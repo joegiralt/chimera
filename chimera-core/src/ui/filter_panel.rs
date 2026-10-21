@@ -108,7 +108,7 @@ impl PanelTarget {
 /// to edit it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouteView {
-    /// (source, FREQ): FM1, FM2, ENV AMT.
+    /// (source, FREQ): ENV AMT, KEYBOARD.
     Freq(ModSource),
     /// (NOTE, FREQ), stepped.
     Keybd,
@@ -288,8 +288,14 @@ pub struct PanelKnob {
 pub struct KindPanel {
     /// FLT's MODE or VOICE, FREQ and Q (cells 2, 5 and 6).
     pub main: [PanelKnob; 3],
-    /// FLT › MOD's six cells.
-    pub mods: [PanelKnob; 6],
+    /// FLT › MOD's first five cells (its F is empty).
+    pub mods: [PanelKnob; 5],
+    /// The chip's own cell, FLT › FX's F: STABILITY on the 2040, LADDER
+    /// and SEM (ADR 0168, 0192); none on CLEAN and DIRTY.
+    pub chip: Option<PanelKnob>,
+    /// FLT › MOD's F: SEM's OUTPUT, its BANDPASS switch (ADR 0192); empty
+    /// on the others.
+    pub out: Option<PanelKnob>,
 }
 
 const fn knob_of(target: PanelTarget, label: &'static str) -> PanelKnob {
@@ -304,30 +310,49 @@ const fn route(s: ModSource, label: &'static str) -> PanelKnob {
     knob_of(PanelTarget::Route(s), label)
 }
 
-/// Two routes, then FM3 · FM3 IN · QM · QM IN: every type's FLT › MOD.
-const fn mods(a: PanelKnob, b: PanelKnob) -> [PanelKnob; 6] {
+/// Two routes, then FREQ MOD · FEEDBACK · RES MOD: every type's FLT › MOD (ADR 0190).
+const fn mods(a: PanelKnob, b: PanelKnob) -> [PanelKnob; 5] {
     [
         a,
         b,
-        knob_of(PanelTarget::JackAmount(JackSlot::Fm3), "FM3"),
-        filter(FilterParams::FM3_IN, "FM3 IN"),
-        knob_of(PanelTarget::JackAmount(JackSlot::Qm), "QM"),
-        filter(FilterParams::QM_IN, "QM IN"),
+        knob_of(PanelTarget::JackAmount(JackSlot::Fm3), "FREQ MOD"),
+        filter(FilterParams::FB, "FEEDBACK"),
+        knob_of(PanelTarget::JackAmount(JackSlot::Qm), "RES MOD"),
     ]
 }
 
-/// CLEAN speaks Cascadia: MODE · FREQ · Q; FM1 and FM2 lead FLT › MOD.
+/// FLT › JACK's jacks, every type's, each under its amount's encoder on
+/// FLT › MOD (ADR 0190): knobs 10 and 11.
+pub static JACKS: [PanelKnob; 2] = [
+    filter(FilterParams::FM3_IN, "FREQ SRC"),
+    filter(FilterParams::QM_IN, "RES SRC"),
+];
+
+/// CLEAN: MODE · FREQ · Q; ENV AMT and KEYBOARD lead FLT › MOD.
 pub static CLEAN_PANEL: KindPanel = KindPanel {
     main: [
         filter(FilterParams::MODE, "MODE"),
         filter(FilterParams::CUTOFF, "FREQ"),
         filter(FilterParams::RESONANCE, "Q"),
     ],
-    mods: mods(route(ModSource::Env1, "FM1"), route(ModSource::Note, "FM2")),
+    mods: mods(
+        route(ModSource::Env1, "ENV AMT"),
+        route(ModSource::Note, "KEYBOARD"),
+    ),
+    chip: None,
+    out: None,
+};
+
+const STABILITY: Option<PanelKnob> = Some(filter(FilterParams::STAB, "STABILITY"));
+
+/// LADDER speaks CLEAN's words (ADR 0104), with STABILITY.
+pub static LADDER_PANEL: KindPanel = KindPanel {
+    chip: STABILITY,
+    ..CLEAN_PANEL
 };
 
 /// The 2040 speaks the Prophet's words: VOICE · CUTOFF · RES, and ENV AMT
-/// and KEYBD (CLEAN's FM1 and FM2) lead FLT › MOD. Its one MODE has no
+/// and KEYBOARD lead FLT › MOD. Its one MODE has no
 /// cell: KIND's band names it (`kind_note`).
 pub static K2040_PANEL: KindPanel = KindPanel {
     main: [
@@ -337,16 +362,34 @@ pub static K2040_PANEL: KindPanel = KindPanel {
     ],
     mods: mods(
         route(ModSource::Env1, "ENV AMT"),
-        knob_of(PanelTarget::Keybd, "KEYBD"),
+        knob_of(PanelTarget::Keybd, "KEYBOARD"),
     ),
+    chip: STABILITY,
+    out: None,
+};
+
+/// SEM speaks the SEM-1A's panel: MODE (the LP–notch–HP pot, a knob, not
+/// CLEAN's list) · FREQ · RES, ENV AMT, KEYBOARD, STABILITY, and its
+/// S504 switch as OUTPUT, MODE or BANDPASS, on FLT › MOD's free F (ADR
+/// 0192).
+pub static SEM_PANEL: KindPanel = KindPanel {
+    main: [
+        filter(FilterParams::MORPH, "MODE"),
+        filter(FilterParams::CUTOFF, "FREQ"),
+        filter(FilterParams::RESONANCE, "RES"),
+    ],
+    mods: CLEAN_PANEL.mods,
+    chip: STABILITY,
+    out: Some(filter(FilterParams::MODE, "OUTPUT")),
 };
 
 pub fn panel(kind: FilterKind) -> &'static KindPanel {
     match kind {
-        // DIRTY and LADDER speak CLEAN's panel and words (spec § 4, ADR
-        // 0104): MODE, FREQ, Q.
-        FilterKind::Svf | FilterKind::Dirty | FilterKind::Ladder => &CLEAN_PANEL,
+        // DIRTY speaks CLEAN's panel and words (spec § 4): MODE, FREQ, Q.
+        FilterKind::Svf | FilterKind::Dirty => &CLEAN_PANEL,
+        FilterKind::Ladder => &LADDER_PANEL,
         FilterKind::K2040 => &K2040_PANEL,
+        FilterKind::Sem => &SEM_PANEL,
     }
 }
 
@@ -354,16 +397,21 @@ pub fn panel(kind: FilterKind) -> &'static KindPanel {
 pub const fn kind_note(kind: FilterKind) -> Option<&'static str> {
     match kind {
         FilterKind::K2040 => Some("4-POLE LP"),
-        FilterKind::Svf | FilterKind::Dirty | FilterKind::Ladder => None,
+        FilterKind::Svf | FilterKind::Dirty | FilterKind::Ladder | FilterKind::Sem => None,
     }
 }
 
-/// Knob `k`: 0–2 FLT's MODE or VOICE, FREQ and Q; 3–8 FLT › MOD's cells.
+/// Knob `k`: 0–2 FLT's MODE or VOICE, FREQ and Q; 3–7 FLT › MOD's cells;
+/// 8 FLT › MOD's F, SEM's OUTPUT; 9 the chip's cell, if the kind has one;
+/// 10 and 11 FLT › JACK's jacks.
 pub fn knob(kind: FilterKind, k: u8) -> Option<&'static PanelKnob> {
     let p = panel(kind);
     match k {
         0..=2 => Some(&p.main[k as usize]),
-        3..=8 => Some(&p.mods[k as usize - 3]),
+        3..=7 => Some(&p.mods[k as usize - 3]),
+        8 => p.out.as_ref(),
+        9 => p.chip.as_ref(),
+        10 | 11 => Some(&JACKS[k as usize - 10]),
         _ => None,
     }
 }
@@ -379,5 +427,8 @@ pub fn applies(kind: FilterKind, id: ParamId) -> bool {
         || p.main
             .iter()
             .chain(p.mods.iter())
+            .chain(p.chip.iter())
+            .chain(p.out.iter())
+            .chain(JACKS.iter())
             .any(|k| k.target == PanelTarget::Filter(id))
 }

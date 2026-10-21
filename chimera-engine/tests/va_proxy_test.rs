@@ -64,12 +64,12 @@ fn print(blocks: &[[f32; BLOCK_SIZE]]) -> u64 {
 
 /// The scenes' prints before the move (`896bae53`, OSC 1's MOD render
 /// called in place; SOFT SYNC's at `52b48dd7`, OSC 2's reversing render
-/// called in place).
+/// called in place; LOOPFM's re-recorded for its curve, #683).
 const BEFORE: [(VaMode, u8, u64); 6] = [
     (VaMode::Fm, 48, 0x69d1_9009_2f94_a263),
     (VaMode::Fm, 84, 0xe30a_41c6_2610_2b05),
-    (VaMode::LoopFm, 48, 0x406a_4dee_d44b_bc0d),
-    (VaMode::LoopFm, 84, 0xa9ac_ea23_5650_161a),
+    (VaMode::LoopFm, 48, 0x620a_6450_4bc7_8c8d),
+    (VaMode::LoopFm, 84, 0x1a58_7bd1_ec9e_d042),
     (VaMode::SoftSync, 48, 0x08e9_a681_9062_1129),
     (VaMode::SoftSync, 84, 0x91c2_07b0_480f_bb78),
 ];

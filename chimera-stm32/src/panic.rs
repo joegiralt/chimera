@@ -16,7 +16,7 @@ fn panic(_info: &PanicInfo) -> ! {
 /// (SHCSR), so a flash read's bus error escalates here.
 #[exception]
 unsafe fn HardFault(_frame: &ExceptionFrame) -> ! {
-    #[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
+    #[cfg(not(feature = "sd-probe"))]
     chimera_board::bank2::reset_on_ecc_fault();
     silence_and_halt()
 }

@@ -350,8 +350,8 @@ fn priming_on_main_page_registers_focused_param() {
     let mut ui = stack_ui();
     press(&mut ui, ButtonId::Plus);
     press(&mut ui, ButtonId::Plus); // node 2: Filter
-    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 1));
-    prime(&mut ui); // slot 4: cutoff
+    ui.handle_input(&MockControls::new().encoder(EncoderId::F, 1));
+    prime(&mut ui); // slot 5: cutoff
     assert_eq!(primed(&ui), []);
     assert_eq!(
         ui.prime_status(),

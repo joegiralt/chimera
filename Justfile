@@ -3,19 +3,13 @@
 # The bench's builds, an area each (all of it no longer fits FLASH), and
 # the filter probes `tools/loop_count.py` counts. Each is built with
 # `--no-default-features` (the `bench` feature brings back all of the
-# shipping set but the console's `put`; so does `filter-probes`).
-# bench-tape alone keeps TAPE in bank 1 and doesn't fit FLASH
-# (private issue #506); `bench-tape,bank2` plays
-# it from bank 2, so its run needs that build's .bk2 installed.
-# ALGO, ROUTING, MEMORY, STRESS and ORBIT play the reverb (and VA's MOD
-# path, ADR 0163) from bank 2, as the unit does (ADR 0174): alone they
-# don't fit FLASH (#654; ROUTING by 3,264 B, MEMORY by 5,064 B with SOFT
-# SYNC's reversing OSC 2), and Gate 3 found bank 2 never slower (ADR
-# 0142). Their runs need their build's .bk2 installed.
-# `bench-stress,orbit` is out: without bank2 VA's MOD path stays in its
-# bank 1 (ADR 0163) and it doesn't fit FLASH, and from bank 2 it fails the
-# stack check (private issue #656).
-bench_sets := "fault-inject bench-algo,bank2 bench-algo,master-tape,bank2 bench-routing,bank2 bench-memory,bank2 bench-stress,bank2 bench-orbit,bank2 bench-tape,bank2 filter-probes"
+# shipping set but the console's `put`; so does `filter-probes`). Every
+# firmware build has bank 2 (ADR 0194): TAPE, the reverb, VA's MOD path
+# (ADR 0163, 0174) and the bench itself play from it, and Gate 3 found
+# bank 2 never slower (ADR 0142). A bench run needs its build's .bk2
+# installed. `bench-stress,orbit` is out: it fails the stack check
+# (private issue #656).
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator
@@ -159,8 +153,8 @@ firmware-gate:
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
-# The ELF's two banks: <out>.bin (bank 1, never .bank2) and, with bank 2's
-# section, <out>.bk2. A build without `bank2` has an empty .bank2: no .bk2.
+# The ELF's two banks: <out>.bin (bank 1, never .bank2) and <out>.bk2. Every
+# firmware build has bank 2 (ADR 0194): an empty .bank2 fails.
 bank2-split elf out:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -169,7 +163,6 @@ bank2-split elf out:
     if [ "$(basename {{out}})" != chimera-gate ]; then just check-no-gate {{out}}.bin; fi
     rm -f {{out}}.bk2
     sections=$(rust-objdump -h {{elf}})
-    syms=$(rust-nm {{elf}})
     if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' <<< "$sections"; then
         pkg=$(cargo pkgid -p chimera-stm32)
         hash=$(git rev-parse --short=8 HEAD)
@@ -179,8 +172,8 @@ bank2-split elf out:
         just check-door-placed {{elf}}
         {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
         just check-bin-paths {{out}}.bk2
-    elif grep -qw BANK2_SEAL <<< "$syms"; then
-        echo "bank 1 expects a bank 2 but the ELF has none" >&2; exit 1
+    else
+        echo "{{elf}} has no bank 2 (ADR 0194)" >&2; exit 1
     fi
 
 # Release binaries: the shipping firmware and its ORBIT variant with every build
@@ -213,7 +206,7 @@ check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
     syms=$(rust-nm -C {{elf}})
-    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render'; do
+    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
 
@@ -334,7 +327,7 @@ build:
 # with the master tape back on, ADR 0055, and the whole suite without ORBIT), desktop
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
 # features, with none, with ORBIT, each bench area (ALGO also with the master
-# tape, STRESS also with ORBIT), the filter probes and the SD probe, clippy on host
+# tape), the filter probes and the SD probe, all with bank 2 (ADR 0194), clippy on host
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide. The host tool's tests run first, against a fake unit.
@@ -347,8 +340,8 @@ check:
     # TAPE's UI with bank 2 closed, through the host's own door (ADR 0175).
     cargo test -p chimera-core --features bank2 --test tape_closed_ui_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
-    # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's and the streamed loads' bank-1 sides through the host's own door.
-    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test stream_door_test --test glyph_door_test
+    # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's and the streamed loads' bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -364,7 +357,7 @@ check:
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits.
     for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe,bank2
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
     out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
@@ -400,7 +393,7 @@ stack-check:
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
     sets=("" "--no-default-features" "--features orbit" "--features bank2-gate")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
-    sets+=("--no-default-features --features sd-probe,bank2")
+    sets+=("--no-default-features --features sd-probe")
     for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
@@ -482,7 +475,7 @@ clippy:
     # Every bench area at once: too big to link, but no area's code is dead.
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}},master-tape -- -D warnings
-    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe,bank2 -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
     # usb-console alone: `stats` answers from no reader
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
@@ -515,7 +508,7 @@ beds *args:
 # Drop-outs in a MOTU recording of stream 0: `just dropouts find rec.wav --ref bed0.wav [--channel N]`
 dropouts *args:
     {{utils}} dropouts {{args}}
-# The card's read speed beside audio and the streams it holds (a bank 2 bench build first: `bench-stress,bank2` or `bench-tape,bank2`)
+# The card's read speed beside audio and the streams it holds (a bench build first: `bench-stress` or `bench-tape`)
 card *args:
     python3 tools/chimera-usb.py card {{args}}
 # A project file onto the card over USB (ADR 0092), saved as the unit saves:
@@ -553,12 +546,11 @@ flash:
 # Flash one bench area to PreenFM3 via DFU: `just flash-bench <area> [extra]`,
 # area one of algo, routing, memory, stress, orbit, tape; extra more
 # features (`just flash-bench stress orbit`: STRESS plays ORBIT;
-# `just flash-bench algo master-tape`: the REEL row). TAPE only links with
-# bank 2 (`just flash-bench tape bank2`, #506). A `bank2` bench's .bk2 is
+# `just flash-bench algo master-tape`: the REEL row). A bench's .bk2 is
 # split, not installed: under a console build first, `python3
 # tools/chimera-usb.py bank2 target/chimera-bench.bk2` stages it (exit 2,
-# needs firmware) and the bench's first boot installs it; without that, its
-# reverb and TAPE are silent. All of the bench no
+# needs firmware) and the bench's first boot installs it; without that, the
+# bench can't run (it lives in bank 2, ADR 0194). All of the bench no
 # longer fits FLASH at once; a bench build has no console `put` (re-flash
 # the shipping build to move files). The bench holds its screens for minutes
 # before the UI loop (and so the console) starts, so a 74 after a
@@ -570,7 +562,7 @@ flash-bench area extra="":
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
-    case ",$features," in *,bank2,*) echo "bank 2 not installed by this: stage target/chimera-bench.bk2 first (chimera-usb.py bank2, under a console build)";; esac
+    echo "bank 2 not installed by this: stage target/chimera-bench.bk2 first (chimera-usb.py bank2, under a console build)"
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
@@ -580,12 +572,12 @@ flash-bench area extra="":
 
 # Flash the fault-injection build (console `fault dma <1|2>`, for #25;
 # `fault card`) with its bank 2, both halves as `flash` does: `fault-inject`
-# and `bank2`, less `put`, so TAPE streams and `fault card` has reads to
-# fail. A test build only.
+# less `put`, so TAPE streams and `fault card` has reads to fail. A test
+# build only.
 flash-fault:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject,bank2
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
     python3 tools/chimera-usb.py update target/chimera-fault.bin target/chimera-fault.bk2
 
@@ -607,9 +599,9 @@ backup-bootloader:
     cd ~/chimera-backups && sha256sum "$(basename "$out")" > "$(basename "$out").sha256"
     echo "$out"
 
-# Flash the SD bring-up probe (--no-default-features --features sd-probe,bank2) to PreenFM3 via DFU
+# Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
 flash-sd-probe:
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe,bank2
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 

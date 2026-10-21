@@ -239,8 +239,8 @@ fn cents(f: f64, want: f64) -> f64 {
 }
 
 /// LADDER's ring at RES 1, dBFS RMS (−15.5 to −16.1 measured, every mode
-/// and FREQ; ± 1 dB): the input pair's level, its own band as EXP's is
-/// (ADR 0104). The modes' gains bring each within 0.5 dB of LP4's.
+/// and FREQ; ± 1 dB): the input pair's level, its own band as EXP's was
+/// (ADR 0104; EXP's is REV2's since ADR 0191). The modes' gains bring each within 0.5 dB of LP4's.
 const LADDER_OSC_DB: f32 = -15.6;
 /// Absolute pitch at RES 1, cents, over C2–C6 and FREQ 100 Hz–5 kHz.
 const PITCH_CENTS: f64 = 5.0;
@@ -428,6 +428,7 @@ fn ladder_stays_bounded_under_audio_rate_modulation() {
                 q: Some(lane),
                 level_routed: false,
                 glide: false,
+                ..FilterMods::NONE
             };
             let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
                 if (b * BLOCK_SIZE + i).is_multiple_of(4001) {

@@ -82,13 +82,20 @@ class Bank2Code(unittest.TestCase):
         for l in dump:
             self.assertIn("-j .bank2", l, "door targets would go uncharged")
 
-    def test_the_full_benches_play_the_reverb_from_bank_2(self):
+    def test_every_bench_area_is_built(self):
         sets = re.search(r'^bench_sets := "([^"]*)"', (ROOT / "Justfile").read_text(), re.M).group(1).split()
-        for area in ("bench-algo", "bench-routing", "bench-memory", "bench-stress", "bench-orbit"):
-            mine = [s for s in sets if area in s.split(",")]
-            self.assertTrue(mine, area)
-            for s in mine:
-                self.assertIn("bank2", s.split(","), f"{s} doesn't fit FLASH (#654)")
+        for area in ("bench-algo", "bench-routing", "bench-memory", "bench-stress", "bench-orbit", "bench-tape"):
+            self.assertTrue([s for s in sets if area in s.split(",")], area)
+
+    def test_bank_2_is_never_a_firmware_feature(self):
+        """ADR 0194: every firmware build links bank 2."""
+        toml = (ROOT / "chimera-stm32/Cargo.toml").read_text()
+        self.assertNotRegex(toml, r"(?m)^bank2 = ")
+        for dep in ("chimera-board", "chimera-core", "chimera-engine"):
+            self.assertRegex(toml, rf'(?m)^{dep} = {{.*features = \["bank2"\]')
+        self.assertNotIn("CARGO_FEATURE_BANK2", (ROOT / "chimera-stm32/build.rs").read_text())
+        split = "\n".join(recipes()["bank2-split"])
+        self.assertRegex(split, r"else\n\s+echo .*no bank 2.*exit 1", "an empty .bank2 must fail the split")
 
     def test_check_runs_the_proxies_with_their_door(self):
         body = "\n".join(recipes()["check"])

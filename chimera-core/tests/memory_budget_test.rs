@@ -72,8 +72,13 @@ fn voice_is_its_chain_plus_one_slot() {
 /// 4473f0a1): a tripwire, so a growth is seen and accounted. The played
 /// Sound's FX block adds 16 B, and DRV's and the folder's blocks leave 24 B
 /// (ADR 0155). FUZZ's state, one per place, adds 72 B (ADR 0156), and
-/// PLAY's MODE beside it (ADR 0170) 8 B of padding.
-const VOICE_SIZE_BEFORE: usize = 6_488;
+/// PLAY's MODE beside it (ADR 0170) 8 B of padding. The filter's
+/// STABILITY adds 40 B: the slot's chip, 36, and the played Sound's STAB
+/// (ADR 0168). FB adds 24 B: the FB signal in CLEAN, DIRTY and the
+/// four-pole slot, the last block's amount, and the played Sound's FB with
+/// its padding (ADR 0190). SEM adds 32 B: its two states, FB signal and
+/// last block's ends (28) and the played Sound's MODE knob (ADR 0192).
+const VOICE_SIZE_BEFORE: usize = 6_584;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.

@@ -216,3 +216,38 @@ fn the_drawn_curve_is_the_engines_across_the_plot() {
         }
     }
 }
+
+/// EXP's picture draws its make-up gain (ADR 0191): its pass band sits
+/// `20·log₁₀(1 + m)` over REV2's at every RES, and its peak over its pass
+/// band is REV2's (where it is on the plot). LADDER, sharing the 4-pole, ignores VOICE.
+#[test]
+fn the_exp_picture_draws_its_make_up() {
+    use chimera_core::dsp::filter::K2040Voice;
+    use chimera_core::dsp::filter::k2040::{k2040_k, make_up};
+    let of = |v| Response::of_voice(FilterKind::K2040, FilterMode::Lp24, v);
+    assert_eq!(of(K2040Voice::Rev2), Response::K2040);
+    assert_eq!(of(K2040Voice::Exp), Response::K2040Exp);
+    assert_eq!(
+        Response::of_voice(FilterKind::Ladder, FilterMode::Lp24, K2040Voice::Exp),
+        Response::K2040
+    );
+    for res in [0.0f32, 0.4, 0.7, 0.9] {
+        let ((dc_r, h_r), (dc_e, h_e)) = (
+            drawn(of(K2040Voice::Rev2), res),
+            drawn(of(K2040Voice::Exp), res),
+        );
+        let want = 20.0 * make_up(k2040_k(res)).log10() * PX_PER_DB;
+        println!(
+            "RES {res}: EXP pass band {} px over REV2's, want {want:.1}",
+            dc_r - dc_e
+        );
+        assert!(((dc_r - dc_e) as f32 - want).abs() <= 1.0, "RES {res}");
+        // Below the plot's top edge, which a lifted RES 0.9 peak reaches.
+        if dc_e - h_e as i32 > PLOT_TOP {
+            assert!(
+                (h_r - h_e).abs() <= 1.0,
+                "RES {res}: peak {h_e} vs {h_r} px"
+            );
+        }
+    }
+}

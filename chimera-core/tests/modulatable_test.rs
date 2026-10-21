@@ -10,11 +10,12 @@ use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
+use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::modulator::EnvType;
 use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
-use chimera_core::params::{EngineType, EnvParams, ParamSnapshot};
+use chimera_core::params::{EngineType, EnvParams, FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
@@ -51,7 +52,17 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
         _ => p.algo = AlgoParams::single(WaveId::TRI),
     }
     match block {
-        BlockRef::Filter => p.filter.cutoff = 2000.0,
+        BlockRef::Filter => {
+            p.filter.cutoff = 2000.0;
+            // STABILITY acts on the 2040 and LADDER.
+            if addr.param == FilterParams::STAB {
+                p.filter.set_kind(FilterKind::K2040);
+            }
+            // SEM's MODE acts on SEM.
+            if addr.param == FilterParams::MORPH {
+                p.filter.set_kind(FilterKind::Sem);
+            }
+        }
         BlockRef::VoiceFx => {
             p.fx.set_type(FxType::Soft);
             p.fx.pots[0] = 0.5;
@@ -168,8 +179,12 @@ fn every_modulatable_param_audibly_changes_output() {
     }
     // + VCA; PITCH, FINE; Modal's macros; VA's; FRMT and BW per operator,
     // VOWEL; the FX slot's pots and MIX; less DRV's three and the fold's;
-    // TAPE's five macros and ONE's START (#698).
-    assert_eq!(checked, 17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 - 6 + 6);
+    // TAPE's five macros and ONE's START (#698); the filter's STABILITY, FB
+    // and SEM's MODE.
+    assert_eq!(
+        checked,
+        17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 - 6 + 6 + 3
+    );
 }
 
 /// #188: ENV 2 → MORPH is heard on the INIT Sound, whose ALG B differs

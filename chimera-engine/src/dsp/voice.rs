@@ -14,7 +14,10 @@ use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::fast_exp2;
-use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
+use crate::dsp::filter::stability::{self, STAB_COST};
+use crate::dsp::filter::{
+    FB_COST, FILTER_LEVEL_COST, Fed, Filter, FilterMods, FilterStability, Spread,
+};
 use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
@@ -68,6 +71,10 @@ pub struct Voice {
     /// The FX slot, PRE or POST the filter (ADR 0155).
     fx: VoiceFx,
     filter: Filter,
+    /// The filter's chip, this slot's (STABILITY, ADR 0168).
+    stab: FilterStability,
+    /// The FB amount the last block ended on: this block's ramps from it.
+    fb_last: f32,
     /// The last block's LEVEL clip, for the LED: 0 while the clipper is
     /// off or the voice idle.
     filter_clip: Clip,
@@ -219,9 +226,13 @@ impl Voice {
         let kind = f.kind();
         let algo = p.engine() == EngineType::Algo;
         let shaped = algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q));
-        let moving = shaped || mods.fixed_moves(FixedCol::Freq) || mods.fixed_moves(FixedCol::Q);
+        let fb = Self::fb_runs(p, mods);
+        let moving =
+            shaped || fb || mods.fixed_moves(FixedCol::Freq) || mods.fixed_moves(FixedCol::Q);
         let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
         f.filter_cost()
+            + when(Self::stab_runs(p, mods), STAB_COST)
+            + when(fb, FB_COST)
             + when(moving, kind.move_cost())
             + when(shaped, TAP_SHAPE_COST)
             + when(Self::level_may_open(p, mods), kind.level_cost())
@@ -240,12 +251,27 @@ impl Voice {
         let taps = |c| algo && p.taps.moving(c);
         let filter_moves = taps(FixedCol::Freq)
             || taps(FixedCol::Q)
+            || Self::fb_runs(p, mods)
             || mods.fixed_moves(FixedCol::Freq)
             || mods.fixed_moves(FixedCol::Q);
         let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
         let fx = g.fx && Self::fx_runs(p, mods) && !Self::fx_ramps(p, mods);
         when(g.filter && !filter_moves, p.filter.kind().glide_cost())
             + when(fx, p.fx.ty().glide_cost())
+    }
+
+    /// STABILITY spreads the voice: the 2040, LADDER or SEM, stored below 1
+    /// or routed.
+    fn stab_runs(p: &ParamSnapshot, mods: &ModState) -> bool {
+        p.filter.kind().has_chip()
+            && (p.filter.stability < 1.0
+                || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::STAB)))
+    }
+
+    /// FB runs: stored off 0, or routed (ADR 0190). It runs the filter's
+    /// moving path.
+    fn fb_runs(p: &ParamSnapshot, mods: &ModState) -> bool {
+        p.filter.fb != 0.0 || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::FB))
     }
 
     /// LEVEL's gate can open: stored over ½, or routed.
@@ -441,6 +467,8 @@ impl Voice {
             write_chain!(p, {
                 fx: VoiceFx::new(),
                 filter: Filter::new(),
+                stab: FilterStability::NEW,
+                fb_last: 0.0,
                 filter_clip: Clip::ZERO,
                 gate: AmpGate::OPEN,
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
@@ -642,6 +670,8 @@ impl Voice {
             // A fresh note: no ramp from the last note's settings, and no
             // ring left in the filter.
             self.filter.reset();
+            self.stab.hold();
+            self.fb_last = params.filter.fb;
             self.fx.hold();
             self.dc.reset();
             self.gate = AmpGate::OPEN;
@@ -657,6 +687,8 @@ impl Voice {
         }
         self.retrigger = true;
         self.gate.restart();
+        self.stab
+            .note_on(ctx.part, self.id.index() as u32, note.get());
         self.last_note = note;
         self.last_velocity = velocity;
         self.last_source = source;
@@ -701,6 +733,7 @@ impl Voice {
             return;
         }
         self.last_note = note;
+        self.stab.retune(note.get());
         let tau = glide_samples as f32 / (3.0 * self.sample_rate as f32);
         self.slot.retune(note, (self.sample_rate, tau), ctx);
     }
@@ -1076,6 +1109,15 @@ impl Voice {
             // A route moves g and k at audio rate; without one, only a
             // knob's glide does.
             glide: !mod_state.filter_routed(),
+            spread: if m.filter.kind().has_chip() {
+                self.stab.step(stability::depth(m.filter.stability))
+            } else {
+                Spread::NONE
+            },
+            fb: Fed::new(
+                core::mem::replace(&mut self.fb_last, m.filter.fb),
+                m.filter.fb,
+            ),
         };
         self.filter_clip = self.filter.process(output, &m.filter, sample_rate, &mods);
 

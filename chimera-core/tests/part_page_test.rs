@@ -137,8 +137,8 @@ fn reverb_send_is_on_sends_and_amp_only() {
 fn filter_fx_and_amp_pages() {
     let mut p = ParamSnapshot::default();
     // MODE reads LP4's place in CLEAN's knob order, 2 of 7; FX OFF, PRE.
-    assert_eq!(read(&reg::FILTER, &p), [0.0, 2.0 / 7.0, 0.0, 0.0, 1.0, 0.0]);
-    turn(&reg::FILTER, 4, -1, &mut p);
+    assert_eq!(read(&reg::FILTER, &p), [0.0, 0.0, 0.0, 2.0 / 7.0, 0.0, 1.0]);
+    turn(&reg::FILTER, 5, -1, &mut p);
     // 1/24 octave a tick (ADR 0107).
     let want = 20000.0 * (-1.0f32 / 24.0).exp2();
     assert!(
@@ -146,17 +146,17 @@ fn filter_fx_and_amp_pages() {
         "{}",
         p.filter.cutoff
     );
-    turn(&reg::FILTER, 1, 1, &mut p);
+    turn(&reg::FILTER, 3, 1, &mut p);
     assert_eq!(
         p.filter.mode(),
         FilterMode::Bp12,
         "the next in CLEAN's list, after LP4"
     );
-    turn(&reg::FILTER, 1, 20, &mut p);
+    turn(&reg::FILTER, 3, 20, &mut p);
     assert_eq!(p.filter.mode(), FilterMode::Phaser, "clamps at the last");
 
     // FX SOFT from OFF; its DRIVE on FLT › FX, SOFT's TONE snapped.
-    turn(&reg::FILTER, 2, 1, &mut p);
+    turn(&reg::FILTER, 1, 1, &mut p);
     assert_eq!(p.fx.ty(), FxType::Soft);
     assert_eq!(read(&reg::FILTER_FX, &p), [0.5, 0.0, 0.5, 0.5, 1.0, 0.0]);
     turn(&reg::FILTER_FX, 1, 5, &mut p);

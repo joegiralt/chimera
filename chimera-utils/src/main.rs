@@ -9,6 +9,7 @@ mod bank2;
 mod beds;
 mod devices;
 mod dropouts;
+mod filter_fb;
 mod generic;
 mod grain;
 mod interp;
@@ -23,7 +24,7 @@ mod stim;
 mod voice;
 
 use chimera_core::dsp::reverb::ReverbType;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The one rate everything runs at: Chimera's.
 pub const SR: f64 = chimera_hal::SAMPLE_RATE as f64;
@@ -37,6 +38,8 @@ usage: chimera-utils [flags] COMMAND …
   bank2-seal --check BIN BK2
                            fail unless the .bk2's seal is the .bin's
   door-check ELF           fail on any bank-1 relocation into bank 2
+  filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
+                           0, ½, full, RMS-matched WAVs and levels.md into DIR
   devices                  the devices and their knobs (fx-soft/fuzz/fold: p1 p2 p3 mix
                            place pre|post input, the voice FX slot beside an open filter)
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
@@ -211,6 +214,7 @@ fn run() -> Result<bool, String> {
             bank2::seal_files(&rest[0], &rest[1], &rest[2], &v).map(|_| true)
         }
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
+        "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "devices" => {
             for (name, d) in devices::Device::all() {
                 let ks: Vec<String> = d

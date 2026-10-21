@@ -4,12 +4,13 @@
 //! linearly in one step, then fed back through the voice's own resonance
 //! element: REV2 (the Prophet-5 Rev 1/2) a linear SSM 2020, EXP (the RSF
 //! Kobol Expander) a 3080 limiter. VOICE also picks the drive into the chip
-//! and, on EXP, a 3080 output stage. Same parameters. No compensation: the
-//! bass loss is the circuits'.
+//! and, on EXP, a 3080 output stage and the Kobol's make-up gain, which
+//! keeps its bass at high RES (ADR 0191). Same parameters. REV2's bass
+//! loss is the circuit's, uncompensated.
 
 use super::coef::g_of;
 use super::level::{FilterMods, LevelRamp, clip_amount, level_gain};
-use super::{SUB, TapShape, ramps, step_to, tap_g_range};
+use super::{Fed, SUB, TapShape, ramps, step_to, tap_g_range};
 use crate::block::DiskCode;
 use crate::dsp::clampf;
 use crate::hw::{BLOCK_SIZE, Cost};
@@ -50,17 +51,32 @@ pub const STAGE_SCALE_EXP: f32 = {
     1.5 * (node / rf) / 0.052 / R_2040
 };
 /// EXP's feedback limit, its 3080 (the Kobol's CI5, spec B3). It sets
-/// EXP's squelch, its self-oscillation level and pitch (L = ∞ sits at +14
-/// cents) and its full-scale bass loss. REV2 has none: its SSM 2020 is
-/// linear, and the ±1 V clip alone bounds its loop.
-pub const L_2040: f32 = 0.25;
+/// EXP's squelch, its self-oscillation level and pitch and its full-scale
+/// bass loss. ½ (ADR 0191; ¼ in ADR 0096): at ¼ a full-scale input
+/// squelched the ring, which the Kobol keeps over its VCO (+11 dB re the
+/// fundamental at RES max, 2026-10-20); at ½ it rings over a full-scale
+/// saw, +5.5 dB, and the ±1 V clip, not the limit, sets its level. REV2 has
+/// none: its SSM 2020 is linear, and the clip alone bounds its loop.
+pub const L_2040: f32 = 0.5;
+/// EXP's make-up gain `1 + m(k)`, `m = k·(MAKE_UP_C1 − MAKE_UP_C2·k)`
+/// (ADR 0191), on the output, after the 3080 stage, outside the loop. The
+/// RSF Kobol Expander loses about half the 4-pole's `1/(1 + k)` bass, flat
+/// from 56 Hz to 1.7 kHz, with the same bump over its bass: a RES-made
+/// make-up gain, not a shelf. Fitted to its held A1 (56.4 Hz, 2026-10-20,
+/// kobol-session): the fundamental against RES 0 at RES knob 5 −3.3 dB and
+/// max −7.0, at EXP RES 0.4 and 1 (the comparison's match by bump), where
+/// EXP lost −8.3 and −13.9 dB. +5.0 dB at RES 0.4, +6.9 at 1; 0 at RES 0.
+pub const MAKE_UP_C1: f32 = 0.6;
+pub const MAKE_UP_C2: f32 = 0.0752;
 /// REV2's cutoff trim, −13.3 cents, as the Prophet's is trimmed at full
 /// resonance (R407/R406): with a linear loop the ±1 V clip rings it +13.6
 /// sharp. A ratio on FREQ, once a block.
 pub const TRIM_REV2: f32 = 0.992348;
-/// EXP's cutoff trim, +11.5 cents: the circuit-scale stage bend (ADR 0105)
-/// rings the self-oscillating loop 11 cents flat, measured. A ratio on FREQ.
-pub const TRIM_EXP: f32 = 1.006_664_8;
+/// EXP's cutoff trim, +36 cents: the circuit-scale stage bend (ADR 0105)
+/// rang the self-oscillating loop 11 cents flat, and at `L_2040` ½ the ring
+/// reaches the ±1 V clip, which rings it 21–29 cents flatter (ADR 0191),
+/// measured. A ratio on FREQ.
+pub const TRIM_EXP: f32 = 1.021_012_1;
 /// The output level: LEVEL ½ at RES 0 is 0 dB ± 0.5 on both voices.
 pub const OUT_2040: f32 = 1.0;
 /// The LED's knee, a fraction of the swing: stage 1 asked for more than
@@ -77,6 +93,9 @@ const _: () = {
     assert!(BETA_EXP * INV_BETA_EXP > 0.9999 && BETA_EXP * INV_BETA_EXP < 1.0001);
     assert!(STAGE_SCALE_EXP > 3.03 && STAGE_SCALE_EXP < 3.05);
     assert!(L_2040 > 0.0 && OUT_2040 > 0.0);
+    // `m` is positive over RES (k ≤ 4.21 at RES 1), and flat at the top
+    // (its vertex at RES 0.95, within 0.4 % of RES 1's).
+    assert!(MAKE_UP_C1 > 0.0 && MAKE_UP_C1 > 4.21 * MAKE_UP_C2);
     assert!(LED_KNEE > 0.0 && LED_KNEE <= 1.0);
 };
 
@@ -108,6 +127,8 @@ pub trait VoiceSpec: voice::Sealed {
     const TRIM: f32 = Self::VOICE.trim();
     /// The stages' bend, a multiple of REV2's.
     const STAGE_SCALE: f32 = Self::VOICE.stage_scale();
+    /// The make-up gain.
+    const MAKE_UP: bool = Self::VOICE.make_up();
 }
 
 /// The voices' zero-sized types (`VoiceSpec`).
@@ -146,7 +167,7 @@ pub enum K2040Voice {
 }
 
 /// VOICE's screen names, in `K2040Voice::ALL`'s order.
-pub static VOICE_LABELS: [&str; 2] = ["REV2", "EXP"];
+pub static VOICE_LABELS: [&str; 2] = ["REV2", "EXPNDR"];
 
 const _: () = {
     assert!(K2040Voice::ALL.len() == VOICE_LABELS.len());
@@ -211,6 +232,11 @@ impl K2040Voice {
         matches!(self, K2040Voice::Exp)
     }
 
+    /// The make-up gain: EXP only (ADR 0191).
+    pub const fn make_up(self) -> bool {
+        matches!(self, K2040Voice::Exp)
+    }
+
     /// The steady bill over LP24, cycles a sample.
     pub const fn cost(self) -> Cost {
         Cost(match self {
@@ -256,12 +282,27 @@ pub fn k2040_k(res: f32) -> f32 {
     res * (4.0 / 0.95)
 }
 
+/// FB's headroom guard on the 2040 (#393): its loop can top full scale
+/// pre-VCA under full FB at high RES (+5 dB over FB 0 in the demo), so the
+/// output leans into `sat_2040`'s knee by FB's depth `d`, 0 none: the
+/// output's at most ±1 at full FB, and the curve is continuous in `d`.
+#[inline(always)]
+fn guard(o: f32, d: f32) -> f32 {
+    o + d * (sat_2040(o) - o)
+}
+
 /// The C1 cubic, `c − (4/27)·c³` for `c = clamp(v, ±1.5)`: slope 1 at 0,
 /// flat at ±1 from ±1.5, no divide.
 #[inline(always)]
 pub fn sat_2040(v: f32) -> f32 {
     let c = clampf(v, -1.5, 1.5);
     c - (4.0 / 27.0) * c * c * c
+}
+
+/// EXP's make-up gain at feedback `k`, `1 + k·(C1 − C2·k)`: 1 at RES 0.
+#[inline(always)]
+pub fn make_up(k: f32) -> f32 {
+    1.0 + k * (MAKE_UP_C1 - MAKE_UP_C2 * k)
 }
 
 /// The model's state: four stage integrators and the last block's ramp
@@ -274,6 +315,8 @@ pub struct K2040 {
     /// One `Option` for the three, as DIRTY's: 8 B under three (ADR 0101's
     /// 2,112 B voice chain).
     last: Option<Ends>,
+    /// FB's signal (#393).
+    fbp: f32,
 }
 
 /// A block's end values of `g`, `k` and LEVEL's gain; LADDER's too, so a
@@ -317,6 +360,8 @@ struct Coef {
     one_g: f32,
     d: f32,
     kd: f32,
+    /// EXP's make-up gain.
+    make_up: f32,
 }
 
 #[inline(always)]
@@ -331,6 +376,7 @@ fn coef(g: f32, k: f32) -> Coef {
         one_g: 1.0 - big_g,
         d,
         kd: k * d,
+        make_up: make_up(k),
     }
 }
 
@@ -359,7 +405,11 @@ impl K2040 {
     ) -> Clip {
         let r = self.ramps(p, fs, mods);
         let t = TapShape::new(mods, tap_g_range(fs), k2040_k);
-        let (peak, sum) = self.run(buf, r, t.as_ref(), mods.glide, |_, _| {});
+        let fb = (mods.fb, tap_g_range(fs));
+        let (peak, sum) = self.run(buf, r, t.as_ref(), mods.glide, fb, |_, _| {});
+        if !mods.fb.on() {
+            self.fbp = 0.0;
+        }
         self.settle(sum);
         clip_amount(peak * (1.0 / (LED_KNEE * R_2040)))
     }
@@ -375,7 +425,7 @@ impl K2040 {
         trace: impl FnMut(usize, &[f32; 4]),
     ) {
         let r = self.ramps(p, fs, &FilterMods::NONE);
-        let (_, sum) = self.run(buf, r, None, false, trace);
+        let (_, sum) = self.run(buf, r, None, false, (Fed::OFF, (0.0, 1.0)), trace);
         self.settle(sum);
     }
 
@@ -388,18 +438,20 @@ impl K2040 {
         r: Ramps,
         tap: Option<&TapShape>,
         glide: bool,
+        fb: (Fed, (f32, f32)),
         trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         use voice::{Exp, Rev2};
-        let steady = tap.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1;
-        let stepped = tap.is_none() && glide;
+        let still = tap.is_none() && !fb.0.on();
+        let steady = still && r.g.0 == r.g.1 && r.k.0 == r.k.1;
+        let stepped = still && glide;
         match (r.voice, steady, stepped) {
             (K2040Voice::Rev2, true, _) => self.steady::<Rev2>(buf, r, trace),
             (K2040Voice::Rev2, _, true) => self.stepped::<Rev2>(buf, r, trace),
-            (K2040Voice::Rev2, ..) => self.moving::<Rev2>(buf, r, tap, trace),
+            (K2040Voice::Rev2, ..) => self.moving::<Rev2>(buf, r, tap, fb, trace),
             (K2040Voice::Exp, true, _) => self.steady::<Exp>(buf, r, trace),
             (K2040Voice::Exp, _, true) => self.stepped::<Exp>(buf, r, trace),
-            (K2040Voice::Exp, ..) => self.moving::<Exp>(buf, r, tap, trace),
+            (K2040Voice::Exp, ..) => self.moving::<Exp>(buf, r, tap, fb, trace),
         }
     }
 
@@ -445,7 +497,7 @@ impl K2040 {
     }
 
     pub(super) fn from_parts(s: [f32; 4], last: Option<Ends>) -> Self {
-        Self { s, last }
+        Self { s, last, fbp: 0.0 }
     }
 
     /// This block's ramps, stored as the next block's start.
@@ -454,8 +506,8 @@ impl K2040 {
         let v = p.voice;
         let (from, to, gain) = four_pole_ends(&mut self.last, p, v.trim(), fs, mods);
         Ramps {
-            g: (from.g, to.g),
-            k: (from.k, to.k),
+            g: mods.spread.g((from.g, to.g)),
+            k: mods.spread.k((from.k, to.k)),
             a: (gain.0 * v.alpha(), gain.1 * v.alpha()),
             voice: v,
         }
@@ -471,7 +523,7 @@ impl K2040 {
         mut trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         let c = coef(r.g.1, r.k.1);
-        let out = r.voice.out_scale();
+        let out = Self::out_scale::<V>(r.voice, &c);
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / BLOCK_SIZE as f32);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for (i, s) in buf.iter_mut().enumerate() {
@@ -494,11 +546,11 @@ impl K2040 {
         r: Ramps,
         mut trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
-        let out = r.voice.out_scale();
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / BLOCK_SIZE as f32);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
             let c = coef(step_to(r.g, j), step_to(r.k, j));
+            let out = Self::out_scale::<V>(r.voice, &c);
             for (i, s) in sub.iter_mut().enumerate() {
                 a += a_step;
                 sum += *s;
@@ -521,6 +573,7 @@ impl K2040 {
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
         tap: Option<&TapShape>,
+        (fb, gr): (Fed, (f32, f32)),
         mut trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         let n = BLOCK_SIZE as f32;
@@ -530,9 +583,23 @@ impl K2040 {
         if let Some(t) = tap {
             t.apply(&mut gs, &mut ks);
         }
-        let out = r.voice.out_scale();
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
+        // FB's loop is bank 2's (ADR 0190); this one runs as it was.
+        if fb.on() {
+            let a = (r.a.0, (r.a.1 - r.a.0) / n);
+            let ran = super::fed::through(|d| {
+                let f = if V::VOICE == K2040Voice::Exp {
+                    d.exp
+                } else {
+                    d.rev2
+                };
+                f(self, buf, &gs, &ks, a, fb, gr)
+            });
+            if let Some(r) = ran {
+                return r;
+            }
+        }
         for (i, s) in buf.iter_mut().enumerate() {
             a += a_step;
             sum += *s;
@@ -540,9 +607,19 @@ impl K2040 {
             let (y, d1) = self.tick::<V>(*s * a, &c);
             trace(i, &y);
             peak = peak.max(d1.abs());
-            *s = Self::output::<V>(y[3], out);
+            *s = Self::output::<V>(y[3], Self::out_scale::<V>(r.voice, &c));
         }
         (peak, sum)
+    }
+
+    /// The output's scale at `c`: `out_scale`, times EXP's make-up gain.
+    #[inline(always)]
+    fn out_scale<V: VoiceSpec>(v: K2040Voice, c: &Coef) -> f32 {
+        if V::MAKE_UP {
+            v.out_scale() * c.make_up
+        } else {
+            v.out_scale()
+        }
     }
 
     /// `y₄` to the output: `y₄·OUT/α` on REV2; on EXP through the 3080,
@@ -601,7 +678,7 @@ impl K2040 {
 
     /// A fresh voice's filter: at rest and unramped.
     pub fn reset(&mut self) {
-        self.s = [0.0; 4];
+        (self.s, self.fbp) = ([0.0; 4], 0.0);
         self.hold();
     }
 
@@ -615,5 +692,42 @@ impl K2040 {
     #[cfg(feature = "test-support")]
     pub fn states(&self) -> [f32; 4] {
         self.s
+    }
+}
+
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
+pub(super) mod fed {
+    use super::super::Fed;
+    use super::{K2040, VoiceSpec, coef, guard};
+    use crate::hw::BLOCK_SIZE;
+
+    impl K2040 {
+        /// `moving`'s loop on voice `V`, each sample's `g` through the FB
+        /// signal, the output through FB's headroom guard. Returns stage
+        /// 1's peak demand and the inputs' sum.
+        #[inline(never)]
+        pub(in crate::dsp::filter) fn fed<V: VoiceSpec>(
+            &mut self,
+            buf: &mut [f32; BLOCK_SIZE],
+            gs: &[f32; BLOCK_SIZE],
+            ks: &[f32; BLOCK_SIZE],
+            (mut a, a_step): (f32, f32),
+            fb: Fed,
+            gr: (f32, f32),
+        ) -> (f32, f32) {
+            let (mut peak, mut sum) = (0.0f32, 0.0f32);
+            for (i, s) in buf.iter_mut().enumerate() {
+                a += a_step;
+                sum += *s;
+                let c = coef(fb.g(gs[i], i, self.fbp, gr), ks[i]);
+                let (y, d1) = self.tick::<V>(*s * a, &c);
+                peak = peak.max(d1.abs());
+                // EXP's make-up rides the output into FB and the guard.
+                let o = Self::output::<V>(y[3], Self::out_scale::<V>(V::VOICE, &c));
+                fb.feed(&mut self.fbp, o);
+                *s = guard(o, fb.depth(i));
+            }
+            (peak, sum)
+        }
     }
 }

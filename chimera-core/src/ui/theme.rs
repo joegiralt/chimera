@@ -182,6 +182,13 @@ pub const XF_CX: i32 = SCREEN_W - MARGIN_X - XF_W / 2;
 pub const XF_TRACK_H: i32 = 6;
 pub const XF_CAP_W: i32 = 10;
 pub const XF_CAP_H: i32 = 26;
+/// STABILITY's spirit level (#593): a vial on the arc's centre line, flush
+/// with the right margin, two marks at its middle and a bubble.
+pub const VIAL_W: i32 = 64;
+pub const VIAL_H: i32 = 20;
+pub const BUBBLE_W: i32 = 16;
+pub const BUBBLE_H: i32 = 12;
+
 /// VA's BLEND: the crossfader on a longer track, room for an end word
 /// under each end (ADR 0129), on this baseline, at least `XF_ENDS_GAP`
 /// apart.

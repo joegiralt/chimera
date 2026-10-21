@@ -33,6 +33,9 @@ impl Sound {
     pub fn init(engine: EngineType) -> Self {
         let mut s = Self::plain_init(engine);
         s.map = default_for(engine);
+        // A new Sound's 2040 or LADDER is a Prophet's voices, each its own
+        // chip (ADR 0168); the factory Sounds, on `plain_init`, stay stable.
+        s.params.filter.stability = crate::dsp::filter::stability::PROPHET;
         // The wheel's vibrato (spec § 9): LFO 1 DEPTH is the wheel, at rest
         // 0, and LFO 1 → PITCH at 2 is ±0.38 semitone at DEPTH 1.
         s.params.lfos[0].depth = 0.0;

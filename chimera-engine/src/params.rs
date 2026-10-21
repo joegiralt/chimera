@@ -22,6 +22,15 @@ pub struct FilterParams {
     mode: FilterMode,
     /// The 2040's VOICE; kept, and inert, on the other types.
     pub voice: K2040Voice,
+    /// STABILITY (ADR 0168): 1 identical voices, lower each voice's chip
+    /// further apart. Read on the 2040 and LADDER; inert on the others.
+    pub stability: f32,
+    /// FB (#393, ADR 0190): the filter's own output into its cutoff, −1..1;
+    /// 0 none. Every TYPE.
+    pub fb: f32,
+    /// SEM's MODE (ADR 0192): 0 LP, ½ the notch at FREQ, 1 HP, the MODE
+    /// pot's mix. Read on SEM only; inert on the others.
+    pub morph: f32,
     /// FM3 IN and QM IN: the rows FM3's FREQ cell and QM's Q cell are
     /// (spec § 2). `filter_panel::repatch` moves them with their routes.
     jacks: JackPair,
@@ -36,6 +45,9 @@ impl Default for FilterParams {
             kind: FilterKind::Svf,
             mode: FilterKind::Svf.default_mode(),
             voice: K2040Voice::Rev2,
+            stability: 1.0,
+            fb: 0.0,
+            morph: 0.0,
             jacks: JackPair::DEFAULT,
         }
     }
@@ -53,6 +65,9 @@ impl FilterParams {
     pub const QM_IN: ParamId = ParamId(11);
     pub const LEVEL: ParamId = ParamId(12);
     pub const VOICE: ParamId = ParamId(13);
+    pub const STAB: ParamId = ParamId(14);
+    pub const FB: ParamId = ParamId(15);
+    pub const MORPH: ParamId = ParamId(16);
 
     pub fn mode(&self) -> FilterMode {
         self.mode
@@ -109,7 +124,7 @@ impl FilterParams {
 }
 
 /// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
-pub static FILTER_SPECS: [ParamSpec; 8] = [
+pub static FILTER_SPECS: [ParamSpec; 11] = [
     // 1/24 octave a tick, shown in Hz (ADR 0107).
     ParamSpec::continuous(
         0,
@@ -175,7 +190,7 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
     )
     .ident("MODE")
     .glyph(crate::glyph::FocusGlyph::None),
-    // The 2040's VOICE (spec § 3): REV2 or EXP, two peers.
+    // The 2040's VOICE (spec § 3): REV2 or EXPNDR, two peers.
     ParamSpec::choice(
         13,
         "VOICE",
@@ -186,10 +201,54 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
     )
     .ident("VOICE")
     .glyph(crate::glyph::FocusGlyph::None),
+    // STABILITY (ADR 0168): VA's STAB, the same law, on the chip.
+    ParamSpec::continuous(
+        14,
+        "STAB",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        1.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("STAB")
+    .glyph(crate::glyph::FocusGlyph::Stability),
+    // FB (ADR 0190): bipolar, the filter's output a sample late into FREQ.
+    ParamSpec::continuous(
+        15,
+        "FEEDBACK",
+        ValFmt::Bi,
+        -1.0,
+        1.0,
+        0.0,
+        2.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("FB")
+    .short("FDBK")
+    .glyph(crate::glyph::FocusGlyph::Feedback),
+    // SEM's MODE (ADR 0192): LP through the notch to HP, a knob that
+    // glides and a matrix destination; its cell says MODE.
+    ParamSpec::continuous(
+        16,
+        "SEM MODE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("MORPH")
+    .short("MODE"),
     // The jacks (spec § 2): patching, not sound. Indexes into their choices.
     ParamSpec::choice(
         8,
-        "FM3 IN",
+        "FREQ SRC",
         ValFmt::Names(&FM3_IN_NAMES),
         7.0,
         0.0,
@@ -200,7 +259,7 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
     .glyph(crate::glyph::FocusGlyph::None),
     ParamSpec::choice(
         11,
-        "QM IN",
+        "RES SRC",
         ValFmt::Names(&QM_IN_NAMES),
         9.0,
         3.0,
@@ -237,6 +296,7 @@ static MODE_SPECS: [ParamSpec; FilterKind::BUILT.len()] = [
     mode_spec(FilterKind::BUILT[1]),
     mode_spec(FilterKind::BUILT[2]),
     mode_spec(FilterKind::BUILT[3]),
+    mode_spec(FilterKind::BUILT[4]),
 ];
 
 impl Block for FilterParams {
@@ -270,6 +330,9 @@ impl Block for FilterParams {
                 .position(|&m| m == self.mode)
                 .unwrap_or(0) as f32,
             Self::VOICE => self.voice as u8 as f32,
+            Self::STAB => self.stability,
+            Self::FB => self.fb,
+            Self::MORPH => self.morph,
             Self::FM3_IN => self.jacks.fm3_index() as f32,
             Self::QM_IN => self.jacks.qm_index() as f32,
             _ => 0.0,
@@ -288,6 +351,9 @@ impl Block for FilterParams {
                 self.set_mode(m[(v.max(0.0) as usize).min(m.len() - 1)]);
             }
             Self::VOICE => self.voice = K2040Voice::from_index(v),
+            Self::STAB => self.stability = v,
+            Self::FB => self.fb = v,
+            Self::MORPH => self.morph = v,
             Self::FM3_IN => {
                 self.set_fm3_src(pick(&Jack::FM3_CHOICES, v));
             }

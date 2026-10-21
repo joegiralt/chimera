@@ -112,7 +112,18 @@ impl Character {
     }
 }
 
-fn xorshift(state: &mut u32) -> f32 {
+/// A walk's one-pole coefficient at `corner_hz`, stepped at `update_hz`,
+/// and the gain to `rms`: from the cascade's closed-form variance for
+/// unit-variance-⅓ noise, so the RMS and corner don't depend on the rate.
+pub fn walk_coefs(update_hz: f32, corner_hz: f32, rms: f32) -> (f32, f32) {
+    let a = -libm::expm1f(-2.0 * core::f32::consts::PI * corner_hz / update_hz);
+    let b = 1.0 - a;
+    // a(2 − a) is 1 − b² without the cancellation
+    let var = (1.0 / 3.0) * a * a * a * a * (1.0 + b * b) / libm::powf(a * (2.0 - a), 3.0);
+    (a, rms / libm::sqrtf(var))
+}
+
+pub(crate) fn xorshift(state: &mut u32) -> f32 {
     let mut x = *state;
     x ^= x << 13;
     x ^= x >> 17;
@@ -148,16 +159,9 @@ impl Stability {
         g: 0.0,
     };
 
-    /// `update_hz` is the rate `step` runs at (the block rate). The gain
-    /// comes from the cascade's closed-form variance for unit-variance-⅓
-    /// noise, so the walk's RMS and corner don't depend on the rate.
+    /// `update_hz` is the rate `step` runs at (the block rate).
     pub fn prepare(&mut self, update_hz: f32) {
-        let a = -libm::expm1f(-2.0 * core::f32::consts::PI * WALK_HZ / update_hz);
-        let b = 1.0 - a;
-        // a(2 − a) is 1 − b² without the cancellation
-        let var = (1.0 / 3.0) * a * a * a * a * (1.0 + b * b) / libm::powf(a * (2.0 - a), 3.0);
-        self.a = a;
-        self.g = WALK_RMS / libm::sqrtf(var);
+        (self.a, self.g) = walk_coefs(update_hz, WALK_HZ, WALK_RMS);
     }
 
     /// The character, and the streams restart from the seed; the walks'

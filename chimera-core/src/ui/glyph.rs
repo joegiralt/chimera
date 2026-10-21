@@ -10,9 +10,10 @@ use crate::dsp::clampf;
 use crate::dsp::rev::sync::{FoldState, Tempo, index_of};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 use crate::dsp::va::combine::{Crusher, Peaks, am_gain, combine, ring_gain};
-use crate::dsp::va::lbfm::{b0_of, lbfm, loop_b};
+use crate::dsp::va::lbfm::{lbfm, target_b0};
 use crate::dsp::va::osc::{MIN_INC, Morph, Unit, peak_bound, wave_at};
 use crate::dsp::va::{VaMode, fm_index, phase_depth};
+use crate::ui::theme;
 
 pub use chimera_engine::glyph::{
     BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS,
@@ -60,6 +61,13 @@ pub enum Gauge {
     Tape(TapeGauge),
     /// The LFO page's glyph (`lfo_glyph`), kept dimmed too.
     Lfo(crate::ui::lfo_glyph::LfoGauge),
+    /// STABILITY's spirit level: the bubble `offset` px right of centre
+    /// and the wander's reach `reach` px either side, both whole pixels
+    /// of the set value, so it redraws only when one moves.
+    Stability { offset: i8, reach: i8 },
+    /// The filter's FEEDBACK (ADR 0190): `q` in -`FEEDBACK_STEPS`..=`FEEDBACK_STEPS`,
+    /// the set value in eighths, so it redraws only when a step moves.
+    Feedback { q: i8 },
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -283,7 +291,7 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
     let last = (N - 1).max(1) as f32;
     let (dt, index) = (VA_MIX_PERIODS / last, fm_index(v.amount, 0.0));
     // LOOPFM: each oscillator's b0 (WAVE scales its own loop), uncapped
-    let loops = v.osc.map(|m| b0_of(loop_b(v.amount, m.wave.get())));
+    let loops = v.osc.map(|m| target_b0(v.amount, m.wave.get()));
     let depth = phase_depth(v.amount);
     let mut read = 0.0;
     let ys = core::array::from_fn(|i| {
@@ -786,6 +794,8 @@ pub fn gauge(
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
         FocusGlyph::Tape => outside(Reads::Tape),
         FocusGlyph::Lfo => outside(Reads::Lfo),
+        FocusGlyph::Stability => stability(value),
+        FocusGlyph::Feedback => feedback(value),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -805,7 +815,9 @@ impl Gauge {
             | Gauge::VaMix(_)
             | Gauge::Blend { .. }
             | Gauge::Tape(_)
-            | Gauge::Lfo(_) => false,
+            | Gauge::Lfo(_)
+            | Gauge::Stability { .. }
+            | Gauge::Feedback { .. } => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
@@ -826,6 +838,33 @@ impl Gauge {
             Gauge::Lfo(g) => g.key(),
             _ => 0,
         }
+    }
+}
+
+/// The bubble's travel, px either side of centre: to the vial's ends.
+pub const BUBBLE_TRAVEL: i32 = (theme::VIAL_W - theme::BUBBLE_W) / 2 - 2;
+
+/// The spirit level at STABILITY `v`: VA's depth law, `(1 − v)²`, so the
+/// bubble leaves the marks as the voices start to wander and reaches the
+/// vial's ends at 0. It rests at half its reach, the ghost showing the
+/// rest.
+fn stability(v: f32) -> Gauge {
+    let x = 1.0 - clampf(v, 0.0, 1.0);
+    let reach = libm::roundf(x * x * BUBBLE_TRAVEL as f32) as i8;
+    Gauge::Stability {
+        offset: reach / 2,
+        reach,
+    }
+}
+
+/// FEEDBACK's steps either side of 0.
+pub const FEEDBACK_STEPS: i32 = 8;
+
+/// FEEDBACK `v` (0..1 for -1..1) in whole steps.
+fn feedback(v: f32) -> Gauge {
+    let b = clampf(v, 0.0, 1.0) * 2.0 - 1.0;
+    Gauge::Feedback {
+        q: libm::roundf(b * FEEDBACK_STEPS as f32) as i8,
     }
 }
 

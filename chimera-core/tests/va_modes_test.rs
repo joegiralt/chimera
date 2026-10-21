@@ -350,10 +350,9 @@ fn leaving_fm_settles() {
 
 // ---- LOOPFM (#613) ----
 
-use chimera_core::dsp::va::lbfm::{b0_cap, b0_of, lbfm, loop_b, render_loop};
+use chimera_core::dsp::va::lbfm::{LEAN, PEAK, b0_cap, lbfm, render_loop, scale_of, target_b0};
 
 const R_RMS: f64 = 0.2;
-const C7: u8 = 96;
 const TWO_THIRDS: f32 = 2.0 / 3.0;
 
 /// Sines' path (WAVE is the loop's scale here, not a shape), STAB 1, no
@@ -365,6 +364,11 @@ fn loopfm(amount: f32, wave: f32) -> VaParams {
         wave: [wave; 2],
         ..sine()
     }
+}
+
+/// The paper's `b0` for feedback `b` (eq. 26), `−b/(1 + √(1 − b²))`.
+fn b0_of(b: f32) -> f32 {
+    -b / (1.0 + (1.0 - b * b).sqrt())
 }
 
 /// The paper's recursion (eq. 11) at 16× the rate, A2, B = 0.5: one
@@ -440,26 +444,44 @@ fn one_osc(b0: f32) -> Vec<f32> {
 
 #[test]
 fn loopfm_is_dc_free_at_level() {
-    for b in [0.0f32, 0.5, 0.95] {
-        let y = one_osc(b0_of(b));
+    // RMS R up to LEAN, then the peak held at PEAK (ADR 0166)
+    // −0.9 is the cap at 100 samples a period
+    for b0 in [0.0f32, -0.3, -LEAN, -0.8, -0.9] {
+        let y = one_osc(b0);
         let mean = y.iter().map(|&v| f64::from(v)).sum::<f64>() / y.len() as f64;
         let r = rms(&y) / R_RMS;
-        println!("B {b}: mean {mean:+.2e}, RMS {r:.4} R");
-        assert!(mean.abs() <= 1e-4, "B {b}: {mean}");
-        assert!((r - 1.0).abs() <= 0.01, "B {b}: {r}");
+        let pk = y.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        println!(
+            "b0 {b0}: mean {mean:+.2e}, RMS {r:.4} R, peak {:.3} PEAK",
+            pk / PEAK
+        );
+        assert!(mean.abs() <= 1e-4, "b0 {b0}: {mean}");
+        if -b0 <= LEAN {
+            assert!((r - 1.0).abs() <= 0.01, "b0 {b0}: {r}");
+        } else {
+            assert!(
+                r < 1.0 && (pk / PEAK - 1.0).abs() <= 0.01,
+                "b0 {b0}: {r} {pk}"
+            );
+        }
     }
+    // the two halves meet at LEAN
+    let (lo, hi) = (scale_of(-LEAN + 1e-4), scale_of(-LEAN - 1e-4));
+    assert!((lo / hi - 1.0).abs() <= 1e-3, "{lo} {hi}");
 }
 
-/// The `b0` cap keeps the closed form's first alias at −45 dB.
+/// The cap keeps the first alias at −45 dB at the deepest loop, C5–G8.
 #[test]
 fn loopfm_alias_gate() {
-    for note in [C5, C6, C7] {
-        let fc = hz_of(note);
-        let y = take_with(|_| {}, note, loopfm(1.0, 1.0), GATE_BLOCKS, |_, _| {});
-        let db = common::spectrum::alias_db(&y, SR as f32, &[fc]);
-        let cap = b0_cap(fc / SR as f32);
-        println!("LOOPFM note {note}: alias {db:.1} dB, |b0| cap {cap:.3}");
-        assert!(db <= -45.0, "note {note}: {db}");
+    for note in [72u8, 79, 84, 91, 96, 103] {
+        for wave in [TWO_THIRDS, 1.0] {
+            let fc = hz_of(note);
+            let y = held(note, loopfm(1.0, wave), GATE_BLOCKS);
+            let db = alias_db_lattice(&y, SR as f32, fc, fc);
+            let cap = b0_cap(fc / SR as f32);
+            println!("LOOPFM note {note} WAVE {wave:.2}: alias {db:.1} dB, |b0| cap {cap:.3}");
+            assert!(db <= -45.0, "note {note} WAVE {wave}: {db}");
+        }
     }
 }
 
@@ -481,19 +503,115 @@ fn loopfm_blend_zero_is_osc1_sine() {
     assert!((amp / (R_RMS * 2f64.sqrt()) - 1.0).abs() <= 0.01, "{amp}");
 }
 
+/// B's curve (ADR 0166): the −45 dB harmonic `100^e + 1`, `e =
+/// 1.5·WAVE·BLEND`, so `|b0|` climbs evenly to 0.95.
 #[test]
-fn loopfm_loop_is_per_wave() {
-    assert_eq!(loop_b(1.0, 0.0), 0.0);
-    assert!((loop_b(1.0, TWO_THIRDS) - 0.95).abs() < 1e-6);
-    assert!((loop_b(0.5, TWO_THIRDS) - 0.95 * 0.25).abs() < 1e-6);
-    assert_eq!(loop_b(1.0, 1.0), 0.95);
-    // the closed form's coefficient keeps its sign; its cap shrinks with pitch
-    assert!(b0_of(0.5) < 0.0 && b0_of(0.0) == 0.0);
-    assert!((b0_of(1e-5) + 0.5e-5).abs() < 1e-9);
+fn loopfm_curve_is_even() {
+    let at = |x: f32, w: f32| -target_b0(x, w);
+    assert_eq!(at(0.0, TWO_THIRDS), 0.0);
+    assert_eq!(at(1.0, 0.0), 0.0);
+    // BLEND 32, 64, 96, 127 at WAVE 2/3
+    for (blend, want) in [(32, 0.197), (64, 0.601), (96, 0.853), (127, 0.9495)] {
+        let got = at(blend as f32 / 127.0, TWO_THIRDS);
+        println!("BLEND {blend}: |b0| {got:.4}");
+        assert!((got - want).abs() <= 2e-3, "BLEND {blend}: {got}");
+    }
+    // the −45 dB harmonic at the top is the 101st
+    assert!((at(1.0, TWO_THIRDS).powi(100) - 0.0056).abs() <= 1e-4);
+    // WAVE 1 gets there at BLEND 2/3 and holds; the sign is the paper's
+    assert!((at(TWO_THIRDS, 1.0) - at(1.0, TWO_THIRDS)).abs() <= 1e-6);
+    assert_eq!(at(0.9, 1.0), at(1.0, 1.0));
+    let mut last = 0.0;
+    for i in 1..=127 {
+        let b = at(i as f32 / 127.0, TWO_THIRDS);
+        assert!(
+            b > last && target_b0(i as f32 / 127.0, TWO_THIRDS) < 0.0,
+            "{i}"
+        );
+        last = b;
+    }
+    // the cap shrinks with pitch and binds from about C4 at the top
     assert_eq!(b0_cap(0.5), 0.0);
     assert!(b0_cap(0.45) < 1e-3);
     assert!(b0_cap(0.01) > b0_cap(0.04));
-    assert!(b0_cap(0.01) > b0_of(0.95).abs());
+    assert!(b0_cap(hz_of(48) / SR as f32) > at(1.0, TWO_THIRDS));
+    assert!(b0_cap(hz_of(C4) / SR as f32) < at(1.0, TWO_THIRDS));
+}
+
+/// INIT's VA, held, through the engine: LOOPFM's peak stays within ~6 dB
+/// of MIX's saws (the filter LEVEL clipper's knee) at every BLEND, C2–C5,
+/// and its RMS within −10..+2.5 dB.
+#[test]
+fn loopfm_peak_stays_near_mix() {
+    let init = VaParams {
+        fine: [0.0, 6.0],
+        stability: 0.7,
+        ..VaParams::default()
+    };
+    let peak = |y: &[f32]| y[4 * B..].iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+    let blocks = SR as usize / B;
+    for note in [36u8, 48, 60, 72] {
+        let mix = held(
+            note,
+            VaParams {
+                mode: VaMode::Mix,
+                ..init
+            },
+            blocks,
+        );
+        let (mp, mr) = (peak(&mix), rms(&mix));
+        for blend in [32u8, 64, 80, 96, 112, 127] {
+            let p = VaParams {
+                mode: VaMode::LoopFm,
+                amount: f32::from(blend) / 127.0,
+                ..init
+            };
+            let y = held(note, p, blocks);
+            let pk = 20.0 * f64::from(peak(&y) / mp).log10();
+            let lv = 20.0 * (rms(&y) / mr).log10();
+            println!("note {note} BLEND {blend}: peak {pk:+.1} dB, RMS {lv:+.1} dB re MIX");
+            assert!(pk <= 6.5, "note {note} BLEND {blend}: peak {pk}");
+            assert!(
+                (-10.0..=2.5).contains(&lv),
+                "note {note} BLEND {blend}: {lv}"
+            );
+        }
+    }
+}
+
+/// BLEND swept under a held note, a quarter of the knob at a time and the
+/// whole knob in one block, never clicks.
+#[test]
+fn loopfm_blend_sweeps_do_not_click() {
+    let base = VaParams {
+        fine: [0.0, 6.0],
+        ..loopfm(0.0, TWO_THIRDS)
+    };
+    for note in [36u8, A4] {
+        let mut spans: Vec<(f32, f32, usize)> = (0..4)
+            .map(|q| (q as f32 / 4.0, (q + 1) as f32 / 4.0, AT))
+            .collect();
+        spans.extend([(0.0, 1.0, 1), (1.0, 0.0, 1)]);
+        for (lo, hi, len) in spans {
+            let y = take_with(
+                |_| {},
+                note,
+                VaParams { amount: lo, ..base },
+                2 * AT + len,
+                |b, p| {
+                    let t = (b.saturating_sub(AT) as f32 / len as f32).min(1.0);
+                    p.amount = lo + (hi - lo) * t;
+                },
+            );
+            let held: Vec<_> = [lo, hi]
+                .iter()
+                .map(|&x| held(note, VaParams { amount: x, ..base }, 2 * AT + len))
+                .collect();
+            let (d, lim) = click(&y, &held);
+            println!("note {note} BLEND {lo} → {hi} in {len}: Δ² {d:.3e} / limit {lim:.3e}");
+            assert!(d <= lim, "note {note} {lo} → {hi}: {d} > {lim}");
+        }
+    }
 }
 
 /// BLEND 0 of two sines plays OSC 1 at MIX's level.

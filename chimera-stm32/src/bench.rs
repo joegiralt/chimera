@@ -105,8 +105,55 @@ type Text = Report<BENCH_TEXT_LEN>;
 static mut REPORT: MaybeUninit<Text> = MaybeUninit::uninit();
 static REPORT_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// The bench in bank 2 (ADR 0194), at `BENCH_DOOR_ADDR`: all of this
+/// module is (`bank2.x`'s `bench` glob), so bank 1 enters it only here.
+#[repr(C)]
+pub struct BenchDoor {
+    magic: u32,
+    pub(crate) enter: Enter,
+}
+
+/// `BenchDoor::enter`: `run` on the report, and its text.
+pub type Enter = fn(
+    &mut Display,
+    Clocks,
+    &mut Project,
+    &mut AudioToken,
+    chimera_board::BenchRings<'_>,
+) -> &'static str;
+
+/// `BenchDoor::magic`.
+pub const BENCH_MAGIC: u32 = u32::from_le_bytes(*b"B2BN");
+
+impl BenchDoor {
+    #[inline(always)]
+    pub fn magic(&self) -> u32 {
+        self.magic
+    }
+}
+
+#[unsafe(link_section = ".bank2.door.bench")]
+#[used]
+static BENCH_DOOR: BenchDoor = BenchDoor {
+    magic: BENCH_MAGIC,
+    enter,
+};
+
+fn enter(
+    display: &mut Display,
+    clk: Clocks,
+    project: &mut Project,
+    sources: &mut AudioToken,
+    rings: chimera_board::BenchRings<'_>,
+) -> &'static str {
+    let report = take_report().expect("bench report taken once");
+    run(display, clk, (project, sources), rings, report);
+    let report: &'static Text = report;
+    report.as_str()
+}
+
 /// The report, once: `run` writes it, the console reads it from then on.
-pub fn take_report() -> Option<&'static mut Text> {
+fn take_report() -> Option<&'static mut Text> {
     if REPORT_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
@@ -155,7 +202,8 @@ fn snapshot(e: EngineType) -> ParamSnapshot {
     ParamSnapshot::for_engine(e)
 }
 
-const PATCHES: [Row; ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static PATCHES: [Row; ROWS] = [
     ("MODAL", || snapshot(EngineType::Modal), 48, 5),
     ("FLOOR", || algo(AlgoId::A1, 0, 0), 36, 12),
     ("1 OP", || algo(AlgoId::A1, 0b1, 0), 36, 12),
@@ -174,7 +222,8 @@ const PATCHES: [Row; ROWS] = [
 /// SYNC's and SOFT SYNC's slave a fifth up, FM's and PHASE's modulator at
 /// unison, LOOPFM's WAVE at its default (2/3). A new MODE appends its row.
 const VA_ROWS: usize = 11;
-const VA: [Row; VA_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static VA: [Row; VA_ROWS] = [
     ("MIX", || va(VaMode::Mix), 36, 12),
     ("SYNC", || va(VaMode::Sync), 36, 12),
     ("RING", || va(VaMode::Ring), 36, 12),
@@ -211,7 +260,8 @@ fn ladder_op() -> ParamSnapshot {
 /// The FORMANT screen's rows (ADR 0131): each term's case at 1..8 voices,
 /// notes C2 up in tenths (to A♯7: the terms cover grain clocks to C8).
 const FORMANT_ROWS: usize = 6;
-const FORMANT: [RoutingRow; FORMANT_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static FORMANT: [RoutingRow; FORMANT_ROWS] = [
     // One FRMT on A1, BW 0: the spans at SKIRT 0 and at SKIRT 3.
     ("FRMT0", |p| *p.params = frmt(0), STILL),
     ("FRMT3", |p| *p.params = frmt(3), STILL),
@@ -279,7 +329,8 @@ fn choir(_: &mut PartAudio) {}
 /// 0031's readings (MIX 148, DELAY 183, before the limiter and MECHANICS),
 /// MIX − 148 is the limiter and DELAY − 183 is MECHANICS.
 type FxRow = (&'static str, fn(&mut AudioShared, u32));
-const FX: [FxRow; FX_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static FX: [FxRow; FX_ROWS] = [
     ("MIX", |_, _| {}),
     ("CHORUS", |s, _| worst_chorus(s)),
     ("DELAY", |s, _| worst_delay(s)),
@@ -292,7 +343,8 @@ const FX: [FxRow; FX_ROWS] = [
 
 /// The REVERB screen's rows, each timed as an FX row is, less MIX.
 const REV_ROWS: usize = 7;
-const REV: [FxRow; REV_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static REV: [FxRow; REV_ROWS] = [
     ("REV QUAD", worst_reverb),
     ("REV QUAD S", smear_reverb),
     ("REV GATE", |s, b| worst_burst(s, b, ReverbType::Gate)),
@@ -398,7 +450,8 @@ const ROUTING_PAGE: usize = 10;
 type RoutingRow = (&'static str, fn(&mut PartAudio), Each);
 type Each = fn(&mut PartAudio, u32);
 const STILL: Each = |_, _| {};
-const ROUTING: [RoutingRow; ROUTING_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("1 OP", |p| *p.params = algo(AlgoId::A1, 0b1, 0), STILL),
     ("MODS", mods, STILL),
     // Each filter type steady, and CLEAN's moving path: SVF − 1 OP is
@@ -840,10 +893,11 @@ fn mods(p: &mut PartAudio) {
     ]);
 }
 
-// SAFETY: ".ram_d2" is NOLOAD, so this holds garbage at boot; sound
-// because it is `MaybeUninit` and `run` writes it before any read. In D2,
-// cacheable, out of AXI's margin: the bench's scope is never timed.
-#[unsafe(link_section = ".ram_d2")]
+// SAFETY: ".uninit" is NOLOAD, so this holds garbage at boot; sound
+// because it is `MaybeUninit` and `run` writes it before any read. In AXI,
+// above the bench's margin (D2 is full beside ALGO's kernel rows): the
+// bench's scope is never timed.
+#[unsafe(link_section = ".uninit.bench_scope")]
 static mut SCOPE: MaybeUninit<TripleBuffer<ScopeFrame>> = MaybeUninit::uninit();
 // SAFETY: ".ram_d2.voices" is NOLOAD, so this holds garbage at boot; sound
 // because it is `MaybeUninit` and `time_rebuild` builds it in place before
@@ -1139,7 +1193,8 @@ const HOLD: fn(&mut ParamSnapshot, u32) -> Hit = |_, _| Hit::Hold;
 
 /// TINY's cases, each in its own model's bill: SIZE 0 on the fewest
 /// frames, then each in its shortest legal loop at XFADE ½.
-const TAPE_ROWS: [TapeRow; 13] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static TAPE_ROWS: [TapeRow; 13] = [
     ("LOOP", Tapes::Long, |p| p.tape.xfade = 0.5, HOLD),
     (
         "STRETCH",
@@ -1470,7 +1525,8 @@ type StreamRow = (
     fn(&mut ParamSnapshot, u32) -> Hit,
 );
 
-const STREAM_ROWS: [StreamRow; 2] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static STREAM_ROWS: [StreamRow; 2] = [
     // The whole file looped, XFADE ½: the ring read through, each pass
     // onto the loop head.
     (
@@ -1566,11 +1622,7 @@ impl StreamRig<'_, '_> {
         b: u32,
         f: impl FnOnce(&mut Streams<'_, '_>) -> R,
     ) -> R {
-        let frames = |id: SourceId| {
-            streamed
-                .contains(&id)
-                .then_some(chimera_engine::stream::units::Frames::new(STREAM_FRAMES))
-        };
+        let frames = crate::streamed_frames(streamed, STREAM_FRAMES);
         let mut ports = Streams {
             audio: self.audio,
             card: StreamCard {

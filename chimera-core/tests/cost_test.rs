@@ -12,6 +12,7 @@ use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::filter::ladder::{LADDER_COST, LADDER_MOVE_COST};
+use chimera_core::dsp::filter::sem::{SEM_COST, SEM_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::TapeMachine;
@@ -105,6 +106,7 @@ fn filter_bills_each_type_and_mode() {
                     (K::K2040, K2040Voice::Rev2) => 78,
                     (K::K2040, K2040Voice::Exp) => 136,
                     (K::Ladder, _) => LADDER_COST.0,
+                    (K::Sem, _) => SEM_COST.0,
                 };
                 assert_eq!(k.cost(v), Cost(want), "{k:?} {m:?} {v:?}");
                 let mut p = chimera_core::params::FilterParams::default();
@@ -116,7 +118,11 @@ fn filter_bills_each_type_and_mode() {
             }
         }
     }
-    assert_eq!(seen, (8 + 1 + 4 + 5) * 2, "every built pair, each VOICE");
+    assert_eq!(
+        seen,
+        (8 + 1 + 4 + 5 + 2) * 2,
+        "every built pair, each VOICE"
+    );
     // Over OLD_LP24 (95): the 2040's and LADDER's steady counts with the
     // block (LADDER's one loop for every mode and its input scan, 210).
     assert!(K::Ladder.cost(K2040Voice::Rev2) >= Cost(210 - 95));
@@ -148,7 +154,7 @@ fn the_moving_path_bills_once() {
     use chimera_core::dsp::filter::{CLEAN_MOVE_COST, K2040_MOVE_COST};
     use chimera_core::taps::TAP_SHAPE_COST;
     assert!(CLEAN_MOVE_COST >= Cost(150 - 75));
-    assert!(K2040_MOVE_COST >= Cost(170 - 110) && K2040_MOVE_COST >= Cost(190 - 135));
+    assert!(K2040_MOVE_COST >= Cost(170 - 110) && K2040_MOVE_COST >= Cost(200 - 135));
     assert!(LADDER_MOVE_COST >= Cost(280 - 210));
     assert!(TAP_SHAPE_COST >= Cost(80));
     let none = ModState::new();
@@ -157,6 +163,7 @@ fn the_moving_path_bills_once() {
         (FilterKind::K2040, K2040_MOVE_COST),
         (FilterKind::Dirty, Cost::ZERO),
         (FilterKind::Ladder, LADDER_MOVE_COST),
+        (FilterKind::Sem, SEM_MOVE_COST),
     ] {
         assert_eq!(k.move_cost(), mv, "{k:?}");
         let mut p = on(k);
@@ -285,6 +292,7 @@ fn level_bills_while_it_can_clip() {
         (FilterKind::Dirty, FILTER_LEVEL_COST),
         (FilterKind::K2040, Cost::ZERO),
         (FilterKind::Ladder, Cost::ZERO),
+        (FilterKind::Sem, Cost::ZERO),
     ] {
         assert_eq!(k.level_cost(), lvl, "{k:?}");
         let mut p = on(k);
@@ -2472,4 +2480,136 @@ fn a_fuzz_part_sheds_only_near_the_limit() {
         eprintln!("{v:?}: one voice {one}, eight {} of {budget}", 8 * one);
         assert!(8 * one <= budget, "{v:?}: {} > {budget}", 8 * one);
     }
+}
+
+/// ADR 0168, 0192: STABILITY bills `STAB_COST` (3) on the 2040, LADDER and
+/// SEM below 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN
+/// and DIRTY never read it. INIT's Prophet setting keeps INIT VA's voices
+/// on every room.
+#[test]
+fn stability_bills_the_four_pole_kinds_below_one() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::filter::stability::STAB_COST;
+    use chimera_core::params::FilterParams;
+    use chimera_core::preset::Sound;
+    assert_eq!(STAB_COST, Cost(3));
+    let stab = ParamAddr::new(BlockRef::Filter, FilterParams::STAB);
+    let lfo = routes(&[(ModSource::Lfo1, stab, 40)]);
+    for kind in FilterKind::BUILT {
+        let mut p = on(kind);
+        let base = Voice::cost(&p, &ModState::new());
+        p.filter.stability = 0.5;
+        let extra = if kind.has_chip() {
+            STAB_COST
+        } else {
+            Cost::ZERO
+        };
+        assert_eq!(Voice::cost(&p, &ModState::new()), base + extra, "{kind:?}");
+        // Routed, over the route's own bill (CLEAN's, which reads none).
+        p.filter.stability = 1.0;
+        let routed = |p: &ParamSnapshot| Voice::cost(p, &lfo).0 - Voice::cost(p, &routes(&[])).0;
+        assert_eq!(
+            routed(&p) - routed(&on(FilterKind::Svf)),
+            extra.0,
+            "{kind:?} routed"
+        );
+    }
+    let rooms = [
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+    ];
+    let init = Sound::init(EngineType::Va).params;
+    let stable = {
+        let mut p = init.clone();
+        p.filter.stability = 1.0;
+        p
+    };
+    let at = |p: &ParamSnapshot| rooms.map(|r| r / Voice::cost(p, &ModState::new()).0);
+    assert_eq!(at(&init), at(&stable));
+}
+
+/// ADR 0190: FB bills its loop, `FB_COST`, on every TYPE when stored off
+/// 0 or routed, with the moving path it runs on unless a route already
+/// bills it; at 0 a voice's bill is today's.
+#[test]
+fn fb_bills_its_loop_and_the_moving_path() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::filter::FB_COST;
+    use chimera_core::params::FilterParams;
+    assert_eq!(FB_COST, Cost(100));
+    let fb = ParamAddr::new(BlockRef::Filter, FilterParams::FB);
+    for kind in FilterKind::BUILT {
+        let mut p = on(kind);
+        let none = ModState::new();
+        let base = Voice::filter_cost(&p, &none);
+        p.filter.fb = 0.5;
+        assert_eq!(
+            Voice::filter_cost(&p, &none),
+            base + kind.move_cost() + FB_COST,
+            "{kind:?}"
+        );
+        // A CUTOFF route already bills the moving path: FB adds its loop.
+        let lfo = cutoff_lfo(20);
+        let moving = Voice::filter_cost(&on(kind), &lfo);
+        assert_eq!(
+            Voice::filter_cost(&p, &lfo),
+            moving + FB_COST,
+            "{kind:?} routed"
+        );
+        // Routed FB at 0 stored bills it too.
+        p.filter.fb = 0.0;
+        let r = routes(&[(ModSource::Lfo1, fb, 40)]);
+        assert_eq!(
+            Voice::filter_cost(&p, &r),
+            base + kind.move_cost() + FB_COST,
+            "{kind:?} FB routed"
+        );
+    }
+}
+
+/// ADR 0192: SEM bills `tools/loop_count.py`'s count on the `filter-probes`
+/// ELF (`probe::sem_probe`): steady 140 cycles, 45 over `OLD_LP24`; moving
+/// 175, 35 over it. Its voices against CLEAN's and LADDER's, ALGO INIT and
+/// VA INIT, steady and with a CUTOFF LFO, on rev V and rev Y beside the
+/// reserve (ALGO / VA, steady / moving).
+#[test]
+fn sem_bills_its_count_and_its_voices() {
+    assert_eq!(SEM_COST, Cost(140 - 95));
+    assert_eq!(SEM_MOVE_COST, Cost(175 - 140));
+    let rooms = [
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+    ];
+    let voices = |e: EngineType, k: FilterKind, mods: &ModState| {
+        let mut p = ParamSnapshot::for_engine(e);
+        p.filter.set_kind(k);
+        let c = Voice::cost(&p, mods).0;
+        rooms.map(|r| (r / c).min(MAX_VOICES as u32))
+    };
+    let still = ModState::new();
+    let lfo = cutoff_lfo(64);
+    let mut table = Vec::new();
+    for k in [
+        FilterKind::Svf,
+        FilterKind::K2040,
+        FilterKind::Ladder,
+        FilterKind::Sem,
+    ] {
+        let row = [
+            voices(EngineType::Algo, k, &still),
+            voices(EngineType::Algo, k, &lfo),
+            voices(EngineType::Va, k, &still),
+            voices(EngineType::Va, k, &lfo),
+        ];
+        println!(
+            "{k:?}: ALGO {:?} / {:?}, VA {:?} / {:?} (rev V, rev Y)",
+            row[0], row[1], row[2], row[3]
+        );
+        table.push(row);
+    }
+    assert_eq!(
+        table[3],
+        [[7, 5], [6, 5], [8, 6], [7, 5]],
+        "SEM: ALGO steady, moving; VA steady, moving"
+    );
 }

@@ -52,6 +52,10 @@ pub struct FilterMods<'a> {
     /// block steps them `STEPS` times, each step on the steady loop, not
     /// per sample (ADR 0117).
     pub glide: bool,
+    /// The 2040's and LADDER's STABILITY this block (ADR 0168).
+    pub spread: super::Spread,
+    /// FB, the filter's own output into its `g` (#393).
+    pub fb: super::Fed,
 }
 
 impl FilterMods<'_> {
@@ -61,6 +65,8 @@ impl FilterMods<'_> {
         freq: None,
         q: None,
         glide: false,
+        spread: super::Spread::NONE,
+        fb: super::Fed::OFF,
     };
 }
 

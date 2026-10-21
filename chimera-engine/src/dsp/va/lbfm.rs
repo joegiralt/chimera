@@ -11,7 +11,7 @@ pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
         cite: "Smyth, \"Loopback Frequency Modulation Using a Time-Varying Delay Line\", \
                DAFx-26, paper 36 (CC-BY 4.0): the closed form z(n) = (b0 + e^(jw0 nT)) / \
-               (1 + b0 e^(jw0 nT)) and the b0/w0 mapping (eq. 26); our own Rust",
+               (1 + b0 e^(jw0 nT)) (eq. 25); b0 set directly by our own curve; our own Rust",
     },
     Provenance::Original {
         author: "AI-assisted, owner-directed and reviewed",
@@ -26,18 +26,26 @@ pub const PATENT: &[PatentLine] = &[PatentLine {
 /// log2 of the first alias's ceiling, −45 dB (0.0056).
 const LOG2_ALIAS: f32 = -7.4806;
 
-/// An oscillator's feedback coefficient `B` at BLEND `blend` and its own
-/// WAVE: `0.95·blend²`, scaled by `1.5·wave` (WAVE 2/3, the default, is
-/// ×1; WAVE 0 never loops), capped at 0.95.
-pub fn loop_b(blend: f32, wave: f32) -> f32 {
-    (0.95 * blend * blend * 1.5 * wave).min(0.95)
+/// log2(100): at the knob's top the −45 dB harmonic is the 101st.
+const LOG2_REACH: f32 = 6.643_856;
+
+/// The `|b0|` whose harmonic `n + 1` sits at −45 dB: `|b0|^n = 0.0056`.
+fn reach(n: f32) -> f32 {
+    crate::dsp::algo::math::exp2(LOG2_ALIAS / n)
 }
 
-/// The closed form's coefficient for feedback `b` (paper eq. 26),
-/// `(√(1 − b²) − 1)/b = −b/(1 + √(1 − b²))`: negative for `b > 0`, `−b/2`
-/// near 0, with no cancellation.
-pub fn b0_of(b: f32) -> f32 {
-    -b / (1.0 + sqrt(1.0 - b * b))
+/// An oscillator's `b0` at BLEND `blend` and its own WAVE, before the cap
+/// (#683, ADR 0166): the harmonic at −45 dB rises in octaves, `100^e + 1`
+/// with `e = min(1, 1.5·wave·blend)`, so `|b0|` runs 0.0056 → 0.95 on an
+/// even curve (WAVE 2/3, the default, is ×1; WAVE 0 never loops). Negative,
+/// the paper's root; 0 at `e = 0`.
+pub fn target_b0(blend: f32, wave: f32) -> f32 {
+    let e = (1.5 * wave * blend).min(1.0);
+    if e <= 0.0 {
+        0.0
+    } else {
+        -reach(crate::dsp::algo::math::exp2(e * LOG2_REACH))
+    }
 }
 
 /// The largest `|b0|` at `inc` cycles a sample: harmonic `k` is
@@ -46,21 +54,31 @@ pub fn b0_of(b: f32) -> f32 {
 /// `K ≤ 1`.
 pub fn b0_cap(inc: f32) -> f32 {
     let k = 0.5 / inc;
-    if k <= 1.0 {
-        0.0
+    if k <= 1.0 { 0.0 } else { reach(k - 1.0) }
+}
+
+/// The scale's peak: twice a saw's at RMS `R`, `2√3·R`, the end of the
+/// filter LEVEL clipper's knee at INIT (MIX's saws peak at its start).
+pub const PEAK: f32 = 2.0 * 1.732_050_8 * R;
+/// The `|b0|` where RMS `R` reaches `PEAK`: `√2·√((1 + a)/(1 − a)) = 2√3`.
+pub const LEAN: f32 = 5.0 / 7.0;
+
+/// The output scale for `b0` (`|b0| < 1`): RMS `R`, `R·√2/√(1 − b0²)`, up
+/// to `|b0| = LEAN`; past it the peak `scale·(1 + |b0|)` is held at `PEAK`
+/// (#683, ADR 0166), so the sharp pulse leans in RMS (−8.1 dB at 0.95)
+/// rather than clip.
+#[inline(always)]
+pub fn scale_of(b0: f32) -> f32 {
+    let a = b0.abs();
+    if a > LEAN {
+        PEAK / (1.0 + a)
     } else {
-        crate::dsp::algo::math::exp2(LOG2_ALIAS / (k - 1.0))
+        R * core::f32::consts::SQRT_2 / sqrt(1.0 - b0 * b0)
     }
 }
 
-/// The output scale for `b0` (`|b0| < 1`): `R·√2/√(1 − b0²)`, RMS `R`.
-#[inline(always)]
-pub fn scale_of(b0: f32) -> f32 {
-    R * core::f32::consts::SQRT_2 / sqrt(1.0 - b0 * b0)
-}
-
 /// One sample at `phase` (cycles), `|b0| < 1`: `Re z0 − b0`, DC-free,
-/// scaled to RMS `R`.
+/// at `scale_of(b0)`.
 pub fn lbfm(phase: f32, b0: f32) -> f32 {
     lbfm_at(phase, b0, scale_of(b0))
 }

@@ -368,13 +368,13 @@ fn sweep(hands: &[EncoderId]) {
 
 #[test]
 fn cc_sweep_never_snaps() {
-    sweep(&[EncoderId::E]);
+    sweep(&[EncoderId::F]);
 }
 
 /// Two knobs turned each pass: the CCs give up a write for each.
 #[test]
 fn cc_sweep_under_two_hands_never_overflows() {
-    sweep(&[EncoderId::E, EncoderId::F]);
+    sweep(&[EncoderId::F, EncoderId::C]);
 }
 
 #[test]
@@ -435,16 +435,17 @@ fn stepped_cc_hysteresis() {
     let mut changes = 0;
     let mut was = b.stored(P1, TYPE);
     assert_eq!(was, 0.0);
-    for v in [63, 64, 63, 64] {
+    // Five TYPEs: the boundary between the third and the fourth is at 76/77.
+    for v in [76, 77, 76, 77] {
         b.pass(&[(30, v)]);
         let now = b.stored(P1, TYPE);
         changes += usize::from(now != was);
         was = now;
     }
-    assert_eq!(changes, 1, "63/64/63/64 at a boundary moves once");
-    assert_eq!(was, 1.0);
-    b.pass(&[(30, 66)]);
-    assert_eq!(b.stored(P1, TYPE), 2.0, "2 counts past it, it moves");
+    assert_eq!(changes, 1, "76/77/76/77 at a boundary moves once");
+    assert_eq!(was, 2.0);
+    b.pass(&[(30, 79)]);
+    assert_eq!(b.stored(P1, TYPE), 3.0, "2 counts past it, it moves");
 }
 
 /// Operator A at FRMT and every other at NOISE: the budget is full, so
@@ -572,9 +573,9 @@ fn hand_wins() {
     b.pass(&[]);
     let mid = b.stored(P1, CUTOFF);
     assert!(mid > spec(CUTOFF).min, "mid-ramp");
-    b.pass_with(vec![], Some(Input::turn(EncoderId::E, 3)), 0, 0);
+    b.pass_with(vec![], Some(Input::turn(EncoderId::F, 3)), 0, 0);
     let turned = b.stored(P1, CUTOFF);
-    assert!(turned > mid, "E turns CUTOFF");
+    assert!(turned > mid, "F turns CUTOFF");
     b.passes(20);
     assert_eq!(b.stored(P1, CUTOFF), turned, "the hand's value stays");
 }
@@ -682,12 +683,12 @@ fn hand_beats_a_cc_in_its_pass() {
     let ccs = vec![b.ev(P1, 74, 127)];
     b.pass_with(
         ccs,
-        Some(Input::turn(EncoderId::E, -3)),
+        Some(Input::turn(EncoderId::F, -3)),
         PASS_MS,
         PASS_BLOCKS,
     );
     let cut = b.stored(P1, CUTOFF);
-    assert!(cut < cut0, "E turned CUTOFF down");
+    assert!(cut < cut0, "F turned CUTOFF down");
     let ccs = vec![b.ev(P1, 75, 127)];
     b.pass_with(
         ccs,

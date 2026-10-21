@@ -77,7 +77,7 @@ fn render(ui: &UiState) -> Vec<f32> {
 fn every_flt_knob_changes_a_held_note() {
     for ct in EngineType::ALL {
         for (sub, slots) in [
-            (0, &[1usize, 4, 5][..]),
+            (0, &[3usize, 5, 2][..]),
             (1, &[0usize, 1, 2, 4][..]),
             (2, &[0usize][..]),
         ] {
@@ -237,6 +237,13 @@ fn back_to_flt(ui: &mut UiState, sub: bool) {
     }
 }
 
+/// `back_to_flt`, then down to FLT › JACK (MOD, FX, JACK).
+fn to_jacks(ui: &mut UiState) {
+    back_to_flt(ui, true);
+    feed(ui, Input::press(ButtonId::Edit));
+    feed(ui, Input::press(ButtonId::Edit));
+}
+
 /// Rows `y0..y1`, columns `x0..x1` of two frames agree.
 fn same_rect(a: &Fb, b: &Fb, (x0, x1): (i32, i32), (y0, y1): (i32, i32)) -> bool {
     (y0..y1).all(|y| (x0..x1).all(|x| a.at(x, y) == b.at(x, y)))
@@ -263,7 +270,7 @@ fn an_absent_route_knob_shows_a_dash() {
     settle(&mut ui);
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
 
-    let (label, fmt) = ("FM1", chimera_core::ui::page::ValFmt::Route);
+    let (label, fmt) = ("ENV AMT", chimera_core::ui::page::ValFmt::Route);
     let (x, y) = (theme::MARGIN_X, theme::CELL_LABEL_Y);
     for dx in 0..12 {
         for dy in 0..2 {
@@ -329,7 +336,7 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     want.px.fill(fb.px[0]);
     components::focus_band(
         &mut want,
-        "FM3",
+        "FREQ MOD",
         "--",
         chimera_core::ui::glyph::Gauge::Arc {
             value: ui.renderer.anim[2].current(),
@@ -379,8 +386,8 @@ fn the_cells_key_carries_the_looks() {
     else {
         panic!("FLT › MOD has cells");
     };
-    assert_eq!(looks & 3, Look::Absent as u32, "FM1");
-    assert_eq!(looks >> 2 & 3, Look::Live as u32, "FM2");
+    assert_eq!(looks & 3, Look::Absent as u32, "ENV AMT");
+    assert_eq!(looks >> 2 & 3, Look::Live as u32, "KEYBOARD");
     assert_eq!(matrix_rev, ui.matrix_state.rev);
 }
 
@@ -394,13 +401,13 @@ fn stand_ins_move_the_cutoff_bar() {
     let mut ui = on_flt(EngineType::Algo);
     ui.params_mut().filter.cutoff = 20.0;
     ui.update(UiTick::for_test());
-    let base = ui.renderer.anim[4].target();
+    let base = ui.renderer.anim[5].target();
     let spec = CUTOFF.spec().unwrap();
     let bar = |ui: &mut UiState, src: ModSource, amount: i8| {
         ui.mod_state_mut()
             .set_fixed(src.index(), FixedCol::Freq, amount);
         ui.update(UiTick::for_test());
-        let t = ui.renderer.anim[4].target();
+        let t = ui.renderer.anim[5].target();
         ui.mod_state_mut().set_fixed(src.index(), FixedCol::Freq, 0);
         t
     };
@@ -484,6 +491,8 @@ fn applies_matches_the_panel() {
             p.main
                 .iter()
                 .chain(p.mods.iter())
+                .chain(p.chip.iter())
+                .chain(filter_panel::JACKS.iter())
                 .any(|n| n.target == PanelTarget::Filter(id))
         };
         for s in FILTER_SPECS.iter() {
@@ -498,9 +507,10 @@ fn applies_matches_the_panel() {
 }
 
 /// TYPE is live once a second kind is built: a detent a kind, CLEAN to
-/// 2040 (whose one MODE shows fixed) to DIRTY to LADDER (keeping LP2), each
-/// at its default MODE or the one it keeps, and held at the last; a TYPE change leaves the matrix byte-identical. (TYPE
-/// is an enum the registry refuses to prime.)
+/// 2040 (whose one MODE shows fixed) to DIRTY to LADDER (keeping LP2) to
+/// SEM (LP2's code is its MODE output), each at its default MODE or the
+/// one it keeps, and held at the last; a TYPE change leaves the matrix
+/// byte-identical. (TYPE is an enum the registry refuses to prime.)
 #[test]
 fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     use chimera_core::ui::view::{self, SlotCtx};
@@ -518,7 +528,8 @@ fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
         (FilterKind::Dirty, FilterMode::Lp12),
         // DIRTY's LP2 is LADDER's too: MODE stays (spec § 7).
         (FilterKind::Ladder, FilterMode::Lp12),
-        (FilterKind::Ladder, FilterMode::Lp12),
+        (FilterKind::Sem, FilterMode::Lp12),
+        (FilterKind::Sem, FilterMode::Lp12),
     ] {
         feed(&mut ui, Input::turn(EncoderId::A, 1));
         assert_eq!(ui.params().filter.kind(), kind);
@@ -527,7 +538,7 @@ fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     }
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
-    feed(&mut ui, Input::turn(EncoderId::A, -4));
+    feed(&mut ui, Input::turn(EncoderId::A, -5));
     assert_eq!(ui.params().filter.kind(), FilterKind::Svf);
     assert_eq!(format!("{:?}", ui.mod_state()), before);
 }
@@ -697,8 +708,8 @@ fn turning_fm3_in_moves_the_cable_past_an_occupied_cell() {
         .set_fixed(ModSource::Lfo1.index(), FixedCol::Freq, 40);
     s.mod_state
         .set_fixed(ModSource::Lfo2.index(), FixedCol::Freq, 11);
-    back_to_flt(&mut ui, true);
-    feed(&mut ui, Input::turn(EncoderId::D, 1)); // FM3 IN: LFO 2 is taken
+    to_jacks(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FM3 IN: LFO 2 is taken
     assert_eq!(ui.params().filter.fm3_src(), Jack::Mod(ModSource::Lfo3));
     let m = ui.mod_state();
     assert_eq!(m.fixed_amount(ModSource::Lfo3.index(), FixedCol::Freq), 40);
@@ -719,17 +730,17 @@ fn turning_fm3_in_moves_the_cable_past_an_occupied_cell() {
 #[test]
 fn skipping_a_source_in_use_shows_a_note() {
     let mut ui = on_flt(EngineType::Algo);
-    back_to_flt(&mut ui, true);
-    feed(&mut ui, Input::turn(EncoderId::D, 1)); // FM3 IN: LFO 1 → LFO 2, free
+    to_jacks(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FM3 IN: LFO 1 → LFO 2, free
     assert_eq!(ui.prime_status(), None);
     let s = ui.project_mut().edit_part(PartId::ALL[0]).sound;
     s.mod_state
         .set_fixed(ModSource::Lfo3.index(), FixedCol::Freq, 11);
-    feed(&mut ui, Input::turn(EncoderId::D, 1)); // LFO 3 is taken
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // LFO 3 is taken
     assert_eq!(ui.prime_status(), Some(PrimeStatus::SourceInUse));
     assert_eq!(PrimeStatus::SourceInUse.label(), "SOURCE IN USE");
     assert_ne!(ui.params().filter.fm3_src(), Jack::Mod(ModSource::Lfo3));
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // the next input retires it
+    feed(&mut ui, Input::turn(EncoderId::E, 1)); // the next input retires it
     assert_eq!(ui.prime_status(), None);
 }
 
@@ -765,7 +776,7 @@ fn mix_minus_on_a_route_view_deletes_its_route() {
 #[test]
 fn mix_plus_on_a_fixed_param_reports_already_routed() {
     let mut ui = on_flt(EngineType::Algo);
-    for enc in [EncoderId::E, EncoderId::F] {
+    for enc in [EncoderId::F, EncoderId::C] {
         feed(&mut ui, Input::turn(enc, 1)); // FREQ, Q
         feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
         assert_eq!(
@@ -782,25 +793,39 @@ fn panels_follow_the_type() {
     use chimera_core::ui::filter_panel::PanelTarget as T;
     use chimera_core::ui::theme::{CELL_COL_W, FONT_LABEL};
     let labels = |k| {
-        (0..9)
-            .map(|i| knob(k, i).unwrap().label)
+        (0..12)
+            .filter_map(|i| knob(k, i).map(|n| n.label))
+            .filter(|&l| l != "STABILITY")
             .collect::<Vec<_>>()
     };
     assert_eq!(
         labels(FilterKind::Svf),
         [
-            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FM3 IN", "QM", "QM IN"
+            "MODE", "FREQ", "Q", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "FREQ SRC", "RES SRC"
         ]
     );
     assert_eq!(labels(FilterKind::Dirty), labels(FilterKind::Svf));
     assert_eq!(labels(FilterKind::Ladder), labels(FilterKind::Svf));
+    // SEM: its MODE knob, FREQ, RES, CLEAN's FLT › MOD and OUTPUT in its F.
+    assert_eq!(
+        labels(FilterKind::Sem),
+        [
+            "MODE", "FREQ", "RES", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "OUTPUT", "FREQ SRC", "RES SRC"
+        ]
+    );
     assert_eq!(
         labels(FilterKind::K2040),
         [
-            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FM3 IN", "QM", "QM IN"
+            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "FREQ SRC", "RES SRC"
         ]
     );
     let t = |k, i| knob(k, i).map(|n| n.target);
+    let t_sem = |i| t(FilterKind::Sem, i);
+    assert_eq!(t_sem(0), Some(T::Filter(FilterParams::MORPH)));
+    assert_eq!(t_sem(8), Some(T::Filter(FilterParams::MODE)));
     assert_eq!(
         t(FilterKind::K2040, 0),
         Some(T::Filter(FilterParams::VOICE))
@@ -814,11 +839,21 @@ fn panels_follow_the_type() {
         assert_eq!(t(k, 1), Some(T::Filter(FilterParams::CUTOFF)));
         assert_eq!(t(k, 2), Some(T::Filter(FilterParams::RESONANCE)));
         assert_eq!(t(k, 5), Some(T::JackAmount(JackSlot::Fm3)));
-        assert_eq!(t(k, 6), Some(T::Filter(FilterParams::FM3_IN)));
+        // FB beside the FM amounts; the jacks on FLT › JACK (ADR 0190).
+        assert_eq!(t(k, 6), Some(T::Filter(FilterParams::FB)));
         assert_eq!(t(k, 7), Some(T::JackAmount(JackSlot::Qm)));
-        assert_eq!(t(k, 8), Some(T::Filter(FilterParams::QM_IN)));
-        assert_eq!(t(k, 9), None);
-        for i in 0..9 {
+        if k != FilterKind::Sem {
+            assert_eq!(t(k, 8), None);
+        }
+        assert_eq!(t(k, 10), Some(T::Filter(FilterParams::FM3_IN)));
+        assert_eq!(t(k, 11), Some(T::Filter(FilterParams::QM_IN)));
+        // The chip's cell, FLT › FX's F: STABILITY on the four-pole kinds
+        // and SEM (ADR 0168, 0192).
+        let chip = k.has_chip().then_some(T::Filter(FilterParams::STAB));
+        assert_eq!(t(k, 9), chip);
+        assert_eq!(knob(k, 9).map(|n| n.label), chip.map(|_| "STABILITY"));
+        assert_eq!(t(k, 12), None);
+        for i in (0..12).filter(|&i| knob(k, i).is_some()) {
             let n = knob(k, i).unwrap();
             let w = text_width(&FONT_LABEL, n.label, 0);
             assert!(w <= CELL_COL_W - 4, "{k:?} {i} {:?}: {w}px", n.label);
@@ -833,7 +868,7 @@ fn panels_follow_the_type() {
     for def in [&FILTER, &FILTER_MOD] {
         assert!((0..6).all(|i| view::view(def, i, &ctx).addr() != Some(mode)));
     }
-    assert_eq!(view::view(&FILTER, 1, &ctx).label(), "VOICE");
+    assert_eq!(view::view(&FILTER, 3, &ctx).label(), "VOICE");
 }
 
 #[test]

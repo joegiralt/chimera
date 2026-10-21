@@ -33,9 +33,9 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
 /// with every param off neutral, a full registry, every route and tap, a
-/// `SourceRef`, a 24-zone `ZoneTune` and a full `MidiMap` (2 549 + 84 =
-/// 2 633 B for 277 params), rounded up to 16 B. `sparse_bound` pins it.
-pub const MAX_SOUND_COST: usize = 2640;
+/// `SourceRef`, a 24-zone `ZoneTune` and a full `MidiMap` (2 569 + 84 =
+/// 2 653 B for 279 params), rounded up to 16 B. `sparse_bound` pins it.
+pub const MAX_SOUND_COST: usize = 2656;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,

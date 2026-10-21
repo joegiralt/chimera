@@ -23,6 +23,9 @@ pub const DOOR_ADDR: u32 = BANK2_BASE + HEADER_LEN;
 pub const BOARD_DOOR_ADDR: u32 = DOOR_ADDR + 0x100;
 /// The UI's table (`chimera_core::bank2::UiDoor`): TAPE's cells and strip.
 pub const UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x180;
+/// The bench's table (`chimera-stm32`'s `bench::BenchDoor`, ADR 0194): its
+/// run, in a bench build only.
+pub const BENCH_DOOR_ADDR: u32 = DOOR_ADDR + 0x200;
 
 /// A fixed slot after the door and the type `bank2.x` links there: a crate
 /// the engine can't name declares its table's slot once, beside the
@@ -101,6 +104,13 @@ pub struct Bank2Door {
     /// FUZZ's kernel (ADR 0157; `Fuzz::play` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub fuzz: crate::dsp::voice_fx::fuzz::FuzzDoor,
+    /// The filters' FB loops (ADR 0190; `filter::fed::through` is bank 1's
+    /// side).
+    #[cfg(feature = "bank2")]
+    pub fed: crate::dsp::filter::fed::FedDoor,
+    /// SEM's kernel (ADR 0192; `Sem::process` is bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub sem: crate::dsp::filter::sem::SemDoor,
 }
 
 impl Bank2Door {
@@ -136,6 +146,8 @@ static DOOR: Bank2Door = Bank2Door {
     lfo: crate::lfo_glyph::LfoDoor::DOOR,
     look: crate::dsp::voice_fx::look::LookDoor::DOOR,
     fuzz: crate::dsp::voice_fx::fuzz::Fuzz::DOOR,
+    fed: crate::dsp::filter::fed::FedDoor::DOOR,
+    sem: crate::dsp::filter::sem::SemDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

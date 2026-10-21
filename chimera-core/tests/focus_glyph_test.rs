@@ -111,6 +111,10 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Tape", "MIX", LEVEL),
     ("Va", "AMOUNT", FocusGlyph::Va(VaGlyph::Blend)),
     ("Va", "SUB", LEVEL),
+    // STABILITY's spirit level (#593), VA's and the filter's.
+    ("Va", "STAB", FocusGlyph::Stability),
+    ("Filter", "STAB", FocusGlyph::Stability),
+    ("Filter", "FB", FocusGlyph::Feedback),
     ("Comp", "MAKEUP", LEVEL),
     ("Comp", "MIX", LEVEL),
     ("Comp", "VOL", LEVEL),
@@ -410,6 +414,13 @@ fn each_glyph_maps_to_its_gauge() {
             FocusGlyph::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
             FocusGlyph::Tape => Gauge::Switch { on: 14.0 },
             FocusGlyph::Lfo => Gauge::Switch { on: 15.0 },
+            // (1 − 0.25)² of the travel, the bubble at half of it.
+            FocusGlyph::Stability => Gauge::Stability {
+                offset: 6,
+                reach: 12,
+            },
+            // -0.5 in eighths.
+            FocusGlyph::Feedback => Gauge::Feedback { q: -4 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,

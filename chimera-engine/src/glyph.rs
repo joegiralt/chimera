@@ -39,6 +39,13 @@ pub enum FocusGlyph {
     /// The LFO page's: what its control does to the LFO, drawn from the
     /// slot's set values (`lfo_glyph`, ADR 0177).
     Lfo,
+    /// STABILITY's spirit level (#593): a vial whose bubble rests off
+    /// centre by how far the voices wander, from the set value. VA's and
+    /// the filter's STAB.
+    Stability,
+    /// The filter's FEEDBACK (ADR 0190): a low-pass curve with the output
+    /// looped back to the cutoff corner, from the set value.
+    Feedback,
 }
 
 /// VA's gauges: what the oscillators and the operator do to the sound.
@@ -112,7 +119,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 16] = [
+    pub const ALL: [FocusGlyph; 18] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -129,6 +136,8 @@ impl FocusGlyph {
         FocusGlyph::Va(VaGlyph::Blend),
         FocusGlyph::Tape,
         FocusGlyph::Lfo,
+        FocusGlyph::Stability,
+        FocusGlyph::Feedback,
     ];
 
     /// Index in `ALL`. Exhaustive: a new variant fails to compile here
@@ -151,6 +160,8 @@ impl FocusGlyph {
             FocusGlyph::Va(VaGlyph::Blend) => 13,
             FocusGlyph::Tape => 14,
             FocusGlyph::Lfo => 15,
+            FocusGlyph::Stability => 16,
+            FocusGlyph::Feedback => 17,
         }
     }
 }
