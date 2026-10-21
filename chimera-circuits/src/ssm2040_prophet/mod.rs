@@ -25,6 +25,8 @@
 pub mod fw;
 pub mod reference;
 
+#[cfg(test)]
+mod tests;
 
 use crate::util::harness::{Case, ac, pad_run};
 use crate::{Controls, Entry, Voice};

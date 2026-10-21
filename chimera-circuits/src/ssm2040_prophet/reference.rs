@@ -174,7 +174,12 @@ pub fn spice(c: &Circuit, case: &Case, dir: &Path) -> Result<Vec<f64>, String> {
     spice::write_series(&dir.join("ir.txt"), &ir, dt)?;
     let t_end = (x.len() - 1) as f64 * dt;
     let net = netlist(c, dir, t_end);
-    let y = spice::run(dir, "filter.cir", &net, &spice::stamp(x.iter().chain(&ic).chain(&ir)))?;
+    let y = spice::run(
+        dir,
+        "filter.cir",
+        &net,
+        &spice::stamp(x.iter().chain(&ic).chain(&ir)),
+    )?;
     let scale = 1.0 / c.out_per_unit();
     let mut y: Vec<f64> = resample_poly(&y, 1, SPICE_UP)
         .iter()
