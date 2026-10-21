@@ -466,7 +466,7 @@ fn k2040_recovers_from_a_nan_block() {
 #[test]
 fn kind_codes_round_trip() {
     assert_eq!(KIND_NAMES.len(), FilterKind::BUILT.len());
-    assert_eq!(KIND_NAMES, ["CLEAN", "2040", "DIRTY", "LADDER"]);
+    assert_eq!(KIND_NAMES, ["CLEAN", "2040", "DIRTY", "LADDER", "SEM"]);
     assert_eq!(FilterKind::K2040.disk_code(), 4);
     assert_eq!(FilterKind::K2040.disk_ident(), "2040");
     assert_eq!(FilterKind::K2040.modes(), [FilterMode::Lp24]);

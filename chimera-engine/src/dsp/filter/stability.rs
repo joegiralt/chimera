@@ -111,6 +111,19 @@ impl Spread {
             (k.1 * self.res.1).min(k.1.max(top)),
         )
     }
+
+    /// `(from, to)` on a damping `k`, SEM's, which falls as RES rises: held
+    /// at `floor`, RES 1's, unless `k` is under it already. At `NONE`
+    /// exactly `k`.
+    #[inline(always)]
+    pub(super) fn k_damping(self, k: (f32, f32), floor: f32) -> (f32, f32) {
+        let at = |k: f32, r: f32| {
+            let f = if k < floor { k } else { floor };
+            let v = k * r;
+            if v > f { v } else { f }
+        };
+        (at(k.0, self.res.0), at(k.1, self.res.1))
+    }
 }
 
 /// One voice slot's chip: its walk, its offset, tracking error and RES

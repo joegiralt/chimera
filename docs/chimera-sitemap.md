@@ -38,7 +38,7 @@ MODAL   EXC ── RES ── FLT ── AMP ── MOD
 VA      VA ── FLT ── AMP ── MOD
         └ OSC 1, OSC 2, PIT
 
-shared  FLT └ FMD (FILTER MOD), FX
+shared  FLT └ FMD (FILTER MOD), FX, JACK
         AMP
         MOD   MTX (matrix) └ E1 E2 E3, SPD, L1 L2 L3
 ```
@@ -49,9 +49,10 @@ TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, M
 
 | Page | Cells |
 |---|---|
-| FLT | TYPE (the filter's kind) · MODE · FX · PLACE · FREQ · Q. On the 2040: TYPE · VOICE · FX · PLACE · CUTOFF · RES, and the TYPE readout names its one mode (4-POLE LP) |
-| FMD | FM1 · FM2 · FM3 · FM3 IN · QM · QM IN. On the 2040: ENV AMT · KEYBD · FM3 · FM3 IN · QM · QM IN |
-| FX | INPUT (the filter's input level) · the FX type's three pots · MIX. SOFT: DRIVE · TONE · LEVEL. FOLD: FOLD · SYMMETRY · LEVEL. OFF: dashes, MIX dimmed |
+| FLT | TYPE (the filter's kind: CLEAN, 2040, DIRTY, LADDER, SEM) · FX · Q · MODE · FX PLACE · FREQ. On the 2040: VOICE in MODE's place, CUTOFF and RES, and the TYPE readout names its one mode (4-POLE LP). On SEM: RES, and MODE is a knob that sweeps the output from low-pass through a notch at FREQ to high-pass |
+| FMD | FM1 · FM2 · FM3 · FDBK (feedback) · QM, F empty. On the 2040: ENV AMT · KEYBD in FM1's and FM2's places. On SEM: F is OUTPUT, MODE (the MODE knob's sweep) or BP (band-pass) |
+| FX | INPUT (the filter's input level) · the FX type's three pots · MIX · STABILITY (on the 2040, LADDER and SEM). SOFT: DRIVE · TONE · LEVEL. FOLD: FOLD · SYMMETRY · LEVEL. OFF: dashes, MIX dimmed |
+| JACK | FM3 IN in C and QM IN in E: the rows FM3 and QM read |
 | AMP | CHORUS · DELAY · REVERB (the three sends) · VEL (the VCA's velocity) |
 
 ### Pages that draw the whole band

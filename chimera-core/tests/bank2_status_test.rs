@@ -367,3 +367,24 @@ fn fuzz_type_reads_needs_update_while_closed() {
         None
     );
 }
+
+/// SEM's kernel is bank 2's (ADR 0192): closed, TYPE reads NEEDS UPDATE at
+/// SEM and its block plays dry; the other TYPEs read their names.
+#[test]
+fn a_closed_bank2_labels_the_sem_filter() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::bank2::closed_text;
+    use chimera_core::dsp::filter::FilterKind;
+    use chimera_core::params::FilterParams;
+    let kind = ParamAddr::new(BlockRef::Filter, FilterParams::KIND);
+    let n = FilterKind::BUILT.len();
+    let at = |i: usize| i as f32 / (n - 1) as f32;
+    let closed = Some(Bank2Status::Empty);
+    for (i, k) in FilterKind::BUILT.into_iter().enumerate() {
+        let want = (k == FilterKind::Sem).then_some("NEEDS UPDATE");
+        assert_eq!(k.in_bank2(), k == FilterKind::Sem);
+        assert_eq!(closed_text(kind, at(i), closed), want, "{k:?}");
+        assert_eq!(closed_text(kind, at(i), Some(open())), None);
+        assert_eq!(closed_text(kind, at(i), None), None, "{k:?}");
+    }
+}

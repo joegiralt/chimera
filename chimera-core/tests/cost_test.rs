@@ -12,6 +12,7 @@ use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::filter::ladder::{LADDER_COST, LADDER_MOVE_COST};
+use chimera_core::dsp::filter::sem::{SEM_COST, SEM_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
@@ -104,6 +105,7 @@ fn filter_bills_each_type_and_mode() {
                     (K::K2040, K2040Voice::Rev2) => 78,
                     (K::K2040, K2040Voice::Exp) => 136,
                     (K::Ladder, _) => LADDER_COST.0,
+                    (K::Sem, _) => SEM_COST.0,
                 };
                 assert_eq!(k.cost(v), Cost(want), "{k:?} {m:?} {v:?}");
                 let mut p = chimera_core::params::FilterParams::default();
@@ -115,7 +117,11 @@ fn filter_bills_each_type_and_mode() {
             }
         }
     }
-    assert_eq!(seen, (8 + 1 + 4 + 5) * 2, "every built pair, each VOICE");
+    assert_eq!(
+        seen,
+        (8 + 1 + 4 + 5 + 2) * 2,
+        "every built pair, each VOICE"
+    );
     // Over OLD_LP24 (95): the 2040's and LADDER's steady counts with the
     // block (LADDER's one loop for every mode and its input scan, 210).
     assert!(K::Ladder.cost(K2040Voice::Rev2) >= Cost(210 - 95));
@@ -156,6 +162,7 @@ fn the_moving_path_bills_once() {
         (FilterKind::K2040, K2040_MOVE_COST),
         (FilterKind::Dirty, Cost::ZERO),
         (FilterKind::Ladder, LADDER_MOVE_COST),
+        (FilterKind::Sem, SEM_MOVE_COST),
     ] {
         assert_eq!(k.move_cost(), mv, "{k:?}");
         let mut p = on(k);
@@ -284,6 +291,7 @@ fn level_bills_while_it_can_clip() {
         (FilterKind::Dirty, FILTER_LEVEL_COST),
         (FilterKind::K2040, Cost::ZERO),
         (FilterKind::Ladder, Cost::ZERO),
+        (FilterKind::Sem, Cost::ZERO),
     ] {
         assert_eq!(k.level_cost(), lvl, "{k:?}");
         let mut p = on(k);
@@ -2442,8 +2450,8 @@ fn a_fuzz_part_sheds_only_near_the_limit() {
     }
 }
 
-/// ADR 0168: STABILITY bills `STAB_COST` (3) on the 2040 and LADDER below
-/// 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN
+/// ADR 0168, 0192: STABILITY bills `STAB_COST` (3) on the 2040, LADDER and
+/// SEM below 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN
 /// and DIRTY never read it. INIT's Prophet setting keeps INIT VA's voices
 /// on every room.
 #[test]
@@ -2459,7 +2467,7 @@ fn stability_bills_the_four_pole_kinds_below_one() {
         let mut p = on(kind);
         let base = Voice::cost(&p, &ModState::new());
         p.filter.stability = 0.5;
-        let extra = if kind.four_pole() {
+        let extra = if kind.has_chip() {
             STAB_COST
         } else {
             Cost::ZERO
@@ -2525,4 +2533,51 @@ fn fb_bills_its_loop_and_the_moving_path() {
             "{kind:?} FB routed"
         );
     }
+}
+
+/// ADR 0192: SEM bills `tools/loop_count.py`'s count on the `filter-probes`
+/// ELF (`probe::sem_probe`): steady 140 cycles, 45 over `OLD_LP24`; moving
+/// 175, 35 over it. Its voices against CLEAN's and LADDER's, ALGO INIT and
+/// VA INIT, steady and with a CUTOFF LFO, on rev V and rev Y beside the
+/// reserve (ALGO / VA, steady / moving).
+#[test]
+fn sem_bills_its_count_and_its_voices() {
+    assert_eq!(SEM_COST, Cost(140 - 95));
+    assert_eq!(SEM_MOVE_COST, Cost(175 - 140));
+    let rooms = [
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+    ];
+    let voices = |e: EngineType, k: FilterKind, mods: &ModState| {
+        let mut p = ParamSnapshot::for_engine(e);
+        p.filter.set_kind(k);
+        let c = Voice::cost(&p, mods).0;
+        rooms.map(|r| (r / c).min(MAX_VOICES as u32))
+    };
+    let still = ModState::new();
+    let lfo = cutoff_lfo(64);
+    let mut table = Vec::new();
+    for k in [
+        FilterKind::Svf,
+        FilterKind::K2040,
+        FilterKind::Ladder,
+        FilterKind::Sem,
+    ] {
+        let row = [
+            voices(EngineType::Algo, k, &still),
+            voices(EngineType::Algo, k, &lfo),
+            voices(EngineType::Va, k, &still),
+            voices(EngineType::Va, k, &lfo),
+        ];
+        println!(
+            "{k:?}: ALGO {:?} / {:?}, VA {:?} / {:?} (rev V, rev Y)",
+            row[0], row[1], row[2], row[3]
+        );
+        table.push(row);
+    }
+    assert_eq!(
+        table[3],
+        [[7, 5], [6, 5], [8, 6], [7, 5]],
+        "SEM: ALGO steady, moving; VA steady, moving"
+    );
 }

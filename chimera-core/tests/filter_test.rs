@@ -53,7 +53,8 @@ fn retired_filter_ids_have_no_spec() {
 
 /// MODE sits on FLT for every kind with a choice of modes; the 2040's
 /// one mode has no cell (KIND's readout names it, ADR 0155) and is on no
-/// FLT page.
+/// FLT page. SEM's choice is its output switch, OUTPUT on FLT › MOD's F;
+/// its FLT cell is the MODE knob (ADR 0192).
 #[test]
 fn mode_is_on_flt_where_it_can_change() {
     let mode = ParamAddr::new(BlockRef::Filter, FilterParams::MODE);
@@ -62,8 +63,9 @@ fn mode_is_on_flt_where_it_can_change() {
         p.filter.set_kind(k);
         let ctx = SlotCtx::read(&p, chimera_core::addr::Op::A);
         let on = |def| (0..6).any(|i| slot_addr(def, i, &ctx) == Some(mode));
-        assert_eq!(on(&FILTER), k != FilterKind::K2040, "{k:?}");
-        assert!(!on(&FILTER_MOD), "{k:?}");
+        let sem = k == FilterKind::Sem;
+        assert_eq!(on(&FILTER), k != FilterKind::K2040 && !sem, "{k:?}");
+        assert_eq!(on(&FILTER_MOD), sem, "{k:?}");
     }
 }
 

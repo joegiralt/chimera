@@ -13,7 +13,7 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use common::rig::{Rig, Src};
 
-const KINDS: [FilterKind; 4] = FilterKind::BUILT;
+const KINDS: [FilterKind; 5] = FilterKind::BUILT;
 
 /// A saw at `hz`, peak `amp`, sample `n`.
 fn saw(n: usize, hz: f32, amp: f32) -> f32 {
@@ -101,7 +101,8 @@ fn fb_is_heard_on_every_type() {
 }
 
 /// Full FB at full RES and a hot input stays finite and bounded on every
-/// TYPE and cutoff; the 2040's guard holds it within full scale.
+/// TYPE and cutoff; the 2040's guard holds it within full scale, SEM's
+/// rails within its bound.
 #[test]
 fn full_fb_at_full_res_is_bounded() {
     for k in KINDS {
@@ -109,8 +110,13 @@ fn full_fb_at_full_res_is_bounded() {
             for fb in [-1.0, 1.0] {
                 let out = run(k, cutoff, 1.0, fb, 2.0, 300);
                 let pk = peak(&out);
+                // SEM keeps the circuit's headroom: its rails, `SEM_BOUND`.
+                let top = match k {
+                    FilterKind::Sem => chimera_core::dsp::filter::sem::SEM_BOUND,
+                    _ => 4.0,
+                };
                 assert!(
-                    pk.is_finite() && pk < 4.0,
+                    pk.is_finite() && pk < top,
                     "{k:?} {cutoff} Hz FB {fb}: {pk}"
                 );
                 if k == FilterKind::K2040 {

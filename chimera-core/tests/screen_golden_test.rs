@@ -113,6 +113,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_mod_dirty", 0xcb3a020442623ede),
     ("flt_ladder", 0xce6acb4caebff20a),
     ("flt_mod_ladder", 0xd860b23036cd68f2),
+    ("flt_sem", 0x75e5ccb533d0012e),
+    ("flt_mod_sem", 0xe8705f38a3bbb655),
+    ("flt_sem_bp", 0x0a6d2faa61b68b67),
     // New (#574): the peak at its real height, 2040 RES 0.3, CLEAN BP2 and
     // LADDER RES 0.
     // Re-recorded on the merge of main (#614): the filter picture and the
@@ -298,7 +301,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser", 0xe6ebc09a421a5c11),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
-    ("sound_browser_pool_full", 0x4327d7766a8f1115),
+    ("sound_browser_pool_full", 0x8c26f23d775090b4),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.

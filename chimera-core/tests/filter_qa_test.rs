@@ -441,3 +441,125 @@ fn write_wav(path: &std::path::Path, stereo: &[f32]) {
     }
     std::fs::write(path, v).expect("the WAV");
 }
+
+/// SEM's desktop QA (ADR 0192), on the real mix path with the knobs'
+/// glides: a held saw at C3 while each control is turned the way a hand
+/// turns it (a detent a block across its range, both ways), then jumped end
+/// to end in one publish. Each run is finite, under the ceiling, freed after
+/// the release, has no click at the jump by the sweep's rule, and no
+/// zipper: the turn's high-band residue (a 4th difference) stays within
+/// 1 dB of the brighter of its two ends held (a block-rate step would
+/// spray the band). Then the levels: SEM's MODE at LP against
+/// CLEAN LP2 and BP against CLEAN BP2, at RES 0, ½, 0.9 and 1.
+#[test]
+#[ignore = "QA: cargo test --release --test filter_qa_test -- --ignored --nocapture sem"]
+fn sem_controls_qa() {
+    use chimera_core::dsp::filter::FilterMode;
+    let (turn_at, off, end) = (BPS / 2, BPS * 4, BPS * 6);
+    let sem = || {
+        let mut s = filtered(saw(), FilterKind::Sem, K2040Voice::Rev2, 800.0, 0.6);
+        s.params.filter.morph = 0.0;
+        s
+    };
+    let hf = |x: &[f32]| {
+        let d: Vec<f32> = x
+            .windows(5)
+            .map(|w| w[0] - 4.0 * w[1] + 6.0 * w[2] - 4.0 * w[3] + w[4])
+            .collect();
+        db(common::rms(&d))
+    };
+    type Turn = fn(&mut Sound, f32);
+    let controls: [(&str, Turn); 8] = [
+        ("MODE", |s, t| s.params.filter.morph = t),
+        ("FREQ", |s, t| {
+            s.params.filter.cutoff = 80.0 * 2f32.powf(8.0 * t)
+        }),
+        ("RES", |s, t| s.params.filter.resonance = t),
+        ("INPUT", |s, t| s.params.filter.level = t),
+        ("STABILITY", |s, t| s.params.filter.stability = 1.0 - t),
+        ("FDBK", |s, t| s.params.filter.fb = 2.0 * t - 1.0),
+        ("MODE at RES 0.95", |s, t| {
+            s.params.filter.resonance = 0.95;
+            s.params.filter.morph = t
+        }),
+        ("OUTPUT", |s, t| {
+            s.params.filter.set_mode(if t < 0.5 {
+                FilterMode::Lp12
+            } else {
+                FilterMode::Bp12
+            });
+        }),
+    ];
+    let mut bad = Vec::new();
+    for (name, set) in controls {
+        // A hand's turn: 128 detents up over 128 blocks, then down.
+        let mut b = bench(sem());
+        b.turn_sound(|s| *s = sem());
+        let mut t = Tape::default();
+        for i in 0..end {
+            if i == 0 {
+                b.note(48, Some(100));
+            }
+            if i == off {
+                b.note(48, None);
+            }
+            if (turn_at..turn_at + 256).contains(&i) {
+                let k = i - turn_at;
+                let v = if k < 128 { k } else { 255 - k } as f32 / 127.0;
+                b.turn_sound(|s| set(s, v));
+            }
+            b.render(&mut t);
+        }
+        let held = hf(t.pair(0, BPS / 4, turn_at));
+        let moving = hf(t.pair(0, turn_at, turn_at + 256));
+        // The jump: end to end in one publish, gliding.
+        let mut j = bench(sem());
+        j.turn_sound(|s| *s = sem());
+        let mut u = Tape::default();
+        for i in 0..end {
+            match i {
+                0 => j.note(48, Some(100)),
+                _ if i == turn_at => j.turn_sound(|s| set(s, 1.0)),
+                _ if i == off => j.note(48, None),
+                _ => {}
+            }
+            j.render(&mut u);
+        }
+        let click = u.click(0, turn_at, (0, off), true);
+        let ends = held.max(hf(u.pair(0, turn_at + BPS / 5, off)));
+        let ok = t.finite() && u.finite() && within_ceiling(t.peak(0)) && within_ceiling(u.peak(0));
+        let free = b.all_free() && j.all_free();
+        println!(
+            "| {name} | turn HF {:+.1} dB re the brighter end | jump click {} | peak {:.1} dBFS | {} |",
+            moving - ends,
+            click.map_or("none".into(), |r| format!("×{r:.1}")),
+            db(t.peak(0).max(u.peak(0))),
+            if ok && free { "ok" } else { "FAIL" }
+        );
+        let zipper = moving - ends > 1.0;
+        if !(ok && free) || click.is_some() || zipper {
+            bad.push(name);
+        }
+    }
+    // Levels against CLEAN on the held saw, C3, FREQ 1 kHz.
+    let level = |kind, mode, res: f32| {
+        let mut s = filtered(saw(), kind, K2040Voice::Rev2, 1000.0, res);
+        assert!(s.params.filter.set_mode(mode));
+        let mut b = bench(s);
+        let t = play(&mut b, &[(48, 0, BPS * 2)], BPS * 3);
+        db(common::rms(
+            &t.bus[BPS / 2 * BLOCK_SIZE..BPS * 2 * BLOCK_SIZE],
+        ))
+    };
+    println!("| RES | SEM MODE (LP) | CLEAN LP2 | SEM BP | CLEAN BP2 |\n|---|---|---|---|---|");
+    for res in [0.0, 0.5, 0.9, 1.0] {
+        println!(
+            "| {res} | {:.1} | {:.1} | {:.1} | {:.1} |",
+            level(FilterKind::Sem, FilterMode::Lp12, res),
+            level(FilterKind::Svf, FilterMode::Lp12, res),
+            level(FilterKind::Sem, FilterMode::Bp12, res),
+            level(FilterKind::Svf, FilterMode::Bp12, res),
+        );
+    }
+    assert!(bad.is_empty(), "SEM QA: {bad:?}");
+}
