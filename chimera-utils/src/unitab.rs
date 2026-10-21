@@ -3,8 +3,14 @@
 //! rendered through the real `Instrument` at each VOICE; the lab harness's
 //! filter-alone render beside it; and the measures the unit's recordings
 //! get. Levels are raw: nothing is matched before the level and low-band
-//! columns, so a flat gain between voicings shows.
+//! columns, so a flat gain between voicings shows. The method:
+//! `.superpowers/ledgers/filters-last/ab-method.md` (ADR 0196).
+//!
+//! `unitab/events.json` holds the scripts the unit's takes played (acid,
+//! bass, sweep, orbit) and `unitab/PULSE_KEYS.A` the Sound of the
+//! method's reference pair (Part 2 "PULSE KEYS", build 68f1d5f0).
 
+use chimera_circuits::Controls;
 use chimera_core::dsp::filter::{Filter, FilterKind, FilterMods, K2040Voice};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::knobs::KnobPublisher;
@@ -21,7 +27,7 @@ use chimera_core::tracked::Tracked;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const SR: f64 = SAMPLE_RATE as f64;
 pub const SCRIPTS: [&str; 4] = ["acid", "bass", "sweep", "orbit"];
@@ -38,6 +44,11 @@ pub enum Ev {
 pub struct Script {
     pub ev: Vec<(f64, Ev)>,
     pub tail: f64,
+}
+
+/// The bundled scripts, `unitab/events.json`.
+pub fn events() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("unitab/events.json")
 }
 
 pub fn script(events: &Path, name: &str) -> Result<Script, String> {
@@ -89,7 +100,7 @@ fn res_of(v: u8) -> f32 {
     f32::from(v) / 127.0
 }
 
-fn voice_of(name: &str) -> K2040Voice {
+pub fn voice_of(name: &str) -> K2040Voice {
     if name == "exp" {
         K2040Voice::Exp
     } else {
@@ -158,50 +169,79 @@ pub fn engine(snd: &Sound, voice: K2040Voice, sc: &Script, res_cc: u8) -> Vec<f3
     out
 }
 
-/// The lab harness's way (`kobol::ours`): a plain saw at ½ into the 2040
-/// alone at LEVEL ½, the same notes, CUTOFF and RES, no envelopes, VCA,
-/// voice mixer or limiter. Gate by note: silence between notes.
-pub fn lab(voice: K2040Voice, sc: &Script, res_cc: u8) -> Vec<f32> {
-    let mut p = FilterParams::default();
-    p.set_kind(FilterKind::K2040);
-    p.voice = voice;
-    p.level = 0.5;
-    p.resonance = res_of(res_cc);
-    let mut f = Filter::new();
+/// The lab harness's input (`kobol::ours`): a plain saw at ½, the same
+/// notes, CUTOFF and RES, no envelopes, VCA, voice mixer or limiter, gated
+/// by note (silence between notes); the controls as they stand at each
+/// block's start, held over it, the gate at the note's velocity.
+pub fn lab_input(sc: &Script, res_cc: u8) -> (Vec<f64>, Vec<Controls>) {
+    let mut c = Controls {
+        cutoff: f64::from(FilterParams::default().cutoff),
+        res: f64::from(res_of(res_cc)),
+        gate: 0.0,
+    };
     let end = PRE_S + sc.ev.last().map_or(0.0, |e| e.0) + sc.tail;
     let blocks = (end * SR) as usize / BLOCK_SIZE;
-    let (mut out, mut next, mut note, mut ph) = (Vec::new(), 0, None::<u8>, 0.0f64);
+    let (mut x, mut ctl) = (Vec::new(), Vec::new());
+    let (mut next, mut note, mut ph) = (0, None::<u8>, 0.0f64);
     for b in 0..blocks {
         let t = (b * BLOCK_SIZE) as f64 / SR - PRE_S;
         while next < sc.ev.len() && sc.ev[next].0 <= t {
             match sc.ev[next].1 {
-                Ev::On(n, _) => note = Some(n),
-                Ev::Off(n) if note == Some(n) => note = None,
-                Ev::Cc(74, v) => p.cutoff = cutoff_of(v),
-                Ev::Cc(71, v) => p.resonance = res_of(v),
+                Ev::On(n, v) => {
+                    note = Some(n);
+                    c.gate = f64::from(v) / 127.0;
+                }
+                Ev::Off(n) if note == Some(n) => {
+                    note = None;
+                    c.gate = 0.0;
+                }
+                Ev::Cc(74, v) => c.cutoff = f64::from(cutoff_of(v)),
+                Ev::Cc(71, v) => c.res = f64::from(res_of(v)),
                 _ => {}
             }
             next += 1;
         }
-        let mut blk = [0.0f32; BLOCK_SIZE];
-        if let Some(n) = note {
-            let hz = 440.0 * 2f64.powf((f64::from(n) - 69.0) / 12.0);
-            for s in blk.iter_mut() {
-                *s = (0.5 * (2.0 * ph - 1.0)) as f32;
-                ph = (ph + hz / SR).fract();
-            }
+        for _ in 0..BLOCK_SIZE {
+            x.push(match note {
+                Some(n) => {
+                    let hz = 440.0 * 2f64.powf((f64::from(n) - 69.0) / 12.0);
+                    let s = 0.5 * (2.0 * ph - 1.0);
+                    ph = (ph + hz / SR).fract();
+                    s
+                }
+                None => 0.0,
+            });
+            ctl.push(c);
         }
-        f.process(&mut blk, &p, SAMPLE_RATE, &FilterMods::NONE);
-        out.extend_from_slice(&blk);
+    }
+    (x, ctl)
+}
+
+/// `lab_input` through the 2040 alone at LEVEL ½.
+pub fn lab(voice: K2040Voice, sc: &Script, res_cc: u8) -> Vec<f32> {
+    let (x, c) = lab_input(sc, res_cc);
+    let mut p = FilterParams::default();
+    p.set_kind(FilterKind::K2040);
+    p.voice = voice;
+    p.level = 0.5;
+    let mut f = Filter::new();
+    let mut out: Vec<f32> = x.iter().map(|&v| v as f32).collect();
+    for (b, blk) in out.as_chunks_mut::<BLOCK_SIZE>().0.iter_mut().enumerate() {
+        let k = &c[b * BLOCK_SIZE];
+        (p.cutoff, p.resonance) = (k.cutoff as f32, k.res as f32);
+        f.process(blk, &p, SAMPLE_RATE, &FilterMods::NONE);
     }
     out
 }
 
-/// `unitab render SOUND EVENTS OUTDIR`: eng_* and lab_* WAVs, every
-/// script × RES × voice, raw (32-bit float, no gain).
+/// `unitab render SOUND [EVENTS] OUTDIR`: eng_* and lab_* WAVs, every
+/// script × RES × voice, raw (32-bit float, no gain). EVENTS defaults to
+/// the bundled scripts.
 pub fn render(args: &[String]) -> Result<(), String> {
-    let [snd, events, dir] = args else {
-        return Err("unitab render SOUND EVENTS OUTDIR".into());
+    let (snd, events, dir) = match args {
+        [s, d] => (s, events(), d),
+        [s, e, d] => (s, PathBuf::from(e), d),
+        _ => return Err("unitab render SOUND [EVENTS] OUTDIR".into()),
     };
     let snd = load_sound(Path::new(snd))?;
     let dir = Path::new(dir);
@@ -234,7 +274,7 @@ pub fn render(args: &[String]) -> Result<(), String> {
     pool.install(|| {
         jobs.par_iter()
             .try_for_each(|&(s, r, v)| -> Result<(), String> {
-                let sc = script(Path::new(events), s)?;
+                let sc = script(&events, s)?;
                 let tag = format!("{s}_r{r}_{v}.wav");
                 crate::reference::write_f32(
                     &dir.join(format!("eng_{tag}")),
@@ -348,11 +388,11 @@ fn null(a: &[f64], b: &[f64]) -> f64 {
         }
     };
     let (mut ab, mut bb, mut aa) = (0.0, 0.0, 0.0);
-    for (i, &x) in a.iter().enumerate().take(n) {
+    for (i, &ai) in a.iter().enumerate().take(n) {
         let y = sh(i);
-        ab += x * y;
+        ab += ai * y;
         bb += y * y;
-        aa += x * x;
+        aa += ai * ai;
     }
     let g = ab / bb.max(1e-30);
     let r: f64 = (0..n).map(|i| (a[i] - g * sh(i)).powi(2)).sum();
@@ -479,11 +519,80 @@ pub fn cmp(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The method's mandatory check (`ab-method.md`): the known pair, 2040
+/// REV2 against EXPNDR, on the orbit script at RES 64 and 114, through
+/// `render` (the pipeline under test) and written by `write_f32` into
+/// `dir`, then measured from the files as written. The unit has EXP
+/// +5.6 dB at RES 64 and +6.4 at 114; a pipeline that normalises puts the
+/// pair within 1 dB of each other. Passes if each Δlevel is within 1 dB of
+/// the unit's and, at RES 64, the third-octave Δ is flat within ±1.5 dB of
+/// it from 40 Hz to 8 kHz. At RES 114 the unit's own bands around the
+/// peak (1–2 kHz) sit −1.7…+1.3 dB off its Δlevel (`ab-debug/table.md`),
+/// so flatness is only reported there.
+pub fn check_known_pair(
+    dir: &Path,
+    render: impl Fn(K2040Voice, &Script, u8) -> Vec<f32>,
+) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let sc = script(&events(), "orbit")?;
+    let mut report = String::new();
+    for (res, unit) in [(64u8, 5.6), (114, 6.4)] {
+        let file = |v: &str| -> Result<Vec<f64>, String> {
+            let p = dir.join(format!("known_orbit_r{res}_{v}.wav"));
+            crate::reference::write_f32(&p, &render(voice_of(v), &sc, res), SAMPLE_RATE)?;
+            take(&p)
+        };
+        let p = pair(&file("rev2")?, &file("exp")?);
+        // Bands 2..=25: 39.7 Hz … 8.06 kHz.
+        let worst = p.bands[2..=25]
+            .iter()
+            .map(|b| (b - p.d_level).abs())
+            .fold(0.0, f64::max);
+        let line = format!(
+            "RES {res}: Δlevel {:+.1} dB (unit {unit:+.1}), third-octave Δ within ±{worst:.1} dB",
+            p.d_level
+        );
+        if (p.d_level - unit).abs() > 1.0 || (res == 64 && worst > 1.5) {
+            return Err(format!("known-pair check failed: {line}"));
+        }
+        report.push_str(&line);
+        report.push('\n');
+    }
+    Ok(report)
+}
+
 pub fn run(args: &[String]) -> Result<(), String> {
     match args.split_first() {
         Some((c, rest)) if c == "render" => render(rest),
         Some((c, rest)) if c == "table" => table(rest),
         Some((c, rest)) if c == "cmp" && rest.len() == 2 => cmp(rest),
-        _ => Err("unitab render|table|cmp …".into()),
+        Some((c, [dir])) if c == "check" => {
+            check_known_pair(Path::new(dir), lab).map(|r| print!("{r}"))
+        }
+        _ => Err("unitab render|table|cmp|check …".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn out(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../target/test-out")
+            .join(name)
+    }
+
+    #[test]
+    fn the_lab_pipeline_passes_the_known_pair_check() {
+        check_known_pair(&out("unitab-lab"), lab).unwrap();
+    }
+
+    #[test]
+    #[ignore = "slow: cargo test -p chimera-utils --release -- --ignored"]
+    fn the_engine_pipeline_passes_the_known_pair_check() {
+        let snd =
+            load_sound(&Path::new(env!("CARGO_MANIFEST_DIR")).join("unitab/PULSE_KEYS.A")).unwrap();
+        check_known_pair(&out("unitab-engine"), |v, sc, r| engine(&snd, v, sc, r)).unwrap();
     }
 }
