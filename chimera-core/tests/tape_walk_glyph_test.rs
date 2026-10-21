@@ -111,8 +111,8 @@ fn write_variants() {
             b.extend_from_slice(&[0; 4]);
             b.extend_from_slice(&54u32.to_le_bytes());
             b.extend_from_slice(&40u32.to_le_bytes());
-            b.extend_from_slice(&(w as i32).to_le_bytes());
-            b.extend_from_slice(&(h as i32).to_le_bytes());
+            b.extend_from_slice(&w.to_le_bytes());
+            b.extend_from_slice(&h.to_le_bytes());
             b.extend_from_slice(&1u16.to_le_bytes());
             b.extend_from_slice(&24u16.to_le_bytes());
             b.extend_from_slice(&[0; 24]);
