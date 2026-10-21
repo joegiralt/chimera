@@ -903,7 +903,8 @@ trim = "-4.5"
 
 # The owner's own patch, saved on the unit and copied off: every value is
 # exactly as set (no trim, no clamp), bar six inert ALGO RR values the Source
-# can't hold on a VA Sound.
+# can't hold on a VA Sound. Kept as made: C7 aliasing reads 37.7 dB, so
+# harmonic = "no" exempts it from that gate.
 [[sound]]
 id = "S9100061"
 name = "THE RIGHT PLACE"
@@ -913,6 +914,7 @@ demo = "poly"
 plays = "long short"
 home = "C3"
 phrase = "pad"
+harmonic = "no"
 FILTER.CUTOFF = "255.29907"  # 255 Hz
 FILTER.RESO = "0.53125"  # 67
 FILTER.STAB = "0.5"  # 64
