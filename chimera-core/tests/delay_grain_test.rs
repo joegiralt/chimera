@@ -153,7 +153,9 @@ impl Reference {
             (f64::from(ctl.rate) * f64::from(ctl.dur) * 0.5).clamp(1.0, GRAINS as f64 / 2.0);
         // The port's heads step in Q16.16.
         let speed = (f64::from(ctl.speed) * 65_536.0).floor() / 65_536.0;
-        let amp = depth.powf(-(1.0 - 0.5 * f64::from(ctl.texture)));
+        let phase = 1.0 - 0.5 * f64::from(ctl.texture);
+        let law = phase + (0.5 - phase) * f64::from(ctl.shift);
+        let amp = depth.powf(-law);
         let mut from = 0;
         for &(at, frac) in &starts[..n] {
             self.grains

@@ -28,7 +28,7 @@ use std::path::Path;
 const SR: f64 = SAMPLE_RATE as f64;
 /// The Part's DELAY send: the dry stays in, the return beside it.
 const SEND: f32 = 0.5;
-const TAIL_S: f64 = 3.5;
+const TAIL_S: f64 = 5.0;
 
 /// (seconds, note, on) and the phrase's length.
 struct Phrase {
@@ -138,8 +138,8 @@ fn settings() -> Vec<(&'static str, DelayParams)> {
         (
             "shimmer",
             DelayParams {
-                feedback: 0.85,
-                tone: 0.75,
+                feedback: 0.92,
+                tone: 0.9,
                 ..g(0.7, 0.7, 12.0, 0.3)
             },
         ),

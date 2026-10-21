@@ -358,6 +358,9 @@ pub struct Ctl {
     pub rate: f32,
     /// PITCH as a read speed.
     pub speed: f32,
+    /// How far PITCH is from 0, up to a semitone: shifted grains add in
+    /// power (`amp`).
+    pub shift: f32,
     pub texture: f32,
     /// The crossfades, samples.
     pub instant: f32,
@@ -380,6 +383,7 @@ impl Ctl {
             dur: SIZE_MIN * libm::powf(SIZE_SPAN, unit(p.size())) * sr,
             rate: RATE_MIN * exp2(RATE_OCTAVES * unit(p.density())) / sr,
             speed: exp2(pitch * (1.0 / 12.0)),
+            shift: pitch.abs().min(1.0),
             texture: unit(p.texture()),
             instant: INSTANT_S * sr,
             preempt: PREEMPT_S * sr,
@@ -388,12 +392,16 @@ impl Ctl {
 
     /// A grain's gain: its bells overlap `rate · dur / 2` deep on average
     /// (a bell's mean is ½), at most half the grains. Read from one place
-    /// they add in phase, so TEXTURE 0 divides by the depth; sprayed they
-    /// add in power, so TEXTURE 1 by its root (Beads: 1/√(grains + 1),
-    /// always).
+    /// at PITCH 0 they add in phase, so TEXTURE 0 divides by the depth;
+    /// sprayed, or shifted (each grain then reads the line a different
+    /// distance back), they add in power, so by its root (Beads:
+    /// 1/√(grains + 1), always). A semitone of PITCH blends the one into
+    /// the other.
     pub fn amp(&self) -> f32 {
         let depth = clampf(self.rate * self.dur * 0.5, 1.0, GRAINS as f32 * 0.5);
-        libm::powf(depth, -(1.0 - 0.5 * self.texture))
+        let phase = 1.0 - 0.5 * self.texture;
+        let law = phase + (0.5 - phase) * self.shift;
+        libm::powf(depth, -law)
     }
 }
 
