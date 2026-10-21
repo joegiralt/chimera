@@ -23,7 +23,7 @@ pub const DATA_TOKEN: u8 = 0xFE;
 pub const TOKEN_TIMEOUT_MS: Millis = Millis::new(100);
 
 /// A block and its CRC16.
-pub const BLOCK_BYTES: usize = 512;
+pub const BLOCK_BYTES: usize = crate::blocks::BLOCK;
 pub const CRC_BYTES: usize = 2;
 pub const BLOCK_WITH_CRC: usize = BLOCK_BYTES + CRC_BYTES;
 /// A busy drain's burst, after CMD12.

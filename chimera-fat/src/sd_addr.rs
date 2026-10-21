@@ -25,7 +25,7 @@ impl AddrMode {
     pub const fn arg(self, lba: Lba) -> Option<CmdArg> {
         match self {
             Self::Block => Some(CmdArg(lba.get())),
-            Self::Byte => match lba.get().checked_mul(512) {
+            Self::Byte => match lba.get().checked_mul(crate::blocks::BLOCK as u32) {
                 Some(a) => Some(CmdArg(a)),
                 None => None,
             },
