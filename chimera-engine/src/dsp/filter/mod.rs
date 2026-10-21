@@ -151,8 +151,8 @@ const K2040_LABELS: [&str; 1] = ["LP4"];
 const DIRTY_LABELS: [&str; 4] = ["LP2", "BP2", "HP2", "NOTCH1"];
 
 /// Which filter model, its TYPE (spec § 1). The discriminants are the disk
-/// codes: append-only, gaps kept for the kinds that never landed. Code 7 is
-/// reserved for LPG (FX spec § LPG), never another kind.
+/// codes: append-only, gaps kept for the kinds that never landed. Code 7 was
+/// kept for LPG, which became the VCA's gate (ADR 0195): it stays unused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum FilterKind {

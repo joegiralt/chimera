@@ -238,9 +238,9 @@ pub static PITCH: BlockDef = BlockDef {
 // Amp
 // ---------------------------------------------------------------------------
 
-/// AMP (sends spec § 3): the three sends and the VCA's VEL, last before MOD
-/// on every Part chain. The fold went to the FX slot (ADR 0155); its two
-/// cells stay empty for now.
+/// AMP: the VCA's VEL and its low-pass gate, LPG · DECAY · STRIKE (ADR
+/// 0195), last before MOD on every Part chain; E and F are free. The sends
+/// are AMP › SENDS, the mixer's own SENDS page.
 pub static AMP: BlockDef = BlockDef {
     id: 9,
     name: "Amp",
@@ -248,14 +248,18 @@ pub static AMP: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Out, OutParams::SEND1),
-        ParamSlot::param(BlockRef::Out, OutParams::SEND2),
-        ParamSlot::param(BlockRef::Out, OutParams::SEND3),
-        EMPTY,
         ParamSlot::param(BlockRef::Out, OutParams::VCA_VEL),
+        ParamSlot::param(BlockRef::Out, OutParams::LPG),
+        ParamSlot::param(BlockRef::Out, OutParams::DECAY),
+        ParamSlot::param(BlockRef::Out, OutParams::STRIKE),
+        EMPTY,
         EMPTY,
     ],
 };
+
+/// AMP › SENDS (ADR 0195): CHORUS · DELAY · REVERB, the page the mixer
+/// opens on, so its cells keep one focus.
+static AMP_SUB_PAGES: [&BlockDef; 1] = [&SENDS];
 
 // ---------------------------------------------------------------------------
 // Filter
@@ -681,7 +685,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::page(&MODAL_EXC),
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&AMP),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -734,7 +738,7 @@ static ALGO_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::with_subs(&ALGO_ALG, &[&PITCH]),
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&AMP),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -767,7 +771,7 @@ static TAPE_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::page(&TAPE_SRC),
     ChainBlock::with_subs(&TAPE_DECK, &TAPE_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&AMP),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -785,7 +789,7 @@ static VA_SUB_PAGES: [&BlockDef; 4] = [&VA_OSC1, &VA_OSC2, &VA_NOISE, &PITCH];
 static VA_BLOCKS: [ChainBlock; 4] = [
     ChainBlock::with_subs(&VA_HOME, &VA_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&AMP),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,

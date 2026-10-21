@@ -124,6 +124,13 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     } else {
         ""
     };
+    // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
+    let gate = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
+"
+    } else {
+        ""
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -155,6 +162,7 @@ SECTIONS {
     /* FUZZ */
     /* FED */
     /* SEM */
+    /* GATE */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -168,7 +176,8 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* LOOK */\n", look)
         .replace("    /* FUZZ */\n", fuzz)
         .replace("    /* FED */\n", fed)
-        .replace("    /* SEM */\n", sem),
+        .replace("    /* SEM */\n", sem)
+        .replace("    /* GATE */\n", gate),
     )
     .unwrap();
 

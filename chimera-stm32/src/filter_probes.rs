@@ -99,3 +99,11 @@ type FoldProbe = fn(&mut [f32; BLOCK_SIZE], &Ends);
 
 #[used]
 static FOLD_TAP_PROBE: FoldProbe = filter::probe::fold_tap_probe;
+
+/// The VCA's low-pass gate (ADR 0195): one block, the routes' gain in.
+#[used]
+static LPG_PROBE: fn(
+    &mut chimera_engine::dsp::lpg::Lpg,
+    &mut [f32; BLOCK_SIZE],
+    &chimera_engine::dsp::lpg::Drive,
+) = chimera_engine::dsp::lpg::lpg_probe;

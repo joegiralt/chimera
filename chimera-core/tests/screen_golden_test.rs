@@ -57,6 +57,10 @@ use screen::*;
 // Re-recorded for the FREQ MOD / RES MOD band naming its source: flt_mode, flt_mod_clean.
 // Re-recorded for ADR 0167 (FLT's front reordered: KIND · FX · Q · MODE ·
 // FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
+// ADR 0195: AMP is VEL · LPG · DECAY · STRIKE, the sends on AMP › SENDS.
+// New: amp_gate, amp_sends. Re-recorded: row_amp, amp_vel_dimmed,
+// amp_vel_live, modal_amp, large_bigviz_filter (an AMP screen),
+// large_modal_amp; sound_browser_pool_full (a dense Sound is 15 B larger).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -156,7 +160,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("row_mod", 0x61ae81a248025efe),
     ("row_osc_mid", 0x10a75dc9cea244b8),
     ("row_osc_last", 0xa3198b2d2fb8a67d),
-    ("row_amp", 0xedf62a5f9b585964),
+    ("row_amp", 0xfa6545ca8559b8a5),
     // New: VA OSC1 and OSC2 under STACK and ROW; the ROW bar says OSC1 / OSC2, not OSCILLATOR n.
     ("va_osc1", 0x117052eda46fe399),
     ("va_osc2", 0xd1bd400c5e8d1428),
@@ -182,8 +186,10 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
     // mod_matrix_wide primes FOLD and MIX on their new cells. Then AMP is
     // the sends and VEL alone, SYM gone (#614).
-    ("amp_vel_dimmed", 0xb39846680183f2f5),
-    ("amp_vel_live", 0xd455067ceda96ed2),
+    ("amp_vel_dimmed", 0x97b5ec576db1686d),
+    ("amp_gate", 0xac47230d2acbfe20),
+    ("amp_sends", 0xc9b0116af8f449fa),
+    ("amp_vel_live", 0xd2952b0ccaa7127e),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     ("algo_pitch", 0xd16ac1fa1fd56727),
@@ -208,7 +214,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_home_bowed", 0xedeb3ad6cfdbe66e),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_amp", 0xc6aa8cf54614ca9d),
+    ("modal_amp", 0xa87011df4f83c078),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it they have their own rows, run by `just test`.
     #[cfg(not(feature = "master-tape"))]
@@ -310,7 +316,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields). Then VA's KIND and
     // LEVEL (ADR 0197): each dense Sound 10 B more, the pool fills sooner.
-    ("sound_browser_pool_full", 0x81ce95e09e0bd574),
+    // Then the VCA's gate (ADR 0195): 15 B more.
+    ("sound_browser_pool_full", 0x8c26f23d775090b4),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -388,8 +395,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // large_algo_level, large_bigviz_filter, large_modal_amp, large_va_drive.
     ("large_engine_algo", 0x05c1170e863ceb31),
     ("large_algo_level", 0x6781c7502e39f90e),
-    ("large_bigviz_filter", 0xcabe5de5ca85d1d7),
-    ("large_modal_amp", 0x0a265b6a0a9884ed),
+    ("large_bigviz_filter", 0xdf4afe14780965be),
+    ("large_modal_amp", 0xe38ccc705df20b41),
     // VA's NOISE page (ADR 0197): KIND · LEVEL; LEVEL at 60 with its bar;
     // KIND on DIGITAL.
     ("va_noise", 0xa02dcec5295dacbb),
