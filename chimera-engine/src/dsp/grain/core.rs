@@ -599,6 +599,13 @@ impl<const G: usize> Started<G> {
     pub fn as_slice(&self) -> &[(Trigger, Slot<G>)] {
         &self.at[..usize::from(self.n)]
     }
+
+    fn push(&mut self, e: (Trigger, Slot<G>)) {
+        if let Some(slot) = self.at.get_mut(usize::from(self.n)) {
+            *slot = e;
+            self.n += 1;
+        }
+    }
 }
 
 /// `G` grains, their clock and the samples since the last start
@@ -677,8 +684,7 @@ impl<const G: usize> Engine<G> {
             };
             let k = self.nearest_end();
             self.grains[k].start(s, t.frac);
-            started.at[usize::from(started.n)] = (t, Slot(k as u8));
-            started.n += 1;
+            started.push((t, Slot(k as u8)));
             if let Some(steal) = sched.steal {
                 let interval = self.since.wrapping_add(t.at as u32);
                 self.steal_ahead(steal, Samples::new(interval as f32));
