@@ -345,7 +345,9 @@ fn factory_sounds_save_as_loaded() {
         all.update(&file);
     }
     if built.iter().all(Option::is_some) {
-        assert_eq!(all.finish(), 0xBA88_16F9, "{} Sounds", r.sounds.len());
+        // ADR 0205: SAW SCRUB and RAIN SCRUB take SCRUB's new defaults
+        // (LENGTH 70 ms, KEY POSITION) and their re-trims.
+        assert_eq!(all.finish(), 0xDBD2_5063, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
         let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();

@@ -2522,7 +2522,7 @@ impl UiState {
         let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.machine();
         let was = model(self);
         self.input(controls);
-        let jog = self.jog_pass(controls.now_ms().0);
+        let jog = self.jog_pass(controls.now_ms());
         // Knob moves the hand may have made: a turn or the reel, each one,
         // and a new MODEL's defaults. Only CCs spend what is left.
         if cfg!(feature = "midi-map") {
@@ -2607,14 +2607,16 @@ impl UiState {
     }
 
     /// SCRUB's reel this pass: POSITION moves at the jog's speed, gliding
-    /// to a stop through DRAG once the FINGER is let go.
-    fn jog_pass(&mut self, now_ms: u32) -> bool {
+    /// to a stop through DRAG once the FINGER is let go. Bank 2's: closed,
+    /// the reel stands.
+    fn jog_pass(&mut self, now_ms: Ms) -> bool {
         let t = self.project.part(self.active_part).sound.params.tape;
         if t.machine != TapeMachine::Scrub {
             self.jog = jog::Jog::new();
             return false;
         }
-        let mv = self.jog.pass(now_ms, t.drag);
+        let jog = &mut self.jog;
+        let mv = crate::bank2::ui_door(|d| d.jog(jog, now_ms, t.drag)).unwrap_or(0.0);
         if mv != 0.0 {
             let p = &mut self.project.edit_part(self.active_part).sound.params.tape;
             p.position = crate::dsp::clampf(p.position + mv, 0.0, 1.0);
@@ -2916,7 +2918,7 @@ impl UiState {
                 // SCRUB's FINGER turns the reel: `jog_pass` moves POSITION.
                 if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeMachine::Scrub
                 {
-                    self.jog.turn(delta, controls.now_ms().0);
+                    self.jog.turn(delta, controls.now_ms());
                     continue;
                 }
                 // The reverb turns by its TYPE's panel, and TYPE keeps the

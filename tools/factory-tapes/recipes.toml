@@ -379,7 +379,9 @@ trim = "-7.0"
 name = "SAW SCRUB"
 source = "SAW LEAD C4"
 model = "SCRUB"
-trim = "-1.0"
+# SCRUB's own defaults (ADR 0205): a 70 ms loop the FINGER moves, keys
+# placing it along the note at ROOT. Re-trimmed for the shorter loop.
+trim = "-3.0"
 
 [[sound]]
 name = "PAD LOOP"
@@ -506,7 +508,8 @@ trim = "+5.0"
 name = "RAIN SCRUB"
 source = "RAIN"
 model = "SCRUB"
-trim = "+7.0"
+# SCRUB's own defaults (ADR 0205), re-trimmed for the 70 ms loop.
+trim = "+5.5"
 
 [[sound]]
 name = "KIT"
