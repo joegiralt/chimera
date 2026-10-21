@@ -7,7 +7,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::kinds::{Linked, OpKind, Why, why_kind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
-use crate::dsp::tape_engine::{NeedsRam, TapeEngineParams, needs_ram};
+use crate::dsp::tape_engine::{NeedsRam, TapeEngineParams};
 use crate::preset::Sound;
 use crate::project::Line;
 
@@ -57,9 +57,14 @@ impl Held {
     /// the Sound's source streams.
     pub fn why(self, sound: &Sound, streamed: bool) -> Option<Reason> {
         if self.addr == MODEL || self.addr == DIRECTION {
-            let mut t = sound.params.tape;
-            crate::block::Block::set(&mut t, self.addr.param, f32::from(self.code));
-            return needs_ram(&t).filter(|_| streamed).map(Reason::NeedsRam);
+            if !streamed {
+                return None;
+            }
+            // Bank 2's (`ui::walk`): closed, nothing is held.
+            let t = &sound.params.tape;
+            return crate::bank2::ui_door(|u| u.tape_held(t, self.addr.param, self.code))
+                .flatten()
+                .map(Reason::NeedsRam);
         }
         let p = &sound.params.algo;
         let why = match self.addr.block {

@@ -432,7 +432,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_page_stretch", 0xbeb317ea13da8a67),
     ("tape_page_stretch_type", 0x2388e89c04b15a30),
     ("tape_deck_transwave", 0xde8bbeffbb06c81a),
-    ("tape_page_transwave", 0xcf7697ab32e621c5),
+    ("tape_page_transwave", 0x04bbc21e5964e49d),
     ("tape_deck_scrub", 0x38206f8d2ff7fa0f),
     ("tape_page_scrub", 0x2980dccca3896a88),
     ("tape_deck_pingpong", 0x8707082939da847c),

@@ -110,9 +110,11 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*12chimera_core2ui11source_cell4card*10SourceCell9rehead_in .text.*12chimera_core2ui11source_cell4card*10SourceCell6run_in
       .text.*7project8streamed*10StreamLoad5start .text.*7project8streamed*10StreamLoad5found
       .text.*7project8streamed*10StreamLoad6rehead .text.*7project8streamed9load_kind
-      .text.*12chimera_core2ui5onset6detect*);
+      .text.*12chimera_core2ui5onset6detect*
+      .text.*12chimera_core2ui4walk15machine_edit_in .text.*12chimera_core2ui4walk12tape_note_in
+      .text.*12chimera_core2ui4walk12tape_held_in);
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
-      .rodata.*12chimera_core2ui5onset6detect*);
+      .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui4walk*);
 ";
     // The crates the engine can't name keep their own tables, each at a
     // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):

@@ -233,10 +233,22 @@ pub enum StepStyle {
     Treads,
     /// A dotted trail, a stride's mark a step.
     Trail,
+    /// A WALK / DON'T WALK pedestrian signal: the walking figure strides
+    /// the DIRECTION, the countdown reads LENGTH, TRON's raised hand waits.
+    Signal,
+    /// A figure on a treadmill: the belt's arrows run the DIRECTION,
+    /// DRIFT wobbles the stride, TRON lights the stop button.
+    Treadmill,
 }
 
 impl StepStyle {
-    pub const ALL: [StepStyle; 3] = [StepStyle::Prints, StepStyle::Treads, StepStyle::Trail];
+    pub const ALL: [StepStyle; 5] = [
+        StepStyle::Prints,
+        StepStyle::Treads,
+        StepStyle::Trail,
+        StepStyle::Signal,
+        StepStyle::Treadmill,
+    ];
     pub const DEFAULT: StepStyle = StepStyle::Prints;
 }
 

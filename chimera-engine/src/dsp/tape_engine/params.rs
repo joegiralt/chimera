@@ -627,7 +627,7 @@ pub const MODEL_NAMES: [&str; 4] = ["WALK", "STRCH", "SCRUB", "WAVE"];
 
 /// The machines' names in full, by `TapeMachine::index`: the model page's
 /// header.
-pub const MACHINE_NAMES: [&str; 4] = ["WALK", "STRETCH", "SCRUB", "TRANSWAVE"];
+pub const MACHINE_NAMES: [&str; 4] = ["WALK", "STRETCH", "SCRUB", "WAVE"];
 
 /// DIRECTION's names, by its value: in full where they fit a cell,
 /// FORWARD and PING-PONG don't (full-word labels rule).

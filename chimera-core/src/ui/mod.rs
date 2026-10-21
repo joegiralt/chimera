@@ -50,6 +50,7 @@ pub mod theme;
 pub mod theme_settings;
 pub mod view;
 pub mod viz;
+pub(crate) mod walk;
 
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;

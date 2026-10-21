@@ -129,10 +129,9 @@ fn write_variants() {
                 b.extend(std::iter::repeat_n(0u8, (row - n) as usize));
             }
             let name = format!(
-                "glyph_{}_{}{}.bmp",
-                ["prints", "treads", "trail"][k],
-                slug,
-                ""
+                "glyph_{}_{}.bmp",
+                ["prints", "treads", "trail", "signal", "treadmill"][k],
+                slug
             );
             std::fs::write(dir.join(name), b).unwrap();
         }

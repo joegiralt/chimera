@@ -888,27 +888,8 @@ pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
 /// at rest, LOOP's or PING's FADE while a VCA route holds the voice (one
 /// release a note: AMP's). ONE keeps FADE live, its HOLD step the gate.
 pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
-    if addr.block != BlockRef::TapeEngine {
-        return None;
-    }
-    let t = &sound.params.tape;
-    match addr.param {
-        T::WOW if !tape_engine::tape_runs(t.tape, tape_routed(sound)) => Some(WOW_AT_REST),
-        T::DRAG
-            if matches!(t.way(), Way::Loop | Way::Ping)
-                && !t.tron_on()
-                && sound.mod_state.routes_into(VCA) != 0 =>
-        {
-            Some(FADE_ASIDE)
-        }
-        T::XFADE if t.machine == TapeMachine::Walk && !matches!(t.way(), Way::Loop | Way::Tron) => {
-            Some(XFADE_LOOP_ONLY)
-        }
-        T::RETRIG if t.machine == TapeMachine::Walk && t.way() != Way::One => {
-            Some(RETRIG_ONCE_ONLY)
-        }
-        _ => None,
-    }
+    // Bank 2's (`ui::walk`): closed, no TAPE cell says why.
+    crate::bank2::ui_door(|u| u.tape_note(addr, sound)).flatten()
 }
 
 /// What the focus band says in its hint's place about a TAPE cell: why

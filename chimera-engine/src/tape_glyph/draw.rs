@@ -771,7 +771,8 @@ fn step(
             p.line(bx - r(dy * 2.0), by + r(dx * 2.0), x, y, ink);
             p.line(bx + r(dy * 2.0), by - r(dx * 2.0), x, y, ink);
         }
-        StepStyle::Trail => {
+        // The figures draw no steps of their own (`signal`, `treadmill`).
+        StepStyle::Trail | StepStyle::Signal | StepStyle::Treadmill => {
             p.rect(x - 1, y - 1, 2, 2, ink);
         }
     }
@@ -805,6 +806,11 @@ fn tape_end(p: &mut Pix, x: i32, y: i32) {
 /// round a loop) and greys the rest.
 #[inline(never)]
 fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
+    match style {
+        StepStyle::Signal => return signal(p, w),
+        StepStyle::Treadmill => return treadmill(p, w),
+        _ => {}
+    }
     let (pos, len) = (w.position.unit(), w.length.unit());
     let drift = w.drift.unit() * 3.0;
     let fade = w.fade.unit();
@@ -920,5 +926,233 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
                 tape_end(p, r(hi) + 6, 24);
             }
         }
+    }
+}
+
+/// The pedestrian figure, mid-stride, facing right: 10 × 16.
+const WALKER: [&[u8; 10]; 16] = [
+    b"....##....",
+    b"....##....",
+    b"..........",
+    b"...####...",
+    b"..#.##.#..",
+    b".#..##..#.",
+    b".#..##...#",
+    b"....##....",
+    b"....##....",
+    b"...#..#...",
+    b"...#...#..",
+    b"..#....#..",
+    b"..#.....#.",
+    b".#......#.",
+    b".#.......#",
+    b"##.......#",
+];
+
+/// DON'T WALK's raised hand: 8 × 10.
+const HAND: [&[u8; 8]; 10] = [
+    b"..#.#...",
+    b"..#.#.#.",
+    b"#.#.#.#.",
+    b"#.#.#.#.",
+    b"#.#####.",
+    b"#######.",
+    b"######..",
+    b".#####..",
+    b"..###...",
+    b"..###...",
+];
+
+/// The countdown's digits, 3 × 5, a bit a pixel row by row.
+const DIGITS: [[u8; 5]; 10] = [
+    [7, 5, 5, 5, 7],
+    [2, 6, 2, 2, 7],
+    [7, 1, 7, 4, 7],
+    [7, 1, 7, 1, 7],
+    [5, 5, 7, 1, 1],
+    [7, 4, 7, 1, 7],
+    [7, 4, 7, 5, 7],
+    [7, 1, 1, 1, 1],
+    [7, 5, 7, 5, 7],
+    [7, 5, 7, 1, 7],
+];
+
+/// `rows` at (`x`, `y`), mirrored left to right if `back`.
+fn sprite<const N: usize>(
+    p: &mut Pix,
+    rows: &[&[u8; N]],
+    (x, y): (i32, i32),
+    back: bool,
+    ink: Ink,
+) {
+    for (j, row) in rows.iter().enumerate() {
+        for (i, &c) in row.iter().enumerate() {
+            if c == b'#' {
+                let i = if back { N - 1 - i } else { i };
+                p.px(x + i as i32, y + j as i32, ink);
+            }
+        }
+    }
+}
+
+/// `n` (0 to 99) in the 3 × 5 digits at (`x`, `y`), two places.
+fn digits(p: &mut Pix, n: u32, (x, y): (i32, i32), ink: Ink) {
+    for (k, d) in [n / 10 % 10, n % 10].into_iter().enumerate() {
+        for (j, bits) in DIGITS[d as usize].iter().enumerate() {
+            for i in 0..3 {
+                if bits & (4 >> i) != 0 {
+                    p.px(x + 4 * k as i32 + i, y + j as i32, ink);
+                }
+            }
+        }
+    }
+}
+
+/// The countdown WALK's signal and treadmill read: LENGTH's tape in
+/// seconds with TRON on, else LENGTH in hundredths.
+fn countdown(w: Steps) -> u32 {
+    if w.tron == Tron::On {
+        libm::ceilf(tron::TapeSeconds::of_length(w.length.unit()).get()) as u32
+    } else {
+        libm::roundf(w.length.unit() * 99.0) as u32
+    }
+}
+
+/// A turning-back mark over (`x`, `y`): an arc and its head, `back` the
+/// way it ends.
+fn turn_mark(p: &mut Pix, x: i32, y: i32, ink: Ink) {
+    p.line(x, y + 3, x + 2, y, ink);
+    p.rect(x + 2, y, 6, 1, ink);
+    p.line(x + 8, y, x + 10, y + 3, ink);
+    p.arrow(x - 1, y + 3, -1, ink);
+}
+
+/// WALK as a WALK / DON'T WALK signal: the lit figure strides FORWARD's
+/// way or REVERSE's (mirrored), a loop arrow rings it on LOOP, a turning
+/// mark crowns it on PING-PONG. DRIFT nudges it off its place by a fixed
+/// step; the countdown reads LENGTH; with TRON on, the raised hand waits
+/// beside it for the tape's end.
+#[inline(never)]
+fn signal(p: &mut Pix, w: Steps) {
+    // The signal head: a dark box, the figure's lamp and the countdown's.
+    p.frame(2, 2, 60, 44, INK2);
+    p.frame(4, 4, 34, 40, FAINT);
+    p.frame(40, 4, 20, 40, FAINT);
+    let d = w.direction();
+    let back = d == Direction::Reverse;
+    let (sx, _) = scatter(i32::from(w.drift.step()));
+    let nudge = r(sx * w.drift.unit() * 6.0);
+    let (fx, fy) = (16 + nudge, 18);
+    sprite(p, &WALKER, (fx, fy), back, ACC);
+    match d {
+        Direction::Loop => {
+            for i in 0..40 {
+                let a = TAU * i as f32 / 40.0;
+                if i % 10 != 9 {
+                    p.px(
+                        fx + 5 + r(13.0 * cos(a)),
+                        fy + 8 - r(13.0 * fast_sin(a)),
+                        MID,
+                    );
+                }
+            }
+            p.arrow(fx + 5 + 13, fy + 8, -1, INK2);
+        }
+        Direction::Ping => turn_mark(p, fx, fy - 8, INK2),
+        _ => p.arrow(
+            if back { fx - 3 } else { fx + 12 },
+            fy + 8,
+            if back { -1 } else { 1 },
+            INK2,
+        ),
+    }
+    // The countdown, and DON'T WALK's hand when the tape can run out.
+    digits(
+        p,
+        countdown(w),
+        (44, 8),
+        if w.tron == Tron::On { INK } else { MID },
+    );
+    if w.tron == Tron::On {
+        sprite(p, &HAND, (46, 24), false, INK);
+    } else {
+        p.rect(45, 26, 10, 10, FAINT);
+    }
+    // FADE dims the lamp's last rows, as the signal flickers out.
+    let faded = libm::roundf(w.fade.unit() * 4.0) as i32;
+    for k in 0..faded {
+        p.rect(6, 41 - k, 30, 1, BG);
+    }
+}
+
+/// WALK on a treadmill: the figure walks the belt, the belt's chevrons
+/// run under it the DIRECTION's way (round on LOOP, both ways on
+/// PING-PONG); POSITION and LENGTH light the belt's run; DRIFT wobbles
+/// the figure along it; TRON lights the stop button on the console and
+/// marks the belt's end of tape.
+#[inline(never)]
+fn treadmill(p: &mut Pix, w: Steps) {
+    let (pos, len) = (w.position.unit(), w.length.unit());
+    let d = w.direction();
+    let back = d == Direction::Reverse;
+    // The console post and its button.
+    p.rect(55, 8, 2, 28, INK2);
+    p.rect(50, 6, 10, 4, INK2);
+    if w.tron == Tron::On {
+        p.dot(55, 3, 2, ACC);
+        p.px(55, 3, INK);
+    } else {
+        p.ring(55, 3, 2, MID);
+    }
+    // The deck: rollers and the belt, its run lit.
+    let (x0, x1, yb) = (6, 52, 38);
+    p.ring(x0, yb + 2, 2, INK2);
+    p.ring(x1, yb + 2, 2, INK2);
+    p.rect(x0, yb, x1 - x0, 1, MID);
+    p.rect(x0, yb + 4, x1 - x0, 1, MID);
+    let from = x0 as f32 + pos * (x1 - x0) as f32;
+    let to = from + lvis(len) * (x1 as f32 - from);
+    p.rect(r(from), yb + 1, (r(to) - r(from)).max(2), 3, SOFT);
+    // The chevrons: on top the way it runs; LOOP's come back below.
+    let chevron = |p: &mut Pix, x: i32, y: i32, dir: i32| {
+        p.line(x, y - 1, x + dir, y, INK);
+        p.line(x + dir, y, x, y + 1, INK);
+    };
+    let run = if back { 1 } else { -1 };
+    for k in 0..5 {
+        let x = x0 + 5 + 9 * k;
+        match d {
+            Direction::Ping => chevron(p, x, yb + 2, if k % 2 == 0 { 1 } else { -1 }),
+            _ => chevron(p, x, yb + 2, run),
+        }
+        if d == Direction::Loop {
+            chevron(p, x + 4, yb + 7, -run);
+        }
+    }
+    if d == Direction::Loop {
+        p.line(x0 - 3, yb + 1, x0 - 3, yb + 6, MID);
+        p.line(x1 + 3, yb + 1, x1 + 3, yb + 6, MID);
+    }
+    // TRON: the tape's end on the belt, LENGTH's share of 8 s.
+    if w.tron == Tron::On {
+        let e = x0 + r(tron::TapeSeconds::of_length(len).get() / TRON_LEN_MAX_S * (x1 - x0) as f32);
+        p.rect(e, yb - 2, 1, 9, INK);
+        p.px(e + 1, yb - 2, INK);
+        p.px(e + 1, yb, INK);
+    }
+    // The walker, DRIFT wobbling its place and its stride.
+    let (sx, sy) = scatter(i32::from(w.drift.step()));
+    let wob = w.drift.unit();
+    let fx = 22 + r(sx * wob * 8.0);
+    let fy = yb - 17 + r(sy * wob * 1.5);
+    let turned = back || (d == Direction::Ping && w.drift.step() % 2 == 1);
+    sprite(p, &WALKER, (fx, fy), turned, ACC);
+    if d == Direction::Ping {
+        turn_mark(p, fx, fy - 6, INK2);
+    }
+    // FADE: the belt's far end fades.
+    let faded = libm::roundf(w.fade.unit() * 6.0) as i32;
+    for k in 0..faded {
+        p.px(x1 - 2 - 2 * k, yb + 2, FAINT);
     }
 }

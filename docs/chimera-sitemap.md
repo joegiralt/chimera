@@ -60,7 +60,7 @@ MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has
 | DECK on WAVE | MODEL · FRAME · SCAN · RANGE |
 | PIT | under DECK, after the model page |
 
-On WALK, FADE's last step reads HOLD on FWD and REVERSE with TRON off. DRIFT moves POSITION by a random step at each note. TRON on gives each key a tape of 0.25 to 8 s (LENGTH), the window coming round until it runs out, and lifts it at key up. WALK's glyph is footsteps: their line, loop or lanes by DIRECTION, scattered by DRIFT, a tape's end with TRON. On a streamed source, DIRECTION holds REVERSE and PING dimmed with `… NEEDS RAM · STREAMED`.
+On WALK, FADE's last step reads HOLD on FWD and REVERSE with TRON off. DRIFT moves POSITION by a random step at each note. TRON on gives each key a tape of 0.25 to 8 s (LENGTH), the window coming round until it runs out, and lifts it at key up. WALK's glyph is footsteps: their line, loop or lanes by DIRECTION, scattered by DRIFT, a tape's end with TRON. The model page on WAVE reads WAVE. On a streamed source, DIRECTION holds REVERSE and PING dimmed with `… NEEDS RAM · STREAMED`.
 
 ### FLT and AMP
 

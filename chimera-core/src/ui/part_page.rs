@@ -3,14 +3,8 @@
 //! bound param's spec.
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
-use crate::block::Block;
-use crate::block::ParamId;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::EnvSlot;
-use crate::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
-use crate::dsp::tape_engine::{
-    Choice, Direction, FADE_HOLD, MachineIndex, TapeEngineParams, TapeMachine, fade_default,
-};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
 
@@ -95,7 +89,8 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
         Edit::Fine(d) => crate::block::nudge_fine(&mut *b, a.param, d),
         Edit::To(v) => b.set(a.param, v),
     }
-    let env1 = machine_edit(a, before, &mut *b);
+    // WALK's defaults, bank 2's (`ui::walk`); a closed door writes none.
+    let env1 = crate::bank2::ui_door(|u| u.machine_edit(a, before, &mut *b)).unwrap_or(&[]);
     let moved = b.get(a.param) != before;
     if !env1.is_empty()
         && let Some(mut env) = params.block_mut(BlockRef::Env(EnvSlot::Env1))
@@ -105,48 +100,6 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
         }
     }
     moved
-}
-
-/// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
-/// Machines, ADR 0178), and a DIRECTION edit across once through and a
-/// loop WALK's LENGTH and FADE for it (ADR 0203), as a MODEL turn between
-/// ONE and LOOP did; a load never does. The engine eases them in. Returns
-/// the ENV 1 defaults (`env_defaults`) the caller writes.
-fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) -> &'static [(ParamId, f32)] {
-    type T = TapeEngineParams;
-    if a.block != BlockRef::TapeEngine || b.get(a.param) == before {
-        return &[];
-    }
-    let dir = |v: f32| Direction::from_value(v).unwrap_or(Direction::Loop);
-    let d = dir(b.get(T::MODE));
-    let m = TapeMachine::from_index(MachineIndex(b.get(T::MODEL) as u8));
-    match a.param {
-        T::MODEL => {
-            for (id, v) in defaults(m, d) {
-                b.set(id, v);
-            }
-            env_defaults(m, d)
-        }
-        T::MODE => {
-            let was = dir(before);
-            let writes = direction_defaults(was, d);
-            for &(id, v) in writes {
-                b.set(id, v);
-            }
-            if writes.is_empty() {
-                &[]
-            } else {
-                env_defaults(m, d)
-            }
-        }
-        // TRON on: its pad always lifts, so FADE at HOLD becomes TRON's
-        // 32 ms, as a MODEL turn onto TRON wrote.
-        T::TRON if b.get(T::TRON) > 0.5 && b.get(T::DRAG) >= FADE_HOLD => {
-            b.set(T::DRAG, fade_default(Direction::Loop));
-            &[]
-        }
-        _ => &[],
-    }
 }
 
 /// Shift+encoder on `slot`: snap the bound param (the selector does not snap).

@@ -256,7 +256,7 @@ fn model_names_fit_the_cell() {
         let w = draw::text_width(&theme::FONT_VALUE, name, 0);
         assert!(w <= theme::CELL_BAR_W, "{name}: {w} px");
     }
-    let full = ["WALK", "STRETCH", "SCRUB", "TRANSWAVE"];
+    let full = ["WALK", "STRETCH", "SCRUB", "WAVE"];
     for (m, want) in TapeMachine::ALL.into_iter().zip(full) {
         let models = Models {
             tape: m,
