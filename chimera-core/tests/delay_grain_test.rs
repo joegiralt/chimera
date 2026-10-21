@@ -497,6 +497,46 @@ fn shimmer_decays_below_full_feedback() {
     assert!(last < first * 0.1, "{first} to {last}");
 }
 
+/// Under full feedback every setting dies away, where the grains add in
+/// phase after all: a regular train shifted (its own lines), and a small
+/// spray under a low tone or a short TIME. A quarter-second burst, then
+/// 7.75 s: the last second under 0.7 of the second after the burst. Each grew, by up to 8×, when the loop
+/// took the return's power law and DENSITY's rate as TEXTURE's.
+#[test]
+fn feedback_under_one_always_dies_away() {
+    // (FDBK, Hz, SIZE, DENSITY, TEXTURE, PITCH, TIME ms)
+    for (fb, hz, size, dens, tex, pitch, time) in [
+        (0.9f32, 60.0f32, 0.4f32, 1.0f32, 0.0f32, 12.0f32, 250.0f32),
+        (0.9, 400.0, 0.6, 0.85, 0.0, 1.0, 250.0),
+        (0.98, 400.0, 0.4, 0.85, 0.25, 0.5, 10.0),
+        (0.98, 60.0, 0.4, 0.85, 0.25, 0.0, 10.0),
+    ] {
+        let p = DelayParams {
+            time_ms: time,
+            feedback: fb,
+            ..grain_params()
+        }
+        .with(DelayParams::SIZE, size)
+        .with(DelayParams::DENSITY, dens)
+        .with(DelayParams::TEXTURE, tex)
+        .with(DelayParams::PITCH, pitch);
+        let mut d = Box::new(TapeDelay::new());
+        let out = play(&mut d, &p, 375 * 8, |b| {
+            if b < 188 {
+                sine(hz, 0.3)(b)
+            } else {
+                [0.0; BLOCK_SIZE]
+            }
+        });
+        let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt();
+        let (first, last) = (rms(&out[12_000..60_000]), rms(&out[out.len() - 48_000..]));
+        assert!(
+            first > 1e-3 && last < first * 0.7,
+            "FDBK {fb} {hz} Hz SIZE {size} DENSITY {dens} TEXTURE {tex} PITCH {pitch} TIME {time}: {first} to {last}"
+        );
+    }
+}
+
 /// The largest step between neighbouring samples of `x`.
 fn max_step(x: &[f32]) -> f32 {
     x.windows(2).fold(0.0, |m, w| m.max((w[1] - w[0]).abs()))
@@ -645,5 +685,5 @@ fn grain_render_is_pinned() {
             h = h.wrapping_mul(0x100_0000_01b3);
         }
     }
-    assert_eq!(h, 0x3e78_9b3a_0bbe_62b4, "re-pin only after listening");
+    assert_eq!(h, 0x1482_9ddc_ffd1_e0a3, "re-pin only after listening");
 }

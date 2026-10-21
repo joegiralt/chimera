@@ -351,6 +351,15 @@ impl<const G: usize> Engine<G> {
         &self.grains
     }
 
+    /// Every grain at `speed` frames a sample from now: a user whose speed
+    /// moves under its grains (TAPE's flutter), not only at their starts.
+    pub fn set_speed(&mut self, speed: f32) {
+        let q = q32(speed);
+        for g in &mut self.grains {
+            g.speed = q;
+        }
+    }
+
     /// Grains playing.
     pub fn active(&self) -> usize {
         self.grains.iter().filter(|g| !g.done()).count()
@@ -424,5 +433,66 @@ impl<const G: usize> Engine<G> {
         }
         self.grains[first].fade_out(sched.instant);
         self.grains[second].fade_out(interval.max(sched.instant).min(sched.preempt));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Ramp;
+
+    impl GrainSource for Ramp {
+        fn frames(&self) -> usize {
+            4096
+        }
+
+        fn frame(&self, i: usize) -> f32 {
+            i as f32
+        }
+    }
+
+    fn played() -> Engine<4> {
+        let sched = Sched {
+            rate: 0.01,
+            texture: 0.0,
+            instant: 240.0,
+            preempt: 4800.0,
+        };
+        let mut e = Engine::<4>::NEW;
+        let mut out = [0.0; BLOCK_SIZE];
+        for _ in 0..8 {
+            e.block(&Ramp, &sched, &mut out, |_, _, _| Start {
+                pos: 64 * ONE,
+                speed: 1.0,
+                dur: 2000.0,
+                amp: 1.0,
+            });
+        }
+        e
+    }
+
+    /// `set_speed` moves every grain's step, playing or not, and nothing
+    /// else: heads, bells, fades, gains, the clock and its draws stay.
+    #[test]
+    fn set_speed_moves_the_live_grains_step_alone() {
+        let before = played();
+        assert!(before.active() > 1);
+        let mut after = before;
+        after.set_speed(1.5);
+        for (a, b) in after.grains.iter().zip(&before.grains) {
+            assert_eq!(a.speed, q32(1.5));
+            assert_eq!(
+                Grain {
+                    speed: b.speed,
+                    ..*a
+                },
+                *b
+            );
+        }
+        assert_eq!(
+            (after.clock, after.rng, after.since),
+            (before.clock, before.rng, before.since)
+        );
     }
 }

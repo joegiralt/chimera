@@ -375,9 +375,10 @@ impl Block for DelayParams {
 /// instructions and a divide, 110 cycles; the block's own 10.1 and 0.23,
 /// 20, and two starts' gains (a `powf` each), 5; six grains at 46
 /// instructions a sample each (the loop runs two samples a round), 74, and
-/// their runs' setup, 1: 580, billed 590. TAPE's head, idle
-/// under GRAIN, isn't taken off. A TYPE crossfade runs both for 20 ms,
-/// in the headroom (ADR 0061). The unit's reading is PENDING
+/// their runs' setup, 1: 580. The feedback's trim, a `powf` a block and a
+/// multiply a sample, about 4 more (estimated): billed 590. TAPE's head,
+/// idle under GRAIN, isn't taken off. A TYPE crossfade runs both for 20
+/// ms, in the headroom (ADR 0061). The unit's reading is PENDING
 /// (private issue #746).
 pub const GRAIN_COST: crate::hw::Cost = crate::hw::Cost(590);
 

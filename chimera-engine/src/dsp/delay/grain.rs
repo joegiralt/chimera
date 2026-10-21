@@ -146,18 +146,36 @@ impl Ctl {
         }
     }
 
-    /// A grain's gain: its bells overlap `rate · dur / 2` deep on average
-    /// (a bell's mean is ½), at most half the grains. Read from one place
-    /// at PITCH 0 they add in phase, so TEXTURE 0 divides by the depth;
-    /// sprayed, or shifted (each grain then reads the line a different
-    /// distance back), they add in power, so by its root (Beads:
-    /// 1/√(grains + 1), always). A semitone of PITCH blends the one into
+    /// The bells' mean overlap, `rate · dur / 2` (a bell's mean is ½), at
+    /// most half the grains. TEXTURE's random intervals start grains
+    /// faster than DENSITY's train: Beads' draw, blended in by TEXTURE,
+    /// averages `1 + t(0.74 − 0.61t)` of its rate (within 3 % above).
+    fn depth(&self) -> f32 {
+        let busy = 1.0 + self.texture * (0.74 - 0.61 * self.texture);
+        clampf(self.rate * busy * self.dur * 0.5, 1.0, GRAINS as f32 * 0.5)
+    }
+
+    /// How the grains add: in phase read from one place (TEXTURE 0, PITCH
+    /// 0), in power sprayed or shifted (each grain then reads the line a
+    /// different distance back); a semitone of PITCH blends the one into
     /// the other.
-    pub fn amp(&self) -> f32 {
-        let depth = clampf(self.rate * self.dur * 0.5, 1.0, GRAINS as f32 * 0.5);
+    fn law(&self) -> f32 {
         let phase = 1.0 - 0.5 * self.texture;
-        let law = phase + (0.5 - phase) * self.shift;
-        libm::powf(depth, -law)
+        phase + (0.5 - phase) * self.shift
+    }
+
+    /// A grain's gain: the depth to the power of `law` (Beads:
+    /// 1/√(grains + 1), always in power).
+    pub fn amp(&self) -> f32 {
+        libm::powf(self.depth(), -self.law())
+    }
+
+    /// The feedback's share of the return, `depth^(law − 1)`: the loop
+    /// counts the grains in phase whatever `law` assumes, as a low tone
+    /// under a small spray, or a shifted regular train's own lines, add;
+    /// so FDBK under 1 always dies away.
+    pub fn fb_trim(&self) -> f32 {
+        libm::powf(self.depth(), self.law() - 1.0)
     }
 
     /// The grain a trigger at sample `at` of the block starts, `frac` of a
@@ -269,7 +287,18 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
         .block(&line, &ctl.sched(), &mut g, |at, frac, u| {
             ctl.start(wp, at, frac, u)
         });
-    span(d, buf, &g, &tap, e, share, tape_heard, insert, fs);
+    span(
+        d,
+        buf,
+        &g,
+        ctl.fb_trim(),
+        &tap,
+        e,
+        share,
+        tape_heard,
+        insert,
+        fs,
+    );
 }
 
 /// The block's samples: TAPE's head too while `tape` (its crossfade), each
@@ -281,6 +310,7 @@ fn span(
     d: &mut TapeDelay,
     buf: &mut [f32; BLOCK_SIZE],
     g: &[f32; BLOCK_SIZE],
+    trim: f32,
     tap: &Tap,
     e: Eased,
     share: (f32, f32),
@@ -320,9 +350,10 @@ fn span(
         let dry = *s;
         let share = at(w.0, w.1, i);
         let c = at(lp_coeff.0, lp_coeff.1, i);
-        // GRAIN's feedback: TONE's one-pole, the DC blocker, the soft clip.
+        // GRAIN's feedback: its trim, TONE's one-pole, the DC blocker, the
+        // soft clip.
         let y = g[i];
-        glp += c * (y - glp);
+        glp += c * (y * trim - glp);
         y1 = gdc * (glp - x1) + r * y1;
         x1 = glp;
         let gfb = soft_clip(y1);

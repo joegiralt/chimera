@@ -38,7 +38,7 @@ Both link into bank 2 (`*3dsp5grain*`, `*5delay5grain*`).
 Taken from Beads:
 - **The trigger:** `TriggerGenerator::RenderPulseTrain`. A phase accumulator at DENSITY's rate; each crossing starts a grain with the sub-sample fraction past it. Its random mode multiplies each interval's rate by `−1/ln(1 − x)`, `x` uniform in [0.1, 1), by `LogOneMinusX`'s four-term series. TEXTURE blends the ratio linearly from 1 (Beads' regular train) to that draw (its random train). Beads switches between the two on the DENSITY knob's halves; here DENSITY is a plain rate and TEXTURE the randomness.
 - **A grain's start:** `DelayGrain::Start`. The delay is corrected by the sub-sample fraction times the consumption speed (`speed − 1`), the duration is trimmed so the line holds it (`MAX / |speed − 1|`), and the delay is held so the head never crosses the write head during the grain (Beads' trim, which makes its STOP policy's crossing check unneeded). The envelope starts the same fraction in.
-- **The envelope:** `GrainEnvelope` at SHAPE ⅔ (attack ½, release ½, smoothness 1), which is smoothstep up the first half and down the second.
+- **The envelope:** `GrainEnvelope` at SHAPE ⅔ (attack ½, release ½, smoothness 1), which is smoothstep up the first half and down the second. Beads holds the release to at least 10 ms and the attack to 0.5 ms; here each half is half of SIZE, 5 ms at its floor.
 - **The scheduler:** `GranularPlayer::SortGrainList`, sorted branch. A start takes the grain with the fewest samples left; then the grain now nearest its end fades out within the steal crossfade (`kInstantCrossfadeTime`, 5 ms) and the next within the interval just gone, bounded by the pre-emptive fade (`kPreemptiveCrossfadeTime`, 100 ms), through `VoiceStealingEnvelope`'s linear ramp. Beads fades four of 32; six grains fade two.
 - **The read:** `DelayLine::Read<INTERPOLATION_HERMITE>`, Beads' own four-tap form, on the `i16` line.
 - **The feedback limit:** `stmlib::SoftClip`, already in the engine as `fast_tanh` (ADR 0097), after a 20 Hz DC blocker (Beads: an SVF high-pass at 40 Hz). TONE's one-pole, TAPE's own law, sits before it, so TONE is shared.
@@ -46,7 +46,8 @@ Taken from Beads:
 Ours, and why:
 - **Six grains** (Beads: 32 in its delay player). Each grain costs 74 cycles a sample; six keep an ALGO INIT's voices on rev Y but one (below). A start always finds a grain: the scheduler steals the nearest the end.
 - **Positions in Q32.32** (Beads: 22.10 behind the head).
-- **The gain.** Beads divides each grain by `√(grains playing + 1)`, which assumes grains add in power. Read from one place, at PITCH 0, they add in phase, so a cloud at one TIME swelled with its depth. Each grain is divided by its expected overlap `depth = rate · size / 2` (a bell's mean is ½, held between 1 and half the grains) to the power `1 − TEXTURE/2`: in phase at TEXTURE 0, in power at 1.
+- **The gain.** Beads divides each grain by `√(grains playing + 1)`, which assumes grains add in power. Read from one place, at PITCH 0, they add in phase, so a cloud at one TIME swelled with its depth. Each grain is divided by its expected overlap `depth = rate · size / 2` (a bell's mean is ½, held between 1 and half the grains) to the power `1 − TEXTURE/2`: in phase at TEXTURE 0, in power at 1; a semitone of PITCH blends to power too. TEXTURE's random intervals start grains faster than DENSITY's rate, `1 + t(0.74 − 0.61t)` of it on average (Beads' draw blended by TEXTURE `t`, within 3 % above), and the depth counts them.
+- **The feedback counts the grains in phase.** The return keeps the law above, for its loudness; the feedback takes `depth^(law − 1)` of it more, so each grain enters the loop at `1/depth`. Grains assumed to add in power do add in phase for a low tone under a small spray, and for a shifted regular train's own lines: with the return's law in the loop, FDBK 0.9 grew 11× over 6 s (PITCH +12, DENSITY 1, SIZE 0.4) and FDBK 0.98 8× (TEXTURE 0.25, TIME 10 ms). With the trim, FDBK under 1 always dies away (`feedback_under_one_always_dies_away`; swept over SIZE, DENSITY, TEXTURE, PITCH, TIME and a low and a mid tone at FDBK 0.9 and 0.98).
 - **SIZE:** 10 ms · 50^SIZE, 10 to 500 ms (Beads: 8 ms to 4 s over its buffer). **DENSITY:** 2^(7·DENSITY) grains a second, 1 to 128 Hz (Beads' pulse train tops out at 130.81 Hz). **PITCH:** −24 to +24 semitones, a speed of 2^(PITCH/12). **TEXTURE** also sprays each start ±50 % of TIME (Beads' TIME randomness). The start position is TIME behind the head, as Beads' TIME knob sets it.
 - **The block.** The grains are rendered for the whole block before the line is written, so a grain never reads closer than 68 samples to the write head (a block, the Hermite's newest tap, and two to spare). Each grain renders in runs whose taps stay inside the ring: no wrap test a sample.
 
@@ -78,13 +79,13 @@ Left out: the seconds-long buffer and its time-stretch clouds (no RAM); stereo p
 
 | Part | Instructions a sample | Cycles |
 |---|---|---|
-| The sample loop (TONE, DC, soft clip, write, return) | 61 + 1 `vdiv` | 110 |
+| The sample loop (the trim, TONE, DC, soft clip, write, return) | 62 + 1 `vdiv` (the trim's multiply estimated) | 112 |
 | The block (clock, knobs' laws) | 10.1 + 0.23 `vdiv` | 20 |
-| Two starts' gains (a `powf` each), a block | ~3 | 5 |
+| Two starts' gains and the feedback's trim (a `powf` each), a block | ~4.5 | 7 |
 | A grain (Hermite, bell, accumulate; the loop runs two samples a round) | 46 | 74 |
 | Six grains, and their runs' setup | 276 + 0.6 | 445 |
 
-`GRAIN_COST` is 590 cycles a sample (580 counted, rounded up): 7.9 % of rev V's 7,500-cycle audio budget (9.4 % of rev Y's 6,250). It is billed beside the bus while TYPE is GRAIN (`delay::extra_cost`, beside the reverb TYPE's extra in `Instrument::render_with`), and TAPE bills nothing new. TAPE's idle head isn't taken off. A TYPE crossfade runs both for 20 ms, in the headroom (ADR 0061). Each engine's INIT voices (`grain_bills_its_cost_and_keeps_the_voices`):
+`GRAIN_COST` is 590 cycles a sample (580 counted, 584 with the feedback's trim estimated, rounded up): 7.9 % of rev V's 7,500-cycle audio budget (9.4 % of rev Y's 6,250). It is billed beside the bus while TYPE is GRAIN (`delay::extra_cost`, beside the reverb TYPE's extra in `Instrument::render_with`), and TAPE bills nothing new. TAPE's idle head isn't taken off. A TYPE crossfade runs both for 20 ms, in the headroom (ADR 0061). Each engine's INIT voices (`grain_bills_its_cost_and_keeps_the_voices`):
 
 | | rev V TAPE → GRAIN | rev Y TAPE → GRAIN |
 |---|---|---|
