@@ -153,6 +153,14 @@ class StackDepth(unittest.TestCase):
         self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x9999, None, None, only)[0], 8 + 0x9999)
         self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x10)[0], 8 + 0x10)
 
+    def test_a_door_only_entry_with_no_caller_fails(self):
+        self.funcs["chimera_stm32::bench::enter"] = (0x500, set(), set(), False)
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("enters chimera_stm32::bench::enter", out.getvalue())
+        self.funcs["chimera_board::synth"] = (0x10, set(), set(), 1)
+        self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
+
     def test_a_door_root_with_two_pointer_calls_fails(self):
         frame, calls, tails, _ = self.funcs["DMA2_STR0"]
         self.funcs["DMA2_STR0"] = (frame, calls, tails, 1)

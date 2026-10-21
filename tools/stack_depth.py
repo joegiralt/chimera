@@ -58,7 +58,9 @@ DOOR_CALLS = {"DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",)}
 # held by the door's table alone: out of the address-taken set, so no other
 # pointer call is charged it; each caller's pointer calls are charged the
 # deeper of it and the usual charge. The bench's entry, read from its slot
-# in `main`'s `bench`, which the link inlines into `synth`.
+# in `main`'s `bench`, which the link inlines into `synth`. With the entry
+# linked but no named caller making a pointer call, the check fails: the
+# call moved where it would go uncharged.
 DOOR_ONLY = {
     "chimera_stm32::bench::enter": ("chimera_board::synth", "chimera_stm32::bench"),
 }
@@ -315,6 +317,10 @@ def check(img, stack_bytes, out):
     for root, _ in DOOR_CALLS.items():
         if root in img.funcs and img.funcs[root][3] > 1:
             print("stack-depth: %s has %d pointer calls, its door's one only" % (root, img.funcs[root][3]), file=out)
+            ok = False
+    for t, callers in DOOR_ONLY.items():
+        if t in img.funcs and not any(img.funcs.get(c, (0, (), (), 0))[3] for c in callers):
+            print("stack-depth: no pointer call in %s enters %s" % (" or ".join(callers), t), file=out)
             ok = False
     for f in small_reached(img.funcs):
         print("stack-depth: an audio or MIDI interrupt reaches %s, built for size" % short(f), file=out)
