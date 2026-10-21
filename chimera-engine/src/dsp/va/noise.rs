@@ -17,6 +17,7 @@
 
 use super::osc::R;
 use crate::block::DiskCode;
+use chimera_hal::BLOCK_SIZE;
 
 /// The noise's colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -126,32 +127,73 @@ impl Noise {
     /// `out[i] += w(i)·noise(i)` over a block: `w` is the level's lane
     /// `(from, step)` times the chain's norm, a quadratic `(n, dn, ddn)`
     /// (`Lanes::norm`); `inc`, OSC 1's cycles a sample (DIGITAL's clock).
-    /// A new KIND starts its filter from rest.
+    /// A new KIND starts its filter from rest. Through bank 2's door with
+    /// `bank2`: closed, it adds nothing.
     #[inline(always)]
-    pub fn add<const N: usize>(
+    pub fn add(
         &mut self,
-        out: &mut [f32; N],
+        out: &mut [f32; BLOCK_SIZE],
         kind: NoiseKind,
         z: (f32, f32),
         norm: (f32, f32, f32),
         inc: f32,
     ) {
-        if kind != self.kind {
-            (self.kind, self.b, self.h) = (kind, [0.0; 3], 1.0);
+        #[cfg(feature = "bank2")]
+        crate::bank2::DOOR_CELL.with(|d| (d.noise.add)(self, out, kind, z, norm, inc));
+        #[cfg(not(feature = "bank2"))]
+        kern::add(self, out, kind, z, norm, inc);
+    }
+}
+
+/// NOISE's pass as the door carries it (`Noise::add`'s arguments).
+pub type NoiseAdd =
+    fn(&mut Noise, &mut [f32; BLOCK_SIZE], NoiseKind, (f32, f32), (f32, f32, f32), f32);
+
+/// NOISE's entry in bank 2's door (ADR 0197).
+#[repr(C)]
+pub struct NoiseDoor {
+    pub add: NoiseAdd,
+}
+
+impl NoiseDoor {
+    pub const DOOR: NoiseDoor = NoiseDoor { add: kern::add };
+}
+
+/// The pass, linked into bank 2 with `bank2` (`bank2.x`,
+/// `*2va5noise4kern*`): every KIND's loop. Free functions, so each symbol
+/// names this module.
+mod kern {
+    use super::{A, C, Noise, NoiseKind, PK_A, PK_C, PK_D, RD_G, STEPS, make_up};
+    use chimera_hal::BLOCK_SIZE;
+
+    type Buf = [f32; BLOCK_SIZE];
+
+    /// The door's entry (`Noise::add`).
+    #[inline(never)]
+    pub(super) fn add(
+        nz: &mut Noise,
+        out: &mut Buf,
+        kind: NoiseKind,
+        z: (f32, f32),
+        norm: (f32, f32, f32),
+        inc: f32,
+    ) {
+        if kind != nz.kind {
+            (nz.kind, nz.b, nz.h) = (kind, [0.0; 3], 1.0);
         }
         let g = make_up(kind);
         let (z, dz) = (z.0 * g, z.1 * g);
         match kind {
-            NoiseKind::White => self.white(out, (z, dz), norm),
-            NoiseKind::Pink => self.pink(out, (z, dz), norm),
-            NoiseKind::Red => self.red(out, (z, dz), norm),
-            NoiseKind::Digital => self.digital(out, (z, dz), norm, inc * STEPS),
+            NoiseKind::White => white(nz, out, (z, dz), norm),
+            NoiseKind::Pink => pink(nz, out, (z, dz), norm),
+            NoiseKind::Red => red(nz, out, (z, dz), norm),
+            NoiseKind::Digital => digital(nz, out, (z, dz), norm, inc * STEPS),
         }
     }
 
     #[inline(always)]
-    fn white<const N: usize>(&mut self, out: &mut [f32; N], z: (f32, f32), n: (f32, f32, f32)) {
-        let mut s = self.s;
+    fn white(nz: &mut Noise, out: &mut Buf, z: (f32, f32), n: (f32, f32, f32)) {
+        let mut s = nz.s;
         let (dz, ddn) = (z.1, n.2);
         let (mut z, mut n, mut dn) = (z.0, n.0, n.1);
         for o in out.iter_mut() {
@@ -161,12 +203,12 @@ impl Noise {
             n += dn;
             dn += ddn;
         }
-        self.s = s;
+        nz.s = s;
     }
 
     #[inline(always)]
-    fn pink<const N: usize>(&mut self, out: &mut [f32; N], z: (f32, f32), n: (f32, f32, f32)) {
-        let (mut s, [mut b0, mut b1, mut b2]) = (self.s, self.b);
+    fn pink(nz: &mut Noise, out: &mut Buf, z: (f32, f32), n: (f32, f32, f32)) {
+        let (mut s, [mut b0, mut b1, mut b2]) = (nz.s, nz.b);
         let (dz, ddn) = (z.1, n.2);
         let (mut z, mut n, mut dn) = (z.0, n.0, n.1);
         for o in out.iter_mut() {
@@ -180,12 +222,12 @@ impl Noise {
             n += dn;
             dn += ddn;
         }
-        (self.s, self.b) = (s, [b0, b1, b2]);
+        (nz.s, nz.b) = (s, [b0, b1, b2]);
     }
 
     #[inline(always)]
-    fn red<const N: usize>(&mut self, out: &mut [f32; N], z: (f32, f32), n: (f32, f32, f32)) {
-        let (mut s, [mut lp, mut hp, b2]) = (self.s, self.b);
+    fn red(nz: &mut Noise, out: &mut Buf, z: (f32, f32), n: (f32, f32, f32)) {
+        let (mut s, [mut lp, mut hp, b2]) = (nz.s, nz.b);
         let (dz, ddn) = (z.1, n.2);
         let (mut z, mut n, mut dn) = (z.0, n.0, n.1);
         for o in out.iter_mut() {
@@ -197,20 +239,14 @@ impl Noise {
             n += dn;
             dn += ddn;
         }
-        (self.s, self.b) = (s, [lp, hp, b2]);
+        (nz.s, nz.b) = (s, [lp, hp, b2]);
     }
 
     /// The hold clock `h` gains `r` a sample; past 1 a fresh draw. `r ≥ 1`
     /// draws every sample, WHITE.
     #[inline(always)]
-    fn digital<const N: usize>(
-        &mut self,
-        out: &mut [f32; N],
-        z: (f32, f32),
-        n: (f32, f32, f32),
-        r: f32,
-    ) {
-        let (mut s, mut h, mut v) = (self.s, self.h, self.v);
+    fn digital(nz: &mut Noise, out: &mut Buf, z: (f32, f32), n: (f32, f32, f32), r: f32) {
+        let (mut s, mut h, mut v) = (nz.s, nz.h, nz.v);
         let (dz, ddn) = (z.1, n.2);
         let (mut z, mut n, mut dn) = (z.0, n.0, n.1);
         for o in out.iter_mut() {
@@ -225,7 +261,7 @@ impl Noise {
             n += dn;
             dn += ddn;
         }
-        (self.s, self.h, self.v) = (s, h, v);
+        (nz.s, nz.h, nz.v) = (s, h, v);
     }
 }
 
@@ -235,7 +271,7 @@ mod tests {
     use super::*;
     use std::vec::Vec;
 
-    const N: usize = 64;
+    const N: usize = BLOCK_SIZE;
 
     /// `kind` alone at weight 1 (`R`), `blocks` blocks at OSC 1's `inc`.
     fn noise(kind: NoiseKind, inc: f32, blocks: usize) -> Vec<f32> {

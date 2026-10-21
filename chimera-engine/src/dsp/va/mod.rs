@@ -426,12 +426,12 @@ pub const COST_SOFTSYNC: Cost = Cost(590);
 /// 31.3 + 95 = 641.9.
 pub const COST_PHASE: Cost = Cost(650);
 
-/// NOISE's pass by KIND (ADR 0197): `tools/loop_count.py` on the M7 build
-/// of `noise.rs` (cortex-m7, opt-level 2), a sample's round plus the
-/// block's setup ÷ 64: WHITE 10.6 + 0.5 instructions, PINK 20.0 + 0.7, RED
-/// 16.0 + 0.6, DIGITAL 18.3 + 0.6 with a draw every sample (its fast path
-/// 12.0). `render`'s own share (the level's lane, `z²` in the norm) is
-/// under 0.1 a sample.
+/// NOISE's pass by KIND (ADR 0197): `tools/loop_count.py` on
+/// `va::noise::kern::add` in the release ELF (bank 2), a sample's round
+/// plus the entry's setup ÷ 64 (1.7): WHITE 10.6 instructions, PINK 20.0,
+/// RED 16.0, DIGITAL 18.25 with a draw every sample (its fast path 12.0).
+/// `render`'s own share (the level's lane, `z²` in the norm, the door's
+/// call) is under 0.1 a sample.
 pub const COST_NOISE_WHITE: Cost = Cost(20);
 pub const COST_NOISE_PINK: Cost = Cost(35);
 pub const COST_NOISE_RED: Cost = Cost(30);
