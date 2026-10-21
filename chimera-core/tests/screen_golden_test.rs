@@ -160,8 +160,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // New: VA OSC1 and OSC2 under STACK and ROW; the ROW bar says OSC1 / OSC2, not OSCILLATOR n.
     ("va_osc1", 0x117052eda46fe399),
     ("va_osc2", 0xd1bd400c5e8d1428),
-    ("row_va_osc1", 0xf9e16c734d8030a9),
-    ("row_va_osc2", 0x1c565687256ca1e1),
+    // Then the row gains NOISE (ADR 0197): OSC1 · OSC2 · NOISE · PITCH.
+    ("row_va_osc1", 0x1ce4f23ee9eb7f84),
+    ("row_va_osc2", 0x413f81a42d6a8978),
     ("env_a", 0x5e214e1a2c59ff77),
     ("env_b_env_ad", 0xcfb572705ac049f9),
     ("env_b_env_ahr", 0x8027de37baeab87c),
@@ -306,8 +307,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // moves to hint line 1 (showcase Task 4).
     ("sound_browser", 0xe6ebc09a421a5c11),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
-    // Then pool_full: 2352 → 2544 (the formant fields).
-    ("sound_browser_pool_full", 0x8c26f23d775090b4),
+    // Then pool_full: 2352 → 2544 (the formant fields). Then VA's KIND and
+    // LEVEL (ADR 0197): each dense Sound 10 B more, the pool fills sooner.
+    ("sound_browser_pool_full", 0x81ce95e09e0bd574),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -387,6 +389,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_algo_level", 0x6781c7502e39f90e),
     ("large_bigviz_filter", 0xcabe5de5ca85d1d7),
     ("large_modal_amp", 0x0a265b6a0a9884ed),
+    // VA's NOISE page (ADR 0197): KIND · LEVEL; LEVEL at 60 with its bar;
+    // KIND on DIGITAL.
+    ("va_noise", 0xa02dcec5295dacbb),
+    ("va_noise_level", 0x257365b54b1d88a2),
+    ("va_noise_digital", 0x1eaa6a804b49021f),
     ("large_va_drive", 0x2257cff3560615e2),
     // The Mix chain's map has a TAPE node with `master-tape` (ADR 0055).
     #[cfg(not(feature = "master-tape"))]
