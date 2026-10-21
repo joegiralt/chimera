@@ -437,6 +437,46 @@ pub fn cuts(p: &TapeEngineParams) -> bool {
     p.machine() == TapeMachine::One && p.retrig == Retrig::Cut
 }
 
+/// SCRUB's KEY (ADR 0205): a key places the finger and plays at ROOT
+/// (POSITION), or plays the scrub at its pitch (PITCH).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum KeyMode {
+    Position = 0,
+    Pitch = 1,
+}
+
+impl DiskCode for KeyMode {
+    fn disk_code(self) -> u8 {
+        self as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            KeyMode::Position => "POSITION",
+            KeyMode::Pitch => "PITCH",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(KeyMode::Position),
+            1 => Some(KeyMode::Pitch),
+            _ => None,
+        }
+    }
+}
+
+impl Choice for KeyMode {
+    fn from_value(v: f32) -> Option<Self> {
+        Self::from_disk_code(v as u8)
+    }
+
+    fn value(self) -> f32 {
+        f32::from(self as u8)
+    }
+}
+
 /// STRETCH's splice: in phase with the old grain (MONO), or at the time
 /// pointer (POLY).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -547,6 +587,8 @@ pub struct TapeEngineParams {
     pub wow: Wow,
     /// ONE's RETRIG.
     pub retrig: Retrig,
+    /// SCRUB's KEY.
+    pub key: KeyMode,
 }
 
 /// As the disk has it: MODEL's model and MODE (`neutral_v1.txt` pins it).
@@ -570,6 +612,7 @@ impl core::fmt::Debug for TapeEngineParams {
             .field("slice", &self.slice)
             .field("wow", &self.wow)
             .field("retrig", &self.retrig)
+            .field("key", &self.key)
             .finish()
     }
 }
@@ -596,6 +639,7 @@ impl Default for TapeEngineParams {
             slice: SliceCode::OFF,
             wow: Wow::Capstan,
             retrig: Retrig::Stack,
+            key: KeyMode::Position,
         }
     }
 }
@@ -656,6 +700,8 @@ impl TapeEngineParams {
     pub const WOW: ParamId = ParamId(14);
     pub const MODE: ParamId = ParamId(15);
     pub const RETRIG: ParamId = ParamId(16);
+    /// 17 and 18 are SLICE's (#748), 19 and 20 PLAY's.
+    pub const KEY: ParamId = ParamId(21);
 }
 
 /// Whether `m` reads `id`: the one table for cells, dimming and the audio
@@ -717,7 +763,7 @@ const TAPE: crate::glyph::FocusGlyph = crate::glyph::FocusGlyph::Tape;
 /// latched by ONE's and TRON's first block; the rest is read at note-on or
 /// at a wrap. ROOT and PERIOD have no cell: a pick
 /// copies them from the source.
-pub static TAPE_ENGINE_SPECS: [ParamSpec; 17] = [
+pub static TAPE_ENGINE_SPECS: [ParamSpec; 18] = [
     // The neutral is PLAY in MODE LOOP: LOOP, index 1.
     ParamSpec::choice(
         0,
@@ -853,6 +899,16 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 17] = [
     .short("RTG")
     .ident("RETRIG")
     .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        21,
+        "KEY",
+        ValFmt::Names(&["POSITION", "PITCH"]),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("KEY")
+    .glyph(TAPE),
 ];
 
 impl Block for TapeEngineParams {
@@ -880,6 +936,7 @@ impl Block for TapeEngineParams {
             Self::WOW => self.wow.value(),
             Self::MODE => self.mode().value(),
             Self::RETRIG => self.retrig.value(),
+            Self::KEY => self.key.value(),
             _ => 0.0,
         }
     }
@@ -908,6 +965,7 @@ impl Block for TapeEngineParams {
                 }
             }
             Self::RETRIG => set(&mut self.retrig, v),
+            Self::KEY => set(&mut self.key, v),
             _ => {}
         }
     }
@@ -920,6 +978,7 @@ impl Block for TapeEngineParams {
             Self::WOW => Some(self.wow.disk_code()),
             Self::MODE => Some(self.mode().disk_code()),
             Self::RETRIG => Some(self.retrig.disk_code()),
+            Self::KEY => Some(self.key.disk_code()),
             _ => None,
         }
     }
@@ -932,6 +991,7 @@ impl Block for TapeEngineParams {
             Self::WOW => Some(self.wow.disk_ident()),
             Self::MODE => Some(self.mode().disk_ident()),
             Self::RETRIG => Some(self.retrig.disk_ident()),
+            Self::KEY => Some(self.key.disk_ident()),
             _ => None,
         }
     }
@@ -949,6 +1009,7 @@ impl Block for TapeEngineParams {
             Self::WOW => apply_code(Wow::from_disk_code(code), |w| self.wow = w),
             Self::MODE => apply_code(PlayMode::from_disk_code(code), |m| self.set_mode(m)),
             Self::RETRIG => apply_code(Retrig::from_disk_code(code), |r| self.retrig = r),
+            Self::KEY => apply_code(KeyMode::from_disk_code(code), |k| self.key = k),
             _ => false,
         }
     }

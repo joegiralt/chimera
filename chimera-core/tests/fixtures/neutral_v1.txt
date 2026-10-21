@@ -319,6 +319,7 @@ Sound {
             slice: 0,
             wow: Capstan,
             retrig: Stack,
+            key: Position,
         },
         va: VaParams {
             wave: [

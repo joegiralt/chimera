@@ -189,6 +189,8 @@ pub struct UiDoor {
     source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
     /// START's and END's onset snap (`ui::onset`, ADR 0185).
     onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
+    /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
+    jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -212,6 +214,7 @@ impl UiDoor {
         source_tick: SourceCell::rehead_in,
         source_run: SourceCell::run_in,
         onset: crate::ui::onset::onset_in_bank2,
+        jog: crate::ui::jog::Jog::pass,
     };
 
     #[inline(always)]
@@ -285,6 +288,16 @@ impl UiDoor {
     #[inline(always)]
     pub(crate) fn onset(&self, held: &[u8], frames: u32, from: u32, fwd: bool) -> Option<u32> {
         (self.onset)(held, frames, from, fwd)
+    }
+
+    #[inline(always)]
+    pub(crate) fn jog(
+        &self,
+        j: &mut crate::ui::jog::Jog,
+        now_ms: chimera_hal::Ms,
+        drag: f32,
+    ) -> f32 {
+        (self.jog)(j, now_ms, drag)
     }
 }
 

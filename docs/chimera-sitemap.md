@@ -45,6 +45,15 @@ shared  FLT └ FMD (FILTER MOD), FX, JACK
 
 TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, MOD). TAPE rows in the Sound browser load like any engine's (ADR 0187); with bank 2 closed the Part reads NEEDS UPDATE (ADR 0141).
 
+### SCRUB
+
+DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE · AGE · WOW · KEY (ADR 0205).
+
+- **FINGER** turns the reel. Its encoder is a jog that reads the hand's speed and glides to a stop through DRAG once let go. A CC or a route moves it too.
+- **LENGTH** is the loop behind the finger, as a time: 2 ms to 2 s, never longer than the window. Its default is 70 ms, so a FINGER sweep moves the sound from the first turn.
+- **KEY POSITION**, the default, makes a key place the finger and plays at ROOT. C is the window's start and each semitone up is 1/12 further along, in every octave. FINGER adds to the key's place. On FINGER the focus band reads KEYS PLACE THE FINGER.
+- **KEY PITCH** plays the scrub at the key's pitch.
+
 ### FLT and AMP
 
 | Page | Cells |

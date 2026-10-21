@@ -66,6 +66,9 @@ use screen::*;
 // FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
 // The fourth TAPE merge: the browsers and POOL count 16 Sounds with STAB
 // and FB (4 %).
+// ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
+// tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
+// pool's count (sound_browser_pool_full).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -316,7 +319,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
     // Fourth TAPE merge: MAX_SOUND_COST 2656 (STAB, FB and TAPE), same picture.
     // Then SEM's MORPH: the dense fill leaves 0.1K FREE, not 0.0K.
-    ("sound_browser_pool_full", 0x4de1ac0696ea9318),
+    ("sound_browser_pool_full", 0x30d9348383441db9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -430,8 +433,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_page_stretch_type", 0x2388e89c04b15a30),
     ("tape_deck_transwave", 0xde8bbeffbb06c81a),
     ("tape_page_transwave", 0xcf7697ab32e621c5),
-    ("tape_deck_scrub", 0x38206f8d2ff7fa0f),
-    ("tape_page_scrub", 0x2980dccca3896a88),
+    ("tape_deck_scrub", 0x4e984b2dd79b5313),
+    ("tape_page_scrub", 0x4824af71a2446b88),
     ("tape_deck_pingpong", 0x1e8a9e6d25cb018a),
     ("tape_page_pingpong", 0xfb082cae989abeb8),
     ("tape_strip_oneshot", 0xd0d3879ef227791c),
@@ -439,7 +442,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_strip_tron", 0x92d1139ec52d5494),
     ("tape_strip_stretch", 0x7fac311807a65826),
     ("tape_strip_transwave", 0x8578d1cff2b53962),
-    ("tape_strip_scrub", 0xbc6f5e8bda4a1ee5),
+    ("tape_strip_scrub", 0x4862fecc1608ba29),
     ("tape_strip_pingpong", 0x68c3cfea764a1094),
     ("tape_strip_loop_reversed", 0x8c6bc98f7858d886),
     ("tape_strip_oneshot_slice", 0x8b54df619e454573),

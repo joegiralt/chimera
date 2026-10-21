@@ -231,12 +231,19 @@ fn scrub_drag_slews() {
             .iter()
             .position(|pr| pr.head as f32 - h0 >= 0.632 * span)
             .expect("the finger arrives");
-        // Two one-poles in series, the aim's (`AIM_S`) then DRAG's: the
-        // time their step response reaches 63 % (ADR 0200).
-        let (ta, tf) = (AIM_S, drag_s(drag));
-        let y = |t: f32| 1.0 - (ta * (-t / ta).exp() - tf * (-t / tf).exp()) / (ta - tf);
+        // Three one-poles in series, the aim's two (`AIM_S` each, ADR
+        // 0205) then DRAG's: the time their step response reaches 63 %,
+        // in continuous time.
+        let k = |tau: f32| 1.0 / (tau * SR as f32);
+        let (ka, kf) = (k(AIM_S), k(drag_s(drag)));
+        let (mut a1, mut a2, mut f) = (0.0f32, 0.0f32, 0.0f32);
         let want = (0..48_000)
-            .find(|&i| y(i as f32 / SR as f32) >= 0.632)
+            .find(|_| {
+                a1 += ka * (1.0 - a1);
+                a2 += ka * (a1 - a2);
+                f += kf * (a2 - f);
+                f >= 0.632
+            })
             .unwrap() as f32;
         let got = (n * B) as f32;
         assert!(
@@ -275,8 +282,10 @@ fn scrub_finger_speed_never_steps() {
         let d = moves(&probes);
         let top = d.iter().fold(0i64, |m, x| m.max(x.abs())) as f32;
         let step = d.windows(2).fold(0i64, |m, x| m.max((x[1] - x[0]).abs())) as f32;
+        // The aim's two poles (ADR 0205): measured 0.15 of the peak at
+        // most, at DRAG 0 (0.4 with one).
         assert!(
-            d[0].abs() as f32 <= 0.4 * top && step <= 0.4 * top,
+            d[0].abs() as f32 <= 0.2 * top && step <= 0.2 * top,
             "drag {drag}, a jump: first block {} and largest change {step} of a peak {top}",
             d[0]
         );
@@ -301,8 +310,9 @@ fn scrub_finger_speed_never_steps() {
         let (lo, hi) = d
             .iter()
             .fold((i64::MAX, 0), |(l, h), &x| (l.min(x), h.max(x)));
+        // ×1.16 at most, at DRAG 0 (ADR 0205; 1.4 with one aim pole).
         assert!(
-            hi as f32 <= 1.4 * lo as f32,
+            hi as f32 <= 1.2 * lo as f32,
             "drag {drag}, a staircase: the finger's speed swings {lo}..{hi} frames a reading"
         );
     }

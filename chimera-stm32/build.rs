@@ -97,8 +97,9 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*5Rings5wants* .text.*6stream3edf*);
     *(.rodata.*13chimera_board8card_dma*8IrqState* .rodata.*6stream5serve*);
     /* TAPE's UI (ADR 0175, `chimera_core::bank2::UiDoor`): the strip's
-       raster and the SOURCE cell's card work and turns. Bank 1 keeps the
-       overview's cache, the cell's state and the wrappers.
+       raster and the SOURCE cell's card work and turns, and SCRUB's jog
+       (`Jog::pass`, ADR 0205). Bank 1 keeps the overview's cache, the
+       cell's state and the wrappers.
        Whole functions only, not their closures: the machine outliner
        shares their small calls with bank 1's code. */
     *(.text.*12chimera_core2ui10tape_strip6raster8strip_in .text.*12chimera_core2ui10tape_strip6raster3tri
@@ -110,9 +111,10 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*12chimera_core2ui11source_cell4card*10SourceCell9rehead_in .text.*12chimera_core2ui11source_cell4card*10SourceCell6run_in
       .text.*7project8streamed*10StreamLoad5start .text.*7project8streamed*10StreamLoad5found
       .text.*7project8streamed*10StreamLoad6rehead .text.*7project8streamed9load_kind
-      .text.*12chimera_core2ui5onset6detect*);
+      .text.*12chimera_core2ui5onset6detect* .text.*12chimera_core2ui3jog*3Jog4pass*
+      .text.*12chimera_core2ui3jog*3Jog4rate*);
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
-      .rodata.*12chimera_core2ui5onset6detect*);
+      .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*);
 ";
     // The crates the engine can't name keep their own tables, each at a
     // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):
@@ -182,15 +184,16 @@ SECTIONS {
     *(.bank2.text .bank2.text.*);
     *(.bank2.rodata .bank2.rodata.*);
     /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
-       modules, and every item of `TapeDeck`; its spans and the stream's
+       modules (`scrub`'s units among them, ADR 0205), and every item of
+       `TapeDeck`; its spans and the stream's
        cursor, which only the deck calls, and `ratio_max`, which only
        admission does. `params` and `machine` stay in bank 1, as do `Heads`
        and the cost table. */
-    *(.text.*11tape_engine5heads* .text.*11tape_engine7stretch* .text.*11tape_engine4wave* .text.*11tape_engine4read*
+    *(.text.*11tape_engine5scrub* .text.*11tape_engine5heads* .text.*11tape_engine7stretch* .text.*11tape_engine4wave* .text.*11tape_engine4read*
       .text.*11tape_engine3age* .text.*11tape_engine6warble* .text.*11tape_engine7oneshot* .text.*11tape_engine4tron*
       .text.*11tape_engine4span* .text.*6stream6cursor* .text.*11tape_engine*8TapeDeck*
       .text.*11tape_engine9ratio_max*);
-    *(.rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
+    *(.rodata.*11tape_engine5scrub* .rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
       .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
       .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
     /* Streamed admission and loads (`AdmitDoor`, `LoadDoor`): the bill,

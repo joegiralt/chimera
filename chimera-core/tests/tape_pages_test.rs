@@ -138,7 +138,7 @@ fn model_page_cells() {
         (M::Loop, ["FADE", "--", "--"]),
         (M::Ping, ["FADE", "--", "--"]),
         (M::Tron, ["--", "--", "--"]),
-        (M::Scrub, ["--", "--", "--"]),
+        (M::Scrub, ["KEY", "--", "--"]),
         (M::Stretch, ["POSITION", "TYPE", "--"]),
         (M::Wave, ["--", "--", "--"]),
     ];
@@ -582,14 +582,17 @@ fn tape_pages_have_no_other_gestures() {
         for def in [&TAPE_SRC, &TAPE_DECK, &TAPE_MODEL] {
             for i in 0..6 {
                 let v = view::view(def, i, &ctx);
-                // MIX + SEQ's learn, every mappable cell's, and START's
-                // and END's onset snap.
+                // MIX + SEQ's learn, every mappable cell's, START's and
+                // END's onset snap, and SCRUB's FINGER: a key places it.
                 let h = v.hint(&ctx);
                 let window = v
                     .addr()
                     .is_some_and(|a| matches!(a.param, P::START | P::END));
+                let finger = m == TapeMachine::Scrub && v.addr() == Some(tape(P::POSITION));
                 assert!(
-                    (window && h == view::ONSET_HINT) || h.iter().all(|g| *g == view::LEARN),
+                    (window && h == view::ONSET_HINT)
+                        || (finger && h == view::KEY_HINT)
+                        || h.iter().all(|g| *g == view::LEARN),
                     "{m:?} {} {i}",
                     def.short
                 );
