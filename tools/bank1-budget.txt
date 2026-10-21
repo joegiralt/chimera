@@ -9,15 +9,15 @@
 # Every line names an ADR or the file refuses to load.
 #
 # <set: features as check builds it>  <bytes>  # ADR NNNN: why
-orbit                          886668  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-default                        866264  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-bank2-gate                     868148  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-fault-inject                   839472  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-bench-algo,bank2               878112  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-bench-algo,master-tape,bank2   874076  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-bench-routing,bank2            875364  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-bench-memory,bank2             864200  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-bench-stress,bank2             877836  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-bench-orbit,bank2              869376  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-bench-tape,bank2               848716  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
-filter-probes                  893480  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +548, the VCA gate's closed-door data
+orbit                          886868  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +748, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+default                        865832  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +116, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bank2-gate                     867732  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +132, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+fault-inject                   839752  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +828, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-algo,bank2               878168  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +604, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-algo,master-tape,bank2   874004  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +476, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-routing,bank2            875436  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +620, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-memory,bank2             864432  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +780, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-stress,bank2             878012  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +724, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-orbit,bank2              869768  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +940, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-tape,bank2               849132  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +964, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+filter-probes                  897128  # ADR 0198: frozen at origin/main eb0cdf0f; ADR 0195: +4196, the same and lpg_probe, the count's probe

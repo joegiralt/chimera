@@ -114,5 +114,8 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
     // VA's twelve (NOISE's LEVEL the last); each operator's FRMT and BW, and
     // VOWEL; the FX slot's pots and MIX; the filter's STABILITY, FB and SEM's
     // MODE; the VCA's LPG, DECAY and STRIKE (ADR 0195)
-    assert_eq!(accepted, 11 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 + 3 + 3);
+    assert_eq!(
+        accepted,
+        11 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 + 3 + 3
+    );
 }

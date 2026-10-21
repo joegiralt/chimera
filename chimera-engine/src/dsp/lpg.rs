@@ -377,7 +377,10 @@ impl Lpg {
     /// afresh.
     #[inline(always)]
     fn settle(&mut self) {
-        if !(self.s1.is_finite() && self.s2.is_finite() && self.vac.is_finite() && self.lh.is_finite())
+        if !(self.s1.is_finite()
+            && self.s2.is_finite()
+            && self.vac.is_finite()
+            && self.lh.is_finite())
         {
             *self = Lpg::NEW;
         }

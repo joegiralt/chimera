@@ -132,19 +132,45 @@ pub fn render(args: &[String]) -> Result<(), String> {
     let dir = Path::new(dir);
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let drum = eighths(
-        &[(48, 112), (55, 70), (48, 92), (52, 60), (55, 104), (48, 72), (60, 124), (55, 84)],
+        &[
+            (48, 112),
+            (55, 70),
+            (48, 92),
+            (52, 60),
+            (55, 104),
+            (48, 72),
+            (60, 124),
+            (55, 84),
+        ],
         0.08,
     );
     let bass = eighths(
-        &[(36, 110), (36, 80), (48, 100), (36, 70), (39, 105), (36, 80), (43, 115), (46, 90)],
+        &[
+            (36, 110),
+            (36, 80),
+            (48, 100),
+            (36, 70),
+            (39, 105),
+            (36, 80),
+            (43, 115),
+            (46, 90),
+        ],
         0.18,
     );
     let mut takes: Vec<(String, Sound, &Phrase)> = vec![("bongo".into(), bongo(), &drum)];
     for (tag, a) in [("0", 0.0), ("half", 0.5), ("1", 1.0)] {
-        takes.push((format!("pluck_lpg_{tag}"), gate(pluck(), a, 0.0, 0.0), &bass));
+        takes.push((
+            format!("pluck_lpg_{tag}"),
+            gate(pluck(), a, 0.0, 0.0),
+            &bass,
+        ));
     }
     for (tag, a) in [("0", 0.0), ("1", 1.0)] {
-        takes.push((format!("sem_lpg_{tag}"), gate(sem(pluck()), a, 0.4, 0.0), &bass));
+        takes.push((
+            format!("sem_lpg_{tag}"),
+            gate(sem(pluck()), a, 0.4, 0.0),
+            &bass,
+        ));
     }
     for (tag, d) in [("0", 0.0), ("half", 0.5), ("1", 1.0)] {
         takes.push((format!("decay_{tag}"), gate(pluck(), 0.0, d, 0.0), &bass));

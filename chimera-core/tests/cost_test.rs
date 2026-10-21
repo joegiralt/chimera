@@ -2660,8 +2660,14 @@ fn the_gate_bills_only_when_up_and_its_voices() {
     let mut table = Vec::new();
     for k in [FilterKind::Sem, FilterKind::K2040] {
         for on in [false, true] {
-            let row = [voices(EngineType::Algo, k, on), voices(EngineType::Va, k, on)];
-            println!("{k:?} gate {on}: ALGO {:?}, VA {:?} (rev V, rev Y)", row[0], row[1]);
+            let row = [
+                voices(EngineType::Algo, k, on),
+                voices(EngineType::Va, k, on),
+            ];
+            println!(
+                "{k:?} gate {on}: ALGO {:?}, VA {:?} (rev V, rev Y)",
+                row[0], row[1]
+            );
             table.push(row);
         }
     }

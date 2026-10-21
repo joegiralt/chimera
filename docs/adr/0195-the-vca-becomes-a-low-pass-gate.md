@@ -41,13 +41,19 @@ Plaits' gate is behavioural, not a circuit. One state (Plaits calls it the vactr
 - **The gate in bank 1:** bank 1 is frozen (owner). Its kernel is about 1 KB that only gated Sounds run.
 
 ## Consequences
-- **Flash** (the `orbit` set as `just check` builds it, against origin/main 5a2e50e7):
-  - **Bank 2** grows 4,384 B (`.bk2` 185,504 → 189,888): the kernel, `Lpg::block` inlined into it, and the bill.
-  - **Bank 1** grows 532 B (886,120 → 886,652). All of that is the closed-door data ADR 0198 allows:
-    - 348 B of rodata: `OUT_SPECS`' three specs (216), their `KNOBS` entries (60), `ROW_WORDS`' AMP and SENDS (24), `spec`'s switch table (12), and the words LPG, DECAY, STRIKE, DCAY, STRK and SENDS (32);
-    - 200 B for the Sound's 12 more bytes (`OutParams::gate`). Base plus that one field and nothing else measures 886,320 B: every struct that holds a Sound moves, and its offsets take longer instructions.
-  - **Bank-1 code** is net −16 B against that measure. The door stubs are `Instrument::render_with`'s call into `GateDoor::run` and its fallback (+56), the strike's flag in `Voice::trigger` (+36), the gate's state in `Voice::init_chain` (+16) and the bill's call into `GateDoor::cost` in `recost` (+8). Inlining that shifted elsewhere outweighs them (`handle_from_with` −122, `render_half` −68).
-  - Each `tools/bank1-budget.txt` line is raised by 548 B, the measured data, and names this ADR. `filter-probes` also carries `lpg_probe`, the count's probe, in its bank 1; it is never shipped.
+- **Flash** (each set as `just check` builds it, against origin/main 5a2e50e7):
+  - **Bank 2** grows 4,384 B on `orbit` (`.bk2` 185,504 → 189,888): the kernel with `Lpg::block` inlined into it, and the bill.
+  - **Bank 1** on `orbit` grows 748 B (886,120 → 886,868). What it is, from the symbols:
+    - **348 B of closed-door data:** `OUT_SPECS`' three specs (216), their `KNOBS` entries (60), `ROW_WORDS`' AMP and SENDS (24), `spec`'s switch table (12), and the words LPG, DECAY, STRIKE, DCAY, STRK and SENDS (32).
+    - **200 B for the Sound's 12 more bytes** (`OutParams::gate`). This was measured by building main with that one field added and nothing else: 886,320 B. Every struct that holds a Sound moves, and its offsets need longer instructions.
+    - **About 170 B of door stubs** that cannot move:
+      - `Instrument::render_with` +56: the call into `GateDoor::run` and the plain VCA as its fallback.
+      - `Voice::trigger` +68: the strike's flag. The store is one instruction; the rest is the inliner's.
+      - `Voice::init_chain` +34: the gate's state written with the voice's.
+      - `recost` +16: the bill's call into `GateDoor::cost`.
+    - The rest is alignment and inlining noise, which swings about ±200 B from build to build (`handle_from_with`, `render_half`).
+  - The other sets, bank 1 before → after (B): `default` 865,716 → 865,832 (+116); `bank2-gate` 867,600 → 867,732 (+132); `fault-inject` 838,924 → 839,752 (+828); `bench-algo,bank2` 877,564 → 878,168 (+604); `bench-algo,master-tape,bank2` 873,528 → 874,004 (+476); `bench-routing,bank2` 874,816 → 875,436 (+620); `bench-memory,bank2` 863,652 → 864,432 (+780); `bench-stress,bank2` 877,288 → 878,012 (+724); `bench-orbit,bank2` 868,828 → 869,768 (+940); `bench-tape,bank2` 848,168 → 849,132 (+964). `filter-probes` 892,932 → 897,128 (+4,196) also carries `lpg_probe`, the count's probe, and is never shipped.
+  - Each `tools/bank1-budget.txt` line is raised to its measured size and names this ADR (ADR 0198's exception 1: door stubs and a closed door's data).
 - **RAM:** the voice grows 72 B (6,584 → 6,656): the gate's 68 B and padding. `VOICE_CHAIN_BYTES` goes from 2,336 to 2,408. A Sound's params grow 12 B (`ParamSnapshot` 648 → 660). `MAX_SOUND_COST` goes from 2,656 to 2,672 B, since a dense Sound now has 282 params (2,658 B).
 - **Cost** (`tools/loop_count.py` on the `filter-probes` ELF, `lpg::lpg_probe`): the routed loop is unrolled 4×, 127 instructions a time round (31.75 a sample), and the unrouted one 68 (17). The block's 654 instructions are 10.2 a sample. Its step, about 122 instructions and 2 `vdiv`, runs 5⅓ times a block: 8.3 more and 0.21 `vdiv` a sample with the block's own. So `ceil5(50.2 × 1.606 + 12 × 0.21)` = **85 cycles routed** and 60 unrouted. `LPG_COST` bills 85 either way, on top of the VCA it does not credit, and only while LPG, DECAY or STRIKE is above 0 or routed. This is a static count, not yet read on the unit.
 - **Voices** (`the_gate_bills_only_when_up_and_its_voices`), INIT Sounds beside the reserve, rev V (480 MHz) / rev Y (400 MHz):

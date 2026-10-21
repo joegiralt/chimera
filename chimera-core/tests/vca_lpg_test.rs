@@ -381,13 +381,19 @@ fn the_gate_opens_bright_and_shuts_as_plaits() {
             "{name}: onset {:.0} Hz, 50 ms {:.0} Hz, −20 dB {} ms, −40 dB {} ms, 1 s {:.1} dB",
             c[0], c[1], c[2], c[3], c[4]
         );
-        assert!((c[0] - r[0]).abs() < 0.01 * r[0], "{name} onset {c:?} {r:?}");
+        assert!(
+            (c[0] - r[0]).abs() < 0.01 * r[0],
+            "{name} onset {c:?} {r:?}"
+        );
         assert!((c[1] - r[1]).abs() < 0.01 * r[1], "{name} 50 ms");
         assert!((c[2] - r[2]).abs() <= 2.0, "{name} −20 dB");
         assert!((c[3] - r[3]).abs() <= 2.0, "{name} −40 dB");
         assert!((c[4] - r[4]).abs() < 0.3, "{name} 1 s");
         assert!(c[0] > 1500.0 && c[1] < c[0], "{name}: bright, then darker");
-        assert!(c[3] > 200.0 && c[3] < 1600.0, "{name}: shuts in about a second");
+        assert!(
+            c[3] > 200.0 && c[3] < 1600.0,
+            "{name}: shuts in about a second"
+        );
     }
 }
 
@@ -536,7 +542,10 @@ fn the_knobs_never_zipper() {
         }
         assert!(t.finite());
         let s = BPS / 2;
-        assert!(t.click(0, s, (s / 2, s + 8), true).is_none(), "knob {which}");
+        assert!(
+            t.click(0, s, (s / 2, s + 8), true).is_none(),
+            "knob {which}"
+        );
     }
 }
 
@@ -612,7 +621,10 @@ fn the_gate_recovers_from_nan() {
     for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
         run(&mut g, bad, &one);
         for _ in 0..2 {
-            assert!(run(&mut g, 0.3, &one).iter().all(|v| v.is_finite()), "{bad}");
+            assert!(
+                run(&mut g, 0.3, &one).iter().all(|v| v.is_finite()),
+                "{bad}"
+            );
         }
     }
     let y = run(&mut g, 0.3, &nan);
@@ -640,13 +652,18 @@ fn old_sounds_load_as_plain_vcas() {
     gated_into(&mut s);
     let d = decode(&encode(&s)).unwrap();
     assert!(d.bits_eq(&s));
-    assert_eq!(
-        d.params.out.gate, [0.75, 0.5, 0.25]
-    );
+    assert_eq!(d.params.out.gate, [0.75, 0.5, 0.25]);
     let init = encode(&Sound::init(EngineType::Va));
     assert!(init.len() < encode(&s).len());
     let specs = s.params.out.specs();
-    for (id, ident) in [(4, "SEND1"), (5, "SEND2"), (6, "SEND3"), (7, "LPG"), (8, "DECAY"), (9, "STRIKE")] {
+    for (id, ident) in [
+        (4, "SEND1"),
+        (5, "SEND2"),
+        (6, "SEND3"),
+        (7, "LPG"),
+        (8, "DECAY"),
+        (9, "STRIKE"),
+    ] {
         let sp = specs.iter().find(|p| p.id.0 == id).unwrap();
         assert_eq!(sp.ident, ident);
     }

@@ -19,10 +19,10 @@ use crate::dsp::filter::{
     FB_COST, FILTER_LEVEL_COST, Fed, Filter, FilterMods, FilterStability, Spread,
 };
 use crate::dsp::gate::AmpGate;
-use crate::dsp::lpg::Lpg;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
 use crate::dsp::lfo::{Lfo, LfoClock};
+use crate::dsp::lpg::Lpg;
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::voice_fx::VoiceFx;

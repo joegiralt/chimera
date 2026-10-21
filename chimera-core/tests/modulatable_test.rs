@@ -166,7 +166,10 @@ fn every_modulatable_param_audibly_changes_output() {
     // them); FRMT and BW per operator, VOWEL; the FX slot's pots and MIX;
     // less DRV's three and the fold's; the filter's STABILITY, FB and SEM's
     // MODE; the VCA's LPG, DECAY and STRIKE (ADR 0195).
-    assert_eq!(checked, 17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 3 + 3);
+    assert_eq!(
+        checked,
+        17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 3 + 3
+    );
 }
 
 /// #188: ENV 2 → MORPH is heard on the INIT Sound, whose ALG B differs
