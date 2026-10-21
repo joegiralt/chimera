@@ -111,7 +111,7 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
     // (DRV's and the folder's moved into the FX slot, whose P1 is the fixed
     // FX column's.)
     // + ENV n LEVEL, TIME, RISE, FALL, SHAPE; VCA; PITCH, FINE; Modal's macros;
-    // VA's eleven; each operator's FRMT and BW, and VOWEL; the FX slot's
-    // pots and MIX; the filter's STABILITY, FB and SEM's MODE
-    assert_eq!(accepted, 11 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 + 3);
+    // VA's twelve (NOISE's LEVEL the last); each operator's FRMT and BW, and
+    // VOWEL; the FX slot's pots and MIX; the filter's STABILITY, FB and SEM's MODE
+    assert_eq!(accepted, 11 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 + 3);
 }

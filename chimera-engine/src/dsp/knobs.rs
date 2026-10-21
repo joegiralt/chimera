@@ -247,6 +247,8 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 offset_of!(V, shape)
             } else if id == V::SHAPE2.0 {
                 offset_of!(V, shape) + size_of::<f32>()
+            } else if id == V::NOISE.0 {
+                offset_of!(V, noise)
             } else {
                 panic!("a VA knob without a field")
             };

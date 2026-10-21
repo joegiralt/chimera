@@ -292,6 +292,7 @@ fn leaving_fm_settles() {
         sub: 0.0,
         amount: 0.8,
         mode: VaMode::Fm,
+        ..VaParams::default()
     };
     let mix = VaParams {
         mode: VaMode::Mix,
@@ -912,6 +913,7 @@ fn am_below_the_knee_is_todays() {
             amount: xp * AM_KNEE,
             sub: 0.3,
             stability: 1.0,
+            ..VaParams::default()
         };
         let y = held(36, p, 128);
         let got: f64 = y.iter().map(|&v| f64::from(v).powi(2)).sum();

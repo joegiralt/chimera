@@ -20,6 +20,7 @@ mod reference;
 mod sig;
 mod stim;
 mod unitab;
+mod vanoise;
 mod voice;
 
 use chimera_core::dsp::reverb::ReverbType;
@@ -40,6 +41,8 @@ usage: chimera-utils [flags] COMMAND …
   circuit render MODEL OUTDIR [EVENTS]
                            a model on unitab's scripts × RES, raw levels, after
                            the known-pair check
+  vanoise hash|check|render …
+                           VA NOISE on the full engine: bit hashes, the page's set
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
                            (an effect also on the listening set)
   bank2-seal ELF BIN BK2 --version TEXT
@@ -218,6 +221,7 @@ fn run() -> Result<bool, String> {
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
         "circuit" => circuit::run(rest).map(|_| true),
+        "vanoise" => vanoise::run(rest).map(|_| true),
         "devices" => {
             for (name, d) in devices::Device::all() {
                 let ks: Vec<String> = d

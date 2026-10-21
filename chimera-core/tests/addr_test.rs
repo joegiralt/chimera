@@ -130,6 +130,7 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         VaParams::CRSE2,
         VaParams::FINE2,
         VaParams::SHAPE2,
+        VaParams::NOISE,
     ] {
         want.push(ParamAddr::new(BlockRef::Va, id));
     }

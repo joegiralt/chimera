@@ -35,15 +35,15 @@ pub const RES_CC: [u8; 4] = [19, 64, 95, 114];
 const PRE_S: f64 = 1.0;
 
 #[derive(Clone, Copy)]
-enum Ev {
+pub enum Ev {
     On(u8, u8),
     Off(u8),
     Cc(u8, u8),
 }
 
 pub struct Script {
-    ev: Vec<(f64, Ev)>,
-    tail: f64,
+    pub ev: Vec<(f64, Ev)>,
+    pub tail: f64,
 }
 
 /// The bundled scripts, `unitab/events.json`.
