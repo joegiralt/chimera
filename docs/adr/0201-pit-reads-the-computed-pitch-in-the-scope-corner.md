@@ -73,7 +73,7 @@ door.
    frame's field and the key's XOR into the scope's; the corner's key
    is 0 off PIT, so every scope page shares the one arm. Measured on
    the default firmware against origin/tape-streaming (0d026a9a):
-   bank 1 +144 B (.text; .rodata and .data +0), bank 2 +2,528 B.
+   bank 1 +104 B (.text; .rodata and .data +0), bank 2 +2,624 B.
    Closed, the corner is empty.
 
 6. **Types.** A pitch is a `Tone` (cents above MIDI 0) and gives its
@@ -103,8 +103,8 @@ door.
 - An FM Sound whose carrier ratio isn't 1 sounds its carrier, not the
   note: the corner reads the note (the ratio is the timbre's).
 - The corner covers up to 112 × 33 px of the scope's top-right.
-- RAM: the `Tuner` state (six last notes and the two lines). Flash: 144 B
-  of bank 1, 2,528 B of bank 2.
+- RAM: the `Tuner` state (six last notes and the two lines). Flash: 104 B
+  of bank 1, 2,624 B of bank 2.
 
 ## Sources
 - Request: owner, 2026-10-21 (PIT tuner).
