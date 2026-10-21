@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::dsp::tape_engine::Direction;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::dsp::tape_engine::TapeMachine;
@@ -91,7 +92,7 @@ impl Rig {
         let a = &mut self.shared.parts[part];
         *a.params = Sound::init(EngineType::Tape).params;
         a.params.tape.machine =
-            TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
+            TapeMachine::of(model);
         *a.mod_state = ModState::new();
         a.source = source;
     }
@@ -609,7 +610,8 @@ fn a_gated_hold_note_sustains() {
     use common::tape::OneSource;
     let (_, held) = plain(1, 100.0);
     let p = TapeEngineParams {
-        machine: TapeMachine::One,
+        machine: TapeMachine::Play,
+        direction: Direction::Forward,
         drag: FADE_HOLD,
         ..TapeEngineParams::default()
     };

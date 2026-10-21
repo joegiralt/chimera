@@ -659,25 +659,27 @@ fn golden_check_catches_every_disagreement() {
 /// then the machines (TAPE Task 12b). `tape_reverse` is Task 12's REVERSE,
 /// now LOOP with END before START: its row is unchanged.
 fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
-    use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode, TapeModel as M};
+    use chimera_core::dsp::tape_engine::{FADE_HOLD, Direction, TapeModel as M};
     let p = TapeEngineParams::default();
     let model = |model| TapeEngineParams {
-        machine: TapeMachine::of(model, PlayMode::Loop),
+        machine: TapeMachine::of(model),
         ..p
     };
     // The old machines, played as PLAY in each MODE (ADR 0170): ONE at
     // HOLD is ONESHOT.
     let ping = TapeEngineParams {
-        machine: TapeMachine::Ping,
+        machine: TapeMachine::Play,
+        direction: Direction::Ping,
         ..p
     };
     let one = TapeEngineParams {
-        machine: TapeMachine::One,
+        machine: TapeMachine::Play,
+        direction: Direction::Forward,
         drag: FADE_HOLD,
         ..p
     };
     let rev = |model| TapeEngineParams {
-        machine: TapeMachine::of(model, PlayMode::Loop),
+        machine: TapeMachine::of(model),
         start: 1.0,
         end: 0.0,
         ..p
@@ -714,10 +716,10 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
             "tape_tron_held",
             TapeEngineParams {
                 size: 0.5,
-                ..model(M::Tron)
+                ..p.with_way(chimera_core::dsp::tape_engine::Way::Tron)
             },
         ),
-        ("tape_tron_released", model(M::Tron)),
+        ("tape_tron_released", p.with_way(chimera_core::dsp::tape_engine::Way::Tron)),
         ("tape_stretch_reverse", rev(M::Stretch)),
         (
             "tape_loop_warble",

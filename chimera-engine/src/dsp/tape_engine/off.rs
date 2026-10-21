@@ -13,7 +13,7 @@ use crate::project::SourceId;
 use crate::source_table::GateView;
 use crate::stream::port::StreamPort;
 
-use super::{Heads, TapeEngineParams, TapeMachine};
+use super::{Heads, TapeEngineParams, Way};
 
 #[derive(Clone, Copy)]
 pub struct TapeEngine;
@@ -77,7 +77,7 @@ impl TapeEngine {
         Cost(0)
     }
 
-    pub const fn model_cost(_: TapeMachine) -> Cost {
+    pub const fn model_cost(_: Way) -> Cost {
         Cost(0)
     }
 

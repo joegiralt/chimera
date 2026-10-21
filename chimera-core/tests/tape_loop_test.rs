@@ -13,8 +13,7 @@ use core::mem::MaybeUninit;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, NOTE_ON_RAMP, PlayMode, TapeEngine, TapeEngineParams, TapeModel, WALK_MAX_S, inc,
-    loop_len, walk_s,
+    INC_MAX, NOTE_ON_RAMP, Direction, TapeEngine, TapeEngineParams, TapeModel, Way, inc, loop_len,
 };
 use chimera_hal::{BLOCK_SIZE, MidiNote};
 use common::tape::{Mach, held_plain, held_transwave, sine};
@@ -332,12 +331,13 @@ fn note_on_ramp_has_no_corner() {
     let v = SourceView::strict(&held).unwrap();
     let n = NOTE_ON_RAMP as f32;
     for (model, mode) in [
-        (TapeModel::Play, PlayMode::Loop),
-        (TapeModel::Play, PlayMode::Ping),
-        (TapeModel::Stretch, PlayMode::Loop),
+        (TapeModel::Play, Direction::Loop),
+        (TapeModel::Play, Direction::Ping),
+        (TapeModel::Stretch, Direction::Loop),
     ] {
         let p = TapeEngineParams {
-            machine: TapeMachine::of(model, mode),
+            machine: TapeMachine::of(model),
+            direction: mode,
             start: 0.125,
             motion: if model == TapeModel::Stretch {
                 0.5
@@ -378,37 +378,26 @@ fn macros_ease() {
     }
 }
 
-/// WALK is in seconds of source, a cubic (#698): MOTION ½ walks
-/// `WALK_MAX_S / 8` = 0.5 s of source a second, so on a 1 s window the
-/// loop's start crosses half the room a second, and wraps; on a 4 s window
-/// it crosses an eighth.
+/// MOTION no longer walks PLAY's loop in time (ADR 0200: WALK steps at
+/// each note, `tape_play_test`): a LOOP at MOTION ½ plays as at 0.
 #[test]
-fn walk_moves_the_loop() {
-    assert!((walk_s(0.5) - WALK_MAX_S / 8.0).abs() < 1e-6);
-    assert!((walk_s(-0.25) + WALK_MAX_S / 64.0).abs() < 1e-6);
-    for secs in [1u32, 4] {
-        let w = secs * 48_000;
-        let held = held_plain(&sine(48_000, 100.0, w), 48_000);
-        let v = SourceView::strict(&held).unwrap();
-        let p = TapeEngineParams {
-            motion: 0.5,
-            size: 0.0,
-            ..TapeEngineParams::default()
-        };
-        let ll = loop_len(0.0, w, SourceRate::MAX);
-        let mut e = fresh();
-        e.note_on(60, &p, &v, SR);
-        let (_, heads) = play(&mut e, &p, &v, 1_000);
-        for t in [0.25f32, 0.5, 0.75, 1.25] {
-            let b = (t * SR as f32 / BLOCK_SIZE as f32) as usize - 1;
-            let want = (0.5 * t / secs as f32).fract() * (w - ll) as f32;
-            let got = heads[b] as f32;
-            assert!(
-                (got - want).abs() < 300.0,
-                "{secs} s, at {t} s: {got}, want {want}"
-            );
-        }
-    }
+fn motion_leaves_the_loop() {
+    let w = 48_000;
+    let held = held_plain(&sine(48_000, 100.0, w), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let still = TapeEngineParams {
+        size: 0.0,
+        ..TapeEngineParams::default()
+    };
+    let moving = TapeEngineParams {
+        motion: 0.5,
+        ..still
+    };
+    let mut a = fresh();
+    a.note_on(60, &still, &v, SR);
+    let mut b = fresh();
+    b.note_on(60, &moving, &v, SR);
+    assert_eq!(play(&mut a, &still, &v, 300).0, play(&mut b, &moving, &v, 300).0);
 }
 
 /// STEAL GLIDE glides `inc`: an octave up at τ 0.1 s is 63 % of the way
@@ -459,7 +448,7 @@ fn tiny_sources_play_finite() {
                 for (start, end) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)] {
                     for (size, xfade) in [(0.0, 0.0), (0.0, 0.5), (1.0, 0.1), (1.0, 0.5)] {
                         let p = TapeEngineParams {
-                            machine: TapeMachine::of(model, PlayMode::Loop),
+                            machine: TapeMachine::of(model),
                             start,
                             end,
                             size,
@@ -479,21 +468,15 @@ fn tiny_sources_play_finite() {
             }
             // ONESHOT (SLICE OFF, NOTE, 16) and TRON, every window either
             // way, at the clamp: they end, finite.
-            for (model, slice) in [
-                (TapeModel::Play, 0u8),
-                (TapeModel::Play, 1),
-                (TapeModel::Play, 17),
-                (TapeModel::Tron, 0),
-            ] {
+            for (way, slice) in [(Way::One, 0u8), (Way::One, 1), (Way::One, 17), (Way::Tron, 0)] {
                 for (start, end) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)] {
                     for size in [0.0, 1.0] {
                         let p = TapeEngineParams {
-                            machine: TapeMachine::of(model, PlayMode::One),
                             slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
                             start,
                             end,
                             size,
-                            ..TapeEngineParams::default()
+                            ..TapeEngineParams::default().with_way(way)
                         };
                         let mut e = fresh();
                         e.set_pitch(2_400.0);
@@ -501,9 +484,9 @@ fn tiny_sources_play_finite() {
                         let (out, _) = play(&mut e, &p, &v, 8);
                         assert!(
                             out.iter().all(|y| y.is_finite()),
-                            "{frames} frames, {model:?} {slice}, {start}..{end}"
+                            "{frames} frames, {way:?} {slice}, {start}..{end}"
                         );
-                        assert!(!e.is_active(), "{model:?} {slice}: ends");
+                        assert!(!e.is_active(), "{way:?} {slice}: ends");
                     }
                 }
             }
@@ -584,21 +567,16 @@ fn midi_extremes_stay_finite() {
     let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
     assert!(out.iter().all(|y| y.is_finite()));
     // The machines, at both ends of MIDI, either way round.
-    for (model, mode) in [
-        (TapeModel::Play, PlayMode::One),
-        (TapeModel::Tron, PlayMode::Loop),
-        (TapeModel::Play, PlayMode::Loop),
-    ] {
+    for way in [Way::One, Way::Tron, Way::Loop] {
         for slice in [0u8, 1, 17] {
             for (note, pitch) in [(0u8, -2_400.0f32), (127, 2_400.0)] {
                 for (start, end) in [(0.2, 0.8), (0.8, 0.2)] {
                     let p = TapeEngineParams {
-                        machine: TapeMachine::of(model, mode),
                         slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
                         start,
                         end,
                         tape: 1.0,
-                        ..TapeEngineParams::default()
+                        ..TapeEngineParams::default().with_way(way)
                     };
                     let mut e = fresh();
                     e.set_pitch(pitch);
@@ -606,7 +584,7 @@ fn midi_extremes_stay_finite() {
                     let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
                     assert!(
                         out.iter().all(|y| y.is_finite()),
-                        "{model:?} {mode:?} {slice} note {note} {start}..{end}"
+                        "{way:?} {slice} note {note} {start}..{end}"
                     );
                 }
             }

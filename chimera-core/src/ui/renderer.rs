@@ -472,8 +472,7 @@ impl Renderer {
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
-    /// slots glide: the strip never snaps. On PLAY the MODE glides with
-    /// MODEL; off it, the machine is the Part's.
+    /// slots glide: the strip never snaps. The machine is the Part's.
     fn strip_params(&self, f: &Frame) -> (TapeMachine, TapeEngineParams) {
         let t = f.parts[f.active_part.index()].sound.params.tape;
         let mut p = t;
@@ -487,11 +486,8 @@ impl Renderer {
                 crate::block::Block::set(&mut p, a.param, v);
             }
         }
-        let m = match (t.machine.mode(), p.machine.mode()) {
-            (Some(was), now) => TapeMachine::play(now.unwrap_or(was)),
-            (None, _) => t.machine,
-        };
-        (m, p)
+        p.machine = t.machine;
+        (t.machine, p)
     }
 
     /// The focused operator's envelope rates, this page's from its animated

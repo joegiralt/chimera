@@ -6,8 +6,11 @@ use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::EnvSlot;
-use crate::dsp::tape_engine::machine::{defaults, env_defaults};
-use crate::dsp::tape_engine::{MachineIndex, TapeEngineParams, TapeMachine};
+use crate::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
+use crate::block::ParamId;
+use crate::dsp::tape_engine::{
+    Direction, FADE_HOLD, MachineIndex, TapeEngineParams, TapeMachine, fade_default,
+};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
 
@@ -92,12 +95,12 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
         Edit::Fine(d) => crate::block::nudge_fine(&mut *b, a.param, d),
         Edit::To(v) => b.set(a.param, v),
     }
-    let model = machine_edit(a, before, &mut *b);
+    let env1 = machine_edit(a, before, &mut *b);
     let moved = b.get(a.param) != before;
-    if let Some(m) = model
+    if !env1.is_empty()
         && let Some(mut env) = params.block_mut(BlockRef::Env(EnvSlot::Env1))
     {
-        for &(id, v) in env_defaults(m) {
+        for &(id, v) in env1 {
             env.set(id, v);
         }
     }
@@ -105,19 +108,40 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
 }
 
 /// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
-/// Machines; ONE, LOOP and PING each a machine, ADR 0178); a load never
-/// does. The engine eases them in. Returns the new machine, whose ENV 1
-/// defaults (`env_defaults`) the caller writes.
-fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) -> Option<TapeMachine> {
-    let model = TapeEngineParams::MODEL;
-    if a == ParamAddr::new(BlockRef::TapeEngine, model) && b.get(model) != before {
-        let m = TapeMachine::from_index(MachineIndex(b.get(model) as u8));
-        for (id, v) in defaults(m) {
-            b.set(id, v);
-        }
-        return Some(m);
+/// Machines, ADR 0178), and a DIRECTION edit across once through and a
+/// loop PLAY's LENGTH and FADE for it (ADR 0200), as a MODEL turn between
+/// ONE and LOOP did; a load never does. The engine eases them in. Returns
+/// the ENV 1 defaults (`env_defaults`) the caller writes.
+fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) -> &'static [(ParamId, f32)] {
+    type T = TapeEngineParams;
+    if a.block != BlockRef::TapeEngine || b.get(a.param) == before {
+        return &[];
     }
-    None
+    let d = Direction::ALL[usize::from(b.get(T::MODE) as u8).min(Direction::ALL.len() - 1)];
+    let m = TapeMachine::from_index(MachineIndex(b.get(T::MODEL) as u8));
+    match a.param {
+        T::MODEL => {
+            for (id, v) in defaults(m, d) {
+                b.set(id, v);
+            }
+            env_defaults(m, d)
+        }
+        T::MODE => {
+            let was = Direction::ALL[usize::from(before as u8).min(Direction::ALL.len() - 1)];
+            let writes = direction_defaults(was, d);
+            for &(id, v) in writes {
+                b.set(id, v);
+            }
+            if writes.is_empty() { &[] } else { env_defaults(m, d) }
+        }
+        // TRON on: its pad always lifts, so FADE at HOLD becomes TRON's
+        // 32 ms, as a MODEL turn onto TRON wrote.
+        T::TRON if b.get(T::TRON) > 0.5 && b.get(T::DRAG) >= FADE_HOLD => {
+            b.set(T::DRAG, fade_default(Direction::Loop));
+            &[]
+        }
+        _ => &[],
+    }
 }
 
 /// Shift+encoder on `slot`: snap the bound param (the selector does not snap).

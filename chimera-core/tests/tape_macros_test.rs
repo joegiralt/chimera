@@ -7,7 +7,6 @@ mod common;
 
 use core::mem::MaybeUninit;
 
-use chimera_core::dsp::tape_engine::PlayMode;
 use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::age::{Age, age_runs};
 use chimera_core::dsp::tape_engine::read::SourceView;
@@ -650,7 +649,7 @@ fn full_tape_keeps_the_clamp_and_floors() {
     ] {
         let model = m.model;
         let p = TapeEngineParams {
-            machine: TapeMachine::of(model, PlayMode::Loop),
+            machine: TapeMachine::of(model),
             start: 0.5,
             end: 0.5 + 64.0 / 48_000.0,
             size: 0.0,

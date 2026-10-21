@@ -9,8 +9,8 @@ use crate::dsp::algo::math::exp2;
 
 /// How a note plays its source: the machines (spec § 2 Machines). Each
 /// discriminant is its disk code. PLAY is LOOP's code 0; ONESHOT (7),
-/// PING-PONG (2) and REVERSE (1) are retired and load as PLAY
-/// (`translate_v1`).
+/// PING-PONG (2), REVERSE (1) and TRON (6) are retired and load as PLAY
+/// (`translate_v1`, ADR 0200).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TapeModel {
@@ -18,16 +18,14 @@ pub enum TapeModel {
     Transwave = 3,
     Scrub = 4,
     Stretch = 5,
-    Tron = 6,
 }
 
 impl TapeModel {
-    /// Every model; MODEL lists them as `TapeMachine`s.
-    pub const ALL: [TapeModel; 5] = [
+    /// Every model, in MODEL's order (`TapeMachine::ALL`).
+    pub const ALL: [TapeModel; 4] = [
         TapeModel::Play,
-        TapeModel::Tron,
-        TapeModel::Scrub,
         TapeModel::Stretch,
+        TapeModel::Scrub,
         TapeModel::Transwave,
     ];
 
@@ -35,10 +33,9 @@ impl TapeModel {
     pub fn index(self) -> u8 {
         match self {
             TapeModel::Play => 0,
-            TapeModel::Tron => 1,
+            TapeModel::Stretch => 1,
             TapeModel::Scrub => 2,
-            TapeModel::Stretch => 3,
-            TapeModel::Transwave => 4,
+            TapeModel::Transwave => 3,
         }
     }
 
@@ -60,7 +57,6 @@ impl DiskCode for TapeModel {
             TapeModel::Transwave => "TRANSWAVE",
             TapeModel::Scrub => "SCRUB",
             TapeModel::Stretch => "STRETCH",
-            TapeModel::Tron => "TRON",
         }
     }
 
@@ -85,77 +81,174 @@ macro_rules! retired_models {
     };
 }
 
-retired_models!(Reverse = 1, PingPong = 2, Oneshot = 7);
+retired_models!(Reverse = 1, PingPong = 2, Tron = 6, Oneshot = 7);
+
+/// DIRECTION's retired code: MODE ONE (0), which read neither POSITION nor
+/// LENGTH. It loads as FORWARD from the window's start, whole (ADR 0200).
+pub const RETIRED_ONE: u8 = 0;
 
 impl RetiredModel {
     pub fn from_code(c: u8) -> Option<Self> {
         Self::ALL.into_iter().find(|m| *m as u8 == c)
     }
 
-    fn play_mode(self) -> PlayMode {
-        match self {
-            Self::Reverse => PlayMode::Loop,
-            Self::PingPong => PlayMode::Ping,
-            Self::Oneshot => PlayMode::One,
-        }
-    }
-
     fn translate(self, b: &mut dyn Block) {
         type P = TapeEngineParams;
         let _ = b.set_enum_code(P::MODEL, TapeModel::Play.disk_code());
-        let _ = b.set_enum_code(P::MODE, self.play_mode().disk_code());
         match self {
             Self::Reverse => {
+                let _ = b.set_enum_code(P::MODE, Direction::Loop.disk_code());
                 let (start, end) = (b.get(P::START), b.get(P::END));
                 b.set(P::START, end);
                 b.set(P::END, start);
             }
             Self::Oneshot => {
+                one_as_forward(b);
                 b.set(P::DRAG, FADE_HOLD);
                 b.set(P::SLICE, 0.0);
             }
-            Self::PingPong => {}
+            Self::PingPong => {
+                let _ = b.set_enum_code(P::MODE, Direction::Ping.disk_code());
+            }
+            // TRON read LENGTH as its tape and never POSITION.
+            Self::Tron => {
+                let _ = b.set_enum_code(P::MODE, Direction::Forward.disk_code());
+                b.set(P::POSITION, 0.0);
+                let _ = b.set_enum_code(P::TRON, Tron::On.disk_code());
+            }
         }
     }
 }
 
-/// How PLAY plays: once to END, around a loop, or back and forth.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PlayMode {
-    One = 0,
-    Loop = 1,
-    Ping = 2,
+/// MODE ONE as FORWARD: from the window's start, all of it.
+fn one_as_forward(b: &mut dyn Block) {
+    type P = TapeEngineParams;
+    let _ = b.set_enum_code(P::MODE, Direction::Forward.disk_code());
+    b.set(P::POSITION, 0.0);
+    b.set(P::SIZE, 1.0);
 }
 
-impl DiskCode for PlayMode {
+/// PLAY's DIRECTION (ADR 0200): once forward, once reversed, around a
+/// loop, or back and forth. Discriminants are DIRECTION's values (its
+/// screen order); the disk codes are `disk_code`'s, LOOP's and PING's kept
+/// from MODE and ONE's (0) retired.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Direction {
+    Forward = 0,
+    Reverse = 1,
+    Loop = 2,
+    Ping = 3,
+}
+
+impl Direction {
+    pub const ALL: [Direction; 4] = [
+        Direction::Forward,
+        Direction::Reverse,
+        Direction::Loop,
+        Direction::Ping,
+    ];
+
+    /// FORWARD and REVERSE play the window once.
+    pub const fn once(self) -> bool {
+        matches!(self, Direction::Forward | Direction::Reverse)
+    }
+}
+
+impl DiskCode for Direction {
+    fn disk_code(self) -> u8 {
+        match self {
+            Direction::Loop => 1,
+            Direction::Ping => 2,
+            Direction::Forward => 3,
+            Direction::Reverse => 4,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Direction::Forward => "FORWARD",
+            Direction::Reverse => "REVERSE",
+            Direction::Loop => "LOOP",
+            Direction::Ping => "PING",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.disk_code() == c)
+    }
+}
+
+impl Choice for Direction {
+    fn from_value(v: f32) -> Option<Self> {
+        Self::ALL.get(usize::from(v as u8)).copied()
+    }
+
+    fn value(self) -> f32 {
+        f32::from(self as u8)
+    }
+}
+
+/// PLAY's WALK on its knob's grid, 1/128 a step: a byte, so the block
+/// keeps its size (the voice holds a played copy).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Walk(u8);
+
+impl Walk {
+    pub const OFF: Walk = Walk(0);
+
+    /// `v` (0..1) to its nearest step; a NaN is OFF.
+    pub fn of(v: f32) -> Walk {
+        let v = if v > 0.0 { v.min(1.0) } else { 0.0 };
+        Walk(libm::roundf(v * 128.0) as u8)
+    }
+
+    /// 0..1.
+    pub fn get(self) -> f32 {
+        f32::from(self.0) * (1.0 / 128.0)
+    }
+}
+
+/// PLAY's TRON (ADR 0200): the Mellotron M400's tape. ON, a note's tape
+/// runs out (LENGTH's, up to 8 s, on FORWARD and REVERSE; 8 s around a
+/// loop) and key up lifts the pressure pad through FADE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Tron {
+    Off = 0,
+    On = 1,
+}
+
+impl DiskCode for Tron {
     fn disk_code(self) -> u8 {
         self as u8
     }
 
     fn disk_ident(self) -> &'static str {
         match self {
-            PlayMode::One => "ONE",
-            PlayMode::Loop => "LOOP",
-            PlayMode::Ping => "PING",
+            Tron::Off => "OFF",
+            Tron::On => "ON",
         }
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
         match c {
-            0 => Some(PlayMode::One),
-            1 => Some(PlayMode::Loop),
-            2 => Some(PlayMode::Ping),
+            0 => Some(Tron::Off),
+            1 => Some(Tron::On),
             _ => None,
         }
     }
 }
 
-/// The MODE code a Sound off PLAY saves: the one its file held, or the
-/// last PLAY's. No machine reads it and nothing outside the codec can (ADR
-/// 0189), so a saved Sound keeps its bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KeptMode(PlayMode);
+impl Choice for Tron {
+    fn from_value(v: f32) -> Option<Self> {
+        Self::from_disk_code(v as u8)
+    }
+
+    fn value(self) -> f32 {
+        f32::from(self as u8)
+    }
+}
 
 /// An enum param's value as the UI and the matrix speak it: its place in
 /// the param's names. Every value names one variant, or none.
@@ -175,61 +268,40 @@ pub trait Choice: Sized + Copy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MachineIndex(pub u8);
 
-/// What MODEL lists (#651): PLAY's three MODEs each a machine of their own
-/// beside the others. The params hold the machine; only the codec splits
-/// it into MODEL's and MODE's disk codes (ADR 0189).
+/// What MODEL lists (ADR 0200): the machines are verbs. PLAY holds what
+/// ONE, LOOP, PING and TRON were, as DIRECTION and TRON.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TapeMachine {
-    One,
-    Loop,
-    Ping,
-    Tron,
-    Scrub,
+    Play,
     Stretch,
+    Scrub,
     Wave,
 }
 
 impl TapeMachine {
     /// MODEL's screen order.
-    pub const ALL: [TapeMachine; 7] = [
-        TapeMachine::One,
-        TapeMachine::Loop,
-        TapeMachine::Ping,
-        TapeMachine::Tron,
-        TapeMachine::Scrub,
+    pub const ALL: [TapeMachine; 4] = [
+        TapeMachine::Play,
         TapeMachine::Stretch,
+        TapeMachine::Scrub,
         TapeMachine::Wave,
     ];
 
-    pub const fn of(model: TapeModel, mode: PlayMode) -> Self {
-        match (model, mode) {
-            (TapeModel::Play, PlayMode::One) => TapeMachine::One,
-            (TapeModel::Play, PlayMode::Loop) => TapeMachine::Loop,
-            (TapeModel::Play, PlayMode::Ping) => TapeMachine::Ping,
-            (TapeModel::Tron, _) => TapeMachine::Tron,
-            (TapeModel::Scrub, _) => TapeMachine::Scrub,
-            (TapeModel::Stretch, _) => TapeMachine::Stretch,
-            (TapeModel::Transwave, _) => TapeMachine::Wave,
+    pub const fn of(model: TapeModel) -> Self {
+        match model {
+            TapeModel::Play => TapeMachine::Play,
+            TapeModel::Scrub => TapeMachine::Scrub,
+            TapeModel::Stretch => TapeMachine::Stretch,
+            TapeModel::Transwave => TapeMachine::Wave,
         }
     }
 
     pub const fn model(self) -> TapeModel {
         match self {
-            TapeMachine::One | TapeMachine::Loop | TapeMachine::Ping => TapeModel::Play,
-            TapeMachine::Tron => TapeModel::Tron,
+            TapeMachine::Play => TapeModel::Play,
             TapeMachine::Scrub => TapeModel::Scrub,
             TapeMachine::Stretch => TapeModel::Stretch,
             TapeMachine::Wave => TapeModel::Transwave,
-        }
-    }
-
-    /// PLAY's MODE; `None` off PLAY.
-    pub const fn mode(self) -> Option<PlayMode> {
-        match self {
-            TapeMachine::One => Some(PlayMode::One),
-            TapeMachine::Loop => Some(PlayMode::Loop),
-            TapeMachine::Ping => Some(PlayMode::Ping),
-            _ => None,
         }
     }
 
@@ -240,24 +312,6 @@ impl TapeMachine {
     /// By MODEL's value; past the end, the last.
     pub fn from_index(v: MachineIndex) -> Self {
         Self::ALL[usize::from(v.0).min(Self::ALL.len() - 1)]
-    }
-
-    /// PLAY in `mode`.
-    pub const fn play(mode: PlayMode) -> Self {
-        match mode {
-            PlayMode::One => TapeMachine::One,
-            PlayMode::Loop => TapeMachine::Loop,
-            PlayMode::Ping => TapeMachine::Ping,
-        }
-    }
-
-    /// Order is direction: END before START plays reversed. PING and the
-    /// others take the sorted window.
-    pub const fn ordered(self) -> bool {
-        match self {
-            TapeMachine::One | TapeMachine::Loop | TapeMachine::Tron | TapeMachine::Stretch => true,
-            TapeMachine::Ping | TapeMachine::Scrub | TapeMachine::Wave => false,
-        }
     }
 }
 
@@ -271,41 +325,97 @@ impl Choice for TapeMachine {
     }
 }
 
-impl Choice for PlayMode {
-    fn from_value(v: f32) -> Option<Self> {
-        Self::from_disk_code(v as u8)
+/// How a note plays, the deck's path: PLAY's DIRECTION and TRON split
+/// into the paths ONE, LOOP, PING and TRON were, then the other machines.
+/// TRON around a loop is LOOP's or PING's path with the tape's run-out
+/// (`TapeEngineParams::tron`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Way {
+    One,
+    Loop,
+    Ping,
+    Tron,
+    Scrub,
+    Stretch,
+    Wave,
+}
+
+impl Way {
+    pub const ALL: [Way; 7] = [
+        Way::One,
+        Way::Loop,
+        Way::Ping,
+        Way::Tron,
+        Way::Scrub,
+        Way::Stretch,
+        Way::Wave,
+    ];
+
+    pub const fn of(m: TapeMachine, d: Direction, tron: Tron) -> Way {
+        match (m, d, tron) {
+            (TapeMachine::Play, Direction::Forward | Direction::Reverse, Tron::Off) => Way::One,
+            (TapeMachine::Play, Direction::Forward | Direction::Reverse, Tron::On) => Way::Tron,
+            (TapeMachine::Play, Direction::Loop, _) => Way::Loop,
+            (TapeMachine::Play, Direction::Ping, _) => Way::Ping,
+            (TapeMachine::Scrub, ..) => Way::Scrub,
+            (TapeMachine::Stretch, ..) => Way::Stretch,
+            (TapeMachine::Wave, ..) => Way::Wave,
+        }
     }
 
-    fn value(self) -> f32 {
-        f32::from(self as u8)
+    /// The machine, DIRECTION and TRON that play `self`: ONE and TRON
+    /// FORWARD, off PLAY LOOP and TRON off (the neutral's).
+    pub const fn parts(self) -> (TapeMachine, Direction, Tron) {
+        let d = match self {
+            Way::One | Way::Tron => Direction::Forward,
+            Way::Ping => Direction::Ping,
+            _ => Direction::Loop,
+        };
+        let t = if matches!(self, Way::Tron) { Tron::On } else { Tron::Off };
+        (self.machine(), d, t)
+    }
+
+    pub const fn machine(self) -> TapeMachine {
+        match self {
+            Way::One | Way::Loop | Way::Ping | Way::Tron => TapeMachine::Play,
+            Way::Scrub => TapeMachine::Scrub,
+            Way::Stretch => TapeMachine::Stretch,
+            Way::Wave => TapeMachine::Wave,
+        }
+    }
+
+    /// Order is direction: END before START plays reversed. PING and the
+    /// others take the sorted window.
+    pub const fn ordered(self) -> bool {
+        match self {
+            Way::One | Way::Loop | Way::Tron | Way::Stretch => true,
+            Way::Ping | Way::Scrub | Way::Wave => false,
+        }
     }
 }
 
 /// FADE's last step: note-off is ignored and a ONE note plays to END.
 pub const FADE_HOLD: f32 = 1.0;
 
-/// FADE's default in `mode`: ONE holds (a drum one-shot), the others
-/// release over 32 ms.
-pub fn fade_default(mode: PlayMode) -> f32 {
-    if mode == PlayMode::One {
-        FADE_HOLD
-    } else {
-        0.3
-    }
+/// FADE's default in `d`: FORWARD and REVERSE hold (a drum one-shot), the
+/// loops release over 32 ms.
+pub fn fade_default(d: Direction) -> f32 {
+    if d.once() { FADE_HOLD } else { 0.3 }
 }
 
-/// `p` holds: PLAY in MODE ONE with FADE at HOLD. No other MODE has the step.
+/// `p` holds: PLAY once through, TRON off, FADE at HOLD. Nothing else has
+/// the step: TRON's pad always lifts.
 pub fn hold(p: &TapeEngineParams) -> bool {
-    p.machine == TapeMachine::One && p.drag >= FADE_HOLD
+    p.way() == Way::One && p.drag >= FADE_HOLD
 }
 
 /// SLICE NOTE: a ONE note plays at ROOT, whatever its key.
 pub fn at_root(p: &TapeEngineParams) -> bool {
-    p.machine == TapeMachine::One && p.slice.slice().by_note()
+    p.way() == Way::One && p.slice.slice().by_note()
 }
 
-/// The machines that seek: none streams (slice 1 § 2.7). PLAY's MODEs
-/// and TRON read forward, so they aren't among them.
+/// The machines that seek: none streams (slice 1 § 2.7). PLAY reads
+/// forward unless it plays reversed or bounces.
 ///
 /// ```compile_fail,E0599
 /// use chimera_engine::dsp::tape_engine::params::{NeedsRam, Seeks};
@@ -323,22 +433,27 @@ pub enum Seeks {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NeedsRam {
     Ping,
-    /// END before START.
+    /// REVERSE, or END before START.
     Reverse,
     Machine(Seeks),
 }
 
-/// `None`: ONE, LOOP or TRON, END at or after START. TRON's note is ONE's
-/// path, one head forward to END, so it streams as ONE does (#698).
+/// `p` plays its window backward: REVERSE with END after START, or
+/// FORWARD or LOOP with END before it (#369).
+pub fn backward(p: &TapeEngineParams) -> bool {
+    (p.direction == Direction::Reverse) != (p.end < p.start)
+}
+
+/// `None`: PLAY read forward, TRON or not. TRON's note is ONE's path, one
+/// head forward to END, so it streams as ONE does (#698).
 pub fn needs_ram(p: &TapeEngineParams) -> Option<NeedsRam> {
-    type K = TapeMachine;
     match p.machine {
-        K::Ping => Some(NeedsRam::Ping),
-        K::One | K::Loop | K::Tron if p.end < p.start => Some(NeedsRam::Reverse),
-        K::One | K::Loop | K::Tron => None,
-        K::Scrub => Some(NeedsRam::Machine(Seeks::Scrub)),
-        K::Stretch => Some(NeedsRam::Machine(Seeks::Stretch)),
-        K::Wave => Some(NeedsRam::Machine(Seeks::Wave)),
+        TapeMachine::Play if p.direction == Direction::Ping => Some(NeedsRam::Ping),
+        TapeMachine::Play if backward(p) => Some(NeedsRam::Reverse),
+        TapeMachine::Play => None,
+        TapeMachine::Scrub => Some(NeedsRam::Machine(Seeks::Scrub)),
+        TapeMachine::Stretch => Some(NeedsRam::Machine(Seeks::Stretch)),
+        TapeMachine::Wave => Some(NeedsRam::Machine(Seeks::Wave)),
     }
 }
 
@@ -432,9 +547,10 @@ impl Choice for Retrig {
     }
 }
 
-/// A note on `p`'s Part cuts its other notes: ONE at RETRIG CUT.
+/// A note on `p`'s Part cuts its other notes: PLAY once through at
+/// RETRIG CUT, TRON off.
 pub fn cuts(p: &TapeEngineParams) -> bool {
-    p.machine() == TapeMachine::One && p.retrig == Retrig::Cut
+    p.way() == Way::One && p.retrig == Retrig::Cut
 }
 
 /// STRETCH's splice: in phase with the old grain (MONO), or at the time
@@ -486,19 +602,15 @@ impl Choice for StretchType {
 
 /// MODEL's names, by `TapeMachine::index`: each machine's page name, as
 /// STRETCH and TRANSWAVE overrun a cell's bar.
-pub const MODEL_NAMES: [&str; 7] = ["ONE", "LOOP", "PING", "TRON", "SCRUB", "STRCH", "WAVE"];
+pub const MODEL_NAMES: [&str; 4] = ["PLAY", "STRCH", "SCRUB", "WAVE"];
 
 /// The machines' names in full, by `TapeMachine::index`: the model page's
 /// header.
-pub const MACHINE_NAMES: [&str; 7] = [
-    "ONE",
-    "LOOP",
-    "PING",
-    "TRON",
-    "SCRUB",
-    "STRETCH",
-    "TRANSWAVE",
-];
+pub const MACHINE_NAMES: [&str; 4] = ["PLAY", "STRETCH", "SCRUB", "TRANSWAVE"];
+
+/// DIRECTION's names, by its value: in full where they fit a cell,
+/// FORWARD and PING-PONG don't (full-word labels rule).
+pub const DIRECTION_NAMES: [&str; 4] = ["FWD", "REVERSE", "LOOP", "PING"];
 
 /// SLICE's names, by its value.
 pub const SLICE_NAMES: [&str; 18] = [
@@ -510,21 +622,18 @@ pub const SLICE_NAMES: [&str; 18] = [
 /// END, POSITION and SIZE are fractions; the window is `[START, END]` of the
 /// source, END kept ≥ START + 2 ms where it plays (`heads::window_end`).
 ///
-/// MODEL and MODE are one field, so a MODE off PLAY can't be held:
-/// ```compile_fail,E0560
-/// use chimera_engine::dsp::tape_engine::{PlayMode, TapeEngineParams, TapeModel};
-/// let _ = TapeEngineParams {
-///     model: TapeModel::Tron,
-///     mode: PlayMode::One,
-///     ..TapeEngineParams::default()
-/// };
+/// TRON is PLAY's, not a machine (ADR 0200):
+/// ```compile_fail,E0599
+/// use chimera_engine::dsp::tape_engine::TapeMachine;
+/// let _ = TapeMachine::Tron;
 /// ```
 #[derive(Clone, Copy, PartialEq)]
 pub struct TapeEngineParams {
-    /// MODEL: on disk, MODEL's and MODE's codes (ADR 0189).
+    /// MODEL.
     pub machine: TapeMachine,
-    /// Off PLAY, the MODE code a Sound saves (ADR 0189).
-    pub kept: KeptMode,
+    /// PLAY's DIRECTION (`MODE` on disk) and TRON: kept off PLAY.
+    pub direction: Direction,
+    pub tron: Tron,
     pub start: f32,
     pub end: f32,
     pub position: f32,
@@ -547,6 +656,9 @@ pub struct TapeEngineParams {
     pub wow: Wow,
     /// ONE's RETRIG.
     pub retrig: Retrig,
+    /// PLAY's WALK: how far POSITION can step at each note, 0 to the
+    /// whole window (`walk::step`).
+    pub walk: Walk,
 }
 
 /// As the disk has it: MODEL's model and MODE (`neutral_v1.txt` pins it).
@@ -554,7 +666,7 @@ impl core::fmt::Debug for TapeEngineParams {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TapeEngineParams")
             .field("model", &self.model())
-            .field("mode", &self.mode())
+            .field("mode", &self.direction)
             .field("start", &self.start)
             .field("end", &self.end)
             .field("position", &self.position)
@@ -570,6 +682,8 @@ impl core::fmt::Debug for TapeEngineParams {
             .field("slice", &self.slice)
             .field("wow", &self.wow)
             .field("retrig", &self.retrig)
+            .field("tron", &self.tron)
+            .field("walk", &self.walk)
             .finish()
     }
 }
@@ -579,8 +693,9 @@ impl core::fmt::Debug for TapeEngineParams {
 impl Default for TapeEngineParams {
     fn default() -> Self {
         Self {
-            machine: TapeMachine::Loop,
-            kept: KeptMode(PlayMode::Loop),
+            machine: TapeMachine::Play,
+            direction: Direction::Loop,
+            tron: Tron::Off,
             start: 0.0,
             end: 1.0,
             position: 0.0,
@@ -596,6 +711,7 @@ impl Default for TapeEngineParams {
             slice: SliceCode::OFF,
             wow: Wow::Capstan,
             retrig: Retrig::Stack,
+            walk: Walk::OFF,
         }
     }
 }
@@ -605,11 +721,7 @@ impl TapeEngineParams {
         self.machine
     }
 
-    /// Leaving PLAY keeps its MODE for the disk (`KeptMode`).
     pub fn set_machine(&mut self, m: TapeMachine) {
-        if let Some(k) = self.machine.mode() {
-            self.keep(k);
-        }
         self.machine = m;
     }
 
@@ -617,26 +729,30 @@ impl TapeEngineParams {
         self.machine.model()
     }
 
-    /// PLAY's MODE, LOOP's off PLAY: MODE's value and disk code.
-    const fn mode(&self) -> PlayMode {
-        match self.machine.mode() {
-            Some(m) => m,
-            None => self.kept.0,
+    /// `w`'s machine, DIRECTION and TRON (`Way::parts`).
+    pub fn set_way(&mut self, w: Way) {
+        (self.machine, self.direction, self.tron) = w.parts();
+    }
+
+    /// `self` on `w` (`set_way`).
+    pub const fn with_way(self, w: Way) -> Self {
+        let (machine, direction, tron) = w.parts();
+        Self {
+            machine,
+            direction,
+            tron,
+            ..self
         }
     }
 
-    /// MODE: PLAY's, or off PLAY the code the disk keeps.
-    fn set_mode(&mut self, m: PlayMode) {
-        if self.machine.mode().is_some() {
-            self.machine = TapeMachine::play(m);
-        } else {
-            self.keep(m);
-        }
+    /// The deck's path for this machine, DIRECTION and TRON.
+    pub const fn way(&self) -> Way {
+        Way::of(self.machine, self.direction, self.tron)
     }
 
-    /// MODE's code off PLAY: kept for the disk alone.
-    fn keep(&mut self, m: PlayMode) {
-        self.kept = KeptMode(m);
+    /// PLAY with TRON on: the tape runs out and the pad lifts at key up.
+    pub fn tron_on(&self) -> bool {
+        self.machine == TapeMachine::Play && self.tron == Tron::On
     }
 
     pub const MODEL: ParamId = ParamId(0);
@@ -656,16 +772,19 @@ impl TapeEngineParams {
     pub const WOW: ParamId = ParamId(14);
     pub const MODE: ParamId = ParamId(15);
     pub const RETRIG: ParamId = ParamId(16);
+    // 17 and 18 are SLICE's (ADR 0199, `tape-slice`).
+    pub const TRON: ParamId = ParamId(19);
+    pub const WALK: ParamId = ParamId(20);
 }
 
 /// Whether `m` reads `id`: the one table for cells, dimming and the audio
 /// test, from the machines' (`machine::MACHINES`). START, END, TAPE, AGE
-/// and WOW read on every machine; ROOT and PERIOD have no cell.
+/// and WOW read on every machine; ROOT and PERIOD have no cell. DIRECTION
+/// (MODE) is PLAY's cell.
 pub fn reads(m: TapeMachine, id: ParamId) -> bool {
     type P = TapeEngineParams;
     match id {
         P::MODEL
-        | P::MODE
         | P::START
         | P::END
         | P::TAPE
@@ -717,14 +836,14 @@ const TAPE: crate::glyph::FocusGlyph = crate::glyph::FocusGlyph::Tape;
 /// latched by ONE's and TRON's first block; the rest is read at note-on or
 /// at a wrap. ROOT and PERIOD have no cell: a pick
 /// copies them from the source.
-pub static TAPE_ENGINE_SPECS: [ParamSpec; 17] = [
-    // The neutral is PLAY in MODE LOOP: LOOP, index 1.
+pub static TAPE_ENGINE_SPECS: [ParamSpec; 19] = [
+    // The neutral is PLAY in DIRECTION LOOP.
     ParamSpec::choice(
         0,
         "MODEL",
         ValFmt::Names(&MODEL_NAMES),
-        6.0,
-        1.0,
+        3.0,
+        0.0,
         Change::Crossfade,
     )
     .ident("MODEL")
@@ -831,17 +950,18 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 17] = [
     )
     .ident("WOW")
     .glyph(TAPE),
-    // PLAY's MODE: no cell, MODEL writes it (ADR 0178).
+    // PLAY's DIRECTION, MODE on disk (ADR 0200): LOOP by default.
     ParamSpec::choice(
         15,
-        "MODE",
-        ValFmt::Names(&["ONE", "LOOP", "PING"]),
+        "DIRECTION",
+        ValFmt::Names(&DIRECTION_NAMES),
+        3.0,
         2.0,
-        1.0,
         Change::NoteOn,
     )
+    .short("DIR")
     .ident("MODE")
-    .glyph(crate::glyph::FocusGlyph::None),
+    .glyph(TAPE),
     ParamSpec::choice(
         16,
         "RETRIG",
@@ -853,6 +973,21 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 17] = [
     .short("RTG")
     .ident("RETRIG")
     .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        19,
+        "TRON",
+        ValFmt::Names(&["OFF", "ON"]),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("TRON")
+    .glyph(TAPE),
+    // Read at note-on: each note steps POSITION by up to WALK (ADR 0200).
+    unit(20, "WALK", 0.0, false, Smoothing::NoteOn)
+        .short("WLK")
+        .ident("WALK")
+        .glyph(TAPE),
 ];
 
 impl Block for TapeEngineParams {
@@ -878,8 +1013,10 @@ impl Block for TapeEngineParams {
             Self::PERIOD => self.period,
             Self::SLICE => self.slice.code() as f32,
             Self::WOW => self.wow.value(),
-            Self::MODE => self.mode().value(),
+            Self::MODE => self.direction.value(),
             Self::RETRIG => self.retrig.value(),
+            Self::TRON => self.tron.value(),
+            Self::WALK => self.walk.get(),
             _ => 0.0,
         }
     }
@@ -902,12 +1039,10 @@ impl Block for TapeEngineParams {
             Self::PERIOD => self.period = v,
             Self::SLICE => self.slice = SliceCode::new(v as u8),
             Self::WOW => set(&mut self.wow, v),
-            Self::MODE => {
-                if let Some(m) = PlayMode::from_value(v) {
-                    self.set_mode(m);
-                }
-            }
+            Self::MODE => set(&mut self.direction, v),
             Self::RETRIG => set(&mut self.retrig, v),
+            Self::TRON => set(&mut self.tron, v),
+            Self::WALK => self.walk = Walk::of(v),
             _ => {}
         }
     }
@@ -918,8 +1053,9 @@ impl Block for TapeEngineParams {
             Self::TYPE => Some(self.kind.disk_code()),
             Self::SLICE => Some(self.slice.code()),
             Self::WOW => Some(self.wow.disk_code()),
-            Self::MODE => Some(self.mode().disk_code()),
+            Self::MODE => Some(self.direction.disk_code()),
             Self::RETRIG => Some(self.retrig.disk_code()),
+            Self::TRON => Some(self.tron.disk_code()),
             _ => None,
         }
     }
@@ -930,25 +1066,26 @@ impl Block for TapeEngineParams {
             Self::TYPE => Some(self.kind.disk_ident()),
             Self::SLICE => Some(SLICE_IDENTS[usize::from(self.slice.code())]),
             Self::WOW => Some(self.wow.disk_ident()),
-            Self::MODE => Some(self.mode().disk_ident()),
+            Self::MODE => Some(self.direction.disk_ident()),
             Self::RETRIG => Some(self.retrig.disk_ident()),
+            Self::TRON => Some(self.tron.disk_ident()),
             _ => None,
         }
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
         match id {
-            // PLAY takes the MODE it has, or LOOP's; MODE's code follows.
             Self::MODEL => apply_code(TapeModel::from_disk_code(code), |m| {
-                self.set_machine(TapeMachine::of(m, self.mode()))
+                self.set_machine(TapeMachine::of(m))
             }),
             Self::TYPE => apply_code(StretchType::from_disk_code(code), |k| self.kind = k),
             Self::SLICE => apply_code(identity_code(&TAPE_ENGINE_SPECS, id, code), |c| {
                 self.slice = SliceCode::new(c)
             }),
             Self::WOW => apply_code(Wow::from_disk_code(code), |w| self.wow = w),
-            Self::MODE => apply_code(PlayMode::from_disk_code(code), |m| self.set_mode(m)),
+            Self::MODE => apply_code(Direction::from_disk_code(code), |d| self.direction = d),
             Self::RETRIG => apply_code(Retrig::from_disk_code(code), |r| self.retrig = r),
+            Self::TRON => apply_code(Tron::from_disk_code(code), |t| self.tron = t),
             _ => false,
         }
     }
@@ -967,19 +1104,27 @@ const SLICE_IDENTS: [&str; 18] = [
     "S13", "S14", "S15", "S16",
 ];
 
-/// A file from before PLAY: MODEL's retired codes load as PLAY (#369, ADR
-/// 0170). REVERSE (1) is LOOP with START and END swapped, which plays it bit
-/// for bit; ONESHOT (7) is MODE ONE with FADE at HOLD and no SLICE; PING-PONG
-/// (2) is MODE PING. Run after the file's writes, so a sparse Sound's base
-/// START 0, END 1 becomes START 1, END 0.
+/// A file from before PLAY (ADR 0170, ADR 0200): MODEL's retired codes
+/// and MODE ONE load as PLAY. REVERSE (1) is LOOP with START and END
+/// swapped, which plays it bit for bit; ONESHOT (7) is FORWARD with FADE at
+/// HOLD and no SLICE; PING-PONG (2) is PING; TRON (6) is FORWARD with TRON
+/// on from the window's start. MODE ONE is FORWARD from the window's
+/// start, whole, as ONE read neither POSITION nor LENGTH. Run after the
+/// file's writes, so a sparse Sound's base START 0, END 1 becomes START
+/// 1, END 0.
 pub fn translate_v1(old: &crate::storage::Retired, b: &mut dyn Block) {
-    let Some(m) = old
-        .code(TapeEngineParams::MODEL)
-        .and_then(RetiredModel::from_code)
-    else {
-        return;
-    };
-    m.translate(b);
+    type P = TapeEngineParams;
+    if let Some(m) = old.code(P::MODEL).and_then(RetiredModel::from_code) {
+        m.translate(b);
+    } else if old.code(P::MODE) == Some(RETIRED_ONE) {
+        // Off PLAY the code was only kept: the machine's POSITION and
+        // LENGTH are its own.
+        if b.enum_code(P::MODEL) == Some(TapeModel::Play.disk_code()) {
+            one_as_forward(b);
+        } else {
+            let _ = b.set_enum_code(P::MODE, Direction::Forward.disk_code());
+        }
+    }
 }
 
 #[cfg(test)]

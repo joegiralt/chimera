@@ -4,6 +4,7 @@
 //! test: the door is a process-wide static.
 #![cfg(all(feature = "bank2", feature = "test-support"))]
 
+use chimera_core::dsp::tape_engine::Direction;
 use core::mem::MaybeUninit;
 
 use chimera_engine::bank2::DOOR_CELL;
@@ -47,7 +48,8 @@ fn bits(x: &[f32]) -> Vec<u32> {
 fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     let (mut tok, id) = source();
     let p = TapeEngineParams {
-        machine: TapeMachine::Loop,
+        machine: TapeMachine::Play,
+        direction: Direction::Loop,
         ..TapeEngineParams::default()
     };
     let mods = ModState::new();

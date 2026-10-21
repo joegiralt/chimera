@@ -3,6 +3,7 @@
 
 mod common;
 
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::budget::{CONTROL_RESERVE, FORMANT_N, FORMANT_N_UNLINKED, HEAVY_OVERHEAD};
 use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::engine::AlgoEngine;
@@ -713,17 +714,12 @@ fn the_model_bills_every_bench_row_high() {
     }
     // The TAPE rows (spec § 5), TAPE and AGE at 0.5 on each, as the bench
     // plays them; read cold on the unit. 0 until the owner's session.
-    use chimera_core::dsp::tape_engine::PlayMode;
-    use chimera_core::dsp::tape_engine::TapeModel::{Play, Scrub, Stretch, Transwave, Tron};
-    // PLAY's three MODEs are the old LOOP, PING-PONG and ONESHOT.
-    let (lp, ping, one) = (
-        (Play, PlayMode::Loop),
-        (Play, PlayMode::Ping),
-        (Play, PlayMode::One),
-    );
-    let tape = |(model, mode), (start, end): (f32, f32), steal_glide: bool| {
-        let mut p = tape_sound(model);
-        p.tape.machine = TapeMachine::of(model, mode);
+    // PLAY's DIRECTIONs and TRON are the old LOOP, PING-PONG, ONESHOT and
+    // TRON (ADR 0200).
+    let (lp, ping, one) = (Way::Loop, Way::Ping, Way::One);
+    let tape = |w: Way, (start, end): (f32, f32), steal_glide: bool| {
+        let mut p = tape_sound(w.machine().model());
+        p.tape.set_way(w);
         (p.tape.tape, p.tape.age, p.tape.start, p.tape.end) = (0.5, 0.5, start, end);
         if steal_glide {
             p.pitch.steal = chimera_core::params::Steal::Glide;
@@ -735,31 +731,31 @@ fn the_model_bills_every_bench_row_high() {
         ("TAPE LOOP", tape(lp, fwd, false), 0),
         (
             "TAPE STRETCH",
-            tape((Stretch, PlayMode::Loop), fwd, false),
+            tape(Way::Stretch, fwd, false),
             0,
         ),
         // ±12 st every block: billed as a glide or a deep route is.
         (
             "TAPE WAVE C7",
-            tape((Transwave, PlayMode::Loop), fwd, true),
+            tape(Way::Wave, fwd, true),
             0,
         ),
         ("TINY LOOP 8", tape(lp, fwd, false), 0),
         ("TINY REV 8", tape(lp, rev, false), 0),
         ("TINY PING 8", tape(ping, fwd, false), 0),
-        ("TINY SCRUB 8", tape((Scrub, PlayMode::Loop), fwd, false), 0),
+        ("TINY SCRUB 8", tape(Way::Scrub, fwd, false), 0),
         ("TINY LOOP", tape(lp, fwd, false), 0),
         ("TINY REV", tape(lp, rev, false), 0),
         ("TINY PING", tape(ping, fwd, false), 0),
-        ("TINY SCRUB", tape((Scrub, PlayMode::Loop), fwd, false), 0),
+        ("TINY SCRUB", tape(Way::Scrub, fwd, false), 0),
         ("TINY 1SHOT", tape(one, fwd, false), 0),
-        ("TINY TRON", tape((Tron, PlayMode::Loop), fwd, false), 0),
+        ("TINY TRON", tape(Way::Tron, fwd, false), 0),
     ] {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
     assert_eq!(tape(lp, fwd, false), 36 + 450 + 40);
-    assert_eq!(tape((Stretch, PlayMode::Loop), fwd, false), 36 + 450 + 40);
-    assert_eq!(tape((Transwave, PlayMode::Loop), fwd, true), 36 + 770 + 40);
+    assert_eq!(tape(Way::Stretch, fwd, false), 36 + 450 + 40);
+    assert_eq!(tape(Way::Wave, fwd, true), 36 + 770 + 40);
     assert_eq!(tape(one, fwd, false), 36 + 230 + 40);
 }
 
@@ -1575,7 +1571,7 @@ fn routes(r: &[(ModSource, chimera_core::addr::ParamAddr, i8)]) -> ModState {
 
 fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Tape);
-    p.tape.machine = TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
+    p.tape.machine = TapeMachine::of(model);
     p
 }
 
@@ -1586,17 +1582,11 @@ fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot
 /// and both at 0.5.
 #[test]
 fn tape_bills_each_model() {
-    use TapeModel::{Play, Scrub, Stretch, Transwave, Tron};
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::dsp::tape_engine::{
-        COST_STREAM, PlayMode, TapeEngineParams, TapeModel, streamed_cost,
-    };
-    // PLAY's three MODEs bill what LOOP, PING-PONG and ONESHOT billed.
-    let (lp, ping, one) = (
-        (Play, PlayMode::Loop),
-        (Play, PlayMode::Ping),
-        (Play, PlayMode::One),
-    );
+    use chimera_core::dsp::tape_engine::{COST_STREAM, TapeEngineParams, streamed_cost};
+    // PLAY's DIRECTIONs and TRON bill what LOOP, PING-PONG, ONESHOT and
+    // TRON billed.
+    let (lp, ping, one) = (Way::Loop, Way::Ping, Way::One);
     let rooms = {
         let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
@@ -1611,18 +1601,18 @@ fn tape_bills_each_model() {
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
-    for ((model, mode), bill, off, both) in [
+    for (w, bill, off, both) in [
         (lp, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
         (ping, 490, [8, 7, 8, 8], [8, 6, 8, 8]),
-        ((Scrub, PlayMode::Loop), 480, [8, 7, 8, 8], [8, 6, 8, 8]),
-        ((Transwave, PlayMode::Loop), 400, [8, 8, 8, 8], [8, 8, 8, 8]),
-        ((Stretch, PlayMode::Loop), 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (Way::Scrub, 480, [8, 7, 8, 8], [8, 6, 8, 8]),
+        (Way::Wave, 400, [8, 8, 8, 8], [8, 8, 8, 8]),
+        (Way::Stretch, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
         (one, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
-        ((Tron, PlayMode::Loop), 230, [8, 8, 8, 8], [8, 8, 8, 8]),
+        (Way::Tron, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
     ] {
         for reversed in [false, true] {
-            let mut p = tape_sound(model);
-            p.tape.machine = TapeMachine::of(model, mode);
+            let mut p = tape_sound(w.machine().model());
+            p.tape.set_way(w);
             if reversed {
                 (p.tape.start, p.tape.end) = (1.0, 0.0);
             }
@@ -1644,24 +1634,24 @@ fn tape_bills_each_model() {
                         continue;
                     };
                     let why = format!(
-                        "{model:?} {mode:?} rev {reversed} TAPE {tape}/{tape_routed} AGE {age}/{age_routed}"
+                        "{w:?} rev {reversed} TAPE {tape}/{tape_routed} AGE {age}/{age_routed}"
                     );
                     assert_eq!(EngineSlot::cost(&p, &mods), Cost(bill + t + a), "{why}");
                 }
             }
             // A streamed source (slice 1 § 5.5): only PLAY streams.
-            if model == Play && mode != PlayMode::Ping {
+            if matches!(w, Way::One | Way::Loop | Way::Tron) {
                 assert_eq!(
-                    streamed_cost(TapeMachine::of(model, mode)),
+                    streamed_cost(w),
                     Cost(bill + COST_STREAM.0),
-                    "{model:?} {mode:?} streamed"
+                    "{w:?} streamed"
                 );
             }
             for (stored, want, extra) in [(0.0, off, 0), (0.5, both, 40)] {
                 (p.tape.tape, p.tape.age) = (stored, stored);
                 let voice = Voice::cost(&p, &ModState::new()).0;
-                assert_eq!(voice, bill + extra + 83, "{model:?} at {stored}");
-                assert_eq!(at(voice), want, "{model:?} at {stored}");
+                assert_eq!(voice, bill + extra + 83, "{w:?} at {stored}");
+                assert_eq!(at(voice), want, "{w:?} at {stored}");
             }
         }
     }

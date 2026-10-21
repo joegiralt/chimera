@@ -14,7 +14,7 @@ use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
 use chimera_core::dsp::tape_engine::{
-    FADE_HOLD, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeMachine, TapeModel,
+    Direction, FADE_HOLD, StretchType, TapeEngine, TapeEngineParams as P, TapeMachine, TapeModel, Tron,
     Wow,
 };
 use chimera_core::dsp::va::VaMode;
@@ -407,7 +407,6 @@ pub fn script(model: TapeModel) -> Script {
         TapeModel::Scrub => Script(&SCRUB_SWEEP, &[], &[]),
         TapeModel::Transwave => Script(&WAVE_SWEEP, &[], &[]),
         TapeModel::Stretch => Script(&STRETCH_KEYS, &STRETCH_TAKES, &[]),
-        TapeModel::Tron => Script(&TRON_KEYS, &[10.0], &[0, 12]),
         TapeModel::Play => Script(&SWEEP, &[], &[]),
     }
 }
@@ -417,7 +416,6 @@ pub fn legend(model: TapeModel) -> &'static str {
         TapeModel::Scrub => SCRUB_LEGEND,
         TapeModel::Transwave => WAVE_LEGEND,
         TapeModel::Stretch => STRETCH_LEGEND,
-        TapeModel::Tron => TRON_LEGEND,
         TapeModel::Play => SWEEP_LEGEND,
     }
 }
@@ -478,6 +476,8 @@ pub enum Way {
     One,
     Ping,
     SliceNote,
+    /// PLAY FORWARD with TRON on (ADR 0200).
+    Tron,
 }
 
 impl Way {
@@ -491,6 +491,7 @@ impl Way {
                 Way::One,
                 Way::SliceNote,
                 Way::Ping,
+                Way::Tron,
             ],
             TapeModel::Stretch => &[Way::Plain, Way::Reversed],
             _ => &[Way::Plain],
@@ -506,6 +507,7 @@ impl Way {
             Way::One => "-one",
             Way::Ping => "-ping",
             Way::SliceNote => "-note",
+            Way::Tron => "-tron",
         }
     }
 
@@ -514,9 +516,10 @@ impl Way {
             Way::Plain => "",
             Way::Reversed => " · END before START",
             Way::Warble => " · WOW WARBLE, TAPE 0.5 from 11.5 s",
-            Way::One => " · MODE ONE, FADE HOLD",
-            Way::Ping => " · MODE PING",
-            Way::SliceNote => " · MODE ONE, SLICE NOTE, 16 notes from C4",
+            Way::One => " · FORWARD, FADE HOLD",
+            Way::Ping => " · PING-PONG",
+            Way::SliceNote => " · FORWARD, SLICE NOTE, 16 notes from C4",
+            Way::Tron => " · FORWARD, TRON ON",
         }
     }
 
@@ -525,7 +528,7 @@ impl Way {
     /// SLICE NOTE.
     pub fn base(self, model: TapeModel, kind: StretchType) -> P {
         let p = P {
-            machine: TapeMachine::of(model, PlayMode::Loop),
+            machine: TapeMachine::of(model),
             kind,
             ..P::default()
         };
@@ -541,16 +544,22 @@ impl Way {
                 ..p
             },
             Way::One => P {
-                machine: TapeMachine::of(model, PlayMode::One),
+                direction: Direction::Forward,
                 drag: FADE_HOLD,
                 ..p
             },
             Way::Ping => P {
-                machine: TapeMachine::of(model, PlayMode::Ping),
+                direction: Direction::Ping,
+                ..p
+            },
+            Way::Tron => P {
+                direction: Direction::Forward,
+                tron: Tron::On,
+                drag: 0.3,
                 ..p
             },
             Way::SliceNote => P {
-                machine: TapeMachine::of(model, PlayMode::One),
+                direction: Direction::Forward,
                 drag: FADE_HOLD,
                 slice: chimera_core::dsp::tape_engine::SliceCode::NOTE,
                 ..p
@@ -562,6 +571,7 @@ impl Way {
         match self {
             Way::One => Script(&ONESHOT_KEYS, &ONESHOT_TAKES, &[]),
             Way::SliceNote => Script(&ONESHOT_NOTE_KEYS, &ONESHOT_NOTE_TAKES, &ONESHOT_NOTE_NOTES),
+            Way::Tron => Script(&TRON_KEYS, &[10.0], &[0, 12]),
             _ => script(model),
         }
     }
@@ -1206,8 +1216,7 @@ mod tests {
     fn every_script_starts_neutral_and_runs_14_5_s() {
         for m in TapeModel::ALL {
             let s = script(m);
-            // TRON holds a key 10 s, twice.
-            let secs = if m == TapeModel::Tron { 20.0 } else { 14.5 };
+            let secs = 14.5;
             assert_eq!(s.secs(), secs, "{m:?}");
             let (mut a, mut b) = (P::default(), P::default());
             s.apply(&mut a, 0.0);

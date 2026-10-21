@@ -228,7 +228,7 @@ pub fn power_bh(x: &[f32]) -> Vec<f64> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mach {
     pub model: chimera_core::dsp::tape_engine::TapeModel,
-    pub mode: chimera_core::dsp::tape_engine::PlayMode,
+    pub mode: chimera_core::dsp::tape_engine::Direction,
     pub rev: bool,
 }
 
@@ -236,7 +236,7 @@ impl Mach {
     pub const fn fwd(model: chimera_core::dsp::tape_engine::TapeModel) -> Mach {
         Mach {
             model,
-            mode: chimera_core::dsp::tape_engine::PlayMode::Loop,
+            mode: chimera_core::dsp::tape_engine::Direction::Loop,
             rev: false,
         }
     }
@@ -244,7 +244,7 @@ impl Mach {
     pub const fn rev(model: chimera_core::dsp::tape_engine::TapeModel) -> Mach {
         Mach {
             model,
-            mode: chimera_core::dsp::tape_engine::PlayMode::Loop,
+            mode: chimera_core::dsp::tape_engine::Direction::Loop,
             rev: true,
         }
     }
@@ -253,7 +253,7 @@ impl Mach {
     pub const fn ping() -> Mach {
         Mach {
             model: chimera_core::dsp::tape_engine::TapeModel::Play,
-            mode: chimera_core::dsp::tape_engine::PlayMode::Ping,
+            mode: chimera_core::dsp::tape_engine::Direction::Ping,
             rev: false,
         }
     }
@@ -264,7 +264,8 @@ impl Mach {
         p: chimera_core::dsp::tape_engine::TapeEngineParams,
     ) -> chimera_core::dsp::tape_engine::TapeEngineParams {
         let p = chimera_core::dsp::tape_engine::TapeEngineParams {
-            machine: chimera_core::dsp::tape_engine::TapeMachine::of(self.model, self.mode),
+            machine: chimera_core::dsp::tape_engine::TapeMachine::of(self.model),
+            direction: self.mode,
             ..p
         };
         if self.rev {

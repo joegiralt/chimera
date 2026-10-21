@@ -42,6 +42,14 @@ impl Dir {
     pub fn of(start: f32, end: f32) -> Dir {
         if end < start { Dir::Rev } else { Dir::Fwd }
     }
+
+    /// The other way: PLAY's REVERSE.
+    pub const fn flip(self) -> Dir {
+        match self {
+            Dir::Fwd => Dir::Rev,
+            Dir::Rev => Dir::Fwd,
+        }
+    }
 }
 
 /// A window of the source, `[lo, hi)` in frames, sorted, and the way it

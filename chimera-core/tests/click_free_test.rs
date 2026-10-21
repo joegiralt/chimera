@@ -203,7 +203,7 @@ fn test_no_clicks_tape_machines() {
     use chimera_core::block::Block;
     use chimera_core::dsp::tape_engine::machine::defaults;
     use chimera_core::dsp::tape_engine::{
-        FADE_HOLD, PlayMode, TapeEngineParams as P, TapeModel, Wow,
+        FADE_HOLD, Direction, TapeEngineParams as P, TapeModel, Wow,
     };
     use common::tape::{held_plain, held_transwave, sine};
     let plain = held_plain(&sine(48_000, 100.7, 4 * 24_000), 48_000);
@@ -211,11 +211,11 @@ fn test_no_clicks_tape_machines() {
     let mut cases = Vec::new();
     for m in TapeModel::ALL {
         let mut t = P {
-            machine: chimera_core::dsp::tape_engine::TapeMachine::of(m, PlayMode::Loop),
+            machine: chimera_core::dsp::tape_engine::TapeMachine::of(m),
             period: 100.7,
             ..P::default()
         };
-        for (id, d) in defaults(t.machine()) {
+        for (id, d) in defaults(t.machine(), t.direction) {
             t.set(id, d);
         }
         cases.push(t);
@@ -228,7 +228,8 @@ fn test_no_clicks_tape_machines() {
         }
     }
     cases.push(P {
-        machine: TapeMachine::One,
+        machine: TapeMachine::Play,
+        direction: Direction::Forward,
         drag: FADE_HOLD,
         slice: chimera_core::dsp::tape_engine::SliceCode::new(6),
         ..P::default()

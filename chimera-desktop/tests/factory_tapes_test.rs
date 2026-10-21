@@ -2,6 +2,7 @@
 //! on every source, six Parts in the arena beside NEW, and every factory
 //! TAPE Sound at the factory median (ADR 0063).
 
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::dsp::tape_engine::{TapeMachine, TapeModel};

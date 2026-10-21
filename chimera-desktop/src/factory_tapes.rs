@@ -12,7 +12,7 @@ use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::dsp::tape_engine::{
-    PlayMode, TapeEngineParams as P, TapeMachine, TapeModel, machine,
+    Direction, TapeEngineParams as P, TapeMachine, TapeModel, Tron, machine,
 };
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
@@ -92,6 +92,9 @@ pub struct SoundRecipe {
     pub name: SoundName,
     pub source: SoundName,
     pub machine: TapeMachine,
+    /// PLAY's DIRECTION and TRON (`mode`, `tron`).
+    pub direction: Direction,
+    pub tron: Tron,
     pub set: Vec<(ParamId, f32)>,
     pub trim_db: f32,
 }
@@ -225,8 +228,8 @@ fn source_recipe(name: SoundName, t: &Table) -> Result<SourceRecipe, String> {
 }
 
 /// The recipes' and manifests' model words, by `TapeModel::index`: PLAY
-/// with its `mode` beside it.
-pub const MODEL_WORDS: [&str; 5] = ["PLAY", "TRON", "SCRUB", "STRETCH", "TRANSWAVE"];
+/// with its `mode` (DIRECTION) and `tron` beside it.
+pub const MODEL_WORDS: [&str; 4] = ["PLAY", "STRETCH", "SCRUB", "TRANSWAVE"];
 
 fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     let m = need(t, "model")?;
@@ -234,18 +237,25 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
         .into_iter()
         .find(|x| MODEL_WORDS[usize::from(x.index())] == m)
         .ok_or(format!("model {m}"))?;
+    let play = model == TapeModel::Play;
     let mode = match get(t, "mode") {
-        None => PlayMode::Loop,
-        Some(k) if model == TapeModel::Play => [PlayMode::One, PlayMode::Loop, PlayMode::Ping]
+        None => Direction::Loop,
+        Some(k) if play => Direction::ALL
             .into_iter()
             .find(|x| x.disk_ident() == k)
             .ok_or(format!("mode {k}"))?,
         Some(k) => return Err(format!("mode {k}: PLAY only")),
     };
+    let tron = match get(t, "tron") {
+        None => Tron::Off,
+        Some("ON") if play => Tron::On,
+        Some("OFF") if play => Tron::Off,
+        Some(k) => return Err(format!("tron {k}: ON or OFF, PLAY only")),
+    };
     let specs = P::default();
     let mut set = Vec::new();
     for (k, v) in t {
-        if ["name", "source", "model", "mode", "trim"].contains(&k.as_str()) {
+        if ["name", "source", "model", "mode", "tron", "trim"].contains(&k.as_str()) {
             continue;
         }
         let spec = specs
@@ -258,7 +268,9 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     Ok(SoundRecipe {
         name,
         source: SoundName::new(need(t, "source")?).map_err(|e| format!("source: {e:?}"))?,
-        machine: TapeMachine::of(model, mode),
+        machine: TapeMachine::of(model),
+        direction: mode,
+        tron,
         set,
         trim_db: num(t, "trim")?.unwrap_or(0.0),
     })
@@ -511,13 +523,19 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     snd.pick_source(head, None);
     let t = &mut snd.params.tape;
     t.machine = s.machine;
-    // The machine's own, ONE's FADE holding.
-    let defaults = machine::defaults(t.machine());
-    for (id, v) in defaults.chain(s.set.iter().copied()) {
+    t.direction = s.direction;
+    // The machine's own, FORWARD's FADE holding, then TRON.
+    for (id, v) in machine::defaults(t.machine(), s.direction) {
         t.set(id, v);
     }
-    // ONE's hit: ENV 1 at its floor, holding full (`env_defaults`).
-    for &(id, v) in machine::env_defaults(t.machine()) {
+    t.tron = s.tron;
+    for &(id, v) in &s.set {
+        t.set(id, v);
+    }
+    // ONE's hit: ENV 1 at its floor, holding full (`env_defaults`); TRON
+    // keeps INIT's, as the TRON machine did.
+    let env = if s.tron == Tron::On { &[][..] } else { machine::env_defaults(t.machine(), s.direction) };
+    for &(id, v) in env {
         snd.params.envelopes[0].set(id, v);
     }
     // On the knob's grid, as INIT's 45/128 is.
@@ -590,13 +608,14 @@ pub fn manifest(r: &Recipes, built: &[Option<Built>]) -> String {
         };
         let _ = write!(
             j,
-            "{}{{\"name\": \"{}\", \"file\": \"{}.A\", \"source\": \"{:08X}\", \"model\": \"{}\", \"mode\": \"{}\"}}",
+            "{}{{\"name\": \"{}\", \"file\": \"{}.A\", \"source\": \"{:08X}\", \"model\": \"{}\", \"mode\": \"{}\", \"tron\": \"{}\"}}",
             if first { "" } else { ",\n" },
             s.name.as_str(),
             sound_stem(i),
             b.head.sref.crc,
             MODEL_WORDS[usize::from(s.machine.model().index())],
-            s.machine.mode().unwrap_or(PlayMode::Loop).disk_ident()
+            s.direction.disk_ident(),
+            s.tron.disk_ident()
         );
         first = false;
     }

@@ -15,7 +15,7 @@
 //! the canvas stay in bank 1.
 
 use crate::dsp::algo::math::clampf;
-use crate::dsp::tape_engine::{MachineIndex, TapeMachine};
+use crate::dsp::tape_engine::{Direction, MachineIndex, TapeMachine, Tron, Way};
 
 /// With TAPE's DSP only: a build without it (the bench's) draws no glyph.
 #[cfg(feature = "tape")]
@@ -215,10 +215,11 @@ pub enum Machine {
     Scrub(Sponge),
 }
 
-/// The glyph a machine shows: MODEL's machine (PLAY's MODEs each their own).
-pub type Kind = TapeMachine;
+/// The glyph a machine shows: the deck's path, so PLAY shows its
+/// DIRECTION, and TRON's blind once through (ADR 0200).
+pub type Kind = Way;
 
-impl TapeMachine {
+impl Way {
     /// Its still pose: fixed inputs that show what the machine is.
     pub fn still(self) -> Machine {
         let q6 = Q6::of;
@@ -295,7 +296,7 @@ pub enum Pose {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 pub struct GlyphInputs {
-    pub machine: TapeMachine,
+    pub machine: Way,
     pub start: f32,
     pub end: f32,
     pub position: f32,
@@ -305,13 +306,16 @@ pub struct GlyphInputs {
     pub tape: f32,
     pub age: f32,
     pub xfade: f32,
+    /// PLAY's DIRECTION (REVERSE draws ONE's run backward) and WALK.
+    pub direction: Direction,
+    pub walk: f32,
     pub pose: Pose,
 }
 
 impl GlyphInputs {
     /// From `TAPE_GLYPH_PARAMS`' set values, normalized; MODEL's to its
     /// nearest machine.
-    pub fn from_set(set: [f32; 10], pose: Pose) -> Self {
+    pub fn from_set(set: [f32; 13], pose: Pose) -> Self {
         let [
             model,
             start,
@@ -323,10 +327,16 @@ impl GlyphInputs {
             tape,
             age,
             xfade,
+            direction,
+            tron,
+            walk,
         ] = set;
-        let at = crate::dsp::rev::sync::index_of(model, TapeMachine::ALL.len());
+        let index_of = crate::dsp::rev::sync::index_of;
+        let m = TapeMachine::from_index(MachineIndex(index_of(model, TapeMachine::ALL.len()) as u8));
+        let direction = Direction::ALL[index_of(direction, Direction::ALL.len())];
+        let tron = if tron > 0.5 { Tron::On } else { Tron::Off };
         Self {
-            machine: TapeMachine::from_index(MachineIndex(at as u8)),
+            machine: Way::of(m, direction, tron),
             start,
             end,
             position,
@@ -336,6 +346,8 @@ impl GlyphInputs {
             tape,
             age,
             xfade,
+            direction,
+            walk,
             pose,
         }
     }
@@ -355,6 +367,9 @@ const _: () = {
         T::TAPE,
         T::AGE,
         T::XFADE,
+        T::MODE,
+        T::TRON,
+        T::WALK,
     ];
     let mut i = 0;
     while i < order.len() {

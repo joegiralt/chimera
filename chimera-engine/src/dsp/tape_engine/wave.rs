@@ -30,7 +30,7 @@
 
 use chimera_hal::BLOCK_SIZE;
 
-use super::params::TapeMachine;
+use super::params::Way;
 use super::read::{Pos, Shape, SourceView};
 use crate::dsp::algo::math::{clampf, exp2};
 
@@ -134,14 +134,14 @@ pub fn next_level(log2_n: u32, step: f32, top: u32) -> u32 {
 
 /// WAVE plays only a `Transwave` whose frames fit its count; TRON refuses
 /// a `ZoneSet`; every other machine plays any source.
-pub fn playable(m: TapeMachine, v: &SourceView<'_>) -> bool {
+pub fn playable(m: Way, v: &SourceView<'_>) -> bool {
     let d = v.desc();
     match m {
-        TapeMachine::Wave => {
+        Way::Wave => {
             d.shape() == Shape::Transwave && top_of(v.frames(), d.count()).is_some()
         }
         // Per-key zones are the streamed TRON's (spec § 8).
-        TapeMachine::Tron => d.shape() != Shape::ZoneSet,
+        Way::Tron => d.shape() != Shape::ZoneSet,
         _ => true,
     }
 }
@@ -215,7 +215,7 @@ impl Wave {
     pub fn on(v: &SourceView<'_>, cycles: f32) -> Wave {
         let count = v.desc().count();
         let top = match top_of(v.frames(), count) {
-            Some(top) if playable(TapeMachine::Wave, v) => top,
+            Some(top) if playable(Way::Wave, v) => top,
             _ => return Wave::IDLE,
         };
         Wave {

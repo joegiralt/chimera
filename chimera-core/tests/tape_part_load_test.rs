@@ -4,9 +4,9 @@
 mod common;
 mod screen;
 
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::bank2::{Bank2Status, NEEDS_UPDATE, NEEDS_UPDATE_CELL, Version, closed_text};
 use chimera_core::block::Block;
-use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::params::EngineType;
 use chimera_core::project::{Origin, PartFrom, PartId, PartSource, Project};
@@ -97,7 +97,7 @@ fn deck_reads_needs_update_closed() {
         if let Some(s) = s {
             ui.set_bank2(s);
         }
-        tape_deck(&mut ui, chimera_core::dsp::tape_engine::TapeMachine::Loop);
+        tape_deck(&mut ui, chimera_core::dsp::tape_engine::Way::Loop);
         settle(&mut ui);
         let h = ui.page_header();
         assert_eq!(h.name.as_str(), "DECK");
@@ -115,7 +115,7 @@ fn deck_reads_needs_update_closed() {
     );
     assert_eq!(empty.1, Some(NEEDS_UPDATE_CELL));
     assert!(first_cell_reads(&empty.0, NEEDS_UPDATE_CELL));
-    assert!(first_cell_reads(&ok.0, "LOOP"));
+    assert!(first_cell_reads(&ok.0, "PLAY"));
 }
 
 // Streamed sources through pass 2 (slice 1 § 5.6).
@@ -170,7 +170,7 @@ mod streamed {
     }
 
     fn one(t: &mut TapeEngineParams) {
-        t.machine = TapeMachine::One;
+        t.set_way(Way::One);
     }
 
     /// Part `n` on TAPE, PLAY ONE, playing `r`.
@@ -477,7 +477,7 @@ mod streamed {
         put(&mut s, &bed);
         let (mut p, t) = Project::boxed();
         tape_part(&mut p, t, 0, bed.0.sref);
-        p.edit_part(PartId::ALL[0]).sound.params.tape.machine = TapeMachine::Ping;
+        p.edit_part(PartId::ALL[0]).sound.params.tape.set_way(Way::Ping);
         p.source_absent(bed.0.sref).unwrap();
         let (q, _) = round_trip(&mut s, &mut p, false);
         let id = q.pool().find_source(bed.0.sref).unwrap();
@@ -515,7 +515,7 @@ mod streamed {
         put(&mut s, &wave);
         let (mut p, t) = Project::boxed();
         tape_part(&mut p, t, 0, wave.0.sref);
-        p.edit_part(PartId::ALL[0]).sound.params.tape.machine = TapeMachine::Loop;
+        p.edit_part(PartId::ALL[0]).sound.params.tape.set_way(Way::Loop);
         let tape = p.part(PartId::ALL[0]).sound.params.tape;
         let shape = Refusal::Transwave;
         assert_eq!(

@@ -6,6 +6,7 @@
 mod common;
 mod screen;
 
+use chimera_core::dsp::tape_engine::Way;
 use core::ops::ControlFlow;
 
 use chimera_core::dsp::tape_engine::TapeMachine;
@@ -439,7 +440,7 @@ fn loaded_row_moves_above_divider() {
 #[test]
 fn wont_fit_alerts() {
     let mut rig = Rig::new(&[choir()]);
-    rig.tape(|t| t.machine = TapeMachine::Ping);
+    rig.tape(|t| t.set_way(Way::Ping));
     // Fill the pool until the CHOIR won't fit.
     let mut seed = 20;
     while rig.ui.project().pool().free() >= card_cost(file_len(&choir().0)).unwrap() {
@@ -805,7 +806,7 @@ fn fits_loads_whole() {
 fn too_big_play_one_streams_with_start_head() {
     let b = bed(1);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     let heads = heads_for(b.0.sref, &rig.params()).unwrap();
     assert_eq!(heads.as_slice().len(), 1);
     let free = rig.ui.project().pool().free();
@@ -841,7 +842,7 @@ fn too_big_loop_streams_with_two_heads() {
     let b = bed(2);
     let mut rig = Rig::new(std::slice::from_ref(&b));
     rig.tape(|t| {
-        t.machine = TapeMachine::Loop;
+        t.set_way(Way::Loop);
         (t.size, t.position, t.xfade) = (0.7, 0.6, 0.1);
     });
     let heads = heads_for(b.0.sref, &rig.params()).unwrap();
@@ -891,7 +892,7 @@ fn refused(f: impl FnOnce(&mut TapeEngineParams), words: &str) {
 
 #[test]
 fn too_big_ping_refused() {
-    refused(|t| t.machine = TapeMachine::Ping, PING_NEEDS_RAM);
+    refused(|t| t.set_way(Way::Ping), PING_NEEDS_RAM);
 }
 
 #[test]
@@ -903,7 +904,7 @@ fn too_big_scrub_refused() {
 fn fragmented_refused() {
     let b = bed(4);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     rig.turn(1);
     rig.s.fragmented = true;
     let free = rig.ui.project().pool().free();
@@ -924,7 +925,7 @@ fn fragmented_refused() {
 fn ninth_streamed_source_refuses() {
     let beds: Vec<_> = (10..19).map(bed).collect();
     let mut rig = Rig::new(&beds);
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     let mut streamed = Vec::new();
     for _ in 0..9 {
         rig.turn(100);
@@ -953,7 +954,7 @@ fn ninth_streamed_source_refuses() {
 fn streamed_load_trusts_the_seal() {
     let b = bed(5);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     let heads = heads_for(b.0.sref, &rig.params()).unwrap();
     let size = file_len(&b.0);
     rig.turn(1);
@@ -969,7 +970,7 @@ fn streamed_load_trusts_the_seal() {
     file[n - 100] ^= 0xFF;
     let mut rig = Rig::new(std::slice::from_ref(&b));
     rig.s.inner.plant(source_file(b.0.sref), &file);
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     rig.turn(1);
     rig.load();
     assert!(
@@ -982,7 +983,7 @@ fn streamed_load_trusts_the_seal() {
     file[first + 508] ^= 0xFF;
     let mut rig = Rig::new(std::slice::from_ref(&b));
     rig.s.inner.plant(source_file(b.0.sref), &file);
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     rig.turn(1);
     rig.load();
     assert_eq!(rig.band(), READ_FAILED);
@@ -1001,7 +1002,7 @@ fn streamed_load_trusts_the_seal() {
 fn registry_row_before_pool_row() {
     let b = bed(6);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     let reg = rig.registry();
     let other = bed(7).0;
     let l = SourceLayout::whole(other).unwrap();
@@ -1035,7 +1036,7 @@ fn registry_row_before_pool_row() {
 fn reheading_after_start_turn() {
     let b = bed(8);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     rig.turn(1);
     rig.load();
     let before = heads_for(b.0.sref, &rig.params()).unwrap();
@@ -1084,7 +1085,7 @@ fn reheading_goes_beside_a_held_note() {
     }
     let b = bed(9);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     rig.turn(1);
     rig.load();
     let before = heads_for(b.0.sref, &rig.params()).unwrap();
@@ -1189,7 +1190,7 @@ fn a_held_source_doesnt_stop_anothers_reheading() {
     }
     let (a, b) = (bed(20), bed(21));
     let mut rig = Rig::new(&[a.clone(), b.clone()]);
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     for _ in 0..2 {
         rig.turn(100);
         rig.load();
@@ -1251,7 +1252,7 @@ fn a_held_source_doesnt_stop_anothers_reheading() {
 /// `b` loaded streamed on Part 1 at PLAY ONE.
 fn streamed_rig(b: &(SourceHead, Vec<u8>)) -> Rig {
     let mut rig = Rig::new(std::slice::from_ref(b));
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     rig.turn(1);
     rig.load();
     assert!(rig.ui.project().pool().streamed(b.0.sref));
@@ -1367,7 +1368,7 @@ fn reheading_waits_when_nothing_is_free_beside() {
     }
     let b = bed(31);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| t.machine = TapeMachine::One);
+    rig.tape(|t| t.set_way(Way::One));
     rig.turn(1);
     rig.load();
     let before = heads_for(b.0.sref, &rig.params()).unwrap();

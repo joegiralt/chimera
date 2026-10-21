@@ -11,6 +11,7 @@ use super::{
     Q4, Q5, Q6, Run, Sponge, TapeGauge, W, Wear,
 };
 use crate::dsp::algo::math::clampf;
+use crate::dsp::tape_engine::Direction;
 use crate::dsp::fast_sin;
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
@@ -37,6 +38,8 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
         tape,
         age,
         xfade,
+        direction,
+        walk,
         pose,
     } = i;
     if pose == Pose::Still {
@@ -44,20 +47,28 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
     }
     let (q6, q5) = (Q6::of, Q5::of);
     let machine = match kind {
-        Kind::One => Machine::One(Run {
-            start: q6(start),
-            end: q6(end),
-        }),
+        // The run POSITION and LENGTH cut from START to END (LENGTH drawn
+        // linear); REVERSE burns the match from its far end.
+        Kind::One => {
+            let (a, z) = if direction == Direction::Reverse { (end, start) } else { (start, end) };
+            let from = a + (z - a) * clampf(pos, 0.0, 1.0);
+            let to = from + (z - from) * clampf(size, 0.0, 1.0);
+            Machine::One(Run {
+                start: q6(from),
+                end: q6(to),
+            })
+        }
+        // WALK, 0 to 1, on the drift's forward half: the hamster runs.
         Kind::Loop => Machine::Loop(Loop {
             position: q6(pos),
             length: q6(size),
-            walk: q6(motion),
+            walk: q6(0.5 + 0.5 * walk),
             xfade: Q3::of(xfade),
         }),
         Kind::Ping => Machine::Ping(Bounce {
             position: q6(pos),
             length: q6(size),
-            walk: q6(motion),
+            walk: q6(0.5 + 0.5 * walk),
         }),
         Kind::Tron => Machine::Tron(Blind {
             length: q6(size),

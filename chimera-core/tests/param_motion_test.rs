@@ -290,7 +290,7 @@ fn scrub_position_follows_the_jog_directly() {
         let mut s = Sound::init(EngineType::Algo);
         s.params.envelopes[0].sustain = 1.0;
         s.params.tape.machine =
-            TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
+            TapeMachine::of(model);
         let mut r = Rig::new([s, Sound::init(EngineType::Algo)]);
         r.note(0, true);
         for _ in 0..50 {

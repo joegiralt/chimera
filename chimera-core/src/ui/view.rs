@@ -16,7 +16,9 @@ use crate::dsp::modulator::{
 };
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine;
-use crate::dsp::tape_engine::{self, MachineIndex, TapeEngineParams as T, TapeMachine, wave};
+use crate::dsp::tape_engine::{
+    self, Direction, MachineIndex, TapeEngineParams as T, TapeMachine, Tron, Way, wave,
+};
 use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use crate::midi_map::Mappable;
 use crate::modulation::VCA;
@@ -78,9 +80,11 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
-    /// TAPE's machine (PLAY's MODE in it): its labels and cells; ONE's
-    /// FADE ends in HOLD.
+    /// TAPE's machine: its labels and cells.
     pub tape: TapeMachine,
+    /// Its path (PLAY's DIRECTION and TRON in it): PLAY once through with
+    /// TRON off has FADE end in HOLD.
+    pub way: Way,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
     /// TAPE's SOURCE as SRC reads it.
@@ -131,6 +135,11 @@ impl SlotCtx {
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
             tape: TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
+            way: Way::of(
+                TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
+                Direction::ALL[usize::from(get(BlockRef::TapeEngine, T::MODE) as u8).min(3)],
+                if get(BlockRef::TapeEngine, T::TRON) > 0.5 { Tron::On } else { Tron::Off },
+            ),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
@@ -209,7 +218,7 @@ impl From<ResonatorMode> for Models {
     fn from(modal: ResonatorMode) -> Self {
         Models {
             modal,
-            tape: TapeMachine::Loop,
+            tape: TapeMachine::Play,
         }
     }
 }
@@ -279,7 +288,7 @@ impl SourceState {
             notes: None,
         };
         match pool.source_view(r) {
-            Some(v) if wave::playable(p.machine, &v) => held,
+            Some(v) if wave::playable(p.way(), &v) => held,
             Some(_) if p.machine == TapeMachine::Wave => SourceState::NotTranswave,
             None if pool.streamed(r) => match tape_engine::needs_ram(p) {
                 Some(n) => SourceState::NeedsRam(n),
@@ -661,7 +670,7 @@ fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
         // ONE's FADE: its last step is HOLD.
-        (BlockRef::TapeEngine, T::DRAG) if ctx.tape == TapeMachine::One => ValFmt::Hold,
+        (BlockRef::TapeEngine, T::DRAG) if ctx.way == Way::One => ValFmt::Hold,
         _ => fmt,
     }
 }
@@ -867,6 +876,10 @@ pub const WOW_AT_REST: &str = "TAPE AT 0 · NO WOW TO SHAPE";
 pub const FADE_ASIDE: &str = "AMP RELEASE ENDS THE NOTE";
 /// ONE's FADE under a VCA route: only HOLD, its last step, is heard.
 pub const FADE_HOLD_ONLY: &str = "BELOW HOLD AMP RELEASE ENDS IT";
+/// PLAY's XFADE off LOOP: only a loop has a seam to fade.
+pub const XFADE_LOOP_ONLY: &str = "ONLY LOOP CROSSFADES ITS SEAM";
+/// PLAY's RETRIG off FORWARD and REVERSE, or with TRON on.
+pub const RETRIG_ONCE_ONLY: &str = "CUTS ONLY ONCE THROUGH";
 /// A streamed loop's XFADE past what its loop head holds (spec § 2.3).
 pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
 
@@ -881,10 +894,15 @@ pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
     match addr.param {
         T::WOW if !tape_engine::tape_runs(t.tape, tape_routed(sound)) => Some(WOW_AT_REST),
         T::DRAG
-            if matches!(t.machine(), TapeMachine::Loop | TapeMachine::Ping)
+            if matches!(t.way(), Way::Loop | Way::Ping)
+                && !t.tron_on()
                 && sound.mod_state.routes_into(VCA) != 0 =>
         {
             Some(FADE_ASIDE)
+        }
+        T::XFADE if t.machine == TapeMachine::Play && t.way() != Way::Loop => Some(XFADE_LOOP_ONLY),
+        T::RETRIG if t.machine == TapeMachine::Play && t.way() != Way::One => {
+            Some(RETRIG_ONCE_ONLY)
         }
         _ => None,
     }
@@ -900,7 +918,7 @@ pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'s
     // ONE's FADE stays live, its HOLD the gate; below HOLD AMP releases.
     let t = &sound.params.tape;
     if addr == ParamAddr::new(BlockRef::TapeEngine, T::DRAG)
-        && t.machine() == TapeMachine::One
+        && t.way() == Way::One
         && t.drag < crate::dsp::tape_engine::FADE_HOLD
         && sound.mod_state.routes_into(VCA) != 0
     {
@@ -916,7 +934,7 @@ pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'s
         return None;
     };
     let t = &sound.params.tape;
-    if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE) || t.machine() != TapeMachine::Loop {
+    if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE) || t.way() != Way::Loop {
         return None;
     }
     let file = core::num::NonZeroU32::new(frames).filter(|f| f.get() >= 2)?;
