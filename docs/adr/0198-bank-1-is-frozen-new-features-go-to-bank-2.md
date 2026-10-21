@@ -23,22 +23,22 @@ Each move so far was a rescue: a feature landed in bank 1, a build stopped fitti
   - Every line carries a `# ADR NNNN` comment, and a line without one fails to load. A raise is an edit to that file naming the exception's ADR. Lowering a line needs only the comment that is already there.
   - `tools/test_bank1_budget.py` checks the tool and that the file covers exactly the sets `check` measures.
 - **Sets without bank 2 carry no budget.** On main these are `--no-default-features` and `sd-probe`: code moved behind a door lands in their bank 1, so they would punish the move. 0194 gives `--no-default-features` bank 2, and it takes a line then.
-- **The budgets are measured, not reasoned about.** They are `just check`'s plain release builds at origin/main `f745c0a1` (bank-1 `.bin` bytes):
+- **The budgets are measured, not reasoned about.** They are `just check`'s plain release builds at origin/main `eb0cdf0f`, after #734 (bank-1 `.bin` bytes):
 
   | Set | Bank 1 (B) | Free of 917,504 (B) |
   |---|---|---|
-  | `orbit` | 886,104 | 31,400 |
-  | `default` | 865,124 | 52,380 |
-  | `bank2-gate` | 866,928 | 50,576 |
-  | `fault-inject` | 839,084 | 78,420 |
-  | `bench-algo,bank2` | 877,348 | 40,156 |
-  | `bench-algo,master-tape,bank2` | 873,152 | 44,352 |
-  | `bench-routing,bank2` | 874,624 | 42,880 |
-  | `bench-memory,bank2` | 863,636 | 53,868 |
-  | `bench-stress,bank2` | 877,160 | 40,344 |
-  | `bench-orbit,bank2` | 868,908 | 48,596 |
-  | `bench-tape,bank2` | 848,192 | 69,312 |
-  | `filter-probes` | 893,084 | 24,420 |
+  | `orbit` | 886,120 | 31,384 |
+  | `default` | 865,716 | 51,788 |
+  | `bank2-gate` | 867,600 | 49,904 |
+  | `fault-inject` | 838,924 | 78,580 |
+  | `bench-algo,bank2` | 877,564 | 39,940 |
+  | `bench-algo,master-tape,bank2` | 873,528 | 43,976 |
+  | `bench-routing,bank2` | 874,816 | 42,688 |
+  | `bench-memory,bank2` | 863,652 | 53,852 |
+  | `bench-stress,bank2` | 877,288 | 40,216 |
+  | `bench-orbit,bank2` | 868,828 | 48,676 |
+  | `bench-tape,bank2` | 848,168 | 69,336 |
+  | `filter-probes` | 892,932 | 24,572 |
 
 ## Alternatives considered
 - **Keep 0163's ~1.5 KB threshold:** that is how bank 1 filled. Many small additions under the threshold add up to the same overflow, followed by another rescue move.
@@ -47,7 +47,7 @@ Each move so far was a rescue: a feature landed in bank 1, a build stopped fitti
 - **Guard the release builds only (`release-bin`, path-remapped):** the bench sets would escape the guard, and the bench harness is where bank 1 overflowed last (0194).
 
 ## Consequences
-- A feature PR that touches bank 1 by more than the slack fails `just check` until its code is behind a door or an ADR names its exception. #734 (NOISE) and #739 (LPG) land with their code in bank 2 and raise the lines only by their closed-door data, measured in their ADRs.
+- A feature PR that touches bank 1 by more than the slack fails `just check` until its code is behind a door or an ADR names its exception. #734 (NOISE, 0197) merged just before the freeze with its code behind `NoiseDoor`: its closed-door data (+592 B on the default build) is in the baseline at `eb0cdf0f`, so it needs no exception line. #739 (LPG) lands with its code in bank 2 and raises the lines only by its closed-door data, measured in its ADR.
 - A closed bank 2 silences or labels more of the instrument as features move. This is acceptable because every install carries the `.bk2` (0137, 0194) and closed doors already say `NEEDS UPDATE` (0141).
 - The budgets are the owner's machine's plain builds. Cargo registry and rustup paths in panic messages are in the `.bin`: 25 of them in bank 1 (bank2-gate at `f745c0a1`), so each character of `$HOME` length moves a set by about 25 B, and a `$HOME` three characters longer than `~` fails the slack. The checkout's own path is not in it (workspace paths are relative; a worktree at another path measures the same bytes). The toolchain is unpinned nightly, so a `rustup update` moves every line (point 4). A second build machine needs its own measurement, or the check moves to path-remapped builds as `release-bin`'s.
 - When tape-streaming next merges main, it takes this file. 0194 renames the sets (`bench-algo,bank2` becomes `bench-algo`) and gives `--no-default-features` bank 2, so its merge re-measures the lines under this ADR.

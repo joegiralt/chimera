@@ -9,15 +9,15 @@
 # Every line names an ADR or the file refuses to load.
 #
 # <set: features as check builds it>  <bytes>  # ADR NNNN: why
-orbit                          886104  # ADR 0198: frozen at origin/main f745c0a1
-default                        865124  # ADR 0198: frozen at origin/main f745c0a1
-bank2-gate                     866928  # ADR 0198: frozen at origin/main f745c0a1
-fault-inject                   839084  # ADR 0198: frozen at origin/main f745c0a1
-bench-algo,bank2               877348  # ADR 0198: frozen at origin/main f745c0a1
-bench-algo,master-tape,bank2   873152  # ADR 0198: frozen at origin/main f745c0a1
-bench-routing,bank2            874624  # ADR 0198: frozen at origin/main f745c0a1
-bench-memory,bank2             863636  # ADR 0198: frozen at origin/main f745c0a1
-bench-stress,bank2             877160  # ADR 0198: frozen at origin/main f745c0a1
-bench-orbit,bank2              868908  # ADR 0198: frozen at origin/main f745c0a1
-bench-tape,bank2               848192  # ADR 0198: frozen at origin/main f745c0a1
-filter-probes                  893084  # ADR 0198: frozen at origin/main f745c0a1
+orbit                          886120  # ADR 0198: frozen at origin/main eb0cdf0f
+default                        865716  # ADR 0198: frozen at origin/main eb0cdf0f
+bank2-gate                     867600  # ADR 0198: frozen at origin/main eb0cdf0f
+fault-inject                   838924  # ADR 0198: frozen at origin/main eb0cdf0f
+bench-algo,bank2               877564  # ADR 0198: frozen at origin/main eb0cdf0f
+bench-algo,master-tape,bank2   873528  # ADR 0198: frozen at origin/main eb0cdf0f
+bench-routing,bank2            874816  # ADR 0198: frozen at origin/main eb0cdf0f
+bench-memory,bank2             863652  # ADR 0198: frozen at origin/main eb0cdf0f
+bench-stress,bank2             877288  # ADR 0198: frozen at origin/main eb0cdf0f
+bench-orbit,bank2              868828  # ADR 0198: frozen at origin/main eb0cdf0f
+bench-tape,bank2               848168  # ADR 0198: frozen at origin/main eb0cdf0f
+filter-probes                  892932  # ADR 0198: frozen at origin/main eb0cdf0f
