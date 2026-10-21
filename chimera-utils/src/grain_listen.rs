@@ -111,7 +111,8 @@ fn phrases() -> Result<Vec<Phrase>, String> {
 }
 
 /// The takes: TAPE as it ships at TIME 300 ms FDBK 0.45, then GRAIN at the
-/// same TIME and FDBK over its own knobs, then the shimmer.
+/// same TIME and FDBK over its own knobs, PITCH +12 TEXTURE 0.4 at FDBK
+/// 0.45, 0.9 and 0.98 (the feedback held under unity), then the shimmer.
 fn settings() -> Vec<(&'static str, DelayParams)> {
     let tape = DelayParams {
         time_ms: 300.0,
@@ -135,6 +136,21 @@ fn settings() -> Vec<(&'static str, DelayParams)> {
         ("grain_stutter", g(0.25, 0.85, 0.0, 0.0)),
         ("grain_sparse", g(0.45, 0.2, 0.0, 0.5)),
         ("grain_cloud", g(0.85, 0.8, 0.0, 0.9)),
+        ("grain_p12_t04", g(0.6, 0.6, 12.0, 0.4)),
+        (
+            "grain_p12_t04_fb090",
+            DelayParams {
+                feedback: 0.9,
+                ..g(0.6, 0.6, 12.0, 0.4)
+            },
+        ),
+        (
+            "grain_p12_t04_fb098",
+            DelayParams {
+                feedback: 0.98,
+                ..g(0.6, 0.6, 12.0, 0.4)
+            },
+        ),
         (
             "shimmer",
             DelayParams {

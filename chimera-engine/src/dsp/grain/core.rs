@@ -149,21 +149,39 @@ impl GrainLen {
     }
 }
 
-/// A read speed, frames a sample: 0 (still) to `MAX_SPEED`, Q32.32 (NaN
-/// is 0).
+/// A read speed, frames a sample: `−MAX_SPEED` (backwards) to
+/// `MAX_SPEED`, Q32.32 (NaN is 0, still).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Speed(u64);
+pub struct Speed(i64);
 
 impl Speed {
-    pub const UNITY: Self = Self(ONE);
+    pub const UNITY: Self = Self(ONE as i64);
 
     pub fn of(ratio: f32) -> Self {
-        Self(q32(clampf(ratio, 0.0, MAX_SPEED)))
+        Self((clampf(ratio, -MAX_SPEED, MAX_SPEED) * 4_294_967_296.0) as i64)
     }
 
     /// As a ratio, to `f32`'s precision.
     pub fn ratio(self) -> f32 {
         self.0 as f32 * (1.0 / 4_294_967_296.0)
+    }
+
+    /// The same pace the other way.
+    pub const fn reversed(self) -> Self {
+        Self(-self.0)
+    }
+
+    pub const fn is_backwards(self) -> bool {
+        self.0 < 0
+    }
+
+    /// Its step, Q32.32, as the head's unsigned arithmetic adds it.
+    const fn step(self) -> u64 {
+        self.0 as u64
+    }
+
+    const fn magnitude(self) -> u64 {
+        self.0.unsigned_abs()
     }
 }
 
@@ -300,6 +318,11 @@ pub struct Trigger {
 }
 
 impl Trigger {
+    const NONE: Self = Self {
+        at: 0,
+        frac: Unit::ZERO,
+    };
+
     /// Its sample, below `BLOCK_SIZE`.
     pub const fn at(self) -> usize {
         self.at
@@ -319,10 +342,7 @@ pub struct Triggers {
 
 impl Triggers {
     const NONE: Self = Self {
-        at: [Trigger {
-            at: 0,
-            frac: Unit::ZERO,
-        }; MAX_STARTS],
+        at: [Trigger::NONE; MAX_STARTS],
         n: 0,
     };
 
@@ -469,8 +489,14 @@ impl Grain {
         while at < n {
             let i = self.pos.whole();
             let run = if i >= 1 && i + 2 < len {
-                // Samples until the newest tap passes the end.
-                let room = ((((len - 2) as u64) << 32) - 1 - self.pos.0) / self.speed.0.max(1) + 1;
+                // Samples until the leading tap leaves the source: the newest
+                // past its end, or backwards the oldest past its start.
+                let room = if self.speed.is_backwards() {
+                    (self.pos.0 - ONE) / self.speed.magnitude() + 1
+                } else {
+                    ((((len - 2) as u64) << 32) - 1 - self.pos.0) / self.speed.magnitude().max(1)
+                        + 1
+                };
                 (n - at).min(room as usize)
             } else {
                 0
@@ -492,7 +518,7 @@ impl Grain {
     /// `out`'s samples, every tap inside the source (`render`'s run).
     #[inline(always)]
     fn run<S: GrainSource, const STEAL: bool>(&mut self, src: &S, out: &mut [f32]) {
-        let (mut pos, speed) = (self.pos, self.speed.0);
+        let (mut pos, speed) = (self.pos, self.speed.step());
         let (mut phase, inc) = (self.phase, self.inc);
         let (mut steal, dec) = (self.steal, self.dec);
         let amp = self.amp.get();
@@ -504,7 +530,7 @@ impl Grain {
             }
             *o += hermite(src.taps(TapAt(pos.whole(), PhantomData)), pos.frac()) * g;
             phase += inc;
-            pos.0 += speed;
+            pos.0 = pos.0.wrapping_add(speed);
         }
         (self.pos, self.phase, self.steal) = (pos, phase, steal);
     }
@@ -519,10 +545,16 @@ impl Grain {
         let g = self.amp.get() * bell(self.phase) * self.steal.max(0.0);
         *o += hermite(x, self.pos.frac()) * g;
         self.phase += self.inc;
-        self.pos.0 += self.speed.0;
+        self.pos.0 = self.pos.0.wrapping_add(self.speed.step());
+        // Past either end, once at most (`MAX_SPEED` < `FRAMES`): forwards
+        // it is past the end, backwards it wrapped below 0 to past it too.
         let end = Pos::frame(len).0;
         if self.pos.0 >= end {
-            self.pos.0 -= end;
+            self.pos.0 = if self.speed.is_backwards() {
+                self.pos.0.wrapping_add(end)
+            } else {
+                self.pos.0 - end
+            };
         }
     }
 }
@@ -533,10 +565,40 @@ pub struct Sched {
     pub rate: Rate,
     /// 0 a regular train, 1 Beads' random intervals.
     pub texture: Unit,
-    /// The steal's crossfade and the pre-emptive one
-    /// (`kInstantCrossfadeTime`, `kPreemptiveCrossfadeTime`).
+    /// How grains are freed ahead of a start: `None` lets every grain play
+    /// out (a start then takes the one nearest its end as it is).
+    pub steal: Option<Steal>,
+}
+
+/// Beads' stealing fades: the steal's crossfade and the pre-emptive one
+/// (`kInstantCrossfadeTime`, `kPreemptiveCrossfadeTime`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Steal {
     pub instant: Samples,
     pub preempt: Samples,
+}
+
+/// A grain's slot in an `Engine<G>`, below `G`: made by the engine alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slot<const G: usize>(u8);
+
+impl<const G: usize> Slot<G> {
+    pub const fn get(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// A block's starts: each trigger a grain took and its slot, in order.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Started<const G: usize> {
+    at: [(Trigger, Slot<G>); MAX_STARTS],
+    n: u8,
+}
+
+impl<const G: usize> Started<G> {
+    pub fn as_slice(&self) -> &[(Trigger, Slot<G>)] {
+        &self.at[..usize::from(self.n)]
+    }
 }
 
 /// `G` grains, their clock and the samples since the last start
@@ -556,6 +618,8 @@ impl<const G: usize> Default for Engine<G> {
 }
 
 impl<const G: usize> Engine<G> {
+    const SLOTS: () = assert!(G >= 2 && G <= 255, "a slot is a u8; stealing fades two");
+
     pub const NEW: Self = Self {
         grains: [Grain::IDLE; G],
         clock: Clock::NEW,
@@ -565,6 +629,10 @@ impl<const G: usize> Engine<G> {
 
     pub fn grains(&self) -> &[Grain; G] {
         &self.grains
+    }
+
+    pub fn grain(&self, slot: Slot<G>) -> &Grain {
+        &self.grains[slot.get()]
     }
 
     /// Every grain at `speed` from now: a user whose speed moves under its
@@ -581,34 +649,46 @@ impl<const G: usize> Engine<G> {
     }
 
     /// The block's grains from `src` into `out`, zeroed first. At each
-    /// trigger the grains render up to it, `start(trigger, u)` (`u` a
-    /// uniform draw for the user's spray) places the new grain, it takes
-    /// the grain nearest its end, and the next two fade (Beads' sorted
-    /// scheduler).
+    /// trigger the grains render up to it and `start(trigger, u)` (`u` a
+    /// uniform draw for the user's spray) places the new grain, or none: a
+    /// grain takes the slot nearest its end, and with `sched.steal` the
+    /// next two fade (Beads' sorted scheduler). Returns the starts.
     pub fn block<S: GrainSource>(
         &mut self,
         src: &S,
         sched: &Sched,
         out: &mut [f32; BLOCK_SIZE],
-        mut start: impl FnMut(Trigger, Unit) -> Start,
-    ) {
+        mut start: impl FnMut(Trigger, Unit) -> Option<Start>,
+    ) -> Started<G> {
+        let () = Self::SLOTS;
         *out = [0.0; BLOCK_SIZE];
-        let starts = self.clock.block(sched.rate, sched.texture, &mut self.rng);
+        let triggers = self.clock.block(sched.rate, sched.texture, &mut self.rng);
+        let mut started = Started {
+            at: [(Trigger::NONE, Slot(0)); MAX_STARTS],
+            n: 0,
+        };
         let mut from = 0;
-        for &t in starts.as_slice() {
+        for &t in triggers.as_slice() {
             self.render(src, &mut out[from..t.at]);
             from = t.at;
             let u = self.rng.uniform();
-            let s = start(t, u);
+            let Some(s) = start(t, u) else {
+                continue;
+            };
             let k = self.nearest_end();
             self.grains[k].start(s, t.frac);
-            let interval = self.since.wrapping_add(t.at as u32);
-            self.steal_ahead(sched, Samples::new(interval as f32));
+            started.at[usize::from(started.n)] = (t, Slot(k as u8));
+            started.n += 1;
+            if let Some(steal) = sched.steal {
+                let interval = self.since.wrapping_add(t.at as u32);
+                self.steal_ahead(steal, Samples::new(interval as f32));
+            }
             // Counted from this start: the block's end adds the rest.
             self.since = 0u32.wrapping_sub(t.at as u32);
         }
         self.render(src, &mut out[from..]);
         self.since = self.since.wrapping_add(BLOCK_SIZE as u32).min(1 << 24);
+        started
     }
 
     fn render<S: GrainSource>(&mut self, src: &S, out: &mut [f32]) {
@@ -635,7 +715,7 @@ impl<const G: usize> Engine<G> {
     /// ends within the steal's crossfade, the next within the interval just
     /// gone or the pre-emptive fade, whichever is shorter; so the next start
     /// finds a grain done, or nearly. Beads fades four of 32; this, two.
-    fn steal_ahead(&mut self, sched: &Sched, interval: Samples) {
+    fn steal_ahead(&mut self, sched: Steal, interval: Samples) {
         let first = self.nearest_end();
         let mut second = usize::from(first == 0);
         for (i, g) in self.grains.iter().enumerate() {
@@ -666,21 +746,35 @@ mod tests {
         }
     }
 
-    fn played() -> Engine<4> {
-        let sched = Sched {
+    const STEAL: Option<Steal> = Some(Steal {
+        instant: Samples::new(240.0),
+        preempt: Samples::new(4800.0),
+    });
+
+    fn sched(steal: Option<Steal>) -> Sched {
+        Sched {
             rate: Rate::hz(480.0, 48_000),
             texture: Unit::ZERO,
-            instant: Samples::new(240.0),
-            preempt: Samples::new(4800.0),
-        };
+            steal,
+        }
+    }
+
+    fn grain_at(frame: usize, speed: Speed) -> Start {
+        Start {
+            pos: Pos::frame(frame),
+            speed,
+            len: GrainLen::new(Samples::new(2000.0)),
+            amp: Gain::new(1.0),
+        }
+    }
+
+    /// Eight blocks of a grain at frame 64 at each trigger.
+    fn played(steal: Option<Steal>) -> Engine<4> {
         let mut e = Engine::<4>::NEW;
         let mut out = [0.0; BLOCK_SIZE];
         for _ in 0..8 {
-            e.block(&Ramp, &sched, &mut out, |_, _| Start {
-                pos: Pos::frame(64),
-                speed: Speed::UNITY,
-                len: GrainLen::new(Samples::new(2000.0)),
-                amp: Gain::new(1.0),
+            e.block(&Ramp, &sched(steal), &mut out, |_, _| {
+                Some(grain_at(64, Speed::UNITY))
             });
         }
         e
@@ -690,7 +784,7 @@ mod tests {
     /// else: heads, bells, fades, gains, the clock and its draws stay.
     #[test]
     fn set_speed_moves_the_live_grains_step_alone() {
-        let before = played();
+        let before = played(STEAL);
         assert!(before.active() > 1);
         let mut after = before;
         after.set_speed(Speed::of(1.5));
@@ -717,5 +811,94 @@ mod tests {
         assert_eq!(p.whole(), 97);
         assert_eq!(p.frac(), 0.5);
         assert_eq!(Pos::behind(10, Frames::new(4.0), 100), Pos::frame(6));
+    }
+
+    /// A trigger whose user starts nothing takes no slot and steals
+    /// nothing: the grains play on as if it never came, and it is not
+    /// among the starts.
+    #[test]
+    fn no_start_takes_no_slot_and_steals_nothing() {
+        let mut a = played(STEAL);
+        let mut b = a;
+        let mut out = [0.0; BLOCK_SIZE];
+        // 480 Hz at 48 kHz: a trigger every 100 samples, so one in 64 or two.
+        let mut blocks = 0;
+        loop {
+            let started = a.block(&Ramp, &sched(STEAL), &mut out, |_, _| None);
+            assert!(started.as_slice().is_empty());
+            let left = b.grains.map(|g| g.remaining());
+            for (g, l) in a.grains.iter().zip(left) {
+                assert_eq!(g.remaining(), l.saturating_sub(BLOCK_SIZE as u32));
+            }
+            for g in &mut b.grains {
+                g.render(&Ramp, &mut [0.0; BLOCK_SIZE]);
+            }
+            blocks += 1;
+            if blocks == 4 {
+                break;
+            }
+        }
+    }
+
+    /// Each start names its slot: the grain there is the one just started,
+    /// its length left less what it has played since its trigger.
+    #[test]
+    fn each_start_names_its_slot() {
+        let mut e = played(STEAL);
+        let mut out = [0.0; BLOCK_SIZE];
+        let mut seen = 0;
+        for _ in 0..8 {
+            let started = e.block(&Ramp, &sched(STEAL), &mut out, |_, _| {
+                Some(grain_at(64, Speed::UNITY))
+            });
+            for &(t, slot) in started.as_slice() {
+                let ahead = started
+                    .as_slice()
+                    .iter()
+                    .any(|&(u, s)| s == slot && u.at() > t.at());
+                if !ahead {
+                    assert_eq!(
+                        e.grain(slot).remaining(),
+                        2000 - (BLOCK_SIZE - t.at()) as u32
+                    );
+                }
+                seen += 1;
+            }
+        }
+        assert!(seen >= 4, "{seen} starts");
+    }
+
+    /// Without `steal` no grain is faded: each plays its whole length,
+    /// where with it the grains nearest their end are cut short.
+    #[test]
+    fn no_steal_lets_every_grain_play_out() {
+        let fades = |e: &Engine<4>| e.grains.iter().filter(|g| g.dec != 0.0).count();
+        assert_eq!(fades(&played(None)), 0);
+        assert!(fades(&played(STEAL)) > 0);
+    }
+
+    /// A backwards grain reads the source downwards, frame by frame, and
+    /// wraps from its start to its end.
+    #[test]
+    fn a_backwards_grain_reads_down_and_wraps() {
+        assert_eq!(Speed::of(-1.0), Speed::UNITY.reversed());
+        assert_eq!(Speed::of(-99.0), Speed::of(-MAX_SPEED));
+        let mut g = Grain::IDLE;
+        g.start(grain_at(100, Speed::of(-1.0)), Unit::ZERO);
+        let mut out = [0.0; 10];
+        g.render(&Ramp, &mut out);
+        for (k, &o) in out.iter().enumerate().skip(1) {
+            let want = (100 - k) as f32 * bell(k as f32 / 2000.0);
+            assert!((o - want).abs() < 1e-3, "{k}: {o} vs {want}");
+        }
+        let mut g = Grain::IDLE;
+        g.start(grain_at(2, Speed::of(-1.0)), Unit::ZERO);
+        g.render(&Ramp, &mut [0.0; 5]);
+        assert_eq!(g.pos, Pos::frame(Ramp::FRAMES - 3));
+        // Forwards it wraps the other way.
+        let mut g = Grain::IDLE;
+        g.start(grain_at(Ramp::FRAMES - 2, Speed::UNITY), Unit::ZERO);
+        g.render(&Ramp, &mut [0.0; 5]);
+        assert_eq!(g.pos, Pos::frame(3));
     }
 }

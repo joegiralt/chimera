@@ -25,7 +25,8 @@ use crate::dsp::algo::math::exp2;
 use crate::dsp::ease::{at, ease_coeff, step_of};
 pub use crate::dsp::grain::core::{
     At, Clock, Engine, Frames, Gain, Grain, GrainLen, GrainSource, MAX_STARTS, Pos, Rate, Rng,
-    Samples, Sched, Speed, Start, TapAt, Trigger, bell, hermite, log_one_minus_x,
+    Samples, Sched, Slot, Speed, Start, Started, Steal, TapAt, Trigger, bell, hermite,
+    log_one_minus_x,
 };
 use crate::dsp::{Unit, clampf};
 use chimera_hal::BLOCK_SIZE;
@@ -144,8 +145,10 @@ impl Ctl {
         Sched {
             rate: self.rate,
             texture: self.texture,
-            instant: self.instant,
-            preempt: self.preempt,
+            steal: Some(Steal {
+                instant: self.instant,
+                preempt: self.preempt,
+            }),
         }
     }
 
@@ -286,9 +289,9 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
     let mut g = [0.0; BLOCK_SIZE];
     let wp = d.write_pos;
     let line = Line(&d.buffer);
-    d.grain
-        .engine
-        .block(&line, &ctl.sched(), &mut g, |t, u| ctl.start(wp, t, u));
+    d.grain.engine.block(&line, &ctl.sched(), &mut g, |t, u| {
+        Some(ctl.start(wp, t, u))
+    });
     span(
         d,
         buf,

@@ -209,7 +209,7 @@ fn against_reference(p: &DelayParams, blocks: usize) -> (f64, f64) {
         let wp = (b * BLOCK_SIZE) % N;
         let (mut a, mut x) = ([0.0f32; BLOCK_SIZE], [0.0f64; BLOCK_SIZE]);
         e.block(&Line(&line), &ctl.sched(), &mut a, |t, u| {
-            ctl.start(wp, t, u)
+            Some(ctl.start(wp, t, u))
         });
         r.block(&line, wp, &ctl, &mut x);
         for (&a, &x) in a.iter().zip(&x) {
@@ -352,7 +352,7 @@ fn the_pool_holds_the_cloud() {
         let mut out = [0.0; BLOCK_SIZE];
         let wp = (b * BLOCK_SIZE) % N;
         e.block(&Line(&line), &ctl.sched(), &mut out, |t, u| {
-            ctl.start(wp, t, u)
+            Some(ctl.start(wp, t, u))
         });
         most = most.max(e.active());
     }
