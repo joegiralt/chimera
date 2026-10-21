@@ -230,7 +230,6 @@ impl StreamFile {
         let covered: u32 = self.reads(&blocks).map(|(_, n)| n.get()).sum();
         let len =
             Bytes::new((self.data_len.get() - c.0 * CHUNK_BYTES.get()).min(CHUNK_BYTES.get()));
-        piece(&self.ext, &blocks, 0)?;
         (covered == blocks.count.get() && blocks.count.get() <= RAW_CHUNK_BLOCKS)
             .then_some(self.read_of(ChunkPlan { blocks, len }))
     }
