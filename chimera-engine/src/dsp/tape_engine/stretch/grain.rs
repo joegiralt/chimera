@@ -375,7 +375,7 @@ impl Grains {
                 top.get(),
             );
             let at = match period {
-                Some(p) => lock(newest.head(k), WinPos::new(want), p, top),
+                Some(p) => lock_in(newest.head(k), WinPos::new(want), p, top),
                 None => WinPos::new(want),
             };
             GrainAt { at, speed, dur }
@@ -568,9 +568,9 @@ fn lock_period(p: &TapeEngineParams, v: &SourceView<'_>, win: Window) -> Option<
 /// from the newest grain's head `h` allows, inside `[0, top]` (a period
 /// moved back in if the nearest is out), so its partials meet the others'
 /// in phase.
-fn lock(h: WinPos, want: WinPos, period: Period, top: WinPos) -> WinPos {
+fn lock_in(h: WinPos, want: WinPos, period: Period, top: WinPos) -> WinPos {
     let (h, at, p, top) = (h.get(), want.get(), period.get(), top.get());
-    let mut u = h - p * libm::roundf((h - at) / p);
+    let mut u = super::classic::lock(h, at, p);
     if u > top {
         u -= p * libm::ceilf((u - top) / p);
     }
@@ -594,7 +594,7 @@ mod tests {
         let p = Period::new(109.3).unwrap();
         let top = WinPos::new(10_000.0);
         for (h, at) in [(5_000.25, 1_234.5), (100.0, 9_000.75), (777.7, 777.0)] {
-            let u = lock(WinPos::new(h), WinPos::new(at), p, top).get();
+            let u = lock_in(WinPos::new(h), WinPos::new(at), p, top).get();
             let n = (h - u) / p.get();
             assert!((n - libm::roundf(n)).abs() < 1e-3, "{h}, {at}: {n}");
             assert!((u - at).abs() <= 0.5 * p.get() + 1e-3);
