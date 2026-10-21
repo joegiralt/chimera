@@ -7,7 +7,7 @@ use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{Block, DiskCode, ParamId, ParamKind, ParamSpec};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::{RevSync, ReverbType};
-use crate::dsp::tape_engine::params::{RetiredModel, TapeEngineParams};
+use crate::dsp::tape_engine::params::{RetiredMode, RetiredModel, TapeEngineParams};
 use crate::modulation::ModSource;
 use crate::orbit::chords::ScaleKind;
 use crate::orbit::ring::{NoteMode, Range, SnapTo};
@@ -175,19 +175,21 @@ pub const RETIRED_BLOCKS: &[u8] = &[9, 11];
 /// `(block code, param id, value code)`: one enum value that is gone for good.
 /// TAPE's MODEL REVERSE (#369): LOOP with END before START plays it, so a
 /// file's code 1 goes to `Retired` and `tape_engine::translate_v1`. So do
-/// PING-PONG (2) and ONESHOT (7), which PLAY folds (ADR 0170).
+/// PING-PONG (2) and ONESHOT (7), which WALK folds (ADR 0170), TRON (6),
+/// and MODE ONE (0), which WALK's DIRECTION and TRON hold (ADR 0203).
 pub const RETIRED_CODES: &[(u8, u8, u8)] = &retired_codes();
 
-const fn retired_codes() -> [(u8, u8, u8); RetiredModel::ALL.len()] {
+const fn retired_codes() -> [(u8, u8, u8); RetiredModel::ALL.len() + 1] {
     let Some(block) = BlockRef::TapeEngine.disk_code() else {
         panic!("TAPE_ENG has a code")
     };
-    let mut out = [(0, 0, 0); RetiredModel::ALL.len()];
+    let mut out = [(0, 0, 0); RetiredModel::ALL.len() + 1];
     let mut i = 0;
-    while i < out.len() {
+    while i < RetiredModel::ALL.len() {
         out[i] = (block, TapeEngineParams::MODEL.0, RetiredModel::ALL[i] as u8);
         i += 1;
     }
+    out[i] = (block, TapeEngineParams::MODE.0, RetiredMode::One.code());
     out
 }
 

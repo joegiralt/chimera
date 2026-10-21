@@ -173,10 +173,7 @@ pub fn db(x: f32) -> f32 {
 
 pub fn tape_model(perf: &mut Performance, part: usize, m: TapeModel) {
     perf.edit(PartId::ALL[part]).sound.params.tape.machine =
-        chimera_core::dsp::tape_engine::TapeMachine::of(
-            m,
-            chimera_core::dsp::tape_engine::PlayMode::Loop,
-        );
+        chimera_core::dsp::tape_engine::TapeMachine::of(m);
 }
 
 pub fn init_perf(engine: EngineType) -> Performance {

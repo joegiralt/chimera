@@ -80,9 +80,11 @@ pub const VOICE_RAM_BUDGET: usize =
 /// (ADR 0051, 2,048 B; ADR 0101 raises it to 2,112 for the 2040's state;
 /// 2,176 for the formant operators' 13 glided settings in `AlgoLive`, which
 /// ADR 0131 records; 2,240 for the played Sound's FX block, ADR 0155;
-/// 2,336 for FUZZ's memory, one a place, 2 × 44 B, ADR 0156; 2,408 for
-/// the VCA's low-pass gate, 68 B and its padding, ADR 0195).
-pub const VOICE_CHAIN_BYTES: usize = 2408;
+/// 2,336 for FUZZ's memory, one a place, 2 × 44 B, ADR 0156; 2,344 for
+/// the played Sound's TAPE block, WALK's DIRECTION, TRON and DRIFT beside
+/// SCRUB's KEY, ADR 0203; 2,416 for the VCA's low-pass gate, 68 B and its
+/// padding, ADR 0195).
+pub const VOICE_CHAIN_BYTES: usize = 2416;
 
 /// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-board/src/display.rs`).
 pub const FB_BYTES: usize = chimera_hal::FB_SIZE * 2; // 153_600

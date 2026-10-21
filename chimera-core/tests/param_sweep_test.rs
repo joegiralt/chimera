@@ -1708,8 +1708,7 @@ fn tape_params_sweep() {
                     };
                     for v in values {
                         let mut s = Sound::init(EngineType::Tape);
-                        s.params.tape.machine =
-                            TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
+                        s.params.tape.machine = TapeMachine::of(model);
                         if model == TapeModel::Scrub {
                             s.params.tape.motion = 0.5; // a moving tape
                         }

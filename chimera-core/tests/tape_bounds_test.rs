@@ -8,10 +8,13 @@ mod common;
 use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Tron;
+use chimera_core::dsp::tape_engine::params::Drift;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, PlayMode, Retrig, SliceCode, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
+    Direction, INC_MAX, Retrig, SliceCode, StretchType, TapeEngine, TapeEngineParams, TapeModel,
+    Wow,
 };
 use chimera_core::storage::twelve::pack12;
 use chimera_hal::BLOCK_SIZE;
@@ -20,8 +23,9 @@ use common::tape::{held_plain, held_transwave};
 
 /// The models these runs play (TRANSWAVE on a `Plain` is silent).
 /// Every machine; START and END are drawn in either order.
-const MODELS: [TapeModel; 5] = TapeModel::ALL;
-const MODES: [PlayMode; 3] = [PlayMode::One, PlayMode::Loop, PlayMode::Ping];
+const MODELS: [TapeModel; 4] = TapeModel::ALL;
+const MODES: [Direction; 4] = Direction::ALL;
+const TRONS: [Tron; 2] = [Tron::Off, Tron::On];
 
 const MAX_FRAMES: usize = 100_000;
 
@@ -50,7 +54,10 @@ fn reads_stay_in_row() {
         held.truncate(keep);
         let v = SourceView::strict(&held).unwrap();
         let p = TapeEngineParams {
-            machine: TapeMachine::of(MODELS[rng.below(MODELS.len())], MODES[rng.below(3)]),
+            machine: TapeMachine::of(MODELS[rng.below(MODELS.len())]),
+            direction: MODES[rng.below(4)],
+            tron: TRONS[rng.below(2)],
+            drift: Drift::of(unit(&mut rng)),
             start: unit(&mut rng),
             end: unit(&mut rng),
             position: unit(&mut rng),
@@ -201,7 +208,10 @@ fn edge(rng: &mut XorShift) -> f32 {
 fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams {
     let start = edge(rng);
     TapeEngineParams {
-        machine: TapeMachine::of(model, MODES[rng.below(3)]),
+        machine: TapeMachine::of(model),
+        direction: MODES[rng.below(4)],
+        tron: TRONS[rng.below(2)],
+        drift: Drift::of(edge(rng)),
         start,
         end: if rng.below(5) == 0 { start } else { edge(rng) },
         position: edge(rng),

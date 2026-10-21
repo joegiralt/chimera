@@ -21,7 +21,7 @@ fn engines() -> Vec<(String, Performance, Option<Vec<u8>>)> {
         ("VA INIT".to_string(), init_perf(EngineType::Va), None),
     ];
     let mut t = init_perf(EngineType::Tape);
-    tape_model(&mut t, 0, TapeModel::Play);
+    tape_model(&mut t, 0, TapeModel::Walk);
     v.push(("TAPE INIT (LOOP)".to_string(), t, Some(chimera_source(0))));
     for i in 0..8 {
         let mut p = Performance::new();

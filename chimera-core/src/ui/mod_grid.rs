@@ -194,13 +194,13 @@ impl DestCtx {
         let tape = TapeMachine::ALL.into_iter().find(|&m| m as u8 == b & 7);
         let fx = FxType::LIST.into_iter().find(|&t| t as u8 == b >> 3);
         Self {
-            tape: tape.unwrap_or(TapeMachine::Loop),
+            tape: tape.unwrap_or(TapeMachine::Walk),
             fx: fx.unwrap_or(FxType::Off),
         }
     }
 
     pub const DEFAULT: DestCtx = DestCtx {
-        tape: TapeMachine::Loop,
+        tape: TapeMachine::Walk,
         fx: FxType::Off,
     };
 }

@@ -286,11 +286,10 @@ fn a_level_gliding_to_zero_is_billed_until_it_lands() {
 fn scrub_position_follows_the_jog_directly() {
     use chimera_core::dsp::tape_engine::{TapeEngineParams, TapeModel};
     let a = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
-    for (model, direct) in [(TapeModel::Scrub, true), (TapeModel::Play, false)] {
+    for (model, direct) in [(TapeModel::Scrub, true), (TapeModel::Walk, false)] {
         let mut s = Sound::init(EngineType::Algo);
         s.params.envelopes[0].sustain = 1.0;
-        s.params.tape.machine =
-            TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
+        s.params.tape.machine = TapeMachine::of(model);
         let mut r = Rig::new([s, Sound::init(EngineType::Algo)]);
         r.note(0, true);
         for _ in 0..50 {

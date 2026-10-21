@@ -207,7 +207,7 @@ check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
     syms=$(rust-nm -C {{elf}})
-    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::grain::core::' 'voice::gate::kern::' 'ui::pit_tuner::calc::'; do
+    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::grain::core::' 'voice::gate::kern::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
 

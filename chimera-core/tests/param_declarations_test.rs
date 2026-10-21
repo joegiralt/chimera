@@ -10,8 +10,8 @@ use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{Motion, ParamSpec, Smoothing};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::modal::{self, ResonatorMode};
-use chimera_core::dsp::tape_engine::TapeMachine;
-use chimera_core::dsp::tape_engine::{self as tape, TapeEngineParams, TapeModel};
+use chimera_core::dsp::tape_engine::Way;
+use chimera_core::dsp::tape_engine::{self as tape, TapeEngineParams};
 use chimera_core::modulation::ModSource;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -53,35 +53,26 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
             (s.params.modal.ens_mix, s.params.modal.ens_depth) = (0.5, 0.5);
         }
         BlockRef::TapeEngine => {
-            use TapeModel::*;
             // PERIOD is STRETCH MONO's lock, DRAG TRON's release (FADE); the
             // rest, the first machine that reads it. A quarter-second
             // source: LOOP wraps within a note.
-            let m = [Play, Stretch, Transwave, Tron, Scrub];
-            let model = match a.param {
-                TapeEngineParams::PERIOD => Stretch,
-                TapeEngineParams::DRAG => Tron,
+            let m = [Way::Loop, Way::Stretch, Way::Wave, Way::Tron, Way::Scrub];
+            let way = match a.param {
+                TapeEngineParams::PERIOD => Way::Stretch,
+                TapeEngineParams::DRAG => Way::Tron,
                 // SLICE is retired: no machine has a cell for it.
-                TapeEngineParams::SLICE => Play,
-                id => *m
-                    .iter()
-                    .find(|&&m| {
-                        let k = chimera_core::dsp::tape_engine::TapeMachine::of(
-                            m,
-                            chimera_core::dsp::tape_engine::PlayMode::Loop,
-                        );
-                        tape::reads(k, id)
-                    })
-                    .unwrap(),
+                TapeEngineParams::SLICE => Way::Loop,
+                // A whole-window loop has no room to walk: FORWARD's start.
+                TapeEngineParams::DRIFT => Way::One,
+                id => *m.iter().find(|&&w| tape::reads(w.machine(), id)).unwrap(),
             };
-            s.params.tape.machine =
-                TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
+            s.params.tape.set_way(way);
             // START, END and SLICE latch at note-on in ONE; LOOP reads END live.
             if matches!(
                 a.param,
                 TapeEngineParams::START | TapeEngineParams::END | TapeEngineParams::SLICE
             ) {
-                s.params.tape.machine = TapeMachine::One;
+                s.params.tape.set_way(Way::One);
             }
             src = Some(held_plain(&saw_with_burst(48_000, 0.25), 48_000));
             // The whole source a loop, its first wrap past `NEXT` (INIT's

@@ -7,6 +7,7 @@
 //! `PROOF_DIR=<dir> cargo test -p chimera-desktop --test unit_proof -- --ignored beds`
 //! `PROOF_DIR=<dir> cargo test -p chimera-desktop --test unit_proof -- --ignored project`
 
+use chimera_core::dsp::tape_engine::Direction;
 use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
 
@@ -245,7 +246,9 @@ fn project() {
         let recipe = SoundRecipe {
             name: SoundName::new(h.name.as_str()).expect("a name"),
             source: h.name,
-            machine: TapeMachine::Loop,
+            machine: TapeMachine::Walk,
+            direction: Direction::Loop,
+            tron: chimera_core::dsp::tape_engine::Tron::Off,
             set: Vec::new(),
             trim_db: 0.0,
         };

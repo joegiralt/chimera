@@ -9,7 +9,7 @@ use core::mem::MaybeUninit;
 use chimera_engine::bank2::DOOR_CELL;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_engine::dsp::tape_engine::{
-    Heads, TapeDeck, TapeEngine, TapeEngineParams, TapeMachine,
+    Direction, Heads, TapeDeck, TapeEngine, TapeEngineParams, TapeMachine,
 };
 use chimera_engine::hw::Cost;
 use chimera_engine::modulation::ModState;
@@ -47,7 +47,8 @@ fn bits(x: &[f32]) -> Vec<u32> {
 fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     let (mut tok, id) = source();
     let p = TapeEngineParams {
-        machine: TapeMachine::Loop,
+        machine: TapeMachine::Walk,
+        direction: Direction::Loop,
         ..TapeEngineParams::default()
     };
     let mods = ModState::new();
@@ -68,7 +69,7 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     assert_eq!(e.heads(), Heads::NONE);
     assert_eq!(e.playing_cost(), None);
     assert_eq!(TapeEngine::cost(&p, &mods), Cost(0));
-    assert_eq!(TapeEngine::model_cost(p.machine), Cost(0));
+    assert_eq!(TapeEngine::model_cost(p.way()), Cost(0));
 
     // Open: the deck's every sample.
     DOOR_CELL.open_host();
@@ -113,8 +114,8 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     assert_eq!(e.sustains(), d.sustains());
     assert_eq!(TapeEngine::cost(&p, &mods), TapeDeck::cost(&p, &mods));
     assert_eq!(
-        TapeEngine::model_cost(p.machine),
-        TapeDeck::model_cost(p.machine)
+        TapeEngine::model_cost(p.way()),
+        TapeDeck::model_cost(p.way())
     );
     // A strip moved to a rebuilt slot carries on as the deck's.
     let (ds, es) = (d.strip(), e.strip());

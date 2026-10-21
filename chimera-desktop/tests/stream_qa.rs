@@ -15,7 +15,7 @@ use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, Shape, streamed_held_len, write_head_table,
 };
-use chimera_core::dsp::tape_engine::{PlayMode, TapeEngine, TapeEngineParams};
+use chimera_core::dsp::tape_engine::{Direction, TapeEngine, TapeEngineParams};
 use chimera_core::project::SourceId;
 use chimera_core::source_table::SourceTable;
 use chimera_core::storage::{Card, SourceHead, read_packed_into, read_source_head, source_name};
@@ -302,13 +302,13 @@ fn stream_qa() {
         assert_eq!(held.len(), DESC_LEN + packed.len());
         let note = ((u32::from(head.root) + 50) / 100).min(127) as u8;
         let secs = head.sref.frames as f32 / f32::from(rate);
-        for mode in [PlayMode::One, PlayMode::Loop] {
+        for mode in [Direction::Forward, Direction::Loop] {
             let p = TapeEngineParams {
-                machine: TapeMachine::play(mode),
+                direction: mode,
                 root: f32::from(head.root),
                 ..TapeEngineParams::default()
             };
-            let len = if mode == PlayMode::One {
+            let len = if mode == Direction::Forward {
                 secs + 0.5
             } else {
                 secs.max(1.0) * 3.0
@@ -347,7 +347,7 @@ fn stream_qa() {
                 let slug = name.to_lowercase().replace(' ', "-");
                 let tag = tag.replace(' ', "-");
                 if let Some(dir) = &wavs
-                    && mode == PlayMode::Loop
+                    && mode == Direction::Loop
                     && EARS.contains(&name.as_str())
                 {
                     write_wav(&dir.join(format!("{slug}-loop-{tag}.wav")), &s).unwrap();
@@ -427,7 +427,8 @@ fn stream_qa_stressed() {
         "admission takes {billed}"
     );
     let p = TapeEngineParams {
-        machine: TapeMachine::Loop,
+        machine: TapeMachine::Walk,
+        direction: Direction::Loop,
         root: 6_000.0,
         ..TapeEngineParams::default()
     };

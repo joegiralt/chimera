@@ -1,6 +1,8 @@
 //! The window and its loop (spec § 2 The macros and the window): the pure
 //! arithmetic both banks take. Bank 1's, outside `bank2.x`'s globs: the
 //! deck calls it per pass, and a streamed load places its heads by it.
+//! Inlined always, so each bank keeps its own copy and none lands in bank
+//! 1 alone for bank 2's callers (ADR 0203).
 
 use core::num::NonZeroU32;
 
@@ -10,6 +12,7 @@ use crate::stream::units::SourceRate;
 
 /// The shortest loop at `rate`, in frames: 2 ms, at least
 /// `MIN_LOOP_FRAMES`.
+#[inline(always)]
 pub fn min_frames(rate: SourceRate) -> u32 {
     shortest(rate, 0.0)
 }
@@ -17,6 +20,7 @@ pub fn min_frames(rate: SourceRate) -> u32 {
 /// The shortest loop at `rate` for a head moving up to `inc` frames a
 /// sample: `min_frames`, and at least `MIN_PASS_SAMPLES · inc`, so a pass
 /// (or a turn) comes at most once in `MIN_PASS_SAMPLES` output samples.
+#[inline(always)]
 pub fn shortest(rate: SourceRate, inc: f32) -> u32 {
     let pass = libm::ceilf(MIN_PASS_SAMPLES as f32 * inc) as u32;
     (libm::roundf(MIN_LOOP_S * f32::from(rate)) as u32)
@@ -32,11 +36,13 @@ pub fn window_start(start: f32, frames: NonZeroU32) -> u32 {
 
 /// The window's end from `ws`: END, kept ≥ START + 2 ms and ≤ `frames`.
 /// Always more than `ws`.
+#[inline(always)]
 pub fn window_end(ws: u32, end: f32, frames: u32, rate: SourceRate) -> u32 {
     window_end_min(ws, end, frames, min_frames(rate))
 }
 
 /// `window_end`, kept ≥ START + `shortest` frames.
+#[inline(always)]
 pub fn window_end_min(ws: u32, end: f32, frames: u32, shortest: u32) -> u32 {
     let e = libm::roundf(clampf(end, 0.0, 1.0) * frames as f32) as u32;
     e.max(ws.saturating_add(shortest)).min(frames)
@@ -44,11 +50,13 @@ pub fn window_end_min(ws: u32, end: f32, frames: u32, shortest: u32) -> u32 {
 
 /// SIZE's loop length in frames: `2 ms · (W / 2 ms)^size`, at least
 /// `MIN_LOOP_FRAMES` (or `W`, if shorter; 1 at least), at most `W`.
+#[inline(always)]
 pub fn loop_len(size: f32, w: u32, rate: SourceRate) -> u32 {
     loop_len_min(size, w, rate, min_frames(rate))
 }
 
 /// `loop_len`, at least `shortest` frames (or `W`, if shorter).
+#[inline(always)]
 pub fn loop_len_min(size: f32, w: u32, rate: SourceRate, shortest: u32) -> u32 {
     let min = MIN_LOOP_S * f32::from(rate);
     let l = min * libm::powf(w as f32 / min, clampf(size, 0.0, 1.0));
@@ -116,6 +124,7 @@ impl Bounds {
 
     /// The loop in the window `[ws, we)`: SIZE's length, at `place` of the
     /// room left, its last XFADE of it the fade.
+    #[inline(always)]
     pub fn of(ws: u32, we: u32, sizing: Sizing, rate: SourceRate) -> Bounds {
         Self::of_min(ws, we, sizing, rate, min_frames(rate))
     }
@@ -123,6 +132,7 @@ impl Bounds {
     /// `of`, the loop at least `shortest` frames (or the window). The
     /// window is never empty, `we > ws` (`window_end_min` keeps it so), and
     /// `loop_len_min` never exceeds it, so neither subtraction wraps.
+    #[inline(always)]
     pub fn of_min(ws: u32, we: u32, sizing: Sizing, rate: SourceRate, shortest: u32) -> Bounds {
         let Sizing { size, place, xfade } = sizing;
         let w = we - ws;

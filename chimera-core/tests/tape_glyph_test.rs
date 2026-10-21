@@ -11,7 +11,7 @@
 mod common;
 mod screen;
 
-use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::components::TAPE_GAP;
 use chimera_core::ui::perf::PerfStats;
@@ -323,11 +323,14 @@ fn cases() -> Vec<(String, TapeGauge)> {
     v
 }
 
+// The still and worn rows are WALK's footsteps since ADR 0203; the live
+// rows of ONE's match, LOOP's wheel, PING's court and TRON's blind are the
+// kept pictures', unchanged.
 const GOLDENS: &[(&str, u64)] = &[
-    ("one_still", 0xd21fca260fc72bb3),
-    ("loop_still", 0xee7ce65bb21a8edd),
-    ("ping_still", 0x11fb45bbcaa0aaad),
-    ("tron_still", 0x2da91fd3c252b178),
+    ("one_still", 0x9f4b5f3936088066),
+    ("loop_still", 0xf81953cb39842fa6),
+    ("ping_still", 0xe2e893a20f5c771f),
+    ("tron_still", 0xc8dfe3dd85713df6),
     ("stretch_still", 0xec7471660def4d69),
     ("wave_still", 0x35b91a1f3869788b),
     ("scrub_still", 0xfa9dc37b17460909),
@@ -353,9 +356,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("scrub_forward", 0x823b6cdf60db0701),
     ("scrub_back", 0xde0233cd46fe3318),
     ("scrub_length_xfade", 0x4ae89a8f1af5f0df),
-    ("loop_wow", 0xc6884ede1fdd43ad),
-    ("loop_grain", 0xa727e7c0a46b570e),
-    ("tron_worn", 0xa028652aeee8bb7d),
+    ("loop_wow", 0x8e80d9f019a555c4),
+    ("loop_grain", 0x751dff187a6ad703),
+    ("tron_worn", 0xafc96adcb08994d6),
 ];
 
 #[test]
@@ -402,7 +405,21 @@ fn a_step_is_about_a_pixel() {
     // that moves less than a step costs no redraw.
     let at = |v: f32| {
         TapeGauge::of(&GlyphInputs::from_set(
-            [1.0 / 6.0, 0.0, 1.0, v, 0.5, 0.5, 0.3, 0.0, 0.0, 0.2],
+            [
+                0.0,
+                0.0,
+                1.0,
+                v,
+                0.5,
+                0.5,
+                0.3,
+                0.0,
+                0.0,
+                0.2,
+                2.0 / 3.0,
+                0.0,
+                0.0,
+            ],
             Pose::Live,
         ))
         .key()
@@ -414,22 +431,40 @@ fn a_step_is_about_a_pixel() {
 
 #[test]
 fn model_picks_the_glyph() {
-    // MODEL's value is the machine, PLAY's three MODEs among them.
-    for m in TapeMachine::ALL {
-        let v = m.index() as f32 / 6.0;
+    // MODEL's value is the machine, WALK's DIRECTION and TRON its path.
+    for w in Way::ALL {
+        let (m, d, t) = w.parts();
         let g = TapeGauge::of(&GlyphInputs::from_set(
-            [v, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2],
+            [
+                m.index() as f32 / 3.0,
+                0.0,
+                1.0,
+                0.3,
+                0.6,
+                0.5,
+                0.3,
+                0.0,
+                0.0,
+                0.2,
+                d as u8 as f32 / 3.0,
+                t as u8 as f32,
+                0.0,
+            ],
             Pose::Live,
         ));
-        assert_eq!(g.kind(), m);
+        assert_eq!(g.kind(), w);
     }
     // Still: the knobs don't move it.
     let a = TapeGauge::of(&GlyphInputs::from_set(
-        [0.5, 0.0, 1.0, 0.1, 0.9, 0.2, 0.3, 1.0, 1.0, 0.0],
+        [
+            0.0, 0.0, 1.0, 0.1, 0.9, 0.2, 0.3, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0,
+        ],
         Pose::Still,
     ));
     let b = TapeGauge::of(&GlyphInputs::from_set(
-        [0.5, 0.3, 0.4, 0.8, 0.1, 0.9, 0.7, 0.0, 0.0, 1.0],
+        [
+            0.0, 0.3, 0.4, 0.8, 0.1, 0.9, 0.7, 0.0, 0.0, 1.0, 0.0, 1.0, 0.9,
+        ],
         Pose::Still,
     ));
     assert_eq!(a, b);
@@ -450,7 +485,7 @@ fn glyph_box_lit(fb: &Fb) -> usize {
 
 #[test]
 fn dirty_redraw_equals_full_while_a_knob_turns() {
-    for model in TapeMachine::ALL {
+    for model in Way::ALL {
         let mut ui = chimera_core::ui::UiState::new();
         tape_deck(&mut ui, model);
         settle(&mut ui);
@@ -483,7 +518,7 @@ fn dirty_redraw_equals_full_while_a_knob_turns() {
 
 #[test]
 fn nothing_redraws_at_idle() {
-    for model in TapeMachine::ALL {
+    for model in Way::ALL {
         let mut ui = chimera_core::ui::UiState::new();
         tape_deck(&mut ui, model);
         feed(&mut ui, Input::turn(EncoderId::B, 4));
@@ -648,7 +683,9 @@ fn xfade_dashes_the_loop_end_where_it_plays() {
     // PING has no crossfade: XFADE (no cell there) leaves it.
     let ping = |xf: f32| {
         TapeGauge::of(&GlyphInputs::from_set(
-            [2.0 / 6.0, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, xf],
+            [
+                0.0, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, xf, 1.0, 0.0, 0.0,
+            ],
             Pose::Live,
         ))
     };
@@ -659,14 +696,19 @@ fn xfade_dashes_the_loop_end_where_it_plays() {
 #[test]
 fn ignored_params_leave_the_glyph() {
     // A param the machine ignores (`reads`: TRON's POSITION and MOTION,
-    // ONE's POSITION, WALK, LENGTH and XFADE, PING's XFADE) moves neither
+    // ONE's POSITION, DRIFT, LENGTH and XFADE, PING's XFADE) moves neither
     // the key nor a pixel.
     use chimera_core::dsp::tape_engine::reads;
     use chimera_core::ui::glyph::TAPE_GLYPH_PARAMS;
     let mut checked = 0;
-    for m in TapeMachine::ALL {
-        let mut set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.2, 0.1, 0.2];
-        set[0] = m.index() as f32 / 6.0;
+    // WALK reads all its cells on every path: what a path's glyph draws
+    // is checked by the other tests.
+    for w in Way::ALL {
+        let (m, d, t) = w.parts();
+        let mut set = [
+            0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.2, 0.1, 0.2, 0.0, 0.0, 0.0,
+        ];
+        (set[0], set[10], set[11]) = (m.index() as f32 / 3.0, d as u8 as f32 / 3.0, t as u8 as f32);
         let base = TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live));
         for (i, a) in TAPE_GLYPH_PARAMS.iter().enumerate().skip(1) {
             if reads(m, a.param) {
@@ -694,9 +736,9 @@ fn no_tape_page_cell_is_dimmed() {
     // reaches VCA.
     use chimera_core::ui::block_registry::{TAPE_DECK, TAPE_MODEL};
     use chimera_core::ui::view::{self, SlotCtx};
-    for m in TapeMachine::ALL {
+    for m in Way::ALL {
         let mut s = chimera_core::preset::Sound::init(chimera_core::params::EngineType::Tape);
-        s.params.tape.set_machine(m);
+        s.params.tape.set_way(m);
         s.params.tape.period = 109.1;
         s.params.tape.tape = 0.3;
         s.mod_state = Default::default();
@@ -704,6 +746,11 @@ fn no_tape_page_cell_is_dimmed() {
         for def in [&TAPE_DECK, &TAPE_MODEL] {
             for i in 0..6 {
                 let v = view::view(def, i, &ctx);
+                // WALK's XFADE off LOOP and RETRIG off once through say why.
+                let why = v.addr().and_then(|a| view::tape_note(a, &s));
+                if matches!(why, Some(view::XFADE_LOOP_ONLY | view::RETRIG_ONCE_ONLY)) {
+                    continue;
+                }
                 assert!(!view::is_dimmed(&v, &s, &ctx), "{m:?} {} {i}", def.short);
             }
         }
@@ -718,7 +765,7 @@ fn unpitched_type_shows_no_glyph() {
     // word has the band, and a turn moves nothing.
     use chimera_hal::ButtonId;
     let mut ui = stack_ui();
-    tape_deck(&mut ui, TapeMachine::Stretch);
+    tape_deck(&mut ui, Way::Stretch);
     feed(&mut ui, Input::press(ButtonId::Edit));
     let shot = |ui: &mut chimera_core::ui::UiState| {
         settle(ui);
@@ -760,10 +807,10 @@ fn stretch_chevrons_count_the_speed_not_the_knob() {
 }
 
 #[test]
-fn model_turned_onto_one_puts_start_and_end_on_deck() {
-    // LOOP → ONE → LOOP on DECK, as on the unit: ONE's DECK is START and
-    // END, which burn the match; back on LOOP, POSITION rolls the wheel.
-    // A dirty frame always equals a full one.
+fn direction_turned_onto_forward_burns_the_match() {
+    // LOOP → FORWARD → LOOP on DECK, as on the unit (ADR 0203): FORWARD's
+    // LENGTH (B) and POSITION (E) cut the match's run; back on LOOP,
+    // POSITION rolls the wheel. A dirty frame always equals a full one.
 
     use chimera_core::project::PartId;
     let perf = PerfStats::zero();
@@ -783,27 +830,20 @@ fn model_turned_onto_one_puts_start_and_end_on_deck() {
             .collect::<Vec<_>>()
     };
     let mut ui = stack_ui();
-    tape_deck(&mut ui, TapeMachine::Loop);
+    tape_deck(&mut ui, Way::Loop);
     shot(&mut ui);
-    feed(&mut ui, Input::turn(EncoderId::A, -1));
-    assert_eq!(tape(&ui).machine, TapeMachine::One);
-    for (enc, by) in [(EncoderId::B, 20), (EncoderId::C, -20)] {
+    feed(&mut ui, Input::turn(EncoderId::D, -2));
+    assert_eq!(tape(&ui).way(), Way::One);
+    for (enc, by) in [(EncoderId::B, -20), (EncoderId::E, 20)] {
         let before = shot(&mut ui);
-        let was = (tape(&ui).start, tape(&ui).end);
         feed(&mut ui, Input::turn(enc, by));
-        assert_ne!(
-            (tape(&ui).start, tape(&ui).end),
-            was,
-            "{enc:?} is START or END"
-        );
         assert_ne!(shot(&mut ui), before, "{enc:?} burns the match");
     }
-    feed(&mut ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(tape(&ui).machine, TapeMachine::Loop);
-    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    feed(&mut ui, Input::turn(EncoderId::D, 2));
+    assert_eq!(tape(&ui).way(), Way::Loop);
     let before = shot(&mut ui);
     let pos = tape(&ui).position;
-    feed(&mut ui, Input::turn(EncoderId::B, 20));
+    feed(&mut ui, Input::turn(EncoderId::E, -10));
     assert_ne!(shot(&mut ui), before, "POSITION rolls the wheel in LOOP");
-    assert!(tape(&ui).position > pos);
+    assert!(tape(&ui).position < pos);
 }

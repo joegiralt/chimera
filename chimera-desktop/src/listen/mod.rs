@@ -14,8 +14,8 @@ use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
 use chimera_core::dsp::tape_engine::{
-    FADE_HOLD, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeMachine, TapeModel,
-    Wow,
+    Direction, FADE_HOLD, StretchType, TapeEngine, TapeEngineParams as P, TapeMachine, TapeModel,
+    Tron, Wow,
 };
 use chimera_core::dsp::va::VaMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
@@ -407,8 +407,7 @@ pub fn script(model: TapeModel) -> Script {
         TapeModel::Scrub => Script(&SCRUB_SWEEP, &[], &[]),
         TapeModel::Transwave => Script(&WAVE_SWEEP, &[], &[]),
         TapeModel::Stretch => Script(&STRETCH_KEYS, &STRETCH_TAKES, &[]),
-        TapeModel::Tron => Script(&TRON_KEYS, &[10.0], &[0, 12]),
-        TapeModel::Play => Script(&SWEEP, &[], &[]),
+        TapeModel::Walk => Script(&SWEEP, &[], &[]),
     }
 }
 
@@ -417,8 +416,7 @@ pub fn legend(model: TapeModel) -> &'static str {
         TapeModel::Scrub => SCRUB_LEGEND,
         TapeModel::Transwave => WAVE_LEGEND,
         TapeModel::Stretch => STRETCH_LEGEND,
-        TapeModel::Tron => TRON_LEGEND,
-        TapeModel::Play => SWEEP_LEGEND,
+        TapeModel::Walk => SWEEP_LEGEND,
     }
 }
 
@@ -468,7 +466,7 @@ pub const TRON_LEGEND: &str = "0–10 s held at ROOT · 10–20 s held an octave
     its own 8 s of tape (END may come first)";
 
 /// How a machine is heard besides its plain script (spec § 2 Machines):
-/// END before START, WOW WARBLE, PLAY's other MODEs (LOOP is Plain),
+/// END before START, WOW WARBLE, WALK's other MODEs (LOOP is Plain),
 /// SLICE NOTE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Way {
@@ -478,19 +476,22 @@ pub enum Way {
     One,
     Ping,
     SliceNote,
+    /// WALK FORWARD with TRON on (ADR 0203).
+    Tron,
 }
 
 impl Way {
     /// The ways `m` is rendered.
     pub fn of(m: TapeModel) -> &'static [Way] {
         match m {
-            TapeModel::Play => &[
+            TapeModel::Walk => &[
                 Way::Plain,
                 Way::Reversed,
                 Way::Warble,
                 Way::One,
                 Way::SliceNote,
                 Way::Ping,
+                Way::Tron,
             ],
             TapeModel::Stretch => &[Way::Plain, Way::Reversed],
             _ => &[Way::Plain],
@@ -506,6 +507,7 @@ impl Way {
             Way::One => "-one",
             Way::Ping => "-ping",
             Way::SliceNote => "-note",
+            Way::Tron => "-tron",
         }
     }
 
@@ -514,9 +516,10 @@ impl Way {
             Way::Plain => "",
             Way::Reversed => " · END before START",
             Way::Warble => " · WOW WARBLE, TAPE 0.5 from 11.5 s",
-            Way::One => " · MODE ONE, FADE HOLD",
-            Way::Ping => " · MODE PING",
-            Way::SliceNote => " · MODE ONE, SLICE NOTE, 16 notes from C4",
+            Way::One => " · FORWARD, FADE HOLD",
+            Way::Ping => " · PING-PONG",
+            Way::SliceNote => " · FORWARD, SLICE NOTE, 16 notes from C4",
+            Way::Tron => " · FORWARD, TRON ON",
         }
     }
 
@@ -525,7 +528,7 @@ impl Way {
     /// SLICE NOTE.
     pub fn base(self, model: TapeModel, kind: StretchType) -> P {
         let p = P {
-            machine: TapeMachine::of(model, PlayMode::Loop),
+            machine: TapeMachine::of(model),
             kind,
             ..P::default()
         };
@@ -541,16 +544,22 @@ impl Way {
                 ..p
             },
             Way::One => P {
-                machine: TapeMachine::of(model, PlayMode::One),
+                direction: Direction::Forward,
                 drag: FADE_HOLD,
                 ..p
             },
             Way::Ping => P {
-                machine: TapeMachine::of(model, PlayMode::Ping),
+                direction: Direction::Ping,
+                ..p
+            },
+            Way::Tron => P {
+                direction: Direction::Forward,
+                tron: Tron::On,
+                drag: 0.3,
                 ..p
             },
             Way::SliceNote => P {
-                machine: TapeMachine::of(model, PlayMode::One),
+                direction: Direction::Forward,
                 drag: FADE_HOLD,
                 slice: chimera_core::dsp::tape_engine::SliceCode::NOTE,
                 ..p
@@ -562,6 +571,7 @@ impl Way {
         match self {
             Way::One => Script(&ONESHOT_KEYS, &ONESHOT_TAKES, &[]),
             Way::SliceNote => Script(&ONESHOT_NOTE_KEYS, &ONESHOT_NOTE_TAKES, &ONESHOT_NOTE_NOTES),
+            Way::Tron => Script(&TRON_KEYS, &[10.0], &[0, 12]),
             _ => script(model),
         }
     }
@@ -1206,8 +1216,7 @@ mod tests {
     fn every_script_starts_neutral_and_runs_14_5_s() {
         for m in TapeModel::ALL {
             let s = script(m);
-            // TRON holds a key 10 s, twice.
-            let secs = if m == TapeModel::Tron { 20.0 } else { 14.5 };
+            let secs = 14.5;
             assert_eq!(s.secs(), secs, "{m:?}");
             let (mut a, mut b) = (P::default(), P::default());
             s.apply(&mut a, 0.0);
@@ -1248,11 +1257,11 @@ mod tests {
     #[test]
     fn page_lists_every_track() {
         let (a, b) = (src("tx-bass"), src("choir"));
-        let rows = [(TapeModel::Play, &a), (TapeModel::Play, &b)];
+        let rows = [(TapeModel::Walk, &a), (TapeModel::Walk, &b)];
         let html = page(&rows);
         for s in ["tx-bass", "choir"] {
             for kind in ["dry", "wet"] {
-                let f = format!("play-{s}-{kind}.wav");
+                let f = format!("walk-{s}-{kind}.wav");
                 assert!(html.contains(&f), "{f} missing");
             }
         }
@@ -1303,11 +1312,11 @@ mod tests {
     fn only_http_links() {
         let mut s = src("x");
         s.url = Some("javascript:alert(1)".into());
-        let html = page(&[(TapeModel::Play, &s)]);
+        let html = page(&[(TapeModel::Walk, &s)]);
         assert!(!html.contains("href=\"javascript"), "plain text");
         s.url = Some("https://example.org/f".into());
         s.author.clear();
-        let html = page(&[(TapeModel::Play, &s)]);
+        let html = page(&[(TapeModel::Walk, &s)]);
         assert!(
             html.contains(">https://example.org/f</a>"),
             "the URL stands in"

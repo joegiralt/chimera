@@ -51,6 +51,7 @@ pub mod theme;
 pub mod theme_settings;
 pub mod view;
 pub mod viz;
+pub(crate) mod walk;
 
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
@@ -1513,8 +1514,8 @@ impl UiState {
     /// nothing is written; onto one it allows, it is written. `false` for
     /// any other cell.
     fn turn_choice(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
-        if a == held::MODEL {
-            return self.turn_model(at, delta, shift);
+        if a == held::MODEL || a == held::DIRECTION {
+            return self.turn_model(at, a, delta, shift);
         }
         if !held::applies(a, shift) {
             return false;
@@ -1551,30 +1552,32 @@ impl UiState {
     /// the source refuses (`needs_ram`) it lands dimmed with the reason,
     /// nothing written, so a key never plays into silence. `false` off a
     /// streamed source: the plain edit.
-    fn turn_model(&mut self, at: PartId, delta: i8, shift: bool) -> bool {
+    fn turn_model(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
         if !self.streams(at) {
             return false;
         }
         let sound = &self.project.part(at).sound;
-        let now = sound.params.tape.machine().index();
-        let held = self.held.filter(|&(h, c)| h == at && c.addr == held::MODEL);
+        let now = crate::block::Block::get(&sound.params.tape, a.param) as u8;
+        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
         let from = held.map_or(now, |(_, c)| c.code);
-        let last = TapeMachine::ALL.len() as i16 - 1;
+        // MODEL and DIRECTION each list four.
+        const _: () = assert!(
+            crate::dsp::tape_engine::TapeMachine::ALL.len() == 4
+                && crate::dsp::tape_engine::Direction::ALL.len() == 4
+        );
+        let last = 3;
         let to = match (shift, delta > 0) {
             (true, true) => last,
             (true, false) => 0,
             _ => (i16::from(from) + i16::from(delta)).clamp(0, last),
         } as u8;
-        let h = held::Held {
-            addr: held::MODEL,
-            code: to,
-        };
+        let h = held::Held { addr: a, code: to };
         if h.why(sound, true).is_some() {
             self.held = Some((at, h));
         } else {
             self.held = None;
             if to != now {
-                self.edit_in(at, held::MODEL, part_page::Edit::To(f32::from(to)));
+                self.edit_in(at, a, part_page::Edit::To(f32::from(to)));
             }
         }
         true
@@ -1670,6 +1673,7 @@ impl UiState {
         if now
             != (SlotCtx {
                 tape: now.tape,
+                holds: now.holds,
                 ..before
             })
         {
@@ -2524,7 +2528,10 @@ impl UiState {
 
     fn handle_frame(&mut self, controls: &impl Controls) {
         let rev = self.project.rev();
-        let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.machine();
+        let model = |ui: &Self| {
+            let t = &ui.project.part(ui.active_part).sound.params.tape;
+            (t.machine(), t.direction)
+        };
         let was = model(self);
         self.input(controls);
         let jog = self.jog_pass(controls.now_ms());
@@ -2535,7 +2542,14 @@ impl UiState {
                 .iter()
                 .filter(|&&e| controls.encoder_delta(e) != 0);
             let now = model(self);
-            let defaults = if now != was { cc::model_writes(now) } else { 0 };
+            let defaults = if now.0 != was.0 {
+                cc::model_writes(now.0, now.1)
+            } else if now.1 != was.1 {
+                // At most a MODEL turn's writes (`cc::model_writes`).
+                cc::model_writes(now.0, now.1)
+            } else {
+                0
+            };
             self.cc.hand(turns.count() as u8 + u8::from(jog) + defaults);
         }
         // A save or clear moves the browser's hints, costs and meter.

@@ -67,6 +67,9 @@ use screen::*;
 // FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
 // The fourth TAPE merge: the browsers and POOL count 16 Sounds with STAB
 // and FB (4 %).
+// ADR 0203: WALK replaces ONE, LOOP, PING and TRON (its DECK, its page,
+// its footsteps and strip, tape_deck_reverse and tape_deck_drift new);
+// sound_browser_pool_full's bound moves with WALK's two params.
 // ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
 // tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
 // pool's count (sound_browser_pool_full).
@@ -217,7 +220,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     // Re-recorded at the main merge: the header's Part dots (ADR 0150).
     // Re-recorded: its map names the machine, LOOP (ADR 0178).
-    ("tape_pitch_musical", 0x57bccbb87c98b3a5),
+    ("tape_pitch_musical", 0xebb38641a3992e19),
     // New: PIT's tuner (ADR 0201).
     ("algo_pitch_note", 0x84aab66825c66813),
     ("tape_pitch_root_unknown", 0xdb2aca9db24ab26c),
@@ -462,35 +465,37 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_src_missing", 0x85708a674c5cfd05),
     // Re-recorded: MODEL lists ONE, LOOP and PING; DECK holds the glyph's
     // knobs, the model page TAPE, AGE, WOW and the rest (ADR 0178).
-    ("tape_deck_oneshot", 0xddac0b3a442a2ace),
-    ("tape_page_oneshot", 0xc1ab888a72ad448b),
-    ("tape_deck_loop", 0x7729120709f86912),
+    ("tape_deck_oneshot", 0x3f32f4d5e221b17b),
+    ("tape_page_oneshot", 0x7fb5a187d2e29ffb),
+    ("tape_deck_loop", 0xaabe8875a98d21a2),
     // New: bank 2 closed (ADR 0141).
-    ("tape_deck_needs_update", 0x754e23f44b5ce17f),
-    ("tape_page_loop", 0xe384ebb8802bc1ce),
-    ("tape_deck_tron", 0xfbe1971ab0fd9b37),
-    ("tape_page_tron", 0x01ab82e2229cccf9),
+    ("tape_deck_needs_update", 0x2baeb028b2934a9c),
+    ("tape_page_loop", 0xc7c4ceedf0e08197),
+    ("tape_deck_tron", 0x42d3cb491160dad4),
+    ("tape_page_tron", 0xf0fd4f6cfc1fcdce),
     ("tape_deck_stretch", 0x33e395cf798ccc3c),
     ("tape_page_stretch", 0xbeb317ea13da8a67),
     ("tape_page_stretch_type", 0x2388e89c04b15a30),
     ("tape_deck_transwave", 0xde8bbeffbb06c81a),
-    ("tape_page_transwave", 0xcf7697ab32e621c5),
+    ("tape_page_transwave", 0x04bbc21e5964e49d),
     ("tape_deck_scrub", 0x4e984b2dd79b5313),
     ("tape_page_scrub", 0x4824af71a2446b88),
-    ("tape_deck_pingpong", 0x1e8a9e6d25cb018a),
-    ("tape_page_pingpong", 0xfb082cae989abeb8),
-    ("tape_strip_oneshot", 0xd0d3879ef227791c),
-    ("tape_strip_loop", 0x7a93bcdc395e9db7),
-    ("tape_strip_tron", 0x92d1139ec52d5494),
+    ("tape_deck_pingpong", 0x8707082939da847c),
+    ("tape_deck_reverse", 0xbf5a0c16b971477f),
+    ("tape_deck_drift", 0x051c0b634e4484f9),
+    ("tape_page_pingpong", 0xd89fbd01ef2f6427),
+    ("tape_strip_oneshot", 0x2351e17d09aba98a),
+    ("tape_strip_loop", 0x45170ab0124291df),
+    ("tape_strip_tron", 0xac3230a5a5bd2d76),
     ("tape_strip_stretch", 0x7fac311807a65826),
     ("tape_strip_transwave", 0x8578d1cff2b53962),
     ("tape_strip_scrub", 0x4862fecc1608ba29),
-    ("tape_strip_pingpong", 0x68c3cfea764a1094),
+    ("tape_strip_pingpong", 0xf96f3a35d1785b5e),
     ("tape_strip_loop_reversed", 0x8c6bc98f7858d886),
-    ("tape_strip_oneshot_slice", 0x8b54df619e454573),
-    ("tape_strip_oneshot_slice_reversed", 0xd5b6657ba7b74491),
-    ("tape_strip_pingpong_reversed", 0x8ee8f289802c399f),
-    ("tape_strip_tron_idle", 0x340ec44fb606f073),
+    ("tape_strip_oneshot_slice", 0xda826c450d9cbb61),
+    ("tape_strip_oneshot_slice_reversed", 0xfc44e058a17b550c),
+    ("tape_strip_pingpong_reversed", 0x5102447e24b0268d),
+    ("tape_strip_tron_idle", 0x1609a91eff5b8529),
     ("tape_src_pool", 0x6ac82eb8b9a261f1),
     ("tape_src_card", 0xd9e193292c4987f3),
     ("tape_src_wont_fit", 0x5877eb1a8b000d0a),

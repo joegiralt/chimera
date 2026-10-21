@@ -9,8 +9,9 @@ mod screen;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::ParamId;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::read::SourceView;
-use chimera_core::dsp::tape_engine::{TapeEngineParams, TapeMachine, TapeModel};
+use chimera_core::dsp::tape_engine::{TapeEngineParams, TapeModel};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::PartId;
@@ -32,9 +33,9 @@ fn tape(id: ParamId) -> ParamAddr {
     ParamAddr::new(BlockRef::TapeEngine, id)
 }
 
-fn sound_on(m: TapeMachine) -> Sound {
+fn sound_on(m: Way) -> Sound {
     let mut s = Sound::init(EngineType::Tape);
-    s.params.tape.set_machine(m);
+    s.params.tape.set_way(m);
     s
 }
 
@@ -119,28 +120,39 @@ fn streamed_source_shows_its_polyphony() {
 }
 
 #[test]
-fn model_holds_machines_a_streamed_source_refuses() {
+fn direction_holds_what_a_streamed_source_refuses() {
+    use chimera_core::dsp::tape_engine::{Direction, TapeMachine};
     let mut ui = streamed_ui();
-    assert_eq!(ui.params().tape.machine(), TapeMachine::Loop);
-    feed(&mut ui, Input::turn(EncoderId::A, 1)); // LOOP → PING: refused
-    assert_eq!(
-        ui.params().tape.machine(),
-        TapeMachine::Loop,
-        "nothing written"
-    );
-    let shown = ui.held_choice().expect("PING held");
-    assert_eq!(shown.held.code, TapeMachine::Ping.index());
+    assert_eq!(ui.params().tape.way(), Way::Loop);
+    feed(&mut ui, Input::turn(EncoderId::D, 1)); // LOOP → PING-PONG: refused
+    assert_eq!(ui.params().tape.way(), Way::Loop, "nothing written");
+    let shown = ui.held_choice().expect("PING-PONG held");
+    assert_eq!(shown.held.code, Direction::Ping as u8);
     assert!(matches!(shown.why, Reason::NeedsRam(_)));
     let why = chimera_core::ui::held::reason(shown.why);
     assert_eq!(why.as_str(), "PING NEEDS RAM · STREAMED");
     fits_band(why.as_str());
-    // The held cell reads PING, dimmed.
+    // The held cell reads PING-PONG, dimmed.
     let shot = render_ui(&ui);
-    assert!(cell_reads(&shot, 0, "PING"));
-    // On from the held choice: two down is ONE, which streams: written.
-    feed(&mut ui, Input::turn(EncoderId::A, -2));
-    assert_eq!(ui.params().tape.machine(), TapeMachine::One);
+    assert!(cell_reads(&shot, 3, "PING"));
+    // REVERSE reads back, so it is held too.
+    feed(&mut ui, Input::turn(EncoderId::D, -2));
+    assert_eq!(
+        ui.held_choice().map(|s| s.held.code),
+        Some(Direction::Reverse as u8)
+    );
+    // On from the held choice: FORWARD streams: written.
+    feed(&mut ui, Input::turn(EncoderId::D, -1));
+    assert_eq!(ui.params().tape.way(), Way::One);
     assert!(ui.held_choice().is_none());
+    // TRON streams.
+    let mut t = ui.project().part(PartId::ALL[0]).sound.clone();
+    t.params.tape.tron = chimera_core::dsp::tape_engine::Tron::On;
+    let h = chimera_core::ui::held::Held {
+        addr: chimera_core::ui::held::DIRECTION,
+        code: Direction::Forward as u8,
+    };
+    assert_eq!(h.why(&t, true), None);
     // Each machine that seeks says so.
     for m in [TapeMachine::Scrub, TapeMachine::Stretch, TapeMachine::Wave] {
         let h = chimera_core::ui::held::Held {
@@ -155,7 +167,7 @@ fn model_holds_machines_a_streamed_source_refuses() {
 }
 
 #[test]
-fn model_turns_freely_on_a_ram_source() {
+fn direction_turns_freely_on_a_ram_source() {
     let held = held_plain(&sine(24_000, 100.7, 24_000), 24_000);
     let r = SourceRef {
         crc: 0xA,
@@ -163,14 +175,14 @@ fn model_turns_freely_on_a_ram_source() {
         rate: 24_000,
     };
     let mut ui = ui_on(r, &held);
-    feed(&mut ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(ui.params().tape.machine(), TapeMachine::Ping);
+    feed(&mut ui, Input::turn(EncoderId::D, 1));
+    assert_eq!(ui.params().tape.way(), Way::Ping);
     assert!(ui.held_choice().is_none());
 }
 
 #[test]
 fn wow_dims_while_tape_rests() {
-    let mut s = sound_on(TapeMachine::Loop);
+    let mut s = sound_on(Way::Loop);
     assert!(view::dimmed(tape(P::WOW), &s), "TAPE 0: no wow");
     assert_eq!(view::tape_note(tape(P::WOW), &s), Some(view::WOW_AT_REST));
     s.params.tape.tape = 0.2;
@@ -182,18 +194,18 @@ fn wow_dims_while_tape_rests() {
 #[test]
 fn fade_steps_aside_for_amp_release() {
     // INIT routes ENV 1 → VCA: AMP's release is the note's one release.
-    for m in [TapeMachine::Loop, TapeMachine::Ping] {
+    for m in [Way::Loop, Way::Ping] {
         let s = sound_on(m);
         assert!(view::dimmed(tape(P::DRAG), &s), "{m:?}");
         assert_eq!(view::tape_note(tape(P::DRAG), &s), Some(view::FADE_ASIDE));
     }
     // ONE's FADE keeps its HOLD step live; TRON's FADE is the machine.
-    for m in [TapeMachine::One, TapeMachine::Tron] {
+    for m in [Way::One, Way::Tron] {
         assert!(!view::dimmed(tape(P::DRAG), &sound_on(m)), "{m:?}");
     }
     // Below HOLD, ONE's band says AMP releases it (#706); at HOLD, nothing.
     let src = SourceState::None;
-    let mut one = sound_on(TapeMachine::One);
+    let mut one = sound_on(Way::One);
     one.params.tape.drag = 0.5;
     assert_eq!(
         view::band_note(tape(P::DRAG), &one, src),
@@ -203,7 +215,7 @@ fn fade_steps_aside_for_amp_release() {
     assert_eq!(view::band_note(tape(P::DRAG), &one, src), None);
     fits_band(view::FADE_HOLD_ONLY);
     // No route into VCA: the key gates the voice, and FADE releases it.
-    let mut s = sound_on(TapeMachine::Loop);
+    let mut s = sound_on(Way::Loop);
     s.mod_state = Default::default();
     assert!(!view::dimmed(tape(P::DRAG), &s));
     fits_band(view::FADE_ASIDE);
@@ -211,7 +223,7 @@ fn fade_steps_aside_for_amp_release() {
 
 #[test]
 fn streamed_xfade_says_its_cap() {
-    let s = sound_on(TapeMachine::Loop);
+    let s = sound_on(Way::Loop);
     let ram = SourceState::Held {
         rate: SourceRate::new(24_000).unwrap(),
         frames: 720_000,
@@ -230,6 +242,8 @@ fn streamed_xfade_says_its_cap() {
     fits_band(view::XFADE_CAPPED);
     // On the page: the band says it where the hint goes.
     let mut ui = streamed_ui();
+    tap(&mut ui, ButtonId::Seq); // PLAY's page
+    assert_eq!(ui.page_def().id, TAPE_MODEL.id);
     feed(&mut ui, Input::turn(EncoderId::E, 1)); // XFADE
     settle(&mut ui);
     assert!(label_reads(&render_ui(&ui), view::XFADE_CAPPED));
@@ -266,8 +280,9 @@ fn start_and_end_turn_in_time() {
         rate: 24_000,
     };
     let mut ui = ui_on(r, &held);
-    feed(&mut ui, Input::turn(EncoderId::A, -1)); // ONE
-    assert_eq!(ui.params().tape.machine(), TapeMachine::One);
+    feed(&mut ui, Input::turn(EncoderId::D, -2)); // FORWARD
+    assert_eq!(ui.params().tape.way(), Way::One);
+    feed(&mut ui, Input::press(chimera_hal::ButtonId::Minus)); // SRC: START
     feed(&mut ui, Input::turn(EncoderId::B, 1).at(1_000));
     let start = ui.params().tape.start;
     assert!((start * 4_000.0 - 1.0).abs() < 1e-3, "{start}");
@@ -314,7 +329,8 @@ fn mix_turn_snaps_start_to_the_next_onset() {
         rate: 24_000,
     };
     let mut ui = ui_on(r, &held);
-    feed(&mut ui, Input::turn(EncoderId::A, -1)); // ONE
+    feed(&mut ui, Input::turn(EncoderId::D, -2)); // FORWARD
+    tap(&mut ui, ButtonId::Minus); // SRC: START, END
     let mix = |d| Input::turn(EncoderId::B, d).and_held(ButtonId::Mix);
     feed(&mut ui, mix(1));
     let at = |ui: &chimera_core::ui::UiState| (ui.params().tape.start * 48_000.0).round() as u32;
@@ -329,7 +345,7 @@ fn mix_turn_snaps_start_to_the_next_onset() {
     let s = &ui.project().part(PartId::ALL[0]).sound;
     let ctx = view::SlotCtx::read(&s.params, chimera_core::addr::Op::A);
     for i in [1, 2] {
-        let v = view::view(&TAPE_DECK, i, &ctx);
+        let v = view::view(&chimera_core::ui::block_registry::TAPE_SRC, i, &ctx);
         assert_eq!(v.hint(&ctx), view::ONSET_HINT, "{}", v.label());
     }
     assert!(chimera_core::ui::hint::width(view::ONSET_HINT) <= theme::CONTENT_W);
@@ -337,7 +353,8 @@ fn mix_turn_snaps_start_to_the_next_onset() {
 
 #[test]
 fn model_page_reads_its_notes() {
-    // LOOP's model page at INIT: WOW and FADE dimmed, each saying why.
+    // WALK's model page at INIT (LOOP): WOW and RETRIG dimmed, each saying
+    // why.
     let mut ui = chimera_core::ui::UiState::new();
     load_init(&mut ui, EngineType::Tape);
     plus(&mut ui, 1);
@@ -351,12 +368,14 @@ fn model_page_reads_its_notes() {
         chimera_core::dsp::tape_engine::Wow::Capstan,
         "dimmed: not turned"
     );
-    let drag = ui.params().tape.drag;
-    feed(&mut ui, Input::turn(EncoderId::D, 1)); // FADE: AMP releases
+    feed(&mut ui, Input::turn(EncoderId::F, 1)); // RETRIG: LOOP never cuts
     settle(&mut ui);
-    assert!(label_reads(&render_ui(&ui), view::FADE_ASIDE));
-    assert_eq!(ui.params().tape.drag, drag);
-    assert_eq!(ui.params().tape.model(), TapeModel::Play);
+    assert!(label_reads(&render_ui(&ui), view::RETRIG_ONCE_ONLY));
+    assert_eq!(
+        ui.params().tape.retrig,
+        chimera_core::dsp::tape_engine::Retrig::Stack
+    );
+    assert_eq!(ui.params().tape.model(), TapeModel::Walk);
 }
 
 /// `text` in the label font where the focus band's hint goes, in MID.

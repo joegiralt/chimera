@@ -113,10 +113,12 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*7project8streamed*10StreamLoad5start .text.*7project8streamed*10StreamLoad5found
       .text.*7project8streamed*10StreamLoad6rehead .text.*7project8streamed9load_kind
       .text.*12chimera_core2ui5onset6detect* .text.*12chimera_core2ui3jog*3Jog4pass*
-      .text.*12chimera_core2ui3jog*3Jog4rate* .text.*12chimera_core2ui9pit_tuner4calc*);
+      .text.*12chimera_core2ui3jog*3Jog4rate* .text.*12chimera_core2ui9pit_tuner4calc*
+      .text.*12chimera_core2ui4walk15machine_edit_in .text.*12chimera_core2ui4walk12tape_note_in
+      .text.*12chimera_core2ui4walk12tape_held_in);
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
       .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*
-      .rodata.*12chimera_core2ui9pit_tuner4calc*);
+      .rodata.*12chimera_core2ui9pit_tuner4calc* .rodata.*12chimera_core2ui4walk*);
 ";
     // The crates the engine can't name keep their own tables, each at a
     // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):
@@ -202,11 +204,11 @@ SECTIONS {
        and the cost table. */
     *(.text.*11tape_engine5scrub* .text.*11tape_engine5heads* .text.*11tape_engine7stretch* .text.*11tape_engine4wave* .text.*11tape_engine4read*
       .text.*11tape_engine3age* .text.*11tape_engine6warble* .text.*11tape_engine7oneshot* .text.*11tape_engine4tron*
-      .text.*11tape_engine4span* .text.*6stream6cursor* .text.*11tape_engine*8TapeDeck*
+      .text.*11tape_engine5drift* .text.*11tape_engine4span* .text.*6stream6cursor* .text.*11tape_engine*8TapeDeck*
       .text.*11tape_engine9ratio_max*);
     *(.rodata.*11tape_engine5scrub* .rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
       .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
-      .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
+      .rodata.*11tape_engine5drift* .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
     /* Streamed admission and loads (`AdmitDoor`, `LoadDoor`): the bill,
        the stealing pick and the block's re-bill; the heads' placement, a
        load's passes and their head reads. Bank 1 keeps the wrappers and

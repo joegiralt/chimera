@@ -51,7 +51,7 @@ fn run() -> Result<bool, String> {
             srcs.push(args.next().ok_or("--src needs chimera or a WAV")?);
         } else if a.eq_ignore_ascii_case("reverse") {
             // REVERSE is LOOP with END before START (#369): its renders.
-            models.push(TapeModel::Play);
+            models.push(TapeModel::Walk);
         } else {
             let m = TapeModel::ALL
                 .into_iter()

@@ -531,7 +531,7 @@ impl EngineSlot {
         match self {
             Self::Algo(_) => Cost::ZERO,
             Self::Modal(_) => ModalEngine::cost(&p.modal),
-            Self::Tape(_) => TapeEngine::model_cost(p.tape.machine),
+            Self::Tape(_) => TapeEngine::model_cost(p.tape.way()),
             Self::Va(_) => VaEngine::cost(&p.va),
         }
     }

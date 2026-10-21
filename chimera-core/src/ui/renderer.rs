@@ -40,7 +40,7 @@ use crate::ui::region::{self, Layout, RegionKind};
 use crate::ui::settings::Ask;
 use crate::ui::settings::prompt::{Beneath, blank_beneath, draw_prompt};
 use crate::ui::settings::view::Bands;
-use crate::ui::tape_glyph::{GlyphInputs, Pose, TapeGauge};
+use crate::ui::tape_glyph::{Pose, TapeGauge};
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
@@ -478,8 +478,7 @@ impl Renderer {
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
-    /// slots glide: the strip never snaps. On PLAY the MODE glides with
-    /// MODEL; off it, the machine is the Part's.
+    /// slots glide: the strip never snaps. The machine is the Part's.
     fn strip_params(&self, f: &Frame) -> (TapeMachine, TapeEngineParams) {
         let t = f.parts[f.active_part.index()].sound.params.tape;
         let mut p = t;
@@ -493,11 +492,8 @@ impl Renderer {
                 crate::block::Block::set(&mut p, a.param, v);
             }
         }
-        let m = match (t.machine.mode(), p.machine.mode()) {
-            (Some(was), now) => TapeMachine::play(now.unwrap_or(was)),
-            (None, _) => t.machine,
-        };
-        (m, p)
+        p.machine = t.machine;
+        (t.machine, p)
     }
 
     /// The focused operator's envelope rates, this page's from its animated
@@ -933,7 +929,7 @@ impl Renderer {
                     Pose::Live
                 };
                 let set = self.eased_set(f, TAPE_GLYPH_PARAMS);
-                Gauge::Tape(TapeGauge::of(&GlyphInputs::from_set(set, pose)))
+                Gauge::Tape(TapeGauge::of_set(set, pose))
             }
             Reads::Lfo => match focused.map(|a| a.block) {
                 Some(BlockRef::Lfo(s)) => {

@@ -10,6 +10,7 @@ mod screen;
 
 use chimera_core::bank2::{DOOR_CELL, NEEDS_UPDATE};
 use chimera_core::dsp::tape_engine::Heads;
+
 use chimera_core::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use chimera_core::params::EngineType;
 use chimera_core::project::LoadLink;
@@ -59,7 +60,7 @@ fn strip_pixels() -> usize {
     draw_strip(
         &mut c,
         &Overview::EMPTY,
-        TapeMachine::Loop,
+        TapeMachine::Walk,
         &p,
         Heads::NONE,
         0,
@@ -116,5 +117,5 @@ fn closed_tape_ui_says_so_and_does_nothing() {
     // The strip and its key are empty.
     assert_eq!(strip_pixels(), 0);
     let p = TapeEngineParams::default();
-    assert_eq!(key(&Overview::EMPTY, TapeMachine::Loop, &p, Heads::NONE), 0);
+    assert_eq!(key(&Overview::EMPTY, TapeMachine::Walk, &p, Heads::NONE), 0);
 }

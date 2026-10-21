@@ -45,7 +45,10 @@ fn play(e: &mut TapeEngine, p: &P, v: &SourceView<'_>, blocks: usize) -> (Vec<f3
 fn scrub() -> P {
     let mut p = P::default();
     p.write(P::MODEL, TapeMachine::Scrub.index().into());
-    for (id, v) in defaults(TapeMachine::Scrub) {
+    for (id, v) in defaults(
+        TapeMachine::Scrub,
+        chimera_core::dsp::tape_engine::Direction::Loop,
+    ) {
         p.set(id, v);
     }
     p
