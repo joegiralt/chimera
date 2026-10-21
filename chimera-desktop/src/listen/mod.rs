@@ -924,7 +924,7 @@ pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
 /// `model`'s name in file names and on the command line: `play`,
 /// `transwave`….
 pub fn model_slug(model: TapeModel) -> String {
-    crate::factory_tapes::MODEL_WORDS[usize::from(model.index())].to_lowercase()
+    crate::factory_tapes::model_word(model).to_lowercase()
 }
 
 pub fn file_name(model: TapeModel, src: &Src, kind: &str) -> String {
@@ -967,7 +967,7 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
         if it.peek().is_none() {
             continue;
         }
-        let name = crate::factory_tapes::MODEL_WORDS[usize::from(m.index())];
+        let name = crate::factory_tapes::model_word(m);
         let _ = write!(
             out,
             "<section><h2>{name}</h2><p class=\"legend\">{}</p>",

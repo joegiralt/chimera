@@ -231,11 +231,16 @@ fn source_recipe(name: SoundName, t: &Table) -> Result<SourceRecipe, String> {
 /// with its `mode` (DIRECTION) and `tron` beside it.
 pub const MODEL_WORDS: [&str; 4] = ["WALK", "STRETCH", "SCRUB", "TRANSWAVE"];
 
+/// `m`'s word in `MODEL_WORDS`.
+pub fn model_word(m: TapeModel) -> &'static str {
+    MODEL_WORDS[usize::from(m.index())]
+}
+
 fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     let m = need(t, "model")?;
     let model = TapeModel::ALL
         .into_iter()
-        .find(|x| MODEL_WORDS[usize::from(x.index())] == m)
+        .find(|&x| model_word(x) == m)
         .ok_or(format!("model {m}"))?;
     let play = model == TapeModel::Walk;
     let mode = match get(t, "mode") {
@@ -617,7 +622,7 @@ pub fn manifest(r: &Recipes, built: &[Option<Built>]) -> String {
             s.name.as_str(),
             sound_stem(i),
             b.head.sref.crc,
-            MODEL_WORDS[usize::from(s.machine.model().index())],
+            model_word(s.machine.model()),
             s.direction.disk_ident(),
             s.tron.disk_ident()
         );
