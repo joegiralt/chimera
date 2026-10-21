@@ -1494,6 +1494,24 @@ pub const CASES: &[ScreenCase] = &[
         on_flt(ui, FilterKind::Ladder, true);
         feed(ui, Input::turn(EncoderId::A, 20)); // FM1
     }),
+    // SEM (ADR 0192): MODE at the notch, RES high; OUTPUT on FLT › MOD's F
+    // turned to BP, whose curve FLT then draws.
+    ("flt_sem", |ui| {
+        on_flt(ui, FilterKind::Sem, false);
+        feed(ui, Input::turn(EncoderId::F, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 110)); // RES
+        feed(ui, Input::turn(EncoderId::D, 64)); // MODE: the notch at FREQ
+    }),
+    ("flt_mod_sem", |ui| {
+        on_flt(ui, FilterKind::Sem, true);
+        feed(ui, Input::turn(EncoderId::F, 1)); // OUTPUT: BP
+    }),
+    ("flt_sem_bp", |ui| {
+        on_flt(ui, FilterKind::Sem, false);
+        ui.params_mut().filter.set_mode(FilterMode::Bp12); // OUTPUT: BP
+        feed(ui, Input::turn(EncoderId::F, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 120)); // RES: the peak
+    }),
     // The LEVEL LED (`LEDS`): beside INPUT on FLT › FX, and in FLT's viz
     // corner.
     ("flt_led_0", |ui| {

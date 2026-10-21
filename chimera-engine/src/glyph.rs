@@ -43,6 +43,9 @@ pub enum FocusGlyph {
     /// centre by how far the voices wander, from the set value. VA's and
     /// the filter's STAB.
     Stability,
+    /// The filter's FEEDBACK (ADR 0190): a low-pass curve with the output
+    /// looped back to the cutoff corner, from the set value.
+    Feedback,
 }
 
 /// VA's gauges: what the oscillators and the operator do to the sound.
@@ -116,7 +119,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 17] = [
+    pub const ALL: [FocusGlyph; 18] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -134,6 +137,7 @@ impl FocusGlyph {
         FocusGlyph::Tape,
         FocusGlyph::Lfo,
         FocusGlyph::Stability,
+        FocusGlyph::Feedback,
     ];
 
     /// Index in `ALL`. Exhaustive: a new variant fails to compile here
@@ -157,6 +161,7 @@ impl FocusGlyph {
             FocusGlyph::Tape => 14,
             FocusGlyph::Lfo => 15,
             FocusGlyph::Stability => 16,
+            FocusGlyph::Feedback => 17,
         }
     }
 }

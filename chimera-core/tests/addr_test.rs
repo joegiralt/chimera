@@ -99,6 +99,7 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL),
         ParamAddr::new(BlockRef::Filter, FilterParams::STAB),
         ParamAddr::new(BlockRef::Filter, FilterParams::FB),
+        ParamAddr::new(BlockRef::Filter, FilterParams::MORPH),
         ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
         ParamAddr::new(BlockRef::Out, OutParams::VCA),
         ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH),

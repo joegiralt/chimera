@@ -51,6 +51,25 @@ pub fn k2040_probe<V: VoiceSpec, const MOVING: bool>(
     f.settle(sum);
 }
 
+/// SEM's paths (ADR 0192), `BP` its BANDPASS output: `PATH` 0 steady, 1
+/// stepped (a glide), 2 moving, 3 FB at ½, each with the ends `run` builds.
+#[inline(never)]
+pub fn sem_probe<const BP: bool, const PATH: u8>(
+    f: &mut super::Sem,
+    buf: &mut [f32; BLOCK_SIZE],
+    p: &FilterParams,
+) -> f32 {
+    let mods = FilterMods {
+        fb: if PATH == 3 {
+            super::Fed::new(0.5, 0.5)
+        } else {
+            super::Fed::OFF
+        },
+        ..FilterMods::NONE
+    };
+    super::sem::kern::path::<BP, PATH>(f, buf, p, &mods)
+}
+
 /// DIRTY in mode `M` (`DIRTY_MODES`' index), `process` with the mode
 /// forced: one loop serves steady and moving blocks (`p.mode()` must agree).
 #[inline(never)]

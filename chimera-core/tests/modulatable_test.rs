@@ -58,6 +58,10 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
             if addr.param == FilterParams::STAB {
                 p.filter.set_kind(FilterKind::K2040);
             }
+            // SEM's MODE acts on SEM.
+            if addr.param == FilterParams::MORPH {
+                p.filter.set_kind(FilterKind::Sem);
+            }
         }
         BlockRef::VoiceFx => {
             p.fx.set_type(FxType::Soft);
@@ -175,10 +179,11 @@ fn every_modulatable_param_audibly_changes_output() {
     }
     // + VCA; PITCH, FINE; Modal's macros; VA's; FRMT and BW per operator,
     // VOWEL; the FX slot's pots and MIX; less DRV's three and the fold's;
-    // TAPE's five macros and ONE's START (#698); the filter's STABILITY and FB.
+    // TAPE's five macros and ONE's START (#698); the filter's STABILITY, FB
+    // and SEM's MODE.
     assert_eq!(
         checked,
-        17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 - 6 + 6 + 2
+        17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 - 6 + 6 + 3
     );
 }
 

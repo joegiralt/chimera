@@ -507,9 +507,10 @@ fn applies_matches_the_panel() {
 }
 
 /// TYPE is live once a second kind is built: a detent a kind, CLEAN to
-/// 2040 (whose one MODE shows fixed) to DIRTY to LADDER (keeping LP2), each
-/// at its default MODE or the one it keeps, and held at the last; a TYPE change leaves the matrix byte-identical. (TYPE
-/// is an enum the registry refuses to prime.)
+/// 2040 (whose one MODE shows fixed) to DIRTY to LADDER (keeping LP2) to
+/// SEM (LP2's code is its MODE output), each at its default MODE or the
+/// one it keeps, and held at the last; a TYPE change leaves the matrix
+/// byte-identical. (TYPE is an enum the registry refuses to prime.)
 #[test]
 fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     use chimera_core::ui::view::{self, SlotCtx};
@@ -527,7 +528,8 @@ fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
         (FilterKind::Dirty, FilterMode::Lp12),
         // DIRTY's LP2 is LADDER's too: MODE stays (spec § 7).
         (FilterKind::Ladder, FilterMode::Lp12),
-        (FilterKind::Ladder, FilterMode::Lp12),
+        (FilterKind::Sem, FilterMode::Lp12),
+        (FilterKind::Sem, FilterMode::Lp12),
     ] {
         feed(&mut ui, Input::turn(EncoderId::A, 1));
         assert_eq!(ui.params().filter.kind(), kind);
@@ -536,7 +538,7 @@ fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     }
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
-    feed(&mut ui, Input::turn(EncoderId::A, -4));
+    feed(&mut ui, Input::turn(EncoderId::A, -5));
     assert_eq!(ui.params().filter.kind(), FilterKind::Svf);
     assert_eq!(format!("{:?}", ui.mod_state()), before);
 }
@@ -799,18 +801,30 @@ fn panels_follow_the_type() {
     assert_eq!(
         labels(FilterKind::Svf),
         [
-            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FB", "QM", "FM3 IN", "QM IN"
+            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FEEDBACK", "QM", "FM3 IN", "QM IN"
         ]
     );
     assert_eq!(labels(FilterKind::Dirty), labels(FilterKind::Svf));
     assert_eq!(labels(FilterKind::Ladder), labels(FilterKind::Svf));
+    // SEM: its MODE knob, FREQ, RES, CLEAN's FLT › MOD and OUTPUT in its F.
+    assert_eq!(
+        labels(FilterKind::Sem),
+        [
+            "MODE", "FREQ", "RES", "FM1", "FM2", "FM3", "FEEDBACK", "QM", "OUTPUT", "FM3 IN",
+            "QM IN"
+        ]
+    );
     assert_eq!(
         labels(FilterKind::K2040),
         [
-            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FB", "QM", "FM3 IN", "QM IN"
+            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FEEDBACK", "QM", "FM3 IN",
+            "QM IN"
         ]
     );
     let t = |k, i| knob(k, i).map(|n| n.target);
+    let t_sem = |i| t(FilterKind::Sem, i);
+    assert_eq!(t_sem(0), Some(T::Filter(FilterParams::MORPH)));
+    assert_eq!(t_sem(8), Some(T::Filter(FilterParams::MODE)));
     assert_eq!(
         t(FilterKind::K2040, 0),
         Some(T::Filter(FilterParams::VOICE))
@@ -827,12 +841,14 @@ fn panels_follow_the_type() {
         // FB beside the FM amounts; the jacks on FLT › JACK (ADR 0190).
         assert_eq!(t(k, 6), Some(T::Filter(FilterParams::FB)));
         assert_eq!(t(k, 7), Some(T::JackAmount(JackSlot::Qm)));
-        assert_eq!(t(k, 8), None);
+        if k != FilterKind::Sem {
+            assert_eq!(t(k, 8), None);
+        }
         assert_eq!(t(k, 10), Some(T::Filter(FilterParams::FM3_IN)));
         assert_eq!(t(k, 11), Some(T::Filter(FilterParams::QM_IN)));
         // The chip's cell, FLT › FX's F: STABILITY on the four-pole kinds
-        // (ADR 0168).
-        let chip = k.four_pole().then_some(T::Filter(FilterParams::STAB));
+        // and SEM (ADR 0168, 0192).
+        let chip = k.has_chip().then_some(T::Filter(FilterParams::STAB));
         assert_eq!(t(k, 9), chip);
         assert_eq!(knob(k, 9).map(|n| n.label), chip.map(|_| "STABILITY"));
         assert_eq!(t(k, 12), None);

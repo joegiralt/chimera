@@ -263,7 +263,8 @@ pub static FILTER: BlockDef = BlockDef {
 };
 
 /// FLT › MOD: the type's cells (filter-types spec § 2, § 3, ADR 0190): FM1 ·
-/// FM2 (the 2040's ENV AMT · KEYBD) · FM3 · FB · QM; F is empty. `short` is
+/// FM2 (the 2040's ENV AMT · KEYBD) · FM3 · FEEDBACK · QM; F is SEM's
+/// OUTPUT (ADR 0192), empty on the others. `short` is
 /// "FMD" (filter mod), not "MOD": on the Algo map "MOD" would read as the
 /// MOD node's own, and "FMOD" runs into the next node.
 pub static FILTER_MOD: BlockDef = BlockDef {
@@ -278,7 +279,7 @@ pub static FILTER_MOD: BlockDef = BlockDef {
         ParamSlot::filter_panel(5),
         ParamSlot::filter_panel(6),
         ParamSlot::filter_panel(7),
-        EMPTY,
+        ParamSlot::filter_panel(8),
     ],
 };
 

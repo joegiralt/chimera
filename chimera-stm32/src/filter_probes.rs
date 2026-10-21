@@ -73,6 +73,20 @@ static LADDER_PROBES: &[LadderProbe] = &[
     filter::probe::ladder_stepped_probe::<4>,
 ];
 
+/// SEM's probes (ADR 0192): MODE and BANDPASS, steady, stepped, moving
+/// and FB.
+type SemProbe = fn(&mut filter::Sem, &mut [f32; BLOCK_SIZE], &FilterParams) -> f32;
+
+#[used]
+static SEM_PROBES: &[SemProbe] = &[
+    filter::probe::sem_probe::<false, 0>,
+    filter::probe::sem_probe::<false, 1>,
+    filter::probe::sem_probe::<false, 2>,
+    filter::probe::sem_probe::<false, 3>,
+    filter::probe::sem_probe::<true, 0>,
+    filter::probe::sem_probe::<true, 2>,
+];
+
 /// The taps' pass over a moving block's `g` and `k`, shared by every type.
 #[used]
 static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_probe;

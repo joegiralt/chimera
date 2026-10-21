@@ -16,6 +16,7 @@ pub mod ladder;
 pub mod level;
 #[cfg(any(test, feature = "probe", feature = "filter-probe"))]
 pub mod probe;
+pub mod sem;
 pub mod stability;
 
 pub use clean::Clean;
@@ -26,6 +27,7 @@ pub use level::{
     FilterMods, LevelRamp, LevelStage, clip_amount, clipped, level_from_drive, level_gain,
     translate_drive,
 };
+pub use sem::Sem;
 pub use stability::{FilterStability, Spread};
 
 /// The filter modes. The discriminants are the old `mode` byte (#111), so
@@ -131,9 +133,10 @@ const CLEAN_LABELS: [&str; 8] = ["LP1", "LP2", "LP4", "BP2", "BP4", "HP4", "NOTC
 pub const CLEAN_MOVE_COST: Cost = Cost(75);
 /// The 2040's moving path (ADR 0096's +12 instructions, 2 `vdiv`), with
 /// `ramps`' fill by adding (6.25): REV2 80 + 6.25 + 2.31 block
-/// instructions, 2.02 `vdiv`, 170 less steady 110 = 60; EXP 94 + 6.25 +
-/// 2.34, 190 − 135 = 55. Billed the larger: 60 (1879169d, 2026-10-07).
-pub const K2040_MOVE_COST: Cost = Cost(60);
+/// instructions, 2.02 `vdiv`, 170 less steady 110 = 60; EXP 100 + 6.25 +
+/// 2.34 with its make-up gain a sample (ADR 0191; 94 before), 200 − 135 =
+/// 65. Billed the larger: 65 (2026-10-20).
+pub const K2040_MOVE_COST: Cost = Cost(65);
 /// LEVEL's clipper on CLEAN and DIRTY, billed while it can run: the
 /// fading loop 20.0 instructions a sample, 0 `vdiv`, ceil5(20 × 1.606) =
 /// 35 (held in, 16.62: 30), over the gate shut's 0 at ½ (1879169d,
@@ -163,6 +166,9 @@ pub enum FilterKind {
     /// LADDER, the Moog transistor ladder (ADR 0104): code 1, the slot the
     /// routing spec kept for the Moog kind.
     Ladder = 1,
+    /// SEM, the Oberheim SEM-1A VCF from its circuit (ADR 0192): code 8,
+    /// past the routing spec's kept 2, 3 and 5 and LPG's 7.
+    Sem = 8,
 }
 
 impl DiskCode for FilterKind {
@@ -172,6 +178,7 @@ impl DiskCode for FilterKind {
             FilterKind::K2040 => 4,
             FilterKind::Dirty => 6,
             FilterKind::Ladder => 1,
+            FilterKind::Sem => 8,
         }
     }
 
@@ -181,6 +188,7 @@ impl DiskCode for FilterKind {
             FilterKind::K2040 => "2040",
             FilterKind::Dirty => "DIRTY",
             FilterKind::Ladder => "LADDER",
+            FilterKind::Sem => "SEM",
         }
     }
 
@@ -190,29 +198,43 @@ impl DiskCode for FilterKind {
             4 => Some(FilterKind::K2040),
             6 => Some(FilterKind::Dirty),
             1 => Some(FilterKind::Ladder),
+            8 => Some(FilterKind::Sem),
             _ => None,
         }
     }
 }
 
 /// TYPE's names, as it steps the built kinds.
-pub static KIND_NAMES: [&str; 4] = ["CLEAN", "2040", "DIRTY", "LADDER"];
+pub static KIND_NAMES: [&str; 5] = ["CLEAN", "2040", "DIRTY", "LADDER", "SEM"];
 
 const _: () = assert!(KIND_NAMES.len() == FilterKind::BUILT.len());
 
 impl FilterKind {
     /// The kinds built, as TYPE steps them.
-    pub const BUILT: [FilterKind; 4] = [
+    pub const BUILT: [FilterKind; 5] = [
         FilterKind::Svf,
         FilterKind::K2040,
         FilterKind::Dirty,
         FilterKind::Ladder,
+        FilterKind::Sem,
     ];
 
     /// The 2040 and LADDER: four stages and ramp ends, one slot between
     /// them (`Poles`); the kinds STABILITY acts on (ADR 0168).
     pub const fn four_pole(self) -> bool {
         matches!(self, FilterKind::K2040 | FilterKind::Ladder)
+    }
+
+    /// The kinds that are a chip a voice, so STABILITY spreads them: the
+    /// four-pole kinds (ADR 0168) and SEM (ADR 0192).
+    pub const fn has_chip(self) -> bool {
+        self.four_pole() || matches!(self, FilterKind::Sem)
+    }
+
+    /// The kinds whose code is bank 2's (ADR 0192): SEM, whose block plays
+    /// dry while the door is closed.
+    pub const fn in_bank2(self) -> bool {
+        matches!(self, FilterKind::Sem)
     }
 
     /// Never empty, in knob order (spec § 1).
@@ -222,6 +244,7 @@ impl FilterKind {
             FilterKind::K2040 => &K2040_MODES,
             FilterKind::Dirty => &dirty::DIRTY_MODES,
             FilterKind::Ladder => &ladder::LADDER_MODES,
+            FilterKind::Sem => &sem::SEM_MODES,
         }
     }
 
@@ -239,7 +262,7 @@ impl FilterKind {
     pub const fn default_mode(self) -> FilterMode {
         match self {
             FilterKind::Svf | FilterKind::K2040 | FilterKind::Ladder => FilterMode::Lp24,
-            FilterKind::Dirty => FilterMode::Lp12,
+            FilterKind::Dirty | FilterKind::Sem => FilterMode::Lp12,
         }
     }
 
@@ -250,6 +273,7 @@ impl FilterKind {
             FilterKind::K2040 => &K2040_LABELS,
             FilterKind::Dirty => &DIRTY_LABELS,
             FilterKind::Ladder => &ladder::LADDER_LABELS,
+            FilterKind::Sem => &sem::SEM_LABELS,
         }
     }
 
@@ -280,6 +304,7 @@ impl FilterKind {
             FilterKind::K2040 => voice.cost(),
             FilterKind::Dirty => dirty::DIRTY_COST,
             FilterKind::Ladder => ladder::LADDER_COST,
+            FilterKind::Sem => sem::SEM_COST,
         }
     }
 
@@ -291,6 +316,7 @@ impl FilterKind {
             FilterKind::K2040 => K2040_MOVE_COST,
             FilterKind::Dirty => Cost::ZERO,
             FilterKind::Ladder => ladder::LADDER_MOVE_COST,
+            FilterKind::Sem => sem::SEM_MOVE_COST,
         }
     }
 
@@ -306,11 +332,12 @@ impl FilterKind {
         }
     }
 
-    /// LEVEL's clipper, while it can run; the 2040 and LADDER have none.
+    /// LEVEL's clipper, while it can run; the 2040, LADDER and SEM have
+    /// none: LEVEL drives their circuits.
     pub const fn level_cost(self) -> Cost {
         match self {
             FilterKind::Svf | FilterKind::Dirty => FILTER_LEVEL_COST,
-            FilterKind::K2040 | FilterKind::Ladder => Cost::ZERO,
+            FilterKind::K2040 | FilterKind::Ladder | FilterKind::Sem => Cost::ZERO,
         }
     }
 }
@@ -449,7 +476,8 @@ impl<'a> TapShape<'a> {
 /// the ramped amount, the clamp, `exp2_poly`, the hold, the one-pole and
 /// on the 2040 the guard, in bank 2's loops. Counted on the thumbv7em ORBIT
 /// build against each type's moving loop: LADDER 140 → 190 instructions,
-/// the 2040 REV2 90 → 145 and EXP 105 → 166; CLEAN's and DIRTY's one loop
+/// the 2040 REV2 90 → 145 and EXP 111 → 172 (105 → 166 before the
+/// make-up of ADR 0191, which rides both); CLEAN's and DIRTY's one loop
 /// for every mode adds its dispatch. Billed the costliest, EXP's 61:
 /// ceil5(61 × 1.606) = 100.
 pub const FB_COST: Cost = Cost(100);
@@ -606,6 +634,8 @@ enum Change {
     DirtyMode,
     /// LADDER's MODE: one state, five mixes; a stack copy, as DIRTY's.
     LadderMode,
+    /// SEM's MODE and BANDPASS: one circuit, two outputs; a stack copy.
+    SemMode,
     /// The 2040's VOICE: the old voice on a stack copy, its states carried.
     Voice,
 }
@@ -622,6 +652,7 @@ impl Change {
             },
             FilterKind::Dirty => Change::DirtyMode,
             FilterKind::Ladder => Change::LadderMode,
+            FilterKind::Sem => Change::SemMode,
             FilterKind::K2040 => Change::Voice,
         }
     }
@@ -757,6 +788,7 @@ pub struct Filter {
     clean: Clean,
     poles: Poles,
     dirty: Dirty,
+    sem: Sem,
     /// The setting the last block ran (a fade's destination); `None` before
     /// the first.
     last: Option<Setting>,
@@ -812,6 +844,7 @@ impl Filter {
                 self.poles.process(buf, q, fs, mods)
             }
             FilterKind::Dirty => self.dirty.process(buf, q, fs, mods),
+            FilterKind::Sem => self.sem.process(buf, q, fs, mods),
         }
     }
 
@@ -825,6 +858,7 @@ impl Filter {
                     FilterKind::Svf => self.clean.outputs(from.mode),
                     FilterKind::K2040 | FilterKind::Ladder => (self.poles.y4(from.voice, res), 0.0),
                     FilterKind::Dirty => self.dirty.outputs(),
+                    FilterKind::Sem => self.sem.outputs(),
                 };
                 match to.kind {
                     FilterKind::Svf => {
@@ -835,6 +869,7 @@ impl Filter {
                         self.poles.hand_to(to, lp, res);
                     }
                     FilterKind::Dirty => self.dirty.seed(lp, bp),
+                    FilterKind::Sem => self.sem.seed(lp, bp),
                 }
             }
             Change::Poles => {
@@ -848,7 +883,7 @@ impl Filter {
                 }
                 self.clean.shift(from.mode, to.mode);
             }
-            Change::DirtyMode | Change::LadderMode => {}
+            Change::DirtyMode | Change::LadderMode | Change::SemMode => {}
             Change::Voice => {
                 carry = self.poles.parts().0;
                 if let Poles::K2040(k) = &mut self.poles {
@@ -896,6 +931,9 @@ impl Filter {
             Change::LadderMode => {
                 self.poles.clone().process(&mut old, &po, fs, mods);
             }
+            Change::SemMode => {
+                self.sem.clone().process(&mut old, &po, fs, mods);
+            }
             // The old side's stages carried; its ramp ends are the slot's.
             Change::Voice | Change::Poles => {
                 let mut c = self.poles.as_type(f.from, f.carry);
@@ -938,6 +976,7 @@ impl Filter {
                 FilterKind::Svf => self.clean.reset(),
                 FilterKind::K2040 | FilterKind::Ladder => self.poles = Poles::default(),
                 FilterKind::Dirty => self.dirty.reset(),
+                FilterKind::Sem => self.sem.reset(),
             }
         }
         if to.kind == FilterKind::Svf {
@@ -950,6 +989,7 @@ impl Filter {
         self.clean.hold();
         self.poles.hold();
         self.dirty.hold();
+        self.sem.hold();
     }
 
     /// A fresh voice's filter: every type at rest and unramped.
@@ -957,6 +997,7 @@ impl Filter {
         self.clean.reset();
         self.poles = Poles::default();
         self.dirty.reset();
+        self.sem.reset();
         (self.last, self.fade) = (None, None);
     }
 
@@ -967,6 +1008,7 @@ impl Filter {
                 FilterKind::Svf => self.clean.rings(),
                 FilterKind::K2040 | FilterKind::Ladder => self.poles.rings(s.voice),
                 FilterKind::Dirty => self.dirty.rings(),
+                FilterKind::Sem => self.sem.rings(),
             },
             None => false,
         }
@@ -988,6 +1030,7 @@ impl Filter {
         match self.last.map(|s| s.kind) {
             Some(FilterKind::K2040 | FilterKind::Ladder) => self.poles.parts().1.map(|e| e.g),
             Some(FilterKind::Dirty) => self.dirty.last_f(),
+            Some(FilterKind::Sem) => self.sem.last_g(),
             _ => self.clean.last_g(),
         }
     }
@@ -1016,6 +1059,8 @@ mod tests {
             (FilterKind::Dirty, FilterKind::K2040),
             (FilterKind::K2040, FilterKind::Ladder),
             (FilterKind::Ladder, FilterKind::Svf),
+            (FilterKind::Svf, FilterKind::Sem),
+            (FilterKind::Sem, FilterKind::Ladder),
         ] {
             p.set_kind(from);
             for b in 0..8 {
@@ -1035,6 +1080,7 @@ mod tests {
                         }
                         FilterKind::K2040 | FilterKind::Ladder => f.poles.rings(p.voice),
                         FilterKind::Dirty => f.dirty.rings(),
+                        FilterKind::Sem => f.sem.rings(),
                     });
                 }
             }
@@ -1050,6 +1096,7 @@ mod tests {
                     (f.poles.rings(p.voice), f.poles.parts().1.is_some())
                 }
                 FilterKind::Dirty => (f.dirty.rings(), f.dirty.last_f().is_some()),
+                FilterKind::Sem => (f.sem.rings(), f.sem.last_g().is_some()),
             };
             assert!(!rings && !ramped, "{from:?} → {to:?}");
             assert!(f.rings(), "{to:?} runs");

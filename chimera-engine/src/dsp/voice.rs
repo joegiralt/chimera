@@ -260,10 +260,10 @@ impl Voice {
             + when(fx, p.fx.ty().glide_cost())
     }
 
-    /// STABILITY spreads the voice: the 2040 or LADDER, stored below 1 or
-    /// routed.
+    /// STABILITY spreads the voice: the 2040, LADDER or SEM, stored below 1
+    /// or routed.
     fn stab_runs(p: &ParamSnapshot, mods: &ModState) -> bool {
-        p.filter.kind().four_pole()
+        p.filter.kind().has_chip()
             && (p.filter.stability < 1.0
                 || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::STAB)))
     }
@@ -1109,7 +1109,7 @@ impl Voice {
             // A route moves g and k at audio rate; without one, only a
             // knob's glide does.
             glide: !mod_state.filter_routed(),
-            spread: if m.filter.kind().four_pole() {
+            spread: if m.filter.kind().has_chip() {
                 self.stab.step(stability::depth(m.filter.stability))
             } else {
                 Spread::NONE

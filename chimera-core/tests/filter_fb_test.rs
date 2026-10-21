@@ -13,7 +13,7 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use common::rig::{Rig, Src};
 
-const KINDS: [FilterKind; 4] = FilterKind::BUILT;
+const KINDS: [FilterKind; 5] = FilterKind::BUILT;
 
 /// A saw at `hz`, peak `amp`, sample `n`.
 fn saw(n: usize, hz: f32, amp: f32) -> f32 {
@@ -101,7 +101,8 @@ fn fb_is_heard_on_every_type() {
 }
 
 /// Full FB at full RES and a hot input stays finite and bounded on every
-/// TYPE and cutoff; the 2040's guard holds it within full scale.
+/// TYPE and cutoff; the 2040's guard holds it within full scale, SEM's
+/// rails within its bound.
 #[test]
 fn full_fb_at_full_res_is_bounded() {
     for k in KINDS {
@@ -109,8 +110,13 @@ fn full_fb_at_full_res_is_bounded() {
             for fb in [-1.0, 1.0] {
                 let out = run(k, cutoff, 1.0, fb, 2.0, 300);
                 let pk = peak(&out);
+                // SEM keeps the circuit's headroom: its rails, `SEM_BOUND`.
+                let top = match k {
+                    FilterKind::Sem => chimera_core::dsp::filter::sem::SEM_BOUND,
+                    _ => 4.0,
+                };
                 assert!(
-                    pk.is_finite() && pk < 4.0,
+                    pk.is_finite() && pk < top,
                     "{k:?} {cutoff} Hz FB {fb}: {pk}"
                 );
                 if k == FilterKind::K2040 {
@@ -175,5 +181,37 @@ fn the_one_pole_holds_the_fizz() {
                 "{k:?} FB {fb}: {lp} against {raw}"
             );
         }
+    }
+}
+
+/// EXP's make-up gain (ADR 0191) rides FB's loop as the plain one: a hair
+/// of FB on the 2040 at RES 0.8 reads within 0.5 dB of FB 0, on each voice.
+#[test]
+fn the_2040s_make_up_holds_under_fb() {
+    use chimera_core::dsp::filter::K2040Voice;
+    let rms = |x: &[f32]| {
+        let t = &x[x.len() / 2..];
+        (t.iter().map(|v| v * v).sum::<f32>() / t.len() as f32).sqrt()
+    };
+    for v in [K2040Voice::Rev2, K2040Voice::Exp] {
+        let mut p = params(FilterKind::K2040, 2000.0, 0.8);
+        p.voice = v;
+        let go = |fed: Fed| {
+            let mut f = Filter::new();
+            let mut out = Vec::new();
+            for b in 0..40 {
+                let mut buf: [f32; BLOCK_SIZE] =
+                    core::array::from_fn(|i| saw(b * BLOCK_SIZE + i, 110.0, 0.25));
+                let mods = FilterMods {
+                    fb: fed,
+                    ..FilterMods::NONE
+                };
+                f.process(&mut buf, &p, SAMPLE_RATE, &mods);
+                out.extend_from_slice(&buf);
+            }
+            rms(&out)
+        };
+        let d = 20.0 * (go(Fed::with_lp(1e-4, 1e-4, 1.0)) / go(Fed::OFF)).log10();
+        assert!(d.abs() < 0.5, "{v:?}: FB a hair off FB 0 by {d:.2} dB");
     }
 }
