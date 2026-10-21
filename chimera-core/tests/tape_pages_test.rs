@@ -859,3 +859,30 @@ fn streamed_refusals_reach_the_band() {
     assert!(rev.starts_with(&format!("{REVERSE_NEEDS_RAM} / ")), "{rev}");
     assert!(state(TapeModel::Walk, Reverse, 0.9, 0.1).starts_with("24K · "));
 }
+
+/// DIRECTION is WALK's: turned on SCRUB (a CC, a learn) it leaves SCRUB's
+/// LENGTH and FADE be. On WALK with TRON on, once through writes TRON's
+/// 32 ms, not HOLD (ADR 0203).
+#[test]
+fn direction_edit_writes_walks_defaults_only() {
+    use chimera_core::dsp::tape_engine::FADE_HOLD;
+    use chimera_core::ui::part_page::{Edit, edit};
+    let dir = tape(P::MODE);
+    let mut s = Sound::init(EngineType::Tape);
+    s.params.tape.machine = TapeMachine::Scrub;
+    let (size, drag) = (s.params.tape.size, s.params.tape.drag);
+    assert!(edit(
+        &mut s.params,
+        dir,
+        Edit::To(Direction::Forward as u8 as f32)
+    ));
+    assert_eq!((s.params.tape.size, s.params.tape.drag), (size, drag));
+    let mut w = Sound::init(EngineType::Tape);
+    w.params.tape.tron = Tron::On;
+    assert!(edit(
+        &mut w.params,
+        dir,
+        Edit::To(Direction::Forward as u8 as f32)
+    ));
+    assert!(w.params.tape.drag < FADE_HOLD, "{}", w.params.tape.drag);
+}

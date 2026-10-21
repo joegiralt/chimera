@@ -38,22 +38,33 @@ pub(crate) fn machine_edit_in(
             }
             env_defaults(m, d)
         }
-        T::MODE => {
+        // DIRECTION is WALK's: off it, LENGTH and FADE are another machine's.
+        T::MODE if m == TapeMachine::Walk => {
             let writes = direction_defaults(dir(before), d);
             for &(id, v) in writes {
                 b.set(id, v);
             }
+            tron_fade(b);
             if writes.is_empty() {
                 &[]
             } else {
                 env_defaults(m, d)
             }
         }
-        T::TRON if b.get(T::TRON) > 0.5 && b.get(T::DRAG) >= FADE_HOLD => {
-            b.set(T::DRAG, fade_default(Direction::Loop));
+        T::TRON => {
+            tron_fade(b);
             &[]
         }
         _ => &[],
+    }
+}
+
+/// TRON on: FADE at HOLD, which means nothing there, turns to TRON's 32 ms.
+/// Inlined: a function of its own would link into bank 1.
+#[inline(always)]
+fn tron_fade(b: &mut dyn Block) {
+    if b.get(T::TRON) > 0.5 && b.get(T::DRAG) >= FADE_HOLD {
+        b.set(T::DRAG, fade_default(Direction::Loop));
     }
 }
 
