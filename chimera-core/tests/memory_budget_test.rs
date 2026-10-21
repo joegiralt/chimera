@@ -80,8 +80,8 @@ fn voice_is_its_chain_plus_one_slot() {
 /// last block's ends (28) and the played Sound's MODE knob (ADR 0192).
 /// VA NOISE adds 8 B: the played Sound's KIND and LEVEL (ADR 0197). The
 /// VCA's gate adds 72 B, its 68 B and padding (ADR 0195). STRETCH's four
-/// params in the played Sound add 16 B (ADR 0204).
-const VOICE_SIZE_BEFORE: usize = 6_680;
+/// params in the played Sound add 16 B (ADR 0204). Merged, 6,688 B.
+const VOICE_SIZE_BEFORE: usize = 6_688;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.
@@ -224,7 +224,8 @@ fn ui_state_rest_under_4k() {
     // latch of each source's heads that can't be re-staged (slice 1
     // § 5.6). 16 B the LFO page's playhead and where it reads it (ADR
     // 0177). 152 B PIT's tuner: each Part's last note and the corner's two
-    // lines (ADR 0201). The focus
+    // lines (ADR 0201). 8 B more on the tree that merges them all
+    // (integration-1021), past the sum of each feature's line. The focus
     // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
     // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
@@ -244,7 +245,8 @@ fn ui_state_rest_under_4k() {
             + 32
             + 128
             + 16
-            + 152,
+            + 152
+            + 8,
         "UiState grew to {rest} B besides its Project"
     );
 }
