@@ -79,7 +79,8 @@ fn old_machine_sounds_render_bit_identically() {
 }
 
 /// Each factory TAPE Sound, re-pointed to WALK and built now, renders as
-/// its file from before WALK did.
+/// its file from before WALK did. STRETCH's three are rebuilt on GRAIN
+/// with ONE's ENV 1 (ADR 0204), so they are not WALK's to keep.
 #[test]
 fn factory_sounds_on_play_render_as_before() {
     let mut checked = 0;
@@ -90,6 +91,13 @@ fn factory_sounds_on_play_render_as_before() {
         let Some((s, b)) = factory(name) else {
             continue;
         };
+        let rebuilt = match s.params.tape.machine {
+            TapeMachine::Stretch => true,
+            TapeMachine::Walk | TapeMachine::Scrub | TapeMachine::Wave => false,
+        };
+        if rebuilt {
+            continue;
+        }
         assert_eq!(
             hash(&render(&s, b, &phrase(root(b)), 4.5)),
             c.hash,
@@ -97,7 +105,7 @@ fn factory_sounds_on_play_render_as_before() {
         );
         checked += 1;
     }
-    assert!(checked >= 26, "{checked}");
+    assert!(checked >= 23, "{checked}");
 }
 
 /// What each old machine loads as: a factory Sound as its recipe now
