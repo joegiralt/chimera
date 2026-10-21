@@ -36,7 +36,7 @@ MODAL   EXC ── RES ── FLT ── AMP ── MOD
                 └ MDL2, PIT
 
 VA      VA ── FLT ── AMP ── MOD
-        └ OSC 1, OSC 2, PIT
+        └ OSC 1, OSC 2, NOISE, PIT
 
 shared  FLT └ FMD (FILTER MOD), FX, JACK
         AMP
@@ -44,6 +44,14 @@ shared  FLT └ FMD (FILTER MOD), FX, JACK
 ```
 
 TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, MOD). In 0.1.0 and until it ships, TAPE rows in the Sound browser read COMING SOON and don't load.
+
+### VA
+
+| Page | Cells |
+|---|---|
+| VA | WAVE1 · WAVE2 · MODE · BLEND · SUB · STABILITY |
+| OSC 1, OSC 2 | CRSE · FINE · SHAPE, D-F empty |
+| NOISE | KIND (WHITE, PINK, RED, DIGITAL) · LEVEL, C-F empty. One noise source a voice, mixed beside SUB after MODE, before the filter. DIGITAL is a sample-and-hold that steps 16 times each OSC 1 cycle, so it brightens up the keyboard |
 
 ### FLT and AMP
 
