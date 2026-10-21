@@ -841,8 +841,14 @@ static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
     ChainBlock::page(&CHORUS),
     ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),
     ChainBlock::with_subs(&EFX, &EFX_SUB_PAGES),
+    // Seven nodes sit 32 px apart: REEL beside a pill doesn't fit, so the
+    // map says MTP, ADR 0170's short for the master tape (#646).
     #[cfg(feature = "master-tape")]
-    ChainBlock::page(&TAPE),
+    ChainBlock {
+        def: &TAPE,
+        sub_pages: &[],
+        map: Some("MTP"),
+    },
     ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),
 ];
 
