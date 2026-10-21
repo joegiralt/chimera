@@ -57,6 +57,14 @@ impl Bench {
     /// FX return alone.
     fn new(e: EngineType) -> Self {
         chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+        // Under the firmware's `boot-waves`, the boot's copy of the tables.
+        #[cfg(feature = "boot-waves")]
+        {
+            static WAVES: std::sync::Once = std::sync::Once::new();
+            WAVES.call_once(|| {
+                chimera_core::dsp::algo::waves::render_into(Box::leak(Box::new_uninit()))
+            });
+        }
         let mut s = Sound::init(e);
         s.params.envelopes[0].sustain = 1.0;
         let mut ui = Box::new(screen::stack_ui());
