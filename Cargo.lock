@@ -355,6 +355,7 @@ version = "0.1.0"
 name = "chimera-utils"
 version = "0.1.0"
 dependencies = [
+ "chimera-circuits",
  "chimera-core",
  "chimera-hal",
  "chimera-image",

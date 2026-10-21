@@ -6,6 +6,7 @@
 #![allow(clippy::disallowed_methods)]
 
 mod bank2;
+mod circuit;
 mod devices;
 mod filter_fb;
 mod generic;
@@ -29,7 +30,16 @@ pub const SR: f64 = chimera_hal::SAMPLE_RATE as f64;
 
 const USAGE: &str = "\
 usage: chimera-utils [flags] COMMAND …
-  unitab render|table|cmp …   filter VOICE A/B on the full engine, against the unit
+  unitab render SOUND [EVENTS] OUTDIR
+                           filter VOICE A/B on the full engine (eng_*) and the lab
+                           harness (lab_*), every script × RES × voice, raw levels
+  unitab table UNITDIR RENDERDIR OUT.md | unitab cmp A B
+                           EXP − REV2 measures: Δlevel, Δlow, tilt, LSD, null
+  unitab check DIR         the A/B method's known-pair check on the lab harness
+  circuit list             the chimera-circuits models (ADR 0196)
+  circuit render MODEL OUTDIR [EVENTS]
+                           a model on unitab's scripts × RES, raw levels, after
+                           the known-pair check
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
                            (an effect also on the listening set)
   bank2-seal ELF BIN BK2 --version TEXT
@@ -207,6 +217,7 @@ fn run() -> Result<bool, String> {
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
+        "circuit" => circuit::run(rest).map(|_| true),
         "devices" => {
             for (name, d) in devices::Device::all() {
                 let ks: Vec<String> = d

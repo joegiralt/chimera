@@ -6,6 +6,7 @@ publish = false
 
 # Host only (ADR 0098): nothing in the firmware depends on this crate.
 [dependencies]
+chimera-circuits = { path = "../chimera-circuits" }
 chimera-core = { path = "../chimera-core" }
 chimera-hal = { path = "../chimera-hal" }
 chimera-image = { path = "../chimera-image" }
