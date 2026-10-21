@@ -118,7 +118,11 @@ What the bank-1 bytes are, all of it the closed door's (0198 point 1):
 - **The stored params:** `DelayParams` grows 20 B (`grain: [f32; 5]`), so `FxParams` and every Performance holding it grow. That alone, measured by giving origin/main's `DelayParams` 20 B of padding and nothing else, moves the ORBIT build's bank 1 by +232 B, all of it layout: field offsets and immediates in the UI's and the board's code (`UiState::input` +284, `chimera_board::synth` +124). Across the sets the text column swings with the layout for this reason, with no new function in it.
 - **The stubs:** the door call in `TapeDelay::run` (+16 B in `render_half`), `bank2::closed_text`'s GRAIN arm (+36), `get` and `write` reaching `grain` (+36), and `extra_cost`'s bill.
 
-The budget lines rise by exactly each set's measured Δ bank 1, each naming this ADR. Bank 2 grows +6,816 B on every set: `delay::grain::run` (the TYPE crossfade's loop and the steady loop, the clock and the knobs' laws, the starts) and the core's `Engine::render` on the line.
+**An owner-accepted exception to ADR 0198** (owner, 2026-10-21: "yes, accept the bank 1 growth for grain"). 0198 lets bank 1 grow by a closed door's data and its stubs. GRAIN's growth is more than that:
+- about 900 B of closed-door data: the rodata column (+888 to +908 B), plus the literal pools and alignment in the rest column;
+- about 600 B of layout churn from `DelayParams` growing 20 B: the text column, up to +722 B on the bench sets and −12 to +480 B on the shipping ones, apart from the ~90 B of stubs.
+
+The churn is not new code, but it exceeds the guard's 64 B slack, so the owner accepted it by name. Each set's line rises by its whole measured Δ bank 1 in the table above, each naming this ADR. Bank 2 grows +6,816 B on every set: `delay::grain::run` (the TYPE crossfade's loop and the steady loop, the clock and the knobs' laws, the starts) and the core's `Engine::render` on the line.
 
 ## Fidelity of the port
 - `the_engine_matches_its_f64_reference` runs the engine and an f64 reference of the port (its trims, gains, envelope, stealing and Hermite; the reference shares the engine's clock, whose starts have their own test) over six settings across SIZE, DENSITY, PITCH ±24 and TEXTURE: within 5·10⁻⁴ of signals near 0.1 RMS. What remains is f32's 2⁻⁹-sample grip on a start 24,000 samples back.
