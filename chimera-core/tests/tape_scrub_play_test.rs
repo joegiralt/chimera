@@ -8,6 +8,7 @@ mod common;
 use core::mem::MaybeUninit;
 
 use chimera_core::block::{Block as _, DiskCode as _};
+use chimera_core::dsp::clampf;
 use chimera_core::dsp::tape_engine::machine::{SCRUB_LENGTH_DEFAULT, defaults};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
@@ -337,7 +338,7 @@ fn jog_moves_the_head_evenly() {
     for (drag, most) in [(0.0, 1.3), (0.3, 1.13), (0.6, 1.08)] {
         let mut jog = Jog::new();
         let (mut next_ui, mut prev) = (0.0f32, 0i32);
-        let cum = |t: f32| ((t.clamp(0.5, 2.0) - 0.5) / 0.04).floor() as i32;
+        let cum = |t: f32| ((clampf(t, 0.5, 2.0) - 0.5) / 0.04).floor() as i32;
         let (lo, hi) = ripple(drag, &mut |k, p| {
             let t = (k * B) as f32 / SR as f32;
             while next_ui <= t {
@@ -347,7 +348,7 @@ fn jog_moves_the_head_evenly() {
                     jog.turn((c - prev) as i8, chimera_hal::Ms(ms));
                     prev = c;
                 }
-                p.position = (p.position + jog.pass(chimera_hal::Ms(ms), p.drag)).clamp(0.0, 1.0);
+                p.position = clampf(p.position + jog.pass(chimera_hal::Ms(ms), p.drag), 0.0, 1.0);
                 next_ui += 0.033;
             }
         });
