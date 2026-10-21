@@ -900,3 +900,37 @@ mod.LFO3 = "VA.AMOUNT +20"
 mod.VEL = "ENV2.LEVEL +50"
 level = "by ear -14.0: set low so the short hit's resonance stays under 1 dB of limiting"
 trim = "-4.5"
+
+# The owner's own patch, saved on the unit and copied off: every value is
+# exactly as set (no trim, no clamp), bar six inert ALGO RR values the Source
+# can't hold on a VA Sound.
+[[sound]]
+id = "S9100061"
+name = "THE RIGHT PLACE"
+engine = "VA"
+note = "KEYTRACKED FILTER, ENV AND LFO"
+demo = "poly"
+plays = "long short"
+home = "C3"
+phrase = "pad"
+FILTER.CUTOFF = "255.29907"  # 255 Hz
+FILTER.RESO = "0.53125"  # 67
+FILTER.STAB = "0.5"  # 64
+ENV1.ATK = "0"  # 2.0 ms
+ENV1.DEC = "0"  # 3.5 ms
+ENV1.SUS = "0.7234375"  # 72%
+ENV1.REL = "0.7855625"  # 1.8 s
+LFO1.RATE = "0.16000001"  # 0.16 Hz
+LFO1.SHAPE = "SAW"
+LFO1.DEPTH = "0.3359375"  # 43
+OUT.LEVEL = "0.3515625"  # 45
+VA.WAVE1 = "0.3151042"  # 40
+VA.WAVE2 = "0"
+VA.AMOUNT = "0"
+VA.STAB = "0.7"  # 89
+VA.SHAPE1 = "1"  # 127
+VA.FINE2 = "6"  # +6
+mod.ENV1 = "FILTER.CUTOFF +26, OUT.VCA +127"
+mod.LFO1 = "FILTER.CUTOFF +8, PITCH.PITCH +2"
+mod.NOTE = "FILTER.CUTOFF +127"
+level = "by ear -15.2: the owner's OUT LEVEL kept as set, not trimmed"
