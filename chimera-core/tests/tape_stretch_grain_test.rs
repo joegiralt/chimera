@@ -11,7 +11,7 @@ use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::stretch::units::StretchEnd;
 use chimera_core::dsp::tape_engine::stretch::{HALF_SPEED, HOLD_S, time_speed};
 use chimera_core::dsp::tape_engine::{
-    STRETCH_DEFAULTS, StretchType, TapeEngine, TapeEngineParams, TapeMachine,
+    STRETCH_DEFAULTS, StretchType, TapeEngine, TapeEngineParams, TapeMachine, Way,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::tape::held_plain;
@@ -56,11 +56,11 @@ fn stretch(secs: f32, spray: f32, stop: bool) -> TapeEngineParams {
 /// ONE on the same source: the reference level.
 fn one() -> TapeEngineParams {
     TapeEngineParams {
-        machine: TapeMachine::One,
         drag: 1.0,
         root: 6_000.0,
         ..TapeEngineParams::default()
     }
+    .with_way(Way::One)
 }
 
 /// `secs` of `p(block)` from a note on `note` (60 is the source's own
