@@ -18,7 +18,7 @@
 // MIT License; the notice is `dsp::grain::core`'s.
 
 use super::{
-    DelayParams, DelayType, Eased, FLUTTER_SAMPLES, LINE_SCALE, MAX_DELAY_SAMPLES, TIME_FADE, Tap,
+    DelayParams, Eased, FLUTTER_SAMPLES, LINE_SCALE, MAX_DELAY_SAMPLES, TIME_FADE, Tap,
     TapeDelay, WOW_SAMPLES, read, to_line,
 };
 use crate::dsp::algo::math::exp2;
@@ -253,11 +253,7 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
     if d.grain.share == Unit::ZERO {
         d.grain = State::NEW;
     }
-    let to = if p.kind() == DelayType::Grain {
-        1.0
-    } else {
-        0.0
-    };
+    let to = p.kind().value();
     let step = BLOCK_SIZE as f32 / f32::from(TIME_FADE);
     let s = d.grain.share.get();
     let share = (
