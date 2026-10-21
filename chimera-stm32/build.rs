@@ -176,6 +176,16 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // `dsp::grain`, text and rodata.
     let grain = "    *(.text.*5delay5grain* .rodata.*5delay5grain* .text.*3dsp5grain* .rodata.*3dsp5grain*);
 ";
+    // The filter probes (`filter-probes`, a measuring build never shipped):
+    // `filter::probe` and the gate's `lpg_probe` in bank 2, so their ~40 KB
+    // leaves bank 1 to the code they count (ADR 0198). `loop_count.py`
+    // reads them by name, wherever they sit.
+    let probes = if env::var_os("CARGO_FEATURE_FILTER_PROBES").is_some() {
+        "    *(.text.*6filter5probe* .rodata.*6filter5probe* .text.*3lpg9lpg_probe* .rodata.*3lpg9lpg_probe*);
+"
+    } else {
+        ""
+    };
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
 ";
@@ -228,6 +238,7 @@ SECTIONS {
     /* BENCH */
     /* GRAIN */
     /* GATE */
+    /* PROBES */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -250,7 +261,8 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* BENCH SLOT */\n", bench_slot)
         .replace("/* BENCH ASSERT */", bench_assert)
         .replace("    /* GRAIN */\n", grain)
-        .replace("    /* GATE */\n", gate),
+        .replace("    /* GATE */\n", gate)
+        .replace("    /* PROBES */\n", probes),
     )
     .unwrap();
 
