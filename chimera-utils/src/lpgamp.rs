@@ -184,17 +184,44 @@ pub fn strike(args: &[String]) -> Result<(), String> {
     };
     let mut takes: Vec<(String, Sound, &Phrase)> = vec![("bongo".into(), bongo(), &drum)];
     for (tag, k) in [("0", 0.0), ("half", 0.5), ("1", 1.0)] {
-        takes.push((format!("chord_strike_{tag}"), gate(held(), 0.5, 0.4, k), &chords));
+        takes.push((
+            format!("chord_strike_{tag}"),
+            gate(held(), 0.5, 0.4, k),
+            &chords,
+        ));
     }
     write(dir, &takes)?;
+    // Each chord's loudest 10 ms over its held level (1.0–1.4 s in).
+    let rms = |y: &[f32]| {
+        let p = y.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / y.len() as f64;
+        10.0 * p.log10()
+    };
+    for (name, s, p) in &takes[1..] {
+        let y = engine(s, p);
+        let at = |t: f64| (t * SR) as usize;
+        let w = at(0.01);
+        let top = (0..at(1.0) / w)
+            .map(|k| rms(&y[k * w..(k + 1) * w]))
+            .fold(f64::MIN, f64::max);
+        let held = rms(&y[at(1.0)..at(1.4)]);
+        println!(
+            "{name}: held {held:.1} dBFS, accent {:+.1} dB over it",
+            top - held
+        );
+    }
     check(dir, snd, events)
 }
 
-/// VA INIT's saw held: ENV 1 (into VCA) at A 0, D 0.3, S 0.6, R 0.4.
+/// VA INIT's saw held: ENV 1 an organ gate (A 0, D 0, S 1, R 0.4) into
+/// VCA at 64, so the held level sits near ½ with room for the strike;
+/// OUT LEVEL 16 keeps the four voices under the limiter.
 fn held() -> Sound {
     let mut s = pluck();
     let e = &mut s.params.envelopes[0];
-    (e.decay, e.sustain, e.release) = (0.3, 0.6, 0.4);
+    (e.attack, e.decay, e.sustain, e.release) = (0.0, 0.0, 1.0, 0.4);
+    s.mod_state
+        .set_fixed(ModSource::Env1.index(), FixedCol::Vca, 64);
+    s.params.out.volume = 16.0 / 128.0;
     s
 }
 
