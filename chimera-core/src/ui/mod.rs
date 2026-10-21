@@ -2594,8 +2594,6 @@ impl UiState {
         self.heads_from = from;
     }
 
-    /// The LFO page's playhead reads `from` (the goldens' own), not the
-    /// audio's.
     /// PIT's tuner takes `note` as `part`'s last, and the edited Part as
     /// `sounding`, never the audio's: for the goldens and tests.
     #[cfg(feature = "test-support")]
@@ -2609,6 +2607,8 @@ impl UiState {
         &self.tuner.shown
     }
 
+    /// The LFO page's playhead reads `from` (the goldens' own), not the
+    /// audio's.
     pub fn hear_lfo(&mut self, from: &'static LfoView) {
         self.lfo_from = from;
     }
