@@ -357,7 +357,7 @@ fn factory_sounds_save_as_loaded() {
         // TRON on; each renders as before (`tape_legacy_test`). ADR 0204: the
         // STRETCH Sounds turn to GRAIN, with ONE's ENV 1, re-trimmed.
         // Re-pinned on the integration's merged tree.
-        assert_eq!(all.finish(), 0x8DC4_E96D, "{} Sounds", r.sounds.len());
+        assert_eq!(all.finish(), 0xBC51_68B7, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
         let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();
