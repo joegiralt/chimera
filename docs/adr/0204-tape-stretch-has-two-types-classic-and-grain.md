@@ -75,6 +75,8 @@ What the bank-1 bytes are (the default build, `llvm-size` and `rust-nm`, itemise
 - **+128 B of text,** of which: the four params' one `get` and one `write` arm (+48 B, what the codec needs to load and save them with the door closed), the two slider laws' arms in `Law::range` (+28 B, the specs' display laws), the door stub for the TYPE's dim in `tape_note` (+32 B), and `view` −40 B (POLY (UNPITCHED) gone); the rest is the snapshot's growth above and layout (`region_data`, `recost`, `model_writes`, `machine_cell`: ±20 B each, as the params-alone build moves unrelated functions by as much).
 No STRETCH code is in bank 1: no `stretch` or `grain` symbol lies below 0x08100000.
 
+On the integrated tree (integration-1021, after #754 → after #752's merge on #749's final core and the integration's fixes, bank 1, each set as `just check` builds it): `orbit` 908,924 → 909,508 (+584); `default` 887,704 → 888,328 (+624); `bank2-gate` 889,452 → 889,924 (+472); `fault-inject` 861,640 → 862,336 (+696); `bench-algo` 906,608 → 907,224 (+616); `bench-algo,master-tape` 883,584 → 884,224 (+640); `bench-routing` 902,720 → 903,328 (+608); `bench-memory` 905,428 → 905,948 (+520); `bench-stress` 907,680 → 908,192 (+512); `bench-orbit` 886,980 → 887,572 (+592); `bench-tape` 869,152 → 869,864 (+712). Each line of `tools/bank1-budget.txt` names this ADR with its share.
+
 ### Compatibility
 - Old STRETCH Sounds load as CLASSIC and render bit for bit as before (above). Every other machine is bit for bit too.
 - Codes only append: TYPE's GRAIN is code 2 (the disk-codes fixture gains `E 34 10 2 GRAIN`); GRAIN's four params are ids 22–25 (21 is SCRUB's KEY, 17–20 SLICE's and PLAY's) (`B 34` lines, appended; END stored as its index, a stepped real, as THEME's HINTS).
@@ -101,7 +103,7 @@ No STRETCH code is in bank 1: no `stretch` or `grain` symbol lies below 0x081000
 ## Consequences
 - GRAIN on an unpitched source (no PERIOD) keeps SPRAY's scatter only: a synthetic bell with no PERIOD reads 13–27 cents off and 1.4–2.0 dB of ripple at the default SPRAY (0.2 dB and up to 15 cents at SPRAY 0, a comb).
 - GRAIN costs a voice on rev Y (7 → 6) and with TAPE and AGE on or the master tape on rev V; CLASSIC costs what it did.
-- Until #749 has `Engine::set_speed`, GRAIN's grains keep the pitch they start at, and `wow_depth_bounds` (on CLASSIC, the neutral TYPE) is unchanged; GRAIN's flutter is sampled at its starts.
+- On #749's final core (integration-1021) `Cloud::set_speed` moves every grain in play and the strike to the key's speed each block, so the bend and the wow move GRAIN's grains, not only those to come; `wow_depth_bounds` (on CLASSIC, the neutral TYPE) was never exempted and is unchanged. The adapter starts no grain on a quiet block (`None`), reads each slot from `Started`, steals none (`steal: None`), and reads the window forward with a reversed grain at a negative `Speed`; the strike, half a bell from full, is its own (the core starts a bell at its foot). The reversed grains' taps sat a frame ahead of their place before; the audio goldens were re-recorded for it.
 
 ## Sources
 - Owner, 2026-10-21; (private notes) (the investigation and proposal); (private notes) (the renders, the reports, the page, the bank-1 builds `x-E0` to `x-E12`).
