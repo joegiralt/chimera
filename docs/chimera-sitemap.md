@@ -62,6 +62,15 @@ MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has
 
 On WALK, FADE's last step reads HOLD on FWD and REVERSE with TRON off. DRIFT moves POSITION by a random step at each note. TRON on gives each key a tape of 0.25 to 8 s (LENGTH), the window coming round until it runs out, and lifts it at key up. WALK's glyph is footsteps: their line, loop or lanes by DIRECTION, scattered by DRIFT, a tape's end with TRON. The model page on WAVE reads WAVE. On a streamed source, DIRECTION holds REVERSE and PING dimmed with `… NEEDS RAM · STREAMED`.
 
+### SCRUB
+
+DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE · AGE · WOW · KEY (ADR 0205).
+
+- **FINGER** turns the reel. Its encoder is a jog that reads the hand's speed and glides to a stop through DRAG once let go. A CC or a route moves it too.
+- **LENGTH** is the loop behind the finger, as a time: 2 ms to 2 s, never longer than the window. Its default is 70 ms, so a FINGER sweep moves the sound from the first turn.
+- **KEY POSITION**, the default, makes a key place the finger and plays at ROOT. C is the window's start and each semitone up is 1/12 further along, in every octave. FINGER adds to the key's place. On FINGER the focus band reads KEYS PLACE THE FINGER.
+- **KEY PITCH** plays the scrub at the key's pitch.
+
 ### FLT and AMP
 
 | Page | Cells |

@@ -73,6 +73,7 @@ fn reads_stay_in_row() {
             slice: SliceCode::new(rng.below(18) as u8),
             wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
             retrig: Retrig::Stack,
+            ..TapeEngineParams::default()
         };
         let mut slot = MaybeUninit::uninit();
         let e = TapeEngine::init_in_place(&mut slot);
@@ -226,6 +227,7 @@ fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams 
         slice: SliceCode::new(rng.below(18) as u8),
         wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
         retrig: Retrig::Stack,
+        ..TapeEngineParams::default()
     }
 }
 

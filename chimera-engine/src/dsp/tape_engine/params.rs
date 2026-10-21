@@ -574,6 +574,46 @@ pub fn cuts(p: &TapeEngineParams) -> bool {
     p.way() == Way::One && p.retrig == Retrig::Cut
 }
 
+/// SCRUB's KEY (ADR 0205): a key places the finger and plays at ROOT
+/// (POSITION), or plays the scrub at its pitch (PITCH).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum KeyMode {
+    Position = 0,
+    Pitch = 1,
+}
+
+impl DiskCode for KeyMode {
+    fn disk_code(self) -> u8 {
+        self as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            KeyMode::Position => "POSITION",
+            KeyMode::Pitch => "PITCH",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(KeyMode::Position),
+            1 => Some(KeyMode::Pitch),
+            _ => None,
+        }
+    }
+}
+
+impl Choice for KeyMode {
+    fn from_value(v: f32) -> Option<Self> {
+        Self::from_disk_code(v as u8)
+    }
+
+    fn value(self) -> f32 {
+        f32::from(self as u8)
+    }
+}
+
 /// STRETCH's splice: in phase with the old grain (MONO), or at the time
 /// pointer (POLY).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -680,6 +720,8 @@ pub struct TapeEngineParams {
     /// WALK's DRIFT: how far POSITION can step at each note, 0 to the
     /// whole window (`drift::step`).
     pub drift: Drift,
+    /// SCRUB's KEY.
+    pub key: KeyMode,
 }
 
 /// As the disk has it: MODEL's model and MODE (`neutral_v1.txt` pins it).
@@ -705,6 +747,7 @@ impl core::fmt::Debug for TapeEngineParams {
             .field("retrig", &self.retrig)
             .field("tron", &self.tron)
             .field("drift", &self.drift)
+            .field("key", &self.key)
             .finish()
     }
 }
@@ -733,6 +776,7 @@ impl Default for TapeEngineParams {
             wow: Wow::Capstan,
             retrig: Retrig::Stack,
             drift: Drift::OFF,
+            key: KeyMode::Position,
         }
     }
 }
@@ -796,6 +840,8 @@ impl TapeEngineParams {
     // 17 and 18 are SLICE's (ADR 0199, `tape-slice`).
     pub const TRON: ParamId = ParamId(19);
     pub const DRIFT: ParamId = ParamId(20);
+    /// SCRUB's KEY (ADR 0205).
+    pub const KEY: ParamId = ParamId(21);
 }
 
 /// Whether `m` reads `id`: the one table for cells, dimming and the audio
@@ -850,7 +896,7 @@ const TAPE: crate::glyph::FocusGlyph = crate::glyph::FocusGlyph::Tape;
 /// latched by ONE's and TRON's first block; the rest is read at note-on or
 /// at a wrap. ROOT and PERIOD have no cell: a pick
 /// copies them from the source.
-pub static TAPE_ENGINE_SPECS: [ParamSpec; 19] = [
+pub static TAPE_ENGINE_SPECS: [ParamSpec; 20] = [
     // The neutral is WALK in DIRECTION LOOP.
     ParamSpec::choice(
         0,
@@ -1002,6 +1048,16 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 19] = [
         .short("DFT")
         .ident("DRIFT")
         .glyph(TAPE),
+    ParamSpec::choice(
+        21,
+        "KEY",
+        ValFmt::Names(&["POSITION", "PITCH"]),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("KEY")
+    .glyph(TAPE),
 ];
 
 impl Block for TapeEngineParams {
@@ -1031,6 +1087,7 @@ impl Block for TapeEngineParams {
             Self::RETRIG => self.retrig.value(),
             Self::TRON => self.tron.value(),
             Self::DRIFT => self.drift.get(),
+            Self::KEY => self.key.value(),
             _ => 0.0,
         }
     }
@@ -1057,6 +1114,7 @@ impl Block for TapeEngineParams {
             Self::RETRIG => set(&mut self.retrig, v),
             Self::TRON => set(&mut self.tron, v),
             Self::DRIFT => self.drift = Drift::of(v),
+            Self::KEY => set(&mut self.key, v),
             _ => {}
         }
     }
@@ -1070,6 +1128,7 @@ impl Block for TapeEngineParams {
             Self::MODE => Some(self.direction.disk_code()),
             Self::RETRIG => Some(self.retrig.disk_code()),
             Self::TRON => Some(self.tron.disk_code()),
+            Self::KEY => Some(self.key.disk_code()),
             _ => None,
         }
     }
@@ -1083,6 +1142,7 @@ impl Block for TapeEngineParams {
             Self::MODE => Some(self.direction.disk_ident()),
             Self::RETRIG => Some(self.retrig.disk_ident()),
             Self::TRON => Some(self.tron.disk_ident()),
+            Self::KEY => Some(self.key.disk_ident()),
             _ => None,
         }
     }
@@ -1100,6 +1160,7 @@ impl Block for TapeEngineParams {
             Self::MODE => apply_code(Direction::from_disk_code(code), |d| self.direction = d),
             Self::RETRIG => apply_code(Retrig::from_disk_code(code), |r| self.retrig = r),
             Self::TRON => apply_code(Tron::from_disk_code(code), |t| self.tron = t),
+            Self::KEY => apply_code(KeyMode::from_disk_code(code), |k| self.key = k),
             _ => false,
         }
     }

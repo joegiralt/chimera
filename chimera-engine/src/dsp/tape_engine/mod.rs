@@ -35,6 +35,7 @@ pub mod machine;
 pub mod oneshot;
 pub mod params;
 pub mod read;
+pub mod scrub;
 #[cfg(feature = "tape")]
 pub mod span;
 pub mod stretch;
@@ -80,7 +81,7 @@ use crate::stream::stage::xfade_max;
 use crate::stream::units::Frames;
 use crate::stream::units::{Cents, Inc, SourceFrame, SourceRate};
 use age::Age;
-use drift::{DriftRng, Place};
+use drift::{DriftRng, Place as DriftPlace};
 use heads::{
     Bounds, Dir, Fade, Ghost, Head, POWER_FADE_S, Plan, Sizing, Turn, Window, at, min_frames, plan,
     power_of, shortest, window_end_min, window_start, xmix,
@@ -96,10 +97,10 @@ use wave::Wave;
 pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
-    Choice, DIRECTION_NAMES, Direction, Drift, FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, MachineIndex,
-    NeedsRam, RetiredModel, Retrig, Seeks, StretchType, TAPE_ENGINE_SPECS, TapeEngineParams,
-    TapeMachine, TapeModel, Tron, Way, Wow, at_root, backward, cuts, drag_s, fade_default, jogs,
-    needs_ram, reads,
+    Choice, DIRECTION_NAMES, Direction, Drift, FADE_HOLD, KeyMode, MACHINE_NAMES, MODEL_NAMES,
+    MachineIndex, NeedsRam, RetiredModel, Retrig, Seeks, StretchType, TAPE_ENGINE_SPECS,
+    TapeEngineParams, TapeMachine, TapeModel, Tron, Way, Wow, at_root, backward, cuts, drag_s,
+    fade_default, jogs, needs_ram, reads,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
@@ -172,11 +173,13 @@ pub const STILL: f32 = 1e-3;
 /// A mid-note stop or start eases SCRUB's output over 30 ms, smoothstep, so
 /// the held value leaves through the DC blocker without a tick.
 pub const HUSH_S: f32 = 0.030;
-/// SCRUB's aim: POSITION's one-pole ahead of DRAG's, 40 ms. A step of
-/// POSITION (a detent, a UI pass's jog, a CC) moves the aim, never the
-/// finger's speed at once: a 33 ms staircase moves it within −8 %/+4 % of its
-/// speed, where DRAG's one-pole alone swung it ×2.8 (ADR 0200).
-pub const AIM_S: f32 = 0.040;
+/// SCRUB's aim: POSITION through two one-poles of 20 ms each ahead of
+/// DRAG's (ADR 0200, two since ADR 0205). A step of POSITION (a detent, a
+/// UI pass's jog, a CC) moves the aim, never the finger's speed at once;
+/// two poles of 20 ms delay it as one of 40 ms did and hold a 33 ms UI
+/// pass's staircase to under half its swing.
+pub const AIM_S: f32 = 0.020;
+pub use scrub::{KEY_PLACES, LoopTime, Place, SCRUB_LEN_MAX_S, key_place};
 /// The macros' share of the way each block: MODAL's (ADR 0056).
 const EASE: f32 = 0.3;
 /// TAPE or AGE easing to 0 is 0 under this, so the transport or the wear
@@ -452,15 +455,38 @@ struct Stream {
     mute: bool,
 }
 
-/// TRON's tape: none with TRON off, so no run-out can be counted then.
+/// TRON's tape: none with TRON off, so no run-out can be counted then;
+/// rolling with its output samples left; or run out, the note falling. One
+/// word: its states are built only by these, read only by `state`.
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Tape {
+struct Tape(u32);
+
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TapeState {
     Off,
-    /// Output samples left.
     Rolling(u32),
-    /// Run out: the note falls.
     Out,
+}
+
+#[cfg(feature = "tape")]
+impl Tape {
+    const OFF: Tape = Tape(u32::MAX);
+    const OUT: Tape = Tape(0);
+
+    /// `left` output samples, at least one and short of `OFF`'s word.
+    fn rolling(left: u32) -> Tape {
+        Tape(left.clamp(1, u32::MAX - 1))
+    }
+
+    fn state(self) -> TapeState {
+        match self.0 {
+            u32::MAX => TapeState::Off,
+            0 => TapeState::Out,
+            n => TapeState::Rolling(n),
+        }
+    }
 }
 
 /// How a TRON note plays its window: as its DIRECTION does (around a
@@ -523,11 +549,16 @@ struct Scrub {
     hush_step: f32,
     speed: f32,
     pull: f32,
-    /// Where the finger heads: POSITION through a one-pole of `AIM_S`,
-    /// `aim_pull` a block, so the finger's speed never steps when
-    /// POSITION does (a detent, a UI pass, a CC).
+    /// Where the finger heads: POSITION through two one-poles of `AIM_S`
+    /// (`lead`, then `aim`), `aim_pull` a block each, so the finger's
+    /// speed never steps when POSITION does (a detent, a UI pass, a CC).
+    lead: Pos,
     aim: Pos,
     aim_pull: f32,
+    /// KEY POSITION's place, which FINGER is added to, so the finger
+    /// starts at the key's place (FINGER 0) and moves from it; `None` at
+    /// KEY PITCH, where FINGER alone places it.
+    key: Option<Place>,
 }
 
 #[cfg(feature = "tape")]
@@ -565,7 +596,7 @@ pub struct TapeDeck {
     first: bool,
     /// DRIFT's place: it steps at each note-on and wanders from note to
     /// note (`drift::step`), at rest with DRIFT off.
-    drift: Place,
+    drift: DriftPlace,
     /// DRIFT's draws, this voice's own: seeded, so a render repeats.
     drift_rng: DriftRng,
     /// TRON's tape, latched at note-on, and whether its window comes round.
@@ -675,9 +706,9 @@ impl TapeDeck {
                 size: 1.0,
             },
             first: false,
-            drift: Place::ZERO,
+            drift: DriftPlace::ZERO,
             drift_rng: DriftRng::IDLE,
-            tape: Tape::Off,
+            tape: Tape::OFF,
             round: Round::No,
             ws: 0,
             bounds: Bounds::plain(0, 1),
@@ -837,8 +868,10 @@ impl TapeDeck {
                 hush_step: 1.0,
                 speed: 0.0,
                 pull: 1.0,
+                lead: Pos(0),
                 aim: Pos(0),
                 aim_pull: 1.0,
+                key: None,
             }),
             Way::Stretch => MachineState::Stretch(Stretch::IDLE),
             Way::Wave => MachineState::Wave(Wave::IDLE),
@@ -1518,7 +1551,7 @@ impl TapeDeck {
         let note = MidiNote::clamped(note);
         let (frames, rate) = (v.frames(), v.desc().rate());
         self.state = Note::Ram;
-        self.at_root = params::at_root(p);
+        self.at_root = params::at_root(p) || Self::keys_place(p);
         self.hold = params::hold(p);
         self.note = note;
         self.root = Cents::new(p.root);
@@ -1544,9 +1577,9 @@ impl TapeDeck {
             tron::TapeSeconds::of_length(p.size)
         };
         self.tape = if p.tron_on() {
-            Tape::Rolling(tape.samples(sample_rate))
+            Tape::rolling(tape.samples(sample_rate))
         } else {
-            Tape::Off
+            Tape::OFF
         };
         self.n = frames;
         self.clamp_len = libm::roundf(CLAMP_FADE_S * sample_rate as f32).max(1.0) as u32;
@@ -1561,6 +1594,7 @@ impl TapeDeck {
                 pull: 1.0
                     - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32)),
                 aim_pull: 1.0 - libm::expf(-(BLOCK_SIZE as f32) / (AIM_S * sample_rate as f32)),
+                key: Self::keys_place(p).then(|| key_place(note)),
                 ..sc
             }),
             m => m,
@@ -1594,7 +1628,15 @@ impl TapeDeck {
         // vari-speed).
         let mut fast = inc(rate, note, self.pitch, self.root, sample_rate).get();
         if self.model() == TapeModel::Scrub {
-            fast = (2.0 * libm::fabsf(clampf(p.motion, -1.0, 1.0)) * fast).min(INC_MAX);
+            // KEY POSITION plays at ROOT.
+            let i = inc(
+                rate,
+                note,
+                Cents::new(self.pitch.get() + self.tune().get()),
+                self.root,
+                sample_rate,
+            );
+            fast = (2.0 * libm::fabsf(clampf(p.motion, -1.0, 1.0)) * i.get()).min(INC_MAX);
         }
         self.min_len = shortest(rate, fast);
         let we = window_end_min(self.ws, end, frames, self.min_len);
@@ -1609,14 +1651,14 @@ impl TapeDeck {
                     0,
                     we - self.ws,
                     Sizing {
-                        size: self.mac.size,
+                        size: LoopTime::of_length(self.mac.size).share_of(we - self.ws, rate),
                         place: 0.0,
                         xfade,
                     },
                     rate,
                     self.min_len,
                 );
-                self.off = self.finger_target(p.position, we);
+                self.off = self.finger_target(self.finger_place(p.position), we);
                 start_at = 0;
                 if p.motion < 0.0 {
                     self.set_mirror(true);
@@ -1681,7 +1723,7 @@ impl TapeDeck {
 
     /// TRON on at the last note-on.
     fn tron(&self) -> bool {
-        !matches!(self.tape, Tape::Off)
+        self.tape.state() != TapeState::Off
     }
 
     /// ONE and TRON play one head toward the window's end.
@@ -1780,11 +1822,25 @@ impl TapeDeck {
         self.gain = 0.0;
     }
 
-    /// SCRUB's finger for POSITION `position`, in a window ending at `we`:
-    /// where the loop behind it fits in the window.
-    fn finger_target(&self, position: f32, we: u32) -> Pos {
+    /// SCRUB's KEY places the finger: SCRUB at KEY POSITION.
+    fn keys_place(p: &TapeEngineParams) -> bool {
+        p.machine == TapeMachine::Scrub && p.key == KeyMode::Position
+    }
+
+    /// The finger's place for FINGER `finger`: the key's place plus it
+    /// at KEY POSITION, FINGER's alone at KEY PITCH.
+    fn finger_place(&self, finger: f32) -> Place {
+        match self.scrub().and_then(|sc| sc.key) {
+            Some(k) => k.plus(finger),
+            None => Place::new(finger),
+        }
+    }
+
+    /// SCRUB's finger at `place`, in a window ending at `we`: where the
+    /// loop behind it fits in the window.
+    fn finger_target(&self, place: Place, we: u32) -> Pos {
         let room = (we - self.ws).saturating_sub(self.bounds.frames());
-        Pos::from_f32(self.ws as f32 + clampf(position, 0.0, 1.0) * room as f32)
+        Pos::from_f32(self.ws as f32 + place.get() * room as f32)
     }
 
     /// `note_on` on a sounding engine (STEAL GLIDE, ADR 0065): the heads
@@ -1820,6 +1876,13 @@ impl TapeDeck {
         };
         self.slide = Glide::new(from, tau);
         self.slide.toward(1.0);
+        // KEY POSITION: the finger heads for the new key's place, through
+        // the aim's glide.
+        if let Some(sc) = self.scrub_mut()
+            && sc.key.is_some()
+        {
+            sc.key = Some(key_place(note));
+        }
         self.note = note;
     }
 
@@ -2095,15 +2158,15 @@ impl TapeDeck {
             }
         } else {
             self.render_heads(out, reads, (p, first), sample_rate);
-            if let Tape::Rolling(left) = self.tape {
+            if let TapeState::Rolling(left) = self.tape.state() {
                 // TRON: the tape runs out, a 2 ms fall.
                 let left = left.saturating_sub(BLOCK_SIZE as u32);
                 self.tape = if left == 0 {
                     let k = libm::expf(-1.0 / (tron::RUN_OUT_S * sample_rate as f32));
                     self.rel_k = self.rel_k.min(k);
-                    Tape::Out
+                    Tape::OUT
                 } else {
-                    Tape::Rolling(left)
+                    Tape::rolling(left)
                 };
             }
             if self.rel_k != 1.0 {
@@ -2333,7 +2396,8 @@ impl TapeDeck {
         let (v, _) = reads.run(0);
         let v = &v;
         let rate = v.desc().rate();
-        let target = self.target_inc(rate, Cents::ZERO, sample_rate);
+        // KEY POSITION plays SCRUB at ROOT.
+        let target = self.target_inc(rate, self.tune(), sample_rate);
         let (mut from, mut to) = self.inc.step(target);
         // The next pass's frame: LOOP's END moved across START flips it,
         // at the next wrap. Its window's start is that frame's.
@@ -2460,6 +2524,7 @@ impl TapeDeck {
             speed,
             pull,
             df,
+            lead,
             aim,
             aim_pull,
             ..
@@ -2480,21 +2545,27 @@ impl TapeDeck {
         let we = self.we;
         let at_n = if self.mirror() { at(self.n) } else { Pos(0) };
         let finger = self.off - at_n;
-        let target = self.finger_target(p.position, we);
+        let target = self.finger_target(self.finger_place(p.position), we);
         // The finger's speed ramps from the last block's to this one's, so
         // the head's speed is linear across the block, and bounded at
         // both ends, so everywhere in it.
-        // The finger follows the aim, which follows POSITION: two poles, so
-        // a step in POSITION starts the reel moving smoothly, never at once.
-        let (aim, (df, df_to)) = if first {
+        // The finger follows the aim, which follows POSITION: three poles,
+        // so a step in POSITION starts the reel moving smoothly, never at
+        // once.
+        let toward = |from: Pos, to: Pos| {
+            let left = (to.0 as i64).wrapping_sub(from.0 as i64) as f32;
+            Pos((from.0 as i64).wrapping_add((aim_pull * left) as i64) as u64)
+        };
+        let (lead, aim, (df, df_to)) = if first {
             self.off = target + at_n;
-            (target, (0, 0))
+            (target, target, (0, 0))
         } else {
-            let left = (target.0 as i64).wrapping_sub(aim.0 as i64) as f32;
-            let aim = Pos((aim.0 as i64).wrapping_add((aim_pull * left) as i64) as u64);
+            let lead = toward(lead, target);
+            let aim = toward(aim, lead);
             let gap = (aim.0 as i64).wrapping_sub(finger.0 as i64) as f32;
             let most = (INC_MAX - from.max(to)) * 4_294_967_296.0;
             (
+                lead,
                 aim,
                 (
                     df,
@@ -2503,6 +2574,7 @@ impl TapeDeck {
             )
         };
         if let Some(sc) = self.scrub_mut() {
+            sc.lead = lead;
             sc.aim = aim;
             sc.speed = speed;
             sc.df = df;
@@ -3022,7 +3094,7 @@ impl TapeDeck {
                     0,
                     we - ws,
                     Sizing {
-                        size: self.mac.size,
+                        size: LoopTime::of_length(self.mac.size).share_of(we - ws, k.rate),
                         place: 0.0,
                         xfade: k.xfade,
                     },

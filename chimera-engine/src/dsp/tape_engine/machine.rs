@@ -10,7 +10,7 @@
 //! ONE, LOOP, PING and TRON were: DIRECTION and TRON are its cells.
 
 use super::params::{
-    Direction, FADE_HOLD, Retrig, StretchType, TapeEngineParams as P, TapeMachine, Tron,
+    Direction, FADE_HOLD, KeyMode, Retrig, StretchType, TapeEngineParams as P, TapeMachine, Tron,
     fade_default,
 };
 use crate::block::ParamId;
@@ -100,6 +100,9 @@ const LENGTH: Cell = cell(P::SIZE, "LENGTH", "LEN", 1.0);
 /// (#698). INIT's.
 pub const LOOP_LENGTH_DEFAULT: f32 = 0.8;
 const XFADE: Cell = cell(P::XFADE, "XFADE", "XFD", 0.1);
+/// SCRUB's LENGTH 66/128: a 70 ms loop on any source (`SCRUB_LEN_MAX_S`),
+/// so FINGER moves it from the first turn (ADR 0205).
+pub const SCRUB_LENGTH_DEFAULT: f32 = 66.0 / 128.0;
 
 /// By `TapeMachine::index`.
 pub static MACHINES: [Machine; 4] = [
@@ -134,11 +137,12 @@ pub static MACHINES: [Machine; 4] = [
         deck: &[
             cell(P::POSITION, "FINGER", "FNG", 0.0),
             SPEED,
-            LENGTH,
+            cell(P::SIZE, "LENGTH", "LEN", SCRUB_LENGTH_DEFAULT),
             XFADE,
             cell(P::DRAG, "DRAG", "DRG", 0.3),
         ],
-        cells: &[],
+        // KEY POSITION: a key places the finger and plays at ROOT.
+        cells: &[choice(P::KEY, "KEY", "KEY", KeyMode::Position as u8)],
     },
     Machine {
         machine: TapeMachine::Wave,

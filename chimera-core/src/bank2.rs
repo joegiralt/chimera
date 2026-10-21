@@ -197,6 +197,8 @@ pub struct UiDoor {
     machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> &'static [(ParamId, f32)],
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
     tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
+    /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
+    jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -223,6 +225,7 @@ impl UiDoor {
         machine_edit: crate::ui::walk::machine_edit_in,
         tape_note: crate::ui::walk::tape_note_in,
         tape_held: crate::ui::walk::tape_held_in,
+        jog: crate::ui::jog::Jog::pass,
     };
 
     #[inline(always)]
@@ -321,6 +324,16 @@ impl UiDoor {
         code: u8,
     ) -> Option<NeedsRam> {
         (self.tape_held)(t, id, code)
+    }
+
+    #[inline(always)]
+    pub(crate) fn jog(
+        &self,
+        j: &mut crate::ui::jog::Jog,
+        now_ms: chimera_hal::Ms,
+        drag: f32,
+    ) -> f32 {
+        (self.jog)(j, now_ms, drag)
     }
 }
 

@@ -321,6 +321,7 @@ Sound {
             retrig: Stack,
             tron: Off,
             drift: 0.0,
+            key: Position,
         },
         va: VaParams {
             wave: [

@@ -69,6 +69,9 @@ use screen::*;
 // ADR 0203: WALK replaces ONE, LOOP, PING and TRON (its DECK, its page,
 // its footsteps and strip, tape_deck_reverse and tape_deck_drift new);
 // sound_browser_pool_full's bound moves with WALK's two params.
+// ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
+// tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
+// pool's count (sound_browser_pool_full).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -433,8 +436,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_page_stretch_type", 0x2388e89c04b15a30),
     ("tape_deck_transwave", 0xde8bbeffbb06c81a),
     ("tape_page_transwave", 0x04bbc21e5964e49d),
-    ("tape_deck_scrub", 0x38206f8d2ff7fa0f),
-    ("tape_page_scrub", 0x2980dccca3896a88),
+    ("tape_deck_scrub", 0x4e984b2dd79b5313),
+    ("tape_page_scrub", 0x4824af71a2446b88),
     ("tape_deck_pingpong", 0x8707082939da847c),
     ("tape_deck_reverse", 0xbf5a0c16b971477f),
     ("tape_deck_drift", 0x051c0b634e4484f9),
@@ -444,7 +447,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_strip_tron", 0xac3230a5a5bd2d76),
     ("tape_strip_stretch", 0x7fac311807a65826),
     ("tape_strip_transwave", 0x8578d1cff2b53962),
-    ("tape_strip_scrub", 0xbc6f5e8bda4a1ee5),
+    ("tape_strip_scrub", 0x4862fecc1608ba29),
     ("tape_strip_pingpong", 0xf96f3a35d1785b5e),
     ("tape_strip_loop_reversed", 0x8c6bc98f7858d886),
     ("tape_strip_oneshot_slice", 0xda826c450d9cbb61),

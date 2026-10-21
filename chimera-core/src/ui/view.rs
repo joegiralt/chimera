@@ -86,6 +86,8 @@ pub struct SlotCtx {
     pub holds: bool,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
+    /// SCRUB's KEY is POSITION: FINGER's hint says a key places it.
+    pub keys_place: bool,
     /// TAPE's SOURCE as SRC reads it.
     pub src: SourceState,
     /// The chorus MODE the CHORUS send hints.
@@ -140,6 +142,7 @@ impl SlotCtx {
                     .is_some_and(Direction::once)
                 && Tron::from_value(get(BlockRef::TapeEngine, T::TRON)) != Some(Tron::On),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
+            keys_place: get(BlockRef::TapeEngine, T::KEY) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
             plate: in_plate_zone(&rev),
@@ -601,6 +604,14 @@ impl View {
             Some(a) if a.block == BlockRef::TapeEngine && matches!(a.param, T::START | T::END) => {
                 ONSET_HINT
             }
+            Some(a)
+                if a.block == BlockRef::TapeEngine
+                    && a.param == T::POSITION
+                    && ctx.tape == TapeMachine::Scrub
+                    && ctx.keys_place =>
+            {
+                KEY_HINT
+            }
             Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => LEARN_HINT,
             _ => hint::NONE,
         }
@@ -649,6 +660,9 @@ const CHORUS_HINTS: [Hint; 4] = [
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 /// START and END: MIX + a turn snaps to the next onset its way (#698).
 pub const ONSET_HINT: Hint = &[Gesture("MIX + TURN", "NEXT ONSET")];
+/// SCRUB's FINGER at KEY POSITION (ADR 0205): a key places the finger,
+/// which then moves from there.
+pub const KEY_HINT: Hint = &[Gesture("KEYS", "PLACE THE FINGER")];
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     let short = addr

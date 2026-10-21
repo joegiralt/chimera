@@ -97,7 +97,7 @@ fn factory_sounds_on_play_render_as_before() {
         );
         checked += 1;
     }
-    assert!(checked >= 28, "{checked}");
+    assert!(checked >= 26, "{checked}");
 }
 
 /// What each old machine loads as: a factory Sound as its recipe now

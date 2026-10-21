@@ -664,10 +664,10 @@ fn worst(e: EngineType) -> (Sound, usize) {
     (s, stuck)
 }
 
-/// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 281 × 5 (params) + 164
+/// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 282 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
-/// 24 zones) + 84 (`MidiMap`, 16 entries) = 2 653 B, less 5 B for each param that has nowhere to move.
+/// 24 zones) + 84 (`MidiMap`, 16 entries) = 2 658 B, less 5 B for each param that has nowhere to move.
 /// A new param moves it: raise
 /// `MAX_SOUND_COST` with it.
 #[test]
@@ -680,7 +680,7 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2663);
+    assert_eq!(most, 2668);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }
 

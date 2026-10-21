@@ -1194,11 +1194,11 @@ fn machine_table_is_pinned() {
             &[
                 (P::POSITION, "FINGER", "FNG", 0.0),
                 (P::MOTION, "SPEED", "SPD", 0.5),
-                LEN,
+                (P::SIZE, "LENGTH", "LEN", 66.0 / 128.0),
                 XFD,
                 (P::DRAG, "DRAG", "DRG", 0.3),
             ],
-            &[],
+            &[(P::KEY, "KEY", "KEY", 0.0)],
         ),
         (
             K::Wave,
@@ -1271,10 +1271,10 @@ fn every_cell_reads_in_the_audio() {
             TapeModel::Scrub => base.size = 0.6,
             _ => {}
         }
-        let render = |p: P| {
+        let render = |p: P, note: u8| {
             let mut e = fresh();
             e.seed(1);
-            e.note_on(60, &p, &v, SR);
+            e.note_on(note, &p, &v, SR);
             let mut out = Vec::new();
             let mut b = [0.0; B];
             for n in 0..400 {
@@ -1291,7 +1291,13 @@ fn every_cell_reads_in_the_audio() {
             }
             out
         };
-        let plain = render(base);
+        // KEY places the finger off C: SCRUB plays E4.
+        let note = if m.machine == TapeMachine::Scrub {
+            64
+        } else {
+            60
+        };
+        let plain = render(base, note);
         // RETRIG is the Instrument's: a note cutting its Part's others
         // (`tape_stream_test`'s and `tape_musical_test`'s).
         // DIRECTION is the path: each is its own row here.
@@ -1317,7 +1323,7 @@ fn every_cell_reads_in_the_audio() {
             };
             p.set(c.id, moved);
             assert!(
-                render(p) != plain,
+                render(p, note) != plain,
                 "{w:?}: {} moved to {moved} changes nothing",
                 c.label
             );
@@ -1402,45 +1408,77 @@ fn musical_snap_steps_fifths_and_fourths() {
     assert_eq!(q.ratio(), r);
 }
 
+/// The jog reads the hand's rate from the time between its turns (ADR
+/// 0205): a steady 25 detents a second reads 25/128 windows a second at
+/// every pass once eased in, whichever detents the 125 ms window holds;
+/// backward turns run it backward; one turn alone is a detent a window.
 #[test]
 fn jog_speed_from_detents() {
+    use chimera_core::ui::jog::{JOG_DETENT, JOG_EASE_S};
     let mut j = Jog::new();
-    j.pass(0, 0.3);
-    for t in 0..8u32 {
-        j.turn(1, 1 + t * 15);
+    j.pass(chimera_hal::Ms(0), 0.3);
+    let want = 25.0 * JOG_DETENT;
+    let mut speeds = Vec::new();
+    for ms in (1..=1_000u32).step_by(1) {
+        if ms % 40 == 1 {
+            j.turn(1, chimera_hal::Ms(ms));
+        }
+        if ms % 33 == 0 {
+            j.pass(chimera_hal::Ms(ms), 0.3);
+            if ms as f32 > 200.0 + 10.0 * JOG_EASE_S * 1_000.0 {
+                speeds.push(j.speed().get());
+            }
+        }
     }
-    let mv = j.pass(125, 0.3);
-    assert!((j.speed() - 0.5).abs() < 1e-6, "{}", j.speed());
-    assert!((mv - 0.5 * 0.125).abs() < 1e-6);
-    // Backward turns run it backward; turns older than 125 ms don't count.
-    j.turn(-4, 300);
-    j.pass(310, 0.3);
-    assert!((j.speed() + 0.25).abs() < 1e-6, "{}", j.speed());
+    for s in &speeds {
+        assert!((s - want).abs() < 1e-4 * want, "{s} against {want}");
+    }
+    // A lone backward turn after a rest: a detent a window, backward.
+    let mut j = Jog::new();
+    j.pass(chimera_hal::Ms(0), 0.3);
+    j.turn(-1, chimera_hal::Ms(300));
+    for ms in (310..=500).step_by(10) {
+        j.pass(chimera_hal::Ms(ms), 0.3);
+    }
+    let lone = -JOG_DETENT * 1_000.0 / chimera_core::ui::jog::JOG_WINDOW_MS as f32;
+    assert!(
+        (j.speed().get() - lone).abs() < 0.01 * -lone,
+        "{}",
+        j.speed().get()
+    );
 }
 
 #[test]
 fn jog_glides_to_stop() {
     for drag in [0.0, 0.3, 1.0] {
         let mut j = Jog::new();
-        j.pass(0, drag);
-        for t in 0..8u32 {
-            j.turn(1, 1 + t * 15);
+        j.pass(chimera_hal::Ms(0), drag);
+        // A detent every 15 ms to 106 ms, a pass every 10 ms: the hand
+        // lets go, and the pass after 1.5 of its 15 ms glides.
+        for now in (10..=120u32).step_by(10) {
+            for t in (0..8u32).filter(|t| (now - 10..now).contains(&(1 + t * 15))) {
+                j.turn(1, chimera_hal::Ms(1 + t * 15));
+            }
+            j.pass(chimera_hal::Ms(now), drag);
         }
         let pass_ms = 10u32;
         let mut now = 125;
-        j.pass(now, drag);
-        let v0 = j.speed();
+        j.pass(chimera_hal::Ms(now), drag);
+        let v0 = j.speed().get();
         let tau_ms = drag_s(drag) * 1_000.0;
         let mut reached = None;
         let mut moved = 0.0;
         while now < 125 + (10.0 * tau_ms) as u32 + 100 {
             now += pass_ms;
-            let before = j.speed();
-            let mv = j.pass(now, drag);
+            let before = j.speed().get();
+            let mv = j.pass(chimera_hal::Ms(now), drag);
             // A pass moves no more than its speed allows.
-            assert!(mv.abs() <= before * pass_ms as f32 * 1e-3 + 1e-7);
+            assert!(
+                mv.abs() <= before * pass_ms as f32 * 1e-3 + 1e-7,
+                "drag {drag} at {now}: {mv} from {before}"
+            );
             moved += mv;
-            if reached.is_none() && j.speed() <= v0 * (-1.0f32).exp() {
+            if reached.is_none() && j.speed().get() <= v0 * (-1.0f32).exp() {
                 reached = Some(now - 125);
             }
         }
@@ -1449,7 +1487,7 @@ fn jog_glides_to_stop() {
             (r - tau_ms).abs() <= pass_ms as f32 + 0.5,
             "DRAG {drag}: {r} ms against {tau_ms}"
         );
-        assert!(j.speed() < 1e-3 * v0);
+        assert!(j.speed().get() < 1e-3 * v0);
         // A tape stopping covers its speed × τ.
         assert!((moved - v0 * tau_ms * 1e-3).abs() <= 0.1 * v0 * tau_ms * 1e-3);
     }

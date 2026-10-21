@@ -346,13 +346,16 @@ fn factory_sounds_save_as_loaded() {
         let file = encode(&tape_sound(s, head));
         let got = decode(&file).unwrap();
         assert_eq!(encode(&got), file, "{}", s.name.as_str());
-        all.update(&file);
+        // Not the file's own CRC trailer: a CRC run over a message and
+        // its CRC is a constant of the length, blind to the content.
+        all.update(&file[..file.len() - 4]);
     }
     if built.iter().all(Option::is_some) {
-        // Re-pinned for PLAY (ADR 0203): FORWARD's DIRECTION code (3) for
-        // MODE ONE's, its LENGTH 1, and TRON BOWED as PLAY with TRON on.
-        // Each still renders as before (`tape_legacy_test`).
-        assert_eq!(all.finish(), 0x0386_F811, "{} Sounds", r.sounds.len());
+        // ADR 0205: SAW SCRUB and RAIN SCRUB take SCRUB's new defaults
+        // (LENGTH 70 ms, KEY POSITION) and their re-trims. ADR 0203: MODE
+        // ONE's Sounds save FORWARD (3) and LENGTH 1, TRON BOWED WALK with
+        // TRON on; each renders as before (`tape_legacy_test`).
+        assert_eq!(all.finish(), 0x8DC4_E96D, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
         let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();

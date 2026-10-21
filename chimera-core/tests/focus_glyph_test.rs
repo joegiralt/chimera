@@ -59,6 +59,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("TapeEngine", "TRON", SWITCH),
     ("TapeEngine", "DRIFT", TAPE),
     ("TapeEngine", "RETRIG", NONE),
+    ("TapeEngine", "KEY", TAPE),
     ("TapeEngine", "POSITION", TAPE),
     ("TapeEngine", "MOTION", TAPE),
     ("TapeEngine", "TAPE", TAPE),
@@ -225,6 +226,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("TapeEngine", "TYPE"),
     // STACK and CUT: two ways a hit meets the last.
     ("TapeEngine", "RETRIG"),
+    // POSITION and PITCH: two things a SCRUB key chooses.
+    ("TapeEngine", "KEY"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.
