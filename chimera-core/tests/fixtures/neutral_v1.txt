@@ -342,6 +342,8 @@ Sound {
             amount: 0.5,
             sub: 0.0,
             stability: 1.0,
+            noise_kind: White,
+            noise: 0.0,
         },
         lfos: [
             LfoParams {

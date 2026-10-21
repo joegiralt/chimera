@@ -13,6 +13,7 @@ members = [
     "chimera-fat",
     "chimera-theory",
     "chimera-utils",
+    "chimera-circuits",
 ]
 exclude = ["chimera-core/fuzz", "chimera-desktop/fuzz"]
 default-members = [

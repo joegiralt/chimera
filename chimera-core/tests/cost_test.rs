@@ -1724,6 +1724,34 @@ fn va_bills_each_mode() {
     }
 }
 
+/// VA NOISE (ADR 0197) bills its KIND's pass only while it can play:
+/// LEVEL above 0, or a route of nonzero amount on LEVEL. At LEVEL 0 the
+/// MODE's bill is untouched, so every existing Sound keeps its voices.
+#[test]
+fn va_noise_bills_only_when_it_plays() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::va::{NoiseKind, VaEngine, VaMode, VaParams};
+    let none = ModState::new();
+    for kind in NoiseKind::ALL {
+        let mut p = va_sound(VaMode::Mix);
+        p.va.noise_kind = kind;
+        assert_eq!(EngineSlot::cost(&p, &none), Cost(530), "{kind:?} at 0");
+        let mut ms = chimera_core::preset::Sound::plain_init(EngineType::Va).mod_state;
+        let lvl = ms
+            .push(ParamAddr::new(BlockRef::Va, VaParams::NOISE))
+            .unwrap();
+        ms.set_route(ModSource::Lfo1.index(), lvl, 0);
+        assert_eq!(EngineSlot::cost(&p, &ms), Cost(530), "{kind:?} amount 0");
+        let with = Cost(530 + VaEngine::noise_cost(kind).0);
+        ms.set_route(ModSource::Lfo1.index(), lvl, 64);
+        assert_eq!(EngineSlot::cost(&p, &ms), with, "{kind:?} routed");
+        p.va.noise = 0.01;
+        assert_eq!(EngineSlot::cost(&p, &none), with, "{kind:?} up");
+    }
+    let bills = NoiseKind::ALL.map(|k| VaEngine::noise_cost(k).0);
+    assert_eq!(bills, [20, 35, 30, 35]);
+}
+
 /// A VA note holds its playing MODE's bill until the duck swaps the MODE:
 /// held in SYNC with MIX stored, it bills SYNC's extra over MIX for the
 /// duck's first block, then none.

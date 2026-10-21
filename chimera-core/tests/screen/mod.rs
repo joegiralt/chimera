@@ -1606,6 +1606,31 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 3);
         set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
+    // VA's OSC1 and OSC2 pages: the chain bar says OSC1 / OSC2, not OSCILLATOR n.
+    ("va_osc1", |ui| {
+        stack_map(ui);
+        load_init(ui, EngineType::Va);
+        tap(ui, ButtonId::Edit);
+    }),
+    ("va_osc2", |ui| {
+        stack_map(ui);
+        load_init(ui, EngineType::Va);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+    }),
+    ("row_va_osc1", |ui| {
+        stack_map(ui);
+        load_init(ui, EngineType::Va);
+        tap(ui, ButtonId::Edit);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_va_osc2", |ui| {
+        stack_map(ui);
+        load_init(ui, EngineType::Va);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
     ("env_a", |ui| {
         to_mod_sub(ui, 1, &reg::ENVELOPE);
         feed(ui, Input::turn(EncoderId::B, 6));
@@ -2343,6 +2368,28 @@ pub const CASES: &[ScreenCase] = &[
         load_init(ui, EngineType::Modal);
         plus(ui, 3);
         large(ui);
+    }),
+    // VA's NOISE page (ADR 0197): EDIT three times from VA; then LEVEL
+    // up, its level bar in the band; then KIND on DIGITAL.
+    ("va_noise", |ui| {
+        load_init(ui, EngineType::Va);
+        for _ in 0..3 {
+            tap(ui, ButtonId::Edit);
+        }
+    }),
+    ("va_noise_level", |ui| {
+        load_init(ui, EngineType::Va);
+        for _ in 0..3 {
+            tap(ui, ButtonId::Edit);
+        }
+        feed(ui, Input::turn(EncoderId::B, 60));
+    }),
+    ("va_noise_digital", |ui| {
+        load_init(ui, EngineType::Va);
+        for _ in 0..3 {
+            tap(ui, ButtonId::Edit);
+        }
+        feed(ui, Input::turn(EncoderId::A, 3));
     }),
     ("large_va_drive", |ui| {
         load_init(ui, EngineType::Va);

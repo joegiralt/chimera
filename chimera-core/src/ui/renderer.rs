@@ -770,9 +770,10 @@ impl Renderer {
         }
         let buf = value_text(f, f.focus, self.set[f.focus].target());
         let gauge = self.gauge(f);
+        let label = band_label(f, &view);
         components::focus_band(
             display,
-            view.label(),
+            label.as_str(),
             buf.as_str(),
             gauge,
             look(f, f.focus),
@@ -846,7 +847,8 @@ impl Renderer {
             return 0;
         }
         let text = value_text(f, i, self.set[i].target());
-        region::settings_key(&[text.as_str().as_bytes()])
+        let label = band_label(f, &view::view(f.def, i, &f.ctx));
+        region::settings_key(&[text.as_str().as_bytes(), label.as_str().as_bytes()])
     }
 
     /// The matrix amount as printed (the target's `amount_of`).
@@ -1262,6 +1264,23 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
+}
+
+/// The focus band's label: FREQ MOD and RES MOD name the source their jack
+/// acts as now (`FREQ MOD LFO1`), as the JACK page does.
+pub fn band_label(f: &Frame, view: &View) -> FmtBuf {
+    use core::fmt::Write;
+    let mut label = FmtBuf::new();
+    let _ = label.write_str(view.label());
+    if let View::Route {
+        route: crate::ui::filter_panel::RouteView::Jack(j),
+        ..
+    } = view
+    {
+        let sound = &f.parts[f.active_part.index()].sound;
+        let _ = write!(label, " {}", j.effective(sound).tag());
+    }
+    label
 }
 
 /// The matrix's inert columns on the edited Part (`mod_grid::inert_dests`).

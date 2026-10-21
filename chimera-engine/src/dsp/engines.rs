@@ -14,7 +14,7 @@ use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeMachine};
-use crate::dsp::va::{VA_OUT_GAIN, VaEngine};
+use crate::dsp::va::{VA_OUT_GAIN, VaEngine, VaParams};
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, move_out};
 use crate::modulation::{ModState, amount_scale};
@@ -554,9 +554,17 @@ impl EngineSlot {
                 TapeEngine::cost(&p.tape, mods) + COST_WAVE_LEVEL
             }
             EngineType::Tape => TapeEngine::cost(&p.tape, mods),
+            EngineType::Va if noise_billed(p, mods) => {
+                VaEngine::cost(&p.va) + VaEngine::noise_cost(p.va.noise_kind)
+            }
             EngineType::Va => VaEngine::cost(&p.va),
         }
     }
+}
+
+/// VA's NOISE plays: LEVEL above 0, or a route moves it (ADR 0197).
+fn noise_billed(p: &ParamSnapshot, mods: &ModState) -> bool {
+    p.va.noise > 0.0 || mods.moves_addr(ParamAddr::new(BlockRef::Va, VaParams::NOISE))
 }
 
 /// TRANSWAVE: a pitch that moves far enough changes level, a block of four

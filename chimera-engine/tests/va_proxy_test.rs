@@ -1,11 +1,12 @@
 //! VA FM's OSC 1, LOOPFM's render and SOFT SYNC's OSC 2 through the door
 //! (ADR 0163): with no door (a build without `bank2`) or open, they play
 //! every bit they played in bank 1; closed, such a voice is silent and the
-//! other MODEs play on.
+//! other MODEs play on. NOISE's pass (ADR 0197) likewise: open, as called
+//! directly; closed, it adds nothing.
 
 use core::mem::MaybeUninit;
 
-use chimera_engine::dsp::va::{VaEngine, VaMode, VaParams};
+use chimera_engine::dsp::va::{NoiseKind, VaEngine, VaMode, VaParams};
 use chimera_engine::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 
@@ -84,10 +85,24 @@ fn plays_as_before() {
     }
 }
 
+/// NOISE (ADR 0197) on MIX, LEVEL 0.6, its KIND stepping through all four
+/// every 50 blocks.
+fn noisy(b: usize) -> VaParams {
+    VaParams {
+        noise_kind: NoiseKind::ALL[b / 50 % 4],
+        noise: 0.6,
+        ..scene(48, b, VaMode::Mix)
+    }
+}
+
+/// `noisy`'s print with NOISE's pass in place (no door).
+const NOISY: u64 = 0xf7d4_3790_4325_454f;
+
 #[cfg(not(all(feature = "bank2", feature = "test-support")))]
 #[test]
 fn the_door_modes_play_as_before_with_no_door() {
     plays_as_before();
+    assert_eq!(print(&take(48, noisy)), NOISY, "NOISE");
 }
 
 /// One test: the door is a process-wide static.
@@ -118,10 +133,17 @@ fn the_door_modes_play_through_the_door_and_are_silent_closed() {
     };
     let modes = VaMode::ALL.into_iter().filter(|m| !m.in_bank2());
     let closed: Vec<_> = modes.clone().map(|m| print(&take(48, other(m)))).collect();
+    // Closed, NOISE adds nothing: the oscillators play on, ducked by its
+    // norm, never silent
+    let quiet = take(48, noisy);
+    assert!(quiet.iter().flatten().all(|v| v.is_finite()));
+    assert!(quiet.iter().skip(1).all(|b| !silent(b)), "NOISE closed");
+    assert_ne!(print(&quiet), NOISY, "NOISE played closed");
     DOOR_CELL.open_host();
     let open: Vec<_> = modes.map(|m| print(&take(48, other(m)))).collect();
     assert_eq!(closed, open, "a bank-1 MODE changed closed");
     // Open: bit for bit as before.
     plays_as_before();
+    assert_eq!(print(&take(48, noisy)), NOISY, "NOISE through the door");
     DOOR_CELL.close();
 }

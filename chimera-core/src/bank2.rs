@@ -111,8 +111,9 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// The text cell `addr` shows in place of its value `v` (0..1, as
 /// displayed) under `bank2`: the reverb's TYPE (ADR 0142), TAPE's MODEL
 /// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
-/// and the FX TYPE FUZZ (ADR 0157) and the filter TYPE SEM (ADR 0192) read
-/// `NEEDS UPDATE` while their code can't play.
+/// and the FX TYPE FUZZ (ADR 0157) and the filter TYPE SEM (ADR 0192) and
+/// VA NOISE's KIND (ADR 0197, every KIND) read `NEEDS UPDATE` while their
+/// code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     v: f32,
@@ -127,6 +128,7 @@ pub fn closed_text(
     let named = [
         ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE),
         ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL),
+        ParamAddr::new(BlockRef::Va, VaParams::NOISE_KIND),
     ];
     let va_mode = || {
         addr == ParamAddr::new(BlockRef::Va, VaParams::MODE)

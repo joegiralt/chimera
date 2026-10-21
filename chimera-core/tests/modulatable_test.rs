@@ -177,13 +177,13 @@ fn every_modulatable_param_audibly_changes_output() {
             checked += 1;
         }
     }
-    // + VCA; PITCH, FINE; Modal's macros; VA's; FRMT and BW per operator,
-    // VOWEL; the FX slot's pots and MIX; less DRV's three and the fold's;
-    // TAPE's five macros and ONE's START (#698); the filter's STABILITY, FB
-    // and SEM's MODE.
+    // + VCA; PITCH, FINE; Modal's macros; VA's twelve (NOISE's LEVEL among
+    // them); FRMT and BW per operator, VOWEL; the FX slot's pots and MIX;
+    // less DRV's three and the fold's; TAPE's five macros and ONE's START
+    // (#698); the filter's STABILITY, FB and SEM's MODE.
     assert_eq!(
         checked,
-        17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 - 6 + 6 + 3
+        17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 6 + 3
     );
 }
 

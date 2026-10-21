@@ -1,0 +1,23 @@
+# Bank 1's budget per firmware set (ADR 0198): the bank-1 .bin (`rust-objcopy
+# -R .bank2`) of `just check`'s plain release build, in bytes. `just check-bank1`
+# fails a set more than 64 B over its line (move the code behind a door) or
+# more than 1 KB under it (lower the line: freed room stays bank 2's).
+#
+# A raise is an ADR exception: edit the line and name that ADR in its comment.
+# A feature's closed-door data (specs, disk codes, page tables, labels) is
+# one: its ADR measures and lists it. `BANK1_LOWER=1 just check` lowers lines.
+# Every line names an ADR or the file refuses to load.
+#
+# <set: features as check builds it>  <bytes>  # ADR NNNN: why
+orbit                          905300  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+default                        884256  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+bank2-gate                     886092  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+fault-inject                   858384  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+bench-algo                     902288  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+bench-algo,master-tape         880264  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+bench-routing                  898248  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+bench-memory                   900876  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+bench-stress                   903048  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+bench-orbit                    883428  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+bench-tape                     865584  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+filter-probes                  911440  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)

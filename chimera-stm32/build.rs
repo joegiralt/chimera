@@ -129,9 +129,11 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
 ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     );
     // The VA's MOD oscillators (ADR 0163): `va::osc::door`, every MOD
-    // render's entry and its runs' instances, and LOOPFM's render.
+    // render's entry and its runs' instances, LOOPFM's render, and NOISE's
+    // pass (ADR 0197, `va::noise::kern`).
     let va = "    *(.text.*3osc4door* .rodata.*3osc4door* .text.*4lbfm11render_loop* .rodata.*4lbfm11render_loop*
-      .text.*8VaEngine13render_loopfm* .rodata.*8VaEngine13render_loopfm*);
+      .text.*8VaEngine13render_loopfm* .rodata.*8VaEngine13render_loopfm*
+      .text.*2va5noise4kern* .rodata.*2va5noise4kern*);
 ";
     // The LFO page's glyphs and scope curve (ADR 0177): `lfo_glyph::draw`,
     // the door's `render` and `curve`.

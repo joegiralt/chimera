@@ -62,6 +62,7 @@ use screen::*;
 // #698: WOW dims at TAPE 0 and LOOP's and PING's FADE under an AMP route
 // (tape_page_*); START and END read time (tape_strip_oneshot*,
 // tape_strip_loop_reversed, tape_src_pool, tape_src_loaded).
+// Re-recorded for the FREQ MOD / RES MOD band naming its source: flt_mode, flt_mod_clean.
 // Re-recorded for ADR 0167 (FLT's front reordered: KIND · FX · Q · MODE ·
 // FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
 // The fourth TAPE merge: the browsers and POOL count 16 Sounds with STAB
@@ -106,14 +107,14 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
-    ("flt_mode", 0x8361f372cba8df63),
+    ("flt_mode", 0x39f981d71a39b49b),
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     // Layout A (#614): VOICE EXPNDR on FLT (flt_2040_exp, was
     // flt_mod_2040_exp), KEYBD HALF on FLT › MOD, no MODE cell.
     ("flt_clean", 0x56110a2e1e38df2e),
-    ("flt_mod_clean", 0xd7f74f61c4685396),
+    ("flt_mod_clean", 0xed08e904e809a166),
     ("flt_2040", 0x15653ec5210b6730),
     // KIND focused on the 2040: its readout names 4-POLE LP (#614).
     ("flt_2040_kind", 0x1e8668949f243f60),
@@ -169,6 +170,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("row_osc_mid", 0x10a75dc9cea244b8),
     ("row_osc_last", 0xa3198b2d2fb8a67d),
     ("row_amp", 0xedf62a5f9b585964),
+    // New: VA OSC1 and OSC2 under STACK and ROW; the ROW bar says OSC1 / OSC2, not OSCILLATOR n.
+    ("va_osc1", 0x117052eda46fe399),
+    ("va_osc2", 0xd1bd400c5e8d1428),
+    // Then the row gains NOISE (ADR 0197): OSC1 · OSC2 · NOISE · PITCH.
+    ("row_va_osc1", 0x1ce4f23ee9eb7f84),
+    ("row_va_osc2", 0x413f81a42d6a8978),
     ("env_a", 0x5e214e1a2c59ff77),
     ("env_b_env_ad", 0xcfb572705ac049f9),
     ("env_b_env_ahr", 0x8027de37baeab87c),
@@ -318,7 +325,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then pool_full: 2352 → 2544 (the formant fields).
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
     // Fourth TAPE merge: MAX_SOUND_COST 2656 (STAB, FB and TAPE), same picture.
-    // Then SEM's MORPH: the dense fill leaves 0.1K FREE, not 0.0K.
+    // Then SEM's MORPH: the dense fill leaves 0.1K FREE, not 0.0K. Then VA's
+    // KIND and LEVEL (ADR 0197): each dense Sound 10 B more, the pool fills sooner.
     ("sound_browser_pool_full", 0x30d9348383441db9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
@@ -399,6 +407,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_algo_level", 0x6781c7502e39f90e),
     ("large_bigviz_filter", 0xcabe5de5ca85d1d7),
     ("large_modal_amp", 0x0a265b6a0a9884ed),
+    // VA's NOISE page (ADR 0197): KIND · LEVEL; LEVEL at 60 with its bar;
+    // KIND on DIGITAL.
+    ("va_noise", 0xa02dcec5295dacbb),
+    ("va_noise_level", 0x257365b54b1d88a2),
+    ("va_noise_digital", 0x1eaa6a804b49021f),
     ("large_va_drive", 0x2257cff3560615e2),
     // The Mix chain's map has a TAPE node with `master-tape` (ADR 0055).
     #[cfg(not(feature = "master-tape"))]

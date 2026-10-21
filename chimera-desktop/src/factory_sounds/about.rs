@@ -17,7 +17,7 @@ use chimera_core::part::PartMode;
 use chimera_core::preset::Sound;
 use chimera_core::taps::TapOp;
 use chimera_core::ui::block_def::{BlockDef, SlotBinding};
-use chimera_core::ui::block_registry::{MODAL_1, VA_HOME, VA_OSC1, VA_OSC2};
+use chimera_core::ui::block_registry::{MODAL_1, VA_HOME, VA_NOISE, VA_OSC1, VA_OSC2};
 use chimera_core::ui::filter_panel;
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::mod_panel::{PanelSlot, env_panel};
@@ -400,6 +400,11 @@ fn engine(snd: &Sound, ctx: &SlotCtx) -> Vec<Fact> {
             let mut v = vec![page(snd, ctx, &VA_HOME, |_| true).join(" · ")];
             if !oscs.is_empty() {
                 v.push(oscs.join(" · "));
+            }
+            // NOISE once its LEVEL is up
+            if snd.params.va.noise > 0.0 {
+                let n = page(snd, ctx, &VA_NOISE, |_| true);
+                v.push(format!("NOISE {}", n.join(" · ")));
             }
             vec![("VIRTUAL ANALOG", v)]
         }

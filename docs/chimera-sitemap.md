@@ -36,7 +36,7 @@ MODAL   EXC ── RES ── FLT ── AMP ── MOD
                 └ MDL2, PIT
 
 VA      VA ── FLT ── AMP ── MOD
-        └ OSC 1, OSC 2, PIT
+        └ OSC1, OSC2, NOISE, PIT
 
 shared  FLT └ FMD (FILTER MOD), FX, JACK
         AMP
@@ -53,6 +53,14 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 - **LENGTH** is the loop behind the finger, as a time: 2 ms to 2 s, never longer than the window. Its default is 70 ms, so a FINGER sweep moves the sound from the first turn.
 - **KEY POSITION**, the default, makes a key place the finger and plays at ROOT. C is the window's start and each semitone up is 1/12 further along, in every octave. FINGER adds to the key's place. On FINGER the focus band reads KEYS PLACE THE FINGER.
 - **KEY PITCH** plays the scrub at the key's pitch.
+
+### VA
+
+| Page | Cells |
+|---|---|
+| VA | WAVE1 · WAVE2 · MODE · BLEND · SUB · STABILITY |
+| OSC1, OSC2 | CRSE · FINE · SHAPE, D-F empty |
+| NOISE | KIND (WHITE, PINK, RED, DIGITAL) · LEVEL, C-F empty. One noise source a voice, mixed beside SUB after MODE, before the filter. DIGITAL is a sample-and-hold that steps 16 times each OSC 1 cycle, so it brightens up the keyboard |
 
 ### FLT and AMP
 
