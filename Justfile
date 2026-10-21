@@ -328,9 +328,11 @@ build:
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide. The host tool's tests run first, against a fake unit.
+# chimera-circuits runs its fast tests here; its slow and ngspice
+# references are #[ignore]d (chimera-circuits/README.md).
 check:
     python3 -m unittest discover -s tools -p 'test_*.py'
-    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
@@ -414,7 +416,7 @@ loom:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
     cargo test -p chimera-core --features master-tape --test screen_golden_test
     just test-fat-tools
@@ -429,7 +431,7 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
