@@ -356,8 +356,10 @@ impl Grains {
         let every = match self.stage {
             Stage::Ending => None,
             _ if mix0 == 1.0 && mix1 == 1.0 => None,
+            // By the longest grain still sounding, not GRAIN's now: a GRAIN
+            // turned short keeps four grains in play, none cut.
             _ => Some(Samples::new(
-                dur.get() * self.jit / thrift.overlap(ratio.max(1.0)),
+                dur.get().max(self.cloud.longest()) * self.jit / thrift.overlap(ratio.max(1.0)),
             )),
         };
         let (t, win, period, newest) = (self.t, self.win, self.period, self.newest);

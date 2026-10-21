@@ -292,6 +292,18 @@ impl Cloud {
         (w, q)
     }
 
+    /// The longest grain still sounding, samples (0 with none): a GRAIN
+    /// turned short mid-note spaces its starts by it, so no start takes a
+    /// grain still sounding (`steal: None`).
+    pub fn longest(&self) -> f32 {
+        self.engine
+            .grains()
+            .iter()
+            .zip(&self.durs)
+            .filter(|(g, _)| !g.done())
+            .fold(0.0, |m, (_, &(d, _))| m.max(d))
+    }
+
     /// The newest grain's window.
     pub fn newest(&self) -> f32 {
         self.engine

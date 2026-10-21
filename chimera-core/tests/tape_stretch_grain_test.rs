@@ -343,6 +343,31 @@ fn no_clicks() {
     }
 }
 
+/// GRAIN turned from its top to its foot mid-note: the new short grains
+/// space by the long ones still sounding, so none is cut (`steal: None`).
+#[test]
+fn grain_turned_short_cuts_no_grain() {
+    let f = 440.0;
+    let src: Vec<f32> = (0..(1.0 * FS) as usize)
+        .map(|i| 0.5 * (core::f32::consts::TAU * f * i as f32 / FS).sin())
+        .collect();
+    let held = held_plain(&src, 48_000);
+    let v = SourceView::new(&held).unwrap();
+    let slope = 0.5 * core::f32::consts::TAU * f / FS;
+    let turn = (0.5 * FS) as usize / B;
+    let p = |n: usize| {
+        let mut p = stretch(3.0, 0.0, true);
+        p.stretch[1] = if n < turn { 1.0 } else { 0.0 };
+        p
+    };
+    let x = play(&p, &v, 60, 1.5);
+    let m = x
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max);
+    assert!(m < 1.6 * slope, "step {:.2} of the sine's", m / slope);
+}
+
 /// END HOLD parks at the end and keeps sounding while held, 8 s at most;
 /// STOP ends the note soon after LENGTH.
 #[test]
