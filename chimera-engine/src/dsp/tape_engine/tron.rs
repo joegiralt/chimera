@@ -9,8 +9,33 @@ use crate::dsp::algo::math::{clampf, exp2};
 
 /// SIZE 1's tape: an M400 strip.
 pub const TRON_LEN_MAX_S: f32 = 8.0;
+/// The run-out's fall, a one-pole: 2 ms, so a run-out ends within 20 ms.
+pub const RUN_OUT_S: f32 = 0.002;
 /// Under −80 dB a released note ends.
 pub const TRON_FLOOR: f32 = 1e-4;
+
+/// A TRON key's tape, seconds: 0.25 to 8 s, the same at every pitch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TapeSeconds(f32);
+
+impl TapeSeconds {
+    /// An M400's whole strip.
+    pub const MAX: TapeSeconds = TapeSeconds(TRON_LEN_MAX_S);
+
+    /// LENGTH's tape (`tron_len_s`).
+    pub fn of_length(size: f32) -> TapeSeconds {
+        TapeSeconds(tron_len_s(size))
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+
+    /// The output samples it plays at `sample_rate`.
+    pub fn samples(self, sample_rate: u32) -> u32 {
+        tron_run_samples(self.0, sample_rate)
+    }
+}
 
 /// LENGTH: `0.25 · 32^size` seconds, 0.25 to 8 s.
 pub fn tron_len_s(size: f32) -> f32 {

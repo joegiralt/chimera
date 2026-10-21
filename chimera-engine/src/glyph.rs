@@ -220,9 +220,10 @@ pub const BRAID_PARAMS: [ParamAddr; 4] = [
 ];
 
 /// What TAPE's machine glyph reads, in `GlyphInputs::from_set`'s order:
-/// MODEL (the machine, PLAY's MODE in it), START, END, POSITION, MOTION,
-/// SIZE, DRAG, TAPE, AGE, XFADE.
-pub const TAPE_GLYPH_PARAMS: [ParamAddr; 10] = {
+/// MODEL, START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE, then
+/// WALK's DIRECTION, TRON and DRIFT (ADR 0203) and STRETCH's LENGTH and
+/// TYPE (ADR 0204).
+pub const TAPE_GLYPH_PARAMS: [ParamAddr; 15] = {
     const fn t(id: crate::block::ParamId) -> ParamAddr {
         ParamAddr::new(BlockRef::TapeEngine, id)
     }
@@ -237,5 +238,10 @@ pub const TAPE_GLYPH_PARAMS: [ParamAddr; 10] = {
         t(T::TAPE),
         t(T::AGE),
         t(T::XFADE),
+        t(T::MODE),
+        t(T::TRON),
+        t(T::DRIFT),
+        t(T::LENGTH),
+        t(T::TYPE),
     ]
 };

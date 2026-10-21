@@ -8,8 +8,9 @@ mod common;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::modulator::EnvSlot;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::machine::env_defaults;
-use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode, TapeEngineParams, TapeMachine};
+use chimera_core::dsp::tape_engine::{Direction, FADE_HOLD, TapeEngineParams, TapeMachine};
 use chimera_core::modulation::{ModSource, ModState};
 use chimera_core::params::{EngineType, EnvParams, ParamSnapshot};
 use chimera_core::preset::Sound;
@@ -23,9 +24,9 @@ fn c4() -> MidiNote {
 }
 
 /// INIT TAPE (ENV 1 into VCA) playing `machine` with `tape` on top.
-fn init(machine: TapeMachine, tape: impl FnOnce(&mut TapeEngineParams)) -> Sound {
+fn init(machine: Way, tape: impl FnOnce(&mut TapeEngineParams)) -> Sound {
     let mut s = Sound::plain_init(EngineType::Tape);
-    s.params.tape.set_machine(machine);
+    s.params.tape.set_way(machine);
     tape(&mut s.params.tape);
     s
 }
@@ -73,7 +74,7 @@ fn amp_release_is_the_one_release() {
         );
         (tail_end(&out[at..], 1e-3) as f32) / SR as f32
     };
-    for m in [TapeMachine::Loop, TapeMachine::Ping] {
+    for m in [Way::Loop, Way::Ping] {
         let long = tail(m, 0.9, true);
         let short = tail(m, 0.2, true);
         // 4.5 s of release: still ringing at the window's end, 0.53 s on.
@@ -82,7 +83,7 @@ fn amp_release_is_the_one_release() {
         assert!(tail(m, 0.9, false) < 0.4, "{m:?} unrouted");
     }
     // TRON's FADE (the pressure pad) ends it whatever AMP's release.
-    assert!(tail(TapeMachine::Tron, 0.9, true) < 0.4, "TRON");
+    assert!(tail(Way::Tron, 0.9, true) < 0.4, "TRON");
 }
 
 /// Finding 4: ONE's MODEL defaults put ENV 1 at its floor and hold it
@@ -90,10 +91,10 @@ fn amp_release_is_the_one_release() {
 #[test]
 fn one_opens_on_the_hit() {
     let held = held_plain(&sine(24_000, 24.0, 24_000), 24_000);
-    let mut s = init(TapeMachine::One, |t| t.drag = FADE_HOLD);
+    let mut s = init(Way::One, |t| t.drag = FADE_HOLD);
     let env = ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::ATTACK).block;
     assert_eq!(env, BlockRef::Env(EnvSlot::Env1));
-    for &(id, v) in env_defaults(TapeMachine::One) {
+    for &(id, v) in env_defaults(TapeMachine::Walk, Direction::Forward) {
         chimera_core::block::Block::set(&mut s.params.envelopes[0], id, v);
     }
     let mut v = Rig::with_source(SR, &held);
@@ -105,7 +106,7 @@ fn one_opens_on_the_hit() {
         .fold(0f32, |m, y| m.max(y.abs()));
     assert!(ms2 > 0.85 * late, "{ms2} at 1-2 ms against {late}");
     // MED's 10 ms attack at INIT, as before: well under.
-    let mut slow = init(TapeMachine::One, |t| t.drag = FADE_HOLD);
+    let mut slow = init(Way::One, |t| t.drag = FADE_HOLD);
     slow.params.envelopes[0].sustain = 1.0;
     let out = play(&mut Rig::with_source(SR, &held), &slow, 127, (20, 0));
     let ms2_slow = out[48..96].iter().fold(0f32, |m, y| m.max(y.abs()));
@@ -139,7 +140,7 @@ fn block_rms(x: &[f32]) -> Vec<f32> {
 #[test]
 fn long_fades_keep_their_power() {
     let held = held_plain(&noise(24_000), 24_000);
-    let s = init(TapeMachine::Loop, |t| {
+    let s = init(Way::Loop, |t| {
         (t.size, t.xfade, t.position) = (0.85, 0.5, 0.3);
     });
     let mut s = s;
@@ -174,7 +175,7 @@ fn long_fades_keep_their_power() {
 fn age_darkens_a_low_rate_source() {
     let held = held_plain(&noise(16_000), 8_000);
     let hi = |age: f32| {
-        let mut s = init(TapeMachine::Loop, |t| t.age = age);
+        let mut s = init(Way::Loop, |t| t.age = age);
         s.params.envelopes[0].sustain = 1.0;
         let out = play(&mut Rig::with_source(SR, &held), &s, 100, (300, 0));
         // The top octave of the source's band, 2–4 kHz.
@@ -196,11 +197,11 @@ fn velocity_moves_one_start() {
         .map(|i| -0.9 + 1.8 * i as f32 / 24_000.0)
         .collect();
     let held = held_plain(&ramp, 24_000);
-    let mut s = init(TapeMachine::One, |t| {
+    let mut s = init(Way::One, |t| {
         (t.drag, t.start) = (FADE_HOLD, 0.0);
     });
     s.params.envelopes[0].sustain = 1.0;
-    for &(id, v) in env_defaults(TapeMachine::One) {
+    for &(id, v) in env_defaults(TapeMachine::Walk, Direction::Forward) {
         chimera_core::block::Block::set(&mut s.params.envelopes[0], id, v);
     }
     let start = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::START);
@@ -222,5 +223,5 @@ fn velocity_moves_one_start() {
     s.mod_state = Sound::plain_init(EngineType::Tape).mod_state;
     let out = play(&mut Rig::with_source(SR, &held), &s, 120, (4, 0));
     assert!(out[2 * BLOCK_SIZE] < -0.8, "{}", out[2 * BLOCK_SIZE]);
-    let _ = (PlayMode::One, ParamSnapshot::default());
+    let _ = (Direction::Forward, ParamSnapshot::default());
 }

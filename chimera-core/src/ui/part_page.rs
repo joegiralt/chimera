@@ -3,11 +3,8 @@
 //! bound param's spec.
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
-use crate::block::Block;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::EnvSlot;
-use crate::dsp::tape_engine::machine::{defaults, env_defaults};
-use crate::dsp::tape_engine::{MachineIndex, TapeEngineParams, TapeMachine};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
 
@@ -92,32 +89,17 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
         Edit::Fine(d) => crate::block::nudge_fine(&mut *b, a.param, d),
         Edit::To(v) => b.set(a.param, v),
     }
-    let model = machine_edit(a, before, &mut *b);
+    // WALK's defaults, bank 2's (`ui::walk`); a closed door writes none.
+    let env1 = crate::bank2::ui_door(|u| u.machine_edit(a, before, &mut *b)).unwrap_or(&[]);
     let moved = b.get(a.param) != before;
-    if let Some(m) = model
+    if !env1.is_empty()
         && let Some(mut env) = params.block_mut(BlockRef::Env(EnvSlot::Env1))
     {
-        for &(id, v) in env_defaults(m) {
+        for &(id, v) in env1 {
             env.set(id, v);
         }
     }
     moved
-}
-
-/// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
-/// Machines; ONE, LOOP and PING each a machine, ADR 0178); a load never
-/// does. The engine eases them in. Returns the new machine, whose ENV 1
-/// defaults (`env_defaults`) the caller writes.
-fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) -> Option<TapeMachine> {
-    let model = TapeEngineParams::MODEL;
-    if a == ParamAddr::new(BlockRef::TapeEngine, model) && b.get(model) != before {
-        let m = TapeMachine::from_index(MachineIndex(b.get(model) as u8));
-        for (id, v) in defaults(m) {
-            b.set(id, v);
-        }
-        return Some(m);
-    }
-    None
 }
 
 /// Shift+encoder on `slot`: snap the bound param (the selector does not snap).

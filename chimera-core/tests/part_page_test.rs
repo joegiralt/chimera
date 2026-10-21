@@ -112,13 +112,13 @@ fn exciter_page_follows_the_model() {
     assert_eq!(p.modal.force, force + 1.0 / 128.0);
 }
 
-/// The reverb send lives on SENDS and AMP only (ADR 0120): no engine home
-/// page (RES, DECK) carries it.
+/// The reverb send lives on SENDS only (ADR 0120), the mixer's page and AMP
+/// › SENDS (ADR 0195): no engine home page (RES, DECK) carries it, nor AMP.
 #[test]
-fn reverb_send_is_on_sends_and_amp_only() {
+fn reverb_send_is_on_sends_only() {
     let rev = ParamAddr::new(BlockRef::Out, OutParams::SEND3);
     let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);
-    for def in [&reg::MODAL_1, &reg::TAPE_DECK] {
+    for def in [&reg::MODAL_1, &reg::TAPE_DECK, &reg::AMP] {
         for k in 0..6 {
             assert_ne!(slot_addr(def, k, &ctx), Some(rev), "{} {k}", def.short);
         }
@@ -129,7 +129,7 @@ fn reverb_send_is_on_sends_and_amp_only() {
         .enumerate()
     {
         let want = Some(ParamAddr::new(BlockRef::Out, send));
-        assert_eq!(slot_addr(&reg::AMP, k, &ctx), want, "AMP {k}");
+        assert_eq!(slot_addr(&reg::SENDS, k, &ctx), want, "SENDS {k}");
     }
 }
 
@@ -164,7 +164,8 @@ fn filter_fx_and_amp_pages() {
     snap(&reg::FILTER_FX, 2, 1, &mut p);
     assert!(p.fx.pots[1] > 0.5, "{}", p.fx.pots[1]);
 
-    assert_eq!(read(&reg::AMP, &p), [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    assert_eq!(read(&reg::AMP, &p), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    assert_eq!(read(&reg::SENDS, &p), [0.0; 6]);
 }
 
 #[test]

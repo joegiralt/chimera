@@ -142,7 +142,7 @@ pub static TAPE_MODEL: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
-// VA engine pages (spec § Pages): VA, then OSC 1 and OSC 2 beneath it
+// VA engine pages (spec § Pages): VA, then OSC 1, OSC 2 and NOISE beneath it
 // ---------------------------------------------------------------------------
 
 /// VA, the home. Ids 87-89: free, under the focus table's top. AMOUNT
@@ -195,18 +195,37 @@ pub static VA_OSC2: BlockDef = BlockDef {
     ],
 };
 
+/// NOISE (ADR 0197): the voice's noise source, mixed beside SUB after
+/// MODE. Id 110: the next past SETTINGS' 109.
+pub static VA_NOISE: BlockDef = BlockDef {
+    id: 110,
+    name: "Noise",
+    short: "NOISE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Va, VaParams::NOISE_KIND),
+        ParamSlot::param(BlockRef::Va, VaParams::NOISE).with_label("LEVEL"),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 // ---------------------------------------------------------------------------
 // Voice pitch (ADR 0042): a sub-page of every engine's node
 // ---------------------------------------------------------------------------
 
 /// PIT: the voice's PITCH and FINE, a steal's STEAL and GLIDE TIME
-/// (#254), and PITCH's SNAP (TAPE Task 12b); F is free.
+/// (#254), and PITCH's SNAP (TAPE Task 12b); F is free. The scope reads
+/// the sounding pitch in its corner (ADR 0201).
 pub static PITCH: BlockDef = BlockDef {
     id: 66,
     name: "Pitch",
     short: "PIT",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::Tuner,
     params: [
         ParamSlot::param(BlockRef::Pitch, PitchParams::PITCH),
         ParamSlot::param(BlockRef::Pitch, PitchParams::FINE),
@@ -221,9 +240,9 @@ pub static PITCH: BlockDef = BlockDef {
 // Amp
 // ---------------------------------------------------------------------------
 
-/// AMP (sends spec § 3): the three sends and the VCA's VEL, last before MOD
-/// on every Part chain. The fold went to the FX slot (ADR 0155); its two
-/// cells stay empty for now.
+/// AMP: the VCA's VEL and its low-pass gate, LPG · DECAY · STRIKE (ADR
+/// 0195), last before MOD on every Part chain; E and F are free. The sends
+/// are AMP › SENDS, the mixer's own SENDS page.
 pub static AMP: BlockDef = BlockDef {
     id: 9,
     name: "Amp",
@@ -231,14 +250,18 @@ pub static AMP: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Out, OutParams::SEND1),
-        ParamSlot::param(BlockRef::Out, OutParams::SEND2),
-        ParamSlot::param(BlockRef::Out, OutParams::SEND3),
-        EMPTY,
         ParamSlot::param(BlockRef::Out, OutParams::VCA_VEL),
+        ParamSlot::param(BlockRef::Out, OutParams::LPG),
+        ParamSlot::param(BlockRef::Out, OutParams::DECAY),
+        ParamSlot::param(BlockRef::Out, OutParams::STRIKE),
+        EMPTY,
         EMPTY,
     ],
 };
+
+/// AMP › SENDS (ADR 0195): CHORUS · DELAY · REVERB, the page the mixer
+/// opens on, so its cells keep one focus.
+static AMP_SUB_PAGES: [&BlockDef; 1] = [&SENDS];
 
 // ---------------------------------------------------------------------------
 // Filter
@@ -473,18 +496,20 @@ pub static DELAY: BlockDef = BlockDef {
     short: "DLY",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
+    // TYPE · the shared five (ADR 0202): TAPE's own in DLY › CHAR,
+    // GRAIN's in DLY › GRAIN.
     params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::TYPE),
         ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
         ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
         ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
         ParamSlot::param(BlockRef::Delay, DelayParams::REV_SEND),
         ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
-        EMPTY,
     ],
 };
 
-/// DLY › CHAR: the tape character, off the delay's main page (FX diet spec
-/// § UI; an assumed default, pending the owner's word).
+/// DLY › CHAR: TAPE's character, off the delay's main page (FX diet spec
+/// § UI).
 pub static DELAY_CHAR: BlockDef = BlockDef {
     id: 56,
     name: "Delay Char",
@@ -501,7 +526,26 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
     ],
 };
 
-static DELAY_SUB_PAGES: [&BlockDef; 1] = [&DELAY_CHAR];
+/// DLY › GRAIN: GRAIN's four (ADR 0202). A table, no code, so bank 1
+/// stays frozen (ADR 0198): the page is there under TAPE too, its knobs
+/// held for GRAIN.
+pub static DELAY_GRAIN: BlockDef = BlockDef {
+    id: 111,
+    name: "Delay Grain",
+    short: "GRAIN",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
+    params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::SIZE),
+        ParamSlot::param(BlockRef::Delay, DelayParams::DENSITY),
+        ParamSlot::param(BlockRef::Delay, DelayParams::PITCH),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TEXTURE),
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DELAY_SUB_PAGES: [&BlockDef; 2] = [&DELAY_CHAR, &DELAY_GRAIN];
 
 /// Tape on DAC pair 1 (FX diet spec § Tape); only with `master-tape`
 /// (ADR 0055).
@@ -664,7 +708,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::page(&MODAL_EXC),
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&AMP),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -717,7 +761,7 @@ static ALGO_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::with_subs(&ALGO_ALG, &[&PITCH]),
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&AMP),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -750,7 +794,7 @@ static TAPE_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::page(&TAPE_SRC),
     ChainBlock::with_subs(&TAPE_DECK, &TAPE_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&AMP),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -762,13 +806,13 @@ static TAPE_BLOCKS: [ChainBlock; 5] = [
 pub static TAPE_CHAIN: ChainDef2 =
     ChainDef2::new("Tape", &TAPE_BLOCKS, &PART_MOD_SOURCES).with_home_def(&TAPE_DECK);
 
-static VA_SUB_PAGES: [&BlockDef; 3] = [&VA_OSC1, &VA_OSC2, &PITCH];
+static VA_SUB_PAGES: [&BlockDef; 4] = [&VA_OSC1, &VA_OSC2, &VA_NOISE, &PITCH];
 
 /// VA · FLT · AMP · MOD: the voice chain behind VA's node.
 static VA_BLOCKS: [ChainBlock; 4] = [
     ChainBlock::with_subs(&VA_HOME, &VA_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&AMP),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -824,8 +868,14 @@ static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
     ChainBlock::page(&CHORUS),
     ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),
     ChainBlock::with_subs(&EFX, &EFX_SUB_PAGES),
+    // Seven nodes sit 32 px apart: REEL beside a pill doesn't fit, so the
+    // map says MTP, ADR 0170's short for the master tape (#646).
     #[cfg(feature = "master-tape")]
-    ChainBlock::page(&TAPE),
+    ChainBlock {
+        def: &TAPE,
+        sub_pages: &[],
+        map: Some("MTP"),
+    },
     ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),
 ];
 

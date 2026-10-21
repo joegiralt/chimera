@@ -238,6 +238,12 @@ fn silences(c: &Case) -> Option<&'static str> {
     if c.is(BlockRef::Out, OutParams::VOLUME) && c.any(|v| v == 0.0) {
         return Some("OUT LEVEL 0 is the voice at volume 0");
     }
+    if c.is(BlockRef::Out, OutParams::STRIKE) && c.any(|v| v == 1.0) {
+        return Some(
+            "STRIKE 1 alone drives the VCA's gate (ADR 0195): a held note rings out on DECAY \
+             and ends when the gate shuts, the key down",
+        );
+    }
     if c.is(BlockRef::Part, PartParams::CHANNEL) && c.any(|v| v != 0.0) {
         return Some("Part 1 listens on another MIDI channel than the notes'");
     }
@@ -1702,8 +1708,7 @@ fn tape_params_sweep() {
                     };
                     for v in values {
                         let mut s = Sound::init(EngineType::Tape);
-                        s.params.tape.machine =
-                            TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
+                        s.params.tape.machine = TapeMachine::of(model);
                         if model == TapeModel::Scrub {
                             s.params.tape.motion = 0.5; // a moving tape
                         }

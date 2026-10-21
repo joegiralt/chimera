@@ -1,6 +1,7 @@
 //! The filter probes (`filter-probes`), linked though nothing calls them:
 //! `tools/loop_count.py` counts their loops in this ELF. Apart from the
-//! bench, whose areas have no room for their ~37 KB.
+//! bench, whose areas have no room for their ~37 KB. Bank 2's, these
+//! tables with them: bank 1 holds no reference into it.
 
 use chimera_engine::dsp::filter::{self, Clean};
 use chimera_engine::dsp::voice_fx::Ends;
@@ -12,7 +13,8 @@ type FilterProbe = fn(&mut Clean, &mut [f32; BLOCK_SIZE], &FilterParams);
 
 /// Every filter probe, kept in the ELF though nothing calls them.
 #[used]
-static FILTER_PROBES: &[FilterProbe] = &[
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
+static FILTER_PROBES: [FilterProbe; 6] = [
     filter::probe::clean_probe::<2, false>,
     filter::probe::clean_probe::<2, true>,
     filter::probe::clean_probe::<7, false>,
@@ -23,7 +25,8 @@ static FILTER_PROBES: &[FilterProbe] = &[
 
 /// CLEAN's other steady modes (LP1, LP2, BP2, BP4, HP4, NOTCH1).
 #[used]
-static CLEAN_MODE_PROBES: &[FilterProbe] = &[
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
+static CLEAN_MODE_PROBES: [FilterProbe; 6] = [
     filter::probe::clean_probe::<0, false>,
     filter::probe::clean_probe::<1, false>,
     filter::probe::clean_probe::<3, false>,
@@ -36,7 +39,8 @@ static CLEAN_MODE_PROBES: &[FilterProbe] = &[
 type K2040Probe = fn(&mut filter::K2040, &mut [f32; BLOCK_SIZE], &FilterParams);
 
 #[used]
-static K2040_PROBES: &[K2040Probe] = &[
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
+static K2040_PROBES: [K2040Probe; 6] = [
     filter::probe::k2040_probe::<filter::k2040::voice::Rev2, false>,
     filter::probe::k2040_probe::<filter::k2040::voice::Rev2, true>,
     filter::probe::k2040_probe::<filter::k2040::voice::Exp, false>,
@@ -49,7 +53,8 @@ static K2040_PROBES: &[K2040Probe] = &[
 type DirtyProbe = fn(&mut filter::Dirty, &mut [f32; BLOCK_SIZE], &FilterParams);
 
 #[used]
-static DIRTY_PROBES: &[DirtyProbe] = &[
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
+static DIRTY_PROBES: [DirtyProbe; 4] = [
     filter::probe::dirty_probe::<0>,
     filter::probe::dirty_probe::<1>,
     filter::probe::dirty_probe::<2>,
@@ -61,7 +66,8 @@ static DIRTY_PROBES: &[DirtyProbe] = &[
 type LadderProbe = fn(&mut filter::Ladder, &mut [f32; BLOCK_SIZE], &FilterParams);
 
 #[used]
-static LADDER_PROBES: &[LadderProbe] = &[
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
+static LADDER_PROBES: [LadderProbe; 9] = [
     filter::probe::ladder_probe::<1, false>,
     filter::probe::ladder_probe::<1, true>,
     filter::probe::ladder_probe::<4, false>,
@@ -78,7 +84,8 @@ static LADDER_PROBES: &[LadderProbe] = &[
 type SemProbe = fn(&mut filter::Sem, &mut [f32; BLOCK_SIZE], &FilterParams) -> f32;
 
 #[used]
-static SEM_PROBES: &[SemProbe] = &[
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
+static SEM_PROBES: [SemProbe; 6] = [
     filter::probe::sem_probe::<false, 0>,
     filter::probe::sem_probe::<false, 1>,
     filter::probe::sem_probe::<false, 2>,
@@ -89,13 +96,25 @@ static SEM_PROBES: &[SemProbe] = &[
 
 /// The taps' pass over a moving block's `g` and `k`, shared by every type.
 #[used]
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
 static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_probe;
 
 /// The tap-VCA's and the folder's tapped loops.
 #[used]
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
 static TAP_VCA_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_vca_probe;
 
 type FoldProbe = fn(&mut [f32; BLOCK_SIZE], &Ends);
 
 #[used]
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
 static FOLD_TAP_PROBE: FoldProbe = filter::probe::fold_tap_probe;
+
+/// The VCA's low-pass gate (ADR 0195): one block, the routes' gain in.
+#[used]
+#[unsafe(link_section = ".bank2.rodata.filter_probes")]
+static LPG_PROBE: fn(
+    &mut chimera_engine::dsp::lpg::Lpg,
+    &mut [f32; BLOCK_SIZE],
+    &chimera_engine::dsp::lpg::Drive,
+) = chimera_engine::dsp::lpg::lpg_probe;

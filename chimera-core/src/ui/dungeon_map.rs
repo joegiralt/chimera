@@ -43,7 +43,7 @@ pub fn page_label(def: &BlockDef, models: impl Into<Models>) -> &'static str {
 /// The row's word for each page on a node with sub-pages: the word a
 /// musician reads, in full where it fits (ADR 0145). STACK and the crumbs
 /// keep `short`. MDL2 and TAPE's model page are named at draw time.
-pub static ROW_WORDS: [(&BlockDef, &str); 51] = [
+pub static ROW_WORDS: [(&BlockDef, &str); 55] = [
     (&reg::ALGO_ALG, "ALGORITHM"),
     (&reg::PITCH, "PITCH"),
     (&reg::ALGO_WAVE, "WAVE"),
@@ -70,6 +70,8 @@ pub static ROW_WORDS: [(&BlockDef, &str); 51] = [
     (&reg::FILTER_MOD, "MODULATION"),
     (&reg::FILTER_FX, "FX"),
     (&reg::FILTER_JACKS, "JACKS"),
+    (&reg::AMP, "AMP"),
+    (&reg::SENDS, "SENDS"),
     (&reg::MOD_MATRIX, "MATRIX"),
     (&reg::ENVELOPE, "ENV1"),
     (&reg::ENV_2, "ENV2"),
@@ -81,10 +83,12 @@ pub static ROW_WORDS: [(&BlockDef, &str); 51] = [
     (&reg::MODAL_1, "RESONATOR"),
     (&reg::TAPE_DECK, "DECK"),
     (&reg::VA_HOME, "VA"),
-    (&reg::VA_OSC1, "OSCILLATOR 1"),
-    (&reg::VA_OSC2, "OSCILLATOR 2"),
+    (&reg::VA_OSC1, "OSC1"),
+    (&reg::VA_OSC2, "OSC2"),
+    (&reg::VA_NOISE, "NOISE"),
     (&reg::DELAY, "DELAY"),
     (&reg::DELAY_CHAR, "CHARACTER"),
+    (&reg::DELAY_GRAIN, "GRAIN"),
     (&reg::EFX, "REVERB"),
     (&reg::EFX_MORE, "MORE"),
     (&reg::EFX_MORE2, "MORE 2"),

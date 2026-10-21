@@ -6,7 +6,7 @@ use super::Heads;
 use core::num::NonZeroU32;
 
 use crate::dsp::tape_engine::heads::{Bounds, Sizing, window_end, window_start};
-use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine, needs_ram};
+use crate::dsp::tape_engine::params::{TapeEngineParams, Way, needs_ram};
 use crate::dsp::tape_engine::read::HeadSpec;
 use crate::project::Refusal;
 use crate::storage::SourceRef;
@@ -55,13 +55,11 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refu
     // row reads it).
     let cap = we.saturating_add(2).min(frames).next_multiple_of(2);
     let start = head(ws, reach, cap).ok_or(Refusal::TooShort)?;
-    type K = TapeMachine;
-    match p.machine {
-        K::Loop => {}
-        // ONE and TRON read one head; `needs_ram` refused the others.
-        K::One | K::Tron | K::Ping | K::Scrub | K::Stretch | K::Wave => {
-            return Ok(Heads::One(start));
-        }
+    // LOOP (TRON or not) loops off a second head. ONE and TRON read one,
+    // from START: POSITION or DRIFT past it starts cold (ADR 0203);
+    // `needs_ram` refused the others.
+    if p.way() != Way::Loop {
+        return Ok(Heads::One(start));
     }
     let b = Bounds::of(
         ws,

@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::dsp::tape_engine::{Direction, Way};
 use core::mem::size_of;
 
 use chimera_core::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
@@ -78,7 +79,8 @@ fn neutral_tape_loops_whole() {
     assert_eq!(
         s.params.tape,
         TapeEngineParams {
-            machine: TapeMachine::Loop,
+            machine: TapeMachine::Walk,
+            direction: Direction::Loop,
             start: 0.0,
             end: 1.0,
             position: 0.0,
@@ -355,11 +357,11 @@ fn a_sounding_note_bills_its_latched_model() {
     slot.note_on(c4(), Velocity::DEFAULT, &s.params, SR, Some(id), ctx);
     assert_eq!(slot.playing_cost(), Some(COST_LOOP));
     let mut edit = s.params.clone();
-    edit.tape.machine = TapeMachine::One;
+    edit.tape.set_way(Way::One);
     assert_eq!(slot.model_cost(&s.params), COST_LOOP);
     assert_eq!(slot.model_cost(&edit), COST_ONESHOT);
     assert_eq!(
-        TapeEngine::model_cost(TapeMachine::One),
+        TapeEngine::model_cost(&edit.tape),
         COST_ONESHOT,
         "the edit's"
     );

@@ -13,7 +13,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::block::Motion;
 use crate::dsp::knobs::MOVES;
 use crate::dsp::tape_engine::machine::{defaults, env_defaults};
-use crate::dsp::tape_engine::{MachineIndex, TapeEngineParams, TapeMachine};
+use crate::dsp::tape_engine::{Direction, MachineIndex, TapeEngineParams, TapeMachine};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::CcEvent;
 use crate::midi_map::ramp::{Ramp, bin, budget};
@@ -115,11 +115,11 @@ fn is_knob(e: &MapEntry) -> bool {
 const MODEL: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
 
 /// The knob writes a MODEL change to `m` makes besides MODEL's own: its
-/// machine's defaults (`part_page::edit`).
-pub(super) fn model_writes(m: TapeMachine) -> u8 {
-    let k = defaults(m).filter(|&(id, _)| knob(ParamAddr::new(BlockRef::TapeEngine, id)));
+/// machine's defaults in DIRECTION `d` (`part_page::edit`).
+pub(super) fn model_writes(m: TapeMachine, d: Direction) -> u8 {
+    let k = defaults(m, d).filter(|&(id, _)| knob(ParamAddr::new(BlockRef::TapeEngine, id)));
     let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
-    let e = env_defaults(m)
+    let e = env_defaults(m, d)
         .iter()
         .filter(|&&(id, _)| knob(ParamAddr::new(env1, id)));
     (k.count() + e.count()) as u8
@@ -218,9 +218,16 @@ impl UiState {
         }
         let mut cost = u8::from(knob(a));
         if a == MODEL {
-            cost += model_writes(TapeMachine::from_index(MachineIndex(
-                (spec.min + f32::from(to)) as u8,
-            )));
+            let d = self.project.part(p).sound.params.tape.direction;
+            cost += model_writes(
+                TapeMachine::from_index(MachineIndex((spec.min + f32::from(to)) as u8)),
+                d,
+            );
+        }
+        // A DIRECTION turn writes at most what a MODEL turn onto WALK does.
+        if a.block == BlockRef::TapeEngine && a.param == TapeEngineParams::MODE {
+            let d = self.project.part(p).sound.params.tape.direction;
+            cost += model_writes(TapeMachine::Walk, d);
         }
         if cost > self.cc.room[i] {
             self.cc.pend[i][j] = to as u8;

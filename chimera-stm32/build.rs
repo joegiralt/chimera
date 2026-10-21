@@ -97,9 +97,10 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*5Rings5wants* .text.*6stream3edf*);
     *(.rodata.*13chimera_board8card_dma*8IrqState* .rodata.*6stream5serve*);
     /* TAPE's UI (ADR 0175, `chimera_core::bank2::UiDoor`): the strip's
-       raster and the SOURCE cell's card work and turns, and SCRUB's jog
-       (`Jog::pass`, ADR 0205). Bank 1 keeps the overview's cache, the
-       cell's state and the wrappers.
+       raster and the SOURCE cell's card work and turns, SCRUB's jog
+       (`Jog::pass`, ADR 0205) and PIT's tuner (ADR 0201,
+       `pit_tuner::calc`). Bank 1 keeps the overview's cache, the cell's
+       and the tuner's state and the wrappers.
        Whole functions only, not their closures: the machine outliner
        shares their small calls with bank 1's code. */
     *(.text.*12chimera_core2ui10tape_strip6raster8strip_in .text.*12chimera_core2ui10tape_strip6raster3tri
@@ -112,9 +113,12 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*7project8streamed*10StreamLoad5start .text.*7project8streamed*10StreamLoad5found
       .text.*7project8streamed*10StreamLoad6rehead .text.*7project8streamed9load_kind
       .text.*12chimera_core2ui5onset6detect* .text.*12chimera_core2ui3jog*3Jog4pass*
-      .text.*12chimera_core2ui3jog*3Jog4rate*);
+      .text.*12chimera_core2ui3jog*3Jog4rate* .text.*12chimera_core2ui9pit_tuner4calc*
+      .text.*12chimera_core2ui4walk15machine_edit_in .text.*12chimera_core2ui4walk12tape_note_in
+      .text.*12chimera_core2ui4walk12tape_held_in);
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
-      .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*);
+      .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*
+      .rodata.*12chimera_core2ui9pit_tuner4calc* .rodata.*12chimera_core2ui4walk*);
 ";
     // The crates the engine can't name keep their own tables, each at a
     // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):
@@ -129,9 +133,11 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
 ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     );
     // The VA's MOD oscillators (ADR 0163): `va::osc::door`, every MOD
-    // render's entry and its runs' instances, and LOOPFM's render.
+    // render's entry and its runs' instances, LOOPFM's render, and NOISE's
+    // pass (ADR 0197, `va::noise::kern`).
     let va = "    *(.text.*3osc4door* .rodata.*3osc4door* .text.*4lbfm11render_loop* .rodata.*4lbfm11render_loop*
-      .text.*8VaEngine13render_loopfm* .rodata.*8VaEngine13render_loopfm*);
+      .text.*8VaEngine13render_loopfm* .rodata.*8VaEngine13render_loopfm*
+      .text.*2va5noise4kern* .rodata.*2va5noise4kern*);
 ";
     // The LFO page's glyphs and scope curve (ADR 0177): `lfo_glyph::draw`,
     // the door's `render` and `curve`.
@@ -166,6 +172,23 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     } else {
         ("", "", "")
     };
+    // The delay's GRAIN (ADR 0202): `delay::grain` and the grain core
+    // `dsp::grain`, text and rodata.
+    let grain = "    *(.text.*5delay5grain* .rodata.*5delay5grain* .text.*3dsp5grain* .rodata.*3dsp5grain*);
+";
+    // The filter probes (`filter-probes`, a measuring build never shipped):
+    // `filter::probe` and the gate's `lpg_probe` in bank 2, so their ~40 KB
+    // leaves bank 1 to the code they count (ADR 0198). `loop_count.py`
+    // reads them by name, wherever they sit.
+    let probes = if env::var_os("CARGO_FEATURE_FILTER_PROBES").is_some() {
+        "    *(.text.*6filter5probe* .rodata.*6filter5probe* .text.*3lpg9lpg_probe* .rodata.*3lpg9lpg_probe*);
+"
+    } else {
+        ""
+    };
+    // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
+    let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
+";
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -191,11 +214,11 @@ SECTIONS {
        and the cost table. */
     *(.text.*11tape_engine5scrub* .text.*11tape_engine5heads* .text.*11tape_engine7stretch* .text.*11tape_engine4wave* .text.*11tape_engine4read*
       .text.*11tape_engine3age* .text.*11tape_engine6warble* .text.*11tape_engine7oneshot* .text.*11tape_engine4tron*
-      .text.*11tape_engine4span* .text.*6stream6cursor* .text.*11tape_engine*8TapeDeck*
+      .text.*11tape_engine5drift* .text.*11tape_engine4span* .text.*6stream6cursor* .text.*11tape_engine*8TapeDeck*
       .text.*11tape_engine9ratio_max*);
     *(.rodata.*11tape_engine5scrub* .rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
       .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
-      .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
+      .rodata.*11tape_engine5drift* .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
     /* Streamed admission and loads (`AdmitDoor`, `LoadDoor`): the bill,
        the stealing pick and the block's re-bill; the heads' placement, a
        load's passes and their head reads. Bank 1 keeps the wrappers and
@@ -213,6 +236,9 @@ SECTIONS {
     /* FED */
     /* SEM */
     /* BENCH */
+    /* GRAIN */
+    /* GATE */
+    /* PROBES */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -233,7 +259,10 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* SEM */\n", sem)
         .replace("    /* BENCH */\n", bench)
         .replace("    /* BENCH SLOT */\n", bench_slot)
-        .replace("/* BENCH ASSERT */", bench_assert),
+        .replace("/* BENCH ASSERT */", bench_assert)
+        .replace("    /* GRAIN */\n", grain)
+        .replace("    /* GATE */\n", gate)
+        .replace("    /* PROBES */\n", probes),
     )
     .unwrap();
 

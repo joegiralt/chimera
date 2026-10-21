@@ -11,9 +11,12 @@ use chimera_hal::store::Store;
 use chimera_image::{FlashFail, Verdict};
 pub use chimera_image::{Seal, Version};
 
-use crate::dsp::tape_engine::Heads;
+use crate::addr::ParamAddr;
+use crate::block::{Block, ParamId};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::tape_engine::read::SourceView;
+use crate::dsp::tape_engine::{Heads, NeedsRam};
+use crate::preset::Sound;
 use crate::project::{LoadKind, PartId, Project};
 use crate::storage::{Ready, SourceHead};
 use crate::ui::source_cell::{SourceCell, SourceJob};
@@ -111,8 +114,9 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// The text cell `addr` shows in place of its value `v` (0..1, as
 /// displayed) under `bank2`: the reverb's TYPE (ADR 0142), TAPE's MODEL
 /// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
-/// and the FX TYPE FUZZ (ADR 0157) and the filter TYPE SEM (ADR 0192) read
-/// `NEEDS UPDATE` while their code can't play.
+/// and the FX TYPE FUZZ (ADR 0157), the filter TYPE SEM (ADR 0192), VA
+/// NOISE's KIND (ADR 0197, every KIND) and the delay TYPE GRAIN (ADR 0202,
+/// which plays as TAPE) read `NEEDS UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     v: f32,
@@ -127,6 +131,7 @@ pub fn closed_text(
     let named = [
         ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE),
         ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL),
+        ParamAddr::new(BlockRef::Va, VaParams::NOISE_KIND),
     ];
     let va_mode = || {
         addr == ParamAddr::new(BlockRef::Va, VaParams::MODE)
@@ -152,7 +157,12 @@ pub fn closed_text(
                     .is_some_and(|k| k.in_bank2())
             })
     };
-    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type() || kind()))
+    let grain = || {
+        use crate::dsp::delay::{DelayParams, DelayType};
+        addr == ParamAddr::new(BlockRef::Delay, DelayParams::TYPE)
+            && DelayType::at(v) == DelayType::Grain
+    };
+    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type() || kind() || grain()))
         .then_some(NEEDS_UPDATE)
 }
 
@@ -189,19 +199,31 @@ pub struct UiDoor {
     source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
     /// START's and END's onset snap (`ui::onset`, ADR 0185).
     onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
+    /// WALK's machine defaults, cell notes and held refusals (`ui::walk`,
+    /// ADR 0203).
+    machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
+    tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
+    tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
     jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
+    /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
+    pit: fn(&mut crate::ui::UiState),
+    pit_paint: fn(&mut dyn Paint, &crate::ui::pit_tuner::Shown),
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
 type HeadKind = (SourceHead, LoadKind);
 
+/// The ENV 1 cells a MODEL or DIRECTION turn writes, each with its value.
+type EnvWrites = &'static [(ParamId, f32)];
+
 /// `UiDoor::magic`.
-const UI_MAGIC: u32 = 0xB2C0_0001;
+const UI_MAGIC: u32 = 0xB2C0_0002;
 
 impl UiDoor {
-    /// Every entry is `tape_strip::raster`'s or `source_cell::card`'s, the
-    /// modules `bank2.x` links into bank 2.
+    /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
+    /// `onset::detect`'s or `pit_tuner::calc`'s, the modules `bank2.x`
+    /// links into bank 2.
     pub const OWN: UiDoor = UiDoor {
         magic: UI_MAGIC,
         overview: Overview::of_in,
@@ -214,7 +236,12 @@ impl UiDoor {
         source_tick: SourceCell::rehead_in,
         source_run: SourceCell::run_in,
         onset: crate::ui::onset::onset_in_bank2,
+        machine_edit: crate::ui::walk::machine_edit_in,
+        tape_note: crate::ui::walk::tape_note_in,
+        tape_held: crate::ui::walk::tape_held_in,
         jog: crate::ui::jog::Jog::pass,
+        pit: crate::ui::pit_tuner::calc::pass_in,
+        pit_paint: crate::ui::pit_tuner::calc::paint_in,
     };
 
     #[inline(always)]
@@ -286,8 +313,38 @@ impl UiDoor {
     }
 
     #[inline(always)]
+    pub(crate) fn pit(&self, ui: &mut crate::ui::UiState) {
+        (self.pit)(ui)
+    }
+
+    #[inline(always)]
+    pub(crate) fn pit_paint(&self, on: &mut dyn Paint, s: &crate::ui::pit_tuner::Shown) {
+        (self.pit_paint)(on, s)
+    }
+
+    #[inline(always)]
     pub(crate) fn onset(&self, held: &[u8], frames: u32, from: u32, fwd: bool) -> Option<u32> {
         (self.onset)(held, frames, from, fwd)
+    }
+
+    #[inline(always)]
+    pub(crate) fn machine_edit(&self, a: ParamAddr, before: f32, b: &mut dyn Block) -> EnvWrites {
+        (self.machine_edit)(a, before, b)
+    }
+
+    #[inline(always)]
+    pub(crate) fn tape_note(&self, a: ParamAddr, s: &Sound) -> Option<&'static str> {
+        (self.tape_note)(a, s)
+    }
+
+    #[inline(always)]
+    pub(crate) fn tape_held(
+        &self,
+        t: &TapeEngineParams,
+        id: ParamId,
+        code: u8,
+    ) -> Option<NeedsRam> {
+        (self.tape_held)(t, id, code)
     }
 
     #[inline(always)]

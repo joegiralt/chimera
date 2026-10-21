@@ -111,6 +111,16 @@ pub struct Bank2Door {
     /// SEM's kernel (ADR 0192; `Sem::process` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub sem: crate::dsp::filter::sem::SemDoor,
+    /// VA NOISE's pass (ADR 0197; `Noise::add` is bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub noise: crate::dsp::va::noise::NoiseDoor,
+    /// The delay's GRAIN (ADR 0202; `TapeDelay::run` is bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub grain: crate::dsp::delay::GrainDoor,
+    /// The VCA's low-pass gate (ADR 0195; `voice::gate::through` is bank
+    /// 1's side).
+    #[cfg(feature = "bank2")]
+    pub gate: crate::dsp::voice::gate::GateDoor,
 }
 
 impl Bank2Door {
@@ -148,6 +158,9 @@ static DOOR: Bank2Door = Bank2Door {
     fuzz: crate::dsp::voice_fx::fuzz::Fuzz::DOOR,
     fed: crate::dsp::filter::fed::FedDoor::DOOR,
     sem: crate::dsp::filter::sem::SemDoor::DOOR,
+    noise: crate::dsp::va::noise::NoiseDoor::DOOR,
+    grain: crate::dsp::delay::GrainDoor::DOOR,
+    gate: crate::dsp::voice::gate::GateDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

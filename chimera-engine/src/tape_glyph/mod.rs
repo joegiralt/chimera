@@ -15,7 +15,7 @@
 //! the canvas stay in bank 1.
 
 use crate::dsp::algo::math::clampf;
-use crate::dsp::tape_engine::{MachineIndex, TapeMachine};
+use crate::dsp::tape_engine::{Direction, MachineIndex, TapeMachine, Tron, Way};
 
 /// With TAPE's DSP only: a build without it (the bench's) draws no glyph.
 #[cfg(feature = "tape")]
@@ -141,7 +141,7 @@ pub struct Run {
     pub end: Q6,
 }
 
-/// LOOP's loop in the window: POSITION, LENGTH, WALK and XFADE.
+/// LOOP's loop in the window: POSITION, LENGTH, DRIFT and XFADE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Loop {
     pub position: Q6,
@@ -151,7 +151,7 @@ pub struct Loop {
     pub xfade: Q3,
 }
 
-/// PING's loop in the window: POSITION, LENGTH and WALK. It has no
+/// PING's loop in the window: POSITION, LENGTH and DRIFT. It has no
 /// crossfade.
 ///
 /// ```compile_fail,E0560
@@ -173,12 +173,18 @@ pub struct Blind {
     pub fade: Q5,
 }
 
-/// STRETCH's accordion: SPEED opens or squeezes it, D-TIME folds it.
+/// STRETCH's accordion: SPEED opens or squeezes it; GRAIN's LENGTH folds
+/// it and a row of grains sits under it, CLASSIC's D-TIME folds it and
+/// POSITION marks where time starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bellows {
     /// Bipolar: MOTION.
     pub speed: Q6,
-    pub d_time: Q5,
+    /// LENGTH (GRAIN) or D-TIME (CLASSIC).
+    pub fold: Q5,
+    /// CLASSIC's POSITION; 0 on GRAIN.
+    pub at: Q5,
+    pub grain: bool,
 }
 
 /// TRANSWAVE's film: FRAME in the gate, RANGE the gate's width, SCAN's
@@ -203,7 +209,57 @@ pub struct Sponge {
     pub xfade: Q3,
 }
 
-/// A machine and its inputs: PLAY's three MODEs each their own.
+/// WALK's footsteps (ADR 0203): DIRECTION lays them (a line forward or
+/// back, a loop, there and back), POSITION and LENGTH the stretch they
+/// cover, DRIFT scatters them, FADE fades the last ones out, and TRON
+/// marks where its tape ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Steps {
+    pub dir: Direction,
+    pub position: Q6,
+    pub length: Q6,
+    pub drift: Q4,
+    pub fade: Q3,
+    pub tron: Tron,
+}
+
+impl Steps {
+    pub const fn direction(self) -> Direction {
+        self.dir
+    }
+}
+
+/// How WALK's footsteps are drawn: the owner picks one (ADR 0203's
+/// listening page); `render` draws `StepStyle::DEFAULT`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepStyle {
+    /// A sole and a toe, left and right.
+    Prints,
+    /// Boot treads: a chevron a step.
+    Treads,
+    /// A dotted trail, a stride's mark a step.
+    Trail,
+    /// A WALK / DON'T WALK pedestrian signal: the walking figure strides
+    /// the DIRECTION, the countdown reads LENGTH, TRON's raised hand waits.
+    Signal,
+    /// A figure on a treadmill: the belt's arrows run the DIRECTION,
+    /// DRIFT wobbles the stride, TRON lights the stop button.
+    Treadmill,
+}
+
+impl StepStyle {
+    pub const ALL: [StepStyle; 5] = [
+        StepStyle::Prints,
+        StepStyle::Treads,
+        StepStyle::Trail,
+        StepStyle::Signal,
+        StepStyle::Treadmill,
+    ];
+    pub const DEFAULT: StepStyle = StepStyle::Prints;
+}
+
+/// A machine and its inputs. ONE's match, LOOP's wheel, PING's court and
+/// TRON's blind are kept (never throw work away); WALK draws `Walk`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Machine {
     One(Run),
@@ -213,14 +269,37 @@ pub enum Machine {
     Stretch(Bellows),
     Wave(Film),
     Scrub(Sponge),
+    Walk(Steps),
 }
 
-/// The glyph a machine shows: MODEL's machine (PLAY's MODEs each their own).
-pub type Kind = TapeMachine;
+/// The glyph a machine shows: the deck's path, so WALK lays its
+/// footsteps by DIRECTION and TRON (ADR 0203).
+pub type Kind = Way;
 
-impl TapeMachine {
+impl Way {
     /// Its still pose: fixed inputs that show what the machine is.
     pub fn still(self) -> Machine {
+        let steps = |dir: Direction, tron: Tron| {
+            Machine::Walk(Steps {
+                dir,
+                position: Q6::of(0.1),
+                length: Q6::of(0.8),
+                drift: Q4::of(0.25),
+                fade: Q3::of(0.0),
+                tron,
+            })
+        };
+        match self {
+            Kind::One => steps(Direction::Forward, Tron::Off),
+            Kind::Loop => steps(Direction::Loop, Tron::Off),
+            Kind::Ping => steps(Direction::Ping, Tron::Off),
+            Kind::Tron => steps(Direction::Forward, Tron::On),
+            Kind::Stretch | Kind::Wave | Kind::Scrub => self.kept(),
+        }
+    }
+
+    /// The other machines' still poses, and the kept pictures'.
+    pub fn kept(self) -> Machine {
         let q6 = Q6::of;
         let q5 = Q5::of;
         let walk = |v: f32| q6(0.5 + 0.5 * v);
@@ -246,7 +325,9 @@ impl TapeMachine {
             }),
             Kind::Stretch => Machine::Stretch(Bellows {
                 speed: walk(0.25),
-                d_time: q5(0.45),
+                fold: q5(0.55),
+                at: q5(0.0),
+                grain: true,
             }),
             Kind::Wave => Machine::Wave(Film {
                 frame: q6(0.45),
@@ -295,7 +376,7 @@ pub enum Pose {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 pub struct GlyphInputs {
-    pub machine: TapeMachine,
+    pub machine: Way,
     pub start: f32,
     pub end: f32,
     pub position: f32,
@@ -305,13 +386,21 @@ pub struct GlyphInputs {
     pub tape: f32,
     pub age: f32,
     pub xfade: f32,
+    /// WALK's DIRECTION (REVERSE draws ONE's run backward) and DRIFT.
+    pub direction: Direction,
+    pub drift: f32,
+    pub tron: Tron,
+    pub length: f32,
+    /// STRETCH's TYPE, its stored value.
+    pub kind: f32,
     pub pose: Pose,
 }
 
 impl GlyphInputs {
     /// From `TAPE_GLYPH_PARAMS`' set values, normalized; MODEL's to its
     /// nearest machine.
-    pub fn from_set(set: [f32; 10], pose: Pose) -> Self {
+    #[inline(always)]
+    pub fn from_set(set: [f32; 15], pose: Pose) -> Self {
         let [
             model,
             start,
@@ -323,10 +412,23 @@ impl GlyphInputs {
             tape,
             age,
             xfade,
+            direction,
+            tron,
+            drift,
+            length,
+            kind,
         ] = set;
-        let at = crate::dsp::rev::sync::index_of(model, TapeMachine::ALL.len());
+        let index_of = crate::dsp::rev::sync::index_of;
+        let m =
+            TapeMachine::from_index(MachineIndex(index_of(model, TapeMachine::ALL.len()) as u8));
+        let direction = Direction::ALL[index_of(direction, Direction::ALL.len())];
+        let tron = if index_of(tron, 2) == 1 {
+            Tron::On
+        } else {
+            Tron::Off
+        };
         Self {
-            machine: TapeMachine::from_index(MachineIndex(at as u8)),
+            machine: Way::of(m, direction, tron),
             start,
             end,
             position,
@@ -336,6 +438,11 @@ impl GlyphInputs {
             tape,
             age,
             xfade,
+            direction,
+            drift,
+            tron,
+            length,
+            kind,
             pose,
         }
     }
@@ -355,6 +462,11 @@ const _: () = {
         T::TAPE,
         T::AGE,
         T::XFADE,
+        T::MODE,
+        T::TRON,
+        T::DRIFT,
+        T::LENGTH,
+        T::TYPE,
     ];
     let mut i = 0;
     while i < order.len() {
@@ -400,6 +512,26 @@ impl TapeGauge {
         }
     }
 
+    /// `of` straight from `TAPE_GLYPH_PARAMS`' set values: the decode is
+    /// bank 2's too (`draw::inputs_set`), so bank 1 only gathers them.
+    pub fn of_set(set: [f32; 15], pose: Pose) -> Self {
+        #[cfg(feature = "bank2")]
+        {
+            crate::bank2::DOOR_CELL
+                .with(|d| (d.glyph.inputs_set)(set, pose))
+                .unwrap_or(Self::still(Kind::One))
+        }
+        #[cfg(all(feature = "tape", not(feature = "bank2")))]
+        {
+            draw::inputs_set(set, pose)
+        }
+        #[cfg(not(feature = "tape"))]
+        {
+            let _ = (set, pose);
+            Self::still(Kind::One)
+        }
+    }
+
     pub const fn kind(&self) -> Kind {
         match self.machine {
             Machine::One(_) => Kind::One,
@@ -409,6 +541,7 @@ impl TapeGauge {
             Machine::Stretch(_) => Kind::Stretch,
             Machine::Wave(_) => Kind::Wave,
             Machine::Scrub(_) => Kind::Scrub,
+            Machine::Walk(s) => Way::of(TapeMachine::Walk, s.dir, s.tron),
         }
     }
 
@@ -423,8 +556,18 @@ impl TapeGauge {
             }
             Machine::Ping(b) => s(b.position.0, 0) | s(b.length.0, 6) | s(b.walk.0, 12),
             Machine::Tron(b) => s(b.length.0, 0) | s(b.fade.0, 6),
-            Machine::Stretch(b) => s(b.speed.0, 0) | s(b.d_time.0, 6),
+            Machine::Stretch(b) => {
+                s(b.speed.0, 0) | s(b.fold.0, 6) | s(b.at.0, 11) | (b.grain as u32) << 16
+            }
             Machine::Wave(f) => s(f.frame.0, 0) | s(f.range.0, 6) | s(f.scan.0, 12),
+            Machine::Walk(w) => {
+                s(w.dir as u8, 0)
+                    | s(w.position.0, 2)
+                    | s(w.length.0, 8)
+                    | s(w.drift.0, 14)
+                    | s(w.fade.0, 18)
+                    | s(w.tron as u8, 21)
+            }
             Machine::Scrub(p) => {
                 s(p.finger.0, 0)
                     | s(p.speed.0, 6)
@@ -465,6 +608,7 @@ pub fn paint(g: &TapeGauge, out: &mut Canvas) -> bool {
 pub struct GlyphDoor {
     render: fn(&TapeGauge, &mut Canvas),
     inputs: fn(&GlyphInputs) -> TapeGauge,
+    inputs_set: fn([f32; 15], Pose) -> TapeGauge,
 }
 
 #[cfg(feature = "bank2")]
@@ -472,5 +616,6 @@ impl GlyphDoor {
     pub const DOOR: GlyphDoor = GlyphDoor {
         render: draw::render,
         inputs: draw::inputs,
+        inputs_set: draw::inputs_set,
     };
 }

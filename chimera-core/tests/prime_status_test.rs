@@ -319,9 +319,9 @@ fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeSt
     }
 }
 
-/// The Algo chain reaches 12 registry addresses (MORPH, VOL, six LEVELs,
-/// and on FLT › FX under SOFT the filter's LEVEL (INPUT), TONE, LEVEL and
-/// MIX); CUTOFF, RESO and FX (SOFT's DRIVE) are permanent columns, so
+/// The Algo chain reaches 13 registry addresses (MORPH, VOL, six LEVELs,
+/// on FLT › FX under SOFT the filter's LEVEL (INPUT), TONE, LEVEL and
+/// MIX, and AMP's LPG); CUTOFF, RESO and FX (SOFT's DRIVE) are permanent columns, so
 /// priming them reports ALREADY ROUTED. Then each ENV's ATTACK, DECAY and
 /// SUSTAIN: through real input, exactly `MAX_MOD_DESTS` report ADDED, then
 /// MATRIX FULL, and the matrix holds every added one.
@@ -343,8 +343,8 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
     feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › FX: INPUT, the pots, MIX
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    feed(&mut ui, Input::press(ButtonId::Plus)); // AMP
-    prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    feed(&mut ui, Input::press(ButtonId::Plus)); // AMP: VEL (the VCA), LPG
+    prime_every_slot(&mut ui, &ALL_SLOTS[..2], &mut seen);
     let chain = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
     assert!(chain < MAX_MOD_DESTS, "{seen:?}");
     for (n, def) in [(1, &ENVELOPE), (2, &ENV_2), (3, &ENV_3)] {

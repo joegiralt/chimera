@@ -194,6 +194,26 @@ fn a_closed_bank2_labels_the_reverb_type() {
     assert_eq!(closed_text(mix, 0.0, Some(Bank2Status::Empty)), None);
 }
 
+/// VA NOISE plays from bank 2 (ADR 0197): closed, KIND reads NEEDS UPDATE
+/// whatever its value; LEVEL keeps its number.
+#[test]
+fn a_closed_bank2_labels_the_noise_kind() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::bank2::closed_text;
+    use chimera_core::dsp::va::VaParams;
+    let kind = ParamAddr::new(BlockRef::Va, VaParams::NOISE_KIND);
+    for v in [0.0, 1.0] {
+        assert_eq!(
+            closed_text(kind, v, Some(Bank2Status::Empty)),
+            Some("NEEDS UPDATE")
+        );
+        assert_eq!(closed_text(kind, v, Some(open())), None);
+        assert_eq!(closed_text(kind, v, None), None);
+    }
+    let level = ParamAddr::new(BlockRef::Va, VaParams::NOISE);
+    assert_eq!(closed_text(level, 0.5, Some(Bank2Status::Empty)), None);
+}
+
 /// The focus band reads NEEDS UPDATE; the TYPE cell, a column wide,
 /// UPDATE, leaving SIZE's cell beside it alone.
 #[test]

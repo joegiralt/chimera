@@ -206,6 +206,8 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 offset_of!(OutParams, volume)
             } else if id == OutParams::VCA_VEL.0 {
                 offset_of!(OutParams, vca_vel)
+            } else if id >= OutParams::LPG.0 && id <= OutParams::STRIKE.0 {
+                offset_of!(OutParams, gate) + (id - OutParams::LPG.0) as usize * size_of::<f32>()
             } else {
                 panic!("an OUT knob without a field")
             };
@@ -247,6 +249,8 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 offset_of!(V, shape)
             } else if id == V::SHAPE2.0 {
                 offset_of!(V, shape) + size_of::<f32>()
+            } else if id == V::NOISE.0 {
+                offset_of!(V, noise)
             } else {
                 panic!("a VA knob without a field")
             };

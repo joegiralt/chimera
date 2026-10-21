@@ -1,5 +1,5 @@
 //! A WAVE or ALG A/B choice the formant budget refuses (ADR 0151), or a
-//! TAPE machine a streamed source can't play: the turn lands on it, the
+//! TAPE machine or WALK DIRECTION a streamed source can't play: the turn lands on it, the
 //! cell shows it dimmed with the reason in the focus band, and nothing is
 //! written.
 
@@ -7,7 +7,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::kinds::{Linked, OpKind, Why, why_kind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
-use crate::dsp::tape_engine::{MachineIndex, NeedsRam, TapeEngineParams, TapeMachine, needs_ram};
+use crate::dsp::tape_engine::{NeedsRam, TapeEngineParams};
 use crate::preset::Sound;
 use crate::project::Line;
 
@@ -40,6 +40,8 @@ pub struct Shown {
 
 /// TAPE's MODEL: on a streamed source a turn holds a machine it refuses.
 pub const MODEL: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
+/// WALK's DIRECTION: likewise REVERSE and PING-PONG (ADR 0203).
+pub const DIRECTION: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODE);
 
 /// Whether `a` is a cell this applies to.
 pub fn applies(a: ParamAddr, shift: bool) -> bool {
@@ -54,10 +56,15 @@ impl Held {
     /// Why `sound` refuses it, or `None` where it would land. `streamed`:
     /// the Sound's source streams.
     pub fn why(self, sound: &Sound, streamed: bool) -> Option<Reason> {
-        if self.addr == MODEL {
-            let mut t = sound.params.tape;
-            t.set_machine(TapeMachine::from_index(MachineIndex(self.code)));
-            return needs_ram(&t).filter(|_| streamed).map(Reason::NeedsRam);
+        if self.addr == MODEL || self.addr == DIRECTION {
+            if !streamed {
+                return None;
+            }
+            // Bank 2's (`ui::walk`): closed, nothing is held.
+            let t = &sound.params.tape;
+            return crate::bank2::ui_door(|u| u.tape_held(t, self.addr.param, self.code))
+                .flatten()
+                .map(Reason::NeedsRam);
         }
         let p = &sound.params.algo;
         let why = match self.addr.block {

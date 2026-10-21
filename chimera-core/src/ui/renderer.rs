@@ -40,7 +40,7 @@ use crate::ui::region::{self, Layout, RegionKind};
 use crate::ui::settings::Ask;
 use crate::ui::settings::prompt::{Beneath, blank_beneath, draw_prompt};
 use crate::ui::settings::view::Bands;
-use crate::ui::tape_glyph::{GlyphInputs, Pose, TapeGauge};
+use crate::ui::tape_glyph::{Pose, TapeGauge};
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
@@ -126,6 +126,8 @@ pub struct Frame<'a> {
     /// An LFO page's playhead: its slot's newest voice on the active Part,
     /// `None` with no voice (ADR 0177).
     pub lfo: Option<crate::ui::lfo_glyph::Head>,
+    /// PIT's corner (ADR 0201).
+    pub tuner: &'a crate::ui::pit_tuner::Shown,
 }
 
 impl Frame<'_> {
@@ -458,7 +460,11 @@ impl Renderer {
                 viz::fx_strip(display, source, fx.place == Place::Post, 128);
                 viz::fx_curve(display, 168, &rows);
             }
-            _ => viz::live_output(display, f.scope),
+            // PIT's corner rides the scope (ADR 0201): empty off PIT.
+            _ => {
+                viz::live_output(display, f.scope);
+                crate::ui::pit_tuner::paint(display, f.tuner);
+            }
         }
     }
 
@@ -472,8 +478,7 @@ impl Renderer {
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
-    /// slots glide: the strip never snaps. On PLAY the MODE glides with
-    /// MODEL; off it, the machine is the Part's.
+    /// slots glide: the strip never snaps. The machine is the Part's.
     fn strip_params(&self, f: &Frame) -> (TapeMachine, TapeEngineParams) {
         let t = f.parts[f.active_part.index()].sound.params.tape;
         let mut p = t;
@@ -487,11 +492,8 @@ impl Renderer {
                 crate::block::Block::set(&mut p, a.param, v);
             }
         }
-        let m = match (t.machine.mode(), p.machine.mode()) {
-            (Some(was), now) => TapeMachine::play(now.unwrap_or(was)),
-            (None, _) => t.machine,
-        };
-        (m, p)
+        p.machine = t.machine;
+        (t.machine, p)
     }
 
     /// The focused operator's envelope rates, this page's from its animated
@@ -641,7 +643,8 @@ impl Renderer {
                     let tp = (fx.ty() as u32) << 1 | fx.place as u32;
                     ([0; 6], region::fold_keys(tp.into(), &bits))
                 }
-                _ => ([0; 6], viz::live_key(f.scope)),
+                // PIT's corner's key is 0 off PIT.
+                _ => ([0; 6], viz::live_key(f.scope) ^ f.tuner.key),
             },
             PageLayout::BigViz => {
                 // The GR meter redraws every 0.25 dB; ABOUT on bank 2's word.
@@ -770,9 +773,10 @@ impl Renderer {
         }
         let buf = value_text(f, f.focus, self.set[f.focus].target());
         let gauge = self.gauge(f);
+        let label = band_label(f, &view);
         components::focus_band(
             display,
-            view.label(),
+            label.as_str(),
             buf.as_str(),
             gauge,
             look(f, f.focus),
@@ -846,7 +850,8 @@ impl Renderer {
             return 0;
         }
         let text = value_text(f, i, self.set[i].target());
-        region::settings_key(&[text.as_str().as_bytes()])
+        let label = band_label(f, &view::view(f.def, i, &f.ctx));
+        region::settings_key(&[text.as_str().as_bytes(), label.as_str().as_bytes()])
     }
 
     /// The matrix amount as printed (the target's `amount_of`).
@@ -924,7 +929,7 @@ impl Renderer {
                     Pose::Live
                 };
                 let set = self.eased_set(f, TAPE_GLYPH_PARAMS);
-                Gauge::Tape(TapeGauge::of(&GlyphInputs::from_set(set, pose)))
+                Gauge::Tape(TapeGauge::of_set(set, pose))
             }
             Reads::Lfo => match focused.map(|a| a.block) {
                 Some(BlockRef::Lfo(s)) => {
@@ -1262,6 +1267,23 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
+}
+
+/// The focus band's label: FREQ MOD and RES MOD name the source their jack
+/// acts as now (`FREQ MOD LFO1`), as the JACK page does.
+pub fn band_label(f: &Frame, view: &View) -> FmtBuf {
+    use core::fmt::Write;
+    let mut label = FmtBuf::new();
+    let _ = label.write_str(view.label());
+    if let View::Route {
+        route: crate::ui::filter_panel::RouteView::Jack(j),
+        ..
+    } = view
+    {
+        let sound = &f.parts[f.active_part.index()].sound;
+        let _ = write!(label, " {}", j.effective(sound).tag());
+    }
+    label
 }
 
 /// The matrix's inert columns on the edited Part (`mod_grid::inert_dests`).

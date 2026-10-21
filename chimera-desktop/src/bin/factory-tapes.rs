@@ -9,7 +9,7 @@ use chimera_core::block::DiskCode;
 use chimera_core::block::ParamId;
 use chimera_core::dsp::tape_engine::TapeEngineParams as P;
 use chimera_core::dsp::tape_engine::read::Shape;
-use chimera_core::dsp::tape_engine::{PlayMode, StretchType, TapeMachine, TapeModel};
+use chimera_core::dsp::tape_engine::{Direction, StretchType, TapeMachine, TapeModel, Tron};
 use chimera_desktop::factory_tapes::{
     ROOT, VERSION, build_all, held, originals, pitch, read_recipes, tape_sound, write_set,
 };
@@ -111,8 +111,8 @@ fn run_qa(wav: Option<&String>) -> Result<bool, String> {
         let own = if wave {
             0.0
         } else {
-            let base = Way::One.base(TapeModel::Play, StretchType::Mono);
-            let s = Way::One.script(TapeModel::Play);
+            let base = Way::One.base(TapeModel::Walk, StretchType::Mono);
+            let s = Way::One.script(TapeModel::Walk);
             let y = render(base, &held, p, root_note(p), &s);
             qa_takes(&y[..y.len().min(48_000 * 5 / 2)], &take_starts(&s)).click_ratio
         };
@@ -182,7 +182,7 @@ fn run_qa(wav: Option<&String>) -> Result<bool, String> {
 /// take from the root, 1.5 s apart, and a param ramped over the render)`.
 type Demo = (
     &'static str,
-    Option<(TapeModel, PlayMode)>,
+    Option<(TapeModel, Direction, Tron)>,
     &'static [u8],
     Option<(ParamId, f32, f32)>,
 );
@@ -196,7 +196,7 @@ const DEMOS: [Demo; 14] = [
     ("TRON BOWED", None, &[0, 12], None),
     (
         "BOWED LOOP",
-        Some((TapeModel::Tron, PlayMode::Loop)),
+        Some((TapeModel::Walk, Direction::Forward, Tron::On)),
         &[0, 7],
         None,
     ),
@@ -209,7 +209,7 @@ const DEMOS: [Demo; 14] = [
     ("PAD PINGPONG", None, &[0, 0], Some((P::SIZE, 0.5, 0.15))),
     (
         "SINE LOOP",
-        Some((TapeModel::Play, PlayMode::Ping)),
+        Some((TapeModel::Walk, Direction::Ping, Tron::Off)),
         &[0, 0],
         Some((P::SIZE, 0.6, 0.2)),
     ),
@@ -237,8 +237,8 @@ fn demo(dir: &str) -> Result<bool, String> {
             .ok_or(name)?;
         let snd = tape_sound(s, &b.head);
         let mut base = snd.params.tape;
-        if let Some((m, mode)) = model {
-            base.machine = TapeMachine::of(m, mode);
+        if let Some((m, d, t)) = model {
+            (base.machine, base.direction, base.tron) = (TapeMachine::of(m), d, t);
         }
         let secs = 1.5 * notes.len() as f32;
         let points: Vec<(f32, ParamId, f32)> = match ramp {

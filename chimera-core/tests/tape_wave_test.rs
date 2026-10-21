@@ -7,7 +7,6 @@ mod common;
 
 use core::mem::MaybeUninit;
 
-use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::wave::{
@@ -15,6 +14,7 @@ use chimera_core::dsp::tape_engine::wave::{
     note_on_level, nyquist_gain, playable, stored_log2, top_of,
 };
 use chimera_core::dsp::tape_engine::{Probe, TapeEngine, TapeEngineParams};
+use chimera_core::dsp::tape_engine::{TapeMachine, Way};
 use chimera_hal::BLOCK_SIZE;
 use common::tape::{held_plain, held_transwave, power_bh, sine};
 
@@ -723,14 +723,11 @@ fn plain_source_is_not_playable() {
     let tv = SourceView::strict(&tw).unwrap();
     let cut = &tw[..tw.len() - 3];
     let cv = SourceView::strict(cut).unwrap();
-    assert!(!playable(TapeMachine::Wave, &pv));
-    assert!(playable(TapeMachine::Wave, &tv));
-    assert!(
-        !playable(TapeMachine::Wave, &cv),
-        "frames short of its count"
-    );
-    for m in TapeMachine::ALL {
-        if m != TapeMachine::Wave {
+    assert!(!playable(Way::Wave, &pv));
+    assert!(playable(Way::Wave, &tv));
+    assert!(!playable(Way::Wave, &cv), "frames short of its count");
+    for m in Way::ALL {
+        if m != Way::Wave {
             for v in [&pv, &tv, &cv] {
                 assert!(playable(m, v), "{m:?}");
             }

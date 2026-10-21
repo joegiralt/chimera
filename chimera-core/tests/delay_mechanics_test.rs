@@ -158,6 +158,7 @@ fn mechanics_is_wow_relabelled() {
         (s.label, s.short, s.ident, s.default),
         ("MECHANICS", Some("MECH"), "WOW", 0.15)
     );
-    assert_eq!(DELAY_SPECS.len(), 7);
+    // TYPE and GRAIN's four follow (ADR 0202).
+    assert_eq!(DELAY_SPECS.len(), 12);
     assert!(ValidAddr::find(BlockRef::Delay, DelayParams::WOW_FLUTTER).is_some());
 }

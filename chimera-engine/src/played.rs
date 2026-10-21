@@ -76,6 +76,8 @@ pub fn any_held() -> bool {
     HELD.iter().any(|w| w.load(Ordering::Relaxed) != 0)
 }
 
+/// Inlined: the screensaver and PIT's tuner (bank 2's) each take their own.
+#[inline(always)]
 pub fn last_in() -> Option<NoteIn> {
     let w = LAST_IN.load(Ordering::Relaxed);
     (w & VALID != 0).then_some(NoteIn {
@@ -85,6 +87,7 @@ pub fn last_in() -> Option<NoteIn> {
     })
 }
 
+#[inline(always)]
 pub fn last_out() -> Option<NoteOut> {
     let w = LAST_OUT.load(Ordering::Relaxed);
     (w & VALID != 0).then_some(NoteOut {

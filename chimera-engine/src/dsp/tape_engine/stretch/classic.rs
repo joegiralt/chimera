@@ -1,4 +1,4 @@
-//! STRETCH (spec § 2 STRETCH, Why period-locking): the Akai S950's
+//! STRETCH's CLASSIC TYPE (ADR 0204; spec § 2 STRETCH, Why period-locking): the Akai S950's
 //! time-stretch (S950 Operator's Manual p. 32: TIMESTRETCH, D-TIME, MONO
 //! and POLY) run in real time, as the JUCE forum's Akai-style two-grain
 //! stretch (2024) does. WSOLA (Verhelst and Roelands, 1993) is the costed
@@ -55,10 +55,12 @@
 
 use chimera_hal::BLOCK_SIZE;
 
-use super::heads::{Dir, POWER, at, power_of, shortest, window_end_min, window_start, xgains};
-use super::params::{StretchType, TapeEngineParams};
-use super::read::{Pos, SourceView};
-use super::{INC_MAX, MIN_LOOP_FRAMES, MIN_PASS_SAMPLES, Macros};
+use super::super::heads::{
+    Dir, POWER, at, power_of, shortest, window_end_min, window_start, xgains,
+};
+use super::super::params::{StretchType, TapeEngineParams};
+use super::super::read::{Pos, SourceView};
+use super::super::{INC_MAX, MIN_LOOP_FRAMES, MIN_PASS_SAMPLES, Macros};
 use crate::dsp::algo::math::{clampf, exp2};
 
 /// A wrap's lift fades over 5 ms, as PING-PONG's clamp does.
@@ -333,10 +335,10 @@ pub struct Stretch {
     peak: f32,
     /// Splices and wraps: for the tests.
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) events: u32,
+    pub(in super::super) events: u32,
     /// Wraps in the loop, lifted and bare: for the tests.
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) wraps: [u32; 2],
+    pub(in super::super) wraps: [u32; 2],
 }
 
 impl Stretch {
@@ -874,7 +876,7 @@ mod tests {
 
     /// `ramp`, sample `i` at `base + i · step`.
     fn ramp_of(frames: usize, base: usize, step: usize) -> ([u8; 16 + 336], usize) {
-        use super::super::read::{DESC_LEN, Descriptor, Shape};
+        use super::super::super::read::{DESC_LEN, Descriptor, Shape};
         let d = Descriptor::whole(Shape::Plain, 1, 48_000).unwrap();
         let mut x = [0i16; 224];
         for (i, y) in x.iter_mut().enumerate() {

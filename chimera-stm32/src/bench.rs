@@ -44,7 +44,9 @@ use chimera_engine::dsp::rev::extra_cost;
 use chimera_engine::dsp::rev::sync::Tempo;
 use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
-use chimera_engine::dsp::tape_engine::{PlayMode, StretchType, TapeMachine, TapeModel, wave};
+use chimera_engine::dsp::tape_engine::{
+    Direction, StretchType, TapeMachine, TapeModel, Tron, wave,
+};
 use chimera_engine::dsp::va::VaMode;
 use chimera_engine::dsp::voice::Voice;
 use chimera_engine::dsp::voice_fx::params::FxType;
@@ -1222,14 +1224,14 @@ static TAPE_ROWS: [TapeRow; 13] = [
     (
         "LOOP 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Play, PlayMode::Loop),
+        |p| tiny(p, TapeModel::Walk, Direction::Loop),
         HOLD,
     ),
     (
         "REV 64",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Play, PlayMode::Loop);
+            tiny(p, TapeModel::Walk, Direction::Loop);
             (p.tape.start, p.tape.end) = (1.0, 0.0);
         },
         HOLD,
@@ -1237,26 +1239,26 @@ static TAPE_ROWS: [TapeRow; 13] = [
     (
         "PING 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Play, PlayMode::Ping),
+        |p| tiny(p, TapeModel::Walk, Direction::Ping),
         HOLD,
     ),
     (
         "SCRUB 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Scrub, PlayMode::Loop),
+        |p| tiny(p, TapeModel::Scrub, Direction::Loop),
         HOLD,
     ),
     (
         "LOOP 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::Play, PlayMode::Loop),
+        |p| tiny(p, TapeModel::Walk, Direction::Loop),
         HOLD,
     ),
     (
         "REV 256",
         Tapes::Short,
         |p| {
-            tiny(p, TapeModel::Play, PlayMode::Loop);
+            tiny(p, TapeModel::Walk, Direction::Loop);
             (p.tape.start, p.tape.end) = (1.0, 0.0);
         },
         HOLD,
@@ -1264,20 +1266,22 @@ static TAPE_ROWS: [TapeRow; 13] = [
     (
         "PING 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::Play, PlayMode::Ping),
+        |p| tiny(p, TapeModel::Walk, Direction::Ping),
         square,
     ),
     (
         "SCRUB 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::Scrub, PlayMode::Loop),
+        |p| tiny(p, TapeModel::Scrub, Direction::Loop),
         square,
     ),
     (
         "1SHOT",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Play, PlayMode::One);
+            tiny(p, TapeModel::Walk, Direction::Forward);
+            // ONE read no LENGTH: FORWARD plays the whole window.
+            p.tape.size = 1.0;
             p.tape.slice = chimera_engine::dsp::tape_engine::SliceCode::new(17);
         },
         |_, _| Hit::Again,
@@ -1285,14 +1289,17 @@ static TAPE_ROWS: [TapeRow; 13] = [
     (
         "TRON",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Tron, PlayMode::Loop),
+        |p| {
+            tiny(p, TapeModel::Walk, Direction::Forward);
+            p.tape.tron = Tron::On;
+        },
         |_, _| Hit::AgainOff,
     ),
 ];
 
 /// SIZE 0, XFADE ½, ROOT 0: `inc` clamped on any source.
-fn tiny(p: &mut ParamSnapshot, model: TapeModel, mode: PlayMode) {
-    p.tape.machine = TapeMachine::of(model, mode);
+fn tiny(p: &mut ParamSnapshot, model: TapeModel, d: Direction) {
+    (p.tape.machine, p.tape.direction) = (TapeMachine::of(model), d);
     (p.tape.size, p.tape.xfade, p.tape.root) = (0.0, 0.5, 0.0);
 }
 
@@ -1517,7 +1524,7 @@ const STREAM_RATE: u16 = 24_000;
 /// was measured at C4 − 4 to + 3, under the old 466 KB/s placeholder.)
 const STREAM_LOW: u8 = 53;
 
-/// A TAPE STREAM row: its label, the Sound over PLAY with TAPE and AGE at
+/// A TAPE STREAM row: its label, the Sound over WALK with TAPE and AGE at
 /// 0.5, and what changes before each block.
 type StreamRow = (
     &'static str,
@@ -1531,21 +1538,21 @@ static STREAM_ROWS: [StreamRow; 2] = [
     // onto the loop head.
     (
         "LOOP",
-        |p| (p.tape.machine, p.tape.size, p.tape.xfade) = (TapeMachine::Loop, 1.0, 0.5),
+        |p| (p.tape.direction, p.tape.size, p.tape.xfade) = (Direction::Loop, 1.0, 0.5),
         HOLD,
     ),
     (
         "HIT",
-        |p| p.tape.machine = TapeMachine::One,
+        |p| (p.tape.direction, p.tape.size) = (Direction::Forward, 1.0),
         |_, _| Hit::Again,
     ),
 ];
 
-/// The Sound a row sets: PLAY at ROOT C4, TAPE and AGE at 0.5.
+/// The Sound a row sets: WALK at ROOT C4, TAPE and AGE at 0.5.
 fn stream_sound(row: &StreamRow) -> ParamSnapshot {
     let mut p = snapshot(EngineType::Tape);
     (p.tape.tape, p.tape.age) = (0.5, 0.5);
-    (p.tape.machine, p.tape.root) = (TapeMachine::Loop, 6_000.0);
+    (p.tape.machine, p.tape.direction, p.tape.root) = (TapeMachine::Walk, Direction::Loop, 6_000.0);
     (row.1)(&mut p);
     p
 }

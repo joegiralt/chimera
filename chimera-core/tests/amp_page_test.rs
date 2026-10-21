@@ -1,5 +1,6 @@
-//! AMP: the sends and VCA VEL (filter-routing spec § 5; the fold left for
-//! the FX slot, ADR 0155).
+//! AMP: the VCA's VEL and its low-pass gate, LPG · DECAY · STRIKE (ADR
+//! 0195); the sends on AMP › SENDS (filter-routing spec § 5; the fold left
+//! for the FX slot, ADR 0155).
 
 mod screen;
 
@@ -46,7 +47,7 @@ fn on_amp() -> UiState {
 #[test]
 fn a_dimmed_vel_ignores_its_encoder() {
     let mut ui = on_amp();
-    feed(&mut ui, Input::turn(EncoderId::E, -20));
+    feed(&mut ui, Input::turn(EncoderId::A, -20));
     assert_eq!(ui.params().out.vca_vel, 1.0);
 }
 
@@ -55,7 +56,7 @@ fn a_dimmed_vel_ignores_its_encoder() {
 #[test]
 fn mix_plus_on_vel_primes_the_vca() {
     let mut ui = on_amp();
-    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     assert_eq!(ui.prime_status(), Some(PrimeStatus::AlreadyRouted));
     assert!(
@@ -81,7 +82,7 @@ fn the_cells_key_carries_vels_dimming() {
         let Some(RegionData::Cells { looks, .. }) = ui.drawn_key(RegionKind::Cells) else {
             panic!("AMP has cells");
         };
-        looks >> 8 & 3
+        looks & 3
     };
     assert_eq!(vel_look(&mut ui), Look::Dimmed as u32);
     let m = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.mod_state;
@@ -91,37 +92,29 @@ fn the_cells_key_carries_vels_dimming() {
 
 #[test]
 fn amp_rows() {
-    let got: Vec<_> = (0..6).map(|i| AMP.params[i].label()).collect();
-    assert_eq!(got, ["CHORUS", "DELAY", "REVERB", "--", "VEL", "--"]);
-}
-
-/// AMP's cell 2 and the mixer's SENDS cell 2 are one address.
-#[test]
-fn amp_and_sends_are_one_value() {
-    use chimera_core::addr::Op;
-    use chimera_core::params::ParamSnapshot;
     use chimera_core::ui::block_registry::SENDS;
-    use chimera_core::ui::part_page;
-    let mut p = ParamSnapshot::default();
-    part_page::apply_encoder(&AMP, 2, 3, &mut p, &mut Op::A);
-    assert_eq!(part_page::read_values(&SENDS, &p, Op::A)[2], 3.0 / 128.0);
+    let got: Vec<_> = (0..6).map(|i| AMP.params[i].label()).collect();
+    assert_eq!(got, ["VEL", "LPG", "DECAY", "STRIKE", "--", "--"]);
+    let got: Vec<_> = (0..6).map(|i| SENDS.params[i].label()).collect();
+    assert_eq!(got, ["CHORUS", "DELAY", "REVERB", "--", "--", "--"]);
 }
 
-/// No sub-page: SYM went with the fold.
+/// AMP's one sub-page is SENDS, the mixer's own: one value, one focus.
 #[test]
-fn amp_has_no_sub_pages() {
+fn amp_sends_is_the_mixers_sends() {
+    use chimera_core::ui::block_registry::SENDS;
     for ct in EngineType::ALL {
         let c = chain_def_for(ct);
-        for b in c.blocks.iter().filter(|b| b.def.id == AMP.id) {
-            assert_eq!(b.sub_page_count(), 0, "{ct:?}");
-        }
+        let b = c.blocks.iter().find(|b| b.def.id == AMP.id).unwrap();
+        assert_eq!(b.sub_page_count(), 2, "{ct:?}: AMP, SENDS");
+        assert_eq!(b.sub_pages[0].id, SENDS.id, "{ct:?}");
     }
 }
 
 #[test]
 fn labels_fit() {
     use chimera_core::ui::{draw, theme};
-    for s in ["CHORUS", "DELAY", "REVERB"] {
+    for s in ["CHORUS", "DELAY", "REVERB", "VEL", "LPG", "DECAY", "STRIKE"] {
         let w = draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
         assert!(w <= theme::CELL_BAR_W, "{s} {w}");
     }

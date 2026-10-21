@@ -1,4 +1,4 @@
-//! A streamed PLAY (slice 1 § 10.2): a source held as heads, the rest read
+//! A streamed WALK (slice 1 § 10.2): a source held as heads, the rest read
 //! off a `TestCard` through the voice's ring, plays as the same source held
 //! whole; a late card drops out and comes back cleanly; a chord's burst
 //! holds behind 100 ms heads; a short loop in a head never asks the card.
@@ -6,6 +6,7 @@
 mod common;
 
 use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::stream::units::{Cents, SourceRate};
 use core::mem::MaybeUninit;
 use core::num::NonZeroU32;
@@ -18,8 +19,8 @@ use chimera_core::dsp::tape_engine::heads::{
 };
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    COST_STREAM, FADE_HOLD, INC_MAX, PlayMode, Retrig, SliceCode, TapeEngine, TapeEngineParams,
-    TapeModel, Wow, inc, ratio_max, tape_runs,
+    COST_STREAM, Direction, FADE_HOLD, INC_MAX, Retrig, SliceCode, TapeEngine, TapeEngineParams,
+    Wow, inc, ratio_max, tape_runs,
 };
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::NoteOrigin;
@@ -144,9 +145,10 @@ fn sizing(p: &TapeEngineParams) -> Sizing {
     }
 }
 
-fn params(mode: PlayMode, start: f32, end: f32) -> TapeEngineParams {
+fn params(mode: Direction, start: f32, end: f32) -> TapeEngineParams {
     TapeEngineParams {
-        machine: TapeMachine::play(mode),
+        machine: TapeMachine::Walk,
+        direction: mode,
         start,
         end,
         tape: 1.0,
@@ -244,7 +246,7 @@ fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 4]) {
     )
 }
 
-/// The slice's key test: streamed with an on-time card, PLAY ONE and LOOP
+/// The slice's key test: streamed with an on-time card, WALK ONE and LOOP
 /// render bit for bit as the source held whole, TAPE and AGE on, across a
 /// START turn that re-stages the heads mid-note and a note struck after
 /// it. LOOP's short loop sits past the ring at the window's end (its start
@@ -257,7 +259,7 @@ fn streamed_equals_whole() {
     let whole = held_plain(&noise(FRAMES), RATE);
     let scripts = [
         Script {
-            p: params(PlayMode::One, 0.30, 1.0),
+            p: params(Direction::Forward, 0.30, 1.0),
             turned: Some(0.29),
             turn: 600,
             again: 1_200,
@@ -268,7 +270,7 @@ fn streamed_equals_whole() {
                 size: 0.0,
                 position: 1.0,
                 xfade: 0.5,
-                ..params(PlayMode::Loop, 0.30, 0.31)
+                ..params(Direction::Loop, 0.30, 0.31)
             },
             turned: Some(0.29),
             turn: 600,
@@ -280,7 +282,7 @@ fn streamed_equals_whole() {
                 size: 0.8,
                 position: 1.0,
                 xfade: 0.25,
-                ..params(PlayMode::Loop, 0.30, 0.32)
+                ..params(Direction::Loop, 0.30, 0.32)
             },
             turned: None,
             turn: 0,
@@ -288,7 +290,7 @@ fn streamed_equals_whole() {
             blocks: 3_200,
         },
         Script {
-            p: params(PlayMode::One, 0.30, 1.0),
+            p: params(Direction::Forward, 0.30, 1.0),
             turned: Some(0.3001),
             turn: WARM,
             again: 1_200,
@@ -299,7 +301,7 @@ fn streamed_equals_whole() {
                 size: 0.0,
                 position: 1.0,
                 xfade: 0.5,
-                ..params(PlayMode::Loop, 0.30, 0.31)
+                ..params(Direction::Loop, 0.30, 0.31)
             },
             turned: Some(0.3001),
             turn: WARM,
@@ -351,7 +353,7 @@ fn underrun_drops_out_cleanly() {
     let p = TapeEngineParams {
         tape: 0.0,
         age: 0.0,
-        ..params(PlayMode::One, 0.1, 1.0)
+        ..params(Direction::Forward, 0.1, 1.0)
     };
     let s = Script {
         p,
@@ -422,7 +424,7 @@ fn chord_burst_holds() {
         let p = TapeEngineParams {
             tape: 0.0,
             age: 0.0,
-            ..params(PlayMode::One, at as f32 / FRAMES as f32, 1.0)
+            ..params(Direction::Forward, at as f32 / FRAMES as f32, 1.0)
         };
         let mut src = OneSource::new(&held(&st.card, &p));
         let mut slots: Vec<MaybeUninit<TapeEngine>> =
@@ -482,7 +484,7 @@ fn short_loop_on_streamed_source_stays_in_ram() {
         size: 0.3403,
         position: 0.0,
         xfade: 0.1,
-        ..params(PlayMode::Loop, 0.5, 1.0)
+        ..params(Direction::Loop, 0.5, 1.0)
     };
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);
@@ -513,7 +515,7 @@ fn short_loop_on_streamed_source_stays_in_ram() {
     assert_eq!(st.card.stats.underruns.load(Ordering::Relaxed), 0);
 }
 
-/// `tape_bounds_test`'s `reads_stay_in_row`, through spans: whatever PLAY
+/// `tape_bounds_test`'s `reads_stay_in_row`, through spans: whatever WALK
 /// ONE or forward LOOP's params, every tap lands inside the span it reads
 /// (strict views panic on one outside).
 #[test]
@@ -526,7 +528,7 @@ fn span_reads_stay_in_bounds() {
         let whole = held_plain(&s, RATE);
         let (a, z) = (unit(&mut rng), unit(&mut rng));
         let p = TapeEngineParams {
-            machine: TapeMachine::play([PlayMode::One, PlayMode::Loop][rng.below(2)]),
+            direction: [Direction::Forward, Direction::Loop][rng.below(2)],
             start: a.min(z),
             end: a.max(z),
             position: unit(&mut rng),
@@ -579,7 +581,7 @@ fn a_start_turn_never_cuts_a_note() {
     let p = TapeEngineParams {
         tape: 0.0,
         age: 0.0,
-        ..params(PlayMode::One, 0.3, 1.0)
+        ..params(Direction::Forward, 0.3, 1.0)
     };
     let moved = TapeEngineParams { start: 0.2, ..p };
     let script = |p, turned| Script {
@@ -658,7 +660,7 @@ fn a_start_turn_never_cuts_a_note() {
     assert_eq!(&out[..], &wb[..100 * BLOCK_SIZE]);
 }
 
-/// WALK moves every pass off the heads: each wrap still lands warm, a
+/// DRIFT moves every pass off the heads: each wrap still lands warm, a
 /// pass ahead's prefetch following the walk (#698), and no step passes 4×
 /// the steady state's.
 #[test]
@@ -670,7 +672,7 @@ fn walking_loop_lands_warm() {
         xfade: 0.2,
         tape: 0.0,
         age: 0.0,
-        ..params(PlayMode::Loop, 0.30, 0.40)
+        ..params(Direction::Loop, 0.30, 0.40)
     };
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);
@@ -720,7 +722,7 @@ fn moved_loop_lands_warm_at_the_wrap() {
             xfade,
             tape: 0.0,
             age: 0.0,
-            ..params(PlayMode::Loop, 0.30, 0.32)
+            ..params(Direction::Loop, 0.30, 0.32)
         };
         let (rings, third) = rings();
         let mut st = Stream::new(&rings, &third, &whole, 0);
@@ -789,7 +791,7 @@ fn streamed_xfade_stops_at_what_the_loop_head_holds() {
         xfade: 0.5,
         tape: 0.0,
         age: 0.0,
-        ..params(PlayMode::Loop, 0.30, 0.34)
+        ..params(Direction::Loop, 0.30, 0.34)
     };
     let r = SourceRef {
         crc: 0,
@@ -852,7 +854,7 @@ fn a_warm_landing_after_a_duck_rises() {
         xfade: 0.3,
         tape: 0.0,
         age: 0.0,
-        ..params(PlayMode::Loop, 0.30, 0.34)
+        ..params(Direction::Loop, 0.30, 0.34)
     };
     let r = SourceRef {
         crc: 0,
@@ -1030,13 +1032,13 @@ impl<'r> Played<'r> {
     }
 }
 
-/// PLAY ONE at FADE HOLD from START 0: note-off doesn't end it.
+/// WALK ONE at FADE HOLD from START 0: note-off doesn't end it.
 fn one_hold() -> TapeEngineParams {
     TapeEngineParams {
         drag: FADE_HOLD,
         tape: 0.0,
         age: 0.0,
-        ..params(PlayMode::One, 0.0, 1.0)
+        ..params(Direction::Forward, 0.0, 1.0)
     }
 }
 
@@ -1159,28 +1161,25 @@ fn steal_fades_through_allocator() {
 #[test]
 fn ping_on_streamed_source_refused_before_allocation() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
-    for (model, mode, plays) in [
-        (TapeModel::Play, PlayMode::One, true),
-        (TapeModel::Play, PlayMode::Loop, true),
-        (TapeModel::Play, PlayMode::Ping, false),
-        (TapeModel::Scrub, PlayMode::Loop, false),
-        (TapeModel::Stretch, PlayMode::Loop, false),
-        (TapeModel::Transwave, PlayMode::Loop, false),
-        (TapeModel::Tron, PlayMode::Loop, true),
+    for (way, plays) in [
+        (Way::One, true),
+        (Way::Loop, true),
+        (Way::Ping, false),
+        (Way::Scrub, false),
+        (Way::Stretch, false),
+        (Way::Wave, false),
+        (Way::Tron, true),
     ] {
         let (rings, third) = rings();
         let st = Stream::new(&rings, &third, &whole, 0);
-        let p = TapeEngineParams {
-            machine: TapeMachine::of(model, mode),
-            ..params(mode, 0.0, 1.0)
-        };
+        let p = params(Direction::Loop, 0.0, 1.0).with_way(way);
         let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
         let mut pl = Played::new(st, src, &[(0, p)]);
         pl.on(0, 60);
-        assert_eq!(pl.booked(), usize::from(plays), "{model:?} {mode:?}");
+        assert_eq!(pl.booked(), usize::from(plays), "{way:?}");
         assert_eq!(pl.rig.inst.allocator().refused(), 0, "never asked");
         pl.block();
-        assert_eq!(pl.rig.inst.active()[0], plays, "{model:?} {mode:?}");
+        assert_eq!(pl.rig.inst.active()[0], plays, "{way:?}");
     }
 }
 
@@ -1188,10 +1187,14 @@ fn ping_on_streamed_source_refused_before_allocation() {
 #[test]
 fn reverse_on_streamed_refused() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
-    for mode in [PlayMode::One, PlayMode::Loop] {
+    for (mode, (start, end)) in [
+        (Direction::Forward, (0.9, 0.1)),
+        (Direction::Loop, (0.9, 0.1)),
+        (Direction::Reverse, (0.1, 0.9)),
+    ] {
         let (rings, third) = rings();
         let st = Stream::new(&rings, &third, &whole, 0);
-        let p = params(mode, 0.9, 0.1);
+        let p = params(mode, start, end);
         let src = OneSource::new(&st.card.held(&[0, 0], HF));
         let mut pl = Played::new(st, src, &[(0, p)]);
         pl.on(0, 60);
@@ -1206,14 +1209,14 @@ fn mode_changed_to_ping_refuses_later_notes() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
     let (rings, third) = rings();
     let st = Stream::new(&rings, &third, &whole, 0);
-    let p = params(PlayMode::Loop, 0.0, 1.0);
+    let p = params(Direction::Loop, 0.0, 1.0);
     let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
     pl.on(0, 60);
     for _ in 0..10 {
         pl.block();
     }
-    pl.rig.shared.parts[0].params.tape.machine = TapeMachine::Ping;
+    pl.rig.shared.parts[0].params.tape.set_way(Way::Ping);
     pl.on(0, 64);
     assert_eq!(pl.booked(), 1);
     assert_eq!(pl.voice_of(0, 64), None);
@@ -1240,7 +1243,7 @@ fn streamed_speed_stays_under_its_cap() {
             motion: 1.0,
             tape: 1.0,
             wow,
-            ..params(PlayMode::Loop, 0.0, 1.0)
+            ..params(Direction::Loop, 0.0, 1.0)
         };
         let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 48), HF));
         let mut pl = Played::new(st, src, &[(0, p)]);
@@ -1291,7 +1294,7 @@ fn streamed_speed_stays_under_its_cap() {
     }
 }
 
-/// A streamed note books PLAY's bill and the stream's term, and keeps it
+/// A streamed note books WALK's bill and the stream's term, and keeps it
 /// once the voices are re-costed each block.
 #[test]
 fn streamed_note_bills_its_stream_term() {
@@ -1325,7 +1328,7 @@ fn resnapped_note_bill_covers_its_cap() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
     let (rings, third) = rings();
     let st = Stream::new(&rings, &third, &whole, 0);
-    let p = params(PlayMode::Loop, 0.0, 1.0);
+    let p = params(Direction::Loop, 0.0, 1.0);
     let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 64), HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
     pl.rig.shared.parts[0].mix.snap = LiveSnap::Chord;
@@ -1422,7 +1425,7 @@ fn raised_reach_is_readmitted_and_followed() {
         let st = Stream::new(&rings, &third, &whole, 0);
         let p = TapeEngineParams {
             tape: 0.0,
-            ..params(PlayMode::Loop, 0.0, 1.0)
+            ..params(Direction::Loop, 0.0, 1.0)
         };
         let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
         let mut pl = Played::new(st, src, &[(0, p)]);
@@ -2154,7 +2157,7 @@ fn a_rotted_cluster_in_a_loop_faults_twice_then_never() {
         drag: FADE_HOLD,
         tape: 0.0,
         age: 0.0,
-        ..params(PlayMode::Loop, 0.0, 0.05)
+        ..params(Direction::Loop, 0.0, 0.05)
     };
     let ws = window_start(p.start, FILE);
     let we = window_end(ws, p.end, FRAMES, HZ);
@@ -2350,7 +2353,7 @@ fn a_routed_start_past_end_never_reverses_a_stream() {
     let stored = TapeEngineParams {
         tape: 0.0,
         age: 0.0,
-        ..params(PlayMode::One, 0.3, 0.5)
+        ..params(Direction::Forward, 0.3, 0.5)
     };
     let routed = TapeEngineParams {
         start: 0.7,

@@ -78,7 +78,10 @@ fn voice_is_its_chain_plus_one_slot() {
 /// four-pole slot, the last block's amount, and the played Sound's FB with
 /// its padding (ADR 0190). SEM adds 32 B: its two states, FB signal and
 /// last block's ends (28) and the played Sound's MODE knob (ADR 0192).
-const VOICE_SIZE_BEFORE: usize = 6_584;
+/// VA NOISE adds 8 B: the played Sound's KIND and LEVEL (ADR 0197). The
+/// VCA's gate adds 72 B, its 68 B and padding (ADR 0195). STRETCH's four
+/// params in the played Sound add 16 B (ADR 0204). Merged, 6,688 B.
+const VOICE_SIZE_BEFORE: usize = 6_688;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.
@@ -220,7 +223,9 @@ fn ui_state_rest_under_4k() {
     // wait: the heads a streamed source wants, and since when; 128 B its
     // latch of each source's heads that can't be re-staged (slice 1
     // § 5.6). 16 B the LFO page's playhead and where it reads it (ADR
-    // 0177). The focus
+    // 0177). 152 B PIT's tuner: each Part's last note and the corner's two
+    // lines (ADR 0201). 8 B more on the tree that merges them all
+    // (integration-1021), past the sum of each feature's line. The focus
     // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
     // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
@@ -239,7 +244,9 @@ fn ui_state_rest_under_4k() {
             + 12
             + 32
             + 128
-            + 16,
+            + 16
+            + 152
+            + 8,
         "UiState grew to {rest} B besides its Project"
     );
 }
@@ -313,10 +320,16 @@ const TAPE_DELAY_F32: usize = 96_344;
 const ORBIT_AXI_USED: usize = 384_264;
 
 /// ADR 0090: the i16 delay line frees half its bytes, on every build.
+/// GRAIN's grains and fades sit beside it (ADR 0202): 272 B, no line.
 #[test]
 fn delay_line_frees_48128() {
     use chimera_core::dsp::delay::TapeDelay;
-    assert_eq!(TAPE_DELAY_F32 - size_of::<TapeDelay>(), 48_128);
+    use chimera_core::dsp::delay::grain::State;
+    assert_eq!(size_of::<State>(), 272);
+    assert_eq!(
+        TAPE_DELAY_F32 + size_of::<State>() - size_of::<TapeDelay>(),
+        48_128
+    );
 }
 
 /// ADR 0087: the 160 KiB arena fits the 32 KiB margin only with the i16

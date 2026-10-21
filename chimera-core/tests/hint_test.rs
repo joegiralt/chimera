@@ -610,10 +610,14 @@ fn source_hints_fit() {
 }
 
 fn out_hint(block: BlockRef, id: ParamId, ctx: &SlotCtx) -> Hint {
-    let def = &reg::AMP;
-    let i = (0..def.params.len())
-        .find(|&i| view(def, i, ctx).addr() == Some(ParamAddr::new(block, id)))
-        .expect("cell on AMP");
+    let (def, i) = [&reg::AMP, &reg::SENDS]
+        .into_iter()
+        .find_map(|def| {
+            (0..def.params.len())
+                .find(|&i| view(def, i, ctx).addr() == Some(ParamAddr::new(block, id)))
+                .map(|i| (def, i))
+        })
+        .expect("cell on AMP or AMP › SENDS");
     view(def, i, ctx).hint(ctx)
 }
 
@@ -700,11 +704,12 @@ fn focus_hint_is(ui: &UiState, want: Hint) -> bool {
 }
 
 /// The CHORUS send hints the project's chorus MODE as the UI draws it, on
-/// AMP and on the mixer's SENDS (a Sound's params hold no FX).
+/// AMP › SENDS and on the mixer's SENDS (a Sound's params hold no FX).
 #[test]
 fn chorus_send_hint_follows_the_project_chorus() {
     let amp = |ui: &mut UiState| {
         screen::plus(ui, 3);
+        feed(ui, Input::press(chimera_hal::ButtonId::Edit)); // AMP › SENDS
         feed(ui, Input::turn(A, 1)); // the CHORUS cell
     };
     let sends = |ui: &mut UiState| {

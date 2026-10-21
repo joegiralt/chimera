@@ -36,14 +36,31 @@ MODAL   EXC ── RES ── FLT ── AMP ── MOD
                 └ MDL2, PIT
 
 VA      VA ── FLT ── AMP ── MOD
-        └ OSC 1, OSC 2, PIT
+        └ OSC1, OSC2, NOISE, PIT
 
 shared  FLT └ FMD (FILTER MOD), FX, JACK
-        AMP
+        AMP └ SENDS
         MOD   MTX (matrix) └ E1 E2 E3, SPD, L1 L2 L3
 ```
 
 TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, MOD). TAPE rows in the Sound browser load like any engine's (ADR 0187); with bank 2 closed the Part reads NEEDS UPDATE (ADR 0141).
+
+### TAPE
+
+MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has its own DECK cells after MODEL and its own model page after TAPE, AGE and WOW; the model page is named by the machine (ADR 0178, 0203).
+
+| Page | Cells |
+|---|---|
+| SRC | SOURCE · START · END · VOL |
+| DECK on WALK | MODEL · LENGTH · FADE · DIRECTION (FWD, REVERSE, LOOP, PING) · POSITION · DRIFT |
+| WALK | TAPE · AGE · WOW · TRON (OFF, ON) · XFADE · RETRIG. XFADE reads on LOOP and with TRON on, RETRIG on FWD and REVERSE with TRON off; elsewhere each is dimmed and the band says why |
+| DECK on STRETCH | MODEL · SPEED · D-TIME |
+| STRCH | TAPE · AGE · WOW · POSITION · TYPE |
+| DECK on SCRUB | MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG |
+| DECK on WAVE | MODEL · FRAME · SCAN · RANGE |
+| PIT | under DECK, after the model page |
+
+On WALK, FADE's last step reads HOLD on FWD and REVERSE with TRON off. DRIFT moves POSITION by a random step at each note. TRON on gives each key a tape of 0.25 to 8 s (LENGTH), the window coming round until it runs out, and lifts it at key up. WALK's glyph is footsteps: their line, loop or lanes by DIRECTION, scattered by DRIFT, a tape's end with TRON. The model page on WAVE reads WAVE. On a streamed source, DIRECTION holds REVERSE and PING dimmed with `… NEEDS RAM · STREAMED`.
 
 ### SCRUB
 
@@ -54,6 +71,16 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 - **KEY POSITION**, the default, makes a key place the finger and plays at ROOT. C is the window's start and each semitone up is 1/12 further along, in every octave. FINGER adds to the key's place. On FINGER the focus band reads KEYS PLACE THE FINGER.
 - **KEY PITCH** plays the scrub at the key's pitch.
 
+### VA
+
+| Page | Cells |
+|---|---|
+| VA | WAVE1 · WAVE2 · MODE · BLEND · SUB · STABILITY |
+| OSC1, OSC2 | CRSE · FINE · SHAPE, D-F empty |
+| NOISE | KIND (WHITE, PINK, RED, DIGITAL) · LEVEL, C-F empty. One noise source a voice, mixed beside SUB after MODE, before the filter. DIGITAL is a sample-and-hold that steps 16 times each OSC 1 cycle, so it brightens up the keyboard |
+
+TAPE STRETCH (ADR 0204) has two TYPEs, CLASSIC and GRAIN: DECK holds MODEL · TYPE · SPEED (0 freezes) · LENGTH (0.25–8 s, GRAIN) · D-TIME (CLASSIC) · POSITION (CLASSIC); its model page STRCH holds TAPE · AGE · WOW · GRAIN (30–250 ms) · SPRAY · END (HOLD or STOP), the last three GRAIN's. Each TYPE's cells dim on the other.
+
 ### FLT and AMP
 
 | Page | Cells |
@@ -62,7 +89,14 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 | FMD | ENV AMT · KEYBOARD · FREQ MOD · FDBK (feedback) · RES MOD, F empty. FREQ MOD and RES MOD read the sources set on JACK. On SEM: F is OUTPUT, MODE (the MODE knob's sweep) or BP (band-pass) |
 | FX | INPUT (the filter's input level) · the FX type's three pots · MIX · STABILITY (on the 2040, LADDER and SEM). SOFT: DRIVE · TONE · LEVEL. FOLD: FOLD · SYMMETRY · LEVEL. OFF: dashes, MIX dimmed |
 | JACK | FREQ SRC in C and RES SRC in E: the sources FREQ MOD and RES MOD read |
-| AMP | CHORUS · DELAY · REVERB (the three sends) · VEL (the VCA's velocity) |
+| AMP | VEL (the VCA's velocity) · LPG · DECAY · STRIKE, E and F empty. LPG, DECAY and STRIKE turn the VCA into a low-pass gate; all three at 0 is a plain VCA. LPG ties darkening to gain, so quieter is darker. DECAY is how slowly the gate closes. STRIKE pings the gate at each note-on, as hard as the note is played. VEL scales the routes into VCA |
+| SENDS | CHORUS · DELAY · REVERB (the three sends), the mixer's SENDS page |
+
+### PIT
+
+Every engine has PIT: PITCH · FINE · STEAL · TIME (glide) · SNAP, F empty. The scope's top-right corner is a tuner (ADR 0201): the pitch the Part's last note sounds at, as a note and cents (`C4 +12ct`, A4 = 440 Hz) over its frequency (`261.6 Hz`). It is worked out from the note, PITCH, FINE, TUNING and the engine's own transposition (ALGO's TRNSP, VA's OSC 1), so it moves the moment PITCH or FINE turns. It is lit while the Part sounds and dim between notes; before the Part's first note it reads middle C, marked `REF C4`. Glide, bend, modulation and wow are left out: it reads where the pitch rests.
+
+On TAPE a source plays at the key it is played on, by its root. A source whose import found no pitch has no known root: the corner reads `ROOT ?` over the shift from the source's own speed (`+7st +0ct`). TRANSWAVE plays the note; SCRUB plays at twice MOTION's speed, `STILL` at 0. A TAPE Part with no source shows nothing. With bank 2 closed the corner is empty.
 
 ### Pages that draw the whole band
 
@@ -75,11 +109,11 @@ FLT (the filter's response curve, with CUTOFF and RES), MST, E1-E3, SPD, ORBIT's
 ```
 PRT ── SND ── CHR ── DLY ── REV ── MST
                       │      │      │
-                      CHAR   MORE,  LVL
-                             MORE 2
+                      CHAR,  MORE,  LVL
+                      GRAIN  MORE 2
 ```
 
-Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. EDIT from PRT or SND goes down to the Sound browser.
+Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; below it CHAR (TAPE's MECHANICS and SAT) and GRAIN (SIZE, DENSITY, PITCH, TEXTURE), each heard under its TYPE. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE. EDIT from PRT or SND goes down to the Sound browser.
 
 ---
 

@@ -16,6 +16,7 @@ use chimera_core::dsp::filter::sem::{SEM_COST, SEM_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use chimera_core::hw::{
@@ -713,17 +714,12 @@ fn the_model_bills_every_bench_row_high() {
     }
     // The TAPE rows (spec § 5), TAPE and AGE at 0.5 on each, as the bench
     // plays them; read cold on the unit. 0 until the owner's session.
-    use chimera_core::dsp::tape_engine::PlayMode;
-    use chimera_core::dsp::tape_engine::TapeModel::{Play, Scrub, Stretch, Transwave, Tron};
-    // PLAY's three MODEs are the old LOOP, PING-PONG and ONESHOT.
-    let (lp, ping, one) = (
-        (Play, PlayMode::Loop),
-        (Play, PlayMode::Ping),
-        (Play, PlayMode::One),
-    );
-    let tape = |(model, mode), (start, end): (f32, f32), steal_glide: bool| {
-        let mut p = tape_sound(model);
-        p.tape.machine = TapeMachine::of(model, mode);
+    // WALK's DIRECTIONs and TRON are the old LOOP, PING-PONG, ONESHOT and
+    // TRON (ADR 0203).
+    let (lp, ping, one) = (Way::Loop, Way::Ping, Way::One);
+    let tape = |w: Way, (start, end): (f32, f32), steal_glide: bool| {
+        let mut p = tape_sound(w.machine().model());
+        p.tape.set_way(w);
         (p.tape.tape, p.tape.age, p.tape.start, p.tape.end) = (0.5, 0.5, start, end);
         if steal_glide {
             p.pitch.steal = chimera_core::params::Steal::Glide;
@@ -733,33 +729,25 @@ fn the_model_bills_every_bench_row_high() {
     let (fwd, rev) = ((0.0, 1.0), (1.0, 0.0));
     for (name, billed, measured) in [
         ("TAPE LOOP", tape(lp, fwd, false), 0),
-        (
-            "TAPE STRETCH",
-            tape((Stretch, PlayMode::Loop), fwd, false),
-            0,
-        ),
+        ("TAPE STRETCH", tape(Way::Stretch, fwd, false), 0),
         // ±12 st every block: billed as a glide or a deep route is.
-        (
-            "TAPE WAVE C7",
-            tape((Transwave, PlayMode::Loop), fwd, true),
-            0,
-        ),
+        ("TAPE WAVE C7", tape(Way::Wave, fwd, true), 0),
         ("TINY LOOP 8", tape(lp, fwd, false), 0),
         ("TINY REV 8", tape(lp, rev, false), 0),
         ("TINY PING 8", tape(ping, fwd, false), 0),
-        ("TINY SCRUB 8", tape((Scrub, PlayMode::Loop), fwd, false), 0),
+        ("TINY SCRUB 8", tape(Way::Scrub, fwd, false), 0),
         ("TINY LOOP", tape(lp, fwd, false), 0),
         ("TINY REV", tape(lp, rev, false), 0),
         ("TINY PING", tape(ping, fwd, false), 0),
-        ("TINY SCRUB", tape((Scrub, PlayMode::Loop), fwd, false), 0),
+        ("TINY SCRUB", tape(Way::Scrub, fwd, false), 0),
         ("TINY 1SHOT", tape(one, fwd, false), 0),
-        ("TINY TRON", tape((Tron, PlayMode::Loop), fwd, false), 0),
+        ("TINY TRON", tape(Way::Tron, fwd, false), 0),
     ] {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
     assert_eq!(tape(lp, fwd, false), 36 + 450 + 40);
-    assert_eq!(tape((Stretch, PlayMode::Loop), fwd, false), 36 + 450 + 40);
-    assert_eq!(tape((Transwave, PlayMode::Loop), fwd, true), 36 + 770 + 40);
+    assert_eq!(tape(Way::Stretch, fwd, false), 36 + 450 + 40);
+    assert_eq!(tape(Way::Wave, fwd, true), 36 + 770 + 40);
     assert_eq!(tape(one, fwd, false), 36 + 230 + 40);
 }
 
@@ -1575,7 +1563,7 @@ fn routes(r: &[(ModSource, chimera_core::addr::ParamAddr, i8)]) -> ModState {
 
 fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Tape);
-    p.tape.machine = TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
+    p.tape.machine = TapeMachine::of(model);
     p
 }
 
@@ -1586,17 +1574,11 @@ fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot
 /// and both at 0.5.
 #[test]
 fn tape_bills_each_model() {
-    use TapeModel::{Play, Scrub, Stretch, Transwave, Tron};
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::dsp::tape_engine::{
-        COST_STREAM, PlayMode, TapeEngineParams, TapeModel, streamed_cost,
-    };
-    // PLAY's three MODEs bill what LOOP, PING-PONG and ONESHOT billed.
-    let (lp, ping, one) = (
-        (Play, PlayMode::Loop),
-        (Play, PlayMode::Ping),
-        (Play, PlayMode::One),
-    );
+    use chimera_core::dsp::tape_engine::{COST_STREAM, TapeEngineParams, streamed_cost};
+    // WALK's DIRECTIONs and TRON bill what LOOP, PING-PONG, ONESHOT and
+    // TRON billed.
+    let (lp, ping, one) = (Way::Loop, Way::Ping, Way::One);
     let rooms = {
         let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
@@ -1611,18 +1593,18 @@ fn tape_bills_each_model() {
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
-    for ((model, mode), bill, off, both) in [
+    for (w, bill, off, both) in [
         (lp, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
         (ping, 490, [8, 7, 8, 8], [8, 6, 8, 8]),
-        ((Scrub, PlayMode::Loop), 480, [8, 7, 8, 8], [8, 6, 8, 8]),
-        ((Transwave, PlayMode::Loop), 400, [8, 8, 8, 8], [8, 8, 8, 8]),
-        ((Stretch, PlayMode::Loop), 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (Way::Scrub, 480, [8, 7, 8, 8], [8, 6, 8, 8]),
+        (Way::Wave, 400, [8, 8, 8, 8], [8, 8, 8, 8]),
+        (Way::Stretch, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
         (one, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
-        ((Tron, PlayMode::Loop), 230, [8, 8, 8, 8], [8, 8, 8, 8]),
+        (Way::Tron, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
     ] {
         for reversed in [false, true] {
-            let mut p = tape_sound(model);
-            p.tape.machine = TapeMachine::of(model, mode);
+            let mut p = tape_sound(w.machine().model());
+            p.tape.set_way(w);
             if reversed {
                 (p.tape.start, p.tape.end) = (1.0, 0.0);
             }
@@ -1644,25 +1626,59 @@ fn tape_bills_each_model() {
                         continue;
                     };
                     let why = format!(
-                        "{model:?} {mode:?} rev {reversed} TAPE {tape}/{tape_routed} AGE {age}/{age_routed}"
+                        "{w:?} rev {reversed} TAPE {tape}/{tape_routed} AGE {age}/{age_routed}"
                     );
                     assert_eq!(EngineSlot::cost(&p, &mods), Cost(bill + t + a), "{why}");
                 }
             }
-            // A streamed source (slice 1 § 5.5): only PLAY streams.
-            if model == Play && mode != PlayMode::Ping {
+            // A streamed source (slice 1 § 5.5): only WALK streams.
+            if matches!(w, Way::One | Way::Loop | Way::Tron) {
                 assert_eq!(
-                    streamed_cost(TapeMachine::of(model, mode)),
+                    streamed_cost(w),
                     Cost(bill + COST_STREAM.0),
-                    "{model:?} {mode:?} streamed"
+                    "{w:?} streamed"
                 );
             }
             for (stored, want, extra) in [(0.0, off, 0), (0.5, both, 40)] {
                 (p.tape.tape, p.tape.age) = (stored, stored);
                 let voice = Voice::cost(&p, &ModState::new()).0;
-                assert_eq!(voice, bill + extra + 83, "{model:?} at {stored}");
-                assert_eq!(at(voice), want, "{model:?} at {stored}");
+                assert_eq!(voice, bill + extra + 83, "{w:?} at {stored}");
+                assert_eq!(at(voice), want, "{w:?} at {stored}");
             }
+        }
+    }
+}
+
+/// STRETCH bills by TYPE (ADR 0204): CLASSIC 450, GRAIN 570, and the
+/// voices GRAIN is admitted beside the reserve on rev V, rev Y, rev V with
+/// ORBIT and with the master tape, TAPE and AGE off and both at 0.5.
+#[test]
+fn stretch_bills_by_type() {
+    use chimera_core::dsp::tape_engine::{StretchType, TapeModel};
+    let rooms = {
+        let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+        let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
+        [
+            v - RESERVED,
+            y - RESERVED,
+            v - RESERVED - ORBIT_COST,
+            v - RESERVED_TAPE,
+        ]
+    };
+    let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
+    for (kind, bill, off, both) in [
+        (StretchType::Mono, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (StretchType::Poly, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (StretchType::Grain, 570, [8, 6, 8, 7], [7, 6, 7, 7]),
+    ] {
+        let mut p = tape_sound(TapeModel::Stretch);
+        p.tape.machine = TapeMachine::Stretch;
+        p.tape.kind = kind;
+        for (stored, want, extra) in [(0.0, off, 0), (0.5, both, 40)] {
+            (p.tape.tape, p.tape.age) = (stored, stored);
+            let voice = Voice::cost(&p, &ModState::new()).0;
+            assert_eq!(voice, bill + extra + 83, "{kind:?} at {stored}");
+            assert_eq!(at(voice), want, "{kind:?} at {stored}");
         }
     }
 }
@@ -1722,6 +1738,34 @@ fn va_bills_each_mode() {
         assert_eq!(voice, bill + 83 + 78, "{mode:?}");
         assert_eq!(at(voice), voices, "{mode:?}");
     }
+}
+
+/// VA NOISE (ADR 0197) bills its KIND's pass only while it can play:
+/// LEVEL above 0, or a route of nonzero amount on LEVEL. At LEVEL 0 the
+/// MODE's bill is untouched, so every existing Sound keeps its voices.
+#[test]
+fn va_noise_bills_only_when_it_plays() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::va::{NoiseKind, VaEngine, VaMode, VaParams};
+    let none = ModState::new();
+    for kind in NoiseKind::ALL {
+        let mut p = va_sound(VaMode::Mix);
+        p.va.noise_kind = kind;
+        assert_eq!(EngineSlot::cost(&p, &none), Cost(530), "{kind:?} at 0");
+        let mut ms = chimera_core::preset::Sound::plain_init(EngineType::Va).mod_state;
+        let lvl = ms
+            .push(ParamAddr::new(BlockRef::Va, VaParams::NOISE))
+            .unwrap();
+        ms.set_route(ModSource::Lfo1.index(), lvl, 0);
+        assert_eq!(EngineSlot::cost(&p, &ms), Cost(530), "{kind:?} amount 0");
+        let with = Cost(530 + VaEngine::noise_cost(kind).0);
+        ms.set_route(ModSource::Lfo1.index(), lvl, 64);
+        assert_eq!(EngineSlot::cost(&p, &ms), with, "{kind:?} routed");
+        p.va.noise = 0.01;
+        assert_eq!(EngineSlot::cost(&p, &none), with, "{kind:?} up");
+    }
+    let bills = NoiseKind::ALL.map(|k| VaEngine::noise_cost(k).0);
+    assert_eq!(bills, [20, 35, 30, 35]);
 }
 
 /// A VA note holds its playing MODE's bill until the duck swaps the MODE:
@@ -2613,3 +2657,98 @@ fn sem_bills_its_count_and_its_voices() {
         "SEM: ALGO steady, moving; VA steady, moving"
     );
 }
+
+/// GRAIN (ADR 0202) bills `GRAIN_COST` beside the bus while TYPE is GRAIN,
+/// as a reverb TYPE bills its extra; TAPE bills nothing more. Each
+/// engine's INIT keeps every voice it had under TAPE but one at most, and
+/// never fewer than the floor, at rev V and rev Y.
+#[test]
+fn grain_bills_its_cost_and_keeps_the_voices() {
+    use chimera_core::dsp::delay::{DelayParams, DelayType, GRAIN_COST, extra_cost};
+    let grain = DelayParams::DEFAULT.with(DelayParams::TYPE, DelayType::Grain.value());
+    assert_eq!(extra_cost(&DelayParams::DEFAULT), Cost::ZERO);
+    assert_eq!(extra_cost(&grain), GRAIN_COST);
+    for hz in [CPU_HZ_REV_V, CPU_HZ_REV_Y] {
+        let budget = SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0 - CONTROL_RESERVE.0;
+        for e in EngineType::PLAYABLE {
+            let v = voice_cost(e).0;
+            let tape = (budget / v).min(MAX_VOICES as u32);
+            let with = ((budget - GRAIN_COST.0) / v).min(MAX_VOICES as u32);
+            println!("{hz} {e:?}: TAPE {tape} voices, GRAIN {with}, budget {budget} voice {v}");
+            assert!(with + 1 >= tape, "{e:?} at {hz}: {tape} to {with}");
+            assert!(with >= FLOOR_VOICES, "{e:?} at {hz}: {with}");
+        }
+    }
+}
+
+/// ADR 0195: the VCA's gate bills `LPG_COST` (`tools/loop_count.py` on the
+/// `filter-probes` ELF, `lpg_probe`) only while LPG, DECAY or STRIKE is
+/// above 0 or routed; at 0 a voice costs what it did. Its voices with SEM
+/// and the 2040 in front, ALGO INIT and VA INIT, on rev V and rev Y beside
+/// the reserve.
+#[test]
+fn the_gate_bills_only_when_up_and_its_voices() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::lpg::LPG_COST;
+    use chimera_core::params::OutParams;
+    let rooms = [
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+    ];
+    let still = ModState::new();
+    for e in [EngineType::Algo, EngineType::Va] {
+        let p = ParamSnapshot::for_engine(e);
+        let base = Voice::cost(&p, &still);
+        for k in 0..3 {
+            let mut q = p.clone();
+            match k {
+                0 => q.out.gate[0] = 1.0 / 128.0,
+                1 => q.out.gate[1] = 1.0 / 128.0,
+                _ => q.out.gate[2] = 1.0 / 128.0,
+            }
+            assert_eq!(Voice::cost(&q, &still), base + LPG_COST, "{e:?} knob {k}");
+        }
+        let lfo = {
+            let mut m = ModState::with_sources(2);
+            let a = ParamAddr::new(BlockRef::Out, OutParams::LPG);
+            assert!(m.set_route_addr(1, a, 64));
+            m
+        };
+        // Routed, it bills as stored above 0.
+        let mut q = p.clone();
+        q.out.gate[0] = 0.5;
+        assert_eq!(Voice::cost(&p, &lfo), Voice::cost(&q, &lfo), "{e:?} routed");
+    }
+    let voices = |e: EngineType, k: FilterKind, on: bool| {
+        let mut p = ParamSnapshot::for_engine(e);
+        p.filter.set_kind(k);
+        if on {
+            p.out.gate[0] = 1.0;
+        }
+        let c = Voice::cost(&p, &still).0;
+        rooms.map(|r| (r / c).min(MAX_VOICES as u32))
+    };
+    let mut table = Vec::new();
+    for k in [FilterKind::Sem, FilterKind::K2040] {
+        for on in [false, true] {
+            let row = [
+                voices(EngineType::Algo, k, on),
+                voices(EngineType::Va, k, on),
+            ];
+            println!(
+                "{k:?} gate {on}: ALGO {:?}, VA {:?} (rev V, rev Y)",
+                row[0], row[1]
+            );
+            table.push(row);
+        }
+    }
+    assert_eq!(table, GATE_VOICES, "SEM off, on; 2040 off, on");
+}
+
+/// SEM off, on; the 2040 off, on: ALGO and VA, rev V and rev Y.
+const GATE_VOICES: [[[u32; 2]; 2]; 4] = [
+    [[7, 5], [8, 6]],
+    [[6, 4], [7, 5]],
+    [[6, 5], [7, 6]],
+    [[6, 4], [7, 5]],
+];

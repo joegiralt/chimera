@@ -199,14 +199,15 @@ release-bin:
 
 # A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
 # NOW) never ships.
-# VA's MOD path (ADR 0163) and the LFO page's raster (ADR 0177) are all
+# VA's MOD path (ADR 0163), the LFO page's raster (ADR 0177) and PIT's
+# tuner (ADR 0201) are all
 # bank 2's on a bank-2 build: a `bank2.x` glob that misses a new door entry
 # or run leaves it silently in bank 1.
 check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
     syms=$(rust-nm -C {{elf}})
-    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass'; do
+    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::grain::core::' 'voice::gate::kern::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
 
@@ -225,6 +226,18 @@ check-bin-size bin:
     n=$(stat -c %s "{{bin}}")
     if [ "$n" -ge 917504 ]; then echo "{{bin}} is $n B: the stock bootloader's SD flash would erase itself at 917,504 B or more" >&2; exit 1; fi
     echo "{{bin}}: $n B, $((917504 - n)) B under the SD-flash limit"
+
+# Bank 1 is frozen (ADR 0198): the last-built firmware's bank 1 (the .bin
+# without .bank2) may not outgrow its set's line in tools/bank1-budget.txt
+# by more than 64 B, and must lower the line when it frees 1 KB. Sets
+# without bank 2 (`--no-default-features`, `sd-probe`) carry no budget:
+# code moved behind a door lands in their bank 1.
+check-bank1 set:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p target/bank1
+    rust-objcopy -R .bank2 -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 "target/bank1/{{set}}.bin"
+    python3 tools/bank1_budget.py "{{set}}" "target/bank1/{{set}}.bin"
 
 # Draft a release of the path-clean firmware on the PUBLIC chimera-releases
 # repo (#413): `just release 0.1.0 [--dry-run]`. Refuses a dirty tree or a
@@ -328,20 +341,22 @@ build:
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
 # features, with none, with ORBIT, each bench area (ALGO also with the master
 # tape), the filter probes and the SD probe, all with bank 2 (ADR 0194), clippy on host
-# and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
+# and firmware (every feature set), rustfmt and the stack check; each firmware set but no-default and sd-probe is held to its bank-1 budget (ADR 0198). The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide. The host tool's tests run first, against a fake unit.
+# chimera-circuits runs its fast tests here; its slow and ngspice
+# references are #[ignore]d (chimera-circuits/README.md).
 check:
     python3 -m unittest discover -s tools -p 'test_*.py'
-    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
     # TAPE's UI with bank 2 closed, through the host's own door (ADR 0175).
     cargo test -p chimera-core --features bank2 --test tape_closed_ui_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
-    # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's and the streamed loads' bank-1 sides through the host's own door.
-    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test
+    # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's and the streamed loads' bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -351,12 +366,16 @@ check:
     # their dev builds sit at or past FLASH
     # (private issue #303).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
+    just check-bank1 default
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
+    just check-bank1 orbit
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
+    just check-bank1 bank2-gate
     # The bench, an area a build: all of it no longer fits FLASH. Each is
-    # door-checked, as bank2-split checks the builds it splits.
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
+    # door-checked, as bank2-split checks the builds it splits, and held to
+    # its bank-1 budget (ADR 0198).
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
@@ -433,7 +452,7 @@ loom:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
     cargo test -p chimera-core --features master-tape --test screen_golden_test
     just test-fat-tools
@@ -450,7 +469,7 @@ test-firmware-features:
     [[ ",$core," == *,tape,* ]] || { echo "the firmware's chimera-core has no tape: [$core]" >&2; exit 1; }
     f="$core,$(sed 's|\([^,]*\)|chimera-engine/\1|g' <<<"$engine")"
     echo "firmware features: $f"
-    cargo test -p chimera-core --no-default-features --features "$f" --test tape_part_load_test --test tape_source_cell_test
+    cargo test -p chimera-core --no-default-features --features "$f" --test tape_part_load_test --test tape_source_cell_test --test turn_reaches_engine_test
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
 # back and fsck.fat -n must pass, after the suite and after console puts
@@ -462,7 +481,7 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings

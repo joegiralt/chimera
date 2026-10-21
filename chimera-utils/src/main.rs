@@ -7,12 +7,15 @@
 
 mod bank2;
 mod beds;
+mod circuit;
 mod devices;
 mod dropouts;
 mod filter_fb;
 mod generic;
 mod grain;
+mod grain_listen;
 mod interp;
+mod lpgamp;
 mod metrics;
 mod models;
 mod models_burst;
@@ -21,6 +24,8 @@ mod plot;
 mod reference;
 mod sig;
 mod stim;
+mod unitab;
+mod vanoise;
 mod voice;
 
 use chimera_core::dsp::reverb::ReverbType;
@@ -31,6 +36,20 @@ pub const SR: f64 = chimera_hal::SAMPLE_RATE as f64;
 
 const USAGE: &str = "\
 usage: chimera-utils [flags] COMMAND …
+  unitab render SOUND [EVENTS] OUTDIR
+                           filter VOICE A/B on the full engine (eng_*) and the lab
+                           harness (lab_*), every script × RES × voice, raw levels
+  unitab table UNITDIR RENDERDIR OUT.md | unitab cmp A B
+                           EXP − REV2 measures: Δlevel, Δlow, tilt, LSD, null
+  unitab check DIR         the A/B method's known-pair check on the lab harness
+  circuit list             the chimera-circuits models (ADR 0196)
+  circuit render MODEL OUTDIR [EVENTS]
+                           a model on unitab's scripts × RES, raw levels, after
+                           the known-pair check
+  vanoise hash|check|render …
+                           VA NOISE on the full engine: bit hashes, the page's set
+  lpg-amp render OUTDIR SOUND EVENTS
+                           the VCA's gate on its listening set, raw levels
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
                            (an effect also on the listening set)
   bank2-seal ELF BIN BK2 --version TEXT
@@ -40,6 +59,9 @@ usage: chimera-utils [flags] COMMAND …
   door-check ELF           fail on any bank-1 relocation into bank 2
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
+  grain-listen OUTDIR      the delay's TAPE against GRAIN (ADR 0202): pluck, stab and
+                           percussion × TAPE and GRAIN settings through the full engine,
+                           raw WAVs and levels.json
   devices                  the devices and their knobs (fx-soft/fuzz/fold: p1 p2 p3 mix
                            place pre|post input, the voice FX slot beside an open filter)
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
@@ -215,6 +237,13 @@ fn run() -> Result<bool, String> {
         }
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
+        "unitab" => unitab::run(rest).map(|_| true),
+        "grain-listen" => grain_listen::run(rest).map(|_| true),
+        "circuit" => circuit::run(rest).map(|_| true),
+        "vanoise" => vanoise::run(rest).map(|_| true),
+        "lpg-amp" if rest.first().is_some_and(|c| c == "render") => {
+            lpgamp::render(&rest[1..]).map(|_| true)
+        }
         "devices" => {
             for (name, d) in devices::Device::all() {
                 let ks: Vec<String> = d

@@ -3,8 +3,9 @@
 //! TAPE Sound at the factory median (ADR 0063).
 
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::tape_engine::TapeModel;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{TapeMachine, TapeModel};
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -211,9 +212,9 @@ fn factory_sounds_sit_at_the_median() {
             ((b.head.root + 50) / 100) as u8
         };
         let secs = b.head.sref.frames as f32 / f32::from(b.head.sref.rate);
-        let blocks = match (s.machine, t.slice.code()) {
-            (TapeMachine::One, 1) => (secs / 16.0 * BPS as f32) as usize,
-            (TapeMachine::One, _) => ((secs * BPS as f32) as usize).min(BPS),
+        let blocks = match (t.way(), t.slice.code()) {
+            (Way::One, 1) => (secs / 16.0 * BPS as f32) as usize,
+            (Way::One, _) => ((secs * BPS as f32) as usize).min(BPS),
             _ => BPS,
         };
         let d = rig.lufs(note, blocks.max(1)) - median;
@@ -296,15 +297,18 @@ fn scrub_take_that_turns_is_click_free() {
             .unwrap();
         let (h, p) = (held(b), pitch(&b.head));
         let straight = render(
-            Way::One.base(TapeModel::Play, StretchType::Mono),
+            Way::One.base(TapeModel::Walk, StretchType::Mono),
             &h,
             p,
             root_note(p),
-            &Way::One.script(TapeModel::Play),
+            &Way::One.script(TapeModel::Walk),
         );
         let own = qa(&straight[..straight.len().min(48_000 * 5 / 2)]).click_ratio;
         let mut base = Way::Plain.base(TapeModel::Scrub, StretchType::Mono);
-        for (id, v) in defaults(chimera_core::dsp::tape_engine::TapeMachine::Scrub) {
+        for (id, v) in defaults(
+            chimera_core::dsp::tape_engine::TapeMachine::Scrub,
+            chimera_core::dsp::tape_engine::Direction::Loop,
+        ) {
             base.write(id, v);
         }
         let y = render(base, &h, p, 60, &Script(&RAMP, &[1.5], &[]));
@@ -348,8 +352,12 @@ fn factory_sounds_save_as_loaded() {
     }
     if built.iter().all(Option::is_some) {
         // ADR 0205: SAW SCRUB and RAIN SCRUB take SCRUB's new defaults
-        // (LENGTH 70 ms, KEY POSITION) and their re-trims.
-        assert_eq!(all.finish(), 0x023C_3EC8, "{} Sounds", r.sounds.len());
+        // (LENGTH 70 ms, KEY POSITION) and their re-trims. ADR 0203: MODE
+        // ONE's Sounds save FORWARD (3) and LENGTH 1, TRON BOWED WALK with
+        // TRON on; each renders as before (`tape_legacy_test`). ADR 0204: the
+        // STRETCH Sounds turn to GRAIN, with ONE's ENV 1, re-trimmed.
+        // Re-pinned on the integration's merged tree.
+        assert_eq!(all.finish(), 0xBC51_68B7, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
         let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();

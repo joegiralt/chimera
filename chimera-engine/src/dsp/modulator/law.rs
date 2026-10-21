@@ -104,6 +104,16 @@ pub const CUTOFF_HZ: Range = Range {
     min: 20.0,
     oct: 9.965_784,
 };
+/// TAPE STRETCH's LENGTH (ADR 0204), 0.25 – 8 s.
+pub const STRETCH_LENGTH: Range = Range {
+    min: 0.25,
+    oct: 5.0,
+};
+/// TAPE STRETCH's GRAIN (ADR 0204), 30 – 250 ms.
+pub const GRAIN_SIZE: Range = Range {
+    min: 0.03,
+    oct: 3.058_894,
+};
 /// A B slot evaluated per block stops its rates here: the block rate ÷ 8
 /// (spec § Rates), 93.75 Hz at 48 kHz and 86.1 Hz at 44.1 kHz.
 pub fn block_rate_max(sample_rate: u32) -> f32 {
@@ -160,6 +170,9 @@ pub enum Law {
     GlideTime,
     /// CUTOFF's Hz (ADR 0107).
     Cutoff,
+    /// STRETCH's LENGTH and GRAIN (ADR 0204).
+    StretchLength,
+    GrainSize,
     Phase,
     Pct,
     Curve,
@@ -179,6 +192,8 @@ impl Law {
             Law::BurstLen => BURST_LEN,
             Law::GlideTime => GLIDE_TIME,
             Law::Cutoff => CUTOFF_HZ,
+            Law::StretchLength => STRETCH_LENGTH,
+            Law::GrainSize => GRAIN_SIZE,
             Law::Phase | Law::Pct | Law::Curve | Law::Tilt | Law::LfoHz => return None,
         })
     }

@@ -11,7 +11,7 @@ use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    AIM_S, CLAMP_FADE_S, INC_MAX, MIN_PASS_SAMPLES, PlayMode, TapeEngine, TapeEngineParams,
+    AIM_S, CLAMP_FADE_S, Direction, INC_MAX, MIN_PASS_SAMPLES, TapeEngine, TapeEngineParams,
     TapeModel, drag_s, loop_len,
 };
 use chimera_hal::BLOCK_SIZE;
@@ -84,7 +84,8 @@ fn ping_pong_turns_are_continuous() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let p = TapeEngineParams {
-        machine: TapeMachine::Ping,
+        machine: TapeMachine::Walk,
+        direction: Direction::Ping,
         size: 0.45,
         position: 0.5,
         ..TapeEngineParams::default()
@@ -113,7 +114,8 @@ fn ping_pong_clamps_with_a_fade() {
     let held = held_plain(&sine(48_000, 100.7, w), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        machine: TapeMachine::Ping,
+        machine: TapeMachine::Walk,
+        direction: Direction::Ping,
         ..TapeEngineParams::default()
     };
     let mut e = fresh();
@@ -604,7 +606,8 @@ fn ping_pong_creeping_bounds_bend_nothing() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        machine: TapeMachine::Ping,
+        machine: TapeMachine::Walk,
+        direction: Direction::Ping,
         size: 0.3,
         position: 0.3,
         ..TapeEngineParams::default()
@@ -643,7 +646,8 @@ fn ping_pong_small_shrink_at_position_0() {
         let want = (ll - shrink) as f32;
         let smaller = (want / min).ln() / (w as f32 / min).ln();
         let mut p = TapeEngineParams {
-            machine: TapeMachine::Ping,
+            machine: TapeMachine::Walk,
+            direction: Direction::Ping,
             size,
             ..TapeEngineParams::default()
         };
@@ -674,7 +678,8 @@ fn ping_pong_size_lfo_soak() {
     let steady = max_step(&sine(48_000, 100.7, 4_800));
     for (rate, position) in [(0.003f32, 0.0f32), (0.02, 0.0), (0.05, 1.0), (0.2, 0.5)] {
         let mut p = TapeEngineParams {
-            machine: TapeMachine::Ping,
+            machine: TapeMachine::Walk,
+            direction: Direction::Ping,
             position,
             ..TapeEngineParams::default()
         };
@@ -703,15 +708,15 @@ fn pass_rate_is_bounded() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     for m in [
-        Mach::fwd(TapeModel::Play),
-        Mach::rev(TapeModel::Play),
+        Mach::fwd(TapeModel::Walk),
+        Mach::rev(TapeModel::Walk),
         Mach::ping(),
         Mach::fwd(TapeModel::Scrub),
     ] {
         let model = m.model;
         for xfade in [0.0, 0.5] {
             let p = TapeEngineParams {
-                machine: TapeMachine::of(model, PlayMode::Loop),
+                machine: TapeMachine::of(model),
                 start: 0.5,
                 end: 0.5 + 64.0 / 48_000.0,
                 size: 0.0,
@@ -755,14 +760,14 @@ fn inc_sweep_across_the_floor_is_click_free() {
     let v = SourceView::strict(&held).unwrap();
     let cents = |t: f32| 4_800.0 * (1.0 - (2.0 * t - 1.0).abs());
     for m in [
-        Mach::fwd(TapeModel::Play),
-        Mach::rev(TapeModel::Play),
+        Mach::fwd(TapeModel::Walk),
+        Mach::rev(TapeModel::Walk),
         Mach::ping(),
         Mach::fwd(TapeModel::Scrub),
     ] {
         let model = m.model;
         let p = TapeEngineParams {
-            machine: TapeMachine::of(model, PlayMode::Loop),
+            machine: TapeMachine::of(model),
             size: 0.0,
             xfade: 0.5,
             position: 0.3,
@@ -818,14 +823,14 @@ fn pitch_drops_latch_the_floor_at_a_wrap() {
         }
     };
     for m in [
-        Mach::fwd(TapeModel::Play),
-        Mach::rev(TapeModel::Play),
+        Mach::fwd(TapeModel::Walk),
+        Mach::rev(TapeModel::Walk),
         Mach::ping(),
         Mach::fwd(TapeModel::Scrub),
     ] {
         let model = m.model;
         let p = TapeEngineParams {
-            machine: TapeMachine::of(model, PlayMode::Loop),
+            machine: TapeMachine::of(model),
             size: 0.0,
             xfade: 0.1,
             position: 0.3,
@@ -873,7 +878,8 @@ fn ping_pong_pitch_jumps_are_click_free() {
     let v = SourceView::strict(&held).unwrap();
     for (motion, position) in [(0.0, 0.3), (0.5, 0.3), (0.0, 0.0)] {
         let p = TapeEngineParams {
-            machine: TapeMachine::Ping,
+            machine: TapeMachine::Walk,
+            direction: Direction::Ping,
             size: 0.0,
             position,
             motion,
@@ -920,7 +926,8 @@ fn ping_pong_jumps_under_a_running_clamp_are_click_free() {
         for motion in [0.0, 0.5] {
             let run = |pitch: &dyn Fn(usize) -> f32| {
                 let p = |n: usize| TapeEngineParams {
-                    machine: TapeMachine::Ping,
+                    machine: TapeMachine::Walk,
+                    direction: Direction::Ping,
                     size,
                     position: if (n / 3).is_multiple_of(2) { 0.1 } else { 0.9 },
                     motion,
@@ -961,7 +968,8 @@ fn ping_pong_clamp_keeps_the_floor() {
     let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        machine: TapeMachine::Ping,
+        machine: TapeMachine::Walk,
+        direction: Direction::Ping,
         size: 0.0,
         ..TapeEngineParams::default()
     };
@@ -1055,21 +1063,21 @@ fn tiny_loops_cost_within_their_bills() {
         blocks,
     );
     let at_clamp = (127, 4_800.0);
-    let bill = |m: (TapeModel, PlayMode)| match m {
-        (TapeModel::Play, PlayMode::Ping) => PING_PONG_BILL,
-        (TapeModel::Play, _) => LOOP_BILL,
+    let bill = |m: (TapeModel, Direction)| match m {
+        (TapeModel::Walk, Direction::Ping) => PING_PONG_BILL,
+        (TapeModel::Walk, _) => LOOP_BILL,
         _ => SCRUB_BILL,
     };
-    let mut rows: Vec<(String, (TapeModel, PlayMode), f64)> = Vec::new();
+    let mut rows: Vec<(String, (TapeModel, Direction), f64)> = Vec::new();
     for m in [
-        Mach::fwd(TapeModel::Play),
-        Mach::rev(TapeModel::Play),
+        Mach::fwd(TapeModel::Walk),
+        Mach::rev(TapeModel::Walk),
         Mach::ping(),
         Mach::fwd(TapeModel::Scrub),
     ] {
         let model = m.model;
         let p = TapeEngineParams {
-            machine: TapeMachine::of(model, PlayMode::Loop),
+            machine: TapeMachine::of(model),
             size: 0.0,
             xfade: 0.5,
             motion: 1.0,
@@ -1079,10 +1087,10 @@ fn tiny_loops_cost_within_their_bills() {
         let t = host_time(&|_| p, &tv, at_clamp, blocks);
         rows.push((format!("{m:?}, 64 frames"), (model, m.mode), t));
     }
-    for m in [Mach::fwd(TapeModel::Play), Mach::rev(TapeModel::Play)] {
+    for m in [Mach::fwd(TapeModel::Walk), Mach::rev(TapeModel::Walk)] {
         let model = m.model;
         let p = TapeEngineParams {
-            machine: TapeMachine::of(model, PlayMode::Loop),
+            machine: TapeMachine::of(model),
             size: 0.0,
             xfade: 0.5,
             ..TapeEngineParams::default()
@@ -1092,7 +1100,8 @@ fn tiny_loops_cost_within_their_bills() {
         rows.push((format!("{m:?}, shortest loop"), (model, m.mode), t));
     }
     let square = |n: usize| TapeEngineParams {
-        machine: TapeMachine::Ping,
+        machine: TapeMachine::Walk,
+        direction: Direction::Ping,
         size: 0.0,
         position: if (n / 8).is_multiple_of(2) { 0.0 } else { 1.0 },
         ..TapeEngineParams::default()
@@ -1100,7 +1109,7 @@ fn tiny_loops_cost_within_their_bills() {
     let t = host_time(&square, &sv, at_clamp, blocks);
     rows.push((
         "PingPong, shortest loop, clamping".into(),
-        (TapeModel::Play, PlayMode::Ping),
+        (TapeModel::Walk, Direction::Ping),
         t,
     ));
     let scrub = TapeEngineParams {
@@ -1113,7 +1122,7 @@ fn tiny_loops_cost_within_their_bills() {
     let t = host_time(&|_| scrub, &sv, at_clamp, blocks);
     rows.push((
         "Scrub, shortest loop".into(),
-        (TapeModel::Scrub, PlayMode::Loop),
+        (TapeModel::Scrub, Direction::Loop),
         t,
     ));
     for (name, model, t) in rows {

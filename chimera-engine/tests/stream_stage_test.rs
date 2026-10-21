@@ -5,7 +5,7 @@
 
 use chimera_engine::dsp::tape_engine::heads::{Bounds, Sizing, window_end, window_start};
 use chimera_engine::dsp::tape_engine::params::TapeEngineParams;
-use chimera_engine::dsp::tape_engine::{PlayMode, TapeMachine, TapeModel};
+use chimera_engine::dsp::tape_engine::{Direction, TapeMachine, TapeModel, Tron, Way};
 use chimera_engine::storage::SourceRef;
 use chimera_engine::stream::admit::head_frames;
 use chimera_engine::stream::layout::CHUNK_FRAMES;
@@ -26,9 +26,10 @@ fn r() -> SourceRef {
     }
 }
 
-fn play(mode: PlayMode, start: f32) -> TapeEngineParams {
+fn play(mode: Direction, start: f32) -> TapeEngineParams {
     TapeEngineParams {
-        machine: TapeMachine::play(mode),
+        machine: TapeMachine::Walk,
+        direction: mode,
         start,
         end: 1.0,
         ..TapeEngineParams::default()
@@ -44,7 +45,7 @@ fn ends_past_a_boundary(end: u32) -> bool {
 #[test]
 fn start_head_starts_before_start_made_even() {
     for start in [0.0, 0.1, 0.25, 0.333_33, 0.5, 0.9] {
-        let p = play(PlayMode::One, start);
+        let p = play(Direction::Forward, start);
         let h = heads_for(r(), &p).expect("ONE streams");
         assert_eq!(h.as_slice().len(), 1, "ONE: START's head alone");
         let s = window_start(start, FILE);
@@ -61,7 +62,7 @@ fn every_head_ends_just_past_the_next_chunk_boundary() {
     for k in 0..CF / 64 {
         let s = 3 * CF + 64 * k;
         let start = s as f32 / FRAMES as f32;
-        let p = play(PlayMode::One, start);
+        let p = play(Direction::Forward, start);
         let h = heads_for(r(), &p).unwrap().as_slice()[0];
         let at = window_start(start, FILE);
         assert!(
@@ -86,7 +87,7 @@ fn loop_head_holds_xfade_and_head_ms() {
         (0.8, 0.7, 0.5),
         (0.3, 0.0, 0.2),
     ] {
-        let mut p = play(PlayMode::Loop, 0.1);
+        let mut p = play(Direction::Loop, 0.1);
         (p.size, p.position, p.xfade) = (size, place, xfade);
         let h = heads_for(r(), &p).expect("LOOP streams");
         assert_eq!(h.as_slice().len(), 2, "LOOP: START's and the loop's");
@@ -120,7 +121,7 @@ fn loop_head_holds_xfade_and_head_ms() {
 #[test]
 fn a_head_stops_at_end_or_the_file() {
     // END a little past START: the head reaches END's taps, no further.
-    let mut p = play(PlayMode::One, 0.5);
+    let mut p = play(Direction::Forward, 0.5);
     p.end = 0.5 + 500.0 / FRAMES as f32;
     let h = heads_for(r(), &p).unwrap().as_slice()[0];
     let we = window_end(window_start(p.start, FILE), p.end, FRAMES, HZ);
@@ -130,7 +131,7 @@ fn a_head_stops_at_end_or_the_file() {
         h.end()
     );
     // At the file's end, the file's last frame (even).
-    let h = heads_for(r(), &play(PlayMode::One, 0.999_9))
+    let h = heads_for(r(), &play(Direction::Forward, 0.999_9))
         .unwrap()
         .as_slice()[0];
     assert_eq!(h.end(), FRAMES);
@@ -138,15 +139,15 @@ fn a_head_stops_at_end_or_the_file() {
 
 #[test]
 fn what_needs_ram_has_no_heads() {
-    let mut ping = play(PlayMode::Ping, 0.2);
+    let mut ping = play(Direction::Ping, 0.2);
     assert!(heads_for(r(), &ping).is_err(), "PING");
-    ping.machine = TapeMachine::Loop;
+    ping.set_way(Way::Loop);
     (ping.start, ping.end) = (0.6, 0.2);
     assert!(heads_for(r(), &ping).is_err(), "END before START");
     for m in [TapeModel::Scrub, TapeModel::Stretch, TapeModel::Transwave] {
         let p = TapeEngineParams {
-            machine: TapeMachine::of(m, PlayMode::One),
-            ..play(PlayMode::One, 0.2)
+            machine: TapeMachine::of(m),
+            ..play(Direction::Forward, 0.2)
         };
         assert!(heads_for(r(), &p).is_err(), "{m:?}");
     }
@@ -157,10 +158,12 @@ fn what_needs_ram_has_no_heads() {
 #[test]
 fn tron_streams_on_one_start_head() {
     let p = TapeEngineParams {
-        machine: TapeMachine::Tron,
-        ..play(PlayMode::Loop, 0.2)
+        machine: TapeMachine::Walk,
+        direction: Direction::Forward,
+        tron: Tron::On,
+        ..play(Direction::Loop, 0.2)
     };
     let h = heads_for(r(), &p).expect("TRON's heads");
-    let one = heads_for(r(), &play(PlayMode::One, 0.2)).unwrap();
+    let one = heads_for(r(), &play(Direction::Forward, 0.2)).unwrap();
     assert_eq!(h, one);
 }

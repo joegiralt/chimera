@@ -92,8 +92,8 @@ pub trait Paint {
     fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgb565);
 }
 
-/// A display as `Paint`.
-struct On<'a, D>(&'a mut D);
+/// A display as `Paint` (PIT's tuner paints through it too).
+pub(crate) struct On<'a, D>(pub(crate) &'a mut D);
 
 impl<D: DrawTarget<Color = Rgb565>> Paint for On<'_, D> {
     fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Rgb565) {

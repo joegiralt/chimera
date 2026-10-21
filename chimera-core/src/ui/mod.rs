@@ -35,6 +35,7 @@ pub mod orbit;
 pub mod page;
 pub mod part_page;
 pub mod perf;
+pub mod pit_tuner;
 pub mod pool_page;
 pub mod push;
 pub mod region;
@@ -50,6 +51,7 @@ pub mod theme;
 pub mod theme_settings;
 pub mod view;
 pub mod viz;
+pub(crate) mod walk;
 
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
@@ -335,6 +337,8 @@ pub struct UiState {
     /// (`instrument::LFO_VIEW`) but in tests.
     lfo_head: Option<lfo_glyph::Head>,
     lfo_from: &'static LfoView,
+    /// PIT's tuner: each Part's last note and the corner (ADR 0201).
+    tuner: pit_tuner::Tuner,
     /// The edited Part's newest voice's formant view, as the audio last
     /// published it: what an OP page's band draws.
     formant: FormantView,
@@ -438,6 +442,7 @@ crate::in_place::field_list!(UiState => UiState {
     heads_from,
     lfo_head,
     lfo_from,
+    tuner,
     formant,
     src,
     lib,
@@ -509,6 +514,7 @@ impl UiState {
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
             addr_of_mut!((*p).lfo_head).write(None);
             addr_of_mut!((*p).lfo_from).write(&crate::instrument::LFO_VIEW);
+            addr_of_mut!((*p).tuner).write(pit_tuner::Tuner::NEW);
             addr_of_mut!((*p).formant).write(FormantView::NONE);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
             library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
@@ -1508,8 +1514,8 @@ impl UiState {
     /// nothing is written; onto one it allows, it is written. `false` for
     /// any other cell.
     fn turn_choice(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
-        if a == held::MODEL {
-            return self.turn_model(at, delta, shift);
+        if a == held::MODEL || a == held::DIRECTION {
+            return self.turn_model(at, a, delta, shift);
         }
         if !held::applies(a, shift) {
             return false;
@@ -1546,30 +1552,32 @@ impl UiState {
     /// the source refuses (`needs_ram`) it lands dimmed with the reason,
     /// nothing written, so a key never plays into silence. `false` off a
     /// streamed source: the plain edit.
-    fn turn_model(&mut self, at: PartId, delta: i8, shift: bool) -> bool {
+    fn turn_model(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
         if !self.streams(at) {
             return false;
         }
         let sound = &self.project.part(at).sound;
-        let now = sound.params.tape.machine().index();
-        let held = self.held.filter(|&(h, c)| h == at && c.addr == held::MODEL);
+        let now = crate::block::Block::get(&sound.params.tape, a.param) as u8;
+        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
         let from = held.map_or(now, |(_, c)| c.code);
-        let last = TapeMachine::ALL.len() as i16 - 1;
+        // MODEL and DIRECTION each list four.
+        const _: () = assert!(
+            crate::dsp::tape_engine::TapeMachine::ALL.len() == 4
+                && crate::dsp::tape_engine::Direction::ALL.len() == 4
+        );
+        let last = 3;
         let to = match (shift, delta > 0) {
             (true, true) => last,
             (true, false) => 0,
             _ => (i16::from(from) + i16::from(delta)).clamp(0, last),
         } as u8;
-        let h = held::Held {
-            addr: held::MODEL,
-            code: to,
-        };
+        let h = held::Held { addr: a, code: to };
         if h.why(sound, true).is_some() {
             self.held = Some((at, h));
         } else {
             self.held = None;
             if to != now {
-                self.edit_in(at, held::MODEL, part_page::Edit::To(f32::from(to)));
+                self.edit_in(at, a, part_page::Edit::To(f32::from(to)));
             }
         }
         true
@@ -1665,6 +1673,7 @@ impl UiState {
         if now
             != (SlotCtx {
                 tape: now.tape,
+                holds: now.holds,
                 ..before
             })
         {
@@ -2519,7 +2528,10 @@ impl UiState {
 
     fn handle_frame(&mut self, controls: &impl Controls) {
         let rev = self.project.rev();
-        let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.machine();
+        let model = |ui: &Self| {
+            let t = &ui.project.part(ui.active_part).sound.params.tape;
+            (t.machine(), t.direction)
+        };
         let was = model(self);
         self.input(controls);
         let jog = self.jog_pass(controls.now_ms());
@@ -2530,7 +2542,14 @@ impl UiState {
                 .iter()
                 .filter(|&&e| controls.encoder_delta(e) != 0);
             let now = model(self);
-            let defaults = if now != was { cc::model_writes(now) } else { 0 };
+            let defaults = if now.0 != was.0 {
+                cc::model_writes(now.0, now.1)
+            } else if now.1 != was.1 {
+                // At most a MODEL turn's writes (`cc::model_writes`).
+                cc::model_writes(now.0, now.1)
+            } else {
+                0
+            };
             self.cc.hand(turns.count() as u8 + u8::from(jog) + defaults);
         }
         // A save or clear moves the browser's hints, costs and meter.
@@ -2592,6 +2611,19 @@ impl UiState {
     /// audio's.
     pub fn hear_heads(&mut self, from: &'static PartHeads) {
         self.heads_from = from;
+    }
+
+    /// PIT's tuner takes `note` as `part`'s last, and the edited Part as
+    /// `sounding`, never the audio's: for the goldens and tests.
+    #[cfg(feature = "test-support")]
+    pub fn hear_note(&mut self, part: PartId, note: Option<crate::MidiNote>, sounding: bool) {
+        self.tuner.hear(part, note, sounding);
+    }
+
+    /// PIT's corner as last worked out: for the tests.
+    #[cfg(feature = "test-support")]
+    pub fn tuner(&self) -> &pit_tuner::Shown {
+        &self.tuner.shown
     }
 
     /// The LFO page's playhead reads `from` (the goldens' own), not the
@@ -3078,6 +3110,8 @@ impl UiState {
         self.strip_pass();
         self.heads = self.heads_from.read(at.index());
         self.lfo_pass();
+        // PIT's tuner (ADR 0201): bank 2's pass; closed, the corner stays empty.
+        crate::bank2::ui_door(|d| d.pit(self));
 
         // Read base param values
         let def = self.page_def();
@@ -3350,6 +3384,7 @@ impl UiState {
             strip: &self.overview,
             heads: self.heads,
             lfo: self.lfo_head,
+            tuner: &self.tuner.shown,
             formant: &self.formant,
             held: self.held_choice(),
         }

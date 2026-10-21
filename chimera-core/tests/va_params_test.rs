@@ -2,7 +2,7 @@
 
 use chimera_core::addr::BlockRef;
 use chimera_core::block::{Block, Change, DiskCode, Motion, ParamId, Smoothing};
-use chimera_core::dsp::va::{VA_SPECS, VaMode, VaParams};
+use chimera_core::dsp::va::{NoiseKind, VA_SPECS, VaMode, VaParams};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
@@ -31,27 +31,32 @@ fn neutral_is_the_spec() {
         (p.mode, p.amount, p.sub, p.stability),
         (VaMode::Mix, 0.5, 0.0, 1.0)
     );
+    // NOISE (ADR 0197): off, so an old Sound plays as it did
+    assert_eq!((p.noise_kind, p.noise), (NoiseKind::White, 0.0));
 }
 
 #[test]
 fn every_param_declares_its_motion() {
     for s in &VA_SPECS {
         let want = match s.id {
-            VaParams::CRSE1 | VaParams::CRSE2 => Motion::Stepped(Change::Snap),
+            VaParams::CRSE1 | VaParams::CRSE2 | VaParams::NOISE_KIND => {
+                Motion::Stepped(Change::Snap)
+            }
             VaParams::MODE => Motion::Stepped(Change::Crossfade),
             _ => Motion::Continuous(Smoothing::KNOB),
         };
         assert_eq!(s.motion(), want, "{}", s.label);
-        assert_eq!(s.modulatable, s.id != VaParams::MODE, "{}", s.label);
+        let choice = matches!(s.id, VaParams::MODE | VaParams::NOISE_KIND);
+        assert_eq!(s.modulatable, !choice, "{}", s.label);
     }
-    assert_eq!(VA_SPECS.iter().filter(|s| s.modulatable).count(), 11);
+    assert_eq!(VA_SPECS.iter().filter(|s| s.modulatable).count(), 12);
     for (i, s) in VA_SPECS.iter().enumerate() {
         assert_eq!(s.id, ParamId(i as u8));
     }
 }
 
 #[test]
-fn all_twelve_round_trip_on_disk() {
+fn all_fourteen_round_trip_on_disk() {
     let mut s = Sound::init(EngineType::Algo);
     s.params.va = VaParams {
         wave: [0.1, 0.9],
@@ -62,6 +67,8 @@ fn all_twelve_round_trip_on_disk() {
         amount: 1.0,
         sub: 1.0,
         stability: 0.0,
+        noise_kind: NoiseKind::Digital,
+        noise: 0.6,
     };
     let mut sink = VecSink(Vec::new());
     let h = Header {
@@ -92,6 +99,18 @@ fn unknown_mode_code_loads_as_mix() {
     assert!(!p.set_enum_code(VaParams::MODE, past));
     assert_eq!(p.mode, VaMode::Mix);
     assert_eq!(VaMode::from_disk_code(past), None);
+}
+
+#[test]
+fn unknown_kind_code_loads_as_white() {
+    let past = NoiseKind::ALL.len() as u8;
+    let mut p = VaParams::default();
+    assert!(!p.set_enum_code(VaParams::NOISE_KIND, past));
+    assert_eq!(p.noise_kind, NoiseKind::White);
+    for k in NoiseKind::ALL {
+        assert!(p.set_enum_code(VaParams::NOISE_KIND, k.disk_code()));
+        assert_eq!(p.noise_kind, k);
+    }
 }
 
 #[test]

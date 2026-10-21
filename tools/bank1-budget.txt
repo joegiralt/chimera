@@ -1,0 +1,23 @@
+# Bank 1's budget per firmware set (ADR 0198): the bank-1 .bin (`rust-objcopy
+# -R .bank2`) of `just check`'s plain release build, in bytes. `just check-bank1`
+# fails a set more than 64 B over its line (move the code behind a door) or
+# more than 1 KB under it (lower the line: freed room stays bank 2's).
+#
+# A raise is an ADR exception: edit the line and name that ADR in its comment.
+# A feature's closed-door data (specs, disk codes, page tables, labels) is
+# one: its ADR measures and lists it. `BANK1_LOWER=1 just check` lowers lines.
+# Every line names an ADR or the file refuses to load.
+#
+# <set: features as check builds it>  <bytes>  # ADR NNNN: why
+orbit                          909508  # ADR 0198: 905300 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +1844 GRAIN's closed-door data (#756 in it); ADR 0195 +948 the gate's data, stubs and churn; ADR 0201 +104 PIT's door calls; ADR 0203 +728 WALK's data and stubs; ADR 0204 +584 STRETCH's (integration-1021)
+default                        888328  # ADR 0198: 884256 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +1460 GRAIN's closed-door data (#756 in it); ADR 0195 +1100 the gate's data, stubs and churn; ADR 0201 +272 PIT's door calls; ADR 0203 +616 WALK's data and stubs; ADR 0204 +624 STRETCH's (integration-1021)
+bank2-gate                     889924  # ADR 0198: 886092 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +1484 GRAIN's closed-door data (#756 in it); ADR 0195 +1036 the gate's data, stubs and churn; ADR 0201 +264 PIT's door calls; ADR 0203 +576 WALK's data and stubs; ADR 0204 +472 STRETCH's (integration-1021)
+fault-inject                   862336  # ADR 0198: 858384 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +1404 GRAIN's closed-door data (#756 in it); ADR 0195 +1180 the gate's data, stubs and churn; ADR 0201 -24 PIT's door calls; ADR 0203 +696 WALK's data and stubs; ADR 0204 +696 STRETCH's (integration-1021)
+bench-algo                     907224  # ADR 0198: 902288 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +2492 GRAIN's closed-door data (#756 in it); ADR 0195 +508 the gate's data, stubs and churn; ADR 0201 +96 PIT's door calls; ADR 0203 +1224 WALK's data and stubs; ADR 0204 +616 STRETCH's (integration-1021)
+bench-algo,master-tape         884224  # ADR 0198: 880264 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +1556 GRAIN's closed-door data (#756 in it); ADR 0195 +924 the gate's data, stubs and churn; ADR 0201 +64 PIT's door calls; ADR 0203 +776 WALK's data and stubs; ADR 0204 +640 STRETCH's (integration-1021)
+bench-routing                  903328  # ADR 0198: 898248 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +2484 GRAIN's closed-door data (#756 in it); ADR 0195 +532 the gate's data, stubs and churn; ADR 0201 +112 PIT's door calls; ADR 0203 +1344 WALK's data and stubs; ADR 0204 +608 STRETCH's (integration-1021)
+bench-memory                   905948  # ADR 0198: 900876 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +2500 GRAIN's closed-door data (#756 in it); ADR 0195 +436 the gate's data, stubs and churn; ADR 0201 +112 PIT's door calls; ADR 0203 +1504 WALK's data and stubs; ADR 0204 +520 STRETCH's (integration-1021)
+bench-stress                   908192  # ADR 0198: 903048 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +2508 GRAIN's closed-door data (#756 in it); ADR 0195 +500 the gate's data, stubs and churn; ADR 0201 +120 PIT's door calls; ADR 0203 +1504 WALK's data and stubs; ADR 0204 +512 STRETCH's (integration-1021)
+bench-orbit                    887572  # ADR 0198: 883428 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +1540 GRAIN's closed-door data (#756 in it); ADR 0195 +988 the gate's data, stubs and churn; ADR 0201 +48 PIT's door calls; ADR 0203 +976 WALK's data and stubs; ADR 0204 +592 STRETCH's (integration-1021)
+bench-tape                     869864  # ADR 0198: 865584 at the main merge (5a2e50e7 on a6f35a7b); ADR 0202 +1692 GRAIN's closed-door data (#756 in it); ADR 0195 +1268 the gate's data, stubs and churn; ADR 0201 +24 PIT's door calls; ADR 0203 +584 WALK's data and stubs; ADR 0204 +712 STRETCH's (integration-1021)
+filter-probes                  863688  # ADR 0198: the probes and their tables in bank 2 (never shipped); ADR 0202 +1420, ADR 0195 +4628 (lpg_probe), ADR 0201 -32 over the main merge's 911440
