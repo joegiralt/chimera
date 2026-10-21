@@ -75,7 +75,7 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
             p.tape.set_way(chimera_core::dsp::tape_engine::Way::One);
             p.tape.drag = chimera_core::dsp::tape_engine::FADE_HOLD;
         }
-        // PLAY reads no MOTION (ADR 0200): STRETCH's SPEED.
+        // PLAY reads no MOTION (ADR 0202): STRETCH's SPEED.
         BlockRef::TapeEngine
             if addr.param == chimera_core::dsp::tape_engine::TapeEngineParams::MOTION =>
         {

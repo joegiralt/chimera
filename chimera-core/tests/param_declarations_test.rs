@@ -63,7 +63,7 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
                 // SLICE is retired: no machine has a cell for it.
                 TapeEngineParams::SLICE => Way::Loop,
                 // A whole-window loop has no room to walk: FORWARD's start.
-                TapeEngineParams::WALK => Way::One,
+                TapeEngineParams::DRIFT => Way::One,
                 id => *m.iter().find(|&&w| tape::reads(w.machine(), id)).unwrap(),
             };
             s.params.tape.set_way(way);

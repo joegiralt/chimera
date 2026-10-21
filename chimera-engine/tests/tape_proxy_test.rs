@@ -47,7 +47,7 @@ fn bits(x: &[f32]) -> Vec<u32> {
 fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     let (mut tok, id) = source();
     let p = TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: Direction::Loop,
         ..TapeEngineParams::default()
     };

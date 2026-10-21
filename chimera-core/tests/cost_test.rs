@@ -714,8 +714,8 @@ fn the_model_bills_every_bench_row_high() {
     }
     // The TAPE rows (spec § 5), TAPE and AGE at 0.5 on each, as the bench
     // plays them; read cold on the unit. 0 until the owner's session.
-    // PLAY's DIRECTIONs and TRON are the old LOOP, PING-PONG, ONESHOT and
-    // TRON (ADR 0200).
+    // WALK's DIRECTIONs and TRON are the old LOOP, PING-PONG, ONESHOT and
+    // TRON (ADR 0202).
     let (lp, ping, one) = (Way::Loop, Way::Ping, Way::One);
     let tape = |w: Way, (start, end): (f32, f32), steal_glide: bool| {
         let mut p = tape_sound(w.machine().model());
@@ -1584,7 +1584,7 @@ fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot
 fn tape_bills_each_model() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::tape_engine::{COST_STREAM, TapeEngineParams, streamed_cost};
-    // PLAY's DIRECTIONs and TRON bill what LOOP, PING-PONG, ONESHOT and
+    // WALK's DIRECTIONs and TRON bill what LOOP, PING-PONG, ONESHOT and
     // TRON billed.
     let (lp, ping, one) = (Way::Loop, Way::Ping, Way::One);
     let rooms = {
@@ -1608,7 +1608,7 @@ fn tape_bills_each_model() {
         (Way::Wave, 400, [8, 8, 8, 8], [8, 8, 8, 8]),
         (Way::Stretch, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
         (one, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
-        (Way::Tron, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
+        (Way::Tron, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
     ] {
         for reversed in [false, true] {
             let mut p = tape_sound(w.machine().model());
@@ -1639,7 +1639,7 @@ fn tape_bills_each_model() {
                     assert_eq!(EngineSlot::cost(&p, &mods), Cost(bill + t + a), "{why}");
                 }
             }
-            // A streamed source (slice 1 § 5.5): only PLAY streams.
+            // A streamed source (slice 1 § 5.5): only WALK streams.
             if matches!(w, Way::One | Way::Loop | Way::Tron) {
                 assert_eq!(
                     streamed_cost(w),

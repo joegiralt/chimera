@@ -446,7 +446,7 @@ fn every_retired_model_loads_and_translates_to_play() {
         let f = with_block_raw(&tape, 34, 0, (m as u32).to_le_bytes());
         assert_eq!(decode_skips(&f), 0, "{m:?}");
         let s = decode(&f).unwrap();
-        assert_eq!(s.params.tape.model(), TapeModel::Play, "{m:?}");
+        assert_eq!(s.params.tape.model(), TapeModel::Walk, "{m:?}");
     }
 }
 

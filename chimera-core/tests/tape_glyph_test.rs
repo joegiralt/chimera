@@ -323,11 +323,14 @@ fn cases() -> Vec<(String, TapeGauge)> {
     v
 }
 
+// The still and worn rows are WALK's footsteps since ADR 0202; the live
+// rows of ONE's match, LOOP's wheel, PING's court and TRON's blind are the
+// kept pictures', unchanged.
 const GOLDENS: &[(&str, u64)] = &[
-    ("one_still", 0xd21fca260fc72bb3),
-    ("loop_still", 0xee7ce65bb21a8edd),
-    ("ping_still", 0x11fb45bbcaa0aaad),
-    ("tron_still", 0x2da91fd3c252b178),
+    ("one_still", 0x9f4b5f3936088066),
+    ("loop_still", 0xf81953cb39842fa6),
+    ("ping_still", 0xe2e893a20f5c771f),
+    ("tron_still", 0xc8dfe3dd85713df6),
     ("stretch_still", 0xec7471660def4d69),
     ("wave_still", 0x35b91a1f3869788b),
     ("scrub_still", 0xfa9dc37b17460909),
@@ -353,9 +356,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("scrub_forward", 0x823b6cdf60db0701),
     ("scrub_back", 0xde0233cd46fe3318),
     ("scrub_length_xfade", 0x4ae89a8f1af5f0df),
-    ("loop_wow", 0xc6884ede1fdd43ad),
-    ("loop_grain", 0xa727e7c0a46b570e),
-    ("tron_worn", 0xa028652aeee8bb7d),
+    ("loop_wow", 0x8e80d9f019a555c4),
+    ("loop_grain", 0x751dff187a6ad703),
+    ("tron_worn", 0xafc96adcb08994d6),
 ];
 
 #[test]
@@ -414,7 +417,7 @@ fn a_step_is_about_a_pixel() {
 
 #[test]
 fn model_picks_the_glyph() {
-    // MODEL's value is the machine, PLAY's DIRECTION and TRON its path.
+    // MODEL's value is the machine, WALK's DIRECTION and TRON its path.
     for w in Way::ALL {
         let (m, d, t) = w.parts();
         let g = TapeGauge::of(&GlyphInputs::from_set(
@@ -673,12 +676,12 @@ fn xfade_dashes_the_loop_end_where_it_plays() {
 #[test]
 fn ignored_params_leave_the_glyph() {
     // A param the machine ignores (`reads`: TRON's POSITION and MOTION,
-    // ONE's POSITION, WALK, LENGTH and XFADE, PING's XFADE) moves neither
+    // ONE's POSITION, DRIFT, LENGTH and XFADE, PING's XFADE) moves neither
     // the key nor a pixel.
     use chimera_core::dsp::tape_engine::reads;
     use chimera_core::ui::glyph::TAPE_GLYPH_PARAMS;
     let mut checked = 0;
-    // PLAY reads all its cells on every path: what a path's glyph draws
+    // WALK reads all its cells on every path: what a path's glyph draws
     // is checked by the other tests.
     for w in Way::ALL {
         let (m, d, t) = w.parts();
@@ -721,7 +724,7 @@ fn no_tape_page_cell_is_dimmed() {
         for def in [&TAPE_DECK, &TAPE_MODEL] {
             for i in 0..6 {
                 let v = view::view(def, i, &ctx);
-                // PLAY's XFADE off LOOP and RETRIG off once through say why.
+                // WALK's XFADE off LOOP and RETRIG off once through say why.
                 let why = v.addr().and_then(|a| view::tape_note(a, &s));
                 if matches!(why, Some(view::XFADE_LOOP_ONLY | view::RETRIG_ONCE_ONLY)) {
                     continue;
@@ -783,7 +786,7 @@ fn stretch_chevrons_count_the_speed_not_the_knob() {
 
 #[test]
 fn direction_turned_onto_forward_burns_the_match() {
-    // LOOP → FORWARD → LOOP on DECK, as on the unit (ADR 0200): FORWARD's
+    // LOOP → FORWARD → LOOP on DECK, as on the unit (ADR 0202): FORWARD's
     // LENGTH (B) and POSITION (E) cut the match's run; back on LOOP,
     // POSITION rolls the wheel. A dirty frame always equals a full one.
 

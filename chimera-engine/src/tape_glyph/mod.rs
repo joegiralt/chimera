@@ -141,7 +141,7 @@ pub struct Run {
     pub end: Q6,
 }
 
-/// LOOP's loop in the window: POSITION, LENGTH, WALK and XFADE.
+/// LOOP's loop in the window: POSITION, LENGTH, DRIFT and XFADE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Loop {
     pub position: Q6,
@@ -151,7 +151,7 @@ pub struct Loop {
     pub xfade: Q3,
 }
 
-/// PING's loop in the window: POSITION, LENGTH and WALK. It has no
+/// PING's loop in the window: POSITION, LENGTH and DRIFT. It has no
 /// crossfade.
 ///
 /// ```compile_fail,E0560
@@ -203,7 +203,51 @@ pub struct Sponge {
     pub xfade: Q3,
 }
 
-/// A machine and its inputs: PLAY's three MODEs each their own.
+/// WALK's footsteps (ADR 0202): DIRECTION lays them (a line forward or
+/// back, a loop, there and back), POSITION and LENGTH the stretch they
+/// cover, DRIFT scatters them, FADE fades the last ones out, and TRON
+/// marks where its tape ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Steps {
+    /// DIRECTION's value, 0 to 3.
+    pub dir: u8,
+    pub position: Q6,
+    pub length: Q6,
+    pub drift: Q4,
+    pub fade: Q3,
+    pub tron: bool,
+}
+
+impl Steps {
+    pub const fn direction(self) -> Direction {
+        match self.dir {
+            0 => Direction::Forward,
+            1 => Direction::Reverse,
+            2 => Direction::Loop,
+            _ => Direction::Ping,
+        }
+    }
+}
+
+/// How WALK's footsteps are drawn: the owner picks one (ADR 0202's
+/// listening page); `render` draws `StepStyle::DEFAULT`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepStyle {
+    /// A sole and a toe, left and right.
+    Prints,
+    /// Boot treads: a chevron a step.
+    Treads,
+    /// A dotted trail, a stride's mark a step.
+    Trail,
+}
+
+impl StepStyle {
+    pub const ALL: [StepStyle; 3] = [StepStyle::Prints, StepStyle::Treads, StepStyle::Trail];
+    pub const DEFAULT: StepStyle = StepStyle::Prints;
+}
+
+/// A machine and its inputs. ONE's match, LOOP's wheel, PING's court and
+/// TRON's blind are kept (never throw work away); WALK draws `Walk`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Machine {
     One(Run),
@@ -213,15 +257,37 @@ pub enum Machine {
     Stretch(Bellows),
     Wave(Film),
     Scrub(Sponge),
+    Walk(Steps),
 }
 
-/// The glyph a machine shows: the deck's path, so PLAY shows its
-/// DIRECTION, and TRON's blind once through (ADR 0200).
+/// The glyph a machine shows: the deck's path, so WALK lays its
+/// footsteps by DIRECTION and TRON (ADR 0202).
 pub type Kind = Way;
 
 impl Way {
     /// Its still pose: fixed inputs that show what the machine is.
     pub fn still(self) -> Machine {
+        let steps = |dir: Direction, tron: bool| {
+            Machine::Walk(Steps {
+                dir: dir as u8,
+                position: Q6::of(0.1),
+                length: Q6::of(0.8),
+                drift: Q4::of(0.25),
+                fade: Q3::of(0.0),
+                tron,
+            })
+        };
+        match self {
+            Kind::One => steps(Direction::Forward, false),
+            Kind::Loop => steps(Direction::Loop, false),
+            Kind::Ping => steps(Direction::Ping, false),
+            Kind::Tron => steps(Direction::Forward, true),
+            Kind::Stretch | Kind::Wave | Kind::Scrub => self.kept(),
+        }
+    }
+
+    /// The other machines' still poses, and the kept pictures'.
+    pub fn kept(self) -> Machine {
         let q6 = Q6::of;
         let q5 = Q5::of;
         let walk = |v: f32| q6(0.5 + 0.5 * v);
@@ -306,9 +372,10 @@ pub struct GlyphInputs {
     pub tape: f32,
     pub age: f32,
     pub xfade: f32,
-    /// PLAY's DIRECTION (REVERSE draws ONE's run backward) and WALK.
+    /// WALK's DIRECTION (REVERSE draws ONE's run backward) and DRIFT.
     pub direction: Direction,
-    pub walk: f32,
+    pub drift: f32,
+    pub tron: bool,
     pub pose: Pose,
 }
 
@@ -329,12 +396,13 @@ impl GlyphInputs {
             xfade,
             direction,
             tron,
-            walk,
+            drift,
         ] = set;
         let index_of = crate::dsp::rev::sync::index_of;
         let m = TapeMachine::from_index(MachineIndex(index_of(model, TapeMachine::ALL.len()) as u8));
         let direction = Direction::ALL[index_of(direction, Direction::ALL.len())];
-        let tron = if tron > 0.5 { Tron::On } else { Tron::Off };
+        let on = tron > 0.5;
+        let tron = if on { Tron::On } else { Tron::Off };
         Self {
             machine: Way::of(m, direction, tron),
             start,
@@ -347,7 +415,8 @@ impl GlyphInputs {
             age,
             xfade,
             direction,
-            walk,
+            drift,
+            tron: on,
             pose,
         }
     }
@@ -369,7 +438,7 @@ const _: () = {
         T::XFADE,
         T::MODE,
         T::TRON,
-        T::WALK,
+        T::DRIFT,
     ];
     let mut i = 0;
     while i < order.len() {
@@ -424,6 +493,12 @@ impl TapeGauge {
             Machine::Stretch(_) => Kind::Stretch,
             Machine::Wave(_) => Kind::Wave,
             Machine::Scrub(_) => Kind::Scrub,
+            Machine::Walk(s) => match (s.direction(), s.tron) {
+                (Direction::Forward | Direction::Reverse, false) => Kind::One,
+                (Direction::Forward | Direction::Reverse, true) => Kind::Tron,
+                (Direction::Loop, _) => Kind::Loop,
+                (Direction::Ping, _) => Kind::Ping,
+            },
         }
     }
 
@@ -440,6 +515,14 @@ impl TapeGauge {
             Machine::Tron(b) => s(b.length.0, 0) | s(b.fade.0, 6),
             Machine::Stretch(b) => s(b.speed.0, 0) | s(b.d_time.0, 6),
             Machine::Wave(f) => s(f.frame.0, 0) | s(f.range.0, 6) | s(f.scan.0, 12),
+            Machine::Walk(w) => {
+                s(w.dir, 0)
+                    | s(w.position.0, 2)
+                    | s(w.length.0, 8)
+                    | s(w.drift.0, 14)
+                    | s(w.fade.0, 18)
+                    | s(u8::from(w.tron), 21)
+            }
             Machine::Scrub(p) => {
                 s(p.finger.0, 0)
                     | s(p.speed.0, 6)

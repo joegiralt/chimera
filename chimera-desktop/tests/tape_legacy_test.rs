@@ -1,5 +1,5 @@
-//! Old-machine Sounds load as PLAY and sound the same (ADR 0200): each
-//! file `fixtures/tape_legacy.txt` holds, written before PLAY, decodes and
+//! Old-machine Sounds load as WALK and sound the same (ADR 0202): each
+//! file `fixtures/tape_legacy.txt` holds, written before WALK, decodes and
 //! renders through the whole instrument bit for bit as it did then, but
 //! where the fixture says why not. And TRON is heard: on a held chord its
 //! tape runs out and key up lifts the pad, where TRON off plays on.
@@ -78,13 +78,13 @@ fn old_machine_sounds_render_bit_identically() {
     assert!(checked >= 45, "{checked}");
 }
 
-/// Each factory TAPE Sound, re-pointed to PLAY and built now, renders as
-/// its file from before PLAY did.
+/// Each factory TAPE Sound, re-pointed to WALK and built now, renders as
+/// its file from before WALK did.
 #[test]
 fn factory_sounds_on_play_render_as_before() {
     let mut checked = 0;
     for c in cases() {
-        let Some(name) = c.name.strip_prefix("factory ") else {
+        let Some(name) = c.name.strip_prefix("factory ").filter(|_| c.same) else {
             continue;
         };
         let Some((s, b)) = factory(name) else {
@@ -97,7 +97,7 @@ fn factory_sounds_on_play_render_as_before() {
 }
 
 /// What each old machine loads as: a factory Sound as its recipe now
-/// names it (PLAY with its DIRECTION and TRON), the others by the machine
+/// names it (WALK with its DIRECTION and TRON), the others by the machine
 /// they were made on.
 #[test]
 fn old_machines_load_as_play_with_their_direction() {
@@ -120,7 +120,7 @@ fn old_machines_load_as_play_with_their_direction() {
                 w.parts()
             }
         };
-        if want.0 == TapeMachine::Play {
+        if want.0 == TapeMachine::Walk {
             assert_eq!((t.machine, t.direction, t.tron), want, "{}", c.name);
         } else {
             assert_eq!(t.machine, want.0, "{}", c.name);
@@ -128,10 +128,11 @@ fn old_machines_load_as_play_with_their_direction() {
     }
 }
 
-/// TRON BOWED (4 s of tape at its root) on a chord held 6 s, then on one
-/// let go at 1.5 s: ON, its tape runs out at 4 s while held and its pad
-/// lifts at key up; OFF (FORWARD at HOLD), it plays to END either way,
-/// slower below the root.
+/// TRON BOWED (a 4 s strip at its root, LENGTH 1: an 8 s tape) on a low
+/// chord held 10 s, then on one let go at 1.5 s: ON, the strip comes
+/// round until the tape runs out at 8 s while held, and its pad lifts at
+/// key up; OFF (FORWARD at HOLD), it plays to END either way, slower below
+/// the root.
 #[test]
 fn tron_is_heard_on_a_held_chord() {
     let Some((on, b)) = factory("TRON BOWED") else {
@@ -142,10 +143,16 @@ fn tron_is_heard_on_a_held_chord() {
     off.params.tape.tron = Tron::Off;
     off.params.tape.drag = chimera_core::dsp::tape_engine::FADE_HOLD;
     let r = root(b);
-    let held = chord(&[r - 12, r - 7, r - 3], 0.0, 6.0);
-    let (a, z) = (mono(&render(&on, b, &held, 7.0)), mono(&render(&off, b, &held, 7.0)));
-    assert!(level_in(&a, 4.2, 5.0) < -60.0, "ON: run out by 4 s, {}", level_in(&a, 4.2, 5.0));
-    assert!(level_in(&z, 4.2, 5.0) > -30.0, "OFF plays on, {}", level_in(&z, 4.2, 5.0));
+    let held = chord(&[r - 24, r - 19, r - 15], 0.0, 10.0);
+    let (a, z) = (mono(&render(&on, b, &held, 11.0)), mono(&render(&off, b, &held, 11.0)));
+    assert!(level_in(&a, 7.0, 7.8) > -30.0, "ON: still on tape at 7 s, {}", level_in(&a, 7.0, 7.8));
+    assert!(level_in(&a, 8.2, 9.5) < -60.0, "ON: run out at 8 s, {}", level_in(&a, 8.2, 9.5));
+    assert!(level_in(&z, 8.2, 9.5) > -30.0, "OFF plays on, {}", level_in(&z, 8.2, 9.5));
+    // At the root the strip ends at 4 s, OFF; ON goes round to 8 s.
+    let root_chord = chord(&[r, r + 4, r + 7], 0.0, 10.0);
+    let (a, z) = (mono(&render(&on, b, &root_chord, 9.0)), mono(&render(&off, b, &root_chord, 9.0)));
+    assert!(level_in(&a, 5.0, 7.5) > -30.0, "ON: round again, {}", level_in(&a, 5.0, 7.5));
+    assert!(level_in(&z, 5.0, 7.5) < -60.0, "OFF: ended at END, {}", level_in(&z, 5.0, 7.5));
     let up = chord(&[r - 12, r - 7, r - 3], 0.0, 1.5);
     let (a, z) = (mono(&render(&on, b, &up, 3.0)), mono(&render(&off, b, &up, 3.0)));
     assert!(level_in(&a, 1.7, 2.5) < -60.0, "ON: the pad lifts, {}", level_in(&a, 1.7, 2.5));

@@ -427,7 +427,7 @@ fn stream_qa_stressed() {
         "admission takes {billed}"
     );
     let p = TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: Direction::Loop,
         root: 6_000.0,
         ..TapeEngineParams::default()

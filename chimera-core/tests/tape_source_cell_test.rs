@@ -1249,7 +1249,7 @@ fn a_held_source_doesnt_stop_anothers_reheading() {
 
 // Card read faults: the UI pass re-inits and mounts.
 
-/// `b` loaded streamed on Part 1 at PLAY ONE.
+/// `b` loaded streamed on Part 1 at WALK ONE.
 fn streamed_rig(b: &(SourceHead, Vec<u8>)) -> Rig {
     let mut rig = Rig::new(std::slice::from_ref(b));
     rig.tape(|t| t.set_way(Way::One));

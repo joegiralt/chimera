@@ -8,9 +8,10 @@
 
 use super::{
     Bellows, Blind, Bounce, Canvas, Film, GlyphInputs, H, Ink, Kind, Loop, Machine, Pose, Q, Q3,
-    Q4, Q5, Q6, Run, Sponge, TapeGauge, W, Wear,
+    Q4, Q5, Q6, Run, Sponge, StepStyle, Steps, TapeGauge, W, Wear,
 };
 use crate::dsp::algo::math::clampf;
+use crate::dsp::algo::math::exp2;
 use crate::dsp::tape_engine::Direction;
 use crate::dsp::fast_sin;
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
@@ -29,8 +30,8 @@ const SOFT: Ink = Ink::Soft;
 pub fn inputs(i: &GlyphInputs) -> TapeGauge {
     let &GlyphInputs {
         machine: kind,
-        start,
-        end,
+        start: _,
+        end: _,
         position: pos,
         motion,
         size,
@@ -39,7 +40,8 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
         age,
         xfade,
         direction,
-        walk,
+        drift,
+        tron,
         pose,
     } = i;
     if pose == Pose::Still {
@@ -47,32 +49,14 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
     }
     let (q6, q5) = (Q6::of, Q5::of);
     let machine = match kind {
-        // The run POSITION and LENGTH cut from START to END (LENGTH drawn
-        // linear); REVERSE burns the match from its far end.
-        Kind::One => {
-            let (a, z) = if direction == Direction::Reverse { (end, start) } else { (start, end) };
-            let from = a + (z - a) * clampf(pos, 0.0, 1.0);
-            let to = from + (z - from) * clampf(size, 0.0, 1.0);
-            Machine::One(Run {
-                start: q6(from),
-                end: q6(to),
-            })
-        }
-        // WALK, 0 to 1, on the drift's forward half: the hamster runs.
-        Kind::Loop => Machine::Loop(Loop {
+        // WALK's footsteps (ADR 0202). FADE at HOLD fades nothing.
+        Kind::One | Kind::Loop | Kind::Ping | Kind::Tron => Machine::Walk(Steps {
+            dir: direction as u8,
             position: q6(pos),
             length: q6(size),
-            walk: q6(0.5 + 0.5 * walk),
-            xfade: Q3::of(xfade),
-        }),
-        Kind::Ping => Machine::Ping(Bounce {
-            position: q6(pos),
-            length: q6(size),
-            walk: q6(0.5 + 0.5 * walk),
-        }),
-        Kind::Tron => Machine::Tron(Blind {
-            length: q6(size),
-            fade: q5(drag),
+            drift: Q4::of(drift),
+            fade: Q3::of(if kind == Kind::One && drag >= 1.0 { 0.0 } else { drag }),
+            tron: kind == Kind::Tron || tron,
         }),
         Kind::Stretch => Machine::Stretch(Bellows {
             speed: q6(motion),
@@ -104,8 +88,15 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
 /// AGE's grain on the ground and its dropouts.
 #[inline(never)]
 pub fn render(g: &TapeGauge, out: &mut Canvas) {
+    render_style(g, out, StepStyle::DEFAULT);
+}
+
+/// `render` with WALK's footsteps drawn in `style`: the listening page's
+/// variants.
+pub fn render_style(g: &TapeGauge, out: &mut Canvas, style: StepStyle) {
     let mut p = Pix(Canvas::new());
     match g.machine {
+        Machine::Walk(w) => steps(&mut p, w, style),
         Machine::One(r) => one(&mut p, r),
         Machine::Loop(l) => wheel(&mut p, l),
         Machine::Ping(l) => pong(&mut p, l),
@@ -365,7 +356,7 @@ fn one(p: &mut Pix, run: Run) {
 /// LOOP: a hamster wheel on the lit loop. LENGTH sizes the wheel (10 to
 /// 15 px, so it has room to roll), POSITION rolls it along the window,
 /// its spokes turning as it goes, even where LENGTH leaves the loop no
-/// room (the strip shows that); XFADE dashes the loop's end; WALK turns
+/// room (the strip shows that); XFADE dashes the loop's end; DRIFT turns
 /// the hamster to the drift and adds speed lines; at 0 it sits.
 #[inline(never)]
 fn wheel(p: &mut Pix, l: Loop) {
@@ -426,7 +417,7 @@ fn wheel(p: &mut Pix, l: Loop) {
 }
 
 /// PING: Pong. LENGTH spaces the paddles (the loop, lit on the floor),
-/// POSITION slides the court along the window, WALK tilts the ball's path
+/// POSITION slides the court along the window, DRIFT tilts the ball's path
 /// and lengthens its trail.
 #[inline(never)]
 fn pong(p: &mut Pix, l: Bounce) {
@@ -732,5 +723,148 @@ fn sponge(p: &mut Pix, s: Sponge) {
         let (d, y) = (if ahead { 1 } else { -1 }, t - 4);
         p.rect(if ahead { sx - 4 } else { sx - 1 }, y, 6, 1, ACC);
         p.arrow(sx + 2 * d, y, d, ACC);
+    }
+}
+
+// ── WALK ─────────────────────────────────────────────────────────────
+
+/// A step's fixed scatter, −1..1 each way: a hash of its place, so DRIFT
+/// moves it the same way every frame.
+fn scatter(k: i32) -> (f32, f32) {
+    let h = (k as u32).wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
+    let h = h ^ (h >> 15);
+    let u = |b: u32| ((h >> b) & 0xFF) as f32 / 127.5 - 1.0;
+    (u(0), u(8))
+}
+
+/// One footstep at (`x`, `y`), heading `(dx, dy)` (unit), on the `side`
+/// (±1) of its line, in `style`.
+fn step(p: &mut Pix, (x, y): (i32, i32), (dx, dy): (f32, f32), side: i32, ink: Ink, style: StepStyle) {
+    // Off the line by 2 px to its side.
+    let (ox, oy) = (r(-dy * 2.0) * side, r(dx * 2.0) * side);
+    let (x, y) = (x + ox, y + oy);
+    match style {
+        StepStyle::Prints => {
+            // The heel behind, the ball ahead, the toes past it.
+            p.dot(x - r(dx * 2.5), y - r(dy * 2.5), 1, ink);
+            p.dot(x + r(dx * 1.0), y + r(dy * 1.0), 1, ink);
+            p.px(x + r(dx * 1.0) + r(dy * 1.5), y + r(dy * 1.0) - r(dx * 1.5), ink);
+            p.px(x + r(dx * 3.0), y + r(dy * 3.0), ink);
+        }
+        StepStyle::Treads => {
+            let (bx, by) = (x - r(dx * 2.0), y - r(dy * 2.0));
+            p.line(bx - r(dy * 2.0), by + r(dx * 2.0), x, y, ink);
+            p.line(bx + r(dy * 2.0), by - r(dx * 2.0), x, y, ink);
+        }
+        StepStyle::Trail => {
+            p.rect(x - 1, y - 1, 2, 2, ink);
+        }
+    }
+}
+
+/// The ink of step `k` of `n`: FADE fades the last ones, down to FAINT.
+fn step_ink(k: i32, n: i32, fade: f32) -> Ink {
+    let faded = libm::roundf(fade * 4.0) as i32;
+    match n - k {
+        d if d <= faded / 2 && faded > 0 => FAINT,
+        d if d <= faded => MID,
+        _ => ACC,
+    }
+}
+
+/// TRON's tape end at `x`: the leader's edge, hatched, with its spool's
+/// tab above.
+fn tape_end(p: &mut Pix, x: i32, y: i32) {
+    p.rect(x, y - 8, 1, 17, INK);
+    for i in 0..4 {
+        p.px(x + 1 + i % 2, y - 7 + 4 * i, INK2);
+    }
+    p.rect(x - 2, y - 10, 5, 2, INK2);
+}
+
+/// WALK: footsteps. FORWARD walks the run POSITION and LENGTH cut from the
+/// window left to right, REVERSE right to left; LOOP round a track LENGTH
+/// sizes and POSITION moves; PING-PONG there on one lane and back on the
+/// other. DRIFT scatters each step, FADE fades the last, TRON stops them
+/// at its tape's end (LENGTH's share of 8 s once through, the strip's end
+/// round a loop) and greys the rest.
+#[inline(never)]
+fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
+    let (pos, len) = (w.position.unit(), w.length.unit());
+    let drift = w.drift.unit() * 3.0;
+    let fade = w.fade.unit();
+    let at = |k: i32, x: f32, y: f32| {
+        let (sx, sy) = scatter(k);
+        (r(x + sx * drift * 0.7), r(y + sy * drift))
+    };
+    match w.direction() {
+        Direction::Forward | Direction::Reverse => {
+            let back = w.direction() == Direction::Reverse;
+            let (x0, x1) = (6.0, 58.0);
+            let from = x0 + pos * (x1 - x0);
+            let to = from + lvis(len) * (x1 - from);
+            let (lo, hi) = (r(from), r(to));
+            window_strip(p, lo, hi, 44, 0);
+            // TRON once through: its tape is LENGTH's share of 8 s.
+            let end = w.tron.then(|| r(x0 + exp2(5.0 * len - 5.0) * (x1 - x0)));
+            let n = (((to - from) / 8.0) as i32).max(1) + 1;
+            let d = if back { -1.0 } else { 1.0 };
+            for k in 0..n {
+                let x = if back { to - 8.0 * k as f32 } else { from + 8.0 * k as f32 };
+                let out = end.is_some_and(|e| if back { x < (x1 - (e as f32 - x0)) } else { x > e as f32 });
+                let ink = if out { FAINT } else { step_ink(k, n - 1, fade) };
+                let side = if k % 2 == 0 { 1 } else { -1 };
+                step(p, at(k, x, 24.0), (d, 0.0), side, ink, style);
+            }
+            if let Some(e) = end {
+                tape_end(p, if back { r(x1) - (e - r(x0)) } else { e }, 24);
+            }
+            p.arrow(if back { lo - 2 } else { hi + 2 }, 24, if back { -1 } else { 1 }, INK2);
+        }
+        Direction::Loop => {
+            let (lo, hi) = loop_span(pos, len);
+            window_strip(p, r(lo), r(hi), 44, 0);
+            let rx = 6.0 + 22.0 * lvis(len);
+            let cx = lo + (hi - lo) / 2.0;
+            let cx = clampf(cx, rx + 2.0, 62.0 - rx);
+            let (cy, ry) = (21.0, 13.0);
+            for i in 0..64 {
+                let a = TAU * i as f32 / 64.0;
+                p.px(r(cx + rx * cos(a)), r(cy - ry * fast_sin(a)), FAINT);
+            }
+            let n = 8 + (rx / 5.0) as i32;
+            for k in 0..n {
+                let a = TAU * k as f32 / n as f32;
+                let (c, sn) = (cos(a), fast_sin(a));
+                // Clockwise, as a loop reads left to right on top.
+                let (dx, dy) = (-sn, c);
+                let ink = if w.tron && k == n - 1 { FAINT } else { step_ink(k, n - 1, fade) };
+                step(p, at(k, cx + rx * c, cy - ry * sn), (dx, -dy), if k % 2 == 0 { 1 } else { -1 }, ink, style);
+            }
+            if w.tron {
+                tape_end(p, r(cx), r(cy - ry));
+            }
+        }
+        Direction::Ping => {
+            let (lo, hi) = loop_span(pos, len);
+            window_strip(p, r(lo), r(hi), 44, 0);
+            let n = (((hi - lo) / 7.0) as i32).max(1) + 1;
+            for (lane, y, d) in [(0, 16.0, 1.0f32), (1, 32.0, -1.0)] {
+                for k in 0..n {
+                    let x = if d > 0.0 { lo + 7.0 * k as f32 } else { hi - 7.0 * k as f32 };
+                    let i = lane * n + k;
+                    let ink = step_ink(i, 2 * n - 1, fade);
+                    step(p, at(i, x, y), (d, 0.0), if k % 2 == 0 { 1 } else { -1 }, ink, style);
+                }
+            }
+            // The turns at each end.
+            p.line(r(hi) + 2, 16, r(hi) + 4, 24, INK2);
+            p.line(r(hi) + 4, 24, r(hi) + 2, 32, INK2);
+            p.line(r(lo) - 2, 32, r(lo) - 4, 24, INK2);
+            p.line(r(lo) - 4, 24, r(lo) - 2, 16, INK2);
+            if w.tron {
+                tape_end(p, r(hi) + 6, 24);
+            }
+        }
     }
 }

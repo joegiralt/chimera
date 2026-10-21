@@ -115,7 +115,7 @@ fn deck_reads_needs_update_closed() {
     );
     assert_eq!(empty.1, Some(NEEDS_UPDATE_CELL));
     assert!(first_cell_reads(&empty.0, NEEDS_UPDATE_CELL));
-    assert!(first_cell_reads(&ok.0, "PLAY"));
+    assert!(first_cell_reads(&ok.0, "WALK"));
 }
 
 // Streamed sources through pass 2 (slice 1 § 5.6).
@@ -173,7 +173,7 @@ mod streamed {
         t.set_way(Way::One);
     }
 
-    /// Part `n` on TAPE, PLAY ONE, playing `r`.
+    /// Part `n` on TAPE, WALK ONE, playing `r`.
     fn tape_part(p: &mut Project, t: chimera_core::project::TemplateCrc, n: usize, r: SourceRef) {
         let part = PartId::ALL[n];
         let src = PartSource {
@@ -496,7 +496,7 @@ mod streamed {
     }
 
     /// A transwave too big for the arena can't stream, whatever it plays:
-    /// under PLAY LOOP pass 2 keeps it absent for its shape, and the cell
+    /// under WALK LOOP pass 2 keeps it absent for its shape, and the cell
     /// says so, not NEEDS RAM (H3).
     #[test]
     fn pass_two_says_a_big_transwave_wont_stream() {

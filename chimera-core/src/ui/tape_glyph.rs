@@ -10,7 +10,7 @@ use embedded_graphics::primitives::Rectangle;
 
 pub use chimera_engine::tape_glyph::{
     Bellows, Blind, Bounce, Canvas, Film, GlyphInputs, H, Ink, Kind, Loop, Machine, Pose, Q, Q3,
-    Q4, Q5, Q6, Run, Sponge, TapeGauge, W, Wear,
+    Q4, Q5, Q6, Run, Sponge, StepStyle, Steps, TapeGauge, W, Wear,
 };
 
 const _: () = assert!(W == theme::WAVE_W && H == theme::WAVE_H);

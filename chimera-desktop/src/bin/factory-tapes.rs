@@ -111,8 +111,8 @@ fn run_qa(wav: Option<&String>) -> Result<bool, String> {
         let own = if wave {
             0.0
         } else {
-            let base = Way::One.base(TapeModel::Play, StretchType::Mono);
-            let s = Way::One.script(TapeModel::Play);
+            let base = Way::One.base(TapeModel::Walk, StretchType::Mono);
+            let s = Way::One.script(TapeModel::Walk);
             let y = render(base, &held, p, root_note(p), &s);
             qa_takes(&y[..y.len().min(48_000 * 5 / 2)], &take_starts(&s)).click_ratio
         };
@@ -196,7 +196,7 @@ const DEMOS: [Demo; 14] = [
     ("TRON BOWED", None, &[0, 12], None),
     (
         "BOWED LOOP",
-        Some((TapeModel::Play, Direction::Forward, Tron::On)),
+        Some((TapeModel::Walk, Direction::Forward, Tron::On)),
         &[0, 7],
         None,
     ),
@@ -209,7 +209,7 @@ const DEMOS: [Demo; 14] = [
     ("PAD PINGPONG", None, &[0, 0], Some((P::SIZE, 0.5, 0.15))),
     (
         "SINE LOOP",
-        Some((TapeModel::Play, Direction::Ping, Tron::Off)),
+        Some((TapeModel::Walk, Direction::Ping, Tron::Off)),
         &[0, 0],
         Some((P::SIZE, 0.6, 0.2)),
     ),

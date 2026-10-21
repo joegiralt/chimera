@@ -246,7 +246,7 @@ fn project() {
         let recipe = SoundRecipe {
             name: SoundName::new(h.name.as_str()).expect("a name"),
             source: h.name,
-            machine: TapeMachine::Play,
+            machine: TapeMachine::Walk,
             direction: Direction::Loop,
             tron: chimera_core::dsp::tape_engine::Tron::Off,
             set: Vec::new(),

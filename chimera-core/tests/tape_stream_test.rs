@@ -1,4 +1,4 @@
-//! A streamed PLAY (slice 1 § 10.2): a source held as heads, the rest read
+//! A streamed WALK (slice 1 § 10.2): a source held as heads, the rest read
 //! off a `TestCard` through the voice's ring, plays as the same source held
 //! whole; a late card drops out and comes back cleanly; a chord's burst
 //! holds behind 100 ms heads; a short loop in a head never asks the card.
@@ -146,7 +146,7 @@ fn sizing(p: &TapeEngineParams) -> Sizing {
 
 fn params(mode: Direction, start: f32, end: f32) -> TapeEngineParams {
     TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: mode,
         start,
         end,
@@ -245,7 +245,7 @@ fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 4]) {
     )
 }
 
-/// The slice's key test: streamed with an on-time card, PLAY ONE and LOOP
+/// The slice's key test: streamed with an on-time card, WALK ONE and LOOP
 /// render bit for bit as the source held whole, TAPE and AGE on, across a
 /// START turn that re-stages the heads mid-note and a note struck after
 /// it. LOOP's short loop sits past the ring at the window's end (its start
@@ -514,7 +514,7 @@ fn short_loop_on_streamed_source_stays_in_ram() {
     assert_eq!(st.card.stats.underruns.load(Ordering::Relaxed), 0);
 }
 
-/// `tape_bounds_test`'s `reads_stay_in_row`, through spans: whatever PLAY
+/// `tape_bounds_test`'s `reads_stay_in_row`, through spans: whatever WALK
 /// ONE or forward LOOP's params, every tap lands inside the span it reads
 /// (strict views panic on one outside).
 #[test]
@@ -659,7 +659,7 @@ fn a_start_turn_never_cuts_a_note() {
     assert_eq!(&out[..], &wb[..100 * BLOCK_SIZE]);
 }
 
-/// WALK moves every pass off the heads: each wrap still lands warm, a
+/// DRIFT moves every pass off the heads: each wrap still lands warm, a
 /// pass ahead's prefetch following the walk (#698), and no step passes 4×
 /// the steady state's.
 #[test]
@@ -1031,7 +1031,7 @@ impl<'r> Played<'r> {
     }
 }
 
-/// PLAY ONE at FADE HOLD from START 0: note-off doesn't end it.
+/// WALK ONE at FADE HOLD from START 0: note-off doesn't end it.
 fn one_hold() -> TapeEngineParams {
     TapeEngineParams {
         drag: FADE_HOLD,
@@ -1293,7 +1293,7 @@ fn streamed_speed_stays_under_its_cap() {
     }
 }
 
-/// A streamed note books PLAY's bill and the stream's term, and keeps it
+/// A streamed note books WALK's bill and the stream's term, and keeps it
 /// once the voices are re-costed each block.
 #[test]
 fn streamed_note_bills_its_stream_term() {

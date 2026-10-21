@@ -10,9 +10,8 @@ use crate::dsp::tape_engine::Heads;
 use crate::dsp::tape_engine::heads::{Bounds, Dir, Sizing, Window, loop_len, min_frames};
 use crate::dsp::tape_engine::oneshot::Slice;
 use crate::dsp::tape_engine::params::{Direction, TapeEngineParams, TapeMachine, Way};
-use crate::dsp::tape_engine::walk;
+use crate::dsp::tape_engine::drift;
 use crate::dsp::tape_engine::read::{Shape, SourceView};
-use crate::dsp::tape_engine::tron::tron_len_s_in;
 use crate::stream::units::SourceRate;
 use crate::ui::theme;
 
@@ -137,7 +136,7 @@ pub(crate) fn strip_in(
     let slice = |k: u64| w.lo + (k * u64::from(len) / 16) as u32;
     let (mut ramp, mut edges, mut ticks) = (None, None, 0u32);
     // POSITION's start, counted from START, the way it plays.
-    let from = walk::from(Window { lo: 0, hi: len, dir: Dir::Fwd }, p.position, min_frames(rate));
+    let from = drift::from(Window { lo: 0, hi: len, dir: Dir::Fwd }, p.position, min_frames(rate));
     let lit = match way {
         Way::One => {
             let s = p.slice.slice();
@@ -158,17 +157,9 @@ pub(crate) fn strip_in(
                 None => place(from, from + loop_len(p.size, len - from, rate)),
             }
         }
-        // The tape SIZE gives at the newest note's pitch (the audio's), or
-        // at ROOT's with none: from START to where it runs out, or END.
-        Way::Tron => match heads.second() {
-            Some(out) if fwd => (w.lo, out.max(w.lo)),
-            Some(out) => (out.min(w.hi), w.hi),
-            None => {
-                let strip = (len - from) as f32 / f32::from(rate);
-                let run = (tron_len_s_in(p.size, strip) * f32::from(rate)) as u32;
-                place(from, from + run.min(len - from))
-            }
-        },
+        // TRON goes round its window from POSITION until its tape runs
+        // out (ADR 0202).
+        Way::Tron => place(from, len),
         Way::Loop | Way::Ping => {
             let sizing = Sizing {
                 size: p.size,
@@ -248,7 +239,7 @@ pub(crate) fn strip_in(
     if way == Way::Wave {
         return;
     }
-    if let Some(h) = heads.second().filter(|_| way != Way::Tron) {
+    if let Some(h) = heads.second() {
         for dy in (0..H).step_by(2) {
             rect(d, col(h), y + dy, 1, 1, theme::ACCENT);
         }

@@ -1,5 +1,5 @@
-//! PLAY (ADR 0200): one machine for what ONE, LOOP, PING-PONG and TRON
-//! were. Each DIRECTION, FADE without clicks, POSITION and WALK (its
+//! WALK (ADR 0202): one machine for what ONE, LOOP, PING-PONG and TRON
+//! were. Each DIRECTION, FADE without clicks, POSITION and DRIFT (its
 //! bounds, wrap, both signs and spread), TRON's run-out and pad, the old
 //! machines' codes, NaN safety and where a voice ends.
 
@@ -10,10 +10,10 @@ use core::mem::MaybeUninit;
 use chimera_core::block::{Block, DiskCode};
 use chimera_core::dsp::tape_engine::heads::loop_len;
 use chimera_core::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
-use chimera_core::dsp::tape_engine::params::{RETIRED_ONE, Walk};
+use chimera_core::dsp::tape_engine::params::{RETIRED_ONE, Drift};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::tron::TRON_LEN_MAX_S;
-use chimera_core::dsp::tape_engine::walk;
+use chimera_core::dsp::tape_engine::drift;
 use chimera_core::dsp::tape_engine::{
     Direction, FADE_HOLD, RetiredModel, TapeEngine, TapeEngineParams, TapeMachine, TapeModel,
     Tron, Way, fade_default, needs_ram,
@@ -49,10 +49,10 @@ fn sine_src() -> Vec<u8> {
     held_plain(&sine(48_000, 100.7, 48_000), 48_000)
 }
 
-/// PLAY in `d` at ROOT C4, LENGTH 1, `d`'s FADE.
+/// WALK in `d` at ROOT C4, LENGTH 1, `d`'s FADE.
 fn play(d: Direction) -> P {
     P {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: d,
         size: 1.0,
         drag: fade_default(d),
@@ -234,15 +234,15 @@ fn position_starts_there_and_length_takes_the_rest() {
     assert!(got.abs_diff(want) <= 2 * B as u32, "{got} vs {want}");
 }
 
-// ── WALK ─────────────────────────────────────────────────────────────
+// ── DRIFT ─────────────────────────────────────────────────────────────
 
 /// `n` steps from 0 at `w`: each step's signed move (wrapped to ±½) and
 /// each place.
 fn walks(w: f32, n: usize, seed: u32) -> (Vec<f32>, Vec<f32>) {
-    let mut rng = walk::seed(seed);
+    let mut rng = drift::seed(seed);
     let (mut at, mut d, mut places) = (0.0, Vec::new(), Vec::new());
     for _ in 0..n {
-        let next = walk::step(at, w, &mut rng);
+        let next = drift::step(at, w, &mut rng);
         let mut m = next - at;
         m -= m.round();
         d.push(m);
@@ -275,8 +275,8 @@ fn walk_bounds_hold_and_it_wraps_both_ways() {
     assert!(down && up, "wraps at both ends");
 }
 
-/// The steps are uniform in ±WALK: mean 0, |step| WALK/2 on average,
-/// RMS WALK/√3; at full WALK the places cover the window evenly.
+/// The steps are uniform in ±DRIFT: mean 0, |step| DRIFT/2 on average,
+/// RMS DRIFT/√3; at full DRIFT the places cover the window evenly.
 #[test]
 fn walk_spreads_as_it_should() {
     for w in [0.1, 0.25, 0.5] {
@@ -297,20 +297,20 @@ fn walk_spreads_as_it_should() {
     assert!(bins.iter().all(|&b| (4_500..5_500).contains(&b)), "{bins:?}");
 }
 
-/// WALK 0 draws nothing and rests at POSITION; a NaN is WALK 0.
+/// DRIFT 0 draws nothing and rests at POSITION; a NaN is DRIFT 0.
 #[test]
 fn walk_zero_rests() {
-    let mut rng = walk::seed(1);
+    let mut rng = drift::seed(1);
     let before = rng;
-    assert_eq!(walk::step(0.4, 0.0, &mut rng), 0.0);
-    assert_eq!(walk::step(0.4, f32::NAN, &mut rng), 0.0);
+    assert_eq!(drift::step(0.4, 0.0, &mut rng), 0.0);
+    assert_eq!(drift::step(0.4, f32::NAN, &mut rng), 0.0);
     assert_eq!(rng, before);
-    assert_eq!(walk::place(0.7, 0.0), 0.7);
-    assert_eq!(walk::place(1.0, 0.0), 1.0);
-    assert_eq!(Walk::of(f32::NAN), Walk::OFF);
+    assert_eq!(drift::place(0.7, 0.0), 0.7);
+    assert_eq!(drift::place(1.0, 0.0), 1.0);
+    assert_eq!(Drift::of(f32::NAN), Drift::OFF);
 }
 
-/// WALK 0 renders bit for bit as a Sound that never set it, note after
+/// DRIFT 0 renders bit for bit as a Sound that never set it, note after
 /// note, on every direction.
 #[test]
 fn walk_zero_is_bit_identical_to_no_walk() {
@@ -323,7 +323,7 @@ fn walk_zero_is_bit_identical_to_no_walk() {
             ..play(d)
         };
         let mut set = plain;
-        set.set(P::WALK, 0.0);
+        set.set(P::DRIFT, 0.0);
         let (mut a, mut b) = (fresh(4), fresh(4));
         for _ in 0..4 {
             assert_eq!(
@@ -342,7 +342,7 @@ fn walk_moves_each_note_repeatably() {
     let h = ramp();
     let v = SourceView::new(&h).unwrap();
     let p = P {
-        walk: Walk::of(0.5),
+        drift: Drift::of(0.5),
         ..play(Direction::Forward)
     };
     let starts = |seed: u32| {
@@ -358,7 +358,7 @@ fn walk_moves_each_note_repeatably() {
     assert!(a.windows(2).all(|w| w[0] != w[1]), "{a:?}");
     // LOOP's place walks too: two notes' first passes differ.
     let lp = P {
-        walk: Walk::of(0.5),
+        drift: Drift::of(0.5),
         size: 0.3,
         ..play(Direction::Loop)
     };
@@ -468,11 +468,11 @@ fn old_machines_load_as_play() {
         let t = decoded(&[(MODEL, 6), (MODE, mode)]);
         assert_eq!(
             (t.machine, t.direction, t.tron, t.position, t.size),
-            (TapeMachine::Play, Direction::Forward, Tron::On, 0.0, 0.5),
+            (TapeMachine::Walk, Direction::Forward, Tron::On, 0.0, 0.5),
             "MODE {mode}"
         );
     }
-    // ONESHOT (7), PING-PONG (2) and REVERSE (1), retired before PLAY.
+    // ONESHOT (7), PING-PONG (2) and REVERSE (1), retired before WALK.
     let t = decoded(&[(MODEL, 7)]);
     assert_eq!((t.way(), t.drag, t.position, t.size), (Way::One, FADE_HOLD, 0.0, 1.0));
     assert_eq!(decoded(&[(MODEL, 2)]).way(), Way::Ping);
@@ -480,7 +480,7 @@ fn old_machines_load_as_play() {
     assert_eq!((t.way(), t.start, t.end), (Way::Loop, 1.0, 0.0));
 }
 
-/// Codes are append-only: no live code is a retired one, and PLAY saves
+/// Codes are append-only: no live code is a retired one, and WALK saves
 /// DIRECTION's new codes.
 #[test]
 fn old_codes_are_never_reused() {
@@ -501,21 +501,21 @@ fn old_codes_are_never_reused() {
 
 // ── The machine's cells ──────────────────────────────────────────────
 
-/// A MODEL turn onto PLAY writes its cells, DIRECTION kept and TRON off;
+/// A MODEL turn onto WALK writes its cells, DIRECTION kept and TRON off;
 /// a DIRECTION turn across once and loop writes LENGTH and FADE.
 #[test]
 fn play_defaults_follow_direction() {
-    let d: Vec<_> = defaults(TapeMachine::Play, Direction::Forward).collect();
+    let d: Vec<_> = defaults(TapeMachine::Walk, Direction::Forward).collect();
     assert!(d.contains(&(P::SIZE, 1.0)) && d.contains(&(P::DRAG, FADE_HOLD)));
-    assert!(d.contains(&(P::TRON, 0.0)) && d.contains(&(P::WALK, 0.0)));
+    assert!(d.contains(&(P::TRON, 0.0)) && d.contains(&(P::DRIFT, 0.0)));
     assert!(!d.iter().any(|&(id, _)| id == P::MODE));
-    let d: Vec<_> = defaults(TapeMachine::Play, Direction::Ping).collect();
+    let d: Vec<_> = defaults(TapeMachine::Walk, Direction::Ping).collect();
     assert!(d.contains(&(P::DRAG, 0.3)));
     assert!(direction_defaults(Direction::Forward, Direction::Reverse).is_empty());
     assert!(direction_defaults(Direction::Loop, Direction::Ping).is_empty());
     assert_eq!(direction_defaults(Direction::Loop, Direction::Forward)[1], (P::DRAG, FADE_HOLD));
-    assert!(!env_defaults(TapeMachine::Play, Direction::Forward).is_empty());
-    assert!(env_defaults(TapeMachine::Play, Direction::Loop).is_empty());
+    assert!(!env_defaults(TapeMachine::Walk, Direction::Forward).is_empty());
+    assert!(env_defaults(TapeMachine::Walk, Direction::Loop).is_empty());
 }
 
 /// Streams read forward: REVERSE and PING-PONG need RAM, TRON doesn't.
@@ -535,7 +535,7 @@ fn what_streams() {
 
 // ── NaN and the voice's end ──────────────────────────────────────────
 
-/// NaN in any of PLAY's reals never reaches the output or hangs a note.
+/// NaN in any of WALK's reals never reaches the output or hangs a note.
 #[test]
 fn nan_is_safe() {
     let h = sine_src();
@@ -547,7 +547,7 @@ fn nan_is_safe() {
                 match k {
                     0 => p.position = f32::NAN,
                     1 => p.size = f32::NAN,
-                    2 => p.set(P::WALK, f32::NAN),
+                    2 => p.set(P::DRIFT, f32::NAN),
                     3 => p.drag = f32::NAN,
                     4 => (p.start, p.end) = (f32::NAN, f32::NAN),
                     _ => p.xfade = f32::NAN,
@@ -574,8 +574,10 @@ fn voices_end() {
         (Direction::Forward, Tron::On),
         (Direction::Reverse, Tron::On),
     ] {
+        // TRON's tape at LENGTH 0: 0.25 s.
+        let size = if tron == Tron::On { 0.0 } else { 1.0 };
         let mut e = fresh(0);
-        run(&mut e, &P { tron, ..play(d) }, &v, 60, blocks(1.2), None);
+        run(&mut e, &P { tron, size, ..play(d) }, &v, 60, blocks(1.2), None);
         assert!(!e.is_active(), "{d:?} {tron:?}");
     }
     for d in [Direction::Loop, Direction::Ping] {

@@ -159,8 +159,8 @@ fn missing_source_refused_before_allocation() {
     let gone = p.source_absent(rg).unwrap();
     let mut r = Rig::of(&p);
     for (id, model, what) in [
-        (None, TapeModel::Play, "no source"),
-        (Some(gone), TapeModel::Play, "an absent one"),
+        (None, TapeModel::Walk, "no source"),
+        (Some(gone), TapeModel::Walk, "an absent one"),
         (Some(a), TapeModel::Transwave, "TRANSWAVE on Plain"),
     ] {
         r.tape(0, model, id);
@@ -175,7 +175,7 @@ fn missing_source_refused_before_allocation() {
     *r.shared.parts[0].params = Sound::init(EngineType::Algo).params;
     r.shared.parts[0].source = None;
     assert!(!r.refuses(0), "ALGO");
-    r.tape(0, TapeModel::Play, Some(a));
+    r.tape(0, TapeModel::Walk, Some(a));
     assert!(!r.refuses(0));
     r.block(&[r.on(0, 60)]);
     assert!(r.any_active(), "allocated");
@@ -190,7 +190,7 @@ fn sounding_bit_follows_the_voice() {
     let a = p.source_store(ra, &ha).unwrap();
     let b = p.source_store(rb, &hb).unwrap();
     let mut r = Rig::of(&p);
-    r.tape(0, TapeModel::Play, Some(a));
+    r.tape(0, TapeModel::Walk, Some(a));
     r.block(&[r.on(0, 60)]);
     assert_eq!(r.table.sounding(), a.bit());
     r.block(&[]);
@@ -237,8 +237,8 @@ fn a_steal_holds_the_waiting_notes_source() {
     let target = u64::from(FxBus::COST.0 + one.0 * 3 / 2);
     let hz = target * 100 * u64::from(SR) / u64::from(AUDIO_BUDGET_PERCENT) + u64::from(SR);
     let mut r = Rig::with_budget(p.pool().table(), SampleBudget::for_cpu(hz as u32));
-    r.tape(0, TapeModel::Play, Some(a));
-    r.tape(1, TapeModel::Play, Some(b));
+    r.tape(0, TapeModel::Walk, Some(a));
+    r.tape(1, TapeModel::Walk, Some(b));
     r.block(&[r.on(0, 60)]);
     r.block(&[r.on(1, 64)]);
     assert_eq!(r.inst.allocator().refused(), 0, "stolen, not refused");
@@ -261,7 +261,7 @@ fn gate_holds_tape_note_on() {
         let (ra, ha) = plain(1, 100.0);
         let a = p.source_store(ra, &ha).unwrap();
         let mut r = Rig::of(&p);
-        r.tape(0, TapeModel::Play, Some(a));
+        r.tape(0, TapeModel::Walk, Some(a));
         r.block(&[]);
         if gated {
             r.table.close_gate_for_test(a.bit());
@@ -299,7 +299,7 @@ fn retire_never_cuts_a_tape_note() {
         // C, above B, is Part 2's.
         p.edit_part(PartId::ALL[1]).sound.source = Some(rc.into());
         let mut r = Rig::of(&p);
-        r.tape(0, TapeModel::Play, Some(a));
+        r.tape(0, TapeModel::Walk, Some(a));
         let mut out = r.block(&[r.on(0, 60)]).to_vec();
         if purge {
             // A, sounding, is retired; B goes, and C moves down under it.
@@ -335,7 +335,7 @@ fn source_switch_leaves_the_ringing_note() {
         let a = p.source_store(ra, &ha).unwrap();
         let b = p.source_store(rb, &hb).unwrap();
         let mut r = Rig::of(&p);
-        r.tape(0, TapeModel::Play, Some(a));
+        r.tape(0, TapeModel::Walk, Some(a));
         let mut out = r.block(&[r.on(0, 60)]).to_vec();
         if switch {
             r.shared.parts[0].source = Some(b);
@@ -359,7 +359,7 @@ fn a_shorter_row_under_the_id_ends_the_note() {
     let a = SourceId::ALL[0];
     table.publish_for_test(a, 0, held.len() as u32, RATE);
     let mut r = Rig::over(table);
-    r.tape(0, TapeModel::Play, Some(a));
+    r.tape(0, TapeModel::Walk, Some(a));
     r.block(&[r.on(0, 60)]);
     assert!(loud(&r.block(&[])));
     // 64 frames of it, under the same id.
@@ -610,7 +610,7 @@ fn a_gated_hold_note_sustains() {
     use common::tape::OneSource;
     let (_, held) = plain(1, 100.0);
     let p = TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: Direction::Forward,
         drag: FADE_HOLD,
         ..TapeEngineParams::default()
@@ -632,7 +632,7 @@ fn the_shells_block_stores_the_voices_sources() {
     let (ra, ha) = plain(1, 100.0);
     let a = p.source_store(ra, &ha).unwrap();
     let mut r = Rig::of(&p);
-    r.tape(0, TapeModel::Play, Some(a));
+    r.tape(0, TapeModel::Walk, Some(a));
     let on = r.on(0, 60);
     let Rig {
         inst,

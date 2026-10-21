@@ -219,7 +219,7 @@ fn test_no_clicks_tape_machines() {
             t.set(id, d);
         }
         cases.push(t);
-        if matches!(m, TapeModel::Play | TapeModel::Stretch) {
+        if matches!(m, TapeModel::Walk | TapeModel::Stretch) {
             cases.push(P {
                 start: 0.9,
                 end: 0.1,
@@ -228,7 +228,7 @@ fn test_no_clicks_tape_machines() {
         }
     }
     cases.push(P {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: Direction::Forward,
         drag: FADE_HOLD,
         slice: chimera_core::dsp::tape_engine::SliceCode::new(6),

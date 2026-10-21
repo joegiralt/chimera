@@ -82,7 +82,7 @@ pub struct SlotCtx {
     pub model: ResonatorMode,
     /// TAPE's machine: its labels and cells.
     pub tape: TapeMachine,
-    /// Its path (PLAY's DIRECTION and TRON in it): PLAY once through with
+    /// Its path (WALK's DIRECTION and TRON in it): WALK once through with
     /// TRON off has FADE end in HOLD.
     pub way: Way,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
@@ -218,7 +218,7 @@ impl From<ResonatorMode> for Models {
     fn from(modal: ResonatorMode) -> Self {
         Models {
             modal,
-            tape: TapeMachine::Play,
+            tape: TapeMachine::Walk,
         }
     }
 }
@@ -664,7 +664,7 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     }
 }
 
-/// `addr`'s format under `ctx`: MODE names its kind's own modes, PLAY's
+/// `addr`'s format under `ctx`: MODE names its kind's own modes, WALK's
 /// FADE reads HOLD.
 fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
@@ -876,9 +876,9 @@ pub const WOW_AT_REST: &str = "TAPE AT 0 · NO WOW TO SHAPE";
 pub const FADE_ASIDE: &str = "AMP RELEASE ENDS THE NOTE";
 /// ONE's FADE under a VCA route: only HOLD, its last step, is heard.
 pub const FADE_HOLD_ONLY: &str = "BELOW HOLD AMP RELEASE ENDS IT";
-/// PLAY's XFADE off LOOP: only a loop has a seam to fade.
-pub const XFADE_LOOP_ONLY: &str = "ONLY LOOP CROSSFADES ITS SEAM";
-/// PLAY's RETRIG off FORWARD and REVERSE, or with TRON on.
+/// WALK's XFADE off LOOP and TRON: only they come round to a seam.
+pub const XFADE_LOOP_ONLY: &str = "ONLY LOOP AND TRON CROSSFADE";
+/// WALK's RETRIG off FORWARD and REVERSE, or with TRON on.
 pub const RETRIG_ONCE_ONLY: &str = "CUTS ONLY ONCE THROUGH";
 /// A streamed loop's XFADE past what its loop head holds (spec § 2.3).
 pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
@@ -900,8 +900,10 @@ pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
         {
             Some(FADE_ASIDE)
         }
-        T::XFADE if t.machine == TapeMachine::Play && t.way() != Way::Loop => Some(XFADE_LOOP_ONLY),
-        T::RETRIG if t.machine == TapeMachine::Play && t.way() != Way::One => {
+        T::XFADE if t.machine == TapeMachine::Walk && !matches!(t.way(), Way::Loop | Way::Tron) => {
+            Some(XFADE_LOOP_ONLY)
+        }
+        T::RETRIG if t.machine == TapeMachine::Walk && t.way() != Way::One => {
             Some(RETRIG_ONCE_ONLY)
         }
         _ => None,
@@ -976,7 +978,7 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3), and what can't be heard:
-        // WOW with TAPE at rest, PLAY's FADE under an AMP route (`fade_aside`).
+        // WOW with TAPE at rest, WALK's FADE under an AMP route (`fade_aside`).
         (BlockRef::TapeEngine, id) => {
             !tape_engine::reads(sound.params.tape.machine(), id) || tape_note(addr, sound).is_some()
         }

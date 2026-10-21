@@ -7,7 +7,7 @@ mod common;
 
 use core::mem::MaybeUninit;
 
-use chimera_core::dsp::tape_engine::params::Walk;
+use chimera_core::dsp::tape_engine::params::Drift;
 use chimera_core::dsp::tape_engine::Tron;
 use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
@@ -56,7 +56,7 @@ fn reads_stay_in_row() {
             machine: TapeMachine::of(MODELS[rng.below(MODELS.len())]),
             direction: MODES[rng.below(4)],
             tron: TRONS[rng.below(2)],
-            walk: Walk::of(unit(&mut rng)),
+            drift: Drift::of(unit(&mut rng)),
             start: unit(&mut rng),
             end: unit(&mut rng),
             position: unit(&mut rng),
@@ -210,7 +210,7 @@ fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams 
         machine: TapeMachine::of(model),
         direction: MODES[rng.below(4)],
         tron: TRONS[rng.below(2)],
-        walk: Walk::of(edge(rng)),
+        drift: Drift::of(edge(rng)),
         start,
         end: if rng.below(5) == 0 { start } else { edge(rng) },
         position: edge(rng),

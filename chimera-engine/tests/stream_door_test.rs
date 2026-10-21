@@ -35,7 +35,7 @@ fn head(frames: u32) -> SourceHead {
 #[test]
 fn loads_place_heads_open_and_refuse_closed() {
     let p = TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: Direction::Forward,
         ..TapeEngineParams::default()
     };

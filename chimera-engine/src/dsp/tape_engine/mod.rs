@@ -38,7 +38,7 @@ pub mod read;
 pub mod span;
 pub mod stretch;
 pub mod tron;
-pub mod walk;
+pub mod drift;
 pub mod warble;
 pub mod wave;
 pub mod window;
@@ -97,7 +97,7 @@ pub use oneshot::SliceCode;
 pub use params::{
     Choice, DIRECTION_NAMES, Direction, FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, MachineIndex,
     NeedsRam, RetiredModel, Retrig, Seeks, StretchType, TAPE_ENGINE_SPECS, TapeEngineParams,
-    TapeMachine, TapeModel, Tron, Walk, Way, Wow, at_root, backward, cuts, drag_s, fade_default, jogs,
+    TapeMachine, TapeModel, Tron, Drift, Way, Wow, at_root, backward, cuts, drag_s, fade_default, jogs,
     needs_ram, reads,
 };
 
@@ -108,8 +108,8 @@ pub use params::{
 pub const COST_LOOP: Cost = Cost(450);
 /// ONESHOT: a short slice's end ramp, retriggered, 135.4 → 229.5.
 pub const COST_ONESHOT: Cost = Cost(230);
-/// TRON: its run-out ramp, as ONESHOT's end, 135.4 → 229.5.
-pub const COST_TRON: Cost = Cost(230);
+/// TRON goes round its window as LOOP does (ADR 0202): LOOP's bill.
+pub const COST_TRON: Cost = COST_LOOP;
 /// PING-PONG clamping in its shortest loop, 289.4 → 489.
 pub const COST_PING: Cost = Cost(490);
 /// SCRUB fading in its shortest loop, an ease in, 283.4 → 479.
@@ -195,15 +195,15 @@ pub const fn model_cost(m: Way) -> Cost {
     }
 }
 
-/// `model_cost` on a streamed source: PLAY forward streams.
+/// `model_cost` on a streamed source: WALK forward streams.
 pub const fn streamed_cost(m: Way) -> Cost {
     Cost(model_cost(m).0 + COST_STREAM.0)
 }
 
 /// The fastest read ratio a streamed note on `p` reaches (slice 1 § 5.5,
 /// #585): `cents` over its key (PITCH, TUNING, the routes' live reach and
-/// wow when TAPE runs) and the bend; SLICE NOTE plays at ROOT. MOTION and WALK move
-/// PLAY's loop, never its speed, so they add nothing. A glide's reach is
+/// wow when TAPE runs) and the bend; SLICE NOTE plays at ROOT. MOTION and DRIFT move
+/// WALK's loop, never its speed, so they add nothing. A glide's reach is
 /// the caller's: it passes the note the glide can start from.
 pub fn ratio_max(p: &TapeEngineParams, note: MidiNote, cents: Cents, bend: Cents) -> ReadRatio {
     let root = if params::at_root(p) {
@@ -453,7 +453,6 @@ enum MachineState {
     One(Once),
     Loop,
     Ping(PingPass),
-    Tron(Once),
     Scrub(Scrub),
     Stretch(Stretch),
     Wave(Wave),
@@ -532,15 +531,20 @@ pub struct TapeDeck {
     mac: Macros,
     /// The note's first block is to come: the macros are taken whole.
     first: bool,
-    /// WALK's place, in windows, [0, 1): it steps at each note-on and
-    /// wanders from note to note (`walk::step`), 0 with WALK at 0.
-    walk: f32,
-    /// WALK's draws, this voice's own: seeded, so a render repeats.
-    walk_rng: u32,
+    /// DRIFT's place, in windows, [0, 1): it steps at each note-on and
+    /// wanders from note to note (`drift::step`), 0 with DRIFT at 0.
+    drift: f32,
+    /// DRIFT's draws, this voice's own: seeded, so a render repeats.
+    drift_rng: u32,
     /// TRON on, latched at note-on, unless `u32::MAX`: the pad lifts at
     /// key up, and around a loop the tape runs out after these output
     /// samples, then falls over 10 ms.
     run_left: u32,
+    /// TRON once through, latched at note-on: its strip is the whole
+    /// window from POSITION, round again until the tape runs out, `flip`
+    /// on REVERSE.
+    whole: bool,
+    flip: bool,
     /// The window's start, latched at note-on, in the first head's frame
     /// (a flip's latches at its wrap).
     ws: u32,
@@ -567,7 +571,7 @@ pub struct TapeDeck {
     /// START, latched at note-on: END before it plays reversed.
     start: f32,
     /// The release's gain and its fall a sample (1 until key up), and
-    /// FADE's fall: TRON's, and PLAY's but at HOLD.
+    /// FADE's fall: TRON's, and WALK's but at HOLD.
     rel: f32,
     rel_k: f32,
     fade_k: f32,
@@ -645,9 +649,11 @@ impl TapeDeck {
                 size: 1.0,
             },
             first: false,
-            walk: 0.0,
-            walk_rng: walk::SEED,
+            drift: 0.0,
+            drift_rng: drift::SEED,
             run_left: u32::MAX,
+            whole: false,
+            flip: false,
             ws: 0,
             bounds: Bounds::plain(0, 1),
             min_len: MIN_LOOP_FRAMES,
@@ -698,7 +704,7 @@ impl TapeDeck {
     pub fn seed(&mut self, s: u32) {
         self.wow = Transport::seeded(s);
         self.rng = (s.wrapping_mul(0x9E37_79B9) ^ 0x510E_527F) | 1;
-        self.walk_rng = walk::seed(s);
+        self.drift_rng = drift::seed(s);
         self.age.seed(s);
         self.warble.seed(s);
     }
@@ -796,7 +802,8 @@ impl TapeDeck {
                 clamp_dg: 1.0 / 240.0,
                 reach: 241.0,
             }),
-            Way::Tron => MachineState::Tron(once),
+            // TRON goes round its window until the tape runs out.
+            Way::Tron => MachineState::Loop,
             Way::Scrub => MachineState::Scrub(Scrub {
                 df: 0,
                 ddf: 0,
@@ -815,9 +822,9 @@ impl TapeDeck {
     fn tape_machine(&self) -> Way {
         match self.machine {
             MachineState::One(_) => Way::One,
+            MachineState::Loop if self.whole => Way::Tron,
             MachineState::Loop => Way::Loop,
             MachineState::Ping(_) => Way::Ping,
-            MachineState::Tron(_) => Way::Tron,
             MachineState::Scrub(_) => Way::Scrub,
             MachineState::Stretch(_) => Way::Stretch,
             MachineState::Wave(_) => Way::Wave,
@@ -826,14 +833,14 @@ impl TapeDeck {
 
     fn once_state(&self) -> Option<&Once> {
         match &self.machine {
-            MachineState::One(o) | MachineState::Tron(o) => Some(o),
+            MachineState::One(o) => Some(o),
             _ => None,
         }
     }
 
     fn once_state_mut(&mut self) -> Option<&mut Once> {
         match &mut self.machine {
-            MachineState::One(o) | MachineState::Tron(o) => Some(o),
+            MachineState::One(o) => Some(o),
             _ => None,
         }
     }
@@ -981,7 +988,7 @@ impl TapeDeck {
         }
     }
 
-    /// A note on a streamed row (slice 1 § 7): PLAY ONE or a forward LOOP
+    /// A note on a streamed row (slice 1 § 7): WALK ONE or a forward LOOP
     /// only, through the voice's rings. Its window is worked out over the
     /// file's frames; the cursor starts on START's head, cold if that
     /// doesn't hold where the head starts.
@@ -1336,7 +1343,7 @@ impl TapeDeck {
                 .jump(SourceFrame::new(at), self.inc_cap(), row.head(h.idx), port);
         }
         let h = self.heads[0].pos;
-        // The next wrap's reads: off the RAM heads (POSITION, LENGTH, WALK
+        // The next wrap's reads: off the RAM heads (POSITION, LENGTH, DRIFT
         // or a route moved the loop), the cursor prefetches them a pass
         // ahead into the slots the pass's end frees (#698).
         let next = self.lp().then(|| self.next_reads());
@@ -1497,11 +1504,19 @@ impl TapeDeck {
         self.tap.set_wow_rate(WOW_RATE * (1.0 + d));
         self.mac = Macros::of(p);
         self.first = true;
-        self.walk = walk::step(self.walk, p.walk.get(), &mut self.walk_rng);
-        // Around a loop the tape runs out at the strip's 8 s; once
-        // through, `once_on` takes LENGTH's.
+        self.drift = drift::step(self.drift, p.drift.get(), &mut self.drift_rng);
+        // TRON: around a loop the tape runs out at 8 s; once through at
+        // LENGTH's, 0.25 to 8 s whatever the strip, its window round again
+        // until then (ADR 0202).
+        self.whole = p.way() == Way::Tron;
+        self.flip = self.whole && p.direction == Direction::Reverse;
+        let tape_s = if self.whole {
+            tron::tron_len_s(p.size)
+        } else {
+            tron::TRON_LEN_MAX_S
+        };
         self.run_left = if p.tron_on() {
-            tron::tron_run_samples(tron::TRON_LEN_MAX_S, sample_rate).min(u32::MAX - 1)
+            tron::tron_run_samples(tape_s, sample_rate).min(u32::MAX - 1)
         } else {
             u32::MAX
         };
@@ -1586,13 +1601,18 @@ impl TapeDeck {
                     self.ws,
                     we,
                     Sizing {
-                        size: self.mac.size,
-                        place: walk::place(self.mac.position, self.walk),
+                        size: self.loop_size(),
+                        place: drift::place(self.mac.position, self.drift),
                         xfade,
                     },
                     rate,
                     self.min_len,
                 );
+                if self.whole {
+                    // TRON's strip starts at POSITION and DRIFT's place.
+                    let w = Window { lo: self.ws, hi: we, dir: Dir::Fwd };
+                    start_at = drift::from(w, drift::place(p.position, self.drift), self.min_len);
+                }
                 if self.lp() && rev {
                     self.set_mirror(true);
                     self.off = at(frames - 1);
@@ -1613,7 +1633,7 @@ impl TapeDeck {
         self.runup = true;
     }
 
-    /// PLAY in MODE ONE, LOOP or PING: the paths the old machines took.
+    /// WALK in MODE ONE, LOOP or PING: the paths the old machines took.
     fn one(&self) -> bool {
         matches!(self.machine, MachineState::One(_))
     }
@@ -1633,15 +1653,20 @@ impl TapeDeck {
 
     /// ONE and TRON play one head toward the window's end.
     fn one_head(&self) -> bool {
-        matches!(self.machine, MachineState::One(_) | MachineState::Tron(_))
+        matches!(self.machine, MachineState::One(_))
     }
 
     /// LOOP plays its next pass reversed: END before the START latched at
-    /// note-on (#369).
+    /// note-on (#369), or TRON on REVERSE with END after it.
     fn reversed(&self, end: f32) -> bool {
         // Streamed, forward only (slice 1 § 2.3): END turned before START
         // mid-note never flips it.
-        self.lp() && !self.fed() && Dir::of(self.start, end) == Dir::Rev
+        self.lp() && !self.fed() && ((Dir::of(self.start, end) == Dir::Rev) != self.flip)
+    }
+
+    /// The loop's SIZE: LENGTH's, but TRON's whole window.
+    fn loop_size(&self) -> f32 {
+        if self.whole { 1.0 } else { self.mac.size }
     }
 
     /// START and END as the model plays them. Reversed (`rev`), LOOP's
@@ -1695,30 +1720,20 @@ impl TapeDeck {
         if self.one() {
             w = slice_bounds(w, p.slice.slice(), note.get());
         }
-        // POSITION and WALK move where it starts, counted the way it plays.
-        let from = walk::from(w, walk::place(p.position, self.walk), floor);
-        // ONE's LENGTH is how much of the rest plays (LOOP's law); TRON's
-        // is its tape, the same at every pitch.
-        let (end, left) = if self.one() {
-            let len = loop_len(p.size, w.hi - from, rate);
-            ((from + len).min(w.hi), u32::MAX)
-        } else {
-            let strip = (w.hi - from) as f32 / f32::from(rate);
-            let run = tron::tron_run_samples(tron::tron_len_s_in(p.size, strip), sample_rate);
-            (w.hi, run)
-        };
+        // POSITION and DRIFT move where it starts, counted the way it plays.
+        let from = drift::from(w, drift::place(p.position, self.drift), floor);
+        // LENGTH is how much of the rest plays (LOOP's law).
+        let end = (from + loop_len(p.size, w.hi - from, rate)).min(w.hi);
         let rev = w.dir == Dir::Rev;
         self.off = if rev { at(w.lo + w.hi - 1) } else { Pos(0) };
         self.heads = [Head {
             pos: at(from),
             mirror: rev,
         }; 2];
-        let o = Once { end, left };
-        self.machine = if self.one() {
-            MachineState::One(o)
-        } else {
-            MachineState::Tron(o)
-        };
+        self.machine = MachineState::One(Once {
+            end,
+            left: u32::MAX,
+        });
         (self.rel, self.rel_k) = (1.0, 1.0);
         self.fade_k = tron::release_k(p.drag, sample_rate);
         self.fade = None;
@@ -1775,17 +1790,17 @@ impl TapeDeck {
     }
 
     /// TRON's tape fades through FADE's one-pole, the pressure pad lifting.
-    /// PLAY (short of HOLD in ONE) does only with no VCA route (`vca`
+    /// WALK (short of HOLD in ONE) does only with no VCA route (`vca`
     /// false): with one, its ENV is the note's one release and FADE steps
     /// aside (#698). ONE at HOLD ignores note-off (`sustains`); the other
     /// machines do nothing, their VCA lets go.
     pub fn release_by(&mut self, vca: bool) {
-        if self.tron() || (self.model() == TapeModel::Play && !self.hold && !vca) {
+        if self.tron() || (self.model() == TapeModel::Walk && !self.hold && !vca) {
             self.rel_k = self.fade_k;
         }
     }
 
-    /// A HOLD head plays (PLAY ONE): the voice keeps its gate, so note-off
+    /// A HOLD head plays (WALK ONE): the voice keeps its gate, so note-off
     /// changes nothing and the note ends at END.
     pub fn sustains(&self) -> bool {
         self.is_active() && self.hold
@@ -1848,11 +1863,6 @@ impl TapeDeck {
             return Heads::NONE;
         }
         let p = self.probe();
-        if let MachineState::Tron(o) = self.machine {
-            let run = (o.left as f32 * self.inc.value().unwrap_or(0.0)) as u32;
-            let out = self.heads[0].pos.whole().saturating_add(run).min(o.end);
-            return Heads::new(p.head, Some(self.frame(at(out))));
-        }
         Heads::new(p.head, p.other)
     }
 
@@ -2047,14 +2057,15 @@ impl TapeDeck {
         } else {
             self.render_heads(out, reads, (p, first), sample_rate);
             if self.tron() {
-                // TRON around a loop: the tape runs out, falling over 10 ms.
+                // TRON: the tape runs out, a 2 ms fall.
                 self.run_left = self.run_left.saturating_sub(BLOCK_SIZE as u32);
                 if self.run_left == 0 {
-                    self.rel_k = self.rel_k.min(tron::release_k(0.0, sample_rate));
+                    let k = libm::expf(-1.0 / (tron::RUN_OUT_S * sample_rate as f32));
+                    self.rel_k = self.rel_k.min(k);
                 }
             }
             if self.rel_k != 1.0 {
-                // PLAY's FADE after note-off: TRON's one-pole release.
+                // WALK's FADE after note-off: TRON's one-pole release.
                 let (mut g, k) = (self.rel, self.rel_k);
                 for y in out.iter_mut() {
                     *y *= g;
@@ -2966,9 +2977,9 @@ impl TapeDeck {
                 if self.mirror() { b.mirror(self.n) } else { b }
             }
             _ => {
-                let place = walk::place(self.mac.position, self.walk);
+                let place = drift::place(self.mac.position, self.drift);
                 let xfade = if self.ping() { 0.0 } else { k.xfade };
-                let size = self.mac.size;
+                let size = self.loop_size();
                 let b = Bounds::of_min(ws, we, Sizing { size, place, xfade }, k.rate, self.min_len);
                 if self.fed() {
                     // The loop head holds XFADE before the loop, at most
@@ -3320,6 +3331,7 @@ mod tests {
         let mut d = TapeDeck::idle();
         for m in Way::ALL {
             d.machine = TapeDeck::idle_machine(m);
+            d.whole = m == Way::Tron;
             assert_eq!(d.tape_machine(), m);
         }
     }

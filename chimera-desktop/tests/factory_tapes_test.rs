@@ -297,11 +297,11 @@ fn scrub_take_that_turns_is_click_free() {
             .unwrap();
         let (h, p) = (held(b), pitch(&b.head));
         let straight = render(
-            Way::One.base(TapeModel::Play, StretchType::Mono),
+            Way::One.base(TapeModel::Walk, StretchType::Mono),
             &h,
             p,
             root_note(p),
-            &Way::One.script(TapeModel::Play),
+            &Way::One.script(TapeModel::Walk),
         );
         let own = qa(&straight[..straight.len().min(48_000 * 5 / 2)]).click_ratio;
         let mut base = Way::Plain.base(TapeModel::Scrub, StretchType::Mono);
@@ -349,7 +349,7 @@ fn factory_sounds_save_as_loaded() {
         all.update(&file);
     }
     if built.iter().all(Option::is_some) {
-        // Re-pinned for PLAY (ADR 0200): FORWARD's DIRECTION code (3) for
+        // Re-pinned for PLAY (ADR 0202): FORWARD's DIRECTION code (3) for
         // MODE ONE's, its LENGTH 1, and TRON BOWED as PLAY with TRON on.
         // Each still renders as before (`tape_legacy_test`).
         assert_eq!(all.finish(), 0x0386_F811, "{} Sounds", r.sounds.len());

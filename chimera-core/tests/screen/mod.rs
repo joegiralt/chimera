@@ -652,7 +652,7 @@ pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
     v
 }
 
-/// PLAY armed on CHRD's segment and `notes` captured into it: the
+/// WALK armed on CHRD's segment and `notes` captured into it: the
 /// runner's `count`th capture, a third into the bar.
 pub fn played(ui: &mut UiState, count: u8, notes: &[u8]) {
     use chimera_core::orbit::runner::{Capture, Captured};
@@ -791,16 +791,16 @@ pub fn tape_deck(ui: &mut UiState, m: Way) {
     to_machine(ui, m);
 }
 
-/// MODEL turned from PLAY in LOOP, the neutral, to `m`'s machine; on PLAY
+/// MODEL turned from WALK in LOOP, the neutral, to `m`'s machine; on WALK
 /// DIRECTION (cell 4) turned to `m`'s, and TRON (MCH's cell 4) switched on.
 fn to_machine(ui: &mut UiState, m: Way) {
     let (machine, d, tron) = m.parts();
-    let by = machine.index() as i8 - TapeMachine::Play.index() as i8;
+    let by = machine.index() as i8 - TapeMachine::Walk.index() as i8;
     if by != 0 {
         feed(ui, Input::turn(EncoderId::A, by));
     }
     let by = d as i8 - Direction::Loop as i8;
-    if machine == TapeMachine::Play && by != 0 {
+    if machine == TapeMachine::Walk && by != 0 {
         feed(ui, Input::turn(EncoderId::D, by));
     }
     if tron == chimera_core::dsp::tape_engine::Tron::On {
@@ -945,11 +945,11 @@ pub fn src_card(ui: &mut UiState, then: CardRow) {
     }
 }
 
-/// Part 1's PLAY in `mode`, its FADE the MODE edit's default.
+/// Part 1's WALK in `mode`, its FADE the MODE edit's default.
 pub fn play_mode(ui: &mut UiState, mode: Direction) {
     let p = chimera_core::project::PartId::ALL[0];
     let t = &mut ui.project_mut().edit_part(p).sound.params.tape;
-    (t.machine, t.direction, t.drag) = (TapeMachine::Play, mode, fade_default(mode));
+    (t.machine, t.direction, t.drag) = (TapeMachine::Walk, mode, fade_default(mode));
 }
 
 /// TAPE's init on Part 1 with the strip's source, at DECK, MODEL turned
@@ -1705,7 +1705,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 3)); // PITCH +19, focused
     }),
     // TAPE's pages (TAPE Task 15): SRC, then DECK and the model page per
-    // machine, MODEL turned from PLAY (index 0, MODE LOOP).
+    // machine, MODEL turned from WALK (index 0, MODE LOOP).
     ("tape_src", |ui| load_init(ui, EngineType::Tape)),
     // A source the pool doesn't hold: SOURCE MISSING, focused.
     ("tape_src_missing", |ui| {
@@ -2233,7 +2233,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, 2).and_held(ButtonId::Mix));
         ui.set_orbit_view(&orbit_view(0.3));
     }),
-    // CHRD with two chords played in through PLAY: Bm7b5 on segment 2,
+    // CHRD with two chords played in through WALK: Bm7b5 on segment 2,
     // picked, and C on segment 4. Each a name, no numeral.
     ("orbit_chrd_played", |ui| {
         to_ring(ui, 3);

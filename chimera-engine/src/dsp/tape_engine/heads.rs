@@ -43,7 +43,7 @@ impl Dir {
         if end < start { Dir::Rev } else { Dir::Fwd }
     }
 
-    /// The other way: PLAY's REVERSE.
+    /// The other way: WALK's REVERSE.
     pub const fn flip(self) -> Dir {
         match self {
             Dir::Fwd => Dir::Rev,

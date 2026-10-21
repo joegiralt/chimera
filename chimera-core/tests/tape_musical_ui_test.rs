@@ -350,7 +350,7 @@ fn mix_turn_snaps_start_to_the_next_onset() {
 
 #[test]
 fn model_page_reads_its_notes() {
-    // PLAY's model page at INIT (LOOP): WOW and RETRIG dimmed, each saying
+    // WALK's model page at INIT (LOOP): WOW and RETRIG dimmed, each saying
     // why.
     let mut ui = chimera_core::ui::UiState::new();
     load_init(&mut ui, EngineType::Tape);
@@ -369,7 +369,7 @@ fn model_page_reads_its_notes() {
     settle(&mut ui);
     assert!(label_reads(&render_ui(&ui), view::RETRIG_ONCE_ONLY));
     assert_eq!(ui.params().tape.retrig, chimera_core::dsp::tape_engine::Retrig::Stack);
-    assert_eq!(ui.params().tape.model(), TapeModel::Play);
+    assert_eq!(ui.params().tape.model(), TapeModel::Walk);
 }
 
 /// `text` in the label font where the focus band's hint goes, in MID.

@@ -108,12 +108,12 @@ fn chain_opens_on_deck() {
     assert_eq!(page_def_id(&ui), TAPE_DECK.id);
 }
 
-/// DECK: MODEL, then the machine's knobs (ADR 0178); PLAY's are LENGTH,
-/// FADE, DIRECTION, POSITION and WALK on every path (ADR 0200). None is
+/// DECK: MODEL, then the machine's knobs (ADR 0178); WALK's are LENGTH,
+/// FADE, DIRECTION, POSITION and DRIFT on every path (ADR 0202). None is
 /// dimmed.
 #[test]
 fn deck_holds_the_glyphs_knobs() {
-    let play = ["LENGTH", "FADE", "DIRECTION", "POSITION", "WALK"];
+    let play = ["LENGTH", "FADE", "DIRECTION", "POSITION", "DRIFT"];
     let want: [(Way, [&str; 5]); 7] = [
         (Way::One, play),
         (Way::Loop, play),
@@ -136,7 +136,7 @@ fn deck_holds_the_glyphs_knobs() {
 }
 
 /// The model page: TAPE, AGE and WOW in the same cells on every machine,
-/// then what else the machine reads: PLAY's TRON, XFADE and RETRIG.
+/// then what else the machine reads: WALK's TRON, XFADE and RETRIG.
 #[test]
 fn model_page_cells() {
     let play = ["TRON", "XFADE", "RETRIG"];
@@ -149,7 +149,7 @@ fn model_page_cells() {
         (Way::Stretch, ["POSITION", "TYPE", "--"]),
         (Way::Wave, ["--", "--", "--"]),
     ];
-    let pages = ["PLAY", "PLAY", "PLAY", "PLAY", "SCRUB", "STRCH", "WAVE"];
+    let pages = ["WALK", "WALK", "WALK", "WALK", "SCRUB", "STRCH", "WAVE"];
     for ((w, cells), page) in want.into_iter().zip(pages) {
         let mut ctx = ctx_on(w);
         ctx.unpitched = false;
@@ -175,14 +175,15 @@ fn model_page_cells() {
     }
 }
 
-/// PLAY's page cells a path can't be heard on say why in the band
+/// WALK's page cells a path can't be heard on say why in the band
 /// (`tape_note`): XFADE off LOOP, RETRIG off FORWARD and REVERSE with TRON
 /// off.
 #[test]
 fn play_page_notes_say_why() {
     let note = |w: Way, id| view::tape_note(tape(id), &live_on(w));
     assert_eq!(note(Way::Loop, P::XFADE), None);
-    for w in [Way::One, Way::Ping, Way::Tron] {
+    assert_eq!(note(Way::Tron, P::XFADE), None);
+    for w in [Way::One, Way::Ping] {
         assert_eq!(note(w, P::XFADE), Some(view::XFADE_LOOP_ONLY), "{w:?}");
     }
     assert_eq!(note(Way::One, P::RETRIG), None);
@@ -195,10 +196,10 @@ fn play_page_notes_say_why() {
     assert_eq!(note(Way::One, P::TRON), None);
 }
 
-/// Off PLAY, every param that moves a machine's glyph has its cell on
-/// DECK, and every DECK cell moves it. PLAY's DECK cells each move the
-/// glyph on at least one of its paths (FADE only TRON's blind, WALK only
-/// the loops'); its XFADE, on its page, moves LOOP's wheel (ADR 0200).
+/// Off WALK, every param that moves a machine's glyph has its cell on
+/// DECK, and every DECK cell moves it. WALK's DECK cells each move the
+/// glyph on at least one of its paths (FADE only TRON's blind, DRIFT only
+/// the loops'); its XFADE, on its page, moves LOOP's wheel (ADR 0202).
 #[test]
 fn deck_is_what_moves_the_glyph() {
     use chimera_core::ui::glyph::TAPE_GLYPH_PARAMS;
@@ -228,29 +229,29 @@ fn deck_is_what_moves_the_glyph() {
             let on_deck = machine(w.machine()).deck.iter().any(|c| c.id == a.param);
             assert_eq!(moves(w, i), on_deck, "{w:?} {:?}", a.param);
         }
-        let on_deck = machine(TapeMachine::Play).deck.iter().any(|c| c.id == a.param);
+        let on_deck = machine(TapeMachine::Walk).deck.iter().any(|c| c.id == a.param);
         let any = paths.iter().any(|&w| moves(w, i));
         if on_deck {
             assert!(any, "PLAY {:?} moves no path's glyph", a.param);
         } else if !matches!(a.param, P::XFADE | P::TRON | P::START | P::END) {
             // START and END are SRC's window, which ONE's match burns;
-            // XFADE and TRON, on PLAY's page, LOOP's wheel and TRON's blind.
+            // XFADE and TRON, on WALK's page, LOOP's wheel and TRON's blind.
             assert!(!any, "PLAY {:?} moves a glyph off DECK", a.param);
         }
     }
 }
 
 /// MODEL reads the machine's page name, which fits a cell's bar (STRETCH
-/// doesn't); the header spells it out. The machines are verbs (ADR 0200).
+/// doesn't); the header spells it out. The machines are verbs (ADR 0202).
 #[test]
 fn model_names_fit_the_cell() {
-    assert_eq!(MODEL_NAMES, ["PLAY", "STRCH", "SCRUB", "WAVE"]);
+    assert_eq!(MODEL_NAMES, ["WALK", "STRCH", "SCRUB", "WAVE"]);
     for (k, name) in MACHINES.iter().zip(MODEL_NAMES) {
         assert_eq!(k.page, name);
         let w = draw::text_width(&theme::FONT_VALUE, name, 0);
         assert!(w <= theme::CELL_BAR_W, "{name}: {w} px");
     }
-    let full = ["PLAY", "STRETCH", "SCRUB", "TRANSWAVE"];
+    let full = ["WALK", "STRETCH", "SCRUB", "TRANSWAVE"];
     for (m, want) in TapeMachine::ALL.into_iter().zip(full) {
         let models = Models {
             tape: m,
@@ -316,7 +317,7 @@ fn model_change_applies_machine_defaults() {
     // The matrix reads the new machine's labels.
     assert_eq!(ui.matrix_state.ctx().tape, TapeMachine::Stretch);
 
-    // Back onto PLAY, still LOOP, then DIRECTION onto FORWARD: its FADE
+    // Back onto WALK, still LOOP, then DIRECTION onto FORWARD: its FADE
     // holding, LENGTH the whole window.
     feed(&mut ui, Input::turn(EncoderId::A, -1)); // PLAY
     assert_eq!(ui.params().tape.way(), Way::Loop);
@@ -396,7 +397,7 @@ fn scrub_finger_jogs() {
     }
     assert_eq!(ui.params().tape.position, 1.0);
 
-    // PLAY's POSITION steps 1/128 a detent.
+    // WALK's POSITION steps 1/128 a detent.
     let mut ui = ui_at_deck();
     feed(&mut ui, Input::turn(EncoderId::E, 1).at(1_000));
     feed(&mut ui, Input::default().at(1_016));
@@ -494,7 +495,7 @@ fn reads_is_the_machine_table() {
             P::SLICE,
             P::MODE,
             P::TRON,
-            P::WALK,
+            P::DRIFT,
             P::RETRIG,
         ] {
             assert_eq!(
@@ -553,9 +554,9 @@ fn src_reads_states() {
         };
         SourceState::of(&p, r, pool)
     };
-    assert_eq!(text(state(TapeModel::Play, None)), "NONE / NONE");
+    assert_eq!(text(state(TapeModel::Walk, None)), "NONE / NONE");
     assert_eq!(
-        text(state(TapeModel::Play, Some(r))),
+        text(state(TapeModel::Walk, Some(r))),
         "24K · 1.5 S · 53K / 1.5 S"
     );
     assert_eq!(
@@ -564,7 +565,7 @@ fn src_reads_states() {
     );
     let gone = SourceRef { crc: 1, ..r };
     assert_eq!(
-        text(state(TapeModel::Play, Some(gone))),
+        text(state(TapeModel::Walk, Some(gone))),
         "SOURCE MISSING / MISSING"
     );
 
@@ -660,8 +661,8 @@ fn matrix_columns_read_the_machine() {
         fmt_route_dest(&mut b, &dest, c);
         b.as_str().to_owned()
     };
-    // PLAY reads no MOTION (its WALK is a param of its own, ADR 0200).
-    assert_eq!(name(TapeMachine::Play), "TPE MOTION");
+    // WALK reads no MOTION (its DRIFT is a param of its own, ADR 0202).
+    assert_eq!(name(TapeMachine::Walk), "TPE MOTION");
     assert_eq!(name(TapeMachine::Stretch), "TPE SPEED");
     assert_eq!(name(TapeMachine::Wave), "TPE SCAN");
     let mut m = MatrixState::new();
@@ -677,23 +678,23 @@ fn matrix_columns_read_the_machine() {
     m.set_tape(TapeMachine::Stretch);
     assert_ne!(m.rev, rev);
     assert_ne!(grid(&m), walk, "the header still reads MOT");
-    m.set_tape(TapeMachine::Play);
+    m.set_tape(TapeMachine::Walk);
     assert_eq!(grid(&m), walk);
 }
 
 /// What a machine ignores is dimmed where it still shows (the matrix's
-/// columns): PLAY reads no MOTION, SCRUB no WALK. No TAPE page shows such
+/// columns): WALK reads no MOTION, SCRUB no DRIFT. No TAPE page shows such
 /// a cell (`deck_holds_the_glyphs_knobs`).
 #[test]
 fn cells_a_machine_ignores_are_dimmed() {
     let dim = |m, id| view::dimmed(tape(id), &live_on(m));
     for w in [Way::One, Way::Loop, Way::Ping, Way::Tron] {
         assert!(dim(w, P::MOTION), "{w:?} MOTION");
-        for id in [P::POSITION, P::SIZE, P::DRAG, P::MODE, P::TRON, P::WALK, P::START, P::END] {
+        for id in [P::POSITION, P::SIZE, P::DRAG, P::MODE, P::TRON, P::DRIFT, P::START, P::END] {
             assert!(!dim(w, id), "{w:?} {id:?}");
         }
     }
-    for id in [P::MODE, P::TRON, P::WALK, P::RETRIG] {
+    for id in [P::MODE, P::TRON, P::DRIFT, P::RETRIG] {
         assert!(dim(Way::Scrub, id), "SCRUB {id:?}");
     }
 }
@@ -717,9 +718,9 @@ fn fade_reads_hold_only_in_one() {
     assert_eq!(text(Way::Tron), "127");
 }
 
-/// MODEL onto PLAY writes its defaults for the DIRECTION it keeps: once
+/// MODEL onto WALK writes its defaults for the DIRECTION it keeps: once
 /// through FADE holds, around a loop 32 ms; TRON off. DIRECTION across
-/// once and loop writes LENGTH and FADE (ADR 0200). The disk keeps PLAY's
+/// once and loop writes LENGTH and FADE (ADR 0202). The disk keeps WALK's
 /// code and DIRECTION's in MODE.
 #[test]
 fn model_edit_writes_play_and_its_mode() {
@@ -799,12 +800,12 @@ fn streamed_refusals_reach_the_band() {
     use Direction::{Forward as One, Loop, Ping, Reverse};
     // Streamed, the band gives its polyphony (#698).
     let poly = "24K · 30.0 S · 7 STREAMS / 30.0 S";
-    assert_eq!(state(TapeModel::Play, Loop, 0.0, 1.0), poly);
-    assert_eq!(state(TapeModel::Play, One, 0.0, 1.0), poly);
-    let ping = state(TapeModel::Play, Ping, 0.0, 1.0);
+    assert_eq!(state(TapeModel::Walk, Loop, 0.0, 1.0), poly);
+    assert_eq!(state(TapeModel::Walk, One, 0.0, 1.0), poly);
+    let ping = state(TapeModel::Walk, Ping, 0.0, 1.0);
     assert!(ping.starts_with(&format!("{PING_NEEDS_RAM} / ")), "{ping}");
     for mode in [One, Loop] {
-        let rev = state(TapeModel::Play, mode, 0.9, 0.1);
+        let rev = state(TapeModel::Walk, mode, 0.9, 0.1);
         assert!(rev.starts_with(&format!("{REVERSE_NEEDS_RAM} / ")), "{rev}");
     }
     for (m, why) in [
@@ -816,7 +817,7 @@ fn streamed_refusals_reach_the_band() {
         assert!(s.starts_with(&format!("{why} / ")), "{s}");
     }
     // REVERSE needs RAM; END before START plays it forward again.
-    let rev = state(TapeModel::Play, Reverse, 0.0, 1.0);
+    let rev = state(TapeModel::Walk, Reverse, 0.0, 1.0);
     assert!(rev.starts_with(&format!("{REVERSE_NEEDS_RAM} / ")), "{rev}");
-    assert!(state(TapeModel::Play, Reverse, 0.9, 0.1).starts_with("24K · "));
+    assert!(state(TapeModel::Walk, Reverse, 0.9, 0.1).starts_with("24K · "));
 }

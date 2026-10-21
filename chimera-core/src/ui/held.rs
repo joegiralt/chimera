@@ -1,5 +1,5 @@
 //! A WAVE or ALG A/B choice the formant budget refuses (ADR 0151), or a
-//! TAPE machine or PLAY DIRECTION a streamed source can't play: the turn lands on it, the
+//! TAPE machine or WALK DIRECTION a streamed source can't play: the turn lands on it, the
 //! cell shows it dimmed with the reason in the focus band, and nothing is
 //! written.
 
@@ -40,7 +40,7 @@ pub struct Shown {
 
 /// TAPE's MODEL: on a streamed source a turn holds a machine it refuses.
 pub const MODEL: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
-/// PLAY's DIRECTION: likewise REVERSE and PING-PONG (ADR 0200).
+/// WALK's DIRECTION: likewise REVERSE and PING-PONG (ADR 0202).
 pub const DIRECTION: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODE);
 
 /// Whether `a` is a cell this applies to.

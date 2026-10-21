@@ -407,7 +407,7 @@ pub fn script(model: TapeModel) -> Script {
         TapeModel::Scrub => Script(&SCRUB_SWEEP, &[], &[]),
         TapeModel::Transwave => Script(&WAVE_SWEEP, &[], &[]),
         TapeModel::Stretch => Script(&STRETCH_KEYS, &STRETCH_TAKES, &[]),
-        TapeModel::Play => Script(&SWEEP, &[], &[]),
+        TapeModel::Walk => Script(&SWEEP, &[], &[]),
     }
 }
 
@@ -416,7 +416,7 @@ pub fn legend(model: TapeModel) -> &'static str {
         TapeModel::Scrub => SCRUB_LEGEND,
         TapeModel::Transwave => WAVE_LEGEND,
         TapeModel::Stretch => STRETCH_LEGEND,
-        TapeModel::Play => SWEEP_LEGEND,
+        TapeModel::Walk => SWEEP_LEGEND,
     }
 }
 
@@ -466,7 +466,7 @@ pub const TRON_LEGEND: &str = "0–10 s held at ROOT · 10–20 s held an octave
     its own 8 s of tape (END may come first)";
 
 /// How a machine is heard besides its plain script (spec § 2 Machines):
-/// END before START, WOW WARBLE, PLAY's other MODEs (LOOP is Plain),
+/// END before START, WOW WARBLE, WALK's other MODEs (LOOP is Plain),
 /// SLICE NOTE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Way {
@@ -476,7 +476,7 @@ pub enum Way {
     One,
     Ping,
     SliceNote,
-    /// PLAY FORWARD with TRON on (ADR 0200).
+    /// WALK FORWARD with TRON on (ADR 0202).
     Tron,
 }
 
@@ -484,7 +484,7 @@ impl Way {
     /// The ways `m` is rendered.
     pub fn of(m: TapeModel) -> &'static [Way] {
         match m {
-            TapeModel::Play => &[
+            TapeModel::Walk => &[
                 Way::Plain,
                 Way::Reversed,
                 Way::Warble,
@@ -1257,7 +1257,7 @@ mod tests {
     #[test]
     fn page_lists_every_track() {
         let (a, b) = (src("tx-bass"), src("choir"));
-        let rows = [(TapeModel::Play, &a), (TapeModel::Play, &b)];
+        let rows = [(TapeModel::Walk, &a), (TapeModel::Walk, &b)];
         let html = page(&rows);
         for s in ["tx-bass", "choir"] {
             for kind in ["dry", "wet"] {
@@ -1312,11 +1312,11 @@ mod tests {
     fn only_http_links() {
         let mut s = src("x");
         s.url = Some("javascript:alert(1)".into());
-        let html = page(&[(TapeModel::Play, &s)]);
+        let html = page(&[(TapeModel::Walk, &s)]);
         assert!(!html.contains("href=\"javascript"), "plain text");
         s.url = Some("https://example.org/f".into());
         s.author.clear();
-        let html = page(&[(TapeModel::Play, &s)]);
+        let html = page(&[(TapeModel::Walk, &s)]);
         assert!(
             html.contains(">https://example.org/f</a>"),
             "the URL stands in"

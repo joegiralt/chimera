@@ -79,7 +79,7 @@ fn neutral_tape_loops_whole() {
     assert_eq!(
         s.params.tape,
         TapeEngineParams {
-            machine: TapeMachine::Play,
+            machine: TapeMachine::Walk,
             direction: Direction::Loop,
             start: 0.0,
             end: 1.0,

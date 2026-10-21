@@ -1222,14 +1222,14 @@ static TAPE_ROWS: [TapeRow; 13] = [
     (
         "LOOP 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Play, Direction::Loop),
+        |p| tiny(p, TapeModel::Walk, Direction::Loop),
         HOLD,
     ),
     (
         "REV 64",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Play, Direction::Loop);
+            tiny(p, TapeModel::Walk, Direction::Loop);
             (p.tape.start, p.tape.end) = (1.0, 0.0);
         },
         HOLD,
@@ -1237,7 +1237,7 @@ static TAPE_ROWS: [TapeRow; 13] = [
     (
         "PING 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Play, Direction::Ping),
+        |p| tiny(p, TapeModel::Walk, Direction::Ping),
         HOLD,
     ),
     (
@@ -1249,14 +1249,14 @@ static TAPE_ROWS: [TapeRow; 13] = [
     (
         "LOOP 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::Play, Direction::Loop),
+        |p| tiny(p, TapeModel::Walk, Direction::Loop),
         HOLD,
     ),
     (
         "REV 256",
         Tapes::Short,
         |p| {
-            tiny(p, TapeModel::Play, Direction::Loop);
+            tiny(p, TapeModel::Walk, Direction::Loop);
             (p.tape.start, p.tape.end) = (1.0, 0.0);
         },
         HOLD,
@@ -1264,7 +1264,7 @@ static TAPE_ROWS: [TapeRow; 13] = [
     (
         "PING 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::Play, Direction::Ping),
+        |p| tiny(p, TapeModel::Walk, Direction::Ping),
         square,
     ),
     (
@@ -1277,7 +1277,7 @@ static TAPE_ROWS: [TapeRow; 13] = [
         "1SHOT",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Play, Direction::Forward);
+            tiny(p, TapeModel::Walk, Direction::Forward);
             // ONE read no LENGTH: FORWARD plays the whole window.
             p.tape.size = 1.0;
             p.tape.slice = chimera_engine::dsp::tape_engine::SliceCode::new(17);
@@ -1288,7 +1288,7 @@ static TAPE_ROWS: [TapeRow; 13] = [
         "TRON",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Play, Direction::Forward);
+            tiny(p, TapeModel::Walk, Direction::Forward);
             p.tape.tron = Tron::On;
         },
         |_, _| Hit::AgainOff,
@@ -1522,7 +1522,7 @@ const STREAM_RATE: u16 = 24_000;
 /// was measured at C4 − 4 to + 3, under the old 466 KB/s placeholder.)
 const STREAM_LOW: u8 = 53;
 
-/// A TAPE STREAM row: its label, the Sound over PLAY with TAPE and AGE at
+/// A TAPE STREAM row: its label, the Sound over WALK with TAPE and AGE at
 /// 0.5, and what changes before each block.
 type StreamRow = (
     &'static str,
@@ -1546,12 +1546,12 @@ static STREAM_ROWS: [StreamRow; 2] = [
     ),
 ];
 
-/// The Sound a row sets: PLAY at ROOT C4, TAPE and AGE at 0.5.
+/// The Sound a row sets: WALK at ROOT C4, TAPE and AGE at 0.5.
 fn stream_sound(row: &StreamRow) -> ParamSnapshot {
     let mut p = snapshot(EngineType::Tape);
     (p.tape.tape, p.tape.age) = (0.5, 0.5);
     (p.tape.machine, p.tape.direction, p.tape.root) =
-        (TapeMachine::Play, Direction::Loop, 6_000.0);
+        (TapeMachine::Walk, Direction::Loop, 6_000.0);
     (row.1)(&mut p);
     p
 }

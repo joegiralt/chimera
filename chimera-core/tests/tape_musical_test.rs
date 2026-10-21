@@ -94,7 +94,7 @@ fn one_opens_on_the_hit() {
     let mut s = init(Way::One, |t| t.drag = FADE_HOLD);
     let env = ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::ATTACK).block;
     assert_eq!(env, BlockRef::Env(EnvSlot::Env1));
-    for &(id, v) in env_defaults(TapeMachine::Play, Direction::Forward) {
+    for &(id, v) in env_defaults(TapeMachine::Walk, Direction::Forward) {
         chimera_core::block::Block::set(&mut s.params.envelopes[0], id, v);
     }
     let mut v = Rig::with_source(SR, &held);
@@ -201,7 +201,7 @@ fn velocity_moves_one_start() {
         (t.drag, t.start) = (FADE_HOLD, 0.0);
     });
     s.params.envelopes[0].sustain = 1.0;
-    for &(id, v) in env_defaults(TapeMachine::Play, Direction::Forward) {
+    for &(id, v) in env_defaults(TapeMachine::Walk, Direction::Forward) {
         chimera_core::block::Block::set(&mut s.params.envelopes[0], id, v);
     }
     let start = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::START);

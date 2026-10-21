@@ -92,7 +92,7 @@ pub struct SoundRecipe {
     pub name: SoundName,
     pub source: SoundName,
     pub machine: TapeMachine,
-    /// PLAY's DIRECTION and TRON (`mode`, `tron`).
+    /// WALK's DIRECTION and TRON (`mode`, `tron`).
     pub direction: Direction,
     pub tron: Tron,
     pub set: Vec<(ParamId, f32)>,
@@ -227,9 +227,9 @@ fn source_recipe(name: SoundName, t: &Table) -> Result<SourceRecipe, String> {
     Ok(SourceRecipe { name, origin, form })
 }
 
-/// The recipes' and manifests' model words, by `TapeModel::index`: PLAY
+/// The recipes' and manifests' model words, by `TapeModel::index`: WALK
 /// with its `mode` (DIRECTION) and `tron` beside it.
-pub const MODEL_WORDS: [&str; 4] = ["PLAY", "STRETCH", "SCRUB", "TRANSWAVE"];
+pub const MODEL_WORDS: [&str; 4] = ["WALK", "STRETCH", "SCRUB", "TRANSWAVE"];
 
 fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     let m = need(t, "model")?;
@@ -237,7 +237,7 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
         .into_iter()
         .find(|x| MODEL_WORDS[usize::from(x.index())] == m)
         .ok_or(format!("model {m}"))?;
-    let play = model == TapeModel::Play;
+    let play = model == TapeModel::Walk;
     let mode = match get(t, "mode") {
         None => Direction::Loop,
         Some(k) if play => Direction::ALL

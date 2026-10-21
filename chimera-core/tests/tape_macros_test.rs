@@ -23,8 +23,8 @@ const B: usize = BLOCK_SIZE;
 
 /// LOOP either way (END before START plays reversed), and the rest.
 const MODELS: [Mach; 6] = [
-    Mach::fwd(TapeModel::Play),
-    Mach::rev(TapeModel::Play),
+    Mach::fwd(TapeModel::Walk),
+    Mach::rev(TapeModel::Walk),
     Mach::ping(),
     Mach::fwd(TapeModel::Scrub),
     Mach::fwd(TapeModel::Transwave),
@@ -201,7 +201,7 @@ fn line(curve: &[(f64, f64)], hz: f64) -> f64 {
 /// between the wow and the capstan) correlates under ½ over 8 s.
 #[test]
 fn voices_have_own_transport() {
-    let model = TapeModel::Play;
+    let model = TapeModel::Walk;
     let m = Mach::fwd(model);
     let held = source(model, 9.0);
     let v = SourceView::strict(&held).unwrap();
@@ -264,7 +264,7 @@ fn voices_have_own_transport() {
 /// pair does on about a quarter, 5; a locked pair on all 20).
 #[test]
 fn wows_never_lock() {
-    let model = TapeModel::Play;
+    let model = TapeModel::Walk;
     let m = Mach::fwd(model);
     let held = source(model, 9.0);
     let v = SourceView::strict(&held).unwrap();
@@ -641,8 +641,8 @@ fn full_tape_keeps_the_clamp_and_floors() {
     // The note's `inc`: 16 · 2^(−33/1200), by PITCH from note 127.
     let pitch = 1_200.0 * INC_MAX.log2() - 33.0 - (12_700.0 - 6_000.0);
     for m in [
-        Mach::fwd(TapeModel::Play),
-        Mach::rev(TapeModel::Play),
+        Mach::fwd(TapeModel::Walk),
+        Mach::rev(TapeModel::Walk),
         Mach::ping(),
         Mach::fwd(TapeModel::Scrub),
         Mach::fwd(TapeModel::Stretch),

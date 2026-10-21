@@ -23,8 +23,8 @@ const SR: u32 = 48_000;
 /// The models that play heads through a window (TRANSWAVE has its own).
 /// LOOP either way (END before START plays reversed), and the rest.
 const MODELS: [Mach; 5] = [
-    Mach::fwd(TapeModel::Play),
-    Mach::rev(TapeModel::Play),
+    Mach::fwd(TapeModel::Walk),
+    Mach::rev(TapeModel::Walk),
     Mach::ping(),
     Mach::fwd(TapeModel::Scrub),
     Mach::fwd(TapeModel::Stretch),
@@ -161,8 +161,8 @@ fn loops_are_click_free() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     for m in [
-        Mach::fwd(TapeModel::Play),
-        Mach::rev(TapeModel::Play),
+        Mach::fwd(TapeModel::Walk),
+        Mach::rev(TapeModel::Walk),
         Mach::fwd(TapeModel::Scrub),
     ] {
         for xfade in [0.1, 0.5] {
@@ -216,7 +216,7 @@ fn tiny_loop_fades_have_no_corner() {
     let held = held_plain(&sine(48_000, 183.4, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let own = (TAU / 183.4).powi(2);
-    for m in [Mach::fwd(TapeModel::Play), Mach::rev(TapeModel::Play)] {
+    for m in [Mach::fwd(TapeModel::Walk), Mach::rev(TapeModel::Walk)] {
         let mut p = as_model(
             m,
             TapeEngineParams {
@@ -331,8 +331,8 @@ fn note_on_ramp_has_no_corner() {
     let v = SourceView::strict(&held).unwrap();
     let n = NOTE_ON_RAMP as f32;
     for (model, mode) in [
-        (TapeModel::Play, Direction::Loop),
-        (TapeModel::Play, Direction::Ping),
+        (TapeModel::Walk, Direction::Loop),
+        (TapeModel::Walk, Direction::Ping),
         (TapeModel::Stretch, Direction::Loop),
     ] {
         let p = TapeEngineParams {
@@ -378,7 +378,7 @@ fn macros_ease() {
     }
 }
 
-/// MOTION no longer walks PLAY's loop in time (ADR 0200: WALK steps at
+/// MOTION no longer walks WALK's loop in time (ADR 0202: DRIFT steps at
 /// each note, `tape_play_test`): a LOOP at MOTION ½ plays as at 0.
 #[test]
 fn motion_leaves_the_loop() {
@@ -486,7 +486,8 @@ fn tiny_sources_play_finite() {
                             out.iter().all(|y| y.is_finite()),
                             "{frames} frames, {way:?} {slice}, {start}..{end}"
                         );
-                        assert!(!e.is_active(), "{way:?} {slice}: ends");
+                        // TRON goes round until its tape runs out (ADR 0202).
+                        assert!(way == Way::Tron || !e.is_active(), "{way:?} {slice}: ends");
                     }
                 }
             }

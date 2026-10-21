@@ -403,7 +403,7 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 /// and trims (#57, ADR 0096) on main's merge; then #698's round: INIT's
 /// LENGTH 0.8, one release a note, equal-power fades by correlation, AGE
 /// from the source's band and TRON's LENGTH over the strip (ADRs
-/// 0179–0182).
+/// 0179–0182); then the TRON rows for WALK (ADR 0202).
 const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_loop",
@@ -505,16 +505,17 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_tron_held",
         (
-            0x21c57835bfd8f660,
+            0x08979866971225ef,
             [
-                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067, 0,
+                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
+                1032249790,
             ],
         ),
     ),
     (
         "tape_tron_released",
         (
-            0x7183cbea8b460022,
+            0x97d875934f35829d,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,
@@ -668,12 +669,12 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
     // The old machines, played as PLAY in each MODE (ADR 0170): ONE at
     // HOLD is ONESHOT.
     let ping = TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: Direction::Ping,
         ..p
     };
     let one = TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: Direction::Forward,
         drag: FADE_HOLD,
         ..p
@@ -685,8 +686,8 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ..p
     };
     vec![
-        ("tape_loop", model(M::Play)),
-        ("tape_reverse", rev(M::Play)),
+        ("tape_loop", model(M::Walk)),
+        ("tape_reverse", rev(M::Walk)),
         ("tape_pingpong", ping),
         ("tape_transwave", model(M::Transwave)),
         // A moving tape: the neutral's MOTION 0 is a stopped, silent one;
@@ -710,8 +711,10 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
                 ..one
             },
         ),
-        // Held: LENGTH ½ over the strip, a 0.5 s tape, runs out before
-        // the key up; released: the whole strip (LENGTH 1) fades at it.
+        // Re-recorded for WALK's TRON (ADR 0202): its tape is LENGTH's of
+        // 8 s whatever the strip, the window round again until then.
+        // Held: LENGTH ½, a 1.4 s tape; released: LENGTH 1, 8 s, fades at
+        // the key up.
         (
             "tape_tron_held",
             TapeEngineParams {
@@ -783,7 +786,7 @@ fn reverse_golden_replays_bit_identically() {
     payload.extend_from_slice(&1u32.to_le_bytes());
     decode_block(&payload, MIGRATIONS, TRANSLATIONS, Some(&mut s.params)).unwrap();
     let t = s.params.tape;
-    assert_eq!((t.model(), t.start, t.end), (TapeModel::Play, 1.0, 0.0));
+    assert_eq!((t.model(), t.start, t.end), (TapeModel::Walk, 1.0, 0.0));
     let out = tape_render(&t);
     let want = TAPE_GOLDENS
         .iter()

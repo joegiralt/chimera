@@ -188,11 +188,11 @@ SECTIONS {
        and the cost table. */
     *(.text.*11tape_engine5heads* .text.*11tape_engine7stretch* .text.*11tape_engine4wave* .text.*11tape_engine4read*
       .text.*11tape_engine3age* .text.*11tape_engine6warble* .text.*11tape_engine7oneshot* .text.*11tape_engine4tron*
-      .text.*11tape_engine4walk* .text.*11tape_engine4span* .text.*6stream6cursor* .text.*11tape_engine*8TapeDeck*
+      .text.*11tape_engine5drift* .text.*11tape_engine4span* .text.*6stream6cursor* .text.*11tape_engine*8TapeDeck*
       .text.*11tape_engine9ratio_max*);
     *(.rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
       .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
-      .rodata.*11tape_engine4walk* .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
+      .rodata.*11tape_engine5drift* .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
     /* Streamed admission and loads (`AdmitDoor`, `LoadDoor`): the bill,
        the stealing pick and the block's re-bill; the heads' placement, a
        load's passes and their head reads. Bank 1 keeps the wrappers and

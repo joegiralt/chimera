@@ -28,7 +28,7 @@ fn r() -> SourceRef {
 
 fn play(mode: Direction, start: f32) -> TapeEngineParams {
     TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: mode,
         start,
         end: 1.0,
@@ -158,7 +158,7 @@ fn what_needs_ram_has_no_heads() {
 #[test]
 fn tron_streams_on_one_start_head() {
     let p = TapeEngineParams {
-        machine: TapeMachine::Play,
+        machine: TapeMachine::Walk,
         direction: Direction::Forward,
         tron: Tron::On,
         ..play(Direction::Loop, 0.2)

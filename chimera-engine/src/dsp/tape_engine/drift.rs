@@ -1,9 +1,9 @@
-//! PLAY's WALK (ADR 0200): at each note-on POSITION steps by a random
-//! amount of up to WALK windows either way, from where the last note's
+//! WALK's DRIFT (ADR 0202): at each note-on POSITION steps by a random
+//! amount of up to DRIFT windows either way, from where the last note's
 //! step left it, so repeats wander through the source (Octatrack's random
 //! start, carried from note to note). Each voice draws from its own seeded
 //! xorshift, so a render repeats. The place wraps at the window's ends.
-//! WALK 0 rests at POSITION and draws nothing.
+//! DRIFT 0 rests at POSITION and draws nothing.
 
 use super::heads::Window;
 use crate::dsp::algo::math::clampf;
@@ -27,7 +27,7 @@ fn draw(rng: &mut u32) -> f32 {
 }
 
 /// The walk's place after a note-on at `walk` from `at`, in windows
-/// `[0, 1)`: `at` plus up to ±`walk`, wrapped. 0 at WALK 0 (or a NaN).
+/// `[0, 1)`: `at` plus up to ±`walk`, wrapped. 0 at DRIFT 0 (or a NaN).
 pub fn step(at: f32, walk: f32, rng: &mut u32) -> f32 {
     let walk = clampf(walk, 0.0, 1.0);
     if !(walk > 0.0) {
