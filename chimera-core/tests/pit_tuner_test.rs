@@ -11,7 +11,7 @@ mod common;
 mod screen;
 
 use chimera_core::MidiNote;
-use chimera_core::dsp::tape_engine::params::TapeMachine;
+use chimera_core::dsp::tape_engine::params::{KeyMode, StretchType, Way};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::PartId;
@@ -59,7 +59,7 @@ fn texts(s: &Shown) -> [String; 2] {
     })
 }
 
-fn tape(machine: TapeMachine, root: f32, period: f32) -> Sound {
+fn tape(way: Way, root: f32, period: f32) -> Sound {
     let mut s = Sound::init(EngineType::Tape);
     s.source = Some(TapeSource {
         r: SourceRef {
@@ -69,7 +69,7 @@ fn tape(machine: TapeMachine, root: f32, period: f32) -> Sound {
         },
         tune: None,
     });
-    s.params.tape.set_machine(machine);
+    s.params.tape.set_way(way);
     s.params.tape.root = root;
     s.params.tape.period = period;
     s
@@ -127,12 +127,7 @@ fn every_engines_offsets_sum() {
 /// root is.
 #[test]
 fn tape_plays_the_key_over_its_root() {
-    for m in [
-        TapeMachine::One,
-        TapeMachine::Loop,
-        TapeMachine::Tron,
-        TapeMachine::Stretch,
-    ] {
+    for m in [Way::One, Way::Loop, Way::Ping, Way::Tron, Way::Stretch] {
         let mut s = tape(m, 4_800.0, 183.4);
         s.params.pitch.pitch = 7.0;
         assert_eq!(pitch(key(48), &s, 0), at(5_500.0), "{m:?}");
@@ -141,7 +136,7 @@ fn tape_plays_the_key_over_its_root() {
         assert_eq!(pitch(key(48), &s, 0), at(5_500.0), "{m:?} any root");
     }
     // TRANSWAVE's cycle plays the note itself.
-    let w = tape(TapeMachine::Wave, 4_800.0, 0.0);
+    let w = tape(Way::Wave, 4_800.0, 0.0);
     assert_eq!(pitch(key(69), &w, 0), at(6_900.0));
 }
 
@@ -149,7 +144,7 @@ fn tape_plays_the_key_over_its_root() {
 /// corner says so and gives the shift off the source's own speed.
 #[test]
 fn an_unknown_root_reads_root_unknown_and_the_shift() {
-    let mut s = tape(TapeMachine::Loop, 6_000.0, 0.0);
+    let mut s = tape(Way::Loop, 6_000.0, 0.0);
     s.params.pitch.pitch = 7.0;
     s.params.pitch.fine = 12.0;
     let p = pitch(key(60), &s, 0);
@@ -161,7 +156,7 @@ fn an_unknown_root_reads_root_unknown_and_the_shift() {
 /// SCRUB runs at 2 · |MOTION| of the source's speed, and stands at 0.
 #[test]
 fn scrub_follows_motion() {
-    let mut s = tape(TapeMachine::Scrub, 6_000.0, 100.0);
+    let mut s = tape(Way::Scrub, 6_000.0, 100.0);
     s.params.tape.motion = 0.0;
     assert_eq!(pitch(key(60), &s, 0), Some(Reading::Known(Known::Still)));
     assert_eq!(
@@ -174,9 +169,32 @@ fn scrub_follows_motion() {
     assert_eq!(pitch(key(60), &s, 0), at(7_200.0));
 }
 
+/// SCRUB's KEY POSITION places the finger and plays every key at ROOT
+/// (ADR 0205); KEY PITCH plays the key.
+#[test]
+fn scrub_key_position_reads_root() {
+    let mut s = tape(Way::Scrub, 6_000.0, 100.0);
+    s.params.tape.motion = 0.5;
+    assert_eq!(s.params.tape.key, KeyMode::Position);
+    assert_eq!(pitch(key(72), &s, 0), at(6_000.0));
+    assert_eq!(pitch(key(48), &s, 0), at(6_000.0));
+    s.params.tape.key = KeyMode::Pitch;
+    assert_eq!(pitch(key(72), &s, 0), at(7_200.0));
+}
+
+/// Every STRETCH TYPE plays the key's pitch (ADR 0204).
+#[test]
+fn every_stretch_type_plays_the_key() {
+    for k in [StretchType::Mono, StretchType::Poly, StretchType::Grain] {
+        let mut s = tape(Way::Stretch, 4_800.0, 183.4);
+        s.params.tape.kind = k;
+        assert_eq!(pitch(key(55), &s, 0), at(5_500.0), "{k:?}");
+    }
+}
+
 #[test]
 fn tape_with_no_source_reads_nothing() {
-    let mut s = tape(TapeMachine::Loop, 6_000.0, 100.0);
+    let mut s = tape(Way::Loop, 6_000.0, 100.0);
     s.source = None;
     assert_eq!(pitch(key(60), &s, 0), None);
 }
@@ -292,7 +310,7 @@ fn fine_moves_the_cents_the_frame_it_turns() {
 #[test]
 fn tape_on_pit_reads_root_and_transposition() {
     let mut ui = pit(EngineType::Tape);
-    let s = tape(TapeMachine::Loop, 4_800.0, 183.4);
+    let s = tape(Way::Loop, 4_800.0, 183.4);
     let edit = &mut ui.project_mut().edit_part(P1).sound;
     edit.source = s.source;
     edit.params.tape.root = 4_800.0;

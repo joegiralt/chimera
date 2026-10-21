@@ -1587,7 +1587,7 @@ impl TapeDeck {
         let note = MidiNote::clamped(note);
         let (frames, rate) = (v.frames(), v.desc().rate());
         self.state = Note::Ram;
-        self.at_root = params::at_root(p) || Self::keys_place(p);
+        self.at_root = params::plays_at_root(p);
         self.hold = params::hold(p);
         self.note = note;
         self.root = Cents::new(p.root);

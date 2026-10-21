@@ -24,7 +24,7 @@ use u8g2_fonts::types::{FontColor, VerticalPosition};
 
 use super::{Line, Shown};
 use crate::MidiNote;
-use crate::dsp::tape_engine::params::{TapeMachine, at_root};
+use crate::dsp::tape_engine::params::{TapeMachine, plays_at_root};
 use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::ui::UiState;
@@ -247,25 +247,26 @@ pub fn pitch(note: MidiNote, s: &Sound, tune: i8) -> Option<Reading> {
         EngineType::Tape => {
             s.source?;
             let t = &p.tape;
-            if t.machine == TapeMachine::Wave {
-                return at(0.0);
-            }
-            let speed = if t.machine == TapeMachine::Scrub {
-                let m = libm::fabsf(t.motion);
-                if m < STILL_MOTION {
-                    return Some(Reading::Known(Known::Still));
-                }
-                1_200.0 * libm::log2f(2.0 * m)
-            } else {
-                0.0
-            };
-            // SLICE NOTE plays every key at ROOT.
-            let key = if at_root(t) {
+            // SLICE NOTE and SCRUB's KEY POSITION play every key at ROOT.
+            let key = if plays_at_root(t) {
                 Tone(t.root).up(set)
             } else {
                 key
             };
-            let c = key.up(speed);
+            let c = match t.machine {
+                // TRANSWAVE's cycle plays the note itself.
+                TapeMachine::Wave => return at(0.0),
+                // SCRUB runs at 2 · |MOTION| of the source's speed.
+                TapeMachine::Scrub => {
+                    let m = libm::fabsf(t.motion);
+                    if m < STILL_MOTION {
+                        return Some(Reading::Known(Known::Still));
+                    }
+                    key.up(1_200.0 * libm::log2f(2.0 * m))
+                }
+                // WALK and STRETCH (each TYPE) play the key's pitch.
+                TapeMachine::Walk | TapeMachine::Stretch => key,
+            };
             Some(if t.period > 0.0 {
                 Reading::Known(Known::Note(c))
             } else {

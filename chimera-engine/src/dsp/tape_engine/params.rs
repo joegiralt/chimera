@@ -438,6 +438,17 @@ pub fn at_root(p: &TapeEngineParams) -> bool {
     p.way() == Way::One && p.slice.slice().by_note()
 }
 
+/// A note on `p` plays at ROOT whatever its key: WALK under SLICE NOTE
+/// (`at_root`), or SCRUB at KEY POSITION, where the key places the finger
+/// (ADR 0205).
+pub fn plays_at_root(p: &TapeEngineParams) -> bool {
+    match p.machine {
+        TapeMachine::Walk => at_root(p),
+        TapeMachine::Scrub => p.key == KeyMode::Position,
+        TapeMachine::Stretch | TapeMachine::Wave => false,
+    }
+}
+
 /// The machines that seek: none streams (slice 1 § 2.7). WALK reads
 /// forward unless it plays reversed or bounces.
 ///
