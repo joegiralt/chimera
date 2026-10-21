@@ -68,7 +68,7 @@ pub struct Line<'a>(pub &'a [i16; N]);
 
 impl GrainSource for Line<'_> {
     #[inline(always)]
-    fn len(&self) -> usize {
+    fn frames(&self) -> usize {
         N
     }
 

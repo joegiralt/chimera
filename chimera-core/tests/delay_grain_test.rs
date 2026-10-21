@@ -82,7 +82,9 @@ impl RGrain {
             dur
         }
         .max(2.0);
-        let delay = delay.clamp(min_d + c.max(0.0) * dur, max_d + c.min(0.0) * dur);
+        let delay = delay
+            .max(min_d + c.max(0.0) * dur)
+            .min(max_d + c.min(0.0) * dur);
         self.pos = (head as f64 - delay).rem_euclid(N as f64);
         self.speed = speed;
         self.inc = 1.0 / dur;
@@ -149,8 +151,9 @@ impl Reference {
         let n = self
             .clock
             .block(ctl.rate, ctl.texture, &mut self.rng, &mut starts);
-        let depth =
-            (f64::from(ctl.rate) * f64::from(ctl.dur) * 0.5).clamp(1.0, GRAINS as f64 / 2.0);
+        let depth = (f64::from(ctl.rate) * f64::from(ctl.dur) * 0.5)
+            .max(1.0)
+            .min(GRAINS as f64 / 2.0);
         let speed = f64::from(ctl.speed);
         let phase = 1.0 - 0.5 * f64::from(ctl.texture);
         let law = phase + (0.5 - phase) * f64::from(ctl.shift);

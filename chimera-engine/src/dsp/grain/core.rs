@@ -54,11 +54,11 @@ pub fn q32(frames: f32) -> Q32 {
 /// `Start`'s `amp` carries them to the output's.
 pub trait GrainSource {
     /// Frames it holds; a head wraps at the end.
-    fn len(&self) -> usize;
-    /// Frame `i`, `i < len()`.
+    fn frames(&self) -> usize;
+    /// Frame `i`, `i < frames()`.
     fn frame(&self, i: usize) -> f32;
     /// Frames `i − 1 ..= i + 2`. The core asks only with `1 ≤ i` and
-    /// `i + 2 < len()`: a source may skip its own bounds checks there.
+    /// `i + 2 < frames()`: a source may skip its own bounds checks there.
     #[inline(always)]
     fn taps(&self, i: usize) -> [f32; 4] {
         [
@@ -243,7 +243,7 @@ impl Grain {
     /// stealing fade only while one runs.
     #[inline(always)]
     pub fn render<S: GrainSource>(&mut self, src: &S, out: &mut [f32], from: usize, to: usize) {
-        let len = src.len();
+        let len = src.frames();
         let n = (to - from).min(self.remaining.max(0) as usize);
         let mut at = from;
         while at < from + n {
@@ -294,7 +294,7 @@ impl Grain {
 
     /// One sample whose taps wrap the source.
     fn wrapped<S: GrainSource>(&mut self, src: &S, o: &mut f32) {
-        let len = src.len();
+        let len = src.frames();
         let i = (self.pos >> 32) as usize;
         let t = ((self.pos as u32) >> 8) as f32 * (1.0 / 16_777_216.0);
         let x: [f32; 4] = ::core::array::from_fn(|k| src.frame((i + len + k - 1) % len));

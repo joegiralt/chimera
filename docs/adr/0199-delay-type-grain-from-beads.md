@@ -21,10 +21,10 @@ Beads' STM32 code is MIT (Copyright 2017 Emilie Gillet, `pichenettes/eurorack`, 
   ```rust
   pub trait GrainSource {
       /// Frames it holds; a head wraps at the end.
-      fn len(&self) -> usize;
-      /// Frame `i`, `i < len()`, at the source's own scale.
+      fn frames(&self) -> usize;
+      /// Frame `i`, `i < frames()`, at the source's own scale.
       fn frame(&self, i: usize) -> f32;
-      /// Frames `i − 1 ..= i + 2`; asked only with `1 ≤ i` and `i + 2 < len()`.
+      /// Frames `i − 1 ..= i + 2`; asked only with `1 ≤ i` and `i + 2 < frames()`.
       fn taps(&self, i: usize) -> [f32; 4] { /* from `frame` */ }
   }
   ```
