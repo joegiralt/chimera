@@ -484,7 +484,7 @@ fn kind_codes_round_trip() {
         assert_eq!(K2040Voice::from_disk_code(v.disk_code()), Some(v));
     }
     assert_eq!(K2040Voice::Exp.disk_code(), 1);
-    assert_eq!(K2040Voice::labels(), &["REV2", "EXP"]);
+    assert_eq!(K2040Voice::labels(), &["REV2", "EXPNDR"]);
     assert_eq!(K2040Voice::default(), K2040Voice::Rev2);
     let engine = (RecordTag::Engine, vec![EngineType::Algo.disk_code()]);
     let code = |c: u32| c.to_le_bytes();

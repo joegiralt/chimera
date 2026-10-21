@@ -190,7 +190,7 @@ pub static FILTER_SPECS: [ParamSpec; 11] = [
     )
     .ident("MODE")
     .glyph(crate::glyph::FocusGlyph::None),
-    // The 2040's VOICE (spec § 3): REV2 or EXP, two peers.
+    // The 2040's VOICE (spec § 3): REV2 or EXPNDR, two peers.
     ParamSpec::choice(
         13,
         "VOICE",
