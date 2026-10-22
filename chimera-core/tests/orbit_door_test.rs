@@ -295,3 +295,72 @@ fn orbit_with_the_door_closed_keeps_the_project() {
     assert_eq!(common::codec_util::encode_project(&rig.project), loaded);
 }
 
+/// Counts the pixels drawn.
+#[cfg(feature = "bank2")]
+struct Count(usize);
+
+#[cfg(feature = "bank2")]
+impl embedded_graphics::geometry::OriginDimensions for Count {
+    fn size(&self) -> embedded_graphics::geometry::Size {
+        embedded_graphics::geometry::Size::new(320, 240)
+    }
+}
+
+#[cfg(feature = "bank2")]
+impl embedded_graphics::draw_target::DrawTarget for Count {
+    type Color = embedded_graphics::pixelcolor::Rgb565;
+    type Error = core::convert::Infallible;
+    fn draw_iter<I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>>(
+        &mut self,
+        p: I,
+    ) -> Result<(), Self::Error> {
+        self.0 += p.into_iter().count();
+        Ok(())
+    }
+}
+
+/// Closed, ORBIT's pages say so: the header warns UPDATE, its params read
+/// NEEDS UPDATE, its own cells UPDATE, and the bands and their key are
+/// empty. Open, the same bands draw.
+#[cfg(feature = "bank2")]
+#[test]
+fn orbit_pages_with_the_door_closed_say_so() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::bank2::{
+        Bank2Status, DOOR_CELL, NEEDS_UPDATE, NEEDS_UPDATE_CELL, closed_orbit, closed_text,
+    };
+    use chimera_core::orbit::RingIdx;
+    use chimera_core::ui::orbit::door as pages;
+    use chimera_core::ui::orbit::draw::OrbitFrame;
+    use chimera_core::ui::orbit::{OrbitCell, OrbitUi};
+
+    let _g = door::turn();
+    let ui = Box::new(chimera_core::ui::UiState::new());
+    let orbit = OrbitUi::default();
+    let f = OrbitFrame::new(ui.project().orbit(), &orbit);
+    let r = RingIdx::ALL[0];
+    let pixels = |band: fn(&mut Count, &OrbitFrame, RingIdx)| {
+        let mut c = Count(0);
+        band(&mut c, &f, r);
+        c.0
+    };
+    let bands: [fn(&mut Count, &OrbitFrame, RingIdx); 4] =
+        [pages::rhythm, pages::voice, pages::notes, pages::orb];
+
+    DOOR_CELL.open_host();
+    assert!(bands.iter().all(|&b| pixels(b) > 0), "open, every band draws");
+    assert_ne!(pages::cell_text(OrbitCell::Ring, &f, r).as_str(), NEEDS_UPDATE_CELL);
+    DOOR_CELL.close();
+
+    let closed = Some(Bank2Status::Empty);
+    assert_eq!(closed_orbit(closed), Some(NEEDS_UPDATE_CELL));
+    let bpm = ParamAddr::new(BlockRef::Tempo, chimera_core::block::ParamId(0));
+    assert_eq!(closed_text(bpm, 0.5, closed), Some(NEEDS_UPDATE));
+    assert_eq!(pages::cell_text(OrbitCell::Ring, &f, r).as_str(), NEEDS_UPDATE_CELL);
+    assert!(bands.iter().all(|&b| pixels(b) == 0), "closed, the bands are blank");
+    let mut c = Count(0);
+    pages::chords(&mut c, &f);
+    pages::scenes(&mut c, &f);
+    pages::circle(&mut c, &f, 0.0);
+    assert_eq!(c.0, 0);
+}
