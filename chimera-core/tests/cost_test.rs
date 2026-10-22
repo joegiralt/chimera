@@ -2470,11 +2470,6 @@ fn a_noise_band_bills_its_link() {
     const { assert!(AlgoEngine::COST_NOIS_LINKED.0 > AlgoEngine::COST_NOIS.0) };
 }
 
-/// FUZZ's ceiling (bench ledger fx-in-filter/bench.md): the costliest filter
-/// kind's steady bill, LADDER at 95 + 176, over `OLD_LP24`'s 95.
-const FUZZ_CEILING: u32 = 271;
-const OLD_LP24: u32 = 95;
-
 /// VA INIT on the 2040 at VOICE `v` with FUZZ PRE.
 fn fuzz_voice(v: K2040Voice) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Va);
@@ -2484,8 +2479,8 @@ fn fuzz_voice(v: K2040Voice) -> ParamSnapshot {
     p
 }
 
-/// FUZZ bills `tools/loop_count.py`'s count on `Fuzz::steady` (93 instructions
-/// and 2 `vdiv` a sample, 175) once the chain's bare bill is paid; it runs at
+/// FUZZ bills what the unit reads (FUZZ − 1 OP 244, ROUTING bench
+/// 2026-10-22; ADR 0211) once the chain's bare bill is paid; it runs at
 /// SUSTAIN 0 too.
 #[test]
 fn fuzz_is_billed_its_measured_cost() {
@@ -2501,7 +2496,7 @@ fn fuzz_is_billed_its_measured_cost() {
         bare + FxType::Fuzz.cost(),
         "SUSTAIN 0"
     );
-    assert_eq!(FxType::Fuzz.cost(), Cost(175));
+    assert_eq!(FxType::Fuzz.cost(), Cost(245));
 }
 
 /// A route on a FUZZ pot adds the moving loop's excess over the steady one:
@@ -2525,25 +2520,17 @@ fn fuzz_routed_adds_its_ramp() {
     assert_eq!(FxType::Fuzz.ramp_cost(), Cost(50));
 }
 
-/// FUZZ plus the bare chain is no costlier than the costliest filter.
+/// ADR 0211: FUZZ bills as it reads, over ADR 0156's old ceiling (271 −
+/// 95): a FUZZ Part, meant for mono and bass, gets fewer voices. VA INIT on
+/// the 2040 with FUZZ, beside the reserve on rev V: REV2 and EXP.
 #[test]
-fn fuzz_fits_the_ceiling() {
-    assert!(FxType::Fuzz.cost().0 + OLD_LP24 <= FUZZ_CEILING);
-}
-
-/// Eight FUZZ voices of VA INIT on the 2040 (EXP, the dearer VOICE) fit the
-/// audio budget (75 % of the CPU) before the bus and the reserves: a FUZZ
-/// Part sheds only near the limit.
-#[test]
-fn a_fuzz_part_sheds_only_near_the_limit() {
+fn a_fuzz_part_gets_the_voices_its_reading_allows() {
     let none = ModState::new();
-    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
-    for v in [K2040Voice::Rev2, K2040Voice::Exp] {
-        let one = Voice::cost(&fuzz_voice(v), &none).0;
-        eprintln!("{v:?}: one voice {one}, eight {} of {budget}", 8 * one);
-        assert!(8 * one <= budget, "{v:?}: {} > {budget}", 8 * one);
-    }
+    let room = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED;
+    let at = |v| room / Voice::cost(&fuzz_voice(v), &none).0;
+    assert_eq!((at(K2040Voice::Rev2), at(K2040Voice::Exp)), FUZZ_VOICES);
 }
+const FUZZ_VOICES: (u32, u32) = (5, 5);
 
 /// ADR 0168, 0192: STABILITY bills `STAB_COST` (5, the unit's 4) on the 2040, LADDER and
 /// SEM below 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN

@@ -77,14 +77,14 @@ impl FxType {
     ///   row (`bench.rs`, less 1 OP) is PENDING (unit); FUZZ plus the bare
     ///   chain stays under the ceiling, 271 - 95.
     /// - The unit, 2026-10-22 (ROUTING bench, rev V at 480 MHz, each row
-    ///   less 1 OP): SOFT 84 and SOFT LO 96, FOLD 80, FUZZ 244. SOFT billed
-    ///   100 and FOLD 80; FUZZ stays 175 while 244 would break its ceiling
-    ///   (ADR 0156), the owner's call.
+    ///   less 1 OP): SOFT 84 and SOFT LO 96, FOLD 80, FUZZ 244. Billed 100,
+    ///   80 and 245: FUZZ as it reads, over ADR 0156's ceiling, which ADR
+    ///   0211 lifts (the owner keeps its sound and its fewer voices).
     pub const fn cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,
             FxType::Soft => Cost(100),
-            FxType::Fuzz => Cost(175),
+            FxType::Fuzz => Cost(245),
             FxType::Fold => Cost(80),
         }
     }
