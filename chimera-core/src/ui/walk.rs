@@ -149,12 +149,14 @@ pub(crate) fn tape_note_in(addr: ParamAddr, sound: &Sound) -> Option<&'static st
     }
 }
 
-/// How TAPE's cell `id` reads on `m`, once through with TRON `once`, where the engine has a law
-/// the spec's format doesn't say (`view::fmt_of`): WALK's LENGTH under
+/// How TAPE's cell `id` reads on `m`, once through with TRON `once`,
+/// where the engine has a law the spec's format doesn't say
+/// (`view::fmt_of`): WALK's LENGTH under
 /// TRON once through is the tape, 0.25 to 8 s, STRETCH's LENGTH law (ADR
 /// 0203); SCRUB's LENGTH its loop, 2 ms to 2 s (ADR 0205); FADE and DRAG
 /// 10 to 500 ms, FADE's top HOLD once through; DRIFT a share of the
-/// window; SPEED a factor of the source's own. `None`: the spec's.
+/// window; SPEED a factor: STRETCH's of the pointer's pace (under GRAIN
+/// LENGTH's, ADR 0204), SCRUB's of the source's own. `None`: the spec's.
 pub(crate) fn tape_fmt_in(id: ParamId, m: TapeMachine, once: Option<Tron>) -> Option<ValFmt> {
     Some(match (m, id) {
         (TapeMachine::Walk, T::SIZE) if once == Some(Tron::On) => ValFmt::Law(Law::StretchLength),
