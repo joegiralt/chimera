@@ -835,12 +835,14 @@ impl AlgoEngine {
         let m = Morph::from_param(live.morph);
         let level = level_gains(live);
         let cycles = self.cycles(p, sr);
-        // Only a table reads a table: the others' mips hold.
+        // Only a table reads a table: the others' mips hold. Each table's
+        // pitch is taken once, for its mip and its increment.
+        let opc: [f32; OPS] = core::array::from_fn(|i| match self.kinds[i] {
+            OpKind::Table(_) => op_cycles(cycles, p, live, i),
+            OpKind::Formant | OpKind::Noise => 0.0,
+        });
         let mips: [(usize, f32, f32); OPS] = core::array::from_fn(|i| match self.kinds[i] {
-            OpKind::Table(_) => mip_step(
-                self.mip[i],
-                self.mip_target(p, live, cycles, sr, m, &level, i),
-            ),
+            OpKind::Table(_) => mip_step(self.mip[i], self.mip_of(opc[i], sr, m, &level, i)),
             OpKind::Formant | OpKind::Noise => (0, 0.0, 0.0),
         });
         let mut view = self.view;
@@ -877,7 +879,7 @@ impl AlgoEngine {
             }
             let (lo, xfade_from, xfade_to) = mips[i];
             OpBlock {
-                inc: (op_cycles(cycles, p, live, i) * 4_294_967_296.0) as u32,
+                inc: (opc[i] * 4_294_967_296.0) as u32,
                 gain_from: self.gain[i],
                 gain_to,
                 feedback: feedback_cycles(live.feedback[i]),
@@ -967,7 +969,10 @@ impl AlgoEngine {
         440.0 * exp2(st / 12.0) / sr * self.slide.value()
     }
 
+    /// `mip_of` at operator `i`'s own pitch: the note-on's, out of line
+    /// in bank 1.
     #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
     fn mip_target(
         &self,
         p: &AlgoParams,
@@ -978,8 +983,13 @@ impl AlgoEngine {
         level: &[f32; OPS],
         i: usize,
     ) -> f32 {
-        let bandwidth =
-            op_cycles(cycles, p, live, i) * sr * (1.0 + incoming(&self.plan, m, i, level));
+        self.mip_of(op_cycles(cycles, p, live, i), sr, m, level, i)
+    }
+
+    /// The mip of table operator `i` at `opc` cycles a sample (`op_cycles`).
+    #[inline(always)]
+    fn mip_of(&self, opc: f32, sr: f32, m: Morph, level: &[f32; OPS], i: usize) -> f32 {
+        let bandwidth = opc * sr * (1.0 + incoming(&self.plan, m, i, level));
         mip_position(bandwidth)
     }
 
