@@ -546,29 +546,45 @@ impl Transport {
     /// samples, summed onto it in that order (`next`).
     #[inline(always)]
     pub fn offsets(&mut self, tap: &Tap) -> (f32, f32) {
-        let wow = lfo(&mut self.wow_phase, tap.wow_rate);
-        let capstan = lfo(&mut self.capstan_phase, tap.capstan_rate);
-        let [a, b] = &mut self.jitter;
-        *a += tap.jitter_coeff * (xorshift_noise(&mut self.rng) - *a);
-        *b += tap.jitter_coeff * (*a - *b);
+        let b = self.advance(tap);
+        let wow = sin_turns(self.wow_phase);
+        let capstan = sin_turns(self.capstan_phase);
         // `max`/`min`, not `clamp`: `b` is never NaN, and they skip the
         // FPU's flag round trip.
         #[allow(clippy::manual_clamp)]
-        let jitter = (*b * tap.jitter_gain).max(-1.0).min(1.0);
+        let jitter = (b * tap.jitter_gain).max(-1.0).min(1.0);
         let flutter = 0.5 * capstan + 0.5 * jitter;
         // MECH 0 adds two exact zeros: today's delay at WOW 0, bit for bit.
         (wow * tap.wow, flutter * tap.flutter)
     }
+
+    /// One sample's state: both phases on and the jitter's two one-poles,
+    /// whose second it returns. All a sample moves, without the sines.
+    #[inline(always)]
+    pub fn advance(&mut self, tap: &Tap) -> f32 {
+        turn(&mut self.wow_phase, tap.wow_rate);
+        turn(&mut self.capstan_phase, tap.capstan_rate);
+        let [a, b] = &mut self.jitter;
+        *a += tap.jitter_coeff * (xorshift_noise(&mut self.rng) - *a);
+        *b += tap.jitter_coeff * (*a - *b);
+        *b
+    }
+
+    /// The jitter's states are finite: every offset it gives is.
+    pub fn is_finite(&self) -> bool {
+        self.jitter.iter().all(|j| j.is_finite())
+            && self.wow_phase.is_finite()
+            && self.capstan_phase.is_finite()
+    }
 }
 
-/// sin(2π·phase), then the phase advanced by `rate` turns.
+/// The phase advanced by `rate` turns, wrapped once.
 #[inline(always)]
-fn lfo(phase: &mut f32, rate: f32) -> f32 {
+fn turn(phase: &mut f32, rate: f32) {
     *phase += rate;
     if *phase >= 1.0 {
         *phase -= 1.0;
     }
-    sin_turns(*phase)
 }
 
 /// A TIME change's crossfade from the old read head to the new, samples:
@@ -604,9 +620,13 @@ pub struct TapeDelay {
     mechanics: Ease,
     /// GRAIN's grains and its share of the return (bank 2's, ADR 0202).
     grain: grain::State,
+    /// Samples since the line was last written anything but 0, counted a
+    /// block at a time (saturating): at `MAX_DELAY_SAMPLES` the line is all
+    /// zero (`tape::run`'s idle skip).
+    zeros: u32,
 }
 
-crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback, saturation, tone, mechanics, grain });
+crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback, saturation, tone, mechanics, grain, zeros });
 
 /// One block's eased settings, each `(from, to)`.
 #[derive(Clone, Copy)]
@@ -655,6 +675,7 @@ impl TapeDelay {
             tone: Ease::default(),
             mechanics: Ease::default(),
             grain: grain::State::NEW,
+            zeros: 0,
         }
     }
 

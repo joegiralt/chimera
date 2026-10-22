@@ -365,9 +365,13 @@ pub struct Ring {
     step: u8,
     from: u8,
     xf: u16,
+    /// Ring samples since a line was last written anything but 0, counted
+    /// a block at a time (saturating): at `RING_LEN` every line is zero,
+    /// since each line's write passes every slot of the ring in that many.
+    zeros: u16,
 }
 
-crate::in_place::field_list!(Ring => Ring { head, lp, step, from, xf });
+crate::in_place::field_list!(Ring => Ring { head, lp, step, from, xf, zeros });
 
 /// `i` below 2·`RING_LEN`, wrapped under it.
 #[inline(always)]
@@ -383,6 +387,7 @@ impl Ring {
             step: 0,
             from: 0,
             xf: 0,
+            zeros: 0,
         }
     }
 
@@ -436,15 +441,51 @@ impl Ring {
         // one only with SMEAR at rest.
         if self.xf > 0 {
             debug_assert!(blk.smear.is_none());
-            self.run::<true>(lines, u, blk, l, r);
+            self.run::<true, false>(lines, u, blk, l, r);
+            self.zeros = 0;
+        } else if crate::dsp::all_pos_zero(u) {
+            if self.idle(blk) {
+                // The block `run` would play, every bit of it (#793).
+                l.fill(0.0);
+                r.fill(0.0);
+                self.head = wrap(self.head as usize + HALF) as u16;
+                self.zeros = self.zeros.saturating_add(HALF as u16);
+                crate::dsp::skipped(crate::dsp::Skip::Ring);
+                return;
+            }
+            // A silent send: count the writes, for `idle`.
+            self.run::<false, true>(lines, u, blk, l, r);
         } else {
-            self.run::<false>(lines, u, blk, l, r);
+            self.run::<false, false>(lines, u, blk, l, r);
+            self.zeros = 0;
         }
+    }
+
+    /// Whether a block on a +0 send leaves the lines, the DAMP states and
+    /// the taps' +0s as they are: every line zero (`zeros`) and every DAMP
+    /// state +0, under finite gains and DAMP. Each read is then 0, each
+    /// DAMP state `q_round_fixed(+0 + a·0)`, 0 again, each write a
+    /// rounding of ±0, 0, and each tap sum `+0 + Σ w·(+0)`, +0. Only the
+    /// head moves. Not crossfading (`process` checks).
+    #[inline(always)]
+    fn idle(&self, blk: &RingBlock) -> bool {
+        crate::dsp::may_skip()
+            && self.zeros as usize >= RING_LEN
+            && crate::dsp::all_pos_zero(&self.lp)
+            && blk
+                .gains_from
+                .iter()
+                .chain(&blk.gains_to)
+                .all(|g| g.is_finite())
+            && blk.damp_from.is_finite()
+            && blk.damp_to.is_finite()
     }
 
     /// SMEAR is a runtime branch at the four stage-delay reads, not a
     /// third copy of this loop: a monomorph costs about 4 KB of flash.
-    fn run<const XF: bool>(
+    /// `TRACK` counts the block's writes into `zeros`: 0 ORed into all of
+    /// them, or the count starts again.
+    fn run<const XF: bool, const TRACK: bool>(
         &mut self,
         lines: &mut [i16; RING_LEN],
         u: &[f32; HALF],
@@ -487,6 +528,7 @@ impl Ring {
         let mut xf = self.xf;
         let mut h = (self.head as usize).min(RING_LEN - 1);
         let mut i = 0;
+        let mut written = 0i16;
         // In segments that no access wraps in: each access's slot at the
         // segment's start, plus the sample's index in it.
         while i < HALF {
@@ -564,12 +606,19 @@ impl Ring {
                         let (j, c) = (3 * K + M, AP_COEF[K][M]);
                         let vd = blend!(bn[j], bo[j]);
                         let vq = q_trunc_fixed(x + c * vd);
+                        if TRACK {
+                            written |= vq;
+                        }
                         // SAFETY: as the reads.
                         unsafe { *lines.get_unchecked_mut(bw[j] + t) = vq };
                         x = vd - c * vq as f32;
                     });
+                    let vr = q_round_fixed(x);
+                    if TRACK {
+                        written |= vr;
+                    }
                     // SAFETY: as the reads.
-                    unsafe { *lines.get_unchecked_mut(bw[3 * K + 2] + t) = q_round_fixed(x) };
+                    unsafe { *lines.get_unchecked_mut(bw[3 * K + 2] + t) = vr };
                 });
                 unroll!(K in [0, 1, 2, 3] {
                     g[K] += dg[K];
@@ -585,6 +634,13 @@ impl Ring {
         self.lp = lp;
         self.xf = xf;
         self.head = h as u16;
+        if TRACK {
+            self.zeros = if written == 0 {
+                self.zeros.saturating_add(HALF as u16)
+            } else {
+                0
+            };
+        }
     }
 }
 

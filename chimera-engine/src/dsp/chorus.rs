@@ -245,6 +245,14 @@ impl BbdLine {
         self.lfo_phase = self.lfo_phase.wrapping_add(inc);
     }
 
+    /// `n` writes of +0 into a line already all +0: only the heads move,
+    /// each as `n` `write`s move it (the phase wraps as they do).
+    #[inline(always)]
+    fn skip(&mut self, n: usize, inc: u32) {
+        self.write_pos = (self.write_pos + n) & MASK;
+        self.lfo_phase = self.lfo_phase.wrapping_add(inc.wrapping_mul(n as u32));
+    }
+
     /// The (normal, inverted) taps at the LFO's phase.
     #[inline(always)]
     fn taps(&self, base: f32, depth: f32) -> (f32, f32) {
@@ -267,7 +275,7 @@ impl BbdLine {
     }
 }
 
-crate::in_place::field_list!(JunoChorus => JunoChorus { line_i, line_ii, weight, depth });
+crate::in_place::field_list!(JunoChorus => JunoChorus { line_i, line_ii, weight, depth, zeros });
 crate::in_place::field_list!(BbdLine => BbdLine { buffer, write_pos, lfo_phase });
 
 /// Juno-style chorus: mono send in, stereo wet out. Both lines are
@@ -278,6 +286,10 @@ pub struct JunoChorus {
     line_ii: BbdLine,
     weight: [Ease; 2],
     depth: Ease,
+    /// Samples since a line was last written anything but +0, counted a
+    /// block at a time (saturating): at `MAX_CHORUS_DELAY` both lines are
+    /// all +0 (`kern::process`'s idle skip).
+    zeros: u32,
 }
 
 impl Default for JunoChorus {
@@ -293,13 +305,14 @@ impl JunoChorus {
             line_ii: BbdLine::new(),
             weight: [Ease::default(); 2],
             depth: Ease::default(),
+            zeros: 0,
         }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         // SAFETY: every field (two `BbdLine { buffer: [f32; N], write_pos:
-        // usize, lfo_phase: u32 }` and three `Ease { f32, bool }`) is valid
-        // as zero bytes, and zero is exactly `new()`'s state; `write_bytes`
+        // usize, lfo_phase: u32 }`, three `Ease { f32, bool }` and a `u32`)
+        // is valid as zero bytes, and zero is exactly `new()`'s state; `write_bytes`
         // covers the whole slot.
         unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
@@ -378,8 +391,31 @@ mod kern {
         let base = 3.6 * ms;
         let turns = |hz: f32| (hz / sample_rate as f32 * 4_294_967_296.0) as u32;
         let (inc_i, inc_ii) = (turns(0.513 * rate), turns(0.863 * rate));
-        let (a, b) = (&mut c.line_i, &mut c.line_ii);
         let steady = w[0].0 == w[0].1 && w[1].0 == w[1].1 && dp.0 == dp.1;
+        // Idle (#793): both lines all +0 and the send +0, so every tap
+        // reads +0 (each a sum of +0 × a weight in [0, 1]), and a steady
+        // block returns it × a finite MIX, +0: `SILENT`, bit for bit. Only
+        // the heads move.
+        let silent = crate::dsp::all_pos_zero(send);
+        if silent
+            && steady
+            && mix.is_finite()
+            && c.zeros >= MAX_CHORUS_DELAY as u32
+            && crate::dsp::may_skip()
+        {
+            c.line_i.skip(BLOCK_SIZE, inc_i);
+            c.line_ii.skip(BLOCK_SIZE, inc_ii);
+            c.zeros = c.zeros.saturating_add(BLOCK_SIZE as u32);
+            *out = Stereo::SILENT;
+            crate::dsp::skipped(crate::dsp::Skip::Chorus);
+            return;
+        }
+        c.zeros = if silent {
+            c.zeros.saturating_add(BLOCK_SIZE as u32)
+        } else {
+            0
+        };
+        let (a, b) = (&mut c.line_i, &mut c.line_ii);
         if steady {
             let depth = 0.5 + dp.1 * 1.5;
             let (depth_i, depth_ii) = (1.7 * depth * ms, 2.3 * depth * ms);

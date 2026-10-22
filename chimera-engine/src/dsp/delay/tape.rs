@@ -24,6 +24,8 @@ pub fn run(
 ) {
     #[cfg(any(feature = "bank2", not(target_os = "none")))]
     if params.kind() == DelayType::Grain || d.grain.share != crate::dsp::Unit::ZERO {
+        // GRAIN writes the line its own way: TAPE's count starts again.
+        d.zeros = 0;
         super::grain::run(d, buf, params, sample_rate, insert);
         return;
     }
@@ -35,12 +37,65 @@ pub fn run(
         (d.next, d.fade) = (tap.base(), TIME_FADE);
     }
     let e = d.eased(params, sample_rate);
+    if d.fade == 0 && !e.moving() && idle(d, buf, &tap, &e, insert, sample_rate) {
+        // The block `span` would play, every bit of it: the transport moves
+        // as each sample moves it; the line, its filter and the return
+        // (the send's own +0s) stay as they are.
+        for _ in 0..BLOCK_SIZE {
+            d.transport.advance(&tap);
+        }
+        d.write_pos += BLOCK_SIZE;
+        if d.write_pos >= MAX_DELAY_SAMPLES {
+            d.write_pos -= MAX_DELAY_SAMPLES;
+        }
+        d.zeros = d.zeros.saturating_add(BLOCK_SIZE as u32);
+        crate::dsp::skipped(crate::dsp::Skip::Delay);
+        return;
+    }
     match (d.fade > 0, e.moving()) {
         (false, false) => span::<false, false>(d, buf, &tap, e, insert),
         (false, true) => span::<false, true>(d, buf, &tap, e, insert),
         (true, false) => span::<true, false>(d, buf, &tap, e, insert),
         (true, true) => span::<true, true>(d, buf, &tap, e, insert),
     }
+}
+
+/// Whether a steady, unfaded block of `span` would leave everything but the
+/// transport and the write head as it is (#793): the send all +0, the line
+/// all zero (`zeros`), so the head reads +0 at any finite delay; the tone's
+/// state a fixed point of its one-pole on that +0, and the write it then
+/// makes, `to_line` of the send plus its saturated feedback, 0; and the
+/// return +0, which the send's +0s already are. Each test is `span`'s own
+/// arithmetic on those values.
+#[inline(always)]
+fn idle(
+    d: &TapeDelay,
+    buf: &[f32; BLOCK_SIZE],
+    tap: &Tap,
+    e: &Eased,
+    insert: bool,
+    fs: u32,
+) -> bool {
+    if !crate::dsp::may_skip()
+        || d.zeros < MAX_DELAY_SAMPLES as u32
+        || !crate::dsp::all_pos_zero(buf)
+        || fs == 0
+        || !(tap.base.is_finite() && tap.wow.is_finite() && tap.flutter.is_finite())
+        || !d.time.is_finite()
+        || !d.transport.is_finite()
+    {
+        return false;
+    }
+    let lp = d.lp_state;
+    let c = 0.2 + e.tone.0 * 0.75;
+    if !lp.is_finite() || (lp + c * (0.0 - lp)).to_bits() != lp.to_bits() {
+        return false;
+    }
+    let g = 1.0 + e.saturation.0 * 3.0;
+    let saturated = libm::tanhf(lp * g) * (1.0 / g);
+    let mix = e.mix.0;
+    let dry_gain = if insert { 1.0 - mix } else { 0.0 };
+    to_line(0.0 + saturated * e.feedback.0) == 0 && (0.0 * dry_gain + 0.0 * mix).to_bits() == 0
 }
 
 /// The block: `FADE` while a TIME crossfade runs, `RAMP` while any
@@ -81,6 +136,8 @@ fn span<const FADE: bool, const RAMP: bool>(
     // From the old head to the new, linearly: the new head's weight.
     let dt = 1.0 / f32::from(TIME_FADE);
     let mut t = 1.0 - f32::from(d.fade) * dt;
+    // Every write ORed: 0 if the block wrote only zeros.
+    let mut written = 0i16;
     for (i, s) in buf.iter_mut().enumerate() {
         let dry = *s;
 
@@ -109,7 +166,9 @@ fn span<const FADE: bool, const RAMP: bool>(
         let saturated = libm::tanhf(filtered * now(sat_gain, i)) * now(sat_inv, i);
 
         // Write: input + feedback
-        d.buffer[write_pos] = to_line(dry + saturated * now(f, i));
+        let w = to_line(dry + saturated * now(f, i));
+        d.buffer[write_pos] = w;
+        written |= w;
         write_pos += 1;
         if write_pos == MAX_DELAY_SAMPLES {
             write_pos = 0;
@@ -121,6 +180,11 @@ fn span<const FADE: bool, const RAMP: bool>(
         *s = dry * dry_gain + delayed * mix;
     }
     (d.transport, d.write_pos, d.lp_state) = (transport, write_pos, lp_state);
+    d.zeros = if written == 0 {
+        d.zeros.saturating_add(BLOCK_SIZE as u32)
+    } else {
+        0
+    };
     if FADE {
         d.fade -= BLOCK_SIZE as u16;
         if d.fade == 0 {
