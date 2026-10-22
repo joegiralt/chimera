@@ -17,7 +17,8 @@ use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink, Project};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
 use chimera_core::stream::layout::StreamFile;
-use chimera_core::stream::port::{NoPorts, StreamCard, Streams, VoicePorts};
+use chimera_core::orbit::door::OrbitPorts;
+use chimera_core::stream::port::{NoPorts, StreamCard, Streams};
 use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::AudioSide;
 use chimera_core::stream::stats::StreamStats;
@@ -294,7 +295,7 @@ impl Engine {
 
     /// `block`'s notes and render, every voice's stream through `ports`.
     #[allow(clippy::type_complexity)]
-    fn run<const N: usize, P: VoicePorts>(
+    fn run<const N: usize, P: OrbitPorts>(
         (inst, fx, dac, gate): (&mut Instrument, &mut FxBus, &mut DacBlocks, &mut LoadGate),
         (runner, sources): (&mut OrbitRunner, &mut AudioToken),
         (link, drain, shared, scope): (

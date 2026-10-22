@@ -480,6 +480,7 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
                     && d.table()[last] == last as u8 ^ 0xB2
             }) && j.with_slot(BOARD_SLOT, |b| b.magic == BOARD_MAGIC)
                 && chimera_core::bank2::ui_door_ok(j)
+                && chimera_core::ui::orbit::door::door_ok(j)
         })
     });
     let Some(checked) = checked else {

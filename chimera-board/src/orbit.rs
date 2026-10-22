@@ -6,7 +6,7 @@
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::note_queue::{NoteEvent, RealTime};
 use chimera_core::source_table::GateView;
-use chimera_core::stream::port::VoicePorts;
+use chimera_core::orbit::door::OrbitPorts;
 use chimera_core::ui::UiState;
 use stm32h7xx_hal::gpio::{Output, PB1, PushPull};
 
@@ -76,7 +76,7 @@ mod on {
         }
 
         #[inline]
-        pub fn block<P: VoicePorts>(
+        pub fn block<P: OrbitPorts>(
             &mut self,
             inst: &mut Instrument,
             shared: &AudioShared,
@@ -141,7 +141,7 @@ mod off {
         pub fn realtime(&mut self, _: usize, _: RealTime, _: u64) {}
 
         #[inline(always)]
-        pub fn block<P: VoicePorts>(
+        pub fn block<P: OrbitPorts>(
             &mut self,
             _: &mut Instrument,
             _: &AudioShared,

@@ -3,8 +3,10 @@
 //! runner's view.
 
 pub mod cells;
+pub mod door;
 pub mod draw;
 pub mod pages;
+mod raster;
 
 pub use cells::OrbitCell;
 pub use pages::{
@@ -445,6 +447,28 @@ impl OrbitUi {
         let was = song.live().rings[r.get() as usize].get(SceneRing::MUTE) != 0.0;
         song.edit(&mut |s| s.rings[r.get() as usize].set(SceneRing::MUTE, f32::from(!was)));
     }
+}
+
+/// ORBIT's own cell `slot` while bank 2 is closed (ADR 0208): its
+/// label over `NEEDS UPDATE`. Its params read so through `closed_text`.
+pub fn closed_focus(
+    def: &crate::ui::block_def::BlockDef,
+    slot: usize,
+    ctx: &crate::ui::view::SlotCtx,
+) -> Option<draw::Focus> {
+    use core::fmt::Write;
+    let crate::ui::view::View::Orbit(c) = crate::ui::view::view(def, slot, ctx) else {
+        return None;
+    };
+    let (mut label, mut text) = (crate::ui::fmt::FmtBuf::new(), crate::ui::fmt::FmtBuf::new());
+    let _ = label.write_str(c.label());
+    let _ = text.write_str(crate::bank2::NEEDS_UPDATE);
+    Some(draw::Focus {
+        label,
+        text,
+        gauge: crate::ui::glyph::Gauge::None,
+        hint: crate::ui::hint::NONE,
+    })
 }
 
 impl Default for OrbitUi {

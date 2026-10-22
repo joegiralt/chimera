@@ -33,7 +33,8 @@ use crate::ui::hint;
 use crate::ui::lfo_glyph::{self, LfoGauge};
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::nav::PageAt;
-use crate::ui::orbit::draw::{self as orbit, OrbitFrame};
+use crate::ui::orbit::door as orbit;
+use crate::ui::orbit::draw::{Focus as OrbitFocus, OrbitFrame};
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, Layout, RegionKind};
@@ -106,7 +107,7 @@ pub struct Frame<'a> {
     pub orbit: OrbitFrame<'a>,
     /// ORBIT's reading of the focused slot, if it has its own: built once
     /// a frame, for the band's key, its gauge and its drawing.
-    pub orbit_focus: Option<orbit::Focus>,
+    pub orbit_focus: Option<OrbitFocus>,
     /// THEME's HINTS: gesture hints drawn (ADR 0086).
     pub hints: bool,
     /// THEME's PAGES: how the map shows sub-pages (ADR 0145).
@@ -1106,6 +1107,9 @@ impl Renderer {
                     let text = text[..end].trim_end();
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
+                View::Orbit(_) if crate::bank2::orbit_closed(f.bank2) => {
+                    let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
+                }
                 View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
                 View::Source(s) => s.cell(&mut buf),
                 // A column wide: NEEDS UPDATE's last word (the band reads it whole).
@@ -1228,7 +1232,8 @@ pub fn page_header(
         Head::Sound(p) | Head::Mix(p) => {
             crate::bank2::closed_part(parts[p.index()].sound.engine(), bank2)
         }
-        Head::Settings | Head::Ring(_) | Head::Orbit(_) => None,
+        Head::Ring(_) | Head::Orbit(_) => crate::bank2::closed_orbit(bank2),
+        Head::Settings => None,
     };
     components::header_text(
         head,

@@ -26,6 +26,9 @@ pub const UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x180;
 /// The bench's table (`chimera-stm32`'s `bench::BenchDoor`, ADR 0194): its
 /// run, in a bench build only.
 pub const BENCH_DOOR_ADDR: u32 = DOOR_ADDR + 0x200;
+/// ORBIT's pages' table (`chimera_core::ui::orbit::door::OrbitUiDoor`, ADR
+/// 0208), in a build with `orbit` only.
+pub const ORBIT_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x280;
 
 /// A fixed slot after the door and the type `bank2.x` links there: a crate
 /// the engine can't name declares its table's slot once, beside the
@@ -121,6 +124,10 @@ pub struct Bank2Door {
     /// 1's side).
     #[cfg(feature = "bank2")]
     pub gate: crate::dsp::voice::gate::GateDoor,
+    /// ORBIT's runner (ADR 0208; `OrbitRunner::block_ported` and the
+    /// rest are bank 1's side).
+    #[cfg(all(feature = "bank2", feature = "orbit"))]
+    pub orbit: crate::orbit::door::OrbitDoor,
 }
 
 impl Bank2Door {
@@ -161,6 +168,8 @@ static DOOR: Bank2Door = Bank2Door {
     noise: crate::dsp::va::noise::NoiseDoor::DOOR,
     grain: crate::dsp::delay::GrainDoor::DOOR,
     gate: crate::dsp::voice::gate::GateDoor::DOOR,
+    #[cfg(feature = "orbit")]
+    orbit: crate::orbit::door::OrbitDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

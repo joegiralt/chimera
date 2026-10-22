@@ -40,23 +40,22 @@ pub struct OrbitState {
 }
 
 impl OrbitState {
-    pub fn start(scene: &Scene) -> OrbitState {
-        let mut st = OrbitState {
+    /// Const, so the runner's constructor (bank 1's) takes it built.
+    pub const fn start(scene: &Scene) -> OrbitState {
+        OrbitState {
             walks: [WalkState::START; RINGS],
-            rngs: [Rng::new(0); RINGS],
+            rngs: dice(scene.seed),
             pending: [None; RINGS],
             fresh: true,
             seg: 0,
-        };
-        st.restart_dice(scene);
-        st
+        }
     }
 
     /// Walks and dice from the seed again, nothing else: a B6 start under
     /// a leading MIDI clock.
     pub fn restart_dice(&mut self, scene: &Scene) {
         self.walks = [WalkState::START; RINGS];
-        self.rngs = RingIdx::ALL.map(|r| Rng::for_ring(scene.seed, r));
+        self.rngs = dice(scene.seed);
     }
 
     /// Every pending off, now, and nothing else.
@@ -88,6 +87,17 @@ impl OrbitState {
     pub fn pending(&self) -> [Option<PendingOff>; RINGS] {
         self.pending
     }
+}
+
+/// Each ring's dice from `seed`.
+const fn dice(seed: u32) -> [Rng; RINGS] {
+    let mut d = [Rng::new(0); RINGS];
+    let mut i = 0;
+    while i < RINGS {
+        d[i] = Rng::for_ring(seed, RingIdx::ALL[i]);
+        i += 1;
+    }
+    d
 }
 
 /// A block's window on the song and on the sample clock.

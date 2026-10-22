@@ -3360,9 +3360,13 @@ impl UiState {
             perf,
             matrix: &self.matrix_state,
             sel_op: self.sel_op,
-            orbit_focus: orbit::draw::focus(def, focus, &ctx, &orbit, self.theme.hints, |i| {
-                anim[i].current()
-            }),
+            orbit_focus: if crate::bank2::orbit_closed(self.bank2) {
+                orbit::closed_focus(def, focus, &ctx)
+            } else {
+                orbit::door::focus(def, focus, &ctx, &orbit, self.theme.hints, |i| {
+                    anim[i].current()
+                })
+            },
             hints: self.theme.hints,
             pages: self.theme.pages,
             text: self.theme.text,

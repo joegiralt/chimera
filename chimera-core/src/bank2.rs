@@ -115,8 +115,9 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// displayed) under `bank2`: the reverb's TYPE (ADR 0142), TAPE's MODEL
 /// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
 /// and the FX TYPE FUZZ (ADR 0157), the filter TYPE SEM (ADR 0192), VA
-/// NOISE's KIND (ADR 0197, every KIND) and the delay TYPE GRAIN (ADR 0202,
-/// which plays as TAPE) read `NEEDS UPDATE` while their code can't play.
+/// NOISE's KIND (ADR 0197, every KIND), the delay TYPE GRAIN (ADR 0202,
+/// which plays as TAPE) and every ORBIT param (ADR 0208) read `NEEDS
+/// UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     v: f32,
@@ -162,7 +163,15 @@ pub fn closed_text(
         addr == ParamAddr::new(BlockRef::Delay, DelayParams::TYPE)
             && DelayType::at(v) == DelayType::Grain
     };
-    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type() || kind() || grain()))
+    let orbit = || {
+        cfg!(feature = "orbit")
+            && matches!(
+                addr.block,
+                BlockRef::OrbitChords | BlockRef::OrbitRing(_) | BlockRef::Tempo
+            )
+    };
+    (closed(bank2)
+        && (named.contains(&addr) || va_mode() || fx_type() || kind() || grain() || orbit()))
         .then_some(NEEDS_UPDATE)
 }
 
@@ -481,6 +490,19 @@ pub fn ui_closed() -> bool {
 #[cfg(feature = "bank2")]
 pub fn ui_door_ok(j: &chimera_engine::bank2::Judged) -> bool {
     j.with_slot(UI_SLOT, |d| d.magic == UI_MAGIC)
+}
+
+/// Whether ORBIT can't run under `bank2`: its runner and pages are bank
+/// 2's (ADR 0208). Its pages say so, B6 plays nothing, and its scenes stay
+/// the project's.
+pub fn orbit_closed(bank2: Option<Bank2Status>) -> bool {
+    cfg!(feature = "orbit") && closed(bank2)
+}
+
+/// What the header of an ORBIT page warns under `bank2`: the last word,
+/// as a TAPE Part's.
+pub fn closed_orbit(bank2: Option<Bank2Status>) -> Option<&'static str> {
+    orbit_closed(bank2).then_some(NEEDS_UPDATE_CELL)
 }
 
 /// A flash op's failure in words: `timeout`, `errors 00040000`, …

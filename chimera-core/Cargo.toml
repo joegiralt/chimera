@@ -30,7 +30,7 @@ tape = ["chimera-engine/tape"]
 # The bench builds go without it: FLASH is full.
 push-encoders = ["chimera-engine/push-encoders"]
 # ORBIT, the ring sequencer: SEQ hold opens it. Off, SEQ hold does nothing.
-orbit = []
+orbit = ["chimera-engine/orbit"]
 # The console's `ls` and `put` (ADR 0092): project files onto the card.
 card-put = ["chimera-engine/card-put"]
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
