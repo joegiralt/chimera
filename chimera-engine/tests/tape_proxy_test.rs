@@ -107,6 +107,8 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
             assert_eq!(bits(&a), bits(&b));
             assert_eq!(d.heads(), e.heads());
             assert_eq!(d.playing_cost(), e.playing_cost());
+            // One meaning of active and held, through the door or not.
+            assert_eq!((d.is_active(), d.sustains()), (e.is_active(), e.sustains()));
         }
     }
     assert!(e.is_active() && d.is_active());

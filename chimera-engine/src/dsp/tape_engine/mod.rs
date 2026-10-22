@@ -454,6 +454,17 @@ enum Note {
     Ending(Stream),
 }
 
+#[cfg(feature = "tape")]
+impl Note {
+    /// A note sounds or waits on its source; one that ended this block
+    /// (`Ending`) does not. The one meaning the deck and bank 1's proxy
+    /// both read, inlined into each.
+    #[inline(always)]
+    fn is_active(&self) -> bool {
+        matches!(self, Note::Gated { .. } | Note::Ram | Note::Streamed(_))
+    }
+}
+
 /// A streamed note's own: its rate, and the fastest step a sample its
 /// cursor plans for (`inc_max`).
 #[cfg(feature = "tape")]
@@ -1089,6 +1100,8 @@ impl TapeDeck {
         if waited > 0 {
             self.catch_up(waited, sample_rate);
             if !self.is_active() {
+                // Ended before its cursor started: nothing to stop.
+                self.state = Note::Idle;
                 return;
             }
         }
@@ -1947,10 +1960,7 @@ impl TapeDeck {
     /// A note sounds or waits on its source; one that ended this block
     /// (`Ending`) does not.
     pub fn is_active(&self) -> bool {
-        matches!(
-            self.state,
-            Note::Gated { .. } | Note::Ram | Note::Streamed(_)
-        )
+        self.state.is_active()
     }
 
     /// The model latched at the last note-on.
