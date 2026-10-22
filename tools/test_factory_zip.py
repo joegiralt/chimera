@@ -60,6 +60,15 @@ class FactoryZip(unittest.TestCase):
                 factory_zip.pack(pub, tapes, root / "f.zip")
         self.assertIn("12345678.SRC, not in the zip", str(e.exception))
 
+    def test_a_source_missing_on_disk_is_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            pub, tapes = builds(root)
+            (tapes / "12345678.SRC").unlink()
+            with self.assertRaises(SystemExit) as e:
+                factory_zip.pack(pub, tapes, root / "f.zip")
+        self.assertIn("CHIMERA/TAPES/12345678.SRC has no", str(e.exception))
+
     def test_a_wrong_sound_count_refuses(self):
         names = [f"CHIMERA/SOUNDS/S91000{n:02}.A" for n in range(10, 26)]
         bad = factory_zip.problems(names, {"sounds": [{}] * 17, "projects": []}, {"sources": [], "sounds": []})

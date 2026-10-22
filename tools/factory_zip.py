@@ -62,6 +62,7 @@ def problems(names, pm, tm):
 def pack(public, tapes, dst):
     files, pm, tm = entries(public, tapes)
     bad = problems(list(files), pm, tm)
+    bad += [f"{n} has no {p}" for n, p in sorted(files.items()) if not p.is_file()]
     if bad:
         sys.exit("factory zip: " + "; ".join(bad))
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:

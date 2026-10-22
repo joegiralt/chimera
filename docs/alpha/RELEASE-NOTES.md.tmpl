@@ -20,7 +20,9 @@ If you skip step 2, TAPE and the reverb make no sound, and their screens say **U
 1. Unzip `factory-v1.zip`.
 2. Turn the PreenFM3 off. Hold **MENU** and turn it on.
 3. Press **button 3** (SD card access). The PreenFM3 shows up on your computer like a USB stick.
-4. Copy the unzipped **CHIMERA** folder onto it. If the card already has one, copy the files inside **SOUNDS**, **TAPES** and **PROJECTS** into the folders of the same name instead, choosing **Replace**: on a Mac, replacing a whole folder throws away what was in it.
+4. Copy the unzipped **CHIMERA** folder onto it. If the card already has one, copy folder by folder instead (on a Mac, replacing a whole folder throws away what was in it):
+   - **SOUNDS** and **PROJECTS**: copy the files inside into the folders of the same name, choosing **Replace**.
+   - **TAPES**: if the card has no TAPES folder, copy the whole folder across. If it has one, copy the files inside and choose **Skip** for any `.SRC` file already there: a source's name is its contents' checksum, so the one on the card is the same, and Chimera keeps it read-only.
 5. Eject it on your computer. Turn the PreenFM3 off and on again.
 
 The demo songs replace any song saved in the first @PROJECTS@ slots.

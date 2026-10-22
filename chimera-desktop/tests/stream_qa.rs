@@ -257,14 +257,8 @@ fn beds(card: &Path) -> Vec<(SourceHead, Vec<u8>, String)> {
         let stem = u32::from_str_radix(std::str::from_utf8(f.stem()).unwrap(), 16).unwrap();
         let got = Card::new()
             .run(&mut store, |s, r| {
-                let head = read_source_head(
-                    s,
-                    r,
-                    chimera_core::storage::Stem::new(stem),
-                    len,
-                    chimera_core::storage::Reach::Head,
-                )
-                .map_err(|_| StoreError::Io)?;
+                let head = read_source_head(s, r, chimera_core::storage::Stem::new(stem), len)
+                    .map_err(|_| StoreError::Io)?;
                 let mut packed = vec![0; 3 * head.sref.frames.div_ceil(2) as usize];
                 read_packed_into(s, r, head.sref, Bytes::new(0), &mut packed)
                     .map_err(|_| StoreError::Io)?;

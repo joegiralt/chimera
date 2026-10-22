@@ -3,7 +3,7 @@
 //! it is bank 2's (`bank2.x` globs this module); bank 1 reaches it only
 //! through `LoadDoor`.
 
-use chimera_hal::store::{RunsError, Seal, Store, StoreError};
+use chimera_hal::store::{CHUNK, FileRuns, RunsError, Seal, Store, StoreError};
 use chimera_hal::units::Bytes;
 
 use super::super::arena::ARENA_BYTES;
@@ -13,8 +13,8 @@ use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
 use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, load_kind};
 use crate::dsp::tape_engine::read::write_head_table;
 use crate::storage::{
-    CardError, CardFault, LoadError, Reach, Ready, SourceLayout, SourceReadError, read_packed_into,
-    read_source_head, source_file,
+    CardError, CardFault, LoadError, Ready, SourceCheck, SourceHead, SourceLayout, SourceReadError,
+    read_packed_into, read_source_check, read_source_head, source_file,
 };
 use crate::stream::admit::head_frames;
 use crate::stream::layout::{FileKey, StreamFile};
@@ -59,33 +59,10 @@ impl StreamLoad {
         p: &mut Project,
         budget: usize,
     ) -> Result<Option<SourceId>, StreamFail> {
-        let read = |e: StoreError| StreamFail::Read(e.into());
-        let Phase::Heads { file, at } = self.phase else {
-            let name = source_file(self.sref);
-            let runs = s.runs(r.volume(), name).map_err(|e| match e {
-                RunsError::Fragmented(_) => StreamFail::Fragmented,
-                RunsError::Store(StoreError::NotFound) => {
-                    StreamFail::Read(SourceReadError::Load(LoadError::Missing))
-                }
-                RunsError::Store(e) => read(e),
-            })?;
-            // Unsealed, a source never read back whole against its CRC
-            // (copied onto the card by hand, the host dropping the
-            // read-only bit, or a cut `put`'s remains): streaming reads
-            // only its heads, so it is read whole through the check once
-            // and sealed (#761 m10, ADR 0210). One that fails stays
-            // unsealed and refused.
-            let open = runs.seal != Seal::Sealed;
-            let reach = if open { Reach::Whole } else { Reach::Head };
-            let got = read_source_head(s, r, self.sref.stem(), runs.len.get(), reach)
-                .map_err(StreamFail::Read)?;
-            if open {
-                s.seal(r.volume(), name).map_err(read)?;
-            }
-            let l = SourceLayout::whole(got).filter(|_| got.sref == self.sref);
-            let file = l.and_then(|l| StreamFile::from_layout(&l, runs));
-            self.phase = Phase::heads(file.ok_or_else(corrupted)?);
-            return Ok(None);
+        let (file, at) = match self.phase {
+            Phase::Heads { file, at } => (file, at),
+            Phase::Find => return self.find(s, r).map(|()| None),
+            Phase::Check { .. } => return self.check(s, r, p, budget).map(|()| None),
         };
         let at = at.get() as usize;
         let len = self.heads.held_len();
@@ -147,6 +124,79 @@ impl StreamLoad {
                 // If it ever fires it is no card's fault: STREAMS FULL.
                 StreamRefused::Taken => StreamFail::Full,
             })
+    }
+
+    /// The first pass: the file's runs, then its head; an unsealed file
+    /// goes to `check` first.
+    fn find(&mut self, s: &mut dyn Store, r: &Ready) -> Result<(), StreamFail> {
+        let runs = s
+            .runs(r.volume(), source_file(self.sref))
+            .map_err(|e| match e {
+                RunsError::Fragmented(_) => StreamFail::Fragmented,
+                RunsError::Store(StoreError::NotFound) => {
+                    StreamFail::Read(SourceReadError::Load(LoadError::Missing))
+                }
+                RunsError::Store(e) => StreamFail::Read(e.into()),
+            })?;
+        // Unsealed, a source never read back whole against its CRC
+        // (copied onto the card by hand, the host dropping the read-only
+        // bit, or a cut `put`'s remains): streaming reads only its heads,
+        // so it is checked whole first (#761 m10, ADR 0210).
+        if runs.seal != Seal::Sealed {
+            let len = runs.len.get();
+            let check = SourceCheck::new(self.sref.stem(), len).map_err(|_| corrupted())?;
+            self.phase = Phase::Check { runs, check, at: 0 };
+            return Ok(());
+        }
+        let got =
+            read_source_head(s, r, self.sref.stem(), runs.len.get()).map_err(StreamFail::Read)?;
+        self.at_heads(got, runs)
+    }
+
+    /// `head` read from the file of `runs`: its heads next.
+    fn at_heads(&mut self, head: SourceHead, runs: FileRuns) -> Result<(), StreamFail> {
+        let l = SourceLayout::whole(head).filter(|_| head.sref == self.sref);
+        let file = l.and_then(|l| StreamFile::from_layout(&l, runs));
+        self.phase = Phase::heads(file.ok_or_else(corrupted)?);
+        Ok(())
+    }
+
+    /// An unsealed file's next `budget` bytes through the check (ADR
+    /// 0210). Once every byte passed, on the card and the file as found,
+    /// it is sealed and its heads come next; one that fails stays
+    /// unsealed and refused. The seal is best effort: a card that won't
+    /// take it (read-only) streams the checked file anyway, checked again
+    /// on its next load.
+    fn check(
+        &mut self,
+        s: &mut dyn Store,
+        r: &Ready,
+        p: &Project,
+        budget: usize,
+    ) -> Result<(), StreamFail> {
+        let Phase::Check {
+            runs,
+            mut check,
+            at,
+        } = core::mem::replace(&mut self.phase, Phase::Find)
+        else {
+            return Ok(());
+        };
+        let len = runs.len.get();
+        let n = (len - at).min(budget.max(CHUNK) as u32);
+        read_source_check(s, r, self.sref.stem(), &mut check, at, n).map_err(StreamFail::Read)?;
+        let at = at + n;
+        if at < len {
+            self.phase = Phase::Check { runs, check, at };
+            return Ok(());
+        }
+        let head = check.finish().map_err(|_| corrupted())?;
+        self.at_heads(head, runs)?;
+        if let Phase::Heads { file, .. } = self.phase {
+            self.still_found(s, r, p, &file)?;
+        }
+        let _ = s.seal(r.volume(), source_file(self.sref));
+        Ok(())
     }
 
     /// The file as found, on the card as found: a remount onto another
@@ -214,7 +264,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 continue;
             }
         };
-        let head = match read_source_head(s, r, e.r.stem(), runs.len.get(), Reach::Head) {
+        let head = match read_source_head(s, r, e.r.stem(), runs.len.get()) {
             // The stem alone matched: another source's file under it is
             // not this one (as `StreamLoad::pass` and `read_sources` judge).
             Ok(head) if head.sref != e.r => {
@@ -241,9 +291,10 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
             p.pool.mark_absent(id, Absence::Missing);
             continue;
         };
-        // One card operation, as `read_sources`' whole reads (ADR 0087):
-        // the heads are the arena's, so a load reads at most `ARENA_BYTES`
-        // of them, whatever the budget.
+        // One card operation, as `read_sources`' whole reads (ADR 0087),
+        // `ARENA_BYTES` a pass: the heads are the arena's, so they take one
+        // or two; an unsealed source's check first reads the whole file,
+        // once (ADR 0210).
         let why = loop {
             match step(&mut l, s, r, p, ARENA_BYTES) {
                 StreamStep::More => {}

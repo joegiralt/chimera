@@ -344,6 +344,51 @@ mod streamed {
         assert_eq!(seal_of(&mut s, f), Seal::Sealed);
     }
 
+    /// ADR 0210: an unsealed source too big for one pass is checked a
+    /// pass's budget at a time, unsealed until the last share passes,
+    /// then sealed and streamed.
+    #[test]
+    fn a_large_unsealed_source_is_checked_a_share_a_pass() {
+        let mut s = MemStore::new(1);
+        let bed = source(9, 150_000);
+        put(&mut s, &bed);
+        let f = source_file(bed.0.sref);
+        let len = file_bytes(&mut s, &bed).len();
+        s.unseal(f);
+        let r = bed.0.sref;
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, r);
+        let heads = heads_for(r, &p.part(PartId::ALL[0]).sound.params.tape).unwrap();
+        let (open, passes) = Card::new()
+            .run(&mut s, |s, rd| {
+                let mut l = StreamLoad::start(&mut p, bed.0, heads).unwrap();
+                let (mut open, mut passes) = (0, 0);
+                loop {
+                    passes += 1;
+                    match l.step(s, rd, &mut p, 4_096) {
+                        StreamStep::More => {}
+                        StreamStep::Done(_) => {
+                            break Ok::<_, chimera_hal::store::StoreError>((open, passes));
+                        }
+                        StreamStep::Failed(e) => panic!("{e:?}"),
+                    }
+                    if s.runs(rd.volume(), f).unwrap().seal == Seal::Open {
+                        open += 1;
+                    }
+                }
+            })
+            .unwrap()
+            .result
+            .unwrap();
+        assert!(
+            open >= len / 4_096,
+            "{open} passes unsealed, of a {len} B file"
+        );
+        assert!(passes > open, "the heads after the check");
+        assert_eq!(seal_of(&mut s, f), Seal::Sealed);
+        assert!(p.pool().streamed(r));
+    }
+
     /// m10 (#761): an unsealed file whose samples don't hash to its name
     /// doesn't stream, though its heads read clean: its ref stays,
     /// absent, with no stream row, and it stays unsealed.
