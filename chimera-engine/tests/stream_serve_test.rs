@@ -18,7 +18,7 @@ use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::stats::StreamStats;
 use chimera_engine::stream::units::{AudioBlocks, Frames, SlotIdx};
 use chimera_engine::voice_alloc::VoiceIdx;
-use chimera_hal::store::{FileRuns, Runs};
+use chimera_hal::store::{FileRuns, Runs, Seal};
 use chimera_hal::units::{BlockCount, Bytes, Lba};
 
 const NOW: AudioBlocks = AudioBlocks::new(100);
@@ -47,6 +47,7 @@ fn file(frames: u32, lba: u32) -> StreamFile {
     let runs = FileRuns {
         ext: runs.finish().unwrap(),
         len: Bytes::new(len),
+        seal: Seal::Sealed,
     };
     StreamFile::from_layout(&l, runs).unwrap()
 }
@@ -233,61 +234,84 @@ fn a_read_holds_its_row() {
     assert!(unsafe { rig.reg.clear(id(3)) }, "free once it ends");
 }
 
-/// C1, I2: a CRC or an error token is read again once; a second failure,
-/// a token timeout or CMD18's bad R1 faults the card; a chunk that won't
-/// de-frame faults it with no retry, counted apart, or is the file's once
-/// blamed on it (#609).
+/// C1, I2: a first CRC or error token is read again; past that a failure
+/// blamed on the card faults it, one blamed on its chunk or file is passed
+/// over with no fault (#609); a chunk that won't de-frame is never read
+/// again, counted apart.
 #[test]
-fn read_errors_retry_once_then_fault() {
-    use chimera_engine::stream::serve::{Attempt, Blame, ErrorStep, ReadError, on_error};
+fn read_errors_retry_once_then_go_by_blame() {
+    use chimera_engine::stream::serve::{Blame, ErrorStep, ReadError, on_error};
     use chimera_hal::card_bus::ProtoError;
-    let p = ReadError::Proto;
-    for (err, first, again) in [
-        (p(ProtoError::Crc), ErrorStep::Retry, ErrorStep::Fault),
-        (
-            p(ProtoError::ErrorToken(0x08)),
-            ErrorStep::Retry,
-            ErrorStep::Fault,
-        ),
-        (p(ProtoError::Timeout), ErrorStep::Fault, ErrorStep::Fault),
-        (p(ProtoError::R1(0x04)), ErrorStep::Fault, ErrorStep::Fault),
-        (
-            ReadError::Frame(Blame::Card),
-            ErrorStep::FrameError,
-            ErrorStep::FrameError,
-        ),
-        (
-            ReadError::Frame(Blame::Chunk),
-            ErrorStep::Rotted,
-            ErrorStep::Rotted,
-        ),
-        (
-            ReadError::Frame(Blame::File),
-            ErrorStep::Rotted,
-            ErrorStep::Rotted,
-        ),
+    for e in [
+        ProtoError::Crc,
+        ProtoError::ErrorToken(0x08),
+        ProtoError::Timeout,
+        ProtoError::R1(0x04),
     ] {
-        assert_eq!(on_error(err, Attempt::First), first, "{err:?}");
-        assert_eq!(on_error(err, Attempt::Retry), again, "{err:?} retried");
+        assert_eq!(on_error(ReadError::Again(e)), ErrorStep::Retry, "{e:?}");
+        let p = |b| on_error(ReadError::Proto(e, b));
+        assert_eq!(p(Blame::Card), ErrorStep::Fault, "{e:?}");
+        assert_eq!(p(Blame::Chunk), ErrorStep::Rotted, "{e:?}");
+        assert_eq!(p(Blame::File), ErrorStep::Rotted, "{e:?}");
     }
+    let f = |b| on_error(ReadError::Frame(b));
+    assert_eq!(f(Blame::Card), ErrorStep::FrameError);
+    assert_eq!(f(Blame::Chunk), ErrorStep::Rotted);
+    assert_eq!(f(Blame::File), ErrorStep::Rotted);
+}
+
+/// M1 (#761): only a first CRC or token is read again; a timeout, a bad
+/// R1 or a second CRC is blamed by `Rot` at once, the card for the
+/// chunk's first failure, the chunk for its next (after the re-init).
+#[cfg(feature = "tape")]
+#[test]
+fn a_protocol_failure_is_blamed_on_its_chunk() {
+    use chimera_engine::stream::serve::{Attempt, Blame, ReadError, Rot};
+    use chimera_hal::card_bus::ProtoError;
+    let (a, b) = (chunk(1, 10, 10), chunk(1, 10, 19));
+    let mut rot = Rot::new();
+    let crc = ProtoError::Crc;
+    assert_eq!(
+        ReadError::proto(crc, Attempt::First, a, &mut rot),
+        ReadError::Again(crc),
+        "read again, nobody blamed"
+    );
+    assert!(!rot.passes_over(a));
+    assert_eq!(
+        ReadError::proto(crc, Attempt::Retry, a, &mut rot),
+        ReadError::Proto(crc, Blame::Card)
+    );
+    let t = ProtoError::Timeout;
+    assert_eq!(
+        ReadError::proto(t, Attempt::First, b, &mut rot),
+        ReadError::Proto(t, Blame::Card),
+        "a timeout isn't read again"
+    );
+    assert_eq!(
+        ReadError::proto(t, Attempt::First, a, &mut rot),
+        ReadError::Proto(t, Blame::Chunk),
+        "failed again after the re-init: the chunk's"
+    );
+    assert!(rot.passes_over(a) && !rot.passes_over(b));
 }
 
 /// The step taken: a retry touches nothing; a fault sets the bus's; a
-/// frame error counts, then faults, unless it is the file's (#609).
+/// frame error counts, then faults, unless it is the file's (#609); a
+/// protocol failure blamed on its chunk neither faults nor counts as one.
 #[test]
 fn a_failed_read_faults_the_bus_and_counts() {
-    use chimera_engine::stream::serve::{Attempt, Blame, ErrorStep, ReadError, read_failed};
+    use chimera_engine::stream::serve::{Blame, ErrorStep, ReadError, read_failed};
     use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
     use std::sync::atomic::Ordering::Relaxed;
     let (bus, stats) = (CardBus::new(), StreamStats::new());
-    let crc = ReadError::Proto(ProtoError::Crc);
+    let crc = ProtoError::Crc;
     assert_eq!(
-        read_failed(crc, Attempt::First, &bus, &stats),
+        read_failed(ReadError::Again(crc), &bus, &stats),
         ErrorStep::Retry
     );
     assert_eq!(bus.fault(), CardFault::Clear);
     assert_eq!(
-        read_failed(crc, Attempt::Retry, &bus, &stats),
+        read_failed(ReadError::Proto(crc, Blame::Card), &bus, &stats),
         ErrorStep::Fault
     );
     assert_eq!(bus.fault(), CardFault::Read);
@@ -295,7 +319,14 @@ fn a_failed_read_faults_the_bus_and_counts() {
 
     let bus = CardBus::new();
     assert_eq!(
-        read_failed(ReadError::Frame(Blame::Card), Attempt::First, &bus, &stats),
+        read_failed(ReadError::Proto(crc, Blame::Chunk), &bus, &stats),
+        ErrorStep::Rotted
+    );
+    assert_eq!(bus.fault(), CardFault::Clear, "the chunk's: no fault");
+    assert_eq!(stats.frame_errors.load(Relaxed), 0, "no frame error");
+
+    assert_eq!(
+        read_failed(ReadError::Frame(Blame::Card), &bus, &stats),
         ErrorStep::FrameError
     );
     assert_eq!(bus.fault(), CardFault::Read);
@@ -303,7 +334,7 @@ fn a_failed_read_faults_the_bus_and_counts() {
 
     let bus = CardBus::new();
     assert_eq!(
-        read_failed(ReadError::Frame(Blame::File), Attempt::First, &bus, &stats),
+        read_failed(ReadError::Frame(Blame::File), &bus, &stats),
         ErrorStep::Rotted
     );
     assert_eq!(bus.fault(), CardFault::Clear, "the file's: no fault");
@@ -358,7 +389,7 @@ fn rot_full_keeps_its_verdicts() {
         rot.blame(c);
     }
     assert!(rot.passes_over(chunk(1, 10, 99)), "file 1 condemned");
-    // Twenty suspects from twenty files: the table holds 8.
+    // Twenty suspects from twenty files: the table holds 16.
     let s = |n: u32| chunk(100 + n, 1_000 + n, 1_008 + n);
     for n in 0..20 {
         assert_eq!(rot.blame(s(n)), Blame::Card);
@@ -367,6 +398,28 @@ fn rot_full_keeps_its_verdicts() {
     assert!(rot.passes_over(lone), "the rotted chunk kept");
     assert_eq!(rot.blame(s(19)), Blame::Chunk, "the newest suspect kept");
     assert_eq!(rot.blame(s(0)), Blame::Card, "the oldest suspect dropped");
+}
+
+/// m7 (#761): nine files condemned, more than the voices, keep every
+/// verdict: none goes through a fault and re-init again.
+#[test]
+#[cfg(feature = "tape")]
+fn rot_keeps_nine_condemned_files() {
+    let mut rot = Rot::new();
+    let file = |n: u32| (chunk(n, 100 * n, 100 * n), chunk(n, 100 * n, 100 * n + 9));
+    for n in 1..=9 {
+        let (a, b) = file(n);
+        for c in [a, a, b] {
+            rot.blame(c);
+        }
+        assert_eq!(rot.blame(b), Blame::File, "file {n} condemned");
+    }
+    for n in 1..=9 {
+        assert!(
+            rot.passes_over(chunk(n, 100 * n, 100 * n + 50)),
+            "file {n} kept"
+        );
+    }
 }
 
 /// #609 (I2): a copy of the same content at other blocks is another file:
@@ -476,4 +529,21 @@ fn a_condemned_file_marks_its_rows() {
     assert_eq!(fail(2), Frame(Blame::File));
     assert!(rig.reg.damaged(id(3)) && rig.reg.damaged(id(5)));
     assert!(!rig.reg.damaged(id(4)), "another file");
+}
+
+/// m1 (#761): failures the protocol doesn't name fault the card at the
+/// third in a row, then count again from none; a fill that lands (a
+/// fresh `Strikes`) starts over.
+#[test]
+fn strikes_fault_at_the_third_in_a_row() {
+    use chimera_engine::stream::serve::Strikes;
+    let mut s = Strikes::new();
+    assert!(!s.strike() && !s.strike());
+    assert!(s.strike(), "the third faults");
+    assert!(!s.strike() && !s.strike(), "counted again from none");
+    assert!(s.strike());
+    let mut s = Strikes::new();
+    assert!(!s.strike() && !s.strike());
+    s = Strikes::new();
+    assert!(!s.strike() && !s.strike(), "a fill landed between");
 }

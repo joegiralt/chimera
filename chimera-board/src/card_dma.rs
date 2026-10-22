@@ -19,8 +19,8 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    Attempt, Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, readable,
-    serve_step,
+    Attempt, Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, Strikes, read_failed,
+    readable, serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
@@ -53,6 +53,8 @@ pub const REG_WAIT_US: Micros = Micros::new(50);
 /// about 20 µs at SCK.
 const READY_BYTES: u32 = 64;
 
+// Each burst renews the watchdog (`CardBus::renew`), so it bounds one
+// burst, not a read whose every block may wait out a token (M2, #761).
 const _: () = assert!(WATCHDOG_MS.get() >= 2 * TOKEN_TIMEOUT_MS.get());
 
 // DMAMUX1's channels 8 and 9 are DMA2's streams 0 and 1 (DMA1's are 0-7);
@@ -311,6 +313,18 @@ enum Why {
     Unmounted,
     /// No command argument for the block (an SDSC card past 4 GiB).
     Range,
+}
+
+impl Why {
+    /// A failure the protocol doesn't name, which `Rot` can't blame on a
+    /// chunk: counted toward `Strikes`. No card, or a block past an SDSC
+    /// card's reach, is not the card's.
+    fn strikes(self) -> bool {
+        match self {
+            Why::Reg(_) | Why::Bound | Why::Busy | Why::Asked | Why::Dma => true,
+            Why::Proto(_) | Why::Unmounted | Why::Range => false,
+        }
+    }
 }
 
 /// What the IRQ runs on: the SPI clock it set and its bounds.
@@ -885,6 +899,9 @@ struct IrqState {
     retry: Option<Fill>,
     /// The chunks that didn't de-frame: a card's once, a file's after.
     rot: Rot,
+    /// Fills failed in a row for a reason the protocol doesn't name
+    /// (`Why::strikes`).
+    strikes: Strikes,
 }
 
 /// A cell only `DMA2_STR0` opens.
@@ -989,6 +1006,7 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker: Hz, cpu: Hz) -> b
         bursts: 0,
         retry: None,
         rot: Rot::new(),
+        strikes: Strikes::new(),
     };
     // SAFETY: once (`side` exists once: `Rings::sides`), before the unmask.
     unsafe { IRQ.set(st) };
@@ -1051,11 +1069,12 @@ fn clocks() -> Stamp {
 
 /// An entry with bank 2 closed: nothing is read. Only a gate build's
 /// `bank2 erase` closes a live door, once the bus is free of streams
-/// (`close_tape`); a burst still in flight then is grounded, CS high, the
-/// bus given back and its claim requeued, with no CMD12 (that is bank 2's
-/// stop): the UI's next command finds the card mid-read and recovers it as
-/// any failed command (a unit check owed: ADR 0175). A bench read in
-/// flight is answered `Fault`. The flags were cleared (`events`).
+/// (`close_tape`, which asks an abort first, so bank 2's stop sends CMD12
+/// while the door is open). A burst still in flight even then (the IRQ
+/// wedged past both waits) is grounded, CS high, the bus given back and
+/// its claim requeued, with no CMD12 (bank 2's): the UI's next command
+/// finds the card mid-read and recovers it as any failed command. A bench
+/// read in flight is answered `Fault`. The flags were cleared (`events`).
 #[cfg(feature = "bank2")]
 #[inline(never)]
 fn closed(st: &mut IrqState) {
@@ -1282,6 +1301,7 @@ impl IrqState {
             return self.abort(h, kind, Why::Bound);
         };
         let upto = kind.landing(end) + dest.n.get();
+        BUS.renew(now_ms());
         #[cfg(feature = "bench")]
         let (dest, fault) = bench::aim(dest);
         match h.fly(dest, &self.line) {
@@ -1410,6 +1430,7 @@ impl IrqState {
         let err = match framed {
             Some(Ok(_)) => {
                 self.rot.cleared(row.key());
+                self.strikes = Strikes::new();
                 self.side.write_guard(&claim);
                 return self.side.fill_done(claim);
             }
@@ -1421,7 +1442,7 @@ impl IrqState {
             // the fault, never a verdict on the chunk.
             None => ReadError::Frame(Blame::Card),
         };
-        failed(err, Attempt::First);
+        failed(err);
         self.side.requeue(claim);
         false
     }
@@ -1453,6 +1474,7 @@ impl IrqState {
             Err(_) => return self.fault(h, then),
         }
         let left = left - READY_BYTES;
+        BUS.renew(now_ms());
         match h.fly(Dest::scan(), &self.line) {
             Ok(bus) => {
                 self.bursts += 1;
@@ -1572,31 +1594,36 @@ impl IrqState {
     /// requeued want waits for the next wake (a new want, or `watch`), so
     /// a card that keeps failing can't hold this handler in a loop. A
     /// fill's protocol error (C1: CMD18's R1, a token, a CRC16, a token
-    /// timeout) is read again once, or faults the card (`on_error`).
+    /// timeout) is read again once, or blamed (`on_error`): the card
+    /// faults for a chunk's first, its chunk is passed over after.
     fn abort(&mut self, h: Held, kind: Kind, why: Why) {
         STATS.aborts.fetch_add(1, Ordering::Relaxed);
         let then = match (kind, why) {
-            (Kind::Fill(f), Why::Proto(e)) => match failed(ReadError::Proto(e), f.attempt) {
-                ErrorStep::Retry => Then::Retry(Fill {
-                    attempt: Attempt::Retry,
-                    ..f
-                }),
-                ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
-                    Then::Give(self.fail_job(Kind::Fill(f), why))
+            (Kind::Fill(f), Why::Proto(e)) => {
+                match failed(f.row.proto_error(e, f.attempt, &mut self.rot)) {
+                    ErrorStep::Retry => Then::Retry(Fill {
+                        attempt: Attempt::Retry,
+                        ..f
+                    }),
+                    ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
+                        Then::Give(self.fail_job(Kind::Fill(f), why))
+                    }
                 }
-            },
+            }
             (kind, why) => Then::Give(self.fail_job(kind, why)),
         };
         self.stop(h, then);
     }
 
-    /// A fill's claim requeued; a bench read's answer, owed.
+    /// A fill's claim requeued, the card faulted at its `Strikes`; a
+    /// bench read's answer, owed.
     fn fail_job(&mut self, kind: Kind, why: Why) -> Owed {
-        #[cfg(not(feature = "bench"))]
-        let _ = why;
         match kind {
             Kind::Fill(f) => {
                 self.side.requeue(f.claim);
+                if why.strikes() && self.strikes.strike() {
+                    set_fault();
+                }
                 Owed::default()
             }
             #[cfg(feature = "bench")]
@@ -1628,9 +1655,9 @@ fn counted(was: CardFault) {
 
 /// A fill's read error, decided (`serve::read_failed`, which sets the
 /// fault and counts a frame error), its fault counted.
-fn failed(err: ReadError, a: Attempt) -> ErrorStep {
+fn failed(err: ReadError) -> ErrorStep {
     let was = BUS.fault();
-    let step = read_failed(err, a, &BUS, &STREAM_STATS);
+    let step = read_failed(err, &BUS, &STREAM_STATS);
     counted(was);
     step
 }

@@ -41,11 +41,20 @@ impl HeldRead<'_> {
     /// Its chunk didn't de-frame: blamed by `rot`, its row marked when
     /// that condemns the file whole (the SOURCE cell says so).
     pub fn frame_error(&self, rot: &mut Rot) -> ReadError {
-        let b = rot.blame(self.key);
-        if b == Blame::File {
+        self.judged(ReadError::Frame(rot.blame(self.key)))
+    }
+
+    /// Its read failed the protocol (`e`) at attempt `a`: as
+    /// `ReadError::proto`, the row marked as for a frame error.
+    pub fn proto_error(&self, e: ProtoError, a: Attempt, rot: &mut Rot) -> ReadError {
+        self.judged(ReadError::proto(e, a, self.key, rot))
+    }
+
+    fn judged(&self, err: ReadError) -> ReadError {
+        if err.blame() == Some(Blame::File) {
             self.row.mark_damaged();
         }
-        ReadError::Frame(b)
+        err
     }
 
     pub fn file(&self) -> &StreamFile {
@@ -218,13 +227,15 @@ pub fn serve_step<'r>(
     }
 }
 
-/// Who a chunk that won't de-frame is blamed on (#609).
+/// Who a chunk that failed is blamed on (#609): one that won't de-frame,
+/// or one whose read fails the protocol past its retry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Blame {
-    /// Its first failure: the card may have sent the wrong blocks, and a
-    /// re-init may mend it.
+    /// Its first failure: the card may have sent the wrong blocks, or
+    /// hiccuped, and a re-init may mend it.
     Card,
-    /// It failed again after the re-init: the file's own bytes there.
+    /// It failed again after the re-init: the file's own bytes there, or
+    /// the sector under them.
     Chunk,
     /// The file is condemned whole: `ROTTED_PER_FILE` of its chunks were.
     File,
@@ -233,11 +244,35 @@ pub enum Blame {
 /// Why a fill failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadError {
-    /// The card's: CMD18's R1, a data token or CRC16, a timeout.
-    Proto(ProtoError),
+    /// A CRC16 or an error token at a piece's first read: read again once,
+    /// nobody blamed yet.
+    Again(ProtoError),
+    /// The card's protocol past that: CMD18's R1, a token timeout, a
+    /// second CRC16 or error token, blamed as `Rot::blame` says, so a bad
+    /// sector faults the card once, not every pass.
+    Proto(ProtoError, Blame),
     /// CRC-good blocks whose records don't de-frame (`layout::deframe`),
     /// blamed as `Rot::blame` says.
     Frame(Blame),
+}
+
+impl ReadError {
+    /// Chunk `key`'s read failed the protocol (`e`) at attempt `a`: a CRC
+    /// or a token is read again at once; any other failure, or that one
+    /// again, is blamed by `rot`.
+    pub fn proto(e: ProtoError, a: Attempt, key: FileChunk, rot: &mut Rot) -> ReadError {
+        match (e, a) {
+            (ProtoError::Crc | ProtoError::ErrorToken(_), Attempt::First) => ReadError::Again(e),
+            _ => ReadError::Proto(e, rot.blame(key)),
+        }
+    }
+
+    fn blame(self) -> Option<Blame> {
+        match self {
+            ReadError::Again(_) => None,
+            ReadError::Proto(_, b) | ReadError::Frame(b) => Some(b),
+        }
+    }
 }
 
 /// A failed fill's next step.
@@ -253,7 +288,8 @@ pub enum ErrorStep {
     FrameError,
     /// The file's, not the card's: no fault, the claim requeued and its
     /// chunk passed over from now on (`serve_step`), so only the voices
-    /// reading it drop out over it. Counted in `frame_errors`.
+    /// reading it drop out over it. Counted in `frame_errors` when it
+    /// didn't de-frame.
     Rotted,
 }
 
@@ -264,24 +300,24 @@ pub enum Attempt {
     Retry,
 }
 
-/// A CRC16 mismatch or an error token is read again, once; a second
-/// failure, a token timeout or a bad R1 faults (C1). A chunk that won't
-/// de-frame faults the first time, and is the file's after (#609).
-pub fn on_error(err: ReadError, a: Attempt) -> ErrorStep {
+/// A first CRC16 mismatch or error token is read again (C1). Past that,
+/// a failure blamed on the card faults it, so the UI re-inits it; one
+/// blamed on the chunk or its file (it failed again after that re-init)
+/// is passed over, no fault (#609). A frame error is never read again.
+pub fn on_error(err: ReadError) -> ErrorStep {
     match err {
-        ReadError::Proto(ProtoError::Crc | ProtoError::ErrorToken(_)) if a == Attempt::First => {
-            ErrorStep::Retry
-        }
-        ReadError::Proto(_) => ErrorStep::Fault,
+        ReadError::Again(_) => ErrorStep::Retry,
+        ReadError::Proto(_, Blame::Card) => ErrorStep::Fault,
         ReadError::Frame(Blame::Card) => ErrorStep::FrameError,
-        ReadError::Frame(Blame::Chunk | Blame::File) => ErrorStep::Rotted,
+        ReadError::Proto(_, Blame::Chunk | Blame::File)
+        | ReadError::Frame(Blame::Chunk | Blame::File) => ErrorStep::Rotted,
     }
 }
 
 /// `on_error`'s step, taken: a fault set on `bus`, a frame error counted.
-pub fn read_failed(err: ReadError, a: Attempt, bus: &CardBus, stats: &StreamStats) -> ErrorStep {
-    let step = on_error(err, a);
-    if matches!(step, ErrorStep::FrameError | ErrorStep::Rotted) {
+pub fn read_failed(err: ReadError, bus: &CardBus, stats: &StreamStats) -> ErrorStep {
+    let step = on_error(err);
+    if matches!(err, ReadError::Frame(_)) {
         stats.frame_errors.fetch_add(1, Ordering::Relaxed);
     }
     if matches!(step, ErrorStep::Fault | ErrorStep::FrameError) {
@@ -290,8 +326,42 @@ pub fn read_failed(err: ReadError, a: Attempt, bus: &CardBus, stats: &StreamStat
     step
 }
 
-/// How many verdicts `Rot` keeps.
-const MARKS: usize = 8;
+/// Fills failed in a row for a reason neither the protocol names nor
+/// `Rot` can blame on a chunk (a card that stays busy, a recurring DMA
+/// error, the watchdog's ask): at `FAULT` the card faults, so the UI
+/// re-inits it and SOURCE says so, never a retry every UI pass for good
+/// (m1, #761). A fill that lands starts it over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Strikes(u8);
+
+impl Strikes {
+    pub const FAULT: u8 = 3;
+
+    pub const fn new() -> Strikes {
+        Strikes(0)
+    }
+
+    /// One more: true at the fault, the count starting over.
+    pub fn strike(&mut self) -> bool {
+        self.0 += 1;
+        let out = self.0 >= Self::FAULT;
+        if out {
+            self.0 = 0;
+        }
+        out
+    }
+}
+
+impl Default for Strikes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// How many verdicts `Rot` keeps: room for every voice's file condemned
+/// with suspects to spare, so a full table seldom drops a verdict (m7,
+/// #761), which would send its file through fault and re-init again.
+const MARKS: usize = 16;
 
 /// Rotted chunks that condemn their whole file: real rot (a short copy, a
 /// zeroed or cross-linked cluster) spans a cluster, 8 chunks or more.
@@ -334,9 +404,10 @@ struct Entry {
     at: u32,
 }
 
-/// The chunks that didn't de-frame (#609), by where they lie. A first
-/// failure is suspected, so the card faults and re-inits as for any read
-/// error (it may have sent the wrong blocks); the same chunk failing again
+/// The chunks that didn't de-frame, or whose reads failed past their
+/// retry (#609), by where they lie. A first failure is suspected, so the
+/// card faults and re-inits (it may have sent the wrong blocks, or
+/// hiccuped); the same chunk failing again
 /// after that is the file's, rotted, never read again; two rotted condemn
 /// the file whole, its voices starving quietly and the card never blamed
 /// for it again. A full table drops a suspect first, then the oldest
@@ -376,8 +447,8 @@ impl Rot {
         }
     }
 
-    /// Chunk `c` didn't de-frame: the card's the first time, the file's
-    /// once it failed before, the whole file's at `ROTTED_PER_FILE`.
+    /// Chunk `c` failed: the card's the first time, the file's once it
+    /// failed before, the whole file's at `ROTTED_PER_FILE`.
     pub fn blame(&mut self, c: FileChunk) -> Blame {
         // Without TAPE nothing streams: no file to blame, and no code.
         if !super::STREAMS {
@@ -411,7 +482,7 @@ impl Rot {
         Blame::File
     }
 
-    /// Chunk `c` de-framed: a suspicion of it was the card's.
+    /// Chunk `c` read and de-framed: a suspicion of it was the card's.
     pub fn cleared(&mut self, c: FileChunk) {
         if !super::STREAMS {
             return;

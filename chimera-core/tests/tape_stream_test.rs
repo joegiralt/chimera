@@ -2212,6 +2212,63 @@ fn a_rotted_cluster_in_a_loop_faults_twice_then_never() {
     }
 }
 
+/// M1 (#761): a LOOP bed over a bad sector, whose every read answers an
+/// error token, for several laps. The card faults once for it (the token
+/// read again, then the fault and the UI's re-init and mount); its next
+/// failure, after the re-init, is the chunk's: passed over, so no later
+/// lap faults or remounts again, and the voice drops out over it and
+/// comes back each lap.
+#[test]
+fn a_bad_sector_in_a_loop_faults_once_then_never() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let p = TapeEngineParams {
+        size: 1.0,
+        position: 0.0,
+        xfade: 0.0,
+        drag: FADE_HOLD,
+        tape: 0.0,
+        age: 0.0,
+        ..params(Direction::Loop, 0.0, 0.05)
+    };
+    let ws = window_start(p.start, FILE);
+    let we = window_end(ws, p.end, FRAMES, HZ);
+    let b = Bounds::of(ws, we, sizing(&p), HZ);
+    let lap = (b.frames() / 32) as usize;
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    st.card.bad_sectors(4..5);
+    let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
+    let mut pl = Played::new(st, src, &[(0, p)]);
+    pl.on(0, 60);
+    let (mut remounts, mut cleared_at) = (Vec::new(), None);
+    let mut level = Vec::new();
+    for k in 0..5 * lap {
+        let was = pl.st.card.bus.fault();
+        pl.block();
+        if was == CardFault::Clear && pl.st.card.bus.fault() == CardFault::Read {
+            cleared_at = Some(k + 10);
+        }
+        // The UI's re-init and mount, a few blocks on.
+        if cleared_at == Some(k) {
+            pl.st.card.bus.set_fault(CardFault::Clear);
+            remounts.push(k);
+        }
+        let x = pl.rig.inst.part_bus(0);
+        level.push(x.iter().fold(0.0f32, |m, y| m.max(y.abs())));
+    }
+    let stats = &pl.st.card.stats;
+    assert_eq!(remounts.len(), 1, "one fault and remount: {remounts:?}");
+    assert!(remounts[0] < lap, "in the first lap");
+    assert_eq!(stats.frame_errors.load(Ordering::Relaxed), 0);
+    assert!(stats.unreadable.load(Ordering::Relaxed) > 0, "passed over");
+    assert_eq!(pl.st.card.bus.fault(), CardFault::Clear);
+    for l in 2..5 {
+        let w = &level[l * lap..(l + 1) * lap];
+        assert!(w.iter().any(|&x| x > 0.1), "lap {l} plays");
+        assert!(w.iter().any(|&x| x < 0.05), "lap {l} drops out");
+    }
+}
+
 /// #609: a rotted record faults the card the first time it fails to
 /// de-frame (the card may have sent the wrong blocks); once the re-init
 /// clears that, the same chunk failing again is the file's: no second

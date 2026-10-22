@@ -404,11 +404,21 @@ impl Iterator for Transfers<'_> {
     }
 }
 
-/// A file's length and where it lies on the device.
+/// A file's length, where it lies on the device, and its seal.
 #[derive(Clone, Copy, Debug)]
 pub struct FileRuns {
     pub ext: Extents,
     pub len: Bytes,
+    pub seal: Seal,
+}
+
+/// Whether a file is sealed read-only (`Store::seal`): a source is sealed
+/// only once it read back whole and its samples hashed to its CRC, so an
+/// open one may be a cut write's remains, unverified.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seal {
+    Sealed,
+    Open,
 }
 
 /// Why `Store::runs` gave none.
@@ -442,7 +452,7 @@ pub fn synthetic_lba(file: FileName) -> Lba {
 
 /// `Store::runs` for a store with no device: one run at `synthetic_lba`.
 /// A file over the stride is `Io`.
-pub fn synthetic_runs(file: FileName, len: Bytes) -> Result<FileRuns, RunsError> {
+pub fn synthetic_runs(file: FileName, len: Bytes, seal: Seal) -> Result<FileRuns, RunsError> {
     let blocks = len.get().div_ceil(CHUNK as u32);
     let mut r = Runs::new();
     if let Some(n) = BlockCount::new(blocks) {
@@ -452,7 +462,7 @@ pub fn synthetic_runs(file: FileName, len: Bytes) -> Result<FileRuns, RunsError>
         r.push(synthetic_lba(file), n);
     }
     let ext = r.finish().map_err(RunsError::Fragmented)?;
-    Ok(FileRuns { ext, len })
+    Ok(FileRuns { ext, len, seal })
 }
 
 /// The longest file any Chimera write makes: the bench's 4 MiB card test

@@ -52,6 +52,38 @@ fn stream_stuck_after_watchdog() {
     assert!(!b.stuck(Ms(10_000)));
 }
 
+/// M2 (#761): a slow card within the SD spec waits up to 100 ms (Nac)
+/// for each block's token. A 9-block chunk at 90 ms a block holds the bus
+/// 810 ms; renewed at each burst, the watchdog never calls it stuck, and
+/// a burst that then stalls is still caught 200 ms after it began.
+#[test]
+fn a_slow_read_renewed_each_burst_is_never_stuck() {
+    let b = CardBus::new();
+    assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
+    for block in 0..9 {
+        let at = block * 90;
+        b.renew(Ms(at));
+        for t in at..at + 90 {
+            assert!(!b.stuck(Ms(t)), "stuck at {t} ms");
+        }
+    }
+    assert!(!b.stuck(Ms(720 + 200)));
+    assert!(b.stuck(Ms(720 + 201)), "a stalled burst is caught");
+}
+
+/// Only a `Stream` hold is renewed: the UI's is never stamped.
+#[test]
+fn renew_leaves_another_owners_bus_alone() {
+    let b = CardBus::new();
+    assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
+    b.give();
+    assert!(b.try_take(Taker::Ui, Ms(0)));
+    b.renew(Ms(500));
+    b.give();
+    assert_eq!(b.take_or_want(Ms(1_000)), Took::Taken);
+    assert!(!b.stuck(Ms(1_200)));
+}
+
 #[test]
 fn a_take_stamped_after_the_clock_read_is_not_stuck() {
     let b = CardBus::new();

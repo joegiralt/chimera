@@ -232,7 +232,7 @@ impl Instrument {
                     .iter()
                     .zip(st)
                     .filter(|&(&w, _)| !gone.contains(w))
-                    .filter_map(|(&w, s)| Some((w, s.billed()?, s.age)))
+                    .filter_map(|(&w, s)| Some((w, s.billed()?, self.age_now(w, s.age))))
             };
             let held = others()
                 .filter(|o| !o.2.released())

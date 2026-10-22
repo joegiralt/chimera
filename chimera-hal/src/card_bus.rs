@@ -21,7 +21,8 @@ pub const QUIET_HOLD_MS: Millis = Millis::new(20);
 /// A write waits this long for the audio to hold its quiet, then writes
 /// anyway (C1).
 pub const QUIET_SPIN_MS: Millis = Millis::new(50);
-/// A `Stream` hold longer than this is stuck: the UI asks an abort.
+/// A `Stream` hold this long since its take or its last burst (`renew`)
+/// is stuck: the UI asks an abort.
 pub const WATCHDOG_MS: Millis = Millis::new(200);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,6 +222,18 @@ impl CardBus {
         self.owner() == Owner::Stream
             && now.signed_since(Ms(self.since.load(Ordering::Relaxed)))
                 > WATCHDOG_MS.get().cast_signed()
+    }
+
+    /// The `Stream` hold's stamp moved to `now`: the card IRQ's, at each
+    /// burst, so the watchdog bounds one burst, never a whole read whose
+    /// every block may wait `TOKEN_TIMEOUT_MS` for its token (an in-spec
+    /// card's Nac). Nothing else stamps a `Stream` hold, so the check
+    /// and the store don't race; another owner's bus is left alone.
+    #[inline]
+    pub fn renew(&self, now: Ms) {
+        if self.owner() == Owner::Stream {
+            self.since.store(now.0, Ordering::Relaxed);
+        }
     }
 
     pub fn ask_abort(&self) {

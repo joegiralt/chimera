@@ -37,6 +37,10 @@ impl SourceSet {
         SourceSet(self.0 | s.bit())
     }
 
+    pub const fn without(self, s: SourceId) -> SourceSet {
+        SourceSet(self.0 & !s.bit())
+    }
+
     pub const fn contains(self, s: SourceId) -> bool {
         self.0 & s.bit() != 0
     }

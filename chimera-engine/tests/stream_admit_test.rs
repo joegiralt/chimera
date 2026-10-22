@@ -2,18 +2,35 @@
 
 use chimera_engine::MidiNote;
 use chimera_engine::stream::admit::{
-    Admit, Age, Bill, LOUD, ReadRatio, STREAM_BUDGET_BPS, WOW_CENTS, admit, bill, head_frames,
-    notes_at_root, ratio_max,
+    ATTACK_BLOCKS, Admit, Age, Bill, LOUD, ReadRatio, STREAM_BUDGET_BPS, Swell, WOW_CENTS, admit,
+    bill, head_frames, notes_at_root, ratio_max,
 };
 use chimera_engine::stream::units::{Blocks, Cents, SourceRate};
 use chimera_engine::voice_alloc::VoiceIdx;
 
-fn age(released: bool, since: u32) -> Age {
+/// A held note `since` blocks old at `level`, in its attack only while
+/// young (`ATTACK_BLOCKS`): an instant attack, then a plateau or decay.
+fn held_at(since: u32, level: u16) -> Age {
     let since = Blocks::new(since);
-    if released {
-        Age::Released { since }
+    let swell = if since < ATTACK_BLOCKS {
+        Swell::Attack
     } else {
-        Age::Held { since, level: LOUD }
+        Swell::Past
+    };
+    Age::Held {
+        since,
+        level,
+        swell,
+    }
+}
+
+fn age(released: bool, since: u32) -> Age {
+    if released {
+        Age::Released {
+            since: Blocks::new(since),
+        }
+    } else {
+        held_at(since, LOUD)
     }
 }
 
@@ -88,8 +105,10 @@ fn six_tron_notes_fit() {
     assert!(matches!(admit(b, p, STREAM_BUDGET_BPS), Admit::Steal(_)));
 }
 
+/// Released notes go first, the oldest; then, all held at full level, the
+/// youngest past its attack (m5, #761: the oldest is the chord's root).
 #[test]
-fn ninth_steals_oldest_released_then_oldest_held() {
+fn ninth_steals_oldest_released_then_youngest_settled_held() {
     let b = Bill::new(38_000);
     let mut p = [
         (v(0), b, age(false, 900)),
@@ -109,7 +128,7 @@ fn ninth_steals_oldest_released_then_oldest_held() {
     p[1].2 = age(false, 0);
     assert_eq!(
         admit(b, p.iter().copied(), STREAM_BUDGET_BPS),
-        Admit::Steal(v(0))
+        Admit::Steal(v(3))
     );
 }
 
@@ -176,16 +195,7 @@ fn the_callers_re_ask_loop_steals_two_oldest_released_first() {
 #[test]
 fn the_quietest_held_note_goes_first() {
     let b = bill(hz(24_000), ReadRatio::ONE);
-    let held = |i: usize, since: u32, level: u16| {
-        (
-            v(i),
-            b,
-            Age::Held {
-                since: Blocks::new(since),
-                level,
-            },
-        )
-    };
+    let held = |i: usize, since: u32, level: u16| (v(i), b, held_at(since, level));
     // The root, oldest and loudest; a quiet fifth; a louder third.
     let chord = [held(0, 90, LOUD), held(1, 50, 2_000), held(2, 40, 40_000)];
     let full = || {
@@ -224,16 +234,7 @@ fn notes_at_root_fit_the_budget() {
 #[test]
 fn a_note_in_its_attack_is_not_the_quietest() {
     let b = bill(hz(48_000), ReadRatio::ONE);
-    let held = |i: usize, since: u32, level: u16| {
-        (
-            v(i),
-            b,
-            Age::Held {
-                since: Blocks::new(since),
-                level,
-            },
-        )
-    };
+    let held = |i: usize, since: u32, level: u16| (v(i), b, held_at(since, level));
     // A 48 kHz source fits three: struck 20, 10 and 2 blocks ago, the
     // youngest still at a whisper under its attack.
     let chord = [held(0, 20, 30_000), held(1, 10, 9_000), held(2, 2, 300)];
@@ -241,4 +242,89 @@ fn a_note_in_its_attack_is_not_the_quietest() {
         admit(b, chord.into_iter(), STREAM_BUDGET_BPS),
         Admit::Steal(v(0))
     );
+}
+
+/// m5 (#761, ADR 0183): an organ chord at full sustain, every note at the
+/// same level, gives up its youngest note past its attack, never its root.
+#[test]
+fn equal_levels_steal_the_youngest_settled_note_not_the_root() {
+    let b = bill(hz(48_000), ReadRatio::ONE);
+    let chord = [
+        (v(0), b, held_at(900, LOUD)),
+        (v(1), b, held_at(600, LOUD)),
+        (v(2), b, held_at(300, LOUD)),
+    ];
+    assert_eq!(
+        admit(b, chord.into_iter(), STREAM_BUDGET_BPS),
+        Admit::Steal(v(2))
+    );
+}
+
+/// m5 (#761): a slow-attack pad played as a gapped arpeggio. Its newest
+/// notes, struck 200 and 100 blocks ago, still swell (their gain has risen
+/// every block), so they rank loud however quiet they are; the old note,
+/// settled at its sustain, goes.
+#[test]
+fn a_slow_pad_keeps_its_swelling_notes() {
+    let b = bill(hz(48_000), ReadRatio::ONE);
+    // Each note's gain, block by block: a 4 s ramp to full.
+    let ramp = |blocks: u32| {
+        (0..blocks).fold(Age::FRESH, |a, k| {
+            a.after_block(true, (u32::from(LOUD) * (k + 1) / 3_000).min(65_535) as u16)
+        })
+    };
+    let settled = (0..400).fold(ramp(3_000), |a, _| a.after_block(true, LOUD));
+    let (mid, new) = (ramp(200), ramp(100));
+    assert!(matches!(
+        mid,
+        Age::Held {
+            swell: Swell::Attack,
+            ..
+        }
+    ));
+    assert!(matches!(
+        settled,
+        Age::Held {
+            swell: Swell::Past,
+            ..
+        }
+    ));
+    let p = [(v(0), b, settled), (v(1), b, mid), (v(2), b, new)];
+    assert_eq!(
+        admit(b, p.into_iter(), STREAM_BUDGET_BPS),
+        Admit::Steal(v(0))
+    );
+}
+
+/// A gain that stops rising ends the attack for good: a tremolo's next
+/// rise doesn't bring it back.
+#[test]
+fn an_attack_ends_once_the_gain_stops_rising() {
+    let mut a = Age::FRESH;
+    for k in 0..60u16 {
+        a = a.after_block(true, 1_000 * (k + 1));
+    }
+    assert!(matches!(
+        a,
+        Age::Held {
+            swell: Swell::Attack,
+            ..
+        }
+    ));
+    a = a.after_block(true, 60_000);
+    assert!(matches!(
+        a,
+        Age::Held {
+            swell: Swell::Past,
+            ..
+        }
+    ));
+    a = a.after_block(true, 61_000);
+    assert!(matches!(
+        a,
+        Age::Held {
+            swell: Swell::Past,
+            ..
+        }
+    ));
 }

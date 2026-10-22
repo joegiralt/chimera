@@ -42,11 +42,11 @@ use chimera_core::ui::source_cell::{
 };
 use chimera_core::ui::view::SourceState;
 use chimera_hal::card_bus::CardFault;
-use chimera_hal::store::synthetic_runs;
 use chimera_hal::store::{
     ByteSink, Dir, FileName, FileRuns, MAX_RUNS, ReadSink, Runs, RunsError, Store, StoreError,
     VolumeId,
 };
+use chimera_hal::store::{Seal, synthetic_runs};
 use chimera_hal::testkit::MemStore;
 use chimera_hal::units::Bytes;
 use chimera_hal::units::{BlockCount, Lba};
@@ -1036,7 +1036,7 @@ fn registry_row_before_pool_row() {
     let other = bed(7).0;
     let l = SourceLayout::whole(other).unwrap();
     let len = source_file_min_len(other.sref).unwrap();
-    let runs = synthetic_runs(source_file(other.sref), Bytes::new(len)).unwrap();
+    let runs = synthetic_runs(source_file(other.sref), Bytes::new(len), Seal::Sealed).unwrap();
     let f = StreamFile::from_layout(&l, runs).unwrap();
     for n in 24..32 {
         reg.insert(SourceId::new(n).unwrap(), f).unwrap();
@@ -1289,8 +1289,9 @@ fn streamed_rig(b: &(SourceHead, Vec<u8>)) -> Rig {
 }
 
 /// While the card is faulted, a streamed source's band reads CARD READ
-/// FAILED: a re-init that fails leaves it so, tried once; one the bus was
-/// too busy for is tried again; one that mounts clears it.
+/// FAILED: a re-init that fails leaves it so, tried again a second later,
+/// then every five (m4, #761); one the bus was too busy for is tried
+/// again at once; one that mounts clears it.
 #[test]
 fn focus_band_reads_card_read_failed() {
     let b = bed(3);
@@ -1302,7 +1303,7 @@ fn focus_band_reads_card_read_failed() {
     rig.work();
     assert_eq!(rig.band(), READ_FAILED);
     rig.work();
-    assert_eq!(rig.s.recovers, 1, "a failed re-init isn't retried");
+    assert_eq!(rig.s.recovers, 1, "a failed re-init waits");
     assert_eq!(rig.band(), READ_FAILED);
 
     // A mount by any card op clears the fault, and the band.
@@ -1446,4 +1447,150 @@ fn reheading_waits_when_nothing_is_free_beside() {
     audio.join().unwrap();
     assert_heads(&rig, &b, after.as_slice());
     assert_ne!(rig.ui.project().pool().find_source(b.0.sref), Some(id));
+}
+
+/// m3 (#761): a re-init that mounts another card while a streamed load
+/// reads its heads takes the registry's rows with it; the load, which
+/// found its file's blocks on the old card, publishes nothing.
+#[test]
+fn a_card_change_mid_load_publishes_nothing() {
+    let b = bed(5);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| t.set_way(Way::One));
+    rig.turn(1);
+    rig.mix_plus();
+    rig.work();
+    assert!(rig.loading(), "the heads still to read");
+    // Another card, holding the same file, re-inited under a read fault.
+    rig.s.inner.swap(2);
+    let mut card = Card::new();
+    card.run(&mut rig.s.inner, |s, r| write_source(s, r, &b.0, &b.1))
+        .unwrap()
+        .result
+        .unwrap();
+    rig.s.fault = CardFault::Read;
+    while rig.ui.card_pending() {
+        rig.work();
+    }
+    let pool = rig.ui.project().pool();
+    assert_eq!(pool.find_source(b.0.sref), None, "nothing published");
+    assert!(
+        SourceId::ALL
+            .iter()
+            .all(|&s| rig.registry().get(s).is_none())
+    );
+}
+
+/// m4 (#761): a re-init that fails is tried again on its own, a second
+/// later, then every five seconds, and the one that mounts clears the
+/// fault: the streams come back with no card op from the user.
+#[test]
+fn a_failed_re_init_is_tried_again_on_a_backoff() {
+    let b = bed(3);
+    let mut rig = streamed_rig(&b);
+    let fine = rig.band();
+    (rig.s.fault, rig.s.recovery) = (CardFault::Read, Err(StoreError::Io));
+    rig.work();
+    assert_eq!(rig.s.recovers, 1);
+    // 50 ms passes: a second is 20 of them.
+    for _ in 0..19 {
+        rig.work();
+    }
+    assert_eq!(rig.s.recovers, 1, "waiting its second");
+    rig.work();
+    assert_eq!(rig.s.recovers, 2, "tried again after a second");
+    for _ in 0..99 {
+        rig.work();
+    }
+    assert_eq!(rig.s.recovers, 2, "then five seconds");
+    rig.s.recovery = Ok(());
+    rig.work();
+    assert_eq!(rig.s.recovers, 3);
+    assert_eq!(rig.s.fault, CardFault::Clear);
+    assert_eq!(rig.band(), fine);
+}
+
+/// m8 (#761): a note that starts while a re-stage reads its heads, with
+/// every stream row taken, leaves the heads where they were for now, not
+/// stuck for good: a row freed, they go in beside it with no turn.
+#[test]
+fn a_rehead_that_meets_a_new_note_tries_again() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
+    fn now_ms() -> u32 {
+        static T0: OnceLock<Instant> = OnceLock::new();
+        T0.get_or_init(Instant::now).elapsed().as_millis() as u32
+    }
+    let b = bed(32);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| t.set_way(Way::One));
+    rig.turn(1);
+    rig.load();
+    let before = heads_for(b.0.sref, &rig.params()).unwrap();
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    let reg = rig.registry();
+    let f = *reg.get(id).unwrap();
+    for n in 24..31 {
+        reg.insert(SourceId::new(n).unwrap(), f).unwrap();
+    }
+    rig.ui.project_mut().set_gate_clock(now_ms);
+    rig.tape(|t| t.start = 0.5);
+    // No note yet: the re-stage starts and reads its heads' first share.
+    let reads = rig.s.reads.len();
+    while rig.s.reads.len() == reads {
+        rig.frame();
+    }
+    let mut tok = rig.ui.project().pool().table().reader().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let audio = std::thread::spawn({
+        let stop = stop.clone();
+        move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = tok.begin_block();
+                tok.store_sounding(id.bit());
+                std::thread::sleep(Duration::from_micros(500));
+            }
+        }
+    });
+    let table = rig.ui.project().pool().table();
+    while table.sounding() != id.bit() {
+        std::thread::yield_now();
+    }
+    for _ in 0..20 {
+        rig.frame();
+    }
+    assert_heads(&rig, &b, before.as_slice());
+    // SAFETY: no voice or card read has these test rows.
+    assert!(unsafe { reg.clear(SourceId::new(30).unwrap()) });
+    let after = heads_for(b.0.sref, &rig.params()).unwrap();
+    for _ in 0..200 {
+        let t = head_table(rig.ui.project().pool().held(b.0.sref).unwrap()).unwrap();
+        if t.iter().eq(after.as_slice().iter().copied()) {
+            break;
+        }
+        rig.frame();
+    }
+    stop.store(true, Ordering::Relaxed);
+    audio.join().unwrap();
+    assert_heads(&rig, &b, after.as_slice());
+}
+
+/// m10 (#761): the SOURCE cell's load of an unsealed file (a cut `put`'s
+/// remains, never checked against its CRC) publishes nothing.
+#[test]
+fn an_unsealed_file_doesnt_stream_from_the_cell() {
+    let b = bed(33);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.s.inner.unseal(source_file(b.0.sref));
+    rig.tape(|t| t.set_way(Way::One));
+    rig.turn(1);
+    rig.load();
+    let pool = rig.ui.project().pool();
+    assert_eq!(pool.find_source(b.0.sref), None, "nothing published");
+    assert!(
+        SourceId::ALL
+            .iter()
+            .all(|&s| rig.registry().get(s).is_none())
+    );
 }

@@ -19,7 +19,7 @@ use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::units::{AudioBlocks, SlotIdx, SourceRate};
 use chimera_engine::voice_alloc::VoiceIdx;
-use chimera_hal::store::{FileRuns, ReadSink, Runs, Store};
+use chimera_hal::store::{FileRuns, ReadSink, Runs, Seal, Store};
 use chimera_hal::testkit::MemStore;
 use chimera_hal::units::{BlockCount, Bytes, Lba, StreamCount};
 use core::ops::ControlFlow;
@@ -84,7 +84,14 @@ fn on_device(file: &[u8]) -> (FileRuns, Vec<u8>) {
     dev[..file.len() - cut as usize * 512].copy_from_slice(&file[cut as usize * 512..]);
     let ext = runs.finish().unwrap();
     let len = Bytes::new(file.len() as u32);
-    (FileRuns { ext, len }, dev)
+    (
+        FileRuns {
+            ext,
+            len,
+            seal: Seal::Sealed,
+        },
+        dev,
+    )
 }
 
 /// The beds' tables and the registry their files are rows of.

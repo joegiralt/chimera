@@ -516,9 +516,26 @@ enum Recovery {
     /// A re-init and mount owed: this pass, and the next while the bus is
     /// busy (the card untouched, C1).
     Owed,
-    /// The re-init failed: left until a card op's mount clears it, so the
-    /// UI never stalls on a card that won't come back.
-    Stuck,
+    /// The re-init failed: tried again after its backoff, or sooner by
+    /// any card op's mount, so a transient error mends itself while a
+    /// card that won't come back costs one re-init every few seconds.
+    Stuck(Backoff),
+}
+
+/// UI passes a failed re-init skips before the next (m4, #761): a second
+/// after the first failure, five after each one since.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Backoff(u8);
+
+impl Backoff {
+    const FIRST: Backoff = Backoff::of(1_000);
+    const THEN: Backoff = Backoff::of(5_000);
+
+    const fn of(ms: u32) -> Backoff {
+        let passes = ms / crate::ui::animation::FRAME_MS - 1;
+        assert!(passes <= u8::MAX as u32);
+        Backoff(passes as u8)
+    }
 }
 
 /// Heads wanted for a streamed source, unchanged for `frames`.
@@ -575,8 +592,10 @@ impl SourceCell {
     pub fn recover<S: Store>(&mut self, card: &mut Card, s: &mut S, p: &mut Project) {
         self.read = match (s.read_fault(), self.read) {
             (CardFault::Clear, _) => Recovery::Clear,
-            (CardFault::Read, Recovery::Stuck) => Recovery::Stuck,
-            (CardFault::Read, _) => match s.recover() {
+            (CardFault::Read, Recovery::Stuck(Backoff(n))) if n > 0 => {
+                Recovery::Stuck(Backoff(n - 1))
+            }
+            (CardFault::Read, was) => match s.recover() {
                 Err(StoreError::Busy) => Recovery::Owed,
                 r => {
                     let (c, event) = after_mount(*card, r);
@@ -588,10 +607,10 @@ impl SourceCell {
                             self.stuck = [None; MAX_SOURCES];
                         }
                     }
-                    if r.is_ok() {
-                        Recovery::Clear
-                    } else {
-                        Recovery::Stuck
+                    match (r, was) {
+                        (Ok(_), _) => Recovery::Clear,
+                        (Err(_), Recovery::Stuck(_)) => Recovery::Stuck(Backoff::THEN),
+                        (Err(_), _) => Recovery::Stuck(Backoff::FIRST),
                     }
                 }
             },

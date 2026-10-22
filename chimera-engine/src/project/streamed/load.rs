@@ -3,7 +3,7 @@
 //! it is bank 2's (`bank2.x` globs this module); bank 1 reaches it only
 //! through `LoadDoor`.
 
-use chimera_hal::store::{RunsError, Store, StoreError};
+use chimera_hal::store::{RunsError, Seal, Store, StoreError};
 use chimera_hal::units::Bytes;
 
 use super::super::arena::ARENA_BYTES;
@@ -13,11 +13,11 @@ use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
 use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, load_kind};
 use crate::dsp::tape_engine::read::write_head_table;
 use crate::storage::{
-    CardFault, LoadError, Ready, SourceLayout, SourceReadError, read_packed_into, read_source_head,
-    source_file,
+    CardError, CardFault, LoadError, Ready, SourceLayout, SourceReadError, read_packed_into,
+    read_source_head, source_file,
 };
 use crate::stream::admit::head_frames;
-use crate::stream::layout::StreamFile;
+use crate::stream::layout::{FileKey, StreamFile};
 use crate::stream::units::{Frames, Packing, SourceRate};
 
 /// A head past any file's bytes, or a table no descriptor holds: cold, so
@@ -27,6 +27,13 @@ fn corrupted() -> StreamFail {
     StreamFail::Read(SourceReadError::Load(LoadError::File(
         crate::storage::FileError::Corrupt,
     )))
+}
+
+/// The card itself failed: not a busy bus (the card untouched), nor a
+/// file missing or damaged (`CardError::from_store`). Only that ends a
+/// project load's stream pass (#761 m9).
+fn card_faulted(e: &impl CardFault) -> bool {
+    e.store_error().and_then(CardError::from_store).is_some()
 }
 
 /// One pass of `l` (`StreamLoad::step`).
@@ -62,6 +69,12 @@ impl StreamLoad {
                 }
                 RunsError::Store(e) => read(e),
             })?;
+            // Unsealed, a source never read back whole against its CRC
+            // (a cut `put`'s remains): the whole-file load would refuse it,
+            // and streaming reads only its heads (#761 m10).
+            if runs.seal != Seal::Sealed {
+                return Err(corrupted());
+            }
             let got = read_source_head(s, r, self.sref.stem(), runs.len.get())
                 .map_err(StreamFail::Read)?;
             let l = SourceLayout::whole(got).filter(|_| got.sref == self.sref);
@@ -108,6 +121,7 @@ impl StreamLoad {
             }
             before += h.byte_len();
         }
+        self.still_found(s, r, p, &file)?;
         p.bump();
         if let Some(id) = self.rehead {
             return p
@@ -123,10 +137,42 @@ impl StreamLoad {
                 StreamRefused::Pool(e) => StreamFail::Pool(e),
                 StreamRefused::Full => StreamFail::Full,
                 // The registry and the pool disagree on a row: unreachable,
-                // as a drain keeps its id `Draining` until `clear` succeeds.
+                // as a drain keeps its id `Draining`, and a failed publish
+                // keeps it owed (`free_source`), until `clear` succeeds.
                 // If it ever fires it is no card's fault: STREAMS FULL.
                 StreamRefused::Taken => StreamFail::Full,
             })
+    }
+
+    /// The file as found, on the card as found: a remount onto another
+    /// volume, or the file deleted or replaced since, publishes nothing
+    /// (#761 m3).
+    fn still_found(
+        &self,
+        s: &mut dyn Store,
+        r: &Ready,
+        p: &Project,
+        file: &StreamFile,
+    ) -> Result<(), StreamFail> {
+        let missing = StreamFail::Read(SourceReadError::Load(LoadError::Missing));
+        if p.pool.streams().map(|g| g.epoch()) != self.epoch {
+            return Err(missing);
+        }
+        if self.rehead.is_some() {
+            return Ok(());
+        }
+        let now = match s.runs(r.volume(), source_file(self.sref)) {
+            Ok(n) => FileKey::new(self.sref.stem(), n.ext.first()),
+            Err(RunsError::Store(e)) if e != StoreError::NotFound => {
+                return Err(StreamFail::Read(e.into()));
+            }
+            Err(_) => return Err(missing),
+        };
+        if now == file.key() {
+            Ok(())
+        } else {
+            Err(missing)
+        }
     }
 }
 
@@ -156,7 +202,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 continue;
             }
             Err(RunsError::Store(err)) => {
-                if CardFault::store_error(&SourceReadError::from(err)).is_some() {
+                if card_faulted(&SourceReadError::from(err)) {
                     p.pool.mark_absent(id, Absence::ReadFailed);
                     fault = true;
                 }
@@ -173,9 +219,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
             Ok(head) => head,
             Err(err) => {
                 p.pool.mark_absent(id, Absence::ReadFailed);
-                if err.store_error().is_some() {
-                    fault = true;
-                }
+                fault = card_faulted(&err);
                 continue;
             }
         };
@@ -205,7 +249,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 StreamStep::Failed(StreamFail::Full) => break Some(Absence::StreamsFull),
                 StreamStep::Failed(StreamFail::Fragmented) => break Some(Absence::Fragmented),
                 StreamStep::Failed(StreamFail::Read(err)) => {
-                    fault = err.store_error().is_some();
+                    fault = card_faulted(&err);
                     break Some(Absence::ReadFailed);
                 }
                 // The heads didn't fit; `Sounding` is a re-head's alone.
