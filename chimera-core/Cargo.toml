@@ -36,6 +36,8 @@ card-put = ["chimera-engine/card-put"]
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
 # its parameters and disk codes stay either way).
 master-tape = ["chimera-engine/master-tape"]
+# WALK's mockup glyph styles (ADR 0209): the listening page's renders.
+walk-styles = ["tape", "chimera-engine/walk-styles"]
 # The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
 # `EngineSlot::new`), for tests only: firmware builds every engine in place.
 test-support = ["chimera-engine/test-support"]

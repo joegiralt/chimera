@@ -1,11 +1,13 @@
 //! WALK's footsteps glyph (ADR 0203): DIRECTION lays them, DRIFT scatters
 //! them, FADE fades the last, TRON marks its tape's end; quantised inputs,
-//! no frame term. `GLYPH_OUT=dir … -- --ignored` writes the owner's
-//! variants as BMPs, 4× (each style, each pose).
+//! no frame term. `GLYPH_OUT=dir cargo test -p chimera-core --features
+//! walk-styles --test tape_walk_glyph_test -- --ignored` writes the
+//! owner's variants as BMPs at 1× and 4× (each style, each pose;
+//! `GLYPH_STYLES=straight,prints` picks styles).
 
 use chimera_core::dsp::tape_engine::Direction;
 use chimera_core::ui::tape_glyph::{
-    Canvas, GlyphInputs, H, Kind, Machine, Palette, Pose, StepStyle, TapeGauge, W,
+    Canvas, GlyphInputs, Kind, Machine, Pose, StepStyle, TapeGauge,
 };
 
 /// The glyph's set values for WALK in `d`, TRON `tron`, DRIFT `drift`.
@@ -87,24 +89,59 @@ fn each_input_moves_the_picture_and_its_key() {
 
 #[test]
 #[ignore]
+#[cfg(feature = "walk-styles")]
 fn write_variants() {
+    use chimera_core::ui::tape_glyph::{H, Palette, W};
     let dir = std::path::PathBuf::from(std::env::var("GLYPH_OUT").expect("GLYPH_OUT"));
     std::fs::create_dir_all(&dir).unwrap();
     let pal = Palette::THEME;
-    let poses = [
-        ("fwd", Direction::Forward, false, 0.0),
-        ("reverse", Direction::Reverse, false, 0.0),
-        ("loop", Direction::Loop, false, 0.0),
-        ("ping", Direction::Ping, false, 0.0),
-        ("fwd-drift", Direction::Forward, false, 1.0),
-        ("loop-drift", Direction::Loop, false, 1.0),
-        ("fwd-tron", Direction::Forward, true, 0.0),
-        ("loop-tron", Direction::Loop, true, 0.0),
+    let (f, r, l, p) = (
+        Direction::Forward,
+        Direction::Reverse,
+        Direction::Loop,
+        Direction::Ping,
+    );
+    // (slug, DIRECTION, TRON, DRIFT, FADE, POSITION, LENGTH)
+    let mut poses = vec![
+        ("fwd".to_string(), f, false, 0.0, 0.3, 0.15, 0.75),
+        ("reverse".into(), r, false, 0.0, 0.3, 0.15, 0.75),
+        ("loop".into(), l, false, 0.0, 0.3, 0.15, 0.75),
+        ("ping".into(), p, false, 0.0, 0.3, 0.15, 0.75),
+        ("fwd-drift".into(), f, false, 1.0, 0.3, 0.15, 0.75),
+        ("fwd-drift-half".into(), f, false, 0.5, 0.3, 0.15, 0.75),
+        ("loop-drift".into(), l, false, 1.0, 0.3, 0.15, 0.75),
+        ("fwd-tron".into(), f, true, 0.0, 0.3, 0.15, 0.75),
+        ("reverse-tron".into(), r, true, 0.0, 0.3, 0.15, 0.75),
+        ("loop-tron".into(), l, true, 0.0, 0.3, 0.15, 0.75),
+        ("ping-tron".into(), p, true, 0.0, 0.3, 0.15, 0.75),
+        ("fwd-fade0".into(), f, false, 0.0, 0.0, 0.15, 0.75),
+        ("fwd-fade1".into(), f, false, 0.0, 0.9, 0.15, 0.75),
+        ("fwd-short".into(), f, false, 0.0, 0.3, 0.15, 0.3),
+        ("fwd-late".into(), f, false, 0.0, 0.3, 0.55, 0.75),
+        ("loop-short".into(), l, false, 0.0, 0.3, 0.7, 0.3),
     ];
-    for (k, style) in StepStyle::ALL.into_iter().enumerate() {
-        for (slug, d, tron, drift) in poses {
-            let c = canvas(&gauge(d, tron, drift, 0.3), style);
-            let s = 4;
+    // POSITION swept under a short window, a frame a step: what a turn
+    // animates (the glyph has no frame term of its own).
+    for (name, d) in [("fwd", f), ("reverse", r), ("loop", l), ("ping", p)] {
+        for k in 0..5 {
+            let pos = k as f32 / 4.0;
+            poses.push((format!("{name}-sweep{k}"), d, false, 0.0, 0.3, pos, 0.35));
+        }
+    }
+    let only = std::env::var("GLYPH_STYLES").unwrap_or_default();
+    for style in StepStyle::ALL {
+        let name = format!("{style:?}").to_lowercase();
+        if !only.is_empty() && !only.split(',').any(|o| o == name) {
+            continue;
+        }
+        for ((slug, d, tron, drift, fade, pos, len), s) in
+            poses.iter().cloned().flat_map(|p| [(p.clone(), 1), (p, 4)])
+        {
+            let mut set = set(d, tron, drift, fade);
+            set[3] = pos;
+            set[5] = len;
+            let g = TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live));
+            let c = canvas(&g, style);
             let (w, h) = (W * s, H * s);
             let row = (w * 3 + 3) & !3;
             let mut b = Vec::new();
@@ -131,12 +168,8 @@ fn write_variants() {
                 }
                 b.extend(std::iter::repeat_n(0u8, (row - n) as usize));
             }
-            let name = format!(
-                "glyph_{}_{}.bmp",
-                ["prints", "treads", "trail", "signal", "treadmill"][k],
-                slug
-            );
-            std::fs::write(dir.join(name), b).unwrap();
+            let file = format!("glyph_{name}_{slug}_{s}x.bmp");
+            std::fs::write(dir.join(file), b).unwrap();
         }
     }
 }
