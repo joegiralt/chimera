@@ -8,7 +8,7 @@ use chimera_engine::storage::{SourceHead, SourceLayout, SourceRef, data_offset};
 use chimera_engine::stream::layout::StreamFile;
 use chimera_engine::stream::registry::{RowRefused, STREAM_ROWS, StreamRegistry};
 use chimera_engine::stream::units::Frames;
-use chimera_hal::store::{FileRuns, Runs};
+use chimera_hal::store::{FileRuns, Runs, Seal};
 use chimera_hal::units::{BlockCount, Bytes, Lba};
 
 /// A `Plain` file of `frames` in one run: its frames tell rows apart.
@@ -33,6 +33,7 @@ fn file(frames: u32) -> StreamFile {
     let runs = FileRuns {
         ext: runs.finish().unwrap(),
         len: Bytes::new(len),
+        seal: Seal::Sealed,
     };
     StreamFile::from_layout(&l, runs).unwrap()
 }

@@ -3,7 +3,7 @@
 //! it is bank 2's (`bank2.x` globs this module); bank 1 reaches it only
 //! through `LoadDoor`.
 
-use chimera_hal::store::{RunsError, Store, StoreError};
+use chimera_hal::store::{RunsError, Seal, Store, StoreError};
 use chimera_hal::units::Bytes;
 
 use super::super::arena::ARENA_BYTES;
@@ -69,6 +69,12 @@ impl StreamLoad {
                 }
                 RunsError::Store(e) => read(e),
             })?;
+            // Unsealed, a source never read back whole against its CRC
+            // (a cut `put`'s remains): the whole-file load would refuse it,
+            // and streaming reads only its heads (#761 m10).
+            if runs.seal != Seal::Sealed {
+                return Err(corrupted());
+            }
             let got = read_source_head(s, r, self.sref.stem(), runs.len.get())
                 .map_err(StreamFail::Read)?;
             let l = SourceLayout::whole(got).filter(|_| got.sref == self.sref);

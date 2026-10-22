@@ -3,7 +3,7 @@
 //! its runs in the stream registry for the card interrupt. The SOURCE
 //! cell's load and a project load's pass 2 both take this path.
 
-use chimera_hal::store::{FileRuns, Store};
+use chimera_hal::store::{FileRuns, Seal, Store};
 use chimera_hal::units::Bytes;
 
 use super::arena::Cost;
@@ -205,14 +205,16 @@ impl StreamLoad {
     }
 
     /// `start`, its file's runs found and its head read already (a
-    /// project load's pass 2): no first pass. `None` as `start`, or when
-    /// the runs don't hold its samples.
+    /// project load's pass 2): no first pass. `None` as `start`, when the
+    /// runs don't hold its samples, or when the file is unsealed (never
+    /// checked against its CRC, as `pass` refuses it).
     pub fn found(
         p: &mut Project,
         head: SourceHead,
         heads: Heads,
         runs: FileRuns,
     ) -> Option<StreamLoad> {
+        (runs.seal == Seal::Sealed).then_some(())?;
         let file = StreamFile::from_layout(&SourceLayout::whole(head)?, runs)?;
         let l = Self::start(p, head, heads)?;
         Some(StreamLoad {

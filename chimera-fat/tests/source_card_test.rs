@@ -444,6 +444,7 @@ fn a_streamed_stem_is_not_deleted() {
     let runs = FileRuns {
         ext: runs.finish().unwrap(),
         len: Bytes::new(len),
+        seal: chimera_hal::store::Seal::Sealed,
     };
     let file = source_name(h.sref.stem());
     let other = source_name(chimera_core::storage::Stem::new(h.sref.crc ^ 1));
@@ -468,4 +469,24 @@ fn a_streamed_stem_is_not_deleted() {
     // SAFETY: nothing reads `REG` but this test.
     assert!(unsafe { REG.clear(id) });
     assert_eq!(s.delete(vol, file), Ok(()));
+}
+
+/// m10 (#761): `runs` says whether the file is sealed, so a stream can
+/// refuse one never read back against its CRC.
+#[test]
+fn runs_say_whether_the_file_is_sealed() {
+    use chimera_core::storage::source_name;
+    use chimera_hal::store::Seal;
+    let (h, _) = source(10, FRAMES);
+    let file = source_name(h.sref.stem());
+    let disk = Rc::new(with_clusters(CLUSTERS, 0x57E));
+    let mut s = probed(&disk);
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.make_dir(vol, Dir::Tapes).unwrap();
+    s.write(vol, file, &mut |w| w.put(&[7; 3_000])).unwrap();
+    let seal = |s: &mut _| Store::runs(s, vol, file).unwrap().seal;
+    assert_eq!(seal(&mut s), Seal::Open);
+    s.seal(vol, file).unwrap();
+    assert_eq!(seal(&mut s), Seal::Sealed);
 }

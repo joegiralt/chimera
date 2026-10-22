@@ -42,11 +42,11 @@ use chimera_core::ui::source_cell::{
 };
 use chimera_core::ui::view::SourceState;
 use chimera_hal::card_bus::CardFault;
-use chimera_hal::store::synthetic_runs;
 use chimera_hal::store::{
     ByteSink, Dir, FileName, FileRuns, MAX_RUNS, ReadSink, Runs, RunsError, Store, StoreError,
     VolumeId,
 };
+use chimera_hal::store::{Seal, synthetic_runs};
 use chimera_hal::testkit::MemStore;
 use chimera_hal::units::Bytes;
 use chimera_hal::units::{BlockCount, Lba};
@@ -1036,7 +1036,7 @@ fn registry_row_before_pool_row() {
     let other = bed(7).0;
     let l = SourceLayout::whole(other).unwrap();
     let len = source_file_min_len(other.sref).unwrap();
-    let runs = synthetic_runs(source_file(other.sref), Bytes::new(len)).unwrap();
+    let runs = synthetic_runs(source_file(other.sref), Bytes::new(len), Seal::Sealed).unwrap();
     let f = StreamFile::from_layout(&l, runs).unwrap();
     for n in 24..32 {
         reg.insert(SourceId::new(n).unwrap(), f).unwrap();
@@ -1474,7 +1474,11 @@ fn a_card_change_mid_load_publishes_nothing() {
     }
     let pool = rig.ui.project().pool();
     assert_eq!(pool.find_source(b.0.sref), None, "nothing published");
-    assert!(SourceId::ALL.iter().all(|&s| rig.registry().get(s).is_none()));
+    assert!(
+        SourceId::ALL
+            .iter()
+            .all(|&s| rig.registry().get(s).is_none())
+    );
 }
 
 /// m4 (#761): a re-init that fails is tried again on its own, a second
@@ -1570,4 +1574,23 @@ fn a_rehead_that_meets_a_new_note_tries_again() {
     stop.store(true, Ordering::Relaxed);
     audio.join().unwrap();
     assert_heads(&rig, &b, after.as_slice());
+}
+
+/// m10 (#761): the SOURCE cell's load of an unsealed file (a cut `put`'s
+/// remains, never checked against its CRC) publishes nothing.
+#[test]
+fn an_unsealed_file_doesnt_stream_from_the_cell() {
+    let b = bed(33);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.s.inner.unseal(source_file(b.0.sref));
+    rig.tape(|t| t.set_way(Way::One));
+    rig.turn(1);
+    rig.load();
+    let pool = rig.ui.project().pool();
+    assert_eq!(pool.find_source(b.0.sref), None, "nothing published");
+    assert!(
+        SourceId::ALL
+            .iter()
+            .all(|&s| rig.registry().get(s).is_none())
+    );
 }

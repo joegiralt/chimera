@@ -2,8 +2,8 @@
 
 use chimera_hal::card_bus::{CardBus, CardFault};
 use chimera_hal::store::{
-    ByteSink, CHUNK, Dir, FileName, FileRuns, ReadSink, RunsError, Store, StoreError, VolumeId,
-    synthetic_runs,
+    ByteSink, CHUNK, Dir, FileName, FileRuns, ReadSink, RunsError, Seal, Store, StoreError,
+    VolumeId, synthetic_runs,
 };
 use chimera_hal::units::Bytes;
 use std::fs::{self, File};
@@ -215,9 +215,15 @@ impl Store for DirStore {
 
     fn runs(&mut self, vol: VolumeId, file: FileName) -> Result<FileRuns, RunsError> {
         self.open(vol)?;
-        let len = fs::metadata(self.file_path(file)).map_err(io_err)?.len();
-        let len = u32::try_from(len).map_err(|_| StoreError::Io)?;
-        synthetic_runs(file, Bytes::new(len))
+        let meta = fs::metadata(self.file_path(file)).map_err(io_err)?;
+        let len = u32::try_from(meta.len()).map_err(|_| StoreError::Io)?;
+        // A sealed file on the host is read-only (`seal`).
+        let seal = if meta.permissions().readonly() {
+            Seal::Sealed
+        } else {
+            Seal::Open
+        };
+        synthetic_runs(file, Bytes::new(len), seal)
     }
 
     fn read_at(

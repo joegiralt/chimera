@@ -18,7 +18,7 @@ use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::stats::StreamStats;
 use chimera_engine::stream::units::{AudioBlocks, Frames, SlotIdx};
 use chimera_engine::voice_alloc::VoiceIdx;
-use chimera_hal::store::{FileRuns, Runs};
+use chimera_hal::store::{FileRuns, Runs, Seal};
 use chimera_hal::units::{BlockCount, Bytes, Lba};
 
 const NOW: AudioBlocks = AudioBlocks::new(100);
@@ -47,6 +47,7 @@ fn file(frames: u32, lba: u32) -> StreamFile {
     let runs = FileRuns {
         ext: runs.finish().unwrap(),
         len: Bytes::new(len),
+        seal: Seal::Sealed,
     };
     StreamFile::from_layout(&l, runs).unwrap()
 }

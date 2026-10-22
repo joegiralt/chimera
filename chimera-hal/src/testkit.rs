@@ -2,8 +2,8 @@
 extern crate std;
 
 use crate::store::{
-    ByteSink, CHUNK, Dir, FileName, FileRuns, ReadSink, RunsError, Store, StoreError, VolumeId,
-    synthetic_runs,
+    ByteSink, CHUNK, Dir, FileName, FileRuns, ReadSink, RunsError, Seal, Store, StoreError,
+    VolumeId, synthetic_runs,
 };
 use crate::units::{BlockCount, Bytes, FileBlock};
 use core::ops::ControlFlow;
@@ -45,6 +45,11 @@ impl MemStore {
     /// `bytes` as `file`, past `write`: as a host drops a file in the root.
     pub fn plant(&mut self, file: FileName, bytes: &[u8]) {
         self.files.insert(file, bytes.to_vec());
+    }
+
+    /// `file`'s seal gone: as a `put` cut before its read-back leaves it.
+    pub fn unseal(&mut self, file: FileName) {
+        self.sealed.remove(&file);
     }
 
     pub fn eject(&mut self) {
@@ -127,7 +132,12 @@ impl Store for MemStore {
     fn runs(&mut self, vol: VolumeId, file: FileName) -> Result<FileRuns, RunsError> {
         self.open(vol)?;
         let data = self.files.get(&file).ok_or(StoreError::NotFound)?;
-        synthetic_runs(file, Bytes::new(data.len() as u32))
+        let seal = if self.sealed.contains(&file) {
+            Seal::Sealed
+        } else {
+            Seal::Open
+        };
+        synthetic_runs(file, Bytes::new(data.len() as u32), seal)
     }
 
     fn read_at(
