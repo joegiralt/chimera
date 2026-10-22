@@ -207,6 +207,8 @@ pub struct UiDoor {
     /// TAPE cells' units where the engine has a law (`ui::walk`).
     tape_fmt: fn(ParamId, TapeMachine, crate::dsp::tape_engine::Way) -> Option<crate::ui::page::ValFmt>,
     speed_text: fn(&mut crate::ui::fmt::FmtBuf, crate::dsp::modulator::law::Law, f32),
+    /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
+    delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
     jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
     /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
@@ -221,7 +223,7 @@ type HeadKind = (SourceHead, LoadKind);
 type EnvWrites = &'static [(ParamId, f32)];
 
 /// `UiDoor::magic`.
-const UI_MAGIC: u32 = 0xB2C0_0003;
+const UI_MAGIC: u32 = 0xB2C0_0004;
 
 impl UiDoor {
     /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
@@ -244,6 +246,7 @@ impl UiDoor {
         tape_held: crate::ui::walk::tape_held_in,
         tape_fmt: crate::ui::walk::tape_fmt_in,
         speed_text: crate::ui::walk::speed_text_in,
+        delay_note: crate::ui::walk::delay_note_in,
         jog: crate::ui::jog::Jog::pass,
         pit: crate::ui::pit_tuner::calc::pass_in,
         pit_paint: crate::ui::pit_tuner::calc::paint_in,
@@ -370,6 +373,15 @@ impl UiDoor {
         v: f32,
     ) {
         (self.speed_text)(buf, law, v)
+    }
+
+    #[inline(always)]
+    pub(crate) fn delay_note(
+        &self,
+        id: ParamId,
+        k: crate::dsp::delay::DelayType,
+    ) -> Option<&'static str> {
+        (self.delay_note)(id, k)
     }
 
     #[inline(always)]

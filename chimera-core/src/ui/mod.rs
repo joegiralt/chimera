@@ -1141,6 +1141,7 @@ impl UiState {
             .on_clock(self.orbit.status.source)
             .on_rev(&self.project.perf().fx.reverb)
             .on_chorus(&self.project.perf().fx.chorus)
+            .on_delay(&self.project.perf().fx.delay)
             .on_pages(self.theme.pages);
         let base =
             view::SourceState::of(&sound.params.tape, sound.source_ref(), self.project.pool())

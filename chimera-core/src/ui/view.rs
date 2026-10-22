@@ -8,6 +8,7 @@ use crate::dsp::algo::kinds::{self, OpKind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
+use crate::dsp::delay::{DelayParams, DelayType};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{self, ModalParams, ResonatorMode};
@@ -95,6 +96,8 @@ pub struct SlotCtx {
     pub chorus: ChorusMode,
     /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
+    /// The delay's TYPE: the other TYPE's cells dim (`delay_note`).
+    pub delay: DelayType,
     /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
     pub plate: bool,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
@@ -147,6 +150,7 @@ impl SlotCtx {
             keys_place: get(BlockRef::TapeEngine, T::KEY) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
+            delay: DelayType::at(get(BlockRef::Delay, DelayParams::TYPE)),
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
@@ -185,6 +189,15 @@ impl SlotCtx {
         Self {
             rev: reverb_panel::shown(rev.kind),
             plate: in_plate_zone(rev),
+            ..self
+        }
+    }
+
+    /// This context under the project delay `fx` (a Sound's params hold
+    /// no FX): which TYPE's cells dim.
+    pub fn on_delay(self, fx: &DelayParams) -> Self {
+        Self {
+            delay: fx.kind(),
             ..self
         }
     }
@@ -902,6 +915,10 @@ pub const XFADE_NO_SEAM: &str = "PING-PONG TURNS · NO SEAM";
 pub const RETRIG_ONCE_ONLY: &str = "CUTS ONLY ONCE THROUGH";
 /// WALK's RETRIG once through with TRON on: TRON's notes stack.
 pub const RETRIG_TRON_OFF: &str = "CUTS ONLY WITH TRON OFF";
+/// The delay's TAPE cells (DLY › CHAR) under TYPE GRAIN, and GRAIN's
+/// (DLY › GRAIN) under TAPE (ADR 0202).
+pub const DELAY_TAPE_ONLY: &str = "TAPE TYPE ONLY";
+pub const DELAY_GRAIN_ONLY: &str = "GRAIN TYPE ONLY";
 /// A streamed loop's XFADE past what its loop head holds (spec § 2.3).
 pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
 
@@ -1008,7 +1025,16 @@ pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
                 },
             ..
         } => ctx.clock == ClockSource::Midi,
-        View::Param { addr, .. } => dimmed(addr, sound),
+        View::Param { addr, .. } => dimmed(addr, sound) || delay_note(addr, ctx).is_some(),
         _ => false,
     }
+}
+
+/// Why a delay cell is dimmed: the other TYPE's (ADR 0202), bank 2's
+/// (`walk::delay_note_in`; closed, none).
+pub fn delay_note(addr: ParamAddr, ctx: &SlotCtx) -> Option<&'static str> {
+    if addr.block != BlockRef::Delay {
+        return None;
+    }
+    crate::bank2::ui_door(|u| u.delay_note(addr.param, ctx.delay)).flatten()
 }

@@ -12,11 +12,12 @@ use crate::dsp::tape_engine::{
 };
 use crate::modulation::VCA;
 use crate::preset::Sound;
+use crate::dsp::delay::{DelayParams, DelayType};
 use crate::dsp::modulator::law::Law;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::page::ValFmt;
 use crate::ui::view::{
-    FADE_ASIDE, RETRIG_ONCE_ONLY, RETRIG_TRON_OFF, WOW_AT_REST, XFADE_LOOP_ONLY, XFADE_NO_SEAM,
+    DELAY_GRAIN_ONLY, DELAY_TAPE_ONLY, FADE_ASIDE, RETRIG_ONCE_ONLY, RETRIG_TRON_OFF, WOW_AT_REST, XFADE_LOOP_ONLY, XFADE_NO_SEAM,
     tape_routed,
 };
 
@@ -139,6 +140,18 @@ pub(crate) fn speed_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
         _ => 2.0 * motion,
     };
     crate::ui::fmt::fixed(buf, x, 2, "x");
+}
+
+/// Why the delay's cell `id` is dimmed under TYPE `k` (ADR 0202): DLY ›
+/// CHAR's MECHANICS and SAT are TAPE's, DLY › GRAIN's four GRAIN's; TIME,
+/// FDBK, TONE, REV and MIX are both TYPEs'.
+pub(crate) fn delay_note_in(id: ParamId, k: DelayType) -> Option<&'static str> {
+    type D = DelayParams;
+    match (k, id) {
+        (DelayType::Grain, D::WOW_FLUTTER | D::SATURATION) => Some(DELAY_TAPE_ONLY),
+        (DelayType::Tape, D::SIZE | D::DENSITY | D::PITCH | D::TEXTURE) => Some(DELAY_GRAIN_ONLY),
+        _ => None,
+    }
 }
 
 /// What `t` with `param` (MODEL or DIRECTION) at `code` can't play from a

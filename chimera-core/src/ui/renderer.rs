@@ -786,7 +786,7 @@ impl Renderer {
         let sound = &f.parts[f.active_part.index()].sound;
         let note = view
             .addr()
-            .and_then(|a| view::band_note(a, sound, f.ctx.src));
+            .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)));
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
             (Some(s), _) => {
                 let why = crate::ui::held::reason(s.why);
