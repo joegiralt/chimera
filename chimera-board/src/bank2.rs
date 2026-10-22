@@ -624,13 +624,25 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
     // interrupt gives the bus back before its work (bank 2's) goes.
     // Its own `TAPE_OFF_MS`: the audio's wait above may have spent the
     // first.
+    // Still streaming then: the abort asked while the door is open, so
+    // bank 2's stop sends CMD12 and drains the card before the door
+    // closes; `closed` grounds a burst with no stop only if that too ran
+    // out (#761 m12).
     #[cfg(not(feature = "sd-probe"))]
     {
-        let t1 = controls::ticks();
-        while crate::sd::BUS.owner() == chimera_hal::card_bus::Owner::Stream
-            && controls::ticks().wrapping_sub(t1) < TICKS
-        {
-            core::hint::spin_loop();
+        use crate::sd::BUS;
+        use chimera_hal::card_bus::Owner;
+        let wait = || {
+            let t1 = controls::ticks();
+            while BUS.owner() == Owner::Stream && controls::ticks().wrapping_sub(t1) < TICKS {
+                core::hint::spin_loop();
+            }
+        };
+        wait();
+        if BUS.owner() == Owner::Stream {
+            BUS.ask_abort();
+            crate::card_dma::pend();
+            wait();
         }
     }
 }

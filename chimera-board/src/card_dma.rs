@@ -1069,11 +1069,12 @@ fn clocks() -> Stamp {
 
 /// An entry with bank 2 closed: nothing is read. Only a gate build's
 /// `bank2 erase` closes a live door, once the bus is free of streams
-/// (`close_tape`); a burst still in flight then is grounded, CS high, the
-/// bus given back and its claim requeued, with no CMD12 (that is bank 2's
-/// stop): the UI's next command finds the card mid-read and recovers it as
-/// any failed command (a unit check owed: ADR 0175). A bench read in
-/// flight is answered `Fault`. The flags were cleared (`events`).
+/// (`close_tape`, which asks an abort first, so bank 2's stop sends CMD12
+/// while the door is open). A burst still in flight even then (the IRQ
+/// wedged past both waits) is grounded, CS high, the bus given back and
+/// its claim requeued, with no CMD12 (bank 2's): the UI's next command
+/// finds the card mid-read and recovers it as any failed command. A bench
+/// read in flight is answered `Fault`. The flags were cleared (`events`).
 #[cfg(feature = "bank2")]
 #[inline(never)]
 fn closed(st: &mut IrqState) {
