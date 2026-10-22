@@ -973,7 +973,8 @@ LFO2.SHAPE = "TRIANGLE"
 mod.LFO2 = "VA.SHAPE2 +30, PITCH.FINE +4"
 mod.NOTE = "FILTER.CUTOFF +45"
 mod.VEL = "FILTER.CUTOFF +10"
-trim = "2.1"
+level = "by ear -15.8: set low so the pad phrase chords stay at or under 3 dB of limiting"
+trim = "-2.8"
 
 # A mono pad that glides: two saws an octave apart, the 2040 open to
 # 1.6 kHz and a slow ENV 2 lifting it further as the note blooms; a slow
@@ -1065,7 +1066,7 @@ LFO2.RATE = "5.2"  # 5.20 Hz
 LFO2.SHAPE = "SINE"
 mod.LFO2 = "PITCH.FINE +3"
 mod.VEL = "FILTER.CUTOFF +12"
-trim = "2.8"
+trim = "2.5"
 
 # Trembling keys: a saw-to-square over a pulse an octave down, plucked by
 # ENV 2 through the 2040, a 6.5 Hz tremolo on the VCA and a sine LFO,
@@ -1195,7 +1196,8 @@ LFO1.RATE = "0.25"  # 0.25 Hz
 LFO1.SHAPE = "TRIANGLE"
 mod.LFO1 = "VA.SHAPE2 +40"
 mod.VEL = "FILTER.CUTOFF +10"
-trim = "-0.4"
+level = "by ear -15.0: set low so the arp phrase stays under 1 dB of limiting"
+trim = "-3.0"
 
 # A grainy swarm: a saw-to-square and a square a major seventh up, a fast
 # random LFO shaking the level, osc 2's pitch and its width, through a
@@ -1240,4 +1242,5 @@ mod.LFO1 = "OUT.VCA +32, VA.FINE2 +80, PITCH.FINE +50, VA.SHAPE2 +20"
 LFO2.RATE = "0.2"  # 0.20 Hz
 LFO2.SHAPE = "TRIANGLE"
 mod.LFO2 = "FILTER.CUTOFF +10"
-trim = "3.6"
+level = "by ear -18.7: set low so the pad phrase chords stay at or under 3 dB of limiting"
+trim = "-2.9"
