@@ -1289,6 +1289,8 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     time_rows(rig, &FORMANT, &mut formant, (36, 10));
     show_rows(rec, "FORMANT", &FORMANT, &formant);
     hold(clocks);
+    warm_page(rig, rec);
+    hold(clocks);
     let mut va = [Counts::default(); VA_ROWS];
     for (row, &(_, patch, low, step)) in va.iter_mut().zip(&VA) {
         for n in 1..=MAX_VOICES {
@@ -1304,6 +1306,79 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     }
     rec.flush();
 }
+
+/// The WARM rows, which measure only (#150): `WARM_ROWS` at 1 and 8
+/// voices, each voice's block rendered twice through `warm::twice`, the
+/// second from a copy of the voice. Each line reads the first render's and
+/// the second's cycles a sample a voice: what the voice costs where it
+/// runs, and with its code and data just used. Then 1 OP at 1..8 voices
+/// with the I-cache off, every instruction fetched from flash.
+#[cfg(feature = "bench-algo")]
+fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
+    use chimera_engine::warm::{ARMED, FIRST, SECOND};
+    use core::sync::atomic::Ordering::Relaxed;
+    let mut cells = [(0u32, 0u32); WARM_ROWS * 2];
+    for (i, &(_, patch, low, step)) in WARM.iter().enumerate() {
+        for (j, n) in [1, MAX_VOICES].into_iter().enumerate() {
+            let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
+            FIRST.store(0, Relaxed);
+            SECOND.store(0, Relaxed);
+            ARMED.store(true, Relaxed);
+            let (_, spans, _) = rig.time(&setup, &|_, _| {}, n, low, step);
+            ARMED.store(false, Relaxed);
+            let samples = (WARM_BLOCKS + TIMED_BLOCKS) * BLOCK_SIZE as u32 * spans.max(1) as u32;
+            cells[i * 2 + j] = (
+                FIRST.load(Relaxed) / samples,
+                SECOND.load(Relaxed) / samples,
+            );
+        }
+    }
+    // SAFETY: the bench runs alone, before interrupts are unmasked;
+    // `main`'s SCB isn't in use until it returns, and this only turns the
+    // I-cache off and back on around the row.
+    let mut cp = unsafe { cortex_m::Peripherals::steal() };
+    let mut cold = Counts::default();
+    cp.SCB.disable_icache();
+    for n in 1..=MAX_VOICES {
+        let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(algo(AlgoId::A1, 0b1, 0));
+        cold.add(n, rig.time(&setup, &|_, _| {}, n, 36, 12));
+    }
+    cp.SCB.enable_icache();
+    rec.clear();
+    let mut line = FmtBuf::new();
+    rec.heading("WARM");
+    rec.line(
+        Face::Label(theme::MID),
+        "/VOICE 1ST 2ND, 1 V AND 8 V",
+        (4, 30),
+    );
+    for (i, &(label, ..)) in WARM.iter().enumerate() {
+        let ((a, b), (c, d)) = (cells[i * 2], cells[i * 2 + 1]);
+        line.clear();
+        let _ = write!(line, "{label} {a} {b}  {c} {d}");
+        rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 16));
+    }
+    voice_row(
+        rec,
+        &mut line,
+        46 + WARM_ROWS as i32 * 16 + 8,
+        "1 OP NO I$",
+        &cold,
+    );
+    rec.flush();
+}
+
+/// The WARM page's patches, as `PATCHES` plays them.
+#[cfg(feature = "bench-algo")]
+const WARM_ROWS: usize = 4;
+#[cfg(feature = "bench-algo")]
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static WARM: [Row; WARM_ROWS] = [
+    ("1 OP", || algo(AlgoId::A1, 0b1, 0), 36, 12),
+    ("6 OP", || algo(AlgoId::A1, ALL, 0), 36, 12),
+    ("CHAIN", || algo(AlgoId::A17, ALL, 0), 36, 12),
+    ("A16+17", a16_a17, 36, 12),
+];
 
 /// Each of `rows` at 1..8 voices, notes `low` up by `step`.
 fn time_rows(rig: &mut Rig<'_>, rows: &[RoutingRow], counts: &mut [Counts], (low, step): (u8, u8)) {
