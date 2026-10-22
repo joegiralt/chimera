@@ -33,7 +33,9 @@ impl DacSample {
 pub fn to_dac(x: f32) -> DacSample {
     // Clamped after the saturating cast, so NaN plays silence.
     const TOP: i32 = DAC_FULL_SCALE as i32;
-    let steps = (libm::roundf(x * DAC_FULL_SCALE) as i32).clamp(-TOP, TOP);
+    // `round` is roundTiesToAway, libm's `roundf` bit for bit (all 2³² f32
+    // checked, `to_dac_matches_libm`): one `vrinta`, not libm's software round.
+    let steps = (core::f32::math::round(x * DAC_FULL_SCALE) as i32).clamp(-TOP, TOP);
     DacSample(steps << 8)
 }
 
@@ -193,4 +195,50 @@ pub const fn kick_gap_us(controls_hz: u32, block: u32, sample_rate: u32) -> u32 
 /// reload register holds 12 bits.
 pub const fn iwdg_reload_at_div4(timeout_ms: u32) -> u32 {
     timeout_ms * (LSI_NOMINAL_HZ / 1000) / 4
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `to_dac` as it was, with libm's `roundf`.
+    fn libm_dac(x: f32) -> DacSample {
+        const TOP: i32 = DAC_FULL_SCALE as i32;
+        DacSample(((libm::roundf(x * DAC_FULL_SCALE) as i32).clamp(-TOP, TOP)) << 8)
+    }
+
+    fn check(bits: u32) {
+        let x = f32::from_bits(bits);
+        let y = x * DAC_FULL_SCALE;
+        assert_eq!(
+            core::f32::math::round(y).to_bits(),
+            libm::roundf(y).to_bits(),
+            "{bits:#x}"
+        );
+        assert_eq!(to_dac(x), libm_dac(x), "{bits:#x}");
+    }
+
+    /// Every 61st f32, and every input whose scaled value lands within a few
+    /// ulps of a half step anywhere the DAC can play.
+    #[test]
+    fn to_dac_matches_libm() {
+        for bits in (0..=u32::MAX).step_by(61) {
+            check(bits);
+        }
+        for n in -8_388_608i32..=8_388_608 {
+            let h = (n as f32 + 0.5) / DAC_FULL_SCALE;
+            for d in -3i32..=3 {
+                check(h.to_bits().wrapping_add_signed(d));
+            }
+        }
+    }
+
+    /// All 2³² f32: `cargo test --release -p chimera-engine -- --ignored to_dac_matches_libm_everywhere`.
+    #[test]
+    #[ignore]
+    fn to_dac_matches_libm_everywhere() {
+        for bits in 0..=u32::MAX {
+            check(bits);
+        }
+    }
 }
