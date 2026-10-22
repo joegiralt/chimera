@@ -13,8 +13,8 @@ use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
 use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, load_kind};
 use crate::dsp::tape_engine::read::write_head_table;
 use crate::storage::{
-    CardFault, LoadError, Ready, SourceLayout, SourceReadError, read_packed_into, read_source_head,
-    source_file,
+    CardError, CardFault, LoadError, Ready, SourceLayout, SourceReadError, read_packed_into,
+    read_source_head, source_file,
 };
 use crate::stream::admit::head_frames;
 use crate::stream::layout::{FileKey, StreamFile};
@@ -27,6 +27,13 @@ fn corrupted() -> StreamFail {
     StreamFail::Read(SourceReadError::Load(LoadError::File(
         crate::storage::FileError::Corrupt,
     )))
+}
+
+/// The card itself failed: not a busy bus (the card untouched), nor a
+/// file missing or damaged (`CardError::from_store`). Only that ends a
+/// project load's stream pass (#761 m9).
+fn card_faulted(e: &impl CardFault) -> bool {
+    e.store_error().and_then(CardError::from_store).is_some()
 }
 
 /// One pass of `l` (`StreamLoad::step`).
@@ -189,7 +196,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 continue;
             }
             Err(RunsError::Store(err)) => {
-                if CardFault::store_error(&SourceReadError::from(err)).is_some() {
+                if card_faulted(&SourceReadError::from(err)) {
                     p.pool.mark_absent(id, Absence::ReadFailed);
                     fault = true;
                 }
@@ -206,9 +213,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
             Ok(head) => head,
             Err(err) => {
                 p.pool.mark_absent(id, Absence::ReadFailed);
-                if err.store_error().is_some() {
-                    fault = true;
-                }
+                fault = card_faulted(&err);
                 continue;
             }
         };
@@ -238,7 +243,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 StreamStep::Failed(StreamFail::Full) => break Some(Absence::StreamsFull),
                 StreamStep::Failed(StreamFail::Fragmented) => break Some(Absence::Fragmented),
                 StreamStep::Failed(StreamFail::Read(err)) => {
-                    fault = err.store_error().is_some();
+                    fault = card_faulted(&err);
                     break Some(Absence::ReadFailed);
                 }
                 // The heads didn't fit; `Sounding` is a re-head's alone.
