@@ -172,7 +172,7 @@ pub fn closed_text(
     };
     (closed(bank2)
         && (named.contains(&addr) || va_mode() || fx_type() || kind() || grain() || orbit()))
-        .then_some(NEEDS_UPDATE)
+    .then_some(NEEDS_UPDATE)
 }
 
 /// What the header of a Part playing `engine` warns under `bank2`: a TAPE

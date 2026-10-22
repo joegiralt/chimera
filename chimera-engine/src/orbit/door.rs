@@ -18,7 +18,8 @@ use crate::source_table::GateView;
 use crate::stream::port::{NoPorts, Streams, VoicePorts};
 
 /// One block of ORBIT through ports `P`: what it sent the `Instrument`.
-type BlockRun<P> = fn(&mut OrbitRunner, &mut Instrument, &AudioShared, &GateView<'_>, &mut P) -> Events;
+type BlockRun<P> =
+    fn(&mut OrbitRunner, &mut Instrument, &AudioShared, &GateView<'_>, &mut P) -> Events;
 
 /// The entries. Private, called only by the proxies below inside the
 /// door's `with`, so no pointer into bank 2 leaves it.
@@ -26,8 +27,13 @@ type BlockRun<P> = fn(&mut OrbitRunner, &mut Instrument, &AudioShared, &GateView
 pub struct OrbitDoor {
     block: BlockRun<NoPorts>,
     #[allow(clippy::type_complexity)]
-    block_streamed:
-        fn(&mut OrbitRunner, &mut Instrument, &AudioShared, &GateView<'_>, &mut Streams<'_, '_>) -> Events,
+    block_streamed: fn(
+        &mut OrbitRunner,
+        &mut Instrument,
+        &AudioShared,
+        &GateView<'_>,
+        &mut Streams<'_, '_>,
+    ) -> Events,
     realtime: fn(&mut OrbitRunner, usize, RealTime, u64),
     live: fn(&mut OrbitRunner, NoteEvent),
     fill_view: fn(&OrbitRunner, &mut OrbitView),

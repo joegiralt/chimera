@@ -5,8 +5,8 @@
 
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::note_queue::{NoteEvent, RealTime};
-use chimera_core::source_table::GateView;
 use chimera_core::orbit::door::OrbitPorts;
+use chimera_core::source_table::GateView;
 use chimera_core::ui::UiState;
 use stm32h7xx_hal::gpio::{Output, PB1, PushPull};
 
