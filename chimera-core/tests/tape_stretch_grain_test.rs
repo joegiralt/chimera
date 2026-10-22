@@ -627,3 +627,52 @@ fn linear_read_loss() {
         (a.0 * a.0 + a.1 * a.1).sqrt()
     }
 }
+
+/// With no PERIOD a tone's grains lock to the window's own period (ADR
+/// 0204): a sine and a two-note chord hold their level within 3 dB,
+/// frozen and at 1×, SPRAY 0 and 0.4, from the window's start and from
+/// START ½ (the run-up, every grain at the window's foot), A4 on ROOT C4.
+#[test]
+fn unpitched_tones_hold_their_level() {
+    let n = FS as usize;
+    let tau = core::f32::consts::TAU;
+    let sine: Vec<f32> = (0..n).map(|i| 0.5 * (tau * i as f32 * 440.0 / FS).sin()).collect();
+    let chord: Vec<f32> = (0..n)
+        .map(|i| {
+            let t = i as f32 / FS;
+            0.25 * (tau * 261.625_58 * t).sin() + 0.25 * (tau * 391.995_44 * t).sin()
+        })
+        .collect();
+    let mut bad = Vec::new();
+    for (name, src) in [("sine", &sine), ("chord", &chord)] {
+        let held = held_plain(src, 48_000);
+        let v = SourceView::new(&held).unwrap();
+        let want = rms(&src[..]);
+        for (motion, start, spray) in [
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.4),
+            (0.5, 0.0, 0.4),
+            (0.5, 0.5, 0.0),
+        ] {
+            let mut p = TapeEngineParams {
+                machine: TapeMachine::Stretch,
+                kind: StretchType::Grain,
+                motion,
+                start,
+                root: 6_000.0,
+                ..TapeEngineParams::default()
+            };
+            p.stretch = [0.5, 0.3, spray, 0.0];
+            let x = play(&|_| p, &v, 69, 1.2);
+            // 20 ms frames from 30 ms on: past the strike's own rise.
+            let f = frames(&x[(0.03 * FS) as usize..], 20.0);
+            let (lo, hi) = f.iter().fold((f32::MAX, 0.0f32), |(l, h), &r| (l.min(r), h.max(r)));
+            let (lo, hi) = (db(lo) - db(want), db(hi) - db(want));
+            eprintln!("{name} SPEED {motion} START {start} SPRAY {spray}: {lo:+.1} .. {hi:+.1} dB");
+            if !(lo > -3.0 && hi < 3.0) {
+                bad.push(format!("{name} SPEED {motion} START {start} SPRAY {spray}"));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "outside 3 dB: {bad:?}");
+}
