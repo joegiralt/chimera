@@ -1107,9 +1107,6 @@ impl Renderer {
                     let text = text[..end].trim_end();
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
-                View::Orbit(_) if crate::bank2::orbit_closed(f.bank2) => {
-                    let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
-                }
                 View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
                 View::Source(s) => s.cell(&mut buf),
                 // A column wide: NEEDS UPDATE's last word (the band reads it whole).
