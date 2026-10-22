@@ -1492,7 +1492,7 @@ static TAPE_ROWS: [TapeRow; 20] = [
     // A 40 ms loop at XFADE ½ on the long source, `inc` 16: a 20 ms fade,
     // equal-power (`power_of` at every wrap, about one a block).
     (
-        "LOOP 40MS",
+        "LOOP 40",
         Tapes::Long,
         |p| (p.tape.size, p.tape.xfade) = (0.55, 0.5),
         HOLD,
@@ -1500,19 +1500,19 @@ static TAPE_ROWS: [TapeRow; 20] = [
     // CLASSIC POLY at its shortest SIZE: with PERIOD a sum-to-1 splice,
     // with none `power_of` at every splice (the storm).
     (
-        "STR POLY",
+        "POLY",
         Tapes::Long,
         |p| stretch(p, StretchType::Poly, 109.0),
         HOLD,
     ),
     (
-        "STR POLY NP",
+        "POLY NP",
         Tapes::Long,
         |p| stretch(p, StretchType::Poly, 0.0),
         HOLD,
     ),
     (
-        "STR MONO NP",
+        "MONO NP",
         Tapes::Long,
         |p| stretch(p, StretchType::Mono, 0.0),
         HOLD,
@@ -1610,7 +1610,7 @@ impl TapeRig<'_> {
                 }
                 let start = DWT::cycle_count();
                 let out = (&mut *fx, &mut self.dac, &mut *self.scope);
-                inst.run_block(self.sources, out, shared, |_, _| {});
+                tape_block(inst, self.sources, out, shared);
                 let c = DWT::cycle_count().wrapping_sub(start);
                 if b >= WARM_BLOCKS {
                     worst = worst.max(c);
@@ -1653,13 +1653,13 @@ impl TapeRig<'_> {
             p.params.tape.start = *fresh as f32 * 0.005;
             for _ in 0..WARM_BLOCKS {
                 let out = (&mut *fx, &mut self.dac, &mut *self.scope);
-                inst.run_block(self.sources, out, shared, |_, _| {});
+                tape_block(inst, self.sources, out, shared);
             }
             cp.SCB.clean_invalidate_dcache(&mut cp.CPUID);
             let start = DWT::cycle_count();
             hit(self.sources, inst, shared, (ids, voices), Hit::Again);
             let out = (&mut *fx, &mut self.dac, &mut *self.scope);
-            inst.run_block(self.sources, out, shared, |_, _| {});
+            tape_block(inst, self.sources, out, shared);
             worst = worst.max(DWT::cycle_count().wrapping_sub(start));
         }
         self.sources.store_sounding(0);
@@ -1667,38 +1667,47 @@ impl TapeRig<'_> {
     }
 }
 
-/// The TAPE STRIKE screen's rows (#777): label, set-up, voices, all on
-/// one source.
+/// One TAPE block with no notes: the bench's one call site, so the
+/// engine's generic render inlines here in bank 2, never a copy in bank 1.
+#[inline(never)]
+fn tape_block(
+    inst: &mut Instrument,
+    sources: &mut AudioToken,
+    out: (&mut FxBus, &mut DacBlocks, &mut ScopeWriter),
+    shared: &AudioShared,
+) {
+    inst.run_block(sources, out, shared, |_, _| {});
+}
+
+/// The STRIKE screen's rows (#777): label, set-up, voices, all on one
+/// source. Labels short, as their bytes land in bank 1: L LOOP, GP GRAIN
+/// with PERIOD, GN GRAIN with none, CN CLASSIC POLY with none; voices, and
+/// /1 on one source, /8 on eight.
 type StrikeRow = (&'static str, fn(&mut ParamSnapshot), usize, bool);
 #[unsafe(link_section = ".bank2.rodata.bench")]
 static STRIKES: [StrikeRow; 6] = [
-    ("LOOP 8", |p| p.tape.xfade = 0.5, MAX_VOICES, false),
+    ("L8", |p| p.tape.xfade = 0.5, MAX_VOICES, false),
     (
-        "GRAIN P 8",
+        "GP8",
         |p| stretch(p, StretchType::Grain, 109.0),
         MAX_VOICES,
         false,
     ),
+    ("GN1", |p| stretch(p, StretchType::Grain, 0.0), 1, false),
     (
-        "GRAIN NP 1",
-        |p| stretch(p, StretchType::Grain, 0.0),
-        1,
-        false,
-    ),
-    (
-        "GRAIN NP 8/1",
+        "GN8/1",
         |p| stretch(p, StretchType::Grain, 0.0),
         MAX_VOICES,
         true,
     ),
     (
-        "GRAIN NP 8/8",
+        "GN8/8",
         |p| stretch(p, StretchType::Grain, 0.0),
         MAX_VOICES,
         false,
     ),
     (
-        "CLASSIC NP 8",
+        "CN8",
         |p| stretch(p, StretchType::Poly, 0.0),
         MAX_VOICES,
         false,
@@ -1835,7 +1844,7 @@ fn tape_page(
     rec.flush();
     // Each strike's whole block, cycles, out of the 640,000 at 480 MHz.
     rec.clear();
-    rec.heading("TAPE STRIKE BLOCK");
+    rec.heading("STRIKE");
     let mut fresh = 0u32;
     match tape_sources(project, Tapes::Long) {
         Some(ids) => {
@@ -1843,7 +1852,7 @@ fn tape_page(
                 let perf = project.perf();
                 let c = rig.time_strike(perf, setup, &ids, (voices, one, &mut fresh));
                 line.clear();
-                let _ = write!(line, "{label} {c} ({}/S)", c / BLOCK_SIZE as u32);
+                let _ = write!(line, "{label} {c}");
                 rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 18));
             }
         }
