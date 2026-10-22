@@ -105,26 +105,35 @@ pub use params::{
 // (instructions × 1.46 × 1.1, + 12 a head for `inc` 16's misses), rounded
 // up to 10 (spec § 5). The bench's cold rows hold them (TAPE Task 14).
 /// LOOP either way: its shortest loop at `inc` 16, XFADE ½, 262.4 → 445.
-pub const COST_LOOP: Cost = Cost(450);
-/// ONESHOT: a short slice's end ramp, retriggered, 135.4 → 229.5.
-pub const COST_ONESHOT: Cost = Cost(230);
-/// TRON goes round its window as LOOP does (ADR 0203): LOOP's bill.
-pub const COST_TRON: Cost = COST_LOOP;
-/// PING-PONG clamping in its shortest loop, 289.4 → 489.
-pub const COST_PING: Cost = Cost(490);
+/// The unit reads more (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): REV 64 892, LOOP 64 859, a 40 ms
+/// loop's equal-power fade at every wrap 775, LOOP 256 664: 820.
+pub const COST_LOOP: Cost = Cost(820);
+/// ONESHOT: a short slice's end ramp, retriggered, 135.4 → 229.5. The unit
+/// reads 1SHOT 418 (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 345.
+pub const COST_ONESHOT: Cost = Cost(345);
+/// TRON goes round its window as LOOP does (ADR 0203), struck and let go
+/// every block on the bench's row: the unit reads 1,035 (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 960.
+pub const COST_TRON: Cost = Cost(960);
+/// PING-PONG clamping in its shortest loop, 289.4 → 489. The unit reads
+/// PING 64 643 (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 570.
+pub const COST_PING: Cost = Cost(570);
 /// SCRUB fading in its shortest loop, an ease in, 283.4 → 479.
 pub const COST_SCRUB: Cost = Cost(480);
-/// TRANSWAVE steady: two heads, 232.9 → 398.
-pub const COST_WAVE: Cost = Cost(400);
+/// TRANSWAVE steady: two heads, 232.9 → 398. The unit reads WAVE 530
+/// (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 455.
+pub const COST_WAVE: Cost = Cost(455);
 /// TRANSWAVE's level change over `COST_WAVE`: four heads, 432.9 → 743,
 /// billed 770 in all. TAPE's `glide_cost` term.
 pub const COST_WAVE_LEVEL: Cost = Cost(370);
-/// STRETCH CLASSIC either way, a short source's lifted wraps, 442.5.
-pub const COST_STRETCH: Cost = Cost(450);
+/// STRETCH CLASSIC either way, a short source's lifted wraps, 442.5. The
+/// unit reads MONO 613, POLY 607 and with no PERIOD (`power_of` at every
+/// splice, #771) 612 (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 540.
+pub const COST_STRETCH: Cost = Cost(540);
 /// STRETCH GRAIN (ADR 0204): four grains of the core's run loop, 84
 /// instructions a sample each (`tools/loop_count.py`, 135 cycles), and the
-/// block's windows, level and power reads, 25: 565.
-pub const COST_STRETCH_GRAIN: Cost = Cost(570);
+/// block's windows, level and power reads, 25: 565. The unit reads 1,020
+/// with the source's PERIOD and 1,019 with its own (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 945.
+pub const COST_STRETCH_GRAIN: Cost = Cost(945);
 /// TAPE when it runs (`tape_runs`): the transport, 1.2 → 1.9.
 pub const COST_TAPE_RUNS: Cost = Cost(10);
 /// AGE when it runs (`age::age_runs`): the wear's loop and block, 15.9 →

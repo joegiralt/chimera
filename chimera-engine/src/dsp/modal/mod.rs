@@ -402,7 +402,10 @@ impl ModalEngine {
     /// (ADR 0097): the out clip's `tanhf`, 62 instructions and two
     /// `vdiv.f32`s a sample on its shortest path, for stmlib's rational
     /// clip, 16.5 and one: (45.5 × 1.46 + 12.54) × 0.9.
-    pub const COST_SYMPATHETIC: Cost = Cost(470);
+    /// The unit read 2026-10-22 (ROUTING bench, rev V at 480 MHz, four
+    /// ringing voices): MDL SYM 928 a voice against 769 billed, SYM0 860
+    /// against 689, SYM+ 1,081 against 909: +175.
+    pub const COST_SYMPATHETIC: Cost = Cost(645);
     /// The resonator bank: this plus `COST_MODE` per mode. Its sample loop
     /// as benched (MDL RES /VOICE 1,865; less the chain's 57, 1,808 at 32
     /// modes against 1,900 billed), and the macros' easing is a few

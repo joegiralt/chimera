@@ -408,7 +408,9 @@ pub const COST_FM: Cost = Cost(580);
 /// divide, the wrap at the 0.45 cap with the jitter's draw; the scale
 /// ramps per block) + 70.1 (OSC 2's) + 37.8 + 52.9 (no VarOsc runs: the
 /// block is `render`'s and `render_loopfm`'s own) + 8.9 + 95 = 349.4.
-pub const COST_LOOPFM: Cost = Cost(350);
+/// The unit read 712 a voice against 584 billed (2026-10-22, bench VA,
+/// rev V at 480 MHz): +130.
+pub const COST_LOOPFM: Cost = Cost(480);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 72.6 (with `am_reach` at the
 /// BLEND ramp's two ends a block, ADR 0176) + 29.9 + 95 = 534.3.
 pub const COST_AM: Cost = Cost(540);
@@ -433,8 +435,10 @@ pub const COST_PHASE: Cost = Cost(650);
 /// `render`'s own share (the level's lane, `z²` in the norm, the door's
 /// call) is under 0.1 a sample.
 pub const COST_NOISE_WHITE: Cost = Cost(20);
-pub const COST_NOISE_PINK: Cost = Cost(35);
-pub const COST_NOISE_RED: Cost = Cost(30);
+/// The unit reads WHITE 16, PINK 36, RED 32, DIGITAL 30 over VA (2026-10-22,
+/// ROUTING bench, rev V at 480 MHz): PINK and RED re-billed.
+pub const COST_NOISE_PINK: Cost = Cost(40);
+pub const COST_NOISE_RED: Cost = Cost(35);
 pub const COST_NOISE_DIGITAL: Cost = Cost(35);
 
 /// PHASE's peak depth at BLEND `blend`, in cycles: `blend/2`. BLEND ½ is
