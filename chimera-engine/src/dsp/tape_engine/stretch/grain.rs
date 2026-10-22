@@ -216,6 +216,10 @@ pub struct Grains {
     win: Window,
     /// The lock's period on a pitched source.
     period: Option<Period>,
+    /// Its own-period search waits for a block with one left (#777).
+    searching: bool,
+    /// The block count it last rendered in (`period::rendering`).
+    seen: u32,
     newest: Newest,
     stage: Stage,
     level: Level,
@@ -239,6 +243,8 @@ impl Grains {
             dir: Dir::Fwd,
         },
         period: None,
+        searching: false,
+        seen: 0,
         newest: Newest {
             at: WinPos::START,
             speed: Speed::ONE,
@@ -286,10 +292,21 @@ impl Grains {
             Dir::Rev => Cloud::struck(&Src::<true>::new(*v, win.base, win.len), first),
             Dir::Fwd => Cloud::struck(&Src::<false>::new(*v, win.base, win.len), first),
         };
+        // The lock waits for the note's first block (#777): no grain
+        // starts before it, so it plays as found at note-on; a block runs
+        // one window's own search at most, and a note past it plays
+        // unlocked till a later block has one.
+        let searching = Period::new(p.period).is_none();
+        let period = if searching {
+            None
+        } else {
+            lock_period(p, v, win).flatten()
+        };
         Grains {
             cloud,
             win,
-            period: lock_period(p, v, win),
+            period,
+            searching,
             newest: Newest {
                 at: WinPos::START,
                 speed,
@@ -345,6 +362,14 @@ impl Grains {
         p: &TapeEngineParams,
         sr: u32,
     ) -> bool {
+        // A search the note-on's block had no room for (#777): unlocked
+        // till then, as a source that doesn't repeat plays.
+        super::period::rendering(&mut self.seen);
+        if self.searching
+            && let Some(period) = lock_period(p, v, self.win)
+        {
+            (self.period, self.searching) = (period, false);
+        }
         let src = Src::<REV>::new(*v, self.win.base, self.win.len);
         let dur = p.grain().seconds().samples(sr);
         let spray = p.spray();
@@ -569,7 +594,8 @@ fn pointer_speed(win: Window, length: Seconds, motion: f32, sr: u32) -> Speed {
 /// first frames repeat (`period::of_window`, once a window), as found: a chord's common period
 /// is a multiple of its root's, and ROOT's would put its fifth out of
 /// phase. Two periods fit the window, or none.
-fn lock_period(p: &TapeEngineParams, v: &WholeRow<'_>, win: Window) -> Option<Period> {
+/// `None` while the window's own search waits for a block (#777).
+fn lock_period(p: &TapeEngineParams, v: &WholeRow<'_>, win: Window) -> Option<Option<Period>> {
     let Some(yin) = Period::new(p.period) else {
         let rate = u32::from(v.desc().rate());
         let key = (win.base, win.len, win.dir == Dir::Rev);
@@ -585,7 +611,7 @@ fn lock_period(p: &TapeEngineParams, v: &WholeRow<'_>, win: Window) -> Option<Pe
         Some(r) if near(yin.get(), r.get()) || near(r.get(), yin.get()) => r,
         _ => yin,
     };
-    (2.0 * pick.get() <= win.len as f32).then_some(pick)
+    Some((2.0 * pick.get() <= win.len as f32).then_some(pick))
 }
 
 /// A pitched grain's start: as near `want` as a whole number of periods
