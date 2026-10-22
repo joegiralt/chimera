@@ -357,8 +357,8 @@ fn factory_sounds_save_as_loaded() {
         // TRON on; each renders as before (`tape_legacy_test`). ADR 0204: the
         // STRETCH Sounds turn to GRAIN, with ONE's ENV 1, re-trimmed.
         // Re-pinned on the integration's merged tree. #761's review (M3):
-        // KIT saves no SLICE (on hold) and is re-trimmed as a whole strip.
-        assert_eq!(all.finish(), 0x5BB4_24E2, "{} Sounds", r.sounds.len());
+        // KIT is out of the set until SLICE returns (#779), so 31 Sounds.
+        assert_eq!(all.finish(), 0x9545_4586, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
         let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();
