@@ -1289,8 +1289,9 @@ fn streamed_rig(b: &(SourceHead, Vec<u8>)) -> Rig {
 }
 
 /// While the card is faulted, a streamed source's band reads CARD READ
-/// FAILED: a re-init that fails leaves it so, tried once; one the bus was
-/// too busy for is tried again; one that mounts clears it.
+/// FAILED: a re-init that fails leaves it so, tried again a second later,
+/// then every five (m4, #761); one the bus was too busy for is tried
+/// again at once; one that mounts clears it.
 #[test]
 fn focus_band_reads_card_read_failed() {
     let b = bed(3);
@@ -1302,7 +1303,7 @@ fn focus_band_reads_card_read_failed() {
     rig.work();
     assert_eq!(rig.band(), READ_FAILED);
     rig.work();
-    assert_eq!(rig.s.recovers, 1, "a failed re-init isn't retried");
+    assert_eq!(rig.s.recovers, 1, "a failed re-init waits");
     assert_eq!(rig.band(), READ_FAILED);
 
     // A mount by any card op clears the fault, and the band.
@@ -1474,4 +1475,33 @@ fn a_card_change_mid_load_publishes_nothing() {
     let pool = rig.ui.project().pool();
     assert_eq!(pool.find_source(b.0.sref), None, "nothing published");
     assert!(SourceId::ALL.iter().all(|&s| rig.registry().get(s).is_none()));
+}
+
+/// m4 (#761): a re-init that fails is tried again on its own, a second
+/// later, then every five seconds, and the one that mounts clears the
+/// fault: the streams come back with no card op from the user.
+#[test]
+fn a_failed_re_init_is_tried_again_on_a_backoff() {
+    let b = bed(3);
+    let mut rig = streamed_rig(&b);
+    let fine = rig.band();
+    (rig.s.fault, rig.s.recovery) = (CardFault::Read, Err(StoreError::Io));
+    rig.work();
+    assert_eq!(rig.s.recovers, 1);
+    // 50 ms passes: a second is 20 of them.
+    for _ in 0..19 {
+        rig.work();
+    }
+    assert_eq!(rig.s.recovers, 1, "waiting its second");
+    rig.work();
+    assert_eq!(rig.s.recovers, 2, "tried again after a second");
+    for _ in 0..99 {
+        rig.work();
+    }
+    assert_eq!(rig.s.recovers, 2, "then five seconds");
+    rig.s.recovery = Ok(());
+    rig.work();
+    assert_eq!(rig.s.recovers, 3);
+    assert_eq!(rig.s.fault, CardFault::Clear);
+    assert_eq!(rig.band(), fine);
 }
