@@ -377,9 +377,11 @@ impl Block for DelayParams {
 /// their runs' setup, 1: 580. The feedback's trim, a `powf` a block and a
 /// multiply a sample, about 4 more (estimated): billed 590. TAPE's head,
 /// idle under GRAIN, isn't taken off. A TYPE crossfade runs both for 20
-/// ms, in the headroom (ADR 0061). The unit's reading is PENDING
-/// (private issue #746).
-pub const GRAIN_COST: crate::hw::Cost = crate::hw::Cost(590);
+/// ms, in the headroom (ADR 0061). The unit reads less (#746; bench FX,
+/// 2026-10-22, rev V at 480 MHz): BUS GRAIN 1,386 against BUS 1,110, 276,
+/// with every grain playing at PITCH +12; a TYPE crossfade always running
+/// 42 over GRAIN alone: billed 320.
+pub const GRAIN_COST: crate::hw::Cost = crate::hw::Cost(320);
 
 /// What the delay bills over the bus: GRAIN's cost while TYPE is GRAIN.
 pub const fn extra_cost(p: &DelayParams) -> crate::hw::Cost {

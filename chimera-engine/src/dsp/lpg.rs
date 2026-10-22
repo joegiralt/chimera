@@ -84,8 +84,10 @@ const NONE: Unit = Unit::new(0.0);
 /// (17); the block's 654 (10.2 a sample) with its step, ~122 instructions
 /// and 2 `vdiv`, taken 5⅓ times a block (8.3 more, 0.21 `vdiv` a sample
 /// with the block's own): ceil5(50.2 × 1.606 + 12 × 0.21) = 85 routed, 60
-/// not. Billed 85 either way.
-pub const LPG_COST: Cost = Cost(85);
+/// not. The unit reads the routed gate 95 over ENV 2 on the VCA, the
+/// unrouted 72 over 1 OP (2026-10-22, ROUTING bench, rev V at 480 MHz,
+/// #735): billed 95 either way.
+pub const LPG_COST: Cost = Cost(95);
 
 /// AMP's LPG, DECAY and STRIKE as the gate reads them.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

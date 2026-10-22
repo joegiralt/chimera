@@ -479,8 +479,9 @@ impl<'a> TapShape<'a> {
 /// the 2040 REV2 90 → 145 and EXP 111 → 172 (105 → 166 before the
 /// make-up of ADR 0191, which rides both); CLEAN's and DIRTY's one loop
 /// for every mode adds its dispatch. Billed the costliest, EXP's 61:
-/// ceil5(61 × 1.606) = 100.
-pub const FB_COST: Cost = Cost(100);
+/// ceil5(61 × 1.606) = 100. The unit reads DIRTY FB 112 over DIRTY, whose
+/// moving path bills 0 (2026-10-22, ROUTING bench, rev V at 480 MHz): 115.
+pub const FB_COST: Cost = Cost(115);
 
 /// FB's octaves at ±1 for a unit of the filter's own output (#393): the
 /// voice's filtered saw runs at about ±0.3, so about ±2.5 octaves play at

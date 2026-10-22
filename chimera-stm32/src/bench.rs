@@ -717,7 +717,11 @@ static ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("VEL 7R", |p| vel_routes(p, 7), STILL),
     // AMP's gate one knob at a time (LPG is all three).
     ("LPG ONLY", |p| one_op(p).out.gate = [0.5, 0.0, 0.0], STILL),
-    ("DECAY ONLY", |p| one_op(p).out.gate = [0.0, 0.5, 0.0], STILL),
+    (
+        "DECAY ONLY",
+        |p| one_op(p).out.gate = [0.0, 0.5, 0.0],
+        STILL,
+    ),
     ("STRIKE", |p| one_op(p).out.gate = [0.0, 0.0, 0.5], STILL),
 ];
 

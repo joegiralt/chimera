@@ -86,7 +86,8 @@ fn the_2040_and_ladder_bill_the_unit() {
     assert_eq!(FilterKind::K2040.cost(K2040Voice::Rev2), Cost(78));
     assert_eq!(FilterKind::Ladder.cost(K2040Voice::Exp), Cost(176));
     assert_eq!(LADDER_COST, Cost(176));
-    assert_eq!(FxType::Soft.cost(), Cost(58));
+    // Unit bench 2026-10-22: SOFT 84, SOFT LO 96 over 1 OP.
+    assert_eq!(FxType::Soft.cost(), Cost(100));
     assert_eq!(FxType::Soft.ramp_cost(), Cost(26));
     assert_eq!(chimera_core::taps::TAP_FOLD_COST, Cost(51));
 }
@@ -713,7 +714,8 @@ fn the_model_bills_every_bench_row_high() {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
     // The TAPE rows (spec § 5), TAPE and AGE at 0.5 on each, as the bench
-    // plays them; read cold on the unit. 0 until the owner's session.
+    // plays them; read cold on the unit (TAPE COLD, 2026-10-22, #771; its
+    // LOOP row found the arena full under the booted project).
     // WALK's DIRECTIONs and TRON are the old LOOP, PING-PONG, ONESHOT and
     // TRON (ADR 0203).
     let (lp, ping, one) = (Way::Loop, Way::Ping, Way::One);
@@ -729,26 +731,37 @@ fn the_model_bills_every_bench_row_high() {
     let (fwd, rev) = ((0.0, 1.0), (1.0, 0.0));
     for (name, billed, measured) in [
         ("TAPE LOOP", tape(lp, fwd, false), 0),
-        ("TAPE STRETCH", tape(Way::Stretch, fwd, false), 0),
+        ("TAPE STRETCH", tape(Way::Stretch, fwd, false), 613),
         // ±12 st every block: billed as a glide or a deep route is.
-        ("TAPE WAVE C7", tape(Way::Wave, fwd, true), 0),
-        ("TINY LOOP 8", tape(lp, fwd, false), 0),
-        ("TINY REV 8", tape(lp, rev, false), 0),
-        ("TINY PING 8", tape(ping, fwd, false), 0),
-        ("TINY SCRUB 8", tape(Way::Scrub, fwd, false), 0),
-        ("TINY LOOP", tape(lp, fwd, false), 0),
-        ("TINY REV", tape(lp, rev, false), 0),
-        ("TINY PING", tape(ping, fwd, false), 0),
-        ("TINY SCRUB", tape(Way::Scrub, fwd, false), 0),
-        ("TINY 1SHOT", tape(one, fwd, false), 0),
-        ("TINY TRON", tape(Way::Tron, fwd, false), 0),
+        ("TAPE WAVE C7", tape(Way::Wave, fwd, true), 535),
+        ("TAPE WAVE", tape(Way::Wave, fwd, false), 530),
+        ("TAPE LOOP 40MS", tape(lp, fwd, false), 775),
+        ("TINY LOOP 8", tape(lp, fwd, false), 859),
+        ("TINY REV 8", tape(lp, rev, false), 892),
+        ("TINY PING 8", tape(ping, fwd, false), 643),
+        ("TINY SCRUB 8", tape(Way::Scrub, fwd, false), 555),
+        ("TINY LOOP", tape(lp, fwd, false), 664),
+        ("TINY REV", tape(lp, rev, false), 667),
+        ("TINY PING", tape(ping, fwd, false), 556),
+        ("TINY SCRUB", tape(Way::Scrub, fwd, false), 501),
+        ("TINY 1SHOT", tape(one, fwd, false), 418),
+        ("TINY TRON", tape(Way::Tron, fwd, false), 1_035),
     ] {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
-    assert_eq!(tape(lp, fwd, false), 36 + 450 + 40);
-    assert_eq!(tape(Way::Stretch, fwd, false), 36 + 450 + 40);
-    assert_eq!(tape(Way::Wave, fwd, true), 36 + 770 + 40);
-    assert_eq!(tape(one, fwd, false), 36 + 230 + 40);
+    assert_eq!(tape(lp, fwd, false), 36 + 820 + 40);
+    assert_eq!(tape(Way::Stretch, fwd, false), 36 + 540 + 40);
+    assert_eq!(tape(Way::Wave, fwd, true), 36 + 825 + 40);
+    assert_eq!(tape(one, fwd, false), 36 + 345 + 40);
+    assert_eq!(tape(Way::Tron, fwd, false), 36 + 960 + 40);
+    // STRETCH GRAIN, with the source's PERIOD and with its own: 1,020 and
+    // 1,019 cold.
+    let mut grain = tape_sound(chimera_core::dsp::tape_engine::TapeModel::Stretch);
+    grain.tape.machine = TapeMachine::Stretch;
+    grain.tape.kind = chimera_core::dsp::tape_engine::StretchType::Grain;
+    (grain.tape.tape, grain.tape.age) = (0.5, 0.5);
+    let billed = Voice::CHAIN_COST.0 + EngineSlot::cost(&grain, &ModState::new()).0;
+    assert!(billed >= 1_020, "GRAIN: {billed}");
 }
 
 /// The Task 13 bench (rev V, 480 MHz, 2026-09-28, the bench-t13c run):
@@ -1016,11 +1029,14 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let playing = FxBus::COST.0 + Instrument::BURST.0 + OrbitRunner::COST.0;
     assert_eq!((budget - playing) / 915, 5);
     // With FOLD in the slot, unrouted (45, ADR 0060): 960, six on rev V
-    // and five on rev Y (six and four with the tape); with SOFT, the
-    // dearer (973), the same. No factory Sound does either with this shape.
+    // and five on rev Y (six and four with the tape); with SOFT as the
+    // unit reads it (100, 2026-10-22), 1,015: six and four (five and four
+    // with the tape). No factory
+    // Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
-    let want = if TAPE { (6, 4) } else { (6, 5) };
-    for ty in [FxType::Fold, FxType::Soft] {
+    let fold = if TAPE { (6, 4) } else { (6, 5) };
+    let soft = if TAPE { (5, 4) } else { (6, 4) };
+    for (ty, want) in [(FxType::Fold, fold), (FxType::Soft, soft)] {
         let v = plain + ty.cost().0;
         assert_eq!(
             (fits(CPU_HZ_REV_V, v), fits(CPU_HZ_REV_Y, v)),
@@ -1269,9 +1285,9 @@ fn modal_bills_each_model() {
         (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.5), 550, (8, 7), (8, 7)),
         (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
-        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 7)),
-        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 6)),
-        (sound(Sympathetic, 0.3, 0.5), 690, (7, 6), (7, 5)),
+        (sound(Sympathetic, 0.0, 0.0), 645, (8, 6), (7, 6)),
+        (sound(Sympathetic, 0.3, 0.0), 725, (7, 5), (6, 5)),
+        (sound(Sympathetic, 0.3, 0.5), 865, (6, 5), (6, 4)),
         (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (3, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
@@ -1594,13 +1610,14 @@ fn tape_bills_each_model() {
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
     for (w, bill, off, both) in [
-        (lp, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
-        (ping, 490, [8, 7, 8, 8], [8, 6, 8, 8]),
+        // The unit's TAPE COLD rows, 2026-10-22 (#771).
+        (lp, 820, [6, 4, 5, 5], [5, 4, 5, 5]),
+        (ping, 570, [8, 6, 8, 7], [7, 6, 7, 7]),
         (Way::Scrub, 480, [8, 7, 8, 8], [8, 6, 8, 8]),
-        (Way::Wave, 400, [8, 8, 8, 8], [8, 8, 8, 8]),
-        (Way::Stretch, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
-        (one, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
-        (Way::Tron, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (Way::Wave, 455, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (Way::Stretch, 540, [8, 6, 8, 8], [8, 6, 7, 7]),
+        (one, 345, [8, 8, 8, 8], [8, 8, 8, 8]),
+        (Way::Tron, 960, [5, 4, 5, 4], [5, 3, 4, 4]),
     ] {
         for reversed in [false, true] {
             let mut p = tape_sound(w.machine().model());
@@ -1649,7 +1666,8 @@ fn tape_bills_each_model() {
     }
 }
 
-/// STRETCH bills by TYPE (ADR 0204): CLASSIC 450, GRAIN 570, and the
+/// STRETCH bills by TYPE (ADR 0204): CLASSIC 540, GRAIN 945 (the unit's
+/// TAPE COLD rows, 2026-10-22, #771), and the
 /// voices GRAIN is admitted beside the reserve on rev V, rev Y, rev V with
 /// ORBIT and with the master tape, TAPE and AGE off and both at 0.5.
 #[test]
@@ -1667,9 +1685,9 @@ fn stretch_bills_by_type() {
     };
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (kind, bill, off, both) in [
-        (StretchType::Mono, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
-        (StretchType::Poly, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
-        (StretchType::Grain, 570, [8, 6, 8, 7], [7, 6, 7, 7]),
+        (StretchType::Mono, 540, [8, 6, 8, 8], [8, 6, 7, 7]),
+        (StretchType::Poly, 540, [8, 6, 8, 8], [8, 6, 7, 7]),
+        (StretchType::Grain, 945, [5, 4, 5, 5], [5, 3, 4, 4]),
     ] {
         let mut p = tape_sound(TapeModel::Stretch);
         p.tape.machine = TapeMachine::Stretch;
@@ -1724,7 +1742,8 @@ fn va_bills_each_mode() {
         (Fm, 580, [7, 5, 7, 6]),
         (Am, 540, [7, 5, 7, 7]),
         (Max, 590, [7, 5, 7, 6]),
-        (LoopFm, 350, [8, 8, 8, 8]),
+        // The unit reads LOOPFM 712 a voice against 584 (2026-10-22).
+        (LoopFm, 480, [8, 6, 8, 8]),
         (SoftSync, 590, [7, 5, 7, 6]),
         (Phase, 650, [6, 5, 6, 6]),
     ] {
@@ -1765,7 +1784,7 @@ fn va_noise_bills_only_when_it_plays() {
         assert_eq!(EngineSlot::cost(&p, &none), with, "{kind:?} up");
     }
     let bills = NoiseKind::ALL.map(|k| VaEngine::noise_cost(k).0);
-    assert_eq!(bills, [20, 35, 30, 35]);
+    assert_eq!(bills, [20, 40, 35, 35]);
 }
 
 /// A VA note holds its playing MODE's bill until the duck swaps the MODE:
@@ -1809,26 +1828,26 @@ fn vibrato_costs_no_level_heads() {
     let (l1, l2) = (ModSource::Lfo1, ModSource::Lfo2);
     // 1 st is 5.3 of 127 at PITCH's ±24 st; 620 cents is 32.8.
     for (r, bill) in [
-        (vec![], 400),
-        (vec![(l1, pitch, 5)], 400),
-        (vec![(l1, pitch, -5)], 400),
-        (vec![(l1, fine, 127)], 400),
-        (vec![(l1, pitch, 32)], 400),
-        (vec![(l1, pitch, 33)], 770),
-        (vec![(l1, pitch, -33)], 770),
-        (vec![(l1, pitch, 64)], 770),
-        (vec![(l1, pitch, 17), (l2, pitch, -17)], 770),
-        (vec![(l1, pitch, 30), (l2, fine, 127)], 770),
-        (vec![(l1, pitch, 30), (l2, fine, 60)], 400),
+        (vec![], 455),
+        (vec![(l1, pitch, 5)], 455),
+        (vec![(l1, pitch, -5)], 455),
+        (vec![(l1, fine, 127)], 455),
+        (vec![(l1, pitch, 32)], 455),
+        (vec![(l1, pitch, 33)], 825),
+        (vec![(l1, pitch, -33)], 825),
+        (vec![(l1, pitch, 64)], 825),
+        (vec![(l1, pitch, 17), (l2, pitch, -17)], 825),
+        (vec![(l1, pitch, 30), (l2, fine, 127)], 825),
+        (vec![(l1, pitch, 30), (l2, fine, 60)], 455),
     ] {
         let mods = routes(&r);
         assert_eq!(EngineSlot::cost(&wave, &mods), Cost(bill), "{r:?}");
         let glide = Voice::glide_cost(&wave, &mods);
-        assert_eq!(glide, Cost(770 - bill), "a re-snap under {r:?}");
+        assert_eq!(glide, Cost(825 - bill), "a re-snap under {r:?}");
     }
     let mut glide = wave;
     glide.pitch.steal = Steal::Glide;
-    assert_eq!(EngineSlot::cost(&glide, &ModState::new()), Cost(770));
+    assert_eq!(EngineSlot::cost(&glide, &ModState::new()), Cost(825));
     assert_eq!(Voice::glide_cost(&glide, &ModState::new()), Cost(0));
     let deep = routes(&[(l1, pitch, 64)]);
     for m in TapeModel::ALL
@@ -2526,7 +2545,7 @@ fn a_fuzz_part_sheds_only_near_the_limit() {
     }
 }
 
-/// ADR 0168, 0192: STABILITY bills `STAB_COST` (3) on the 2040, LADDER and
+/// ADR 0168, 0192: STABILITY bills `STAB_COST` (5, the unit's 4) on the 2040, LADDER and
 /// SEM below 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN
 /// and DIRTY never read it. INIT's Prophet setting keeps INIT VA's voices
 /// on every room.
@@ -2536,7 +2555,7 @@ fn stability_bills_the_four_pole_kinds_below_one() {
     use chimera_core::dsp::filter::stability::STAB_COST;
     use chimera_core::params::FilterParams;
     use chimera_core::preset::Sound;
-    assert_eq!(STAB_COST, Cost(3));
+    assert_eq!(STAB_COST, Cost(5));
     let stab = ParamAddr::new(BlockRef::Filter, FilterParams::STAB);
     let lfo = routes(&[(ModSource::Lfo1, stab, 40)]);
     for kind in FilterKind::BUILT {
@@ -2580,7 +2599,8 @@ fn fb_bills_its_loop_and_the_moving_path() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::filter::FB_COST;
     use chimera_core::params::FilterParams;
-    assert_eq!(FB_COST, Cost(100));
+    // The unit reads DIRTY FB 112 over DIRTY (2026-10-22).
+    assert_eq!(FB_COST, Cost(115));
     let fb = ParamAddr::new(BlockRef::Filter, FilterParams::FB);
     for kind in FilterKind::BUILT {
         let mut p = on(kind);
@@ -2611,15 +2631,15 @@ fn fb_bills_its_loop_and_the_moving_path() {
     }
 }
 
-/// ADR 0192: SEM bills `tools/loop_count.py`'s count on the `filter-probes`
-/// ELF (`probe::sem_probe`): steady 140 cycles, 45 over `OLD_LP24`; moving
-/// 175, 35 over it. Its voices against CLEAN's and LADDER's, ALGO INIT and
+/// ADR 0192: SEM bills what the unit reads (#726, ROUTING bench
+/// 2026-10-22): steady 9 over CLEAN LP4, 10; its moving path 47 over its
+/// steady, 50. Its voices against CLEAN's and LADDER's, ALGO INIT and
 /// VA INIT, steady and with a CUTOFF LFO, on rev V and rev Y beside the
 /// reserve (ALGO / VA, steady / moving).
 #[test]
 fn sem_bills_its_count_and_its_voices() {
-    assert_eq!(SEM_COST, Cost(140 - 95));
-    assert_eq!(SEM_MOVE_COST, Cost(175 - 140));
+    assert_eq!(SEM_COST, Cost(10));
+    assert_eq!(SEM_MOVE_COST, Cost(50));
     let rooms = [
         SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
         SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
@@ -2653,7 +2673,7 @@ fn sem_bills_its_count_and_its_voices() {
     }
     assert_eq!(
         table[3],
-        [[7, 5], [6, 5], [8, 6], [7, 5]],
+        [[7, 5], [6, 5], [8, 6], [8, 6]],
         "SEM: ALGO steady, moving; VA steady, moving"
     );
 }
@@ -2748,7 +2768,7 @@ fn the_gate_bills_only_when_up_and_its_voices() {
 /// SEM off, on; the 2040 off, on: ALGO and VA, rev V and rev Y.
 const GATE_VOICES: [[[u32; 2]; 2]; 4] = [
     [[7, 5], [8, 6]],
-    [[6, 4], [7, 5]],
+    [[6, 5], [7, 5]],
     [[6, 5], [7, 6]],
-    [[6, 4], [7, 5]],
+    [[6, 4], [6, 5]],
 ];
