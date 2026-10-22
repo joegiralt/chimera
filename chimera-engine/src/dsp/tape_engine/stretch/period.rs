@@ -137,7 +137,7 @@ fn refine(s: &impl Fn(u32) -> f32, p0: u32, d: u32) -> Option<Period> {
 fn vertex(a: f32, b: f32, c: f32) -> f32 {
     let den = a - 2.0 * b + c;
     if den < 0.0 {
-        (0.5 * (a - c) / den).clamp(-0.5, 0.5)
+        crate::dsp::clampf(0.5 * (a - c) / den, -0.5, 0.5)
     } else {
         0.0
     }
