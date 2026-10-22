@@ -205,18 +205,21 @@ impl StreamLoad {
     }
 
     /// `start`, its file's runs found and its head read already (a
-    /// project load's pass 2): no first pass. `None` as `start`, when the
-    /// runs don't hold its samples, or when the file is unsealed (never
-    /// checked against its CRC, as `pass` refuses it).
+    /// project load's pass 2): no first pass, unless the file is unsealed
+    /// (never checked against its CRC): that first pass checks it whole
+    /// and seals it. `None` as `start`, or when the runs don't hold its
+    /// samples.
     pub fn found(
         p: &mut Project,
         head: SourceHead,
         heads: Heads,
         runs: FileRuns,
     ) -> Option<StreamLoad> {
-        (runs.seal == Seal::Sealed).then_some(())?;
         let file = StreamFile::from_layout(&SourceLayout::whole(head)?, runs)?;
         let l = Self::start(p, head, heads)?;
+        if runs.seal != Seal::Sealed {
+            return Some(l);
+        }
         Some(StreamLoad {
             phase: Phase::heads(file),
             ..l

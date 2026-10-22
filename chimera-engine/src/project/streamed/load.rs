@@ -13,7 +13,7 @@ use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
 use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, load_kind};
 use crate::dsp::tape_engine::read::write_head_table;
 use crate::storage::{
-    CardError, CardFault, LoadError, Ready, SourceLayout, SourceReadError, read_packed_into,
+    CardError, CardFault, LoadError, Reach, Ready, SourceLayout, SourceReadError, read_packed_into,
     read_source_head, source_file,
 };
 use crate::stream::admit::head_frames;
@@ -70,13 +70,18 @@ impl StreamLoad {
                 RunsError::Store(e) => read(e),
             })?;
             // Unsealed, a source never read back whole against its CRC
-            // (a cut `put`'s remains): the whole-file load would refuse it,
-            // and streaming reads only its heads (#761 m10).
-            if runs.seal != Seal::Sealed {
-                return Err(corrupted());
-            }
-            let got = read_source_head(s, r, self.sref.stem(), runs.len.get())
+            // (copied onto the card by hand, the host dropping the
+            // read-only bit, or a cut `put`'s remains): streaming reads
+            // only its heads, so it is read whole through the check once
+            // and sealed (#761 m10, ADR 0210). One that fails stays
+            // unsealed and refused.
+            let open = runs.seal != Seal::Sealed;
+            let reach = if open { Reach::Whole } else { Reach::Head };
+            let got = read_source_head(s, r, self.sref.stem(), runs.len.get(), reach)
                 .map_err(StreamFail::Read)?;
+            if open {
+                s.seal(r.volume(), name).map_err(read)?;
+            }
             let l = SourceLayout::whole(got).filter(|_| got.sref == self.sref);
             let file = l.and_then(|l| StreamFile::from_layout(&l, runs));
             self.phase = Phase::heads(file.ok_or_else(corrupted)?);
@@ -209,7 +214,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 continue;
             }
         };
-        let head = match read_source_head(s, r, e.r.stem(), runs.len.get()) {
+        let head = match read_source_head(s, r, e.r.stem(), runs.len.get(), Reach::Head) {
             // The stem alone matched: another source's file under it is
             // not this one (as `StreamLoad::pass` and `read_sources` judge).
             Ok(head) if head.sref != e.r => {
