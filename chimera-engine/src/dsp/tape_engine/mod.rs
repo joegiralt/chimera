@@ -96,9 +96,9 @@ pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
     Choice, DIRECTION_NAMES, Direction, Drift, FADE_HOLD, KeyMode, MACHINE_NAMES, MODEL_NAMES,
-    MachineIndex, NeedsRam, RetiredModel, Retrig, STRETCH_DEFAULTS, Seeks, StretchKnobs, StretchType,
-    TAPE_ENGINE_SPECS, TapeEngineParams, TapeMachine, TapeModel, Tron, Way, Wow, at_root, backward,
-    cuts, drag_s, fade_default, jogs, needs_ram, reads,
+    MachineIndex, NeedsRam, RetiredModel, Retrig, STRETCH_DEFAULTS, Seeks, StretchKnobs,
+    StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeMachine, TapeModel, Tron, Way, Wow,
+    at_root, backward, cuts, drag_s, fade_default, jogs, needs_ram, reads,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
@@ -2483,9 +2483,12 @@ impl TapeDeck {
         }
         if let Some(sc) = self.scrub_mut() {
             // The finger's speed at the block's ends, frames a sample.
-            let end = sc.df.0.wrapping_add(sc.ddf.0.wrapping_mul(BLOCK_SIZE as i64));
-            let finger = sc.df.0.unsigned_abs().max(end.unsigned_abs()) as f32
-                * (1.0 / 4_294_967_296.0);
+            let end = sc
+                .df
+                .0
+                .wrapping_add(sc.ddf.0.wrapping_mul(BLOCK_SIZE as i64));
+            let finger =
+                sc.df.0.unsigned_abs().max(end.unsigned_abs()) as f32 * (1.0 / 4_294_967_296.0);
             let speed = from.max(to).max(finger);
             // Hysteresis: stop under STILL, start over twice it.
             sc.stopped = if sc.stopped && !first {

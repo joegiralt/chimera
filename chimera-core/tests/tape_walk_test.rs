@@ -802,7 +802,10 @@ fn a_retired_slice_is_never_heard() {
         slice: SliceCode::NOTE,
         ..t
     };
-    assert!(!at_root(&held) && !plays_at_root(&held), "a slice in memory");
+    assert!(
+        !at_root(&held) && !plays_at_root(&held),
+        "a slice in memory"
+    );
     let src = sine_src();
     let v = SourceView::new(&src).unwrap();
     // Zero crossings a second: the key's octave over ROOT doubles them.
@@ -810,7 +813,9 @@ fn a_retired_slice_is_never_heard() {
         let mut e = fresh(1);
         let x = run(&mut e, &held, &v, note, 6_000 / B, None);
         let x = &x[2_000..4_000];
-        x.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count() as f32
+        x.windows(2)
+            .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+            .count() as f32
     };
     let ratio = rate(72) / rate(60);
     assert!((ratio - 2.0).abs() < 0.05, "C5 over C4: {ratio}");

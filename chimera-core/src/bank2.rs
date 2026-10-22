@@ -205,7 +205,8 @@ pub struct UiDoor {
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
     tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
     /// TAPE cells' units where the engine has a law (`ui::walk`).
-    tape_fmt: fn(ParamId, TapeMachine, crate::dsp::tape_engine::Way) -> Option<crate::ui::page::ValFmt>,
+    tape_fmt:
+        fn(ParamId, TapeMachine, crate::dsp::tape_engine::Way) -> Option<crate::ui::page::ValFmt>,
     speed_text: fn(&mut crate::ui::fmt::FmtBuf, crate::dsp::modulator::law::Law, f32),
     /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
     delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,

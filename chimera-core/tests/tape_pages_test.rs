@@ -791,7 +791,10 @@ fn tape_cells_read_their_units() {
     for k in 0..=16 {
         let x = k as f32 / 16.0;
         let near = |a: f32, b: f32| (a / b - 1.0).abs() < 2e-3;
-        assert!(near(SCRUB_LENGTH.at(x), LoopTime::of_length(x).seconds()), "{x}");
+        assert!(
+            near(SCRUB_LENGTH.at(x), LoopTime::of_length(x).seconds()),
+            "{x}"
+        );
         assert!(near(DRAG_TIME.at(x), drag_s(x)), "{x}");
         assert!(near(STRETCH_LENGTH.at(x), 0.25 * 32f32.powf(x)), "{x}");
     }

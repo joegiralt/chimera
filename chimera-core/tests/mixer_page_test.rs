@@ -769,8 +769,18 @@ fn delay_cells_dim_under_the_other_type() {
     let sound = Sound::init(chimera_core::params::EngineType::Algo);
     let base = SlotCtx::read(&sound.params, Op::A);
     for (ty, dim, live, why) in [
-        (0.0, &reg::DELAY_GRAIN, &reg::DELAY_CHAR, view::DELAY_GRAIN_ONLY),
-        (1.0, &reg::DELAY_CHAR, &reg::DELAY_GRAIN, view::DELAY_TAPE_ONLY),
+        (
+            0.0,
+            &reg::DELAY_GRAIN,
+            &reg::DELAY_CHAR,
+            view::DELAY_GRAIN_ONLY,
+        ),
+        (
+            1.0,
+            &reg::DELAY_CHAR,
+            &reg::DELAY_GRAIN,
+            view::DELAY_TAPE_ONLY,
+        ),
     ] {
         let mut d = DelayParams::DEFAULT;
         d.set(DelayParams::TYPE, ty);

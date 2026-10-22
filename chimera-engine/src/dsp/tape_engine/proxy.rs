@@ -263,8 +263,7 @@ impl TapeEngine {
     }
 
     pub fn is_active(&self) -> bool {
-        self.read(|_, k| k.state.is_active())
-            .unwrap_or(false)
+        self.read(|_, k| k.state.is_active()).unwrap_or(false)
     }
 
     pub fn heads(&self) -> Heads {

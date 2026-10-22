@@ -136,7 +136,10 @@ pub(super) fn direction_writes(was: Direction, now: Direction) -> u8 {
     let e = if writes.is_empty() {
         0
     } else {
-        env_defaults(TapeMachine::Walk, now).iter().filter(env).count()
+        env_defaults(TapeMachine::Walk, now)
+            .iter()
+            .filter(env)
+            .count()
     };
     (writes.iter().filter(tape).count() + e) as u8
 }
@@ -411,7 +414,10 @@ mod tests {
                     .filter(|sp| s.params.tape.get(sp.id) != before.get(sp.id))
                     .filter(|sp| knob(ParamAddr::new(BlockRef::TapeEngine, sp.id)))
                     .count();
-                let env = envs.iter().filter(|&&(id, _)| knob(ParamAddr::new(env1, id))).count();
+                let env = envs
+                    .iter()
+                    .filter(|&&(id, _)| knob(ParamAddr::new(env1, id)))
+                    .count();
                 assert_eq!(
                     usize::from(direction_writes(was, now)),
                     tape + env,

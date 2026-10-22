@@ -143,7 +143,8 @@ impl SlotCtx {
             tape,
             way: Way::of(
                 tape,
-                Direction::from_value(get(BlockRef::TapeEngine, T::MODE)).unwrap_or(Direction::Loop),
+                Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
+                    .unwrap_or(Direction::Loop),
                 Tron::from_value(get(BlockRef::TapeEngine, T::TRON)).unwrap_or(Tron::Off),
             ),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,

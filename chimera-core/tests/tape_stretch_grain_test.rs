@@ -283,7 +283,12 @@ fn one_times_is_the_source() {
         let null = db(rms(&d)) - db(rms(&a[..n]));
         eprintln!("null {null:.1} dB");
         assert!(null < -40.0, "null {null:.1} dB");
-        let c = play(&|_| stretch(1.25, STRETCH_DEFAULTS.spray, true), &v, 60, 1.2);
+        let c = play(
+            &|_| stretch(1.25, STRETCH_DEFAULTS.spray, true),
+            &v,
+            60,
+            1.2,
+        );
         let dl = db(rms(&c[..n])) - db(rms(&a[..n]));
         eprintln!("SPRAY's level {dl:+.2} dB");
         assert!(dl.abs() < 0.5, "SPRAY's level {dl:+.2} dB");
@@ -543,9 +548,16 @@ fn spans_and_silence_are_no_whole_row() {
     assert!(span.whole_row().is_none(), "a span from 128");
     let short = SourceView::span(&bytes[..96], v.desc(), 0, v.frames()).unwrap();
     assert!(short.whole_row().is_none(), "a span cut short");
-    assert!(SourceView::silent(v.desc(), v.file_frames()).whole_row().is_none());
+    assert!(
+        SourceView::silent(v.desc(), v.file_frames())
+            .whole_row()
+            .is_none()
+    );
     let whole = SourceView::span(bytes, v.desc(), 0, v.frames()).unwrap();
-    assert!(whole.whole_row().is_some(), "a span of the whole row is one");
+    assert!(
+        whole.whole_row().is_some(),
+        "a span of the whole row is one"
+    );
 }
 
 /// GRAIN's cheaper builds against GRAIN as shipped (ADR 0204, the owner's
@@ -651,7 +663,9 @@ fn linear_read_loss() {
 fn unpitched_tones_hold_their_level() {
     let n = FS as usize;
     let tau = core::f32::consts::TAU;
-    let sine: Vec<f32> = (0..n).map(|i| 0.5 * (tau * i as f32 * 440.0 / FS).sin()).collect();
+    let sine: Vec<f32> = (0..n)
+        .map(|i| 0.5 * (tau * i as f32 * 440.0 / FS).sin())
+        .collect();
     let chord: Vec<f32> = (0..n)
         .map(|i| {
             let t = i as f32 / FS;
@@ -686,7 +700,9 @@ fn unpitched_tones_hold_their_level() {
             let x = play(&|_| p, &v, 69, 1.2);
             // 20 ms frames from 30 ms on: past the strike's own rise.
             let f = frames(&x[(0.03 * FS) as usize..], 20.0);
-            let (lo, hi) = f.iter().fold((f32::MAX, 0.0f32), |(l, h), &r| (l.min(r), h.max(r)));
+            let (lo, hi) = f
+                .iter()
+                .fold((f32::MAX, 0.0f32), |(l, h), &r| (l.min(r), h.max(r)));
             let (lo, hi) = (db(lo) - db(want), db(hi) - db(want));
             eprintln!("{name} SPEED {motion} START {start} SPRAY {spray}: {lo:+.1} .. {hi:+.1} dB");
             if !(lo > -3.0 && hi < 3.0) {

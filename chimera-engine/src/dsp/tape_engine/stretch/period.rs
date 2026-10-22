@@ -72,7 +72,11 @@ pub fn of(v: &WholeRow<'_>, rate: u32, len: u32, frame: impl Fn(u32) -> u32) -> 
             c += x[i] * x[i + t];
             e += x[i + t] * x[i + t];
         }
-        if e > 0.0 { c / libm::sqrtf(e0 * e) } else { 0.0 }
+        if e > 0.0 {
+            c / libm::sqrtf(e0 * e)
+        } else {
+            0.0
+        }
     };
     let mut r = [0.0f32; LAGS + 2];
     for (t, r) in r.iter_mut().enumerate().take(hi + 2).skip(lo - 1) {
@@ -82,7 +86,8 @@ pub fn of(v: &WholeRow<'_>, rate: u32, len: u32, frame: impl Fn(u32) -> u32) -> 
     if best < LOCK {
         return None;
     }
-    let t = (lo..=hi).find(|&t| r[t] >= NEAR_BEST * best && r[t] >= r[t - 1] && r[t] >= r[t + 1])?;
+    let t =
+        (lo..=hi).find(|&t| r[t] >= NEAR_BEST * best && r[t] >= r[t - 1] && r[t] >= r[t + 1])?;
     let tc = t as f32 + vertex(r[t - 1], r[t], r[t + 1]);
     refine(&s, libm::roundf(tc * d as f32) as u32, d)
 }
@@ -105,7 +110,11 @@ fn refine(s: &impl Fn(u32) -> f32, p0: u32, d: u32) -> Option<Period> {
             c += x * y;
             e1 += y * y;
         }
-        if e0 > 0.0 && e1 > 0.0 { c / libm::sqrtf(e0 * e1) } else { 0.0 }
+        if e0 > 0.0 && e1 > 0.0 {
+            c / libm::sqrtf(e0 * e1)
+        } else {
+            0.0
+        }
     };
     let mut l = p0.max(2);
     let (mut lo, mut mid, mut hi) = (corr(l - 1), corr(l), corr(l + 1));

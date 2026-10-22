@@ -5,6 +5,8 @@
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::{Block, ParamId};
+use crate::dsp::delay::{DelayParams, DelayType};
+use crate::dsp::modulator::law::Law;
 use crate::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
 use crate::dsp::tape_engine::{
     self, Choice, Direction, FADE_HOLD, MachineIndex, NeedsRam, TapeEngineParams as T, TapeMachine,
@@ -12,13 +14,11 @@ use crate::dsp::tape_engine::{
 };
 use crate::modulation::VCA;
 use crate::preset::Sound;
-use crate::dsp::delay::{DelayParams, DelayType};
-use crate::dsp::modulator::law::Law;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::page::ValFmt;
 use crate::ui::view::{
-    DELAY_GRAIN_ONLY, DELAY_TAPE_ONLY, FADE_ASIDE, RETRIG_ONCE_ONLY, RETRIG_TRON_OFF, WOW_AT_REST, XFADE_LOOP_ONLY, XFADE_NO_SEAM,
-    tape_routed,
+    DELAY_GRAIN_ONLY, DELAY_TAPE_ONLY, FADE_ASIDE, RETRIG_ONCE_ONLY, RETRIG_TRON_OFF, WOW_AT_REST,
+    XFADE_LOOP_ONLY, XFADE_NO_SEAM, tape_routed,
 };
 
 /// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
