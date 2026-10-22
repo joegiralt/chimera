@@ -175,7 +175,6 @@ pub struct StreamLoad {
 
 /// Where a `StreamLoad` is.
 #[derive(Clone, Copy)]
-#[expect(clippy::large_enum_variant, reason = "one, in the one load")]
 enum Phase {
     /// The first pass finds the file's runs.
     Find,
