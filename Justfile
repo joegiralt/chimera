@@ -356,6 +356,8 @@ check:
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
+    # WALK's kept glyph styles (ADR 0209): host only, never in firmware.
+    cargo test -p chimera-core --features walk-styles --test tape_walk_glyph_test
     # TAPE's UI with bank 2 closed, through the host's own door (ADR 0175).
     cargo test -p chimera-core --features bank2 --test tape_closed_ui_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
@@ -496,6 +498,7 @@ clippy:
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features bank2-gate -- -D warnings
     cargo clippy -p chimera-core --features bank2-gate --all-targets -- -D warnings
+    cargo clippy -p chimera-core --features walk-styles --test tape_walk_glyph_test -- -D warnings
     for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
