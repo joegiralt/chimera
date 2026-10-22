@@ -96,10 +96,14 @@ use chimera_board::clocks::{self, Clocks};
 #[cfg(feature = "orbit")]
 use chimera_board::orbit::SAMPLE_RATE_NZ;
 
-/// The bench's screens as text: ALGO and ROUTING with the 0.2 stress
-/// rows passed 6 KB; TAPE, ROUTING and STRESS in one build fit 12 KB;
-/// `# TRUNCATED` past this.
-pub const BENCH_TEXT_LEN: usize = 12288;
+/// The bench's screens as text, `# TRUNCATED` past this: ROUTING's rows
+/// alone pass 6 KB, so a build with it takes 12 KB (TAPE, ROUTING and
+/// STRESS together fit D2); without it 6 KB, as ALGO's D2 leaves room for.
+pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
+    12288
+} else {
+    6144
+};
 type Text = Report<BENCH_TEXT_LEN>;
 
 // A `static mut`, not a `singleton!`: that builds its value on the caller's
