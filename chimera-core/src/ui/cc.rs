@@ -232,6 +232,18 @@ impl UiState {
         if d == 0 {
             return;
         }
+        // MODEL and DIRECTION onto what a streamed source can't play are
+        // refused, as the hand's turn is (`turn_model`), so a key never
+        // plays into silence.
+        if (a == super::held::MODEL || a == super::held::DIRECTION) && self.streams(p) {
+            let h = super::held::Held {
+                addr: a,
+                code: (spec.min + f32::from(to)) as u8,
+            };
+            if h.why(&self.project.part(p).sound, true).is_some() {
+                return;
+            }
+        }
         let mut cost = u8::from(knob(a));
         if a == MODEL {
             let d = self.project.part(p).sound.params.tape.direction;
