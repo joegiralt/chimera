@@ -42,6 +42,9 @@ const FINE: usize = 256;
 /// The period of the window `frame(0..len)` reads (its frames the way it
 /// plays), at the source's `rate`: `None` if it doesn't repeat between
 /// 70 Hz and 1.5 kHz, or fewer than two periods fit.
+// Index loops, not iterator adapters: an adapter's instance is core's and
+// links into bank 1.
+#[allow(clippy::needless_range_loop)]
 pub fn of(v: &WholeRow<'_>, rate: u32, len: u32, frame: impl Fn(u32) -> u32) -> Option<Period> {
     let d = rate.div_ceil(RATE).max(1);
     let ar = rate / d;
@@ -58,11 +61,18 @@ pub fn of(v: &WholeRow<'_>, rate: u32, len: u32, frame: impl Fn(u32) -> u32) -> 
     }
     let s = |u: u32| v.sample(frame(u)) as f32;
     let mut x = [0.0f32; N + LAGS + 2];
-    for (k, x) in x.iter_mut().enumerate().take(N + hi + 2) {
+    for k in 0..N + hi + 2 {
         let at = k as u32 * d;
-        *x = (0..d).map(|j| s(at + j)).sum::<f32>();
+        let mut sum = 0.0;
+        for j in 0..d {
+            sum += s(at + j);
+        }
+        x[k] = sum;
     }
-    let e0: f32 = x[..N].iter().map(|a| a * a).sum();
+    let mut e0 = 0.0f32;
+    for k in 0..N {
+        e0 += x[k] * x[k];
+    }
     if e0 <= 0.0 {
         return None;
     }
@@ -79,15 +89,23 @@ pub fn of(v: &WholeRow<'_>, rate: u32, len: u32, frame: impl Fn(u32) -> u32) -> 
         }
     };
     let mut r = [0.0f32; LAGS + 2];
-    for (t, r) in r.iter_mut().enumerate().take(hi + 2).skip(lo - 1) {
-        *r = corr(t);
+    let mut best = 0.0f32;
+    for t in lo - 1..hi + 2 {
+        r[t] = corr(t);
+        if (lo..=hi).contains(&t) {
+            best = best.max(r[t]);
+        }
     }
-    let best = r[lo..=hi].iter().fold(0.0f32, |a, &b| a.max(b));
     if best < LOCK {
         return None;
     }
-    let t =
-        (lo..=hi).find(|&t| r[t] >= NEAR_BEST * best && r[t] >= r[t - 1] && r[t] >= r[t + 1])?;
+    let mut t = lo;
+    while !(r[t] >= NEAR_BEST * best && r[t] >= r[t - 1] && r[t] >= r[t + 1]) {
+        t += 1;
+        if t > hi {
+            return None;
+        }
+    }
     let tc = t as f32 + vertex(r[t - 1], r[t], r[t + 1]);
     refine(&s, libm::roundf(tc * d as f32) as u32, d)
 }
@@ -95,19 +113,20 @@ pub fn of(v: &WholeRow<'_>, rate: u32, len: u32, frame: impl Fn(u32) -> u32) -> 
 /// The fine period about `p0` (within about a coarse frame, `d`): from it
 /// the climb to the nearest peak of the normalised correlation over about
 /// a period, at most `d` steps, and the parabola there.
+#[allow(clippy::needless_range_loop)]
 fn refine(s: &impl Fn(u32) -> f32, p0: u32, d: u32) -> Option<Period> {
     let n = (p0 as usize).clamp(FINE / 4, FINE);
     let mut a = [0.0f32; FINE];
-    for (i, a) in a.iter_mut().enumerate().take(n) {
-        *a = s(i as u32);
+    let mut e0 = 0.0f32;
+    for i in 0..n {
+        a[i] = s(i as u32);
+        e0 += a[i] * a[i];
     }
-    let a = &a[..n];
-    let e0: f32 = a.iter().map(|x| x * x).sum();
     let corr = |l: u32| {
         let (mut c, mut e1) = (0.0f32, 0.0f32);
-        for (i, x) in a.iter().enumerate() {
+        for i in 0..n {
             let y = s(i as u32 + l);
-            c += x * y;
+            c += a[i] * y;
             e1 += y * y;
         }
         if e0 > 0.0 && e1 > 0.0 {
