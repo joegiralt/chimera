@@ -312,9 +312,9 @@ impl Grains {
         self.win.dir
     }
 
-    /// A block at `inc` ramped `(from, to)` (each grain at the speed its
-    /// start found), SPEED's MOTION `motion` eased, LENGTH, GRAIN, SPRAY
-    /// and END read from `p`. False once the note has ended: its last
+    /// A block at `inc` ramped `(from, to)` (every grain in play, and the
+    /// strike, retuned to `to` each block: `Cloud::set_speed`), SPEED's
+    /// MOTION `motion` eased, LENGTH, GRAIN, SPRAY and END read from `p`. False once the note has ended: its last
     /// grain faded out.
     pub fn render(
         &mut self,
