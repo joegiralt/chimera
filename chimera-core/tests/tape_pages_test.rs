@@ -736,6 +736,23 @@ fn fade_reads_hold_only_in_one() {
     assert_eq!(text(Way::Tron), "127");
 }
 
+/// TRON once through's LENGTH is the tape, read as STRETCH's LENGTH
+/// (0.25 to 8 s, ADR 0203); a loop's is a share of its window, 0 to 127.
+#[test]
+fn tron_length_reads_seconds() {
+    use chimera_core::ui::fmt::fmt_val;
+    let text = |m, v| {
+        let fmt = view::shown_fmt(tape(P::SIZE), &ctx_on(m)).unwrap();
+        let mut b = FmtBuf::new();
+        fmt_val(&mut b, v, fmt);
+        b.as_str().to_owned()
+    };
+    assert_eq!(text(Way::Tron, 1.0), "8.0 s");
+    assert_eq!(text(Way::Tron, 0.0), "250 ms");
+    assert_eq!(text(Way::Loop, 1.0), "127");
+    assert_eq!(text(Way::One, 1.0), "127");
+}
+
 /// MODEL onto WALK writes its defaults for the DIRECTION it keeps: once
 /// through FADE holds, around a loop 32 ms; TRON off. DIRECTION across
 /// once and loop writes LENGTH and FADE (ADR 0203). The disk keeps WALK's

@@ -82,8 +82,9 @@ pub struct SlotCtx {
     pub model: ResonatorMode,
     /// TAPE's machine: its labels and cells.
     pub tape: TapeMachine,
-    /// WALK once through with TRON off: FADE ends in HOLD.
-    pub holds: bool,
+    /// TAPE's way: WALK once through with TRON off (`One`) ends FADE in
+    /// HOLD, with TRON on (`Tron`) reads LENGTH as the tape's seconds.
+    pub way: Way,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
     /// SCRUB's KEY is POSITION: FINGER's hint says a key places it.
@@ -137,10 +138,11 @@ impl SlotCtx {
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
             tape,
-            holds: tape == TapeMachine::Walk
-                && Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
-                    .is_some_and(Direction::once)
-                && Tron::from_value(get(BlockRef::TapeEngine, T::TRON)) != Some(Tron::On),
+            way: Way::of(
+                tape,
+                Direction::from_value(get(BlockRef::TapeEngine, T::MODE)).unwrap_or(Direction::Loop),
+                Tron::from_value(get(BlockRef::TapeEngine, T::TRON)).unwrap_or(Tron::Off),
+            ),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             keys_place: get(BlockRef::TapeEngine, T::KEY) == 0.0,
             src: SourceState::None,
@@ -677,13 +679,15 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     }
 }
 
-/// `addr`'s format under `ctx`: MODE names its kind's own modes, WALK's
-/// FADE reads HOLD.
+/// `addr`'s format under `ctx`: MODE names its kind's own modes; a TAPE
+/// cell reads its engine law's unit, bank 2's (`walk::tape_fmt_in`; a
+/// closed door, the spec's).
 fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
-        // ONE's FADE: its last step is HOLD.
-        (BlockRef::TapeEngine, T::DRAG) if ctx.holds => ValFmt::Hold,
+        (BlockRef::TapeEngine, id) => crate::bank2::ui_door(|u| u.tape_fmt(id, ctx.tape, ctx.way))
+            .flatten()
+            .unwrap_or(fmt),
         _ => fmt,
     }
 }

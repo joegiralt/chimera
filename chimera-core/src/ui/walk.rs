@@ -12,6 +12,8 @@ use crate::dsp::tape_engine::{
 };
 use crate::modulation::VCA;
 use crate::preset::Sound;
+use crate::dsp::modulator::law::Law;
+use crate::ui::page::ValFmt;
 use crate::ui::view::{FADE_ASIDE, RETRIG_ONCE_ONLY, WOW_AT_REST, XFADE_LOOP_ONLY, tape_routed};
 
 /// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
@@ -94,6 +96,18 @@ pub(crate) fn tape_note_in(addr: ParamAddr, sound: &Sound) -> Option<&'static st
         }
         _ => None,
     }
+}
+
+/// How TAPE's cell `id` reads on `m` in `way` where the engine has a law
+/// the spec's format doesn't say (`view::fmt_of`): WALK's LENGTH under
+/// TRON once through is the tape, 0.25 to 8 s, STRETCH's LENGTH law (ADR
+/// 0203); FADE's top is HOLD once through. `None`: the spec's.
+pub(crate) fn tape_fmt_in(id: ParamId, m: TapeMachine, way: Way) -> Option<ValFmt> {
+    Some(match (m, id) {
+        (TapeMachine::Walk, T::SIZE) if way == Way::Tron => ValFmt::Law(Law::StretchLength),
+        (TapeMachine::Walk, T::DRAG) if way == Way::One => ValFmt::Hold,
+        _ => return None,
+    })
 }
 
 /// What `t` with `param` (MODEL or DIRECTION) at `code` can't play from a

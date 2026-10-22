@@ -204,6 +204,8 @@ pub struct UiDoor {
     machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
     tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
+    /// TAPE cells' units where the engine has a law (`ui::walk`).
+    tape_fmt: fn(ParamId, TapeMachine, crate::dsp::tape_engine::Way) -> Option<crate::ui::page::ValFmt>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
     jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
     /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
@@ -218,7 +220,7 @@ type HeadKind = (SourceHead, LoadKind);
 type EnvWrites = &'static [(ParamId, f32)];
 
 /// `UiDoor::magic`.
-const UI_MAGIC: u32 = 0xB2C0_0002;
+const UI_MAGIC: u32 = 0xB2C0_0003;
 
 impl UiDoor {
     /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
@@ -239,6 +241,7 @@ impl UiDoor {
         machine_edit: crate::ui::walk::machine_edit_in,
         tape_note: crate::ui::walk::tape_note_in,
         tape_held: crate::ui::walk::tape_held_in,
+        tape_fmt: crate::ui::walk::tape_fmt_in,
         jog: crate::ui::jog::Jog::pass,
         pit: crate::ui::pit_tuner::calc::pass_in,
         pit_paint: crate::ui::pit_tuner::calc::paint_in,
@@ -345,6 +348,16 @@ impl UiDoor {
         code: u8,
     ) -> Option<NeedsRam> {
         (self.tape_held)(t, id, code)
+    }
+
+    #[inline(always)]
+    pub(crate) fn tape_fmt(
+        &self,
+        id: ParamId,
+        m: TapeMachine,
+        way: crate::dsp::tape_engine::Way,
+    ) -> Option<crate::ui::page::ValFmt> {
+        (self.tape_fmt)(id, m, way)
     }
 
     #[inline(always)]
