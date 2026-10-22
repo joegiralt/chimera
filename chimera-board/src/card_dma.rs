@@ -1421,7 +1421,7 @@ impl IrqState {
             // the fault, never a verdict on the chunk.
             None => ReadError::Frame(Blame::Card),
         };
-        failed(err, Attempt::First);
+        failed(err);
         self.side.requeue(claim);
         false
     }
@@ -1572,19 +1572,22 @@ impl IrqState {
     /// requeued want waits for the next wake (a new want, or `watch`), so
     /// a card that keeps failing can't hold this handler in a loop. A
     /// fill's protocol error (C1: CMD18's R1, a token, a CRC16, a token
-    /// timeout) is read again once, or faults the card (`on_error`).
+    /// timeout) is read again once, or blamed (`on_error`): the card
+    /// faults for a chunk's first, its chunk is passed over after.
     fn abort(&mut self, h: Held, kind: Kind, why: Why) {
         STATS.aborts.fetch_add(1, Ordering::Relaxed);
         let then = match (kind, why) {
-            (Kind::Fill(f), Why::Proto(e)) => match failed(ReadError::Proto(e), f.attempt) {
-                ErrorStep::Retry => Then::Retry(Fill {
-                    attempt: Attempt::Retry,
-                    ..f
-                }),
-                ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
-                    Then::Give(self.fail_job(Kind::Fill(f), why))
+            (Kind::Fill(f), Why::Proto(e)) => {
+                match failed(f.row.proto_error(e, f.attempt, &mut self.rot)) {
+                    ErrorStep::Retry => Then::Retry(Fill {
+                        attempt: Attempt::Retry,
+                        ..f
+                    }),
+                    ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
+                        Then::Give(self.fail_job(Kind::Fill(f), why))
+                    }
                 }
-            },
+            }
             (kind, why) => Then::Give(self.fail_job(kind, why)),
         };
         self.stop(h, then);
@@ -1628,9 +1631,9 @@ fn counted(was: CardFault) {
 
 /// A fill's read error, decided (`serve::read_failed`, which sets the
 /// fault and counts a frame error), its fault counted.
-fn failed(err: ReadError, a: Attempt) -> ErrorStep {
+fn failed(err: ReadError) -> ErrorStep {
     let was = BUS.fault();
-    let step = read_failed(err, a, &BUS, &STREAM_STATS);
+    let step = read_failed(err, &BUS, &STREAM_STATS);
     counted(was);
     step
 }

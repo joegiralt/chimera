@@ -17,7 +17,7 @@ use chimera_core::stream::layout::{RAW_CHUNK_BYTES, StreamFile, deframe};
 use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    Attempt, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, serve_step,
+    Attempt, ErrorStep, HeldRead, Parked, Rot, ServeStep, read_failed, serve_step,
 };
 use chimera_core::stream::stats::StreamStats;
 use chimera_core::stream::units::AudioBlocks;
@@ -291,12 +291,8 @@ impl<'r> CardStream<'r> {
             ..
         } = f;
         if fails {
-            match read_failed(
-                ReadError::Proto(ProtoError::Crc),
-                attempt,
-                self.bus,
-                self.stats,
-            ) {
+            let err = row.proto_error(ProtoError::Crc, attempt, &mut self.rot);
+            match read_failed(err, self.bus, self.stats) {
                 ErrorStep::Retry => {
                     self.flight = Some(Flight {
                         claim,
@@ -331,7 +327,7 @@ impl<'r> CardStream<'r> {
             }
             _ => {
                 let err = row.frame_error(&mut self.rot);
-                read_failed(err, Attempt::First, self.bus, self.stats);
+                read_failed(err, self.bus, self.stats);
                 self.side.requeue(claim);
             }
         }
