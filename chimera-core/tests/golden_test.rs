@@ -500,8 +500,11 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_oneshot_slice7",
         (
-            0x66b4834f036719a1,
-            [0, 1050811635, 1053320054, 0, 0, 0, 0, 0],
+            0xd204e8cc8e9c4c87,
+            [
+                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
+                1032249790,
+            ],
         ),
     ),
     (
@@ -725,7 +728,8 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ("tape_loop_age", TapeEngineParams { age: 0.5, ..p }),
         ("tape_loop_tape", TapeEngineParams { tape: 0.5, ..p }),
         ("tape_oneshot", one),
-        // SLICE 7: its value 8.
+        // SLICE 7: its value 8. SLICE is on hold (`slice_in_play`, review
+        // of #761): it plays as `tape_oneshot`, whose hash it now is.
         (
             "tape_oneshot_slice7",
             TapeEngineParams {

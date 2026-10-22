@@ -895,6 +895,7 @@ fn slices_are_exact() {
 }
 
 #[test]
+#[ignore = "SLICE is on hold (ADR 0199, tape-slice, #748): no note plays it until it returns"]
 fn slice_note_picks_without_transposing() {
     let win = Window {
         lo: 0,

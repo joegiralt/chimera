@@ -39,6 +39,8 @@ pub(crate) fn machine_edit_in(
             for (id, v) in defaults(m, d) {
                 b.set(id, v);
             }
+            // SLICE is on hold (`slice_in_play`): a turn leaves none.
+            b.set(T::SLICE, 0.0);
             env_defaults(m, d)
         }
         // DIRECTION is WALK's: off it, LENGTH and FADE are another machine's.

@@ -779,3 +779,43 @@ fn tron_reverse_is_end_before_start() {
     );
     assert!(at(&back, 0.1) < at(&back, 0.5) && at(&back, 0.5) < at(&back, 0.9));
 }
+
+/// SLICE is on hold (review of #761, M3): a main-era Sound's SLICE, NOTE or
+/// slice 5, loads OFF on every MODEL code, and one left in memory is never
+/// heard. A LOOP Sound with SLICE NOTE turned to FORWARD plays its key at
+/// the key's pitch, over the whole window.
+#[test]
+fn a_retired_slice_is_never_heard() {
+    use chimera_core::dsp::tape_engine::{SliceCode, at_root, params::plays_at_root};
+    const MODEL: u8 = 0;
+    const SLICE: u8 = 13;
+    for model in [0u32, 2, 3, 4, 5, 6, 7] {
+        for slice in [1u32, 6] {
+            let t = decoded(&[(MODEL, model), (SLICE, slice)]);
+            assert_eq!(t.slice, SliceCode::OFF, "MODEL {model} SLICE {slice}");
+        }
+    }
+    let mut t = decoded(&[(MODEL, 0), (SLICE, 1)]);
+    // FORWARD's defaults, as a DIRECTION turn writes them: the whole of it.
+    (t.direction, t.size, t.position, t.root) = (Direction::Forward, 1.0, 0.0, 6_000.0);
+    let held = P {
+        slice: SliceCode::NOTE,
+        ..t
+    };
+    assert!(!at_root(&held) && !plays_at_root(&held), "a slice in memory");
+    let src = sine_src();
+    let v = SourceView::new(&src).unwrap();
+    // Zero crossings a second: the key's octave over ROOT doubles them.
+    let rate = |note| {
+        let mut e = fresh(1);
+        let x = run(&mut e, &held, &v, note, 6_000 / B, None);
+        let x = &x[2_000..4_000];
+        x.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count() as f32
+    };
+    let ratio = rate(72) / rate(60);
+    assert!((ratio - 2.0).abs() < 0.05, "C5 over C4: {ratio}");
+    // Whole window: a note plays past a sixteenth of it.
+    let mut e = fresh(1);
+    let x = run(&mut e, &held, &v, 61, 24_000 / B, None);
+    assert!(x[20_000..].iter().any(|y| y.abs() > 0.1), "past a slice");
+}

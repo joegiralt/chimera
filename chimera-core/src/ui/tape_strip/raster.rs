@@ -147,7 +147,7 @@ pub(crate) fn strip_in(
     );
     let lit = match way {
         Way::One => {
-            let s = p.slice.slice();
+            let s = p.slice_in_play();
             ticks = if s == Slice::Off { 0 } else { 16 };
             // Slice k from START (`slice_bounds`), or under NOTE the one
             // the newest note plays.

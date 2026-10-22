@@ -1867,7 +1867,7 @@ impl TapeDeck {
         if p.direction == Direction::Reverse {
             w.dir = w.dir.flip();
         }
-        w = slice_bounds(w, p.slice.slice(), note.get());
+        w = slice_bounds(w, p.slice_in_play(), note.get());
         // POSITION and DRIFT move where it starts, counted the way it plays.
         let from = drift::from(w, drift::place(p.position, self.drift), floor);
         // LENGTH is how much of the rest plays (LOOP's law).

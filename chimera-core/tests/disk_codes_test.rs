@@ -347,6 +347,15 @@ fn every_enum_param_round_trips_in_loader_order() {
     for (b, _) in stored() {
         for e in ValidAddr::of_block(b).filter(|a| a.coded()) {
             let s = e.spec();
+            // SLICE is on hold (`slice_in_play`): every code loads OFF.
+            if b == BlockRef::TapeEngine && s.id == chimera_core::dsp::tape_engine::TapeEngineParams::SLICE {
+                for v in 0..=s.max as u8 {
+                    let mut a = Bank::new();
+                    a.block(b).set(s.id, f32::from(v));
+                    assert_eq!(load(b, &mut a).block(b).get(s.id), 0.0, "SLICE {v}");
+                }
+                continue;
+            }
             for v in 0..=s.max as u8 {
                 let mut a = Bank::new();
                 a.block(b).set(s.id, f32::from(v));

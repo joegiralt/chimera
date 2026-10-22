@@ -1,7 +1,7 @@
 //! TAPE's parameters (spec § 3), block `BlockRef::TapeEngine`: ids frozen
 //! once written.
 
-use super::oneshot::SliceCode;
+use super::oneshot::{Slice, SliceCode};
 use super::stretch::units::{GrainLen, Length, Spray, StretchEnd};
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
@@ -430,7 +430,7 @@ pub fn hold(p: &TapeEngineParams) -> bool {
 
 /// SLICE NOTE: a ONE note plays at ROOT, whatever its key.
 pub fn at_root(p: &TapeEngineParams) -> bool {
-    p.way() == Way::One && p.slice.slice().by_note()
+    p.way() == Way::One && p.slice_in_play().by_note()
 }
 
 /// A note on `p` plays at ROOT whatever its key: WALK under SLICE NOTE
@@ -816,6 +816,15 @@ impl TapeEngineParams {
     /// The deck's path for this machine, DIRECTION and TRON.
     pub const fn way(&self) -> Way {
         Way::of(self.machine, self.direction, self.tron)
+    }
+
+    /// The SLICE a note plays: OFF while SLICE is on hold (ADR 0199, on
+    /// `tape-slice`, #748). No cell sets it, so a value an old file or a
+    /// MODEL turn left would be a state the player can't see or change:
+    /// every reader asks here, and none hears it. The code stays for the
+    /// codec.
+    pub const fn slice_in_play(&self) -> Slice {
+        Slice::Off
     }
 
     /// WALK with TRON on: the tape runs out and the pad lifts at key up.
@@ -1248,8 +1257,10 @@ impl Block for TapeEngineParams {
                 self.set_machine(TapeMachine::of(m))
             }),
             Self::TYPE => apply_code(StretchType::from_disk_code(code), |k| self.kind = k),
-            Self::SLICE => apply_code(identity_code(&TAPE_ENGINE_SPECS, id, code), |c| {
-                self.slice = SliceCode::new(c)
+            // SLICE is on hold (`slice_in_play`): a file's, any MODEL's,
+            // loads as OFF.
+            Self::SLICE => apply_code(identity_code(&TAPE_ENGINE_SPECS, id, code), |_| {
+                self.slice = SliceCode::OFF
             }),
             Self::WOW => apply_code(Wow::from_disk_code(code), |w| self.wow = w),
             Self::MODE => apply_code(Direction::from_disk_code(code), |d| self.direction = d),

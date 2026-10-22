@@ -668,6 +668,8 @@ fn worst(e: EngineType) -> (Sound, usize) {
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
 /// 24 zones) + 84 (`MidiMap`, 16 entries) = 2 703 B, less 5 B for each param that has nowhere to move.
+/// TAPE's SLICE is on hold (`slice_in_play`): every code loads OFF, so a
+/// Sound never stores one, 5 B under it.
 /// A new param moves it: raise
 /// `MAX_SOUND_COST` with it.
 #[test]
@@ -680,7 +682,7 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2713);
+    assert_eq!(most, 2708);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }
 
