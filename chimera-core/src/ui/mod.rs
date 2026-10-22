@@ -1677,7 +1677,7 @@ impl UiState {
         if now
             != (SlotCtx {
                 tape: now.tape,
-                way: now.way,
+                once: now.once,
                 ..before
             })
         {

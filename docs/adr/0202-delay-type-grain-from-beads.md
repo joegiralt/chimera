@@ -73,7 +73,7 @@ Left out: the seconds-long buffer and its time-stretch clouds (no RAM); stereo p
 - **TAPE is bit for bit:** `delay_tape_hash_test` hashes the delay's send and insert returns over 1,600 blocks of plucks and noise, with TIME, FDBK, MECHANICS, SAT, TONE and MIX all moving (TIME twice, its crossfade). The hashes were taken on origin/main `f745c0a1` before TYPE existed and match unchanged.
 
 ### Memory
-- No new line. `TapeDelay` grows 272 B (`grain::State`: six grains of 40 B, the clock, the TYPE share, the feedback's filter states), in the FX bus's AXI budget. `DelayParams` grows 20 B (`grain: [f32; 5]`, ids 7–11 in one array so `get` and `write` reach them in one arm each).
+- No new line. `TapeDelay` grows 272 B (`grain::State`: six grains of 40 B, the clock, the TYPE share, the feedback's filter states), in the FX bus's AXI budget. `DelayParams` grows 20 B (`grain: [f32; 5]`, ids 7–11 in one array so `get` and `write` reach them in one arm each). TYPE stays an `f32` index in that array, read typed through `kind` (a `DelayType`): an accepted exception to the type rule (review of #761), as a `DelayType` field of its own measured +56 B in bank 1 (`mix_parts` and the block's `get`/`write`).
 
 ### Cost
 `tools/loop_count.py` on the ORBIT ELF (static counts, ADR 0056's 1.606 cycles an instruction and 12 a divide):

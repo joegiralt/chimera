@@ -10,17 +10,50 @@ use crate::dsp::modulator::law::Law;
 use crate::dsp::tape_engine::machine::{Cell, defaults, direction_defaults, env_defaults, machine};
 use crate::dsp::tape_engine::{
     self, Choice, Direction, FADE_HOLD, MachineIndex, NeedsRam, TapeEngineParams as T, TapeMachine,
-    Way, fade_default, needs_ram,
+    Tron, Way, fade_default, needs_ram,
 };
 use crate::modulation::VCA;
 use crate::preset::Sound;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::page::ValFmt;
 use crate::ui::view::{
-    DELAY_GRAIN_ONLY, DELAY_TAPE_ONLY, FADE_ASIDE, FADE_HOLD_ONLY, RETRIG_ONCE_ONLY,
-    RETRIG_TRON_OFF, SourceState, WOW_AT_REST, XFADE_CAPPED, XFADE_LOOP_ONLY, XFADE_NO_SEAM,
-    tape_routed,
+    FADE_ASIDE, FADE_HOLD_ONLY, RETRIG_ONCE_ONLY, SourceState, WOW_AT_REST, XFADE_CAPPED,
+    XFADE_LOOP_ONLY, tape_routed,
 };
+
+/// The words this module adds, named so they link into bank 2 with it
+/// (`bank2.x`'s `.rodata.*walk*`), not into bank 1's unnamed rodata; cut
+/// by `Word`. `view`'s constants of the same text are the tests'.
+static WORDS: [u8; 90] = *b"PING-PONG TURNS \xc2\xb7 NO SEAMCUTS ONLY WITH TRON OFFTAPE TYPE ONLYGRAIN TYPE ONLYFORWARDHOLDx";
+
+#[derive(Clone, Copy)]
+enum Word {
+    NoSeam,
+    TronOff,
+    TapeOnly,
+    GrainOnly,
+    Forward,
+    Hold,
+    Times,
+}
+
+/// `w`'s text in `WORDS`; checked, never failing (`WORDS` is UTF-8).
+#[inline(always)]
+fn word(w: Word) -> &'static str {
+    let (at, len) = match w {
+        Word::NoSeam => (0, 26),
+        Word::TronOff => (26, 23),
+        Word::TapeOnly => (49, 14),
+        Word::GrainOnly => (63, 15),
+        Word::Forward => (78, 7),
+        Word::Hold => (85, 4),
+        Word::Times => (89, 1),
+    };
+    match WORDS.get(at..at + len).map(core::str::from_utf8) {
+        Some(Ok(s)) => s,
+        _ => "",
+    }
+}
 
 /// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
 /// Machines, ADR 0178), and a DIRECTION edit across once through and a
@@ -99,28 +132,28 @@ pub(crate) fn tape_note_in(addr: ParamAddr, sound: &Sound) -> Option<&'static st
         // Each reason by the way it plays, so TRON on never reads as off.
         T::XFADE => match t.way() {
             Way::One => Some(XFADE_LOOP_ONLY),
-            Way::Ping => Some(XFADE_NO_SEAM),
+            Way::Ping => Some(word(Word::NoSeam)),
             _ => None,
         },
         T::RETRIG => match t.way() {
             Way::Loop | Way::Ping => Some(RETRIG_ONCE_ONLY),
-            Way::Tron => Some(RETRIG_TRON_OFF),
+            Way::Tron => Some(word(Word::TronOff)),
             _ => None,
         },
         _ => None,
     }
 }
 
-/// How TAPE's cell `id` reads on `m` in `way` where the engine has a law
+/// How TAPE's cell `id` reads on `m`, once through with TRON `once`, where the engine has a law
 /// the spec's format doesn't say (`view::fmt_of`): WALK's LENGTH under
 /// TRON once through is the tape, 0.25 to 8 s, STRETCH's LENGTH law (ADR
 /// 0203); SCRUB's LENGTH its loop, 2 ms to 2 s (ADR 0205); FADE and DRAG
 /// 10 to 500 ms, FADE's top HOLD once through; DRIFT a share of the
 /// window; SPEED a factor of the source's own. `None`: the spec's.
-pub(crate) fn tape_fmt_in(id: ParamId, m: TapeMachine, way: Way) -> Option<ValFmt> {
+pub(crate) fn tape_fmt_in(id: ParamId, m: TapeMachine, once: Option<Tron>) -> Option<ValFmt> {
     Some(match (m, id) {
-        (TapeMachine::Walk, T::SIZE) if way == Way::Tron => ValFmt::Law(Law::StretchLength),
-        (TapeMachine::Walk, T::DRAG) if way == Way::One => ValFmt::Law(Law::FadeHold),
+        (TapeMachine::Walk, T::SIZE) if once == Some(Tron::On) => ValFmt::Law(Law::StretchLength),
+        (TapeMachine::Walk, T::DRAG) if once == Some(Tron::Off) => ValFmt::Law(Law::FadeHold),
         (TapeMachine::Walk | TapeMachine::Scrub, T::DRAG) => ValFmt::Law(Law::DragTime),
         (TapeMachine::Walk, T::DRIFT) => ValFmt::Law(Law::Pct),
         (TapeMachine::Scrub, T::SIZE) => ValFmt::Law(Law::ScrubLength),
@@ -139,7 +172,7 @@ pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
     let motion = 2.0 * v - 1.0;
     let x = match law {
         Law::FadeHold if v >= 0.999 => {
-            let _ = buf.write_str("HOLD");
+            let _ = buf.write_str(word(Word::Hold));
             return;
         }
         Law::FadeHold => {
@@ -149,7 +182,7 @@ pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
         Law::StretchSpeed => tape_engine::stretch::time_speed(motion),
         _ => 2.0 * motion,
     };
-    crate::ui::fmt::fixed(buf, x, 2, "x");
+    crate::ui::fmt::fixed(buf, x, 2, word(Word::Times));
 }
 
 /// Why the delay's cell `id` is dimmed under TYPE `k` (ADR 0202): DLY ›
@@ -158,8 +191,10 @@ pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
 pub(crate) fn delay_note_in(id: ParamId, k: DelayType) -> Option<&'static str> {
     type D = DelayParams;
     match (k, id) {
-        (DelayType::Grain, D::WOW_FLUTTER | D::SATURATION) => Some(DELAY_TAPE_ONLY),
-        (DelayType::Tape, D::SIZE | D::DENSITY | D::PITCH | D::TEXTURE) => Some(DELAY_GRAIN_ONLY),
+        (DelayType::Grain, D::WOW_FLUTTER | D::SATURATION) => Some(word(Word::TapeOnly)),
+        (DelayType::Tape, D::SIZE | D::DENSITY | D::PITCH | D::TEXTURE) => {
+            Some(word(Word::GrainOnly))
+        }
         _ => None,
     }
 }
@@ -173,7 +208,7 @@ pub(crate) fn readout_word_in(a: ParamAddr, v: f32, held: Option<u8>) -> Option<
     }
     let names: &[&str] = match a.param {
         T::MODEL => &tape_engine::MACHINE_NAMES,
-        T::MODE => &tape_engine::params::DIRECTION_WORDS,
+        T::MODE => &tape_engine::DIRECTION_NAMES,
         _ => return None,
     };
     let last = names.len() as u8 - 1;
@@ -181,7 +216,12 @@ pub(crate) fn readout_word_in(a: ParamAddr, v: f32, held: Option<u8>) -> Option<
         Some(h) => h,
         None => crate::ui::fmt::discrete(v, last),
     };
-    names.get(usize::from(i)).copied()
+    // FORWARD is the one the cell cuts (FWD) that the readout has room
+    // for: PING-PONG would push DIRECTION's glyph out, so PING stays.
+    match (a.param, i) {
+        (T::MODE, 0) => Some(word(Word::Forward)),
+        _ => names.get(usize::from(i)).copied(),
+    }
 }
 
 /// The knob writes (`Motion::knob`, glided by the Part's knobs) an edit

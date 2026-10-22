@@ -206,8 +206,11 @@ pub struct UiDoor {
     band_note: fn(ParamAddr, &Sound, crate::ui::view::SourceState) -> Option<&'static str>,
     tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
     /// TAPE cells' units where the engine has a law (`ui::walk`).
-    tape_fmt:
-        fn(ParamId, TapeMachine, crate::dsp::tape_engine::Way) -> Option<crate::ui::page::ValFmt>,
+    tape_fmt: fn(
+        ParamId,
+        TapeMachine,
+        Option<crate::dsp::tape_engine::Tron>,
+    ) -> Option<crate::ui::page::ValFmt>,
     law_text: fn(&mut crate::ui::fmt::FmtBuf, crate::dsp::modulator::law::Law, f32),
     /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
     delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,
@@ -379,9 +382,9 @@ impl UiDoor {
         &self,
         id: ParamId,
         m: TapeMachine,
-        way: crate::dsp::tape_engine::Way,
+        once: Option<crate::dsp::tape_engine::Tron>,
     ) -> Option<crate::ui::page::ValFmt> {
-        (self.tape_fmt)(id, m, way)
+        (self.tape_fmt)(id, m, once)
     }
 
     #[inline(always)]

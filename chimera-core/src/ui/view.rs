@@ -18,7 +18,7 @@ use crate::dsp::modulator::{
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine;
 use crate::dsp::tape_engine::{
-    self, Choice, Direction, MachineIndex, TapeEngineParams as T, TapeMachine, Tron, Way, wave,
+    self, Choice, Direction, MachineIndex, TapeEngineParams as T, TapeMachine, Tron, wave,
 };
 use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use crate::midi_map::Mappable;
@@ -83,9 +83,10 @@ pub struct SlotCtx {
     pub model: ResonatorMode,
     /// TAPE's machine: its labels and cells.
     pub tape: TapeMachine,
-    /// TAPE's way: WALK once through with TRON off (`One`) ends FADE in
-    /// HOLD, with TRON on (`Tron`) reads LENGTH as the tape's seconds.
-    pub way: Way,
+    /// WALK once through (FORWARD or REVERSE), and TRON then: off, FADE
+    /// ends in HOLD; on, LENGTH reads the tape's seconds. `None` around a
+    /// loop, or off WALK.
+    pub once: Option<Tron>,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
     /// SCRUB's KEY is POSITION: FINGER's hint says a key places it.
@@ -141,12 +142,10 @@ impl SlotCtx {
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
             tape,
-            way: Way::of(
-                tape,
-                Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
-                    .unwrap_or(Direction::Loop),
-                Tron::from_value(get(BlockRef::TapeEngine, T::TRON)).unwrap_or(Tron::Off),
-            ),
+            once: (tape == TapeMachine::Walk
+                && Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
+                    .is_some_and(Direction::once))
+            .then(|| Tron::from_value(get(BlockRef::TapeEngine, T::TRON)).unwrap_or(Tron::Off)),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             keys_place: get(BlockRef::TapeEngine, T::KEY) == 0.0,
             src: SourceState::None,
@@ -706,7 +705,7 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
 fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
-        (BlockRef::TapeEngine, id) => crate::bank2::ui_door(|u| u.tape_fmt(id, ctx.tape, ctx.way))
+        (BlockRef::TapeEngine, id) => crate::bank2::ui_door(|u| u.tape_fmt(id, ctx.tape, ctx.once))
             .flatten()
             .unwrap_or(fmt),
         _ => fmt,
