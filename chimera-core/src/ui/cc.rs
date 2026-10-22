@@ -10,10 +10,10 @@ use super::UiState;
 use super::nav::PartChain;
 use super::part_page::Edit;
 use crate::addr::{BlockRef, ParamAddr};
-use crate::block::Motion;
+use crate::block::{Motion, ParamId};
 use crate::dsp::knobs::MOVES;
-use crate::dsp::tape_engine::machine::{defaults, env_defaults};
-use crate::dsp::tape_engine::{Direction, MachineIndex, TapeEngineParams, TapeMachine};
+use crate::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
+use crate::dsp::tape_engine::{Choice, Direction, MachineIndex, TapeEngineParams, TapeMachine};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::CcEvent;
 use crate::midi_map::ramp::{Ramp, bin, budget};
@@ -125,6 +125,22 @@ pub(super) fn model_writes(m: TapeMachine, d: Direction) -> u8 {
     (k.count() + e.count()) as u8
 }
 
+/// The knob writes a DIRECTION change from `was` to `now` makes besides
+/// its own (`walk::machine_edit_in`): LENGTH and FADE crossing once
+/// through and a loop, and then ENV 1's for `now`.
+pub(super) fn direction_writes(was: Direction, now: Direction) -> u8 {
+    let writes = direction_defaults(was, now);
+    let tape = |&&(id, _): &&(ParamId, f32)| knob(ParamAddr::new(BlockRef::TapeEngine, id));
+    let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
+    let env = |&&(id, _): &&(ParamId, f32)| knob(ParamAddr::new(env1, id));
+    let e = if writes.is_empty() {
+        0
+    } else {
+        env_defaults(TapeMachine::Walk, now).iter().filter(env).count()
+    };
+    (writes.iter().filter(tape).count() + e) as u8
+}
+
 impl UiState {
     /// Each Part's ramps `now` on, then this pass's CCs (spec §§ 5-7).
     /// After `handle_input`, before the publish: the hand's moves are in.
@@ -224,10 +240,12 @@ impl UiState {
                 d,
             );
         }
-        // A DIRECTION turn writes at most what a MODEL turn onto WALK does.
+        // A DIRECTION turn's own writes, from where it is to where it lands.
         if a.block == BlockRef::TapeEngine && a.param == TapeEngineParams::MODE {
-            let d = self.project.part(p).sound.params.tape.direction;
-            cost += model_writes(TapeMachine::Walk, d);
+            let was = self.project.part(p).sound.params.tape.direction;
+            if let Some(now) = Direction::from_value(spec.min + f32::from(to)) {
+                cost += direction_writes(was, now);
+            }
         }
         if cost > self.cc.room[i] {
             self.cc.pend[i][j] = to as u8;
@@ -347,6 +365,47 @@ impl UiState {
             self.cc.bins[i][j] = NO_BIN;
             self.cc.pend[i][j] = NO_BIN;
             self.cc.handed[i] |= 1 << j;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::Block;
+
+    /// A DIRECTION change's budget is the knob writes the edit makes, from
+    /// every DIRECTION to every other (review of #761, m2).
+    #[test]
+    fn direction_writes_are_the_edits() {
+        let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
+        for was in Direction::ALL {
+            for now in Direction::ALL {
+                let mut s = crate::preset::Sound::init(crate::params::EngineType::Tape);
+                s.params.tape.direction = was;
+                // Unlike every default, so each write moves its knob.
+                (s.params.tape.size, s.params.tape.drag) = (0.123, 0.456);
+                let before = s.params.tape;
+                s.params.tape.set(TapeEngineParams::MODE, now as u8 as f32);
+                let addr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODE);
+                let envs = crate::ui::walk::machine_edit_in(
+                    addr,
+                    f32::from(was as u8),
+                    &mut s.params.tape,
+                );
+                let tape = crate::dsp::tape_engine::TAPE_ENGINE_SPECS
+                    .iter()
+                    .filter(|sp| sp.id != TapeEngineParams::MODE)
+                    .filter(|sp| s.params.tape.get(sp.id) != before.get(sp.id))
+                    .filter(|sp| knob(ParamAddr::new(BlockRef::TapeEngine, sp.id)))
+                    .count();
+                let env = envs.iter().filter(|&&(id, _)| knob(ParamAddr::new(env1, id))).count();
+                assert_eq!(
+                    usize::from(direction_writes(was, now)),
+                    tape + env,
+                    "{was:?} to {now:?}"
+                );
+            }
         }
     }
 }
