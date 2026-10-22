@@ -1505,3 +1505,69 @@ fn a_failed_re_init_is_tried_again_on_a_backoff() {
     assert_eq!(rig.s.fault, CardFault::Clear);
     assert_eq!(rig.band(), fine);
 }
+
+/// m8 (#761): a note that starts while a re-stage reads its heads, with
+/// every stream row taken, leaves the heads where they were for now, not
+/// stuck for good: a row freed, they go in beside it with no turn.
+#[test]
+fn a_rehead_that_meets_a_new_note_tries_again() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
+    fn now_ms() -> u32 {
+        static T0: OnceLock<Instant> = OnceLock::new();
+        T0.get_or_init(Instant::now).elapsed().as_millis() as u32
+    }
+    let b = bed(32);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| t.set_way(Way::One));
+    rig.turn(1);
+    rig.load();
+    let before = heads_for(b.0.sref, &rig.params()).unwrap();
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    let reg = rig.registry();
+    let f = *reg.get(id).unwrap();
+    for n in 24..31 {
+        reg.insert(SourceId::new(n).unwrap(), f).unwrap();
+    }
+    rig.ui.project_mut().set_gate_clock(now_ms);
+    rig.tape(|t| t.start = 0.5);
+    // No note yet: the re-stage starts and reads its heads' first share.
+    let reads = rig.s.reads.len();
+    while rig.s.reads.len() == reads {
+        rig.frame();
+    }
+    let mut tok = rig.ui.project().pool().table().reader().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let audio = std::thread::spawn({
+        let stop = stop.clone();
+        move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = tok.begin_block();
+                tok.store_sounding(id.bit());
+                std::thread::sleep(Duration::from_micros(500));
+            }
+        }
+    });
+    let table = rig.ui.project().pool().table();
+    while table.sounding() != id.bit() {
+        std::thread::yield_now();
+    }
+    for _ in 0..20 {
+        rig.frame();
+    }
+    assert_heads(&rig, &b, before.as_slice());
+    // SAFETY: no voice or card read has these test rows.
+    assert!(unsafe { reg.clear(SourceId::new(30).unwrap()) });
+    let after = heads_for(b.0.sref, &rig.params()).unwrap();
+    for _ in 0..200 {
+        let t = head_table(rig.ui.project().pool().held(b.0.sref).unwrap()).unwrap();
+        if t.iter().eq(after.as_slice().iter().copied()) {
+            break;
+        }
+        rig.frame();
+    }
+    stop.store(true, Ordering::Relaxed);
+    audio.join().unwrap();
+    assert_heads(&rig, &b, after.as_slice());
+}

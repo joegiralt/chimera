@@ -240,15 +240,17 @@ impl SourceCell {
             SourceJob::Rehead(mut l) => match l.step(s, r, p, STEP_BYTES as usize) {
                 StreamStep::More => self.job = Some(SourceJob::Rehead(l)),
                 StreamStep::Done(_) => {}
-                // A card fault: tried again after another `REHEAD`.
+                // A card fault, or a note that started during the head
+                // read with nothing free beside it (#761 m8): passing, so
+                // tried again after another `REHEAD` once `can_rehead`
+                // lets it.
+                StreamStep::Failed(StreamFail::Sounding) => self.wait = None,
                 StreamStep::Failed(StreamFail::Read(e))
                     if crate::storage::CardFault::store_error(&e).is_some() =>
                 {
                     self.wait = None
                 }
-                // Not again until the heads it wants change, or the card
-                // (`Sounding` too: `can_rehead` let it start, so a retry
-                // would only read the same heads again).
+                // Not again until the heads it wants change, or the card.
                 StreamStep::Failed(_) => {
                     if let Some(w) = self.wait {
                         self.stuck[w.id.index()] = Some(heads_key(&w.heads));
