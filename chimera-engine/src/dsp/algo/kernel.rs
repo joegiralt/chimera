@@ -9,6 +9,7 @@ use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
 use crate::dsp::algo::waves::{Table, WAVE_LEN, WaveId};
 use crate::hw::BLOCK_SIZE;
 use crate::taps::{TapOp, TapRows};
+use core::mem::MaybeUninit;
 
 /// Phase swing, in cycles, of a full-scale modulator at weight 1.
 pub const PM_CYCLES: f32 = 4.0;
@@ -308,19 +309,25 @@ impl Kernel {
         for (k, &op) in plan.order.iter().enumerate() {
             pos[op as usize % OPS] = k;
         }
-        // Row `k` holds the block of the operator `k`-th in the order.
-        let mut bufs = [[0.0f32; BLOCK_SIZE]; OPS];
+        // Row `k` holds the block of the operator `k`-th in the order. Each
+        // turn writes its own rows whole before `k` passes them: a silent
+        // op's zeros, a table's every sample, a noise or formant row zeroed
+        // first. So no row is cleared twice.
+        let mut bufs: [Row; OPS] = [[MaybeUninit::uninit(); BLOCK_SIZE]; OPS];
         out.fill(0.0);
         let mut k = 0;
         while k < OPS {
             let a = plan.order[k] as usize % OPS;
             if silent(&blk.ops[a]) {
                 self.idle(&blk.ops[a], a, &mut env[a]);
+                bufs[k] = [MaybeUninit::new(0.0); BLOCK_SIZE];
                 k += 1;
                 continue;
             }
             let n = plan.starts[k + 1].saturating_sub(plan.starts[k]) as usize;
             let (done, rest) = bufs.split_at_mut(k);
+            // SAFETY: the rows before `k` are written (above).
+            let done = unsafe { written(done) };
             let link = |i: usize| {
                 let e = plan.edges[plan.starts[k] as usize + i];
                 Link {
@@ -331,13 +338,31 @@ impl Kernel {
             };
             if let KindBlock::Noise(nb) = &blk.ops[a].kind {
                 let links: [Option<Link>; 5] = core::array::from_fn(|i| (i < n).then(|| link(i)));
-                self.noise_op(blk, a, dm, nb, &links, &mut env[a], &mut rest[0], out);
+                self.noise_op(
+                    blk,
+                    a,
+                    dm,
+                    nb,
+                    &links,
+                    &mut env[a],
+                    zeroed(&mut rest[0]),
+                    out,
+                );
                 k += 1;
                 continue;
             }
             if let KindBlock::Formant(fb) = &blk.ops[a].kind {
                 let links: [Option<Link>; 5] = core::array::from_fn(|i| (i < n).then(|| link(i)));
-                self.formant_op(blk, a, dm, fb, &links, &mut env[a], &mut rest[0], out);
+                self.formant_op(
+                    blk,
+                    a,
+                    dm,
+                    fb,
+                    &links,
+                    &mut env[a],
+                    zeroed(&mut rest[0]),
+                    out,
+                );
                 k += 1;
                 continue;
             }
@@ -399,7 +424,8 @@ impl Kernel {
             }
             self.keep(a, &x);
         }
-        // A silent op's row was never written: zeros.
+        // SAFETY: every row is written: `k` passed them all.
+        let bufs = unsafe { written(&bufs) };
         for (op, row) in TapOp::ALL.iter().zip(taps.rows_mut()) {
             if let Some(row) = row {
                 for (r, &y) in row.iter_mut().zip(&bufs[pos[op.op_index()]]) {
@@ -781,6 +807,30 @@ impl Kernel {
 }
 
 const STEP: f32 = 1.0 / BLOCK_SIZE as f32;
+
+/// An operator's block in `render_ops`, written before it is read.
+type Row = [MaybeUninit<f32>; BLOCK_SIZE];
+
+/// `rows` as the samples they hold.
+///
+/// # Safety
+/// Every sample of `rows` is written.
+#[inline(always)]
+unsafe fn written(rows: &[Row]) -> &[[f32; BLOCK_SIZE]] {
+    // SAFETY: `MaybeUninit<f32>` has `f32`'s layout, so a `Row` has
+    // `[f32; BLOCK_SIZE]`'s, and the caller vouches each sample is written.
+    unsafe { &*(rows as *const [Row] as *const [[f32; BLOCK_SIZE]]) }
+}
+
+/// `row` zeroed, as samples: a noise or formant op's, which its run may
+/// leave in part.
+#[inline(always)]
+fn zeroed(row: &mut Row) -> &mut [f32; BLOCK_SIZE] {
+    *row = [MaybeUninit::new(0.0); BLOCK_SIZE];
+    // SAFETY: every sample was just written; `MaybeUninit<f32>` has
+    // `f32`'s layout.
+    unsafe { &mut *(row as *mut Row as *mut [f32; BLOCK_SIZE]) }
+}
 
 /// A block of no PM: what an operator with no links reads (and doesn't).
 static ZEROS: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
@@ -1441,13 +1491,13 @@ fn run_one<const N: usize>(
     st: &mut OpState,
     mut links: [Link; N],
     env: &mut OpEnv,
-    dst: &mut [f32; BLOCK_SIZE],
+    dst: &mut Row,
     acc: &mut [f32; BLOCK_SIZE],
 ) {
     let (mut x, mut run) = (*st, env.run());
     for s in 0..BLOCK_SIZE {
         let y = tick(&mut x, &mut links, &mut run, env, s);
-        dst[s] = y;
+        dst[s] = MaybeUninit::new(y);
         acc[s] += x.carrier * y;
         x.carrier += x.dcarrier;
     }
@@ -1455,12 +1505,8 @@ fn run_one<const N: usize>(
     env.store(run);
 }
 
-type PairLane<'a, 'b, const N: usize> = (
-    &'b mut OpState,
-    [Link<'a>; N],
-    &'b mut OpEnv,
-    &'b mut [f32; BLOCK_SIZE],
-);
+type PairLane<'a, 'b, const N: usize> =
+    (&'b mut OpState, [Link<'a>; N], &'b mut OpEnv, &'b mut Row);
 
 /// Two operators that don't read each other, interleaved so their chains
 /// overlap; `a` still sums into `acc` first.
@@ -1477,8 +1523,8 @@ fn run_pair<const N: usize, const M: usize>(
     for s in 0..BLOCK_SIZE {
         let ya = tick(&mut x, &mut la, &mut rx, ea, s);
         let yb = tick(&mut y, &mut lb, &mut ry, eb, s);
-        da[s] = ya;
-        db[s] = yb;
+        da[s] = MaybeUninit::new(ya);
+        db[s] = MaybeUninit::new(yb);
         acc[s] += x.carrier * ya;
         acc[s] += y.carrier * yb;
         x.carrier += x.dcarrier;
