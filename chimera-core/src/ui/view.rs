@@ -151,7 +151,8 @@ impl SlotCtx {
             keys_place: get(BlockRef::TapeEngine, T::KEY) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
-            delay: DelayType::at(get(BlockRef::Delay, DelayParams::TYPE)),
+            // The project's, not a Sound's: `UiState::ctx` sets it.
+            delay: DelayType::Tape,
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
@@ -1031,12 +1032,11 @@ pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
     }
 }
 
-/// The focus readout's format for `addr` where its cell abbreviates: full
-/// words (`walk::long_names_in`, bank 2's: closed, none).
-pub fn readout_fmt(addr: ParamAddr) -> Option<ValFmt> {
-    crate::bank2::ui_door(|u| u.long_names(addr))
-        .flatten()
-        .map(ValFmt::Names)
+/// The focus readout's word for `addr` at display value `v` (or the held
+/// choice `held`) where its cell abbreviates it: full words
+/// (`walk::readout_word_in`, bank 2's: closed, none).
+pub fn readout_word(addr: ParamAddr, v: f32, held: Option<u8>) -> Option<&'static str> {
+    crate::bank2::ui_door(|u| u.readout_word(addr, v, held)).flatten()
 }
 
 /// Why a delay cell is dimmed: the other TYPE's (ADR 0202), bank 2's

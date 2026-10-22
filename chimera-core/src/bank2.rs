@@ -213,7 +213,7 @@ pub struct UiDoor {
     /// A TAPE MODEL or DIRECTION edit's knob writes (`ui::walk`).
     tape_writes: fn(ParamId, u8, &TapeEngineParams) -> u8,
     /// The focus readout's full words for TAPE's MODEL and DIRECTION.
-    long_names: fn(ParamAddr) -> Option<&'static [&'static str]>,
+    readout_word: fn(ParamAddr, f32, Option<u8>) -> Option<&'static str>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
     jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
     /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
@@ -252,7 +252,7 @@ impl UiDoor {
         tape_fmt: crate::ui::walk::tape_fmt_in,
         law_text: crate::ui::walk::law_text_in,
         delay_note: crate::ui::walk::delay_note_in,
-        long_names: crate::ui::walk::long_names_in,
+        readout_word: crate::ui::walk::readout_word_in,
         tape_writes: crate::ui::walk::tape_writes_in,
         jog: crate::ui::jog::Jog::pass,
         pit: crate::ui::pit_tuner::calc::pass_in,
@@ -392,8 +392,13 @@ impl UiDoor {
     }
 
     #[inline(always)]
-    pub(crate) fn long_names(&self, a: ParamAddr) -> Option<&'static [&'static str]> {
-        (self.long_names)(a)
+    pub(crate) fn readout_word(
+        &self,
+        a: ParamAddr,
+        v: f32,
+        held: Option<u8>,
+    ) -> Option<&'static str> {
+        (self.readout_word)(a, v, held)
     }
 
     #[inline(always)]

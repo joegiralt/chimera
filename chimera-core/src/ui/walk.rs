@@ -163,17 +163,21 @@ pub(crate) fn delay_note_in(id: ParamId, k: DelayType) -> Option<&'static str> {
     }
 }
 
-/// The focus readout's names for TAPE's `a` where its cell abbreviates
-/// them (full-word labels): MODEL's machines and DIRECTION's ways.
-pub(crate) fn long_names_in(a: ParamAddr) -> Option<&'static [&'static str]> {
+/// The focus readout's word for TAPE's `a` at display value `v` (or the
+/// held choice `held`) where its cell abbreviates it (full-word labels):
+/// MODEL's machine, DIRECTION's way. `None`: the cell's text.
+pub(crate) fn readout_word_in(a: ParamAddr, v: f32, held: Option<u8>) -> Option<&'static str> {
     if a.block != BlockRef::TapeEngine {
         return None;
     }
-    match a.param {
-        T::MODEL => Some(&tape_engine::MACHINE_NAMES),
-        T::MODE => Some(&tape_engine::params::DIRECTION_WORDS),
-        _ => None,
-    }
+    let names: &[&str] = match a.param {
+        T::MODEL => &tape_engine::MACHINE_NAMES,
+        T::MODE => &tape_engine::params::DIRECTION_WORDS,
+        _ => return None,
+    };
+    let last = names.len() as u8 - 1;
+    let i = held.unwrap_or_else(|| crate::ui::fmt::discrete(v, last));
+    names.get(usize::from(i)).copied()
 }
 
 /// The knob writes (`Motion::knob`, glided by the Part's knobs) an edit

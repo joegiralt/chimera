@@ -957,21 +957,20 @@ fn direction_edit_writes_walks_defaults_only() {
 #[test]
 fn readout_names_in_full() {
     use chimera_core::ui::fmt::fmt_val;
-    let text = |fmt, v| {
+    let cell = |a, v| {
         let mut b = FmtBuf::new();
-        fmt_val(&mut b, v, fmt);
+        fmt_val(&mut b, v, view::shown_fmt(a, &ctx_on(Way::Loop)).unwrap());
         b.as_str().to_owned()
     };
-    let ctx = ctx_on(Way::Loop);
     let (model, dir) = (tape(P::MODEL), tape(P::MODE));
-    let long = |a| view::readout_fmt(a).unwrap();
-    let cell = |a| view::shown_fmt(a, &ctx).unwrap();
-    assert_eq!(text(long(model), 1.0 / 3.0), "STRETCH");
-    assert_eq!(text(cell(model), 1.0 / 3.0), "STRCH");
-    assert_eq!(text(long(dir), 0.0), "FORWARD");
-    assert_eq!(text(cell(dir), 0.0), "FWD");
-    assert_eq!(text(long(dir), 1.0), "PING");
-    assert_eq!(view::readout_fmt(tape(P::SIZE)), None);
+    assert_eq!(view::readout_word(model, 1.0 / 3.0, None), Some("STRETCH"));
+    assert_eq!(cell(model, 1.0 / 3.0), "STRCH");
+    assert_eq!(view::readout_word(dir, 0.0, None), Some("FORWARD"));
+    assert_eq!(cell(dir, 0.0), "FWD");
+    assert_eq!(view::readout_word(dir, 1.0, None), Some("PING"));
+    // A held choice reads as itself: REVERSE held on a streamed source.
+    assert_eq!(view::readout_word(dir, 0.0, Some(1)), Some("REVERSE"));
+    assert_eq!(view::readout_word(tape(P::SIZE), 1.0, None), None);
     // Rendered: the cell abbreviates, the readout is the larger face.
     let mut ui = ui_at_deck();
     feed(&mut ui, Input::turn(EncoderId::A, 1)); // MODEL: WALK → STRETCH

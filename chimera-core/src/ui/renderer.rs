@@ -772,7 +772,20 @@ impl Renderer {
             return hint::focus(display, f.hint(o.hint), f.text, right);
         }
         let v = self.set[f.focus].target();
-        let buf = long_text(f, &view, v).unwrap_or_else(|| value_text(f, f.focus, v));
+        let held = held_on(f, &view).map(|h| h.code);
+        // The cell's own text where bank 2 can't say (NEEDS UPDATE).
+        let word = view
+            .addr()
+            .filter(|&a| crate::bank2::closed_text(a, v, f.bank2).is_none())
+            .and_then(|a| view::readout_word(a, v, held));
+        let buf = match word {
+            Some(w) => {
+                let mut b = FmtBuf::new();
+                let _ = core::fmt::Write::write_str(&mut b, w);
+                b
+            }
+            None => value_text(f, f.focus, v),
+        };
         let gauge = self.gauge(f);
         let label = band_label(f, &view);
         components::focus_band(
@@ -1313,24 +1326,6 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
         view => buf = param_text(f, i, &view, v),
     }
     buf
-}
-
-/// The focus readout's text in full words where the cell abbreviates
-/// (`walk::long_names_in`, bank 2's: closed, the cell's).
-fn long_text(f: &Frame, view: &View, v: f32) -> Option<FmtBuf> {
-    let View::Param {
-        addr, label, short, ..
-    } = *view
-    else {
-        return None;
-    };
-    let long = View::Param {
-        addr,
-        label,
-        fmt: view::readout_fmt(addr)?,
-        short,
-    };
-    Some(param_text(f, f.focus, &long, v))
 }
 
 /// The ALGO page's picked cell (ALG A or B is the focus) and the refused
