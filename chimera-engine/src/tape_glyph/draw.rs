@@ -13,7 +13,7 @@ use super::{
 use crate::dsp::algo::math::clampf;
 use crate::dsp::fast_sin;
 use crate::dsp::tape_engine::tron::{self, TRON_LEN_MAX_S};
-use crate::dsp::tape_engine::{Direction, Tron};
+use crate::dsp::tape_engine::{Direction, StretchType, Tron};
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
 const BG: Ink = Ink::Bg;
@@ -70,7 +70,7 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
             tron,
         }),
         Kind::Stretch => {
-            let grain = stretch_type >= 1.5;
+            let grain = stretch_type == StretchType::Grain;
             Machine::Stretch(Bellows {
                 speed: q6(motion),
                 fold: q5(if grain { length } else { size }),

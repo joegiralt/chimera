@@ -15,7 +15,7 @@
 //! the canvas stay in bank 1.
 
 use crate::dsp::algo::math::clampf;
-use crate::dsp::tape_engine::{Direction, MachineIndex, TapeMachine, Tron, Way};
+use crate::dsp::tape_engine::{Direction, MachineIndex, StretchType, TapeMachine, Tron, Way};
 
 /// With TAPE's DSP only: a build without it (the bench's) draws no glyph.
 #[cfg(feature = "tape")]
@@ -391,8 +391,8 @@ pub struct GlyphInputs {
     pub drift: f32,
     pub tron: Tron,
     pub length: f32,
-    /// STRETCH's TYPE, its stored value.
-    pub kind: f32,
+    /// STRETCH's TYPE.
+    pub kind: StretchType,
     pub pose: Pose,
 }
 
@@ -422,11 +422,8 @@ impl GlyphInputs {
         let m =
             TapeMachine::from_index(MachineIndex(index_of(model, TapeMachine::ALL.len()) as u8));
         let direction = Direction::ALL[index_of(direction, Direction::ALL.len())];
-        let tron = if index_of(tron, 2) == 1 {
-            Tron::On
-        } else {
-            Tron::Off
-        };
+        let tron = Tron::ALL[index_of(tron, Tron::ALL.len())];
+        let kind = StretchType::ALL[index_of(kind, StretchType::ALL.len())];
         Self {
             machine: Way::of(m, direction, tron),
             start,

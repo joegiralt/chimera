@@ -255,6 +255,11 @@ impl DiskCode for Tron {
     }
 }
 
+impl Tron {
+    /// By value.
+    pub const ALL: [Tron; 2] = [Tron::Off, Tron::On];
+}
+
 impl Choice for Tron {
     fn from_value(v: f32) -> Option<Self> {
         Self::from_disk_code(v as u8)
@@ -646,6 +651,11 @@ impl DiskCode for StretchType {
 
 /// By code (and so by value): the table, not a match, so TYPE's decoding is data.
 const STRETCH_TYPES: [StretchType; 3] = [StretchType::Mono, StretchType::Poly, StretchType::Grain];
+
+impl StretchType {
+    /// By value (its code).
+    pub const ALL: [StretchType; 3] = STRETCH_TYPES;
+}
 
 impl Choice for StretchType {
     fn from_value(v: f32) -> Option<Self> {
