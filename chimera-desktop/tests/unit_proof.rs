@@ -250,7 +250,10 @@ fn project() {
             direction: Direction::Loop,
             tron: chimera_core::dsp::tape_engine::Tron::Off,
             set: Vec::new(),
+            params: Vec::new(),
+            mods: Vec::new(),
             trim_db: 0.0,
+            level: None,
         };
         let snd = tape_sound(&recipe, h);
         let kind = load_kind(h, free, &snd.params.tape);

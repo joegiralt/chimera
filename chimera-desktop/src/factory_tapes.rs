@@ -8,6 +8,7 @@ use std::f32::consts::TAU;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use chimera_core::addr::Blocks;
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
@@ -15,15 +16,20 @@ use chimera_core::dsp::tape_engine::{
     Direction, TapeEngineParams as P, TapeMachine, TapeModel, Tron, machine,
 };
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
+use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
     Card, FileKind, Generation, Header, SourceHead, encode_sound, write_file, write_source,
 };
+use chimera_core::ui::mod_grid::dest_label;
 use chimera_hal::SAMPLE_RATE;
 use chimera_hal::store::{Dir, FileName, Store};
 
+use crate::factory_sounds::source::{
+    ByEar, Route, by_ear, other_engine, routes, set as set_param, valid_addr,
+};
 use crate::import::tape::convert::{Channel, Mono, Pitch, read_wav};
 use crate::import::tape::{Built, Cycle, Form, ImportError, Rate, Root, Top, build};
 use crate::listen::{Table, render_sound, tables};
@@ -86,7 +92,9 @@ pub struct SourceRecipe {
     pub form: Form,
 }
 
-/// A factory TAPE Sound: TAPE INIT on `source`, its `machine`'s defaults, then `set`, its level trimmed `trim_db`.
+/// A factory TAPE Sound: TAPE INIT on `source`, its `machine`'s defaults, then `set`,
+/// then any other block's params and routes as factory-sounds writes them
+/// (`FILTER.CUTOFF`, `mod.LFO1`), its level trimmed `trim_db`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundRecipe {
     pub name: SoundName,
@@ -96,7 +104,14 @@ pub struct SoundRecipe {
     pub direction: Direction,
     pub tron: Tron,
     pub set: Vec<(ParamId, f32)>,
+    /// `BLOCK.PARAM` keys, by frozen ident, and values as the card stores them.
+    pub params: Vec<(String, String)>,
+    /// `mod.SOURCE` keys: each route added to TAPE INIT's, or its amount set.
+    pub mods: Vec<(ModSource, Vec<Route>)>,
     pub trim_db: f32,
+    /// A level set by ear (`level = "by ear -1.7: <why>"`, dB off the
+    /// median): the median gate holds it there instead.
+    pub level: Option<ByEar>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -258,9 +273,26 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
         Some(k) => return Err(format!("tron {k}: ON or OFF, PLAY only")),
     };
     let specs = P::default();
-    let mut set = Vec::new();
+    let (mut set, mut params, mut mods) = (Vec::new(), Vec::new(), Vec::new());
+    let mut probe = Sound::neutral(EngineType::Tape);
     for (k, v) in t {
-        if ["name", "source", "model", "mode", "tron", "trim"].contains(&k.as_str()) {
+        if ["name", "source", "model", "mode", "tron", "trim", "level"].contains(&k.as_str()) {
+            continue;
+        }
+        if let Some((head, rest)) = k.split_once('.') {
+            if head == "mod" {
+                let src = ModSource::ALL
+                    .into_iter()
+                    .find(|m| m.disk_ident() == rest)
+                    .ok_or(format!("{k}: no such source"))?;
+                mods.push((src, routes(v, 0, EngineType::Tape)?));
+                continue;
+            }
+            let a = valid_addr(head, rest).ok_or(format!("{k}: no such param"))?;
+            other_engine(a.addr(), EngineType::Tape)?;
+            let mut blk = probe.params.block_mut(a.addr().block).ok_or(k.clone())?;
+            set_param(&mut *blk, a, v)?;
+            params.push((k.clone(), v.clone()));
             continue;
         }
         let spec = specs
@@ -277,7 +309,12 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
         direction: mode,
         tron,
         set,
+        params,
+        mods,
         trim_db: num(t, "trim")?.unwrap_or(0.0),
+        level: get(t, "level")
+            .map(|v| by_ear(v, 0).ok_or(format!("level {v}: \"by ear <dB>: <why>\"")))
+            .transpose()?,
     })
 }
 
@@ -546,6 +583,24 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     };
     for &(id, v) in env {
         snd.params.envelopes[0].set(id, v);
+    }
+    for (k, v) in &s.params {
+        let a = k
+            .split_once('.')
+            .and_then(|(b, p)| valid_addr(b, p))
+            .expect("checked when read");
+        let mut blk = snd.params.block_mut(a.addr().block).expect("a Sound block");
+        set_param(&mut *blk, a, v).expect("checked when read");
+    }
+    for (src, routes) in &s.mods {
+        for r in routes {
+            if FixedCol::of(r.dest).is_none() && snd.dest_registry.find(r.dest).is_none() {
+                snd.dest_registry
+                    .add(r.dest, dest_label(r.dest))
+                    .expect("a registry column");
+            }
+            assert!(snd.mod_state.set_route_addr(src.index(), r.dest, r.amount));
+        }
     }
     // On the knob's grid, as INIT's 45/128 is.
     let v = snd.params.out.volume * 10f32.powf(s.trim_db / 20.0);
