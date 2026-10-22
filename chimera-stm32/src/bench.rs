@@ -97,8 +97,9 @@ use chimera_board::clocks::{self, Clocks};
 use chimera_board::orbit::SAMPLE_RATE_NZ;
 
 /// The bench's screens as text: ALGO and ROUTING with the 0.2 stress
-/// rows passed 6 KB; `# TRUNCATED` past this.
-pub const BENCH_TEXT_LEN: usize = 10240;
+/// rows passed 6 KB; TAPE, ROUTING and STRESS in one build fit 12 KB;
+/// `# TRUNCATED` past this.
+pub const BENCH_TEXT_LEN: usize = 12288;
 type Text = Report<BENCH_TEXT_LEN>;
 
 // A `static mut`, not a `singleton!`: that builds its value on the caller's
@@ -464,7 +465,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 73;
+const ROUTING_ROWS: usize = 83;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -703,7 +704,63 @@ static ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("VA NZ PNK", |p| va_noise(p, NoiseKind::Pink), STILL),
     ("VA NZ RED", |p| va_noise(p, NoiseKind::Red), STILL),
     ("VA NZ DIG", |p| va_noise(p, NoiseKind::Digital), STILL),
+    // The mod sources a voice runs, each over its base: LFO 2 as 1 DEST's
+    // LFO 1, all three LFOs on three destinations, ENV 1 and ENV 3 alone on
+    // the VCA (A VCA is ENV 2's), and VEL (a still source) on one, four and
+    // seven destinations beside ENV 2 on the VCA: a route's own cost.
+    ("LFO2 DEST", |p| lfos(p, 1), STILL),
+    ("3 LFO", |p| lfos(p, 3), STILL),
+    ("ENV1 VCA", |p| on_vca(p, &[ModSource::Env1], None), STILL),
+    ("ENV3 VCA", |p| on_vca(p, &[ModSource::Env3], None), STILL),
+    ("VEL 1R", |p| vel_routes(p, 1), STILL),
+    ("VEL 4R", |p| vel_routes(p, 4), STILL),
+    ("VEL 7R", |p| vel_routes(p, 7), STILL),
+    // AMP's gate one knob at a time (LPG is all three).
+    ("LPG ONLY", |p| one_op(p).out.gate = [0.5, 0.0, 0.0], STILL),
+    ("DECAY ONLY", |p| one_op(p).out.gate = [0.0, 0.5, 0.0], STILL),
+    ("STRIKE", |p| one_op(p).out.gate = [0.0, 0.0, 0.5], STILL),
 ];
+
+/// Destinations no voice bills a path for: MORPH, OUT LEVEL, PAN, the
+/// three sends and AMP's VEL.
+fn quiet_dests() -> [ParamAddr; 7] {
+    let out = |q| ParamAddr::new(BlockRef::Out, q);
+    [
+        ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH),
+        out(OutParams::VOLUME),
+        out(OutParams::PAN),
+        out(OutParams::SEND1),
+        out(OutParams::SEND2),
+        out(OutParams::SEND3),
+        out(OutParams::VCA_VEL),
+    ]
+}
+
+/// 1 OP with LFOs 1.. `n` (1 Hz sines) on the first `n` quiet
+/// destinations; `n` 1 is LFO 2 alone on MORPH.
+fn lfos(p: &mut PartAudio, n: usize) {
+    one_op(p);
+    let d = quiet_dests();
+    let r = [
+        (ModSource::Lfo1, d[0], 127),
+        (ModSource::Lfo2, d[1], 64),
+        (ModSource::Lfo3, d[2], 64),
+    ];
+    *p.mod_state = match n {
+        1 => matrix(&[(ModSource::Lfo2, d[0], 127)]),
+        _ => matrix(&r[..n]),
+    };
+}
+
+/// ENV 2 on the VCA and VEL on the first `n` quiet destinations.
+fn vel_routes(p: &mut PartAudio, n: usize) {
+    one_op(p);
+    let mut r = [(ModSource::Env2, VCA, 127); 8];
+    for (r, d) in r[1..].iter_mut().zip(quiet_dests()) {
+        *r = (ModSource::Vel, d, 32);
+    }
+    *p.mod_state = matrix(&r[..=n]);
+}
 
 /// 1 OP through `k` (the 2040 at EXP, its costlier VOICE).
 #[inline(never)]
