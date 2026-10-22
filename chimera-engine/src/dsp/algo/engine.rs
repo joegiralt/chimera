@@ -427,6 +427,10 @@ const DETUNE_TOP: f32 = exp2(3.0 * DETUNE_CENTS / 1200.0);
 impl AlgoEngine {
     // Cycles/sample terms of `cost`, solved from the bench rows and rounded
     // up. The mip crossfade always runs, so it is in `COST_OP`.
+    // BASE: the unit reads every table row 55–65 over its bill (2026-10-22,
+    // bench ALGO: 1 OP 657 against 596, A16+17 1,050 against 998). Kept at
+    // 0.2: 0.3.0's efficiency pass makes ALGO cheaper instead
+    // (private issue #793).
     pub const COST_BASE: Cost = Cost(370); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_OP: Cost = Cost(60); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_LINK: Cost = Cost(8); // measured 2026-09-27, bench, rev V at 480 MHz

@@ -51,7 +51,102 @@ const EMPTY: Slot = Slot {
 static CACHE: [Slot; SLOTS] = [EMPTY; SLOTS];
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
-/// `of`, once a source and window: the row `v` (where it sits and its
+/// Searches the audio block may still run (#777, ADR 0211): one. A new
+/// window's search is some 50 k cycles, and eight in one block (a chord
+/// on eight windows) overran it; past the first, a note plays unlocked
+/// and searches in a later block (`Grains::render`).
+/// The block's count, `GEN`: a GRAIN voice rendering a second time in it
+/// means the next block has begun (`rendering`).
+#[cfg(not(any(test, feature = "test-support")))]
+static LEFT: AtomicU32 = AtomicU32::new(1);
+#[cfg(not(any(test, feature = "test-support")))]
+static GEN: AtomicU32 = AtomicU32::new(1);
+
+#[cfg(not(any(test, feature = "test-support")))]
+mod left {
+    use super::{GEN, LEFT, Relaxed};
+    pub fn get() -> u32 {
+        LEFT.load(Relaxed)
+    }
+    pub fn set(n: u32) {
+        LEFT.store(n, Relaxed);
+    }
+    pub fn generation() -> u32 {
+        GEN.load(Relaxed)
+    }
+    pub fn set_generation(g: u32) {
+        GEN.store(g, Relaxed);
+    }
+    pub fn ran() {}
+}
+
+/// The allowance, the block's count and the searches run, per thread:
+/// parallel tests don't spend each other's.
+#[cfg(any(test, feature = "test-support"))]
+mod left {
+    extern crate std;
+    use core::cell::Cell;
+    std::thread_local!(static LEFT: Cell<(u32, u32, u32)> = const { Cell::new((1, 1, 0)) });
+    pub fn get() -> u32 {
+        LEFT.with(|c| c.get().0)
+    }
+    pub fn set(n: u32) {
+        LEFT.with(|c| {
+            let (_, g, r) = c.get();
+            c.set((n, g, r))
+        });
+    }
+    pub fn generation() -> u32 {
+        LEFT.with(|c| c.get().1)
+    }
+    pub fn set_generation(g: u32) {
+        LEFT.with(|c| {
+            let (n, _, r) = c.get();
+            c.set((n, g, r))
+        });
+    }
+    pub fn ran() {
+        LEFT.with(|c| {
+            let (n, g, r) = c.get();
+            c.set((n, g, r + 1))
+        });
+    }
+    pub fn runs() -> u32 {
+        LEFT.with(|c| c.get().2)
+    }
+}
+
+/// A GRAIN voice's block begins, `seen` the block count it last rendered
+/// in: a voice that rendered in this count already starts the next block,
+/// and its one search comes back. At most one such a block: the others
+/// that rendered last block take the new count as they render.
+pub fn rendering(seen: &mut u32) {
+    let g = left::generation();
+    if *seen == g {
+        let next = g.wrapping_add(1).max(1);
+        left::set_generation(next);
+        left::set(1);
+        *seen = next;
+    } else {
+        *seen = g;
+    }
+}
+
+/// The next block's search back now: for the tests' own blocks.
+#[cfg(any(test, feature = "test-support"))]
+pub fn new_block() {
+    left::set(1);
+}
+
+/// Searches run so far on this thread: for the tests.
+#[cfg(any(test, feature = "test-support"))]
+pub fn searches() -> u32 {
+    left::runs()
+}
+
+/// `of`, once a source and window, and at most one search a block (`LEFT`):
+/// `None` while this block's is spent, so the caller asks again next block.
+/// The row `v` (where it sits and its
 /// frames), its `rate`, the window (`base`, `len`, `rev`) and eight of its
 /// samples make the key, so a row re-stored where another was, or the
 /// window moved, searches again. The answer is the kept one's, to 1/64
@@ -61,7 +156,7 @@ pub fn of_window(
     rate: u32,
     (base, len, rev): (u32, u32, bool),
     frame: impl Fn(u32) -> u32,
-) -> Option<Period> {
+) -> Option<Option<Period>> {
     let mut h: u32 = 0x811C_9DC5;
     let mut mix = |x: u32| {
         h = (h ^ x).wrapping_mul(0x0100_0193);
@@ -81,10 +176,15 @@ pub fn of_window(
         if s.key.load(Relaxed) == key {
             let val = s.val.load(Relaxed);
             if val & 0xFFFF_0000 == tag {
-                return decode(val);
+                return Some(decode(val));
             }
         }
     }
+    if left::get() == 0 {
+        return None;
+    }
+    left::set(0);
+    left::ran();
     let val = tag | encode(of(v, rate, len, frame));
     let i = NEXT.load(Relaxed) as usize % SLOTS;
     NEXT.store((i + 1) as u32, Relaxed);
@@ -92,7 +192,7 @@ pub fn of_window(
     s.key.store(0, Relaxed);
     s.val.store(val, Relaxed);
     s.key.store(key, Relaxed);
-    decode(val)
+    Some(decode(val))
 }
 
 /// A period in 1/64 frame, 1 to 0xFFFF (1,023 frames: past any the search
@@ -384,7 +484,10 @@ mod tests {
         let h = held(|t| 0.5 * libm::sinf(TAU * 261.63 * t), 48_000, 8_000);
         let v = WholeRow::new(&h).unwrap();
         let n = v.frames();
-        let once = |base: u32| of_window(&v, 48_000, (base, n - base, false), |u| base + u);
+        let once = |base: u32| {
+            new_block();
+            of_window(&v, 48_000, (base, n - base, false), |u| base + u).unwrap()
+        };
         let first = once(0).unwrap().get();
         let want = of(&v, 48_000, n, |u| u).unwrap().get();
         assert!((first - want).abs() <= 1.0 / 128.0, "{first} {want}");
@@ -396,11 +499,28 @@ mod tests {
         assert!((moved - want).abs() <= 1.0 / 128.0, "{moved} {want}");
         let saw = held(|t| 0.4 * (2.0 * (t * 261.63).fract() - 1.0), 48_000, 8_000);
         let w = WholeRow::new(&saw).unwrap();
-        let other = of_window(&w, 48_000, (0, n, false), |u| u);
+        new_block();
+        let other = of_window(&w, 48_000, (0, n, false), |u| u).unwrap();
         assert_eq!(
             other.map(Period::get),
             of(&w, 48_000, n, |u| u).map(|p| { libm::roundf(p.get() * 64.0) / 64.0 })
         );
+    }
+
+    /// One search a block: a second new window waits for the next block,
+    /// and a kept one answers whatever the block has spent.
+    #[test]
+    fn one_search_a_block() {
+        let h = held(|t| 0.5 * libm::sinf(TAU * 220.0 * t), 48_000, 8_000);
+        let v = WholeRow::new(&h).unwrap();
+        let n = v.frames();
+        let at = |base: u32| of_window(&v, 48_000, (base, n - base, false), |u| base + u);
+        new_block();
+        let first = at(10).expect("the block's search");
+        assert_eq!(at(20), None, "a second new window waits");
+        assert_eq!(at(10), Some(first), "a kept one answers");
+        new_block();
+        assert!(at(20).is_some(), "next block it searches");
     }
 
     /// A window too short for two periods of the lowest pitch looks no

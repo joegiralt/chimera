@@ -138,13 +138,16 @@ pub fn sem_g(fc: f32, fs: f32) -> f32 {
 /// (`tools/loop_count.py`, `probe::sem_probe`, ADR 0192): MODE's loop 84
 /// instructions with the diodes conducting (77 quiet), 0 `vdiv`, its block
 /// 1.83 and 0.062 `vdiv`: ceil5(85.83 × 1.606 + 12 × 0.062) = 140, less 95.
-/// BANDPASS's runs 79: 135. Billed MODE's.
-pub const SEM_COST: Cost = Cost(45);
+/// BANDPASS's runs 79: 135. The unit reads SEM 9 over CLEAN LP4 (667 and
+/// 658 a voice, 2026-10-22, ROUTING bench, rev V at 480 MHz; #726): 10.
+pub const SEM_COST: Cost = Cost(10);
 /// The moving path over the steady one: MODE's loop 91 instructions and 1
 /// `vdiv`, its block 2.30 and 0.047, `ramps`' fill 6.25: ceil5(99.55 ×
 /// 1.606 + 12 × 1.047) = 175, less the steady 140. FB's loop (135, 1
-/// `vdiv`: 245) is inside `FB_COST`'s 100 over it.
-pub const SEM_MOVE_COST: Cost = Cost(35);
+/// `vdiv`: 245) is inside `FB_COST` over it. The unit reads the moving path
+/// 47 over SEM's steady one (SEM MOVE 611 against SVF MOVE 568, CLEAN's
+/// own moving path 13 over its steady; 2026-10-22, ROUTING bench, #726): 50.
+pub const SEM_MOVE_COST: Cost = Cost(50);
 
 /// The circuit's state in volts: BP and LP (the followers' sources), the
 /// last block's ends, and FB's signal.

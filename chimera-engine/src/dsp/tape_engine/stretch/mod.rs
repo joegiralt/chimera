@@ -9,7 +9,7 @@ use chimera_hal::BLOCK_SIZE;
 pub mod classic;
 mod cloud;
 pub mod grain;
-mod period;
+pub mod period;
 pub mod units;
 
 pub use classic::{GrainClock, HALF_SPEED, WRAP_SAMPLES, d_time_s, lock, locks, time_speed};

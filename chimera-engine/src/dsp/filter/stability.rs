@@ -63,8 +63,10 @@ const STRIDE: [f32; 3] = [0.618_034, 0.414_213_57, 0.754_877_7];
 /// What STABILITY adds to a voice's bill, on the 2040 and LADDER below 1:
 /// `step` (one walk step, an `exp2_poly`, the hold test), about 90
 /// instructions on the thumbv7em ORBIT build, and the four multiplies on
-/// the ends: 94 × 1.606 / 64 = 2.4, billed 3. The draws are note-on work.
-pub const STAB_COST: Cost = Cost(3);
+/// the ends: 94 × 1.606 / 64 = 2.4. The unit reads 2040 STAB 4 over the
+/// 2040, LADDER STAB 3 (2026-10-22, ROUTING bench): billed 5. The draws are
+/// note-on work.
+pub const STAB_COST: Cost = Cost(5);
 
 /// A voice slot's fixed draw for `salt`, −1..1: Part `part`'s start, `slot`
 /// strides on.
