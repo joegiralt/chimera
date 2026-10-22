@@ -317,15 +317,92 @@ mod streamed {
         );
     }
 
-    /// m10 (#761): an unsealed file, never read back against its CRC (a
-    /// cut `put`), doesn't stream, as the whole-file load would refuse it:
-    /// its ref stays, absent, with no stream row.
+    /// `file`'s seal on `s`.
+    fn seal_of(s: &mut MemStore, file: chimera_hal::store::FileName) -> Seal {
+        let vol = s.mount().unwrap();
+        s.runs(vol, file).unwrap().seal
+    }
+
+    /// An unsealed file (copied onto the card by hand, or a cut `put`'s
+    /// remains) whose samples hash to its name streams as a sealed one,
+    /// checked whole first, and is sealed after.
     #[test]
-    fn an_unsealed_file_doesnt_stream() {
+    fn an_unsealed_file_that_checks_out_streams_and_is_sealed() {
         let mut s = MemStore::new(1);
         let bed = source(7, 150_000);
         put(&mut s, &bed);
-        s.unseal(source_file(bed.0.sref));
+        let f = source_file(bed.0.sref);
+        s.unseal(f);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, bed.0.sref);
+        p.source_absent(bed.0.sref).unwrap();
+        let (q, _) = round_trip(&mut s, &mut p, false);
+        let r = bed.0.sref;
+        let id = q.pool().find_source(r).expect("the ref kept");
+        assert_eq!(q.pool().absence(id), None);
+        assert!(q.pool().streams().unwrap().get(id).is_some(), "streamed");
+        assert_eq!(seal_of(&mut s, f), Seal::Sealed);
+    }
+
+    /// ADR 0210: an unsealed source too big for one pass is checked a
+    /// pass's budget at a time, unsealed until the last share passes,
+    /// then sealed and streamed.
+    #[test]
+    fn a_large_unsealed_source_is_checked_a_share_a_pass() {
+        let mut s = MemStore::new(1);
+        let bed = source(9, 150_000);
+        put(&mut s, &bed);
+        let f = source_file(bed.0.sref);
+        let len = file_bytes(&mut s, &bed).len();
+        s.unseal(f);
+        let r = bed.0.sref;
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, r);
+        let heads = heads_for(r, &p.part(PartId::ALL[0]).sound.params.tape).unwrap();
+        let (open, passes) = Card::new()
+            .run(&mut s, |s, rd| {
+                let mut l = StreamLoad::start(&mut p, bed.0, heads).unwrap();
+                let (mut open, mut passes) = (0, 0);
+                loop {
+                    passes += 1;
+                    match l.step(s, rd, &mut p, 4_096) {
+                        StreamStep::More => {}
+                        StreamStep::Done(_) => {
+                            break Ok::<_, chimera_hal::store::StoreError>((open, passes));
+                        }
+                        StreamStep::Failed(e) => panic!("{e:?}"),
+                    }
+                    if s.runs(rd.volume(), f).unwrap().seal == Seal::Open {
+                        open += 1;
+                    }
+                }
+            })
+            .unwrap()
+            .result
+            .unwrap();
+        assert!(
+            open >= len / 4_096,
+            "{open} passes unsealed, of a {len} B file"
+        );
+        assert!(passes > open, "the heads after the check");
+        assert_eq!(seal_of(&mut s, f), Seal::Sealed);
+        assert!(p.pool().streamed(r));
+    }
+
+    /// m10 (#761): an unsealed file whose samples don't hash to its name
+    /// doesn't stream, though its heads read clean: its ref stays,
+    /// absent, with no stream row, and it stays unsealed.
+    #[test]
+    fn an_unsealed_damaged_file_doesnt_stream() {
+        let mut s = MemStore::new(1);
+        let bed = source(8, 150_000);
+        put(&mut s, &bed);
+        let f = source_file(bed.0.sref);
+        let mut file = file_bytes(&mut s, &bed);
+        let n = file.len();
+        file[n - 64] ^= 0x01;
+        s.plant(f, &file);
+        s.unseal(f);
         let (mut p, t) = Project::boxed();
         tape_part(&mut p, t, 0, bed.0.sref);
         p.source_absent(bed.0.sref).unwrap();
@@ -333,8 +410,9 @@ mod streamed {
         let r = bed.0.sref;
         assert_eq!(q.pool().held(r), None, "nothing published");
         let id = q.pool().find_source(r).expect("the ref kept");
-        assert!(q.pool().absence(id).is_some());
+        assert_eq!(q.pool().absence(id), Some(Absence::ReadFailed));
         assert!(q.pool().streams().unwrap().get(id).is_none());
+        assert_eq!(seal_of(&mut s, f), Seal::Open);
     }
 
     /// The file `write_source` made for `src` on `s`, byte for byte.

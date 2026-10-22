@@ -87,11 +87,11 @@ factory-tapes *args:
 factory-sounds *args:
     cargo run -q --release -p chimera-desktop --bin factory-sounds -- {{args}}
 
-# The factory set onto the unit's card: each source through `put` (ADR
-# 0106; a re-run answers OK PRESENT for each). `dir` is `just
-# factory-tapes`' output, or a downloaded `tapes-vN` release. The factory
-# TAPE Sounds (S9xxxxxx.A) stay off the card: no firmware reads
-# /CHIMERA/SOUNDS until the card library (#317).
+# The TAPE sources onto the unit's card: each through `put` (ADR 0106; a
+# re-run answers OK PRESENT for each). `dir` is `just factory-tapes`'
+# output, or a downloaded `tapes-vN` release. Sources only: the factory
+# TAPE Sounds (S9xxxxxx.A) ride in factory-v1.zip with the others, for
+# the FACTORY tab (`just release`).
 put-factory-tapes dir="target/tapes-v1":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -248,7 +248,9 @@ check-bank1 set:
 # version already tagged or released; builds `release-bin`; names the files
 # CHIMERA.BIN (8.3, so the stock bootloader lists it, #558; the ORBIT build,
 # the only firmware shipped), CHIMERA.BK2 (sealed for that .bin: dropped in
-# the card root, the next boot installs it) and factory-v1.zip; writes
+# the card root, the next boot installs it) and factory-v1.zip (the
+# card's whole CHIMERA folder: every factory Sound, TAPE's sources and the
+# demo projects); writes
 # SHA256SUMS and the notes from docs/alpha/RELEASE-NOTES.md.tmpl; asserts
 # the assets are exactly those four and none is a private file's bytes. A
 # draft only: the owner publishes. --dry-run does everything but `gh release create`.
@@ -275,25 +277,16 @@ release version *flags:
     # No .bk2 under a .bin name: only the .bk2 starts CHIMERA2.
     if head -c 8 "$out/CHIMERA.BIN" | grep -qa CHIMERA2; then echo "CHIMERA.BIN is a .bk2" >&2; exit 1; fi
     head -c 8 "$out/CHIMERA.BK2" | grep -qa CHIMERA2 || { echo "CHIMERA.BK2 is not a .bk2" >&2; exit 1; }
-    # The factory set: the public build's CHIMERA/ + manifest.json, nothing
-    # private (FACTORY_PUBLIC overrides the dir and skips the fresh build, --dry-run only).
-    # A real release always builds fresh; the override is for --dry-run tests only.
-    [ -z "${FACTORY_PUBLIC:-}" ] || [ $dry = 1 ] || { echo "FACTORY_PUBLIC is for --dry-run only: a release packs a fresh build" >&2; exit 1; }
+    # The factory set: the card's CHIMERA folder as a tester copies it, one
+    # root: the public build's Sounds and demo projects, TAPE's Sounds and
+    # the sources they play in TAPES, nothing private, refused unless every
+    # count is the builds' (tools/factory_zip.py). FACTORY_PUBLIC and
+    # FACTORY_TAPES override the dirs and skip the fresh builds, --dry-run only.
+    [ -z "${FACTORY_PUBLIC:-}${FACTORY_TAPES:-}" ] || [ $dry = 1 ] || { echo "FACTORY_PUBLIC and FACTORY_TAPES are for --dry-run only: a release packs fresh builds" >&2; exit 1; }
     if [ -z "${FACTORY_PUBLIC:-}" ]; then just factory-sounds; fi
-    pub=${FACTORY_PUBLIC:-target/factory-sounds/public}
-    [ -d "$pub/CHIMERA" ] && [ -f "$pub/manifest.json" ] || { echo "no factory set in $pub: just factory-sounds" >&2; exit 1; }
-    python3 -I - "$pub" "$out/factory-v1.zip" <<'PY'
-    import sys, pathlib, zipfile
-    src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]
-    names = sorted(p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file() and (p.parts[len(src.parts)] == "CHIMERA" or p.name == "manifest.json" and p.parent == src))
-    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
-        for n in names:
-            i = zipfile.ZipInfo(n, (2026, 1, 1, 0, 0, 0)); i.compress_type = zipfile.ZIP_DEFLATED; i.external_attr = 0o644 << 16
-            z.writestr(i, (src / n).read_bytes())
-    PY
-    # The 16 TX81Z-inspired ports ship public (ADR 0138): all of them, or refuse.
-    n=$(python3 -I -m zipfile -l "$out/factory-v1.zip" | grep -cE 'S91000(1[0-9]|2[0-5])\.A' || true)
-    [ "$n" = 16 ] || { echo "factory-v1.zip holds $n of the 16 ports: refusing" >&2; exit 1; }
+    if [ -z "${FACTORY_TAPES:-}" ]; then just factory-tapes; fi
+    pub=${FACTORY_PUBLIC:-target/factory-sounds/public}; tapes=${FACTORY_TAPES:-target/tapes-v1}
+    python3 -I tools/factory_zip.py "$pub" "$tapes" "$out/factory-v1.zip"
     (cd "$out" && sha256sum CHIMERA.BIN CHIMERA.BK2 factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
     # file (the stock bootloader backup, the bootloader, a dev chimera.bin or .bk2).
@@ -316,7 +309,9 @@ release version *flags:
         | sed 's|^\(- `u8g2-fonts` [^:]*\): *$|\1: MIT OR Apache-2.0; its fonts are U8g2'"'"'s, each under its own licence (https://github.com/olikraus/u8g2/blob/master/LICENSE)|' > "$out/crates.md"
     ! grep -q ': *$' "$out/crates.md" || { echo "a linked crate has no licence: add it to the notes" >&2; exit 1; }
     [ -s "$out/crates.md" ] || { echo "no crate list" >&2; exit 1; }
-    sed -e "s/@VERSION@/$V/g" -e "s/@COMMIT@/$(git rev-parse --short HEAD)/g" -e "s/@DATE@/$(date -u +%F)/g" \
+    sounds=$(python3 -I -m zipfile -l "$out/factory-v1.zip" | grep -c 'CHIMERA/SOUNDS/.*\.A ' || true)
+    demos=$(python3 -I -m zipfile -l "$out/factory-v1.zip" | grep -c 'CHIMERA/PROJECTS/.*\.A ' || true)
+    sed -e "s/@VERSION@/$V/g" -e "s/@SOUNDS@/$sounds/g" -e "s/@PROJECTS@/$demos/g" -e "s/@COMMIT@/$(git rev-parse --short HEAD)/g" -e "s/@DATE@/$(date -u +%F)/g" \
         -e "/@DEMOS@/{r $out/demos.md" -e "d}" -e "/@CRATES@/{r $out/crates.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
     rm "$out/demos.md" "$out/crates.md"
     ! grep -q '@[A-Z]*@' "$out/RELEASE-NOTES.md" || { echo "unfilled template field" >&2; exit 1; }

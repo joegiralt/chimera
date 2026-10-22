@@ -267,7 +267,7 @@ mod.LFO2 = "ALGO.MORPH +20"
 mod.VEL = "ALGO.MORPH +20, OP_D.LEVEL +15"
 FILTER.KIND = "2040"
 OUT.LEVEL = "1"  # 127
-trim = "-1.1"
+trim = "-1.5"
 
 # Inspired by the TX81Z voice LoTine81Z.
 [[sound]]
@@ -429,6 +429,7 @@ OP_F.LEVEL = "0"
 FILTER.CUTOFF = "20000"  # 20.0 kHz
 VOICEFX.TYPE = "FOLD"
 VOICEFX.PLACE = "POST"
+VOICEFX.P3 = "0.637"  # 81
 VOICEFX.P1 = "0.1"  # 13
 VOICEFX.MIX = "0.5"  # 0
 LFO1.RATE = "0.23"  # 0.23 Hz  # 1

@@ -11,7 +11,9 @@ use super::sources::{SOURCE_HEAD, SourceId, SourceSet, source_cost};
 use super::{PoolFull, Project};
 use crate::dsp::tape_engine::params::{NeedsRam, TapeEngineParams};
 use crate::dsp::tape_engine::read::Shape;
-use crate::storage::{LoadError, Ready, SourceHead, SourceLayout, SourceReadError, SourceRef};
+use crate::storage::{
+    Crc32, LoadError, Ready, SourceHead, SourceLayout, SourceReadError, SourceRef,
+};
 use crate::stream::layout::StreamFile;
 use crate::stream::registry::CardEpoch;
 use crate::stream::stage::{Heads, heads_for};
@@ -173,10 +175,16 @@ pub struct StreamLoad {
 
 /// Where a `StreamLoad` is.
 #[derive(Clone, Copy)]
-#[expect(clippy::large_enum_variant, reason = "one, in the one load")]
 enum Phase {
     /// The first pass finds the file's runs.
     Find,
+    /// An unsealed file's packed bytes hashed against its name, a pass's
+    /// share at a time through the staging: `at` bytes so far (ADR 0210).
+    Check {
+        file: StreamFile,
+        crc: Crc32,
+        at: u32,
+    },
     /// The heads read: `at` bytes so far, of every head's.
     Heads { file: StreamFile, at: Bytes },
 }
@@ -205,18 +213,21 @@ impl StreamLoad {
     }
 
     /// `start`, its file's runs found and its head read already (a
-    /// project load's pass 2): no first pass. `None` as `start`, when the
-    /// runs don't hold its samples, or when the file is unsealed (never
-    /// checked against its CRC, as `pass` refuses it).
+    /// project load's pass 2): no first pass, unless the file is unsealed
+    /// (never checked against its CRC): that first pass checks it whole
+    /// and seals it. `None` as `start`, or when the runs don't hold its
+    /// samples.
     pub fn found(
         p: &mut Project,
         head: SourceHead,
         heads: Heads,
         runs: FileRuns,
     ) -> Option<StreamLoad> {
-        (runs.seal == Seal::Sealed).then_some(())?;
         let file = StreamFile::from_layout(&SourceLayout::whole(head)?, runs)?;
         let l = Self::start(p, head, heads)?;
+        if runs.seal != Seal::Sealed {
+            return Some(l);
+        }
         Some(StreamLoad {
             phase: Phase::heads(file),
             ..l
