@@ -206,6 +206,7 @@ pub struct UiDoor {
     tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
     /// TAPE cells' units where the engine has a law (`ui::walk`).
     tape_fmt: fn(ParamId, TapeMachine, crate::dsp::tape_engine::Way) -> Option<crate::ui::page::ValFmt>,
+    speed_text: fn(&mut crate::ui::fmt::FmtBuf, crate::dsp::modulator::law::Law, f32),
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
     jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
     /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
@@ -242,6 +243,7 @@ impl UiDoor {
         tape_note: crate::ui::walk::tape_note_in,
         tape_held: crate::ui::walk::tape_held_in,
         tape_fmt: crate::ui::walk::tape_fmt_in,
+        speed_text: crate::ui::walk::speed_text_in,
         jog: crate::ui::jog::Jog::pass,
         pit: crate::ui::pit_tuner::calc::pass_in,
         pit_paint: crate::ui::pit_tuner::calc::paint_in,
@@ -358,6 +360,16 @@ impl UiDoor {
         way: crate::dsp::tape_engine::Way,
     ) -> Option<crate::ui::page::ValFmt> {
         (self.tape_fmt)(id, m, way)
+    }
+
+    #[inline(always)]
+    pub(crate) fn speed_text(
+        &self,
+        buf: &mut crate::ui::fmt::FmtBuf,
+        law: crate::dsp::modulator::law::Law,
+        v: f32,
+    ) {
+        (self.speed_text)(buf, law, v)
     }
 
     #[inline(always)]

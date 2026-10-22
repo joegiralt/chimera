@@ -13,6 +13,7 @@ use crate::dsp::tape_engine::{
 use crate::modulation::VCA;
 use crate::preset::Sound;
 use crate::dsp::modulator::law::Law;
+use crate::ui::fmt::FmtBuf;
 use crate::ui::page::ValFmt;
 use crate::ui::view::{FADE_ASIDE, RETRIG_ONCE_ONLY, WOW_AT_REST, XFADE_LOOP_ONLY, tape_routed};
 
@@ -101,13 +102,33 @@ pub(crate) fn tape_note_in(addr: ParamAddr, sound: &Sound) -> Option<&'static st
 /// How TAPE's cell `id` reads on `m` in `way` where the engine has a law
 /// the spec's format doesn't say (`view::fmt_of`): WALK's LENGTH under
 /// TRON once through is the tape, 0.25 to 8 s, STRETCH's LENGTH law (ADR
-/// 0203); FADE's top is HOLD once through. `None`: the spec's.
+/// 0203); SCRUB's LENGTH its loop, 2 ms to 2 s (ADR 0205); FADE and DRAG
+/// 10 to 500 ms, FADE's top HOLD once through; DRIFT a share of the
+/// window; SPEED a factor of the source's own. `None`: the spec's.
 pub(crate) fn tape_fmt_in(id: ParamId, m: TapeMachine, way: Way) -> Option<ValFmt> {
     Some(match (m, id) {
         (TapeMachine::Walk, T::SIZE) if way == Way::Tron => ValFmt::Law(Law::StretchLength),
         (TapeMachine::Walk, T::DRAG) if way == Way::One => ValFmt::Hold,
+        (TapeMachine::Walk | TapeMachine::Scrub, T::DRAG) => ValFmt::Law(Law::DragTime),
+        (TapeMachine::Walk, T::DRIFT) => ValFmt::Law(Law::Pct),
+        (TapeMachine::Scrub, T::SIZE) => ValFmt::Law(Law::ScrubLength),
+        (TapeMachine::Stretch, T::MOTION) => ValFmt::Law(Law::StretchSpeed),
+        (TapeMachine::Scrub, T::MOTION) => ValFmt::Law(Law::ScrubSpeed),
         _ => return None,
     })
+}
+
+/// SPEED at `v` (MOTION's 0..1 display, −1..1 stored) as the engine
+/// plays it: `1.00x`, `0.50x`, `-1.00x`; STRETCH by `time_speed`
+/// (0 freezes), SCRUB `2 · MOTION`.
+pub(crate) fn speed_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
+    let motion = 2.0 * v - 1.0;
+    let x = match law {
+        #[cfg(feature = "tape")]
+        Law::StretchSpeed => tape_engine::stretch::time_speed(motion),
+        _ => 2.0 * motion,
+    };
+    crate::ui::fmt::fixed(buf, x, 2, "x");
 }
 
 /// What `t` with `param` (MODEL or DIRECTION) at `code` can't play from a

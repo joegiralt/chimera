@@ -900,8 +900,8 @@ pub fn jogs(m: TapeMachine, id: ParamId) -> bool {
 
 /// DRAG in seconds: 10 to 500 ms, exponential.
 pub fn drag_s(drag: f32) -> f32 {
-    // log2(50)
-    0.01 * exp2(5.643_856 * drag)
+    use crate::dsp::modulator::law::DRAG_TIME;
+    DRAG_TIME.min * exp2(DRAG_TIME.oct * drag)
 }
 
 const fn unit(

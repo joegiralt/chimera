@@ -115,7 +115,8 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*12chimera_core2ui5onset6detect* .text.*12chimera_core2ui3jog*3Jog4pass*
       .text.*12chimera_core2ui3jog*3Jog4rate* .text.*12chimera_core2ui9pit_tuner4calc*
       .text.*12chimera_core2ui4walk15machine_edit_in .text.*12chimera_core2ui4walk12tape_note_in
-      .text.*12chimera_core2ui4walk12tape_held_in .text.*12chimera_core2ui4walk11tape_fmt_in);
+      .text.*12chimera_core2ui4walk12tape_held_in .text.*12chimera_core2ui4walk11tape_fmt_in
+      .text.*12chimera_core2ui4walk13speed_text_in);
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
       .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*
       .rodata.*12chimera_core2ui9pit_tuner4calc* .rodata.*12chimera_core2ui4walk*);

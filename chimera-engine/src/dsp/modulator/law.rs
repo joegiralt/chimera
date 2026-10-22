@@ -114,6 +114,16 @@ pub const GRAIN_SIZE: Range = Range {
     min: 0.03,
     oct: 3.058_894,
 };
+/// TAPE SCRUB's LENGTH (ADR 0205), 2 ms – 2 s: `scrub::LoopTime`'s law.
+pub const SCRUB_LENGTH: Range = Range {
+    min: 0.002,
+    oct: 9.965_784,
+};
+/// TAPE's FADE and SCRUB's DRAG (ADR 0203), 10 – 500 ms: `drag_s`.
+pub const DRAG_TIME: Range = Range {
+    min: 0.01,
+    oct: 5.643_856,
+};
 /// A B slot evaluated per block stops its rates here: the block rate ÷ 8
 /// (spec § Rates), 93.75 Hz at 48 kHz and 86.1 Hz at 44.1 kHz.
 pub fn block_rate_max(sample_rate: u32) -> f32 {
@@ -170,9 +180,19 @@ pub enum Law {
     GlideTime,
     /// CUTOFF's Hz (ADR 0107).
     Cutoff,
-    /// STRETCH's LENGTH and GRAIN (ADR 0204).
+    /// STRETCH's LENGTH and GRAIN (ADR 0204); WALK's LENGTH under TRON
+    /// once through is the same law (ADR 0203).
     StretchLength,
     GrainSize,
+    /// SCRUB's LENGTH, a time (`SCRUB_LENGTH`).
+    ScrubLength,
+    /// FADE and DRAG, a time (`DRAG_TIME`).
+    DragTime,
+    /// STRETCH's and SCRUB's SPEED on MOTION (−1..1): a factor of the
+    /// source's own, its text the UI door's (`stretch::time_speed`, and
+    /// SCRUB's `2 · MOTION`). Bipolar: 0 at the middle.
+    StretchSpeed,
+    ScrubSpeed,
     Phase,
     Pct,
     Curve,
@@ -194,7 +214,15 @@ impl Law {
             Law::Cutoff => CUTOFF_HZ,
             Law::StretchLength => STRETCH_LENGTH,
             Law::GrainSize => GRAIN_SIZE,
-            Law::Phase | Law::Pct | Law::Curve | Law::Tilt | Law::LfoHz => return None,
+            Law::ScrubLength => SCRUB_LENGTH,
+            Law::DragTime => DRAG_TIME,
+            Law::Phase
+            | Law::Pct
+            | Law::Curve
+            | Law::Tilt
+            | Law::LfoHz
+            | Law::StretchSpeed
+            | Law::ScrubSpeed => return None,
         })
     }
 }
