@@ -3,19 +3,13 @@
 # The bench's builds, an area each (all of it no longer fits FLASH), and
 # the filter probes `tools/loop_count.py` counts. Each is built with
 # `--no-default-features` (the `bench` feature brings back all of the
-# shipping set but the console's `put`; so does `filter-probes`).
-# bench-tape alone keeps TAPE in bank 1 and doesn't fit FLASH
-# (private issue #506); `bench-tape,bank2` plays
-# it from bank 2, so its run needs that build's .bk2 installed.
-# ALGO, ROUTING, MEMORY, STRESS and ORBIT play the reverb (and VA's MOD
-# path, ADR 0163) from bank 2, as the unit does (ADR 0174): alone they
-# don't fit FLASH (#654; ROUTING by 3,264 B, MEMORY by 5,064 B with SOFT
-# SYNC's reversing OSC 2), and Gate 3 found bank 2 never slower (ADR
-# 0142). Their runs need their build's .bk2 installed.
-# `bench-stress,orbit` is out: without bank2 VA's MOD path stays in its
-# bank 1 (ADR 0163) and it doesn't fit FLASH, and from bank 2 it fails the
-# stack check (private issue #656).
-bench_sets := "fault-inject bench-algo,bank2 bench-algo,master-tape,bank2 bench-routing,bank2 bench-memory,bank2 bench-stress,bank2 bench-orbit,bank2 bench-tape,bank2 filter-probes"
+# shipping set but the console's `put`; so does `filter-probes`). Every
+# firmware build has bank 2 (ADR 0194): TAPE, the reverb, VA's MOD path
+# (ADR 0163, 0174) and the bench itself play from it, and Gate 3 found
+# bank 2 never slower (ADR 0142). A bench run needs its build's .bk2
+# installed. `bench-stress,orbit` is out: it fails the stack check
+# (private issue #656).
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator
@@ -28,6 +22,16 @@ desktop:
 # name is looked for in $CHIMERA_TAPES_SRC (~/chimera-tapes-src)
 tape-listen *args:
     cargo run -q -p chimera-desktop --bin tape-listen -- {{args}}
+
+# Streamed PLAY's desktop QA (slice 1 § 10.5): every factory bed in
+# target/tapes-v1/ (`just factory-tapes` first), ONE and LOOP, read through
+# the card model at m1, slow and m1 with a fault, judged by the click rule;
+# then six voices admission takes, one at inc 2, on a 28 s bed with every
+# read at slow's 19.6 ms ceiling: drop-outs that must all be fades.
+# `just stream-qa <dir>` also writes RAIN, TRON BOWED and PAD CHORD's LOOPs
+# there as WAVs.
+stream-qa dir="":
+    STREAM_QA_WAVS="{{dir}}" cargo test -q -p chimera-desktop --test stream_qa -- --ignored --nocapture
 
 # A WAV to a TAPE source (spec § 6), sealed in the desktop sim's card
 # (CHIMERA_CARD, else chimera-card/), never the unit's:
@@ -149,8 +153,8 @@ firmware-gate:
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
-# The ELF's two banks: <out>.bin (bank 1, never .bank2) and, with bank 2's
-# section, <out>.bk2. A build without `bank2` has an empty .bank2: no .bk2.
+# The ELF's two banks: <out>.bin (bank 1, never .bank2) and <out>.bk2. Every
+# firmware build has bank 2 (ADR 0194): an empty .bank2 fails.
 bank2-split elf out:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -159,7 +163,6 @@ bank2-split elf out:
     if [ "$(basename {{out}})" != chimera-gate ]; then just check-no-gate {{out}}.bin; fi
     rm -f {{out}}.bk2
     sections=$(rust-objdump -h {{elf}})
-    syms=$(rust-nm {{elf}})
     if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' <<< "$sections"; then
         pkg=$(cargo pkgid -p chimera-stm32)
         hash=$(git rev-parse --short=8 HEAD)
@@ -169,8 +172,8 @@ bank2-split elf out:
         just check-door-placed {{elf}}
         {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
         just check-bin-paths {{out}}.bk2
-    elif grep -qw BANK2_SEAL <<< "$syms"; then
-        echo "bank 1 expects a bank 2 but the ELF has none" >&2; exit 1
+    else
+        echo "{{elf}} has no bank 2 (ADR 0194)" >&2; exit 1
     fi
 
 # Release binaries: the shipping firmware and its ORBIT variant with every build
@@ -196,14 +199,16 @@ release-bin:
 
 # A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
 # NOW) never ships.
-# VA's MOD path (ADR 0163) and the LFO page's raster (ADR 0177) are all
+# VA's MOD path (ADR 0163), the LFO page's raster (ADR 0177) and PIT's
+# tuner (ADR 0201), and TAPE's UI door entries and STRETCH GRAIN's note-on
+# (its own-period search inlined there, ADR 0204) are all
 # bank 2's on a bank-2 build: a `bank2.x` glob that misses a new door entry
 # or run leaves it silently in bank 1.
 check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
     syms=$(rust-nm -C {{elf}})
-    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'voice::gate::kern::' 'va::noise::kern::'; do
+    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::grain::core::' 'voice::gate::kern::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
 
@@ -336,8 +341,8 @@ build:
 # with the master tape back on, ADR 0055, and the whole suite without ORBIT), desktop
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
 # features, with none, with ORBIT, each bench area (ALGO also with the master
-# tape, STRESS also with ORBIT), the filter probes and the SD probe, clippy on host
-# and firmware (every feature set), rustfmt and the stack check; each bank-2 firmware set is held to its bank-1 budget (ADR 0198). The desktop needs ALSA's
+# tape), the filter probes and the SD probe, all with bank 2 (ADR 0194), clippy on host
+# and firmware (every feature set), rustfmt and the stack check; each firmware set but no-default and sd-probe is held to its bank-1 budget (ADR 0198). The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide. The host tool's tests run first, against a fake unit.
 # chimera-circuits runs its fast tests here; its slow and ngspice
@@ -348,9 +353,11 @@ check:
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
+    # TAPE's UI with bank 2 closed, through the host's own door (ADR 0175).
+    cargo test -p chimera-core --features bank2 --test tape_closed_ui_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
-    # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's and the VCA gate's bank-1 sides through the host's own door.
-    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test gate_proxy_test
+    # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's and the streamed loads' bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -390,7 +397,8 @@ check:
 # all nested at once, against the stack, each call through a pointer
 # charged the deepest address-taken function (bank 2's door table among
 # the data dumped, so a door entry is one), three deep; and that the audio
-# interrupt reaches no small-profile code (ADR 0108). Checked for the default,
+# interrupt reaches no small-profile code (ADR 0108); each run three times
+# under different hash seeds, all alike. Checked for the default,
 # no-default, orbit, bank2-gate, every bench set (`bench_sets`) and sd-probe feature
 # sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an
@@ -420,15 +428,28 @@ stack-check:
         if [[ "$features" != *sd-probe* ]]; then
             addr() { "$nm" "$elf" | awk -v s="$1" '$3 == s { print strtonum("0x" $1) }'; }
             echo "stack-depth (features: ${features:-default})"
-            python3 tools/stack_depth.py "$(( $(addr _stack_start) - $(addr _stack_end) ))" <<<"$dis"$'\n'"$data"
+            # Three hash seeds, one answer (#582): the walk's order never moves it.
+            stack=$(( $(addr _stack_start) - $(addr _stack_end) ))
+            runs=()
+            for seed in 0 1 2; do
+                runs+=("$(PYTHONHASHSEED=$seed python3 tools/stack_depth.py "$stack" <<<"$dis"$'\n'"$data"; echo "exit $?")")
+            done
+            echo "${runs[0]%exit *}"
+            if [[ "${runs[0]}" != "${runs[1]}" || "${runs[0]}" != "${runs[2]}" ]]; then
+                echo "stack-depth: the answer changes with PYTHONHASHSEED" >&2
+                exit 1
+            fi
+            [[ "${runs[0]}" == *"exit 0" ]]
         fi
     done
 
 # The source table's gate under loom (ADR 0087): every interleaving of
-# one audio block loop and one UI close, wait, move and open. Its own
-# target dir: `--cfg loom` would rebuild everything else.
+# one audio block loop and one UI close, wait, move and open; and a stream
+# slot's want, cancel and fill against the card's claim; and the card
+# bus's wakeups, no want stranded. Its own target dir: `--cfg loom` would
+# rebuild everything else.
 loom:
-    RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test -p chimera-core --features test-support --test loom_source_table --release
+    RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test -p chimera-core --features test-support --test loom_source_table --test loom_stream_slot --test loom_card_bus --release
 
 # Run tests
 test:
@@ -436,6 +457,20 @@ test:
     cargo test -p chimera-desktop --lib --tests
     cargo test -p chimera-core --features master-tape --test screen_golden_test
     just test-fat-tools
+    just test-firmware-features
+
+# TAPE's load tests under the shipping firmware's own core and engine
+# features, read from Cargo's resolve of `--features orbit`: a gate the
+# host's defaults hide but the firmware lacks fails here.
+test-firmware-features:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    resolved() { cargo tree -q -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit -e features -i "$1" --prefix none --format '{p} [{f}]' | sed -n "s/^$1 v.*\[\(.*\)\]$/\1/p" | head -1; }
+    core=$(resolved chimera-core); engine=$(resolved chimera-engine)
+    [[ ",$core," == *,tape,* ]] || { echo "the firmware's chimera-core has no tape: [$core]" >&2; exit 1; }
+    f="$core,$(sed 's|\([^,]*\)|chimera-engine/\1|g' <<<"$engine")"
+    echo "firmware features: $f"
+    cargo test -p chimera-core --no-default-features --features "$f" --test tape_part_load_test --test tape_source_cell_test --test turn_reaches_engine_test
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
 # back and fsck.fat -n must pass, after the suite and after console puts
@@ -487,7 +522,13 @@ status:
 # About 10 s, up to 45 the first time while it writes two 4 MiB files in
 # /CHIMERA/BENCH; it plays a chord on channel 1. `just card seed=N` repeats
 # a run's random reads; `just card clean` removes /CHIMERA/BENCH.
-# The card's read speed beside audio and the streams it holds (any `just flash-bench <area>` without ORBIT or master-tape first)
+# Bench beds: `beds write DIR` (chirp WAVs), `beds check OUT.CHK bed0.SRC …` (the CRC table `put-beds` sends)
+beds *args:
+    {{utils}} beds {{args}}
+# Drop-outs in a MOTU recording of stream 0: `just dropouts find rec.wav --ref bed0.wav [--channel N]`
+dropouts *args:
+    {{utils}} dropouts {{args}}
+# The card's read speed beside audio and the streams it holds (a bench build first: `bench-stress` or `bench-tape`)
 card *args:
     python3 tools/chimera-usb.py card {{args}}
 # A project file onto the card over USB (ADR 0092), saved as the unit saves:
@@ -498,6 +539,9 @@ put local remote:
 # `just put-tape chimera-card/CHIMERA/TAPES/0BADF00D.SRC`. A re-run answers OK PRESENT.
 put-tape file:
     python3 tools/chimera-usb.py put "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" /CHIMERA/TAPES/
+# The bench's check table onto the card (the product build runs; 9 KiB at most): `just put-beds BEDS.CHK`
+put-beds file:
+    python3 tools/chimera-usb.py put "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" /CHIMERA/BENCH/BEDS.CHK
 # The project files on the card and their sizes; `just ls tapes`: the sources
 ls *args:
     python3 tools/chimera-usb.py ls {{args}}
@@ -522,12 +566,11 @@ flash:
 # Flash one bench area to PreenFM3 via DFU: `just flash-bench <area> [extra]`,
 # area one of algo, routing, memory, stress, orbit, tape; extra more
 # features (`just flash-bench stress orbit`: STRESS plays ORBIT;
-# `just flash-bench algo master-tape`: the REEL row). TAPE only links with
-# bank 2 (`just flash-bench tape bank2`, #506). A `bank2` bench's .bk2 is
+# `just flash-bench algo master-tape`: the REEL row). A bench's .bk2 is
 # split, not installed: under a console build first, `python3
 # tools/chimera-usb.py bank2 target/chimera-bench.bk2` stages it (exit 2,
-# needs firmware) and the bench's first boot installs it; without that, its
-# reverb and TAPE are silent. All of the bench no
+# needs firmware) and the bench's first boot installs it; without that, the
+# bench can't run (it lives in bank 2, ADR 0194). All of the bench no
 # longer fits FLASH at once; a bench build has no console `put` (re-flash
 # the shipping build to move files). The bench holds its screens for minutes
 # before the UI loop (and so the console) starts, so a 74 after a
@@ -539,7 +582,7 @@ flash-bench area extra="":
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
-    case ",$features," in *,bank2,*) echo "bank 2 not installed by this: stage target/chimera-bench.bk2 first (chimera-usb.py bank2, under a console build)";; esac
+    echo "bank 2 not installed by this: stage target/chimera-bench.bk2 first (chimera-usb.py bank2, under a console build)"
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
@@ -547,21 +590,16 @@ flash-bench area extra="":
         echo "bench running ~4 min; console appears after"
     elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
-# Flash the fault-injection build (console `fault dma <1|2>`, for #25) via
-# DFU: the shipping set plus `fault-inject`, less `put`. A test build only.
-# Bank 2 is not written: if the unit's differs, the seal keeps the door shut
-# (FM, LOOPFM, SOFT SYNC, PHASE silent, NEEDS UPDATE); #25 does not need it.
+# Flash the fault-injection build (console `fault dma <1|2>`, for #25;
+# `fault card`) with its bank 2, both halves as `flash` does: `fault-inject`
+# less `put`, so TAPE streams and `fault card` has reads to fail. A test
+# build only.
 flash-fault:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
-    python3 tools/chimera-usb.py to-dfu
-    log=$(mktemp) && trap 'rm -f "$log"' EXIT
-    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-fault.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
-    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
-        python3 tools/chimera-usb.py wait-console 10
-    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
+    python3 tools/chimera-usb.py update target/chimera-fault.bin target/chimera-fault.bk2
 
 # Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a
 # .sha256, never over an existing file. Upload only: it never writes the
@@ -631,6 +669,10 @@ mv-ab type:
 # A MidiVerb II program's structure from the decompiled listing
 mv-structure +progs:
     {{utils}} mv-structure {{progs}}
+
+# TAPE's Hermite read against a polyphase sinc, 24 kHz source, -12..+24 st (#698)
+tape-interp-ab dir:
+    {{utils}} tape-interp-ab {{dir}}
 
 # Loudness, vibrato, drift, breath share, formants and vowel motion of WAVs
 voice-stats +wavs:

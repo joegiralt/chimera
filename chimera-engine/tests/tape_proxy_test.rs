@@ -8,7 +8,9 @@ use core::mem::MaybeUninit;
 
 use chimera_engine::bank2::DOOR_CELL;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_engine::dsp::tape_engine::{Heads, TapeDeck, TapeEngine, TapeEngineParams, TapeModel};
+use chimera_engine::dsp::tape_engine::{
+    Direction, Heads, TapeDeck, TapeEngine, TapeEngineParams, TapeMachine,
+};
 use chimera_engine::hw::Cost;
 use chimera_engine::modulation::ModState;
 use chimera_engine::project::SourceId;
@@ -22,12 +24,7 @@ const FRAMES: usize = 9_600;
 
 /// A 48 kHz sine 100 frames long, as the arena holds it, alone in a table.
 fn source() -> (AudioToken, SourceId) {
-    let d = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate: RATE,
-        head_frames: 0,
-    };
+    let d = Descriptor::whole(Shape::Plain, 1, RATE).expect("a descriptor");
     let s: Vec<i16> = (0..FRAMES)
         .map(|i| (libm::sinf(core::f32::consts::TAU * i as f32 / 100.0) * 2047.0) as i16)
         .collect();
@@ -50,7 +47,8 @@ fn bits(x: &[f32]) -> Vec<u32> {
 fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     let (mut tok, id) = source();
     let p = TapeEngineParams {
-        model: TapeModel::Loop,
+        machine: TapeMachine::Walk,
+        direction: Direction::Loop,
         ..TapeEngineParams::default()
     };
     let mods = ModState::new();
@@ -61,17 +59,17 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     let e = TapeEngine::init_in_place(&mut slot);
     e.seed(3);
     e.latch(id);
-    assert!(TapeEngine::refuses(p.model, Some(id), &tok.begin_block()));
-    e.start(60, &p, &tok.begin_block(), SR);
+    assert!(TapeEngine::refuses(&p, Some(id), &tok.begin_block()));
+    e.start(60, &p, &tok.begin_block(), SR, None);
     let mut out = [1.0; BLOCK_SIZE];
-    e.play(&mut out, &p, &tok.begin_block(), SR);
+    e.play(&mut out, &p, &tok.begin_block(), SR, None);
     assert_eq!(out, [0.0; BLOCK_SIZE]);
     assert!(!e.is_active() && !e.sustains());
     assert_eq!(e.source(), None);
     assert_eq!(e.heads(), Heads::NONE);
     assert_eq!(e.playing_cost(), None);
     assert_eq!(TapeEngine::cost(&p, &mods), Cost(0));
-    assert_eq!(TapeEngine::model_cost(p.model), Cost(0));
+    assert_eq!(TapeEngine::model_cost(&p), Cost(0));
 
     // Open: the deck's every sample.
     DOOR_CELL.open_host();
@@ -83,10 +81,10 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     e.seed(3);
     for (k, note) in [(0, 60u8), (40, 67)] {
         let v = tok.begin_block();
-        assert!(!TapeEngine::refuses(p.model, Some(id), &v));
+        assert!(!TapeEngine::refuses(&p, Some(id), &v));
         assert_eq!(
-            TapeEngine::refuses(p.model, Some(id), &v),
-            TapeDeck::refuses(p.model, Some(id), &v)
+            TapeEngine::refuses(&p, Some(id), &v),
+            TapeDeck::refuses(&p, Some(id), &v)
         );
         d.latch(id);
         e.latch(id);
@@ -98,27 +96,26 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
             e.hold();
             d.set_pitch(7.0);
             e.set_pitch(7.0);
-            d.start(note, &p, &v, SR);
-            e.start(note, &p, &v, SR);
+            d.start(note, &p, &v, SR, None);
+            e.start(note, &p, &v, SR, None);
         }
         for _ in 0..40 {
             let v = tok.begin_block();
             let (mut a, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-            d.play(&mut a, &p, &v, SR);
-            e.play(&mut b, &p, &v, SR);
+            d.play(&mut a, &p, &v, SR, None);
+            e.play(&mut b, &p, &v, SR, None);
             assert_eq!(bits(&a), bits(&b));
             assert_eq!(d.heads(), e.heads());
             assert_eq!(d.playing_cost(), e.playing_cost());
+            // One meaning of active and held, through the door or not.
+            assert_eq!((d.is_active(), d.sustains()), (e.is_active(), e.sustains()));
         }
     }
     assert!(e.is_active() && d.is_active());
     assert_eq!(e.source(), Some(id));
     assert_eq!(e.sustains(), d.sustains());
     assert_eq!(TapeEngine::cost(&p, &mods), TapeDeck::cost(&p, &mods));
-    assert_eq!(
-        TapeEngine::model_cost(p.model),
-        TapeDeck::model_cost(p.model)
-    );
+    assert_eq!(TapeEngine::model_cost(&p), TapeDeck::model_cost(&p));
     // A strip moved to a rebuilt slot carries on as the deck's.
     let (ds, es) = (d.strip(), e.strip());
     let mut dslot2 = MaybeUninit::uninit();
@@ -130,15 +127,15 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     d2.latch(id);
     e2.latch(id);
     let v = tok.begin_block();
-    d2.start(64, &p, &v, SR);
-    e2.start(64, &p, &v, SR);
+    d2.start(64, &p, &v, SR, None);
+    e2.start(64, &p, &v, SR, None);
     d.note_off();
     e.note_off();
     for _ in 0..20 {
         let v = tok.begin_block();
         let (mut a, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-        d2.play(&mut a, &p, &v, SR);
-        e2.play(&mut b, &p, &v, SR);
+        d2.play(&mut a, &p, &v, SR, None);
+        e2.play(&mut b, &p, &v, SR, None);
         assert_eq!(bits(&a), bits(&b));
         assert!(a.iter().any(|&y| y != 0.0));
     }
@@ -146,11 +143,11 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     // Closed again mid-note: silent, and nothing reads the deck.
     DOOR_CELL.close();
     let mut out = [1.0; BLOCK_SIZE];
-    e2.play(&mut out, &p, &tok.begin_block(), SR);
+    e2.play(&mut out, &p, &tok.begin_block(), SR, None);
     assert_eq!(out, [0.0; BLOCK_SIZE]);
     assert!(!e2.is_active());
     assert_eq!(e2.heads(), Heads::NONE);
-    assert!(TapeEngine::refuses(p.model, Some(id), &tok.begin_block()));
+    assert!(TapeEngine::refuses(&p, Some(id), &tok.begin_block()));
 
     // Open again: the deck plays on from where the close left it.
     DOOR_CELL.open_host();
@@ -158,8 +155,8 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     for _ in 0..5 {
         let v = tok.begin_block();
         let (mut a, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-        d2.play(&mut a, &p, &v, SR);
-        e2.play(&mut b, &p, &v, SR);
+        d2.play(&mut a, &p, &v, SR, None);
+        e2.play(&mut b, &p, &v, SR, None);
         assert_eq!(bits(&a), bits(&b));
         assert!(a.iter().any(|&y| y != 0.0));
     }
@@ -184,17 +181,17 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     let v = tok.begin_block();
     for k in [&mut *d3, &mut *d4] {
         k.latch(id);
-        k.start(60, &worn, &v, SR);
+        k.start(60, &worn, &v, SR, None);
     }
     e3.latch(id);
-    e3.start(60, &worn, &v, SR);
+    e3.start(60, &worn, &v, SR, None);
     let mut differs = false;
     for _ in 0..40 {
         let v = tok.begin_block();
         let (mut a, mut b, mut c) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-        d3.play(&mut a, &worn, &v, SR);
-        e3.play(&mut b, &worn, &v, SR);
-        d4.play(&mut c, &worn, &v, SR);
+        d3.play(&mut a, &worn, &v, SR, None);
+        e3.play(&mut b, &worn, &v, SR, None);
+        d4.play(&mut c, &worn, &v, SR, None);
         assert_eq!(bits(&a), bits(&b));
         differs |= bits(&a) != bits(&c);
     }

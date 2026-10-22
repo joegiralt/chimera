@@ -5,12 +5,14 @@
 
 mod common;
 
+use chimera_core::dsp::tape_engine::{Direction, Way};
 use core::mem::size_of;
 
 use chimera_core::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use chimera_core::dsp::modal::{ModalEngine, SymPool};
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::{
-    COST_LOOP, COST_ONESHOT, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
+    COST_LOOP, COST_ONESHOT, StretchType, TapeEngine, TapeEngineParams, Wow,
 };
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
@@ -77,7 +79,8 @@ fn neutral_tape_loops_whole() {
     assert_eq!(
         s.params.tape,
         TapeEngineParams {
-            model: TapeModel::Loop,
+            machine: TapeMachine::Walk,
+            direction: Direction::Loop,
             start: 0.0,
             end: 1.0,
             position: 0.0,
@@ -92,6 +95,8 @@ fn neutral_tape_loops_whole() {
             period: 0.0,
             slice: chimera_core::dsp::tape_engine::SliceCode::OFF,
             wow: Wow::Capstan,
+            retrig: chimera_core::dsp::tape_engine::Retrig::Stack,
+            ..TapeEngineParams::default()
         }
     );
 }
@@ -255,6 +260,7 @@ fn with_view(v: &mut Rig, f: impl FnOnce(&mut Voice, &mut EngineCtx<'_>)) {
         voice,
         &mut EngineCtx {
             sym: pool,
+            streams: None,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
@@ -286,7 +292,7 @@ fn a_moving_source_holds_the_note() {
 #[test]
 fn an_unplayable_source_plays_nothing() {
     let mut s = Sound::init(EngineType::Tape);
-    s.params.tape.model = TapeModel::Transwave;
+    s.params.tape.machine = TapeMachine::Wave;
     let mut v = Rig::with_source(SR, &saw());
     v.note_on(c4(), Velocity::DEFAULT, &s.params);
     assert!(
@@ -313,6 +319,7 @@ fn no_source_unlatches_the_last() {
         let view = src.view();
         let ctx = &mut EngineCtx {
             sym: &mut sym,
+            streams: None,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
@@ -342,6 +349,7 @@ fn a_sounding_note_bills_its_latched_model() {
     let mut sym = SymPool::boxed();
     let ctx = &mut EngineCtx {
         sym: &mut sym,
+        streams: None,
         src: &view,
         part: chimera_core::project::PartId::ALL[0],
         tune: 0.0,
@@ -349,11 +357,11 @@ fn a_sounding_note_bills_its_latched_model() {
     slot.note_on(c4(), Velocity::DEFAULT, &s.params, SR, Some(id), ctx);
     assert_eq!(slot.playing_cost(), Some(COST_LOOP));
     let mut edit = s.params.clone();
-    edit.tape.model = TapeModel::Oneshot;
+    edit.tape.set_way(Way::One);
     assert_eq!(slot.model_cost(&s.params), COST_LOOP);
     assert_eq!(slot.model_cost(&edit), COST_ONESHOT);
     assert_eq!(
-        TapeEngine::model_cost(TapeModel::Oneshot),
+        TapeEngine::model_cost(&edit.tape),
         COST_ONESHOT,
         "the edit's"
     );
@@ -421,6 +429,7 @@ fn a_note_waiting_a_fade_plays_its_source() {
         let view = src.view();
         let ctx = &mut EngineCtx {
             sym: &mut sym,
+            streams: None,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
@@ -444,5 +453,17 @@ fn a_note_waiting_a_fade_plays_its_source() {
     assert!(
         then < 1e-3,
         "on its own source, not the last note's: {then}"
+    );
+}
+
+/// Slice 1 § 10.3: the deck holds its stream's cursor and still fits
+/// inside MODAL's slot, so `EngineSlot` (and a voice) doesn't grow.
+#[test]
+fn tape_with_its_cursor_stays_under_modal() {
+    assert!(
+        size_of::<TapeEngine>() < size_of::<ModalEngine>(),
+        "TAPE {} B, MODAL {} B",
+        size_of::<TapeEngine>(),
+        size_of::<ModalEngine>()
     );
 }

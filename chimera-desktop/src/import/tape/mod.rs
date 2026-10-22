@@ -6,6 +6,7 @@
 pub mod convert;
 pub mod transwave;
 
+use chimera_core::stream::units::SourceRate;
 use std::fmt;
 use std::ops::{ControlFlow, Range};
 use std::path::{Path, PathBuf};
@@ -687,7 +688,7 @@ fn suggest(lp: (u32, u32), kept: Range<usize>, out: usize, s: SourceRef) -> Opti
     } else {
         1.0
     };
-    let played = f64::from(loop_len(size, s.frames, s.rate));
+    let played = f64::from(loop_len(size, s.frames, SourceRate::new(s.rate)?));
     let position = if w > played {
         clampf((ls / (w - played)) as f32, 0.0, 1.0)
     } else {
@@ -764,7 +765,7 @@ fn card_head<S: Store>(s: &mut S, r: &Ready, sref: SourceRef) -> Result<SourceHe
         }
     })?;
     let damaged = |_| ImportError::Save(SaveError::Damaged);
-    let check = SourceCheck::new(sref.crc, len.ok_or(StoreError::NotFound)?).map_err(damaged)?;
+    let check = SourceCheck::new(sref.stem(), len.ok_or(StoreError::NotFound)?).map_err(damaged)?;
     let mut feed = Feed(check);
     s.read(vol, file, &mut feed)?;
     feed.0.finish().map_err(damaged)

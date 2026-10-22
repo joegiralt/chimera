@@ -9,7 +9,7 @@ use chimera_core::block::DiskCode;
 use chimera_core::block::ParamId;
 use chimera_core::dsp::tape_engine::TapeEngineParams as P;
 use chimera_core::dsp::tape_engine::read::Shape;
-use chimera_core::dsp::tape_engine::{StretchType, TapeModel};
+use chimera_core::dsp::tape_engine::{Direction, StretchType, TapeMachine, TapeModel, Tron};
 use chimera_desktop::factory_tapes::{
     ROOT, VERSION, build_all, held, originals, pitch, read_recipes, tape_sound, write_set,
 };
@@ -111,8 +111,8 @@ fn run_qa(wav: Option<&String>) -> Result<bool, String> {
         let own = if wave {
             0.0
         } else {
-            let base = Way::Plain.base(TapeModel::Oneshot, StretchType::Mono);
-            let s = script(TapeModel::Oneshot);
+            let base = Way::One.base(TapeModel::Walk, StretchType::Mono);
+            let s = Way::One.script(TapeModel::Walk);
             let y = render(base, &held, p, root_note(p), &s);
             qa_takes(&y[..y.len().min(48_000 * 5 / 2)], &take_starts(&s)).click_ratio
         };
@@ -182,7 +182,7 @@ fn run_qa(wav: Option<&String>) -> Result<bool, String> {
 /// take from the root, 1.5 s apart, and a param ramped over the render)`.
 type Demo = (
     &'static str,
-    Option<TapeModel>,
+    Option<(TapeModel, Direction, Tron)>,
     &'static [u8],
     Option<(ParamId, f32, f32)>,
 );
@@ -194,7 +194,12 @@ const DEMOS: [Demo; 14] = [
     ("SINE LOOP", None, &[0, 12], None),
     ("PAD LOOP", None, &[0, 5], None),
     ("TRON BOWED", None, &[0, 12], None),
-    ("BOWED LOOP", Some(TapeModel::Tron), &[0, 7], None),
+    (
+        "BOWED LOOP",
+        Some((TapeModel::Walk, Direction::Forward, Tron::On)),
+        &[0, 7],
+        None,
+    ),
     ("STAB STRETCH", None, &[0, 0], Some((P::MOTION, 0.25, 1.0))),
     ("VOICE STRETCH", None, &[0, 0], Some((P::MOTION, 0.25, 1.0))),
     ("WAVE MORPH", None, &[0, 7], Some((P::POSITION, 0.0, 1.0))),
@@ -204,7 +209,7 @@ const DEMOS: [Demo; 14] = [
     ("PAD PINGPONG", None, &[0, 0], Some((P::SIZE, 0.5, 0.15))),
     (
         "SINE LOOP",
-        Some(TapeModel::PingPong),
+        Some((TapeModel::Walk, Direction::Ping, Tron::Off)),
         &[0, 0],
         Some((P::SIZE, 0.6, 0.2)),
     ),
@@ -232,8 +237,8 @@ fn demo(dir: &str) -> Result<bool, String> {
             .ok_or(name)?;
         let snd = tape_sound(s, &b.head);
         let mut base = snd.params.tape;
-        if let Some(m) = model {
-            base.model = m;
+        if let Some((m, d, t)) = model {
+            (base.machine, base.direction, base.tron) = (TapeMachine::of(m), d, t);
         }
         let secs = 1.5 * notes.len() as f32;
         let points: Vec<(f32, ParamId, f32)> = match ramp {
@@ -266,7 +271,7 @@ fn demo(dir: &str) -> Result<bool, String> {
         let file = format!(
             "{:02}-{}-{}.wav",
             k + 1,
-            model_slug(base.model),
+            model_slug(base.model()),
             name.to_lowercase().replace(' ', "-")
         );
         write_wav(&PathBuf::from(dir).join(&file), &y)?;
@@ -275,7 +280,7 @@ fn demo(dir: &str) -> Result<bool, String> {
             "{}{{\"file\": \"{}\", \"machine\": \"{}\", \"sound\": \"{name}\", \"source\": \"{}\", \"note\": {note}, \"takes\": {:?}, \"ramp\": \"{}\", \"peak_dbfs\": {:.2}, \"click\": {:.2}}}",
             if k == 0 { "" } else { ",\n" },
             file.replace(".wav", ".oga"),
-            base.model.disk_ident(),
+            chimera_desktop::factory_tapes::model_word(base.model()),
             s.source.as_str(),
             notes,
             ramp.map_or(String::from("none"), |(id, a, z)| format!(

@@ -34,6 +34,8 @@ pub fn nudge_fine(b: &mut dyn Block, id: ParamId, delta: i8) {
 pub enum ValFmt {
     /// Unipolar: 0 to 127. Snaps: 0, 100, 127.
     Uni,
+    /// `Uni`, its top step reading HOLD.
+    Hold,
     /// Bipolar: -64 to +63. Snaps: -64, -44, 0, +43, +63.
     Bi,
     /// Discrete integer 0..N. N is stored in the variant.
@@ -69,7 +71,7 @@ impl ValFmt {
     /// Coarse snap points in normalized 0..1 space.
     pub fn snap_points(self) -> &'static [f32] {
         match self {
-            ValFmt::Uni | ValFmt::Law(_) => &[0.0, 100.0 / 127.0, 1.0],
+            ValFmt::Uni | ValFmt::Hold | ValFmt::Law(_) => &[0.0, 100.0 / 127.0, 1.0],
             ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Keybd => {
                 &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
             }
@@ -85,9 +87,15 @@ impl ValFmt {
     }
 
     pub fn is_bipolar(self) -> bool {
+        use crate::dsp::modulator::law::Law;
         matches!(
             self,
-            ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Keybd | ValFmt::Signed(_)
+            ValFmt::Bi
+                | ValFmt::Pan
+                | ValFmt::Route
+                | ValFmt::Keybd
+                | ValFmt::Signed(_)
+                | ValFmt::Law(Law::StretchSpeed | Law::ScrubSpeed)
         )
     }
 
@@ -107,6 +115,7 @@ impl ValFmt {
             ValFmt::Signed(n) => n.saturating_mul(2),
             ValFmt::Names(names) => names.len().saturating_sub(1) as u8,
             ValFmt::Uni
+            | ValFmt::Hold
             | ValFmt::Bi
             | ValFmt::Pan
             | ValFmt::Route

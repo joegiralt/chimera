@@ -97,7 +97,7 @@ fn new_reads_its_percent() {
     draw::text_right(
         &mut want,
         &theme::FONT_LABEL,
-        "3%",
+        "4%",
         theme::VIZ_RIGHT,
         browser::INFO_Y,
         theme::MID,

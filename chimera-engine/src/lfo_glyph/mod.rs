@@ -311,8 +311,8 @@ pub fn curve(w: &Wave, out: &mut [i8; COLS]) -> bool {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct LfoDoor {
-    pub render: fn(&LfoGauge, &mut Canvas),
-    pub curve: fn(&Wave, &mut [i8; COLS]),
+    render: fn(&LfoGauge, &mut Canvas),
+    curve: fn(&Wave, &mut [i8; COLS]),
 }
 
 #[cfg(feature = "bank2")]

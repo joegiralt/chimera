@@ -49,6 +49,8 @@ pub enum VizType {
     /// FLT › FX: `source › FX › FLT` (or the filter first) and the type's
     /// transfer curve.
     FxCurve,
+    /// PIT: the live output, the sounding pitch in its corner (ADR 0201).
+    Tuner,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.
@@ -108,12 +110,12 @@ pub enum SlotBinding {
     Orbit(crate::ui::orbit::OrbitCell),
 }
 
-/// Where a TAPE cell sits: DECK's POSITION and MOTION, or cell `k` of the
-/// model page, each labelled by the Sound's machine.
+/// Where a TAPE cell sits: cell `k` of DECK after MODEL (the glyph's
+/// knobs) or of the model page after TAPE, AGE and WOW, each labelled by
+/// the Sound's machine (ADR 0178).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MachineSlot {
-    Position,
-    Motion,
+    Deck(u8),
     Page(u8),
 }
 

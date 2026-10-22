@@ -7,8 +7,31 @@
 
 pub mod bank2;
 pub mod cache;
-#[cfg(all(feature = "bench", feature = "usb-console"))]
+#[cfg(not(feature = "sd-probe"))]
+pub mod card_dma;
+// Only where `CARD_BENCH` is true: nothing else reaches it.
+#[cfg(all(
+    feature = "bench",
+    feature = "usb-console",
+    feature = "bank2",
+    not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
+))]
 pub mod card_speed;
+
+/// The console's `card` bench is in this build: bank 2's bench builds
+/// only, where `card dma` runs, and not ORBIT's, the master tape's nor
+/// TAPE's (FLASH, AXI's margin). Without it nothing sets the stream
+/// bench's beds, so its heads never run.
+pub const CARD_BENCH: bool = cfg!(all(
+    feature = "bench",
+    feature = "usb-console",
+    feature = "bank2",
+    not(any(
+        feature = "orbit",
+        feature = "master-tape",
+        feature = "bench-tape"
+    ))
+));
 pub mod clocks;
 #[cfg(not(feature = "sd-probe"))]
 pub mod controls;
@@ -151,6 +174,13 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     #[cfg(feature = "usb-console")]
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    // SAFETY: once, before audio and the rings' owner exist, so the eight
+    // words (8 KiB apart, so in different lines) are nothing else's yet.
+    #[cfg(not(feature = "sd-probe"))]
+    chimera_core::console::SRAM4
+        .store(unsafe { cache::sram4_self_test(&mut cp.SCB, &shared::sram4_words()) });
+    #[cfg(not(feature = "sd-probe"))]
+    shared::zero_rings();
     // Bank 2 judged before anything could call into it (ADR 0137), a
     // fault's mark first; the cycle counter bounds its erase.
     #[cfg(not(feature = "sd-probe"))]
@@ -327,6 +357,8 @@ pub struct AudioStart<'a> {
     pub formant: chimera_core::triple::Writer<chimera_core::dsp::algo::engine::FormantViews>,
     pub orbit: orbit::Runner,
     pub sources: chimera_core::source_table::AudioToken,
+    /// The stream rings' audio side.
+    pub streams: chimera_core::stream::ring::AudioSide<'static>,
     #[cfg(feature = "midi-din")]
     pub din: chimera_core::note_queue::NoteProducer<'static>,
     /// MIDI DIN's CCs: the ISR pushes, the UI drains (MIDI map spec § 1).
@@ -348,7 +380,35 @@ pub struct Shell {
         clocks::Clocks,
         &mut chimera_core::project::Project,
         &mut chimera_core::source_table::AudioToken,
+        BenchRings<'_>,
     ) -> &'static str,
+}
+
+/// The stream rings' sides, lent to TAPE's bench before the card IRQ takes
+/// its own (`TAPE STREAM`); `None` in the other areas, where it has.
+#[cfg(feature = "bench")]
+pub type BenchRings<'a> = Option<(
+    &'a mut chimera_core::stream::ring::AudioSide<'static>,
+    &'a mut chimera_core::stream::ring::CardSide<'static>,
+)>;
+
+/// The card IRQ's start, with the rings' card side: false if it can't run
+/// (`card_dma::init`).
+#[cfg(not(feature = "sd-probe"))]
+fn start_card(
+    nvic: &mut cortex_m::peripheral::NVIC,
+    clocks: &CoreClocks,
+    cpu_hz: u32,
+    side: chimera_core::stream::ring::CardSide<'static>,
+) -> bool {
+    use stm32h7xx_hal::spi::{Enabled, Spi};
+    let ker = Spi::<pac::SPI2, Enabled>::kernel_clk_unwrap(clocks).raw();
+    card_dma::init(
+        nvic,
+        side,
+        card_dma::Hz::new(ker),
+        card_dma::Hz::new(cpu_hz),
+    )
 }
 
 /// The bench's text and flush, built here with the UI's (ADR 0108):
@@ -435,6 +495,20 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     display.flush();
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
     let store = sd::take_store(sd).expect("store taken once");
+    // The rings' card side to the card IRQ, its audio side to the audio.
+    // TAPE's bench lends both sides to its STREAM rows first.
+    #[cfg_attr(not(all(feature = "bench", feature = "bench-tape")), allow(unused_mut))]
+    let (mut streams, mut card_side) = shared::ring_sides().expect("ring sides taken once");
+    #[cfg(not(all(feature = "bench", feature = "bench-tape")))]
+    let _card_irq = start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
+    // Streamed sources' files go in the registry for the card (slice 1
+    // § 5.5), if its interrupt runs: else no row is lent, and a source too
+    // big for the arena reads STREAMS FULL, not a silent stream. A bench
+    // build's beds keep its rows to themselves.
+    #[cfg(not(feature = "bench"))]
+    if let Some(r) = shared::registry().filter(|_| _card_irq) {
+        ui.project_mut().set_streams(r);
+    }
     let mut card = Card::new();
     // No card or a card fault shows at the project's boot; a SYSTEM
     // file that can't be read still applies the defaults silently:
@@ -490,7 +564,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         clk,
         ui.project_mut(),
         &mut sources,
+        #[cfg(feature = "bench-tape")]
+        Some((&mut streams, &mut card_side)),
+        #[cfg(not(feature = "bench-tape"))]
+        None,
     ));
+    #[cfg(all(feature = "bench", feature = "bench-tape"))]
+    start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
     #[cfg(all(feature = "usb-console", not(feature = "bench")))]
     let bench_text: Option<&str> = None;
 
@@ -510,7 +590,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             all(
                 feature = "bench",
                 feature = "usb-console",
-                not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+                not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
             )
         )),
         allow(unused_mut, unused_variables)
@@ -529,6 +609,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         formant: formant_w,
         orbit: orbit_runner,
         sources,
+        streams,
         #[cfg(feature = "midi-din")]
         din: producers
             .take(shared::DIN)
@@ -540,13 +621,15 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     marker.stage(BootStage::Audio);
 
     // The console's `card`: the measurement over the card, its chord on
-    // the `CARD` note source. Not in ORBIT's bench builds, nor the master
-    // tape's, nor TAPE's: with it they no longer fit FLASH, or AXI's
-    // margin (TAPE's comes back with streaming: #539).
+    // the `CARD` note source. Only in bank 2's bench builds, where `card
+    // dma` runs (#568); not ORBIT's, the master tape's nor TAPE's: with it
+    // they no longer fit FLASH, or AXI's margin (TAPE's comes back with
+    // streaming: #539).
     #[cfg(all(
         feature = "bench",
         feature = "usb-console",
-        not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+        feature = "bank2",
+        not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
     ))]
     let mut card_bench = card_speed::take(
         producers
@@ -578,23 +661,51 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     let mut last_tick = controls::ticks();
     loop {
+        // A write's quiet released 20 ms after its last write; then a
+        // stuck card transfer aborted, a stranded want woken.
+        if let Some(q) = sd::BUS.settle(controls::now_ms()) {
+            shared::STREAM_STATS.note_quiet(q);
+        }
+        card_dma::watch(controls::now_ms());
+        // A `card dma` run moved on: B6 redraws every row, and saves the
+        // project once a minute.
+        #[cfg(all(
+            feature = "usb-console",
+            feature = "bench",
+            feature = "bank2",
+            not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
+        ))]
+        let bench_redraw = {
+            let ask = card_bench.tick(controls::now_ms(), store, stats_r.as_mut());
+            if ask.save {
+                card_bench.saved(bench_save(&mut card, store, ui));
+            }
+            ask.redraw
+        };
+        #[cfg(not(all(
+            feature = "usb-console",
+            feature = "bench",
+            feature = "bank2",
+            not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
+        )))]
+        let bench_redraw = false;
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
         tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
         #[cfg(all(
             feature = "usb-console",
             feature = "bench",
-            not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+            feature = "bank2",
+            not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         ))]
         let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(
             feature = "usb-console",
-            any(
-                not(feature = "bench"),
-                feature = "orbit",
-                feature = "master-tape",
-                feature = "tape"
-            )
+            not(all(
+                feature = "bench",
+                feature = "bank2",
+                not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
+            ))
         ))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
@@ -683,9 +794,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         last_tick = now;
         ui.step_idle(elapsed_ms, busy);
         let toast = ui.step_toast(elapsed_ms);
-        if toast == ToastStep::Ended || busy || installed {
+        if toast == ToastStep::Ended || busy || installed || bench_redraw {
             // The toast, BUSY or the install covered rows the dirty regions
-            // don't know about.
+            // don't know about; B6 redraws them all regardless.
             ui.render_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
             ui.prime_regions(&perf.stats, stats.as_ref(), scope_r.read());
             if let ToastStep::Show(text) = toast {
@@ -712,6 +823,25 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             }
         }
     }
+}
+
+/// B6's save of the open project over its own file: true if it landed.
+#[cfg(all(
+    feature = "usb-console",
+    feature = "bench",
+    feature = "bank2",
+    not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
+))]
+#[inline(never)]
+fn bench_save(
+    card: &mut chimera_core::storage::Card,
+    store: &mut sd::SdStore,
+    ui: &mut chimera_core::ui::UiState,
+) -> bool {
+    use chimera_core::project::{ProjectNote, SaveTo, save_project_as};
+    let name = ui.project().meta().name();
+    let saved = save_project_as(card, store, ui.project_mut(), SaveTo::Own, name);
+    matches!(saved.out, ProjectNote::Saved(_))
 }
 
 /// A USB try if one is due, and the host's progress: each step, the try's
@@ -757,7 +887,7 @@ fn publish(
 ) {
     b.update_from_project(ui.project(), LOAD_LINK.epoch(), knobs);
     orbit::publish(ui, b);
-    ui.publish_tune(b);
+    ui.publish_ui(b);
 }
 
 /// The audio's latest stats with the stack's high-water mark, as the

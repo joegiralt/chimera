@@ -11,7 +11,6 @@ use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
 use crate::in_place::uninit_at;
 use crate::name::SoundName;
-use crate::params::EngineType;
 use crate::project::{
     AdoptError, CardOut, Confirmed, LibEntry, LibNote, LibPage, LibRead, LibraryPart, Line, PageAt,
     PartId, PartSet, ReplaceError, ReplaceGuard, Shelf, SlotId, SourceNeed, Staged, list_library,
@@ -22,14 +21,14 @@ use crate::storage::{
 };
 use crate::ui::UiState;
 use crate::ui::about_page;
-use crate::ui::browser::{Browse, Soon};
+use crate::ui::browser::Browse;
 use crate::ui::busy::Toast;
 use crate::ui::nav::{ListAt, Location};
 use crate::ui::settings::job::Job;
 use crate::ui::settings::prompt;
 use crate::ui::settings::replace::LibraryAsk;
 use crate::ui::settings::{Ask, NamingFor, PART_ROW, SAVE_TO_LIB_ROW};
-use crate::ui::source_cell::{READ_FAILED, SOURCE_MISSING, SourceLoad, StagedStep};
+use crate::ui::source_cell::{READ_FAILED, SOURCE_MISSING, SourceLoad, SourceNote, StagedStep};
 
 /// What the Sound rung lists: kept for the session, PROJECT at boot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,14 +103,11 @@ pub struct LibState {
     /// SAVE PART FIRST's Stale Parts and slot: asked about once the load
     /// it ran before ends, not under it.
     after: Option<(PartSet, SlotId)>,
-    /// TAPE Sounds listed: only the tests of TAPE's load set it, as no
-    /// player reaches one until its rework (ADR 0132).
-    pub(crate) tape: bool,
 }
 
 // `init_in_place` writes each field: a new one fails to build here first.
 crate::in_place::field_list!(LibState => LibState {
-    page, listed, described, err, load, tab, this, after, tape
+    page, listed, described, err, load, tab, this, after
 });
 
 impl LibState {
@@ -136,7 +132,6 @@ impl LibState {
             addr_of_mut!((*p).tab).write(BrowserTab::Project);
             addr_of_mut!((*p).this).write(about_page::THIS);
             addr_of_mut!((*p).after).write(None);
-            addr_of_mut!((*p).tape).write(false);
             slot.assume_init_mut()
         }
     }
@@ -174,12 +169,6 @@ impl LibState {
     pub fn note_of(&self, e: &LibEntry) -> Option<Note> {
         let d = self.described?;
         (factory_id(e) == Some(d.id)).then_some(d.note)?
-    }
-
-    /// A row of an engine coming soon: greyed, and EDIT only says so.
-    /// LIBRARY never lists one but under TAPE's load tests.
-    pub fn soon(&self, e: &LibEntry) -> Option<Soon> {
-        e.engine.and_then(Soon::of).filter(|_| !self.tape)
     }
 
     /// A failed listing is tried again: LIBRARY entered anew.
@@ -342,9 +331,6 @@ impl UiState {
         if let Some(e) = entry.err {
             return self.error(Line::new(e.message()));
         }
-        if let Some(s) = self.lib.soon(&entry) {
-            return self.notice(Line::new(s.toast()));
-        }
         let Some(file) = self.lib.page.file(&entry) else {
             return;
         };
@@ -409,11 +395,6 @@ impl UiState {
         let CardOut { out, event } = list_library(card, store, shelf, at, &mut self.lib.page);
         // A new listing may be of other files: each description peeked anew.
         self.lib.described = None;
-        // TAPE is coming soon (ADR 0132): its Sounds stay on the card,
-        // unlisted in LIBRARY; a stray factory one lists greyed.
-        if shelf == Shelf::User && !self.lib.tape {
-            self.lib.page.retain(|e| e.engine != Some(EngineType::Tape));
-        }
         self.saw(event);
         // The rows just read are the new card's: its event is no news.
         // A failure is listed too, as its row, so it isn't retried a pass.
@@ -510,7 +491,7 @@ impl UiState {
         match self.stream_size(card, store, file.vol, need) {
             // Gone or changed since the read: it loads absent.
             None => self.lib_adopt(go, read, Some(Staged::Missing(need.r))),
-            Some(size) => match SourceLoad::start(&mut self.project, need.r.crc, size) {
+            Some(size) => match SourceLoad::start(&mut self.project, need.r.stem(), size) {
                 Some(stream) => {
                     debug_assert!(
                         !self.src.busy(),
@@ -565,13 +546,15 @@ impl UiState {
                 Ok::<_, StoreError>(stream.step_staged(s, r, p))
             }) {
                 Ok(o) => {
-                    let step = o.result.unwrap_or(StagedStep::Failed(READ_FAILED));
+                    let step = o
+                        .result
+                        .unwrap_or(StagedStep::Failed(SourceNote::ReadFailed));
                     self.saw(Some(o.event));
                     step
                 }
-                Err(_) => StagedStep::Failed(READ_FAILED),
+                Err(_) => StagedStep::Failed(SourceNote::ReadFailed),
             },
-            None => StagedStep::Failed(READ_FAILED),
+            None => StagedStep::Failed(SourceNote::ReadFailed),
         };
         if step == StagedStep::More {
             self.lib.load = Some(l);
@@ -583,7 +566,7 @@ impl UiState {
             (StagedStep::Staged(got), Some(need)) if got.r == need.r => {
                 self.lib_adopt(l.go, l.read, Some(Staged::Read(need)))
             }
-            (StagedStep::Failed(w), _) => self.error(Line::new(w)),
+            (StagedStep::Failed(w), _) => self.error(Line::new(w.words())),
             _ => self.error(Line::new(READ_FAILED)),
         }
         self.lib_ended();

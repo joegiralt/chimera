@@ -295,10 +295,13 @@ fn snap_walks_bipolar_points_both_ways() {
 /// params add 48 B (TAPE spec § 2, Structure); VA's params add 40 B
 /// (VA spec § Params); the three sends add 12 B (ADR 0123); the operators'
 /// `Kinds` add 4 B (formant spec § 1) and their six fields and VOWEL 36 B (§ 2);
-/// the voice FX block 20 B (ADR 0155); the VCA's gate 12 B (ADR 0195).
+/// PLAY's MODE adds 4 B with its padding (ADR 0170); the voice FX block 20 B
+/// (ADR 0155); the VCA's gate 12 B (ADR 0195); STRETCH's LENGTH, GRAIN,
+/// SPRAY and END 16 B (ADR 0204); WALK's TRON and DRIFT 8 B past the
+/// padding they fit alone (ADR 0203), measured on the merged tree.
 #[test]
 fn snapshot_is_small() {
     let size = core::mem::size_of::<chimera_core::params::ParamSnapshot>();
     eprintln!("ParamSnapshot = {size} B");
-    assert!(size <= 660, "ParamSnapshot is {size} B");
+    assert!(size <= 684, "ParamSnapshot is {size} B");
 }

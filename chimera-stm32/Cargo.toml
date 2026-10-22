@@ -4,37 +4,36 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders", "bank2"]
+default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders"]
 midi-din = ["chimera-board/midi-din"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
 # beside the synth. `bench` is the shared rig, built with an area and
 # `--no-default-features`: the shipping set less the console's `put`
-# (`card-put`, ~7 KB), which no bench run needs, so ORBIT's areas fit.
+# (`card-put`, ~7 KB), which no bench run needs. Bank 2 comes with every
+# build (ADR 0194).
 bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "usb-console"]
 # ALGO's patches, the FX bus, the kernel and FORMANT's rows; its ELF is the one
-# `tools/loop_count.py` counts the kernel's loops on. Built with `bank2`
-# (#654).
+# `tools/loop_count.py` counts the kernel's loops on. Its bank 1 holds the
+# rig; the reverb and VA's MOD path play from bank 2 (#654).
 bench-algo = ["bench", "midi-din", "chimera-core/span-count", "chimera-engine/demo-sounds"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
 bench-routing = ["bench", "midi-din"]
 # MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.
 bench-memory = ["bench", "midi-din"]
 # STRESS: NEW's Parts with every key down, and the runs' phases; ORBIT
-# plays in them with `orbit`. Built with `bank2` (the reverb from bank 2,
-# ADR 0174): alone it doesn't fit FLASH (#654).
+# plays in them with `orbit`. The reverb plays from bank 2 (ADR 0174).
 bench-stress = ["bench", "midi-din"]
-# ORBIT: its block's cost and phases. Built with `bank2`, as ALGO is (#654).
+# ORBIT: its block's cost and phases (#654).
 bench-orbit = ["bench", "midi-din", "orbit"]
 # TAPE COLD: each machine's cold-cache voice. It never plays MIDI; FLASH
-# (#507). Alone it keeps TAPE in bank 1 and doesn't fit FLASH (#506): build
-# it with `bank2`, whose .bk2 the run needs installed.
-bench-tape = ["bench", "chimera-core/tape", "chimera-board/tape"]
+# (#507). TAPE plays from bank 2 (#506): the run needs its .bk2 installed.
+bench-tape = ["bench", "chimera-core/tape", "chimera-board/bench-tape"]
 # The filter probes, linked though nothing calls them, for
 # `tools/loop_count.py`'s static counts: the shipping build plus them, less
 # the console's `put`, the MIDI map and PUSH ENCODERS as the bench's (bank
 # 2's install filled FLASH; #507; the filters' loops are the same).
-filter-probes = ["midi-din", "perf-probe", "usb-console", "sweep-free", "bank2", "chimera-core/filter-probe"]
+filter-probes = ["midi-din", "perf-probe", "usb-console", "sweep-free", "chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
 sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
@@ -59,21 +58,20 @@ card-put = ["usb-console", "chimera-board/card-put", "chimera-core/source-writer
 sweep-free = ["chimera-board/sweep-free"]
 # The console's `fault dma <1|2>`: provokes a transfer error on a trailing
 # DMA stream, to test its re-arm on the unit (#25). Never in a shipping build.
-# Bank 2 as the shipping set: without it VA's MOD oscillators stay in bank 1
-# and it doesn't fit FLASH (8,116 B over since PHASE's, ADR 0160).
-fault-inject = ["usb-console", "perf-probe", "midi-din", "bank2", "chimera-board/fault-inject", "chimera-core/fault-inject"]
-# Bank 2's section (header and door at 0x08100000, `build.rs`) and bank 1's
-# seal of it (ADR 0137). The Justfile splits the ELF into .bin and .bk2.
-bank2 = ["chimera-engine/bank2", "chimera-board/bank2"]
+fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-inject", "chimera-core/fault-inject"]
 # Hardware Gate 2's power-pull aid: the install holds 3 s at each phase
 # (PULL NOW) and the console takes `bank2 erase`. `just firmware-gate` only:
 # never in a release, flash or bench build (release-bin refuses its marker).
-bank2-gate = ["bank2", "usb-console", "chimera-board/bank2-gate"]
+bank2-gate = ["usb-console", "chimera-board/bank2-gate"]
 
 [dependencies]
-chimera-board = { path = "../chimera-board" }
-chimera-core = { path = "../chimera-core", default-features = false }
-chimera-engine = { path = "../chimera-engine" }
+# Bank 2 in every build, never a feature (ADR 0194): its section (header and
+# door at 0x08100000, `build.rs`) and bank 1's seal of it (ADR 0137). The
+# Justfile splits the ELF into .bin and .bk2. TAPE plays from bank 2, so the
+# UI that loads its sources comes with it (chimera-core asserts the pair).
+chimera-board = { path = "../chimera-board", features = ["bank2"] }
+chimera-core = { path = "../chimera-core", default-features = false, features = ["bank2"] }
+chimera-engine = { path = "../chimera-engine", features = ["bank2"] }
 chimera-hal = { path = "../chimera-hal" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 # set-vtor: Reset points VTOR at the linked __vector_table (FLASH ORIGIN in

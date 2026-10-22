@@ -3,7 +3,7 @@
 
 mod screen;
 
-use chimera_core::dsp::tape_engine::TapeModel;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::project::PartId;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::draw;
@@ -716,7 +716,7 @@ fn every_route_readout_fits_its_line() {
     for b in BlockRef::ALL {
         // TAPE's columns read each machine's labels, FX's each type's.
         let tapes: Vec<DestCtx> = match b {
-            BlockRef::TapeEngine => TapeModel::ALL
+            BlockRef::TapeEngine => TapeMachine::ALL
                 .iter()
                 .map(|&tape| DestCtx {
                     tape,

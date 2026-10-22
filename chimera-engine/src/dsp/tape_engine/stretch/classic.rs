@@ -1,4 +1,4 @@
-//! STRETCH (spec § 2 STRETCH, Why period-locking): the Akai S950's
+//! STRETCH's CLASSIC TYPE (ADR 0204; spec § 2 STRETCH, Why period-locking): the Akai S950's
 //! time-stretch (S950 Operator's Manual p. 32: TIMESTRETCH, D-TIME, MONO
 //! and POLY) run in real time, as the JUCE forum's Akai-style two-grain
 //! stretch (2024) does. WSOLA (Verhelst and Roelands, 1993) is the costed
@@ -9,8 +9,8 @@
 //! `inc`, so the pitch is the note's whatever the speed. Every D-TIME/2
 //! output samples (SIZE: 10–250 ms) a splice starts a grain at `T` under
 //! one fade (a smoothstep, so splices have no corner), D-TIME/2 long, latched as it starts; the next splice
-//! waits for it to end, so the old grain's gain is always exactly 1 − the
-//! new one's. MONO starts the new grain a whole number of the source's YIN
+//! waits for it to end. Locked grains' gains sum to 1; unlocked (POLY)
+//! ones' powers do (`heads::xgains`). MONO starts the new grain a whole number of the source's YIN
 //! periods from the old grain's head (`lock`), so a held tone's splices
 //! line up; a period that doesn't fit twice in the window and the D-TIME
 //! (`locks`), or none, plays POLY.
@@ -55,10 +55,12 @@
 
 use chimera_hal::BLOCK_SIZE;
 
-use super::heads::{Dir, at, shortest, window_end_min, window_start};
-use super::params::{StretchType, TapeEngineParams};
-use super::read::{Pos, SourceView};
-use super::{INC_MAX, MIN_LOOP_FRAMES, MIN_PASS_SAMPLES, Macros};
+use super::super::heads::{
+    Dir, POWER, at, power_of, shortest, window_end_min, window_start, xgains,
+};
+use super::super::params::{StretchType, TapeEngineParams};
+use super::super::read::{Pos, SourceView};
+use super::super::{INC_MAX, MIN_LOOP_FRAMES, MIN_PASS_SAMPLES, Macros};
 use crate::dsp::algo::math::{clampf, exp2};
 
 /// A wrap's lift fades over 5 ms, as PING-PONG's clamp does.
@@ -89,12 +91,26 @@ pub fn d_time_s(size: f32) -> f32 {
     0.01 * exp2(LOG2_25 * clampf(size, 0.0, 1.0))
 }
 
-/// Time's speed for MOTION `motion`: `2 · motion` from 0 up, `motion`
-/// below, −1 to +2 times the source's own.
+/// Time's speed for MOTION `motion`, −1 to +2 times the source's own:
+/// freeze at 0, 1× at ½, 2× at 1. Under 1× either way it is `slow`, an
+/// exponential from 0, so the slow stretches (0.1–0.5×, the usual musical
+/// ones) take 14 detents, not 8 (#698); 1× to 2× is linear.
 pub fn time_speed(motion: f32) -> f32 {
     let m = clampf(motion, -1.0, 1.0);
-    if m >= 0.0 { 2.0 * m } else { m }
+    match m {
+        m if m >= 0.5 => 2.0 * m,
+        m if m >= 0.0 => slow(2.0 * m),
+        m => -slow(-m),
+    }
 }
+
+/// `(2^(4u) − 1) / 15`: 0 at 0, 1 at 1.
+fn slow(u: f32) -> f32 {
+    (exp2(4.0 * u) - 1.0) * (1.0 / 15.0)
+}
+
+/// MOTION 0.385 93: half speed under `time_speed`.
+pub const HALF_SPEED: f32 = 0.385_932_85;
 
 /// MONO's splice: as near `t` as can be, a whole number of `period`s from
 /// the old grain's head `h_old`: `h_old − P · round((h_old − t) / P)`. The
@@ -292,6 +308,12 @@ pub struct Stretch {
     inv_p: f32,
     /// The first splice is to come: the fade follows each block's D-TIME.
     runup: bool,
+    /// The splice's `heads::xgains` power: equal-power between unlocked
+    /// (POLY) grains, whose material is uncorrelated; a sum to 1 between
+    /// locked ones and the note's first, which read alike (#698).
+    pow: f32,
+    /// The grain in play started locked.
+    locked: bool,
     /// What wraps carry, riding on the output `x` as `w · (carry − hold ·
     /// x)`, `w` (`carry_w`) from 1 at a wrap falling by `lift_k` a sample.
     /// MONO's wrap is whole periods, its jump near 0: it lifts (`hold` 0),
@@ -313,10 +335,10 @@ pub struct Stretch {
     peak: f32,
     /// Splices and wraps: for the tests.
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) events: u32,
+    pub(in super::super) events: u32,
     /// Wraps in the loop, lifted and bare: for the tests.
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) wraps: [u32; 2],
+    pub(in super::super) wraps: [u32; 2],
 }
 
 impl Stretch {
@@ -342,6 +364,8 @@ impl Stretch {
         pf: 0.0,
         inv_p: 0.0,
         runup: false,
+        pow: 0.0,
+        locked: false,
         carry: 0.0,
         carry_w: 0.0,
         hold: 0.0,
@@ -431,7 +455,7 @@ impl Stretch {
         end: f32,
         sr: u32,
     ) -> Block {
-        let (frames, rate) = (v.frames(), v.desc().rate);
+        let (frames, rate) = (v.frames(), v.desc().rate());
         // END before START: the window mirrored, START its start there.
         let rev = Dir::of(self.start, end) == Dir::Rev;
         let (start, end) = if rev {
@@ -441,7 +465,7 @@ impl Stretch {
         };
         // Never under `MIN_LOOP_FRAMES` (64, and no source is shorter): a
         // START near the end moves the window's start back.
-        let ws = window_start(start, frames).min(frames.saturating_sub(MIN_LOOP_FRAMES));
+        let ws = window_start(start, v.file_frames()).min(frames.saturating_sub(MIN_LOOP_FRAMES));
         let floor = shortest(
             rate,
             (2 * WRAP_SAMPLES / MIN_PASS_SAMPLES) as f32 * from.max(to),
@@ -455,7 +479,7 @@ impl Stretch {
         let wq = (w as u64) << 32;
         let d = d_time_s(size);
         let half = ((d * sr as f32 * 0.5 + 0.5) as u32).max(MIN_PASS_SAMPLES);
-        let locked = locks(self.kind, self.pf, w, (d * rate as f32 + 0.5) as u32);
+        let locked = locks(self.kind, self.pf, w, (d * f32::from(rate) + 0.5) as u32);
         let span = if locked {
             // The fewest whole periods that are a wrap's travel at the
             // block's fastest `inc` and at least `INC_MAX` frames, so a
@@ -475,7 +499,7 @@ impl Stretch {
         let tiny = (span >> 32) < (MIN_PASS_SAMPLES as f32 * from.max(to)) as u64;
         let x = clampf(position, 0.0, 1.0) * w as f32;
         let off = q(x).min(wq - 1);
-        let speed = time_speed(motion) * rate as f32 / sr as f32;
+        let speed = time_speed(motion) * f32::from(rate) / sr as f32;
         Block {
             ws,
             hi,
@@ -587,7 +611,7 @@ impl Stretch {
             let (w0, w1) = (Pos(neg(self.span[0], d0)), Pos(neg(self.span[1], d1)));
             let [t0, t1] = self.tiny;
             let [k0, k1] = self.holds;
-            let (mut g, dg) = (self.g, self.dg);
+            let (mut g, dg, pw) = (self.g, self.dg, self.pow);
             let (mut c, mut w) = (self.carry, self.carry_w);
             let (mut vel, mut vk) = (self.vel, self.vel_k);
             let s = i;
@@ -599,7 +623,8 @@ impl Stretch {
                 let a = v.read(h0);
                 let b = v.read(h1);
                 g += dg;
-                let x = a + smooth(g) * (b - a);
+                let (ga, gb) = xgains(g, pw);
+                let x = ga * a + gb * b;
                 let o = add + keep * x;
                 xe += x * x;
                 out[i] = o;
@@ -616,7 +641,7 @@ impl Stretch {
                     h0 = h0 - w0;
                     if !t0 {
                         let prev = if i >= 2 { out[i - 2] } else { last };
-                        let share = 1.0 - smooth(g + dg);
+                        let share = xgains(g + dg, pw).0;
                         let jump = (a, h0 - Pos(c0), share);
                         let now = (o, prev, libm::fabsf(x).max(peak));
                         (c, vel, vk, m) = carry_at_wrap(v, k0, (c, w, m, x), now, jump);
@@ -632,7 +657,7 @@ impl Stretch {
                     h1 = h1 - w1;
                     if !t1 {
                         let prev = if i >= 2 { out[i - 2] } else { last };
-                        let jump = (b, h1 - Pos(c1), smooth(g + dg));
+                        let jump = (b, h1 - Pos(c1), xgains(g + dg, pw).1);
                         let now = (o, prev, libm::fabsf(x).max(peak));
                         (c, vel, vk, m) = carry_at_wrap(v, k1, (c, w, m, x), now, jump);
                         w = 1.0;
@@ -653,6 +678,7 @@ impl Stretch {
             if self.clock.left() == 0 {
                 let t = self.time(k.off as i64 + tau + i as i64 * k.tstep, *k);
                 self.splice(t, *k);
+                self.pow = self.splice_power(v, k.half);
             }
         }
         self.prev = out[BLOCK_SIZE - 1];
@@ -670,7 +696,7 @@ impl Stretch {
     #[cold]
     #[inline(never)]
     fn wrap(&mut self, v: &SourceView<'_>, hold: f32) {
-        let g = smooth(self.g + self.dg);
+        let (ga, gb) = xgains(self.g + self.dg, self.pow);
         // The output now, near enough: the last sample out.
         let o = self.prev;
         let d = self.carry_w * (self.carry - self.hold * o);
@@ -686,7 +712,7 @@ impl Stretch {
                 w = at(hi) - Pos(span);
                 whole = false;
             }
-            let share = if x == 1 { g } else { 1.0 - g };
+            let share = if x == 1 { gb } else { ga };
             let was = self.heads[x];
             self.set_u(x, w);
             jump += share * (v.read(was) - v.read(self.heads[x]));
@@ -720,11 +746,13 @@ impl Stretch {
         // A flip lands here: the new grain plays the new way, and locks
         // only to a grain going its way.
         self.rev[1] = k.rev;
-        let u = if k.locked && self.rev[0] == k.rev {
+        let locked = k.locked && self.rev[0] == k.rev;
+        let u = if locked {
             self.lock_at(self.u(0), t, k)
         } else {
             t
         };
+        self.locked = locked;
         self.set_u(1, u);
         self.hi[1] = k.hi;
         self.span[1] = k.span;
@@ -742,6 +770,35 @@ impl Stretch {
         {
             self.events += 1;
         }
+    }
+
+    /// The splice just made's power: a sum to 1 on a pitched source, else
+    /// `power_of` the two grains over the fade (`span` frames, about), or
+    /// a sum to 1 where too few frames are held.
+    fn splice_power(&self, v: &SourceView<'_>, span: u32) -> f32 {
+        // A pitched source's grains read one tone, correlated, locked or
+        // not: summing to 1 keeps the holds and lifts' bounds (ADR 0103).
+        // A flip's grains run opposite ways: their phase drifts through
+        // the fade, so no one power holds it.
+        let flip = self.rev[0] != self.rev[1];
+        if self.locked || flip || self.pf > 0.0 {
+            return 0.0;
+        }
+        // A grain that wraps inside the fade reads elsewhere, and its hold
+        // or lift is bounded for gains summing to 1: those splice so.
+        let clear = (0..2).all(|x| self.u(x).whole().saturating_add(span) < self.hi[x]);
+        if !clear {
+            return 0.0;
+        }
+        let from = |x: usize| {
+            let h = self.heads[x].whole();
+            if self.rev[x] {
+                h.saturating_sub(span)
+            } else {
+                h
+            }
+        };
+        power_of(v, from(0), v, from(1), span).map_or(0.0, |c| c.min(0.5 * POWER))
     }
 
     /// `lock` in 32.32 with the period's reciprocal, no division, and the
@@ -819,13 +876,8 @@ mod tests {
 
     /// `ramp`, sample `i` at `base + i · step`.
     fn ramp_of(frames: usize, base: usize, step: usize) -> ([u8; 16 + 336], usize) {
-        use super::super::read::{DESC_LEN, Descriptor, Shape};
-        let d = Descriptor {
-            shape: Shape::Plain,
-            count: 1,
-            rate: 48_000,
-            head_frames: 0,
-        };
+        use super::super::super::read::{DESC_LEN, Descriptor, Shape};
+        let d = Descriptor::whole(Shape::Plain, 1, 48_000).unwrap();
         let mut x = [0i16; 224];
         for (i, y) in x.iter_mut().enumerate() {
             *y = ((base + i * step) % 2_048) as i16;

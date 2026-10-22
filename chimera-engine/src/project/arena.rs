@@ -7,6 +7,7 @@ use core::ptr::NonNull;
 
 use crate::fmt_buf::FmtBuf;
 use crate::source_table::SourceTable;
+use crate::stream::registry::StreamRegistry;
 
 pub const ARENA_BYTES: usize = 160 * 1024;
 pub const GRANULE: usize = 16;
@@ -130,6 +131,9 @@ impl<F: Fn(u32) -> bool> GateAcked<F> {
 pub struct ArenaWriter {
     base: NonNull<u8>,
     table: &'static SourceTable,
+    /// Where streamed sources' files are registered for the card: `None`
+    /// until the shell lends it, and in a bench build, whose beds own it.
+    streams: Option<&'static StreamRegistry>,
     /// Sources fill `[0, src_end)`, in offset order.
     src_end: u32,
     /// Sounds fill `[snd_start, ARENA_BYTES)`.
@@ -153,6 +157,7 @@ impl ArenaWriter {
         ArenaWriter {
             base,
             table,
+            streams: None,
             src_end: 0,
             snd_start: ARENA_BYTES as u32,
             srcs: [NO_SRC; MAX_SOURCES],
@@ -160,18 +165,32 @@ impl ArenaWriter {
         }
     }
 
-    /// An arena of its own on the heap, leaked (host tests and tools).
+    /// An arena of its own on the heap, leaked, with a registry of its own
+    /// (host tests and tools).
     #[cfg(any(test, feature = "test-support", feature = "host-project"))]
     pub fn leaked() -> ArenaWriter {
-        ArenaWriter::new(
+        let mut a = ArenaWriter::new(
             alloc::boxed::Box::leak(alloc::vec![0; ARENA_BYTES].into_boxed_slice()),
             alloc::boxed::Box::leak(alloc::boxed::Box::new(SourceTable::new())),
-        )
+        );
+        a.streams = Some(alloc::boxed::Box::leak(alloc::boxed::Box::new(
+            StreamRegistry::new(),
+        )));
+        a
     }
 
     /// The audio's view of these bytes.
     pub fn table(&self) -> &'static SourceTable {
         self.table
+    }
+
+    /// The registry streamed sources' files go in.
+    pub fn streams(&self) -> Option<&'static StreamRegistry> {
+        self.streams
+    }
+
+    pub fn set_streams(&mut self, r: &'static StreamRegistry) {
+        self.streams = Some(r);
     }
 
     /// Bytes held by Sounds and sources, pending holes included.

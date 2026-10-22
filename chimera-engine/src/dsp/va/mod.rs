@@ -1025,7 +1025,7 @@ impl VaEngine {
                 // silent and the duck runs on
                 #[cfg(feature = "bank2")]
                 if crate::bank2::DOOR_CELL
-                    .with(|d| (d.va.loopfm)(self, out, &l, gain, x, wave))
+                    .with(|d| d.va.loopfm(self, out, &l, gain, x, wave))
                     .is_none()
                 {
                     out.fill(0.0);
@@ -1114,8 +1114,8 @@ impl VaEngine {
         );
         // OSC 2's reversing render is bank 2's with `bank2` (ADR 0163).
         // Closed, the voice is silent and OSC 2 waits as it was.
-        let mut osc2 = |f: osc::door::ModRender| {
-            f(
+        let mut osc2 = |f: &osc::door::ModEntry| {
+            f.render(
                 o2,
                 b,
                 mk,
@@ -1129,14 +1129,14 @@ impl VaEngine {
         };
         #[cfg(feature = "bank2")]
         if crate::bank2::DOOR_CELL
-            .with(|d| osc2(d.va.osc2_rev))
+            .with(|d| osc2(&d.va.osc2_rev))
             .is_none()
         {
             out.fill(0.0);
             return;
         }
         #[cfg(not(feature = "bank2"))]
-        osc2(osc::door::osc2_rev);
+        osc2(&osc::door::OSC2_REV);
         match gain {
             Some(g) => self.operator::<true>(out, l, VaMode::SoftSync, g),
             None => self.operator::<false>(out, l, VaMode::SoftSync, &DUCK_UP[1]),
@@ -1194,19 +1194,19 @@ impl VaEngine {
         }
         // OSC 1's MOD render is bank 2's with `bank2` (ADR 0163). Closed,
         // the voice is silent and OSC 1 waits as it was.
-        let mut osc1 = |f: osc::door::ModRender| {
-            f(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (1.0, 0.0))
+        let mut osc1 = |f: &osc::door::ModEntry| {
+            f.render(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (1.0, 0.0))
         };
         #[cfg(feature = "bank2")]
         if crate::bank2::DOOR_CELL
-            .with(|d| osc1(d.va.osc1_mod))
+            .with(|d| osc1(&d.va.osc1_mod))
             .is_none()
         {
             out.fill(0.0);
             return;
         }
         #[cfg(not(feature = "bank2"))]
-        osc1(osc::door::osc1_mod);
+        osc1(&osc::door::OSC1_MOD);
         #[cfg(any(test, feature = "test-support"))]
         {
             self.backwards = self.osc2.iter().any(|&v| v < -1.0);
@@ -1298,9 +1298,9 @@ impl VaEngine {
         let s = 1.0 / l.pk.b;
         let (x0, dx) = (dp.0 * s, step_of(dp, BLOCK_SIZE) * s);
         // both oscillators are bank 2's with `bank2` (ADR 0163)
-        let mut play = |osc2: osc::door::ModRender, osc1: osc::door::ModRender| {
+        let mut play = |osc2: &osc::door::ModEntry, osc1: &osc::door::ModEntry| {
             // OSC 2 naive at its steps, each marked for OSC 1's next sample
-            osc2(
+            osc2.render(
                 o2,
                 b,
                 mk,
@@ -1336,19 +1336,19 @@ impl VaEngine {
                 }
             }
             o1.set_pm_scale((x0, dx));
-            osc1(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (0.0, 1.0));
+            osc1.render(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (0.0, 1.0));
         };
         // closed, the voice is silent and both oscillators wait as they were
         #[cfg(feature = "bank2")]
         if crate::bank2::DOOR_CELL
-            .with(|d| play(d.va.osc2_steps, d.va.osc1_phase))
+            .with(|d| play(&d.va.osc2_steps, &d.va.osc1_phase))
             .is_none()
         {
             out.fill(0.0);
             return;
         }
         #[cfg(not(feature = "bank2"))]
-        play(osc::door::osc2_steps, osc::door::osc1_phase);
+        play(&osc::door::OSC2_STEPS, &osc::door::OSC1_PHASE);
         match gain {
             Some(g) => self.operator::<true>(out, l, VaMode::Phase, g),
             None => self.operator::<false>(out, l, VaMode::Phase, &DUCK_UP[1]),

@@ -110,6 +110,9 @@ pub struct Voice {
     /// The velocity the VCA's VEL played last block: a re-strike's ramps
     /// from it (#483).
     vca_velocity: Velocity,
+    /// The VCA's gain at the last block's end, in 65 535ths: how loud the
+    /// note is, for a streamed steal (`admit::Age::level`).
+    level: u16,
     /// The source the last note, or the one waiting, plays (TAPE).
     last_source: Option<SourceId>,
     /// Samples left of a fade-out (`kill`, a switch); 0 when not
@@ -488,6 +491,7 @@ impl Voice {
                 last_note: MidiNote::A4,
                 last_velocity: Velocity::DEFAULT,
                 vca_velocity: Velocity::DEFAULT,
+                level: 0,
                 last_source: None,
                 fade: 0,
                 after_fade: AfterFade::Idle,
@@ -772,7 +776,19 @@ impl Voice {
         if self.after_fade == AfterFade::Restart {
             self.after_fade = AfterFade::Idle;
         }
-        self.slot.note_off(ctx);
+        // One release a note: a VCA route holds the voice, so its ENV
+        // releases it, not TAPE's FADE as well.
+        self.slot.note_off(ctx, self.vca.bits != 0);
+    }
+
+    /// The VCA's gain last block, in 65 535ths.
+    pub fn level(&self) -> u16 {
+        self.level
+    }
+
+    /// Fading out: a steal's, a shed's, or ahead of a queued note.
+    pub fn fading(&self) -> bool {
+        self.fade > 0
     }
 
     /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
@@ -836,6 +852,12 @@ impl Voice {
     /// The strip's heads (`TapeEngine::heads`): none unless TAPE plays.
     pub fn heads(&self) -> crate::dsp::tape_engine::Heads {
         self.slot.heads()
+    }
+
+    /// A streamed note sounds: its deck owns the voice's ring. Otherwise
+    /// the ring holds nothing of this voice's (#586).
+    pub fn streams(&self) -> bool {
+        self.active && self.slot.streams()
     }
 
     /// Each LFO's phase, 0..1, for the LFO page's playhead (ADR 0177).
@@ -1214,6 +1236,13 @@ impl Voice {
             }
         }
 
+        // The gate is the VCA too: a decayed LPG note ranks quiet in a steal.
+        self.level = if gate.is_some() || gain.is_some() {
+            (last_gain * 65_535.0) as u16
+        } else {
+            (crate::dsp::clampf(volume, 0.0, 1.0) * 65_535.0) as u16
+        };
+
         // Check if done
         self.active = self.slot.is_active();
         if !self.active && self.filter.rings() {
@@ -1352,6 +1381,7 @@ mod tests {
         let none = crate::source_table::GateView::empty();
         let ctx = &mut EngineCtx {
             sym: &mut pool,
+            streams: None,
             src: &none,
             part: crate::project::PartId::ALL[0],
             tune: 0.0,

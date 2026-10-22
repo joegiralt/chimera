@@ -131,19 +131,7 @@ pub fn render(args: &[String]) -> Result<(), String> {
     };
     let dir = Path::new(dir);
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let drum = eighths(
-        &[
-            (48, 112),
-            (55, 70),
-            (48, 92),
-            (52, 60),
-            (55, 104),
-            (48, 72),
-            (60, 124),
-            (55, 84),
-        ],
-        0.08,
-    );
+    let drum = drum();
     let bass = eighths(
         &[
             (36, 110),
@@ -175,7 +163,86 @@ pub fn render(args: &[String]) -> Result<(), String> {
     for (tag, d) in [("0", 0.0), ("half", 0.5), ("1", 1.0)] {
         takes.push((format!("decay_{tag}"), gate(pluck(), 0.0, d, 0.0), &bass));
     }
-    for (name, s, p) in &takes {
+    write(dir, &takes)?;
+    check(dir, snd, events)
+}
+
+/// `lpg-amp strike OUTDIR SOUND EVENTS`: STRIKE on a held saw chord at 0,
+/// ½ and 1, and the bongo; then the method's check.
+pub fn strike(args: &[String]) -> Result<(), String> {
+    let [dir, snd, events] = args else {
+        return Err("lpg-amp strike OUTDIR SOUND EVENTS".into());
+    };
+    let dir = Path::new(dir);
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let drum = drum();
+    // Two chords held 1.5 s, struck at 110 then 70.
+    let chord = |at: f64, v: u8| [48, 55, 60, 64].map(|n| (at, n, v, 1.5));
+    let chords = Phrase {
+        notes: chord(0.0, 110).into_iter().chain(chord(2.0, 70)).collect(),
+        tail: 2.0,
+    };
+    let mut takes: Vec<(String, Sound, &Phrase)> = vec![("bongo".into(), bongo(), &drum)];
+    for (tag, k) in [("0", 0.0), ("half", 0.5), ("1", 1.0)] {
+        takes.push((
+            format!("chord_strike_{tag}"),
+            gate(held(), 0.5, 0.4, k),
+            &chords,
+        ));
+    }
+    write(dir, &takes)?;
+    // Each chord's loudest 10 ms over its held level (1.0–1.4 s in).
+    let rms = |y: &[f32]| {
+        let p = y.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / y.len() as f64;
+        10.0 * p.log10()
+    };
+    for (name, s, p) in &takes[1..] {
+        let y = engine(s, p);
+        let at = |t: f64| (t * SR) as usize;
+        let w = at(0.01);
+        let top = (0..at(1.0) / w)
+            .map(|k| rms(&y[k * w..(k + 1) * w]))
+            .fold(f64::MIN, f64::max);
+        let held = rms(&y[at(1.0)..at(1.4)]);
+        println!(
+            "{name}: held {held:.1} dBFS, accent {:+.1} dB over it",
+            top - held
+        );
+    }
+    check(dir, snd, events)
+}
+
+/// VA INIT's saw held: ENV 1 an organ gate (A 0, D 0, S 1, R 0.4) into
+/// VCA at 64, so the held level sits near ½ with room for the strike;
+/// OUT LEVEL 16 keeps the four voices under the limiter.
+fn held() -> Sound {
+    let mut s = pluck();
+    let e = &mut s.params.envelopes[0];
+    (e.attack, e.decay, e.sustain, e.release) = (0.0, 0.0, 1.0, 0.4);
+    s.mod_state
+        .set_fixed(ModSource::Env1.index(), FixedCol::Vca, 64);
+    s.params.out.volume = 16.0 / 128.0;
+    s
+}
+
+fn drum() -> Phrase {
+    eighths(
+        &[
+            (48, 112),
+            (55, 70),
+            (48, 92),
+            (52, 60),
+            (55, 104),
+            (48, 72),
+            (60, 124),
+            (55, 84),
+        ],
+        0.08,
+    )
+}
+
+fn write(dir: &Path, takes: &[(String, Sound, &Phrase)]) -> Result<(), String> {
+    for (name, s, p) in takes {
         let y = engine(s, p);
         let pk = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         let rms = (y.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / y.len() as f64).sqrt();
@@ -187,6 +254,10 @@ pub fn render(args: &[String]) -> Result<(), String> {
         );
         crate::reference::write_f32(&dir.join(format!("{name}.wav")), &y, SAMPLE_RATE)?;
     }
+    Ok(())
+}
+
+fn check(dir: &Path, snd: &str, events: &str) -> Result<(), String> {
     // The method's mandatory check: REV2 against EXPNDR on SOUND, through
     // this file's own writer, measured off the files.
     let snd = unitab::load_sound(Path::new(snd))?;

@@ -6,7 +6,8 @@
 mod common;
 
 use chimera_core::dsp::tape_engine::read::{
-    DESC_LEN, Descriptor, Shape, SourceView, ZONE_LAYOUT_LEN,
+    DESC_LEN, Descriptor, HEAD_ENTRY, HeadSpec, Shape, SourceView, ZONE_LAYOUT_LEN, head_table,
+    streamed_held_len, write_head_table,
 };
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -20,6 +21,7 @@ use chimera_core::storage::{
     read_source_into, source_crc, source_file_min_len, write_descriptor, write_file, write_source,
     write_zone_set, zone_set_crc,
 };
+use chimera_core::stream::units::Frames;
 use chimera_hal::store::{Dir, Store};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{VecSink, decode, encode, fix_crc, record_offsets};
@@ -191,7 +193,7 @@ fn descriptor_leads_held() {
     assert_eq!(r, Ok(DESC_LEN + 5 * ZONE_LAYOUT_LEN + data.len()));
     let d = Descriptor::from_bytes(&out[..DESC_LEN]).expect("a descriptor");
     assert_eq!(
-        (d.shape, d.count, d.rate, d.head_frames),
+        (d.shape(), d.count(), d.rate().get(), d.reach().get()),
         (Shape::ZoneSet, 5, 24_000, 0)
     );
     for (i, zone) in z.zones().iter().enumerate() {
@@ -355,7 +357,8 @@ const CHUNK: usize = 64;
 /// Feeds `bytes` in `CHUNK`s: the chunk the first refusal came from, and
 /// it, or `finish`'s answer.
 fn feed(stem: u32, bytes: &[u8]) -> Result<SourceHead, (usize, PutRefusal)> {
-    let mut c = SourceCheck::new(stem, bytes.len() as u32).map_err(|e| (0, e))?;
+    let mut c = SourceCheck::new(chimera_core::storage::Stem::new(stem), bytes.len() as u32)
+        .map_err(|e| (0, e))?;
     for (i, b) in bytes.chunks(CHUNK).enumerate() {
         c.feed(b).map_err(|e| (i, e))?;
     }
@@ -437,7 +440,7 @@ fn source_check_refuses_early() {
         "frames − 2"
     );
     // A refusal sticks.
-    let mut c = SourceCheck::new(p.sref.crc, project.len() as u32).unwrap();
+    let mut c = SourceCheck::new(p.sref.stem(), project.len() as u32).unwrap();
     assert_eq!(c.feed(&project), Err(PutRefusal::Kind));
     assert_eq!(c.feed(&[]), Err(PutRefusal::Kind));
     assert_eq!(c.finish(), Err(PutRefusal::Kind));
@@ -615,4 +618,96 @@ fn listed_zones_reads_the_size() {
     let size = size_of(&mut s, p.sref);
     assert_eq!(listed_zones(p.sref, size), Some(0), "whole");
     assert_eq!(listed_zones(p.sref, size - 1), None, "torn");
+}
+
+/// A streamed `Plain` (slice 1 § 5.1): byte 8 counts its heads, and the
+/// head table after the descriptor holds each head's frames, `first` and
+/// `end`, both even (`HeadSpec`), each head as long as its own.
+#[test]
+fn streamed_plain_descriptor_round_trips() {
+    let d = Descriptor::new(Shape::Plain, 1, 24_000, Frames::new(2_400), 2).unwrap();
+    let b = d.to_bytes();
+    assert_eq!(b[8], 2);
+    assert_eq!(Descriptor::from_bytes(&b), Some(d));
+    let heads = [
+        HeadSpec::new(0, 2_692).unwrap(),
+        HeadSpec::new(48_000, 53_764).unwrap(),
+    ];
+    assert_eq!(HeadSpec::new(1, 10), None, "odd first");
+    assert_eq!(HeadSpec::new(0, 11), None, "odd end");
+    assert_eq!(HeadSpec::new(10, 10), None, "empty");
+    let mut held = vec![0; streamed_held_len(&heads)];
+    let (rate, reach) = (d.rate(), d.reach());
+    let at = write_head_table(rate, reach, &heads, &mut held).unwrap();
+    assert_eq!(
+        write_head_table(rate, reach, &heads, &mut [0; DESC_LEN]),
+        None,
+        "too short"
+    );
+    assert_eq!(at, DESC_LEN + 2 * HEAD_ENTRY);
+    assert_eq!(held.len(), at + 3 * 2_692 / 2 + 3 * 5_764 / 2);
+    let t = head_table(&held).expect("a table");
+    assert_eq!(t.iter().collect::<Vec<_>>(), heads);
+    assert_eq!(t.get(1), Some((heads[1], at + heads[0].byte_len())));
+    assert!(
+        head_table(&held[..held.len() - 1]).is_none(),
+        "a head cut short"
+    );
+    let mut odd = held.clone();
+    odd[DESC_LEN + HEAD_ENTRY] = 1;
+    assert!(
+        head_table(&odd).is_none(),
+        "a head starting on an odd frame"
+    );
+    let mut empty = held.clone();
+    empty[DESC_LEN + 4..DESC_LEN + 8].copy_from_slice(&0u32.to_le_bytes());
+    assert!(
+        head_table(&empty).is_none(),
+        "a head ending where it starts"
+    );
+    let whole = Descriptor::whole(Shape::Plain, 1, 24_000).unwrap();
+    assert!(
+        head_table(&whole.to_bytes()).unwrap().is_empty(),
+        "held whole"
+    );
+}
+
+/// Heads and `head_frames` come together on a `Plain`: neither alone. A
+/// `ZoneSet`'s heads are its zones', so it counts none; a `Transwave`
+/// streams none.
+#[test]
+fn heads_on_a_whole_plain_refused() {
+    let bad = [
+        (Shape::Plain, 2_400, 0),
+        (Shape::Plain, 0, 1),
+        (Shape::Transwave, 2_400, 1),
+        (Shape::ZoneSet, 2_400, 1),
+    ];
+    for (shape, hf, heads) in bad {
+        assert_eq!(
+            Descriptor::new(shape, 1, 24_000, Frames::new(hf), heads),
+            None,
+            "{shape:?} {hf} {heads}"
+        );
+        let mut b = [0; DESC_LEN];
+        (b[0], b[1]) = (shape as u8, 1);
+        b[2..4].copy_from_slice(&24_000u16.to_le_bytes());
+        b[4..8].copy_from_slice(&hf.to_le_bytes());
+        b[8] = heads;
+        assert_eq!(Descriptor::from_bytes(&b), None, "{b:?}");
+    }
+    let zones = Descriptor::new(Shape::ZoneSet, 1, 24_000, Frames::new(2_400), 0).unwrap();
+    assert_eq!(Descriptor::from_bytes(&zones.to_bytes()), Some(zones));
+}
+
+#[test]
+fn reserved_bytes_still_zero() {
+    let good = Descriptor::new(Shape::Plain, 1, 24_000, Frames::new(2_400), 2)
+        .unwrap()
+        .to_bytes();
+    for at in 9..DESC_LEN {
+        let mut b = good;
+        b[at] = 1;
+        assert_eq!(Descriptor::from_bytes(&b), None, "reserved byte {at}");
+    }
 }

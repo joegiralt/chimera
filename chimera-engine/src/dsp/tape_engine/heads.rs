@@ -12,8 +12,11 @@
 //! source at `off − u`, so LOOP with END before START, PING-PONG's way down
 //! and SCRUB's backward vari-speed are LOOP's arithmetic read backward.
 
-use super::read::Pos;
-use super::{MIN_LOOP_FRAMES, MIN_LOOP_S, MIN_PASS_SAMPLES};
+use super::read::{Pos, SourceView};
+pub use super::window::{
+    Bounds, Sizing, loop_len, loop_len_min, min_frames, shortest, window_end, window_end_min,
+    window_start,
+};
 use crate::dsp::algo::math::clampf;
 
 /// One read head: a 32.32 position in frames, and its frame: mirrored, it
@@ -38,6 +41,14 @@ impl Dir {
     /// END before START plays reversed; END on START plays forward.
     pub fn of(start: f32, end: f32) -> Dir {
         if end < start { Dir::Rev } else { Dir::Fwd }
+    }
+
+    /// The other way: WALK's REVERSE.
+    pub const fn flip(self) -> Dir {
+        match self {
+            Dir::Fwd => Dir::Rev,
+            Dir::Rev => Dir::Fwd,
+        }
     }
 }
 
@@ -85,105 +96,6 @@ pub const fn at(n: u32) -> Pos {
     Pos((n as u64) << 32)
 }
 
-/// The shortest loop at `rate`, in frames: 2 ms, at least
-/// `MIN_LOOP_FRAMES`.
-pub fn min_frames(rate: u16) -> u32 {
-    shortest(rate, 0.0)
-}
-
-/// The shortest loop at `rate` for a head moving up to `inc` frames a
-/// sample: `min_frames`, and at least `MIN_PASS_SAMPLES · inc`, so a pass
-/// (or a turn) comes at most once in `MIN_PASS_SAMPLES` output samples.
-pub fn shortest(rate: u16, inc: f32) -> u32 {
-    let pass = libm::ceilf(MIN_PASS_SAMPLES as f32 * inc) as u32;
-    (libm::roundf(MIN_LOOP_S * rate as f32) as u32)
-        .max(MIN_LOOP_FRAMES)
-        .max(pass)
-}
-
-/// The window's start, of `frames` (≥ 1): in `[0, frames − 1]`.
-pub fn window_start(start: f32, frames: u32) -> u32 {
-    ((clampf(start, 0.0, 1.0) * frames as f32) as u32).min(frames - 1)
-}
-
-/// The window's end from `ws`: END, kept ≥ START + 2 ms and ≤ `frames`.
-/// Always more than `ws`.
-pub fn window_end(ws: u32, end: f32, frames: u32, rate: u16) -> u32 {
-    window_end_min(ws, end, frames, min_frames(rate))
-}
-
-/// `window_end`, kept ≥ START + `shortest` frames.
-pub fn window_end_min(ws: u32, end: f32, frames: u32, shortest: u32) -> u32 {
-    let e = libm::roundf(clampf(end, 0.0, 1.0) * frames as f32) as u32;
-    e.max(ws.saturating_add(shortest)).min(frames)
-}
-
-/// SIZE's loop length in frames: `2 ms · (W / 2 ms)^size`, at least
-/// `MIN_LOOP_FRAMES` (or `W`, if shorter; 1 at least), at most `W`.
-pub fn loop_len(size: f32, w: u32, rate: u16) -> u32 {
-    loop_len_min(size, w, rate, min_frames(rate))
-}
-
-/// `loop_len`, at least `shortest` frames (or `W`, if shorter).
-pub fn loop_len_min(size: f32, w: u32, rate: u16, shortest: u32) -> u32 {
-    let min = MIN_LOOP_S * rate as f32;
-    let l = min * libm::powf(w as f32 / min, clampf(size, 0.0, 1.0));
-    let w = w.max(1);
-    (libm::roundf(l) as u32).clamp(shortest.min(w), w)
-}
-
-/// One pass's loop: `[ls, le)`, its last `lx` frames the crossfade.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Bounds {
-    pub ls: u32,
-    pub le: u32,
-    pub lx: u32,
-}
-
-impl Bounds {
-    /// The loop in the window `[ws, we)`: SIZE's length, at `place` (0–1)
-    /// of the room left, its last XFADE of it the fade.
-    pub fn of(ws: u32, we: u32, sizing: (f32, f32, f32), rate: u16) -> Bounds {
-        Self::of_min(ws, we, sizing, rate, min_frames(rate))
-    }
-
-    /// `of`, the loop at least `shortest` frames (or the window).
-    pub fn of_min(
-        ws: u32,
-        we: u32,
-        (size, place, xfade): (f32, f32, f32),
-        rate: u16,
-        shortest: u32,
-    ) -> Bounds {
-        let w = we - ws;
-        let ll = loop_len_min(size, w, rate, shortest);
-        let ls = ws + ((clampf(place, 0.0, 1.0) * (w - ll) as f32) as u32).min(w - ll);
-        Bounds {
-            ls,
-            le: ls + ll,
-            lx: (clampf(xfade, 0.0, 0.5) * ll as f32) as u32,
-        }
-    }
-
-    pub fn frames(&self) -> u32 {
-        self.le - self.ls
-    }
-
-    /// Where the fade into the next pass starts: the end, at XFADE 0.
-    pub fn fade_at(&self) -> u32 {
-        self.le - self.lx
-    }
-
-    /// The same loop in a frame mirrored about `n` (≥ `le`): `u = n − x`.
-    pub fn mirror(&self, n: u32) -> Bounds {
-        Bounds {
-            ls: n - self.le,
-            le: n - self.ls,
-            lx: self.lx,
-        }
-    }
-}
-
 /// PING-PONG's clamp (spec § 2): a head left outside new bounds plays on,
 /// its own way, while the output moves to the head that starts inside, over
 /// `len` samples, linearly.
@@ -226,20 +138,20 @@ pub enum Plan {
 }
 
 /// A fade of `rem` reads `rem` frames before the next pass's restart. They
-/// lie before `next.ls` if the window has them there; else inside the loop
+/// lie before `next.ls()` if the window has them there; else inside the loop
 /// (folded), up to half of it.
 pub fn plan(rem: Pos, next: &Bounds, ws: u32, le: u32) -> Plan {
     let r = rem.whole() as f32 + rem.frac();
-    let before = next.ls - ws;
+    let before = next.ls() - ws;
     if r <= before as f32 {
         return Plan::Fade {
-            restart: at(next.ls),
+            restart: at(next.ls()),
         };
     }
     let room = before.max(next.frames() / 2);
     if r <= room as f32 {
         Plan::Fade {
-            restart: at(next.ls) + rem,
+            restart: at(next.ls()) + rem,
         }
     } else if room == 0 {
         Plan::Splice
@@ -261,6 +173,82 @@ pub struct Fade {
     pub inv: f32,
     /// The pass it fades into.
     pub next: Bounds,
+    /// 0: gains that sum to 1 (a short loop, correlated across the
+    /// splice); `POWER`: gains whose powers sum to about 1 (`xmix`).
+    pub power: f32,
+}
+
+/// `Fade::power` for an equal-power fade.
+pub const POWER: f32 = 0.5;
+/// A fade this long or longer may be equal-power (`power_of`): over a
+/// pad's or a bed's uncorrelated material a sum-to-1 fade dips 3 dB at its
+/// middle (#698). A shorter one, a short loop's, splices correlated
+/// material: sum to 1.
+pub const POWER_FADE_S: f32 = 0.020;
+/// Pairs `power_of` reads across a fade.
+const PAIRS: u32 = 64;
+
+/// A fade's `xgains` power from what its two heads will read (Kontakt and
+/// the S950 offer both laws; this picks by the material): the normalized
+/// correlation `ρ` of `PAIRS` sample pairs, from `a0` in `va` and `b0` in
+/// `vb`, `span` frames on, and the power that holds a mix of material
+/// that correlated at the fade's middle, `POWER` at most: correlated
+/// material (a held tone) sums to 1 and never peaks past its own level,
+/// and uncorrelated material (a bed, noise) keeps its power.
+/// `None` where the views hold under `4 · PAIRS` frames of it.
+pub fn power_of(
+    va: &SourceView<'_>,
+    a0: u32,
+    vb: &SourceView<'_>,
+    b0: u32,
+    span: u32,
+) -> Option<f32> {
+    // Over what both views hold of the fade, `MIN_PAIRS_SPAN` at least.
+    let room = |v: &SourceView<'_>, x: u32| (v.first() <= x).then(|| v.end().saturating_sub(x + 1));
+    let n = span.min(room(va, a0)?).min(room(vb, b0)?);
+    if n < PAIRS * 4 {
+        return None;
+    }
+    let d = n / PAIRS;
+    let (mut ab, mut aa, mut bb) = (0f32, 0f32, 0f32);
+    let mut r = 0x9E37_79B9u32 ^ n;
+    for j in 0..PAIRS {
+        // A random place in each stride: a tone whose period divides the
+        // stride can't alias to one phase.
+        let x = j * d + crate::dsp::xorshift32(&mut r) % d;
+        let (a, b) = (va.sample(a0 + x) as f32, vb.sample(b0 + x) as f32);
+        (ab, aa, bb) = (ab + a * b, aa + a * a, bb + b * b);
+    }
+    let rho = if aa * bb > 0.0 {
+        ab / libm::sqrtf(aa * bb)
+    } else {
+        0.0
+    };
+    // Constant power at the middle: `x·(1 + 0.75c) = 1 / √(2 + 2ρ)`.
+    let rho = clampf(rho, 0.0, 1.0);
+    Some(clampf(
+        (2.0 / libm::sqrtf(2.0 + 2.0 * rho) - 1.0) * (4.0 / 3.0),
+        0.0,
+        POWER,
+    ))
+}
+
+/// The fade's output at the second head's share `g`: a smoothstep `x`,
+/// and gains `y·(1 + c·(1 − y²))` and `x·(1 + c·(1 − x²))` (`y = 1 − x`).
+/// `c` 0 is the plain `a + x·(b − a)`; at `POWER` the powers sum to
+/// 0.945–1 (−0.24 dB at the middle, against −3 dB).
+#[inline(always)]
+pub fn xmix(a: f32, b: f32, g: f32, c: f32) -> f32 {
+    let (ga, gb) = xgains(g, c);
+    a * ga + b * gb
+}
+
+/// `xmix`'s gains at share `g`: the head going out's, the one coming in's.
+#[inline(always)]
+pub fn xgains(g: f32, c: f32) -> (f32, f32) {
+    let x = g * g * (3.0 - 2.0 * g);
+    let y = 1.0 - x;
+    (y * (1.0 + c * (1.0 - y * y)), x * (1.0 + c * (1.0 - x * x)))
 }
 
 impl Fade {
@@ -272,6 +260,7 @@ impl Fade {
             end,
             inv: 1.0 / r.max(1.0),
             next,
+            power: 0.0,
         }
     }
 
@@ -287,6 +276,7 @@ impl Fade {
             end,
             inv: share / r.max(LEAST),
             next,
+            power: 0.0,
         }
     }
 
@@ -301,6 +291,8 @@ impl Fade {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream::units::SourceRate;
+    use core::num::NonZeroU32;
 
     /// A fade 100 / 2³² of a frame long: finite, its gain in [0, 1].
     #[test]
@@ -330,79 +322,73 @@ mod tests {
 
     #[test]
     fn mirror_twice_is_the_same() {
-        let b = Bounds {
-            ls: 10,
-            le: 90,
-            lx: 8,
-        };
-        assert_eq!(
-            b.mirror(100),
-            Bounds {
-                ls: 10,
-                le: 90,
-                lx: 8
-            }
-        );
+        let b = Bounds::new(10, 90, 8).unwrap();
+        assert_eq!(b.mirror(100), Bounds::new(10, 90, 8).unwrap());
         assert_eq!(b.mirror(200).mirror(200), b);
-        assert_eq!(b.mirror(200).ls, 110);
+        assert_eq!(b.mirror(200).ls(), 110);
     }
 
     #[test]
     fn loop_len_spans_2ms_to_the_window() {
-        assert_eq!(loop_len(0.0, 48_000, 48_000), 96);
-        assert_eq!(loop_len(1.0, 48_000, 48_000), 48_000);
-        assert_eq!(loop_len(0.5, 9_600, 48_000), 960);
+        assert_eq!(loop_len(0.0, 48_000, SourceRate::MAX), 96);
+        assert_eq!(loop_len(1.0, 48_000, SourceRate::MAX), 48_000);
+        assert_eq!(loop_len(0.5, 9_600, SourceRate::MAX), 960);
         // A window under 2 ms is the loop; never 0.
-        assert_eq!(loop_len(0.0, 3, 48_000), 3);
-        assert_eq!(loop_len(0.0, 0, 48_000), 1);
+        assert_eq!(loop_len(0.0, 3, SourceRate::MAX), 3);
+        assert_eq!(loop_len(0.0, 0, SourceRate::MAX), 1);
     }
 
     #[test]
     fn end_keeps_2ms_past_start() {
-        assert_eq!(window_end(1_000, 0.0, 48_000, 48_000), 1_096);
-        assert_eq!(window_end(47_990, 1.0, 48_000, 48_000), 48_000);
-        assert_eq!(window_end(1, 0.0, 2, 48_000), 2);
-        assert_eq!(window_start(1.0, 2), 1);
+        assert_eq!(window_end(1_000, 0.0, 48_000, SourceRate::MAX), 1_096);
+        assert_eq!(window_end(47_990, 1.0, 48_000, SourceRate::MAX), 48_000);
+        assert_eq!(window_end(1, 0.0, 2, SourceRate::MAX), 2);
+        assert_eq!(window_start(1.0, NonZeroU32::new(2).unwrap()), 1);
     }
 
     #[test]
     fn neutral_folds_inside_the_loop() {
-        let b = Bounds::of(0, 10_000, (1.0, 0.0, 0.1), 48_000);
-        assert_eq!(
-            b,
-            Bounds {
-                ls: 0,
-                le: 10_000,
-                lx: 1_000
-            }
+        let b = Bounds::of(
+            0,
+            10_000,
+            Sizing {
+                size: 1.0,
+                place: 0.0,
+                xfade: 0.1,
+            },
+            SourceRate::MAX,
         );
+        assert_eq!(b, Bounds::new(0, 10_000, 1_000).unwrap());
         let rem = at(1_000);
-        assert_eq!(plan(rem, &b, 0, b.le), Plan::Fade { restart: at(1_000) });
+        assert_eq!(plan(rem, &b, 0, b.le()), Plan::Fade { restart: at(1_000) });
     }
 
     #[test]
     fn room_before_the_loop_reads_there() {
-        let b = Bounds::of(0, 10_000, (0.5, 0.5, 0.1), 48_000);
-        assert!(b.ls > b.lx);
+        let b = Bounds::of(
+            0,
+            10_000,
+            Sizing {
+                size: 0.5,
+                place: 0.5,
+                xfade: 0.1,
+            },
+            SourceRate::MAX,
+        );
+        assert!(b.ls() > b.lx());
         assert_eq!(
-            plan(at(b.lx), &b, 0, b.le),
-            Plan::Fade { restart: at(b.ls) }
+            plan(at(b.lx()), &b, 0, b.le()),
+            Plan::Fade {
+                restart: at(b.ls())
+            }
         );
     }
 
     #[test]
     fn a_fade_too_long_for_the_room_waits() {
-        let b = Bounds {
-            ls: 0,
-            le: 100,
-            lx: 10,
-        };
+        let b = Bounds::new(0, 100, 10).unwrap();
         assert_eq!(plan(at(5_000), &b, 0, 48_000), Plan::Later(48_000 - 50));
-        let one = Bounds {
-            ls: 0,
-            le: 1,
-            lx: 0,
-        };
+        let one = Bounds::new(0, 1, 0).unwrap();
         assert_eq!(plan(at(5), &one, 0, 48_000), Plan::Splice);
     }
 }

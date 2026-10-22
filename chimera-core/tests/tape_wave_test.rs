@@ -13,7 +13,8 @@ use chimera_core::dsp::tape_engine::wave::{
     ALIAS_STEP, CYCLES_MAX, FADE_CYCLES, RISE_STEP, frame_len, level_offset, next_level,
     note_on_level, nyquist_gain, playable, stored_log2, top_of,
 };
-use chimera_core::dsp::tape_engine::{Probe, TapeEngine, TapeEngineParams, TapeModel};
+use chimera_core::dsp::tape_engine::{Probe, TapeEngine, TapeEngineParams};
+use chimera_core::dsp::tape_engine::{TapeMachine, Way};
 use chimera_hal::BLOCK_SIZE;
 use common::tape::{held_plain, held_transwave, power_bh, sine};
 
@@ -22,12 +23,14 @@ const B: usize = BLOCK_SIZE;
 
 fn fresh() -> TapeEngine {
     let mut slot = MaybeUninit::uninit();
-    *TapeEngine::init_in_place(&mut slot)
+    TapeEngine::init_in_place(&mut slot);
+    // SAFETY: `init_in_place` wrote it whole.
+    unsafe { slot.assume_init() }
 }
 
 fn wave(p: TapeEngineParams) -> TapeEngineParams {
     TapeEngineParams {
-        model: TapeModel::Transwave,
+        machine: TapeMachine::Wave,
         ..p
     }
 }
@@ -720,14 +723,11 @@ fn plain_source_is_not_playable() {
     let tv = SourceView::strict(&tw).unwrap();
     let cut = &tw[..tw.len() - 3];
     let cv = SourceView::strict(cut).unwrap();
-    assert!(!playable(TapeModel::Transwave, &pv));
-    assert!(playable(TapeModel::Transwave, &tv));
-    assert!(
-        !playable(TapeModel::Transwave, &cv),
-        "frames short of its count"
-    );
-    for m in TapeModel::ALL {
-        if m != TapeModel::Transwave {
+    assert!(!playable(Way::Wave, &pv));
+    assert!(playable(Way::Wave, &tv));
+    assert!(!playable(Way::Wave, &cv), "frames short of its count");
+    for m in Way::ALL {
+        if m != Way::Wave {
             for v in [&pv, &tv, &cv] {
                 assert!(playable(m, v), "{m:?}");
             }

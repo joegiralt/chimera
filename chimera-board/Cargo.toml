@@ -12,8 +12,9 @@ perf-probe = []
 bench = ["perf-probe"]
 sd-probe = []
 orbit = ["chimera-core/orbit"]
-# TAPE's bench build: it drops the card bench, for FLASH (#539).
-tape = ["chimera-core/tape"]
+# TAPE's bench build: it drops the card bench, for FLASH (#539). Not TAPE
+# itself, which bank 2 brings to every firmware build (ADR 0194).
+bench-tape = ["chimera-core/tape"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
 # firmware leaves it out: FLASH (#507).
 midi-map = ["chimera-core/midi-map"]
@@ -31,7 +32,7 @@ card-put = ["usb-console", "chimera-core/card-put"]
 sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]
 # Bank 1's seal of the bank-2 image it was linked with (ADR 0137).
-bank2 = []
+bank2 = ["chimera-core/bank2"]
 # Bank 2's power-pull aid: `bank2 erase`, PULL NOW holds. Never shipping.
 bank2-gate = ["bank2", "usb-console", "chimera-core/bank2-gate"]
 

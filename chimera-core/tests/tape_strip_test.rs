@@ -7,8 +7,9 @@ mod screen;
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::Heads;
+use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
-use chimera_core::dsp::tape_engine::params::TapeModel;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, HEADS, Instrument};
@@ -162,10 +163,12 @@ fn heads_published_once_a_block() {
         scope_writer(),
     );
     let mut shared = Box::<AudioShared>::default();
-    for (p, model) in [(0, TapeModel::Loop), (1, TapeModel::Tron)] {
+    for (p, way) in [(0, Way::Loop), (1, Way::Tron)] {
         let a = &mut shared.parts[p];
         *a.params = Sound::init(EngineType::Tape).params;
-        a.params.tape.model = model;
+        a.params.tape.set_way(way);
+        // TRON's LENGTH 1: the whole strip (ADR 0180).
+        a.params.tape.size = 1.0;
         *a.mod_state = ModState::new();
         a.source = Some(src.id);
     }
@@ -207,22 +210,12 @@ fn heads_published_once_a_block() {
         "the newest note's head"
     );
 
-    // TRON's second is where its 8 s of tape runs out: at C4, past this
-    // 1 s source, so END.
+    // TRON goes round its window as LOOP does (ADR 0203): its heads are
+    // a loop's, the second only while a seam fades.
     block(&mut inst, &[on(&shared, 1, 60)], &shared);
     let t = HEADS.read(1);
     assert!(t.head().is_some());
-    assert_eq!(t.second(), Some(FRAMES), "the tape outlasts the source");
-    // LENGTH 0 (0.25 s): 12 000 frames from START at C4, 24 000 at C5.
-    shared.parts[1].params.tape.size = 0.0;
-    for (note, frames) in [(60, 12_000), (72, 24_000)] {
-        block(&mut inst, &[on(&shared, 1, note)], &shared);
-        let out = HEADS.read(1).second().unwrap();
-        assert!(
-            out.abs_diff(frames) <= 2 * b,
-            "note {note}: {out} ≈ {frames}"
-        );
-    }
+    assert_eq!(t.second(), None);
 
     // A kill fades for a block, its heads still playing.
     inst.kill_all();
@@ -239,7 +232,7 @@ fn strip_key_moves_with_the_heads() {
     let held = noise(21_600); // 100 frames a column
     let o = Overview::of(&SourceView::new(&held).unwrap(), 0.0, 1.0);
     let p = TapeEngineParams::default();
-    let key = |o: &Overview, h: Heads| tape_strip::key(o, TapeModel::Loop, &p, h);
+    let key = |o: &Overview, h: Heads| tape_strip::key(o, TapeMachine::Walk, &p, h);
     let at = |h, s| key(&o, Heads::new(h, s));
     assert_eq!(at(1_000, None), at(1_099, None), "one column");
     assert_ne!(at(1_000, None), at(1_100, None), "the next");
@@ -257,7 +250,7 @@ fn strip_key_moves_with_the_heads() {
     let size = TapeEngineParams { size: 0.5, ..p };
     assert_ne!(
         key(&o, Heads::NONE),
-        tape_strip::key(&o, TapeModel::Loop, &size, Heads::NONE),
+        tape_strip::key(&o, TapeMachine::Walk, &size, Heads::NONE),
         "LENGTH, off this page"
     );
 }
@@ -277,7 +270,11 @@ fn strip_rows(ui: &chimera_core::ui::UiState) -> Vec<u16> {
 #[test]
 fn strip_glides_with_its_cells() {
     let mut ui = chimera_core::ui::UiState::new();
-    tape_strip(&mut ui, 0, Heads::NONE);
+    tape_strip(
+        &mut ui,
+        chimera_core::dsp::tape_engine::Way::Loop,
+        Heads::NONE,
+    );
     feed(&mut ui, Input::press(ButtonId::Minus)); // SRC
     settle(&mut ui);
     let before = strip_rows(&ui);

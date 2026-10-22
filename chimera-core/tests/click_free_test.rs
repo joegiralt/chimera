@@ -11,6 +11,7 @@ use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -201,22 +202,24 @@ fn test_no_clicks_tape() {
 fn test_no_clicks_tape_machines() {
     use chimera_core::block::Block;
     use chimera_core::dsp::tape_engine::machine::defaults;
-    use chimera_core::dsp::tape_engine::{TapeEngineParams as P, TapeModel, Wow};
+    use chimera_core::dsp::tape_engine::{
+        Direction, FADE_HOLD, TapeEngineParams as P, TapeModel, Wow,
+    };
     use common::tape::{held_plain, held_transwave, sine};
     let plain = held_plain(&sine(48_000, 100.7, 4 * 24_000), 48_000);
     let wave = held_transwave(512, 4, |f, h| if h <= 1 + f as u32 { 0.4 } else { 0.0 });
     let mut cases = Vec::new();
     for m in TapeModel::ALL {
         let mut t = P {
-            model: m,
+            machine: chimera_core::dsp::tape_engine::TapeMachine::of(m),
             period: 100.7,
             ..P::default()
         };
-        for (id, d) in defaults(m) {
+        for (id, d) in defaults(t.machine(), t.direction) {
             t.set(id, d);
         }
         cases.push(t);
-        if matches!(m, TapeModel::Loop | TapeModel::Stretch) {
+        if matches!(m, TapeModel::Walk | TapeModel::Stretch) {
             cases.push(P {
                 start: 0.9,
                 end: 0.1,
@@ -225,7 +228,9 @@ fn test_no_clicks_tape_machines() {
         }
     }
     cases.push(P {
-        model: TapeModel::Oneshot,
+        machine: TapeMachine::Walk,
+        direction: Direction::Forward,
+        drag: FADE_HOLD,
         slice: chimera_core::dsp::tape_engine::SliceCode::new(6),
         ..P::default()
     });
@@ -237,7 +242,7 @@ fn test_no_clicks_tape_machines() {
     for t in cases {
         let mut p = chimera_core::preset::Sound::neutral(EngineType::Tape).params;
         p.tape = t;
-        let held = if t.model == TapeModel::Transwave {
+        let held = if t.model() == TapeModel::Transwave {
             &wave
         } else {
             &plain
@@ -256,7 +261,7 @@ fn test_no_clicks_tape_machines() {
         assert!(
             c.is_empty(),
             "{:?} {}..{}: {} clicks: {:?}",
-            t.model,
+            t.model(),
             t.start,
             t.end,
             c.len(),

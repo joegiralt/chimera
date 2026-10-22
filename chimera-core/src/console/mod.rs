@@ -140,7 +140,7 @@ table! {
     Put    (PutArg)  => "put",    "a project, Sound or source: <path> <size> <crc32> [--over]",
     Rm     (SoundArg) => "rm",    "a library Sound's pair: /CHIMERA/SOUNDS/S#######",
     Get    (SoundArg) => "get",   "a library Sound's file, base64: /CHIMERA/SOUNDS/S#######",
-    Fault  (FaultArg) => "fault",  "DMA fault test: fault dma <1|2>, fault ndtr (fault-inject builds)",
+    Fault  (FaultArg) => "fault",  "fault test: fault dma <1|2>, fault ndtr, fault card (fault-inject builds)",
 }
 #[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
 table! {
@@ -151,7 +151,7 @@ table! {
 }
 #[cfg(all(not(feature = "card-put"), feature = "fault-inject"))]
 table! {
-    Fault  (FaultArg) => "fault",  "provoke a DMA transfer error: fault dma <1|2> (fault-inject builds)",
+    Fault  (FaultArg) => "fault",  "fault test: fault dma <1|2>, fault card (fault-inject builds)",
 }
 #[cfg(all(not(feature = "card-put"), not(feature = "fault-inject")))]
 table! {}

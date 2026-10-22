@@ -13,7 +13,7 @@ use crate::block::OffsetLaw;
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
-use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeModel};
+use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeMachine};
 use crate::dsp::va::{VA_OUT_GAIN, VaEngine, VaParams};
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, move_out};
@@ -21,6 +21,7 @@ use crate::modulation::{ModState, amount_scale};
 use crate::params::{EngineType, ParamSnapshot, PitchParams, Steal};
 use crate::project::{PartId, SourceId};
 use crate::source_table::GateView;
+use crate::stream::port::StreamPort;
 use crate::sym_alloc::{Lease, SymAlloc};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
@@ -36,11 +37,15 @@ pub enum SlotKind {
 }
 
 /// What an engine reads beside its params: the sympathetic pool (MODAL's
-/// SYMP), this block's view of the pool's sources (TAPE) and the Part the
-/// voice plays (VA's seed). Each engine ignores what it doesn't read.
+/// SYMP), this block's view of the pool's sources and the voice's ring
+/// (TAPE) and the Part the voice plays (VA's seed). Each engine ignores
+/// what it doesn't read.
 pub struct EngineCtx<'a> {
     pub sym: &'a mut SymPool,
     pub src: &'a GateView<'a>,
+    /// The voice's stream (slice 1 § 7.1): `None` with no rings, where a
+    /// streamed source plays nothing.
+    pub streams: Option<&'a mut StreamPort<'a, 'a>>,
     pub part: PartId,
     /// SETTINGS > TUNING in semitones, eased (`Instrument`): added to the
     /// pitch offset of every engine.
@@ -332,7 +337,13 @@ impl EngineSlot {
                     Some(id) => t.latch(id),
                     None => t.unlatch(),
                 }
-                t.start(note.get(), &p.tape, ctx.src, sample_rate);
+                t.start(
+                    note.get(),
+                    &p.tape,
+                    ctx.src,
+                    sample_rate,
+                    ctx.streams.as_deref_mut(),
+                );
             }
             (Self::Va(v), None) => v.note_on(note.get(), &p.va, ctx.part, sample_rate),
             (Self::Va(v), Some(tau)) => v.glide_on(note.get(), &p.va, ctx.part, (sample_rate, tau)),
@@ -389,11 +400,12 @@ impl EngineSlot {
         }
     }
 
-    pub fn note_off(&mut self, ctx: &mut EngineCtx<'_>) {
+    /// `vca`: a VCA route holds the voice (TAPE's FADE steps aside).
+    pub fn note_off(&mut self, ctx: &mut EngineCtx<'_>, vca: bool) {
         match self {
             Self::Algo(a) => a.note_off(),
             Self::Modal(m) => m.note_off(ctx.sym),
-            Self::Tape(t) => t.note_off(),
+            Self::Tape(t) => t.release_by(vca),
             Self::Va(v) => v.note_off(),
         }
     }
@@ -403,6 +415,14 @@ impl EngineSlot {
         match self {
             Self::Tape(t) => t.heads(),
             Self::Algo(_) | Self::Modal(_) | Self::Va(_) => crate::dsp::tape_engine::Heads::NONE,
+        }
+    }
+
+    /// A streamed TAPE note plays: it owns its voice's ring.
+    pub fn streams(&self) -> bool {
+        match self {
+            Self::Tape(t) => t.streams(),
+            Self::Algo(_) | Self::Modal(_) | Self::Va(_) => false,
         }
     }
 
@@ -452,7 +472,13 @@ impl EngineSlot {
         match self {
             Self::Algo(a) => a.render(out, &p.algo, live, sample_rate, taps),
             Self::Modal(m) => m.render(out, &p.modal, sample_rate, ctx.sym),
-            Self::Tape(t) => t.play(out, &p.tape, ctx.src, sample_rate),
+            Self::Tape(t) => t.play(
+                out,
+                &p.tape,
+                ctx.src,
+                sample_rate,
+                ctx.streams.as_deref_mut(),
+            ),
             Self::Va(v) => v.render(out, &p.va, sample_rate),
         }
     }
@@ -505,7 +531,7 @@ impl EngineSlot {
         match self {
             Self::Algo(_) => Cost::ZERO,
             Self::Modal(_) => ModalEngine::cost(&p.modal),
-            Self::Tape(_) => TapeEngine::model_cost(p.tape.model),
+            Self::Tape(_) => TapeEngine::model_cost(&p.tape),
             Self::Va(_) => VaEngine::cost(&p.va),
         }
     }
@@ -544,7 +570,7 @@ fn noise_billed(p: &ParamSnapshot, mods: &ModState) -> bool {
 /// TRANSWAVE: a pitch that moves far enough changes level, a block of four
 /// heads (`COST_WAVE_LEVEL`).
 fn wave_levels(p: &ParamSnapshot) -> bool {
-    p.tape.model == TapeModel::Transwave
+    p.tape.machine == TapeMachine::Wave
 }
 
 /// Pitch can move past `LEVEL_CENTS` in a note: a glide steal, or PITCH
@@ -556,6 +582,11 @@ fn level_billed(p: &ParamSnapshot, mods: &ModState) -> bool {
 /// The most cents PITCH's and FINE's routes can move a note, every source
 /// at full swing.
 pub(crate) fn pitch_reach(mods: &ModState) -> f32 {
+    pitch_reach_by(mods, |_| 1.0)
+}
+
+/// `pitch_reach` with source `s` swinging `scale(s)` of its full (0 to 1).
+pub(crate) fn pitch_reach_by(mods: &ModState, scale: impl Fn(usize) -> f32) -> f32 {
     [PitchParams::PITCH, PitchParams::FINE]
         .into_iter()
         .map(|q| {
@@ -566,7 +597,7 @@ pub(crate) fn pitch_reach(mods: &ModState) -> f32 {
                 _ => 0.0,
             };
             let d = mods.find(addr);
-            let swing = |s| d.map_or(0.0, |d| amount_scale(mods.amount(s, d)).abs());
+            let swing = |s| d.map_or(0.0, |d| amount_scale(mods.amount(s, d)).abs() * scale(s));
             cents * (0..mods.num_sources()).map(swing).sum::<f32>()
         })
         .sum()

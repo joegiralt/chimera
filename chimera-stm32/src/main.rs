@@ -67,16 +67,43 @@ fn main() -> ! {
 }
 
 /// The bench's screens before the audio starts; their text, for the
-/// console's `bench`.
+/// console's `bench`. The bench is bank 2's (ADR 0194): closed, it can't run.
 #[cfg(feature = "bench")]
 fn bench(
     display: &mut chimera_board::Display,
     clk: chimera_board::clocks::Clocks,
     project: &mut chimera_engine::project::Project,
     sources: &mut chimera_engine::source_table::AudioToken,
+    rings: chimera_board::BenchRings<'_>,
 ) -> &'static str {
-    let report = bench::take_report().expect("bench report taken once");
-    bench::run(display, clk, (project, sources), report);
-    let report: &'static chimera_core::console::Report<{ bench::BENCH_TEXT_LEN }> = report;
-    report.as_str()
+    use chimera_core::bank2::{BENCH_DOOR_ADDR, DOOR_CELL, DoorSlot};
+    // SAFETY: `bank2.x` links `bench::BENCH_DOOR`, a `BenchDoor`, at
+    // `BENCH_DOOR_ADDR` in every bench build (its assert, `__bank2_bench_door`).
+    const SLOT: DoorSlot<bench::BenchDoor> = unsafe { DoorSlot::new(BENCH_DOOR_ADDR) };
+    DOOR_CELL
+        .with_slot(SLOT, |d| {
+            assert_eq!(
+                d.magic(),
+                bench::BENCH_MAGIC,
+                "the bench's table at its slot"
+            );
+            (d.enter)(display, clk, project, sources, rings)
+        })
+        .unwrap_or("# bench: bank 2 closed: install this build's .bk2\n")
+}
+
+/// A bench `StreamCard`'s frames, `n` for each of `streamed`: bank 1's, as
+/// the `dyn Fn` vtable bank 1 holds of it is (ADR 0194).
+#[cfg(feature = "bench")]
+#[cfg_attr(not(feature = "bench-tape"), allow(dead_code))]
+fn streamed_frames(
+    streamed: &[chimera_engine::project::SourceId],
+    n: u32,
+) -> impl Fn(chimera_engine::project::SourceId) -> Option<chimera_engine::stream::units::Frames> + '_
+{
+    move |id| {
+        streamed
+            .contains(&id)
+            .then_some(chimera_engine::stream::units::Frames::new(n))
+    }
 }

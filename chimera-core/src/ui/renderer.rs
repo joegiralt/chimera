@@ -11,7 +11,7 @@ use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::{EnvType, HoldPos, LfoSlot};
-use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::va::osc::{Morph, Unit};
 use crate::part::DacPair;
 use crate::perf::load::AudioStats;
@@ -26,7 +26,8 @@ use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::glyph::{
     BRAID_PARAMS, Braid, BraidPart, CompositeId, Cube, CubePart, FocusGlyph, Gauge, REVERB_PARAMS,
-    RINGS_PARAMS, Reads, Rings, RingsPart, Tail, VA_MIX_PARAMS, VaGlyph, VaMix, va_mode,
+    RINGS_PARAMS, Reads, Rings, RingsPart, TAPE_GLYPH_PARAMS, Tail, VA_MIX_PARAMS, VaGlyph, VaMix,
+    va_mode,
 };
 use crate::ui::hint;
 use crate::ui::lfo_glyph::{self, LfoGauge};
@@ -39,6 +40,7 @@ use crate::ui::region::{self, Layout, RegionKind};
 use crate::ui::settings::Ask;
 use crate::ui::settings::prompt::{Beneath, blank_beneath, draw_prompt};
 use crate::ui::settings::view::Bands;
+use crate::ui::tape_glyph::{Pose, TapeGauge};
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
@@ -124,6 +126,8 @@ pub struct Frame<'a> {
     /// An LFO page's playhead: its slot's newest voice on the active Part,
     /// `None` with no voice (ADR 0177).
     pub lfo: Option<crate::ui::lfo_glyph::Head>,
+    /// PIT's corner (ADR 0201).
+    pub tuner: &'a crate::ui::pit_tuner::Shown,
 }
 
 impl Frame<'_> {
@@ -456,7 +460,11 @@ impl Renderer {
                 viz::fx_strip(display, source, fx.place == Place::Post, 128);
                 viz::fx_curve(display, 168, &rows);
             }
-            _ => viz::live_output(display, f.scope),
+            // PIT's corner rides the scope (ADR 0201): empty off PIT.
+            _ => {
+                viz::live_output(display, f.scope);
+                crate::ui::pit_tuner::paint(display, f.tuner);
+            }
         }
     }
 
@@ -470,8 +478,8 @@ impl Renderer {
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
-    /// slots glide: the strip never snaps.
-    fn strip_params(&self, f: &Frame) -> (TapeModel, TapeEngineParams) {
+    /// slots glide: the strip never snaps. The machine is the Part's.
+    fn strip_params(&self, f: &Frame) -> (TapeMachine, TapeEngineParams) {
         let t = f.parts[f.active_part.index()].sound.params.tape;
         let mut p = t;
         for (i, anim) in self.anim.iter().enumerate().take(f.def.params.len()) {
@@ -484,7 +492,8 @@ impl Renderer {
                 crate::block::Block::set(&mut p, a.param, v);
             }
         }
-        (t.model, p)
+        p.machine = t.machine;
+        (t.machine, p)
     }
 
     /// The focused operator's envelope rates, this page's from its animated
@@ -634,7 +643,8 @@ impl Renderer {
                     let tp = (fx.ty() as u32) << 1 | fx.place as u32;
                     ([0; 6], region::fold_keys(tp.into(), &bits))
                 }
-                _ => ([0; 6], viz::live_key(f.scope)),
+                // PIT's corner's key is 0 off PIT.
+                _ => ([0; 6], viz::live_key(f.scope) ^ f.tuner.key),
             },
             PageLayout::BigViz => {
                 // The GR meter redraws every 0.25 dB; ABOUT on bank 2's word.
@@ -761,7 +771,21 @@ impl Renderer {
             let right = hint_right(&o.gauge);
             return hint::focus(display, f.hint(o.hint), f.text, right);
         }
-        let buf = value_text(f, f.focus, self.set[f.focus].target());
+        let v = self.set[f.focus].target();
+        let held = held_on(f, &view).map(|h| h.code);
+        // The cell's own text where bank 2 can't say (NEEDS UPDATE).
+        let word = view
+            .addr()
+            .filter(|&a| crate::bank2::closed_text(a, v, f.bank2).is_none())
+            .and_then(|a| view::readout_word(a, v, held));
+        let buf = match word {
+            Some(w) => {
+                let mut b = FmtBuf::new();
+                let _ = core::fmt::Write::write_str(&mut b, w);
+                b
+            }
+            None => value_text(f, f.focus, v),
+        };
         let gauge = self.gauge(f);
         let label = band_label(f, &view);
         components::focus_band(
@@ -773,9 +797,17 @@ impl Renderer {
             f.prime_status,
             f.text,
         );
-        match f.held.filter(|s| held_on(f, &view) == Some(s.held)) {
-            Some(s) => Self::draw_reason(display, s.why),
-            None => hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge)),
+        let sound = &f.parts[f.active_part.index()].sound;
+        let note = view
+            .addr()
+            .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)));
+        match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
+            (Some(s), _) => {
+                let why = crate::ui::held::reason(s.why);
+                Self::draw_reason(display, why.as_str(), theme::ALERT)
+            }
+            (None, Some(n)) => Self::draw_reason(display, n, theme::MID),
+            (None, None) => hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge)),
         }
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
             crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
@@ -802,20 +834,20 @@ impl Renderer {
         f.hint(h)
     }
 
-    /// Why the cell's choice is dimmed, in the hint's place.
-    fn draw_reason<D>(display: &mut D, why: crate::dsp::algo::kinds::Why)
+    /// Words in the hint's place: why the cell's choice is dimmed (ALERT),
+    /// or a TAPE cell's note (`view::band_note`, MID).
+    fn draw_reason<D>(display: &mut D, text: &str, color: Rgb565)
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let text = crate::ui::held::reason(why);
-        let t = crate::ui::source_cell::tracking(text.as_str());
+        let t = crate::ui::source_cell::tracking(text);
         crate::ui::draw::text_tracked(
             display,
             &theme::FONT_LABEL,
-            text.as_str(),
+            text,
             theme::MARGIN_X,
             hint::FOCUS_Y,
-            theme::ALERT,
+            color,
             t,
         );
     }
@@ -899,6 +931,19 @@ impl Renderer {
             }
             Reads::Va(VaGlyph::Mode) => {
                 Gauge::VaMix(VaMix::from_set(self.eased_set(f, VA_MIX_PARAMS)))
+            }
+            // Without TAPE's DSP (the bench) there is no glyph to draw.
+            Reads::Tape if !cfg!(feature = "tape") => Gauge::None,
+            Reads::Tape => {
+                use crate::dsp::tape_engine::TapeEngineParams as T;
+                // MODEL names the machine: its still identity.
+                let pose = if focused.is_some_and(|a| a.param == T::MODEL) {
+                    Pose::Still
+                } else {
+                    Pose::Live
+                };
+                let set = self.eased_set(f, TAPE_GLYPH_PARAMS);
+                Gauge::Tape(TapeGauge::of_set(set, pose))
             }
             Reads::Lfo => match focused.map(|a| a.block) {
                 Some(BlockRef::Lfo(s)) => {
@@ -986,7 +1031,9 @@ impl Renderer {
     }
 
     /// The gauge the focus band shows now: none while a prime status holds
-    /// the band, or for a dimmed, absent or empty slot.
+    /// the band, or for an absent or empty slot, or a dimmed one but for
+    /// TAPE's machine glyph, which a cell its machine ignores leaves as it
+    /// was (ADR 0173).
     pub fn shown_gauge(&self, f: &Frame) -> Option<Gauge> {
         let plain = f.def.layout != PageLayout::Matrix
             && !matches!(f.def.viz, VizType::AudioStats | VizType::Pool);
@@ -995,8 +1042,11 @@ impl Renderer {
         }
         match look(f, f.focus) {
             components::Look::Live => Some(self.gauge(f)),
-            // An LFO cell its mode ignores keeps its glyph (ADR 0177).
-            components::Look::Dimmed => Some(self.gauge(f)).filter(|g| matches!(g, Gauge::Lfo(_))),
+            // A TAPE cell its machine ignores, an LFO cell its mode
+            // ignores, keep their glyph (ADR 0173, 0177).
+            components::Look::Dimmed => {
+                Some(self.gauge(f)).filter(|g| matches!(g, Gauge::Tape(_) | Gauge::Lfo(_)))
+            }
             _ => None,
         }
     }
@@ -1309,6 +1359,18 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
             f32::from(h.code) / f32::from(fmt.max_int().max(1)),
             fmt,
         );
+        return buf;
+    }
+    if let (Some(a), view::SourceState::Held { rate, frames, .. }) = (view.addr(), f.ctx.src)
+        && a.block == BlockRef::TapeEngine
+        && matches!(
+            a.param,
+            crate::dsp::tape_engine::TapeEngineParams::START
+                | crate::dsp::tape_engine::TapeEngineParams::END
+        )
+    {
+        let mut buf = FmtBuf::new();
+        crate::ui::onset::time_text(&mut buf, v, rate.get(), frames);
         return buf;
     }
     if let Some(t) = view

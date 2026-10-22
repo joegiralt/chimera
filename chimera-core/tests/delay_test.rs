@@ -25,6 +25,7 @@ fn with_no_wow_each_click_repeats_time_later() {
         tone: 1.0,
         mix: 0.5,
         rev_send: 0.0,
+        ..DelayParams::DEFAULT
     };
     let mut d = Box::new(TapeDelay::new());
     let mut out = Vec::new();
@@ -82,6 +83,7 @@ fn full_feedback_with_no_saturation_stays_bounded() {
         tone: 1.0,
         mix: 1.0,
         rev_send: 0.0,
+        ..DelayParams::DEFAULT
     };
     let mut d = Box::new(TapeDelay::new());
     let mut peak = 0.0f32;

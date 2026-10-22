@@ -9,3 +9,11 @@ embedded-graphics-core = "0.4"
 [features]
 # MemStore and the Store conformance suite, for host tests of stores.
 testkit = []
+
+# The bus word's model (`chimera-core/tests/loom_card_bus.rs`): only under
+# `RUSTFLAGS="--cfg loom"`, never in a firmware or desktop build. MIT.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

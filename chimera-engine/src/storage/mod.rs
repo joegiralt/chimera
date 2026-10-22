@@ -28,6 +28,7 @@ pub use file::{
     check_file, check_frame, delete_ab, delete_order, load_ab, load_ab_in_place, load_file, pick,
     save_ab, save_target, write_target,
 };
+pub(crate) use frame::RECORD_HEAD_LEN;
 pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,
     ProjectFile, ProjectId, Side, TRAILER_LEN, peek_header,
@@ -44,13 +45,14 @@ pub use record::{
 pub use sound::{MAX_SOUND_COST, SoundCheck, SoundDecoder, encode_sound, sound_crc};
 pub use source_file::{
     MAX_TAPES, PutRefusal, SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceCheck, SourceHead, SourceLayout,
-    SourceReadError, SourceZones, TapeList, WholeShape, ZONE_LEN, Zone, held_for_file_len,
-    held_len, held_len_zoned, listed_zones, read_source_into, source_crc, source_file,
-    source_file_min_len, source_name, write_descriptor, zone_set_crc,
+    SourceReadError, SourceZones, TapeList, WholeShape, ZONE_LEN, Zone, data_offset,
+    held_for_file_len, held_len, held_len_zoned, listed_zones, read_packed_into, read_source_head,
+    read_source_into, source_crc, source_file, source_file_min_len, source_name, write_descriptor,
+    zone_set_crc,
 };
 #[cfg(feature = "source-writer")]
 pub use source_file::{Wrote, source_target, verify_and_seal, write_source, write_zone_set};
-pub use source_ref::{SourceRef, TapeSource, ZoneTune};
+pub use source_ref::{SourceRef, Stem, TapeSource, ZoneTune};
 pub use sweep::boot_sweep;
 pub use system::{
     BootNote, Exit, ExitPlan, SyncError, SystemCheck, SystemDecoder, SystemSettings, SystemSync,

@@ -12,12 +12,63 @@ use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
 use chimera_hal::store::{Files, Mark, Store, StoreError, SweepRun};
+use chimera_hal::units::{Micros, Millis};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stats {
     pub audio: AudioStats,
     pub loop_avg_us: u32,
     pub loop_peak_us: u32,
+    /// `None`: nothing streams in this build.
+    pub streams: Option<StreamTally>,
+}
+
+/// The streams' and the card IRQ's counters (slice 1 § 8, § 9), since boot
+/// but `irq_share`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamTally {
+    pub underruns: u32,
+    pub cold: u32,
+    /// The cursor's tripwire (`StreamStats::unplanned`).
+    pub unplanned: u32,
+    /// Card read faults past their retry (`CardStats::faults`).
+    pub card_faults: u32,
+    pub frame_errors: u32,
+    pub unreadable: u32,
+    pub held_at_cap: u32,
+    pub late_refused: u32,
+    pub quiet_ms_max: Millis,
+    pub quiets: u32,
+    /// The card IRQ's longest entry, wall time.
+    pub irq_us_max: Micros,
+    /// Its longest less the audio that preempted it.
+    pub irq_own_us_max: Micros,
+    /// Its own time's share since the last `stats`.
+    pub irq_share: PerMille,
+}
+
+/// A share in tenths of a percent, printed as one (`0.4`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PerMille(u16);
+
+impl PerMille {
+    /// `part` of `whole`, rounded, at most all of it; nothing of nothing.
+    pub fn of(part: u64, whole: u64) -> PerMille {
+        let part = part.min(whole);
+        let pm = match part.checked_mul(1_000) {
+            Some(p) => p.saturating_add(whole / 2).checked_div(whole).unwrap_or(0),
+            // `whole` ≥ `part` > `u64::MAX` / 1,000: over 1,000.
+            None => part / (whole / 1_000),
+        };
+        // At most 1,000: `part` ≤ `whole`.
+        PerMille(pm as u16)
+    }
+}
+
+impl fmt::Display for PerMille {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.0 / 10, self.0 % 10)
+    }
 }
 
 /// `sweep`'s outcome, reached before its answer starts. Nothing sweeps in
@@ -185,6 +236,9 @@ pub fn answer(
         // measures links none of it. A stop keeps what came before.
         Ok(r @ Request::Card(_)) => match unit.card() {
             None => Err(Why::Absent(r.command())),
+            Some(CardAnswer::Dma(a)) => {
+                return super::write_dma_answer(&a, &mut t).map_err(|fmt::Error| Stalled);
+            }
             Some(CardAnswer::Cleaned(Ok(()))) => Ok(Ok(())),
             Some(CardAnswer::Cleaned(Err(e))) => {
                 return writeln!(t, "ERR card: {}", e.message()).map_err(|fmt::Error| Stalled);
@@ -326,7 +380,24 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
     writeln!(t, "voices {} {} of {MAX_VOICES}", a.voices, a.voices_peak)?;
     writeln!(t, "cost_pct {}", a.cost_pct)?;
     writeln!(t, "loop_avg_us {}", s.loop_avg_us)?;
-    writeln!(t, "loop_peak_us {}", s.loop_peak_us)
+    writeln!(t, "loop_peak_us {}", s.loop_peak_us)?;
+    s.streams.map_or(Ok(()), |n| streams(&n, t))
+}
+
+fn streams(n: &StreamTally, t: &mut impl Write) -> fmt::Result {
+    writeln!(t, "stream_underruns {}", n.underruns)?;
+    writeln!(t, "stream_cold {}", n.cold)?;
+    writeln!(t, "stream_unplanned {}", n.unplanned)?;
+    writeln!(t, "stream_frame_errors {}", n.frame_errors)?;
+    writeln!(t, "stream_unreadable {}", n.unreadable)?;
+    writeln!(t, "stream_held_at_cap {}", n.held_at_cap)?;
+    writeln!(t, "stream_late_refused {}", n.late_refused)?;
+    writeln!(t, "card_faults {}", n.card_faults)?;
+    writeln!(t, "card_quiet_ms_max {}", n.quiet_ms_max.get())?;
+    writeln!(t, "card_quiets {}", n.quiets)?;
+    writeln!(t, "card_irq_us_max {}", n.irq_us_max.get())?;
+    writeln!(t, "card_irq_own_us_max {}", n.irq_own_us_max.get())?;
+    writeln!(t, "card_irq_pct {}", n.irq_share)
 }
 
 fn bench(b: &str, t: &mut impl Write) -> fmt::Result {

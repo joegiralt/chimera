@@ -51,7 +51,7 @@ fn run() -> Result<bool, String> {
             srcs.push(args.next().ok_or("--src needs chimera or a WAV")?);
         } else if a.eq_ignore_ascii_case("reverse") {
             // REVERSE is LOOP with END before START (#369): its renders.
-            models.push(TapeModel::Loop);
+            models.push(TapeModel::Walk);
         } else {
             let m = TapeModel::ALL
                 .into_iter()
@@ -176,7 +176,7 @@ fn run() -> Result<bool, String> {
                     let _ = writeln!(
                         report,
                         "{:<9} {:<17} {kind}  peak {:6.2} dBFS  click {:5.2}x at {:6.3} s  non-finite {}  {}",
-                        m.disk_ident(),
+                        chimera_desktop::factory_tapes::model_word(m),
                         row.slug,
                         q.peak_dbfs,
                         q.click_ratio,

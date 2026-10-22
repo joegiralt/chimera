@@ -1,4 +1,4 @@
-//! TAPE's STRETCH (spec § 2 STRETCH, Why period-locking): two grains read
+//! TAPE STRETCH CLASSIC (ADR 0204; spec § 2 STRETCH, Why period-locking): two grains read
 //! at the note's pitch, spliced every D-TIME/2 under one complementary fade
 //! while a time pointer runs at MOTION's speed. Precedent: Akai S950
 //! Operator's Manual p. 32 (TIMESTRETCH, D-TIME, MONO and POLY); the JUCE
@@ -8,13 +8,13 @@ mod common;
 
 use core::mem::MaybeUninit;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::read::{Pos, SourceView};
 use chimera_core::dsp::tape_engine::stretch::{
-    GrainClock, WRAP_SAMPLES, d_time_s, lock, locks, time_speed,
+    GrainClock, HALF_SPEED, WRAP_SAMPLES, d_time_s, lock, locks, time_speed,
 };
 use chimera_core::dsp::tape_engine::{
     INC_MAX, MIN_PASS_SAMPLES, NOTE_ON_RAMP, Probe, StretchType, TapeEngine, TapeEngineParams,
-    TapeModel,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
@@ -27,12 +27,14 @@ const P: f32 = 109.3;
 
 fn fresh() -> TapeEngine {
     let mut slot = MaybeUninit::uninit();
-    *TapeEngine::init_in_place(&mut slot)
+    TapeEngine::init_in_place(&mut slot);
+    // SAFETY: `init_in_place` wrote it whole.
+    unsafe { slot.assume_init() }
 }
 
 fn stretch(kind: StretchType, period: f32) -> TapeEngineParams {
     TapeEngineParams {
-        model: TapeModel::Stretch,
+        machine: TapeMachine::Stretch,
         kind,
         period,
         ..TapeEngineParams::default()
@@ -117,15 +119,29 @@ fn laws() {
     assert!((d_time_s(0.0) - 0.010).abs() < 1e-8);
     assert!((d_time_s(1.0) - 0.250).abs() < 1e-6);
     assert!((d_time_s(0.5) - 0.050).abs() < 1e-6);
+    // Freeze at 0, 1× at ½, 2× at 1; under 1× either way exponential.
     for (m, s) in [
         (-1.0, -1.0),
-        (-0.5, -0.5),
+        (-0.5, -0.2),
         (0.0, 0.0),
+        (0.25, 0.2),
+        (HALF_SPEED, 0.5),
         (0.5, 1.0),
         (1.0, 2.0),
     ] {
-        assert_eq!(time_speed(m), s, "MOTION {m}");
+        assert!(
+            (time_speed(m) - s).abs() < 1e-4,
+            "MOTION {m}: {}",
+            time_speed(m)
+        );
     }
+    // The slow stretches, 0.1× to 0.5×, take 14 detents of MOTION's 1/64.
+    let detents = |s: f32| {
+        (0..=64)
+            .filter(|&k| time_speed(k as f32 / 64.0) < s)
+            .count()
+    };
+    assert!(detents(0.5) - detents(0.1) >= 14);
     // As near `t` as a whole number of periods from the old head allows.
     assert_eq!(lock(1_000.0, 0.0, 100.0), 0.0);
     assert_eq!(lock(1_000.0, 40.0, 100.0), 0.0);
@@ -139,7 +155,7 @@ fn laws() {
     assert!(!locks(StretchType::Poly, 100.0, 1_000, 1_000));
 }
 
-/// MOTION 0.25, 0.5 and 1 (time at 0.5, 1 and 2): the pitch is the note's
+/// MOTION `HALF_SPEED`, 0.5 and 1 (time at 0.5, 1 and 2): the pitch is the note's
 /// within a cent, MONO on a sine, and a click in the source comes out at
 /// its time over the speed, within one D-TIME.
 #[test]
@@ -147,7 +163,7 @@ fn stretch_keeps_pitch() {
     let held = held_plain(&sine(48_000, P, 4 * 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let want = 48_000.0 / P as f64;
-    for motion in [0.25, 0.5, 1.0] {
+    for motion in [HALF_SPEED, 0.5, 1.0] {
         for size in [0.0, 0.5, 1.0] {
             let p = TapeEngineParams {
                 motion,
@@ -174,7 +190,7 @@ fn stretch_keeps_pitch() {
     }
     let held = held_plain(&src, 48_000);
     let v = SourceView::strict(&held).unwrap();
-    for motion in [0.25, 0.5, 1.0] {
+    for motion in [HALF_SPEED, 0.5, 1.0] {
         for size in [0.0, 0.5] {
             let p = TapeEngineParams {
                 motion,
@@ -252,7 +268,7 @@ fn mono_splices_are_click_free() {
     let v = SourceView::strict(&held).unwrap();
     let (own_step, own_bend) = own(&v);
     for size in [0.0, 0.25, 0.5, 0.75, 1.0] {
-        for motion in [0.25, 1.0] {
+        for motion in [HALF_SPEED, 1.0] {
             let p = TapeEngineParams {
                 size,
                 motion,
@@ -325,7 +341,7 @@ fn poly_noise_wobbles_under_3db() {
     let held = held_plain(&noise, 48_000);
     let v = SourceView::strict(&held).unwrap();
     for size in [0.0, 0.5, 1.0] {
-        for motion in [0.25, 0.5, 1.0] {
+        for motion in [HALF_SPEED, 0.5, 1.0] {
             let p = TapeEngineParams {
                 size,
                 motion,
@@ -500,7 +516,7 @@ fn time_wraps_under_the_fade() {
     let v = SourceView::strict(&held).unwrap();
     let own = own(&v);
     for (kind, period) in [(StretchType::Mono, P), (StretchType::Poly, 0.0)] {
-        for motion in [0.25, 0.5, 1.0] {
+        for motion in [HALF_SPEED, 0.5, 1.0] {
             let p = TapeEngineParams {
                 end: 0.1,
                 size: 0.3,
@@ -542,7 +558,7 @@ fn grain_wraps_are_click_free() {
     let held = held_plain(&src, 48_000);
     let v = SourceView::strict(&held).unwrap();
     for (kind, period) in [(StretchType::Poly, 0.0), (StretchType::Mono, P)] {
-        for motion in [0.25, 0.5, 1.0] {
+        for motion in [HALF_SPEED, 0.5, 1.0] {
             let p = TapeEngineParams {
                 end: 0.1,
                 size: 1.0,
@@ -712,7 +728,7 @@ fn splices_have_no_corner() {
     let held = held_plain(&sine(48_000, P, 4 * 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let own = own(&v);
-    for motion in [0.25, 1.0] {
+    for motion in [HALF_SPEED, 1.0] {
         let p = TapeEngineParams {
             size: 0.0,
             motion,
@@ -899,7 +915,7 @@ fn splices_start_at_the_time_pointer() {
     let v = SourceView::strict(&held).unwrap();
     let p = TapeEngineParams {
         size: 0.13,
-        motion: 0.25,
+        motion: HALF_SPEED,
         ..stretch(StretchType::Poly, 0.0)
     };
     let mut e = fresh();

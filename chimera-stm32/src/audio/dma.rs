@@ -7,11 +7,13 @@ use chimera_engine::audio_out::{
 };
 use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_engine::part::DacPair;
-use cortex_m::peripheral::NVIC;
+use cortex_m::peripheral::{DWT, NVIC};
 use stm32h7xx_hal::pac::{self, interrupt};
 
 use chimera_board::priority::{self, Priority};
-use chimera_board::shared::{BLOCKS, DESYNCS, DMA_ERRORS, FIFO_ERRORS, OVERRUNS, bump};
+use chimera_board::shared::{
+    AUDIO_CYCLES, BLOCKS, DESYNCS, DMA_ERRORS, FIFO_ERRORS, OVERRUNS, bump,
+};
 
 pub const RING_WORDS: usize = 2 * BLOCK_SIZE * 2;
 // DMAMUX1 requests for SAI1_A, SAI1_B, SAI2_A (RM0433; stock PreenFM3 uses the same).
@@ -20,6 +22,11 @@ const REQUEST_ID: [u8; DAC_PAIRS] = [87, 88, 89];
 #[repr(C, align(32))]
 struct Rings([[[DacSample; BLOCK_SIZE * 2]; 2]; DAC_PAIRS]);
 const _: () = assert!(core::mem::size_of::<Rings>() == DAC_PAIRS * RING_WORDS * 4);
+// The card's staging shares the non-cacheable DMA region (ram_d2.x).
+const _: () = assert!(
+    core::mem::size_of::<Rings>() + chimera_board::card_dma::STAGING_BYTES
+        <= chimera_engine::hw::D2_DMA_RESERVE
+);
 
 // SAFETY: ".ram_d2.dma" is real RAM_D2 SRAM (linker-defined) and NOLOAD, so
 // this static holds garbage at boot; sound because the type is `MaybeUninit`
@@ -186,6 +193,7 @@ fn rearm(dma1: &pac::dma1::RegisterBlock, pair: DacPair) {
 
 #[interrupt]
 fn DMA1_STR0() {
+    let t0 = DWT::cycle_count();
     // SAFETY: once `init` has run, this handler is the only user of DMA1's
     // LISR and LIFCR (it clears stream 0's HT/TC and streams 1–2's error flags), reads
     // their NDTR and re-arms a halted stream 1 or 2.
@@ -251,4 +259,5 @@ fn DMA1_STR0() {
     if overruns > 0 {
         bump(&OVERRUNS, overruns);
     }
+    AUDIO_CYCLES.fetch_add(DWT::cycle_count().wrapping_sub(t0), Ordering::Relaxed);
 }

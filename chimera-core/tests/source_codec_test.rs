@@ -4,7 +4,7 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::TapeModel;
+use chimera_core::dsp::tape_engine::TapeEngineParams;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::name::SoundName;
 use chimera_core::project::Absence;
@@ -48,12 +48,7 @@ fn source(seed: u8, frames: u32, name: &str) -> (SourceHead, Vec<u8>) {
 
 /// What the arena holds for a source: its descriptor, then its bytes.
 fn held(head: &SourceHead, data: &[u8]) -> Vec<u8> {
-    let d = Descriptor {
-        shape: head.shape,
-        count: head.count,
-        rate: head.sref.rate,
-        head_frames: 0,
-    };
+    let d = Descriptor::whole(head.shape, head.count, head.sref.rate).expect("a descriptor");
     let mut v = d.to_bytes().to_vec();
     v.extend_from_slice(data);
     v
@@ -678,7 +673,7 @@ fn a_card_fault_ends_the_source_reads() {
     for r in refs {
         let id = q.pool().find_source(r).unwrap();
         assert_eq!(q.pool().absence(id), Some(Absence::ReadFailed));
-        let state = SourceState::of(TapeModel::Loop, Some(r), q.pool());
+        let state = SourceState::of(&TapeEngineParams::default(), Some(r), q.pool());
         assert_eq!(state, SourceState::Absent(Absence::ReadFailed));
     }
 }
@@ -714,7 +709,7 @@ fn absent_sources_say_why() {
     assert_eq!(why(bad.sref), Some(Absence::Missing));
     let text = |r| {
         let mut b = chimera_core::ui::fmt::FmtBuf::new();
-        SourceState::of(TapeModel::Loop, Some(r), q.pool()).text(&mut b);
+        SourceState::of(&TapeEngineParams::default(), Some(r), q.pool()).text(&mut b);
         b.as_str().to_string()
     };
     assert_eq!(text(off.sref), "SOURCE NOT ON CARD");

@@ -1,13 +1,13 @@
 use core::mem::MaybeUninit;
-use core::ptr::addr_of_mut;
+use core::ptr::{addr_of, addr_of_mut};
 #[cfg(feature = "perf-probe")]
 use core::sync::atomic::AtomicU8;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering, compiler_fence};
 
 use chimera_core::dsp::algo::engine::{FormantView, FormantViews};
 use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
-use chimera_core::hw::MAX_PARTS;
+use chimera_core::hw::{self, MAX_PARTS};
 use chimera_core::instrument::AudioShared;
 #[cfg(feature = "midi-din")]
 use chimera_core::midi_in::CcRing;
@@ -20,6 +20,9 @@ use chimera_core::preset::Performance;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
 use chimera_core::source_table::SOURCE_TABLE;
+use chimera_core::stream::registry::StreamRegistry;
+use chimera_core::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
+use chimera_core::stream::stats::StreamStats;
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 
@@ -33,6 +36,82 @@ pub fn take_scope() -> Option<(Writer<ScopeFrame>, Reader<ScopeFrame>)> {
     // SAFETY: the flag lets exactly one caller past, so this is the only
     // reference to `SCOPE` ever made.
     Some(unsafe { &mut *addr_of_mut!(SCOPE) }.split())
+}
+
+// D3 SRAM4 (sram4.x): the stream rings. NOLOAD, so nothing reads it
+// before `cache::sram4_self_test`, then `zero_rings` builds them in place.
+#[unsafe(link_section = ".sram4")]
+static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
+// Their third slots, which SRAM4 can't hold: 32 KB of D2 beside the UI,
+// NOLOAD, built in place by `zero_rings` too. Cacheable, as the rings:
+// only the CPU touches either.
+#[unsafe(link_section = ".ram_d2")]
+static mut THIRD: MaybeUninit<ThirdSlots> = MaybeUninit::uninit();
+// The stream registry (slice 1 § 5.5): NOLOAD in D2, zeroed by
+// `zero_rings` too.
+#[unsafe(link_section = ".ram_d2")]
+static mut REGISTRY: MaybeUninit<StreamRegistry> = MaybeUninit::uninit();
+static RINGS_TAKEN: AtomicBool = AtomicBool::new(false);
+static RINGS_ZEROED: AtomicBool = AtomicBool::new(false);
+
+const SRAM4_WORDS: usize = 8;
+const SRAM4_STRIDE: usize = hw::SRAM4 / SRAM4_WORDS;
+// The self-test's last word lies inside the rings.
+const _: () = assert!((SRAM4_WORDS - 1) * SRAM4_STRIDE + 4 <= size_of::<Rings>());
+
+/// One word every 8 KiB of SRAM4, for its self-test.
+pub fn sram4_words() -> [*mut u32; SRAM4_WORDS] {
+    let base = addr_of_mut!(RINGS).cast::<u8>();
+    // SAFETY: each offset is inside `RINGS` (asserted above), 4-aligned as
+    // `Rings` is.
+    core::array::from_fn(|i| unsafe { base.add(i * SRAM4_STRIDE) }.cast::<u32>())
+}
+
+/// Every slot Empty and every registry row free: after
+/// `cache::sram4_self_test`, once.
+pub fn zero_rings() {
+    if RINGS_TAKEN.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    // SAFETY: the flag lets one caller past, before `rings`, `sides` or
+    // `registry` hands out any reference (they wait for `RINGS_ZEROED`);
+    // all-zero bytes are a valid `Rings`, `ThirdSlots` (ring.rs) and
+    // `StreamRegistry` (registry.rs).
+    unsafe {
+        addr_of_mut!(RINGS).write_bytes(0, 1);
+        addr_of_mut!(THIRD).write_bytes(0, 1);
+        addr_of_mut!(REGISTRY).write_bytes(0, 1);
+    }
+    RINGS_ZEROED.store(true, Ordering::Release);
+}
+
+/// The rings, once `zero_rings` has built them.
+pub fn rings() -> Option<&'static Rings> {
+    // SAFETY: zeroed (a valid `Rings`) before the flag's `Release`, and only
+    // ever touched again through `Rings`' own atomics and sides.
+    RINGS_ZEROED
+        .load(Ordering::Acquire)
+        .then(|| unsafe { (*addr_of!(RINGS)).assume_init_ref() })
+}
+
+/// The stream registry, once `zero_rings` has emptied it.
+#[inline]
+pub fn registry() -> Option<&'static StreamRegistry> {
+    // SAFETY: zeroed (empty) before the flag's `Release`, then touched only
+    // through `StreamRegistry`'s own tags.
+    RINGS_ZEROED
+        .load(Ordering::Acquire)
+        .then(|| unsafe { (*addr_of!(REGISTRY)).assume_init_ref() })
+}
+
+/// The rings' audio and card sides, once.
+pub fn ring_sides() -> Option<(AudioSide<'static>, CardSide<'static>)> {
+    // SAFETY: as `rings`: zeroed before the flag's `Release`, then touched
+    // only through `ThirdSlots`' own flag and the sides.
+    let third = RINGS_ZEROED
+        .load(Ordering::Acquire)
+        .then(|| unsafe { (*addr_of!(THIRD)).assume_init_ref() })?;
+    rings()?.sides(third)
 }
 
 // The wave tables' zero-wait working copy, at the top of DTCM (dtcm.x).
@@ -53,7 +132,7 @@ pub fn build_waves() {
 // `UiState` is ~27 KB: it lives in D2, not in `main`'s frame on the
 // ~63.75 KB DTCM stack (ADR 0025), nor in AXI, which the MIDI map's 96 B a
 // Sound filled to the margin (ADR 0087, 0139). NOLOAD: built in place by
-// `take_ui`. D2 is cacheable apart from the 4 KB DMA window (`cache.rs`).
+// `take_ui`. D2 is cacheable apart from the 16 KB DMA window (`cache.rs`).
 #[unsafe(link_section = ".ram_d2")]
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
@@ -221,6 +300,63 @@ pub static DMA_ERRORS: AtomicU32 = AtomicU32::new(0);
 pub static FIFO_ERRORS: AtomicU32 = AtomicU32::new(0);
 /// Halves rendered, wrapping: the watchdog's audio heartbeat.
 pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
+/// Cycles spent in the audio interrupt, wrapping: what the card IRQ takes
+/// off its own entries' time.
+pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
+/// Cycles spent in MIDI DIN's interrupt less the audio's inside it,
+/// wrapping: the card IRQ takes them off its own entries' time too.
+pub static MIDI_CYCLES: AtomicU32 = AtomicU32::new(0);
+/// A count of CPU cycles, or a reading of the wrapping cycle counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Cycles(u32);
+
+impl Cycles {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub fn now() -> Self {
+        Self(cortex_m::peripheral::DWT::cycle_count())
+    }
+
+    /// Cycles from `then` to now, wrapping.
+    pub fn since(self, then: Self) -> Self {
+        Self(self.0.wrapping_sub(then.0))
+    }
+}
+
+/// The cycle counter and the other interrupts' cycle total, read as a pair.
+#[derive(Clone, Copy)]
+pub struct Stamp {
+    pub at: Cycles,
+    pub over: Cycles,
+}
+
+/// `Stamp` of the counter and `over()` as one pair: a change of `over`
+/// between the reads is caught and the pair read again (N1). The fences
+/// keep the counter's read between the loads.
+#[inline(always)]
+pub fn stamp(over: impl Fn() -> u32) -> Stamp {
+    loop {
+        let before = over();
+        compiler_fence(Ordering::SeqCst);
+        let at = Cycles::now();
+        compiler_fence(Ordering::SeqCst);
+        if over() == before {
+            return Stamp {
+                at,
+                over: Cycles::new(before),
+            };
+        }
+    }
+}
+
+/// The streams' counters: the voices', and the card IRQ's time.
+pub static STREAM_STATS: StreamStats = StreamStats::new();
 /// MIDI DIN's line errors: overrun, framing, noise.
 pub static MIDI_ERRORS: AtomicU32 = AtomicU32::new(0);
 

@@ -10,6 +10,7 @@ mod common;
 use common::*;
 
 use chimera_core::dsp::tape_engine::TapeEngineParams;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::{MidiNote, Velocity};
@@ -399,12 +400,15 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 /// machines' rows appended at Task 12b, the rest unchanged; re-recorded for
 /// `out_gain` (Task 19), then the smoothstep note-on ramp and LOOP's
 /// smoothstep fades (#385), then CLEAN's ACCURATE tan, exact divides, k law
-/// and trims (#57, ADR 0096) on main's merge.
+/// and trims (#57, ADR 0096) on main's merge; then #698's round: INIT's
+/// LENGTH 0.8, one release a note, equal-power fades by correlation, AGE
+/// from the source's band and TRON's LENGTH over the strip (ADRs
+/// 0179–0182); then the TRON rows for WALK (ADR 0203).
 const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_loop",
         (
-            0x10bf5c97f6b9701c,
+            0xc09387ff5cdbd29f,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,
@@ -414,7 +418,7 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_reverse",
         (
-            0x2337937b073fd48e,
+            0x546fea8d7d2fe71f,
             [
                 0, 1045879065, 1017140382, 3199036123, 1040238763, 1040038395, 1050120794,
                 3189053675,
@@ -443,38 +447,40 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     ),
     (
         "tape_scrub",
+        // ADR 0205: SCRUB's LENGTH is a time (2 ms · 1000^LENGTH) and its
+        // key places the finger at ROOT.
         (
-            0x10bf5c97f6b9701c,
+            0x35d55af8b31f45e8,
             [
-                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
-                1032249790,
+                0, 1049757435, 1046834261, 1002846824, 3196076949, 3195929937, 1048166787,
+                3181853559,
             ],
         ),
     ),
     (
         "tape_stretch",
         (
-            0x3dedea3977e0a8dd,
+            0x769cb91d531f5ccf,
             [
-                0, 3193362778, 3163524242, 3185853581, 1035472109, 1035708095, 1024605169,
-                3164996604,
+                0, 3193362780, 3163524285, 3186117975, 1036160366, 1036405804, 1026258061,
+                3163603571,
             ],
         ),
     ),
     (
         "tape_loop_age",
         (
-            0x5a6e4d4b9921ab3c,
+            0x273c64033e5daeab,
             [
-                3070985076, 3194124313, 3167105100, 1051448124, 3188507217, 3188200258, 3189962063,
-                1036580912,
+                3070985076, 3194246171, 3167882689, 1051410578, 3188599866, 3188292756, 3175651932,
+                1039304959,
             ],
         ),
     ),
     (
         "tape_loop_tape",
         (
-            0x6a09d793db3a854e,
+            0x9e28ec6da29249c2,
             [
                 0, 3193926882, 3159894369, 1052712166, 3177682647, 3177190977, 3196410297,
                 1051157288,
@@ -491,21 +497,20 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
-    // Re-recorded for the voice-end fade past −80 dB (#487): the slice
-    // ended on a −39 dB step, now ramped out over the last block.
     (
         "tape_oneshot_slice7",
         (
-            0x66b4834f036719a1,
-            [0, 1050811635, 1053320054, 0, 0, 0, 0, 0],
+            0xd204e8cc8e9c4c87,
+            [
+                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
+                1032249790,
+            ],
         ),
     ),
-    // Re-recorded for the voice-end fade past −80 dB (#487): the tape ran
-    // out on a −39 dB step, now ramped out over the last block.
     (
         "tape_tron_held",
         (
-            0xe90f31aa5cb2475e,
+            0x08979866971225ef,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,
@@ -515,7 +520,7 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_tron_released",
         (
-            0xcdf279ecda19efe4,
+            0x97d875934f35829d,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,
@@ -525,17 +530,37 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_stretch_reverse",
         (
-            0x45ceaedf606095ea,
+            0x9c57daa842f78fe6,
             [
-                0, 1045191811, 1010431416, 1037391874, 3183836458, 3184088462, 3173983647,
-                1012150857,
+                0, 1045191817, 1010431416, 1037524946, 3184551058, 3184813150, 3175765132,
+                1008516491,
+            ],
+        ),
+    ),
+    (
+        "tape_stretch_grain",
+        (
+            0x203c4e364a30ada2,
+            [
+                0, 3194077547, 3176936110, 1050150903, 3193813286, 3193680097, 1050230980,
+                3168865049,
+            ],
+        ),
+    ),
+    (
+        "tape_stretch_grain_reverse",
+        (
+            0x8b0d69083adedb8d,
+            [
+                0, 1045909750, 1019957261, 3199038575, 1041297164, 1041168321, 3200263219,
+                3186360794,
             ],
         ),
     ),
     (
         "tape_loop_warble",
         (
-            0x1e951224f88514b1,
+            0xfbfdc56b2598addc,
             [
                 0, 3194037626, 3166929527, 1051513146, 3188467278, 3188333103, 1051724949,
                 3192587643,
@@ -660,51 +685,97 @@ fn golden_check_catches_every_disagreement() {
 /// then the machines (TAPE Task 12b). `tape_reverse` is Task 12's REVERSE,
 /// now LOOP with END before START: its row is unchanged.
 fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
-    use chimera_core::dsp::tape_engine::TapeModel as M;
+    use chimera_core::dsp::tape_engine::{Direction, FADE_HOLD, TapeModel as M};
     let p = TapeEngineParams::default();
-    let model = |model| TapeEngineParams { model, ..p };
+    let model = |model| TapeEngineParams {
+        machine: TapeMachine::of(model),
+        ..p
+    };
+    // The old machines, played as PLAY in each MODE (ADR 0170): ONE at
+    // HOLD is ONESHOT.
+    let ping = TapeEngineParams {
+        machine: TapeMachine::Walk,
+        direction: Direction::Ping,
+        ..p
+    };
+    let one = TapeEngineParams {
+        machine: TapeMachine::Walk,
+        direction: Direction::Forward,
+        drag: FADE_HOLD,
+        ..p
+    };
     let rev = |model| TapeEngineParams {
-        model,
+        machine: TapeMachine::of(model),
         start: 1.0,
         end: 0.0,
         ..p
     };
     vec![
-        ("tape_loop", model(M::Loop)),
-        ("tape_reverse", rev(M::Loop)),
-        ("tape_pingpong", model(M::PingPong)),
+        ("tape_loop", model(M::Walk)),
+        ("tape_reverse", rev(M::Walk)),
+        ("tape_pingpong", ping),
         ("tape_transwave", model(M::Transwave)),
-        // A moving tape: the neutral's MOTION 0 is a stopped, silent one.
+        // A moving tape: the neutral's MOTION 0 is a stopped, silent one;
+        // ½ is 1×, which plays as LOOP does (#706).
         (
             "tape_scrub",
             TapeEngineParams {
-                motion: 0.5,
+                motion: 0.3,
                 ..model(M::Scrub)
             },
         ),
         ("tape_stretch", model(M::Stretch)),
         ("tape_loop_age", TapeEngineParams { age: 0.5, ..p }),
         ("tape_loop_tape", TapeEngineParams { tape: 0.5, ..p }),
-        ("tape_oneshot", model(M::Oneshot)),
-        // SLICE 7: its value 8.
+        ("tape_oneshot", one),
+        // SLICE 7: its value 8. SLICE is on hold (`slice_in_play`, review
+        // of #761): it plays as `tape_oneshot`, whose hash it now is.
         (
             "tape_oneshot_slice7",
             TapeEngineParams {
                 slice: chimera_core::dsp::tape_engine::SliceCode::new(8),
-                ..model(M::Oneshot)
+                ..one
             },
         ),
-        // Held: a 1.4 s tape runs out before the key up; released: an 8 s
-        // one fades at it.
+        // Re-recorded for WALK's TRON (ADR 0203): its tape is LENGTH's of
+        // 8 s whatever the strip, the window round again until then.
+        // Held: LENGTH ½, a 1.4 s tape; released: LENGTH 1, 8 s, fades at
+        // the key up.
         (
             "tape_tron_held",
             TapeEngineParams {
                 size: 0.5,
-                ..model(M::Tron)
+                ..p.with_way(chimera_core::dsp::tape_engine::Way::Tron)
             },
         ),
-        ("tape_tron_released", model(M::Tron)),
+        (
+            "tape_tron_released",
+            p.with_way(chimera_core::dsp::tape_engine::Way::Tron),
+        ),
         ("tape_stretch_reverse", rev(M::Stretch)),
+        // GRAIN (ADR 0204): its own rows; CLASSIC's above are as recorded
+        // before GRAIN existed. Re-recorded on #749's final core: the strike
+        // reads its own head (a hair off the old grain's at the second
+        // spot), and a reversed grain reads forward at a negative speed,
+        // its taps no longer a frame ahead of its place. Re-recorded again
+        // for the window's own period (review of #761, M2): the source has
+        // no PERIOD, and its grains now lock to the one its window repeats at;
+        // again for that search's mean taken off and its answer kept to 1/64
+        // frame, once a window.
+        (
+            "tape_stretch_grain",
+            TapeEngineParams {
+                kind: chimera_core::dsp::tape_engine::StretchType::Grain,
+                ..model(M::Stretch)
+            },
+        ),
+        (
+            "tape_stretch_grain_reverse",
+            TapeEngineParams {
+                kind: chimera_core::dsp::tape_engine::StretchType::Grain,
+                ..rev(M::Stretch)
+            },
+        ),
         (
             "tape_loop_warble",
             TapeEngineParams {
@@ -724,7 +795,7 @@ fn tape_render(t: &TapeEngineParams) -> Vec<f32> {
     use common::tape::{held_plain, saw_to_square, saw_with_burst};
     let mut s = Sound::init(EngineType::Tape);
     s.params.tape = *t;
-    let sources = if t.model == TapeModel::Transwave {
+    let sources = if t.model() == TapeModel::Transwave {
         vec![saw_to_square()]
     } else {
         [24_000, 8_000]
@@ -761,11 +832,13 @@ fn reverse_golden_replays_bit_identically() {
     use chimera_core::dsp::tape_engine::TapeModel;
     use chimera_core::storage::{MIGRATIONS, TRANSLATIONS, decode_block};
     let mut s = Sound::init(EngineType::Tape);
+    // The golden plays the neutral's LENGTH 1, not INIT's 0.8.
+    s.params.tape.size = 1.0;
     let mut payload = vec![34u8, 0];
     payload.extend_from_slice(&1u32.to_le_bytes());
     decode_block(&payload, MIGRATIONS, TRANSLATIONS, Some(&mut s.params)).unwrap();
     let t = s.params.tape;
-    assert_eq!((t.model, t.start, t.end), (TapeModel::Loop, 1.0, 0.0));
+    assert_eq!((t.model(), t.start, t.end), (TapeModel::Walk, 1.0, 0.0));
     let out = tape_render(&t);
     let want = TAPE_GOLDENS
         .iter()

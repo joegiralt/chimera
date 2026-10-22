@@ -2,8 +2,8 @@ use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     Bank2Answer, Bank2Audio, Bank2Fail, Bank2Refusal, CardAnswer, CardFail, CardSpeed, Colours,
-    Command, Console, FlashPeek, FlashRegs, Frame, Hands, NoArg, Out, QUEUE, Request, SHOT_HEADER,
-    Stalled, Stats, SweepAsk, Unit, answer, check_staged, installed,
+    Command, Console, FlashPeek, FlashRegs, Frame, Hands, NoArg, Out, PerMille, QUEUE, Request,
+    SHOT_HEADER, Stalled, Stats, StreamTally, SweepAsk, Unit, answer, check_staged, installed,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -13,6 +13,7 @@ use chimera_hal::FB_SIZE;
 use chimera_hal::store::{
     Doubt, Mark, StoreError, Sweep, SweepRun, SweepStats, Swept, Then, Trigger,
 };
+use chimera_hal::units::{Micros, Millis};
 
 struct Sink(Vec<u8>);
 impl Out for Sink {
@@ -322,6 +323,7 @@ fn stats_reads_audio_load_and_the_loop() {
         audio: a,
         loop_avg_us: 812,
         loop_peak_us: 4210,
+        streams: None,
     });
     assert_eq!(
         ask(&mut u, "stats\n"),
@@ -337,9 +339,61 @@ fn stats_reads_audio_load_and_the_loop() {
             audio: a,
             loop_avg_us: 0,
             loop_peak_us: 0,
+            streams: None,
         });
         assert!(ask(&mut u, "stats\n").contains(want), "{sources} sources");
     }
+}
+
+/// A build that streams adds the streams' and the card IRQ's lines after
+/// the loop's (slice 1 § 8, § 9, § 12).
+#[test]
+fn stats_prints_the_streams_lines() {
+    let mut u = Fake::new();
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 1,
+        loop_peak_us: 2,
+        streams: Some(StreamTally {
+            underruns: 3,
+            cold: 17,
+            unplanned: 1,
+            card_faults: 7,
+            frame_errors: 0,
+            unreadable: 2,
+            held_at_cap: 4,
+            late_refused: 5,
+            quiet_ms_max: Millis::new(38),
+            quiets: 6,
+            irq_us_max: Micros::new(312),
+            irq_own_us_max: Micros::new(140),
+            irq_share: PerMille::of(4, 1_000),
+        }),
+    });
+    let got = ask(&mut u, "stats\n");
+    assert!(
+        got.ends_with(
+            "loop_avg_us 1\nloop_peak_us 2\n\
+             stream_underruns 3\nstream_cold 17\nstream_unplanned 1\nstream_frame_errors 0\n\
+             stream_unreadable 2\nstream_held_at_cap 4\nstream_late_refused 5\n\
+             card_faults 7\ncard_quiet_ms_max 38\ncard_quiets 6\n\
+             card_irq_us_max 312\ncard_irq_own_us_max 140\ncard_irq_pct 0.4\nOK\n"
+        ),
+        "{got}"
+    );
+}
+
+/// The card IRQ's share, in tenths of a percent: rounded to nearest,
+/// capped at the whole, nothing of nothing.
+#[test]
+fn irq_share_rounds_in_tenths() {
+    let pct = |p: PerMille| p.to_string();
+    assert_eq!(pct(PerMille::of(4, 1_000)), "0.4");
+    assert_eq!(pct(PerMille::of(1_049, 100_000)), "1.0");
+    assert_eq!(pct(PerMille::of(1_051, 100_000)), "1.1");
+    assert_eq!(pct(PerMille::of(0, 0)), "0.0");
+    assert_eq!(pct(PerMille::of(9, 1)), "100.0");
+    assert_eq!(pct(PerMille::of(u64::MAX, u64::MAX)), "100.0");
 }
 
 #[test]
@@ -477,6 +531,7 @@ fn a_stall_is_returned_from_every_answer() {
         audio: audio(),
         loop_avg_us: 1,
         loop_peak_us: 2,
+        streams: None,
     });
     let mut c = Console::new();
     u.card = Some(CardAnswer::Measured(full(), None));
@@ -521,6 +576,7 @@ fn a_stall_mid_text_ends_the_answer_there() {
         audio: audio(),
         loop_avg_us: 1,
         loop_peak_us: 2,
+        streams: None,
     });
     for req in [
         Request::Help(NoArg),
@@ -596,6 +652,7 @@ fn random_streams_never_panic_and_end_each_answer_once() {
         audio: audio(),
         loop_avg_us: 1,
         loop_peak_us: 2,
+        streams: None,
     });
     let mut answers = 0;
     for _ in 0..5_000 {
@@ -642,6 +699,7 @@ fn the_specs_stats_has_every_line_stats_writes() {
         audio: audio(),
         loop_avg_us: 0,
         loop_peak_us: 0,
+        streams: None,
     });
     let key = |l: &str| l.split(' ').next().unwrap().to_owned();
     let got: Vec<_> = ask(&mut u, "stats\n").lines().map(key).collect();
@@ -1233,4 +1291,26 @@ mod hands {
         assert_eq!(c(h.step(Ms(1000))), 0);
         assert!(h.idle());
     }
+}
+
+/// The card IRQ's u32 cycles wrap every 8.9 s of its time at 480 MHz:
+/// folded every UI pass into 64 bits, a 10-minute gap at 2 % reads 2 %
+/// (#596 review), not the wrapped remainder.
+#[test]
+fn irq_cycles_fold_past_the_wrap() {
+    use chimera_core::stream::stats::IrqCycles;
+    let (hz, pass_ms, share) = (480_000_000u64, 33u64, 0.02);
+    let per_pass = (hz as f64 * share * pass_ms as f64 / 1e3) as u64;
+    let passes = 10 * 60 * 1_000 / pass_ms;
+    let (mut raw, mut f) = (0u32, IrqCycles::new(0));
+    let start = f.fold(raw);
+    for _ in 0..passes {
+        raw = raw.wrapping_add(per_pass as u32);
+        f.fold(raw);
+    }
+    let own = f.total() - start;
+    assert_eq!(own, per_pass * passes);
+    assert!(own > u64::from(u32::MAX), "the raw counter wrapped");
+    let wall = passes * pass_ms * hz / 1_000;
+    assert_eq!(PerMille::of(own, wall).to_string(), "2.0");
 }

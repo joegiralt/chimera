@@ -10,6 +10,8 @@ impl Priority {
     pub const AUDIO: Priority = Priority::level(0);
     #[cfg(feature = "midi-din")]
     pub const MIDI: Priority = Priority::level(4);
+    /// The card's DMA interrupt: under audio and MIDI, over SysTick.
+    pub const CARD: Priority = Priority::level(12);
     pub const SYSTICK: Priority = Priority::level(15);
     // USB has no level: it is polled from the UI loop (ADR 0068).
 
@@ -24,6 +26,7 @@ impl Priority {
 }
 
 const _: () = assert!(Priority::AUDIO.bits() == 0x00 && Priority::SYSTICK.bits() == 0xF0);
+const _: () = assert!(Priority::CARD.bits() == 0xC0);
 #[cfg(feature = "midi-din")]
 const _: () = assert!(Priority::MIDI.bits() == 0x40);
 

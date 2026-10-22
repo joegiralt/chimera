@@ -14,29 +14,46 @@ use crate::hw::Cost;
 use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
+use crate::stream::port::StreamPort;
 
-use super::{Heads, TapeDeck, TapeEngineParams, TapeModel, model_cost};
+use super::{Heads, TapeDeck, TapeEngineParams};
 
 /// What bank 1 may call of the deck: one entry a method that does work,
 /// all of them bank 2's (`TapeDeck::DOOR`).
 #[repr(C)]
 pub struct TapeDoor {
-    pub init: fn(&mut MaybeUninit<TapeDeck>),
-    pub seed: fn(&mut TapeDeck, u32),
-    pub strip: fn(&TapeDeck) -> super::Strip,
-    pub restore: fn(&mut TapeDeck, super::Strip),
-    pub latch: fn(&mut TapeDeck, SourceId),
-    pub unlatch: fn(&mut TapeDeck),
-    pub start: fn(&mut TapeDeck, u8, &TapeEngineParams, &GateView<'_>, u32),
-    pub refuses: fn(TapeModel, Option<SourceId>, &GateView<'_>) -> bool,
-    pub play: fn(&mut TapeDeck, &mut [f32; BLOCK_SIZE], &TapeEngineParams, &GateView<'_>, u32),
-    pub cost: fn(&TapeEngineParams, &ModState) -> Cost,
-    pub playing_cost: fn(&TapeDeck) -> Option<Cost>,
-    pub set_pitch: fn(&mut TapeDeck, f32),
-    pub glide_to: fn(&mut TapeDeck, u8, (u32, f32)),
-    pub note_off: fn(&mut TapeDeck),
-    pub hold: fn(&mut TapeDeck),
-    pub heads: fn(&TapeDeck) -> Heads,
+    init: fn(&mut MaybeUninit<TapeDeck>),
+    seed: fn(&mut TapeDeck, u32),
+    strip: fn(&TapeDeck) -> super::Strip,
+    restore: fn(&mut TapeDeck, super::Strip),
+    latch: fn(&mut TapeDeck, SourceId),
+    unlatch: fn(&mut TapeDeck),
+    start: fn(
+        &mut TapeDeck,
+        u8,
+        &TapeEngineParams,
+        &GateView<'_>,
+        u32,
+        Option<&mut StreamPort<'_, '_>>,
+    ),
+    refuses: fn(&TapeEngineParams, Option<SourceId>, &GateView<'_>) -> bool,
+    play: fn(
+        &mut TapeDeck,
+        &mut [f32; BLOCK_SIZE],
+        &TapeEngineParams,
+        &GateView<'_>,
+        u32,
+        Option<&mut StreamPort<'_, '_>>,
+    ),
+    cost: fn(&TapeEngineParams, &ModState) -> Cost,
+    model_cost: fn(&TapeEngineParams) -> Cost,
+    playing_cost: fn(&TapeDeck) -> Option<Cost>,
+    set_pitch: fn(&mut TapeDeck, f32),
+    glide_to: fn(&mut TapeDeck, u8, (u32, f32)),
+    release_by: fn(&mut TapeDeck, bool),
+    hold: fn(&mut TapeDeck),
+    heads: fn(&TapeDeck) -> Heads,
+    stretch_only: fn(super::StretchType, crate::block::ParamId) -> Option<&'static str>,
 }
 
 impl TapeDeck {
@@ -53,12 +70,14 @@ impl TapeDeck {
         refuses: Self::refuses,
         play: Self::play,
         cost: Self::cost,
+        model_cost: Self::model_cost,
         playing_cost: Self::playing_cost,
         set_pitch: Self::set_pitch,
         glide_to: Self::glide_to,
-        note_off: Self::note_off,
+        release_by: Self::release_by,
         hold: Self::hold,
         heads: Self::heads,
+        stretch_only: Self::stretch_only,
     };
 
     fn door_init(slot: &mut MaybeUninit<TapeDeck>) {
@@ -66,8 +85,12 @@ impl TapeDeck {
     }
 }
 
+// A deck is built on its voice's first call through the door, in the audio
+// block: eight voices' first notes in one block write eight decks, a few
+// µs. Kept small so that stays so; never copied whole (no `Copy`).
+const _: () = assert!(size_of::<TapeDeck>() <= 1024);
+
 /// A voice's TAPE: the deck's room, and whether it is built.
-#[derive(Clone, Copy)]
 pub struct TapeEngine {
     deck: MaybeUninit<TapeDeck>,
     /// `deck` is built: every field written through the door.
@@ -149,14 +172,26 @@ impl TapeEngine {
         self.read(|_, k| k.src).flatten()
     }
 
-    pub fn start(&mut self, note: u8, p: &TapeEngineParams, src: &GateView<'_>, sample_rate: u32) {
-        self.run(|t, k| (t.start)(k, note, p, src, sample_rate));
+    pub fn streams(&self) -> bool {
+        self.read(|_, k| matches!(k.state, super::Note::Streamed(_)))
+            .unwrap_or(false)
+    }
+
+    pub fn start(
+        &mut self,
+        note: u8,
+        p: &TapeEngineParams,
+        src: &GateView<'_>,
+        sample_rate: u32,
+        streams: Option<&mut StreamPort<'_, '_>>,
+    ) {
+        self.run(|t, k| (t.start)(k, note, p, src, sample_rate, streams));
     }
 
     /// Closed, every note.
-    pub fn refuses(model: TapeModel, id: Option<SourceId>, src: &GateView<'_>) -> bool {
+    pub fn refuses(p: &TapeEngineParams, id: Option<SourceId>, src: &GateView<'_>) -> bool {
         DOOR_CELL
-            .with(|d| (d.tape.refuses)(model, id, src))
+            .with(|d| (d.tape.refuses)(p, id, src))
             .unwrap_or(true)
     }
 
@@ -166,9 +201,10 @@ impl TapeEngine {
         p: &TapeEngineParams,
         src: &GateView<'_>,
         sample_rate: u32,
+        streams: Option<&mut StreamPort<'_, '_>>,
     ) {
         if self
-            .run(|t, k| (t.play)(k, out, p, src, sample_rate))
+            .run(|t, k| (t.play)(k, out, p, src, sample_rate, streams))
             .is_none()
         {
             out.fill(0.0);
@@ -181,12 +217,10 @@ impl TapeEngine {
             .unwrap_or(Cost(0))
     }
 
-    pub fn model_cost(m: TapeModel) -> Cost {
-        if DOOR_CELL.is_open() {
-            model_cost(m)
-        } else {
-            Cost(0)
-        }
+    pub fn model_cost(p: &TapeEngineParams) -> Cost {
+        DOOR_CELL
+            .with(|d| (d.tape.model_cost)(p))
+            .unwrap_or(Cost(0))
     }
 
     pub fn playing_cost(&self) -> Option<Cost> {
@@ -198,6 +232,11 @@ impl TapeEngine {
         self.read(|_, k| k.slide()).unwrap_or(1.0)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn speed(&self) -> Option<(f32, f32)> {
+        self.read(|_, k| k.speed()).flatten()
+    }
+
     pub fn set_pitch(&mut self, cents: f32) {
         self.run(|t, k| (t.set_pitch)(k, cents));
     }
@@ -207,11 +246,15 @@ impl TapeEngine {
     }
 
     pub fn note_off(&mut self) {
-        self.run(|t, k| (t.note_off)(k));
+        self.release_by(false);
+    }
+
+    pub fn release_by(&mut self, vca: bool) {
+        self.run(|t, k| (t.release_by)(k, vca));
     }
 
     pub fn sustains(&self) -> bool {
-        self.read(|_, k| k.active && matches!(k.model, TapeModel::Oneshot))
+        self.read(|_, k| k.state.is_active() && k.hold)
             .unwrap_or(false)
     }
 
@@ -220,10 +263,15 @@ impl TapeEngine {
     }
 
     pub fn is_active(&self) -> bool {
-        self.read(|_, k| k.active).unwrap_or(false)
+        self.read(|_, k| k.state.is_active()).unwrap_or(false)
     }
 
     pub fn heads(&self) -> Heads {
         self.read(|t, k| (t.heads)(k)).unwrap_or(Heads::NONE)
+    }
+
+    /// Closed, none.
+    pub fn stretch_only(k: super::StretchType, id: crate::block::ParamId) -> Option<&'static str> {
+        DOOR_CELL.with(|d| (d.tape.stretch_only)(k, id)).flatten()
     }
 }

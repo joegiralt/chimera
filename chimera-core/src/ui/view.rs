@@ -8,6 +8,7 @@ use crate::dsp::algo::kinds::{self, OpKind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
+use crate::dsp::delay::{DelayParams, DelayType};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{self, ModalParams, ResonatorMode};
@@ -15,8 +16,10 @@ use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
-use crate::dsp::tape_engine::machine::{self, Cell};
-use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
+use crate::dsp::tape_engine::machine;
+use crate::dsp::tape_engine::{
+    self, Choice, Direction, MachineIndex, TapeEngineParams as T, TapeMachine, Tron, wave,
+};
 use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use crate::midi_map::Mappable;
 use crate::modulation::VCA;
@@ -28,7 +31,8 @@ use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::project::arena::Cost;
 use crate::project::{Absence, Pool};
-use crate::storage::SourceRef;
+use crate::storage::{SourceRef, Stem};
+use crate::stream::units::SourceRate;
 use crate::ui::block_def::{BlockDef, MachineSlot, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget, RouteView};
 use crate::ui::fmt::FmtBuf;
@@ -77,16 +81,24 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
-    /// TAPE's machine: its labels and its model page's cells.
-    pub tape: TapeModel,
+    /// TAPE's machine: its labels and cells.
+    pub tape: TapeMachine,
+    /// WALK once through (FORWARD or REVERSE), and TRON then: off, FADE
+    /// ends in HOLD; on, LENGTH reads the tape's seconds. `None` around a
+    /// loop, or off WALK.
+    pub once: Option<Tron>,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
+    /// SCRUB's KEY is POSITION: FINGER's hint says a key places it.
+    pub keys_place: bool,
     /// TAPE's SOURCE as SRC reads it.
     pub src: SourceState,
     /// The chorus MODE the CHORUS send hints.
     pub chorus: ChorusMode,
     /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
+    /// The delay's TYPE: the other TYPE's cells dim (`delay_note`).
+    pub delay: DelayType,
     /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
     pub plate: bool,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
@@ -108,6 +120,7 @@ impl SlotCtx {
             size: get(BlockRef::Reverb, ReverbParams::SIZE),
             ..ReverbParams::default()
         };
+        let tape = TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8));
         Self {
             sel_op,
             chorus: ChorusMode::from_u8(get(BlockRef::Chorus, ChorusParams::MODE) as u8),
@@ -128,10 +141,17 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
-            tape: TapeModel::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
+            tape,
+            once: (tape == TapeMachine::Walk
+                && Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
+                    .is_some_and(Direction::once))
+            .then(|| Tron::from_value(get(BlockRef::TapeEngine, T::TRON)).unwrap_or(Tron::Off)),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
+            keys_place: get(BlockRef::TapeEngine, T::KEY) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
+            // The project's, not a Sound's: `UiState::ctx` sets it.
+            delay: DelayType::Tape,
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
@@ -174,6 +194,15 @@ impl SlotCtx {
         }
     }
 
+    /// This context under the project delay `fx` (a Sound's params hold
+    /// no FX): which TYPE's cells dim.
+    pub fn on_delay(self, fx: &DelayParams) -> Self {
+        Self {
+            delay: fx.kind(),
+            ..self
+        }
+    }
+
     /// This context under the project chorus `fx` (a Sound's params hold
     /// no FX): the mode the CHORUS send hints.
     pub fn on_chorus(self, fx: &ChorusParams) -> Self {
@@ -194,7 +223,7 @@ impl SlotCtx {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Models {
     pub modal: ResonatorMode,
-    pub tape: TapeModel,
+    pub tape: TapeMachine,
 }
 
 impl Default for Models {
@@ -207,7 +236,7 @@ impl From<ResonatorMode> for Models {
     fn from(modal: ResonatorMode) -> Self {
         Models {
             modal,
-            tape: TapeModel::Loop,
+            tape: TapeMachine::Walk,
         }
     }
 }
@@ -220,31 +249,39 @@ pub enum SourceState {
     /// Picked, and the pool keeps its ref without its bytes, for this
     /// reason (#372).
     Absent(Absence),
+    /// Streamed, and the card condemned its file whole (#609): it plays,
+    /// dropping out over the records that won't de-frame.
+    Damaged,
     /// TRANSWAVE on a source that isn't one.
     NotTranswave,
     /// TRON on a zone set (the streamed TRON's).
     ZonesOnTron,
+    /// A streamed source the note would need in RAM (slice 1 § 2.3).
+    NeedsRam(tape_engine::NeedsRam),
     Held {
-        rate: u16,
+        rate: SourceRate,
         frames: u32,
         cost: Cost,
         name: Option<SoundName>,
+        /// Streamed: the notes at ROOT the card's budget fits
+        /// (`admit::notes_at_root`), the band's polyphony.
+        notes: Option<u8>,
     },
     /// The cell on a card row, not loaded: its head once read (`None`, its
     /// stem stands in), its cost, and the pool's free bytes.
     Card {
-        stem: u32,
+        stem: Stem,
         head: Option<(SoundName, u16, u32)>,
         cost: Cost,
         free: Cost,
     },
     /// A card read failed: until the next input.
-    Failed(&'static str),
+    Failed(crate::ui::source_cell::SourceNote),
 }
 
 impl SourceState {
-    /// What a note-on on `model` finds for `r` in `pool`.
-    pub fn of(model: TapeModel, r: Option<SourceRef>, pool: &Pool) -> Self {
+    /// What a note-on on `p` finds for `r` in `pool`.
+    pub fn of(p: &T, r: Option<SourceRef>, pool: &Pool) -> Self {
         let Some(r) = r else {
             return SourceState::None;
         };
@@ -254,14 +291,27 @@ impl SourceState {
         if let Some(why) = pool.absence(id) {
             return SourceState::Absent(why);
         }
+        // Only TAPE streams: no scan, no words in a build without it.
+        if cfg!(feature = "tape") && pool.streams().is_some_and(|reg| reg.damaged(id)) {
+            return SourceState::Damaged;
+        }
+        let Some(rate) = SourceRate::new(r.rate) else {
+            return SourceState::Absent(Absence::Missing);
+        };
+        let held = SourceState::Held {
+            rate,
+            frames: r.frames,
+            cost: pool.source(id).map_or(Cost::default(), |e| e.cost()),
+            name: None,
+            notes: None,
+        };
         match pool.source_view(r) {
-            Some(v) if wave::playable(model, &v) => SourceState::Held {
-                rate: r.rate,
-                frames: r.frames,
-                cost: pool.source(id).map_or(Cost::default(), |e| e.cost()),
-                name: None,
+            Some(v) if wave::playable(p.way(), &v) => held,
+            Some(_) if p.machine == TapeMachine::Wave => SourceState::NotTranswave,
+            None if pool.streamed(r) => match tape_engine::needs_ram(p) {
+                Some(n) => SourceState::NeedsRam(n),
+                None => held.streaming(p.tape > 0.0),
             },
-            Some(_) if model == TapeModel::Transwave => SourceState::NotTranswave,
             _ => SourceState::ZonesOnTron,
         }
     }
@@ -270,18 +320,59 @@ impl SourceState {
     pub fn named(self, n: Option<SoundName>) -> Self {
         match self {
             SourceState::Held {
-                rate, frames, cost, ..
+                rate,
+                frames,
+                cost,
+                notes,
+                ..
             } => SourceState::Held {
                 rate,
                 frames,
                 cost,
                 name: n,
+                notes,
             },
             s => s,
         }
     }
 
-    /// The focus band's: `CHOIR · 24K · 1.5 S · 41K`, or why it won't play.
+    /// A held source as streamed: its notes at ROOT, wow billed when TAPE
+    /// runs (`tape_runs`).
+    pub fn streaming(self, wow: bool) -> Self {
+        match self {
+            SourceState::Held {
+                rate,
+                frames,
+                cost,
+                name,
+                ..
+            } => {
+                let n = crate::stream::admit::notes_at_root(rate, wow);
+                SourceState::Held {
+                    rate,
+                    frames,
+                    cost,
+                    name,
+                    // No more streams than voices.
+                    notes: Some(n.min(crate::hw::MAX_VOICES as u32) as u8),
+                }
+            }
+            s => s,
+        }
+    }
+
+    /// A streamed source's notes re-counted with TAPE routed: its wow is
+    /// billed whatever TAPE stores.
+    pub fn tape_routed(self, routed: bool) -> Self {
+        match self {
+            SourceState::Held { notes: Some(_), .. } if routed => self.streaming(true),
+            s => s,
+        }
+    }
+
+    /// The focus band's: `CHOIR · 24K · 1.5 S · 41K`, a streamed one's
+    /// `CHOIR · 24K · 7 STREAMS` (the notes at ROOT the card fits), or
+    /// why it won't play.
     pub fn text(self, buf: &mut FmtBuf) {
         use core::fmt::Write;
         let tail =
@@ -300,16 +391,38 @@ impl SourceState {
             SourceState::Held {
                 rate,
                 frames,
+                name,
+                notes: Some(n),
+                ..
+            } => {
+                // A name leaves no room for the length (32 B).
+                match name {
+                    Some(name) => {
+                        let _ = write!(buf, "{} · {}K · ", name.as_str(), rate.get() / 1000);
+                    }
+                    None => {
+                        let _ = write!(buf, "{}K · ", rate.get() / 1000);
+                        seconds(buf, rate.get(), frames);
+                        let _ = buf.write_str(" · ");
+                    }
+                }
+                let word = if n == 1 { "STREAM" } else { "STREAMS" };
+                let _ = write!(buf, "{n} {word}");
+            }
+            SourceState::Held {
+                rate,
+                frames,
                 cost,
                 name,
-            } => tail(buf, name, Some((rate, frames)), cost),
+                notes: None,
+            } => tail(buf, name, Some((rate.get(), frames)), cost),
             SourceState::Card {
                 stem,
                 head: None,
                 cost,
                 ..
             } => {
-                let _ = write!(buf, "{stem:08X} · ");
+                let _ = write!(buf, "{:08X} · ", stem.get());
                 tail(buf, None, None, cost)
             }
             SourceState::Card {
@@ -330,9 +443,14 @@ impl SourceState {
             SourceState::Absent(Absence::Missing) => SOURCE_MISSING,
             SourceState::Absent(Absence::NotOnCard) => NOT_ON_CARD,
             SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
+            SourceState::Absent(Absence::StreamsFull) => crate::ui::source_cell::STREAMS_FULL,
+            SourceState::Absent(Absence::Fragmented) => crate::ui::source_cell::FRAGMENTED,
+            SourceState::Absent(Absence::NeedsRam(r)) => crate::ui::source_cell::refusal_words(r),
+            SourceState::Damaged => crate::ui::source_cell::FILE_DAMAGED,
             SourceState::NotTranswave => "NOT A TRANSWAVE",
             SourceState::ZonesOnTron => "ZONES: NOT TRON",
-            SourceState::Failed(w) => w,
+            SourceState::NeedsRam(n) => crate::ui::source_cell::needs_ram_words(n),
+            SourceState::Failed(w) => w.words(),
             _ => "NONE",
         }
     }
@@ -348,10 +466,17 @@ impl SourceState {
             SourceState::Absent(Absence::ReadFailed) | SourceState::Failed(_) => {
                 buf.write_str("ERROR")
             }
+            SourceState::Absent(Absence::StreamsFull) => buf.write_str("FULL"),
+            SourceState::Absent(Absence::Fragmented) => buf.write_str("COPY"),
+            SourceState::Absent(Absence::NeedsRam(r)) => {
+                buf.write_str(crate::ui::source_cell::refusal_cell(r))
+            }
+            SourceState::Damaged => buf.write_str("BAD FILE"),
             SourceState::NotTranswave => buf.write_str("NO WAVE"),
             SourceState::ZonesOnTron => buf.write_str("ZONES"),
+            SourceState::NeedsRam(_) => buf.write_str("RAM"),
             SourceState::Held { rate, frames, .. } => {
-                seconds(buf, rate, frames);
+                seconds(buf, rate.get(), frames);
                 Ok(())
             }
             SourceState::Card { cost, .. } => buf.write_str(cost.kib_label().as_str()),
@@ -492,6 +617,23 @@ impl View {
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
+            // MIX + turn snaps to an onset only on a held source
+            // (`turn_window`); elsewhere it is the plain snap.
+            Some(a)
+                if a.block == BlockRef::TapeEngine
+                    && matches!(a.param, T::START | T::END)
+                    && matches!(ctx.src, SourceState::Held { .. }) =>
+            {
+                ONSET_HINT
+            }
+            Some(a)
+                if a.block == BlockRef::TapeEngine
+                    && a.param == T::POSITION
+                    && ctx.tape == TapeMachine::Scrub
+                    && ctx.keys_place =>
+            {
+                KEY_HINT
+            }
             Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => LEARN_HINT,
             _ => hint::NONE,
         }
@@ -538,6 +680,11 @@ const CHORUS_HINTS: [Hint; 4] = [
 ];
 
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
+/// START and END: MIX + a turn snaps to the next onset its way (#698).
+pub const ONSET_HINT: Hint = &[Gesture("MIX + TURN", "NEXT ONSET")];
+/// SCRUB's FINGER at KEY POSITION (ADR 0205): a key places the finger,
+/// which then moves from there.
+pub const KEY_HINT: Hint = &[Gesture("KEYS", "PLACE THE FINGER")];
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     let short = addr
@@ -552,10 +699,15 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     }
 }
 
-/// `addr`'s format under `ctx`: MODE names its kind's own modes.
+/// `addr`'s format under `ctx`: MODE names its kind's own modes; a TAPE
+/// cell reads its engine law's unit, bank 2's (`walk::tape_fmt_in`; a
+/// closed door, the spec's).
 fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
+        (BlockRef::TapeEngine, id) => crate::bank2::ui_door(|u| u.tape_fmt(id, ctx.tape, ctx.once))
+            .flatten()
+            .unwrap_or(fmt),
         _ => fmt,
     }
 }
@@ -677,30 +829,25 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
     }
 }
 
-/// A TAPE cell on the Sound's machine: its label, or the param's own,
-/// dimmed by `tape_engine::reads`, where the machine ignores it.
+/// A TAPE cell on the Sound's machine, labelled its way: DECK's after
+/// MODEL or the model page's after TAPE, AGE and WOW (ADR 0178). A
+/// machine lists only what it reads, so a cell past its list is empty.
 fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
     let k = machine::machine(ctx.tape);
-    let (id, cell): (_, Option<&Cell>) = match at {
-        MachineSlot::Position => (T::POSITION, k.deck[0].as_ref()),
-        MachineSlot::Motion => (T::MOTION, k.deck[1].as_ref()),
-        MachineSlot::Page(i) => match k.cells.get(usize::from(i)) {
-            Some(c) => (c.id, Some(c)),
-            None => return View::Empty,
-        },
+    let cells = match at {
+        MachineSlot::Deck(_) => k.deck,
+        MachineSlot::Page(_) => k.cells,
     };
+    let (MachineSlot::Deck(i) | MachineSlot::Page(i)) = at;
+    let Some(cell) = cells.get(usize::from(i)) else {
+        return View::Empty;
+    };
+    let (id, label) = (cell.id, cell.label);
     let addr = ParamAddr::new(BlockRef::TapeEngine, id);
     let Some(spec) = addr.spec() else {
         return View::Empty;
     };
-    let label = cell.map_or(spec.label, |c| c.label);
-    if id == T::TYPE && ctx.unpitched {
-        return View::Text {
-            label,
-            text: "POLY (UNPITCHED)",
-        };
-    }
-    param(addr, label, spec.fmt)
+    param(addr, label, fmt_of(addr, spec.fmt, ctx))
 }
 
 /// Whether slot `i` of `def` is a reverb panel cell: its text and step
@@ -754,6 +901,49 @@ fn panel_view(panel: &mod_panel::ModPanel, k: u8, block: BlockRef) -> View {
     }
 }
 
+/// WOW shapes TAPE's wow: at rest (TAPE 0, unrouted) there is none.
+pub const WOW_AT_REST: &str = "TAPE AT 0 · NO WOW TO SHAPE";
+/// LOOP's and PING's FADE under a VCA route: AMP's release ends the note.
+pub const FADE_ASIDE: &str = "AMP RELEASE ENDS THE NOTE";
+/// ONE's FADE under a VCA route: only HOLD, its last step, is heard.
+pub const FADE_HOLD_ONLY: &str = "BELOW HOLD AMP RELEASE ENDS IT";
+/// WALK's XFADE once through with TRON off: only LOOP and TRON come
+/// round to a seam.
+pub const XFADE_LOOP_ONLY: &str = "ONLY LOOP AND TRON CROSSFADE";
+/// WALK's XFADE on PING-PONG, TRON on or off: it turns, it has no seam.
+pub const XFADE_NO_SEAM: &str = "PING-PONG TURNS · NO SEAM";
+/// WALK's RETRIG on LOOP and PING-PONG.
+pub const RETRIG_ONCE_ONLY: &str = "CUTS ONLY ONCE THROUGH";
+/// WALK's RETRIG once through with TRON on: TRON's notes stack.
+pub const RETRIG_TRON_OFF: &str = "CUTS ONLY WITH TRON OFF";
+/// The delay's TAPE cells (DLY › CHAR) under TYPE GRAIN, and GRAIN's
+/// (DLY › GRAIN) under TAPE (ADR 0202).
+pub const DELAY_TAPE_ONLY: &str = "TAPE TYPE ONLY";
+pub const DELAY_GRAIN_ONLY: &str = "GRAIN TYPE ONLY";
+/// A streamed loop's XFADE past what its loop head holds (spec § 2.3).
+pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
+
+/// Why a TAPE cell is dimmed though its machine reads it: WOW with TAPE
+/// at rest, LOOP's or PING's FADE while a VCA route holds the voice (one
+/// release a note: AMP's). ONE keeps FADE live, its HOLD step the gate.
+pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
+    // Bank 2's (`ui::walk`): closed, no TAPE cell says why.
+    crate::bank2::ui_door(|u| u.tape_note(addr, sound)).flatten()
+}
+
+/// What the focus band says in its hint's place about a TAPE cell: why
+/// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
+/// its loop head holds. Bank 2's (`walk::band_note_in`): closed, nothing.
+pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'static str> {
+    crate::bank2::ui_door(|u| u.band_note(addr, sound, src)).flatten()
+}
+
+/// A route moves TAPE: its wow runs whatever TAPE stores (`tape_runs`).
+pub fn tape_routed(sound: &Sound) -> bool {
+    let a = ParamAddr::new(BlockRef::TapeEngine, T::TAPE);
+    sound.mod_state.moves_addr(a)
+}
+
 /// A fixed or inapplicable slot draws dimmed, and its encoder is ignored
 /// (spec § UI "Dimmed").
 pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
@@ -777,8 +967,11 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::AlgoOp(op), id) => !kinds::reads(sound.params.algo.kinds().get(op.index()), id),
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
-        // What the machine ignores (spec § 3).
-        (BlockRef::TapeEngine, id) => !tape_engine::reads(sound.params.tape.model, id),
+        // What the machine ignores (spec § 3), and what can't be heard:
+        // WOW with TAPE at rest, WALK's FADE under an AMP route (`fade_aside`).
+        (BlockRef::TapeEngine, id) => {
+            !tape_engine::reads(sound.params.tape.machine(), id) || tape_note(addr, sound).is_some()
+        }
         // CLASSIC FREE plays the Part's clock: PHASE is RETRIG's start
         // alone (ADR 0177).
         (BlockRef::Lfo(s), crate::dsp::lfo::LfoParams::PHASE) => {
@@ -803,7 +996,23 @@ pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
                 },
             ..
         } => ctx.clock == ClockSource::Midi,
-        View::Param { addr, .. } => dimmed(addr, sound),
+        View::Param { addr, .. } => dimmed(addr, sound) || delay_note(addr, ctx).is_some(),
         _ => false,
     }
+}
+
+/// The focus readout's word for `addr` at display value `v` (or the held
+/// choice `held`) where its cell abbreviates it: full words
+/// (`walk::readout_word_in`, bank 2's: closed, none).
+pub fn readout_word(addr: ParamAddr, v: f32, held: Option<u8>) -> Option<&'static str> {
+    crate::bank2::ui_door(|u| u.readout_word(addr, v, held)).flatten()
+}
+
+/// Why a delay cell is dimmed: the other TYPE's (ADR 0202), bank 2's
+/// (`walk::delay_note_in`; closed, none).
+pub fn delay_note(addr: ParamAddr, ctx: &SlotCtx) -> Option<&'static str> {
+    if addr.block != BlockRef::Delay {
+        return None;
+    }
+    crate::bank2::ui_door(|u| u.delay_note(addr.param, ctx.delay)).flatten()
 }

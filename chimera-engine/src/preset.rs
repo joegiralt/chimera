@@ -67,6 +67,10 @@ impl Sound {
             mod_state.set_fixed(ModSource::Env1.index(), FixedCol::Vca, 127);
         }
         let mut params = ParamSnapshot::for_engine(engine);
+        if engine == EngineType::Tape {
+            // LOOP's LENGTH (`machine`): POSITION moves the loop at INIT.
+            params.tape.size = crate::dsp::tape_engine::machine::LOOP_LENGTH_DEFAULT;
+        }
         if engine == EngineType::Va {
             params.va.fine[1] = 6.0;
             params.va.stability = 0.7;

@@ -23,6 +23,8 @@ use screen::*;
 // beat dot, so three paths drop their first part.
 // The pool, library and TAPE-source screens again for CHOIR, TALK BASS,
 // BREATH and VOX in the bank: the pool bar counts their bytes.
+// Re-recorded for ADR 0187: INIT TAPE joins the browser and NEW; the pool
+// meter, cost and the factory TAPE row follow.
 // Re-recorded for #562: a Part's SOUND and MIX headers draw six Part dots.
 // Re-recorded for #614 (FX in the filter, Task 7: layout A), the map
 // without DRV, FLT's and AMP's new cells: engine_algo, algo_alg,
@@ -52,15 +54,35 @@ use screen::*;
 // tape_src_card, tape_src_wont_fit, tape_src_loaded,
 // tape_src_read_failed.
 // New: flt_2040_kind, flt_2040_exp, flt_fx_off, flt_fx_soft, flt_fx_fold,
-// flt_front_fx, row_amp. Gone: row_drv, amp_sym, flt_mod_2040_exp.// Re-recorded in Task 14: the curve viz draws SOFT and FOLD at their
+// flt_front_fx, row_amp. Gone: row_drv, amp_sym, flt_mod_2040_exp.
+// Re-recorded in Task 14: the curve viz draws SOFT and FOLD at their
 // `MAKE_UP` 0.483 and 0.684 (flt_fx_soft, flt_fx_fold, _soft_pre, _fold_post).
+// Again for the TAPE merge: every TAPE map drops DRV (#614), and
+// sound_browser_pool_full counts main's factory bytes.
+// #698: WOW dims at TAPE 0 and LOOP's and PING's FADE under an AMP route
+// (tape_page_*); START and END read time (tape_strip_oneshot*,
+// tape_strip_loop_reversed, tape_src_pool, tape_src_loaded).
 // Re-recorded for the FREQ MOD / RES MOD band naming its source: flt_mode, flt_mod_clean.
 // Re-recorded for ADR 0167 (FLT's front reordered: KIND · FX · Q · MODE ·
 // FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
+// The fourth TAPE merge: the browsers and POOL count 16 Sounds with STAB
+// and FB (4 %).
+// ADR 0203: WALK replaces ONE, LOOP, PING and TRON (its DECK, its page,
+// its footsteps and strip, tape_deck_reverse and tape_deck_drift new);
+// sound_browser_pool_full's bound moves with WALK's two params.
+// ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
+// tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
+// pool's count (sound_browser_pool_full).
 // ADR 0195: AMP is VEL · LPG · DECAY · STRIKE, the sends on AMP › SENDS.
 // New: amp_gate, amp_sends. Re-recorded: row_amp, amp_vel_dimmed,
 // amp_vel_live, modal_amp, large_bigviz_filter (an AMP screen),
 // large_modal_amp; sound_browser_pool_full (a dense Sound is 15 B larger).
+// Review of #761: TAPE cells read their engine laws' units (TRON's LENGTH
+// in seconds, SCRUB's LENGTH, FADE and DRAG in ms, DRIFT in %, SPEED as a
+// factor), the readout names MODEL and DIRECTION in full, and SLICE is
+// never shown (tape_deck_*, tape_page_stretch*, tape_strip_*,
+// tape_strip_oneshot_slice*: no slices); sound_browser_pool_full (a dense
+// Sound's SLICE stores OFF, 5 B smaller).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -192,15 +214,24 @@ const GOLDENS: &[(&str, u64)] = &[
     ("amp_vel_live", 0xd2952b0ccaa7127e),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_pitch", 0xd16ac1fa1fd56727),
+    // Re-recorded: the scope's corner reads REF C4 (ADR 0201).
+    ("algo_pitch", 0xaea5614dc8b3c57f),
     // Re-recorded: the EXC node (plan Task 13).
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("modal_pitch", 0xa1d8e11218a836be),
+    // Re-recorded: the scope's corner reads REF C4 (ADR 0201).
+    ("modal_pitch", 0xf393e330a5b8f647),
     // PIT on TAPE, SNAP MUSICAL: PITCH +19 in three clicks (TAPE Task 12b);
     // again for Task 15: PIT hangs under DECK.
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("tape_pitch_musical", 0x57bccbb87c98b3a5),
+    // Re-recorded at the main merge: the header's Part dots (ADR 0150).
+    // Re-recorded: its map names the machine, LOOP (ADR 0178).
+    ("tape_pitch_musical", 0xebb38641a3992e19),
+    // New: PIT's tuner (ADR 0201). Re-recorded at the integration: the map
+    // under it says WALK (ADR 0203) and NOISE above PIT (ADR 0197).
+    ("algo_pitch_note", 0x84aab66825c66813),
+    ("tape_pitch_root_unknown", 0xb289953a05153b28),
+    ("large_va_pitch_note", 0x359d3b962f4f7710),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0x1a9d74fd3e32a2a1),
     // Re-recorded: the EXC node (plan Task 13).
@@ -222,8 +253,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
+    // Re-recorded: TYPE in front (ADR 0202).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0xfbe0808a050ed002),
+    ("mixer_fx_delay", 0x0858ddab18f1090a),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
@@ -250,8 +282,16 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_bloom", 0x8bb0cf42db45e7a5),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
+    // Re-recorded: the map's DLY branch holds GRAIN (ADR 0202).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0xb3e9570b26525f00),
+    ("mixer_fx_delay_char", 0xf7d292f46d3dbced),
+    // GRAIN: DLY, DLY › GRAIN at PITCH +12, and bank 2 closed (ADR 0202).
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay_grain", 0xef1ed3ecaaa14bba),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay_grain_page", 0xd8814ef0bb2d5569),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay_grain_needs_update", 0xc98f6ca5642f4246),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
@@ -261,9 +301,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_part", 0x9f6c12c0b45db43d),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x4f5f9daa56c5aea5),
-    // DLY's branch hides REV's label it ran into (TAPE Task 15).
+    // DLY's branch hides REV's label it ran into (TAPE Task 15). With master-tape
+    // the delay pages, GRAIN's among them (#749), map seven nodes with MTP (#756).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x4a8bdad905f55c61),
+    ("mixer_fx_delay", 0x5b21af63949b68dc),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb", 0xf884d95677bc4c9f),
     #[cfg(feature = "master-tape")]
@@ -286,6 +327,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_bloom_more", 0xa267930e1d560034),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_char", 0x323fc0627565e957),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_delay_grain", 0x869e1540291fb66c),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_delay_grain_page", 0x45d7ede89404786f),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_delay_grain_needs_update", 0x4d0db4ababe3a198),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xdbadbeba402b34e4),
     #[cfg(feature = "master-tape")]
@@ -312,46 +359,50 @@ const GOLDENS: &[(&str, u64)] = &[
     // Sound is smaller (fixed columns, no registry entry).
     // Then, with the library_* screens: FACTORY joins the title and B ◂▸
     // moves to hint line 1 (showcase Task 4).
-    ("sound_browser", 0xe6ebc09a421a5c11),
+    ("sound_browser", 0x2fa4a8557ca216f9),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
-    // Then pool_full: 2352 → 2544 (the formant fields). Then VA's KIND and
-    // LEVEL (ADR 0197): each dense Sound 10 B more, the pool fills sooner.
-    // Then the VCA's gate (ADR 0195): 15 B more.
-    ("sound_browser_pool_full", 0x8c26f23d775090b4),
+    // Then pool_full: 2352 → 2544 (the formant fields).
+    // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
+    // Fourth TAPE merge: MAX_SOUND_COST 2656 (STAB, FB and TAPE), same picture.
+    // Then SEM's MORPH: the dense fill leaves 0.1K FREE, not 0.0K. Then VA's
+    // KIND and LEVEL (ADR 0197): each dense Sound 10 B more, the pool fills sooner.
+    // Then the VCA's gate (ADR 0195): 15 B more. STRETCH GRAIN's four params
+    // (ADR 0204): MAX_SOUND_COST 2720.
+    ("sound_browser_pool_full", 0x4de1ac0696ea9318),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
-    ("library_empty", 0xaf1407579ab08624),
-    ("library_no_card", 0x386e6c2c8027ccd9),
-    ("library_sounds", 0x8964371b11796e5f),
-    ("library_this_build", 0x0719763e23b44930),
-    ("library_cut_short", 0x8b4bddae0c9784ad),
-    ("library_older", 0x004f2248949f5c1f),
-    ("library_newer", 0x54415a7d9a958936),
+    ("library_empty", 0x8ff43b98d2c86a11),
+    ("library_no_card", 0x168ce5173d61f5ec),
+    ("library_sounds", 0x076f85f0ce687b12),
+    ("library_this_build", 0xde6811b43375f8d5),
+    ("library_cut_short", 0xb99075b511f1af08),
+    ("library_older", 0x2cc7cf964ecd32d2),
+    ("library_newer", 0x8b2feaec640678a3),
     ("library_wont_fit", 0x24494e0f831f3bab),
     ("library_pool_full", 0x950a8303f1cef0f3),
     ("library_naming", 0xa234ea336d54efbf),
     // The FACTORY tab: a row's description on line 2, the set's build on
-    // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
+    // line 3; empty, no card, and a TAPE file listed.
     // Re-recorded on the merge: the pool meter at the formant cost.
-    ("factory_described", 0xde88e442deb01c5b),
-    ("factory_empty", 0x8b3ffd0a81b93e56),
-    ("factory_no_card", 0xeb75c38b1f28726b),
-    ("factory_coming_soon", 0xe9464e21b7ec8f87),
+    ("factory_described", 0xcbb7a29ebaea0cbe),
+    ("factory_empty", 0xb13dbda8afb210c3),
+    ("factory_no_card", 0xc327c2468f6650b6),
+    ("factory_tape_row", 0x498ea355d4f277d3),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
     // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
     // Long user names, LARGE's pair (ADR 0154).
-    ("sound_browser_long", 0x9f219d2caa40b9bd),
+    ("sound_browser_long", 0x7b76be0e59309d55),
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0xaedbd6aa48dfcbc4),
+    ("settings_project_pool", 0x0674700774736f4f),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -410,48 +461,54 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_mixer_sends", 0x2db88c25aaaa4ce0),
     ("large_settings_top", 0x9d2976351278b0df),
     ("large_settings_personal", 0x35b1c3eb794412f7),
-    ("large_sound_browser", 0x018933e3d8721858),
-    ("large_sound_browser_long", 0xa914e71773ba2c56),
-    ("large_library_sounds", 0xc680b63718145a73),
+    ("large_sound_browser", 0x4b2ef7b9df03ce5c),
+    ("large_sound_browser_long", 0xdc1f10aa2fa8aa1e),
+    ("large_library_sounds", 0x5b05a63df82aab7e),
     ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
     // TAPE's pages (TAPE Task 15): SRC, and DECK and the model page per machine.
+    // Re-recorded at the main merge: the header's Part dots (ADR 0150).
+    // Re-recorded: every machine cell shows its machine's glyph (ADR 0173).
     ("tape_src", 0x2ce444f656e7f685),
     ("tape_src_missing", 0x85708a674c5cfd05),
-    ("tape_deck_oneshot", 0xf0404a951d313e58),
-    ("tape_page_oneshot", 0x4214b7cafbf80e83),
-    ("tape_deck_loop", 0xc76ebef5c7ae7d91),
+    // Re-recorded: MODEL lists ONE, LOOP and PING; DECK holds the glyph's
+    // knobs, the model page TAPE, AGE, WOW and the rest (ADR 0178).
+    ("tape_deck_oneshot", 0x3d0273b877f6f8d4),
+    ("tape_page_oneshot", 0x7fb5a187d2e29ffb),
+    ("tape_deck_loop", 0x64797cc415b3f8c1),
     // New: bank 2 closed (ADR 0141).
-    ("tape_deck_needs_update", 0xed4151c2af8a9ad8),
-    ("tape_page_loop", 0x5f2dd678cbd3df95),
-    ("tape_deck_tron", 0x8917ca0bee2e4020),
-    ("tape_page_tron", 0x0fa1313170d7d76d),
-    ("tape_deck_stretch", 0x77801ffd4b09f795),
-    ("tape_page_stretch", 0x40b53e08880d943d),
-    ("tape_page_stretch_type", 0xbdad5ba1e147c069),
-    ("tape_deck_transwave", 0x9e80c12e371ebc81),
-    ("tape_page_transwave", 0x37710bf1dec9e6e7),
-    ("tape_deck_scrub", 0x6ae2ffb7d909827d),
-    ("tape_page_scrub", 0xff848ff50ecd85ef),
-    ("tape_deck_pingpong", 0x866e512118d56e00),
-    ("tape_page_pingpong", 0xd7d9121a05f4f1d6),
-    ("tape_strip_oneshot", 0xb01738aedde49e7d),
-    ("tape_strip_loop", 0x870c72dc064eccc8),
-    ("tape_strip_tron", 0x85b4d95422eb61b3),
-    ("tape_strip_stretch", 0x1ed2362f660b4d7f),
-    ("tape_strip_transwave", 0x2b819b488ccb62b1),
-    ("tape_strip_scrub", 0x0e2f08b87a2e3e07),
-    ("tape_strip_pingpong", 0xf625f6c153b7acbd),
-    ("tape_strip_loop_reversed", 0x3cd8d0d69e8fda7e),
-    ("tape_strip_oneshot_slice", 0x7a5e6875d9976c86),
-    ("tape_strip_oneshot_slice_reversed", 0xa6e3cac4d5abd6fb),
-    ("tape_strip_pingpong_reversed", 0x50e5909946ae9749),
-    ("tape_strip_tron_idle", 0xfab668e8bd9e558c),
-    ("tape_src_pool", 0x1a2310f01387e05a),
+    ("tape_deck_needs_update", 0x8ea88405e665e1bf),
+    ("tape_page_loop", 0xc7c4ceedf0e08197),
+    ("tape_deck_tron", 0x8ae1900ebe86fd5c),
+    ("tape_page_tron", 0xf0fd4f6cfc1fcdce),
+    ("tape_deck_stretch", 0x20e758645ffd57e5),
+    ("tape_page_stretch", 0x370c5864b61e6cb2),
+    ("tape_page_stretch_type", 0x43a2555e7b1a6d7b),
+    ("tape_deck_transwave", 0xde8bbeffbb06c81a),
+    ("tape_page_transwave", 0x04bbc21e5964e49d),
+    ("tape_deck_scrub", 0xda740d213c4e7248),
+    ("tape_page_scrub", 0x4824af71a2446b88),
+    ("tape_deck_pingpong", 0xcb733d609d75061f),
+    ("tape_deck_reverse", 0xe7abb9fcc549cfc8),
+    ("tape_deck_drift", 0x8c07372d10b5d9f0),
+    ("tape_page_pingpong", 0xd89fbd01ef2f6427),
+    ("tape_strip_oneshot", 0x1ecdb1bfa24d70f9),
+    ("tape_strip_loop", 0x9f28340ee399fe28),
+    ("tape_strip_tron", 0x820e1e30a298c62e),
+    ("tape_strip_stretch", 0xa8095293937600a7),
+    ("tape_strip_transwave", 0x8578d1cff2b53962),
+    ("tape_strip_scrub", 0x81d506fe7de6c3a2),
+    ("tape_strip_pingpong", 0x61c5b978399c14cd),
+    ("tape_strip_loop_reversed", 0x8c6bc98f7858d886),
+    ("tape_strip_oneshot_slice", 0x722f5a4ccf2d55c9),
+    ("tape_strip_oneshot_slice_reversed", 0xf93a0867fcc731a6),
+    ("tape_strip_pingpong_reversed", 0xd7e6dd7400eeb322),
+    ("tape_strip_tron_idle", 0x0419bf67fe773bf1),
+    ("tape_src_pool", 0x6ac82eb8b9a261f1),
     ("tape_src_card", 0xd9e193292c4987f3),
-    ("tape_src_wont_fit", 0x18d3447434e6f195),
-    ("tape_src_loaded", 0x4587d0ef8bbb46b6),
+    ("tape_src_wont_fit", 0x5877eb1a8b000d0a),
+    ("tape_src_loaded", 0x2570f7f781938fd9),
     ("tape_src_read_failed", 0xa7d6268da8eee639),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),

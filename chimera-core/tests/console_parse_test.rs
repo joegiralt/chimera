@@ -267,7 +267,7 @@ fn put_takes_a_tapes_path() {
     let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
     let want = |resume| {
         Ok(Request::Put(PutArg {
-            to: PutTo::Source(0x0BAD_F00D),
+            to: PutTo::Source(chimera_core::storage::Stem::new(0x0BAD_F00D)),
             size: 600_000,
             crc: 0x1234_5678,
             resume,
@@ -541,4 +541,44 @@ fn turn_takes_an_encoder_and_a_delta() {
     ] {
         assert_eq!(one(bad), Err(Refusal::Arguments(Command::Turn)), "{bad}");
     }
+}
+
+#[test]
+fn card_dma_takes_a_bench_and_its_stream_count() {
+    use chimera_hal::units::StreamCount;
+    let one = |s: &str| feed(&mut Console::new(), format!("{s}\n").as_bytes()).remove(0);
+    let n = |k| StreamCount::new(k).unwrap();
+    for (line, verb) in [
+        ("card dma chunk", DmaVerb::Chunk),
+        ("card dma burst", DmaVerb::Burst),
+        ("card dma sustain 8", DmaVerb::Sustain(n(8))),
+        ("card dma stall 4", DmaVerb::Stall(n(4))),
+        ("card dma ui 8", DmaVerb::Ui(n(8))),
+        ("card dma back", DmaVerb::Back),
+        ("card dma listen 8", DmaVerb::Listen(n(8))),
+        ("card dma wake 2", DmaVerb::Wake(n(2))),
+        ("card dma inject abort", DmaVerb::Inject(Inject::Abort)),
+        ("card dma inject te", DmaVerb::Inject(Inject::Te)),
+        ("card dma inject modf", DmaVerb::Inject(Inject::Modf)),
+        ("card dma report", DmaVerb::Report),
+        ("card dma stop", DmaVerb::Stop),
+        ("CARD DMA Sustain 1", DmaVerb::Sustain(n(1))),
+    ] {
+        assert_eq!(one(line), Ok(Request::Card(CardArg::Dma(verb))), "{line}");
+    }
+    for bad in [
+        "card dma",
+        "card dma sustain 0",
+        "card dma sustain 9",
+        "card dma sustain 9x",
+        "card dma sustain",
+        "card dma inject",
+        "card dma inject x",
+        "card dma burst 2",
+        "card dma report now",
+        "card dma wake 2 2",
+    ] {
+        assert_eq!(one(bad), Err(Refusal::Arguments(Command::Card)), "{bad}");
+    }
+    assert!(Command::Card.usage().contains("dma"));
 }

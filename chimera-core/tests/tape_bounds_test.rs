@@ -7,10 +7,14 @@ mod common;
 
 use core::mem::MaybeUninit;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Tron;
+use chimera_core::dsp::tape_engine::params::Drift;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, SliceCode, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
+    Direction, INC_MAX, Retrig, SliceCode, StretchType, TapeEngine, TapeEngineParams, TapeModel,
+    Wow,
 };
 use chimera_core::storage::twelve::pack12;
 use chimera_hal::BLOCK_SIZE;
@@ -19,7 +23,9 @@ use common::tape::{held_plain, held_transwave};
 
 /// The models these runs play (TRANSWAVE on a `Plain` is silent).
 /// Every machine; START and END are drawn in either order.
-const MODELS: [TapeModel; 7] = TapeModel::ALL;
+const MODELS: [TapeModel; 4] = TapeModel::ALL;
+const MODES: [Direction; 4] = Direction::ALL;
+const TRONS: [Tron; 2] = [Tron::Off, Tron::On];
 
 const MAX_FRAMES: usize = 100_000;
 
@@ -39,12 +45,7 @@ fn reads_stay_in_row() {
     for run in 0..2_000 {
         let frames = 64 + rng.below(MAX_FRAMES - 64);
         let rate = rates[rng.below(rates.len())];
-        let d = Descriptor {
-            shape: Shape::Plain,
-            count: 1,
-            rate,
-            head_frames: 0,
-        };
+        let d = Descriptor::whole(Shape::Plain, 1, rate).expect("a descriptor");
         let mut held = d.to_bytes().to_vec();
         held.extend_from_slice(&packed[..3 * frames.div_ceil(2)]);
         // Held cut short, as a head-only hold is: the shortest source at
@@ -53,7 +54,10 @@ fn reads_stay_in_row() {
         held.truncate(keep);
         let v = SourceView::strict(&held).unwrap();
         let p = TapeEngineParams {
-            model: MODELS[rng.below(MODELS.len())],
+            machine: TapeMachine::of(MODELS[rng.below(MODELS.len())]),
+            direction: MODES[rng.below(4)],
+            tron: TRONS[rng.below(2)],
+            drift: Drift::of(unit(&mut rng)),
             start: unit(&mut rng),
             end: unit(&mut rng),
             position: unit(&mut rng),
@@ -63,11 +67,13 @@ fn reads_stay_in_row() {
             size: unit(&mut rng),
             xfade: 0.5 * unit(&mut rng),
             drag: unit(&mut rng),
-            kind: [StretchType::Mono, StretchType::Poly][rng.below(2)],
+            kind: [StretchType::Mono, StretchType::Poly, StretchType::Grain][rng.below(3)],
             root: 12_700.0 * unit(&mut rng),
             period: [0.0, 1.0 + 60.0 * unit(&mut rng), 1_000.0 * unit(&mut rng)][rng.below(3)],
             slice: SliceCode::new(rng.below(18) as u8),
             wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
+            retrig: Retrig::Stack,
+            ..TapeEngineParams::default()
         };
         let mut slot = MaybeUninit::uninit();
         let e = TapeEngine::init_in_place(&mut slot);
@@ -75,7 +81,7 @@ fn reads_stay_in_row() {
         e.note_on(rng.below(128) as u8, &p, &v, 48_000);
         let mut b = [0.0; BLOCK_SIZE];
         let reach = v.frames() + INC_MAX as u32;
-        assert!(p.model != TapeModel::Transwave || b.iter().all(|&y| y == 0.0));
+        assert!(p.model() != TapeModel::Transwave || b.iter().all(|&y| y == 0.0));
         for _ in 0..4 {
             e.render(&mut b, &p, &v, 48_000);
             assert!(b.iter().all(|y| y.is_finite()), "run {run}: {p:?}");
@@ -104,12 +110,7 @@ fn transwave_reads_stay_in_row() {
         let s: Vec<i16> = (0..n)
             .map(|_| ((rng.next_u32() & 0xFFF) as i16) << 4 >> 4)
             .collect();
-        let d = Descriptor {
-            shape: Shape::Transwave,
-            count,
-            rate: 48_000,
-            head_frames: 0,
-        };
+        let d = Descriptor::whole(Shape::Transwave, count, 48_000).expect("a descriptor");
         let mut held = d.to_bytes().to_vec();
         held.resize(DESC_LEN + 3 * n / 2, 0);
         pack12(&s, &mut held[DESC_LEN..]);
@@ -119,7 +120,7 @@ fn transwave_reads_stay_in_row() {
         }
         let v = SourceView::strict(&held).unwrap();
         let p = TapeEngineParams {
-            model: TapeModel::Transwave,
+            machine: TapeMachine::Wave,
             position: unit(&mut rng),
             motion: 2.0 * unit(&mut rng) - 1.0,
             size: unit(&mut rng),
@@ -160,7 +161,7 @@ fn scrub_reversing_at_a_crawl_stays_finite() {
         let held = held_plain(&s, [4_000, 8_000][rng.below(2)]);
         let v = SourceView::strict(&held).unwrap();
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size: unit(&mut rng),
             xfade: 0.5 * unit(&mut rng),
             position: unit(&mut rng),
@@ -207,7 +208,10 @@ fn edge(rng: &mut XorShift) -> f32 {
 fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams {
     let start = edge(rng);
     TapeEngineParams {
-        model,
+        machine: TapeMachine::of(model),
+        direction: MODES[rng.below(4)],
+        tron: TRONS[rng.below(2)],
+        drift: Drift::of(edge(rng)),
         start,
         end: if rng.below(5) == 0 { start } else { edge(rng) },
         position: edge(rng),
@@ -217,11 +221,13 @@ fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams 
         size: edge(rng),
         xfade: 0.5 * edge(rng),
         drag: edge(rng),
-        kind: [StretchType::Mono, StretchType::Poly][rng.below(2)],
+        kind: [StretchType::Mono, StretchType::Poly, StretchType::Grain][rng.below(3)],
         root: [0.0, 6_000.0, 12_700.0, 12_700.0 * unit(rng)][rng.below(4)],
         period: [0.0, period][rng.below(2)],
         slice: SliceCode::new(rng.below(18) as u8),
         wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
+        retrig: Retrig::Stack,
+        ..TapeEngineParams::default()
     }
 }
 

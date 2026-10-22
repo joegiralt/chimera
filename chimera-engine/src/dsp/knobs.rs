@@ -1127,11 +1127,11 @@ mod tests {
     /// with no knob changing: a move that lands it.
     #[test]
     fn a_model_that_moves_a_knob_itself_moves_it() {
-        use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
+        use crate::dsp::tape_engine::{TapeEngineParams, TapeMachine};
         let mut pb = KnobPublisher::new();
         let mut s = Tracked::fresh(Sound::init(EngineType::Tape));
         let d = pb.publish(0, &s, Loads::NONE);
-        s.params.tape.model = TapeModel::Scrub;
+        s.params.tape.machine = TapeMachine::Scrub;
         let e = pb.publish(0, &s, Loads::NONE);
         let pos = index(ParamAddr::new(
             BlockRef::TapeEngine,

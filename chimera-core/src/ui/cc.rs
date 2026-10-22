@@ -9,11 +9,9 @@ use chimera_hal::Ms;
 use super::UiState;
 use super::nav::PartChain;
 use super::part_page::Edit;
-use crate::addr::{BlockRef, ParamAddr};
+use crate::addr::ParamAddr;
 use crate::block::Motion;
 use crate::dsp::knobs::MOVES;
-use crate::dsp::tape_engine::machine::defaults;
-use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::CcEvent;
 use crate::midi_map::ramp::{Ramp, bin, budget};
@@ -112,15 +110,6 @@ fn is_knob(e: &MapEntry) -> bool {
     knob(e.target.addr())
 }
 
-const MODEL: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
-
-/// The knob writes a MODEL change to `m` makes besides MODEL's own: its
-/// machine's defaults (`part_page::edit`).
-pub(super) fn model_writes(m: TapeModel) -> u8 {
-    let k = defaults(m).filter(|&(id, _)| knob(ParamAddr::new(BlockRef::TapeEngine, id)));
-    k.count() as u8
-}
-
 impl UiState {
     /// Each Part's ramps `now` on, then this pass's CCs (spec §§ 5-7).
     /// After `handle_input`, before the publish: the hand's moves are in.
@@ -213,8 +202,18 @@ impl UiState {
             return;
         }
         let mut cost = u8::from(knob(a));
-        if a == MODEL {
-            cost += model_writes(TapeModel::from_index((spec.min + f32::from(to)) as u8));
+        if a == super::held::MODEL || a == super::held::DIRECTION {
+            // Onto what a streamed source can't play it is refused, as the
+            // hand's turn is (`turn_model`), so a key never plays into
+            // silence; else it spends its machine's or DIRECTION's knob
+            // writes too (bank 2's, `walk::tape_writes_in`).
+            let code = (spec.min + f32::from(to)) as u8;
+            let s = &self.project.part(p).sound;
+            if self.streams(p) && (super::held::Held { addr: a, code }).why(s, true).is_some() {
+                return;
+            }
+            cost += crate::bank2::ui_door(|u| u.tape_writes(a.param, code, &s.params.tape))
+                .unwrap_or(0);
         }
         if cost > self.cc.room[i] {
             self.cc.pend[i][j] = to as u8;

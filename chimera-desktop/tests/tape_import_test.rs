@@ -1,12 +1,13 @@
 //! `chimera-import tape` (TAPE spec § 6): a WAV to a sealed `.SRC` on the
 //! sim's card, and the report that says what it made.
 
-use chimera_core::dsp::tape_engine::heads::Bounds;
+use chimera_core::dsp::tape_engine::heads::{Bounds, Sizing};
 use chimera_core::dsp::tape_engine::read::{Descriptor, Shape, SourceView};
 use chimera_core::name::SoundName;
 use chimera_core::project::Project;
 use chimera_core::project::arena::Cost;
 use chimera_core::storage::{Card, SourceCheck, SourceHead, Wrote, read_source_into};
+use chimera_core::stream::units::SourceRate;
 use chimera_desktop::import::tape::convert::Channel;
 use chimera_desktop::import::tape::{
     Cycle, Form, ImportError, MAX_WAV_BYTES, Rate, Report, Root, SEND_LINE, TapeOpts, Top, Tune,
@@ -95,7 +96,7 @@ fn head_of(root: &Path, rep: &Report) -> SourceHead {
         .join("CHIMERA/TAPES")
         .join(rep.file().rsplit('/').next().unwrap());
     let bytes = std::fs::read(path).unwrap();
-    let mut c = SourceCheck::new(rep.head.sref.crc, bytes.len() as u32).unwrap();
+    let mut c = SourceCheck::new(rep.head.sref.stem(), bytes.len() as u32).unwrap();
     c.feed(&bytes).unwrap();
     c.finish().unwrap()
 }
@@ -205,12 +206,21 @@ fn smpl_loop_suggests_position_and_size() {
         );
         let s = rep.suggest.expect("a loop to suggest");
         // ls = POSITION · (W − Ll), Ll = 2 ms · (W / 2 ms)^SIZE.
-        let b = Bounds::of(0, frames, (s.size, s.position, 0.0), rate.hz());
+        let b = Bounds::of(
+            0,
+            frames,
+            Sizing {
+                size: s.size,
+                place: s.position,
+                xfade: 0.0,
+            },
+            SourceRate::new(rate.hz()).unwrap(),
+        );
         let tol = frames as f32 * 0.002;
         assert!(
-            (b.ls as f32 - frames as f32 / 4.0).abs() < tol,
+            (b.ls() as f32 - frames as f32 / 4.0).abs() < tol,
             "{rate:?}: starts at {} of {frames}",
-            b.ls
+            b.ls()
         );
         assert!(
             (b.frames() as f32 - frames as f32 / 2.0).abs() < tol,
@@ -309,9 +319,18 @@ fn smpl_loop_end_is_inclusive() {
     let w = wav_file(&saw(109.0, 2_000), 48_000, Some((100, 1_099)));
     let rep = run(&plain(&w, Rate::K48, None), &fresh("card")).unwrap();
     let s = rep.suggest.unwrap();
-    let b = Bounds::of(0, rep.head.sref.frames, (s.size, s.position, 0.0), 48_000);
+    let b = Bounds::of(
+        0,
+        rep.head.sref.frames,
+        Sizing {
+            size: s.size,
+            place: s.position,
+            xfade: 0.0,
+        },
+        SourceRate::MAX,
+    );
     assert_eq!(b.frames(), 1_000, "{s:?}");
-    assert!(b.ls.abs_diff(99) <= 1, "{b:?}");
+    assert!(b.ls().abs_diff(99) <= 1, "{b:?}");
 }
 
 /// `--transwave 512` on 18 cycles (16 whole ones clear the resampler's
@@ -340,7 +359,10 @@ fn transwave_import_layout() {
         assert!(rep.to_string().lines().any(|l| l == "CYCLES   16"));
         let h = held(&card, &rep);
         let d = Descriptor::from_bytes(&h).unwrap();
-        assert_eq!((d.shape, d.count, d.rate), (Shape::Transwave, 16, 48_000));
+        assert_eq!(
+            (d.shape(), d.count(), d.rate().get()),
+            (Shape::Transwave, 16, 48_000)
+        );
         assert_eq!(SourceView::new(&h).unwrap().frames(), 16 * len);
     }
 }
@@ -389,7 +411,7 @@ fn imported_file_reads_into_a_view() {
     let h = held(&card, &rep);
     let v = SourceView::new(&h).expect("a view");
     assert_eq!(v.frames(), rep.head.sref.frames);
-    assert_eq!(v.desc().rate, 16_000);
+    assert_eq!(v.desc().rate().get(), 16_000);
     // Pitched at the saw's 440.37 Hz: A4 +1, its period in 16 kHz frames.
     let Tune::Pitched { root, period } = rep.tune() else {
         panic!("{:?}", rep.tune())

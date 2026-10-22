@@ -12,16 +12,18 @@ pub enum CardError {
 }
 
 impl CardError {
-    /// `None` for NO CARD and for file-level conditions: `NotFound`,
-    /// `Corrupt`, and `Full`, which leaves a healthy card a delete can make
-    /// room on.
+    /// `None` for NO CARD, for a busy bus (the card untouched), and for
+    /// file-level conditions: `NotFound`, `Corrupt`, and `Full`, which
+    /// leaves a healthy card a delete can make room on.
     pub fn from_store(e: StoreError) -> Option<CardError> {
         match e {
             StoreError::NoCard
             | StoreError::NotFound
             | StoreError::Corrupt
             | StoreError::Full
-            | StoreError::ReadOnly => None,
+            | StoreError::ReadOnly
+            | StoreError::Busy
+            | StoreError::Streaming => None,
             StoreError::Unsupported(u) => Some(CardError::Unsupported(u)),
             StoreError::Timeout => Some(CardError::Timeout),
             StoreError::VolumeChanged(v) => Some(CardError::VolumeChanged(v)),
@@ -192,12 +194,16 @@ fn mounted(card: Card, vol: VolumeId) -> (Card, CardEvent) {
     (Card::Ready(vol), event)
 }
 
-/// A failed mount fails closed: anything but NO CARD is a card fault, and
-/// one that names no card fault (a file error from `mount`) is `Io`. The
-/// type-driven fix is a `MountError`: private issue #196
+/// A failed mount fails closed: anything but NO CARD or BUSY is a card
+/// fault, and one that names no card fault (a file error from `mount`) is
+/// `Io`. The type-driven fix is a `MountError`:
+/// private issue #196
 fn mount_failed(card: Card, e: StoreError) -> Card {
-    if e == StoreError::NoCard {
-        return Card::Absent;
+    match e {
+        StoreError::NoCard => return Card::Absent,
+        // The bus was the streams': the card was never asked.
+        StoreError::Busy => return card,
+        _ => {}
     }
     Card::Failed {
         err: CardError::from_store(e).unwrap_or(CardError::Io),
@@ -228,5 +234,21 @@ pub fn after_error(card: Card, e: StoreError) -> Card {
             last: card.last(),
         },
         None => card,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn busy_is_not_a_card_fault() {
+        let ready = Card::Ready(VolumeId {
+            serial: 1,
+            label: [b' '; 11],
+        });
+        assert_eq!(CardError::from_store(StoreError::Busy), None);
+        assert_eq!(after_error(ready, StoreError::Busy), ready);
+        assert_eq!(after_mount(ready, Err(StoreError::Busy)), (ready, None));
     }
 }

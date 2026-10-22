@@ -49,7 +49,7 @@ fn sources() -> Vec<(String, Sound)> {
     v.push(("init_algo.snd".into(), v1_init(EngineType::Algo)));
     v.push(("init_modal.snd".into(), v1_init(EngineType::Modal)));
     // TAPE's INIT as TAPE Task 12 saved it: engine code 2 frozen (ADR 0045).
-    v.push(("init_tape.snd".into(), Sound::plain_init(EngineType::Tape)));
+    v.push(("init_tape.snd".into(), v1_init_tape()));
     // A library Sound (library spec): factory 0 behind a `Build` record.
     v.push((LIBRARY_FIXTURE.into(), frozen(0)));
     // A described one (showcase spec § 1): factory 1 behind `Build` and `Note`.
@@ -94,6 +94,14 @@ fn v1_init(engine: EngineType) -> Sound {
     for o in &mut s.params.algo.ops {
         o.rr = 8;
     }
+    s
+}
+
+/// TAPE's INIT as TAPE Task 12 saved it: LENGTH 1, before INIT's LOOP
+/// took 0.8 (#698).
+fn v1_init_tape() -> Sound {
+    let mut s = Sound::plain_init(EngineType::Tape);
+    s.params.tape.size = 1.0;
     s
 }
 
@@ -503,6 +511,12 @@ fn project_fixture_loads() {
         assert_values(&*blk, pinned, b.disk_ident().unwrap());
     }
     assert_eq!(p.perf().fx.delay.mix, 0.3);
+    // Saved before the delay had a TYPE: TAPE, GRAIN's knobs at their
+    // defaults (ADR 0202; TAPE's sound is pinned in delay_tape_hash_test).
+    let d = p.perf().fx.delay;
+    let dflt = chimera_core::dsp::delay::DelayParams::DEFAULT;
+    assert_eq!(d.kind(), chimera_core::dsp::delay::DelayType::Tape);
+    assert_eq!(d.grain, dflt.grain);
 }
 
 #[test]
@@ -560,7 +574,9 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // On the rig's second of saw (`common::rig`); re-recorded for TAPE's
     // `out_gain` (ADR 0063, TAPE Task 19), then its smoothstep note-on ramp
     // (#385), then CLEAN's ACCURATE tan, exact divides, k law and trims
-    // (#57, ADR 0096).
+    // (#57, ADR 0096), then PLAY's FADE release in LOOP (ADR 0170), then
+    // AMP's release the one release a note and the fades' power (ADRs 0179,
+    // 0182).
     ("init_tape.snd", 0xcaf4315437e08679),
     // Factory 0's render: the stamp changes no sound.
     ("library_1.snd", 0x2b0219df38902ede),
@@ -619,7 +635,7 @@ fn init_tape_fixture_pins_engine_code_2() {
     assert_eq!(EngineType::Tape.disk_code(), 2);
     let s = decode(&fixture("init_tape.snd")).unwrap();
     assert_eq!(s.engine(), EngineType::Tape);
-    assert!(s.bits_eq(&Sound::plain_init(EngineType::Tape)));
+    assert!(s.bits_eq(&v1_init_tape()));
 }
 
 /// VA's engine code is 3 for good: the frozen INIT loads as VA.

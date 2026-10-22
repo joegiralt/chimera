@@ -13,6 +13,7 @@ mod parts;
 mod pool;
 mod sources;
 mod store;
+mod streamed;
 mod swap;
 mod template;
 #[cfg(any(test, feature = "test-support"))]
@@ -38,7 +39,8 @@ pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Loads, Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
 pub use pool::{EncodedSound, Pool, PoolFull};
 pub use sources::{
-    Absence, Purged, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, Unused, Users, source_users,
+    Absence, Purged, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, SourceSet, Unused, Users,
+    source_users,
 };
 pub use store::PROJECT_DEMO_TOP;
 #[cfg(feature = "card-put")]
@@ -49,6 +51,7 @@ pub use store::{
     clear_project, delete_project, find_named, list_projects, load_project, new_project_id,
     project_file, save_project, save_project_as,
 };
+pub use streamed::{LoadDoor, LoadKind, Refusal, StreamFail, StreamLoad, StreamStep, load_kind};
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::{NEW_PARTS, TemplateCrc};
 

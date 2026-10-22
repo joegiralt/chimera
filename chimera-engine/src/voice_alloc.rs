@@ -46,8 +46,34 @@ impl VoiceIdx {
         all
     };
 
+    pub const fn new(i: usize) -> Option<Self> {
+        if i < MAX_VOICES {
+            Some(Self(i as u8))
+        } else {
+            None
+        }
+    }
+
     pub fn index(self) -> usize {
         self.0 as usize
+    }
+}
+
+/// A set of voices, a bit each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VoiceSet(u8);
+
+const _: () = assert!(MAX_VOICES <= u8::BITS as usize);
+
+impl VoiceSet {
+    pub const EMPTY: VoiceSet = VoiceSet(0);
+
+    pub const fn with(self, v: VoiceIdx) -> VoiceSet {
+        VoiceSet(self.0 | 1 << v.0)
+    }
+
+    pub const fn contains(self, v: VoiceIdx) -> bool {
+        self.0 & 1 << v.0 != 0
     }
 }
 

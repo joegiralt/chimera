@@ -7,6 +7,7 @@ use chimera_fat::FatStore;
 use chimera_fat::dir::{ShortName, Slot, lfn_checksum, parse};
 use chimera_fat::volume::{FsKind, Layout, Link, Root, first_partition, layout};
 use chimera_hal::store::{Dir, FileName, Store, StoreError, Unsupported, VolumeId};
+use chimera_hal::units::{BlockCount, FileBlock};
 use core::cell::RefCell;
 use embedded_sdmmc::BlockDevice;
 use image::{
@@ -1068,6 +1069,16 @@ fn mount_retries_once_after_reinit() {
     assert_eq!(log(&s).reads.get(), 2, "no third read");
 }
 
+/// After a stream read fault the card is re-inited before the mount,
+/// even though its first read would have answered.
+#[test]
+fn recover_reinits_then_mounts() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    assert_eq!(s.recover(), Ok(vol));
+    assert_eq!(log(&s).reinits.get(), 1);
+}
+
 /// Review Focus 2's torn truncate: an old length over a short chain.
 #[test]
 fn chain_errors_read_as_corrupt() {
@@ -1102,7 +1113,7 @@ fn runs_name_the_files_blocks_on_the_device() {
     let body = pattern(3, 3 * cluster + 100);
     s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
     let mut runs = Vec::new();
-    let len = s
+    let (len, _) = s
         .runs(vol, name(b"DATA"), &mut |at, n| runs.push((at, n)))
         .unwrap();
     assert_eq!(len as usize, body.len());
@@ -1126,13 +1137,40 @@ fn runs_split_where_the_chain_jumps() {
     let mut s = probed(&disk);
     s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
     let mut runs = Vec::new();
-    let len = s
+    let (len, _) = s
         .runs(vol, name(b"DATA"), &mut |at, n| runs.push((at, n)))
         .unwrap();
     let per = (cluster / 512) as u32;
     assert_eq!(runs.len(), 2);
     assert_eq!((runs[0].1, runs[1].1), (per, 2 * per));
     assert_eq!(raw_runs(&disk, &runs, len), body);
+}
+
+#[test]
+fn runs_follow_a_fragmented_chain() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    let cluster = layout_of(&disk).cluster_bytes() as usize;
+    let a = pattern(1, 2 * cluster);
+    let b = pattern(2, cluster);
+    let c = pattern(3, 5 * cluster + 77);
+    s.write(vol, name(b"A"), &mut |w| w.put(&a)).unwrap();
+    s.write(vol, name(b"B"), &mut |w| w.put(&b)).unwrap();
+    s.delete(vol, name(b"A")).unwrap();
+    // A fresh store searches from cluster 2: it fills A's hole, then jumps B.
+    let mut s = probed(&disk);
+    s.write(vol, name(b"C"), &mut |w| w.put(&c)).unwrap();
+    let r = Store::runs(&mut s, vol, name(b"C")).unwrap();
+    assert_eq!(r.len.get() as usize, c.len());
+    assert!(r.ext.runs() > 1, "C jumps over B");
+    let max = BlockCount::new(u32::MAX).unwrap();
+    let raw: Vec<u8> = r
+        .ext
+        .transfers(FileBlock::new(0), u32::MAX, max)
+        .flat_map(|(at, n)| (at.get()..at.get() + n.get()).flat_map(|b| disk.block(b)))
+        .take(c.len())
+        .collect();
+    assert_eq!(raw, c);
 }
 
 #[test]
@@ -1258,4 +1296,74 @@ fn read_at_matches_read() {
             assert_eq!(got.1, want, "bytes at {off}");
         }
     }
+}
+
+/// The card `base` with its partition moved to `at` by the MBR: block `at`
+/// onward is the partition's, read through to `base`'s.
+struct High {
+    base: Rc<RamDisk>,
+    at: u32,
+}
+
+impl BlockDevice for High {
+    type Error = image::DiskError;
+
+    fn read(
+        &self,
+        blocks: &mut [embedded_sdmmc::Block],
+        start: embedded_sdmmc::BlockIdx,
+    ) -> Result<(), image::DiskError> {
+        for (i, b) in blocks.iter_mut().enumerate() {
+            let idx = start.0 + i as u32;
+            b.contents = match idx {
+                0 => {
+                    let mut mbr = self.base.block(0);
+                    mbr[454..458].copy_from_slice(&self.at.to_le_bytes());
+                    mbr
+                }
+                n if n >= self.at => self.base.block(PART_LBA + (n - self.at)),
+                _ => return Err(image::DiskError),
+            };
+        }
+        Ok(())
+    }
+
+    fn write(
+        &self,
+        _: &[embedded_sdmmc::Block],
+        _: embedded_sdmmc::BlockIdx,
+    ) -> Result<(), image::DiskError> {
+        Err(image::DiskError)
+    }
+
+    fn num_blocks(&self) -> Result<embedded_sdmmc::BlockCount, image::DiskError> {
+        Ok(embedded_sdmmc::BlockCount(u32::MAX))
+    }
+}
+
+impl chimera_fat::Medium for High {}
+
+/// M7: a partition whose offset puts a file's blocks past u32::MAX refuses
+/// the file as corrupt; its runs never name an LBA that wrapped.
+#[test]
+fn runs_past_the_last_lba_are_corrupt() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    let cluster = layout_of(&disk).cluster_bytes() as usize;
+    s.write(vol, name(b"DATA"), &mut |w| w.put(&pattern(5, 2 * cluster)))
+        .unwrap();
+    let mut runs = Vec::new();
+    s.runs(vol, name(b"DATA"), &mut |at, n| runs.push((at, n)))
+        .unwrap();
+    let first = runs[0].0 - PART_LBA;
+    // The FAT and the root below the file's blocks still read; its blocks
+    // land past u32::MAX.
+    let at = u32::MAX - first + 1;
+    let mut s = FatStore::new(High { base: disk, at });
+    let vol = s.mount().unwrap();
+    let mut got = Vec::new();
+    assert_eq!(
+        s.runs(vol, name(b"DATA"), &mut |at, n| got.push((at, n))),
+        Err(StoreError::Corrupt)
+    );
 }

@@ -325,6 +325,7 @@ name = "chimera-hal"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics-core",
+ "loom",
 ]
 
 [[package]]
@@ -357,6 +358,7 @@ version = "0.1.0"
 dependencies = [
  "chimera-circuits",
  "chimera-core",
+ "chimera-engine",
  "chimera-hal",
  "chimera-image",
  "hound",

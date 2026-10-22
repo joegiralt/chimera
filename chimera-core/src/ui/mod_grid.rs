@@ -8,7 +8,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::addr::{BlockRef, ParamAddr};
-use crate::dsp::tape_engine::{TapeModel, machine};
+use crate::dsp::tape_engine::{TapeMachine, machine};
 use crate::dsp::voice_fx::params::FxType;
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::{FixedCol, ModState};
@@ -180,7 +180,7 @@ pub struct MatrixState {
 /// the FX slot's type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DestCtx {
-    pub tape: TapeModel,
+    pub tape: TapeMachine,
     pub fx: FxType,
 }
 
@@ -191,16 +191,16 @@ impl DestCtx {
     }
 
     fn unpack(b: u8) -> Self {
-        let tape = TapeModel::ALL.into_iter().find(|&m| m as u8 == b & 7);
+        let tape = TapeMachine::ALL.into_iter().find(|&m| m as u8 == b & 7);
         let fx = FxType::LIST.into_iter().find(|&t| t as u8 == b >> 3);
         Self {
-            tape: tape.unwrap_or(TapeModel::Loop),
+            tape: tape.unwrap_or(TapeMachine::Walk),
             fx: fx.unwrap_or(FxType::Off),
         }
     }
 
     pub const DEFAULT: DestCtx = DestCtx {
-        tape: TapeModel::Loop,
+        tape: TapeMachine::Walk,
         fx: FxType::Off,
     };
 }
@@ -235,7 +235,7 @@ impl MatrixState {
     }
 
     /// The edited Part's machine; a change redraws the headers.
-    pub fn set_tape(&mut self, m: TapeModel) {
+    pub fn set_tape(&mut self, m: TapeMachine) {
         self.set_ctx(DestCtx {
             tape: m,
             ..self.ctx()
@@ -710,7 +710,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
 }
 
 /// A TAPE destination's cell on `tape`'s machine (`WALK`, `WLK`).
-fn machine_cell(a: ParamAddr, tape: TapeModel) -> Option<&'static machine::Cell> {
+fn machine_cell(a: ParamAddr, tape: TapeMachine) -> Option<&'static machine::Cell> {
     (a.block == BlockRef::TapeEngine)
         .then(|| machine::cell_of(tape, a.param))
         .flatten()

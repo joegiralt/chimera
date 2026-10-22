@@ -19,7 +19,7 @@ use chimera_core::params::{EngineType, EnvParams, FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
-/// A base sound in which `addr` is audible: Modal's or VA's own engine, else Algo
+/// A base sound in which `addr` is audible: Modal's, VA's or TAPE's own engine, else Algo
 /// (every operator heard at ALG A for its own parameters, the triangle for
 /// the chain's). An ENV slot takes the TYPE its parameter acts on.
 fn recipe(addr: ParamAddr) -> ParamSnapshot {
@@ -27,9 +27,15 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
     let engine = match block {
         BlockRef::Modal => EngineType::Modal,
         BlockRef::Va => EngineType::Va,
+        BlockRef::TapeEngine => EngineType::Tape,
         _ => EngineType::Algo,
     };
     let mut p = ParamSnapshot::for_engine(engine);
+    if engine == EngineType::Tape {
+        // A loop shorter than the 1 s saw, so POSITION places it, and
+        // LENGTH and WALK move it; AGE and TAPE are heard from 0.
+        p.tape.size = 0.6;
+    }
     p.lfos[0].rate = 5.0; // swings both ways within the render
     match block {
         BlockRef::Algo | BlockRef::AlgoOp(_) => {
@@ -65,6 +71,20 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
         BlockRef::VoiceFx => {
             p.fx.set_type(FxType::Soft);
             p.fx.pots[0] = 0.5;
+        }
+        // ONE latches START at a note's first block: heard at the
+        // re-strike (`repluck`).
+        BlockRef::TapeEngine
+            if addr.param == chimera_core::dsp::tape_engine::TapeEngineParams::START =>
+        {
+            p.tape.set_way(chimera_core::dsp::tape_engine::Way::One);
+            p.tape.drag = chimera_core::dsp::tape_engine::FADE_HOLD;
+        }
+        // PLAY reads no MOTION (ADR 0203): STRETCH's SPEED.
+        BlockRef::TapeEngine
+            if addr.param == chimera_core::dsp::tape_engine::TapeEngineParams::MOTION =>
+        {
+            p.tape.machine = chimera_core::dsp::tape_engine::TapeMachine::Stretch;
         }
         BlockRef::Env(s) => {
             p.filter.cutoff = 1000.0;
@@ -146,7 +166,12 @@ fn every_modulatable_param_audibly_changes_output() {
                 continue;
             }
             for (case, base) in recipes(addr).iter().enumerate() {
-                let repluck = block == BlockRef::Modal;
+                let repluck = block == BlockRef::Modal
+                    || addr
+                        == ParamAddr::new(
+                            BlockRef::TapeEngine,
+                            chimera_core::dsp::tape_engine::TapeEngineParams::START,
+                        );
                 let dry = render(base, &routes(addr, 0), repluck);
                 let wet = render(base, &routes(addr, 127), repluck);
                 let diff = dry
@@ -164,11 +189,12 @@ fn every_modulatable_param_audibly_changes_output() {
     }
     // + VCA; PITCH, FINE; Modal's macros; VA's twelve (NOISE's LEVEL among
     // them); FRMT and BW per operator, VOWEL; the FX slot's pots and MIX;
-    // less DRV's three and the fold's; the filter's STABILITY, FB and SEM's
-    // MODE; the VCA's LPG, DECAY and STRIKE (ADR 0195).
+    // less DRV's three and the fold's; TAPE's five macros and ONE's START
+    // (#698); the filter's STABILITY, FB and SEM's MODE; the VCA's LPG, DECAY
+    // and STRIKE (ADR 0195).
     assert_eq!(
         checked,
-        17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 3 + 3
+        17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 6 + 3 + 3
     );
 }
 

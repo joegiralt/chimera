@@ -8,7 +8,7 @@ use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};
 
 use chimera_board::priority::{self, Priority};
-use chimera_board::shared::{MIDI_ERRORS as ERRORS, bump};
+use chimera_board::shared::{AUDIO_CYCLES, MIDI_CYCLES, MIDI_ERRORS as ERRORS, bump, stamp};
 
 const BAUD: u32 = 31_250;
 
@@ -49,8 +49,14 @@ pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ccs: &
     unsafe { NVIC::unmask(pac::Interrupt::USART1) };
 }
 
+fn audio_cycles() -> u32 {
+    AUDIO_CYCLES.load(Ordering::Relaxed)
+}
+
 #[interrupt]
 fn USART1() {
+    // Its own time, for the card IRQ's (`card_dma::clocks`).
+    let enter = stamp(audio_cycles);
     // SAFETY: this handler owns USART1 after `init`, and `PARSER`,
     // `DIN_NOTES` and `DIN_CCS` are touched only here once `init` has
     // unmasked it; the handler can't preempt itself.
@@ -89,4 +95,8 @@ fn USART1() {
             _ => {}
         }
     }
+    let leave = stamp(audio_cycles);
+    let audio = leave.over.since(enter.over);
+    let own = leave.at.since(enter.at).get().saturating_sub(audio.get());
+    MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
 }

@@ -6,7 +6,10 @@ use crate::ui::page::ValFmt;
 pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
     use core::fmt::Write;
     match fmt {
-        ValFmt::Uni => {
+        ValFmt::Hold if val >= 0.999 => {
+            let _ = buf.write_str("HOLD");
+        }
+        ValFmt::Uni | ValFmt::Hold => {
             let midi = (val * 127.0 + 0.5) as i32;
             let _ = write!(buf, "{}", midi);
         }
@@ -149,6 +152,11 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         }
         // Whole Hz under 1 kHz, then kHz to 3 figures.
         Law::Cutoff => hz_text(buf, round(CUTOFF_HZ.at(v))),
+        // The engine's laws, bank 2's: the door hands these formats out
+        // only open (`view::fmt_of`).
+        Law::StretchSpeed | Law::ScrubSpeed | Law::FadeHold | Law::ScrubLength | Law::DragTime => {
+            crate::bank2::ui_door(|u| u.law_text(buf, law, v));
+        }
         _ => {
             let s = law.range().map_or(0.0, |r| r.at(v));
             let ms = s * 1000.0;

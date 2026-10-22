@@ -340,6 +340,17 @@ fn every_enum_param_round_trips_in_loader_order() {
     for (b, _) in stored() {
         for e in ValidAddr::of_block(b).filter(|a| a.coded()) {
             let s = e.spec();
+            // SLICE is on hold (`slice_in_play`): every code loads OFF.
+            if b == BlockRef::TapeEngine
+                && s.id == chimera_core::dsp::tape_engine::TapeEngineParams::SLICE
+            {
+                for v in 0..=s.max as u8 {
+                    let mut a = Bank::new();
+                    a.block(b).set(s.id, f32::from(v));
+                    assert_eq!(load(b, &mut a).block(b).get(s.id), 0.0, "SLICE {v}");
+                }
+                continue;
+            }
             for v in 0..=s.max as u8 {
                 let mut a = Bank::new();
                 a.block(b).set(s.id, f32::from(v));
@@ -524,8 +535,13 @@ fn retired_never_live() {
             (11, 2)
         ]
     );
-    // TAPE's MODEL REVERSE (#369): LOOP with END before START.
-    assert_eq!(RETIRED_CODES, &[(34, 0, 1)]);
+    // TAPE's MODEL REVERSE (#369): LOOP with END before START; PING-PONG
+    // and ONESHOT, folded into PLAY (ADR 0170); TRON and MODE ONE, into
+    // WALK's TRON and DIRECTION FORWARD (ADR 0203).
+    assert_eq!(
+        RETIRED_CODES,
+        &[(34, 0, 1), (34, 0, 2), (34, 0, 6), (34, 0, 7), (34, 15, 0)]
+    );
     assert!(RETIRED_SOURCES.is_empty());
     // DRV and the folder (ADR 0155): never reused.
     assert_eq!(RETIRED_BLOCKS, &[9, 11]);

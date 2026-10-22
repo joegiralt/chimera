@@ -15,7 +15,9 @@
 # (`six_parts_fit`): every Plain source but TRON and the kit is at most
 # 18 KB (0.75 s at 16k, 0.375 s at 32k, 1 s at 12k).
 #
-# [[sound]]: name; source; model (its machine's defaults); then TAPE params
+# [[sound]]: name; source; model (its machine's defaults), WALK with its mode
+# (DIRECTION: FORWARD, REVERSE, LOOP or PING; once through holds) and tron
+# (ON or OFF, ADR 0203); then TAPE params
 # by label (START, END, POSITION, MOTION, TAPE, AGE, SIZE, XFADE, DRAG,
 # TYPE, SLICE, WOW) as stored values; trim in dB on OUT LEVEL, so each sits
 # at the factory median (`factory_sounds_sit_at_the_median`).
@@ -302,180 +304,245 @@ transwave = "436.36"
 [[sound]]
 name = "SINE LOOP"
 source = "SINE C4"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "-6.5"
 
 [[sound]]
 name = "EPIANO HIT"
 source = "EPIANO C4"
-model = "ONESHOT"
-trim = "-2.5"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-5.0"
 
 [[sound]]
 name = "EPIANO STAB"
 source = "EPIANO STAB"
-model = "ONESHOT"
-trim = "+2.0"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-0.5"
 
 [[sound]]
 name = "STAB STRETCH"
 source = "EPIANO STAB"
 model = "STRETCH"
-trim = "+2.0"
+trim = "+0.5"
 
 [[sound]]
 name = "TX BASS HIT"
 source = "TX BASS C2"
-model = "ONESHOT"
-trim = "+6.5"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+4.5"
 
 [[sound]]
 name = "SQR BASS HIT"
 source = "SQR BASS C2"
-model = "ONESHOT"
-trim = "+3.5"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+1.0"
 
 [[sound]]
 name = "BRASS LOOP"
 source = "BRASS C4"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
 start = "0.2"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+1.5"
 
 [[sound]]
 name = "BELL HIT"
 source = "BELL C5"
-model = "ONESHOT"
-trim = "-4.5"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-7.0"
 
 [[sound]]
 name = "BELL BACKWARDS"
 source = "BELL C5"
-model = "ONESHOT"
+model = "WALK"
+mode = "FORWARD"
 start = "1"
 end = "0"
-trim = "-4.0"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-7.0"
 
 [[sound]]
 name = "SAW SCRUB"
 source = "SAW LEAD C4"
 model = "SCRUB"
-trim = "-1.0"
+# SCRUB's own defaults (ADR 0205): a 70 ms loop the FINGER moves, keys
+# placing it along the note at ROOT. Re-trimmed for the shorter loop.
+trim = "-3.0"
 
 [[sound]]
 name = "PAD LOOP"
 source = "PAD CHORD"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
 start = "0.15"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+2.0"
 
 [[sound]]
 name = "PAD PINGPONG"
 source = "PAD CHORD"
-model = "PING_PONG"
+model = "WALK"
+mode = "PING"
 # Past the pad's attack.
 position = "0.5"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+3.5"
 
 [[sound]]
 name = "KEYS LOOP"
 source = "KEYS C4"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
 start = "0.1"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+1.5"
 
 [[sound]]
 name = "PLUCK HIT"
 source = "PLUCK C3"
-model = "ONESHOT"
-trim = "+2.0"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-0.5"
 
 [[sound]]
 name = "PLUCK LOW"
 source = "PLUCK E2"
-model = "ONESHOT"
-trim = "+2.0"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+0.0"
 
 [[sound]]
 name = "HARP HIT"
 source = "HARP C5"
-model = "ONESHOT"
-trim = "+0.5"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-1.5"
 
 [[sound]]
 name = "BOWED LOOP"
 source = "BOWED C3"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
 start = "0.2"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "-6.0"
 
 [[sound]]
 name = "BOWED STRETCH"
 source = "BOWED CHORD"
 model = "STRETCH"
-trim = "-1.0"
+trim = "-2.5"
 
 [[sound]]
 name = "METAL HIT"
 source = "METAL C4"
-model = "ONESHOT"
-trim = "+4.0"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+2.0"
 
 [[sound]]
 name = "GLASS HIT"
 source = "GLASS C6"
-model = "ONESHOT"
-trim = "+4.0"
+model = "WALK"
+mode = "FORWARD"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+2.0"
 
 [[sound]]
 name = "SYMP LOOP"
 source = "SYMP C3"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "-0.5"
 
 [[sound]]
 name = "TRON BOWED"
 source = "TRON BOWED"
-model = "TRON"
+model = "WALK"
+mode = "FORWARD"
+tron = "ON"
+# The TRON machine's own (ADR 0203): FADE 32 ms, an M400's tape under WARBLE.
+drag = "0.3"
+tape = "0.3"
+wow = "1"
 trim = "-7.5"
 
 [[sound]]
 name = "NOISE LOOP"
 source = "NOISE"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+7.0"
 
 [[sound]]
 name = "WIND LOOP"
 source = "WIND"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
 tape = "0.3"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+5.0"
 
 [[sound]]
 name = "RAIN SCRUB"
 source = "RAIN"
 model = "SCRUB"
-trim = "+7.0"
+# SCRUB's own defaults (ADR 0205), re-trimmed for the 70 ms loop.
+trim = "+5.5"
 
 [[sound]]
 name = "KIT"
 source = "KIT 16"
-model = "ONESHOT"
-slice = "1"
-trim = "-3.0"
+model = "WALK"
+mode = "FORWARD"
+# SLICE NOTE (`slice = "1"`) until SLICE went on hold (ADR 0199 on
+# `tape-slice`, #748): no note reads it now, so the file carries none.
+# Until it returns the strip plays whole at the key (#779), re-trimmed
+# to the set's median as a whole strip (was -4.0 as one hit).
+trim = "-1.2"
 
 [[sound]]
 name = "VOICE LOOP"
 source = "VOICE AH"
-model = "LOOP"
+model = "WALK"
+mode = "LOOP"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+1.0"
 
 [[sound]]
 name = "VOICE STRETCH"
 source = "VOICE AH"
 model = "STRETCH"
-trim = "+1.0"
+trim = "-1.0"
 
 [[sound]]
 name = "WAVE MORPH"

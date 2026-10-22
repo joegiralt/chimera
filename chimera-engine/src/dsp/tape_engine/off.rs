@@ -11,8 +11,9 @@ use crate::hw::Cost;
 use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
+use crate::stream::port::StreamPort;
 
-use super::{Heads, TapeEngineParams, TapeModel};
+use super::{Heads, TapeEngineParams, Way};
 
 #[derive(Clone, Copy)]
 pub struct TapeEngine;
@@ -42,10 +43,22 @@ impl TapeEngine {
         None
     }
 
-    pub fn start(&mut self, _: u8, _: &TapeEngineParams, _: &GateView<'_>, _: u32) {}
+    pub fn streams(&self) -> bool {
+        false
+    }
+
+    pub fn start(
+        &mut self,
+        _: u8,
+        _: &TapeEngineParams,
+        _: &GateView<'_>,
+        _: u32,
+        _: Option<&mut StreamPort<'_, '_>>,
+    ) {
+    }
 
     /// Every note: nothing here plays.
-    pub fn refuses(_: TapeModel, _: Option<SourceId>, _: &GateView<'_>) -> bool {
+    pub fn refuses(_: &TapeEngineParams, _: Option<SourceId>, _: &GateView<'_>) -> bool {
         true
     }
 
@@ -55,6 +68,7 @@ impl TapeEngine {
         _: &TapeEngineParams,
         _: &GateView<'_>,
         _: u32,
+        _: Option<&mut StreamPort<'_, '_>>,
     ) {
         out.fill(0.0);
     }
@@ -63,7 +77,7 @@ impl TapeEngine {
         Cost(0)
     }
 
-    pub const fn model_cost(_: TapeModel) -> Cost {
+    pub const fn model_cost(_: &TapeEngineParams) -> Cost {
         Cost(0)
     }
 
@@ -82,6 +96,8 @@ impl TapeEngine {
 
     pub fn note_off(&mut self) {}
 
+    pub fn release_by(&mut self, _vca: bool) {}
+
     pub fn sustains(&self) -> bool {
         false
     }
@@ -94,5 +110,9 @@ impl TapeEngine {
 
     pub fn heads(&self) -> Heads {
         Heads::NONE
+    }
+
+    pub fn stretch_only(_: super::StretchType, _: crate::block::ParamId) -> Option<&'static str> {
+        None
     }
 }

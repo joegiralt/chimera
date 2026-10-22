@@ -1,6 +1,7 @@
 //! `status`: firmware, project, Part, where the UI is and bank 2.
 
 use core::fmt::{self, Write};
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use super::PROTOCOL;
 use crate::board::BoardId;
@@ -19,6 +20,43 @@ pub fn state_word(s: ProjectStatus) -> &'static str {
     }
 }
 
+/// SRAM4's boot self-test (the board runs it once, before audio).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sram4 {
+    Untested,
+    Ok,
+    Failed,
+}
+
+impl Sram4 {
+    fn word(self) -> &'static str {
+        match self {
+            Sram4::Untested => "untested",
+            Sram4::Ok => "ok",
+            Sram4::Failed => "FAIL",
+        }
+    }
+}
+
+/// The self-test's result: stored once at boot, before audio.
+pub struct Sram4Cell(AtomicU8);
+
+impl Sram4Cell {
+    pub fn store(&self, s: Sram4) {
+        self.0.store(s as u8, Ordering::Relaxed);
+    }
+
+    pub fn load(&self) -> Sram4 {
+        match self.0.load(Ordering::Relaxed) {
+            1 => Sram4::Ok,
+            2 => Sram4::Failed,
+            _ => Sram4::Untested,
+        }
+    }
+}
+
+pub static SRAM4: Sram4Cell = Sram4Cell(AtomicU8::new(Sram4::Untested as u8));
+
 /// The status body, without the terminal line.
 pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     write!(w, "firmware {VERSION} ")?;
@@ -34,6 +72,7 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     w.write_str("at ")?;
     write_at(ui, w)?;
     w.write_char('\n')?;
+    writeln!(w, "sram4 {}", SRAM4.load().word())?;
     match ui.bank2() {
         Some(b) => {
             b.line(w)?;

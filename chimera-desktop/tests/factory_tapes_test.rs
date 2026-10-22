@@ -4,7 +4,8 @@
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::TapeModel;
-use chimera_core::dsp::tape_engine::read::Shape;
+use chimera_core::dsp::tape_engine::Way;
+use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -61,6 +62,16 @@ fn manifest_crcs_are_pinned() {
             ),
             None => eprintln!("{}: its CC0 original is absent, skipped", s.name.as_str()),
         }
+    }
+}
+
+/// Every factory source's descriptor reads back to its own bytes.
+#[test]
+fn factory_descriptors_round_trip() {
+    for b in set().1.iter().flatten() {
+        let h = held(b);
+        let d = Descriptor::from_bytes(&h).expect("a descriptor");
+        assert_eq!(d.to_bytes(), h[..DESC_LEN], "{:?}", b.head.sref);
     }
 }
 
@@ -201,9 +212,9 @@ fn factory_sounds_sit_at_the_median() {
             ((b.head.root + 50) / 100) as u8
         };
         let secs = b.head.sref.frames as f32 / f32::from(b.head.sref.rate);
-        let blocks = match (s.model, t.slice.code()) {
-            (TapeModel::Oneshot, 1) => (secs / 16.0 * BPS as f32) as usize,
-            (TapeModel::Oneshot, _) => ((secs * BPS as f32) as usize).min(BPS),
+        let blocks = match (t.way(), t.slice.code()) {
+            (Way::One, 1) => (secs / 16.0 * BPS as f32) as usize,
+            (Way::One, _) => ((secs * BPS as f32) as usize).min(BPS),
             _ => BPS,
         };
         let d = rig.lufs(note, blocks.max(1)) - median;
@@ -272,7 +283,7 @@ fn scrub_take_that_turns_is_click_free() {
     use chimera_core::dsp::tape_engine::machine::defaults;
     use chimera_core::dsp::tape_engine::{StretchType, TapeEngineParams as P};
     use chimera_desktop::factory_tapes::pitch;
-    use chimera_desktop::listen::{CLICK_RATIO, Script, Way, qa, render, root_note, script};
+    use chimera_desktop::listen::{CLICK_RATIO, Script, Way, qa, render, root_note};
     static RAMP: [(f32, chimera_core::block::ParamId, f32); 2] =
         [(0.0, P::MOTION, 0.6), (3.0, P::MOTION, -0.6)];
     let (r, built) = set();
@@ -286,15 +297,18 @@ fn scrub_take_that_turns_is_click_free() {
             .unwrap();
         let (h, p) = (held(b), pitch(&b.head));
         let straight = render(
-            Way::Plain.base(TapeModel::Oneshot, StretchType::Mono),
+            Way::One.base(TapeModel::Walk, StretchType::Mono),
             &h,
             p,
             root_note(p),
-            &script(TapeModel::Oneshot),
+            &Way::One.script(TapeModel::Walk),
         );
         let own = qa(&straight[..straight.len().min(48_000 * 5 / 2)]).click_ratio;
         let mut base = Way::Plain.base(TapeModel::Scrub, StretchType::Mono);
-        for (id, v) in defaults(TapeModel::Scrub) {
+        for (id, v) in defaults(
+            chimera_core::dsp::tape_engine::TapeMachine::Scrub,
+            chimera_core::dsp::tape_engine::Direction::Loop,
+        ) {
             base.write(id, v);
         }
         let y = render(base, &h, p, 60, &Script(&RAMP, &[1.5], &[]));
@@ -304,6 +318,53 @@ fn scrub_take_that_turns_is_click_free() {
             "{name}: click {:.1}x at {:.3} s (straight {own:.2}x)",
             q.click_ratio,
             q.click_at as f32 / 48_000.0
+        );
+    }
+}
+
+#[path = "../../chimera-core/tests/common/codec_util.rs"]
+mod codec_util;
+
+/// Every factory TAPE Sound loads and saves to its file's bytes (ADR
+/// 0189), and those bytes are pinned. An absent CC0 original's Sounds
+/// stand on another source, and the pin waits for the whole set.
+#[test]
+fn factory_sounds_save_as_loaded() {
+    use chimera_core::storage::Crc32;
+    use codec_util::{decode, encode};
+    let (r, built) = set();
+    let stand_in = &built.iter().flatten().next().unwrap().head;
+    let mut all = Crc32::new();
+    for s in &r.sounds {
+        let head = r
+            .sources
+            .iter()
+            .zip(built)
+            .find(|(x, _)| x.name == s.source)
+            .and_then(|(_, b)| b.as_ref())
+            .map_or(stand_in, |b| &b.head);
+        let file = encode(&tape_sound(s, head));
+        let got = decode(&file).unwrap();
+        assert_eq!(encode(&got), file, "{}", s.name.as_str());
+        // Not the file's own CRC trailer: a CRC run over a message and
+        // its CRC is a constant of the length, blind to the content.
+        all.update(&file[..file.len() - 4]);
+    }
+    if built.iter().all(Option::is_some) {
+        // ADR 0205: SAW SCRUB and RAIN SCRUB take SCRUB's new defaults
+        // (LENGTH 70 ms, KEY POSITION) and their re-trims. ADR 0203: MODE
+        // ONE's Sounds save FORWARD (3) and LENGTH 1, TRON BOWED WALK with
+        // TRON on; each renders as before (`tape_legacy_test`). ADR 0204: the
+        // STRETCH Sounds turn to GRAIN, with ONE's ENV 1, re-trimmed.
+        // Re-pinned on the integration's merged tree. #761's review (M3):
+        // KIT saves no SLICE (on hold) and is re-trimmed as a whole strip.
+        assert_eq!(all.finish(), 0x5BB4_24E2, "{} Sounds", r.sounds.len());
+    } else {
+        let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
+        let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();
+        eprintln!(
+            "CRC pin skipped, CC0 originals absent: {}",
+            names.join(", ")
         );
     }
 }

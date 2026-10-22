@@ -2,12 +2,14 @@
 
 import importlib.util
 import io
+import os
 import pathlib
+import subprocess
+import sys
 import unittest
 
-_spec = importlib.util.spec_from_file_location(
-    "stack_depth", pathlib.Path(__file__).resolve().parent / "stack_depth.py"
-)
+TOOL = pathlib.Path(__file__).resolve().parent / "stack_depth.py"
+_spec = importlib.util.spec_from_file_location("stack_depth", TOOL)
 sd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sd)
 
@@ -46,6 +48,9 @@ DIS = """
 
 08000700 <HardFault>:
  8000700:      \tpush\t{r7, lr}
+
+08000780 <DMA2_STR0>:
+ 8000780:      \tpush\t{r7, lr}
 
 08000800 <<chimera_core::dsp::voice::Voice>::render>:
  8000800:      \tpush\t{r4, lr}
@@ -110,9 +115,60 @@ class StackDepth(unittest.TestCase):
     def test_the_roots_sum_with_exception_frames(self):
         out = io.StringIO()
         self.assertTrue(sd.check(self.img, 64 * 1024, out))
-        want = 20 + 0x100 + 0x2000 + 4 * (8 + sd.EXC_FRAME)
+        want = 20 + 0x100 + 0x2000 + 5 * (8 + sd.EXC_FRAME)
         self.assertIn("nested     %6d B" % want, out.getvalue())
         self.assertFalse(sd.check(self.img, want + sd.MARGIN - 1, io.StringIO()))
+
+    def test_dma2_str0_counts(self):
+        # The card interrupt nests like the others: its frame and its
+        # exception frame are in the sum, and a build without it fails.
+        out = io.StringIO()
+        self.assertTrue(sd.check(self.img, 64 * 1024, out))
+        self.assertIn("DMA2_STR0  %6d B" % (8 + sd.EXC_FRAME), out.getvalue())
+        del self.img.funcs["DMA2_STR0"]
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("no DMA2_STR0", out.getvalue())
+
+    def test_a_door_call_costs_its_known_target(self):
+        # DMA2_STR0's one pointer call is the board's door entry: charged
+        # its target's depth, not every address-taken function's.
+        frame, calls, tails, _ = self.funcs["DMA2_STR0"]
+        self.funcs["DMA2_STR0"] = (frame, calls, tails, True)
+        self.funcs["<chimera_board::card_dma::IrqState>::step"] = (0x60, set(), set(), False)
+        doors = {"DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",)}
+        self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x9999, None, doors)[0], 8 + 0x60)
+        self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x9999)[0], 8 + 0x9999)
+        del self.funcs["<chimera_board::card_dma::IrqState>::step"]
+        self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x9999, None, doors)[0], 8 + 0x9999)
+
+    def test_a_door_only_entry_is_charged_at_its_callers_alone(self):
+        # The bench's entry: its caller's pointer calls cost the deeper of
+        # it and the charge; it is no address-taken function's charge.
+        frame, calls, tails, _ = self.funcs["DMA2_STR0"]
+        self.funcs["DMA2_STR0"] = (frame, calls, tails, True)
+        self.funcs["chimera_stm32::bench::enter"] = (0x500, set(), set(), False)
+        only = {"chimera_stm32::bench::enter": ("DMA2_STR0",)}
+        self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x10, None, None, only)[0], 8 + 0x500)
+        self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x9999, None, None, only)[0], 8 + 0x9999)
+        self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x10)[0], 8 + 0x10)
+
+    def test_a_door_only_entry_with_no_caller_fails(self):
+        self.funcs["chimera_stm32::bench::enter"] = (0x500, set(), set(), False)
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("enters chimera_stm32::bench::enter", out.getvalue())
+        self.funcs["chimera_board::synth"] = (0x10, set(), set(), 1)
+        self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
+
+    def test_a_door_root_with_two_pointer_calls_fails(self):
+        frame, calls, tails, _ = self.funcs["DMA2_STR0"]
+        self.funcs["DMA2_STR0"] = (frame, calls, tails, 1)
+        self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
+        self.funcs["DMA2_STR0"] = (frame, calls, tails, 2)
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("DMA2_STR0 has 2 pointer calls", out.getvalue())
 
     def test_a_missing_root_fails_but_midi_may_be_absent(self):
         del self.img.funcs["USART1"]
@@ -153,6 +209,43 @@ class StackDepth(unittest.TestCase):
         ))
         self.assertNotIn(0x08000101, img.words)
         self.assertIn(0x08000201, img.words, "a literal after the table still counts")
+
+    def cycle(self, light, heavy):
+        """main calls both of a cycle: `light` (16 B) and `heavy` (256 B),
+        heavy also a 4 KB leaf. Whichever main enters first, the worst
+        is light > heavy > leaf (#582)."""
+        f = lambda frame, *calls: (frame, frozenset(calls), frozenset(), False)
+        return {
+            "main": f(8, light, heavy),
+            light: f(16, heavy),
+            heavy: f(256, light, "leaf"),
+            "leaf": f(0x1000),
+        }
+
+    def test_a_cycle_costs_its_longest_simple_path_in_any_order(self):
+        want = 8 + 16 + 256 + 0x1000
+        for light, heavy in (("a", "b"), ("b", "a")):
+            total, chain, cut, _ = sd.depth(self.cycle(light, heavy), "main")
+            self.assertEqual(total, want, "light %s" % light)
+            self.assertEqual(chain, ["main", light, heavy, "leaf"])
+            self.assertEqual(cut, {"a", "b"}, "both entries' back edges")
+
+    def test_every_hash_seed_gives_one_answer(self):
+        # The cycles below and DIS's: a set's order changes with the seed.
+        cycle = (
+            "08000180 <ping>:\n 8000180:      \tsub\tsp, #0x10\n 8000182:      \tbl\t0x80001c0 <pong>\n\n"
+            "080001c0 <pong>:\n 80001c0:      \tsub\tsp, #0x200\n 80001c2:      \tbl\t0x8000180 <ping>\n"
+            " 80001c4:      \tbl\t0x8000300 <tail>\n\n"
+        )
+        calls = " 8000100:      \tbl\t0x8000180 <ping>\n 8000100:      \tbl\t0x80001c0 <pong>\n"
+        dis = DIS.replace("08000100 <leaf>:\n", "08000100 <leaf>:\n" + calls).replace("Contents of", cycle + "Contents of")
+        outs = set()
+        for seed in range(6):
+            env = dict(os.environ, PYTHONHASHSEED=str(seed))
+            run = subprocess.run([sys.executable, str(TOOL), "65536"], input=dis, env=env, capture_output=True, text=True)
+            outs.add((run.returncode, run.stdout))
+        self.assertEqual(len(outs), 1, "\n----\n".join(o for _, o in outs))
+        self.assertIn("%-10s %6d B  main > leaf > ping > pong > tail" % ("main", 20 + 0x100 + 8 + 0x10 + 0x200 + 0x2000), outs.pop()[1])
 
 
 if __name__ == "__main__":

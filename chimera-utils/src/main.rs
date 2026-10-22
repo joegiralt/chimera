@@ -6,11 +6,15 @@
 #![allow(clippy::disallowed_methods)]
 
 mod bank2;
+mod beds;
 mod circuit;
 mod devices;
+mod dropouts;
 mod filter_fb;
 mod generic;
 mod grain;
+mod grain_listen;
+mod interp;
 mod lpgamp;
 mod metrics;
 mod models;
@@ -46,6 +50,8 @@ usage: chimera-utils [flags] COMMAND …
                            VA NOISE on the full engine: bit hashes, the page's set
   lpg-amp render OUTDIR SOUND EVENTS
                            the VCA's gate on its listening set, raw levels
+  lpg-amp strike OUTDIR SOUND EVENTS
+                           STRIKE on a held chord and the bongo, raw levels
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
                            (an effect also on the listening set)
   bank2-seal ELF BIN BK2 --version TEXT
@@ -55,6 +61,9 @@ usage: chimera-utils [flags] COMMAND …
   door-check ELF           fail on any bank-1 relocation into bank 2
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
+  grain-listen OUTDIR      the delay's TAPE against GRAIN (ADR 0202): pluck, stab and
+                           percussion × TAPE and GRAIN settings through the full engine,
+                           raw WAVs and levels.json
   devices                  the devices and their knobs (fx-soft/fuzz/fold: p1 p2 p3 mix
                            place pre|post input, the voice FX slot beside an open filter)
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
@@ -74,6 +83,14 @@ usage: chimera-utils [flags] COMMAND …
   model-taps hall FITS [dens=…] [taps=FILE]
                            search HALL's tap fractions, the fits' knobs held
   model-fit VARIANT PROG … fit a `models` sketch (BURST v2) to programs
+  beds write DIR [--n 8] [--secs 25] [--rate 24000]
+                           bed<k>.wav: a linear chirp from 100 x 1.3^k Hz to 4x that
+  beds check OUT.CHK BED.SRC …
+                           the per-chunk CRCs of sealed sources, for `just put-beds`
+  dropouts find REC.WAV --ref BED.WAV [--channel N]
+                           gaps, repeats and skips in a recording of stream 0
+  tape-interp-ab DIR       TAPE's Hermite read against a polyphase sinc on a 24 kHz
+                           source at -12/0/+12/+24 st (#698), WAVs into DIR
   stim DIR                 the listening set as WAVs into DIR:
                            snare bass stab sine_short sine_long texture hats
 flags:
@@ -223,10 +240,14 @@ fn run() -> Result<bool, String> {
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
+        "grain-listen" => grain_listen::run(rest).map(|_| true),
         "circuit" => circuit::run(rest).map(|_| true),
         "vanoise" => vanoise::run(rest).map(|_| true),
         "lpg-amp" if rest.first().is_some_and(|c| c == "render") => {
             lpgamp::render(&rest[1..]).map(|_| true)
+        }
+        "lpg-amp" if rest.first().is_some_and(|c| c == "strike") => {
+            lpgamp::strike(&rest[1..]).map(|_| true)
         }
         "devices" => {
             for (name, d) in devices::Device::all() {
@@ -266,6 +287,16 @@ fn run() -> Result<bool, String> {
                     .collect::<Result<_, _>>()?
             };
             mv::start(&cfg, &types)
+        }
+        "beds" if rest.first().is_some_and(|c| c == "write") => {
+            beds::write(&rest[1..]).map(|_| true)
+        }
+        "beds" if rest.first().is_some_and(|c| c == "check") => {
+            beds::check(&rest[1..]).map(|_| true)
+        }
+        "dropouts" if rest.first().is_some_and(|c| c == "find") => dropouts::find(&rest[1..]),
+        "tape-interp-ab" if rest.len() == 1 => {
+            interp::write(std::path::Path::new(&rest[0])).map(|()| true)
         }
         "stim" if rest.len() == 1 => {
             stim::write_listening(std::path::Path::new(&rest[0])).map(|ps| {

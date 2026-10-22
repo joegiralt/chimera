@@ -52,12 +52,7 @@ fn source(seed: u8, frames: u32) -> (SourceHead, Vec<u8>) {
 }
 
 fn held(head: &SourceHead, data: &[u8]) -> Vec<u8> {
-    let d = Descriptor {
-        shape: head.shape,
-        count: head.count,
-        rate: head.sref.rate,
-        head_frames: 0,
-    };
+    let d = Descriptor::whole(head.shape, head.count, head.sref.rate).expect("a descriptor");
     let mut v = d.to_bytes().to_vec();
     v.extend_from_slice(data);
     v
@@ -426,4 +421,72 @@ fn same_audio_new_root_is_present() {
     let mut files = Vec::new();
     s.list(vol, Dir::Tapes, &mut |f, _| files.push(f)).unwrap();
     assert_eq!(files, vec![source_file(h.sref)]);
+}
+
+/// A stem with a stream registry row is neither deleted nor replaced: the
+/// store refuses with `Streaming` and writes nothing, until the row clears.
+#[test]
+fn a_streamed_stem_is_not_deleted() {
+    use chimera_core::project::SourceId;
+    use chimera_core::storage::{SourceLayout, data_offset, source_name};
+    use chimera_core::stream::layout::StreamFile;
+    use chimera_core::stream::registry::StreamRegistry;
+    use chimera_hal::store::{FileRuns, Runs};
+    use chimera_hal::units::{BlockCount, Bytes, Lba};
+    static REG: StreamRegistry = StreamRegistry::new();
+
+    let (h, _) = source(9, FRAMES);
+    let l = SourceLayout::whole(h).unwrap();
+    let data = l.data_len() as u32;
+    let len = data_offset(&l).get() + data + 4 * data.div_ceil(504);
+    let mut runs = Runs::new();
+    runs.push(Lba::new(1_000), BlockCount::new(len.div_ceil(512)).unwrap());
+    let runs = FileRuns {
+        ext: runs.finish().unwrap(),
+        len: Bytes::new(len),
+        seal: chimera_hal::store::Seal::Sealed,
+    };
+    let file = source_name(h.sref.stem());
+    let other = source_name(chimera_core::storage::Stem::new(h.sref.crc ^ 1));
+    let disk = Rc::new(with_clusters(CLUSTERS, 0x57E));
+    let mut s = probed(&disk);
+    s.guard_streamed(|f| REG.streams(f));
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.make_dir(vol, Dir::Tapes).unwrap();
+    for f in [file, other] {
+        s.write(vol, f, &mut |w| w.put(b"unsealed")).unwrap();
+    }
+    let id = SourceId::new(4).unwrap();
+    REG.insert(id, StreamFile::from_layout(&l, runs).unwrap())
+        .unwrap();
+    let wrote = log(&s).writes.borrow().len();
+    assert_eq!(s.delete(vol, file), Err(StoreError::Streaming));
+    let raw = s.write(vol, file, &mut |w| w.put(b"over"));
+    assert_eq!(raw, Err(StoreError::Streaming));
+    assert_eq!(log(&s).writes.borrow().len(), wrote, "nothing written");
+    assert_eq!(s.delete(vol, other), Ok(()), "another stem deletes");
+    // SAFETY: nothing reads `REG` but this test.
+    assert!(unsafe { REG.clear(id) });
+    assert_eq!(s.delete(vol, file), Ok(()));
+}
+
+/// m10 (#761): `runs` says whether the file is sealed, so a stream can
+/// refuse one never read back against its CRC.
+#[test]
+fn runs_say_whether_the_file_is_sealed() {
+    use chimera_core::storage::source_name;
+    use chimera_hal::store::Seal;
+    let (h, _) = source(10, FRAMES);
+    let file = source_name(h.sref.stem());
+    let disk = Rc::new(with_clusters(CLUSTERS, 0x57E));
+    let mut s = probed(&disk);
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.make_dir(vol, Dir::Tapes).unwrap();
+    s.write(vol, file, &mut |w| w.put(&[7; 3_000])).unwrap();
+    let seal = |s: &mut _| Store::runs(s, vol, file).unwrap().seal;
+    assert_eq!(seal(&mut s), Seal::Open);
+    s.seal(vol, file).unwrap();
+    assert_eq!(seal(&mut s), Seal::Sealed);
 }

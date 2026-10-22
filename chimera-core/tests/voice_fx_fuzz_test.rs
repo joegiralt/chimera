@@ -154,6 +154,7 @@ fn into_the_filter(p: &ParamSnapshot, note: u8, blocks: usize) -> Vec<f32> {
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
+            streams: None,
         };
         if b == 0 {
             let (n, v) = (MidiNote::new(note).unwrap(), Velocity::new(VEL).unwrap());

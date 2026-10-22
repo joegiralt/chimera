@@ -236,6 +236,54 @@ class Tool(unittest.TestCase):
             r = run_tool(["card"], u.target)
         self.assertEqual((r.returncode, r.stdout), (0, b"streams 12\n"))
 
+    def test_card_wait_polls_until_result(self):
+        replies = {
+            b"card dma sustain 8\n": [b"OK started sustain 8\n"],
+            b"card dma report\n": [b"running 10\nOK\n", b"running 90\nOK\n", b"n 3\nempties 0\nOK\n"],
+        }
+
+        asked = []
+
+        class Script:
+            def __contains__(self, line):
+                return bool(replies.get(line))
+
+            def __getitem__(self, line):
+                asked.append(line)
+                return replies[line][0]
+
+        with FakeUnit(Script(), on_answer=lambda: replies[asked[-1]].pop(0)) as u:
+            r = run_tool(["card-wait", "sustain", "8"], u.target, env={"CHIMERA_POLL_S": "0"})
+        self.assertEqual((r.returncode, r.stdout), (0, b"n 3\nempties 0\n"), r.stderr)
+        self.assertEqual(u.requests, [b"card dma sustain 8\n"] + [b"card dma report\n"] * 3)
+        self.assertIn(b"running 90", r.stderr)
+        self.assertEqual(tool.CARD_POLL_S, 10.0)
+
+    def test_card_wait_gives_a_slow_report_the_card_wait(self):
+        replies = {b"card dma ui 8\n": [b"OK started ui 8\n"], b"card dma report\n": [b"n 1\nOK\n"]}
+        asked = []
+
+        class Slow:
+            def __contains__(self, line):
+                return bool(replies.get(line))
+
+            def __getitem__(self, line):
+                if line == b"card dma report\n" and line not in asked:
+                    time.sleep(tool.SILENCE_S + 0.5)  # a B6 save mid-pass
+                asked.append(line)
+                return replies[line][0]
+
+        with FakeUnit(Slow(), on_answer=lambda: replies[asked[-1]].pop(0)) as u:
+            r = run_tool(["card-wait", "ui", "8"], u.target, env={"CHIMERA_POLL_S": "0"})
+        self.assertEqual((r.returncode, r.stdout), (0, b"n 1\n"), r.stderr)
+
+    def test_card_wait_stops_at_a_refused_start(self):
+        with FakeUnit({b"card dma burst\n": b"ERR beds\n"}) as u:
+            r = run_tool(["card-wait", "burst"], u.target, env={"CHIMERA_POLL_S": "0"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"ERR beds", r.stderr)
+        self.assertEqual(u.requests, [b"card dma burst\n"])
+
     def test_shot_writes_a_png_of_the_pixels(self):
         px = bytes(range(256)) * 600  # 153 600 bytes
         with FakeUnit({b"shot\n": b"SHOT 240 320 rgb565be 153600\n" + px + b"OK\n"}) as u, tempfile.TemporaryDirectory() as d:
@@ -399,8 +447,8 @@ class Tool(unittest.TestCase):
         self.assertEqual(tool.CONSOLE_ID, (0x0483, 0x5740))
         self.assertEqual(tool.ROM_DFU_ID, (0x0483, 0xDF11))
         just = (ROOT / "Justfile").read_text()
-        # `flash` goes through `update` (its DFU is the tool's).
-        for recipe in ("flash-bench area", "flash-fault:"):
+        # `flash` and `flash-fault` go through `update` (its DFU is the tool's).
+        for recipe in ("flash-bench area",):
             body = just.split("\n" + recipe, 1)[1].split("\n\n", 1)[0]
             self.assertLess(body.index("to-dfu"), body.index("dfu-util"), recipe)
             self.assertIn("-s 0x8020000:leave", body, recipe)
@@ -408,13 +456,13 @@ class Tool(unittest.TestCase):
             self.assertIn('"$rc" -eq 74', body, recipe)
             self.assertIn("File downloaded successfully", body, recipe)
         fault = just.split("\nflash-fault:", 1)[1].split("\n\n", 1)[0]
-        self.assertIn("wait-console 10", fault)
+        self.assertIn("chimera-usb.py update target/chimera-fault.bin target/chimera-fault.bk2", fault)
 
     def test_the_justfile_never_touches_the_option_bytes(self):
         just = (ROOT / "Justfile").read_text()
         self.assertEqual(re.findall(r"-a\s*1\b|--alt[ =]1\b", just), [])
         alts = re.findall(r"^\s+(?:rc=0 && )?dfu-util (\S+)", just, re.M)
-        self.assertGreaterEqual(len(alts), 4)
+        self.assertGreaterEqual(len(alts), 3)
         self.assertEqual(set(alts), {"-a0"})
 
     def test_backup_bootloader_refuses_to_overwrite(self):
@@ -643,6 +691,25 @@ class Put(unittest.TestCase):
         self.assertEqual(len(u.ends), 3)
         self.assertEqual(r.stdout, b"/CHIMERA/TAPES/0BADF00D.SRC 600000\n")
         self.assertIn(b"100% 600000 of 600000 bytes", r.stderr)
+
+    def test_put_beds_path(self):
+        data = bytes((i * 11) % 251 for i in range(5_000))
+        f = self.local("BEDS.CHK", data)
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/BENCH/"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.data, data)
+        self.assertEqual(u.requests[0], b"put /CHIMERA/BENCH/BEDS.CHK 5000 %08x" % zlib.crc32(data))
+        self.assertEqual(u.ends, [], "a whole file, not chunks")
+        self.assertEqual(r.stdout, b"/CHIMERA/BENCH/BEDS.CHK 5000\n")
+
+    def test_a_beds_table_over_9_kib_is_refused_before_sending(self):
+        f = self.local("BEDS.CHK", bytes(9 * 1024 + 1))
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/BENCH/BEDS.CHK"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"put takes at most 9216", r.stderr)
+        self.assertEqual(u.requests, [])
 
     def test_a_project_never_takes_the_source_protocol(self):
         data = bytes(300_000)

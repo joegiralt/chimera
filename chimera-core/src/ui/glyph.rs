@@ -7,7 +7,7 @@ use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::ChorusMode;
 use crate::dsp::clampf;
-use crate::dsp::rev::sync::{FoldState, Tempo};
+use crate::dsp::rev::sync::{FoldState, Tempo, index_of};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 use crate::dsp::va::combine::{Crusher, Peaks, am_gain, combine, ring_gain};
 use crate::dsp::va::lbfm::{lbfm, target_b0};
@@ -16,9 +16,11 @@ use crate::dsp::va::{VaMode, fm_index, phase_depth};
 use crate::ui::theme;
 
 pub use chimera_engine::glyph::{
-    BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS, VA_MIX_PARAMS,
-    VaGlyph, VaOsc,
+    BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS,
+    TAPE_GLYPH_PARAMS, VA_MIX_PARAMS, VaGlyph, VaOsc,
 };
+
+use crate::ui::tape_glyph::TapeGauge;
 
 /// What the focus band draws, with its inputs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,6 +57,8 @@ pub enum Gauge {
     /// A crossfader at the set AMOUNT, its ends named by MODE
     /// (`blend_ends`).
     Blend { value: f32, mode: VaMode },
+    /// TAPE's machine glyph (`tape_glyph`): still on MODEL.
+    Tape(TapeGauge),
     /// The LFO page's glyph (`lfo_glyph`), kept dimmed too.
     Lfo(crate::ui::lfo_glyph::LfoGauge),
     /// STABILITY's spirit level: the bubble `offset` px right of centre
@@ -71,6 +75,8 @@ pub enum Gauge {
 pub enum Reads {
     Composite(CompositeId),
     Va(VaGlyph),
+    /// `TAPE_GLYPH_PARAMS`.
+    Tape,
     /// The focused LFO slot's params.
     Lfo,
 }
@@ -255,8 +261,7 @@ impl VaMix {
 
 /// MODE at its normalized set value.
 pub fn va_mode(v: f32) -> VaMode {
-    let last = (VaMode::ALL.len() - 1) as f32;
-    VaMode::ALL[libm::roundf(clampf(v, 0.0, 1.0) * last) as usize]
+    VaMode::ALL[index_of(v, VaMode::ALL.len())]
 }
 
 /// The operator's output over `VA_MIX_PERIODS` of OSC 1 across `N`
@@ -715,7 +720,7 @@ impl Braid {
     /// From `BRAID_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 4], focus: Option<BraidPart>, frame: u32) -> Self {
         Self {
-            mode: ChorusMode::from_u8(libm::roundf(clampf(set[0], 0.0, 1.0) * 3.0) as u8),
+            mode: ChorusMode::from_u8(index_of(set[0], 4) as u8),
             rate: clampf(set[1], 0.0, 1.0),
             depth: clampf(set[2], 0.0, 1.0),
             mix: clampf(set[3], 0.0, 1.0),
@@ -787,6 +792,7 @@ pub fn gauge(
         ) as u8)),
         FocusGlyph::Composite(id) => outside(Reads::Composite(id)),
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
+        FocusGlyph::Tape => outside(Reads::Tape),
         FocusGlyph::Lfo => outside(Reads::Lfo),
         FocusGlyph::Stability => stability(value),
         FocusGlyph::Feedback => feedback(value),
@@ -808,6 +814,7 @@ impl Gauge {
             | Gauge::VaWave(_)
             | Gauge::VaMix(_)
             | Gauge::Blend { .. }
+            | Gauge::Tape(_)
             | Gauge::Lfo(_)
             | Gauge::Stability { .. }
             | Gauge::Feedback { .. } => false,
@@ -825,6 +832,8 @@ impl Gauge {
             Gauge::VaMix(v) => (m(&v.osc[0]) ^ m(&v.osc[1]).rotate_left(11) ^ q(v.amount) << 22)
                 .wrapping_add(v.mode as u32),
             Gauge::Blend { mode, .. } => *mode as u32,
+            // Its quantised steps: it redraws when one moves a pixel.
+            Gauge::Tape(t) => t.key(),
             // Its quantised steps: it redraws when one moves.
             Gauge::Lfo(g) => g.key(),
             _ => 0,

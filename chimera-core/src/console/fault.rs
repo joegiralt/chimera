@@ -1,6 +1,8 @@
 //! `fault` (fault-inject builds): provokes a DMA transfer error on a trailing
 //! audio stream, to test its re-arm on a unit with no debug probe; `fault
-//! ndtr` dumps the three streams' registers to see what the re-arm left.
+//! ndtr` dumps the three streams' registers to see what the re-arm left;
+//! `fault card` fails the card's next transfer twice: its retry, then the
+//! read fault and the UI's recovery.
 
 use core::fmt::{self, Write};
 
@@ -11,14 +13,17 @@ use super::{Arg, Words};
 pub enum FaultArg {
     Dma(u8),
     Ndtr,
+    Card,
 }
 
 impl Arg for FaultArg {
-    const USAGE: &'static str = "dma 1, dma 2 or ndtr";
+    const USAGE: &'static str = "dma 1, dma 2, ndtr or card";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let first = words.next()?;
-        if first.eq_ignore_ascii_case(b"ndtr") {
-            return words.next().is_none().then_some(FaultArg::Ndtr);
+        for (w, arg) in [(&b"ndtr"[..], FaultArg::Ndtr), (b"card", FaultArg::Card)] {
+            if first.eq_ignore_ascii_case(w) {
+                return words.next().is_none().then_some(arg);
+            }
         }
         if !first.eq_ignore_ascii_case(b"dma") {
             return None;

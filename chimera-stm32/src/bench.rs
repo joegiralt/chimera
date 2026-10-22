@@ -44,7 +44,9 @@ use chimera_engine::dsp::rev::extra_cost;
 use chimera_engine::dsp::rev::sync::Tempo;
 use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
-use chimera_engine::dsp::tape_engine::{StretchType, TapeModel, wave};
+use chimera_engine::dsp::tape_engine::{
+    Direction, StretchType, TapeMachine, TapeModel, Tron, wave,
+};
 use chimera_engine::dsp::va::VaMode;
 use chimera_engine::dsp::voice::Voice;
 use chimera_engine::dsp::voice_fx::params::FxType;
@@ -55,7 +57,7 @@ use chimera_engine::hw::{
     BLOCK_SIZE, BlockBudget, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
 };
 use chimera_engine::instrument::{
-    AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
+    AudioShared, DacBlocks, Instrument, MixState, NoteOrigin, PartAudio, mix_parts,
 };
 use chimera_engine::modulation::{CUTOFF, FixedCol, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_engine::note_queue::{NoteEvent, NoteKind};
@@ -69,9 +71,13 @@ use chimera_engine::preset::{Performance, Sound};
 use chimera_engine::project::{NEW_PARTS, Project, SlotId, SourceId, SourceRef, project_crc};
 use chimera_engine::scope::{ScopeFrame, ScopeWriter, scope_buffer};
 use chimera_engine::source_table::{AudioToken, GateView};
+use chimera_engine::stream::port::{StreamCard, Streams};
+use chimera_engine::stream::ring::{AudioSide, CardSide};
+use chimera_engine::stream::stats::StreamStats;
+use chimera_engine::stream::units::{AudioBlocks, Frames, SlotIdx, SourceRate};
 use chimera_engine::sym_alloc::SymAlloc;
 use chimera_engine::taps::TapOp;
-use chimera_engine::triple::TripleBuffer;
+use chimera_engine::triple::{TripleBuffer, Writer};
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_engine::{MidiChannel, MidiNote, Velocity};
 use chimera_engine::{
@@ -80,6 +86,7 @@ use chimera_engine::{
     project::Loads,
     tracked::Tracked,
 };
+use chimera_hal::card_bus::CardBus;
 use cortex_m::peripheral::DWT;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
@@ -100,8 +107,55 @@ type Text = Report<BENCH_TEXT_LEN>;
 static mut REPORT: MaybeUninit<Text> = MaybeUninit::uninit();
 static REPORT_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// The bench in bank 2 (ADR 0194), at `BENCH_DOOR_ADDR`: all of this
+/// module is (`bank2.x`'s `bench` glob), so bank 1 enters it only here.
+#[repr(C)]
+pub struct BenchDoor {
+    magic: u32,
+    pub(crate) enter: Enter,
+}
+
+/// `BenchDoor::enter`: `run` on the report, and its text.
+pub type Enter = fn(
+    &mut Display,
+    Clocks,
+    &mut Project,
+    &mut AudioToken,
+    chimera_board::BenchRings<'_>,
+) -> &'static str;
+
+/// `BenchDoor::magic`.
+pub const BENCH_MAGIC: u32 = u32::from_le_bytes(*b"B2BN");
+
+impl BenchDoor {
+    #[inline(always)]
+    pub fn magic(&self) -> u32 {
+        self.magic
+    }
+}
+
+#[unsafe(link_section = ".bank2.door.bench")]
+#[used]
+static BENCH_DOOR: BenchDoor = BenchDoor {
+    magic: BENCH_MAGIC,
+    enter,
+};
+
+fn enter(
+    display: &mut Display,
+    clk: Clocks,
+    project: &mut Project,
+    sources: &mut AudioToken,
+    rings: chimera_board::BenchRings<'_>,
+) -> &'static str {
+    let report = take_report().expect("bench report taken once");
+    run(display, clk, (project, sources), rings, report);
+    let report: &'static Text = report;
+    report.as_str()
+}
+
 /// The report, once: `run` writes it, the console reads it from then on.
-pub fn take_report() -> Option<&'static mut Text> {
+fn take_report() -> Option<&'static mut Text> {
     if REPORT_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
@@ -150,7 +204,8 @@ fn snapshot(e: EngineType) -> ParamSnapshot {
     ParamSnapshot::for_engine(e)
 }
 
-const PATCHES: [Row; ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static PATCHES: [Row; ROWS] = [
     ("MODAL", || snapshot(EngineType::Modal), 48, 5),
     ("FLOOR", || algo(AlgoId::A1, 0, 0), 36, 12),
     ("1 OP", || algo(AlgoId::A1, 0b1, 0), 36, 12),
@@ -169,7 +224,8 @@ const PATCHES: [Row; ROWS] = [
 /// SYNC's and SOFT SYNC's slave a fifth up, FM's and PHASE's modulator at
 /// unison, LOOPFM's WAVE at its default (2/3). A new MODE appends its row.
 const VA_ROWS: usize = 11;
-const VA: [Row; VA_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static VA: [Row; VA_ROWS] = [
     ("MIX", || va(VaMode::Mix), 36, 12),
     ("SYNC", || va(VaMode::Sync), 36, 12),
     ("RING", || va(VaMode::Ring), 36, 12),
@@ -206,7 +262,8 @@ fn ladder_op() -> ParamSnapshot {
 /// The FORMANT screen's rows (ADR 0131): each term's case at 1..8 voices,
 /// notes C2 up in tenths (to A♯7: the terms cover grain clocks to C8).
 const FORMANT_ROWS: usize = 6;
-const FORMANT: [RoutingRow; FORMANT_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static FORMANT: [RoutingRow; FORMANT_ROWS] = [
     // One FRMT on A1, BW 0: the spans at SKIRT 0 and at SKIRT 3.
     ("FRMT0", |p| *p.params = frmt(0), STILL),
     ("FRMT3", |p| *p.params = frmt(3), STILL),
@@ -274,7 +331,8 @@ fn choir(_: &mut PartAudio) {}
 /// 0031's readings (MIX 148, DELAY 183, before the limiter and MECHANICS),
 /// MIX − 148 is the limiter and DELAY − 183 is MECHANICS.
 type FxRow = (&'static str, fn(&mut AudioShared, u32));
-const FX: [FxRow; FX_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static FX: [FxRow; FX_ROWS] = [
     ("MIX", |_, _| {}),
     ("CHORUS", |s, _| worst_chorus(s)),
     ("DELAY", |s, _| worst_delay(s)),
@@ -287,7 +345,8 @@ const FX: [FxRow; FX_ROWS] = [
 
 /// The REVERB screen's rows, each timed as an FX row is, less MIX.
 const REV_ROWS: usize = 7;
-const REV: [FxRow; REV_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static REV: [FxRow; REV_ROWS] = [
     ("REV QUAD", worst_reverb),
     ("REV QUAD S", smear_reverb),
     ("REV GATE", |s, b| worst_burst(s, b, ReverbType::Gate)),
@@ -393,7 +452,8 @@ const ROUTING_PAGE: usize = 10;
 type RoutingRow = (&'static str, fn(&mut PartAudio), Each);
 type Each = fn(&mut PartAudio, u32);
 const STILL: Each = |_, _| {};
-const ROUTING: [RoutingRow; ROUTING_ROWS] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("1 OP", |p| *p.params = algo(AlgoId::A1, 0b1, 0), STILL),
     ("MODS", mods, STILL),
     // Each filter type steady, and CLEAN's moving path: SVF − 1 OP is
@@ -835,10 +895,11 @@ fn mods(p: &mut PartAudio) {
     ]);
 }
 
-// SAFETY: ".ram_d2" is NOLOAD, so this holds garbage at boot; sound
-// because it is `MaybeUninit` and `run` writes it before any read. In D2,
-// cacheable, out of AXI's margin: the bench's scope is never timed.
-#[unsafe(link_section = ".ram_d2")]
+// SAFETY: ".uninit" is NOLOAD, so this holds garbage at boot; sound
+// because it is `MaybeUninit` and `run` writes it before any read. In AXI,
+// above the bench's margin (D2 is full beside ALGO's kernel rows): the
+// bench's scope is never timed.
+#[unsafe(link_section = ".uninit.bench_scope")]
 static mut SCOPE: MaybeUninit<TripleBuffer<ScopeFrame>> = MaybeUninit::uninit();
 // SAFETY: ".ram_d2.voices" is NOLOAD, so this holds garbage at boot; sound
 // because it is `MaybeUninit` and `time_rebuild` builds it in place before
@@ -878,8 +939,24 @@ struct Rig<'p> {
     fx_slot: &'static mut MaybeUninit<FxBus>,
     shared_slot: &'static mut MaybeUninit<AudioShared>,
     perf: &'p Performance,
-    scope: ScopeWriter,
-    dac: DacBlocks,
+    scope: &'static mut ScopeWriter,
+    dac: &'static mut DacBlocks,
+}
+
+// The rig's scope writer and DAC blocks: in AXI, as the engine keeps its
+// own, not 3.5 KB on the bench's frames under `main`. Zeroed `.bss`;
+// `rig_io` builds them before any read.
+static mut RIG_IO: MaybeUninit<(ScopeWriter, DacBlocks)> = MaybeUninit::uninit();
+
+/// `RIG_IO` built in place: out of line, so no temporary of it is ever on
+/// the deep path's frames.
+#[inline(never)]
+fn rig_io(w: Writer<ScopeFrame>) -> (&'static mut ScopeWriter, &'static mut DacBlocks) {
+    // SAFETY: the bench is the only user of `RIG_IO` (see `run`), which
+    // calls this once, and `write` builds it whole before any read.
+    let io = unsafe { &mut *addr_of_mut!(RIG_IO) };
+    let (scope, dac) = io.write((ScopeWriter::new(w), DacBlocks::new()));
+    (scope, dac)
 }
 
 // Not inlined, so its frame never adds to `main`'s.
@@ -888,6 +965,7 @@ pub fn run(
     display: &mut Display,
     clocks: Clocks,
     (project, sources): (&mut Project, &mut AudioToken),
+    rings: chimera_board::BenchRings<'_>,
     report: &mut Text,
 ) {
     #[cfg(feature = "bench-memory")]
@@ -905,23 +983,30 @@ pub fn run(
         let (w, _unread) = (&mut *addr_of_mut!(SCOPE)).write(scope_buffer()).split();
         (i, f, chimera_board::shared::bench_audio(), w)
     };
-    #[cfg_attr(not(feature = "bench-tape"), allow(unused_mut))]
-    let mut scope = ScopeWriter::new(scope_w);
+    let (scope, dac) = rig_io(scope_w);
     #[cfg(feature = "bench-tape")]
     {
         tape_page(
             (&mut *inst_slot, &mut *fx_slot, &mut *shared_slot),
-            (&mut scope, sources),
+            (&mut *scope, sources),
             project,
+            rec,
+        );
+        hold(clocks);
+        stream_page(
+            (&mut *inst_slot, &mut *fx_slot, &mut *shared_slot),
+            (&mut *scope, sources),
+            project,
+            rings,
             rec,
         );
         hold(clocks);
     }
     #[cfg(not(feature = "bench-tape"))]
-    let _ = sources;
+    let _ = (sources, rings);
     algo_pages(
         clocks,
-        (inst_slot, fx_slot, shared_slot, scope),
+        (inst_slot, fx_slot, shared_slot, scope, dac),
         project,
         rec,
         proj_crc,
@@ -962,11 +1047,12 @@ fn title(rec: &mut Recorder<'_>, clocks: Clocks) {
 #[inline(never)]
 fn algo_pages(
     clocks: Clocks,
-    (inst_slot, fx_slot, shared_slot, scope): (
+    (inst_slot, fx_slot, shared_slot, scope, dac): (
         &'static mut MaybeUninit<Instrument>,
         &'static mut MaybeUninit<FxBus>,
         &'static mut MaybeUninit<AudioShared>,
-        ScopeWriter,
+        &'static mut ScopeWriter,
+        &'static mut DacBlocks,
     ),
     project: &Project,
     rec: &mut Recorder<'_>,
@@ -979,7 +1065,7 @@ fn algo_pages(
         shared_slot,
         perf: project.perf(),
         scope,
-        dac: DacBlocks::new(),
+        dac,
     };
     #[cfg(feature = "bench-algo")]
     {
@@ -1109,13 +1195,14 @@ const HOLD: fn(&mut ParamSnapshot, u32) -> Hit = |_, _| Hit::Hold;
 
 /// TINY's cases, each in its own model's bill: SIZE 0 on the fewest
 /// frames, then each in its shortest legal loop at XFADE ½.
-const TAPE_ROWS: [TapeRow; 13] = [
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static TAPE_ROWS: [TapeRow; 13] = [
     ("LOOP", Tapes::Long, |p| p.tape.xfade = 0.5, HOLD),
     (
         "STRETCH",
         Tapes::Long,
         |p| {
-            (p.tape.model, p.tape.size) = (TapeModel::Stretch, 0.0);
+            (p.tape.machine, p.tape.size) = (TapeMachine::Stretch, 0.0);
             (p.tape.kind, p.tape.period) = (StretchType::Mono, 109.0);
         },
         HOLD,
@@ -1126,7 +1213,7 @@ const TAPE_ROWS: [TapeRow; 13] = [
         "WAVE C7",
         Tapes::Wave,
         |p| {
-            p.tape.model = TapeModel::Transwave;
+            p.tape.machine = TapeMachine::Wave;
             p.pitch.steal = Steal::Glide;
         },
         |p, b| {
@@ -1134,12 +1221,17 @@ const TAPE_ROWS: [TapeRow; 13] = [
             Hit::Hold
         },
     ),
-    ("LOOP 64", Tapes::Least, |p| tiny(p, TapeModel::Loop), HOLD),
+    (
+        "LOOP 64",
+        Tapes::Least,
+        |p| tiny(p, TapeModel::Walk, Direction::Loop),
+        HOLD,
+    ),
     (
         "REV 64",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Loop);
+            tiny(p, TapeModel::Walk, Direction::Loop);
             (p.tape.start, p.tape.end) = (1.0, 0.0);
         },
         HOLD,
@@ -1147,21 +1239,26 @@ const TAPE_ROWS: [TapeRow; 13] = [
     (
         "PING 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::PingPong),
+        |p| tiny(p, TapeModel::Walk, Direction::Ping),
         HOLD,
     ),
     (
         "SCRUB 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Scrub),
+        |p| tiny(p, TapeModel::Scrub, Direction::Loop),
         HOLD,
     ),
-    ("LOOP 256", Tapes::Short, |p| tiny(p, TapeModel::Loop), HOLD),
+    (
+        "LOOP 256",
+        Tapes::Short,
+        |p| tiny(p, TapeModel::Walk, Direction::Loop),
+        HOLD,
+    ),
     (
         "REV 256",
         Tapes::Short,
         |p| {
-            tiny(p, TapeModel::Loop);
+            tiny(p, TapeModel::Walk, Direction::Loop);
             (p.tape.start, p.tape.end) = (1.0, 0.0);
         },
         HOLD,
@@ -1169,20 +1266,22 @@ const TAPE_ROWS: [TapeRow; 13] = [
     (
         "PING 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::PingPong),
+        |p| tiny(p, TapeModel::Walk, Direction::Ping),
         square,
     ),
     (
         "SCRUB 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::Scrub),
+        |p| tiny(p, TapeModel::Scrub, Direction::Loop),
         square,
     ),
     (
         "1SHOT",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Oneshot);
+            tiny(p, TapeModel::Walk, Direction::Forward);
+            // ONE read no LENGTH: FORWARD plays the whole window.
+            p.tape.size = 1.0;
             p.tape.slice = chimera_engine::dsp::tape_engine::SliceCode::new(17);
         },
         |_, _| Hit::Again,
@@ -1190,14 +1289,18 @@ const TAPE_ROWS: [TapeRow; 13] = [
     (
         "TRON",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Tron),
+        |p| {
+            tiny(p, TapeModel::Walk, Direction::Forward);
+            p.tape.tron = Tron::On;
+        },
         |_, _| Hit::AgainOff,
     ),
 ];
 
 /// SIZE 0, XFADE ½, ROOT 0: `inc` clamped on any source.
-fn tiny(p: &mut ParamSnapshot, model: TapeModel) {
-    (p.tape.model, p.tape.size, p.tape.xfade, p.tape.root) = (model, 0.0, 0.5, 0.0);
+fn tiny(p: &mut ParamSnapshot, model: TapeModel, d: Direction) {
+    (p.tape.machine, p.tape.direction) = (TapeMachine::of(model), d);
+    (p.tape.size, p.tape.xfade, p.tape.root) = (0.0, 0.5, 0.0);
 }
 
 /// POSITION a square wave, flipping every block: the bounds jump, and
@@ -1319,12 +1422,7 @@ fn tape_sources(project: &mut Project, t: Tapes) -> Option<[SourceId; MAX_VOICES
         Tapes::Short => (Shape::Plain, 1, 1_024, 8_000),
     };
     let len = DESC_LEN + 3 * frames.div_ceil(2) as usize;
-    let desc = Descriptor {
-        shape,
-        count,
-        rate,
-        head_frames: 0,
-    };
+    let desc = Descriptor::whole(shape, count, rate)?;
     let mut ids = [None; MAX_VOICES];
     for (i, id) in ids.iter_mut().enumerate() {
         let crc = 0xBE7C_0000 | (t as u32) << 8 | i as u32;
@@ -1408,6 +1506,294 @@ fn tape_page(
             }
         }
         free_sources(project, rig.sources);
+        rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 18));
+    }
+    rec.flush();
+}
+
+/// TAPE STREAM's file: `Tapes::Long`'s frames and rate, so its RAM twin is
+/// the LOOP row's sources.
+const STREAM_FRAMES: u32 = 12_000;
+const STREAM_RATE: u16 = 24_000;
+/// ROOT C4; the eight notes C4 − 7 to 0 st, `inc` 0.33 to 0.50: with the
+/// bend's 2 st and wow, 310 KB/s billed, the most eight distinct notes
+/// admit under `STREAM_BUDGET_BPS` (316 KB/s), a semitone higher being 329
+/// KB/s. A held streamed voice that fast spans a chunk edge every 80
+/// blocks or so, never every block: HIT strikes every block instead, each
+/// a new start on its head and its ring asked again. (COST_STREAM's +100
+/// was measured at C4 − 4 to + 3, under the old 466 KB/s placeholder.)
+const STREAM_LOW: u8 = 53;
+
+/// A TAPE STREAM row: its label, the Sound over WALK with TAPE and AGE at
+/// 0.5, and what changes before each block.
+type StreamRow = (
+    &'static str,
+    fn(&mut ParamSnapshot),
+    fn(&mut ParamSnapshot, u32) -> Hit,
+);
+
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static STREAM_ROWS: [StreamRow; 2] = [
+    // The whole file looped, XFADE ½: the ring read through, each pass
+    // onto the loop head.
+    (
+        "LOOP",
+        |p| (p.tape.direction, p.tape.size, p.tape.xfade) = (Direction::Loop, 1.0, 0.5),
+        HOLD,
+    ),
+    (
+        "HIT",
+        |p| (p.tape.direction, p.tape.size) = (Direction::Forward, 1.0),
+        |_, _| Hit::Again,
+    ),
+];
+
+/// The Sound a row sets: WALK at ROOT C4, TAPE and AGE at 0.5.
+fn stream_sound(row: &StreamRow) -> ParamSnapshot {
+    let mut p = snapshot(EngineType::Tape);
+    (p.tape.tape, p.tape.age) = (0.5, 0.5);
+    (p.tape.machine, p.tape.direction, p.tape.root) = (TapeMachine::Walk, Direction::Loop, 6_000.0);
+    (row.1)(&mut p);
+    p
+}
+
+/// Eight streamed rows of a `STREAM_FRAMES` file for `p`: each its heads
+/// (`heads_for`, as a load stages them) of seeded noise; `None` if the
+/// arena can't take them.
+fn stream_sources(project: &mut Project, p: &ParamSnapshot) -> Option<[SourceId; MAX_VOICES]> {
+    use chimera_engine::dsp::tape_engine::read::{streamed_held_len, write_head_table};
+    let mut ids = [None; MAX_VOICES];
+    for (i, id) in ids.iter_mut().enumerate() {
+        let crc = 0x57E4_0000 | i as u32;
+        let r = SourceRef {
+            crc,
+            frames: STREAM_FRAMES,
+            rate: STREAM_RATE,
+        };
+        let heads = chimera_engine::stream::stage::heads_for(r, &p.tape).ok()?;
+        let rate = SourceRate::new(STREAM_RATE)?;
+        let reach = Frames::new(chimera_engine::stream::admit::head_frames(rate));
+        *id = project.source_write(r, heads.held_len(), |b| {
+            let at = write_head_table(rate, reach, heads.as_slice(), b).unwrap_or(b.len());
+            debug_assert_eq!(b.len(), streamed_held_len(heads.as_slice()));
+            noise(crc, &mut b[at..]);
+        });
+    }
+    ids.iter()
+        .all(Option::is_some)
+        .then(|| ids.map(|id| id.unwrap_or(SourceId::ALL[0])))
+}
+
+/// `b` filled with xorshift noise from `seed`.
+fn noise(seed: u32, b: &mut [u8]) {
+    let mut x = seed | 1;
+    for y in b {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        *y = x as u8;
+    }
+}
+
+/// Every Wanted slot read at once, as an on-time card: noise in, the
+/// guard, Ready. Outside the timing.
+fn serve_all(card: &mut CardSide<'_>) {
+    for v in VoiceIdx::ALL {
+        for s in SlotIdx::ALL {
+            let Some(c) = card.claim(v, s) else {
+                continue;
+            };
+            if let Some(b) = card.fill_buf(&c) {
+                noise(0xC4D0 ^ c.chunk().get(), b);
+            }
+            card.write_guard(&c);
+            card.fill_done(c);
+        }
+    }
+}
+
+/// The rings and the card's side of the voices' ports, a row's.
+struct StreamRig<'s, 'r> {
+    audio: &'s mut AudioSide<'r>,
+    card: &'s mut CardSide<'r>,
+    bus: CardBus,
+    stats: StreamStats,
+}
+
+impl StreamRig<'_, '_> {
+    /// `f` with the block's ports at block `b`: a streamed source is one
+    /// of `streamed`.
+    fn ports<R>(
+        &mut self,
+        streamed: &[SourceId],
+        b: u32,
+        f: impl FnOnce(&mut Streams<'_, '_>) -> R,
+    ) -> R {
+        let frames = crate::streamed_frames(streamed, STREAM_FRAMES);
+        let mut ports = Streams {
+            audio: self.audio,
+            card: StreamCard {
+                frames: &frames,
+                now: AudioBlocks::new(b),
+                bus: &self.bus,
+                stats: &self.stats,
+                pend: || {},
+                loud: core::cell::Cell::new(false),
+            },
+        };
+        f(&mut ports)
+    }
+}
+
+impl TapeRig<'_> {
+    /// `time_cold`'s worst block, its voices through the rings' ports: the
+    /// eight notes of `row` on `ids`, every Wanted slot served between
+    /// blocks, the D-cache cleaned and invalidated before each timed one.
+    /// Streamed when `streamed`, else `ids` are RAM sources. Ends with every
+    /// ring emptied (`drop_ring`). With the voices streaming at the end.
+    #[inline(never)]
+    fn time_streamed(
+        &mut self,
+        perf: &Performance,
+        row: &StreamRow,
+        ids: &[SourceId; MAX_VOICES],
+        (st, streamed): (&mut StreamRig<'_, '_>, bool),
+    ) -> (u32, u8) {
+        // SAFETY: as `time_cold`'s: the bench runs alone, before interrupts.
+        let mut cp = unsafe { cortex_m::Peripherals::steal() };
+        let on: &[SourceId] = if streamed { ids } else { &[] };
+        let (mut worst, mut streaming) = (0u32, 0);
+        for _ in 0..COLD_RUNS {
+            let budget = SampleBudget::for_cpu(u32::MAX);
+            let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+            let fx = FxBus::init_in_place(self.fx_slot);
+            let shared = AudioShared::init_in_place(self.shared_slot, perf);
+            let p = &mut shared.parts[0];
+            (*p.params, *p.mod_state) = (stream_sound(row), ModState::new());
+            let mut b = 0;
+            strike(self.sources, inst, shared, (st, on, b), ids);
+            for k in 0..WARM_BLOCKS + TIMED_BLOCKS {
+                if (row.2)(&mut shared.parts[0].params, k) == Hit::Again {
+                    strike(self.sources, inst, shared, (st, on, b), ids);
+                }
+                serve_all(st.card);
+                cp.SCB.clean_invalidate_dcache(&mut cp.CPUID);
+                let out = (&mut *fx, &mut self.dac, &mut *self.scope);
+                let c = st.ports(on, b, |ports| {
+                    let start = DWT::cycle_count();
+                    inst.run_block_ported(self.sources, out, shared, ports, |_, _, _| {});
+                    DWT::cycle_count().wrapping_sub(start)
+                });
+                if k >= WARM_BLOCKS {
+                    worst = worst.max(c);
+                }
+                b += 1;
+            }
+            streaming = inst.streaming().map_or(0, |n| n.get());
+            // Every voice let go and freed: each ring dropped as it frees.
+            let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+            let out = (&mut *fx, &mut self.dac, &mut *self.scope);
+            st.ports(on, b, |ports| {
+                inst.run_block_ported(self.sources, out, shared, ports, |_, _, _| {})
+            });
+        }
+        self.sources.store_sounding(0);
+        (worst / BLOCK_SIZE as u32, streaming)
+    }
+}
+
+/// Voice `v` struck at `STREAM_LOW + v` on `ids[v]`, through the ports:
+/// admitted and started as a live note is.
+fn strike(
+    sources: &mut AudioToken,
+    inst: &mut Instrument,
+    shared: &mut AudioShared,
+    (st, on, b): (&mut StreamRig<'_, '_>, &[SourceId], u32),
+    ids: &[SourceId; MAX_VOICES],
+) {
+    st.ports(on, b, |ports| {
+        let view = sources.begin_block();
+        for (v, &id) in ids.iter().enumerate() {
+            shared.parts[0].source = Some(id);
+            let ev = NoteEvent {
+                channel: MidiChannel::clamped(0),
+                note: MidiNote::new(STREAM_LOW + v as u8).unwrap_or(MidiNote::A4),
+                kind: NoteKind::On(Velocity::DEFAULT),
+            };
+            inst.handle_streamed(ev, shared, NoteOrigin::Live, &view, ports);
+        }
+    });
+}
+
+/// TAPE STREAM (slice 1 § 10.4, #596): each row's eight voices streamed
+/// less the same eight on RAM sources (the LOOP row's), cold, over 8:
+/// what streaming adds a voice, `refresh_bills` and the ports in:
+/// `COST_STREAM`'s measure. `None` rings: not lent, nothing timed.
+#[inline(never)]
+fn stream_page(
+    (inst_slot, fx_slot, shared_slot): Slots<'_>,
+    (scope, sources): (&mut ScopeWriter, &mut AudioToken),
+    project: &mut Project,
+    rings: chimera_board::BenchRings<'_>,
+    rec: &mut Recorder<'_>,
+) {
+    let rig = &mut TapeRig {
+        inst_slot,
+        fx_slot,
+        shared_slot,
+        scope,
+        dac: DacBlocks::new(),
+        sources,
+    };
+    rec.clear();
+    rec.heading("TAPE STREAM /VOICE");
+    let Some((audio, card)) = rings else {
+        rec.line(Face::Value, "NO RINGS", (4, 46));
+        rec.flush();
+        return;
+    };
+    let st = &mut StreamRig {
+        audio,
+        card,
+        bus: CardBus::new(),
+        stats: StreamStats::new(),
+    };
+    let mut line = FmtBuf::new();
+    for (i, row) in STREAM_ROWS.iter().enumerate() {
+        line.clear();
+        let p = stream_sound(row);
+        let ram = match tape_sources(project, Tapes::Long) {
+            Some(ids) => {
+                let (c, _) = rig.time_streamed(project.perf(), row, &ids, (st, false));
+                free_sources(project, rig.sources);
+                Some(c)
+            }
+            None => None,
+        };
+        let streamed = match stream_sources(project, &p) {
+            Some(ids) => {
+                let c = rig.time_streamed(project.perf(), row, &ids, (st, true));
+                free_sources(project, rig.sources);
+                Some(c)
+            }
+            None => None,
+        };
+        match (streamed, ram) {
+            (Some((s, n)), Some(r)) => {
+                let per = s.saturating_sub(r) / MAX_VOICES as u32;
+                // Within `FmtBuf`'s 32: +PER over the 8 voices' STREAMED/RAM
+                // cycles, S streams, U underruns.
+                let _ = write!(
+                    line,
+                    "{} +{per} {s}/{r} S{n} U{}",
+                    row.0,
+                    st.stats.underruns.load(Ordering::Relaxed)
+                );
+            }
+            _ => {
+                let _ = write!(line, "{} FULL", row.0);
+            }
+        }
         rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 18));
     }
     rec.flush();
@@ -1644,12 +2030,12 @@ impl Rig<'_> {
         }
         for b in 0..WARM_BLOCKS {
             each(shared, b);
-            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+            inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
         }
         let start = DWT::cycle_count();
         for b in 0..TIMED_BLOCKS {
             each(shared, WARM_BLOCKS + b);
-            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+            inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
         }
         let cycles = DWT::cycle_count().wrapping_sub(start);
         let spans = match inst.ringing() {
@@ -1690,14 +2076,14 @@ impl Rig<'_> {
                 &NO_POOL,
             );
             if first_block {
-                inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+                inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
             }
             if round > 0 {
                 cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
             }
             inst.handle_with(ev(NoteKind::Off), shared, &NO_POOL);
             for _ in 0..IDLE_BLOCKS {
-                inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+                inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
                 if idle(inst) {
                     break;
                 }
@@ -1803,7 +2189,7 @@ impl Rig<'_> {
         let written = [true; MAX_PARTS];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
         let mut pans = MixState::default();
-        let scope = &mut self.scope;
+        let scope = &mut *self.scope;
         // Its cycles: the voices' render before it is not counted.
         let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacBlocks, b: u32| {
             if let Some(inst) = inst.as_deref_mut() {
@@ -1825,12 +2211,12 @@ impl Rig<'_> {
             DWT::cycle_count().wrapping_sub(start)
         };
         for b in 0..WARM_BLOCKS + SWITCH_WARM {
-            block(shared, fx, &mut self.dac, b);
+            block(shared, fx, self.dac, b);
         }
         let mut cycles = 0u32;
         for b in 0..TIMED_BLOCKS {
             let b = WARM_BLOCKS + SWITCH_WARM + b;
-            cycles = cycles.wrapping_add(block(shared, fx, &mut self.dac, b));
+            cycles = cycles.wrapping_add(block(shared, fx, self.dac, b));
         }
         cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32)
     }
@@ -1928,7 +2314,7 @@ impl Rig<'_> {
                 ph = Phases::read(b, ran, boundary);
             }
             let k0 = knob_cycles();
-            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+            inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
             let k = knob_cycles().wrapping_sub(k0);
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
                 interleave(self.dac.out(), pair, o);
@@ -2007,13 +2393,7 @@ impl Rig<'_> {
                 ReverbType::Bloom,
             ][(b / SWITCH_EVERY) as usize % 5];
             let start = DWT::cycle_count();
-            inst.render_with(
-                fx,
-                &mut self.dac,
-                shared,
-                &mut self.scope,
-                &GateView::empty(),
-            );
+            inst.render_with(fx, self.dac, shared, self.scope, &GateView::empty());
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
                 interleave(self.dac.out(), pair, o);
             }

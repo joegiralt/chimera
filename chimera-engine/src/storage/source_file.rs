@@ -6,9 +6,12 @@
 //! one only through `put` (ADR 0106): `SourceCheck` judges it as it
 //! streams, `source_target` and `verify_and_seal` around the write.
 
-use chimera_hal::store::{Dir, FileName, Store, StoreError};
+use core::ops::ControlFlow;
 
-use super::SourceRef;
+use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError};
+use chimera_hal::units::Bytes;
+
+use super::{SourceRef, Stem};
 use crate::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN,
 };
@@ -215,7 +218,7 @@ impl SourceLayout {
 
     fn playable(&self) -> bool {
         self.head.sref.frames >= MIN_SOURCE_FRAMES
-            && Descriptor::from_bytes(&self.descriptor().to_bytes()).is_some()
+            && self.descriptor().is_some()
             && held_len(self.head.sref)
                 .and_then(|n| n.checked_add(self.layout_len()))
                 .is_some()
@@ -231,13 +234,8 @@ impl SourceLayout {
     }
 
     /// The descriptor `held` starts with: the whole source, no head.
-    fn descriptor(&self) -> Descriptor {
-        Descriptor {
-            shape: self.head.shape,
-            count: self.head.count,
-            rate: self.head.sref.rate,
-            head_frames: 0,
-        }
+    fn descriptor(&self) -> Option<Descriptor> {
+        Descriptor::whole(self.head.shape, self.head.count, self.head.sref.rate)
     }
 
     fn layout_len(&self) -> usize {
@@ -272,6 +270,16 @@ impl SourceLayout {
     fn crc_prefix(&self) -> Crc32 {
         crc_prefix(self.head.shape, self.head.count, self.zones())
     }
+}
+
+/// The first `SourceData` record's offset in the file: after the header,
+/// the head record and a zoned source's `SourceZones` record.
+pub fn data_offset(l: &SourceLayout) -> Bytes {
+    let zones = match l.zones().len() {
+        0 => 0,
+        n => RECORD_HEAD_LEN + ZONE_LEN * n,
+    };
+    Bytes::new((HEADER_LEN + RECORD_HEAD_LEN + SOURCE_HEAD_LEN + zones) as u32)
 }
 
 fn crc_prefix(shape: Shape, count: u8, zones: &[Zone]) -> Crc32 {
@@ -328,7 +336,14 @@ pub fn held_len(r: SourceRef) -> Option<usize> {
 /// zone's `start`, `frames` and `key` each (spec § 8). Returns its length,
 /// where the samples start. Panics if `out` is shorter.
 pub fn write_descriptor(l: &SourceLayout, out: &mut [u8]) -> usize {
-    out[..DESC_LEN].copy_from_slice(&l.descriptor().to_bytes());
+    // `playable` made `Descriptor::whole` of these three accept them: held
+    // whole, no heads, no reach, so the rest is zero.
+    let h = l.head();
+    debug_assert!(l.descriptor().is_some());
+    let d = &mut out[..DESC_LEN];
+    d.fill(0);
+    (d[0], d[1]) = (h.shape as u8, h.count);
+    d[2..4].copy_from_slice(&h.sref.rate.to_le_bytes());
     for (i, z) in l.zones().iter().enumerate() {
         out[DESC_LEN + i * ZONE_LAYOUT_LEN..][..ZONE_LAYOUT_LEN].copy_from_slice(&z.layout());
     }
@@ -381,11 +396,12 @@ pub fn held_len_zoned(r: SourceRef, zones: u8) -> Option<usize> {
 
 /// `/CHIMERA/TAPES/<CRC>.SRC`, the CRC in upper-case hex.
 pub fn source_file(r: SourceRef) -> FileName {
-    source_name(r.crc)
+    source_name(r.stem())
 }
 
-/// `source_file` by the stem's CRC alone, as `put` names it.
-pub fn source_name(crc: u32) -> FileName {
+/// `source_file` by the stem alone, as `put` names it.
+pub fn source_name(stem: Stem) -> FileName {
+    let crc = stem.get();
     let hex = |n: u32| b"0123456789ABCDEF"[n as usize & 0xF];
     let stem: [u8; 8] = core::array::from_fn(|i| hex(crc >> (28 - 4 * i)));
     FileName::new(Dir::Tapes, &stem, b"SRC").expect("8 hex digits is a stem")
@@ -397,22 +413,22 @@ pub const MAX_TAPES: usize = 64;
 /// `/CHIMERA/TAPES` as listed: each `.SRC` stem and size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TapeList {
-    files: [(u32, u32); MAX_TAPES],
+    files: [(Stem, u32); MAX_TAPES],
     n: u8,
 }
 
 impl TapeList {
     pub const EMPTY: TapeList = TapeList {
-        files: [(0, 0); MAX_TAPES],
+        files: [(Stem::new(0), 0); MAX_TAPES],
         n: 0,
     };
 
-    pub fn files(&self) -> &[(u32, u32)] {
+    pub fn files(&self) -> &[(Stem, u32)] {
         &self.files[..self.n as usize]
     }
 
     /// One directory read; no file is opened. No `TAPES` is an empty list.
-    pub fn list<S: Store>(s: &mut S, r: &Ready) -> Result<TapeList, StoreError> {
+    pub fn list(s: &mut dyn Store, r: &Ready) -> Result<TapeList, StoreError> {
         let mut l = TapeList::EMPTY;
         let listed = s.list(r.volume(), Dir::Tapes, &mut |f, size| {
             let stem = core::str::from_utf8(f.stem()).ok();
@@ -420,7 +436,7 @@ impl TapeList {
             if let Some(crc) = stem.and_then(|t| u32::from_str_radix(t, 16).ok())
                 && (l.n as usize) < MAX_TAPES
             {
-                l.files[l.n as usize] = (crc, size);
+                l.files[l.n as usize] = (Stem::new(crc), size);
                 l.n += 1;
             }
         });
@@ -436,14 +452,14 @@ impl TapeList {
 #[derive(Clone, Copy)]
 enum Expect {
     Ref(SourceRef),
-    Stem(u32),
+    Stem(Stem),
 }
 
 impl Expect {
     fn file(self) -> FileName {
         match self {
             Expect::Ref(r) => source_file(r),
-            Expect::Stem(crc) => source_name(crc),
+            Expect::Stem(stem) => source_name(stem),
         }
     }
 }
@@ -533,7 +549,7 @@ impl Records {
                 let h = SourceHead::from_bytes(p).ok_or(Bad::Head)?;
                 let named = match self.expect {
                     Expect::Ref(r) => h.sref == r,
-                    Expect::Stem(crc) => h.sref.crc == crc,
+                    Expect::Stem(stem) => h.sref.stem() == stem,
                 };
                 if !named {
                     return Err(Bad::Other);
@@ -705,6 +721,160 @@ pub fn read_source_into<S: Store>(
     read_source(s, r, Expect::Ref(sref), Some(out)).map(|l| l.held_len())
 }
 
+/// A whole `Plain` file of `r`'s packed bytes: where its first
+/// `SourceData` record starts, and how many sample bytes there are.
+fn plain_data(r: SourceRef) -> Option<(u32, u32)> {
+    let off = HEADER_LEN + RECORD_HEAD_LEN + SOURCE_HEAD_LEN;
+    let len = u32::try_from(held_len(r)? - DESC_LEN).ok()?;
+    Some((off as u32, len))
+}
+
+/// Takes the samples of `SourceData` records from a record's start, the
+/// first `skip` bytes of the first one dropped, into `out`: each record's
+/// tag and length checked (a full record but the last), never its
+/// samples. A streamed load trusts the seal (Review Focus 2).
+struct HeadSink<'a> {
+    out: &'a mut [u8],
+    got: usize,
+    skip: usize,
+    /// Sample bytes left in the file from the record being read.
+    left: u32,
+    head: [u8; RECORD_HEAD_LEN],
+    /// Head bytes seen of the record being read, then its samples left.
+    at_head: usize,
+    body: usize,
+    bad: bool,
+}
+
+impl ReadSink for HeadSink<'_> {
+    fn begin(&mut self, _len: u32) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn chunk(&mut self, mut bytes: &[u8]) -> ControlFlow<()> {
+        while !bytes.is_empty() && self.got < self.out.len() {
+            if self.body == 0 {
+                let n = (RECORD_HEAD_LEN - self.at_head).min(bytes.len());
+                self.head[self.at_head..][..n].copy_from_slice(&bytes[..n]);
+                (self.at_head, bytes) = (self.at_head + n, &bytes[n..]);
+                if self.at_head < RECORD_HEAD_LEN {
+                    break;
+                }
+                let tag = u16::from_le_bytes([self.head[0], self.head[1]]);
+                let len = u16::from_le_bytes([self.head[2], self.head[3]]) as usize;
+                let want = (self.left as usize).min(SOURCE_DATA_MAX);
+                if tag != RecordTag::SourceData.code() || len != want || len == 0 {
+                    self.bad = true;
+                    return ControlFlow::Break(());
+                }
+                (self.at_head, self.body) = (0, len);
+                self.left -= len as u32;
+                continue;
+            }
+            let n = self.body.min(bytes.len());
+            let drop = self.skip.min(n);
+            let take = (n - drop).min(self.out.len() - self.got);
+            self.out[self.got..][..take].copy_from_slice(&bytes[drop..drop + take]);
+            self.got += take;
+            (self.skip, self.body, bytes) = (self.skip - drop, self.body - n, &bytes[n..]);
+        }
+        if self.got == self.out.len() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+}
+
+/// `out.len()` packed bytes of whole `Plain` source `r` from packed byte
+/// `from`, read from the `SourceData` record holding it: a head, or a
+/// UI pass's share of one. Framing a record's tag and length don't match
+/// fails it (`Corrupt`), as does a file that ends first (`Truncated`).
+pub fn read_packed_into<S: Store + ?Sized>(
+    s: &mut S,
+    r: &Ready,
+    sref: SourceRef,
+    from: Bytes,
+    out: &mut [u8],
+) -> Result<(), SourceReadError> {
+    let from = from.get();
+    let bad = |e| SourceReadError::Load(LoadError::File(e));
+    let (off, len) = plain_data(sref).ok_or(bad(FileError::Bounds))?;
+    let end = (from as u64) + out.len() as u64;
+    if end > u64::from(len) {
+        return Err(bad(FileError::Bounds));
+    }
+    let k = from / SOURCE_DATA_MAX as u32;
+    let mut sink = HeadSink {
+        out,
+        got: 0,
+        skip: (from % SOURCE_DATA_MAX as u32) as usize,
+        left: len - k * SOURCE_DATA_MAX as u32,
+        head: [0; RECORD_HEAD_LEN],
+        at_head: 0,
+        body: 0,
+        bad: false,
+    };
+    let at = off + k * (RECORD_HEAD_LEN + SOURCE_DATA_MAX) as u32;
+    s.read_at(r.volume(), source_file(sref), at, &mut sink)
+        .map_err(|e| match e {
+            StoreError::NotFound => SourceReadError::Load(LoadError::Missing),
+            e => e.into(),
+        })?;
+    match (sink.bad, sink.got == sink.out.len()) {
+        (true, _) => Err(bad(FileError::Corrupt)),
+        (false, false) => Err(bad(FileError::Truncated)),
+        (false, true) => Ok(()),
+    }
+}
+
+/// Feeds a `SourceCheck` until its head came, or `left` bytes went.
+struct HeadOnly<'a> {
+    check: &'a mut SourceCheck,
+    left: u32,
+    refused: bool,
+}
+
+impl ReadSink for HeadOnly<'_> {
+    fn begin(&mut self, _len: u32) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn chunk(&mut self, bytes: &[u8]) -> ControlFlow<()> {
+        let n = bytes.len().min(self.left as usize);
+        self.refused = self.check.feed(&bytes[..n]).is_err();
+        self.left -= n as u32;
+        if self.refused || self.left == 0 || self.check.head().is_some() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+}
+
+/// The head of card file `stem`, `len` bytes long, from its first records:
+/// a streamed load's descriptor, read without the samples.
+pub fn read_source_head<S: Store + ?Sized>(
+    s: &mut S,
+    r: &Ready,
+    stem: Stem,
+    len: u32,
+) -> Result<SourceHead, SourceReadError> {
+    let bad = SourceReadError::Load(LoadError::File(FileError::Corrupt));
+    let mut check = SourceCheck::new(stem, len).map_err(|_| bad)?;
+    let mut sink = HeadOnly {
+        check: &mut check,
+        left: 4_096,
+        refused: false,
+    };
+    s.read_at(r.volume(), source_name(stem), 0, &mut sink)
+        .map_err(|e| match e {
+            StoreError::NotFound => SourceReadError::Load(LoadError::Missing),
+            e => e.into(),
+        })?;
+    check.head().ok_or(bad)
+}
+
 /// Why `put` refuses a source file (TAPE Task 18), at the record that
 /// shows it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -748,12 +918,12 @@ pub struct SourceCheck {
 }
 
 impl SourceCheck {
-    /// A file of `len` bytes, put as `<stem_crc>.SRC`. `len` is the one
+    /// A file of `len` bytes, put as `<stem>.SRC`. `len` is the one
     /// `put` announces: the framer needs it to find the trailer.
-    pub fn new(stem_crc: u32, len: u32) -> Result<SourceCheck, PutRefusal> {
+    pub fn new(stem: Stem, len: u32) -> Result<SourceCheck, PutRefusal> {
         Ok(SourceCheck {
             framer: Framer::new(len).map_err(PutRefusal::File)?,
-            rec: Records::new(Expect::Stem(stem_crc)),
+            rec: Records::new(Expect::Stem(stem)),
             fed: 0,
             len,
             refused: None,
@@ -879,7 +1049,7 @@ pub fn write_zone_set<S: Store>(
     write_layout(s, r, &l, data)
 }
 
-/// Before a source is written as `<stem_crc>.SRC`, the file already
+/// Before a source is written as `<stem>.SRC`, the file already
 /// there: `Present` if it verifies (sealed now if it wasn't: nothing to
 /// write); `Replaced` for an unsealed one that fails, the torn remains of
 /// a cut write, deleted; `New` for none. `Damaged` for a sealed file that
@@ -888,9 +1058,9 @@ pub fn write_zone_set<S: Store>(
 pub fn source_target<S: Store>(
     s: &mut S,
     r: &Ready,
-    stem_crc: u32,
+    stem: Stem,
 ) -> Result<Wrote, super::SaveError> {
-    target(s, r, Expect::Stem(stem_crc))
+    target(s, r, Expect::Stem(stem))
 }
 
 /// `source_target` for the file `e` names; `write_source` asks for its
@@ -918,17 +1088,13 @@ fn target<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<Wrote, super::Sav
     }
 }
 
-/// After a write of `<stem_crc>.SRC`: read back whole, its head naming
+/// After a write of `<stem>.SRC`: read back whole, its head naming
 /// the stem, its samples hashing to it, then sealed. Unsealed on any
 /// `Err`, so the next write replaces it.
 #[cfg(feature = "source-writer")]
-pub fn verify_and_seal<S: Store>(
-    s: &mut S,
-    r: &Ready,
-    stem_crc: u32,
-) -> Result<(), super::SaveError> {
-    verify(s, r, Expect::Stem(stem_crc))?;
-    s.seal(r.volume(), source_name(stem_crc))?;
+pub fn verify_and_seal<S: Store>(s: &mut S, r: &Ready, stem: Stem) -> Result<(), super::SaveError> {
+    verify(s, r, Expect::Stem(stem))?;
+    s.seal(r.volume(), source_name(stem))?;
     Ok(())
 }
 

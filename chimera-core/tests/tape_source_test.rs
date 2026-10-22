@@ -7,6 +7,8 @@ mod common;
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::KnobPublisher;
+use chimera_core::dsp::tape_engine::Direction;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::params::TapeModel;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
 use chimera_core::dsp::voice::Voice;
@@ -89,7 +91,7 @@ impl Rig {
     fn tape(&mut self, part: usize, model: TapeModel, source: Option<SourceId>) {
         let a = &mut self.shared.parts[part];
         *a.params = Sound::init(EngineType::Tape).params;
-        a.params.tape.model = model;
+        a.params.tape.machine = TapeMachine::of(model);
         *a.mod_state = ModState::new();
         a.source = source;
     }
@@ -156,8 +158,8 @@ fn missing_source_refused_before_allocation() {
     let gone = p.source_absent(rg).unwrap();
     let mut r = Rig::of(&p);
     for (id, model, what) in [
-        (None, TapeModel::Loop, "no source"),
-        (Some(gone), TapeModel::Loop, "an absent one"),
+        (None, TapeModel::Walk, "no source"),
+        (Some(gone), TapeModel::Walk, "an absent one"),
         (Some(a), TapeModel::Transwave, "TRANSWAVE on Plain"),
     ] {
         r.tape(0, model, id);
@@ -172,7 +174,7 @@ fn missing_source_refused_before_allocation() {
     *r.shared.parts[0].params = Sound::init(EngineType::Algo).params;
     r.shared.parts[0].source = None;
     assert!(!r.refuses(0), "ALGO");
-    r.tape(0, TapeModel::Loop, Some(a));
+    r.tape(0, TapeModel::Walk, Some(a));
     assert!(!r.refuses(0));
     r.block(&[r.on(0, 60)]);
     assert!(r.any_active(), "allocated");
@@ -187,7 +189,7 @@ fn sounding_bit_follows_the_voice() {
     let a = p.source_store(ra, &ha).unwrap();
     let b = p.source_store(rb, &hb).unwrap();
     let mut r = Rig::of(&p);
-    r.tape(0, TapeModel::Loop, Some(a));
+    r.tape(0, TapeModel::Walk, Some(a));
     r.block(&[r.on(0, 60)]);
     assert_eq!(r.table.sounding(), a.bit());
     r.block(&[]);
@@ -234,8 +236,8 @@ fn a_steal_holds_the_waiting_notes_source() {
     let target = u64::from(FxBus::COST.0 + one.0 * 3 / 2);
     let hz = target * 100 * u64::from(SR) / u64::from(AUDIO_BUDGET_PERCENT) + u64::from(SR);
     let mut r = Rig::with_budget(p.pool().table(), SampleBudget::for_cpu(hz as u32));
-    r.tape(0, TapeModel::Loop, Some(a));
-    r.tape(1, TapeModel::Loop, Some(b));
+    r.tape(0, TapeModel::Walk, Some(a));
+    r.tape(1, TapeModel::Walk, Some(b));
     r.block(&[r.on(0, 60)]);
     r.block(&[r.on(1, 64)]);
     assert_eq!(r.inst.allocator().refused(), 0, "stolen, not refused");
@@ -258,7 +260,7 @@ fn gate_holds_tape_note_on() {
         let (ra, ha) = plain(1, 100.0);
         let a = p.source_store(ra, &ha).unwrap();
         let mut r = Rig::of(&p);
-        r.tape(0, TapeModel::Loop, Some(a));
+        r.tape(0, TapeModel::Walk, Some(a));
         r.block(&[]);
         if gated {
             r.table.close_gate_for_test(a.bit());
@@ -296,7 +298,7 @@ fn retire_never_cuts_a_tape_note() {
         // C, above B, is Part 2's.
         p.edit_part(PartId::ALL[1]).sound.source = Some(rc.into());
         let mut r = Rig::of(&p);
-        r.tape(0, TapeModel::Loop, Some(a));
+        r.tape(0, TapeModel::Walk, Some(a));
         let mut out = r.block(&[r.on(0, 60)]).to_vec();
         if purge {
             // A, sounding, is retired; B goes, and C moves down under it.
@@ -332,7 +334,7 @@ fn source_switch_leaves_the_ringing_note() {
         let a = p.source_store(ra, &ha).unwrap();
         let b = p.source_store(rb, &hb).unwrap();
         let mut r = Rig::of(&p);
-        r.tape(0, TapeModel::Loop, Some(a));
+        r.tape(0, TapeModel::Walk, Some(a));
         let mut out = r.block(&[r.on(0, 60)]).to_vec();
         if switch {
             r.shared.parts[0].source = Some(b);
@@ -356,7 +358,7 @@ fn a_shorter_row_under_the_id_ends_the_note() {
     let a = SourceId::ALL[0];
     table.publish_for_test(a, 0, held.len() as u32, RATE);
     let mut r = Rig::over(table);
-    r.tape(0, TapeModel::Loop, Some(a));
+    r.tape(0, TapeModel::Walk, Some(a));
     r.block(&[r.on(0, 60)]);
     assert!(loud(&r.block(&[])));
     // 64 frames of it, under the same id.
@@ -560,7 +562,9 @@ fn a_glide_on_a_gated_note_moves_its_start() {
     use common::tape::OneSource;
     let fresh = || {
         let mut slot = core::mem::MaybeUninit::uninit();
-        *TapeEngine::init_in_place(&mut slot)
+        TapeEngine::init_in_place(&mut slot);
+        // SAFETY: `init_in_place` wrote it whole.
+        unsafe { slot.assume_init() }
     };
     let (_, held) = plain(1, 100.0);
     let p = TapeEngineParams::default();
@@ -568,33 +572,55 @@ fn a_glide_on_a_gated_note_moves_its_start() {
     let mut e = fresh();
     e.latch(src.id);
     src.close();
-    e.start(60, &p, &src.view(), SR);
+    e.start(60, &p, &src.view(), SR, None);
     assert!(e.is_active());
     e.glide_to(64, (SR, 0.01));
     src.open();
     let mut late = [0.0; BLOCK_SIZE];
-    e.play(&mut late, &p, &src.view(), SR);
+    e.play(&mut late, &p, &src.view(), SR, None);
     let mut f = fresh();
     f.latch(src.id);
     let mut now = [0.0; BLOCK_SIZE];
-    f.start(64, &p, &src.view(), SR);
-    f.play(&mut now, &p, &src.view(), SR);
+    f.start(64, &p, &src.view(), SR, None);
+    f.play(&mut now, &p, &src.view(), SR, None);
     assert!(loud(&now));
     assert_eq!(late, now);
 
     // A model that can't play it, found only once the gate opens: idle.
     let wave = TapeEngineParams {
-        model: TapeModel::Transwave,
+        machine: TapeMachine::Wave,
         ..p
     };
     let mut g = fresh();
     g.latch(src.id);
     src.close();
-    g.start(60, &wave, &src.view(), SR);
+    g.start(60, &wave, &src.view(), SR, None);
     src.open();
     let mut out = [1.0; BLOCK_SIZE];
-    g.play(&mut out, &wave, &src.view(), SR);
+    g.play(&mut out, &wave, &src.view(), SR, None);
     assert!(!g.is_active() && !loud(&out));
+}
+
+/// A HOLD note waiting at the gate already holds: a note-off before the
+/// gate opens leaves it playing to END.
+#[test]
+fn a_gated_hold_note_sustains() {
+    use chimera_core::dsp::tape_engine::{FADE_HOLD, TapeEngine, TapeEngineParams};
+    use common::tape::OneSource;
+    let (_, held) = plain(1, 100.0);
+    let p = TapeEngineParams {
+        machine: TapeMachine::Walk,
+        direction: Direction::Forward,
+        drag: FADE_HOLD,
+        ..TapeEngineParams::default()
+    };
+    let mut src = OneSource::new(&held);
+    let mut slot = core::mem::MaybeUninit::uninit();
+    let e = TapeEngine::init_in_place(&mut slot);
+    e.latch(src.id);
+    src.close();
+    e.start(60, &p, &src.view(), SR, None);
+    assert!(e.is_active() && e.sustains());
 }
 
 /// The shells' block (`Instrument::run_block`): note-ons and the render
@@ -605,7 +631,7 @@ fn the_shells_block_stores_the_voices_sources() {
     let (ra, ha) = plain(1, 100.0);
     let a = p.source_store(ra, &ha).unwrap();
     let mut r = Rig::of(&p);
-    r.tape(0, TapeModel::Loop, Some(a));
+    r.tape(0, TapeModel::Walk, Some(a));
     let on = r.on(0, 60);
     let Rig {
         inst,
@@ -647,6 +673,7 @@ fn a_dropped_queued_note_frees_its_source() {
         let view = src.view();
         let ctx = &mut EngineCtx {
             sym: &mut sym,
+            streams: None,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
@@ -665,6 +692,7 @@ fn a_dropped_queued_note_frees_its_source() {
     let view = src.view();
     let ctx = &mut EngineCtx {
         sym: &mut sym,
+        streams: None,
         src: &view,
         part: chimera_core::project::PartId::ALL[0],
         tune: 0.0,

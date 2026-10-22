@@ -105,8 +105,8 @@ pub static TAPE_SRC: BlockDef = BlockDef {
     ],
 };
 
-/// DECK, the home: MODAL's RES shape, MODEL, the four macros;
-/// POSITION and MOTION as the machine labels them.
+/// DECK, the home: MODEL, then every knob that moves the machine's glyph
+/// as the machine labels them (ADR 0178).
 pub static TAPE_DECK: BlockDef = BlockDef {
     id: 94,
     name: "Deck",
@@ -115,15 +115,16 @@ pub static TAPE_DECK: BlockDef = BlockDef {
     viz: VizType::Strip,
     params: [
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::MODEL),
-        ParamSlot::machine(MachineSlot::Position),
-        ParamSlot::machine(MachineSlot::Motion),
-        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
-        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
-        EMPTY,
+        ParamSlot::machine(MachineSlot::Deck(0)),
+        ParamSlot::machine(MachineSlot::Deck(1)),
+        ParamSlot::machine(MachineSlot::Deck(2)),
+        ParamSlot::machine(MachineSlot::Deck(3)),
+        ParamSlot::machine(MachineSlot::Deck(4)),
     ],
 };
 
-/// The model page: named and filled by the machine.
+/// The model page: named by the machine, TAPE, AGE and WOW in the same
+/// cells on every machine, then the machine's other cells (ADR 0178).
 pub static TAPE_MODEL: BlockDef = BlockDef {
     id: 95,
     name: "Machine",
@@ -131,12 +132,12 @@ pub static TAPE_MODEL: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::WOW),
         ParamSlot::machine(MachineSlot::Page(0)),
         ParamSlot::machine(MachineSlot::Page(1)),
         ParamSlot::machine(MachineSlot::Page(2)),
-        ParamSlot::machine(MachineSlot::Page(3)),
-        ParamSlot::machine(MachineSlot::Page(4)),
-        ParamSlot::machine(MachineSlot::Page(5)),
     ],
 };
 
@@ -217,13 +218,14 @@ pub static VA_NOISE: BlockDef = BlockDef {
 // ---------------------------------------------------------------------------
 
 /// PIT: the voice's PITCH and FINE, a steal's STEAL and GLIDE TIME
-/// (#254), and PITCH's SNAP (TAPE Task 12b); F is free.
+/// (#254), and PITCH's SNAP (TAPE Task 12b); F is free. The scope reads
+/// the sounding pitch in its corner (ADR 0201).
 pub static PITCH: BlockDef = BlockDef {
     id: 66,
     name: "Pitch",
     short: "PIT",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::Tuner,
     params: [
         ParamSlot::param(BlockRef::Pitch, PitchParams::PITCH),
         ParamSlot::param(BlockRef::Pitch, PitchParams::FINE),
@@ -494,18 +496,20 @@ pub static DELAY: BlockDef = BlockDef {
     short: "DLY",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
+    // TYPE · the shared five (ADR 0202): TAPE's own in DLY › CHAR,
+    // GRAIN's in DLY › GRAIN.
     params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::TYPE),
         ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
         ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
         ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
         ParamSlot::param(BlockRef::Delay, DelayParams::REV_SEND),
         ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
-        EMPTY,
     ],
 };
 
-/// DLY › CHAR: the tape character, off the delay's main page (FX diet spec
-/// § UI; an assumed default, pending the owner's word).
+/// DLY › CHAR: TAPE's character, off the delay's main page (FX diet spec
+/// § UI).
 pub static DELAY_CHAR: BlockDef = BlockDef {
     id: 56,
     name: "Delay Char",
@@ -522,7 +526,26 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
     ],
 };
 
-static DELAY_SUB_PAGES: [&BlockDef; 1] = [&DELAY_CHAR];
+/// DLY › GRAIN: GRAIN's four (ADR 0202). A table, no code, so bank 1
+/// stays frozen (ADR 0198): the page is there under TAPE too, its knobs
+/// held for GRAIN.
+pub static DELAY_GRAIN: BlockDef = BlockDef {
+    id: 111,
+    name: "Delay Grain",
+    short: "GRAIN",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
+    params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::SIZE),
+        ParamSlot::param(BlockRef::Delay, DelayParams::DENSITY),
+        ParamSlot::param(BlockRef::Delay, DelayParams::PITCH),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TEXTURE),
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DELAY_SUB_PAGES: [&BlockDef; 2] = [&DELAY_CHAR, &DELAY_GRAIN];
 
 /// Tape on DAC pair 1 (FX diet spec § Tape); only with `master-tape`
 /// (ADR 0055).

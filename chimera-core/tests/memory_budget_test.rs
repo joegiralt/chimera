@@ -71,15 +71,17 @@ fn voice_is_its_chain_plus_one_slot() {
 /// A voice, re-read on formant-ops at Task 15 (6,304 B on main at
 /// 4473f0a1): a tripwire, so a growth is seen and accounted. The played
 /// Sound's FX block adds 16 B, and DRV's and the folder's blocks leave 24 B
-/// (ADR 0155). FUZZ's state, one per place, adds 72 B (ADR 0156). The
-/// filter's STABILITY adds 40 B: the slot's chip, 36, and the played
-/// Sound's STAB (ADR 0168). FB adds 24 B: the FB signal in CLEAN, DIRTY
-/// and the four-pole slot, the last block's amount, and the played
-/// Sound's FB with its padding (ADR 0190). SEM adds 32 B: its two states,
-/// FB signal and last block's ends (28) and the played Sound's MODE knob
-/// (ADR 0192). VA NOISE adds 8 B: the played Sound's KIND and LEVEL
-/// (ADR 0197). The VCA's gate adds 72 B, its 68 B and padding (ADR 0195).
-const VOICE_SIZE_BEFORE: usize = 6_656;
+/// (ADR 0155). FUZZ's state, one per place, adds 72 B (ADR 0156), and
+/// PLAY's MODE beside it (ADR 0170) 8 B of padding. The filter's
+/// STABILITY adds 40 B: the slot's chip, 36, and the played Sound's STAB
+/// (ADR 0168). FB adds 24 B: the FB signal in CLEAN, DIRTY and the
+/// four-pole slot, the last block's amount, and the played Sound's FB with
+/// its padding (ADR 0190). SEM adds 32 B: its two states, FB signal and
+/// last block's ends (28) and the played Sound's MODE knob (ADR 0192).
+/// VA NOISE adds 8 B: the played Sound's KIND and LEVEL (ADR 0197). The
+/// VCA's gate adds 72 B, its 68 B and padding (ADR 0195). STRETCH's four
+/// params in the played Sound add 16 B (ADR 0204). Merged, 6,688 B.
+const VOICE_SIZE_BEFORE: usize = 6_688;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.
@@ -217,12 +219,34 @@ fn ui_state_rest_under_4k() {
     // MIDI map's CCs (6 Parts × 16 entries' 16 B ramp and bin), and 120 B more
     // for each entry's waiting bin, the hand's marks and each Part's room a
     // pass; 48 B bank 2's status (its version and seal, ADR 0137). 12 B the
-    // six encoders' pushes (ADR 0140). 16 B the LFO page's playhead and
-    // where it reads it (ADR 0177). The focus
+    // six encoders' pushes (ADR 0140). 32 B the SOURCE cell's re-head
+    // wait: the heads a streamed source wants, and since when; 128 B its
+    // latch of each source's heads that can't be re-staged (slice 1
+    // § 5.6). 16 B the LFO page's playhead and where it reads it (ADR
+    // 0177). 152 B PIT's tuner: each Part's last note and the corner's two
+    // lines (ADR 0201). 8 B more on the tree that merges them all
+    // (integration-1021), past the sum of each feature's line. The focus
     // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
     // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 80 + 16 + 52 + 1648 + 120 + 48 + 12 + 16,
+        rest <= 4096
+            + 512
+            + 2816
+            + 128
+            + 192
+            + 3072
+            + 80
+            + 16
+            + 52
+            + 1648
+            + 120
+            + 48
+            + 12
+            + 32
+            + 128
+            + 16
+            + 152
+            + 8,
         "UiState grew to {rest} B besides its Project"
     );
 }
@@ -296,10 +320,16 @@ const TAPE_DELAY_F32: usize = 96_344;
 const ORBIT_AXI_USED: usize = 384_264;
 
 /// ADR 0090: the i16 delay line frees half its bytes, on every build.
+/// GRAIN's grains and fades sit beside it (ADR 0202): 272 B, no line.
 #[test]
 fn delay_line_frees_48128() {
     use chimera_core::dsp::delay::TapeDelay;
-    assert_eq!(TAPE_DELAY_F32 - size_of::<TapeDelay>(), 48_128);
+    use chimera_core::dsp::delay::grain::State;
+    assert_eq!(size_of::<State>(), 272);
+    assert_eq!(
+        TAPE_DELAY_F32 + size_of::<State>() - size_of::<TapeDelay>(),
+        48_128
+    );
 }
 
 /// ADR 0087: the 160 KiB arena fits the 32 KiB margin only with the i16
@@ -320,8 +350,8 @@ fn arena_needs_the_delay() {
 }
 
 /// D2 holds the voices' Instrument, the DMA rings' reserve, the UI's knob
-/// publisher (ADR 0115) and the formant views, and keeps room: the figure
-/// ADR 0115 records.
+/// publisher (ADR 0115), the formant views and the stream rings' third
+/// slots, and keeps room: the figure ADR 0115 records.
 #[test]
 fn d2_holds_the_knob_publisher() {
     use chimera_core::dsp::knobs::KnobPublisher;
@@ -330,12 +360,22 @@ fn d2_holds_the_knob_publisher() {
         size_of::<KnobPublisher>(),
     );
     assert_eq!(knobs, hw::D2_KNOBS);
-    let used = inst + hw::D2_DMA_RESERVE + knobs + hw::D2_FORMANT;
+    let used = inst + hw::D2_DMA_RESERVE + knobs + hw::D2_FORMANT + hw::D2_THIRD_SLOTS;
     eprintln!(
-        "D2: Instrument {inst} + DMA reserve {} + knobs {knobs} + formant views {} = {used} B, {} B free",
+        "D2: Instrument {inst} + DMA reserve {} + knobs {knobs} + formant views {} + third slots {} = {used} B, {} B free",
         hw::D2_DMA_RESERVE,
         hw::D2_FORMANT,
+        hw::D2_THIRD_SLOTS,
         hw::D2_SRAM - used
     );
+    // A slot a voice: 8 x 4,038 B, and the taken flag.
+    assert_eq!(hw::D2_THIRD_SLOTS, 32_305);
     assert!(used <= hw::D2_SRAM);
+}
+
+/// Slice 1 § 10.3: every voice's ring fits SRAM4's 64 KiB.
+#[test]
+fn rings_fit_sram4() {
+    use chimera_core::stream::ring::Rings;
+    assert!(size_of::<Rings>() <= 64 * 1024, "{} B", size_of::<Rings>());
 }

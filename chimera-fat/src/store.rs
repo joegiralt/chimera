@@ -6,12 +6,15 @@ use crate::blocks::{BLOCK, Blocks, FsError};
 use crate::fat::{FatCache, Orphan, Stale, Table};
 use crate::fs::Fs;
 use crate::mark::{self, CLEAN, DIRTY};
+use crate::sd_addr::AddrMode;
 use crate::sweep::{self, Fail};
 use crate::volume::{Layout, first_partition, layout};
+use chimera_hal::card_bus::CardFault;
 use chimera_hal::store::{
-    ByteSink, Dir, Doubt, FileName, Files, Mark, ReadSink, Store, StoreError, Sweep, SweepSeen,
-    SweepStats, Swept, VolumeId,
+    ByteSink, Dir, Doubt, FileName, FileRuns, Files, Mark, ReadSink, Runs, RunsError, Seal, Store,
+    StoreError, Sweep, SweepSeen, SweepStats, Swept, VolumeId,
 };
+use chimera_hal::units::{BlockCount, Bytes, Lba};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCard, SdCardError};
@@ -22,9 +25,14 @@ pub trait Medium: BlockDevice {
     /// Arm the medium's deadline for one `Store` operation.
     fn start_op(&self) {}
     /// After an error: wake, slow clock, re-acquire on the next access.
-    fn reinit(&self) {}
-    /// The volume opened: fast clock.
-    fn mounted(&self) {}
+    /// `Busy`: the bus was the streams', the card untouched.
+    fn reinit(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+    /// The volume opened: fast clock. `Busy` as `reinit`.
+    fn mounted(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
     /// Each operation armed from now on ends after `ms` in all; `None`:
     /// the medium's own cap.
     fn cap(&self, _ms: Option<u32>) {}
@@ -35,6 +43,14 @@ pub trait Medium: BlockDevice {
     /// the sweep's phase times. 0 where nothing counts.
     fn elapsed_ms(&self) -> u32 {
         0
+    }
+    /// How the card addresses a block, once acquired.
+    fn addr_mode(&self) -> Option<AddrMode> {
+        None
+    }
+    /// The streams' reads faulted (`Store::read_fault`).
+    fn read_fault(&self) -> CardFault {
+        CardFault::Clear
     }
 }
 
@@ -78,16 +94,18 @@ impl<S: SpiDevice<u8> + SdBus, D: DelayNs> Medium for SdCard<S, D> {
         self.spi(|s| s.start_op());
     }
 
-    fn reinit(&self) {
+    fn reinit(&self) -> Result<(), StoreError> {
         self.spi(|s| {
             s.set_phase(BusPhase::Acquire);
             s.wake();
         });
         self.mark_card_uninit();
+        Ok(())
     }
 
-    fn mounted(&self) {
+    fn mounted(&self) -> Result<(), StoreError> {
         self.spi(|s| s.set_phase(BusPhase::Data));
+        Ok(())
     }
 
     fn cap(&self, ms: Option<u32>) {
@@ -96,6 +114,10 @@ impl<S: SpiDevice<u8> + SdBus, D: DelayNs> Medium for SdCard<S, D> {
 
     fn elapsed_ms(&self) -> u32 {
         self.spi(|s| s.elapsed_ms())
+    }
+
+    fn addr_mode(&self) -> Option<AddrMode> {
+        self.get_card_type().map(AddrMode::of)
     }
 
     fn classify(&self, e: &SdCardError) -> StoreError {
@@ -219,6 +241,8 @@ pub struct FatStore<D: Medium> {
     hint: Keyed<u32>,
     stale: Keyed<Stale>,
     orphan: Keyed<Orphan>,
+    /// Files the streams read: `write` and `delete` refuse them.
+    streamed: fn(FileName) -> bool,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;
@@ -232,7 +256,14 @@ impl<D: Medium> FatStore<D> {
             hint: Keyed::new(),
             stale: Keyed::new(),
             orphan: Keyed::new(),
+            streamed: |_| false,
         }
+    }
+
+    /// `streamed(file)` true: `write` and `delete` refuse `file` with
+    /// `Streaming`, touching nothing (the stream registry's rows).
+    pub fn guard_streamed(&mut self, streamed: fn(FileName) -> bool) {
+        self.streamed = streamed;
     }
 
     pub fn device(&self) -> &D {
@@ -258,16 +289,35 @@ impl<D: Medium> FatStore<D> {
     }
 
     /// `Fs::runs` on the card, if it is still `vol`, each run's first block
-    /// on the device: for raw reads that bypass the FAT.
+    /// on the device, and the file's seal: for raw reads that bypass the
+    /// FAT. A run whose LBA
+    /// overflows u32 (a corrupt partition offset) refuses the file,
+    /// `Corrupt`, and `f` sees no more. The card's real end is not checked:
+    /// a run past it fails at the card's CMD18 (R1 error or error token),
+    /// the streams' usual read fault. The gap is tracked in
+    /// private issue #710.
     pub fn runs(
         &mut self,
         vol: VolumeId,
         file: FileName,
         f: &mut dyn FnMut(u32, u32),
-    ) -> Result<u32, StoreError> {
-        self.run(vol, |fs, lba| {
-            fs.runs(file, &mut |at, n| f(lba.saturating_add(at), n))
-        })
+    ) -> Result<(u32, Seal), StoreError> {
+        let mut past = false;
+        let got = self.run(vol, |fs, lba| {
+            fs.runs(file, &mut |at, n| {
+                let last = lba
+                    .checked_add(at)
+                    .and_then(|a| a.checked_add(n.saturating_sub(1)).map(|_| a));
+                match last {
+                    Some(a) if !past => f(a, n),
+                    _ => past = true,
+                }
+            })
+        })?;
+        if past {
+            return Err(StoreError::Corrupt);
+        }
+        Ok(got)
     }
 
     /// The lost-cluster sweep (#360): `Store::sweep`, one operation under
@@ -365,11 +415,14 @@ impl<D: Medium> FatStore<D> {
         }
     }
 
-    /// A device error: classified by the medium, which re-inits.
+    /// A device error: classified by the medium, which re-inits unless
+    /// the bus was busy and the card was never asked. A re-init the bus
+    /// was too busy for is `Busy`: the card is as it was.
     fn fault(&self, e: &D::Error) -> StoreError {
-        let err = self.dev.classify(e);
-        self.dev.reinit();
-        err
+        match self.dev.classify(e) {
+            StoreError::Busy => StoreError::Busy,
+            err => self.dev.reinit().err().unwrap_or(err),
+        }
     }
 
     /// Reads absolute block `lba` into `buf`.
@@ -517,18 +570,39 @@ impl<D: Medium> FatStore<D> {
 }
 
 impl<D: Medium> Store for FatStore<D> {
+    fn read_fault(&self) -> CardFault {
+        self.dev.read_fault()
+    }
+
+    /// The card left mid-read: re-inited first, so the mount acquires it.
+    fn recover(&mut self) -> Result<VolumeId, StoreError> {
+        self.dev.start_op();
+        self.dev.reinit()?;
+        self.mount()
+    }
+
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.dev.start_op();
-        if self.read(0).is_err() {
+        if let Err(e) = self.read(0) {
+            if self.dev.classify(&e) == StoreError::Busy {
+                return Err(StoreError::Busy);
+            }
             // A card swapped while idle is still in SD mode: re-init, retry once.
-            self.dev.reinit();
+            self.dev.reinit()?;
             self.dev.start_op();
             self.read(0).map_err(|e| self.fault(&e))?;
         }
         // No volume to use (unsupported, exFAT): back to acquiring, so the
         // medium's phase and the driver agree the card needs re-init.
-        let (_, _, id) = self.identify().inspect_err(|_| self.dev.reinit())?;
-        self.dev.mounted();
+        let (_, _, id) = match self.identify() {
+            Ok(v) => v,
+            Err(StoreError::Busy) => return Err(StoreError::Busy),
+            Err(e) => {
+                self.dev.reinit()?;
+                return Err(e);
+            }
+        };
+        self.dev.mounted()?;
         Ok(id)
     }
 
@@ -539,6 +613,21 @@ impl<D: Medium> Store for FatStore<D> {
         f: &mut dyn FnMut(FileName, u32),
     ) -> Result<(), StoreError> {
         self.run(vol, |fs, _| fs.list(dir, f))
+    }
+
+    fn runs(&mut self, vol: VolumeId, file: FileName) -> Result<FileRuns, RunsError> {
+        let mut runs = Runs::new();
+        let (len, seal) = FatStore::runs(self, vol, file, &mut |at, n| {
+            if let Some(n) = BlockCount::new(n) {
+                runs.push(Lba::new(at), n);
+            }
+        })?;
+        let ext = runs.finish().map_err(RunsError::Fragmented)?;
+        Ok(FileRuns {
+            ext,
+            len: Bytes::new(len),
+            seal,
+        })
     }
 
     fn read(
@@ -569,12 +658,18 @@ impl<D: Medium> Store for FatStore<D> {
         if file == mark::name() || file.dir() == Dir::Root {
             return Err(StoreError::ReadOnly);
         }
+        if (self.streamed)(file) {
+            return Err(StoreError::Streaming);
+        }
         self.change(vol, |fs| fs.write(file, body))
     }
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
         if file == mark::name() || file.dir() == Dir::Root {
             return Err(StoreError::ReadOnly);
+        }
+        if (self.streamed)(file) {
+            return Err(StoreError::Streaming);
         }
         self.change(vol, |fs| fs.delete(file))
     }

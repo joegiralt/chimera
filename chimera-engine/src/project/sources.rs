@@ -24,6 +24,33 @@ impl SourceId {
 
 const _: () = assert!(MAX_SOURCES <= u32::BITS as usize);
 
+/// Pool sources, a bit each (`SourceId::bit`). Bank 2's door takes it by
+/// value: its word is the ABI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct SourceSet(u32);
+
+impl SourceSet {
+    pub const EMPTY: SourceSet = SourceSet(0);
+
+    pub const fn with(self, s: SourceId) -> SourceSet {
+        SourceSet(self.0 | s.bit())
+    }
+
+    pub const fn without(self, s: SourceId) -> SourceSet {
+        SourceSet(self.0 & !s.bit())
+    }
+
+    pub const fn contains(self, s: SourceId) -> bool {
+        self.0 & s.bit() != 0
+    }
+
+    /// Its sources, in id order.
+    pub fn iter(self) -> impl Iterator<Item = SourceId> {
+        SourceId::ALL.into_iter().filter(move |&s| self.contains(s))
+    }
+}
+
 /// Its on-disk ref lives in `storage` (a card format type), named here too.
 pub use crate::storage::SourceRef;
 
@@ -40,6 +67,12 @@ pub enum Absence {
     NotOnCard,
     /// The card faulted reading it, or before its turn came.
     ReadFailed,
+    /// Too big for the arena, and every stream row taken (slice 1 § 5.5).
+    StreamsFull,
+    /// Too big for the arena, and in more runs than a stream row keeps.
+    Fragmented,
+    /// Too big for the arena, and it can't stream: why.
+    NeedsRam(super::Refusal),
 }
 
 /// A pool source: its ref and how many of its bytes the arena holds. An
@@ -258,6 +291,39 @@ impl Project {
             self.bump();
         }
         moved
+    }
+
+    /// The card under the streamed sources changed (a re-init after a read
+    /// fault mounted another volume): each streamed source out of the
+    /// index, so its Parts read SOURCE MISSING, and every stream row
+    /// freed, so no read lands another card's blocks. A voice holding a
+    /// retired source is never cut (ADR 0087); its wants go unserved.
+    pub fn lose_streams(&mut self) {
+        let Some(reg) = self.pool.streams() else {
+            return;
+        };
+        self.bump();
+        for s in SourceId::ALL {
+            if self.pool.source(s).is_some_and(|e| self.pool.streamed(e.r)) {
+                self.pool.source_free(s);
+            }
+        }
+        // SAFETY: every `get` reference is formed and dropped inside one
+        // entry of the audio or card interrupt, both above this thread,
+        // so none is live here; `clear` leaves the card's held row; and
+        // the pool reuses no freed id before its drain (ADR 0087), so no
+        // row is rewritten under a voice that latched it.
+        // A row the card IRQ still holds (none is expected under a fault: a
+        // retry's hold drops at its next look) is left stale: no read
+        // after the one in flight finds it, and its source's drain frees it
+        // on a later pass (`drain_retired`).
+        let _ = unsafe { reg.clear_all() };
+    }
+
+    /// The registry streamed sources' files go in: the shell's, lent once
+    /// (a bench build's beds keep theirs).
+    pub fn set_streams(&mut self, r: &'static crate::stream::registry::StreamRegistry) {
+        self.pool.set_streams(r);
     }
 
     /// The UI loop's clock in ms, which a gate waits by

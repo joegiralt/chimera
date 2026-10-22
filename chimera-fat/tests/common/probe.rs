@@ -90,8 +90,9 @@ impl<D: BlockDevice<Error = DiskError>> BlockDevice for Probe<D> {
 }
 
 impl<D: BlockDevice<Error = DiskError>> Medium for Probe<D> {
-    fn reinit(&self) {
+    fn reinit(&self) -> Result<(), StoreError> {
         self.log.reinits.set(self.log.reinits.get() + 1);
+        Ok(())
     }
 
     fn classify(&self, _e: &DiskError) -> StoreError {

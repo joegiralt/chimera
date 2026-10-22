@@ -18,7 +18,7 @@ use super::codec::encode_new_project;
 use super::note::{Differ, ProjectNote, Subject};
 use super::{
     Absence, Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
-    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SourceId,
+    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SourceSet,
     Swap, encode_project, part_status, project_crc,
 };
 
@@ -424,16 +424,31 @@ fn load_into<S: Store>(
     let read = load_ab_in_place(s, r, project_file(id), &mut d);
     *swap = d.take_swap();
     let (lossy, to_read, (sounds, sources)) = (d.lossy(), d.to_read(), d.dropped());
-    let (unlisted, over) = (d.missing(), d.over_budget());
+    let (unlisted, over, to_stream) = (d.missing(), d.over_budget(), d.to_stream());
     read?;
     let (missed, unread) = read_sources(s, r, p, to_read);
+    let streamed = stream_sources(s, r, p, to_stream);
     Ok(Loaded {
         lossy,
         sounds,
-        sources: sources.saturating_add(missed),
+        sources: sources.saturating_add(missed).saturating_sub(streamed),
         missing: unlisted.saturating_add(unread),
         over,
     })
+}
+
+/// The sources `ids`, too big for the arena, that a TAPE Part plays
+/// forward load as their heads (`LoadDoor::sources`): how many streamed.
+/// With bank 2 shut none.
+#[cfg(feature = "tape")]
+fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet) -> u8 {
+    super::LoadDoor::with(|d| d.sources(s, r, p, ids)).unwrap_or(0)
+}
+
+/// No TAPE: nothing streams.
+#[cfg(not(feature = "tape"))]
+fn stream_sources<S: Store>(_: &mut S, _: &Ready, _: &mut Project, _: SourceSet) -> u8 {
+    0
 }
 
 /// Reads sources `ids` into their absent entries, inside the load's epoch
@@ -441,11 +456,11 @@ fn load_into<S: Store>(
 /// absent otherwise. A file missing, short, damaged or naming another ref
 /// leaves its entry absent: the ref is kept, and its Parts are silent. A
 /// card fault ends the reads there.
-fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u8, u8) {
+fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet) -> (u8, u8) {
     p.bump();
     let (mut missed, mut unread) = (0u8, 0u8);
     let mut fault = false;
-    for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
+    for id in ids.iter() {
         let Some(e) = p.pool.source(id) else { continue };
         if fault {
             p.pool.mark_absent(id, Absence::ReadFailed);

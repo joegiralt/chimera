@@ -37,6 +37,7 @@ const XF: FocusGlyph = FocusGlyph::Crossfader;
 const BRAID: FocusGlyph = FocusGlyph::Composite(CompositeId::ChorusBraid);
 const RINGS: FocusGlyph = FocusGlyph::Composite(CompositeId::DelayRings);
 const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
+const TAPE: FocusGlyph = FocusGlyph::Tape;
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Assigning a glyph
@@ -48,10 +49,29 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Va", "NOISEKIND", NONE),
     ("Va", "WAVE1", FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
     ("Va", "WAVE2", FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
-    ("TapeEngine", "MODEL", NONE),
-    ("TapeEngine", "TYPE", NONE),
+    // TAPE's machine cells: the machine's glyph (ADR 0173).
+    ("TapeEngine", "MODEL", TAPE),
+    ("TapeEngine", "TYPE", TAPE),
     ("TapeEngine", "SLICE", NONE),
-    ("TapeEngine", "WOW", NONE),
+    ("TapeEngine", "WOW", TAPE),
+    // WALK's DIRECTION lays the footsteps; TRON is a toggle; DRIFT
+    // scatters them (ADR 0203).
+    ("TapeEngine", "MODE", TAPE),
+    ("TapeEngine", "TRON", SWITCH),
+    ("TapeEngine", "DRIFT", TAPE),
+    ("TapeEngine", "RETRIG", NONE),
+    ("TapeEngine", "KEY", TAPE),
+    ("TapeEngine", "POSITION", TAPE),
+    ("TapeEngine", "MOTION", TAPE),
+    ("TapeEngine", "TAPE", TAPE),
+    ("TapeEngine", "AGE", TAPE),
+    ("TapeEngine", "SIZE", TAPE),
+    ("TapeEngine", "XFADE", TAPE),
+    ("TapeEngine", "DRAG", TAPE),
+    ("TapeEngine", "STRETCH_LENGTH", TAPE),
+    ("TapeEngine", "GRAIN", TAPE),
+    ("TapeEngine", "SPRAY", TAPE),
+    ("TapeEngine", "STRETCH_END", TAPE),
     ("Algo", "ALG_A", NONE),
     ("Algo", "ALG_B", NONE),
     ("Filter", "KIND", NONE),
@@ -122,6 +142,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Delay", "TONE", RINGS),
     ("Delay", "MIX", RINGS),
     ("Delay", "REV", RINGS),
+    // TAPE and GRAIN: two delays, a word (ADR 0202). GRAIN's four pots
+    // keep the arc: the rings draw TAPE's head.
+    ("Delay", "TYPE", NONE),
     // The reverb: every knob shows its composite (the cube under QUAD);
     // TYPE and SYNC are words (reverb TYPEs spec § TYPE and the words).
     ("Reverb", "TIME", CUBE),
@@ -200,6 +223,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Pitch", "SNAP"),
     // CAPSTAN and WARBLE: two flutters.
     ("TapeEngine", "WOW"),
+    // TAPE and GRAIN: two delays.
+    ("Delay", "TYPE"),
     // SCALE and CHORD: two sets to snap to.
     ("OrbitRing", "SNAP"),
     // STEP and POOL: two ways to pick a note.
@@ -210,6 +235,12 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Midi", "SYNC"),
     // MONO and POLY: two ways to splice a grain.
     ("TapeEngine", "TYPE"),
+    // STACK and CUT: two ways a hit meets the last.
+    ("TapeEngine", "RETRIG"),
+    // POSITION and PITCH: two things a SCRUB key chooses.
+    ("TapeEngine", "KEY"),
+    // HOLD and STOP: two ends of a stretch, neither off.
+    ("TapeEngine", "STRETCH_END"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.
@@ -283,8 +314,13 @@ fn every_two_state_choice_is_decided() {
                 "{b:?}.{}: SWITCH or TWO_PEERS, once",
                 s.ident
             );
+            // TAPE's two-word cells show the machine (ADR 0173).
             if peers {
-                assert_eq!(s.glyph, FocusGlyph::None, "{b:?}.{}", s.ident);
+                assert!(
+                    matches!(s.glyph, FocusGlyph::None | FocusGlyph::Tape),
+                    "{b:?}.{}",
+                    s.ident
+                );
             }
         }
     }
@@ -396,7 +432,8 @@ fn each_glyph_maps_to_its_gauge() {
             FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)) => Gauge::Switch { on: 11.0 },
             FocusGlyph::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
             FocusGlyph::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
-            FocusGlyph::Lfo => Gauge::Switch { on: 14.0 },
+            FocusGlyph::Tape => Gauge::Switch { on: 14.0 },
+            FocusGlyph::Lfo => Gauge::Switch { on: 15.0 },
             // (1 − 0.25)² of the travel, the bubble at half of it.
             FocusGlyph::Stability => Gauge::Stability {
                 offset: 6,
@@ -417,7 +454,8 @@ fn each_glyph_maps_to_its_gauge() {
             Reads::Va(VaGlyph::Wave(VaOsc::Two)) => Gauge::Switch { on: 11.0 },
             Reads::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
             Reads::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
-            Reads::Lfo => Gauge::Switch { on: 14.0 },
+            Reads::Tape => Gauge::Switch { on: 14.0 },
+            Reads::Lfo => Gauge::Switch { on: 15.0 },
         };
         assert_eq!(gauge(g, 0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
@@ -1301,9 +1339,15 @@ fn rings_ui(slot: EncoderId) -> UiState {
 #[test]
 fn glyph_rings_page_moves_only_inside_its_box() {
     use chimera_core::dsp::delay::DelayParams;
-    // Every delay param carries the rings.
+    // Every delay param the rings read carries them; TYPE is a word and
+    // GRAIN's pots keep the arc (ADR 0202).
     for s in BlockRef::Delay.specs() {
-        assert_eq!(s.glyph, RINGS, "{}", s.ident);
+        let want = match s.ident {
+            "TYPE" => NONE,
+            "SIZE" | "DENSITY" | "PITCH" | "TEXTURE" => FocusGlyph::Arc,
+            _ => RINGS,
+        };
+        assert_eq!(s.glyph, want, "{}", s.ident);
     }
     // Every value the page's params show stays clear of the box.
     for id in [

@@ -171,7 +171,8 @@ const PLAIN: [(usize, u64); 15] = [
     (464, 0x548dd4eb65f23948),
     (132, 0x91e8cb92bf5162e0),
     (132, 0x8575cbc8307a58e3),
-    (136, 0x82a8213584981303),
+    // INIT TAPE's LOOP LENGTH 0.8 (ADR 0180): a one-param block more.
+    (146, 0x474adc4c807cd4e0),
 ];
 
 #[test]
@@ -435,6 +436,18 @@ fn a_refused_enum_code_counts_and_a_retired_one_does_not() {
     assert_eq!(decode_skips(&bogus), 1);
     let retired = with_block_raw(&tape, 34, 0, 1u32.to_le_bytes());
     assert_eq!(decode_skips(&retired), 0);
+}
+
+#[test]
+fn every_retired_model_loads_and_translates_to_play() {
+    use chimera_core::dsp::tape_engine::{RetiredModel, TapeModel};
+    let tape = stamped(&Sound::init(EngineType::Tape));
+    for m in RetiredModel::ALL {
+        let f = with_block_raw(&tape, 34, 0, (m as u32).to_le_bytes());
+        assert_eq!(decode_skips(&f), 0, "{m:?}");
+        let s = decode(&f).unwrap();
+        assert_eq!(s.params.tape.model(), TapeModel::Walk, "{m:?}");
+    }
 }
 
 // ---- Note (showcase spec § 1, ADR 0133) ----

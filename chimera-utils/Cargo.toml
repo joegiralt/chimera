@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 chimera-circuits = { path = "../chimera-circuits" }
 chimera-core = { path = "../chimera-core" }
+chimera-engine = { path = "../chimera-engine" }
 chimera-hal = { path = "../chimera-hal" }
 chimera-image = { path = "../chimera-image" }
 hound = "3.5"
@@ -16,3 +17,7 @@ rayon = "1.11"
 rustfft = "6.4"
 serde_json = "1.0"
 sha2 = "0.10"
+
+[dev-dependencies]
+chimera-engine = { path = "../chimera-engine", features = ["source-writer"] }
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

@@ -50,6 +50,12 @@ fn gauge_at(glyph: FocusGlyph, fmt: ValFmt, v: f32, rev: ReverbType) -> Gauge {
             value: v,
             mode: VaMode::ALL[(v * 4.0) as usize],
         },
+        Reads::Tape => Gauge::Tape(chimera_core::ui::tape_glyph::TapeGauge::of(
+            &chimera_core::ui::tape_glyph::GlyphInputs::from_set(
+                [v; 15],
+                chimera_core::ui::tape_glyph::Pose::Live,
+            ),
+        )),
         Reads::Lfo => {
             use chimera_core::lfo_glyph::{Glyph, LfoGauge, Q, Wave};
             Gauge::Lfo(LfoGauge {
@@ -79,7 +85,29 @@ fn ink(fb: &Fb, i: usize) -> bool {
 /// The value alone, and with `g`: the pixels `g` landed on, and if the
 /// band drew it at all.
 fn overlap(label: &str, text: &str, g: Gauge) -> (bool, Vec<(usize, usize)>) {
+    // Beside a TAPE glyph a long word is set at the readout size.
+    let readout = matches!(g, Gauge::Tape(_)) && components::layout(text, &g) == Layout::NoGauge;
     let value = render(|d| {
+        if readout {
+            components::focus_band(
+                d,
+                label,
+                "",
+                Gauge::None,
+                Look::Live,
+                None,
+                chimera_core::ui::theme::TextSize::Normal,
+            );
+            chimera_core::ui::draw::text(
+                d,
+                &theme::FONT_READOUT,
+                text,
+                theme::FOCUS_VALUE_X,
+                theme::FOCUS_VALUE_Y,
+                theme::INK,
+            );
+            return;
+        }
         components::focus_band(
             d,
             label,

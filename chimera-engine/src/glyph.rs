@@ -6,6 +6,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
+use crate::dsp::tape_engine::TapeEngineParams as T;
 use crate::dsp::va::VaParams;
 
 /// The gauge a parameter's focus band shows.
@@ -32,6 +33,9 @@ pub enum FocusGlyph {
     Composite(CompositeId),
     /// VA's own gauges, drawn from the VA block's set values (ADR 0129).
     Va(VaGlyph),
+    /// TAPE's machine glyph (ADR 0173): every machine cell's, drawn from
+    /// `TAPE_GLYPH_PARAMS`' set values; still on MODEL.
+    Tape,
     /// The LFO page's: what its control does to the LFO, drawn from the
     /// slot's set values (`lfo_glyph`, ADR 0177).
     Lfo,
@@ -115,7 +119,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 17] = [
+    pub const ALL: [FocusGlyph; 18] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -130,6 +134,7 @@ impl FocusGlyph {
         FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)),
         FocusGlyph::Va(VaGlyph::Mode),
         FocusGlyph::Va(VaGlyph::Blend),
+        FocusGlyph::Tape,
         FocusGlyph::Lfo,
         FocusGlyph::Stability,
         FocusGlyph::Feedback,
@@ -153,9 +158,10 @@ impl FocusGlyph {
             FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)) => 11,
             FocusGlyph::Va(VaGlyph::Mode) => 12,
             FocusGlyph::Va(VaGlyph::Blend) => 13,
-            FocusGlyph::Lfo => 14,
-            FocusGlyph::Stability => 15,
-            FocusGlyph::Feedback => 16,
+            FocusGlyph::Tape => 14,
+            FocusGlyph::Lfo => 15,
+            FocusGlyph::Stability => 16,
+            FocusGlyph::Feedback => 17,
         }
     }
 }
@@ -212,3 +218,30 @@ pub const BRAID_PARAMS: [ParamAddr; 4] = [
     ParamAddr::new(BlockRef::Chorus, ChorusParams::DEPTH),
     ParamAddr::new(BlockRef::Chorus, ChorusParams::MIX),
 ];
+
+/// What TAPE's machine glyph reads, in `GlyphInputs::from_set`'s order:
+/// MODEL, START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE, then
+/// WALK's DIRECTION, TRON and DRIFT (ADR 0203) and STRETCH's LENGTH and
+/// TYPE (ADR 0204).
+pub const TAPE_GLYPH_PARAMS: [ParamAddr; 15] = {
+    const fn t(id: crate::block::ParamId) -> ParamAddr {
+        ParamAddr::new(BlockRef::TapeEngine, id)
+    }
+    [
+        t(T::MODEL),
+        t(T::START),
+        t(T::END),
+        t(T::POSITION),
+        t(T::MOTION),
+        t(T::SIZE),
+        t(T::DRAG),
+        t(T::TAPE),
+        t(T::AGE),
+        t(T::XFADE),
+        t(T::MODE),
+        t(T::TRON),
+        t(T::DRIFT),
+        t(T::LENGTH),
+        t(T::TYPE),
+    ]
+};

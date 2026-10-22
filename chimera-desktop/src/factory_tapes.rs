@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{TapeEngineParams as P, TapeModel, machine};
+use chimera_core::dsp::tape_engine::{
+    Direction, TapeEngineParams as P, TapeMachine, TapeModel, Tron, machine,
+};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -84,13 +86,15 @@ pub struct SourceRecipe {
     pub form: Form,
 }
 
-/// A factory TAPE Sound: TAPE INIT on `source`, MODEL `model` with its
-/// machine's defaults, then `set`, its level trimmed `trim_db`.
+/// A factory TAPE Sound: TAPE INIT on `source`, its `machine`'s defaults, then `set`, its level trimmed `trim_db`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundRecipe {
     pub name: SoundName,
     pub source: SoundName,
-    pub model: TapeModel,
+    pub machine: TapeMachine,
+    /// WALK's DIRECTION and TRON (`mode`, `tron`).
+    pub direction: Direction,
+    pub tron: Tron,
     pub set: Vec<(ParamId, f32)>,
     pub trim_db: f32,
 }
@@ -223,16 +227,40 @@ fn source_recipe(name: SoundName, t: &Table) -> Result<SourceRecipe, String> {
     Ok(SourceRecipe { name, origin, form })
 }
 
+/// The recipes' and manifests' model words, by `TapeModel::index`: WALK
+/// with its `mode` (DIRECTION) and `tron` beside it.
+pub const MODEL_WORDS: [&str; 4] = ["WALK", "STRETCH", "SCRUB", "TRANSWAVE"];
+
+/// `m`'s word in `MODEL_WORDS`.
+pub fn model_word(m: TapeModel) -> &'static str {
+    MODEL_WORDS[usize::from(m.index())]
+}
+
 fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     let m = need(t, "model")?;
     let model = TapeModel::ALL
         .into_iter()
-        .find(|x| x.disk_ident() == m)
+        .find(|&x| model_word(x) == m)
         .ok_or(format!("model {m}"))?;
+    let play = model == TapeModel::Walk;
+    let mode = match get(t, "mode") {
+        None => Direction::Loop,
+        Some(k) if play => Direction::ALL
+            .into_iter()
+            .find(|x| x.disk_ident() == k)
+            .ok_or(format!("mode {k}"))?,
+        Some(k) => return Err(format!("mode {k}: PLAY only")),
+    };
+    let tron = match get(t, "tron") {
+        None => Tron::Off,
+        Some("ON") if play => Tron::On,
+        Some("OFF") if play => Tron::Off,
+        Some(k) => return Err(format!("tron {k}: ON or OFF, PLAY only")),
+    };
     let specs = P::default();
     let mut set = Vec::new();
     for (k, v) in t {
-        if ["name", "source", "model", "trim"].contains(&k.as_str()) {
+        if ["name", "source", "model", "mode", "tron", "trim"].contains(&k.as_str()) {
             continue;
         }
         let spec = specs
@@ -245,7 +273,9 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     Ok(SoundRecipe {
         name,
         source: SoundName::new(need(t, "source")?).map_err(|e| format!("source: {e:?}"))?,
-        model,
+        machine: TapeMachine::of(model),
+        direction: mode,
+        tron,
         set,
         trim_db: num(t, "trim")?.unwrap_or(0.0),
     })
@@ -471,12 +501,7 @@ pub fn source(r: &SourceRecipe, m: Mono) -> Result<Built, String> {
 /// The bytes the arena holds for a built source: its descriptor, then its
 /// samples.
 pub fn held(b: &Built) -> Vec<u8> {
-    let d = Descriptor {
-        shape: b.head.shape,
-        count: b.head.count,
-        rate: b.head.sref.rate,
-        head_frames: 0,
-    };
+    let d = Descriptor::whole(b.head.shape, b.head.count, b.head.sref.rate).expect("a descriptor");
     let mut h = d.to_bytes().to_vec();
     h.resize(DESC_LEN, 0);
     h.extend_from_slice(&b.packed);
@@ -497,12 +522,30 @@ pub fn pitch(h: &SourceHead) -> Pitch {
 /// `s` as a TAPE Sound on `head` (picked as SOURCE picks it).
 pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     let mut snd = Sound::init(EngineType::Tape);
+    // A factory Sound's filter stays stable, as `plain_init`'s (ADR 0168).
+    snd.params.filter.stability = 1.0;
     snd.name = s.name;
     snd.pick_source(head, None);
     let t = &mut snd.params.tape;
-    t.model = s.model;
-    for (id, v) in machine::defaults(s.model).chain(s.set.iter().copied()) {
+    t.machine = s.machine;
+    t.direction = s.direction;
+    // The machine's own, FORWARD's FADE holding, then TRON.
+    for (id, v) in machine::defaults(t.machine(), s.direction) {
         t.set(id, v);
+    }
+    t.tron = s.tron;
+    for &(id, v) in &s.set {
+        t.set(id, v);
+    }
+    // ONE's hit: ENV 1 at its floor, holding full (`env_defaults`); TRON
+    // keeps INIT's, as the TRON machine did.
+    let env = if s.tron == Tron::On {
+        &[][..]
+    } else {
+        machine::env_defaults(t.machine(), s.direction)
+    };
+    for &(id, v) in env {
+        snd.params.envelopes[0].set(id, v);
     }
     // On the knob's grid, as INIT's 45/128 is.
     let v = snd.params.out.volume * 10f32.powf(s.trim_db / 20.0);
@@ -574,12 +617,14 @@ pub fn manifest(r: &Recipes, built: &[Option<Built>]) -> String {
         };
         let _ = write!(
             j,
-            "{}{{\"name\": \"{}\", \"file\": \"{}.A\", \"source\": \"{:08X}\", \"model\": \"{}\"}}",
+            "{}{{\"name\": \"{}\", \"file\": \"{}.A\", \"source\": \"{:08X}\", \"model\": \"{}\", \"mode\": \"{}\", \"tron\": \"{}\"}}",
             if first { "" } else { ",\n" },
             s.name.as_str(),
             sound_stem(i),
             b.head.sref.crc,
-            s.model.disk_ident()
+            model_word(s.machine.model()),
+            s.direction.disk_ident(),
+            s.tron.disk_ident()
         );
         first = false;
     }

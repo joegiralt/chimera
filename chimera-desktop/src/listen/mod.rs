@@ -8,13 +8,15 @@ use std::mem::MaybeUninit;
 
 use crate::import::tape::convert::{Mono, Pitch, clean, quantise_tpdf, resample, yin};
 use crate::import::tape::transwave::{DEFAULT_TOP, MAX_FRAMES, cut_cycles, round12, transwave};
-use chimera_core::block::{Block, DiskCode, ParamId};
+use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
+use chimera_core::dsp::tape_engine::stretch::HALF_SPEED;
 use chimera_core::dsp::tape_engine::{
-    StretchType, TapeEngine, TapeEngineParams as P, TapeModel, Wow,
+    Direction, FADE_HOLD, StretchType, TapeEngine, TapeEngineParams as P, TapeMachine, TapeModel,
+    Tron, Wow,
 };
 use chimera_core::dsp::va::VaMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
@@ -150,12 +152,10 @@ pub fn held_from(m: &Mono, rate: u32) -> Result<(Vec<u8>, Pitch), String> {
     }
     let pitch = yin(&x, rate);
     let q = quantise_tpdf(&x, SEED);
-    let desc = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate: u16::try_from(rate).expect("a rate under 65 536"),
-        head_frames: 0,
-    };
+    let desc = u16::try_from(rate)
+        .ok()
+        .and_then(|r| Descriptor::whole(Shape::Plain, 1, r))
+        .ok_or_else(|| format!("no source at {rate} Hz"))?;
     let mut held = desc.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * q.len() / 2, 0);
     pack12(&q, &mut held[DESC_LEN..]);
@@ -189,12 +189,10 @@ pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String>
     };
     let picked: Vec<Vec<f32>> = (0..n).map(|k| cycles[pick(k)].clone()).collect();
     let q = round12(&transwave(&picked, DEFAULT_TOP)).ok_or("silent cycles")?;
-    let desc = Descriptor {
-        shape: Shape::Transwave,
-        count: n as u8,
-        rate: 48_000,
-        head_frames: 0,
-    };
+    let desc = u8::try_from(n)
+        .ok()
+        .and_then(|n| Descriptor::whole(Shape::Transwave, n, 48_000))
+        .ok_or("too many frames")?;
     let mut held = desc.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * q.len() / 2, 0);
     pack12(&q, &mut held[DESC_LEN..]);
@@ -350,18 +348,18 @@ const D_TIME_60: f32 = 0.556_641;
 
 /// STRETCH's: 2 s frozen at START (MOTION 0) at D-TIME 250 ms; then the
 /// same passage from START, a fresh take each, at 0.5×, 1× and 2× its time
-/// (MOTION 0.25, 0.5, 1), pitch fixed, D-TIME 60 ms; then at 0.5× again at
+/// (MOTION `HALF_SPEED`, 0.5, 1), pitch fixed, D-TIME 60 ms; then at 0.5× again at
 /// D-TIME 10 ms (metallic) and 250 ms (tremolo).
 static STRETCH_SWEEP: [(f32, ParamId, f32); 12] = [
     (1.99, P::MOTION, 0.0),
-    (2.0, P::MOTION, 0.25),
-    (4.99, P::MOTION, 0.25),
+    (2.0, P::MOTION, HALF_SPEED),
+    (4.99, P::MOTION, HALF_SPEED),
     (5.0, P::MOTION, 0.5),
     (7.99, P::MOTION, 0.5),
     (8.0, P::MOTION, 1.0),
     (10.99, P::MOTION, 1.0),
-    (11.0, P::MOTION, 0.25),
-    (14.5, P::MOTION, 0.25),
+    (11.0, P::MOTION, HALF_SPEED),
+    (14.5, P::MOTION, HALF_SPEED),
     (1.99, P::SIZE, 1.0),
     (2.0, P::SIZE, D_TIME_60),
     (10.99, P::SIZE, D_TIME_60),
@@ -409,9 +407,7 @@ pub fn script(model: TapeModel) -> Script {
         TapeModel::Scrub => Script(&SCRUB_SWEEP, &[], &[]),
         TapeModel::Transwave => Script(&WAVE_SWEEP, &[], &[]),
         TapeModel::Stretch => Script(&STRETCH_KEYS, &STRETCH_TAKES, &[]),
-        TapeModel::Oneshot => Script(&ONESHOT_KEYS, &ONESHOT_TAKES, &[]),
-        TapeModel::Tron => Script(&TRON_KEYS, &[10.0], &[0, 12]),
-        TapeModel::Loop | TapeModel::PingPong => Script(&SWEEP, &[], &[]),
+        TapeModel::Walk => Script(&SWEEP, &[], &[]),
     }
 }
 
@@ -420,9 +416,7 @@ pub fn legend(model: TapeModel) -> &'static str {
         TapeModel::Scrub => SCRUB_LEGEND,
         TapeModel::Transwave => WAVE_LEGEND,
         TapeModel::Stretch => STRETCH_LEGEND,
-        TapeModel::Oneshot => ONESHOT_LEGEND,
-        TapeModel::Tron => TRON_LEGEND,
-        TapeModel::Loop | TapeModel::PingPong => SWEEP_LEGEND,
+        TapeModel::Walk => SWEEP_LEGEND,
     }
 }
 
@@ -452,10 +446,6 @@ static ONESHOT_TAKES: [f32; 20] = [
     13.0, 14.0,
 ];
 
-pub const ONESHOT_LEGEND: &str = "0–2.5 s the whole window once · 2.5–10 s a take each 0.5 s, \
-    SLICE 1→16 by the knob · 10–14.5 s END before START (reversed), a take a second · \
-    11.5–14.5 s TAPE and AGE at 0.5";
-
 /// ONESHOT at SLICE NOTE: 16 notes from C4, 0.5 s apart, each its slice
 /// at ROOT's pitch.
 static ONESHOT_NOTE_KEYS: [(f32, ParamId, f32); 1] = [(8.0, P::TAPE, 0.0)];
@@ -468,26 +458,35 @@ static ONESHOT_NOTE_NOTES: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 /// tape runs out (or END comes) before each key's 10 s.
 static TRON_KEYS: [(f32, ParamId, f32); 1] = [(20.0, P::TAPE, 0.0)];
 
-pub const TRON_LEGEND: &str = "0–10 s held at ROOT · 10–20 s held an octave up: each key \
-    its own 8 s of tape (END may come first)";
-
 /// How a machine is heard besides its plain script (spec § 2 Machines):
-/// END before START, WOW WARBLE, SLICE NOTE.
+/// END before START, WOW WARBLE, WALK's other MODEs (LOOP is Plain),
+/// SLICE NOTE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Way {
     Plain,
     Reversed,
     Warble,
+    One,
+    Ping,
     SliceNote,
+    /// WALK FORWARD with TRON on (ADR 0203).
+    Tron,
 }
 
 impl Way {
     /// The ways `m` is rendered.
     pub fn of(m: TapeModel) -> &'static [Way] {
         match m {
-            TapeModel::Loop => &[Way::Plain, Way::Reversed, Way::Warble],
+            TapeModel::Walk => &[
+                Way::Plain,
+                Way::Reversed,
+                Way::Warble,
+                Way::One,
+                Way::SliceNote,
+                Way::Ping,
+                Way::Tron,
+            ],
             TapeModel::Stretch => &[Way::Plain, Way::Reversed],
-            TapeModel::Oneshot => &[Way::Plain, Way::SliceNote],
             _ => &[Way::Plain],
         }
     }
@@ -498,7 +497,10 @@ impl Way {
             Way::Plain => "",
             Way::Reversed => "-rev",
             Way::Warble => "-warble",
+            Way::One => "-one",
+            Way::Ping => "-ping",
             Way::SliceNote => "-note",
+            Way::Tron => "-tron",
         }
     }
 
@@ -507,7 +509,10 @@ impl Way {
             Way::Plain => "",
             Way::Reversed => " · END before START",
             Way::Warble => " · WOW WARBLE, TAPE 0.5 from 11.5 s",
-            Way::SliceNote => " · SLICE NOTE, 16 notes from C4",
+            Way::One => " · FORWARD, FADE HOLD",
+            Way::Ping => " · PING-PONG",
+            Way::SliceNote => " · FORWARD, SLICE NOTE, 16 notes from C4",
+            Way::Tron => " · FORWARD, TRON ON",
         }
     }
 
@@ -516,7 +521,7 @@ impl Way {
     /// SLICE NOTE.
     pub fn base(self, model: TapeModel, kind: StretchType) -> P {
         let p = P {
-            model,
+            machine: TapeMachine::of(model),
             kind,
             ..P::default()
         };
@@ -531,7 +536,24 @@ impl Way {
                 wow: Wow::Warble,
                 ..p
             },
+            Way::One => P {
+                direction: Direction::Forward,
+                drag: FADE_HOLD,
+                ..p
+            },
+            Way::Ping => P {
+                direction: Direction::Ping,
+                ..p
+            },
+            Way::Tron => P {
+                direction: Direction::Forward,
+                tron: Tron::On,
+                drag: 0.3,
+                ..p
+            },
             Way::SliceNote => P {
+                direction: Direction::Forward,
+                drag: FADE_HOLD,
                 slice: chimera_core::dsp::tape_engine::SliceCode::NOTE,
                 ..p
             },
@@ -540,7 +562,9 @@ impl Way {
 
     pub fn script(self, model: TapeModel) -> Script {
         match self {
+            Way::One => Script(&ONESHOT_KEYS, &ONESHOT_TAKES, &[]),
             Way::SliceNote => Script(&ONESHOT_NOTE_KEYS, &ONESHOT_NOTE_TAKES, &ONESHOT_NOTE_NOTES),
+            Way::Tron => Script(&TRON_KEYS, &[10.0], &[0, 12]),
             _ => script(model),
         }
     }
@@ -897,10 +921,10 @@ pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
         .collect()
 }
 
-/// `model`'s name in file names and on the command line: `loop`,
-/// `pingpong`, `transwave`….
+/// `model`'s name in file names and on the command line: `walk`,
+/// `transwave`….
 pub fn model_slug(model: TapeModel) -> String {
-    model.disk_ident().to_lowercase().replace('_', "")
+    crate::factory_tapes::model_word(model).to_lowercase()
 }
 
 pub fn file_name(model: TapeModel, src: &Src, kind: &str) -> String {
@@ -943,7 +967,7 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
         if it.peek().is_none() {
             continue;
         }
-        let name = m.disk_ident().replace('_', "-");
+        let name = crate::factory_tapes::model_word(m);
         let _ = write!(
             out,
             "<section><h2>{name}</h2><p class=\"legend\">{}</p>",
@@ -1185,9 +1209,7 @@ mod tests {
     fn every_script_starts_neutral_and_runs_14_5_s() {
         for m in TapeModel::ALL {
             let s = script(m);
-            // TRON holds a key 10 s, twice.
-            let secs = if m == TapeModel::Tron { 20.0 } else { 14.5 };
-            assert_eq!(s.secs(), secs, "{m:?}");
+            assert_eq!(s.secs(), 14.5, "{m:?}");
             let (mut a, mut b) = (P::default(), P::default());
             s.apply(&mut a, 0.0);
             s.apply(&mut b, 1.9);
@@ -1215,7 +1237,7 @@ mod tests {
         for (&t, (speed, d)) in s.1.iter().zip(want) {
             let mut p = P::default();
             s.apply(&mut p, t);
-            assert!((time_speed(p.motion) - speed).abs() < 1e-6, "{t} s");
+            assert!((time_speed(p.motion) - speed).abs() < 1e-4, "{t} s");
             assert!(
                 (d_time_s(p.size) - d).abs() < 1e-4,
                 "{t} s: {}",
@@ -1227,11 +1249,11 @@ mod tests {
     #[test]
     fn page_lists_every_track() {
         let (a, b) = (src("tx-bass"), src("choir"));
-        let rows = [(TapeModel::Loop, &a), (TapeModel::Loop, &b)];
+        let rows = [(TapeModel::Walk, &a), (TapeModel::Walk, &b)];
         let html = page(&rows);
         for s in ["tx-bass", "choir"] {
             for kind in ["dry", "wet"] {
-                let f = format!("loop-{s}-{kind}.wav");
+                let f = format!("walk-{s}-{kind}.wav");
                 assert!(html.contains(&f), "{f} missing");
             }
         }
@@ -1282,11 +1304,11 @@ mod tests {
     fn only_http_links() {
         let mut s = src("x");
         s.url = Some("javascript:alert(1)".into());
-        let html = page(&[(TapeModel::Loop, &s)]);
+        let html = page(&[(TapeModel::Walk, &s)]);
         assert!(!html.contains("href=\"javascript"), "plain text");
         s.url = Some("https://example.org/f".into());
         s.author.clear();
-        let html = page(&[(TapeModel::Loop, &s)]);
+        let html = page(&[(TapeModel::Walk, &s)]);
         assert!(
             html.contains(">https://example.org/f</a>"),
             "the URL stands in"

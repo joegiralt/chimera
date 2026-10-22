@@ -174,7 +174,7 @@ fn bound(def: &BlockDef) -> Vec<Option<ParamAddr>> {
 fn fx_encoders_step_like_before() {
     let mut perf = Performance::new();
     perf.fx = FxParams::OFF;
-    turn_def(&reg::DELAY, 0, 2, &mut perf);
+    turn_def(&reg::DELAY, 1, 2, &mut perf);
     assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
     turn_def(&reg::CHORUS, 0, 5, &mut perf);
     assert_eq!(perf.fx.chorus.mode, 3);
@@ -188,11 +188,22 @@ fn fx_encoders_step_like_before() {
     // (`the_reverb_pages_turn_by_the_panel`).
     turn_def(&reg::EFX_MORE, 3, 2, &mut perf);
     assert!((perf.fx.reverb.rate - (0.75 + 2.0 / 128.0)).abs() < 1e-6);
-    turn_def(&reg::DELAY, 3, 64, &mut perf);
+    turn_def(&reg::DELAY, 4, 64, &mut perf);
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
     assert!((perf.fx.delay.wow_flutter - (0.15 + 1.0 / 128.0)).abs() < 1e-6);
-    part_page::snap_encoder(&reg::DELAY, 4, 1, &mut perf.edit(PartId::ALL[0]), Op::A);
+    // TYPE to GRAIN, and DLY › GRAIN's pots (ADR 0202).
+    turn_def(&reg::DELAY, 0, 1, &mut perf);
+    assert_eq!(
+        perf.fx.delay.kind(),
+        chimera_core::dsp::delay::DelayType::Grain
+    );
+    turn_def(&reg::DELAY_GRAIN, 0, 1, &mut perf);
+    assert!((perf.fx.delay.size() - (0.6 + 1.0 / 128.0)).abs() < 1e-6);
+    turn_def(&reg::DELAY_GRAIN, 2, 12, &mut perf);
+    assert_eq!(perf.fx.delay.pitch(), 12.0);
+    turn_def(&reg::DELAY, 0, -1, &mut perf);
+    part_page::snap_encoder(&reg::DELAY, 5, 1, &mut perf.edit(PartId::ALL[0]), Op::A);
     assert_eq!(perf.fx.delay.mix, 100.0 / 127.0);
 }
 
@@ -200,8 +211,8 @@ fn fx_encoders_step_like_before() {
 #[test]
 fn fx_are_shared_across_parts() {
     let mut perf = Performance::new();
-    turn_def(&reg::DELAY, 0, 2, &mut perf);
-    let shown = part_page::read_values(&reg::DELAY, &perf.edit(PartId::ALL[3]), Op::A)[0];
+    turn_def(&reg::DELAY, 1, 2, &mut perf);
+    let shown = part_page::read_values(&reg::DELAY, &perf.edit(PartId::ALL[3]), Op::A)[1];
     assert_eq!(shown, (391.0 - 10.0) / (500.0 - 10.0));
 }
 
@@ -367,18 +378,18 @@ fn fx_pages_light_their_effect_in_the_flow() {
 /// move to DLY › CHAR (an assumed default, pending the owner), on both
 /// Mix chains.
 #[test]
-fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
+fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_and_grain_below() {
     use chimera_core::dsp::delay::DelayParams as D;
     let at = |p| Some(ParamAddr::new(BlockRef::Delay, p));
     assert_eq!(
         bound(&reg::DELAY),
         [
+            at(D::TYPE),
             at(D::TIME_MS),
             at(D::FEEDBACK),
             at(D::TONE),
             at(D::REV_SEND),
             at(D::MIX),
-            None
         ]
     );
     assert_eq!(
@@ -392,6 +403,17 @@ fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
             None
         ]
     );
+    assert_eq!(
+        bound(&reg::DELAY_GRAIN),
+        [
+            at(D::SIZE),
+            at(D::DENSITY),
+            at(D::PITCH),
+            at(D::TEXTURE),
+            None,
+            None
+        ]
+    );
     let chain = &reg::MIXER_CHANNEL_CHAIN;
     let dly = chain
         .blocks
@@ -399,7 +421,12 @@ fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
         .find(|b| b.def.id == reg::DELAY.id)
         .unwrap();
     let subs: Vec<u16> = dly.sub_pages.iter().map(|d| d.id).collect();
-    assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
+    assert_eq!(
+        subs,
+        [reg::DELAY_CHAR.id, reg::DELAY_GRAIN.id],
+        "{}",
+        chain.name
+    );
 }
 
 /// Reverb TYPEs spec § Pages: REV is TYPE · the TYPE's four · MIX, and
@@ -729,3 +756,49 @@ fn rev_more_redraws_the_plate_zones_predelay() {
 
 /// The first pixel row under the focus band.
 const FOCUS_BOTTOM: usize = chimera_core::ui::theme::FOCUS_BOTTOM as usize;
+
+/// Each delay TYPE's cells dim under the other and say why (review of
+/// #761, m11): DLY › GRAIN under TAPE, DLY › CHAR under GRAIN; DELAY's
+/// shared cells never.
+#[test]
+fn delay_cells_dim_under_the_other_type() {
+    use chimera_core::block::Block;
+    use chimera_core::dsp::delay::DelayParams;
+    use chimera_core::preset::Sound;
+    use chimera_core::ui::view::{self, SlotCtx};
+    let sound = Sound::init(chimera_core::params::EngineType::Algo);
+    let base = SlotCtx::read(&sound.params, Op::A);
+    for (ty, dim, live, why) in [
+        (
+            0.0,
+            &reg::DELAY_GRAIN,
+            &reg::DELAY_CHAR,
+            view::DELAY_GRAIN_ONLY,
+        ),
+        (
+            1.0,
+            &reg::DELAY_CHAR,
+            &reg::DELAY_GRAIN,
+            view::DELAY_TAPE_ONLY,
+        ),
+    ] {
+        let mut d = DelayParams::DEFAULT;
+        d.set(DelayParams::TYPE, ty);
+        let ctx = base.on_delay(&d);
+        for i in 0..6 {
+            let v = view::view(dim, i, &ctx);
+            if let Some(a) = v.addr() {
+                assert!(view::is_dimmed(&v, &sound, &ctx), "{} {i}", dim.short);
+                assert_eq!(view::delay_note(a, &ctx), Some(why));
+            }
+            let v = view::view(live, i, &ctx);
+            assert!(!view::is_dimmed(&v, &sound, &ctx) || v.addr().is_none());
+        }
+        for i in 0..6 {
+            let v = view::view(&reg::DELAY, i, &ctx);
+            if let Some(a) = v.addr() {
+                assert_eq!(view::delay_note(a, &ctx), None, "DELAY {i}");
+            }
+        }
+    }
+}

@@ -3,10 +3,12 @@
 use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
+pub mod card_bus;
 pub mod midi;
 pub mod store;
 #[cfg(feature = "testkit")]
 pub mod testkit;
+pub mod units;
 
 pub const BLOCK_SIZE: usize = 64;
 pub const SCREEN_WIDTH: u16 = 240;
@@ -192,6 +194,17 @@ impl Ms {
     pub fn since(self, earlier: Ms) -> u32 {
         self.0.wrapping_sub(earlier.0)
     }
+
+    /// `since`, signed: negative when `earlier` is later (a stamp taken
+    /// after this clock read).
+    pub fn signed_since(self, earlier: Ms) -> i32 {
+        i32::from_ne_bytes(self.since(earlier).to_ne_bytes())
+    }
+
+    /// `since`, as a duration.
+    pub fn elapsed_since(self, earlier: Ms) -> units::Millis {
+        units::Millis::new(self.since(earlier))
+    }
 }
 
 /// A button's level now and the edges since the last frame, in ms.
@@ -290,6 +303,11 @@ impl MidiNote {
 
     pub const fn new(n: u8) -> Option<Self> {
         if n <= 127 { Some(Self(n)) } else { None }
+    }
+
+    /// `n` limited to 127: for a note already taken from a `MidiNote`.
+    pub const fn clamped(n: u8) -> Self {
+        Self(if n > 127 { 127 } else { n })
     }
 
     pub const fn get(self) -> u8 {

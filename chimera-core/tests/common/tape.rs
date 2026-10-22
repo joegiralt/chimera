@@ -39,7 +39,7 @@ impl OneSource {
         let table: &'static SourceTable = Box::leak(Box::new(SourceTable::new()));
         let bytes: &'static mut [u8] = Box::leak([held, second].concat().into_boxed_slice());
         table.attach_for_test(bytes.as_mut_ptr());
-        let rate = |b: &[u8]| Descriptor::from_bytes(b).map_or(0, |d| d.rate);
+        let rate = |b: &[u8]| Descriptor::from_bytes(b).map_or(0, |d| d.rate().get());
         let (id, id2) = (SourceId::ALL[0], SourceId::ALL[1]);
         table.publish_for_test(id, 0, held.len() as u32, rate(held));
         if !second.is_empty() {
@@ -59,6 +59,12 @@ impl OneSource {
     /// A block's view, as the audio begins one.
     pub fn view(&mut self) -> GateView<'_> {
         self.tok.begin_block()
+    }
+
+    /// The audio's token, for a shell's whole block (`run_block_ported`).
+    #[allow(dead_code)]
+    pub fn token(&mut self) -> &mut AudioToken {
+        &mut self.tok
     }
 
     /// The row gone: retired and compacted, as the pool leaves it.
@@ -85,12 +91,7 @@ impl OneSource {
 
 /// `samples` packed after a `Plain` descriptor at `rate`, held whole.
 pub fn held_plain(samples: &[f32], rate: u16) -> Vec<u8> {
-    let d = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate,
-        head_frames: 0,
-    };
+    let d = Descriptor::whole(Shape::Plain, 1, rate).expect("a descriptor");
     let s: Vec<i16> = samples.iter().map(|&x| to12(x)).collect();
     let mut held = d.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * s.len().div_ceil(2), 0);
@@ -131,12 +132,7 @@ pub fn saw_with_burst(rate: u16, secs: f32) -> Vec<f32> {
 /// keeps harmonics `1..=wave::harmonics`, as the importer's do, rounded to
 /// 12 bits.
 pub fn held_transwave(top: u32, count: u8, amp: impl Fn(usize, u32) -> f32) -> Vec<u8> {
-    let d = Descriptor {
-        shape: Shape::Transwave,
-        count,
-        rate: 48_000,
-        head_frames: 0,
-    };
+    let d = Descriptor::whole(Shape::Transwave, count, 48_000).expect("a descriptor");
     let mut s: Vec<i16> = Vec::new();
     for f in 0..count as usize {
         let mut l = wave::nominal_top(top).trailing_zeros();
@@ -228,20 +224,38 @@ pub fn power_bh(x: &[f32]) -> Vec<f64> {
 }
 
 /// A machine as a test plays it: its model, and END before START or not.
-/// The old REVERSE is `Mach::rev(TapeModel::Loop)` (#369).
+/// The old REVERSE is `Mach::rev(TapeModel::Walk)` (#369).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mach {
     pub model: chimera_core::dsp::tape_engine::TapeModel,
+    pub mode: chimera_core::dsp::tape_engine::Direction,
     pub rev: bool,
 }
 
 impl Mach {
     pub const fn fwd(model: chimera_core::dsp::tape_engine::TapeModel) -> Mach {
-        Mach { model, rev: false }
+        Mach {
+            model,
+            mode: chimera_core::dsp::tape_engine::Direction::Loop,
+            rev: false,
+        }
     }
 
     pub const fn rev(model: chimera_core::dsp::tape_engine::TapeModel) -> Mach {
-        Mach { model, rev: true }
+        Mach {
+            model,
+            mode: chimera_core::dsp::tape_engine::Direction::Loop,
+            rev: true,
+        }
+    }
+
+    /// PLAY in MODE PING.
+    pub const fn ping() -> Mach {
+        Mach {
+            model: chimera_core::dsp::tape_engine::TapeModel::Walk,
+            mode: chimera_core::dsp::tape_engine::Direction::Ping,
+            rev: false,
+        }
     }
 
     /// `p` on this machine: its START and END swapped when reversed.
@@ -250,7 +264,8 @@ impl Mach {
         p: chimera_core::dsp::tape_engine::TapeEngineParams,
     ) -> chimera_core::dsp::tape_engine::TapeEngineParams {
         let p = chimera_core::dsp::tape_engine::TapeEngineParams {
-            model: self.model,
+            machine: chimera_core::dsp::tape_engine::TapeMachine::of(self.model),
+            direction: self.mode,
             ..p
         };
         if self.rev {

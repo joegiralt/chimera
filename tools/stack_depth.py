@@ -28,8 +28,9 @@ Standard library only.
 import re
 import sys
 
-ISRS = ("DMA1_STR0", "USART1", "SysTick", "HardFault")
-# A build without MIDI DIN has no USART1; the rest are always there.
+ISRS = ("DMA1_STR0", "USART1", "DMA2_STR0", "SysTick", "HardFault")
+# A build without MIDI DIN has no USART1; the rest are always there (the
+# card's DMA2_STR0 in every build but the SD probe, which has no check).
 OPTIONAL = ("USART1",)
 THREAD = "main"  # what `Reset` calls; its own frame is a few words
 # An exception's stacked frame with the FPU's lazy state: 26 words, aligned.
@@ -48,6 +49,21 @@ ROOTS = ("Reset", "__stext", "main", "DefaultHandler", "DefaultHandler_") + ISRS
 # calling a dyn sink calling `core::fmt`'s writer. An assumption, not a
 # proof: the firmware formats only flat values, and no dyn call recurses.
 POINTER_NEST = 3
+# A root whose one pointer call is a door entry (ADR 0175) whose target is
+# known: charged that target's depth, not every address-taken function's.
+# A second pointer call in such a root fails the check.
+# The card interrupt's shim calls `IrqState::step` through the board's slot.
+DOOR_CALLS = {"DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",)}
+# A door entry that only its named callers reach (ADR 0194), its address
+# held by the door's table alone: out of the address-taken set, so no other
+# pointer call is charged it; each caller's pointer calls are charged the
+# deeper of it and the usual charge. The bench's entry, read from its slot
+# in `main`'s `bench`, which the link inlines into `synth`. With the entry
+# linked but no named caller making a pointer call, the check fails: the
+# call moved where it would go uncharged.
+DOOR_ONLY = {
+    "chimera_stm32::bench::enter": ("chimera_board::synth", "chimera_stm32::bench"),
+}
 
 HEADER = re.compile(r"^([0-9a-f]{8}) <(.+)>:$")
 # The mnemonic follows the address (and raw bytes, if shown) after a tab.
@@ -102,7 +118,7 @@ def parse(lines) -> Image:
         h = HEADER.match(line)
         if h:
             cur = h.group(2)
-            img.funcs[cur] = [0, set(), set(), False]
+            img.funcs[cur] = [0, set(), set(), 0]
             img.starts[cur] = int(h.group(1), 16)
             lo, table = {}, False
             continue
@@ -144,55 +160,116 @@ def parse(lines) -> Image:
                 f[2].add(t.group(1))
         elif op.startswith("blx") or (op == "bx" and args.strip() != "lr"):
             if re.match(r"(r\d+|ip|lr)\b", args.strip()):
-                f[3] = True
+                f[3] += 1
     img.funcs = {k: tuple(v) for k, v in img.funcs.items()}
     return img
 
 
-def depth(funcs, root, charge=0):
+def components(funcs):
+    """Each function's strongly connected component (Tarjan, iterative) as a
+    frozenset: the functions it can recurse through, itself alone if none."""
+    index, low, stack, on, comp = {}, {}, [], set(), {}
+    edges = {f: sorted(set(v[1]) | set(v[2])) for f, v in funcs.items()}
+    for root in sorted(funcs):
+        if root in index:
+            continue
+        work = [(root, 0)]
+        while work:
+            f, i = work.pop()
+            if i == 0:
+                index[f] = low[f] = len(index)
+                stack.append(f)
+                on.add(f)
+            out = edges.get(f, ())
+            if i < len(out):
+                work.append((f, i + 1))
+                c = out[i]
+                if c not in index:
+                    work.append((c, 0))
+                elif c in on:
+                    low[f] = min(low[f], index[c])
+                continue
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[f])
+            if low[f] == index[f]:
+                members = []
+                while True:
+                    m = stack.pop()
+                    on.discard(m)
+                    members.append(m)
+                    if m == f:
+                        break
+                for m in members:
+                    comp[m] = frozenset(members)
+    return comp
+
+
+def depth(funcs, root, charge=0, comp=None, doors=None, only=None):
     """(bytes, deepest chain, recursive calls cut, functions with pointer
-    calls). A pointer call costs `charge`."""
+    calls). A pointer call costs `charge`. A call back into the chain costs
+    0, so a recursion's worst case is its longest simple path, every
+    function in it live once. That depends on which of the cycle's
+    functions are already on the chain, so a result is kept per function
+    and those (the rest of the chain can't be reached again); calls go in
+    name order and only a deeper one replaces the best: one answer, one
+    chain, whatever the hash seed. A function in `doors` charges its
+    pointer call its named targets' depth instead, where they are found;
+    one in `only`'s callers charges the deeper of its target and `charge`."""
+    doors = doors or {}
+    also = {}
+    for t, callers in (only or {}).items():
+        for c in callers:
+            also.setdefault(c, []).append(t)
+    comp = components(funcs) if comp is None else comp
     memo, cut, indirect = {}, set(), set()
 
     def go(f, on):
-        if f in memo:
-            return memo[f]
         if f in on:
             cut.add(f)
             return 0, [f + " (recursion)"]
+        key = (f, on & comp.get(f, frozenset()))
+        if key in memo:
+            return memo[key]
         frame, calls, tails, ind = funcs.get(f, (0, (), (), False))
         best = (0, [])
-        if ind:
+        known = [t for t in doors.get(f, ()) if t in funcs]
+        if ind and not known:
             indirect.add(f)
             best = (charge, ["(a pointer call, %d B)" % charge])
         on = on | {f}
-        for c in calls:
+        for t in sorted((known or [t for t in also.get(f, ()) if t in funcs]) if ind else ()):
+            d = go(t, on)
+            if d[0] > best[0]:
+                best = (d[0], ["(the door's) " + d[1][0]] + d[1][1:])
+        for c in sorted(calls):
             d = go(c, on)
             if d[0] > best[0]:
                 best = d
         own = (frame + best[0], [f] + best[1])
-        for t in tails:
+        for t in sorted(tails):
             d = go(t, on)
             if d[0] > own[0]:
                 own = d
-        memo[f] = own
+        memo[key] = own
         return own
 
     total, chain = go(root, frozenset())
     return total, chain, cut, indirect
 
 
-def pointer_charge(img, out):
+def pointer_charge(img, out, comp=None):
     """What one pointer call may cost: the deepest function whose address
     the image holds (Thumb bit set), with its own pointer calls charged one
     level less, `POINTER_NEST` levels in all (the innermost charged 0).
     A fixed point doesn't exist: address-taken functions make pointer
     calls themselves (a `Store` body calling a sink), so the nesting is the
     stated assumption."""
-    taken = [f for f, a in img.starts.items() if (a | 1) in img.words and f not in ROOTS]
+    taken = sorted(f for f, a in img.starts.items() if (a | 1) in img.words and f not in ROOTS and f not in DOOR_ONLY)
+    comp = comp if comp is not None else components(img.funcs)
     charge, deepest = 0, "-"
     for _ in range(POINTER_NEST):
-        charge, deepest = max(((depth(img.funcs, f, charge)[0], f) for f in taken), default=(0, "-"))
+        charge, deepest = max(((depth(img.funcs, f, charge, comp, None, DOOR_ONLY)[0], f) for f in taken), default=(0, "-"))
     print(
         "pointers   %6d B  each, %d deep, over %d address-taken functions; deepest %s"
         % (charge, POINTER_NEST, len(taken), short(deepest)),
@@ -220,7 +297,8 @@ def short(name, n=90):
 
 def check(img, stack_bytes, out):
     """True if every root is found and the nested sum fits."""
-    charge = pointer_charge(img, out)
+    comp = components(img.funcs)
+    charge = pointer_charge(img, out, comp)
     ok, total = True, 0
     for i, root in enumerate((THREAD,) + ISRS):
         if root not in img.funcs:
@@ -228,7 +306,7 @@ def check(img, stack_bytes, out):
                 print("stack-depth: no %s in the disassembly" % root, file=out)
                 ok = False
             continue
-        d, chain, cut, ind = depth(img.funcs, root, charge)
+        d, chain, cut, ind = depth(img.funcs, root, charge, comp, DOOR_CALLS, DOOR_ONLY)
         d += EXC_FRAME if i else 0
         total += d
         print("%-10s %6d B  %s" % (root, d, " > ".join(short(c, 60) for c in chain[:6]) + (" > …" if len(chain) > 6 else "")), file=out)
@@ -236,6 +314,14 @@ def check(img, stack_bytes, out):
             print("           recursion cut at: %s" % ", ".join(sorted(short(c, 60) for c in cut)), file=out)
         if ind:
             print("           %d functions call through a pointer, each charged above" % len(ind), file=out)
+    for root in DOOR_CALLS:
+        if root in img.funcs and img.funcs[root][3] > 1:
+            print("stack-depth: %s has %d pointer calls, its door's one only" % (root, img.funcs[root][3]), file=out)
+            ok = False
+    for t, callers in DOOR_ONLY.items():
+        if t in img.funcs and not any(img.funcs.get(c, (0, (), (), 0))[3] for c in callers):
+            print("stack-depth: no pointer call in %s enters %s" % (" or ".join(callers), t), file=out)
+            ok = False
     for f in small_reached(img.funcs):
         print("stack-depth: an audio or MIDI interrupt reaches %s, built for size" % short(f), file=out)
         ok = False

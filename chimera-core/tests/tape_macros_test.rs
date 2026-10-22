@@ -7,6 +7,7 @@ mod common;
 
 use core::mem::MaybeUninit;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::age::{Age, age_runs};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::stretch::WRAP_SAMPLES;
@@ -22,9 +23,9 @@ const B: usize = BLOCK_SIZE;
 
 /// LOOP either way (END before START plays reversed), and the rest.
 const MODELS: [Mach; 6] = [
-    Mach::fwd(TapeModel::Loop),
-    Mach::rev(TapeModel::Loop),
-    Mach::fwd(TapeModel::PingPong),
+    Mach::fwd(TapeModel::Walk),
+    Mach::rev(TapeModel::Walk),
+    Mach::ping(),
     Mach::fwd(TapeModel::Scrub),
     Mach::fwd(TapeModel::Transwave),
     Mach::fwd(TapeModel::Stretch),
@@ -32,7 +33,9 @@ const MODELS: [Mach; 6] = [
 
 fn fresh() -> TapeEngine {
     let mut slot = MaybeUninit::uninit();
-    *TapeEngine::init_in_place(&mut slot)
+    TapeEngine::init_in_place(&mut slot);
+    // SAFETY: `init_in_place` wrote it whole.
+    unsafe { slot.assume_init() }
 }
 
 /// A long 1 kHz sine at 48 kHz (no wrap inside `secs`), or TRANSWAVE's
@@ -198,7 +201,7 @@ fn line(curve: &[(f64, f64)], hz: f64) -> f64 {
 /// between the wow and the capstan) correlates under ½ over 8 s.
 #[test]
 fn voices_have_own_transport() {
-    let model = TapeModel::Loop;
+    let model = TapeModel::Walk;
     let m = Mach::fwd(model);
     let held = source(model, 9.0);
     let v = SourceView::strict(&held).unwrap();
@@ -261,7 +264,7 @@ fn voices_have_own_transport() {
 /// pair does on about a quarter, 5; a locked pair on all 20).
 #[test]
 fn wows_never_lock() {
-    let model = TapeModel::Loop;
+    let model = TapeModel::Walk;
     let m = Mach::fwd(model);
     let held = source(model, 9.0);
     let v = SourceView::strict(&held).unwrap();
@@ -638,15 +641,15 @@ fn full_tape_keeps_the_clamp_and_floors() {
     // The note's `inc`: 16 · 2^(−33/1200), by PITCH from note 127.
     let pitch = 1_200.0 * INC_MAX.log2() - 33.0 - (12_700.0 - 6_000.0);
     for m in [
-        Mach::fwd(TapeModel::Loop),
-        Mach::rev(TapeModel::Loop),
-        Mach::fwd(TapeModel::PingPong),
+        Mach::fwd(TapeModel::Walk),
+        Mach::rev(TapeModel::Walk),
+        Mach::ping(),
         Mach::fwd(TapeModel::Scrub),
         Mach::fwd(TapeModel::Stretch),
     ] {
         let model = m.model;
         let p = TapeEngineParams {
-            model,
+            machine: TapeMachine::of(model),
             start: 0.5,
             end: 0.5 + 64.0 / 48_000.0,
             size: 0.0,

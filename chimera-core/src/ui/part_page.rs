@@ -3,10 +3,8 @@
 //! bound param's spec.
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
-use crate::block::Block;
 use crate::dsp::algo::params::AlgoOpParams;
-use crate::dsp::tape_engine::machine::defaults;
-use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
+use crate::dsp::modulator::EnvSlot;
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
 
@@ -91,19 +89,17 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
         Edit::Fine(d) => crate::block::nudge_fine(&mut *b, a.param, d),
         Edit::To(v) => b.set(a.param, v),
     }
-    machine_edit(a, before, &mut *b);
-    b.get(a.param) != before
-}
-
-/// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
-/// Machines); a load never does. The engine eases them in.
-fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) {
-    let model = TapeEngineParams::MODEL;
-    if a == ParamAddr::new(BlockRef::TapeEngine, model) && b.get(model) != before {
-        for (id, v) in defaults(TapeModel::from_index(b.get(model) as u8)) {
-            b.set(id, v);
+    // WALK's defaults, bank 2's (`ui::walk`); a closed door writes none.
+    let env1 = crate::bank2::ui_door(|u| u.machine_edit(a, before, &mut *b)).unwrap_or(&[]);
+    let moved = b.get(a.param) != before;
+    if !env1.is_empty()
+        && let Some(mut env) = params.block_mut(BlockRef::Env(EnvSlot::Env1))
+    {
+        for &(id, v) in env1 {
+            env.set(id, v);
         }
     }
+    moved
 }
 
 /// Shift+encoder on `slot`: snap the bound param (the selector does not snap).

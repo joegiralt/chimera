@@ -29,11 +29,13 @@ pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
+pub mod onset;
 pub mod op_page;
 pub mod orbit;
 pub mod page;
 pub mod part_page;
 pub mod perf;
+pub mod pit_tuner;
 pub mod pool_page;
 pub mod push;
 pub mod region;
@@ -43,11 +45,13 @@ pub mod saver;
 pub mod settings;
 pub mod source_cell;
 pub mod splash;
+pub mod tape_glyph;
 pub mod tape_strip;
 pub mod theme;
 pub mod theme_settings;
 pub mod view;
 pub mod viz;
+pub(crate) mod walk;
 
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
@@ -68,7 +72,7 @@ use crate::dsp::algo::params::step_alg;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
-use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeMachine};
 use crate::in_place::uninit_at;
 use crate::instrument::AudioShared;
 use crate::instrument::{LfoView, PartHeads};
@@ -333,6 +337,8 @@ pub struct UiState {
     /// (`instrument::LFO_VIEW`) but in tests.
     lfo_head: Option<lfo_glyph::Head>,
     lfo_from: &'static LfoView,
+    /// PIT's tuner: each Part's last note and the corner (ADR 0201).
+    tuner: pit_tuner::Tuner,
     /// The edited Part's newest voice's formant view, as the audio last
     /// published it: what an OP page's band draws.
     formant: FormantView,
@@ -436,6 +442,7 @@ crate::in_place::field_list!(UiState => UiState {
     heads_from,
     lfo_head,
     lfo_from,
+    tuner,
     formant,
     src,
     lib,
@@ -507,6 +514,7 @@ impl UiState {
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
             addr_of_mut!((*p).lfo_head).write(None);
             addr_of_mut!((*p).lfo_from).write(&crate::instrument::LFO_VIEW);
+            addr_of_mut!((*p).tuner).write(pit_tuner::Tuner::NEW);
             addr_of_mut!((*p).formant).write(FormantView::NONE);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
             library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
@@ -1134,7 +1142,13 @@ impl UiState {
             .on_rev(&self.project.perf().fx.reverb)
             .on_chorus(&self.project.perf().fx.chorus)
             .on_pages(self.theme.pages);
-        let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
+        let ctx = SlotCtx {
+            delay: self.project.perf().fx.delay.kind(),
+            ..ctx
+        };
+        let base =
+            view::SourceState::of(&sound.params.tape, sound.source_ref(), self.project.pool())
+                .tape_routed(view::tape_routed(sound));
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
@@ -1236,18 +1250,11 @@ impl UiState {
     fn load_sound(&mut self, part: PartId, b: Browse) {
         let cursor = b.cursor();
         // The init entries lead the pool slots; a coming-soon engine's
-        // row, or a pool Sound of one, only says so.
-        let soon = |s: browser::Soon| Line::new(s.toast());
+        // row only says so.
         let from = match browser::entry_at(cursor) {
-            Some(browser::Entry::Slot(s)) => {
-                let engine = self.project.pool().get(s).map(|x| x.engine());
-                if let Some(x) = engine.and_then(browser::Soon::of) {
-                    return self.notice(soon(x));
-                }
-                PartFrom::Slot(s)
-            }
+            Some(browser::Entry::Slot(s)) => PartFrom::Slot(s),
             Some(browser::Entry::Init(e)) => PartFrom::Init(e),
-            Some(browser::Entry::Soon(s)) => return self.notice(soon(s)),
+            Some(browser::Entry::Soon(s)) => return self.notice(Line::new(s.toast())),
             None => return,
         };
         // An empty slot has nothing to ask about.
@@ -1511,6 +1518,9 @@ impl UiState {
     /// nothing is written; onto one it allows, it is written. `false` for
     /// any other cell.
     fn turn_choice(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
+        if a == held::MODEL || a == held::DIRECTION {
+            return self.turn_model(at, a, delta, shift);
+        }
         if !held::applies(a, shift) {
             return false;
         }
@@ -1542,13 +1552,82 @@ impl UiState {
         true
     }
 
+    /// A MODEL turn on a streamed source (ADR 0151's rule): onto a machine
+    /// the source refuses (`needs_ram`) it lands dimmed with the reason,
+    /// nothing written, so a key never plays into silence. `false` off a
+    /// streamed source: the plain edit.
+    fn turn_model(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
+        if !self.streams(at) {
+            return false;
+        }
+        let sound = &self.project.part(at).sound;
+        let now = crate::block::Block::get(&sound.params.tape, a.param) as u8;
+        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
+        let from = held.map_or(now, |(_, c)| c.code);
+        // MODEL and DIRECTION each list four.
+        const _: () = assert!(
+            crate::dsp::tape_engine::TapeMachine::ALL.len() == 4
+                && crate::dsp::tape_engine::Direction::ALL.len() == 4
+        );
+        let last = 3;
+        let to = match (shift, delta > 0) {
+            (true, true) => last,
+            (true, false) => 0,
+            _ => (i16::from(from) + i16::from(delta)).clamp(0, last),
+        } as u8;
+        let h = held::Held { addr: a, code: to };
+        if h.why(sound, true).is_some() {
+            self.held = Some((at, h));
+        } else {
+            self.held = None;
+            if to != now {
+                self.edit_in(at, a, part_page::Edit::To(f32::from(to)));
+            }
+        }
+        true
+    }
+
+    /// START or END turned on a held source (#698 finding 6): in time,
+    /// `onset::stepped`; with MIX, to the next onset the turn's way, or
+    /// left where it is with none in RAM. `false` for any other cell.
+    fn turn_window(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
+        use crate::dsp::tape_engine::TapeEngineParams as T;
+        if a.block != BlockRef::TapeEngine || !matches!(a.param, T::START | T::END) {
+            return false;
+        }
+        let view::SourceState::Held { rate, frames, .. } = self.ctx().src else {
+            return false;
+        };
+        let sound = &self.project.part(at).sound;
+        let now = crate::block::Block::get(&sound.params.tape, a.param);
+        let to = if shift {
+            let r = sound.source_ref();
+            let held = r.and_then(|r| self.project.pool().held(r));
+            let from = (now * frames as f32) as u32;
+            held.and_then(|h| onset::onset(h, frames, from, delta > 0))
+                .map_or(now, |f| f as f32 / frames.max(1) as f32)
+        } else {
+            onset::stepped(now, delta, rate.get(), frames)
+        };
+        if to != now {
+            self.edit_in(at, a, part_page::Edit::To(to));
+        }
+        true
+    }
+
+    /// Part `at`'s source streams.
+    fn streams(&self, at: PartId) -> bool {
+        let r = self.project.part(at).sound.source_ref();
+        r.is_some_and(|r| self.project.pool().streamed(r))
+    }
+
     /// The choice the focused cell shows dimmed and why, if any.
     pub fn held_choice(&self) -> Option<held::Shown> {
         let (at, h) = self.held?;
         let def = self.page_def();
         let on = slot_addr(def, self.focused_slot(), &self.ctx());
         (at == self.active_part && on == Some(h.addr))
-            .then(|| h.why(&self.project.part(at).sound))
+            .then(|| h.why(&self.project.part(at).sound, self.streams(at)))
             .flatten()
             .map(|why| held::Shown { held: h, why })
     }
@@ -1598,6 +1677,7 @@ impl UiState {
         if now
             != (SlotCtx {
                 tape: now.tape,
+                once: now.once,
                 ..before
             })
         {
@@ -1887,13 +1967,6 @@ impl UiState {
     #[doc(hidden)]
     pub fn replaced_for_test(&mut self, was: PartChain) {
         self.project_replaced(was)
-    }
-
-    /// LIBRARY lists TAPE Sounds, for the tests of their load.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    pub fn list_tape_for_test(&mut self) {
-        self.lib.tape = true;
     }
 
     /// A replace from `src` that asks opens its prompt; whether it did.
@@ -2350,9 +2423,14 @@ impl UiState {
         }
     }
 
-    /// SETTINGS > TUNING for the audio thread, in the same publish.
-    pub fn publish_tune(&self, out: &mut AudioShared) {
+    /// The UI's own part of a publish: SETTINGS > TUNING, and nothing
+    /// for a Part whose SOURCE sits on a card row it hasn't loaded, as
+    /// its cell reads (#742).
+    pub fn publish_ui(&self, out: &mut AudioShared) {
         out.tune = self.midi.tune;
+        if let Some(p) = self.src.on_card() {
+            out.parts[p.index()].source = None;
+        }
     }
 
     /// ORBIT's settings for the audio thread, into a slot of its triple
@@ -2454,10 +2532,13 @@ impl UiState {
 
     fn handle_frame(&mut self, controls: &impl Controls) {
         let rev = self.project.rev();
-        let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.model;
+        let model = |ui: &Self| {
+            let t = &ui.project.part(ui.active_part).sound.params.tape;
+            (t.machine(), t.direction)
+        };
         let was = model(self);
         self.input(controls);
-        let jog = self.jog_pass(controls.now_ms().0);
+        let jog = self.jog_pass(controls.now_ms());
         // Knob moves the hand may have made: a turn or the reel, each one,
         // and a new MODEL's defaults. Only CCs spend what is left.
         if cfg!(feature = "midi-map") {
@@ -2465,7 +2546,15 @@ impl UiState {
                 .iter()
                 .filter(|&&e| controls.encoder_delta(e) != 0);
             let now = model(self);
-            let defaults = if now != was { cc::model_writes(now) } else { 0 };
+            // At most a MODEL turn's writes (`walk::tape_writes_in`).
+            let t = &self.project.part(self.active_part).sound.params.tape;
+            let defaults = if now != was {
+                let code = now.0.index();
+                crate::bank2::ui_door(|u| u.tape_writes(TapeEngineParams::MODEL, code, t))
+                    .unwrap_or(0)
+            } else {
+                0
+            };
             self.cc.hand(turns.count() as u8 + u8::from(jog) + defaults);
         }
         // A save or clear moves the browser's hints, costs and meter.
@@ -2503,7 +2592,9 @@ impl UiState {
         let held = r.filter(|_| v.is_some());
         // Keyed on the ref: a source file is write-once and sealed, and its
         // ref's CRC is over its bytes, so other bytes are another ref.
-        if held != self.strip_of {
+        // Worked out only with the UI's table open (ADR 0175), so a bank 2
+        // installed later fills it.
+        if held != self.strip_of && crate::bank2::ui_door(|_| ()).is_some() {
             self.strip_of = held;
             self.overview = v.map_or(tape_strip::Overview::EMPTY, |v| {
                 tape_strip::Overview::of(&v, 0.0, 1.0)
@@ -2527,6 +2618,19 @@ impl UiState {
         self.heads_from = from;
     }
 
+    /// PIT's tuner takes `note` as `part`'s last, and the edited Part as
+    /// `sounding`, never the audio's: for the goldens and tests.
+    #[cfg(feature = "test-support")]
+    pub fn hear_note(&mut self, part: PartId, note: Option<crate::MidiNote>, sounding: bool) {
+        self.tuner.hear(part, note, sounding);
+    }
+
+    /// PIT's corner as last worked out: for the tests.
+    #[cfg(feature = "test-support")]
+    pub fn tuner(&self) -> &pit_tuner::Shown {
+        &self.tuner.shown
+    }
+
     /// The LFO page's playhead reads `from` (the goldens' own), not the
     /// audio's.
     pub fn hear_lfo(&mut self, from: &'static LfoView) {
@@ -2540,14 +2644,16 @@ impl UiState {
     }
 
     /// SCRUB's reel this pass: POSITION moves at the jog's speed, gliding
-    /// to a stop through DRAG once the FINGER is let go.
-    fn jog_pass(&mut self, now_ms: u32) -> bool {
+    /// to a stop through DRAG once the FINGER is let go. Bank 2's: closed,
+    /// the reel stands.
+    fn jog_pass(&mut self, now_ms: Ms) -> bool {
         let t = self.project.part(self.active_part).sound.params.tape;
-        if t.model != TapeModel::Scrub {
+        if t.machine != TapeMachine::Scrub {
             self.jog = jog::Jog::new();
             return false;
         }
-        let mv = self.jog.pass(now_ms, t.drag);
+        let jog = &mut self.jog;
+        let mv = crate::bank2::ui_door(|d| d.jog(jog, now_ms, t.drag)).unwrap_or(0.0);
         if mv != 0.0 {
             let p = &mut self.project.edit_part(self.active_part).sound.params.tape;
             p.position = crate::dsp::clampf(p.position + mv, 0.0, 1.0);
@@ -2596,7 +2702,7 @@ impl UiState {
         let whole = a.block == BlockRef::Reverb
             && reverb_panel::whole_ticks(&self.project.perf().fx.reverb, a.param);
         let jack = a.block == BlockRef::Filter && JackSlot::of(a.param).is_some();
-        let finger = a == SCRUB_FINGER && ctx.tape == TapeModel::Scrub;
+        let finger = a == SCRUB_FINGER && ctx.tape == TapeMachine::Scrub;
         if whole || jack || finger || view::is_dimmed(&v, &self.project.part(at).sound, &ctx) {
             return;
         }
@@ -2847,8 +2953,9 @@ impl UiState {
                     continue; // dimmed: the encoder is ignored
                 }
                 // SCRUB's FINGER turns the reel: `jog_pass` moves POSITION.
-                if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeModel::Scrub {
-                    self.jog.turn(delta, controls.now_ms().0);
+                if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeMachine::Scrub
+                {
+                    self.jog.turn(delta, controls.now_ms());
                     continue;
                 }
                 // The reverb turns by its TYPE's panel, and TYPE keeps the
@@ -2897,7 +3004,8 @@ impl UiState {
                 {
                     self.sel_op = self.sel_op.nudged(delta);
                 } else if let Some(a) = slot_addr(def, i, &ctx) {
-                    if fine {
+                    if self.turn_window(at, a, delta, shift) {
+                    } else if fine {
                         self.edit_fine(at, a, delta);
                     } else if !self.turn_choice(at, a, delta, shift) {
                         self.edit_addr(at, a, delta, shift);
@@ -2986,10 +3094,14 @@ impl UiState {
     pub fn update(&mut self, _: animation::UiTick) {
         self.saver_frames = self.saver_frames.saturating_add(1);
         self.saver_drawn |= self.idle.asleep();
+        // A streamed source's heads follow its Part's turns (spec § 5.6).
+        if !self.lib.busy() {
+            self.src.tick(&mut self.project);
+        }
         // A pending source hole closes when nothing above it sounds; never
         // under a load staging in the gap.
         // Nor under a library load's staging or scratch.
-        if !self.src.loading() && !self.lib.busy() {
+        if !self.src.holds_gap() && !self.lib.busy() {
             self.project.sources_pass();
         }
         self.refresh_status();
@@ -3003,6 +3115,8 @@ impl UiState {
         self.strip_pass();
         self.heads = self.heads_from.read(at.index());
         self.lfo_pass();
+        // PIT's tuner (ADR 0201): bank 2's pass; closed, the corner stays empty.
+        crate::bank2::ui_door(|d| d.pit(self));
 
         // Read base param values
         let def = self.page_def();
@@ -3275,6 +3389,7 @@ impl UiState {
             strip: &self.overview,
             heads: self.heads,
             lfo: self.lfo_head,
+            tuner: &self.tuner.shown,
             formant: &self.formant,
             held: self.held_choice(),
         }

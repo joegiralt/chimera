@@ -23,6 +23,44 @@ use crate::cache::{BANK2_OPEN_RASR, BANK2_READ_RASR, BANK2_REGION, BANK2_WRITE_R
 
 const _: () = assert!(BANK2_BASE == crate::cache::BANK2_BASE);
 
+/// The board's table in bank 2 (ADR 0175), at `BOARD_DOOR_ADDR`, after the
+/// engine's door: what the board's bank 1 calls of its own code there.
+#[cfg(feature = "bank2")]
+#[repr(C)]
+pub(crate) struct BoardDoor {
+    magic: u32,
+    /// The card interrupt's streaming work.
+    #[cfg(not(feature = "sd-probe"))]
+    pub(crate) card: crate::card_dma::CardDoor,
+}
+
+/// `BoardDoor::magic`.
+#[cfg(feature = "bank2")]
+const BOARD_MAGIC: u32 = u32::from_le_bytes(*b"B2BD");
+
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.door.board")]
+#[used]
+static BOARD_DOOR: BoardDoor = BoardDoor {
+    magic: BOARD_MAGIC,
+    #[cfg(not(feature = "sd-probe"))]
+    card: crate::card_dma::CardDoor::DOOR,
+};
+
+/// `BOARD_DOOR`'s slot.
+#[cfg(feature = "bank2")]
+// SAFETY: `bank2.x` links `BOARD_DOOR`, a `BoardDoor`, at `BOARD_DOOR_ADDR`
+// (its assert, `__bank2_board_door`).
+const BOARD_SLOT: chimera_core::bank2::DoorSlot<BoardDoor> =
+    unsafe { chimera_core::bank2::DoorSlot::new(chimera_core::bank2::BOARD_DOOR_ADDR) };
+
+/// `f` on the board's table, `None` closed (see `DoorCell::with`).
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
+#[inline(always)]
+pub(crate) fn board_door<R>(f: impl FnOnce(&BoardDoor) -> R) -> Option<R> {
+    DOOR_CELL.with_slot(BOARD_SLOT, f)
+}
+
 /// MPU region 2's state over S0-S3; region 1 (no access) is under it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -410,12 +448,13 @@ pub fn reset_on_ecc_fault() {
 /// Bank 2 judged against `seal`, this build's, and flash's verdict. Region
 /// 2 `Read` and the door cell closed first, so every path but open ends
 /// there (the console's `flash` still reads S0). On `Good`: region 2
-/// `Open`, the cell opened and the door checked once: `probe(1) == 43`,
-/// the table's first and last bytes. The boot's and an install's one way
+/// `Open`, the door checked once where it lies (`probe(1) == 43`, the
+/// table's first and last bytes, the board's and the UI's magics), then
+/// the cell opened. The boot's and an install's one way
 /// in.
 #[cfg(feature = "bank2")]
 fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
-    use chimera_core::bank2::{DOOR_MAGIC, PROBE_ADDS, TABLE_LEN};
+    use chimera_core::bank2::{DOOR_MAGIC, Judged, PROBE_ADDS, TABLE_LEN};
     use chimera_image::Door;
 
     DOOR_CELL.close();
@@ -428,19 +467,26 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
     let flash = Verdict::Good(*door.header());
     set_mpu(Mpu2::Open);
     // SAFETY: `door` was opened with `bank2_seal()`, this build's seal.
-    let ok = unsafe { DOOR_CELL.open(&door) }
-        && DOOR_CELL.with(|d| {
-            let last = TABLE_LEN - 1;
-            d.magic == DOOR_MAGIC
-                && (d.probe)(1) == 1 + PROBE_ADDS
-                && d.table[0] == 0xB2
-                && d.table[last] == last as u8 ^ 0xB2
-        }) == Some(true);
-    if !ok {
-        DOOR_CELL.close();
+    let judged = unsafe { Judged::of(&door) };
+    // Checked where it lies, then published: the audio and card
+    // interrupts, live at an install, call through it only once it passed.
+    let checked = judged.and_then(|j| {
+        j.check(|j| {
+            j.with(|d| {
+                let last = TABLE_LEN - 1;
+                d.magic == DOOR_MAGIC
+                    && d.probe(1) == 1 + PROBE_ADDS
+                    && d.table()[0] == 0xB2
+                    && d.table()[last] == last as u8 ^ 0xB2
+            }) && j.with_slot(BOARD_SLOT, |b| b.magic == BOARD_MAGIC)
+                && chimera_core::bank2::ui_door_ok(j)
+        })
+    });
+    let Some(checked) = checked else {
         set_mpu(Mpu2::Read);
         return (Bank2Status::Corrupt, flash);
-    }
+    };
+    DOOR_CELL.open(checked);
     let status = Bank2Status::Open {
         version: *door.version(),
         seal: door.seal().bytes(),
@@ -458,7 +504,8 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
 /// next boot; so does success (nothing renames it), and a boot with flash
 /// `Good` never reads it. `None`: nothing written; else bank 2 as the door
 /// then judged it.
-#[cfg(feature = "bank2")]
+// The SD probe halts after its probe: it installs nothing.
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
 #[inline(never)]
 pub fn boot_install(
     store: &mut impl chimera_hal::store::Store,
@@ -479,6 +526,7 @@ pub fn boot_install(
 /// OFF, then the door: the install's result and bank 2 as the door then
 /// judged it. The boot's install and the console's, one copy.
 #[cfg(feature = "bank2")]
+#[cfg_attr(feature = "sd-probe", allow(dead_code))]
 #[inline(never)]
 fn write_staged(
     staged: &mut impl ImageRead,
@@ -510,6 +558,7 @@ fn write_staged(
 /// The install's phase under DON'T POWER OFF; a gate build holds at each
 /// mark for a hand to pull the power.
 #[cfg(feature = "bank2")]
+#[cfg_attr(feature = "sd-probe", allow(dead_code))]
 struct Shown<'a, D> {
     d: &'a mut D,
     at: chimera_image::Phase,
@@ -569,9 +618,33 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
     use crate::controls;
     const TICKS: u32 = TAPE_OFF_MS * controls::CONTROLS_HZ / 1000;
     let t0 = controls::ticks();
-    let _ = ui.close_bank2(&chimera_core::project::LOAD_LINK, || {
-        controls::ticks().wrapping_sub(t0) < TICKS
-    });
+    let within = || controls::ticks().wrapping_sub(t0) < TICKS;
+    let _ = ui.close_bank2(&chimera_core::project::LOAD_LINK, within);
+    // No stream wants a fill now: the burst in flight lands and the card
+    // interrupt gives the bus back before its work (bank 2's) goes.
+    // Its own `TAPE_OFF_MS`: the audio's wait above may have spent the
+    // first.
+    // Still streaming then: the abort asked while the door is open, so
+    // bank 2's stop sends CMD12 and drains the card before the door
+    // closes; `closed` grounds a burst with no stop only if that too ran
+    // out (#761 m12).
+    #[cfg(not(feature = "sd-probe"))]
+    {
+        use crate::sd::BUS;
+        use chimera_hal::card_bus::Owner;
+        let wait = || {
+            let t1 = controls::ticks();
+            while BUS.owner() == Owner::Stream && controls::ticks().wrapping_sub(t1) < TICKS {
+                core::hint::spin_loop();
+            }
+        };
+        wait();
+        if BUS.owner() == Owner::Stream {
+            BUS.ask_abort();
+            crate::card_dma::pend();
+            wait();
+        }
+    }
 }
 
 #[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
