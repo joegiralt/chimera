@@ -187,10 +187,10 @@ type Demo = (
     Option<(ParamId, f32, f32)>,
 );
 
-const DEMOS: [Demo; 14] = [
+const DEMOS: [Demo; 13] = [
     ("TX BASS HIT", None, &[0, 0], None),
-    // SLICE NOTE from C4: kick, snare, closed hat, open hat.
-    ("KIT", None, &[0, 2, 6, 7], None),
+    // ponytail: KIT is out of the factory set until SLICE returns (#779).
+    // ("KIT", None, &[0, 2, 6, 7], None),
     ("SINE LOOP", None, &[0, 12], None),
     ("PAD LOOP", None, &[0, 5], None),
     ("TRON BOWED", None, &[0, 12], None),
