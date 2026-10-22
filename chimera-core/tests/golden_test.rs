@@ -500,8 +500,11 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_oneshot_slice7",
         (
-            0x66b4834f036719a1,
-            [0, 1050811635, 1053320054, 0, 0, 0, 0, 0],
+            0xd204e8cc8e9c4c87,
+            [
+                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
+                1032249790,
+            ],
         ),
     ),
     (
@@ -537,20 +540,20 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_stretch_grain",
         (
-            0xdcb96f9eb0451042,
+            0x203c4e364a30ada2,
             [
-                0, 3194122263, 1048588676, 1038371030, 3194242296, 3194046961, 3198953301,
-                1043531043,
+                0, 3194077547, 3176936110, 1050150903, 3193813286, 3193680097, 1050230980,
+                3168865049,
             ],
         ),
     ),
     (
         "tape_stretch_grain_reverse",
         (
-            0xc537bb2d694cbb20,
+            0x8b0d69083adedb8d,
             [
-                0, 1045956079, 3196498648, 3187434611, 1045894812, 1045703982, 1051045107,
-                3191800288,
+                0, 1045909750, 1019957261, 3199038575, 1041297164, 1041168321, 3200263219,
+                3186360794,
             ],
         ),
     ),
@@ -725,7 +728,8 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ("tape_loop_age", TapeEngineParams { age: 0.5, ..p }),
         ("tape_loop_tape", TapeEngineParams { tape: 0.5, ..p }),
         ("tape_oneshot", one),
-        // SLICE 7: its value 8.
+        // SLICE 7: its value 8. SLICE is on hold (`slice_in_play`, review
+        // of #761): it plays as `tape_oneshot`, whose hash it now is.
         (
             "tape_oneshot_slice7",
             TapeEngineParams {
@@ -753,7 +757,11 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         // before GRAIN existed. Re-recorded on #749's final core: the strike
         // reads its own head (a hair off the old grain's at the second
         // spot), and a reversed grain reads forward at a negative speed,
-        // its taps no longer a frame ahead of its place.
+        // its taps no longer a frame ahead of its place. Re-recorded again
+        // for the window's own period (review of #761, M2): the source has
+        // no PERIOD, and its grains now lock to the one its window repeats at;
+        // again for that search's mean taken off and its answer kept to 1/64
+        // frame, once a window.
         (
             "tape_stretch_grain",
             TapeEngineParams {

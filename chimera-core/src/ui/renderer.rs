@@ -771,7 +771,21 @@ impl Renderer {
             let right = hint_right(&o.gauge);
             return hint::focus(display, f.hint(o.hint), f.text, right);
         }
-        let buf = value_text(f, f.focus, self.set[f.focus].target());
+        let v = self.set[f.focus].target();
+        let held = held_on(f, &view).map(|h| h.code);
+        // The cell's own text where bank 2 can't say (NEEDS UPDATE).
+        let word = view
+            .addr()
+            .filter(|&a| crate::bank2::closed_text(a, v, f.bank2).is_none())
+            .and_then(|a| view::readout_word(a, v, held));
+        let buf = match word {
+            Some(w) => {
+                let mut b = FmtBuf::new();
+                let _ = core::fmt::Write::write_str(&mut b, w);
+                b
+            }
+            None => value_text(f, f.focus, v),
+        };
         let gauge = self.gauge(f);
         let label = band_label(f, &view);
         components::focus_band(
@@ -786,7 +800,7 @@ impl Renderer {
         let sound = &f.parts[f.active_part.index()].sound;
         let note = view
             .addr()
-            .and_then(|a| view::band_note(a, sound, f.ctx.src));
+            .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)));
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
             (Some(s), _) => {
                 let why = crate::ui::held::reason(s.why);

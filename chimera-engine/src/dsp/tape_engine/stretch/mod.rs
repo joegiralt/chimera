@@ -9,6 +9,7 @@ use chimera_hal::BLOCK_SIZE;
 pub mod classic;
 mod cloud;
 pub mod grain;
+mod period;
 pub mod units;
 
 pub use classic::{GrainClock, HALF_SPEED, WRAP_SAMPLES, d_time_s, lock, locks, time_speed};
@@ -43,7 +44,12 @@ impl Note {
         sr: u32,
     ) -> Note {
         match p.kind {
-            StretchType::Grain => Note::Grain(grain::Grains::on(p, v, inc, seed, sr)),
+            // GRAIN reads a whole row (`row_taps`); STRETCH is RAM's, so
+            // a span never comes, and would play nothing.
+            StretchType::Grain => Note::Grain(match v.whole_row() {
+                Some(row) => grain::Grains::on(p, &row, inc, seed, sr),
+                None => grain::Grains::ended(),
+            }),
             StretchType::Mono | StretchType::Poly => {
                 Note::Classic(classic::Stretch::on(p, v, inc, m, sr))
             }
@@ -94,7 +100,13 @@ impl Note {
                 st.render(out, v, inc, (m.position, m.motion, m.size), p.end, sr);
                 true
             }
-            Note::Grain(g) => g.render(out, v, inc, m.motion, p, sr),
+            Note::Grain(g) => match v.whole_row() {
+                Some(row) => g.render(out, &row, inc, m.motion, p, sr),
+                None => {
+                    out.fill(0.0);
+                    false
+                }
+            },
         }
     }
 

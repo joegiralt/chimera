@@ -245,14 +245,7 @@ fn idents_are_tokens_and_unique() {
                 blk.set(s.id, f32::from(v));
                 let i = blk.enum_ident(s.id).expect("an Enum has an ident");
                 assert!(is_token(i), "{b:?} {} value {v}: {i:?}", s.ident);
-                // TAPE's ONE, LOOP and PING are PLAY's code; MODE tells
-                // them apart (ADR 0178).
-                let play = b == BlockRef::TapeEngine && s.ident == "MODEL" && v <= 2;
-                assert!(
-                    play || !values.contains(&i),
-                    "{b:?} {} repeats {i}",
-                    s.ident
-                );
+                assert!(!values.contains(&i), "{b:?} {} repeats {i}", s.ident);
                 values.push(i);
             }
             bank.block(b).set(s.id, s.default);
@@ -347,6 +340,17 @@ fn every_enum_param_round_trips_in_loader_order() {
     for (b, _) in stored() {
         for e in ValidAddr::of_block(b).filter(|a| a.coded()) {
             let s = e.spec();
+            // SLICE is on hold (`slice_in_play`): every code loads OFF.
+            if b == BlockRef::TapeEngine
+                && s.id == chimera_core::dsp::tape_engine::TapeEngineParams::SLICE
+            {
+                for v in 0..=s.max as u8 {
+                    let mut a = Bank::new();
+                    a.block(b).set(s.id, f32::from(v));
+                    assert_eq!(load(b, &mut a).block(b).get(s.id), 0.0, "SLICE {v}");
+                }
+                continue;
+            }
             for v in 0..=s.max as u8 {
                 let mut a = Bank::new();
                 a.block(b).set(s.id, f32::from(v));

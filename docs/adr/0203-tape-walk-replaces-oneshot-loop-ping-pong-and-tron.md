@@ -10,7 +10,7 @@ ONE, LOOP, PING and TRON all play one head through the window. They differ in wh
 TRON sounded the same as ONE. It was ONE's path plus a run-out counter of `0.25 · (4·T)^LENGTH` s over a strip of T seconds, so LENGTH 1 ended exactly at END at ROOT, where ONE at HOLD ends too; key up faded it in 32 ms. On the factory TRON BOWED (a 4 s strip) through the whole instrument the two differed only off the root or at key up: a chord let go at 1.5 s was at −59 dB by 1.6 s on TRON and played past 6 s on ONE.
 
 ## Decision
-- **MODEL lists WALK, STRETCH, SCRUB, WAVE** (`TapeMachine::ALL`, values 0 to 3). The MODEL cell reads WALK, STRCH, SCRUB, WAVE; the model page's header WALK, STRETCH, SCRUB, WAVE (TRANSWAVE's header renamed WAVE, a display string; its disk ident stays `TRANSWAVE`). SLICE (0199) is on hold until PREP: disk code 8 and param ids 17 and 18 stay free for it.
+- **MODEL lists WALK, STRETCH, SCRUB, WAVE** (`TapeMachine::ALL`, values 0 to 3). The MODEL cell reads WALK, STRCH, SCRUB, WAVE; the model page's header WALK, STRETCH, SCRUB, WAVE (TRANSWAVE's header renamed WAVE, a display string; its disk ident stays `TRANSWAVE`). SLICE (ADR 0199, on the `tape-slice` branch, #748; not on this one) is on hold until PREP: disk code 8 and param ids 17 and 18 stay free for it. While it is, its stored param (13) is never heard (review of #761): every reader asks `TapeEngineParams::slice_in_play`, which answers OFF; a file's SLICE, on any MODEL, loads OFF; a MODEL turn writes it OFF. A main-era Sound that kept SLICE NOTE under LOOP loads and plays its keys at their pitch over the whole window.
 - **WALK's controls**, on 6-cell pages:
 
   | Page | Cells |

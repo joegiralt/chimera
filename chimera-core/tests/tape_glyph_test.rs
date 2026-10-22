@@ -760,7 +760,15 @@ fn no_tape_page_cell_is_dimmed() {
                 let v = view::view(def, i, &ctx);
                 // WALK's XFADE off LOOP and RETRIG off once through say why.
                 let why = v.addr().and_then(|a| view::tape_note(a, &s));
-                if matches!(why, Some(view::XFADE_LOOP_ONLY | view::RETRIG_ONCE_ONLY)) {
+                if matches!(
+                    why,
+                    Some(
+                        view::XFADE_LOOP_ONLY
+                            | view::XFADE_NO_SEAM
+                            | view::RETRIG_ONCE_ONLY
+                            | view::RETRIG_TRON_OFF
+                    )
+                ) {
                     continue;
                 }
                 // STRETCH dims the other TYPE's cells (ADR 0204), and only
@@ -846,4 +854,30 @@ fn direction_turned_onto_forward_burns_the_match() {
     feed(&mut ui, Input::turn(EncoderId::E, -10));
     assert_ne!(shot(&mut ui), before, "POSITION rolls the wheel in LOOP");
     assert!(tape(&ui).position < pos);
+}
+
+/// The glyph's inputs decode TYPE and TRON from their normalised set
+/// values into their enums (review of #761, m7): GRAIN is TYPE's top
+/// (1.0), which the old `>= 1.5` on the normalised value never met, so
+/// GRAIN's bellows drew CLASSIC's.
+#[test]
+fn glyph_inputs_decode_type_and_tron() {
+    use chimera_core::dsp::tape_engine::{StretchType, Tron};
+    let at = |kind: f32, tron: f32| {
+        let mut set = [0.0; 15];
+        (set[11], set[14]) = (tron, kind);
+        GlyphInputs::from_set(set, Pose::Live)
+    };
+    assert_eq!(at(0.0, 0.0).kind, StretchType::Mono);
+    assert_eq!(at(0.5, 0.0).kind, StretchType::Poly);
+    assert_eq!(at(1.0, 0.0).kind, StretchType::Grain);
+    assert_eq!(at(0.0, 1.0).tron, Tron::On);
+    assert_eq!(at(0.0, 0.0).tron, Tron::Off);
+    // STRETCH under GRAIN draws GRAIN's bellows, under CLASSIC CLASSIC's.
+    let mut set = [0.0; 15];
+    set[0] = 1.0 / 3.0; // MODEL: STRETCH
+    set[14] = 1.0;
+    let grain = TapeGauge::of_set(set, Pose::Live);
+    set[14] = 0.0;
+    assert_ne!(grain, TapeGauge::of_set(set, Pose::Live));
 }

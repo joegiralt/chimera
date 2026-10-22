@@ -15,7 +15,7 @@ use crate::dsp::grain::core::{
     TapAt, bell, hermite,
 };
 use crate::dsp::grain::core::{Samples as CoreSamples, Speed as CoreSpeed};
-use crate::dsp::tape_engine::read::SourceView;
+use crate::dsp::tape_engine::read::WholeRow;
 
 /// Grain slots: four overlap at most; two more spare, so a start never
 /// steals one still sounding.
@@ -26,7 +26,8 @@ const SRC_LEN: usize = 1 << 30;
 /// either way: forward past the window's top or backward past its foot.
 const MID: i64 = 1 << 29;
 /// The window's last frames (the way it plays) ramp to silence over this
-/// many, so a grain read over its end never steps.
+/// many, so a grain read over its end never steps; a window under four
+/// times it ramps over its last quarter, so its grains aren't all ramped.
 const EDGE: f32 = 256.0;
 /// A source sample's scale, 12 bits to ±1.
 const SCALE: f32 = 1.0 / 2048.0;
@@ -41,23 +42,34 @@ pub const fn rng(seed: u32) -> Rng {
 /// from its top down, its grains at a negative speed. Past the window's
 /// end, the way it plays, it reads silence.
 pub struct Src<'a, const REV: bool> {
-    v: SourceView<'a>,
+    v: WholeRow<'a>,
     /// The window's frames.
     win: u32,
     /// Its lowest source frame.
     lo: u32,
+    /// Its end ramp's frames: `EDGE`, or a quarter of a shorter window;
+    /// and their inverse (`EDGE`'s exact, so a long window's ramp is as
+    /// it was, bit for bit).
+    edge: f32,
+    inv: f32,
 }
 
 impl<'a, const REV: bool> Src<'a, REV> {
     /// The window of `win` frames from `base`, its first frame the way it
     /// plays (`REV`'s top).
-    pub fn new(v: SourceView<'a>, base: u32, win: u32) -> Self {
+    pub fn new(v: WholeRow<'a>, base: u32, win: u32) -> Self {
         let lo = if REV {
             (base + 1).saturating_sub(win)
         } else {
             base
         };
-        Src { v, win, lo }
+        Src {
+            v,
+            win,
+            lo,
+            edge: EDGE.min(0.25 * win as f32),
+            inv: 1.0 / EDGE.min(0.25 * win as f32),
+        }
     }
 
     /// `at`, the way it plays, as a forward frame.
@@ -70,7 +82,7 @@ impl<'a, const REV: bool> Src<'a, REV> {
         }
     }
 
-    /// Forward frame `f`'s edge: the last `EDGE` frames the way it plays
+    /// Forward frame `f`'s edge: the last `edge` frames the way it plays
     /// ramp to silence, and past them is silence; a clamp, no branch.
     #[inline(always)]
     fn edge(&self, f: i64) -> f32 {
@@ -79,16 +91,16 @@ impl<'a, const REV: bool> Src<'a, REV> {
         } else {
             (i64::from(self.win) - 1 - f) as f32
         };
-        clampf(to_end * (1.0 / EDGE), 0.0, 1.0)
+        clampf(to_end * self.inv, 0.0, 1.0)
     }
 
-    /// Forward frame `f` is within `EDGE` of the end it plays to.
+    /// Forward frame `f` is within `edge` of the end it plays to.
     #[inline(always)]
     fn near_end(&self, f: i64) -> bool {
         if REV {
-            f <= EDGE as i64
+            f <= self.edge as i64
         } else {
-            f + EDGE as i64 >= i64::from(self.win) - 1
+            f + self.edge as i64 >= i64::from(self.win) - 1
         }
     }
 
@@ -365,4 +377,32 @@ impl Cloud {
 /// length and lateness (`Grain::start`: phase `(frac + played) / len`).
 fn phase_bell(left: u32, (dur, frac): (f32, f32)) -> f32 {
     bell((frac + (dur as i64 - i64::from(left)) as f32) / dur)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
+
+    /// A window under four `EDGE`s ramps over its last quarter, not its
+    /// whole length (review of #761, m6); a long one over `EDGE`, as it was.
+    #[test]
+    fn a_short_window_ramps_its_last_quarter() {
+        let d = Descriptor::whole(Shape::Plain, 1, 48_000).unwrap();
+        let mut held = [0u8; DESC_LEN + 3 * 1_024 / 2];
+        held[..DESC_LEN].copy_from_slice(&d.to_bytes());
+        let x = [1_000i16; 1_024];
+        crate::storage::twelve::pack12(&x, &mut held[DESC_LEN..]);
+        let v = WholeRow::new(&held).unwrap();
+        let s = Src::<false>::new(v, 0, 128);
+        assert_eq!(s.edge(0), 1.0);
+        assert_eq!(s.edge(127 - 32), 1.0, "full until its last 32 frames");
+        assert_eq!(s.edge(127 - 16), 0.5);
+        let r = Src::<true>::new(v, 127, 128);
+        assert_eq!(r.edge(127), 1.0);
+        assert_eq!(r.edge(16), 0.5);
+        let long = Src::<false>::new(v, 0, 1_024);
+        assert_eq!(long.edge(1_023 - 256), 1.0);
+        assert_eq!(long.edge(1_023 - 128), 0.5);
+    }
 }

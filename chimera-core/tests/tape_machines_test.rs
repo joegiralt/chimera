@@ -895,6 +895,7 @@ fn slices_are_exact() {
 }
 
 #[test]
+#[ignore = "SLICE is on hold (ADR 0199, tape-slice, #748): no note plays it until it returns"]
 fn slice_note_picks_without_transposing() {
     let win = Window {
         lo: 0,
@@ -1277,7 +1278,7 @@ fn every_cell_reads_in_the_audio() {
             TapeModel::Walk if !base.direction.once() => base.size = 0.6,
             TapeModel::Scrub => base.size = 0.6,
             // A GRAIN stretch that ends inside the 400 blocks: END is heard.
-            TapeModel::Stretch => base.stretch[0] = 0.0,
+            TapeModel::Stretch => base.stretch.length = 0.0,
             _ => {}
         }
         let render = |p: P, note: u8| {

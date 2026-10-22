@@ -8,6 +8,7 @@ use crate::dsp::algo::kinds::{self, OpKind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
+use crate::dsp::delay::{DelayParams, DelayType};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{self, ModalParams, ResonatorMode};
@@ -17,7 +18,7 @@ use crate::dsp::modulator::{
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine;
 use crate::dsp::tape_engine::{
-    self, Choice, Direction, MachineIndex, TapeEngineParams as T, TapeMachine, Tron, Way, wave,
+    self, Choice, Direction, MachineIndex, TapeEngineParams as T, TapeMachine, Tron, wave,
 };
 use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use crate::midi_map::Mappable;
@@ -82,8 +83,10 @@ pub struct SlotCtx {
     pub model: ResonatorMode,
     /// TAPE's machine: its labels and cells.
     pub tape: TapeMachine,
-    /// WALK once through with TRON off: FADE ends in HOLD.
-    pub holds: bool,
+    /// WALK once through (FORWARD or REVERSE), and TRON then: off, FADE
+    /// ends in HOLD; on, LENGTH reads the tape's seconds. `None` around a
+    /// loop, or off WALK.
+    pub once: Option<Tron>,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
     /// SCRUB's KEY is POSITION: FINGER's hint says a key places it.
@@ -94,6 +97,8 @@ pub struct SlotCtx {
     pub chorus: ChorusMode,
     /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
+    /// The delay's TYPE: the other TYPE's cells dim (`delay_note`).
+    pub delay: DelayType,
     /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
     pub plate: bool,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
@@ -137,14 +142,16 @@ impl SlotCtx {
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
             tape,
-            holds: tape == TapeMachine::Walk
+            once: (tape == TapeMachine::Walk
                 && Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
-                    .is_some_and(Direction::once)
-                && Tron::from_value(get(BlockRef::TapeEngine, T::TRON)) != Some(Tron::On),
+                    .is_some_and(Direction::once))
+            .then(|| Tron::from_value(get(BlockRef::TapeEngine, T::TRON)).unwrap_or(Tron::Off)),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             keys_place: get(BlockRef::TapeEngine, T::KEY) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
+            // The project's, not a Sound's: `UiState::ctx` sets it.
+            delay: DelayType::Tape,
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
@@ -183,6 +190,15 @@ impl SlotCtx {
         Self {
             rev: reverb_panel::shown(rev.kind),
             plate: in_plate_zone(rev),
+            ..self
+        }
+    }
+
+    /// This context under the project delay `fx` (a Sound's params hold
+    /// no FX): which TYPE's cells dim.
+    pub fn on_delay(self, fx: &DelayParams) -> Self {
+        Self {
+            delay: fx.kind(),
             ..self
         }
     }
@@ -601,7 +617,13 @@ impl View {
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
-            Some(a) if a.block == BlockRef::TapeEngine && matches!(a.param, T::START | T::END) => {
+            // MIX + turn snaps to an onset only on a held source
+            // (`turn_window`); elsewhere it is the plain snap.
+            Some(a)
+                if a.block == BlockRef::TapeEngine
+                    && matches!(a.param, T::START | T::END)
+                    && matches!(ctx.src, SourceState::Held { .. }) =>
+            {
                 ONSET_HINT
             }
             Some(a)
@@ -677,13 +699,15 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     }
 }
 
-/// `addr`'s format under `ctx`: MODE names its kind's own modes, WALK's
-/// FADE reads HOLD.
+/// `addr`'s format under `ctx`: MODE names its kind's own modes; a TAPE
+/// cell reads its engine law's unit, bank 2's (`walk::tape_fmt_in`; a
+/// closed door, the spec's).
 fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
-        // ONE's FADE: its last step is HOLD.
-        (BlockRef::TapeEngine, T::DRAG) if ctx.holds => ValFmt::Hold,
+        (BlockRef::TapeEngine, id) => crate::bank2::ui_door(|u| u.tape_fmt(id, ctx.tape, ctx.once))
+            .flatten()
+            .unwrap_or(fmt),
         _ => fmt,
     }
 }
@@ -883,10 +907,19 @@ pub const WOW_AT_REST: &str = "TAPE AT 0 · NO WOW TO SHAPE";
 pub const FADE_ASIDE: &str = "AMP RELEASE ENDS THE NOTE";
 /// ONE's FADE under a VCA route: only HOLD, its last step, is heard.
 pub const FADE_HOLD_ONLY: &str = "BELOW HOLD AMP RELEASE ENDS IT";
-/// WALK's XFADE off LOOP and TRON: only they come round to a seam.
+/// WALK's XFADE once through with TRON off: only LOOP and TRON come
+/// round to a seam.
 pub const XFADE_LOOP_ONLY: &str = "ONLY LOOP AND TRON CROSSFADE";
-/// WALK's RETRIG off FORWARD and REVERSE, or with TRON on.
+/// WALK's XFADE on PING-PONG, TRON on or off: it turns, it has no seam.
+pub const XFADE_NO_SEAM: &str = "PING-PONG TURNS · NO SEAM";
+/// WALK's RETRIG on LOOP and PING-PONG.
 pub const RETRIG_ONCE_ONLY: &str = "CUTS ONLY ONCE THROUGH";
+/// WALK's RETRIG once through with TRON on: TRON's notes stack.
+pub const RETRIG_TRON_OFF: &str = "CUTS ONLY WITH TRON OFF";
+/// The delay's TAPE cells (DLY › CHAR) under TYPE GRAIN, and GRAIN's
+/// (DLY › GRAIN) under TAPE (ADR 0202).
+pub const DELAY_TAPE_ONLY: &str = "TAPE TYPE ONLY";
+pub const DELAY_GRAIN_ONLY: &str = "GRAIN TYPE ONLY";
 /// A streamed loop's XFADE past what its loop head holds (spec § 2.3).
 pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
 
@@ -900,39 +933,9 @@ pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
 
 /// What the focus band says in its hint's place about a TAPE cell: why
 /// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
-/// its loop head holds.
+/// its loop head holds. Bank 2's (`walk::band_note_in`): closed, nothing.
 pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'static str> {
-    if let Some(n) = tape_note(addr, sound) {
-        return Some(n);
-    }
-    // ONE's FADE stays live, its HOLD the gate; below HOLD AMP releases.
-    let t = &sound.params.tape;
-    if addr == ParamAddr::new(BlockRef::TapeEngine, T::DRAG)
-        && t.way() == Way::One
-        && t.drag < crate::dsp::tape_engine::FADE_HOLD
-        && sound.mod_state.routes_into(VCA) != 0
-    {
-        return Some(FADE_HOLD_ONLY);
-    }
-    let SourceState::Held {
-        rate,
-        frames,
-        notes: Some(_),
-        ..
-    } = src
-    else {
-        return None;
-    };
-    if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE) || t.way() != Way::Loop {
-        return None;
-    }
-    let file = core::num::NonZeroU32::new(frames).filter(|f| f.get() >= 2)?;
-    use crate::dsp::tape_engine::window::{loop_len, window_end, window_start};
-    let ws = window_start(t.start, file);
-    let we = window_end(ws, t.end, frames, rate);
-    let asked = t.xfade * loop_len(t.size, we - ws, rate) as f32;
-    let cap = u32::from(rate) * crate::stream::stage::XFADE_MAX_MS / 1_000;
-    (asked > cap as f32).then_some(XFADE_CAPPED)
+    crate::bank2::ui_door(|u| u.band_note(addr, sound, src)).flatten()
 }
 
 /// A route moves TAPE: its wow runs whatever TAPE stores (`tape_runs`).
@@ -993,7 +996,23 @@ pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
                 },
             ..
         } => ctx.clock == ClockSource::Midi,
-        View::Param { addr, .. } => dimmed(addr, sound),
+        View::Param { addr, .. } => dimmed(addr, sound) || delay_note(addr, ctx).is_some(),
         _ => false,
     }
+}
+
+/// The focus readout's word for `addr` at display value `v` (or the held
+/// choice `held`) where its cell abbreviates it: full words
+/// (`walk::readout_word_in`, bank 2's: closed, none).
+pub fn readout_word(addr: ParamAddr, v: f32, held: Option<u8>) -> Option<&'static str> {
+    crate::bank2::ui_door(|u| u.readout_word(addr, v, held)).flatten()
+}
+
+/// Why a delay cell is dimmed: the other TYPE's (ADR 0202), bank 2's
+/// (`walk::delay_note_in`; closed, none).
+pub fn delay_note(addr: ParamAddr, ctx: &SlotCtx) -> Option<&'static str> {
+    if addr.block != BlockRef::Delay {
+        return None;
+    }
+    crate::bank2::ui_door(|u| u.delay_note(addr.param, ctx.delay)).flatten()
 }

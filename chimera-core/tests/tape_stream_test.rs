@@ -1664,6 +1664,7 @@ fn a_late_note_that_doesnt_fit_is_refused() {
 /// SLICE NOTE plays every key at ROOT: a glide moves no pitch, held whole
 /// or streamed.
 #[test]
+#[ignore = "SLICE is on hold (ADR 0199, tape-slice, #748): no note plays it until it returns"]
 fn a_slice_note_glide_holds_pitch() {
     for streamed in [false, true] {
         let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);

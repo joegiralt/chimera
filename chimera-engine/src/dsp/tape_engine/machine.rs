@@ -138,13 +138,13 @@ pub static MACHINES: [Machine; 4] = [
         deck: &[
             choice(P::TYPE, "TYPE", "TYP", StretchType::Grain as u8),
             SPEED,
-            cell(P::LENGTH, "LENGTH", "LEN", STRETCH_DEFAULTS[0]),
+            cell(P::LENGTH, "LENGTH", "LEN", STRETCH_DEFAULTS.length),
             cell(P::SIZE, "D-TIME", "DTM", 0.5),
             POS,
         ],
         cells: &[
-            cell(P::GRAIN, "GRAIN", "GRN", STRETCH_DEFAULTS[1]),
-            cell(P::SPRAY, "SPRAY", "SPR", STRETCH_DEFAULTS[2]),
+            cell(P::GRAIN, "GRAIN", "GRN", STRETCH_DEFAULTS.grain),
+            cell(P::SPRAY, "SPRAY", "SPR", STRETCH_DEFAULTS.spray),
             choice(P::FINISH, "END", "END", 0),
         ],
         env: &ONE_ENV,

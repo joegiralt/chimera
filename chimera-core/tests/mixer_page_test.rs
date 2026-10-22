@@ -756,3 +756,49 @@ fn rev_more_redraws_the_plate_zones_predelay() {
 
 /// The first pixel row under the focus band.
 const FOCUS_BOTTOM: usize = chimera_core::ui::theme::FOCUS_BOTTOM as usize;
+
+/// Each delay TYPE's cells dim under the other and say why (review of
+/// #761, m11): DLY › GRAIN under TAPE, DLY › CHAR under GRAIN; DELAY's
+/// shared cells never.
+#[test]
+fn delay_cells_dim_under_the_other_type() {
+    use chimera_core::block::Block;
+    use chimera_core::dsp::delay::DelayParams;
+    use chimera_core::preset::Sound;
+    use chimera_core::ui::view::{self, SlotCtx};
+    let sound = Sound::init(chimera_core::params::EngineType::Algo);
+    let base = SlotCtx::read(&sound.params, Op::A);
+    for (ty, dim, live, why) in [
+        (
+            0.0,
+            &reg::DELAY_GRAIN,
+            &reg::DELAY_CHAR,
+            view::DELAY_GRAIN_ONLY,
+        ),
+        (
+            1.0,
+            &reg::DELAY_CHAR,
+            &reg::DELAY_GRAIN,
+            view::DELAY_TAPE_ONLY,
+        ),
+    ] {
+        let mut d = DelayParams::DEFAULT;
+        d.set(DelayParams::TYPE, ty);
+        let ctx = base.on_delay(&d);
+        for i in 0..6 {
+            let v = view::view(dim, i, &ctx);
+            if let Some(a) = v.addr() {
+                assert!(view::is_dimmed(&v, &sound, &ctx), "{} {i}", dim.short);
+                assert_eq!(view::delay_note(a, &ctx), Some(why));
+            }
+            let v = view::view(live, i, &ctx);
+            assert!(!view::is_dimmed(&v, &sound, &ctx) || v.addr().is_none());
+        }
+        for i in 0..6 {
+            let v = view::view(&reg::DELAY, i, &ctx);
+            if let Some(a) = v.addr() {
+                assert_eq!(view::delay_note(a, &ctx), None, "DELAY {i}");
+            }
+        }
+    }
+}

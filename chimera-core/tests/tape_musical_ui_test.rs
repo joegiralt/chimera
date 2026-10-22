@@ -119,6 +119,48 @@ fn streamed_source_shows_its_polyphony() {
     assert_eq!(band(h16.streaming(false)), "16K · 1.5 S · 8 STREAMS");
 }
 
+/// A mapped CC is refused what a turn is (review of #761, m3): on a
+/// streamed source, DIRECTION onto PING-PONG or MODEL onto SCRUB writes
+/// nothing, so a key never plays into silence; FORWARD streams, written.
+#[test]
+fn a_cc_is_refused_what_a_turn_is() {
+    use chimera_core::dsp::tape_engine::{Direction, TapeMachine};
+    use chimera_core::midi_in::{Cc, CcEvent};
+    use chimera_core::midi_map::Mappable;
+    use chimera_core::ui::held::{DIRECTION, MODEL};
+    let mut ui = streamed_ui();
+    let p = PartId::ALL[0];
+    let ch = ui.project().part(p).mix.channel;
+    {
+        let s = ui.project_mut().edit_part(p).sound;
+        for (cc, a) in [(30, DIRECTION), (31, MODEL)] {
+            s.map
+                .learn(Cc::new(cc).unwrap(), Mappable::new(a).unwrap())
+                .unwrap();
+        }
+    }
+    let mut now = 0;
+    // Four values a CC: value `k` is its bin's middle, 32 apart.
+    let mut cc = |ui: &mut chimera_core::ui::UiState, cc: u8, k: u8| {
+        for _ in 0..4 {
+            now += 20;
+            let ev = CcEvent {
+                channel: ch,
+                cc: Cc::new(cc).unwrap(),
+                value: 32 * k + 16,
+            };
+            ui.hear_ccs([ev].into_iter(), chimera_hal::Ms(now), true);
+        }
+    };
+    assert_eq!(ui.params().tape.way(), Way::Loop);
+    cc(&mut ui, 30, Direction::Ping as u8);
+    assert_eq!(ui.params().tape.way(), Way::Loop, "PING-PONG refused");
+    cc(&mut ui, 31, TapeMachine::Scrub.index());
+    assert_eq!(ui.params().tape.machine, TapeMachine::Walk, "SCRUB refused");
+    cc(&mut ui, 30, Direction::Forward as u8);
+    assert_eq!(ui.params().tape.way(), Way::One, "FORWARD streams");
+}
+
 #[test]
 fn direction_holds_what_a_streamed_source_refuses() {
     use chimera_core::dsp::tape_engine::{Direction, TapeMachine};
@@ -343,10 +385,18 @@ fn mix_turn_snaps_start_to_the_next_onset() {
     assert!(at(&ui).abs_diff(12_000) <= 2, "{}", at(&ui));
     // The cell says so in its band.
     let s = &ui.project().part(PartId::ALL[0]).sound;
-    let ctx = view::SlotCtx::read(&s.params, chimera_core::addr::Op::A);
+    let none = view::SlotCtx::read(&s.params, chimera_core::addr::Op::A);
+    let ctx = view::SlotCtx {
+        src: ui.source_state(),
+        ..none
+    };
     for i in [1, 2] {
         let v = view::view(&chimera_core::ui::block_registry::TAPE_SRC, i, &ctx);
         assert_eq!(v.hint(&ctx), view::ONSET_HINT, "{}", v.label());
+        // With no source held, MIX + turn is the plain snap: no onset to
+        // name (review of #761, m4).
+        let v = view::view(&chimera_core::ui::block_registry::TAPE_SRC, i, &none);
+        assert_ne!(v.hint(&none), view::ONSET_HINT, "{}", v.label());
     }
     assert!(chimera_core::ui::hint::width(view::ONSET_HINT) <= theme::CONTENT_W);
 }

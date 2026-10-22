@@ -203,7 +203,21 @@ pub struct UiDoor {
     /// ADR 0203).
     machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
+    band_note: fn(ParamAddr, &Sound, crate::ui::view::SourceState) -> Option<&'static str>,
     tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
+    /// TAPE cells' units where the engine has a law (`ui::walk`).
+    tape_fmt: fn(
+        ParamId,
+        TapeMachine,
+        Option<crate::dsp::tape_engine::Tron>,
+    ) -> Option<crate::ui::page::ValFmt>,
+    law_text: fn(&mut crate::ui::fmt::FmtBuf, crate::dsp::modulator::law::Law, f32),
+    /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
+    delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,
+    /// A TAPE MODEL or DIRECTION edit's knob writes (`ui::walk`).
+    tape_writes: fn(ParamId, u8, &TapeEngineParams) -> u8,
+    /// The focus readout's full words for TAPE's MODEL and DIRECTION.
+    readout_word: fn(ParamAddr, f32, Option<u8>) -> Option<&'static str>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
     jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
     /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
@@ -218,7 +232,7 @@ type HeadKind = (SourceHead, LoadKind);
 type EnvWrites = &'static [(ParamId, f32)];
 
 /// `UiDoor::magic`.
-const UI_MAGIC: u32 = 0xB2C0_0002;
+const UI_MAGIC: u32 = 0xB2C0_0007;
 
 impl UiDoor {
     /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
@@ -238,7 +252,13 @@ impl UiDoor {
         onset: crate::ui::onset::onset_in_bank2,
         machine_edit: crate::ui::walk::machine_edit_in,
         tape_note: crate::ui::walk::tape_note_in,
+        band_note: crate::ui::walk::band_note_in,
         tape_held: crate::ui::walk::tape_held_in,
+        tape_fmt: crate::ui::walk::tape_fmt_in,
+        law_text: crate::ui::walk::law_text_in,
+        delay_note: crate::ui::walk::delay_note_in,
+        readout_word: crate::ui::walk::readout_word_in,
+        tape_writes: crate::ui::walk::tape_writes_in,
         jog: crate::ui::jog::Jog::pass,
         pit: crate::ui::pit_tuner::calc::pass_in,
         pit_paint: crate::ui::pit_tuner::calc::paint_in,
@@ -338,6 +358,16 @@ impl UiDoor {
     }
 
     #[inline(always)]
+    pub(crate) fn band_note(
+        &self,
+        a: ParamAddr,
+        s: &Sound,
+        src: crate::ui::view::SourceState,
+    ) -> Option<&'static str> {
+        (self.band_note)(a, s, src)
+    }
+
+    #[inline(always)]
     pub(crate) fn tape_held(
         &self,
         t: &TapeEngineParams,
@@ -345,6 +375,50 @@ impl UiDoor {
         code: u8,
     ) -> Option<NeedsRam> {
         (self.tape_held)(t, id, code)
+    }
+
+    #[inline(always)]
+    pub(crate) fn tape_fmt(
+        &self,
+        id: ParamId,
+        m: TapeMachine,
+        once: Option<crate::dsp::tape_engine::Tron>,
+    ) -> Option<crate::ui::page::ValFmt> {
+        (self.tape_fmt)(id, m, once)
+    }
+
+    #[inline(always)]
+    pub(crate) fn law_text(
+        &self,
+        buf: &mut crate::ui::fmt::FmtBuf,
+        law: crate::dsp::modulator::law::Law,
+        v: f32,
+    ) {
+        (self.law_text)(buf, law, v)
+    }
+
+    #[inline(always)]
+    pub(crate) fn delay_note(
+        &self,
+        id: ParamId,
+        k: crate::dsp::delay::DelayType,
+    ) -> Option<&'static str> {
+        (self.delay_note)(id, k)
+    }
+
+    #[inline(always)]
+    pub(crate) fn readout_word(
+        &self,
+        a: ParamAddr,
+        v: f32,
+        held: Option<u8>,
+    ) -> Option<&'static str> {
+        (self.readout_word)(a, v, held)
+    }
+
+    #[inline(always)]
+    pub(crate) fn tape_writes(&self, id: ParamId, code: u8, t: &TapeEngineParams) -> u8 {
+        (self.tape_writes)(id, code, t)
     }
 
     #[inline(always)]

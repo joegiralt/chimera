@@ -1,7 +1,7 @@
 //! TAPE's parameters (spec § 3), block `BlockRef::TapeEngine`: ids frozen
 //! once written.
 
-use super::oneshot::SliceCode;
+use super::oneshot::{Slice, SliceCode};
 use super::stretch::units::{GrainLen, Length, Spray, StretchEnd};
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
@@ -255,6 +255,11 @@ impl DiskCode for Tron {
     }
 }
 
+impl Tron {
+    /// By value.
+    pub const ALL: [Tron; 2] = [Tron::Off, Tron::On];
+}
+
 impl Choice for Tron {
     fn from_value(v: f32) -> Option<Self> {
         Self::from_disk_code(v as u8)
@@ -430,7 +435,7 @@ pub fn hold(p: &TapeEngineParams) -> bool {
 
 /// SLICE NOTE: a ONE note plays at ROOT, whatever its key.
 pub fn at_root(p: &TapeEngineParams) -> bool {
-    p.way() == Way::One && p.slice.slice().by_note()
+    p.way() == Way::One && p.slice_in_play().by_note()
 }
 
 /// A note on `p` plays at ROOT whatever its key: WALK under SLICE NOTE
@@ -647,6 +652,11 @@ impl DiskCode for StretchType {
 /// By code (and so by value): the table, not a match, so TYPE's decoding is data.
 const STRETCH_TYPES: [StretchType; 3] = [StretchType::Mono, StretchType::Poly, StretchType::Grain];
 
+impl StretchType {
+    /// By value (its code).
+    pub const ALL: [StretchType; 3] = STRETCH_TYPES;
+}
+
 impl Choice for StretchType {
     fn from_value(v: f32) -> Option<Self> {
         Self::from_disk_code(v as u8)
@@ -719,10 +729,9 @@ pub struct TapeEngineParams {
     /// SCRUB's KEY.
     pub key: KeyMode,
     /// STRETCH's LENGTH, GRAIN, SPRAY and END (ids 22–25, ADR 0204), as
-    /// the knobs and the codec hold them: one array, so `get` and `write`
-    /// reach them in one arm each. The DSP reads them typed (`length`,
-    /// `grain`, `spray`, `end_mode`), each held in its range.
-    pub stretch: [f32; 4],
+    /// the knobs and the codec hold them. The DSP reads them typed
+    /// (`length`, `grain`, `spray`, `end_mode`), each held in its range.
+    pub stretch: StretchKnobs,
 }
 
 /// As the disk has it: MODEL's model and MODE (`neutral_v1.txt` pins it).
@@ -749,7 +758,11 @@ impl core::fmt::Debug for TapeEngineParams {
             .field("tron", &self.tron)
             .field("drift", &self.drift)
             .field("key", &self.key)
-            .field("stretch", &self.stretch)
+            // As the array it was: `neutral_v1.txt` pins this text.
+            .field("stretch", &{
+                let k = self.stretch;
+                [k.length, k.grain, k.spray, k.finish]
+            })
             .finish()
     }
 }
@@ -818,6 +831,15 @@ impl TapeEngineParams {
         Way::of(self.machine, self.direction, self.tron)
     }
 
+    /// The SLICE a note plays: OFF while SLICE is on hold (ADR 0199, on
+    /// `tape-slice`, #748). No cell sets it, so a value an old file or a
+    /// MODEL turn left would be a state the player can't see or change:
+    /// every reader asks here, and none hears it. The code stays for the
+    /// codec.
+    pub const fn slice_in_play(&self) -> Slice {
+        Slice::Off
+    }
+
     /// WALK with TRON on: the tape runs out and the pad lifts at key up.
     pub fn tron_on(&self) -> bool {
         self.machine == TapeMachine::Walk && self.tron == Tron::On
@@ -840,7 +862,7 @@ impl TapeEngineParams {
     pub const WOW: ParamId = ParamId(14);
     pub const MODE: ParamId = ParamId(15);
     pub const RETRIG: ParamId = ParamId(16);
-    // 17 and 18 are SLICE's (ADR 0199, `tape-slice`).
+    // 17 and 18 are SLICE's (ADR 0199, on the `tape-slice` branch, #748).
     pub const TRON: ParamId = ParamId(19);
     pub const DRIFT: ParamId = ParamId(20);
     /// SCRUB's KEY (ADR 0205).
@@ -854,30 +876,49 @@ impl TapeEngineParams {
     /// STRETCH's LENGTH, 0.25 to 8 s.
     #[inline(always)]
     pub fn length(&self) -> Length {
-        Length::of_knob(self.stretch[0])
+        Length::of_knob(self.stretch.length)
     }
 
     /// STRETCH's GRAIN, 30 to 250 ms.
     #[inline(always)]
     pub fn grain(&self) -> GrainLen {
-        GrainLen::of_knob(self.stretch[1])
+        GrainLen::of_knob(self.stretch.grain)
     }
 
     /// STRETCH's SPRAY.
     #[inline(always)]
     pub fn spray(&self) -> Spray {
-        Spray::of_knob(self.stretch[2])
+        Spray::of_knob(self.stretch.spray)
     }
 
     /// STRETCH's END: HOLD or STOP.
     #[inline(always)]
     pub fn end_mode(&self) -> StretchEnd {
-        StretchEnd::of_knob(self.stretch[3])
+        StretchEnd::of_knob(self.stretch.finish)
     }
 }
 
+/// STRETCH's four knobs (ids 22–25, ADR 0204) as the knobs and the codec
+/// hold them, 0..1 each: a field a knob, not an array indexed by id.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StretchKnobs {
+    /// LENGTH (22): 0.25 · 32^x s.
+    pub length: f32,
+    /// GRAIN (23): 30 · (250/30)^x ms.
+    pub grain: f32,
+    /// SPRAY (24): its share.
+    pub spray: f32,
+    /// END (25): HOLD or STOP, a stepped real.
+    pub finish: f32,
+}
+
 /// LENGTH 2 s, GRAIN 80 ms, SPRAY 40 %, END HOLD: each on the knob's grid.
-pub const STRETCH_DEFAULTS: [f32; 4] = [77.0 / 128.0, 59.0 / 128.0, 51.0 / 128.0, 0.0];
+pub const STRETCH_DEFAULTS: StretchKnobs = StretchKnobs {
+    length: 77.0 / 128.0,
+    grain: 59.0 / 128.0,
+    spray: 51.0 / 128.0,
+    finish: 0.0,
+};
 
 /// Whether `m` reads `id`: the one table for cells, dimming and the audio
 /// test, from the machines' (`machine::MACHINES`). START, END, TAPE, AGE
@@ -900,8 +941,8 @@ pub fn jogs(m: TapeMachine, id: ParamId) -> bool {
 
 /// DRAG in seconds: 10 to 500 ms, exponential.
 pub fn drag_s(drag: f32) -> f32 {
-    // log2(50)
-    0.01 * exp2(5.643_856 * drag)
+    use crate::dsp::modulator::law::DRAG_TIME;
+    DRAG_TIME.min * exp2(DRAG_TIME.oct * drag)
 }
 
 const fn unit(
@@ -1102,7 +1143,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 24] = [
         ValFmt::Law(Law::StretchLength),
         0.0,
         1.0,
-        STRETCH_DEFAULTS[0],
+        STRETCH_DEFAULTS.length,
         1.0 / 128.0,
         false,
         Smoothing::Own,
@@ -1116,7 +1157,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 24] = [
         ValFmt::Law(Law::GrainSize),
         0.0,
         1.0,
-        STRETCH_DEFAULTS[1],
+        STRETCH_DEFAULTS.grain,
         1.0 / 128.0,
         false,
         Smoothing::Own,
@@ -1130,7 +1171,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 24] = [
         ValFmt::Law(Law::Pct),
         0.0,
         1.0,
-        STRETCH_DEFAULTS[2],
+        STRETCH_DEFAULTS.spray,
         1.0 / 128.0,
         false,
         Smoothing::Own,
@@ -1145,7 +1186,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 24] = [
         ValFmt::Names(&["HOLD", "STOP"]),
         0.0,
         1.0,
-        STRETCH_DEFAULTS[3],
+        STRETCH_DEFAULTS.finish,
         false,
         Motion::Stepped(Change::Snap),
     )
@@ -1181,7 +1222,10 @@ impl Block for TapeEngineParams {
             Self::TRON => self.tron.value(),
             Self::DRIFT => self.drift.get(),
             Self::KEY => self.key.value(),
-            ParamId(id @ 22..=25) => self.stretch[usize::from(id - 22)],
+            Self::LENGTH => self.stretch.length,
+            Self::GRAIN => self.stretch.grain,
+            Self::SPRAY => self.stretch.spray,
+            Self::FINISH => self.stretch.finish,
             _ => 0.0,
         }
     }
@@ -1209,7 +1253,10 @@ impl Block for TapeEngineParams {
             Self::TRON => set(&mut self.tron, v),
             Self::DRIFT => self.drift = Drift::of(v),
             Self::KEY => set(&mut self.key, v),
-            ParamId(id @ 22..=25) => self.stretch[usize::from(id - 22)] = v,
+            Self::LENGTH => self.stretch.length = v,
+            Self::GRAIN => self.stretch.grain = v,
+            Self::SPRAY => self.stretch.spray = v,
+            Self::FINISH => self.stretch.finish = v,
             _ => {}
         }
     }
@@ -1248,8 +1295,10 @@ impl Block for TapeEngineParams {
                 self.set_machine(TapeMachine::of(m))
             }),
             Self::TYPE => apply_code(StretchType::from_disk_code(code), |k| self.kind = k),
-            Self::SLICE => apply_code(identity_code(&TAPE_ENGINE_SPECS, id, code), |c| {
-                self.slice = SliceCode::new(c)
+            // SLICE is on hold (`slice_in_play`): a file's, any MODEL's,
+            // loads as OFF.
+            Self::SLICE => apply_code(identity_code(&TAPE_ENGINE_SPECS, id, code), |_| {
+                self.slice = SliceCode::OFF
             }),
             Self::WOW => apply_code(Wow::from_disk_code(code), |w| self.wow = w),
             Self::MODE => apply_code(Direction::from_disk_code(code), |d| self.direction = d),

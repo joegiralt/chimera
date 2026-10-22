@@ -195,14 +195,28 @@ fn play_page_notes_say_why() {
     let note = |w: Way, id| view::tape_note(tape(id), &live_on(w));
     assert_eq!(note(Way::Loop, P::XFADE), None);
     assert_eq!(note(Way::Tron, P::XFADE), None);
-    for w in [Way::One, Way::Ping] {
-        assert_eq!(note(w, P::XFADE), Some(view::XFADE_LOOP_ONLY), "{w:?}");
-    }
+    assert_eq!(note(Way::One, P::XFADE), Some(view::XFADE_LOOP_ONLY));
+    // PING-PONG with TRON on or off: it has no seam, and says so, not
+    // that TRON is off (review of #761, m1).
+    assert_eq!(note(Way::Ping, P::XFADE), Some(view::XFADE_NO_SEAM));
+    let mut ping_tron = live_on(Way::Ping);
+    ping_tron.params.tape.tron = chimera_core::dsp::tape_engine::Tron::On;
+    assert_eq!(
+        view::tape_note(tape(P::XFADE), &ping_tron),
+        Some(view::XFADE_NO_SEAM)
+    );
     assert_eq!(note(Way::One, P::RETRIG), None);
-    for w in [Way::Loop, Way::Ping, Way::Tron] {
+    for w in [Way::Loop, Way::Ping] {
         assert_eq!(note(w, P::RETRIG), Some(view::RETRIG_ONCE_ONLY), "{w:?}");
     }
-    for n in [view::XFADE_LOOP_ONLY, view::RETRIG_ONCE_ONLY] {
+    // FORWARD with TRON on is once through: TRON is why.
+    assert_eq!(note(Way::Tron, P::RETRIG), Some(view::RETRIG_TRON_OFF));
+    for n in [
+        view::XFADE_LOOP_ONLY,
+        view::XFADE_NO_SEAM,
+        view::RETRIG_ONCE_ONLY,
+        view::RETRIG_TRON_OFF,
+    ] {
         fits_band(n);
     }
     assert_eq!(note(Way::One, P::TRON), None);
@@ -717,7 +731,7 @@ fn cells_a_machine_ignores_are_dimmed() {
     }
 }
 
-/// ONE's FADE ends in HOLD: elsewhere the top step is a number, as
+/// ONE's FADE ends in HOLD: elsewhere the top step is a time, as
 /// TRON's and SCRUB's are.
 #[test]
 fn fade_reads_hold_only_in_one() {
@@ -730,10 +744,60 @@ fn fade_reads_hold_only_in_one() {
         b.as_str().to_owned()
     };
     assert_eq!(text(Way::One), "HOLD");
-    assert_eq!(text(Way::Loop), "127");
-    assert_eq!(text(Way::Ping), "127");
+    assert_eq!(text(Way::Loop), "500 ms");
+    assert_eq!(text(Way::Ping), "500 ms");
     // TRON's pad always lifts: no HOLD, FORWARD or not.
-    assert_eq!(text(Way::Tron), "127");
+    assert_eq!(text(Way::Tron), "500 ms");
+}
+
+/// Each TAPE cell with an engine law reads its unit (review of #761):
+/// TRON once through's LENGTH is the tape, as STRETCH's LENGTH; SCRUB's
+/// LENGTH its loop; FADE and DRAG 10 to 500 ms; DRIFT a share; SPEED a
+/// factor of the source's own. A loop's LENGTH stays a share of its
+/// window, 0 to 127.
+#[test]
+fn tape_cells_read_their_units() {
+    use chimera_core::ui::fmt::fmt_val;
+    let text = |m, id, v| {
+        let fmt = view::shown_fmt(tape(id), &ctx_on(m)).unwrap();
+        let mut b = FmtBuf::new();
+        fmt_val(&mut b, v, fmt);
+        b.as_str().to_owned()
+    };
+    for (m, id, v, want) in [
+        (Way::Tron, P::SIZE, 1.0, "8.0 s"),
+        (Way::Tron, P::SIZE, 0.0, "250 ms"),
+        (Way::Loop, P::SIZE, 1.0, "127"),
+        (Way::One, P::SIZE, 1.0, "127"),
+        (Way::Scrub, P::SIZE, 66.0 / 128.0, "70 ms"),
+        (Way::Scrub, P::SIZE, 1.0, "2.0 s"),
+        (Way::Scrub, P::SIZE, 0.0, "2.0 ms"),
+        (Way::One, P::DRAG, 0.3, "32 ms"),
+        (Way::Loop, P::DRAG, 0.0, "10 ms"),
+        (Way::Scrub, P::DRAG, 0.3, "32 ms"),
+        (Way::Loop, P::DRIFT, 0.25, "25%"),
+        (Way::Stretch, P::MOTION, 0.75, "1.00x"),
+        (Way::Stretch, P::MOTION, 0.5, "0.00x"),
+        (Way::Stretch, P::MOTION, 1.0, "2.00x"),
+        (Way::Stretch, P::MOTION, 0.0, "-1.00x"),
+        (Way::Scrub, P::MOTION, 0.75, "1.00x"),
+        (Way::Scrub, P::MOTION, 0.0, "-2.00x"),
+    ] {
+        assert_eq!(text(m, id, v), want, "{m:?} {id:?} at {v}");
+    }
+    // The engine's laws are the ones the cells print.
+    use chimera_core::dsp::modulator::law::{DRAG_TIME, SCRUB_LENGTH, STRETCH_LENGTH};
+    use chimera_core::dsp::tape_engine::{LoopTime, drag_s};
+    for k in 0..=16 {
+        let x = k as f32 / 16.0;
+        let near = |a: f32, b: f32| (a / b - 1.0).abs() < 2e-3;
+        assert!(
+            near(SCRUB_LENGTH.at(x), LoopTime::of_length(x).seconds()),
+            "{x}"
+        );
+        assert!(near(DRAG_TIME.at(x), drag_s(x)), "{x}");
+        assert!(near(STRETCH_LENGTH.at(x), 0.25 * 32f32.powf(x)), "{x}");
+    }
 }
 
 /// MODEL onto WALK writes its defaults for the DIRECTION it keeps: once
@@ -885,4 +949,30 @@ fn direction_edit_writes_walks_defaults_only() {
         Edit::To(Direction::Forward as u8 as f32)
     ));
     assert!(w.params.tape.drag < FADE_HOLD, "{}", w.params.tape.drag);
+}
+
+/// The focus readout says MODEL and DIRECTION in full words where the
+/// cell abbreviates them (review of #761, m12): STRETCH, FORWARD; the
+/// cell keeps STRCH and FWD. PING-PONG would push the glyph out: PING.
+#[test]
+fn readout_names_in_full() {
+    use chimera_core::ui::fmt::fmt_val;
+    let cell = |a, v| {
+        let mut b = FmtBuf::new();
+        fmt_val(&mut b, v, view::shown_fmt(a, &ctx_on(Way::Loop)).unwrap());
+        b.as_str().to_owned()
+    };
+    let (model, dir) = (tape(P::MODEL), tape(P::MODE));
+    assert_eq!(view::readout_word(model, 1.0 / 3.0, None), Some("STRETCH"));
+    assert_eq!(cell(model, 1.0 / 3.0), "STRCH");
+    assert_eq!(view::readout_word(dir, 0.0, None), Some("FORWARD"));
+    assert_eq!(cell(dir, 0.0), "FWD");
+    assert_eq!(view::readout_word(dir, 1.0, None), Some("PING"));
+    // A held choice reads as itself: REVERSE held on a streamed source.
+    assert_eq!(view::readout_word(dir, 0.0, Some(1)), Some("REVERSE"));
+    assert_eq!(view::readout_word(tape(P::SIZE), 1.0, None), None);
+    // Rendered: the cell abbreviates, the readout is the larger face.
+    let mut ui = ui_at_deck();
+    feed(&mut ui, Input::turn(EncoderId::A, 1)); // MODEL: WALK → STRETCH
+    assert!(cell_reads(&render_ui(&ui), 0, "STRCH"));
 }

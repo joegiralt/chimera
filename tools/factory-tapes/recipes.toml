@@ -523,9 +523,11 @@ name = "KIT"
 source = "KIT 16"
 model = "WALK"
 mode = "FORWARD"
-slice = "1"
-# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
-trim = "-4.0"
+# SLICE NOTE (`slice = "1"`) until SLICE went on hold (ADR 0199 on
+# `tape-slice`, #748): no note reads it now, so the file carries none.
+# Until it returns the strip plays whole at the key (#779), re-trimmed
+# to the set's median as a whole strip (was -4.0 as one hit).
+trim = "-1.2"
 
 [[sound]]
 name = "VOICE LOOP"

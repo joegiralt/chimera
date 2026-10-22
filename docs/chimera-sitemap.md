@@ -47,25 +47,28 @@ TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, M
 
 ### TAPE
 
-MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has its own DECK cells after MODEL and its own model page after TAPE, AGE and WOW; the model page is named by the machine (ADR 0178, 0203).
+MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has its own DECK cells after MODEL and its own model page after TAPE, AGE and WOW; the model page is named by the machine (ADR 0178, 0203). A cell reads STRCH and FWD where the word doesn't fit; the focus readout says STRETCH and FORWARD.
 
 | Page | Cells |
 |---|---|
 | SRC | SOURCE · START · END · VOL |
 | DECK on WALK | MODEL · LENGTH · FADE · DIRECTION (FWD, REVERSE, LOOP, PING) · POSITION · DRIFT |
-| WALK | TAPE · AGE · WOW · TRON (OFF, ON) · XFADE · RETRIG. XFADE reads on LOOP and with TRON on, RETRIG on FWD and REVERSE with TRON off; elsewhere each is dimmed and the band says why |
-| DECK on STRETCH | MODEL · SPEED · D-TIME |
-| STRCH | TAPE · AGE · WOW · POSITION · TYPE |
+| WALK | TAPE · AGE · WOW · TRON (OFF, ON) · XFADE · RETRIG. XFADE reads on LOOP and on FWD or REVERSE with TRON on, dimmed once through with TRON off (ONLY LOOP AND TRON CROSSFADE) and on PING-PONG, TRON on or off (PING-PONG TURNS · NO SEAM); RETRIG reads on FWD and REVERSE with TRON off, dimmed on LOOP and PING-PONG (CUTS ONLY ONCE THROUGH) and with TRON on (CUTS ONLY WITH TRON OFF) |
+| DECK on STRETCH | MODEL · TYPE · SPEED · LENGTH · D-TIME · POSITION |
+| STRCH | TAPE · AGE · WOW · GRAIN · SPRAY · END |
 | DECK on SCRUB | MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG |
 | DECK on WAVE | MODEL · FRAME · SCAN · RANGE |
 | PIT | under DECK, after the model page |
 
-On WALK, FADE's last step reads HOLD on FWD and REVERSE with TRON off. DRIFT moves POSITION by a random step at each note. TRON on gives each key a tape of 0.25 to 8 s (LENGTH), the window coming round until it runs out, and lifts it at key up. WALK's glyph is footsteps: their line, loop or lanes by DIRECTION, scattered by DRIFT, a tape's end with TRON. The model page on WAVE reads WAVE. On a streamed source, DIRECTION holds REVERSE and PING dimmed with `… NEEDS RAM · STREAMED`.
+On WALK, FADE reads 10 ms to 500 ms, its last step HOLD on FWD and REVERSE with TRON off. DRIFT, a percentage of the window, moves POSITION by a random step at each note. TRON on gives each key a tape of 0.25 to 8 s (LENGTH, read in seconds on FWD and REVERSE), the window coming round until it runs out, and lifts it at key up. WALK's glyph is footsteps: their line, loop or lanes by DIRECTION, scattered by DRIFT, a tape's end with TRON. The model page on WAVE reads WAVE. On a streamed source, DIRECTION holds REVERSE and PING dimmed with `… NEEDS RAM · STREAMED`.
+
+TAPE STRETCH (ADR 0204) has two TYPEs, CLASSIC and GRAIN. DECK holds MODEL · TYPE · SPEED · LENGTH · D-TIME · POSITION: SPEED reads the pointer's factor (`1.00x`, `0.00x` frozen, −1× to 2×), LENGTH 0.25–8 s (GRAIN's), D-TIME and POSITION CLASSIC's. The model page STRCH holds TAPE · AGE · WOW · GRAIN (30–250 ms) · SPRAY · END (HOLD or STOP), the last three GRAIN's. Each TYPE's cells dim on the other, the band saying GRAIN TYPE ONLY or CLASSIC TYPE ONLY.
 
 ### SCRUB
 
 DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE · AGE · WOW · KEY (ADR 0205).
 
+- **SPEED** reads the loop's factor of the source's speed (`1.00x`, −2× to 2×); **DRAG** reads 10 ms to 500 ms.
 - **FINGER** turns the reel. Its encoder is a jog that reads the hand's speed and glides to a stop through DRAG once let go. A CC or a route moves it too.
 - **LENGTH** is the loop behind the finger, as a time: 2 ms to 2 s, never longer than the window. Its default is 70 ms, so a FINGER sweep moves the sound from the first turn.
 - **KEY POSITION**, the default, makes a key place the finger and plays at ROOT. C is the window's start and each semitone up is 1/12 further along, in every octave. FINGER adds to the key's place. On FINGER the focus band reads KEYS PLACE THE FINGER.
@@ -78,8 +81,6 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 | VA | WAVE1 · WAVE2 · MODE · BLEND · SUB · STABILITY |
 | OSC1, OSC2 | CRSE · FINE · SHAPE, D-F empty |
 | NOISE | KIND (WHITE, PINK, RED, DIGITAL) · LEVEL, C-F empty. One noise source a voice, mixed beside SUB after MODE, before the filter. DIGITAL is a sample-and-hold that steps 16 times each OSC 1 cycle, so it brightens up the keyboard |
-
-TAPE STRETCH (ADR 0204) has two TYPEs, CLASSIC and GRAIN: DECK holds MODEL · TYPE · SPEED (0 freezes) · LENGTH (0.25–8 s, GRAIN) · D-TIME (CLASSIC) · POSITION (CLASSIC); its model page STRCH holds TAPE · AGE · WOW · GRAIN (30–250 ms) · SPRAY · END (HOLD or STOP), the last three GRAIN's. Each TYPE's cells dim on the other.
 
 ### FLT and AMP
 
@@ -113,7 +114,7 @@ PRT ── SND ── CHR ── DLY ── REV ── MST
                       GRAIN  MORE 2
 ```
 
-Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; below it CHAR (TAPE's MECHANICS and SAT) and GRAIN (SIZE, DENSITY, PITCH, TEXTURE), each heard under its TYPE. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE. EDIT from PRT or SND goes down to the Sound browser.
+Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; below it CHAR (TAPE's MECHANICS and SAT) and GRAIN (SIZE, DENSITY, PITCH, TEXTURE), each heard under its TYPE and dimmed under the other, the band saying TAPE TYPE ONLY or GRAIN TYPE ONLY. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE. EDIT from PRT or SND goes down to the Sound browser.
 
 ---
 

@@ -32,7 +32,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use super::super::heads::{Dir, window_end_min, window_start};
 use super::super::params::TapeEngineParams;
-use super::super::read::SourceView;
+use super::super::read::{SourceView, WholeRow};
 use super::super::{MIN_LOOP_FRAMES, Probe};
 use super::classic::time_speed;
 use super::cloud::{Cloud, GrainAt, Src, rng};
@@ -74,7 +74,11 @@ impl Thrift {
     }
 }
 
-/// The build the tests and the listening tool pick.
+/// The build the tests and the listening tool pick. At `Four` (0, the
+/// default) the render's arithmetic is the firmware's: the other arms
+/// only add branches that `Four` never takes. Only test-support builds
+/// (tests, `stretch_listen`) have it; the desktop simulator, like the
+/// firmware, does not.
 #[cfg(any(test, feature = "test-support"))]
 pub static THRIFT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
@@ -136,7 +140,12 @@ impl Window {
 
     /// The source's frame at `u`.
     fn frame(self, u: WinPos) -> u32 {
-        let u = (u.get() as u32).min(self.len - 1);
+        self.frame_at(u.get() as u32)
+    }
+
+    /// The source's frame at whole frame `u`.
+    fn frame_at(self, u: u32) -> u32 {
+        let u = u.min(self.len - 1);
         match self.dir {
             Dir::Rev => self.base.saturating_sub(u),
             Dir::Fwd => self.base + u,
@@ -253,10 +262,18 @@ impl Grains {
         events: 0,
     };
 
+    /// A note with nothing to play: it ends on its first block.
+    pub fn ended() -> Grains {
+        Grains {
+            stage: Stage::Ending,
+            ..IDLE_NOTE
+        }
+    }
+
     /// A note on `v` at `inc` frames a sample, `seed` the voice's draw:
     /// the window latched from START and END, the first grain at its start,
     /// from full.
-    pub fn on(p: &TapeEngineParams, v: &SourceView<'_>, inc: f32, seed: u32, sr: u32) -> Grains {
+    pub fn on(p: &TapeEngineParams, v: &WholeRow<'_>, inc: f32, seed: u32, sr: u32) -> Grains {
         let win = Window::of(p, v);
         let speed = Speed::new(inc);
         let dur = p.grain().seconds().samples(sr);
@@ -299,14 +316,14 @@ impl Grains {
         self.win.dir
     }
 
-    /// A block at `inc` ramped `(from, to)` (each grain at the speed its
-    /// start found), SPEED's MOTION `motion` eased, LENGTH, GRAIN, SPRAY
-    /// and END read from `p`. False once the note has ended: its last
+    /// A block at `inc` ramped `(from, to)` (every grain in play, and the
+    /// strike, retuned to `to` each block: `Cloud::set_speed`), SPEED's
+    /// MOTION `motion` eased, LENGTH, GRAIN, SPRAY and END read from `p`. False once the note has ended: its last
     /// grain faded out.
     pub fn render(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
-        v: &SourceView<'_>,
+        v: &WholeRow<'_>,
         inc: (f32, f32),
         motion: f32,
         p: &TapeEngineParams,
@@ -322,7 +339,7 @@ impl Grains {
     fn render_way<const REV: bool>(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
-        v: &SourceView<'_>,
+        v: &WholeRow<'_>,
         (_, to): (f32, f32),
         motion: f32,
         p: &TapeEngineParams,
@@ -548,9 +565,16 @@ fn pointer_speed(win: Window, length: Seconds, motion: f32, sr: u32) -> Speed {
 /// A pitched source's lock (YIN found a PERIOD): its PERIOD, or ROOT's
 /// period where the two are whole multiples within 3 %, the note it sounds,
 /// so a bell's loudest partial meets itself in phase where YIN read its hum
-/// an octave down, a little off. Two periods fit the window, or none.
-fn lock_period(p: &TapeEngineParams, v: &SourceView<'_>, win: Window) -> Option<Period> {
-    let yin = Period::new(p.period)?;
+/// an octave down, a little off. With no PERIOD, the window's own where its
+/// first frames repeat (`period::of_window`, once a window), as found: a chord's common period
+/// is a multiple of its root's, and ROOT's would put its fifth out of
+/// phase. Two periods fit the window, or none.
+fn lock_period(p: &TapeEngineParams, v: &WholeRow<'_>, win: Window) -> Option<Period> {
+    let Some(yin) = Period::new(p.period) else {
+        let rate = u32::from(v.desc().rate());
+        let key = (win.base, win.len, win.dir == Dir::Rev);
+        return super::period::of_window(v, rate, key, |u| win.frame_at(u));
+    };
     let root =
         Period::new(f32::from(v.desc().rate()) / (440.0 * exp2((p.root - 6_900.0) / 1_200.0)));
     let near = |a: f32, b: f32| {

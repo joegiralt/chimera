@@ -96,9 +96,9 @@ pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
     Choice, DIRECTION_NAMES, Direction, Drift, FADE_HOLD, KeyMode, MACHINE_NAMES, MODEL_NAMES,
-    MachineIndex, NeedsRam, RetiredModel, Retrig, STRETCH_DEFAULTS, Seeks, StretchType,
-    TAPE_ENGINE_SPECS, TapeEngineParams, TapeMachine, TapeModel, Tron, Way, Wow, at_root, backward,
-    cuts, drag_s, fade_default, jogs, needs_ram, reads,
+    MachineIndex, NeedsRam, RetiredModel, Retrig, STRETCH_DEFAULTS, Seeks, StretchKnobs,
+    StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeMachine, TapeModel, Tron, Way, Wow,
+    at_root, backward, cuts, drag_s, fade_default, jogs, needs_ram, reads,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
@@ -454,6 +454,17 @@ enum Note {
     Ending(Stream),
 }
 
+#[cfg(feature = "tape")]
+impl Note {
+    /// A note sounds or waits on its source; one that ended this block
+    /// (`Ending`) does not. The one meaning the deck and bank 1's proxy
+    /// both read, inlined into each.
+    #[inline(always)]
+    fn is_active(&self) -> bool {
+        matches!(self, Note::Gated { .. } | Note::Ram | Note::Streamed(_))
+    }
+}
+
 /// A streamed note's own: its rate, and the fastest step a sample its
 /// cursor plans for (`inc_max`).
 #[cfg(feature = "tape")]
@@ -546,6 +557,28 @@ struct PingPass {
     reach: f32,
 }
 
+/// SCRUB's finger's move a sample, or its change a sample: signed 32.32
+/// frames. The run's loop adds it to the heads' `u64` steps wrapping
+/// (`wrapping`, two's complement), so it is stored signed and read signed.
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+struct FingerStep(i64);
+
+#[cfg(feature = "tape")]
+impl FingerStep {
+    /// The run loop's bits.
+    #[inline(always)]
+    fn wrapping(self) -> u64 {
+        self.0 as u64
+    }
+
+    /// From the run loop's bits.
+    #[inline(always)]
+    fn of_wrapping(x: u64) -> FingerStep {
+        FingerStep(x as i64)
+    }
+}
+
 /// SCRUB's: the finger's move each sample (wrapping) and its change a
 /// sample, which ramps across the block as `inc` does; the tape stopped,
 /// the output's share (linear before its smoothstep) and its move a block
@@ -554,8 +587,8 @@ struct PingPass {
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy)]
 struct Scrub {
-    df: u64,
-    ddf: u64,
+    df: FingerStep,
+    ddf: FingerStep,
     stopped: bool,
     hush: f32,
     hush_step: f32,
@@ -873,8 +906,8 @@ impl TapeDeck {
             // TRON goes round its window until the tape runs out.
             Way::Tron => MachineState::Loop,
             Way::Scrub => MachineState::Scrub(Scrub {
-                df: 0,
-                ddf: 0,
+                df: FingerStep(0),
+                ddf: FingerStep(0),
                 stopped: false,
                 hush: 1.0,
                 hush_step: 1.0,
@@ -966,14 +999,15 @@ impl TapeDeck {
 
     /// SCRUB's finger's move a sample and its change; 0 off SCRUB.
     fn finger(&self) -> (u64, u64) {
-        self.scrub().map_or((0, 0), |sc| (sc.df, sc.ddf))
+        self.scrub()
+            .map_or((0, 0), |sc| (sc.df.wrapping(), sc.ddf.wrapping()))
     }
 
     fn set_df(&mut self, df: u64) {
         let sc = self.scrub_mut();
         debug_assert!(sc.is_some(), "a finger off SCRUB");
         if let Some(sc) = sc {
-            sc.df = df;
+            sc.df = FingerStep::of_wrapping(df);
         }
     }
 
@@ -1089,6 +1123,8 @@ impl TapeDeck {
         if waited > 0 {
             self.catch_up(waited, sample_rate);
             if !self.is_active() {
+                // Ended before its cursor started: nothing to stop.
+                self.state = Note::Idle;
                 return;
             }
         }
@@ -1831,7 +1867,7 @@ impl TapeDeck {
         if p.direction == Direction::Reverse {
             w.dir = w.dir.flip();
         }
-        w = slice_bounds(w, p.slice.slice(), note.get());
+        w = slice_bounds(w, p.slice_in_play(), note.get());
         // POSITION and DRIFT move where it starts, counted the way it plays.
         let from = drift::from(w, drift::place(p.position, self.drift), floor);
         // LENGTH is how much of the rest plays (LOOP's law).
@@ -1947,10 +1983,7 @@ impl TapeDeck {
     /// A note sounds or waits on its source; one that ended this block
     /// (`Ending`) does not.
     pub fn is_active(&self) -> bool {
-        matches!(
-            self.state,
-            Note::Gated { .. } | Note::Ram | Note::Streamed(_)
-        )
+        self.state.is_active()
     }
 
     /// The model latched at the last note-on.
@@ -2450,9 +2483,12 @@ impl TapeDeck {
         }
         if let Some(sc) = self.scrub_mut() {
             // The finger's speed at the block's ends, frames a sample.
-            let end = (sc.df as i64).wrapping_add((sc.ddf as i64).wrapping_mul(BLOCK_SIZE as i64));
-            let finger = (sc.df as i64).unsigned_abs().max(end.unsigned_abs()) as f32
-                * (1.0 / 4_294_967_296.0);
+            let end = sc
+                .df
+                .0
+                .wrapping_add(sc.ddf.0.wrapping_mul(BLOCK_SIZE as i64));
+            let finger =
+                sc.df.0.unsigned_abs().max(end.unsigned_abs()) as f32 * (1.0 / 4_294_967_296.0);
             let speed = from.max(to).max(finger);
             // Hysteresis: stop under STILL, start over twice it.
             sc.stopped = if sc.stopped && !first {
@@ -2555,7 +2591,7 @@ impl TapeDeck {
         };
         let (lead, aim, (df, df_to)) = if first {
             self.off = target + at_n;
-            (target, target, (0, 0))
+            (target, target, (FingerStep(0), 0))
         } else {
             let lead = toward(lead, target);
             let aim = toward(aim, lead);
@@ -2575,7 +2611,7 @@ impl TapeDeck {
             sc.aim = aim;
             sc.speed = speed;
             sc.df = df;
-            sc.ddf = (df_to.wrapping_sub(df as i64) / BLOCK_SIZE as i64) as u64;
+            sc.ddf = FingerStep(df_to.wrapping_sub(df.0) / BLOCK_SIZE as i64);
         }
         (from, to)
     }
