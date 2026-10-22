@@ -1083,6 +1083,7 @@ fn facts_use_full_words() {
         "CLEAN",
         "LADDER",
         "DIRTY",
+        "SEM",
         "LP4",
         "LP2",
         "BP2",
