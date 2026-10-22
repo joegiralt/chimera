@@ -64,5 +64,5 @@ fn eight_windows_struck_in_one_block_stay_inside_it() {
     assert!(STRUCK_8 + SEARCH * per_block[0] <= BLOCK);
     assert_eq!(last - before, 8, "{per_block:?}");
     // Without the limit all eight would search in the strike's block.
-    assert!(STRUCK_8 + SEARCH * 8 > BLOCK);
+    const { assert!(STRUCK_8 + SEARCH * 8 > BLOCK) };
 }
