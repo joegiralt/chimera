@@ -26,10 +26,10 @@ ADR 0198 froze bank 1. #741 lists what can move out of it, and ORBIT came first:
 
   | Set | Bank 1 before | Bank 1 after | Bank 1 Δ | Bank 2 before | Bank 2 after | Bank 2 Δ |
   |---|---|---|---|---|---|---|
-  | `orbit` | 909,164 | 891,356 | −17,808 | 313,600 | 344,704 | +31,104 |
-  | `bench-orbit` | 887,572 | 867,284 | −20,288 | 324,064 | 352,512 | +28,448 |
+  | `orbit` | 909,164 | 890,940 | −18,224 | 313,600 | 341,312 | +27,712 |
+  | `bench-orbit` | 887,572 | 866,916 | −20,656 | 324,064 | 348,640 | +24,576 |
 
-  Bank 2 grows by more than bank 1 shrinks: the code inlined into the entries is also kept in bank 1 for its other callers. `tools/bank1-budget.txt`'s `orbit` and `bench-orbit` lines come down to the new sizes, so the freed room can't silently refill.
+  Bank 2 grows by more than bank 1 shrinks: the code inlined into the entries is also kept in bank 1 for its other callers. `tools/bank1-budget.txt`'s `orbit` and `bench-orbit` lines come down to the sizes before the single block entry (891,356 and 867,284; the entry's merge saved a further ~400 B, inside the slack), so the freed room can't silently refill.
 - **Sets without ORBIT** shed its pages: they linked them, unreachable, as SEQ hold never opens ORBIT there. A firmware build without `orbit` now answers every page call closed, so none links. Each set's line comes down 13,872 to 14,384 B: `default` 888,328 → 874,392, `bank2-gate` 889,924 → 876,052, `fault-inject` 862,336 → 848,304, and the bench sets and `filter-probes` alike (each line's comment). Their bank 2 doesn't change.
 - The bench's ORBIT rows (`bench-orbit`) now time the runner from bank 2. They need the `.bk2` installed, as the other bank-2 benches do.
 - `check-door-placed` checks ORBIT's door module, its raster, `draw::cell_text` and `draw::viz_key` on a build that links them.
