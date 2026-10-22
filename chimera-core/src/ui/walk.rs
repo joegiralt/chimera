@@ -38,7 +38,9 @@ enum Word {
 }
 
 /// `w`'s text in `WORDS`; checked, never failing (`WORDS` is UTF-8).
+/// Matches, not `unwrap_or_default`: a core instance would be bank 1's.
 #[inline(always)]
+#[allow(clippy::manual_unwrap_or_default)]
 fn word(w: Word) -> &'static str {
     let (at, len) = match w {
         Word::NoSeam => (0, 26),
@@ -166,21 +168,22 @@ pub(crate) fn tape_fmt_in(id: ParamId, m: TapeMachine, once: Option<Tron>) -> Op
     })
 }
 
-/// The text of a TAPE law bank 1 hands here (`fmt::fmt_law`): FADE once
-/// through, its top step HOLD, else its time; SPEED at `v` (MOTION's
+/// The text of a TAPE law bank 1 hands here (`fmt::fmt_law`): SCRUB's
+/// LENGTH and DRAG, their times; FADE once through, its top step HOLD,
+/// else its time; SPEED at `v` (MOTION's
 /// 0..1 display, −1..1 stored) as the engine plays it, `1.00x`, `0.50x`,
 /// `-1.00x`: STRETCH by `time_speed` (0 freezes), SCRUB `2 · MOTION`.
 pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
     use core::fmt::Write;
     let motion = 2.0 * v - 1.0;
+    use crate::dsp::modulator::law::{DRAG_TIME, SCRUB_LENGTH};
     let x = match law {
         Law::FadeHold if v >= 0.999 => {
             let _ = buf.write_str(word(Word::Hold));
             return;
         }
-        Law::FadeHold => {
-            return crate::ui::fmt::fmt_val(buf, v, ValFmt::Law(Law::DragTime));
-        }
+        Law::FadeHold | Law::DragTime => return secs_text(buf, DRAG_TIME.at(v)),
+        Law::ScrubLength => return secs_text(buf, SCRUB_LENGTH.at(v)),
         #[cfg(feature = "tape")]
         Law::StretchSpeed => tape_engine::stretch::time_speed(motion),
         _ => 2.0 * motion,
@@ -224,6 +227,20 @@ pub(crate) fn readout_word_in(a: ParamAddr, v: f32, held: Option<u8>) -> Option<
     match (a.param, i) {
         (T::MODE, 0) => Some(word(Word::Forward)),
         _ => names.get(usize::from(i)).copied(),
+    }
+}
+
+/// `s` seconds as the time laws read (`fmt::fmt_law`'s): to a tenth of
+/// a ms under 10 ms, whole ms under 1 s, then seconds to a tenth.
+#[inline(always)]
+fn secs_text(buf: &mut FmtBuf, s: f32) {
+    let ms = s * 1000.0;
+    if libm::roundf(ms * 10.0) < 100.0 {
+        crate::ui::fmt::fixed(buf, ms, 1, " ms");
+    } else if libm::roundf(ms) < 1000.0 {
+        crate::ui::fmt::fixed(buf, ms, 0, " ms");
+    } else {
+        crate::ui::fmt::fixed(buf, s, 1, " s");
     }
 }
 

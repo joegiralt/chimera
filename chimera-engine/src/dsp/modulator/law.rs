@@ -184,9 +184,9 @@ pub enum Law {
     /// once through is the same law (ADR 0203).
     StretchLength,
     GrainSize,
-    /// SCRUB's LENGTH, a time (`SCRUB_LENGTH`).
+    /// SCRUB's LENGTH, a time (`SCRUB_LENGTH`), its text the UI door's.
     ScrubLength,
-    /// FADE and DRAG, a time (`DRAG_TIME`).
+    /// FADE and DRAG, a time (`DRAG_TIME`), its text the UI door's.
     DragTime,
     /// WALK's FADE once through: `DragTime`, its top step HOLD; its text
     /// the UI door's.
@@ -217,8 +217,6 @@ impl Law {
             Law::Cutoff => CUTOFF_HZ,
             Law::StretchLength => STRETCH_LENGTH,
             Law::GrainSize => GRAIN_SIZE,
-            Law::ScrubLength => SCRUB_LENGTH,
-            Law::DragTime => DRAG_TIME,
             Law::Phase
             | Law::Pct
             | Law::Curve
@@ -226,6 +224,8 @@ impl Law {
             | Law::LfoHz
             | Law::StretchSpeed
             | Law::ScrubSpeed
+            | Law::ScrubLength
+            | Law::DragTime
             | Law::FadeHold => return None,
         })
     }
