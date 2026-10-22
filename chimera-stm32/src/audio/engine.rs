@@ -16,13 +16,14 @@ use chimera_engine::dsp::fx_bus::FxBus;
 use chimera_engine::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
 use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument, NoteOrigin};
 use chimera_engine::note_queue::{InEvent, NoteDrain};
+use chimera_engine::orbit::door::OrbitPorts;
 use chimera_engine::part::DacPair;
 use chimera_engine::project::SourceId;
 use chimera_engine::project::{LOAD_LINK, LoadGate};
 use chimera_engine::scope::{ScopeFrame, ScopeWriter};
 use chimera_engine::source_table::AudioToken;
 use chimera_engine::stream::layout::StreamFile;
-use chimera_engine::stream::port::{NoPorts, StreamCard, Streams, VoicePorts};
+use chimera_engine::stream::port::{NoPorts, StreamCard, Streams};
 use chimera_engine::stream::ring::AudioSide;
 use chimera_engine::stream::units::AudioBlocks;
 use chimera_engine::triple::{Reader, Writer};
@@ -202,7 +203,7 @@ struct Run<'a> {
 /// the gate, then only when it opens the drain (live notes to ORBIT's
 /// capture and then the Parts, real-time to ORBIT's clock) and ORBIT.
 #[inline(never)]
-fn block<P: VoicePorts>(r: Run<'_>, shared: &AudioShared, ports: &mut P) {
+fn block<P: OrbitPorts>(r: Run<'_>, shared: &AudioShared, ports: &mut P) {
     let Run {
         inst,
         sources,

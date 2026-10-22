@@ -5,6 +5,7 @@
 pub mod channel;
 pub mod chords;
 pub mod clock;
+pub mod door;
 pub mod engine;
 pub mod euclid;
 pub mod mutate;

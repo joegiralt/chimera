@@ -352,7 +352,10 @@ impl OrbitRunner {
     pub const COST: Cost = Cost(171); // worst block less its notes' handling, 10,913, the worst over five runs (STRESS keys first), measured 2026-10-04/05, bench ORBIT PHASES, rev V at 480 MHz, 06dd8707 to 785a028a; / 64, rounded up
 
     pub fn new(sample_rate: NonZeroU32) -> Self {
-        let working = Scene::init();
+        // Built at compile time: `OrbitState`'s code is bank 2's.
+        const INIT: Scene = Scene::init();
+        const START: OrbitState = OrbitState::start(&INIT);
+        let working = INIT;
         OrbitRunner {
             clock: InternalClock::start(0, Bpm::DEFAULT, sample_rate),
             midi: MidiClock::new(sample_rate),
@@ -361,7 +364,7 @@ impl OrbitRunner {
             ext_start: false,
             ext_play: None,
             edge: Position::ZERO,
-            state: OrbitState::start(&working),
+            state: START,
             working,
             playing: SceneIdx::ALL[0],
             applied: Seq::ZERO,
@@ -471,10 +474,9 @@ impl OrbitRunner {
         self.sample
     }
 
-    /// A MIDI real-time message from source `src`, drained at `now` (§ 6.1).
-    /// Only the leading clock's are taken, and none under SYNC INT. Start,
-    /// Continue and Stop act at the next block, which sends their offs.
-    pub fn realtime(&mut self, src: usize, rt: RealTime, now: u64) {
+    /// `realtime`'s body (`door`).
+    #[inline(always)]
+    pub(super) fn realtime_in(&mut self, src: usize, rt: RealTime, now: u64) {
         if self.sync == SyncMode::Int {
             return;
         }
@@ -511,12 +513,9 @@ impl OrbitRunner {
         }
     }
 
-    /// A live note, drained before it goes to the `Instrument`: into an
-    /// armed capture (spec § 5.3), from any source and channel. It runs
-    /// from the first key-down to the last key-up, at most `MAX_POOL`
-    /// notes, each once; a STEP ring's takes one a key-down, repeats too,
-    /// and ends when its hits are filled.
-    pub fn live(&mut self, ev: NoteEvent) {
+    /// `live`'s body (`door`).
+    #[inline(always)]
+    pub(super) fn live_in(&mut self, ev: NoteEvent) {
         let step = match self.take.armed {
             Capture::Off => return,
             Capture::Segment(_) => None,
@@ -576,9 +575,9 @@ impl OrbitRunner {
         self.block_ported(inst, shared, src, &mut NoPorts)
     }
 
-    /// `block_with`, a streamed note starting through its voice's port
-    /// from `ports`: what the firmware runs.
-    pub fn block_ported<P: VoicePorts>(
+    /// `block_ported`'s body (`door`).
+    #[inline(always)]
+    pub(super) fn block_ported_in<P: VoicePorts>(
         &mut self,
         inst: &mut Instrument,
         shared: &AudioShared,
@@ -829,10 +828,10 @@ impl OrbitRunner {
         v
     }
 
-    /// The view, written into `v` in place: every field, every time, as
-    /// a triple buffer's slot comes back two publishes stale. The
-    /// destructure fails to compile when `OrbitView` gains a field.
-    pub fn fill_view(&self, v: &mut OrbitView) {
+    /// `fill_view`'s body (`door`). The destructure fails to compile
+    /// when `OrbitView` gains a field.
+    #[inline(always)]
+    pub(super) fn fill_view_in(&self, v: &mut OrbitView) {
         let OrbitView {
             running,
             epoch,

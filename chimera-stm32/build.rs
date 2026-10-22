@@ -192,6 +192,30 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
 ";
+    // ORBIT (ADR 0208, #741). The runner: `orbit::door` in the engine, the
+    // door's entries, and what only they reach: the block's steps
+    // (`orbit::engine`), MUTATE, the walk, the runner's own block and load,
+    // the MIDI clock's tick; the pools and the register note stay with the
+    // scenes they edit. The pages: `ui::orbit::draw` and `ui::orbit::raster`,
+    // their table at its slot after the bench's (`ORBIT_UI_DOOR_ADDR`);
+    // `Ink` and the helpers built for it stay in bank 1 with their callers.
+    // Text and rodata. Only with `orbit`: without it ORBIT isn't linked.
+    let (orbit, orbit_slot, orbit_assert) = if env::var_os("CARGO_FEATURE_ORBIT").is_some() {
+        (
+            "    *(.text.*14chimera_engine5orbit4door* .rodata.*14chimera_engine5orbit4door*
+      .text.*5orbit6engine* .rodata.*5orbit6engine* .text.*6mutate6mutate* .text.*6mutate5nudge*
+      .text.*4walk9walk_next* .text.*11OrbitRunner7advance* .rodata.*11OrbitRunner7advance*
+      .text.*11OrbitRunner4load* .text.*9MidiClock4tick*);
+    *(.text.*2ui5orbit4draw* .rodata.*2ui5orbit4draw* .text.*2ui5orbit6raster* .rodata.*2ui5orbit6raster*);
+",
+            "    . = __bank2_door + 0x280; __bank2_orbit_ui_door = .;
+    KEEP(*(.bank2.door.orbit_ui));
+",
+            "ASSERT(__bank2_orbit_ui_door == 0x08100380, \"ORBIT's pages' table at its slot\");",
+        )
+    } else {
+        ("", "", "")
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -207,6 +231,7 @@ SECTIONS {
     KEEP(*(.bank2.door));
     /* SLOTS */
     /* BENCH SLOT */
+    /* ORBIT SLOT */
     *(.bank2.text .bank2.text.*);
     *(.bank2.rodata .bank2.rodata.*);
     /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
@@ -247,6 +272,7 @@ SECTIONS {
     /* GRAIN */
     /* GATE */
     /* PROBES */
+    /* ORBIT */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -255,6 +281,7 @@ ASSERT(__bank2_end <= 0x08180000, "bank 2 stays clear of bootloader 1.09's slots
 ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
 /* ASSERTS */
 /* BENCH ASSERT */
+/* ORBIT ASSERT */
 "#
         .replace("    /* REVERB */\n", reverb)
         .replace("    /* SLOTS */\n", slots)
@@ -270,7 +297,10 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("/* BENCH ASSERT */", bench_assert)
         .replace("    /* GRAIN */\n", grain)
         .replace("    /* GATE */\n", gate)
-        .replace("    /* PROBES */\n", probes),
+        .replace("    /* PROBES */\n", probes)
+        .replace("    /* ORBIT */\n", orbit)
+        .replace("    /* ORBIT SLOT */\n", orbit_slot)
+        .replace("/* ORBIT ASSERT */", orbit_assert),
     )
     .unwrap();
 
