@@ -234,18 +234,20 @@ synth = "rain"
 secs = "1.0"
 rate = "12k"
 
-[[source]]
-name = "KIT 16"
-# 16 hits of 62.5 ms, a slice each under SLICE NOTE (C4 is the kick):
-# kick, short kick, snare, tight snare, clap, rim, closed hat, open hat,
-# low, mid and high tom, bell, shaker, crash, click, zap. At 16k for the
-# hats; 24 KB.
-origin = "synth"
-synth = "kit"
-secs = "1.0"
-rate = "16k"
-
-# ── Sources: CC0 recordings ───────────────────────────────────────────
+# ponytail: KIT 16 and its KIT Sound are out of the factory set until SLICE
+# returns (#779).
+# [[source]]
+# name = "KIT 16"
+# # 16 hits of 62.5 ms, a slice each under SLICE NOTE (C4 is the kick):
+# # kick, short kick, snare, tight snare, clap, rim, closed hat, open hat,
+# # low, mid and high tom, bell, shaker, crash, click, zap. At 16k for the
+# # hats; 24 KB.
+# origin = "synth"
+# synth = "kit"
+# secs = "1.0"
+# rate = "16k"
+#
+# # ── Sources: CC0 recordings ───────────────────────────────────────────
 
 [[source]]
 name = "VOICE AH"
@@ -518,16 +520,17 @@ model = "SCRUB"
 # SCRUB's own defaults (ADR 0205), re-trimmed for the 70 ms loop.
 trim = "+5.5"
 
-[[sound]]
-name = "KIT"
-source = "KIT 16"
-model = "WALK"
-mode = "FORWARD"
-# SLICE NOTE (`slice = "1"`) until SLICE went on hold (ADR 0199 on
-# `tape-slice`, #748): no note reads it now, so the file carries none.
-# Until it returns the strip plays whole at the key (#779), re-trimmed
-# to the set's median as a whole strip (was -4.0 as one hit).
-trim = "-1.2"
+# ponytail: see KIT 16 above (#779).
+# [[sound]]
+# name = "KIT"
+# source = "KIT 16"
+# model = "WALK"
+# mode = "FORWARD"
+# # SLICE NOTE (`slice = "1"`) until SLICE went on hold (ADR 0199 on
+# # `tape-slice`, #748): no note reads it now, so the file carries none.
+# # Until it returns the strip plays whole at the key (#779), re-trimmed
+# # to the set's median as a whole strip (was -4.0 as one hit).
+# trim = "-1.2"
 
 [[sound]]
 name = "VOICE LOOP"
