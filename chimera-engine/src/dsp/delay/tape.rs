@@ -14,6 +14,7 @@ use chimera_hal::BLOCK_SIZE;
 /// The door's entry (`DelayDoor::run`): one block of the delay. GRAIN, or
 /// TAPE fading back from it, goes on to `grain::run`; a firmware build
 /// without bank 2 has no room for GRAIN and plays TAPE (ADR 0202).
+/// Whether `buf` is known all +0: the idle skip's (#793).
 #[inline(never)]
 pub fn run(
     d: &mut TapeDelay,
@@ -21,13 +22,13 @@ pub fn run(
     params: &DelayParams,
     sample_rate: u32,
     insert: bool,
-) {
+) -> bool {
     #[cfg(any(feature = "bank2", not(target_os = "none")))]
     if params.kind() == DelayType::Grain || d.grain.share != crate::dsp::Unit::ZERO {
         // GRAIN writes the line its own way: TAPE's count starts again.
         d.zeros = 0;
         super::grain::run(d, buf, params, sample_rate, insert);
-        return;
+        return false;
     }
     let tap = Tap::new(params, sample_rate);
     if !d.primed {
@@ -50,7 +51,7 @@ pub fn run(
         }
         d.zeros = d.zeros.saturating_add(BLOCK_SIZE as u32);
         crate::dsp::skipped(crate::dsp::Skip::Delay);
-        return;
+        return true;
     }
     match (d.fade > 0, e.moving()) {
         (false, false) => span::<false, false>(d, buf, &tap, e, insert),
@@ -58,6 +59,7 @@ pub fn run(
         (true, false) => span::<true, false>(d, buf, &tap, e, insert),
         (true, true) => span::<true, true>(d, buf, &tap, e, insert),
     }
+    false
 }
 
 /// Whether a steady, unfaded block of `span` would leave everything but the
@@ -92,7 +94,7 @@ fn idle(
         return false;
     }
     let g = 1.0 + e.saturation.0 * 3.0;
-    let saturated = libm::tanhf(lp * g) * (1.0 / g);
+    let saturated = tanhf(lp * g) * (1.0 / g);
     let mix = e.mix.0;
     let dry_gain = if insert { 1.0 - mix } else { 0.0 };
     to_line(0.0 + saturated * e.feedback.0) == 0 && (0.0 * dry_gain + 0.0 * mix).to_bits() == 0
@@ -163,7 +165,7 @@ fn span<const FADE: bool, const RAMP: bool>(
         // 1 grows without bound. Bounded by 1 / gain, the write stays
         // within |dry| + FDBK: ±2.0, the line's full scale, at a unity
         // send.
-        let saturated = libm::tanhf(filtered * now(sat_gain, i)) * now(sat_inv, i);
+        let saturated = tanhf(filtered * now(sat_gain, i)) * now(sat_inv, i);
 
         // Write: input + feedback
         let w = to_line(dry + saturated * now(f, i));
@@ -189,6 +191,189 @@ fn span<const FADE: bool, const RAMP: bool>(
         d.fade -= BLOCK_SIZE as u16;
         if d.fade == 0 {
             d.time = next;
+        }
+    }
+}
+
+// `tanhf` and `expm1f` below are libm 0.2.16's (rust-lang/libm, MIT OR
+// Apache-2.0), from musl, from FreeBSD's msun `s_tanhf.c` and
+// `s_expm1f.c`:
+//
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunPro, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+//
+// Conversion to float by Ian Lance Taylor, Cygnus Support, ian@cygnus.com.
+
+/// `libm::tanhf`, the same operations in the same order, inlined into the
+/// loop: bit for bit libm's at every input (`tanh_is_libms`), without the
+/// call, its register spills and its flag-raising stores (#793). Those
+/// stores (`force_eval!`) change no value and are left out.
+#[inline(always)]
+fn tanhf(mut x: f32) -> f32 {
+    let mut ix = x.to_bits();
+    let sign = (ix >> 31) != 0;
+    ix &= 0x7fffffff;
+    x = f32::from_bits(ix);
+    let w = ix;
+    let tt = if w > 0x3f0c9f54 {
+        // |x| > log(3)/2 ~= 0.5493 or NaN
+        if w > 0x41200000 {
+            // |x| > 10
+            1. + 0. / x
+        } else {
+            let t = expm1f(2. * x);
+            1. - 2. / (t + 2.)
+        }
+    } else if w > 0x3e82c578 {
+        // |x| > log(5/3)/2 ~= 0.2554
+        let t = expm1f(2. * x);
+        t / (t + 2.)
+    } else if w >= 0x00800000 {
+        // |x| >= 0x1p-126
+        let t = expm1f(-2. * x);
+        -t / (t + 2.)
+    } else {
+        // |x| is subnormal
+        x
+    };
+    if sign { -tt } else { tt }
+}
+
+/// `libm::expm1f` as `tanhf` needs it, the same operations in the same order.
+/// Its constants as libm writes them, each the same `f32`.
+#[inline(always)]
+#[allow(clippy::excessive_precision)]
+fn expm1f(mut x: f32) -> f32 {
+    const LN2_HI: f32 = 6.9313812256e-01; // 0x3f317180
+    const LN2_LO: f32 = 9.0580006145e-06; // 0x3717f7d1
+    const INV_LN2: f32 = 1.4426950216e+00; // 0x3fb8aa3b
+    const Q1: f32 = -3.3333212137e-2; // -0x888868.0p-28
+    const Q2: f32 = 1.5807170421e-3; //  0xcf3010.0p-33
+    let x1p127 = f32::from_bits(0x7f000000);
+    let mut hx = x.to_bits();
+    let sign = (hx >> 31) != 0;
+    hx &= 0x7fffffff;
+    // Huge and non-finite arguments.
+    if hx >= 0x4195b844 {
+        // |x| >= 27·ln2
+        if hx > 0x7f800000 {
+            return x;
+        }
+        if sign {
+            return -1.;
+        }
+        if hx > 0x42b17217 {
+            // x > log(FLT_MAX)
+            x *= x1p127;
+            return x;
+        }
+    }
+    let k: i32;
+    let hi: f32;
+    let lo: f32;
+    let mut c = 0f32;
+    // Argument reduction.
+    if hx > 0x3eb17218 {
+        // |x| > 0.5·ln2
+        if hx < 0x3F851592 {
+            // and |x| < 1.5·ln2
+            if !sign {
+                hi = x - LN2_HI;
+                lo = LN2_LO;
+                k = 1;
+            } else {
+                hi = x + LN2_HI;
+                lo = -LN2_LO;
+                k = -1;
+            }
+        } else {
+            k = (INV_LN2 * x + (if sign { -0.5 } else { 0.5 })) as i32;
+            let t = k as f32;
+            hi = x - t * LN2_HI; // t·ln2_hi is exact here
+            lo = t * LN2_LO;
+        }
+        x = hi - lo;
+        c = (hi - x) - lo;
+    } else if hx < 0x33000000 {
+        // |x| < 2^-25
+        return x;
+    } else {
+        k = 0;
+    }
+    // x is now in the primary range.
+    let hfx = 0.5 * x;
+    let hxs = x * hfx;
+    let r1 = 1. + hxs * (Q1 + hxs * Q2);
+    let t = 3. - r1 * hfx;
+    let mut e = hxs * ((r1 - t) / (6. - x * t));
+    if k == 0 {
+        // c is 0
+        return x - (x * e - hxs);
+    }
+    e = x * (e - c) - c;
+    e -= hxs;
+    // exp(x) ~ 2^k (x_reduced - e + 1)
+    if k == -1 {
+        return 0.5 * (x - e) - 0.5;
+    }
+    if k == 1 {
+        if x < -0.25 {
+            return -2. * (e - (x + 0.5));
+        }
+        return 1. + 2. * (x - e);
+    }
+    let twopk = f32::from_bits(((0x7f + k) << 23) as u32); // 2^k
+    if !(0..=56).contains(&k) {
+        // suffice to return exp(x)-1
+        let mut y = x - e + 1.;
+        if k == 128 {
+            y = y * 2. * x1p127;
+        } else {
+            y *= twopk;
+        }
+        return y - 1.;
+    }
+    let uf = f32::from_bits(((0x7f - k) << 23) as u32); // 2^-k
+    if k < 23 {
+        (x - e + (1. - uf)) * twopk
+    } else {
+        (x - (e + uf) + 1.) * twopk
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tanhf;
+
+    fn check(bits: u32) {
+        let x = f32::from_bits(bits);
+        assert_eq!(tanhf(x).to_bits(), libm::tanhf(x).to_bits(), "{bits:#x}");
+    }
+
+    /// Every 61st f32, and every one in the range a tape loop meets most.
+    #[test]
+    fn tanh_is_libms() {
+        for bits in (0..=u32::MAX).step_by(61) {
+            check(bits);
+        }
+        for bits in 0x3e00_0000..0x4120_0000u32 {
+            check(bits);
+            check(bits | 0x8000_0000);
+        }
+    }
+
+    /// All 2³² f32: `cargo test --release -p chimera-engine -- --ignored tanh_is_libms_everywhere`.
+    #[test]
+    #[ignore]
+    fn tanh_is_libms_everywhere() {
+        for bits in 0..=u32::MAX {
+            check(bits);
         }
     }
 }

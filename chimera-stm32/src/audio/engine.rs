@@ -189,6 +189,8 @@ pub fn render_half(half: Half) {
         if chimera_board::CARD_BENCH && pair == DacPair::P1 && BENCH.listening() {
             // SAFETY: as `put`'s; this reference ends with the turn.
             bench_listen(&mut e.streams, unsafe { dma::half_mut(pair, half) });
+            // Its words are the bench's now, not the block's.
+            e.dma_zero[half.index()][pair.index()] = false;
         }
     }
 }

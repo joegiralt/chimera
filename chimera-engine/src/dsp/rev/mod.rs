@@ -548,20 +548,23 @@ impl Reverb {
         tempo: Tempo,
         sample_rate: u32,
         out: &mut Stereo,
-    ) {
+    ) -> bool {
         #[cfg(feature = "bank2")]
-        if crate::bank2::DOOR_CELL
-            .with(|d| (d.reverb.process)(self, send, p, mix, tempo, sample_rate, out))
-            .is_none()
         {
-            *out = Stereo::SILENT;
+            crate::bank2::DOOR_CELL
+                .with(|d| (d.reverb.process)(self, send, p, mix, tempo, sample_rate, out))
+                .unwrap_or_else(|| {
+                    *out = Stereo::SILENT;
+                    true
+                })
         }
         #[cfg(not(feature = "bank2"))]
-        self.process(send, p, mix, tempo, sample_rate, out);
+        self.process(send, p, mix, tempo, sample_rate, out)
     }
 
-    /// Wet only: the engine's return × `mix`, into `out`. A synced time
-    /// follows `tempo`; QUAD runs free of it. With `bank2` it is linked
+    /// Wet only: the engine's return × `mix`, into `out`; whether it is
+    /// known all +0 (#793). A synced time follows `tempo`; QUAD runs free
+    /// of it. With `bank2` it is linked
     /// into bank 2 with the TYPEs' engines (`bank2.x`), and bank 1 calls
     /// it only through the door (`play`).
     #[inline(never)]
@@ -573,7 +576,7 @@ impl Reverb {
         tempo: Tempo,
         sample_rate: u32,
         out: &mut Stereo,
-    ) {
+    ) -> bool {
         let switching = matches!(
             self.phase,
             SwitchPhase::FadeOut { .. } | SwitchPhase::Clear { .. }
@@ -596,7 +599,7 @@ impl Reverb {
             }
             out.l.fill(0.0);
             out.r.fill(0.0);
-            return;
+            return true;
         }
         let p = &self.latched;
         // A row TYPE's knobs, mapped once a block (fast `exp2`/`log2`).
@@ -774,7 +777,9 @@ impl Reverb {
         // return times the ramp, bit for bit.
         if let Some(r) = phase.gains() {
             ramp(out, r.0, step_of(r, BLOCK_SIZE));
+            return false;
         }
+        (unheard || quiet) && from == to && kept
     }
 }
 
@@ -782,7 +787,8 @@ impl Reverb {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct ReverbDoor {
-    process: fn(&mut Reverb, &[f32; BLOCK_SIZE], &ReverbParams, f32, Tempo, u32, &mut Stereo),
+    process:
+        fn(&mut Reverb, &[f32; BLOCK_SIZE], &ReverbParams, f32, Tempo, u32, &mut Stereo) -> bool,
 }
 
 #[cfg(feature = "bank2")]

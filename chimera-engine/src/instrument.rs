@@ -552,23 +552,28 @@ pub fn mix_parts(
     let moving = &moving[..moving_n];
 
     let mut scope = [0.0f32; BLOCK_SIZE];
-    let [s0, s1, s2] = sends;
-    for c in 0..BLOCK_SIZE / SEND_STEP {
-        let i = c * SEND_STEP;
-        let mut a = [[0.0f32; SEND_STEP]; FX_SENDS + 1];
-        for &(bus, amt) in &src[..n] {
-            for k in 0..SEND_STEP {
-                let b = bus[i + k];
-                a[0][k] += b * amt[0];
-                a[1][k] += b * amt[1];
-                a[2][k] += b * amt[2];
-                a[3][k] += b;
+    // No Part written: every sum is its +0 start, as the scope's is (#793).
+    if n == 0 && crate::dsp::may_skip() {
+        *sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+    } else {
+        let [s0, s1, s2] = &mut *sends;
+        for c in 0..BLOCK_SIZE / SEND_STEP {
+            let i = c * SEND_STEP;
+            let mut a = [[0.0f32; SEND_STEP]; FX_SENDS + 1];
+            for &(bus, amt) in &src[..n] {
+                for k in 0..SEND_STEP {
+                    let b = bus[i + k];
+                    a[0][k] += b * amt[0];
+                    a[1][k] += b * amt[1];
+                    a[2][k] += b * amt[2];
+                    a[3][k] += b;
+                }
             }
+            s0[i..i + SEND_STEP].copy_from_slice(&a[0]);
+            s1[i..i + SEND_STEP].copy_from_slice(&a[1]);
+            s2[i..i + SEND_STEP].copy_from_slice(&a[2]);
+            scope[i..i + SEND_STEP].copy_from_slice(&a[3]);
         }
-        s0[i..i + SEND_STEP].copy_from_slice(&a[0]);
-        s1[i..i + SEND_STEP].copy_from_slice(&a[1]);
-        s2[i..i + SEND_STEP].copy_from_slice(&a[2]);
-        scope[i..i + SEND_STEP].copy_from_slice(&a[3]);
     }
     for &(bus, _, steps) in moving {
         for (send, &step) in sends.iter_mut().zip(&steps[2..]) {

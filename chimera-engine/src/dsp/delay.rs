@@ -407,7 +407,7 @@ const fn grain_slot(id: ParamId) -> Option<usize> {
 /// 0212): bank 1 calls `run` once a block.
 #[repr(C)]
 pub struct DelayDoor {
-    pub run: fn(&mut TapeDelay, &mut [f32; BLOCK_SIZE], &DelayParams, u32, bool),
+    pub run: fn(&mut TapeDelay, &mut [f32; BLOCK_SIZE], &DelayParams, u32, bool) -> bool,
 }
 
 impl DelayDoor {
@@ -706,35 +706,39 @@ impl TapeDelay {
     }
 
     /// Send/return use (the FX bus): writes only the wet signal × MIX, the
-    /// return level, in place of the send.
+    /// return level, in place of the send. Whether the return is known all
+    /// +0 (#793).
     pub fn process_wet(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         params: &DelayParams,
         sample_rate: u32,
-    ) {
-        self.run(buf, params, sample_rate, false);
+    ) -> bool {
+        self.run(buf, params, sample_rate, false)
     }
 
     /// Through the door with `bank2`; closed, the return is silent and an
-    /// insert passes its dry (ADR 0212).
+    /// insert passes its dry (ADR 0212). Whether `buf` is known all +0.
     fn run(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         params: &DelayParams,
         sample_rate: u32,
         insert: bool,
-    ) {
+    ) -> bool {
         #[cfg(feature = "bank2")]
-        if crate::bank2::DOOR_CELL
-            .with(|d| (d.delay.run)(self, buf, params, sample_rate, insert))
-            .is_none()
-            && !insert
         {
-            buf.fill(0.0);
+            crate::bank2::DOOR_CELL
+                .with(|d| (d.delay.run)(self, buf, params, sample_rate, insert))
+                .unwrap_or_else(|| {
+                    if !insert {
+                        buf.fill(0.0);
+                    }
+                    !insert
+                })
         }
         #[cfg(not(feature = "bank2"))]
-        tape::run(self, buf, params, sample_rate, insert);
+        tape::run(self, buf, params, sample_rate, insert)
     }
 
     /// The block's eased settings: MIX (0 while off), FDBK, SAT, TONE and
