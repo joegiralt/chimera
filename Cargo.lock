@@ -226,7 +226,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chimera-board"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-core",
  "chimera-fat",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-circuits"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-core",
  "chimera-engine",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-engine",
  "chimera-hal",
@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-fat"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-hal"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-graphics-core",
  "loom",
@@ -330,11 +330,11 @@ dependencies = [
 
 [[package]]
 name = "chimera-image"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "chimera-stm32"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-board",
  "chimera-core",
@@ -350,11 +350,11 @@ dependencies = [
 
 [[package]]
 name = "chimera-theory"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "chimera-utils"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-circuits",
  "chimera-core",
@@ -371,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-waves"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chimera-waves",
  "libm",
