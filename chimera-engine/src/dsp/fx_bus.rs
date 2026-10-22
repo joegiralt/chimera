@@ -203,15 +203,16 @@ impl FxBus {
 
     /// The master section, after every pair is summed: the compressor, one
     /// gain on every pair; with `master-tape`, the tape on pair 1 first.
+    /// Whether the compressor ran (it scales every pair).
     pub fn master(
         &mut self,
         out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
         params: &FxParams,
         sample_rate: u32,
-    ) {
+    ) -> bool {
         #[cfg(feature = "master-tape")]
         self.tape.process(&mut out[0], &params.tape, sample_rate);
-        self.comp.process(out, &params.comp, sample_rate);
+        self.comp.process(out, &params.comp, sample_rate)
     }
 
     /// The output stage, after the master section: the output gain and the

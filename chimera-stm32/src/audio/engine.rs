@@ -13,7 +13,7 @@ use chimera_engine::audio_out::DacSample;
 use chimera_engine::audio_out::{Half, interleave};
 use chimera_engine::dsp::algo::engine::FormantViews;
 use chimera_engine::dsp::fx_bus::FxBus;
-use chimera_engine::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
+use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument, NoteOrigin};
 use chimera_engine::note_queue::{InEvent, NoteDrain};
 use chimera_engine::orbit::door::OrbitPorts;
@@ -50,6 +50,8 @@ struct Engine {
     /// The voices' formant views, once a block, for the OP pages.
     formant: Writer<FormantViews>,
     dac: DacBlocks,
+    /// Each DMA half's pairs holding only 0 words (`put`).
+    dma_zero: [[bool; DAC_PAIRS]; 2],
     /// Holds the note queues through a project load (ADR 0046).
     gate: LoadGate,
     orbit: chimera_board::orbit::Runner,
@@ -104,6 +106,7 @@ pub fn init(
             scope: ScopeWriter::new(scope),
             formant,
             dac: DacBlocks::new(),
+            dma_zero: [[false; DAC_PAIRS]; 2],
             gate: LoadGate::new(),
             orbit,
             sources: {
@@ -176,16 +179,34 @@ pub fn render_half(half: Half) {
         COST_PCT.store(e.inst.cost_pct(), Ordering::Relaxed);
     }
     for pair in DacPair::ALL {
-        // SAFETY: `main` runs `dma::clear` before `prefill`; the caller is
-        // this half's only writer while the DMA reads the other half, and the
-        // reference ends with this pair's turn of the loop.
-        let out = unsafe { dma::half_mut(pair, half) };
-        interleave(e.dac.out(), pair, out);
+        put(
+            &e.dac,
+            pair,
+            half,
+            &mut e.dma_zero[half.index()][pair.index()],
+        );
         #[cfg(feature = "bench")]
         if chimera_board::CARD_BENCH && pair == DacPair::P1 && BENCH.listening() {
-            bench_listen(&mut e.streams, out);
+            // SAFETY: as `put`'s; this reference ends with the turn.
+            bench_listen(&mut e.streams, unsafe { dma::half_mut(pair, half) });
         }
     }
+}
+
+/// `pair`'s words of the block out into its DMA `half`: none to write
+/// where the pair is +0 and the half already holds its 0 words (`held`,
+/// #793). One copy of the conversion's loop for the three pairs.
+#[inline(never)]
+fn put(dac: &DacBlocks, pair: DacPair, half: Half, held: &mut bool) {
+    let zero = dac.is_zero(pair);
+    if zero && *held {
+        return;
+    }
+    *held = zero;
+    // SAFETY: `main` runs `dma::clear` before `prefill`; the caller
+    // (`render_half`) is this half's only writer while the DMA reads the
+    // other half, and the reference ends here.
+    interleave(dac.out(), pair, unsafe { dma::half_mut(pair, half) });
 }
 
 /// What a block runs on: the engine's parts but the rings and the shared

@@ -582,9 +582,21 @@ pub fn mix_parts(
     let mut ret = Stereo::SILENT;
     fx.process(sends, &shared.fx, tempo, sample_rate, &mut ret);
 
-    let out = dac.mix();
+    let (out, zero) = dac.mix_known();
     for (k, pair) in out.iter_mut().enumerate() {
         let parts = &dry[k][..dry_n[k]];
+        // Nothing routed (pair 1 takes the FX return): +0s, already there
+        // if this block's pair was +0 when it went out (#793).
+        if k != 0 && parts.is_empty() {
+            if zero[k] && crate::dsp::may_skip() {
+                crate::dsp::skipped(crate::dsp::Skip::Pairs);
+            } else {
+                pair.fill(0.0);
+                zero[k] = true;
+            }
+            continue;
+        }
+        zero[k] = false;
         for c in 0..BLOCK_SIZE / PAIR_STEP {
             let i = c * PAIR_STEP;
             let mut a = [0.0f32; 2 * PAIR_STEP];
@@ -612,7 +624,10 @@ pub fn mix_parts(
         }
     }
     // The master section, after every pair is summed; then the output stage.
-    fx.master(out, &shared.fx, sample_rate);
+    if fx.master(out, &shared.fx, sample_rate) {
+        // Scaled: its +0 pairs no longer known.
+        *zero = [false; DAC_PAIRS];
+    }
     fx.limit(dac, &shared.fx, sample_rate);
     scope
 }

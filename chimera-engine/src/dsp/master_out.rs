@@ -73,7 +73,10 @@ impl MasterOut {
     /// Scale the block the DACs play by `p`'s VOL and PAN.
     pub fn apply(
         &mut self,
-        out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
+        (out, zero): (
+            &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
+            &mut [bool; DAC_PAIRS],
+        ),
         p: &CompParams,
         sample_rate: u32,
     ) {
@@ -89,6 +92,9 @@ impl MasterOut {
             return;
         }
         let (sl, sr) = (step_of(l, BLOCK_SIZE), step_of(r, BLOCK_SIZE));
+        // Scaled, a +0 pair may not stay +0 (a ramp's last gain can be
+        // −0's maker): no longer known (#793).
+        *zero = [false; DAC_PAIRS];
         for pair in out.iter_mut() {
             let (mut gl, mut gr) = (l.0, r.0);
             for s in pair.as_chunks_mut::<2>().0 {

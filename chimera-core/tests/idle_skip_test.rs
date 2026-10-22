@@ -53,9 +53,13 @@ fn score() -> Vec<Step> {
     s
 }
 
-/// The DAC words of every pair, every block, through the engine: `fx`,
-/// Part 1 sending `send` to every effect, on `pair`.
-fn render(fx: FxParams, send: f32, pair: DacPair, skip: bool) -> Vec<Vec<DacSample>> {
+/// One pair's block out: its DAC words and its floats' bits.
+type Out = (Vec<DacSample>, Vec<u32>);
+
+/// Every pair's block out, every block, through the engine: `fx`, Part 1
+/// sending `send` to every effect, on `pair`. A pair nothing is routed to
+/// (pair 1 takes the FX return) is exactly +0 throughout.
+fn render(fx: FxParams, send: f32, pair: DacPair, skip: bool) -> Vec<Out> {
     NEVER_SKIP.store(!skip, Ordering::Relaxed);
     let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
     let mut shared = Box::new(AudioShared::default());
@@ -80,7 +84,11 @@ fn render(fx: FxParams, send: f32, pair: DacPair, skip: bool) -> Vec<Vec<DacSamp
                 for p in DacPair::ALL {
                     let mut words = vec![DacSample::ZERO; 2 * BLOCK_SIZE];
                     interleave(dac, p, (&mut words[..]).try_into().unwrap());
-                    out.push(words);
+                    let bits: Vec<u32> = dac[p.index()].iter().map(|s| s.to_bits()).collect();
+                    if p != DacPair::P1 && p != pair {
+                        assert!(bits.iter().all(|&b| b == 0), "{p:?} unrouted, not +0");
+                    }
+                    out.push((words, bits));
                 }
             }
         }
@@ -138,13 +146,13 @@ fn same(fx: FxParams, send: f32, pair: DacPair, flush: bool) -> [u32; 8] {
     for (i, (a, b)) in full.iter().zip(&skipped).enumerate() {
         assert!(
             a == b,
-            "block {} pair {}: the skips changed the words",
+            "block {} pair {}: the skips changed the words or the floats",
             i / 3,
             i % 3 + 1
         );
     }
     assert!(
-        full.iter().any(|w| w.iter().any(|s| s.get() != 0)),
+        full.iter().any(|(w, _)| w.iter().any(|s| s.get() != 0)),
         "silent"
     );
     n
@@ -175,6 +183,7 @@ fn idle_then_woken_is_bit_for_bit_the_full_path() {
         Skip::Ring,
         Skip::Decimator,
         Skip::Unheard,
+        Skip::Pairs,
     ] {
         assert!(ran(n, k), "{k:?} never ran: {n:?}");
     }
@@ -228,5 +237,19 @@ fn a_part_on_another_pair_is_bit_for_bit_the_full_path() {
         ] {
             assert!(ran(n, k), "{k:?} never ran: {n:?}");
         }
+    }
+}
+
+/// The compressor on and the master VOL and PAN off unity: each scales
+/// every pair, so no pair stays known +0 through them, and the paths still
+/// match.
+#[test]
+fn the_master_stages_scaling_is_bit_for_bit_the_full_path() {
+    let _t = TURN.lock().unwrap_or_else(|e| e.into_inner());
+    counts();
+    for (ratio, vol, pan) in [(3, 1.0, 0.0), (0, 0.6, 0.3)] {
+        let mut f = fx();
+        (f.comp.ratio, f.comp.vol, f.comp.pan) = (ratio, vol, pan);
+        same(f, 0.5, DacPair::P2, false);
     }
 }
