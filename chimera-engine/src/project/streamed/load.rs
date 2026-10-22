@@ -145,7 +145,13 @@ impl StreamLoad {
         if runs.seal != Seal::Sealed {
             let len = runs.len.get();
             let check = SourceCheck::new(self.sref.stem(), len).map_err(|_| corrupted())?;
-            self.phase = Phase::Check { runs, check, at: 0 };
+            let key = FileKey::new(self.sref.stem(), runs.ext.first());
+            self.phase = Phase::Check {
+                check,
+                key,
+                len,
+                at: 0,
+            };
             return Ok(());
         }
         let got =
@@ -175,22 +181,38 @@ impl StreamLoad {
         budget: usize,
     ) -> Result<(), StreamFail> {
         let Phase::Check {
-            runs,
             mut check,
+            key,
+            len,
             at,
         } = core::mem::replace(&mut self.phase, Phase::Find)
         else {
             return Ok(());
         };
-        let len = runs.len.get();
         let n = (len - at).min(budget.max(CHUNK) as u32);
         read_source_check(s, r, self.sref.stem(), &mut check, at, n).map_err(StreamFail::Read)?;
         let at = at + n;
         if at < len {
-            self.phase = Phase::Check { runs, check, at };
+            self.phase = Phase::Check {
+                check,
+                key,
+                len,
+                at,
+            };
             return Ok(());
         }
         let head = check.finish().map_err(|_| corrupted())?;
+        // The file checked, on the card checked: not replaced since the
+        // check began, nor the card remounted (`still_found`).
+        let missing = StreamFail::Read(SourceReadError::Load(LoadError::Missing));
+        let runs = match s.runs(r.volume(), source_file(self.sref)) {
+            Ok(n) if FileKey::new(self.sref.stem(), n.ext.first()) == key && n.len.get() == len => {
+                n
+            }
+            Ok(_) | Err(RunsError::Store(StoreError::NotFound)) => return Err(missing),
+            Err(RunsError::Fragmented(_)) => return Err(StreamFail::Fragmented),
+            Err(RunsError::Store(e)) => return Err(StreamFail::Read(e.into())),
+        };
         self.at_heads(head, runs)?;
         if let Phase::Heads { file, .. } = self.phase {
             self.still_found(s, r, p, &file)?;

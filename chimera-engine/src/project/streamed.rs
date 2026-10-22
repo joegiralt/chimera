@@ -14,7 +14,7 @@ use crate::dsp::tape_engine::read::Shape;
 use crate::storage::{
     LoadError, Ready, SourceCheck, SourceHead, SourceLayout, SourceReadError, SourceRef,
 };
-use crate::stream::layout::StreamFile;
+use crate::stream::layout::{FileKey, StreamFile};
 use crate::stream::registry::CardEpoch;
 use crate::stream::stage::{Heads, heads_for};
 
@@ -179,10 +179,12 @@ enum Phase {
     /// The first pass finds the file's runs.
     Find,
     /// An unsealed file read whole through the check, a pass's share at a
-    /// time: `at` bytes so far, of `runs.len` (ADR 0210).
+    /// time: `at` bytes so far, of `len`, in the file whose first block
+    /// `key` names (ADR 0210).
     Check {
-        runs: FileRuns,
         check: SourceCheck,
+        key: FileKey,
+        len: u32,
         at: u32,
     },
     /// The heads read: `at` bytes so far, of every head's.

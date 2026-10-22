@@ -24,7 +24,8 @@ through `put`'s `SourceCheck` (its head naming the stem, its samples
 hashing to it) before streaming it: a `Check` phase of `StreamLoad`,
 `read_source_check` feeding the pass's budget a pass from where the last
 one stopped. Once every byte passed, on the card and the file as found
-(the registry's epoch and the file's first block, as the commit checks),
+(the registry's epoch, and the file's first block and length as the
+check began),
 the source is sealed and its heads read as a sealed one's. One that fails
 stays unsealed and refused (`READ FAILED`), as before. The seal is best
 effort: a card that won't take it streams the checked file anyway and
@@ -64,6 +65,9 @@ same bytes) rather than Replace it.
 - The seal is a directory-entry write: like a save, it quiets any
   streams playing (their ~20 ms fade) while the card is written, once a
   source.
+- The `Check` phase holds a `SourceCheck` (1,200 B) and the file's first
+  block; the SOURCE cell's job slot grows 40 B past the whole load's
+  (`memory_budget_test`).
 - A damaged unsealed file is still refused, never sealed.
 - Amends #761 m10's refusal: unsealed is now "not yet checked", not
   "corrupt".
