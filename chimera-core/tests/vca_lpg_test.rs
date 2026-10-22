@@ -120,6 +120,19 @@ const TAU: f64 = 2.0 * std::f64::consts::PI;
 /// level the routes' `level` (`None`: no route), a fresh note struck at 0
 /// on `note`.
 fn gate(a: f32, d: f32, s: f32, x: &[f32], level: Option<&[f32]>, note: u8) -> Vec<f32> {
+    gate_hit(a, d, s, x, level, note, Velocity::MAX)
+}
+
+/// `gate`, struck at `hit`.
+fn gate_hit(
+    a: f32,
+    d: f32,
+    s: f32,
+    x: &[f32],
+    level: Option<&[f32]>,
+    note: u8,
+    hit: Velocity,
+) -> Vec<f32> {
     let mut g = Lpg::NEW;
     g.strike(Onset::Fresh);
     let mut out = Vec::with_capacity(x.len());
@@ -132,7 +145,7 @@ fn gate(a: f32, d: f32, s: f32, x: &[f32], level: Option<&[f32]>, note: u8) -> V
                 .as_ref()
                 .map_or(Level::Open, |l| Level::Routes(l, Unit::new(1.0))),
             knobs: Knobs::of([a, d, s]),
-            hit: Velocity::MAX,
+            hit,
             note: MidiNote::new(note).unwrap(),
             fs: FS as f32,
         };
@@ -418,14 +431,94 @@ fn each_knob_does_what_it_says() {
     let vca64: Vec<f64> = vca.iter().map(|&v| f64::from(v)).collect();
     let null = null_db(&y, &vca64);
     assert!(null < -100.0, "DECAY 0 against the VCA: {null:.1} dB");
-    // STRIKE ½ on a held level of ½: the level plays × ½, the ping rises ½
-    // over it, then falls back to it.
+    // STRIKE ½ on a held level of ½: the strike's ½ sums with the level
+    // to 1 − ½·½, then falls back to the level. The level is no longer
+    // × (1 − STRIKE) under the routes: STRIKE is an accent on it (LxD).
     let half = vec![0.5f32; n];
     let y = gate(0.0, 0.5, 0.5, &vec![1.0; n], Some(&half), 60);
     let peak = y[..4800].iter().fold(0.0f32, |m, v| m.max(*v));
     let held = y[n - 1];
     assert!((peak - 0.75).abs() < 0.01, "{peak}");
-    assert!((held - 0.5 * 0.5).abs() < 0.01, "{held}");
+    assert!((held - 0.5).abs() < 0.01, "{held}");
+}
+
+/// A held level `l` struck at `s` and velocity `v` (LPG 0, DECAY 0.3, a
+/// DC input): the gain, a sample at a time.
+fn struck(l: f32, s: f32, v: u8) -> Vec<f32> {
+    let n = 2 * FS as usize;
+    let hit = Velocity::new(v).unwrap();
+    gate_hit(0.0, 0.3, s, &vec![1.0; n], Some(&vec![l; n]), 60, hit)
+}
+
+/// A held note with sustain stays at the envelope's level after its
+/// strike, at every STRIKE up to 1, and never falls below it.
+#[test]
+fn a_held_note_stays_at_its_envelope_after_the_strike() {
+    for s in [0.25, 0.5, 1.0] {
+        let y = struck(0.5, s, 127);
+        let top = y
+            .iter()
+            .enumerate()
+            .fold((0, 0.0f32), |m, (i, &v)| if v > m.1 { (i, v) } else { m });
+        let after = &y[top.0..];
+        let low = after.iter().fold(1.0f32, |m, v| m.min(*v));
+        let end = y[y.len() - 1];
+        assert!((end - 0.5).abs() < 1e-3, "STRIKE {s}: ends at {end}");
+        assert!(low > 0.5 - 1e-3, "STRIKE {s}: falls to {low}");
+    }
+}
+
+/// The strike is an accent above the envelope: it peaks at the soft sum
+/// `1 − (1 − l)(1 − STRIKE·vel)`, rising with STRIKE and velocity, over
+/// the envelope's level `l`; at STRIKE 0 there is none.
+#[test]
+fn the_strike_is_an_accent_above_the_envelope() {
+    let peak = |l: f32, s: f32, v: u8| struck(l, s, v).iter().fold(0.0f32, |m, v| m.max(*v));
+    for l in [0.25, 0.5, 0.8] {
+        for v in [127u8, 64] {
+            let x = Velocity::new(v).unwrap().unit();
+            let p = [0.0, 0.5, 1.0].map(|s| peak(l, s, v));
+            assert!((p[0] - l).abs() < 1e-3, "level {l}: no accent at 0, {p:?}");
+            for (k, s) in [(1, 0.5), (2, 1.0)] {
+                let want = 1.0 - (1.0 - l) * (1.0 - s * x);
+                assert!(
+                    (p[k] - want).abs() < 0.01,
+                    "level {l} vel {v} STRIKE {s}: {p:?}"
+                );
+            }
+            assert!(p[0] < p[1] && p[1] < p[2], "{p:?}");
+        }
+    }
+}
+
+/// Nothing holding the gate open still pings: a routed envelope at 0
+/// (sustain 0, or finished) is the no-route ping at STRIKE 1, to the
+/// sample, and both shut.
+#[test]
+fn sustain_0_or_no_route_still_pings() {
+    let n = FS as usize;
+    let x = tone_saw(220.0, n);
+    let ping = gate(1.0, 0.3, 1.0, &x, None, 60);
+    let shut = gate(1.0, 0.3, 1.0, &x, Some(&vec![0.0; n]), 60);
+    assert_eq!(ping, shut);
+    assert!(ping[..4800].iter().any(|v| v.abs() > 0.05), "it pings");
+    assert!(ping[n - 4800..].iter().all(|v| v.abs() < 1e-3), "and shuts");
+}
+
+/// STRIKE 1 no longer ignores the envelope: a held VA INIT note under the
+/// gate at STRIKE 1 sounds on at STRIKE 0's level (ENV 1's sustain), its
+/// voice held, where it once pinged and ended.
+#[test]
+fn strike_at_one_keeps_the_envelope() {
+    let tail = |k: f32| {
+        let mut b = bench(gated(Sound::init(EngineType::Va), 0.5, 0.4, k));
+        let t = hold(&mut b, None, BPS * 4);
+        assert_eq!(b.sounding(), 1, "STRIKE {k}: the held note sounds on");
+        rms_db(t.pair(0, BPS * 3, BPS * 4))
+    };
+    let (none, full) = (tail(0.0), tail(1.0));
+    assert!(none > -60.0, "{none}");
+    assert!((full - none).abs() < 0.1, "STRIKE 1 {full} vs 0 {none} dB");
 }
 
 // ============================================================ the voice

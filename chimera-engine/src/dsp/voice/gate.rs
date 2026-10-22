@@ -83,7 +83,7 @@ pub(super) mod kern {
     /// The gate in the VCA's place: AMP's VEL on the routes and the
     /// strike, the key as the level of a key-gated note with no route, then
     /// OUT LEVEL. The voice is held while the gate is open, or as the VCA
-    /// holds it unless STRIKE alone drives the gate.
+    /// holds it unless STRIKE alone drives the gate (no route, STRIKE 1).
     #[inline(never)]
     pub(super) fn run(
         v: &mut Voice,
@@ -125,7 +125,7 @@ pub(super) mod kern {
         };
         Some(Gate {
             last: v.lpg.level(),
-            holds: v.lpg.open() || (!knobs.strike_alone() && today),
+            holds: v.lpg.open() || (!knobs.strike_alone(level.law()) && today),
         })
     }
 }
