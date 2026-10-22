@@ -170,6 +170,9 @@ fn midi_clock() -> Hashes {
 }
 
 /// The songs' hashes, as main played them before ORBIT moved (5a2e50e7).
+/// Dense's audio through the master tape stage (`master-tape`).
+const DENSE_MASTER_TAPE_AUDIO: u64 = 10036277446996524101;
+
 const WANT: [(&str, Hashes); 4] = [
     (
         "init",
@@ -257,14 +260,19 @@ fn orbit_plays_as_it_did_before_the_move() {
     for (name, h) in &got {
         println!("{name}: {h:?}");
     }
-    for ((name, mut got), (want_name, want)) in got.into_iter().zip(WANT) {
+    for ((name, got), (want_name, want)) in got.into_iter().zip(WANT) {
         assert_eq!(name, want_name);
         assert!(got.ons > 0, "{name}: ORBIT played nothing");
-        // The master tape stage (ADR 0055) colours the sum: the audio hashes
-        // are the shipping chain's.
-        if cfg!(feature = "master-tape") {
-            got.audio = want.audio;
-        }
+        // The master tape stage (ADR 0055) colours a sum loud enough to
+        // reach it: only dense's.
+        let want = if cfg!(feature = "master-tape") && name == "dense" {
+            Hashes {
+                audio: DENSE_MASTER_TAPE_AUDIO,
+                ..want
+            }
+        } else {
+            want
+        };
         assert_eq!(got, want, "{name}");
     }
 }
