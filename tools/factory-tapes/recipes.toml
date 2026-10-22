@@ -246,8 +246,8 @@ rate = "12k"
 # synth = "kit"
 # secs = "1.0"
 # rate = "16k"
-#
-# # ── Sources: CC0 recordings ───────────────────────────────────────────
+
+# ── Sources: CC0 recordings ───────────────────────────────────────────
 
 [[source]]
 name = "VOICE AH"
