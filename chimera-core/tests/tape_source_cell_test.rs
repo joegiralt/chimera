@@ -1576,13 +1576,50 @@ fn a_rehead_that_meets_a_new_note_tries_again() {
     assert_heads(&rig, &b, after.as_slice());
 }
 
-/// m10 (#761): the SOURCE cell's load of an unsealed file (a cut `put`'s
-/// remains, never checked against its CRC) publishes nothing.
+/// m10 (#761): the SOURCE cell streams an unsealed file (copied onto the
+/// card by hand) once it checks out whole, and seals it.
 #[test]
-fn an_unsealed_file_doesnt_stream_from_the_cell() {
+fn an_unsealed_file_streams_from_the_cell_once_checked() {
     let b = bed(33);
     let mut rig = Rig::new(std::slice::from_ref(&b));
     rig.s.inner.unseal(source_file(b.0.sref));
+    rig.tape(|t| t.set_way(Way::One));
+    rig.turn(1);
+    rig.load();
+    let pool = rig.ui.project().pool();
+    let id = pool.find_source(b.0.sref).expect("published");
+    assert!(rig.registry().get(id).is_some(), "streamed");
+    let f = source_file(b.0.sref);
+    let vol = rig.s.inner.mount().unwrap();
+    let seal = rig.s.inner.runs(vol, f).unwrap().seal;
+    assert_eq!(seal, chimera_hal::store::Seal::Sealed);
+}
+
+/// ADR 0210: the SOURCE cell refuses an unsealed file whose samples don't
+/// hash to its name, publishes nothing, and leaves it unsealed.
+#[test]
+fn an_unsealed_damaged_file_doesnt_stream_from_the_cell() {
+    let b = bed(34);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    let f = source_file(b.0.sref);
+    struct Sink(Vec<u8>);
+    impl chimera_hal::store::ReadSink for Sink {
+        fn begin(&mut self, _: u32) -> std::ops::ControlFlow<()> {
+            std::ops::ControlFlow::Continue(())
+        }
+        fn chunk(&mut self, b: &[u8]) -> std::ops::ControlFlow<()> {
+            self.0.extend_from_slice(b);
+            std::ops::ControlFlow::Continue(())
+        }
+    }
+    let vol = rig.s.inner.mount().unwrap();
+    let mut sink = Sink(Vec::new());
+    rig.s.inner.read(vol, f, &mut sink).unwrap();
+    let mut file = sink.0;
+    let n = file.len();
+    file[n - 64] ^= 0x01;
+    rig.s.inner.plant(f, &file);
+    rig.s.inner.unseal(f);
     rig.tape(|t| t.set_way(Way::One));
     rig.turn(1);
     rig.load();
@@ -1592,5 +1629,10 @@ fn an_unsealed_file_doesnt_stream_from_the_cell() {
         SourceId::ALL
             .iter()
             .all(|&s| rig.registry().get(s).is_none())
+    );
+    let vol = rig.s.inner.mount().unwrap();
+    assert_eq!(
+        rig.s.inner.runs(vol, f).unwrap().seal,
+        chimera_hal::store::Seal::Open
     );
 }

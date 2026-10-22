@@ -11,10 +11,10 @@ use super::super::pool::StreamRefused;
 use super::super::sources::source_cost;
 use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
 use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, load_kind};
-use crate::dsp::tape_engine::read::write_head_table;
+use crate::dsp::tape_engine::read::{DESC_LEN, write_head_table};
 use crate::storage::{
-    CardError, CardFault, LoadError, Ready, SourceLayout, SourceReadError, read_packed_into,
-    read_source_head, source_file,
+    CardError, CardFault, Crc32, LoadError, Ready, SourceLayout, SourceReadError, held_len,
+    read_packed_into, read_source_head, source_file,
 };
 use crate::stream::admit::head_frames;
 use crate::stream::layout::{FileKey, StreamFile};
@@ -59,28 +59,12 @@ impl StreamLoad {
         p: &mut Project,
         budget: usize,
     ) -> Result<Option<SourceId>, StreamFail> {
-        let read = |e: StoreError| StreamFail::Read(e.into());
-        let Phase::Heads { file, at } = self.phase else {
-            let name = source_file(self.sref);
-            let runs = s.runs(r.volume(), name).map_err(|e| match e {
-                RunsError::Fragmented(_) => StreamFail::Fragmented,
-                RunsError::Store(StoreError::NotFound) => {
-                    StreamFail::Read(SourceReadError::Load(LoadError::Missing))
-                }
-                RunsError::Store(e) => read(e),
-            })?;
-            // Unsealed, a source never read back whole against its CRC
-            // (a cut `put`'s remains): the whole-file load would refuse it,
-            // and streaming reads only its heads (#761 m10).
-            if runs.seal != Seal::Sealed {
-                return Err(corrupted());
+        let (file, at) = match self.phase {
+            Phase::Heads { file, at } => (file, at),
+            Phase::Find => return self.find(s, r).map(|()| None),
+            Phase::Check { file, crc, at } => {
+                return self.check(s, r, p, budget, file, crc, at).map(|()| None);
             }
-            let got = read_source_head(s, r, self.sref.stem(), runs.len.get())
-                .map_err(StreamFail::Read)?;
-            let l = SourceLayout::whole(got).filter(|_| got.sref == self.sref);
-            let file = l.and_then(|l| StreamFile::from_layout(&l, runs));
-            self.phase = Phase::heads(file.ok_or_else(corrupted)?);
-            return Ok(None);
         };
         let at = at.get() as usize;
         let len = self.heads.held_len();
@@ -142,6 +126,82 @@ impl StreamLoad {
                 // If it ever fires it is no card's fault: STREAMS FULL.
                 StreamRefused::Taken => StreamFail::Full,
             })
+    }
+
+    /// The first pass: the file's runs and its head; an unsealed file is
+    /// checked before its heads (`check`).
+    fn find(&mut self, s: &mut dyn Store, r: &Ready) -> Result<(), StreamFail> {
+        let runs = s
+            .runs(r.volume(), source_file(self.sref))
+            .map_err(|e| match e {
+                RunsError::Fragmented(_) => StreamFail::Fragmented,
+                RunsError::Store(StoreError::NotFound) => {
+                    StreamFail::Read(SourceReadError::Load(LoadError::Missing))
+                }
+                RunsError::Store(e) => StreamFail::Read(e.into()),
+            })?;
+        let got =
+            read_source_head(s, r, self.sref.stem(), runs.len.get()).map_err(StreamFail::Read)?;
+        let l = SourceLayout::whole(got).filter(|_| got.sref == self.sref);
+        let file = l.and_then(|l| StreamFile::from_layout(&l, runs));
+        let file = file.ok_or_else(corrupted)?;
+        // Unsealed, a source never read back whole against its CRC
+        // (copied onto the card by hand, the host dropping the read-only
+        // bit, or a cut `put`'s remains): streaming reads only its heads,
+        // so its samples are hashed first (#761 m10, ADR 0210). The CRC
+        // starts as `source_crc`'s, on the head's shape and count.
+        self.phase = if runs.seal == Seal::Sealed {
+            Phase::heads(file)
+        } else {
+            let mut crc = Crc32::new();
+            crc.update(&[got.shape as u8, got.count]);
+            Phase::Check { file, crc, at: 0 }
+        };
+        Ok(())
+    }
+
+    /// An unsealed file's next share of packed bytes into the staging,
+    /// hashed (ADR 0210): a pass's budget, at most the staging's room.
+    /// Once they all hash to its name, on the card and the file as found,
+    /// it is sealed and its heads come next; one that doesn't stays
+    /// unsealed and refused. The seal is best effort: a card that won't
+    /// take it streams the checked file anyway, checked again next load.
+    #[expect(clippy::too_many_arguments, reason = "the phase's fields, unpacked")]
+    fn check(
+        &mut self,
+        s: &mut dyn Store,
+        r: &Ready,
+        p: &mut Project,
+        budget: usize,
+        file: StreamFile,
+        mut crc: Crc32,
+        at: u32,
+    ) -> Result<(), StreamFail> {
+        let total = held_len(self.sref)
+            .and_then(|n| u32::try_from(n.checked_sub(DESC_LEN)?).ok())
+            .ok_or_else(corrupted)?;
+        let len = self.heads.held_len();
+        let gone = StreamFail::Pool(PoolFull {
+            needs: source_cost(len),
+            free: p.pool().free(),
+        });
+        let (_, held) = p.source_staging(len).ok_or(gone)?;
+        let n = ((total - at) as usize).min(budget.max(3)).min(held.len());
+        let out = &mut held[..n];
+        read_packed_into(s, r, self.sref, Bytes::new(at), out).map_err(StreamFail::Read)?;
+        crc.update(out);
+        let at = at + n as u32;
+        if at < total {
+            self.phase = Phase::Check { file, crc, at };
+            return Ok(());
+        }
+        if crc.finish() != self.sref.crc {
+            return Err(corrupted());
+        }
+        self.still_found(s, r, p, &file)?;
+        let _ = s.seal(r.volume(), source_file(self.sref));
+        self.phase = Phase::heads(file);
+        Ok(())
     }
 
     /// The file as found, on the card as found: a remount onto another
@@ -236,9 +296,10 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
             p.pool.mark_absent(id, Absence::Missing);
             continue;
         };
-        // One card operation, as `read_sources`' whole reads (ADR 0087):
-        // the heads are the arena's, so a load reads at most `ARENA_BYTES`
-        // of them, whatever the budget.
+        // One card operation, as `read_sources`' whole reads (ADR 0087),
+        // `ARENA_BYTES` a pass: the heads are the arena's, so they take one
+        // or two; an unsealed source's check first reads its samples
+        // whole, once, a staging's room a pass (ADR 0210).
         let why = loop {
             match step(&mut l, s, r, p, ARENA_BYTES) {
                 StreamStep::More => {}
