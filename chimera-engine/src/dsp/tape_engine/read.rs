@@ -93,6 +93,13 @@ pub struct SourceView<'a> {
 pub struct WholeRow<'a>(SourceView<'a>);
 
 impl<'a> WholeRow<'a> {
+    /// Where its samples sit: with its frames, which row it is while it
+    /// stays put (a cache's key, never a read).
+    #[inline(always)]
+    pub fn addr(&self) -> usize {
+        self.0.samples.as_ptr() as usize
+    }
+
     /// `SourceView::new`'s row, always whole.
     #[inline(always)]
     pub fn new(held: &'a [u8]) -> Option<WholeRow<'a>> {

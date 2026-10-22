@@ -540,20 +540,20 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_stretch_grain",
         (
-            0x5dd98b43a5ce3c20,
+            0x203c4e364a30ada2,
             [
-                0, 3194077578, 3177051529, 1050130475, 3193909746, 3193776756, 1050137708,
-                3170574979,
+                0, 3194077547, 3176936110, 1050150903, 3193813286, 3193680097, 1050230980,
+                3168865049,
             ],
         ),
     ),
     (
         "tape_stretch_grain_reverse",
         (
-            0x44a4bb38acef1cd7,
+            0x8b0d69083adedb8d,
             [
-                0, 1045909721, 1019764205, 3199055839, 1041216195, 1041087366, 3200320532,
-                3186694903,
+                0, 1045909750, 1019957261, 3199038575, 1041297164, 1041168321, 3200263219,
+                3186360794,
             ],
         ),
     ),
@@ -759,7 +759,9 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         // spot), and a reversed grain reads forward at a negative speed,
         // its taps no longer a frame ahead of its place. Re-recorded again
         // for the window's own period (review of #761, M2): the source has
-        // no PERIOD, and its grains now lock to the one its window repeats at.
+        // no PERIOD, and its grains now lock to the one its window repeats at;
+        // again for that search's mean taken off and its answer kept to 1/64
+        // frame, once a window.
         (
             "tape_stretch_grain",
             TapeEngineParams {

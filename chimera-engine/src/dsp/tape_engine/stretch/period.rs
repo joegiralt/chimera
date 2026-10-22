@@ -13,11 +13,99 @@
 //! averaged down to about 6 kHz, a parabola through its best for the
 //! fraction, then a climb at the source's rate to the nearest peak and a
 //! parabola there. A multiple of the period may win on a high tone: it
-//! locks in phase as well. Cold, once a note: at 48 kHz about 950 decodes
-//! and 5,200 multiply-adds coarse, and 4 to 6 fine lags of 64 to 256.
+//! locks in phase as well. The window's mean is taken off first, so a
+//! level (DC) doesn't repeat.
+//!
+//! At 48 kHz the search is, at worst, about 950 decodes and 5,400
+//! multiply-adds coarse, then up to 11 fine lags (the climb's `d` = 8
+//! steps and the parabola's three) of 256 frames: about 3,800 decodes and
+//! 11,000 multiply-adds in all, some 50 k M7 cycles. So it runs once a
+//! source and window (`of_window`, its answer kept in `CACHE`), not once a
+//! note: a chord's notes after the first, and every later note on the
+//! same window, pay a lookup of eight decodes.
+
+use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use super::super::read::WholeRow;
 use super::units::Period;
+
+/// Windows whose search is kept: more than the voices.
+const SLOTS: usize = 8;
+
+/// One kept search: its window's key, and the answer tagged with the
+/// key's low half (a slot written by another key never reads as this
+/// one's). In RAM; only the audio path writes it.
+struct Slot {
+    key: AtomicU32,
+    /// `key`'s low 16 bits over the period in 1/64 frame, 0 for none.
+    val: AtomicU32,
+}
+
+#[allow(clippy::declare_interior_mutable_const)]
+const EMPTY: Slot = Slot {
+    key: AtomicU32::new(0),
+    val: AtomicU32::new(0),
+};
+
+/// The kept searches, written round in turn.
+static CACHE: [Slot; SLOTS] = [EMPTY; SLOTS];
+static NEXT: AtomicU32 = AtomicU32::new(0);
+
+/// `of`, once a source and window: the row `v` (where it sits and its
+/// frames), its `rate`, the window (`base`, `len`, `rev`) and eight of its
+/// samples make the key, so a row re-stored where another was, or the
+/// window moved, searches again. The answer is the kept one's, to 1/64
+/// frame, even the first time, so every note of a window locks alike.
+pub fn of_window(
+    v: &WholeRow<'_>,
+    rate: u32,
+    (base, len, rev): (u32, u32, bool),
+    frame: impl Fn(u32) -> u32,
+) -> Option<Period> {
+    let mut h: u32 = 0x811C_9DC5;
+    let mut mix = |x: u32| {
+        h = (h ^ x).wrapping_mul(0x0100_0193);
+    };
+    mix(v.addr() as u32);
+    mix(v.frames());
+    mix(rate);
+    mix(base);
+    mix(len);
+    mix(u32::from(rev));
+    for k in 0..8 {
+        mix(v.sample(frame(k * (len / 8))) as u32);
+    }
+    let key = h | 1;
+    let tag = (key & 0xFFFF) << 16;
+    for s in &CACHE {
+        if s.key.load(Relaxed) == key {
+            let val = s.val.load(Relaxed);
+            if val & 0xFFFF_0000 == tag {
+                return decode(val);
+            }
+        }
+    }
+    let val = tag | encode(of(v, rate, len, frame));
+    let i = NEXT.load(Relaxed) as usize % SLOTS;
+    NEXT.store((i + 1) as u32, Relaxed);
+    let s = &CACHE[i];
+    s.key.store(0, Relaxed);
+    s.val.store(val, Relaxed);
+    s.key.store(key, Relaxed);
+    decode(val)
+}
+
+/// A period in 1/64 frame, 1 to 0xFFFF (1,023 frames: past any the search
+/// finds); 0, none.
+fn encode(p: Option<Period>) -> u32 {
+    p.map_or(0, |p| {
+        crate::dsp::clampf(libm::roundf(p.get() * 64.0), 1.0, 65_535.0) as u32
+    })
+}
+
+fn decode(val: u32) -> Option<Period> {
+    Period::new((val & 0xFFFF) as f32 * (1.0 / 64.0))
+}
 
 /// The analysis rate the coarse search runs at, at most: the source's
 /// averaged down by a whole factor.
@@ -69,6 +157,18 @@ pub fn of(v: &WholeRow<'_>, rate: u32, len: u32, frame: impl Fn(u32) -> u32) -> 
         }
         if let Some(x) = x.get_mut(k) {
             *x = sum;
+        }
+    }
+    // The level off: a constant repeats at every lag.
+    let m = N + hi + 2;
+    let mut mean = 0.0;
+    for k in 0..m {
+        mean += at(&x, k);
+    }
+    mean /= m as f32;
+    for k in 0..m {
+        if let Some(x) = x.get_mut(k) {
+            *x -= mean;
         }
     }
     let xi = |i: usize| at(&x, i);
@@ -123,18 +223,26 @@ pub fn of(v: &WholeRow<'_>, rate: u32, len: u32, frame: impl Fn(u32) -> u32) -> 
 fn refine(s: &impl Fn(u32) -> f32, p0: u32, d: u32) -> Option<Period> {
     let n = (p0 as usize).clamp(FINE / 4, FINE);
     let mut a = [0.0f32; FINE];
-    let mut e0 = 0.0f32;
+    let mut mean = 0.0;
     for i in 0..n {
         let y = s(i as u32);
         if let Some(a) = a.get_mut(i) {
             *a = y;
         }
-        e0 += y * y;
+        mean += y;
+    }
+    mean /= n as f32;
+    let mut e0 = 0.0f32;
+    for i in 0..n {
+        if let Some(a) = a.get_mut(i) {
+            *a -= mean;
+            e0 += *a * *a;
+        }
     }
     let corr = |l: u32| {
         let (mut c, mut e1) = (0.0f32, 0.0f32);
         for i in 0..n {
-            let y = s(i as u32 + l);
+            let y = s(i as u32 + l) - mean;
             c += at(&a, i) * y;
             e1 += y * y;
         }
@@ -256,6 +364,43 @@ mod tests {
         let h = held(|t| 0.5 * noise[(t * 48_000.0) as usize], 48_000, 8_000);
         assert_eq!(period(&h, 48_000), None);
         assert_eq!(period(&held(|_| 0.0, 48_000, 8_000), 48_000), None);
+    }
+
+    /// A level alone (DC) and a level under a tone: none for the one, the
+    /// tone's period for the other (the mean comes off first).
+    #[test]
+    fn a_level_has_no_period() {
+        assert_eq!(period(&held(|_| 0.4, 48_000, 8_000), 48_000), None);
+        let h = held(|t| 0.4 + 0.3 * libm::sinf(TAU * 440.0 * t), 48_000, 8_000);
+        let got = period(&h, 48_000).unwrap();
+        let m = libm::roundf(got / (48_000.0 / 440.0)).max(1.0);
+        assert!((got - m * 48_000.0 / 440.0).abs() < 0.2 * m, "{got}");
+    }
+
+    /// The kept search answers as the search does, to 1/64 frame, the
+    /// same on every note; a window moved, or another row, is its own.
+    #[test]
+    fn a_window_is_searched_once() {
+        let h = held(|t| 0.5 * libm::sinf(TAU * 261.63 * t), 48_000, 8_000);
+        let v = WholeRow::new(&h).unwrap();
+        let n = v.frames();
+        let once = |base: u32| of_window(&v, 48_000, (base, n - base, false), |u| base + u);
+        let first = once(0).unwrap().get();
+        let want = of(&v, 48_000, n, |u| u).unwrap().get();
+        assert!((first - want).abs() <= 1.0 / 128.0, "{first} {want}");
+        for _ in 0..4 {
+            assert_eq!(once(0).map(Period::get), Some(first));
+        }
+        let moved = once(1_000).unwrap().get();
+        let want = of(&v, 48_000, n - 1_000, |u| 1_000 + u).unwrap().get();
+        assert!((moved - want).abs() <= 1.0 / 128.0, "{moved} {want}");
+        let saw = held(|t| 0.4 * (2.0 * (t * 261.63).fract() - 1.0), 48_000, 8_000);
+        let w = WholeRow::new(&saw).unwrap();
+        let other = of_window(&w, 48_000, (0, n, false), |u| u);
+        assert_eq!(
+            other.map(Period::get),
+            of(&w, 48_000, n, |u| u).map(|p| { libm::roundf(p.get() * 64.0) / 64.0 })
+        );
     }
 
     /// A window too short for two periods of the lowest pitch looks no

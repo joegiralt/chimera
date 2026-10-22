@@ -566,13 +566,14 @@ fn pointer_speed(win: Window, length: Seconds, motion: f32, sr: u32) -> Speed {
 /// period where the two are whole multiples within 3 %, the note it sounds,
 /// so a bell's loudest partial meets itself in phase where YIN read its hum
 /// an octave down, a little off. With no PERIOD, the window's own where its
-/// first frames repeat (`period::of`), as found: a chord's common period
+/// first frames repeat (`period::of_window`, once a window), as found: a chord's common period
 /// is a multiple of its root's, and ROOT's would put its fifth out of
 /// phase. Two periods fit the window, or none.
 fn lock_period(p: &TapeEngineParams, v: &WholeRow<'_>, win: Window) -> Option<Period> {
     let Some(yin) = Period::new(p.period) else {
         let rate = u32::from(v.desc().rate());
-        return super::period::of(v, rate, win.len, |u| win.frame_at(u));
+        let key = (win.base, win.len, win.dir == Dir::Rev);
+        return super::period::of_window(v, rate, key, |u| win.frame_at(u));
     };
     let root =
         Period::new(f32::from(v.desc().rate()) / (440.0 * exp2((p.root - 6_900.0) / 1_200.0)));
