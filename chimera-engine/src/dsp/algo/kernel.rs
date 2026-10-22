@@ -586,11 +586,14 @@ impl Kernel {
         if let KindState::Formant(f) = &mut self.state[op] {
             *f = FormantState::CLOSED;
         }
-        let mut run = env.run();
-        for _ in 0..BLOCK_SIZE {
-            run.step(env);
+        // A held envelope's block is its count alone (`skip_held`).
+        if !env.skip_held(BLOCK_SIZE as u32) {
+            let mut run = env.run();
+            for _ in 0..BLOCK_SIZE {
+                run.step(env);
+            }
+            env.store(run);
         }
-        env.store(run);
         self.phase[op] = self.phase[op].wrapping_add(o.inc.wrapping_mul(BLOCK_SIZE as u32));
         self.out[op] = 0.0;
         self.hist[op] = 0.0;
