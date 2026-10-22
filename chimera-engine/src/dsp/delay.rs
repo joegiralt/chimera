@@ -4,11 +4,12 @@
 //! bank 2's).
 
 pub mod grain;
+mod tape;
 
 use crate::block::{Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt};
 use crate::dsp::algo::math::inv_sqrt;
 use crate::dsp::clampf;
-use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
+use crate::dsp::ease::{Ease, ease_coeff};
 use crate::dsp::{sin_turns, xorshift_noise};
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
@@ -402,35 +403,15 @@ const fn grain_slot(id: ParamId) -> Option<usize> {
     }
 }
 
-/// GRAIN's kernel, bank 2's (ADR 0202): bank 1 calls `run` while TYPE
-/// is GRAIN or still fading.
+/// The delay's per-sample work, TAPE's and GRAIN's, bank 2's (ADR 0202,
+/// 0212): bank 1 calls `run` once a block.
 #[repr(C)]
-pub struct GrainDoor {
+pub struct DelayDoor {
     pub run: fn(&mut TapeDelay, &mut [f32; BLOCK_SIZE], &DelayParams, u32, bool),
 }
 
-impl GrainDoor {
-    pub const DOOR: GrainDoor = GrainDoor { run: grain::run };
-}
-
-/// `f` on GRAIN: through the door with `bank2` (`None` while it is
-/// closed); on a host, bank 1's own. Firmware without bank 2 has no
-/// room for it (ADR 0198, 0202): it plays TAPE, as a closed door does.
-#[inline(always)]
-fn through<R>(f: impl FnOnce(&GrainDoor) -> R) -> Option<R> {
-    #[cfg(feature = "bank2")]
-    {
-        crate::bank2::DOOR_CELL.with(|d| f(&d.grain))
-    }
-    #[cfg(all(not(feature = "bank2"), not(target_os = "none")))]
-    {
-        Some(f(&GrainDoor::DOOR))
-    }
-    #[cfg(all(not(feature = "bank2"), target_os = "none"))]
-    {
-        let _ = f;
-        None
-    }
+impl DelayDoor {
+    pub const DOOR: DelayDoor = DelayDoor { run: tape::run };
 }
 
 /// One block's constants for the transport: the base delay, the depths
@@ -714,6 +695,8 @@ impl TapeDelay {
         self.run(buf, params, sample_rate, false);
     }
 
+    /// Through the door with `bank2`; closed, the return is silent and an
+    /// insert passes its dry (ADR 0212).
     fn run(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
@@ -721,26 +704,16 @@ impl TapeDelay {
         sample_rate: u32,
         insert: bool,
     ) {
-        // GRAIN, or TAPE fading back from it: bank 2's. Closed, TAPE plays.
-        if (params.kind() == DelayType::Grain || self.grain.share != crate::dsp::Unit::ZERO)
-            && through(|d| (d.run)(self, buf, params, sample_rate, insert)).is_some()
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| (d.delay.run)(self, buf, params, sample_rate, insert))
+            .is_none()
+            && !insert
         {
-            return;
+            buf.fill(0.0);
         }
-        let tap = Tap::new(params, sample_rate);
-        if !self.primed {
-            (self.time, self.primed) = (tap.base(), true);
-        }
-        if self.fade == 0 && tap.base() != self.time {
-            (self.next, self.fade) = (tap.base(), TIME_FADE);
-        }
-        let e = self.eased(params, sample_rate);
-        match (self.fade > 0, e.moving()) {
-            (false, false) => self.span::<false, false>(buf, &tap, e, insert),
-            (false, true) => self.span::<false, true>(buf, &tap, e, insert),
-            (true, false) => self.span::<true, false>(buf, &tap, e, insert),
-            (true, true) => self.span::<true, true>(buf, &tap, e, insert),
-        }
+        #[cfg(not(feature = "bank2"))]
+        tape::run(self, buf, params, sample_rate, insert);
     }
 
     /// The block's eased settings: MIX (0 while off), FDBK, SAT, TONE and
@@ -755,93 +728,6 @@ impl TapeDelay {
             saturation: self.saturation.step(p.saturation, k),
             tone: self.tone.step(p.tone, k),
             mechanics: self.mechanics.step(p.wow_flutter, k),
-        }
-    }
-
-    /// The block: `FADE` while a TIME crossfade runs, `RAMP` while any
-    /// eased setting moves (each ramps from its `.0` to its `.1`; one
-    /// that isn't moving ramps by 0, so plays its value).
-    #[inline(always)]
-    fn span<const FADE: bool, const RAMP: bool>(
-        &mut self,
-        buf: &mut [f32; BLOCK_SIZE],
-        tap: &Tap,
-        e: Eased,
-        insert: bool,
-    ) {
-        let ramp = |v: (f32, f32)| (v.0, step_of(v, BLOCK_SIZE));
-        // Tone: LP coefficient (higher = brighter)
-        let lp = |t: f32| 0.2 + t * 0.75;
-        let lp_coeff = ramp((lp(e.tone.0), lp(e.tone.1)));
-        let gain = |s: f32| 1.0 + s * 3.0;
-        let (g0, g1) = (gain(e.saturation.0), gain(e.saturation.1));
-        let sat_gain = ramp((g0, g1));
-        // Once a block: the loop multiplies, never divides (within 1 ulp).
-        // Ramped, the inverse is linear between the ends: still at most 1.
-        let sat_inv = ramp((1.0 / g0, 1.0 / g1));
-        let (m, f, d) = (ramp(e.mix), ramp(e.feedback), ramp(e.mechanics));
-        // MECHANICS at 1: ramped, the transport's offsets × its depth.
-        let unit = Tap {
-            wow: WOW_SAMPLES,
-            flutter: FLUTTER_SAMPLES,
-            ..*tap
-        };
-        let now = |(v, step): (f32, f32), i: usize| if RAMP { at(v, step, i) } else { v };
-        let top = (MAX_DELAY_SAMPLES - 2) as f32;
-
-        // The loop's state in locals: the stores into the line cannot then
-        // make the compiler reload and store it every sample.
-        let (mut transport, mut write_pos, mut lp_state) =
-            (self.transport, self.write_pos, self.lp_state);
-        let (time, next) = (self.time, self.next);
-        // From the old head to the new, linearly: the new head's weight.
-        let dt = 1.0 / f32::from(TIME_FADE);
-        let mut t = 1.0 - f32::from(self.fade) * dt;
-        for (i, s) in buf.iter_mut().enumerate() {
-            let dry = *s;
-
-            let (wow, flutter) = if RAMP {
-                let ((w, f), depth) = (transport.offsets(&unit), now(d, i));
-                (w * depth, f * depth)
-            } else {
-                transport.offsets(tap)
-            };
-            let head = |base: f32| clampf(base + wow + flutter, 1.0, top);
-            let mut delayed = read(&self.buffer, write_pos, head(time));
-            if FADE {
-                delayed += (read(&self.buffer, write_pos, head(next)) - delayed) * t;
-                t += dt;
-            }
-
-            // Tone: one-pole LP in feedback path (tape loses highs each pass)
-            lp_state += now(lp_coeff, i) * (delayed - lp_state);
-            let filtered = lp_state;
-
-            // Tape saturation in the feedback path, always on (ADR 0038): at
-            // SAT 0 the loop is otherwise linear with unity DC gain, so FDBK
-            // 1 grows without bound. Bounded by 1 / gain, the write stays
-            // within |dry| + FDBK: ±2.0, the line's full scale, at a unity
-            // send.
-            let saturated = libm::tanhf(filtered * now(sat_gain, i)) * now(sat_inv, i);
-
-            // Write: input + feedback
-            self.buffer[write_pos] = to_line(dry + saturated * now(f, i));
-            write_pos += 1;
-            if write_pos == MAX_DELAY_SAMPLES {
-                write_pos = 0;
-            }
-
-            // Mix
-            let mix = now(m, i);
-            let dry_gain = if insert { 1.0 - mix } else { 0.0 };
-            *s = dry * dry_gain + delayed * mix;
-        }
-        (self.transport, self.write_pos, self.lp_state) = (transport, write_pos, lp_state);
-        if FADE {
-            self.fade -= BLOCK_SIZE as u16;
-            if self.fade == 0 {
-                self.time = next;
-            }
         }
     }
 }

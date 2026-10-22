@@ -309,9 +309,48 @@ impl JunoChorus {
 
     /// Send/return use (the FX bus): the wet signal × MIX, the return
     /// level, per side. At MIX 0 or mode OFF the lines are still written
-    /// and the return fades out.
+    /// and the return fades out. Through the door with `bank2`; closed,
+    /// silent (ADR 0212).
     pub fn process_wet(
         &mut self,
+        send: &[f32; BLOCK_SIZE],
+        params: &ChorusParams,
+        sample_rate: u32,
+        out: &mut Stereo,
+    ) {
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| (d.chorus.process)(self, send, params, sample_rate, out))
+            .is_none()
+        {
+            *out = Stereo::SILENT;
+        }
+        #[cfg(not(feature = "bank2"))]
+        kern::process(self, send, params, sample_rate, out);
+    }
+}
+
+/// The chorus's per-sample work, bank 2's (ADR 0212): bank 1 calls
+/// `process` once a block.
+#[repr(C)]
+pub struct ChorusDoor {
+    pub process: fn(&mut JunoChorus, &[f32; BLOCK_SIZE], &ChorusParams, u32, &mut Stereo),
+}
+
+impl ChorusDoor {
+    pub const DOOR: ChorusDoor = ChorusDoor {
+        process: kern::process,
+    };
+}
+
+/// The lines' loops, linked into bank 2 (`bank2.x`, `*6chorus4kern*`).
+mod kern {
+    use super::*;
+
+    /// The door's entry: one block, the wet × MIX into `out`.
+    #[inline(never)]
+    pub fn process(
+        c: &mut JunoChorus,
         send: &[f32; BLOCK_SIZE],
         params: &ChorusParams,
         sample_rate: u32,
@@ -328,10 +367,10 @@ impl JunoChorus {
         let mix = if params.mix >= 0.001 { params.mix } else { 0.0 };
         let k = ease_coeff(sample_rate);
         let w = [
-            self.weight[0].step(share.0 * mix, k),
-            self.weight[1].step(share.1 * mix, k),
+            c.weight[0].step(share.0 * mix, k),
+            c.weight[1].step(share.1 * mix, k),
         ];
-        let dp = self.depth.step(params.depth, k);
+        let dp = c.depth.step(params.depth, k);
         // Juno I: 0.513 Hz, 1.7 ms; Juno II: 0.863 Hz, 2.3 ms; both 3.6 ms
         // from centre. RATE and DEPTH scale 0.5x to 2.0x.
         let rate = 0.5 + params.rate * 1.5;
@@ -339,7 +378,7 @@ impl JunoChorus {
         let base = 3.6 * ms;
         let turns = |hz: f32| (hz / sample_rate as f32 * 4_294_967_296.0) as u32;
         let (inc_i, inc_ii) = (turns(0.513 * rate), turns(0.863 * rate));
-        let (a, b) = (&mut self.line_i, &mut self.line_ii);
+        let (a, b) = (&mut c.line_i, &mut c.line_ii);
         let steady = w[0].0 == w[0].1 && w[1].0 == w[1].1 && dp.0 == dp.1;
         if steady {
             let depth = 0.5 + dp.1 * 1.5;
@@ -383,20 +422,20 @@ impl JunoChorus {
             out.r[i] = r1 * g1 + r2 * g2;
         }
     }
-}
 
-/// One loop per mode, so no per-sample dispatch: `tick` from the send to
-/// (L, R), × `mix`.
-#[inline(always)]
-fn each(
-    send: &[f32; BLOCK_SIZE],
-    mix: f32,
-    out: &mut Stereo,
-    mut tick: impl FnMut(f32) -> (f32, f32),
-) {
-    for (i, &x) in send.iter().enumerate() {
-        let (l, r) = tick(x);
-        out.l[i] = l * mix;
-        out.r[i] = r * mix;
+    /// One loop per mode, so no per-sample dispatch: `tick` from the send to
+    /// (L, R), × `mix`.
+    #[inline(always)]
+    fn each(
+        send: &[f32; BLOCK_SIZE],
+        mix: f32,
+        out: &mut Stereo,
+        mut tick: impl FnMut(f32) -> (f32, f32),
+    ) {
+        for (i, &x) in send.iter().enumerate() {
+            let (l, r) = tick(x);
+            out.l[i] = l * mix;
+            out.r[i] = r * mix;
+        }
     }
 }
