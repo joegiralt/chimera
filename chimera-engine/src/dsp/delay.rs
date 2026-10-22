@@ -64,7 +64,7 @@ impl DelayType {
         if v >= 0.5 { Self::Grain } else { Self::Tape }
     }
 
-    /// Its index: TYPE's stored value (`DelayParams::get`).
+    /// Its index, as `DelayParams::ty` holds it.
     pub const fn value(self) -> f32 {
         self as u8 as f32
     }
@@ -90,14 +90,11 @@ pub struct DelayParams {
     /// The delay's return into the reverb's send (0..1): FX diet spec
     /// § REV SEND.
     pub rev_send: f32,
-    /// TYPE (id 7, ADR 0202): TAPE or GRAIN, its stored index decoded once
-    /// on its way in.
-    pub kind: DelayType,
-    /// GRAIN's knobs, ids 8–11 in order: SIZE, DENSITY, PITCH (semitones,
-    /// −24..24) and TEXTURE (ADR 0202). One array, so `get` and `write`
-    /// reach them in one arm each and bank 1's codec code stays small
-    /// (ADR 0198).
-    pub grain: [f32; 4],
+    /// GRAIN's TYPE and knobs, ids 7–11 in order: TYPE's index (0 TAPE,
+    /// 1 GRAIN, `kind`), SIZE, DENSITY, PITCH (semitones, −24..24) and
+    /// TEXTURE (ADR 0202). One array, so `get` and `write` reach them in
+    /// one arm each and bank 1's codec code stays as it was (ADR 0198).
+    pub grain: [f32; 5],
 }
 
 impl DelayParams {
@@ -109,8 +106,7 @@ impl DelayParams {
         tone: 0.6,
         mix: 1.0, // unity return (sends spec § 4)
         rev_send: 0.0,
-        kind: DelayType::Tape,
-        grain: [0.6, 0.6, 0.0, 0.2],
+        grain: [0.0, 0.6, 0.6, 0.0, 0.2],
     };
 }
 
@@ -136,33 +132,31 @@ impl DelayParams {
     pub const REV_SEND: ParamId = ParamId(6);
     pub const TYPE: ParamId = ParamId(7);
 
-    /// TYPE.
+    /// The TYPE `grain` holds.
     pub const fn kind(&self) -> DelayType {
-        self.kind
+        DelayType::at(self.grain[0])
     }
 
     pub const fn size(&self) -> f32 {
-        self.grain[0]
-    }
-
-    pub const fn density(&self) -> f32 {
         self.grain[1]
     }
 
-    pub const fn pitch(&self) -> f32 {
+    pub const fn density(&self) -> f32 {
         self.grain[2]
     }
 
-    pub const fn texture(&self) -> f32 {
+    pub const fn pitch(&self) -> f32 {
         self.grain[3]
     }
 
-    /// These params with GRAIN's `id` (TYPE and 8–11) at `v`; any other
-    /// id leaves them as they are.
+    pub const fn texture(&self) -> f32 {
+        self.grain[4]
+    }
+
+    /// These params with GRAIN's `id` (7–11) at `v`; any other id leaves
+    /// them as they are.
     pub const fn with(mut self, id: ParamId, v: f32) -> Self {
-        if id.0 == Self::TYPE.0 {
-            self.kind = DelayType::at(v);
-        } else if let Some(i) = grain_slot(id) {
+        if let Some(i) = grain_slot(id) {
             self.grain[i] = v;
         }
         self
@@ -352,7 +346,6 @@ impl Block for DelayParams {
             Self::TONE => self.tone,
             Self::MIX => self.mix,
             Self::REV_SEND => self.rev_send,
-            Self::TYPE => self.kind.value(),
             _ => grain_slot(id).map_or(0.0, |i| self.grain[i]),
         }
     }
@@ -367,7 +360,6 @@ impl Block for DelayParams {
             Self::TONE => self.tone = v,
             Self::MIX => self.mix = v,
             Self::REV_SEND => self.rev_send = v,
-            Self::TYPE => self.kind = DelayType::at(v),
             _ => {
                 if let Some(i) = grain_slot(id) {
                     self.grain[i] = v;
@@ -397,10 +389,10 @@ pub const fn extra_cost(p: &DelayParams) -> crate::hw::Cost {
     }
 }
 
-/// `id`'s place in `DelayParams::grain`, if it is one of GRAIN's knobs.
+/// `id`'s place in `DelayParams::grain`, if it is GRAIN's.
 #[inline(always)]
 const fn grain_slot(id: ParamId) -> Option<usize> {
-    let i = id.0.wrapping_sub(DelayParams::SIZE.0) as usize;
+    let i = id.0.wrapping_sub(DelayParams::TYPE.0) as usize;
     if i < DelayParams::DEFAULT.grain.len() {
         Some(i)
     } else {

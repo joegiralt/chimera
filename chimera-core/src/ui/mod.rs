@@ -1143,7 +1143,7 @@ impl UiState {
             .on_chorus(&self.project.perf().fx.chorus)
             .on_pages(self.theme.pages);
         let ctx = SlotCtx {
-            delay: self.project.perf().fx.delay.kind,
+            delay: self.project.perf().fx.delay.kind(),
             ..ctx
         };
         let base =
