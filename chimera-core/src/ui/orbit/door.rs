@@ -151,8 +151,8 @@ pub fn door_ok(j: &chimera_engine::bank2::Judged) -> bool {
     }
 }
 
-/// `f` on the table: bank 2's through the door on the unit with `bank2`,
-/// `None` closed; this build's own elsewhere. A host test under `bank2`
+/// `f` on the table: bank 2's through the door on the unit, `None`
+/// closed or without `orbit`; this build's own on a host. A host test under `bank2`
 /// answers as the unit does: only while the door cell is open.
 #[inline(always)]
 fn through<R>(f: impl FnOnce(&OrbitUiDoor) -> R) -> Option<R> {
@@ -160,7 +160,13 @@ fn through<R>(f: impl FnOnce(&OrbitUiDoor) -> R) -> Option<R> {
     {
         crate::bank2::DOOR_CELL.with_slot(SLOT, f)
     }
-    #[cfg(not(all(feature = "bank2", feature = "orbit", target_os = "none")))]
+    // A firmware build without ORBIT never shows its pages: none links.
+    #[cfg(all(not(feature = "orbit"), target_os = "none"))]
+    {
+        let _ = f;
+        None
+    }
+    #[cfg(not(target_os = "none"))]
     {
         #[cfg(feature = "bank2")]
         if !crate::bank2::DOOR_CELL.is_open() {
