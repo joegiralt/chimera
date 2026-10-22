@@ -53,6 +53,8 @@ pub const REG_WAIT_US: Micros = Micros::new(50);
 /// about 20 µs at SCK.
 const READY_BYTES: u32 = 64;
 
+// Each burst renews the watchdog (`CardBus::renew`), so it bounds one
+// burst, not a read whose every block may wait out a token (M2, #761).
 const _: () = assert!(WATCHDOG_MS.get() >= 2 * TOKEN_TIMEOUT_MS.get());
 
 // DMAMUX1's channels 8 and 9 are DMA2's streams 0 and 1 (DMA1's are 0-7);
@@ -1282,6 +1284,7 @@ impl IrqState {
             return self.abort(h, kind, Why::Bound);
         };
         let upto = kind.landing(end) + dest.n.get();
+        BUS.renew(now_ms());
         #[cfg(feature = "bench")]
         let (dest, fault) = bench::aim(dest);
         match h.fly(dest, &self.line) {
@@ -1453,6 +1456,7 @@ impl IrqState {
             Err(_) => return self.fault(h, then),
         }
         let left = left - READY_BYTES;
+        BUS.renew(now_ms());
         match h.fly(Dest::scan(), &self.line) {
             Ok(bus) => {
                 self.bursts += 1;
