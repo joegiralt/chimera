@@ -934,39 +934,9 @@ pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
 
 /// What the focus band says in its hint's place about a TAPE cell: why
 /// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
-/// its loop head holds.
+/// its loop head holds. Bank 2's (`walk::band_note_in`): closed, nothing.
 pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'static str> {
-    if let Some(n) = tape_note(addr, sound) {
-        return Some(n);
-    }
-    // ONE's FADE stays live, its HOLD the gate; below HOLD AMP releases.
-    let t = &sound.params.tape;
-    if addr == ParamAddr::new(BlockRef::TapeEngine, T::DRAG)
-        && t.way() == Way::One
-        && t.drag < crate::dsp::tape_engine::FADE_HOLD
-        && sound.mod_state.routes_into(VCA) != 0
-    {
-        return Some(FADE_HOLD_ONLY);
-    }
-    let SourceState::Held {
-        rate,
-        frames,
-        notes: Some(_),
-        ..
-    } = src
-    else {
-        return None;
-    };
-    if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE) || t.way() != Way::Loop {
-        return None;
-    }
-    let file = core::num::NonZeroU32::new(frames).filter(|f| f.get() >= 2)?;
-    use crate::dsp::tape_engine::window::{loop_len, window_end, window_start};
-    let ws = window_start(t.start, file);
-    let we = window_end(ws, t.end, frames, rate);
-    let asked = t.xfade * loop_len(t.size, we - ws, rate) as f32;
-    let cap = u32::from(rate) * crate::stream::stage::XFADE_MAX_MS / 1_000;
-    (asked > cap as f32).then_some(XFADE_CAPPED)
+    crate::bank2::ui_door(|u| u.band_note(addr, sound, src)).flatten()
 }
 
 /// A route moves TAPE: its wow runs whatever TAPE stores (`tape_runs`).

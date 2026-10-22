@@ -203,6 +203,7 @@ pub struct UiDoor {
     /// ADR 0203).
     machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
+    band_note: fn(ParamAddr, &Sound, crate::ui::view::SourceState) -> Option<&'static str>,
     tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
     /// TAPE cells' units where the engine has a law (`ui::walk`).
     tape_fmt:
@@ -228,7 +229,7 @@ type HeadKind = (SourceHead, LoadKind);
 type EnvWrites = &'static [(ParamId, f32)];
 
 /// `UiDoor::magic`.
-const UI_MAGIC: u32 = 0xB2C0_0006;
+const UI_MAGIC: u32 = 0xB2C0_0007;
 
 impl UiDoor {
     /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
@@ -248,6 +249,7 @@ impl UiDoor {
         onset: crate::ui::onset::onset_in_bank2,
         machine_edit: crate::ui::walk::machine_edit_in,
         tape_note: crate::ui::walk::tape_note_in,
+        band_note: crate::ui::walk::band_note_in,
         tape_held: crate::ui::walk::tape_held_in,
         tape_fmt: crate::ui::walk::tape_fmt_in,
         law_text: crate::ui::walk::law_text_in,
@@ -350,6 +352,16 @@ impl UiDoor {
     #[inline(always)]
     pub(crate) fn tape_note(&self, a: ParamAddr, s: &Sound) -> Option<&'static str> {
         (self.tape_note)(a, s)
+    }
+
+    #[inline(always)]
+    pub(crate) fn band_note(
+        &self,
+        a: ParamAddr,
+        s: &Sound,
+        src: crate::ui::view::SourceState,
+    ) -> Option<&'static str> {
+        (self.band_note)(a, s, src)
     }
 
     #[inline(always)]

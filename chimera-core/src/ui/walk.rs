@@ -7,7 +7,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::block::{Block, ParamId};
 use crate::dsp::delay::{DelayParams, DelayType};
 use crate::dsp::modulator::law::Law;
-use crate::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
+use crate::dsp::tape_engine::machine::{Cell, defaults, direction_defaults, env_defaults, machine};
 use crate::dsp::tape_engine::{
     self, Choice, Direction, FADE_HOLD, MachineIndex, NeedsRam, TapeEngineParams as T, TapeMachine,
     Way, fade_default, needs_ram,
@@ -17,8 +17,9 @@ use crate::preset::Sound;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::page::ValFmt;
 use crate::ui::view::{
-    DELAY_GRAIN_ONLY, DELAY_TAPE_ONLY, FADE_ASIDE, RETRIG_ONCE_ONLY, RETRIG_TRON_OFF, WOW_AT_REST,
-    XFADE_LOOP_ONLY, XFADE_NO_SEAM, tape_routed,
+    DELAY_GRAIN_ONLY, DELAY_TAPE_ONLY, FADE_ASIDE, FADE_HOLD_ONLY, RETRIG_ONCE_ONLY,
+    RETRIG_TRON_OFF, SourceState, WOW_AT_REST, XFADE_CAPPED, XFADE_LOOP_ONLY, XFADE_NO_SEAM,
+    tape_routed,
 };
 
 /// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
@@ -176,7 +177,10 @@ pub(crate) fn readout_word_in(a: ParamAddr, v: f32, held: Option<u8>) -> Option<
         _ => return None,
     };
     let last = names.len() as u8 - 1;
-    let i = held.unwrap_or_else(|| crate::ui::fmt::discrete(v, last));
+    let i = match held {
+        Some(h) => h,
+        None => crate::ui::fmt::discrete(v, last),
+    };
     names.get(usize::from(i)).copied()
 }
 
@@ -186,28 +190,14 @@ pub(crate) fn readout_word_in(a: ParamAddr, v: f32, held: Option<u8>) -> Option<
 /// and their ENV 1; DIRECTION, crossing once through and a loop, LENGTH
 /// and FADE and then ENV 1's. A CC's budget (`cc_bin`) and the hand's.
 pub(crate) fn tape_writes_in(param: ParamId, code: u8, t: &T) -> u8 {
-    let knob = |b: BlockRef, id: ParamId| {
-        ParamAddr::new(b, id)
-            .spec()
-            .and_then(|s| s.motion().knob())
-            .is_some()
-    };
     let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
-    let count = |b: BlockRef, writes: &[(ParamId, f32)]| {
-        let mut n = 0;
-        for &(id, _) in writes {
-            n += u8::from(knob(b, id));
-        }
-        n
-    };
     match param {
         T::MODEL => {
             let m = TapeMachine::from_index(MachineIndex(code));
-            let mut n = count(env1, env_defaults(m, t.direction));
-            for (id, _) in defaults(m, t.direction) {
-                n += u8::from(knob(BlockRef::TapeEngine, id));
-            }
-            n
+            // `defaults`' cells, by id alone: no iterator's instance, which
+            // would be core's and link into bank 1.
+            let k = machine(m);
+            cell_knobs(k.deck) + cell_knobs(k.cells) + knobs(env1, env_defaults(m, t.direction))
         }
         T::MODE => {
             let Some(now) = Direction::from_value(f32::from(code)) else {
@@ -217,12 +207,88 @@ pub(crate) fn tape_writes_in(param: ParamId, code: u8, t: &T) -> u8 {
             if writes.is_empty() {
                 0
             } else {
-                count(BlockRef::TapeEngine, writes)
-                    + count(env1, env_defaults(TapeMachine::Walk, now))
+                knobs(BlockRef::TapeEngine, writes)
+                    + knobs(env1, env_defaults(TapeMachine::Walk, now))
             }
         }
         _ => 0,
     }
+}
+
+/// How many of a machine's `cells` a MODEL turn writes (`defaults`: all
+/// but the window and DIRECTION) are knobs.
+#[inline(always)]
+fn cell_knobs(c: &[Cell]) -> u8 {
+    let mut n = 0;
+    let mut i = 0;
+    while i < c.len() {
+        let id = c[i].id;
+        n += u8::from(!matches!(id, T::START | T::END | T::MODE) && knob(BlockRef::TapeEngine, id));
+        i += 1;
+    }
+    n
+}
+
+/// `b`'s param `id` is glided by the Part's knobs (`Motion::knob`).
+#[inline(always)]
+fn knob(b: BlockRef, id: ParamId) -> bool {
+    ParamAddr::new(b, id)
+        .spec()
+        .is_some_and(|s| s.motion().knob().is_some())
+}
+
+/// How many of `writes` on `b` are knobs. Inlined, a plain loop: bank 2's
+/// with its caller.
+#[inline(always)]
+fn knobs(b: BlockRef, writes: &[(ParamId, f32)]) -> u8 {
+    let mut n = 0;
+    let mut i = 0;
+    while i < writes.len() {
+        n += u8::from(knob(b, writes[i].0));
+        i += 1;
+    }
+    n
+}
+
+/// What the focus band says in its hint's place about a TAPE cell: why
+/// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
+/// its loop head holds (`view::band_note`).
+pub(crate) fn band_note_in(
+    addr: ParamAddr,
+    sound: &Sound,
+    src: SourceState,
+) -> Option<&'static str> {
+    if let Some(n) = tape_note_in(addr, sound) {
+        return Some(n);
+    }
+    // ONE's FADE stays live, its HOLD the gate; below HOLD AMP releases.
+    let t = &sound.params.tape;
+    if addr == ParamAddr::new(BlockRef::TapeEngine, T::DRAG)
+        && t.way() == Way::One
+        && t.drag < crate::dsp::tape_engine::FADE_HOLD
+        && sound.mod_state.routes_into(VCA) != 0
+    {
+        return Some(FADE_HOLD_ONLY);
+    }
+    let SourceState::Held {
+        rate,
+        frames,
+        notes: Some(_),
+        ..
+    } = src
+    else {
+        return None;
+    };
+    if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE) || t.way() != Way::Loop {
+        return None;
+    }
+    let file = core::num::NonZeroU32::new(frames).filter(|f| f.get() >= 2)?;
+    use crate::dsp::tape_engine::window::{loop_len, window_end, window_start};
+    let ws = window_start(t.start, file);
+    let we = window_end(ws, t.end, frames, rate);
+    let asked = t.xfade * loop_len(t.size, we - ws, rate) as f32;
+    let cap = u32::from(rate) * crate::stream::stage::XFADE_MAX_MS / 1_000;
+    (asked > cap as f32).then_some(XFADE_CAPPED)
 }
 
 /// What `t` with `param` (MODEL or DIRECTION) at `code` can't play from a
@@ -236,6 +302,29 @@ pub(crate) fn tape_held_in(t: &T, param: ParamId, code: u8) -> Option<NeedsRam> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A MODEL change's budget is its defaults' knobs and its ENV 1's, on
+    /// every machine and DIRECTION.
+    #[test]
+    fn model_writes_are_the_defaults() {
+        let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
+        for m in TapeMachine::ALL {
+            for d in Direction::ALL {
+                let t = T {
+                    direction: d,
+                    ..T::default()
+                };
+                let want = defaults(m, d)
+                    .filter(|&(id, _)| knob(BlockRef::TapeEngine, id))
+                    .count()
+                    + env_defaults(m, d)
+                        .iter()
+                        .filter(|&&(id, _)| knob(env1, id))
+                        .count();
+                assert_eq!(usize::from(tape_writes_in(T::MODEL, m.index(), &t)), want);
+            }
+        }
+    }
 
     /// A DIRECTION change's budget is the knob writes the edit makes, from
     /// every DIRECTION to every other (review of #761, m2).
