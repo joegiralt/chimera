@@ -118,6 +118,7 @@ ENV1.SUS = "1"  # 100%
 ENV1.REL = "0.4"  # 84 ms
 VOICEFX.TYPE = "FOLD"
 VOICEFX.PLACE = "POST"
+VOICEFX.P3 = "0.637"  # 81
 VOICEFX.MIX = "0.5"  # 0
 mod.ENV1 = "OUT.VCA +127"
 VA.FINE2 = "3"  # +3
@@ -160,6 +161,7 @@ ENV2.DEC = "0.4"  # 84 ms
 ENV2.SUS = "0"  # 0%
 VOICEFX.TYPE = "FOLD"
 VOICEFX.PLACE = "POST"
+VOICEFX.P3 = "0.637"  # 81
 VOICEFX.MIX = "0.5"  # 0
 mod.ENV1 = "OUT.VCA +127, FILTER.CUTOFF +40"
 mod.ENV2 = "VA.AMOUNT +50, FILTER.CUTOFF +30"
@@ -764,7 +766,7 @@ LFO2.SHAPE = "TRIANGLE"
 mod.LFO2 = "FILTER.CUTOFF +8"
 mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +8"
 level = "by ear -13.2: set low so the short hit's resonance stays under 1 dB of limiting"
-trim = "1.2"
+trim = "-5.0"
 
 # Rubbery acid on triangle waves, an octave tri under: they hold few
 # harmonics, so the filter's resonance does the squelch.
