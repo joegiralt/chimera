@@ -603,7 +603,13 @@ impl View {
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
-            Some(a) if a.block == BlockRef::TapeEngine && matches!(a.param, T::START | T::END) => {
+            // MIX + turn snaps to an onset only on a held source
+            // (`turn_window`); elsewhere it is the plain snap.
+            Some(a)
+                if a.block == BlockRef::TapeEngine
+                    && matches!(a.param, T::START | T::END)
+                    && matches!(ctx.src, SourceState::Held { .. }) =>
+            {
                 ONSET_HINT
             }
             Some(a)

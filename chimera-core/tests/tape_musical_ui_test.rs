@@ -385,10 +385,18 @@ fn mix_turn_snaps_start_to_the_next_onset() {
     assert!(at(&ui).abs_diff(12_000) <= 2, "{}", at(&ui));
     // The cell says so in its band.
     let s = &ui.project().part(PartId::ALL[0]).sound;
-    let ctx = view::SlotCtx::read(&s.params, chimera_core::addr::Op::A);
+    let none = view::SlotCtx::read(&s.params, chimera_core::addr::Op::A);
+    let ctx = view::SlotCtx {
+        src: ui.source_state(),
+        ..none
+    };
     for i in [1, 2] {
         let v = view::view(&chimera_core::ui::block_registry::TAPE_SRC, i, &ctx);
         assert_eq!(v.hint(&ctx), view::ONSET_HINT, "{}", v.label());
+        // With no source held, MIX + turn is the plain snap: no onset to
+        // name (review of #761, m4).
+        let v = view::view(&chimera_core::ui::block_registry::TAPE_SRC, i, &none);
+        assert_ne!(v.hint(&none), view::ONSET_HINT, "{}", v.label());
     }
     assert!(chimera_core::ui::hint::width(view::ONSET_HINT) <= theme::CONTENT_W);
 }
