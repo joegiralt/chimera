@@ -20,7 +20,11 @@
 # (ON or OFF, ADR 0203); then TAPE params
 # by label (START, END, POSITION, MOTION, TAPE, AGE, SIZE, XFADE, DRAG,
 # TYPE, SLICE, WOW) as stored values; trim in dB on OUT LEVEL, so each sits
-# at the factory median (`factory_sounds_sit_at_the_median`).
+# at the factory median (`factory_sounds_sit_at_the_median`), or level =
+# "by ear <dB off the median>: <why>" where it sits elsewhere on purpose.
+# Any other block's params and routes as tools/factory-sounds writes them
+# (FILTER.CUTOFF = "743.25", mod.LFO1 = "TAPE_ENG.POSITION +62"): each
+# applied after the machine's defaults, each route added to TAPE INIT's.
 
 # ── Sources: Chimera's renders ────────────────────────────────────────
 
@@ -570,3 +574,44 @@ name = "WAVE BRASS"
 source = "WAVE BRASS"
 model = "TRANSWAVE"
 trim = "-3.5"
+
+[[sound]]
+name = "TINZ"
+# The owner's, saved on the unit (build 14fecc46): SCRUB on WAVE MORPH's
+# frames, a resonant SEM low-pass under the LPG, an octave down with GLIDE;
+# LFO 1 walks POSITION once the mod wheel opens its DEPTH (CC1, at 0).
+# Its values as the unit stored them, its own filter STAB 0.5 among them;
+# OUT LEVEL 22/128 is its trim.
+source = "WAVE MORPH"
+model = "SCRUB"
+position = "0.14233711"
+motion = "0.5"
+tape = "0.515625"
+size = "0.265625"
+xfade = "0.4203125"
+drag = "1"
+type = "2"
+direction = "3"
+key = "1"
+FILTER.CUTOFF = "743.25366"
+FILTER.RESO = "0.890625"
+FILTER.KIND = "SEM"
+FILTER.MODE = "LP12"
+FILTER.STAB = "0.5"
+FILTER.MORPH = "0.109375"
+ENV1.ATK = "0"
+ENV1.SUS = "1"
+ENV1.SPEED = "FAST"
+LFO1.DEPTH = "0"
+OUT.SEND2 = "0.0703125"
+OUT.SEND3 = "0.1796875"
+OUT.LPG = "0.2890625"
+OUT.DECAY = "0.40625"
+OUT.STRIKE = "0.328125"
+PITCH.PITCH = "-12"
+PITCH.STEAL = "GLIDE"
+mod.ENV1 = "FILTER.CUTOFF +33"
+mod.LFO1 = "FILTER.CUTOFF +9, TAPE_ENG.POSITION +62"
+mod.NOTE = "FILTER.CUTOFF +122"
+trim = "-6.2"
+level = "by ear -1.7: the owner's level, set on the unit"

@@ -184,7 +184,8 @@ const BPS: usize = SAMPLE_RATE as usize / BLOCK_SIZE;
 
 /// Every factory TAPE Sound, its source's root (C4 for SLICE NOTE's first
 /// slice) at velocity 100 on P1, sits within `MEDIAN_DB` of ALGO INIT's C4
-/// (ADR 0063), measured over a second, or a ONESHOT's own length.
+/// (ADR 0063), measured over a second, or a ONESHOT's own length; a level
+/// set by ear within `MEDIAN_DB` of its own pin.
 #[test]
 fn factory_sounds_sit_at_the_median() {
     let (r, built) = set();
@@ -219,7 +220,7 @@ fn factory_sounds_sit_at_the_median() {
         };
         let d = rig.lufs(note, blocks.max(1)) - median;
         println!("{:<16} {:+6.2} dB", s.name.as_str(), d);
-        if d.abs() > MEDIAN_DB {
+        if (d - s.level.as_ref().map_or(0.0, |l| l.lufs)).abs() > MEDIAN_DB {
             bad.push(format!("{}: {d:+.2} dB", s.name.as_str()));
         }
     }
@@ -357,8 +358,9 @@ fn factory_sounds_save_as_loaded() {
         // TRON on; each renders as before (`tape_legacy_test`). ADR 0204: the
         // STRETCH Sounds turn to GRAIN, with ONE's ENV 1, re-trimmed.
         // Re-pinned on the integration's merged tree. #761's review (M3):
-        // KIT is out of the set until SLICE returns (#779), so 31 Sounds.
-        assert_eq!(all.finish(), 0x9545_4586, "{} Sounds", r.sounds.len());
+        // KIT is out of the set until SLICE returns (#779). TINZ, the
+        // owner's SCRUB on WAVE MORPH, makes 32 Sounds.
+        assert_eq!(all.finish(), 0xEF0F_4F49, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
         let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();

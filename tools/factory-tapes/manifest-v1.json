@@ -54,10 +54,11 @@
 {"name": "NOISE LOOP", "file": "S9000023.A", "source": "0FBA7ABB", "model": "WALK", "mode": "LOOP", "tron": "OFF"},
 {"name": "WIND LOOP", "file": "S9000024.A", "source": "7DC5626C", "model": "WALK", "mode": "LOOP", "tron": "OFF"},
 {"name": "RAIN SCRUB", "file": "S9000025.A", "source": "D8F2CDEA", "model": "SCRUB", "mode": "LOOP", "tron": "OFF"},
-{"name": "VOICE LOOP", "file": "S9000027.A", "source": "BA70EAAC", "model": "WALK", "mode": "LOOP", "tron": "OFF"},
-{"name": "VOICE STRETCH", "file": "S9000028.A", "source": "BA70EAAC", "model": "STRETCH", "mode": "LOOP", "tron": "OFF"},
-{"name": "WAVE MORPH", "file": "S9000029.A", "source": "FD87A9B7", "model": "TRANSWAVE", "mode": "LOOP", "tron": "OFF"},
-{"name": "WAVE SAW", "file": "S9000030.A", "source": "C050667D", "model": "TRANSWAVE", "mode": "LOOP", "tron": "OFF"},
-{"name": "WAVE BOWED", "file": "S9000031.A", "source": "68D35AC2", "model": "TRANSWAVE", "mode": "LOOP", "tron": "OFF"},
-{"name": "WAVE BRASS", "file": "S9000032.A", "source": "5463DEB2", "model": "TRANSWAVE", "mode": "LOOP", "tron": "OFF"}
+{"name": "VOICE LOOP", "file": "S9000026.A", "source": "BA70EAAC", "model": "WALK", "mode": "LOOP", "tron": "OFF"},
+{"name": "VOICE STRETCH", "file": "S9000027.A", "source": "BA70EAAC", "model": "STRETCH", "mode": "LOOP", "tron": "OFF"},
+{"name": "WAVE MORPH", "file": "S9000028.A", "source": "FD87A9B7", "model": "TRANSWAVE", "mode": "LOOP", "tron": "OFF"},
+{"name": "WAVE SAW", "file": "S9000029.A", "source": "C050667D", "model": "TRANSWAVE", "mode": "LOOP", "tron": "OFF"},
+{"name": "WAVE BOWED", "file": "S9000030.A", "source": "68D35AC2", "model": "TRANSWAVE", "mode": "LOOP", "tron": "OFF"},
+{"name": "WAVE BRASS", "file": "S9000031.A", "source": "5463DEB2", "model": "TRANSWAVE", "mode": "LOOP", "tron": "OFF"},
+{"name": "TINZ", "file": "S9000032.A", "source": "FD87A9B7", "model": "SCRUB", "mode": "LOOP", "tron": "OFF"}
 ]}
