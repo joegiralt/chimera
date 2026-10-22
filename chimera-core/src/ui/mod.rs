@@ -2543,9 +2543,12 @@ impl UiState {
                 .iter()
                 .filter(|&&e| controls.encoder_delta(e) != 0);
             let now = model(self);
-            // At most a MODEL turn's writes (`cc::model_writes`).
+            // At most a MODEL turn's writes (`walk::tape_writes_in`).
+            let t = &self.project.part(self.active_part).sound.params.tape;
             let defaults = if now != was {
-                cc::model_writes(now.0, now.1)
+                let code = now.0.index();
+                crate::bank2::ui_door(|u| u.tape_writes(TapeEngineParams::MODEL, code, t))
+                    .unwrap_or(0)
             } else {
                 0
             };

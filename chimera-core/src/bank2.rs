@@ -210,6 +210,8 @@ pub struct UiDoor {
     law_text: fn(&mut crate::ui::fmt::FmtBuf, crate::dsp::modulator::law::Law, f32),
     /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
     delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,
+    /// A TAPE MODEL or DIRECTION edit's knob writes (`ui::walk`).
+    tape_writes: fn(ParamId, u8, &TapeEngineParams) -> u8,
     /// The focus readout's full words for TAPE's MODEL and DIRECTION.
     long_names: fn(ParamAddr) -> Option<&'static [&'static str]>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
@@ -226,7 +228,7 @@ type HeadKind = (SourceHead, LoadKind);
 type EnvWrites = &'static [(ParamId, f32)];
 
 /// `UiDoor::magic`.
-const UI_MAGIC: u32 = 0xB2C0_0005;
+const UI_MAGIC: u32 = 0xB2C0_0006;
 
 impl UiDoor {
     /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
@@ -251,6 +253,7 @@ impl UiDoor {
         law_text: crate::ui::walk::law_text_in,
         delay_note: crate::ui::walk::delay_note_in,
         long_names: crate::ui::walk::long_names_in,
+        tape_writes: crate::ui::walk::tape_writes_in,
         jog: crate::ui::jog::Jog::pass,
         pit: crate::ui::pit_tuner::calc::pass_in,
         pit_paint: crate::ui::pit_tuner::calc::paint_in,
@@ -391,6 +394,11 @@ impl UiDoor {
     #[inline(always)]
     pub(crate) fn long_names(&self, a: ParamAddr) -> Option<&'static [&'static str]> {
         (self.long_names)(a)
+    }
+
+    #[inline(always)]
+    pub(crate) fn tape_writes(&self, id: ParamId, code: u8, t: &TapeEngineParams) -> u8 {
+        (self.tape_writes)(id, code, t)
     }
 
     #[inline(always)]

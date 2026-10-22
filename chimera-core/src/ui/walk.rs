@@ -176,10 +176,92 @@ pub(crate) fn long_names_in(a: ParamAddr) -> Option<&'static [&'static str]> {
     }
 }
 
+/// The knob writes (`Motion::knob`, glided by the Part's knobs) an edit
+/// of TAPE's `param` to `code` on `t` makes besides its own
+/// (`machine_edit_in`): MODEL its machine's defaults in `t`'s DIRECTION
+/// and their ENV 1; DIRECTION, crossing once through and a loop, LENGTH
+/// and FADE and then ENV 1's. A CC's budget (`cc_bin`) and the hand's.
+pub(crate) fn tape_writes_in(param: ParamId, code: u8, t: &T) -> u8 {
+    let knob = |b: BlockRef, id: ParamId| {
+        ParamAddr::new(b, id)
+            .spec()
+            .and_then(|s| s.motion().knob())
+            .is_some()
+    };
+    let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
+    let count = |b: BlockRef, writes: &[(ParamId, f32)]| {
+        let mut n = 0;
+        for &(id, _) in writes {
+            n += u8::from(knob(b, id));
+        }
+        n
+    };
+    match param {
+        T::MODEL => {
+            let m = TapeMachine::from_index(MachineIndex(code));
+            let mut n = count(env1, env_defaults(m, t.direction));
+            for (id, _) in defaults(m, t.direction) {
+                n += u8::from(knob(BlockRef::TapeEngine, id));
+            }
+            n
+        }
+        T::MODE => {
+            let Some(now) = Direction::from_value(f32::from(code)) else {
+                return 0;
+            };
+            let writes = direction_defaults(t.direction, now);
+            if writes.is_empty() {
+                0
+            } else {
+                count(BlockRef::TapeEngine, writes)
+                    + count(env1, env_defaults(TapeMachine::Walk, now))
+            }
+        }
+        _ => 0,
+    }
+}
+
 /// What `t` with `param` (MODEL or DIRECTION) at `code` can't play from a
 /// streamed source (`held::Held::why`).
 pub(crate) fn tape_held_in(t: &T, param: ParamId, code: u8) -> Option<NeedsRam> {
     let mut t = *t;
     t.set(param, f32::from(code));
     needs_ram(&t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A DIRECTION change's budget is the knob writes the edit makes, from
+    /// every DIRECTION to every other (review of #761, m2).
+    #[test]
+    fn direction_writes_are_the_edits() {
+        let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
+        let knob = |a: ParamAddr| a.spec().and_then(|s| s.motion().knob()).is_some();
+        for was in Direction::ALL {
+            for now in Direction::ALL {
+                let mut s = Sound::init(crate::params::EngineType::Tape);
+                s.params.tape.direction = was;
+                // Unlike every default, so each write moves its knob.
+                (s.params.tape.size, s.params.tape.drag) = (0.123, 0.456);
+                let before = s.params.tape;
+                let want = tape_writes_in(T::MODE, now as u8, &before);
+                s.params.tape.set(T::MODE, now as u8 as f32);
+                let addr = ParamAddr::new(BlockRef::TapeEngine, T::MODE);
+                let envs = machine_edit_in(addr, f32::from(was as u8), &mut s.params.tape);
+                let tape = crate::dsp::tape_engine::TAPE_ENGINE_SPECS
+                    .iter()
+                    .filter(|sp| sp.id != T::MODE)
+                    .filter(|sp| s.params.tape.get(sp.id) != before.get(sp.id))
+                    .filter(|sp| knob(ParamAddr::new(BlockRef::TapeEngine, sp.id)))
+                    .count();
+                let env = envs
+                    .iter()
+                    .filter(|&&(id, _)| knob(ParamAddr::new(env1, id)))
+                    .count();
+                assert_eq!(usize::from(want), tape + env, "{was:?} to {now:?}");
+            }
+        }
+    }
 }
