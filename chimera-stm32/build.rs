@@ -192,6 +192,11 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
 ";
+    // ALGO's block (ADR 0212): `algo::engine::kern`, the render the door
+    // calls with `AlgoEngine::block` inlined, and the kernel it runs,
+    // `algo::kernel`, text and rodata.
+    let algo = "    *(.text.*4algo6engine4kern* .rodata.*4algo6engine4kern* .text.*4algo6kernel* .rodata.*4algo6kernel*);
+";
     // ORBIT (ADR 0208, #741). The runner: `orbit::door` in the engine, the
     // door's entries, and what only they reach: the block's steps
     // (`orbit::engine`), MUTATE, the walk, the runner's own block and load,
@@ -272,6 +277,7 @@ SECTIONS {
     /* GRAIN */
     /* GATE */
     /* PROBES */
+    /* ALGO */
     /* ORBIT */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
@@ -298,6 +304,7 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* GRAIN */\n", grain)
         .replace("    /* GATE */\n", gate)
         .replace("    /* PROBES */\n", probes)
+        .replace("    /* ALGO */\n", algo)
         .replace("    /* ORBIT */\n", orbit)
         .replace("    /* ORBIT SLOT */\n", orbit_slot)
         .replace("/* ORBIT ASSERT */", orbit_assert),
