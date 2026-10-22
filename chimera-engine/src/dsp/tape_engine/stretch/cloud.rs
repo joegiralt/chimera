@@ -15,7 +15,7 @@ use crate::dsp::grain::core::{
     TapAt, bell, hermite,
 };
 use crate::dsp::grain::core::{Samples as CoreSamples, Speed as CoreSpeed};
-use crate::dsp::tape_engine::read::SourceView;
+use crate::dsp::tape_engine::read::WholeRow;
 
 /// Grain slots: four overlap at most; two more spare, so a start never
 /// steals one still sounding.
@@ -41,7 +41,7 @@ pub const fn rng(seed: u32) -> Rng {
 /// from its top down, its grains at a negative speed. Past the window's
 /// end, the way it plays, it reads silence.
 pub struct Src<'a, const REV: bool> {
-    v: SourceView<'a>,
+    v: WholeRow<'a>,
     /// The window's frames.
     win: u32,
     /// Its lowest source frame.
@@ -51,7 +51,7 @@ pub struct Src<'a, const REV: bool> {
 impl<'a, const REV: bool> Src<'a, REV> {
     /// The window of `win` frames from `base`, its first frame the way it
     /// plays (`REV`'s top).
-    pub fn new(v: SourceView<'a>, base: u32, win: u32) -> Self {
+    pub fn new(v: WholeRow<'a>, base: u32, win: u32) -> Self {
         let lo = if REV {
             (base + 1).saturating_sub(win)
         } else {

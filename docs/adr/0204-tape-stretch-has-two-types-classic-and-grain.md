@@ -27,7 +27,7 @@ pub trait GrainSource {
 }
 ```
 
-`stretch::Src` reads the latched window in its own frame, always forward (END before START mirrors it), its frame `i` the window's `i − 1`, so a tap never wraps at the start; `frames()` is 2³⁰, so the core never wraps a head. Past the window's end it reads silence, its last 256 frames ramping there, so a grain over the end fades on nothing. Its taps are `SourceView::row_taps`: the four 12-bit samples in two unaligned words, not four halfwords.
+`stretch::Src` reads the latched window in its own frame, always forward (END before START mirrors it), its frame `i` the window's `i − 1`, so a tap never wraps at the start; `frames()` is 2³⁰, so the core never wraps a head. Past the window's end it reads silence, its last 256 frames ramping there, so a grain over the end fades on nothing. Its taps are `WholeRow::row_taps` (a whole row's alone, the type holding `first` 0 and at least 64 frames, so a span or silence can't reach its unchecked loads): the four 12-bit samples in two unaligned words, not four halfwords.
 
 All of it sits behind one adapter, `stretch/cloud.rs` (`Src`, `Cloud`, `GrainAt`): nothing else in STRETCH names a core type, so re-copying the core touches that file alone. What STRETCH needs that the core keeps to itself it rebuilds outside it: each slot's window (from the samples the grain has left and the length and lateness its start gave it), the newest grain's head (its start, speed and the samples since), and the strike (a `Grain` of its own started half a bell in). The core latches each grain's speed at its start, so a bend or the wow moves the grains to come; `Engine::set_speed`, which retunes the grains in play, is being added to #749, and until it lands `wow_depth_bounds` leaves STRETCH out of its 9 Hz flutter line (6.6 cents against 4 ± 1) and lets its peak reach 35 cents.
 
@@ -60,7 +60,7 @@ Measured one at a time (`tape_stretch_grain_test::thrift_report` on a synthetic 
 Three grains is the one build that brings GRAIN under CLASSIC's bill. Its pitch holds; its length is within 3 % on the TX bell (3.4 % on the synthetic bell at 8 s); its ripple is at most the default's on the bell and a little higher on the pad and the voice. It is a GRAIN option for the owner to hear, not the default.
 
 ### Bank 1 and bank 2
-`dsp::grain` links into bank 2 (`bank2.x`, `*3dsp5grain*`), as do `stretch` and all its modules (CLASSIC, GRAIN, the adapter, the types), `read`'s `row_taps` and the TYPE's dim (`TapeDeck::stretch_only`). The idle images of the note's state are statics in `.bank2.rodata` (`stretch::IDLE`, `grain::IDLE_NOTE`, `cloud::IDLE_CLOUD`): as anonymous constants they had put 776 B into bank 1.
+`dsp::grain` links into bank 2 (`bank2.x`, `*3dsp5grain*`), as do `stretch` and all its modules (CLASSIC, GRAIN, the adapter, the types), `read`'s `WholeRow::row_taps` and the TYPE's dim (`TapeDeck::stretch_only`). The idle images of the note's state are statics in `.bank2.rodata` (`stretch::IDLE`, `grain::IDLE_NOTE`, `cloud::IDLE_CLOUD`): as anonymous constants they had put 776 B into bank 1.
 
 Each set's plain release build, `rust-objcopy -R .bank2` (bank 1) and `-j .bank2` (bank 2), against origin/tape-streaming `a6f35a7b` (with #753's SCRUB):
 

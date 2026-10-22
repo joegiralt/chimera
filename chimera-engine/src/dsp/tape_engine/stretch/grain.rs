@@ -32,7 +32,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use super::super::heads::{Dir, window_end_min, window_start};
 use super::super::params::TapeEngineParams;
-use super::super::read::SourceView;
+use super::super::read::{SourceView, WholeRow};
 use super::super::{MIN_LOOP_FRAMES, Probe};
 use super::classic::time_speed;
 use super::cloud::{Cloud, GrainAt, Src, rng};
@@ -253,10 +253,18 @@ impl Grains {
         events: 0,
     };
 
+    /// A note with nothing to play: it ends on its first block.
+    pub fn ended() -> Grains {
+        Grains {
+            stage: Stage::Ending,
+            ..IDLE_NOTE
+        }
+    }
+
     /// A note on `v` at `inc` frames a sample, `seed` the voice's draw:
     /// the window latched from START and END, the first grain at its start,
     /// from full.
-    pub fn on(p: &TapeEngineParams, v: &SourceView<'_>, inc: f32, seed: u32, sr: u32) -> Grains {
+    pub fn on(p: &TapeEngineParams, v: &WholeRow<'_>, inc: f32, seed: u32, sr: u32) -> Grains {
         let win = Window::of(p, v);
         let speed = Speed::new(inc);
         let dur = p.grain().seconds().samples(sr);
@@ -306,7 +314,7 @@ impl Grains {
     pub fn render(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
-        v: &SourceView<'_>,
+        v: &WholeRow<'_>,
         inc: (f32, f32),
         motion: f32,
         p: &TapeEngineParams,
@@ -322,7 +330,7 @@ impl Grains {
     fn render_way<const REV: bool>(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
-        v: &SourceView<'_>,
+        v: &WholeRow<'_>,
         (_, to): (f32, f32),
         motion: f32,
         p: &TapeEngineParams,

@@ -7,7 +7,7 @@ mod common;
 
 use core::mem::MaybeUninit;
 
-use chimera_core::dsp::tape_engine::read::SourceView;
+use chimera_core::dsp::tape_engine::read::{DESC_LEN, SourceView};
 use chimera_core::dsp::tape_engine::stretch::units::StretchEnd;
 use chimera_core::dsp::tape_engine::stretch::{HALF_SPEED, HOLD_S, time_speed};
 use chimera_core::dsp::tape_engine::{
@@ -506,12 +506,31 @@ fn row_taps_are_the_samples() {
     let held = held_plain(&src, 48_000);
     let v = SourceView::strict(&held).unwrap();
     let n = v.frames();
+    let row = v.whole_row().unwrap();
     for i in 1..n - 3 {
         let want = [0u32, 1, 2, 3].map(|k| v.sample(i + k - 1));
-        assert_eq!(v.row_taps(i), want, "frame {i}");
+        assert_eq!(row.row_taps(i), want, "frame {i}");
     }
-    assert_eq!(v.row_taps(n - 2), v.row_taps(n - 4));
-    assert_eq!(v.row_taps(0), v.row_taps(1));
+    assert_eq!(row.row_taps(n - 2), row.row_taps(n - 4));
+    assert_eq!(row.row_taps(0), row.row_taps(1));
+}
+
+/// Only a whole row reads `row_taps`: a span or silence is no `WholeRow`.
+#[test]
+fn spans_and_silence_are_no_whole_row() {
+    let src: Vec<f32> = (0..256).map(|i| (i as f32 * 0.01).sin() * 0.5).collect();
+    let held = held_plain(&src, 48_000);
+    let v = SourceView::new(&held).unwrap();
+    assert!(v.whole_row().is_some());
+    let bytes = &held[DESC_LEN..];
+    let at = |first: u32| &bytes[(3 * first / 2) as usize..];
+    let span = SourceView::span(at(128), v.desc(), 128, v.frames()).unwrap();
+    assert!(span.whole_row().is_none(), "a span from 128");
+    let short = SourceView::span(&bytes[..96], v.desc(), 0, v.frames()).unwrap();
+    assert!(short.whole_row().is_none(), "a span cut short");
+    assert!(SourceView::silent(v.desc(), v.file_frames()).whole_row().is_none());
+    let whole = SourceView::span(bytes, v.desc(), 0, v.frames()).unwrap();
+    assert!(whole.whole_row().is_some(), "a span of the whole row is one");
 }
 
 /// GRAIN's cheaper builds against GRAIN as shipped (ADR 0204, the owner's
