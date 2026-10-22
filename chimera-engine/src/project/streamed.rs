@@ -13,6 +13,7 @@ use crate::dsp::tape_engine::params::{NeedsRam, TapeEngineParams};
 use crate::dsp::tape_engine::read::Shape;
 use crate::storage::{LoadError, Ready, SourceHead, SourceLayout, SourceReadError, SourceRef};
 use crate::stream::layout::StreamFile;
+use crate::stream::registry::CardEpoch;
 use crate::stream::stage::{Heads, heads_for};
 
 mod load;
@@ -164,6 +165,10 @@ pub struct StreamLoad {
     phase: Phase,
     /// The arena offset the staging started at: a gap that moved fails it.
     stage: u32,
+    /// The registry's card when it started: another one since (a re-init
+    /// that mounted another volume, `lose_streams`) refuses the commit, so
+    /// no row names the old card's blocks.
+    epoch: Option<CardEpoch>,
 }
 
 /// Where a `StreamLoad` is.
@@ -195,6 +200,7 @@ impl StreamLoad {
             rehead: None,
             phase: Phase::Find,
             stage,
+            epoch: p.pool.streams().map(|r| r.epoch()),
         })
     }
 
@@ -219,7 +225,8 @@ impl StreamLoad {
     /// START or the loop turned); `None` when it isn't streamed, or they
     /// don't fit the gap beside its old ones.
     pub fn rehead(p: &mut Project, id: SourceId, heads: Heads) -> Option<StreamLoad> {
-        let file = *p.pool.streams()?.get(id)?;
+        let reg = p.pool.streams()?;
+        let (file, epoch) = (*reg.get(id)?, reg.epoch());
         let sref = p.pool.source(id)?.r;
         let (stage, _) = p.source_staging(heads.held_len())?;
         Some(StreamLoad {
@@ -228,6 +235,7 @@ impl StreamLoad {
             rehead: Some(id),
             phase: Phase::heads(file),
             stage,
+            epoch: Some(epoch),
         })
     }
 

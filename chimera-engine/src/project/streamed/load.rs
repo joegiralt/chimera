@@ -17,7 +17,7 @@ use crate::storage::{
     source_file,
 };
 use crate::stream::admit::head_frames;
-use crate::stream::layout::StreamFile;
+use crate::stream::layout::{FileKey, StreamFile};
 use crate::stream::units::{Frames, Packing, SourceRate};
 
 /// A head past any file's bytes, or a table no descriptor holds: cold, so
@@ -108,6 +108,7 @@ impl StreamLoad {
             }
             before += h.byte_len();
         }
+        self.still_found(s, r, p, &file)?;
         p.bump();
         if let Some(id) = self.rehead {
             return p
@@ -128,6 +129,37 @@ impl StreamLoad {
                 // If it ever fires it is no card's fault: STREAMS FULL.
                 StreamRefused::Taken => StreamFail::Full,
             })
+    }
+
+    /// The file as found, on the card as found: a remount onto another
+    /// volume, or the file deleted or replaced since, publishes nothing
+    /// (#761 m3).
+    fn still_found(
+        &self,
+        s: &mut dyn Store,
+        r: &Ready,
+        p: &Project,
+        file: &StreamFile,
+    ) -> Result<(), StreamFail> {
+        let missing = StreamFail::Read(SourceReadError::Load(LoadError::Missing));
+        if p.pool.streams().map(|g| g.epoch()) != self.epoch {
+            return Err(missing);
+        }
+        if self.rehead.is_some() {
+            return Ok(());
+        }
+        let now = match s.runs(r.volume(), source_file(self.sref)) {
+            Ok(n) => FileKey::new(self.sref.stem(), n.ext.first()),
+            Err(RunsError::Store(e)) if e != StoreError::NotFound => {
+                return Err(StreamFail::Read(e.into()));
+            }
+            Err(_) => return Err(missing),
+        };
+        if now == file.key() {
+            Ok(())
+        } else {
+            Err(missing)
+        }
     }
 }
 

@@ -1447,3 +1447,31 @@ fn reheading_waits_when_nothing_is_free_beside() {
     assert_heads(&rig, &b, after.as_slice());
     assert_ne!(rig.ui.project().pool().find_source(b.0.sref), Some(id));
 }
+
+/// m3 (#761): a re-init that mounts another card while a streamed load
+/// reads its heads takes the registry's rows with it; the load, which
+/// found its file's blocks on the old card, publishes nothing.
+#[test]
+fn a_card_change_mid_load_publishes_nothing() {
+    let b = bed(5);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| t.set_way(Way::One));
+    rig.turn(1);
+    rig.mix_plus();
+    rig.work();
+    assert!(rig.loading(), "the heads still to read");
+    // Another card, holding the same file, re-inited under a read fault.
+    rig.s.inner.swap(2);
+    let mut card = Card::new();
+    card.run(&mut rig.s.inner, |s, r| write_source(s, r, &b.0, &b.1))
+        .unwrap()
+        .result
+        .unwrap();
+    rig.s.fault = CardFault::Read;
+    while rig.ui.card_pending() {
+        rig.work();
+    }
+    let pool = rig.ui.project().pool();
+    assert_eq!(pool.find_source(b.0.sref), None, "nothing published");
+    assert!(SourceId::ALL.iter().all(|&s| rig.registry().get(s).is_none()));
+}
