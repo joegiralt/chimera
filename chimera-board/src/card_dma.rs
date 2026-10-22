@@ -19,8 +19,8 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    Attempt, Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, readable,
-    serve_step,
+    Attempt, Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, Strikes, read_failed,
+    readable, serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
@@ -313,6 +313,18 @@ enum Why {
     Unmounted,
     /// No command argument for the block (an SDSC card past 4 GiB).
     Range,
+}
+
+impl Why {
+    /// A failure the protocol doesn't name, which `Rot` can't blame on a
+    /// chunk: counted toward `Strikes`. No card, or a block past an SDSC
+    /// card's reach, is not the card's.
+    fn strikes(self) -> bool {
+        match self {
+            Why::Reg(_) | Why::Bound | Why::Busy | Why::Asked | Why::Dma => true,
+            Why::Proto(_) | Why::Unmounted | Why::Range => false,
+        }
+    }
 }
 
 /// What the IRQ runs on: the SPI clock it set and its bounds.
@@ -887,6 +899,9 @@ struct IrqState {
     retry: Option<Fill>,
     /// The chunks that didn't de-frame: a card's once, a file's after.
     rot: Rot,
+    /// Fills failed in a row for a reason the protocol doesn't name
+    /// (`Why::strikes`).
+    strikes: Strikes,
 }
 
 /// A cell only `DMA2_STR0` opens.
@@ -991,6 +1006,7 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker: Hz, cpu: Hz) -> b
         bursts: 0,
         retry: None,
         rot: Rot::new(),
+        strikes: Strikes::new(),
     };
     // SAFETY: once (`side` exists once: `Rings::sides`), before the unmask.
     unsafe { IRQ.set(st) };
@@ -1413,6 +1429,7 @@ impl IrqState {
         let err = match framed {
             Some(Ok(_)) => {
                 self.rot.cleared(row.key());
+                self.strikes = Strikes::new();
                 self.side.write_guard(&claim);
                 return self.side.fill_done(claim);
             }
@@ -1597,13 +1614,15 @@ impl IrqState {
         self.stop(h, then);
     }
 
-    /// A fill's claim requeued; a bench read's answer, owed.
+    /// A fill's claim requeued, the card faulted at its `Strikes`; a
+    /// bench read's answer, owed.
     fn fail_job(&mut self, kind: Kind, why: Why) -> Owed {
-        #[cfg(not(feature = "bench"))]
-        let _ = why;
         match kind {
             Kind::Fill(f) => {
                 self.side.requeue(f.claim);
+                if why.strikes() && self.strikes.strike() {
+                    set_fault();
+                }
                 Owed::default()
             }
             #[cfg(feature = "bench")]

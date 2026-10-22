@@ -326,6 +326,38 @@ pub fn read_failed(err: ReadError, bus: &CardBus, stats: &StreamStats) -> ErrorS
     step
 }
 
+/// Fills failed in a row for a reason neither the protocol names nor
+/// `Rot` can blame on a chunk (a card that stays busy, a recurring DMA
+/// error, the watchdog's ask): at `FAULT` the card faults, so the UI
+/// re-inits it and SOURCE says so, never a retry every UI pass for good
+/// (m1, #761). A fill that lands starts it over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Strikes(u8);
+
+impl Strikes {
+    pub const FAULT: u8 = 3;
+
+    pub const fn new() -> Strikes {
+        Strikes(0)
+    }
+
+    /// One more: true at the fault, the count starting over.
+    pub fn strike(&mut self) -> bool {
+        self.0 += 1;
+        let out = self.0 >= Self::FAULT;
+        if out {
+            self.0 = 0;
+        }
+        out
+    }
+}
+
+impl Default for Strikes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// How many verdicts `Rot` keeps.
 const MARKS: usize = 8;
 

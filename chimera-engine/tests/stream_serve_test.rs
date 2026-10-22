@@ -507,3 +507,20 @@ fn a_condemned_file_marks_its_rows() {
     assert!(rig.reg.damaged(id(3)) && rig.reg.damaged(id(5)));
     assert!(!rig.reg.damaged(id(4)), "another file");
 }
+
+/// m1 (#761): failures the protocol doesn't name fault the card at the
+/// third in a row, then count again from none; a fill that lands (a
+/// fresh `Strikes`) starts over.
+#[test]
+fn strikes_fault_at_the_third_in_a_row() {
+    use chimera_engine::stream::serve::Strikes;
+    let mut s = Strikes::new();
+    assert!(!s.strike() && !s.strike());
+    assert!(s.strike(), "the third faults");
+    assert!(!s.strike() && !s.strike(), "counted again from none");
+    assert!(s.strike());
+    let mut s = Strikes::new();
+    assert!(!s.strike() && !s.strike());
+    s = Strikes::new();
+    assert!(!s.strike() && !s.strike(), "a fill landed between");
+}
