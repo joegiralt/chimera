@@ -723,10 +723,9 @@ pub struct TapeEngineParams {
     /// SCRUB's KEY.
     pub key: KeyMode,
     /// STRETCH's LENGTH, GRAIN, SPRAY and END (ids 22–25, ADR 0204), as
-    /// the knobs and the codec hold them: one array, so `get` and `write`
-    /// reach them in one arm each. The DSP reads them typed (`length`,
-    /// `grain`, `spray`, `end_mode`), each held in its range.
-    pub stretch: [f32; 4],
+    /// the knobs and the codec hold them. The DSP reads them typed
+    /// (`length`, `grain`, `spray`, `end_mode`), each held in its range.
+    pub stretch: StretchKnobs,
 }
 
 /// As the disk has it: MODEL's model and MODE (`neutral_v1.txt` pins it).
@@ -753,7 +752,11 @@ impl core::fmt::Debug for TapeEngineParams {
             .field("tron", &self.tron)
             .field("drift", &self.drift)
             .field("key", &self.key)
-            .field("stretch", &self.stretch)
+            // As the array it was: `neutral_v1.txt` pins this text.
+            .field("stretch", &{
+                let k = self.stretch;
+                [k.length, k.grain, k.spray, k.finish]
+            })
             .finish()
     }
 }
@@ -867,30 +870,49 @@ impl TapeEngineParams {
     /// STRETCH's LENGTH, 0.25 to 8 s.
     #[inline(always)]
     pub fn length(&self) -> Length {
-        Length::of_knob(self.stretch[0])
+        Length::of_knob(self.stretch.length)
     }
 
     /// STRETCH's GRAIN, 30 to 250 ms.
     #[inline(always)]
     pub fn grain(&self) -> GrainLen {
-        GrainLen::of_knob(self.stretch[1])
+        GrainLen::of_knob(self.stretch.grain)
     }
 
     /// STRETCH's SPRAY.
     #[inline(always)]
     pub fn spray(&self) -> Spray {
-        Spray::of_knob(self.stretch[2])
+        Spray::of_knob(self.stretch.spray)
     }
 
     /// STRETCH's END: HOLD or STOP.
     #[inline(always)]
     pub fn end_mode(&self) -> StretchEnd {
-        StretchEnd::of_knob(self.stretch[3])
+        StretchEnd::of_knob(self.stretch.finish)
     }
 }
 
+/// STRETCH's four knobs (ids 22–25, ADR 0204) as the knobs and the codec
+/// hold them, 0..1 each: a field a knob, not an array indexed by id.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StretchKnobs {
+    /// LENGTH (22): 0.25 · 32^x s.
+    pub length: f32,
+    /// GRAIN (23): 30 · (250/30)^x ms.
+    pub grain: f32,
+    /// SPRAY (24): its share.
+    pub spray: f32,
+    /// END (25): HOLD or STOP, a stepped real.
+    pub finish: f32,
+}
+
 /// LENGTH 2 s, GRAIN 80 ms, SPRAY 40 %, END HOLD: each on the knob's grid.
-pub const STRETCH_DEFAULTS: [f32; 4] = [77.0 / 128.0, 59.0 / 128.0, 51.0 / 128.0, 0.0];
+pub const STRETCH_DEFAULTS: StretchKnobs = StretchKnobs {
+    length: 77.0 / 128.0,
+    grain: 59.0 / 128.0,
+    spray: 51.0 / 128.0,
+    finish: 0.0,
+};
 
 /// Whether `m` reads `id`: the one table for cells, dimming and the audio
 /// test, from the machines' (`machine::MACHINES`). START, END, TAPE, AGE
@@ -1115,7 +1137,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 24] = [
         ValFmt::Law(Law::StretchLength),
         0.0,
         1.0,
-        STRETCH_DEFAULTS[0],
+        STRETCH_DEFAULTS.length,
         1.0 / 128.0,
         false,
         Smoothing::Own,
@@ -1129,7 +1151,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 24] = [
         ValFmt::Law(Law::GrainSize),
         0.0,
         1.0,
-        STRETCH_DEFAULTS[1],
+        STRETCH_DEFAULTS.grain,
         1.0 / 128.0,
         false,
         Smoothing::Own,
@@ -1143,7 +1165,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 24] = [
         ValFmt::Law(Law::Pct),
         0.0,
         1.0,
-        STRETCH_DEFAULTS[2],
+        STRETCH_DEFAULTS.spray,
         1.0 / 128.0,
         false,
         Smoothing::Own,
@@ -1158,7 +1180,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 24] = [
         ValFmt::Names(&["HOLD", "STOP"]),
         0.0,
         1.0,
-        STRETCH_DEFAULTS[3],
+        STRETCH_DEFAULTS.finish,
         false,
         Motion::Stepped(Change::Snap),
     )
@@ -1194,7 +1216,10 @@ impl Block for TapeEngineParams {
             Self::TRON => self.tron.value(),
             Self::DRIFT => self.drift.get(),
             Self::KEY => self.key.value(),
-            ParamId(id @ 22..=25) => self.stretch[usize::from(id - 22)],
+            Self::LENGTH => self.stretch.length,
+            Self::GRAIN => self.stretch.grain,
+            Self::SPRAY => self.stretch.spray,
+            Self::FINISH => self.stretch.finish,
             _ => 0.0,
         }
     }
@@ -1222,7 +1247,10 @@ impl Block for TapeEngineParams {
             Self::TRON => set(&mut self.tron, v),
             Self::DRIFT => self.drift = Drift::of(v),
             Self::KEY => set(&mut self.key, v),
-            ParamId(id @ 22..=25) => self.stretch[usize::from(id - 22)] = v,
+            Self::LENGTH => self.stretch.length = v,
+            Self::GRAIN => self.stretch.grain = v,
+            Self::SPRAY => self.stretch.spray = v,
+            Self::FINISH => self.stretch.finish = v,
             _ => {}
         }
     }

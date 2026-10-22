@@ -11,7 +11,7 @@ use chimera_core::dsp::tape_engine::read::{DESC_LEN, SourceView};
 use chimera_core::dsp::tape_engine::stretch::units::StretchEnd;
 use chimera_core::dsp::tape_engine::stretch::{HALF_SPEED, HOLD_S, time_speed};
 use chimera_core::dsp::tape_engine::{
-    STRETCH_DEFAULTS, StretchType, TapeEngine, TapeEngineParams, TapeMachine, Way,
+    STRETCH_DEFAULTS, StretchKnobs, StretchType, TapeEngine, TapeEngineParams, TapeMachine, Way,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::tape::held_plain;
@@ -44,12 +44,12 @@ fn stretch(secs: f32, spray: f32, stop: bool) -> TapeEngineParams {
         period: PERIOD,
         ..TapeEngineParams::default()
     };
-    p.stretch = [
-        length(secs),
-        STRETCH_DEFAULTS[1],
+    p.stretch = StretchKnobs {
+        length: length(secs),
+        grain: STRETCH_DEFAULTS.grain,
         spray,
-        if stop { 1.0 } else { 0.0 },
-    ];
+        finish: if stop { 1.0 } else { 0.0 },
+    };
     p
 }
 
@@ -189,13 +189,23 @@ fn laws() {
     // The laws at their ends and the defaults; the types hold the range.
     let secs = |p: &TapeEngineParams| (p.length().seconds().get(), p.grain().seconds().get());
     let mut p = TapeEngineParams {
-        stretch: [0.0; 4],
+        stretch: StretchKnobs {
+            length: 0.0,
+            grain: 0.0,
+            spray: 0.0,
+            finish: 0.0,
+        },
         ..TapeEngineParams::default()
     };
     let (l, g) = secs(&p);
     assert!((l - 0.25).abs() < 1e-6 && (g - 0.03).abs() < 1e-6);
     assert_eq!(p.end_mode(), StretchEnd::Hold);
-    p.stretch = [1.0; 4];
+    p.stretch = StretchKnobs {
+        length: 1.0,
+        grain: 1.0,
+        spray: 1.0,
+        finish: 1.0,
+    };
     let (l, g) = secs(&p);
     assert!((l - 8.0).abs() < 1e-3 && (g - 0.25).abs() < 1e-4);
     assert_eq!(p.end_mode(), StretchEnd::Stop);
@@ -217,7 +227,7 @@ fn pitch_holds_at_every_length() {
             for note in [60u8, 67, 72] {
                 let want = f0 * 2f32.powf((note as f32 - 60.0) / 12.0);
                 let x = play(
-                    &|_| stretch(secs, STRETCH_DEFAULTS[2], false),
+                    &|_| stretch(secs, STRETCH_DEFAULTS.spray, false),
                     &v,
                     note,
                     chimera_core::dsp::clampf(secs, 0.5, 1.5),
@@ -242,7 +252,7 @@ fn length_is_kept() {
     for secs in [1.25f32, 2.0, 4.0, 8.0] {
         for note in [60u8, 72] {
             let x = play(
-                &|_| stretch(secs, STRETCH_DEFAULTS[2], true),
+                &|_| stretch(secs, STRETCH_DEFAULTS.spray, true),
                 &v,
                 note,
                 secs + 1.0,
@@ -273,7 +283,7 @@ fn one_times_is_the_source() {
         let null = db(rms(&d)) - db(rms(&a[..n]));
         eprintln!("null {null:.1} dB");
         assert!(null < -40.0, "null {null:.1} dB");
-        let c = play(&|_| stretch(1.25, STRETCH_DEFAULTS[2], true), &v, 60, 1.2);
+        let c = play(&|_| stretch(1.25, STRETCH_DEFAULTS.spray, true), &v, 60, 1.2);
         let dl = db(rms(&c[..n])) - db(rms(&a[..n]));
         eprintln!("SPRAY's level {dl:+.2} dB");
         assert!(dl.abs() < 0.5, "SPRAY's level {dl:+.2} dB");
@@ -288,7 +298,7 @@ fn level_holds_stretched() {
     let v = SourceView::new(&held).unwrap();
     let a = rms(&play(&|_| one(), &v, 60, 1.0)[(0.1 * FS) as usize..]);
     for secs in [2.0, 4.0, 8.0] {
-        for spray in [0.0, STRETCH_DEFAULTS[2], 1.0] {
+        for spray in [0.0, STRETCH_DEFAULTS.spray, 1.0] {
             let x = play(&|_| stretch(secs, spray, false), &v, 60, 1.0);
             let dl = db(rms(&x[(0.1 * FS) as usize..])) - db(a);
             eprintln!("{secs} s SPRAY {spray}: {dl:+.2} dB");
@@ -304,7 +314,7 @@ fn splices_are_smooth() {
     let held = held_plain(&bell(1.25), 48_000);
     let v = SourceView::new(&held).unwrap();
     for secs in [2.0f32, 4.0, 8.0] {
-        for spray in [0.0, STRETCH_DEFAULTS[2]] {
+        for spray in [0.0, STRETCH_DEFAULTS.spray] {
             let x = play(&|_| stretch(secs, spray, false), &v, 60, secs);
             let r = ripple(&x, 0.1, 0.9 * secs);
             eprintln!("{secs} s SPRAY {spray}: ripple {r:.3} dB");
@@ -325,7 +335,7 @@ fn no_clicks() {
     let v = SourceView::new(&held).unwrap();
     let slope = 0.5 * core::f32::consts::TAU * f / FS;
     for (secs, stop) in [(0.5, true), (3.0, true), (3.0, false), (8.0, true)] {
-        for spray in [0.0, STRETCH_DEFAULTS[2], 1.0] {
+        for spray in [0.0, STRETCH_DEFAULTS.spray, 1.0] {
             let x = play(&|_| stretch(secs, spray, stop), &v, 60, secs + 0.5);
             let m = x
                 .windows(2)
@@ -357,7 +367,7 @@ fn grain_turned_short_cuts_no_grain() {
     let turn = (0.5 * FS) as usize / B;
     let p = |n: usize| {
         let mut p = stretch(3.0, 0.0, true);
-        p.stretch[1] = if n < turn { 1.0 } else { 0.0 };
+        p.stretch.grain = if n < turn { 1.0 } else { 0.0 };
         p
     };
     let x = play(&p, &v, 60, 1.5);
@@ -375,7 +385,7 @@ fn end_holds_or_stops() {
     let held = held_plain(&saw(1.0), 48_000);
     let v = SourceView::new(&held).unwrap();
     for stop in [false, true] {
-        let p = stretch(1.0, STRETCH_DEFAULTS[2], stop);
+        let p = stretch(1.0, STRETCH_DEFAULTS.spray, stop);
         let mut e = fresh();
         e.note_on(60, &p, &v, SR);
         let mut b = [0.0; B];
@@ -409,7 +419,7 @@ fn speed_0_freezes() {
     let held = held_plain(&saw(1.0), 48_000);
     let v = SourceView::new(&held).unwrap();
     let p = |n: usize| {
-        let mut p = stretch(1.0, STRETCH_DEFAULTS[2], true);
+        let mut p = stretch(1.0, STRETCH_DEFAULTS.spray, true);
         p.motion = if n * B < (0.3 * FS) as usize {
             0.5
         } else {
@@ -442,7 +452,12 @@ fn nan_is_safe() {
     let v = SourceView::new(&held).unwrap();
     for bad in [f32::NAN, f32::INFINITY, -1.0, 9.0] {
         let mut p = stretch(2.0, 0.5, false);
-        p.stretch = [bad; 4];
+        p.stretch = StretchKnobs {
+            length: bad,
+            grain: bad,
+            spray: bad,
+            finish: bad,
+        };
         p.motion = bad;
         let x = play(&|_| p, &v, 60, 0.5);
         assert!(x.iter().all(|s| s.is_finite() && s.abs() < 2.0), "{bad}");
@@ -454,7 +469,7 @@ fn nan_is_safe() {
 fn reversed_walks_down() {
     let held = held_plain(&saw(1.0), 48_000);
     let v = SourceView::new(&held).unwrap();
-    let mut p = stretch(2.0, STRETCH_DEFAULTS[2], true);
+    let mut p = stretch(2.0, STRETCH_DEFAULTS.spray, true);
     (p.start, p.end) = (1.0, 0.0);
     let mut e = fresh();
     e.note_on(60, &p, &v, SR);
@@ -481,7 +496,7 @@ fn unpitched_bell_keeps_pitch() {
     let held = held_plain(&bell(1.25), 48_000);
     let v = SourceView::new(&held).unwrap();
     for secs in [2.0f32, 4.0, 8.0] {
-        for spray in [0.0, STRETCH_DEFAULTS[2]] {
+        for spray in [0.0, STRETCH_DEFAULTS.spray] {
             let p = TapeEngineParams {
                 period: 0.0,
                 ..stretch(secs, spray, false)
@@ -553,7 +568,7 @@ fn thrift_report() {
         let mut worst_len = 0.0f32;
         let mut worst_rip = 0.0f32;
         for secs in [1.25f32, 2.0, 4.0, 8.0] {
-            for spray in [0.0, STRETCH_DEFAULTS[2]] {
+            for spray in [0.0, STRETCH_DEFAULTS.spray] {
                 for (v, name) in [(&bv, "bell"), (&sv, "saw")] {
                     let x = play(&|_| stretch(secs, spray, false), v, 60, secs.min(2.0));
                     let mid = &x[(0.1 * FS) as usize..x.len() - (0.05 * FS) as usize];
@@ -662,7 +677,12 @@ fn unpitched_tones_hold_their_level() {
                 root: 6_000.0,
                 ..TapeEngineParams::default()
             };
-            p.stretch = [0.5, 0.3, spray, 0.0];
+            p.stretch = StretchKnobs {
+                length: 0.5,
+                grain: 0.3,
+                spray,
+                finish: 0.0,
+            };
             let x = play(&|_| p, &v, 69, 1.2);
             // 20 ms frames from 30 ms on: past the strike's own rise.
             let f = frames(&x[(0.03 * FS) as usize..], 20.0);

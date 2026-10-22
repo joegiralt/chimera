@@ -1278,7 +1278,7 @@ fn every_cell_reads_in_the_audio() {
             TapeModel::Walk if !base.direction.once() => base.size = 0.6,
             TapeModel::Scrub => base.size = 0.6,
             // A GRAIN stretch that ends inside the 400 blocks: END is heard.
-            TapeModel::Stretch => base.stretch[0] = 0.0,
+            TapeModel::Stretch => base.stretch.length = 0.0,
             _ => {}
         }
         let render = |p: P, note: u8| {
