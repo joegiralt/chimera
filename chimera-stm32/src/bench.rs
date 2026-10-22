@@ -48,6 +48,7 @@ use chimera_engine::dsp::tape_engine::{
     Direction, StretchType, TapeMachine, TapeModel, Tron, wave,
 };
 use chimera_engine::dsp::va::VaMode;
+use chimera_engine::dsp::va::noise::NoiseKind;
 use chimera_engine::dsp::voice::Voice;
 use chimera_engine::dsp::voice_fx::params::FxType;
 #[cfg(feature = "bench-algo")]
@@ -95,9 +96,9 @@ use chimera_board::clocks::{self, Clocks};
 #[cfg(feature = "orbit")]
 use chimera_board::orbit::SAMPLE_RATE_NZ;
 
-/// The bench's screens as text: under 4 KB measured with every page in
-/// one build (3.9 KB), an area's less; `# TRUNCATED` past this.
-pub const BENCH_TEXT_LEN: usize = 6144;
+/// The bench's screens as text: ALGO and ROUTING with the 0.2 stress
+/// rows passed 6 KB; `# TRUNCATED` past this.
+pub const BENCH_TEXT_LEN: usize = 10240;
 type Text = Report<BENCH_TEXT_LEN>;
 
 // A `static mut`, not a `singleton!`: that builds its value on the caller's
@@ -180,7 +181,7 @@ const TIMED_BLOCKS: u32 = 64;
 const HOLD_SECONDS: u32 = 30;
 const ROWS: usize = 10;
 /// The TAPE row only with `master-tape` (ADR 0055).
-const FX_ROWS: usize = if cfg!(feature = "master-tape") { 7 } else { 6 };
+const FX_ROWS: usize = if cfg!(feature = "master-tape") { 10 } else { 9 };
 
 /// Each Algo row plays six distinct waves; voices sit an octave apart so
 /// each reads its own mips (a D-cache worst case).
@@ -340,7 +341,16 @@ static FX: [FxRow; FX_ROWS] = [
     #[cfg(feature = "master-tape")]
     ("REEL", |s, _| worst_tape(s)),
     ("COMP", |s, _| worst_comp(s)),
+    // Delay TYPE GRAIN (ADR 0202, #746): all eight grains, PITCH +12;
+    // then TYPE flipped every 16 blocks, so its 20 ms crossfade always
+    // runs. BUS GRAIN − BUS is what `GRAIN_COST` bills over the bus.
+    ("DLY GRAIN", |s, _| worst_grain(s)),
+    ("DLY XF", grain_switch),
     ("BUS", worst_bus),
+    ("BUS GRAIN", |s, b| {
+        worst_bus(s, b);
+        worst_grain(s);
+    }),
 ];
 
 /// The REVERB screen's rows, each timed as an FX row is, less MIX.
@@ -372,6 +382,19 @@ fn worst_bus(s: &mut AudioShared, b: u32) {
     #[cfg(feature = "master-tape")]
     worst_tape(s);
     worst_comp(s);
+}
+
+/// The delay at its worst under TYPE GRAIN: SIZE and DENSITY 1 (every
+/// grain playing), PITCH +12, TEXTURE ½.
+fn worst_grain(s: &mut AudioShared) {
+    worst_delay(s);
+    s.fx.delay.grain = [1.0, 1.0, 1.0, 12.0, 0.5];
+}
+
+/// `worst_grain`, TYPE TAPE and GRAIN in turn every 16 blocks.
+fn grain_switch(s: &mut AudioShared, b: u32) {
+    worst_grain(s);
+    s.fx.delay.grain[0] = ((b / 16) % 2) as f32;
 }
 
 fn worst_chorus(s: &mut AudioShared) {
@@ -441,7 +464,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 52;
+const ROUTING_ROWS: usize = 73;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -618,7 +641,105 @@ static ROUTING: [RoutingRow; ROUTING_ROWS] = [
         |p| one_op(p).filter.set_kind(FilterKind::Ladder),
         STILL,
     ),
+    // The 0.2 stress test's rows: each line's `B` is `Voice::cost`, so
+    // `/VOICE` against it is the bill's error with no subtraction.
+    ("SEM", |p| kind(p, FilterKind::Sem).filter.fb = 0.0, STILL),
+    // KIND − its steady row is the type's moving bill (`move_cost`).
+    ("SVF MOVE", |p| moving(p, FilterKind::Svf), STILL),
+    ("2040 MOVE", |p| moving(p, FilterKind::K2040), STILL),
+    ("LADDER MOVE", |p| moving(p, FilterKind::Ladder), STILL),
+    ("SEM MOVE", |p| moving(p, FilterKind::Sem), STILL),
+    // FB at ½: the moving path and `FB_COST`.
+    (
+        "SVF FB",
+        |p| kind(p, FilterKind::Svf).filter.fb = 0.5,
+        STILL,
+    ),
+    (
+        "DIRTY FB",
+        |p| kind(p, FilterKind::Dirty).filter.fb = 0.5,
+        STILL,
+    ),
+    (
+        "2040 FB",
+        |p| kind(p, FilterKind::K2040).filter.fb = 0.5,
+        STILL,
+    ),
+    (
+        "LADDER FB",
+        |p| kind(p, FilterKind::Ladder).filter.fb = 0.5,
+        STILL,
+    ),
+    (
+        "SEM FB",
+        |p| kind(p, FilterKind::Sem).filter.fb = 0.5,
+        STILL,
+    ),
+    // STABILITY ½ on the chips: `STAB_COST`.
+    (
+        "2040 STAB",
+        |p| kind(p, FilterKind::K2040).filter.stability = 0.5,
+        STILL,
+    ),
+    (
+        "LADDER STAB",
+        |p| kind(p, FilterKind::Ladder).filter.stability = 0.5,
+        STILL,
+    ),
+    (
+        "SEM STAB",
+        |p| kind(p, FilterKind::Sem).filter.stability = 0.5,
+        STILL,
+    ),
+    // AMP's gate (ADR 0195): LPG, DECAY and STRIKE at ½; routed, LFO 1
+    // into LPG beside ENV 2 on the VCA (A VCA is its base).
+    ("LPG", |p| one_op(p).out.gate = [0.5; 3], STILL),
+    ("LPG RT", lpg_routed, STILL),
+    // VA at MIX, BLEND 1, on its default 2040; each line over VA is NOISE
+    // by KIND at LEVEL ½, or STABILITY 0 (the oscillators' drift).
+    ("VA", |p| *p.params = va(VaMode::Mix), STILL),
+    ("VA STAB0", |p| va_with(p).va.stability = 0.0, STILL),
+    ("VA NZ WHT", |p| va_noise(p, NoiseKind::White), STILL),
+    ("VA NZ PNK", |p| va_noise(p, NoiseKind::Pink), STILL),
+    ("VA NZ RED", |p| va_noise(p, NoiseKind::Red), STILL),
+    ("VA NZ DIG", |p| va_noise(p, NoiseKind::Digital), STILL),
 ];
+
+/// 1 OP through `k` (the 2040 at EXP, its costlier VOICE).
+#[inline(never)]
+fn kind(p: &mut PartAudio, k: FilterKind) -> &mut ParamSnapshot {
+    let f = &mut one_op(p).filter;
+    f.set_kind(k);
+    f.voice = K2040Voice::Exp;
+    &mut p.params
+}
+
+/// `kind` with LFO 1 (1 Hz sine) into CUTOFF at 127: the moving path.
+fn moving(p: &mut PartAudio, k: FilterKind) {
+    kind(p, k);
+    *p.mod_state = matrix(&[(ModSource::Lfo1, CUTOFF, 127)]);
+}
+
+/// 1 OP's gate at ½ each, ENV 2 on the VCA and LFO 1 into LPG.
+fn lpg_routed(p: &mut PartAudio) {
+    on_vca(p, &[ModSource::Env2], None);
+    p.params.out.gate = [0.5; 3];
+    let lpg = ParamAddr::new(BlockRef::Out, OutParams::LPG);
+    *p.mod_state = matrix(&[(ModSource::Env2, VCA, 127), (ModSource::Lfo1, lpg, 127)]);
+}
+
+/// VA's row, to change.
+#[inline(never)]
+fn va_with(p: &mut PartAudio) -> &mut ParamSnapshot {
+    *p.params = va(VaMode::Mix);
+    &mut p.params
+}
+
+/// VA with NOISE `k` at LEVEL ½.
+fn va_noise(p: &mut PartAudio, k: NoiseKind) {
+    let s = va_with(p);
+    (s.va.noise_kind, s.va.noise) = (k, 0.5);
+}
 
 /// 1 OP with the FX slot at `ty`, P1 ½, LFO 1 (1 Hz sine, so moving) into
 /// the FX column at 127: the type ramps every block. At 1 the route's rise
@@ -1196,7 +1317,7 @@ const HOLD: fn(&mut ParamSnapshot, u32) -> Hit = |_, _| Hit::Hold;
 /// TINY's cases, each in its own model's bill: SIZE 0 on the fewest
 /// frames, then each in its shortest legal loop at XFADE ½.
 #[unsafe(link_section = ".bank2.rodata.bench")]
-static TAPE_ROWS: [TapeRow; 13] = [
+static TAPE_ROWS: [TapeRow; 20] = [
     ("LOOP", Tapes::Long, |p| p.tape.xfade = 0.5, HOLD),
     (
         "STRETCH",
@@ -1295,7 +1416,63 @@ static TAPE_ROWS: [TapeRow; 13] = [
         },
         |_, _| Hit::AgainOff,
     ),
+    // The 0.2 stress test's rows (#771, #777). TRANSWAVE steady, no level
+    // change: `COST_WAVE`.
+    (
+        "WAVE",
+        Tapes::Wave,
+        |p| p.tape.machine = TapeMachine::Wave,
+        HOLD,
+    ),
+    // A 40 ms loop at XFADE ½ on the long source, `inc` 16: a 20 ms fade,
+    // equal-power (`power_of` at every wrap, about one a block).
+    (
+        "LOOP 40MS",
+        Tapes::Long,
+        |p| (p.tape.size, p.tape.xfade) = (0.55, 0.5),
+        HOLD,
+    ),
+    // CLASSIC POLY at its shortest SIZE: with PERIOD a sum-to-1 splice,
+    // with none `power_of` at every splice (the storm).
+    (
+        "STR POLY",
+        Tapes::Long,
+        |p| stretch(p, StretchType::Poly, 109.0),
+        HOLD,
+    ),
+    (
+        "STR POLY NP",
+        Tapes::Long,
+        |p| stretch(p, StretchType::Poly, 0.0),
+        HOLD,
+    ),
+    (
+        "STR MONO NP",
+        Tapes::Long,
+        |p| stretch(p, StretchType::Mono, 0.0),
+        HOLD,
+    ),
+    // GRAIN with the source's PERIOD, and with none: the lock its own
+    // search found at note-on (in the warm blocks, not timed here).
+    (
+        "GRAIN P",
+        Tapes::Long,
+        |p| stretch(p, StretchType::Grain, 109.0),
+        HOLD,
+    ),
+    (
+        "GRAIN NP",
+        Tapes::Long,
+        |p| stretch(p, StretchType::Grain, 0.0),
+        HOLD,
+    ),
 ];
+
+/// STRETCH at TYPE `k`, SIZE 0, PERIOD `period` (0: none).
+fn stretch(p: &mut ParamSnapshot, k: StretchType, period: f32) {
+    (p.tape.machine, p.tape.size) = (TapeMachine::Stretch, 0.0);
+    (p.tape.kind, p.tape.period) = (k, period);
+}
 
 /// SIZE 0, XFADE ½, ROOT 0: `inc` clamped on any source.
 fn tiny(p: &mut ParamSnapshot, model: TapeModel, d: Direction) {
@@ -1379,7 +1556,89 @@ impl TapeRig<'_> {
         self.sources.store_sounding(0);
         worst / BLOCK_SIZE as u32
     }
+
+    /// A strike's whole block in cycles, not a sample's: `voices` notes
+    /// of `setup` struck in one block, each on its own source of `ids` or
+    /// all on the first (`one`), the D-cache cold, the worst of
+    /// `COLD_RUNS`. Each run moves START (`*fresh`), so STRETCH GRAIN's
+    /// own-period search (`period::of_window`) finds no window kept.
+    #[inline(never)]
+    fn time_strike(
+        &mut self,
+        perf: &Performance,
+        setup: fn(&mut ParamSnapshot),
+        ids: &[SourceId; MAX_VOICES],
+        (voices, one, fresh): (usize, bool, &mut u32),
+    ) -> u32 {
+        // SAFETY: as `time_cold`'s.
+        let mut cp = unsafe { cortex_m::Peripherals::steal() };
+        let same = [ids[0]; MAX_VOICES];
+        let ids = if one { &same } else { ids };
+        let mut worst = 0u32;
+        for _ in 0..COLD_RUNS {
+            let budget = SampleBudget::for_cpu(u32::MAX);
+            let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+            let fx = FxBus::init_in_place(self.fx_slot);
+            let shared = AudioShared::init_in_place(self.shared_slot, perf);
+            let p = &mut shared.parts[0];
+            (*p.params, *p.mod_state) = (snapshot(EngineType::Tape), ModState::new());
+            (p.params.tape.tape, p.params.tape.age) = (0.5, 0.5);
+            setup(&mut p.params);
+            *fresh += 1;
+            p.params.tape.start = *fresh as f32 * 0.005;
+            for _ in 0..WARM_BLOCKS {
+                let out = (&mut *fx, &mut self.dac, &mut *self.scope);
+                inst.run_block(self.sources, out, shared, |_, _| {});
+            }
+            cp.SCB.clean_invalidate_dcache(&mut cp.CPUID);
+            let start = DWT::cycle_count();
+            hit(self.sources, inst, shared, (ids, voices), Hit::Again);
+            let out = (&mut *fx, &mut self.dac, &mut *self.scope);
+            inst.run_block(self.sources, out, shared, |_, _| {});
+            worst = worst.max(DWT::cycle_count().wrapping_sub(start));
+        }
+        self.sources.store_sounding(0);
+        worst
+    }
 }
+
+/// The TAPE STRIKE screen's rows (#777): label, set-up, voices, all on
+/// one source.
+type StrikeRow = (&'static str, fn(&mut ParamSnapshot), usize, bool);
+#[unsafe(link_section = ".bank2.rodata.bench")]
+static STRIKES: [StrikeRow; 6] = [
+    ("LOOP 8", |p| p.tape.xfade = 0.5, MAX_VOICES, false),
+    (
+        "GRAIN P 8",
+        |p| stretch(p, StretchType::Grain, 109.0),
+        MAX_VOICES,
+        false,
+    ),
+    (
+        "GRAIN NP 1",
+        |p| stretch(p, StretchType::Grain, 0.0),
+        1,
+        false,
+    ),
+    (
+        "GRAIN NP 8/1",
+        |p| stretch(p, StretchType::Grain, 0.0),
+        MAX_VOICES,
+        true,
+    ),
+    (
+        "GRAIN NP 8/8",
+        |p| stretch(p, StretchType::Grain, 0.0),
+        MAX_VOICES,
+        false,
+    ),
+    (
+        "CLASSIC NP 8",
+        |p| stretch(p, StretchType::Poly, 0.0),
+        MAX_VOICES,
+        false,
+    ),
+];
 
 /// Voice `v` struck at note 120 + `v` on `ids[v]` (`Hit::Again`), and let
 /// go too (`AgainOff`).
@@ -1506,8 +1765,26 @@ fn tape_page(
             }
         }
         free_sources(project, rig.sources);
-        rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 18));
+        rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 13));
     }
+    rec.flush();
+    // Each strike's whole block, cycles, out of the 640,000 at 480 MHz.
+    rec.clear();
+    rec.heading("TAPE STRIKE BLOCK");
+    let mut fresh = 0u32;
+    match tape_sources(project, Tapes::Long) {
+        Some(ids) => {
+            for (i, &(label, setup, voices, one)) in STRIKES.iter().enumerate() {
+                let perf = project.perf();
+                let c = rig.time_strike(perf, setup, &ids, (voices, one, &mut fresh));
+                line.clear();
+                let _ = write!(line, "{label} {c} ({}/S)", c / BLOCK_SIZE as u32);
+                rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 18));
+            }
+        }
+        None => rec.line(Face::Value, "FULL", (4, 46)),
+    }
+    free_sources(project, rig.sources);
     rec.flush();
 }
 
@@ -1968,6 +2245,9 @@ fn time_rebuild() -> u32 {
 struct Counts {
     cycles: [u32; MAX_VOICES],
     spans: usize,
+    /// `Voice::cost` of the row's Sound and routes, a voice: the bill its
+    /// `/VOICE` answers.
+    bill: u32,
 }
 
 impl Default for Counts {
@@ -1975,14 +2255,16 @@ impl Default for Counts {
         Self {
             cycles: [0; MAX_VOICES],
             spans: MAX_VOICES,
+            bill: 0,
         }
     }
 }
 
 impl Counts {
-    fn add(&mut self, notes: usize, (cycles, spans): (u32, usize)) {
+    fn add(&mut self, notes: usize, (cycles, spans, bill): (u32, usize, u32)) {
         self.cycles[notes - 1] = cycles;
         self.spans = spans;
+        self.bill = bill;
     }
 
     /// The cost of a voice that sounds, or for Sympathetic that rings:
@@ -2003,7 +2285,8 @@ fn hold(clocks: Clocks) {
 impl Rig<'_> {
     /// Voice `v` plays note `low + step * v`; `each` runs before every
     /// block, its time counted (a few cycles a block). Returns the cycles
-    /// per sample and the voices its per-voice figure spans (`Counts`).
+    /// per sample, the voices its per-voice figure spans and Part 1's bill
+    /// a voice as set up (`Counts`).
     #[inline(never)]
     fn time(
         &mut self,
@@ -2012,13 +2295,14 @@ impl Rig<'_> {
         voices: usize,
         low: u8,
         step: u8,
-    ) -> (u32, usize) {
+    ) -> (u32, usize, u32) {
         // The allocator must not refuse what the bench wants to measure.
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         setup(shared);
+        let bill = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
         for v in 0..voices {
             let note = MidiNote::new(low + step * v as u8).unwrap_or(MidiNote::A4);
             let ev = NoteEvent {
@@ -2042,7 +2326,7 @@ impl Rig<'_> {
             0 => inst.sounding(),
             ringing => ringing,
         };
-        (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), spans)
+        (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), spans, bill)
     }
 
     /// Cycles of `Instrument::handle` for one note-on of `note`, Part 0
@@ -2758,12 +3042,14 @@ fn show(
     line.clear();
     let _ = write!(line, "KERNEL /VOICE {kernel} (350)");
     rec.line(Face::Value, line.as_str(), (4, y));
-    // Seven rows, three to a line: with FX_ROWS at 7 the old 18/14 spacing
-    // put the third line at y 317; 16/10 keeps it at 307, under 310.
+    // Nine rows, three to a line: with FX_ROWS at 7 the old 18/14 spacing
+    // put the third line at y 317; 16/10 keeps it at 307, under 310 (with
+    // `master-tape`'s tenth a fourth line runs off the screen, not the
+    // report).
     y += 16;
     for (i, (&(label, _), &c)) in FX.iter().zip(fx).enumerate() {
-        // Each effect less MIX; MIX and BUS as read.
-        let c = if i == 0 || i == FX_ROWS - 1 {
+        // Each effect less MIX; MIX and the BUS rows as read.
+        let c = if i == 0 || label.starts_with("BUS") {
             c
         } else {
             c.saturating_sub(fx[0])
@@ -2934,7 +3220,12 @@ fn show_lines<'a>(rec: &mut Recorder<'_>, lines: impl Iterator<Item = core::fmt:
 /// sounded when fewer than all, and its count at each voice count.
 fn voice_row(rec: &mut Recorder<'_>, line: &mut FmtBuf, y: i32, label: &str, counts: &Counts) {
     line.clear();
-    let _ = write!(line, "{label} /VOICE {}", counts.per_voice());
+    let _ = write!(
+        line,
+        "{label} /VOICE {} B{}",
+        counts.per_voice(),
+        counts.bill
+    );
     if counts.spans < MAX_VOICES {
         let _ = write!(line, " ({} V)", counts.spans);
     }
