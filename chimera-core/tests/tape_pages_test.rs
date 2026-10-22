@@ -949,8 +949,8 @@ fn direction_edit_writes_walks_defaults_only() {
 }
 
 /// The focus readout says MODEL and DIRECTION in full words where the
-/// cell abbreviates them (review of #761, m12): STRETCH, FORWARD,
-/// PING-PONG; the cell keeps STRCH, FWD and PING.
+/// cell abbreviates them (review of #761, m12): STRETCH, FORWARD; the
+/// cell keeps STRCH and FWD. PING-PONG would push the glyph out: PING.
 #[test]
 fn readout_names_in_full() {
     use chimera_core::ui::fmt::fmt_val;
@@ -967,7 +967,7 @@ fn readout_names_in_full() {
     assert_eq!(text(cell(model), 1.0 / 3.0), "STRCH");
     assert_eq!(text(long(dir), 0.0), "FORWARD");
     assert_eq!(text(cell(dir), 0.0), "FWD");
-    assert_eq!(text(long(dir), 1.0), "PING-PONG");
+    assert_eq!(text(long(dir), 1.0), "PING");
     assert_eq!(view::readout_fmt(tape(P::SIZE)), None);
     // Rendered: the cell abbreviates, the readout is the larger face.
     let mut ui = ui_at_deck();
