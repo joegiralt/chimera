@@ -66,9 +66,11 @@ fn word(b: &mut FmtBuf, w: Word) {
         Word::St => (18, 2),
         Word::Ct => (20, 2),
     };
-    if let Some(s) = WORDS.get(at..at + len) {
-        // SAFETY: `WORDS` is ASCII, so every slice of it is UTF-8.
-        let _ = b.write_str(unsafe { core::str::from_utf8_unchecked(s) });
+    // Checked, not `from_utf8_unchecked`: `WORDS` is ASCII, so it never
+    // fails, and a `&str` table would put its bytes in bank 1's unnamed
+    // rodata.
+    if let Some(Ok(s)) = WORDS.get(at..at + len).map(core::str::from_utf8) {
+        let _ = b.write_str(s);
     }
 }
 
