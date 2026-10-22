@@ -7,7 +7,7 @@
 
 use chimera_core::dsp::tape_engine::Direction;
 use chimera_core::ui::tape_glyph::{
-    Canvas, GlyphInputs, H, Kind, Machine, Palette, Pose, StepStyle, TapeGauge, W,
+    Canvas, GlyphInputs, Kind, Machine, Pose, StepStyle, TapeGauge,
 };
 
 /// The glyph's set values for WALK in `d`, TRON `tron`, DRIFT `drift`.
@@ -91,6 +91,7 @@ fn each_input_moves_the_picture_and_its_key() {
 #[ignore]
 #[cfg(feature = "walk-styles")]
 fn write_variants() {
+    use chimera_core::ui::tape_glyph::{H, Palette, W};
     let dir = std::path::PathBuf::from(std::env::var("GLYPH_OUT").expect("GLYPH_OUT"));
     std::fs::create_dir_all(&dir).unwrap();
     let pal = Palette::THEME;

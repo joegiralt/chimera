@@ -127,7 +127,7 @@ impl Runner {
 fn drift_of(k: usize, w: Steps) -> (f32, Pose) {
     let (sx, sy) = scatter(k as i32 * 3 + 1);
     let shuffle = w.drift.step() as usize * (1 + (sy > 0.0) as usize);
-    let pose = if (k + shuffle) % 2 == 0 {
+    let pose = if (k + shuffle).is_multiple_of(2) {
         Pose::Stride
     } else {
         Pose::Flight
