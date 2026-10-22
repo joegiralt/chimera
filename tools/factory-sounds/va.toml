@@ -936,3 +936,308 @@ mod.ENV1 = "FILTER.CUTOFF +26, OUT.VCA +127"
 mod.LFO1 = "FILTER.CUTOFF +8, PITCH.PITCH +2"
 mod.NOTE = "FILTER.CUTOFF +127"
 level = "by ear -15.2: the owner's OUT LEVEL kept as set, not trimmed"
+# A dry, slow pad through the SEM: a saw over a pulse an octave down, the
+# SEM's low-pass breathing on a 0.4 Hz triangle while a slower one leans
+# the pulse width; the cutoff follows the key. No noise: pink noise failed
+# the DC and aliasing gates.
+[[sound]]
+id = "S9100132"
+name = "VELVET FOG"
+engine = "VA"
+note = "SEM PAD, SLOW LFO BREATHES"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.66"  # 553 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "1"  # 100%
+ENV1.REL = "0.78"  # 1.7 s
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.6667"  # 85
+VA.WAVE2 = "0.9"  # 114
+VA.SHAPE2 = "0.2"  # 25
+VA.CRSE2 = "-12"
+VA.FINE2 = "3"  # +3
+VA.AMOUNT = "0.4"  # 51
+VA.STAB = "0.6"  # 76
+FILTER.KIND = "SEM"
+FILTER.CUTOFF = "700"  # 700 Hz
+FILTER.RESO = "0.3"  # 38
+LFO1.RATE = "0.4"  # 0.40 Hz
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "FILTER.CUTOFF +16"
+LFO2.RATE = "0.07"  # 0.07 Hz
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "VA.SHAPE2 +30, PITCH.FINE +4"
+mod.NOTE = "FILTER.CUTOFF +45"
+mod.VEL = "FILTER.CUTOFF +10"
+trim = "2.1"
+
+# A mono pad that glides: two saws an octave apart, the 2040 open to
+# 1.6 kHz and a slow ENV 2 lifting it further as the note blooms; a slow
+# LFO walks osc 1's shape.
+[[sound]]
+id = "S9100133"
+name = "AMBER GLIDE"
+engine = "VA"
+note = "MONO SAWS GLIDE, OPEN 2040"
+demo = "mono"
+plays = "long glide"
+home = "C3"
+phrase = "lead"
+OUT.LEVEL = "0.35"  # 44
+ENV1.ATK = "0.2"  # 11 ms
+ENV1.DEC = "0.6"  # 415 ms
+ENV1.SUS = "0.9"  # 90%
+ENV1.REL = "0.7"  # 919 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.6667"  # 85
+VA.WAVE2 = "0.6667"  # 85
+VA.SHAPE1 = "0.3"  # 38
+VA.CRSE2 = "-12"
+VA.FINE2 = "-3"
+VA.AMOUNT = "0.35"  # 44
+VA.STAB = "0.55"  # 70
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.65"  # 140 ms
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1600"  # 1.60 kHz
+FILTER.RESO = "0.18"  # 23
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0.45"  # 482 ms
+ENV2.DEC = "0.6"  # 2.9 s
+ENV2.SUS = "0.6"  # 60%
+ENV2.REL = "0.6"  # 2.9 s
+mod.ENV2 = "FILTER.CUTOFF +22"
+LFO1.RATE = "0.18"  # 0.18 Hz
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "VA.SHAPE1 +30, PITCH.FINE +2"
+mod.NOTE = "FILTER.CUTOFF +30"
+mod.VEL = "FILTER.CUTOFF +14"
+trim = "2.9"
+
+# A singing sync lead: osc 2 synced a fifth up, ENV 3 bending it up and
+# back on every note (a vowel opening) into a resonant 2040 left open; a
+# slow LFO keeps the vowel moving as it holds. FINE2 carries the sweeps:
+# CRSE2 steps, and stepped it failed the aliasing gate.
+[[sound]]
+id = "S9100134"
+name = "SYNC VOICE"
+engine = "VA"
+note = "SYNC SWEEP, RESONANT 2040"
+demo = "mono"
+plays = "long glide"
+home = "C3"
+phrase = "lead"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.25"  # 17 ms
+ENV1.DEC = "0.6"  # 415 ms
+ENV1.SUS = "0.95"  # 95%
+ENV1.REL = "0.6"  # 415 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.MODE = "SYNC"
+VA.WAVE1 = "0.6667"  # 85
+VA.WAVE2 = "0.6667"  # 85
+VA.CRSE2 = "7"  # +7
+VA.AMOUNT = "0.8"  # 102
+VA.STAB = "0.6"  # 76
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.55"  # 65 ms
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1700"  # 1.70 kHz
+FILTER.RESO = "0.5"  # 64
+ENV2.ATK = "0.3"  # 26 ms
+ENV2.DEC = "0.6"  # 415 ms
+ENV2.SUS = "0.3"  # 30%
+ENV2.REL = "0.6"  # 415 ms
+mod.ENV2 = "FILTER.CUTOFF +16"
+ENV3.ATK = "0.2"  # 25
+ENV3.DEC = "0.62"  # 79
+ENV3.SUS = "0.2"  # 25
+ENV3.REL = "0.5"  # 64
+mod.ENV3 = "VA.FINE2 +127"
+LFO1.RATE = "0.21"  # 0.21 Hz
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.FINE2 +30, FILTER.CUTOFF +8"
+LFO2.RATE = "5.2"  # 5.20 Hz
+LFO2.SHAPE = "SINE"
+mod.LFO2 = "PITCH.FINE +3"
+mod.VEL = "FILTER.CUTOFF +12"
+trim = "2.8"
+
+# Trembling keys: a saw-to-square over a pulse an octave down, plucked by
+# ENV 2 through the 2040, a 6.5 Hz tremolo on the VCA and a sine LFO,
+# restarted on each note, nudging the cutoff (an S&H one read 17 dB on the
+# aliasing gate).
+[[sound]]
+id = "S9100135"
+name = "FLUTTER KEYS"
+engine = "VA"
+note = "PLUCKED KEYS WITH TREMOLO"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "arp"
+OUT.LEVEL = "0.35"  # 44
+ENV1.ATK = "0.05"  # 3.1 ms
+ENV1.DEC = "0.6"  # 415 ms
+ENV1.SUS = "0.8"  # 80%
+ENV1.REL = "0.62"  # 486 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.8"  # 102
+VA.WAVE2 = "1"  # 127
+VA.SHAPE2 = "0.3"  # 38
+VA.CRSE2 = "-12"
+VA.AMOUNT = "0.25"  # 32
+VA.STAB = "0.6"  # 76
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "620"  # 620 Hz
+FILTER.RESO = "0.3"  # 38
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.12"  # 12%
+ENV2.REL = "0.4"  # 84 ms
+mod.ENV2 = "FILTER.CUTOFF +34"
+LFO1.RATE = "6.5"  # 6.50 Hz
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "OUT.VCA +30"
+LFO2.RATE = "3.2"  # 3.20 Hz
+LFO2.SHAPE = "SINE"
+LFO2.SYNC = "RETRIG"
+mod.LFO2 = "FILTER.CUTOFF +9"
+mod.NOTE = "FILTER.CUTOFF +20"
+mod.VEL = "FILTER.CUTOFF +16"
+level = "by ear -15.3: set low so the texture sixteenths, their releases overlapping, stay under 1 dB of limiting"
+trim = "1.6"
+
+# Stepped rain: a saw-to-square over a pulse an octave down into a
+# resonant 2040, driven a little, an S&H LFO at 6 Hz jumping the cutoff
+# while a slow ENV 2 eases it down and a slow LFO moves the pulse width.
+# harmonic "no": the cutoff's jumps are the point, and the aliasing gate
+# reads them as inharmonic (16 dB at C6 and C7).
+[[sound]]
+id = "S9100136"
+name = "STEPPED RAIN"
+engine = "VA"
+note = "S&H LFO STEPS THE 2040"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "arp"
+harmonic = "no"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.05"  # 3.1 ms
+ENV1.DEC = "0.6"  # 415 ms
+ENV1.SUS = "0.75"  # 75%
+ENV1.REL = "0.6"  # 415 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.8"  # 102
+VA.WAVE2 = "1"  # 127
+VA.SHAPE1 = "0.4"  # 51
+VA.CRSE2 = "-12"
+VA.AMOUNT = "0.35"  # 44
+VA.STAB = "0.6"  # 76
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1800"  # 1.80 kHz
+FILTER.RESO = "0.42"  # 53
+FILTER.LEVEL = "0.6"  # 76
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0.5"  # 747 ms
+ENV2.DEC = "0.6"  # 2.9 s
+ENV2.SUS = "0.6"  # 60%
+ENV2.REL = "0.6"  # 2.9 s
+mod.ENV2 = "FILTER.CUTOFF -6"
+LFO1.RATE = "6"  # 6.00 Hz
+LFO1.SHAPE = "RANDOM"
+mod.LFO1 = "FILTER.CUTOFF +32"
+LFO2.RATE = "0.3"  # 0.30 Hz
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "VA.SHAPE2 +30, PITCH.FINE +5"
+mod.VEL = "FILTER.CUTOFF +6"
+level = "by ear -15.1: set low so the texture sixteenths, their releases overlapping, stay under 1 dB of limiting"
+trim = "-0.4"
+
+# Chip plucks: two squares an octave apart, BITS at full crush (two bits),
+# a short pluck through an open filter, a fast blip of pitch at each
+# attack and a slow width sweep. harmonic "no": BITS is quantising,
+# alias-exempt by design (ADR 0118), as BIT BLOOM.
+[[sound]]
+id = "S9100137"
+name = "PIXEL PLUCK"
+engine = "VA"
+note = "FULL BITS CRUSH: CHIP PLUCKS"
+demo = "poly"
+plays = "short long"
+home = "C3"
+phrase = "arp"
+harmonic = "no"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0"  # 2.0 ms
+ENV1.DEC = "0.55"  # 279 ms
+ENV1.SUS = "0.45"  # 45%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.MODE = "BITS"
+VA.AMOUNT = "1"  # 127
+VA.WAVE1 = "1"  # 127
+VA.WAVE2 = "1"  # 127
+VA.SHAPE1 = "0.5"  # 64
+VA.CRSE2 = "12"  # +12
+FILTER.KIND = "SVF"
+FILTER.CUTOFF = "7000"  # 7.00 kHz
+ENV3.ATK = "0"
+ENV3.DEC = "0.3"  # 38
+ENV3.SUS = "0"
+mod.ENV3 = "PITCH.FINE +20"
+LFO1.RATE = "0.25"  # 0.25 Hz
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.SHAPE2 +40"
+mod.VEL = "FILTER.CUTOFF +10"
+trim = "-0.4"
+
+# A grainy swarm: a saw-to-square and a square a major seventh up, a fast
+# random LFO shaking the level, osc 2's pitch and its width, through a
+# bright 2040 that a slow ENV 2 closes a little as the swell rises.
+# harmonic "no": the seventh and the 14 Hz random pitch are inharmonic by
+# design (5-7 dB at C6 and C7).
+[[sound]]
+id = "S9100138"
+name = "GRAIN SWARM"
+engine = "VA"
+note = "FAST RANDOM SHAKES A SWELL"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "pad"
+harmonic = "no"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.72"  # 921 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "1"  # 100%
+ENV1.REL = "0.8"  # 2.0 s
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.8"  # 102
+VA.WAVE2 = "1"  # 127
+VA.SHAPE1 = "0.45"  # 57
+VA.CRSE2 = "11"  # +11
+VA.FINE2 = "12"  # +12
+VA.AMOUNT = "0.4"  # 51
+VA.STAB = "0.5"  # 64
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "2600"  # 2.60 kHz
+FILTER.RESO = "0.3"  # 38
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0.55"  # 1.2 s
+ENV2.DEC = "0.6"  # 2.9 s
+ENV2.SUS = "1"  # 100%
+ENV2.REL = "0.6"  # 2.9 s
+mod.ENV2 = "FILTER.CUTOFF -12"
+LFO1.RATE = "14"  # 14.0 Hz
+LFO1.SHAPE = "RANDOM"
+mod.LFO1 = "OUT.VCA +32, VA.FINE2 +80, PITCH.FINE +50, VA.SHAPE2 +20"
+LFO2.RATE = "0.2"  # 0.20 Hz
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "FILTER.CUTOFF +10"
+trim = "3.6"
