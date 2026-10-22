@@ -1,7 +1,10 @@
 //! Probe, not a gate: STRETCH's listening takes through the whole
 //! instrument (P1, the bus, the limiter, `(L + R) / 2`), raw levels, WAVs
 //! to `$PROBE_OUT` and a report beside them: CLASSIC, GRAIN and GRAIN on
-//! three grains, side by side.
+//! three grains, side by side. The builds other than `Thrift::Four` are
+//! test-support measurement builds (`stretch::grain::THRIFT`): firmware
+//! renders `Four` alone, which these takes match sample for sample; each
+//! take's report line names its build.
 //! `PROBE_OUT=dir cargo test -p chimera-desktop --test stretch_listen -- --ignored --nocapture`
 
 use chimera_core::block::Block as _;
@@ -293,6 +296,11 @@ fn listen() {
         (tape_sound(s, &b.head), b)
     };
     let mut rep = String::new();
+    writeln!(
+        rep,
+        "Builds: four = GRAIN as the firmware renders it; three, bypass = test-support measurement builds only"
+    )
+    .unwrap();
     // (slug, sound, source, held s, render s, thrift)
     let mut cases: Vec<(String, Sound, &Built, f32, f32, Thrift)> = Vec::new();
     let (bell, bb) = find("BELL1 STRETCH");
@@ -452,12 +460,18 @@ fn listen() {
         let rt = root(b);
         let x = render(&snd, b, &[(0.0, rt, true), (hold, rt, false)], secs);
         let name = format!("{slug}.wav");
+        let build = match thrift {
+            Thrift::Four => "four",
+            Thrift::Three => "three",
+            Thrift::ByRatio => "by ratio",
+            Thrift::Bypass => "bypass",
+        };
         write(&dir, &name, &x);
         let src_f0 = 440.0 * 2f32.powf((b.head.root as f32 / 100.0 - 69.0) / 12.0);
         let f = f0(&x, 0.05, hold.max(0.4));
         writeln!(
             rep,
-            "{name:<26} level {:+6.2} dBFS  end {:5.2} s  fall30 {:5.2} s  ripple {:.2} dB  f0 {f:.1} Hz ({:+.0} c of the root's {src_f0:.1})",
+            "{name:<26} [{build}] level {:+6.2} dBFS  end {:5.2} s  fall30 {:5.2} s  ripple {:.2} dB  f0 {f:.1} Hz ({:+.0} c of the root's {src_f0:.1})",
             level(&x),
             end_t(&x),
             fall_from_peak(&x, 30.0),
@@ -467,6 +481,7 @@ fn listen() {
         .unwrap();
         writeln!(rep, "  env 0.25s: {}", env_line(&x, 0.25)).unwrap();
     }
+    THRIFT.store(Thrift::Four as u8, core::sync::atomic::Ordering::Relaxed);
     std::fs::write(dir.join("report.txt"), &rep).unwrap();
     println!("{rep}");
 }

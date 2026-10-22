@@ -74,7 +74,11 @@ impl Thrift {
     }
 }
 
-/// The build the tests and the listening tool pick.
+/// The build the tests and the listening tool pick. At `Four` (0, the
+/// default) the render's arithmetic is the firmware's: the other arms
+/// only add branches that `Four` never takes. Only test-support builds
+/// (tests, `stretch_listen`) have it; the desktop simulator, like the
+/// firmware, does not.
 #[cfg(any(test, feature = "test-support"))]
 pub static THRIFT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
