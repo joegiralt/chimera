@@ -91,7 +91,7 @@ On the integrated tree (integration-1021, after #754 → after #752's merge on #
 
 ### Compatibility
 - Old STRETCH Sounds load as CLASSIC and render bit for bit as before (above). Every other machine is bit for bit too.
-- Codes only append: TYPE's GRAIN is code 2 (the disk-codes fixture gains `E 34 10 2 GRAIN`); GRAIN's four params are ids 22–25 (21 is SCRUB's KEY, 17–20 SLICE's and PLAY's) (`B 34` lines, appended; END stored as its index, a stepped real, as THEME's HINTS).
+- Codes only append: TYPE's GRAIN is code 2 (the disk-codes fixture gains `E 34 10 2 GRAIN`); GRAIN's four params are ids 22–25 (21 is SCRUB's KEY, 17 and 18 SLICE's, 19 TRON and 20 DRIFT) (`B 34` lines, appended; END stored as its index, a stepped real, as THEME's HINTS).
 - The factory STRETCH Sounds turn to GRAIN with ONE's ENV 1; their trims are re-measured to the set's median.
 
 ### Memory

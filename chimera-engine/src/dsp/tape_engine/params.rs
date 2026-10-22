@@ -849,7 +849,7 @@ impl TapeEngineParams {
     pub const WOW: ParamId = ParamId(14);
     pub const MODE: ParamId = ParamId(15);
     pub const RETRIG: ParamId = ParamId(16);
-    // 17 and 18 are SLICE's (ADR 0199, `tape-slice`).
+    // 17 and 18 are SLICE's (ADR 0199, on the `tape-slice` branch, #748).
     pub const TRON: ParamId = ParamId(19);
     pub const DRIFT: ParamId = ParamId(20);
     /// SCRUB's KEY (ADR 0205).

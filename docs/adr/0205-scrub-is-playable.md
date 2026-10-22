@@ -28,7 +28,7 @@ After #747 (ADR 0200) SCRUB's finger no longer snaps, but three things kept it f
      - 70 ms is the middle of the band: the loop repeats at 14 Hz, well under fusion, and holds several periods of anything pitched.
 5. **KEY: POSITION or PITCH** (param 21, `KeyMode`, on SCRUB's page). The default is POSITION.
    - **POSITION:** a key places the finger and plays at ROOT.
-     - **The places.** There are 12 places an octave (`KEY_PLACES`), every octave alike. C places the finger at the window's start, C♯ 1/12 of the way along, and up to B at 11/12. This is SLICE's octave grid (#748, ADR 0199), so any octave and either hand play the whole source.
+     - **The places.** There are 12 places an octave (`KEY_PLACES`), every octave alike. C places the finger at the window's start, C♯ 1/12 of the way along, and up to B at 11/12. This is SLICE's octave grid (#748, ADR 0199 on the `tape-slice` branch), so any octave and either hand play the whole source.
      - **The range.** Places are relative to START and END: they are shares of the finger's room, the window less the loop.
      - **Quantised, not continuous.** Each key is one of 12 steps. FINGER gives the fine placement.
      - **FINGER adds to the key's place.** The finger sits at `place + FINGER`, at most the room's end. At FINGER 0 a key plays its own place. Turning FINGER, a CC or a route moves the finger from there. C plays exactly as before.
@@ -91,4 +91,4 @@ Its bounds are tightened from 0.4 and ×1.4 to 0.2 and ×1.2.
 - `chimera-core/src/ui/jog.rs`, `chimera-engine/src/dsp/tape_engine/mod.rs` (`scrub_block`, `scrub_size`, `key_place`, `AIM_S`), `machine.rs` (`SCRUB_LENGTH_DEFAULT`), `params.rs` (`KeyMode`), `chimera-core/src/ui/view.rs` (`KEY_HINT`).
 - Tests: `tape_scrub_play_test`, `tape_models_test::scrub_finger_speed_never_steps` and `scrub_drag_slews`, `tape_machines_test::jog_*`.
 - (private notes) (the probe, the block-rate model, the renders and the listening page).
-- Precedent: Elektron Octatrack slice mode and Digitakt sample start (a key chooses where); Morphagene's Slide (a slewed position); SLICE's octave grid (ADR 0199).
+- Precedent: Elektron Octatrack slice mode and Digitakt sample start (a key chooses where); Morphagene's Slide (a slewed position); SLICE's octave grid (ADR 0199 on the `tape-slice` branch, #748).
