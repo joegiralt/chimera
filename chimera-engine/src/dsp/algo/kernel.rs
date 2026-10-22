@@ -413,12 +413,13 @@ impl Kernel {
                 let d = &mut rest[0];
                 let e = &mut env[a];
                 match n {
-                    0 => run_one(&mut x, from_fn::<_, 0>(link), e, d, out),
-                    1 => run_one(&mut x, from_fn::<_, 1>(link), e, d, out),
-                    2 => run_one(&mut x, from_fn::<_, 2>(link), e, d, out),
-                    3 => run_one(&mut x, from_fn::<_, 3>(link), e, d, out),
-                    4 => run_one(&mut x, from_fn::<_, 4>(link), e, d, out),
-                    _ => run_one(&mut x, from_fn::<_, 5>(link), e, d, out),
+                    0 if x.feedback == 0.0 => run_one::<0, false>(&mut x, [], e, d, out),
+                    0 => run_one::<0, true>(&mut x, [], e, d, out),
+                    1 => run_one::<1, true>(&mut x, from_fn(link), e, d, out),
+                    2 => run_one::<2, true>(&mut x, from_fn(link), e, d, out),
+                    3 => run_one::<3, true>(&mut x, from_fn(link), e, d, out),
+                    4 => run_one::<4, true>(&mut x, from_fn(link), e, d, out),
+                    _ => run_one::<5, true>(&mut x, from_fn(link), e, d, out),
                 }
                 k += 1;
             }
@@ -1461,22 +1462,28 @@ fn pick2(env: &mut [OpEnv; OPS], a: usize, b: usize) -> (&mut OpEnv, &mut OpEnv)
     if a < b { (x, y) } else { (y, x) }
 }
 
-/// One sample of one operator, exactly as `render_samples` does it.
+/// One sample of one operator, exactly as `render_samples` does it. With
+/// `PM` false (no link, FEEDBACK 0) the PM is left out: `0 · x` is ±0 or
+/// NaN, and either casts to phase 0.
 #[inline(always)]
-fn tick<const N: usize>(
+fn tick<const N: usize, const PM: bool>(
     st: &mut OpState,
     links: &mut [Link; N],
     env: &mut EnvRun,
     env_mem: &mut OpEnv,
     s: usize,
 ) -> f32 {
-    let mut pm = st.feedback * (st.prev + st.hist);
-    for l in links.iter_mut() {
-        pm += l.w * l.src[s];
-        l.w += l.dw;
-    }
     st.phase = st.phase.wrapping_add(st.inc);
-    let p = st.phase.wrapping_add((pm as i32 as u32) << 8);
+    let p = if PM {
+        let mut pm = st.feedback * (st.prev + st.hist);
+        for l in links.iter_mut() {
+            pm += l.w * l.src[s];
+            l.w += l.dw;
+        }
+        st.phase.wrapping_add((pm as i32 as u32) << 8)
+    } else {
+        st.phase
+    };
     let y = read(st.lo, st.hi, st.xfade, p) * env.step(env_mem) * st.gain;
     st.gain += st.dgain;
     st.xfade += st.dxfade;
@@ -1485,9 +1492,10 @@ fn tick<const N: usize>(
     y
 }
 
-#[cfg_attr(not(feature = "span-count"), inline(always))]
-#[cfg_attr(feature = "span-count", inline(never))]
-fn run_one<const N: usize>(
+/// Out of line, each its own loop: inlined into `render_ops`, every loop
+/// there lost a register to the no-PM variant (an `ldr` a sample).
+#[inline(never)]
+fn run_one<const N: usize, const PM: bool>(
     st: &mut OpState,
     mut links: [Link; N],
     env: &mut OpEnv,
@@ -1496,7 +1504,7 @@ fn run_one<const N: usize>(
 ) {
     let (mut x, mut run) = (*st, env.run());
     for s in 0..BLOCK_SIZE {
-        let y = tick(&mut x, &mut links, &mut run, env, s);
+        let y = tick::<N, PM>(&mut x, &mut links, &mut run, env, s);
         dst[s] = MaybeUninit::new(y);
         acc[s] += x.carrier * y;
         x.carrier += x.dcarrier;
@@ -1521,8 +1529,8 @@ fn run_pair<const N: usize, const M: usize>(
     let (mut x, mut rx) = (*sa, ea.run());
     let (mut y, mut ry) = (*sb, eb.run());
     for s in 0..BLOCK_SIZE {
-        let ya = tick(&mut x, &mut la, &mut rx, ea, s);
-        let yb = tick(&mut y, &mut lb, &mut ry, eb, s);
+        let ya = tick::<N, true>(&mut x, &mut la, &mut rx, ea, s);
+        let yb = tick::<M, true>(&mut y, &mut lb, &mut ry, eb, s);
         da[s] = MaybeUninit::new(ya);
         db[s] = MaybeUninit::new(yb);
         acc[s] += x.carrier * ya;
