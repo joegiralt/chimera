@@ -333,7 +333,7 @@ fn approval(v: &str) -> Option<Status> {
 }
 
 /// `by ear <LUFS>: <why>`.
-fn by_ear(v: &str, line: usize) -> Option<ByEar> {
+pub(crate) fn by_ear(v: &str, line: usize) -> Option<ByEar> {
     let (lufs, why) = v.strip_prefix("by ear ")?.split_once(':')?;
     Some(ByEar {
         line,
@@ -615,7 +615,7 @@ fn note_number(v: &str) -> Option<u8> {
 }
 
 /// A stored param of a Sound block, by its frozen idents.
-fn valid_addr(block: &str, param: &str) -> Option<ValidAddr> {
+pub(crate) fn valid_addr(block: &str, param: &str) -> Option<ValidAddr> {
     let b = BlockRef::ALL
         .into_iter()
         .find(|b| b.disk_ident() == Some(block))?;
@@ -625,7 +625,7 @@ fn valid_addr(block: &str, param: &str) -> Option<ValidAddr> {
 
 /// `a` is `engine`'s to set: every Sound holds each engine's block, but
 /// only its own engine reads it.
-fn other_engine(a: ParamAddr, engine: EngineType) -> Result<(), String> {
+pub(crate) fn other_engine(a: ParamAddr, engine: EngineType) -> Result<(), String> {
     let owner = match a.block {
         BlockRef::Va => Some(EngineType::Va),
         BlockRef::Algo | BlockRef::AlgoOp(_) => Some(EngineType::Algo),
@@ -670,7 +670,7 @@ fn ident(a: ParamAddr) -> String {
 /// `DEST ±amount, …`: each destination a matrix column takes (a fixed
 /// column or a modulatable param of `engine`'s), once, amounts −127…127
 /// but 0.
-fn routes(v: &str, line: usize, engine: EngineType) -> Result<Vec<Route>, String> {
+pub(crate) fn routes(v: &str, line: usize, engine: EngineType) -> Result<Vec<Route>, String> {
     let mut out: Vec<Route> = Vec::new();
     for r in v.split(',') {
         let r = r.trim();
