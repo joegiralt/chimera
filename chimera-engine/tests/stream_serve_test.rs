@@ -388,7 +388,7 @@ fn rot_full_keeps_its_verdicts() {
         rot.blame(c);
     }
     assert!(rot.passes_over(chunk(1, 10, 99)), "file 1 condemned");
-    // Twenty suspects from twenty files: the table holds 8.
+    // Twenty suspects from twenty files: the table holds 16.
     let s = |n: u32| chunk(100 + n, 1_000 + n, 1_008 + n);
     for n in 0..20 {
         assert_eq!(rot.blame(s(n)), Blame::Card);
@@ -397,6 +397,28 @@ fn rot_full_keeps_its_verdicts() {
     assert!(rot.passes_over(lone), "the rotted chunk kept");
     assert_eq!(rot.blame(s(19)), Blame::Chunk, "the newest suspect kept");
     assert_eq!(rot.blame(s(0)), Blame::Card, "the oldest suspect dropped");
+}
+
+/// m7 (#761): nine files condemned, more than the voices, keep every
+/// verdict: none goes through a fault and re-init again.
+#[test]
+#[cfg(feature = "tape")]
+fn rot_keeps_nine_condemned_files() {
+    let mut rot = Rot::new();
+    let file = |n: u32| (chunk(n, 100 * n, 100 * n), chunk(n, 100 * n, 100 * n + 9));
+    for n in 1..=9 {
+        let (a, b) = file(n);
+        for c in [a, a, b] {
+            rot.blame(c);
+        }
+        assert_eq!(rot.blame(b), Blame::File, "file {n} condemned");
+    }
+    for n in 1..=9 {
+        assert!(
+            rot.passes_over(chunk(n, 100 * n, 100 * n + 50)),
+            "file {n} kept"
+        );
+    }
 }
 
 /// #609 (I2): a copy of the same content at other blocks is another file:

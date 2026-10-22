@@ -358,8 +358,10 @@ impl Default for Strikes {
     }
 }
 
-/// How many verdicts `Rot` keeps.
-const MARKS: usize = 8;
+/// How many verdicts `Rot` keeps: room for every voice's file condemned
+/// with suspects to spare, so a full table seldom drops a verdict (m7,
+/// #761), which would send its file through fault and re-init again.
+const MARKS: usize = 16;
 
 /// Rotted chunks that condemn their whole file: real rot (a short copy, a
 /// zeroed or cross-linked cluster) spans a cluster, 8 chunks or more.
