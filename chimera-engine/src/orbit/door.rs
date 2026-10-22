@@ -12,27 +12,26 @@
 
 use super::engine::Events;
 use super::runner::{OrbitRunner, OrbitView};
+use crate::dsp::engines::EngineCtx;
 use crate::instrument::{AudioShared, Instrument};
 use crate::note_queue::{NoteEvent, RealTime};
 use crate::source_table::GateView;
-use crate::stream::port::{NoPorts, Streams, VoicePorts};
-
-/// One block of ORBIT through ports `P`: what it sent the `Instrument`.
-type BlockRun<P> =
-    fn(&mut OrbitRunner, &mut Instrument, &AudioShared, &GateView<'_>, &mut P) -> Events;
+use crate::stream::port::{CtxBase, NoPorts, Port, Streams, VoicePorts};
+use crate::stream::stats::StreamStats;
+use crate::voice_alloc::VoiceIdx;
+use chimera_hal::card_bus::CardFault;
 
 /// The entries. Private, called only by the proxies below inside the
 /// door's `with`, so no pointer into bank 2 leaves it.
 #[repr(C)]
 pub struct OrbitDoor {
-    block: BlockRun<NoPorts>,
     #[allow(clippy::type_complexity)]
-    block_streamed: fn(
+    block: fn(
         &mut OrbitRunner,
         &mut Instrument,
         &AudioShared,
         &GateView<'_>,
-        &mut Streams<'_, '_>,
+        &mut OrbitPortsMut<'_, '_, '_>,
     ) -> Events,
     realtime: fn(&mut OrbitRunner, usize, RealTime, u64),
     live: fn(&mut OrbitRunner, NoteEvent),
@@ -42,50 +41,78 @@ pub struct OrbitDoor {
 impl OrbitDoor {
     pub const DOOR: OrbitDoor = OrbitDoor {
         block,
-        block_streamed,
         realtime,
         live,
         fill_view,
     };
 }
 
+/// One block, every voice's stream through `ports`. One entry for both
+/// port kinds: a fn pointer can't be generic, and the shipped build only
+/// ever streams, so a second entry would sit in bank 2 dead.
 #[inline(never)]
 fn block(
     r: &mut OrbitRunner,
     inst: &mut Instrument,
     shared: &AudioShared,
     src: &GateView<'_>,
-    ports: &mut NoPorts,
+    ports: &mut OrbitPortsMut<'_, '_, '_>,
 ) -> Events {
     r.block_ported_in(inst, shared, src, ports)
 }
 
-/// `block`, every voice's stream through its port: its own function, as
-/// `Streams`' lifetimes keep a generic one's instance out of the table.
-#[inline(never)]
-fn block_streamed(
-    r: &mut OrbitRunner,
-    inst: &mut Instrument,
-    shared: &AudioShared,
-    src: &GateView<'_>,
-    ports: &mut Streams<'_, '_>,
-) -> Events {
-    r.block_ported_in(inst, shared, src, ports)
+/// The ports a block runs ORBIT through, as one type the door's entry
+/// can name: none (`NoPorts`) or the voices' streams. The match is per
+/// ORBIT note-on's port, never in the render.
+pub enum OrbitPortsMut<'a, 'b, 'r> {
+    None,
+    Streams(&'a mut Streams<'b, 'r>),
 }
 
-/// The ports a block may run ORBIT through: each has its own entry, as a
-/// fn pointer can't be generic. No rings (`NoPorts`) or the voices'
-/// streams (`Streams`).
+impl VoicePorts for OrbitPortsMut<'_, '_, '_> {
+    #[inline(always)]
+    fn ctx<R>(
+        &mut self,
+        base: CtxBase<'_>,
+        v: VoiceIdx,
+        port: Port,
+        f: impl FnOnce(&mut EngineCtx<'_>) -> R,
+    ) -> R {
+        match self {
+            OrbitPortsMut::None => NoPorts.ctx(base, v, port, f),
+            OrbitPortsMut::Streams(s) => s.ctx(base, v, port, f),
+        }
+    }
+
+    #[inline(always)]
+    fn drop_ring(&mut self, v: VoiceIdx) {
+        match self {
+            OrbitPortsMut::None => NoPorts.drop_ring(v),
+            OrbitPortsMut::Streams(s) => s.drop_ring(v),
+        }
+    }
+
+    fn stats(&self) -> Option<&StreamStats> {
+        match self {
+            OrbitPortsMut::None => None,
+            OrbitPortsMut::Streams(s) => s.stats(),
+        }
+    }
+
+    fn fault(&self) -> CardFault {
+        match self {
+            OrbitPortsMut::None => NoPorts.fault(),
+            OrbitPortsMut::Streams(s) => s.fault(),
+        }
+    }
+}
+
+/// The ports a shell's block may run ORBIT through: each becomes an
+/// `OrbitPortsMut`. No rings (`NoPorts`) or the voices' streams
+/// (`Streams`).
 pub trait OrbitPorts: VoicePorts + sealed::Sealed {
     #[doc(hidden)]
-    fn run(
-        d: &OrbitDoor,
-        r: &mut OrbitRunner,
-        inst: &mut Instrument,
-        shared: &AudioShared,
-        src: &GateView<'_>,
-        ports: &mut Self,
-    ) -> Events;
+    fn as_orbit<R>(&mut self, f: impl FnOnce(&mut OrbitPortsMut<'_, '_, '_>) -> R) -> R;
 }
 
 mod sealed {
@@ -96,29 +123,15 @@ mod sealed {
 
 impl OrbitPorts for NoPorts {
     #[inline(always)]
-    fn run(
-        d: &OrbitDoor,
-        r: &mut OrbitRunner,
-        inst: &mut Instrument,
-        shared: &AudioShared,
-        src: &GateView<'_>,
-        ports: &mut Self,
-    ) -> Events {
-        (d.block)(r, inst, shared, src, ports)
+    fn as_orbit<R>(&mut self, f: impl FnOnce(&mut OrbitPortsMut<'_, '_, '_>) -> R) -> R {
+        f(&mut OrbitPortsMut::None)
     }
 }
 
 impl OrbitPorts for Streams<'_, '_> {
     #[inline(always)]
-    fn run(
-        d: &OrbitDoor,
-        r: &mut OrbitRunner,
-        inst: &mut Instrument,
-        shared: &AudioShared,
-        src: &GateView<'_>,
-        ports: &mut Self,
-    ) -> Events {
-        (d.block_streamed)(r, inst, shared, src, ports)
+    fn as_orbit<R>(&mut self, f: impl FnOnce(&mut OrbitPortsMut<'_, '_, '_>) -> R) -> R {
+        f(&mut OrbitPortsMut::Streams(self))
     }
 }
 
@@ -181,10 +194,12 @@ impl OrbitRunner {
         src: &GateView<'_>,
         ports: &mut P,
     ) -> Events {
-        through(|d| P::run(d, self, inst, shared, src, ports)).unwrap_or_else(|| {
-            inst.set_harmony(None);
-            Events::new()
-        })
+        through(|d| ports.as_orbit(|p| (d.block)(self, inst, shared, src, p))).unwrap_or_else(
+            || {
+                inst.set_harmony(None);
+                Events::new()
+            },
+        )
     }
 
     /// The view, written into `v` in place: every field, every time, as
