@@ -12,7 +12,7 @@ use crate::dir::{self, Attr, ENTRY, Entry, ShortName, Slot, encode, lfn_checksum
 use crate::fat::{FatCache, Table};
 use crate::fsinfo;
 use crate::volume::{Layout, Link, Root};
-use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, StoreError};
+use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Seal, StoreError};
 use core::ops::ControlFlow;
 
 /// The directories from the root down to `dir`.
@@ -183,14 +183,19 @@ impl<'a, B: Blocks> Fs<'a, B> {
     }
 
     /// Calls `f` with each run of contiguous blocks that holds `file`'s
-    /// bytes, in order, as (first block, blocks), and returns its length.
-    /// The chain is checked as `read` checks it.
+    /// bytes, in order, as (first block, blocks), and returns its length
+    /// and its seal. The chain is checked as `read` checks it.
     pub fn runs(
         &mut self,
         file: FileName,
         f: &mut dyn FnMut(u32, u32),
-    ) -> Result<u32, FsError<B::Error>> {
-        let e = self.find(file)?;
+    ) -> Result<(u32, Seal), FsError<B::Error>> {
+        let (e, at) = self.find_at(file)?;
+        let seal = match self.writable(at) {
+            Ok(()) => Seal::Open,
+            Err(FsError::Body(StoreError::ReadOnly)) => Seal::Sealed,
+            Err(e) => return Err(e),
+        };
         let layout = *self.table.layout();
         let (mut c, mut left) = (e.start, e.len.div_ceil(BLOCK as u32));
         let mut run: Option<(u32, u32)> = None;
@@ -216,7 +221,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
         if let Some((at, len)) = run {
             f(at, len);
         }
-        Ok(e.len)
+        Ok((e.len, seal))
     }
 
     /// Whether `dir` exists.
@@ -231,7 +236,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
     /// The block that holds `file`, if it is exactly one block long.
     pub fn one_block(&mut self, file: FileName) -> Result<Option<u32>, FsError<B::Error>> {
         let mut first = None;
-        let len = self.runs(file, &mut |at, _| _ = first.get_or_insert(at))?;
+        let (len, _) = self.runs(file, &mut |at, _| _ = first.get_or_insert(at))?;
         Ok(first.filter(|_| len == BLOCK as u32))
     }
 
@@ -257,15 +262,20 @@ impl<'a, B: Blocks> Fs<'a, B> {
 
     /// `file`'s entry, its chain checked to hold its length.
     fn find(&mut self, file: FileName) -> Result<Entry, FsError<B::Error>> {
-        let at = self.open(file.dir())?;
-        let Some((Slot::File(e), _)) = self.lookup(at, ShortName::file(&file))?.hit else {
+        self.find_at(file).map(|(e, _)| e)
+    }
+
+    /// `find`, and where its entry lies.
+    fn find_at(&mut self, file: FileName) -> Result<(Entry, Loc), FsError<B::Error>> {
+        let dir = self.open(file.dir())?;
+        let Some((Slot::File(e), at)) = self.lookup(dir, ShortName::file(&file))?.hit else {
             return Err(FsError::NotFound);
         };
         let layout = *self.table.layout();
         if e.len > 0 && self.table.chain_len(e.start)? < e.len.div_ceil(layout.cluster_bytes()) {
             return Err(FsError::Corrupt);
         }
-        Ok(e)
+        Ok((e, at))
     }
 
     /// Replaces `file` with what `body` puts, and returns its length. In

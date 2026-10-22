@@ -12,7 +12,7 @@ use chimera_engine::dsp::tape_engine::read::Shape;
 use chimera_engine::storage::{Crc32, PutRefusal, SourceCheck, SourceLayout, Stem};
 use chimera_engine::stream::bench::{BedCheck, BedChecks, MAX_BED_CHUNKS};
 use chimera_engine::stream::layout::{ChunkIdx, StreamFile, deframe};
-use chimera_hal::store::{FileRuns, Runs};
+use chimera_hal::store::{FileRuns, Runs, Seal};
 use chimera_hal::units::{BlockCount, Bytes, Lba};
 
 /// A bed's first frequency, and the ratio between beds.
@@ -106,6 +106,7 @@ fn table(path: &Path) -> Result<BedCheck, String> {
         FileRuns {
             ext,
             len: Bytes::new(len),
+            seal: Seal::Sealed,
         },
     )
     .ok_or_else(|| format!("{name}: the file does not hold its samples"))?;

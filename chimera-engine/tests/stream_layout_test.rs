@@ -12,7 +12,7 @@ use chimera_engine::stream::layout::{
     RAW_CHUNK_BYTES, StreamFile, deframe,
 };
 use chimera_engine::stream::units::{Frames, SourceFrame};
-use chimera_hal::store::{FileRuns, ReadSink, Runs, Store};
+use chimera_hal::store::{FileRuns, ReadSink, Runs, Seal, Store};
 use chimera_hal::testkit::MemStore;
 use chimera_hal::units::{BlockCount, Bytes, Lba};
 use core::ops::ControlFlow;
@@ -129,6 +129,7 @@ fn on_device(file: &[u8], cuts: &[u32]) -> (FileRuns, Vec<u8>) {
         FileRuns {
             ext,
             len: Bytes::new(file.len() as u32),
+            seal: Seal::Sealed,
         },
         dev,
     )
@@ -287,6 +288,7 @@ fn runs_short_of_the_file_are_refused() {
     let short = FileRuns {
         ext: r.finish().unwrap(),
         len: runs.len,
+        seal: Seal::Sealed,
     };
     assert!(StreamFile::from_layout(&l, short).is_none());
 }

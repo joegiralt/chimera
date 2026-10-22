@@ -1113,7 +1113,7 @@ fn runs_name_the_files_blocks_on_the_device() {
     let body = pattern(3, 3 * cluster + 100);
     s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
     let mut runs = Vec::new();
-    let len = s
+    let (len, _) = s
         .runs(vol, name(b"DATA"), &mut |at, n| runs.push((at, n)))
         .unwrap();
     assert_eq!(len as usize, body.len());
@@ -1137,7 +1137,7 @@ fn runs_split_where_the_chain_jumps() {
     let mut s = probed(&disk);
     s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
     let mut runs = Vec::new();
-    let len = s
+    let (len, _) = s
         .runs(vol, name(b"DATA"), &mut |at, n| runs.push((at, n)))
         .unwrap();
     let per = (cluster / 512) as u32;

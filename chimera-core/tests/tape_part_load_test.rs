@@ -137,7 +137,7 @@ mod streamed {
     };
     use chimera_core::stream::layout::StreamFile;
     use chimera_core::stream::stage::heads_for;
-    use chimera_hal::store::{Store, synthetic_runs};
+    use chimera_hal::store::{Seal, Store, synthetic_runs};
     use chimera_hal::testkit::MemStore;
     use chimera_hal::units::Bytes;
 
@@ -200,7 +200,8 @@ mod streamed {
             let other = source(99, 150_000).0;
             let l = SourceLayout::whole(other).unwrap();
             let len = source_file_min_len(other.sref).unwrap();
-            let runs = synthetic_runs(source_file(other.sref), Bytes::new(len)).unwrap();
+            let runs =
+                synthetic_runs(source_file(other.sref), Bytes::new(len), Seal::Sealed).unwrap();
             let f = StreamFile::from_layout(&l, runs).unwrap();
             for n in 24..32 {
                 q.pool()
@@ -314,6 +315,26 @@ mod streamed {
                 sources: 1
             })
         );
+    }
+
+    /// m10 (#761): an unsealed file, never read back against its CRC (a
+    /// cut `put`), doesn't stream, as the whole-file load would refuse it:
+    /// its ref stays, absent, with no stream row.
+    #[test]
+    fn an_unsealed_file_doesnt_stream() {
+        let mut s = MemStore::new(1);
+        let bed = source(7, 150_000);
+        put(&mut s, &bed);
+        s.unseal(source_file(bed.0.sref));
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, bed.0.sref);
+        p.source_absent(bed.0.sref).unwrap();
+        let (q, _) = round_trip(&mut s, &mut p, false);
+        let r = bed.0.sref;
+        assert_eq!(q.pool().held(r), None, "nothing published");
+        let id = q.pool().find_source(r).expect("the ref kept");
+        assert!(q.pool().absence(id).is_some());
+        assert!(q.pool().streams().unwrap().get(id).is_none());
     }
 
     /// The file `write_source` made for `src` on `s`, byte for byte.

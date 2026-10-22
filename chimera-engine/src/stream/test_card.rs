@@ -46,6 +46,8 @@ pub struct TestCard<'r> {
     garble: bool,
     /// The chunks whose records are rotted: they never de-frame.
     rotten: core::ops::Range<u32>,
+    /// The chunks on bad sectors: every read of them fails a token.
+    bad: core::ops::Range<u32>,
     rot: Rot,
     /// The read in flight, the block it lands, and which attempt it is.
     flight: Option<(Claim, AudioBlocks, Attempt)>,
@@ -79,6 +81,7 @@ impl<'r> TestCard<'r> {
             fail: 0,
             garble: false,
             rotten: 0..0,
+            bad: 0..0,
             rot: Rot::new(),
             flight: None,
             claims: 0,
@@ -112,6 +115,12 @@ impl<'r> TestCard<'r> {
     /// Chunks `cs` never de-frame from now on: rotted records in the file.
     pub fn rot_chunks(&mut self, cs: core::ops::Range<u32>) {
         self.rotten = cs;
+    }
+
+    /// Chunks `cs` lie on bad sectors from now on: every read of them
+    /// answers an error token.
+    pub fn bad_sectors(&mut self, cs: core::ops::Range<u32>) {
+        self.bad = cs;
     }
 
     /// Reads claimed so far.
@@ -215,12 +224,15 @@ impl<'r> TestCard<'r> {
         let garbled = core::mem::take(&mut self.garble) || self.rotten.contains(&c.chunk().get());
         let err = if self.fail > 0 {
             self.fail -= 1;
-            Some(ReadError::Proto(ProtoError::Crc))
+            Some(ReadError::proto(ProtoError::Crc, a, key, &mut self.rot))
+        } else if self.bad.contains(&c.chunk().get()) {
+            let token = ProtoError::ErrorToken(0x08);
+            Some(ReadError::proto(token, a, key, &mut self.rot))
         } else {
             garbled.then(|| ReadError::Frame(self.rot.blame(key)))
         };
         if let Some(err) = err {
-            match read_failed(err, a, &self.bus, &self.stats) {
+            match read_failed(err, &self.bus, &self.stats) {
                 ErrorStep::Retry => {
                     self.claims += 1;
                     self.flight = Some((c, now.after(self.latency), Attempt::Retry));

@@ -9,7 +9,7 @@ Musical findings 1, 5 and 13, perf finding 2. A note's card bill took every PITC
 
 ## Decision
 - **The reach in use** (`Instrument::bill_in`): each route's source by its live swing (an LFO by its DEPTH unless DEPTH is routed, so the wheel's vibrato at rest reaches nothing), wow only while TAPE runs (`tape_runs`), and the bend the wheel holds now, up (the glided reach or where the wheel sits). A wheel or DEPTH moving up re-bills the note each block (`refresh_in`, `raise`); if the card can't take it, the note holds at its cap, counted (`held_at_cap`), as before.
-- **Steals:** released voices first, the oldest; then the quietest held (its VCA's gain last block, `Age::level`), then the oldest (`Age::rank`).
+- **Steals:** released voices first, the oldest; then the quietest held (its VCA's gain last block, `Age::level`). A note in its attack (`Swell::Attack`: under `ATTACK_BLOCKS`, or its gain rising every block since) ranks loud. Among equal levels a note past its attack goes before one in it, the youngest of them, so a sustained chord keeps its root and a slow pad keeps its swelling notes; of notes all in their attack, the oldest (`Age::rank`; #761 review m5).
 - **TRON streams** (`needs_ram`): one START head, as ONE (`heads_in` places one head off LOOP); reversed it needs RAM.
 - **`STREAM_BUDGET_BPS` stays 315,978** until the unit's stress run measures 2× B4's load; `STREAM_BUDGET_2X_BPS` is named for it.
 - **`COST_STREAM` 90:** the gain multiplies by `1/1440` and skips its loop at rest (perf finding 2: 14 cycles a sample), pending the unit's re-measure.

@@ -11,7 +11,7 @@ use crate::sweep::{self, Fail};
 use crate::volume::{Layout, first_partition, layout};
 use chimera_hal::card_bus::CardFault;
 use chimera_hal::store::{
-    ByteSink, Dir, Doubt, FileName, FileRuns, Files, Mark, ReadSink, Runs, RunsError, Store,
+    ByteSink, Dir, Doubt, FileName, FileRuns, Files, Mark, ReadSink, Runs, RunsError, Seal, Store,
     StoreError, Sweep, SweepSeen, SweepStats, Swept, VolumeId,
 };
 use chimera_hal::units::{BlockCount, Bytes, Lba};
@@ -289,7 +289,8 @@ impl<D: Medium> FatStore<D> {
     }
 
     /// `Fs::runs` on the card, if it is still `vol`, each run's first block
-    /// on the device: for raw reads that bypass the FAT. A run whose LBA
+    /// on the device, and the file's seal: for raw reads that bypass the
+    /// FAT. A run whose LBA
     /// overflows u32 (a corrupt partition offset) refuses the file,
     /// `Corrupt`, and `f` sees no more. The card's real end is not checked:
     /// a run past it fails at the card's CMD18 (R1 error or error token),
@@ -300,9 +301,9 @@ impl<D: Medium> FatStore<D> {
         vol: VolumeId,
         file: FileName,
         f: &mut dyn FnMut(u32, u32),
-    ) -> Result<u32, StoreError> {
+    ) -> Result<(u32, Seal), StoreError> {
         let mut past = false;
-        let len = self.run(vol, |fs, lba| {
+        let got = self.run(vol, |fs, lba| {
             fs.runs(file, &mut |at, n| {
                 let last = lba
                     .checked_add(at)
@@ -316,7 +317,7 @@ impl<D: Medium> FatStore<D> {
         if past {
             return Err(StoreError::Corrupt);
         }
-        Ok(len)
+        Ok(got)
     }
 
     /// The lost-cluster sweep (#360): `Store::sweep`, one operation under
@@ -616,7 +617,7 @@ impl<D: Medium> Store for FatStore<D> {
 
     fn runs(&mut self, vol: VolumeId, file: FileName) -> Result<FileRuns, RunsError> {
         let mut runs = Runs::new();
-        let len = FatStore::runs(self, vol, file, &mut |at, n| {
+        let (len, seal) = FatStore::runs(self, vol, file, &mut |at, n| {
             if let Some(n) = BlockCount::new(n) {
                 runs.push(Lba::new(at), n);
             }
@@ -625,6 +626,7 @@ impl<D: Medium> Store for FatStore<D> {
         Ok(FileRuns {
             ext,
             len: Bytes::new(len),
+            seal,
         })
     }
 
