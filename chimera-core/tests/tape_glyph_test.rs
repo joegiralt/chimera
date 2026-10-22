@@ -760,7 +760,15 @@ fn no_tape_page_cell_is_dimmed() {
                 let v = view::view(def, i, &ctx);
                 // WALK's XFADE off LOOP and RETRIG off once through say why.
                 let why = v.addr().and_then(|a| view::tape_note(a, &s));
-                if matches!(why, Some(view::XFADE_LOOP_ONLY | view::RETRIG_ONCE_ONLY)) {
+                if matches!(
+                    why,
+                    Some(
+                        view::XFADE_LOOP_ONLY
+                            | view::XFADE_NO_SEAM
+                            | view::RETRIG_ONCE_ONLY
+                            | view::RETRIG_TRON_OFF
+                    )
+                ) {
                     continue;
                 }
                 // STRETCH dims the other TYPE's cells (ADR 0204), and only

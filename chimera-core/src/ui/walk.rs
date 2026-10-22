@@ -15,7 +15,10 @@ use crate::preset::Sound;
 use crate::dsp::modulator::law::Law;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::page::ValFmt;
-use crate::ui::view::{FADE_ASIDE, RETRIG_ONCE_ONLY, WOW_AT_REST, XFADE_LOOP_ONLY, tape_routed};
+use crate::ui::view::{
+    FADE_ASIDE, RETRIG_ONCE_ONLY, RETRIG_TRON_OFF, WOW_AT_REST, XFADE_LOOP_ONLY, XFADE_NO_SEAM,
+    tape_routed,
+};
 
 /// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
 /// Machines, ADR 0178), and a DIRECTION edit across once through and a
@@ -91,12 +94,17 @@ pub(crate) fn tape_note_in(addr: ParamAddr, sound: &Sound) -> Option<&'static st
         {
             Some(FADE_ASIDE)
         }
-        T::XFADE if t.machine == TapeMachine::Walk && !matches!(t.way(), Way::Loop | Way::Tron) => {
-            Some(XFADE_LOOP_ONLY)
-        }
-        T::RETRIG if t.machine == TapeMachine::Walk && t.way() != Way::One => {
-            Some(RETRIG_ONCE_ONLY)
-        }
+        // Each reason by the way it plays, so TRON on never reads as off.
+        T::XFADE => match t.way() {
+            Way::One => Some(XFADE_LOOP_ONLY),
+            Way::Ping => Some(XFADE_NO_SEAM),
+            _ => None,
+        },
+        T::RETRIG => match t.way() {
+            Way::Loop | Way::Ping => Some(RETRIG_ONCE_ONLY),
+            Way::Tron => Some(RETRIG_TRON_OFF),
+            _ => None,
+        },
         _ => None,
     }
 }

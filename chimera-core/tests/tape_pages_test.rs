@@ -195,14 +195,28 @@ fn play_page_notes_say_why() {
     let note = |w: Way, id| view::tape_note(tape(id), &live_on(w));
     assert_eq!(note(Way::Loop, P::XFADE), None);
     assert_eq!(note(Way::Tron, P::XFADE), None);
-    for w in [Way::One, Way::Ping] {
-        assert_eq!(note(w, P::XFADE), Some(view::XFADE_LOOP_ONLY), "{w:?}");
-    }
+    assert_eq!(note(Way::One, P::XFADE), Some(view::XFADE_LOOP_ONLY));
+    // PING-PONG with TRON on or off: it has no seam, and says so, not
+    // that TRON is off (review of #761, m1).
+    assert_eq!(note(Way::Ping, P::XFADE), Some(view::XFADE_NO_SEAM));
+    let mut ping_tron = live_on(Way::Ping);
+    ping_tron.params.tape.tron = chimera_core::dsp::tape_engine::Tron::On;
+    assert_eq!(
+        view::tape_note(tape(P::XFADE), &ping_tron),
+        Some(view::XFADE_NO_SEAM)
+    );
     assert_eq!(note(Way::One, P::RETRIG), None);
-    for w in [Way::Loop, Way::Ping, Way::Tron] {
+    for w in [Way::Loop, Way::Ping] {
         assert_eq!(note(w, P::RETRIG), Some(view::RETRIG_ONCE_ONLY), "{w:?}");
     }
-    for n in [view::XFADE_LOOP_ONLY, view::RETRIG_ONCE_ONLY] {
+    // FORWARD with TRON on is once through: TRON is why.
+    assert_eq!(note(Way::Tron, P::RETRIG), Some(view::RETRIG_TRON_OFF));
+    for n in [
+        view::XFADE_LOOP_ONLY,
+        view::XFADE_NO_SEAM,
+        view::RETRIG_ONCE_ONLY,
+        view::RETRIG_TRON_OFF,
+    ] {
         fits_band(n);
     }
     assert_eq!(note(Way::One, P::TRON), None);

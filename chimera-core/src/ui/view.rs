@@ -887,10 +887,15 @@ pub const WOW_AT_REST: &str = "TAPE AT 0 · NO WOW TO SHAPE";
 pub const FADE_ASIDE: &str = "AMP RELEASE ENDS THE NOTE";
 /// ONE's FADE under a VCA route: only HOLD, its last step, is heard.
 pub const FADE_HOLD_ONLY: &str = "BELOW HOLD AMP RELEASE ENDS IT";
-/// WALK's XFADE off LOOP and TRON: only they come round to a seam.
+/// WALK's XFADE once through with TRON off: only LOOP and TRON come
+/// round to a seam.
 pub const XFADE_LOOP_ONLY: &str = "ONLY LOOP AND TRON CROSSFADE";
-/// WALK's RETRIG off FORWARD and REVERSE, or with TRON on.
+/// WALK's XFADE on PING-PONG, TRON on or off: it turns, it has no seam.
+pub const XFADE_NO_SEAM: &str = "PING-PONG TURNS · NO SEAM";
+/// WALK's RETRIG on LOOP and PING-PONG.
 pub const RETRIG_ONCE_ONLY: &str = "CUTS ONLY ONCE THROUGH";
+/// WALK's RETRIG once through with TRON on: TRON's notes stack.
+pub const RETRIG_TRON_OFF: &str = "CUTS ONLY WITH TRON OFF";
 /// A streamed loop's XFADE past what its loop head holds (spec § 2.3).
 pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
 

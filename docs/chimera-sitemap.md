@@ -53,7 +53,7 @@ MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has
 |---|---|
 | SRC | SOURCE · START · END · VOL |
 | DECK on WALK | MODEL · LENGTH · FADE · DIRECTION (FWD, REVERSE, LOOP, PING) · POSITION · DRIFT |
-| WALK | TAPE · AGE · WOW · TRON (OFF, ON) · XFADE · RETRIG. XFADE reads on LOOP and with TRON on, RETRIG on FWD and REVERSE with TRON off; elsewhere each is dimmed and the band says why |
+| WALK | TAPE · AGE · WOW · TRON (OFF, ON) · XFADE · RETRIG. XFADE reads on LOOP and on FWD or REVERSE with TRON on, dimmed once through with TRON off (ONLY LOOP AND TRON CROSSFADE) and on PING-PONG, TRON on or off (PING-PONG TURNS · NO SEAM); RETRIG reads on FWD and REVERSE with TRON off, dimmed on LOOP and PING-PONG (CUTS ONLY ONCE THROUGH) and with TRON on (CUTS ONLY WITH TRON OFF) |
 | DECK on STRETCH | MODEL · SPEED · D-TIME |
 | STRCH | TAPE · AGE · WOW · POSITION · TYPE |
 | DECK on SCRUB | MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG |
