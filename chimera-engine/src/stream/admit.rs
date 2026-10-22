@@ -83,17 +83,34 @@ pub fn ratio_max(note: MidiNote, root: Cents, reach: Cents, bend: Cents) -> Read
 
 /// How long a playing voice has been so: `since` its start while held, its
 /// release once released. Bigger is older. `level`: a held voice's VCA
-/// gain last block, in 65 535ths (`LOUD` for a fresh note).
+/// gain last block, in 65 535ths (`LOUD` for a fresh note); `swell`
+/// whether it is still in its attack.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Age {
-    Held { since: Blocks, level: u16 },
-    Released { since: Blocks },
+    Held {
+        since: Blocks,
+        level: u16,
+        swell: Swell,
+    },
+    Released {
+        since: Blocks,
+    },
+}
+
+/// Where a held note's VCA is: still rising from its strike, or past it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Swell {
+    /// Struck under `ATTACK_BLOCKS` ago, or its gain has risen every block
+    /// since (a slow attack): it ranks loud.
+    Attack,
+    /// Its gain has stopped rising once: sustain, decay, or a plateau.
+    Past,
 }
 
 /// A fresh note's `Age::Held` level: full.
 pub const LOUD: u16 = u16::MAX;
-/// A held note this young (50 ms at 48 kHz) is in its attack: it ranks as
-/// loud, so a chord struck over a few ms keeps its notes.
+/// A held note this young (50 ms at 48 kHz) is in its attack, whatever its
+/// gain does: a chord struck over a few ms keeps its notes.
 pub const ATTACK_BLOCKS: Blocks = Blocks::new(38);
 
 impl Age {
@@ -101,6 +118,7 @@ impl Age {
     pub const FRESH: Age = Age::Held {
         since: Blocks::ZERO,
         level: LOUD,
+        swell: Swell::Attack,
     };
     /// Shed or cut: older than any other.
     pub const DYING: Age = Age::Released { since: Blocks::MAX };
@@ -110,32 +128,58 @@ impl Age {
     }
 
     /// A block on: older while still held or still released, else new to
-    /// its state; `level` the VCA's now.
+    /// its state; `level` the VCA's now. A held note stays in its attack
+    /// for `ATTACK_BLOCKS`, then while its gain still rises.
     pub fn after_block(self, held: bool, level: u16) -> Age {
-        let since = match self {
-            Age::Held { since, .. } if held => since.next(),
-            Age::Released { since } if !held => since.next(),
-            _ => Blocks::ZERO,
-        };
-        if held {
-            Age::Held { since, level }
-        } else {
-            Age::Released { since }
+        match self {
+            Age::Held {
+                since,
+                level: was,
+                swell,
+            } if held => {
+                let since = since.next();
+                let rising = swell == Swell::Attack && level > was;
+                let swell = if since < ATTACK_BLOCKS || rising {
+                    Swell::Attack
+                } else {
+                    Swell::Past
+                };
+                Age::Held {
+                    since,
+                    level,
+                    swell,
+                }
+            }
+            Age::Released { since } if !held => Age::Released {
+                since: since.next(),
+            },
+            _ if held => Age::Held {
+                since: Blocks::ZERO,
+                level,
+                swell: Swell::Attack,
+            },
+            _ => Age::Released {
+                since: Blocks::ZERO,
+            },
         }
     }
 
-    /// Which voice a steal takes first, the bigger: a released one before
-    /// a held one, the oldest; of held ones the quietest (the most
-    /// decayed; one still in its attack, `ATTACK_BLOCKS`, counts as loud),
-    /// then the oldest. The oldest held note is usually a chord's
-    /// foundation (#698).
-    fn rank(self) -> (bool, u32, u32) {
+    /// Which voice a steal takes first, the bigger (ADR 0183): a released
+    /// one before a held one, the oldest; of held ones the quietest (the
+    /// most decayed; one in its attack counts as loud). Among equals one
+    /// past its attack goes before one in it, the youngest of them: the
+    /// oldest is usually the chord's root (#698), and a slow pad's newest
+    /// notes, still swelling, are kept. Of notes all in their attack, the
+    /// oldest goes.
+    fn rank(self) -> (bool, u32, bool, u32) {
         match self {
-            Age::Released { since } => (true, since.get(), 0),
-            Age::Held { since, level } => {
-                let level = if since < ATTACK_BLOCKS { LOUD } else { level };
-                (false, u32::from(LOUD - level), since.get())
-            }
+            Age::Released { since } => (true, since.get(), false, 0),
+            Age::Held {
+                since,
+                level,
+                swell: Swell::Past,
+            } => (false, u32::from(LOUD - level), true, u32::MAX - since.get()),
+            Age::Held { since, .. } => (false, 0, false, since.get()),
         }
     }
 }
