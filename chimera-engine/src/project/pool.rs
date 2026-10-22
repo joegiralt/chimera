@@ -18,7 +18,9 @@ use crate::storage::{
 
 use super::arena::{ArenaWriter, Cost, GateAcked, MAX_SOURCES, Shift};
 use super::ids::SlotId;
-use super::sources::{Absence, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, source_cost};
+use super::sources::{
+    Absence, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, SourceSet, source_cost,
+};
 use crate::source_table::{Answer, GATE_ACK_TIMEOUT_MS, SourceTable};
 use crate::stream::layout::StreamFile;
 use crate::stream::registry::{RowRefused, StreamRegistry};
@@ -129,6 +131,10 @@ enum SrcSlot {
 struct Sources {
     slots: [SrcSlot; MAX_SOURCES],
     gens: [u16; MAX_SOURCES],
+    /// Ids whose stream row a failed publish couldn't free (a stale
+    /// ring's card read held it): freed by `drain_retired`, the id kept
+    /// from `free_source` till then.
+    owed: SourceSet,
 }
 
 /// Where each slot's bytes sit, and its generation.
@@ -160,6 +166,7 @@ impl Pool {
             addr_of_mut!((*p).sources).write(Sources {
                 slots: [SrcSlot::Empty; MAX_SOURCES],
                 gens: [0; MAX_SOURCES],
+                owed: SourceSet::EMPTY,
             });
             addr_of_mut!((*p).clock).write(None);
             addr_of_mut!((*p).new_skipped).write(0);
@@ -323,11 +330,15 @@ impl Pool {
                 RowRefused::Taken => StreamRefused::Taken,
             })
         };
-        // SAFETY: `s`'s pool row was never published, so no voice and no
-        // card read has its stream row.
-        let undo = |s| {
-            // Never held: no want names `s` yet.
-            let _ = unsafe { reg.clear(s) };
+        let undo = |pool: &mut Pool, s: SourceId| {
+            // SAFETY: `s`'s pool row was never published, so no voice
+            // reached its stream row through it. A card read of a stale
+            // ring that names `s` may hold the row: `clear` leaves a held
+            // row and says so.
+            if !unsafe { reg.clear(s) } {
+                // Freed on a later pass, as `rehead_beside`'s drain.
+                pool.sources.owed = pool.sources.owed.with(s);
+            }
         };
         self.commit_with(r, len, first, undo)
     }
@@ -565,7 +576,7 @@ impl Pool {
         r: SourceRef,
         len: usize,
     ) -> Result<SourceId, PoolFull> {
-        self.commit_with(r, len, |_| Ok(()), |_| {})
+        self.commit_with(r, len, |_| Ok(()), |_, _| {})
     }
 
     /// `source_commit`, with `first` run on the slot before its row is
@@ -576,7 +587,7 @@ impl Pool {
         r: SourceRef,
         len: usize,
         first: impl FnOnce(SourceId) -> Result<(), E>,
-        undo: impl FnOnce(SourceId),
+        undo: impl FnOnce(&mut Self, SourceId),
     ) -> Result<SourceId, E> {
         let found = self.find_source(r);
         if let Some(s) = found.filter(|&s| self.source(s).is_some_and(|e| !e.absent())) {
@@ -588,16 +599,17 @@ impl Pool {
         })?;
         first(s)?;
         if let Err(e) = self.source_put(s, r, len, |_| Some(len)) {
-            undo(s);
+            undo(self, s);
             return Err(e.into());
         }
         Ok(s)
     }
 
     pub(in crate::project) fn free_source(&self) -> Option<SourceId> {
-        SourceId::ALL
-            .into_iter()
-            .find(|s| matches!(self.sources.slots[s.index()], SrcSlot::Empty))
+        SourceId::ALL.into_iter().find(|&s| {
+            matches!(self.sources.slots[s.index()], SrcSlot::Empty)
+                && !self.sources.owed.contains(s)
+        })
     }
 
     /// Takes source `s` out of the index. Its bytes become a pending hole
@@ -722,11 +734,12 @@ impl Pool {
         loop {
             self.source_pass(&mut within);
             self.drain_retired();
-            if self
-                .sources
-                .slots
-                .iter()
-                .all(|s| matches!(s, SrcSlot::Empty))
+            if self.sources.owed == SourceSet::EMPTY
+                && self
+                    .sources
+                    .slots
+                    .iter()
+                    .all(|s| matches!(s, SrcSlot::Empty))
             {
                 return true;
             }
@@ -752,29 +765,36 @@ impl Pool {
     }
 
     /// A drained slot whose source no voice held since its row emptied
-    /// is free again: a held note-on never finds its id reused.
+    /// is free again: a held note-on never finds its id reused. An owed
+    /// stream row (`source_commit_streamed`'s undo) is freed too.
     fn drain_retired(&mut self) {
         let table = self.table();
         let (reader, blocks) = (table.has_reader(), table.blocks());
         let sounding = table.sounding();
         let streams = self.arena.streams();
+        let Sources { slots, owed, .. } = &mut self.sources;
         for s in SourceId::ALL {
-            let slot = &mut self.sources.slots[s.index()];
-            if let SrcSlot::Draining { since } = *slot
-                && (!reader || blocks.wrapping_sub(since) >= 2 && sounding & s.bit() == 0)
-            {
-                // SAFETY (ADR 0087's retire): the source was retired, its
-                // hole closed under an acked gate that moved it, its table
-                // row emptied two blocks ago and no voice held it since, so
-                // the audio holds nothing of its row. A card read in flight
-                // holds it (#597): left, and drained on a later pass.
-                let freed = match streams.filter(|_| cfg!(feature = "tape")) {
-                    Some(reg) => unsafe { reg.clear(s) },
-                    None => true,
-                };
-                if freed {
+            let slot = &mut slots[s.index()];
+            let drained = matches!(*slot, SrcSlot::Draining { since }
+                if !reader || blocks.wrapping_sub(since) >= 2 && sounding & s.bit() == 0);
+            if !drained && !owed.contains(s) {
+                continue;
+            }
+            // SAFETY (ADR 0087's retire): a drained source was retired, its
+            // hole closed under an acked gate that moved it, its table row
+            // emptied two blocks ago and no voice held it since, so the
+            // audio holds nothing of its row; an owed row's pool row was
+            // never published. A card read in flight holds it (#597): left,
+            // and freed on a later pass.
+            let freed = match streams.filter(|_| cfg!(feature = "tape")) {
+                Some(reg) => unsafe { reg.clear(s) },
+                None => true,
+            };
+            if freed {
+                if drained {
                     *slot = SrcSlot::Empty;
                 }
+                *owed = owed.without(s);
             }
         }
     }

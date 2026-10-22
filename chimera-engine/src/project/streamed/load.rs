@@ -123,7 +123,8 @@ impl StreamLoad {
                 StreamRefused::Pool(e) => StreamFail::Pool(e),
                 StreamRefused::Full => StreamFail::Full,
                 // The registry and the pool disagree on a row: unreachable,
-                // as a drain keeps its id `Draining` until `clear` succeeds.
+                // as a drain keeps its id `Draining`, and a failed publish
+                // keeps it owed (`free_source`), until `clear` succeeds.
                 // If it ever fires it is no card's fault: STREAMS FULL.
                 StreamRefused::Taken => StreamFail::Full,
             })
