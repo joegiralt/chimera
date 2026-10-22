@@ -49,9 +49,12 @@ fn word(w: Word) -> &'static str {
         Word::Hold => (85, 4),
         Word::Times => (89, 1),
     };
-    match WORDS.get(at..at + len).map(core::str::from_utf8) {
-        Some(Ok(s)) => s,
-        _ => "",
+    match WORDS.get(at..at + len) {
+        Some(b) => match core::str::from_utf8(b) {
+            Ok(s) => s,
+            Err(_) => "",
+        },
+        None => "",
     }
 }
 

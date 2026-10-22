@@ -69,7 +69,11 @@ fn word(b: &mut FmtBuf, w: Word) {
     // Checked, not `from_utf8_unchecked`: `WORDS` is ASCII, so it never
     // fails, and a `&str` table would put its bytes in bank 1's unnamed
     // rodata.
-    if let Some(Ok(s)) = WORDS.get(at..at + len).map(core::str::from_utf8) {
+    // A match, not `Option::map`: the map's instance would be core's, in
+    // bank 1.
+    if let Some(w) = WORDS.get(at..at + len)
+        && let Ok(s) = core::str::from_utf8(w)
+    {
         let _ = b.write_str(s);
     }
 }
