@@ -119,7 +119,7 @@ pub(crate) fn tape_note_in(addr: ParamAddr, sound: &Sound) -> Option<&'static st
 pub(crate) fn tape_fmt_in(id: ParamId, m: TapeMachine, way: Way) -> Option<ValFmt> {
     Some(match (m, id) {
         (TapeMachine::Walk, T::SIZE) if way == Way::Tron => ValFmt::Law(Law::StretchLength),
-        (TapeMachine::Walk, T::DRAG) if way == Way::One => ValFmt::Hold,
+        (TapeMachine::Walk, T::DRAG) if way == Way::One => ValFmt::Law(Law::FadeHold),
         (TapeMachine::Walk | TapeMachine::Scrub, T::DRAG) => ValFmt::Law(Law::DragTime),
         (TapeMachine::Walk, T::DRIFT) => ValFmt::Law(Law::Pct),
         (TapeMachine::Scrub, T::SIZE) => ValFmt::Law(Law::ScrubLength),
@@ -129,12 +129,21 @@ pub(crate) fn tape_fmt_in(id: ParamId, m: TapeMachine, way: Way) -> Option<ValFm
     })
 }
 
-/// SPEED at `v` (MOTION's 0..1 display, −1..1 stored) as the engine
-/// plays it: `1.00x`, `0.50x`, `-1.00x`; STRETCH by `time_speed`
-/// (0 freezes), SCRUB `2 · MOTION`.
-pub(crate) fn speed_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
+/// The text of a TAPE law bank 1 hands here (`fmt::fmt_law`): FADE once
+/// through, its top step HOLD, else its time; SPEED at `v` (MOTION's
+/// 0..1 display, −1..1 stored) as the engine plays it, `1.00x`, `0.50x`,
+/// `-1.00x`: STRETCH by `time_speed` (0 freezes), SCRUB `2 · MOTION`.
+pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
+    use core::fmt::Write;
     let motion = 2.0 * v - 1.0;
     let x = match law {
+        Law::FadeHold if v >= 0.999 => {
+            let _ = buf.write_str("HOLD");
+            return;
+        }
+        Law::FadeHold => {
+            return crate::ui::fmt::fmt_val(buf, v, ValFmt::Law(Law::DragTime));
+        }
         #[cfg(feature = "tape")]
         Law::StretchSpeed => tape_engine::stretch::time_speed(motion),
         _ => 2.0 * motion,

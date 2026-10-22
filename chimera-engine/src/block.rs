@@ -34,8 +34,7 @@ pub fn nudge_fine(b: &mut dyn Block, id: ParamId, delta: i8) {
 pub enum ValFmt {
     /// Unipolar: 0 to 127. Snaps: 0, 100, 127.
     Uni,
-    /// FADE's time (`Law::DragTime`), its top step reading HOLD: WALK
-    /// once through.
+    /// `Uni`, its top step reading HOLD.
     Hold,
     /// Bipolar: -64 to +63. Snaps: -64, -44, 0, +43, +63.
     Bi,

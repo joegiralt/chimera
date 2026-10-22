@@ -188,6 +188,9 @@ pub enum Law {
     ScrubLength,
     /// FADE and DRAG, a time (`DRAG_TIME`).
     DragTime,
+    /// WALK's FADE once through: `DragTime`, its top step HOLD; its text
+    /// the UI door's.
+    FadeHold,
     /// STRETCH's and SCRUB's SPEED on MOTION (−1..1): a factor of the
     /// source's own, its text the UI door's (`stretch::time_speed`, and
     /// SCRUB's `2 · MOTION`). Bipolar: 0 at the middle.
@@ -222,7 +225,8 @@ impl Law {
             | Law::Tilt
             | Law::LfoHz
             | Law::StretchSpeed
-            | Law::ScrubSpeed => return None,
+            | Law::ScrubSpeed
+            | Law::FadeHold => return None,
         })
     }
 }

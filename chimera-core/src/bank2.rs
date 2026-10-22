@@ -207,7 +207,7 @@ pub struct UiDoor {
     /// TAPE cells' units where the engine has a law (`ui::walk`).
     tape_fmt:
         fn(ParamId, TapeMachine, crate::dsp::tape_engine::Way) -> Option<crate::ui::page::ValFmt>,
-    speed_text: fn(&mut crate::ui::fmt::FmtBuf, crate::dsp::modulator::law::Law, f32),
+    law_text: fn(&mut crate::ui::fmt::FmtBuf, crate::dsp::modulator::law::Law, f32),
     /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
     delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,
     /// The focus readout's full words for TAPE's MODEL and DIRECTION.
@@ -248,7 +248,7 @@ impl UiDoor {
         tape_note: crate::ui::walk::tape_note_in,
         tape_held: crate::ui::walk::tape_held_in,
         tape_fmt: crate::ui::walk::tape_fmt_in,
-        speed_text: crate::ui::walk::speed_text_in,
+        law_text: crate::ui::walk::law_text_in,
         delay_note: crate::ui::walk::delay_note_in,
         long_names: crate::ui::walk::long_names_in,
         jog: crate::ui::jog::Jog::pass,
@@ -370,13 +370,13 @@ impl UiDoor {
     }
 
     #[inline(always)]
-    pub(crate) fn speed_text(
+    pub(crate) fn law_text(
         &self,
         buf: &mut crate::ui::fmt::FmtBuf,
         law: crate::dsp::modulator::law::Law,
         v: f32,
     ) {
-        (self.speed_text)(buf, law, v)
+        (self.law_text)(buf, law, v)
     }
 
     #[inline(always)]

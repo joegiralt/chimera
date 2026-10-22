@@ -9,8 +9,7 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
         ValFmt::Hold if val >= 0.999 => {
             let _ = buf.write_str("HOLD");
         }
-        ValFmt::Hold => fmt_law(buf, val, crate::dsp::modulator::law::Law::DragTime),
-        ValFmt::Uni => {
+        ValFmt::Uni | ValFmt::Hold => {
             let midi = (val * 127.0 + 0.5) as i32;
             let _ = write!(buf, "{}", midi);
         }
@@ -155,8 +154,8 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         Law::Cutoff => hz_text(buf, round(CUTOFF_HZ.at(v))),
         // The engine's laws, bank 2's: the door hands these formats out
         // only open (`view::fmt_of`).
-        Law::StretchSpeed | Law::ScrubSpeed => {
-            crate::bank2::ui_door(|u| u.speed_text(buf, law, v));
+        Law::StretchSpeed | Law::ScrubSpeed | Law::FadeHold => {
+            crate::bank2::ui_door(|u| u.law_text(buf, law, v));
         }
         _ => {
             let s = law.range().map_or(0.0, |r| r.at(v));
