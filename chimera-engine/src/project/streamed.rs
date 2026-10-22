@@ -12,9 +12,9 @@ use super::{PoolFull, Project};
 use crate::dsp::tape_engine::params::{NeedsRam, TapeEngineParams};
 use crate::dsp::tape_engine::read::Shape;
 use crate::storage::{
-    LoadError, Ready, SourceCheck, SourceHead, SourceLayout, SourceReadError, SourceRef,
+    Crc32, LoadError, Ready, SourceHead, SourceLayout, SourceReadError, SourceRef,
 };
-use crate::stream::layout::{FileKey, StreamFile};
+use crate::stream::layout::StreamFile;
 use crate::stream::registry::CardEpoch;
 use crate::stream::stage::{Heads, heads_for};
 
@@ -174,17 +174,16 @@ pub struct StreamLoad {
 }
 
 /// Where a `StreamLoad` is.
+#[derive(Clone, Copy)]
 #[expect(clippy::large_enum_variant, reason = "one, in the one load")]
 enum Phase {
     /// The first pass finds the file's runs.
     Find,
-    /// An unsealed file read whole through the check, a pass's share at a
-    /// time: `at` bytes so far, of `len`, in the file whose first block
-    /// `key` names (ADR 0210).
+    /// An unsealed file's packed bytes hashed against its name, a pass's
+    /// share at a time through the staging: `at` bytes so far (ADR 0210).
     Check {
-        check: SourceCheck,
-        key: FileKey,
-        len: u32,
+        file: StreamFile,
+        crc: Crc32,
         at: u32,
     },
     /// The heads read: `at` bytes so far, of every head's.

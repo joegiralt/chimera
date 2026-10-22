@@ -46,9 +46,9 @@ pub use sound::{MAX_SOUND_COST, SoundCheck, SoundDecoder, encode_sound, sound_cr
 pub use source_file::{
     MAX_TAPES, PutRefusal, SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceCheck, SourceHead, SourceLayout,
     SourceReadError, SourceZones, TapeList, WholeShape, ZONE_LEN, Zone, data_offset,
-    held_for_file_len, held_len, held_len_zoned, listed_zones, read_packed_into, read_source_check,
-    read_source_head, read_source_into, source_crc, source_file, source_file_min_len, source_name,
-    write_descriptor, zone_set_crc,
+    held_for_file_len, held_len, held_len_zoned, listed_zones, read_packed_into, read_source_head,
+    read_source_into, source_crc, source_file, source_file_min_len, source_name, write_descriptor,
+    zone_set_crc,
 };
 #[cfg(feature = "source-writer")]
 pub use source_file::{Wrote, source_target, verify_and_seal, write_source, write_zone_set};

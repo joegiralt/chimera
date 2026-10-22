@@ -228,9 +228,6 @@ fn ui_state_rest_under_4k() {
     // (integration-1021), past the sum of each feature's line. The focus
     // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
     // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
-    // 40 B a streamed load's check of an unsealed source (ADR 0210): its
-    // `SourceCheck` beside the load's own fields outgrows the whole load's
-    // slot by that much.
     assert!(
         rest <= 4096
             + 512
@@ -249,8 +246,7 @@ fn ui_state_rest_under_4k() {
             + 128
             + 16
             + 152
-            + 8
-            + 40,
+            + 8,
         "UiState grew to {rest} B besides its Project"
     );
 }

@@ -19,21 +19,23 @@ against the CRC on each load. But a source that streams (too big for the
 pool's free room) would be refused forever: nothing on the unit sealed it.
 
 ## Decision
-A streamed load that meets an unsealed source checks it whole once
-through `put`'s `SourceCheck` (its head naming the stem, its samples
-hashing to it) before streaming it: a `Check` phase of `StreamLoad`,
-`read_source_check` feeding the pass's budget a pass from where the last
-one stopped. Once every byte passed, on the card and the file as found
-(the registry's epoch, and the file's first block and length as the
-check began),
-the source is sealed and its heads read as a sealed one's. One that fails
-stays unsealed and refused (`READ FAILED`), as before. The seal is best
-effort: a card that won't take it streams the checked file anyway and
-checks it again on its next load. A project load's pass 2
-(`StreamLoad::found`) hands an unsealed file to that phase instead of
-skipping it. The phase and `read_source_check` are bank 2's; bank 1
-gains only `HeadOnly`'s reach test (its sink stays in bank 1, as every
-sink's vtable must).
+A streamed load that meets an unsealed source reads its head as for a
+sealed one, then hashes its packed samples against its name before
+streaming it: a `Check` phase of `StreamLoad` (the file, a running
+`Crc32` begun as `source_crc`'s on the head's shape and count, and how
+far), each pass reading the next share through `read_packed_into` into
+the load's staging (the heads' gap, unused until the heads go in): the
+pass's budget, at most the staging's room. `read_packed_into` checks each
+`SourceData` record's tag and length as it goes. Once every byte hashed
+to the name, on the card and the file as found (`still_found`: the
+registry's epoch, the file's first block), the source is sealed and its
+heads read as a sealed one's. One that doesn't stays unsealed and refused
+(`READ FAILED`), as before. The seal is best effort: a card that won't
+take it streams the checked file anyway and checks it again on its next
+load. A project load's pass 2 (`StreamLoad::found`) hands an unsealed
+file to the first pass instead of skipping it. All of it is bank 2's
+(`project::streamed::load`); the phase is three words, so the SOURCE
+cell's job slot doesn't grow.
 
 `factory-v1.zip` ships the sources with ordinary (writable) permissions:
 it does not rely on the attribute surviving a copy. Once sealed they are
@@ -49,33 +51,35 @@ same bytes) rather than Replace it.
   the card each time a new one appears, for files that may never stream.
 - **Seal after a whole load:** bank 1 code (frozen, ADR 0198), and a
   source that streams from the first load is never whole-loaded.
+- **Feed `put`'s `SourceCheck` across passes:** it is 1,200 B; held in the
+  load it outgrew the SOURCE cell's job slot, and the shifted `UiState`
+  cost bank 1 about 300 B of code. The CRC over the samples is three
+  words.
 
 ## Consequences
 - A hand-copied source streams like a `put` one. Its first stream reads
-  the whole file once, bounded per UI frame: the SOURCE cell's budget is
-  `STEP_BYTES` (4 KiB) a frame, one `read_at` of eight blocks after the
-  file's directory entry and cluster chain are found. ADR 0172's M1
-  measured a random 4 KB read at median 5.3 ms, max 6.7 ms, so no frame
-  waits on much more than that. At `UI_FPS` (20) that is 80 KB/s: about
-  13 s a MiB, once; the factory sources (15–48 KB) take 4–12 frames, up
-  to 0.6 s. The cell shows the load pending, as for any streamed load.
-  Each read is one 4 KiB card operation, far under `SD_OP_CAP_MS` (10
-  s), so a large reel never times out. A project load checks it in `ARENA_BYTES` (160 KiB) passes
-  inside its one card operation, as its whole loads read.
+  its samples whole once, bounded per UI frame: the SOURCE cell's budget
+  is `STEP_BYTES` (4 KiB) a frame, one `read_packed_into` of eight blocks
+  or so. ADR 0172's M1 measured a random 4 KB read at median 5.3 ms, max
+  6.7 ms, so no frame waits on much more than that. At `UI_FPS` (20)
+  that is 80 KB/s: about 13 s a MiB, once; the factory sources (15–48 KB)
+  take 4–12 frames, up to 0.6 s. The cell shows the load pending, as for
+  any streamed load. Each read is one 4 KiB card operation, far under
+  `SD_OP_CAP_MS` (10 s), so a large reel never times out. A project load
+  checks it in passes of the staging's room (its heads' bytes, up to
+  `ARENA_BYTES`) inside its one card operation, as its whole loads read.
 - The seal is a directory-entry write: like a save, it quiets any
   streams playing (their ~20 ms fade) while the card is written, once a
   source.
-- The `Check` phase holds a `SourceCheck` (1,200 B) and the file's first
-  block; the SOURCE cell's job slot grows 40 B past the whole load's
-  (`memory_budget_test`).
-- A damaged unsealed file is still refused, never sealed.
+- A damaged unsealed file is still refused, never sealed. The check is
+  the samples' CRC and the records' framing, not the file trailer's CRC:
+  what the seal promises (ADR 0106), the samples hashing to the name.
 - Amends #761 m10's refusal: unsealed is now "not yet checked", not
   "corrupt".
 
 ## Sources
 - `chimera-engine/src/project/streamed/load.rs` (`StreamLoad::find`, `check`),
-  `chimera-engine/src/project/streamed.rs` (`StreamLoad::found`),
-  `chimera-engine/src/storage/source_file.rs` (`read_source_check`)
+  `chimera-engine/src/project/streamed.rs` (`StreamLoad::found`)
 - `chimera-fat/src/dir.rs` (`ATTR_READ_ONLY`), `chimera-fat/src/fs.rs` (`runs`)
 - Tests: `tape_part_load_test` (`an_unsealed_file_that_checks_out_streams_and_is_sealed`,
   `an_unsealed_damaged_file_doesnt_stream`), `tape_source_cell_test`

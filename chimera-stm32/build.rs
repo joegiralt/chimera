@@ -254,11 +254,11 @@ SECTIONS {
        (ADR 0175, below). The pool's streamed commit and re-head are a
        load's alone: here, whatever the inliner leaves of them. */
     *(.text.*10instrument9admission* .text.*7project8streamed4load* .text.*6stream5stage5place*
-      .text.*11source_file16read_source_head* .text.*11source_file17read_source_check* .text.*11source_file16read_packed_into*
+      .text.*11source_file16read_source_head* .text.*11source_file16read_packed_into*
       .text.*7project4pool*source_commit_streamed* .text.*7project4pool*source_rehead*
       .text.*7project4pool*rehead_beside* .text.*7project4pool*rehead_in_place*);
     *(.rodata.*10instrument9admission* .rodata.*7project8streamed4load* .rodata.*6stream5stage5place*
-      .rodata.*11source_file16read_source_head* .rodata.*11source_file17read_source_check* .rodata.*11source_file16read_packed_into*
+      .rodata.*11source_file16read_source_head* .rodata.*11source_file16read_packed_into*
       .rodata.*7project4pool*source_commit_streamed* .rodata.*7project4pool*source_rehead*
       .rodata.*7project4pool*rehead_beside* .rodata.*7project4pool*rehead_in_place*);
     /* REVERB */

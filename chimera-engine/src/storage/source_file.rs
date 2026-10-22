@@ -828,22 +828,10 @@ pub fn read_packed_into<S: Store + ?Sized>(
     }
 }
 
-/// How far a `HeadOnly` feeds its check.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Reach {
-    /// Up to its head, in its first 4 KB.
-    Head,
-    /// Its `left` bytes, whatever came: a share of an unsealed source's
-    /// whole check (`read_source_check`).
-    Whole,
-}
-
-/// Feeds a `SourceCheck` until its head came (on `Reach::Head`), or
-/// `left` bytes went.
+/// Feeds a `SourceCheck` until its head came, or `left` bytes went.
 struct HeadOnly<'a> {
     check: &'a mut SourceCheck,
     left: u32,
-    reach: Reach,
     refused: bool,
 }
 
@@ -856,10 +844,7 @@ impl ReadSink for HeadOnly<'_> {
         let n = bytes.len().min(self.left as usize);
         self.refused = self.check.feed(&bytes[..n]).is_err();
         self.left -= n as u32;
-        if self.refused
-            || self.left == 0
-            || (self.reach == Reach::Head && self.check.head().is_some())
-        {
+        if self.refused || self.left == 0 || self.check.head().is_some() {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -880,7 +865,6 @@ pub fn read_source_head<S: Store + ?Sized>(
     let mut sink = HeadOnly {
         check: &mut check,
         left: 4_096,
-        reach: Reach::Head,
         refused: false,
     };
     s.read_at(r.volume(), source_name(stem), 0, &mut sink)
@@ -889,35 +873,6 @@ pub fn read_source_head<S: Store + ?Sized>(
             e => e.into(),
         })?;
     check.head().ok_or(bad)
-}
-
-/// Card source `stem`'s next `n` bytes from byte `at` into `check`: a
-/// share of an unsealed source's whole check, a pass at a time, before
-/// its seal (ADR 0210). `check.finish()` gives the verdict once every
-/// byte went.
-pub fn read_source_check<S: Store + ?Sized>(
-    s: &mut S,
-    r: &Ready,
-    stem: Stem,
-    check: &mut SourceCheck,
-    at: u32,
-    n: u32,
-) -> Result<(), SourceReadError> {
-    let mut sink = HeadOnly {
-        check,
-        left: n,
-        reach: Reach::Whole,
-        refused: false,
-    };
-    s.read_at(r.volume(), source_name(stem), at, &mut sink)
-        .map_err(|e| match e {
-            StoreError::NotFound => SourceReadError::Load(LoadError::Missing),
-            e => e.into(),
-        })?;
-    if sink.refused {
-        return Err(SourceReadError::Load(LoadError::File(FileError::Corrupt)));
-    }
-    Ok(())
 }
 
 /// Why `put` refuses a source file (TAPE Task 18), at the record that
