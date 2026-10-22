@@ -1030,6 +1030,14 @@ pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
     }
 }
 
+/// The focus readout's format for `addr` where its cell abbreviates: full
+/// words (`walk::long_names_in`, bank 2's: closed, none).
+pub fn readout_fmt(addr: ParamAddr) -> Option<ValFmt> {
+    crate::bank2::ui_door(|u| u.long_names(addr))
+        .flatten()
+        .map(ValFmt::Names)
+}
+
 /// Why a delay cell is dimmed: the other TYPE's (ADR 0202), bank 2's
 /// (`walk::delay_note_in`; closed, none).
 pub fn delay_note(addr: ParamAddr, ctx: &SlotCtx) -> Option<&'static str> {

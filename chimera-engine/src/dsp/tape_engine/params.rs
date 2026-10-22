@@ -669,6 +669,10 @@ pub const MACHINE_NAMES: [&str; 4] = ["WALK", "STRETCH", "SCRUB", "WAVE"];
 /// FORWARD and PING-PONG don't (full-word labels rule).
 pub const DIRECTION_NAMES: [&str; 4] = ["FWD", "REVERSE", "LOOP", "PING"];
 
+/// DIRECTION's names in full, by its value: the focus readout's, which
+/// has the room.
+pub const DIRECTION_WORDS: [&str; 4] = ["FORWARD", "REVERSE", "LOOP", "PING-PONG"];
+
 /// SLICE's names, by its value.
 pub const SLICE_NAMES: [&str; 18] = [
     "OFF", "NOTE", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",

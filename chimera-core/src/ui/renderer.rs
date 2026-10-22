@@ -771,7 +771,8 @@ impl Renderer {
             let right = hint_right(&o.gauge);
             return hint::focus(display, f.hint(o.hint), f.text, right);
         }
-        let buf = value_text(f, f.focus, self.set[f.focus].target());
+        let v = self.set[f.focus].target();
+        let buf = long_text(f, &view, v).unwrap_or_else(|| value_text(f, f.focus, v));
         let gauge = self.gauge(f);
         let label = band_label(f, &view);
         components::focus_band(
@@ -1312,6 +1313,24 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
         view => buf = param_text(f, i, &view, v),
     }
     buf
+}
+
+/// The focus readout's text in full words where the cell abbreviates
+/// (`walk::long_names_in`, bank 2's: closed, the cell's).
+fn long_text(f: &Frame, view: &View, v: f32) -> Option<FmtBuf> {
+    let View::Param {
+        addr, label, short, ..
+    } = *view
+    else {
+        return None;
+    };
+    let long = View::Param {
+        addr,
+        label,
+        fmt: view::readout_fmt(addr)?,
+        short,
+    };
+    Some(param_text(f, f.focus, &long, v))
 }
 
 /// The ALGO page's picked cell (ALG A or B is the focus) and the refused

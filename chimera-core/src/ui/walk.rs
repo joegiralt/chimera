@@ -154,6 +154,19 @@ pub(crate) fn delay_note_in(id: ParamId, k: DelayType) -> Option<&'static str> {
     }
 }
 
+/// The focus readout's names for TAPE's `a` where its cell abbreviates
+/// them (full-word labels): MODEL's machines and DIRECTION's ways.
+pub(crate) fn long_names_in(a: ParamAddr) -> Option<&'static [&'static str]> {
+    if a.block != BlockRef::TapeEngine {
+        return None;
+    }
+    match a.param {
+        T::MODEL => Some(&tape_engine::MACHINE_NAMES),
+        T::MODE => Some(&tape_engine::params::DIRECTION_WORDS),
+        _ => None,
+    }
+}
+
 /// What `t` with `param` (MODEL or DIRECTION) at `code` can't play from a
 /// streamed source (`held::Held::why`).
 pub(crate) fn tape_held_in(t: &T, param: ParamId, code: u8) -> Option<NeedsRam> {
