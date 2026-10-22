@@ -331,14 +331,14 @@ fn cases() -> Vec<(String, TapeGauge)> {
     v
 }
 
-// The still and worn rows are WALK's footsteps since ADR 0203; the live
+// The still and worn rows are WALK's STRAIGHT since ADR 0209; the live
 // rows of ONE's match, LOOP's wheel, PING's court and TRON's blind are the
 // kept pictures', unchanged.
 const GOLDENS: &[(&str, u64)] = &[
-    ("one_still", 0x9f4b5f3936088066),
-    ("loop_still", 0xf81953cb39842fa6),
-    ("ping_still", 0xe2e893a20f5c771f),
-    ("tron_still", 0xc8dfe3dd85713df6),
+    ("one_still", 0xeb3433509e1ce8d5),
+    ("loop_still", 0x4b2477c7f1b07ce6),
+    ("ping_still", 0xd522892dea253ea8),
+    ("tron_still", 0x4446140a67165778),
     ("stretch_still", 0xec7471660def4d69),
     ("wave_still", 0x35b91a1f3869788b),
     ("scrub_still", 0xfa9dc37b17460909),
@@ -364,9 +364,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("scrub_forward", 0x823b6cdf60db0701),
     ("scrub_back", 0xde0233cd46fe3318),
     ("scrub_length_xfade", 0x4ae89a8f1af5f0df),
-    ("loop_wow", 0x8e80d9f019a555c4),
-    ("loop_grain", 0x751dff187a6ad703),
-    ("tron_worn", 0xafc96adcb08994d6),
+    ("loop_wow", 0x9c9fc2cd5cb6e2c3),
+    ("loop_grain", 0x235ded261aee7d6a),
+    ("tron_worn", 0x6f836ef99019bab2),
 ];
 
 #[test]

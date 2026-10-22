@@ -37,6 +37,9 @@ tape = []
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
 # its parameters and disk codes stay either way).
 master-tape = []
+# WALK's mockup glyph styles beside STRAIGHT (ADR 0209), for the listening
+# page's renders: kept, never in a firmware build.
+walk-styles = ["tape"]
 # The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
 # `EngineSlot::new`), for tests only: firmware builds every engine in place.
 test-support = []

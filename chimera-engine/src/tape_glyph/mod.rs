@@ -229,35 +229,54 @@ impl Steps {
     }
 }
 
-/// How WALK's footsteps are drawn: the owner picks one (ADR 0203's
-/// listening page); `render` draws `StepStyle::DEFAULT`.
+/// How WALK is drawn. STRAIGHT ships (the owner's pick, ADR 0209); the
+/// rest are the mockups it was picked from, kept for tests and
+/// `walk-styles` builds, never linked into firmware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepStyle {
+    /// Runners on the home straight, a few bold strokes each, facing the
+    /// DIRECTION; the strip under them the window, its arrow the way.
+    Straight,
     /// A sole and a toe, left and right.
+    #[cfg(any(test, feature = "walk-styles"))]
     Prints,
     /// Boot treads: a chevron a step.
+    #[cfg(any(test, feature = "walk-styles"))]
     Treads,
     /// A dotted trail, a stride's mark a step.
+    #[cfg(any(test, feature = "walk-styles"))]
     Trail,
     /// A WALK / DON'T WALK pedestrian signal: the walking figure strides
     /// the DIRECTION, the countdown reads LENGTH, TRON's raised hand waits.
+    #[cfg(any(test, feature = "walk-styles"))]
     Signal,
     /// A figure on a treadmill: the belt's arrows run the DIRECTION,
     /// DRIFT wobbles the stride, TRON lights the stop button.
+    #[cfg(any(test, feature = "walk-styles"))]
     Treadmill,
     /// Little runners round an oval seen from above at an angle: the lit
     /// stretch is the run, the finish tape TRON's end.
+    #[cfg(any(test, feature = "walk-styles"))]
     Oval,
     /// The oval in depth: big runners on the near straight, small ones on
     /// the far.
+    #[cfg(any(test, feature = "walk-styles"))]
     Stadium,
-    /// The home straight from the side, the track taking DIRECTION's
-    /// shape: a straight, the oval on LOOP, cones on PING-PONG.
-    Straight,
+    /// STRAIGHT as mocked up: the grandstand, the dotted lane, runners
+    /// with faces and ponytails, the oval on LOOP, cones on PING-PONG,
+    /// TRON's stopwatch.
+    #[cfg(any(test, feature = "walk-styles"))]
+    StraightMockup,
 }
 
 impl StepStyle {
-    pub const ALL: [StepStyle; 8] = [
+    pub const DEFAULT: StepStyle = StepStyle::Straight;
+}
+
+#[cfg(any(test, feature = "walk-styles"))]
+impl StepStyle {
+    pub const ALL: [StepStyle; 9] = [
+        StepStyle::Straight,
         StepStyle::Prints,
         StepStyle::Treads,
         StepStyle::Trail,
@@ -265,9 +284,8 @@ impl StepStyle {
         StepStyle::Treadmill,
         StepStyle::Oval,
         StepStyle::Stadium,
-        StepStyle::Straight,
+        StepStyle::StraightMockup,
     ];
-    pub const DEFAULT: StepStyle = StepStyle::Prints;
 }
 
 /// A machine and its inputs. ONE's match, LOOP's wheel, PING's court and
