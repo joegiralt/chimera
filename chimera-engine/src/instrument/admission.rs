@@ -18,7 +18,7 @@ use crate::params::EngineType;
 use crate::part::PartMode;
 use crate::project::{PartId, SourceId};
 use crate::source_table::GateView;
-use crate::stream::admit::{Admit, Age, Bill, STREAM_BUDGET_BPS, admit};
+use crate::stream::admit::{Admit, Age, Bill, ReadRatio, STREAM_BUDGET_BPS, admit};
 use crate::stream::stats::StreamStats;
 use crate::voice_alloc::{VoiceIdx, VoiceSet};
 
@@ -53,6 +53,7 @@ pub struct AdmitDoor {
         (Option<&StreamStats>, CardFault),
     ) -> Option<(usize, Option<Paid>)>,
     refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
+    loop_extra: fn(&Instrument, PartId, &AudioShared, &GateView<'_>, BillAt) -> Cost,
 }
 
 impl AdmitDoor {
@@ -90,6 +91,18 @@ impl AdmitDoor {
     ) {
         (self.refresh)(i, shared, src, stats)
     }
+
+    #[inline(always)]
+    pub(crate) fn loop_extra(
+        &self,
+        i: &Instrument,
+        p: PartId,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        at: BillAt,
+    ) -> Cost {
+        (self.loop_extra)(i, p, shared, src, at)
+    }
 }
 
 impl Instrument {
@@ -99,6 +112,7 @@ impl Instrument {
         bill: Self::bill_in,
         pick: Self::pick_streamed,
         refresh: Self::refresh_in,
+        loop_extra: Self::loop_in,
     };
 
     /// What key `key`'s note `note` on Part `p`, reading `source`, asks of
@@ -114,21 +128,32 @@ impl Instrument {
         src: &GateView<'_>,
         BillAt { key, note, source }: BillAt,
     ) -> Option<Paid> {
+        use crate::dsp::tape_engine::read::Descriptor;
+        use crate::stream::admit::bill;
+        if shared.parts[p.index()].params.engine() != EngineType::Tape {
+            return None;
+        }
+        let d = Descriptor::from_bytes(src.bytes(source?)?).filter(Descriptor::is_streamed)?;
+        let ratio = self.reach(p, shared, key, note);
+        Some(Paid {
+            bill: bill(d.rate(), ratio),
+            ratio,
+        })
+    }
+
+    /// What key `key`'s note `note` on Part `p` can read at its fastest,
+    /// over its source's own speed: `bill_in`'s reach.
+    fn reach(&self, p: PartId, shared: &AudioShared, key: MidiNote, note: MidiNote) -> ReadRatio {
         use crate::addr::{BlockRef, ParamAddr};
         use crate::dsp::engines::pitch_reach_by;
         use crate::dsp::lfo::LfoParams;
         use crate::dsp::modulator::LfoSlot;
-        use crate::dsp::tape_engine::read::Descriptor;
         use crate::dsp::tape_engine::{TapeEngineParams, ratio_max, tape_runs};
         use crate::modulation::ModSource;
-        use crate::stream::admit::{WOW_CENTS, bill};
+        use crate::stream::admit::WOW_CENTS;
         use crate::stream::units::Cents;
         use chimera_theory::snap_reach_up;
         let part = &shared.parts[p.index()];
-        if part.params.engine() != EngineType::Tape {
-            return None;
-        }
-        let d = Descriptor::from_bytes(src.bytes(source?)?).filter(Descriptor::is_streamed)?;
         let mut top = note;
         if part.params.pitch.steal_glide().is_some() {
             for s in self
@@ -174,11 +199,70 @@ impl Instrument {
         };
         let bend = Cents::new(self.bend_up(p, part) * 100.0);
         let cents = (part.params.pitch.semitones() + self.tune) * 100.0 + routes + wow;
-        let ratio = ratio_max(&part.params.tape, top, Cents::new(cents), bend);
-        Some(Paid {
-            bill: bill(d.rate(), ratio),
-            ratio,
-        })
+        ratio_max(&part.params.tape, top, Cents::new(cents), bend)
+    }
+
+    /// What key `key`'s note `note` on Part `p` bills over its TAPE model's
+    /// for its loop (`heads::loop_extra`, ADR 0211): the loop as the note
+    /// lays it out on `source`, at the fastest it reads. A SIZE, START, END
+    /// or XFADE route can make it any loop: billed the shortest, faded
+    /// equal-power. Nothing off TAPE, or with no source to read.
+    fn loop_in(
+        &self,
+        p: PartId,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        BillAt { key, note, source }: BillAt,
+    ) -> Cost {
+        use crate::addr::{BlockRef, ParamAddr};
+        use crate::dsp::tape_engine::heads::{
+            Bounds, Sizing, loop_extra, shortest, window_end_min, window_start,
+        };
+        use crate::dsp::tape_engine::read::SourceView;
+        use crate::dsp::tape_engine::{INC_MAX, TapeEngineParams, Way};
+        let part = &shared.parts[p.index()];
+        let t = &part.params.tape;
+        let way = t.way();
+        if part.params.engine() != EngineType::Tape
+            || !matches!(way, Way::Loop | Way::Tron | Way::Ping)
+        {
+            return Cost::ZERO;
+        }
+        let Some(v) = source.and_then(|s| src.bytes(s)).and_then(SourceView::new) else {
+            return Cost::ZERO;
+        };
+        let rate = v.desc().rate();
+        let ratio = self.reach(p, shared, key, note).get();
+        let inc = (f32::from(rate) / crate::hw::SAMPLE_RATE as f32 * ratio).min(INC_MAX);
+        let frames = v.file_frames();
+        let floor = shortest(rate, inc);
+        let routed = [
+            TapeEngineParams::SIZE,
+            TapeEngineParams::START,
+            TapeEngineParams::END,
+            TapeEngineParams::XFADE,
+        ]
+        .iter()
+        .any(|&q| {
+            part.mod_state
+                .moves_addr(ParamAddr::new(BlockRef::TapeEngine, q))
+        });
+        let (len, fade) = if routed {
+            let len = floor.min(frames.get());
+            (len, len / 2)
+        } else {
+            let ws = window_start(t.start, frames);
+            let we = window_end_min(ws, t.end, frames.get(), floor);
+            let xfade = if way == Way::Ping { 0.0 } else { t.xfade };
+            let sizing = Sizing {
+                size: t.size,
+                place: 0.0,
+                xfade,
+            };
+            let b = Bounds::of_min(ws.min(we), ws.max(we), sizing, rate, floor);
+            (b.frames(), b.lx())
+        };
+        loop_extra(way, len, fade, rate, inc)
     }
 
     /// Part `p`'s bend up, semitones: the wheel's glided reach or where the

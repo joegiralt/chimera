@@ -406,6 +406,9 @@ struct Streaming {
     /// Its reach rose past what the card admits: it holds at its cap,
     /// counted once (`StreamStats::held_at_cap`).
     capped: bool,
+    /// Its loop's bill over its TAPE model's, at note-on (ADR 0211): held
+    /// in every block's re-bill.
+    looped: Cost,
 }
 
 impl Streaming {
@@ -414,6 +417,7 @@ impl Streaming {
         fading: None,
         age: Age::FRESH,
         capped: false,
+        looped: Cost::ZERO,
     };
 
     /// The ring serves one stream at a time: counted once, fading or not.
@@ -1028,6 +1032,21 @@ impl Instrument {
         Self::admission(|d| d.bill(self, p, shared, src, at)).flatten()
     }
 
+    /// What a note on Part `p` bills for its loop over its TAPE model's
+    /// (`AdmitDoor::loop_extra`, ADR 0211); nothing off TAPE.
+    fn loop_bill(
+        &self,
+        p: PartId,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        at: admission::BillAt,
+    ) -> Cost {
+        if shared.parts[p.index()].params.engine() != EngineType::Tape {
+            return Cost::ZERO;
+        }
+        Self::admission(|d| d.loop_extra(self, p, shared, src, at)).unwrap_or(Cost::ZERO)
+    }
+
     /// Once a block, before the voices render: the streamed notes'
     /// re-bill (`AdmitDoor::refresh`).
     fn refresh_bills(
@@ -1206,6 +1225,8 @@ impl Instrument {
                     if stream.is_some() {
                         cost = cost + COST_STREAM;
                     }
+                    let looped = self.loop_bill(id, shared, src, at);
+                    cost = cost + looped;
                     let glides = part.params.pitch.steal_glide().is_some();
                     let pick = admission::PickAt {
                         part: id,
@@ -1301,8 +1322,11 @@ impl Instrument {
                             fading: old.filter(|_| self.voices[v].fading()),
                             age: Age::FRESH,
                             capped: false,
+                            looped,
                         };
                     }
+                    #[cfg(not(feature = "tape"))]
+                    let _ = looped;
                     #[cfg(feature = "probe")]
                     crate::probe::acc(2, crate::probe::now().wrapping_sub(t2));
                     // A note replaced before it sounded (ADR 0027).
@@ -1753,6 +1777,7 @@ impl Instrument {
                 let held = self.voices[v].held_model_extra(&part.params)
                     + self.voices[v].held_level_extra(&part.params, &part.mod_state)
                     + self.voices[v].held_ops_extra(&part.params, &part.mod_state)
+                    + self.streaming[v].looped
                     + high;
                 let k = if first { Knobs::COST } else { Cost::ZERO };
                 self.alloc

@@ -104,19 +104,26 @@ pub use params::{
 // Each model's bill: its measured worst a sample, the M7's static count
 // (instructions × 1.46 × 1.1, + 12 a head for `inc` 16's misses), rounded
 // up to 10 (spec § 5). The bench's cold rows hold them (TAPE Task 14).
-/// LOOP either way: its shortest loop at `inc` 16, XFADE ½, 262.4 → 445.
-/// The unit reads more (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): REV 64 892, LOOP 64 859, a 40 ms
-/// loop's equal-power fade at every wrap 775, LOOP 256 664: 820.
-pub const COST_LOOP: Cost = Cost(820);
+/// LOOP either way, its loop's floor (ADR 0211): a pass every 256 output
+/// samples or more, its fade summing to 1. A shorter pass, or an
+/// equal-power fade, bills `heads::loop_extra` over it at note-on: the
+/// unit reads (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the
+/// chain's 36, TAPE's 10 and AGE's 30) a pass every 4 samples 816, every
+/// 16 samples 588, and a 40 ms loop's equal-power fade every 62 samples
+/// 699; a pass's cost `512 + 1,216 / spw`, an equal-power fade 130 more and
+/// its `power_of` about 2,600 a pass.
+pub const COST_LOOP: Cost = Cost(520);
 /// ONESHOT: a short slice's end ramp, retriggered, 135.4 → 229.5. The unit
 /// reads 1SHOT 418 (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 345.
 pub const COST_ONESHOT: Cost = Cost(345);
-/// TRON goes round its window as LOOP does (ADR 0203), struck and let go
-/// every block on the bench's row: the unit reads 1,035 (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 960.
-pub const COST_TRON: Cost = Cost(960);
-/// PING-PONG clamping in its shortest loop, 289.4 → 489. The unit reads
-/// PING 64 643 (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 570.
-pub const COST_PING: Cost = Cost(570);
+/// TRON goes round its window as LOOP does (ADR 0203): LOOP's floor and
+/// its bands; struck and let go every block on a 64-frame source the unit
+/// reads 1,035 (`heads::loop_extra`'s tiny band).
+pub const COST_TRON: Cost = COST_LOOP;
+/// PING-PONG clamping in its shortest legal loop, a turn every 16 samples:
+/// the unit reads 480 (PING 256). Under 16 samples a turn (a source
+/// shorter than the loop's floor), 567: `heads::loop_extra`.
+pub const COST_PING: Cost = Cost(490);
 /// SCRUB fading in its shortest loop, an ease in, 283.4 → 479.
 pub const COST_SCRUB: Cost = Cost(480);
 /// TRANSWAVE steady: two heads, 232.9 → 398. The unit reads WAVE 530

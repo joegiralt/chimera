@@ -12,12 +12,52 @@
 //! source at `off − u`, so LOOP with END before START, PING-PONG's way down
 //! and SCRUB's backward vari-speed are LOOP's arithmetic read backward.
 
+use super::Way;
 use super::read::{Pos, SourceView};
 pub use super::window::{
     Bounds, Sizing, loop_len, loop_len_min, min_frames, shortest, window_end, window_end_min,
     window_start,
 };
 use crate::dsp::algo::math::clampf;
+use crate::hw::Cost;
+use crate::stream::units::SourceRate;
+
+/// A pass's length in output samples, banded (ADR 0211): under 16 (only a
+/// source shorter than the loop's floor), 16 to 59, 60 to 255, 256 on.
+const BANDS: [u32; 3] = [16, 60, 256];
+/// LOOP's and TRON's bill over `COST_LOOP` by band, a fade summing to 1
+/// and an equal-power one (none under 16: such a fade is short). The
+/// formula at each band's shortest pass, rounded up to 10: `512 + 1,216 /
+/// spw`, and `130 + 2,600 / spw` more for equal power. Under 16 samples
+/// the unit's readings: LOOP 816, TRON struck every block 959. A pass every
+/// 16 samples reads 591 reversed, over the formula's 588: 80 there.
+const LOOP_EXTRA: [(u32, u32); 3] = [(80, 370), (20, 190), (0, 140)];
+const LOOP_TINY: u32 = 300;
+const TRON_TINY: u32 = 440;
+/// PING-PONG's turn under 16 samples: 567, over `COST_PING`'s 490.
+const PING_TINY: u32 = 80;
+
+/// What a note's loop bills over its model's (ADR 0211): `frames` a pass
+/// and `fade` of them crossfading, at `rate`, read `inc` frames a sample at
+/// the fastest its note reaches. Only LOOP, TRON and PING-PONG pay; a fade
+/// of 20 ms or more may be equal-power (`POWER_FADE_S`).
+pub fn loop_extra(way: Way, frames: u32, fade: u32, rate: SourceRate, inc: f32) -> Cost {
+    let spw = frames as f32 / inc.max(1e-3);
+    let band = BANDS.iter().filter(|&&b| spw >= b as f32).count();
+    let power = fade as f32 >= POWER_FADE_S * f32::from(rate);
+    let c = match (way, band) {
+        (Way::Ping, 0) => PING_TINY,
+        (Way::Ping, _) => 0,
+        (Way::Loop, 0) => LOOP_TINY,
+        (Way::Tron, 0) => TRON_TINY,
+        (Way::Loop | Way::Tron, b) => {
+            let (sum, pow) = LOOP_EXTRA[b - 1];
+            if power { pow } else { sum }
+        }
+        _ => 0,
+    };
+    Cost(c)
+}
 
 /// One read head: a 32.32 position in frames, and its frame: mirrored, it
 /// reads the source backward (`off − u`). Each head has its own, so at a

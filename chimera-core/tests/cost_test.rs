@@ -735,25 +735,20 @@ fn the_model_bills_every_bench_row_high() {
         // ±12 st every block: billed as a glide or a deep route is.
         ("TAPE WAVE C7", tape(Way::Wave, fwd, true), 535),
         ("TAPE WAVE", tape(Way::Wave, fwd, false), 530),
-        ("TAPE LOOP 40MS", tape(lp, fwd, false), 775),
-        ("TINY LOOP 8", tape(lp, fwd, false), 859),
-        ("TINY REV 8", tape(lp, rev, false), 892),
-        ("TINY PING 8", tape(ping, fwd, false), 643),
+        // LOOP's, TRON's and PING-PONG's rows bill their loop's band over
+        // these (ADR 0211): tape_loop_bill_test holds each reading.
         ("TINY SCRUB 8", tape(Way::Scrub, fwd, false), 555),
-        ("TINY LOOP", tape(lp, fwd, false), 664),
-        ("TINY REV", tape(lp, rev, false), 667),
-        ("TINY PING", tape(ping, fwd, false), 556),
         ("TINY SCRUB", tape(Way::Scrub, fwd, false), 501),
         ("TINY 1SHOT", tape(one, fwd, false), 418),
-        ("TINY TRON", tape(Way::Tron, fwd, false), 1_035),
     ] {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
-    assert_eq!(tape(lp, fwd, false), 36 + 820 + 40);
+    assert_eq!(tape(lp, fwd, false), 36 + 520 + 40);
+    let _ = (rev, ping);
     assert_eq!(tape(Way::Stretch, fwd, false), 36 + 540 + 40);
     assert_eq!(tape(Way::Wave, fwd, true), 36 + 825 + 40);
     assert_eq!(tape(one, fwd, false), 36 + 345 + 40);
-    assert_eq!(tape(Way::Tron, fwd, false), 36 + 960 + 40);
+    assert_eq!(tape(Way::Tron, fwd, false), 36 + 520 + 40);
     // STRETCH GRAIN, with the source's PERIOD and with its own: 1,020 and
     // 1,019 cold.
     let mut grain = tape_sound(chimera_core::dsp::tape_engine::TapeModel::Stretch);
@@ -1610,14 +1605,17 @@ fn tape_bills_each_model() {
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
     for (w, bill, off, both) in [
-        // The unit's TAPE COLD rows, 2026-10-22 (#771).
-        (lp, 820, [6, 4, 5, 5], [5, 4, 5, 5]),
-        (ping, 570, [8, 6, 8, 7], [7, 6, 7, 7]),
+        // The unit's TAPE COLD rows, 2026-10-22 (#771); LOOP, TRON and
+        // PING-PONG at their floor, a pass every 256 samples or more:
+        // shorter passes bill over it at note-on (ADR 0211,
+        // tape_loop_bill_test).
+        (lp, 520, LP_OFF, LP_BOTH),
+        (ping, 490, PING_OFF, PING_BOTH),
         (Way::Scrub, 480, [8, 7, 8, 8], [8, 6, 8, 8]),
         (Way::Wave, 455, [8, 7, 8, 8], [8, 7, 8, 8]),
         (Way::Stretch, 540, [8, 6, 8, 8], [8, 6, 7, 7]),
         (one, 345, [8, 8, 8, 8], [8, 8, 8, 8]),
-        (Way::Tron, 960, [5, 4, 5, 4], [5, 3, 4, 4]),
+        (Way::Tron, 520, LP_OFF, LP_BOTH),
     ] {
         for reversed in [false, true] {
             let mut p = tape_sound(w.machine().model());
@@ -1665,6 +1663,13 @@ fn tape_bills_each_model() {
         }
     }
 }
+
+/// LOOP's and TRON's voices at their floor, TAPE and AGE off and both at
+/// ½; PING-PONG's.
+const LP_OFF: [u32; 4] = [8, 6, 8, 8];
+const LP_BOTH: [u32; 4] = [8, 6, 8, 8];
+const PING_OFF: [u32; 4] = [8, 7, 8, 8];
+const PING_BOTH: [u32; 4] = [8, 6, 8, 8];
 
 /// STRETCH bills by TYPE (ADR 0204): CLASSIC 540, GRAIN 945 (the unit's
 /// TAPE COLD rows, 2026-10-22, #771), and the
