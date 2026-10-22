@@ -26,10 +26,14 @@ The readings, the cost table and the voice table are in the stress-0.2 ledger.
 
      | Band | Summing fade | Equal-power fade (20 ms or more, `POWER_FADE_S`) |
      |---|---|---|
-     | 256 and up | +0 | +140 |
-     | 60–255 | +20 | +190 |
-     | 16–59 | +80 | +370 |
+     | 4,096 and up | +0 | +10 |
+     | 1,024–4,095 | +0 | +20 |
+     | 256–1,023 | +0 | +50 |
+     | 60–255 | +20 | +200 |
+     | 16–59 | +80 | +740 |
      | Under 16 | LOOP +300, TRON +440 | — |
+
+   - The model behind the bands: a pass costs `512 + 1,216 / spw`, fitted to the unit's 816 every 4 samples and 588 every 16. An equal-power fade adds 10 a sample (`xgains`' 8 flops) and 10,500 a pass. The pass term is fitted to the 40 ms loop's 699, a pass every 62 samples. The unit read no loop longer than 62 samples a pass, so the 16–59 band's equal-power figure is that model's, not a reading.
 
    - PING-PONG: +80 under 16, else +0.
    - A pass under 16 samples only happens when the source is shorter than the loop's floor.
@@ -45,7 +49,7 @@ The readings, the cost table and the voice table are in the stress-0.2 ledger.
 ## Consequences
 - **Voices:**
   - FUZZ Parts: five.
-  - Factory LOOP Sounds: six to eight, by fade, against nine at the old static bill and five at the worst-row bill.
+  - Factory LOOP Sounds: eight, a pass every 7,000 samples or more at their pitches. That matches the old static bill; the worst-row bill gave five.
   - SYMPATHETIC: one fewer. GRAIN delay Parts: about a third of a voice back.
 - **Lag:** a GRAIN chord on eight windows locks over eight blocks (11 ms).
 - **SIZE knob:** a knob turned to a tiny SIZE under a held note isn't re-banded. It runs in the headroom, as a UI move does (ADR 0061).

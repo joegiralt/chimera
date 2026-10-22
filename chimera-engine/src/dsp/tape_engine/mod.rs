@@ -110,8 +110,8 @@ pub use params::{
 /// unit reads (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the
 /// chain's 36, TAPE's 10 and AGE's 30) a pass every 4 samples 816, every
 /// 16 samples 588, and a 40 ms loop's equal-power fade every 62 samples
-/// 699; a pass's cost `512 + 1,216 / spw`, an equal-power fade 130 more and
-/// its `power_of` about 2,600 a pass.
+/// 699; a pass's cost `512 + 1,216 / spw`, an equal-power fade 10 more a
+/// sample and 10,500 a pass.
 pub const COST_LOOP: Cost = Cost(520);
 /// ONESHOT: a short slice's end ramp, retriggered, 135.4 → 229.5. The unit
 /// reads 1SHOT 418 (2026-10-22, TAPE COLD bench, rev V at 480 MHz, less the chain's 36, TAPE's 10 and AGE's 30): 345.

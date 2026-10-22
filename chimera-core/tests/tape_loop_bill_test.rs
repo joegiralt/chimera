@@ -32,12 +32,15 @@ fn every_band_bills_its_pass_length() {
         assert_eq!(at(w, 4, 0), tiny, "{w:?} under 16");
     }
     for (spw, sum, pow) in [
-        (16, 80, 370),
-        (59, 80, 370),
-        (60, 20, 190),
-        (255, 20, 190),
-        (256, 0, 140),
-        (4096, 0, 140),
+        (16, 80, 740),
+        (59, 80, 740),
+        (60, 20, 200),
+        (255, 20, 200),
+        (256, 0, 50),
+        (1_023, 0, 50),
+        (1_024, 0, 20),
+        (4_096, 0, 10),
+        (30_000, 0, 10),
     ] {
         for w in [Way::Loop, Way::Tron] {
             assert_eq!(at(w, spw, 0), sum, "{w:?} {spw} summing");
@@ -108,12 +111,13 @@ fn every_band_holds_the_unit_s_reading() {
 
 /// A LOOP note on a 64-frame source at the top of the keyboard books its
 /// tiny band at note-on and holds it every block; one played at its root
-/// on a long source books the floor's band (its fade 20 ms, equal-power).
+/// on a long source books the longest band's (its fade 20 ms or more,
+/// equal-power).
 #[test]
 fn admission_books_the_loop_and_holds_it() {
     let tiny = held_plain(&sine(24_000, 16.0, 64), 24_000);
     let long = held_plain(&sine(24_000, 100.0, 24_000), 24_000);
-    for (held, note, extra) in [(&tiny, 120, 300), (&long, 60, 140)] {
+    for (held, note, extra) in [(&tiny, 120, 300), (&long, 60, 10)] {
         let mut src = OneSource::new(held);
         let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
         let mut p: ParamSnapshot = common::init_params(EngineType::Tape);

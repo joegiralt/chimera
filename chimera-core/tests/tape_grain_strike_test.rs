@@ -47,8 +47,13 @@ fn eight_windows_struck_in_one_block_stay_inside_it() {
     let mut per_block = Vec::new();
     for _ in 0..12 {
         let view = src.view();
-        rig.inst
-            .render_with(&mut rig.fx, &mut rig.dac, &rig.shared, &mut rig.scope, &view);
+        rig.inst.render_with(
+            &mut rig.fx,
+            &mut rig.dac,
+            &rig.shared,
+            &mut rig.scope,
+            &view,
+        );
         let now = searches();
         per_block.push(now - last);
         last = now;

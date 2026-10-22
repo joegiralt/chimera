@@ -23,15 +23,16 @@ use crate::hw::Cost;
 use crate::stream::units::SourceRate;
 
 /// A pass's length in output samples, banded (ADR 0211): under 16 (only a
-/// source shorter than the loop's floor), 16 to 59, 60 to 255, 256 on.
-const BANDS: [u32; 3] = [16, 60, 256];
+/// source shorter than the loop's floor), then from 16, 60, 256, 1,024
+/// and 4,096 up.
+const BANDS: [u32; 5] = [16, 60, 256, 1_024, 4_096];
 /// LOOP's and TRON's bill over `COST_LOOP` by band, a fade summing to 1
-/// and an equal-power one (none under 16: such a fade is short). The
-/// formula at each band's shortest pass, rounded up to 10: `512 + 1,216 /
-/// spw`, and `130 + 2,600 / spw` more for equal power. Under 16 samples
-/// the unit's readings: LOOP 816, TRON struck every block 959. A pass every
-/// 16 samples reads 591 reversed, over the formula's 588: 80 there.
-const LOOP_EXTRA: [(u32, u32); 3] = [(80, 370), (20, 190), (0, 140)];
+/// and an equal-power one (none under 16: such a fade is short), at each
+/// band's shortest pass, rounded up to 10. A pass costs `512 + 1,216 /
+/// spw` (the unit's 816 every 4 samples, 588 every 16; 591 reversed, so 80
+/// at 16); an equal-power fade 10 more a sample (`xgains`' 8 flops) and
+/// 10,500 a pass (`power_of`, fitted to the 40 ms loop's 699 every 62).
+const LOOP_EXTRA: [(u32, u32); 5] = [(80, 740), (20, 200), (0, 50), (0, 20), (0, 10)];
 const LOOP_TINY: u32 = 300;
 const TRON_TINY: u32 = 440;
 /// PING-PONG's turn under 16 samples: 567, over `COST_PING`'s 490.
