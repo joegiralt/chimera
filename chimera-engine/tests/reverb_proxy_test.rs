@@ -82,7 +82,7 @@ fn the_reverb_plays_through_the_door_and_is_silent_closed() {
         assert!(bits(&out).iter().all(|&x| x == 0), "block {b} not silent");
     }
     // The bus closed, every send fed: chorus and delay are bank 2's too
-    // (ADR 0212), so nothing returns.
+    // (ADR 0213), so nothing returns.
     let closed = bus_run(0.7);
     assert!(closed.iter().all(|&x| x == 0), "the bus returned closed");
 

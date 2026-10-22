@@ -116,7 +116,7 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
 /// and the FX TYPE FUZZ (ADR 0157), the filter TYPE SEM (ADR 0192), VA
 /// NOISE's KIND (ADR 0197, every KIND), the delay's TYPE and the chorus's
-/// MODE (ADR 0212, every value: both play from bank 2) and every ORBIT
+/// MODE (ADR 0213, every value: both play from bank 2) and every ORBIT
 /// param (ADR 0208) read `NEEDS UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,

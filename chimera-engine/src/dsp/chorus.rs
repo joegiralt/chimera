@@ -323,7 +323,7 @@ impl JunoChorus {
     /// Send/return use (the FX bus): the wet signal × MIX, the return
     /// level, per side. At MIX 0 or mode OFF the lines are still written
     /// and the return fades out. Through the door with `bank2`; closed,
-    /// silent (ADR 0212).
+    /// silent (ADR 0213).
     pub fn process_wet(
         &mut self,
         send: &[f32; BLOCK_SIZE],
@@ -343,7 +343,7 @@ impl JunoChorus {
     }
 }
 
-/// The chorus's per-sample work, bank 2's (ADR 0212): bank 1 calls
+/// The chorus's per-sample work, bank 2's (ADR 0213): bank 1 calls
 /// `process` once a block.
 #[repr(C)]
 pub struct ChorusDoor {

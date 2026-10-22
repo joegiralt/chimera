@@ -1,4 +1,4 @@
-# 0212. Move the TAPE delay's and the chorus's loops to bank 2
+# 0213. Move the TAPE delay's and the chorus's loops to bank 2
 
 - **Status:** Proposed (amends 0202's closed door: GRAIN no longer plays as TAPE closed, the delay is silent)
 - **Deciders:** owner (#793: 0.3's efficiency wins, the sound unchanged), firmware

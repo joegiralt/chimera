@@ -1,4 +1,4 @@
-//! TAPE's sample loop and the TYPE's dispatch, bank 2's (ADR 0212):
+//! TAPE's sample loop and the TYPE's dispatch, bank 2's (ADR 0213):
 //! `TapeDelay::run` calls `run` through the door.
 
 #[cfg(any(feature = "bank2", not(target_os = "none")))]

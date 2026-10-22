@@ -1,4 +1,4 @@
-# 0213. Skip the bus's idle work only where the result is known bit for bit
+# 0214. Skip the bus's idle work only where the result is known bit for bit
 
 - **Status:** Proposed
 - **Deciders:** owner (#793: "easy wins to make algorithms more efficient without changing the way they sound. Very important."), firmware
@@ -28,12 +28,12 @@ Under ADR 0061 every effect runs at MIX 0 and keeps its lines written, so a retu
 - **Flushing QUAD's DAMP state to 0 after a silent ring length,** so it idles at high DAMP too: that is a sound change (about −90 dB), so it goes to the owner's ear.
 
 ## Consequences
-- The counters add a word to `TapeDelay` and `JunoChorus` and a halfword to `Ring`. Bank 1 sees that only as layout. The effects' skip code is all bank 2's (ADR 0212). The pairs' skips are bank 1's (the mix, the limiter and the conversion, on the audio interrupt's path): about +190 B, paid for by the conversion running as one out-of-line loop for the three pairs (`engine::put`) where it was three inlined copies. Each set's bank 1 then sits 456 to 936 B under its line, and the lines come down to it (`tools/bank1-budget.txt`, naming this ADR), so the room stays bank 2's.
+- The counters add a word to `TapeDelay` and `JunoChorus` and a halfword to `Ring`. Bank 1 sees that only as layout. The effects' skip code is all bank 2's (ADR 0213). The pairs' skips are bank 1's (the mix, the limiter and the conversion, on the audio interrupt's path): about +190 B, paid for by the conversion running as one out-of-line loop for the three pairs (`engine::put`) where it was three inlined copies. Each set's bank 1 then sits 456 to 936 B under its line, and the lines come down to it (`tools/bank1-budget.txt`, naming this ADR), so the room stays bank 2's.
 - An idle bus costs less, but the bill doesn't change. `FxBus::COST` is reserved every block, so the savings are headroom, not voices, until the bus is billed by what is awake (#793).
 - QUAD never idles where its DAMP state holds ±1 LSB for good (high DAMP, `Ring::is_silent`'s note). That is correct, and it stays the full path.
 
 ## Sources
-- #793; (private notes). ADR 0050 (the limiter), 0061, 0090 (the delay's i16 line), 0142, 0198, 0212.
+- #793; (private notes). ADR 0050 (the limiter), 0061, 0090 (the delay's i16 line), 0142, 0198, 0213.
 - `chimera-engine/src/dsp/delay/tape.rs`, `chorus.rs`, `ring.rs`, `rev/mod.rs`, `halfband.rs`, `limiter.rs`, `master_out.rs`, `fx_bus.rs`, `instrument.rs` (`mix_parts`), `dsp/mod.rs` (`may_skip`, `all_pos_zero`, `Skip`); `chimera-stm32/src/audio/engine.rs` (`put`); `chimera-core/tests/idle_skip_test.rs`.
 - libm 0.2.16 (rust-lang/libm, MIT OR Apache-2.0): `tanhf`, `expm1f`, from FreeBSD msun (Sun's notice, in `delay/tape.rs` and THIRD_PARTY.md).
 - The bench's ROUTING area times MIX and MIX DRY (every send 0, warmed 1,024 blocks until every effect idles) on its BUS screen.

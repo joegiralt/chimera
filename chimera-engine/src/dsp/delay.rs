@@ -404,7 +404,7 @@ const fn grain_slot(id: ParamId) -> Option<usize> {
 }
 
 /// The delay's per-sample work, TAPE's and GRAIN's, bank 2's (ADR 0202,
-/// 0212): bank 1 calls `run` once a block.
+/// 0213): bank 1 calls `run` once a block.
 #[repr(C)]
 pub struct DelayDoor {
     pub run: fn(&mut TapeDelay, &mut [f32; BLOCK_SIZE], &DelayParams, u32, bool) -> bool,
@@ -718,7 +718,7 @@ impl TapeDelay {
     }
 
     /// Through the door with `bank2`; closed, the return is silent and an
-    /// insert passes its dry (ADR 0212). Whether `buf` is known all +0.
+    /// insert passes its dry (ADR 0213). Whether `buf` is known all +0.
     fn run(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],

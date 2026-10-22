@@ -200,7 +200,7 @@ release-bin:
 # A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
 # NOW) never ships.
 # VA's MOD path (ADR 0163), the LFO page's raster (ADR 0177) and PIT's
-# tuner (ADR 0201), the delay's TAPE loop and the chorus's (ADR 0212), and TAPE's UI door entries and STRETCH GRAIN's note-on
+# tuner (ADR 0201), the delay's TAPE loop and the chorus's (ADR 0213), and TAPE's UI door entries and STRETCH GRAIN's note-on
 # (its own-period search inlined there, ADR 0204) are all
 # bank 2's on a bank-2 build: a `bank2.x` glob that misses a new door entry
 # or run leaves it silently in bank 1. ORBIT's runner and pages (ADR 0208)

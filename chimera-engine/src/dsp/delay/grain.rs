@@ -13,7 +13,7 @@
 //! With `bank2` this module links into bank 2 whole (`bank2.x`,
 //! `*5delay5grain*`, and the core's `*3dsp5grain*`); bank 1 reaches `run`
 //! only through `DelayDoor` (`tape::run`). With the door closed the delay
-//! is silent, TAPE too (ADR 0212).
+//! is silent, TAPE too (ADR 0213).
 //
 // The start's trims are Beads' (Copyright 2017 Emilie Gillet), under the
 // MIT License; the notice is `dsp::grain::core`'s.
