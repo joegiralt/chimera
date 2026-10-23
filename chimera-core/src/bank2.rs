@@ -115,9 +115,9 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// displayed) under `bank2`: the reverb's TYPE (ADR 0142), TAPE's MODEL
 /// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
 /// and the FX TYPE FUZZ (ADR 0157), the filter TYPE SEM (ADR 0192), VA
-/// NOISE's KIND (ADR 0197, every KIND), the delay TYPE GRAIN (ADR 0202,
-/// which plays as TAPE) and every ORBIT param (ADR 0208) read `NEEDS
-/// UPDATE` while their code can't play.
+/// NOISE's KIND (ADR 0197, every KIND), the delay's TYPE and the chorus's
+/// MODE (ADR 0213, every value: both play from bank 2) and every ORBIT
+/// param (ADR 0208) read `NEEDS UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     v: f32,
@@ -133,6 +133,8 @@ pub fn closed_text(
         ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE),
         ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL),
         ParamAddr::new(BlockRef::Va, VaParams::NOISE_KIND),
+        ParamAddr::new(BlockRef::Delay, crate::dsp::delay::DelayParams::TYPE),
+        ParamAddr::new(BlockRef::Chorus, crate::dsp::chorus::ChorusParams::MODE),
     ];
     let va_mode = || {
         addr == ParamAddr::new(BlockRef::Va, VaParams::MODE)
@@ -158,11 +160,6 @@ pub fn closed_text(
                     .is_some_and(|k| k.in_bank2())
             })
     };
-    let grain = || {
-        use crate::dsp::delay::{DelayParams, DelayType};
-        addr == ParamAddr::new(BlockRef::Delay, DelayParams::TYPE)
-            && DelayType::at(v) == DelayType::Grain
-    };
     let orbit = || {
         cfg!(feature = "orbit")
             && matches!(
@@ -170,9 +167,8 @@ pub fn closed_text(
                 BlockRef::OrbitChords | BlockRef::OrbitRing(_) | BlockRef::Tempo
             )
     };
-    (closed(bank2)
-        && (named.contains(&addr) || va_mode() || fx_type() || kind() || grain() || orbit()))
-    .then_some(NEEDS_UPDATE)
+    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type() || kind() || orbit()))
+        .then_some(NEEDS_UPDATE)
 }
 
 /// What the header of a Part playing `engine` warns under `bank2`: a TAPE

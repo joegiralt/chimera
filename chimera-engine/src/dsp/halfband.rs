@@ -42,6 +42,15 @@ impl Decimator {
     }
 }
 
+impl Decimator {
+    /// Its history is all +0: on a +0 block it gives +0s and stays so
+    /// (each output `0.5·(+0) + Σ h·(+0 + +0)`), so the block can be skipped.
+    #[inline(always)]
+    pub fn is_rest(&self) -> bool {
+        crate::dsp::all_pos_zero(&self.hist)
+    }
+}
+
 impl Default for Decimator {
     fn default() -> Self {
         Self::new()
@@ -76,6 +85,34 @@ impl Interpolator {
         }
         self.hist.copy_from_slice(&buf[HALF..]);
     }
+}
+
+impl Interpolator {
+    /// Its history is all +0: on a +0 block it gives +0s and stays so.
+    #[inline(always)]
+    pub fn is_rest(&self) -> bool {
+        crate::dsp::all_pos_zero(&self.hist)
+    }
+
+    /// Every history value is finite and under 1e30: on such a block each
+    /// output is finite (the taps sum to under 2 in size, ×2).
+    #[inline(always)]
+    pub fn is_bounded(&self) -> bool {
+        bounded(&self.hist)
+    }
+
+    /// The history `process(z)` leaves, without its outputs: `z`'s last
+    /// `INT_HIST`.
+    #[inline(always)]
+    pub fn skip(&mut self, z: &[f32; HALF]) {
+        self.hist.copy_from_slice(&z[HALF - INT_HIST..]);
+    }
+}
+
+/// Every value finite and under 1e30 in size.
+#[inline(always)]
+pub fn bounded(x: &[f32]) -> bool {
+    x.iter().all(|v| v.abs() < 1e30)
 }
 
 impl Default for Interpolator {

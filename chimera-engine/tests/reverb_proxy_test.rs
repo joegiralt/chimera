@@ -81,9 +81,10 @@ fn the_reverb_plays_through_the_door_and_is_silent_closed() {
         r.play(&block(&mut seed), &p, p.mix, Tempo::DEFAULT, SR, &mut out);
         assert!(bits(&out).iter().all(|&x| x == 0), "block {b} not silent");
     }
-    // The bus closed, every send fed: chorus and delay play as with the
-    // reverb's MIX at 0.
+    // The bus closed, every send fed: chorus and delay are bank 2's too
+    // (ADR 0213), so nothing returns.
     let closed = bus_run(0.7);
+    assert!(closed.iter().all(|&x| x == 0), "the bus returned closed");
 
     // Open: the door's engine, bit for bit the engines called directly.
     DOOR_CELL.open_host();
@@ -101,7 +102,8 @@ fn the_reverb_plays_through_the_door_and_is_silent_closed() {
     }
     assert!(heard, "the reverb returned nothing open");
     assert_eq!(via.running(), ReverbType::ALL[5]);
-    assert_eq!(bus_run(0.0), closed, "chorus and delay changed closed");
-    assert_ne!(bus_run(0.7), closed, "the reverb's wet is missing open");
+    let dry = bus_run(0.0);
+    assert_ne!(dry, closed, "chorus and delay are missing open");
+    assert_ne!(bus_run(0.7), dry, "the reverb's wet is missing open");
     DOOR_CELL.close();
 }

@@ -548,20 +548,23 @@ impl Reverb {
         tempo: Tempo,
         sample_rate: u32,
         out: &mut Stereo,
-    ) {
+    ) -> bool {
         #[cfg(feature = "bank2")]
-        if crate::bank2::DOOR_CELL
-            .with(|d| (d.reverb.process)(self, send, p, mix, tempo, sample_rate, out))
-            .is_none()
         {
-            *out = Stereo::SILENT;
+            crate::bank2::DOOR_CELL
+                .with(|d| (d.reverb.process)(self, send, p, mix, tempo, sample_rate, out))
+                .unwrap_or_else(|| {
+                    *out = Stereo::SILENT;
+                    true
+                })
         }
         #[cfg(not(feature = "bank2"))]
-        self.process(send, p, mix, tempo, sample_rate, out);
+        self.process(send, p, mix, tempo, sample_rate, out)
     }
 
-    /// Wet only: the engine's return × `mix`, into `out`. A synced time
-    /// follows `tempo`; QUAD runs free of it. With `bank2` it is linked
+    /// Wet only: the engine's return × `mix`, into `out`; whether it is
+    /// known all +0 (#793). A synced time follows `tempo`; QUAD runs free
+    /// of it. With `bank2` it is linked
     /// into bank 2 with the TYPEs' engines (`bank2.x`), and bank 1 calls
     /// it only through the door (`play`).
     #[inline(never)]
@@ -573,7 +576,7 @@ impl Reverb {
         tempo: Tempo,
         sample_rate: u32,
         out: &mut Stereo,
-    ) {
+    ) -> bool {
         let switching = matches!(
             self.phase,
             SwitchPhase::FadeOut { .. } | SwitchPhase::Clear { .. }
@@ -596,7 +599,7 @@ impl Reverb {
             }
             out.l.fill(0.0);
             out.r.fill(0.0);
-            return;
+            return true;
         }
         let p = &self.latched;
         // A row TYPE's knobs, mapped once a block (fast `exp2`/`log2`).
@@ -608,7 +611,12 @@ impl Reverb {
             EngineState::Quad(_) => None,
         };
         let mut u = [0.0f32; HALF];
-        self.dec.process(send, &mut u);
+        // A +0 send on a +0 history decimates to +0s (#793).
+        if crate::dsp::may_skip() && crate::dsp::all_pos_zero(send) && self.dec.is_rest() {
+            crate::dsp::skipped(crate::dsp::Skip::Decimator);
+        } else {
+            self.dec.process(send, &mut u);
+        }
         let mut lr = [[0.0f32; HALF]; 2];
         let fs = sample_rate as f32 * 0.5;
         let rate = if p.rate.is_nan() {
@@ -719,13 +727,44 @@ impl Reverb {
         // MIX's ease × the tail gate's, one ramp.
         let (g0, g1) = self.tail.step(&mut lr, self.kind);
         let (from, to) = (from * g0, to * g1);
-        self.up_l.process(&lr[0], &mut out.l);
-        self.up_r.process(&lr[1], &mut out.r);
+        // #793: a +0 return on +0 histories interpolates to +0s, bit for
+        // bit (`quiet`). At MIX 0 (`unheard`) every output is a finite
+        // sample × ±0, a zero, whose sign nothing downstream can see: the
+        // return is only ever added onto pair 1's sums, which start at +0
+        // and so are never −0. Their histories move as `process` moves them.
+        let skip = crate::dsp::may_skip();
+        let quiet = skip
+            && crate::dsp::all_pos_zero(lr.as_flattened())
+            && self.up_l.is_rest()
+            && self.up_r.is_rest();
+        let unheard = !quiet
+            && skip
+            && from == 0.0
+            && to == 0.0
+            && crate::dsp::halfband::bounded(lr.as_flattened())
+            && self.up_l.is_bounded()
+            && self.up_r.is_bounded();
+        if unheard {
+            self.up_l.skip(&lr[0]);
+            self.up_r.skip(&lr[1]);
+            *out = Stereo::SILENT;
+            crate::dsp::skipped(crate::dsp::Skip::Unheard);
+        } else if quiet {
+            *out = Stereo::SILENT;
+            crate::dsp::skipped(crate::dsp::Skip::Interpolators);
+        } else {
+            self.up_l.process(&lr[0], &mut out.l);
+            self.up_r.process(&lr[1], &mut out.r);
+        }
         let wet = wet_gain(self.kind);
         let gain = wet * to / FULL_SCALE;
+        // +0 × a finite gain of + sign is +0: nothing to scale.
+        let kept = unheard || (quiet && gain.is_finite() && gain.is_sign_positive());
         if from == to {
-            for s in out.l.iter_mut().chain(out.r.iter_mut()) {
-                *s *= gain;
+            if !kept {
+                for s in out.l.iter_mut().chain(out.r.iter_mut()) {
+                    *s *= gain;
+                }
             }
         } else {
             ramp(
@@ -738,7 +777,9 @@ impl Reverb {
         // return times the ramp, bit for bit.
         if let Some(r) = phase.gains() {
             ramp(out, r.0, step_of(r, BLOCK_SIZE));
+            return false;
         }
+        (unheard || quiet) && from == to && kept
     }
 }
 
@@ -746,7 +787,8 @@ impl Reverb {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct ReverbDoor {
-    process: fn(&mut Reverb, &[f32; BLOCK_SIZE], &ReverbParams, f32, Tempo, u32, &mut Stereo),
+    process:
+        fn(&mut Reverb, &[f32; BLOCK_SIZE], &ReverbParams, f32, Tempo, u32, &mut Stereo) -> bool,
 }
 
 #[cfg(feature = "bank2")]
@@ -877,10 +919,17 @@ impl TailGate {
             return (1.0, 1.0);
         }
         let [l, r] = lr;
-        let pk = l
-            .iter()
-            .zip(r.iter())
-            .fold(0.0f32, |m, (a, b)| m.max(a.abs() + b.abs()));
+        // An all +0 return peaks at +0, and on +0 states the low-pass
+        // gives it back as it is (#793).
+        let zero =
+            crate::dsp::may_skip() && crate::dsp::all_pos_zero(l) && crate::dsp::all_pos_zero(r);
+        let pk = if zero {
+            0.0
+        } else {
+            l.iter()
+                .zip(r.iter())
+                .fold(0.0f32, |m, (a, b)| m.max(a.abs() + b.abs()))
+        };
         let prev = self.env;
         self.env = if pk > self.env {
             pk
@@ -895,6 +944,9 @@ impl TailGate {
         if a0 == 1.0 && a1 == 1.0 {
             // Open: the state follows, so closing starts where it is.
             self.y = [[l[HALF - 1]; 2], [r[HALF - 1]; 2]];
+        } else if zero && crate::dsp::all_pos_zero(self.y.as_flattened()) {
+            // Each step `+0 + a·(+0 − +0)`, a in [A_MIN, 1]: +0.
+            crate::dsp::skipped(crate::dsp::Skip::TailGate);
         } else {
             let da = step_of((a0, a1), HALF);
             let [mut yl, mut yr] = self.y;

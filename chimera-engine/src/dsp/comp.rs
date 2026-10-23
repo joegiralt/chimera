@@ -386,17 +386,18 @@ impl MasterComp {
     }
 
     /// Compress every pair (interleaved L, R) by one linked gain, in place.
+    /// Whether it ran: bypassed, nothing is touched.
     pub fn process<const PAIRS: usize>(
         &mut self,
         out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS],
         p: &CompParams,
         sample_rate: u32,
-    ) {
+    ) -> bool {
         const { assert!(PAIRS > 0) };
         let p = p.sanitised();
         let on = p.is_on();
         if !on && !self.is_running() {
-            return;
+            return false;
         }
         let oct = 1.0 / DB_PER_OCT;
         if !self.is_running() {
@@ -450,6 +451,7 @@ impl MasterComp {
             self.run::<PAIRS, true>(out, ctl, on);
         }
         (self.thresh, self.makeup, self.mix) = (t1, m1, x1);
+        true
     }
 
     #[inline(always)]

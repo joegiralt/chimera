@@ -76,6 +76,11 @@ pub struct DacBlocks {
     /// The block last put out, and so the next one mixed over; the other
     /// holds the last block in.
     out: usize,
+    /// Each block's pairs known to hold only +0 (#793): a pair nothing is
+    /// routed to, which the mix, the limiter and the master stages then
+    /// skip, as their work on it is `+0 × a gain of + sign`, +0. Only ever
+    /// true where it is so; any writer that can't say clears it.
+    zero: [[bool; DAC_PAIRS]; 2],
 }
 
 impl Default for DacBlocks {
@@ -91,12 +96,19 @@ impl DacBlocks {
         Self {
             blocks: [[[0.0; 2 * BLOCK_SIZE]; DAC_PAIRS]; 2],
             out: 0,
+            zero: [[true; DAC_PAIRS]; 2],
         }
     }
 
     /// The block the next render mixes into, over the last one out.
     pub fn mix(&mut self) -> &mut Pairs {
+        self.zero[self.out] = [false; DAC_PAIRS];
         &mut self.blocks[self.out]
+    }
+
+    /// `mix`, with the pairs it holds known +0, for the mix to keep.
+    pub(crate) fn mix_known(&mut self) -> (&mut Pairs, &mut [bool; DAC_PAIRS]) {
+        (&mut self.blocks[self.out], &mut self.zero[self.out])
     }
 
     /// The last block out, limited: what the DACs play.
@@ -104,9 +116,16 @@ impl DacBlocks {
         &self.blocks[self.out]
     }
 
-    /// The last block out, to scale after the limiter (`MasterOut`).
-    pub(crate) fn out_mut(&mut self) -> &mut Pairs {
-        &mut self.blocks[self.out]
+    /// Whether `pair` of the last block out holds only +0: its DAC words
+    /// are all 0.
+    pub fn is_zero(&self, pair: crate::part::DacPair) -> bool {
+        self.zero[self.out][pair.index()]
+    }
+
+    /// The last block out, to scale after the limiter (`MasterOut`), with
+    /// its pairs known +0.
+    pub(crate) fn out_mut(&mut self) -> (&mut Pairs, &mut [bool; DAC_PAIRS]) {
+        (&mut self.blocks[self.out], &mut self.zero[self.out])
     }
 
     /// The last block in, before any gain: the pairs as the mix summed them.
@@ -114,10 +133,17 @@ impl DacBlocks {
         &self.blocks[self.out ^ 1]
     }
 
-    /// The block just mixed, to read, and the one before it, to scale.
-    fn split(&mut self) -> (&Pairs, &mut Pairs) {
+    /// The block just mixed, to read, and the one before it, to scale, each
+    /// with its pairs known +0.
+    #[allow(clippy::type_complexity)]
+    fn split(&mut self) -> ((&Pairs, [bool; DAC_PAIRS]), (&mut Pairs, [bool; DAC_PAIRS])) {
         let [a, b] = &mut self.blocks;
-        if self.out == 0 { (a, b) } else { (b, a) }
+        let [za, zb] = self.zero;
+        if self.out == 0 {
+            ((a, za), (b, zb))
+        } else {
+            ((b, zb), (a, za))
+        }
     }
 }
 
@@ -174,12 +200,18 @@ impl Limiter {
             self.k = exp2(-LOG2_E * STEP as f32 / RELEASE_S * per_fs);
             self.rate = sample_rate;
         }
-        let (fresh, held) = dac.split();
+        let ((fresh, fz), (held, hz)) = dac.split();
+        let (fz, hz) = if crate::dsp::may_skip() {
+            (fz, hz)
+        } else {
+            ([false; DAC_PAIRS], [false; DAC_PAIRS])
+        };
         let mut m = [0.0f32; CHUNKS];
+        let mut lost = false;
         let (mut prev, mut head, mut e0) = (self.last, 1.0f32, self.gain);
         for (c, mc) in m.iter_mut().enumerate() {
             let i0 = c * STEP;
-            let peak = chunk_peak(fresh, i0);
+            let peak = chunk_peak(fresh, &fz, i0);
             // The share of the gain this chunk keeps: `knee(o) / o`.
             let r = if peak > THRESHOLD {
                 knee(peak * OUTPUT_GAIN - KNEE)
@@ -207,14 +239,26 @@ impl Limiter {
             let e1 = self.sum as f32 * (OUTPUT_GAIN / FULL as f32);
             // The chunk in stays where it is; the one in a block ago is
             // scaled in place and goes out.
-            for (j, g) in ramp_gains(e0, e1).into_iter().enumerate() {
-                let k = 2 * (i0 + j);
-                for pair in held.iter_mut() {
+            // A +0 pair stays +0 under gains of + sign: the ramp is monotone,
+            // so its ends bound it.
+            let gs = ramp_gains(e0, e1);
+            let keep = gs[0].is_sign_positive() && gs[STEP - 1].is_sign_positive();
+            for (pair, &z) in held.iter_mut().zip(&hz) {
+                if z && keep {
+                    continue;
+                }
+                // Scaled, a +0 pair may not stay +0: no longer known.
+                lost |= z;
+                for (j, &g) in gs.iter().enumerate() {
+                    let k = 2 * (i0 + j);
                     pair[k] *= g;
                     pair[k + 1] *= g;
                 }
             }
             e0 = e1;
+        }
+        if lost {
+            dac.zero[dac.out ^ 1] = [false; DAC_PAIRS];
         }
         dac.out ^= 1;
         self.gain = e0;
@@ -255,25 +299,34 @@ fn least(a: f32, b: f32) -> f32 {
 /// upstream never mutes the music around it, and a finite over beside it
 /// is still measured. Rare, so it costs a second look only then.
 #[inline(always)]
-fn chunk_peak(x: &Pairs, i0: usize) -> f32 {
-    let peak = chunk_max(x, i0, |b| b);
+fn chunk_peak(x: &Pairs, zero: &[bool; DAC_PAIRS], i0: usize) -> f32 {
+    let peak = chunk_max(x, zero, i0, |b| b);
     if peak < INF {
         return f32::from_bits(peak);
     }
-    f32::from_bits(chunk_max(x, i0, |b| if b < INF { b } else { FULL_SCALE }))
+    f32::from_bits(chunk_max(
+        x,
+        zero,
+        i0,
+        |b| if b < INF { b } else { FULL_SCALE },
+    ))
 }
 
 const INF: u32 = 0x7f80_0000;
 /// The input the gain brings to the DAC's full scale.
 const FULL_SCALE: u32 = (1.0 / OUTPUT_GAIN).to_bits();
 
-/// The largest `read(|s| bits)` over the chunk.
+/// The largest `read(|s| bits)` over the chunk. A pair known +0 reads 0,
+/// which never raises the max: it is skipped.
 #[inline(always)]
-fn chunk_max(x: &Pairs, i0: usize, read: impl Fn(u32) -> u32) -> u32 {
+fn chunk_max(x: &Pairs, zero: &[bool; DAC_PAIRS], i0: usize, read: impl Fn(u32) -> u32) -> u32 {
     let bits = |s: f32| read(s.to_bits() & 0x7fff_ffff);
     let mut peak = 0u32;
-    for i in i0..i0 + STEP {
-        for pair in x {
+    for (pair, &z) in x.iter().zip(zero) {
+        if z {
+            continue;
+        }
+        for i in i0..i0 + STEP {
             peak = peak.max(bits(pair[2 * i])).max(bits(pair[2 * i + 1]));
         }
     }

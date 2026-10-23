@@ -101,6 +101,59 @@ pub fn sin_turns(phase: f32) -> f32 {
     -(y + 0.224 * (y * y.abs() - y))
 }
 
+/// The bus's idle skips (#793): each skips a block's work only where the
+/// work's result is known bit for bit. Off, every block runs in full: the
+/// tests that compare the two paths.
+#[cfg(any(test, feature = "test-support"))]
+pub static NEVER_SKIP: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Whether an idle skip may run (always, outside the tests).
+#[inline(always)]
+pub fn may_skip() -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        !NEVER_SKIP.load(core::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        true
+    }
+}
+
+/// The idle skips, for the tests' count of which ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Skip {
+    Delay,
+    Chorus,
+    Ring,
+    Decimator,
+    Interpolators,
+    Unheard,
+    TailGate,
+    Pairs,
+}
+
+/// How many times each `Skip` ran (tests only).
+#[cfg(any(test, feature = "test-support"))]
+pub static SKIPS: [core::sync::atomic::AtomicU32; 8] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
+
+/// Counts a skip (tests only; nothing in firmware).
+#[inline(always)]
+pub fn skipped(k: Skip) {
+    #[cfg(any(test, feature = "test-support"))]
+    SKIPS[k as usize].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(any(test, feature = "test-support")))]
+    let _ = k;
+}
+
+/// Every sample of `x` is +0.0, bit for bit.
+#[inline(always)]
+pub fn all_pos_zero(x: &[f32]) -> bool {
+    // Early out: a sounding block costs a sample or two, not the block.
+    x.iter().all(|v| v.to_bits() == 0)
+}
+
 /// One block per side.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stereo {
