@@ -1547,16 +1547,16 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
 
         let mut odd = 0.0_f32;
         let mut even = 0.0_f32;
-        bank.cos_osc.start();
+        let mut w = bank.cos_osc.start();
 
-        let mut i = 0;
-        while i + 1 < num {
-            odd += bank.cos_osc.next() * bank.filters[i].process_bp(input);
-            even += bank.cos_osc.next() * bank.filters[i + 1].process_bp(input);
-            i += 2;
+        // One slice: no bounds check a mode.
+        let mut pairs = bank.filters[..num].chunks_exact_mut(2);
+        for pair in &mut pairs {
+            odd += w.next() * pair[0].process_bp(input);
+            even += w.next() * pair[1].process_bp(input);
         }
-        if i < num {
-            odd += bank.cos_osc.next() * bank.filters[i].process_bp(input);
+        if let [last] = pairs.into_remainder() {
+            odd += w.next() * last.process_bp(input);
         }
 
         // Sum to mono and soft-limit, a quarter of Rings' 2× out: the
