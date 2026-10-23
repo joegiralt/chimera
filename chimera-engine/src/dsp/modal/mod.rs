@@ -102,10 +102,20 @@ struct ModalBank {
     noise_state: u32,
     /// The burst's one-pole lowpass.
     burst_lp: f32,
+    /// What the filters were last set for in a block (`FiltersKey`): the
+    /// same again, `compute_filters` would write what is there.
+    key: FiltersKey,
 }
 
+/// `compute_filters`' inputs, bit for bit: MODES, DAMP, STRUCTURE, BRIGHT
+/// and the frequency.
+type FiltersKey = [u32; 5];
+
+/// No block's: a note-on set the filters.
+const NO_KEY: FiltersKey = [u32::MAX; 5];
+
 crate::in_place::field_list!(ModalBank => ModalBank {
-    filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp,
+    filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp, key,
 });
 
 /// The bowed string and the bow's force on it, 0 once the bow lifts.
@@ -701,6 +711,7 @@ impl ModalEngine {
             ModelSlot::Bank(bank) => {
                 bank.resolution = params.modes.count();
                 bank.compute_filters(m, bank_freq);
+                bank.key = NO_KEY;
                 if !restrike {
                     bank.cos_osc.init(params::beta(m.pos, params::END));
                 }
@@ -978,8 +989,20 @@ impl ModalEngine {
         // note sounds on.
         let exciting = match &mut self.model {
             ModelSlot::Bank(bank) => {
-                // Recompute filters every block (Rings does this — allows live parameter changes)
-                bank.compute_filters(&m, bank_freq);
+                // Recompute filters every block (Rings does this — allows
+                // live parameter changes), unless nothing they read moved:
+                // a pure function of the key, so skipping it is exact.
+                let key = [
+                    bank.resolution as u32,
+                    m.damp.to_bits(),
+                    m.structure.to_bits(),
+                    m.bright.to_bits(),
+                    bank_freq.to_bits(),
+                ];
+                if key != bank.key {
+                    bank.compute_filters(&m, bank_freq);
+                    bank.key = key;
+                }
                 // POS glides its weights over the block; a note's first takes it whole.
                 let place = params::beta(m.pos, params::END);
                 if first {
@@ -1107,6 +1130,7 @@ impl ModalBank {
             addr_of_mut!((*p).burst_amp).write(0.0);
             addr_of_mut!((*p).noise_state).write(0x1234_5678);
             addr_of_mut!((*p).burst_lp).write(0.0);
+            addr_of_mut!((*p).key).write(NO_KEY);
             slot.assume_init_mut()
         }
     }
