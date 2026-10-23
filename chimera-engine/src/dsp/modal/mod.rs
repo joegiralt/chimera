@@ -904,6 +904,8 @@ impl ModalEngine {
         self.active
     }
 
+    /// One block, through the door (ADR 0215): `kern::render`, bank 2's.
+    /// With the door closed the voice is silent and ends.
     pub fn render(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
@@ -917,7 +919,21 @@ impl ModalEngine {
             }
             return;
         }
+        if through(|d| (d.render)(self, output, params, sample_rate, pool)).is_none() {
+            output.fill(0.0);
+            self.active = false;
+        }
+    }
 
+    /// An active voice's block: the macros, the model and its lifetime.
+    #[inline(always)]
+    fn block(
+        &mut self,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ModalParams,
+        sample_rate: u32,
+        pool: &mut SymPool,
+    ) {
         let mut max_level = 0.0_f32;
         self.slide.tick();
 
@@ -1016,6 +1032,58 @@ impl ModalEngine {
         } else {
             self.silence_counter = 0;
         }
+    }
+}
+
+/// MODAL's block (`ModalEngine::block`).
+pub type ModalRun = fn(&mut ModalEngine, &mut [f32; BLOCK_SIZE], &ModalParams, u32, &mut SymPool);
+
+/// MODAL's entry (ADR 0215): one call a voice a block.
+#[repr(C)]
+pub struct ModalDoor {
+    pub render: ModalRun,
+}
+
+impl ModalDoor {
+    pub const DOOR: ModalDoor = ModalDoor {
+        render: kern::render,
+    };
+}
+
+/// `f` on MODAL's block: through the door with `bank2` (`None` while it is
+/// closed), else bank 1's own on a host. A firmware built without bank 2
+/// has no room for it in bank 1: there MODAL is silent.
+#[inline(always)]
+fn through<R>(f: impl FnOnce(&ModalDoor) -> R) -> Option<R> {
+    #[cfg(feature = "bank2")]
+    {
+        crate::bank2::DOOR_CELL.with(|d| f(&d.modal))
+    }
+    #[cfg(all(not(feature = "bank2"), not(target_os = "none")))]
+    {
+        Some(f(&ModalDoor::DOOR))
+    }
+    #[cfg(all(not(feature = "bank2"), target_os = "none"))]
+    {
+        let _ = f;
+        None
+    }
+}
+
+/// Bank 2's: `bank2.x` links `*5modal4kern*`, and the models' loops only
+/// the block reaches.
+mod kern {
+    use super::{BLOCK_SIZE, ModalEngine, ModalParams, SymPool};
+
+    #[inline(never)]
+    pub(super) fn render(
+        e: &mut ModalEngine,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ModalParams,
+        sample_rate: u32,
+        pool: &mut SymPool,
+    ) {
+        e.block(output, params, sample_rate, pool);
     }
 }
 

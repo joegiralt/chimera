@@ -156,6 +156,13 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // table).
     let fuzz = "    *(.text.*8voice_fx4fuzz* .rodata.*8voice_fx4fuzz*);
 ";
+    // MODAL's block (ADR 0215): `modal::kern`, the render the door calls
+    // with `ModalEngine::block` inlined, and the loops only it reaches:
+    // BOWED's, and STRING's and SYMP's main string with its colour. Text
+    // and rodata.
+    let modal = "    *(.text.*5modal4kern* .rodata.*5modal4kern* .text.*5modal12render_bowed* .rodata.*5modal12render_bowed*
+      .text.*11StringVoice6render* .rodata.*11StringVoice6render* .text.*11StringVoice6colour* .rodata.*11StringVoice6colour*);
+";
     // The filters' FB loops (ADR 0190): each type's `fed` module, text only
     // (`filter::fed`).
     let fed = "    *(.text.*6filter*3fed*);
@@ -266,6 +273,7 @@ SECTIONS {
     /* LFO */
     /* LOOK */
     /* FUZZ */
+    /* MODAL */
     /* FED */
     /* SEM */
     /* BENCH */
@@ -290,6 +298,7 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* LFO */\n", lfo)
         .replace("    /* LOOK */\n", look)
         .replace("    /* FUZZ */\n", fuzz)
+        .replace("    /* MODAL */\n", modal)
         .replace("    /* FED */\n", fed)
         .replace("    /* SEM */\n", sem)
         .replace("    /* BENCH */\n", bench)

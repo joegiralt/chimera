@@ -130,6 +130,8 @@ pub fn closed_text(
     use crate::dsp::va::{VaMode, VaParams};
     use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
     let named = [
+        // MODAL plays from bank 2 (ADR 0215): its MODE, as TAPE's MODEL.
+        ParamAddr::new(BlockRef::Modal, crate::dsp::modal::ModalParams::MODE),
         ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE),
         ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL),
         ParamAddr::new(BlockRef::Va, VaParams::NOISE_KIND),
@@ -176,13 +178,16 @@ pub fn closed_text(
 }
 
 /// What the header of a Part playing `engine` warns under `bank2`: a TAPE
-/// Part is silent while TAPE can't play (ADR 0141). Beside the context and
-/// the page, the header has room for the last word only.
+/// or MODAL Part is silent while its engine can't play (ADR 0141, 0215).
+/// Beside the context and the page, the header has room for the last word
+/// only.
 pub fn closed_part(
     engine: crate::params::EngineType,
     bank2: Option<Bank2Status>,
 ) -> Option<&'static str> {
-    (closed(bank2) && engine == crate::params::EngineType::Tape).then_some(NEEDS_UPDATE_CELL)
+    use crate::params::EngineType;
+    (closed(bank2) && matches!(engine, EngineType::Tape | EngineType::Modal))
+        .then_some(NEEDS_UPDATE_CELL)
 }
 
 /// The UI's table in bank 2 (ADR 0175), at `UI_DOOR_ADDR`: TAPE's cells
