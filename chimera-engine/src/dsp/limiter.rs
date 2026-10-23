@@ -207,6 +207,7 @@ impl Limiter {
             ([false; DAC_PAIRS], [false; DAC_PAIRS])
         };
         let mut m = [0.0f32; CHUNKS];
+        let mut lost = false;
         let (mut prev, mut head, mut e0) = (self.last, 1.0f32, self.gain);
         for (c, mc) in m.iter_mut().enumerate() {
             let i0 = c * STEP;
@@ -246,6 +247,8 @@ impl Limiter {
                 if z && keep {
                     continue;
                 }
+                // Scaled, a +0 pair may not stay +0: no longer known.
+                lost |= z;
                 for (j, &g) in gs.iter().enumerate() {
                     let k = 2 * (i0 + j);
                     pair[k] *= g;
@@ -253,6 +256,9 @@ impl Limiter {
                 }
             }
             e0 = e1;
+        }
+        if lost {
+            dac.zero[dac.out ^ 1] = [false; DAC_PAIRS];
         }
         dac.out ^= 1;
         self.gain = e0;

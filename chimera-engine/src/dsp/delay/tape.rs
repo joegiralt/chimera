@@ -349,7 +349,40 @@ fn expm1f(mut x: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::tanhf;
+    use super::super::{DelayParams, MAX_DELAY_SAMPLES, TapeDelay};
+    use super::{run, tanhf};
+    use crate::dsp::NEVER_SKIP;
+    use chimera_hal::BLOCK_SIZE;
+    use core::sync::atomic::Ordering;
+    extern crate std;
+    use std::boxed::Box;
+
+    /// One steady block on a +0 send over a zero line with the tone's state
+    /// at `lp`, with the idle skip allowed or not: what it leaves.
+    fn block(lp: f32, skip: bool) -> (Box<TapeDelay>, [u32; BLOCK_SIZE]) {
+        let mut d = Box::new(TapeDelay::new());
+        (d.lp_state, d.zeros) = (lp, MAX_DELAY_SAMPLES as u32);
+        let mut buf = [0.0; BLOCK_SIZE];
+        NEVER_SKIP.store(!skip, Ordering::Relaxed);
+        run(&mut d, &mut buf, &DelayParams::DEFAULT, 48_000, false);
+        NEVER_SKIP.store(false, Ordering::Relaxed);
+        (d, buf.map(f32::to_bits))
+    }
+
+    /// The skip leaves what the full block leaves: at rest, and with a tone
+    /// state that isn't yet its one-pole's fixed point, which it must not
+    /// skip.
+    #[test]
+    fn the_idle_skip_is_the_full_block() {
+        for lp in [0.0, 1.0e-30, -3.0e-6] {
+            let ((a, ba), (b, bb)) = (block(lp, true), block(lp, false));
+            assert_eq!(ba, bb, "{lp}");
+            assert_eq!(a.lp_state.to_bits(), b.lp_state.to_bits(), "{lp}");
+            assert_eq!(a.transport, b.transport, "{lp}");
+            assert_eq!((a.write_pos, a.zeros), (b.write_pos, b.zeros), "{lp}");
+            assert!(a.buffer == b.buffer, "{lp}");
+        }
+    }
 
     fn check(bits: u32) {
         let x = f32::from_bits(bits);

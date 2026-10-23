@@ -92,10 +92,19 @@ impl MasterOut {
             return;
         }
         let (sl, sr) = (step_of(l, BLOCK_SIZE), step_of(r, BLOCK_SIZE));
-        // Scaled, a +0 pair may not stay +0 (a ramp's last gain can be
-        // −0's maker): no longer known (#793).
-        *zero = [false; DAC_PAIRS];
-        for pair in out.iter_mut() {
+        // Steady, every sample's gain is `l.0 + 0`: of + sign, a +0 pair
+        // stays +0 and is skipped (#793). Ramping, a gain can be −0's
+        // maker: a pair scaled is no longer known +0.
+        let keep = sl == 0.0
+            && sr == 0.0
+            && [l.0 + sl, r.0 + sr]
+                .iter()
+                .all(|g| g.is_finite() && g.is_sign_positive());
+        for (pair, z) in out.iter_mut().zip(zero.iter_mut()) {
+            if *z && keep {
+                continue;
+            }
+            *z = false;
             let (mut gl, mut gr) = (l.0, r.0);
             for s in pair.as_chunks_mut::<2>().0 {
                 gl += sl;

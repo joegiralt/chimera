@@ -762,3 +762,59 @@ impl QuadState {
         self.ring.process(arena, u, &blk, l, r);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::NEVER_SKIP;
+    use core::sync::atomic::Ordering;
+    extern crate std;
+    use std::boxed::Box;
+
+    /// One block on a +0 send from `ring` over zero lines, with the idle
+    /// skip allowed or not: the ring, the lines and the taps after.
+    fn block(mut ring: Ring, skip: bool) -> (Ring, Box<ReverbArena>, [u32; 2 * HALF]) {
+        let mut arena = Box::new(ReverbArena::new());
+        let blk = RingBlock {
+            gains_from: [0.9; STAGES],
+            gains_to: [0.9; STAGES],
+            damp_from: 0.3,
+            damp_to: 0.3,
+            smear: None,
+        };
+        let (mut l, mut r) = ([1.0; HALF], [1.0; HALF]);
+        NEVER_SKIP.store(!skip, Ordering::Relaxed);
+        ring.process(&mut arena, &[0.0; HALF], &blk, &mut l, &mut r);
+        NEVER_SKIP.store(false, Ordering::Relaxed);
+        let mut taps = [0; 2 * HALF];
+        for (t, v) in taps.iter_mut().zip(l.iter().chain(&r)) {
+            *t = v.to_bits();
+        }
+        (ring, arena, taps)
+    }
+
+    /// The skip leaves what the full block leaves: at rest, and with a DAMP
+    /// state holding an LSB (high DAMP's ±1, which writes nothing) or more,
+    /// which writes the lines: that it must not skip.
+    #[test]
+    fn the_idle_skip_is_the_full_block() {
+        for lp in [
+            [0.0; STAGES],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0],
+            [0.0, 900.0, 0.0, 0.0],
+        ] {
+            let ring = Ring {
+                head: 23_200,
+                lp,
+                zeros: RING_LEN as u16,
+                ..Ring::new()
+            };
+            let (a, la, ta) = block(ring, true);
+            let (b, lb, tb) = block(ring, false);
+            assert_eq!(a, b, "{lp:?}");
+            assert!(la.lines() == lb.lines(), "{lp:?}");
+            assert_eq!(ta, tb, "{lp:?}");
+        }
+    }
+}

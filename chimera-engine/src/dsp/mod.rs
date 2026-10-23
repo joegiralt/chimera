@@ -150,7 +150,8 @@ pub fn skipped(k: Skip) {
 /// Every sample of `x` is +0.0, bit for bit.
 #[inline(always)]
 pub fn all_pos_zero(x: &[f32]) -> bool {
-    x.iter().fold(0, |a, v| a | v.to_bits()) == 0
+    // Early out: a sounding block costs a sample or two, not the block.
+    x.iter().all(|v| v.to_bits() == 0)
 }
 
 /// One block per side.

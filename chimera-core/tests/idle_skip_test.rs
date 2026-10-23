@@ -59,7 +59,8 @@ type Out = (Vec<DacSample>, Vec<u32>);
 /// Every pair's block out, every block, through the engine: `fx`, Part 1
 /// sending `send` to every effect, on `pair`. A pair nothing is routed to
 /// (pair 1 takes the FX return) is exactly +0 throughout.
-fn render(fx: FxParams, send: f32, pair: DacPair, skip: bool) -> Vec<Out> {
+/// From step `back`, if given, the reverb's MIX is back at its default.
+fn render(fx: FxParams, send: f32, pair: DacPair, skip: bool, back: Option<usize>) -> Vec<Out> {
     NEVER_SKIP.store(!skip, Ordering::Relaxed);
     let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
     let mut shared = Box::new(AudioShared::default());
@@ -68,7 +69,10 @@ fn render(fx: FxParams, send: f32, pair: DacPair, skip: bool) -> Vec<Out> {
     shared.parts[0].mix.output = pair;
     let ch = shared.parts[0].mix.channel;
     let mut out = Vec::new();
-    for step in score() {
+    for (i, step) in score().into_iter().enumerate() {
+        if back == Some(i) {
+            shared.fx.reverb.mix = FxParams::DEFAULT.reverb.mix;
+        }
         let ev = |n: u8, kind| NoteEvent {
             channel: ch,
             note: MidiNote::new(n).unwrap(),
@@ -107,22 +111,29 @@ fn flushed<R>(f: impl FnOnce() -> R) -> R {
     {
         #[allow(deprecated)]
         use std::arch::x86_64::{_mm_getcsr, _mm_setcsr};
+        /// Puts the thread's MXCSR back, a panic in `f` too.
+        struct Restore(u32);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                // SAFETY: writes back the value this thread's MXCSR held
+                // before `flushed` set FTZ and DAZ.
+                #[allow(deprecated)]
+                unsafe {
+                    _mm_setcsr(self.0)
+                };
+            }
+        }
+        // SAFETY: reading MXCSR has no effect.
+        #[allow(deprecated)]
+        let _restore = Restore(unsafe { _mm_getcsr() });
         // SAFETY: sets only MXCSR's FTZ (bit 15) and DAZ (bit 6) on this
-        // thread, restored before return; no float code here depends on
+        // thread, until `_restore` drops; no float code here depends on
         // denormals.
         #[allow(deprecated)]
-        let old = unsafe { _mm_getcsr() };
-        #[allow(deprecated)]
         unsafe {
-            _mm_setcsr(old | 0x8040)
+            _mm_setcsr(_restore.0 | 0x8040)
         };
-        let r = f();
-        // SAFETY: as above, the thread's own value put back.
-        #[allow(deprecated)]
-        unsafe {
-            _mm_setcsr(old)
-        };
-        r
+        f()
     }
     #[cfg(not(target_arch = "x86_64"))]
     f()
@@ -130,11 +141,16 @@ fn flushed<R>(f: impl FnOnce() -> R) -> R {
 
 /// Both paths, the words compared block by block; the skips' counts.
 fn same(fx: FxParams, send: f32, pair: DacPair, flush: bool) -> [u32; 8] {
+    same_from(fx, send, pair, flush, None)
+}
+
+/// `same`, the reverb's MIX back at its default from step `back`.
+fn same_from(fx: FxParams, send: f32, pair: DacPair, flush: bool, back: Option<usize>) -> [u32; 8] {
     let run = |skip| {
         if flush {
-            flushed(|| render(fx, send, pair, skip))
+            flushed(|| render(fx, send, pair, skip, back))
         } else {
-            render(fx, send, pair, skip)
+            render(fx, send, pair, skip, back)
         }
     };
     let full = run(false);
@@ -208,7 +224,9 @@ fn idle_then_woken_flushed_is_bit_for_bit_the_full_path() {
 }
 
 /// The reverb at MIX 0 on a live send: its interpolators skipped, their
-/// histories moved on, so a MIX brought back would play the same.
+/// histories moved on, so a MIX brought back plays the same: back while
+/// the first chord sounds, just after it is let go, and in the second's
+/// tail.
 #[test]
 fn reverb_at_mix_0_is_bit_for_bit_the_full_path() {
     let _t = TURN.lock().unwrap_or_else(|e| e.into_inner());
@@ -217,6 +235,10 @@ fn reverb_at_mix_0_is_bit_for_bit_the_full_path() {
     f.reverb.mix = 0.0;
     let n = same(f, 0.5, DacPair::P1, false);
     assert!(ran(n, Skip::Unheard), "{n:?}");
+    for back in [100, 203, 7_850] {
+        let n = same_from(f, 0.5, DacPair::P1, false, Some(back));
+        assert!(ran(n, Skip::Unheard), "back at {back}: {n:?}");
+    }
 }
 
 /// Part 1 on pair 2 and nothing sending: pair 1 holds only the idle
