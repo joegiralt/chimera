@@ -164,7 +164,11 @@ impl FxBus {
     /// Run every effect over its send and sum the wet returns into `ret`.
     /// Each runs whatever its MIX, which eases its return: an effect at
     /// MIX 0 returns nothing, and one brought back up plays what its send
-    /// is doing now, never a frozen tail (#61).
+    /// is doing now, never a frozen tail (#61). An effect known silent
+    /// isn't added (#793): `x + +0` is `x` but where `x` is −0, and the
+    /// return lands only on pair 1's sums, which start at +0 and so can't
+    /// see a zero's sign. The same holds for the delay's REV SEND, which
+    /// lands on the reverb's send, also a sum from +0.
     pub fn process(
         &mut self,
         sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
@@ -176,14 +180,17 @@ impl FxBus {
         let [chorus, delay, reverb] = sends;
         self.chorus
             .process_wet(chorus, &params.chorus, sample_rate, ret);
-        self.delay.process_wet(delay, &params.delay, sample_rate);
-        add(&mut ret.l, delay);
-        add(&mut ret.r, delay);
+        let dry =
+            self.delay.process_wet(delay, &params.delay, sample_rate) && crate::dsp::may_skip();
+        if !dry {
+            add(&mut ret.l, delay);
+            add(&mut ret.r, delay);
+        }
         // REV SEND: the delay's return into the reverb's send, this block.
         let (from, to) = self
             .rev_send
             .step(unit(params.delay.rev_send), ease_coeff(sample_rate));
-        if from != 0.0 || to != 0.0 {
+        if !dry && (from != 0.0 || to != 0.0) {
             let n = BLOCK_SIZE as f32;
             for (i, (r, &d)) in reverb.iter_mut().zip(delay.iter()).enumerate() {
                 *r += (from + (to - from) * (i + 1) as f32 / n) * d;
@@ -195,23 +202,28 @@ impl FxBus {
         } else {
             0.0
         };
-        self.reverb
-            .play(reverb, &params.reverb, mix, tempo, sample_rate, &mut wet);
-        add(&mut ret.l, &wet.l);
-        add(&mut ret.r, &wet.r);
+        let none = self
+            .reverb
+            .play(reverb, &params.reverb, mix, tempo, sample_rate, &mut wet)
+            && crate::dsp::may_skip();
+        if !none {
+            add(&mut ret.l, &wet.l);
+            add(&mut ret.r, &wet.r);
+        }
     }
 
     /// The master section, after every pair is summed: the compressor, one
     /// gain on every pair; with `master-tape`, the tape on pair 1 first.
+    /// Whether the compressor ran (it scales every pair).
     pub fn master(
         &mut self,
         out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
         params: &FxParams,
         sample_rate: u32,
-    ) {
+    ) -> bool {
         #[cfg(feature = "master-tape")]
         self.tape.process(&mut out[0], &params.tape, sample_rate);
-        self.comp.process(out, &params.comp, sample_rate);
+        self.comp.process(out, &params.comp, sample_rate)
     }
 
     /// The output stage, after the master section: the output gain and the

@@ -2,6 +2,7 @@
 //! (ADR 0108). `chimera-core` re-exports every module here under its own
 //! name and adds the UI and the console, which build for size.
 #![no_std]
+#![feature(core_float_math)]
 
 #[cfg(all(feature = "test-support", target_os = "none"))]
 compile_error!("test-support is for host tests: it forges confirmations and fresh files");

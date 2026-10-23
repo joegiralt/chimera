@@ -97,7 +97,9 @@ fn return_is_each_effects_wet_output() {
                     c.process_wet(&input, &params.chorus, SR, &mut w);
                     w
                 }
-                1 => mono(input, |w| d.process_wet(w, &params.delay, SR)),
+                1 => mono(input, |w| {
+                    d.process_wet(w, &params.delay, SR);
+                }),
                 _ => {
                     let mut w = Stereo::SILENT;
                     r.process(

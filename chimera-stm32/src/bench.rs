@@ -183,6 +183,9 @@ const WARM_BLOCKS: u32 = 8;
 /// through the switch to it (15 + 4 + 15 blocks) before it is timed.
 const SWITCH_WARM: u32 = 34;
 const TIMED_BLOCKS: u32 = 64;
+/// MIX DRY's warm-up: past QUAD's 726 blocks to an idle ring.
+#[cfg(feature = "bench-routing")]
+const DRY_WARM: u32 = 1024;
 const HOLD_SECONDS: u32 = 30;
 const ROWS: usize = 10;
 /// The TAPE row only with `master-tape` (ADR 0055).
@@ -1414,6 +1417,17 @@ fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
         show_rows(rec, heading.as_str(), labels, counts);
         hold(clocks);
     }
+    // The bus as the FX screen's MIX times it (every send at 0.5, the
+    // effects at MIX 0 on it), and with no send: the mix and the output
+    // stage alone (#793).
+    let (mix, dry) = (rig.time_bus(FX[0].1), rig.time_bus_dry());
+    rec.clear();
+    rec.heading("BUS");
+    show_lines(
+        rec,
+        [format_args!("MIX {mix}"), format_args!("MIX DRY {dry}")].into_iter(),
+    );
+    hold(clocks);
 }
 
 /// TAPE's synthetic sources (spec § 5): eight of a kind, xorshift noise
@@ -2581,7 +2595,16 @@ impl Rig<'_> {
     /// sets the FX before every block.
     #[inline(never)]
     fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
-        self.bus(each, false)
+        self.bus(each, false, 0.5, WARM_BLOCKS + SWITCH_WARM)
+    }
+
+    /// MIX DRY: `time_bus`'s MIX with every send at 0, warmed until every
+    /// effect is idle (the delay's line 376 blocks, QUAD's ring 726, #793):
+    /// the mix and the output stage alone.
+    #[cfg(feature = "bench-routing")]
+    #[inline(never)]
+    fn time_bus_dry(&mut self) -> u32 {
+        self.bus(|_, _| {}, false, 0.0, DRY_WARM)
     }
 
     /// `time_bus` with six `a16_a17` voices on Part 1 rendered, untimed,
@@ -2589,17 +2612,17 @@ impl Rig<'_> {
     /// sits between the FX blocks, as in the running synth.
     #[inline(never)]
     fn time_bus_with_voices(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
-        self.bus(each, true)
+        self.bus(each, true, 0.5, WARM_BLOCKS + SWITCH_WARM)
     }
 
-    fn bus(&mut self, each: fn(&mut AudioShared, u32), voices: bool) -> u32 {
+    fn bus(&mut self, each: fn(&mut AudioShared, u32), voices: bool, send: f32, warm: u32) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         // Every effect off but the row's: the boot project's FX would sit
         // in MIX and every row less it.
         shared.fx = FxParams::OFF;
         for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.params.out.sends = [0.5; FX_SENDS];
+            part.params.out.sends = [send; FX_SENDS];
             // One Part to a channel: only Part 1 plays the notes.
             part.mix.channel = MidiChannel::clamped(i as u8);
         }
@@ -2643,12 +2666,12 @@ impl Rig<'_> {
             ));
             DWT::cycle_count().wrapping_sub(start)
         };
-        for b in 0..WARM_BLOCKS + SWITCH_WARM {
+        for b in 0..warm {
             block(shared, fx, self.dac, b);
         }
         let mut cycles = 0u32;
         for b in 0..TIMED_BLOCKS {
-            let b = WARM_BLOCKS + SWITCH_WARM + b;
+            let b = warm + b;
             cycles = cycles.wrapping_add(block(shared, fx, self.dac, b));
         }
         cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32)
