@@ -1111,6 +1111,20 @@ impl ModalBank {
         }
     }
 
+    /// The burst's next sample, 0 once it is spent.
+    #[inline(always)]
+    fn excite(&mut self) -> f32 {
+        if self.burst_remaining > 0 {
+            self.burst_remaining -= 1;
+            let env = (self.burst_remaining as f32 / 200.0).min(1.0);
+            let raw = xorshift_noise(&mut self.noise_state) * self.burst_amp * env;
+            self.burst_lp += 0.4 * (raw - self.burst_lp);
+            self.burst_lp
+        } else {
+            0.0
+        }
+    }
+
     /// Configure filters — called every render block (not just note_on).
     /// Matches Rings' ComputeFilters().
     fn compute_filters(&mut self, m: &Macros, frequency: f32) {
@@ -1528,22 +1542,55 @@ impl SympatheticSet {
     }
 }
 
+/// The bank's block. With POS still its weights hold all block, so each
+/// pair of modes runs the whole block with its state in registers (#793);
+/// gliding, a sample at a time. Both sum the same products in the same
+/// order: bit for bit the same.
 fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
+    if bank.cos_osc.gliding() {
+        render_modal_gliding(bank, output);
+        return;
+    }
+    // The burst doesn't hear the modes: all of it first.
+    let mut input = [0.0_f32; BLOCK_SIZE];
+    for x in input.iter_mut() {
+        *x = bank.excite();
+    }
+    let num = bank.sounding;
+    // Still, `start` moves nothing: one sample's weights are every sample's.
+    let mut w = bank.cos_osc.start();
+    let mut odd = [0.0_f32; BLOCK_SIZE];
+    let mut even = [0.0_f32; BLOCK_SIZE];
+    let mut pairs = bank.filters[..num].chunks_exact_mut(2);
+    for pair in &mut pairs {
+        let (w0, w1) = (w.next(), w.next());
+        let (mut a, mut b) = (pair[0], pair[1]);
+        for ((x, o), e) in input.iter().zip(&mut odd).zip(&mut even) {
+            *o += w0 * a.process_bp(*x);
+            *e += w1 * b.process_bp(*x);
+        }
+        (pair[0], pair[1]) = (a, b);
+    }
+    if let [last] = pairs.into_remainder() {
+        let w0 = w.next();
+        let mut a = *last;
+        for (x, o) in input.iter().zip(&mut odd) {
+            *o += w0 * a.process_bp(*x);
+        }
+        *last = a;
+    }
+    for ((s, o), e) in output.iter_mut().zip(&odd).zip(&even) {
+        *s = fast_tanh(o + e) * 0.5;
+    }
+}
+
+/// A gliding POS's block: the weights step every sample.
+fn render_modal_gliding(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
     let num = bank.sounding;
     for s in output.iter_mut() {
-        let excite = if bank.burst_remaining > 0 {
-            bank.burst_remaining -= 1;
-            let env = (bank.burst_remaining as f32 / 200.0).min(1.0);
-            let raw = xorshift_noise(&mut bank.noise_state) * bank.burst_amp * env;
-            bank.burst_lp += 0.4 * (raw - bank.burst_lp);
-            bank.burst_lp
-        } else {
-            0.0
-        };
-
         // Rings scales external audio input by 0.125. Our internal exciter
         // is already at the right level — no additional scaling needed.
-        let input = excite;
+        let input = bank.excite();
 
         let mut odd = 0.0_f32;
         let mut even = 0.0_f32;

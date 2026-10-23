@@ -170,6 +170,11 @@ impl CosineOsc {
             c: self.iir_coefficient,
         }
     }
+
+    /// Whether the weights glide this block.
+    pub(super) fn gliding(&self) -> bool {
+        self.left > 0
+    }
 }
 
 /// One sample's position weights, a mode at a time.
