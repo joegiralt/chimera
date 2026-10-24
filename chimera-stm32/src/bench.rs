@@ -1313,13 +1313,15 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
 /// The WARM rows, which measure only (#150): `WARM_ROWS` at 1 and 8
 /// voices, each voice's block rendered twice through `warm::twice`, the
 /// second from a copy of the voice. Each line reads the first render's and
-/// the second's cycles a sample a voice: what the voice costs where it
-/// runs, and with its code and data just used. Then 1 OP at 1..8 voices
+/// the second's cycles a sample a voice: the first with the voice's state
+/// out of the D-cache and its code where the voices before left the
+/// I-cache, the second with both just used. Then 1 OP at 1..8 voices
 /// with the I-cache off, every instruction fetched from flash.
 #[cfg(feature = "bench-algo")]
 fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
     use chimera_engine::warm::{ARMED, FIRST, SECOND};
     use core::sync::atomic::Ordering::Relaxed;
+    chimera_engine::warm::set_flush(flush_dcache);
     let mut cells = [(0u32, 0u32); WARM_ROWS * 2];
     for (i, &(_, patch, low, step)) in WARM.iter().enumerate() {
         for (j, n) in [1, MAX_VOICES].into_iter().enumerate() {
@@ -1369,6 +1371,17 @@ fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
         &cold,
     );
     rec.flush();
+}
+
+/// `warm::twice`'s flush: the D-cache cleaned and invalidated over
+/// `bytes` from `at`.
+#[cfg(feature = "bench-algo")]
+fn flush_dcache(at: usize, bytes: usize) {
+    // SAFETY: the bench runs alone, before interrupts are unmasked;
+    // `main`'s SCB isn't in use until it returns, and this only cleans and
+    // invalidates lines, writing back first, so no data is lost.
+    let mut cp = unsafe { cortex_m::Peripherals::steal() };
+    cp.SCB.clean_invalidate_dcache_by_address(at, bytes);
 }
 
 /// The WARM page's patches, as `PATCHES` plays them.
