@@ -261,6 +261,18 @@ impl OpEnv {
         self.level
     }
 
+    /// `n` steps at once while held: `level · 1 + 0` is `level`, which is
+    /// never −0 or a NaN, so only `left` moves. False if a stage could end
+    /// within them.
+    #[inline(always)]
+    pub(crate) fn skip_held(&mut self, n: u32) -> bool {
+        let skip = self.holding && self.left > n;
+        if skip {
+            self.left -= n;
+        }
+        skip
+    }
+
     /// The fields `step` changes, for a loop that keeps them in registers.
     #[inline(always)]
     pub(crate) fn run(&self) -> EnvRun {
@@ -353,5 +365,50 @@ impl OpEnv {
     /// The canonical "never ends" state: `advance` renews it forever.
     fn hold(&mut self) {
         (self.mul, self.add, self.left, self.holding) = (1.0, 0.0, u32::MAX, true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A held envelope skipped a block is the one stepped through it, bit
+    /// for bit: idle, a sustain at D2R 0 and an attack at AR 0.
+    #[test]
+    fn a_held_skip_is_the_steps() {
+        let note = MidiNote::new(60).unwrap();
+        let rates = |ar, d1r, d2r| EnvRates {
+            ar,
+            d1r,
+            d1l: 10,
+            d2r,
+            rr: 8,
+            rs: 0,
+        };
+        let mut held = [OpEnv::IDLE; 3];
+        held[1].note_on(EnvCoefs::new(rates(31, 31, 0), note, 48_000.0));
+        held[2].note_on(EnvCoefs::new(rates(0, 0, 0), note, 48_000.0));
+        for e in held.iter_mut() {
+            for _ in 0..2_000 {
+                e.step();
+            }
+            assert!(e.holding);
+            let (mut a, mut b) = (*e, *e);
+            for _ in 0..64 {
+                a.step();
+            }
+            assert!(b.skip_held(64));
+            assert_eq!(
+                (a.level.to_bits(), a.left, a.stage),
+                (b.level.to_bits(), b.left, b.stage)
+            );
+        }
+        // Not held, or within a block of its end: stepped.
+        let mut e = OpEnv::IDLE;
+        e.note_on(EnvCoefs::new(rates(20, 10, 5), note, 48_000.0));
+        assert!(!e.skip_held(64));
+        let mut h = OpEnv::IDLE;
+        h.left = 64;
+        assert!(!h.skip_held(64));
     }
 }

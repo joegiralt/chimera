@@ -81,8 +81,14 @@ pub fn detune_factor(detune: i8) -> f32 {
     detune_at(f32::from(detune))
 }
 
-/// `detune_factor` between its steps, as the Part's knobs glide it.
+/// `detune_factor` between its steps, as the Part's knobs glide it. Out
+/// of line: inlined, its test grew bank 1's callers.
+#[inline(never)]
 pub fn detune_at(detune: f32) -> f32 {
+    // `exp2(±0)` is 1 exactly: skip it.
+    if detune == 0.0 {
+        return 1.0;
+    }
     exp2(clampf(detune, -3.0, 3.0) * DETUNE_CENTS / 1200.0)
 }
 

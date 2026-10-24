@@ -63,3 +63,5 @@ pub mod theme_settings;
 pub mod tracked;
 pub mod triple;
 pub mod voice_alloc;
+#[cfg(feature = "bench-warm")]
+pub mod warm;

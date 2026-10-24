@@ -55,6 +55,9 @@ source-writer = []
 orbit = []
 # Bench-only phase stamps inside ORBIT's block and the note handling.
 probe = []
+# The bench-algo's WARM rows (`warm`): each voice's block rendered twice,
+# the second from a copy, both timed. Measurement only (#150).
+bench-warm = ["probe"]
 # The formant demo Sounds (`factory::demo_sound`): tests, and the
 # bench-algo's CHOIR row.
 demo-sounds = []

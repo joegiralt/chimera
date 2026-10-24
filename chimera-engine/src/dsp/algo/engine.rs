@@ -792,6 +792,8 @@ impl AlgoEngine {
         )
     }
 
+    /// One block, through the door (ADR 0212): `kern::render`, bank 2's.
+    /// With the door closed the voice is silent and ends.
     pub fn render(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
@@ -804,6 +806,22 @@ impl AlgoEngine {
             out.fill(0.0);
             return;
         }
+        if through(|d| (d.render)(self, out, p, live, sample_rate, taps)).is_none() {
+            out.fill(0.0);
+            self.active = false;
+        }
+    }
+
+    /// An active voice's block: its ramps, the kernel and its lifetime.
+    #[inline(always)]
+    fn block(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        p: &AlgoParams,
+        live: &AlgoLive,
+        sample_rate: u32,
+        taps: &mut TapRows,
+    ) {
         let sr = sample_rate as f32;
         self.slide.tick();
         self.begin_swap(p);
@@ -817,12 +835,14 @@ impl AlgoEngine {
         let m = Morph::from_param(live.morph);
         let level = level_gains(live);
         let cycles = self.cycles(p, sr);
-        // Only a table reads a table: the others' mips hold.
+        // Only a table reads a table: the others' mips hold. Each table's
+        // pitch is taken once, for its mip and its increment.
+        let opc: [f32; OPS] = core::array::from_fn(|i| match self.kinds[i] {
+            OpKind::Table(_) => op_cycles(cycles, p, live, i),
+            OpKind::Formant | OpKind::Noise => 0.0,
+        });
         let mips: [(usize, f32, f32); OPS] = core::array::from_fn(|i| match self.kinds[i] {
-            OpKind::Table(_) => mip_step(
-                self.mip[i],
-                self.mip_target(p, live, cycles, sr, m, &level, i),
-            ),
+            OpKind::Table(_) => mip_step(self.mip[i], self.mip_of(opc[i], sr, m, &level, i)),
             OpKind::Formant | OpKind::Noise => (0, 0.0, 0.0),
         });
         let mut view = self.view;
@@ -859,7 +879,7 @@ impl AlgoEngine {
             }
             let (lo, xfade_from, xfade_to) = mips[i];
             OpBlock {
-                inc: (op_cycles(cycles, p, live, i) * 4_294_967_296.0) as u32,
+                inc: (opc[i] * 4_294_967_296.0) as u32,
                 gain_from: self.gain[i],
                 gain_to,
                 feedback: feedback_cycles(live.feedback[i]),
@@ -949,7 +969,10 @@ impl AlgoEngine {
         440.0 * exp2(st / 12.0) / sr * self.slide.value()
     }
 
+    /// `mip_of` at operator `i`'s own pitch: the note-on's, out of line
+    /// in bank 1.
     #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
     fn mip_target(
         &self,
         p: &AlgoParams,
@@ -960,8 +983,13 @@ impl AlgoEngine {
         level: &[f32; OPS],
         i: usize,
     ) -> f32 {
-        let bandwidth =
-            op_cycles(cycles, p, live, i) * sr * (1.0 + incoming(&self.plan, m, i, level));
+        self.mip_of(op_cycles(cycles, p, live, i), sr, m, level, i)
+    }
+
+    /// The mip of table operator `i` at `opc` cycles a sample (`op_cycles`).
+    #[inline(always)]
+    fn mip_of(&self, opc: f32, sr: f32, m: Morph, level: &[f32; OPS], i: usize) -> f32 {
+        let bandwidth = opc * sr * (1.0 + incoming(&self.plan, m, i, level));
         mip_position(bandwidth)
     }
 
@@ -1322,4 +1350,57 @@ fn level_gains(live: &AlgoLive) -> [f32; OPS] {
 /// FINE and DETUNE as `live` plays them.
 fn op_cycles(cycles: f32, p: &AlgoParams, live: &AlgoLive, i: usize) -> f32 {
     (cycles * ratio_at(p.ops[i].coarse, live.fine[i]) * detune_at(live.detune[i])).min(0.5)
+}
+
+/// ALGO's block (`AlgoEngine::block`).
+pub type AlgoRun =
+    fn(&mut AlgoEngine, &mut [f32; BLOCK_SIZE], &AlgoParams, &AlgoLive, u32, &mut TapRows);
+
+/// ALGO's entry (ADR 0212): one call a voice a block.
+#[repr(C)]
+pub struct AlgoDoor {
+    pub render: AlgoRun,
+}
+
+impl AlgoDoor {
+    pub const DOOR: AlgoDoor = AlgoDoor {
+        render: kern::render,
+    };
+}
+
+/// `f` on ALGO's block: through the door with `bank2` (`None` while it is
+/// closed), else bank 1's own on a host. A firmware built without bank 2
+/// has no room for it in bank 1: there ALGO is silent.
+#[inline(always)]
+fn through<R>(f: impl FnOnce(&AlgoDoor) -> R) -> Option<R> {
+    #[cfg(feature = "bank2")]
+    {
+        crate::bank2::DOOR_CELL.with(|d| f(&d.algo))
+    }
+    #[cfg(all(not(feature = "bank2"), not(target_os = "none")))]
+    {
+        Some(f(&AlgoDoor::DOOR))
+    }
+    #[cfg(all(not(feature = "bank2"), target_os = "none"))]
+    {
+        let _ = f;
+        None
+    }
+}
+
+/// Bank 2's: `bank2.x` links `*4algo6engine4kern*`, and the kernel.
+mod kern {
+    use super::{AlgoEngine, AlgoLive, AlgoParams, BLOCK_SIZE, TapRows};
+
+    #[inline(never)]
+    pub(super) fn render(
+        e: &mut AlgoEngine,
+        out: &mut [f32; BLOCK_SIZE],
+        p: &AlgoParams,
+        live: &AlgoLive,
+        sample_rate: u32,
+        taps: &mut TapRows,
+    ) {
+        e.block(out, p, live, sample_rate, taps);
+    }
 }

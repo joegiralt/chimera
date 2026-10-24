@@ -133,6 +133,9 @@ pub struct Bank2Door {
     /// rest are bank 1's side).
     #[cfg(all(feature = "bank2", feature = "orbit"))]
     pub orbit: crate::orbit::door::OrbitDoor,
+    /// ALGO's block (ADR 0212; `AlgoEngine::render` is bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub algo: crate::dsp::algo::engine::AlgoDoor,
 }
 
 impl Bank2Door {
@@ -176,6 +179,7 @@ static DOOR: Bank2Door = Bank2Door {
     gate: crate::dsp::voice::gate::GateDoor::DOOR,
     #[cfg(feature = "orbit")]
     orbit: crate::orbit::door::OrbitDoor::DOOR,
+    algo: crate::dsp::algo::engine::AlgoDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

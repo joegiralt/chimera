@@ -9,6 +9,7 @@ use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
 use crate::dsp::algo::waves::{Table, WAVE_LEN, WaveId};
 use crate::hw::BLOCK_SIZE;
 use crate::taps::{TapOp, TapRows};
+use core::mem::MaybeUninit;
 
 /// Phase swing, in cycles, of a full-scale modulator at weight 1.
 pub const PM_CYCLES: f32 = 4.0;
@@ -285,7 +286,14 @@ impl Kernel {
         taps: &mut TapRows,
     ) {
         if blk.plan.delayed == 0 {
-            self.render_ops(blk, env, out, taps);
+            // A block whose ops gain from the no-PM loop gets its own
+            // `render_ops`: the arm alone cost every other loop in it a
+            // register reload.
+            if skip_pm_gains(blk) {
+                self.render_ops::<true>(blk, env, out, taps);
+            } else {
+                self.render_ops::<false>(blk, env, out, taps);
+            }
         } else {
             self.render_samples(blk, env, out, taps);
         }
@@ -295,7 +303,7 @@ impl Kernel {
     /// its whole block in turn with its state and link weights in
     /// registers. The same operations in the same order as
     /// `render_samples`, so the output is identical.
-    fn render_ops(
+    fn render_ops<const FREE: bool>(
         &mut self,
         blk: &KernelBlock,
         env: &mut [OpEnv; OPS],
@@ -308,19 +316,28 @@ impl Kernel {
         for (k, &op) in plan.order.iter().enumerate() {
             pos[op as usize % OPS] = k;
         }
-        // Row `k` holds the block of the operator `k`-th in the order.
-        let mut bufs = [[0.0f32; BLOCK_SIZE]; OPS];
+        // Row `k` holds the block of the operator `k`-th in the order. Each
+        // turn writes its own rows whole before `k` passes them: a silent
+        // op's zeros, a noise or formant row zeroed first, a single table
+        // op's every sample (`run_one`), a pair's both rows (`run_pair`, or
+        // zeros in the match's catch-all). So no row is cleared twice.
+        let mut bufs: [Row; OPS] = [[MaybeUninit::uninit(); BLOCK_SIZE]; OPS];
         out.fill(0.0);
         let mut k = 0;
         while k < OPS {
             let a = plan.order[k] as usize % OPS;
             if silent(&blk.ops[a]) {
                 self.idle(&blk.ops[a], a, &mut env[a]);
+                bufs[k] = [MaybeUninit::new(0.0); BLOCK_SIZE];
                 k += 1;
                 continue;
             }
             let n = plan.starts[k + 1].saturating_sub(plan.starts[k]) as usize;
             let (done, rest) = bufs.split_at_mut(k);
+            // SAFETY: the rows before `k` are written: every turn writes the
+            // rows it passes whole, on each of its paths (above), the pair
+            // match's catch-all included.
+            let done = unsafe { written(done) };
             let link = |i: usize| {
                 let e = plan.edges[plan.starts[k] as usize + i];
                 Link {
@@ -331,13 +348,31 @@ impl Kernel {
             };
             if let KindBlock::Noise(nb) = &blk.ops[a].kind {
                 let links: [Option<Link>; 5] = core::array::from_fn(|i| (i < n).then(|| link(i)));
-                self.noise_op(blk, a, dm, nb, &links, &mut env[a], &mut rest[0], out);
+                self.noise_op(
+                    blk,
+                    a,
+                    dm,
+                    nb,
+                    &links,
+                    &mut env[a],
+                    zeroed(&mut rest[0]),
+                    out,
+                );
                 k += 1;
                 continue;
             }
             if let KindBlock::Formant(fb) = &blk.ops[a].kind {
                 let links: [Option<Link>; 5] = core::array::from_fn(|i| (i < n).then(|| link(i)));
-                self.formant_op(blk, a, dm, fb, &links, &mut env[a], &mut rest[0], out);
+                self.formant_op(
+                    blk,
+                    a,
+                    dm,
+                    fb,
+                    &links,
+                    &mut env[a],
+                    zeroed(&mut rest[0]),
+                    out,
+                );
                 k += 1;
                 continue;
             }
@@ -377,7 +412,12 @@ impl Kernel {
                                 (&mut y, from_fn(link_b), eb, db),
                                 out,
                             ),)*
-                            _ => {}
+                            // `pair` holds `n, m <= 2`, so never; if it
+                            // did, both rows still come out written.
+                            _ => {
+                                *da = [MaybeUninit::new(0.0); BLOCK_SIZE];
+                                *db = [MaybeUninit::new(0.0); BLOCK_SIZE];
+                            }
                         }
                     };
                 }
@@ -388,18 +428,23 @@ impl Kernel {
                 let d = &mut rest[0];
                 let e = &mut env[a];
                 match n {
-                    0 => run_one(&mut x, from_fn::<_, 0>(link), e, d, out),
-                    1 => run_one(&mut x, from_fn::<_, 1>(link), e, d, out),
-                    2 => run_one(&mut x, from_fn::<_, 2>(link), e, d, out),
-                    3 => run_one(&mut x, from_fn::<_, 3>(link), e, d, out),
-                    4 => run_one(&mut x, from_fn::<_, 4>(link), e, d, out),
-                    _ => run_one(&mut x, from_fn::<_, 5>(link), e, d, out),
+                    0 if FREE && x.feedback == 0.0 => {
+                        run_one::<0, false>(&mut x, from_fn(link), e, d, out)
+                    }
+                    0 => run_one::<0, true>(&mut x, from_fn(link), e, d, out),
+                    1 => run_one::<1, true>(&mut x, from_fn(link), e, d, out),
+                    2 => run_one::<2, true>(&mut x, from_fn(link), e, d, out),
+                    3 => run_one::<3, true>(&mut x, from_fn(link), e, d, out),
+                    4 => run_one::<4, true>(&mut x, from_fn(link), e, d, out),
+                    _ => run_one::<5, true>(&mut x, from_fn(link), e, d, out),
                 }
                 k += 1;
             }
             self.keep(a, &x);
         }
-        // A silent op's row was never written: zeros.
+        // SAFETY: every row is written: `k` passed them all, and each turn
+        // wrote the rows it passed on every path (the loop's comment).
+        let bufs = unsafe { written(&bufs) };
         for (op, row) in TapOp::ALL.iter().zip(taps.rows_mut()) {
             if let Some(row) = row {
                 for (r, &y) in row.iter_mut().zip(&bufs[pos[op.op_index()]]) {
@@ -586,11 +631,14 @@ impl Kernel {
         if let KindState::Formant(f) = &mut self.state[op] {
             *f = FormantState::CLOSED;
         }
-        let mut run = env.run();
-        for _ in 0..BLOCK_SIZE {
-            run.step(env);
+        // A held envelope's block is its count alone (`skip_held`).
+        if !env.skip_held(BLOCK_SIZE as u32) {
+            let mut run = env.run();
+            for _ in 0..BLOCK_SIZE {
+                run.step(env);
+            }
+            env.store(run);
         }
-        env.store(run);
         self.phase[op] = self.phase[op].wrapping_add(o.inc.wrapping_mul(BLOCK_SIZE as u32));
         self.out[op] = 0.0;
         self.hist[op] = 0.0;
@@ -778,6 +826,54 @@ impl Kernel {
 }
 
 const STEP: f32 = 1.0 / BLOCK_SIZE as f32;
+
+/// Whether `blk` gains from `render_ops::<true>`: on the M7 its no-PM
+/// loop saves five instructions a sample on each lit table op with no link
+/// and FEEDBACK 0, and costs every other loop one. Only picks the copy:
+/// either renders any block bit for bit.
+fn skip_pm_gains(blk: &KernelBlock) -> bool {
+    let plan = blk.plan;
+    let (mut free, mut other) = (0u32, 0u32);
+    for k in 0..OPS {
+        let o = &blk.ops[plan.order[k] as usize % OPS];
+        if silent(o) {
+            continue;
+        }
+        if is_table(o)
+            && o.feedback * 0.5 * PHASE_UNITS == 0.0
+            && plan.starts[k + 1] <= plan.starts[k]
+        {
+            free += 1;
+        } else {
+            other += 1;
+        }
+    }
+    5 * free > other
+}
+
+/// An operator's block in `render_ops`, written before it is read.
+type Row = [MaybeUninit<f32>; BLOCK_SIZE];
+
+/// `rows` as the samples they hold.
+///
+/// # Safety
+/// Every sample of `rows` is written.
+#[inline(always)]
+unsafe fn written(rows: &[Row]) -> &[[f32; BLOCK_SIZE]] {
+    // SAFETY: `MaybeUninit<f32>` has `f32`'s layout, so a `Row` has
+    // `[f32; BLOCK_SIZE]`'s, and the caller vouches each sample is written.
+    unsafe { &*(rows as *const [Row] as *const [[f32; BLOCK_SIZE]]) }
+}
+
+/// `row` zeroed, as samples: a noise or formant op's, which its run may
+/// leave in part.
+#[inline(always)]
+fn zeroed(row: &mut Row) -> &mut [f32; BLOCK_SIZE] {
+    *row = [MaybeUninit::new(0.0); BLOCK_SIZE];
+    // SAFETY: every sample was just written; `MaybeUninit<f32>` has
+    // `f32`'s layout.
+    unsafe { &mut *(row as *mut Row as *mut [f32; BLOCK_SIZE]) }
+}
 
 /// A block of no PM: what an operator with no links reads (and doesn't).
 static ZEROS: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
@@ -1408,22 +1504,28 @@ fn pick2(env: &mut [OpEnv; OPS], a: usize, b: usize) -> (&mut OpEnv, &mut OpEnv)
     if a < b { (x, y) } else { (y, x) }
 }
 
-/// One sample of one operator, exactly as `render_samples` does it.
+/// One sample of one operator, exactly as `render_samples` does it. With
+/// `PM` false (no link, FEEDBACK 0) the PM is left out: `0 · x` is ±0 or
+/// NaN, and either casts to phase 0.
 #[inline(always)]
-fn tick<const N: usize>(
+fn tick<const N: usize, const PM: bool>(
     st: &mut OpState,
     links: &mut [Link; N],
     env: &mut EnvRun,
     env_mem: &mut OpEnv,
     s: usize,
 ) -> f32 {
-    let mut pm = st.feedback * (st.prev + st.hist);
-    for l in links.iter_mut() {
-        pm += l.w * l.src[s];
-        l.w += l.dw;
-    }
     st.phase = st.phase.wrapping_add(st.inc);
-    let p = st.phase.wrapping_add((pm as i32 as u32) << 8);
+    let p = if PM {
+        let mut pm = st.feedback * (st.prev + st.hist);
+        for l in links.iter_mut() {
+            pm += l.w * l.src[s];
+            l.w += l.dw;
+        }
+        st.phase.wrapping_add((pm as i32 as u32) << 8)
+    } else {
+        st.phase
+    };
     let y = read(st.lo, st.hi, st.xfade, p) * env.step(env_mem) * st.gain;
     st.gain += st.dgain;
     st.xfade += st.dxfade;
@@ -1434,17 +1536,17 @@ fn tick<const N: usize>(
 
 #[cfg_attr(not(feature = "span-count"), inline(always))]
 #[cfg_attr(feature = "span-count", inline(never))]
-fn run_one<const N: usize>(
+fn run_one<const N: usize, const PM: bool>(
     st: &mut OpState,
     mut links: [Link; N],
     env: &mut OpEnv,
-    dst: &mut [f32; BLOCK_SIZE],
+    dst: &mut Row,
     acc: &mut [f32; BLOCK_SIZE],
 ) {
     let (mut x, mut run) = (*st, env.run());
     for s in 0..BLOCK_SIZE {
-        let y = tick(&mut x, &mut links, &mut run, env, s);
-        dst[s] = y;
+        let y = tick::<N, PM>(&mut x, &mut links, &mut run, env, s);
+        dst[s] = MaybeUninit::new(y);
         acc[s] += x.carrier * y;
         x.carrier += x.dcarrier;
     }
@@ -1452,12 +1554,8 @@ fn run_one<const N: usize>(
     env.store(run);
 }
 
-type PairLane<'a, 'b, const N: usize> = (
-    &'b mut OpState,
-    [Link<'a>; N],
-    &'b mut OpEnv,
-    &'b mut [f32; BLOCK_SIZE],
-);
+type PairLane<'a, 'b, const N: usize> =
+    (&'b mut OpState, [Link<'a>; N], &'b mut OpEnv, &'b mut Row);
 
 /// Two operators that don't read each other, interleaved so their chains
 /// overlap; `a` still sums into `acc` first.
@@ -1472,10 +1570,10 @@ fn run_pair<const N: usize, const M: usize>(
     let (mut x, mut rx) = (*sa, ea.run());
     let (mut y, mut ry) = (*sb, eb.run());
     for s in 0..BLOCK_SIZE {
-        let ya = tick(&mut x, &mut la, &mut rx, ea, s);
-        let yb = tick(&mut y, &mut lb, &mut ry, eb, s);
-        da[s] = ya;
-        db[s] = yb;
+        let ya = tick::<N, true>(&mut x, &mut la, &mut rx, ea, s);
+        let yb = tick::<M, true>(&mut y, &mut lb, &mut ry, eb, s);
+        da[s] = MaybeUninit::new(ya);
+        db[s] = MaybeUninit::new(yb);
         acc[s] += x.carrier * ya;
         acc[s] += y.carrier * yb;
         x.carrier += x.dcarrier;
