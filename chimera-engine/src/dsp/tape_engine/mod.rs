@@ -2530,7 +2530,7 @@ impl TapeDeck {
                 reads.run(run)
             };
             let (r, c) = (&r, (i, cur, step));
-            let rs = (r, &second, stop, stop1);
+            let rs = (r, &second, stop, stop1, reads.whole);
             (i, cur) = match (self.ghost().is_some(), self.turning().is_some()) {
                 (true, _) => self.run_slow::<true>(out, r, c, &k),
                 (false, true) => self.run_slow::<false>(out, r, c, &k),
@@ -2777,7 +2777,7 @@ impl TapeDeck {
     fn run<const MIRROR: bool, const MOVING: bool>(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
-        (v, v1, stop, stop1): (&SourceView<'_>, &SourceView<'_>, Stop, Stop),
+        (v, v1, stop, stop1, whole): (&SourceView<'_>, &SourceView<'_>, Stop, Stop, bool),
         (mut i, mut cur, step): (usize, u64, u64),
         k: &AtWrap<'_>,
     ) -> (usize, u64) {
@@ -2936,7 +2936,13 @@ impl TapeDeck {
                 // A fade that starts here picks its second head's view
                 // where it starts (a prefetched wrap's slot): back out.
                 let starts = !fading && self.fade.is_some();
-                if self.leaves(MIRROR) || self.jumped || starts {
+                // A wrap or a fade's start on a whole row stays: back out,
+                // `render_heads` would hand this run the same views and
+                // stops, and call it again in the same frame (`leaves`
+                // false) with the same state, which is all it reloads
+                // here; SCRUB's finger, which it reloads too, aside. A
+                // tiny loop wraps every few samples (#793).
+                if self.leaves(MIRROR) || ((self.jumped || starts) && (MOVING || !whole)) {
                     return (i, cur);
                 }
                 [h0, h1] = self.heads.map(|h| h.pos);

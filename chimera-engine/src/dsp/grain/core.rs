@@ -477,14 +477,24 @@ impl Grain {
             let i = self.pos.whole();
             let run = if i >= 1 && i + 2 < len {
                 // Samples until the leading tap leaves the source: the newest
-                // past its end, or backwards the oldest past its start.
-                let room = if self.speed.is_backwards() {
-                    (self.pos.0 - ONE) / self.speed.magnitude() + 1
+                // past its end, or backwards the oldest past its start;
+                // `room = ahead / m + 1`. It binds only when `room < want`,
+                // that is `ahead < (want − 1)·m`: a multiply decides, and
+                // the divide runs only then (its result is the same).
+                let want = n - at;
+                let (ahead, m) = if self.speed.is_backwards() {
+                    (self.pos.0 - ONE, self.speed.magnitude())
                 } else {
-                    ((((len - 2) as u64) << 32) - 1 - self.pos.0) / self.speed.magnitude().max(1)
-                        + 1
+                    (
+                        (((len - 2) as u64) << 32) - 1 - self.pos.0,
+                        self.speed.magnitude().max(1),
+                    )
                 };
-                (n - at).min(room as usize)
+                if ahead >= (want as u64 - 1).saturating_mul(m) {
+                    want
+                } else {
+                    want.min((ahead / m + 1) as usize)
+                }
             } else {
                 0
             };
