@@ -20,9 +20,9 @@ use chimera_hal::SAMPLE_RATE;
 static DOOR: Mutex<()> = Mutex::new(());
 
 /// Part 1's bus, hashed (FNV-1a over the bits), over a chord of `s` held
-/// 200 blocks, a re-strike, then 200 of tail; and the voices sounding
-/// after the first block.
-fn render(s: &Sound) -> (u64, usize) {
+/// 200 blocks, a re-strike, then 200 of tail, every LEVEL set to `lift`
+/// at block 150 if given; and the voices sounding after the first block.
+fn render(s: &Sound, lift: Option<u8>) -> (u64, usize) {
     let mut shared = Box::<AudioShared>::default();
     *shared.parts[0].params = s.params.clone();
     *shared.parts[0].mod_state = s.mod_state.clone();
@@ -44,6 +44,13 @@ fn render(s: &Sound) -> (u64, usize) {
         if b == 0 {
             for n in notes {
                 inst.handle(ev(n, NoteKind::On(Velocity::new(100).unwrap())), &shared);
+            }
+        }
+        if b == 150 {
+            if let Some(level) = lift {
+                for op in shared.parts[0].params.algo.ops.iter_mut() {
+                    op.level = level;
+                }
             }
         }
         if b == 100 {
@@ -101,7 +108,7 @@ const BEFORE: &[u64] = &[
 ];
 
 fn hashes() -> Vec<u64> {
-    sounds().iter().map(|s| render(s).0).collect()
+    sounds().iter().map(|s| render(s, None).0).collect()
 }
 
 #[test]
@@ -128,6 +135,33 @@ fn algo_with_the_door_closed_is_silent_and_ends() {
         h
     };
     for s in sounds() {
-        assert_eq!(render(&s), (silent, 0));
+        assert_eq!(render(&s, None), (silent, 0));
     }
+}
+
+/// Operators silent at note-on while their envelopes decay, lit mid-note:
+/// a silent op's envelope skips only while it holds (`skip_held`), so a
+/// decaying one keeps its steps and is heard where it had got to.
+fn decaying() -> Sound {
+    let mut s = Sound::init(EngineType::Algo);
+    for (i, op) in s.params.algo.ops.iter_mut().enumerate() {
+        let i = i as u8;
+        (op.ar, op.d1r, op.d1l, op.d2r) = (12 + i, 4 + i, 10, 3);
+        op.level = if i == 0 { 99 } else { 0 };
+    }
+    s
+}
+
+/// Taken on main before the move (5ec76841).
+const DECAYING_BEFORE: u64 = 0x87d5_2bb9_d182_925b;
+
+#[test]
+fn a_silent_op_lit_mid_decay_plays_as_before() {
+    let _g = DOOR.lock().unwrap_or_else(|e| e.into_inner());
+    #[cfg(all(feature = "bank2", feature = "test-support"))]
+    chimera_engine::bank2::DOOR_CELL.open_host();
+    let h = render(&decaying(), Some(99)).0;
+    #[cfg(all(feature = "bank2", feature = "test-support"))]
+    chimera_engine::bank2::DOOR_CELL.close();
+    assert_eq!(h, DECAYING_BEFORE, "{h:#018x}");
 }
