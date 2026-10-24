@@ -531,7 +531,7 @@ impl K2040 {
             sum += *s;
             let (y, d1) = self.tick::<V>(*s * a, &c);
             trace(i, &y);
-            peak = peak.max(d1.abs());
+            peak = crate::dsp::maxnm(peak, d1.abs());
             *s = Self::output::<V>(y[3], out);
         }
         (peak, sum)
@@ -556,7 +556,7 @@ impl K2040 {
                 sum += *s;
                 let (y, d1) = self.tick::<V>(*s * a, &c);
                 trace(j * SUB + i, &y);
-                peak = peak.max(d1.abs());
+                peak = crate::dsp::maxnm(peak, d1.abs());
                 *s = Self::output::<V>(y[3], out);
             }
         }
@@ -606,7 +606,7 @@ impl K2040 {
             let c = coef(gs[i], ks[i]);
             let (y, d1) = self.tick::<V>(*s * a, &c);
             trace(i, &y);
-            peak = peak.max(d1.abs());
+            peak = crate::dsp::maxnm(peak, d1.abs());
             *s = Self::output::<V>(y[3], Self::out_scale::<V>(r.voice, &c));
         }
         (peak, sum)
@@ -721,7 +721,7 @@ pub(super) mod fed {
                 sum += *s;
                 let c = coef(fb.g(gs[i], i, self.fbp, gr), ks[i]);
                 let (y, d1) = self.tick::<V>(*s * a, &c);
-                peak = peak.max(d1.abs());
+                peak = crate::dsp::maxnm(peak, d1.abs());
                 // EXP's make-up rides the output into FB and the guard.
                 let o = Self::output::<V>(y[3], Self::out_scale::<V>(V::VOICE, &c));
                 fb.feed(&mut self.fbp, o);

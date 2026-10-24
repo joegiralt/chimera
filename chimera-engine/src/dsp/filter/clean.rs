@@ -57,7 +57,7 @@ pub fn trim(mode: FilterMode, k: f32) -> f32 {
         // HP12 never reaches CLEAN (`process` runs HP4 for it).
         FilterMode::Hp24 | FilterMode::Hp12 => 0.3367, // +0.62 to +2.29
         FilterMode::Notch => 0.6324,                   // −4.82 to −3.22
-        FilterMode::Phaser => return 0.5 * libm::sqrtf(1.0 - notch2_fb(k)),
+        FilterMode::Phaser => return 0.5 * crate::dsp::sqrt(1.0 - notch2_fb(k)),
     };
     let u = crate::dsp::clampf(1.0 - 2.0 * k, 0.0, 1.0);
     1.0 + (osc - 1.0) * u

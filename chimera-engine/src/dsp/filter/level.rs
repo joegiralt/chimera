@@ -170,7 +170,7 @@ impl LevelStage {
             for s in buf.iter_mut() {
                 g += g_step;
                 let y = *s * g;
-                peak = peak.max(y.abs());
+                peak = crate::dsp::maxnm(peak, y.abs());
                 *s = clipped(y);
             }
         } else {
@@ -178,7 +178,7 @@ impl LevelStage {
             for s in buf.iter_mut() {
                 (g, f) = (g + g_step, f + f_step);
                 let y = *s * g;
-                peak = peak.max(y.abs());
+                peak = crate::dsp::maxnm(peak, y.abs());
                 *s = y + f * clip_delta(y);
             }
         }

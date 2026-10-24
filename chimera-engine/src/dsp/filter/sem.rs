@@ -216,13 +216,11 @@ fn through<R>(f: impl FnOnce(&SemDoor) -> R) -> Option<R> {
 #[inline(always)]
 fn diode(b: f32) -> f32 {
     let e = b.abs() - B0;
-    let y = if e <= 0.0 {
-        0.0
-    } else if e < W {
-        e * e * (0.5 / W)
-    } else {
-        e - 0.5 * W
-    };
+    // Both pieces, then selects (`vsel`), not two compare-and-branches a
+    // sample: the same formulas, the same bits.
+    let (bend, line) = (e * e * (0.5 / W), e - 0.5 * W);
+    let y = if e < W { bend } else { line };
+    let y = if e <= 0.0 { 0.0 } else { y };
     (KD * y).copysign(b)
 }
 
@@ -444,7 +442,7 @@ pub(super) mod kern {
         for x in buf.iter_mut() {
             (a, m) = (a + da, m + dm);
             let (y, b) = out::<BP>(s, *x, a, m, g, kg, d);
-            (*x, pk) = (y, pk.max(b));
+            (*x, pk) = (y, crate::dsp::maxnm(pk, b));
         }
         pk
     }
@@ -461,7 +459,7 @@ pub(super) mod kern {
             for x in sub {
                 (a, m) = (a + da, m + dm);
                 let (y, b) = out::<BP>(s, *x, a, m, g, kg, d);
-                (*x, pk) = (y, pk.max(b));
+                (*x, pk) = (y, crate::dsp::maxnm(pk, b));
             }
         }
         pk
@@ -485,7 +483,7 @@ pub(super) mod kern {
                 let (g, k) = (fb.g(gs[i], i, s.fbp, r.gr), ks[i]);
                 let d = 1.0 / (1.0 + k * g + g * g);
                 let (y, b) = out::<BP>(s, *x, a, m, g, k + g, d);
-                (*x, pk) = (y, pk.max(b));
+                (*x, pk) = (y, crate::dsp::maxnm(pk, b));
                 fb.feed(&mut s.fbp, y);
             }
         } else {
@@ -494,7 +492,7 @@ pub(super) mod kern {
                 let (g, k) = (gs[i], ks[i]);
                 let d = 1.0 / (1.0 + k * g + g * g);
                 let (y, b) = out::<BP>(s, *x, a, m, g, k + g, d);
-                (*x, pk) = (y, pk.max(b));
+                (*x, pk) = (y, crate::dsp::maxnm(pk, b));
             }
         }
         pk
