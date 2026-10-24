@@ -286,7 +286,14 @@ impl Kernel {
         taps: &mut TapRows,
     ) {
         if blk.plan.delayed == 0 {
-            self.render_ops(blk, env, out, taps);
+            // A block whose ops gain from the no-PM loop gets its own
+            // `render_ops`: the arm alone cost every other loop in it a
+            // register reload.
+            if skip_pm_gains(blk) {
+                self.render_ops::<true>(blk, env, out, taps);
+            } else {
+                self.render_ops::<false>(blk, env, out, taps);
+            }
         } else {
             self.render_samples(blk, env, out, taps);
         }
@@ -296,7 +303,7 @@ impl Kernel {
     /// its whole block in turn with its state and link weights in
     /// registers. The same operations in the same order as
     /// `render_samples`, so the output is identical.
-    fn render_ops(
+    fn render_ops<const FREE: bool>(
         &mut self,
         blk: &KernelBlock,
         env: &mut [OpEnv; OPS],
@@ -311,8 +318,9 @@ impl Kernel {
         }
         // Row `k` holds the block of the operator `k`-th in the order. Each
         // turn writes its own rows whole before `k` passes them: a silent
-        // op's zeros, a table's every sample, a noise or formant row zeroed
-        // first. So no row is cleared twice.
+        // op's zeros, a noise or formant row zeroed first, a single table
+        // op's every sample (`run_one`), a pair's both rows (`run_pair`, or
+        // zeros in the match's catch-all). So no row is cleared twice.
         let mut bufs: [Row; OPS] = [[MaybeUninit::uninit(); BLOCK_SIZE]; OPS];
         out.fill(0.0);
         let mut k = 0;
@@ -326,7 +334,9 @@ impl Kernel {
             }
             let n = plan.starts[k + 1].saturating_sub(plan.starts[k]) as usize;
             let (done, rest) = bufs.split_at_mut(k);
-            // SAFETY: the rows before `k` are written (above).
+            // SAFETY: the rows before `k` are written: every turn writes the
+            // rows it passes whole, on each of its paths (above), the pair
+            // match's catch-all included.
             let done = unsafe { written(done) };
             let link = |i: usize| {
                 let e = plan.edges[plan.starts[k] as usize + i];
@@ -402,7 +412,12 @@ impl Kernel {
                                 (&mut y, from_fn(link_b), eb, db),
                                 out,
                             ),)*
-                            _ => {}
+                            // `pair` holds `n, m <= 2`, so never; if it
+                            // did, both rows still come out written.
+                            _ => {
+                                *da = [MaybeUninit::new(0.0); BLOCK_SIZE];
+                                *db = [MaybeUninit::new(0.0); BLOCK_SIZE];
+                            }
                         }
                     };
                 }
@@ -413,8 +428,10 @@ impl Kernel {
                 let d = &mut rest[0];
                 let e = &mut env[a];
                 match n {
-                    0 if x.feedback == 0.0 => run_one::<0, false>(&mut x, [], e, d, out),
-                    0 => run_one::<0, true>(&mut x, [], e, d, out),
+                    0 if FREE && x.feedback == 0.0 => {
+                        run_one::<0, false>(&mut x, from_fn(link), e, d, out)
+                    }
+                    0 => run_one::<0, true>(&mut x, from_fn(link), e, d, out),
                     1 => run_one::<1, true>(&mut x, from_fn(link), e, d, out),
                     2 => run_one::<2, true>(&mut x, from_fn(link), e, d, out),
                     3 => run_one::<3, true>(&mut x, from_fn(link), e, d, out),
@@ -425,7 +442,8 @@ impl Kernel {
             }
             self.keep(a, &x);
         }
-        // SAFETY: every row is written: `k` passed them all.
+        // SAFETY: every row is written: `k` passed them all, and each turn
+        // wrote the rows it passed on every path (the loop's comment).
         let bufs = unsafe { written(&bufs) };
         for (op, row) in TapOp::ALL.iter().zip(taps.rows_mut()) {
             if let Some(row) = row {
@@ -808,6 +826,30 @@ impl Kernel {
 }
 
 const STEP: f32 = 1.0 / BLOCK_SIZE as f32;
+
+/// Whether `blk` gains from `render_ops::<true>`: on the M7 its no-PM
+/// loop saves five instructions a sample on each lit table op with no link
+/// and FEEDBACK 0, and costs every other loop one. Only picks the copy:
+/// either renders any block bit for bit.
+fn skip_pm_gains(blk: &KernelBlock) -> bool {
+    let plan = blk.plan;
+    let (mut free, mut other) = (0u32, 0u32);
+    for k in 0..OPS {
+        let o = &blk.ops[plan.order[k] as usize % OPS];
+        if silent(o) {
+            continue;
+        }
+        if is_table(o)
+            && o.feedback * 0.5 * PHASE_UNITS == 0.0
+            && plan.starts[k + 1] <= plan.starts[k]
+        {
+            free += 1;
+        } else {
+            other += 1;
+        }
+    }
+    5 * free > other
+}
 
 /// An operator's block in `render_ops`, written before it is read.
 type Row = [MaybeUninit<f32>; BLOCK_SIZE];
@@ -1492,9 +1534,8 @@ fn tick<const N: usize, const PM: bool>(
     y
 }
 
-/// Out of line, each its own loop: inlined into `render_ops`, every loop
-/// there lost a register to the no-PM variant (an `ldr` a sample).
-#[inline(never)]
+#[cfg_attr(not(feature = "span-count"), inline(always))]
+#[cfg_attr(feature = "span-count", inline(never))]
 fn run_one<const N: usize, const PM: bool>(
     st: &mut OpState,
     mut links: [Link; N],
