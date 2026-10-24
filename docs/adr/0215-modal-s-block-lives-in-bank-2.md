@@ -38,7 +38,7 @@ The 0.3 audit of the voice paths (#793, (private notes)) found MODAL's biggest s
   | `bench-tape` | 856,040 | 837,368 | −18,672 | 336,800 | 355,520 | +18,720 |
   | `filter-probes` | 849,800 | 831,208 | −18,592 | 370,336 | 389,056 | +18,720 |
 
-  Each line in `tools/bank1-budget.txt` comes down to its measured size, so the freed room stays bank 2's.
+  Each line in `tools/bank1-budget.txt` comes down to its measured size, so the freed room stays bank 2's. Merged onto main after 0213 (the delay and chorus loops), with the rest of #793's voice wins in the same lowering (the filters' VMAXNM and VSQRT, −2.1 KB; BURST's TILT share, +0.2 KB), each line comes down 20.3 to 20.8 KB from main's (`default` 865,904 → 845,352).
 - The efficiency work on MODAL (#793) now edits bank 2, except `compute_filters`, which the note-on shares.
 - A closed bank 2 silences MODAL. ABOUT says so, and so does a MODAL Part's header.
 - The stack check charges `kern::render` as an address-taken function. Every set stays under its stack.

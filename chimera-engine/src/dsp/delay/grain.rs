@@ -12,7 +12,8 @@
 //!
 //! With `bank2` this module links into bank 2 whole (`bank2.x`,
 //! `*5delay5grain*`, and the core's `*3dsp5grain*`); bank 1 reaches `run`
-//! only through `GrainDoor`. With the door closed GRAIN plays as TAPE.
+//! only through `DelayDoor` (`tape::run`). With the door closed the delay
+//! is silent, TAPE too (ADR 0213).
 //
 // The start's trims are Beads' (Copyright 2017 Emilie Gillet), under the
 // MIT License; the notice is `dsp::grain::core`'s.
@@ -222,9 +223,8 @@ impl State {
     };
 }
 
-/// The door's entry (`GrainDoor::run`): one block of the delay with GRAIN
-/// heard, or fading in or out against TAPE. Bank 1 calls it while TYPE is
-/// GRAIN or its share is above 0.
+/// One block of the delay with GRAIN heard, or fading in or out against
+/// TAPE: `tape::run` calls it while TYPE is GRAIN or its share is above 0.
 #[inline(never)]
 pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: u32, insert: bool) {
     let tap = Tap::new(p, fs);

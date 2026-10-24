@@ -183,8 +183,10 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
         ("", "", "")
     };
     // The delay's GRAIN (ADR 0202): `delay::grain` and the grain core
-    // `dsp::grain`, text and rodata.
+    // `dsp::grain`, text and rodata; TAPE's loop (`delay::tape`) and the
+    // chorus's (`chorus::kern`) too (ADR 0213).
     let grain = "    *(.text.*5delay5grain* .rodata.*5delay5grain* .text.*3dsp5grain* .rodata.*3dsp5grain*);
+    *(.text.*5delay4tape* .rodata.*5delay4tape* .text.*6chorus4kern* .rodata.*6chorus4kern*);
 ";
     // The filter probes (`filter-probes`, a measuring build never shipped):
     // `filter::probe` and the gate's `lpg_probe` in bank 2, so their ~40 KB
