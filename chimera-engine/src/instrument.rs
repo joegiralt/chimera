@@ -2056,7 +2056,7 @@ impl Instrument {
             let (knobs, clock) = (&self.knobs[p].0, &self.lfo_clocks[p]);
             ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
                 #[cfg(feature = "bench-warm")]
-                crate::warm::twice(voice, |voice| {
+                crate::warm::twice(voice, &mut |voice| {
                     voice.render_knobs(
                         &mut block,
                         &part.params,

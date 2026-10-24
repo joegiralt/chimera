@@ -1311,30 +1311,28 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
 }
 
 /// The WARM rows, which measure only (#150): `WARM_ROWS` at 1 and 8
-/// voices, each voice's block rendered twice through `warm::twice`, the
+/// voices, each voice's block rendered twice through `warm_twice`, the
 /// second from a copy of the voice. Each line reads the first render's and
 /// the second's cycles a sample a voice: the first with the voice's state
 /// out of the D-cache and its code where the voices before left the
-/// I-cache, the second with both just used. Then 1 OP at 1..8 voices
-/// with the I-cache off, every instruction fetched from flash.
+/// I-cache, the second with both just used. Then 1 OP at 1..8 voices with
+/// the I-cache off, every instruction fetched from flash.
 #[cfg(feature = "bench-algo")]
 fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
-    use chimera_engine::warm::{ARMED, FIRST, SECOND};
     use core::sync::atomic::Ordering::Relaxed;
-    chimera_engine::warm::set_flush(flush_dcache);
     let mut cells = [(0u32, 0u32); WARM_ROWS * 2];
     for (i, &(_, patch, low, step)) in WARM.iter().enumerate() {
         for (j, n) in [1, MAX_VOICES].into_iter().enumerate() {
             let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
-            FIRST.store(0, Relaxed);
-            SECOND.store(0, Relaxed);
-            ARMED.store(true, Relaxed);
+            WARM_FIRST.store(0, Relaxed);
+            WARM_SECOND.store(0, Relaxed);
+            chimera_engine::warm::set_hook(Some(warm_twice));
             let (_, spans, _) = rig.time(&setup, &|_, _| {}, n, low, step);
-            ARMED.store(false, Relaxed);
+            chimera_engine::warm::set_hook(None);
             let samples = (WARM_BLOCKS + TIMED_BLOCKS) * BLOCK_SIZE as u32 * spans.max(1) as u32;
             cells[i * 2 + j] = (
-                FIRST.load(Relaxed) / samples,
-                SECOND.load(Relaxed) / samples,
+                WARM_FIRST.load(Relaxed) / samples,
+                WARM_SECOND.load(Relaxed) / samples,
             );
         }
     }
@@ -1373,15 +1371,50 @@ fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
     rec.flush();
 }
 
-/// `warm::twice`'s flush: the D-cache cleaned and invalidated over
-/// `bytes` from `at`.
+/// Cycles of every voice's first render, and of its second, summed.
 #[cfg(feature = "bench-algo")]
-fn flush_dcache(at: usize, bytes: usize) {
+static WARM_FIRST: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(feature = "bench-algo")]
+static WARM_SECOND: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+// SAFETY: ".uninit" is NOLOAD, so this holds garbage at boot; sound
+// because it is `MaybeUninit` and `warm_twice` writes it before any read.
+// In AXI, out of D2 (full beside ALGO's kernel rows).
+#[cfg(feature = "bench-algo")]
+#[unsafe(link_section = ".uninit.bench_warm")]
+static mut WARM_SAVED: MaybeUninit<Voice> = MaybeUninit::uninit();
+
+/// `warm::Hook`: `render` on `v` twice, the voice's bytes put back
+/// between, each timed. Before the first, the voice and its copy are
+/// cleaned and invalidated out of the D-cache (the copy read it in).
+#[cfg(feature = "bench-algo")]
+fn warm_twice(v: &mut Voice, render: &mut dyn FnMut(&mut Voice)) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let saved = (&raw mut WARM_SAVED).cast::<Voice>();
+    // SAFETY: the hook is set only around the WARM rows, which render on
+    // one thread before the audio starts, so `WARM_SAVED` has no other
+    // user. The voice's bytes go back where they were taken, the same
+    // object at the same address, with nothing dropped or moved between:
+    // an ALGO voice owns no heap and shares no state its first render
+    // changes.
+    unsafe { core::ptr::copy_nonoverlapping(v, saved, 1) };
     // SAFETY: the bench runs alone, before interrupts are unmasked;
     // `main`'s SCB isn't in use until it returns, and this only cleans and
-    // invalidates lines, writing back first, so no data is lost.
+    // invalidates lines, writing them back first.
     let mut cp = unsafe { cortex_m::Peripherals::steal() };
-    cp.SCB.clean_invalidate_dcache_by_address(at, bytes);
+    let bytes = size_of::<Voice>();
+    cp.SCB
+        .clean_invalidate_dcache_by_address(&raw const *v as usize, bytes);
+    cp.SCB
+        .clean_invalidate_dcache_by_address(saved as usize, bytes);
+    let t = DWT::cycle_count();
+    render(v);
+    WARM_FIRST.fetch_add(DWT::cycle_count().wrapping_sub(t), Relaxed);
+    // SAFETY: as above; `saved` holds the bytes just copied.
+    unsafe { core::ptr::copy_nonoverlapping(saved, v, 1) };
+    let t = DWT::cycle_count();
+    render(v);
+    WARM_SECOND.fetch_add(DWT::cycle_count().wrapping_sub(t), Relaxed);
 }
 
 /// The WARM page's patches, as `PATCHES` plays them.

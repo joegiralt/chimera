@@ -46,11 +46,9 @@ fn render(s: &Sound, lift: Option<u8>) -> (u64, usize) {
                 inst.handle(ev(n, NoteKind::On(Velocity::new(100).unwrap())), &shared);
             }
         }
-        if b == 150 {
-            if let Some(level) = lift {
-                for op in shared.parts[0].params.algo.ops.iter_mut() {
-                    op.level = level;
-                }
+        if let Some(level) = lift.filter(|_| b == 150) {
+            for op in shared.parts[0].params.algo.ops.iter_mut() {
+                op.level = level;
             }
         }
         if b == 100 {
