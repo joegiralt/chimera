@@ -1599,8 +1599,8 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
     let mut w = bank.cos_osc.start();
     let mut odd = [0.0_f32; BLOCK_SIZE];
     let mut even = [0.0_f32; BLOCK_SIZE];
-    let mut pairs = bank.filters[..num].chunks_exact_mut(2);
-    for pair in &mut pairs {
+    let (pairs, rest) = bank.filters[..num].as_chunks_mut::<2>();
+    for pair in pairs {
         let (w0, w1) = (w.next(), w.next());
         let (mut a, mut b) = (pair[0], pair[1]);
         for ((x, o), e) in input.iter().zip(&mut odd).zip(&mut even) {
@@ -1609,7 +1609,7 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
         }
         (pair[0], pair[1]) = (a, b);
     }
-    if let [last] = pairs.into_remainder() {
+    if let [last] = rest {
         let w0 = w.next();
         let mut a = *last;
         for (x, o) in input.iter().zip(&mut odd) {
@@ -1635,12 +1635,12 @@ fn render_modal_gliding(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
         let mut w = bank.cos_osc.start();
 
         // One slice: no bounds check a mode.
-        let mut pairs = bank.filters[..num].chunks_exact_mut(2);
-        for pair in &mut pairs {
+        let (pairs, rest) = bank.filters[..num].as_chunks_mut::<2>();
+        for pair in pairs {
             odd += w.next() * pair[0].process_bp(input);
             even += w.next() * pair[1].process_bp(input);
         }
-        if let [last] = pairs.into_remainder() {
+        if let [last] = rest {
             odd += w.next() * last.process_bp(input);
         }
 
