@@ -233,6 +233,30 @@ fn cases() -> Vec<(String, Sound, Vec<u8>)> {
             v.push((format!("factory {i}"), s, chord.clone()));
         }
     }
+    // DAMP and BRIGHT still while only STRUCTURE (SYMP's halo chord
+    // glides) or only the pitch moves: the halo's settings follow the
+    // periods alone.
+    for mode in [Sympathetic, String, Bowed] {
+        let mut p = modal(mode, |m| (m.halo, m.couple) = (0.8, 0.7));
+        let mut r = Vec::new();
+        lfo(&mut r, &mut p, 1, 0.8, ModalParams::STRUCTURE, 120);
+        v.push((
+            format!("{mode:?} structure alone"),
+            sound(p, mods(&r)),
+            chord.clone(),
+        ));
+        let p = modal(mode, |m| (m.halo, m.couple) = (0.8, 0.7));
+        let mut r = Vec::new();
+        bend(&mut r);
+        let mut p = p;
+        p.lfos[0].rate = 4.0;
+        p.lfos[0].depth = 1.0;
+        v.push((
+            format!("{mode:?} pitch alone"),
+            sound(p, mods(&r)),
+            chord.clone(),
+        ));
+    }
     v
 }
 
@@ -246,7 +270,8 @@ fn hashes() -> Vec<(String, u64, u64)> {
         .collect()
 }
 
-/// Taken on main before the move (bc20ae7c), bank 1's own path: the DAC's
+/// Taken on main before the move (bc20ae7c; the six "alone" rows on
+/// 5ec76841, where the first 60 match too), bank 1's own path: the DAC's
 /// hash and Part 1's bus's.
 const BEFORE: &[(&str, u64, u64)] = &[
     ("String init", 0x2945be550b3e07b5, 0x552b36dadf56e7ca),
@@ -377,6 +402,28 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ),
     ("Sympathetic long", 0x2de8c24df4eecc49, 0x9d6d167e4a0669d0),
     ("Sympathetic high", 0xae5539d74b0b3875, 0xd16f7d128abe9d8c),
+    (
+        "Sympathetic structure alone",
+        0xa5901a6dc550038d,
+        0xa21a8ef98cec172b,
+    ),
+    (
+        "Sympathetic pitch alone",
+        0xbc4dd0ee0c7e3eb1,
+        0xc98d4625076fa0ea,
+    ),
+    (
+        "String structure alone",
+        0xe664e574592131ed,
+        0xc9a18268a06ed11e,
+    ),
+    ("String pitch alone", 0x5ae620719e2de6dd, 0x02ca17684b2c3d36),
+    (
+        "Bowed structure alone",
+        0x7e5effbe95300b81,
+        0x810027f802c57e01,
+    ),
+    ("Bowed pitch alone", 0x07246432160f1b29, 0x23627fbce72ef9ac),
 ];
 
 #[test]

@@ -4,7 +4,7 @@
 - **Deciders:** owner (0.3 efficiency pass, #793: "the sound must not change"), firmware
 
 ## Context
-The 0.3 audit of the voice paths (#793, (private notes)) found MODAL's biggest savings, and they all leave the output bit-identical: RES's modes run a block at a time with their state in registers, the weights' oscillator in locals, `compute_filters` skipped when its inputs are still, BOWED's state in locals and SYMP's halo settings cached. All of MODAL's per-block path was bank 1's. `EngineSlot::render` had `ModalEngine::render`, `render_modal` and `render_sympathetic` inlined. `StringVoice::render` and `render_bowed` sat beside them. Bank 1 is frozen (0198), so every one of those edits would be a bank-1 edit. ALGO's block moved to bank 2 for the same reason (0212).
+The 0.3 audit of the voice paths (#793, (private notes)) found MODAL's biggest savings, and they all leave the output bit-identical: RES's modes run a block at a time with their state in registers, the weights' oscillator in locals, `compute_filters` skipped when its inputs are still, BOWED's state in locals and SYMP's halo settings cached. All of MODAL's per-block path was bank 1's. `EngineSlot::render` had `ModalEngine::render`, `render_modal` and `render_sympathetic` inlined. `StringVoice::render` and `render_bowed` sat beside them. Bank 1 is frozen (0198), so every one of those edits would be a bank-1 edit. ALGO's block moves to bank 2 for the same reason (0212, #802, still open as this is written).
 
 ## Decision
 - **MODAL's block is bank 2's**, behind `Bank2Door::modal` (`dsp::modal::ModalDoor { render }`). `ModalEngine::render` is bank 1's side. An idle voice still fills zeros without crossing. An active voice makes one indirect call a block to `modal::kern::render`, which is `ModalEngine::block` inlined: the macros' ease, the retune, the model's loop (RES and RES48's bank, STRING, BOWED, SYMP), the DC blocker and the voice's lifetime, exactly as `render` ran them.
@@ -18,7 +18,7 @@ The 0.3 audit of the voice paths (#793, (private notes)) found MODAL's biggest s
 ## Alternatives considered
 - **An exception to the freeze for MODAL's edits:** most are size-neutral or shrink, but the block-wise bank adds about 1 KB (it keeps the gliding loop), and each later MODAL edit would need its own exception.
 - **Moving only the bank's loop (`render_modal`):** STRING's, BOWED's and SYMP's wins would stay bank-1 edits, and the per-block prep (`retune`, the macros) would stay frozen.
-- **A bank-1 MODAL for a closed door:** that keeps the code in bank 1, the opposite of the move. A closed door already silences TAPE, ALGO and the reverb, and every install carries bank 2.
+- **A bank-1 MODAL for a closed door:** that keeps the code in bank 1, the opposite of the move. A closed door already silences TAPE and the reverb, and ALGO too once 0212 (#802) merges; every install carries bank 2.
 
 ## Consequences
 - **Flash**, `just check`'s release builds at main (bc20ae7c) and after; bank 1 the `.bin` (`rust-objcopy -R .bank2`), bank 2 the `.bk2`:
@@ -45,5 +45,5 @@ The 0.3 audit of the voice paths (#793, (private notes)) found MODAL's biggest s
 
 ## Sources
 - #793; (private notes).
-- ADR 0137 and 0141 (the door, closed labels), 0142 and 0174 (bank 2's cost), 0194 (bank 2 required), 0198 (the freeze), 0208 (ORBIT's move), 0212 (ALGO's, the pattern).
+- ADR 0137 and 0141 (the door, closed labels), 0142 and 0174 (bank 2's cost), 0194 (bank 2 required), 0198 (the freeze), 0208 (ORBIT's move), 0212 (ALGO's, the pattern, #802).
 - `chimera-engine/src/dsp/modal/mod.rs` (`ModalDoor`, `kern`), `chimera-stm32/build.rs`, `chimera-engine/tests/modal_door_test.rs`.

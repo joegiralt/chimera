@@ -2940,8 +2940,10 @@ impl TapeDeck {
                 // `render_heads` would hand this run the same views and
                 // stops, and call it again in the same frame (`leaves`
                 // false) with the same state, which is all it reloads
-                // here; SCRUB's finger, which it reloads too, aside. A
-                // tiny loop wraps every few samples (#793).
+                // here. A tiny loop wraps every few samples (#793). SCRUB
+                // still backs out: its finger is reloaded as it was set,
+                // so staying would be the same bits too (the hash test's
+                // tiny SCRUB loops agree), but it is left as it ran.
                 if self.leaves(MIRROR) || ((self.jumped || starts) && (MOVING || !whole)) {
                     return (i, cur);
                 }
