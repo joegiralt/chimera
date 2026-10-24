@@ -39,7 +39,7 @@ ALGO is the default engine: INIT and every built-in Sound play it.
   | `bench-tape` | 856,040 | 820,120 | −35,920 | 336,800 | 373,056 | +36,256 |
   | `filter-probes` | 849,800 | 813,632 | −36,168 | 370,336 | 406,816 | +36,480 |
 
-  Each line in `tools/bank1-budget.txt` comes down to its measured size, so the freed room stays bank 2's.
+  Each line in `tools/bank1-budget.txt` comes down to its measured size, so the freed room stays bank 2's. Merged over main at 5ec76841 (after 0213 and 0214), with the rest of the 0.3 ALGO passes in, the lines come down again from main's: `default` 865,904 → 829,264 (−36,640), `orbit` 882,780 → 846,100, `bench-algo` 883,648 → 844,648, every set by 36.5 to 39.0 KB.
 - The efficiency work on ALGO (#793) now edits bank 2 only. Its inlining churn no longer touches the frozen bank.
 - A closed bank 2 silences the default engine. A unit whose `.bk2` is missing plays only what bank 1 still holds until it is updated. ABOUT says so. A header warning on ALGO Parts is a UI change for its own PR.
 - The bench's kernel rows (`bench-algo`) already ran from bank 2 (0194). They now time kernel code that is itself in bank 2, as the shipping build runs it.
