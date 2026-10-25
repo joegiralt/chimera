@@ -528,6 +528,118 @@ fn canonical_nrpn_moves_mappable_only() {
     assert_eq!(va.stored(P1, VA_MODE), to, "MODE set by its code");
 }
 
+/// `n` continuous params with an NRPN address, mappable and live on ALGO,
+/// CUTOFF last.
+fn canonical_params(n: usize) -> Vec<ParamAddr> {
+    let mut k: Vec<_> = chimera_core::nrpn::chart()
+        .filter_map(|l| match l {
+            chimera_core::nrpn::ChartLine::Live { block, spec, .. } => {
+                Some(ParamAddr::new(block, spec.id))
+            }
+            _ => None,
+        })
+        .filter(|&a| {
+            a != CUTOFF
+                && spec(a).kind == ParamKind::Continuous
+                && Mappable::new(a).is_some_and(|m| m.live(EngineType::Algo))
+        })
+        .take(n - 1)
+        .collect();
+    k.push(CUTOFF);
+    assert_eq!(k.len(), n);
+    k
+}
+
+#[test]
+fn canonical_nrpns_past_the_slots_all_land() {
+    // Twenty canonical NRPNs in one pass, more than a Part has slots: each
+    // ramps to its value in turn, none lost, never past the budget.
+    let mut r = Rig::algo();
+    let params = canonical_params(20);
+    for &a in &params {
+        r.set(P1, a, 0.5);
+    }
+    r.passes(2);
+    let v = |i: usize| 10 + 5 * i as u8;
+    let ev: Vec<_> = params
+        .iter()
+        .enumerate()
+        .map(|(i, &a)| r.nrpn(P1, addr_of(a), DataValue::Coarse(u7(v(i)))))
+        .collect();
+    let (first, last) = (r.place(P1, params[0]), r.stored(P1, CUTOFF));
+    r.most = 0;
+    r.pass(&ev);
+    r.pass(&[]);
+    let mid = r.place(P1, params[0]);
+    assert!(
+        mid < first && mid > place7(v(0)),
+        "ramped, not snapped: {mid}"
+    );
+    assert_eq!(r.stored(P1, CUTOFF), last, "the last waits its turn");
+    for _ in 0..200 {
+        r.pass(&[]);
+        assert!((r.most as usize) <= MOVES, "{} moves a publish", r.most);
+    }
+    for (i, &a) in params.iter().enumerate() {
+        let got = r.place(P1, a);
+        assert!((got - place7(v(i))).abs() < 1e-4, "{a:?} at {got}");
+    }
+}
+
+#[test]
+fn canonical_nrpn_sweeps_past_the_slots_take_turns() {
+    // Twelve params swept at once, every pass: each moves while the sweep
+    // lasts (none starves behind the slots), and each lands on its last.
+    let mut r = Rig::algo();
+    let params = canonical_params(12);
+    for &a in &params {
+        r.set(P1, a, 0.0);
+    }
+    r.passes(2);
+    let start: Vec<f32> = params.iter().map(|&a| r.stored(P1, a)).collect();
+    for v in 1..=100u8 {
+        let ev: Vec<_> = params
+            .iter()
+            .map(|&a| r.nrpn(P1, addr_of(a), DataValue::Coarse(u7(v))))
+            .collect();
+        r.pass(&ev);
+    }
+    for (i, &a) in params.iter().enumerate() {
+        assert!(r.stored(P1, a) > start[i], "{a:?} starved");
+    }
+    r.passes(200);
+    for &a in &params {
+        let got = r.place(P1, a);
+        assert!((got - place7(100)).abs() < 1e-4, "{a:?} at {got}");
+    }
+}
+
+#[test]
+fn canonical_nrpn_waiting_yields_to_the_hand() {
+    // CUTOFF waits behind nineteen others; the panel turns it: the value
+    // it waited with never lands.
+    let mut r = Rig::algo();
+    let params = canonical_params(20);
+    for &a in &params {
+        r.set(P1, a, 0.5);
+    }
+    r.go_to_page(FILTER.id);
+    r.passes(2);
+    let ev: Vec<_> = params
+        .iter()
+        .map(|&a| r.nrpn(P1, addr_of(a), DataValue::Coarse(u7(0))))
+        .collect();
+    let was = r.stored(P1, CUTOFF);
+    r.pass(&ev);
+    assert_eq!(r.stored(P1, CUTOFF), was, "waiting");
+    r.pass_with(&[], Some(Key::turn(EncoderId::F, 3)));
+    r.passes(5);
+    let turned = r.stored(P1, CUTOFF);
+    assert!(turned > was, "the hand moved it up");
+    r.passes(200);
+    assert_eq!(r.stored(P1, CUTOFF), turned, "the hand won");
+}
+
 #[test]
 fn canonical_nrpn_dead_engine_ignored() {
     let mut r = Rig::algo();

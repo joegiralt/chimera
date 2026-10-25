@@ -18,7 +18,7 @@ use crate::project::PartId;
 /// The MIDI UI's state: in AXI `.bss`, not in D2 with `UiState` (bench
 /// builds' D2 is full). Bank 1 keeps the hand's moves, the moves in flight
 /// to the audio, this pass's room and the clock; bank 2 builds the rest
-/// (`MidiUi`, ~4.6 KB) the first time the door runs, so bank 1 carries no
+/// (`MidiUi`, ~5.7 KB) the first time the door runs, so bank 1 carries no
 /// image of it.
 pub struct MidiSlot {
     pub(super) built: bool,

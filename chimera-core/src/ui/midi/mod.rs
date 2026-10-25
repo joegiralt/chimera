@@ -38,11 +38,15 @@ use crate::project::{Loads, PartId, Project};
 use ramp::{Ramp, bin, budget};
 use resolve::{Action, BindRuntime, resolve};
 
-/// Canonical NRPN targets a Part moves at once: a fifth waits for a slot
-/// to come to rest, and is dropped.
-const CANON: usize = 4;
+/// Canonical NRPN targets a Part moves at once. The rest wait in line, each
+/// with its latest place, till a slot comes to rest (spec § 5: delayed as a
+/// CC is, not lost); past `WAIT` addresses waiting, a new one is dropped.
+const CANON: usize = 8;
+/// Canonical targets that wait for a slot, first come first moved.
+const WAIT: usize = 16;
 /// A Part's slots: its map's entries, then its canonical NRPN targets.
 const SLOTS: usize = MAP_LEN + CANON;
+const _: () = assert!(SLOTS <= 32, "`handed` holds a bit a slot");
 /// No bin heard since a load or the hand: the stored value's.
 const NO_BIN: u8 = u8::MAX;
 /// RPN 0, pitch-bend sensitivity.
@@ -63,6 +67,9 @@ pub struct PartMidi {
     /// Detents heard and not yet turned: one edit an entry a pass.
     turns: [i16; MAP_LEN],
     canon: [Option<Mappable>; CANON],
+    /// Canonical targets no slot was free for, and their latest places, in
+    /// the order they came: the `None`s after.
+    wait: [Option<(Mappable, Place)>; WAIT],
     cursor: u8,
     loads: Loads,
     /// Slots the hand turned this pass: nothing heard moves them till the next.
@@ -78,6 +85,7 @@ static REST: PartMidi = PartMidi {
     rt: [BindRuntime::NEW; MAP_LEN],
     turns: [0; MAP_LEN],
     canon: [None; CANON],
+    wait: [None; WAIT],
     cursor: 0,
     loads: Loads::NONE,
     handed: 0,
@@ -95,10 +103,76 @@ impl PartMidi {
             ..REST
         };
     }
+
+    /// Canonical slot `k` is free to move: at rest, no bin waiting, and
+    /// not the hand's this pass (its target's message would be refused).
+    fn rests(&self, k: usize) -> bool {
+        let j = MAP_LEN + k;
+        !self.ramps[j].moving() && self.pend[j] == NO_BIN && self.handed >> j & 1 == 0
+    }
+
+    /// Where canonical target `t` goes now: its own slot at rest (or still
+    /// moving, if `sweep`), else a free one, taken for it. One copy, bank
+    /// 2's: inlined twice, its compare is left in bank 1 (ADR 0175).
+    #[inline(never)]
+    fn seat(&mut self, t: Mappable, sweep: bool) -> Seat {
+        if let Some(k) = self.canon.iter().position(|&c| c == Some(t)) {
+            return if self.handed >> (MAP_LEN + k) & 1 != 0 {
+                Seat::Handed
+            } else if sweep || self.rests(k) {
+                Seat::Move(k)
+            } else {
+                Seat::Wait
+            };
+        }
+        let Some(k) = (0..CANON).find(|&k| self.rests(k)) else {
+            return Seat::Wait;
+        };
+        let j = MAP_LEN + k;
+        self.canon[k] = Some(t);
+        (self.ramps[j], self.bins[j]) = (Ramp::rest(0.0), NO_BIN);
+        Seat::Move(k)
+    }
+
+    /// `t` waits to move to `to`: its place, if it waits already, else last
+    /// in line. Dropped when the line is full.
+    fn wait_for(&mut self, t: Mappable, to: Place) {
+        let at = self.wait.iter().position(|w| w.is_none_or(|(u, _)| u == t));
+        if let Some(i) = at {
+            self.wait[i] = Some((t, to));
+        }
+    }
+
+    /// The wait at `i` leaves the line; the rest close up.
+    fn unwait(&mut self, i: usize) {
+        for x in i..WAIT - 1 {
+            self.wait[x] = self.wait[x + 1];
+        }
+        self.wait[WAIT - 1] = None;
+    }
+
+    /// `a` no longer waits.
+    fn unwait_addr(&mut self, a: ParamAddr) {
+        let at = self
+            .wait
+            .iter()
+            .position(|w| w.is_some_and(|(u, _)| u.addr() == a));
+        if let Some(i) = at {
+            self.unwait(i);
+        }
+    }
+}
+
+/// Where a canonical target goes now (`PartMidi::seat`).
+enum Seat {
+    Move(usize),
+    Wait,
+    /// The hand turned it this pass: the message is refused (spec § 6.2).
+    Handed,
 }
 
 /// Each Part's, and whether a stepped or relative move edited the active
-/// Part this pass. ~4.6 KB, AXI (`MidiSlot`).
+/// Part this pass. ~5.7 KB, AXI (`MidiSlot`).
 pub struct MidiUi {
     parts: [PartMidi; MAX_PARTS],
     stepped: bool,
@@ -244,6 +318,7 @@ impl UiState {
             if elapsed > 0 {
                 self.cc_step(p, elapsed);
             }
+            self.cc_waiting(p, now);
         }
         for e in ev {
             if busy {
@@ -394,37 +469,63 @@ impl UiState {
             return;
         };
         let m = self.cc.part(p.index());
-        let k = match m.canon.iter().position(|&c| c == Some(t)) {
-            Some(k) => k,
-            None => {
-                let free = (0..CANON).find(|&k| {
-                    let j = MAP_LEN + k;
-                    !m.ramps[j].moving() && m.pend[j] == NO_BIN
-                });
-                let Some(k) = free else {
-                    return;
-                };
-                let j = MAP_LEN + k;
-                m.canon[k] = Some(t);
-                (m.ramps[j], m.bins[j]) = (Ramp::rest(0.0), NO_BIN);
-                k
-            }
+        // A sweep keeps its moving slot while none waits; else it waits
+        // its turn as the others do.
+        let k = match m.seat(t, m.wait[0].is_none()) {
+            Seat::Move(k) => k,
+            Seat::Wait => return m.wait_for(t, to),
+            Seat::Handed => return,
         };
+        m.unwait_addr(a);
+        self.cc_canon_move(p, k, to, now);
+    }
+
+    /// Canonical slot `k` on Part `p` to `to`, by its target's law's place.
+    fn cc_canon_move(&mut self, p: PartId, k: usize, to: Place, now: Ms) {
         let j = MAP_LEN + k;
-        if m.handed >> j & 1 != 0 {
+        let Some(t) = self.cc.part(p.index()).canon[k] else {
             return;
-        }
+        };
+        let a = t.addr();
+        let Some(spec) = a.spec() else {
+            return;
+        };
         match spec.motion() {
             // The index the law named, exactly: no bins to cross.
             Motion::Stepped(_) => {
+                let hi = nrpn::steps(spec);
                 let at = (u32::from(to.get()) * u32::from(hi) + 8191) / 16383;
                 let at = at.min(u32::from(NO_BIN) - 1) as u16;
-                if u16::from(m.bins[j]) != at {
-                    m.bins[j] = at as u8;
+                let last = &mut self.cc.part(p.index()).bins[j];
+                if u16::from(*last) != at {
+                    *last = at as u8;
                     self.cc_bin(p, j, a, at);
                 }
             }
             Motion::Continuous(_) => self.cc_place(p, j, a, Span::FULL, to, now),
+        }
+    }
+
+    /// Part `p`'s canonical targets waiting, in the order they came, each
+    /// to its own slot once at rest or a free one, as far as slots free.
+    fn cc_waiting(&mut self, p: PartId, now: Ms) {
+        let engine = self.project.part(p).sound.params.engine();
+        let mut i = 0;
+        while i < WAIT {
+            let m = self.cc.part(p.index());
+            let Some((t, to)) = m.wait[i] else {
+                return;
+            };
+            if !t.live(engine) {
+                m.unwait(i);
+                continue;
+            }
+            let Seat::Move(k) = m.seat(t, false) else {
+                i += 1;
+                continue;
+            };
+            m.unwait(i);
+            self.cc_canon_move(p, k, to, now);
         }
     }
 
@@ -637,7 +738,7 @@ impl UiState {
     }
 
     /// The hand wins: a turn of `a` on Part `p` stops its ramps and drops
-    /// its waiting bins and detents, nothing heard moves it this pass, and
+    /// its waiting bins, detents and canonical place, nothing heard moves it this pass, and
     /// its next message starts from the turned value, its next bin from the
     /// stored one. The door's `hand`.
     pub(super) fn hand_in(&mut self, p: PartId, a: ParamAddr) {
@@ -659,6 +760,7 @@ impl UiState {
                 m.turns[j] = 0;
             }
         }
+        m.unwait_addr(a);
     }
 }
 
