@@ -1,0 +1,9 @@
+# Ableton Live "Signed Bit": sign bit, set = up (+1 = 41, -1 = 01)
+cc 21 41
+cc 21 41
+cc 21 42
+cc 21 41
+cc 21 01
+cc 21 01
+cc 21 02
+cc 21 01

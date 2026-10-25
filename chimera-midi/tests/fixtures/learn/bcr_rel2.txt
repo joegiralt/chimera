@@ -1,0 +1,9 @@
+# Behringer BCR2000, Relative 2: binary offset (+1 = 41, -1 = 3F)
+cc 81 41
+cc 81 41
+cc 81 42
+cc 81 41
+cc 81 3F
+cc 81 3F
+cc 81 3E
+cc 81 3F

@@ -1,0 +1,10 @@
+# Mackie Control V-Pot: sign bit, set = counter-clockwise, low 6 bits = ticks (+1 = 01, -1 = 41)
+cc 16 01
+cc 16 01
+cc 16 03
+cc 16 05
+cc 16 01
+cc 16 41
+cc 16 42
+cc 16 41
+cc 16 41

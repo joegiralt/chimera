@@ -1,0 +1,9 @@
+# Behringer BCR2000, Relative 3: sign bit, set = down (+1 = 01, -1 = 41)
+cc 81 01
+cc 81 01
+cc 81 02
+cc 81 01
+cc 81 41
+cc 81 41
+cc 81 43
+cc 81 41
