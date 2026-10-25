@@ -21,7 +21,7 @@ use chimera_core::dsp::va::VaParams;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::midi_in::{CTRL_RING_LEN, Cc, CcEvent, CtrlEvent, CtrlRing};
-use chimera_core::midi_map::{MapEntry, Mappable};
+use chimera_core::midi_map::{Input as MapInput, Mappable, Span};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
@@ -121,7 +121,7 @@ impl Bench {
     fn map(&mut self, p: PartId, cc: u8, a: ParamAddr) {
         let s = self.ui.project_mut().edit_part(p).sound;
         s.map
-            .learn(Cc::new(cc).unwrap(), Mappable::new(a).unwrap())
+            .learn(MapInput::cc(cc).unwrap(), Mappable::new(a).unwrap())
             .unwrap();
     }
 
@@ -254,9 +254,8 @@ fn swept_ends_reach_min_and_max() {
                 let e = s.map.entries()[0];
                 s.map.set(
                     0,
-                    MapEntry {
-                        min: 255,
-                        max: 0,
+                    chimera_core::midi_map::Binding {
+                        span: Span { min: 255, max: 0 },
                         ..e
                     },
                 );
@@ -634,7 +633,7 @@ fn a_project_load_ends_every_ramp() {
         p.edit_part(P1)
             .sound
             .map
-            .learn(Cc::new(74).unwrap(), m)
+            .learn(MapInput::cc(74).unwrap(), m)
             .unwrap();
     });
     let mut b = Bench::algo();
@@ -950,7 +949,7 @@ fn learned_cells_ramp() {
     b.pass(&[(40, 0)]);
     let map = b.ui.project().part(P1).sound.map;
     assert!(
-        map.targets_of(Cc::new(40).unwrap())
+        map.targets_of(&MapInput::cc(40).unwrap())
             .any(|(_, e)| e.target.addr() == bright)
     );
     b.passes(20);
@@ -964,7 +963,7 @@ fn learned_cells_ramp() {
     b.pass(&[(41, 0)]);
     let map = b.ui.project().part(P1).sound.map;
     assert!(
-        map.targets_of(Cc::new(41).unwrap())
+        map.targets_of(&MapInput::cc(41).unwrap())
             .any(|(_, e)| e.target.addr() == level)
     );
     b.pass(&[(41, 0)]);

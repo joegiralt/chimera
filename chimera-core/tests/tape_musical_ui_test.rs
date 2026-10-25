@@ -135,7 +135,10 @@ fn a_cc_is_refused_what_a_turn_is() {
         let s = ui.project_mut().edit_part(p).sound;
         for (cc, a) in [(30, DIRECTION), (31, MODEL)] {
             s.map
-                .learn(Cc::new(cc).unwrap(), Mappable::new(a).unwrap())
+                .learn(
+                    chimera_core::midi_map::Input::cc(cc).unwrap(),
+                    Mappable::new(a).unwrap(),
+                )
                 .unwrap();
         }
     }

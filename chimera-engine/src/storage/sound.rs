@@ -7,14 +7,14 @@ use super::{SourceRef, TapeSource, ZoneTune};
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
 use crate::dsp::voice_fx::legacy::{Legacy, legacy_fx};
-use crate::midi_in::Cc;
-use crate::midi_map::{MAP_LEN, MapEntry, Mappable, MidiMap};
+use crate::midi_map::{Binding, CcKind, Feedback, Input, MAP_LEN, Mappable, MidiMap, Span};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
 use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
 use crate::params::{EngineType, FilterParams, ParamSnapshot};
 use crate::preset::Sound;
 use crate::taps::{Jack, TapRoutes};
+use chimera_midi::take::Takeover;
 
 use super::block_codec::{ByteSet, ENTRY_LEN, decode_block, encode_block};
 use super::codes::{DiskAddr, MIGRATIONS, TRANSLATIONS, ValidAddr, readdress};
@@ -172,13 +172,19 @@ pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(
     }
     if !s.map.is_empty() {
         r.clear();
+        // 0x001E holds plain absolute CC entries only (Task 10 writes the rest).
         for e in s.map.entries() {
-            r.u8(e.cc.get());
+            let Input::Cc(c, CcKind::Absolute(Takeover::Jump)) = e.input else {
+                continue;
+            };
+            r.u8(c.get());
             r.bytes(&addr_code(e.target.addr()));
-            r.u8(e.min);
-            r.u8(e.max);
+            r.u8(e.span.min);
+            r.u8(e.span.max);
         }
-        w.put(RecordTag::MidiMap, r.as_slice())?;
+        if !r.as_slice().is_empty() {
+            w.put(RecordTag::MidiMap, r.as_slice())?;
+        }
     }
     Ok(())
 }
@@ -660,21 +666,21 @@ fn midi_map(p: &[u8], staged: Option<&mut MidiMap>) -> Result<u16, FileError> {
     if let Some(m) = staged {
         for &[cc, block, id, min, max] in entries {
             let t = addr_of(block, id).and_then(Mappable::new);
-            let Some((cc, target)) = Cc::new(cc).filter(|c| !c.is_reserved()).zip(t) else {
+            let Some((input, target)) = Input::cc(cc).zip(t) else {
                 lost += 1;
                 continue;
             };
-            let e = MapEntry {
-                cc,
+            let e = Binding {
+                input,
                 target,
-                min,
-                max,
+                span: Span { min, max },
+                feedback: Feedback::Off,
             };
             match m.entries().iter().position(|x| x.target == target) {
                 Some(i) => m.set(i, e),
                 None => {
                     // At most 16 entries, so there is always room.
-                    let _ = m.learn(cc, target);
+                    let _ = m.learn(input, target);
                     m.set(m.len() - 1, e);
                 }
             }

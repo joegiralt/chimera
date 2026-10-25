@@ -101,6 +101,10 @@ use chimera_board::orbit::SAMPLE_RATE_NZ;
 /// STRESS together fit D2); without it 6 KB, as ALGO's D2 leaves room for.
 pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
     12288
+} else if cfg!(feature = "bench-algo") {
+    // ALGO's D2 has 256 B less since the typed bindings (ADR 0217: a
+    // map grew 65 B in each of 7 Sounds).
+    5888
 } else {
     6144
 };

@@ -134,7 +134,10 @@ fn learn_maps_first_cc() {
     cc(&mut ui, p1, 74, 100, 20_000);
     let map = ui.project().part(P1).sound.map;
     assert_eq!(map.len(), 1);
-    assert_eq!(map.entries()[0].cc, Cc::new(74).unwrap());
+    assert_eq!(
+        map.entries()[0].input,
+        chimera_core::midi_map::Input::cc(74).unwrap()
+    );
     assert_eq!(map.entries()[0].target, Mappable::new(CUTOFF).unwrap());
     assert_eq!(band(&ui), "CC 74 → CUTOFF");
     assert_eq!(ui.learn(), Learn::Off);
@@ -217,7 +220,9 @@ fn learn_refusals() {
     let mut ui = on_cutoff();
     for (i, t) in others(MAP_LEN).into_iter().enumerate() {
         let s = ui.project_mut().edit_part(P1).sound;
-        s.map.learn(Cc::new(i as u8 + 1).unwrap(), t).unwrap();
+        s.map
+            .learn(chimera_core::midi_map::Input::cc(i as u8 + 40).unwrap(), t)
+            .unwrap();
     }
     mix_seq(&mut ui);
     cc(&mut ui, ch(0), 74, 100, 20_000);
@@ -239,7 +244,10 @@ fn learn_cancels_on_nav() {
         let mut ui = on_cutoff();
         let s = ui.project_mut().edit_part(P1).sound;
         s.map
-            .learn(Cc::new(74).unwrap(), Mappable::new(RESO).unwrap())
+            .learn(
+                chimera_core::midi_map::Input::cc(74).unwrap(),
+                Mappable::new(RESO).unwrap(),
+            )
             .unwrap();
         let map = s.map;
         mix_seq(&mut ui);

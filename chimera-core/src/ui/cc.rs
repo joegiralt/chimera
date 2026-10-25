@@ -15,7 +15,7 @@ use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
 use crate::midi_in::HeardCc;
 use crate::midi_map::ramp::{Ramp, bin, budget};
-use crate::midi_map::{MAP_LEN, MapEntry, MidiMap};
+use crate::midi_map::{Binding, Input, MAP_LEN, MidiMap};
 use crate::project::{Loads, PartId, Project};
 
 /// No bin heard since a load or the hand: the stored value's.
@@ -106,7 +106,7 @@ fn knob(a: ParamAddr) -> bool {
     a.spec().and_then(|s| s.motion().knob()).is_some()
 }
 
-fn is_knob(e: &MapEntry) -> bool {
+fn is_knob(e: &Binding) -> bool {
     knob(e.target.addr())
 }
 
@@ -160,7 +160,13 @@ impl UiState {
                 }
                 let (map, handed) = (self.project.part(p).sound.map, self.cc.handed[p.index()]);
                 // The hand beats a CC in its pass (spec § 5).
-                for (j, e) in map.targets_of(ev.cc).filter(|&(j, _)| handed >> j & 1 == 0) {
+                let Some(heard) = Input::cc(ev.cc.get()) else {
+                    continue;
+                };
+                for (j, e) in map
+                    .targets_of(&heard)
+                    .filter(|&(j, _)| handed >> j & 1 == 0)
+                {
                     self.cc_hear(p, j, e, ev.value, now);
                 }
             }
@@ -238,7 +244,7 @@ impl UiState {
 
     /// Entry `j`'s CC value `v` on Part `p`: a continuous target heads for
     /// its place; a stepped one moves to its bin through the edit path.
-    fn cc_hear(&mut self, p: PartId, j: usize, e: &MapEntry, v: u8, now: Ms) {
+    fn cc_hear(&mut self, p: PartId, j: usize, e: &Binding, v: u8, now: Ms) {
         let a = e.target.addr();
         if !e.target.live(self.project.part(p).sound.params.engine()) {
             return;
@@ -258,7 +264,7 @@ impl UiState {
                 } else {
                     u16::from(*last)
                 };
-                let to = bin(v, steps, e.min, e.max, cur).min(u16::from(NO_BIN) - 1);
+                let to = bin(v, steps, e.span.min, e.span.max, cur).min(u16::from(NO_BIN) - 1);
                 *last = to as u8;
                 if to != cur {
                     self.cc_bin(p, j, a, to);
@@ -271,7 +277,7 @@ impl UiState {
                 if !r.moving() {
                     r.cancel(spec.normalize(was));
                 }
-                r.hear(v, e.place(v), now);
+                r.hear(v, e.span.place(v), now);
             }
         }
     }

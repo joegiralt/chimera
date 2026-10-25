@@ -5,6 +5,12 @@
 pub mod ramp;
 
 pub use crate::midi_in::Cc;
+pub use chimera_midi::out::Cc14Msb;
+
+use chimera_midi::ctl::{Ctl, FreeCc, Sel};
+use chimera_midi::rel::ByteEncoding;
+use chimera_midi::take::Takeover;
+use chimera_midi::value::U14;
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ParamId;
@@ -57,17 +63,159 @@ impl Mappable {
     }
 }
 
-/// One mapping. `min` and `max` are places 0..=255 of the param's
-/// normalized span; `min > max` inverts.
+/// A CC a binding may be learned on: `FreeCc` already leaves out bank
+/// select, data entry, sustain, RPN/NRPN and channel mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MapEntry {
-    pub cc: Cc,
-    pub target: Mappable,
+pub struct LearnCc(FreeCc);
+
+impl LearnCc {
+    pub const fn new(n: u8) -> Option<Self> {
+        match FreeCc::new(n) {
+            Some(c) => Some(Self(c)),
+            None => None,
+        }
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0.get()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonMode {
+    Momentary,
+    Toggle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CcKind {
+    Absolute(Takeover),
+    Relative(ByteEncoding),
+    Button(ButtonMode),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NrpnKind {
+    Absolute(Takeover),
+    Relative(ByteEncoding),
+    IncDec,
+    Button(ButtonMode),
+}
+
+const TAKEOVERS: [Takeover; 3] = [Takeover::Jump, Takeover::Pickup, Takeover::Scale];
+
+/// The control and how to read it, as one type: IncDec on a CC, or
+/// relative on pressure, can't be written down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Input {
+    Cc(LearnCc, CcKind),
+    Cc14(Cc14Msb, Takeover),
+    Nrpn(U14, NrpnKind),
+    Pressure(Takeover),
+}
+
+impl Input {
+    /// CC `n` read as absolute with `Jump`: the default kind. `None` for a
+    /// number a binding can't take.
+    pub const fn cc(n: u8) -> Option<Self> {
+        match LearnCc::new(n) {
+            Some(c) => Some(Self::Cc(c, CcKind::Absolute(Takeover::Jump))),
+            None => None,
+        }
+    }
+
+    /// The legal kinds of this control, this control number kept: E's cycle
+    /// (spec § 8.2). At most 10: three takeovers, four relatives, two
+    /// buttons, IncDec.
+    pub fn kinds(self) -> impl Iterator<Item = Input> {
+        let mut out = [self; 10];
+        let mut n = 0;
+        let mut put = |i| {
+            out[n] = i;
+            n += 1;
+        };
+        match self {
+            Self::Cc(c, _) => {
+                for t in TAKEOVERS {
+                    put(Self::Cc(c, CcKind::Absolute(t)));
+                }
+                for e in ByteEncoding::ALL {
+                    put(Self::Cc(c, CcKind::Relative(e)));
+                }
+                put(Self::Cc(c, CcKind::Button(ButtonMode::Momentary)));
+                put(Self::Cc(c, CcKind::Button(ButtonMode::Toggle)));
+            }
+            Self::Nrpn(a, _) => {
+                for t in TAKEOVERS {
+                    put(Self::Nrpn(a, NrpnKind::Absolute(t)));
+                }
+                for e in ByteEncoding::ALL {
+                    put(Self::Nrpn(a, NrpnKind::Relative(e)));
+                }
+                put(Self::Nrpn(a, NrpnKind::IncDec));
+                put(Self::Nrpn(a, NrpnKind::Button(ButtonMode::Momentary)));
+                put(Self::Nrpn(a, NrpnKind::Button(ButtonMode::Toggle)));
+            }
+            Self::Cc14(m, _) => {
+                for t in TAKEOVERS {
+                    put(Self::Cc14(m, t));
+                }
+            }
+            Self::Pressure(_) => {
+                for t in TAKEOVERS {
+                    put(Self::Pressure(t));
+                }
+            }
+        }
+        out.into_iter().take(n)
+    }
+
+    /// Whether `c` belongs to this control, whatever its kind. A 14-bit
+    /// pair hears its MSB CC and the LSB CC, MSB + 32.
+    pub fn heard(&self, c: &Ctl) -> bool {
+        match (*self, c) {
+            (Self::Cc(l, _), Ctl::Cc { cc, .. }) => cc.get() == l.get(),
+            (Self::Cc14(m, _), Ctl::Cc { cc, .. }) => {
+                cc.get() == m.get() || cc.get() == m.get() + 32
+            }
+            (Self::Nrpn(n, _), Ctl::Data { sel, .. } | Ctl::Step { sel, .. }) => {
+                *sel == Sel::Nrpn(n)
+            }
+            (Self::Pressure(_), Ctl::Pressure(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// The same control, whatever its kind.
+    fn same_control(&self, o: &Input) -> bool {
+        match (*self, *o) {
+            (Self::Cc(a, _), Self::Cc(b, _)) => a == b,
+            (Self::Cc14(a, _), Self::Cc14(b, _)) => a == b,
+            (Self::Nrpn(a, _), Self::Nrpn(b, _)) => a == b,
+            (Self::Pressure(_), Self::Pressure(_)) => true,
+            _ => false,
+        }
+    }
+}
+
+/// What a binding sends back to the controller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Feedback {
+    Off,
+    Value,
+}
+
+/// `min` and `max` are places 0..=255 of the param's normalized span;
+/// `min > max` inverts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Span {
     pub min: u8,
     pub max: u8,
 }
 
-impl MapEntry {
+impl Span {
+    pub const FULL: Self = Self { min: 0, max: 255 };
+
     /// A CC value 0..=127 as a place 0..1 of the span.
     pub fn place(&self, v: u8) -> f32 {
         let (lo, hi) = (self.min as f32, self.max as f32);
@@ -75,12 +223,18 @@ impl MapEntry {
     }
 }
 
-pub const MAP_LEN: usize = 16;
+/// One mapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Binding {
+    pub input: Input,
+    pub target: Mappable,
+    pub span: Span,
+    pub feedback: Feedback,
+}
 
-const CC0: Cc = match Cc::new(0) {
-    Some(c) => c,
-    None => panic!(),
-};
+const _: () = assert!(core::mem::size_of::<Binding>() <= 12);
+
+pub const MAP_LEN: usize = 16;
 
 /// Sixteen mappings are held and one more was learned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,7 +242,7 @@ pub struct MapFull;
 
 #[derive(Clone, Copy)]
 pub struct MidiMap {
-    entries: [MapEntry; MAP_LEN],
+    entries: [Binding; MAP_LEN],
     len: u8,
 }
 
@@ -109,11 +263,11 @@ impl Eq for MidiMap {}
 
 impl MidiMap {
     pub const EMPTY: Self = Self {
-        entries: [MapEntry {
-            cc: CC0,
+        entries: [Binding {
+            input: Input::Pressure(Takeover::Jump),
             target: Mappable(ParamAddr::new(BlockRef::Filter, crate::block::ParamId(0))),
-            min: 0,
-            max: 255,
+            span: Span::FULL,
+            feedback: Feedback::Off,
         }; MAP_LEN],
         len: 0,
     };
@@ -126,18 +280,18 @@ impl MidiMap {
         self.len == 0
     }
 
-    pub fn entries(&self) -> &[MapEntry] {
+    pub fn entries(&self) -> &[Binding] {
         &self.entries[..self.len()]
     }
 
-    /// Maps `cc` to `t` over the full range: replaces the target's entry
-    /// (a param appears once) or appends.
-    pub fn learn(&mut self, cc: Cc, t: Mappable) -> Result<(), MapFull> {
-        let e = MapEntry {
-            cc,
+    /// Maps `input` to `t` over the full range, echo off: replaces the
+    /// target's entry (a param appears once) or appends.
+    pub fn learn(&mut self, input: Input, t: Mappable) -> Result<(), MapFull> {
+        let e = Binding {
+            input,
             target: t,
-            min: 0,
-            max: 255,
+            span: Span::FULL,
+            feedback: Feedback::Off,
         };
         let n = self.len();
         if let Some(i) = self.entries().iter().position(|x| x.target == t) {
@@ -161,27 +315,31 @@ impl MidiMap {
     }
 
     /// Replaces entry `i`. Out of range does nothing.
-    pub fn set(&mut self, i: usize, e: MapEntry) {
+    pub fn set(&mut self, i: usize, e: Binding) {
         if i < self.len() {
             self.entries[i] = e;
         }
     }
 
-    pub fn targets_of(&self, cc: Cc) -> impl Iterator<Item = (usize, &MapEntry)> {
+    /// The entries on the same control as `input`, whatever their kind.
+    pub fn targets_of<'a>(
+        &'a self,
+        input: &'a Input,
+    ) -> impl Iterator<Item = (usize, &'a Binding)> + 'a {
         self.entries()
             .iter()
             .enumerate()
-            .filter(move |(_, e)| e.cc == cc)
+            .filter(move |(_, e)| e.input.same_control(input))
     }
 }
 
-const fn ent(cc: u8, b: BlockRef, p: ParamId) -> MapEntry {
-    match (Cc::new(cc), Mappable::new(ParamAddr::new(b, p))) {
-        (Some(cc), Some(target)) => MapEntry {
-            cc,
+const fn ent(cc: u8, b: BlockRef, p: ParamId) -> Binding {
+    match (Input::cc(cc), Mappable::new(ParamAddr::new(b, p))) {
+        (Some(input), Some(target)) => Binding {
+            input,
             target,
-            min: 0,
-            max: 255,
+            span: Span::FULL,
+            feedback: Feedback::Off,
         },
         _ => panic!("a default map entry must be mappable"),
     }
@@ -189,7 +347,7 @@ const fn ent(cc: u8, b: BlockRef, p: ParamId) -> MapEntry {
 
 /// Spec § 9: the seven shared entries in learn order, then CCs 16-19 for
 /// ALGO, MODAL and VA (TAPE has none, ADR 0132).
-static DEFAULTS: [MapEntry; 19] = {
+static DEFAULTS: [Binding; 19] = {
     use BlockRef::{Algo, Filter, Lfo, Modal, Out, Part, Va, VoiceFx};
     [
         ent(74, Filter, FilterParams::CUTOFF),

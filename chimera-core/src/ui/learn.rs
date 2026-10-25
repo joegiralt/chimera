@@ -13,7 +13,7 @@ use crate::midi_in::Cc;
 #[cfg(feature = "midi-map")]
 use crate::midi_in::CcEvent;
 #[cfg(feature = "midi-map")]
-use crate::midi_map::Mappable;
+use crate::midi_map::{Input, Mappable};
 use crate::project::PartId;
 use crate::ui::fmt::FmtBuf;
 
@@ -160,9 +160,9 @@ impl UiState {
             }
         } else if ev.cc.is_reserved() {
             LearnNote::Reserved(ev.cc)
-        } else if let Some(t) = self.learn_target() {
+        } else if let Some((input, t)) = Input::cc(ev.cc.get()).zip(self.learn_target()) {
             let mut map = self.project.part(part).sound.map;
-            let note = match map.learn(ev.cc, t) {
+            let note = match map.learn(input, t) {
                 Ok(()) => {
                     // A Sound edit, so `*` shows; entries may have moved.
                     self.project.edit_part(part).sound.map = map;

@@ -438,16 +438,15 @@ fn manage_command(ui: &mut UiState, row: usize, c: Command, modified: bool) {
 fn map_page(ui: &mut UiState, fill: bool) {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modal::ModalParams;
-    use chimera_core::midi_in::Cc;
-    use chimera_core::midi_map::{MapEntry, Mappable, MidiMap};
+    use chimera_core::midi_map::{Binding, Feedback, Input as MapInput, Mappable, MidiMap, Span};
     use chimera_core::params::FilterParams;
     let at = |b, id| Mappable::new(ParamAddr::new(b, id)).unwrap();
     let mut m = MidiMap::EMPTY;
-    let e = |cc, t, min, max| MapEntry {
-        cc: Cc::new(cc).unwrap(),
+    let e = |cc, t, min, max| Binding {
+        input: MapInput::cc(cc).unwrap(),
         target: t,
-        min,
-        max,
+        span: Span { min, max },
+        feedback: Feedback::Off,
     };
     if fill {
         for x in [
@@ -467,7 +466,7 @@ fn map_page(ui: &mut UiState, fill: bool) {
                 0,
             ),
         ] {
-            m.learn(x.cc, x.target).unwrap();
+            m.learn(x.input, x.target).unwrap();
             let n = m.len() - 1;
             m.set(n, x);
         }

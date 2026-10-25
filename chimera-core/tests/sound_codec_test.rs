@@ -7,7 +7,7 @@ use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
-use chimera_core::midi_map::{Cc, MAP_LEN, MapEntry, Mappable, MidiMap};
+use chimera_core::midi_map::{Binding, Input as MapInput, MAP_LEN, Mappable, MidiMap};
 use chimera_core::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS};
 use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams};
@@ -738,16 +738,16 @@ fn mapped() -> MidiMap {
     let part = [PartParams::LEVEL, PartParams::PAN]
         .map(|id| Mappable::new(ParamAddr::new(BlockRef::Part, id)).unwrap());
     for (i, t) in part.into_iter().chain(targets).take(MAP_LEN).enumerate() {
-        m.learn(Cc::new(70 + i as u8).unwrap(), t).unwrap();
+        m.learn(MapInput::cc(70 + i as u8).unwrap(), t).unwrap();
     }
     assert_eq!(m.len(), MAP_LEN);
-    let mut e = |i: usize, f: fn(&mut MapEntry)| {
+    let mut e = |i: usize, f: fn(&mut Binding)| {
         let mut x = m.entries()[i];
         f(&mut x);
         m.set(i, x);
     };
-    e(3, |x| (x.min, x.max) = (200, 10));
-    e(4, |x| (x.min, x.max) = (0, 128));
+    e(3, |x| (x.span.min, x.span.max) = (200, 10));
+    e(4, |x| (x.span.min, x.span.max) = (0, 128));
     m
 }
 
@@ -851,7 +851,10 @@ fn map_record_dedups_to_the_last_and_drops_cc_over_127() {
     assert_eq!(lost, 1);
     let e = s.map.entries();
     assert_eq!(e.len(), 1);
-    assert_eq!((e[0].cc.get(), e[0].min, e[0].max), (9, 7, 9));
+    assert_eq!(
+        (e[0].input, e[0].span.min, e[0].span.max),
+        (MapInput::cc(9).unwrap(), 7, 9)
+    );
 }
 
 #[test]

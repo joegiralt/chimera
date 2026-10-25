@@ -682,7 +682,7 @@ fn a_part_map_round_trips() {
             PartParams::PAN,
         ))
         .unwrap();
-        m.learn(chimera_core::midi_map::Cc::new(10).unwrap(), t)
+        m.learn(chimera_core::midi_map::Input::cc(10).unwrap(), t)
             .unwrap();
         m
     };

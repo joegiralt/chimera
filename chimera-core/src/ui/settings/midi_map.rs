@@ -10,8 +10,7 @@ use super::prompt::{Choice, DeleteAnswer, Prompt};
 use super::view::RowLook;
 use super::{Ask, Screen, screen_path};
 use crate::dsp::voice_fx::params::FxType;
-use crate::midi_in::Cc;
-use crate::midi_map::{MapEntry, MidiMap};
+use crate::midi_map::{Binding, Input, LearnCc, MidiMap, Span};
 use crate::params::EngineType;
 use crate::project::{Line, PartId};
 use crate::ui::UiState;
@@ -20,7 +19,7 @@ use crate::ui::mod_grid;
 use crate::ui::nav::Location;
 
 /// The target's spec label, or the FX type's word for its pot.
-pub fn name(e: &MapEntry, fx: FxType) -> &'static str {
+pub fn name(e: &Binding, fx: FxType) -> &'static str {
     let a = e.target.addr();
     mod_grid::fx_cell(a, fx)
         .map(|c| c.label)
@@ -39,13 +38,13 @@ pub struct MapRow {
 
 /// `e`, its target's spec label, on a Part playing `engine`:
 /// dimmed when that engine doesn't read it. (The font has no dashes.)
-pub fn row(e: &MapEntry, engine: EngineType, fx: FxType) -> MapRow {
+pub fn row(e: &Binding, engine: EngineType, fx: FxType) -> MapRow {
     let live = e.target.live(engine);
     let (mut label, mut range) = (FmtBuf::new(), FmtBuf::new());
     let name = name(e, fx);
     let dead = if live { "" } else { "- " };
-    let _ = write!(label, "CC {:<3} {dead}{name}", e.cc.get());
-    let _ = write!(range, "{}-{}", e.min, e.max);
+    let _ = write!(label, "CC {:<3} {dead}{name}", cc_of(e).get());
+    let _ = write!(range, "{}-{}", e.span.min, e.span.max);
     MapRow {
         label,
         range,
@@ -71,13 +70,30 @@ impl MapBand {
     }
 }
 
-/// B's detents: along 0..=127 past the reserved CCs, stopping at the ends.
-fn step_cc(cc: Cc, d: i8) -> Cc {
+/// The CC a binding listens on; the page lists CC bindings only until
+/// learn writes the other controls.
+fn cc_of(e: &Binding) -> LearnCc {
+    const ONE: LearnCc = match LearnCc::new(1) {
+        Some(c) => c,
+        None => panic!(),
+    };
+    match e.input {
+        Input::Cc(c, _) => c,
+        _ => ONE,
+    }
+}
+
+/// B's detents: along the free CCs, stopping at the ends. Other controls
+/// stay as they are.
+fn step_cc(i: Input, d: i8) -> Input {
+    let Input::Cc(cc, kind) = i else {
+        return i;
+    };
     let s = i16::from(d.signum());
     let mut n = i16::from(cc.get());
     for _ in 0..d.unsigned_abs() {
         let mut m = n + s;
-        while Cc::new(m as u8).is_some_and(Cc::is_reserved) && (0..=127).contains(&m) {
+        while LearnCc::new(m as u8).is_none() && (0..=127).contains(&m) {
             m += s;
         }
         if !(0..=127).contains(&m) {
@@ -85,7 +101,7 @@ fn step_cc(cc: Cc, d: i8) -> Cc {
         }
         n = m;
     }
-    Cc::new(n as u8).unwrap_or(cc)
+    Input::Cc(LearnCc::new(n as u8).unwrap_or(cc), kind)
 }
 
 /// DELETE's panel: `DELETE CC 74?` over the target's cell label, as the
@@ -93,14 +109,14 @@ fn step_cc(cc: Cc, d: i8) -> Cc {
 #[derive(Clone, Copy, Debug)]
 pub struct MapDelete {
     pub part: PartId,
-    pub entry: MapEntry,
+    pub entry: Binding,
     pub label: &'static str,
 }
 
 impl Prompt for MapDelete {
     type Answer = DeleteAnswer;
     fn words(&self, q: &mut Line, r: &mut Line) {
-        let _ = write!(q, "DELETE CC {}?", self.entry.cc.get());
+        let _ = write!(q, "DELETE CC {}?", cc_of(&self.entry).get());
         let _ = r.write_str(self.label);
     }
 }
@@ -126,10 +142,12 @@ impl UiState {
             return self.ask(Ask::MapDelete(ask, Choice::new()));
         }
         let by = |v: u8, id| (i16::from(v) + i16::from(c.encoder_delta(id))).clamp(0, 255) as u8;
-        let n = MapEntry {
-            cc: step_cc(e.cc, c.encoder_delta(EncoderId::B)),
-            min: by(e.min, EncoderId::C),
-            max: by(e.max, EncoderId::D),
+        let n = Binding {
+            input: step_cc(e.input, c.encoder_delta(EncoderId::B)),
+            span: Span {
+                min: by(e.span.min, EncoderId::C),
+                max: by(e.span.max, EncoderId::D),
+            },
             ..e
         };
         if n != e {
@@ -158,7 +176,7 @@ impl UiState {
     /// DELETE answered: drop the entry (found by target, as the map may
     /// not have moved but the row did), and keep the bar on a row.
     #[inline(never)]
-    pub(in crate::ui) fn map_deleted(&mut self, p: PartId, e: MapEntry) {
+    pub(in crate::ui) fn map_deleted(&mut self, p: PartId, e: Binding) {
         let mut m = self.project.part(p).sound.map;
         let Some(i) = m.entries().iter().position(|x| x.target == e.target) else {
             return;

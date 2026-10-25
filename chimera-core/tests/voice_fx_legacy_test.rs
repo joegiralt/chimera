@@ -223,13 +223,13 @@ fn an_old_midi_map_cc_on_drive_drives_p1() {
     (p.filter.cutoff, p.filter.resonance) = (20_000.0, 0.0);
     let blocks = chimera_hal::SAMPLE_RATE as usize / BLOCK_SIZE;
     let mut rig = Rig::new(chimera_hal::SAMPLE_RATE);
-    p.fx.pots[0] = e.place(0);
+    p.fx.pots[0] = e.span.place(0);
     rig.note_on(MidiNote::new(45).unwrap(), Velocity::new(100).unwrap(), &p);
     let (mut out, mut buf) = (Vec::new(), [0.0f32; BLOCK_SIZE]);
     let mut last = p.fx.pots[0];
     let mut worst = 0.0f32;
     for b in 0..blocks {
-        p.fx.pots[0] = e.place((b * 127 / (blocks - 1)) as u8);
+        p.fx.pots[0] = e.span.place((b * 127 / (blocks - 1)) as u8);
         worst = worst.max((p.fx.pots[0] - last).abs());
         last = p.fx.pots[0];
         rig.render_glided(&mut buf, &p, &s.mod_state);
