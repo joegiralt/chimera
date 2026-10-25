@@ -14,7 +14,7 @@ use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::modulator::EnvType;
 use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::mod_path::ModDestRegistry;
-use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
+use chimera_core::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::params::{EngineType, EnvParams, FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -28,6 +28,8 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
         BlockRef::Modal => EngineType::Modal,
         BlockRef::Va => EngineType::Va,
         BlockRef::TapeEngine => EngineType::Tape,
+        // The gate's fall is heard on a ringing engine: ALGO's carriers hold it (#798).
+        BlockRef::Out if addr.param.0 >= 7 => EngineType::Modal,
         _ => EngineType::Algo,
     };
     let mut p = ParamSnapshot::for_engine(engine);
@@ -214,4 +216,33 @@ fn env2_into_morph_is_heard_on_init() {
     let rel =
         (sq(&mut dry.iter().zip(&wet).map(|(a, b)| a - b)) / sq(&mut dry.iter().copied())).sqrt();
     assert!(rel > 0.1, "relative RMS change {rel}");
+}
+
+/// The gate's knobs on ALGO with ENV 1 routed into VCA (Routes, #798): an
+/// LFO route into LPG, DECAY or STRIKE is heard.
+#[test]
+fn algo_gate_knobs_are_heard_through_a_vca_route() {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.lfos[0].rate = 5.0;
+    p.out.gate = [0.5, 0.3, 0.5];
+    for id in [
+        chimera_core::params::OutParams::LPG,
+        chimera_core::params::OutParams::DECAY,
+        chimera_core::params::OutParams::STRIKE,
+    ] {
+        let addr = ParamAddr::new(BlockRef::Out, id);
+        let with = |lfo| {
+            let mut m = routes(addr, lfo);
+            // Half level, so the strike has room over it.
+            m.set_fixed(ModSource::Env1.index(), FixedCol::Vca, 64);
+            // Re-struck mid-render: STRIKE reads its LFO at the note-on.
+            render(&p, &m, true)
+        };
+        let (dry, wet) = (with(0), with(127));
+        let diff = dry
+            .iter()
+            .zip(&wet)
+            .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+        assert!(diff > 1e-4, "{addr:?}: max diff {diff}");
+    }
 }

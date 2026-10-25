@@ -65,6 +65,7 @@ pub(super) mod kern {
     use crate::addr::{BlockRef, ParamAddr};
     use crate::dsp::ease::at;
     use crate::dsp::lpg::LPG_COST;
+    use crate::dsp::voice::EngineSlot;
     use crate::params::OutParams;
 
     /// Billed while LPG, DECAY or STRIKE is stored above 0 or routed.
@@ -103,7 +104,10 @@ pub(super) mod kern {
         let level = match gain {
             Some(g) => Level::Routes(g, vel),
             None if key_gated => Level::Key(if v.held { Key::Held } else { Key::Up }),
-            None => Level::Open,
+            None => match &v.slot {
+                EngineSlot::Algo(a) => Level::Carriers(Unit::new(a.carrier_level())),
+                _ => Level::Open,
+            },
         };
         let d = Drive {
             level,

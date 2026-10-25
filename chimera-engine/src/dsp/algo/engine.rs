@@ -728,6 +728,18 @@ impl AlgoEngine {
         self.active
     }
 
+    /// The loudest sounding carrier's envelope, 0..1: what the LPG gate
+    /// follows with no VCA route (the max, a few compares a block).
+    pub fn carrier_level(&self) -> f32 {
+        let m = self.morph;
+        (0..OPS)
+            .filter(|&i| {
+                self.gain[i] > 0.0 && blend(self.plan.carrier_a[i], self.plan.carrier_b[i], m) > 0.0
+            })
+            .fold(0.0f32, |t, i| t.max(self.env[i].level()))
+            .min(1.0)
+    }
+
     /// Restarts so far that found their lane's window open: 0 by
     /// construction (spec § 3).
     #[cfg(any(test, feature = "test-support"))]

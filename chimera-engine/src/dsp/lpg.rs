@@ -146,7 +146,10 @@ pub enum Level<'a> {
     Routes(&'a Buf, Unit),
     /// No route on an engine the key ends (TAPE, VA): the key.
     Key(Key),
-    /// No route on an engine that shapes itself (ALGO, MODAL): open.
+    /// No route on an engine whose own envelopes shape and hold the note
+    /// (ALGO): the loudest carrier envelope, held like a route's level.
+    Carriers(Unit),
+    /// No route on an engine that rings by itself (MODAL): open.
     Open,
 }
 
@@ -165,7 +168,7 @@ impl Level<'_> {
     #[inline(always)]
     pub const fn law(&self) -> Law {
         match self {
-            Level::Routes(..) => Law::Accent,
+            Level::Routes(..) | Level::Carriers(_) => Law::Accent,
             Level::Key(_) | Level::Open => Law::Ping,
         }
     }
@@ -376,6 +379,7 @@ impl Lpg {
                 };
                 self.key.get()
             }
+            Level::Carriers(c) => c.get(),
             Level::Open => 1.0,
         }
     }
@@ -440,7 +444,7 @@ impl Lpg {
                     }
                     self.lh = lh;
                 }
-                Level::Key(_) | Level::Open => {
+                Level::Key(_) | Level::Carriers(_) | Level::Open => {
                     for x in &mut buf[i..i + n] {
                         let (gn, bn) = (gain.next(), b.next());
                         *x = self.tick(*x * gn, g, rg, h, bn);
