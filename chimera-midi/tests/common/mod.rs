@@ -41,3 +41,18 @@ pub fn u7(n: u8) -> U7 {
 pub fn vel(n: u8) -> Velocity {
     Velocity::new(n).unwrap()
 }
+
+/// Bytes through `Parser` then `Controllers`: what layer 2 said, per voice event.
+pub fn hear_bytes(
+    c: &mut chimera_midi::ctl::Controllers,
+    bytes: &[u8],
+) -> Vec<(u8, chimera_midi::ctl::Heard)> {
+    let mut p = Parser::<32>::new();
+    let mut out = Vec::new();
+    for &b in bytes {
+        if let Some(Parsed::Event(Event::Voice(ch, v))) = p.push(b) {
+            out.push((ch.get(), c.hear(ch, v)));
+        }
+    }
+    out
+}

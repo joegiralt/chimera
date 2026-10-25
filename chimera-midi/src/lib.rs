@@ -2,5 +2,6 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod ctl;
 pub mod stream;
 pub mod value;

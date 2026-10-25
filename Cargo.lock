@@ -302,6 +302,7 @@ dependencies = [
  "chimera-engine",
  "chimera-hal",
  "chimera-image",
+ "chimera-midi",
  "chimera-theory",
  "chimera-waves",
  "libm",

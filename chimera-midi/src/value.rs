@@ -5,6 +5,7 @@
 pub struct U7(u8);
 
 impl U7 {
+    pub const ZERO: U7 = U7(0);
     pub const MAX: U7 = U7(127);
 
     pub const fn new(v: u8) -> Option<Self> {
