@@ -336,6 +336,9 @@ version = "0.2.0"
 [[package]]
 name = "chimera-midi"
 version = "0.2.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "chimera-stm32"
