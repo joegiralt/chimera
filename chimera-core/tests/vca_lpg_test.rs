@@ -532,6 +532,18 @@ fn algo_held_note_holds_the_gate_at_strike_one() {
     assert!(tail > -60.0, "{tail}");
 }
 
+/// #798, released: the ALGO note held under STRIKE 1 ends by its carriers'
+/// envelopes after note-off, and the voice frees.
+#[test]
+fn algo_released_note_frees_through_its_carriers() {
+    let mut b = bench(gated(saw_sound(), 1.0, 0.0, 1.0));
+    let off = BPS * 2;
+    let t = hold(&mut b, Some(off), BPS * 12);
+    assert!(rms_db(t.pair(0, BPS, BPS * 2)) > -60.0, "held note sounds");
+    assert!(b.all_free(), "freed after the key");
+    assert!(t.freed(off).is_some());
+}
+
 // ============================================================ the voice
 
 fn saw_sound() -> Sound {
