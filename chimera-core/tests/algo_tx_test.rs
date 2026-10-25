@@ -133,3 +133,13 @@ fn detune_is_small_and_symmetric() {
     assert!((cents(-3) + 4.5).abs() < 0.01);
     assert_eq!(detune_factor(9), detune_factor(3));
 }
+
+/// DETUNE 0 skips `exp2`: it returns the bits `exp2` gave at ±0.
+#[test]
+fn detune_zero_is_exp2_of_zero() {
+    use chimera_core::dsp::algo::tx::detune_at;
+    for z in [0.0f32, -0.0] {
+        assert_eq!(detune_at(z).to_bits(), exp2(z * 1.5 / 1200.0).to_bits());
+        assert_eq!(detune_at(z).to_bits(), 1.0f32.to_bits());
+    }
+}
