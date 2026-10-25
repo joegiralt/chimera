@@ -555,14 +555,14 @@ impl Grains {
             l.uh + STAT_K * (u - l.uh)
         };
         let most = if q > 0.0 {
-            (w / libm::sqrtf(q)).max(1.0)
+            (w / crate::dsp::sqrt(q)).max(1.0)
         } else {
             1.0
         };
         let c1 = if ending {
             l.c
         } else if uh > 1e-12 && ph.is_finite() {
-            clampf(libm::sqrtf(ph / uh), 1.0, most)
+            clampf(crate::dsp::sqrt(ph / uh), 1.0, most)
         } else {
             l.c.min(most)
         };

@@ -261,14 +261,14 @@ pub fn power_of(
         (ab, aa, bb) = (ab + a * b, aa + a * a, bb + b * b);
     }
     let rho = if aa * bb > 0.0 {
-        ab / libm::sqrtf(aa * bb)
+        ab / crate::dsp::sqrt(aa * bb)
     } else {
         0.0
     };
     // Constant power at the middle: `x·(1 + 0.75c) = 1 / √(2 + 2ρ)`.
     let rho = clampf(rho, 0.0, 1.0);
     Some(clampf(
-        (2.0 / libm::sqrtf(2.0 + 2.0 * rho) - 1.0) * (4.0 / 3.0),
+        (2.0 / crate::dsp::sqrt(2.0 + 2.0 * rho) - 1.0) * (4.0 / 3.0),
         0.0,
         POWER,
     ))

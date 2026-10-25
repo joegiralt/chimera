@@ -48,6 +48,30 @@ pub fn sqrt(x: f32) -> f32 {
     }
 }
 
+/// `a.max(b)` as VMAXNM on the M7: one instruction, where `f32::max`
+/// compiles to two compares, two selects and two FPSCR reads. They agree
+/// on every input but a signalling NaN, which no arithmetic makes: a peak
+/// meter's `peak.max(x.abs())` (never −0) is the same bits either way.
+#[inline(always)]
+pub fn maxnm(a: f32, b: f32) -> f32 {
+    #[cfg(all(target_arch = "arm", target_feature = "vfp2"))]
+    {
+        let r: f32;
+        // SAFETY: one register-to-register VFP op (FPv5's VMAXNM); no
+        // memory or stack touched. It may set FPSCR's IOC on a signalling
+        // NaN; nothing reads it.
+        unsafe {
+            core::arch::asm!("vmaxnm.f32 {r}, {a}, {b}", r = lateout(sreg) r, a = in(sreg) a,
+                b = in(sreg) b, options(pure, nomem, nostack));
+        }
+        r
+    }
+    #[cfg(not(all(target_arch = "arm", target_feature = "vfp2")))]
+    {
+        a.max(b)
+    }
+}
+
 /// Fast sine approximation using 1024-entry LUT with linear interpolation.
 /// Input: theta in radians (any range, wraps automatically).
 /// ~10 cycles on Cortex-M7 vs ~500 for libm::sinf.

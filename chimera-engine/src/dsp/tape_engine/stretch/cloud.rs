@@ -63,6 +63,11 @@ impl<'a, const REV: bool> Src<'a, REV> {
         } else {
             base
         };
+        // A whole row is held in RAM, far under 2²⁹ frames: so a forward
+        // frame (within `MID` of the window, `Src`'s length) and every sum
+        // of it with `lo` or `win` fits an `i32`, and the reads take no
+        // 64-bit arithmetic or conversion.
+        debug_assert!(win < 1 << 29 && lo < 1 << 29);
         Src {
             v,
             win,
@@ -85,36 +90,36 @@ impl<'a, const REV: bool> Src<'a, REV> {
     /// Forward frame `f`'s edge: the last `edge` frames the way it plays
     /// ramp to silence, and past them is silence; a clamp, no branch.
     #[inline(always)]
-    fn edge(&self, f: i64) -> f32 {
+    fn edge(&self, f: i32) -> f32 {
         let to_end = if REV {
             f as f32
         } else {
-            (i64::from(self.win) - 1 - f) as f32
+            (self.win as i32 - 1 - f) as f32
         };
         clampf(to_end * self.inv, 0.0, 1.0)
     }
 
     /// Forward frame `f` is within `edge` of the end it plays to.
     #[inline(always)]
-    fn near_end(&self, f: i64) -> bool {
+    fn near_end(&self, f: i32) -> bool {
         if REV {
-            f <= self.edge as i64
+            f <= self.edge as i32
         } else {
-            f + self.edge as i64 >= i64::from(self.win) - 1
+            f + self.edge as i32 >= self.win as i32 - 1
         }
     }
 
     /// Forward frame `f`'s source frame (past the source's ends `row_taps`
     /// and `sample` clamp).
     #[inline(always)]
-    fn source(&self, f: i64) -> u32 {
-        (i64::from(self.lo) + f).clamp(0, i64::from(u32::MAX)) as u32
+    fn source(&self, f: i32) -> u32 {
+        (self.lo as i32 + f).max(0) as u32
     }
 
     /// Forward frames `f − 1 ..= f + 2`, the edge ramp only where it is:
     /// a compare, not four multiplies.
     #[inline(always)]
-    fn taps_at(&self, f: i64) -> [f32; 4] {
+    fn taps_at(&self, f: i32) -> [f32; 4] {
         let x = self.v.row_taps(self.source(f)).map(|x| x as f32);
         if self.near_end(f) {
             let g = self.edge(f);
@@ -126,7 +131,7 @@ impl<'a, const REV: bool> Src<'a, REV> {
 
     /// Forward frame `f` and `t` of the next, scaled to ±1.
     #[inline(always)]
-    fn at(&self, f: i64, t: f32) -> f32 {
+    fn at(&self, f: i32, t: f32) -> f32 {
         hermite(self.taps_at(f), t) * SCALE
     }
 
@@ -134,7 +139,7 @@ impl<'a, const REV: bool> Src<'a, REV> {
     pub fn read(&self, at: WinPos) -> f32 {
         let f = self.forward(at);
         let w = libm::floorf(f);
-        self.at(w as i64, f - w)
+        self.at(w as i32, f - w)
     }
 
     /// `g` as the core starts it: its head at `g.at` the way the window
@@ -165,13 +170,13 @@ impl<const REV: bool> GrainSource for Src<'_, REV> {
     const FRAMES: usize = SRC_LEN;
 
     fn frame(&self, i: At<Self>) -> f32 {
-        let f = i.get() as i64 - MID;
+        let f = i.get() as i32 - MID as i32;
         self.v.sample(self.source(f)) as f32 * self.edge(f)
     }
 
     #[inline(always)]
     fn taps(&self, i: TapAt<Self>) -> [f32; 4] {
-        self.taps_at(i.get() as i64 - MID)
+        self.taps_at(i.get() as i32 - MID as i32)
     }
 }
 
@@ -195,7 +200,7 @@ pub struct Starts {
 /// bell at its foot only).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Strike {
-    whole: i64,
+    whole: i32,
     frac: f32,
     /// Forward frames a sample: negative on `REV`.
     step: f32,
@@ -232,7 +237,7 @@ impl Strike {
             phase += inc;
             self.frac += self.step;
             let carry = libm::floorf(self.frac);
-            self.whole += carry as i64;
+            self.whole += carry as i32;
             self.frac -= carry;
         }
         self.left -= n as u32;
@@ -273,7 +278,7 @@ impl Cloud {
         let w = libm::floorf(f);
         let mut c = IDLE_CLOUD;
         c.strike = Strike {
-            whole: w as i64,
+            whole: w as i32,
             frac: f - w,
             step: src.speed(g.speed).ratio(),
             left: (0.5 * dur) as u32,

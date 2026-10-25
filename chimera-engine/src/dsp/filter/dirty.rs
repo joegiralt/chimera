@@ -101,7 +101,7 @@ pub fn dirty_f_raw(fc: f32, fs: f32) -> f32 {
 /// margin. One `vsqrt` a block.
 #[inline(always)]
 pub fn dirty_f_bound(q: f32) -> f32 {
-    DIRTY_MARGIN * (libm::sqrtf(q * q + 4.0) - q)
+    DIRTY_MARGIN * (crate::dsp::sqrt(q * q + 4.0) - q)
 }
 
 /// The block's `f` at FREQ `fc`, bounded at the block's largest `q`.

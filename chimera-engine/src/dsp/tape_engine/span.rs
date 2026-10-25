@@ -148,6 +148,9 @@ pub struct Reads<'a> {
     /// to hasn't landed yet.
     pub landed: bool,
     pub short: Option<u32>,
+    /// Every read is the one whole row (`whole`): each run and each second
+    /// head reads the same view, never stopping.
+    pub whole: bool,
 }
 
 impl<'a> Reads<'a> {
@@ -157,6 +160,7 @@ impl<'a> Reads<'a> {
             seconds: [(v, Stop::Never); 2],
             landed: true,
             short: None,
+            whole: true,
         }
     }
 
@@ -207,6 +211,7 @@ impl<'a> Reads<'a> {
             seconds,
             landed,
             short,
+            whole: false,
         }
     }
 

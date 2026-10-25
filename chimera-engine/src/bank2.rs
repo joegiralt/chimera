@@ -107,6 +107,9 @@ pub struct Bank2Door {
     /// FUZZ's kernel (ADR 0157; `Fuzz::play` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub fuzz: crate::dsp::voice_fx::fuzz::FuzzDoor,
+    /// MODAL's block (ADR 0215; `ModalEngine::render` is bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub modal: crate::dsp::modal::ModalDoor,
     /// The filters' FB loops (ADR 0190; `filter::fed::through` is bank 1's
     /// side).
     #[cfg(feature = "bank2")]
@@ -171,6 +174,7 @@ static DOOR: Bank2Door = Bank2Door {
     lfo: crate::lfo_glyph::LfoDoor::DOOR,
     look: crate::dsp::voice_fx::look::LookDoor::DOOR,
     fuzz: crate::dsp::voice_fx::fuzz::Fuzz::DOOR,
+    modal: crate::dsp::modal::ModalDoor::DOOR,
     fed: crate::dsp::filter::fed::FedDoor::DOOR,
     sem: crate::dsp::filter::sem::SemDoor::DOOR,
     noise: crate::dsp::va::noise::NoiseDoor::DOOR,

@@ -102,10 +102,20 @@ struct ModalBank {
     noise_state: u32,
     /// The burst's one-pole lowpass.
     burst_lp: f32,
+    /// What the filters were last set for in a block (`FiltersKey`): the
+    /// same again, `compute_filters` would write what is there.
+    key: FiltersKey,
 }
 
+/// `compute_filters`' inputs, bit for bit: MODES, DAMP, STRUCTURE, BRIGHT
+/// and the frequency.
+type FiltersKey = [u32; 5];
+
+/// No block's: a note-on set the filters.
+const NO_KEY: FiltersKey = [u32::MAX; 5];
+
 crate::in_place::field_list!(ModalBank => ModalBank {
-    filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp,
+    filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp, key,
 });
 
 /// The bowed string and the bow's force on it, 0 once the bow lifts.
@@ -165,10 +175,21 @@ pub struct SympatheticSet {
     /// Each sympathetic string's last output, not yet stored: it is stored
     /// with the next sample's coupled input (`KsString::tick_coupled`).
     pending: [f32; NUM_SYMPATHETIC],
+    /// The strings' last block's settings (`halo_params`).
+    halo: HaloCache,
+}
+
+/// The halo strings' last block's settings and what they were taken for:
+/// DAMP's and BRIGHT's bits, then each period's. All zeros is empty.
+#[derive(Clone, Copy)]
+struct HaloCache {
+    taken: bool,
+    key: [u32; 2 + NUM_SYMPATHETIC],
+    params: [KsRenderParams; NUM_SYMPATHETIC],
 }
 
 crate::in_place::field_list!(SympatheticSet => SympatheticSet {
-    strings, chord, ratios, glides, main, coupling, level, pending,
+    strings, chord, ratios, glides, main, coupling, level, pending, halo,
 });
 
 /// Sympathetic's sets, one per slot of `SymAlloc`, which lends them to
@@ -701,6 +722,7 @@ impl ModalEngine {
             ModelSlot::Bank(bank) => {
                 bank.resolution = params.modes.count();
                 bank.compute_filters(m, bank_freq);
+                bank.key = NO_KEY;
                 if !restrike {
                     bank.cos_osc.init(params::beta(m.pos, params::END));
                 }
@@ -904,6 +926,8 @@ impl ModalEngine {
         self.active
     }
 
+    /// One block, through the door (ADR 0215): `kern::render`, bank 2's.
+    /// With the door closed the voice is silent and ends.
     pub fn render(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
@@ -917,7 +941,21 @@ impl ModalEngine {
             }
             return;
         }
+        if through(|d| (d.render)(self, output, params, sample_rate, pool)).is_none() {
+            output.fill(0.0);
+            self.active = false;
+        }
+    }
 
+    /// An active voice's block: the macros, the model and its lifetime.
+    #[inline(always)]
+    fn block(
+        &mut self,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ModalParams,
+        sample_rate: u32,
+        pool: &mut SymPool,
+    ) {
         let mut max_level = 0.0_f32;
         self.slide.tick();
 
@@ -962,8 +1000,20 @@ impl ModalEngine {
         // note sounds on.
         let exciting = match &mut self.model {
             ModelSlot::Bank(bank) => {
-                // Recompute filters every block (Rings does this — allows live parameter changes)
-                bank.compute_filters(&m, bank_freq);
+                // Recompute filters every block (Rings does this — allows
+                // live parameter changes), unless nothing they read moved:
+                // a pure function of the key, so skipping it is exact.
+                let key = [
+                    bank.resolution as u32,
+                    m.damp.to_bits(),
+                    m.structure.to_bits(),
+                    m.bright.to_bits(),
+                    bank_freq.to_bits(),
+                ];
+                if key != bank.key {
+                    bank.compute_filters(&m, bank_freq);
+                    bank.key = key;
+                }
                 // POS glides its weights over the block; a note's first takes it whole.
                 let place = params::beta(m.pos, params::END);
                 if first {
@@ -1019,6 +1069,58 @@ impl ModalEngine {
     }
 }
 
+/// MODAL's block (`ModalEngine::block`).
+pub type ModalRun = fn(&mut ModalEngine, &mut [f32; BLOCK_SIZE], &ModalParams, u32, &mut SymPool);
+
+/// MODAL's entry (ADR 0215): one call a voice a block.
+#[repr(C)]
+pub struct ModalDoor {
+    pub render: ModalRun,
+}
+
+impl ModalDoor {
+    pub const DOOR: ModalDoor = ModalDoor {
+        render: kern::render,
+    };
+}
+
+/// `f` on MODAL's block: through the door with `bank2` (`None` while it is
+/// closed), else bank 1's own on a host. A firmware built without bank 2
+/// has no room for it in bank 1: there MODAL is silent.
+#[inline(always)]
+fn through<R>(f: impl FnOnce(&ModalDoor) -> R) -> Option<R> {
+    #[cfg(feature = "bank2")]
+    {
+        crate::bank2::DOOR_CELL.with(|d| f(&d.modal))
+    }
+    #[cfg(all(not(feature = "bank2"), not(target_os = "none")))]
+    {
+        Some(f(&ModalDoor::DOOR))
+    }
+    #[cfg(all(not(feature = "bank2"), target_os = "none"))]
+    {
+        let _ = f;
+        None
+    }
+}
+
+/// Bank 2's: `bank2.x` links `*5modal4kern*`, and the models' loops only
+/// the block reaches.
+mod kern {
+    use super::{BLOCK_SIZE, ModalEngine, ModalParams, SymPool};
+
+    #[inline(never)]
+    pub(super) fn render(
+        e: &mut ModalEngine,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ModalParams,
+        sample_rate: u32,
+        pool: &mut SymPool,
+    ) {
+        e.block(output, params, sample_rate, pool);
+    }
+}
+
 /// A note is silent this far under its peak: −60 dB, DAMP's T60.
 const SILENT_REL: f32 = 0.001;
 /// And under this whatever its peak: −120 dB.
@@ -1039,7 +1141,22 @@ impl ModalBank {
             addr_of_mut!((*p).burst_amp).write(0.0);
             addr_of_mut!((*p).noise_state).write(0x1234_5678);
             addr_of_mut!((*p).burst_lp).write(0.0);
+            addr_of_mut!((*p).key).write(NO_KEY);
             slot.assume_init_mut()
+        }
+    }
+
+    /// The burst's next sample, 0 once it is spent.
+    #[inline(always)]
+    fn excite(&mut self) -> f32 {
+        if self.burst_remaining > 0 {
+            self.burst_remaining -= 1;
+            let env = (self.burst_remaining as f32 / 200.0).min(1.0);
+            let raw = xorshift_noise(&mut self.noise_state) * self.burst_amp * env;
+            self.burst_lp += 0.4 * (raw - self.burst_lp);
+            self.burst_lp
+        } else {
+            0.0
         }
     }
 
@@ -1359,6 +1476,9 @@ impl SympatheticSet {
             addr_of_mut!((*p).coupling).write(0.0);
             addr_of_mut!((*p).level).write(0.0);
             addr_of_mut!((*p).pending).write([0.0; NUM_SYMPATHETIC]);
+            // All zeros is a valid `HaloCache` (a false `taken`, zero
+            // words and floats), and an empty one.
+            addr_of_mut!((*p).halo).write_bytes(0, 1);
             slot.assume_init_mut()
         }
     }
@@ -1460,35 +1580,68 @@ impl SympatheticSet {
     }
 }
 
+/// The bank's block. With POS still its weights hold all block, so each
+/// pair of modes runs the whole block with its state in registers (#793);
+/// gliding, a sample at a time. Both sum the same products in the same
+/// order: bit for bit the same.
 fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
+    if bank.cos_osc.gliding() {
+        render_modal_gliding(bank, output);
+        return;
+    }
+    // The burst doesn't hear the modes: all of it first.
+    let mut input = [0.0_f32; BLOCK_SIZE];
+    for x in input.iter_mut() {
+        *x = bank.excite();
+    }
+    let num = bank.sounding;
+    // Still, `start` moves nothing: one sample's weights are every sample's.
+    let mut w = bank.cos_osc.start();
+    let mut odd = [0.0_f32; BLOCK_SIZE];
+    let mut even = [0.0_f32; BLOCK_SIZE];
+    let (pairs, rest) = bank.filters[..num].as_chunks_mut::<2>();
+    for pair in pairs {
+        let (w0, w1) = (w.next(), w.next());
+        let (mut a, mut b) = (pair[0], pair[1]);
+        for ((x, o), e) in input.iter().zip(&mut odd).zip(&mut even) {
+            *o += w0 * a.process_bp(*x);
+            *e += w1 * b.process_bp(*x);
+        }
+        (pair[0], pair[1]) = (a, b);
+    }
+    if let [last] = rest {
+        let w0 = w.next();
+        let mut a = *last;
+        for (x, o) in input.iter().zip(&mut odd) {
+            *o += w0 * a.process_bp(*x);
+        }
+        *last = a;
+    }
+    for ((s, o), e) in output.iter_mut().zip(&odd).zip(&even) {
+        *s = fast_tanh(o + e) * 0.5;
+    }
+}
+
+/// A gliding POS's block: the weights step every sample.
+fn render_modal_gliding(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
     let num = bank.sounding;
     for s in output.iter_mut() {
-        let excite = if bank.burst_remaining > 0 {
-            bank.burst_remaining -= 1;
-            let env = (bank.burst_remaining as f32 / 200.0).min(1.0);
-            let raw = xorshift_noise(&mut bank.noise_state) * bank.burst_amp * env;
-            bank.burst_lp += 0.4 * (raw - bank.burst_lp);
-            bank.burst_lp
-        } else {
-            0.0
-        };
-
         // Rings scales external audio input by 0.125. Our internal exciter
         // is already at the right level — no additional scaling needed.
-        let input = excite;
+        let input = bank.excite();
 
         let mut odd = 0.0_f32;
         let mut even = 0.0_f32;
-        bank.cos_osc.start();
+        let mut w = bank.cos_osc.start();
 
-        let mut i = 0;
-        while i + 1 < num {
-            odd += bank.cos_osc.next() * bank.filters[i].process_bp(input);
-            even += bank.cos_osc.next() * bank.filters[i + 1].process_bp(input);
-            i += 2;
+        // One slice: no bounds check a mode.
+        let (pairs, rest) = bank.filters[..num].as_chunks_mut::<2>();
+        for pair in pairs {
+            odd += w.next() * pair[0].process_bp(input);
+            even += w.next() * pair[1].process_bp(input);
         }
-        if i < num {
-            odd += bank.cos_osc.next() * bank.filters[i].process_bp(input);
+        if let [last] = rest {
+            odd += w.next() * last.process_bp(input);
         }
 
         // Sum to mono and soft-limit, a quarter of Rings' 2× out: the
@@ -1646,52 +1799,61 @@ fn render_bowed(
     let step = 1.0 / BLOCK_SIZE as f32;
     let mut point = split_back(back);
     let mut comb = comb;
+    // The loop's state in locals: the ring's stores would otherwise make
+    // every field reload and store each sample. Written back after.
+    let (mut force, mut slope, mut bow_vel_now) = (b.force, b.slope, b.bow_vel);
+    let (force_to, slope_to, lift, bowing) = (b.force_to, b.slope_to, b.lift, b.bowing);
+    let (mut tone, mut written, mut hair, mut release) = (b.tone, b.written, b.hair, b.release);
+    let comb_to = b.comb;
+    let string = &mut b.string;
     for (k, s) in output.iter_mut().enumerate() {
         if moving {
             let t = (k + 1) as f32 * step;
             let at = from + t * (back - from);
             point = split_back(at);
-            comb = comb_from + t * (b.comb - comb_from);
+            comb = comb_from + t * (comb_to - comb_from);
         }
-        if b.bowing {
+        if bowing {
             // At its target, no bit moves.
-            b.force += BOW_EASE * (b.force_to - b.force);
-            b.slope += BOW_EASE * (b.slope_to - b.slope);
-            b.bow_vel += BOW_EASE * (vel_to - b.bow_vel);
-        } else if b.force > b.force_to {
-            b.force = (b.force - b.lift).max(b.force_to);
+            force += BOW_EASE * (force_to - force);
+            slope += BOW_EASE * (slope_to - slope);
+            bow_vel_now += BOW_EASE * (vel_to - bow_vel_now);
+        } else if force > force_to {
+            force = (force - lift).max(force_to);
         }
-        let bow_vel = if b.force > 0.001 { b.bow_vel } else { 0.0 };
-        let gain = b.release.gain(held);
-        let (x, xo, y) = b.string.bow_taps(b.written, (c, co), point);
+        let bow_vel = if force > 0.001 { bow_vel_now } else { 0.0 };
+        let gain = release.gain(held);
+        let (x, xo, y) = string.bow_taps(written, (c, co), point);
         // The bow point's nulls, heard: outside the loop, so the pitch holds.
         let out = xo + comb * (y - xo);
-        b.tone = if a < 1.0 {
-            b.tone + a * (out - b.tone)
+        tone = if a < 1.0 {
+            tone + a * (out - tone)
         } else {
             out
         };
-        *s = b.tone;
+        *s = tone;
         // Stick-slip: a small |Δv| sticks (energy in), a large one slips.
-        let friction = b.force * 4.0 * fast_tanh((bow_vel - x) * b.slope);
+        let friction = force * 4.0 * fast_tanh((bow_vel - x) * slope);
         // Inverted each pass: two passes a period. Bounded: `x` under a
         // gain below 1, a bounded push, then `tanh`; once the bow is off,
         // linear, so DAMP's ring is its T60 at any level.
         let feedback = -x * gain.get() + friction * 0.4;
-        let v = if b.force > 0.0 {
+        let v = if force > 0.0 {
             fast_tanh(feedback)
         } else {
             feedback
         };
-        if b.written == 0 {
+        if written == 0 {
             // A note's first push is its first pass's tap (#206): the
             // smoothing starts as if held at it, not 3 samples of silence.
-            b.hair.past = [v; 6];
+            hair.past = [v; 6];
         }
-        let y = b.hair.process(v);
-        b.string.ring_push(y);
-        b.written = b.written.saturating_add(1);
+        let y = hair.process(v);
+        string.ring_push(y);
+        written = written.saturating_add(1);
     }
+    (b.force, b.slope, b.bow_vel) = (force, slope, bow_vel_now);
+    (b.tone, b.written, b.hair, b.release) = (tone, written, hair, release);
 }
 
 /// Each halo string's T60 over the main string's.
@@ -1712,14 +1874,7 @@ fn render_sympathetic(
     main.render(&main_string(m, f0), output);
     if let Some(set) = set {
         set.glide_step();
-        // Each halo string rings twice the main one's T60, no darker.
-        let lp = lp_coeff(halo_bright(m.bright));
-        let halo_t60 = HALO_T60 * t60(m.damp);
-        let halo = set.periods().map(|p| {
-            let hz = (SAMPLE_RATE as f32 / p, core::f32::consts::TAU / p);
-            let (lp, gain) = damped(halo_t60, hz, lp);
-            KsRenderParams { lp, gain }
-        });
+        let halo = halo_params(set, m);
         let (coupling, level) = (set.coupling, set.level);
         // The main string drives each halo string at its write position.
         let mut input = [0.0_f32; BLOCK_SIZE];
@@ -1740,6 +1895,29 @@ fn render_sympathetic(
     for s in output.iter_mut() {
         *s = fast_tanh(*s);
     }
+}
+
+/// Each halo string's block settings: twice the main one's T60, no
+/// darker. A pure function of DAMP, BRIGHT and the periods, which move
+/// only while a glide glides: kept, and taken again only when one moved.
+#[inline(always)]
+fn halo_params(set: &mut SympatheticSet, m: &Macros) -> [KsRenderParams; NUM_SYMPATHETIC] {
+    let periods = set.periods();
+    let mut key = [m.damp.to_bits(), m.bright.to_bits(), 0, 0, 0, 0, 0, 0, 0];
+    for (k, p) in key[2..].iter_mut().zip(periods) {
+        *k = p.to_bits();
+    }
+    if !set.halo.taken || set.halo.key != key {
+        let lp = lp_coeff(halo_bright(m.bright));
+        let halo_t60 = HALO_T60 * t60(m.damp);
+        set.halo.params = periods.map(|p| {
+            let hz = (SAMPLE_RATE as f32 / p, core::f32::consts::TAU / p);
+            let (lp, gain) = damped(halo_t60, hz, lp);
+            KsRenderParams { lp, gain }
+        });
+        (set.halo.taken, set.halo.key) = (true, key);
+    }
+    set.halo.params
 }
 
 use super::note_to_freq;

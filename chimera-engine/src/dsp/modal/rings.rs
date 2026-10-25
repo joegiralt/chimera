@@ -96,8 +96,6 @@ pub(super) fn tan_approx(f: f32) -> f32 {
 // ── Cosine Oscillator (position weighting, matching Rings) ──────────
 
 pub(super) struct CosineOsc {
-    y0: f32,
-    y1: f32,
     iir_coefficient: f32,
     initial_amplitude: f32,
     /// A moved position's glide: its end, the coefficient's step a
@@ -110,8 +108,6 @@ pub(super) struct CosineOsc {
 impl CosineOsc {
     pub(super) fn new() -> Self {
         Self {
-            y0: 0.0,
-            y1: 0.0,
             iir_coefficient: 0.0,
             initial_amplitude: 0.0,
             to: 0.0,
@@ -154,8 +150,10 @@ impl CosineOsc {
         };
     }
 
-    /// Reset to start of sequence, a gliding position a sample on.
-    pub(super) fn start(&mut self) {
+    /// Reset to start of sequence, a gliding position a sample on: the
+    /// sample's weights, in locals (stored, they would be reloaded after
+    /// every mode's write).
+    pub(super) fn start(&mut self) -> Weights {
         if self.left > 0 {
             self.left -= 1;
             // The last step lands on the end exactly.
@@ -166,15 +164,33 @@ impl CosineOsc {
             };
             self.initial_amplitude = self.iir_coefficient * 0.25;
         }
-        self.y1 = self.initial_amplitude;
-        self.y0 = 0.5;
+        Weights {
+            y0: 0.5,
+            y1: self.initial_amplitude,
+            c: self.iir_coefficient,
+        }
     }
 
+    /// Whether the weights glide this block.
+    pub(super) fn gliding(&self) -> bool {
+        self.left > 0
+    }
+}
+
+/// One sample's position weights, a mode at a time.
+#[derive(Clone, Copy)]
+pub(super) struct Weights {
+    y0: f32,
+    y1: f32,
+    c: f32,
+}
+
+impl Weights {
     /// Get next amplitude weight (call once per mode).
-    #[inline]
+    #[inline(always)]
     pub(super) fn next(&mut self) -> f32 {
         let temp = self.y0;
-        self.y0 = self.iir_coefficient * self.y0 - self.y1;
+        self.y0 = self.c * self.y0 - self.y1;
         self.y1 = temp;
         temp + 0.5 // shift to [0, 1]
     }

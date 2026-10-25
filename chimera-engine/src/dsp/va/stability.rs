@@ -120,7 +120,7 @@ pub fn walk_coefs(update_hz: f32, corner_hz: f32, rms: f32) -> (f32, f32) {
     let b = 1.0 - a;
     // a(2 − a) is 1 − b² without the cancellation
     let var = (1.0 / 3.0) * a * a * a * a * (1.0 + b * b) / libm::powf(a * (2.0 - a), 3.0);
-    (a, rms / libm::sqrtf(var))
+    (a, rms / crate::dsp::sqrt(var))
 }
 
 pub(crate) fn xorshift(state: &mut u32) -> f32 {

@@ -253,6 +253,19 @@ impl FuncGen {
     }
 
     fn burst_level(&self, form: EnvForm) -> f32 {
+        self.burst_level_in(form, self.sine_share())
+    }
+
+    /// TILT's share of the sine in the AD and AHR pulse: fixed while TILT is.
+    fn sine_share(&self) -> f32 {
+        1.0 - (2.0 * self.tilt - 1.0).abs()
+    }
+
+    /// `burst_level` with TILT's sine share `m` taken once a block. At `m`
+    /// 0 the square alone and at 1 the sine alone: `(1 − m)·square + m·sine`
+    /// is that exactly (the square is 0 or 1; the sine `0.5 − 0.5·s` is
+    /// never −0), so the other isn't computed.
+    fn burst_level_in(&self, form: EnvForm, m: f32) -> f32 {
         if self.seg == Seg::Idle {
             return 0.0;
         }
@@ -261,10 +274,15 @@ impl FuncGen {
         let pulse = if form == EnvForm::Cycle {
             tilt(ph, self.tilt)
         } else {
-            let m = 1.0 - (2.0 * self.tilt - 1.0).abs();
-            let square = if ph < 0.5 { 1.0 } else { 0.0 };
-            let sine = 0.5 - 0.5 * fast_sin(TAU * ph + FRAC_PI_2);
-            (1.0 - m) * square + m * sine
+            let square = || if ph < 0.5 { 1.0 } else { 0.0 };
+            let sine = || 0.5 - 0.5 * fast_sin(TAU * ph + FRAC_PI_2);
+            if m == 0.0 {
+                square()
+            } else if m == 1.0 {
+                sine()
+            } else {
+                (1.0 - m) * square() + m * sine()
+            }
         };
         env * pulse
     }
@@ -307,9 +325,10 @@ impl FuncGen {
                 }
             }
             Func::Burst(form) => {
+                let m = self.sine_share();
                 for o in out.iter_mut() {
                     self.burst_step(c, form, key, 1);
-                    *o = self.burst_level(form);
+                    *o = self.burst_level_in(form, m);
                 }
             }
         }
