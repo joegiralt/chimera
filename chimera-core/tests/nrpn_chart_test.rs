@@ -313,6 +313,41 @@ fn code7_codes_fit_an_msb() {
     );
 }
 
+fn gets(b: &dyn Block) -> Vec<f32> {
+    b.specs().iter().map(|s| b.get(s.id)).collect()
+}
+
+/// The probe leaves every block as it was, from a state off the defaults
+/// (each param near the top of its range, TAPE SLICE at S3), whatever code
+/// it tries on whichever choice.
+#[test]
+fn code7_probe_never_changes_the_block() {
+    use chimera_core::dsp::tape_engine::params::TapeEngineParams;
+    for b in BlockRef::ALL
+        .into_iter()
+        .filter(|b| b.disk_code().is_some())
+    {
+        let mut bank = Bank::new();
+        let coded: Vec<_> = ValidAddr::of_block(b).filter(|v| v.coded()).collect();
+        for v in ValidAddr::of_block(b) {
+            let s = v.spec();
+            bank.block(b).set(s.id, s.min + (s.max - s.min) * 0.7);
+        }
+        if b == BlockRef::TapeEngine {
+            bank.block(b).write(TapeEngineParams::SLICE, 3.0);
+            assert_eq!(bank.block(b).get(TapeEngineParams::SLICE), 3.0);
+        }
+        let before = gets(&*bank.block(b));
+        for v in &coded {
+            for c in 0..=127 {
+                let mut blk = bank.block(b);
+                nrpn::index_of_code(&mut *blk, v.spec().id, u7(c));
+                assert_eq!(gets(&*blk), before, "{b:?} {} code {c}", v.spec().ident);
+            }
+        }
+    }
+}
+
 /// Labelled lines for the docs: `chimera-utils nrpn-chart` prints the same.
 #[test]
 fn labelled_lines_name_the_range() {

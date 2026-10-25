@@ -111,41 +111,25 @@ pub const fn writable(a: ParamAddr) -> Option<Mappable> {
 /// decoder, so a code depending on another param (filter MODE on KIND) is
 /// read in the block's context. `None`: no live value has the code.
 ///
-/// The probe writes `b`; every stored param is written back after, in spec
-/// order, the load order, so `b` ends as it began.
+/// The probe writes `b`; every stored param's raw value is written back
+/// after, in spec order (the load order), by `write`, not through the
+/// codes' load policy (TAPE SLICE loads as OFF), so `b` ends as it began.
 pub fn index_of_code(b: &mut dyn Block, id: ParamId, code: U7) -> Option<u16> {
     let specs = b.specs();
     let min = specs.iter().find(|s| s.id == id)?.min;
-    let mut saved = [Saved::Skip; MAX_BLOCK_PARAMS];
+    let mut saved = [0.0; MAX_BLOCK_PARAMS];
     for (s, x) in specs.iter().zip(saved.iter_mut()) {
-        if s.stored {
-            *x = match b.enum_code(s.id) {
-                Some(c) if s.kind == ParamKind::Enum => Saved::Code(c),
-                _ => Saved::Real(b.get(s.id)),
-            };
-        }
+        *x = b.get(s.id);
     }
     let at = b
         .set_enum_code(id, code.get())
         .then(|| libm::roundf(b.get(id) - min) as u16);
-    for (s, x) in specs.iter().zip(saved) {
-        match x {
-            Saved::Code(c) => {
-                let ok = b.set_enum_code(s.id, c);
-                debug_assert!(ok, "a block's own code refused on restore");
-            }
-            Saved::Real(v) => b.write(s.id, v),
-            Saved::Skip => {}
+    for (s, &v) in specs.iter().zip(saved.iter()) {
+        if s.stored {
+            b.write(s.id, v);
         }
     }
     at
-}
-
-#[derive(Clone, Copy)]
-enum Saved {
-    Skip,
-    Real(f32),
-    Code(u8),
 }
 
 /// One line of the chart: a stored param, or a retired address that is
