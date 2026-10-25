@@ -521,6 +521,17 @@ fn strike_at_one_keeps_the_envelope() {
     assert!((full - none).abs() < 0.1, "STRIKE 1 {full} vs 0 {none} dB");
 }
 
+/// #798: ALGO's carrier envelopes hold the gate like VA's key: a held note
+/// under LPG 1, DECAY 0, STRIKE 1 sounds on instead of pinging shut.
+#[test]
+fn algo_held_note_holds_the_gate_at_strike_one() {
+    let mut b = bench(gated(saw_sound(), 1.0, 0.0, 1.0));
+    let t = hold(&mut b, None, BPS * 4);
+    assert_eq!(b.sounding(), 1, "the held note sounds on");
+    let tail = rms_db(t.pair(0, BPS * 3, BPS * 4));
+    assert!(tail > -60.0, "{tail}");
+}
+
 // ============================================================ the voice
 
 fn saw_sound() -> Sound {
@@ -577,13 +588,14 @@ fn the_gate_never_gates_twice() {
     assert!((d + 6.02).abs() < 0.3, "{d:.2} dB");
 }
 
-/// A voice under the gate ends when it shuts. A struck ALGO note (STRIKE
+/// A voice under the gate ends when it shuts. A struck MODAL note (STRIKE
 /// 1, no route into VCA) frees once its ping has shut, the key still held;
+/// an ALGO one holds on its carriers' envelopes (#798);
 /// VA INIT's note rings past ENV 1's release on DECAY's tail, then frees;
 /// a VA note with no route falls from its key up and frees.
 #[test]
 fn voices_end_when_the_gate_shuts() {
-    let mut b = bench(gated(saw_sound(), 1.0, 0.3, 1.0));
+    let mut b = bench(gated(Sound::init(EngineType::Modal), 1.0, 0.3, 1.0));
     let t = hold(&mut b, None, BPS * 8);
     assert!(t.rms(0, 0, BPS / 10) > 1e-3, "the ping is heard");
     assert_eq!(b.sounding(), 0, "the shut gate ended it, the key held");
@@ -764,11 +776,11 @@ fn gated_into(s: &mut Sound) {
 }
 
 /// Every strike is Plaits' ping at the note's velocity: on a voice at rest
-/// (ALGO with no route, VA INIT's ENV 1) as on a held one, a soft note
+/// (MODAL with no route, VA INIT's ENV 1) as on a held one, a soft note
 /// strikes softer.
 #[test]
 fn a_fresh_voice_strikes_at_its_velocity() {
-    for s in [saw_sound(), Sound::init(EngineType::Va)] {
+    for s in [Sound::init(EngineType::Modal), Sound::init(EngineType::Va)] {
         let first = |vel: u8| {
             let mut b = bench(gated(s.clone(), 0.5, 0.5, 1.0));
             let mut t = Tape::default();

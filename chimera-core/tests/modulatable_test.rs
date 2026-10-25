@@ -28,6 +28,8 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
         BlockRef::Modal => EngineType::Modal,
         BlockRef::Va => EngineType::Va,
         BlockRef::TapeEngine => EngineType::Tape,
+        // The gate's fall is heard on a ringing engine: ALGO's carriers hold it (#798).
+        BlockRef::Out if addr.param.0 >= 7 => EngineType::Modal,
         _ => EngineType::Algo,
     };
     let mut p = ParamSnapshot::for_engine(engine);
