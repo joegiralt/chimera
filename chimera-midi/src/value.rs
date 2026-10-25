@@ -1,7 +1,5 @@
 //! MIDI quantities as checked newtypes: an out-of-range value cannot be built.
 
-use core::num::NonZeroU8;
-
 /// 7-bit data byte, 0..=127.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct U7(u8);
@@ -88,30 +86,29 @@ impl Key {
 
 /// Note-on velocity, 1..=127. Zero means note-off and is not representable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Velocity(NonZeroU8);
+// The 1..=127 invariant is held by the constructor, not NonZeroU8: that niche costs ~100 B of bank 1.
+pub struct Velocity(u8);
 
 impl Velocity {
-    pub const MAX: Velocity = Velocity(NonZeroU8::new(127).unwrap());
+    pub const MAX: Velocity = Velocity(127);
     /// Velocity of the desktop keyboard and the firmware test note.
-    pub const DEFAULT: Velocity = Velocity(NonZeroU8::new(100).unwrap());
+    pub const DEFAULT: Velocity = Velocity(100);
 
     pub const fn new(v: u8) -> Option<Self> {
-        if v > 127 {
-            return None;
-        }
-        match NonZeroU8::new(v) {
-            Some(n) => Some(Self(n)),
-            None => None,
+        if v >= 1 && v <= 127 {
+            Some(Self(v))
+        } else {
+            None
         }
     }
 
     pub const fn get(self) -> u8 {
-        self.0.get()
+        self.0
     }
 
     /// Velocity as 0..1, exactly `v as f32 / 127.0` (what the engines used).
     pub fn unit(self) -> f32 {
-        self.0.get() as f32 / 127.0
+        self.0 as f32 / 127.0
     }
 }
 
