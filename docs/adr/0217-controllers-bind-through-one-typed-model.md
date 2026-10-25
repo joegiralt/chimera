@@ -25,7 +25,7 @@ The DIN parser (`chimera-hal::midi::MidiParser`) also lacks SysEx state, System 
   - A relative unit is one panel detent through the encoder's edit path. Controller-side acceleration is taken at face value, and there is no receiver acceleration.
   - `Pickup` engages within 2/127 of the span or on a crossing, and re-arms on any other change. `Scale` converges both ends (Ableton's value scaling).
   - Every absolute move still goes through ADR 0139's ramp and the knob glide: never a snap.
-  - Default takeover is `Jump`. Echo defaults to on for absolute and button bindings, off for relative ones.
+  - Default takeover is `Jump`. Echo defaults to off; learn turns it on for relative encoders and 14-bit controls (CC14, NRPN 14-bit). MIDI MAP's ECHO overrides per binding.
 - **Learn senses the kind.** MIX+SEQ arms as today. The first control heard writes the entry, then learn stays open (no timer) while `classify` reads up to 24 samples and rewrites the entry's `Input`. Nothing the sensed control sends is applied while sensing. MIX+SEQ, a nav key, a page change or a panel turn ends it. MIDI MAP's E (INPUT) and F (ECHO) correct any guess.
 - **Value echo out of DIN, per Part.**
   - A pull model: each UI pass compares each feedback binding's quantised param to what was last sent. It sends on the Part's channel, on the binding's own control and encoding.
@@ -35,13 +35,13 @@ The DIN parser (`chimera-hal::midi::MidiParser`) also lacks SysEx state, System 
   - Priority: identity, then the active Part, then the rest.
   - On a shared channel only the lowest Part echoes.
   - A 256 B `OutRing` feeds a USART1 TX interrupt.
-  - SETTINGS › MIDI CONFIG › ECHO (`OFF`/`ON`, SYSTEM `Midi` param 3, default `ON`) gates all output.
-- **Universal Identity Reply.** `F0 7E <7F|00> 06 01 F7` is answered with `F0 7E 00 06 02 7D 43 48 01 00 <maj min patch 0> F7` until the owner picks a manufacturer ID.
+  - SETTINGS › MIDI CONFIG › ECHO (`OFF`/`ON`, SYSTEM `Midi` param 3, default `ON`) is the master switch for all output; each binding's `Feedback` decides what is echoed.
+- **Universal Identity Reply.** `F0 7E <7F|00> 06 01 F7` is answered with `F0 7E 00 06 02 7D 43 48 01 00 <maj min patch 0> F7`. `7D` (non-commercial) is the owner's pick for now; a bought MMA ID replaces it before anything is sold.
 - **Stream policy:**
   - CC 124–127 act only as All Notes Off (Mode 3 per Part). CC 122 is ignored.
   - FF is All Sound Off plus Reset All Controllers on every channel.
   - Active Sensing arms on the first FE and times out after 300 ms through USART1's receiver timeout, releasing every channel's notes.
-- **Persistence.** A new non-critical Sound record `Bindings` `0x001F`: a version byte, then 8 B an entry. `0x001E` is read as `Cc(_, Absolute(Jump))` with echo on, and never written. Bad entries are skipped and counted.
+- **Persistence.** A new non-critical Sound record `Bindings` `0x001F`: a version byte, then 8 B an entry. `0x001E` is read as `Cc(_, Absolute(Jump))` with echo off, and never written. Bad entries are skipped and counted.
 - **Placement (ADR 0198).**
   - **Bank 2, behind `Bank2Door::midi` (`MidiDoor`):** `chimera_midi`'s `stream`, `ctl`, `rel`, `take`, `law`, `learn`, `out`, `sysex` and `sense`; `chimera_engine::midi_in`'s pipe; `nrpn`; the map codec.
   - **Bank 2, behind `MidiUiDoor` at `DOOR_ADDR + 0x300`:** the UI's resolution, learn sensing, echo and MIDI MAP page, together with today's `cc.rs`, `midi_map::ramp` and the map page's code.
@@ -58,7 +58,7 @@ The DIN parser (`chimera-hal::midi::MidiParser`) also lacks SysEx state, System 
 - **Parsing in the audio block from a raw byte ring.** It moves the parser onto the audio thread and away from where bytes arrive (ADR 0019), and coarsens clock arrival.
 - **Batching the RX FIFO with a threshold and receiver timeout.** It adds up to 320 µs of note latency to save cycles that cost 0.1 % of the CPU.
 - **A push model for echo (a hook in every edit path).** Every new edit path would need to remember it. The pull compare catches all of them for 96 compares a pass.
-- **Keeping the old parser as a closed-door fallback.** It keeps about 1 KB of bank 1 forever so that a stale `.bk2` plays VA's plain modes. Left to the owner (spec § 13).
+- **Keeping the old parser as a closed-door fallback.** It keeps about 1 KB of bank 1 forever so that a stale `.bk2` plays VA's plain modes. The owner rejected it: the header's bank-2 warning covers a stale unit.
 - **The binding in the Part (Octatrack, DAW).** Already rejected by 0139: engine-specific targets don't survive engine changes.
 
 ## Consequences

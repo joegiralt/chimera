@@ -1,6 +1,6 @@
 # Chimera 0.3 MIDI Phase 1 (DIN): typed parser, NRPN address space, binding model, value echo
 
-- **Status:** Draft for owner review
+- **Status:** Owner answers recorded 2026-10-25 (§ 13); ready to implement
 - **Date:** 2026-10-25
 - **Base:** `origin/main` 4eae5d81 (worktree `chimera-midi-03`, branch `midi-03`)
 - **Research:** `reports/MIDI controller and USB schemes.md` ("Recommended phased plan for 0.3", Phase 1) and its notes in `research_notes/MIDI controller and USB schemes/`
@@ -358,9 +358,9 @@ pub enum Learn { Off, Armed { part, note }, Sensing { part, entry: u8, seen: See
   - Any other change to the param re-arms pickup: the panel, a load, another binding, an echo.
   - `Scale` converges as in § 4.1. `Jump` moves at once, and the move is still a glide, because every write goes through the ramp and the knob glide (CLAUDE.md "never snap").
 - **Defaults** **(my call)**:
-  - **Takeover: `Jump`.** It continues ADR 0139 and matches the Elektron precedent (follow-hardware-sequencer-precedent), and with echo on, a capable controller never jumps. The report recommended `Pickup`; see owner question 3.
-  - **Echo:** on for absolute and button bindings, off for relative ones. A relative CC that receives an absolute value back is undefined on some controllers.
-  - INIT's and the factory Sounds' default maps are `Cc(_, Absolute(Jump))` with `Feedback::Value`.
+  - **Takeover: `Jump`** (owner, 2026-10-25). It continues ADR 0139 and matches the Elektron precedent (follow-hardware-sequencer-precedent).
+  - **Echo** (owner, 2026-10-25): `Feedback::Off` by default. Learn sets `Feedback::Value` automatically when it senses a relative encoder (any `ByteEncoding`, or NRPN `IncDec`) or a 14-bit control (`Cc14`, or an NRPN absolute control that sent a CC 38 fine value). Absolute 7-bit CC, button and pressure bindings learn with echo off. MIDI MAP's F (ECHO) overrides per binding; E (INPUT) never changes F.
+  - INIT's and the factory Sounds' default maps are `Cc(_, Absolute(Jump))` with `Feedback::Off`.
 - **Precedence** in one pass:
   1. The hand beats a CC (ADR 0139).
   2. An explicit binding beats the canonical NRPN.
@@ -394,7 +394,7 @@ The user corrects any guess on MIDI MAP (§ 8.2).
   - Byte 0 is the format version (`1`), followed by 8 B an entry:
     `[input tag:3 | kind:5] [number hi] [number lo] [block disk code] [param id] [min] [max] [flags: bit0 feedback]`
   - Neutral is the empty map, which writes no record (ADR 0045/0087). `MAX_SOUND_COST` grows by the difference (`1 + 16 × 8` against `80` B): ≈ +49 B, rounded per `sparse_bound` in Task 10.
-- **`0x001E` is read, never written.** Each old entry becomes `Cc(cc, Absolute(Jump))` with `Feedback::Value`. When both records are present, `0x001F` wins.
+- **`0x001E` is read, never written.** Each old entry becomes `Cc(cc, Absolute(Jump))` with `Feedback::Off`. When both records are present, `0x001F` wins.
 - **Safety:**
   - A bad length or version is `Bounds`.
   - An entry with an unknown tag or kind, a reserved CC, an MSB outside `Cc14Msb`, an unknown address or a target that isn't `Mappable` is skipped: `LOADED · SOME PARAMS SKIPPED`.
@@ -449,8 +449,7 @@ UI loop ─► MidiUiDoor::hear(CtrlRing.drain())                               
 **Closed bank 2** (a stale or missing `.bk2`, ABOUT reads `NEEDS UPDATE`):
 - The ISR stub drains and drops RX, so **MIDI in is deaf, notes included**, and nothing is transmitted.
 - Maps aren't decoded, and MIDI MAP and the learn hint read `NEEDS UPDATE`.
-- **Today a closed unit still plays VA's plain modes from MIDI. After Phase 1 it doesn't** (owner question 2).
-- The alternative is to keep the old parser in bank 1 as a closed-door fallback. It costs nothing new but keeps about 1 KB in bank 1 forever.
+- **Today a closed unit still plays VA's plain modes from MIDI. After Phase 1 it doesn't.** Owner, 2026-10-25: accepted. There is no bank-1 fallback parser; the header's existing bank-2 warning covers it.
 
 **Expected sizes** (estimates; each task reports its measured line per flash-counting-proportion):
 - Bank 2 gains about 14–18 KB: parser and controllers 3 KB, binding and UI 6 KB, codec 1 KB, learn 1.5 KB, echo and identity 2 KB, page 2 KB.
@@ -511,10 +510,9 @@ It is still a SETTINGS list Screen with its own visual language (settings-menu).
 When the focused cell's param has a `Pickup` binding that is waiting, the focus band's hint reads `MOVE THE KNOB UP TO PICK UP` or `MOVE THE KNOB DOWN TO PICK UP` (hidden-gestures-need-hints). It clears when the binding engages.
 
 ### 8.4 SETTINGS › MIDI CONFIG › ECHO
-- A new row in SYSTEM, `ECHO` `OFF` / `ON`, default **`ON`** **(my call)**.
-- Off sends nothing, identity replies included.
+- A new row in SYSTEM, `ECHO` `OFF` / `ON`, default `ON`. It is the master switch for DIN OUT: off sends nothing, identity replies included.
+- The per-binding `Feedback` decides what is echoed, and it defaults to off (§ 6.2), so out of the box only learned relative and 14-bit bindings echo. The master defaults to `ON` so that the owner's auto-ON rule works without a second setting.
 - An older SYSTEM file without the param reads the default.
-- The owner may prefer `OFF` because DIN OUT has never sent before (owner question 4).
 
 ## 9. Value echo out of DIN
 
@@ -534,7 +532,7 @@ When the focused cell's param has a `Pickup` binding that is waiting, the focus 
   - CC14: MSB then LSB.
   - NRPN: 99, 98, 6 and 38 with running status.
   - Button: `span` min or max as 0 or 127.
-  - Relative bindings with `Feedback::Value`: the absolute value on the same CC. Off by default.
+  - Relative bindings with `Feedback::Value`: the absolute value on the same CC (the controller's LED ring follows). Learn turns it on (§ 6.2).
 
   When Parts share a channel and bind the same control, only the lowest-numbered Part echoes **(my call)**.
 - **Bandwidth** at 31,250 baud (320 µs a byte; arithmetic, not measurements):
@@ -558,7 +556,7 @@ When the focused cell's param has a `Pickup` binding that is waiting, the focus 
 
 - **Request:** `F0 7E <7F|00> 06 01 F7`.
 - **Reply:** `F0 7E 00 06 02 <maker> <family lo hi> <member lo hi> <v1 v2 v3 v4> F7`.
-  - **(my call)** `maker` = `7D` until the owner decides (owner question 1). `family` = `43 48` ("CH"). `member` = `01 00` (PreenFM3 hardware; the Blackbox port takes `02 00`). The version bytes are major, minor, patch, 0 from `CARGO_PKG_VERSION` (0.3.0 → `00 03 00 00`).
+  - `maker` = `7D` (owner, 2026-10-25: non-commercial for now; swap for a bought MMA ID before anything is sold). `family` = `43 48` ("CH"). `member` = `01 00` (PreenFM3 hardware; the Blackbox port takes `02 00`). The version bytes are major, minor, patch, 0 from `CARGO_PKG_VERSION` (0.3.0 → `00 03 00 00`).
   - It is 15 bytes, queued first in the echo plan, and sent only when MIDI CONFIG › ECHO is on.
 
 ## 11. Stream rules the instrument now obeys
@@ -620,11 +618,9 @@ When the focused cell's param has a `Pickup` binding that is waiting, the focus 
   - The owner does UAT by ear and hand.
 - **Unit (ship gate, unit-e2e-test):** flash, check the MIDI channel against the Part, play notes, sweep a learned CC, a relative encoder and an NRPN, and capture the echo and identity reply on the MOTU's MIDI in.
 
-## 13. Open questions for the owner
+## 13. Owner answers (2026-10-25, binding)
 
-1. **Identity manufacturer ID.**
-   - Ship `7D` (non-commercial, what stock PreenFM3 uses; not allowed in a product that is sold)?
-   - Or buy an MMA manufacturer ID now? The DSP-company plan and Phase 3 SysEx will need one anyway.
-2. **Closed bank 2 makes MIDI in deaf, notes included.** Today a stale `.bk2` still plays VA's plain modes. Accept, or keep the old parser as a closed-door fallback (about 1 KB of bank 1 kept)?
-3. **Takeover default for a learned absolute control.** `JUMP` (my pick: Elektron precedent and ADR 0139) or `PICKUP` (the report's pick, Ableton's)?
-4. **ECHO default.** `ON` (my pick: controllers work best with it), or `OFF` because DIN OUT has never sent before, and echoes on a Part's channel can move other gear on that channel downstream?
+1. **Identity manufacturer ID:** `0x7D` for now. Swap it for a bought MMA ID before anything is sold.
+2. **Closed bank 2:** MIDI in is ignored, notes included. No bank-1 fallback parser. The header's existing bank-2 warning covers it.
+3. **Takeover default:** `JUMP`.
+4. **Value echo:** off by default per binding, but on automatically for bindings learned as relative encoders or 14-bit (CC14, NRPN 14-bit). MIDI MAP's per-binding ECHO overrides. The SYSTEM ECHO master stays `ON` (§ 8.4).
