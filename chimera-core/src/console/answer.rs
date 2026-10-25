@@ -130,6 +130,11 @@ pub trait Unit {
     fn request_sweep(&mut self) -> Option<SweepAsk> {
         None
     }
+    /// MIDI in's pipe: `status`'s `midi` line, after `sweep`. `None`: no
+    /// line (no MIDI in).
+    fn midi(&self) -> Option<super::MidiStats> {
+        None
+    }
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
     /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
@@ -220,6 +225,7 @@ pub fn answer(
             .and_then(|()| unit.board().map_or(Ok(()), |b| write_board(b, &mut t)))
             .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))
             .and_then(|()| unit.sweep().map_or(Ok(()), |r| write_sweep(&r, &mut t)))
+            .and_then(|()| unit.midi().map_or(Ok(()), |m| writeln!(t, "{m}")))
             .and_then(|()| {
                 unit.usb_regs()
                     .map_or(Ok(()), |r| writeln!(t, "usb_regs {r}"))

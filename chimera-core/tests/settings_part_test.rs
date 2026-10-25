@@ -658,7 +658,11 @@ mod midi_map {
         ui.hear_ccs(core::iter::once(ev(127)), Ms(200), true);
         turn(&mut ui, EncoderId::D, -50);
         let was = ui.project().part(P[0]).sound.params.filter.cutoff;
-        ui.hear_ccs(core::iter::empty(), Ms(300), true);
+        ui.hear_ccs(
+            core::iter::empty::<chimera_core::midi_in::CcEvent>(),
+            Ms(300),
+            true,
+        );
         assert_eq!(ui.project().part(P[0]).sound.params.filter.cutoff, was);
     }
 }

@@ -200,13 +200,16 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     };
     // The NRPN address space (ADR 0216): `chimera_engine::nrpn`, text and
     // rodata. Linked once canonical NRPNs land (Task 11's door).
-    // And the MIDI pipe (Phase 1): `DinPipe` and the `chimera_midi` stream,
-    // controller and sensing layers it runs (linked once the door feeds it).
+    // And the MIDI pipe (Phase 1, `MidiDoor`): `DinPipe`, its counting sink
+    // (`Counted`) and the `chimera_midi` stream, controller, sensing and
+    // SysEx layers it runs.
     let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
     *(.text.*14chimera_engine7midi_in*7DinPipe* .rodata.*14chimera_engine7midi_in*7DinPipe*);
+    *(.text.*14chimera_engine7midi_in*7Counted* .rodata.*14chimera_engine7midi_in*7Counted*);
     *(.text.*12chimera_midi6stream* .rodata.*12chimera_midi6stream*);
     *(.text.*12chimera_midi3ctl* .rodata.*12chimera_midi3ctl*);
     *(.text.*12chimera_midi5sense* .rodata.*12chimera_midi5sense*);
+    *(.text.*12chimera_midi5sysex* .rodata.*12chimera_midi5sysex*);
 ";
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);

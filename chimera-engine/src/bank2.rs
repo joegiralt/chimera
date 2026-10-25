@@ -139,7 +139,15 @@ pub struct Bank2Door {
     /// ALGO's block (ADR 0212; `AlgoEngine::render` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub algo: crate::dsp::algo::engine::AlgoDoor,
+    /// MIDI in's pipe (`midi_in::feed` and `idle` are bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub midi: crate::midi_in::MidiDoor,
 }
+
+// The table fits before the board's slot (the link would fail later, and
+// less plainly).
+#[cfg(all(feature = "bank2", target_pointer_width = "32"))]
+const _: () = assert!(size_of::<Bank2Door>() <= (BOARD_DOOR_ADDR - DOOR_ADDR) as usize);
 
 impl Bank2Door {
     #[inline(always)]
@@ -184,6 +192,7 @@ static DOOR: Bank2Door = Bank2Door {
     #[cfg(feature = "orbit")]
     orbit: crate::orbit::door::OrbitDoor::DOOR,
     algo: crate::dsp::algo::engine::AlgoDoor::DOOR,
+    midi: crate::midi_in::MidiDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

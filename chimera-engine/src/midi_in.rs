@@ -1,15 +1,15 @@
 //! MIDI in, split at the source (MIDI map spec § 1): notes, bend, the
-//! pedal, channel mode and real-time go to the note queue; every other CC
-//! to its own ring, which the UI drains. A turning knob never fills the
-//! note queue, and only the UI edits the Sound.
+//! pedal, channel mode and real-time go to the note queue; every other
+//! controller to the control ring, which the UI drains. A turning knob never
+//! fills the note queue, and only the UI edits the Sound.
 //!
-//! `CcRing` is `NoteQueue`'s ring without the note-off reserve: one
-//! producer (an ISR or a MIDI thread), one consumer (the UI), the same
-//! `Acquire`/`Release` pairing on `head` and `tail` (see `note_queue`).
+//! `DinPipe` runs both parser layers in bank 2, behind `MidiDoor`: a shell
+//! hands its bytes to `feed` (one door call per ISR entry, spec § 7.2).
+//! Closed, MIDI in is deaf, notes included (spec § 13): no bank-1 parser.
 
+use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use chimera_hal::MidiMessage;
 use chimera_midi::ctl::{Controllers, Ctl, DataValue, Dir, FreeCc, Heard, Sel};
 use chimera_midi::sense::Sensing;
 use chimera_midi::stream::{Event, FaultCounts, Parsed, Parser, RealTime as Rt};
@@ -17,7 +17,7 @@ use chimera_midi::sysex;
 use chimera_midi::value::{Channel, U7, U14};
 
 use crate::MidiChannel;
-use crate::note_queue::{ChannelMode, ChannelModeEvent, InEvent, RealTime};
+use crate::note_queue::{ChannelMode, ChannelModeEvent, InEvent, NoteProducer, RealTime};
 
 /// A controller number, 0..=127.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,111 +61,28 @@ pub struct CcEvent {
     pub value: u8,
 }
 
-impl CcEvent {
-    /// Bits 0..4 channel, 4..11 CC, 11..18 value.
-    pub fn pack(self) -> u32 {
-        self.channel.get() as u32 | ((self.cc.0 as u32) << 4) | (((self.value & 0x7F) as u32) << 11)
-    }
+/// What `UiState::hear_ccs` takes: a plain CC (a test's) or a control
+/// event off the ring, of which it hears `Ctl::Cc` only for now.
+pub trait HeardCc: Copy {
+    fn cc_event(self) -> Option<CcEvent>;
+}
 
-    pub fn unpack(bits: u32) -> Option<Self> {
-        Some(Self {
-            channel: MidiChannel::new((bits & 0xF) as u8)?,
-            cc: Cc(((bits >> 4) & 0x7F) as u8),
-            value: ((bits >> 11) & 0x7F) as u8,
-        })
+impl HeardCc for CcEvent {
+    fn cc_event(self) -> Option<CcEvent> {
+        Some(self)
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Routed {
-    Queue(InEvent),
-    Cc(CcEvent),
-    Drop,
-}
-
-/// Where a message goes: the note queue takes `InEvent::from_midi`'s set,
-/// the ring every other CC (reserved ones too: learn and decode refuse them).
-pub fn route(msg: MidiMessage) -> Routed {
-    InEvent::from_midi(msg).map_or_else(
-        || match msg {
-            MidiMessage::ControlChange { channel, cc, value } => {
-                Cc::new(cc).map_or(Routed::Drop, |cc| {
-                    Routed::Cc(CcEvent {
-                        channel,
-                        cc,
-                        value: value & 0x7F,
-                    })
-                })
-            }
-            _ => Routed::Drop,
-        },
-        Routed::Queue,
-    )
-}
-
-pub const CC_RING_LEN: usize = 64;
-const _: () = assert!(CC_RING_LEN.is_power_of_two());
-
-/// One producer, one consumer; head and tail free-running, the slot
-/// `counter % CC_RING_LEN`. A full ring drops the newest and counts it.
-pub struct CcRing {
-    slots: [AtomicU32; CC_RING_LEN],
-    /// Next event to pop (the consumer's only).
-    head: AtomicU32,
-    /// Next slot to push (the producer's only).
-    tail: AtomicU32,
-    dropped: AtomicU32,
-}
-
-impl Default for CcRing {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CcRing {
-    pub const fn new() -> Self {
-        Self {
-            slots: [const { AtomicU32::new(0) }; CC_RING_LEN],
-            head: AtomicU32::new(0),
-            tail: AtomicU32::new(0),
-            dropped: AtomicU32::new(0),
+impl HeardCc for CtrlEvent {
+    fn cc_event(self) -> Option<CcEvent> {
+        match self {
+            CtrlEvent::Ctl(channel, Ctl::Cc { cc, value }) => Some(CcEvent {
+                channel,
+                cc: Cc(cc.get()),
+                value: value.get(),
+            }),
+            _ => None,
         }
-    }
-
-    /// Producer side only. `false`: full, dropped. `head` `Acquire` pairs
-    /// with `pop`'s `Release`; the `Release` on `tail` publishes the slot.
-    pub fn push(&self, ev: CcEvent) -> bool {
-        let tail = self.tail.load(Ordering::Relaxed);
-        if tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= CC_RING_LEN {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-            return false;
-        }
-        self.slots[tail as usize % CC_RING_LEN].store(ev.pack(), Ordering::Relaxed);
-        self.tail.store(tail.wrapping_add(1), Ordering::Release);
-        true
-    }
-
-    /// Consumer side only. `tail` `Acquire` pairs with `push`'s `Release`;
-    /// the `Release` on `head` frees the slot.
-    pub fn pop(&self) -> Option<CcEvent> {
-        let head = self.head.load(Ordering::Relaxed);
-        if head == self.tail.load(Ordering::Acquire) {
-            return None;
-        }
-        let bits = self.slots[head as usize % CC_RING_LEN].load(Ordering::Relaxed);
-        self.head.store(head.wrapping_add(1), Ordering::Release);
-        CcEvent::unpack(bits)
-    }
-
-    /// Consumer side: every event waiting, oldest first.
-    pub fn drain(&self) -> impl Iterator<Item = CcEvent> + '_ {
-        core::iter::from_fn(|| self.pop())
-    }
-
-    /// Events dropped because the ring was full.
-    pub fn dropped(&self) -> u32 {
-        self.dropped.load(Ordering::Relaxed)
     }
 }
 
@@ -281,8 +198,10 @@ impl CtrlEvent {
 pub const CTRL_RING_LEN: usize = 64;
 const _: () = assert!(CTRL_RING_LEN.is_power_of_two());
 
-/// `CcRing` for `CtrlEvent`s: two words a slot, written whole before `tail`
-/// publishes them, so a full ring drops whole events and a reader never sees
+/// One producer (an ISR or a MIDI thread), one consumer (the UI); head and
+/// tail free-running, the slot `counter % CTRL_RING_LEN`, the same
+/// `Acquire`/`Release` pairing as `note_queue`'s. Two words a slot, written
+/// whole before `tail` publishes them, so a full ring drops whole events and a reader never sees
 /// half of one (an NRPN's address and value travel together).
 pub struct CtrlRing {
     slots: [[AtomicU32; 2]; CTRL_RING_LEN],
@@ -309,8 +228,9 @@ impl CtrlRing {
         }
     }
 
-    /// Producer side only. `false`: full, the whole event dropped. Same
-    /// `Acquire`/`Release` pairing as `CcRing::push`.
+    /// Producer side only. `false`: full, the whole event dropped. `head`
+    /// `Acquire` pairs with `pop`'s `Release`; the `Release` on `tail`
+    /// publishes the slot.
     pub fn push(&self, e: CtrlEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         if tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= CTRL_RING_LEN {
@@ -325,7 +245,8 @@ impl CtrlRing {
         true
     }
 
-    /// Consumer side only, as `CcRing::pop`.
+    /// Consumer side only. `tail` `Acquire` pairs with `push`'s `Release`;
+    /// the `Release` on `head` frees the slot.
     pub fn pop(&self) -> Option<CtrlEvent> {
         let head = self.head.load(Ordering::Relaxed);
         if head == self.tail.load(Ordering::Acquire) {
@@ -367,6 +288,23 @@ pub struct PipeStats {
     pub refused: u16,
 }
 
+impl PipeStats {
+    /// Every fault layer 1 counted.
+    pub fn fault_total(&self) -> u32 {
+        let f = self.faults;
+        [
+            f.orphan,
+            f.interrupted,
+            f.sysex_cut,
+            f.sysex_overflow,
+            f.undefined,
+        ]
+        .iter()
+        .map(|&n| u32::from(n))
+        .sum()
+    }
+}
+
 /// One source's byte stream, both parser layers: the note path to the note
 /// queue, every other controller to the control ring.
 pub struct DinPipe {
@@ -402,7 +340,7 @@ impl DinPipe {
         }
     }
 
-    pub fn feed(&mut self, bytes: &[u8], out: &mut dyn Sinks) {
+    pub fn feed<S: Sinks + ?Sized>(&mut self, bytes: &[u8], out: &mut S) {
         for &b in bytes {
             let Some(parsed) = self.parser.push(b) else {
                 continue;
@@ -453,11 +391,12 @@ impl DinPipe {
                 Parsed::Event(Event::Common(_) | Event::Fault(_)) => {}
             }
         }
+        self.stats.faults = self.parser.faults();
     }
 
     /// The receiver timeout fired: if Active Sensing was armed, every Part
     /// lets go and the UI hears it.
-    pub fn idle(&mut self, out: &mut dyn Sinks) {
+    pub fn idle<S: Sinks + ?Sized>(&mut self, out: &mut S) {
         if self.sense.timed_out() {
             let mut sink = Counted {
                 out,
@@ -474,21 +413,138 @@ impl DinPipe {
         self.sense.armed()
     }
 
+    /// As of the last `feed`. A field read, so bank 1 may call it closed.
+    #[inline(always)]
     pub fn stats(&self) -> PipeStats {
-        PipeStats {
-            faults: self.parser.faults(),
-            ..self.stats
-        }
+        self.stats
     }
 }
 
+/// A shell's sinks: its note queue's producer and its control ring. The
+/// door's pipe pushes to them directly, so the pushes run in bank 2 with it
+/// (no vtable, nothing of them left in bank 1's stub).
+pub struct DinSinks<'a, 'q> {
+    pub notes: &'a mut NoteProducer<'q>,
+    pub ctrl: &'a CtrlRing,
+}
+
+impl Sinks for DinSinks<'_, '_> {
+    #[inline]
+    fn note(&mut self, e: InEvent) -> bool {
+        self.notes.push(e)
+    }
+
+    #[inline]
+    fn ctrl(&mut self, e: CtrlEvent) -> bool {
+        self.ctrl.push(e)
+    }
+}
+
+/// A shell's pipe, built by the door on its first bytes: a `static` of it is
+/// all zero (`.bss`), so bank 1 carries no image of `DinPipe::new` (~290 B)
+/// and never runs its stores.
+pub struct PipeSlot {
+    ready: bool,
+    pipe: MaybeUninit<DinPipe>,
+}
+
+impl Default for PipeSlot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PipeSlot {
+    pub const fn new() -> Self {
+        Self {
+            ready: false,
+            pipe: MaybeUninit::uninit(),
+        }
+    }
+
+    /// The pipe, once bytes have reached it.
+    #[inline(always)]
+    pub fn pipe(&self) -> Option<&DinPipe> {
+        // SAFETY: `ready` is set only by `built`, after it writes `pipe`.
+        self.ready.then(|| unsafe { self.pipe.assume_init_ref() })
+    }
+
+    /// As of the last `feed`; nothing counted before the first.
+    #[inline(always)]
+    pub fn stats(&self) -> PipeStats {
+        self.pipe().map_or_else(PipeStats::default, DinPipe::stats)
+    }
+
+    /// The pipe, built first if it is not yet. Inlined into the door's
+    /// entries, so `DinPipe::new` runs in bank 2.
+    #[inline(always)]
+    fn built(&mut self) -> &mut DinPipe {
+        if !self.ready {
+            self.pipe.write(DinPipe::new());
+            self.ready = true;
+        }
+        // SAFETY: written above or by an earlier call, which set `ready`.
+        unsafe { self.pipe.assume_init_mut() }
+    }
+}
+
+/// `DinPipe::feed` as the door carries it.
+pub type MidiFeed = fn(&mut PipeSlot, &[u8], &mut DinSinks<'_, '_>);
+/// `DinPipe::idle` as the door carries it.
+pub type MidiIdle = fn(&mut PipeSlot, &mut DinSinks<'_, '_>);
+
+/// MIDI in's entries in bank 2's door: the pipe's two layers.
+#[repr(C)]
+pub struct MidiDoor {
+    pub feed: MidiFeed,
+    pub idle: MidiIdle,
+}
+
+impl MidiDoor {
+    pub const DOOR: MidiDoor = MidiDoor {
+        feed: DinPipe::door_feed,
+        idle: DinPipe::door_idle,
+    };
+}
+
+/// The door's entries: `feed` and `idle` on a shell's slot and sinks,
+/// `DinPipe`'s so `bank2.x`'s glob places them.
+impl DinPipe {
+    fn door_feed(slot: &mut PipeSlot, bytes: &[u8], out: &mut DinSinks<'_, '_>) {
+        slot.built().feed(bytes, out);
+    }
+
+    fn door_idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
+        slot.built().idle(out);
+    }
+}
+
+/// `bytes` through `slot`'s pipe into `out`, through bank 2's door with
+/// `bank2`: closed, they are dropped, notes too (spec § 13).
+#[inline(always)]
+pub fn feed(slot: &mut PipeSlot, bytes: &[u8], out: &mut DinSinks<'_, '_>) {
+    #[cfg(feature = "bank2")]
+    crate::bank2::DOOR_CELL.with(|d| (d.midi.feed)(slot, bytes, out));
+    #[cfg(not(feature = "bank2"))]
+    DinPipe::door_feed(slot, bytes, out);
+}
+
+/// The receiver timed out (`DinPipe::idle`), as `feed`: closed, nothing.
+#[inline(always)]
+pub fn idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
+    #[cfg(feature = "bank2")]
+    crate::bank2::DOOR_CELL.with(|d| (d.midi.idle)(slot, out));
+    #[cfg(not(feature = "bank2"))]
+    DinPipe::door_idle(slot, out);
+}
+
 /// A sink that counts refusals.
-struct Counted<'a> {
-    out: &'a mut dyn Sinks,
+struct Counted<'a, S: Sinks + ?Sized> {
+    out: &'a mut S,
     refused: &'a mut u16,
 }
 
-impl Counted<'_> {
+impl<S: Sinks + ?Sized> Counted<'_, S> {
     fn note(&mut self, e: InEvent) {
         if !self.out.note(e) {
             *self.refused = self.refused.saturating_add(1);

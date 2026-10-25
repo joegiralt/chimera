@@ -13,7 +13,7 @@ use crate::addr::ParamAddr;
 use crate::block::Motion;
 use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
-use crate::midi_in::CcEvent;
+use crate::midi_in::HeardCc;
 use crate::midi_map::ramp::{Ramp, bin, budget};
 use crate::midi_map::{MAP_LEN, MapEntry, MidiMap};
 use crate::project::{Loads, PartId, Project};
@@ -111,12 +111,13 @@ fn is_knob(e: &MapEntry) -> bool {
 }
 
 impl UiState {
-    /// Each Part's ramps `now` on, then this pass's CCs (spec §§ 5-7).
+    /// Each Part's ramps `now` on, then this pass's CCs (spec §§ 5-7): the
+    /// control ring's `Ctl::Cc`s, or a test's plain `CcEvent`s.
     /// After `handle_input`, before the publish: the hand's moves are in.
     /// `taken`: the audio has taken the last publish (`Writer::taken`).
     /// Card work waiting drops them (spec § 1): a write now would refuse
     /// the load or adopt its witness confirmed.
-    pub fn hear_ccs(&mut self, ccs: impl Iterator<Item = CcEvent>, now: Ms, taken: bool) {
+    pub fn hear_ccs(&mut self, ccs: impl Iterator<Item = impl HeardCc>, now: Ms, taken: bool) {
         let elapsed = now.since(self.cc.last);
         self.cc.last = now;
         let busy = self.job.is_some() || self.lib.busy() || self.src.busy();
@@ -147,7 +148,8 @@ impl UiState {
                 self.cc_step(p, elapsed);
             }
         }
-        for ev in ccs.filter(|_| !busy) {
+        // Only `Ctl::Cc` for now; the rest of the ring is drained unheard.
+        for ev in ccs.filter_map(HeardCc::cc_event).filter(|_| !busy) {
             #[cfg(feature = "midi-map")]
             if self.learn_cc(ev) {
                 continue;

@@ -5,6 +5,8 @@
 mod common;
 
 use chimera_core::instrument::NoteOrigin;
+use chimera_core::midi_in::{CtrlEvent, DinPipe, Sinks};
+use chimera_core::note_queue::{ChannelMode, ChannelModeEvent};
 use chimera_core::note_queue::{InEvent, NoteEvent, NoteKind, NoteSources, RealTime, SourceId};
 use chimera_core::orbit::clock::{
     ClockSource, MAX_BPM_EXT, Phase, Position, SyncMode, step_at, step_start,
@@ -16,8 +18,7 @@ use chimera_core::orbit::rng::Pct;
 use chimera_core::orbit::scene::Scene;
 use chimera_core::orbit::{RINGS, RingIdx};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
-use chimera_hal::midi::MidiParser;
-use chimera_hal::{BLOCK_SIZE, MidiMessage};
+use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::orbit::OrbitRig;
 
@@ -26,41 +27,57 @@ const B: u64 = BLOCK_SIZE as u64;
 const SILENT: u64 = SR as u64 / 2;
 const BAR: u64 = 1 << 32;
 
+/// The DIN pipe's note queue for `bytes`.
+fn queued(bytes: &[u8]) -> Vec<InEvent> {
+    struct Q(Vec<InEvent>);
+    impl Sinks for Q {
+        fn note(&mut self, e: InEvent) -> bool {
+            self.0.push(e);
+            true
+        }
+        fn ctrl(&mut self, _: CtrlEvent) -> bool {
+            true
+        }
+    }
+    let mut q = Q(Vec::new());
+    DinPipe::new().feed(bytes, &mut q);
+    q.0
+}
+
 #[test]
 fn midi_parser_real_time() {
-    let mut p = MidiParser::new();
-    let got: Vec<MidiMessage> = [
+    let got = queued(&[
         0x90, 60, 0xF8, 100, 0xFA, 62, 0xFB, 0, 0xFC, 0xFE, 0xFF, 64, 0xFE, 90,
-    ]
-    .iter()
-    .filter_map(|&b| p.feed(b))
-    .collect();
+    ]);
     let ch = MidiChannel::new(0).unwrap();
-    let n = |n| MidiNote::new(n).unwrap();
+    let n = |n, kind| {
+        InEvent::Note(NoteEvent {
+            channel: ch,
+            note: MidiNote::new(n).unwrap(),
+            kind,
+        })
+    };
+    let mut want = vec![
+        InEvent::Rt(RealTime::Clock),
+        n(60, NoteKind::On(Velocity::new(100).unwrap())),
+        InEvent::Rt(RealTime::Start),
+        InEvent::Rt(RealTime::Continue),
+        n(62, NoteKind::Off),
+        InEvent::Rt(RealTime::Stop),
+    ];
+    // 0xFF is System Reset now: every channel's sound off and reset.
+    for c in 0..16 {
+        for mode in [ChannelMode::SoundOff, ChannelMode::ResetControllers] {
+            want.push(InEvent::Mode(ChannelModeEvent {
+                channel: MidiChannel::new(c).unwrap(),
+                mode,
+            }));
+        }
+    }
+    want.push(n(64, NoteKind::On(Velocity::new(90).unwrap())));
     assert_eq!(
-        got,
-        [
-            MidiMessage::Clock,
-            MidiMessage::NoteOn {
-                channel: ch,
-                note: n(60),
-                velocity: Velocity::new(100).unwrap()
-            },
-            MidiMessage::Start,
-            MidiMessage::Continue,
-            MidiMessage::NoteOff {
-                channel: ch,
-                note: n(62),
-                velocity: 0
-            },
-            MidiMessage::Stop,
-            MidiMessage::NoteOn {
-                channel: ch,
-                note: n(64),
-                velocity: Velocity::new(90).unwrap()
-            },
-        ],
-        "real-time bytes come out where they fall; running status holds; 0xFE and 0xFF drop"
+        got, want,
+        "real-time bytes come out where they fall; running status holds; 0xFE drops"
     );
 }
 
@@ -94,13 +111,10 @@ fn real_time_keeps_its_order_in_the_queue() {
     let mut got = Vec::new();
     drain.drain(|s, e| got.push((s, e)));
     assert_eq!(got, sent.map(|e| (SRC, e)));
-    for m in [
-        MidiMessage::Clock,
-        MidiMessage::Start,
-        MidiMessage::Continue,
-        MidiMessage::Stop,
-    ] {
-        let rt = InEvent::from_midi(m).expect("real-time is queued");
+    for b in [0xF8, 0xFA, 0xFB, 0xFC] {
+        let [rt] = queued(&[b])[..] else {
+            panic!("real-time is queued")
+        };
         assert!(tx.push(rt));
         drain.drain(|_, e| assert_eq!(e, rt));
     }

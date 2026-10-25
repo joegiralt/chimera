@@ -39,7 +39,7 @@ pub fn start(a: AudioStart<'_>) {
     dma::start();
     sai::start();
     #[cfg(feature = "midi-din")]
-    crate::midi_din::init(a.nvic, a.pclk2_hz, a.din, a.din_ccs);
+    crate::midi_din::init(a.nvic, a.pclk2_hz, a.din, a.din_ctrl);
     #[cfg(not(feature = "midi-din"))]
     let _ = a.pclk2_hz;
 }

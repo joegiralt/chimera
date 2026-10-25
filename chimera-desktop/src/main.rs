@@ -197,7 +197,7 @@ fn main() {
         // Mapped CCs, in the room the hand's moves left.
         #[cfg(feature = "midi")]
         ui.hear_ccs(
-            audio::MIDI_CCS.drain(),
+            audio::MIDI_CTRL.drain(),
             chimera_hal::Controls::now_ms(&controls),
             audio.taken(),
         );

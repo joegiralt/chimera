@@ -57,6 +57,20 @@ impl Sram4Cell {
 
 pub static SRAM4: Sram4Cell = Sram4Cell(AtomicU8::new(Sram4::Untested as u8));
 
+/// MIDI in's pipe (`PipeStats`): the faults its parser counted and the
+/// events a full queue or ring refused. `status`'s `midi` line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MidiStats {
+    pub faults: u32,
+    pub drops: u32,
+}
+
+impl fmt::Display for MidiStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "midi faults={} drops={}", self.faults, self.drops)
+    }
+}
+
 /// The status body, without the terminal line.
 pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     write!(w, "firmware {VERSION} ")?;

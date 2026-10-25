@@ -321,3 +321,118 @@ fn fault_counts_saturate() {
     }
     assert_eq!(p.faults().orphan, u16::MAX);
 }
+
+/// The retired hal `MidiParser`'s table (`chimera-hal/tests/midi_parser_test.rs`),
+/// on what that parser emitted: notes, CCs, bend and clock/transport. What
+/// it dropped (sysex, common, program, pressure, sensing, faults) is
+/// filtered out here; the tests above pin those.
+#[test]
+fn old_parser_table() {
+    let cc = |c: u8, n: u8, v: u8| {
+        Item::Voice(
+            c,
+            Voice::Control {
+                cc: Ctrl::new(n).unwrap(),
+                value: u7(v),
+            },
+        )
+    };
+    let bend = |c: u8, v: i16| {
+        Item::Voice(
+            c,
+            Voice::PitchBend(Bend::from_u14(U14::new((v + 8192) as u16).unwrap())),
+        )
+    };
+    use RealTime::*;
+    let cases: Vec<(&str, Vec<u8>, Vec<Item>)> = vec![
+        (
+            "running_status",
+            vec![0x90, 60, 100, 62, 100],
+            vec![on(0, 60, 100), on(0, 62, 100)],
+        ),
+        (
+            "realtime_mid_message",
+            vec![0x90, 60, 0xF8, 100, 0xFE, 0x92, 0xFA, 61, 0xFC, 1],
+            vec![
+                Item::Rt(Clock),
+                on(0, 60, 100),
+                Item::Rt(Start),
+                Item::Rt(Stop),
+                on(2, 61, 1),
+            ],
+        ),
+        (
+            "sysex_with_note_like_bytes",
+            vec![0xF0, 0x7E, 60, 100, 0xF7, 60, 100, 0x90, 60, 100],
+            vec![on(0, 60, 100)],
+        ),
+        (
+            "system_common_then_stray_data",
+            vec![0xF3, 5, 60, 100, 0xF2, 0x10, 0x20, 60, 100],
+            vec![],
+        ),
+        (
+            "velocity_zero_is_note_off",
+            vec![0x93, 64, 0],
+            vec![off(3, 64, 0)],
+        ),
+        (
+            "program_change_takes_one_byte",
+            vec![0xC0, 5, 6, 7, 0x90, 60, 100],
+            vec![on(0, 60, 100)],
+        ),
+        (
+            "channel_pressure_takes_one_byte",
+            vec![0xD2, 0x40, 0x41, 0x92, 60, 1],
+            vec![on(2, 60, 1)],
+        ),
+        (
+            "pitch_bend",
+            vec![0xE5, 0x00, 0x40, 0xE0, 0x7F, 0x7F, 0xE0, 0, 0],
+            vec![bend(5, 0), bend(0, 8191), bend(0, -8192)],
+        ),
+        (
+            "control_change_on_channel_16",
+            vec![0xBF, 7, 127],
+            vec![cc(15, 7, 127)],
+        ),
+        (
+            "junk_before_first_status",
+            vec![60, 100, 0x3C, 0x90, 60, 100],
+            vec![on(0, 60, 100)],
+        ),
+        (
+            "truncated_message_resyncs_on_next_status",
+            vec![0x90, 60, 0x80, 64, 0],
+            vec![off(0, 64, 0)],
+        ),
+        (
+            "hot_plug_junk_then_note",
+            vec![0x3C, 0xF7, 0x40, 0x92, 0x3C, 0x40],
+            vec![on(2, 60, 64)],
+        ),
+    ];
+    for (name, bytes, want) in cases {
+        let got: Vec<Item> = parse(&bytes)
+            .into_iter()
+            .filter(|i| match i {
+                Item::Rt(r) => !matches!(r, ActiveSensing | Reset),
+                Item::Voice(_, v) => matches!(
+                    v,
+                    Voice::NoteOn { .. }
+                        | Voice::NoteOff { .. }
+                        | Voice::Control { .. }
+                        | Voice::PitchBend(_)
+                ),
+                _ => false,
+            })
+            .collect();
+        assert_eq!(got, want, "{name}");
+    }
+}
+
+#[test]
+fn a_parser_can_live_in_a_static() {
+    static PARSER: Parser<32> = Parser::new();
+    let _ = &PARSER;
+}

@@ -4,7 +4,6 @@ use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
 pub mod card_bus;
-pub mod midi;
 pub mod store;
 #[cfg(feature = "testkit")]
 pub mod testkit;
@@ -293,35 +292,6 @@ pub trait Controls {
 }
 
 pub use chimera_midi::value::{Channel as MidiChannel, Key as MidiNote, Velocity};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MidiMessage {
-    NoteOn {
-        channel: MidiChannel,
-        note: MidiNote,
-        velocity: Velocity,
-    },
-    /// Release velocity may be 0.
-    NoteOff {
-        channel: MidiChannel,
-        note: MidiNote,
-        velocity: u8,
-    },
-    ControlChange {
-        channel: MidiChannel,
-        cc: u8,
-        value: u8,
-    },
-    PitchBend {
-        channel: MidiChannel,
-        value: i16,
-    },
-    /// System real-time: 24 a quarter note.
-    Clock,
-    Start,
-    Continue,
-    Stop,
-}
 
 /// RGB565 framebuffer pixel type
 pub type Pixel = Rgb565;

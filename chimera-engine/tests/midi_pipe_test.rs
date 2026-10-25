@@ -1,9 +1,13 @@
-//! `DinPipe`: both parser layers into the note queue and the control ring,
-//! beside the old `MidiParser` + `route` (Task 8 retires those).
+//! `DinPipe`: both parser layers into the note queue and the control ring.
+//! What the retired `MidiParser` + `route` queued is frozen here as
+//! `old_route_queued`.
 
-use chimera_engine::midi_in::{CtrlEvent, CtrlRing, DinPipe, Routed, Sinks, route};
-use chimera_engine::note_queue::{ChannelMode, ChannelModeEvent, InEvent, NoteQueue};
-use chimera_hal::midi::MidiParser;
+use chimera_engine::midi_in::{CtrlEvent, CtrlRing, DinPipe, Sinks};
+use chimera_engine::note_queue::{
+    BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteEvent, NoteKind, NoteQueue, RealTime,
+    SustainEvent,
+};
+use chimera_engine::{MidiNote, Velocity};
 use chimera_midi::ctl::{Ctl, DataValue, Dir, FreeCc, Sel};
 use chimera_midi::value::{Channel, U7, U14};
 use proptest::prelude::*;
@@ -65,28 +69,91 @@ const OLD_ROUTE_CORPUS: &[u8] = &[
     0x93, 70, 80, 0x83, 70, 0,
 ];
 
-/// What the old route queued for `bytes`.
-fn old_route(bytes: &[u8]) -> Vec<InEvent> {
-    let mut p = MidiParser::new();
-    bytes
-        .iter()
-        .filter_map(|&b| p.feed(b))
-        .filter_map(|m| match route(m) {
-            Routed::Queue(e) => Some(e),
-            _ => None,
+fn on(c: u8, n: u8, v: u8) -> InEvent {
+    InEvent::Note(NoteEvent {
+        channel: ch(c),
+        note: MidiNote::new(n).unwrap(),
+        kind: NoteKind::On(Velocity::new(v).unwrap()),
+    })
+}
+
+fn off(c: u8, n: u8) -> InEvent {
+    InEvent::Note(NoteEvent {
+        channel: ch(c),
+        note: MidiNote::new(n).unwrap(),
+        kind: NoteKind::Off,
+    })
+}
+
+fn mode(c: u8, mode: ChannelMode) -> InEvent {
+    InEvent::Mode(ChannelModeEvent {
+        channel: ch(c),
+        mode,
+    })
+}
+
+/// What the old `MidiParser` + `route` queued for `OLD_ROUTE_CORPUS`,
+/// recorded from it before it was deleted (Task 8, ruling R5).
+fn old_route_queued() -> Vec<InEvent> {
+    let bend = |value| {
+        InEvent::Bend(BendEvent {
+            channel: ch(0),
+            value,
         })
-        .collect()
+    };
+    let pedal = |down| {
+        InEvent::Sustain(SustainEvent {
+            channel: ch(0),
+            down,
+        })
+    };
+    vec![
+        on(0, 60, 100),
+        on(0, 64, 90),
+        off(0, 60),
+        off(0, 64),
+        bend(0),
+        bend(8191),
+        pedal(true),
+        pedal(false),
+        InEvent::Rt(RealTime::Clock),
+        InEvent::Rt(RealTime::Clock),
+        on(1, 62, 99),
+        InEvent::Rt(RealTime::Start),
+        InEvent::Rt(RealTime::Continue),
+        InEvent::Rt(RealTime::Stop),
+        InEvent::Rt(RealTime::Clock),
+        mode(2, ChannelMode::SoundOff),
+        mode(2, ChannelMode::ResetControllers),
+        mode(2, ChannelMode::NotesOff),
+        on(3, 70, 80),
+        off(3, 70),
+    ]
 }
 
 #[test]
 fn pipe_matches_old_route_for_notes_bend_sustain_clock() {
-    let want = old_route(OLD_ROUTE_CORPUS);
-    assert!(
-        want.len() > 15,
-        "corpus exercises the route: {}",
-        want.len()
+    let want = old_route_queued();
+    let r = pipe(OLD_ROUTE_CORPUS);
+    assert_eq!(r.notes, want);
+    // The old route's one CC (74 on channel 2) rides the ring; pressure is
+    // new there, and program is dropped (Phase 1).
+    let ccs: Vec<_> = r
+        .ctrl
+        .iter()
+        .filter(|e| matches!(e, CtrlEvent::Ctl(_, Ctl::Cc { .. })))
+        .collect();
+    assert_eq!(
+        ccs,
+        [&CtrlEvent::Ctl(
+            ch(1),
+            Ctl::Cc {
+                cc: FreeCc::new(74).unwrap(),
+                value: u7(33)
+            }
+        )]
     );
-    assert_eq!(pipe(OLD_ROUTE_CORPUS).notes, want);
+    assert_eq!(r.ctrl.len(), 2, "and channel pressure: {:?}", r.ctrl);
     // The same bytes in awkward slices: the pipe keeps state across `feed`s.
     let mut p = DinPipe::new();
     let mut r = Rec::default();
@@ -94,6 +161,32 @@ fn pipe_matches_old_route_for_notes_bend_sustain_clock() {
         p.feed(b, &mut r);
     }
     assert_eq!(r.notes, want);
+}
+
+/// Ported from `chimera-core/tests/midi_route_test.rs`' `route_splits_ccs`:
+/// notes, bend, the pedal and clock queue; a free CC rides the ring. CC 0
+/// (which the old route rang) is bank select now, held for a program.
+#[test]
+fn pipe_splits_ccs_from_the_queue() {
+    let r = pipe(&[0x90, 60, 100, 0xE0, 100, 0x40, 0xB0, 64, 127, 0xF8]);
+    assert_eq!(r.notes.len(), 4);
+    assert!(r.ctrl.is_empty());
+    for n in [74, 7] {
+        let r = pipe(&[0xB0, n, 33]);
+        assert!(r.notes.is_empty());
+        assert_eq!(
+            r.ctrl,
+            [CtrlEvent::Ctl(
+                ch(0),
+                Ctl::Cc {
+                    cc: FreeCc::new(n).unwrap(),
+                    value: u7(33)
+                }
+            )]
+        );
+    }
+    let r = pipe(&[0xB0, 0, 33]);
+    assert!(r.notes.is_empty() && r.ctrl.is_empty(), "bank select");
 }
 
 #[test]
@@ -352,4 +445,22 @@ proptest! {
     fn pack_round_trips(e in arb_ctrl()) {
         prop_assert_eq!(CtrlEvent::unpack(e.pack()), Some(e));
     }
+}
+
+/// Ported from `chimera-core/tests/midi_route_test.rs`: the map's CC
+/// number and the ones it never maps.
+#[test]
+fn cc_newtype_and_reserved() {
+    use chimera_engine::midi_in::Cc;
+    assert_eq!(Cc::new(127).map(Cc::get), Some(127));
+    assert_eq!(Cc::new(128), None);
+    let reserved: Vec<u8> = (0..=127)
+        .filter(|&n| Cc::new(n).unwrap().is_reserved())
+        .collect();
+    let want: Vec<u8> = [0, 6, 32, 38, 64]
+        .into_iter()
+        .chain(96..=101)
+        .chain(120..=127)
+        .collect();
+    assert_eq!(reserved, want);
 }

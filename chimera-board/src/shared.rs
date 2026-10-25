@@ -10,7 +10,7 @@ use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{self, MAX_PARTS};
 use chimera_core::instrument::AudioShared;
 #[cfg(feature = "midi-din")]
-use chimera_core::midi_in::CcRing;
+use chimera_core::midi_in::CtrlRing;
 use chimera_core::note_queue::NoteSources;
 #[cfg(any(feature = "midi-din", feature = "bench"))]
 use chimera_core::note_queue::SourceId;
@@ -259,25 +259,24 @@ pub fn take_formant() -> Option<(Writer<FormantViews>, Reader<FormantViews>)> {
     Some(TripleBuffer::init_in_place(slot, || [FormantView::NONE; MAX_PARTS]).split())
 }
 
-// MIDI DIN's CC ring (MIDI map spec § 1), the USART1 ISR's to push and
-// the UI's to drain: in D2, not AXI, which the ORBIT build fills to its
-// margin (ADR 0087), as `FORMANT`. NOLOAD: built at `take_cc_din`.
+// MIDI DIN's control ring (MIDI map spec § 1), the USART1 ISR's to push
+// and the UI's to drain: in AXI, which has room over its margin (ADR 0087)
+// where D2 has none in the bench builds. Built at `take_ctrl_din`.
 #[cfg(feature = "midi-din")]
-#[unsafe(link_section = ".ram_d2")]
-static mut CC_DIN: MaybeUninit<CcRing> = MaybeUninit::uninit();
+static mut CTRL_DIN: MaybeUninit<CtrlRing> = MaybeUninit::uninit();
 #[cfg(feature = "midi-din")]
-static CC_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
+static CTRL_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
 
-/// The DIN CC ring, built empty; once. Both ends share the reference.
+/// The DIN control ring, built empty; once. Both ends share the reference.
 #[cfg(feature = "midi-din")]
-pub fn take_cc_din() -> Option<&'static CcRing> {
-    if CC_DIN_TAKEN.swap(true, Ordering::AcqRel) {
+pub fn take_ctrl_din() -> Option<&'static CtrlRing> {
+    if CTRL_DIN_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
     // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `CC_DIN` ever made; `write` initialises it before any
+    // reference to `CTRL_DIN` ever made; `write` initialises it before any
     // read, and from then on it is only shared.
-    Some(unsafe { (*addr_of_mut!(CC_DIN)).write(CcRing::new()) })
+    Some(unsafe { (*addr_of_mut!(CTRL_DIN)).write(CtrlRing::new()) })
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:
@@ -359,6 +358,10 @@ pub fn stamp(over: impl Fn() -> u32) -> Stamp {
 pub static STREAM_STATS: StreamStats = StreamStats::new();
 /// MIDI DIN's line errors: overrun, framing, noise.
 pub static MIDI_ERRORS: AtomicU32 = AtomicU32::new(0);
+/// MIDI DIN's pipe: the faults its parser counted and the events a full
+/// queue or ring refused (`PipeStats`), as of the ISR's last feed.
+pub static MIDI_FAULTS: AtomicU32 = AtomicU32::new(0);
+pub static MIDI_DROPS: AtomicU32 = AtomicU32::new(0);
 
 /// A saturating count, as the audio and MIDI interrupts keep them.
 #[inline]

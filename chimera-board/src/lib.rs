@@ -361,9 +361,10 @@ pub struct AudioStart<'a> {
     pub streams: chimera_core::stream::ring::AudioSide<'static>,
     #[cfg(feature = "midi-din")]
     pub din: chimera_core::note_queue::NoteProducer<'static>,
-    /// MIDI DIN's CCs: the ISR pushes, the UI drains (MIDI map spec § 1).
+    /// MIDI DIN's controllers: the ISR pushes, the UI drains (MIDI map
+    /// spec § 1).
     #[cfg(feature = "midi-din")]
-    pub din_ccs: &'static chimera_core::midi_in::CcRing,
+    pub din_ctrl: &'static chimera_core::midi_in::CtrlRing,
 }
 
 /// The binary's audio side, which the start-up calls at its steps. Plain
@@ -597,7 +598,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     )]
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
     #[cfg(feature = "midi-din")]
-    let cc_din = shared::take_cc_din().expect("DIN CC ring taken once");
+    let ctrl_din = shared::take_ctrl_din().expect("DIN control ring taken once");
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -615,7 +616,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             .take(shared::DIN)
             .expect("DIN producer taken once"),
         #[cfg(feature = "midi-din")]
-        din_ccs: cc_din,
+        din_ctrl: ctrl_din,
     });
 
     marker.stage(BootStage::Audio);
@@ -750,7 +751,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // Mapped CCs, in the room the hand's moves left. No bench run plays
         // a controller: bench firmware leaves the MIDI map out (FLASH, #507).
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        ui.hear_ccs(cc_din.drain(), controls::now_ms(), shared_w.taken());
+        ui.hear_ccs(ctrl_din.drain(), controls::now_ms(), shared_w.taken());
         // SYSTEM synced first: a THEME change made in this visit is kept.
         if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
             dfu::enter(&marker, dfu::DfuFrom::Menu(yes));

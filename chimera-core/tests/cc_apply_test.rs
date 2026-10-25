@@ -20,7 +20,7 @@ use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::va::VaParams;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-use chimera_core::midi_in::{CC_RING_LEN, Cc, CcEvent, CcRing};
+use chimera_core::midi_in::{CTRL_RING_LEN, Cc, CcEvent, CtrlEvent, CtrlRing};
 use chimera_core::midi_map::{MapEntry, Mappable};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
@@ -584,14 +584,23 @@ fn hand_wins() {
 fn ring_keeps_the_last_value() {
     let mut b = Bench::algo();
     b.map(P1, 74, CUTOFF);
-    let ring = CcRing::new();
-    for i in 0..CC_RING_LEN + 10 {
-        ring.push(b.ev(P1, 74, (i % 100) as u8 + 20));
+    let ring = CtrlRing::new();
+    let ctl = |e: CcEvent| {
+        CtrlEvent::Ctl(
+            e.channel,
+            chimera_midi::ctl::Ctl::Cc {
+                cc: chimera_midi::ctl::FreeCc::new(e.cc.get()).unwrap(),
+                value: chimera_midi::value::U7::new(e.value).unwrap(),
+            },
+        )
+    };
+    for i in 0..CTRL_RING_LEN + 10 {
+        ring.push(ctl(b.ev(P1, 74, (i % 100) as u8 + 20)));
     }
     assert_eq!(ring.dropped(), 10);
     b.now += PASS_MS;
     b.ui.hear_ccs(ring.drain(), Ms(b.now), true);
-    ring.push(b.ev(P1, 74, 5));
+    ring.push(ctl(b.ev(P1, 74, 5)));
     b.now += PASS_MS;
     b.ui.hear_ccs(ring.drain(), Ms(b.now), true);
     for _ in 0..40 {

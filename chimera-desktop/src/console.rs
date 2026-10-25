@@ -119,6 +119,14 @@ impl Unit for DeskUnit<'_> {
     fn boot(&self) -> Option<chimera_core::boot::BootSeen> {
         None
     }
+    #[cfg(feature = "midi")]
+    fn midi(&self) -> Option<chimera_core::console::MidiStats> {
+        use std::sync::atomic::Ordering;
+        Some(chimera_core::console::MidiStats {
+            faults: crate::midi::FAULTS.load(Ordering::Relaxed),
+            drops: crate::midi::DROPS.load(Ordering::Relaxed),
+        })
+    }
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
         None
     }

@@ -41,10 +41,10 @@ const N_SOURCES: usize = 1;
 const KEYS: SourceId<N_SOURCES> = SourceId::new(0);
 #[cfg(feature = "midi")]
 const MIDI: SourceId<N_SOURCES> = SourceId::new(1);
-/// The MIDI port's CCs (MIDI map spec § 1): its thread pushes, the UI
-/// thread drains.
+/// The MIDI port's controllers (MIDI map spec § 1): its thread pushes, the
+/// UI thread drains.
 #[cfg(feature = "midi")]
-pub static MIDI_CCS: chimera_core::midi_in::CcRing = chimera_core::midi_in::CcRing::new();
+pub static MIDI_CTRL: chimera_core::midi_in::CtrlRing = chimera_core::midi_in::CtrlRing::new();
 
 /// Shared with the audio callback: `solo` 0 = all pairs, 1..=3 = only that
 /// DAC pair; `clamped` counts mixdown frames the speakers' clamp held.
@@ -406,9 +406,7 @@ fn stereo_frame(dac: &DacOut, solo: u8, i: usize) -> ((f32, f32), bool) {
 /// connection alive keeps it open. `None` (no device, or only "Midi
 /// Through") means the computer keyboard is the only note source.
 #[cfg(feature = "midi")]
-fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConnection<()>> {
-    use chimera_core::midi_in::{Routed, route};
-    use chimera_hal::midi::MidiParser;
+fn connect_midi(notes: NoteProducer<'static>) -> Option<midir::MidiInputConnection<()>> {
     let input = midir::MidiInput::new("chimera")
         .map_err(|e| eprintln!("MIDI unavailable: {e}"))
         .ok()?;
@@ -423,24 +421,12 @@ fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConn
         return None;
     };
     eprintln!("MIDI in: {}", names[i]);
-    let mut parser = MidiParser::new();
+    let mut port = crate::midi::Port::new(notes, &MIDI_CTRL);
     input
         .connect(
             &ports[i],
             "chimera-in",
-            move |_stamp, bytes, _| {
-                for &b in bytes {
-                    match parser.feed(b).map(route) {
-                        Some(Routed::Queue(ev)) => {
-                            notes.push(ev);
-                        }
-                        Some(Routed::Cc(ev)) => {
-                            MIDI_CCS.push(ev);
-                        }
-                        _ => {}
-                    }
-                }
-            },
+            move |_stamp, bytes, _| port.bytes(bytes),
             (),
         )
         .map_err(|e| eprintln!("MIDI connect failed: {e}"))
