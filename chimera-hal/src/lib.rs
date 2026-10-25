@@ -292,74 +292,7 @@ pub trait Controls {
     }
 }
 
-/// MIDI note number, 0..=127. Built at the MIDI trust boundary (the parser,
-/// the desktop keyboard), so the audio path only ever sees valid notes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MidiNote(u8);
-
-impl MidiNote {
-    /// A4 (440 Hz).
-    pub const A4: MidiNote = MidiNote(69);
-
-    pub const fn new(n: u8) -> Option<Self> {
-        if n <= 127 { Some(Self(n)) } else { None }
-    }
-
-    /// `n` limited to 127: for a note already taken from a `MidiNote`.
-    pub const fn clamped(n: u8) -> Self {
-        Self(if n > 127 { 127 } else { n })
-    }
-
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-}
-
-/// MIDI channel, 0..=15 (the low nibble of the status byte).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MidiChannel(u8);
-
-impl MidiChannel {
-    pub const fn new(c: u8) -> Option<Self> {
-        if c <= 15 { Some(Self(c)) } else { None }
-    }
-
-    /// `c` limited to 15: for values already clamped by a param spec.
-    pub const fn clamped(c: u8) -> Self {
-        Self(if c > 15 { 15 } else { c })
-    }
-
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-}
-
-/// Note-on velocity, 1..=127. Zero means note-off and is not representable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Velocity(u8);
-
-impl Velocity {
-    pub const MAX: Velocity = Velocity(127);
-    /// Velocity of the desktop keyboard and the firmware test note.
-    pub const DEFAULT: Velocity = Velocity(100);
-
-    pub const fn new(v: u8) -> Option<Self> {
-        if v >= 1 && v <= 127 {
-            Some(Self(v))
-        } else {
-            None
-        }
-    }
-
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-
-    /// Velocity as 0..1, exactly `v as f32 / 127.0` (what the engines used).
-    pub fn unit(self) -> f32 {
-        self.0 as f32 / 127.0
-    }
-}
+pub use chimera_midi::value::{Channel as MidiChannel, Key as MidiNote, Velocity};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MidiMessage {

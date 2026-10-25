@@ -324,12 +324,17 @@ dependencies = [
 name = "chimera-hal"
 version = "0.2.0"
 dependencies = [
+ "chimera-midi",
  "embedded-graphics-core",
  "loom",
 ]
 
 [[package]]
 name = "chimera-image"
+version = "0.2.0"
+
+[[package]]
+name = "chimera-midi"
 version = "0.2.0"
 
 [[package]]
