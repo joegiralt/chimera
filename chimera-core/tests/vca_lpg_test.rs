@@ -544,6 +544,33 @@ fn algo_released_note_frees_through_its_carriers() {
     assert!(t.freed(off).is_some());
 }
 
+/// #806: with no route the ALGO gate follows its carrier envelopes. On a
+/// slow attack STRIKE plucks ahead of the envelope (louder at the start
+/// the higher it goes), and DECAY lengthens the pluck.
+#[test]
+fn algo_strike_plucks_over_the_carrier_level() {
+    let run = |d: f32, k: f32| {
+        let mut s = saw_sound();
+        for o in &mut s.params.algo.ops {
+            (o.ar, o.d1l) = (8, 15);
+        }
+        let mut b = bench(gated(s, 0.5, d, k));
+        hold(&mut b, None, BPS)
+    };
+    let early = |d: f32, k: f32, a: usize, z: usize| rms_db(run(d, k).pair(0, a, z));
+    let (e0, e5, e1) = (
+        early(0.3, 0.0, 0, BPS / 20),
+        early(0.3, 0.5, 0, BPS / 20),
+        early(0.3, 1.0, 0, BPS / 20),
+    );
+    assert!(e5 > e0 + 1.0 && e1 > e5 + 1.0, "{e0} {e5} {e1}");
+    let (short, long) = (
+        early(0.1, 1.0, BPS / 10, BPS / 5),
+        early(0.9, 1.0, BPS / 10, BPS / 5),
+    );
+    assert!(long > short + 1.0, "{short} {long}");
+}
+
 // ============================================================ the voice
 
 fn saw_sound() -> Sound {

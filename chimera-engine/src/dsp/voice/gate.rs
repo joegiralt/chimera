@@ -104,8 +104,10 @@ pub(super) mod kern {
         let level = match gain {
             Some(g) => Level::Routes(g, vel),
             None if key_gated => Level::Key(if v.held { Key::Held } else { Key::Up }),
-            None if matches!(v.slot, EngineSlot::Algo(_)) => Level::Carriers,
-            None => Level::Open,
+            None => match &v.slot {
+                EngineSlot::Algo(a) => Level::Carriers(Unit::new(a.carrier_level())),
+                _ => Level::Open,
+            },
         };
         let d = Drive {
             level,
