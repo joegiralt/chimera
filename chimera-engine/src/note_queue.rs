@@ -31,6 +31,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use chimera_hal::MidiMessage;
+use chimera_midi::stream::{ChannelMode as StreamMode, Voice};
 
 use crate::{MidiChannel, MidiNote, Velocity};
 
@@ -207,6 +208,47 @@ impl InEvent {
             }
             MidiMessage::ControlChange { .. } => return None,
         })
+    }
+
+    /// The note path's share of a layer-1 voice message: notes, bend and
+    /// the pedal (CC 64). Everything else is layer 2's.
+    pub fn from_event(channel: MidiChannel, v: &Voice) -> Option<Self> {
+        Some(match *v {
+            Voice::NoteOn { key, vel } => InEvent::Note(NoteEvent {
+                channel,
+                note: key,
+                kind: NoteKind::On(vel),
+            }),
+            Voice::NoteOff { key, .. } => InEvent::Note(NoteEvent {
+                channel,
+                note: key,
+                kind: NoteKind::Off,
+            }),
+            Voice::PitchBend(b) => InEvent::Bend(BendEvent {
+                channel,
+                value: b.get(),
+            }),
+            Voice::Control { cc, value } if cc.get() == CC_SUSTAIN => {
+                InEvent::Sustain(SustainEvent {
+                    channel,
+                    down: value.get() >= 64,
+                })
+            }
+            _ => return None,
+        })
+    }
+
+    /// Channel mode: 120 sound off, 121 reset, 123-127 notes off (the Omni
+    /// and Mono/Poly switches release held keys, as the Parts have no
+    /// modes); 122 local control is nothing here.
+    pub fn from_mode(channel: MidiChannel, m: StreamMode) -> Option<Self> {
+        let mode = match m {
+            StreamMode::AllSoundOff => ChannelMode::SoundOff,
+            StreamMode::ResetAllControllers => ChannelMode::ResetControllers,
+            StreamMode::LocalControl(_) => return None,
+            _ => ChannelMode::NotesOff,
+        };
+        Some(InEvent::Mode(ChannelModeEvent { channel, mode }))
     }
 
     /// A note packs as `NoteEvent::pack`, kind 0.
