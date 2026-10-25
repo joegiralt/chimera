@@ -102,9 +102,9 @@ use chimera_board::orbit::SAMPLE_RATE_NZ;
 pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
     12288
 } else if cfg!(feature = "bench-algo") {
-    // ALGO's D2 has 256 B less since the typed bindings (ADR 0217: a
-    // map grew 65 B in each of 7 Sounds).
-    5888
+    // ALGO's D2 is 112 B over since the typed bindings (ADR 0217: a
+    // map grew 65 B in each of 7 Sounds): 128 B off is the least that links.
+    6016
 } else {
     6144
 };
