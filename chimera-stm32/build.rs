@@ -198,6 +198,10 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     } else {
         ""
     };
+    // The NRPN address space (ADR 0216): `chimera_engine::nrpn`, text and
+    // rodata. Linked once canonical NRPNs land (Task 11's door).
+    let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
+";
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
 ";
@@ -288,6 +292,7 @@ SECTIONS {
     /* GATE */
     /* PROBES */
     /* ALGO */
+    /* NRPN */
     /* ORBIT */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
@@ -316,6 +321,7 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* GATE */\n", gate)
         .replace("    /* PROBES */\n", probes)
         .replace("    /* ALGO */\n", algo)
+        .replace("    /* NRPN */\n", nrpn)
         .replace("    /* ORBIT */\n", orbit)
         .replace("    /* ORBIT SLOT */\n", orbit_slot)
         .replace("/* ORBIT ASSERT */", orbit_assert),

@@ -318,7 +318,7 @@ pub enum Learn { Off, Armed { part, note }, Sensing { part, entry: u8, seen: See
   | Law | When | Wire |
   |---|---|---|
   | `Place14` | continuous | 14-bit over the normalised span (`ParamSpec::normalize`). An MSB alone is bit-replicated (`m<<7 \| m`), so 0 → 0 and 127 → full; CC 38 refines. |
-  | `Code7` | a choice with frozen enum codes | MSB = the frozen disk code; LSB ignored. Reordering a list never moves a sequencer's value. A code with no live value is ignored. |
+  | `Code7` | a choice with frozen enum codes | MSB = the frozen disk code; LSB ignored. Reordering a list never moves a sequencer's value. A code with no live value is ignored. A choice with a code past 7 bits (THEME BLACK's 254/255) is `Index7` (`nrpn::WIDE_CODES`). |
   | `Index7` | other discrete params, ≤ 128 values | MSB = steps from `min`; LSB ignored. |
   | `Index14` | discrete params, > 128 values (TUNE) | 14-bit steps from `min`. |
 

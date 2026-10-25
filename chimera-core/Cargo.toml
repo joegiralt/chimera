@@ -74,6 +74,7 @@ bank2 = ["tape", "chimera-engine/bank2"]
 # No default features: `--no-default-features` must reach the library too.
 chimera-core = { path = ".", default-features = false, features = ["test-support", "source-writer", "smear-probe", "clamp-probe", "tape"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
+chimera-midi = { path = "../chimera-midi" }
 
 
 

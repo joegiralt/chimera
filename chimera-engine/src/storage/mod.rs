@@ -15,6 +15,7 @@ mod system;
 pub mod twelve;
 
 pub(crate) use block_codec::ENTRY_LEN;
+pub(crate) use block_codec::MAX_BLOCK_PARAMS;
 pub use block_codec::{decode_block, encode_block};
 pub use card::{Card, CardError, CardEvent, CardFault, Outcome, Ready, after_error, after_mount};
 pub use chimera_image::crc::Crc32;

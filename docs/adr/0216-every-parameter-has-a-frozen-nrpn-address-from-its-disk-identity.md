@@ -20,13 +20,13 @@ ADR 0128 and 0139 rule out a global CC chart: CCs belong to each Sound's map.
   - `chimera_engine::nrpn::NrpnAddr::of(ParamAddr)` and `NrpnAddr::addr` are the only conversions.
 - **Each param has a value law, derived from its `ParamSpec`:**
   - `Place14` (continuous): 14-bit over the normalised span. An MSB alone is bit-replicated (`m<<7 | m`) so 127 reaches the top; the LSB refines.
-  - `Code7` (a choice with frozen enum codes): MSB = the disk code, LSB ignored.
+  - `Code7` (a choice with frozen enum codes): MSB = the disk code, LSB ignored. A choice with a code past 7 bits (THEME BLACK stores −2 and −1 as 254 and 255) is `Index7` instead, listed in `nrpn::WIDE_CODES`.
   - `Index7` (other discrete params, ≤ 128 values): MSB = steps from min.
   - `Index14` (discrete params, > 128 values): 14-bit steps from min.
-- **The chart is pinned.** `chimera-core/tests/fixtures/nrpn_v1.txt` holds one line a stored param: `N <msb> <lsb> <BLOCK_IDENT> <PARAM_IDENT> <law> <W|R|X>`.
+- **The chart is pinned.** `chimera-core/tests/fixtures/nrpn_v1.txt` holds one line a stored param: `N <msb> <lsb> <BLOCK_IDENT> <PARAM_IDENT> <law> <W|R>`, then one `X <msb> <lsb>` line a retired address.
   - `nrpn_chart_test` (in `just check`) fails when a line changes or disappears.
-  - Appending is allowed.
-  - A retired param stays, marked `X`, and its address is never reused.
+  - Appending is allowed: a new line may land anywhere (the chart is block-ordered), and the old lines keep their order.
+  - A retired param's `N` line gives way to an `X` line at the same address, which is never reused.
   - A change of law counts as a renumber.
 - **What can be written.** In 0.3 Phase 1, writes are accepted for ADR 0139's `Mappable` set (`W`), on the Part's channel, with jump takeover, through the same ramp and budget as a mapped CC. Every other address is reserved and inert (`R`). A later ADR may open FX on a global channel.
 - **Canonical NRPNs need no binding.** A per-Sound binding on the same NRPN number wins over the canonical meaning (ADR 0217). An address the Part's engine doesn't read is ignored.
