@@ -569,10 +569,11 @@ fn sparse_sizes() {
         .collect();
     println!("factory: {costs:?}");
     // The table Sounds, then the formant demos, whose routes, LFOs and
-    // envelopes add about 200 B.
+    // envelopes add about 200 B. Each default map is 34 B more as
+    // `Bindings` than it was as `MidiMap` (1 + 11 × 3).
     let (table, demos) = costs.split_at(8);
-    assert!(table.iter().all(|c| (190..=320).contains(c)), "{costs:?}");
-    assert!(demos.iter().all(|c| (459..=539).contains(c)), "{costs:?}");
+    assert!(table.iter().all(|c| (224..=354).contains(c)), "{costs:?}");
+    assert!(demos.iter().all(|c| (493..=573).contains(c)), "{costs:?}");
     // 46 B of name, Engine, an empty Registry, ModDests and Routes (its
     // three fixed-FREQ routes), and 70 B for the values INIT moved off
     // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param
@@ -593,8 +594,9 @@ fn sparse_sizes() {
         );
     }
     // INIT as it ships: the default map's eleven entries, the wheel's
-    // vibrato (spec § 9) and STABILITY's Prophet setting (ADR 0168).
-    assert_eq!(encode(&Sound::init(EngineType::Algo)).len(), 227);
+    // vibrato (spec § 9) and STABILITY's Prophet setting (ADR 0168); the
+    // map as `Bindings`, 34 B over `MidiMap`'s.
+    assert_eq!(encode(&Sound::init(EngineType::Algo)).len(), 227 + 34);
 }
 
 /// `neutral(e)` with every stored param that can move at another value, a
@@ -667,7 +669,7 @@ fn worst(e: EngineType) -> (Sound, usize) {
 /// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 291 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
-/// 24 zones) + 84 (`MidiMap`, 16 entries) = 2 703 B, less 5 B for each param that has nowhere to move.
+/// 24 zones) + 133 (`Bindings`, 16 entries) = 2 752 B, less 5 B for each param that has nowhere to move.
 /// TAPE's SLICE is on hold (`slice_in_play`): every code loads OFF, so a
 /// Sound never stores one, 5 B under it.
 /// A new param moves it: raise
@@ -682,7 +684,7 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2708);
+    assert_eq!(most, 2757);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }
 

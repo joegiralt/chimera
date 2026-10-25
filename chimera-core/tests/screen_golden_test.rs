@@ -362,7 +362,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Sound is smaller (fixed columns, no registry entry).
     // Then, with the library_* screens: FACTORY joins the title and B ◂▸
     // moves to hint line 1 (showcase Task 4).
-    ("sound_browser", 0x2fa4a8557ca216f9),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("sound_browser", 0x958456622543372c),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
@@ -371,41 +372,57 @@ const GOLDENS: &[(&str, u64)] = &[
     // KIND and LEVEL (ADR 0197): each dense Sound 10 B more, the pool fills sooner.
     // Then the VCA's gate (ADR 0195): 15 B more. STRETCH GRAIN's four params
     // (ADR 0204): MAX_SOUND_COST 2720.
-    ("sound_browser_pool_full", 0x4de1ac0696ea9318),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("sound_browser_pool_full", 0x16e71cda6e99b5d3),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
-    ("library_empty", 0x8ff43b98d2c86a11),
-    ("library_no_card", 0x168ce5173d61f5ec),
-    ("library_sounds", 0x076f85f0ce687b12),
-    ("library_this_build", 0xde6811b43375f8d5),
-    ("library_cut_short", 0xb99075b511f1af08),
-    ("library_older", 0x2cc7cf964ecd32d2),
-    ("library_newer", 0x8b2feaec640678a3),
-    ("library_wont_fit", 0x24494e0f831f3bab),
-    ("library_pool_full", 0x950a8303f1cef0f3),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_empty", 0xd4f0b068fb297a11),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_no_card", 0x0ef3cabc0a005fac),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_sounds", 0x8179b02b76c07912),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_this_build", 0xe2a5bfa32dc2f895),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_cut_short", 0xc82d8ec053050608),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_older", 0xeff7f1c0da22a8d2),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_newer", 0xbc6be4aa213e6763),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_wont_fit", 0xba02297fe9fba3db),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("library_pool_full", 0xcfe515a8e7a48a23),
     ("library_naming", 0xa234ea336d54efbf),
     // The FACTORY tab: a row's description on line 2, the set's build on
     // line 3; empty, no card, and a TAPE file listed.
     // Re-recorded on the merge: the pool meter at the formant cost.
-    ("factory_described", 0xcbb7a29ebaea0cbe),
-    ("factory_empty", 0xb13dbda8afb210c3),
-    ("factory_no_card", 0xc327c2468f6650b6),
-    ("factory_tape_row", 0x498ea355d4f277d3),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("factory_described", 0xe16af98ceb186186),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("factory_empty", 0x4e7a62f82ecfe083),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("factory_no_card", 0xf2356a3f4d7b1db6),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("factory_tape_row", 0xeccddb1e270cf713),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
     // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
     // Long user names, LARGE's pair (ADR 0154).
-    ("sound_browser_long", 0x7b76be0e59309d55),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("sound_browser_long", 0xcd48d3df38542330),
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0x0674700774736f4f),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("settings_project_pool", 0x553fccecbee75ba9),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -464,9 +481,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_mixer_sends", 0x2db88c25aaaa4ce0),
     ("large_settings_top", 0x9d2976351278b0df),
     ("large_settings_personal", 0x35b1c3eb794412f7),
-    ("large_sound_browser", 0x4b2ef7b9df03ce5c),
-    ("large_sound_browser_long", 0xdc1f10aa2fa8aa1e),
-    ("large_library_sounds", 0x5b05a63df82aab7e),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("large_sound_browser", 0xd12afb6198751769),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("large_sound_browser_long", 0xb600433b28399753),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("large_library_sounds", 0x87eade6ec856523e),
     ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
@@ -509,8 +529,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_strip_pingpong_reversed", 0xf1f38ad830237d16),
     ("tape_strip_tron_idle", 0xcce2e4d1be026dcf),
     ("tape_src_pool", 0x6ac82eb8b9a261f1),
-    ("tape_src_card", 0xd9e193292c4987f3),
-    ("tape_src_wont_fit", 0x5877eb1a8b000d0a),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("tape_src_card", 0x83a447e85f1aa483),
+    // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
+    ("tape_src_wont_fit", 0x1de0d425a65a9ffa),
     ("tape_src_loaded", 0x2570f7f781938fd9),
     ("tape_src_read_failed", 0xa7d6268da8eee639),
     ("busy", 0x198544cd36863145),

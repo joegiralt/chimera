@@ -202,8 +202,9 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // rodata. Linked once canonical NRPNs land (Task 11's door).
     // And the MIDI pipe (Phase 1, `MidiDoor`): `DinPipe`, its counting sink
     // (`Counted`) and the `chimera_midi` stream, controller, sensing and
-    // SysEx layers it runs.
+    // SysEx layers it runs. And the map's codec (`midi_map::codec`).
     let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
+    *(.text.*8midi_map5codec* .rodata.*8midi_map5codec*);
     *(.text.*14chimera_engine7midi_in*7DinPipe* .rodata.*14chimera_engine7midi_in*7DinPipe*);
     *(.text.*14chimera_engine7midi_in*7Counted* .rodata.*14chimera_engine7midi_in*7Counted*);
     *(.text.*12chimera_midi6stream* .rodata.*12chimera_midi6stream*);

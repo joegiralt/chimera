@@ -75,8 +75,10 @@ fn closed_tape_ui_says_so_and_does_nothing() {
     let mut card = Card::new();
     let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
     let link = LoadLink::new();
-    let mut ui = Box::new(UiState::new());
+    // Open before NEW is built, as the boot does: NEW's maps decode
+    // through the door (MIDI phase 1 spec § 6.4).
     DOOR_CELL.open_host();
+    let mut ui = Box::new(UiState::new());
     load_init(&mut ui, EngineType::Tape);
     assert_ne!(band(&ui), NEEDS_UPDATE);
     assert!(strip_pixels() > 0, "open, the empty strip's flat line");

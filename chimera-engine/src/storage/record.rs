@@ -73,9 +73,14 @@ pub enum RecordTag {
     /// skipped everywhere else.
     Note,
     /// A Sound's MIDI map (midi-map spec § 2): 5-byte `(cc, block code,
-    /// param id, min, max)` entries, up to 16, written last and only when
-    /// non-empty. 0x1E: 0x1D is `showcase-library`'s `Note`. Not critical.
+    /// param id, min, max)` entries, up to 16. 0x1E: 0x1D is
+    /// `showcase-library`'s `Note`. Not critical. Read only since
+    /// `Bindings` (MIDI phase 1 spec § 6.4): each entry loads as JUMP.
     MidiMap,
+    /// A Sound's bindings (MIDI phase 1 spec § 6.4, `midi_map::codec`): a
+    /// version byte, then 8 B an entry, up to 16, written last and only
+    /// when the map isn't empty. Not critical; wins over `MidiMap`.
+    Bindings,
 }
 
 impl RecordTag {
@@ -107,6 +112,7 @@ impl RecordTag {
             RecordTag::Build => 0x001C,
             RecordTag::Note => 0x001D,
             RecordTag::MidiMap => 0x001E,
+            RecordTag::Bindings => 0x001F,
         }
     }
 
@@ -138,6 +144,7 @@ impl RecordTag {
             0x001C => RecordTag::Build,
             0x001D => RecordTag::Note,
             0x001E => RecordTag::MidiMap,
+            0x001F => RecordTag::Bindings,
             _ => return None,
         })
     }

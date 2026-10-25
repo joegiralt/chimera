@@ -200,6 +200,7 @@ fn codes_are_frozen() {
         (RecordTag::TapRoutes, 0x001B),
         (RecordTag::Build, 0x001C),
         (RecordTag::MidiMap, 0x001E),
+        (RecordTag::Bindings, 0x001F),
     ];
     for (t, c) in table {
         assert_eq!(t.code(), c);

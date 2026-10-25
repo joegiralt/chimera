@@ -205,7 +205,7 @@ release-bin:
 # bank 2's on a bank-2 build: a `bank2.x` glob that misses a new door entry
 # or run leaves it silently in bank 1. ORBIT's runner and pages (ADR 0208)
 # too, on a build that links them; and the NRPN address space (ADR 0216)
-# once anything links it.
+# once anything links it. The map's codec (MidiDoor) always.
 check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -223,7 +223,7 @@ check-door-placed elf:
             if grep -qE " [tT] .*$p" <<< "$syms"; then pipe+=("$p"); fi
         done
     fi
-    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on'; do
+    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
 
@@ -641,14 +641,15 @@ flash-sd-probe:
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, the library peek, seeded with the
-# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start,
+# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start
+# (and both map records, 0x001E and 0x001F, in the Sound seeds),
 # and of the TAPE importer's WAV reader, seeded with small WAVs; the TX81Z
 # bank parser and map first, from an empty corpus (never a real bank)
 # (needs nightly and cargo-fuzz)
 fuzz:
     cd chimera-desktop/fuzz && cargo +nightly fuzz run parse_tx -- -max_total_time=300
     mkdir -p chimera-core/fuzz/corpus/decode_sound chimera-core/fuzz/corpus/decode_project
-    cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/corpus/decode_sound/
+    cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/seeds/decode_sound/*.snd chimera-core/fuzz/corpus/decode_sound/
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
     cp chimera-core/tests/fixtures/v1/orbit.prj chimera-core/fuzz/seeds/decode_project/*.prj chimera-core/fuzz/corpus/decode_project/
     cd chimera-core/fuzz && for t in decode_sound decode_project peek_library; do cargo +nightly fuzz run $t -- -max_total_time=300; done

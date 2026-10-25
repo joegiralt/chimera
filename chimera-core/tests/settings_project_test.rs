@@ -753,12 +753,13 @@ fn pool_leaf_lists_breakdown() {
     let text = |i: usize| texts[i].as_ref().map(|t| t.as_str().to_string());
     let labels = SYS_POOL.params.map(|p| p.label());
     assert_eq!(labels[..4], ["SOUNDS", "SOURCES", "FREE", "PENDING"]);
-    assert_eq!(text(0).as_deref(), Some("16 · 5.0K"));
+    // NEW's maps as `Bindings` (MIDI phase 1): 5.0K as `MidiMap`.
+    assert_eq!(text(0).as_deref(), Some("16 · 5.5K"));
     assert_eq!(text(1).as_deref(), Some("0 · 0.0K"));
     assert_eq!(
         text(2).as_deref(),
-        Some("155K"),
-        "floored: 4.8K + 155K ≤ 160K"
+        Some("154K"),
+        "floored: 5.3K + 154K ≤ 160K"
     );
     assert_eq!(text(3), None, "no PENDING with none pending");
     let fb = screen::render_ui(&ui);

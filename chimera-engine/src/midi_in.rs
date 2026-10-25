@@ -17,7 +17,10 @@ use chimera_midi::sysex;
 use chimera_midi::value::{Channel, U7, U14};
 
 use crate::MidiChannel;
+use crate::midi_map::MidiMap;
+use crate::midi_map::codec::{self, Bounds, MapRecord};
 use crate::note_queue::{ChannelMode, ChannelModeEvent, InEvent, NoteProducer, RealTime};
+use crate::storage::RecordBuf;
 
 /// A controller number, 0..=127.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -493,17 +496,27 @@ pub type MidiFeed = fn(&mut PipeSlot, &[u8], &mut DinSinks<'_, '_>);
 /// `DinPipe::idle` as the door carries it.
 pub type MidiIdle = fn(&mut PipeSlot, &mut DinSinks<'_, '_>);
 
-/// MIDI in's entries in bank 2's door: the pipe's two layers.
+/// `midi_map::codec::decode` as the door carries it.
+pub type MapDecode = fn(MapRecord, &[u8], Option<&mut MidiMap>) -> Result<u16, Bounds>;
+/// `midi_map::codec::encode` as the door carries it.
+pub type MapEncode = fn(&MidiMap, &mut RecordBuf);
+
+/// MIDI in's entries in bank 2's door: the pipe's two layers and the
+/// map's codec.
 #[repr(C)]
 pub struct MidiDoor {
     pub feed: MidiFeed,
     pub idle: MidiIdle,
+    pub decode_map: MapDecode,
+    pub encode_map: MapEncode,
 }
 
 impl MidiDoor {
     pub const DOOR: MidiDoor = MidiDoor {
         feed: DinPipe::door_feed,
         idle: DinPipe::door_idle,
+        decode_map: codec::decode,
+        encode_map: codec::encode,
     };
 }
 
@@ -536,6 +549,39 @@ pub fn idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
     crate::bank2::DOOR_CELL.with(|d| (d.midi.idle)(slot, out));
     #[cfg(not(feature = "bank2"))]
     DinPipe::door_idle(slot, out);
+}
+
+/// A map record checked and, with `m`, decoded (`codec::decode`) through
+/// bank 2's door with `bank2`: closed, it is not read, `m` keeps its
+/// empty map and nothing is skipped (spec § 6.4).
+#[inline(always)]
+pub fn decode_map(r: MapRecord, p: &[u8], m: Option<&mut MidiMap>) -> Result<u16, Bounds> {
+    #[cfg(feature = "bank2")]
+    return crate::bank2::DOOR_CELL
+        .with(|d| (d.midi.decode_map)(r, p, m))
+        .unwrap_or(Ok(0));
+    #[cfg(not(feature = "bank2"))]
+    codec::decode(r, p, m)
+}
+
+/// `m` as a `Bindings` payload into `out` (`codec::encode`), as
+/// `decode_map`: closed, nothing.
+#[inline(always)]
+pub fn encode_map(m: &MidiMap, out: &mut RecordBuf) {
+    #[cfg(feature = "bank2")]
+    crate::bank2::DOOR_CELL.with(|d| (d.midi.encode_map)(m, out));
+    #[cfg(not(feature = "bank2"))]
+    codec::encode(m, out);
+}
+
+/// Whether `decode_map` and `encode_map` reach the codec: bank 2's door
+/// is open, or this build has no bank 2.
+#[inline(always)]
+pub fn map_codec_open() -> bool {
+    #[cfg(feature = "bank2")]
+    return crate::bank2::DOOR_CELL.is_open();
+    #[cfg(not(feature = "bank2"))]
+    true
 }
 
 /// A sink that counts refusals.

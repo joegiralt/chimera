@@ -44,6 +44,7 @@ pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
 };
 pub use sound::{MAX_SOUND_COST, SoundCheck, SoundDecoder, encode_sound, sound_crc};
+pub(crate) use sound::{addr_code, addr_of};
 pub use source_file::{
     MAX_TAPES, PutRefusal, SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceCheck, SourceHead, SourceLayout,
     SourceReadError, SourceZones, TapeList, WholeShape, ZONE_LEN, Zone, data_offset,
