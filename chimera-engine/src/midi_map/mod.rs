@@ -3,7 +3,6 @@
 //! may not drive (FX, ORBIT, settings) can never be stored.
 
 pub mod codec;
-pub mod ramp;
 
 pub use crate::midi_in::Cc;
 pub use chimera_midi::out::Cc14Msb;

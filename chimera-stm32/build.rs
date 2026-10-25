@@ -199,10 +199,12 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
         ""
     };
     // The NRPN address space (ADR 0216): `chimera_engine::nrpn`, text and
-    // rodata. Linked once canonical NRPNs land (Task 11's door).
+    // rodata, linked by the MIDI UI's canonical NRPNs.
     // And the MIDI pipe (Phase 1, `MidiDoor`): `DinPipe`, its counting sink
     // (`Counted`) and the `chimera_midi` stream, controller, sensing and
-    // SysEx layers it runs. And the map's codec (`midi_map::codec`).
+    // SysEx layers it runs. And the map's codec (`midi_map::codec`), and
+    // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
+    // and rel).
     let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
     *(.text.*8midi_map5codec* .rodata.*8midi_map5codec*);
     *(.text.*14chimera_engine7midi_in*7DinPipe* .rodata.*14chimera_engine7midi_in*7DinPipe*);
@@ -211,6 +213,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*12chimera_midi3ctl* .rodata.*12chimera_midi3ctl*);
     *(.text.*12chimera_midi5sense* .rodata.*12chimera_midi5sense*);
     *(.text.*12chimera_midi5sysex* .rodata.*12chimera_midi5sysex*);
+    *(.text.*12chimera_midi4take* .rodata.*12chimera_midi4take* .text.*12chimera_midi3law* .rodata.*12chimera_midi3law*);
+    *(.text.*12chimera_midi3rel* .rodata.*12chimera_midi3rel*);
 ";
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
@@ -244,6 +248,15 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     } else {
         ("", "", "")
     };
+    // The MIDI UI (Phase 1, ADR 0217): `ui::midi`, bindings resolving, the
+    // ramp, bin and budget, text and rodata, its table at its slot after
+    // ORBIT's (`MIDI_UI_DOOR_ADDR`). Bank 1 keeps `ui::cc`: the state's
+    // home and the stubs.
+    let (midi_ui, midi_ui_slot, midi_ui_assert) = (
+        "    *(.text.*12chimera_core2ui4midi* .rodata.*12chimera_core2ui4midi*);\n",
+        "    . = __bank2_door + 0x300; __bank2_midi_ui_door = .;\n    KEEP(*(.bank2.door.midi_ui));\n",
+        "ASSERT(__bank2_midi_ui_door == 0x08100400, \"the MIDI UI's table at its slot\");",
+    );
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -260,6 +273,7 @@ SECTIONS {
     /* SLOTS */
     /* BENCH SLOT */
     /* ORBIT SLOT */
+    /* MIDI UI SLOT */
     *(.bank2.text .bank2.text.*);
     *(.bank2.rodata .bank2.rodata.*);
     /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
@@ -304,6 +318,7 @@ SECTIONS {
     /* ALGO */
     /* NRPN */
     /* ORBIT */
+    /* MIDI UI */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -313,6 +328,7 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
 /* ASSERTS */
 /* BENCH ASSERT */
 /* ORBIT ASSERT */
+/* MIDI UI ASSERT */
 "#
         .replace("    /* REVERB */\n", reverb)
         .replace("    /* SLOTS */\n", slots)
@@ -334,7 +350,10 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* NRPN */\n", nrpn)
         .replace("    /* ORBIT */\n", orbit)
         .replace("    /* ORBIT SLOT */\n", orbit_slot)
-        .replace("/* ORBIT ASSERT */", orbit_assert),
+        .replace("/* ORBIT ASSERT */", orbit_assert)
+        .replace("    /* MIDI UI */\n", midi_ui)
+        .replace("    /* MIDI UI SLOT */\n", midi_ui_slot)
+        .replace("/* MIDI UI ASSERT */", midi_ui_assert),
     )
     .unwrap();
 

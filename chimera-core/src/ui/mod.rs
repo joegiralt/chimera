@@ -6,7 +6,7 @@ pub mod block_def;
 pub mod block_registry;
 pub mod browser;
 pub mod busy;
-mod cc;
+pub mod cc;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
@@ -25,6 +25,7 @@ pub mod led;
 pub mod lfo_glyph;
 pub mod library;
 pub mod meter;
+pub mod midi;
 pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
@@ -354,8 +355,8 @@ pub struct UiState {
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
     /// loses nothing. RAM only; a project load clears it.
     rev_knobs: KnobMemory,
-    /// Mapped CCs: each Part's ramps, bins and budget cursor.
-    cc: cc::CcState,
+    /// Bindings' state (`ui::midi`): in AXI, lent once.
+    cc: &'static mut cc::MidiSlot,
     /// MIX+SEQ's MIDI learn (spec § 4).
     learn: learn::Learn,
 }
@@ -546,7 +547,7 @@ impl UiState {
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
             addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
-            addr_of_mut!((*p).cc).write(cc::CcState::new());
+            addr_of_mut!((*p).cc).write(cc::MidiSlot::take());
             addr_of_mut!((*p).learn).write(learn::Learn::Off);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);

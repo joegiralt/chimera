@@ -64,28 +64,29 @@ pub struct CcEvent {
     pub value: u8,
 }
 
-/// What `UiState::hear_ccs` takes: a plain CC (a test's) or a control
-/// event off the ring, of which it hears `Ctl::Cc` only for now.
+/// What `UiState::hear_ccs` takes: a control event off the ring, or a
+/// test's plain CC, which may name a number no binding can take (learn
+/// says so).
 pub trait HeardCc: Copy {
-    fn cc_event(self) -> Option<CcEvent>;
+    fn heard(self) -> HeardEv;
+}
+
+/// One message for the UI, either way it came.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeardEv {
+    Ctrl(CtrlEvent),
+    Cc(CcEvent),
 }
 
 impl HeardCc for CcEvent {
-    fn cc_event(self) -> Option<CcEvent> {
-        Some(self)
+    fn heard(self) -> HeardEv {
+        HeardEv::Cc(self)
     }
 }
 
 impl HeardCc for CtrlEvent {
-    fn cc_event(self) -> Option<CcEvent> {
-        match self {
-            CtrlEvent::Ctl(channel, Ctl::Cc { cc, value }) => Some(CcEvent {
-                channel,
-                cc: Cc(cc.get()),
-                value: value.get(),
-            }),
-            _ => None,
-        }
+    fn heard(self) -> HeardEv {
+        HeardEv::Ctrl(self)
     }
 }
 

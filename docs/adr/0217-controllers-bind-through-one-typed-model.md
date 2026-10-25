@@ -45,6 +45,9 @@ The DIN parser (`chimera-hal::midi::MidiParser`) also lacks SysEx state, System 
 - **Placement (ADR 0198).**
   - **Bank 2, behind `Bank2Door::midi` (`MidiDoor`):** `chimera_midi`'s `stream`, `ctl`, `rel`, `take`, `law`, `learn`, `out`, `sysex` and `sense`; `chimera_engine::midi_in`'s pipe; `nrpn`; the map codec.
   - **Bank 2, behind `MidiUiDoor` at `DOOR_ADDR + 0x300`:** the UI's resolution, learn sensing, echo and MIDI MAP page, together with today's `cc.rs`, `midi_map::ramp` and the map page's code.
+    - Its state (`MidiUi`: each Part's ramps, bins, takeover runtime, detents waiting and canonical-NRPN slots) lives in AXI `.bss`, not in D2 with `UiState`, which bench builds fill. Bank 2 builds it on first use from a named static (`ui::midi::REST`), so bank 1 carries no image of it. Bank 1 keeps `ui::cc`: the slot, the stubs and the hand's count.
+    - A Part ramps at most four canonical NRPN params at once. An address arriving while all four slots are still moving is dropped.
+    - Relative detents heard in one pass turn their entry once, as their sum, through `edit_addr`, under the same room as a ramp.
   - **The USART1 ISR** drains the RX FIFO and makes one door call per entry: about 0.1 % of the CPU at the DIN maximum (estimate, measured by `MIDI_CYCLES`).
   - **Bank 1 keeps:** the value newtypes; the `Binding`, `Input` and `MidiMap` type definitions and default map data (the Sound holds them); `InEvent`, `NoteQueue`, `CtrlRing` and `OutRing`; the ISR stub; the UI stubs; the ECHO spec.
   - **Bank 1 exceptions** (ADR 0198 point 1, measured in their PRs): PB6 AF7, USART1 `TE`/`TXFTIE`/`RTOEN`, and the `Binding` type growth in each Sound.

@@ -1,8 +1,15 @@
 //! The pure CC core (MIDI map spec §§ 5-6): the inter-arrival ramp, jitter,
 //! stepped binning with hysteresis and the round-robin MOVES budget.
 
-use chimera_core::midi_map::ramp::{HYST, RAMP_MIN_MS, Ramp, bin, budget};
+use chimera_core::ui::midi::ramp::{HYST, RAMP_MIN_MS, Ramp, bin, budget};
 use chimera_hal::Ms;
+use chimera_midi::take::Place;
+use chimera_midi::value::U7;
+
+/// A 7-bit value as the ramp hears it.
+fn k(v: u8) -> Place {
+    Place::from_u7_replicated(U7::new(v).unwrap())
+}
 
 /// Steps `r` by `dt` ms until rest; returns the ms taken and the places seen.
 fn run(r: &mut Ramp, dt: u32) -> (u32, Vec<f32>) {
@@ -18,8 +25,8 @@ fn run(r: &mut Ramp, dt: u32) -> (u32, Vec<f32>) {
 /// Ms a 0.0 -> 1.0 ramp takes when its CC follows the last by `dt`.
 fn cross_ms(dt: u32) -> u32 {
     let mut r = Ramp::rest(0.0);
-    assert!(r.hear(10, 0.0, Ms(1_000)));
-    assert!(r.hear(20, 1.0, Ms(1_000 + dt)));
+    assert!(r.hear(k(10), 0.0, Ms(1_000)));
+    assert!(r.hear(k(20), 1.0, Ms(1_000 + dt)));
     let (t, seen) = run(&mut r, 1);
     assert_eq!(seen.last(), Some(&1.0));
     t
@@ -28,8 +35,8 @@ fn cross_ms(dt: u32) -> u32 {
 #[test]
 fn ramp_crosses_in_inter_arrival() {
     let mut r = Ramp::rest(0.0);
-    assert!(r.hear(0, 0.0, Ms(0)));
-    assert!(r.hear(64, 0.5, Ms(80)));
+    assert!(r.hear(k(0), 0.0, Ms(0)));
+    assert!(r.hear(k(64), 0.5, Ms(80)));
     let (t, seen) = run(&mut r, 10);
     assert!((70..=90).contains(&t), "crossed in {t} ms");
     assert_eq!(seen.last(), Some(&0.5));
@@ -54,19 +61,19 @@ fn ramp_clamps() {
 #[test]
 fn ramp_first_cc_uses_the_floor() {
     let mut r = Ramp::rest(0.0);
-    assert!(r.hear(127, 1.0, Ms(5_000)));
+    assert!(r.hear(k(127), 1.0, Ms(5_000)));
     assert_eq!(run(&mut r, 1).0, RAMP_MIN_MS);
 }
 
 #[test]
 fn ramp_retargets_from_where_it_is() {
     let mut r = Ramp::rest(0.0);
-    r.hear(0, 0.0, Ms(0));
-    r.hear(127, 1.0, Ms(100));
+    r.hear(k(0), 0.0, Ms(0));
+    r.hear(k(127), 1.0, Ms(100));
     let mid = r.step(50).unwrap();
     assert!(mid > 0.0 && mid < 1.0);
     // A new CC turns it round from `mid`, never jumping.
-    assert!(r.hear(10, 0.0, Ms(150)));
+    assert!(r.hear(k(10), 0.0, Ms(150)));
     let (t, seen) = run(&mut r, 5);
     assert_eq!(t, 50);
     assert!(seen[0] < mid && seen[0] > 0.0);
@@ -77,37 +84,37 @@ fn ramp_retargets_from_where_it_is() {
 #[test]
 fn ramp_handles_the_clock_wrap() {
     let mut r = Ramp::rest(0.0);
-    r.hear(0, 0.0, Ms(u32::MAX - 39));
-    r.hear(100, 1.0, Ms(40));
+    r.hear(k(0), 0.0, Ms(u32::MAX - 39));
+    r.hear(k(100), 1.0, Ms(40));
     assert_eq!(run(&mut r, 1).0, 80);
 }
 
 #[test]
 fn ramp_cancel_rests_at_the_hand() {
     let mut r = Ramp::rest(0.0);
-    r.hear(127, 1.0, Ms(0));
+    r.hear(k(127), 1.0, Ms(0));
     r.step(3);
     r.cancel(0.25);
     assert_eq!(r.step(10), None);
-    assert!(r.hear(0, 0.25, Ms(500)));
+    assert!(r.hear(k(0), 0.25, Ms(500)));
     assert_eq!(r.step(10), None, "a CC at the place it rests is no move");
 }
 
 #[test]
 fn ramp_ignores_jitter() {
     let mut r = Ramp::rest(0.0);
-    assert!(r.hear(64, 0.5, Ms(0)));
-    assert!(!r.hear(64, 0.5, Ms(30)));
+    assert!(r.hear(k(64), 0.5, Ms(0)));
+    assert!(!r.hear(k(64), 0.5, Ms(30)));
 
     let mut r = Ramp::rest(0.0);
-    assert!(r.hear(64, 0.5, Ms(0)));
-    assert!(r.hear(65, 0.51, Ms(20)));
-    assert!(!r.hear(64, 0.5, Ms(40)));
+    assert!(r.hear(k(64), 0.5, Ms(0)));
+    assert!(r.hear(k(65), 0.51, Ms(20)));
+    assert!(!r.hear(k(64), 0.5, Ms(40)));
 
     let mut r = Ramp::rest(0.0);
-    assert!(r.hear(64, 0.5, Ms(0)));
-    assert!(r.hear(65, 0.51, Ms(60)));
-    assert!(r.hear(64, 0.5, Ms(120)));
+    assert!(r.hear(k(64), 0.5, Ms(0)));
+    assert!(r.hear(k(65), 0.51, Ms(60)));
+    assert!(r.hear(k(64), 0.5, Ms(120)));
 }
 
 #[test]
@@ -171,6 +178,7 @@ fn budget_skips_what_is_not_due() {
 
 #[test]
 fn ramp_stays_small() {
-    // 6 Parts × 16 entries of these live in RAM.
-    assert_eq!(core::mem::size_of::<Ramp>(), 16);
+    // 6 Parts × 20 slots of these live in AXI: 16 B, and 4 more for the
+    // 14-bit places a ramp now hears.
+    assert_eq!(core::mem::size_of::<Ramp>(), 20);
 }

@@ -122,6 +122,8 @@ fn streamed_source_shows_its_polyphony() {
 /// A mapped CC is refused what a turn is (review of #761, m3): on a
 /// streamed source, DIRECTION onto PING-PONG or MODEL onto SCRUB writes
 /// nothing, so a key never plays into silence; FORWARD streams, written.
+/// Mapped CCs apply only with `midi-map` (#507).
+#[cfg(feature = "midi-map")]
 #[test]
 fn a_cc_is_refused_what_a_turn_is() {
     use chimera_core::dsp::tape_engine::{Direction, TapeMachine};

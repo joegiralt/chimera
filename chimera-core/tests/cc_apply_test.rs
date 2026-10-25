@@ -837,7 +837,7 @@ fn a_cc_beside_a_queued_load_is_dropped() {
 /// keeps it.
 #[test]
 fn a_stepped_cc_keeps_the_page_as_a_turn_does() {
-    use chimera_core::midi_map::ramp::bin;
+    use chimera_core::ui::midi::ramp::bin;
     let on_op_a = || {
         let mut s = Sound::plain_init(EngineType::Algo);
         s.params.algo.try_set_kind(0, OpKind::Formant).unwrap();

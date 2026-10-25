@@ -29,6 +29,9 @@ pub const BENCH_DOOR_ADDR: u32 = DOOR_ADDR + 0x200;
 /// ORBIT's pages' table (`chimera_core::ui::orbit::door::OrbitUiDoor`, ADR
 /// 0208), in a build with `orbit` only.
 pub const ORBIT_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x280;
+/// The MIDI UI's table (`chimera_core::ui::cc::MidiUiDoor`, ADR 0217):
+/// bindings resolving.
+pub const MIDI_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x300;
 
 /// A fixed slot after the door and the type `bank2.x` links there: a crate
 /// the engine can't name declares its table's slot once, beside the

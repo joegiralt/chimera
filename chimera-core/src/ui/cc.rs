@@ -1,346 +1,188 @@
-//! Mapped CCs move the Sound (spec §§ 5-7): each Part's map heard on its
-//! channel, continuous targets ramped over the gap between CCs, stepped
-//! ones binned through the encoder's edit path, and only as many knob
-//! writes a Part as the moves still in flight to the audio leave room
-//! for, so the audio never takes more than `MOVES` at once.
+//! Mapped controls move the Sound (spec §§ 5-7): bank 1's side of
+//! `MidiUiDoor` (ADR 0198, 0217). Bindings resolve in bank 2 (`ui::midi`),
+//! its table at its own slot after the door (`MIDI_UI_DOOR_ADDR`); here
+//! are the state's home and the stubs. Closed, what MIDI in heard is
+//! drained and dropped (spec § 13): nothing moves.
+
+use core::mem::MaybeUninit;
 
 use chimera_hal::Ms;
 
 use super::UiState;
-use super::nav::PartChain;
-use super::part_page::Edit;
+use super::midi::MidiUi;
 use crate::addr::ParamAddr;
-use crate::block::Motion;
-use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
-use crate::midi_in::HeardCc;
-use crate::midi_map::ramp::{Ramp, bin, budget};
-use crate::midi_map::{Binding, Input, MAP_LEN, MidiMap};
-use crate::project::{Loads, PartId, Project};
+use crate::midi_in::{HeardCc, HeardEv};
+use crate::project::PartId;
 
-/// No bin heard since a load or the hand: the stored value's.
-const NO_BIN: u8 = u8::MAX;
-
-/// Each Part's entries' ramps, last bins and waiting bins, its budget
-/// cursor, the Sound loads they were heard on, the entries the hand
-/// turned, the knob writes left this pass and the knob moves published
-/// since the audio last took a publish; the hand's knob moves this pass.
-/// ~1.8 KB.
-pub struct CcState {
-    ramps: [[Ramp; MAP_LEN]; MAX_PARTS],
-    bins: [[u8; MAP_LEN]; MAX_PARTS],
-    /// A stepped entry's bin that found no room: it goes first next pass.
-    pend: [[u8; MAP_LEN]; MAX_PARTS],
-    cursor: [u8; MAX_PARTS],
-    loads: [Loads; MAX_PARTS],
-    /// Entries the hand turned this pass: no CC moves them till the next.
-    handed: [u16; MAX_PARTS],
-    room: [u8; MAX_PARTS],
+/// The MIDI UI's state: in AXI `.bss`, not in D2 with `UiState` (bench
+/// builds' D2 is full). Bank 1 keeps the hand's moves, the moves in flight
+/// to the audio, this pass's room and the clock; bank 2 builds the rest
+/// (`MidiUi`, ~4.6 KB) the first time the door runs, so bank 1 carries no
+/// image of it.
+pub struct MidiSlot {
+    pub(super) built: bool,
+    /// The Parts whose map changed since the door last ran.
+    pub(super) stale: u8,
+    /// The hand's knob moves this pass.
+    pub(super) hand: u8,
     /// Knob moves published since the audio last took a publish.
-    flight: [u8; MAX_PARTS],
-    last: Ms,
-    hand: u8,
-    /// A stepped CC moved the active Part this pass.
-    stepped: bool,
+    pub(super) flight: [u8; MAX_PARTS],
+    /// The knob writes left this pass.
+    pub(super) room: [u8; MAX_PARTS],
+    pub(super) last: Ms,
+    pub(super) ui: MaybeUninit<MidiUi>,
 }
 
-impl Default for CcState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+const _: () = assert!(MAX_PARTS <= 8, "`stale` holds a bit a Part");
 
-impl CcState {
-    pub const fn new() -> Self {
+impl MidiSlot {
+    const fn new() -> Self {
         Self {
-            ramps: [[Ramp::rest(0.0); MAP_LEN]; MAX_PARTS],
-            bins: [[NO_BIN; MAP_LEN]; MAX_PARTS],
-            pend: [[NO_BIN; MAP_LEN]; MAX_PARTS],
-            cursor: [0; MAX_PARTS],
-            loads: [Loads::NONE; MAX_PARTS],
-            handed: [0; MAX_PARTS],
-            room: [0; MAX_PARTS],
-            flight: [0; MAX_PARTS],
-            last: Ms(0),
+            built: false,
+            stale: 0,
             hand: 0,
-            stepped: false,
+            flight: [0; MAX_PARTS],
+            room: [0; MAX_PARTS],
+            last: Ms(0),
+            ui: MaybeUninit::uninit(),
         }
+    }
+
+    /// The firmware's one slot, zeroed `.bss` in AXI.
+    #[cfg(target_os = "none")]
+    pub(super) fn take() -> &'static mut MidiSlot {
+        use core::sync::atomic::{AtomicBool, Ordering};
+        static mut SLOT: MidiSlot = MidiSlot::new();
+        static TAKEN: AtomicBool = AtomicBool::new(false);
+        assert!(!TAKEN.swap(true, Ordering::AcqRel));
+        // SAFETY: the flag lets exactly one caller past, so this is the
+        // only reference to `SLOT` ever made.
+        unsafe { &mut *core::ptr::addr_of_mut!(SLOT) }
+    }
+
+    /// A host's: one leaked per `UiState`, as its arena is.
+    #[cfg(not(target_os = "none"))]
+    pub(super) fn take() -> &'static mut MidiSlot {
+        extern crate alloc;
+        alloc::boxed::Box::leak(alloc::boxed::Box::new(MidiSlot::new()))
     }
 
     /// A new project: no ramp or bin survives it.
     pub(super) fn clear(&mut self) {
-        let (last, hand, flight) = (self.last, self.hand, self.flight);
-        *self = Self {
-            last,
-            hand,
-            flight,
-            ..Self::new()
-        };
+        self.built = false;
+        self.stale = 0;
     }
 
-    /// Part `p`'s ramps at rest, bins and cursor cleared: its map changed
-    /// (a learn, a load), and they are indexed by entry.
+    /// Part `p`'s map changed (a learn, a page edit): its entries' state
+    /// resets before the door next runs.
+    #[cfg(feature = "midi-map")]
     #[inline]
     pub(super) fn reset_part(&mut self, p: PartId) {
-        let i = p.index();
-        self.ramps[i] = [Ramp::rest(0.0); MAP_LEN];
-        self.bins[i] = [NO_BIN; MAP_LEN];
-        self.pend[i] = [NO_BIN; MAP_LEN];
-        self.cursor[i] = 0;
+        self.stale |= 1 << p.index();
     }
 
     /// The knob moves the hand made this pass, at most: its turns and the
-    /// reel's (`handle_input`), which the CC writes after it leave room for.
+    /// reel's (`handle_input`), which the moves heard after it leave room
+    /// for.
     pub(super) fn hand(&mut self, moves: u8) {
         self.hand = moves;
     }
 }
 
-/// `a`'s stored value on Part `p`.
-fn stored(project: &Project, p: PartId, a: ParamAddr) -> Option<f32> {
-    Some(project.read_part(p).block(a.block)?.get(a.param))
+/// The door's `hear`: `UiState::hear_in`.
+type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
+
+/// Without `midi-map` (the bench builds, #507) nothing heard is applied:
+/// the ring drained and dropped, as with the door closed.
+#[cfg(not(feature = "midi-map"))]
+fn deaf(_: &mut UiState, ev: &mut dyn Iterator<Item = HeardEv>, _: Ms, _: bool) {
+    ev.for_each(drop);
 }
 
-/// Glided by the Part's knobs: counted by the publish (`KNOBS`).
-fn knob(a: ParamAddr) -> bool {
-    a.spec().and_then(|s| s.motion().knob()).is_some()
+/// The entries, private: called only through `through`, so no pointer
+/// into bank 2 leaves it.
+#[repr(C)]
+pub struct MidiUiDoor {
+    magic: Magic,
+    hear: Hear,
+    hand: fn(&mut UiState, PartId, ParamAddr),
 }
 
-fn is_knob(e: &Binding) -> bool {
-    knob(e.target.addr())
+/// `MidiUiDoor`'s mark: a table at the slot that isn't this one fails the
+/// boot's door check (`door_ok`), and bank 2 reads corrupt.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+struct Magic(u32);
+
+const MAGIC: Magic = Magic(0xB2C0_0217);
+
+impl MidiUiDoor {
+    pub const OWN: MidiUiDoor = MidiUiDoor {
+        magic: MAGIC,
+        #[cfg(feature = "midi-map")]
+        hear: UiState::hear_in,
+        #[cfg(not(feature = "midi-map"))]
+        hear: deaf,
+        hand: UiState::hand_in,
+    };
+}
+
+#[cfg(feature = "bank2")]
+// SAFETY: `bank2.x` links `MIDI_UI_DOOR`, a `MidiUiDoor`, at
+// `MIDI_UI_DOOR_ADDR` in every firmware build with `bank2` (its assert,
+// `__bank2_midi_ui_door`).
+const SLOT: chimera_engine::bank2::DoorSlot<MidiUiDoor> =
+    unsafe { chimera_engine::bank2::DoorSlot::new(chimera_engine::bank2::MIDI_UI_DOOR_ADDR) };
+
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.door.midi_ui")]
+#[used]
+static MIDI_UI_DOOR: MidiUiDoor = MidiUiDoor::OWN;
+
+/// The MIDI UI's table in judged door `j` answers (the boot's door check,
+/// run before the door opens).
+#[cfg(feature = "bank2")]
+pub fn door_ok(j: &chimera_engine::bank2::Judged) -> bool {
+    j.with_slot(SLOT, |d| d.magic == MAGIC)
+}
+
+/// `f` on the table: bank 2's through the door on the unit, `None` closed;
+/// this build's own elsewhere. A host test under `bank2` answers as the
+/// unit does: only while the door cell is open.
+#[inline(always)]
+fn through<R>(f: impl FnOnce(&MidiUiDoor) -> R) -> Option<R> {
+    #[cfg(all(feature = "bank2", target_os = "none"))]
+    {
+        crate::bank2::DOOR_CELL.with_slot(SLOT, f)
+    }
+    #[cfg(not(all(feature = "bank2", target_os = "none")))]
+    {
+        #[cfg(feature = "bank2")]
+        if !crate::bank2::DOOR_CELL.is_open() {
+            return None;
+        }
+        Some(f(&MidiUiDoor::OWN))
+    }
 }
 
 impl UiState {
-    /// Each Part's ramps `now` on, then this pass's CCs (spec §§ 5-7): the
-    /// control ring's `Ctl::Cc`s, or a test's plain `CcEvent`s.
-    /// After `handle_input`, before the publish: the hand's moves are in.
-    /// `taken`: the audio has taken the last publish (`Writer::taken`).
-    /// Card work waiting drops them (spec § 1): a write now would refuse
-    /// the load or adopt its witness confirmed.
-    pub fn hear_ccs(&mut self, ccs: impl Iterator<Item = impl HeardCc>, now: Ms, taken: bool) {
-        let elapsed = now.since(self.cc.last);
-        self.cc.last = now;
-        let busy = self.job.is_some() || self.lib.busy() || self.src.busy();
-        let at = self.active_part;
-        let chain = PartChain::of(&self.project.part(at).sound);
-        let (before, rev) = (self.ctx(), self.project.rev());
-        // The audio takes every move published since it last took one, over
-        // however many passes: two can read the ms clock microseconds apart
-        // (one a redraw held up). So the room is what the moves in flight,
-        // the hand's this pass among them, leave.
-        if taken {
-            self.cc.flight = [0; MAX_PARTS];
-        }
-        // Waiting bins first, then ramps: one heard now starts now, not
-        // `elapsed` ago.
-        for p in PartId::ALL {
-            let i = p.index();
-            let hand = if p == at { self.cc.hand } else { 0 };
-            self.cc.flight[i] = self.cc.flight[i].saturating_add(hand);
-            // One kept for a key's edit (a route deleted or primed).
-            self.cc.room[i] = (MOVES as u8 - 1).saturating_sub(self.cc.flight[i]);
-            if busy {
-                continue;
-            }
-            self.cc_reset_on_load(p);
-            self.cc_pending(p);
-            if elapsed > 0 {
-                self.cc_step(p, elapsed);
-            }
-        }
-        // Only `Ctl::Cc` for now; the rest of the ring is drained unheard.
-        for ev in ccs.filter_map(HeardCc::cc_event).filter(|_| !busy) {
-            #[cfg(feature = "midi-map")]
-            if self.learn_cc(ev) {
-                continue;
-            }
-            for p in PartId::ALL {
-                if self.project.part(p).mix.channel != ev.channel {
-                    continue;
-                }
-                let (map, handed) = (self.project.part(p).sound.map, self.cc.handed[p.index()]);
-                // The hand beats a CC in its pass (spec § 5).
-                let Some(heard) = Input::cc(ev.cc.get()) else {
-                    continue;
-                };
-                for (j, e) in map
-                    .targets_of(&heard)
-                    .filter(|&(j, _)| handed >> j & 1 == 0)
-                {
-                    self.cc_hear(p, j, e, ev.value, now);
-                }
-            }
-        }
-        for (f, r) in self.cc.flight.iter_mut().zip(self.cc.room) {
-            *f = (*f).max(MOVES as u8 - 1) - r;
-        }
-        self.cc.handed = [0; MAX_PARTS];
-        // The page follows a stepped CC on the active Part as a turn's.
-        if core::mem::take(&mut self.cc.stepped) && self.loc.page(&self.cx()).is_some() {
-            self.after_edit(at, chain, before, self.page_def());
-        }
-        // A CC on a browsed Part moves its cost and meter hints.
-        self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
-    }
-
-    /// Part `p`'s waiting bins, as far as this pass has room.
-    fn cc_pending(&mut self, p: PartId) {
-        let (i, map) = (p.index(), self.project.part(p).sound.map);
-        let engine = self.project.part(p).sound.params.engine();
-        for (j, e) in map.entries().iter().enumerate() {
-            let to = self.cc.pend[i][j];
-            if to != NO_BIN && e.target.live(engine) {
-                self.cc_bin(p, j, e.target.addr(), u16::from(to));
-            }
+    /// This pass's control messages (spec §§ 5-7), through the door: the
+    /// control ring's `CtrlEvent`s, or a test's plain `CcEvent`s. After
+    /// `handle_input`, before the publish. `taken`: the audio has taken
+    /// the last publish (`Writer::taken`). Closed, drained and dropped.
+    pub fn hear_ccs(&mut self, ev: impl Iterator<Item = impl HeardCc>, now: Ms, taken: bool) {
+        let mut ev = ev.map(HeardCc::heard);
+        if through(|d| (d.hear)(self, &mut ev, now, taken)).is_none() {
+            ev.for_each(drop);
         }
     }
 
-    /// Entry `j`'s stepped target `a` on Part `p` to bin `to` through the
-    /// edit path, if this pass has room for its knob writes (a MODEL's
-    /// defaults too); else it waits for the next, as a ramp does.
-    fn cc_bin(&mut self, p: PartId, j: usize, a: ParamAddr, to: u16) {
-        let i = p.index();
-        self.cc.pend[i][j] = NO_BIN;
-        let (Some(spec), Some(was)) = (a.spec(), stored(&self.project, p, a)) else {
-            return;
-        };
-        let at = (was - spec.min + 0.5) as u16;
-        let d = (i32::from(to) - i32::from(at)).clamp(-127, 127) as i8;
-        if d == 0 {
-            return;
-        }
-        let mut cost = u8::from(knob(a));
-        if a == super::held::MODEL || a == super::held::DIRECTION {
-            // Onto what a streamed source can't play it is refused, as the
-            // hand's turn is (`turn_model`), so a key never plays into
-            // silence; else it spends its machine's or DIRECTION's knob
-            // writes too (bank 2's, `walk::tape_writes_in`).
-            let code = (spec.min + f32::from(to)) as u8;
-            let s = &self.project.part(p).sound;
-            if self.streams(p) && (super::held::Held { addr: a, code }).why(s, true).is_some() {
-                return;
-            }
-            cost += crate::bank2::ui_door(|u| u.tape_writes(a.param, code, &s.params.tape))
-                .unwrap_or(0);
-        }
-        if cost > self.cc.room[i] {
-            self.cc.pend[i][j] = to as u8;
-            return;
-        }
-        self.cc.room[i] -= cost;
-        self.cc.stepped |= self.edit_addr(p, a, d, false) && p == self.active_part;
-    }
-
-    /// A new Sound (a load, NEW, Revert, CLEAR): every ramp rests, its
-    /// jitter forgotten. A ramp at rest takes the stored place when it
-    /// next hears (`cc_hear`), so where it rests doesn't matter.
-    fn cc_reset_on_load(&mut self, p: PartId) {
-        let (i, loads) = (p.index(), self.project.part(p).loads());
-        if loads != self.cc.loads[i] {
-            self.cc.loads[i] = loads;
-            self.cc.reset_part(p);
-        }
-    }
-
-    /// Entry `j`'s CC value `v` on Part `p`: a continuous target heads for
-    /// its place; a stepped one moves to its bin through the edit path.
-    fn cc_hear(&mut self, p: PartId, j: usize, e: &Binding, v: u8, now: Ms) {
-        let a = e.target.addr();
-        if !e.target.live(self.project.part(p).sound.params.engine()) {
-            return;
-        }
-        let (Some(spec), Some(was)) = (a.spec(), stored(&self.project, p, a)) else {
-            return;
-        };
-        let i = p.index();
-        match spec.motion() {
-            Motion::Stepped(_) => {
-                // One unit a step (`ParamSpec::stepped`, `choice`).
-                let steps = (spec.max - spec.min) as u16 + 1;
-                let at = (was - spec.min + 0.5) as u16;
-                let last = &mut self.cc.bins[i][j];
-                let cur = if *last == NO_BIN {
-                    at
-                } else {
-                    u16::from(*last)
-                };
-                let to = bin(v, steps, e.span.min, e.span.max, cur).min(u16::from(NO_BIN) - 1);
-                *last = to as u8;
-                if to != cur {
-                    self.cc_bin(p, j, a, to);
-                }
-            }
-            Motion::Continuous(_) => {
-                let r = &mut self.cc.ramps[i][j];
-                // At rest, it starts from the stored value, wherever the
-                // hand or the engine left it.
-                if !r.moving() {
-                    r.cancel(spec.normalize(was));
-                }
-                r.hear(v, e.span.place(v), now);
-            }
-        }
-    }
-
-    /// Part `p`'s moving ramps, `elapsed` ms on: every non-knob one, and
-    /// round-robin as many knobs as the pass has room for. The rest keep
-    /// their ramp and go first next pass.
-    fn cc_step(&mut self, p: PartId, elapsed: u32) {
-        let i = p.index();
-        let map: MidiMap = self.project.part(p).sound.map;
-        let engine = self.project.part(p).sound.params.engine();
-        let (mut due, mut own) = ([false; MAP_LEN], [false; MAP_LEN]);
-        for (j, e) in map.entries().iter().enumerate() {
-            let r = &mut self.cc.ramps[i][j];
-            if !r.moving() {
-                continue;
-            }
-            if !e.target.live(engine) {
-                // Its engine left: a CC after the return starts afresh.
-                r.cancel(0.0);
-                continue;
-            }
-            if is_knob(e) {
-                due[j] = true;
-            } else {
-                own[j] = true;
-            }
-        }
-        let mut cursor = usize::from(self.cc.cursor[i]);
-        let pick = budget(&due, &mut cursor, usize::from(self.cc.room[i]));
-        self.cc.cursor[i] = cursor as u8;
-        self.cc.room[i] -= pick.iter().filter(|&&b| b).count() as u8;
-        for (j, e) in map.entries().iter().enumerate() {
-            if !(pick[j] || own[j]) {
-                continue;
-            }
-            let a = e.target.addr();
-            if let (Some(place), Some(spec)) = (self.cc.ramps[i][j].step(elapsed), a.spec()) {
-                // The top lands on `max` itself, not its exp2 round trip.
-                let v = if place >= 1.0 {
-                    spec.max
-                } else {
-                    spec.denormalize(place)
-                };
-                self.edit_in(p, a, Edit::To(v));
-            }
-        }
-    }
-
-    /// The hand wins: a turn of `a` on Part `p` stops its ramp and drops
-    /// its waiting bin, no CC moves it this pass, and its next CC starts
-    /// from the turned value, its next bin from the stored one.
+    /// The hand wins: a turn of `a` on Part `p` stops what its bindings
+    /// were moving (`hand_in`). Closed, nothing moves.
     pub(super) fn cc_hand(&mut self, p: PartId, a: ParamAddr) {
-        if !cfg!(feature = "midi-map") {
-            return;
-        }
-        let i = p.index();
-        let map = &self.project.part(p).sound.map;
-        if let Some(j) = map.entries().iter().position(|e| e.target.addr() == a) {
-            self.cc.ramps[i][j].cancel(0.0);
-            self.cc.bins[i][j] = NO_BIN;
-            self.cc.pend[i][j] = NO_BIN;
-            self.cc.handed[i] |= 1 << j;
+        if cfg!(feature = "midi-map") {
+            through(|d| (d.hand)(self, p, a));
         }
     }
 }
