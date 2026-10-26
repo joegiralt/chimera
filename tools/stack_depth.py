@@ -51,8 +51,8 @@ ROOTS = ("Reset", "__stext", "main", "DefaultHandler", "DefaultHandler_") + ISRS
 POINTER_NEST = 3
 # A root whose pointer calls are door entries (ADR 0175) whose targets are
 # known: charged the deepest target's depth, not every address-taken
-# function's. More pointer calls in such a root than named entries fail the
-# check. The card interrupt's shim calls `IrqState::step` through the
+# function's. More pointer calls in such a root than named entries, or a
+# named entry missing while the root makes a pointer call, fail the check. The card interrupt's shim calls `IrqState::step` through the
 # board's slot; the DIN interrupt calls MIDI's `feed` and `idle` through
 # bank 2's door (ADR 0217).
 DOOR_CALLS = {
@@ -326,6 +326,13 @@ def check(img, stack_bytes, out):
         if root in img.funcs and img.funcs[root][3] > len(entries):
             print("stack-depth: %s has %d pointer calls, its door's %d only" % (root, img.funcs[root][3], len(entries)), file=out)
             ok = False
+        # A renamed or dropped entry would charge the pointer call the
+        # usual charge in silence: every named one must be linked.
+        if root in img.funcs and img.funcs[root][3]:
+            for t in entries:
+                if t not in img.funcs:
+                    print("stack-depth: %s's door entry %s is not in the disassembly" % (root, short(t)), file=out)
+                    ok = False
     for t, callers in DOOR_ONLY.items():
         if t in img.funcs and not any(img.funcs.get(c, (0, (), (), 0))[3] for c in callers):
             print("stack-depth: no pointer call in %s enters %s" % (" or ".join(callers), t), file=out)

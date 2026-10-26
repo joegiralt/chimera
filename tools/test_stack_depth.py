@@ -162,6 +162,7 @@ class StackDepth(unittest.TestCase):
         self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
 
     def test_a_door_root_with_two_pointer_calls_fails(self):
+        self.funcs["<chimera_board::card_dma::IrqState>::step"] = (0x60, set(), set(), False)
         frame, calls, tails, _ = self.funcs["DMA2_STR0"]
         self.funcs["DMA2_STR0"] = (frame, calls, tails, 1)
         self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
@@ -171,6 +172,8 @@ class StackDepth(unittest.TestCase):
         self.assertIn("DMA2_STR0 has 2 pointer calls", out.getvalue())
 
     def test_the_din_root_may_make_its_two_door_calls(self):
+        for t in sd.DOOR_CALLS["USART1"]:
+            self.funcs[t] = (0x10, set(), set(), False)
         frame, calls, tails, _ = self.funcs["USART1"]
         self.funcs["USART1"] = (frame, calls, tails, 2)
         self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
@@ -178,6 +181,22 @@ class StackDepth(unittest.TestCase):
         out = io.StringIO()
         self.assertFalse(sd.check(self.img, 1 << 20, out))
         self.assertIn("USART1 has 3 pointer calls", out.getvalue())
+
+    def test_a_door_entry_missing_from_the_binary_fails(self):
+        feed, idle = sd.DOOR_CALLS["USART1"]
+        frame, calls, tails, _ = self.funcs["USART1"]
+        self.funcs["USART1"] = (frame, calls, tails, 2)
+        self.funcs[feed] = (0x10, set(), set(), False)
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("door entry " + sd.short(idle) + " is not", out.getvalue())
+        self.assertNotIn("door entry " + sd.short(feed), out.getvalue())
+        self.funcs[idle] = (0x10, set(), set(), False)
+        self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
+        # No pointer call, no door to name: the entries may be absent.
+        self.funcs["USART1"] = (frame, calls, tails, 0)
+        del self.funcs[feed], self.funcs[idle]
+        self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
 
     def test_a_missing_root_fails_but_midi_may_be_absent(self):
         del self.img.funcs["USART1"]
