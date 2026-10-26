@@ -16,6 +16,8 @@ use chimera_core::note_queue::NoteSources;
 use chimera_core::note_queue::SourceId;
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitView;
+#[cfg(all(feature = "midi-din", feature = "midi-map"))]
+use chimera_core::out_ring::OutRing;
 use chimera_core::preset::Performance;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
@@ -277,6 +279,19 @@ pub fn take_ctrl_din() -> Option<&'static CtrlRing> {
     // reference to `CTRL_DIN` ever made; `write` initialises it before any
     // read, and from then on it is only shared.
     Some(unsafe { (*addr_of_mut!(CTRL_DIN)).write(CtrlRing::new()) })
+}
+
+// DIN OUT's ring (MIDI phase 1 spec § 9), the UI's to push and the USART1
+// ISR's to pop: all zero, so `.bss` in AXI with no code to build it.
+#[cfg(all(feature = "midi-din", feature = "midi-map"))]
+static OUT_DIN: OutRing = OutRing::new();
+#[cfg(all(feature = "midi-din", feature = "midi-map"))]
+static OUT_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// DIN OUT's ring, empty; once. Both ends share the reference.
+#[cfg(all(feature = "midi-din", feature = "midi-map"))]
+pub fn take_out_din() -> Option<&'static OutRing> {
+    (!OUT_DIN_TAKEN.swap(true, Ordering::AcqRel)).then_some(&OUT_DIN)
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:

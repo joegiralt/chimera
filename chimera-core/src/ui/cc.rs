@@ -23,6 +23,8 @@ use crate::hw::MAX_PARTS;
 use crate::midi_in::{HeardCc, HeardEv};
 #[cfg(feature = "midi-map")]
 use crate::midi_map::Binding;
+#[cfg(feature = "midi-map")]
+use crate::out_ring::OutRing;
 use crate::project::PartId;
 
 /// The MIDI UI's state: in AXI `.bss`, not in D2 with `UiState` (bench
@@ -116,6 +118,10 @@ type MapTextFn = fn(&Binding, FxType, bool, &mut MapText);
 #[cfg(feature = "midi-map")]
 type FocusNote = fn(&UiState) -> Option<Dir>;
 
+/// The door's `out`: `UiState::out_in`, DIN OUT's pass.
+#[cfg(feature = "midi-map")]
+type Out = fn(&mut UiState, &OutRing);
+
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
 
@@ -142,6 +148,8 @@ pub struct MidiUiDoor {
     map_text: MapTextFn,
     #[cfg(feature = "midi-map")]
     focus_note: FocusNote,
+    #[cfg(feature = "midi-map")]
+    out: Out,
 }
 
 /// `MidiUiDoor`'s mark: a table at the slot that isn't this one fails the
@@ -169,6 +177,8 @@ impl MidiUiDoor {
         map_text: super::midi::page::text,
         #[cfg(feature = "midi-map")]
         focus_note: UiState::focus_note,
+        #[cfg(feature = "midi-map")]
+        out: UiState::out_in,
     };
 }
 
@@ -244,6 +254,13 @@ impl UiState {
     /// (`map_in`). Closed, nothing.
     pub(super) fn map_keys(&mut self, d: [i8; 6], delete: bool) {
         through(|t| (t.map_in)(self, d, delete));
+    }
+
+    /// DIN OUT's pass, after `hear_ccs`: what waits to be sent (an
+    /// identity reply) into `ring`, each message whole (`out_in`).
+    /// Closed, nothing is sent (spec § 7.3).
+    pub fn send_out(&mut self, ring: &OutRing) {
+        through(|d| (d.out)(self, ring));
     }
 }
 

@@ -3,6 +3,8 @@ use core::sync::atomic::{Ordering, compiler_fence};
 
 use chimera_engine::midi_in::{self, CtrlRing, DinSinks, PipeSlot};
 use chimera_engine::note_queue::NoteProducer;
+#[cfg(feature = "midi-map")]
+use chimera_engine::out_ring::OutRing;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};
 
@@ -16,12 +18,26 @@ const BAUD: u32 = 31_250;
 /// The RX FIFO's depth: one ISR entry drains at most this many bytes into
 /// one door call.
 const RX_FIFO: usize = 16;
+/// `TXFTCFG`: the threshold flag once the TX FIFO is half empty.
+#[cfg(feature = "midi-map")]
+const TXFT_HALF: u8 = 0b010;
 
 /// The DIN pipe's slot; only the handler feeds it (the door builds it).
 static mut PIPE: PipeSlot = PipeSlot::new();
 static mut DIN_NOTES: Option<NoteProducer<'static>> = None;
 /// The DIN control ring; only the handler pushes.
 static mut DIN_CTRL: Option<&'static CtrlRing> = None;
+/// DIN OUT's ring; only the handler pops (the UI pushes).
+#[cfg(feature = "midi-map")]
+static mut DIN_OUT: Option<&'static OutRing> = None;
+
+/// DIN OUT's ring, before `init`: the handler pops it into the TX FIFO.
+#[cfg(feature = "midi-map")]
+pub fn set_out(out: &'static OutRing) {
+    // SAFETY: before `init` unmasks USART1's interrupt, so nothing reads
+    // `DIN_OUT` yet; from then on only the handler does.
+    unsafe { *addr_of_mut!(DIN_OUT) = Some(out) };
+}
 
 pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ctrl: &'static CtrlRing) {
     // SAFETY: single-threaded init before USART1's interrupt is unmasked;
@@ -36,9 +52,21 @@ pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ctrl: 
     usart
         .icr
         .write(|w| w.orecf().clear().fecf().clear().ncf().clear());
-    usart
-        .cr1
-        .write(|w| w.fifoen().set_bit().rxneie().set_bit().re().set_bit());
+    // DIN OUT: the TX FIFO's threshold at half empty, so the handler
+    // tops it up before the line runs dry.
+    #[cfg(feature = "midi-map")]
+    // SAFETY: 0b010 is a defined `TXFTCFG` value (RM0433, USART_CR3).
+    usart.cr3.write(|w| unsafe { w.txftcfg().bits(TXFT_HALF) });
+    usart.cr1.write(|w| {
+        w.fifoen()
+            .set_bit()
+            .rxneie()
+            .set_bit()
+            .re()
+            .set_bit()
+            .te()
+            .bit(cfg!(feature = "midi-map"))
+    });
     usart.cr1.modify(|_, w| w.ue().set_bit());
     // SAFETY: USART1's interrupt is still masked, so nothing reads
     // `DIN_NOTES` or `DIN_CTRL` yet; from then on only the handler does.
@@ -50,8 +78,9 @@ pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ctrl: 
     compiler_fence(Ordering::SeqCst);
     priority::set_irq(nvic, pac::Interrupt::USART1, Priority::MIDI);
     // SAFETY: the handler touches only USART1, its own `PIPE`,
-    // `DIN_NOTES`, the DIN queue's producer, and `DIN_CTRL`, the DIN
-    // control ring it alone pushes to.
+    // `DIN_NOTES`, the DIN queue's producer, `DIN_CTRL`, the DIN
+    // control ring it alone pushes to, and `DIN_OUT`, the out ring it
+    // alone pops.
     unsafe { NVIC::unmask(pac::Interrupt::USART1) };
 }
 
@@ -100,6 +129,21 @@ fn USART1() {
         let s = pipe.stats();
         MIDI_FAULTS.store(s.fault_total(), Ordering::Relaxed);
         MIDI_DROPS.store(u32::from(s.refused), Ordering::Relaxed);
+    }
+    // DIN OUT: the ring into the TX FIFO while it has room. The threshold
+    // interrupt stays on while bytes wait; the main loop pends this handler
+    // after the UI's out pass (`din_out`), so an idle line starts. Every
+    // CR3 write is this handler's.
+    #[cfg(feature = "midi-map")]
+    // SAFETY: `DIN_OUT` is written only before `init` unmasks this
+    // handler, which alone reads it.
+    if let Some(out) = unsafe { *addr_of_mut!(DIN_OUT) } {
+        let mut b = [0u8; 1];
+        while usart.isr.read().txe().bit_is_set() && out.pop_into(&mut b) == 1 {
+            usart.tdr.write(|w| w.tdr().bits(u16::from(b[0])));
+        }
+        let more = !out.is_empty();
+        usart.cr3.modify(|_, w| w.txftie().bit(more));
     }
     let leave = stamp(audio_cycles);
     let audio = leave.over.since(enter.over);

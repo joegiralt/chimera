@@ -44,6 +44,7 @@ pub mod name;
 pub mod note_queue;
 pub mod nrpn;
 pub mod orbit;
+pub mod out_ring;
 pub mod params;
 pub mod part;
 pub mod perf;

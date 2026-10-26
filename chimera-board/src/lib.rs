@@ -196,6 +196,8 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     #[cfg(feature = "midi-din")]
     let _midi_rx = gpiob.pb7.into_alternate::<7>();
+    #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+    let _midi_tx = gpiob.pb6.into_alternate::<7>();
     // The board's strap before its HC165 pins (ADR 0140): PD0..PD3 pulled
     // up, left to settle, read once. They stay pulled-up inputs.
     let straps = (
@@ -365,6 +367,21 @@ pub struct AudioStart<'a> {
     /// spec § 1).
     #[cfg(feature = "midi-din")]
     pub din_ctrl: &'static chimera_core::midi_in::CtrlRing,
+    /// DIN OUT's bytes: the UI pushes, the ISR pops into the TX FIFO.
+    #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+    pub din_out: &'static chimera_core::out_ring::OutRing,
+}
+
+/// DIN OUT's pass: what the UI queued, then the USART1 handler pended to
+/// send it (it disarms itself once the ring is empty). Out of line, so
+/// the loop around it keeps its shape.
+#[cfg(all(feature = "midi-din", feature = "midi-map"))]
+#[inline(never)]
+fn din_out(ui: &mut chimera_core::ui::UiState, out: &chimera_core::out_ring::OutRing) {
+    ui.send_out(out);
+    if !out.is_empty() {
+        cortex_m::peripheral::NVIC::pend(pac::Interrupt::USART1);
+    }
 }
 
 /// The binary's audio side, which the start-up calls at its steps. Plain
@@ -599,6 +616,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
     #[cfg(feature = "midi-din")]
     let ctrl_din = shared::take_ctrl_din().expect("DIN control ring taken once");
+    #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+    let out_din = shared::take_out_din().expect("DIN out ring taken once");
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -617,6 +636,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             .expect("DIN producer taken once"),
         #[cfg(feature = "midi-din")]
         din_ctrl: ctrl_din,
+        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+        din_out: out_din,
     });
 
     marker.stage(BootStage::Audio);
@@ -752,6 +773,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // a controller: bench firmware leaves the MIDI map out (FLASH, #507).
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         ui.hear_ccs(ctrl_din.drain(), controls::now_ms(), shared_w.taken());
+        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+        din_out(ui, out_din);
         // SYSTEM synced first: a THEME change made in this visit is kept.
         if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
             dfu::enter(&marker, dfu::DfuFrom::Menu(yes));

@@ -11,6 +11,7 @@ mod screen;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::bank2::DOOR_CELL;
 use chimera_core::midi_in::CtrlEvent;
+use chimera_core::out_ring::OutRing;
 use chimera_core::params::FilterParams;
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
@@ -69,7 +70,10 @@ fn closed_drains_and_moves_nothing() {
         ),
         CtrlEvent::Ctl(ch, Ctl::Pressure(u7(0))),
         CtrlEvent::SensingLost,
+        CtrlEvent::Identity { dev: u7(0x7F) },
     ];
+    let ring = OutRing::new();
+    let mut sent = [0u8; 32];
     let start = cutoff(&ui);
     assert_ne!(start, CUTOFF.spec().unwrap().min);
 
@@ -79,7 +83,9 @@ fn closed_drains_and_moves_nothing() {
     for _ in 0..50 {
         now += 4;
         ui.hear_ccs(every.into_iter(), Ms(now), true);
+        ui.send_out(&ring);
     }
+    assert_eq!(ring.pop_into(&mut sent), 0, "closed, nothing is sent");
     // A hand's turn closed: nothing to stop, nothing breaks.
     feed(&mut ui, Input::turn(EncoderId::F, 1));
     let rev2 = ui.project().rev();
@@ -97,4 +103,7 @@ fn closed_drains_and_moves_nothing() {
         ui.hear_ccs(core::iter::once(cc74(0)), Ms(now), true);
     }
     assert_eq!(cutoff(&ui), CUTOFF.spec().unwrap().min, "open, CC 74 moves");
+    ui.hear_ccs(core::iter::once(every[6]), Ms(now), true);
+    ui.send_out(&ring);
+    assert_eq!(ring.pop_into(&mut sent), 15, "open, an inquiry is answered");
 }

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use chimera_core::midi_in::{self, CtrlRing, DinSinks, PipeSlot};
 use chimera_core::note_queue::NoteProducer;
+use chimera_core::out_ring::{OUT_RING_LEN, OutRing};
 
 /// The port's pipe as of its last bytes: `status`'s `midi` line.
 pub static FAULTS: AtomicU32 = AtomicU32::new(0);
@@ -37,6 +38,62 @@ impl<'q> Port<'q> {
         FAULTS.store(s.fault_total(), Ordering::Relaxed);
         DROPS.store(u32::from(s.refused), Ordering::Relaxed);
     }
+}
+
+/// `--midi-out <name>`: the output port to open, if asked.
+pub fn midi_out_arg(args: impl IntoIterator<Item = String>) -> Option<String> {
+    let mut args = args.into_iter();
+    while let Some(a) = args.next() {
+        if a == "--midi-out" {
+            return args.next();
+        }
+    }
+    None
+}
+
+/// Each whole message in `bytes` to `send`, its running status written
+/// out (midir sends one message a call). SysEx and real-time pass whole.
+pub fn messages(bytes: &[u8], mut send: impl FnMut(&[u8])) {
+    let (mut status, mut data, mut n, mut sysex) = (0u8, [0u8; 2], 0usize, None);
+    for (i, &b) in bytes.iter().enumerate() {
+        if let Some(start) = sysex {
+            if b == 0xF7 {
+                send(&bytes[start..=i]);
+                sysex = None;
+            }
+            continue;
+        }
+        match b {
+            0xF0 => sysex = Some(i),
+            0xF8..=0xFF => send(&[b]),
+            0xF1..=0xF7 => status = 0,
+            0x80..=0xEF => (status, n) = (b, 0),
+            _ if status != 0 => {
+                data[n] = b;
+                n += 1;
+                let need = if matches!(status & 0xF0, 0xC0 | 0xD0) {
+                    1
+                } else {
+                    2
+                };
+                if n == need {
+                    send(&[status, data[0], data[1]][..=need]);
+                    n = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Everything `ring` holds, message by message, to `send`; how many
+/// bytes. One pop of the whole ring always ends on a message's end: the
+/// UI publishes whole messages.
+pub fn drain_out(ring: &OutRing, send: impl FnMut(&[u8])) -> usize {
+    let mut b = [0u8; OUT_RING_LEN];
+    let n = ring.pop_into(&mut b);
+    messages(&b[..n], send);
+    n
 }
 
 pub fn pick_port(names: &[String], wanted: Option<&str>) -> Option<usize> {
@@ -193,6 +250,71 @@ mod tests {
         assert_eq!(place(&ui), 1.0, "lands on the top");
         let bound = 2.0 * f32::from(step) / 16383.0;
         assert!(most <= bound, "a pass moved {most}, bound {bound}");
+    }
+
+    /// The desktop's QA for DIN OUT, without a real port: a Device
+    /// Inquiry (`amidi -S 'F0 7E 7F 06 01 F7'`) through the port's pipe
+    /// and ring, a UI pass, then the out thread's drain: the golden reply,
+    /// one message, once.
+    #[test]
+    fn an_inquiry_through_the_port_gets_the_reply_on_midi_out() {
+        use chimera_core::out_ring::OutRing;
+        let q = NoteQueue::new();
+        let (notes, _audio) = q.split().unwrap();
+        let ring = CtrlRing::new();
+        let out = OutRing::new();
+        let mut port = Port::new(notes, &ring);
+        let mut ui = Box::new(UiState::new());
+        port.bytes(&[0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7]);
+        ui.hear_ccs(ring.drain(), Ms(1_000), true);
+        ui.send_out(&out);
+        let mut sent = Vec::new();
+        super::drain_out(&out, |m| sent.push(m.to_vec()));
+        let v = chimera_core::ui::midi::out::version(env!("CARGO_PKG_VERSION")).map(|u| u.get());
+        let mut golden = vec![0xF0, 0x7E, 0x00, 0x06, 0x02, 0x7D, 0x43, 0x48, 0x01, 0x00];
+        golden.extend_from_slice(&v);
+        golden.push(0xF7);
+        assert_eq!(sent, [golden]);
+        ui.hear_ccs(ring.drain(), Ms(1_010), true);
+        ui.send_out(&out);
+        assert_eq!(super::drain_out(&out, |_| panic!("answered twice")), 0);
+    }
+
+    /// Running status written out, a message a send, SysEx and real-time
+    /// whole: midir takes one message a call.
+    #[test]
+    fn messages_split_running_status() {
+        let mut got = Vec::new();
+        super::messages(
+            &[
+                0xB2, 99, 1, 98, 2, 6, 3, 38, 4, 0xF8, 0xF0, 0x7E, 0x00, 0xF7, 0xC1, 5, 6, 0x91,
+                60, 100,
+            ],
+            |m| got.push(m.to_vec()),
+        );
+        let want: Vec<Vec<u8>> = vec![
+            vec![0xB2, 99, 1],
+            vec![0xB2, 98, 2],
+            vec![0xB2, 6, 3],
+            vec![0xB2, 38, 4],
+            vec![0xF8],
+            vec![0xF0, 0x7E, 0x00, 0xF7],
+            vec![0xC1, 5],
+            vec![0xC1, 6],
+            vec![0x91, 60, 100],
+        ];
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn midi_out_names_its_port() {
+        let a = |v: &[&str]| super::midi_out_arg(v.iter().map(|s| s.to_string()));
+        assert_eq!(
+            a(&["chimera", "--midi-out", "Virtual Raw"]),
+            Some("Virtual Raw".into())
+        );
+        assert_eq!(a(&["chimera"]), None);
+        assert_eq!(a(&["chimera", "--midi-out"]), None);
     }
 
     fn names(v: &[&str]) -> Vec<String> {

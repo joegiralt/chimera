@@ -13,6 +13,7 @@
 #![cfg_attr(not(feature = "midi-map"), allow(dead_code))]
 
 pub mod learn;
+pub mod out;
 #[cfg(feature = "midi-map")]
 pub mod page;
 pub mod ramp;
@@ -176,12 +177,13 @@ enum Seat {
 }
 
 /// Each Part's, whether a stepped or relative move edited the active Part
-/// this pass, and what learn has heard of the control it senses. ~5.8 KB,
-/// AXI (`MidiSlot`).
+/// this pass, what learn has heard of the control it senses, and whether a
+/// Device Inquiry waits for its reply (`out`). ~5.8 KB, AXI (`MidiSlot`).
 pub struct MidiUi {
     parts: [PartMidi; MAX_PARTS],
     stepped: bool,
     seen: Seen,
+    reply: bool,
 }
 
 /// Nothing sensed: a named static, so its image is bank 2's.
@@ -201,6 +203,7 @@ impl MidiSlot {
                 }
                 core::ptr::addr_of_mut!((*m).stepped).write(false);
                 core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
+                core::ptr::addr_of_mut!((*m).reply).write(false);
             }
             self.built = true;
         }
@@ -354,6 +357,12 @@ impl UiState {
             self.cc_waiting(p, now);
         }
         for e in ev {
+            // A Device Inquiry asks nothing of the Sound: answered busy or
+            // not, two in a pass with one reply (`out`).
+            if let HeardEv::Ctrl(CtrlEvent::Identity { .. }) = e {
+                self.cc.ui().reply = true;
+                continue;
+            }
             if busy {
                 continue;
             }
