@@ -15,6 +15,9 @@ use chimera_core::out_ring::OutRing;
 use chimera_core::params::FilterParams;
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
+use chimera_core::ui::busy::ToastStep;
+use chimera_core::ui::learn::Learn;
+use chimera_hal::ButtonId::{Mix, Seq};
 use chimera_hal::{EncoderId, Ms};
 use chimera_midi::ctl::{Ctl, DataValue, Dir, FreeCc, Sel};
 use chimera_midi::value::{U7, U14};
@@ -86,6 +89,16 @@ fn closed_drains_and_moves_nothing() {
         ui.send_out(&ring);
     }
     assert_eq!(ring.pop_into(&mut sent), 0, "closed, nothing is sent");
+    // MIX + SEQ closed: learn never arms, so the knobs still edit, and
+    // the toast says why (spec § 7.3).
+    feed(&mut ui, Input::chord(Mix, Seq).at(10_000));
+    feed(&mut ui, Input::release(Seq).and_held(Mix).at(10_100));
+    assert_eq!(ui.learn(), Learn::Off, "closed, MIX + SEQ never arms");
+    match ui.step_toast(0) {
+        ToastStep::Show(l) => assert_eq!(l.as_str(), chimera_core::bank2::NEEDS_UPDATE),
+        s => panic!("no toast: {s:?}"),
+    }
+    feed(&mut ui, Input::release(Mix).at(10_133));
     // A hand's turn closed: nothing to stop, nothing breaks.
     feed(&mut ui, Input::turn(EncoderId::F, 1));
     let rev2 = ui.project().rev();

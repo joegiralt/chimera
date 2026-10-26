@@ -152,12 +152,16 @@ impl UiState {
     }
 
     /// MIX + SEQ: arms on a Part's page, never in SETTINGS; cancels when
-    /// armed.
+    /// armed. Bank 2 closed, it never arms: `NEEDS UPDATE` (spec § 7.3).
     #[cfg(feature = "midi-map")]
     #[cfg_attr(feature = "midi-map", inline(never))]
     pub(super) fn toggle_learn(&mut self) {
         let on_page = self.loc.settings().is_none() && self.loc.page(&self.cx()).is_some();
         self.learn = match self.learn {
+            Learn::Off if on_page && !super::cc::map_open() => {
+                self.show_boot_fault(crate::bank2::NEEDS_UPDATE);
+                Learn::Off
+            }
             Learn::Off if on_page => Learn::Armed {
                 part: self.active_part,
                 note: None,

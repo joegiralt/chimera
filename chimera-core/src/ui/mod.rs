@@ -683,7 +683,8 @@ impl UiState {
         }
     }
 
-    /// A start-up fault as a toast, held `Toast::BOOT_MS`.
+    /// A start-up fault, or closed bank 2's `NEEDS UPDATE` for learn, as a
+    /// toast held `Toast::BOOT_MS`.
     pub fn show_boot_fault(&mut self, text: &str) {
         self.toast.show(busy::Toast {
             text: Line::new(text),
