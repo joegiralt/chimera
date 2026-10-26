@@ -7,14 +7,22 @@
 use core::mem::MaybeUninit;
 
 use chimera_hal::Ms;
+use chimera_midi::ctl::Dir;
 
 use super::UiState;
 use super::fmt::FmtBuf;
-use super::learn::{Line, Sensed};
+use super::hint::{Gesture, Hint};
+use super::learn::{LearnNote, Line, Sensed};
 use super::midi::MidiUi;
+#[cfg(feature = "midi-map")]
+use super::settings::midi_map::MapText;
 use crate::addr::ParamAddr;
+#[cfg(feature = "midi-map")]
+use crate::dsp::voice_fx::params::FxType;
 use crate::hw::MAX_PARTS;
 use crate::midi_in::{HeardCc, HeardEv};
+#[cfg(feature = "midi-map")]
+use crate::midi_map::Binding;
 use crate::project::PartId;
 
 /// The MIDI UI's state: in AXI `.bss`, not in D2 with `UiState` (bench
@@ -95,6 +103,18 @@ impl MidiSlot {
 type SensedFn = fn(&UiState) -> Option<Sensed>;
 /// The door's `words`: `learn::words`, one of sensing's lines.
 type Words = fn(Sensed, &str, Line, &mut FmtBuf);
+/// The door's `note`: `learn::note_words`, learn's other words.
+type Note = fn(Option<LearnNote>, &str, &mut FmtBuf);
+
+/// The door's `map_in`: `UiState::map_in`, MIDI MAP's keys.
+#[cfg(feature = "midi-map")]
+type MapIn = fn(&mut UiState, [i8; 6], bool);
+/// The door's `map_text`: `page::text`, a binding's words on MIDI MAP.
+#[cfg(feature = "midi-map")]
+type MapTextFn = fn(&Binding, FxType, bool, &mut MapText);
+/// The door's `focus_note`: `UiState::focus_note`, the pickup hint's way.
+#[cfg(feature = "midi-map")]
+type FocusNote = fn(&UiState) -> Option<Dir>;
 
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
@@ -115,6 +135,13 @@ pub struct MidiUiDoor {
     hand: fn(&mut UiState, PartId, ParamAddr),
     sensed: SensedFn,
     words: Words,
+    note: Note,
+    #[cfg(feature = "midi-map")]
+    map_in: MapIn,
+    #[cfg(feature = "midi-map")]
+    map_text: MapTextFn,
+    #[cfg(feature = "midi-map")]
+    focus_note: FocusNote,
 }
 
 /// `MidiUiDoor`'s mark: a table at the slot that isn't this one fails the
@@ -135,6 +162,13 @@ impl MidiUiDoor {
         hand: UiState::hand_in,
         sensed: UiState::sensed_in,
         words: super::midi::learn::words,
+        note: super::midi::learn::note_words,
+        #[cfg(feature = "midi-map")]
+        map_in: UiState::map_in,
+        #[cfg(feature = "midi-map")]
+        map_text: super::midi::page::text,
+        #[cfg(feature = "midi-map")]
+        focus_note: UiState::focus_note,
     };
 }
 
@@ -204,8 +238,61 @@ impl UiState {
     }
 }
 
+#[cfg(feature = "midi-map")]
+impl UiState {
+    /// MIDI MAP's keys this pass: A to F's detents and MIX+MINUS
+    /// (`map_in`). Closed, nothing.
+    pub(super) fn map_keys(&mut self, d: [i8; 6], delete: bool) {
+        through(|t| (t.map_in)(self, d, delete));
+    }
+}
+
+impl UiState {
+    /// The focused cell's pickup, if one waits: the way the knob must go
+    /// (spec § 8.3, `focus_note`). Closed, or without `midi-map`, none.
+    pub fn pickup(&self) -> Option<Dir> {
+        #[cfg(feature = "midi-map")]
+        return through(|d| (d.focus_note)(self)).flatten();
+        #[cfg(not(feature = "midi-map"))]
+        None
+    }
+}
+
+/// MIDI MAP's words for `e`, its target `live`, into `out` (`map_text`).
+/// Closed, none.
+#[cfg(feature = "midi-map")]
+pub(super) fn map_text(e: &Binding, fx: FxType, live: bool, out: &mut MapText) {
+    through(|d| (d.map_text)(e, fx, live, out));
+}
+
+/// Whether bank 2 answers: closed, MIDI MAP reads `NEEDS UPDATE`.
+#[cfg(feature = "midi-map")]
+pub(super) fn map_open() -> bool {
+    through(|_| ()).is_some()
+}
+
+/// The pickup hint: which way the knob must turn till its binding takes
+/// the param (spec § 8.3).
+pub const PICKUP_UP: Hint = &[Gesture("MOVE THE KNOB UP", "TO PICK UP")];
+pub const PICKUP_DOWN: Hint = &[Gesture("MOVE THE KNOB DOWN", "TO PICK UP")];
+
+/// The pickup hint for `d`.
+pub fn pickup_hint(d: Dir) -> Hint {
+    match d {
+        Dir::Up => PICKUP_UP,
+        Dir::Down => PICKUP_DOWN,
+    }
+}
+
+/// Learn's words for `n` on the cell labelled `label` (`note`): armed,
+/// a refusal, sensing's guess. Closed, none.
+pub(super) fn learn_note(n: Option<LearnNote>, label: &str, out: &mut FmtBuf) {
+    through(|d| (d.note)(n, label, out));
+}
+
 /// Sensing's line `line` for `s` on the cell labelled `label`, into `out`
 /// (`learn::words`). Closed, none.
+#[cfg(feature = "midi-map")]
 pub(super) fn learn_words(s: Sensed, label: &str, line: Line, out: &mut FmtBuf) {
     through(|d| (d.words)(s, label, line, out));
 }

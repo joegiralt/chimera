@@ -5,8 +5,6 @@
 //! (ADR 0017), under the cell's own label. Bank 1 keeps the state and the
 //! band; hearing, sensing and the words are bank 2's (`ui::midi::learn`).
 
-use core::fmt::Write;
-
 use chimera_hal::{ALL_ENCODERS, Controls};
 
 use super::view::{self, View};
@@ -49,24 +47,9 @@ pub enum LearnNote {
 }
 
 impl LearnNote {
-    /// The band's words, `label` the cell's.
+    /// The band's words, `label` the cell's: bank 2's (`note_words`).
     pub fn text(&self, label: &str, out: &mut FmtBuf) {
-        let _ = match *self {
-            Self::NotMappable => write!(out, "{label} NOT MAPPABLE"),
-            Self::WrongChannel { cc, got, part } => write!(
-                out,
-                "CC {} ON CH {}, PART ON CH {}",
-                cc.get(),
-                got.get() + 1,
-                part.get() + 1
-            ),
-            Self::Reserved(cc) => write!(out, "CC {} RESERVED", cc.get()),
-            Self::Sensing(s) => {
-                super::cc::learn_words(s, label, Line::Words, out);
-                Ok(())
-            }
-            Self::Full => out.write_str("MAP FULL"),
-        };
+        super::cc::learn_note(Some(*self), label, out);
     }
 }
 
@@ -96,6 +79,10 @@ pub enum Line {
 /// MIX + SEQ ends sensing, once the guess is sure: the hint line's.
 #[cfg(feature = "midi-map")]
 pub const DONE: super::hint::Hint = &[super::hint::Gesture("MIX + SEQ", "DONE")];
+/// `DONE`'s width at NORMAL, px: what a BigViz status line must leave for
+/// it (`hint::width`, held by a test).
+#[cfg(feature = "midi-map")]
+pub const DONE_W: i32 = 101;
 
 /// Sensing's label line (spec § 8.1), `CC 21 → CUTOFF` on the cell
 /// labelled `label`, into `out`.
@@ -105,9 +92,9 @@ pub fn label_line(s: Sensed, label: &str, out: &mut FmtBuf) {
     super::cc::learn_words(s, label, Line::Label, out);
 }
 
-/// Armed, nothing heard yet.
+/// Armed, nothing heard yet: `MOVE A KNOB · CUTOFF` (bank 2's).
 pub fn armed_text(label: &str, out: &mut FmtBuf) {
-    let _ = write!(out, "MOVE A KNOB · {label}");
+    super::cc::learn_note(None, label, out);
 }
 
 impl UiState {

@@ -270,8 +270,67 @@ fn word(w: Word) -> &'static str {
     }
 }
 
+/// What learn says but for sensing (spec § 8.1's refusals, and armed).
+static NOTES: [u8; 74] =
+    *b" NOT MAPPABLE|CC | ON CH |, PART ON CH | RESERVED|MAP FULL|MOVE A KNOB \xc2\xb7 ";
+
+/// `NOTES`' words, in order.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum Note {
+    NotMappable,
+    Cc,
+    OnCh,
+    PartOnCh,
+    Reserved,
+    Full,
+    Armed,
+}
+
+/// `w`'s text in `NOTES`.
+#[inline(never)]
+fn note(w: Note) -> &'static str {
+    super::pick(&NOTES, w as u8)
+}
+
+/// Learn's words for `n` on the cell labelled `label`, into `out`: `None`
+/// armed, `MOVE A KNOB · CUTOFF`; a refusal; sensing's guess. The door's
+/// `note`.
+pub fn note_words(n: Option<LearnNote>, label: &str, out: &mut FmtBuf) {
+    let put = |out: &mut FmtBuf, w: Note| {
+        let _ = out.write_str(note(w));
+    };
+    let cc = |out: &mut FmtBuf, c: Cc| {
+        put(out, Note::Cc);
+        put_num(out, c.get());
+    };
+    match n {
+        None => {
+            put(out, Note::Armed);
+            let _ = out.write_str(label);
+        }
+        Some(LearnNote::NotMappable) => {
+            let _ = out.write_str(label);
+            put(out, Note::NotMappable);
+        }
+        Some(LearnNote::WrongChannel { cc: c, got, part }) => {
+            cc(out, c);
+            put(out, Note::OnCh);
+            put_num(out, got.get() + 1);
+            put(out, Note::PartOnCh);
+            put_num(out, part.get() + 1);
+        }
+        Some(LearnNote::Reserved(c)) => {
+            cc(out, c);
+            put(out, Note::Reserved);
+        }
+        Some(LearnNote::Sensing(s)) => words(s, label, Line::Words, out),
+        Some(LearnNote::Full) => put(out, Note::Full),
+    }
+}
+
 /// `n` in decimal.
-fn put_num(out: &mut FmtBuf, n: u8) {
+pub(super) fn put_num(out: &mut FmtBuf, n: u8) {
     let (h, t, o) = (n / 100, n / 10 % 10, n % 10);
     for (d, shown) in [(h, h > 0), (t, n >= 10), (o, true)] {
         if shown {

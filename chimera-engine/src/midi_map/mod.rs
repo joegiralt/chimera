@@ -316,7 +316,9 @@ impl MidiMap {
         }
     }
 
-    /// Replaces entry `i`. Out of range does nothing.
+    /// Replaces entry `i`. Out of range does nothing. Inlined: MIDI MAP's
+    /// keys, its caller, are bank 2's.
+    #[inline(always)]
     pub fn set(&mut self, i: usize, e: Binding) {
         if i < self.len() {
             self.entries[i] = e;

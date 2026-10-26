@@ -13,6 +13,8 @@
 #![cfg_attr(not(feature = "midi-map"), allow(dead_code))]
 
 pub mod learn;
+#[cfg(feature = "midi-map")]
+pub mod page;
 pub mod ramp;
 pub mod resolve;
 
@@ -228,6 +230,36 @@ impl MidiSlot {
             }
         }
     }
+}
+
+/// Word number `want` of `table`, its words `|` between: the bytes
+/// between its `|`s, none past the last. Checked, never failing. Bank 2's
+/// word tables are named statics, so their bytes are bank 2's, not
+/// anonymous string rodata left in bank 1. Inlined into one out-of-line
+/// reader a table: a shared callee's argument set-up is what the machine
+/// outliner pulls into bank 1 (ADR 0175).
+#[inline(always)]
+#[allow(clippy::manual_unwrap_or_default)]
+fn pick(table: &'static [u8], want: u8) -> &'static str {
+    let (mut n, mut start, mut k) = (0u8, 0usize, 0usize);
+    while k <= table.len() {
+        if k == table.len() || table[k] == b'|' {
+            if n == want {
+                // Matches, not `Option::map`: a core instance is bank 1's.
+                return match table.get(start..k) {
+                    Some(b) => match core::str::from_utf8(b) {
+                        Ok(s) => s,
+                        Err(_) => "",
+                    },
+                    None => "",
+                };
+            }
+            n += 1;
+            start = k + 1;
+        }
+        k += 1;
+    }
+    ""
 }
 
 /// `a`'s stored value on Part `p`.

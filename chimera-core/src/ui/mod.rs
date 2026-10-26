@@ -1014,7 +1014,15 @@ impl UiState {
                 Some(sc) => self.screen_rows(sc),
                 None => settings::rows(s.path()).len(),
             };
-            self.list_first = settings::view::first_visible(s.row() as usize, len, prev) as u8;
+            #[cfg(feature = "midi-map")]
+            let rows = match s.screen() {
+                Some(Screen::MidiMap) => settings::view::MAP_ROWS,
+                _ => settings::view::VISIBLE_ROWS,
+            };
+            #[cfg(not(feature = "midi-map"))]
+            let rows = settings::view::VISIBLE_ROWS;
+            let row = s.row() as usize;
+            self.list_first = settings::view::first_visible_of(row, len, prev, rows) as u8;
         }
         if let Some(p) = to.part() {
             self.active_part = p;
@@ -1766,7 +1774,7 @@ impl UiState {
         let mapping = self.screen() == Some(Screen::MidiMap);
         #[cfg(not(feature = "midi-map"))]
         let mapping = false;
-        // MIDI MAP's B, C and D edit the row under the bar.
+        // MIDI MAP's B to F edit the row under the bar.
         let a = list_turn(c, if mapping { &MAP_EDITS } else { &[] });
         let on_list = self.loc.settings().is_some_and(|s| s.at_leaf().is_none());
         if on_list && a != 0 {
@@ -3377,6 +3385,10 @@ impl UiState {
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.band_status(),
+            pickup: self
+                .pickup()
+                .filter(|_| self.theme.hints)
+                .map(cc::pickup_hint),
             pool: self.project.pool(),
             audio,
             card: self.card,
@@ -3793,9 +3805,15 @@ fn part_key(c: &impl Controls) -> bool {
             .any(|&b| c.button_state(b) == ButtonState::Pressed)
 }
 
-/// MIDI MAP's value encoders: CC, MIN, MAX.
+/// MIDI MAP's value encoders: CONTROL, MIN, MAX, INPUT, ECHO.
 #[cfg(feature = "midi-map")]
-const MAP_EDITS: [EncoderId; 3] = [EncoderId::B, EncoderId::C, EncoderId::D];
+const MAP_EDITS: [EncoderId; 5] = [
+    EncoderId::B,
+    EncoderId::C,
+    EncoderId::D,
+    EncoderId::E,
+    EncoderId::F,
+];
 #[cfg(not(feature = "midi-map"))]
 const MAP_EDITS: [EncoderId; 0] = [];
 

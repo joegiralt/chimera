@@ -23,6 +23,8 @@ use crate::project::{
 use crate::ui::components::HeaderStatus;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+#[cfg(feature = "midi-map")]
+use crate::ui::hint;
 use crate::ui::nav::{Column, SettingsAt};
 use crate::ui::region::settings_key;
 use crate::ui::theme;
@@ -31,6 +33,9 @@ use crate::ui::theme::{Face, TextSize};
 pub const LIST_TOP: i32 = 34;
 pub const ROW_H: i32 = 28;
 pub const VISIBLE_ROWS: usize = 8;
+/// MIDI MAP's rows: the bar's binding is spelled out beneath them.
+#[cfg(feature = "midi-map")]
+pub const MAP_ROWS: usize = 6;
 /// The footer takes the map's band.
 pub const FOOTER_TOP: i32 = theme::MAP_TOP;
 /// The PART strip, under the breadcrumb; PART's lists start below it.
@@ -345,7 +350,7 @@ fn draw_part_list<D: DrawTarget<Color = Rgb565>>(
     row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
     let c = Col { size, ..FULL };
-    draw_col(d, &c, PART_LIST_TOP, len, bar, 0, Bar::Keyed, row);
+    draw_col::<VISIBLE_ROWS, _>(d, &c, PART_LIST_TOP, len, bar, 0, Bar::Keyed, row);
 }
 
 /// MANAGE PROJECTS: `rows` on the left from `first`, the bar on `bar`;
@@ -372,11 +377,11 @@ fn draw_manage_rows<D: DrawTarget<Color = Rgb565>>(
     cmd: Option<u8>,
 ) {
     let held = if cmd.is_some() { Bar::Held } else { Bar::Keyed };
-    draw_col(d, &MANAGE_LIST, LIST_TOP, len, bar, first, held, row);
+    draw_col::<VISIBLE_ROWS, _>(d, &MANAGE_LIST, LIST_TOP, len, bar, first, held, row);
     let h = VISIBLE_ROWS as i32 * ROW_H - 4;
     draw::fill_rect(d, MANAGE_RULE_X, LIST_TOP, 1, h, theme::FAINT);
     let on = cmd.map_or(usize::MAX, usize::from);
-    draw_col(
+    draw_col::<VISIBLE_ROWS, _>(
         d,
         &MANAGE_CMDS,
         LIST_TOP,
@@ -398,11 +403,11 @@ pub fn draw_rows<D: DrawTarget<Color = Rgb565>>(
     row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
     let c = Col { size, ..FULL };
-    draw_col(d, &c, LIST_TOP, len, bar, first, Bar::Keyed, row);
+    draw_col::<VISIBLE_ROWS, _>(d, &c, LIST_TOP, len, bar, first, Bar::Keyed, row);
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_col<D: DrawTarget<Color = Rgb565>>(
+fn draw_col<const N: usize, D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     c: &Col,
     top: i32,
@@ -412,16 +417,17 @@ fn draw_col<D: DrawTarget<Color = Rgb565>>(
     on: Bar,
     mut row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
-    for i in (first..len).take(VISIBLE_ROWS) {
+    let n = N;
+    for i in (first..len).take(n) {
         let y = top + (i - first) as i32 * ROW_H;
         let b = if i == bar { on } else { Bar::Off };
         row(i, &mut |r| draw_row(d, c, &r, y, b));
     }
-    if len > VISIBLE_ROWS {
-        let h = VISIBLE_ROWS as i32 * ROW_H - 4;
+    if len > n {
+        let h = n as i32 * ROW_H - 4;
         draw::fill_rect(d, c.scroll, top, 2, h, theme::FAINT);
-        let thumb = (h * VISIBLE_ROWS as i32 / len as i32).max(8);
-        let max_first = len - VISIBLE_ROWS;
+        let thumb = (h * n as i32 / len as i32).max(8);
+        let max_first = len - n;
         let y = top + (h - thumb) * first.min(max_first) as i32 / max_first as i32;
         draw::fill_rect(d, c.scroll, y, 2, thumb, theme::MID);
     }
@@ -507,13 +513,47 @@ fn fit<'s>(c: &Col, s: &'s str, w: i32) -> &'s str {
     &s[..end]
 }
 
+/// MIDI MAP's bar spelled out under its rows (spec § 8.2): the input in
+/// full words over two lines, then MIN, MAX and ECHO beside their keys,
+/// then B's and E's hint.
+#[cfg(feature = "midi-map")]
+fn draw_map_focus<D: DrawTarget<Color = Rgb565>>(d: &mut D, t: &super::midi_map::MapText) {
+    let (x, tr) = (theme::MARGIN_X, theme::LABEL_TRACKING);
+    let y = |line: i32| LIST_TOP + MAP_ROWS as i32 * ROW_H + 12 + line * 14;
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL_BOLD,
+        t.head.as_str(),
+        x,
+        y(0),
+        theme::INK,
+        tr,
+    );
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL,
+        t.tail.as_str(),
+        x,
+        y(1),
+        theme::MID,
+        tr,
+    );
+    hint::draw(d, &t.values(), x, y(2));
+    hint::draw(d, t.hint(), x, y(3));
+}
+
 /// The first row shown: `prev_first` while the bar stays on screen, else
 /// just enough scroll to show it.
 pub fn first_visible(bar: usize, len: usize, prev_first: usize) -> usize {
+    first_visible_of(bar, len, prev_first, VISIBLE_ROWS)
+}
+
+/// `first_visible` for a list showing `rows` at once.
+pub fn first_visible_of(bar: usize, len: usize, prev_first: usize, rows: usize) -> usize {
     prev_first
-        .min(len.saturating_sub(VISIBLE_ROWS))
+        .min(len.saturating_sub(rows))
         .min(bar)
-        .max((bar + 1).saturating_sub(VISIBLE_ROWS))
+        .max((bar + 1).saturating_sub(rows))
 }
 
 /// A Part against its slot, as the PART strip says it (Pre-flight 19).
@@ -797,7 +837,7 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::ManageLater, _) => "LATER · MENU LIST",
         (L::Load, _) => "EDIT LOAD · MENU BACK",
         #[cfg(feature = "midi-map")]
-        (L::Map, _) => "AEF MOVE · BCD EDIT · MIX+MINUS DEL",
+        (L::Map, _) => "A MOVE · MIX+MINUS DELETES",
     }
 }
 
@@ -876,7 +916,7 @@ impl Bands<'_> {
             (Some(Screen::SceneSaveTo), _) => return legend(LegendFor::Action, false),
             #[cfg(feature = "midi-map")]
             (Some(Screen::MidiMap), _) => {
-                let rows = self.map.is_some_and(|m| !m.map.is_empty());
+                let rows = self.map.is_some_and(|m| m.open && !m.map.is_empty());
                 return legend(
                     if rows {
                         LegendFor::Map
@@ -1056,47 +1096,64 @@ impl Bands<'_> {
         );
     }
 
-    /// MIDI MAP's rows, or the empty page's one.
+    /// MIDI MAP's rows and, beneath, the bar's binding spelled out; the
+    /// empty page's words; closed, `NEEDS UPDATE`.
     #[cfg(feature = "midi-map")]
     fn draw_map<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, m: &super::midi_map::MapBand) {
-        if m.map.is_empty() {
-            // Two rows: the one line outruns the list's width.
-            return draw_rows(d, 2, usize::MAX, 0, self.text, |i, f| {
+        // Closed, or empty (two rows: the one line outruns the list).
+        let note: &[&str] = match m.open {
+            false => &[crate::bank2::NEEDS_UPDATE],
+            true => &["NO CCS", "MIX+SEQ ON A CELL"],
+        };
+        if !m.open || m.map.is_empty() {
+            return draw_rows(d, note.len(), usize::MAX, 0, self.text, |i, f| {
                 f(ListRow {
-                    label: ["NO CCS", "MIX+SEQ ON A CELL"][i],
+                    label: note[i],
                     opens: false,
                     note: None,
                     look: RowLook::Dimmed,
                 })
             });
         }
-        draw_rows(
+        let bar = self.at.row() as usize;
+        let c = Col {
+            size: self.text,
+            ..FULL
+        };
+        draw_col::<MAP_ROWS, _>(
             d,
+            &c,
+            LIST_TOP,
             m.map.len(),
-            self.at.row() as usize,
+            bar,
             self.first,
-            self.text,
+            Bar::Keyed,
             |i, f| {
-                let r = m.row(i);
+                let t = m.text(i);
                 f(ListRow {
-                    label: r.label.as_str(),
+                    label: t.label.as_str(),
                     opens: false,
-                    note: Some(r.range.as_str()),
-                    look: r.look,
+                    note: Some(t.word.as_str()),
+                    look: m.look(i),
                 })
             },
         );
+        if bar < m.map.len() {
+            draw_map_focus(d, &m.text(bar));
+        }
     }
 
-    /// The map's rows as one number, for the list's region key.
+    /// The map's rows as one number, for the list's region key (each
+    /// row's words, the bar's lines among them, bank 2's `MapText::key`);
+    /// closed, 1.
     #[cfg(feature = "midi-map")]
     fn map_key(&self) -> u32 {
         let Some(m) = &self.map else { return 0 };
-        (0..m.map.len()).fold(m.map.len() as u32, |h, i| {
-            let r = m.row(i);
-            let k = settings_key(&[r.label.as_str().as_bytes(), r.range.as_str().as_bytes()]);
-            h.rotate_left(7) ^ k
-        })
+        if !m.open {
+            return 1;
+        }
+        let n = m.map.len();
+        (0..n).fold(n as u32, |h, i| h.rotate_left(7) ^ m.text(i).key)
     }
 
     /// The PART strip, then PART's rows or SAVE TO PROJ's.

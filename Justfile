@@ -224,9 +224,10 @@ check-door-placed elf:
         done
     fi
     # The MIDI UI's door entries always link; whatever of `ui::midi` the
-    # inliner leaves out of them is checked too.
+    # inliner leaves out of them is checked too, and MIDI MAP's entries
+    # where `midi-map` links them.
     midi_ui=('ui::UiState>::hear_in$' 'ui::UiState>::hand_in$')
-    for p in 'ui::midi::' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
+    for p in 'ui::midi::' 'ui::UiState>::map_in$' 'ui::UiState>::focus_note$' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
         if grep -qE " [tT] .*$p" <<< "$syms"; then midi_ui+=("$p"); fi
     done
     for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on'; do
@@ -377,7 +378,7 @@ check:
     # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's, ALGO's and the streamed loads' bank-1 sides through the host's own door.
     cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test --test algo_door_test --test modal_door_test --test midi_door_test
     # ORBIT's runner and pages through the host's own door: open it plays as before the move, closed nothing (ADR 0208).
-    cargo test -p chimera-core --features bank2 --test orbit_door_test --test midi_ui_door_test
+    cargo test -p chimera-core --features bank2 --test orbit_door_test --test midi_ui_door_test --test midi_map_door_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features

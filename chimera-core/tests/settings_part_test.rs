@@ -536,9 +536,12 @@ mod midi_map {
         feed(ui, Input::turn(e, d));
     }
 
+    /// Row `i`'s label, its range as the bar's lines give it, its look.
     fn text(ui: &UiState, i: usize) -> (String, String, RowLook) {
-        let r = ui.map_band().row(i);
-        (r.label.as_str().into(), r.range.as_str().into(), r.look)
+        let b = ui.map_band();
+        let t = b.text(i);
+        let range = format!("{}-{}", t.min.as_str(), t.max.as_str());
+        (t.label.as_str().into(), range, b.look(i))
     }
 
     #[test]
@@ -677,7 +680,7 @@ mod midi_map {
     }
 }
 
-/// MIDI MAP's rows follow A, E and F; B, C and D edit the row (#561).
+/// MIDI MAP's rows follow A; B to F edit the row (#561, spec § 8.2).
 #[cfg(feature = "midi-map")]
 mod midi_map_bar {
     use super::*;
@@ -686,7 +689,7 @@ mod midi_map_bar {
     use chimera_core::params::FilterParams;
 
     #[test]
-    fn a_e_and_f_move_the_bar_b_c_d_edit() {
+    fn a_moves_the_bar_b_to_f_edit() {
         let mut ui = UiState::new();
         let (cc, target) = (
             chimera_core::midi_map::Input::cc(74).unwrap(),
@@ -699,13 +702,18 @@ mod midi_map_bar {
         feed(&mut ui, Input::press(ButtonId::Edit));
         let row = |ui: &UiState| ui.location().settings().unwrap().row();
         let rev = ui.project().rev();
-        for id in [EncoderId::A, EncoderId::E, EncoderId::F] {
-            feed(&mut ui, Input::turn(id, 1));
-            assert_eq!(row(&ui), 0, "one row: it wraps, {id:?}");
-        }
+        feed(&mut ui, Input::turn(EncoderId::A, 1));
+        assert_eq!(row(&ui), 0, "one row: it wraps");
         assert_eq!(ui.project().rev(), rev, "the bar edits nothing");
-        // MIN sits at 0 and MAX at 255: C turns up, D down.
-        for (id, d) in [(EncoderId::B, 1), (EncoderId::C, 1), (EncoderId::D, -1)] {
+        // MIN sits at 0 and MAX at 255: C turns up, D down; E steps the
+        // input, F turns the echo on.
+        for (id, d) in [
+            (EncoderId::B, 1),
+            (EncoderId::C, 1),
+            (EncoderId::D, -1),
+            (EncoderId::E, 1),
+            (EncoderId::F, 1),
+        ] {
             let before = ui.project().rev();
             feed(&mut ui, Input::turn(id, d));
             assert_ne!(ui.project().rev(), before, "{id:?} edits");

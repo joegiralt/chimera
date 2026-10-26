@@ -56,6 +56,7 @@ whatever the last frame left.
 | ![](algo_alg_morph_dimmed.png) | ALG | ALG B = ALG A: MORPH focused and dimmed |
 | ![](algo_out_p3.png) | ALG | Part 1 sent to P3: the OUT warning on its sound pages |
 | ![](algo_pitch.png) | ALG › PIT | PITCH +7, FINE −25; STEAL CUT, GLIDE TIME |
+| ![](pickup_hint.png) | ALG › PIT | FINE bound to a PICKUP CC heard below it: the band says which way to turn |
 | ![](algo_pit_glide.png) | ALG › PIT | STEAL at GLIDE |
 | ![](algo_wave.png) | OSC | Operator waves, op 2 a few steps in |
 | ![](algo_crs.png) | OSC › CRS | Coarse ratio, ops 1–6 |
@@ -182,6 +183,7 @@ in-memory card.
 | ![](settings_part.png) | PART | The active Part's strip and its actions |
 | ![](settings_part_save_to.png) | PART › SAVE TO | Part 1 edited from SLOT 03: OVER SLOT 03, TO NEW SLOT |
 | ![](settings_part_rename.png) | PART › RENAME | NAMING the Part's Sound |
+| ![](midi_map_mixed.png) | PART › MIDI MAP | A CC, a 14-bit pair, an NRPN, pressure, a dead target, a relative encoder; the bar's binding spelled out beneath |
 | ![](settings_midi.png) | MIDI | SYNC and PORT later, CHANNELS |
 | ![](settings_audio.png) | AUDIO | OUTPUTS, SENDS later, TUNING |
 | ![](settings_personal.png) | PERSONAL | THEME |
