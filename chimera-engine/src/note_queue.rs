@@ -30,7 +30,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use chimera_hal::MidiMessage;
+use chimera_midi::stream::{ChannelMode as StreamMode, Voice};
 
 use crate::{MidiChannel, MidiNote, Velocity};
 
@@ -155,58 +155,47 @@ const KIND_MODE: usize = KIND_SUSTAIN + 1;
 const _: () = assert!(KIND_MODE < 8);
 /// The CC that is the sustain pedal.
 const CC_SUSTAIN: u8 = 64;
-const CC_SOUND_OFF: u8 = 120;
-const CC_RESET: u8 = 121;
-const CC_NOTES_OFF: u8 = 123;
 
 impl InEvent {
-    /// Notes, pitch bend, the sustain pedal and real-time. Every other CC
-    /// is the Part's MIDI map's (#247), never a global chart: not queued.
-    pub fn from_midi(msg: MidiMessage) -> Option<Self> {
-        Some(match msg {
-            MidiMessage::NoteOn {
+    /// The note path's share of a layer-1 voice message: notes, bend and
+    /// the pedal (CC 64). Everything else is layer 2's.
+    pub fn from_event(channel: MidiChannel, v: &Voice) -> Option<Self> {
+        Some(match *v {
+            Voice::NoteOn { key, vel } => InEvent::Note(NoteEvent {
                 channel,
-                note,
-                velocity,
-            } => InEvent::Note(NoteEvent {
-                channel,
-                note,
-                kind: NoteKind::On(velocity),
+                note: key,
+                kind: NoteKind::On(vel),
             }),
-            MidiMessage::NoteOff { channel, note, .. } => InEvent::Note(NoteEvent {
+            Voice::NoteOff { key, .. } => InEvent::Note(NoteEvent {
                 channel,
-                note,
+                note: key,
                 kind: NoteKind::Off,
             }),
-            MidiMessage::Clock => InEvent::Rt(RealTime::Clock),
-            MidiMessage::Start => InEvent::Rt(RealTime::Start),
-            MidiMessage::Continue => InEvent::Rt(RealTime::Continue),
-            MidiMessage::Stop => InEvent::Rt(RealTime::Stop),
-            MidiMessage::PitchBend { channel, value } => {
-                InEvent::Bend(BendEvent { channel, value })
-            }
-            MidiMessage::ControlChange {
+            Voice::PitchBend(b) => InEvent::Bend(BendEvent {
                 channel,
-                cc: CC_SUSTAIN,
-                value,
-            } => InEvent::Sustain(SustainEvent {
-                channel,
-                down: value >= 64,
+                value: b.get(),
             }),
-            MidiMessage::ControlChange { channel, cc, .. }
-                if matches!(cc, CC_SOUND_OFF | CC_RESET | CC_NOTES_OFF) =>
-            {
-                InEvent::Mode(ChannelModeEvent {
+            Voice::Control { cc, value } if cc.get() == CC_SUSTAIN => {
+                InEvent::Sustain(SustainEvent {
                     channel,
-                    mode: match cc {
-                        CC_SOUND_OFF => ChannelMode::SoundOff,
-                        CC_RESET => ChannelMode::ResetControllers,
-                        _ => ChannelMode::NotesOff,
-                    },
+                    down: value.get() >= 64,
                 })
             }
-            MidiMessage::ControlChange { .. } => return None,
+            _ => return None,
         })
+    }
+
+    /// Channel mode: 120 sound off, 121 reset, 123-127 notes off (the Omni
+    /// and Mono/Poly switches release held keys, as the Parts have no
+    /// modes); 122 local control is nothing here.
+    pub fn from_mode(channel: MidiChannel, m: StreamMode) -> Option<Self> {
+        let mode = match m {
+            StreamMode::AllSoundOff => ChannelMode::SoundOff,
+            StreamMode::ResetAllControllers => ChannelMode::ResetControllers,
+            StreamMode::LocalControl(_) => return None,
+            _ => ChannelMode::NotesOff,
+        };
+        Some(InEvent::Mode(ChannelModeEvent { channel, mode }))
     }
 
     /// A note packs as `NoteEvent::pack`, kind 0.
@@ -322,7 +311,7 @@ impl NoteQueue {
     fn push(&self, ev: InEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
-        // A velocity-0 note-on is an `Off` already (`unpack`, `from_midi`).
+        // A velocity-0 note-on is an `Off` already (`unpack`, `from_event`).
         // A pedal up and a channel-mode message are let through as well:
         // dropped, they leave notes stuck.
         let note_off = matches!(

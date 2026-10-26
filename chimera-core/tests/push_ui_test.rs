@@ -79,10 +79,7 @@ fn tap(ui: &mut UiState, e: EncoderId) {
 /// then MINUS from SENDS), or on SENDS.
 fn ui(on: bool, part_page: bool) -> Box<UiState> {
     let mut ui = Box::new(UiState::new());
-    ui.set_midi(MidiSettings {
-        push: on,
-        ..MidiSettings::DEFAULT
-    });
+    ui.set_midi(MidiSettings::DEFAULT.with_push(on));
     screen::feed(&mut ui, screen::Input::chord(ButtonId::Mix, ButtonId::B1));
     if part_page {
         screen::feed(&mut ui, screen::Input::press(ButtonId::Minus));

@@ -59,6 +59,8 @@ usage: chimera-utils [flags] COMMAND …
   bank2-seal --check BIN BK2
                            fail unless the .bk2's seal is the .bin's
   door-check ELF           fail on any bank-1 relocation into bank 2
+  nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
+                           and ranges
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
   grain-listen OUTDIR      the delay's TAPE against GRAIN (ADR 0202): pluck, stab and
@@ -238,6 +240,13 @@ fn run() -> Result<bool, String> {
             bank2::seal_files(&rest[0], &rest[1], &rest[2], &v).map(|_| true)
         }
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
+        "nrpn-chart" => {
+            use std::io::Write;
+            // A closed pipe (`| head`) ends the listing, not the tool.
+            let mut out = std::io::stdout().lock();
+            let _ = chimera_core::nrpn::chart().try_for_each(|l| writeln!(out, "{}", l.labelled()));
+            Ok(true)
+        }
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
         "grain-listen" => grain_listen::run(rest).map(|_| true),

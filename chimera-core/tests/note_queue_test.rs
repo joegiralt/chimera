@@ -6,7 +6,8 @@ use chimera_core::note_queue::{
     NoteSources, RealTime, SourceId,
 };
 use chimera_core::{MidiChannel, MidiNote, Velocity};
-use chimera_hal::MidiMessage;
+use chimera_midi::stream::{Ctrl, Voice};
+use chimera_midi::value::{Bend, U7, U14};
 
 fn ev(ch: u8, note: u8, vel: u8) -> NoteEvent {
     NoteEvent {
@@ -23,33 +24,32 @@ fn ev(ch: u8, note: u8, vel: u8) -> NoteEvent {
 fn notes_bend_pedal_and_real_time_are_queued() {
     let c = MidiChannel::new(4).unwrap();
     let n = MidiNote::new(60).unwrap();
-    let on = MidiMessage::NoteOn {
-        channel: c,
-        note: n,
-        velocity: Velocity::MAX,
+    let u7 = |v| U7::new(v).unwrap();
+    let control = |cc, value| Voice::Control {
+        cc: Ctrl::new(cc).unwrap(),
+        value: u7(value),
     };
-    let off = MidiMessage::NoteOff {
-        channel: c,
-        note: n,
-        velocity: 64,
+    let on = Voice::NoteOn {
+        key: n,
+        vel: Velocity::MAX,
     };
-    assert_eq!(InEvent::from_midi(on), Some(InEvent::Note(ev(4, 60, 127))));
-    assert_eq!(InEvent::from_midi(off), Some(InEvent::Note(ev(4, 60, 0))));
+    let off = Voice::NoteOff {
+        key: n,
+        vel: u7(64),
+    };
     assert_eq!(
-        InEvent::from_midi(MidiMessage::ControlChange {
-            channel: c,
-            cc: 1,
-            value: 2
-        }),
-        None
+        InEvent::from_event(c, &on),
+        Some(InEvent::Note(ev(4, 60, 127)))
     );
+    assert_eq!(
+        InEvent::from_event(c, &off),
+        Some(InEvent::Note(ev(4, 60, 0)))
+    );
+    assert_eq!(InEvent::from_event(c, &control(1, 2)), None);
     // Pitch bend and the pedal are queued; every other CC is the Part's
     // MIDI map's (#247).
     assert_eq!(
-        InEvent::from_midi(MidiMessage::PitchBend {
-            channel: c,
-            value: -8192
-        }),
+        InEvent::from_event(c, &Voice::PitchBend(Bend::from_u14(U14::new(0).unwrap()))),
         Some(InEvent::Bend(chimera_core::note_queue::BendEvent {
             channel: c,
             value: -8192
@@ -57,27 +57,15 @@ fn notes_bend_pedal_and_real_time_are_queued() {
     );
     for (value, down) in [(0, false), (63, false), (64, true), (127, true)] {
         assert_eq!(
-            InEvent::from_midi(MidiMessage::ControlChange {
-                channel: c,
-                cc: 64,
-                value
-            }),
+            InEvent::from_event(c, &control(64, value)),
             Some(InEvent::Sustain(chimera_core::note_queue::SustainEvent {
                 channel: c,
                 down
             }))
         );
     }
-    for cc in [0, 1, 7, 10, 63, 65, 119, 122, 124] {
-        assert_eq!(
-            InEvent::from_midi(MidiMessage::ControlChange {
-                channel: c,
-                cc,
-                value: 100
-            }),
-            None,
-            "CC {cc}"
-        );
+    for cc in [0, 1, 7, 10, 63, 65, 119] {
+        assert_eq!(InEvent::from_event(c, &control(cc, 100)), None, "CC {cc}");
     }
 }
 

@@ -196,6 +196,8 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     #[cfg(feature = "midi-din")]
     let _midi_rx = gpiob.pb7.into_alternate::<7>();
+    #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+    let _midi_tx = gpiob.pb6.into_alternate::<7>();
     // The board's strap before its HC165 pins (ADR 0140): PD0..PD3 pulled
     // up, left to settle, read once. They stay pulled-up inputs.
     let straps = (
@@ -361,9 +363,25 @@ pub struct AudioStart<'a> {
     pub streams: chimera_core::stream::ring::AudioSide<'static>,
     #[cfg(feature = "midi-din")]
     pub din: chimera_core::note_queue::NoteProducer<'static>,
-    /// MIDI DIN's CCs: the ISR pushes, the UI drains (MIDI map spec § 1).
+    /// MIDI DIN's controllers: the ISR pushes, the UI drains (MIDI map
+    /// spec § 1).
     #[cfg(feature = "midi-din")]
-    pub din_ccs: &'static chimera_core::midi_in::CcRing,
+    pub din_ctrl: &'static chimera_core::midi_in::CtrlRing,
+    /// DIN OUT's bytes: the UI pushes, the ISR pops into the TX FIFO.
+    #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+    pub din_out: &'static chimera_core::out_ring::OutRing,
+}
+
+/// DIN OUT's pass: what the UI queued, then the USART1 handler pended to
+/// send it (it disarms itself once the ring is empty). Out of line, so
+/// the loop around it keeps its shape.
+#[cfg(all(feature = "midi-din", feature = "midi-map"))]
+#[inline(never)]
+fn din_out(ui: &mut chimera_core::ui::UiState, out: &chimera_core::out_ring::OutRing) {
+    ui.send_out(out);
+    if !out.is_empty() {
+        cortex_m::peripheral::NVIC::pend(pac::Interrupt::USART1);
+    }
 }
 
 /// The binary's audio side, which the start-up calls at its steps. Plain
@@ -469,14 +487,6 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause, board_id);
 
     let mut controls = Stm32Controls::new();
-    let ui = shared::take_ui().expect("UI state taken once");
-    // A build without bank 2 plays TAPE and the reverb from bank 1: no
-    // status, so nothing reads NEEDS UPDATE (ADR 0141).
-    if cfg!(feature = "bank2") {
-        ui.set_bank2(bank2.status);
-    }
-    ui.project_mut().set_gate_clock(gate_ms);
-
     // Start-up, in order, behind the splash until PART 1 can be drawn:
     // 1. SYSTEM and the last project from the card, however slow;
     // 2. the controls tick, the audio and MIDI DIN;
@@ -501,14 +511,6 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (mut streams, mut card_side) = shared::ring_sides().expect("ring sides taken once");
     #[cfg(not(all(feature = "bench", feature = "bench-tape")))]
     let _card_irq = start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
-    // Streamed sources' files go in the registry for the card (slice 1
-    // § 5.5), if its interrupt runs: else no row is lent, and a source too
-    // big for the arena reads STREAMS FULL, not a silent stream. A bench
-    // build's beds keep its rows to themselves.
-    #[cfg(not(feature = "bench"))]
-    if let Some(r) = shared::registry().filter(|_| _card_irq) {
-        ui.project_mut().set_streams(r);
-    }
     let mut card = Card::new();
     // No card or a card fault shows at the project's boot; a SYSTEM
     // file that can't be read still applies the defaults silently:
@@ -516,11 +518,30 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     // A staged bank 2 this build can open, installed behind DON'T POWER
     // OFF before the project, which may play from it.
+    #[cfg_attr(not(feature = "bank2"), allow(unused_mut))]
+    let mut status = bank2.status;
     #[cfg(feature = "bank2")]
     if let Some(flash) = &bank2.install_over
         && let Some(now) = bank2::boot_install(store, &mut display, &marker, flash, clk.cpu_hz)
     {
-        ui.set_bank2(now);
+        status = now;
+    }
+    // Then the UI and NEW, so an install's door is open for NEW's maps:
+    // built closed, they decode empty and NEW's template reads Modified.
+    let ui = shared::take_ui().expect("UI state taken once");
+    // A build without bank 2 plays TAPE and the reverb from bank 1: no
+    // status, so nothing reads NEEDS UPDATE (ADR 0141).
+    if cfg!(feature = "bank2") {
+        ui.set_bank2(status);
+    }
+    ui.project_mut().set_gate_clock(gate_ms);
+    // Streamed sources' files go in the registry for the card (slice 1
+    // § 5.5), if its interrupt runs: else no row is lent, and a source too
+    // big for the arena reads STREAMS FULL, not a silent stream. A bench
+    // build's beds keep its rows to themselves.
+    #[cfg(not(feature = "bench"))]
+    if let Some(r) = shared::registry().filter(|_| _card_irq) {
+        ui.project_mut().set_streams(r);
     }
     ui.set_theme(settings.theme);
     ui.set_midi(settings.midi);
@@ -597,7 +618,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     )]
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
     #[cfg(feature = "midi-din")]
-    let cc_din = shared::take_cc_din().expect("DIN CC ring taken once");
+    let ctrl_din = shared::take_ctrl_din().expect("DIN control ring taken once");
+    #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+    let out_din = shared::take_out_din().expect("DIN out ring taken once");
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -615,7 +638,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             .take(shared::DIN)
             .expect("DIN producer taken once"),
         #[cfg(feature = "midi-din")]
-        din_ccs: cc_din,
+        din_ctrl: ctrl_din,
+        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+        din_out: out_din,
     });
 
     marker.stage(BootStage::Audio);
@@ -733,7 +758,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(not(feature = "usb-console"))]
         let installed = false;
         // SYSTEM's PUSH ENCODERS as last edited: off, the read stays 24 bits.
-        controls::set_push(ui.midi().push);
+        controls::set_push(ui.push_encoders());
         // The console's `key` and `turn`, at the scan's level.
         #[cfg(feature = "usb-console")]
         controls::hand(
@@ -748,9 +773,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // Mapped CCs, in the room the hand's moves left. No bench run plays
-        // a controller: bench firmware leaves the MIDI map out (FLASH, #507).
+        // a controller: bench firmware leaves the MIDI map out (FLASH, #507)
+        // and drops the ring unread, so it never fills.
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        ui.hear_ccs(cc_din.drain(), controls::now_ms(), shared_w.taken());
+        ui.hear_ccs(ctrl_din.drain(), controls::now_ms(), shared_w.taken());
+        #[cfg(all(feature = "midi-din", not(feature = "midi-map")))]
+        ctrl_din.clear();
+        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+        din_out(ui, out_din);
         // SYSTEM synced first: a THEME change made in this visit is kept.
         if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
             dfu::enter(&marker, dfu::DfuFrom::Menu(yes));

@@ -1,8 +1,9 @@
-//! MIDI learn (MIDI map spec § 4): MIX+SEQ arms on the focused cell; the
-//! first CC on the Part's channel maps to it. What learn says, it says in
-//! the focus band (ADR 0017), under the cell's own label.
-
-use core::fmt::Write;
+//! MIDI learn (MIDI map spec § 4, phase 1 § 6.3): MIX+SEQ arms on the
+//! focused cell; the first control on the Part's channel maps to it, and
+//! learn senses its kind from what it sends till MIX+SEQ, a nav key, a page
+//! change or a turn ends it. What learn says, it says in the focus band
+//! (ADR 0017), under the cell's own label. Bank 1 keeps the state and the
+//! band; hearing, sensing and the words are bank 2's (`ui::midi::learn`).
 
 use chimera_hal::{ALL_ENCODERS, Controls};
 
@@ -10,9 +11,6 @@ use super::view::{self, View};
 use super::{PrimeStatus, UiState};
 use crate::MidiChannel;
 use crate::midi_in::Cc;
-#[cfg(feature = "midi-map")]
-use crate::midi_in::CcEvent;
-#[cfg(feature = "midi-map")]
 use crate::midi_map::Mappable;
 use crate::project::PartId;
 use crate::ui::fmt::FmtBuf;
@@ -26,17 +24,9 @@ pub enum Learn {
         part: PartId,
         note: Option<LearnNote>,
     },
-}
-
-impl Learn {
-    /// Armed: on which Part, and the last refusal. Never without
-    /// `midi-map`, so every path past the arm folds away.
-    pub fn armed(self) -> Option<(PartId, Option<LearnNote>)> {
-        match self {
-            Learn::Armed { part, note } if cfg!(feature = "midi-map") => Some((part, note)),
-            _ => None,
-        }
-    }
+    /// Part `part`'s map entry `entry` is the control heard, its kind
+    /// sensed from what it sends (the samples bank 2's, in AXI).
+    Sensing { part: PartId, entry: u8 },
 }
 
 /// What a learn heard or found.
@@ -50,33 +40,61 @@ pub enum LearnNote {
         part: MidiChannel,
     },
     Reserved(Cc),
-    Mapped(Cc),
+    /// Sensing the control heard: `TURN IT RIGHT, THEN LEFT`, then the guess.
+    Sensing(Sensed),
     /// Sixteen entries, the cell's param not among them.
     Full,
 }
 
 impl LearnNote {
-    /// The band's words, `label` the cell's.
+    /// The band's words, `label` the cell's: bank 2's (`note_words`).
     pub fn text(&self, label: &str, out: &mut FmtBuf) {
-        let _ = match *self {
-            Self::NotMappable => write!(out, "{label} NOT MAPPABLE"),
-            Self::WrongChannel { cc, got, part } => write!(
-                out,
-                "CC {} ON CH {}, PART ON CH {}",
-                cc.get(),
-                got.get() + 1,
-                part.get() + 1
-            ),
-            Self::Reserved(cc) => write!(out, "CC {} RESERVED", cc.get()),
-            Self::Mapped(cc) => write!(out, "CC {} → {label}", cc.get()),
-            Self::Full => out.write_str("MAP FULL"),
-        };
+        super::cc::learn_note(Some(*self), label, out);
     }
 }
 
-/// Armed, nothing heard yet.
+/// What sensing has made of the control: the entry's input as guessed and
+/// whether the guess is sure, packed in three bytes so the band's status
+/// stays as small as learn's other notes. Bank 2 packs and reads it
+/// (`Sensed::new`, `input`, in `ui::midi::learn`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sensed(pub(super) [u8; 3]);
+
+impl Sensed {
+    #[inline(always)]
+    pub fn sure(self) -> bool {
+        self.0[0] & 1 != 0
+    }
+}
+
+/// Which of sensing's lines `learn::words` writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Line {
+    /// `CC 21 → CUTOFF`.
+    Label,
+    /// `TURN IT RIGHT, THEN LEFT`, or the guess in words.
+    Words,
+}
+
+/// MIX + SEQ ends sensing, once the guess is sure: the hint line's.
+#[cfg(feature = "midi-map")]
+pub const DONE: super::hint::Hint = &[super::hint::Gesture("MIX + SEQ", "DONE")];
+/// `DONE`'s width at NORMAL, px: what a BigViz status line must leave for
+/// it (`hint::width`, held by a test).
+#[cfg(feature = "midi-map")]
+pub const DONE_W: i32 = 101;
+
+/// Sensing's label line (spec § 8.1), `CC 21 → CUTOFF` on the cell
+/// labelled `label`, into `out`.
+#[cfg(feature = "midi-map")]
+#[inline(always)]
+pub fn label_line(s: Sensed, label: &str, out: &mut FmtBuf) {
+    super::cc::learn_words(s, label, Line::Label, out);
+}
+
+/// Armed, nothing heard yet: `MOVE A KNOB · CUTOFF` (bank 2's).
 pub fn armed_text(label: &str, out: &mut FmtBuf) {
-    let _ = write!(out, "MOVE A KNOB · {label}");
+    super::cc::learn_note(None, label, out);
 }
 
 impl UiState {
@@ -85,21 +103,29 @@ impl UiState {
     }
 
     /// The focused cell's param, if a CC may drive it.
-    #[cfg(feature = "midi-map")]
-    fn learn_target(&self) -> Option<Mappable> {
+    pub(super) fn learn_target(&self) -> Option<Mappable> {
         view::view(self.page_def(), self.focused_slot(), &self.ctx())
             .addr()
             .and_then(Mappable::new)
     }
 
-    /// What the focus band says in the value's place: learn's while armed.
+    /// What the focus band says in the value's place: learn's while armed
+    /// or sensing.
     pub(super) fn band_status(&self) -> Option<PrimeStatus> {
         #[cfg(feature = "midi-map")]
-        if let Some((_, note)) = self.learn.armed() {
-            let not = || self.learn_target().is_none();
-            return Some(PrimeStatus::Learn(
-                note.or_else(|| not().then_some(LearnNote::NotMappable)),
-            ));
+        match self.learn {
+            Learn::Armed { note, .. } => {
+                let not = || self.learn_target().is_none();
+                return Some(PrimeStatus::Learn(
+                    note.or_else(|| not().then_some(LearnNote::NotMappable)),
+                ));
+            }
+            Learn::Sensing { .. } => {
+                return self
+                    .sensed()
+                    .map(|s| PrimeStatus::Learn(Some(LearnNote::Sensing(s))));
+            }
+            Learn::Off => {}
         }
         self.prime_status
     }
@@ -111,13 +137,31 @@ impl UiState {
         self.band_status().map(|s| s.text(v.label()))
     }
 
+    /// Sensing's label line, the words in the value's place, and whether
+    /// `MIX + SEQ  DONE` follows: the tests' read.
+    #[cfg(all(feature = "midi-map", any(test, feature = "test-support")))]
+    pub fn learn_text(&self) -> Option<(FmtBuf, FmtBuf, bool)> {
+        let Some(PrimeStatus::Learn(Some(LearnNote::Sensing(s)))) = self.band_status() else {
+            return None;
+        };
+        let v = view::view(self.page_def(), self.focused_slot(), &self.ctx());
+        let (mut top, mut words) = (FmtBuf::new(), FmtBuf::new());
+        super::cc::learn_words(s, v.label(), Line::Label, &mut top);
+        super::cc::learn_words(s, v.label(), Line::Words, &mut words);
+        Some((top, words, s.sure()))
+    }
+
     /// MIX + SEQ: arms on a Part's page, never in SETTINGS; cancels when
-    /// armed.
+    /// armed. Bank 2 closed, it never arms: `NEEDS UPDATE` (spec § 7.3).
     #[cfg(feature = "midi-map")]
     #[cfg_attr(feature = "midi-map", inline(never))]
     pub(super) fn toggle_learn(&mut self) {
         let on_page = self.loc.settings().is_none() && self.loc.page(&self.cx()).is_some();
         self.learn = match self.learn {
+            Learn::Off if on_page && !super::cc::map_open() => {
+                self.show_boot_fault(crate::bank2::NEEDS_UPDATE);
+                Learn::Off
+            }
             Learn::Off if on_page => Learn::Armed {
                 part: self.active_part,
                 note: None,
@@ -126,12 +170,21 @@ impl UiState {
         };
     }
 
-    /// Armed, a turn moves the focus and never a value. `true` when armed.
+    /// Armed, a turn moves the focus and never a value; sensing, a turn
+    /// ends it with its guess and moves nothing. `true` while learning.
     /// Out of line: `input` is big enough.
     #[cfg_attr(feature = "midi-map", inline(never))]
     pub(super) fn learn_turns(&mut self, c: &impl Controls) -> bool {
-        let Some((part, _)) = self.learn.armed() else {
-            return false;
+        let part = match self.learn {
+            _ if !cfg!(feature = "midi-map") => return false,
+            Learn::Off => return false,
+            Learn::Armed { part, .. } => part,
+            Learn::Sensing { .. } => {
+                if ALL_ENCODERS.iter().any(|&e| c.encoder_delta(e) != 0) {
+                    self.learn = Learn::Off;
+                }
+                return true;
+            }
         };
         let (def, ctx) = (self.page_def(), self.ctx());
         for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
@@ -141,47 +194,5 @@ impl UiState {
             }
         }
         true
-    }
-
-    /// A CC heard while armed. On the Part's channel and free, it maps the
-    /// focused cell and is consumed (`true`): its value is never applied.
-    /// A refusal is said and the CC heard on as usual.
-    #[cfg(feature = "midi-map")]
-    pub(super) fn learn_cc(&mut self, ev: CcEvent) -> bool {
-        let Some((part, _)) = self.learn.armed() else {
-            return false;
-        };
-        let ch = self.project.part(part).mix.channel;
-        let note = if ev.channel != ch {
-            LearnNote::WrongChannel {
-                cc: ev.cc,
-                got: ev.channel,
-                part: ch,
-            }
-        } else if ev.cc.is_reserved() {
-            LearnNote::Reserved(ev.cc)
-        } else if let Some(t) = self.learn_target() {
-            let mut map = self.project.part(part).sound.map;
-            let note = match map.learn(ev.cc, t) {
-                Ok(()) => {
-                    // A Sound edit, so `*` shows; entries may have moved.
-                    self.project.edit_part(part).sound.map = map;
-                    self.cc.reset_part(part);
-                    LearnNote::Mapped(ev.cc)
-                }
-                Err(_) => LearnNote::Full,
-            };
-            self.learn = Learn::Off;
-            self.prime_status = Some(PrimeStatus::Learn(Some(note)));
-            return true;
-        } else {
-            // NOT MAPPABLE stands.
-            return false;
-        };
-        self.learn = Learn::Armed {
-            part,
-            note: Some(note),
-        };
-        false
     }
 }

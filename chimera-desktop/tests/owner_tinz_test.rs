@@ -108,12 +108,12 @@ fn dump(s: &Sound) -> String {
     for e in s.map.entries() {
         let _ = writeln!(
             out,
-            "map CC{} -> {:?}.{} {}..{}",
-            e.cc.get(),
+            "map {:?} -> {:?}.{} {}..{}",
+            e.input,
             e.target.addr().block,
             label(e.target.addr().block, e.target.addr().param.0),
-            e.min,
-            e.max
+            e.span.min,
+            e.span.max
         );
     }
     out

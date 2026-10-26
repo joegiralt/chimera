@@ -22,7 +22,7 @@ use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::reverb_panel::RevPage;
 use crate::ui::settings::leaves::{
-    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, MAP_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, ECHO_LEAF, LIVE_SNAP_LEAF, MAP_LEAF,
     OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, SAVER_LEAF, SYNC_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
@@ -998,6 +998,25 @@ pub static SYS_PUSH: BlockDef = BlockDef {
     ],
 };
 
+/// MIDI CONFIG › ECHO: DIN OUT's master switch (spec § 8.4).
+pub static SYS_ECHO: BlockDef = BlockDef {
+    // Never used before, and below the top: the focus table keeps its
+    // size (`MAX_PAGES`).
+    id: 63,
+    name: "Echo",
+    short: "ECH",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Midi, MidiSettings::ECHO),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080).
 pub static SYS_SYNC: BlockDef = BlockDef {
     id: 86,
@@ -1347,7 +1366,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 20] = [
+const FIXED: [&ChainDef2; 21] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
@@ -1356,6 +1375,7 @@ const FIXED: [&ChainDef2; 20] = [
     &MIXER_CHANNEL_CHAIN,
     CHANNELS_LEAF.chain(),
     SYNC_LEAF.chain(),
+    ECHO_LEAF.chain(),
     OUTPUTS_LEAF.chain(),
     TUNING_LEAF.chain(),
     THEME_LEAF.chain(),

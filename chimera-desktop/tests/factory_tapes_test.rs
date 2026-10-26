@@ -360,7 +360,9 @@ fn factory_sounds_save_as_loaded() {
         // Re-pinned on the integration's merged tree. #761's review (M3):
         // KIT is out of the set until SLICE returns (#779). TINZ, the
         // owner's SCRUB on WAVE MORPH, makes 32 Sounds.
-        assert_eq!(all.finish(), 0xEF0F_4F49, "{} Sounds", r.sounds.len());
+        // Re-pinned for the 0x001F map record (34 B a default map): only the map
+        // record differs; the old layout still hashes to 0xEF0F_4F49.
+        assert_eq!(all.finish(), 0x77E7_49FF, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
         let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();

@@ -7,8 +7,8 @@ use super::{SourceRef, TapeSource, ZoneTune};
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
 use crate::dsp::voice_fx::legacy::{Legacy, legacy_fx};
-use crate::midi_in::Cc;
-use crate::midi_map::{MAP_LEN, MapEntry, Mappable, MidiMap};
+use crate::midi_map::MidiMap;
+use crate::midi_map::codec::MapRecord;
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
 use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
@@ -25,7 +25,6 @@ use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter}
 
 const REGISTRY_ENTRY_LEN: usize = 2 + LABEL_LEN;
 const ROUTE_LEN: usize = 4;
-const MAP_ENTRY_LEN: usize = 5;
 /// Every source into every registry column and every fixed one.
 const MAX_ROUTES: usize = MAX_MOD_SOURCES * (MAX_MOD_DESTS + FixedCol::ALL.len());
 const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
@@ -33,11 +32,11 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
 /// with every param off neutral, a full registry, every route and tap, a
-/// `SourceRef`, a 24-zone `ZoneTune` and a full `MidiMap` (2 629 + 84 =
-/// 2 713 B for 291 params: WALK's TRON and DRIFT, ADR 0203, and STRETCH
-/// GRAIN's four, ADR 0204, among them), rounded up to 16 B. `sparse_bound`
-/// pins it.
-pub const MAX_SOUND_COST: usize = 2720;
+/// `SourceRef`, a 24-zone `ZoneTune` and a full `Bindings` (2 629 + 133 =
+/// 2 762 B for 291 params: WALK's TRON and DRIFT, ADR 0203, and STRETCH
+/// GRAIN's four, ADR 0204, among them; `Bindings` 49 B over `MidiMap`'s
+/// 84), rounded up to 16 B. `sparse_bound` pins it.
+pub const MAX_SOUND_COST: usize = 2768;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
@@ -74,13 +73,13 @@ fn neutral_params(engine: EngineType) -> ParamSnapshot {
 
 /// `a`'s (block code, param id). Every address a Sound routes is modulatable,
 /// so its block is stored.
-fn addr_code(a: ParamAddr) -> [u8; 2] {
+pub(crate) fn addr_code(a: ParamAddr) -> [u8; 2] {
     [a.block.disk_code().expect("a stored block"), a.param.0]
 }
 
 /// The stored address with these codes, if this firmware has it; a
 /// retired one through `READDRESS` (DRIVE's routes land on LEVEL).
-fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
+pub(crate) fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
     if let Some(a) = readdress(DiskAddr {
         block,
         id: ParamId(id),
@@ -171,14 +170,12 @@ pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(
         }
     }
     if !s.map.is_empty() {
+        // Behind the door: closed, no map record (spec § 6.4).
         r.clear();
-        for e in s.map.entries() {
-            r.u8(e.cc.get());
-            r.bytes(&addr_code(e.target.addr()));
-            r.u8(e.min);
-            r.u8(e.max);
+        crate::midi_in::encode_map(&s.map, &mut r);
+        if !r.as_slice().is_empty() {
+            w.put(RecordTag::Bindings, r.as_slice())?;
         }
-        w.put(RecordTag::MidiMap, r.as_slice())?;
     }
     Ok(())
 }
@@ -202,6 +199,7 @@ const fn once_bit(tag: RecordTag) -> u16 {
         RecordTag::ZoneTune => 1 << 6,
         RecordTag::TapRoutes => 1 << 7,
         RecordTag::MidiMap => 1 << 8,
+        RecordTag::Bindings => 1 << 9,
         // Skipped before `once` is asked.
         RecordTag::Build | RecordTag::Note => 0,
         // A project's own records: refused before `once` is asked.
@@ -512,10 +510,10 @@ impl SoundCheck {
                 }
                 Ok(())
             }
-            RecordTag::MidiMap => {
-                self.skip(midi_map(p, staged.map(|s| &mut s.map))?);
-                Ok(())
-            }
+            // `Bindings` wins: an older map after it is not read.
+            RecordTag::MidiMap if self.seen & once_bit(RecordTag::Bindings) != 0 => Ok(()),
+            RecordTag::MidiMap => self.map(MapRecord::Legacy, p, staged),
+            RecordTag::Bindings => self.map(MapRecord::Bindings, p, staged),
             RecordTag::Slot
             | RecordTag::Part
             | RecordTag::Fx
@@ -590,6 +588,20 @@ impl SoundCheck {
         Ok(())
     }
 
+    /// A map record, through the door: closed, it is not read and the
+    /// Sound keeps an empty map (spec § 6.4).
+    fn map(
+        &mut self,
+        which: MapRecord,
+        p: &[u8],
+        staged: Option<&mut Sound>,
+    ) -> Result<(), FileError> {
+        let lost = crate::midi_in::decode_map(which, p, staged.map(|s| &mut s.map))
+            .map_err(|_| FileError::Bounds)?;
+        self.skip(lost);
+        Ok(())
+    }
+
     fn engine_record(&mut self, p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
         let &[code] = p else {
             return Err(FileError::Bounds);
@@ -640,43 +652,6 @@ fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<u16, FileError
                 && let Some(c) = addr_of(block, id).and_then(FixedCol::of)
             {
                 t.set(op, c, amount as i8);
-            }
-        }
-    }
-    Ok(lost)
-}
-
-/// `(cc, block code, param id, min, max)` entries. One whose address this
-/// firmware lacks, that isn't `Mappable`, or whose CC is reserved or over
-/// 127 is dropped and counted; a duplicate target keeps the last.
-fn midi_map(p: &[u8], staged: Option<&mut MidiMap>) -> Result<u16, FileError> {
-    let (entries, []) = p.as_chunks::<MAP_ENTRY_LEN>() else {
-        return Err(FileError::Bounds);
-    };
-    if entries.len() > MAP_LEN {
-        return Err(FileError::Bounds);
-    }
-    let mut lost = 0;
-    if let Some(m) = staged {
-        for &[cc, block, id, min, max] in entries {
-            let t = addr_of(block, id).and_then(Mappable::new);
-            let Some((cc, target)) = Cc::new(cc).filter(|c| !c.is_reserved()).zip(t) else {
-                lost += 1;
-                continue;
-            };
-            let e = MapEntry {
-                cc,
-                target,
-                min,
-                max,
-            };
-            match m.entries().iter().position(|x| x.target == target) {
-                Some(i) => m.set(i, e),
-                None => {
-                    // At most 16 entries, so there is always room.
-                    let _ = m.learn(cc, target);
-                    m.set(m.len() - 1, e);
-                }
             }
         }
     }

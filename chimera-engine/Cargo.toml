@@ -9,6 +9,7 @@ edition.workspace = true
 # console, built for size.
 [dependencies]
 chimera-hal = { path = "../chimera-hal" }
+chimera-midi = { path = "../chimera-midi" }
 chimera-image = { path = "../chimera-image" }
 chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"

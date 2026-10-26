@@ -10,7 +10,7 @@ use chimera_core::dsp::modulator::LfoSlot;
 use chimera_core::dsp::va::VaParams;
 use chimera_core::dsp::voice_fx::params::VoiceFxParams;
 use chimera_core::midi_in::Cc;
-use chimera_core::midi_map::{MAP_LEN, MapEntry, MapFull, Mappable, MidiMap};
+use chimera_core::midi_map::{Binding, Feedback, Input, MAP_LEN, MapFull, Mappable, MidiMap, Span};
 use chimera_core::orbit::RingIdx;
 use chimera_core::params::{FilterParams, OutParams};
 use chimera_core::part::PartParams;
@@ -18,6 +18,10 @@ use chimera_core::project::PartId;
 
 fn cc(n: u8) -> Cc {
     Cc::new(n).unwrap()
+}
+
+fn inp(n: u8) -> Input {
+    Input::cc(n).unwrap()
 }
 
 fn mappable(b: BlockRef, p: chimera_core::block::ParamId) -> Mappable {
@@ -91,14 +95,14 @@ fn learn_replaces_and_fills() {
     let cutoff = mappable(BlockRef::Filter, FilterParams::CUTOFF);
     let reso = mappable(BlockRef::Filter, FilterParams::RESONANCE);
     let mut m = MidiMap::EMPTY;
-    m.learn(cc(74), cutoff).unwrap();
-    m.learn(cc(20), cutoff).unwrap();
+    m.learn(inp(74), cutoff).unwrap();
+    m.learn(inp(20), cutoff).unwrap();
     assert_eq!(m.len(), 1);
-    assert_eq!(m.entries()[0].cc, cc(20));
-    m.learn(cc(20), reso).unwrap();
+    assert_eq!(m.entries()[0].input, inp(20));
+    m.learn(inp(20), reso).unwrap();
     assert_eq!(m.len(), 2);
-    assert_eq!(m.targets_of(cc(20)).count(), 2);
-    assert_eq!(m.targets_of(cc(74)).count(), 0);
+    assert_eq!(m.targets_of(&inp(20)).count(), 2);
+    assert_eq!(m.targets_of(&inp(74)).count(), 0);
 
     // Fill to 16 distinct targets, then a 17th is refused.
     let mut m = MidiMap::EMPTY;
@@ -107,14 +111,14 @@ fn learn_replaces_and_fills() {
         .flat_map(|b| b.specs().iter().map(move |s| ParamAddr::new(b, s.id)))
         .filter_map(Mappable::new);
     for _ in 0..MAP_LEN {
-        m.learn(cc(1), targets.next().unwrap()).unwrap();
+        m.learn(inp(1), targets.next().unwrap()).unwrap();
     }
     assert_eq!(m.len(), MAP_LEN);
-    assert_eq!(m.learn(cc(1), targets.next().unwrap()), Err(MapFull));
+    assert_eq!(m.learn(inp(1), targets.next().unwrap()), Err(MapFull));
     // A full map still re-learns a target it holds.
     let held = m.entries()[3].target;
-    assert_eq!(m.learn(cc(2), held), Ok(()));
-    assert_eq!(m.entries()[3].cc, cc(2));
+    assert_eq!(m.learn(inp(2), held), Ok(()));
+    assert_eq!(m.entries()[3].input, inp(2));
 }
 
 #[test]
@@ -122,20 +126,20 @@ fn remove_and_set() {
     let t = mappable(BlockRef::Filter, FilterParams::CUTOFF);
     let u = mappable(BlockRef::Filter, FilterParams::RESONANCE);
     let mut m = MidiMap::EMPTY;
-    m.learn(cc(74), t).unwrap();
-    m.learn(cc(71), u).unwrap();
+    m.learn(inp(74), t).unwrap();
+    m.learn(inp(71), u).unwrap();
     m.remove(0);
     assert_eq!((m.len(), m.entries()[0].target), (1, u));
     m.set(
         0,
-        MapEntry {
-            cc: cc(9),
+        Binding {
+            input: inp(9),
             target: u,
-            min: 5,
-            max: 6,
+            span: Span { min: 5, max: 6 },
+            feedback: Feedback::Off,
         },
     );
-    assert_eq!((m.entries()[0].cc, m.entries()[0].min), (cc(9), 5));
+    assert_eq!((m.entries()[0].input, m.entries()[0].span.min), (inp(9), 5));
     m.remove(7);
     assert_eq!(m.len(), 1);
 }
@@ -143,15 +147,11 @@ fn remove_and_set() {
 #[test]
 fn place_inverts() {
     let t = mappable(BlockRef::Filter, FilterParams::CUTOFF);
-    let e = |min, max| MapEntry {
-        cc: cc(1),
-        target: t,
-        min,
-        max,
-    };
+    let e = |min, max| Span { min, max };
     assert_eq!(e(255, 0).place(0), 1.0);
     assert_eq!(e(0, 255).place(127), 1.0);
     assert_eq!(e(64, 128).place(0), 64.0 / 255.0);
+    let _ = t;
 }
 
 #[test]
@@ -177,15 +177,16 @@ fn default_map_entries_are_mappable() {
         assert_eq!(m.len(), n, "{e:?}");
         for x in m.entries() {
             assert!(Mappable::new(x.target.addr()).is_some());
-            assert_eq!((x.min, x.max), (0, 255), "{e:?}");
+            assert_eq!((x.span.min, x.span.max), (0, 255), "{e:?}");
         }
     }
-    let ccs: Vec<u8> = default_for(EngineType::Modal)
+    let ccs: Vec<Input> = default_for(EngineType::Modal)
         .entries()
         .iter()
-        .map(|x| x.cc.get())
+        .map(|x| x.input)
         .collect();
-    assert_eq!(ccs, [74, 71, 7, 10, 91, 93, 1, 16, 17, 18, 19]);
+    let want = [74, 71, 7, 10, 91, 93, 1, 16, 17, 18, 19].map(inp);
+    assert_eq!(ccs, want);
 }
 
 /// INIT before the wheel: DEPTH 1, no PITCH route.
@@ -296,13 +297,13 @@ fn fx_pots_are_mappable() {
 #[test]
 fn the_midi_map_names_an_fx_pot_by_the_type() {
     use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams as X};
-    use chimera_core::midi_map::MapEntry;
+    use chimera_core::midi_map::{Binding, Feedback, Span};
     use chimera_core::ui::settings::midi_map::name;
-    let e = MapEntry {
-        cc: cc(20),
+    let e = Binding {
+        input: inp(20),
         target: mappable(BlockRef::VoiceFx, X::P2),
-        min: 0,
-        max: 255,
+        span: Span::FULL,
+        feedback: Feedback::Off,
     };
     assert_eq!(name(&e, FxType::Soft), "TONE");
     assert_eq!(name(&e, FxType::Fold), "SYMMETRY");

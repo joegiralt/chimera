@@ -378,23 +378,30 @@ fn mode(rig: &mut InstRig, c: u8, mode: ChannelMode) {
 
 #[test]
 fn channel_mode_ccs_reach_the_queue_as_events() {
-    use chimera_hal::MidiMessage;
+    use chimera_core::midi_in::{CtrlEvent, DinPipe, Sinks};
+    struct Notes(Vec<InEvent>);
+    impl Sinks for Notes {
+        fn note(&mut self, e: InEvent) -> bool {
+            self.0.push(e);
+            true
+        }
+        fn ctrl(&mut self, _: CtrlEvent) -> bool {
+            true
+        }
+    }
     for (cc, want) in [
         (120, ChannelMode::SoundOff),
         (121, ChannelMode::ResetControllers),
         (123, ChannelMode::NotesOff),
     ] {
-        let m = MidiMessage::ControlChange {
-            channel: ch(3),
-            cc,
-            value: 0,
-        };
+        let mut got = Notes(Vec::new());
+        DinPipe::new().feed(&[0xB3, cc, 0], &mut got);
         assert_eq!(
-            InEvent::from_midi(m),
-            Some(InEvent::Mode(ChannelModeEvent {
+            got.0,
+            [InEvent::Mode(ChannelModeEvent {
                 channel: ch(3),
                 mode: want
-            }))
+            })]
         );
     }
 }

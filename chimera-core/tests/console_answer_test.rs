@@ -46,6 +46,7 @@ struct Fake {
     bank2: Option<Bank2Answer>,
     installs: usize,
     hands: Option<Hands>,
+    midi: Option<chimera_core::console::MidiStats>,
 }
 
 impl Fake {
@@ -70,6 +71,7 @@ impl Fake {
             bank2: None,
             installs: 0,
             hands: None,
+            midi: None,
         }
     }
 }
@@ -113,6 +115,9 @@ impl Unit for Fake {
     }
     fn usb_regs(&self) -> Option<UsbRegs> {
         self.usb_regs
+    }
+    fn midi(&self) -> Option<chimera_core::console::MidiStats> {
+        self.midi
     }
     fn flash_regs(&self) -> Option<FlashRegs> {
         self.flash.map(|f| f.0)
@@ -479,6 +484,26 @@ fn the_chips_status_ends_with_its_boot_line() {
             "{want}{seen}\nusb_regs gotgctl=00000001 gccfg=00000002 dctl=00000003 \
              gintsts=00000004 dsts=00000005 pwr_cr3=00000006\nOK\n"
         )
+    );
+}
+
+#[test]
+fn status_has_the_midi_pipe_before_usb_regs() {
+    let mut u = Fake::new();
+    let mut want = String::new();
+    chimera_core::console::write_status(&u.ui, &mut want).unwrap();
+    u.midi = Some(chimera_core::console::MidiStats {
+        faults: 3,
+        drops: 7,
+        ctrl_drops: 9,
+    });
+    u.usb_regs = Some(UsbRegs::from_words([1, 2, 3, 4, 5, 6]));
+    let a = ask(&mut u, "status\n");
+    assert!(
+        a.starts_with(&format!(
+            "{want}midi faults=3 drops=7 ctrl_drops=9\nusb_regs "
+        )),
+        "{a}"
     );
 }
 

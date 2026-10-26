@@ -1100,14 +1100,25 @@ impl EncodedSound<'_> {
         &self.bytes[NAME_LEN..]
     }
 
-    /// `s` encodes to these bytes: a Part on this Sound is Clean.
+    /// `s` encodes to these bytes: a Part on this Sound is Clean. With
+    /// bank 2 closed no map is written (spec § 6.4), so a last map record
+    /// left over matches: closed, nothing edits a map.
     pub fn matches(&self, s: &Sound) -> bool {
         let (name, records) = self.bytes.split_at(NAME_LEN);
         if name != s.name.padded() {
             return false;
         }
         let mut same = Same { expect: records };
-        encode_sound(s, &mut RecordWriter::over(&mut same)).is_ok() && same.expect.is_empty()
+        encode_sound(s, &mut RecordWriter::over(&mut same)).is_ok()
+            && match same.expect {
+                [] => true,
+                [t0, t1, l0, l1, rest @ ..] => {
+                    !crate::midi_in::map_codec_open()
+                        && matches!(u16::from_le_bytes([*t0, *t1]), 0x001E | 0x001F)
+                        && usize::from(u16::from_le_bytes([*l0, *l1])) == rest.len()
+                }
+                _ => false,
+            }
     }
 
     /// Checks, then decodes onto `s`: a refusal leaves `s` as it was.

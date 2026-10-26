@@ -82,6 +82,10 @@ pub struct Frame<'a> {
     /// The last MIX+PLUS outcome or MIDI learn's word, shown in the focus
     /// band in place of the value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
+    /// The focused cell's pickup waiting: the hint that says which way the
+    /// knob must go, in the focus band or on a BigViz page's status line
+    /// (none with HINTS off).
+    pub pickup: Option<hint::Hint>,
     /// The project's pool, for PROJECT › POOL.
     pub pool: &'a crate::project::Pool,
     /// The measured stats AUDIO LOAD and ABOUT show; `None` where not had.
@@ -366,7 +370,20 @@ impl Renderer {
         }
         if let Some(status) = f.prime_status {
             let label = view::view(f.def, f.focus, &f.ctx).label();
-            components::viz_status(display, status, label);
+            let w = components::viz_status(display, status, label);
+            // Sensing sure: MIX + SEQ  DONE after the guess, where it fits.
+            #[cfg(feature = "midi-map")]
+            if let PrimeStatus::Learn(Some(crate::ui::learn::LearnNote::Sensing(s))) = status
+                && s.sure()
+                && w + 8 + crate::ui::learn::DONE_W <= theme::CONTENT_W
+            {
+                let x = theme::MARGIN_X + w + 8;
+                hint::draw(display, crate::ui::learn::DONE, x, theme::BIGVIZ_STATUS_Y);
+            }
+            #[cfg(not(feature = "midi-map"))]
+            let _ = w;
+        } else if let Some(h) = f.pickup {
+            hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
         }
     }
 
@@ -798,6 +815,26 @@ impl Renderer {
             f.prime_status,
             f.text,
         );
+        // Sensing: learn's hint line, whatever the cell's own (spec § 8.1).
+        #[cfg(feature = "midi-map")]
+        if let Some(PrimeStatus::Learn(Some(crate::ui::learn::LearnNote::Sensing(s)))) =
+            f.prime_status
+        {
+            if s.sure() {
+                hint::draw(
+                    display,
+                    crate::ui::learn::DONE,
+                    theme::MARGIN_X,
+                    hint::FOCUS_Y,
+                );
+            }
+            return;
+        }
+        // A pickup waiting: which way to turn, over the cell's own hint.
+        // Never LARGE: it is near the line's whole width at NORMAL.
+        if let Some(h) = f.pickup {
+            return hint::draw(display, h, theme::MARGIN_X, hint::FOCUS_Y);
+        }
         let sound = &f.parts[f.active_part.index()].sound;
         let note = view
             .addr()
@@ -858,15 +895,18 @@ impl Renderer {
         orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
     }
 
-    /// A hash of slot `i`'s printed text at its target: a move below the
-    /// display resolution leaves it, a change in the number changes it.
+    /// A hash of slot `i`'s printed text at its target, and of the focused
+    /// cell's pickup hint: a move below the display resolution leaves it, a
+    /// change in the number changes it.
     pub fn text_key(&self, f: &Frame, i: usize) -> u32 {
         if view::view(f.def, i, &f.ctx) == View::Empty {
             return 0;
         }
         let text = value_text(f, i, self.set[i].target());
         let label = band_label(f, &view::view(f.def, i, &f.ctx));
-        region::settings_key(&[text.as_str().as_bytes(), label.as_str().as_bytes()])
+        // The focused cell's pickup hint rides with its text (§ 8.3).
+        let pickup = f.pickup.map_or(0, |h| h.as_ptr() as usize as u32);
+        region::settings_key(&[text.as_str().as_bytes(), label.as_str().as_bytes()]) ^ pickup
     }
 
     /// The matrix amount as printed (the target's `amount_of`).
@@ -1291,6 +1331,13 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
 pub fn band_label(f: &Frame, view: &View) -> FmtBuf {
     use core::fmt::Write;
     let mut label = FmtBuf::new();
+    // Sensing, the control heard: `CC 21 → CUTOFF` (spec § 8.1).
+    #[cfg(feature = "midi-map")]
+    if let Some(PrimeStatus::Learn(Some(crate::ui::learn::LearnNote::Sensing(s)))) = f.prime_status
+    {
+        crate::ui::learn::label_line(s, view.label(), &mut label);
+        return label;
+    }
     let _ = label.write_str(view.label());
     if let View::Route {
         route: crate::ui::filter_panel::RouteView::Jack(j),

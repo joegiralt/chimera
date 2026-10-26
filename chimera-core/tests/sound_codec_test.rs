@@ -7,7 +7,7 @@ use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
-use chimera_core::midi_map::{Cc, MAP_LEN, MapEntry, Mappable, MidiMap};
+use chimera_core::midi_map::{Binding, Input as MapInput, MAP_LEN, Mappable, MidiMap};
 use chimera_core::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS};
 use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams};
@@ -569,10 +569,11 @@ fn sparse_sizes() {
         .collect();
     println!("factory: {costs:?}");
     // The table Sounds, then the formant demos, whose routes, LFOs and
-    // envelopes add about 200 B.
+    // envelopes add about 200 B. Each default map is 34 B more as
+    // `Bindings` than it was as `MidiMap` (1 + 11 × 3).
     let (table, demos) = costs.split_at(8);
-    assert!(table.iter().all(|c| (190..=320).contains(c)), "{costs:?}");
-    assert!(demos.iter().all(|c| (459..=539).contains(c)), "{costs:?}");
+    assert!(table.iter().all(|c| (224..=354).contains(c)), "{costs:?}");
+    assert!(demos.iter().all(|c| (493..=573).contains(c)), "{costs:?}");
     // 46 B of name, Engine, an empty Registry, ModDests and Routes (its
     // three fixed-FREQ routes), and 70 B for the values INIT moved off
     // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param
@@ -593,8 +594,9 @@ fn sparse_sizes() {
         );
     }
     // INIT as it ships: the default map's eleven entries, the wheel's
-    // vibrato (spec § 9) and STABILITY's Prophet setting (ADR 0168).
-    assert_eq!(encode(&Sound::init(EngineType::Algo)).len(), 227);
+    // vibrato (spec § 9) and STABILITY's Prophet setting (ADR 0168); the
+    // map as `Bindings`, 34 B over `MidiMap`'s.
+    assert_eq!(encode(&Sound::init(EngineType::Algo)).len(), 227 + 34);
 }
 
 /// `neutral(e)` with every stored param that can move at another value, a
@@ -667,7 +669,7 @@ fn worst(e: EngineType) -> (Sound, usize) {
 /// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 291 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
-/// 24 zones) + 84 (`MidiMap`, 16 entries) = 2 703 B, less 5 B for each param that has nowhere to move.
+/// 24 zones) + 133 (`Bindings`, 16 entries) = 2 752 B, less 5 B for each param that has nowhere to move.
 /// TAPE's SLICE is on hold (`slice_in_play`): every code loads OFF, so a
 /// Sound never stores one, 5 B under it.
 /// A new param moves it: raise
@@ -682,7 +684,7 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2708);
+    assert_eq!(most, 2757);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }
 
@@ -738,16 +740,16 @@ fn mapped() -> MidiMap {
     let part = [PartParams::LEVEL, PartParams::PAN]
         .map(|id| Mappable::new(ParamAddr::new(BlockRef::Part, id)).unwrap());
     for (i, t) in part.into_iter().chain(targets).take(MAP_LEN).enumerate() {
-        m.learn(Cc::new(70 + i as u8).unwrap(), t).unwrap();
+        m.learn(MapInput::cc(70 + i as u8).unwrap(), t).unwrap();
     }
     assert_eq!(m.len(), MAP_LEN);
-    let mut e = |i: usize, f: fn(&mut MapEntry)| {
+    let mut e = |i: usize, f: fn(&mut Binding)| {
         let mut x = m.entries()[i];
         f(&mut x);
         m.set(i, x);
     };
-    e(3, |x| (x.min, x.max) = (200, 10));
-    e(4, |x| (x.min, x.max) = (0, 128));
+    e(3, |x| (x.span.min, x.span.max) = (200, 10));
+    e(4, |x| (x.span.min, x.span.max) = (0, 128));
     m
 }
 
@@ -851,7 +853,10 @@ fn map_record_dedups_to_the_last_and_drops_cc_over_127() {
     assert_eq!(lost, 1);
     let e = s.map.entries();
     assert_eq!(e.len(), 1);
-    assert_eq!((e[0].cc.get(), e[0].min, e[0].max), (9, 7, 9));
+    assert_eq!(
+        (e[0].input, e[0].span.min, e[0].span.max),
+        (MapInput::cc(9).unwrap(), 7, 9)
+    );
 }
 
 #[test]

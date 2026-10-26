@@ -269,6 +269,7 @@ dependencies = [
  "chimera-engine",
  "chimera-hal",
  "chimera-image",
+ "chimera-midi",
  "chimera-theory",
  "embedded-graphics",
  "embedded-graphics-core",
@@ -283,6 +284,7 @@ version = "0.2.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
+ "chimera-midi",
  "cpal",
  "embedded-graphics",
  "embedded-graphics-core",
@@ -302,6 +304,7 @@ dependencies = [
  "chimera-engine",
  "chimera-hal",
  "chimera-image",
+ "chimera-midi",
  "chimera-theory",
  "chimera-waves",
  "libm",
@@ -324,6 +327,7 @@ dependencies = [
 name = "chimera-hal"
 version = "0.2.0"
 dependencies = [
+ "chimera-midi",
  "embedded-graphics-core",
  "loom",
 ]
@@ -331,6 +335,13 @@ dependencies = [
 [[package]]
 name = "chimera-image"
 version = "0.2.0"
+
+[[package]]
+name = "chimera-midi"
+version = "0.2.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "chimera-stm32"

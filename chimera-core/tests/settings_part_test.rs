@@ -486,30 +486,37 @@ mod midi_map {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modal::ModalParams;
     use chimera_core::midi_in::Cc;
-    use chimera_core::midi_map::{MapEntry, Mappable, MidiMap};
+    use chimera_core::midi_map::{Binding, Feedback, Input as MapInput, Mappable, MidiMap, Span};
     use chimera_core::params::FilterParams;
 
     const MIDI_MAP_ROW: usize = 6;
 
-    fn entry(cc: u8, block: BlockRef, id: chimera_core::block::ParamId) -> MapEntry {
-        MapEntry {
-            cc: Cc::new(cc).unwrap(),
+    fn entry(cc: u8, block: BlockRef, id: chimera_core::block::ParamId) -> Binding {
+        Binding {
+            input: MapInput::cc(cc).unwrap(),
             target: Mappable::new(ParamAddr::new(block, id)).unwrap(),
-            min: 0,
-            max: 255,
+            span: Span::FULL,
+            feedback: Feedback::Off,
         }
     }
 
-    fn cutoff(cc: u8) -> MapEntry {
+    fn cc_num(b: &Binding) -> u8 {
+        match b.input {
+            MapInput::Cc(c, _) => c.get(),
+            _ => panic!("not a CC binding"),
+        }
+    }
+
+    fn cutoff(cc: u8) -> Binding {
         entry(cc, BlockRef::Filter, FilterParams::CUTOFF)
     }
 
     /// Part 1 on INIT with `entries`, and the page open.
-    fn page(entries: &[MapEntry]) -> UiState {
+    fn page(entries: &[Binding]) -> UiState {
         let mut ui = UiState::new();
         let mut m = MidiMap::EMPTY;
         for e in entries {
-            m.learn(e.cc, e.target).unwrap();
+            m.learn(e.input, e.target).unwrap();
         }
         ui.project_mut().edit_part(P[0]).sound.map = m;
         part_row(&mut ui, P[0], MIDI_MAP_ROW);
@@ -529,9 +536,12 @@ mod midi_map {
         feed(ui, Input::turn(e, d));
     }
 
+    /// Row `i`'s label, its range as the bar's lines give it, its look.
     fn text(ui: &UiState, i: usize) -> (String, String, RowLook) {
-        let r = ui.map_band().row(i);
-        (r.label.as_str().into(), r.range.as_str().into(), r.look)
+        let b = ui.map_band();
+        let t = b.text(i);
+        let range = format!("{}-{}", t.min.as_str(), t.max.as_str());
+        (t.label.as_str().into(), range, b.look(i))
     }
 
     #[test]
@@ -556,32 +566,35 @@ mod midi_map {
         let mut ui = page(&[cutoff(74), cutoff_b(63)]);
         let c0 = crc(&ui, P[0]);
         turn(&mut ui, EncoderId::B, 1);
-        assert_eq!(map(&ui).entries()[0].cc.get(), 75);
+        assert_eq!(cc_num(&map(&ui).entries()[0]), 75);
         assert_ne!(crc(&ui, P[0]), c0);
         assert_eq!(status(&ui, P[0]), PartStatus::Edited);
 
         // Row 1, CC 63: PLUS skips the reserved 64.
         feed(&mut ui, Input::press(ButtonId::Plus));
         turn(&mut ui, EncoderId::B, 1);
-        assert_eq!(map(&ui).entries()[1].cc.get(), 65);
+        assert_eq!(cc_num(&map(&ui).entries()[1]), 65);
         turn(&mut ui, EncoderId::B, -1);
-        assert_eq!(map(&ui).entries()[1].cc.get(), 63);
+        assert_eq!(cc_num(&map(&ui).entries()[1]), 63);
         // A duplicate is allowed: row 1 onto row 0's 75.
         turn(&mut ui, EncoderId::B, 11);
-        assert_eq!(map(&ui).entries()[1].cc.get(), 75);
+        assert_eq!(cc_num(&map(&ui).entries()[1]), 75);
         // Range edits dirty it too.
         let c1 = crc(&ui, P[0]);
         turn(&mut ui, EncoderId::C, 5);
         turn(&mut ui, EncoderId::D, -5);
         assert_eq!(
-            (map(&ui).entries()[1].min, map(&ui).entries()[1].max),
+            (
+                map(&ui).entries()[1].span.min,
+                map(&ui).entries()[1].span.max
+            ),
             (5, 250)
         );
         assert_ne!(crc(&ui, P[0]), c1);
         assert_eq!(status(&ui, P[0]), PartStatus::Edited);
     }
 
-    fn cutoff_b(cc: u8) -> MapEntry {
+    fn cutoff_b(cc: u8) -> Binding {
         entry(cc, BlockRef::Filter, FilterParams::RESONANCE)
     }
 
@@ -589,10 +602,10 @@ mod midi_map {
     fn midi_map_cc_clamps_at_the_ends() {
         let mut ui = page(&[cutoff(1)]);
         turn(&mut ui, EncoderId::B, -3); // 0 is bank select
-        assert_eq!(map(&ui).entries()[0].cc.get(), 1);
+        assert_eq!(cc_num(&map(&ui).entries()[0]), 1);
         let mut ui = page(&[cutoff(119)]);
         turn(&mut ui, EncoderId::B, 3); // 120-127 are channel mode
-        assert_eq!(map(&ui).entries()[0].cc.get(), 119);
+        assert_eq!(cc_num(&map(&ui).entries()[0]), 119);
     }
 
     #[test]
@@ -600,21 +613,21 @@ mod midi_map {
         let mut ui = page(&[cutoff(74)]);
         let c0 = crc(&ui, P[0]);
         turn(&mut ui, EncoderId::D, -10);
-        assert_eq!(map(&ui).entries()[0].max, 245);
+        assert_eq!(map(&ui).entries()[0].span.max, 245);
         assert_eq!(text(&ui, 0).1, "0-245");
         assert_ne!(crc(&ui, P[0]), c0);
         // C up to 250: min above max is an inverted range.
         turn(&mut ui, EncoderId::C, 125);
         turn(&mut ui, EncoderId::C, 125);
-        assert_eq!(map(&ui).entries()[0].min, 250);
+        assert_eq!(map(&ui).entries()[0].span.min, 250);
         assert_eq!(text(&ui, 0).1, "250-245");
         assert_eq!(status(&ui, P[0]), PartStatus::Edited);
         // Clamps, never wraps.
         turn(&mut ui, EncoderId::C, 127);
-        assert_eq!(map(&ui).entries()[0].min, 255);
+        assert_eq!(map(&ui).entries()[0].span.min, 255);
         turn(&mut ui, EncoderId::D, -127);
         turn(&mut ui, EncoderId::D, -127);
-        assert_eq!(map(&ui).entries()[0].max, 0);
+        assert_eq!(map(&ui).entries()[0].span.max, 0);
     }
 
     #[test]
@@ -628,7 +641,7 @@ mod midi_map {
         feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
         answer(&mut ui, 0); // DELETE
         assert_eq!(map(&ui).len(), 1);
-        assert_eq!(map(&ui).entries()[0].cc.get(), 20);
+        assert_eq!(cc_num(&map(&ui).entries()[0]), 20);
         assert_eq!(status(&ui, P[0]), PartStatus::Edited);
     }
 
@@ -658,25 +671,28 @@ mod midi_map {
         ui.hear_ccs(core::iter::once(ev(127)), Ms(200), true);
         turn(&mut ui, EncoderId::D, -50);
         let was = ui.project().part(P[0]).sound.params.filter.cutoff;
-        ui.hear_ccs(core::iter::empty(), Ms(300), true);
+        ui.hear_ccs(
+            core::iter::empty::<chimera_core::midi_in::CcEvent>(),
+            Ms(300),
+            true,
+        );
         assert_eq!(ui.project().part(P[0]).sound.params.filter.cutoff, was);
     }
 }
 
-/// MIDI MAP's rows follow A, E and F; B, C and D edit the row (#561).
+/// MIDI MAP's rows follow A; B to F edit the row (#561, spec § 8.2).
 #[cfg(feature = "midi-map")]
 mod midi_map_bar {
     use super::*;
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::midi_in::Cc;
     use chimera_core::midi_map::{Mappable, MidiMap};
     use chimera_core::params::FilterParams;
 
     #[test]
-    fn a_e_and_f_move_the_bar_b_c_d_edit() {
+    fn a_moves_the_bar_b_to_f_edit() {
         let mut ui = UiState::new();
         let (cc, target) = (
-            Cc::new(74).unwrap(),
+            chimera_core::midi_map::Input::cc(74).unwrap(),
             Mappable::new(ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)).unwrap(),
         );
         let mut m = MidiMap::EMPTY;
@@ -686,13 +702,18 @@ mod midi_map_bar {
         feed(&mut ui, Input::press(ButtonId::Edit));
         let row = |ui: &UiState| ui.location().settings().unwrap().row();
         let rev = ui.project().rev();
-        for id in [EncoderId::A, EncoderId::E, EncoderId::F] {
-            feed(&mut ui, Input::turn(id, 1));
-            assert_eq!(row(&ui), 0, "one row: it wraps, {id:?}");
-        }
+        feed(&mut ui, Input::turn(EncoderId::A, 1));
+        assert_eq!(row(&ui), 0, "one row: it wraps");
         assert_eq!(ui.project().rev(), rev, "the bar edits nothing");
-        // MIN sits at 0 and MAX at 255: C turns up, D down.
-        for (id, d) in [(EncoderId::B, 1), (EncoderId::C, 1), (EncoderId::D, -1)] {
+        // MIN sits at 0 and MAX at 255: C turns up, D down; E steps the
+        // input, F turns the echo on.
+        for (id, d) in [
+            (EncoderId::B, 1),
+            (EncoderId::C, 1),
+            (EncoderId::D, -1),
+            (EncoderId::E, 1),
+            (EncoderId::F, 1),
+        ] {
             let before = ui.project().rev();
             feed(&mut ui, Input::turn(id, d));
             assert_ne!(ui.project().rev(), before, "{id:?} edits");

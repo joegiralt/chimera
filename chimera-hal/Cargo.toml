@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+chimera-midi = { path = "../chimera-midi" }
 embedded-graphics-core = "0.4"
 
 [features]

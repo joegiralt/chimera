@@ -1,23 +1,48 @@
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{Ordering, compiler_fence};
 
-use chimera_engine::midi_in::{CcRing, Routed, route};
+use chimera_engine::midi_in::{self, CtrlRing, DinSinks, PipeSlot};
 use chimera_engine::note_queue::NoteProducer;
-use chimera_hal::midi::MidiParser;
+#[cfg(feature = "midi-map")]
+use chimera_engine::out_ring::OutRing;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};
 
 use chimera_board::priority::{self, Priority};
-use chimera_board::shared::{AUDIO_CYCLES, MIDI_CYCLES, MIDI_ERRORS as ERRORS, bump, stamp};
+use chimera_board::shared::{
+    AUDIO_CYCLES, MIDI_CTRL_DROPS, MIDI_CYCLES, MIDI_DROPS, MIDI_ERRORS as ERRORS, MIDI_FAULTS,
+    bump, stamp,
+};
 
 const BAUD: u32 = 31_250;
+/// Active Sensing's silence: 300 ms in bit times at 31,250 baud (spec § 11).
+const SENSING_BITS: u32 = 9_375;
 
-static mut PARSER: MidiParser = MidiParser::new();
+/// The RX FIFO's depth: one ISR entry drains at most this many bytes into
+/// one door call.
+const RX_FIFO: usize = 16;
+/// `TXFTCFG`: the threshold flag once the TX FIFO is half empty.
+#[cfg(feature = "midi-map")]
+const TXFT_HALF: u8 = 0b010;
+
+/// The DIN pipe's slot; only the handler feeds it (the door builds it).
+static mut PIPE: PipeSlot = PipeSlot::new();
 static mut DIN_NOTES: Option<NoteProducer<'static>> = None;
-/// The DIN CC ring; only the handler pushes.
-static mut DIN_CCS: Option<&'static CcRing> = None;
+/// The DIN control ring; only the handler pushes.
+static mut DIN_CTRL: Option<&'static CtrlRing> = None;
+/// DIN OUT's ring; only the handler pops (the UI pushes).
+#[cfg(feature = "midi-map")]
+static mut DIN_OUT: Option<&'static OutRing> = None;
 
-pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ccs: &'static CcRing) {
+/// DIN OUT's ring, before `init`: the handler pops it into the TX FIFO.
+#[cfg(feature = "midi-map")]
+pub fn set_out(out: &'static OutRing) {
+    // SAFETY: before `init` unmasks USART1's interrupt, so nothing reads
+    // `DIN_OUT` yet; from then on only the handler does.
+    unsafe { *addr_of_mut!(DIN_OUT) = Some(out) };
+}
+
+pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ctrl: &'static CtrlRing) {
     // SAFETY: single-threaded init before USART1's interrupt is unmasked;
     // RCC's APB2ENR is read-modify-written only from `main`, and USART1 is
     // used nowhere else.
@@ -27,25 +52,42 @@ pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ccs: &
     // FIFOEN can only be written while UE is 0.
     usart.cr1.reset();
     usart.brr.write(|w| w.brr().bits((pclk2_hz / BAUD) as u16));
+    // The receiver timeout always counts; only an armed pipe takes its
+    // interrupt (`RTOIE`, the handler's).
+    usart.rtor.write(|w| w.rto().bits(SENSING_BITS));
+    usart.cr2.write(|w| w.rtoen().set_bit());
     usart
         .icr
         .write(|w| w.orecf().clear().fecf().clear().ncf().clear());
-    usart
-        .cr1
-        .write(|w| w.fifoen().set_bit().rxneie().set_bit().re().set_bit());
+    // DIN OUT: the TX FIFO's threshold at half empty, so the handler
+    // tops it up before the line runs dry.
+    #[cfg(feature = "midi-map")]
+    // SAFETY: 0b010 is a defined `TXFTCFG` value (RM0433, USART_CR3).
+    usart.cr3.write(|w| unsafe { w.txftcfg().bits(TXFT_HALF) });
+    usart.cr1.write(|w| {
+        w.fifoen()
+            .set_bit()
+            .rxneie()
+            .set_bit()
+            .re()
+            .set_bit()
+            .te()
+            .bit(cfg!(feature = "midi-map"))
+    });
     usart.cr1.modify(|_, w| w.ue().set_bit());
     // SAFETY: USART1's interrupt is still masked, so nothing reads
-    // `DIN_NOTES` or `DIN_CCS` yet; from then on only the handler does.
+    // `DIN_NOTES` or `DIN_CTRL` yet; from then on only the handler does.
     unsafe {
         *addr_of_mut!(DIN_NOTES) = Some(notes);
-        *addr_of_mut!(DIN_CCS) = Some(ccs);
+        *addr_of_mut!(DIN_CTRL) = Some(ctrl);
     }
     // The plain store above must not sink past the unmask's volatile write.
     compiler_fence(Ordering::SeqCst);
     priority::set_irq(nvic, pac::Interrupt::USART1, Priority::MIDI);
-    // SAFETY: the handler touches only USART1, its own `PARSER`,
-    // `DIN_NOTES`, the DIN queue's producer, and `DIN_CCS`, the DIN CC
-    // ring it alone pushes to.
+    // SAFETY: the handler touches only USART1, its own `PIPE`,
+    // `DIN_NOTES`, the DIN queue's producer, `DIN_CTRL`, the DIN
+    // control ring it alone pushes to, and `DIN_OUT`, the out ring it
+    // alone pops.
     unsafe { NVIC::unmask(pac::Interrupt::USART1) };
 }
 
@@ -57,21 +99,38 @@ fn audio_cycles() -> u32 {
 fn USART1() {
     // Its own time, for the card IRQ's (`card_dma::clocks`).
     let enter = stamp(audio_cycles);
-    // SAFETY: this handler owns USART1 after `init`, and `PARSER`,
-    // `DIN_NOTES` and `DIN_CCS` are touched only here once `init` has
+    // SAFETY: this handler owns USART1 after `init`, and `PIPE`,
+    // `DIN_NOTES` and `DIN_CTRL` are touched only here once `init` has
     // unmasked it; the handler can't preempt itself.
-    let (usart, parser, notes, ccs) = unsafe {
+    let (usart, pipe, notes, ctrl) = unsafe {
         (
             &*pac::USART1::ptr(),
-            &mut *addr_of_mut!(PARSER),
+            &mut *addr_of_mut!(PIPE),
             &mut *addr_of_mut!(DIN_NOTES),
-            *addr_of_mut!(DIN_CCS),
+            *addr_of_mut!(DIN_CTRL),
         )
     };
-    loop {
+    // Active Sensing: 300 ms without a byte. A stale flag (counted while
+    // disarmed) is cleared here, before this entry's bytes can arm.
+    if usart.isr.read().rtof().bit_is_set() {
+        usart.icr.write(|w| w.rtocf().clear());
+        if usart.cr1.read().rtoie().bit_is_set() {
+            usart.cr1.modify(|_, w| w.rtoie().clear_bit());
+            if let (Some(notes), Some(ctrl)) = (notes.as_mut(), ctrl) {
+                midi_in::idle(pipe, &mut DinSinks { notes, ctrl });
+            }
+        }
+    }
+    // Every byte the FIFO holds, then one door call (spec § 7.2).
+    let mut buf = [0u8; RX_FIFO];
+    let mut n = 0;
+    while n < RX_FIFO {
         let isr = usart.isr.read();
+        // A framing or noise error flags the byte at the FIFO's head: it is
+        // read and dropped, so a glitch can't be FF (Reset).
+        let bad = isr.fe().bit_is_set() || isr.nf().bit_is_set();
         // An uncleared ORE with RXFNEIE set refires this interrupt forever.
-        if isr.ore().bit_is_set() || isr.fe().bit_is_set() || isr.nf().bit_is_set() {
+        if bad || isr.ore().bit_is_set() {
             usart
                 .icr
                 .write(|w| w.orecf().clear().fecf().clear().ncf().clear());
@@ -80,20 +139,37 @@ fn USART1() {
         if isr.rxne().bit_is_clear() {
             break;
         }
-        let byte = usart.rdr.read().rdr().bits() as u8;
-        match parser.feed(byte).map(route) {
-            Some(Routed::Queue(ev)) => {
-                if let Some(notes) = notes.as_mut() {
-                    notes.push(ev);
-                }
-            }
-            Some(Routed::Cc(ev)) => {
-                if let Some(ccs) = ccs {
-                    ccs.push(ev);
-                }
-            }
-            _ => {}
+        buf[n] = usart.rdr.read().rdr().bits() as u8;
+        n += usize::from(!bad);
+    }
+    if n > 0
+        && let (Some(notes), Some(ctrl)) = (notes.as_mut(), ctrl)
+    {
+        // Closed, the bytes are dropped: MIDI in is deaf (spec § 13).
+        midi_in::feed(pipe, &buf[..n], &mut DinSinks { notes, ctrl });
+        let s = pipe.stats();
+        MIDI_FAULTS.store(s.fault_total(), Ordering::Relaxed);
+        MIDI_DROPS.store(u32::from(s.refused), Ordering::Relaxed);
+        MIDI_CTRL_DROPS.store(u32::from(s.ctrl_refused), Ordering::Relaxed);
+        // An FE arms the timeout's interrupt; the next silence fires it.
+        if pipe.sensing_armed() {
+            usart.cr1.modify(|_, w| w.rtoie().set_bit());
         }
+    }
+    // DIN OUT: the ring into the TX FIFO while it has room. The threshold
+    // interrupt stays on while bytes wait; the main loop pends this handler
+    // after the UI's out pass (`din_out`), so an idle line starts. Every
+    // CR3 write is this handler's.
+    #[cfg(feature = "midi-map")]
+    // SAFETY: `DIN_OUT` is written only before `init` unmasks this
+    // handler, which alone reads it.
+    if let Some(out) = unsafe { *addr_of_mut!(DIN_OUT) } {
+        let mut b = [0u8; 1];
+        while usart.isr.read().txe().bit_is_set() && out.pop_into(&mut b) == 1 {
+            usart.tdr.write(|w| w.tdr().bits(u16::from(b[0])));
+        }
+        let more = !out.is_empty();
+        usart.cr3.modify(|_, w| w.txftie().bit(more));
     }
     let leave = stamp(audio_cycles);
     let audio = leave.over.since(enter.over);

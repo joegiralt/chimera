@@ -6,7 +6,7 @@ pub mod block_def;
 pub mod block_registry;
 pub mod browser;
 pub mod busy;
-mod cc;
+pub mod cc;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
@@ -25,6 +25,7 @@ pub mod led;
 pub mod lfo_glyph;
 pub mod library;
 pub mod meter;
+pub mod midi;
 pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
@@ -354,8 +355,8 @@ pub struct UiState {
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
     /// loses nothing. RAM only; a project load clears it.
     rev_knobs: KnobMemory,
-    /// Mapped CCs: each Part's ramps, bins and budget cursor.
-    cc: cc::CcState,
+    /// Bindings' state (`ui::midi`): in AXI, lent once.
+    cc: &'static mut cc::MidiSlot,
     /// MIX+SEQ's MIDI learn (spec § 4).
     learn: learn::Learn,
 }
@@ -546,7 +547,7 @@ impl UiState {
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
             addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
-            addr_of_mut!((*p).cc).write(cc::CcState::new());
+            addr_of_mut!((*p).cc).write(cc::MidiSlot::take());
             addr_of_mut!((*p).learn).write(learn::Learn::Off);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
@@ -682,7 +683,8 @@ impl UiState {
         }
     }
 
-    /// A start-up fault as a toast, held `Toast::BOOT_MS`.
+    /// A start-up fault, or closed bank 2's `NEEDS UPDATE` for learn, as a
+    /// toast held `Toast::BOOT_MS`.
     pub fn show_boot_fault(&mut self, text: &str) {
         self.toast.show(busy::Toast {
             text: Line::new(text),
@@ -1013,7 +1015,15 @@ impl UiState {
                 Some(sc) => self.screen_rows(sc),
                 None => settings::rows(s.path()).len(),
             };
-            self.list_first = settings::view::first_visible(s.row() as usize, len, prev) as u8;
+            #[cfg(feature = "midi-map")]
+            let rows = match s.screen() {
+                Some(Screen::MidiMap) => settings::view::MAP_ROWS,
+                _ => settings::view::VISIBLE_ROWS,
+            };
+            #[cfg(not(feature = "midi-map"))]
+            let rows = settings::view::VISIBLE_ROWS;
+            let row = s.row() as usize;
+            self.list_first = settings::view::first_visible_of(row, len, prev, rows) as u8;
         }
         if let Some(p) = to.part() {
             self.active_part = p;
@@ -1765,7 +1775,7 @@ impl UiState {
         let mapping = self.screen() == Some(Screen::MidiMap);
         #[cfg(not(feature = "midi-map"))]
         let mapping = false;
-        // MIDI MAP's B, C and D edit the row under the bar.
+        // MIDI MAP's B to F edit the row under the bar.
         let a = list_turn(c, if mapping { &MAP_EDITS } else { &[] });
         let on_list = self.loc.settings().is_some_and(|s| s.at_leaf().is_none());
         if on_list && a != 0 {
@@ -2663,7 +2673,15 @@ impl UiState {
 
     /// SYSTEM's PUSH ENCODERS, in a build that has them (ADR 0140).
     fn push_on(&self) -> bool {
-        cfg!(feature = "push-encoders") && self.midi.push
+        cfg!(feature = "push-encoders") && self.midi.push()
+    }
+
+    /// SYSTEM's PUSH ENCODERS as last edited: the scan's read width. Read
+    /// in place: a copy of `MidiSettings` out of `midi()` cost the main
+    /// loop a stack slot and ~200 B of bank 1.
+    #[inline(always)]
+    pub fn push_encoders(&self) -> bool {
+        self.midi.push()
     }
 
     /// Each encoder's push this frame (ADR 0140); with PUSH ENCODERS off,
@@ -3376,6 +3394,10 @@ impl UiState {
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.band_status(),
+            pickup: self
+                .pickup()
+                .filter(|_| self.theme.hints)
+                .map(cc::pickup_hint),
             pool: self.project.pool(),
             audio,
             card: self.card,
@@ -3792,9 +3814,15 @@ fn part_key(c: &impl Controls) -> bool {
             .any(|&b| c.button_state(b) == ButtonState::Pressed)
 }
 
-/// MIDI MAP's value encoders: CC, MIN, MAX.
+/// MIDI MAP's value encoders: CONTROL, MIN, MAX, INPUT, ECHO.
 #[cfg(feature = "midi-map")]
-const MAP_EDITS: [EncoderId; 3] = [EncoderId::B, EncoderId::C, EncoderId::D];
+const MAP_EDITS: [EncoderId; 5] = [
+    EncoderId::B,
+    EncoderId::C,
+    EncoderId::D,
+    EncoderId::E,
+    EncoderId::F,
+];
 #[cfg(not(feature = "midi-map"))]
 const MAP_EDITS: [EncoderId; 0] = [];
 

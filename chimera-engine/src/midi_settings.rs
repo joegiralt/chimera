@@ -1,7 +1,8 @@
 //! The instrument-wide settings SYSTEM keeps beside the theme: MIDI
 //! CONFIG's SYNC, who drives ORBIT's transport (ADR 0080), SETTINGS >
-//! TUNING's TUNE, the A4 reference as cents off 440 Hz, and SYSTEM > PUSH
-//! ENCODERS' PUSH, whether the front panel's encoders push (ADR 0140).
+//! TUNING's TUNE, the A4 reference as cents off 440 Hz, SYSTEM > PUSH
+//! ENCODERS' PUSH, whether the front panel's encoders push (ADR 0140), and
+//! MIDI CONFIG's ECHO, DIN OUT's master switch (spec § 8.4).
 //! They say how the unit sits in the studio, not what a project plays.
 //! (One block, so the file keeps its `MIDI` record.)
 
@@ -16,20 +17,61 @@ pub struct MidiSettings {
     pub sync: SyncMode,
     /// Cents, -100..=100: A4 = 440 Hz × 2^(tune / 1200). Whole cents.
     pub tune: i8,
-    /// The control board has push encoders: read them (ADR 0140).
-    pub push: bool,
+    /// PUSH and ECHO (`push`, `echo`).
+    pub switches: Switches,
+}
+
+/// SYSTEM's two switches in one byte: PUSH, the control board has push
+/// encoders, read them (ADR 0140); ECHO, DIN OUT sends value echo and
+/// identity replies (spec § 8.4). One byte keeps `MidiSettings` at three,
+/// so SYSTEM's copies in bank 1 keep their shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Switches(u8);
+
+impl Switches {
+    const PUSH: u8 = 1;
+    const ECHO: u8 = 2;
+
+    const fn has(self, bit: u8) -> bool {
+        self.0 & bit != 0
+    }
+
+    const fn with(self, bit: u8, on: bool) -> Self {
+        Self(if on { self.0 | bit } else { self.0 & !bit })
+    }
 }
 
 impl MidiSettings {
     pub const DEFAULT: MidiSettings = MidiSettings {
         sync: SyncMode::DEFAULT,
         tune: 0,
-        push: false,
+        switches: Switches(Switches::ECHO),
     };
 
     pub const SYNC: ParamId = ParamId(0);
     pub const TUNE: ParamId = ParamId(1);
     pub const PUSH: ParamId = ParamId(2);
+    pub const ECHO: ParamId = ParamId(3);
+
+    /// The control board has push encoders: read them (ADR 0140).
+    pub const fn push(&self) -> bool {
+        self.switches.has(Switches::PUSH)
+    }
+
+    /// DIN OUT sends: value echo and identity replies (spec § 8.4).
+    pub const fn echo(&self) -> bool {
+        self.switches.has(Switches::ECHO)
+    }
+
+    pub const fn with_push(mut self, on: bool) -> Self {
+        self.switches = self.switches.with(Switches::PUSH, on);
+        self
+    }
+
+    pub const fn with_echo(mut self, on: bool) -> Self {
+        self.switches = self.switches.with(Switches::ECHO, on);
+        self
+    }
 
     /// TUNE in semitones, for the pitch path.
     pub fn tune_semitones(&self) -> f32 {
@@ -48,7 +90,7 @@ const SYNC_NAMES: [&str; 2] = ["INT", "EXT"];
 /// SYNC by index, `SyncMode::ALL`'s order; `SYNC_NAMES` too
 /// (`midi_sync_page_test::sync_value_names_and_order_agree`). INT and EXT are two peers,
 /// neither off, so the focus shows the word.
-pub static MIDI_SPECS: [ParamSpec; 3] = [
+pub static MIDI_SPECS: [ParamSpec; 4] = [
     ParamSpec::choice(
         0,
         "SYNC",
@@ -84,6 +126,19 @@ pub static MIDI_SPECS: [ParamSpec; 3] = [
     )
     .ident("PUSH")
     .glyph(crate::glyph::FocusGlyph::Switch),
+    // A SYSTEM from before ECHO has none: ON, the default (spec § 8.4).
+    ParamSpec::stepped(
+        3,
+        "ECHO",
+        ValFmt::Names(&OFF_ON),
+        0.0,
+        1.0,
+        1.0,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("ECHO")
+    .glyph(crate::glyph::FocusGlyph::Switch),
 ];
 
 const _: () = assert!(SyncMode::ALL.len() == SYNC_NAMES.len());
@@ -107,7 +162,8 @@ impl Block for MidiSettings {
         match id {
             Self::SYNC => self.sync as u8 as f32,
             Self::TUNE => f32::from(self.tune),
-            Self::PUSH => f32::from(self.push),
+            Self::PUSH => f32::from(self.push()),
+            Self::ECHO => f32::from(self.echo()),
             _ => 0.0,
         }
     }
@@ -117,7 +173,8 @@ impl Block for MidiSettings {
         match id {
             Self::SYNC => self.sync = SyncMode::ALL[(v as usize).min(SyncMode::ALL.len() - 1)],
             Self::TUNE => self.tune = crate::dsp::clampf(v, -100.0, 100.0) as i8,
-            Self::PUSH => self.push = v as u8 != 0,
+            Self::PUSH => *self = self.with_push(v as u8 != 0),
+            Self::ECHO => *self = self.with_echo(v as u8 != 0),
             _ => {}
         }
     }

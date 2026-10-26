@@ -438,16 +438,15 @@ fn manage_command(ui: &mut UiState, row: usize, c: Command, modified: bool) {
 fn map_page(ui: &mut UiState, fill: bool) {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modal::ModalParams;
-    use chimera_core::midi_in::Cc;
-    use chimera_core::midi_map::{MapEntry, Mappable, MidiMap};
+    use chimera_core::midi_map::{Binding, Feedback, Input as MapInput, Mappable, MidiMap, Span};
     use chimera_core::params::FilterParams;
     let at = |b, id| Mappable::new(ParamAddr::new(b, id)).unwrap();
     let mut m = MidiMap::EMPTY;
-    let e = |cc, t, min, max| MapEntry {
-        cc: Cc::new(cc).unwrap(),
+    let e = |cc, t, min, max| Binding {
+        input: MapInput::cc(cc).unwrap(),
         target: t,
-        min,
-        max,
+        span: Span { min, max },
+        feedback: Feedback::Off,
     };
     if fill {
         for x in [
@@ -467,7 +466,7 @@ fn map_page(ui: &mut UiState, fill: bool) {
                 0,
             ),
         ] {
-            m.learn(x.cc, x.target).unwrap();
+            m.learn(x.input, x.target).unwrap();
             let n = m.len() - 1;
             m.set(n, x);
         }
@@ -873,7 +872,7 @@ fn every_encoder_picks_every_prompt_pill() {
     }
 }
 
-/// MIDI MAP: A, E and F move the bar; B, C and D edit the row and leave it.
+/// MIDI MAP: A moves the bar; B to F edit the row and leave it.
 #[cfg(feature = "midi-map")]
 #[test]
 fn midi_map_splits_the_encoders() {
@@ -883,16 +882,19 @@ fn midi_map_splits_the_encoders() {
     let n = ui.map_band().map.len();
     assert!(n >= 2);
     let rev = ui.project().rev();
-    for e in [EncoderId::A, EncoderId::E, EncoderId::F] {
-        let at = row(&ui);
-        feed(&mut ui, Input::turn(e, 1));
-        assert_eq!(row(&ui) as usize, (at as usize + 1) % n, "{e:?}");
-        feed(&mut ui, Input::turn(e, -1));
-        assert_eq!(row(&ui), at, "{e:?} back");
-    }
-    assert_eq!(ui.project().rev(), rev, "moving edits nothing");
     let at = row(&ui);
-    for (e, d) in [(EncoderId::B, 1), (EncoderId::C, 1), (EncoderId::D, -1)] {
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(row(&ui) as usize, (at as usize + 1) % n);
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(row(&ui), at, "back");
+    assert_eq!(ui.project().rev(), rev, "moving edits nothing");
+    for (e, d) in [
+        (EncoderId::B, 1),
+        (EncoderId::C, 1),
+        (EncoderId::D, -1),
+        (EncoderId::E, 1),
+        (EncoderId::F, 1),
+    ] {
         let before = ui.project().rev();
         feed(&mut ui, Input::turn(e, d));
         assert_eq!(row(&ui), at, "{e:?} keeps the bar");
@@ -906,5 +908,8 @@ fn midi_map_hints_the_split() {
     let mut ui = crate::screen::stack_ui();
     map_page(&mut ui, true);
     let l = ui.legend_for_test().unwrap();
-    assert!(l.contains("AEF MOVE") && l.contains("BCD EDIT"), "{l}");
+    assert!(
+        l.contains("A MOVE") && l.contains("MIX+MINUS DELETES"),
+        "{l}"
+    );
 }

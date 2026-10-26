@@ -2533,7 +2533,127 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "TEXT SIZE"]);
         feed(ui, Input::turn(EncoderId::A, 1));
     }),
+    // MIDI MAP (spec § 8.2): every kind of control, a dead target, the
+    // bar on the relative encoder, spelled out with its range and echo.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_mixed", midi_map_mixed),
+    // INIT Algo's PIT, FINE bound to a PICKUP CC that waits below it: the
+    // focus band says which way to turn (spec § 8.3).
+    #[cfg(feature = "midi-map")]
+    ("pickup_hint", pickup_hint),
 ];
+
+/// Part 1 on INIT Algo with a mixed map, MIDI MAP open on its row 5.
+#[cfg(feature = "midi-map")]
+fn midi_map_mixed(ui: &mut UiState) {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::ModalParams;
+    use chimera_core::midi_map::{
+        Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input as In, LearnCc, Mappable, MidiMap,
+        NrpnKind, Span,
+    };
+    use chimera_core::params::FilterParams;
+    use chimera_core::part::PartParams;
+    use chimera_midi::rel::ByteEncoding;
+    use chimera_midi::take::Takeover;
+    use chimera_midi::value::{U7, U14};
+    init_part(ui, PartId::ALL[0]);
+    let at = |b, id| Mappable::new(ParamAddr::new(b, id)).unwrap();
+    let cc = |n| LearnCc::new(n).unwrap();
+    let nrpn = U14::from_parts(U7::new(10).unwrap(), U7::new(3).unwrap());
+    let e = |input, target, (min, max), feedback| Binding {
+        input,
+        target,
+        span: Span { min, max },
+        feedback,
+    };
+    let entries = [
+        e(
+            In::cc(74).unwrap(),
+            at(BlockRef::Filter, FilterParams::CUTOFF),
+            (0, 255),
+            Feedback::Off,
+        ),
+        e(
+            In::Cc14(Cc14Msb::new(2).unwrap(), Takeover::Pickup),
+            at(BlockRef::Part, PartParams::PAN),
+            (0, 255),
+            Feedback::Value,
+        ),
+        e(
+            In::Nrpn(nrpn, NrpnKind::IncDec),
+            at(BlockRef::Filter, FilterParams::RESONANCE),
+            (0, 255),
+            Feedback::Value,
+        ),
+        e(
+            In::Pressure(Takeover::Scale),
+            at(BlockRef::Filter, FilterParams::STAB),
+            (255, 0),
+            Feedback::Off,
+        ),
+        e(
+            In::Cc(cc(16), CcKind::Button(ButtonMode::Toggle)),
+            at(BlockRef::Modal, ModalParams::STRUCTURE),
+            (0, 255),
+            Feedback::Off,
+        ),
+        e(
+            In::Cc(cc(21), CcKind::Relative(ByteEncoding::TwosComplement)),
+            at(BlockRef::Part, PartParams::LEVEL),
+            (40, 200),
+            Feedback::Value,
+        ),
+    ];
+    let mut m = MidiMap::EMPTY;
+    for x in entries {
+        m.learn(x.input, x.target).unwrap();
+        let n = m.len() - 1;
+        m.set(n, x);
+    }
+    ui.project_mut().edit_part(PartId::ALL[0]).sound.map = m;
+    to_leaf(ui, &["PART"]);
+    plus(ui, 6);
+    feed(ui, Input::press(ButtonId::Edit));
+    feed(ui, Input::turn(EncoderId::A, 5));
+}
+
+/// INIT Algo's PIT, FINE touched, bound to CC 21 with PICKUP; CC 21 at 0
+/// heard, below FINE: the knob must go up.
+#[cfg(feature = "midi-map")]
+fn pickup_hint(ui: &mut UiState) {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::midi_in::CtrlEvent;
+    use chimera_core::midi_map::{
+        Binding, CcKind, Feedback, Input as In, LearnCc, Mappable, MidiMap, Span,
+    };
+    use chimera_midi::ctl::{Ctl, FreeCc};
+    use chimera_midi::take::Takeover;
+    use chimera_midi::value::U7;
+    init_part(ui, PartId::ALL[0]);
+    to_pitch(ui, EngineType::Algo);
+    feed(ui, Input::turn(EncoderId::B, -25)); // FINE -25, focused
+    let fine = ParamAddr::new(BlockRef::Pitch, chimera_core::block::ParamId(1));
+    let e = Binding {
+        input: In::Cc(
+            LearnCc::new(21).unwrap(),
+            CcKind::Absolute(Takeover::Pickup),
+        ),
+        target: Mappable::new(fine).unwrap(),
+        span: Span::FULL,
+        feedback: Feedback::Off,
+    };
+    let mut m = MidiMap::EMPTY;
+    m.learn(e.input, e.target).unwrap();
+    ui.project_mut().edit_part(PartId::ALL[0]).sound.map = m;
+    let ch = ui.project().part(PartId::ALL[0]).mix.channel;
+    let c = Ctl::Cc {
+        cc: FreeCc::new(21).unwrap(),
+        value: U7::new(0).unwrap(),
+    };
+    ui.hear_ccs(core::iter::once(CtrlEvent::Ctl(ch, c)), Ms(10_000), true);
+    assert_eq!(ui.pickup(), Some(chimera_midi::ctl::Dir::Up));
+}
 
 /// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.
 pub fn audio_fixture() -> AudioStats {

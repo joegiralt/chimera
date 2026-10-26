@@ -10,6 +10,7 @@ chimera-hal = { path = "../chimera-hal" }
 chimera-image = { path = "../chimera-image" }
 chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"
+chimera-midi = { path = "../chimera-midi" }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 # Bitmap fonts from U8g2 (crate MIT OR Apache-2.0; font licences in ADR 0016).
@@ -74,6 +75,7 @@ bank2 = ["tape", "chimera-engine/bank2"]
 # No default features: `--no-default-features` must reach the library too.
 chimera-core = { path = ".", default-features = false, features = ["test-support", "source-writer", "smear-probe", "clamp-probe", "tape"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
+chimera-midi = { path = "../chimera-midi" }
 
 
 

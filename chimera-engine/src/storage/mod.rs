@@ -15,6 +15,7 @@ mod system;
 pub mod twelve;
 
 pub(crate) use block_codec::ENTRY_LEN;
+pub(crate) use block_codec::MAX_BLOCK_PARAMS;
 pub use block_codec::{decode_block, encode_block};
 pub use card::{Card, CardError, CardEvent, CardFault, Outcome, Ready, after_error, after_mount};
 pub use chimera_image::crc::Crc32;
@@ -43,6 +44,7 @@ pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
 };
 pub use sound::{MAX_SOUND_COST, SoundCheck, SoundDecoder, encode_sound, sound_crc};
+pub(crate) use sound::{addr_code, addr_of};
 pub use source_file::{
     MAX_TAPES, PutRefusal, SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceCheck, SourceHead, SourceLayout,
     SourceReadError, SourceZones, TapeList, WholeShape, ZONE_LEN, Zone, data_offset,

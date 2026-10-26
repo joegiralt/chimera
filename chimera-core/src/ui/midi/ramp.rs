@@ -1,30 +1,33 @@
-//! The pure CC core (spec §§ 5-6). A continuous target ramps over the gap
-//! between its CCs so a slow sweep is never a staircase; a stepped one bins
-//! with hysteresis; the MOVES budget picks which ramps write a pass.
+//! The pure ramp, bin and budget core (spec §§ 5-6, ADR 0139). A
+//! continuous target ramps over the gap between its messages so a slow
+//! sweep is never a staircase; a stepped one bins with hysteresis; the
+//! MOVES budget picks which ramps write a pass. Bank 2's.
 
 use chimera_hal::Ms;
+use chimera_midi::take::Place;
 
 /// The ramp's shortest and longest crossing, ms.
 pub const RAMP_MIN_MS: u32 = 15;
 pub const RAMP_MAX_MS: u32 = 120;
-/// A ±1 reversal this soon after the last change is jitter.
+/// A reversal this soon after the last change is jitter.
 pub const DEAD_MS: u32 = 50;
+/// How far back a reversal may go and still be jitter: one 7-bit count,
+/// as a replicated place (`v << 7 | v`).
+pub const DEAD_PLACES: u16 = 129;
 /// Counts past a bin's boundary a stepped target needs to move.
 pub const HYST: u8 = 2;
 
-/// No CC heard yet. CC values are 7-bit, so it never collides.
-const NONE: u8 = u8::MAX;
-
-/// One mapped entry's ramp: 16 bytes. The rate is implied by `left`, the ms
-/// still to go, so the last step lands exactly on `to`.
+/// One entry's ramp: 20 bytes. The rate is implied by `left`, the ms still
+/// to go, so the last step lands exactly on `to`. The last two places
+/// heard are kept as `place + 1`, 0 for none.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ramp {
     at: f32,
     to: f32,
     last: Ms,
     left: u8,
-    last_v: u8,
-    prev_v: u8,
+    last_k: u16,
+    prev_k: u16,
 }
 
 impl Ramp {
@@ -34,25 +37,28 @@ impl Ramp {
             to: place,
             last: Ms(0),
             left: 0,
-            last_v: NONE,
-            prev_v: NONE,
+            last_k: 0,
+            prev_k: 0,
         }
     }
 
-    /// Heads for `place`, crossing in the gap since the last CC. `false`
-    /// when `v` repeats the last value or is a ±1 reversal inside `DEAD_MS`.
-    pub fn hear(&mut self, v: u8, place: f32, now: Ms) -> bool {
-        let v = v.min(127);
+    /// Heads for `place`, crossing in the gap since the last message.
+    /// `false` when `k` repeats the last heard or goes back to the one
+    /// before by at most `DEAD_PLACES` inside `DEAD_MS`.
+    pub fn hear(&mut self, k: Place, place: f32, now: Ms) -> bool {
+        let k = k.get() + 1;
         let dt = now.since(self.last);
-        if v == self.last_v || (v == self.prev_v && v.abs_diff(self.last_v) == 1 && dt < DEAD_MS) {
+        if k == self.last_k
+            || (k == self.prev_k && k.abs_diff(self.last_k) <= DEAD_PLACES && dt < DEAD_MS)
+        {
             return false;
         }
-        let t = if self.last_v == NONE || dt > RAMP_MAX_MS {
+        let t = if self.last_k == 0 || dt > RAMP_MAX_MS {
             RAMP_MIN_MS
         } else {
             dt.max(RAMP_MIN_MS)
         };
-        (self.prev_v, self.last_v, self.last) = (self.last_v, v, now);
+        (self.prev_k, self.last_k, self.last) = (self.last_k, k, now);
         self.to = place;
         self.left = if place == self.at { 0 } else { t as u8 };
         true
@@ -79,7 +85,7 @@ impl Ramp {
         Some(self.at)
     }
 
-    /// Still heading for its last CC's place.
+    /// Still heading for its last message's place.
     pub const fn moving(&self) -> bool {
         self.left != 0
     }

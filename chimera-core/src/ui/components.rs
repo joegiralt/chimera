@@ -408,7 +408,8 @@ pub fn focus_band<D>(
 /// `viz::PLOT_TOP` — above every curve and the touched-value readout, which
 /// is clamped to the plot. The strip behind the text is cleared first so a
 /// curve point at the plot's top edge can't run into the letters.
-pub fn viz_status<D>(d: &mut D, status: PrimeStatus, label: &str)
+/// Its width drawn, in px.
+pub fn viz_status<D>(d: &mut D, status: PrimeStatus, label: &str) -> i32
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -438,6 +439,7 @@ where
         theme::INK,
         theme::LABEL_TRACKING,
     );
+    w
 }
 
 /// A status's face: the value font, or the bold label's where that runs

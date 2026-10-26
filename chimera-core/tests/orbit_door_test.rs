@@ -173,11 +173,12 @@ fn midi_clock() -> Hashes {
 /// Dense's audio through the master tape stage (`master-tape`).
 const DENSE_MASTER_TAPE_AUDIO: u64 = 10036277446996524101;
 
+// Events re-pinned after Task 1: the type rename moved the Debug text (Key/Channel); view and audio are identical.
 const WANT: [(&str, Hashes); 4] = [
     (
         "init",
         Hashes {
-            events: 16712541784421469427,
+            events: 10218719416688139281,
             view: 5799786289991752721,
             audio: 6712420641175603369,
             ons: 14,
@@ -186,7 +187,7 @@ const WANT: [(&str, Hashes); 4] = [
     (
         "fixture",
         Hashes {
-            events: 14629289380968475772,
+            events: 14975909431943274182,
             view: 1229182318731282432,
             audio: 17022195276077958477,
             ons: 32,
@@ -195,7 +196,7 @@ const WANT: [(&str, Hashes); 4] = [
     (
         "dense",
         Hashes {
-            events: 14643758011103609088,
+            events: 10289365257650624116,
             view: 4960121372176126917,
             audio: 15069732824941459853,
             ons: 47,
@@ -204,7 +205,7 @@ const WANT: [(&str, Hashes); 4] = [
     (
         "midi_clock",
         Hashes {
-            events: 7253012048407308496,
+            events: 7189842878401238995,
             view: 8363854142273624929,
             audio: 908574724158595525,
             ons: 27,

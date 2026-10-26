@@ -20,8 +20,8 @@ use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::va::VaParams;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-use chimera_core::midi_in::{CC_RING_LEN, Cc, CcEvent, CcRing};
-use chimera_core::midi_map::{MapEntry, Mappable};
+use chimera_core::midi_in::{CTRL_RING_LEN, Cc, CcEvent, CtrlEvent, CtrlRing};
+use chimera_core::midi_map::{Input as MapInput, Mappable, Span};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
@@ -121,7 +121,7 @@ impl Bench {
     fn map(&mut self, p: PartId, cc: u8, a: ParamAddr) {
         let s = self.ui.project_mut().edit_part(p).sound;
         s.map
-            .learn(Cc::new(cc).unwrap(), Mappable::new(a).unwrap())
+            .learn(MapInput::cc(cc).unwrap(), Mappable::new(a).unwrap())
             .unwrap();
     }
 
@@ -254,9 +254,8 @@ fn swept_ends_reach_min_and_max() {
                 let e = s.map.entries()[0];
                 s.map.set(
                     0,
-                    MapEntry {
-                        min: 255,
-                        max: 0,
+                    chimera_core::midi_map::Binding {
+                        span: Span { min: 255, max: 0 },
                         ..e
                     },
                 );
@@ -584,14 +583,23 @@ fn hand_wins() {
 fn ring_keeps_the_last_value() {
     let mut b = Bench::algo();
     b.map(P1, 74, CUTOFF);
-    let ring = CcRing::new();
-    for i in 0..CC_RING_LEN + 10 {
-        ring.push(b.ev(P1, 74, (i % 100) as u8 + 20));
+    let ring = CtrlRing::new();
+    let ctl = |e: CcEvent| {
+        CtrlEvent::Ctl(
+            e.channel,
+            chimera_midi::ctl::Ctl::Cc {
+                cc: chimera_midi::ctl::FreeCc::new(e.cc.get()).unwrap(),
+                value: chimera_midi::value::U7::new(e.value).unwrap(),
+            },
+        )
+    };
+    for i in 0..CTRL_RING_LEN + 10 {
+        ring.push(ctl(b.ev(P1, 74, (i % 100) as u8 + 20)));
     }
     assert_eq!(ring.dropped(), 10);
     b.now += PASS_MS;
     b.ui.hear_ccs(ring.drain(), Ms(b.now), true);
-    ring.push(b.ev(P1, 74, 5));
+    ring.push(ctl(b.ev(P1, 74, 5)));
     b.now += PASS_MS;
     b.ui.hear_ccs(ring.drain(), Ms(b.now), true);
     for _ in 0..40 {
@@ -625,7 +633,7 @@ fn a_project_load_ends_every_ramp() {
         p.edit_part(P1)
             .sound
             .map
-            .learn(Cc::new(74).unwrap(), m)
+            .learn(MapInput::cc(74).unwrap(), m)
             .unwrap();
     });
     let mut b = Bench::algo();
@@ -829,7 +837,7 @@ fn a_cc_beside_a_queued_load_is_dropped() {
 /// keeps it.
 #[test]
 fn a_stepped_cc_keeps_the_page_as_a_turn_does() {
-    use chimera_core::midi_map::ramp::bin;
+    use chimera_core::ui::midi::ramp::bin;
     let on_op_a = || {
         let mut s = Sound::plain_init(EngineType::Algo);
         s.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
@@ -865,8 +873,10 @@ fn ramps_up(b: &mut Bench, cc: u8, a: ParamAddr) {
     let mut was = b.place(P1, a);
     assert!(was < 1.0, "{a:?} rests below the top");
     b.pass(&[(cc, 127)]);
-    let mut steps = 0;
+    let (mut steps, mut passes) = (0, 0);
     while b.place(P1, a) < 1.0 {
+        passes += 1;
+        assert!(passes < 400, "{a:?} never moves");
         b.pass(&[]);
         let now = b.place(P1, a);
         assert!(now >= was, "{a:?} never backs off");
@@ -902,9 +912,8 @@ fn init_default_map_moves_its_targets() {
     }
 }
 
-/// MIX + SEQ, then a turn moves the focus to cell `i`: armed on it.
-fn arm_on(b: &mut Bench, i: usize) {
-    use chimera_core::ui::learn::Learn;
+/// MIX + SEQ pressed and let go: arms learn, or ends its sensing.
+fn mix_seq(b: &mut Bench) {
     feed(
         &mut b.ui,
         Input::chord(ButtonId::Mix, ButtonId::Seq).at(10_000),
@@ -916,6 +925,12 @@ fn arm_on(b: &mut Bench, i: usize) {
             .at(10_100),
     );
     feed(&mut b.ui, Input::release(ButtonId::Mix).at(10_133));
+}
+
+/// MIX + SEQ, then a turn moves the focus to cell `i`: armed on it.
+fn arm_on(b: &mut Bench, i: usize) {
+    use chimera_core::ui::learn::Learn;
+    mix_seq(b);
     let e = [
         EncoderId::A,
         EncoderId::B,
@@ -939,9 +954,11 @@ fn learned_cells_ramp() {
     b.go_to_page(MODAL_1.id);
     arm_on(&mut b, 2);
     b.pass(&[(40, 0)]);
+    // Learn senses the kind till MIX + SEQ ends it (phase 1 § 6.3).
+    mix_seq(&mut b);
     let map = b.ui.project().part(P1).sound.map;
     assert!(
-        map.targets_of(Cc::new(40).unwrap())
+        map.targets_of(&MapInput::cc(40).unwrap())
             .any(|(_, e)| e.target.addr() == bright)
     );
     b.passes(20);
@@ -953,9 +970,10 @@ fn learned_cells_ramp() {
     screen::to_osc_sub(&mut b.ui, &ALGO_LEVEL);
     arm_on(&mut b, 0);
     b.pass(&[(41, 0)]);
+    mix_seq(&mut b);
     let map = b.ui.project().part(P1).sound.map;
     assert!(
-        map.targets_of(Cc::new(41).unwrap())
+        map.targets_of(&MapInput::cc(41).unwrap())
             .any(|(_, e)| e.target.addr() == level)
     );
     b.pass(&[(41, 0)]);

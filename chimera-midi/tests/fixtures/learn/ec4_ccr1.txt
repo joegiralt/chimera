@@ -1,0 +1,12 @@
+# Faderfox EC4, CCr1: two's complement, +n = n, -n = 128-n (+1 = 01, -1 = 7F)
+# format: cc <number> <hex value>; right first, then left
+cc 21 01
+cc 21 01
+cc 21 02
+cc 21 03
+cc 21 01
+cc 21 7F
+cc 21 7F
+cc 21 7E
+cc 21 7D
+cc 21 7F

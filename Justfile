@@ -204,14 +204,33 @@ release-bin:
 # (its own-period search inlined there, ADR 0204) are all
 # bank 2's on a bank-2 build: a `bank2.x` glob that misses a new door entry
 # or run leaves it silently in bank 1. ORBIT's runner and pages (ADR 0208)
-# too, on a build that links them.
+# too, on a build that links them; and the NRPN address space (ADR 0216)
+# once anything links it. The map's codec (MidiDoor) always.
 check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
     syms=$(rust-nm -C {{elf}})
     orbit=()
     if grep -q 'chimera_engine::orbit::door::' <<< "$syms"; then orbit=('chimera_engine::orbit::door::' 'ui::orbit::raster::' 'ui::orbit::draw::cell_text$' 'ui::orbit::draw::viz_key$'); fi
-    for pat in "${orbit[@]}" 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on'; do
+    nrpn=()
+    if grep -q 'chimera_engine::nrpn::' <<< "$syms"; then nrpn=('chimera_engine::nrpn::'); fi
+    pipe=()
+    # The pipe's layers inline into `DinPipe::feed`; any left out of line
+    # are checked too.
+    if grep -q 'midi_in::DinPipe' <<< "$syms"; then
+        pipe=('midi_in::DinPipe>::door_feed$' 'midi_in::DinPipe>::door_idle$' 'midi_in::DinPipe>::')
+        for p in 'midi_in::Counted' 'chimera_midi::stream::' 'chimera_midi::ctl::' 'chimera_midi::sense::' 'chimera_midi::sysex::'; do
+            if grep -qE " [tT] .*$p" <<< "$syms"; then pipe+=("$p"); fi
+        done
+    fi
+    # The MIDI UI's door entries always link; whatever of `ui::midi` the
+    # inliner leaves out of them is checked too, and MIDI MAP's entries
+    # where `midi-map` links them.
+    midi_ui=('ui::UiState>::hear_in$' 'ui::UiState>::hand_in$')
+    for p in 'ui::midi::' 'ui::UiState>::map_in$' 'ui::UiState>::focus_note$' 'ui::UiState>::out_in$' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
+        if grep -qE " [tT] .*$p" <<< "$syms"; then midi_ui+=("$p"); fi
+    done
+    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
 
@@ -333,7 +352,7 @@ check-bin-paths bin:
 
 # Build all (desktop targets only)
 build:
-    cargo build -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop
+    cargo build -p chimera-core -p chimera-engine -p chimera-midi -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests (and core
 # with the master tape back on, ADR 0055, and the whole suite without ORBIT), desktop
@@ -347,7 +366,7 @@ build:
 # references are #[ignore]d (chimera-circuits/README.md).
 check:
     python3 -m unittest discover -s tools -p 'test_*.py'
-    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
@@ -357,9 +376,9 @@ check:
     cargo test -p chimera-core --features bank2 --test tape_closed_ui_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
     # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's, ALGO's and the streamed loads' bank-1 sides through the host's own door.
-    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test --test algo_door_test --test modal_door_test
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test --test algo_door_test --test modal_door_test --test midi_door_test
     # ORBIT's runner and pages through the host's own door: open it plays as before the move, closed nothing (ADR 0208).
-    cargo test -p chimera-core --features bank2 --test orbit_door_test
+    cargo test -p chimera-core --features bank2 --test orbit_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -455,7 +474,7 @@ loom:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
     cargo test -p chimera-core --features master-tape --test screen_golden_test
     just test-fat-tools
@@ -484,7 +503,7 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
@@ -629,14 +648,15 @@ flash-sd-probe:
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, the library peek, seeded with the
-# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start,
+# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start
+# (and both map records, 0x001E and 0x001F, in the Sound seeds),
 # and of the TAPE importer's WAV reader, seeded with small WAVs; the TX81Z
 # bank parser and map first, from an empty corpus (never a real bank)
 # (needs nightly and cargo-fuzz)
 fuzz:
     cd chimera-desktop/fuzz && cargo +nightly fuzz run parse_tx -- -max_total_time=300
     mkdir -p chimera-core/fuzz/corpus/decode_sound chimera-core/fuzz/corpus/decode_project
-    cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/corpus/decode_sound/
+    cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/seeds/decode_sound/*.snd chimera-core/fuzz/corpus/decode_sound/
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
     cp chimera-core/tests/fixtures/v1/orbit.prj chimera-core/fuzz/seeds/decode_project/*.prj chimera-core/fuzz/corpus/decode_project/
     cd chimera-core/fuzz && for t in decode_sound decode_project peek_library; do cargo +nightly fuzz run $t -- -max_total_time=300; done

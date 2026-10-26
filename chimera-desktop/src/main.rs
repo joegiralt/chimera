@@ -98,6 +98,10 @@ fn main() {
     let (desk_streams, bus) = card_model();
     let streams = desk_streams.reg;
     let mut audio = audio::DesktopAudio::new(scope_w, orbit_w, formant_w, Some(desk_streams));
+    #[cfg(feature = "midi")]
+    if let Some(name) = midi::midi_out_arg(std::env::args().skip(1)) {
+        audio::connect_midi_out(&name);
+    }
 
     let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
     ui.project_mut().set_gate_clock(gate_ms);
@@ -197,10 +201,13 @@ fn main() {
         // Mapped CCs, in the room the hand's moves left.
         #[cfg(feature = "midi")]
         ui.hear_ccs(
-            audio::MIDI_CCS.drain(),
+            audio::MIDI_CTRL.drain(),
             chimera_hal::Controls::now_ms(&controls),
             audio.taken(),
         );
+        // DIN OUT's pass: `--midi-out`'s thread sends it.
+        #[cfg(feature = "midi")]
+        ui.send_out(&audio::MIDI_OUT);
         if ui
             .take_dfu_synced(&mut sync, &mut card, &mut store, &mut settings)
             .is_some()

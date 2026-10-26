@@ -27,8 +27,10 @@ fn settings() -> SystemSettings {
         midi: MidiSettings {
             sync: SyncMode::Int,
             tune: -37,
-            push: true,
-        },
+            ..MidiSettings::DEFAULT
+        }
+        .with_push(true)
+        .with_echo(false),
         theme: ThemeSettings {
             bright: Bright::new(40),
             gamma: Gamma::Soft,

@@ -1,0 +1,11 @@
+# Faderfox EC4, CCr2: binary offset, 64+n (+1 = 41, -1 = 3F)
+cc 21 41
+cc 21 41
+cc 21 42
+cc 21 44
+cc 21 41
+cc 21 3F
+cc 21 3F
+cc 21 3E
+cc 21 3C
+cc 21 3F

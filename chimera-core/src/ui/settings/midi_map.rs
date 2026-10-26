@@ -1,26 +1,28 @@
-//! SETTINGS › PART › MIDI MAP (spec § 8): the active Part's map as rows,
+//! SETTINGS › PART › MIDI MAP (spec § 8.2): the active Part's map as rows,
 //! and the keys that edit it. Every edit is a Sound edit, so `*` and
 //! Revert carry it, and it rests the Part's ramps (indexed by position).
+//! The words and the keys are bank 2's (`ui::midi::page`, behind
+//! `MidiUiDoor`); here are the bands' reads and the stub.
 
 use core::fmt::Write;
 
-use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
+use chimera_hal::{ALL_ENCODERS, ButtonId, ButtonState, Controls};
 
-use super::prompt::{Choice, DeleteAnswer, Prompt};
+use super::prompt::{DeleteAnswer, Prompt};
 use super::view::RowLook;
-use super::{Ask, Screen, screen_path};
+use super::{Screen, screen_path};
 use crate::dsp::voice_fx::params::FxType;
-use crate::midi_in::Cc;
-use crate::midi_map::{MapEntry, MidiMap};
+use crate::midi_map::{Binding, MidiMap};
 use crate::params::EngineType;
 use crate::project::{Line, PartId};
 use crate::ui::UiState;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::hint::{Gesture, Hint};
 use crate::ui::mod_grid;
 use crate::ui::nav::Location;
 
 /// The target's spec label, or the FX type's word for its pot.
-pub fn name(e: &MapEntry, fx: FxType) -> &'static str {
+pub fn name(e: &Binding, fx: FxType) -> &'static str {
     let a = e.target.addr();
     mod_grid::fx_cell(a, fx)
         .map(|c| c.label)
@@ -28,34 +30,58 @@ pub fn name(e: &MapEntry, fx: FxType) -> &'static str {
         .unwrap_or("??")
 }
 
-/// A row as the list draws it.
-pub struct MapRow {
-    /// `CC 74  FREQ`; a dead entry `CC 16  - STRUCT`.
+/// A binding's words as MIDI MAP shows them (spec § 8.2), written whole
+/// by bank 2 (`ui::midi::page::text`, behind the door); closed, empty.
+#[derive(Default)]
+pub struct MapText {
+    /// `CC 74  CUTOFF`; a dead entry `CC 16  - STRUCT`.
     pub label: FmtBuf,
-    /// `0-255`: places of the param's span; min above max inverts.
-    pub range: FmtBuf,
-    pub look: RowLook,
+    /// The input's short form, right-aligned on the row: `JUMP`.
+    pub word: FmtBuf,
+    /// The input spelled out: `RELATIVE · TWOS COMPLEMENT`.
+    pub head: FmtBuf,
+    /// What follows it, if anything: `+1 = 1  -1 = 127`.
+    pub tail: FmtBuf,
+    /// The span's places, `0`-`255`.
+    pub min: FmtBuf,
+    pub max: FmtBuf,
+    /// `OFF` / `ON`.
+    pub echo: FmtBuf,
+    /// `CC 74`, `CC 2+34`, `NRPN 10:3`, `PRESSURE`: DELETE's question.
+    pub control: FmtBuf,
+    /// An NRPN or pressure: B can't step it.
+    pub fixed: bool,
+    /// All of the above as one number, for the list's region key.
+    pub key: u32,
 }
 
-/// `e`, its target's spec label, on a Part playing `engine`:
-/// dimmed when that engine doesn't read it. (The font has no dashes.)
-pub fn row(e: &MapEntry, engine: EngineType, fx: FxType) -> MapRow {
-    let live = e.target.live(engine);
-    let (mut label, mut range) = (FmtBuf::new(), FmtBuf::new());
-    let name = name(e, fx);
-    let dead = if live { "" } else { "- " };
-    let _ = write!(label, "CC {:<3} {dead}{name}", e.cc.get());
-    let _ = write!(range, "{}-{}", e.min, e.max);
-    MapRow {
-        label,
-        range,
-        look: if live {
-            RowLook::Normal
-        } else {
-            RowLook::Dimmed
-        },
+impl MapText {
+    /// MIN, MAX and ECHO beside their keys: `C MIN 0  D MAX 255  F ECHO OFF`.
+    pub fn values(&self) -> [Gesture<'_>; 3] {
+        [
+            Gesture("C MIN", self.min.as_str()),
+            Gesture("D MAX", self.max.as_str()),
+            Gesture("F ECHO", self.echo.as_str()),
+        ]
+    }
+
+    /// B's and E's hint, under the values.
+    pub fn hint(&self) -> Hint {
+        if self.fixed { FIXED } else { KEYS }
     }
 }
+
+/// `e`'s words, its target `live` on the Part's engine.
+fn text(e: &Binding, fx: FxType, live: bool) -> MapText {
+    let mut t = MapText::default();
+    crate::ui::cc::map_text(e, fx, live, &mut t);
+    t
+}
+
+/// B and E, under the values (spec § 8.2's hint line, ADR 0086).
+pub const KEYS: Hint = &[Gesture("B", "CONTROL"), Gesture("E", "INPUT")];
+/// An NRPN or pressure control is fixed: B can't step it.
+pub const FIXED: Hint = &[Gesture("B", "RELEARN TO CHANGE"), Gesture("E", "INPUT")];
 
 /// The active Part's map for the bands.
 #[derive(Clone, Copy)]
@@ -63,29 +89,25 @@ pub struct MapBand {
     pub map: MidiMap,
     engine: EngineType,
     fx: FxType,
+    /// Bank 2 answers: closed, the page reads `NEEDS UPDATE`.
+    pub open: bool,
 }
 
 impl MapBand {
-    pub fn row(&self, i: usize) -> MapRow {
-        row(&self.map.entries()[i], self.engine, self.fx)
+    /// Row `i`'s words.
+    pub fn text(&self, i: usize) -> MapText {
+        let e = &self.map.entries()[i];
+        text(e, self.fx, e.target.live(self.engine))
     }
-}
 
-/// B's detents: along 0..=127 past the reserved CCs, stopping at the ends.
-fn step_cc(cc: Cc, d: i8) -> Cc {
-    let s = i16::from(d.signum());
-    let mut n = i16::from(cc.get());
-    for _ in 0..d.unsigned_abs() {
-        let mut m = n + s;
-        while Cc::new(m as u8).is_some_and(Cc::is_reserved) && (0..=127).contains(&m) {
-            m += s;
+    /// Row `i`'s look: dimmed when the Part's engine doesn't read it.
+    pub fn look(&self, i: usize) -> RowLook {
+        if self.map.entries()[i].target.live(self.engine) {
+            RowLook::Normal
+        } else {
+            RowLook::Dimmed
         }
-        if !(0..=127).contains(&m) {
-            break;
-        }
-        n = m;
     }
-    Cc::new(n as u8).unwrap_or(cc)
 }
 
 /// DELETE's panel: `DELETE CC 74?` over the target's cell label, as the
@@ -93,50 +115,31 @@ fn step_cc(cc: Cc, d: i8) -> Cc {
 #[derive(Clone, Copy, Debug)]
 pub struct MapDelete {
     pub part: PartId,
-    pub entry: MapEntry,
+    pub entry: Binding,
     pub label: &'static str,
 }
 
 impl Prompt for MapDelete {
     type Answer = DeleteAnswer;
     fn words(&self, q: &mut Line, r: &mut Line) {
-        let _ = write!(q, "DELETE CC {}?", self.entry.cc.get());
+        let t = text(&self.entry, FxType::default(), true);
+        let _ = q.write_str("DELETE ");
+        let _ = q.write_str(t.control.as_str());
+        let _ = q.write_char('?');
         let _ = r.write_str(self.label);
     }
 }
 
 impl UiState {
-    /// A key on the page: B sets the CC, C MIN, D MAX; MIX+MINUS deletes.
+    /// A key on the page: A moves the bar (`NavKey::Bar`), B the control,
+    /// C MIN, D MAX, E the input, F the echo; MIX+MINUS deletes. Bank 2's
+    /// (`map_in`); closed, nothing.
     #[inline(never)]
     pub(in crate::ui) fn map_input(&mut self, c: &impl Controls) {
-        let p = self.active_part;
-        let (map, Some(at)) = (self.project.part(p).sound.map, self.loc.settings()) else {
-            return;
-        };
-        let i = at.row() as usize;
-        let Some(&e) = map.entries().get(i) else {
-            return;
-        };
-        if c.edges(ButtonId::Mix).down && c.button_state(ButtonId::Minus) == ButtonState::Pressed {
-            let ask = MapDelete {
-                part: p,
-                entry: e,
-                label: name(&e, self.project.part(p).sound.params.fx.ty()),
-            };
-            return self.ask(Ask::MapDelete(ask, Choice::new()));
-        }
-        let by = |v: u8, id| (i16::from(v) + i16::from(c.encoder_delta(id))).clamp(0, 255) as u8;
-        let n = MapEntry {
-            cc: step_cc(e.cc, c.encoder_delta(EncoderId::B)),
-            min: by(e.min, EncoderId::C),
-            max: by(e.max, EncoderId::D),
-            ..e
-        };
-        if n != e {
-            let mut m = map;
-            m.set(i, n);
-            self.set_map(p, m);
-        }
+        let d = ALL_ENCODERS.map(|e| c.encoder_delta(e));
+        let delete =
+            c.edges(ButtonId::Mix).down && c.button_state(ButtonId::Minus) == ButtonState::Pressed;
+        self.map_keys(d, delete);
     }
 
     /// The active Part's map as the page draws it.
@@ -146,11 +149,12 @@ impl UiState {
             map: s.map,
             engine: s.params.engine(),
             fx: s.params.fx.ty(),
+            open: crate::ui::cc::map_open(),
         }
     }
 
     /// `m` as Part `p`'s map: a Sound edit, its ramps at rest.
-    fn set_map(&mut self, p: PartId, m: MidiMap) {
+    pub(in crate::ui) fn set_map(&mut self, p: PartId, m: MidiMap) {
         self.project.edit_part(p).sound.map = m;
         self.cc.reset_part(p);
     }
@@ -158,7 +162,7 @@ impl UiState {
     /// DELETE answered: drop the entry (found by target, as the map may
     /// not have moved but the row did), and keep the bar on a row.
     #[inline(never)]
-    pub(in crate::ui) fn map_deleted(&mut self, p: PartId, e: MapEntry) {
+    pub(in crate::ui) fn map_deleted(&mut self, p: PartId, e: Binding) {
         let mut m = self.project.part(p).sound.map;
         let Some(i) = m.entries().iter().position(|x| x.target == e.target) else {
             return;
