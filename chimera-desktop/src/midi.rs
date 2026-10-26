@@ -1,6 +1,8 @@
 //! The desktop's midir input: port choice, a pure function so "no device"
 //! and "loopback only" are host-tested without opening a real port; and
-//! the port's bytes through a `DinPipe`, as the firmware's DIN.
+//! the port's bytes through a `DinPipe`, as the firmware's DIN. Active
+//! Sensing is never armed here: midir has no idle callback, so nothing
+//! calls `midi_in::idle` (spec § 11).
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -11,6 +13,7 @@ use chimera_core::out_ring::{OUT_RING_LEN, OutRing};
 /// The port's pipe as of its last bytes: `status`'s `midi` line.
 pub static FAULTS: AtomicU32 = AtomicU32::new(0);
 pub static DROPS: AtomicU32 = AtomicU32::new(0);
+pub static CTRL_DROPS: AtomicU32 = AtomicU32::new(0);
 
 /// A MIDI port's bytes: its pipe, into its note queue and control ring.
 pub struct Port<'q> {
@@ -37,6 +40,7 @@ impl<'q> Port<'q> {
         let s = self.pipe.stats();
         FAULTS.store(s.fault_total(), Ordering::Relaxed);
         DROPS.store(u32::from(s.refused), Ordering::Relaxed);
+        CTRL_DROPS.store(u32::from(s.ctrl_refused), Ordering::Relaxed);
     }
 }
 

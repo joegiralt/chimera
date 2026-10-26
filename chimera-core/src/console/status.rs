@@ -57,17 +57,23 @@ impl Sram4Cell {
 
 pub static SRAM4: Sram4Cell = Sram4Cell(AtomicU8::new(Sram4::Untested as u8));
 
-/// MIDI in's pipe (`PipeStats`): the faults its parser counted and the
-/// events a full queue or ring refused. `status`'s `midi` line.
+/// MIDI in's pipe (`PipeStats`): the faults its parser counted, the events
+/// a full note queue refused (`drops`) and those a full control ring
+/// refused (`ctrl_drops`). `status`'s `midi` line.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MidiStats {
     pub faults: u32,
     pub drops: u32,
+    pub ctrl_drops: u32,
 }
 
 impl fmt::Display for MidiStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "midi faults={} drops={}", self.faults, self.drops)
+        write!(
+            f,
+            "midi faults={} drops={} ctrl_drops={}",
+            self.faults, self.drops, self.ctrl_drops
+        )
     }
 }
 

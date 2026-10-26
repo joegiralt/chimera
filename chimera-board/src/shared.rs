@@ -373,10 +373,12 @@ pub fn stamp(over: impl Fn() -> u32) -> Stamp {
 pub static STREAM_STATS: StreamStats = StreamStats::new();
 /// MIDI DIN's line errors: overrun, framing, noise.
 pub static MIDI_ERRORS: AtomicU32 = AtomicU32::new(0);
-/// MIDI DIN's pipe: the faults its parser counted and the events a full
-/// queue or ring refused (`PipeStats`), as of the ISR's last feed.
+/// MIDI DIN's pipe: the faults its parser counted, the events a full note
+/// queue refused and those a full control ring refused (`PipeStats`), as
+/// of the ISR's last feed.
 pub static MIDI_FAULTS: AtomicU32 = AtomicU32::new(0);
 pub static MIDI_DROPS: AtomicU32 = AtomicU32::new(0);
+pub static MIDI_CTRL_DROPS: AtomicU32 = AtomicU32::new(0);
 
 /// A saturating count, as the audio and MIDI interrupts keep them.
 #[inline]

@@ -2,10 +2,10 @@
 //! What the retired `MidiParser` + `route` queued is frozen here as
 //! `old_route_queued`.
 
-use chimera_engine::midi_in::{CtrlEvent, CtrlRing, DinPipe, Sinks};
+use chimera_engine::midi_in::{self, CtrlEvent, CtrlRing, DinPipe, DinSinks, PipeSlot, Sinks};
 use chimera_engine::note_queue::{
-    BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteEvent, NoteKind, NoteQueue, RealTime,
-    SustainEvent,
+    BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteConsumer, NoteEvent, NoteKind,
+    NoteProducer, NoteQueue, RealTime, SustainEvent,
 };
 use chimera_engine::{MidiNote, Velocity};
 use chimera_midi::ctl::{Ctl, DataValue, Dir, FreeCc, Sel};
@@ -292,6 +292,23 @@ fn ring_drop_loses_whole_events() {
     assert_eq!(ring.pop(), None);
 }
 
+/// A build with no MIDI map drops the ring unread each pass, so a flood
+/// never counts as a drop.
+#[test]
+fn clear_drops_what_waits_and_frees_the_ring() {
+    let ring = CtrlRing::new();
+    for n in 0..64 {
+        assert!(ring.push(data(n)));
+    }
+    ring.clear();
+    assert_eq!(ring.pop(), None);
+    for n in 0..64 {
+        assert!(ring.push(data(n)), "room for a whole ring again");
+    }
+    assert_eq!(ring.dropped(), 0);
+    assert_eq!(ring.pop(), Some(data(0)));
+}
+
 #[test]
 fn cc_flood_never_drops_note_ons() {
     let queue = NoteQueue::new();
@@ -339,10 +356,11 @@ fn cc_flood_never_drops_note_ons() {
         ring.dropped() > 0,
         "the undrained ring fills, not the queue"
     );
+    assert_eq!(p.stats().refused, 0, "the queue refused nothing");
     assert_eq!(
-        u32::from(p.stats().refused),
+        u32::from(p.stats().ctrl_refused),
         ring.dropped(),
-        "refusals are the ring's drops"
+        "the ring's drops, counted apart"
     );
 }
 
@@ -375,6 +393,82 @@ fn active_sensing_arms_and_idle_releases_once() {
     assert_eq!(r.notes.len(), 16, "once per silence");
 }
 
+/// The USART1 ISR's path: a slot through `midi_in::feed` and `idle` into a
+/// note queue and a control ring, armed read off the slot as the ISR reads
+/// it to set the receiver timeout's interrupt.
+struct Din {
+    notes: NoteProducer<'static>,
+    audio: NoteConsumer<'static>,
+    ring: &'static CtrlRing,
+    slot: PipeSlot,
+}
+
+impl Din {
+    fn new() -> Self {
+        let (notes, audio) = Box::leak(Box::new(NoteQueue::new())).split().unwrap();
+        Self {
+            notes,
+            audio,
+            ring: Box::leak(Box::new(CtrlRing::new())),
+            slot: PipeSlot::new(),
+        }
+    }
+
+    /// `bytes` in (empty: the receiver timed out), then what reached the
+    /// queue and the ring.
+    fn run(&mut self, bytes: &[u8]) -> (Vec<InEvent>, Vec<CtrlEvent>) {
+        let mut out = DinSinks {
+            notes: &mut self.notes,
+            ctrl: self.ring,
+        };
+        if bytes.is_empty() {
+            midi_in::idle(&mut self.slot, &mut out);
+        } else {
+            midi_in::feed(&mut self.slot, bytes, &mut out);
+        }
+        let heard = core::iter::from_fn(|| self.audio.pop()).collect();
+        (heard, self.ring.drain().collect())
+    }
+}
+
+fn all_notes_off() -> Vec<InEvent> {
+    (0..16).map(|c| mode(c, ChannelMode::NotesOff)).collect()
+}
+
+#[test]
+fn idle_after_fe_releases_all_channels() {
+    let mut din = Din::new();
+    din.run(&[0x90, 60, 100, 0xFE]);
+    assert!(din.slot.sensing_armed(), "the ISR arms the timeout");
+    let (notes, ctrl) = din.run(&[]);
+    assert_eq!(notes, all_notes_off(), "notes off, not sound off");
+    assert_eq!(ctrl, [CtrlEvent::SensingLost]);
+    assert!(!din.slot.sensing_armed(), "the ISR disarms");
+}
+
+#[test]
+fn idle_before_fe_does_nothing() {
+    let mut din = Din::new();
+    assert!(!din.slot.sensing_armed(), "nothing built, nothing armed");
+    assert_eq!(din.run(&[]), (vec![], vec![]), "an unbuilt pipe");
+    din.run(&[0x90, 60, 100, 0xF8]);
+    assert!(!din.slot.sensing_armed());
+    assert_eq!(din.run(&[]), (vec![], vec![]), "no FE yet");
+}
+
+#[test]
+fn fe_rearms_after_timeout() {
+    let mut din = Din::new();
+    din.run(&[0xFE]);
+    assert_eq!(din.run(&[]).0, all_notes_off());
+    assert_eq!(din.run(&[]), (vec![], vec![]), "once per silence");
+    din.run(&[0x90, 60, 100]);
+    assert!(!din.slot.sensing_armed(), "notes alone don't re-arm");
+    din.run(&[0xFE]);
+    assert!(din.slot.sensing_armed(), "the next FE does");
+    assert_eq!(din.run(&[]).0, all_notes_off());
+}
+
 #[test]
 fn stats_count_faults_dropped_programs_and_refusals() {
     let mut p = DinPipe::new();
@@ -387,7 +481,8 @@ fn stats_count_faults_dropped_programs_and_refusals() {
     assert!(r.ctrl.is_empty(), "Phase 1 drops Program Change");
     r.refuse = true;
     p.feed(&[0x90, 60, 1, 0xB0, 74, 1, 0xB0, 74, 2], &mut r);
-    assert_eq!(p.stats().refused, 3);
+    assert_eq!(p.stats().refused, 1, "the note");
+    assert_eq!(p.stats().ctrl_refused, 2, "the CCs");
 }
 
 fn arb_sel() -> impl Strategy<Value = Sel> {

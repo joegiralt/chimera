@@ -270,6 +270,14 @@ impl CtrlRing {
         core::iter::from_fn(|| self.pop())
     }
 
+    /// Consumer side: every event waiting dropped unread, as a build with
+    /// no MIDI map drains it (`tail` `Acquire` as `pop`'s).
+    #[inline]
+    pub fn clear(&self) {
+        self.head
+            .store(self.tail.load(Ordering::Acquire), Ordering::Release);
+    }
+
     /// Events dropped because the ring was full.
     pub fn dropped(&self) -> u32 {
         self.dropped.load(Ordering::Relaxed)
@@ -288,8 +296,11 @@ pub struct PipeStats {
     pub faults: FaultCounts,
     /// Program Changes parsed and dropped (Phase 1 acts on none).
     pub programs_dropped: u16,
-    /// Events a sink refused.
+    /// Events the note queue refused.
     pub refused: u16,
+    /// Events the control ring refused, apart: a ring nobody drains fills
+    /// without a note lost.
+    pub ctrl_refused: u16,
 }
 
 impl PipeStats {
@@ -340,6 +351,7 @@ impl DinPipe {
                 },
                 programs_dropped: 0,
                 refused: 0,
+                ctrl_refused: 0,
             },
         }
     }
@@ -351,7 +363,7 @@ impl DinPipe {
             };
             let mut sink = Counted {
                 out: &mut *out,
-                refused: &mut self.stats.refused,
+                stats: &mut self.stats,
             };
             match parsed {
                 Parsed::RealTime(rt) => match rt {
@@ -373,8 +385,8 @@ impl DinPipe {
                     Some(e) => sink.note(e),
                     None => match self.ctl.hear(c, v) {
                         Heard::Ctl(Ctl::Program { .. }) => {
-                            self.stats.programs_dropped =
-                                self.stats.programs_dropped.saturating_add(1);
+                            sink.stats.programs_dropped =
+                                sink.stats.programs_dropped.saturating_add(1);
                         }
                         Heard::Ctl(ctl) => sink.ctrl(CtrlEvent::Ctl(c, ctl)),
                         Heard::Note | Heard::Consumed => {}
@@ -404,7 +416,7 @@ impl DinPipe {
         if self.sense.timed_out() {
             let mut sink = Counted {
                 out,
-                refused: &mut self.stats.refused,
+                stats: &mut self.stats,
             };
             for c in 0..16 {
                 sink.mode(Channel::clamped(c), ChannelMode::NotesOff);
@@ -413,6 +425,9 @@ impl DinPipe {
         }
     }
 
+    /// A field read, so bank 1's ISR may call it: armed, it sets the
+    /// receiver timeout's interrupt.
+    #[inline(always)]
     pub fn sensing_armed(&self) -> bool {
         self.sense.armed()
     }
@@ -477,6 +492,13 @@ impl PipeSlot {
     #[inline(always)]
     pub fn stats(&self) -> PipeStats {
         self.pipe().map_or_else(PipeStats::default, DinPipe::stats)
+    }
+
+    /// Active Sensing armed as of the last `feed` or `idle`; nothing
+    /// before the first. A field read, as `stats`.
+    #[inline(always)]
+    pub fn sensing_armed(&self) -> bool {
+        self.pipe().is_some_and(DinPipe::sensing_armed)
     }
 
     /// The pipe, built first if it is not yet. Inlined into the door's
@@ -585,22 +607,22 @@ pub fn map_codec_open() -> bool {
     true
 }
 
-/// A sink that counts refusals.
+/// A sink that counts refusals, each sink's apart.
 struct Counted<'a, S: Sinks + ?Sized> {
     out: &'a mut S,
-    refused: &'a mut u16,
+    stats: &'a mut PipeStats,
 }
 
 impl<S: Sinks + ?Sized> Counted<'_, S> {
     fn note(&mut self, e: InEvent) {
         if !self.out.note(e) {
-            *self.refused = self.refused.saturating_add(1);
+            self.stats.refused = self.stats.refused.saturating_add(1);
         }
     }
 
     fn ctrl(&mut self, e: CtrlEvent) {
         if !self.out.ctrl(e) {
-            *self.refused = self.refused.saturating_add(1);
+            self.stats.ctrl_refused = self.stats.ctrl_refused.saturating_add(1);
         }
     }
 

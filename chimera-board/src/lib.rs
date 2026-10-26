@@ -770,9 +770,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // Mapped CCs, in the room the hand's moves left. No bench run plays
-        // a controller: bench firmware leaves the MIDI map out (FLASH, #507).
+        // a controller: bench firmware leaves the MIDI map out (FLASH, #507)
+        // and drops the ring unread, so it never fills.
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         ui.hear_ccs(ctrl_din.drain(), controls::now_ms(), shared_w.taken());
+        #[cfg(all(feature = "midi-din", not(feature = "midi-map")))]
+        ctrl_din.clear();
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         din_out(ui, out_din);
         // SYSTEM synced first: a THEME change made in this visit is kept.

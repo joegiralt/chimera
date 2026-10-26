@@ -591,11 +591,12 @@ impl Unit for ChipUnit<'_> {
 
     #[cfg(feature = "midi-din")]
     fn midi(&self) -> Option<chimera_core::console::MidiStats> {
-        use crate::shared::{MIDI_DROPS, MIDI_FAULTS};
+        use crate::shared::{MIDI_CTRL_DROPS, MIDI_DROPS, MIDI_FAULTS};
         use core::sync::atomic::Ordering;
         Some(chimera_core::console::MidiStats {
             faults: MIDI_FAULTS.load(Ordering::Relaxed),
             drops: MIDI_DROPS.load(Ordering::Relaxed),
+            ctrl_drops: MIDI_CTRL_DROPS.load(Ordering::Relaxed),
         })
     }
 

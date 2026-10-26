@@ -495,11 +495,14 @@ fn status_has_the_midi_pipe_before_usb_regs() {
     u.midi = Some(chimera_core::console::MidiStats {
         faults: 3,
         drops: 7,
+        ctrl_drops: 9,
     });
     u.usb_regs = Some(UsbRegs::from_words([1, 2, 3, 4, 5, 6]));
     let a = ask(&mut u, "status\n");
     assert!(
-        a.starts_with(&format!("{want}midi faults=3 drops=7\nusb_regs ")),
+        a.starts_with(&format!(
+            "{want}midi faults=3 drops=7 ctrl_drops=9\nusb_regs "
+        )),
         "{a}"
     );
 }

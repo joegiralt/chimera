@@ -10,10 +10,13 @@ use stm32h7xx_hal::pac::{self, interrupt};
 
 use chimera_board::priority::{self, Priority};
 use chimera_board::shared::{
-    AUDIO_CYCLES, MIDI_CYCLES, MIDI_DROPS, MIDI_ERRORS as ERRORS, MIDI_FAULTS, bump, stamp,
+    AUDIO_CYCLES, MIDI_CTRL_DROPS, MIDI_CYCLES, MIDI_DROPS, MIDI_ERRORS as ERRORS, MIDI_FAULTS,
+    bump, stamp,
 };
 
 const BAUD: u32 = 31_250;
+/// Active Sensing's silence: 300 ms in bit times at 31,250 baud (spec § 11).
+const SENSING_BITS: u32 = 9_375;
 
 /// The RX FIFO's depth: one ISR entry drains at most this many bytes into
 /// one door call.
@@ -49,6 +52,10 @@ pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ctrl: 
     // FIFOEN can only be written while UE is 0.
     usart.cr1.reset();
     usart.brr.write(|w| w.brr().bits((pclk2_hz / BAUD) as u16));
+    // The receiver timeout always counts; only an armed pipe takes its
+    // interrupt (`RTOIE`, the handler's).
+    usart.rtor.write(|w| w.rto().bits(SENSING_BITS));
+    usart.cr2.write(|w| w.rtoen().set_bit());
     usart
         .icr
         .write(|w| w.orecf().clear().fecf().clear().ncf().clear());
@@ -103,13 +110,27 @@ fn USART1() {
             *addr_of_mut!(DIN_CTRL),
         )
     };
+    // Active Sensing: 300 ms without a byte. A stale flag (counted while
+    // disarmed) is cleared here, before this entry's bytes can arm.
+    if usart.isr.read().rtof().bit_is_set() {
+        usart.icr.write(|w| w.rtocf().clear());
+        if usart.cr1.read().rtoie().bit_is_set() {
+            usart.cr1.modify(|_, w| w.rtoie().clear_bit());
+            if let (Some(notes), Some(ctrl)) = (notes.as_mut(), ctrl) {
+                midi_in::idle(pipe, &mut DinSinks { notes, ctrl });
+            }
+        }
+    }
     // Every byte the FIFO holds, then one door call (spec § 7.2).
     let mut buf = [0u8; RX_FIFO];
     let mut n = 0;
     while n < RX_FIFO {
         let isr = usart.isr.read();
+        // A framing or noise error flags the byte at the FIFO's head: it is
+        // read and dropped, so a glitch can't be FF (Reset).
+        let bad = isr.fe().bit_is_set() || isr.nf().bit_is_set();
         // An uncleared ORE with RXFNEIE set refires this interrupt forever.
-        if isr.ore().bit_is_set() || isr.fe().bit_is_set() || isr.nf().bit_is_set() {
+        if bad || isr.ore().bit_is_set() {
             usart
                 .icr
                 .write(|w| w.orecf().clear().fecf().clear().ncf().clear());
@@ -119,7 +140,7 @@ fn USART1() {
             break;
         }
         buf[n] = usart.rdr.read().rdr().bits() as u8;
-        n += 1;
+        n += usize::from(!bad);
     }
     if n > 0
         && let (Some(notes), Some(ctrl)) = (notes.as_mut(), ctrl)
@@ -129,6 +150,11 @@ fn USART1() {
         let s = pipe.stats();
         MIDI_FAULTS.store(s.fault_total(), Ordering::Relaxed);
         MIDI_DROPS.store(u32::from(s.refused), Ordering::Relaxed);
+        MIDI_CTRL_DROPS.store(u32::from(s.ctrl_refused), Ordering::Relaxed);
+        // An FE arms the timeout's interrupt; the next silence fires it.
+        if pipe.sensing_armed() {
+            usart.cr1.modify(|_, w| w.rtoie().set_bit());
+        }
     }
     // DIN OUT: the ring into the TX FIFO while it has room. The threshold
     // interrupt stays on while bytes wait; the main loop pends this handler

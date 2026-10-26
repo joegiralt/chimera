@@ -22,6 +22,8 @@ impl Sensing {
         was
     }
 
+    /// Inlined: bank 1's ISR reads it through `PipeSlot::sensing_armed`.
+    #[inline(always)]
     pub fn armed(&self) -> bool {
         *self == Sensing::Armed
     }
