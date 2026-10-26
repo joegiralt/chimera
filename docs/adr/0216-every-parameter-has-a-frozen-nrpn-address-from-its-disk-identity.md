@@ -46,6 +46,7 @@ ADR 0128 and 0139 rule out a global CC chart: CCs belong to each Sound's map.
 - An LSB-only 7-bit sender can't move a discrete param. The chart documents MSB.
 - Stock PreenFM3 NRPN editors drive the wrong params on Chimera: MSB 0 and 1 are stock's rows but Chimera's block codes. This is documented, not mitigated.
 - The fixture is one more file a param PR touches. Its test message says how to append.
+- **Measured** at Phase 1's head: the chart holds 434 stored params (291 `W`, 143 `R`) and 18 retired addresses (`docs/midi/nrpn-chart.md`). `nrpn` costs no bank 1: its one out-of-line symbol is 116 B of bank 2, the rest inlines into the UI's resolution behind `MidiUiDoor`. A Part moves at most eight canonical NRPN params at once and holds the latest value of 16 more; an address past those 24 is dropped (ADR 0217).
 
 ## Sources
 - `reports/MIDI controller and USB schemes.md` § Editors, PE and sequencer files; § Recommended phased plan (Phase 1).
