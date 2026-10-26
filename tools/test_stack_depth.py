@@ -170,6 +170,15 @@ class StackDepth(unittest.TestCase):
         self.assertFalse(sd.check(self.img, 1 << 20, out))
         self.assertIn("DMA2_STR0 has 2 pointer calls", out.getvalue())
 
+    def test_the_din_root_may_make_its_two_door_calls(self):
+        frame, calls, tails, _ = self.funcs["USART1"]
+        self.funcs["USART1"] = (frame, calls, tails, 2)
+        self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
+        self.funcs["USART1"] = (frame, calls, tails, 3)
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("USART1 has 3 pointer calls", out.getvalue())
+
     def test_a_missing_root_fails_but_midi_may_be_absent(self):
         del self.img.funcs["USART1"]
         self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()), "no MIDI DIN")

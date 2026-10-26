@@ -49,11 +49,19 @@ ROOTS = ("Reset", "__stext", "main", "DefaultHandler", "DefaultHandler_") + ISRS
 # calling a dyn sink calling `core::fmt`'s writer. An assumption, not a
 # proof: the firmware formats only flat values, and no dyn call recurses.
 POINTER_NEST = 3
-# A root whose one pointer call is a door entry (ADR 0175) whose target is
-# known: charged that target's depth, not every address-taken function's.
-# A second pointer call in such a root fails the check.
-# The card interrupt's shim calls `IrqState::step` through the board's slot.
-DOOR_CALLS = {"DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",)}
+# A root whose pointer calls are door entries (ADR 0175) whose targets are
+# known: charged the deepest target's depth, not every address-taken
+# function's. More pointer calls in such a root than named entries fail the
+# check. The card interrupt's shim calls `IrqState::step` through the
+# board's slot; the DIN interrupt calls MIDI's `feed` and `idle` through
+# bank 2's door (ADR 0217).
+DOOR_CALLS = {
+    "DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",),
+    "USART1": (
+        "<chimera_engine::midi_in::DinPipe>::door_feed",
+        "<chimera_engine::midi_in::DinPipe>::door_idle",
+    ),
+}
 # A door entry that only its named callers reach (ADR 0194), its address
 # held by the door's table alone: out of the address-taken set, so no other
 # pointer call is charged it; each caller's pointer calls are charged the
@@ -314,9 +322,9 @@ def check(img, stack_bytes, out):
             print("           recursion cut at: %s" % ", ".join(sorted(short(c, 60) for c in cut)), file=out)
         if ind:
             print("           %d functions call through a pointer, each charged above" % len(ind), file=out)
-    for root in DOOR_CALLS:
-        if root in img.funcs and img.funcs[root][3] > 1:
-            print("stack-depth: %s has %d pointer calls, its door's one only" % (root, img.funcs[root][3]), file=out)
+    for root, entries in DOOR_CALLS.items():
+        if root in img.funcs and img.funcs[root][3] > len(entries):
+            print("stack-depth: %s has %d pointer calls, its door's %d only" % (root, img.funcs[root][3], len(entries)), file=out)
             ok = False
     for t, callers in DOOR_ONLY.items():
         if t in img.funcs and not any(img.funcs.get(c, (0, (), (), 0))[3] for c in callers):
