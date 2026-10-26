@@ -487,14 +487,6 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause, board_id);
 
     let mut controls = Stm32Controls::new();
-    let ui = shared::take_ui().expect("UI state taken once");
-    // A build without bank 2 plays TAPE and the reverb from bank 1: no
-    // status, so nothing reads NEEDS UPDATE (ADR 0141).
-    if cfg!(feature = "bank2") {
-        ui.set_bank2(bank2.status);
-    }
-    ui.project_mut().set_gate_clock(gate_ms);
-
     // Start-up, in order, behind the splash until PART 1 can be drawn:
     // 1. SYSTEM and the last project from the card, however slow;
     // 2. the controls tick, the audio and MIDI DIN;
@@ -519,14 +511,6 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (mut streams, mut card_side) = shared::ring_sides().expect("ring sides taken once");
     #[cfg(not(all(feature = "bench", feature = "bench-tape")))]
     let _card_irq = start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
-    // Streamed sources' files go in the registry for the card (slice 1
-    // § 5.5), if its interrupt runs: else no row is lent, and a source too
-    // big for the arena reads STREAMS FULL, not a silent stream. A bench
-    // build's beds keep its rows to themselves.
-    #[cfg(not(feature = "bench"))]
-    if let Some(r) = shared::registry().filter(|_| _card_irq) {
-        ui.project_mut().set_streams(r);
-    }
     let mut card = Card::new();
     // No card or a card fault shows at the project's boot; a SYSTEM
     // file that can't be read still applies the defaults silently:
@@ -534,11 +518,30 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     // A staged bank 2 this build can open, installed behind DON'T POWER
     // OFF before the project, which may play from it.
+    #[cfg_attr(not(feature = "bank2"), allow(unused_mut))]
+    let mut status = bank2.status;
     #[cfg(feature = "bank2")]
     if let Some(flash) = &bank2.install_over
         && let Some(now) = bank2::boot_install(store, &mut display, &marker, flash, clk.cpu_hz)
     {
-        ui.set_bank2(now);
+        status = now;
+    }
+    // Then the UI and NEW, so an install's door is open for NEW's maps:
+    // built closed, they decode empty and NEW's template reads Modified.
+    let ui = shared::take_ui().expect("UI state taken once");
+    // A build without bank 2 plays TAPE and the reverb from bank 1: no
+    // status, so nothing reads NEEDS UPDATE (ADR 0141).
+    if cfg!(feature = "bank2") {
+        ui.set_bank2(status);
+    }
+    ui.project_mut().set_gate_clock(gate_ms);
+    // Streamed sources' files go in the registry for the card (slice 1
+    // § 5.5), if its interrupt runs: else no row is lent, and a source too
+    // big for the arena reads STREAMS FULL, not a silent stream. A bench
+    // build's beds keep its rows to themselves.
+    #[cfg(not(feature = "bench"))]
+    if let Some(r) = shared::registry().filter(|_| _card_irq) {
+        ui.project_mut().set_streams(r);
     }
     ui.set_theme(settings.theme);
     ui.set_midi(settings.midi);
