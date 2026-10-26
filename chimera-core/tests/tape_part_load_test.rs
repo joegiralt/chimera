@@ -23,10 +23,18 @@ fn open() -> Bank2Status {
     }
 }
 
+/// The door as `streamed`'s tests leave it, opened before anything is
+/// built: they run in parallel in this process, and a NEW built closed
+/// reads its Parts Edited once the door opens (maps decode only open).
+fn door_as_streamed() {
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+}
+
 /// Part 2 TAPE, AGE turned: it loads as saved, not lossy, and a save
 /// writes the file back byte for byte.
 #[test]
 fn a_tape_part_loads_as_tape_and_saves_back_whole() {
+    door_as_streamed();
     let part = PartId::ALL[1];
     let (mut p, t) = Project::boxed();
     let src = PartSource {
@@ -64,6 +72,7 @@ fn warn(engine: EngineType, bank2: Option<Bank2Status>) -> Option<&'static str> 
 
 #[test]
 fn a_tape_part_reads_needs_update_while_bank2_is_closed() {
+    door_as_streamed();
     use Bank2Status::{Empty, Unsealed};
     use EngineType::{Tape, Va};
     assert_eq!(warn(Tape, Some(Empty)), Some(NEEDS_UPDATE_CELL));
@@ -81,6 +90,7 @@ fn a_tape_part_reads_needs_update_while_bank2_is_closed() {
 /// cell; open, its model.
 #[test]
 fn deck_reads_needs_update_closed() {
+    door_as_streamed();
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::tape_engine::params::TapeEngineParams;
     let model = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
