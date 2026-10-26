@@ -12,6 +12,7 @@
 // Without `midi-map` the door's `hear` is `ui::cc::deaf`: none of this runs.
 #![cfg_attr(not(feature = "midi-map"), allow(dead_code))]
 
+pub mod echo;
 pub mod learn;
 pub mod out;
 #[cfg(feature = "midi-map")]
@@ -177,13 +178,13 @@ enum Seat {
 }
 
 /// Each Part's, whether a stepped or relative move edited the active Part
-/// this pass, what learn has heard of the control it senses, and whether a
-/// Device Inquiry waits for its reply (`out`). ~5.8 KB, AXI (`MidiSlot`).
+/// this pass, what learn has heard of the control it senses, and DIN OUT's
+/// echo plan, the identity reply among it. ~6.6 KB, AXI (`MidiSlot`).
 pub struct MidiUi {
     parts: [PartMidi; MAX_PARTS],
     stepped: bool,
     seen: Seen,
-    reply: bool,
+    echo: echo::EchoPlan,
 }
 
 /// Nothing sensed: a named static, so its image is bank 2's.
@@ -203,7 +204,7 @@ impl MidiSlot {
                 }
                 core::ptr::addr_of_mut!((*m).stepped).write(false);
                 core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
-                core::ptr::addr_of_mut!((*m).reply).write(false);
+                core::ptr::addr_of_mut!((*m).echo).write(echo::SILENT);
             }
             self.built = true;
         }
@@ -230,6 +231,7 @@ impl MidiSlot {
         for i in 0..MAX_PARTS {
             if stale >> i & 1 != 0 {
                 self.part(i).reset();
+                self.ui().echo.burst(PartId::ALL[i]);
             }
         }
     }
@@ -360,7 +362,7 @@ impl UiState {
             // A Device Inquiry asks nothing of the Sound: answered busy or
             // not, two in a pass with one reply (`out`).
             if let HeardEv::Ctrl(CtrlEvent::Identity { .. }) = e {
-                self.cc.ui().reply = true;
+                self.cc.ui().echo.ask();
                 continue;
             }
             if busy {
@@ -459,22 +461,27 @@ impl UiState {
         let m = self.cc.part(i);
         // The param as the controller sees it: where this entry put it
         // while its move is still its own, else where it is.
-        let (ours, place) = match spec.motion() {
+        let ours = match spec.motion() {
             Motion::Stepped(_) => {
-                let steps = (spec.max - spec.min) as u16 + 1;
                 let at = (was - spec.min + 0.5) as u16;
-                let ours = m.pend[j] != NO_BIN || u16::from(m.bins[j]) == at;
-                let centre = ((f32::from(at) + 0.5) * 256.0 / f32::from(steps)).min(255.0);
-                (ours, centre / 255.0)
+                m.pend[j] != NO_BIN || u16::from(m.bins[j]) == at
             }
-            Motion::Continuous(_) => (m.ramps[j].moving(), spec.normalize(was)),
+            Motion::Continuous(_) => m.ramps[j].moving(),
         };
+        let place = echo::param_place(spec, was);
         let rt = &mut m.rt[j];
         let seen = match rt.wrote() {
             Some(w) if ours => w,
             _ => span_of(s, place),
         };
-        match resolve(&e, rt, c, seen) {
+        let act = resolve(&e, rt, c, seen);
+        // Its own echo waits (spec § 9); a place it put counts as sent.
+        let sent = match act {
+            Some(Action::Place(to)) => echo::level(&e.input, to),
+            _ => None,
+        };
+        self.cc.ui().echo.heard(p, j, sent, now);
+        match act {
             Some(Action::Place(to)) => self.cc_place(p, j, a, s, to, now),
             Some(Action::Detents(d)) => {
                 let t = &mut self.cc.part(i).turns[j];

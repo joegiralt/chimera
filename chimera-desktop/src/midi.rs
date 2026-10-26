@@ -51,10 +51,19 @@ pub fn midi_out_arg(args: impl IntoIterator<Item = String>) -> Option<String> {
     None
 }
 
+/// The out line's running status, carried from one drain to the next: the
+/// UI's echo leaves out a status the line already runs on.
+#[derive(Default)]
+pub struct Line {
+    status: u8,
+}
+
 /// Each whole message in `bytes` to `send`, its running status written
-/// out (midir sends one message a call). SysEx and real-time pass whole.
-pub fn messages(bytes: &[u8], mut send: impl FnMut(&[u8])) {
-    let (mut status, mut data, mut n, mut sysex) = (0u8, [0u8; 2], 0usize, None);
+/// out (midir sends one message a call). SysEx and real-time pass whole;
+/// a SysEx ends running status.
+pub fn messages(bytes: &[u8], line: &mut Line, mut send: impl FnMut(&[u8])) {
+    let (mut data, mut n, mut sysex) = ([0u8; 2], 0usize, None);
+    let status = &mut line.status;
     for (i, &b) in bytes.iter().enumerate() {
         if let Some(start) = sysex {
             if b == 0xF7 {
@@ -64,20 +73,20 @@ pub fn messages(bytes: &[u8], mut send: impl FnMut(&[u8])) {
             continue;
         }
         match b {
-            0xF0 => sysex = Some(i),
+            0xF0 => (sysex, *status) = (Some(i), 0),
             0xF8..=0xFF => send(&[b]),
-            0xF1..=0xF7 => status = 0,
-            0x80..=0xEF => (status, n) = (b, 0),
-            _ if status != 0 => {
+            0xF1..=0xF7 => *status = 0,
+            0x80..=0xEF => (*status, n) = (b, 0),
+            _ if *status != 0 => {
                 data[n] = b;
                 n += 1;
-                let need = if matches!(status & 0xF0, 0xC0 | 0xD0) {
+                let need = if matches!(*status & 0xF0, 0xC0 | 0xD0) {
                     1
                 } else {
                     2
                 };
                 if n == need {
-                    send(&[status, data[0], data[1]][..=need]);
+                    send(&[*status, data[0], data[1]][..=need]);
                     n = 0;
                 }
             }
@@ -89,10 +98,10 @@ pub fn messages(bytes: &[u8], mut send: impl FnMut(&[u8])) {
 /// Everything `ring` holds, message by message, to `send`; how many
 /// bytes. One pop of the whole ring always ends on a message's end: the
 /// UI publishes whole messages.
-pub fn drain_out(ring: &OutRing, send: impl FnMut(&[u8])) -> usize {
+pub fn drain_out(ring: &OutRing, line: &mut Line, send: impl FnMut(&[u8])) -> usize {
     let mut b = [0u8; OUT_RING_LEN];
     let n = ring.pop_into(&mut b);
-    messages(&b[..n], send);
+    messages(&b[..n], line, send);
     n
 }
 
@@ -269,7 +278,7 @@ mod tests {
         ui.hear_ccs(ring.drain(), Ms(1_000), true);
         ui.send_out(&out);
         let mut sent = Vec::new();
-        super::drain_out(&out, |m| sent.push(m.to_vec()));
+        super::drain_out(&out, &mut super::Line::default(), |m| sent.push(m.to_vec()));
         let v = chimera_core::ui::midi::out::version(env!("CARGO_PKG_VERSION")).map(|u| u.get());
         let mut golden = vec![0xF0, 0x7E, 0x00, 0x06, 0x02, 0x7D, 0x43, 0x48, 0x01, 0x00];
         golden.extend_from_slice(&v);
@@ -277,7 +286,12 @@ mod tests {
         assert_eq!(sent, [golden]);
         ui.hear_ccs(ring.drain(), Ms(1_010), true);
         ui.send_out(&out);
-        assert_eq!(super::drain_out(&out, |_| panic!("answered twice")), 0);
+        assert_eq!(
+            super::drain_out(&out, &mut super::Line::default(), |_| panic!(
+                "answered twice"
+            )),
+            0
+        );
     }
 
     /// Running status written out, a message a send, SysEx and real-time
@@ -290,6 +304,7 @@ mod tests {
                 0xB2, 99, 1, 98, 2, 6, 3, 38, 4, 0xF8, 0xF0, 0x7E, 0x00, 0xF7, 0xC1, 5, 6, 0x91,
                 60, 100,
             ],
+            &mut super::Line::default(),
             |m| got.push(m.to_vec()),
         );
         let want: Vec<Vec<u8>> = vec![
@@ -304,6 +319,89 @@ mod tests {
             vec![0x91, 60, 100],
         ];
         assert_eq!(got, want);
+    }
+
+    /// Running status holds across drains: the echo leaves out a status
+    /// the line runs on, and the out thread may pop between two messages.
+    /// A SysEx ends it.
+    #[test]
+    fn running_status_carries_across_drains() {
+        let mut line = super::Line::default();
+        let mut got = Vec::new();
+        super::messages(&[0xB0, 20, 1], &mut line, |m| got.push(m.to_vec()));
+        super::messages(&[21, 2], &mut line, |m| got.push(m.to_vec()));
+        super::messages(&[0xF0, 0x7E, 0xF7, 22, 3], &mut line, |m| {
+            got.push(m.to_vec())
+        });
+        assert_eq!(
+            got,
+            [vec![0xB0, 20, 1], vec![0xB0, 21, 2], vec![0xF0, 0x7E, 0xF7]]
+        );
+    }
+
+    /// The desktop's echo QA by bytes: a panel turn on CUTOFF, bound to
+    /// CC 20 with echo, reaches the out thread as CC 20 on Part 1's
+    /// channel; the same CC heard from a controller is not sent back.
+    #[test]
+    fn a_bound_cell_echoes_on_midi_out_and_not_to_the_hand() {
+        use chimera_core::addr::Blocks;
+        use chimera_core::midi_map::{Binding, CcKind, Feedback, Input, Mappable, Span};
+        use chimera_core::out_ring::OutRing;
+        use chimera_midi::take::Takeover;
+        let q = NoteQueue::new();
+        let (notes, _audio) = q.split().unwrap();
+        let ring = CtrlRing::new();
+        let out = OutRing::new();
+        let mut port = Port::new(notes, &ring);
+        let mut ui = Box::new(UiState::new());
+        let p1 = PartId::ALL[0];
+        let ch = ui.project().part(p1).mix.channel.get();
+        let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+        let map = &mut ui.project_mut().edit_part(p1).sound.map;
+        *map = chimera_core::midi_map::MidiMap::EMPTY;
+        let input = Input::Cc(
+            chimera_core::midi_map::LearnCc::new(20).unwrap(),
+            CcKind::Absolute(Takeover::Jump),
+        );
+        let target = Mappable::new(cutoff).unwrap();
+        map.learn(input, target).unwrap();
+        map.set(
+            0,
+            Binding {
+                input,
+                target,
+                span: Span::FULL,
+                feedback: Feedback::Value,
+            },
+        );
+        let mut line = super::Line::default();
+        let mut now = 1_000;
+        let mut pass = |ui: &mut UiState| {
+            now += 10;
+            ui.hear_ccs(ring.drain(), Ms(now), true);
+            ui.send_out(&out);
+            let mut sent = Vec::new();
+            super::drain_out(&out, &mut line, |m| sent.push(m.to_vec()));
+            sent
+        };
+        // The burst: where CUTOFF is, once.
+        let first = pass(&mut ui);
+        assert_eq!(first.len(), 1, "{first:02X?}");
+        assert_eq!(&first[0][..2], &[0xB0 | ch, 20]);
+        // The controller moves it: nothing back, during or after.
+        for v in [10u8, 20, 30, 40] {
+            port.bytes(&[0xB0 | ch, 20, v]);
+            assert!(pass(&mut ui).is_empty(), "echoed to the hand");
+        }
+        for _ in 0..40 {
+            assert!(pass(&mut ui).is_empty());
+        }
+        // Moved by anything else: echoed, the latest value.
+        let spec = cutoff.spec().unwrap();
+        let s = ui.project_mut().edit_part(p1).sound;
+        let mut f = s.params.block_mut(BlockRef::Filter).unwrap();
+        f.set(FilterParams::CUTOFF, spec.denormalize(0.9));
+        assert_eq!(pass(&mut ui), [vec![0xB0 | ch, 20, 114]]);
     }
 
     #[test]

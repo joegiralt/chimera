@@ -465,8 +465,9 @@ pub fn connect_midi_out(wanted: &str) -> bool {
     };
     eprintln!("MIDI out: {}", names[i]);
     std::thread::spawn(move || {
+        let mut line = crate::midi::Line::default();
         loop {
-            let sent = crate::midi::drain_out(&MIDI_OUT, |m| {
+            let sent = crate::midi::drain_out(&MIDI_OUT, &mut line, |m| {
                 if let Err(e) = conn.send(m) {
                     eprintln!("MIDI out: {e}");
                 }

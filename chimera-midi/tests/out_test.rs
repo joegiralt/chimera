@@ -1,5 +1,5 @@
 use chimera_midi::ctl::{DataValue, FreeCc};
-use chimera_midi::out::{Cc14Msb, Writer, din_us};
+use chimera_midi::out::{Cc14Msb, Running, Writer, din_us};
 use chimera_midi::value::{Channel, U7, U14};
 
 fn ch(c: u8) -> Channel {
@@ -113,4 +113,24 @@ fn sysex_cancels_running_status_and_rejects_high_bytes() {
 fn din_us_cc_is_960() {
     assert_eq!(din_us(3), 960);
     assert_eq!(din_us(2), 640);
+}
+
+#[test]
+fn a_writer_after_another_keeps_its_running_status() {
+    let mut a = [0u8; 8];
+    let mut w = Writer::new(&mut a);
+    assert!(w.cc(ch(2), cc(20), u7(5)));
+    let r = w.running();
+    let mut b = [0u8; 8];
+    let mut w = Writer::after(&mut b, r);
+    assert!(w.cc(ch(2), cc(21), u7(6)));
+    assert_eq!(&b[..2], &[21, 6], "the status left out");
+    let mut c = [0u8; 8];
+    let mut w = Writer::after(&mut c, r);
+    assert!(w.cc(ch(3), cc(21), u7(6)));
+    assert_eq!(&c[..3], &[0xB3, 21, 6], "another channel sends its own");
+    let mut d = [0u8; 8];
+    let mut w = Writer::after(&mut d, Running::NONE);
+    assert!(w.cc(ch(2), cc(21), u7(6)));
+    assert_eq!(w.len(), 3);
 }

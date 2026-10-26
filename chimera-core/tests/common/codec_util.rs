@@ -194,8 +194,8 @@ pub fn system_midi_fixture_settings() -> SystemSettings {
         midi: MidiSettings {
             sync: chimera_core::orbit::clock::SyncMode::Int,
             tune: 0,
-            // The fixture predates PUSH: it reads OFF.
-            push: false,
+            // The fixture predates PUSH and ECHO: OFF and ON, the defaults.
+            ..MidiSettings::DEFAULT
         },
         theme: ThemeSettings {
             bright: Bright::new(55),

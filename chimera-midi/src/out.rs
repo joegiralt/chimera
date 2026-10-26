@@ -26,6 +26,16 @@ pub const fn din_us(bytes: usize) -> u32 {
     bytes as u32 * 320
 }
 
+/// The status a writer last sent: the next writer on the same line may
+/// leave it out (`Writer::after`). Only a writer makes one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Running(Option<u8>);
+
+impl Running {
+    /// Nothing sent yet: the next message sends its status.
+    pub const NONE: Self = Self(None);
+}
+
 /// Writes whole messages or nothing. Running status holds until
 /// `clear_status` or a SysEx.
 pub struct Writer<'a> {
@@ -41,6 +51,21 @@ impl<'a> Writer<'a> {
             len: 0,
             status: None,
         }
+    }
+
+    /// A writer whose line last carried `r`: its first message leaves out
+    /// a status equal to `r`'s.
+    pub fn after(buf: &'a mut [u8], r: Running) -> Self {
+        Self {
+            buf,
+            len: 0,
+            status: r.0,
+        }
+    }
+
+    /// The status the line now runs on.
+    pub const fn running(&self) -> Running {
+        Running(self.status)
     }
 
     pub const fn len(&self) -> usize {

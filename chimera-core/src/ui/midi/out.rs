@@ -1,9 +1,9 @@
-//! DIN OUT's pass (spec §§ 9-10): a Device Inquiry heard queues one
-//! identity reply, written into the out ring whole when it fits, else
-//! the next pass. Bank 2's, as `ui::midi` is.
+//! DIN OUT's pass (spec §§ 8.4, 9-10): with MIDI CONFIG › ECHO on, the
+//! echo plan's identity reply and value echo into the out ring, each
+//! message whole when it fits, else a later pass. Bank 2's, as `ui::midi`
+//! is.
 
-use chimera_midi::out::Writer;
-use chimera_midi::sysex::{Identity, Maker, identity_reply};
+use chimera_midi::sysex::{Identity, Maker};
 use chimera_midi::value::{U7, U14};
 
 use super::super::UiState;
@@ -41,7 +41,7 @@ pub const fn version(s: &str) -> [U7; 4] {
 /// Chimera on the PreenFM3: maker 7D (owner, spec § 13: swap for a bought
 /// MMA ID before anything is sold), family "CH", member 1 (the Blackbox
 /// port takes 2). A named static, so its bytes are bank 2's.
-static ID: Identity = Identity {
+pub(super) static ID: Identity = Identity {
     maker: Maker::NonCommercial,
     family: U14::from_parts(u7(0x48), u7(0x43)),
     member: U14::from_parts(U7::ZERO, u7(1)),
@@ -52,22 +52,16 @@ static ID: Identity = Identity {
 pub const REPLY_LEN: usize = 15;
 
 impl UiState {
-    /// The out pass: a pending identity reply into `ring`, whole. The
-    /// door's `out`.
+    /// The out pass, after `hear_in` (its clock): with ECHO on, the echo
+    /// plan's messages into `ring` (`EchoPlan::pump`); off, nothing, and
+    /// an inquiry heard is dropped (spec § 8.4). The door's `out`.
     pub(in crate::ui) fn out_in(&mut self, ring: &OutRing) {
-        let m = self.cc.ui();
-        if !m.reply {
-            return;
-        }
-        let mut b = [0u8; REPLY_LEN];
-        let mut w = Writer::new(&mut b);
-        // Our device byte is 0: the parser hears 7F or 0 (`midi_in`).
-        if !identity_reply(U7::ZERO, &ID, &mut w) {
-            return;
-        }
-        let n = w.len();
-        if ring.push_msg(&b[..n]) {
-            m.reply = false;
+        let (on, at, now) = (self.midi.echo(), self.active_part, self.cc.last);
+        let plan = &mut self.cc.ui().echo;
+        if on {
+            plan.pump(&self.project, at, now, ring);
+        } else {
+            plan.silence();
         }
     }
 }

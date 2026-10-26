@@ -2672,7 +2672,15 @@ impl UiState {
 
     /// SYSTEM's PUSH ENCODERS, in a build that has them (ADR 0140).
     fn push_on(&self) -> bool {
-        cfg!(feature = "push-encoders") && self.midi.push
+        cfg!(feature = "push-encoders") && self.midi.push()
+    }
+
+    /// SYSTEM's PUSH ENCODERS as last edited: the scan's read width. Read
+    /// in place: a copy of `MidiSettings` out of `midi()` cost the main
+    /// loop a stack slot and ~200 B of bank 1.
+    #[inline(always)]
+    pub fn push_encoders(&self) -> bool {
+        self.midi.push()
     }
 
     /// Each encoder's push this frame (ADR 0140); with PUSH ENCODERS off,

@@ -755,7 +755,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(not(feature = "usb-console"))]
         let installed = false;
         // SYSTEM's PUSH ENCODERS as last edited: off, the read stays 24 bits.
-        controls::set_push(ui.midi().push);
+        controls::set_push(ui.push_encoders());
         // The console's `key` and `turn`, at the scan's level.
         #[cfg(feature = "usb-console")]
         controls::hand(
