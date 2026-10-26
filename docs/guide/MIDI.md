@@ -61,7 +61,7 @@ SETTINGS › PART › MIDI MAP shows the current Part's map, one binding a row. 
 | `OFFSET` | `RELATIVE · BINARY OFFSET` | 65 for right, 63 for left |
 | `SIGNED` | `RELATIVE · SIGNED BIT` | 1 for right, 65 for left |
 | `SIGNED 2` | `RELATIVE · SIGNED BIT 2` | 65 for right, 1 for left |
-| `INC DEC` | `RELATIVE · NRPN INCREMENT AND DECREMENT` | NRPN only |
+| `INC DEC` | `RELATIVE · NRPN`, then `INCREMENT AND DECREMENT` on the line below | NRPN only |
 | `MOMENTARY` | `BUTTON · HELD IS MAX` | A button: held is MAX, let go is MIN |
 | `TOGGLE` | `BUTTON · EACH PRESS FLIPS` | A button: each press flips between MIN and MAX |
 
@@ -94,7 +94,11 @@ When two Parts share a channel and bind the same control, the lower-numbered Par
 
 With ECHO off, MIDI OUT stays silent.
 
+If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with MIDI thru on, an interface's soft thru, a controller that merges its input), turn ECHO off here, or the binding's own ECHO: a relative encoder would read its echoed value as turns and walk the cell.
+
 ## What else Chimera answers on DIN
+
+When SETTINGS › ABOUT reads `NEEDS UPDATE`, Chimera ignores MIDI in, notes and clock too, until the update is installed: MIDI MAP reads `NEEDS UPDATE`, and **MIX + SEQ** says `NEEDS UPDATE` instead of starting learn.
 
 - **Identity request** (`F0 7E 7F 06 01 F7`): Chimera answers with its identity and firmware version, while ECHO is on.
 - **All Notes Off** (CC 123), and the Omni and Mono/Poly messages (CC 124–127): the notes of every Part on that channel are released. **All Sound Off** (CC 120) silences them, and **Reset All Controllers** (CC 121) resets the pedal and bend.

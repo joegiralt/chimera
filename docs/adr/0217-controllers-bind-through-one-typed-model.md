@@ -58,6 +58,7 @@ The DIN parser (`chimera-hal::midi::MidiParser`) also lacks SysEx state, System 
     - the DIN TX path: PB6 AF7, USART1 `TE` and `TXFTCFG`, the TX FIFO fill from the `OutRing` in the ISR, the out pass's stub and the main loop's pend: +376 B measured (+384 B on the line);
     - ECHO's closed-door data: its spec, page, leaf and row, and the `Midi` block's get and write arms for param 3: +332 B;
     - Active Sensing: the receiver timeout's arm, flag and door call in the USART1 ISR (`RTOR`/`RTOEN` set once at init, `RTOIE` alone arms), FE/NF bytes skipped, the control ring's drops counted apart (`ctrl_drops` in `MidiStats` and the console's status): +184 B.
+    - within the check's slack, with no line raised: the MIDI MAP page's stubs (+152 B), and closed learn's `NEEDS UPDATE` with the boot building NEW after a staged install (+40 B).
   - **Bank 1 drops** `MidiParser`, `MidiMessage`, `midi_in::route` and `InEvent::from_midi` (−288 B measured on `orbit`, its line −344 B), then the bindings' resolution with today's `cc.rs` and the ramp (−2844 B on the line), so its lines are lowered.
   - **Closed bank 2:** MIDI in is deaf (notes included), nothing is sent, maps aren't decoded, and MIDI MAP reads `NEEDS UPDATE`.
 
