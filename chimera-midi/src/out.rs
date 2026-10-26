@@ -8,6 +8,7 @@ use crate::value::{Channel, U7, U14};
 pub struct Cc14Msb(u8);
 
 impl Cc14Msb {
+    #[inline]
     pub const fn new(n: u8) -> Option<Self> {
         match n {
             1..=5 | 7..=31 => Some(Self(n)),

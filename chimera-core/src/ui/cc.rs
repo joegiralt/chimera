@@ -9,6 +9,8 @@ use core::mem::MaybeUninit;
 use chimera_hal::Ms;
 
 use super::UiState;
+use super::fmt::FmtBuf;
+use super::learn::{Line, Sensed};
 use super::midi::MidiUi;
 use crate::addr::ParamAddr;
 use crate::hw::MAX_PARTS;
@@ -76,7 +78,6 @@ impl MidiSlot {
 
     /// Part `p`'s map changed (a learn, a page edit): its entries' state
     /// resets before the door next runs.
-    #[cfg(feature = "midi-map")]
     #[inline]
     pub(super) fn reset_part(&mut self, p: PartId) {
         self.stale |= 1 << p.index();
@@ -89,6 +90,11 @@ impl MidiSlot {
         self.hand = moves;
     }
 }
+
+/// The door's `sensed`: `UiState::sensed_in`.
+type SensedFn = fn(&UiState) -> Option<Sensed>;
+/// The door's `words`: `learn::words`, one of sensing's lines.
+type Words = fn(Sensed, &str, Line, &mut FmtBuf);
 
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
@@ -107,6 +113,8 @@ pub struct MidiUiDoor {
     magic: Magic,
     hear: Hear,
     hand: fn(&mut UiState, PartId, ParamAddr),
+    sensed: SensedFn,
+    words: Words,
 }
 
 /// `MidiUiDoor`'s mark: a table at the slot that isn't this one fails the
@@ -125,6 +133,8 @@ impl MidiUiDoor {
         #[cfg(not(feature = "midi-map"))]
         hear: deaf,
         hand: UiState::hand_in,
+        sensed: UiState::sensed_in,
+        words: super::midi::learn::words,
     };
 }
 
@@ -178,6 +188,13 @@ impl UiState {
         }
     }
 
+    /// What sensing has made of the control learn heard (`sensed_in`).
+    /// Closed, nothing: learn never heard one.
+    #[cfg(feature = "midi-map")]
+    pub(super) fn sensed(&self) -> Option<Sensed> {
+        through(|d| (d.sensed)(self)).flatten()
+    }
+
     /// The hand wins: a turn of `a` on Part `p` stops what its bindings
     /// were moving (`hand_in`). Closed, nothing moves.
     pub(super) fn cc_hand(&mut self, p: PartId, a: ParamAddr) {
@@ -185,4 +202,10 @@ impl UiState {
             through(|d| (d.hand)(self, p, a));
         }
     }
+}
+
+/// Sensing's line `line` for `s` on the cell labelled `label`, into `out`
+/// (`learn::words`). Closed, none.
+pub(super) fn learn_words(s: Sensed, label: &str, line: Line, out: &mut FmtBuf) {
+    through(|d| (d.words)(s, label, line, out));
 }

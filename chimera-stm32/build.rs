@@ -204,7 +204,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // (`Counted`) and the `chimera_midi` stream, controller, sensing and
     // SysEx layers it runs. And the map's codec (`midi_map::codec`), and
     // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
-    // and rel).
+    // and rel), learn's classifier (`chimera_midi::learn`) and the 14-bit
+    // MSB check it shares with the codec (`chimera_midi::out`).
     let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
     *(.text.*8midi_map5codec* .rodata.*8midi_map5codec*);
     *(.text.*14chimera_engine7midi_in*7DinPipe* .rodata.*14chimera_engine7midi_in*7DinPipe*);
@@ -215,6 +216,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*12chimera_midi5sysex* .rodata.*12chimera_midi5sysex*);
     *(.text.*12chimera_midi4take* .rodata.*12chimera_midi4take* .text.*12chimera_midi3law* .rodata.*12chimera_midi3law*);
     *(.text.*12chimera_midi3rel* .rodata.*12chimera_midi3rel*);
+    *(.text.*12chimera_midi5learn* .rodata.*12chimera_midi5learn*);
+    *(.text.*12chimera_midi3out* .rodata.*12chimera_midi3out*);
 ";
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);

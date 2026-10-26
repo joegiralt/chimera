@@ -285,7 +285,9 @@ impl MidiMap {
     }
 
     /// Maps `input` to `t` over the full range, echo off: replaces the
-    /// target's entry (a param appears once) or appends.
+    /// target's entry (a param appears once) or appends. Inlined: its
+    /// callers (learn, the codec) are bank 2's.
+    #[inline(always)]
     pub fn learn(&mut self, input: Input, t: Mappable) -> Result<(), MapFull> {
         let e = Binding {
             input,

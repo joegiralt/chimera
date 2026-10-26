@@ -798,6 +798,21 @@ impl Renderer {
             f.prime_status,
             f.text,
         );
+        // Sensing: learn's hint line, whatever the cell's own (spec § 8.1).
+        #[cfg(feature = "midi-map")]
+        if let Some(PrimeStatus::Learn(Some(crate::ui::learn::LearnNote::Sensing(s)))) =
+            f.prime_status
+        {
+            if s.sure() {
+                hint::draw(
+                    display,
+                    crate::ui::learn::DONE,
+                    theme::MARGIN_X,
+                    hint::FOCUS_Y,
+                );
+            }
+            return;
+        }
         let sound = &f.parts[f.active_part.index()].sound;
         let note = view
             .addr()
@@ -1291,6 +1306,13 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
 pub fn band_label(f: &Frame, view: &View) -> FmtBuf {
     use core::fmt::Write;
     let mut label = FmtBuf::new();
+    // Sensing, the control heard: `CC 21 → CUTOFF` (spec § 8.1).
+    #[cfg(feature = "midi-map")]
+    if let Some(PrimeStatus::Learn(Some(crate::ui::learn::LearnNote::Sensing(s)))) = f.prime_status
+    {
+        crate::ui::learn::label_line(s, view.label(), &mut label);
+        return label;
+    }
     let _ = label.write_str(view.label());
     if let View::Route {
         route: crate::ui::filter_panel::RouteView::Jack(j),

@@ -873,8 +873,10 @@ fn ramps_up(b: &mut Bench, cc: u8, a: ParamAddr) {
     let mut was = b.place(P1, a);
     assert!(was < 1.0, "{a:?} rests below the top");
     b.pass(&[(cc, 127)]);
-    let mut steps = 0;
+    let (mut steps, mut passes) = (0, 0);
     while b.place(P1, a) < 1.0 {
+        passes += 1;
+        assert!(passes < 400, "{a:?} never moves");
         b.pass(&[]);
         let now = b.place(P1, a);
         assert!(now >= was, "{a:?} never backs off");
@@ -910,9 +912,8 @@ fn init_default_map_moves_its_targets() {
     }
 }
 
-/// MIX + SEQ, then a turn moves the focus to cell `i`: armed on it.
-fn arm_on(b: &mut Bench, i: usize) {
-    use chimera_core::ui::learn::Learn;
+/// MIX + SEQ pressed and let go: arms learn, or ends its sensing.
+fn mix_seq(b: &mut Bench) {
     feed(
         &mut b.ui,
         Input::chord(ButtonId::Mix, ButtonId::Seq).at(10_000),
@@ -924,6 +925,12 @@ fn arm_on(b: &mut Bench, i: usize) {
             .at(10_100),
     );
     feed(&mut b.ui, Input::release(ButtonId::Mix).at(10_133));
+}
+
+/// MIX + SEQ, then a turn moves the focus to cell `i`: armed on it.
+fn arm_on(b: &mut Bench, i: usize) {
+    use chimera_core::ui::learn::Learn;
+    mix_seq(b);
     let e = [
         EncoderId::A,
         EncoderId::B,
@@ -947,6 +954,8 @@ fn learned_cells_ramp() {
     b.go_to_page(MODAL_1.id);
     arm_on(&mut b, 2);
     b.pass(&[(40, 0)]);
+    // Learn senses the kind till MIX + SEQ ends it (phase 1 § 6.3).
+    mix_seq(&mut b);
     let map = b.ui.project().part(P1).sound.map;
     assert!(
         map.targets_of(&MapInput::cc(40).unwrap())
@@ -961,6 +970,7 @@ fn learned_cells_ramp() {
     screen::to_osc_sub(&mut b.ui, &ALGO_LEVEL);
     arm_on(&mut b, 0);
     b.pass(&[(41, 0)]);
+    mix_seq(&mut b);
     let map = b.ui.project().part(P1).sound.map;
     assert!(
         map.targets_of(&MapInput::cc(41).unwrap())

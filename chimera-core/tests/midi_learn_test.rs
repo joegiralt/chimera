@@ -139,8 +139,12 @@ fn learn_maps_first_cc() {
         chimera_core::midi_map::Input::cc(74).unwrap()
     );
     assert_eq!(map.entries()[0].target, Mappable::new(CUTOFF).unwrap());
-    assert_eq!(band(&ui), "CC 74 → CUTOFF");
-    assert_eq!(ui.learn(), Learn::Off);
+    let (top, words, _) = ui.learn_text().unwrap();
+    assert_eq!(top.as_str(), "CC 74 → CUTOFF");
+    assert_eq!(words.as_str(), "TURN IT RIGHT, THEN LEFT");
+    assert_eq!(band(&ui), "TURN IT RIGHT, THEN LEFT");
+    // Learn stays open, sensing the control's kind (phase 1 § 6.3).
+    assert_eq!(ui.learn(), Learn::Sensing { part: P1, entry: 0 });
     // FLT is BigViz: the words ride the viz band's top line.
     let fb = screen::render_ui(&ui);
     let top = chimera_core::ui::theme::BIGVIZ_STATUS_Y;
@@ -156,7 +160,9 @@ fn learn_maps_first_cc() {
     assert_eq!(stored(&ui, CUTOFF), was);
     let p = ui.project();
     assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Edited, "*");
-    // The next CC moves it.
+    // MIX + SEQ ends sensing; the next CC moves it.
+    mix_seq(&mut ui);
+    assert_eq!(ui.learn(), Learn::Off);
     cc(&mut ui, p1, 74, 0, 20_200);
     for t in 1..40 {
         cc(&mut ui, ch(15), 1, 0, 20_200 + 4 * t);
@@ -317,9 +323,44 @@ fn learn_words_fit_the_band() {
             part: ch(15),
         },
         LearnNote::Reserved(cc127),
-        LearnNote::Mapped(cc127),
         LearnNote::Full,
     ];
+    // Sensing's words: the widest control of each kind, each guess, sure
+    // or not; the hint line with MIX + SEQ  DONE after a sure guess.
+    use chimera_core::midi_map::{ButtonMode, Cc14Msb, CcKind, Input as In, LearnCc, NrpnKind};
+    use chimera_core::ui::learn::{Line, Sensed};
+    use chimera_midi::rel::ByteEncoding;
+    use chimera_midi::take::Takeover::Jump;
+    use chimera_midi::value::U14;
+    let c = LearnCc::new(119).unwrap();
+    let n = U14::new(16383).unwrap();
+    let mut inputs = vec![
+        In::Cc(c, CcKind::Absolute(Jump)),
+        In::Cc(c, CcKind::Button(ButtonMode::Momentary)),
+        In::Cc14(Cc14Msb::new(31).unwrap(), Jump),
+        In::Nrpn(n, NrpnKind::IncDec),
+        In::Nrpn(n, NrpnKind::Absolute(Jump)),
+        In::Pressure(Jump),
+    ];
+    for e in ByteEncoding::ALL {
+        inputs.push(In::Cc(c, CcKind::Relative(e)));
+        inputs.push(In::Nrpn(n, NrpnKind::Relative(e)));
+    }
+    let sensed: Vec<Sensed> = inputs
+        .iter()
+        .flat_map(|&input| [false, true].map(|sure| Sensed::new(input, sure)))
+        .collect();
+    for &s in &sensed {
+        assert_eq!(Sensed::new(s.input().unwrap(), s.sure()), s, "packs");
+        let mut hint = FmtBuf::new();
+        chimera_core::ui::midi::learn::words(s, "", Line::Words, &mut hint);
+        // The words in the value's place, at the status face.
+        fits(&hint);
+    }
+    {
+        use chimera_core::ui::hint::{Gesture, width};
+        assert!(width(&[Gesture("MIX + SEQ", "DONE")]) <= CONTENT_W);
+    }
     for chain in ALL_CHAINS {
         for b in chain.blocks {
             for def in core::iter::once(b.def).chain(b.sub_pages.iter().copied()) {
@@ -328,10 +369,25 @@ fn learn_words_fit_the_band() {
                     let mut t = FmtBuf::new();
                     armed_text(label, &mut t);
                     fits(&t);
-                    for n in notes {
+                    for n in notes
+                        .iter()
+                        .copied()
+                        .chain(sensed.iter().map(|&s| LearnNote::Sensing(s)))
+                    {
                         let mut t = FmtBuf::new();
                         n.text(label, &mut t);
                         fits(&t);
+                    }
+                    // Sensing's label line, at the label's face.
+                    for &s in &sensed {
+                        let mut top = FmtBuf::new();
+                        chimera_core::ui::midi::learn::words(s, label, Line::Label, &mut top);
+                        let w = text_width(
+                            &chimera_core::ui::theme::FONT_VALUE,
+                            top.as_str(),
+                            LABEL_TRACKING,
+                        );
+                        assert!(w <= CONTENT_W, "{}: {w}", top.as_str());
                     }
                 }
             }

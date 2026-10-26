@@ -12,12 +12,14 @@
 // Without `midi-map` the door's `hear` is `ui::cc::deaf`: none of this runs.
 #![cfg_attr(not(feature = "midi-map"), allow(dead_code))]
 
+pub mod learn;
 pub mod ramp;
 pub mod resolve;
 
 use chimera_hal::Ms;
 use chimera_midi::ctl::{Ctl, DataValue, Dir, FreeCc, Sel};
 use chimera_midi::law::place_of;
+use chimera_midi::learn::Seen;
 use chimera_midi::take::Place;
 use chimera_midi::value::{U7, U14};
 
@@ -171,12 +173,17 @@ enum Seat {
     Handed,
 }
 
-/// Each Part's, and whether a stepped or relative move edited the active
-/// Part this pass. ~5.7 KB, AXI (`MidiSlot`).
+/// Each Part's, whether a stepped or relative move edited the active Part
+/// this pass, and what learn has heard of the control it senses. ~5.8 KB,
+/// AXI (`MidiSlot`).
 pub struct MidiUi {
     parts: [PartMidi; MAX_PARTS],
     stepped: bool,
+    seen: Seen,
 }
+
+/// Nothing sensed: a named static, so its image is bank 2's.
+static NO_SEEN: Seen = Seen::new();
 
 impl MidiSlot {
     /// The state, built on first use from `REST`: bank 1 never writes it.
@@ -191,12 +198,20 @@ impl MidiSlot {
                     core::ptr::addr_of_mut!((*m).parts[i]).write(REST);
                 }
                 core::ptr::addr_of_mut!((*m).stepped).write(false);
+                core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
             }
             self.built = true;
         }
         // SAFETY: written above, or by an earlier call that set `built`;
         // only `clear` unsets it, and the next call writes it again.
         unsafe { self.ui.assume_init_mut() }
+    }
+
+    /// The state, if built: a read never builds it.
+    #[inline(always)]
+    fn built(&self) -> Option<&MidiUi> {
+        // SAFETY: `built` says the slot was written (`ui`).
+        self.built.then(|| unsafe { self.ui.assume_init_ref() })
     }
 
     #[inline(always)]
@@ -249,34 +264,20 @@ fn span_of(s: Span, place: f32) -> Place {
 /// The control message in `e`, its learn heard first; `None` if learn
 /// took it or it is no control a binding hears.
 fn control(ui: &mut UiState, e: HeardEv) -> Option<(crate::MidiChannel, Ctl)> {
-    #[cfg(not(feature = "midi-map"))]
-    let _ = ui;
     let (ch, c) = match e {
         HeardEv::Cc(cc) => {
-            #[cfg(feature = "midi-map")]
-            if ui.learn_cc(cc) {
+            let Some(free) = FreeCc::new(cc.cc.get()) else {
+                ui.learn_reserved(cc);
                 return None;
-            }
-            let c = Ctl::Cc {
-                cc: FreeCc::new(cc.cc.get())?,
-                value: U7::new(cc.value)?,
             };
-            return Some((cc.channel, c));
+            let value = U7::new(cc.value)?;
+            (cc.channel, Ctl::Cc { cc: free, value })
         }
         HeardEv::Ctrl(CtrlEvent::Ctl(ch, c)) => (ch, c),
         HeardEv::Ctrl(_) => return None,
     };
-    #[cfg(feature = "midi-map")]
-    if let Ctl::Cc { cc, value } = c {
-        let cc = crate::midi_in::Cc::new(cc.get())?;
-        let ev = crate::midi_in::CcEvent {
-            channel: ch,
-            cc,
-            value: value.get(),
-        };
-        if ui.learn_cc(ev) {
-            return None;
-        }
+    if ui.learn_in(ch, &c) {
+        return None;
     }
     Some((ch, c))
 }
