@@ -1,6 +1,7 @@
 //! ADR 0211: LOOP, TRON and PING-PONG bill their loop by the output samples
 //! a pass takes, each band at or over the unit's reading (TAPE COLD bench,
-//! 2026-10-22), and admission books it at note-on and holds it.
+//! 2026-10-22; 2026-10-26 for 0.3, ADR 0218), and admission books it at
+//! note-on and holds it.
 
 mod common;
 use common::InstRig;
@@ -28,12 +29,12 @@ fn every_band_bills_its_pass_length() {
     let r = rate(24_000);
     let at = |w, spw: u32, fade| loop_extra(w, 16 * spw, fade, r, 16.0).0;
     let power = 481; // 20 ms at 24 kHz, and a frame
-    for (w, tiny) in [(Way::Loop, 300), (Way::Tron, 440), (Way::Ping, 80)] {
+    for (w, tiny) in [(Way::Loop, 180), (Way::Tron, 370), (Way::Ping, 90)] {
         assert_eq!(at(w, 4, 0), tiny, "{w:?} under 16");
     }
     for (spw, sum, pow) in [
-        (16, 80, 740),
-        (59, 80, 740),
+        (16, 50, 710),
+        (59, 50, 710),
         (60, 20, 200),
         (255, 20, 200),
         (256, 0, 50),
@@ -64,41 +65,38 @@ fn every_band_holds_the_unit_s_reading() {
         (
             "LOOP 64",
             row(COST_LOOP, Way::Loop, 64, 32, 24_000, 16.0),
-            859,
+            776,
         ),
         (
             "REV 64",
             row(COST_LOOP, Way::Loop, 64, 32, 24_000, 16.0),
-            892,
+            771,
         ),
         (
             "PING 64",
             row(COST_PING, Way::Ping, 64, 0, 24_000, 16.0),
-            643,
+            650,
         ),
-        (
-            "TRON",
-            row(COST_TRON, Way::Tron, 64, 32, 24_000, 16.0),
-            1_035,
-        ),
+        ("TRON", row(COST_TRON, Way::Tron, 64, 32, 24_000, 16.0), 958),
         // The shortest legal loop, 256 frames at 8 kHz: every 16 samples.
         (
             "LOOP 256",
             row(COST_LOOP, Way::Loop, 256, 128, 8_000, 16.0),
-            664,
+            642,
         ),
         (
             "REV 256",
             row(COST_LOOP, Way::Loop, 256, 128, 8_000, 16.0),
-            667,
+            634,
         ),
         (
             "PING 256",
             row(COST_PING, Way::Ping, 256, 0, 8_000, 16.0),
-            556,
+            546,
         ),
         // SIZE 0.55 of 0.5 s at 24 kHz, XFADE ½: 999 frames, a 20.8 ms
-        // equal-power fade, a pass every 62 samples.
+        // equal-power fade, a pass every 62 samples (0.2's reading: 0.3's
+        // bench had no source for it).
         (
             "LOOP 40",
             row(COST_LOOP, Way::Loop, 999, 499, 24_000, 16.0),
@@ -117,7 +115,7 @@ fn every_band_holds_the_unit_s_reading() {
 fn admission_books_the_loop_and_holds_it() {
     let tiny = held_plain(&sine(24_000, 16.0, 64), 24_000);
     let long = held_plain(&sine(24_000, 100.0, 24_000), 24_000);
-    for (held, note, extra) in [(&tiny, 120, 300), (&long, 60, 10)] {
+    for (held, note, extra) in [(&tiny, 120, 180), (&long, 60, 10)] {
         let mut src = OneSource::new(held);
         let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
         let mut p: ParamSnapshot = common::init_params(EngineType::Tape);

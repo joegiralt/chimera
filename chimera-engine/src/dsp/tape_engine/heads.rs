@@ -32,11 +32,15 @@ const BANDS: [u32; 5] = [16, 60, 256, 1_024, 4_096];
 /// spw` (the unit's 816 every 4 samples, 588 every 16; 591 reversed, so 80
 /// at 16); an equal-power fade 10 more a sample (`xgains`' 8 flops) and
 /// 10,500 a pass (`power_of`, fitted to the 40 ms loop's 699 every 62).
-const LOOP_EXTRA: [(u32, u32); 5] = [(80, 740), (20, 200), (0, 50), (0, 20), (0, 10)];
-const LOOP_TINY: u32 = 300;
-const TRON_TINY: u32 = 440;
-/// PING-PONG's turn under 16 samples: 567, over `COST_PING`'s 490.
-const PING_TINY: u32 = 80;
+/// The 0.3 unit (ADR 0218): LOOP 256 642 every 16, so 50 there and the
+/// equal-power fade 660 over it; LOOP 64 776 and TRON 958 every 4, 180 and
+/// 370 over the floor's 596.
+const LOOP_EXTRA: [(u32, u32); 5] = [(50, 710), (20, 200), (0, 50), (0, 20), (0, 10)];
+const LOOP_TINY: u32 = 180;
+const TRON_TINY: u32 = 370;
+/// PING-PONG's turn under 16 samples: 650 on the 0.3 unit, 84 over
+/// `COST_PING`'s floor (ADR 0218).
+const PING_TINY: u32 = 90;
 
 /// What a note's loop bills over its model's (ADR 0211): `frames` a pass
 /// and `fade` of them crossfading, at `rate`, read `inc` frames a sample at

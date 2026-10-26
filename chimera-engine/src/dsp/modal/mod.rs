@@ -404,7 +404,9 @@ impl ModalEngine {
     /// blocker), −86 cycles; DAMP's two `powf`s a block, 8, and the
     /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
     /// +18. BODY and the ensemble bill apart.
-    pub const COST_STRING: Cost = Cost(330);
+    /// The 0.3 unit reads it 29 under at MDL STR0, its Part's routes off
+    /// (ADR 0218): 310.
+    pub const COST_STRING: Cost = Cost(310);
     /// The one-loop bow (ADR 0064), counted in the thumbv7em release build
     /// (`render_bowed` kept out of line so it can be): its per-sample loop,
     /// traced on the bowed path with both `fast_tanh`s off their clamps,
@@ -414,7 +416,8 @@ impl ModalEngine {
     /// one-loop bow's benched 620 at 143 instructions and two `tanhf` bodies
     /// (135), with the two `vdiv.f32`s at 14 cycles: 620 + (270 − 143 −
     /// 135) × 1.46 × 1.1 + 2 × (14 − 1.46) × 1.1 = 634.8, rounded up to 640.
-    pub const COST_BOWED: Cost = Cost(640);
+    /// The 0.3 unit's worst row, MDL BOW+, reads 117 under (ADR 0218): 530.
+    pub const COST_BOWED: Cost = Cost(530);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -435,6 +438,8 @@ impl ModalEngine {
     /// `tanhf`, 60 instructions and two `vdiv.f32`s a sample on its
     /// shortest path, for stmlib's rational clip, 16 and one, (44 × 1.46 +
     /// 12.54) × 0.9.
+    /// The 0.3 unit reads 310 and 17 a mode (ADR 0218); kept until its
+    /// eight-note chord's limiter rule is ruled on, as six voices break it.
     pub const COST_BANK: Cost = Cost(400);
     pub const COST_MODE: Cost = Cost(45);
 
