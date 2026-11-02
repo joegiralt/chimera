@@ -163,8 +163,8 @@ mod door {
     use chimera_core::out_ring::OutRing;
     use chimera_midi::usb::{Packer, unpack};
     use chimera_midi::usb_class::{Ids, descriptors as write};
-    use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
     use usb_device::UsbError;
+    use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
     use usb_device::device::UsbDeviceState;
 
     use super::{IN, MidiClass, MidiIn, MidiSlot};
