@@ -1057,9 +1057,9 @@ impl Drop for Release {
 #[cfg(feature = "midi-usb")]
 #[interrupt]
 fn OTG_FS() {
-    use crate::shared::{AUDIO_CYCLES, MIDI_CYCLES, stamp};
+    use crate::shared::{MIDI_CYCLES, audio_cycles, own_cycles, stamp};
     // Its own time, for `stats` and the card IRQ's.
-    let enter = stamp(|| AUDIO_CYCLES.load(Ordering::Relaxed));
+    let enter = stamp(audio_cycles);
     // SAFETY: `install` wrote the cell before unmasking this handler, and
     // `with` masks it while the UI holds the cell: this reference is the
     // only one. The handler can't preempt itself.
@@ -1077,9 +1077,7 @@ fn OTG_FS() {
     } else {
         core.poll_all();
     }
-    let leave = stamp(|| AUDIO_CYCLES.load(Ordering::Relaxed));
-    let audio = leave.over.since(enter.over);
-    let own = leave.at.since(enter.at).get().saturating_sub(audio.get());
+    let own = own_cycles(enter, stamp(audio_cycles)).get();
     // The card IRQ's own time leaves out the MIDI level's (`card_dma::clocks`).
     MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
     let n = &mut core.irq;

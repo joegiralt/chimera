@@ -395,6 +395,20 @@ pub fn stamp(over: impl Fn() -> u32) -> Stamp {
     }
 }
 
+/// The audio's cycle total: what a MIDI-level handler's `stamp` reads.
+#[inline(always)]
+pub fn audio_cycles() -> u32 {
+    AUDIO_CYCLES.load(Ordering::Relaxed)
+}
+
+/// A handler's own cycles from `enter` to `leave`, the audio's inside
+/// them taken off.
+#[inline(always)]
+pub fn own_cycles(enter: Stamp, leave: Stamp) -> Cycles {
+    let audio = leave.over.since(enter.over);
+    Cycles::new(leave.at.since(enter.at).get().saturating_sub(audio.get()))
+}
+
 /// The streams' counters: the voices', and the card IRQ's time.
 pub static STREAM_STATS: StreamStats = StreamStats::new();
 /// MIDI DIN's line errors: overrun, framing, noise.
