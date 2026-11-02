@@ -114,14 +114,15 @@ pub fn storm(window: &mut StormWindow, now_cycles: u32, cycles_per_ms: u32) -> b
 /// SysTick's tick, which also kicks the 100 ms watchdog, stalled this long
 /// under the USB interrupt: a storm.
 pub const TICK_STALL_MS: u32 = 20;
-/// The UI's `service` this long ago under the USB interrupt: a storm. A
-/// lap peaks at 40 ms.
+/// The UI's last hold of the USB cell this long ago under the USB
+/// interrupt: a storm. A lap peaks at 40 ms, and a long answer holds it at
+/// every pump.
 pub const SERVICE_STALL_MS: u32 = 250;
 
 /// One entry at `now` (DWT): true when the tick, last seen moving at
-/// `tick_at`, has stalled over `TICK_STALL_MS`, or the UI's last `service`,
-/// at `served_at`, is over `SERVICE_STALL_MS` old. `None`: no `service`
-/// yet (boot), which never starves. Starvation itself, not a CPU share:
+/// `tick_at`, has stalled over `TICK_STALL_MS`, or the UI's last hold of
+/// the cell, at `served_at`, is over `SERVICE_STALL_MS` old. `None`: no
+/// hold yet (boot), which never starves. Starvation itself, not a CPU share:
 /// three share tests failed against audio's whole-half renders.
 pub fn starved(now: u32, tick_at: u32, served_at: Option<u32>, cycles_per_ms: u32) -> bool {
     let over = |at: u32, ms: u32| now.wrapping_sub(at) > ms * cycles_per_ms;

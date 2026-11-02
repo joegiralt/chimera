@@ -203,3 +203,17 @@ fn no_service_yet_is_not_starved() {
     assert!(!starved(1_000 * MS, 999 * MS, None, MS), "1 s from boot");
     assert!(starved(tick + 21 * MS, tick, None, MS));
 }
+
+/// A long answer: the UI holds the cell every 100 ms inside one `service`
+/// for a second while SysTick runs. Never starved.
+#[test]
+fn a_long_answer_pumping_is_not_starved() {
+    let t = 5 * MS;
+    for k in 1..=10 {
+        let held = t + (k - 1) * 100 * MS;
+        for ms in (0..100).step_by(2) {
+            let now = held + ms * MS;
+            assert!(!starved(now, now, Some(held), MS), "{k} {ms}");
+        }
+    }
+}

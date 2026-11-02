@@ -423,10 +423,7 @@ impl Usb {
         // Every pass, inside the IRQ counter's wrap.
         crate::card_dma::irq_cycles();
         #[cfg(feature = "midi-usb")]
-        self.usb_irq.fold(self.link.with(|c| {
-            c.irq.served_at = Some(now);
-            c.irq
-        }));
+        self.usb_irq.fold(self.link.with(|c| c.irq));
         #[cfg(feature = "bank2")]
         let cpu_hz = self.cycles_per_us * 1_000_000;
         #[cfg(feature = "midi-usb")]
@@ -834,7 +831,8 @@ pub(crate) struct IrqCounts {
     /// saw it change.
     tick: u32,
     tick_at: u32,
-    /// The DWT cycle of the UI's last `service`; `None` before the first.
+    /// The DWT cycle the UI last let go of the cell (`with`); `None`
+    /// before the first.
     served_at: Option<u32>,
     cycles_per_us: u32,
     /// The guard masked the handler: `with` leaves it masked, and the end
@@ -985,6 +983,8 @@ fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     // one other user, is masked and not running.
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
     let r = f(core);
+    // Any UI hold is the UI alive: a long answer pumps inside one `service`.
+    core.irq.served_at = Some(DWT::cycle_count());
     unlock(core.irq.held);
     r
 }
