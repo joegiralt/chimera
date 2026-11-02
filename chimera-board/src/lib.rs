@@ -837,6 +837,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             #[cfg(feature = "midi-usb")]
             usb.up().is_some_and(|u| u.midi_up()),
         );
+        // Card work and SYSTEM's sync can hold the UI for seconds: no false
+        // storm from the guard's service test meanwhile.
+        #[cfg(feature = "usb-console")]
+        if let Some(u) = usb.up() {
+            u.away();
+        }
         // SYSTEM synced first: a THEME change made in this visit is kept.
         if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
             dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
@@ -864,6 +870,10 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
         ui.sync_system(&mut sync, &mut card, store, &mut settings);
+        #[cfg(feature = "usb-console")]
+        if let Some(u) = usb.up() {
+            u.back();
+        }
         // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         // The loop spins as fast as it can; animation runs at UI_FPS.

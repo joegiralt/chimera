@@ -465,6 +465,9 @@ impl Usb {
             let Some(req) = line.push(byte[0]) else {
                 continue;
             };
+            // A bench `card`, `sweep`'s scan, `bank2`'s write: seconds with
+            // no hold. The answer's first pump wakes the service test.
+            link.away();
             // Outside a bench build nothing measures, and none of it links.
             let card = match req {
                 Ok(Request::Card(arg)) if cfg!(feature = "bench") => {
@@ -542,6 +545,18 @@ impl Usb {
             return Some(restart);
         }
         None
+    }
+
+    /// The UI loop off on a long errand: `Link::away`, until `back`.
+    #[inline(always)]
+    pub fn away(&mut self) {
+        self.link.away();
+    }
+
+    /// Back from `away`: the service test counts from now.
+    #[inline(always)]
+    pub fn back(&mut self) {
+        self.link.with(|_| ());
     }
 
     /// The console's hand at `now`: what `key` and `turn` hold and turn.
@@ -936,6 +951,15 @@ impl Link {
         #[cfg(feature = "midi-usb")]
         with(f)
     }
+
+    /// The UI off on an errand that can outlast `SERVICE_STALL_MS` with no
+    /// hold (card work, SYSTEM's sync, an install): the guard's service
+    /// test sleeps until the next hold, its tick test still holds.
+    #[inline(always)]
+    fn away(&mut self) {
+        #[cfg(feature = "midi-usb")]
+        with(|c| c.irq.served_at = None);
+    }
 }
 
 #[cfg(feature = "midi-usb")]
@@ -982,9 +1006,10 @@ fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     // SAFETY: the cell is written (a `Link` exists), and the handler, its
     // one other user, is masked and not running.
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
-    let r = f(core);
     // Any UI hold is the UI alive: a long answer pumps inside one `service`.
+    // Before `f`, so `away`'s `None` stands.
     core.irq.served_at = Some(DWT::cycle_count());
+    let r = f(core);
     unlock(core.irq.held);
     r
 }
