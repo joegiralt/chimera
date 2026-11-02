@@ -110,6 +110,14 @@ impl OutRing {
             .store(self.tail.load(Ordering::Acquire), Ordering::Release);
     }
 
+    /// Consumer side, for a port nobody reads: everything waiting dropped,
+    /// and the producer's losses forgotten, so they never count as drops.
+    #[inline(always)]
+    pub fn discard(&self) {
+        self.clear();
+        self.dropped.store(0, Ordering::Relaxed);
+    }
+
     /// Nothing waits. Either side; a moment's answer.
     #[inline(always)]
     pub fn is_empty(&self) -> bool {

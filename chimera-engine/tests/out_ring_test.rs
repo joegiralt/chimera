@@ -194,6 +194,19 @@ fn tee_din_alone() {
     assert_eq!(popped(&din), [0xF8]);
 }
 
+/// A port nobody reads: what waits and what was lost, both gone.
+#[test]
+fn discard_forgets_losses() {
+    let (din, usb) = (OutRing::new(), OutRing::new());
+    assert!(usb.push_msg(&[0; OUT_RING_LEN]));
+    let mut t = OutPorts::new(&din, &usb).tee();
+    assert!(t.send(&[0xF8]));
+    usb.discard();
+    assert!(usb.is_empty());
+    assert_eq!(usb.take_dropped(), 0);
+    assert!(usb.push_msg(&[0; OUT_RING_LEN]), "the whole ring free");
+}
+
 #[test]
 fn clear_drops_what_waits() {
     let r = OutRing::new();

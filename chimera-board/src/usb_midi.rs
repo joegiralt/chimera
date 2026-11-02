@@ -80,11 +80,22 @@ impl Midi {
         serial: &mut Serial,
         counts: &mut Counts,
     ) -> Result<(), Option<Closed>> {
-        let Some(m) = &mut self.0 else {
-            return Err(None);
+        let polled = match &mut self.0 {
+            Some(m) => crate::bank2::board_door(|d| (d.usb.poll)(dev, serial, m, counts))
+                .ok_or_else(|| Some(Closed(m.out.address()))),
+            None => Err(None),
         };
-        crate::bank2::board_door(|d| (d.usb.poll)(dev, serial, m, counts))
-            .ok_or_else(|| Some(Closed(m.out.address())))
+        if polled.is_err() {
+            // Nothing sends USB's out ring, and the UI copies to it all the
+            // same (a door opened after a closed boot runs the echo): it is
+            // dropped, and its losses are no drops.
+            // SAFETY: as `door::poll`'s: only the poll touches `IN` once
+            // `connect` has run, under the cell's exclusion.
+            if let Some(r) = unsafe { (*addr_of_mut!(IN)).tx.ring } {
+                r.discard();
+            }
+        }
+        polled
     }
 }
 
@@ -283,12 +294,12 @@ mod door {
         if tx.n == 0 && ring.is_empty() {
             return;
         }
-        let lost = ring.take_dropped();
         if !up {
-            ring.clear();
+            ring.discard();
             (tx.packer, tx.n) = (Packer::new(), 0);
             return;
         }
+        let lost = ring.take_dropped();
         counts.midi_drops = counts.midi_drops.wrapping_add(lost);
         loop {
             while tx.n < tx.held.len()
