@@ -196,8 +196,11 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     #[cfg(feature = "midi-din")]
     let _midi_rx = gpiob.pb7.into_alternate::<7>();
+    // Open drain: DIN OUT's loop runs from +5 V (220 R to pin 4, PB6 by
+    // 220 R to pin 5), so a 3.3 V high still lit the receiver's opto.
+    // PB6 is 5 V tolerant; released, the loop floats to 5 V.
     #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-    let _midi_tx = gpiob.pb6.into_alternate::<7>();
+    let _midi_tx = gpiob.pb6.into_alternate_open_drain::<7>();
     // The board's strap before its HC165 pins (ADR 0140): PD0..PD3 pulled
     // up, left to settle, read once. They stay pulled-up inputs.
     let straps = (
