@@ -404,9 +404,9 @@ impl ModalEngine {
     /// blocker), −86 cycles; DAMP's two `powf`s a block, 8, and the
     /// dispersion's re-split each block STRUCTURE glides, 8, billed always,
     /// +18. BODY and the ensemble bill apart.
-    /// The 0.3 unit reads it 29 under at MDL STR0, its Part's routes off
-    /// (ADR 0218): 310.
-    pub const COST_STRING: Cost = Cost(310);
+    /// The 0.3 unit's top voice at MDL STR0, its Part's routes off, reads
+    /// 11 over 310, so it stays (ADR 0218).
+    pub const COST_STRING: Cost = Cost(330);
     /// The one-loop bow (ADR 0064), counted in the thumbv7em release build
     /// (`render_bowed` kept out of line so it can be): its per-sample loop,
     /// traced on the bowed path with both `fast_tanh`s off their clamps,

@@ -49,8 +49,8 @@ fn worst() -> AlgoParams {
     p
 }
 
-/// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 310 (the 0.3 unit's
-/// reading, ADR 0218) and `BODY` 80, plus
+/// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 330 (the 0.3 unit's
+/// worst voice, ADR 0218) and `BODY` 80, plus
 /// `CHAIN_COST` (30 since ADR 0060, 36 with ADR 0110's amp gate). Algo is priced from its patch.
 /// Each engine's default filter bills over the LP24 its term carries (VA's
 /// 2040 REV2, 15).
@@ -59,7 +59,7 @@ fn voice_costs_are_the_billed_literals() {
     assert_eq!(Voice::CHAIN_COST, Cost(36));
     assert_eq!(
         voice_cost(EngineType::Modal),
-        Cost(426) + chimera_core::dsp::modal::ModalEngine::PITCH + ModRouting::BASE + LP24
+        Cost(446) + chimera_core::dsp::modal::ModalEngine::PITCH + ModRouting::BASE + LP24
     );
     let mods = ModState::new();
     for e in EngineType::ALL {
@@ -1278,9 +1278,9 @@ fn modal_bills_each_model() {
     use ResonatorMode::{Bowed, Modal, String, Sympathetic};
     // Voices on rev V and rev Y, then with the master tape (ADR 0055).
     for (p, billed, voices, taped) in [
-        (sound(String, 0.0, 0.0), 310, (8, 8), (8, 8)),
-        (sound(String, 0.3, 0.0), 390, (8, 8), (8, 8)),
-        (sound(String, 0.3, 0.5), 530, (8, 7), (8, 7)),
+        (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.5), 550, (8, 7), (8, 7)),
         (sound(Bowed, 0.3, 0.5), 530, (8, 7), (8, 7)),
         (sound(Sympathetic, 0.0, 0.0), 645, (8, 6), (7, 6)),
         (sound(Sympathetic, 0.3, 0.0), 725, (7, 5), (6, 5)),
@@ -1714,12 +1714,12 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
     p
 }
 
-/// Spec § Budget: each MODE bills its row as the 0.3 unit reads it (ADR
-/// 0218; ADR 0165's counts before), and the voices each is admitted beside
+/// Spec § Budget: each MODE bills its worst voice as the 0.3 unit reads it
+/// (ADR 0218; ADR 0165's counts before), and the voices each is admitted beside
 /// the reserve on the four rooms (rev V, rev Y, rev V with ORBIT, rev V
 /// with the master tape), INIT's 2040 REV2 (+15) and the chain and routing
-/// (83) on top. ADR 0040's done-when is six on each: met everywhere but
-/// PHASE on rev Y, five. The rooms are at 75 % (ADR 0124). ADR 0118: WAVE's reach and
+/// (83) on top. ADR 0040's done-when is six on each: met on rev V and
+/// beside ORBIT; on rev Y only MIX reaches it, the others fit five. The rooms are at 75 % (ADR 0124). ADR 0118: WAVE's reach and
 /// SYNC's master held under 7 kHz, points 11 and 12; the sub at the shaped
 /// edge, point 13.
 #[test]
@@ -1740,18 +1740,18 @@ fn va_bills_each_mode() {
     assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 480, [8, 6, 8, 8]),
-        (Sync, 500, [8, 6, 7, 7]),
-        (Ring, 490, [8, 6, 8, 7]),
-        (Xor, 510, [8, 6, 7, 7]),
-        (Bits, 500, [8, 6, 7, 7]),
-        (Fm, 530, [7, 6, 7, 7]),
-        (Am, 500, [8, 6, 7, 7]),
-        (Max, 510, [8, 6, 7, 7]),
+        (Mix, 530, [7, 6, 7, 7]),
+        (Sync, 550, [7, 5, 7, 7]),
+        (Ring, 540, [7, 5, 7, 7]),
+        (Xor, 550, [7, 5, 7, 7]),
+        (Bits, 540, [7, 5, 7, 7]),
+        (Fm, 580, [7, 5, 7, 6]),
+        (Am, 550, [7, 5, 7, 7]),
+        (Max, 550, [7, 5, 7, 7]),
         // The unit reads LOOPFM 712 a voice against 584 (2026-10-22).
         (LoopFm, 480, [8, 6, 8, 8]),
-        (SoftSync, 530, [7, 6, 7, 7]),
-        (Phase, 540, [7, 5, 7, 7]),
+        (SoftSync, 610, [7, 5, 6, 6]),
+        (Phase, 590, [7, 5, 7, 6]),
     ] {
         let p = va_sound(mode);
         assert_eq!(
@@ -1776,14 +1776,14 @@ fn va_noise_bills_only_when_it_plays() {
     for kind in NoiseKind::ALL {
         let mut p = va_sound(VaMode::Mix);
         p.va.noise_kind = kind;
-        assert_eq!(EngineSlot::cost(&p, &none), Cost(480), "{kind:?} at 0");
+        assert_eq!(EngineSlot::cost(&p, &none), Cost(530), "{kind:?} at 0");
         let mut ms = chimera_core::preset::Sound::plain_init(EngineType::Va).mod_state;
         let lvl = ms
             .push(ParamAddr::new(BlockRef::Va, VaParams::NOISE))
             .unwrap();
         ms.set_route(ModSource::Lfo1.index(), lvl, 0);
-        assert_eq!(EngineSlot::cost(&p, &ms), Cost(480), "{kind:?} amount 0");
-        let with = Cost(480 + VaEngine::noise_cost(kind).0);
+        assert_eq!(EngineSlot::cost(&p, &ms), Cost(530), "{kind:?} amount 0");
+        let with = Cost(530 + VaEngine::noise_cost(kind).0);
         ms.set_route(ModSource::Lfo1.index(), lvl, 64);
         assert_eq!(EngineSlot::cost(&p, &ms), with, "{kind:?} routed");
         p.va.noise = 0.01;
@@ -2529,7 +2529,7 @@ fn fuzz_routed_adds_its_ramp() {
 /// ADR 0211: FUZZ bills as it reads, over ADR 0156's old ceiling (271 −
 /// 95): a FUZZ Part, meant for mono and bass, gets fewer voices. VA INIT on
 /// the 2040 with FUZZ, beside the reserve on rev V: REV2 and EXP; REV2's
-/// sixth with MIX's 0.3 bill (ADR 0218).
+/// sixth needs MIX under its worst voice (ADR 0218).
 #[test]
 fn a_fuzz_part_gets_the_voices_its_reading_allows() {
     let none = ModState::new();
@@ -2537,7 +2537,7 @@ fn a_fuzz_part_gets_the_voices_its_reading_allows() {
     let at = |v| room / Voice::cost(&fuzz_voice(v), &none).0;
     assert_eq!((at(K2040Voice::Rev2), at(K2040Voice::Exp)), FUZZ_VOICES);
 }
-const FUZZ_VOICES: (u32, u32) = (6, 5);
+const FUZZ_VOICES: (u32, u32) = (5, 5);
 
 /// ADR 0168, 0192: STABILITY bills `STAB_COST` (5, the unit's 4) on the 2040, LADDER and
 /// SEM below 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN
@@ -2667,7 +2667,7 @@ fn sem_bills_its_count_and_its_voices() {
     }
     assert_eq!(
         table[3],
-        [[7, 5], [6, 5], [8, 7], [8, 6]],
+        [[7, 5], [6, 5], [8, 6], [8, 6]],
         "SEM: ALGO steady, moving; VA steady, moving"
     );
 }
@@ -2761,8 +2761,8 @@ fn the_gate_bills_only_when_up_and_its_voices() {
 
 /// SEM off, on; the 2040 off, on: ALGO and VA, rev V and rev Y.
 const GATE_VOICES: [[[u32; 2]; 2]; 4] = [
-    [[7, 5], [8, 7]],
-    [[6, 5], [8, 6]],
-    [[6, 5], [8, 6]],
-    [[6, 4], [7, 5]],
+    [[7, 5], [8, 6]],
+    [[6, 5], [7, 5]],
+    [[6, 5], [7, 6]],
+    [[6, 4], [6, 5]],
 ];

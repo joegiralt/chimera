@@ -32,10 +32,10 @@ const BANDS: [u32; 5] = [16, 60, 256, 1_024, 4_096];
 /// spw` (the unit's 816 every 4 samples, 588 every 16; 591 reversed, so 80
 /// at 16); an equal-power fade 10 more a sample (`xgains`' 8 flops) and
 /// 10,500 a pass (`power_of`, fitted to the 40 ms loop's 699 every 62).
-/// The 0.3 unit (ADR 0218): LOOP 256 642 every 16, so 50 there and the
-/// equal-power fade 660 over it; LOOP 64 776 and TRON 958 every 4, 180 and
-/// 370 over the floor's 596.
-const LOOP_EXTRA: [(u32, u32); 5] = [(50, 710), (20, 200), (0, 50), (0, 20), (0, 10)];
+/// The 0.3 unit (ADR 0218): LOOP 64 776 and TRON 958 every 4, 180 and 370
+/// over the floor's 596. The 16–59 band stays: LOOP 256 reads 642, but no
+/// row reads TRON or the equal-power fade there.
+const LOOP_EXTRA: [(u32, u32); 5] = [(80, 740), (20, 200), (0, 50), (0, 20), (0, 10)];
 const LOOP_TINY: u32 = 180;
 const TRON_TINY: u32 = 370;
 /// PING-PONG's turn under 16 samples: 650 on the 0.3 unit, 84 over
