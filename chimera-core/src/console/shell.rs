@@ -82,44 +82,55 @@ impl LoopTimer {
 pub const STORM_LIMIT: u32 = 200;
 
 /// The USB interrupt's entries in the millisecond of DWT cycles it opened,
-/// and their wall cycles, audio's preemption included.
+/// their own cycles, and the audio counter as it opened.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StormWindow {
     start: u32,
+    audio: u32,
     entries: u32,
-    busy: u32,
+    own: u32,
 }
 
 impl StormWindow {
     pub const fn new() -> Self {
         StormWindow {
             start: 0,
+            audio: 0,
             entries: 0,
-            busy: 0,
+            own: 0,
         }
     }
 
-    /// An entry's wall cycles, enter to leave, as it leaves. Wall, not its
-    /// own: above 50 % audio its own time can never pass half the window.
-    pub fn charge(&mut self, enter: u32, leave: u32) {
-        self.busy = self.busy.saturating_add(leave.wrapping_sub(enter));
+    /// An entry's own cycles, the audio's taken off, as it leaves.
+    pub fn charge(&mut self, own: u32) {
+        self.own = self.own.saturating_add(own);
     }
 }
 
-/// One entry at `now_cycles`: true once this millisecond holds more than
-/// `STORM_LIMIT` entries, or the entries before it spanned over half its
-/// cycles, audio's included, so slow entries under heavy audio trip it
-/// too. Cycles, not the shell's `Ms`, which steps every 2 ms and stalls
-/// while the storm holds the CPU.
-pub fn storm(window: &mut StormWindow, now_cycles: u32, cycles_per_ms: u32) -> bool {
+/// One entry at `now_cycles`, `audio_cycles` the audio interrupt's running
+/// total: true once this millisecond holds more than `STORM_LIMIT` entries,
+/// or the entries before it own over half the window's non-audio cycles.
+/// Audio's preemption is charged to neither side, so a heavy patch neither
+/// hides a storm nor makes one. The whole window, not its elapsed part: a
+/// packet's entry and its IN completion back to back are no storm. Cycles,
+/// not the shell's `Ms`, which steps every 2 ms and stalls while the storm
+/// holds the CPU.
+pub fn storm(
+    window: &mut StormWindow,
+    now_cycles: u32,
+    audio_cycles: u32,
+    cycles_per_ms: u32,
+) -> bool {
     if now_cycles.wrapping_sub(window.start) >= cycles_per_ms {
         *window = StormWindow {
             start: now_cycles,
+            audio: audio_cycles,
             ..StormWindow::new()
         };
     }
     window.entries = window.entries.saturating_add(1);
-    window.entries > STORM_LIMIT || window.busy > cycles_per_ms / 2
+    let audio = audio_cycles.wrapping_sub(window.audio);
+    window.entries > STORM_LIMIT || window.own > cycles_per_ms.saturating_sub(audio) / 2
 }
 
 /// Report text in a fixed buffer. The last `TRUNCATED.len()` bytes are kept

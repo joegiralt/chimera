@@ -1009,7 +1009,7 @@ impl Drop for Release {
 }
 
 /// Polls the device. Over `STORM_LIMIT` entries in a millisecond, or over
-/// half its wall cycles (a full console's packet left in the RX FIFO keeps
+/// half its non-audio cycles (a full console's packet left in the RX FIFO keeps
 /// RXFLVL up), it masks itself
 /// until the UI's next `service`, whose polls carry the console meanwhile.
 #[cfg(feature = "midi-usb")]
@@ -1023,7 +1023,12 @@ fn OTG_FS() {
     // only one. The handler can't preempt itself.
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
     let n = &mut core.irq;
-    if storm(&mut n.window, enter.at.get(), n.cycles_per_us * 1_000) {
+    if storm(
+        &mut n.window,
+        enter.at.get(),
+        enter.over.get(),
+        n.cycles_per_us * 1_000,
+    ) {
         n.held = true;
         n.storms = n.storms.wrapping_add(1);
         NVIC::mask(pac::Interrupt::OTG_FS);
@@ -1036,7 +1041,7 @@ fn OTG_FS() {
     // The card IRQ's own time leaves out the MIDI level's (`card_dma::clocks`).
     MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
     let n = &mut core.irq;
-    n.window.charge(enter.at.get(), leave.at.get());
+    n.window.charge(own);
     n.cycles = n.cycles.wrapping_add(own);
     n.us_max = n.us_max.max(own / n.cycles_per_us);
 }
