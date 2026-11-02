@@ -45,8 +45,6 @@ use core::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::Ordering};
 use cortex_m::peripheral::NVIC;
 #[cfg(feature = "midi-usb")]
 use stm32h7xx_hal::pac::interrupt;
-#[cfg(feature = "midi-usb")]
-use usb_device::bus::UsbBus as _;
 
 /// The stock PreenFM3's ID: Ixox/preenfm3 firmware/Src/usbd_desc.c.
 pub const VID_PID: (u16, u16) = (0x0483, 0x5740);
@@ -72,8 +70,8 @@ const USB33_WAIT_MS: u32 = 100;
 const READ_BUDGET: usize = 256;
 
 pub(crate) type Bus = UsbBus<Otg2>;
-type Dev = UsbDevice<'static, Bus>;
-type Port = SerialPort<'static, Bus>;
+pub(crate) type Dev = UsbDevice<'static, Bus>;
+pub(crate) type Serial = SerialPort<'static, Bus>;
 
 /// `bcdDevice` of the composite device, MIDI configured or not: a new
 /// layout under the same VID:PID, which Windows caches drivers by. 0.2's
@@ -195,9 +193,9 @@ pub struct Usb {
 /// nothing until `connect`. Only `init` makes one.
 pub struct Unconnected {
     bus: &'static UsbBusAllocator<UsbBus<Otg2>>,
-    serial: Port,
+    serial: Serial,
     #[cfg(feature = "midi-usb")]
-    midi: crate::usb_midi::MidiSlot,
+    midi: crate::usb_midi::Midi,
     uid: &'static str,
     cpu_hz: u32,
     boot: BootSeen,
@@ -307,9 +305,7 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
     let serial = SerialPort::new(bus);
     // USB MIDI only if bank 2's door is open now: this boot's layout.
     #[cfg(feature = "midi-usb")]
-    let mut midi = crate::usb_midi::MidiSlot::new();
-    #[cfg(feature = "midi-usb")]
-    crate::usb_midi::alloc(bus, &mut midi);
+    let midi = crate::usb_midi::Midi::alloc(bus);
     // The chip's 96-bit UID: a stable /dev/serial/by-id name per unit.
     let uid = cortex_m::singleton!(: chimera_core::console::SerialNumber = serial_hex(Uid::read()))
         .expect("serial number taken once");
@@ -367,7 +363,6 @@ impl Unconnected {
                 us_max: 0,
                 storms: 0,
                 midi_drops: 0,
-                configured: false,
             },
         };
         #[cfg(not(feature = "midi-usb"))]
@@ -821,10 +816,10 @@ impl Out for UsbOut<'_> {
 /// The device and its classes.
 pub(crate) struct UsbCore {
     pub(crate) dev: Dev,
-    pub(crate) serial: Port,
-    /// USB MIDI's class, if allocated at `init`.
+    pub(crate) serial: Serial,
+    /// USB MIDI, on or off this boot.
     #[cfg(feature = "midi-usb")]
-    pub(crate) midi: crate::usb_midi::MidiSlot,
+    pub(crate) midi: crate::usb_midi::Midi,
     /// The handler's own counters, read by the UI under `with`.
     #[cfg(feature = "midi-usb")]
     pub(crate) irq: IrqCounts,
@@ -857,8 +852,6 @@ pub(crate) struct IrqCounts {
     storms: u32,
     /// USB MIDI event packets read and dropped.
     pub(crate) midi_drops: u32,
-    /// Configured, as the last MIDI poll saw it.
-    pub(crate) configured: bool,
 }
 
 impl UsbCore {
@@ -869,21 +862,23 @@ impl UsbCore {
         self.dev.poll(&mut [&mut self.serial]);
     }
 
-    /// The one poll. MIDI up and the door open: bank 2 polls console and
-    /// MIDI. Else the console here, and MIDI OUT's packets read and
-    /// dropped, so none waits in the shared RX FIFO (spec § 13.1, 13.2).
+    /// The one poll. MIDI on and the door open: bank 2 polls console and
+    /// MIDI. Else the console here, and MIDI's OUT drained if it is on
+    /// (`Closed`).
     #[cfg(feature = "midi-usb")]
     #[inline(never)]
     fn poll_all(&mut self) {
-        let out = self.midi.out();
-        if out.is_some() && crate::usb_midi::poll(self).is_some() {
-            return;
-        }
-        self.dev.poll(&mut [&mut self.serial]);
-        let Some(out) = out else { return };
-        let mut p = [0u8; 64];
-        while let Ok(n) = self.dev.bus().read(out, &mut p) {
-            self.irq.midi_drops = self.irq.midi_drops.wrapping_add((n / 4) as u32);
+        let UsbCore {
+            dev,
+            serial,
+            midi,
+            irq,
+        } = self;
+        if let Err(closed) = midi.poll(dev, serial, irq) {
+            dev.poll(&mut [serial]);
+            if let Some(c) = closed {
+                c.drain(dev, &mut irq.midi_drops);
+            }
         }
     }
 }
