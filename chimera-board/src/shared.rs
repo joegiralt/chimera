@@ -9,8 +9,6 @@ use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{self, MAX_PARTS};
 use chimera_core::instrument::AudioShared;
-#[cfg(feature = "midi-usb")]
-use chimera_core::midi_in::CTRL_USB_LEN;
 #[cfg(any(feature = "midi-din", feature = "midi-usb"))]
 use chimera_core::midi_in::CtrlRing;
 use chimera_core::note_queue::NoteSources;
@@ -283,17 +281,26 @@ pub fn take_ctrl_din() -> Option<&'static CtrlRing> {
     Some(unsafe { (*addr_of_mut!(CTRL_DIN)).write(CtrlRing::new()) })
 }
 
-// USB MIDI's control ring, the USB poll's to push and the UI's to drain:
-// all zero, so `.bss` in AXI with no code to build it, as `OUT_DIN`. A
-// burst's size (4 KB), not DIN's.
+/// USB MIDI's control ring: a burst's (4 KB) where the MIDI map reads it;
+/// elsewhere it is dropped unread each lap, and DIN's 64 keep the bench's
+/// AXI margin (ADR 0087).
 #[cfg(feature = "midi-usb")]
-static CTRL_USB: CtrlRing<CTRL_USB_LEN> = CtrlRing::new();
+pub type UsbCtrl = CtrlRing<{ USB_CTRL_LEN }>;
+#[cfg(all(feature = "midi-usb", feature = "midi-map"))]
+const USB_CTRL_LEN: usize = chimera_core::midi_in::CTRL_USB_LEN;
+#[cfg(all(feature = "midi-usb", not(feature = "midi-map")))]
+const USB_CTRL_LEN: usize = chimera_core::midi_in::CTRL_RING_LEN;
+
+// USB MIDI's control ring, the USB poll's to push and the UI's to drain:
+// all zero, so `.bss` in AXI with no code to build it, as `OUT_DIN`.
+#[cfg(feature = "midi-usb")]
+static CTRL_USB: UsbCtrl = CtrlRing::new();
 #[cfg(feature = "midi-usb")]
 static CTRL_USB_TAKEN: AtomicBool = AtomicBool::new(false);
 
 /// The USB control ring, empty; once. Both ends share the reference.
 #[cfg(feature = "midi-usb")]
-pub fn take_ctrl_usb() -> Option<&'static CtrlRing<CTRL_USB_LEN>> {
+pub fn take_ctrl_usb() -> Option<&'static UsbCtrl> {
     (!CTRL_USB_TAKEN.swap(true, Ordering::AcqRel)).then_some(&CTRL_USB)
 }
 

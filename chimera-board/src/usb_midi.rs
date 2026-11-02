@@ -21,7 +21,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use chimera_core::midi_in::{CTRL_USB_LEN, CtrlRing, PipeSlot};
+use chimera_core::midi_in::PipeSlot;
 use chimera_core::note_queue::NoteProducer;
 use chimera_core::out_ring::OutRing;
 use chimera_midi::usb::Packer;
@@ -31,6 +31,7 @@ use usb_device::class_prelude::{
     StringIndex, UsbBusAllocator, UsbClass,
 };
 
+use crate::shared::UsbCtrl;
 use crate::usb::{Bus, UsbCore};
 
 /// The jacks' name, and so the port's.
@@ -85,7 +86,7 @@ impl MidiSlot {
 struct MidiIn {
     pipe: PipeSlot,
     notes: Option<NoteProducer<'static>>,
-    ctrl: Option<&'static CtrlRing<CTRL_USB_LEN>>,
+    ctrl: Option<&'static UsbCtrl>,
     out: Option<&'static OutRing>,
     packer: Packer,
     held: [[u8; 4]; 16],
@@ -106,7 +107,7 @@ static mut IN: MidiIn = MidiIn {
 /// installs the device: bank 2's poll feeds and empties them.
 pub(crate) fn set_in(
     notes: Option<NoteProducer<'static>>,
-    ctrl: &'static CtrlRing<CTRL_USB_LEN>,
+    ctrl: &'static UsbCtrl,
     out: Option<&'static OutRing>,
 ) {
     // SAFETY: before `connect` unmasks `OTG_FS` or makes the `Link` that
@@ -159,16 +160,34 @@ impl UsbClass<Bus> for MidiClass {
 mod door {
     use core::ptr::addr_of_mut;
 
-    use chimera_core::midi_in::{self, DinPipe, DinSinks, Left};
+    use chimera_core::midi_in::{self, DinSinks, Left};
+    #[cfg(feature = "midi-map")]
+    use chimera_core::midi_in::{CTRL_USB_LEN, DinPipe, PipeSlot};
     use chimera_core::out_ring::OutRing;
     use chimera_midi::usb::{Packer, unpack};
     use chimera_midi::usb_class::{Ids, descriptors as write};
+    #[cfg(not(feature = "midi-map"))]
+    use midi_in::{feed, lost};
     use usb_device::UsbError;
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
     use usb_device::device::UsbDeviceState;
 
     use super::{IN, MidiClass, MidiIn, MidiSlot};
     use crate::usb::{Bus, IrqCounts, UsbCore};
+
+    /// USB's burst-sized ring takes the pipe straight (the door's entries
+    /// take DIN's); at DIN's size, the door's.
+    #[cfg(feature = "midi-map")]
+    #[inline(always)]
+    fn feed(pipe: &mut PipeSlot, bytes: &[u8], s: &mut DinSinks<'_, '_, { CTRL_USB_LEN }>) {
+        DinPipe::usb_feed(pipe, bytes, s);
+    }
+
+    #[cfg(feature = "midi-map")]
+    #[inline(always)]
+    fn lost(pipe: &mut PipeSlot, s: &mut DinSinks<'_, '_, { CTRL_USB_LEN }>) {
+        DinPipe::usb_lost(pipe, s);
+    }
 
     /// Bulk packets at full speed.
     const PACKET: u16 = 64;
@@ -223,14 +242,14 @@ mod door {
             if let (false, Some(s)) = (up, sinks.as_mut())
                 && midi_in::lets_go(left, pipe.played())
             {
-                DinPipe::usb_lost(pipe, s);
+                lost(pipe, s);
             }
         }
         let mut p = [0u8; PACKET as usize];
         while let Ok(n) = m.out.read(&mut p) {
             for &e in p[..n].as_chunks::<4>().0 {
                 match (unpack(e), sinks.as_mut()) {
-                    (Some((0, b)), Some(s)) => DinPipe::usb_feed(pipe, b.as_slice(), s),
+                    (Some((0, b)), Some(s)) => feed(pipe, b.as_slice(), s),
                     _ => irq.midi_drops = irq.midi_drops.wrapping_add(1),
                 }
             }
