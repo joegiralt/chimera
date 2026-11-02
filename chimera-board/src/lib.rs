@@ -809,7 +809,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         midi_out(ui, &out);
         // Card work and SYSTEM's sync can hold the UI for seconds: an
         // errand, so no false storm from the guard's service test.
-        let errand = || {
+        #[cfg_attr(feature = "usb-console", allow(unused_mut))]
+        let mut errand = || {
             // SYSTEM synced first: a THEME change made in this visit is kept.
             if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
                 dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
