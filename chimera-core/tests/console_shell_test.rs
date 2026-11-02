@@ -1,6 +1,6 @@
 use chimera_core::console::{
     ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, STORM_LIMIT, Served, StormWindow,
-    serial_hex, storm,
+    serial_hex, starved, storm,
 };
 use chimera_hal::Ms;
 
@@ -119,9 +119,9 @@ const MS: u32 = 480_000;
 fn storm_trips_over_limit() {
     let mut w = StormWindow::new();
     for k in 0..STORM_LIMIT {
-        assert!(!storm(&mut w, 1_000 + k * 100, 0, MS), "entry {}", k + 1);
+        assert!(!storm(&mut w, 1_000 + k * 100, MS), "entry {}", k + 1);
     }
-    assert!(storm(&mut w, 1_000 + STORM_LIMIT * 100, 0, MS), "the 201st");
+    assert!(storm(&mut w, 1_000 + STORM_LIMIT * 100, MS), "the 201st");
 }
 
 #[test]
@@ -129,10 +129,7 @@ fn window_resets_each_ms() {
     let mut w = StormWindow::new();
     for ms in 0..10 {
         for k in 0..STORM_LIMIT {
-            assert!(
-                !storm(&mut w, ms * MS + k * 2_000, 0, MS),
-                "ms {ms} entry {k}"
-            );
+            assert!(!storm(&mut w, ms * MS + k * 2_000, MS), "ms {ms} entry {k}");
         }
     }
 }
@@ -142,103 +139,67 @@ fn wraps_dwt() {
     let mut w = StormWindow::new();
     let start = u32::MAX - MS / 2;
     for k in 0..STORM_LIMIT {
-        assert!(!storm(&mut w, start.wrapping_add(k), 0, MS));
+        assert!(!storm(&mut w, start.wrapping_add(k), MS));
     }
     // A millisecond on, past the counter's wrap: a fresh window.
     let next = start.wrapping_add(MS);
     for k in 0..STORM_LIMIT {
         assert!(
-            !storm(&mut w, next.wrapping_add(k), 0, MS),
+            !storm(&mut w, next.wrapping_add(k), MS),
             "entry {k} after the wrap"
         );
     }
-    assert!(storm(&mut w, next.wrapping_add(STORM_LIMIT), 0, MS));
+    assert!(storm(&mut w, next.wrapping_add(STORM_LIMIT), MS));
 }
 
 #[test]
 fn a_window_opens_on_its_first_cycle() {
     let mut w = StormWindow::new();
     for k in 0..STORM_LIMIT {
-        assert!(!storm(&mut w, k, 0, MS));
+        assert!(!storm(&mut w, k, MS));
     }
-    assert!(!storm(&mut w, MS, 0, MS), "cycle MS opens a fresh window");
-}
-
-/// Entry `k` of a run that starts one every `every` cycles, each owning
-/// `own` cycles, with audio taking `audio` per mille of the CPU.
-fn run(w: &mut StormWindow, every: u32, own: u32, audio: u32, k: u32) -> bool {
-    let enter = 1_000 + k * every;
-    let tripped = storm(w, enter, k * every / 1_000 * audio, MS);
-    w.charge(own);
-    tripped
+    assert!(!storm(&mut w, MS, MS), "cycle MS opens a fresh window");
 }
 
 #[test]
-fn slow_entries_over_half_a_window_trip() {
-    let mut w = StormWindow::new();
-    for k in 0..3 {
-        assert!(!run(&mut w, 10_000, MS / 5, 0, k));
-    }
-    // 60 % of the millisecond in three entries.
-    assert!(storm(&mut w, 40_000, 0, MS));
+fn a_stalled_tick_starves() {
+    let t = 5 * MS;
+    assert!(starved(t + 21 * MS, t, Some(t), MS), "21 ms");
+    assert!(!starved(t + 19 * MS, t, Some(t), MS), "19 ms");
 }
 
 #[test]
-fn slow_entries_under_half_a_window_do_not() {
-    let mut w = StormWindow::new();
-    for k in 0..2 {
-        assert!(!run(&mut w, 10_000, MS / 5, 0, k));
-    }
-    assert!(!storm(&mut w, 30_000, 0, MS), "40 % of the millisecond");
-    // The next millisecond starts its own count.
-    w.charge(MS / 5);
-    assert!(!storm(&mut w, MS + 1_000, 0, MS));
+fn a_stalled_service_starves() {
+    let s = 5 * MS;
+    let tick = s + 240 * MS; // SysTick still moving
+    assert!(starved(s + 251 * MS, tick, Some(s), MS), "251 ms");
+    assert!(!starved(s + 249 * MS, tick, Some(s), MS), "249 ms");
 }
 
-/// Audio at 70 %: 10 µs entries back to back, 3 µs of each USB's own. Its
-/// own time passes half the non-audio time before the entry limit.
 #[test]
-fn a_storm_under_heavy_audio_trips() {
-    let mut w = StormWindow::new();
-    let us10 = 10 * MS / 1_000;
-    let tripped = (0..STORM_LIMIT)
-        .find(|&k| run(&mut w, us10, 3 * us10 / 10, 700, k))
-        .expect("trips under the entry limit");
-    assert!(tripped < 100, "inside the millisecond: entry {tripped}");
-}
-
-/// One entry audio preempted for 0.9 ms of its wall time, 2 µs its own:
-/// audio at 67 % is no storm.
-#[test]
-fn audio_preemption_is_not_a_storm() {
-    let mut w = StormWindow::new();
-    assert!(!storm(&mut w, 1_000, 0, MS));
-    w.charge(2 * MS / 1_000);
-    let wall = 9 * MS / 10;
-    assert!(!storm(
-        &mut w,
-        1_000 + wall + 100,
-        wall - 2 * MS / 1_000,
+fn starved_reads_across_the_dwt_wrap() {
+    let at = u32::MAX - 5 * MS;
+    assert!(starved(at.wrapping_add(21 * MS), at, Some(at), MS));
+    assert!(!starved(at.wrapping_add(19 * MS), at, Some(at), MS));
+    assert!(starved(
+        at.wrapping_add(251 * MS),
+        at.wrapping_add(240 * MS),
+        Some(at),
+        MS
+    ));
+    assert!(!starved(
+        at.wrapping_add(249 * MS),
+        at.wrapping_add(240 * MS),
+        Some(at),
         MS
     ));
 }
 
-/// An OUT packet's entry, then its IN completion's 1 µs on: no storm.
+/// Before the UI's first `service` only the tick can starve.
 #[test]
-fn a_back_to_back_pair_does_not_trip() {
-    let mut w = StormWindow::new();
-    let us = MS / 1_000;
-    let at = 10 * MS; // opens its own window
-    assert!(!storm(&mut w, at, 0, MS));
-    w.charge(2 * us);
-    assert!(!storm(&mut w, at + 3 * us, 0, MS));
-}
-
-/// 40 entries a millisecond at 2 µs each under 70 % audio: never trips.
-#[test]
-fn quiet_traffic_does_not_trip() {
-    let mut w = StormWindow::new();
-    for k in 0..400 {
-        assert!(!run(&mut w, MS / 40, 2 * MS / 1_000, 700, k), "entry {k}");
-    }
+fn no_service_yet_is_not_starved() {
+    let tick = 2 * MS;
+    assert!(!starved(tick + 19 * MS, tick, None, MS));
+    assert!(!starved(1_000 * MS, 999 * MS, None, MS), "1 s from boot");
+    assert!(starved(tick + 21 * MS, tick, None, MS));
 }

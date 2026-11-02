@@ -36,7 +36,7 @@ use usbd_serial::USB_CLASS_CDC;
 
 use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
-use chimera_core::console::{StormWindow, storm};
+use chimera_core::console::{StormWindow, starved, storm};
 #[cfg(feature = "midi-usb")]
 use core::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::Ordering};
 #[cfg(feature = "midi-usb")]
@@ -355,6 +355,10 @@ impl Unconnected {
             #[cfg(feature = "midi-usb")]
             irq: IrqCounts {
                 window: StormWindow::new(),
+                // SysTick runs from boot step 1: the tick test holds from here.
+                tick: crate::controls::now_ms().0,
+                tick_at: DWT::cycle_count(),
+                served_at: None,
                 cycles_per_us: (self.cpu_hz / 1_000_000).max(1),
                 held: false,
                 cycles: 0,
@@ -419,7 +423,10 @@ impl Usb {
         // Every pass, inside the IRQ counter's wrap.
         crate::card_dma::irq_cycles();
         #[cfg(feature = "midi-usb")]
-        self.usb_irq.fold(self.link.with(|c| c.irq));
+        self.usb_irq.fold(self.link.with(|c| {
+            c.irq.served_at = Some(now);
+            c.irq
+        }));
         #[cfg(feature = "bank2")]
         let cpu_hz = self.cycles_per_us * 1_000_000;
         #[cfg(feature = "midi-usb")]
@@ -821,8 +828,14 @@ pub(crate) struct UsbCore {
 #[cfg(feature = "midi-usb")]
 #[derive(Clone, Copy)]
 pub(crate) struct IrqCounts {
-    /// Its entries and own cycles this millisecond: the storm guard's.
+    /// Its entries this millisecond: the storm guard's.
     window: StormWindow,
+    /// SysTick's tick as the handler last saw it, and the DWT cycle it
+    /// saw it change.
+    tick: u32,
+    tick_at: u32,
+    /// The DWT cycle of the UI's last `service`; `None` before the first.
+    served_at: Option<u32>,
     cycles_per_us: u32,
     /// The guard masked the handler: `with` leaves it masked, and the end
     /// of `Usb::service` unmasks it.
@@ -1008,10 +1021,11 @@ impl Drop for Release {
     }
 }
 
-/// Polls the device. Over `STORM_LIMIT` entries in a millisecond, or over
-/// half its non-audio cycles (a full console's packet left in the RX FIFO keeps
-/// RXFLVL up), it masks itself
-/// until the UI's next `service`, whose polls carry the console meanwhile.
+/// Polls the device. Over `STORM_LIMIT` entries in a millisecond, or
+/// while it starves SysTick (the watchdog's kick) or the UI's `service` (a
+/// full console's packet left in the RX FIFO keeps RXFLVL up), it masks
+/// itself until the UI's next `service`, whose polls carry the console
+/// meanwhile.
 #[cfg(feature = "midi-usb")]
 #[interrupt]
 fn OTG_FS() {
@@ -1023,12 +1037,12 @@ fn OTG_FS() {
     // only one. The handler can't preempt itself.
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
     let n = &mut core.irq;
-    if storm(
-        &mut n.window,
-        enter.at.get(),
-        enter.over.get(),
-        n.cycles_per_us * 1_000,
-    ) {
+    let (now, per_ms) = (enter.at.get(), n.cycles_per_us * 1_000);
+    let tick = crate::controls::now_ms().0;
+    if tick != n.tick {
+        (n.tick, n.tick_at) = (tick, now);
+    }
+    if storm(&mut n.window, now, per_ms) || starved(now, n.tick_at, n.served_at, per_ms) {
         n.held = true;
         n.storms = n.storms.wrapping_add(1);
         NVIC::mask(pac::Interrupt::OTG_FS);
@@ -1041,7 +1055,6 @@ fn OTG_FS() {
     // The card IRQ's own time leaves out the MIDI level's (`card_dma::clocks`).
     MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
     let n = &mut core.irq;
-    n.window.charge(own);
     n.cycles = n.cycles.wrapping_add(own);
     n.us_max = n.us_max.max(own / n.cycles_per_us);
 }
