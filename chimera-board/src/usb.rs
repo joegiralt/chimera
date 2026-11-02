@@ -783,7 +783,7 @@ pub(crate) struct UsbCore {
 #[cfg(feature = "midi-usb")]
 #[derive(Clone, Copy)]
 struct IrqCounts {
-    /// Its entries this millisecond: the storm guard's.
+    /// Its entries and own cycles this millisecond: the storm guard's.
     window: StormWindow,
     cycles_per_us: u32,
     /// The guard masked the handler: `with` leaves it masked, and the end
@@ -900,7 +900,9 @@ fn install(core: UsbCore) -> Link {
 }
 
 /// The UI's way in: `OTG_FS` masked for `f`. Never nested: only `Link`
-/// calls it, and only `install` makes one, after the cell is written.
+/// calls it, and only `install` makes one, after the cell is written; and
+/// `Release`'s drop, made only inside `Usb::service` (so after `install`)
+/// and never dropped inside a `with` (panics abort).
 #[cfg(feature = "midi-usb")]
 fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     lock();
@@ -944,8 +946,9 @@ impl Drop for Release {
     }
 }
 
-/// Polls the device. Over `STORM_LIMIT` entries in a millisecond (a full
-/// console's packet left in the RX FIFO keeps RXFLVL up), it masks itself
+/// Polls the device. Over `STORM_LIMIT` entries in a millisecond, or over
+/// half its cycles (a full console's packet left in the RX FIFO keeps
+/// RXFLVL up), it masks itself
 /// until the UI's next `service`, whose polls carry the console meanwhile.
 #[cfg(feature = "midi-usb")]
 #[interrupt]
@@ -971,6 +974,7 @@ fn OTG_FS() {
     // The card IRQ's own time leaves out the MIDI level's (`card_dma::clocks`).
     MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
     let n = &mut core.irq;
+    n.window.charge(own);
     n.cycles = n.cycles.wrapping_add(own);
     n.us_max = n.us_max.max(own / n.cycles_per_us);
 }

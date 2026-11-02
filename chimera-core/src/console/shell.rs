@@ -81,11 +81,13 @@ impl LoopTimer {
 /// the unit's measured worst (spec § 13 ruling 5).
 pub const STORM_LIMIT: u32 = 200;
 
-/// The USB interrupt's entries in the millisecond of DWT cycles it opened.
+/// The USB interrupt's entries in the millisecond of DWT cycles it opened,
+/// and its own cycles in them.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StormWindow {
     start: u32,
     entries: u32,
+    own: u32,
 }
 
 impl StormWindow {
@@ -93,22 +95,30 @@ impl StormWindow {
         StormWindow {
             start: 0,
             entries: 0,
+            own: 0,
         }
+    }
+
+    /// An entry's own cycles, the audio's taken off, as it leaves.
+    pub fn charge(&mut self, own: u32) {
+        self.own = self.own.saturating_add(own);
     }
 }
 
 /// One entry at `now_cycles`: true once this millisecond holds more than
-/// `STORM_LIMIT`. Cycles, not the shell's `Ms`, which steps every 2 ms and
-/// stalls while the storm holds the CPU.
+/// `STORM_LIMIT` entries, or the entries before it took over half its
+/// cycles, so slow entries under heavy audio trip it too. Cycles, not the
+/// shell's `Ms`, which steps every 2 ms and stalls while the storm holds
+/// the CPU.
 pub fn storm(window: &mut StormWindow, now_cycles: u32, cycles_per_ms: u32) -> bool {
     if now_cycles.wrapping_sub(window.start) >= cycles_per_ms {
         *window = StormWindow {
             start: now_cycles,
-            entries: 0,
+            ..StormWindow::new()
         };
     }
     window.entries = window.entries.saturating_add(1);
-    window.entries > STORM_LIMIT
+    window.entries > STORM_LIMIT || window.own > cycles_per_ms / 2
 }
 
 /// Report text in a fixed buffer. The last `TRUNCATED.len()` bytes are kept

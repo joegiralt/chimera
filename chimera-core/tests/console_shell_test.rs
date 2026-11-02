@@ -151,3 +151,36 @@ fn wraps_dwt() {
     }
     assert!(storm(&mut w, next.wrapping_add(STORM_LIMIT), MS));
 }
+
+#[test]
+fn a_window_opens_on_its_first_cycle() {
+    let mut w = StormWindow::new();
+    for k in 0..STORM_LIMIT {
+        assert!(!storm(&mut w, k, MS));
+    }
+    assert!(!storm(&mut w, MS, MS), "cycle MS opens a fresh window");
+}
+
+#[test]
+fn slow_entries_over_half_a_window_trip() {
+    let mut w = StormWindow::new();
+    for k in 0..3 {
+        assert!(!storm(&mut w, 1_000 + k * 10_000, MS));
+        w.charge(MS / 5);
+    }
+    // 60 % of the millisecond in three entries.
+    assert!(storm(&mut w, 40_000, MS));
+}
+
+#[test]
+fn slow_entries_under_half_a_window_do_not() {
+    let mut w = StormWindow::new();
+    for k in 0..2 {
+        assert!(!storm(&mut w, 1_000 + k * 10_000, MS));
+        w.charge(MS / 5);
+    }
+    assert!(!storm(&mut w, 30_000, MS), "40 % of the millisecond");
+    // The next millisecond starts its own count.
+    w.charge(MS / 5);
+    assert!(!storm(&mut w, MS + 1_000, MS));
+}
