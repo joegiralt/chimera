@@ -11,4 +11,5 @@ pub mod sense;
 pub mod stream;
 pub mod sysex;
 pub mod take;
+pub mod usb;
 pub mod value;
