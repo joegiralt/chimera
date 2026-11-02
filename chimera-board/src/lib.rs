@@ -52,6 +52,8 @@ mod sd_probe;
 pub mod shared;
 #[cfg(feature = "usb-console")]
 pub mod usb;
+#[cfg(feature = "midi-usb")]
+mod usb_midi;
 #[cfg(not(feature = "sd-probe"))]
 pub mod watchdog;
 

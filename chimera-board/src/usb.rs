@@ -30,7 +30,9 @@ use usb_device::bus::UsbBusAllocator;
 use usb_device::device::{
     StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid,
 };
-use usbd_serial::{SerialPort, USB_CLASS_CDC};
+use usbd_serial::SerialPort;
+#[cfg(not(feature = "midi-usb"))]
+use usbd_serial::USB_CLASS_CDC;
 
 use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
@@ -41,6 +43,8 @@ use core::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::Ordering};
 use cortex_m::peripheral::NVIC;
 #[cfg(feature = "midi-usb")]
 use stm32h7xx_hal::pac::interrupt;
+#[cfg(feature = "midi-usb")]
+use usb_device::bus::UsbBus as _;
 
 /// The stock PreenFM3's ID: Ixox/preenfm3 firmware/Src/usbd_desc.c.
 pub const VID_PID: (u16, u16) = (0x0483, 0x5740);
@@ -65,8 +69,15 @@ const USB33_WAIT_MS: u32 = 100;
 /// Bytes read per loop top at most: a flood without a newline can't hold the UI.
 const READ_BUDGET: usize = 256;
 
-type Dev = UsbDevice<'static, UsbBus<Otg2>>;
-type Port = SerialPort<'static, UsbBus<Otg2>>;
+pub(crate) type Bus = UsbBus<Otg2>;
+type Dev = UsbDevice<'static, Bus>;
+type Port = SerialPort<'static, Bus>;
+
+/// `bcdDevice` of the composite device, MIDI configured or not: a new
+/// layout under the same VID:PID, which Windows caches drivers by. 0.2's
+/// console-only device was 0x0010.
+#[cfg(feature = "midi-usb")]
+const MIDI_RELEASE: u16 = 0x0020;
 
 /// OTG2, the OTG FS core on PA11/PA12, for `UsbBus`. Its `enable` only
 /// sets the clock bit, so `UsbBus::enable`'s masked, unbounded spins
@@ -183,6 +194,8 @@ pub struct Usb {
 pub struct Unconnected {
     bus: &'static UsbBusAllocator<UsbBus<Otg2>>,
     serial: Port,
+    #[cfg(feature = "midi-usb")]
+    midi: crate::usb_midi::MidiSlot,
     uid: &'static str,
     cpu_hz: u32,
     boot: BootSeen,
@@ -290,12 +303,19 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         cortex_m::singleton!(: UsbBusAllocator<UsbBus<Otg2>> = bus).expect("USB bus taken once");
 
     let serial = SerialPort::new(bus);
+    // USB MIDI only if bank 2's door is open now: this boot's layout.
+    #[cfg(feature = "midi-usb")]
+    let mut midi = crate::usb_midi::MidiSlot::new();
+    #[cfg(feature = "midi-usb")]
+    crate::usb_midi::alloc(bus, &mut midi);
     // The chip's 96-bit UID: a stable /dev/serial/by-id name per unit.
     let uid = cortex_m::singleton!(: chimera_core::console::SerialNumber = serial_hex(Uid::read()))
         .expect("serial number taken once");
     Unconnected {
         bus,
         serial,
+        #[cfg(feature = "midi-usb")]
+        midi,
         uid: uid.as_str(),
         cpu_hz,
         boot,
@@ -313,19 +333,25 @@ impl Unconnected {
     pub fn connect(self) -> Usb {
         let strings = StringDescriptors::default()
             .manufacturer("Chimera")
-            .product("Chimera console")
+            .product("Chimera")
             .serial_number(self.uid);
         let dev = UsbDeviceBuilder::new(self.bus, UsbVidPid(VID_PID.0, VID_PID.1))
             .strings(&[strings])
             .expect("one language")
             .self_powered(true)
             .max_power(100)
-            .expect("100 mA is within 500")
-            .device_class(USB_CLASS_CDC)
-            .build();
+            .expect("100 mA is within 500");
+        // MIDI or not (the slot filled at `init`), fixed for the boot: a
+        // host never sees the layout change under it.
+        #[cfg(feature = "midi-usb")]
+        let dev = dev.composite_with_iads().device_release(MIDI_RELEASE);
+        #[cfg(not(feature = "midi-usb"))]
+        let dev = dev.device_class(USB_CLASS_CDC);
         let core = UsbCore {
-            dev,
+            dev: dev.build(),
             serial: self.serial,
+            #[cfg(feature = "midi-usb")]
+            midi: self.midi,
             #[cfg(feature = "midi-usb")]
             irq: IrqCounts {
                 window: StormWindow::new(),
@@ -334,6 +360,7 @@ impl Unconnected {
                 cycles: 0,
                 us_max: 0,
                 storms: 0,
+                midi_drops: 0,
             },
         };
         #[cfg(not(feature = "midi-usb"))]
@@ -771,18 +798,21 @@ impl Out for UsbOut<'_> {
 
 /// The device and its classes.
 pub(crate) struct UsbCore {
-    dev: Dev,
-    serial: Port,
+    pub(crate) dev: Dev,
+    pub(crate) serial: Port,
+    /// USB MIDI's class, if allocated at `init`.
+    #[cfg(feature = "midi-usb")]
+    pub(crate) midi: crate::usb_midi::MidiSlot,
     /// The handler's own counters, read by the UI under `with`.
     #[cfg(feature = "midi-usb")]
-    irq: IrqCounts,
+    pub(crate) irq: IrqCounts,
 }
 
 /// The handler's state and counters, kept in the cell beside the device:
 /// the handler writes them, the UI reads them under `with`.
 #[cfg(feature = "midi-usb")]
 #[derive(Clone, Copy)]
-struct IrqCounts {
+pub(crate) struct IrqCounts {
     /// Its entries and own cycles this millisecond: the storm guard's.
     window: StormWindow,
     cycles_per_us: u32,
@@ -795,13 +825,34 @@ struct IrqCounts {
     us_max: u32,
     /// The guard's trips.
     storms: u32,
+    /// USB MIDI event packets read and dropped.
+    pub(crate) midi_drops: u32,
 }
 
 impl UsbCore {
     /// The one poll: the console's.
+    #[cfg(not(feature = "midi-usb"))]
     #[inline(always)]
     fn poll_all(&mut self) {
         self.dev.poll(&mut [&mut self.serial]);
+    }
+
+    /// The one poll. MIDI up and the door open: bank 2 polls console and
+    /// MIDI. Else the console here, and MIDI OUT's packets read and
+    /// dropped, so none waits in the shared RX FIFO (spec § 13.1, 13.2).
+    #[cfg(feature = "midi-usb")]
+    #[inline(never)]
+    fn poll_all(&mut self) {
+        let out = self.midi.out();
+        if out.is_some() && crate::usb_midi::poll(self).is_some() {
+            return;
+        }
+        self.dev.poll(&mut [&mut self.serial]);
+        let Some(out) = out else { return };
+        let mut p = [0u8; 64];
+        while let Ok(n) = self.dev.bus().read(out, &mut p) {
+            self.irq.midi_drops = self.irq.midi_drops.wrapping_add((n / 4) as u32);
+        }
     }
 }
 
@@ -843,6 +894,7 @@ impl UsbIrq {
             irq_share: chimera_core::console::PerMille::of(own, wall),
             irq_us_max: chimera_hal::units::Micros::new(self.seen.us_max),
             storms: self.seen.storms,
+            midi_drops: self.seen.midi_drops,
         }
     }
 }

@@ -35,6 +35,8 @@ pub struct UsbTally {
     pub irq_us_max: Micros,
     /// The storm guard's trips.
     pub storms: u32,
+    /// USB MIDI event packets read and dropped.
+    pub midi_drops: u32,
 }
 
 /// The streams' and the card IRQ's counters (slice 1 § 8, § 9), since boot
@@ -405,7 +407,8 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
     s.usb.map_or(Ok(()), |u| {
         writeln!(t, "usb_irq_pct {}", u.irq_share)?;
         writeln!(t, "usb_irq_us_max {}", u.irq_us_max.get())?;
-        writeln!(t, "usb_storms {}", u.storms)
+        writeln!(t, "usb_storms {}", u.storms)?;
+        writeln!(t, "usb_midi_drops {}", u.midi_drops)
     })
 }
 

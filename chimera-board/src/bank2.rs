@@ -32,6 +32,9 @@ pub(crate) struct BoardDoor {
     /// The card interrupt's streaming work.
     #[cfg(not(feature = "sd-probe"))]
     pub(crate) card: crate::card_dma::CardDoor,
+    /// USB MIDI's class: its allocation and the device's poll.
+    #[cfg(feature = "midi-usb")]
+    pub(crate) usb: crate::usb_midi::UsbDoor,
 }
 
 /// `BoardDoor::magic`.
@@ -45,6 +48,8 @@ static BOARD_DOOR: BoardDoor = BoardDoor {
     magic: BOARD_MAGIC,
     #[cfg(not(feature = "sd-probe"))]
     card: crate::card_dma::CardDoor::DOOR,
+    #[cfg(feature = "midi-usb")]
+    usb: crate::usb_midi::UsbDoor::DOOR,
 };
 
 /// `BOARD_DOOR`'s slot.

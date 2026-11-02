@@ -405,11 +405,14 @@ fn stats_prints_the_usb_lines() {
             irq_share: PerMille::of(12, 1_000),
             irq_us_max: Micros::new(41),
             storms: 3,
+            midi_drops: 5,
         }),
     });
     let got = ask(&mut u, "stats\n");
     assert!(
-        got.ends_with("loop_peak_us 2\nusb_irq_pct 1.2\nusb_irq_us_max 41\nusb_storms 3\nOK\n"),
+        got.ends_with(
+            "loop_peak_us 2\nusb_irq_pct 1.2\nusb_irq_us_max 41\nusb_storms 3\nusb_midi_drops 5\nOK\n"
+        ),
         "{got}"
     );
 }

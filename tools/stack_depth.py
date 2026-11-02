@@ -60,12 +60,17 @@ POINTER_NEST = 3
 # function's. More pointer calls in such a root than named entries, or a
 # named entry missing while the root makes a pointer call, fail the check. The card interrupt's shim calls `IrqState::step` through the
 # board's slot; the DIN interrupt calls MIDI's `feed` and `idle` through
-# bank 2's door (ADR 0217).
+# bank 2's door (ADR 0217). USB's one poll calls bank 2's through the
+# board's slot, and USB MIDI's descriptor shim the writer its class holds.
 DOOR_CALLS = {
     "DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",),
     "USART1": (
         "<chimera_engine::midi_in::DinPipe>::door_feed",
         "<chimera_engine::midi_in::DinPipe>::door_idle",
+    ),
+    "<chimera_board::usb::UsbCore>::poll_all": ("chimera_board::usb_midi::door::poll",),
+    "<chimera_board::usb_midi::MidiClass as usb_device::class::UsbClass<synopsys_usb_otg::bus::UsbBus<chimera_board::usb::Otg2>>>::get_configuration_descriptors": (
+        "chimera_board::usb_midi::door::descriptors",
     ),
 }
 # The USB device's poll calls its classes through `dyn UsbClass`: each such
