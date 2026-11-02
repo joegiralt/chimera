@@ -1,0 +1,64 @@
+# 0222. Service the USB port from its interrupt; USB MIDI beside the console
+
+- **Status:** Proposed (supersedes in part 0068: "polled, never interrupt-driven")
+- **Deciders:** owner ("you're going to be able to drive this yourself", 2026-11-02: a class-compliant USB MIDI device beside the console, no USB host), firmware
+
+## Context
+ADR 0068 polls the CDC console from the UI loop. The unit reads `loop_avg_us 641` and `loop_peak_us 40019`, so a polled USB MIDI note could wait 40 ms. A DAW or a USB-only sequencer should play the unit as DIN does, so the port has to be serviced from the `OTG_FS` interrupt. The console carries `update`, the only way testers install firmware, so no interrupt fault may cost it (the USB-audio spike stranded a unit in DFU). Bank 1 is frozen (ADR 0198). The spec is `docs/superpowers/specs/2026-11-02-usb-midi-design.md`; its § 13 rulings override §§ 4–10.
+
+## Decision
+- **The device:** `composite_with_iads()` (EF/02/01): the CDC console as before, then a USB MIDI 1.0 function, one cable each way. An in-tree class (about 150 lines, no new crate; `usbd-midi` would bring its own message types and descriptors we don't control): AudioControl and MIDIStreaming interfaces under one IAD (01/00/00), one embedded and one external jack each way, all named "Chimera", two 64-byte bulk endpoints. VID:PID stays 0483:5740; `bcdDevice` 0x0010 → 0x0020; the product string "Chimera console" → "Chimera" (`chimera-usb.py` matches VID:PID and the device node, never the string).
+- **The control buffer is 256 B** (usb-device's `control-buffer-256`, enabled on `chimera-midi`'s dependency so every build that links the class, its host test included, gets it). The configuration descriptor is 175 B with MIDI (9 + CDC 66 + MIDI 100) and 75 B without; usb-device's default 128-B buffer drops a GET_DESCRIPTOR it can't fit without a stall, and the host times out. `chimera-midi/tests/usb_class_test.rs` enumerates both layouts through usb-device's own `poll` on a fake bus and checks every descriptor reaches the host. A descriptor change is never flashed without it.
+- **One cell, one poll.** `UsbDevice`, the `SerialPort`, the MIDI slot and the counters (`IrqCounts`) live in one static cell, written once by `install` at the end of `connect`, before `OTG_FS` is unmasked at `Priority::MIDI` (USART1's level; audio stays above). `poll_all` is the only poll; the handler and every UI pump (`service`, `UsbOut::pump`, `flush`, `put`, `recv`, the DFU drain) call it. The UI reaches the cell only through `Link::with`, which masks `OTG_FS` in the NVIC (then `dsb`/`isb`) for the closure. `Link` is a token only `install` makes, and `with` borrows it `&mut`, so nesting doesn't compile. Under the mask the UI polls the device itself, so a long answer still moves its bytes.
+- **The storm guard** (`chimera_core::console::shell::storm`, host-tested beside `LoopTimer`) runs on DWT cycles in 1 ms windows. It trips when a window holds more than `STORM_LIMIT` = 200 entries, or when the handler's own cycles in the window pass half of it. A trip masks `OTG_FS`, sets `held` and counts `usb_storms`; `with` leaves it masked while `held`, and `Usb::service`'s drop guard clears `held` and unmasks on every path out. A storm costs at most one window's entries per UI lap, and the console runs at the UI's pace, as in 0.2. The known storm is a full console buffer: a CDC packet left at the head of the shared RX FIFO keeps RXFLVL set. synopsys-usb-otg stays at 0.4.0, unvendored. There is no switch to turn the interrupt off; the guard is the fallback.
+- **`STORM_LIMIT` stays 200,** read on the unit at dc3a4b92 (the interrupt with the console alone): three `update`s (each pushes the 439 KB `.bk2` through the console) and `get`s under load tripped nothing; an 8 KB no-newline flood under an 8-note DIN chord (7 voices, load 67 %) tripped 128 times, the console answered `status` after, 0 overruns, `usb_irq_pct 1.2`, `usb_irq_us_max 7` (6 idle), `loop_peak` 23.8 ms. § 13.5's 4× rule waits on a dense MIDI stream on the unit, which re-reads `usb_storms` = 0.
+- **The handler's time is MIDI's.** `OTG_FS` stamps against `AUDIO_CYCLES` as USART1 does and adds its own cycles to `MIDI_CYCLES`; the two share a level and never nest, so the card interrupt's own-time stamp already takes USB's out unchanged (§ 13.9). `stats` gains `usb_irq_pct`, `usb_irq_us_max`, `usb_storms` and `usb_midi_drops`.
+- **Bank placement (0175's pattern).** Bank 1 keeps the `OTG_FS` shim, the cell, `with`, `lock`/`unlock`, the guard, the closed path and the MIDI class's `UsbClass` impl as shims. Bank 2 (`usb_midi::door`, in `BoardDoor` as `UsbDoor { alloc, poll }`) allocates the class, polls console and MIDI together, reads, feeds and packs. The board's door table grows from 12 to 20 B of its 128-B slot.
+  - **A `dyn` vtable's code must be bank 1's.** rustc emits the `dyn UsbClass` vtable as an anonymous constant (`.rodata..Lanon.<hash>.N`) that no `bank2.x` glob can name, so it lands in bank 1 wherever the coercion is. The impl's methods are therefore bank-1 shims (`get_configuration_descriptors` 12 B calling a fn pointer `door::alloc` stores in the class in RAM, `get_string` 24 B, `control_in`/`control_out` 6 B) plus the 60-B vtable. Only `door::poll` lists the class, so the shims run only with the door open. ADRs 0175, 0194 and 0208 kept vtables in bank 1 for the same reason.
+  - **New state goes in the cell, not in statics.** The USB counters, `held` and `configured` are `IrqCounts` fields. As separate atomics in `shared.rs`, LTO churn twice let the machine outliner place a bank-1 fragment tail-calling a bank-2 `Rings::wants` closure, and `door-check` failed `bench-orbit` and `bench-algo,master-tape`. In the cell they pass in every set.
+- **Open or closed is a boot snapshot.** MIDI is configured only if the door was open at `init`; closed, nothing is allocated and the host reads the console alone. `poll_all` takes the door only while the slot is filled and the door is open now. Otherwise bank 1 polls the console and drains MIDI's OUT endpoint by address, counting the packets in `usb_midi_drops`, so the shared RX FIFO never blocks. A gate build's `bank2 erase` leaves MIDI configured but deaf; a door opened later brings MIDI at the next boot.
+- **MIDI in** has its own pipe (`PipeSlot`), source (`USB`, note source 1; `MAX_NOTE_SOURCES` 2 → 3) and control ring (`CTRL_USB`), so running status, SysEx and NRPN state are USB's own. Cable 0 is fed one door call a packet; other cables, CIN 0 and 1, and events with no sinks are counted in `usb_midi_drops`. The UI drains DIN's and USB's control rings in one tagged pass with one budget.
+- **Detach lets go.** On a change away from Configured, a bus reset always calls `midi_in::lost` (NotesOff on all 16 channels, then `SensingLost`); a suspend calls it only if USB delivered a note-on since the last `lost` (amends § 13.8), so an idle host's autosuspend doesn't cut a note held from DIN. `lost` releases by channel, not by source.
+- **MIDI out.** One out pass writes each echo message to DIN's ring, then copies it to `OUT_USB`. DIN keeps its hold-back. USB's copy never holds DIN back: a copy that doesn't fit is lost and counted in `usb_midi_drops`, and so is the rest of that pass (its running status would read against the wrong status); while not Configured the copies are skipped, uncounted (amends § 13.4: otherwise every boot's first burst reads as drops). Identity is a flag per port; the Reply goes out the port that asked. The UI pends `OTG_FS` after its out pass; bank 2's poll packs the ring into up to 16 packets and writes them while the endpoint takes them. `WouldBlock` keeps them for the next poll, any other error drops and counts them; each completed IN packet re-enters the handler. No SOF interrupt.
+- **The stack check charges `OTG_FS`** (`tools/stack_depth.py`): `USART1` and `OTG_FS` share a level, so the level is charged the deeper of the two; `UsbDevice::poll`'s pointer calls are charged the deepest linked `UsbClass` method, and the door calls (`poll_all` → `door::poll`, the descriptors shim, `door_feed`, `door_lost`) their named targets.
+
+## Alternatives considered
+- **Poll MIDI from the UI loop beside the console.** No ADR, least code, and up to 40 ms of note jitter on the unit's own reading.
+- **embassy-usb from the interrupt.** A new stack under the console and `update` for nothing MIDI needs.
+- **The whole class in bank 2, the coercion inside bank 2's poll** (§ 13.7 as written). door-check failed: the anonymous vtable sits in bank 1's rodata pointing at bank-2 methods.
+- **A guard on entries alone** (§ 13.5 as written). A slow handler under a heavy patch could take the CPU in under 200 entries; the half-window time test closes that.
+- **Keep 0.2's CDC-only descriptor when the door is closed.** About 250 B of bank 1 for a second builder; with class EF either way Windows reads the interfaces fresh, so one `bcdDevice` covers both layouts.
+- **Count echo skipped before Configured.** Every boot with an echo binding would read drops, and a dense-stream test couldn't use the counter.
+
+## Consequences
+- **Bank 1** (the .bin without `.bank2`, clean builds of origin/main 6808f323 against this branch; lines raised by the growth):
+
+| set | 6808f323 | this branch | growth |
+|---|---|---|---|
+| default | 806,808 | 808,640 | +1,832 |
+| orbit | 823,452 | 825,180 | +1,728 |
+| bank2-gate | 808,636 | 810,572 | +1,936 |
+| fault-inject | 782,348 | 784,156 | +1,808 |
+| bench-algo | 824,052 | 826,012 | +1,960 |
+| bench-algo,master-tape | 801,524 | 803,620 | +2,096 |
+| bench-routing | 823,132 | 825,092 | +1,960 |
+| bench-memory | 825,632 | 827,608 | +1,976 |
+| bench-stress | 827,644 | 829,612 | +1,968 |
+| bench-orbit | 801,664 | 803,304 | +1,640 |
+| bench-tape | 790,164 | 790,708 | +544 |
+| filter-probes | 783,460 | 785,332 | +1,872 |
+
+  bench-tape has no `midi-usb`: its +544 is the console's ungated `Stats.usb` printing, `MAX_NOTE_SOURCES` 3 and churn. By symbol (bench-algo,master-tape): `tend_usb` +248, `OTG_FS` +236, `Usb::service` +208, `synth` +192, `poll_all` +164, outliner churn +162, `PerMille::of` outlined +152, `with`/`lock`/`unlock` +84, the class shims +42 and the vtable 60; the rest is the stats strings and churn. By step: the interrupt, cell and guard about +1.0 KB; the class, door and shims about +0.45 KB; USB's pipe and third note source about +0.45 KB (most of it `drain` unrolling one more queue in the block, and `synth`); the tagged drain and out pass about +0.12 KB. The spec's guide is 2 KB a set: bench-algo,master-tape passes it by 48 B. It is a bench set that never ships, the shipped ORBIT build grew 1,728 B, and the owner's rule is no byte-shaving rounds, so it is accepted and every line rose by its measured growth.
+
+- **RAM:** the cell `usb::CORE` is 1,212 B (the 256-B control buffer among it); `OUT_USB` and `CTRL_USB` sit in `.bss` beside DIN's.
+- **Stack:** `OTG_FS` 704 B (696 in the bench sets) against USART1's 312 B; nested totals stay under 63,232 B (default 61,132, orbit 61,644).
+- **Latency:** a USB note waits for the frame and the handler, not the UI lap. While the console is mid-transfer under the lock, MIDI waits up to one UI lap.
+- **Untested on the unit at this writing:** IN packets under `amidi -d`, Linux reading a 64-byte bulk IN with no ZLP, latency and jitter, unplug mid-chord, and the closed-door layout. The unit's verification run (spec § 10) is their check. macOS and Windows are left to testers.
+- **The outliner hazard stays.** Any later bank-1 change can bring back a bank-1 fragment calling bank 2; `door-check` catches it.
+- **Follow-ups:** cables per Part; macOS and Windows enumeration; USB audio on top of this interrupt; stale echo when a host enumerates but doesn't read.
+
+## Sources
+- `docs/superpowers/specs/2026-11-02-usb-midi-design.md`, the plan `docs/superpowers/plans/2026-11-02-usb-midi.md`, and the ledger `.superpowers/sdd/2026-11-02-usb-midi/` (rulings, task reports, the unit's readings and the 2026-11-02 enumeration incident).
+- ADR 0068, 0092, 0175, 0194, 0198, 0208, 0217; (private notes).
+- `chimera-board/src/usb.rs`, `chimera-board/src/usb_midi.rs`, `chimera-midi/src/usb.rs`, `chimera-midi/src/usb_class.rs`, `chimera-midi/tests/usb_class_test.rs`, `chimera-core/src/console/shell.rs`, `tools/stack_depth.py`.
+- USB Device Class Definition for MIDI Devices 1.0; usb-device 0.3.2 (MIT/Apache-2.0), synopsys-usb-otg 0.4.0, usbd-serial 0.2.
