@@ -101,3 +101,18 @@ A DAW or a USB-only sequencer plugged into the unit's one USB port should play i
 - Cables per Part (cable 0–5 → Parts 1–6, cable 6 global), the report's layout.
 - macOS and Windows enumeration, by a tester.
 - USB audio (Phase 5): the spike's walls, on top of this interrupt.
+
+## 13. Rulings from the builder check (override §§ 4–10 where they differ)
+
+Full questions: (private notes). All Claude's calls.
+
+1. **MIDI OUT is always emptied.** Under `with`, the UI's pumps call the same `poll_all` plus the handler's after-poll work (read, feed, pack), so MIDI is fed at the pump's pace during an answer and never blocks the shared RX FIFO. With the door closed and MIDI configured, bank 1 drains MIDI's OUT endpoint by its address (`UsbBus::read`) and drops the packets, counted in `usb_midi_drops`. A few dozen bytes of bank 1.
+2. **Open or closed:** MIDI is configured only if the door was open at `connect` (a boot snapshot). `poll_all` uses the door only while that snapshot is set **and** the door is open now. Otherwise it takes the bank-1 path: console poll, plus the drain from 1. A door that opens later (`bank2 install`) brings MIDI at the next boot; a gate build's `bank2 erase` leaves MIDI configured but deaf, never calling unmapped code. §10 gains: `bank2 erase` on a gate build while `amidi` streams, and the console still answers.
+3. **IN starts from the UI:** after its out pass the UI pends `OTG_FS`, as `din_out` pends USART1. No SOF interrupt.
+4. **Echo per port:** one out pass writes each message to both rings. DIN's ring keeps today's hold-back. USB's copy is dropped when its ring is full, or skipped when the device isn't Configured, counted in `usb_midi_drops`; it never holds DIN back. `hear_ccs` drains both control rings in one pass with one budget, tagging each event with its port. Identity is a flag per port, and the Reply goes out the port that asked.
+5. **Storm guard on DWT:** entries are counted per 1 ms of DWT cycles, not `now_ms` (2 ms steps, and stalled during a storm). `STORM_LIMIT` is measured, not guessed. Provisionally 200, then set to 4× the worst entries per millisecond read on the unit during test 5 plus a console `get` of 1 MB. **The plan's first hardware task is the interrupt with the console alone:** `update` twice, `put` and `get` 1 MB, and the stimulus from 6, before any MIDI code. If that fails, the RXFLVL-mask fix from the spike's vendored synopsys-usb-otg comes in, as its own task.
+6. **Test 7's storm stimulus:** 8 KB written to the console's tty with no newline, so the UI can't drain it in one lap. Pass: `usb_storms` > 0, then the console answers `status`, and MIDI resumes. A `put` under a note stream separately must finish (storms may stay 0).
+7. **The device poll runs in bank 2 while open:** one door entry polls console and MIDI, monomorphised in bank 2, so no bank-2 vtable sits in bank 1. A sealed bank 2 is trusted, and the closed path is bank 1's own. The MIDI class's endpoints are allocated at `init` through a door entry into a bank-1 `MaybeUninit` slot (`PipeSlot`'s pattern). Closed at boot, nothing is allocated.
+8. **Suspend releases notes**, as a bus reset does: a sleeping host leaves nothing stuck. `SensingLost` stays shared; no new UI.
+9. **The card interrupt's own-time stamp subtracts `USB_CYCLES`** too, as it does MIDI's. In scope.
+10. **`MAX_NOTE_SOURCES` goes to 3**, with `midi-usb` on in the bench sets that have `midi-din`. Measured into ADR 0222 with the rest.
