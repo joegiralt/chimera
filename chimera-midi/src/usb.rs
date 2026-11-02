@@ -51,8 +51,13 @@ fn size(status: u8) -> u8 {
 }
 
 impl Packer {
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            b: [0; 3],
+            n: 0,
+            status: 0,
+            sysex: false,
+        }
     }
 
     pub fn push(&mut self, b: u8) -> Option<[u8; 4]> {

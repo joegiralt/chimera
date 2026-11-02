@@ -1,7 +1,8 @@
-//! Bytes the UI queues for DIN OUT (MIDI phase 1 spec § 4.2, § 9): a
-//! 256-byte single-producer single-consumer ring. The UI pushes whole
-//! messages or nothing; the TX interrupt (or the desktop's out thread)
-//! pops bytes. Bank 1's type: the ISR stub and the UI share it.
+//! Bytes the UI queues for DIN OUT or USB's IN (MIDI phase 1 spec § 4.2,
+//! § 9): a 256-byte single-producer single-consumer ring. The UI pushes
+//! whole messages or nothing; the TX interrupt, USB's poll (or the
+//! desktop's out thread) pops bytes. Bank 1's type: the ISR stub and the
+//! UI share it.
 //!
 //! Ordering as `note_queue`'s: the producer's `Relaxed` byte stores are
 //! published by its `Release` on `tail`, which the consumer's `Acquire`
@@ -22,6 +23,8 @@ pub struct OutRing {
     head: AtomicU32,
     /// Next byte to push (the producer's only), free-running.
     tail: AtomicU32,
+    /// Messages the producer dropped, till the consumer takes the count.
+    dropped: AtomicU32,
 }
 
 impl Default for OutRing {
@@ -36,6 +39,7 @@ impl OutRing {
             buf: [const { AtomicU8::new(0) }; OUT_RING_LEN],
             head: AtomicU32::new(0),
             tail: AtomicU32::new(0),
+            dropped: AtomicU32::new(0),
         }
     }
 
@@ -70,6 +74,31 @@ impl OutRing {
         self.head
             .store(head.wrapping_add(n as u32), Ordering::Release);
         n
+    }
+
+    /// Consumer side only: the oldest waiting byte. Inlined into its
+    /// caller, bank 2's USB poll, so `pop_into` stays the ISR's alone.
+    #[inline(always)]
+    pub fn pop(&self) -> Option<u8> {
+        let head = self.head.load(Ordering::Relaxed);
+        if self.tail.load(Ordering::Acquire) == head {
+            return None;
+        }
+        let b = self.buf[head as usize % OUT_RING_LEN].load(Ordering::Relaxed);
+        self.head.store(head.wrapping_add(1), Ordering::Release);
+        Some(b)
+    }
+
+    /// Producer side: `n` messages dropped.
+    #[inline(always)]
+    pub fn lose(&self, n: u32) {
+        self.dropped.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Consumer side: the messages dropped since it last asked.
+    #[inline(always)]
+    pub fn take_dropped(&self) -> u32 {
+        self.dropped.swap(0, Ordering::Relaxed)
     }
 
     /// Nothing waits. Either side; a moment's answer.

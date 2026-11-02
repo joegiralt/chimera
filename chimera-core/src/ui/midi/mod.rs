@@ -310,8 +310,8 @@ fn control(ui: &mut UiState, e: HeardEv) -> Option<(crate::MidiChannel, Ctl)> {
             let value = U7::new(cc.value)?;
             (cc.channel, Ctl::Cc { cc: free, value })
         }
-        HeardEv::Ctrl(CtrlEvent::Ctl(ch, c)) => (ch, c),
-        HeardEv::Ctrl(_) => return None,
+        HeardEv::Ctrl(_, CtrlEvent::Ctl(ch, c)) => (ch, c),
+        HeardEv::Ctrl(..) => return None,
     };
     if ui.learn_in(ch, &c) {
         return None;
@@ -360,9 +360,10 @@ impl UiState {
         }
         for e in ev {
             // A Device Inquiry asks nothing of the Sound: answered busy or
-            // not, two in a pass with one reply (`out`).
-            if let HeardEv::Ctrl(CtrlEvent::Identity { .. }) = e {
-                self.cc.ui().echo.ask();
+            // not, two in a pass with one reply (`out`), out of the port
+            // that asked.
+            if let HeardEv::Ctrl(port, CtrlEvent::Identity { .. }) = e {
+                self.cc.ui().echo.ask(port);
                 continue;
             }
             if busy {

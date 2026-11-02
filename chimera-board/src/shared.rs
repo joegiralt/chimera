@@ -16,7 +16,7 @@ use chimera_core::note_queue::NoteSources;
 use chimera_core::note_queue::SourceId;
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitView;
-#[cfg(all(feature = "midi-din", feature = "midi-map"))]
+#[cfg(all(any(feature = "midi-din", feature = "midi-usb"), feature = "midi-map"))]
 use chimera_core::out_ring::OutRing;
 use chimera_core::preset::Performance;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
@@ -305,6 +305,19 @@ static OUT_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
 pub fn take_out_din() -> Option<&'static OutRing> {
     (!OUT_DIN_TAKEN.swap(true, Ordering::AcqRel)).then_some(&OUT_DIN)
+}
+
+// USB MIDI's out ring, the UI's to push and the USB poll's to pack into IN
+// packets: all zero, so `.bss` with no code to build it, as `OUT_DIN`.
+#[cfg(all(feature = "midi-usb", feature = "midi-map"))]
+static OUT_USB: OutRing = OutRing::new();
+#[cfg(all(feature = "midi-usb", feature = "midi-map"))]
+static OUT_USB_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// USB's out ring, empty; once. Both ends share the reference.
+#[cfg(all(feature = "midi-usb", feature = "midi-map"))]
+pub fn take_out_usb() -> Option<&'static OutRing> {
+    (!OUT_USB_TAKEN.swap(true, Ordering::AcqRel)).then_some(&OUT_USB)
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:

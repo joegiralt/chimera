@@ -74,10 +74,18 @@ pub trait HeardCc: Copy {
     fn heard(self) -> HeardEv;
 }
 
+/// The port a control message came in on, and an identity reply goes
+/// out of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Port {
+    Din,
+    Usb,
+}
+
 /// One message for the UI, either way it came.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeardEv {
-    Ctrl(CtrlEvent),
+    Ctrl(Port, CtrlEvent),
     Cc(CcEvent),
 }
 
@@ -87,9 +95,16 @@ impl HeardCc for CcEvent {
     }
 }
 
+/// DIN's, untagged.
 impl HeardCc for CtrlEvent {
     fn heard(self) -> HeardEv {
-        HeardEv::Ctrl(self)
+        HeardEv::Ctrl(Port::Din, self)
+    }
+}
+
+impl HeardCc for (Port, CtrlEvent) {
+    fn heard(self) -> HeardEv {
+        HeardEv::Ctrl(self.0, self.1)
     }
 }
 

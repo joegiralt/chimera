@@ -13,12 +13,18 @@
 //! its note source and control ring, as DIN's (spec §§ 7, 8). Leaving
 //! Configured lets every Part go on a bus reset, and on a suspend only if
 //! USB played a note-on since (`midi_in::lets_go`).
+//!
+//! MIDI out: the UI's echo in USB's out ring, packed into IN packets while
+//! the endpoint takes them; the UI pends `OTG_FS` to start, each IN
+//! packet's completion carries on. Not Configured, what waits is dropped.
 
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use chimera_core::midi_in::{CtrlRing, PipeSlot};
 use chimera_core::note_queue::NoteProducer;
+use chimera_core::out_ring::OutRing;
+use chimera_midi::usb::Packer;
 
 use usb_device::class_prelude::{
     DescriptorWriter, EndpointAddress, EndpointIn, EndpointOut, InterfaceNumber, LangID,
@@ -38,7 +44,6 @@ pub(crate) struct MidiClass {
     ms: InterfaceNumber,
     name: StringIndex,
     out: EndpointOut<'static, Bus>,
-    #[allow(dead_code)] // USB MIDI out writes it.
     inp: EndpointIn<'static, Bus>,
     /// Bank 2's descriptor writer, stored by `door::alloc`.
     descriptors: Descriptors,
@@ -74,28 +79,42 @@ impl MidiSlot {
     }
 }
 
-/// USB MIDI in's pipe and sinks. The sinks are set before `connect`; from
+/// USB MIDI in's pipe and sinks, and out's ring, packer and the packets
+/// the endpoint hasn't taken yet. The rings are set before `connect`; from
 /// then on only the poll touches it, under the cell's exclusion.
 struct MidiIn {
     pipe: PipeSlot,
     notes: Option<NoteProducer<'static>>,
     ctrl: Option<&'static CtrlRing>,
+    out: Option<&'static OutRing>,
+    packer: Packer,
+    held: [[u8; 4]; 16],
+    n: usize,
 }
 
 static mut IN: MidiIn = MidiIn {
     pipe: PipeSlot::new(),
     notes: None,
     ctrl: None,
+    out: None,
+    packer: Packer::new(),
+    held: [[0; 4]; 16],
+    n: 0,
 };
 
-/// USB's note producer and control ring, before `connect` installs the
-/// device: bank 2's poll feeds them.
-pub(crate) fn set_in(notes: Option<NoteProducer<'static>>, ctrl: &'static CtrlRing) {
+/// USB's note producer, control ring and out ring, before `connect`
+/// installs the device: bank 2's poll feeds and empties them.
+pub(crate) fn set_in(
+    notes: Option<NoteProducer<'static>>,
+    ctrl: &'static CtrlRing,
+    out: Option<&'static OutRing>,
+) {
     // SAFETY: before `connect` unmasks `OTG_FS` or makes the `Link` that
     // `with` needs, so no poll reads `IN` yet.
     let i = unsafe { &mut *addr_of_mut!(IN) };
     i.notes = notes;
     i.ctrl = Some(ctrl);
+    i.out = out;
 }
 
 /// The board door's USB entries.
@@ -141,13 +160,14 @@ mod door {
     use core::ptr::addr_of_mut;
 
     use chimera_core::midi_in::{self, DinSinks, Left};
-    use chimera_midi::usb::unpack;
+    use chimera_core::out_ring::OutRing;
+    use chimera_midi::usb::{Packer, unpack};
     use chimera_midi::usb_class::{Ids, descriptors as write};
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
     use usb_device::device::UsbDeviceState;
 
     use super::{IN, MidiClass, MidiIn, MidiSlot};
-    use crate::usb::{Bus, UsbCore};
+    use crate::usb::{Bus, IrqCounts, UsbCore};
 
     /// Bulk packets at full speed.
     const PACKET: u16 = 64;
@@ -168,7 +188,8 @@ mod door {
 
     /// The device polled with both classes; leaving Configured, every
     /// Part let go as `lets_go` rules; then every OUT packet read, cable 0's bytes fed to
-    /// USB's pipe one door call each, the rest dropped and counted.
+    /// USB's pipe one door call each, the rest dropped and counted; then
+    /// the out ring sent (`send`).
     pub(super) fn poll(core: &mut UsbCore) {
         let UsbCore {
             dev,
@@ -183,7 +204,10 @@ mod door {
         dev.poll(&mut [serial, m]);
         // SAFETY: only the poll touches `IN` once `connect` has run, and
         // the poll runs in the handler or under `with`, which masks it.
-        let MidiIn { pipe, notes, ctrl } = unsafe { &mut *addr_of_mut!(IN) };
+        let i = unsafe { &mut *addr_of_mut!(IN) };
+        let MidiIn {
+            pipe, notes, ctrl, ..
+        } = &mut *i;
         let mut sinks = notes
             .as_mut()
             .zip(*ctrl)
@@ -209,6 +233,37 @@ mod door {
                     _ => irq.midi_drops = irq.midi_drops.wrapping_add(1),
                 }
             }
+        }
+        if let Some(ring) = i.out {
+            send(m, ring, i, irq, up);
+        }
+    }
+
+    /// The UI's lost echo counted; then, Configured, `ring`'s bytes packed
+    /// into IN packets while the endpoint takes them, what it doesn't held
+    /// for the next poll. Not Configured, all dropped: a host that comes
+    /// back hears nothing stale.
+    fn send(m: &mut MidiClass, ring: &OutRing, i: &mut MidiIn, irq: &mut IrqCounts, up: bool) {
+        irq.midi_drops = irq.midi_drops.wrapping_add(ring.take_dropped());
+        if !up {
+            while ring.pop().is_some() {}
+            (i.packer, i.n) = (Packer::new(), 0);
+            return;
+        }
+        loop {
+            while i.n < i.held.len()
+                && let Some(x) = ring.pop()
+            {
+                if let Some(p) = i.packer.push(x) {
+                    i.held[i.n] = p;
+                    i.n += 1;
+                }
+            }
+            let (held, _) = i.held.as_flattened().split_at(i.n * 4);
+            if held.is_empty() || m.inp.write(held).is_err() {
+                return;
+            }
+            i.n = 0;
         }
     }
 

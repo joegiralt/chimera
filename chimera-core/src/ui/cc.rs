@@ -118,9 +118,9 @@ type MapTextFn = fn(&Binding, FxType, bool, &mut MapText);
 #[cfg(feature = "midi-map")]
 type FocusNote = fn(&UiState) -> Option<Dir>;
 
-/// The door's `out`: `UiState::out_in`, DIN OUT's pass.
+/// The door's `out`: `UiState::out_in`, MIDI out's pass.
 #[cfg(feature = "midi-map")]
-type Out = fn(&mut UiState, &OutRing);
+type Out = fn(&mut UiState, &OutRing, Option<&OutRing>, bool);
 
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
@@ -222,7 +222,8 @@ fn through<R>(f: impl FnOnce(&MidiUiDoor) -> R) -> Option<R> {
 
 impl UiState {
     /// This pass's control messages (spec §§ 5-7), through the door: the
-    /// control ring's `CtrlEvent`s, or a test's plain `CcEvent`s. After
+    /// control rings' `CtrlEvent`s (DIN's), tagged with their `Port`, all
+    /// in one pass and one budget, or a test's plain `CcEvent`s. After
     /// `handle_input`, before the publish. `taken`: the audio has taken
     /// the last publish (`Writer::taken`). Closed, drained and dropped.
     pub fn hear_ccs(&mut self, ev: impl Iterator<Item = impl HeardCc>, now: Ms, taken: bool) {
@@ -260,7 +261,13 @@ impl UiState {
     /// identity reply) into `ring`, each message whole (`out_in`).
     /// Closed, nothing is sent (spec § 7.3).
     pub fn send_out(&mut self, ring: &OutRing) {
-        through(|d| (d.out)(self, ring));
+        through(|d| (d.out)(self, ring, None, false));
+    }
+
+    /// `send_out` to DIN's ring and USB's, Configured if `up`: USB's copy
+    /// never holds DIN back; one lost is counted on `usb`.
+    pub fn send_ports(&mut self, din: &OutRing, usb: &OutRing, up: bool) {
+        through(|d| (d.out)(self, din, Some(usb), up));
     }
 }
 

@@ -377,12 +377,26 @@ pub struct AudioStart<'a> {
     pub din_out: &'static chimera_core::out_ring::OutRing,
 }
 
-/// DIN OUT's pass: what the UI queued, then the USART1 handler pended to
-/// send it (it disarms itself once the ring is empty). Out of line, so
-/// the loop around it keeps its shape.
+/// MIDI out's pass: what the UI queued for DIN, then the USART1 handler
+/// pended to send it (it disarms itself once the ring is empty); and with
+/// USB, its copy, then `OTG_FS` pended to start its IN packets (`up`:
+/// Configured). Out of line, so the loop around it keeps its shape.
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
 #[inline(never)]
-fn din_out(ui: &mut chimera_core::ui::UiState, out: &chimera_core::out_ring::OutRing) {
+fn din_out(
+    ui: &mut chimera_core::ui::UiState,
+    out: &chimera_core::out_ring::OutRing,
+    #[cfg(feature = "midi-usb")] usb: &chimera_core::out_ring::OutRing,
+    #[cfg(feature = "midi-usb")] up: bool,
+) {
+    #[cfg(feature = "midi-usb")]
+    {
+        ui.send_ports(out, usb, up);
+        if !usb.is_empty() {
+            cortex_m::peripheral::NVIC::pend(pac::Interrupt::OTG_FS);
+        }
+    }
+    #[cfg(not(feature = "midi-usb"))]
     ui.send_out(out);
     if !out.is_empty() {
         cortex_m::peripheral::NVIC::pend(pac::Interrupt::USART1);
@@ -630,8 +644,17 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     // USB MIDI in's, for the port's poll once it connects (step 4).
     #[cfg(feature = "midi-usb")]
     let ctrl_usb = shared::take_ctrl_usb().expect("USB control ring taken once");
+    #[cfg(all(feature = "midi-usb", feature = "midi-map"))]
+    let out_usb = shared::take_out_usb().expect("USB out ring taken once");
     #[cfg(feature = "midi-usb")]
-    usb_midi::set_in(producers.take(shared::USB), ctrl_usb);
+    usb_midi::set_in(
+        producers.take(shared::USB),
+        ctrl_usb,
+        #[cfg(feature = "midi-map")]
+        Some(out_usb),
+        #[cfg(not(feature = "midi-map"))]
+        None,
+    );
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -783,20 +806,44 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ui.set_formant_views(formant_r.read());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
-        // Mapped CCs, in the room the hand's moves left. No bench run plays
-        // a controller: bench firmware leaves the MIDI map out (FLASH, #507)
-        // and drops the ring unread, so it never fills.
-        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+        // Mapped CCs, in the room the hand's moves left: DIN's then USB's,
+        // one pass, one budget. No bench run plays a controller: bench
+        // firmware leaves the MIDI map out (FLASH, #507) and drops the rings
+        // unread, so they never fill.
+        #[cfg(all(feature = "midi-din", feature = "midi-map", not(feature = "midi-usb")))]
         ui.hear_ccs(ctrl_din.drain(), controls::now_ms(), shared_w.taken());
-        // Then USB's.
-        #[cfg(all(feature = "midi-usb", feature = "midi-map"))]
-        ui.hear_ccs(ctrl_usb.drain(), controls::now_ms(), shared_w.taken());
+        #[cfg(all(feature = "midi-din", feature = "midi-map", feature = "midi-usb"))]
+        {
+            use chimera_core::midi_in::Port;
+            // One pop site for both rings: DIN's, then USB's.
+            let mut at = Some((Port::Din, ctrl_din));
+            let ev = core::iter::from_fn(|| {
+                loop {
+                    let (p, ring) = at?;
+                    if let Some(e) = ring.pop() {
+                        return Some((p, e));
+                    }
+                    at = (p == Port::Din).then_some((Port::Usb, ctrl_usb));
+                }
+            });
+            ui.hear_ccs(ev, controls::now_ms(), shared_w.taken());
+        }
         #[cfg(all(feature = "midi-din", not(feature = "midi-map")))]
         ctrl_din.clear();
-        #[cfg(all(feature = "midi-usb", not(feature = "midi-map")))]
+        #[cfg(all(
+            feature = "midi-usb",
+            not(all(feature = "midi-din", feature = "midi-map"))
+        ))]
         ctrl_usb.clear();
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        din_out(ui, out_din);
+        din_out(
+            ui,
+            out_din,
+            #[cfg(feature = "midi-usb")]
+            out_usb,
+            #[cfg(feature = "midi-usb")]
+            usb.up().is_some_and(|u| u.midi_up()),
+        );
         // SYSTEM synced first: a THEME change made in this visit is kept.
         if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
             dfu::enter(&marker, dfu::DfuFrom::Menu(yes));

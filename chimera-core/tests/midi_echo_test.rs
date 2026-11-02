@@ -11,7 +11,7 @@ use chimera_core::MidiChannel;
 use chimera_core::addr::Blocks;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::Block;
-use chimera_core::midi_in::CtrlEvent;
+use chimera_core::midi_in::{CtrlEvent, Port};
 use chimera_core::midi_map::{
     Binding, CcKind, Feedback, Input, LearnCc, Mappable, MidiMap, NrpnKind, Span,
 };
@@ -565,4 +565,104 @@ fn echo_row_switches_din_out() {
     feed(&mut r.ui, Key::turn(EncoderId::A, 1));
     assert!(r.ui.midi().echo());
     assert_eq!(values(&r.settle(), r.ch(P1), 20), [r.want(P1, CUTOFF)]);
+}
+
+/// Everything waiting in `ring`.
+fn pop(ring: &OutRing) -> Vec<u8> {
+    let mut b = [0u8; OUT_RING_LEN];
+    let n = ring.pop_into(&mut b);
+    b[..n].to_vec()
+}
+
+impl Rig {
+    /// A pass with `ev` heard on their ports, then the out pass to both
+    /// rings, USB's `usb`, Configured if `up`.
+    fn pass_ports(&mut self, ev: &[(Port, CtrlEvent)], usb: &OutRing, up: bool) {
+        self.now += PASS_MS;
+        self.ui.hear_ccs(ev.iter().copied(), Ms(self.now), true);
+        self.ui.send_ports(&self.ring, usb, up);
+    }
+
+    /// Passes enough to settle, both rings emptied each: what each sent.
+    fn settle_ports(&mut self, usb: &OutRing, up: bool) -> (Vec<u8>, Vec<u8>) {
+        let (mut din, mut u) = (Vec::new(), Vec::new());
+        for _ in 0..100 {
+            self.pass_ports(&[], usb, up);
+            din.extend(self.drain());
+            u.extend(pop(usb));
+        }
+        (din, u)
+    }
+
+    /// Both Parts' 16 NRPN targets echoing: a burst of 32 messages.
+    fn bind_nrpns(&mut self) {
+        for p in [P1, P2] {
+            for &(n, a) in &nrpn_targets() {
+                let input = Input::Nrpn(n, NrpnKind::Absolute(Takeover::Jump));
+                self.bind(p, input, a, Feedback::Value);
+            }
+        }
+    }
+}
+
+#[test]
+fn identity_replies_on_asking_port_only() {
+    let mut r = Rig::new();
+    let usb = OutRing::new();
+    let ask = CtrlEvent::Identity {
+        dev: U7::new(0x7F).unwrap(),
+    };
+    let reply = |b: &[u8]| b.len() == 15 && b[0] == 0xF0 && b[14] == 0xF7;
+    r.pass_ports(&[(Port::Usb, ask)], &usb, true);
+    assert!(reply(&pop(&usb)), "USB asked, USB answered");
+    assert!(r.drain().is_empty(), "DIN didn't ask");
+    r.pass_ports(&[(Port::Din, ask)], &usb, true);
+    assert!(reply(&r.drain()), "DIN asked, DIN answered");
+    assert!(pop(&usb).is_empty(), "USB didn't ask");
+    r.pass_ports(
+        &[(Port::Din, ask), (Port::Usb, ask), (Port::Usb, ask)],
+        &usb,
+        true,
+    );
+    assert!(reply(&r.drain()) && reply(&pop(&usb)), "one each");
+}
+
+#[test]
+fn full_usb_ring_never_holds_din() {
+    let (mut a, mut b) = (Rig::new(), Rig::new());
+    a.bind_nrpns();
+    b.bind_nrpns();
+    // Room for two messages: the first with its status, one running.
+    let usb = OutRing::new();
+    assert!(usb.push_msg(&[0; OUT_RING_LEN - 17]));
+    let want = a.settle();
+    // USB's ring never read: full all along.
+    let mut din = Vec::new();
+    for _ in 0..100 {
+        b.pass_ports(&[], &usb, true);
+        din.extend(b.drain());
+    }
+    let u = pop(&usb);
+    assert_eq!(din, want, "DIN as with no USB at all");
+    // 32 NRPNs, Part 2's split over two passes: its status twice.
+    assert_eq!(want.len(), 2 * (1 + 16 * 8) + 1, "the burst");
+    assert_eq!(&u[OUT_RING_LEN - 17..], &want[..17], "USB's copy, whole");
+    assert_eq!(usb.take_dropped(), 30, "the rest dropped, counted");
+    assert_eq!(usb.take_dropped(), 0);
+}
+
+#[test]
+fn unconfigured_usb_skipped() {
+    let (mut a, mut b) = (Rig::new(), Rig::new());
+    for r in [&mut a, &mut b] {
+        r.bind(P1, cc_in(20, JUMP), CUTOFF, Feedback::Value);
+        r.set(P1, CUTOFF, 0.5);
+    }
+    let usb = OutRing::new();
+    let want = a.settle();
+    let (din, u) = b.settle_ports(&usb, false);
+    assert_eq!(din, want, "DIN as today");
+    assert_eq!(values(&din, a.ch(P1), 20).len(), 1);
+    assert!(u.is_empty(), "nothing into USB's ring");
+    assert_eq!(usb.take_dropped(), 1, "the echo skipped, counted");
 }

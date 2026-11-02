@@ -549,6 +549,13 @@ impl Usb {
     pub fn take_redraw(&mut self) -> bool {
         core::mem::take(&mut self.redraw)
     }
+
+    /// USB MIDI Configured, as `service` last read the handler's poll.
+    #[cfg(feature = "midi-usb")]
+    #[inline(always)]
+    pub fn midi_up(&self) -> bool {
+        self.usb_irq.seen.configured
+    }
 }
 
 /// What the console reads, borrowed for one answer.
