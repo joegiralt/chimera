@@ -635,7 +635,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     // USB MIDI in's, for the port's poll once it connects (step 4).
     #[cfg(feature = "midi-usb")]
     usb_midi::set_in(
-        producers.take(shared::source(shared::Port::Usb)),
+        producers.take(const { shared::source(shared::Port::Usb) }),
         &ctrl.usb,
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         out.usb,
@@ -656,7 +656,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         streams,
         #[cfg(feature = "midi-din")]
         din: producers
-            .take(shared::source(shared::Port::Din))
+            .take(const { shared::source(shared::Port::Din) })
             .expect("DIN producer taken once"),
         #[cfg(feature = "midi-din")]
         din_ctrl: &ctrl.din,

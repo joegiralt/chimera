@@ -314,9 +314,15 @@ pub fn take_out() -> Option<OutPorts<'static>> {
 pub const NOTE_SOURCES: usize =
     1 + cfg!(feature = "midi-usb") as usize + cfg!(feature = "bench") as usize;
 
-/// Port `p`'s note source: its index. USB's exists only with `midi-usb`.
+/// Port `p`'s note source: its index. Call it in a `const` block: USB's
+/// where USB MIDI isn't built is then a build error, not another
+/// source's id.
 #[cfg(any(feature = "midi-din", feature = "midi-usb"))]
 pub const fn source(p: Port) -> SourceId<NOTE_SOURCES> {
+    assert!(
+        cfg!(feature = "midi-usb") || matches!(p, Port::Din),
+        "no USB MIDI in this build"
+    );
     SourceId::new(p as usize)
 }
 #[cfg(feature = "bench")]
