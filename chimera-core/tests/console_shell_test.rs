@@ -161,12 +161,20 @@ fn a_window_opens_on_its_first_cycle() {
     assert!(!storm(&mut w, MS, MS), "cycle MS opens a fresh window");
 }
 
+/// Entry `k` of a run that starts one every `every` cycles, each `wall`
+/// cycles from enter to leave (audio's preemption inside them included).
+fn run(w: &mut StormWindow, start: u32, every: u32, wall: u32, k: u32) -> bool {
+    let enter = start + k * every;
+    let tripped = storm(w, enter, MS);
+    w.charge(enter, enter + wall);
+    tripped
+}
+
 #[test]
 fn slow_entries_over_half_a_window_trip() {
     let mut w = StormWindow::new();
     for k in 0..3 {
-        assert!(!storm(&mut w, 1_000 + k * 10_000, MS));
-        w.charge(MS / 5);
+        assert!(!run(&mut w, 1_000, 10_000, MS / 5, k));
     }
     // 60 % of the millisecond in three entries.
     assert!(storm(&mut w, 40_000, MS));
@@ -176,11 +184,33 @@ fn slow_entries_over_half_a_window_trip() {
 fn slow_entries_under_half_a_window_do_not() {
     let mut w = StormWindow::new();
     for k in 0..2 {
-        assert!(!storm(&mut w, 1_000 + k * 10_000, MS));
-        w.charge(MS / 5);
+        assert!(!run(&mut w, 1_000, 10_000, MS / 5, k));
     }
     assert!(!storm(&mut w, 30_000, MS), "40 % of the millisecond");
     // The next millisecond starts its own count.
-    w.charge(MS / 5);
+    w.charge(30_000, 30_000 + MS / 5);
     assert!(!storm(&mut w, MS + 1_000, MS));
+}
+
+/// Audio at 67 %: each 3 µs entry owns 1 µs, back to back. Its wall time
+/// passes half the millisecond before the entry limit.
+#[test]
+fn back_to_back_entries_under_audio_trip_on_wall_time() {
+    let mut w = StormWindow::new();
+    let us3 = 3 * MS / 1_000;
+    let tripped = (0..STORM_LIMIT)
+        .find(|&k| run(&mut w, 1_000, us3, us3, k))
+        .expect("trips under the entry limit");
+    assert!(tripped * us3 > MS / 2, "not before half the millisecond");
+    assert!(tripped * us3 < MS / 2 + us3, "on the entry that passes it");
+}
+
+/// 40 entries a millisecond at 5 µs each: 20 % wall, never trips.
+#[test]
+fn quiet_traffic_does_not_trip() {
+    let mut w = StormWindow::new();
+    let every = MS / 40;
+    for k in 0..400 {
+        assert!(!run(&mut w, 1_000, every, 5 * MS / 1_000, k), "entry {k}");
+    }
 }
