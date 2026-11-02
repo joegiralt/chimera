@@ -459,36 +459,38 @@ impl Usb {
         self.last = Served::Idle;
         if let Some(req) = req {
             // A bench `card`, `sweep`'s scan, `bank2`'s write: seconds with
-            // no hold. The answer's first pump wakes the service test.
-            link.away();
-            // Outside a bench build nothing measures, and none of it links.
-            let card = match req {
-                Ok(Request::Card(arg)) if cfg!(feature = "bench") => {
-                    card(arg, stats.as_deref_mut(), store)
-                }
-                _ => None,
-            };
-            let sweep_ask = match req {
-                Ok(Request::Sweep(_)) => Some(chimera_core::console::ask_sweep(
-                    ui.project_status() == chimera_core::project::ProjectStatus::Modified,
-                    store,
-                )),
-                _ => None,
-            };
-            // Bank 2's write, seconds at most, before the answer's clock
-            // starts; the screen it drew is redrawn whole after.
-            let bank2 = match req {
-                #[cfg(feature = "bank2")]
-                Ok(Request::Bank2(chimera_core::console::Bank2Arg::Install)) => {
-                    *redraw = true;
-                    Some(crate::bank2::run_install(store, ui, display, cpu_hz))
-                }
-                #[cfg(feature = "bank2-gate")]
-                Ok(Request::Bank2(chimera_core::console::Bank2Arg::Erase)) => {
-                    Some(crate::bank2::run_erase(ui, cpu_hz))
-                }
-                _ => None,
-            };
+            // no hold, so an errand. Outside a bench build nothing
+            // measures, and none of it links.
+            let (card, sweep_ask, bank2) = link.errand(|| {
+                let card = match req {
+                    Ok(Request::Card(arg)) if cfg!(feature = "bench") => {
+                        card(arg, stats.as_deref_mut(), store)
+                    }
+                    _ => None,
+                };
+                let sweep_ask = match req {
+                    Ok(Request::Sweep(_)) => Some(chimera_core::console::ask_sweep(
+                        ui.project_status() == chimera_core::project::ProjectStatus::Modified,
+                        store,
+                    )),
+                    _ => None,
+                };
+                // Bank 2's write, seconds at most, before the answer's
+                // clock starts; the screen it drew is redrawn whole after.
+                let bank2 = match req {
+                    #[cfg(feature = "bank2")]
+                    Ok(Request::Bank2(chimera_core::console::Bank2Arg::Install)) => {
+                        *redraw = true;
+                        Some(crate::bank2::run_install(store, ui, display, cpu_hz))
+                    }
+                    #[cfg(feature = "bank2-gate")]
+                    Ok(Request::Bank2(chimera_core::console::Bank2Arg::Erase)) => {
+                        Some(crate::bank2::run_erase(ui, cpu_hz))
+                    }
+                    _ => None,
+                };
+                (card, sweep_ask, bank2)
+            });
             let unit = &mut ChipUnit {
                 ui: &*ui,
                 stats,
@@ -538,18 +540,6 @@ impl Usb {
             return Some(restart);
         }
         None
-    }
-
-    /// The UI loop off on a long errand: `Link::away`, until `back`.
-    #[inline(always)]
-    pub fn away(&mut self) {
-        self.link.away();
-    }
-
-    /// Back from `away`: the service test counts from now.
-    #[inline(always)]
-    pub fn back(&mut self) {
-        self.link.with(|_| ());
     }
 
     /// The console's hand at `now`: what `key` and `turn` hold and turn.
@@ -955,13 +945,19 @@ impl Link {
         with(f)
     }
 
-    /// The UI off on an errand that can outlast `SERVICE_STALL_MS` with no
-    /// hold (card work, SYSTEM's sync, an install): the guard's service
-    /// test sleeps until the next hold, its tick test still holds.
+    /// `f`, the UI off on an errand that can outlast `SERVICE_STALL_MS`
+    /// with no hold (card work, SYSTEM's sync, an install): the guard's
+    /// service test sleeps through it, its tick test still holds. Back, the
+    /// UI is alive from then. The one way long UI work goes: a scope, so
+    /// the guard can't be left asleep or forgotten awake.
     #[inline(always)]
-    fn away(&mut self) {
+    fn errand<R>(&mut self, f: impl FnOnce() -> R) -> R {
         #[cfg(feature = "midi-usb")]
-        with(|c| c.irq.alive = None);
+        self.with(|c| c.irq.alive = None);
+        let r = f();
+        #[cfg(feature = "midi-usb")]
+        self.with(|_| ());
+        r
     }
 }
 
@@ -1009,7 +1005,7 @@ fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     // one other user, is masked and not running.
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
     // Any UI hold is the UI alive: a long answer pumps inside one `service`.
-    // Before `f`, so `away`'s `None` stands.
+    // Before `f`, so an errand's `None` stands.
     #[cfg(feature = "midi-usb")]
     {
         core.irq.alive = Some(crate::shared::dwt());
@@ -1246,6 +1242,14 @@ impl PortState {
             *step = next;
             (next, *tries)
         })
+    }
+
+    /// `f` as an errand (`Link::errand`) while the port is up; else just `f`.
+    pub fn errand<R>(&mut self, f: impl FnOnce() -> R) -> R {
+        match self.up() {
+            Some(u) => u.link.errand(f),
+            None => f(),
+        }
     }
 
     pub fn up(&mut self) -> Option<&mut Usb> {

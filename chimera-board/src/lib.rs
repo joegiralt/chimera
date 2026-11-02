@@ -806,43 +806,42 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ctrl.clear();
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         midi_out(ui, &out);
-        // Card work and SYSTEM's sync can hold the UI for seconds: no false
-        // storm from the guard's service test meanwhile.
-        #[cfg(feature = "usb-console")]
-        if let Some(u) = usb.up() {
-            u.away();
-        }
-        // SYSTEM synced first: a THEME change made in this visit is kept.
-        if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
-            dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
-        }
-        // Card work the keys asked for, under BUSY. A load settles before
-        // it publishes: the ack, or `LOAD_ACK_TICKS`.
-        let busy = ui.card_pending();
-        if busy {
-            let (y0, y1) = draw_busy(&mut display);
-            display.flush_region(y0, y1);
-        }
-        let cx = CardCx {
-            card: &mut card,
-            store: &mut *store,
-            sync: &mut sync,
-            settings: &mut settings,
-        };
-        ui.card_work(cx, &LOAD_LINK, |swap, u| {
-            let t0 = controls::ticks();
-            let _ = swap.settle(&LOAD_LINK, || {
-                controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
+        // Card work and SYSTEM's sync can hold the UI for seconds: an
+        // errand, so no false storm from the guard's service test.
+        let errand = || {
+            // SYSTEM synced first: a THEME change made in this visit is kept.
+            if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
+                dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
+            }
+            // Card work the keys asked for, under BUSY. A load settles
+            // before it publishes: the ack, or `LOAD_ACK_TICKS`.
+            let busy = ui.card_pending();
+            if busy {
+                let (y0, y1) = draw_busy(&mut display);
+                display.flush_region(y0, y1);
+            }
+            let cx = CardCx {
+                card: &mut card,
+                store: &mut *store,
+                sync: &mut sync,
+                settings: &mut settings,
+            };
+            ui.card_work(cx, &LOAD_LINK, |swap, u| {
+                let t0 = controls::ticks();
+                let _ = swap.settle(&LOAD_LINK, || {
+                    controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
+                });
+                shared_w.publish(|b| publish(b, u, knobs));
             });
-            shared_w.publish(|b| publish(b, u, knobs));
-        });
-        // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
-        // quicker than BUSY can be read. A toast says how it went.
-        ui.sync_system(&mut sync, &mut card, store, &mut settings);
+            // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save
+            // is quicker than BUSY can be read. A toast says how it went.
+            ui.sync_system(&mut sync, &mut card, store, &mut settings);
+            busy
+        };
         #[cfg(feature = "usb-console")]
-        if let Some(u) = usb.up() {
-            u.back();
-        }
+        let busy = usb.errand(errand);
+        #[cfg(not(feature = "usb-console"))]
+        let busy = errand();
         // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         // The loop spins as fast as it can; animation runs at UI_FPS.
