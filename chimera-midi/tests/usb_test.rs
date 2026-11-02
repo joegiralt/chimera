@@ -1,4 +1,4 @@
-use chimera_midi::usb::{Packer, unpack};
+use chimera_midi::usb::{Cable, Packer, unpack};
 
 fn pack(bytes: &[u8]) -> Vec<[u8; 4]> {
     let mut p = Packer::new();
@@ -15,13 +15,21 @@ fn unpacked(pkts: &[[u8; 4]]) -> Vec<u8> {
 #[test]
 fn note_on_unpacks() {
     let (c, b) = unpack([0x09, 0x90, 60, 100]).unwrap();
-    assert_eq!((c, b.as_slice()), (0, &[0x90, 60, 100][..]));
+    assert_eq!((c, b.as_slice()), (Cable::ZERO, &[0x90, 60, 100][..]));
 }
 
 #[test]
 fn cable_is_returned() {
     let (c, b) = unpack([0x19, 0x90, 60, 100]).unwrap();
-    assert_eq!((c, b.as_slice()), (1, &[0x90, 60, 100][..]));
+    assert_eq!((c.get(), b.as_slice()), (1, &[0x90, 60, 100][..]));
+}
+
+#[test]
+fn every_cable_unpacks_in_range() {
+    for n in 0..16u8 {
+        let (c, _) = unpack([n << 4 | 0x09, 0x90, 60, 100]).unwrap();
+        assert_eq!(c.get(), n);
+    }
 }
 
 #[test]

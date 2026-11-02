@@ -164,7 +164,7 @@ mod door {
     #[cfg(feature = "midi-map")]
     use chimera_core::midi_in::{CTRL_USB_LEN, DinPipe, PipeSlot};
     use chimera_core::out_ring::OutRing;
-    use chimera_midi::usb::{Packer, unpack};
+    use chimera_midi::usb::{Cable, Packer, unpack};
     use chimera_midi::usb_class::{Ids, descriptors as write};
     #[cfg(not(feature = "midi-map"))]
     use midi_in::{feed, lost};
@@ -249,7 +249,7 @@ mod door {
         while let Ok(n) = m.out.read(&mut p) {
             for &e in p[..n].as_chunks::<4>().0 {
                 match (unpack(e), sinks.as_mut()) {
-                    (Some((0, b)), Some(s)) => feed(pipe, b.as_slice(), s),
+                    (Some((Cable::ZERO, b)), Some(s)) => feed(pipe, b.as_slice(), s),
                     _ => irq.midi_drops = irq.midi_drops.wrapping_add(1),
                 }
             }

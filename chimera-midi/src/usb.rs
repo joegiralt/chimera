@@ -13,8 +13,21 @@ impl Bytes {
     }
 }
 
+/// A virtual cable, 0 to 15: a packet's high nibble.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cable(u8);
+
+impl Cable {
+    /// The only cable Chimera's descriptors name.
+    pub const ZERO: Cable = Cable(0);
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
 /// Cable and bytes of a packet; `None` for the reserved CINs 0 and 1.
-pub fn unpack(p: [u8; 4]) -> Option<(u8, Bytes)> {
+pub fn unpack(p: [u8; 4]) -> Option<(Cable, Bytes)> {
     let len = match p[0] & 0x0F {
         0 | 1 => return None,
         5 | 0xF => 1,
@@ -22,7 +35,7 @@ pub fn unpack(p: [u8; 4]) -> Option<(u8, Bytes)> {
         _ => 3,
     };
     Some((
-        p[0] >> 4,
+        Cable(p[0] >> 4),
         Bytes {
             len,
             b: [p[1], p[2], p[3]],
