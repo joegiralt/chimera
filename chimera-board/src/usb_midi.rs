@@ -159,7 +159,7 @@ impl UsbClass<Bus> for MidiClass {
 mod door {
     use core::ptr::addr_of_mut;
 
-    use chimera_core::midi_in::{self, DinSinks, Left};
+    use chimera_core::midi_in::{self, DinPipe, DinSinks, Left};
     use chimera_core::out_ring::OutRing;
     use chimera_midi::usb::{Packer, unpack};
     use chimera_midi::usb_class::{Ids, descriptors as write};
@@ -223,14 +223,14 @@ mod door {
             if let (false, Some(s)) = (up, sinks.as_mut())
                 && midi_in::lets_go(left, pipe.played())
             {
-                pipe.lost_bank2(s);
+                DinPipe::usb_lost(pipe, s);
             }
         }
         let mut p = [0u8; PACKET as usize];
         while let Ok(n) = m.out.read(&mut p) {
             for &e in p[..n].as_chunks::<4>().0 {
                 match (unpack(e), sinks.as_mut()) {
-                    (Some((0, b)), Some(s)) => pipe.feed_bank2(b.as_slice(), s),
+                    (Some((0, b)), Some(s)) => DinPipe::usb_feed(pipe, b.as_slice(), s),
                     _ => irq.midi_drops = irq.midi_drops.wrapping_add(1),
                 }
             }

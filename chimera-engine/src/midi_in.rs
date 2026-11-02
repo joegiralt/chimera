@@ -554,19 +554,6 @@ impl PipeSlot {
         self.pipe().is_some_and(DinPipe::played)
     }
 
-    /// `feed` for a caller already in bank 2 (USB's poll), on a ring of
-    /// any length: the pipe itself, no door call.
-    #[inline(always)]
-    pub fn feed_bank2<const N: usize>(&mut self, bytes: &[u8], out: &mut DinSinks<'_, '_, N>) {
-        self.built().feed(bytes, out);
-    }
-
-    /// `lost`, as `feed_bank2`.
-    #[inline(always)]
-    pub fn lost_bank2<const N: usize>(&mut self, out: &mut DinSinks<'_, '_, N>) {
-        self.built().lost(out);
-    }
-
     /// The pipe, built first if it is not yet. Inlined into the door's
     /// entries, so `DinPipe::new` runs in bank 2.
     #[inline(always)]
@@ -640,6 +627,21 @@ impl DinPipe {
     }
 
     fn door_lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
+        slot.built().lost(out);
+    }
+
+    /// `door_feed` on USB's ring, for a caller already in bank 2 (USB's
+    /// poll): no door call. Not generic, so it builds at this crate's
+    /// level as the door's: built at the board's, the machine outliner put
+    /// a call into bank 2 in a bank-1 outline.
+    #[inline(never)]
+    pub fn usb_feed(slot: &mut PipeSlot, bytes: &[u8], out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
+        slot.built().feed(bytes, out);
+    }
+
+    /// `door_lost`, as `usb_feed`.
+    #[inline(never)]
+    pub fn usb_lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
         slot.built().lost(out);
     }
 }

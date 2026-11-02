@@ -815,10 +815,18 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(all(feature = "midi-din", feature = "midi-map", feature = "midi-usb"))]
         {
             use chimera_core::midi_in::Port;
-            let ev = ctrl_din
-                .drain()
-                .map(|e| (Port::Din, e))
-                .chain(ctrl_usb.drain().map(|e| (Port::Usb, e)));
+            // DIN's, then USB's; a `from_fn`, not a `Chain`, whose
+            // overrides `hear_ccs`'s `dyn` would link into bank 1.
+            let mut din = true;
+            let ev = core::iter::from_fn(|| {
+                if din {
+                    match ctrl_din.pop() {
+                        Some(e) => return Some((Port::Din, e)),
+                        None => din = false,
+                    }
+                }
+                ctrl_usb.pop().map(|e| (Port::Usb, e))
+            });
             ui.hear_ccs(ev, controls::now_ms(), shared_w.taken());
         }
         #[cfg(all(feature = "midi-din", not(feature = "midi-map")))]
