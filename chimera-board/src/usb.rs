@@ -9,8 +9,8 @@ use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
     AnswerClock, Bank2Answer, BankRegs, CardAnswer, CardArg, Console, FlashPeek, FlashRegs, Frame,
-    Hand, Hands, LoopTimer, Out, PEEK_AT, Request, Served, Stalled, Stats, SweepAsk, Unit, answer,
-    serial_hex,
+    Hand, Hands, LoopTimer, Out, PEEK_AT, Refusal, Request, Served, Stalled, Stats, SweepAsk, Unit,
+    answer, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
@@ -352,7 +352,7 @@ impl Unconnected {
             #[cfg(feature = "midi-usb")]
             midi: self.midi,
             #[cfg(feature = "midi-usb")]
-            irq: IrqCounts {
+            irq: Irq {
                 window: StormWindow::new(),
                 // SysTick runs from boot step 1: the tick test holds from here.
                 tick: crate::controls::now_ms().0,
@@ -360,14 +360,16 @@ impl Unconnected {
                 alive: None,
                 per_ms: Cycles::new((self.cpu_hz / 1_000).max(1)),
                 held: false,
-                cycles: 0,
-                us_max: 0,
-                storms: 0,
-                midi_drops: 0,
+                counts: Counts {
+                    cycles: 0,
+                    us_max: 0,
+                    storms: 0,
+                    midi_drops: 0,
+                },
             },
         };
         #[cfg(feature = "midi-usb")]
-        let usb_irq = UsbIrq::new(core.irq, crate::controls::now_ms());
+        let usb_irq = UsbIrq::new(core.irq.counts, crate::controls::now_ms());
         let link = install(core);
         Usb {
             link,
@@ -417,12 +419,8 @@ impl Usb {
         self.timer.lap(us, self.last);
         // Every pass, inside the IRQ counter's wrap.
         crate::card_dma::irq_cycles();
-        #[cfg(feature = "midi-usb")]
-        self.usb_irq.fold(self.link.with(|c| c.irq));
         #[cfg(feature = "bank2")]
         let cpu_hz = self.cycles_per_us * 1_000_000;
-        #[cfg(feature = "midi-usb")]
-        let _release = Release;
         let Usb {
             link,
             line,
@@ -439,27 +437,27 @@ impl Usb {
             hands,
             ..
         } = self;
-        let flushed = link.with(|c| {
+        // One hold a lap: a storm's mask lifted (`unlock` then unmasks), the
+        // counters read, the device polled, the console flushed and read up
+        // to one request. The line parses under the hold: what follows a
+        // request's newline must wait in the port for the next lap.
+        let req = link.with(|c| {
+            #[cfg(feature = "midi-usb")]
+            {
+                c.irq.held = false;
+                usb_irq.fold(c.irq.counts);
+            }
             c.poll_all();
-            c.serial.flush()
+            // A stalled answer's tail still waiting: no new request until
+            // the host reads it, so a host that writes but never reads NAKs
+            // itself instead of costing a stall every lap.
+            match c.serial.flush() {
+                Err(UsbError::WouldBlock) => None,
+                _ => read(&mut c.serial, line),
+            }
         });
         self.last = Served::Idle;
-        // A stalled answer's tail still waiting: no new request until the
-        // host reads it, so a host that writes but never reads NAKs itself
-        // instead of costing a stall every lap.
-        if let Err(UsbError::WouldBlock) = flushed {
-            return None;
-        }
-        // Read whatever poll said or not: bytes left from the last request
-        // already wait in the port's buffer.
-        let mut byte = [0u8; 1];
-        for _ in 0..READ_BUDGET {
-            if !matches!(link.with(|c| c.serial.read(&mut byte)), Ok(1)) {
-                break;
-            }
-            let Some(req) = line.push(byte[0]) else {
-                continue;
-            };
+        if let Some(req) = req {
             // A bench `card`, `sweep`'s scan, `bank2`'s write: seconds with
             // no hold. The answer's first pump wakes the service test.
             link.away();
@@ -741,6 +739,21 @@ impl Unit for ChipUnit<'_> {
     }
 }
 
+/// The port's bytes into `line`, up to `READ_BUDGET` (a flood without a
+/// newline can't hold the UI): `Some` once one ends a request.
+fn read(serial: &mut Serial, line: &mut Console) -> Option<Result<Request, Refusal>> {
+    let mut byte = [0u8; 1];
+    for _ in 0..READ_BUDGET {
+        if !matches!(serial.read(&mut byte), Ok(1)) {
+            return None;
+        }
+        if let Some(req) = line.push(byte[0]) {
+            return Some(req);
+        }
+    }
+    None
+}
+
 /// The port as `Out`, for one answer: it polls the device while the port
 /// is full, until its `AnswerClock` expires.
 struct UsbOut<'a> {
@@ -820,14 +833,13 @@ pub(crate) struct UsbCore {
     pub(crate) midi: crate::usb_midi::Midi,
     /// The handler's own counters, read by the UI under `with`.
     #[cfg(feature = "midi-usb")]
-    pub(crate) irq: IrqCounts,
+    pub(crate) irq: Irq,
 }
 
-/// The handler's state and counters, kept in the cell beside the device:
-/// the handler writes them, the UI reads them under `with`.
+/// The handler's storm guard and counters, kept in the cell beside the
+/// device: the handler writes them, the UI under `with`.
 #[cfg(feature = "midi-usb")]
-#[derive(Clone, Copy)]
-pub(crate) struct IrqCounts {
+pub(crate) struct Irq {
     /// Its entries this millisecond: the storm guard's.
     window: StormWindow,
     /// SysTick's tick as the handler last saw it, and the DWT cycle it
@@ -839,9 +851,16 @@ pub(crate) struct IrqCounts {
     alive: Option<Cycles>,
     /// DWT cycles in a millisecond.
     per_ms: Cycles,
-    /// The guard masked the handler: `with` leaves it masked, and the end
-    /// of `Usb::service` unmasks it.
+    /// The guard masked the handler: `with` leaves it masked until the top
+    /// of the next `Usb::service` clears it.
     held: bool,
+    counts: Counts,
+}
+
+/// The handler's counters, what `stats` reads.
+#[cfg(feature = "midi-usb")]
+#[derive(Clone, Copy)]
+pub(crate) struct Counts {
     /// Its own cycles less the audio's inside it, wrapping.
     cycles: u32,
     /// Its longest entry, in µs.
@@ -872,10 +891,11 @@ impl UsbCore {
             midi,
             irq,
         } = self;
-        if let Err(closed) = midi.poll(dev, serial, irq) {
+        let counts = &mut irq.counts;
+        if let Err(closed) = midi.poll(dev, serial, counts) {
             dev.poll(&mut [serial]);
             if let Some(c) = closed {
-                c.drain(dev, &mut irq.midi_drops);
+                c.drain(dev, &mut counts.midi_drops);
             }
         }
     }
@@ -886,7 +906,7 @@ impl UsbCore {
 /// `stats` last read.
 #[cfg(feature = "midi-usb")]
 struct UsbIrq {
-    seen: IrqCounts,
+    seen: Counts,
     cycles: chimera_core::stream::stats::IrqCycles,
     read: u64,
     at: Ms,
@@ -894,7 +914,7 @@ struct UsbIrq {
 
 #[cfg(feature = "midi-usb")]
 impl UsbIrq {
-    fn new(seen: IrqCounts, now: Ms) -> UsbIrq {
+    fn new(seen: Counts, now: Ms) -> UsbIrq {
         UsbIrq {
             seen,
             cycles: chimera_core::stream::stats::IrqCycles::new(seen.cycles),
@@ -903,7 +923,7 @@ impl UsbIrq {
         }
     }
 
-    fn fold(&mut self, seen: IrqCounts) {
+    fn fold(&mut self, seen: Counts) {
         self.seen = seen;
         self.cycles.fold(seen.cycles);
     }
@@ -982,9 +1002,7 @@ fn install(core: UsbCore) -> Link {
 }
 
 /// The UI's way in: `OTG_FS` masked for `f`. Never nested: only `Link`
-/// calls it, and only `install` makes one, after the cell is written; and
-/// `Release`'s drop, made only inside `Usb::service` (so after `install`)
-/// and never dropped inside a `with` (panics abort).
+/// calls it, and only `install` makes one, after the cell is written.
 fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     lock();
     // SAFETY: the cell is written (a `Link` exists), and the handler, its
@@ -1026,18 +1044,6 @@ fn unlock(held: bool) {
     }
 }
 
-/// Unmasks a storm's `OTG_FS` on every path out of `Usb::service`: the
-/// hold cleared, `with`'s own unmask does it.
-#[cfg(feature = "midi-usb")]
-struct Release;
-
-#[cfg(feature = "midi-usb")]
-impl Drop for Release {
-    fn drop(&mut self) {
-        with(|c| c.irq.held = false);
-    }
-}
-
 /// Polls the device. Over `STORM_LIMIT` entries in a millisecond, or
 /// while it starves SysTick (the watchdog's kick) or the UI's `service` (a
 /// full console's packet left in the RX FIFO keeps RXFLVL up), it masks
@@ -1061,7 +1067,7 @@ fn OTG_FS() {
     }
     if storm(&mut n.window, now, n.per_ms) || starved(now, n.tick_at, n.alive, n.per_ms) {
         n.held = true;
-        n.storms = n.storms.wrapping_add(1);
+        n.counts.storms = n.counts.storms.wrapping_add(1);
         NVIC::mask(pac::Interrupt::OTG_FS);
     } else {
         core.poll_all();
@@ -1070,8 +1076,9 @@ fn OTG_FS() {
     // The card IRQ's own time leaves out the MIDI level's (`card_dma::clocks`).
     MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
     let n = &mut core.irq;
-    n.cycles = n.cycles.wrapping_add(own);
-    n.us_max = n.us_max.max(own / (n.per_ms.get() / 1_000).max(1));
+    let us = own / (n.per_ms.get() / 1_000).max(1);
+    n.counts.cycles = n.counts.cycles.wrapping_add(own);
+    n.counts.us_max = n.counts.us_max.max(us);
 }
 
 /// DSTS.FNSOF (bits 8..22): moving while the host sends start-of-frame.

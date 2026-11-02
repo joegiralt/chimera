@@ -32,7 +32,7 @@ use usb_device::class_prelude::{
     StringIndex, UsbBusAllocator, UsbClass,
 };
 
-use crate::usb::{Bus, Dev, IrqCounts, Serial};
+use crate::usb::{Bus, Counts, Dev, Serial};
 
 /// USB's control ring, as `shared::Ctrl` sizes it.
 type UsbCtrl = chimera_core::midi_in::CtrlRing<{ crate::shared::CTRL_USB }>;
@@ -78,12 +78,12 @@ impl Midi {
         &mut self,
         dev: &mut Dev,
         serial: &mut Serial,
-        irq: &mut IrqCounts,
+        counts: &mut Counts,
     ) -> Result<(), Option<Closed>> {
         let Some(m) = &mut self.0 else {
             return Err(None);
         };
-        crate::bank2::board_door(|d| (d.usb.poll)(dev, serial, m, irq))
+        crate::bank2::board_door(|d| (d.usb.poll)(dev, serial, m, counts))
             .ok_or_else(|| Some(Closed(m.out.address())))
     }
 }
@@ -149,7 +149,7 @@ pub(crate) fn set_in(
 #[repr(C)]
 pub(crate) struct UsbDoor {
     alloc: fn(&'static UsbBusAllocator<Bus>) -> MidiClass,
-    poll: fn(&mut Dev, &mut Serial, &mut MidiClass, &mut IrqCounts),
+    poll: fn(&mut Dev, &mut Serial, &mut MidiClass, &mut Counts),
 }
 
 impl UsbDoor {
@@ -188,7 +188,7 @@ mod door {
     use usb_device::device::UsbDeviceState;
 
     use super::{IN, MidiClass, MidiIn, Tx, UsbCtrl};
-    use crate::usb::{Bus, Dev, IrqCounts, Serial};
+    use crate::usb::{Bus, Counts, Dev, Serial};
 
     /// USB's burst-sized ring takes the pipe straight (the door's entries
     /// take DIN's); at DIN's size, the door's.
@@ -235,7 +235,7 @@ mod door {
     /// let go as `lets_go` rules; then every OUT packet read, cable 0's
     /// bytes fed to USB's pipe here in bank 2 (its ring is not DIN's), the
     /// rest dropped and counted; then the out ring sent (`send`).
-    pub(super) fn poll(dev: &mut Dev, serial: &mut Serial, m: &mut MidiClass, irq: &mut IrqCounts) {
+    pub(super) fn poll(dev: &mut Dev, serial: &mut Serial, m: &mut MidiClass, counts: &mut Counts) {
         dev.poll(&mut [serial, m]);
         // SAFETY: only the poll touches `IN` once `connect` has run, and
         // the poll runs in the handler or under `with`, which masks it.
@@ -266,11 +266,11 @@ mod door {
             for &e in p[..n].as_chunks::<4>().0 {
                 match (unpack(e), s.as_mut()) {
                     (Some((Cable::ZERO, b)), Some(s)) => feed(pipe, b.as_slice(), s),
-                    _ => irq.midi_drops = irq.midi_drops.wrapping_add(1),
+                    _ => counts.midi_drops = counts.midi_drops.wrapping_add(1),
                 }
             }
         }
-        send(m, tx, irq, up);
+        send(m, tx, counts, up);
     }
 
     /// Configured, the UI's lost echo counted, then the ring's bytes packed
@@ -278,7 +278,7 @@ mod door {
     /// next poll; any other error, dropped and counted. Not Configured, all
     /// dropped and the losses uncounted (the UI copies whatever the host
     /// does): a host that comes back hears nothing stale.
-    fn send(m: &mut MidiClass, tx: &mut Tx, irq: &mut IrqCounts, up: bool) {
+    fn send(m: &mut MidiClass, tx: &mut Tx, counts: &mut Counts, up: bool) {
         let Some(ring) = tx.ring else { return };
         if tx.n == 0 && ring.is_empty() {
             return;
@@ -289,7 +289,7 @@ mod door {
             (tx.packer, tx.n) = (Packer::new(), 0);
             return;
         }
-        irq.midi_drops = irq.midi_drops.wrapping_add(lost);
+        counts.midi_drops = counts.midi_drops.wrapping_add(lost);
         loop {
             while tx.n < tx.held.len()
                 && let Some(x) = ring.pop()
@@ -305,7 +305,7 @@ mod door {
             }
             match m.inp.write(held) {
                 Err(UsbError::WouldBlock) => return,
-                Err(_) => irq.midi_drops = irq.midi_drops.wrapping_add(tx.n as u32),
+                Err(_) => counts.midi_drops = counts.midi_drops.wrapping_add(tx.n as u32),
                 Ok(_) => {}
             }
             tx.n = 0;
