@@ -1,5 +1,6 @@
 use chimera_core::console::{
-    ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, Served, serial_hex,
+    ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, STORM_LIMIT, Served, StormWindow,
+    serial_hex, storm,
 };
 use chimera_hal::Ms;
 
@@ -109,4 +110,44 @@ fn the_answer_clock_reads_across_a_wrap() {
     c.progress(Ms(start.wrapping_add(200)));
     assert!(!c.expired(Ms(start.wrapping_add(400))));
     assert!(c.expired(Ms(start.wrapping_add(ANSWER_MS))));
+}
+
+/// 480 MHz: the unit's DWT cycles in a millisecond.
+const MS: u32 = 480_000;
+
+#[test]
+fn storm_trips_over_limit() {
+    let mut w = StormWindow::new();
+    for k in 0..STORM_LIMIT {
+        assert!(!storm(&mut w, 1_000 + k * 100, MS), "entry {}", k + 1);
+    }
+    assert!(storm(&mut w, 1_000 + STORM_LIMIT * 100, MS), "the 201st");
+}
+
+#[test]
+fn window_resets_each_ms() {
+    let mut w = StormWindow::new();
+    for ms in 0..10 {
+        for k in 0..STORM_LIMIT {
+            assert!(!storm(&mut w, ms * MS + k * 2_000, MS), "ms {ms} entry {k}");
+        }
+    }
+}
+
+#[test]
+fn wraps_dwt() {
+    let mut w = StormWindow::new();
+    let start = u32::MAX - MS / 2;
+    for k in 0..STORM_LIMIT {
+        assert!(!storm(&mut w, start.wrapping_add(k), MS));
+    }
+    // A millisecond on, past the counter's wrap: a fresh window.
+    let next = start.wrapping_add(MS);
+    for k in 0..STORM_LIMIT {
+        assert!(
+            !storm(&mut w, next.wrapping_add(k), MS),
+            "entry {k} after the wrap"
+        );
+    }
+    assert!(storm(&mut w, next.wrapping_add(STORM_LIMIT), MS));
 }

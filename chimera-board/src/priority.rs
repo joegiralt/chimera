@@ -8,12 +8,14 @@ pub struct Priority(u8);
 
 impl Priority {
     pub const AUDIO: Priority = Priority::level(0);
-    #[cfg(feature = "midi-din")]
+    /// MIDI's interrupts, DIN's and USB's: under audio, never nesting.
+    #[cfg(any(feature = "midi-din", feature = "midi-usb"))]
     pub const MIDI: Priority = Priority::level(4);
     /// The card's DMA interrupt: under audio and MIDI, over SysTick.
     pub const CARD: Priority = Priority::level(12);
     pub const SYSTICK: Priority = Priority::level(15);
-    // USB has no level: it is polled from the UI loop (ADR 0068).
+    // Without `midi-usb`, USB has no level: it is polled from the UI loop
+    // (ADR 0068).
 
     const fn level(level: u8) -> Self {
         assert!(level < 16);
@@ -27,7 +29,7 @@ impl Priority {
 
 const _: () = assert!(Priority::AUDIO.bits() == 0x00 && Priority::SYSTICK.bits() == 0xF0);
 const _: () = assert!(Priority::CARD.bits() == 0xC0);
-#[cfg(feature = "midi-din")]
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
 const _: () = assert!(Priority::MIDI.bits() == 0x40);
 
 pub fn set_irq(nvic: &mut NVIC, irq: pac::Interrupt, p: Priority) {

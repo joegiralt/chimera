@@ -1057,7 +1057,7 @@ fn DMA2_STR0() {
 }
 
 /// The cycle counter and the cycles of the interrupts over this one (the
-/// audio's and MIDI DIN's) as one pair.
+/// audio's and the MIDI level's, DIN's and USB's) as one pair.
 #[inline(always)]
 fn clocks() -> Stamp {
     stamp(|| {

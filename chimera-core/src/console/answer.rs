@@ -21,6 +21,20 @@ pub struct Stats {
     pub loop_peak_us: u32,
     /// `None`: nothing streams in this build.
     pub streams: Option<StreamTally>,
+    /// `None`: no USB interrupt in this build.
+    pub usb: Option<UsbTally>,
+}
+
+/// The USB interrupt's counters: its longest entry and storms since boot,
+/// its share since the last `stats`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UsbTally {
+    /// Its own time's share, the audio that preempted it taken off.
+    pub irq_share: PerMille,
+    /// Its longest entry, the audio taken off.
+    pub irq_us_max: Micros,
+    /// The storm guard's trips.
+    pub storms: u32,
 }
 
 /// The streams' and the card IRQ's counters (slice 1 § 8, § 9), since boot
@@ -387,7 +401,12 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
     writeln!(t, "cost_pct {}", a.cost_pct)?;
     writeln!(t, "loop_avg_us {}", s.loop_avg_us)?;
     writeln!(t, "loop_peak_us {}", s.loop_peak_us)?;
-    s.streams.map_or(Ok(()), |n| streams(&n, t))
+    s.streams.map_or(Ok(()), |n| streams(&n, t))?;
+    s.usb.map_or(Ok(()), |u| {
+        writeln!(t, "usb_irq_pct {}", u.irq_share)?;
+        writeln!(t, "usb_irq_us_max {}", u.irq_us_max.get())?;
+        writeln!(t, "usb_storms {}", u.storms)
+    })
 }
 
 fn streams(n: &StreamTally, t: &mut impl Write) -> fmt::Result {

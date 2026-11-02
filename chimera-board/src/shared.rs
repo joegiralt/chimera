@@ -317,8 +317,9 @@ pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
 /// Cycles spent in the audio interrupt, wrapping: what the card IRQ takes
 /// off its own entries' time.
 pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
-/// Cycles spent in MIDI DIN's interrupt less the audio's inside it,
-/// wrapping: the card IRQ takes them off its own entries' time too.
+/// Cycles spent in the MIDI level's interrupts (DIN's, and USB's with
+/// `midi-usb`) less the audio's inside them, wrapping: the card IRQ takes
+/// them off its own entries' time too.
 pub static MIDI_CYCLES: AtomicU32 = AtomicU32::new(0);
 /// A count of CPU cycles, or a reading of the wrapping cycle counter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

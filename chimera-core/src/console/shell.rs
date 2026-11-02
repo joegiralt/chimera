@@ -76,6 +76,41 @@ impl LoopTimer {
     }
 }
 
+/// The USB interrupt's entries in one millisecond at most; over it, the
+/// shell masks the interrupt until the UI's next lap. Provisional: set from
+/// the unit's measured worst (spec § 13 ruling 5).
+pub const STORM_LIMIT: u32 = 200;
+
+/// The USB interrupt's entries in the millisecond of DWT cycles it opened.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StormWindow {
+    start: u32,
+    entries: u32,
+}
+
+impl StormWindow {
+    pub const fn new() -> Self {
+        StormWindow {
+            start: 0,
+            entries: 0,
+        }
+    }
+}
+
+/// One entry at `now_cycles`: true once this millisecond holds more than
+/// `STORM_LIMIT`. Cycles, not the shell's `Ms`, which steps every 2 ms and
+/// stalls while the storm holds the CPU.
+pub fn storm(window: &mut StormWindow, now_cycles: u32, cycles_per_ms: u32) -> bool {
+    if now_cycles.wrapping_sub(window.start) >= cycles_per_ms {
+        *window = StormWindow {
+            start: now_cycles,
+            entries: 0,
+        };
+    }
+    window.entries = window.entries.saturating_add(1);
+    window.entries > STORM_LIMIT
+}
+
 /// Report text in a fixed buffer. The last `TRUNCATED.len()` bytes are kept
 /// back, so a report that runs out of room always ends in `# TRUNCATED`.
 pub struct Report<const N: usize> {
