@@ -1,6 +1,5 @@
-//! USB MIDI 1.0, one cable (spec § 4): an AudioControl and a MIDIStreaming
-//! interface, one embedded and one external jack each way, both named
-//! "Chimera", and a 64-byte bulk endpoint each way. In-tree, not
+//! USB MIDI 1.0, one cable (spec § 4), its descriptors
+//! `chimera_midi::usb_class`'s, the jacks named "Chimera". In-tree, not
 //! `usbd-midi`: the same shape in fewer lines, raw packets, no new crate.
 //!
 //! `door` is bank 2's (`bank2.x` globs it): the allocation, the poll and
@@ -106,35 +105,11 @@ impl UsbClass<Bus> for MidiClass {
 
 /// Bank 2's half.
 mod door {
+    use chimera_midi::usb_class::{Ids, descriptors as write};
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
 
     use super::{MidiClass, MidiSlot};
     use crate::usb::{Bus, UsbCore};
-
-    const IAD: u8 = 0x0B;
-    const AUDIO: u8 = 0x01;
-    const AUDIOCONTROL: u8 = 0x01;
-    const MIDISTREAMING: u8 = 0x03;
-    const CS_INTERFACE: u8 = 0x24;
-    const CS_ENDPOINT: u8 = 0x25;
-    const HEADER: u8 = 0x01;
-    const MIDI_IN_JACK: u8 = 0x02;
-    const MIDI_OUT_JACK: u8 = 0x03;
-    const MS_GENERAL: u8 = 0x01;
-    const EMBEDDED: u8 = 0x01;
-    const EXTERNAL: u8 = 0x02;
-
-    /// Jack IDs: embedded IN (the host's OUT endpoint feeds it), external
-    /// IN, embedded OUT (feeds the host's IN endpoint), external OUT.
-    const IN_EMB: u8 = 1;
-    const IN_EXT: u8 = 2;
-    const OUT_EMB: u8 = 3;
-    const OUT_EXT: u8 = 4;
-
-    /// The class-specific MIDIStreaming descriptors' total (class spec
-    /// B.4.2): header 7, IN jacks 6 + 6, OUT jacks 9 + 9, each endpoint
-    /// 9 + 5.
-    const MS_TOTAL: u16 = 7 + 6 + 6 + 9 + 9 + (9 + 5) * 2;
 
     /// Bulk packets at full speed.
     const PACKET: u16 = 64;
@@ -173,39 +148,13 @@ mod door {
         }
     }
 
+    /// `chimera_midi::usb_class`'s descriptors, its host test's.
     fn descriptors(c: &MidiClass, w: &mut DescriptorWriter) -> usb_device::Result<()> {
-        // The IAD written raw: `iad` called from here too would leave an
-        // outlined copy in bank 1. The device is always composite.
-        w.write(IAD, &[c.ac.into(), 2, AUDIO, 0x00, 0x00, 0])?;
-        w.interface(c.ac, AUDIO, AUDIOCONTROL, 0)?;
-        // bcdADC 1.0, wTotalLength 9, one streaming interface.
-        w.write(CS_INTERFACE, &[HEADER, 0x00, 0x01, 9, 0, 1, c.ms.into()])?;
-        w.interface(c.ms, AUDIO, MIDISTREAMING, 0)?;
-        let [lo, hi] = MS_TOTAL.to_le_bytes();
-        w.write(CS_INTERFACE, &[HEADER, 0x00, 0x01, lo, hi])?;
-        let name = c.name.into();
-        w.write(CS_INTERFACE, &[MIDI_IN_JACK, EMBEDDED, IN_EMB, name])?;
-        w.write(CS_INTERFACE, &[MIDI_IN_JACK, EXTERNAL, IN_EXT, name])?;
-        w.write(
-            CS_INTERFACE,
-            &[MIDI_OUT_JACK, EMBEDDED, OUT_EMB, 1, IN_EXT, 1, name],
-        )?;
-        w.write(
-            CS_INTERFACE,
-            &[MIDI_OUT_JACK, EXTERNAL, OUT_EXT, 1, IN_EMB, 1, name],
-        )?;
-        // Audio's 9-byte endpoints: bRefresh and bSynchAddress 0.
-        w.endpoint_ex(&c.out, zeros)?;
-        w.write(CS_ENDPOINT, &[MS_GENERAL, 1, IN_EMB])?;
-        w.endpoint_ex(&c.inp, zeros)?;
-        w.write(CS_ENDPOINT, &[MS_GENERAL, 1, OUT_EMB])
-    }
-
-    /// bRefresh and bSynchAddress.
-    fn zeros(b: &mut [u8]) -> usb_device::Result<usize> {
-        b.get_mut(..2)
-            .ok_or(usb_device::UsbError::BufferOverflow)?
-            .fill(0);
-        Ok(2)
+        let ids = Ids {
+            ac: c.ac,
+            ms: c.ms,
+            name: c.name,
+        };
+        write(w, ids, &c.out, &c.inp)
     }
 }

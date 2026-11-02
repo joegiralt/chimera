@@ -4,5 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+# USB MIDI's class descriptors (`usb_class`). With the console's CDC the
+# configuration descriptor passes usb-device's 128-byte control buffer:
+# 256 wherever the class is built, so the test runs what ships.
+usb-device = { version = "0.3.2", features = ["control-buffer-256"] }
+
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
+usbd-serial = "0.2.2"
