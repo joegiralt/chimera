@@ -217,16 +217,19 @@ impl CtrlEvent {
     }
 }
 
+/// DIN's ring: 3 bytes a millisecond fill few slots a UI lap.
 pub const CTRL_RING_LEN: usize = 64;
-const _: () = assert!(CTRL_RING_LEN.is_power_of_two());
+/// USB's: a host's burst lands whole in a few milliseconds; 3,780 B (420
+/// note pairs, each with a CC) dropped 160 CCs from 64 slots on the unit.
+pub const CTRL_USB_LEN: usize = 512;
 
 /// One producer (an ISR or a MIDI thread), one consumer (the UI); head and
-/// tail free-running, the slot `counter % CTRL_RING_LEN`, the same
+/// tail free-running, the slot `counter % N` (a power of two), the same
 /// `Acquire`/`Release` pairing as `note_queue`'s. Two words a slot, written
 /// whole before `tail` publishes them, so a full ring drops whole events and a reader never sees
 /// half of one (an NRPN's address and value travel together).
-pub struct CtrlRing {
-    slots: [[AtomicU32; 2]; CTRL_RING_LEN],
+pub struct CtrlRing<const N: usize = CTRL_RING_LEN> {
+    slots: [[AtomicU32; 2]; N],
     /// Next event to pop (the consumer's only).
     head: AtomicU32,
     /// Next slot to push (the producer's only).
@@ -234,16 +237,17 @@ pub struct CtrlRing {
     dropped: AtomicU32,
 }
 
-impl Default for CtrlRing {
+impl<const N: usize> Default for CtrlRing<N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CtrlRing {
+impl<const N: usize> CtrlRing<N> {
     pub const fn new() -> Self {
+        const { assert!(N.is_power_of_two()) };
         Self {
-            slots: [const { [AtomicU32::new(0), AtomicU32::new(0)] }; CTRL_RING_LEN],
+            slots: [const { [AtomicU32::new(0), AtomicU32::new(0)] }; N],
             head: AtomicU32::new(0),
             tail: AtomicU32::new(0),
             dropped: AtomicU32::new(0),
@@ -255,11 +259,11 @@ impl CtrlRing {
     /// publishes the slot.
     pub fn push(&self, e: CtrlEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
-        if tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= CTRL_RING_LEN {
+        if tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= N {
             self.dropped.fetch_add(1, Ordering::Relaxed);
             return false;
         }
-        let slot = &self.slots[tail as usize % CTRL_RING_LEN];
+        let slot = &self.slots[tail as usize % N];
         let [a, b] = e.pack();
         slot[0].store(a, Ordering::Relaxed);
         slot[1].store(b, Ordering::Relaxed);
@@ -274,7 +278,7 @@ impl CtrlRing {
         if head == self.tail.load(Ordering::Acquire) {
             return None;
         }
-        let slot = &self.slots[head as usize % CTRL_RING_LEN];
+        let slot = &self.slots[head as usize % N];
         let bits = [
             slot[0].load(Ordering::Relaxed),
             slot[1].load(Ordering::Relaxed),
@@ -485,12 +489,12 @@ impl DinPipe {
 /// A shell's sinks: its note queue's producer and its control ring. The
 /// door's pipe pushes to them directly, so the pushes run in bank 2 with it
 /// (no vtable, nothing of them left in bank 1's stub).
-pub struct DinSinks<'a, 'q> {
+pub struct DinSinks<'a, 'q, const N: usize = CTRL_RING_LEN> {
     pub notes: &'a mut NoteProducer<'q>,
-    pub ctrl: &'a CtrlRing,
+    pub ctrl: &'a CtrlRing<N>,
 }
 
-impl Sinks for DinSinks<'_, '_> {
+impl<const N: usize> Sinks for DinSinks<'_, '_, N> {
     #[inline]
     fn note(&mut self, e: InEvent) -> bool {
         self.notes.push(e)
@@ -548,6 +552,19 @@ impl PipeSlot {
     #[inline(always)]
     pub fn played(&self) -> bool {
         self.pipe().is_some_and(DinPipe::played)
+    }
+
+    /// `feed` for a caller already in bank 2 (USB's poll), on a ring of
+    /// any length: the pipe itself, no door call.
+    #[inline(always)]
+    pub fn feed_bank2<const N: usize>(&mut self, bytes: &[u8], out: &mut DinSinks<'_, '_, N>) {
+        self.built().feed(bytes, out);
+    }
+
+    /// `lost`, as `feed_bank2`.
+    #[inline(always)]
+    pub fn lost_bank2<const N: usize>(&mut self, out: &mut DinSinks<'_, '_, N>) {
+        self.built().lost(out);
     }
 
     /// The pipe, built first if it is not yet. Inlined into the door's

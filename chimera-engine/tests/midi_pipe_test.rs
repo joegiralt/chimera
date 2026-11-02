@@ -3,7 +3,8 @@
 //! `old_route_queued`.
 
 use chimera_engine::midi_in::{
-    self, CtrlEvent, CtrlRing, DinPipe, DinSinks, Left, PipeSlot, Sinks,
+    self, CTRL_RING_LEN, CTRL_USB_LEN, CtrlEvent, CtrlRing, DinPipe, DinSinks, Left, PipeSlot,
+    Sinks,
 };
 use chimera_engine::note_queue::{
     BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteConsumer, NoteEvent, NoteKind,
@@ -277,7 +278,7 @@ fn data(i: u16) -> CtrlEvent {
 
 #[test]
 fn ring_drop_loses_whole_events() {
-    let ring = CtrlRing::new();
+    let ring: CtrlRing = CtrlRing::new();
     for n in 0..64 {
         assert!(ring.push(data(n)));
     }
@@ -294,11 +295,25 @@ fn ring_drop_loses_whole_events() {
     assert_eq!(ring.pop(), None);
 }
 
+/// USB's ring takes a host's burst whole: 3,780 B on the unit, 420 note
+/// pairs each with a CC, landed between two UI laps. DIN's stays 64.
+#[test]
+fn usb_ring_takes_a_burst_whole() {
+    assert_eq!(CTRL_RING_LEN, 64, "DIN's ring unchanged");
+    assert_eq!(core::mem::size_of::<CtrlRing>(), 64 * 8 + 12);
+    let ring: CtrlRing<CTRL_USB_LEN> = CtrlRing::new();
+    for n in 0..420 {
+        assert!(ring.push(data(n)), "CC {n} refused");
+    }
+    assert_eq!(ring.dropped(), 0);
+    assert!(ring.drain().eq((0..420).map(data)), "in order, whole");
+}
+
 /// A build with no MIDI map drops the ring unread each pass, so a flood
 /// never counts as a drop.
 #[test]
 fn clear_drops_what_waits_and_frees_the_ring() {
-    let ring = CtrlRing::new();
+    let ring: CtrlRing = CtrlRing::new();
     for n in 0..64 {
         assert!(ring.push(data(n)));
     }

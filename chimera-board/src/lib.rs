@@ -815,17 +815,10 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(all(feature = "midi-din", feature = "midi-map", feature = "midi-usb"))]
         {
             use chimera_core::midi_in::Port;
-            // One pop site for both rings: DIN's, then USB's.
-            let mut at = Some((Port::Din, ctrl_din));
-            let ev = core::iter::from_fn(|| {
-                loop {
-                    let (p, ring) = at?;
-                    if let Some(e) = ring.pop() {
-                        return Some((p, e));
-                    }
-                    at = (p == Port::Din).then_some((Port::Usb, ctrl_usb));
-                }
-            });
+            let ev = ctrl_din
+                .drain()
+                .map(|e| (Port::Din, e))
+                .chain(ctrl_usb.drain().map(|e| (Port::Usb, e)));
             ui.hear_ccs(ev, controls::now_ms(), shared_w.taken());
         }
         #[cfg(all(feature = "midi-din", not(feature = "midi-map")))]

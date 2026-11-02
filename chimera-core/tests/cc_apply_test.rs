@@ -20,7 +20,7 @@ use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::va::VaParams;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-use chimera_core::midi_in::{CTRL_RING_LEN, Cc, CcEvent, CtrlEvent, CtrlRing, Port};
+use chimera_core::midi_in::{CTRL_RING_LEN, CTRL_USB_LEN, Cc, CcEvent, CtrlEvent, CtrlRing, Port};
 use chimera_core::midi_map::{Input as MapInput, Mappable, Span};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
@@ -583,7 +583,7 @@ fn hand_wins() {
 fn ring_keeps_the_last_value() {
     let mut b = Bench::algo();
     b.map(P1, 74, CUTOFF);
-    let ring = CtrlRing::new();
+    let ring: CtrlRing = CtrlRing::new();
     let ctl = |e: CcEvent| {
         CtrlEvent::Ctl(
             e.channel,
@@ -1069,7 +1069,7 @@ fn both_rings_share_one_budget() {
     b.publish();
     b.note();
     b.reset_most();
-    let (din, usb) = (CtrlRing::new(), CtrlRing::new());
+    let (din, usb): (CtrlRing, CtrlRing<CTRL_USB_LEN>) = (CtrlRing::new(), CtrlRing::new());
     let n = 500;
     for t in 0..=n {
         let v = (127 * t / n) as u8;
@@ -1082,7 +1082,11 @@ fn both_rings_share_one_budget() {
                     value: chimera_midi::value::U7::new(v).unwrap(),
                 },
             );
-            if i % 2 == 0 { &din } else { &usb }.push(ctl);
+            if i % 2 == 0 {
+                din.push(ctl)
+            } else {
+                usb.push(ctl)
+            };
         }
         b.now += PASS_MS;
         let ev = din

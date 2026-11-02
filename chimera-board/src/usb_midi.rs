@@ -21,7 +21,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use chimera_core::midi_in::{CtrlRing, PipeSlot};
+use chimera_core::midi_in::{CTRL_USB_LEN, CtrlRing, PipeSlot};
 use chimera_core::note_queue::NoteProducer;
 use chimera_core::out_ring::OutRing;
 use chimera_midi::usb::Packer;
@@ -85,7 +85,7 @@ impl MidiSlot {
 struct MidiIn {
     pipe: PipeSlot,
     notes: Option<NoteProducer<'static>>,
-    ctrl: Option<&'static CtrlRing>,
+    ctrl: Option<&'static CtrlRing<CTRL_USB_LEN>>,
     out: Option<&'static OutRing>,
     packer: Packer,
     held: [[u8; 4]; 16],
@@ -106,7 +106,7 @@ static mut IN: MidiIn = MidiIn {
 /// installs the device: bank 2's poll feeds and empties them.
 pub(crate) fn set_in(
     notes: Option<NoteProducer<'static>>,
-    ctrl: &'static CtrlRing,
+    ctrl: &'static CtrlRing<CTRL_USB_LEN>,
     out: Option<&'static OutRing>,
 ) {
     // SAFETY: before `connect` unmasks `OTG_FS` or makes the `Link` that
@@ -189,7 +189,7 @@ mod door {
 
     /// The device polled with both classes; leaving Configured, every
     /// Part let go as `lets_go` rules; then every OUT packet read, cable 0's bytes fed to
-    /// USB's pipe one door call each, the rest dropped and counted; then
+    /// USB's pipe here in bank 2 (its ring is not DIN's), the rest dropped and counted; then
     /// the out ring sent (`send`).
     pub(super) fn poll(core: &mut UsbCore) {
         let UsbCore {
@@ -223,14 +223,14 @@ mod door {
             if let (false, Some(s)) = (up, sinks.as_mut())
                 && midi_in::lets_go(left, pipe.played())
             {
-                midi_in::lost(pipe, s);
+                pipe.lost_bank2(s);
             }
         }
         let mut p = [0u8; PACKET as usize];
         while let Ok(n) = m.out.read(&mut p) {
             for &e in p[..n].as_chunks::<4>().0 {
                 match (unpack(e), sinks.as_mut()) {
-                    (Some((0, b)), Some(s)) => midi_in::feed(pipe, b.as_slice(), s),
+                    (Some((0, b)), Some(s)) => pipe.feed_bank2(b.as_slice(), s),
                     _ => irq.midi_drops = irq.midi_drops.wrapping_add(1),
                 }
             }
