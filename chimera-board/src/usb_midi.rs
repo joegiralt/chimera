@@ -26,12 +26,14 @@ use chimera_core::note_queue::NoteProducer;
 use chimera_core::out_ring::OutRing;
 use chimera_midi::usb::Packer;
 
+/// USB's control ring, as `shared::Ctrl` sizes it.
+type UsbCtrl = chimera_core::midi_in::CtrlRing<{ crate::shared::CTRL_USB }>;
+
 use usb_device::class_prelude::{
     DescriptorWriter, EndpointAddress, EndpointIn, EndpointOut, InterfaceNumber, LangID,
     StringIndex, UsbBusAllocator, UsbClass,
 };
 
-use crate::shared::UsbCtrl;
 use crate::usb::{Bus, UsbCore};
 
 /// The jacks' name, and so the port's.

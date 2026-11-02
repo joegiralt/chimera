@@ -3,8 +3,8 @@
 //! `old_route_queued`.
 
 use chimera_engine::midi_in::{
-    self, CTRL_RING_LEN, CTRL_USB_LEN, CtrlEvent, CtrlRing, DinPipe, DinSinks, Left, PipeSlot,
-    Sinks,
+    self, CTRL_RING_LEN, CTRL_USB_LEN, CtrlEvent, CtrlPorts, CtrlRing, DinPipe, DinSinks, Left,
+    PipeSlot, Port, Sinks,
 };
 use chimera_engine::note_queue::{
     BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteConsumer, NoteEvent, NoteKind,
@@ -324,6 +324,35 @@ fn clear_drops_what_waits_and_frees_the_ring() {
     }
     assert_eq!(ring.dropped(), 0);
     assert_eq!(ring.pop(), Some(data(0)));
+}
+
+/// One drain over both ports: DIN's first, each tagged with its port.
+#[test]
+fn ports_drain_din_then_usb_tagged() {
+    let ports: CtrlPorts = CtrlPorts::new();
+    assert!(ports.usb.push(data(10)));
+    assert!(ports.din.push(data(1)));
+    assert!(ports.usb.push(data(11)));
+    assert!(ports.din.push(data(2)));
+    let all: Vec<_> = ports.drain().collect();
+    assert_eq!(
+        all,
+        [
+            (Port::Din, data(1)),
+            (Port::Din, data(2)),
+            (Port::Usb, data(10)),
+            (Port::Usb, data(11)),
+        ]
+    );
+    assert_eq!(ports.drain().next(), None);
+}
+
+#[test]
+fn ports_clear_both() {
+    let ports: CtrlPorts<64> = CtrlPorts::new();
+    assert!(ports.din.push(data(1)) && ports.usb.push(data(2)));
+    ports.clear();
+    assert_eq!(ports.drain().next(), None);
 }
 
 #[test]

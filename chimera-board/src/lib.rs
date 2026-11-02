@@ -637,19 +637,17 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         allow(unused_mut, unused_variables)
     )]
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
-    #[cfg(feature = "midi-din")]
-    let ctrl_din = shared::take_ctrl_din().expect("DIN control ring taken once");
+    #[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+    let ctrl = shared::take_ctrl().expect("control rings taken once");
     #[cfg(all(feature = "midi-din", feature = "midi-map"))]
     let out_din = shared::take_out_din().expect("DIN out ring taken once");
     // USB MIDI in's, for the port's poll once it connects (step 4).
-    #[cfg(feature = "midi-usb")]
-    let ctrl_usb = shared::take_ctrl_usb().expect("USB control ring taken once");
     #[cfg(all(feature = "midi-usb", feature = "midi-map"))]
     let out_usb = shared::take_out_usb().expect("USB out ring taken once");
     #[cfg(feature = "midi-usb")]
     usb_midi::set_in(
-        producers.take(shared::USB),
-        ctrl_usb,
+        producers.take(shared::source(shared::Port::Usb)),
+        &ctrl.usb,
         #[cfg(feature = "midi-map")]
         Some(out_usb),
         #[cfg(not(feature = "midi-map"))]
@@ -669,10 +667,10 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         streams,
         #[cfg(feature = "midi-din")]
         din: producers
-            .take(shared::DIN)
+            .take(shared::source(shared::Port::Din))
             .expect("DIN producer taken once"),
         #[cfg(feature = "midi-din")]
-        din_ctrl: ctrl_din,
+        din_ctrl: &ctrl.din,
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         din_out: out_din,
     });
@@ -810,32 +808,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // one pass, one budget. No bench run plays a controller: bench
         // firmware leaves the MIDI map out (FLASH, #507) and drops the rings
         // unread, so they never fill.
-        #[cfg(all(feature = "midi-din", feature = "midi-map", not(feature = "midi-usb")))]
-        ui.hear_ccs(ctrl_din.drain(), controls::now_ms(), shared_w.taken());
-        #[cfg(all(feature = "midi-din", feature = "midi-map", feature = "midi-usb"))]
-        {
-            use chimera_core::midi_in::Port;
-            // DIN's, then USB's; a `from_fn`, not a `Chain`, whose
-            // overrides `hear_ccs`'s `dyn` would link into bank 1.
-            let mut din = true;
-            let ev = core::iter::from_fn(|| {
-                if din {
-                    match ctrl_din.pop() {
-                        Some(e) => return Some((Port::Din, e)),
-                        None => din = false,
-                    }
-                }
-                ctrl_usb.pop().map(|e| (Port::Usb, e))
-            });
-            ui.hear_ccs(ev, controls::now_ms(), shared_w.taken());
-        }
-        #[cfg(all(feature = "midi-din", not(feature = "midi-map")))]
-        ctrl_din.clear();
+        #[cfg(all(any(feature = "midi-din", feature = "midi-usb"), feature = "midi-map"))]
+        ui.hear_ccs(ctrl.drain(), controls::now_ms(), shared_w.taken());
         #[cfg(all(
-            feature = "midi-usb",
-            not(all(feature = "midi-din", feature = "midi-map"))
+            any(feature = "midi-din", feature = "midi-usb"),
+            not(feature = "midi-map")
         ))]
-        ctrl_usb.clear();
+        ctrl.clear();
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         din_out(
             ui,

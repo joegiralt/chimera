@@ -10,7 +10,9 @@ use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{self, MAX_PARTS};
 use chimera_core::instrument::AudioShared;
 #[cfg(any(feature = "midi-din", feature = "midi-usb"))]
-use chimera_core::midi_in::CtrlRing;
+use chimera_core::midi_in::CtrlPorts;
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+pub use chimera_core::midi_in::Port;
 use chimera_core::note_queue::NoteSources;
 #[cfg(any(feature = "midi-din", feature = "midi-usb", feature = "bench"))]
 use chimera_core::note_queue::SourceId;
@@ -261,47 +263,28 @@ pub fn take_formant() -> Option<(Writer<FormantViews>, Reader<FormantViews>)> {
     Some(TripleBuffer::init_in_place(slot, || [FormantView::NONE; MAX_PARTS]).split())
 }
 
-// MIDI DIN's control ring (MIDI map spec § 1), the USART1 ISR's to push
-// and the UI's to drain: in AXI, which has room over its margin (ADR 0087)
-// where D2 has none in the bench builds. Built at `take_ctrl_din`.
-#[cfg(feature = "midi-din")]
-static mut CTRL_DIN: MaybeUninit<CtrlRing> = MaybeUninit::uninit();
-#[cfg(feature = "midi-din")]
-static CTRL_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
+/// MIDI in's control rings, one a port (MIDI map spec § 1): each port's
+/// poll pushes, the UI drains. USB's holds a burst (4 KB) where the MIDI
+/// map reads it; elsewhere both are dropped unread each lap, and DIN's 64
+/// keep the bench's AXI margin (ADR 0087).
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+pub type Ctrl = CtrlPorts<{ CTRL_USB }>;
+/// USB's control ring's slots.
+#[cfg(feature = "midi-map")]
+pub const CTRL_USB: usize = chimera_core::midi_in::CTRL_USB_LEN;
+#[cfg(not(feature = "midi-map"))]
+pub const CTRL_USB: usize = chimera_core::midi_in::CTRL_RING_LEN;
 
-/// The DIN control ring, built empty; once. Both ends share the reference.
-#[cfg(feature = "midi-din")]
-pub fn take_ctrl_din() -> Option<&'static CtrlRing> {
-    if CTRL_DIN_TAKEN.swap(true, Ordering::AcqRel) {
-        return None;
-    }
-    // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `CTRL_DIN` ever made; `write` initialises it before any
-    // read, and from then on it is only shared.
-    Some(unsafe { (*addr_of_mut!(CTRL_DIN)).write(CtrlRing::new()) })
-}
+// All zero, so `.bss` in AXI with no code to build it.
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+static CTRL: Ctrl = CtrlPorts::new();
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+static CTRL_TAKEN: AtomicBool = AtomicBool::new(false);
 
-/// USB MIDI's control ring: a burst's (4 KB) where the MIDI map reads it;
-/// elsewhere it is dropped unread each lap, and DIN's 64 keep the bench's
-/// AXI margin (ADR 0087).
-#[cfg(feature = "midi-usb")]
-pub type UsbCtrl = CtrlRing<{ USB_CTRL_LEN }>;
-#[cfg(all(feature = "midi-usb", feature = "midi-map"))]
-const USB_CTRL_LEN: usize = chimera_core::midi_in::CTRL_USB_LEN;
-#[cfg(all(feature = "midi-usb", not(feature = "midi-map")))]
-const USB_CTRL_LEN: usize = chimera_core::midi_in::CTRL_RING_LEN;
-
-// USB MIDI's control ring, the USB poll's to push and the UI's to drain:
-// all zero, so `.bss` in AXI with no code to build it, as `OUT_DIN`.
-#[cfg(feature = "midi-usb")]
-static CTRL_USB: UsbCtrl = CtrlRing::new();
-#[cfg(feature = "midi-usb")]
-static CTRL_USB_TAKEN: AtomicBool = AtomicBool::new(false);
-
-/// The USB control ring, empty; once. Both ends share the reference.
-#[cfg(feature = "midi-usb")]
-pub fn take_ctrl_usb() -> Option<&'static UsbCtrl> {
-    (!CTRL_USB_TAKEN.swap(true, Ordering::AcqRel)).then_some(&CTRL_USB)
+/// The control rings, empty; once. Both ends share the reference.
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+pub fn take_ctrl() -> Option<&'static Ctrl> {
+    (!CTRL_TAKEN.swap(true, Ordering::AcqRel)).then_some(&CTRL)
 }
 
 // DIN OUT's ring (MIDI phase 1 spec § 9), the UI's to push and the USART1
@@ -333,14 +316,16 @@ pub fn take_out_usb() -> Option<&'static OutRing> {
 // What the audio interrupt (`chimera-stm32`) and this side both touch:
 // the note sources, the DMA's and MIDI DIN's counters, the probe's voices.
 
-/// MIDI DIN, USB MIDI with `midi-usb`, and in a bench build the console's
-/// `card`, which plays a chord.
+/// One a MIDI port (DIN's, and USB's with `midi-usb`), and in a bench
+/// build the console's `card`, which plays a chord.
 pub const NOTE_SOURCES: usize =
     1 + cfg!(feature = "midi-usb") as usize + cfg!(feature = "bench") as usize;
-#[cfg(feature = "midi-din")]
-pub const DIN: SourceId<NOTE_SOURCES> = SourceId::new(0);
-#[cfg(feature = "midi-usb")]
-pub const USB: SourceId<NOTE_SOURCES> = SourceId::new(1);
+
+/// Port `p`'s note source: its index. USB's exists only with `midi-usb`.
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+pub const fn source(p: Port) -> SourceId<NOTE_SOURCES> {
+    SourceId::new(p as usize)
+}
 #[cfg(feature = "bench")]
 pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(NOTE_SOURCES - 1);
 pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();

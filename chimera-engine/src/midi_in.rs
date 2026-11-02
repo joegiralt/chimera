@@ -82,6 +82,11 @@ pub enum Port {
     Usb,
 }
 
+impl Port {
+    pub const ALL: [Port; Port::COUNT] = [Port::Din, Port::Usb];
+    pub const COUNT: usize = 2;
+}
+
 /// One message for the UI, either way it came.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeardEv {
@@ -303,6 +308,53 @@ impl<const N: usize> CtrlRing<N> {
     /// Events dropped because the ring was full.
     pub fn dropped(&self) -> u32 {
         self.dropped.load(Ordering::Relaxed)
+    }
+}
+
+/// MIDI in's control rings, one a `Port`: DIN's at DIN's rate, USB's at
+/// `U` slots, a host's burst. Each port's poll pushes its own; the UI is
+/// the one consumer.
+pub struct CtrlPorts<const U: usize = CTRL_USB_LEN> {
+    pub din: CtrlRing,
+    pub usb: CtrlRing<U>,
+}
+
+impl<const U: usize> Default for CtrlPorts<U> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const U: usize> CtrlPorts<U> {
+    pub const fn new() -> Self {
+        Self {
+            din: CtrlRing::new(),
+            usb: CtrlRing::new(),
+        }
+    }
+
+    /// Consumer side: every event waiting, DIN's then USB's, each tagged
+    /// with its port. A `from_fn`, not a `Chain`, whose overrides a `dyn`
+    /// caller would link.
+    #[inline(always)]
+    pub fn drain(&self) -> impl Iterator<Item = (Port, CtrlEvent)> + '_ {
+        let mut din = true;
+        core::iter::from_fn(move || {
+            if din {
+                match self.din.pop() {
+                    Some(e) => return Some((Port::Din, e)),
+                    None => din = false,
+                }
+            }
+            self.usb.pop().map(|e| (Port::Usb, e))
+        })
+    }
+
+    /// Consumer side: both dropped unread.
+    #[inline(always)]
+    pub fn clear(&self) {
+        self.din.clear();
+        self.usb.clear();
     }
 }
 
