@@ -721,13 +721,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             feature = "bank2",
             not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         ))]
-        let bench_redraw = {
+        // A save is card work: an errand.
+        let bench_redraw = usb.errand(|| {
             let ask = card_bench.tick(controls::now_ms(), store, stats_r.as_mut());
             if ask.save {
                 card_bench.saved(bench_save(&mut card, store, ui));
             }
             ask.redraw
-        };
+        });
         #[cfg(not(all(
             feature = "usb-console",
             feature = "bench",
