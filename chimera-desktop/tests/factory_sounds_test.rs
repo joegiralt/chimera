@@ -1290,11 +1290,11 @@ fn renders_steal_at_the_units_voice_budget() {
         stab < 4 && stab <= n,
         "its 4-note stab sounds {stab} of {n}"
     );
-    // A plain VA pad (2040 REV2, 78 a voice since #642) fits seven on
-    // rev V, one under the cap.
+    // A plain VA pad (2040 REV2, 78 a voice since #642) fits the cap's
+    // eight on rev V with MIX billed as the 0.3 unit reads it (ADR 0218).
     assert_eq!(
         render::unit_voices(&run(BASE).unwrap()[0]).unwrap(),
-        MAX_VOICES - 1
+        MAX_VOICES
     );
 }
 

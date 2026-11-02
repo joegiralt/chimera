@@ -390,20 +390,24 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 ///
 /// MIX: 158.2 + 134.4 (TRI/SAW) + 36.2 + 71.6 + 29.9 + 95 = 525.4 (the
 /// recount of 2026-10-20 on the merged tree, ADR 0165).
-pub const COST_MIX: Cost = Cost(530);
+///
+/// Each MODE then billed as the 0.3 unit reads its VA row (ADR 0218;
+/// bench 2026-10-26, rev V at 480 MHz, 4eae5d81), its Part's routes off:
+/// the count less the row's margin, rounded down to 10. MIX read 51 under.
+pub const COST_MIX: Cost = Cost(480);
 /// SYNC: 121.7 (master at 7 kHz) + 184.1 (SINE/TRI slave: a reset's 197.5
 /// × 7/48) + 36.2 + 75.0 + 31.0 + 95 = 543.0.
-pub const COST_SYNC: Cost = Cost(550);
+pub const COST_SYNC: Cost = Cost(500);
 /// RING: 158.2 + 134.4 + 42.6 + 72.2 + 29.9 + 95 = 532.4.
-pub const COST_RING: Cost = Cost(540);
+pub const COST_RING: Cost = Cost(490);
 /// XOR: 158.2 + 134.4 + 53.9 + 73.4 + 29.9 + 95 = 544.8.
-pub const COST_XOR: Cost = Cost(550);
+pub const COST_XOR: Cost = Cost(510);
 /// BITS: 158.2 + 134.4 + 42.6 + 72.4 + 29.9 + 95 = 532.5.
-pub const COST_BITS: Cost = Cost(540);
+pub const COST_BITS: Cost = Cost(500);
 /// FM: 209.3 (SINE/TRI, OSC 1's MOD instance: its edges follow the read,
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
 /// + 77.8 (5.1 of it the modulator's scaling) + 29.9 + 95 = 575.8.
-pub const COST_FM: Cost = Cost(580);
+pub const COST_FM: Cost = Cost(530);
 /// LOOPFM: 84.7 (OSC 1's `render_loop`: its round with the closed form's
 /// divide, the wrap at the 0.45 cap with the jitter's draw; the scale
 /// ramps per block) + 70.1 (OSC 2's) + 37.8 + 52.9 (no VarOsc runs: the
@@ -413,20 +417,20 @@ pub const COST_FM: Cost = Cost(580);
 pub const COST_LOOPFM: Cost = Cost(480);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 72.6 (with `am_reach` at the
 /// BLEND ramp's two ends a block, ADR 0176) + 29.9 + 95 = 534.3.
-pub const COST_AM: Cost = Cost(540);
+pub const COST_AM: Cost = Cost(500);
 /// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +
 /// 3.3 + 37.7 (a kink a sample at the worst: one sign change, its divide and
 /// the BLAMP) + 75.3 + 29.9 + 95 = 584.4.
-pub const COST_MAX: Cost = Cost(590);
+pub const COST_MAX: Cost = Cost(510);
 /// SOFT SYNC: 121.7 (master at 7 kHz) + 232.5 (TRI, OSC 2's reversing
 /// instance through the door: its edges either way at 0.45, a divide a
 /// crossing, a turn's 86.7 × 7/48) + 36.2 + 71.3 + 30.2 + 95 = 586.9.
-pub const COST_SOFTSYNC: Cost = Cost(590);
+pub const COST_SOFTSYNC: Cost = Cost(530);
 /// PHASE (ADR 0160): 223.5 (SINE/TRI, OSC 1's own MOD instance, FM's
 /// with a jump's test) + 142.9 (OSC 2 marking its steps) + 26.5 + 2.9 +
 /// 119.9 (33.5 of it six jumps and marks a block, 6.3 the offset loop) +
 /// 31.3 + 95 = 641.9.
-pub const COST_PHASE: Cost = Cost(650);
+pub const COST_PHASE: Cost = Cost(540);
 
 /// NOISE's pass by KIND (ADR 0197): `tools/loop_count.py` on
 /// `va::noise::kern::add` in the release ELF (bank 2), a sample's round

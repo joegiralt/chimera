@@ -2514,6 +2514,9 @@ impl Rig<'_> {
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        // No routes but the row's own: the project's Part 1 routes would
+        // ride every row that sets only a Sound (ADR 0218).
+        *shared.parts[0].mod_state = ModState::with_sources(MAX_MOD_SOURCES);
         setup(shared);
         let bill = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
         for v in 0..voices {

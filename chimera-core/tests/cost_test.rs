@@ -49,8 +49,8 @@ fn worst() -> AlgoParams {
     p
 }
 
-/// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 330 and `BODY` 80,
-/// host estimates until the bench (Modal 2 step A, task 12), plus
+/// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 310 (the 0.3 unit's
+/// reading, ADR 0218) and `BODY` 80, plus
 /// `CHAIN_COST` (30 since ADR 0060, 36 with ADR 0110's amp gate). Algo is priced from its patch.
 /// Each engine's default filter bills over the LP24 its term carries (VA's
 /// 2040 REV2, 15).
@@ -59,7 +59,7 @@ fn voice_costs_are_the_billed_literals() {
     assert_eq!(Voice::CHAIN_COST, Cost(36));
     assert_eq!(
         voice_cost(EngineType::Modal),
-        Cost(446) + chimera_core::dsp::modal::ModalEngine::PITCH + ModRouting::BASE + LP24
+        Cost(426) + chimera_core::dsp::modal::ModalEngine::PITCH + ModRouting::BASE + LP24
     );
     let mods = ModState::new();
     for e in EngineType::ALL {
@@ -86,8 +86,9 @@ fn the_2040_and_ladder_bill_the_unit() {
     assert_eq!(FilterKind::K2040.cost(K2040Voice::Rev2), Cost(78));
     assert_eq!(FilterKind::Ladder.cost(K2040Voice::Exp), Cost(176));
     assert_eq!(LADDER_COST, Cost(176));
-    // Unit bench 2026-10-22: SOFT 84, SOFT LO 96 over 1 OP.
-    assert_eq!(FxType::Soft.cost(), Cost(100));
+    // Unit bench 2026-10-22: SOFT 84, SOFT LO 96 over 1 OP; 2026-10-26
+    // (ADR 0218): 78 and 90.
+    assert_eq!(FxType::Soft.cost(), Cost(90));
     assert_eq!(FxType::Soft.ramp_cost(), Cost(26));
     assert_eq!(chimera_core::taps::TAP_FOLD_COST, Cost(51));
 }
@@ -994,9 +995,9 @@ fn a16_a17() -> AlgoParams {
 /// some counts below are one fewer.
 const TAPE: bool = cfg!(feature = "master-tape");
 
-/// FX diet spec § Intent and ADR 0031: with the bus at 1,204 (BUS+V
-/// 1,188 of 2026-10-04 and the reverb's tail gate; 1,494 with the master
-/// tape) and the modulator pool's floor (`ModRouting::BASE`, 47) added,
+/// FX diet spec § Intent and ADR 0031: with the bus at 1,190 (BUS+V
+/// 1,186 of 2026-10-26, the reverb's tail gate in it, ADR 0218; 1,494 with
+/// the master tape) and the modulator pool's floor (`ModRouting::BASE`, 47) added,
 /// the costliest patch gets six voices on rev V (6 × 915 + 1,204 = 6,694
 /// ≤ 7,500; a seventh would be 7,609), and five on rev Y ((6,250 − 1,204)
 /// / 915 = 5.5; (6,250 − 1,494) / 915 = 5.2 with the tape),
@@ -1009,7 +1010,7 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 915);
     let plain = 915 + LP24.0;
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
-    let bus = if TAPE { 1_494 } else { 1_204 };
+    let bus = if TAPE { 1_494 } else { 1_190 };
     assert_eq!(FxBus::COST.0, bus, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
@@ -1025,12 +1026,12 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!((budget - playing) / 915, 5);
     // With FOLD in the slot, unrouted (45, ADR 0060): 960, six on rev V
     // and five on rev Y (six and four with the tape); with SOFT as the
-    // unit reads it (100, 2026-10-22), 1,015: six and four (five and four
+    // unit reads it (90, 2026-10-26), 1,005: six and five (five and four
     // with the tape). No factory
     // Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
     let fold = if TAPE { (6, 4) } else { (6, 5) };
-    let soft = if TAPE { (5, 4) } else { (6, 4) };
+    let soft = if TAPE { (5, 4) } else { (6, 5) };
     for (ty, want) in [(FxType::Fold, fold), (FxType::Soft, soft)] {
         let v = plain + ty.cost().0;
         assert_eq!(
@@ -1264,7 +1265,8 @@ fn a_structure_route_on_symp_bills_the_chord_glide() {
 /// Voices beside the whole FX bus at its worst, on rev V and rev Y: the
 /// costlier models get fewer, as they must. BANK's and SYMP's out clip,
 /// stmlib's rational curve for `tanhf` (ADR 0097), gave BANK a third voice
-/// on rev V and SYMP one more on most rows.
+/// on rev V and SYMP one more on most rows. STRING and BOWED then billed as
+/// the 0.3 unit reads them (ADR 0218).
 #[test]
 fn modal_bills_each_model() {
     use chimera_core::dsp::modal::{BankModes, ModalEngine, ResonatorMode};
@@ -1276,10 +1278,10 @@ fn modal_bills_each_model() {
     use ResonatorMode::{Bowed, Modal, String, Sympathetic};
     // Voices on rev V and rev Y, then with the master tape (ADR 0055).
     for (p, billed, voices, taped) in [
-        (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
-        (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
-        (sound(String, 0.3, 0.5), 550, (8, 7), (8, 7)),
-        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
+        (sound(String, 0.0, 0.0), 310, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.0), 390, (8, 8), (8, 8)),
+        (sound(String, 0.3, 0.5), 530, (8, 7), (8, 7)),
+        (sound(Bowed, 0.3, 0.5), 530, (8, 7), (8, 7)),
         (sound(Sympathetic, 0.0, 0.0), 645, (8, 6), (7, 6)),
         (sound(Sympathetic, 0.3, 0.0), 725, (7, 5), (6, 5)),
         (sound(Sympathetic, 0.3, 0.5), 865, (6, 5), (6, 4)),
@@ -1712,13 +1714,12 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
     p
 }
 
-/// Spec § Budget: each MODE bills ADR 0056's count of its worst voice, and
-/// the voices each is admitted beside the reserve on the four rooms (rev V,
-/// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
-/// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
-/// on each: met on rev V, beside ORBIT and with the master tape in every
-/// MODE; on rev Y only MIX (six) and LOOPFM (eight) reach it, the others
-/// fit five (the recount of 2026-10-20, ADR 0165). The rooms are at 75 % (ADR 0124). ADR 0118: WAVE's reach and
+/// Spec § Budget: each MODE bills its row as the 0.3 unit reads it (ADR
+/// 0218; ADR 0165's counts before), and the voices each is admitted beside
+/// the reserve on the four rooms (rev V, rev Y, rev V with ORBIT, rev V
+/// with the master tape), INIT's 2040 REV2 (+15) and the chain and routing
+/// (83) on top. ADR 0040's done-when is six on each: met everywhere but
+/// PHASE on rev Y, five. The rooms are at 75 % (ADR 0124). ADR 0118: WAVE's reach and
 /// SYNC's master held under 7 kHz, points 11 and 12; the sub at the shaped
 /// edge, point 13.
 #[test]
@@ -1739,18 +1740,18 @@ fn va_bills_each_mode() {
     assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 530, [7, 6, 7, 7]),
-        (Sync, 550, [7, 5, 7, 7]),
-        (Ring, 540, [7, 5, 7, 7]),
-        (Xor, 550, [7, 5, 7, 7]),
-        (Bits, 540, [7, 5, 7, 7]),
-        (Fm, 580, [7, 5, 7, 6]),
-        (Am, 540, [7, 5, 7, 7]),
-        (Max, 590, [7, 5, 7, 6]),
+        (Mix, 480, [8, 6, 8, 8]),
+        (Sync, 500, [8, 6, 7, 7]),
+        (Ring, 490, [8, 6, 8, 7]),
+        (Xor, 510, [8, 6, 7, 7]),
+        (Bits, 500, [8, 6, 7, 7]),
+        (Fm, 530, [7, 6, 7, 7]),
+        (Am, 500, [8, 6, 7, 7]),
+        (Max, 510, [8, 6, 7, 7]),
         // The unit reads LOOPFM 712 a voice against 584 (2026-10-22).
         (LoopFm, 480, [8, 6, 8, 8]),
-        (SoftSync, 590, [7, 5, 7, 6]),
-        (Phase, 650, [6, 5, 6, 6]),
+        (SoftSync, 530, [7, 6, 7, 7]),
+        (Phase, 540, [7, 5, 7, 7]),
     ] {
         let p = va_sound(mode);
         assert_eq!(
@@ -1775,14 +1776,14 @@ fn va_noise_bills_only_when_it_plays() {
     for kind in NoiseKind::ALL {
         let mut p = va_sound(VaMode::Mix);
         p.va.noise_kind = kind;
-        assert_eq!(EngineSlot::cost(&p, &none), Cost(530), "{kind:?} at 0");
+        assert_eq!(EngineSlot::cost(&p, &none), Cost(480), "{kind:?} at 0");
         let mut ms = chimera_core::preset::Sound::plain_init(EngineType::Va).mod_state;
         let lvl = ms
             .push(ParamAddr::new(BlockRef::Va, VaParams::NOISE))
             .unwrap();
         ms.set_route(ModSource::Lfo1.index(), lvl, 0);
-        assert_eq!(EngineSlot::cost(&p, &ms), Cost(530), "{kind:?} amount 0");
-        let with = Cost(530 + VaEngine::noise_cost(kind).0);
+        assert_eq!(EngineSlot::cost(&p, &ms), Cost(480), "{kind:?} amount 0");
+        let with = Cost(480 + VaEngine::noise_cost(kind).0);
         ms.set_route(ModSource::Lfo1.index(), lvl, 64);
         assert_eq!(EngineSlot::cost(&p, &ms), with, "{kind:?} routed");
         p.va.noise = 0.01;
@@ -2527,7 +2528,8 @@ fn fuzz_routed_adds_its_ramp() {
 
 /// ADR 0211: FUZZ bills as it reads, over ADR 0156's old ceiling (271 −
 /// 95): a FUZZ Part, meant for mono and bass, gets fewer voices. VA INIT on
-/// the 2040 with FUZZ, beside the reserve on rev V: REV2 and EXP.
+/// the 2040 with FUZZ, beside the reserve on rev V: REV2 and EXP; REV2's
+/// sixth with MIX's 0.3 bill (ADR 0218).
 #[test]
 fn a_fuzz_part_gets_the_voices_its_reading_allows() {
     let none = ModState::new();
@@ -2535,7 +2537,7 @@ fn a_fuzz_part_gets_the_voices_its_reading_allows() {
     let at = |v| room / Voice::cost(&fuzz_voice(v), &none).0;
     assert_eq!((at(K2040Voice::Rev2), at(K2040Voice::Exp)), FUZZ_VOICES);
 }
-const FUZZ_VOICES: (u32, u32) = (5, 5);
+const FUZZ_VOICES: (u32, u32) = (6, 5);
 
 /// ADR 0168, 0192: STABILITY bills `STAB_COST` (5, the unit's 4) on the 2040, LADDER and
 /// SEM below 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN
@@ -2665,7 +2667,7 @@ fn sem_bills_its_count_and_its_voices() {
     }
     assert_eq!(
         table[3],
-        [[7, 5], [6, 5], [8, 6], [8, 6]],
+        [[7, 5], [6, 5], [8, 7], [8, 6]],
         "SEM: ALGO steady, moving; VA steady, moving"
     );
 }
@@ -2759,8 +2761,8 @@ fn the_gate_bills_only_when_up_and_its_voices() {
 
 /// SEM off, on; the 2040 off, on: ALGO and VA, rev V and rev Y.
 const GATE_VOICES: [[[u32; 2]; 2]; 4] = [
-    [[7, 5], [8, 6]],
-    [[6, 5], [7, 5]],
-    [[6, 5], [7, 6]],
-    [[6, 4], [6, 5]],
+    [[7, 5], [8, 7]],
+    [[6, 5], [8, 6]],
+    [[6, 5], [8, 6]],
+    [[6, 4], [7, 5]],
 ];

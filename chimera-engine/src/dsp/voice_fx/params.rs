@@ -83,7 +83,7 @@ impl FxType {
     pub const fn cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,
-            FxType::Soft => Cost(100),
+            FxType::Soft => Cost(90), // SOFT LO reads 90 over 1 OP (ADR 0218)
             FxType::Fuzz => Cost(245),
             FxType::Fold => Cost(80),
         }
