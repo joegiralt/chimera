@@ -361,6 +361,7 @@ impl Unconnected {
                 us_max: 0,
                 storms: 0,
                 midi_drops: 0,
+                configured: false,
             },
         };
         #[cfg(not(feature = "midi-usb"))]
@@ -827,6 +828,8 @@ pub(crate) struct IrqCounts {
     storms: u32,
     /// USB MIDI event packets read and dropped.
     pub(crate) midi_drops: u32,
+    /// Configured, as the last MIDI poll saw it.
+    pub(crate) configured: bool,
 }
 
 impl UsbCore {

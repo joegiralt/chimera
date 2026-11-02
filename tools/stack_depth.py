@@ -69,6 +69,10 @@ DOOR_CALLS = {
         "<chimera_engine::midi_in::DinPipe>::door_idle",
     ),
     "<chimera_board::usb::UsbCore>::poll_all": ("chimera_board::usb_midi::door::poll",),
+    "chimera_board::usb_midi::door::poll": (
+        "<chimera_engine::midi_in::DinPipe>::door_feed",
+        "<chimera_engine::midi_in::DinPipe>::door_lost",
+    ),
     "<chimera_board::usb_midi::MidiClass as usb_device::class::UsbClass<synopsys_usb_otg::bus::UsbBus<chimera_board::usb::Otg2>>>::get_configuration_descriptors": (
         "chimera_board::usb_midi::door::descriptors",
     ),

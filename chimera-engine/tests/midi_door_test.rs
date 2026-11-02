@@ -104,3 +104,29 @@ fn closed_is_deaf() {
     DOOR_CELL.close();
     assert_eq!(r.notes.len(), 1);
 }
+
+/// `lost` through the door: open, every channel let go; closed, nothing.
+#[test]
+fn lost_through_the_door() {
+    let _g = DOOR.lock().unwrap();
+    let lost = |p: &mut PipeSlot| {
+        let q = NoteQueue::new();
+        let (mut notes, mut audio) = q.split().unwrap();
+        let ctrl = CtrlRing::new();
+        midi_in::lost(
+            p,
+            &mut DinSinks {
+                notes: &mut notes,
+                ctrl: &ctrl,
+            },
+        );
+        let n = core::iter::from_fn(|| audio.pop()).count();
+        (n, ctrl.drain().collect::<Vec<_>>())
+    };
+    DOOR_CELL.close();
+    assert_eq!(lost(&mut PipeSlot::new()), (0, vec![]));
+    DOOR_CELL.open_host();
+    let r = lost(&mut PipeSlot::new());
+    DOOR_CELL.close();
+    assert_eq!(r, (16, vec![CtrlEvent::SensingLost]));
+}

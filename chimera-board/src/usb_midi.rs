@@ -8,8 +8,16 @@
 //! bank 1 holds it, and it may name only bank 1's code. The descriptors
 //! are reached through a pointer the allocation stores in the class, and
 //! only bank 2's poll ever hands the class to the device.
+//!
+//! MIDI in: each OUT packet's bytes, cable 0's, through USB's own pipe into
+//! its note source and control ring, as DIN's (spec §§ 7, 8). Leaving
+//! Configured (bus reset, suspend) lets every Part go.
 
 use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
+use chimera_core::midi_in::{CtrlRing, PipeSlot};
+use chimera_core::note_queue::NoteProducer;
 
 use usb_device::class_prelude::{
     DescriptorWriter, EndpointAddress, EndpointIn, EndpointOut, InterfaceNumber, LangID,
@@ -65,6 +73,30 @@ impl MidiSlot {
     }
 }
 
+/// USB MIDI in's pipe and sinks. The sinks are set before `connect`; from
+/// then on only the poll touches it, under the cell's exclusion.
+struct MidiIn {
+    pipe: PipeSlot,
+    notes: Option<NoteProducer<'static>>,
+    ctrl: Option<&'static CtrlRing>,
+}
+
+static mut IN: MidiIn = MidiIn {
+    pipe: PipeSlot::new(),
+    notes: None,
+    ctrl: None,
+};
+
+/// USB's note producer and control ring, before `connect` installs the
+/// device: bank 2's poll feeds them.
+pub(crate) fn set_in(notes: Option<NoteProducer<'static>>, ctrl: &'static CtrlRing) {
+    // SAFETY: before `connect` unmasks `OTG_FS` or makes the `Link` that
+    // `with` needs, so no poll reads `IN` yet.
+    let i = unsafe { &mut *addr_of_mut!(IN) };
+    i.notes = notes;
+    i.ctrl = Some(ctrl);
+}
+
 /// The board door's USB entries.
 #[repr(C)]
 pub(crate) struct UsbDoor {
@@ -105,10 +137,15 @@ impl UsbClass<Bus> for MidiClass {
 
 /// Bank 2's half.
 mod door {
+    use core::ptr::addr_of_mut;
+
+    use chimera_core::midi_in::{self, DinSinks};
+    use chimera_midi::usb::unpack;
     use chimera_midi::usb_class::{Ids, descriptors as write};
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
+    use usb_device::device::UsbDeviceState;
 
-    use super::{MidiClass, MidiSlot};
+    use super::{IN, MidiClass, MidiIn, MidiSlot};
     use crate::usb::{Bus, UsbCore};
 
     /// Bulk packets at full speed.
@@ -128,8 +165,9 @@ mod door {
         slot.out = Some(out);
     }
 
-    /// The device polled with both classes, then every OUT packet read:
-    /// dropped and counted until USB MIDI in feeds them to its pipe.
+    /// The device polled with both classes; leaving Configured, every
+    /// Part let go; then every OUT packet read, cable 0's bytes fed to
+    /// USB's pipe one door call each, the rest dropped and counted.
     pub(super) fn poll(core: &mut UsbCore) {
         let UsbCore {
             dev,
@@ -142,9 +180,28 @@ mod door {
             return;
         };
         dev.poll(&mut [serial, m]);
+        // SAFETY: only the poll touches `IN` once `connect` has run, and
+        // the poll runs in the handler or under `with`, which masks it.
+        let MidiIn { pipe, notes, ctrl } = unsafe { &mut *addr_of_mut!(IN) };
+        let mut sinks = notes
+            .as_mut()
+            .zip(*ctrl)
+            .map(|(notes, ctrl)| DinSinks { notes, ctrl });
+        let up = dev.state() == UsbDeviceState::Configured;
+        if irq.configured != up {
+            irq.configured = up;
+            if let (false, Some(s)) = (up, sinks.as_mut()) {
+                midi_in::lost(pipe, s);
+            }
+        }
         let mut p = [0u8; PACKET as usize];
         while let Ok(n) = m.out.read(&mut p) {
-            irq.midi_drops = irq.midi_drops.wrapping_add((n / 4) as u32);
+            for &e in p[..n].as_chunks::<4>().0 {
+                match (unpack(e), sinks.as_mut()) {
+                    (Some((0, b)), Some(s)) => midi_in::feed(pipe, b.as_slice(), s),
+                    _ => irq.midi_drops = irq.midi_drops.wrapping_add(1),
+                }
+            }
         }
     }
 

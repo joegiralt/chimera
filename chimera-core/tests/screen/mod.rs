@@ -2667,7 +2667,7 @@ pub fn audio_fixture() -> AudioStats {
     s.load_peak = 41;
     s.overruns = 2;
     s.desyncs = 1;
-    s.drops = [0, 3];
+    s.drops[..2].copy_from_slice(&[0, 3]);
     s.sources = 2;
     s.stack_used = 12_000;
     s

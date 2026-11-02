@@ -5,6 +5,7 @@
 //!
 //! `DinPipe` runs both parser layers in bank 2, behind `MidiDoor`: a shell
 //! hands its bytes to `feed` (one door call per ISR entry, spec § 7.2).
+//! USB's shell feeds its own slot the same way, and `lost` on detach.
 //! Closed, MIDI in is deaf, notes included (spec § 13): no bank-1 parser.
 
 use core::mem::MaybeUninit;
@@ -414,15 +415,21 @@ impl DinPipe {
     /// lets go and the UI hears it.
     pub fn idle<S: Sinks + ?Sized>(&mut self, out: &mut S) {
         if self.sense.timed_out() {
-            let mut sink = Counted {
-                out,
-                stats: &mut self.stats,
-            };
-            for c in 0..16 {
-                sink.mode(Channel::clamped(c), ChannelMode::NotesOff);
-            }
-            sink.ctrl(CtrlEvent::SensingLost);
+            self.lost(out);
         }
+    }
+
+    /// The source went away (USB's bus reset or suspend): every Part lets
+    /// go and the UI hears it, sensing armed or not.
+    pub fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S) {
+        let mut sink = Counted {
+            out,
+            stats: &mut self.stats,
+        };
+        for c in 0..16 {
+            sink.mode(Channel::clamped(c), ChannelMode::NotesOff);
+        }
+        sink.ctrl(CtrlEvent::SensingLost);
     }
 
     /// A field read, so bank 1's ISR may call it: armed, it sets the
@@ -516,7 +523,7 @@ impl PipeSlot {
 
 /// `DinPipe::feed` as the door carries it.
 pub type MidiFeed = fn(&mut PipeSlot, &[u8], &mut DinSinks<'_, '_>);
-/// `DinPipe::idle` as the door carries it.
+/// `DinPipe::idle` and `lost` as the door carries them.
 pub type MidiIdle = fn(&mut PipeSlot, &mut DinSinks<'_, '_>);
 
 /// `midi_map::codec::decode` as the door carries it.
@@ -530,6 +537,7 @@ pub type MapEncode = fn(&MidiMap, &mut RecordBuf);
 pub struct MidiDoor {
     pub feed: MidiFeed,
     pub idle: MidiIdle,
+    pub lost: MidiIdle,
     pub decode_map: MapDecode,
     pub encode_map: MapEncode,
 }
@@ -538,6 +546,7 @@ impl MidiDoor {
     pub const DOOR: MidiDoor = MidiDoor {
         feed: DinPipe::door_feed,
         idle: DinPipe::door_idle,
+        lost: DinPipe::door_lost,
         decode_map: codec::decode,
         encode_map: codec::encode,
     };
@@ -552,6 +561,10 @@ impl DinPipe {
 
     fn door_idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
         slot.built().idle(out);
+    }
+
+    fn door_lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
+        slot.built().lost(out);
     }
 }
 
@@ -572,6 +585,15 @@ pub fn idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
     crate::bank2::DOOR_CELL.with(|d| (d.midi.idle)(slot, out));
     #[cfg(not(feature = "bank2"))]
     DinPipe::door_idle(slot, out);
+}
+
+/// The source went away (`DinPipe::lost`), as `feed`: closed, nothing.
+#[inline(always)]
+pub fn lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
+    #[cfg(feature = "bank2")]
+    crate::bank2::DOOR_CELL.with(|d| (d.midi.lost)(slot, out));
+    #[cfg(not(feature = "bank2"))]
+    DinPipe::door_lost(slot, out);
 }
 
 /// A map record checked and, with `m`, decoded (`codec::decode`) through

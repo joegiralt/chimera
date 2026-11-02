@@ -609,10 +609,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (formant_w, mut formant_r) = shared::take_formant().expect("formant views taken once");
     let (mut shared_w, shared_r, knobs) =
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
-    // Without MIDI DIN or `card` nothing takes a producer.
+    // Without MIDI DIN, USB or `card` nothing takes a producer.
     #[cfg_attr(
         not(any(
             feature = "midi-din",
+            feature = "midi-usb",
             all(
                 feature = "bench",
                 feature = "usb-console",
@@ -626,6 +627,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let ctrl_din = shared::take_ctrl_din().expect("DIN control ring taken once");
     #[cfg(all(feature = "midi-din", feature = "midi-map"))]
     let out_din = shared::take_out_din().expect("DIN out ring taken once");
+    // USB MIDI in's, for the port's poll once it connects (step 4).
+    #[cfg(feature = "midi-usb")]
+    let ctrl_usb = shared::take_ctrl_usb().expect("USB control ring taken once");
+    #[cfg(feature = "midi-usb")]
+    usb_midi::set_in(producers.take(shared::USB), ctrl_usb);
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -782,8 +788,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // and drops the ring unread, so it never fills.
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         ui.hear_ccs(ctrl_din.drain(), controls::now_ms(), shared_w.taken());
+        // Then USB's.
+        #[cfg(all(feature = "midi-usb", feature = "midi-map"))]
+        ui.hear_ccs(ctrl_usb.drain(), controls::now_ms(), shared_w.taken());
         #[cfg(all(feature = "midi-din", not(feature = "midi-map")))]
         ctrl_din.clear();
+        #[cfg(all(feature = "midi-usb", not(feature = "midi-map")))]
+        ctrl_usb.clear();
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         din_out(ui, out_din);
         // SYSTEM synced first: a THEME change made in this visit is kept.

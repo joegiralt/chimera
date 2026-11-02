@@ -9,10 +9,10 @@ use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{self, MAX_PARTS};
 use chimera_core::instrument::AudioShared;
-#[cfg(feature = "midi-din")]
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
 use chimera_core::midi_in::CtrlRing;
 use chimera_core::note_queue::NoteSources;
-#[cfg(any(feature = "midi-din", feature = "bench"))]
+#[cfg(any(feature = "midi-din", feature = "midi-usb", feature = "bench"))]
 use chimera_core::note_queue::SourceId;
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitView;
@@ -281,6 +281,19 @@ pub fn take_ctrl_din() -> Option<&'static CtrlRing> {
     Some(unsafe { (*addr_of_mut!(CTRL_DIN)).write(CtrlRing::new()) })
 }
 
+// USB MIDI's control ring, the USB poll's to push and the UI's to drain:
+// all zero, so `.bss` with no code to build it, as `OUT_DIN`.
+#[cfg(feature = "midi-usb")]
+static CTRL_USB: CtrlRing = CtrlRing::new();
+#[cfg(feature = "midi-usb")]
+static CTRL_USB_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The USB control ring, empty; once. Both ends share the reference.
+#[cfg(feature = "midi-usb")]
+pub fn take_ctrl_usb() -> Option<&'static CtrlRing> {
+    (!CTRL_USB_TAKEN.swap(true, Ordering::AcqRel)).then_some(&CTRL_USB)
+}
+
 // DIN OUT's ring (MIDI phase 1 spec § 9), the UI's to push and the USART1
 // ISR's to pop: all zero, so `.bss` in AXI with no code to build it.
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
@@ -297,12 +310,16 @@ pub fn take_out_din() -> Option<&'static OutRing> {
 // What the audio interrupt (`chimera-stm32`) and this side both touch:
 // the note sources, the DMA's and MIDI DIN's counters, the probe's voices.
 
-/// MIDI DIN, and in a bench build the console's `card`, which plays a chord.
-pub const NOTE_SOURCES: usize = if cfg!(feature = "bench") { 2 } else { 1 };
+/// MIDI DIN, USB MIDI with `midi-usb`, and in a bench build the console's
+/// `card`, which plays a chord.
+pub const NOTE_SOURCES: usize =
+    1 + cfg!(feature = "midi-usb") as usize + cfg!(feature = "bench") as usize;
 #[cfg(feature = "midi-din")]
 pub const DIN: SourceId<NOTE_SOURCES> = SourceId::new(0);
+#[cfg(feature = "midi-usb")]
+pub const USB: SourceId<NOTE_SOURCES> = SourceId::new(1);
 #[cfg(feature = "bench")]
-pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(1);
+pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(NOTE_SOURCES - 1);
 pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
 
 pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);

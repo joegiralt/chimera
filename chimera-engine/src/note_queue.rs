@@ -357,7 +357,7 @@ impl NoteQueue {
     }
 }
 
-pub const MAX_NOTE_SOURCES: usize = 2;
+pub const MAX_NOTE_SOURCES: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceId<const N: usize>(usize);

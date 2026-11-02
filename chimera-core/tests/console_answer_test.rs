@@ -322,7 +322,7 @@ fn stats_reads_audio_load_and_the_loop() {
         a.stack_used,
     ) = (23, 41, 0, 2, 2, 12_288);
     (a.dma_errors, a.fifo_errors) = (3, 4);
-    a.drops = [5, 7];
+    a.drops[..2].copy_from_slice(&[5, 7]);
     a.record_voices(5, 60, false);
     a.record_voices(3, 47, false);
     u.stats = Some(Stats {
@@ -339,7 +339,7 @@ fn stats_reads_audio_load_and_the_loop() {
     for (sources, want) in [
         (1, "\ndrops 5\n"),
         (0, "\ndrops -\n"),
-        (200, "\ndrops 5 7\n"),
+        (200, "\ndrops 5 7 0\n"),
     ] {
         a.sources = sources;
         u.stats = Some(Stats {

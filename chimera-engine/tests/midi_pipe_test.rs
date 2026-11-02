@@ -469,6 +469,36 @@ fn fe_rearms_after_timeout() {
     assert_eq!(din.run(&[]).0, all_notes_off());
 }
 
+/// USB's detach: every channel let go and the UI told, sensing armed or
+/// not, every time.
+#[test]
+fn lost_releases_every_channel() {
+    let mut din = Din::new();
+    din.run(&[0x90, 60, 100, 0x99, 36, 100]);
+    assert!(!din.slot.sensing_armed());
+    let mut lost = || {
+        let mut out = DinSinks {
+            notes: &mut din.notes,
+            ctrl: din.ring,
+        };
+        midi_in::lost(&mut din.slot, &mut out);
+        let heard: Vec<_> = core::iter::from_fn(|| din.audio.pop()).collect();
+        (heard, din.ring.drain().collect::<Vec<_>>())
+    };
+    assert_eq!(lost(), (all_notes_off(), vec![CtrlEvent::SensingLost]));
+    assert_eq!(lost().0, all_notes_off(), "each transition");
+    din.run(&[0x91, 62, 100, 0xFE]);
+    assert!(din.slot.sensing_armed());
+    let mut out = DinSinks {
+        notes: &mut din.notes,
+        ctrl: din.ring,
+    };
+    midi_in::lost(&mut din.slot, &mut out);
+    let (notes, ctrl) = din.run(&[0xF8]);
+    assert_eq!(notes[..16], all_notes_off()[..], "armed too");
+    assert_eq!(ctrl, [CtrlEvent::SensingLost]);
+}
+
 #[test]
 fn stats_count_faults_dropped_programs_and_refusals() {
     let mut p = DinPipe::new();
