@@ -38,6 +38,8 @@ use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
 use chimera_core::console::{StormWindow, starved, storm};
 #[cfg(feature = "midi-usb")]
+use chimera_hal::units::Cycles;
+#[cfg(feature = "midi-usb")]
 use core::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::Ordering};
 #[cfg(feature = "midi-usb")]
 use cortex_m::peripheral::NVIC;
@@ -357,9 +359,9 @@ impl Unconnected {
                 window: StormWindow::new(),
                 // SysTick runs from boot step 1: the tick test holds from here.
                 tick: crate::controls::now_ms().0,
-                tick_at: DWT::cycle_count(),
-                served_at: None,
-                cycles_per_us: (self.cpu_hz / 1_000_000).max(1),
+                tick_at: crate::shared::dwt(),
+                alive: None,
+                per_ms: Cycles::new((self.cpu_hz / 1_000).max(1)),
                 held: false,
                 cycles: 0,
                 us_max: 0,
@@ -845,11 +847,12 @@ pub(crate) struct IrqCounts {
     /// SysTick's tick as the handler last saw it, and the DWT cycle it
     /// saw it change.
     tick: u32,
-    tick_at: u32,
-    /// The DWT cycle the UI last let go of the cell (`with`); `None`
-    /// before the first.
-    served_at: Option<u32>,
-    cycles_per_us: u32,
+    tick_at: Cycles,
+    /// The UI's last sign of life (`with`); `None` before the first, and
+    /// on an errand.
+    alive: Option<Cycles>,
+    /// DWT cycles in a millisecond.
+    per_ms: Cycles,
     /// The guard masked the handler: `with` leaves it masked, and the end
     /// of `Usb::service` unmasks it.
     held: bool,
@@ -958,7 +961,7 @@ impl Link {
     #[inline(always)]
     fn away(&mut self) {
         #[cfg(feature = "midi-usb")]
-        with(|c| c.irq.served_at = None);
+        with(|c| c.irq.alive = None);
     }
 }
 
@@ -1008,7 +1011,7 @@ fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
     // Any UI hold is the UI alive: a long answer pumps inside one `service`.
     // Before `f`, so `away`'s `None` stands.
-    core.irq.served_at = Some(DWT::cycle_count());
+    core.irq.alive = Some(crate::shared::dwt());
     let r = f(core);
     unlock(core.irq.held);
     r
@@ -1062,12 +1065,12 @@ fn OTG_FS() {
     // only one. The handler can't preempt itself.
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
     let n = &mut core.irq;
-    let (now, per_ms) = (enter.at.get(), n.cycles_per_us * 1_000);
+    let now = enter.at;
     let tick = crate::controls::now_ms().0;
     if tick != n.tick {
         (n.tick, n.tick_at) = (tick, now);
     }
-    if storm(&mut n.window, now, per_ms) || starved(now, n.tick_at, n.served_at, per_ms) {
+    if storm(&mut n.window, now, n.per_ms) || starved(now, n.tick_at, n.alive, n.per_ms) {
         n.held = true;
         n.storms = n.storms.wrapping_add(1);
         NVIC::mask(pac::Interrupt::OTG_FS);
@@ -1081,7 +1084,7 @@ fn OTG_FS() {
     MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
     let n = &mut core.irq;
     n.cycles = n.cycles.wrapping_add(own);
-    n.us_max = n.us_max.max(own / n.cycles_per_us);
+    n.us_max = n.us_max.max(own / (n.per_ms.get() / 1_000).max(1));
 }
 
 /// DSTS.FNSOF (bits 8..22): moving while the host sends start-of-frame.

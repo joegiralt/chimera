@@ -44,7 +44,7 @@ use crate::controls::now_ms;
 use crate::priority::{self, Priority};
 use crate::sd::{BUS, CARD_ADDR, SD_FAST_HZ};
 use crate::shared::{
-    AUDIO_CYCLES, BLOCKS, Cycles, MIDI_CYCLES, STREAM_STATS, Stamp, registry, rings, stamp,
+    AUDIO_CYCLES, BLOCKS, Cycles, MIDI_CYCLES, STREAM_STATS, Stamp, dwt, registry, rings, stamp,
 };
 
 /// The bound on any register poll.
@@ -362,12 +362,12 @@ impl Hz {
 /// Polls `ready` for at most `cycles` cycles and `cycles` tries, so a
 /// cycle counter that doesn't count still ends it.
 fn wait(cycles: Cycles, mut ready: impl FnMut() -> bool) -> bool {
-    let t0 = Cycles::now();
+    let t0 = dwt();
     for _ in 0..cycles.get() {
         if ready() {
             return true;
         }
-        if Cycles::now().since(t0) > cycles {
+        if dwt().since(t0) > cycles {
             break;
         }
     }
@@ -1281,7 +1281,7 @@ impl IrqState {
         if let Err(why) = h.ready(&self.line) {
             return self.drop_job(h, kind, why);
         }
-        let t0 = Cycles::now();
+        let t0 = dwt();
         match h.command(CMD18, arg, &self.line) {
             Ok(()) => {
                 let end = kind.start();
@@ -1390,7 +1390,7 @@ impl IrqState {
                     let filled = self.deliver(&mut h, f);
                     #[cfg(feature = "bench")]
                     if filled {
-                        bench::filled(self.line.us(Cycles::now().since(t0)));
+                        bench::filled(self.line.us(dwt().since(t0)));
                     }
                     #[cfg(not(feature = "bench"))]
                     let _ = filled;
@@ -1514,7 +1514,7 @@ impl IrqState {
                 STATS.reads.fetch_add(1, Ordering::Relaxed);
                 STATS.bursts.fetch_add(self.bursts, Ordering::Relaxed);
                 STATS.bursts_max.fetch_max(self.bursts, Ordering::Relaxed);
-                let took = self.line.us(Cycles::now().since(t0));
+                let took = self.line.us(dwt().since(t0));
                 match done {
                     Done::Filled => {}
                     #[cfg(feature = "bench")]
@@ -1689,7 +1689,7 @@ mod bench {
     use core::ptr::{addr_of, addr_of_mut};
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
-    use crate::shared::Cycles;
+    use crate::shared::dwt;
     use chimera_core::stream::bench::{BENCH, BenchBeds};
     use chimera_core::stream::layout::ChunkIdx;
     use chimera_core::voice_alloc::VoiceIdx;
@@ -1826,13 +1826,13 @@ mod bench {
     pub(super) static CHECK_CYCLES: AtomicU32 = AtomicU32::new(0);
 
     pub(super) fn check(v: VoiceIdx, c: ChunkIdx, bytes: &[u8]) {
-        let t0 = Cycles::now();
+        let t0 = dwt();
         if let Some(b) = beds().and_then(|b| b.check(v))
             && !b.verify(c, bytes)
         {
             BENCH.check_failed(v);
         }
-        CHECK_CYCLES.fetch_add(Cycles::now().since(t0).get(), Ordering::Relaxed);
+        CHECK_CYCLES.fetch_add(dwt().since(t0).get(), Ordering::Relaxed);
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

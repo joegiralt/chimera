@@ -3,6 +3,7 @@
 
 use super::{ANSWER_MS, STALL_MS};
 use chimera_hal::Ms;
+use chimera_hal::units::Cycles;
 
 /// Whether a loop iteration answered a console request.
 #[must_use]
@@ -82,28 +83,34 @@ impl LoopTimer {
 pub const STORM_LIMIT: u32 = 200;
 
 /// The USB interrupt's entries in the millisecond of DWT cycles it opened.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct StormWindow {
-    start: u32,
+    start: Cycles,
     entries: u32,
 }
 
 impl StormWindow {
     pub const fn new() -> Self {
         StormWindow {
-            start: 0,
+            start: Cycles::new(0),
             entries: 0,
         }
     }
 }
 
-/// One entry at `now_cycles`: true once this millisecond holds more than
-/// `STORM_LIMIT` entries. Cycles, not the shell's `Ms`, which steps every
-/// 2 ms and stalls while the storm holds the CPU.
-pub fn storm(window: &mut StormWindow, now_cycles: u32, cycles_per_ms: u32) -> bool {
-    if now_cycles.wrapping_sub(window.start) >= cycles_per_ms {
+impl Default for StormWindow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// One entry at `now`: true once this millisecond (`per_ms`) holds more
+/// than `STORM_LIMIT` entries. Cycles, not the shell's `Ms`, which steps
+/// every 2 ms and stalls while the storm holds the CPU.
+pub fn storm(window: &mut StormWindow, now: Cycles, per_ms: Cycles) -> bool {
+    if now.since(window.start) >= per_ms {
         *window = StormWindow {
-            start: now_cycles,
+            start: now,
             entries: 0,
         };
     }
@@ -114,19 +121,19 @@ pub fn storm(window: &mut StormWindow, now_cycles: u32, cycles_per_ms: u32) -> b
 /// SysTick's tick, which also kicks the 100 ms watchdog, stalled this long
 /// under the USB interrupt: a storm.
 pub const TICK_STALL_MS: u32 = 20;
-/// The UI's last hold of the USB cell this long ago under the USB
-/// interrupt: a storm. A lap peaks at 40 ms, and a long answer holds it at
-/// every pump.
+/// The UI's last sign of life this long ago under the USB interrupt: a
+/// storm. A lap peaks at 40 ms, and a long answer holds the cell at every
+/// pump.
 pub const SERVICE_STALL_MS: u32 = 250;
 
-/// One entry at `now` (DWT): true when the tick, last seen moving at
-/// `tick_at`, has stalled over `TICK_STALL_MS`, or the UI's last hold of
-/// the cell, at `served_at`, is over `SERVICE_STALL_MS` old. `None`: no
-/// hold yet (boot), which never starves. Starvation itself, not a CPU share:
-/// three share tests failed against audio's whole-half renders.
-pub fn starved(now: u32, tick_at: u32, served_at: Option<u32>, cycles_per_ms: u32) -> bool {
-    let over = |at: u32, ms: u32| now.wrapping_sub(at) > ms * cycles_per_ms;
-    over(tick_at, TICK_STALL_MS) || served_at.is_some_and(|at| over(at, SERVICE_STALL_MS))
+/// One entry at `now`: true when the tick, last seen moving at `tick_at`,
+/// has stalled over `TICK_STALL_MS`, or the UI's last sign of life,
+/// `alive`, is over `SERVICE_STALL_MS` old. `None`: none yet (boot) or the
+/// UI on an errand, which never starves. Starvation itself, not a CPU
+/// share: three share tests failed against audio's whole-half renders.
+pub fn starved(now: Cycles, tick_at: Cycles, alive: Option<Cycles>, per_ms: Cycles) -> bool {
+    let over = |at: Cycles, ms: u32| now.since(at).get() > ms * per_ms.get();
+    over(tick_at, TICK_STALL_MS) || alive.is_some_and(|at| over(at, SERVICE_STALL_MS))
 }
 
 /// Report text in a fixed buffer. The last `TRUNCATED.len()` bytes are kept

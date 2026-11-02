@@ -105,6 +105,25 @@ impl Millis {
     }
 }
 
+/// A count of CPU cycles, or a reading of the wrapping cycle counter (DWT).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Cycles(u32);
+
+impl Cycles {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Cycles from `then` to this reading, wrapping.
+    pub const fn since(self, then: Self) -> Self {
+        Self(self.0.wrapping_sub(then.0))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Micros(u32);
 

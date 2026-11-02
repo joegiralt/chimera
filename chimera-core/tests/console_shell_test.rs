@@ -1,8 +1,9 @@
 use chimera_core::console::{
-    ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, STORM_LIMIT, Served, StormWindow,
-    serial_hex, starved, storm,
+    self, ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, STORM_LIMIT, Served, StormWindow,
+    serial_hex,
 };
 use chimera_hal::Ms;
+use chimera_hal::units::Cycles;
 
 #[test]
 fn the_timer_averages_and_peaks_then_resets() {
@@ -114,6 +115,16 @@ fn the_answer_clock_reads_across_a_wrap() {
 
 /// 480 MHz: the unit's DWT cycles in a millisecond.
 const MS: u32 = 480_000;
+
+/// The guard's tests, read in raw DWT counts.
+fn storm(w: &mut StormWindow, now: u32, per_ms: u32) -> bool {
+    console::storm(w, Cycles::new(now), Cycles::new(per_ms))
+}
+
+fn starved(now: u32, tick_at: u32, alive: Option<u32>, per_ms: u32) -> bool {
+    let c = Cycles::new;
+    console::starved(c(now), c(tick_at), alive.map(c), c(per_ms))
+}
 
 #[test]
 fn storm_trips_over_limit() {

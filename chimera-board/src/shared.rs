@@ -361,27 +361,12 @@ pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
 /// `midi-usb`) less the audio's inside them, wrapping: the card IRQ takes
 /// them off its own entries' time too.
 pub static MIDI_CYCLES: AtomicU32 = AtomicU32::new(0);
-/// A count of CPU cycles, or a reading of the wrapping cycle counter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Cycles(u32);
+pub use chimera_hal::units::Cycles;
 
-impl Cycles {
-    pub const fn new(n: u32) -> Self {
-        Self(n)
-    }
-
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-
-    pub fn now() -> Self {
-        Self(cortex_m::peripheral::DWT::cycle_count())
-    }
-
-    /// Cycles from `then` to now, wrapping.
-    pub fn since(self, then: Self) -> Self {
-        Self(self.0.wrapping_sub(then.0))
-    }
+/// The cycle counter now.
+#[inline(always)]
+pub fn dwt() -> Cycles {
+    Cycles::new(cortex_m::peripheral::DWT::cycle_count())
 }
 
 /// The cycle counter and the other interrupts' cycle total, read as a pair.
@@ -399,7 +384,7 @@ pub fn stamp(over: impl Fn() -> u32) -> Stamp {
     loop {
         let before = over();
         compiler_fence(Ordering::SeqCst);
-        let at = Cycles::now();
+        let at = dwt();
         compiler_fence(Ordering::SeqCst);
         if over() == before {
             return Stamp {
