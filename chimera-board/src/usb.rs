@@ -1,9 +1,9 @@
 //! The USB console's shell (ADR 0068): CDC-ACM on the OTG FS port (PA11/PA12).
-//! Without `midi-usb`, polled from the UI loop and `pac::Interrupt::OTG_FS`
-//! never unmasked. With it, the device lives in a static cell the `OTG_FS`
-//! handler polls, at MIDI's level under audio; the UI reaches it through
-//! `with`, which masks the handler, and a storm guard falls back to the
-//! UI's polls (spec §§ 5, 6).
+//! The device lives in a static cell the UI reaches through `with`.
+//! Without `midi-usb` only the UI loop polls it and `pac::Interrupt::OTG_FS`
+//! is never unmasked. With it, the `OTG_FS` handler polls it too, at MIDI's
+//! level under audio; `with` masks the handler, and a storm guard falls
+//! back to the UI's polls (spec §§ 5, 6).
 
 use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
@@ -40,7 +40,8 @@ use chimera_core::console::{StormWindow, starved, storm};
 #[cfg(feature = "midi-usb")]
 use chimera_hal::units::Cycles;
 #[cfg(feature = "midi-usb")]
-use core::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::Ordering};
+use core::sync::atomic::Ordering;
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 #[cfg(feature = "midi-usb")]
 use cortex_m::peripheral::NVIC;
 #[cfg(feature = "midi-usb")]
@@ -365,11 +366,8 @@ impl Unconnected {
                 midi_drops: 0,
             },
         };
-        #[cfg(not(feature = "midi-usb"))]
-        let link = Link(core);
         #[cfg(feature = "midi-usb")]
         let usb_irq = UsbIrq::new(core.irq, crate::controls::now_ms());
-        #[cfg(feature = "midi-usb")]
         let link = install(core);
         Usb {
             link,
@@ -926,20 +924,14 @@ impl UsbIrq {
     }
 }
 
-/// The UI's hold on the device. Without `midi-usb`, the device itself;
-/// with it, the proof `connect` filled the cell, reached through `with`.
-/// One per `Usb`, borrowed `&mut` for each closure, so a `with` can't nest.
-#[cfg(not(feature = "midi-usb"))]
-struct Link(UsbCore);
-#[cfg(feature = "midi-usb")]
+/// The UI's hold on the device: the proof `connect` filled the cell,
+/// reached through `with`. One per `Usb`, borrowed `&mut` for each
+/// closure, so a `with` can't nest.
 struct Link(());
 
 impl Link {
     #[inline(always)]
     fn with<R>(&mut self, f: impl FnOnce(&mut UsbCore) -> R) -> R {
-        #[cfg(not(feature = "midi-usb"))]
-        return f(&mut self.0);
-        #[cfg(feature = "midi-usb")]
         with(f)
     }
 
@@ -953,37 +945,39 @@ impl Link {
     }
 }
 
-#[cfg(feature = "midi-usb")]
+/// The device and its classes, in every build: with `midi-usb` the
+/// `OTG_FS` handler's too.
 struct Cell(UnsafeCell<MaybeUninit<UsbCore>>);
 // SAFETY: written once by `install` before `OTG_FS` is unmasked; after that
 // touched only by the handler and by `with`, which masks it first (the
-// thread can't preempt the handler).
-#[cfg(feature = "midi-usb")]
+// thread can't preempt the handler). Without `midi-usb` no handler runs.
 unsafe impl Sync for Cell {}
-#[cfg(feature = "midi-usb")]
 static CORE: Cell = Cell(UnsafeCell::new(MaybeUninit::uninit()));
 
-/// The core into the cell, then `OTG_FS` unmasked at MIDI's level.
-#[cfg(feature = "midi-usb")]
+/// The core into the cell, then, with `midi-usb`, `OTG_FS` unmasked at
+/// MIDI's level.
 fn install(core: UsbCore) -> Link {
     // SAFETY: the one write: only `connect` calls this, on the one
     // `Unconnected` `init`'s singletons allow, and the handler, the cell's
     // other user, is still masked.
     unsafe { (*CORE.0.get()).write(core) };
-    // The write must not sink past the unmask's volatile write.
-    core::sync::atomic::compiler_fence(Ordering::SeqCst);
-    // SAFETY: only the NVIC is used, for this interrupt's priority and
-    // unmask; every other priority is set at boot, and nothing else writes
-    // one after.
-    let mut nvic = unsafe { cortex_m::Peripherals::steal() }.NVIC;
-    crate::priority::set_irq(
-        &mut nvic,
-        pac::Interrupt::OTG_FS,
-        crate::priority::Priority::MIDI,
-    );
-    // SAFETY: the handler touches only the cell, whose user here masks it
-    // first, and the counters it alone adds to.
-    unsafe { NVIC::unmask(pac::Interrupt::OTG_FS) };
+    #[cfg(feature = "midi-usb")]
+    {
+        // The write must not sink past the unmask's volatile write.
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+        // SAFETY: only the NVIC is used, for this interrupt's priority and
+        // unmask; every other priority is set at boot, and nothing else
+        // writes one after.
+        let mut nvic = unsafe { cortex_m::Peripherals::steal() }.NVIC;
+        crate::priority::set_irq(
+            &mut nvic,
+            pac::Interrupt::OTG_FS,
+            crate::priority::Priority::MIDI,
+        );
+        // SAFETY: the handler touches only the cell, whose user here masks
+        // it first, and the counters it alone adds to.
+        unsafe { NVIC::unmask(pac::Interrupt::OTG_FS) };
+    }
     Link(())
 }
 
@@ -991,7 +985,6 @@ fn install(core: UsbCore) -> Link {
 /// calls it, and only `install` makes one, after the cell is written; and
 /// `Release`'s drop, made only inside `Usb::service` (so after `install`)
 /// and never dropped inside a `with` (panics abort).
-#[cfg(feature = "midi-usb")]
 fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     lock();
     // SAFETY: the cell is written (a `Link` exists), and the handler, its
@@ -999,20 +992,28 @@ fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
     // Any UI hold is the UI alive: a long answer pumps inside one `service`.
     // Before `f`, so `away`'s `None` stands.
-    core.irq.alive = Some(crate::shared::dwt());
+    #[cfg(feature = "midi-usb")]
+    {
+        core.irq.alive = Some(crate::shared::dwt());
+    }
     let r = f(core);
+    #[cfg(feature = "midi-usb")]
     unlock(core.irq.held);
     r
 }
 
-/// `with`'s mask, out of line: one call at each of its sites.
-#[cfg(feature = "midi-usb")]
-#[inline(never)]
+/// `with`'s mask, out of line: one call at each of its sites. Nothing to
+/// mask without `midi-usb`.
+#[cfg_attr(feature = "midi-usb", inline(never))]
+#[cfg_attr(not(feature = "midi-usb"), inline(always))]
 fn lock() {
-    NVIC::mask(pac::Interrupt::OTG_FS);
-    // The mask lands before the cell is touched.
-    cortex_m::asm::dsb();
-    cortex_m::asm::isb();
+    #[cfg(feature = "midi-usb")]
+    {
+        NVIC::mask(pac::Interrupt::OTG_FS);
+        // The mask lands before the cell is touched.
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
+    }
 }
 
 /// `with`'s unmask, unless a storm holds the handler off.
