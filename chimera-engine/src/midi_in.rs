@@ -20,7 +20,9 @@ use chimera_midi::value::{Channel, U7, U14};
 use crate::MidiChannel;
 use crate::midi_map::MidiMap;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
-use crate::note_queue::{ChannelMode, ChannelModeEvent, InEvent, NoteProducer, RealTime};
+use crate::note_queue::{
+    ChannelMode, ChannelModeEvent, InEvent, NoteEvent, NoteKind, NoteProducer, RealTime,
+};
 use crate::storage::RecordBuf;
 
 /// A controller number, 0..=127.
@@ -328,6 +330,8 @@ pub struct DinPipe {
     ctl: Controllers,
     sense: Sensing,
     stats: PipeStats,
+    /// A note-on since the last `lost`.
+    played: bool,
 }
 
 impl Default for DinPipe {
@@ -354,6 +358,7 @@ impl DinPipe {
                 refused: 0,
                 ctrl_refused: 0,
             },
+            played: false,
         }
     }
 
@@ -383,7 +388,16 @@ impl DinPipe {
                     }
                 },
                 Parsed::Event(Event::Voice(c, v)) => match InEvent::from_event(c, &v) {
-                    Some(e) => sink.note(e),
+                    Some(e) => {
+                        self.played |= matches!(
+                            e,
+                            InEvent::Note(NoteEvent {
+                                kind: NoteKind::On(_),
+                                ..
+                            })
+                        );
+                        sink.note(e)
+                    }
                     None => match self.ctl.hear(c, v) {
                         Heard::Ctl(Ctl::Program { .. }) => {
                             sink.stats.programs_dropped =
@@ -422,6 +436,7 @@ impl DinPipe {
     /// The source went away (USB's bus reset or suspend): every Part lets
     /// go and the UI hears it, sensing armed or not.
     pub fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S) {
+        self.played = false;
         let mut sink = Counted {
             out,
             stats: &mut self.stats,
@@ -437,6 +452,12 @@ impl DinPipe {
     #[inline(always)]
     pub fn sensing_armed(&self) -> bool {
         self.sense.armed()
+    }
+
+    /// A note-on since the last `lost`. A field read, as `sensing_armed`.
+    #[inline(always)]
+    pub fn played(&self) -> bool {
+        self.played
     }
 
     /// As of the last `feed`. A field read, so bank 1 may call it closed.
@@ -508,6 +529,12 @@ impl PipeSlot {
         self.pipe().is_some_and(DinPipe::sensing_armed)
     }
 
+    /// A note-on since the last `lost`; nothing before the first `feed`.
+    #[inline(always)]
+    pub fn played(&self) -> bool {
+        self.pipe().is_some_and(DinPipe::played)
+    }
+
     /// The pipe, built first if it is not yet. Inlined into the door's
     /// entries, so `DinPipe::new` runs in bank 2.
     #[inline(always)]
@@ -519,6 +546,23 @@ impl PipeSlot {
         // SAFETY: written above or by an earlier call, which set `ready`.
         unsafe { self.pipe.assume_init_mut() }
     }
+}
+
+/// How USB left Configured, as its poll saw it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Left {
+    /// A bus reset (or unplug): the host is gone.
+    Reset,
+    /// A suspend: an idle host's autosuspend as often as a sleep.
+    Suspend,
+}
+
+/// Whether leaving Configured lets every Part go (`lost`): a reset always;
+/// a suspend only if USB played a note-on since the last `lost`, so an idle
+/// host's autosuspend never cuts notes held from DIN.
+#[inline(always)]
+pub fn lets_go(left: Left, played: bool) -> bool {
+    left == Left::Reset || played
 }
 
 /// `DinPipe::feed` as the door carries it.

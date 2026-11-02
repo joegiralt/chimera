@@ -11,7 +11,8 @@
 //!
 //! MIDI in: each OUT packet's bytes, cable 0's, through USB's own pipe into
 //! its note source and control ring, as DIN's (spec §§ 7, 8). Leaving
-//! Configured (bus reset, suspend) lets every Part go.
+//! Configured lets every Part go on a bus reset, and on a suspend only if
+//! USB played a note-on since (`midi_in::lets_go`).
 
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
@@ -139,7 +140,7 @@ impl UsbClass<Bus> for MidiClass {
 mod door {
     use core::ptr::addr_of_mut;
 
-    use chimera_core::midi_in::{self, DinSinks};
+    use chimera_core::midi_in::{self, DinSinks, Left};
     use chimera_midi::usb::unpack;
     use chimera_midi::usb_class::{Ids, descriptors as write};
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
@@ -166,7 +167,7 @@ mod door {
     }
 
     /// The device polled with both classes; leaving Configured, every
-    /// Part let go; then every OUT packet read, cable 0's bytes fed to
+    /// Part let go as `lets_go` rules; then every OUT packet read, cable 0's bytes fed to
     /// USB's pipe one door call each, the rest dropped and counted.
     pub(super) fn poll(core: &mut UsbCore) {
         let UsbCore {
@@ -190,7 +191,13 @@ mod door {
         let up = dev.state() == UsbDeviceState::Configured;
         if irq.configured != up {
             irq.configured = up;
-            if let (false, Some(s)) = (up, sinks.as_mut()) {
+            let left = match dev.state() {
+                UsbDeviceState::Suspend => Left::Suspend,
+                _ => Left::Reset,
+            };
+            if let (false, Some(s)) = (up, sinks.as_mut())
+                && midi_in::lets_go(left, pipe.played())
+            {
                 midi_in::lost(pipe, s);
             }
         }

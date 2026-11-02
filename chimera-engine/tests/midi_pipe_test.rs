@@ -2,7 +2,9 @@
 //! What the retired `MidiParser` + `route` queued is frozen here as
 //! `old_route_queued`.
 
-use chimera_engine::midi_in::{self, CtrlEvent, CtrlRing, DinPipe, DinSinks, PipeSlot, Sinks};
+use chimera_engine::midi_in::{
+    self, CtrlEvent, CtrlRing, DinPipe, DinSinks, Left, PipeSlot, Sinks,
+};
 use chimera_engine::note_queue::{
     BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteConsumer, NoteEvent, NoteKind,
     NoteProducer, NoteQueue, RealTime, SustainEvent,
@@ -497,6 +499,42 @@ fn lost_releases_every_channel() {
     let (notes, ctrl) = din.run(&[0xF8]);
     assert_eq!(notes[..16], all_notes_off()[..], "armed too");
     assert_eq!(ctrl, [CtrlEvent::SensingLost]);
+}
+
+/// USB leaving Configured as the poll sees it: a reset always lets go; a
+/// suspend only after a note-on since the last `lost`.
+fn detach(din: &mut Din, left: Left) -> bool {
+    let go = midi_in::lets_go(left, din.slot.played());
+    if go {
+        let mut out = DinSinks {
+            notes: &mut din.notes,
+            ctrl: din.ring,
+        };
+        midi_in::lost(&mut din.slot, &mut out);
+        din.run(&[]);
+    }
+    go
+}
+
+#[test]
+fn suspend_lets_go_only_after_a_note_on() {
+    let mut din = Din::new();
+    assert!(!detach(&mut din, Left::Suspend), "nothing played yet");
+    din.run(&[0xB0, 74, 1, 0x80, 60, 0]);
+    assert!(!detach(&mut din, Left::Suspend), "no note-on");
+    din.run(&[0x90, 60, 100]);
+    assert!(din.slot.played());
+    assert!(detach(&mut din, Left::Suspend), "a note-on: once");
+    assert!(!din.slot.played(), "`lost` clears it");
+    assert!(!detach(&mut din, Left::Suspend), "no new note-on");
+}
+
+#[test]
+fn reset_always_lets_go() {
+    let mut din = Din::new();
+    assert!(detach(&mut din, Left::Reset), "with no note-on too");
+    din.run(&[0x90, 60, 100]);
+    assert!(detach(&mut din, Left::Reset));
 }
 
 #[test]
