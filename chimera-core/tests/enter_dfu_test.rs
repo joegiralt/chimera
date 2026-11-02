@@ -31,11 +31,23 @@ impl Sys {
 
     /// The shell's once-a-frame sync.
     fn frame(&mut self, ui: &mut UiState) {
-        ui.sync_system(&mut self.sync, &mut self.card, &mut self.s, &mut self.set);
+        ui.sync_system(
+            chimera_core::errand::Errand::HOST,
+            &mut self.sync,
+            &mut self.card,
+            &mut self.s,
+            &mut self.set,
+        );
     }
 
     fn take(&mut self, ui: &mut UiState) -> Option<Said<RomDfu>> {
-        ui.take_dfu_synced(&mut self.sync, &mut self.card, &mut self.s, &mut self.set)
+        ui.take_dfu_synced(
+            chimera_core::errand::Errand::HOST,
+            &mut self.sync,
+            &mut self.card,
+            &mut self.s,
+            &mut self.set,
+        )
     }
 }
 

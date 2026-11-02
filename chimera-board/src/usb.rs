@@ -37,6 +37,7 @@ use usbd_serial::USB_CLASS_CDC;
 use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
 use chimera_core::console::{StormWindow, starved, storm};
+use chimera_core::errand::Errand;
 #[cfg(feature = "midi-usb")]
 use chimera_hal::units::Cycles;
 #[cfg(feature = "midi-usb")]
@@ -164,8 +165,12 @@ pub enum Restart {
 
 /// `card`'s measurement, run before its answer starts: `None` without one
 /// in this build.
-pub type CardRun<'a> =
-    &'a mut dyn FnMut(CardArg, Option<&mut Reader<AudioStats>>, &mut SdStore) -> Option<CardAnswer>;
+pub type CardRun<'a> = &'a mut dyn FnMut(
+    &Errand,
+    CardArg,
+    Option<&mut Reader<AudioStats>>,
+    &mut SdStore,
+) -> Option<CardAnswer>;
 
 /// The port, the half-read request line, and the loop's time between tops.
 pub struct Usb {
@@ -461,15 +466,16 @@ impl Usb {
             // A bench `card`, `sweep`'s scan, `bank2`'s write: seconds with
             // no hold, so an errand. Outside a bench build nothing
             // measures, and none of it links.
-            let (card, sweep_ask, bank2) = link.errand(|| {
+            let (card, sweep_ask, bank2) = link.errand(|e| {
                 let card = match req {
                     Ok(Request::Card(arg)) if cfg!(feature = "bench") => {
-                        card(arg, stats.as_deref_mut(), store)
+                        card(e, arg, stats.as_deref_mut(), store)
                     }
                     _ => None,
                 };
                 let sweep_ask = match req {
                     Ok(Request::Sweep(_)) => Some(chimera_core::console::ask_sweep(
+                        e,
                         ui.project_status() == chimera_core::project::ProjectStatus::Modified,
                         store,
                     )),
@@ -481,11 +487,11 @@ impl Usb {
                     #[cfg(feature = "bank2")]
                     Ok(Request::Bank2(chimera_core::console::Bank2Arg::Install)) => {
                         *redraw = true;
-                        Some(crate::bank2::run_install(store, ui, display, cpu_hz))
+                        Some(crate::bank2::run_install(e, store, ui, display, cpu_hz))
                     }
                     #[cfg(feature = "bank2-gate")]
                     Ok(Request::Bank2(chimera_core::console::Bank2Arg::Erase)) => {
-                        Some(crate::bank2::run_erase(ui, cpu_hz))
+                        Some(crate::bank2::run_erase(e, ui, cpu_hz))
                     }
                     _ => None,
                 };
@@ -951,10 +957,10 @@ impl Link {
     /// UI is alive from then. The one way long UI work goes: a scope, so
     /// the guard can't be left asleep or forgotten awake.
     #[inline(always)]
-    fn errand<R>(&mut self, f: impl FnOnce() -> R) -> R {
+    fn errand<R>(&mut self, f: impl FnOnce(&Errand) -> R) -> R {
         #[cfg(feature = "midi-usb")]
         self.with(|c| c.irq.alive = None);
-        let r = f();
+        let r = Errand::run(f);
         #[cfg(feature = "midi-usb")]
         self.with(|_| ());
         r
@@ -1244,11 +1250,13 @@ impl PortState {
         })
     }
 
-    /// `f` as an errand (`Link::errand`) while the port is up; else just `f`.
-    pub fn errand<R>(&mut self, f: impl FnOnce() -> R) -> R {
+    /// `f` as an errand (`Link::errand`) while the port is up; else just
+    /// `f`, with the proof. Long UI work needs the `&Errand` this hands
+    /// out, so it can't run outside one.
+    pub fn errand<R>(&mut self, f: impl FnOnce(&Errand) -> R) -> R {
         match self.up() {
             Some(u) => u.link.errand(f),
-            None => f(),
+            None => Errand::run(f),
         }
     }
 

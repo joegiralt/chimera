@@ -435,9 +435,11 @@ impl<'u> Rig<'u> {
             sync: &mut self.sync,
             settings: &mut self.set,
         };
-        let _ = self.ui.card_work(cx, link, |swap, _| {
-            let _ = swap.settle(link, || false);
-        });
+        let _ = self
+            .ui
+            .card_work(chimera_core::errand::Errand::HOST, cx, link, |swap, _| {
+                let _ = swap.settle(link, || false);
+            });
     }
 
     /// The load epoch: what a snapshot published now carries.

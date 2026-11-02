@@ -722,10 +722,10 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         ))]
         // A save is card work: an errand.
-        let bench_redraw = usb.errand(|| {
+        let bench_redraw = usb.errand(|e| {
             let ask = card_bench.tick(controls::now_ms(), store, stats_r.as_mut());
             if ask.save {
-                card_bench.saved(bench_save(&mut card, store, ui));
+                card_bench.saved(bench_save(e, &mut card, store, ui));
             }
             ask.redraw
         });
@@ -745,7 +745,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             feature = "bank2",
             not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         ))]
-        let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
+        let card_run: usb::CardRun = &mut |_, arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(
             feature = "usb-console",
             not(all(
@@ -754,7 +754,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
             ))
         ))]
-        let card_run: usb::CardRun = &mut |_, _, _| None;
+        let card_run: usb::CardRun = &mut |_, _, _, _| None;
         #[cfg(feature = "usb-console")]
         if let Some(restart) = usb.up().and_then(|u| {
             u.service(
@@ -767,7 +767,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             )
         }) {
             // As the menu's path: a THEME change in this visit is kept.
-            ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
+            usb.errand(|e| ui.sync_system_now(e, &mut sync, &mut card, store, &mut settings));
             match restart {
                 usb::Restart::Dfu(asked) => dfu::enter(&marker, dfu::DfuFrom::Console(asked)),
                 // The boot it restarts into sweeps, the arena's gap free.
@@ -809,10 +809,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         midi_out(ui, &out);
         // Card work and SYSTEM's sync can hold the UI for seconds: an
         // errand, so no false storm from the guard's service test.
-        #[cfg_attr(feature = "usb-console", allow(unused_mut))]
-        let mut errand = || {
+        let errand = |e: &chimera_core::errand::Errand| {
             // SYSTEM synced first: a THEME change made in this visit is kept.
-            if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
+            if let Some(yes) = ui.take_dfu_synced(e, &mut sync, &mut card, store, &mut settings) {
                 dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
             }
             // Card work the keys asked for, under BUSY. A load settles
@@ -828,7 +827,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 sync: &mut sync,
                 settings: &mut settings,
             };
-            ui.card_work(cx, &LOAD_LINK, |swap, u| {
+            ui.card_work(e, cx, &LOAD_LINK, |swap, u| {
                 let t0 = controls::ticks();
                 let _ = swap.settle(&LOAD_LINK, || {
                     controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
@@ -837,13 +836,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             });
             // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save
             // is quicker than BUSY can be read. A toast says how it went.
-            ui.sync_system(&mut sync, &mut card, store, &mut settings);
+            ui.sync_system(e, &mut sync, &mut card, store, &mut settings);
             busy
         };
         #[cfg(feature = "usb-console")]
         let busy = usb.errand(errand);
         #[cfg(not(feature = "usb-console"))]
-        let busy = errand();
+        let busy = chimera_core::errand::Errand::run(errand);
         // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         // The loop spins as fast as it can; animation runs at UI_FPS.
@@ -900,6 +899,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 ))]
 #[inline(never)]
 fn bench_save(
+    _: &chimera_core::errand::Errand,
     card: &mut chimera_core::storage::Card,
     store: &mut sd::SdStore,
     ui: &mut chimera_core::ui::UiState,

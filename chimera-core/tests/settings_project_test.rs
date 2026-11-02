@@ -58,9 +58,11 @@ impl<S: Store> Rig<S> {
             sync: &mut self.sync,
             settings: &mut self.set,
         };
-        let r = self.ui.card_work(cx, link, |swap, _| {
-            let _ = swap.settle(link, || false);
-        });
+        let r = self
+            .ui
+            .card_work(chimera_core::errand::Errand::HOST, cx, link, |swap, _| {
+                let _ = swap.settle(link, || false);
+            });
         self.swaps += r.is_some() as usize;
     }
 

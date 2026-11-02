@@ -26,4 +26,5 @@ const _: () = assert!(
 
 pub mod bank2;
 pub mod console;
+pub mod errand;
 pub mod ui;

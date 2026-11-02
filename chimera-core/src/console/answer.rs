@@ -104,7 +104,7 @@ pub enum SweepAsk {
 
 /// `sweep`'s request: refused over unsaved changes, else the card's mark
 /// set to `Asked`. A mark it can't rewrite owes a sweep already.
-pub fn ask_sweep(unsaved: bool, s: &mut impl Store) -> SweepAsk {
+pub fn ask_sweep(_: &crate::errand::Errand, unsaved: bool, s: &mut impl Store) -> SweepAsk {
     if unsaved {
         return SweepAsk::Unsaved;
     }

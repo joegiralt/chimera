@@ -318,9 +318,21 @@ fn input_dismisses_the_toast() {
     let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
     let mut ui = chimera_core::ui::UiState::new();
     tap(&mut ui, ButtonId::Menu);
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut cur,
+    );
     feed(&mut ui, Input::press(ButtonId::B1));
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut cur,
+    );
     assert_eq!(ui.step_toast(16), ToastStep::Show(Line::new("SAVED")));
     feed(&mut ui, Input::press(ButtonId::B2));
     assert_eq!(ui.step_toast(16), ToastStep::Ended);

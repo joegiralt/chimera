@@ -96,7 +96,7 @@ fn closed_tape_ui_says_so_and_does_nothing() {
         sync: &mut sync,
         settings: &mut set,
     };
-    let _ = ui.card_work(cx, &link, |swap, _| {
+    let _ = ui.card_work(chimera_core::errand::Errand::HOST, cx, &link, |swap, _| {
         let _ = swap.settle(&link, || false);
     });
     assert!(!ui.card_pending(), "the queued job dropped");

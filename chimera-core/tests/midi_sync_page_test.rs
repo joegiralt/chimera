@@ -52,13 +52,25 @@ fn sync_is_kept_in_system() {
     let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
     let mut ui = UiState::new();
     to_leaf(&mut ui, &["MIDI CONFIG", "SYNC"]);
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut cur,
+    );
     feed(&mut ui, Input::turn(EncoderId::A, -1));
     tap(&mut ui, ButtonId::Menu);
     while ui.in_settings() {
         tap(&mut ui, ButtonId::Menu);
     }
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut cur,
+    );
     assert_eq!(cur.midi.sync, SyncMode::Int, "the save took the UI's SYNC");
 
     // Booted with no card: untouched defaults, then that card goes in.
@@ -69,9 +81,21 @@ fn sync_is_kept_in_system() {
     s.insert();
     let mut ui = UiState::new();
     tap(&mut ui, ButtonId::Menu);
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut cur,
+    );
     tap(&mut ui, ButtonId::Menu);
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut cur,
+    );
     assert_eq!(ui.midi().sync, SyncMode::Int, "loaded and applied");
     assert_eq!(published(&ui), SyncMode::Int);
 }

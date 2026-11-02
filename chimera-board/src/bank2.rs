@@ -664,6 +664,7 @@ const TAPE_OFF_MS: u32 = 30;
 #[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
 #[inline(never)]
 pub fn run_erase(
+    _: &chimera_core::errand::Errand,
     ui: &mut chimera_core::ui::UiState,
     cpu_hz: u32,
 ) -> chimera_core::console::Bank2Answer {
@@ -690,6 +691,7 @@ pub fn run_erase(
 #[cfg(all(feature = "bank2", feature = "usb-console"))]
 #[inline(never)]
 pub fn run_install(
+    _: &chimera_core::errand::Errand,
     store: &mut impl chimera_hal::store::Store,
     ui: &mut chimera_core::ui::UiState,
     display: &mut impl chimera_hal::ChimeraDisplay,
