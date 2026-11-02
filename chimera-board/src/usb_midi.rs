@@ -164,6 +164,7 @@ mod door {
     use chimera_midi::usb::{Packer, unpack};
     use chimera_midi::usb_class::{Ids, descriptors as write};
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
+    use usb_device::UsbError;
     use usb_device::device::UsbDeviceState;
 
     use super::{IN, MidiClass, MidiIn, MidiSlot};
@@ -240,9 +241,9 @@ mod door {
     }
 
     /// The UI's lost echo counted; then, Configured, `ring`'s bytes packed
-    /// into IN packets while the endpoint takes them, what it doesn't held
-    /// for the next poll. Not Configured, all dropped: a host that comes
-    /// back hears nothing stale.
+    /// into IN packets while the endpoint takes them; busy, held for the
+    /// next poll; any other error, dropped and counted. Not Configured, all
+    /// dropped: a host that comes back hears nothing stale.
     fn send(m: &mut MidiClass, ring: &OutRing, i: &mut MidiIn, irq: &mut IrqCounts, up: bool) {
         irq.midi_drops = irq.midi_drops.wrapping_add(ring.take_dropped());
         if !up {
@@ -260,8 +261,13 @@ mod door {
                 }
             }
             let (held, _) = i.held.as_flattened().split_at(i.n * 4);
-            if held.is_empty() || m.inp.write(held).is_err() {
+            if held.is_empty() {
                 return;
+            }
+            match m.inp.write(held) {
+                Err(UsbError::WouldBlock) => return,
+                Err(_) => irq.midi_drops = irq.midi_drops.wrapping_add(i.n as u32),
+                Ok(_) => {}
             }
             i.n = 0;
         }

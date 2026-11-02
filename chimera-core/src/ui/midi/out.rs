@@ -54,13 +54,15 @@ pub const REPLY_LEN: usize = 15;
 impl UiState {
     /// The out pass, after `hear_in` (its clock): with ECHO on, the echo
     /// plan's messages into `din` and, Configured (`up`), `usb`
-    /// (`EchoPlan::pump`), USB's lost counted on its ring; off, nothing,
+    /// (`EchoPlan::pump`), USB's lost counted on its ring (skips while not
+    /// Configured are not); off, nothing,
     /// and an inquiry heard is dropped (spec § 8.4). The door's `out`.
     pub(in crate::ui) fn out_in(&mut self, din: &OutRing, usb: Option<&OutRing>, up: bool) {
         let (on, at, now) = (self.midi.echo(), self.active_part, self.cc.last);
         let plan = &mut self.cc.ui().echo;
         if on {
-            let lost = plan.pump(&self.project, at, now, din, usb.filter(|_| up));
+            let usb = usb.filter(|_| up);
+            let lost = plan.pump(&self.project, at, now, din, usb);
             if let Some(u) = usb {
                 u.lose(lost);
             }

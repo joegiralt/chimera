@@ -664,5 +664,5 @@ fn unconfigured_usb_skipped() {
     assert_eq!(din, want, "DIN as today");
     assert_eq!(values(&din, a.ch(P1), 20).len(), 1);
     assert!(u.is_empty(), "nothing into USB's ring");
-    assert_eq!(usb.take_dropped(), 1, "the echo skipped, counted");
+    assert_eq!(usb.take_dropped(), 0, "the echo skipped, not counted");
 }
