@@ -261,17 +261,19 @@ mod door {
         }
     }
 
-    /// The UI's lost echo counted; then, Configured, `ring`'s bytes packed
+    /// Configured, the UI's lost echo counted, then `ring`'s bytes packed
     /// into IN packets while the endpoint takes them; busy, held for the
     /// next poll; any other error, dropped and counted. Not Configured, all
-    /// dropped: a host that comes back hears nothing stale.
+    /// dropped and the losses uncounted (the UI copies whatever the host
+    /// does): a host that comes back hears nothing stale.
     fn send(m: &mut MidiClass, ring: &OutRing, i: &mut MidiIn, irq: &mut IrqCounts, up: bool) {
-        irq.midi_drops = irq.midi_drops.wrapping_add(ring.take_dropped());
+        let lost = ring.take_dropped();
         if !up {
-            while ring.pop().is_some() {}
+            ring.clear();
             (i.packer, i.n) = (Packer::new(), 0);
             return;
         }
+        irq.midi_drops = irq.midi_drops.wrapping_add(lost);
         loop {
             while i.n < i.held.len()
                 && let Some(x) = ring.pop()

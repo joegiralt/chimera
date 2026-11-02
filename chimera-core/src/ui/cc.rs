@@ -24,7 +24,7 @@ use crate::midi_in::{HeardCc, HeardEv};
 #[cfg(feature = "midi-map")]
 use crate::midi_map::Binding;
 #[cfg(feature = "midi-map")]
-use crate::out_ring::OutRing;
+use crate::out_ring::{OutPorts, OutRing};
 use crate::project::PartId;
 
 /// The MIDI UI's state: in AXI `.bss`, not in D2 with `UiState` (bench
@@ -120,7 +120,7 @@ type FocusNote = fn(&UiState) -> Option<Dir>;
 
 /// The door's `out`: `UiState::out_in`, MIDI out's pass.
 #[cfg(feature = "midi-map")]
-type Out = fn(&mut UiState, &OutRing, Option<&OutRing>, bool);
+type Out = fn(&mut UiState, &OutPorts);
 
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
@@ -257,17 +257,16 @@ impl UiState {
         through(|t| (t.map_in)(self, d, delete));
     }
 
-    /// DIN OUT's pass, after `hear_ccs`: what waits to be sent (an
-    /// identity reply) into `ring`, each message whole (`out_in`).
-    /// Closed, nothing is sent (spec § 7.3).
-    pub fn send_out(&mut self, ring: &OutRing) {
-        through(|d| (d.out)(self, ring, None, false));
+    /// MIDI out's pass, after `hear_ccs`: what waits to be sent (an
+    /// identity reply, the echo) out of `out`'s ports, each message whole
+    /// (`out_in`). Closed, nothing is sent (spec § 7.3).
+    pub fn send(&mut self, out: &OutPorts) {
+        through(|d| (d.out)(self, out));
     }
 
-    /// `send_out` to DIN's ring and USB's, Configured if `up`: USB's copy
-    /// never holds DIN back; one lost is counted on `usb`.
-    pub fn send_ports(&mut self, din: &OutRing, usb: &OutRing, up: bool) {
-        through(|d| (d.out)(self, din, Some(usb), up));
+    /// `send` to DIN's ring alone.
+    pub fn send_out(&mut self, ring: &OutRing) {
+        self.send(&OutPorts::din(ring));
     }
 }
 

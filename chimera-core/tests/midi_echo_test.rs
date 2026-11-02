@@ -16,7 +16,7 @@ use chimera_core::midi_map::{
     Binding, CcKind, Feedback, Input, LearnCc, Mappable, MidiMap, NrpnKind, Span,
 };
 use chimera_core::nrpn::{self, ChartLine};
-use chimera_core::out_ring::{OUT_RING_LEN, OutRing};
+use chimera_core::out_ring::{OUT_RING_LEN, OutPorts, OutRing};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::project::{PartFrom, PartId, PartSource};
 use chimera_core::storage::{AbFile, Card, Side, SystemSettings, SystemSync};
@@ -576,18 +576,18 @@ fn pop(ring: &OutRing) -> Vec<u8> {
 
 impl Rig {
     /// A pass with `ev` heard on their ports, then the out pass to both
-    /// rings, USB's `usb`, Configured if `up`.
-    fn pass_ports(&mut self, ev: &[(Port, CtrlEvent)], usb: &OutRing, up: bool) {
+    /// rings, USB's `usb`.
+    fn pass_ports(&mut self, ev: &[(Port, CtrlEvent)], usb: &OutRing) {
         self.now += PASS_MS;
         self.ui.hear_ccs(ev.iter().copied(), Ms(self.now), true);
-        self.ui.send_ports(&self.ring, usb, up);
+        self.ui.send(&OutPorts::new(&self.ring, usb));
     }
 
     /// Passes enough to settle, both rings emptied each: what each sent.
-    fn settle_ports(&mut self, usb: &OutRing, up: bool) -> (Vec<u8>, Vec<u8>) {
+    fn settle_ports(&mut self, usb: &OutRing) -> (Vec<u8>, Vec<u8>) {
         let (mut din, mut u) = (Vec::new(), Vec::new());
         for _ in 0..100 {
-            self.pass_ports(&[], usb, up);
+            self.pass_ports(&[], usb);
             din.extend(self.drain());
             u.extend(pop(usb));
         }
@@ -613,16 +613,15 @@ fn identity_replies_on_asking_port_only() {
         dev: U7::new(0x7F).unwrap(),
     };
     let reply = |b: &[u8]| b.len() == 15 && b[0] == 0xF0 && b[14] == 0xF7;
-    r.pass_ports(&[(Port::Usb, ask)], &usb, true);
+    r.pass_ports(&[(Port::Usb, ask)], &usb);
     assert!(reply(&pop(&usb)), "USB asked, USB answered");
     assert!(r.drain().is_empty(), "DIN didn't ask");
-    r.pass_ports(&[(Port::Din, ask)], &usb, true);
+    r.pass_ports(&[(Port::Din, ask)], &usb);
     assert!(reply(&r.drain()), "DIN asked, DIN answered");
     assert!(pop(&usb).is_empty(), "USB didn't ask");
     r.pass_ports(
         &[(Port::Din, ask), (Port::Usb, ask), (Port::Usb, ask)],
         &usb,
-        true,
     );
     assert!(reply(&r.drain()) && reply(&pop(&usb)), "one each");
 }
@@ -639,7 +638,7 @@ fn full_usb_ring_never_holds_din() {
     // USB's ring never read: full all along.
     let mut din = Vec::new();
     for _ in 0..100 {
-        b.pass_ports(&[], &usb, true);
+        b.pass_ports(&[], &usb);
         din.extend(b.drain());
     }
     let u = pop(&usb);
@@ -651,8 +650,10 @@ fn full_usb_ring_never_holds_din() {
     assert_eq!(usb.take_dropped(), 0);
 }
 
+/// The UI always copies to USB's ring: whether the host is there to read
+/// it is USB's poll's business (it drops what waits while not Configured).
 #[test]
-fn unconfigured_usb_skipped() {
+fn usb_gets_dins_echo() {
     let (mut a, mut b) = (Rig::new(), Rig::new());
     for r in [&mut a, &mut b] {
         r.bind(P1, cc_in(20, JUMP), CUTOFF, Feedback::Value);
@@ -660,9 +661,9 @@ fn unconfigured_usb_skipped() {
     }
     let usb = OutRing::new();
     let want = a.settle();
-    let (din, u) = b.settle_ports(&usb, false);
+    let (din, u) = b.settle_ports(&usb);
     assert_eq!(din, want, "DIN as today");
     assert_eq!(values(&din, a.ch(P1), 20).len(), 1);
-    assert!(u.is_empty(), "nothing into USB's ring");
-    assert_eq!(usb.take_dropped(), 0, "the echo skipped, not counted");
+    assert_eq!(u, want, "the same bytes into USB's ring");
+    assert_eq!(usb.take_dropped(), 0);
 }

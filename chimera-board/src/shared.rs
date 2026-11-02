@@ -18,8 +18,8 @@ use chimera_core::note_queue::NoteSources;
 use chimera_core::note_queue::SourceId;
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitView;
-#[cfg(all(any(feature = "midi-din", feature = "midi-usb"), feature = "midi-map"))]
-use chimera_core::out_ring::OutRing;
+#[cfg(all(feature = "midi-din", feature = "midi-map"))]
+use chimera_core::out_ring::{OutPorts, OutRing};
 use chimera_core::preset::Performance;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
@@ -287,30 +287,23 @@ pub fn take_ctrl() -> Option<&'static Ctrl> {
     (!CTRL_TAKEN.swap(true, Ordering::AcqRel)).then_some(&CTRL)
 }
 
-// DIN OUT's ring (MIDI phase 1 spec § 9), the UI's to push and the USART1
-// ISR's to pop: all zero, so `.bss` in AXI with no code to build it.
+// MIDI out's rings, one a port (MIDI phase 1 spec § 9), the UI's to push;
+// DIN's the USART1 ISR's to pop, USB's its poll's to pack into IN packets.
+// All zero, so `.bss` in AXI with no code to build them.
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-static OUT_DIN: OutRing = OutRing::new();
+static OUT: [OutRing; Port::COUNT] = [const { OutRing::new() }; Port::COUNT];
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-static OUT_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
+static OUT_TAKEN: AtomicBool = AtomicBool::new(false);
 
-/// DIN OUT's ring, empty; once. Both ends share the reference.
+/// MIDI out's rings, empty; once. Both ends share them.
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-pub fn take_out_din() -> Option<&'static OutRing> {
-    (!OUT_DIN_TAKEN.swap(true, Ordering::AcqRel)).then_some(&OUT_DIN)
-}
-
-// USB MIDI's out ring, the UI's to push and the USB poll's to pack into IN
-// packets: all zero, so `.bss` with no code to build it, as `OUT_DIN`.
-#[cfg(all(feature = "midi-usb", feature = "midi-map"))]
-static OUT_USB: OutRing = OutRing::new();
-#[cfg(all(feature = "midi-usb", feature = "midi-map"))]
-static OUT_USB_TAKEN: AtomicBool = AtomicBool::new(false);
-
-/// USB's out ring, empty; once. Both ends share the reference.
-#[cfg(all(feature = "midi-usb", feature = "midi-map"))]
-pub fn take_out_usb() -> Option<&'static OutRing> {
-    (!OUT_USB_TAKEN.swap(true, Ordering::AcqRel)).then_some(&OUT_USB)
+pub fn take_out() -> Option<OutPorts<'static>> {
+    let din = &OUT[Port::Din as usize];
+    #[cfg(feature = "midi-usb")]
+    let ports = OutPorts::new(din, &OUT[Port::Usb as usize]);
+    #[cfg(not(feature = "midi-usb"))]
+    let ports = OutPorts::din(din);
+    (!OUT_TAKEN.swap(true, Ordering::AcqRel)).then_some(ports)
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:

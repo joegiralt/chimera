@@ -377,29 +377,20 @@ pub struct AudioStart<'a> {
     pub din_out: &'static chimera_core::out_ring::OutRing,
 }
 
-/// MIDI out's pass: what the UI queued for DIN, then the USART1 handler
-/// pended to send it (it disarms itself once the ring is empty); and with
-/// USB, its copy, then `OTG_FS` pended to start its IN packets (`up`:
-/// Configured). Out of line, so the loop around it keeps its shape.
+/// MIDI out's pass: what the UI queued, then each port's handler pended to
+/// send it: USART1's disarms itself once DIN's ring is empty, `OTG_FS`'s
+/// starts USB's IN packets. Out of line, so the loop around it keeps its
+/// shape.
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
 #[inline(never)]
-fn din_out(
-    ui: &mut chimera_core::ui::UiState,
-    out: &chimera_core::out_ring::OutRing,
-    #[cfg(feature = "midi-usb")] usb: &chimera_core::out_ring::OutRing,
-    #[cfg(feature = "midi-usb")] up: bool,
-) {
-    #[cfg(feature = "midi-usb")]
-    {
-        ui.send_ports(out, usb, up);
-        if !usb.is_empty() {
-            cortex_m::peripheral::NVIC::pend(pac::Interrupt::OTG_FS);
-        }
-    }
-    #[cfg(not(feature = "midi-usb"))]
-    ui.send_out(out);
-    if !out.is_empty() {
+fn midi_out(ui: &mut chimera_core::ui::UiState, out: &chimera_core::out_ring::OutPorts) {
+    ui.send(out);
+    if !out.din.is_empty() {
         cortex_m::peripheral::NVIC::pend(pac::Interrupt::USART1);
+    }
+    #[cfg(feature = "midi-usb")]
+    if out.usb.is_some_and(|u| !u.is_empty()) {
+        cortex_m::peripheral::NVIC::pend(pac::Interrupt::OTG_FS);
     }
 }
 
@@ -640,17 +631,15 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     #[cfg(any(feature = "midi-din", feature = "midi-usb"))]
     let ctrl = shared::take_ctrl().expect("control rings taken once");
     #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-    let out_din = shared::take_out_din().expect("DIN out ring taken once");
+    let out = shared::take_out().expect("out rings taken once");
     // USB MIDI in's, for the port's poll once it connects (step 4).
-    #[cfg(all(feature = "midi-usb", feature = "midi-map"))]
-    let out_usb = shared::take_out_usb().expect("USB out ring taken once");
     #[cfg(feature = "midi-usb")]
     usb_midi::set_in(
         producers.take(shared::source(shared::Port::Usb)),
         &ctrl.usb,
-        #[cfg(feature = "midi-map")]
-        Some(out_usb),
-        #[cfg(not(feature = "midi-map"))]
+        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+        out.usb,
+        #[cfg(not(all(feature = "midi-din", feature = "midi-map")))]
         None,
     );
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
@@ -672,7 +661,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(feature = "midi-din")]
         din_ctrl: &ctrl.din,
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        din_out: out_din,
+        din_out: out.din,
     });
 
     marker.stage(BootStage::Audio);
@@ -816,14 +805,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ))]
         ctrl.clear();
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        din_out(
-            ui,
-            out_din,
-            #[cfg(feature = "midi-usb")]
-            out_usb,
-            #[cfg(feature = "midi-usb")]
-            usb.up().is_some_and(|u| u.midi_up()),
-        );
+        midi_out(ui, &out);
         // Card work and SYSTEM's sync can hold the UI for seconds: no false
         // storm from the guard's service test meanwhile.
         #[cfg(feature = "usb-console")]

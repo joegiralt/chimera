@@ -21,7 +21,7 @@ use crate::block::{Motion, ParamSpec};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::Port;
 use crate::midi_map::{Binding, CcKind, Feedback, Input, MAP_LEN, NrpnKind};
-use crate::out_ring::OutRing;
+use crate::out_ring::OutPorts;
 use crate::project::{Loads, PartId, Project};
 
 /// After a binding hears, its own echo waits this long (spec § 9, the
@@ -41,7 +41,7 @@ pub struct EchoPlan {
     heard_at: [[Option<Ms>; MAP_LEN]; MAX_PARTS],
     loads: [Loads; MAX_PARTS],
     active: Option<PartId>,
-    identity: [bool; 2],
+    identity: [bool; Port::COUNT],
 }
 
 /// Nothing sent: a named static, so its image is bank 2's.
@@ -50,7 +50,7 @@ pub(super) static SILENT: EchoPlan = EchoPlan {
     heard_at: [[None; MAP_LEN]; MAX_PARTS],
     loads: [Loads::NONE; MAX_PARTS],
     active: None,
-    identity: [false; 2],
+    identity: [false; Port::COUNT],
 };
 
 impl EchoPlan {
@@ -63,7 +63,7 @@ impl EchoPlan {
     /// MIDI CONFIG › ECHO is off: nothing goes out, and an inquiry heard
     /// meanwhile is never answered.
     pub fn silence(&mut self) {
-        self.identity = [false; 2];
+        self.identity = [false; Port::COUNT];
     }
 
     /// Every feedback binding of Part `p` sends again: a Sound or project
@@ -87,19 +87,11 @@ impl EchoPlan {
         }
     }
 
-    /// One pass (spec §§ 7, 9): the identity replies, then the active Part
-    /// `at`'s changed bindings, the other Parts', then the bursts, each
-    /// whole into `din` while it has room; the rest wait for a later pass.
-    /// Each sent is copied to `usb` (`None`: not Configured), never holding
-    /// DIN back; how many copies were lost.
-    pub fn pump(
-        &mut self,
-        project: &Project,
-        at: PartId,
-        now: Ms,
-        din: &OutRing,
-        mut usb: Option<&OutRing>,
-    ) -> u32 {
+    /// One pass (spec §§ 7, 9): the identity replies, each out of the
+    /// port that asked, then the active Part `at`'s changed bindings, the
+    /// other Parts', then the bursts, each out of every port (`Tee`) while
+    /// DIN's ring has room; the rest wait for a later pass.
+    pub fn pump(&mut self, project: &Project, at: PartId, now: Ms, out: &OutPorts) {
         if self.active != Some(at) {
             self.active = Some(at);
             self.burst(at);
@@ -111,21 +103,26 @@ impl EchoPlan {
                 self.burst(p);
             }
         }
-        let mut lost = 0;
-        if self.identity != [false; 2] {
+        let mut tee = out.tee();
+        if self.identity != [false; Port::COUNT] {
             let mut b = [0u8; REPLY_LEN];
             let mut w = Writer::new(&mut b);
             // Our device byte is 0: the parser hears 7F or 0 (`midi_in`).
             let ok = identity_reply(U7::ZERO, &ID, &mut w);
             let n = w.len();
-            let msg = &b[..n];
-            if ok && core::mem::take(&mut self.identity[Port::Usb as usize]) {
-                copy(&mut usb, msg, &mut lost);
+            if ok {
+                for p in Port::ALL {
+                    let asked = &mut self.identity[p as usize];
+                    if *asked && tee.send_to(p, &b[..n]) {
+                        *asked = false;
+                    }
+                }
+                // DIN's had no room: it waits for a later pass.
+                if self.identity[Port::Din as usize] {
+                    return;
+                }
             }
-            if ok && self.identity[Port::Din as usize] && !din.push_msg(msg) {
-                return lost;
-            }
-            self.identity = [false; 2];
+            self.identity = [false; Port::COUNT];
         }
         let mut run = Running::NONE;
         for burst in [false, true] {
@@ -147,17 +144,14 @@ impl EchoPlan {
                     if !ok {
                         continue;
                     }
-                    let msg = &b[..n];
-                    if !din.push_msg(msg) {
-                        return lost;
+                    if !tee.send(&b[..n]) {
+                        return;
                     }
-                    copy(&mut usb, msg, &mut lost);
                     run = r;
                     self.last[p.index()][j] = Some(v);
                 }
             }
         }
-        lost
     }
 
     /// Entry `j`, `e`, of Part `p`'s value to send now, if it echoes and
@@ -188,16 +182,6 @@ impl EchoPlan {
                     .any(|(_, b)| b.feedback == Feedback::Value)
         });
         (!lower).then_some(v)
-    }
-}
-
-/// `msg` into USB's ring, if Configured and it fits; else lost, and so is
-/// the pass's rest: their running status would read wrong.
-#[inline(always)]
-fn copy(usb: &mut Option<&OutRing>, msg: &[u8], lost: &mut u32) {
-    if !usb.is_some_and(|u| u.push_msg(msg)) {
-        *usb = None;
-        *lost += 1;
     }
 }
 
