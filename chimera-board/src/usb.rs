@@ -1008,7 +1008,8 @@ fn install(core: UsbCore) -> Link {
 fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     lock();
     // SAFETY: the cell is written (a `Link` exists), and the handler, its
-    // one other user, is masked and not running.
+    // one other user, is masked and not running (or, without `midi-usb`,
+    // doesn't exist).
     let core = unsafe { (*CORE.0.get()).assume_init_mut() };
     // Any UI hold is the UI alive: a long answer pumps inside one `service`.
     // Before `f`, so an errand's `None` stands.

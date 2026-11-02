@@ -104,6 +104,8 @@ A DAW or a USB-only sequencer plugged into the unit's one USB port should play i
 
 ## 13. Rulings from the builder check (override §§ 4–10 where they differ)
 
+Mechanisms named here (the `MaybeUninit` slot, `away`, skipping echo before Configured) are superseded in shape by ADR 0222's restructure; the rulings stand.
+
 Full questions: (private notes). All Claude's calls.
 
 1. **MIDI OUT is always emptied.** Under `with`, the UI's pumps call the same `poll_all` plus the handler's after-poll work (read, feed, pack), so MIDI is fed at the pump's pace during an answer and never blocks the shared RX FIFO. With the door closed and MIDI configured, bank 1 drains MIDI's OUT endpoint by its address (`UsbBus::read`) and drops the packets, counted in `usb_midi_drops`. A few dozen bytes of bank 1.

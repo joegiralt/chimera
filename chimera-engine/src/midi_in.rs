@@ -83,8 +83,8 @@ pub enum Port {
 }
 
 impl Port {
-    pub const ALL: [Port; Port::COUNT] = [Port::Din, Port::Usb];
-    pub const COUNT: usize = 2;
+    pub const ALL: [Port; 2] = [Port::Din, Port::Usb];
+    pub const COUNT: usize = Port::ALL.len();
 }
 
 /// One message for the UI, either way it came.
