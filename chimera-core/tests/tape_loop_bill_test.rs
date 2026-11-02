@@ -33,8 +33,8 @@ fn every_band_bills_its_pass_length() {
         assert_eq!(at(w, 4, 0), tiny, "{w:?} under 16");
     }
     for (spw, sum, pow) in [
-        (16, 50, 710),
-        (59, 50, 710),
+        (16, 80, 740),
+        (59, 80, 740),
         (60, 20, 200),
         (255, 20, 200),
         (256, 0, 50),
