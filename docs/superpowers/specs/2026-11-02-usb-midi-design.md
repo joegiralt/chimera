@@ -97,10 +97,10 @@ A DAW or a USB-only sequencer plugged into the unit's one USB port should play i
 - Whether `with` sits in `usb.rs` or its own module.
 - The `chimera-usb.py` match on the new product string.
 
-## 12. Follow-ups to file
-- Cables per Part (cable 0–5 → Parts 1–6, cable 6 global), the report's layout.
-- macOS and Windows enumeration, by a tester.
-- USB audio (Phase 5): the spike's walls, on top of this interrupt.
+## 12. Follow-ups
+- Cables per Part (cable 0–5 → Parts 1–6, cable 6 global): private issue #840
+- macOS and Windows enumeration, by a tester: private issue #841
+- USB audio (Phase 5), on top of this interrupt: private issue #204
 
 ## 13. Rulings from the builder check (override §§ 4–10 where they differ)
 

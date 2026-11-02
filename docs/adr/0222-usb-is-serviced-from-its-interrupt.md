@@ -53,9 +53,15 @@ ADR 0068 polls the CDC console from the UI loop. The unit reads `loop_avg_us 641
 - **RAM:** the cell `usb::CORE` is 1,212 B (the 256-B control buffer among it); `OUT_USB` and `CTRL_USB` sit in `.bss` beside DIN's.
 - **Stack:** `OTG_FS` 704 B (696 in the bench sets) against USART1's 312 B; nested totals stay under 63,232 B (default 61,132, orbit 61,644).
 - **Latency:** a USB note waits for the frame and the handler, not the UI lap. While the console is mid-transfer under the lock, MIDI waits up to one UI lap.
-- **Untested on the unit at this writing:** IN packets under `amidi -d`, Linux reading a 64-byte bulk IN with no ZLP, latency and jitter, unplug mid-chord, and the closed-door layout. The unit's verification run (spec § 10) is their check. macOS and Windows are left to testers.
+- **Untested on the unit at this writing:** IN packets under `amidi -d`, Linux reading a 64-byte bulk IN with no ZLP, latency and jitter, unplug mid-chord, the closed-door layout, and the storm a large console `put` raises. The unit's verification run (spec § 10) is their check. macOS and Windows are left to testers (private issue #841).
+- **The 2026-11-02 incident.** The first composite flash (11b82462) sent a 175-B configuration descriptor through usb-device's default 128-B control buffer. The host timed out reading it, the unit dropped off USB, and the owner had to put it in the bootloader's DFU to recover it. The fix is `control-buffer-256` and the host enumeration test `chimera-midi/tests/usb_class_test.rs`. No descriptor change is flashed without that test passing.
 - **The outliner hazard stays.** Any later bank-1 change can bring back a bank-1 fragment calling bank 2; `door-check` catches it.
-- **Follow-ups:** cables per Part; macOS and Windows enumeration; USB audio on top of this interrupt; stale echo when a host enumerates but doesn't read.
+- **Follow-ups:**
+  - Cables per Part: private issue #840
+  - macOS and Windows enumeration: private issue #841
+  - Stale echo when a host enumerates but doesn't read: private issue #842
+  - Deferred review minors: private issue #843
+  - USB audio on top of this interrupt: private issue #204
 
 ## Sources
 - `docs/superpowers/specs/2026-11-02-usb-midi-design.md`, the plan `docs/superpowers/plans/2026-11-02-usb-midi.md`, and the ledger `.superpowers/sdd/2026-11-02-usb-midi/` (rulings, task reports, the unit's readings and the 2026-11-02 enumeration incident).
