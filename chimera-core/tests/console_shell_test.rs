@@ -228,3 +228,46 @@ fn a_long_answer_pumping_is_not_starved() {
         }
     }
 }
+
+use chimera_core::console::{PerMille, WallClock};
+
+/// The unit's USB flood under a heavy chord: each 22 ms lap the handler
+/// storms until the tick test trips at 20 ms of DWT, SysTick (the shell's
+/// `Ms`) stalled all the while, and the handler gets a third of it (audio
+/// takes the rest). Shares over SysTick's ms read the stalled clock: the
+/// storm's cycles over 2 ms a lap, pinned at 100 %. Over the DWT wall
+/// clock, a third of 20 ms in 22.
+#[test]
+fn a_storm_that_stalls_systick_keeps_the_share_true() {
+    let (lap, stalled, own_lap) = (22 * MS, 20 * MS, 20 * MS / 3);
+    let (mut dwt, mut ms) = (u32::MAX - 3 * MS, Ms(1_000));
+    let mut wall = WallClock::new(Cycles::new(dwt), ms);
+    let (start_ms, mut own) = (ms, 0u64);
+    for _ in 0..100 {
+        dwt = dwt.wrapping_add(lap);
+        ms = Ms(ms.0 + (lap - stalled) / MS);
+        own += u64::from(own_lap);
+        wall.fold(Cycles::new(dwt), ms, Cycles::new(MS));
+    }
+    let by_ms = u64::from(ms.since(start_ms)) * u64::from(MS);
+    assert_eq!(
+        PerMille::of(own, by_ms),
+        PerMille::of(1, 1),
+        "the stalled clock"
+    );
+    assert_eq!(PerMille::of(own, wall.total()), PerMille::of(20, 66));
+}
+
+/// A lap longer than the cycle counter's 8.9 s wrap (an install): SysTick,
+/// stalled at most 20 ms a trip, says how many wraps passed.
+#[test]
+fn a_lap_past_the_dwt_wrap_counts_whole() {
+    let mut wall = WallClock::new(Cycles::new(5), Ms(0));
+    let ten_s = 10_000u64 * u64::from(MS);
+    let dwt = Cycles::new(5u32.wrapping_add(ten_s as u32));
+    assert_eq!(wall.fold(dwt, Ms(10_000), Cycles::new(MS)), ten_s);
+    // 20 ms of SysTick lost in the next 9 s: still one wrap, by DWT.
+    let nine_s = 9_000u64 * u64::from(MS);
+    let dwt = Cycles::new(dwt.get().wrapping_add(nine_s as u32));
+    assert_eq!(wall.fold(dwt, Ms(18_980), Cycles::new(MS)), ten_s + nine_s);
+}

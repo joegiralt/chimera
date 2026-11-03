@@ -39,6 +39,40 @@ impl AnswerClock {
     }
 }
 
+/// Wall time in DWT cycles since boot, folded each UI lap: the shares'
+/// denominator. Not SysTick's `Ms`, which a storm stalls (up to the guard's
+/// `TICK_STALL_MS` a trip) while the cycles it is shared against run on.
+/// SysTick only says how many of the counter's 8.9 s wraps a long lap
+/// spanned.
+#[derive(Clone, Copy, Debug)]
+pub struct WallClock {
+    dwt: Cycles,
+    ms: Ms,
+    total: u64,
+}
+
+impl WallClock {
+    pub const fn new(dwt: Cycles, ms: Ms) -> Self {
+        WallClock { dwt, ms, total: 0 }
+    }
+
+    /// The counter at `dwt` and SysTick at `ms` now (`per_ms` cycles a
+    /// millisecond): the cycles since, added, the wraps SysTick's ms say
+    /// passed (rounded to the nearest) with them. The total.
+    pub fn fold(&mut self, dwt: Cycles, ms: Ms, per_ms: Cycles) -> u64 {
+        let d = u64::from(dwt.since(self.dwt).get());
+        let by_ms = u64::from(ms.since(self.ms)) * u64::from(per_ms.get());
+        let wraps = (by_ms.saturating_sub(d) + (1 << 31)) >> 32;
+        self.total = self.total.wrapping_add(d + (wraps << 32));
+        (self.dwt, self.ms) = (dwt, ms);
+        self.total
+    }
+
+    pub fn total(&self) -> u64 {
+        self.total
+    }
+}
+
 /// The UI loop's time between loop tops, since the last `take`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LoopTimer {

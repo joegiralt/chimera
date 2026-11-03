@@ -159,34 +159,31 @@ pub fn irq_cycles() -> u64 {
 #[derive(Clone, Copy)]
 pub struct IrqMark {
     cycles: u64,
-    at: Ms,
+    /// The wall clock's cycles then (`WallClock`).
+    at: u64,
 }
 
 #[cfg(feature = "usb-console")]
 impl IrqMark {
-    pub fn new(now: Ms) -> IrqMark {
+    pub fn new(wall: u64) -> IrqMark {
         IrqMark {
             cycles: irq_cycles(),
-            at: now,
+            at: wall,
         }
     }
 }
 
-/// `stats`' stream lines at `now`: the IRQ's share since `mark`, which
-/// moves to now.
+/// `stats`' stream lines at `wall` (`WallClock`'s cycles): the IRQ's
+/// share since `mark`, which moves to now.
 #[cfg(feature = "usb-console")]
-pub fn tally(
-    mark: &mut IrqMark,
-    now: Ms,
-    cycles_per_us: u32,
-) -> chimera_core::console::StreamTally {
+pub fn tally(mark: &mut IrqMark, wall: u64) -> chimera_core::console::StreamTally {
     use chimera_core::console::{PerMille, StreamTally};
     use chimera_hal::units::Millis;
     let ld = |a: &AtomicU32| a.load(Ordering::Relaxed);
     let s = &STREAM_STATS;
-    let then = replace(mark, IrqMark::new(now));
+    let then = replace(mark, IrqMark::new(wall));
     let own = mark.cycles.saturating_sub(then.cycles);
-    let wall = u64::from(now.since(then.at)) * 1_000 * u64::from(cycles_per_us);
+    let wall = wall.saturating_sub(then.at);
     StreamTally {
         underruns: ld(&s.underruns),
         cold: ld(&s.cold),

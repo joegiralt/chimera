@@ -10,7 +10,7 @@ use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep,
 use chimera_core::console::{
     AnswerClock, Bank2Answer, BankRegs, CardAnswer, CardArg, Console, FlashPeek, FlashRegs, Frame,
     Hand, Hands, LoopTimer, Out, PEEK_AT, Refusal, Request, Served, Stalled, Stats, SweepAsk, Unit,
-    answer, serial_hex,
+    WallClock, answer, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
@@ -38,7 +38,6 @@ use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
 use chimera_core::console::{StormWindow, starved, storm};
 use chimera_core::errand::Errand;
-#[cfg(feature = "midi-usb")]
 use chimera_hal::units::Cycles;
 #[cfg(feature = "midi-usb")]
 use core::sync::atomic::Ordering;
@@ -179,6 +178,8 @@ pub struct Usb {
     timer: LoopTimer,
     /// Where `stats` last read the card IRQ's cycles.
     irq: crate::card_dma::IrqMark,
+    /// The shares' wall time, in DWT cycles.
+    wall: WallClock,
     /// The USB interrupt's cycles, and where `stats` last read them.
     #[cfg(feature = "midi-usb")]
     usb_irq: UsbIrq,
@@ -374,13 +375,14 @@ impl Unconnected {
             },
         };
         #[cfg(feature = "midi-usb")]
-        let usb_irq = UsbIrq::new(core.irq.counts, crate::controls::now_ms());
+        let usb_irq = UsbIrq::new(core.irq.counts);
         let link = install(core);
         Usb {
             link,
             line: Console::new(),
             timer: LoopTimer::new(),
-            irq: crate::card_dma::IrqMark::new(crate::controls::now_ms()),
+            irq: crate::card_dma::IrqMark::new(0),
+            wall: WallClock::new(crate::shared::dwt(), crate::controls::now_ms()),
             #[cfg(feature = "midi-usb")]
             usb_irq,
             top: DWT::cycle_count(),
@@ -422,8 +424,11 @@ impl Usb {
         let us = now.wrapping_sub(self.top) / self.cycles_per_us;
         self.top = now;
         self.timer.lap(us, self.last);
-        // Every pass, inside the IRQ counter's wrap.
+        // Every pass, inside the IRQ counter's wrap and the wall clock's.
         crate::card_dma::irq_cycles();
+        let per_ms = Cycles::new(self.cycles_per_us * 1_000);
+        self.wall
+            .fold(Cycles::new(now), crate::controls::now_ms(), per_ms);
         #[cfg(feature = "bank2")]
         let cpu_hz = self.cycles_per_us * 1_000_000;
         let Usb {
@@ -431,6 +436,7 @@ impl Usb {
             line,
             timer,
             irq,
+            wall,
             #[cfg(feature = "midi-usb")]
             usb_irq,
             cycles_per_us,
@@ -503,6 +509,7 @@ impl Usb {
                 card,
                 timer,
                 irq,
+                wall,
                 #[cfg(feature = "midi-usb")]
                 usb_irq,
                 cycles_per_us: *cycles_per_us,
@@ -566,6 +573,7 @@ struct ChipUnit<'a> {
     card: Option<CardAnswer>,
     timer: &'a mut LoopTimer,
     irq: &'a mut crate::card_dma::IrqMark,
+    wall: &'a mut WallClock,
     #[cfg(feature = "midi-usb")]
     usb_irq: &'a mut UsbIrq,
     cycles_per_us: u32,
@@ -603,19 +611,19 @@ impl Unit for ChipUnit<'_> {
         let audio = crate::audio_stats(self.stats.as_deref_mut())?;
         crate::probe::restart_voice_peak();
         let (loop_avg_us, loop_peak_us) = self.timer.take();
-        let streams = chimera_core::stream::STREAMS.then(|| {
-            crate::card_dma::tally(self.irq, crate::controls::now_ms(), self.cycles_per_us)
-        });
+        let wall = self.wall.fold(
+            crate::shared::dwt(),
+            crate::controls::now_ms(),
+            Cycles::new(self.cycles_per_us * 1_000),
+        );
+        let streams = chimera_core::stream::STREAMS.then(|| crate::card_dma::tally(self.irq, wall));
         Some(Stats {
             audio,
             loop_avg_us,
             loop_peak_us,
             streams,
             #[cfg(feature = "midi-usb")]
-            usb: Some(
-                self.usb_irq
-                    .tally(crate::controls::now_ms(), self.cycles_per_us),
-            ),
+            usb: Some(self.usb_irq.tally(wall)),
             #[cfg(not(feature = "midi-usb"))]
             usb: None,
         })
@@ -898,24 +906,24 @@ impl UsbCore {
 }
 
 /// The handler's counters as `service` last read them, its cycles folded
-/// into 64 bits there, far inside their 8.9 s wrap, and the total and time
-/// `stats` last read.
+/// into 64 bits there, far inside their 8.9 s wrap, and the total and wall
+/// cycles `stats` last read.
 #[cfg(feature = "midi-usb")]
 struct UsbIrq {
     seen: Counts,
     cycles: chimera_core::stream::stats::IrqCycles,
     read: u64,
-    at: Ms,
+    at: u64,
 }
 
 #[cfg(feature = "midi-usb")]
 impl UsbIrq {
-    fn new(seen: Counts, now: Ms) -> UsbIrq {
+    fn new(seen: Counts) -> UsbIrq {
         UsbIrq {
             seen,
             cycles: chimera_core::stream::stats::IrqCycles::new(seen.cycles),
             read: 0,
-            at: now,
+            at: 0,
         }
     }
 
@@ -924,13 +932,12 @@ impl UsbIrq {
         self.cycles.fold(seen.cycles);
     }
 
-    /// `stats`' USB lines at `now`: the share since the last read.
-    fn tally(&mut self, now: Ms, cycles_per_us: u32) -> chimera_core::console::UsbTally {
+    /// `stats`' USB lines at `wall` (`WallClock`'s cycles): the share
+    /// since the last read.
+    fn tally(&mut self, wall: u64) -> chimera_core::console::UsbTally {
         let total = self.cycles.total();
         let own = total.saturating_sub(core::mem::replace(&mut self.read, total));
-        let wall = u64::from(now.since(core::mem::replace(&mut self.at, now)))
-            * 1_000
-            * u64::from(cycles_per_us);
+        let wall = wall.saturating_sub(core::mem::replace(&mut self.at, wall));
         chimera_core::console::UsbTally {
             irq_share: chimera_core::console::PerMille::of(own, wall),
             irq_us_max: chimera_hal::units::Micros::new(self.seen.us_max),
