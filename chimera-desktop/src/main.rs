@@ -209,7 +209,13 @@ fn main() {
         #[cfg(feature = "midi")]
         ui.send_out(&audio::MIDI_OUT);
         if ui
-            .take_dfu_synced(&mut sync, &mut card, &mut store, &mut settings)
+            .take_dfu_synced(
+                chimera_core::errand::Errand::HOST,
+                &mut sync,
+                &mut card,
+                &mut store,
+                &mut settings,
+            )
             .is_some()
         {
             eprintln!("dfu: not in this build");
@@ -227,16 +233,27 @@ fn main() {
             sync: &mut sync,
             settings: &mut settings,
         };
-        ui.card_work(cx, &LOAD_LINK, |swap, u| {
-            let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
-            let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
-            audio.update(u.project(), LOAD_LINK.epoch(), |b| {
-                u.publish_orbit(&mut b.orbit);
-                u.publish_ui(b);
-            });
-        });
+        ui.card_work(
+            chimera_core::errand::Errand::HOST,
+            cx,
+            &LOAD_LINK,
+            |swap, u| {
+                let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
+                let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
+                audio.update(u.project(), LOAD_LINK.epoch(), |b| {
+                    u.publish_orbit(&mut b.orbit);
+                    u.publish_ui(b);
+                });
+            },
+        );
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
-        ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
+        ui.sync_system(
+            chimera_core::errand::Errand::HOST,
+            &mut sync,
+            &mut card,
+            &mut store,
+            &mut settings,
+        );
         display.set_theme(&ui.theme());
         if let Some(t) = pacer.due(Ms(first_light.elapsed().as_millis() as u32)) {
             ui.update(t);

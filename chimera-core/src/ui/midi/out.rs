@@ -1,13 +1,13 @@
-//! DIN OUT's pass (spec §§ 8.4, 9-10): with MIDI CONFIG › ECHO on, the
-//! echo plan's identity reply and value echo into the out ring, each
-//! message whole when it fits, else a later pass. Bank 2's, as `ui::midi`
-//! is.
+//! MIDI out's pass (spec §§ 7, 8.4, 9-10): with MIDI CONFIG › ECHO on, the
+//! echo plan's identity replies and value echo into DIN's ring and USB's,
+//! each message whole when it fits, else a later pass (DIN) or lost
+//! (USB). Bank 2's, as `ui::midi` is.
 
 use chimera_midi::sysex::{Identity, Maker};
 use chimera_midi::value::{U7, U14};
 
 use super::super::UiState;
-use crate::out_ring::OutRing;
+use crate::out_ring::OutPorts;
 
 /// `v`, past 127 held at 127.
 const fn u7(v: u8) -> U7 {
@@ -53,13 +53,14 @@ pub const REPLY_LEN: usize = 15;
 
 impl UiState {
     /// The out pass, after `hear_in` (its clock): with ECHO on, the echo
-    /// plan's messages into `ring` (`EchoPlan::pump`); off, nothing, and
-    /// an inquiry heard is dropped (spec § 8.4). The door's `out`.
-    pub(in crate::ui) fn out_in(&mut self, ring: &OutRing) {
+    /// plan's messages out of `out`'s ports (`EchoPlan::pump`); off,
+    /// nothing, and an inquiry heard is dropped (spec § 8.4). The door's
+    /// `out`.
+    pub(in crate::ui) fn out_in(&mut self, out: &OutPorts) {
         let (on, at, now) = (self.midi.echo(), self.active_part, self.cc.last);
         let plan = &mut self.cc.ui().echo;
         if on {
-            plan.pump(&self.project, at, now, ring);
+            plan.pump(&self.project, at, now, out);
         } else {
             plan.silence();
         }

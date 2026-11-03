@@ -2,7 +2,10 @@
 //! What the retired `MidiParser` + `route` queued is frozen here as
 //! `old_route_queued`.
 
-use chimera_engine::midi_in::{self, CtrlEvent, CtrlRing, DinPipe, DinSinks, PipeSlot, Sinks};
+use chimera_engine::midi_in::{
+    self, CTRL_RING_LEN, CTRL_USB_LEN, CtrlEvent, CtrlPorts, CtrlRing, DinPipe, DinSinks, Left,
+    PipeSlot, Port, Sinks,
+};
 use chimera_engine::note_queue::{
     BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteConsumer, NoteEvent, NoteKind,
     NoteProducer, NoteQueue, RealTime, SustainEvent,
@@ -275,7 +278,7 @@ fn data(i: u16) -> CtrlEvent {
 
 #[test]
 fn ring_drop_loses_whole_events() {
-    let ring = CtrlRing::new();
+    let ring: CtrlRing = CtrlRing::new();
     for n in 0..64 {
         assert!(ring.push(data(n)));
     }
@@ -292,11 +295,25 @@ fn ring_drop_loses_whole_events() {
     assert_eq!(ring.pop(), None);
 }
 
+/// USB's ring takes a host's burst whole: 3,780 B on the unit, 420 note
+/// pairs each with a CC, landed between two UI laps. DIN's stays 64.
+#[test]
+fn usb_ring_takes_a_burst_whole() {
+    assert_eq!(CTRL_RING_LEN, 64, "DIN's ring unchanged");
+    assert_eq!(core::mem::size_of::<CtrlRing>(), 64 * 8 + 12);
+    let ring: CtrlRing<CTRL_USB_LEN> = CtrlRing::new();
+    for n in 0..420 {
+        assert!(ring.push(data(n)), "CC {n} refused");
+    }
+    assert_eq!(ring.dropped(), 0);
+    assert!(ring.drain().eq((0..420).map(data)), "in order, whole");
+}
+
 /// A build with no MIDI map drops the ring unread each pass, so a flood
 /// never counts as a drop.
 #[test]
 fn clear_drops_what_waits_and_frees_the_ring() {
-    let ring = CtrlRing::new();
+    let ring: CtrlRing = CtrlRing::new();
     for n in 0..64 {
         assert!(ring.push(data(n)));
     }
@@ -307,6 +324,35 @@ fn clear_drops_what_waits_and_frees_the_ring() {
     }
     assert_eq!(ring.dropped(), 0);
     assert_eq!(ring.pop(), Some(data(0)));
+}
+
+/// One drain over both ports: DIN's first, each tagged with its port.
+#[test]
+fn ports_drain_din_then_usb_tagged() {
+    let ports: CtrlPorts = CtrlPorts::new();
+    assert!(ports.usb.push(data(10)));
+    assert!(ports.din.push(data(1)));
+    assert!(ports.usb.push(data(11)));
+    assert!(ports.din.push(data(2)));
+    let all: Vec<_> = ports.drain().collect();
+    assert_eq!(
+        all,
+        [
+            (Port::Din, data(1)),
+            (Port::Din, data(2)),
+            (Port::Usb, data(10)),
+            (Port::Usb, data(11)),
+        ]
+    );
+    assert_eq!(ports.drain().next(), None);
+}
+
+#[test]
+fn ports_clear_both() {
+    let ports: CtrlPorts<64> = CtrlPorts::new();
+    assert!(ports.din.push(data(1)) && ports.usb.push(data(2)));
+    ports.clear();
+    assert_eq!(ports.drain().next(), None);
 }
 
 #[test]
@@ -467,6 +513,72 @@ fn fe_rearms_after_timeout() {
     din.run(&[0xFE]);
     assert!(din.slot.sensing_armed(), "the next FE does");
     assert_eq!(din.run(&[]).0, all_notes_off());
+}
+
+/// USB's detach: every channel let go and the UI told, sensing armed or
+/// not, every time.
+#[test]
+fn lost_releases_every_channel() {
+    let mut din = Din::new();
+    din.run(&[0x90, 60, 100, 0x99, 36, 100]);
+    assert!(!din.slot.sensing_armed());
+    let mut lost = || {
+        let mut out = DinSinks {
+            notes: &mut din.notes,
+            ctrl: din.ring,
+        };
+        midi_in::lost(&mut din.slot, &mut out);
+        let heard: Vec<_> = core::iter::from_fn(|| din.audio.pop()).collect();
+        (heard, din.ring.drain().collect::<Vec<_>>())
+    };
+    assert_eq!(lost(), (all_notes_off(), vec![CtrlEvent::SensingLost]));
+    assert_eq!(lost().0, all_notes_off(), "each transition");
+    din.run(&[0x91, 62, 100, 0xFE]);
+    assert!(din.slot.sensing_armed());
+    let mut out = DinSinks {
+        notes: &mut din.notes,
+        ctrl: din.ring,
+    };
+    midi_in::lost(&mut din.slot, &mut out);
+    let (notes, ctrl) = din.run(&[0xF8]);
+    assert_eq!(notes[..16], all_notes_off()[..], "armed too");
+    assert_eq!(ctrl, [CtrlEvent::SensingLost]);
+}
+
+/// USB leaving Configured as the poll sees it: a reset always lets go; a
+/// suspend only after a note-on since the last `lost`.
+fn detach(din: &mut Din, left: Left) -> bool {
+    let go = midi_in::lets_go(left, din.slot.played());
+    if go {
+        let mut out = DinSinks {
+            notes: &mut din.notes,
+            ctrl: din.ring,
+        };
+        midi_in::lost(&mut din.slot, &mut out);
+        din.run(&[]);
+    }
+    go
+}
+
+#[test]
+fn suspend_lets_go_only_after_a_note_on() {
+    let mut din = Din::new();
+    assert!(!detach(&mut din, Left::Suspend), "nothing played yet");
+    din.run(&[0xB0, 74, 1, 0x80, 60, 0]);
+    assert!(!detach(&mut din, Left::Suspend), "no note-on");
+    din.run(&[0x90, 60, 100]);
+    assert!(din.slot.played());
+    assert!(detach(&mut din, Left::Suspend), "a note-on: once");
+    assert!(!din.slot.played(), "`lost` clears it");
+    assert!(!detach(&mut din, Left::Suspend), "no new note-on");
+}
+
+#[test]
+fn reset_always_lets_go() {
+    let mut din = Din::new();
+    assert!(detach(&mut din, Left::Reset), "with no note-on too");
+    din.run(&[0x90, 60, 100]);
+    assert!(detach(&mut din, Left::Reset));
 }
 
 #[test]

@@ -245,7 +245,7 @@ fn drops_are_counted_per_source() {
 #[test]
 fn source_ids_are_positions_in_the_drain_order() {
     assert_eq!((A.index(), B.index()), (0, 1));
-    assert_eq!(MAX_NOTE_SOURCES, 2);
+    assert_eq!(MAX_NOTE_SOURCES, 3);
 }
 
 #[test]

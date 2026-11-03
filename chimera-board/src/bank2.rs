@@ -32,6 +32,9 @@ pub(crate) struct BoardDoor {
     /// The card interrupt's streaming work.
     #[cfg(not(feature = "sd-probe"))]
     pub(crate) card: crate::card_dma::CardDoor,
+    /// USB MIDI's class: its allocation and the device's poll.
+    #[cfg(feature = "midi-usb")]
+    pub(crate) usb: crate::usb_midi::UsbDoor,
 }
 
 /// `BoardDoor::magic`.
@@ -45,6 +48,8 @@ static BOARD_DOOR: BoardDoor = BoardDoor {
     magic: BOARD_MAGIC,
     #[cfg(not(feature = "sd-probe"))]
     card: crate::card_dma::CardDoor::DOOR,
+    #[cfg(feature = "midi-usb")]
+    usb: crate::usb_midi::UsbDoor::DOOR,
 };
 
 /// `BOARD_DOOR`'s slot.
@@ -659,6 +664,7 @@ const TAPE_OFF_MS: u32 = 30;
 #[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
 #[inline(never)]
 pub fn run_erase(
+    _: &chimera_core::errand::Errand,
     ui: &mut chimera_core::ui::UiState,
     cpu_hz: u32,
 ) -> chimera_core::console::Bank2Answer {
@@ -685,6 +691,7 @@ pub fn run_erase(
 #[cfg(all(feature = "bank2", feature = "usb-console"))]
 #[inline(never)]
 pub fn run_install(
+    _: &chimera_core::errand::Errand,
     store: &mut impl chimera_hal::store::Store,
     ui: &mut chimera_core::ui::UiState,
     display: &mut impl chimera_hal::ChimeraDisplay,

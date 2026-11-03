@@ -29,6 +29,9 @@ usb-console = [
     "dep:synopsys-usb-otg",
 ]
 card-put = ["usb-console", "chimera-core/card-put"]
+# The console serviced from the OTG_FS interrupt, with its storm guard; USB
+# MIDI joins it there, its class behind the board's door.
+midi-usb = ["usb-console", "bank2"]
 sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]
 # Bank 1's seal of the bank-2 image it was linked with (ADR 0137).
@@ -41,6 +44,7 @@ chimera-core = { path = "../chimera-core", default-features = false, features = 
 chimera-hal = { path = "../chimera-hal" }
 chimera-fat = { path = "../chimera-fat" }
 chimera-image = { path = "../chimera-image" }
+chimera-midi = { path = "../chimera-midi" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 # As `chimera-stm32`'s: the rev V register definitions.
 stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }
@@ -48,6 +52,8 @@ embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 embedded-sdmmc = { version = "0.10", default-features = false }
 embedded-hal = "1.0"
+# Its control buffer is 256 B through chimera-midi's (`usb_class`): the
+# console's CDC with USB MIDI's function passes 128.
 usb-device = { version = "0.3.2", optional = true }
 usbd-serial = { version = "0.2.2", optional = true }
 # The HAL's own OTG driver, for `usb::Otg2`, whose enable adds nothing to

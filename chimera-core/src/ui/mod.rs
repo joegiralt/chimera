@@ -560,6 +560,7 @@ impl UiState {
     /// this visit would otherwise be lost. Writes the card.
     pub fn sync_system_now<S: Store>(
         &mut self,
+        _: &crate::errand::Errand,
         sync: &mut SystemSync,
         card: &mut Card,
         store: &mut S,
@@ -576,13 +577,14 @@ impl UiState {
     /// path to DFU can't skip the card write.
     pub fn take_dfu_synced<S: Store>(
         &mut self,
+        e: &crate::errand::Errand,
         sync: &mut SystemSync,
         card: &mut Card,
         store: &mut S,
         s: &mut SystemSettings,
     ) -> Option<Said<RomDfu>> {
         let yes = self.dfu.take()?;
-        self.sync_system_now(sync, card, store, s);
+        self.sync_system_now(e, sync, card, store, s);
         Some(yes)
     }
 
@@ -662,6 +664,7 @@ impl UiState {
     /// theme is applied here.
     pub fn sync_system<S: Store>(
         &mut self,
+        _: &crate::errand::Errand,
         sync: &mut SystemSync,
         card: &mut Card,
         store: &mut S,

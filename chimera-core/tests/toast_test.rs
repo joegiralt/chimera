@@ -123,7 +123,7 @@ fn frame(
     s: &mut MemStore,
     cur: &mut SystemSettings,
 ) -> ToastStep {
-    ui.sync_system(sync, card, s, cur);
+    ui.sync_system(chimera_core::errand::Errand::HOST, sync, card, s, cur);
     // The step after the card work spans it: a slow one must not count.
     ui.step_toast(5_000)
 }

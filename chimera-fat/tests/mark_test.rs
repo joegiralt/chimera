@@ -347,9 +347,15 @@ fn a_clean_boot_reads_a_few_blocks_and_writes_none() {
 fn an_asked_sweep_runs_at_the_next_boot() {
     let disk = Rc::new(clean_card());
     let mut s = probed(&disk);
-    assert_eq!(ask_sweep(true, &mut s), SweepAsk::Unsaved);
+    assert_eq!(
+        ask_sweep(chimera_core::errand::Errand::HOST, true, &mut s),
+        SweepAsk::Unsaved
+    );
     assert!(log(&s).writes.borrow().is_empty());
-    assert_eq!(ask_sweep(false, &mut s), SweepAsk::Requested);
+    assert_eq!(
+        ask_sweep(chimera_core::errand::Errand::HOST, false, &mut s),
+        SweepAsk::Requested
+    );
     assert_eq!(log(&s).writes.borrow().len(), 1, "the mark, in place");
     assert_eq!(mark_of(&disk), Mark::Asked(0));
     let run = boot(&disk);
@@ -368,19 +374,36 @@ fn an_asked_sweep_runs_at_the_next_boot() {
     assert!(matches!(boot(&disk), SweepRun::Skipped(Mark::Clean)));
     // A card with no mark gets one; a card Chimera never wrote, none.
     let disk = Rc::new(with_clusters(CLUSTERS, 0xA5C));
-    assert_eq!(ask_sweep(false, &mut probed(&disk)), SweepAsk::Unused);
+    assert_eq!(
+        ask_sweep(
+            chimera_core::errand::Errand::HOST,
+            false,
+            &mut probed(&disk)
+        ),
+        SweepAsk::Unused
+    );
     assert_eq!(mark_of(&disk), Mark::Unused);
     {
         let mut s = probed(&disk);
         let vol = s.mount().unwrap();
         s.make_dir(vol, Dir::Chimera).unwrap();
     }
-    assert_eq!(ask_sweep(false, &mut probed(&disk)), SweepAsk::Requested);
+    assert_eq!(
+        ask_sweep(
+            chimera_core::errand::Errand::HOST,
+            false,
+            &mut probed(&disk)
+        ),
+        SweepAsk::Requested
+    );
     assert_eq!(mark_of(&disk), Mark::Asked(0));
     // A card that won't mount fails.
     let mut s = probed(&disk);
     log(&s).absent.set(true);
-    assert!(matches!(ask_sweep(false, &mut s), SweepAsk::Failed(_)));
+    assert!(matches!(
+        ask_sweep(chimera_core::errand::Errand::HOST, false, &mut s),
+        SweepAsk::Failed(_)
+    ));
 }
 
 /// The request's write, cut or torn: the old mark, `Asked`, or plain
@@ -393,7 +416,11 @@ fn a_cut_request_never_reads_clean() {
         Cut::TornAfter(0, Tear::Garbage),
     ] {
         let disk = Rc::new(CutDisk::new(clean_card(), cut));
-        let _ = ask_sweep(false, &mut probed(&disk));
+        let _ = ask_sweep(
+            chimera_core::errand::Errand::HOST,
+            false,
+            &mut probed(&disk),
+        );
         disk.cut.set(Cut::Never);
         let m = mark_of(&disk);
         assert!(
@@ -542,7 +569,14 @@ fn three_doubting_boots_stop_the_automatic_sweep() {
     assert_eq!(mark_of(&disk), Mark::Doubted(DOUBT_HALT));
     // An asked sweep runs at the next boot, halted or not; its doubt
     // counts no boot, and the count comes back.
-    assert_eq!(ask_sweep(false, &mut probed(&disk)), SweepAsk::Requested);
+    assert_eq!(
+        ask_sweep(
+            chimera_core::errand::Errand::HOST,
+            false,
+            &mut probed(&disk)
+        ),
+        SweepAsk::Requested
+    );
     assert_eq!(mark_of(&disk), Mark::Asked(DOUBT_HALT));
     let run = boot(&disk);
     assert!(
@@ -561,7 +595,14 @@ fn three_doubting_boots_stop_the_automatic_sweep() {
     assert_eq!(mark_of(&disk), Mark::Doubted(DOUBT_HALT));
     // Fixed, an asked sweep settles and clears it.
     fix(&disk);
-    assert_eq!(ask_sweep(false, &mut probed(&disk)), SweepAsk::Requested);
+    assert_eq!(
+        ask_sweep(
+            chimera_core::errand::Errand::HOST,
+            false,
+            &mut probed(&disk)
+        ),
+        SweepAsk::Requested
+    );
     let run = boot(&disk);
     assert!(
         matches!(

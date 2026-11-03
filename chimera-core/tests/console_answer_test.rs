@@ -3,7 +3,8 @@ use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     Bank2Answer, Bank2Audio, Bank2Fail, Bank2Refusal, CardAnswer, CardFail, CardSpeed, Colours,
     Command, Console, FlashPeek, FlashRegs, Frame, Hands, NoArg, Out, PerMille, QUEUE, Request,
-    SHOT_HEADER, Stalled, Stats, StreamTally, SweepAsk, Unit, answer, check_staged, installed,
+    SHOT_HEADER, Stalled, Stats, StreamTally, SweepAsk, Unit, UsbTally, answer, check_staged,
+    installed,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -321,7 +322,7 @@ fn stats_reads_audio_load_and_the_loop() {
         a.stack_used,
     ) = (23, 41, 0, 2, 2, 12_288);
     (a.dma_errors, a.fifo_errors) = (3, 4);
-    a.drops = [5, 7];
+    a.drops[..2].copy_from_slice(&[5, 7]);
     a.record_voices(5, 60, false);
     a.record_voices(3, 47, false);
     u.stats = Some(Stats {
@@ -329,6 +330,7 @@ fn stats_reads_audio_load_and_the_loop() {
         loop_avg_us: 812,
         loop_peak_us: 4210,
         streams: None,
+        usb: None,
     });
     assert_eq!(
         ask(&mut u, "stats\n"),
@@ -337,7 +339,7 @@ fn stats_reads_audio_load_and_the_loop() {
     for (sources, want) in [
         (1, "\ndrops 5\n"),
         (0, "\ndrops -\n"),
-        (200, "\ndrops 5 7\n"),
+        (200, "\ndrops 5 7 0\n"),
     ] {
         a.sources = sources;
         u.stats = Some(Stats {
@@ -345,6 +347,7 @@ fn stats_reads_audio_load_and_the_loop() {
             loop_avg_us: 0,
             loop_peak_us: 0,
             streams: None,
+            usb: None,
         });
         assert!(ask(&mut u, "stats\n").contains(want), "{sources} sources");
     }
@@ -374,6 +377,7 @@ fn stats_prints_the_streams_lines() {
             irq_own_us_max: Micros::new(140),
             irq_share: PerMille::of(4, 1_000),
         }),
+        usb: None,
     });
     let got = ask(&mut u, "stats\n");
     assert!(
@@ -383,6 +387,31 @@ fn stats_prints_the_streams_lines() {
              stream_unreadable 2\nstream_held_at_cap 4\nstream_late_refused 5\n\
              card_faults 7\ncard_quiet_ms_max 38\ncard_quiets 6\n\
              card_irq_us_max 312\ncard_irq_own_us_max 140\ncard_irq_pct 0.4\nOK\n"
+        ),
+        "{got}"
+    );
+}
+
+/// A build with the USB interrupt ends on its three lines.
+#[test]
+fn stats_prints_the_usb_lines() {
+    let mut u = Fake::new();
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 1,
+        loop_peak_us: 2,
+        streams: None,
+        usb: Some(UsbTally {
+            irq_share: PerMille::of(12, 1_000),
+            irq_us_max: Micros::new(41),
+            storms: 3,
+            midi_drops: 5,
+        }),
+    });
+    let got = ask(&mut u, "stats\n");
+    assert!(
+        got.ends_with(
+            "loop_peak_us 2\nusb_irq_pct 1.2\nusb_irq_us_max 41\nusb_storms 3\nusb_midi_drops 5\nOK\n"
         ),
         "{got}"
     );
@@ -557,6 +586,7 @@ fn a_stall_is_returned_from_every_answer() {
         loop_avg_us: 1,
         loop_peak_us: 2,
         streams: None,
+        usb: None,
     });
     let mut c = Console::new();
     u.card = Some(CardAnswer::Measured(full(), None));
@@ -602,6 +632,7 @@ fn a_stall_mid_text_ends_the_answer_there() {
         loop_avg_us: 1,
         loop_peak_us: 2,
         streams: None,
+        usb: None,
     });
     for req in [
         Request::Help(NoArg),
@@ -678,6 +709,7 @@ fn random_streams_never_panic_and_end_each_answer_once() {
         loop_avg_us: 1,
         loop_peak_us: 2,
         streams: None,
+        usb: None,
     });
     let mut answers = 0;
     for _ in 0..5_000 {
@@ -725,6 +757,7 @@ fn the_specs_stats_has_every_line_stats_writes() {
         loop_avg_us: 0,
         loop_peak_us: 0,
         streams: None,
+        usb: None,
     });
     let key = |l: &str| l.split(' ').next().unwrap().to_owned();
     let got: Vec<_> = ask(&mut u, "stats\n").lines().map(key).collect();

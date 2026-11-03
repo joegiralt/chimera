@@ -44,7 +44,7 @@ use crate::controls::now_ms;
 use crate::priority::{self, Priority};
 use crate::sd::{BUS, CARD_ADDR, SD_FAST_HZ};
 use crate::shared::{
-    AUDIO_CYCLES, BLOCKS, Cycles, MIDI_CYCLES, STREAM_STATS, Stamp, registry, rings, stamp,
+    AUDIO_CYCLES, BLOCKS, Cycles, MIDI_CYCLES, STREAM_STATS, Stamp, dwt, registry, rings, stamp,
 };
 
 /// The bound on any register poll.
@@ -159,34 +159,31 @@ pub fn irq_cycles() -> u64 {
 #[derive(Clone, Copy)]
 pub struct IrqMark {
     cycles: u64,
-    at: Ms,
+    /// The wall clock's cycles then (`WallClock`).
+    at: u64,
 }
 
 #[cfg(feature = "usb-console")]
 impl IrqMark {
-    pub fn new(now: Ms) -> IrqMark {
+    pub fn new(wall: u64) -> IrqMark {
         IrqMark {
             cycles: irq_cycles(),
-            at: now,
+            at: wall,
         }
     }
 }
 
-/// `stats`' stream lines at `now`: the IRQ's share since `mark`, which
-/// moves to now.
+/// `stats`' stream lines at `wall` (`WallClock`'s cycles): the IRQ's
+/// share since `mark`, which moves to now.
 #[cfg(feature = "usb-console")]
-pub fn tally(
-    mark: &mut IrqMark,
-    now: Ms,
-    cycles_per_us: u32,
-) -> chimera_core::console::StreamTally {
+pub fn tally(mark: &mut IrqMark, wall: u64) -> chimera_core::console::StreamTally {
     use chimera_core::console::{PerMille, StreamTally};
     use chimera_hal::units::Millis;
     let ld = |a: &AtomicU32| a.load(Ordering::Relaxed);
     let s = &STREAM_STATS;
-    let then = replace(mark, IrqMark::new(now));
+    let then = replace(mark, IrqMark::new(wall));
     let own = mark.cycles.saturating_sub(then.cycles);
-    let wall = u64::from(now.since(then.at)) * 1_000 * u64::from(cycles_per_us);
+    let wall = wall.saturating_sub(then.at);
     StreamTally {
         underruns: ld(&s.underruns),
         cold: ld(&s.cold),
@@ -362,12 +359,12 @@ impl Hz {
 /// Polls `ready` for at most `cycles` cycles and `cycles` tries, so a
 /// cycle counter that doesn't count still ends it.
 fn wait(cycles: Cycles, mut ready: impl FnMut() -> bool) -> bool {
-    let t0 = Cycles::now();
+    let t0 = dwt();
     for _ in 0..cycles.get() {
         if ready() {
             return true;
         }
-        if Cycles::now().since(t0) > cycles {
+        if dwt().since(t0) > cycles {
             break;
         }
     }
@@ -1057,7 +1054,7 @@ fn DMA2_STR0() {
 }
 
 /// The cycle counter and the cycles of the interrupts over this one (the
-/// audio's and MIDI DIN's) as one pair.
+/// audio's and the MIDI level's, DIN's and USB's) as one pair.
 #[inline(always)]
 fn clocks() -> Stamp {
     stamp(|| {
@@ -1281,7 +1278,7 @@ impl IrqState {
         if let Err(why) = h.ready(&self.line) {
             return self.drop_job(h, kind, why);
         }
-        let t0 = Cycles::now();
+        let t0 = dwt();
         match h.command(CMD18, arg, &self.line) {
             Ok(()) => {
                 let end = kind.start();
@@ -1390,7 +1387,7 @@ impl IrqState {
                     let filled = self.deliver(&mut h, f);
                     #[cfg(feature = "bench")]
                     if filled {
-                        bench::filled(self.line.us(Cycles::now().since(t0)));
+                        bench::filled(self.line.us(dwt().since(t0)));
                     }
                     #[cfg(not(feature = "bench"))]
                     let _ = filled;
@@ -1514,7 +1511,7 @@ impl IrqState {
                 STATS.reads.fetch_add(1, Ordering::Relaxed);
                 STATS.bursts.fetch_add(self.bursts, Ordering::Relaxed);
                 STATS.bursts_max.fetch_max(self.bursts, Ordering::Relaxed);
-                let took = self.line.us(Cycles::now().since(t0));
+                let took = self.line.us(dwt().since(t0));
                 match done {
                     Done::Filled => {}
                     #[cfg(feature = "bench")]
@@ -1689,7 +1686,7 @@ mod bench {
     use core::ptr::{addr_of, addr_of_mut};
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
-    use crate::shared::Cycles;
+    use crate::shared::dwt;
     use chimera_core::stream::bench::{BENCH, BenchBeds};
     use chimera_core::stream::layout::ChunkIdx;
     use chimera_core::voice_alloc::VoiceIdx;
@@ -1826,13 +1823,13 @@ mod bench {
     pub(super) static CHECK_CYCLES: AtomicU32 = AtomicU32::new(0);
 
     pub(super) fn check(v: VoiceIdx, c: ChunkIdx, bytes: &[u8]) {
-        let t0 = Cycles::now();
+        let t0 = dwt();
         if let Some(b) = beds().and_then(|b| b.check(v))
             && !b.verify(c, bytes)
         {
             BENCH.check_failed(v);
         }
-        CHECK_CYCLES.fetch_add(Cycles::now().since(t0).get(), Ordering::Relaxed);
+        CHECK_CYCLES.fetch_add(dwt().since(t0).get(), Ordering::Relaxed);
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

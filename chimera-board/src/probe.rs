@@ -133,7 +133,7 @@ mod imp {
         stats.drops[..drops.len()].copy_from_slice(&drops);
         #[cfg(feature = "midi-din")]
         {
-            let din = &mut stats.drops[shared::DIN.index()];
+            let din = &mut stats.drops[const { shared::source(shared::Port::Din) }.index()];
             *din = din.saturating_add(shared::MIDI_ERRORS.load(Ordering::Relaxed));
         }
         stats.sources = drops.len() as u8;

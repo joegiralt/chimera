@@ -1,7 +1,9 @@
 use chimera_core::console::{
-    ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, Served, serial_hex,
+    self, ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, STORM_LIMIT, Served, StormWindow,
+    serial_hex,
 };
 use chimera_hal::Ms;
+use chimera_hal::units::Cycles;
 
 #[test]
 fn the_timer_averages_and_peaks_then_resets() {
@@ -109,4 +111,163 @@ fn the_answer_clock_reads_across_a_wrap() {
     c.progress(Ms(start.wrapping_add(200)));
     assert!(!c.expired(Ms(start.wrapping_add(400))));
     assert!(c.expired(Ms(start.wrapping_add(ANSWER_MS))));
+}
+
+/// 480 MHz: the unit's DWT cycles in a millisecond.
+const MS: u32 = 480_000;
+
+/// The guard's tests, read in raw DWT counts.
+fn storm(w: &mut StormWindow, now: u32, per_ms: u32) -> bool {
+    console::storm(w, Cycles::new(now), Cycles::new(per_ms))
+}
+
+fn starved(now: u32, tick_at: u32, alive: Option<u32>, per_ms: u32) -> bool {
+    let c = Cycles::new;
+    console::starved(c(now), c(tick_at), alive.map(c), c(per_ms))
+}
+
+#[test]
+fn storm_trips_over_limit() {
+    let mut w = StormWindow::new();
+    for k in 0..STORM_LIMIT {
+        assert!(!storm(&mut w, 1_000 + k * 100, MS), "entry {}", k + 1);
+    }
+    assert!(storm(&mut w, 1_000 + STORM_LIMIT * 100, MS), "the 201st");
+}
+
+#[test]
+fn window_resets_each_ms() {
+    let mut w = StormWindow::new();
+    for ms in 0..10 {
+        for k in 0..STORM_LIMIT {
+            assert!(!storm(&mut w, ms * MS + k * 2_000, MS), "ms {ms} entry {k}");
+        }
+    }
+}
+
+#[test]
+fn wraps_dwt() {
+    let mut w = StormWindow::new();
+    let start = u32::MAX - MS / 2;
+    for k in 0..STORM_LIMIT {
+        assert!(!storm(&mut w, start.wrapping_add(k), MS));
+    }
+    // A millisecond on, past the counter's wrap: a fresh window.
+    let next = start.wrapping_add(MS);
+    for k in 0..STORM_LIMIT {
+        assert!(
+            !storm(&mut w, next.wrapping_add(k), MS),
+            "entry {k} after the wrap"
+        );
+    }
+    assert!(storm(&mut w, next.wrapping_add(STORM_LIMIT), MS));
+}
+
+#[test]
+fn a_window_opens_on_its_first_cycle() {
+    let mut w = StormWindow::new();
+    for k in 0..STORM_LIMIT {
+        assert!(!storm(&mut w, k, MS));
+    }
+    assert!(!storm(&mut w, MS, MS), "cycle MS opens a fresh window");
+}
+
+#[test]
+fn a_stalled_tick_starves() {
+    let t = 5 * MS;
+    assert!(starved(t + 21 * MS, t, Some(t), MS), "21 ms");
+    assert!(!starved(t + 19 * MS, t, Some(t), MS), "19 ms");
+}
+
+#[test]
+fn a_stalled_service_starves() {
+    let s = 5 * MS;
+    let tick = s + 240 * MS; // SysTick still moving
+    assert!(starved(s + 251 * MS, tick, Some(s), MS), "251 ms");
+    assert!(!starved(s + 249 * MS, tick, Some(s), MS), "249 ms");
+}
+
+#[test]
+fn starved_reads_across_the_dwt_wrap() {
+    let at = u32::MAX - 5 * MS;
+    assert!(starved(at.wrapping_add(21 * MS), at, Some(at), MS));
+    assert!(!starved(at.wrapping_add(19 * MS), at, Some(at), MS));
+    assert!(starved(
+        at.wrapping_add(251 * MS),
+        at.wrapping_add(240 * MS),
+        Some(at),
+        MS
+    ));
+    assert!(!starved(
+        at.wrapping_add(249 * MS),
+        at.wrapping_add(240 * MS),
+        Some(at),
+        MS
+    ));
+}
+
+/// Before the UI's first `service` only the tick can starve.
+#[test]
+fn no_service_yet_is_not_starved() {
+    let tick = 2 * MS;
+    assert!(!starved(tick + 19 * MS, tick, None, MS));
+    assert!(!starved(1_000 * MS, 999 * MS, None, MS), "1 s from boot");
+    assert!(starved(tick + 21 * MS, tick, None, MS));
+}
+
+/// A long answer: the UI holds the cell every 100 ms inside one `service`
+/// for a second while SysTick runs. Never starved.
+#[test]
+fn a_long_answer_pumping_is_not_starved() {
+    let t = 5 * MS;
+    for k in 1..=10 {
+        let held = t + (k - 1) * 100 * MS;
+        for ms in (0..100).step_by(2) {
+            let now = held + ms * MS;
+            assert!(!starved(now, now, Some(held), MS), "{k} {ms}");
+        }
+    }
+}
+
+use chimera_core::console::{PerMille, WallClock};
+
+/// The unit's USB flood under a heavy chord: each 22 ms lap the handler
+/// storms until the tick test trips at 20 ms of DWT, SysTick (the shell's
+/// `Ms`) stalled all the while, and the handler gets a third of it (audio
+/// takes the rest). Shares over SysTick's ms read the stalled clock: the
+/// storm's cycles over 2 ms a lap, pinned at 100 %. Over the DWT wall
+/// clock, a third of 20 ms in 22.
+#[test]
+fn a_storm_that_stalls_systick_keeps_the_share_true() {
+    let (lap, stalled, own_lap) = (22 * MS, 20 * MS, 20 * MS / 3);
+    let (mut dwt, mut ms) = (u32::MAX - 3 * MS, Ms(1_000));
+    let mut wall = WallClock::new(Cycles::new(dwt), ms);
+    let (start_ms, mut own) = (ms, 0u64);
+    for _ in 0..100 {
+        dwt = dwt.wrapping_add(lap);
+        ms = Ms(ms.0 + (lap - stalled) / MS);
+        own += u64::from(own_lap);
+        wall.fold(Cycles::new(dwt), ms, Cycles::new(MS));
+    }
+    let by_ms = u64::from(ms.since(start_ms)) * u64::from(MS);
+    assert_eq!(
+        PerMille::of(own, by_ms),
+        PerMille::of(1, 1),
+        "the stalled clock"
+    );
+    assert_eq!(PerMille::of(own, wall.total()), PerMille::of(20, 66));
+}
+
+/// A lap longer than the cycle counter's 8.9 s wrap (an install): SysTick,
+/// stalled at most 20 ms a trip, says how many wraps passed.
+#[test]
+fn a_lap_past_the_dwt_wrap_counts_whole() {
+    let mut wall = WallClock::new(Cycles::new(5), Ms(0));
+    let ten_s = 10_000u64 * u64::from(MS);
+    let dwt = Cycles::new(5u32.wrapping_add(ten_s as u32));
+    assert_eq!(wall.fold(dwt, Ms(10_000), Cycles::new(MS)), ten_s);
+    // 20 ms of SysTick lost in the next 9 s: still one wrap, by DWT.
+    let nine_s = 9_000u64 * u64::from(MS);
+    let dwt = Cycles::new(dwt.get().wrapping_add(nine_s as u32));
+    assert_eq!(wall.fold(dwt, Ms(18_980), Cycles::new(MS)), ten_s + nine_s);
 }

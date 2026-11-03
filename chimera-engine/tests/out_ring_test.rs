@@ -1,7 +1,8 @@
 //! DIN OUT's byte ring (spec § 4.2): the UI queues whole messages, the
 //! TX interrupt pops bytes; a message that doesn't fit is refused whole.
 
-use chimera_engine::out_ring::{OUT_RING_LEN, OutRing};
+use chimera_engine::midi_in::Port;
+use chimera_engine::out_ring::{OUT_RING_LEN, OutPorts, OutRing};
 use proptest::prelude::*;
 
 #[test]
@@ -125,4 +126,92 @@ fn out_ring_spsc_threads() {
     }
     producer.join().unwrap();
     assert!(got.iter().enumerate().all(|(i, &b)| b == i as u8));
+}
+
+fn popped(r: &OutRing) -> Vec<u8> {
+    let mut b = [0u8; OUT_RING_LEN];
+    let n = r.pop_into(&mut b);
+    b[..n].to_vec()
+}
+
+/// One pass: each message whole into DIN's ring and copied to USB's.
+#[test]
+fn tee_copies_each_message() {
+    let (din, usb) = (OutRing::new(), OutRing::new());
+    let mut t = OutPorts::new(&din, &usb).tee();
+    assert!(t.send(&[0xB0, 20, 1]) && t.send(&[21, 2]));
+    assert_eq!(popped(&din), [0xB0, 20, 1, 21, 2]);
+    assert_eq!(popped(&usb), [0xB0, 20, 1, 21, 2]);
+}
+
+/// DIN full: nothing goes anywhere, the pass stops.
+#[test]
+fn tee_holds_back_on_din_only() {
+    let (din, usb) = (OutRing::new(), OutRing::new());
+    assert!(din.push_msg(&[0; OUT_RING_LEN - 2]));
+    let mut t = OutPorts::new(&din, &usb).tee();
+    assert!(!t.send(&[0xB0, 20, 1]));
+    assert!(usb.is_empty(), "nothing copied of a message DIN refused");
+}
+
+/// USB full: DIN sends on; the copy and the rest of the pass lost, each
+/// counted on USB's ring, even one that would fit again.
+#[test]
+fn tee_loses_the_rest_of_the_pass_on_usb() {
+    let (din, usb) = (OutRing::new(), OutRing::new());
+    assert!(usb.push_msg(&[0; OUT_RING_LEN - 2]));
+    let mut t = OutPorts::new(&din, &usb).tee();
+    assert!(t.send(&[0xB0, 20, 1]));
+    assert!(t.send(&[0xF8]));
+    assert_eq!(popped(&din), [0xB0, 20, 1, 0xF8]);
+    assert_eq!(usb.take_dropped(), 2);
+    assert_eq!(popped(&usb).len(), OUT_RING_LEN - 2, "nothing of either");
+    // The next pass starts whole.
+    let mut t = OutPorts::new(&din, &usb).tee();
+    assert!(t.send(&[0xF8]));
+    assert_eq!(popped(&usb), [0xF8]);
+}
+
+/// A reply out of one port only; only DIN's can wait.
+#[test]
+fn tee_sends_to_one_port() {
+    let (din, usb) = (OutRing::new(), OutRing::new());
+    let mut t = OutPorts::new(&din, &usb).tee();
+    assert!(t.send_to(Port::Usb, &[0xF0, 0xF7]));
+    assert!(din.is_empty());
+    assert_eq!(popped(&usb), [0xF0, 0xF7]);
+    assert!(din.push_msg(&[0; OUT_RING_LEN]));
+    assert!(!t.send_to(Port::Din, &[0xF0, 0xF7]), "DIN's waits");
+    assert!(usb.is_empty());
+}
+
+/// DIN alone (the desktop, a build without USB): copies go nowhere, uncounted.
+#[test]
+fn tee_din_alone() {
+    let din = OutRing::new();
+    let mut t = OutPorts::din(&din).tee();
+    assert!(t.send(&[0xF8]) && t.send_to(Port::Usb, &[0xF8]));
+    assert_eq!(popped(&din), [0xF8]);
+}
+
+/// A port nobody reads: what waits and what was lost, both gone.
+#[test]
+fn discard_forgets_losses() {
+    let (din, usb) = (OutRing::new(), OutRing::new());
+    assert!(usb.push_msg(&[0; OUT_RING_LEN]));
+    let mut t = OutPorts::new(&din, &usb).tee();
+    assert!(t.send(&[0xF8]));
+    usb.discard();
+    assert!(usb.is_empty());
+    assert_eq!(usb.take_dropped(), 0);
+    assert!(usb.push_msg(&[0; OUT_RING_LEN]), "the whole ring free");
+}
+
+#[test]
+fn clear_drops_what_waits() {
+    let r = OutRing::new();
+    assert!(r.push_msg(&[1, 2, 3]));
+    r.clear();
+    assert!(r.is_empty());
+    assert!(r.push_msg(&[0; OUT_RING_LEN]), "the whole ring free");
 }

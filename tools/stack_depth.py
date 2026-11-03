@@ -17,7 +17,9 @@ Pointer calls are assumed to nest at most `POINTER_NEST` deep, and a
 recursive direct call to run once (the sorts' and `core::str`'s).
 
 The thread (`main`) and each interrupt entry (`ISRS`) are summed, each
-interrupt with its FPU exception frame, as if all nest at once. Exit 1 if
+interrupt with its FPU exception frame, as if all nest at once; the
+interrupts of one priority (`ONE_LEVEL`) never nest each other, so that
+level is charged its deepest. Exit 1 if
 that passes `stack bytes` less `MARGIN`, or a root (but `OPTIONAL`) is missing,
 or if the audio interrupt reaches, by direct or tail calls, code of a
 small-profile crate (`SMALL`, ADR 0108): a name holding one, its own
@@ -28,10 +30,14 @@ Standard library only.
 import re
 import sys
 
-ISRS = ("DMA1_STR0", "USART1", "DMA2_STR0", "SysTick", "HardFault")
-# A build without MIDI DIN has no USART1; the rest are always there (the
-# card's DMA2_STR0 in every build but the SD probe, which has no check).
-OPTIONAL = ("USART1",)
+ISRS = ("DMA1_STR0", "USART1", "OTG_FS", "DMA2_STR0", "SysTick", "HardFault")
+# A build without MIDI DIN has no USART1, one without `midi-usb` no OTG_FS;
+# the rest are always there (the card's DMA2_STR0 in every build but the SD
+# probe, which has no check).
+OPTIONAL = ("USART1", "OTG_FS")
+# Interrupts at one priority: they never nest each other (MIDI's, ADR 0217
+# and the USB MIDI spec § 5).
+ONE_LEVEL = (("USART1", "OTG_FS"),)
 THREAD = "main"  # what `Reset` calls; its own frame is a few words
 # An exception's stacked frame with the FPU's lazy state: 26 words, aligned.
 EXC_FRAME = 104
@@ -54,14 +60,29 @@ POINTER_NEST = 3
 # function's. More pointer calls in such a root than named entries, or a
 # named entry missing while the root makes a pointer call, fail the check. The card interrupt's shim calls `IrqState::step` through the
 # board's slot; the DIN interrupt calls MIDI's `feed` and `idle` through
-# bank 2's door (ADR 0217).
+# bank 2's door (ADR 0217). USB's one poll calls bank 2's through the
+# board's slot, and USB MIDI's descriptor shim the writer its class holds.
 DOOR_CALLS = {
     "DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",),
     "USART1": (
         "<chimera_engine::midi_in::DinPipe>::door_feed",
         "<chimera_engine::midi_in::DinPipe>::door_idle",
     ),
+    "<chimera_board::usb::UsbCore>::poll_all": ("chimera_board::usb_midi::door::poll",),
+    "chimera_board::usb_midi::door::poll": (
+        "<chimera_engine::midi_in::DinPipe>::door_feed",
+        "<chimera_engine::midi_in::DinPipe>::door_lost",
+    ),
+    "<chimera_board::usb_midi::MidiClass as usb_device::class::UsbClass<synopsys_usb_otg::bus::UsbBus<chimera_board::usb::Otg2>>>::get_configuration_descriptors": (
+        "chimera_board::usb_midi::door::descriptors",
+    ),
 }
+# The USB device's poll calls its classes through `dyn UsbClass`: each such
+# pointer call is charged the deepest class method linked (a name holding
+# `CLASS`), not every address-taken function. No class method linked while
+# the poll makes a pointer call fails the check.
+CLASS_CALLS = ("<usb_device::device::UsbDevice<synopsys_usb_otg::bus::UsbBus<chimera_board::usb::Otg2>>>::poll",)
+CLASS = " as usb_device::class::UsbClass<"
 # A door entry that only its named callers reach (ADR 0194), its address
 # held by the door's table alone: out of the address-taken set, so no other
 # pointer call is charged it; each caller's pointer calls are charged the
@@ -308,15 +329,30 @@ def check(img, stack_bytes, out):
     comp = components(img.funcs)
     charge = pointer_charge(img, out, comp)
     ok, total = True, 0
+    doors = dict(DOOR_CALLS)
+    classes = tuple(sorted(f for f in img.funcs if CLASS in f))
+    for f in CLASS_CALLS:
+        if f in img.funcs and img.funcs[f][3]:
+            if not classes:
+                print("stack-depth: %s calls through a pointer, but no class method is linked" % short(f), file=out)
+                ok = False
+            doors[f] = classes
+    level = {r: g for g in ONE_LEVEL for r in g}
+    deepest = {}
     for i, root in enumerate((THREAD,) + ISRS):
         if root not in img.funcs:
             if root not in OPTIONAL:
                 print("stack-depth: no %s in the disassembly" % root, file=out)
                 ok = False
             continue
-        d, chain, cut, ind = depth(img.funcs, root, charge, comp, DOOR_CALLS, DOOR_ONLY)
+        d, chain, cut, ind = depth(img.funcs, root, charge, comp, doors, DOOR_ONLY)
         d += EXC_FRAME if i else 0
-        total += d
+        g = level.get(root)
+        if g is None:
+            total += d
+        elif d > deepest.get(g, 0):
+            total += d - deepest.get(g, 0)
+            deepest[g] = d
         print("%-10s %6d B  %s" % (root, d, " > ".join(short(c, 60) for c in chain[:6]) + (" > …" if len(chain) > 6 else "")), file=out)
         if cut:
             print("           recursion cut at: %s" % ", ".join(sorted(short(c, 60) for c in cut)), file=out)

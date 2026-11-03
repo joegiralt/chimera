@@ -145,9 +145,11 @@ impl Rig {
             sync: &mut self.sync,
             settings: &mut self.set,
         };
-        let _ = self.ui.card_work(cx, link, |swap, _| {
-            let _ = swap.settle(link, || false);
-        });
+        let _ = self
+            .ui
+            .card_work(chimera_core::errand::Errand::HOST, cx, link, |swap, _| {
+                let _ = swap.settle(link, || false);
+            });
     }
 
     /// Passes until no card work is pending.

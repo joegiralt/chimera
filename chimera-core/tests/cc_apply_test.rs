@@ -20,7 +20,7 @@ use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::va::VaParams;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-use chimera_core::midi_in::{CTRL_RING_LEN, Cc, CcEvent, CtrlEvent, CtrlRing};
+use chimera_core::midi_in::{CTRL_RING_LEN, CTRL_USB_LEN, Cc, CcEvent, CtrlEvent, CtrlRing, Port};
 use chimera_core::midi_map::{Input as MapInput, Mappable, Span};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
@@ -583,7 +583,7 @@ fn hand_wins() {
 fn ring_keeps_the_last_value() {
     let mut b = Bench::algo();
     b.map(P1, 74, CUTOFF);
-    let ring = CtrlRing::new();
+    let ring: CtrlRing = CtrlRing::new();
     let ctl = |e: CcEvent| {
         CtrlEvent::Ctl(
             e.channel,
@@ -1050,5 +1050,58 @@ fn a_swept_end_shows_promptly() {
         frames(&mut b, 4, |_, _, _| {});
         assert_eq!(shown(b.played(WAVE1)), to, "played");
         assert_eq!(shown(b.ui.renderer.anim[0].current()), to, "shown");
+    }
+}
+
+/// DIN's and USB's control rings drained in one pass: 8 mapped knobs
+/// swept 0→127, half heard on each port, never more than `MOVES - 1`
+/// moves a publish, and every knob arrives.
+#[test]
+fn both_rings_share_one_budget() {
+    let mut b = Bench::algo();
+    let knobs = eight_knobs();
+    for (i, k) in knobs.iter().enumerate() {
+        b.map(P1, 20 + i as u8, k.addr);
+        let s = b.ui.project_mut().edit_part(P1).sound;
+        let mut blk = s.params.block_mut(k.addr.block).unwrap();
+        blk.set(k.addr.param, k.spec.denormalize(0.0));
+    }
+    b.publish();
+    b.note();
+    b.reset_most();
+    let (din, usb): (CtrlRing, CtrlRing<CTRL_USB_LEN>) = (CtrlRing::new(), CtrlRing::new());
+    let n = 500;
+    for t in 0..=n {
+        let v = (127 * t / n) as u8;
+        for i in 0..knobs.len() {
+            let e = b.ev(P1, 20 + i as u8, v);
+            let ctl = CtrlEvent::Ctl(
+                e.channel,
+                chimera_midi::ctl::Ctl::Cc {
+                    cc: chimera_midi::ctl::FreeCc::new(e.cc.get()).unwrap(),
+                    value: chimera_midi::value::U7::new(v).unwrap(),
+                },
+            );
+            if i % 2 == 0 {
+                din.push(ctl)
+            } else {
+                usb.push(ctl)
+            };
+        }
+        b.now += PASS_MS;
+        let ev = din
+            .drain()
+            .map(|e| (Port::Din, e))
+            .chain(usb.drain().map(|e| (Port::Usb, e)));
+        b.ui.hear_ccs(ev, Ms(b.now), b.taken);
+        b.publish();
+        for _ in 0..PASS_BLOCKS {
+            b.render();
+        }
+    }
+    assert_eq!(b.most as usize, MOVES - 1, "a publish of {} moves", b.most);
+    b.passes(200);
+    for k in &knobs {
+        assert_eq!(b.place(P1, k.addr), 1.0, "{:?} arrives", k.addr);
     }
 }

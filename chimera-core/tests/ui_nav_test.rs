@@ -81,14 +81,32 @@ fn bn_from_a_settings_leaf_lands_on_part_pages_and_syncs_system() {
     let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut s);
     let mut ui = crate::screen::stack_ui();
     to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut set,
+    );
     assert!(ui.in_settings());
     feed(&mut ui, Input::turn(EncoderId::A, 1));
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut set,
+    );
     let edited = ui.theme();
     assert_ne!(edited, ThemeSettings::DEFAULT);
     feed(&mut ui, Input::press(ButtonId::B2));
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut set,
+    );
     assert!(!ui.in_settings());
     assert_eq!(ui.location(), part_home(P[1]));
     let (_, saved, _) = SystemSync::boot(&mut Card::new(), &mut s);

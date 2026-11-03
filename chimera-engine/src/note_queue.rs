@@ -263,7 +263,9 @@ pub struct NoteProducer<'a>(&'a NoteQueue);
 pub struct NoteConsumer<'a>(&'a NoteQueue);
 
 impl NoteProducer<'_> {
-    /// `false`: the queue was full and the event was dropped.
+    /// `false`: the queue was full and the event was dropped. Inlined into
+    /// each pipe in bank 2: out of line, it lands in bank 1.
+    #[inline(always)]
     pub fn push(&mut self, ev: impl Into<InEvent>) -> bool {
         self.0.push(ev.into())
     }
@@ -357,7 +359,7 @@ impl NoteQueue {
     }
 }
 
-pub const MAX_NOTE_SOURCES: usize = 2;
+pub const MAX_NOTE_SOURCES: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceId<const N: usize>(usize);

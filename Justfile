@@ -414,10 +414,12 @@ check:
 # SP by 8 KB or more in one step, or by a register (a large value built on
 # the stack instead of in a static); then `tools/stack_depth.py` sums nested
 # frames from `main` and from each interrupt entry (the audio's DMA1_STR0,
-# render_half and the FX bus under it, MIDI's USART1, SysTick, HardFault),
-# all nested at once, against the stack, each call through a pointer
-# charged the deepest address-taken function (bank 2's door table among
-# the data dumped, so a door entry is one), three deep; and that the audio
+# render_half and the FX bus under it, MIDI's USART1 and USB's OTG_FS, one
+# level charged its deeper, SysTick, HardFault), all nested at once, against
+# the stack, each call through a pointer charged the deepest address-taken
+# function (bank 2's door table among the data dumped, so a door entry is
+# one; the USB poll's class calls the deepest class method), three deep;
+# and that the audio
 # interrupt reaches no small-profile code (ADR 0108); each run three times
 # under different hash seeds, all alike. Checked for the default,
 # no-default, orbit, bank2-gate, every bench set (`bench_sets`) and sd-probe feature

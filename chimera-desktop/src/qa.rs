@@ -73,10 +73,12 @@ impl Desk {
             sync: &mut self.sync,
             settings: &mut self.settings,
         };
-        self.ui.card_work(cx, link, |swap, _| {
-            let _ = swap.settle(link, || false);
-        });
+        self.ui
+            .card_work(chimera_core::errand::Errand::HOST, cx, link, |swap, _| {
+                let _ = swap.settle(link, || false);
+            });
         self.ui.sync_system(
+            chimera_core::errand::Errand::HOST,
             &mut self.sync,
             &mut self.card,
             &mut self.store,

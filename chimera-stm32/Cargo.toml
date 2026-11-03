@@ -4,8 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders"]
+default = ["midi-din", "midi-usb", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders"]
 midi-din = ["chimera-board/midi-din"]
+# The console serviced from the OTG_FS interrupt, with its storm guard; on
+# wherever MIDI DIN is.
+midi-usb = ["usb-console", "chimera-board/midi-usb"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
 # beside the synth. `bench` is the shared rig, built with an area and
@@ -16,16 +19,16 @@ bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "usb-console
 # ALGO's patches, the FX bus, the kernel and FORMANT's rows; its ELF is the one
 # `tools/loop_count.py` counts the kernel's loops on. Its bank 1 holds the
 # rig; the reverb and VA's MOD path play from bank 2 (#654).
-bench-algo = ["bench", "midi-din", "chimera-core/span-count", "chimera-engine/demo-sounds", "chimera-engine/bench-warm"]
+bench-algo = ["bench", "midi-din", "midi-usb", "chimera-core/span-count", "chimera-engine/demo-sounds", "chimera-engine/bench-warm"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
-bench-routing = ["bench", "midi-din"]
+bench-routing = ["bench", "midi-din", "midi-usb"]
 # MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.
-bench-memory = ["bench", "midi-din"]
+bench-memory = ["bench", "midi-din", "midi-usb"]
 # STRESS: NEW's Parts with every key down, and the runs' phases; ORBIT
 # plays in them with `orbit`. The reverb plays from bank 2 (ADR 0174).
-bench-stress = ["bench", "midi-din"]
+bench-stress = ["bench", "midi-din", "midi-usb"]
 # ORBIT: its block's cost and phases (#654).
-bench-orbit = ["bench", "midi-din", "orbit"]
+bench-orbit = ["bench", "midi-din", "midi-usb", "orbit"]
 # TAPE COLD: each machine's cold-cache voice. It never plays MIDI; FLASH
 # (#507). TAPE plays from bank 2 (#506): the run needs its .bk2 installed.
 bench-tape = ["bench", "chimera-core/tape", "chimera-board/bench-tape"]
@@ -33,7 +36,7 @@ bench-tape = ["bench", "chimera-core/tape", "chimera-board/bench-tape"]
 # `tools/loop_count.py`'s static counts: the shipping build plus them, less
 # the console's `put`, the MIDI map and PUSH ENCODERS as the bench's (bank
 # 2's install filled FLASH; #507; the filters' loops are the same).
-filter-probes = ["midi-din", "perf-probe", "usb-console", "sweep-free", "chimera-core/filter-probe"]
+filter-probes = ["midi-din", "midi-usb", "perf-probe", "usb-console", "sweep-free", "chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
 sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
@@ -46,7 +49,7 @@ orbit = ["chimera-core/orbit", "chimera-board/orbit"]
 # firmware leaves it out: FLASH (#507).
 midi-map = ["chimera-board/midi-map"]
 # The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
-# loop, its interrupt never unmasked.
+# loop, its interrupt never unmasked unless `midi-usb` moves it there.
 usb-console = ["chimera-board/usb-console"]
 # The console's `ls` and `put` (ADR 0092): files onto the card over USB;
 # TAPE sources too, in checked chunks, sealed (ADR 0106). The owner took
@@ -58,7 +61,7 @@ card-put = ["usb-console", "chimera-board/card-put", "chimera-core/source-writer
 sweep-free = ["chimera-board/sweep-free"]
 # The console's `fault dma <1|2>`: provokes a transfer error on a trailing
 # DMA stream, to test its re-arm on the unit (#25). Never in a shipping build.
-fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-inject", "chimera-core/fault-inject"]
+fault-inject = ["usb-console", "perf-probe", "midi-din", "midi-usb", "chimera-board/fault-inject", "chimera-core/fault-inject"]
 # Hardware Gate 2's power-pull aid: the install holds 3 s at each phase
 # (PULL NOW) and the console takes `bank2 erase`. `just firmware-gate` only:
 # never in a release, flash or bench build (release-bin refuses its marker).

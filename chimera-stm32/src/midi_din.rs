@@ -10,8 +10,8 @@ use stm32h7xx_hal::pac::{self, interrupt};
 
 use chimera_board::priority::{self, Priority};
 use chimera_board::shared::{
-    AUDIO_CYCLES, MIDI_CTRL_DROPS, MIDI_CYCLES, MIDI_DROPS, MIDI_ERRORS as ERRORS, MIDI_FAULTS,
-    bump, stamp,
+    MIDI_CTRL_DROPS, MIDI_CYCLES, MIDI_DROPS, MIDI_ERRORS as ERRORS, MIDI_FAULTS, audio_cycles,
+    bump, own_cycles, stamp,
 };
 
 const BAUD: u32 = 31_250;
@@ -91,10 +91,6 @@ pub fn init(nvic: &mut NVIC, pclk2_hz: u32, notes: NoteProducer<'static>, ctrl: 
     unsafe { NVIC::unmask(pac::Interrupt::USART1) };
 }
 
-fn audio_cycles() -> u32 {
-    AUDIO_CYCLES.load(Ordering::Relaxed)
-}
-
 #[interrupt]
 fn USART1() {
     // Its own time, for the card IRQ's (`card_dma::clocks`).
@@ -171,8 +167,6 @@ fn USART1() {
         let more = !out.is_empty();
         usart.cr3.modify(|_, w| w.txftie().bit(more));
     }
-    let leave = stamp(audio_cycles);
-    let audio = leave.over.since(enter.over);
-    let own = leave.at.since(enter.at).get().saturating_sub(audio.get());
-    MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
+    let own = own_cycles(enter, stamp(audio_cycles));
+    MIDI_CYCLES.fetch_add(own.get(), Ordering::Relaxed);
 }

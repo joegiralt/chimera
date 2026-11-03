@@ -52,6 +52,8 @@ mod sd_probe;
 pub mod shared;
 #[cfg(feature = "usb-console")]
 pub mod usb;
+#[cfg(feature = "midi-usb")]
+mod usb_midi;
 #[cfg(not(feature = "sd-probe"))]
 pub mod watchdog;
 
@@ -375,15 +377,20 @@ pub struct AudioStart<'a> {
     pub din_out: &'static chimera_core::out_ring::OutRing,
 }
 
-/// DIN OUT's pass: what the UI queued, then the USART1 handler pended to
-/// send it (it disarms itself once the ring is empty). Out of line, so
-/// the loop around it keeps its shape.
+/// MIDI out's pass: what the UI queued, then each port's handler pended to
+/// send it: USART1's disarms itself once DIN's ring is empty, `OTG_FS`'s
+/// starts USB's IN packets. Out of line, so the loop around it keeps its
+/// shape.
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
 #[inline(never)]
-fn din_out(ui: &mut chimera_core::ui::UiState, out: &chimera_core::out_ring::OutRing) {
-    ui.send_out(out);
-    if !out.is_empty() {
+fn midi_out(ui: &mut chimera_core::ui::UiState, out: &chimera_core::out_ring::OutPorts) {
+    ui.send(out);
+    if !out.din.is_empty() {
         cortex_m::peripheral::NVIC::pend(pac::Interrupt::USART1);
+    }
+    #[cfg(feature = "midi-usb")]
+    if out.usb.is_some_and(|u| !u.is_empty()) {
+        cortex_m::peripheral::NVIC::pend(pac::Interrupt::OTG_FS);
     }
 }
 
@@ -607,10 +614,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (formant_w, mut formant_r) = shared::take_formant().expect("formant views taken once");
     let (mut shared_w, shared_r, knobs) =
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
-    // Without MIDI DIN or `card` nothing takes a producer.
+    // Without MIDI DIN, USB or `card` nothing takes a producer.
     #[cfg_attr(
         not(any(
             feature = "midi-din",
+            feature = "midi-usb",
             all(
                 feature = "bench",
                 feature = "usb-console",
@@ -620,10 +628,20 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         allow(unused_mut, unused_variables)
     )]
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
-    #[cfg(feature = "midi-din")]
-    let ctrl_din = shared::take_ctrl_din().expect("DIN control ring taken once");
+    #[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+    let ctrl = shared::take_ctrl().expect("control rings taken once");
     #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-    let out_din = shared::take_out_din().expect("DIN out ring taken once");
+    let out = shared::take_out().expect("out rings taken once");
+    // USB MIDI in's, for the port's poll once it connects (step 4).
+    #[cfg(feature = "midi-usb")]
+    usb_midi::set_in(
+        producers.take(const { shared::source(shared::Port::Usb) }),
+        &ctrl.usb,
+        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+        out.usb,
+        #[cfg(not(all(feature = "midi-din", feature = "midi-map")))]
+        None,
+    );
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -638,12 +656,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         streams,
         #[cfg(feature = "midi-din")]
         din: producers
-            .take(shared::DIN)
+            .take(const { shared::source(shared::Port::Din) })
             .expect("DIN producer taken once"),
         #[cfg(feature = "midi-din")]
-        din_ctrl: ctrl_din,
+        din_ctrl: &ctrl.din,
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        din_out: out_din,
+        din_out: out.din,
     });
 
     marker.stage(BootStage::Audio);
@@ -703,13 +721,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             feature = "bank2",
             not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         ))]
-        let bench_redraw = {
+        // A save is card work: an errand.
+        let bench_redraw = usb.errand(|e| {
             let ask = card_bench.tick(controls::now_ms(), store, stats_r.as_mut());
             if ask.save {
-                card_bench.saved(bench_save(&mut card, store, ui));
+                card_bench.saved(bench_save(e, &mut card, store, ui));
             }
             ask.redraw
-        };
+        });
         #[cfg(not(all(
             feature = "usb-console",
             feature = "bench",
@@ -726,7 +745,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             feature = "bank2",
             not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         ))]
-        let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
+        let card_run: usb::CardRun = &mut |_, arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(
             feature = "usb-console",
             not(all(
@@ -735,7 +754,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
             ))
         ))]
-        let card_run: usb::CardRun = &mut |_, _, _| None;
+        let card_run: usb::CardRun = &mut |_, _, _, _| None;
         #[cfg(feature = "usb-console")]
         if let Some(restart) = usb.up().and_then(|u| {
             u.service(
@@ -748,7 +767,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             )
         }) {
             // As the menu's path: a THEME change in this visit is kept.
-            ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
+            usb.errand(|e| ui.sync_system_now(e, &mut sync, &mut card, store, &mut settings));
             match restart {
                 usb::Restart::Dfu(asked) => dfu::enter(&marker, dfu::DfuFrom::Console(asked)),
                 // The boot it restarts into sweeps, the arena's gap free.
@@ -775,42 +794,55 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ui.set_formant_views(formant_r.read());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
-        // Mapped CCs, in the room the hand's moves left. No bench run plays
-        // a controller: bench firmware leaves the MIDI map out (FLASH, #507)
-        // and drops the ring unread, so it never fills.
+        // Mapped CCs, in the room the hand's moves left: DIN's then USB's,
+        // one pass, one budget. No bench run plays a controller: bench
+        // firmware leaves the MIDI map out (FLASH, #507) and drops the rings
+        // unread, so they never fill.
+        #[cfg(all(any(feature = "midi-din", feature = "midi-usb"), feature = "midi-map"))]
+        ui.hear_ccs(ctrl.drain(), controls::now_ms(), shared_w.taken());
+        #[cfg(all(
+            any(feature = "midi-din", feature = "midi-usb"),
+            not(feature = "midi-map")
+        ))]
+        ctrl.clear();
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        ui.hear_ccs(ctrl_din.drain(), controls::now_ms(), shared_w.taken());
-        #[cfg(all(feature = "midi-din", not(feature = "midi-map")))]
-        ctrl_din.clear();
-        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        din_out(ui, out_din);
-        // SYSTEM synced first: a THEME change made in this visit is kept.
-        if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
-            dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
-        }
-        // Card work the keys asked for, under BUSY. A load settles before
-        // it publishes: the ack, or `LOAD_ACK_TICKS`.
-        let busy = ui.card_pending();
-        if busy {
-            let (y0, y1) = draw_busy(&mut display);
-            display.flush_region(y0, y1);
-        }
-        let cx = CardCx {
-            card: &mut card,
-            store: &mut *store,
-            sync: &mut sync,
-            settings: &mut settings,
-        };
-        ui.card_work(cx, &LOAD_LINK, |swap, u| {
-            let t0 = controls::ticks();
-            let _ = swap.settle(&LOAD_LINK, || {
-                controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
+        midi_out(ui, &out);
+        // Card work and SYSTEM's sync can hold the UI for seconds: an
+        // errand, so no false storm from the guard's service test.
+        let errand = |e: &chimera_core::errand::Errand| {
+            // SYSTEM synced first: a THEME change made in this visit is kept.
+            if let Some(yes) = ui.take_dfu_synced(e, &mut sync, &mut card, store, &mut settings) {
+                dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
+            }
+            // Card work the keys asked for, under BUSY. A load settles
+            // before it publishes: the ack, or `LOAD_ACK_TICKS`.
+            let busy = ui.card_pending();
+            if busy {
+                let (y0, y1) = draw_busy(&mut display);
+                display.flush_region(y0, y1);
+            }
+            let cx = CardCx {
+                card: &mut card,
+                store: &mut *store,
+                sync: &mut sync,
+                settings: &mut settings,
+            };
+            ui.card_work(e, cx, &LOAD_LINK, |swap, u| {
+                let t0 = controls::ticks();
+                let _ = swap.settle(&LOAD_LINK, || {
+                    controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
+                });
+                shared_w.publish(|b| publish(b, u, knobs));
             });
-            shared_w.publish(|b| publish(b, u, knobs));
-        });
-        // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
-        // quicker than BUSY can be read. A toast says how it went.
-        ui.sync_system(&mut sync, &mut card, store, &mut settings);
+            // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save
+            // is quicker than BUSY can be read. A toast says how it went.
+            ui.sync_system(e, &mut sync, &mut card, store, &mut settings);
+            busy
+        };
+        #[cfg(feature = "usb-console")]
+        let busy = usb.errand(errand);
+        #[cfg(not(feature = "usb-console"))]
+        let busy = chimera_core::errand::Errand::run(errand);
         // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         // The loop spins as fast as it can; animation runs at UI_FPS.
@@ -867,6 +899,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 ))]
 #[inline(never)]
 fn bench_save(
+    _: &chimera_core::errand::Errand,
     card: &mut chimera_core::storage::Card,
     store: &mut sd::SdStore,
     ui: &mut chimera_core::ui::UiState,

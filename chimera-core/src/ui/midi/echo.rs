@@ -1,9 +1,10 @@
-//! Value echo out of DIN (spec § 9): pulled, not pushed. Each pass every
-//! feedback binding's param, as its control would send it, is compared
-//! with what it last sent; a difference is sent on the Part's channel, the
-//! latest value only, whole messages while the out ring has room. The
-//! identity reply goes first, then the active Part, the other Parts, and
-//! last the bursts (a load, a Part change, a map change). Bank 2's, as
+//! Value echo out of DIN and USB (spec §§ 7, 9): pulled, not pushed. Each
+//! pass every feedback binding's param, as its control would send it, is
+//! compared with what it last sent; a difference is sent on the Part's
+//! channel, the latest value only, whole messages while DIN's ring has
+//! room, and each copied to USB's. The identity reply goes first, out of
+//! the port that asked, then the active Part, the other Parts, and last
+//! the bursts (a load, a Part change, a map change). Bank 2's, as
 //! `ui::midi` is; the state is `MidiSlot`'s, in AXI.
 
 use chimera_hal::Ms;
@@ -18,8 +19,9 @@ use super::{span_of, stored};
 use crate::MidiChannel;
 use crate::block::{Motion, ParamSpec};
 use crate::hw::MAX_PARTS;
+use crate::midi_in::Port;
 use crate::midi_map::{Binding, CcKind, Feedback, Input, MAP_LEN, NrpnKind};
-use crate::out_ring::OutRing;
+use crate::out_ring::OutPorts;
 use crate::project::{Loads, PartId, Project};
 
 /// After a binding hears, its own echo waits this long (spec § 9, the
@@ -32,14 +34,14 @@ const MSG_MAX: usize = 9;
 /// What each binding last sent (`None`: not since a burst), when it last
 /// heard its control (its quiet: a stamp and `since`, so the clock's wrap
 /// never holds an echo), the loads and active Part the last pass saw, and
-/// whether an identity reply waits. ~1 KB, in `MidiUi`.
+/// whether an identity reply waits, a flag a `Port`. ~1 KB, in `MidiUi`.
 #[derive(Clone, Copy)]
 pub struct EchoPlan {
     last: [[Option<u16>; MAP_LEN]; MAX_PARTS],
     heard_at: [[Option<Ms>; MAP_LEN]; MAX_PARTS],
     loads: [Loads; MAX_PARTS],
     active: Option<PartId>,
-    identity: bool,
+    identity: [bool; Port::COUNT],
 }
 
 /// Nothing sent: a named static, so its image is bank 2's.
@@ -48,19 +50,20 @@ pub(super) static SILENT: EchoPlan = EchoPlan {
     heard_at: [[None; MAP_LEN]; MAX_PARTS],
     loads: [Loads::NONE; MAX_PARTS],
     active: None,
-    identity: false,
+    identity: [false; Port::COUNT],
 };
 
 impl EchoPlan {
-    /// A Device Inquiry was heard: one reply, however many asked this pass.
-    pub fn ask(&mut self) {
-        self.identity = true;
+    /// A Device Inquiry was heard on `port`: one reply out of it, however
+    /// many asked this pass.
+    pub fn ask(&mut self, port: Port) {
+        self.identity[port as usize] = true;
     }
 
     /// MIDI CONFIG › ECHO is off: nothing goes out, and an inquiry heard
     /// meanwhile is never answered.
     pub fn silence(&mut self) {
-        self.identity = false;
+        self.identity = [false; Port::COUNT];
     }
 
     /// Every feedback binding of Part `p` sends again: a Sound or project
@@ -84,10 +87,11 @@ impl EchoPlan {
         }
     }
 
-    /// One pass (spec § 9): the identity reply, then the active Part `at`'s
-    /// changed bindings, the other Parts', then the bursts, each whole into
-    /// `ring` while it has room; the rest wait for a later pass.
-    pub fn pump(&mut self, project: &Project, at: PartId, now: Ms, ring: &OutRing) {
+    /// One pass (spec §§ 7, 9): the identity replies, each out of the
+    /// port that asked, then the active Part `at`'s changed bindings, the
+    /// other Parts', then the bursts, each out of every port (`Tee`) while
+    /// DIN's ring has room; the rest wait for a later pass.
+    pub fn pump(&mut self, project: &Project, at: PartId, now: Ms, out: &OutPorts) {
         if self.active != Some(at) {
             self.active = Some(at);
             self.burst(at);
@@ -99,16 +103,26 @@ impl EchoPlan {
                 self.burst(p);
             }
         }
-        if self.identity {
+        let mut tee = out.tee();
+        if self.identity != [false; Port::COUNT] {
             let mut b = [0u8; REPLY_LEN];
             let mut w = Writer::new(&mut b);
             // Our device byte is 0: the parser hears 7F or 0 (`midi_in`).
             let ok = identity_reply(U7::ZERO, &ID, &mut w);
             let n = w.len();
-            if ok && !ring.push_msg(&b[..n]) {
-                return;
+            if ok {
+                for p in Port::ALL {
+                    let asked = &mut self.identity[p as usize];
+                    if *asked && tee.send_to(p, &b[..n]) {
+                        *asked = false;
+                    }
+                }
+                // DIN's had no room: it waits for a later pass.
+                if self.identity[Port::Din as usize] {
+                    return;
+                }
             }
-            self.identity = false;
+            self.identity = [false; Port::COUNT];
         }
         let mut run = Running::NONE;
         for burst in [false, true] {
@@ -130,7 +144,7 @@ impl EchoPlan {
                     if !ok {
                         continue;
                     }
-                    if !ring.push_msg(&b[..n]) {
+                    if !tee.send(&b[..n]) {
                         return;
                     }
                     run = r;

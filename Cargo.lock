@@ -232,6 +232,7 @@ dependencies = [
  "chimera-fat",
  "chimera-hal",
  "chimera-image",
+ "chimera-midi",
  "cortex-m",
  "embedded-graphics",
  "embedded-graphics-core",
@@ -341,6 +342,8 @@ name = "chimera-midi"
 version = "0.2.0"
 dependencies = [
  "proptest",
+ "usb-device",
+ "usbd-serial",
 ]
 
 [[package]]

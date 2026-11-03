@@ -435,9 +435,11 @@ impl<'u> Rig<'u> {
             sync: &mut self.sync,
             settings: &mut self.set,
         };
-        let _ = self.ui.card_work(cx, link, |swap, _| {
-            let _ = swap.settle(link, || false);
-        });
+        let _ = self
+            .ui
+            .card_work(chimera_core::errand::Errand::HOST, cx, link, |swap, _| {
+                let _ = swap.settle(link, || false);
+            });
     }
 
     /// The load epoch: what a snapshot published now carries.
@@ -2667,7 +2669,7 @@ pub fn audio_fixture() -> AudioStats {
     s.load_peak = 41;
     s.overruns = 2;
     s.desyncs = 1;
-    s.drops = [0, 3];
+    s.drops[..2].copy_from_slice(&[0, 3]);
     s.sources = 2;
     s.stack_used = 12_000;
     s

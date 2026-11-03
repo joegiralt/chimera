@@ -24,7 +24,7 @@ use crate::midi_in::{HeardCc, HeardEv};
 #[cfg(feature = "midi-map")]
 use crate::midi_map::Binding;
 #[cfg(feature = "midi-map")]
-use crate::out_ring::OutRing;
+use crate::out_ring::{OutPorts, OutRing};
 use crate::project::PartId;
 
 /// The MIDI UI's state: in AXI `.bss`, not in D2 with `UiState` (bench
@@ -118,9 +118,9 @@ type MapTextFn = fn(&Binding, FxType, bool, &mut MapText);
 #[cfg(feature = "midi-map")]
 type FocusNote = fn(&UiState) -> Option<Dir>;
 
-/// The door's `out`: `UiState::out_in`, DIN OUT's pass.
+/// The door's `out`: `UiState::out_in`, MIDI out's pass.
 #[cfg(feature = "midi-map")]
-type Out = fn(&mut UiState, &OutRing);
+type Out = fn(&mut UiState, &OutPorts);
 
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
@@ -222,7 +222,8 @@ fn through<R>(f: impl FnOnce(&MidiUiDoor) -> R) -> Option<R> {
 
 impl UiState {
     /// This pass's control messages (spec §§ 5-7), through the door: the
-    /// control ring's `CtrlEvent`s, or a test's plain `CcEvent`s. After
+    /// control rings' `CtrlEvent`s (DIN's), tagged with their `Port`, all
+    /// in one pass and one budget, or a test's plain `CcEvent`s. After
     /// `handle_input`, before the publish. `taken`: the audio has taken
     /// the last publish (`Writer::taken`). Closed, drained and dropped.
     pub fn hear_ccs(&mut self, ev: impl Iterator<Item = impl HeardCc>, now: Ms, taken: bool) {
@@ -256,11 +257,16 @@ impl UiState {
         through(|t| (t.map_in)(self, d, delete));
     }
 
-    /// DIN OUT's pass, after `hear_ccs`: what waits to be sent (an
-    /// identity reply) into `ring`, each message whole (`out_in`).
-    /// Closed, nothing is sent (spec § 7.3).
+    /// MIDI out's pass, after `hear_ccs`: what waits to be sent (an
+    /// identity reply, the echo) out of `out`'s ports, each message whole
+    /// (`out_in`). Closed, nothing is sent (spec § 7.3).
+    pub fn send(&mut self, out: &OutPorts) {
+        through(|d| (d.out)(self, out));
+    }
+
+    /// `send` to DIN's ring alone.
     pub fn send_out(&mut self, ring: &OutRing) {
-        through(|d| (d.out)(self, ring));
+        self.send(&OutPorts::din(ring));
     }
 }
 

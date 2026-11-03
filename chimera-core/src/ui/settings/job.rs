@@ -107,6 +107,7 @@ impl UiState {
     /// `publish` (settle, then publish), before any SYSTEM write.
     pub fn card_work<S: Store, R>(
         &mut self,
+        _: &crate::errand::Errand,
         mut cx: CardCx<'_, S>,
         link: &LoadLink,
         publish: impl FnOnce(Swap, &UiState) -> R,

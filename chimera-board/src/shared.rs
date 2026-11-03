@@ -9,15 +9,17 @@ use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{self, MAX_PARTS};
 use chimera_core::instrument::AudioShared;
-#[cfg(feature = "midi-din")]
-use chimera_core::midi_in::CtrlRing;
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+use chimera_core::midi_in::CtrlPorts;
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+pub use chimera_core::midi_in::Port;
 use chimera_core::note_queue::NoteSources;
-#[cfg(any(feature = "midi-din", feature = "bench"))]
+#[cfg(any(feature = "midi-din", feature = "midi-usb", feature = "bench"))]
 use chimera_core::note_queue::SourceId;
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitView;
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-use chimera_core::out_ring::OutRing;
+use chimera_core::out_ring::{OutPorts, OutRing};
 use chimera_core::preset::Performance;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
@@ -261,48 +263,70 @@ pub fn take_formant() -> Option<(Writer<FormantViews>, Reader<FormantViews>)> {
     Some(TripleBuffer::init_in_place(slot, || [FormantView::NONE; MAX_PARTS]).split())
 }
 
-// MIDI DIN's control ring (MIDI map spec § 1), the USART1 ISR's to push
-// and the UI's to drain: in AXI, which has room over its margin (ADR 0087)
-// where D2 has none in the bench builds. Built at `take_ctrl_din`.
-#[cfg(feature = "midi-din")]
-static mut CTRL_DIN: MaybeUninit<CtrlRing> = MaybeUninit::uninit();
-#[cfg(feature = "midi-din")]
-static CTRL_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
+/// MIDI in's control rings, one a port (MIDI map spec § 1): each port's
+/// poll pushes, the UI drains. USB's holds a burst (4 KB) where the MIDI
+/// map reads it; elsewhere both are dropped unread each lap, and DIN's 64
+/// keep the bench's AXI margin (ADR 0087).
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+pub type Ctrl = CtrlPorts<{ CTRL_USB }>;
+/// USB's control ring's slots.
+#[cfg(feature = "midi-map")]
+pub const CTRL_USB: usize = chimera_core::midi_in::CTRL_USB_LEN;
+#[cfg(not(feature = "midi-map"))]
+pub const CTRL_USB: usize = chimera_core::midi_in::CTRL_RING_LEN;
 
-/// The DIN control ring, built empty; once. Both ends share the reference.
-#[cfg(feature = "midi-din")]
-pub fn take_ctrl_din() -> Option<&'static CtrlRing> {
-    if CTRL_DIN_TAKEN.swap(true, Ordering::AcqRel) {
-        return None;
-    }
-    // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `CTRL_DIN` ever made; `write` initialises it before any
-    // read, and from then on it is only shared.
-    Some(unsafe { (*addr_of_mut!(CTRL_DIN)).write(CtrlRing::new()) })
+// All zero, so `.bss` in AXI with no code to build it.
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+static CTRL: Ctrl = CtrlPorts::new();
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+static CTRL_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The control rings, empty; once. Both ends share the reference.
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+pub fn take_ctrl() -> Option<&'static Ctrl> {
+    (!CTRL_TAKEN.swap(true, Ordering::AcqRel)).then_some(&CTRL)
 }
 
-// DIN OUT's ring (MIDI phase 1 spec § 9), the UI's to push and the USART1
-// ISR's to pop: all zero, so `.bss` in AXI with no code to build it.
+// MIDI out's rings, one a port (MIDI phase 1 spec § 9), the UI's to push;
+// DIN's the USART1 ISR's to pop, USB's its poll's to pack into IN packets.
+// All zero, so `.bss` in AXI with no code to build them.
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-static OUT_DIN: OutRing = OutRing::new();
+static OUT: [OutRing; Port::COUNT] = [const { OutRing::new() }; Port::COUNT];
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-static OUT_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
+static OUT_TAKEN: AtomicBool = AtomicBool::new(false);
 
-/// DIN OUT's ring, empty; once. Both ends share the reference.
+/// MIDI out's rings, empty; once. Both ends share them.
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-pub fn take_out_din() -> Option<&'static OutRing> {
-    (!OUT_DIN_TAKEN.swap(true, Ordering::AcqRel)).then_some(&OUT_DIN)
+pub fn take_out() -> Option<OutPorts<'static>> {
+    let din = &OUT[Port::Din as usize];
+    #[cfg(feature = "midi-usb")]
+    let ports = OutPorts::new(din, &OUT[Port::Usb as usize]);
+    #[cfg(not(feature = "midi-usb"))]
+    let ports = OutPorts::din(din);
+    (!OUT_TAKEN.swap(true, Ordering::AcqRel)).then_some(ports)
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:
 // the note sources, the DMA's and MIDI DIN's counters, the probe's voices.
 
-/// MIDI DIN, and in a bench build the console's `card`, which plays a chord.
-pub const NOTE_SOURCES: usize = if cfg!(feature = "bench") { 2 } else { 1 };
-#[cfg(feature = "midi-din")]
-pub const DIN: SourceId<NOTE_SOURCES> = SourceId::new(0);
+/// One a MIDI port (DIN's, and USB's with `midi-usb`), and in a bench
+/// build the console's `card`, which plays a chord.
+pub const NOTE_SOURCES: usize =
+    1 + cfg!(feature = "midi-usb") as usize + cfg!(feature = "bench") as usize;
+
+/// Port `p`'s note source: its index. Call it in a `const` block: USB's
+/// where USB MIDI isn't built is then a build error, not another
+/// source's id.
+#[cfg(any(feature = "midi-din", feature = "midi-usb"))]
+pub const fn source(p: Port) -> SourceId<NOTE_SOURCES> {
+    assert!(
+        cfg!(feature = "midi-usb") || matches!(p, Port::Din),
+        "no USB MIDI in this build"
+    );
+    SourceId::new(p as usize)
+}
 #[cfg(feature = "bench")]
-pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(1);
+pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(NOTE_SOURCES - 1);
 pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
 
 pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
@@ -317,30 +341,16 @@ pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
 /// Cycles spent in the audio interrupt, wrapping: what the card IRQ takes
 /// off its own entries' time.
 pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
-/// Cycles spent in MIDI DIN's interrupt less the audio's inside it,
-/// wrapping: the card IRQ takes them off its own entries' time too.
+/// Cycles spent in the MIDI level's interrupts (DIN's, and USB's with
+/// `midi-usb`) less the audio's inside them, wrapping: the card IRQ takes
+/// them off its own entries' time too.
 pub static MIDI_CYCLES: AtomicU32 = AtomicU32::new(0);
-/// A count of CPU cycles, or a reading of the wrapping cycle counter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Cycles(u32);
+pub use chimera_hal::units::Cycles;
 
-impl Cycles {
-    pub const fn new(n: u32) -> Self {
-        Self(n)
-    }
-
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-
-    pub fn now() -> Self {
-        Self(cortex_m::peripheral::DWT::cycle_count())
-    }
-
-    /// Cycles from `then` to now, wrapping.
-    pub fn since(self, then: Self) -> Self {
-        Self(self.0.wrapping_sub(then.0))
-    }
+/// The cycle counter now.
+#[inline(always)]
+pub fn dwt() -> Cycles {
+    Cycles::new(cortex_m::peripheral::DWT::cycle_count())
 }
 
 /// The cycle counter and the other interrupts' cycle total, read as a pair.
@@ -358,7 +368,7 @@ pub fn stamp(over: impl Fn() -> u32) -> Stamp {
     loop {
         let before = over();
         compiler_fence(Ordering::SeqCst);
-        let at = Cycles::now();
+        let at = dwt();
         compiler_fence(Ordering::SeqCst);
         if over() == before {
             return Stamp {
@@ -367,6 +377,20 @@ pub fn stamp(over: impl Fn() -> u32) -> Stamp {
             };
         }
     }
+}
+
+/// The audio's cycle total: what a MIDI-level handler's `stamp` reads.
+#[inline(always)]
+pub fn audio_cycles() -> u32 {
+    AUDIO_CYCLES.load(Ordering::Relaxed)
+}
+
+/// A handler's own cycles from `enter` to `leave`, the audio's inside
+/// them taken off.
+#[inline(always)]
+pub fn own_cycles(enter: Stamp, leave: Stamp) -> Cycles {
+    let audio = leave.over.since(enter.over);
+    Cycles::new(leave.at.since(enter.at).get().saturating_sub(audio.get()))
 }
 
 /// The streams' counters: the voices', and the card IRQ's time.

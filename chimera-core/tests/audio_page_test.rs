@@ -72,7 +72,7 @@ fn extreme_stats_stay_on_screen() {
     s.load_peak = u16::MAX;
     s.overruns = u32::MAX;
     s.desyncs = u32::MAX;
-    s.drops = [u32::MAX; 2];
+    s.drops.fill(u32::MAX);
     s.stack_used = 131_072;
     s.rev = SiliconRev::Unknown(0x2001);
     s.cpu_hz = 400_000_000;

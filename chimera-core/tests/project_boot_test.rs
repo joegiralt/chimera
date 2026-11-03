@@ -471,9 +471,21 @@ fn a_failed_system_write_keeps_the_saved_toast() {
     // Retried at the next System exit, with nothing else changed.
     let mut s = s.0;
     screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
-    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    b.ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut b.sync,
+        &mut b.card,
+        &mut s,
+        &mut b.settings,
+    );
     screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
-    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    b.ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut b.sync,
+        &mut b.card,
+        &mut s,
+        &mut b.settings,
+    );
     assert_eq!(last_on_card(&mut s), Some(id(3)));
 }
 
@@ -936,9 +948,21 @@ fn a_failed_write_then_an_idle_system_exit_keeps_the_theme() {
     );
     s.1 = true;
     screen::tap(&mut ui, chimera_hal::ButtonId::Menu);
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut set,
+    );
     screen::tap(&mut ui, chimera_hal::ButtonId::Menu);
-    ui.sync_system(&mut sync, &mut card, &mut s, &mut set);
+    ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut sync,
+        &mut card,
+        &mut s,
+        &mut set,
+    );
     let now = system_on(&mut s.0);
     assert_eq!((now.theme, now.last_project), (owner.theme, Some(id(3))));
     assert_eq!(ui.theme(), owner.theme);
@@ -976,12 +1000,24 @@ fn the_last_project_stays_on_its_card() {
 
     // A theme change on B, then leaving System, writes B's SYSTEM.
     screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
-    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    b.ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut b.sync,
+        &mut b.card,
+        &mut s,
+        &mut b.settings,
+    );
     let mut t = b.ui.theme();
     t.bright = Bright::new(55);
     b.ui.set_theme(t);
     screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
-    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    b.ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut b.sync,
+        &mut b.card,
+        &mut s,
+        &mut b.settings,
+    );
     let on_b = system_on(&mut s);
     assert_eq!(on_b.theme, t, "B took the theme");
     assert_eq!(
@@ -1034,9 +1070,21 @@ fn the_last_project_is_no_theme_change() {
 
     let (mut s, owner) = owner_card();
     screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
-    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    b.ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut b.sync,
+        &mut b.card,
+        &mut s,
+        &mut b.settings,
+    );
     screen::tap(&mut b.ui, chimera_hal::ButtonId::Menu);
-    b.ui.sync_system(&mut b.sync, &mut b.card, &mut s, &mut b.settings);
+    b.ui.sync_system(
+        chimera_core::errand::Errand::HOST,
+        &mut b.sync,
+        &mut b.card,
+        &mut s,
+        &mut b.settings,
+    );
     assert_eq!(system_on(&mut s), owner, "the owner's card is untouched");
     assert_eq!(b.ui.theme(), owner.theme, "and its theme applies");
 }

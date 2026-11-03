@@ -5,6 +5,7 @@
 //!
 //! `DinPipe` runs both parser layers in bank 2, behind `MidiDoor`: a shell
 //! hands its bytes to `feed` (one door call per ISR entry, spec § 7.2).
+//! USB's shell feeds its own slot the same way, and `lost` on detach.
 //! Closed, MIDI in is deaf, notes included (spec § 13): no bank-1 parser.
 
 use core::mem::MaybeUninit;
@@ -19,7 +20,9 @@ use chimera_midi::value::{Channel, U7, U14};
 use crate::MidiChannel;
 use crate::midi_map::MidiMap;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
-use crate::note_queue::{ChannelMode, ChannelModeEvent, InEvent, NoteProducer, RealTime};
+use crate::note_queue::{
+    ChannelMode, ChannelModeEvent, InEvent, NoteEvent, NoteKind, NoteProducer, RealTime,
+};
 use crate::storage::RecordBuf;
 
 /// A controller number, 0..=127.
@@ -71,10 +74,23 @@ pub trait HeardCc: Copy {
     fn heard(self) -> HeardEv;
 }
 
+/// The port a control message came in on, and an identity reply goes
+/// out of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Port {
+    Din,
+    Usb,
+}
+
+impl Port {
+    pub const ALL: [Port; 2] = [Port::Din, Port::Usb];
+    pub const COUNT: usize = Port::ALL.len();
+}
+
 /// One message for the UI, either way it came.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeardEv {
-    Ctrl(CtrlEvent),
+    Ctrl(Port, CtrlEvent),
     Cc(CcEvent),
 }
 
@@ -84,9 +100,16 @@ impl HeardCc for CcEvent {
     }
 }
 
+/// DIN's, untagged.
 impl HeardCc for CtrlEvent {
     fn heard(self) -> HeardEv {
-        HeardEv::Ctrl(self)
+        HeardEv::Ctrl(Port::Din, self)
+    }
+}
+
+impl HeardCc for (Port, CtrlEvent) {
+    fn heard(self) -> HeardEv {
+        HeardEv::Ctrl(self.0, self.1)
     }
 }
 
@@ -199,16 +222,19 @@ impl CtrlEvent {
     }
 }
 
+/// DIN's ring: 3 bytes a millisecond fill few slots a UI lap.
 pub const CTRL_RING_LEN: usize = 64;
-const _: () = assert!(CTRL_RING_LEN.is_power_of_two());
+/// USB's: a host's burst lands whole in a few milliseconds; 3,780 B (420
+/// note pairs, each with a CC) dropped 160 CCs from 64 slots on the unit.
+pub const CTRL_USB_LEN: usize = 512;
 
 /// One producer (an ISR or a MIDI thread), one consumer (the UI); head and
-/// tail free-running, the slot `counter % CTRL_RING_LEN`, the same
+/// tail free-running, the slot `counter % N` (a power of two), the same
 /// `Acquire`/`Release` pairing as `note_queue`'s. Two words a slot, written
 /// whole before `tail` publishes them, so a full ring drops whole events and a reader never sees
 /// half of one (an NRPN's address and value travel together).
-pub struct CtrlRing {
-    slots: [[AtomicU32; 2]; CTRL_RING_LEN],
+pub struct CtrlRing<const N: usize = CTRL_RING_LEN> {
+    slots: [[AtomicU32; 2]; N],
     /// Next event to pop (the consumer's only).
     head: AtomicU32,
     /// Next slot to push (the producer's only).
@@ -216,16 +242,17 @@ pub struct CtrlRing {
     dropped: AtomicU32,
 }
 
-impl Default for CtrlRing {
+impl<const N: usize> Default for CtrlRing<N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CtrlRing {
+impl<const N: usize> CtrlRing<N> {
     pub const fn new() -> Self {
+        const { assert!(N.is_power_of_two()) };
         Self {
-            slots: [const { [AtomicU32::new(0), AtomicU32::new(0)] }; CTRL_RING_LEN],
+            slots: [const { [AtomicU32::new(0), AtomicU32::new(0)] }; N],
             head: AtomicU32::new(0),
             tail: AtomicU32::new(0),
             dropped: AtomicU32::new(0),
@@ -237,11 +264,11 @@ impl CtrlRing {
     /// publishes the slot.
     pub fn push(&self, e: CtrlEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
-        if tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= CTRL_RING_LEN {
+        if tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= N {
             self.dropped.fetch_add(1, Ordering::Relaxed);
             return false;
         }
-        let slot = &self.slots[tail as usize % CTRL_RING_LEN];
+        let slot = &self.slots[tail as usize % N];
         let [a, b] = e.pack();
         slot[0].store(a, Ordering::Relaxed);
         slot[1].store(b, Ordering::Relaxed);
@@ -256,7 +283,7 @@ impl CtrlRing {
         if head == self.tail.load(Ordering::Acquire) {
             return None;
         }
-        let slot = &self.slots[head as usize % CTRL_RING_LEN];
+        let slot = &self.slots[head as usize % N];
         let bits = [
             slot[0].load(Ordering::Relaxed),
             slot[1].load(Ordering::Relaxed),
@@ -281,6 +308,53 @@ impl CtrlRing {
     /// Events dropped because the ring was full.
     pub fn dropped(&self) -> u32 {
         self.dropped.load(Ordering::Relaxed)
+    }
+}
+
+/// MIDI in's control rings, one a `Port`: DIN's at DIN's rate, USB's at
+/// `U` slots, a host's burst. Each port's poll pushes its own; the UI is
+/// the one consumer.
+pub struct CtrlPorts<const U: usize = CTRL_USB_LEN> {
+    pub din: CtrlRing,
+    pub usb: CtrlRing<U>,
+}
+
+impl<const U: usize> Default for CtrlPorts<U> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const U: usize> CtrlPorts<U> {
+    pub const fn new() -> Self {
+        Self {
+            din: CtrlRing::new(),
+            usb: CtrlRing::new(),
+        }
+    }
+
+    /// Consumer side: every event waiting, DIN's then USB's, each tagged
+    /// with its port. A `from_fn`, not a `Chain`, whose overrides a `dyn`
+    /// caller would link.
+    #[inline(always)]
+    pub fn drain(&self) -> impl Iterator<Item = (Port, CtrlEvent)> + '_ {
+        let mut din = true;
+        core::iter::from_fn(move || {
+            if din {
+                match self.din.pop() {
+                    Some(e) => return Some((Port::Din, e)),
+                    None => din = false,
+                }
+            }
+            self.usb.pop().map(|e| (Port::Usb, e))
+        })
+    }
+
+    /// Consumer side: both dropped unread.
+    #[inline(always)]
+    pub fn clear(&self) {
+        self.din.clear();
+        self.usb.clear();
     }
 }
 
@@ -327,6 +401,8 @@ pub struct DinPipe {
     ctl: Controllers,
     sense: Sensing,
     stats: PipeStats,
+    /// A note-on since the last `lost`.
+    played: bool,
 }
 
 impl Default for DinPipe {
@@ -353,6 +429,7 @@ impl DinPipe {
                 refused: 0,
                 ctrl_refused: 0,
             },
+            played: false,
         }
     }
 
@@ -382,7 +459,16 @@ impl DinPipe {
                     }
                 },
                 Parsed::Event(Event::Voice(c, v)) => match InEvent::from_event(c, &v) {
-                    Some(e) => sink.note(e),
+                    Some(e) => {
+                        self.played |= matches!(
+                            e,
+                            InEvent::Note(NoteEvent {
+                                kind: NoteKind::On(_),
+                                ..
+                            })
+                        );
+                        sink.note(e)
+                    }
                     None => match self.ctl.hear(c, v) {
                         Heard::Ctl(Ctl::Program { .. }) => {
                             sink.stats.programs_dropped =
@@ -414,15 +500,22 @@ impl DinPipe {
     /// lets go and the UI hears it.
     pub fn idle<S: Sinks + ?Sized>(&mut self, out: &mut S) {
         if self.sense.timed_out() {
-            let mut sink = Counted {
-                out,
-                stats: &mut self.stats,
-            };
-            for c in 0..16 {
-                sink.mode(Channel::clamped(c), ChannelMode::NotesOff);
-            }
-            sink.ctrl(CtrlEvent::SensingLost);
+            self.lost(out);
         }
+    }
+
+    /// The source went away (USB's bus reset or suspend): every Part lets
+    /// go and the UI hears it, sensing armed or not.
+    pub fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S) {
+        self.played = false;
+        let mut sink = Counted {
+            out,
+            stats: &mut self.stats,
+        };
+        for c in 0..16 {
+            sink.mode(Channel::clamped(c), ChannelMode::NotesOff);
+        }
+        sink.ctrl(CtrlEvent::SensingLost);
     }
 
     /// A field read, so bank 1's ISR may call it: armed, it sets the
@@ -430,6 +523,12 @@ impl DinPipe {
     #[inline(always)]
     pub fn sensing_armed(&self) -> bool {
         self.sense.armed()
+    }
+
+    /// A note-on since the last `lost`. A field read, as `sensing_armed`.
+    #[inline(always)]
+    pub fn played(&self) -> bool {
+        self.played
     }
 
     /// As of the last `feed`. A field read, so bank 1 may call it closed.
@@ -442,12 +541,12 @@ impl DinPipe {
 /// A shell's sinks: its note queue's producer and its control ring. The
 /// door's pipe pushes to them directly, so the pushes run in bank 2 with it
 /// (no vtable, nothing of them left in bank 1's stub).
-pub struct DinSinks<'a, 'q> {
+pub struct DinSinks<'a, 'q, const N: usize = CTRL_RING_LEN> {
     pub notes: &'a mut NoteProducer<'q>,
-    pub ctrl: &'a CtrlRing,
+    pub ctrl: &'a CtrlRing<N>,
 }
 
-impl Sinks for DinSinks<'_, '_> {
+impl<const N: usize> Sinks for DinSinks<'_, '_, N> {
     #[inline]
     fn note(&mut self, e: InEvent) -> bool {
         self.notes.push(e)
@@ -501,6 +600,12 @@ impl PipeSlot {
         self.pipe().is_some_and(DinPipe::sensing_armed)
     }
 
+    /// A note-on since the last `lost`; nothing before the first `feed`.
+    #[inline(always)]
+    pub fn played(&self) -> bool {
+        self.pipe().is_some_and(DinPipe::played)
+    }
+
     /// The pipe, built first if it is not yet. Inlined into the door's
     /// entries, so `DinPipe::new` runs in bank 2.
     #[inline(always)]
@@ -514,9 +619,26 @@ impl PipeSlot {
     }
 }
 
+/// How USB left Configured, as its poll saw it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Left {
+    /// A bus reset (or unplug): the host is gone.
+    Reset,
+    /// A suspend: an idle host's autosuspend as often as a sleep.
+    Suspend,
+}
+
+/// Whether leaving Configured lets every Part go (`lost`): a reset always;
+/// a suspend only if USB played a note-on since the last `lost`, so an idle
+/// host's autosuspend never cuts notes held from DIN.
+#[inline(always)]
+pub fn lets_go(left: Left, played: bool) -> bool {
+    left == Left::Reset || played
+}
+
 /// `DinPipe::feed` as the door carries it.
 pub type MidiFeed = fn(&mut PipeSlot, &[u8], &mut DinSinks<'_, '_>);
-/// `DinPipe::idle` as the door carries it.
+/// `DinPipe::idle` and `lost` as the door carries them.
 pub type MidiIdle = fn(&mut PipeSlot, &mut DinSinks<'_, '_>);
 
 /// `midi_map::codec::decode` as the door carries it.
@@ -530,6 +652,7 @@ pub type MapEncode = fn(&MidiMap, &mut RecordBuf);
 pub struct MidiDoor {
     pub feed: MidiFeed,
     pub idle: MidiIdle,
+    pub lost: MidiIdle,
     pub decode_map: MapDecode,
     pub encode_map: MapEncode,
 }
@@ -538,6 +661,7 @@ impl MidiDoor {
     pub const DOOR: MidiDoor = MidiDoor {
         feed: DinPipe::door_feed,
         idle: DinPipe::door_idle,
+        lost: DinPipe::door_lost,
         decode_map: codec::decode,
         encode_map: codec::encode,
     };
@@ -552,6 +676,25 @@ impl DinPipe {
 
     fn door_idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
         slot.built().idle(out);
+    }
+
+    fn door_lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
+        slot.built().lost(out);
+    }
+
+    /// `door_feed` on USB's ring, for a caller already in bank 2 (USB's
+    /// poll): no door call. Not generic, so it builds at this crate's
+    /// level as the door's: built at the board's, the machine outliner put
+    /// a call into bank 2 in a bank-1 outline.
+    #[inline(never)]
+    pub fn usb_feed(slot: &mut PipeSlot, bytes: &[u8], out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
+        slot.built().feed(bytes, out);
+    }
+
+    /// `door_lost`, as `usb_feed`.
+    #[inline(never)]
+    pub fn usb_lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
+        slot.built().lost(out);
     }
 }
 
@@ -572,6 +715,15 @@ pub fn idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
     crate::bank2::DOOR_CELL.with(|d| (d.midi.idle)(slot, out));
     #[cfg(not(feature = "bank2"))]
     DinPipe::door_idle(slot, out);
+}
+
+/// The source went away (`DinPipe::lost`), as `feed`: closed, nothing.
+#[inline(always)]
+pub fn lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
+    #[cfg(feature = "bank2")]
+    crate::bank2::DOOR_CELL.with(|d| (d.midi.lost)(slot, out));
+    #[cfg(not(feature = "bank2"))]
+    DinPipe::door_lost(slot, out);
 }
 
 /// A map record checked and, with `m`, decoded (`codec::decode`) through
