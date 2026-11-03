@@ -987,29 +987,13 @@ impl Link {
     /// the guard can't be left asleep or forgotten awake.
     #[inline(always)]
     fn errand<R>(&mut self, f: impl FnOnce(&Errand) -> R) -> R {
-        // SAFETY: long: the guard sleeps.
-        unsafe { self.errand_if(true, f) }
-    }
-
-    /// `errand` when `long`; else `f` with the proof, no hold, the guard
-    /// awake.
-    ///
-    /// # Safety
-    ///
-    /// `long` false only as `Errand::run`'s contract allows: `f` short.
-    #[inline(always)]
-    unsafe fn errand_if<R>(&mut self, long: bool, f: impl FnOnce(&Errand) -> R) -> R {
-        if long {
-            #[cfg(feature = "midi-usb")]
-            self.with(|c| c.irq.alive = None);
-        }
-        // SAFETY: long, the service test sleeps until the hold below gives
-        // the stamp back; short, the caller's.
+        #[cfg(feature = "midi-usb")]
+        self.with(|c| c.irq.alive = None);
+        // SAFETY: the service test sleeps until the hold below gives the
+        // stamp back.
         let r = unsafe { Errand::run(f) };
-        if long {
-            #[cfg(feature = "midi-usb")]
-            self.with(|_| ());
-        }
+        #[cfg(feature = "midi-usb")]
+        self.with(|_| ());
         r
     }
 }
@@ -1358,19 +1342,8 @@ impl PortState {
     /// `f`, with the proof. Long UI work needs the `&Errand` this hands
     /// out, so it can't run outside one.
     pub fn errand<R>(&mut self, f: impl FnOnce(&Errand) -> R) -> R {
-        // SAFETY: long: the guard sleeps.
-        unsafe { self.errand_if(true, f) }
-    }
-
-    /// `errand` when `long`; else `f` with the proof, the guard awake.
-    ///
-    /// # Safety
-    ///
-    /// `long` false only as `Errand::run`'s contract allows: `f` short.
-    pub unsafe fn errand_if<R>(&mut self, long: bool, f: impl FnOnce(&Errand) -> R) -> R {
         match self.up() {
-            // SAFETY: the caller's.
-            Some(u) => unsafe { u.link.errand_if(long, f) },
+            Some(u) => u.link.errand(f),
             // SAFETY: no port up: `OTG_FS` masked, no guard runs.
             None => unsafe { Errand::run(f) },
         }

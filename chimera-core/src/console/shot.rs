@@ -23,8 +23,9 @@ pub trait Out {
 }
 
 /// `put`'s data as an `Out` reads it: a packet a `fill` (one USB hold),
-/// handed out a byte a `pop`. The host waits on each answer, so none is
-/// left past one.
+/// handed out a byte a `pop`. A finished `put` leaves none (the host
+/// waits on each answer); an aborted one drops up to 63 B, and the host
+/// resyncs on its next request.
 pub struct Rx {
     buf: [u8; Rx::PACKET],
     at: u8,

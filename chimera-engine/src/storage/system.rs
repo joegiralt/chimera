@@ -377,11 +377,6 @@ impl SystemSync {
         left
     }
 
-    /// `left_system` would say true this frame: SYSTEM's write is due.
-    pub fn leaving(&self, in_system: bool) -> bool {
-        self.was_in && !in_system
-    }
-
     /// On leaving System: mounts, then does what `exit_plan` says for that
     /// volume. `Loaded` replaced `s` with the card's, to apply. `current`
     /// is the loaded project's file: SYSTEM names it only on its own card.

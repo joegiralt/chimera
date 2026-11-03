@@ -18,8 +18,8 @@ impl Errand {
     /// # Safety
     ///
     /// No USB guard's service test can trip over `f`: the board's errand
-    /// scope has put it to sleep, no guard runs (no port up, or a build
-    /// without one), or `f` is short (`UiState::errand_due` false).
+    /// scope has put it to sleep, or no guard runs (no port up, or a build
+    /// without one).
     /// Broken, a long `f` trips a false storm: USB MIDI held off a lap.
     #[inline(always)]
     pub unsafe fn run<R>(f: impl FnOnce(&Errand) -> R) -> R {
