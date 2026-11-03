@@ -416,11 +416,12 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
         let k = u.storms;
         writeln!(
             t,
-            "usb_storms {} {} {} {}",
+            "usb_storms {} {} {} {} {}",
             k.total(),
             k.entries,
             k.tick,
-            k.ui
+            k.ui,
+            k.peak
         )?;
         writeln!(t, "usb_rx_parks {}", u.rx_parks)?;
         writeln!(t, "usb_midi_drops {} {}", u.midi_in_drops, u.midi_out_drops)

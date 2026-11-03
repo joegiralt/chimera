@@ -1106,7 +1106,9 @@ fn OTG_FS() {
     if tick != n.tick {
         (n.tick, n.tick_at) = (tick, now);
     }
-    if let Some(kind) = trip(&mut n.window, now, n.tick_at, n.alive, n.per_ms) {
+    let kind = trip(&mut n.window, now, n.tick_at, n.alive, n.per_ms);
+    n.counts.storms.saw(&n.window);
+    if let Some(kind) = kind {
         n.held = true;
         n.counts.storms.add(kind);
         NVIC::mask(pac::Interrupt::OTG_FS);

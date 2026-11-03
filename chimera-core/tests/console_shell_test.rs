@@ -238,6 +238,21 @@ fn trip_names_each_test() {
     assert_eq!(trip(&mut w, now, now, Some(t)), Some(Storm::Ui));
 }
 
+/// The most entries one millisecond held, for § 13.5's 4x rule (#848).
+#[test]
+fn storm_kinds_keep_the_busiest_millisecond() {
+    let mut w = StormWindow::new();
+    let mut k = StormKinds::new();
+    for (ms, n) in [(1, 3), (2, 9), (3, 5)] {
+        for e in 0..n {
+            storm(&mut w, ms * MS + e, MS);
+            k.saw(&w);
+        }
+    }
+    assert_eq!(k.peak, 9);
+    assert_eq!(k.total(), 0, "a peak is no trip");
+}
+
 #[test]
 fn storm_kinds_count_each_and_total() {
     let mut k = StormKinds::new();
@@ -256,6 +271,7 @@ fn storm_kinds_count_each_and_total() {
         entries: u32::MAX,
         tick: 1,
         ui: 0,
+        ..StormKinds::new()
     };
     k.add(Storm::Entries);
     assert_eq!(

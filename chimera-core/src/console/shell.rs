@@ -211,12 +211,15 @@ pub fn trip(
     }
 }
 
-/// The guard's trips by test, wrapping; `usb_storms` is their sum.
+/// The guard's trips by test, wrapping; `usb_storms` is their sum. And the
+/// most entries one millisecond held: a dense stream's peak, which
+/// `STORM_LIMIT`'s 4x rule reads (#848).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StormKinds {
     pub entries: u32,
     pub tick: u32,
     pub ui: u32,
+    pub peak: u32,
 }
 
 impl StormKinds {
@@ -225,7 +228,14 @@ impl StormKinds {
             entries: 0,
             tick: 0,
             ui: 0,
+            peak: 0,
         }
+    }
+
+    /// An entry `storm` counted in `w`.
+    #[inline(always)]
+    pub fn saw(&mut self, w: &StormWindow) {
+        self.peak = self.peak.max(w.entries);
     }
 
     pub fn add(&mut self, s: Storm) {

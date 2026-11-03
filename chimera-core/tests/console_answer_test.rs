@@ -408,6 +408,7 @@ fn stats_prints_the_usb_lines() {
                 entries: 1,
                 tick: 2,
                 ui: 4,
+                peak: 37,
             },
             rx_parks: 9,
             midi_in_drops: 5,
@@ -417,7 +418,7 @@ fn stats_prints_the_usb_lines() {
     let got = ask(&mut u, "stats\n");
     assert!(
         got.ends_with(
-            "loop_peak_us 2\nusb_irq_pct 1.2\nusb_irq_us_max 41\nusb_storms 7 1 2 4\nusb_rx_parks 9\nusb_midi_drops 5 6\nOK\n"
+            "loop_peak_us 2\nusb_irq_pct 1.2\nusb_irq_us_max 41\nusb_storms 7 1 2 4 37\nusb_rx_parks 9\nusb_midi_drops 5 6\nOK\n"
         ),
         "{got}"
     );
