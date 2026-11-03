@@ -144,9 +144,6 @@ pub struct UsbParts {
     pub sweep: Option<SweepRun>,
     /// The board's strap: `status`'s `board` line.
     pub board: BoardId,
-    /// What USB MIDI feeds and empties.
-    #[cfg(feature = "midi-usb")]
-    pub(crate) midi: crate::usb_midi::Sinks,
 }
 
 /// `dfu` answered and its `OK` flushed: only `Usb::service` makes one, and
@@ -223,9 +220,7 @@ pub struct Ready(UsbParts);
 /// AHBIDL and a core soft reset (CSRST) on the FS PHY. The last two are
 /// what `connect`'s enable (synopsys-usb-otg `UsbBus::enable`) spins on
 /// with interrupts masked and no timeout. `Err` names the first that
-/// never came true and hands the parts back for the next try (by value:
-/// no heap to box them).
-#[allow(clippy::result_large_err)]
+/// never came true and hands the parts back for the next try.
 pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, (UsbParts, UsbOff)> {
     match check(&parts, cpu_hz) {
         Ok(()) => Ok(Ready(parts)),
@@ -273,7 +268,7 @@ fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
 
 /// Sets the port up, once: the CRS trimming HSI48 from the host's SOF, the
 /// OTG core and the CDC-ACM class. Nothing connects yet (`connect`).
-pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
+pub fn init(ready: Ready, midi: MidiSinks, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
     let Ready(parts) = ready;
     let UsbParts {
         dm,
@@ -287,8 +282,6 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         boot,
         sweep,
         board,
-        #[cfg(feature = "midi-usb")]
-        midi,
     } = parts;
     crs_rec.enable();
     // SAFETY: SYNCSRC is a 2-bit field and 0b11 is a defined value, USB2
@@ -320,6 +313,8 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
     // USB MIDI only if bank 2's door is open now: this boot's layout.
     #[cfg(feature = "midi-usb")]
     let midi = crate::usb_midi::Midi::alloc(bus, midi);
+    #[cfg(not(feature = "midi-usb"))]
+    let () = midi;
     // The chip's 96-bit UID: a stable /dev/serial/by-id name per unit.
     let uid = cortex_m::singleton!(: chimera_core::console::SerialNumber = serial_hex(Uid::read()))
         .expect("serial number taken once");
@@ -1182,12 +1177,19 @@ fn bus_step(state: UsbDeviceState, sof_moved: bool, was: UsbStep) -> UsbStep {
     }
 }
 
+/// What USB MIDI feeds and empties, kept for the try that connects; none
+/// without USB MIDI.
+#[cfg(feature = "midi-usb")]
+pub type MidiSinks = crate::usb_midi::Sinks;
+#[cfg(not(feature = "midi-usb"))]
+pub type MidiSinks = ();
+
 /// The port through the boot: waiting for a try that passes `preflight`,
 /// up, or given up after `USB_TRIES`. One lives on `synth`'s frame for
 /// the whole run, and there's no heap to box `Usb` into.
 #[allow(clippy::large_enum_variant)]
 pub enum PortState {
-    Waiting(UsbParts, UsbRetry),
+    Waiting(UsbParts, UsbRetry, MidiSinks),
     Up {
         usb: Usb,
         tries: u8,
@@ -1198,8 +1200,8 @@ pub enum PortState {
 }
 
 impl PortState {
-    pub fn new(parts: UsbParts) -> PortState {
-        PortState::Waiting(parts, UsbRetry::new())
+    pub fn new(parts: UsbParts, midi: MidiSinks) -> PortState {
+        PortState::Waiting(parts, UsbRetry::new(), midi)
     }
 
     /// A try if one is due (`UsbRetry`): `Some` with how it ended. Each
@@ -1212,20 +1214,21 @@ impl PortState {
         cpu_hz: u32,
         step: &mut dyn FnMut(UsbStep, u8),
     ) -> Option<UsbState> {
-        let PortState::Waiting(_, retry) = self else {
+        let PortState::Waiting(_, retry, _) = self else {
             return None;
         };
         if !retry.due(now) {
             return None;
         }
-        let PortState::Waiting(parts, mut retry) = core::mem::replace(self, PortState::Off) else {
+        let PortState::Waiting(parts, mut retry, midi) = core::mem::replace(self, PortState::Off)
+        else {
             return None;
         };
         let tries = retry.tried(now);
         step(UsbStep::Preflight, tries);
         let state = match preflight(parts, cpu_hz) {
             Ok(ready) => {
-                let unconnected = init(ready, clocks, cpu_hz);
+                let unconnected = init(ready, midi, clocks, cpu_hz);
                 step(UsbStep::Init, tries);
                 step(UsbStep::Connect, tries);
                 let usb = unconnected.connect();
@@ -1241,7 +1244,7 @@ impl PortState {
             Err((parts, why)) => {
                 let state = UsbState::Off { why, tries };
                 if !state.gave_up() {
-                    *self = PortState::Waiting(parts, retry);
+                    *self = PortState::Waiting(parts, retry, midi);
                 }
                 state
             }

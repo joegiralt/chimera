@@ -127,20 +127,11 @@ impl Closed {
 }
 
 /// What USB MIDI feeds and empties: in's note producer and control ring,
-/// out's ring. Handed to `init` with the port's parts.
-pub(crate) struct Sinks {
+/// out's ring. Handed to `init`.
+pub struct Sinks {
     pub(crate) notes: Option<NoteProducer<'static>>,
-    pub(crate) ctrl: Option<&'static UsbCtrl>,
+    pub(crate) ctrl: &'static UsbCtrl,
     pub(crate) out: Option<&'static OutRing>,
-}
-
-impl Sinks {
-    /// None yet: the boot hands them over before the port's first try.
-    pub(crate) const NONE: Sinks = Sinks {
-        notes: None,
-        ctrl: None,
-        out: None,
-    };
 }
 
 /// USB MIDI in's pipe and sinks, and out's queue: the poll's alone, in the
@@ -148,7 +139,7 @@ impl Sinks {
 struct Port {
     pipe: PipeSlot,
     notes: Option<NoteProducer<'static>>,
-    ctrl: Option<&'static UsbCtrl>,
+    ctrl: &'static UsbCtrl,
     queue: InQueue,
 }
 
@@ -158,7 +149,7 @@ pub(crate) struct UsbDoor {
     alloc: fn(
         &'static UsbBusAllocator<Bus>,
         Option<NoteProducer<'static>>,
-        Option<&'static UsbCtrl>,
+        &'static UsbCtrl,
     ) -> MidiClass,
     poll: fn(&mut Dev, &mut Serial, &mut MidiClass, Option<&'static OutRing>, &mut Counts),
 }
@@ -218,7 +209,7 @@ mod door {
     pub(super) fn alloc(
         bus: &'static UsbBusAllocator<Bus>,
         notes: Option<NoteProducer<'static>>,
-        ctrl: Option<&'static UsbCtrl>,
+        ctrl: &'static UsbCtrl,
     ) -> MidiClass {
         MidiClass {
             ac: bus.interface(),
@@ -237,16 +228,13 @@ mod door {
         }
     }
 
-    /// The pipe's sinks, if the boot gave it both.
+    /// The pipe's sinks, if the boot gave it a note producer.
     #[inline(always)]
     fn sinks<'a>(
         notes: &'a mut Option<NoteProducer<'static>>,
-        ctrl: Option<&'static UsbCtrl>,
+        ctrl: &'static UsbCtrl,
     ) -> Option<DinSinks<'a, 'static, { crate::shared::CTRL_USB }>> {
-        notes
-            .as_mut()
-            .zip(ctrl)
-            .map(|(notes, ctrl)| DinSinks { notes, ctrl })
+        notes.as_mut().map(|notes| DinSinks { notes, ctrl })
     }
 
     /// The device polled with both classes; leaving Configured, every Part
@@ -276,13 +264,13 @@ mod door {
         } = m;
         if let Some(left) = edge.poll(dev.state())
             && midi_in::lets_go(left, pipe.played())
-            && let Some(s) = &mut sinks(notes, *ctrl)
+            && let Some(s) = &mut sinks(notes, ctrl)
         {
             lost(pipe, s);
         }
         let mut p = [0u8; PACKET as usize];
         while let Ok(n) = from_host.read(&mut p) {
-            let mut s = sinks(notes, *ctrl);
+            let mut s = sinks(notes, ctrl);
             for e in cable_zero(&p[..n]) {
                 match (e, s.as_mut()) {
                     (Some(b), Some(s)) => feed(pipe, b.as_slice(), s),
