@@ -255,6 +255,39 @@ pub fn park(before: Option<RxHead>, after: Option<RxHead>) -> bool {
     before.is_some_and(|h| (h.0 >> 17) & 0xF == 2) && before == after
 }
 
+/// The RXFLVL park: parked if and only if the board has GINTMSK.RXFLVLM
+/// clear. Each step returns the write that keeps it so, if any: `Some(p)`
+/// sets RXFLVLM to `!p`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RxPark {
+    parked: bool,
+}
+
+impl RxPark {
+    pub const fn new() -> Self {
+        RxPark { parked: false }
+    }
+
+    pub fn parked(&self) -> bool {
+        self.parked
+    }
+
+    /// The handler's poll: parks on a head it left (`park`), lets it back
+    /// once the head moved or went (read, or a bus reset's flush).
+    #[inline(always)]
+    pub fn polled(&mut self, before: Option<RxHead>, after: Option<RxHead>) -> Option<bool> {
+        let p = park(before, after);
+        (p != core::mem::replace(&mut self.parked, p)).then_some(p)
+    }
+
+    /// A UI hold let go: a parked head comes back, since the hold may have
+    /// drained its class; a console still full parks it again in one entry.
+    #[inline(always)]
+    pub fn unlock(&mut self) -> Option<bool> {
+        core::mem::take(&mut self.parked).then_some(false)
+    }
+}
+
 /// Report text in a fixed buffer. The last `TRUNCATED.len()` bytes are kept
 /// back, so a report that runs out of room always ends in `# TRUNCATED`.
 pub struct Report<const N: usize> {

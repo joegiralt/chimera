@@ -37,7 +37,7 @@ use usbd_serial::USB_CLASS_CDC;
 
 use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
-use chimera_core::console::{RxHead, StormKinds, StormWindow, park, trip};
+use chimera_core::console::{RxHead, RxPark, StormKinds, StormWindow, trip};
 use chimera_core::errand::Errand;
 use chimera_hal::units::Cycles;
 #[cfg(feature = "midi-usb")]
@@ -369,7 +369,7 @@ impl Unconnected {
                 alive: None,
                 per_ms: Cycles::new((self.cpu_hz / 1_000).max(1)),
                 held: false,
-                parked: false,
+                park: RxPark::new(),
                 counts: Counts {
                     cycles: 0,
                     us_max: 0,
@@ -870,9 +870,9 @@ pub(crate) struct Irq {
     /// The guard masked the handler: `with` leaves it masked until the top
     /// of the next `Usb::service` clears it.
     held: bool,
-    /// RXFLVLM cleared: the RX FIFO's head waits for the UI (`park`); every
-    /// `with` sets it again.
-    parked: bool,
+    /// RXFLVLM cleared: the RX FIFO's head waits for the UI; every `with`
+    /// sets it again.
+    park: RxPark,
     counts: Counts,
 }
 
@@ -1075,8 +1075,8 @@ fn lock() {
 #[cfg(feature = "midi-usb")]
 #[inline(never)]
 fn unlock(irq: &mut Irq) {
-    if core::mem::take(&mut irq.parked) {
-        rx_park(false);
+    if let Some(p) = irq.park.unlock() {
+        rx_park(p);
     }
     if !irq.held {
         // SAFETY: as `install`'s unmask.
@@ -1113,10 +1113,8 @@ fn OTG_FS() {
     } else {
         let before = rx_head(true);
         core.poll_all();
-        let p = park(before, rx_head(false));
         let n = &mut core.irq;
-        if p != n.parked {
-            n.parked = p;
+        if let Some(p) = n.park.polled(before, rx_head(false)) {
             n.counts.rx_parks = n.counts.rx_parks.wrapping_add(u32::from(p));
             rx_park(p);
         }

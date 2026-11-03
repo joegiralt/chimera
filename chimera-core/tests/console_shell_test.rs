@@ -1,6 +1,6 @@
 use chimera_core::console::{
-    self, ANSWER_MS, AnswerClock, LoopTimer, Report, RxHead, STALL_MS, STORM_LIMIT, Served, Storm,
-    StormKinds, StormWindow, park, serial_hex,
+    self, ANSWER_MS, AnswerClock, LoopTimer, Report, RxHead, RxPark, STALL_MS, STORM_LIMIT, Served,
+    Storm, StormKinds, StormWindow, park, serial_hex,
 };
 use chimera_hal::Ms;
 use chimera_hal::units::Cycles;
@@ -287,6 +287,60 @@ fn parks_only_out_data() {
     let done = Some(RxHead(0x0006_0002));
     assert!(!park(setup, setup));
     assert!(!park(done, done));
+}
+
+/// The park's steps as the handler and `unlock` take them; each `Some`
+/// is the RXFLVLM write the board makes (`Some(true)`: cleared, parked).
+#[test]
+fn the_park_parks_on_a_stuck_head_and_every_hold_lets_it_back() {
+    let full = Some(RxHead(0x0004_0402));
+    let done = Some(RxHead(0x0006_0002));
+    let mut r = RxPark::new();
+    assert_eq!(r.unlock(), None, "nothing parked, no write");
+    assert_eq!(r.polled(full, done), None, "progress, unparked already");
+    assert_eq!(r.polled(full, full), Some(true), "a full console parks");
+    assert!(r.parked());
+    assert_eq!(r.polled(full, full), None, "parked once");
+    assert_eq!(r.unlock(), Some(false), "the hold lets it back");
+    assert!(!r.parked());
+    assert_eq!(r.unlock(), None, "once");
+    assert_eq!(r.polled(full, full), Some(true), "still full: parked again");
+    assert_eq!(r.polled(full, None), Some(false), "a bus reset flushed it");
+    assert_eq!(r.polled(full, full), Some(true));
+    assert_eq!(r.polled(full, done), Some(false), "read meanwhile");
+}
+
+/// Parked if and only if RXFLVLM is clear, over every step sequence up to
+/// eight long.
+#[test]
+fn parked_is_rxflvlm_clear() {
+    let full = Some(RxHead(0x0004_0402));
+    let done = Some(RxHead(0x0006_0002));
+    let setup = Some(RxHead(0x000C_0080));
+    let steps = [
+        (full, full),
+        (full, done),
+        (full, None),
+        (setup, setup),
+        (None, None),
+    ];
+    // Step 5: a UI hold's unlock.
+    for seq in 0..6u32.pow(8) {
+        let (mut r, mut masked_in) = (RxPark::new(), true);
+        let mut s = seq;
+        for _ in 0..8 {
+            let w = match (s % 6) as usize {
+                5 => r.unlock(),
+                i => r.polled(steps[i].0, steps[i].1),
+            };
+            if let Some(p) = w {
+                assert_ne!(masked_in, !p, "a write that changes nothing");
+                masked_in = !p;
+            }
+            assert_eq!(r.parked(), !masked_in, "{seq}");
+            s /= 6;
+        }
+    }
 }
 
 #[test]
