@@ -816,8 +816,8 @@ impl Out for UsbOut<'_> {
     }
 
     /// Polls until a byte comes or `wait_ms` pass: `put`'s data, read in
-    /// the UI loop while audio and MIDI run above it, a packet a hold, so
-    /// a parked RX head waits one hold a packet, not one a byte.
+    /// the UI loop while audio and MIDI run above it, a poll and a packet
+    /// a hold, so a parked RX head waits one hold a packet, not one a byte.
     fn recv(&mut self, wait_ms: u32) -> Option<u8> {
         let start = crate::controls::now_ms();
         loop {
@@ -825,13 +825,15 @@ impl Out for UsbOut<'_> {
                 return Some(b);
             }
             let rx = &mut self.rx;
-            if self.link.with(|c| rx.fill(|buf| c.serial.read(buf).ok())) {
+            if self.link.with(|c| {
+                c.poll_all();
+                rx.fill(|buf| c.serial.read(buf).ok())
+            }) {
                 continue;
             }
             if crate::controls::now_ms().since(start) >= wait_ms {
                 return None;
             }
-            self.link.with(UsbCore::poll_all);
         }
     }
 
