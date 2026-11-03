@@ -114,7 +114,7 @@ impl LoopTimer {
 /// The USB interrupt's entries in one millisecond at most; over it, the
 /// shell masks the interrupt until the UI's next lap. Provisional: set from
 /// the unit's measured worst (spec § 13 ruling 5); § 13.5's 4× a dense
-/// stream's peak waits on the unit.
+/// stream's peak waits on a bench counter (private issue #848).
 pub const STORM_LIMIT: u32 = 200;
 
 /// The USB interrupt's entries in the millisecond of DWT cycles it opened.
