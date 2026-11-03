@@ -237,7 +237,8 @@ impl Default for InQueue {
 }
 
 impl InQueue {
-    /// Inlined: bank 1 builds the port, bank 2 runs the queue.
+    /// Inlined, a habit for anything bank 1 might build: bank 2's
+    /// `door::alloc` builds the port today.
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
