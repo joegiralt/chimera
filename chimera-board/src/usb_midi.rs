@@ -22,7 +22,7 @@
 //! the endpoint takes them; the UI pends `OTG_FS` to start, each IN
 //! packet's completion carries on. Not Configured, what waits is dropped.
 
-use chimera_core::midi_in::PipeSlot;
+use chimera_core::midi_in::UsbSlot;
 use chimera_core::note_queue::NoteProducer;
 use chimera_core::out_ring::OutRing;
 use chimera_midi::usb::{Edge, InQueue};
@@ -140,7 +140,7 @@ pub struct Sinks {
 /// cell. The pipe beside it: its held keys in the cell pushed the
 /// counters past bank 1's short offsets.
 struct Port {
-    pipe: Option<&'static mut PipeSlot>,
+    pipe: Option<&'static mut UsbSlot>,
     notes: Option<NoteProducer<'static>>,
     ctrl: &'static UsbCtrl,
     queue: InQueue,
@@ -178,32 +178,36 @@ impl UsbClass<Bus> for MidiClass {
 
 /// Bank 2's half.
 mod door {
-    use chimera_core::midi_in::{self, DinSinks};
-    #[cfg(feature = "midi-map")]
-    use chimera_core::midi_in::{CTRL_USB_LEN, DinPipe};
+    use chimera_core::midi_in::{self, DinPipe, DinSinks};
     use chimera_core::note_queue::NoteProducer;
     use chimera_core::out_ring::OutRing;
     use chimera_midi::usb::{Edge, InQueue, cable_zero};
     use chimera_midi::usb_class::{Ids, descriptors as write};
-    #[cfg(not(feature = "midi-map"))]
-    use midi_in::{feed, lost};
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
 
-    use super::{MidiClass, PipeSlot, Port, UsbCtrl};
+    use super::{MidiClass, Port, UsbCtrl, UsbSlot};
     use crate::usb::{Bus, Counts, Dev, Serial};
 
-    /// USB's burst-sized ring takes the pipe straight (the door's entries
-    /// take DIN's); at DIN's size, the door's.
-    #[cfg(feature = "midi-map")]
+    /// USB's pipe, straight: the poll runs in bank 2. Its ring is
+    /// burst-sized with the map, DIN's size without.
     #[inline(always)]
-    fn feed(pipe: &mut PipeSlot, bytes: &[u8], s: &mut DinSinks<'_, '_, { CTRL_USB_LEN }>) {
+    fn feed(
+        pipe: &mut UsbSlot,
+        bytes: &[u8],
+        s: &mut DinSinks<'_, '_, { crate::shared::CTRL_USB }>,
+    ) {
+        #[cfg(feature = "midi-map")]
         DinPipe::usb_feed(pipe, bytes, s);
+        #[cfg(not(feature = "midi-map"))]
+        DinPipe::usb_feed_short(pipe, bytes, s);
     }
 
-    #[cfg(feature = "midi-map")]
     #[inline(always)]
-    fn lost(pipe: &mut PipeSlot, s: &mut DinSinks<'_, '_, { CTRL_USB_LEN }>) {
+    fn lost(pipe: &mut UsbSlot, s: &mut DinSinks<'_, '_, { crate::shared::CTRL_USB }>) {
+        #[cfg(feature = "midi-map")]
         DinPipe::usb_lost(pipe, s);
+        #[cfg(not(feature = "midi-map"))]
+        DinPipe::usb_lost_short(pipe, s);
     }
 
     /// Bulk packets at full speed.
@@ -224,7 +228,7 @@ mod door {
             edge: Edge::new(),
             port: Port {
                 // `alloc` runs once a boot (`Midi::alloc`, from `init`).
-                pipe: cortex_m::singleton!(: PipeSlot = PipeSlot::new()),
+                pipe: cortex_m::singleton!(: UsbSlot = UsbSlot::new()),
                 notes,
                 ctrl,
                 queue: InQueue::new(),
@@ -235,11 +239,11 @@ mod door {
     /// The pipe and its sinks, if the boot gave it a note producer.
     #[inline(always)]
     fn sinks<'a>(
-        pipe: &'a mut Option<&'static mut PipeSlot>,
+        pipe: &'a mut Option<&'static mut UsbSlot>,
         notes: &'a mut Option<NoteProducer<'static>>,
         ctrl: &'static UsbCtrl,
     ) -> Option<(
-        &'a mut PipeSlot,
+        &'a mut UsbSlot,
         DinSinks<'a, 'static, { crate::shared::CTRL_USB }>,
     )> {
         Some((

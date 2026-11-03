@@ -69,12 +69,7 @@ DOOR_CALLS = {
         "<chimera_engine::midi_in::DinPipe>::door_idle",
     ),
     "<chimera_board::usb::UsbCore>::poll_all": ("chimera_board::usb_midi::door::poll",),
-    "chimera_board::usb_midi::door::poll": (
-        "<chimera_engine::midi_in::DinPipe>::door_feed",
-        "<chimera_engine::midi_in::DinPipe>::door_lost",
-    ),
-    # `midi_in::feed`'s door call, out of line where it has callers enough
-    # (USB's poll feeds packets and retries what `lost` owes).
+    # `midi_in::feed`'s door call, if out of line.
     "<chimera_engine::bank2::DoorCell>::with::<(), chimera_engine::midi_in::feed::{closure#0}>": (
         "<chimera_engine::midi_in::DinPipe>::door_feed",
     ),

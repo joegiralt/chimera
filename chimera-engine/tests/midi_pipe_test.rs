@@ -4,7 +4,7 @@
 
 use chimera_engine::midi_in::{
     self, CTRL_RING_LEN, CTRL_USB_LEN, CtrlEvent, CtrlPorts, CtrlRing, DinPipe, DinSinks, Left,
-    PipeSlot, Port, Sinks,
+    PipeSlot, Port, Sinks, UsbSlot,
 };
 use chimera_engine::note_queue::{
     BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteConsumer, NoteEvent, NoteKind,
@@ -439,42 +439,116 @@ fn active_sensing_arms_and_idle_releases_once() {
     assert_eq!(r.notes.len(), 16, "once per silence");
 }
 
-/// The USART1 ISR's path: a slot through `midi_in::feed` and `idle` into a
-/// note queue and a control ring, armed read off the slot as the ISR reads
-/// it to set the receiver timeout's interrupt.
-struct Din {
+/// A port's slot as its shell drives it: DIN's through `midi_in::feed`
+/// and `idle` (the USART1 ISR's path), USB's through its own.
+trait Slot {
+    fn new() -> Self;
+    /// Empty: DIN's receiver timed out; USB's poll retries what is owed.
+    fn feed(&mut self, bytes: &[u8], out: &mut DinSinks<'_, '_>);
+}
+
+impl Slot for PipeSlot {
+    fn new() -> Self {
+        PipeSlot::new()
+    }
+
+    fn feed(&mut self, bytes: &[u8], out: &mut DinSinks<'_, '_>) {
+        if bytes.is_empty() {
+            midi_in::idle(self, out);
+        } else {
+            midi_in::feed(self, bytes, out);
+        }
+    }
+}
+
+impl Slot for UsbSlot {
+    fn new() -> Self {
+        UsbSlot::new()
+    }
+
+    fn feed(&mut self, bytes: &[u8], out: &mut DinSinks<'_, '_>) {
+        UsbSlot::feed(self, bytes, out);
+    }
+}
+
+/// A slot into a note queue and a control ring, armed read off DIN's slot
+/// as the ISR reads it to set the receiver timeout's interrupt.
+struct Rig<P> {
     notes: NoteProducer<'static>,
     audio: NoteConsumer<'static>,
     ring: &'static CtrlRing,
-    slot: PipeSlot,
+    slot: P,
 }
 
-impl Din {
+type Din = Rig<PipeSlot>;
+/// USB's: held keys and pedals, `lost`.
+type Usb = Rig<UsbSlot>;
+
+impl<P: Slot> Rig<P> {
     fn new() -> Self {
         let (notes, audio) = Box::leak(Box::new(NoteQueue::new())).split().unwrap();
         Self {
             notes,
             audio,
             ring: Box::leak(Box::new(CtrlRing::new())),
-            slot: PipeSlot::new(),
+            slot: P::new(),
         }
     }
 
-    /// `bytes` in (empty: the receiver timed out), then what reached the
-    /// queue and the ring.
+    /// `bytes` in (`Slot::feed`), then what reached the queue and the ring.
     fn run(&mut self, bytes: &[u8]) -> (Vec<InEvent>, Vec<CtrlEvent>) {
+        self.feed(bytes);
+        self.take()
+    }
+
+    /// An empty feed: the poll's retry of what `lost` owes.
+    fn settle(&mut self) -> Vec<InEvent> {
+        self.run(&[]).0
+    }
+
+    /// Bytes fed, nothing popped.
+    fn feed(&mut self, bytes: &[u8]) {
         let mut out = DinSinks {
             notes: &mut self.notes,
             ctrl: self.ring,
         };
-        if bytes.is_empty() {
-            midi_in::idle(&mut self.slot, &mut out);
-        } else {
-            midi_in::feed(&mut self.slot, bytes, &mut out);
-        }
+        self.slot.feed(bytes, &mut out);
+    }
+
+    fn take(&mut self) -> (Vec<InEvent>, Vec<CtrlEvent>) {
         let heard = core::iter::from_fn(|| self.audio.pop()).collect();
         (heard, self.ring.drain().collect())
     }
+
+    /// The queue filled to its last slot, as a host's burst leaves it.
+    fn fill(&mut self) {
+        while self.notes.push(off(15, 0)) {}
+    }
+
+    fn pop(&mut self, n: usize) {
+        for _ in 0..n {
+            self.audio.pop().unwrap();
+        }
+    }
+}
+
+impl Usb {
+    /// `UsbSlot::lost`, then what reached the queue and the ring.
+    fn lost(&mut self) -> (Vec<InEvent>, Vec<CtrlEvent>) {
+        let mut out = DinSinks {
+            notes: &mut self.notes,
+            ctrl: self.ring,
+        };
+        self.slot.lost(&mut out);
+        self.take()
+    }
+}
+
+/// DIN's slot carries no held keys: only USB's reads them.
+#[test]
+fn only_usb_tracks_what_it_holds() {
+    assert!(size_of::<PipeSlot>() < 512, "a key set is 256 B");
+    assert!(size_of::<UsbSlot>() >= size_of::<PipeSlot>() + 256);
 }
 
 fn all_notes_off() -> Vec<InEvent> {
@@ -519,200 +593,137 @@ fn fe_rearms_after_timeout() {
 /// not, every time.
 #[test]
 fn lost_releases_every_channel() {
-    let mut din = Din::new();
-    din.run(&[0x90, 60, 100, 0x99, 36, 100]);
-    assert!(!din.slot.sensing_armed());
-    let mut lost = || {
-        let mut out = DinSinks {
-            notes: &mut din.notes,
-            ctrl: din.ring,
-        };
-        midi_in::lost(&mut din.slot, &mut out);
-        let heard: Vec<_> = core::iter::from_fn(|| din.audio.pop()).collect();
-        (heard, din.ring.drain().collect::<Vec<_>>())
-    };
-    assert_eq!(lost(), (all_notes_off(), vec![CtrlEvent::SensingLost]));
-    assert_eq!(lost().0, all_notes_off(), "each transition");
-    din.run(&[0x91, 62, 100, 0xFE]);
-    assert!(din.slot.sensing_armed());
-    let mut out = DinSinks {
-        notes: &mut din.notes,
-        ctrl: din.ring,
-    };
-    midi_in::lost(&mut din.slot, &mut out);
-    let (notes, ctrl) = din.run(&[0xF8]);
-    assert_eq!(notes[..16], all_notes_off()[..], "armed too");
+    let mut usb = Usb::new();
+    usb.run(&[0x90, 60, 100, 0x99, 36, 100]);
+    assert_eq!(usb.lost(), (all_notes_off(), vec![CtrlEvent::SensingLost]));
+    assert_eq!(usb.lost().0, all_notes_off(), "each transition");
+    usb.run(&[0x91, 62, 100, 0xFE]);
+    let (notes, ctrl) = usb.lost();
+    assert_eq!(notes, all_notes_off(), "armed too");
     assert_eq!(ctrl, [CtrlEvent::SensingLost]);
 }
 
 /// USB leaving Configured as the poll sees it: a reset always lets go; a
-/// suspend only while USB holds a key.
-fn detach(din: &mut Din, left: Left) -> bool {
-    let go = midi_in::lets_go(left, din.slot.holds());
+/// suspend only while USB holds a key or a pedal.
+fn detach(usb: &mut Usb, left: Left) -> bool {
+    let go = midi_in::lets_go(left, usb.slot.holds());
     if go {
-        din.lost();
+        usb.lost();
     }
     go
 }
 
-impl Din {
-    /// `midi_in::lost`, then what reached the queue and the ring.
-    fn lost(&mut self) -> (Vec<InEvent>, Vec<CtrlEvent>) {
-        let mut out = DinSinks {
-            notes: &mut self.notes,
-            ctrl: self.ring,
-        };
-        midi_in::lost(&mut self.slot, &mut out);
-        self.take()
-    }
-
-    /// An empty feed: the poll's retry of what `lost` owes.
-    fn settle(&mut self) -> Vec<InEvent> {
-        let mut out = DinSinks {
-            notes: &mut self.notes,
-            ctrl: self.ring,
-        };
-        midi_in::feed(&mut self.slot, &[], &mut out);
-        self.take().0
-    }
-
-    /// Bytes fed, nothing popped.
-    fn feed(&mut self, bytes: &[u8]) {
-        let mut out = DinSinks {
-            notes: &mut self.notes,
-            ctrl: self.ring,
-        };
-        midi_in::feed(&mut self.slot, bytes, &mut out);
-    }
-
-    fn take(&mut self) -> (Vec<InEvent>, Vec<CtrlEvent>) {
-        let heard = core::iter::from_fn(|| self.audio.pop()).collect();
-        (heard, self.ring.drain().collect())
-    }
-
-    /// The queue filled to its last slot, as a host's burst leaves it.
-    fn fill(&mut self) {
-        while self.notes.push(off(15, 0)) {}
-    }
-
-    fn pop(&mut self, n: usize) {
-        for _ in 0..n {
-            self.audio.pop().unwrap();
-        }
-    }
-}
-
 #[test]
 fn suspend_lets_go_only_while_usb_holds_a_key() {
-    let mut din = Din::new();
-    assert!(!detach(&mut din, Left::Suspend), "nothing played yet");
-    din.run(&[0x90, 60, 100, 0x80, 60, 0]);
-    assert!(!detach(&mut din, Left::Suspend), "played and let go");
-    din.run(&[0x90, 60, 100, 0x90, 60, 0]);
-    assert!(!din.slot.holds(), "velocity 0 lets go");
-    assert_eq!(din.take(), (vec![], vec![]), "a DIN-held note survives");
-    din.run(&[0x90, 60, 100, 62, 100, 0x80, 60, 0]);
-    assert!(din.slot.holds(), "62 still down");
-    assert!(detach(&mut din, Left::Suspend));
-    assert!(!din.slot.holds(), "`lost` lets go of all");
-    assert!(!detach(&mut din, Left::Suspend), "nothing since");
+    let mut usb = Usb::new();
+    assert!(!detach(&mut usb, Left::Suspend), "nothing played yet");
+    usb.run(&[0x90, 60, 100, 0x80, 60, 0]);
+    assert!(!detach(&mut usb, Left::Suspend), "played and let go");
+    usb.run(&[0x90, 60, 100, 0x90, 60, 0]);
+    assert!(!usb.slot.holds(), "velocity 0 lets go");
+    assert_eq!(usb.take(), (vec![], vec![]), "a DIN-held note survives");
+    usb.run(&[0x90, 60, 100, 62, 100, 0x80, 60, 0]);
+    assert!(usb.slot.holds(), "62 still down");
+    assert!(detach(&mut usb, Left::Suspend));
+    assert!(!usb.slot.holds(), "`lost` lets go of all");
+    assert!(!detach(&mut usb, Left::Suspend), "nothing since");
 }
 
 #[test]
 fn channel_mode_clears_what_usb_holds() {
-    let mut din = Din::new();
+    let mut usb = Usb::new();
     for bytes in [
         &[0x90, 60, 100, 0xB0, 123, 0][..], // All Notes Off
         &[0x91, 60, 100, 0xB1, 120, 0],     // All Sound Off
         &[0x92, 60, 100, 0xB2, 124, 0],     // Omni off: notes off too
         &[0x93, 60, 100, 0xFF],             // Reset: sound off on all
     ] {
-        din.run(bytes);
-        assert!(!din.slot.holds(), "{bytes:?}");
+        usb.run(bytes);
+        assert!(!usb.slot.holds(), "{bytes:?}");
     }
-    din.run(&[0x90, 60, 100, 0xB0, 121, 0]);
-    assert!(din.slot.holds(), "Reset All Controllers lets nothing go");
-    din.run(&[0xB1, 123, 0]);
-    assert!(din.slot.holds(), "another channel's");
+    usb.run(&[0x90, 60, 100, 0xB0, 121, 0]);
+    assert!(usb.slot.holds(), "Reset All Controllers lets nothing go");
+    usb.run(&[0xB1, 123, 0]);
+    assert!(usb.slot.holds(), "another channel's");
 }
 
 /// Held keys, not a count a channel: a key let go on another channel, or
 /// one never down, lets nothing go.
 #[test]
 fn a_stray_note_off_keeps_a_held_key() {
-    let mut din = Din::new();
-    din.run(&[0x90, 60, 100, 0x81, 60, 0]);
-    assert!(din.slot.holds(), "released on another channel");
-    din.run(&[0x80, 61, 0]);
-    assert!(din.slot.holds(), "a key never down");
-    din.run(&[0x90, 60, 100, 0x80, 60, 0]);
-    assert!(!din.slot.holds(), "twice down, once up: let go");
+    let mut usb = Usb::new();
+    usb.run(&[0x90, 60, 100, 0x81, 60, 0]);
+    assert!(usb.slot.holds(), "released on another channel");
+    usb.run(&[0x80, 61, 0]);
+    assert!(usb.slot.holds(), "a key never down");
+    usb.run(&[0x90, 60, 100, 0x80, 60, 0]);
+    assert!(!usb.slot.holds(), "twice down, once up: let go");
 }
 
 #[test]
 fn reset_always_lets_go() {
-    let mut din = Din::new();
-    assert!(detach(&mut din, Left::Reset), "with nothing held too");
-    din.run(&[0x90, 60, 100]);
-    assert!(detach(&mut din, Left::Reset));
+    let mut usb = Usb::new();
+    assert!(detach(&mut usb, Left::Reset), "with nothing held too");
+    usb.run(&[0x90, 60, 100]);
+    assert!(detach(&mut usb, Left::Reset));
 }
 
 /// A key the queue refused is not held.
 #[test]
 fn a_refused_note_on_is_not_held() {
-    let mut din = Din::new();
-    din.fill();
-    din.feed(&[0x90, 60, 100]);
-    assert!(!din.slot.holds());
+    let mut usb = Usb::new();
+    usb.fill();
+    usb.feed(&[0x90, 60, 100]);
+    assert!(!usb.slot.holds());
 }
 
 /// `lost` into a full queue: its NotesOff wait for room, each channel's
 /// once, in order, ahead of anything fed since.
 #[test]
 fn lost_waits_for_room() {
-    let mut din = Din::new();
-    din.run(&[0x90, 60, 100]);
-    din.fill();
-    let (notes, ctrl) = din.lost();
+    let mut usb = Usb::new();
+    usb.run(&[0x90, 60, 100]);
+    usb.fill();
+    let (notes, ctrl) = usb.lost();
     assert_eq!(notes.len(), 64, "only the fill");
     assert_eq!(ctrl, [CtrlEvent::SensingLost], "the UI hears it now");
-    assert!(din.slot.owes());
-    din.fill();
-    din.pop(5);
-    din.feed(&[0x91, 62, 100, 0x81, 62, 0]);
-    let got = din.take().0;
+    assert!(usb.slot.owes());
+    usb.fill();
+    usb.pop(5);
+    usb.feed(&[0x91, 62, 100, 0x81, 62, 0]);
+    let got = usb.take().0;
     assert_eq!(got[59..], all_notes_off()[..5], "room for 5, no note");
-    assert_eq!(din.slot.stats().refused, 2, "the note fed meanwhile");
-    assert!(din.slot.owes());
-    assert_eq!(din.settle(), all_notes_off()[5..], "the rest");
-    assert!(!din.slot.owes());
-    assert_eq!(din.settle(), [], "once");
+    assert_eq!(usb.slot.stats().refused, 2, "the note fed meanwhile");
+    assert!(usb.slot.owes());
+    assert_eq!(usb.settle(), all_notes_off()[5..], "the rest");
+    assert!(!usb.slot.owes());
+    assert_eq!(usb.settle(), [], "once");
 }
 
 #[test]
 fn a_second_lost_while_owed_does_not_double() {
-    let mut din = Din::new();
-    din.fill();
-    din.lost();
-    din.fill();
-    let (notes, ctrl) = din.lost();
+    let mut usb = Usb::new();
+    usb.fill();
+    usb.lost();
+    usb.fill();
+    let (notes, ctrl) = usb.lost();
     assert_eq!(notes.len(), 64);
     assert_eq!(ctrl, [CtrlEvent::SensingLost]);
-    assert_eq!(din.settle(), all_notes_off());
-    assert_eq!(din.settle(), []);
+    assert_eq!(usb.settle(), all_notes_off());
+    assert_eq!(usb.settle(), []);
 }
 
 /// Owed NotesOff go ahead of what is fed after room frees.
 #[test]
 fn owed_notes_off_go_first() {
-    let mut din = Din::new();
-    din.fill();
-    din.lost();
-    din.feed(&[0x90, 60, 100]);
+    let mut usb = Usb::new();
+    usb.fill();
+    usb.lost();
+    usb.feed(&[0x90, 60, 100]);
     let mut want = all_notes_off();
     want.push(on(0, 60, 100));
-    assert_eq!(din.take().0, want);
-    assert!(din.slot.holds());
+    assert_eq!(usb.take().0, want);
+    assert!(usb.slot.holds());
 }
 
 fn pedal_up(c: u8) -> InEvent {
@@ -726,64 +737,64 @@ fn pedal_up(c: u8) -> InEvent {
 /// the pedal lifted.
 #[test]
 fn suspend_lifts_a_held_pedal() {
-    let mut din = Din::new();
-    din.run(&[0x90, 60, 100, 0xB0, 64, 127, 0x80, 60, 0]);
-    assert!(din.slot.holds(), "the pedal holds 60");
-    assert!(midi_in::lets_go(Left::Suspend, din.slot.holds()));
+    let mut usb = Usb::new();
+    usb.run(&[0x90, 60, 100, 0xB0, 64, 127, 0x80, 60, 0]);
+    assert!(usb.slot.holds(), "the pedal holds 60");
+    assert!(midi_in::lets_go(Left::Suspend, usb.slot.holds()));
     let mut want = all_notes_off();
     want.push(pedal_up(0));
-    assert_eq!(din.lost().0, want);
-    assert!(!din.slot.holds());
-    assert!(!detach(&mut din, Left::Suspend), "lifted once");
+    assert_eq!(usb.lost().0, want);
+    assert!(!usb.slot.holds());
+    assert!(!detach(&mut usb, Left::Suspend), "lifted once");
 }
 
 #[test]
 fn reset_lifts_a_held_pedal() {
-    let mut din = Din::new();
-    din.run(&[0xB2, 64, 127, 0xB5, 64, 64]);
+    let mut usb = Usb::new();
+    usb.run(&[0xB2, 64, 127, 0xB5, 64, 64]);
     let mut want = all_notes_off();
     want.extend([pedal_up(2), pedal_up(5)]);
-    assert_eq!(din.lost().0, want, "a reset always calls `lost`");
+    assert_eq!(usb.lost().0, want, "a reset always calls `lost`");
 }
 
 #[test]
 fn a_pedal_let_up_or_reset_holds_nothing() {
-    let mut din = Din::new();
-    din.run(&[0xB0, 64, 127, 0xB0, 64, 63]);
-    assert!(!din.slot.holds(), "below 64 is up");
-    din.run(&[0xB1, 64, 127, 0xB1, 121, 0]);
-    assert!(!din.slot.holds(), "Reset All Controllers lifts it");
-    din.run(&[0xB1, 64, 127, 0xB1, 123, 0]);
-    assert!(din.slot.holds(), "All Notes Off leaves it down");
-    din.lost();
-    assert!(!din.slot.holds());
-    din.run(&[0xB0, 64, 127]);
-    din.fill();
-    din.feed(&[0xB0, 64, 0]);
-    assert!(din.slot.holds(), "a refused pedal-up still holds");
+    let mut usb = Usb::new();
+    usb.run(&[0xB0, 64, 127, 0xB0, 64, 63]);
+    assert!(!usb.slot.holds(), "below 64 is up");
+    usb.run(&[0xB1, 64, 127, 0xB1, 121, 0]);
+    assert!(!usb.slot.holds(), "Reset All Controllers lifts it");
+    usb.run(&[0xB1, 64, 127, 0xB1, 123, 0]);
+    assert!(usb.slot.holds(), "All Notes Off leaves it down");
+    usb.lost();
+    assert!(!usb.slot.holds());
+    usb.run(&[0xB0, 64, 127]);
+    usb.fill();
+    usb.feed(&[0xB0, 64, 0]);
+    assert!(usb.slot.holds(), "a refused pedal-up still holds");
 }
 
 /// The pedal-up a full queue refuses is owed after the NotesOff, delivered
 /// once, ahead of anything fed since.
 #[test]
 fn a_pedal_up_waits_for_room() {
-    let mut din = Din::new();
-    din.run(&[0xB3, 64, 127]);
-    din.fill();
-    din.lost();
-    din.fill();
-    din.pop(16);
-    din.feed(&[0x90, 60, 100]);
+    let mut usb = Usb::new();
+    usb.run(&[0xB3, 64, 127]);
+    usb.fill();
+    usb.lost();
+    usb.fill();
+    usb.pop(16);
+    usb.feed(&[0x90, 60, 100]);
     assert_eq!(
-        din.take().0[48..],
+        usb.take().0[48..],
         all_notes_off()[..],
         "no room for the pedal"
     );
-    assert!(din.slot.owes());
-    assert_eq!(din.slot.stats().refused, 1, "the note");
-    assert_eq!(din.settle(), [pedal_up(3)]);
-    assert!(!din.slot.owes());
-    assert_eq!(din.settle(), [], "once");
+    assert!(usb.slot.owes());
+    assert_eq!(usb.slot.stats().refused, 1, "the note");
+    assert_eq!(usb.settle(), [pedal_up(3)]);
+    assert!(!usb.slot.owes());
+    assert_eq!(usb.settle(), [], "once");
 }
 
 #[test]
