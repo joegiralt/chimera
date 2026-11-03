@@ -55,7 +55,7 @@ impl Rx {
     /// Empty, a packet from `read` (its byte count, or `None`): true if
     /// it brought any.
     pub fn fill(&mut self, read: impl FnOnce(&mut [u8]) -> Option<usize>) -> bool {
-        let n = read(&mut self.buf).unwrap_or(0).min(Rx::PACKET);
+        let n = read(&mut self.buf).unwrap_or(0);
         (self.at, self.len) = (0, n as u8);
         n > 0
     }
