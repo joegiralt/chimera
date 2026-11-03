@@ -73,6 +73,11 @@ DOOR_CALLS = {
         "<chimera_engine::midi_in::DinPipe>::door_feed",
         "<chimera_engine::midi_in::DinPipe>::door_lost",
     ),
+    # `midi_in::feed`'s door call, out of line where it has callers enough
+    # (USB's poll feeds packets and retries what `lost` owes).
+    "<chimera_engine::bank2::DoorCell>::with::<(), chimera_engine::midi_in::feed::{closure#0}>": (
+        "<chimera_engine::midi_in::DinPipe>::door_feed",
+    ),
     "<chimera_board::usb_midi::MidiClass as usb_device::class::UsbClass<synopsys_usb_otg::bus::UsbBus<chimera_board::usb::Otg2>>>::get_configuration_descriptors": (
         "chimera_board::usb_midi::door::descriptors",
     ),
