@@ -13,8 +13,9 @@
 //!
 //! MIDI in: each OUT packet's bytes, cable 0's, through USB's own pipe into
 //! its note source and control ring, as DIN's (spec §§ 7, 8). Leaving
-//! Configured lets every Part go on a bus reset, and on a suspend only if
-//! USB played a note-on since (`midi_in::lets_go`).
+//! Configured lets every Part go on a bus reset, and on a suspend only
+//! while USB holds a key (`midi_in::lets_go`); NotesOff a full queue
+//! refused are retried each poll.
 //!
 //! MIDI out: the UI's echo in USB's out ring, packed into IN packets while
 //! the endpoint takes them; the UI pends `OTG_FS` to start, each IN
@@ -135,9 +136,10 @@ pub struct Sinks {
 }
 
 /// USB MIDI in's pipe and sinks, and out's queue: the poll's alone, in the
-/// cell.
+/// cell. The pipe beside it: its held keys in the cell pushed the
+/// counters past bank 1's short offsets.
 struct Port {
-    pipe: PipeSlot,
+    pipe: Option<&'static mut PipeSlot>,
     notes: Option<NoteProducer<'static>>,
     ctrl: &'static UsbCtrl,
     queue: InQueue,
@@ -220,7 +222,8 @@ mod door {
             descriptors,
             edge: Edge::new(),
             port: Port {
-                pipe: PipeSlot::new(),
+                // `alloc` runs once a boot (`Midi::alloc`, from `init`).
+                pipe: cortex_m::singleton!(: PipeSlot = PipeSlot::new()),
                 notes,
                 ctrl,
                 queue: InQueue::new(),
@@ -228,17 +231,28 @@ mod door {
         }
     }
 
-    /// The pipe's sinks, if the boot gave it a note producer.
+    /// The pipe and its sinks, if the boot gave it a note producer.
     #[inline(always)]
     fn sinks<'a>(
+        pipe: &'a mut Option<&'static mut PipeSlot>,
         notes: &'a mut Option<NoteProducer<'static>>,
         ctrl: &'static UsbCtrl,
-    ) -> Option<DinSinks<'a, 'static, { crate::shared::CTRL_USB }>> {
-        notes.as_mut().map(|notes| DinSinks { notes, ctrl })
+    ) -> Option<(
+        &'a mut PipeSlot,
+        DinSinks<'a, 'static, { crate::shared::CTRL_USB }>,
+    )> {
+        Some((
+            pipe.as_deref_mut()?,
+            DinSinks {
+                notes: notes.as_mut()?,
+                ctrl,
+            },
+        ))
     }
 
     /// The device polled with both classes; leaving Configured, every Part
-    /// let go as `lets_go` rules; then every OUT packet read, cable 0's
+    /// let go as `lets_go` rules, NotesOff still owed retried (an empty
+    /// feed); then every OUT packet read, cable 0's
     /// bytes fed to USB's pipe here in bank 2 (its ring is not DIN's), the
     /// rest dropped and counted; then the out ring sent (`InQueue::send`).
     pub(super) fn poll(
@@ -262,18 +276,20 @@ mod door {
                 },
             ..
         } = m;
-        if let Some(left) = edge.poll(dev.state())
-            && midi_in::lets_go(left, pipe.played())
-            && let Some(s) = &mut sinks(notes, ctrl)
-        {
-            lost(pipe, s);
+        let left = edge.poll(dev.state());
+        if let Some((pipe, s)) = &mut sinks(pipe, notes, ctrl) {
+            if left.is_some_and(|l| midi_in::lets_go(l, pipe.holds())) {
+                lost(pipe, s);
+            } else if pipe.owes() {
+                feed(pipe, &[], s);
+            }
         }
         let mut p = [0u8; PACKET as usize];
         while let Ok(n) = from_host.read(&mut p) {
-            let mut s = sinks(notes, ctrl);
+            let mut s = sinks(pipe, notes, ctrl);
             for e in cable_zero(&p[..n]) {
                 match (e, s.as_mut()) {
-                    (Some(b), Some(s)) => feed(pipe, b.as_slice(), s),
+                    (Some(b), Some((pipe, s))) => feed(pipe, b.as_slice(), s),
                     _ => counts.in_drops = counts.in_drops.wrapping_add(1),
                 }
             }

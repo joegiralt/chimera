@@ -546,39 +546,173 @@ fn lost_releases_every_channel() {
 }
 
 /// USB leaving Configured as the poll sees it: a reset always lets go; a
-/// suspend only after a note-on since the last `lost`.
+/// suspend only while USB holds a key.
 fn detach(din: &mut Din, left: Left) -> bool {
-    let go = midi_in::lets_go(left, din.slot.played());
+    let go = midi_in::lets_go(left, din.slot.holds());
     if go {
-        let mut out = DinSinks {
-            notes: &mut din.notes,
-            ctrl: din.ring,
-        };
-        midi_in::lost(&mut din.slot, &mut out);
-        din.run(&[]);
+        din.lost();
     }
     go
 }
 
+impl Din {
+    /// `midi_in::lost`, then what reached the queue and the ring.
+    fn lost(&mut self) -> (Vec<InEvent>, Vec<CtrlEvent>) {
+        let mut out = DinSinks {
+            notes: &mut self.notes,
+            ctrl: self.ring,
+        };
+        midi_in::lost(&mut self.slot, &mut out);
+        self.take()
+    }
+
+    /// An empty feed: the poll's retry of what `lost` owes.
+    fn settle(&mut self) -> Vec<InEvent> {
+        let mut out = DinSinks {
+            notes: &mut self.notes,
+            ctrl: self.ring,
+        };
+        midi_in::feed(&mut self.slot, &[], &mut out);
+        self.take().0
+    }
+
+    /// Bytes fed, nothing popped.
+    fn feed(&mut self, bytes: &[u8]) {
+        let mut out = DinSinks {
+            notes: &mut self.notes,
+            ctrl: self.ring,
+        };
+        midi_in::feed(&mut self.slot, bytes, &mut out);
+    }
+
+    fn take(&mut self) -> (Vec<InEvent>, Vec<CtrlEvent>) {
+        let heard = core::iter::from_fn(|| self.audio.pop()).collect();
+        (heard, self.ring.drain().collect())
+    }
+
+    /// The queue filled to its last slot, as a host's burst leaves it.
+    fn fill(&mut self) {
+        while self.notes.push(off(15, 0)) {}
+    }
+
+    fn pop(&mut self, n: usize) {
+        for _ in 0..n {
+            self.audio.pop().unwrap();
+        }
+    }
+}
+
 #[test]
-fn suspend_lets_go_only_after_a_note_on() {
+fn suspend_lets_go_only_while_usb_holds_a_key() {
     let mut din = Din::new();
     assert!(!detach(&mut din, Left::Suspend), "nothing played yet");
-    din.run(&[0xB0, 74, 1, 0x80, 60, 0]);
-    assert!(!detach(&mut din, Left::Suspend), "no note-on");
-    din.run(&[0x90, 60, 100]);
-    assert!(din.slot.played());
-    assert!(detach(&mut din, Left::Suspend), "a note-on: once");
-    assert!(!din.slot.played(), "`lost` clears it");
-    assert!(!detach(&mut din, Left::Suspend), "no new note-on");
+    din.run(&[0x90, 60, 100, 0x80, 60, 0]);
+    assert!(!detach(&mut din, Left::Suspend), "played and let go");
+    din.run(&[0x90, 60, 100, 0x90, 60, 0]);
+    assert!(!din.slot.holds(), "velocity 0 lets go");
+    assert_eq!(din.take(), (vec![], vec![]), "a DIN-held note survives");
+    din.run(&[0x90, 60, 100, 62, 100, 0x80, 60, 0]);
+    assert!(din.slot.holds(), "62 still down");
+    assert!(detach(&mut din, Left::Suspend));
+    assert!(!din.slot.holds(), "`lost` lets go of all");
+    assert!(!detach(&mut din, Left::Suspend), "nothing since");
+}
+
+#[test]
+fn channel_mode_clears_what_usb_holds() {
+    let mut din = Din::new();
+    for bytes in [
+        &[0x90, 60, 100, 0xB0, 123, 0][..], // All Notes Off
+        &[0x91, 60, 100, 0xB1, 120, 0],     // All Sound Off
+        &[0x92, 60, 100, 0xB2, 124, 0],     // Omni off: notes off too
+        &[0x93, 60, 100, 0xFF],             // Reset: sound off on all
+    ] {
+        din.run(bytes);
+        assert!(!din.slot.holds(), "{bytes:?}");
+    }
+    din.run(&[0x90, 60, 100, 0xB0, 121, 0]);
+    assert!(din.slot.holds(), "Reset All Controllers lets nothing go");
+    din.run(&[0xB1, 123, 0]);
+    assert!(din.slot.holds(), "another channel's");
+}
+
+/// Held keys, not a count a channel: a key let go on another channel, or
+/// one never down, lets nothing go.
+#[test]
+fn a_stray_note_off_keeps_a_held_key() {
+    let mut din = Din::new();
+    din.run(&[0x90, 60, 100, 0x81, 60, 0]);
+    assert!(din.slot.holds(), "released on another channel");
+    din.run(&[0x80, 61, 0]);
+    assert!(din.slot.holds(), "a key never down");
+    din.run(&[0x90, 60, 100, 0x80, 60, 0]);
+    assert!(!din.slot.holds(), "twice down, once up: let go");
 }
 
 #[test]
 fn reset_always_lets_go() {
     let mut din = Din::new();
-    assert!(detach(&mut din, Left::Reset), "with no note-on too");
+    assert!(detach(&mut din, Left::Reset), "with nothing held too");
     din.run(&[0x90, 60, 100]);
     assert!(detach(&mut din, Left::Reset));
+}
+
+/// A key the queue refused is not held.
+#[test]
+fn a_refused_note_on_is_not_held() {
+    let mut din = Din::new();
+    din.fill();
+    din.feed(&[0x90, 60, 100]);
+    assert!(!din.slot.holds());
+}
+
+/// `lost` into a full queue: its NotesOff wait for room, each channel's
+/// once, in order, ahead of anything fed since.
+#[test]
+fn lost_waits_for_room() {
+    let mut din = Din::new();
+    din.run(&[0x90, 60, 100]);
+    din.fill();
+    let (notes, ctrl) = din.lost();
+    assert_eq!(notes.len(), 64, "only the fill");
+    assert_eq!(ctrl, [CtrlEvent::SensingLost], "the UI hears it now");
+    assert!(din.slot.owes());
+    din.fill();
+    din.pop(5);
+    din.feed(&[0x91, 62, 100, 0x81, 62, 0]);
+    let got = din.take().0;
+    assert_eq!(got[59..], all_notes_off()[..5], "room for 5, no note");
+    assert_eq!(din.slot.stats().refused, 2, "the note fed meanwhile");
+    assert!(din.slot.owes());
+    assert_eq!(din.settle(), all_notes_off()[5..], "the rest");
+    assert!(!din.slot.owes());
+    assert_eq!(din.settle(), [], "once");
+}
+
+#[test]
+fn a_second_lost_while_owed_does_not_double() {
+    let mut din = Din::new();
+    din.fill();
+    din.lost();
+    din.fill();
+    let (notes, ctrl) = din.lost();
+    assert_eq!(notes.len(), 64);
+    assert_eq!(ctrl, [CtrlEvent::SensingLost]);
+    assert_eq!(din.settle(), all_notes_off());
+    assert_eq!(din.settle(), []);
+}
+
+/// Owed NotesOff go ahead of what is fed after room frees.
+#[test]
+fn owed_notes_off_go_first() {
+    let mut din = Din::new();
+    din.fill();
+    din.lost();
+    din.feed(&[0x90, 60, 100]);
+    let mut want = all_notes_off();
+    want.push(on(0, 60, 100));
+    assert_eq!(din.take().0, want);
+    assert!(din.slot.holds());
 }
 
 #[test]

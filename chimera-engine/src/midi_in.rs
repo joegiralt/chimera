@@ -20,9 +20,7 @@ use chimera_midi::value::{Channel, U7, U14};
 use crate::MidiChannel;
 use crate::midi_map::MidiMap;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
-use crate::note_queue::{
-    ChannelMode, ChannelModeEvent, InEvent, NoteEvent, NoteKind, NoteProducer, RealTime,
-};
+use crate::note_queue::{ChannelMode, ChannelModeEvent, InEvent, NoteKind, NoteProducer, RealTime};
 use crate::storage::RecordBuf;
 
 /// A controller number, 0..=127.
@@ -401,8 +399,43 @@ pub struct DinPipe {
     ctl: Controllers,
     sense: Sensing,
     stats: PipeStats,
-    /// A note-on since the last `lost`.
-    played: bool,
+    held: Held,
+}
+
+/// The keys a pipe's source holds on the note queue, and the NotesOff
+/// `lost` owes it.
+struct Held {
+    /// A bit a key, a word a channel: set by a note-on the queue took,
+    /// cleared by its note-off, NotesOff or SoundOff. A count a channel
+    /// would be fooled by a stray note-off (256 B against 16).
+    keys: [u128; 16],
+    /// A bit a channel whose NotesOff the queue has yet to take.
+    owed: u16,
+}
+
+impl Held {
+    /// A channel's word; masked, so no bounds check's panic data lands in
+    /// bank 1's anonymous constants.
+    fn keys(&mut self, c: MidiChannel) -> &mut u128 {
+        &mut self.keys[usize::from(c.get()) & 15]
+    }
+
+    fn heard(&mut self, e: InEvent) {
+        match e {
+            InEvent::Note(n) => {
+                let k = self.keys(n.channel);
+                let bit = 1u128 << n.note.get();
+                match n.kind {
+                    NoteKind::On(_) => *k |= bit,
+                    NoteKind::Off => *k &= !bit,
+                }
+            }
+            InEvent::Mode(m) if m.mode != ChannelMode::ResetControllers => {
+                *self.keys(m.channel) = 0;
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Default for DinPipe {
@@ -429,11 +462,21 @@ impl DinPipe {
                 refused: 0,
                 ctrl_refused: 0,
             },
-            played: false,
+            held: Held {
+                keys: [0; 16],
+                owed: 0,
+            },
         }
     }
 
+    /// Empty, it queues what `lost` still owes: the poll's retry.
     pub fn feed<S: Sinks + ?Sized>(&mut self, bytes: &[u8], out: &mut S) {
+        Counted {
+            out: &mut *out,
+            stats: &mut self.stats,
+            held: &mut self.held,
+        }
+        .settle();
         for &b in bytes {
             let Some(parsed) = self.parser.push(b) else {
                 continue;
@@ -441,6 +484,7 @@ impl DinPipe {
             let mut sink = Counted {
                 out: &mut *out,
                 stats: &mut self.stats,
+                held: &mut self.held,
             };
             match parsed {
                 Parsed::RealTime(rt) => match rt {
@@ -459,16 +503,7 @@ impl DinPipe {
                     }
                 },
                 Parsed::Event(Event::Voice(c, v)) => match InEvent::from_event(c, &v) {
-                    Some(e) => {
-                        self.played |= matches!(
-                            e,
-                            InEvent::Note(NoteEvent {
-                                kind: NoteKind::On(_),
-                                ..
-                            })
-                        );
-                        sink.note(e)
-                    }
+                    Some(e) => sink.note(e),
                     None => match self.ctl.hear(c, v) {
                         Heard::Ctl(Ctl::Program { .. }) => {
                             sink.stats.programs_dropped =
@@ -505,16 +540,20 @@ impl DinPipe {
     }
 
     /// The source went away (USB's bus reset or suspend): every Part lets
-    /// go and the UI hears it, sensing armed or not.
+    /// go and the UI hears it, sensing armed or not. NotesOff a full queue
+    /// refuses are owed, each channel's once, and go ahead of anything fed
+    /// after (`feed`).
     pub fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S) {
-        self.played = false;
+        self.held = Held {
+            keys: [0; 16],
+            owed: u16::MAX,
+        };
         let mut sink = Counted {
             out,
             stats: &mut self.stats,
+            held: &mut self.held,
         };
-        for c in 0..16 {
-            sink.mode(Channel::clamped(c), ChannelMode::NotesOff);
-        }
+        sink.settle();
         sink.ctrl(CtrlEvent::SensingLost);
     }
 
@@ -525,10 +564,17 @@ impl DinPipe {
         self.sense.armed()
     }
 
-    /// A note-on since the last `lost`. A field read, as `sensing_armed`.
+    /// A key the queue took down that nothing has let go since.
     #[inline(always)]
-    pub fn played(&self) -> bool {
-        self.played
+    pub fn holds(&self) -> bool {
+        self.held.keys.iter().any(|&k| k != 0)
+    }
+
+    /// NotesOff `lost` still owes the queue. A field read, as
+    /// `sensing_armed`.
+    #[inline(always)]
+    pub fn owes(&self) -> bool {
+        self.held.owed != 0
     }
 
     /// As of the last `feed`. A field read, so bank 1 may call it closed.
@@ -600,10 +646,17 @@ impl PipeSlot {
         self.pipe().is_some_and(DinPipe::sensing_armed)
     }
 
-    /// A note-on since the last `lost`; nothing before the first `feed`.
+    /// A key held; nothing before the first `feed`.
     #[inline(always)]
-    pub fn played(&self) -> bool {
-        self.pipe().is_some_and(DinPipe::played)
+    pub fn holds(&self) -> bool {
+        self.pipe().is_some_and(DinPipe::holds)
+    }
+
+    /// NotesOff `lost` still owes the queue; nothing before the first
+    /// `feed`. A field read, as `stats`.
+    #[inline(always)]
+    pub fn owes(&self) -> bool {
+        self.pipe().is_some_and(DinPipe::owes)
     }
 
     /// The pipe, built first if it is not yet. Inlined into the door's
@@ -623,11 +676,11 @@ impl PipeSlot {
 pub use chimera_midi::usb::Left;
 
 /// Whether leaving Configured lets every Part go (`lost`): a reset always;
-/// a suspend only if USB played a note-on since the last `lost`, so an idle
-/// host's autosuspend never cuts notes held from DIN.
+/// a suspend only while USB holds a key (`PipeSlot::holds`), so a host's
+/// autosuspend never cuts notes held from DIN alone.
 #[inline(always)]
-pub fn lets_go(left: Left, played: bool) -> bool {
-    left == Left::Reset || played
+pub fn lets_go(left: Left, holds: bool) -> bool {
+    left == Left::Reset || holds
 }
 
 /// `DinPipe::feed` as the door carries it.
@@ -753,17 +806,38 @@ pub fn map_codec_open() -> bool {
     true
 }
 
-/// A sink that counts refusals, each sink's apart.
+/// A sink that counts refusals, each sink's apart, and keeps `Held`.
 struct Counted<'a, S: Sinks + ?Sized> {
     out: &'a mut S,
     stats: &'a mut PipeStats,
+    held: &'a mut Held,
 }
 
 impl<S: Sinks + ?Sized> Counted<'_, S> {
+    /// Refused while NotesOff are owed, so none overtakes them.
     fn note(&mut self, e: InEvent) {
-        if !self.out.note(e) {
+        if self.settle() && self.out.note(e) {
+            self.held.heard(e);
+        } else {
             self.stats.refused = self.stats.refused.saturating_add(1);
         }
+    }
+
+    /// The owed NotesOff, lowest channel first, until one is refused;
+    /// `true`: none left.
+    fn settle(&mut self) -> bool {
+        while self.held.owed != 0 {
+            let c = self.held.owed.trailing_zeros() as u8;
+            let e = InEvent::Mode(ChannelModeEvent {
+                channel: Channel::clamped(c),
+                mode: ChannelMode::NotesOff,
+            });
+            if !self.out.note(e) {
+                return false;
+            }
+            self.held.owed &= self.held.owed - 1;
+        }
+        true
     }
 
     fn ctrl(&mut self, e: CtrlEvent) {
