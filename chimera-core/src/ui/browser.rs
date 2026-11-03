@@ -81,7 +81,8 @@ pub enum Entry {
 
 /// The Sound rung's browser: each tab's cursor and first row shown. Only
 /// `input`, `input_library` and a listing's landing move them; PROJECT
-/// opens on slot 1, the INIT and coming-soon rows just above, LIBRARY at its top.
+/// opens on the row its Sound came from (`entry_of`), else slot 1, the INIT and
+/// coming-soon rows just above; LIBRARY at its top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Browse {
     cursor: u8,
