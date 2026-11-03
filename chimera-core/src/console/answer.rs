@@ -35,11 +35,11 @@ pub struct UsbTally {
     pub irq_us_max: Micros,
     /// The storm guard's trips.
     pub storms: u32,
-    /// USB MIDI event packets the host sent that were dropped: on another
-    /// cable, a reserved CIN, no sinks, or the door closed.
+    /// `usb_midi_drops`' first: event packets from the host dropped (on
+    /// another cable, a reserved CIN, no sinks, or the door closed).
     pub midi_in_drops: u32,
-    /// USB MIDI out's losses: echo messages USB's out ring had no room
-    /// for, and IN event packets the endpoint refused.
+    /// Its second: echo messages USB's out ring had no room for, and IN
+    /// event packets the endpoint refused.
     pub midi_out_drops: u32,
 }
 
@@ -412,8 +412,7 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
         writeln!(t, "usb_irq_pct {}", u.irq_share)?;
         writeln!(t, "usb_irq_us_max {}", u.irq_us_max.get())?;
         writeln!(t, "usb_storms {}", u.storms)?;
-        writeln!(t, "usb_midi_in_drops {}", u.midi_in_drops)?;
-        writeln!(t, "usb_midi_out_drops {}", u.midi_out_drops)
+        writeln!(t, "usb_midi_drops {} {}", u.midi_in_drops, u.midi_out_drops)
     })
 }
 

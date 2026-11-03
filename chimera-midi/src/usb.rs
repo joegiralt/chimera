@@ -192,7 +192,8 @@ impl Edge {
     /// The device's state now; `Some` only on leaving Configured.
     pub fn poll(&mut self, state: UsbDeviceState) -> Option<Left> {
         let up = state == UsbDeviceState::Configured;
-        if core::mem::replace(&mut self.0, up) == up || up {
+        let was = core::mem::replace(&mut self.0, up);
+        if !was || up {
             return None;
         }
         Some(match state {
