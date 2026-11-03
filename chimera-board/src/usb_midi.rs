@@ -20,12 +20,10 @@
 //! the endpoint takes them; the UI pends `OTG_FS` to start, each IN
 //! packet's completion carries on. Not Configured, what waits is dropped.
 
-use core::ptr::addr_of_mut;
-
 use chimera_core::midi_in::PipeSlot;
 use chimera_core::note_queue::NoteProducer;
 use chimera_core::out_ring::OutRing;
-use chimera_midi::usb::Packer;
+use chimera_midi::usb::{Edge, InQueue};
 use usb_device::bus::UsbBus as _;
 use usb_device::class_prelude::{
     DescriptorWriter, EndpointAddress, EndpointIn, EndpointOut, InterfaceNumber, LangID,
@@ -51,14 +49,26 @@ pub(crate) struct MidiClass {
     inp: EndpointIn<'static, Bus>,
     /// Bank 2's descriptor writer, stored by `door::alloc`.
     descriptors: Descriptors,
-    /// Configured, as the last poll saw it.
-    configured: bool,
+    edge: Edge,
+    port: Port,
 }
 
 /// USB MIDI this boot: the class, if the door was open at `init` to
-/// allocate it (a boot's layout never changes under the host). Only this
-/// module reaches the class.
-pub(crate) struct Midi(Option<MidiClass>);
+/// allocate it (a boot's layout never changes under the host), and USB's
+/// out ring. Only this module reaches the class.
+pub(crate) struct Midi {
+    class: Option<MidiClass>,
+    out: Option<&'static OutRing>,
+}
+
+/// What a poll answered.
+pub(crate) enum Polled {
+    /// Bank 2 polled console and MIDI.
+    ByBank2,
+    /// The door is closed: bank 1 polls the console, and drains MIDI's OUT
+    /// if MIDI is on (`Closed`).
+    Console(Option<Closed>),
+}
 
 /// MIDI OUT's endpoint: all a closed door leaves bank 1. Enough to drain
 /// it, never the class, whose descriptor shim calls bank 2.
@@ -67,33 +77,38 @@ pub(crate) struct Closed(EndpointAddress);
 impl Midi {
     /// The class's interfaces and endpoints, through the door: closed,
     /// nothing is allocated and MIDI stays off this boot.
-    pub(crate) fn alloc(bus: &'static UsbBusAllocator<Bus>) -> Midi {
-        Midi(crate::bank2::board_door(|d| (d.usb.alloc)(bus)))
+    pub(crate) fn alloc(bus: &'static UsbBusAllocator<Bus>, sinks: Sinks) -> Midi {
+        let Sinks { notes, ctrl, out } = sinks;
+        Midi {
+            class: crate::bank2::board_door(|d| (d.usb.alloc)(bus, notes, ctrl)),
+            out,
+        }
     }
 
-    /// Console and MIDI polled by bank 2, the door open now (`Ok`). Else
-    /// what bank 1 polls: the console, and `Closed` if MIDI is on.
+    /// Console and MIDI polled by bank 2 if the door is open now.
     #[inline(always)]
     pub(crate) fn poll(
         &mut self,
         dev: &mut Dev,
         serial: &mut Serial,
         counts: &mut Counts,
-    ) -> Result<(), Option<Closed>> {
-        let polled = match &mut self.0 {
-            Some(m) => crate::bank2::board_door(|d| (d.usb.poll)(dev, serial, m, counts))
-                .ok_or_else(|| Some(Closed(m.out.address()))),
-            None => Err(None),
+    ) -> Polled {
+        let Midi { class, out } = self;
+        let polled = match class {
+            Some(m) => crate::bank2::board_door(|d| (d.usb.poll)(dev, serial, m, *out, counts))
+                .map_or_else(
+                    || Polled::Console(Some(Closed(m.out.address()))),
+                    |()| Polled::ByBank2,
+                ),
+            None => Polled::Console(None),
         };
-        if polled.is_err() {
+        if let Polled::Console(_) = polled
+            && let Some(r) = out
+        {
             // Nothing sends USB's out ring, and the UI copies to it all the
             // same (a door opened after a closed boot runs the echo): it is
             // dropped, and its losses are no drops.
-            // SAFETY: as `door::poll`'s: only the poll touches `IN` once
-            // `connect` has run, under the cell's exclusion.
-            if let Some(r) = unsafe { (*addr_of_mut!(IN)).tx.ring } {
-                r.discard();
-            }
+            r.discard();
         }
         polled
     }
@@ -111,56 +126,41 @@ impl Closed {
     }
 }
 
-/// USB MIDI in's pipe and sinks, and out's (`Tx`). The rings are set before
-/// `connect`; from then on only the poll touches it, under the cell's
-/// exclusion.
-struct MidiIn {
+/// What USB MIDI feeds and empties: in's note producer and control ring,
+/// out's ring. Handed to `init` with the port's parts.
+pub(crate) struct Sinks {
+    pub(crate) notes: Option<NoteProducer<'static>>,
+    pub(crate) ctrl: Option<&'static UsbCtrl>,
+    pub(crate) out: Option<&'static OutRing>,
+}
+
+impl Sinks {
+    /// None yet: the boot hands them over before the port's first try.
+    pub(crate) const NONE: Sinks = Sinks {
+        notes: None,
+        ctrl: None,
+        out: None,
+    };
+}
+
+/// USB MIDI in's pipe and sinks, and out's queue: the poll's alone, in the
+/// cell.
+struct Port {
     pipe: PipeSlot,
     notes: Option<NoteProducer<'static>>,
     ctrl: Option<&'static UsbCtrl>,
-    tx: Tx,
-}
-
-/// USB's out ring, its packer and the packets the endpoint hasn't taken.
-struct Tx {
-    ring: Option<&'static OutRing>,
-    packer: Packer,
-    held: [[u8; 4]; 16],
-    n: usize,
-}
-
-static mut IN: MidiIn = MidiIn {
-    pipe: PipeSlot::new(),
-    notes: None,
-    ctrl: None,
-    tx: Tx {
-        ring: None,
-        packer: Packer::new(),
-        held: [[0; 4]; 16],
-        n: 0,
-    },
-};
-
-/// USB's note producer, control ring and out ring, before `connect`
-/// installs the device: bank 2's poll feeds and empties them.
-pub(crate) fn set_in(
-    notes: Option<NoteProducer<'static>>,
-    ctrl: &'static UsbCtrl,
-    out: Option<&'static OutRing>,
-) {
-    // SAFETY: before `connect` unmasks `OTG_FS` or makes the `Link` that
-    // `with` needs, so no poll reads `IN` yet.
-    let i = unsafe { &mut *addr_of_mut!(IN) };
-    i.notes = notes;
-    i.ctrl = Some(ctrl);
-    i.tx.ring = out;
+    queue: InQueue,
 }
 
 /// The board door's USB entries.
 #[repr(C)]
 pub(crate) struct UsbDoor {
-    alloc: fn(&'static UsbBusAllocator<Bus>) -> MidiClass,
-    poll: fn(&mut Dev, &mut Serial, &mut MidiClass, &mut Counts),
+    alloc: fn(
+        &'static UsbBusAllocator<Bus>,
+        Option<NoteProducer<'static>>,
+        Option<&'static UsbCtrl>,
+    ) -> MidiClass,
+    poll: fn(&mut Dev, &mut Serial, &mut MidiClass, Option<&'static OutRing>, &mut Counts),
 }
 
 impl UsbDoor {
@@ -184,21 +184,18 @@ impl UsbClass<Bus> for MidiClass {
 
 /// Bank 2's half.
 mod door {
-    use core::ptr::addr_of_mut;
-
-    use chimera_core::midi_in::{self, DinSinks, Left};
+    use chimera_core::midi_in::{self, DinSinks};
     #[cfg(feature = "midi-map")]
-    use chimera_core::midi_in::{CTRL_USB_LEN, DinPipe, PipeSlot};
+    use chimera_core::midi_in::{CTRL_USB_LEN, DinPipe};
     use chimera_core::note_queue::NoteProducer;
-    use chimera_midi::usb::{Cable, Packer, unpack};
+    use chimera_core::out_ring::OutRing;
+    use chimera_midi::usb::{Edge, InQueue, cable_zero};
     use chimera_midi::usb_class::{Ids, descriptors as write};
     #[cfg(not(feature = "midi-map"))]
     use midi_in::{feed, lost};
-    use usb_device::UsbError;
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
-    use usb_device::device::UsbDeviceState;
 
-    use super::{IN, MidiClass, MidiIn, Tx, UsbCtrl};
+    use super::{MidiClass, PipeSlot, Port, UsbCtrl};
     use crate::usb::{Bus, Counts, Dev, Serial};
 
     /// USB's burst-sized ring takes the pipe straight (the door's entries
@@ -218,7 +215,11 @@ mod door {
     /// Bulk packets at full speed.
     const PACKET: u16 = 64;
 
-    pub(super) fn alloc(bus: &'static UsbBusAllocator<Bus>) -> MidiClass {
+    pub(super) fn alloc(
+        bus: &'static UsbBusAllocator<Bus>,
+        notes: Option<NoteProducer<'static>>,
+        ctrl: Option<&'static UsbCtrl>,
+    ) -> MidiClass {
         MidiClass {
             ac: bus.interface(),
             ms: bus.interface(),
@@ -226,11 +227,17 @@ mod door {
             out: bus.bulk(PACKET),
             inp: bus.bulk(PACKET),
             descriptors,
-            configured: false,
+            edge: Edge::new(),
+            port: Port {
+                pipe: PipeSlot::new(),
+                notes,
+                ctrl,
+                queue: InQueue::new(),
+            },
         }
     }
 
-    /// The pipe's sinks, if `set_in` gave it both.
+    /// The pipe's sinks, if the boot gave it both.
     #[inline(always)]
     fn sinks<'a>(
         notes: &'a mut Option<NoteProducer<'static>>,
@@ -245,81 +252,47 @@ mod door {
     /// The device polled with both classes; leaving Configured, every Part
     /// let go as `lets_go` rules; then every OUT packet read, cable 0's
     /// bytes fed to USB's pipe here in bank 2 (its ring is not DIN's), the
-    /// rest dropped and counted; then the out ring sent (`send`).
-    pub(super) fn poll(dev: &mut Dev, serial: &mut Serial, m: &mut MidiClass, counts: &mut Counts) {
+    /// rest dropped and counted; then the out ring sent (`InQueue::send`).
+    pub(super) fn poll(
+        dev: &mut Dev,
+        serial: &mut Serial,
+        m: &mut MidiClass,
+        out: Option<&'static OutRing>,
+        counts: &mut Counts,
+    ) {
         dev.poll(&mut [serial, m]);
-        // SAFETY: only the poll touches `IN` once `connect` has run, and
-        // the poll runs in the handler or under `with`, which masks it.
-        let MidiIn {
-            pipe,
-            notes,
-            ctrl,
-            tx,
-        } = unsafe { &mut *addr_of_mut!(IN) };
-        let state = dev.state();
-        let up = state == UsbDeviceState::Configured;
-        if m.configured != up {
-            m.configured = up;
-            let left = match state {
-                UsbDeviceState::Suspend => Left::Suspend,
-                _ => Left::Reset,
-            };
-            if !up
-                && midi_in::lets_go(left, pipe.played())
-                && let Some(s) = &mut sinks(notes, *ctrl)
-            {
-                lost(pipe, s);
-            }
+        let MidiClass {
+            out: from_host,
+            inp,
+            edge,
+            port:
+                Port {
+                    pipe,
+                    notes,
+                    ctrl,
+                    queue,
+                },
+            ..
+        } = m;
+        if let Some(left) = edge.poll(dev.state())
+            && midi_in::lets_go(left, pipe.played())
+            && let Some(s) = &mut sinks(notes, *ctrl)
+        {
+            lost(pipe, s);
         }
         let mut p = [0u8; PACKET as usize];
-        while let Ok(n) = m.out.read(&mut p) {
+        while let Ok(n) = from_host.read(&mut p) {
             let mut s = sinks(notes, *ctrl);
-            for &e in p[..n].as_chunks::<4>().0 {
-                match (unpack(e), s.as_mut()) {
-                    (Some((Cable::ZERO, b)), Some(s)) => feed(pipe, b.as_slice(), s),
-                    _ => counts.midi_drops = counts.midi_drops.wrapping_add(1),
+            for e in cable_zero(&p[..n]) {
+                match (e, s.as_mut()) {
+                    (Some(b), Some(s)) => feed(pipe, b.as_slice(), s),
+                    _ => counts.in_drops = counts.in_drops.wrapping_add(1),
                 }
             }
         }
-        send(m, tx, counts, up);
-    }
-
-    /// Configured, the UI's lost echo counted, then the ring's bytes packed
-    /// into IN packets while the endpoint takes them; busy, held for the
-    /// next poll; any other error, dropped and counted. Not Configured, all
-    /// dropped and the losses uncounted (the UI copies whatever the host
-    /// does): a host that comes back hears nothing stale.
-    fn send(m: &mut MidiClass, tx: &mut Tx, counts: &mut Counts, up: bool) {
-        let Some(ring) = tx.ring else { return };
-        if tx.n == 0 && ring.is_empty() {
-            return;
-        }
-        if !up {
-            ring.discard();
-            (tx.packer, tx.n) = (Packer::new(), 0);
-            return;
-        }
-        let lost = ring.take_dropped();
-        counts.midi_drops = counts.midi_drops.wrapping_add(lost);
-        loop {
-            while tx.n < tx.held.len()
-                && let Some(x) = ring.pop()
-            {
-                if let Some(p) = tx.packer.push(x) {
-                    tx.held[tx.n] = p;
-                    tx.n += 1;
-                }
-            }
-            let (held, _) = tx.held.as_flattened().split_at(tx.n * 4);
-            if held.is_empty() {
-                return;
-            }
-            match m.inp.write(held) {
-                Err(UsbError::WouldBlock) => return,
-                Err(_) => counts.midi_drops = counts.midi_drops.wrapping_add(tx.n as u32),
-                Ok(_) => {}
-            }
-            tx.n = 0;
+        if let Some(ring) = out {
+            let lost = queue.send(ring, edge.up(), |b| inp.write(b));
+            counts.out_drops = counts.out_drops.wrapping_add(lost);
         }
     }
 

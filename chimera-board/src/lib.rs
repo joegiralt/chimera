@@ -322,6 +322,8 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
                 boot: seen,
                 sweep: None,
                 board: board_id,
+                #[cfg(feature = "midi-usb")]
+                midi: usb_midi::Sinks::NONE,
             },
         },
         sd: sd::SdParts {
@@ -632,16 +634,19 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let ctrl = shared::take_ctrl().expect("control rings taken once");
     #[cfg(all(feature = "midi-din", feature = "midi-map"))]
     let out = shared::take_out().expect("out rings taken once");
-    // USB MIDI in's, for the port's poll once it connects (step 4).
+    // USB MIDI's, for the port's poll once it connects (step 4).
     #[cfg(feature = "midi-usb")]
-    usb_midi::set_in(
-        producers.take(const { shared::source(shared::Port::Usb) }),
-        &ctrl.usb,
-        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        out.usb,
-        #[cfg(not(all(feature = "midi-din", feature = "midi-map")))]
-        None,
-    );
+    let usb_parts = usb::UsbParts {
+        midi: usb_midi::Sinks {
+            notes: producers.take(const { shared::source(shared::Port::Usb) }),
+            ctrl: Some(&ctrl.usb),
+            #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+            out: out.usb,
+            #[cfg(not(all(feature = "midi-din", feature = "midi-map")))]
+            out: None,
+        },
+        ..usb_parts
+    };
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,

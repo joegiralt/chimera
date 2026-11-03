@@ -619,14 +619,8 @@ impl PipeSlot {
     }
 }
 
-/// How USB left Configured, as its poll saw it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Left {
-    /// A bus reset (or unplug): the host is gone.
-    Reset,
-    /// A suspend: an idle host's autosuspend as often as a sleep.
-    Suspend,
-}
+/// How USB left Configured (`chimera_midi::usb::Edge`).
+pub use chimera_midi::usb::Left;
 
 /// Whether leaving Configured lets every Part go (`lost`): a reset always;
 /// a suspend only if USB played a note-on since the last `lost`, so an idle

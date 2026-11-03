@@ -144,6 +144,9 @@ pub struct UsbParts {
     pub sweep: Option<SweepRun>,
     /// The board's strap: `status`'s `board` line.
     pub board: BoardId,
+    /// What USB MIDI feeds and empties.
+    #[cfg(feature = "midi-usb")]
+    pub(crate) midi: crate::usb_midi::Sinks,
 }
 
 /// `dfu` answered and its `OK` flushed: only `Usb::service` makes one, and
@@ -220,7 +223,9 @@ pub struct Ready(UsbParts);
 /// AHBIDL and a core soft reset (CSRST) on the FS PHY. The last two are
 /// what `connect`'s enable (synopsys-usb-otg `UsbBus::enable`) spins on
 /// with interrupts masked and no timeout. `Err` names the first that
-/// never came true and hands the parts back for the next try.
+/// never came true and hands the parts back for the next try (by value:
+/// no heap to box them).
+#[allow(clippy::result_large_err)]
 pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, (UsbParts, UsbOff)> {
     match check(&parts, cpu_hz) {
         Ok(()) => Ok(Ready(parts)),
@@ -282,6 +287,8 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         boot,
         sweep,
         board,
+        #[cfg(feature = "midi-usb")]
+        midi,
     } = parts;
     crs_rec.enable();
     // SAFETY: SYNCSRC is a 2-bit field and 0b11 is a defined value, USB2
@@ -312,7 +319,7 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
     let serial = SerialPort::new(bus);
     // USB MIDI only if bank 2's door is open now: this boot's layout.
     #[cfg(feature = "midi-usb")]
-    let midi = crate::usb_midi::Midi::alloc(bus);
+    let midi = crate::usb_midi::Midi::alloc(bus, midi);
     // The chip's 96-bit UID: a stable /dev/serial/by-id name per unit.
     let uid = cortex_m::singleton!(: chimera_core::console::SerialNumber = serial_hex(Uid::read()))
         .expect("serial number taken once");
@@ -370,7 +377,8 @@ impl Unconnected {
                     cycles: 0,
                     us_max: 0,
                     storms: 0,
-                    midi_drops: 0,
+                    in_drops: 0,
+                    out_drops: 0,
                 },
             },
         };
@@ -872,7 +880,10 @@ pub(crate) struct Counts {
     /// The guard's trips.
     storms: u32,
     /// USB MIDI event packets read and dropped.
-    pub(crate) midi_drops: u32,
+    pub(crate) in_drops: u32,
+    /// Echo messages USB's out ring lost and IN packets the endpoint
+    /// refused.
+    pub(crate) out_drops: u32,
 }
 
 impl UsbCore {
@@ -896,10 +907,10 @@ impl UsbCore {
             irq,
         } = self;
         let counts = &mut irq.counts;
-        if let Err(closed) = midi.poll(dev, serial, counts) {
+        if let crate::usb_midi::Polled::Console(closed) = midi.poll(dev, serial, counts) {
             dev.poll(&mut [serial]);
             if let Some(c) = closed {
-                c.drain(dev, &mut counts.midi_drops);
+                c.drain(dev, &mut counts.in_drops);
             }
         }
     }
@@ -942,7 +953,8 @@ impl UsbIrq {
             irq_share: chimera_core::console::PerMille::of(own, wall),
             irq_us_max: chimera_hal::units::Micros::new(self.seen.us_max),
             storms: self.seen.storms,
-            midi_drops: self.seen.midi_drops,
+            midi_in_drops: self.seen.in_drops,
+            midi_out_drops: self.seen.out_drops,
         }
     }
 }

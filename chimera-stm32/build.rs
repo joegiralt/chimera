@@ -98,11 +98,13 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     *(.rodata.*13chimera_board8card_dma*8IrqState* .rodata.*6stream5serve*);
     /* USB MIDI (`usb_midi::UsbDoor`): `usb_midi::door`, the class's
        allocation, descriptors (`chimera_midi::usb_class`) and the
-       device's poll with it. Bank 1 keeps
+       device's poll with it, and the packets, IN queue and Configured
+       edge it runs (`chimera_midi::usb`). Bank 1 keeps
        the slot, the class's shims (its vtable is bank 1's) and the closed
        path. */
     *(.text.*13chimera_board8usb_midi4door* .rodata.*13chimera_board8usb_midi4door*
-      .text.*12chimera_midi9usb_class* .rodata.*12chimera_midi9usb_class*);
+      .text.*12chimera_midi9usb_class* .rodata.*12chimera_midi9usb_class*
+      .text.*12chimera_midi3usb* .rodata.*12chimera_midi3usb*);
     /* TAPE's UI (ADR 0175, `chimera_core::bank2::UiDoor`): the strip's
        raster and the SOURCE cell's card work and turns, SCRUB's jog
        (`Jog::pass`, ADR 0205) and PIT's tuner (ADR 0201,
