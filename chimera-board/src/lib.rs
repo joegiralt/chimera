@@ -632,16 +632,18 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let ctrl = shared::take_ctrl().expect("control rings taken once");
     #[cfg(all(feature = "midi-din", feature = "midi-map"))]
     let out = shared::take_out().expect("out rings taken once");
-    // USB MIDI in's, for the port's poll once it connects (step 4).
+    // USB MIDI's, for the port's poll once it connects (step 4).
     #[cfg(feature = "midi-usb")]
-    usb_midi::set_in(
-        producers.take(const { shared::source(shared::Port::Usb) }),
-        &ctrl.usb,
+    let usb_midi = usb_midi::Sinks {
+        notes: producers.take(const { shared::source(shared::Port::Usb) }),
+        ctrl: &ctrl.usb,
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        out.usb,
+        out: out.usb,
         #[cfg(not(all(feature = "midi-din", feature = "midi-map")))]
-        None,
-    );
+        out: None,
+    };
+    #[cfg(all(feature = "usb-console", not(feature = "midi-usb")))]
+    let usb_midi = ();
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -698,7 +700,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     // Step 4. On the bus only now: the loop below polls it from here on.
     #[cfg(feature = "usb-console")]
-    let mut usb = usb::PortState::new(usb_parts);
+    let mut usb = usb::PortState::new(usb_parts, usb_midi);
     #[cfg(feature = "usb-console")]
     let mut usb_snap = controls::now_ms();
     #[cfg(feature = "usb-console")]
@@ -841,8 +843,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         };
         #[cfg(feature = "usb-console")]
         let busy = usb.errand(errand);
+        // SAFETY: no USB guard in this build.
         #[cfg(not(feature = "usb-console"))]
-        let busy = chimera_core::errand::Errand::run(errand);
+        let busy = unsafe { chimera_core::errand::Errand::run(errand) };
         // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         // The loop spins as fast as it can; animation runs at UI_FPS.

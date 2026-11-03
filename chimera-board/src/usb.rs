@@ -2,8 +2,9 @@
 //! The device lives in a static cell the UI reaches through `with`.
 //! Without `midi-usb` only the UI loop polls it and `pac::Interrupt::OTG_FS`
 //! is never unmasked. With it, the `OTG_FS` handler polls it too, at MIDI's
-//! level under audio; `with` masks the handler, and a storm guard falls
-//! back to the UI's polls (spec §§ 5, 6).
+//! level under audio; `with` masks the handler. A packet no class takes
+//! parks RXFLVL until the UI's next hold, and a storm guard falls back to
+//! the UI's polls (spec §§ 5, 6).
 
 use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
@@ -36,7 +37,7 @@ use usbd_serial::USB_CLASS_CDC;
 
 use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
-use chimera_core::console::{StormWindow, starved, storm};
+use chimera_core::console::{RxHead, RxPark, StormKinds, StormWindow, trip};
 use chimera_core::errand::Errand;
 use chimera_hal::units::Cycles;
 #[cfg(feature = "midi-usb")]
@@ -268,7 +269,7 @@ fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
 
 /// Sets the port up, once: the CRS trimming HSI48 from the host's SOF, the
 /// OTG core and the CDC-ACM class. Nothing connects yet (`connect`).
-pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
+pub fn init(ready: Ready, midi: MidiSinks, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
     let Ready(parts) = ready;
     let UsbParts {
         dm,
@@ -312,7 +313,9 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
     let serial = SerialPort::new(bus);
     // USB MIDI only if bank 2's door is open now: this boot's layout.
     #[cfg(feature = "midi-usb")]
-    let midi = crate::usb_midi::Midi::alloc(bus);
+    let midi = crate::usb_midi::Midi::alloc(bus, midi);
+    #[cfg(not(feature = "midi-usb"))]
+    let () = midi;
     // The chip's 96-bit UID: a stable /dev/serial/by-id name per unit.
     let uid = cortex_m::singleton!(: chimera_core::console::SerialNumber = serial_hex(Uid::read()))
         .expect("serial number taken once");
@@ -366,11 +369,14 @@ impl Unconnected {
                 alive: None,
                 per_ms: Cycles::new((self.cpu_hz / 1_000).max(1)),
                 held: false,
+                park: RxPark::new(),
                 counts: Counts {
                     cycles: 0,
                     us_max: 0,
-                    storms: 0,
-                    midi_drops: 0,
+                    storms: StormKinds::new(),
+                    rx_parks: 0,
+                    in_drops: 0,
+                    out_drops: 0,
                 },
             },
         };
@@ -528,6 +534,7 @@ impl Usb {
             let out = &mut UsbOut {
                 link,
                 clock: AnswerClock::start(crate::controls::now_ms()),
+                rx: chimera_core::console::Rx::new(),
             };
             // A stalled answer just stops: the host tool resyncs on its next request.
             let sent = answer(req, unit, out).and_then(|()| out.flush());
@@ -763,6 +770,7 @@ fn read(serial: &mut Serial, line: &mut Console) -> Option<Result<Request, Refus
 struct UsbOut<'a> {
     link: &'a mut Link,
     clock: AnswerClock,
+    rx: chimera_core::console::Rx,
 }
 
 impl UsbOut<'_> {
@@ -808,18 +816,24 @@ impl Out for UsbOut<'_> {
     }
 
     /// Polls until a byte comes or `wait_ms` pass: `put`'s data, read in
-    /// the UI loop while audio and MIDI run above it.
+    /// the UI loop while audio and MIDI run above it, a poll and a packet
+    /// a hold, so a parked RX head waits one hold a packet, not one a byte.
     fn recv(&mut self, wait_ms: u32) -> Option<u8> {
         let start = crate::controls::now_ms();
-        let mut byte = [0u8; 1];
         loop {
-            if let Ok(1) = self.link.with(|c| c.serial.read(&mut byte)) {
-                return Some(byte[0]);
+            if let Some(b) = self.rx.pop() {
+                return Some(b);
+            }
+            let rx = &mut self.rx;
+            if self.link.with(|c| {
+                c.poll_all();
+                rx.fill(|buf| c.serial.read(buf).ok())
+            }) {
+                continue;
             }
             if crate::controls::now_ms().since(start) >= wait_ms {
                 return None;
             }
-            self.link.with(UsbCore::poll_all);
         }
     }
 
@@ -858,6 +872,9 @@ pub(crate) struct Irq {
     /// The guard masked the handler: `with` leaves it masked until the top
     /// of the next `Usb::service` clears it.
     held: bool,
+    /// RXFLVLM cleared: the RX FIFO's head waits for the UI; every `with`
+    /// sets it again.
+    park: RxPark,
     counts: Counts,
 }
 
@@ -869,10 +886,15 @@ pub(crate) struct Counts {
     cycles: u32,
     /// Its longest entry, in µs.
     us_max: u32,
-    /// The guard's trips.
-    storms: u32,
+    /// The guard's trips, by test.
+    storms: StormKinds,
+    /// RXFLVL parks.
+    rx_parks: u32,
     /// USB MIDI event packets read and dropped.
-    pub(crate) midi_drops: u32,
+    pub(crate) in_drops: u32,
+    /// Echo messages USB's out ring lost and IN packets the endpoint
+    /// refused.
+    pub(crate) out_drops: u32,
 }
 
 impl UsbCore {
@@ -896,10 +918,10 @@ impl UsbCore {
             irq,
         } = self;
         let counts = &mut irq.counts;
-        if let Err(closed) = midi.poll(dev, serial, counts) {
+        if let crate::usb_midi::Polled::Console(closed) = midi.poll(dev, serial, counts) {
             dev.poll(&mut [serial]);
             if let Some(c) = closed {
-                c.drain(dev, &mut counts.midi_drops);
+                c.drain(dev, &mut counts.in_drops);
             }
         }
     }
@@ -942,7 +964,9 @@ impl UsbIrq {
             irq_share: chimera_core::console::PerMille::of(own, wall),
             irq_us_max: chimera_hal::units::Micros::new(self.seen.us_max),
             storms: self.seen.storms,
-            midi_drops: self.seen.midi_drops,
+            rx_parks: self.seen.rx_parks,
+            midi_in_drops: self.seen.in_drops,
+            midi_out_drops: self.seen.out_drops,
         }
     }
 }
@@ -967,7 +991,9 @@ impl Link {
     fn errand<R>(&mut self, f: impl FnOnce(&Errand) -> R) -> R {
         #[cfg(feature = "midi-usb")]
         self.with(|c| c.irq.alive = None);
-        let r = Errand::run(f);
+        // SAFETY: the service test sleeps until the hold below gives the
+        // stamp back.
+        let r = unsafe { Errand::run(f) };
         #[cfg(feature = "midi-usb")]
         self.with(|_| ());
         r
@@ -1026,7 +1052,7 @@ fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     }
     let r = f(core);
     #[cfg(feature = "midi-usb")]
-    unlock(core.irq.held);
+    unlock(&mut core.irq);
     r
 }
 
@@ -1044,21 +1070,28 @@ fn lock() {
     }
 }
 
-/// `with`'s unmask, unless a storm holds the handler off.
+/// `with`'s unmask, unless a storm holds the handler off. A parked head
+/// is let back first: the hold may have drained its class, and a console
+/// still full parks it again in one entry, so RXFLVL never stays masked
+/// past a hold.
 #[cfg(feature = "midi-usb")]
 #[inline(never)]
-fn unlock(held: bool) {
-    if !held {
+fn unlock(irq: &mut Irq) {
+    if let Some(p) = irq.park.unlock() {
+        rx_park(p);
+    }
+    if !irq.held {
         // SAFETY: as `install`'s unmask.
         unsafe { NVIC::unmask(pac::Interrupt::OTG_FS) };
     }
 }
 
-/// Polls the device. Over `STORM_LIMIT` entries in a millisecond, or
-/// while it starves SysTick (the watchdog's kick) or the UI's `service` (a
-/// full console's packet left in the RX FIFO keeps RXFLVL up), it masks
-/// itself until the UI's next `service`, whose polls carry the console
-/// meanwhile.
+/// Polls the device; a RX FIFO head the poll left (a full console's
+/// packet, which keeps RXFLVL up) parks RXFLVL until the UI's next hold,
+/// and a head gone (read, or flushed by a bus reset) lets it back. Over
+/// `STORM_LIMIT` entries in a millisecond, or while it starves SysTick
+/// (the watchdog's kick) or the UI's `service`, it masks itself until the
+/// UI's next `service`, whose polls carry the console meanwhile.
 #[cfg(feature = "midi-usb")]
 #[interrupt]
 fn OTG_FS() {
@@ -1075,12 +1108,20 @@ fn OTG_FS() {
     if tick != n.tick {
         (n.tick, n.tick_at) = (tick, now);
     }
-    if storm(&mut n.window, now, n.per_ms) || starved(now, n.tick_at, n.alive, n.per_ms) {
+    let kind = trip(&mut n.window, now, n.tick_at, n.alive, n.per_ms);
+    n.counts.storms.saw(&n.window);
+    if let Some(kind) = kind {
         n.held = true;
-        n.counts.storms = n.counts.storms.wrapping_add(1);
+        n.counts.storms.add(kind);
         NVIC::mask(pac::Interrupt::OTG_FS);
     } else {
+        let before = rx_head(true);
         core.poll_all();
+        let n = &mut core.irq;
+        if let Some(p) = n.park.polled(before, rx_head(false)) {
+            n.counts.rx_parks = n.counts.rx_parks.wrapping_add(u32::from(p));
+            rx_park(p);
+        }
     }
     let own = own_cycles(enter, stamp(audio_cycles)).get();
     // The card IRQ's own time leaves out the MIDI level's (`card_dma::clocks`).
@@ -1089,6 +1130,39 @@ fn OTG_FS() {
     let us = own / (n.per_ms.get() / 1_000).max(1);
     n.counts.cycles = n.counts.cycles.wrapping_add(own);
     n.counts.us_max = n.counts.us_max.max(us);
+}
+
+/// OTG2's global block, for the RXFLVL park.
+#[cfg(feature = "midi-usb")]
+#[inline(always)]
+fn otg() -> &'static pac::otg1_hs_global::RegisterBlock {
+    // SAFETY: OTG2's fixed global block. Its reads here have no side
+    // effect (GRXSTSR peeks; GRXSTSP would pop), and its one write is
+    // `rx_park`'s.
+    unsafe { &*pac::OTG2_HS_GLOBAL::ptr() }
+}
+
+/// The RX FIFO's head, with RXFLVL up. `polled`: only if the crate's poll
+/// will read it, which ENUMDNE, WKUINT and USBSUSP each take first.
+#[cfg(feature = "midi-usb")]
+#[inline(always)]
+fn rx_head(polled: bool) -> Option<RxHead> {
+    let g = otg();
+    let s = g.gintsts.read();
+    let first = polled && (s.enumdne().bit() || s.wkuint().bit() || s.usbsusp().bit());
+    (s.rxflvl().bit() && !first).then(|| RxHead(g.grxstsr_device().read().bits()))
+}
+
+/// GINTMSK's RXFLVLM cleared (`park`) or set. A read-modify-write that
+/// can't race: synopsys-usb-otg writes GINTMSK only in `enable`, inside
+/// `connect`'s `build`, before `install` unmasks the handler; after that
+/// only the handler and `unlock` write it, and `with` masks the one while
+/// the other runs. USBRST stays unmasked, so a bus reset still enters the
+/// handler, whose poll flushes the FIFO and lets RXFLVL back.
+#[cfg(feature = "midi-usb")]
+#[inline(always)]
+fn rx_park(park: bool) {
+    otg().gintmsk.modify(|_, w| w.rxflvlm().bit(!park));
 }
 
 /// DSTS.FNSOF (bits 8..22): moving while the host sends start-of-frame.
@@ -1170,12 +1244,19 @@ fn bus_step(state: UsbDeviceState, sof_moved: bool, was: UsbStep) -> UsbStep {
     }
 }
 
+/// What USB MIDI feeds and empties, kept for the try that connects; none
+/// without USB MIDI.
+#[cfg(feature = "midi-usb")]
+pub type MidiSinks = crate::usb_midi::Sinks;
+#[cfg(not(feature = "midi-usb"))]
+pub type MidiSinks = ();
+
 /// The port through the boot: waiting for a try that passes `preflight`,
 /// up, or given up after `USB_TRIES`. One lives on `synth`'s frame for
 /// the whole run, and there's no heap to box `Usb` into.
 #[allow(clippy::large_enum_variant)]
 pub enum PortState {
-    Waiting(UsbParts, UsbRetry),
+    Waiting(UsbParts, UsbRetry, MidiSinks),
     Up {
         usb: Usb,
         tries: u8,
@@ -1186,8 +1267,8 @@ pub enum PortState {
 }
 
 impl PortState {
-    pub fn new(parts: UsbParts) -> PortState {
-        PortState::Waiting(parts, UsbRetry::new())
+    pub fn new(parts: UsbParts, midi: MidiSinks) -> PortState {
+        PortState::Waiting(parts, UsbRetry::new(), midi)
     }
 
     /// A try if one is due (`UsbRetry`): `Some` with how it ended. Each
@@ -1200,20 +1281,21 @@ impl PortState {
         cpu_hz: u32,
         step: &mut dyn FnMut(UsbStep, u8),
     ) -> Option<UsbState> {
-        let PortState::Waiting(_, retry) = self else {
+        let PortState::Waiting(_, retry, _) = self else {
             return None;
         };
         if !retry.due(now) {
             return None;
         }
-        let PortState::Waiting(parts, mut retry) = core::mem::replace(self, PortState::Off) else {
+        let PortState::Waiting(parts, mut retry, midi) = core::mem::replace(self, PortState::Off)
+        else {
             return None;
         };
         let tries = retry.tried(now);
         step(UsbStep::Preflight, tries);
         let state = match preflight(parts, cpu_hz) {
             Ok(ready) => {
-                let unconnected = init(ready, clocks, cpu_hz);
+                let unconnected = init(ready, midi, clocks, cpu_hz);
                 step(UsbStep::Init, tries);
                 step(UsbStep::Connect, tries);
                 let usb = unconnected.connect();
@@ -1229,7 +1311,7 @@ impl PortState {
             Err((parts, why)) => {
                 let state = UsbState::Off { why, tries };
                 if !state.gave_up() {
-                    *self = PortState::Waiting(parts, retry);
+                    *self = PortState::Waiting(parts, retry, midi);
                 }
                 state
             }
@@ -1264,7 +1346,8 @@ impl PortState {
     pub fn errand<R>(&mut self, f: impl FnOnce(&Errand) -> R) -> R {
         match self.up() {
             Some(u) => u.link.errand(f),
-            None => Errand::run(f),
+            // SAFETY: no port up: `OTG_FS` masked, no guard runs.
+            None => unsafe { Errand::run(f) },
         }
     }
 

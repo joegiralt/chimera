@@ -145,3 +145,250 @@ fn a_status_aborts_sysex() {
         [[0x04, 0xF0, 0x7E, 0x7F], [0x09, 0x90, 0x3C, 0x64]]
     );
 }
+
+// USB MIDI's IN queue, its Configured edge and OUT's cable filter.
+
+use chimera_midi::usb::{ByteRing, Edge, InQueue, Left, cable_zero};
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
+use usb_device::UsbError;
+use usb_device::device::UsbDeviceState as S;
+
+/// USB's out ring: bytes, and the messages the UI lost.
+#[derive(Default)]
+struct Ring {
+    b: RefCell<VecDeque<u8>>,
+    dropped: Cell<u32>,
+}
+
+impl Ring {
+    fn of(bytes: &[u8]) -> Self {
+        let r = Ring::default();
+        r.put(bytes);
+        r
+    }
+
+    fn put(&self, bytes: &[u8]) {
+        self.b.borrow_mut().extend(bytes);
+    }
+
+    fn len(&self) -> usize {
+        self.b.borrow().len()
+    }
+}
+
+impl ByteRing for Ring {
+    fn pop(&self) -> Option<u8> {
+        self.b.borrow_mut().pop_front()
+    }
+    fn is_empty(&self) -> bool {
+        self.b.borrow().is_empty()
+    }
+    fn discard(&self) {
+        self.b.borrow_mut().clear();
+        self.dropped.set(0);
+    }
+    fn take_dropped(&self) -> u32 {
+        self.dropped.replace(0)
+    }
+}
+
+/// An IN endpoint answering each write from `script` (then `Ok`), keeping
+/// what it took and every write it was offered.
+#[derive(Default)]
+struct Endpoint {
+    script: VecDeque<UsbError>,
+    took: Vec<[u8; 4]>,
+    offered: Vec<Vec<u8>>,
+}
+
+impl Endpoint {
+    fn answering(script: &[UsbError]) -> Self {
+        Endpoint {
+            script: script.iter().copied().collect(),
+            ..Endpoint::default()
+        }
+    }
+
+    fn write(&mut self, b: &[u8]) -> usb_device::Result<usize> {
+        self.offered.push(b.to_vec());
+        if let Some(e) = self.script.pop_front() {
+            return Err(e);
+        }
+        self.took.extend(b.as_chunks::<4>().0);
+        Ok(b.len())
+    }
+}
+
+fn send(q: &mut InQueue, ring: &Ring, up: bool, ep: &mut Endpoint) -> u32 {
+    q.send(ring, up, |b| ep.write(b))
+}
+
+/// `n` note-ons, keys from 0, each its own status.
+fn notes(n: u8) -> Vec<u8> {
+    (0..n).flat_map(|k| [0x90, k, 100]).collect()
+}
+
+#[test]
+fn an_empty_queue_writes_nothing() {
+    let (mut q, ring, mut ep) = (InQueue::new(), Ring::default(), Endpoint::default());
+    assert_eq!(send(&mut q, &ring, true, &mut ep), 0);
+    assert!(ep.offered.is_empty());
+}
+
+#[test]
+fn the_ring_goes_out_packed() {
+    let (mut q, mut ep) = (InQueue::new(), Endpoint::default());
+    let ring = Ring::of(&[0x90, 60, 100, 0x80, 60, 0]);
+    assert_eq!(send(&mut q, &ring, true, &mut ep), 0);
+    assert_eq!(ep.offered, [vec![0x09, 0x90, 60, 100, 0x08, 0x80, 60, 0]]);
+    assert!(ring.is_empty());
+}
+
+#[test]
+fn sixteen_packets_a_write() {
+    let (mut q, mut ep) = (InQueue::new(), Endpoint::default());
+    let ring = Ring::of(&notes(20));
+    send(&mut q, &ring, true, &mut ep);
+    let sizes: Vec<_> = ep.offered.iter().map(Vec::len).collect();
+    assert_eq!(sizes, [64, 16]);
+    assert_eq!(ep.took, pack(&notes(20)));
+}
+
+#[test]
+fn would_block_holds_every_packet_for_the_next_call() {
+    let mut q = InQueue::new();
+    let ring = Ring::of(&notes(20));
+    let mut ep = Endpoint::answering(&[UsbError::WouldBlock]);
+    assert_eq!(send(&mut q, &ring, true, &mut ep), 0);
+    // Sixteen packed and held, the rest left in the ring.
+    assert_eq!((ep.offered.len(), ep.took.len(), ring.len()), (1, 0, 4 * 3));
+    ring.put(&[0xB0, 1, 2]);
+    send(&mut q, &ring, true, &mut ep);
+    assert_eq!(ep.offered[1], ep.offered[0]);
+    let mut all = notes(20);
+    all.extend([0xB0, 1, 2]);
+    assert_eq!(ep.took, pack(&all));
+}
+
+#[test]
+fn would_block_again_still_holds() {
+    let mut q = InQueue::new();
+    let ring = Ring::of(&notes(2));
+    let mut ep = Endpoint::answering(&[UsbError::WouldBlock, UsbError::WouldBlock]);
+    send(&mut q, &ring, true, &mut ep);
+    send(&mut q, &ring, true, &mut ep);
+    send(&mut q, &ring, true, &mut ep);
+    assert_eq!(ep.offered.len(), 3);
+    assert_eq!(ep.took, pack(&notes(2)));
+}
+
+#[test]
+fn any_other_error_drops_and_counts_the_packets() {
+    let mut q = InQueue::new();
+    let ring = Ring::of(&notes(20));
+    let mut ep = Endpoint::answering(&[UsbError::InvalidEndpoint]);
+    // The first 16 refused and counted; the last 4 still go.
+    assert_eq!(send(&mut q, &ring, true, &mut ep), 16);
+    assert_eq!(ep.took, pack(&notes(20))[16..]);
+}
+
+#[test]
+fn the_uis_lost_echo_is_counted() {
+    let (mut q, mut ep) = (InQueue::new(), Endpoint::default());
+    let ring = Ring::of(&notes(1));
+    ring.dropped.set(3);
+    assert_eq!(send(&mut q, &ring, true, &mut ep), 3);
+    assert_eq!(ring.dropped.get(), 0);
+}
+
+#[test]
+fn not_configured_discards_uncounted() {
+    let (mut q, mut ep) = (InQueue::new(), Endpoint::default());
+    let ring = Ring::of(&notes(3));
+    ring.dropped.set(3);
+    assert_eq!(send(&mut q, &ring, false, &mut ep), 0);
+    assert!(ep.offered.is_empty());
+    assert!(ring.is_empty());
+    assert_eq!(ring.dropped.get(), 0);
+}
+
+#[test]
+fn not_configured_drops_what_was_held() {
+    let mut q = InQueue::new();
+    let ring = Ring::of(&notes(2));
+    let mut ep = Endpoint::answering(&[UsbError::WouldBlock]);
+    send(&mut q, &ring, true, &mut ep);
+    send(&mut q, &ring, false, &mut ep);
+    ring.put(&[0x80, 7, 0]);
+    send(&mut q, &ring, true, &mut ep);
+    assert_eq!(ep.took, pack(&[0x80, 7, 0]));
+}
+
+#[test]
+fn not_configured_resets_the_packer() {
+    let (mut q, mut ep) = (InQueue::new(), Endpoint::default());
+    // Half a note-on, waiting in the packer.
+    let ring = Ring::of(&[0x90, 60]);
+    send(&mut q, &ring, true, &mut ep);
+    ring.put(&[0xF8]);
+    send(&mut q, &ring, false, &mut ep);
+    // Its running status is gone: these data bytes pack nothing.
+    ring.put(&[61, 100]);
+    send(&mut q, &ring, true, &mut ep);
+    assert!(ep.took.is_empty());
+}
+
+#[test]
+fn leaving_configured_says_how() {
+    for (to, left) in [
+        (S::Suspend, Left::Suspend),
+        (S::Default, Left::Reset),
+        (S::Addressed, Left::Reset),
+    ] {
+        let mut e = Edge::new();
+        assert_eq!(e.poll(S::Configured), None);
+        assert!(e.up());
+        assert_eq!(e.poll(to), Some(left), "{to:?}");
+        assert!(!e.up());
+        assert_eq!(e.poll(to), None, "once");
+    }
+}
+
+#[test]
+fn no_edge_without_configured() {
+    let mut e = Edge::new();
+    for s in [S::Default, S::Addressed, S::Suspend, S::Default] {
+        assert_eq!(e.poll(s), None, "{s:?}");
+        assert!(!e.up());
+    }
+}
+
+#[test]
+fn coming_back_is_no_edge() {
+    let mut e = Edge::new();
+    e.poll(S::Configured);
+    assert_eq!(e.poll(S::Suspend), Some(Left::Suspend));
+    assert_eq!(e.poll(S::Configured), None);
+    assert!(e.up());
+    assert_eq!(e.poll(S::Configured), None);
+    assert_eq!(e.poll(S::Default), Some(Left::Reset));
+}
+
+#[test]
+fn only_cable_zeros_events_pass() {
+    let p = [
+        0x09, 0x90, 60, 100, // cable 0's note-on
+        0x19, 0x90, 60, 100, // cable 1's
+        0x00, 0x00, 0x00, 0x00, // CIN 0
+        0x0F, 0xF8, 0, 0, // clock
+        0x09, 0x90, // half a packet
+    ];
+    let got: Vec<_> = cable_zero(&p)
+        .map(|e| e.map(|b| b.as_slice().to_vec()))
+        .collect();
+    assert_eq!(
+        got,
+        [Some(vec![0x90, 60, 100]), None, None, Some(vec![0xF8])]
+    );
+}

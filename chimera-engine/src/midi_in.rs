@@ -21,7 +21,7 @@ use crate::MidiChannel;
 use crate::midi_map::MidiMap;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
 use crate::note_queue::{
-    ChannelMode, ChannelModeEvent, InEvent, NoteEvent, NoteKind, NoteProducer, RealTime,
+    ChannelMode, ChannelModeEvent, InEvent, NoteKind, NoteProducer, RealTime, SustainEvent,
 };
 use crate::storage::RecordBuf;
 
@@ -401,8 +401,58 @@ pub struct DinPipe {
     ctl: Controllers,
     sense: Sensing,
     stats: PipeStats,
-    /// A note-on since the last `lost`.
-    played: bool,
+    /// A bit a channel whose NotesOff `lost` owes the queue.
+    owed: u16,
+}
+
+/// The keys and pedals USB's host holds on the note queue, and the
+/// pedal-ups `lost` owes it. USB's alone (`UsbSlot`): only its poll reads
+/// them, so DIN's pipe carries none.
+struct Held {
+    /// A bit a key, a word a channel: set by a note-on the queue took,
+    /// cleared by its note-off, NotesOff or SoundOff. A count a channel
+    /// would be fooled by a stray note-off (256 B against 16).
+    keys: [u128; 16],
+    /// A bit a channel whose pedal the queue took down: cleared by its
+    /// pedal-up or Reset All Controllers.
+    pedal: u16,
+    /// A bit a channel whose pedal-up the queue has yet to take, after
+    /// every owed NotesOff.
+    up: u16,
+}
+
+impl Held {
+    /// A channel's word; masked, so no bounds check's panic data lands in
+    /// bank 1's anonymous constants.
+    fn keys(&mut self, c: MidiChannel) -> &mut u128 {
+        &mut self.keys[usize::from(c.get()) & 15]
+    }
+
+    fn heard(&mut self, e: InEvent) {
+        match e {
+            InEvent::Note(n) => {
+                let k = self.keys(n.channel);
+                let bit = 1u128 << n.note.get();
+                match n.kind {
+                    NoteKind::On(_) => *k |= bit,
+                    NoteKind::Off => *k &= !bit,
+                }
+            }
+            InEvent::Sustain(p) => {
+                let bit = 1 << (p.channel.get() & 15);
+                if p.down {
+                    self.pedal |= bit;
+                } else {
+                    self.pedal &= !bit;
+                }
+            }
+            InEvent::Mode(m) if m.mode == ChannelMode::ResetControllers => {
+                self.pedal &= !(1 << (m.channel.get() & 15));
+            }
+            InEvent::Mode(m) => *self.keys(m.channel) = 0,
+            _ => {}
+        }
+    }
 }
 
 impl Default for DinPipe {
@@ -429,11 +479,24 @@ impl DinPipe {
                 refused: 0,
                 ctrl_refused: 0,
             },
-            played: false,
+            owed: 0,
         }
     }
 
+    /// Empty, it queues what `lost` still owes: the poll's retry.
     pub fn feed<S: Sinks + ?Sized>(&mut self, bytes: &[u8], out: &mut S) {
+        self.run(bytes, out, None);
+    }
+
+    /// `feed`, keeping `held` (USB's) by what the queue takes.
+    fn run<S: Sinks + ?Sized>(&mut self, bytes: &[u8], out: &mut S, mut held: Option<&mut Held>) {
+        Counted {
+            out: &mut *out,
+            stats: &mut self.stats,
+            owed: &mut self.owed,
+            held: held.as_deref_mut(),
+        }
+        .settle();
         for &b in bytes {
             let Some(parsed) = self.parser.push(b) else {
                 continue;
@@ -441,6 +504,8 @@ impl DinPipe {
             let mut sink = Counted {
                 out: &mut *out,
                 stats: &mut self.stats,
+                owed: &mut self.owed,
+                held: held.as_deref_mut(),
             };
             match parsed {
                 Parsed::RealTime(rt) => match rt {
@@ -459,16 +524,7 @@ impl DinPipe {
                     }
                 },
                 Parsed::Event(Event::Voice(c, v)) => match InEvent::from_event(c, &v) {
-                    Some(e) => {
-                        self.played |= matches!(
-                            e,
-                            InEvent::Note(NoteEvent {
-                                kind: NoteKind::On(_),
-                                ..
-                            })
-                        );
-                        sink.note(e)
-                    }
+                    Some(e) => sink.note(e),
                     None => match self.ctl.hear(c, v) {
                         Heard::Ctl(Ctl::Program { .. }) => {
                             sink.stats.programs_dropped =
@@ -500,21 +556,29 @@ impl DinPipe {
     /// lets go and the UI hears it.
     pub fn idle<S: Sinks + ?Sized>(&mut self, out: &mut S) {
         if self.sense.timed_out() {
-            self.lost(out);
+            self.lost(out, None);
         }
     }
 
-    /// The source went away (USB's bus reset or suspend): every Part lets
-    /// go and the UI hears it, sensing armed or not.
-    pub fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S) {
-        self.played = false;
+    /// The source went away (DIN's sensing timed out, USB's bus reset or
+    /// suspend): every Part lets go and the UI hears it; then every pedal
+    /// `held` (USB's) has down is lifted. NotesOff and pedal-ups a full
+    /// queue refuses are owed, each channel's once, and go ahead of
+    /// anything fed after (`feed`).
+    fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S, mut held: Option<&mut Held>) {
+        self.owed = u16::MAX;
+        if let Some(h) = held.as_deref_mut() {
+            h.keys = [0; 16];
+            h.up |= h.pedal;
+            h.pedal = 0;
+        }
         let mut sink = Counted {
             out,
             stats: &mut self.stats,
+            owed: &mut self.owed,
+            held,
         };
-        for c in 0..16 {
-            sink.mode(Channel::clamped(c), ChannelMode::NotesOff);
-        }
+        sink.settle();
         sink.ctrl(CtrlEvent::SensingLost);
     }
 
@@ -523,12 +587,6 @@ impl DinPipe {
     #[inline(always)]
     pub fn sensing_armed(&self) -> bool {
         self.sense.armed()
-    }
-
-    /// A note-on since the last `lost`. A field read, as `sensing_armed`.
-    #[inline(always)]
-    pub fn played(&self) -> bool {
-        self.played
     }
 
     /// As of the last `feed`. A field read, so bank 1 may call it closed.
@@ -600,12 +658,6 @@ impl PipeSlot {
         self.pipe().is_some_and(DinPipe::sensing_armed)
     }
 
-    /// A note-on since the last `lost`; nothing before the first `feed`.
-    #[inline(always)]
-    pub fn played(&self) -> bool {
-        self.pipe().is_some_and(DinPipe::played)
-    }
-
     /// The pipe, built first if it is not yet. Inlined into the door's
     /// entries, so `DinPipe::new` runs in bank 2.
     #[inline(always)]
@@ -619,26 +671,77 @@ impl PipeSlot {
     }
 }
 
-/// How USB left Configured, as its poll saw it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Left {
-    /// A bus reset (or unplug): the host is gone.
-    Reset,
-    /// A suspend: an idle host's autosuspend as often as a sleep.
-    Suspend,
+/// USB's pipe, and the keys and pedals its host holds (`Held`): `lost`
+/// lets go of them. Zero is empty, as `PipeSlot`.
+pub struct UsbSlot {
+    slot: PipeSlot,
+    held: Held,
 }
 
+impl Default for UsbSlot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UsbSlot {
+    pub const fn new() -> Self {
+        Self {
+            slot: PipeSlot::new(),
+            held: Held {
+                keys: [0; 16],
+                pedal: 0,
+                up: 0,
+            },
+        }
+    }
+
+    /// A key or pedal the queue took down that nothing has let go since.
+    #[inline(always)]
+    pub fn holds(&self) -> bool {
+        self.held.pedal != 0 || self.held.keys.iter().any(|&k| k != 0)
+    }
+
+    /// NotesOff or pedal-ups `lost` still owes the queue. Field reads.
+    #[inline(always)]
+    pub fn owes(&self) -> bool {
+        self.held.up != 0 || self.slot.pipe().is_some_and(|p| p.owed != 0)
+    }
+
+    /// As of the last `feed`; nothing counted before the first.
+    #[inline(always)]
+    pub fn stats(&self) -> PipeStats {
+        self.slot.stats()
+    }
+
+    /// `DinPipe::feed`, keeping what the host holds. Inlined into
+    /// `DinPipe`'s entries, so it runs in bank 2 with them.
+    #[inline(always)]
+    pub fn feed<S: Sinks + ?Sized>(&mut self, bytes: &[u8], out: &mut S) {
+        self.slot.built().run(bytes, out, Some(&mut self.held));
+    }
+
+    /// The host went away (`DinPipe::lost`): every key and pedal let go.
+    #[inline(always)]
+    pub fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S) {
+        self.slot.built().lost(out, Some(&mut self.held));
+    }
+}
+
+/// How USB left Configured (`chimera_midi::usb::Edge`).
+pub use chimera_midi::usb::Left;
+
 /// Whether leaving Configured lets every Part go (`lost`): a reset always;
-/// a suspend only if USB played a note-on since the last `lost`, so an idle
-/// host's autosuspend never cuts notes held from DIN.
+/// a suspend only while USB holds a key or a pedal (`UsbSlot::holds`), so a host's
+/// autosuspend never cuts notes held from DIN alone.
 #[inline(always)]
-pub fn lets_go(left: Left, played: bool) -> bool {
-    left == Left::Reset || played
+pub fn lets_go(left: Left, holds: bool) -> bool {
+    left == Left::Reset || holds
 }
 
 /// `DinPipe::feed` as the door carries it.
 pub type MidiFeed = fn(&mut PipeSlot, &[u8], &mut DinSinks<'_, '_>);
-/// `DinPipe::idle` and `lost` as the door carries them.
+/// `DinPipe::idle` as the door carries it.
 pub type MidiIdle = fn(&mut PipeSlot, &mut DinSinks<'_, '_>);
 
 /// `midi_map::codec::decode` as the door carries it.
@@ -652,7 +755,6 @@ pub type MapEncode = fn(&MidiMap, &mut RecordBuf);
 pub struct MidiDoor {
     pub feed: MidiFeed,
     pub idle: MidiIdle,
-    pub lost: MidiIdle,
     pub decode_map: MapDecode,
     pub encode_map: MapEncode,
 }
@@ -661,7 +763,6 @@ impl MidiDoor {
     pub const DOOR: MidiDoor = MidiDoor {
         feed: DinPipe::door_feed,
         idle: DinPipe::door_idle,
-        lost: DinPipe::door_lost,
         decode_map: codec::decode,
         encode_map: codec::encode,
     };
@@ -678,23 +779,31 @@ impl DinPipe {
         slot.built().idle(out);
     }
 
-    fn door_lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
-        slot.built().lost(out);
-    }
-
     /// `door_feed` on USB's ring, for a caller already in bank 2 (USB's
     /// poll): no door call. Not generic, so it builds at this crate's
     /// level as the door's: built at the board's, the machine outliner put
     /// a call into bank 2 in a bank-1 outline.
     #[inline(never)]
-    pub fn usb_feed(slot: &mut PipeSlot, bytes: &[u8], out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
-        slot.built().feed(bytes, out);
+    pub fn usb_feed(slot: &mut UsbSlot, bytes: &[u8], out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
+        slot.feed(bytes, out);
     }
 
-    /// `door_lost`, as `usb_feed`.
+    /// `UsbSlot::lost`, as `usb_feed`.
     #[inline(never)]
-    pub fn usb_lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
-        slot.built().lost(out);
+    pub fn usb_lost(slot: &mut UsbSlot, out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
+        slot.lost(out);
+    }
+
+    /// `usb_feed` on DIN's ring size: builds without the map.
+    #[inline(never)]
+    pub fn usb_feed_short(slot: &mut UsbSlot, bytes: &[u8], out: &mut DinSinks<'_, '_>) {
+        slot.feed(bytes, out);
+    }
+
+    /// `usb_lost` on DIN's ring size, as `usb_feed_short`.
+    #[inline(never)]
+    pub fn usb_lost_short(slot: &mut UsbSlot, out: &mut DinSinks<'_, '_>) {
+        slot.lost(out);
     }
 }
 
@@ -715,15 +824,6 @@ pub fn idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
     crate::bank2::DOOR_CELL.with(|d| (d.midi.idle)(slot, out));
     #[cfg(not(feature = "bank2"))]
     DinPipe::door_idle(slot, out);
-}
-
-/// The source went away (`DinPipe::lost`), as `feed`: closed, nothing.
-#[inline(always)]
-pub fn lost(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
-    #[cfg(feature = "bank2")]
-    crate::bank2::DOOR_CELL.with(|d| (d.midi.lost)(slot, out));
-    #[cfg(not(feature = "bank2"))]
-    DinPipe::door_lost(slot, out);
 }
 
 /// A map record checked and, with `m`, decoded (`codec::decode`) through
@@ -759,17 +859,54 @@ pub fn map_codec_open() -> bool {
     true
 }
 
-/// A sink that counts refusals, each sink's apart.
+/// A sink that counts refusals, each sink's apart, settles what `lost`
+/// owes, and keeps USB's `Held`.
 struct Counted<'a, S: Sinks + ?Sized> {
     out: &'a mut S,
     stats: &'a mut PipeStats,
+    owed: &'a mut u16,
+    held: Option<&'a mut Held>,
 }
 
 impl<S: Sinks + ?Sized> Counted<'_, S> {
+    /// Refused while NotesOff are owed, so none overtakes them.
     fn note(&mut self, e: InEvent) {
-        if !self.out.note(e) {
+        if self.settle() && self.out.note(e) {
+            if let Some(h) = self.held.as_deref_mut() {
+                h.heard(e);
+            }
+        } else {
             self.stats.refused = self.stats.refused.saturating_add(1);
         }
+    }
+
+    /// The owed NotesOff, then the owed pedal-ups (the voices a NotesOff
+    /// leaves sustained go with the pedal), lowest channel first, until
+    /// one is refused; `true`: none left.
+    fn settle(&mut self) -> bool {
+        let mut none = 0;
+        let up = self.held.as_deref_mut().map_or(&mut none, |h| &mut h.up);
+        for (bits, up) in [(&mut *self.owed, false), (up, true)] {
+            while *bits != 0 {
+                let channel = Channel::clamped(bits.trailing_zeros() as u8);
+                let e = if up {
+                    InEvent::Sustain(SustainEvent {
+                        channel,
+                        down: false,
+                    })
+                } else {
+                    InEvent::Mode(ChannelModeEvent {
+                        channel,
+                        mode: ChannelMode::NotesOff,
+                    })
+                };
+                if !self.out.note(e) {
+                    return false;
+                }
+                *bits &= *bits - 1;
+            }
+        }
+        true
     }
 
     fn ctrl(&mut self, e: CtrlEvent) {

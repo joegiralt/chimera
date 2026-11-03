@@ -241,6 +241,8 @@ impl Console {
 
 mod status;
 pub use status::*;
+mod out;
+pub use out::*;
 mod shot;
 pub use shot::*;
 mod answer;

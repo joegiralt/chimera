@@ -98,11 +98,13 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     *(.rodata.*13chimera_board8card_dma*8IrqState* .rodata.*6stream5serve*);
     /* USB MIDI (`usb_midi::UsbDoor`): `usb_midi::door`, the class's
        allocation, descriptors (`chimera_midi::usb_class`) and the
-       device's poll with it. Bank 1 keeps
+       device's poll with it, and the packets, IN queue and Configured
+       edge it runs (`chimera_midi::usb`). Bank 1 keeps
        the slot, the class's shims (its vtable is bank 1's) and the closed
        path. */
     *(.text.*13chimera_board8usb_midi4door* .rodata.*13chimera_board8usb_midi4door*
-      .text.*12chimera_midi9usb_class* .rodata.*12chimera_midi9usb_class*);
+      .text.*12chimera_midi9usb_class* .rodata.*12chimera_midi9usb_class*
+      .text.*12chimera_midi3usb* .rodata.*12chimera_midi3usb*);
     /* TAPE's UI (ADR 0175, `chimera_core::bank2::UiDoor`): the strip's
        raster and the SOURCE cell's card work and turns, SCRUB's jog
        (`Jog::pass`, ADR 0205) and PIT's tuner (ADR 0201,
@@ -208,7 +210,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The NRPN address space (ADR 0216): `chimera_engine::nrpn`, text and
     // rodata, linked by the MIDI UI's canonical NRPNs.
     // And the MIDI pipe (Phase 1, `MidiDoor`): `DinPipe`, its counting sink
-    // (`Counted`) and the `chimera_midi` stream, controller, sensing and
+    // (`Counted`), USB's slot and held keys (`UsbSlot`, `Held`) and the `chimera_midi` stream, controller, sensing and
     // SysEx layers it runs. And the map's codec (`midi_map::codec`), and
     // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
     // and rel), learn's classifier (`chimera_midi::learn`) and the 14-bit
@@ -217,6 +219,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*8midi_map5codec* .rodata.*8midi_map5codec*);
     *(.text.*14chimera_engine7midi_in*7DinPipe* .rodata.*14chimera_engine7midi_in*7DinPipe*);
     *(.text.*14chimera_engine7midi_in*7Counted* .rodata.*14chimera_engine7midi_in*7Counted*);
+    *(.text.*14chimera_engine7midi_in*7UsbSlot* .rodata.*14chimera_engine7midi_in*7UsbSlot*);
+    *(.text.*14chimera_engine7midi_in*4Held* .rodata.*14chimera_engine7midi_in*4Held*);
     *(.text.*12chimera_midi6stream* .rodata.*12chimera_midi6stream*);
     *(.text.*12chimera_midi3ctl* .rodata.*12chimera_midi3ctl*);
     *(.text.*12chimera_midi5sense* .rodata.*12chimera_midi5sense*);

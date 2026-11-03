@@ -1,26 +1,8 @@
 //! `shot`: the framebuffer streamed through the palette, a row at a time.
 
-use super::Colours;
+use super::{Colours, Out, Stalled};
 use crate::ui::theme_settings::Palette;
 use chimera_hal::{FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
-
-/// The host stopped taking bytes for STALL_MS.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stalled;
-
-/// The host: where answers go, and where `put`'s data comes from.
-pub trait Out {
-    fn put(&mut self, bytes: &[u8]) -> Result<(), Stalled>;
-    /// The answer's clock restarts: after card work, before more text.
-    fn fresh(&mut self) {}
-    /// The next byte past the request line, or `None` once `wait_ms` pass
-    /// without one. An `Out` that never hears from the host: always `None`.
-    fn recv(&mut self, _wait_ms: u32) -> Option<u8> {
-        None
-    }
-    /// The shell's clock. Required: a `put` times its waits by it.
-    fn now(&self) -> chimera_hal::Ms;
-}
 
 /// The screen as the display holds it, and the palette it flushes through.
 #[derive(Clone, Copy)]

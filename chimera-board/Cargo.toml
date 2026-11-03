@@ -58,8 +58,11 @@ usb-device = { version = "0.3.2", optional = true }
 usbd-serial = { version = "0.2.2", optional = true }
 # The HAL's own OTG driver, for `usb::Otg2`, whose enable adds nothing to
 # what `usb::preflight` checked (the HAL's `USB2` resets the block and sets
-# USB33DEN inside the masked section).
-synopsys-usb-otg = { version = "0.4.0", features = ["hs"], optional = true }
+# USB33DEN inside the masked section). Pinned: the RXFLVL park
+# (`usb::rx_head`, `rx_park`) rests on 0.4.0's `poll` popping one RX entry,
+# serving ENUMDNE, WKUINT and USBSUSP before RX, and writing GINTMSK only in
+# `enable` (ADR 0222); an upgrade rereads that first.
+synopsys-usb-otg = { version = "=0.4.0", features = ["hs"], optional = true }
 
 [lib]
 test = false

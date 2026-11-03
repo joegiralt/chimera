@@ -430,6 +430,23 @@ fn all_notes_off_under_the_pedal_holds_until_it_is_up() {
     assert_eq!(held(&rig), 0);
 }
 
+/// `midi_in::lost` under a pedal: NotesOff on every channel, then the
+/// pedal up, frees a held key and a sustained one.
+#[test]
+fn a_lost_source_under_the_pedal_frees_every_voice() {
+    let mut rig = rev_v();
+    pedal(&mut rig, 0, true);
+    rig.note_on(0, 60);
+    rig.note_on(0, 64);
+    rig.note_off(0, 60);
+    for c in 0..16 {
+        mode(&mut rig, c, ChannelMode::NotesOff);
+    }
+    assert_eq!(held(&rig), 2, "both sustained");
+    pedal(&mut rig, 0, false);
+    assert_eq!(held(&rig), 0);
+}
+
 #[test]
 fn modal_rings_on_after_all_notes_off() {
     let mut rig = rev_v();

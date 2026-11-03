@@ -125,6 +125,27 @@ impl OutRing {
     }
 }
 
+/// USB's IN queue's view (`chimera_midi::usb::InQueue`), inlined into its
+/// one caller, bank 2's USB poll.
+impl chimera_midi::usb::ByteRing for OutRing {
+    #[inline(always)]
+    fn pop(&self) -> Option<u8> {
+        self.pop()
+    }
+    #[inline(always)]
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+    #[inline(always)]
+    fn discard(&self) {
+        self.discard();
+    }
+    #[inline(always)]
+    fn take_dropped(&self) -> u32 {
+        self.take_dropped()
+    }
+}
+
 /// MIDI out's rings, one a `Port`: DIN's, and USB's where it is built.
 #[derive(Clone, Copy)]
 pub struct OutPorts<'a> {

@@ -1,6 +1,6 @@
 use chimera_core::console::{
-    self, ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, STORM_LIMIT, Served, StormWindow,
-    serial_hex,
+    self, ANSWER_MS, AnswerClock, LoopTimer, Report, RxHead, RxPark, STALL_MS, STORM_LIMIT, Served,
+    Storm, StormKinds, StormWindow, park, serial_hex,
 };
 use chimera_hal::Ms;
 use chimera_hal::units::Cycles;
@@ -122,8 +122,17 @@ fn storm(w: &mut StormWindow, now: u32, per_ms: u32) -> bool {
 }
 
 fn starved(now: u32, tick_at: u32, alive: Option<u32>, per_ms: u32) -> bool {
+    starved_by(now, tick_at, alive, per_ms).is_some()
+}
+
+fn starved_by(now: u32, tick_at: u32, alive: Option<u32>, per_ms: u32) -> Option<Storm> {
     let c = Cycles::new;
     console::starved(c(now), c(tick_at), alive.map(c), c(per_ms))
+}
+
+fn trip(w: &mut StormWindow, now: u32, tick_at: u32, alive: Option<u32>) -> Option<Storm> {
+    let c = Cycles::new;
+    console::trip(w, c(now), c(tick_at), alive.map(c), c(MS))
 }
 
 #[test]
@@ -175,32 +184,195 @@ fn a_window_opens_on_its_first_cycle() {
 #[test]
 fn a_stalled_tick_starves() {
     let t = 5 * MS;
-    assert!(starved(t + 21 * MS, t, Some(t), MS), "21 ms");
-    assert!(!starved(t + 19 * MS, t, Some(t), MS), "19 ms");
+    assert_eq!(
+        starved_by(t + 7 * MS, t, Some(t), MS),
+        Some(Storm::Tick),
+        "7 ms"
+    );
+    assert!(!starved(t + 5 * MS, t, Some(t), MS), "5 ms");
+}
+
+/// SysTick steps every 2 ms: 6 ms is three steps missed, never one late.
+#[test]
+fn the_tick_test_sits_three_steps_out() {
+    assert_eq!(console::TICK_STALL_MS, 6);
+    let t = 5 * MS;
+    assert!(!starved(t + 2 * MS + MS / 2, t, Some(t), MS), "a late step");
 }
 
 #[test]
 fn a_stalled_service_starves() {
     let s = 5 * MS;
-    let tick = s + 240 * MS; // SysTick still moving
-    assert!(starved(s + 251 * MS, tick, Some(s), MS), "251 ms");
+    let tick = s + 248 * MS; // SysTick still moving
+    assert_eq!(
+        starved_by(s + 251 * MS, tick, Some(s), MS),
+        Some(Storm::Ui),
+        "251 ms"
+    );
     assert!(!starved(s + 249 * MS, tick, Some(s), MS), "249 ms");
+}
+
+/// Both stalled: the tick's test is the one named.
+#[test]
+fn a_stalled_tick_names_the_tick_first() {
+    let s = 5 * MS;
+    assert_eq!(starved_by(s + 251 * MS, s, Some(s), MS), Some(Storm::Tick));
+}
+
+#[test]
+fn trip_names_each_test() {
+    let mut w = StormWindow::new();
+    let t = 5 * MS;
+    for k in 0..STORM_LIMIT {
+        assert_eq!(trip(&mut w, t + k, t, Some(t)), None, "entry {k}");
+    }
+    // The entries' test first, even with the tick stalled.
+    assert_eq!(
+        trip(&mut w, t + STORM_LIMIT, t, Some(t)),
+        Some(Storm::Entries)
+    );
+    let mut w = StormWindow::new();
+    assert_eq!(trip(&mut w, t + 7 * MS, t, Some(t)), Some(Storm::Tick));
+    let mut w = StormWindow::new();
+    let now = t + 251 * MS;
+    assert_eq!(trip(&mut w, now, now, Some(t)), Some(Storm::Ui));
+}
+
+/// The most entries one millisecond held, for § 13.5's 4x rule (#848).
+#[test]
+fn storm_kinds_keep_the_busiest_millisecond() {
+    let mut w = StormWindow::new();
+    let mut k = StormKinds::new();
+    for (ms, n) in [(1, 3), (2, 9), (3, 5)] {
+        for e in 0..n {
+            storm(&mut w, ms * MS + e, MS);
+            k.saw(&w);
+        }
+    }
+    assert_eq!(k.peak, 9);
+    assert_eq!(k.total(), 0, "a peak is no trip");
+}
+
+#[test]
+fn storm_kinds_count_each_and_total() {
+    let mut k = StormKinds::new();
+    for s in [
+        Storm::Entries,
+        Storm::Tick,
+        Storm::Tick,
+        Storm::Ui,
+        Storm::Ui,
+        Storm::Ui,
+    ] {
+        k.add(s);
+    }
+    assert_eq!((k.entries, k.tick, k.ui, k.total()), (1, 2, 3, 6));
+    let mut k = StormKinds {
+        entries: u32::MAX,
+        tick: 1,
+        ui: 0,
+        ..StormKinds::new()
+    };
+    k.add(Storm::Entries);
+    assert_eq!(
+        (k.entries, k.total()),
+        (0, 1),
+        "wrapping, as the counters do"
+    );
+}
+
+/// One handler entry's RX FIFO head, before its poll and after.
+#[test]
+fn parks_only_a_head_the_poll_left() {
+    // GRXSTSR: EPNUM 0..3, BCNT 4..14, PKTSTS 17..20.
+    let full = Some(RxHead(0x0004_0402)); // OUT data (2), 64 bytes, EP2
+    let done = Some(RxHead(0x0006_0002)); // its OUT-complete (3) behind it
+    assert!(park(full, full), "nobody took it: a full console");
+    assert!(!park(full, done), "read: the next entry is the poll's");
+    assert!(!park(full, None), "the FIFO emptied");
+    assert!(!park(None, done), "a packet came in during the poll");
+    assert!(!park(None, None));
+}
+
+/// Only an OUT data entry parks: a SETUP the poll left (a host's identical
+/// retry, or a suspend served first) or an unchanged complete entry
+/// re-enters as before.
+#[test]
+fn parks_only_out_data() {
+    let setup = Some(RxHead(0x000C_0080)); // SETUP data (6), 8 bytes, EP0
+    let done = Some(RxHead(0x0006_0002));
+    assert!(!park(setup, setup));
+    assert!(!park(done, done));
+}
+
+/// The park's steps as the handler and `unlock` take them; each `Some`
+/// is the RXFLVLM write the board makes (`Some(true)`: cleared, parked).
+#[test]
+fn the_park_parks_on_a_stuck_head_and_every_hold_lets_it_back() {
+    let full = Some(RxHead(0x0004_0402));
+    let done = Some(RxHead(0x0006_0002));
+    let mut r = RxPark::new();
+    assert_eq!(r.unlock(), None, "nothing parked, no write");
+    assert_eq!(r.polled(full, done), None, "progress, unparked already");
+    assert_eq!(r.polled(full, full), Some(true), "a full console parks");
+    assert!(r.parked());
+    assert_eq!(r.polled(full, full), None, "parked once");
+    assert_eq!(r.unlock(), Some(false), "the hold lets it back");
+    assert!(!r.parked());
+    assert_eq!(r.unlock(), None, "once");
+    assert_eq!(r.polled(full, full), Some(true), "still full: parked again");
+    assert_eq!(r.polled(full, None), Some(false), "a bus reset flushed it");
+    assert_eq!(r.polled(full, full), Some(true));
+    assert_eq!(r.polled(full, done), Some(false), "read meanwhile");
+}
+
+/// Parked if and only if RXFLVLM is clear, over every step sequence up to
+/// eight long.
+#[test]
+fn parked_is_rxflvlm_clear() {
+    let full = Some(RxHead(0x0004_0402));
+    let done = Some(RxHead(0x0006_0002));
+    let setup = Some(RxHead(0x000C_0080));
+    let steps = [
+        (full, full),
+        (full, done),
+        (full, None),
+        (setup, setup),
+        (None, None),
+    ];
+    // Step 5: a UI hold's unlock.
+    for seq in 0..6u32.pow(8) {
+        let (mut r, mut masked_in) = (RxPark::new(), true);
+        let mut s = seq;
+        for _ in 0..8 {
+            let w = match (s % 6) as usize {
+                5 => r.unlock(),
+                i => r.polled(steps[i].0, steps[i].1),
+            };
+            if let Some(p) = w {
+                assert_ne!(masked_in, !p, "a write that changes nothing");
+                masked_in = !p;
+            }
+            assert_eq!(r.parked(), !masked_in, "{seq}");
+            s /= 6;
+        }
+    }
 }
 
 #[test]
 fn starved_reads_across_the_dwt_wrap() {
     let at = u32::MAX - 5 * MS;
-    assert!(starved(at.wrapping_add(21 * MS), at, Some(at), MS));
-    assert!(!starved(at.wrapping_add(19 * MS), at, Some(at), MS));
+    assert!(starved(at.wrapping_add(7 * MS), at, Some(at), MS));
+    assert!(!starved(at.wrapping_add(5 * MS), at, Some(at), MS));
     assert!(starved(
         at.wrapping_add(251 * MS),
-        at.wrapping_add(240 * MS),
+        at.wrapping_add(248 * MS),
         Some(at),
         MS
     ));
     assert!(!starved(
         at.wrapping_add(249 * MS),
-        at.wrapping_add(240 * MS),
+        at.wrapping_add(248 * MS),
         Some(at),
         MS
     ));
@@ -210,9 +382,9 @@ fn starved_reads_across_the_dwt_wrap() {
 #[test]
 fn no_service_yet_is_not_starved() {
     let tick = 2 * MS;
-    assert!(!starved(tick + 19 * MS, tick, None, MS));
+    assert!(!starved(tick + 5 * MS, tick, None, MS));
     assert!(!starved(1_000 * MS, 999 * MS, None, MS), "1 s from boot");
-    assert!(starved(tick + 21 * MS, tick, None, MS));
+    assert!(starved(tick + 7 * MS, tick, None, MS));
 }
 
 /// A long answer: the UI holds the cell every 100 ms inside one `service`
@@ -232,7 +404,7 @@ fn a_long_answer_pumping_is_not_starved() {
 use chimera_core::console::{PerMille, WallClock};
 
 /// The unit's USB flood under a heavy chord: each 22 ms lap the handler
-/// storms until the tick test trips at 20 ms of DWT, SysTick (the shell's
+/// storms until the tick test trips at 20 ms of DWT (its limit then), SysTick (the shell's
 /// `Ms`) stalled all the while, and the handler gets a third of it (audio
 /// takes the rest). Shares over SysTick's ms read the stalled clock: the
 /// storm's cycles over 2 ms a lap, pinned at 100 %. Over the DWT wall
@@ -259,7 +431,7 @@ fn a_storm_that_stalls_systick_keeps_the_share_true() {
 }
 
 /// A lap longer than the cycle counter's 8.9 s wrap (an install): SysTick,
-/// stalled at most 20 ms a trip, says how many wraps passed.
+/// stalled at most `TICK_STALL_MS` a trip, says how many wraps passed.
 #[test]
 fn a_lap_past_the_dwt_wrap_counts_whole() {
     let mut wall = WallClock::new(Cycles::new(5), Ms(0));
