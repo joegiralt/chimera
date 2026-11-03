@@ -20,7 +20,9 @@ use chimera_midi::value::{Channel, U7, U14};
 use crate::MidiChannel;
 use crate::midi_map::MidiMap;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
-use crate::note_queue::{ChannelMode, ChannelModeEvent, InEvent, NoteKind, NoteProducer, RealTime};
+use crate::note_queue::{
+    ChannelMode, ChannelModeEvent, InEvent, NoteKind, NoteProducer, RealTime, SustainEvent,
+};
 use crate::storage::RecordBuf;
 
 /// A controller number, 0..=127.
@@ -402,15 +404,21 @@ pub struct DinPipe {
     held: Held,
 }
 
-/// The keys a pipe's source holds on the note queue, and the NotesOff
-/// `lost` owes it.
+/// The keys and pedals a pipe's source holds on the note queue, and the
+/// NotesOff and pedal-ups `lost` owes it.
 struct Held {
     /// A bit a key, a word a channel: set by a note-on the queue took,
     /// cleared by its note-off, NotesOff or SoundOff. A count a channel
     /// would be fooled by a stray note-off (256 B against 16).
     keys: [u128; 16],
+    /// A bit a channel whose pedal the queue took down: cleared by its
+    /// pedal-up or Reset All Controllers.
+    pedal: u16,
     /// A bit a channel whose NotesOff the queue has yet to take.
     owed: u16,
+    /// A bit a channel whose pedal-up the queue has yet to take, after
+    /// every owed NotesOff.
+    up: u16,
 }
 
 impl Held {
@@ -430,9 +438,18 @@ impl Held {
                     NoteKind::Off => *k &= !bit,
                 }
             }
-            InEvent::Mode(m) if m.mode != ChannelMode::ResetControllers => {
-                *self.keys(m.channel) = 0;
+            InEvent::Sustain(p) => {
+                let bit = 1 << (p.channel.get() & 15);
+                if p.down {
+                    self.pedal |= bit;
+                } else {
+                    self.pedal &= !bit;
+                }
             }
+            InEvent::Mode(m) if m.mode == ChannelMode::ResetControllers => {
+                self.pedal &= !(1 << (m.channel.get() & 15));
+            }
+            InEvent::Mode(m) => *self.keys(m.channel) = 0,
             _ => {}
         }
     }
@@ -464,7 +481,9 @@ impl DinPipe {
             },
             held: Held {
                 keys: [0; 16],
+                pedal: 0,
                 owed: 0,
+                up: 0,
             },
         }
     }
@@ -540,14 +559,16 @@ impl DinPipe {
     }
 
     /// The source went away (USB's bus reset or suspend): every Part lets
-    /// go and the UI hears it, sensing armed or not. NotesOff a full queue
-    /// refuses are owed, each channel's once, and go ahead of anything fed
-    /// after (`feed`).
+    /// go and the UI hears it, sensing armed or not; then every pedal it
+    /// held is lifted. NotesOff and pedal-ups a full queue refuses are
+    /// owed, each channel's once, and go ahead of anything fed after
+    /// (`feed`).
     pub fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S) {
-        self.held = Held {
-            keys: [0; 16],
-            owed: u16::MAX,
-        };
+        let h = &mut self.held;
+        h.keys = [0; 16];
+        h.owed = u16::MAX;
+        h.up |= h.pedal;
+        h.pedal = 0;
         let mut sink = Counted {
             out,
             stats: &mut self.stats,
@@ -564,17 +585,17 @@ impl DinPipe {
         self.sense.armed()
     }
 
-    /// A key the queue took down that nothing has let go since.
+    /// A key or pedal the queue took down that nothing has let go since.
     #[inline(always)]
     pub fn holds(&self) -> bool {
-        self.held.keys.iter().any(|&k| k != 0)
+        self.held.pedal != 0 || self.held.keys.iter().any(|&k| k != 0)
     }
 
-    /// NotesOff `lost` still owes the queue. A field read, as
+    /// NotesOff or pedal-ups `lost` still owes the queue. Field reads, as
     /// `sensing_armed`.
     #[inline(always)]
     pub fn owes(&self) -> bool {
-        self.held.owed != 0
+        self.held.owed | self.held.up != 0
     }
 
     /// As of the last `feed`. A field read, so bank 1 may call it closed.
@@ -676,7 +697,7 @@ impl PipeSlot {
 pub use chimera_midi::usb::Left;
 
 /// Whether leaving Configured lets every Part go (`lost`): a reset always;
-/// a suspend only while USB holds a key (`PipeSlot::holds`), so a host's
+/// a suspend only while USB holds a key or a pedal (`PipeSlot::holds`), so a host's
 /// autosuspend never cuts notes held from DIN alone.
 #[inline(always)]
 pub fn lets_go(left: Left, holds: bool) -> bool {
@@ -823,19 +844,30 @@ impl<S: Sinks + ?Sized> Counted<'_, S> {
         }
     }
 
-    /// The owed NotesOff, lowest channel first, until one is refused;
-    /// `true`: none left.
+    /// The owed NotesOff, then the owed pedal-ups (the voices a NotesOff
+    /// leaves sustained go with the pedal), lowest channel first, until
+    /// one is refused; `true`: none left.
     fn settle(&mut self) -> bool {
-        while self.held.owed != 0 {
-            let c = self.held.owed.trailing_zeros() as u8;
-            let e = InEvent::Mode(ChannelModeEvent {
-                channel: Channel::clamped(c),
-                mode: ChannelMode::NotesOff,
-            });
-            if !self.out.note(e) {
-                return false;
+        let h = &mut *self.held;
+        for (bits, up) in [(&mut h.owed, false), (&mut h.up, true)] {
+            while *bits != 0 {
+                let channel = Channel::clamped(bits.trailing_zeros() as u8);
+                let e = if up {
+                    InEvent::Sustain(SustainEvent {
+                        channel,
+                        down: false,
+                    })
+                } else {
+                    InEvent::Mode(ChannelModeEvent {
+                        channel,
+                        mode: ChannelMode::NotesOff,
+                    })
+                };
+                if !self.out.note(e) {
+                    return false;
+                }
+                *bits &= *bits - 1;
             }
-            self.held.owed &= self.held.owed - 1;
         }
         true
     }

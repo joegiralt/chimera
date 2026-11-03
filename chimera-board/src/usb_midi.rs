@@ -14,8 +14,9 @@
 //! MIDI in: each OUT packet's bytes, cable 0's, through USB's own pipe into
 //! its note source and control ring, as DIN's (spec §§ 7, 8). Leaving
 //! Configured lets every Part go on a bus reset, and on a suspend only
-//! while USB holds a key (`midi_in::lets_go`); NotesOff a full queue
-//! refused are retried each poll.
+//! while USB holds a key or a pedal (`midi_in::lets_go`), every pedal it
+//! held lifted after; NotesOff and pedal-ups a full queue refused are
+//! retried each poll.
 //!
 //! MIDI out: the UI's echo in USB's out ring, packed into IN packets while
 //! the endpoint takes them; the UI pends `OTG_FS` to start, each IN

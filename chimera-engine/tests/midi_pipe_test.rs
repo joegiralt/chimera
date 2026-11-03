@@ -715,6 +715,77 @@ fn owed_notes_off_go_first() {
     assert!(din.slot.holds());
 }
 
+fn pedal_up(c: u8) -> InEvent {
+    InEvent::Sustain(SustainEvent {
+        channel: ch(c),
+        down: false,
+    })
+}
+
+/// A pedal down holds: a suspend lets go with the keys up, NotesOff then
+/// the pedal lifted.
+#[test]
+fn suspend_lifts_a_held_pedal() {
+    let mut din = Din::new();
+    din.run(&[0x90, 60, 100, 0xB0, 64, 127, 0x80, 60, 0]);
+    assert!(din.slot.holds(), "the pedal holds 60");
+    assert!(midi_in::lets_go(Left::Suspend, din.slot.holds()));
+    let mut want = all_notes_off();
+    want.push(pedal_up(0));
+    assert_eq!(din.lost().0, want);
+    assert!(!din.slot.holds());
+    assert!(!detach(&mut din, Left::Suspend), "lifted once");
+}
+
+#[test]
+fn reset_lifts_a_held_pedal() {
+    let mut din = Din::new();
+    din.run(&[0xB2, 64, 127, 0xB5, 64, 64]);
+    let mut want = all_notes_off();
+    want.extend([pedal_up(2), pedal_up(5)]);
+    assert_eq!(din.lost().0, want, "a reset always calls `lost`");
+}
+
+#[test]
+fn a_pedal_let_up_or_reset_holds_nothing() {
+    let mut din = Din::new();
+    din.run(&[0xB0, 64, 127, 0xB0, 64, 63]);
+    assert!(!din.slot.holds(), "below 64 is up");
+    din.run(&[0xB1, 64, 127, 0xB1, 121, 0]);
+    assert!(!din.slot.holds(), "Reset All Controllers lifts it");
+    din.run(&[0xB1, 64, 127, 0xB1, 123, 0]);
+    assert!(din.slot.holds(), "All Notes Off leaves it down");
+    din.lost();
+    assert!(!din.slot.holds());
+    din.run(&[0xB0, 64, 127]);
+    din.fill();
+    din.feed(&[0xB0, 64, 0]);
+    assert!(din.slot.holds(), "a refused pedal-up still holds");
+}
+
+/// The pedal-up a full queue refuses is owed after the NotesOff, delivered
+/// once, ahead of anything fed since.
+#[test]
+fn a_pedal_up_waits_for_room() {
+    let mut din = Din::new();
+    din.run(&[0xB3, 64, 127]);
+    din.fill();
+    din.lost();
+    din.fill();
+    din.pop(16);
+    din.feed(&[0x90, 60, 100]);
+    assert_eq!(
+        din.take().0[48..],
+        all_notes_off()[..],
+        "no room for the pedal"
+    );
+    assert!(din.slot.owes());
+    assert_eq!(din.slot.stats().refused, 1, "the note");
+    assert_eq!(din.settle(), [pedal_up(3)]);
+    assert!(!din.slot.owes());
+    assert_eq!(din.settle(), [], "once");
+}
+
 #[test]
 fn stats_count_faults_dropped_programs_and_refusals() {
     let mut p = DinPipe::new();
