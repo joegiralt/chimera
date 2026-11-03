@@ -34,6 +34,7 @@ fn cx(engine: EngineType) -> NavCtx {
         rev: chimera_core::dsp::reverb::ReverbType::Hall,
         // ADR 0081's keys; ROW's are `row_*` below.
         pages: chimera_core::ui::theme_settings::Pages::Stack,
+        opens: Default::default(),
     }
 }
 
@@ -452,6 +453,7 @@ fn row_edit_steps_left_and_seq_right_wrapping() {
     for engine in [EngineType::Algo, EngineType::Modal, EngineType::Va] {
         let cx = NavCtx {
             pages: Pages::Row,
+            opens: Default::default(),
             ..cx(engine)
         };
         let c = chain_def_for(engine);
@@ -503,6 +505,7 @@ fn row_flips_orbit_sub_pages_but_scn_still_saves() {
     use chimera_core::ui::theme_settings::Pages;
     let cx = NavCtx {
         pages: Pages::Row,
+        opens: Default::default(),
         ..cx(EngineType::Algo)
     };
     let mut r = Recall::new();

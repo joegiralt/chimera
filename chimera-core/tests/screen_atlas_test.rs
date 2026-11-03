@@ -384,7 +384,7 @@ const S3: SlotId = SlotId::ALL[2];
 fn rung(ui: &mut UiState, p: PartId, s: SlotId) {
     let b = [ButtonId::B1, ButtonId::B2, ButtonId::B3, ButtonId::B4];
     feed(ui, Input::chord(ButtonId::Edit, b[p.index()]));
-    feed(ui, Input::turn(EncoderId::A, s.index() as i8));
+    to_row(ui, chimera_core::ui::browser::HEAD + s.index());
 }
 
 /// Slot `s` into Part `p`, unedited, through the Sound rung.

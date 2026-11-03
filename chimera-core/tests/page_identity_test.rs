@@ -45,6 +45,7 @@ fn cx() -> NavCtx {
         orbit: OrbitCx::NONE,
         rev: ReverbType::Quad,
         pages: chimera_core::ui::theme_settings::Pages::Stack,
+        opens: Default::default(),
     }
 }
 

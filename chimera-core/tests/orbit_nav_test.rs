@@ -25,6 +25,7 @@ fn cx() -> NavCtx {
         rev: chimera_core::dsp::reverb::ReverbType::Quad,
         // ADR 0081's keys; ROW's are `row_*` below.
         pages: chimera_core::ui::theme_settings::Pages::Stack,
+        opens: Default::default(),
     }
 }
 

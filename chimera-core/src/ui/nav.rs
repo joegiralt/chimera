@@ -608,6 +608,8 @@ pub struct NavCtx {
     pub orbit: OrbitCx,
     /// THEME's PAGES: which way SEQ and EDIT step a sub-page (`sub_move`).
     pub pages: Pages,
+    /// Where each Part's Sound rung opens: on the row it came from.
+    pub opens: [Browse; MAX_PARTS],
 }
 
 impl NavCtx {
@@ -834,7 +836,7 @@ impl Location {
             (Part(_, m), NavKey::MixPart(n)) => go(Part(n, m)),
             (Fx(_, at), NavKey::MixPart(n)) => go(Fx(n, at)),
             (_, NavKey::MixPart(n)) => go(r.mix_entry(n)),
-            (_, NavKey::EditPart(n)) => go(Sound(n, Browse::default())),
+            (_, NavKey::EditPart(n)) => go(Sound(n, cx.opens[n.index()])),
             // `Recall::leave` keeps where it came from.
             (_, NavKey::SeqHold) => go(Orbit(r.orbit)),
             (Settings(s), NavKey::MenuTap) => match s.back() {
@@ -847,7 +849,7 @@ impl Location {
                 .map_or(Step::Stay, |at| go(Pages(p, at))),
             (Part(p, m), NavKey::Plus) => go(mix_walk(p, m, 1)),
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
-            (Part(p, _), NavKey::Edit) => go(Sound(p, Browse::default())),
+            (Part(p, _), NavKey::Edit) => go(Sound(p, cx.opens[p.index()])),
             // The mixer is the top of its chain; the Sound rung is under it.
             (Part(..), NavKey::SeqTap) => Step::Stay,
             (Sound(p, _), NavKey::SeqTap) => go(r.mix_entry(p)),

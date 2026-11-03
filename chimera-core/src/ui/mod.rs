@@ -3992,6 +3992,10 @@ fn nav_cx(project: &Project) -> NavCtx {
             targets: live.rings.map(|r| r.target.part()),
         },
         pages: ThemeSettings::DEFAULT.pages,
+        opens: PartId::ALL.map(|p| {
+            browser::entry_of(project.part(p).origin(), project.pool())
+                .map_or_else(Browse::default, Browse::at)
+        }),
     }
 }
 

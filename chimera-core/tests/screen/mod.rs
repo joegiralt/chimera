@@ -269,6 +269,17 @@ pub fn feed(ui: &mut UiState, input: Input) {
     ui.handle_input(&input);
 }
 
+/// On the Sound rung, the cursor turned to list entry `entry`.
+pub fn to_row(ui: &mut UiState, entry: usize) {
+    let at = ui
+        .location()
+        .browse()
+        .expect("on the Sound rung")
+        .1
+        .cursor();
+    feed(ui, Input::turn(EncoderId::A, entry as i8 - at as i8));
+}
+
 /// Press, then release 100 ms later.
 pub fn tap(ui: &mut UiState, b: ButtonId) {
     feed(ui, Input::press(b).at(0));

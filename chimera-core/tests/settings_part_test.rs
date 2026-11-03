@@ -17,7 +17,7 @@ use chimera_core::ui::settings::view::{PartMark, RowLook, draw_part_strip};
 use chimera_core::ui::settings::{PART_ROW, Screen, screen_path};
 use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
-use screen::{Fb, Input, feed, tap, to_leaf};
+use screen::{Fb, Input, feed, tap, to_leaf, to_row};
 
 const P: [PartId; 6] = PartId::ALL;
 const B: [ButtonId; 6] = [
@@ -46,7 +46,7 @@ fn crc(ui: &UiState, p: PartId) -> u32 {
 /// Part `p`'s Sound rung, the cursor on pool slot `slot` (0-based).
 fn rung(ui: &mut UiState, p: PartId, slot: usize) {
     feed(ui, Input::chord(ButtonId::Edit, B[p.index()]));
-    feed(ui, Input::turn(EncoderId::A, slot as i8));
+    to_row(ui, chimera_core::ui::browser::HEAD + slot);
     let at = ui.location().browse().map(|(_, b)| b.cursor());
     assert_eq!(at, Some(chimera_core::ui::browser::HEAD + slot));
 }
