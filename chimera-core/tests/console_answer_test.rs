@@ -3,8 +3,8 @@ use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     Bank2Answer, Bank2Audio, Bank2Fail, Bank2Refusal, CardAnswer, CardFail, CardSpeed, Colours,
     Command, Console, FlashPeek, FlashRegs, Frame, Hands, NoArg, Out, PerMille, QUEUE, Request,
-    SHOT_HEADER, Stalled, Stats, StreamTally, SweepAsk, Unit, UsbTally, answer, check_staged,
-    installed,
+    SHOT_HEADER, Stalled, Stats, StormKinds, StreamTally, SweepAsk, Unit, UsbTally, answer,
+    check_staged, installed,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -392,7 +392,7 @@ fn stats_prints_the_streams_lines() {
     );
 }
 
-/// A build with the USB interrupt ends on its three lines.
+/// A build with the USB interrupt ends on its lines.
 #[test]
 fn stats_prints_the_usb_lines() {
     let mut u = Fake::new();
@@ -404,7 +404,12 @@ fn stats_prints_the_usb_lines() {
         usb: Some(UsbTally {
             irq_share: PerMille::of(12, 1_000),
             irq_us_max: Micros::new(41),
-            storms: 3,
+            storms: StormKinds {
+                entries: 1,
+                tick: 2,
+                ui: 4,
+            },
+            rx_parks: 9,
             midi_in_drops: 5,
             midi_out_drops: 6,
         }),
@@ -412,7 +417,7 @@ fn stats_prints_the_usb_lines() {
     let got = ask(&mut u, "stats\n");
     assert!(
         got.ends_with(
-            "loop_peak_us 2\nusb_irq_pct 1.2\nusb_irq_us_max 41\nusb_storms 3\nusb_midi_drops 5 6\nOK\n"
+            "loop_peak_us 2\nusb_irq_pct 1.2\nusb_irq_us_max 41\nusb_storms 7\nusb_storm_kinds 1 2 4\nusb_rx_parks 9\nusb_midi_drops 5 6\nOK\n"
         ),
         "{got}"
     );

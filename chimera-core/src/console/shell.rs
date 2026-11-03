@@ -113,7 +113,8 @@ impl LoopTimer {
 
 /// The USB interrupt's entries in one millisecond at most; over it, the
 /// shell masks the interrupt until the UI's next lap. Provisional: set from
-/// the unit's measured worst (spec § 13 ruling 5).
+/// the unit's measured worst (spec § 13 ruling 5); § 13.5's 4× a dense
+/// stream's peak waits on the unit.
 pub const STORM_LIMIT: u32 = 200;
 
 /// The USB interrupt's entries in the millisecond of DWT cycles it opened.
@@ -153,21 +154,104 @@ pub fn storm(window: &mut StormWindow, now: Cycles, per_ms: Cycles) -> bool {
 }
 
 /// SysTick's tick, which also kicks the 100 ms watchdog, stalled this long
-/// under the USB interrupt: a storm.
-pub const TICK_STALL_MS: u32 = 20;
+/// under the USB interrupt: a storm. It steps every 2 ms: three missed.
+pub const TICK_STALL_MS: u32 = 6;
 /// The UI's last sign of life this long ago under the USB interrupt: a
 /// storm. A lap peaks at 40 ms, and a long answer holds the cell at every
 /// pump.
 pub const SERVICE_STALL_MS: u32 = 250;
 
-/// One entry at `now`: true when the tick, last seen moving at `tick_at`,
-/// has stalled over `TICK_STALL_MS`, or the UI's last sign of life,
-/// `alive`, is over `SERVICE_STALL_MS` old. `None`: none yet (boot) or the
-/// UI on an errand, which never starves. Starvation itself, not a CPU
-/// share: three share tests failed against audio's whole-half renders.
-pub fn starved(now: Cycles, tick_at: Cycles, alive: Option<Cycles>, per_ms: Cycles) -> bool {
+/// Which of the guard's tests tripped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Storm {
+    /// Over `STORM_LIMIT` entries in a millisecond.
+    Entries,
+    /// SysTick stalled over `TICK_STALL_MS`.
+    Tick,
+    /// The UI unseen over `SERVICE_STALL_MS`.
+    Ui,
+}
+
+/// One entry at `now`: which test, if any, starves. The tick, last seen
+/// moving at `tick_at`, stalled over `TICK_STALL_MS`, or the UI's last sign
+/// of life, `alive`, over `SERVICE_STALL_MS` old. `None` for `alive`: none
+/// yet (boot) or the UI on an errand, which never starves. Starvation
+/// itself, not a CPU share: three share tests failed against audio's
+/// whole-half renders. `alive` isn't kept fresh as `tick_at` is: past the
+/// DWT's 8.9 s wrap with no entry it can read young, so a storm after a
+/// wedged UI waits at most `SERVICE_STALL_MS` more; the tick test holds.
+pub fn starved(
+    now: Cycles,
+    tick_at: Cycles,
+    alive: Option<Cycles>,
+    per_ms: Cycles,
+) -> Option<Storm> {
     let over = |at: Cycles, ms: u32| now.since(at).get() > ms * per_ms.get();
-    over(tick_at, TICK_STALL_MS) || alive.is_some_and(|at| over(at, SERVICE_STALL_MS))
+    if over(tick_at, TICK_STALL_MS) {
+        Some(Storm::Tick)
+    } else if alive.is_some_and(|at| over(at, SERVICE_STALL_MS)) {
+        Some(Storm::Ui)
+    } else {
+        None
+    }
+}
+
+/// One entry at `now`: `storm`, then `starved`.
+pub fn trip(
+    window: &mut StormWindow,
+    now: Cycles,
+    tick_at: Cycles,
+    alive: Option<Cycles>,
+    per_ms: Cycles,
+) -> Option<Storm> {
+    if storm(window, now, per_ms) {
+        Some(Storm::Entries)
+    } else {
+        starved(now, tick_at, alive, per_ms)
+    }
+}
+
+/// The guard's trips by test, wrapping; `usb_storms` is their sum.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StormKinds {
+    pub entries: u32,
+    pub tick: u32,
+    pub ui: u32,
+}
+
+impl StormKinds {
+    pub const fn new() -> Self {
+        StormKinds {
+            entries: 0,
+            tick: 0,
+            ui: 0,
+        }
+    }
+
+    pub fn add(&mut self, s: Storm) {
+        let n = match s {
+            Storm::Entries => &mut self.entries,
+            Storm::Tick => &mut self.tick,
+            Storm::Ui => &mut self.ui,
+        };
+        *n = n.wrapping_add(1);
+    }
+
+    pub fn total(&self) -> u32 {
+        self.entries.wrapping_add(self.tick).wrapping_add(self.ui)
+    }
+}
+
+/// The USB RX FIFO's head entry, its status word peeked (GRXSTSR).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RxHead(pub u32);
+
+/// The head the handler's poll was to read (`before`) is still the head
+/// after it: no class took it (a full console), and RXFLVL would re-enter
+/// the handler nonstop. Park it: mask RXFLVL until the UI drains the class.
+/// Any other head is progress; each packet leaves two entries.
+pub fn park(before: Option<RxHead>, after: Option<RxHead>) -> bool {
+    before.is_some() && before == after
 }
 
 /// Report text in a fixed buffer. The last `TRUNCATED.len()` bytes are kept

@@ -2,8 +2,9 @@
 //! The device lives in a static cell the UI reaches through `with`.
 //! Without `midi-usb` only the UI loop polls it and `pac::Interrupt::OTG_FS`
 //! is never unmasked. With it, the `OTG_FS` handler polls it too, at MIDI's
-//! level under audio; `with` masks the handler, and a storm guard falls
-//! back to the UI's polls (spec §§ 5, 6).
+//! level under audio; `with` masks the handler. A packet no class takes
+//! parks RXFLVL until the UI's next hold, and a storm guard falls back to
+//! the UI's polls (spec §§ 5, 6).
 
 use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
@@ -36,7 +37,7 @@ use usbd_serial::USB_CLASS_CDC;
 
 use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
-use chimera_core::console::{StormWindow, starved, storm};
+use chimera_core::console::{RxHead, StormKinds, StormWindow, park, trip};
 use chimera_core::errand::Errand;
 use chimera_hal::units::Cycles;
 #[cfg(feature = "midi-usb")]
@@ -368,10 +369,12 @@ impl Unconnected {
                 alive: None,
                 per_ms: Cycles::new((self.cpu_hz / 1_000).max(1)),
                 held: false,
+                parked: false,
                 counts: Counts {
                     cycles: 0,
                     us_max: 0,
-                    storms: 0,
+                    storms: StormKinds::new(),
+                    rx_parks: 0,
                     in_drops: 0,
                     out_drops: 0,
                 },
@@ -861,6 +864,9 @@ pub(crate) struct Irq {
     /// The guard masked the handler: `with` leaves it masked until the top
     /// of the next `Usb::service` clears it.
     held: bool,
+    /// RXFLVLM cleared: the RX FIFO's head waits for the UI (`park`); every
+    /// `with` sets it again.
+    parked: bool,
     counts: Counts,
 }
 
@@ -872,8 +878,10 @@ pub(crate) struct Counts {
     cycles: u32,
     /// Its longest entry, in µs.
     us_max: u32,
-    /// The guard's trips.
-    storms: u32,
+    /// The guard's trips, by test.
+    storms: StormKinds,
+    /// RXFLVL parks.
+    rx_parks: u32,
     /// USB MIDI event packets read and dropped.
     pub(crate) in_drops: u32,
     /// Echo messages USB's out ring lost and IN packets the endpoint
@@ -948,6 +956,7 @@ impl UsbIrq {
             irq_share: chimera_core::console::PerMille::of(own, wall),
             irq_us_max: chimera_hal::units::Micros::new(self.seen.us_max),
             storms: self.seen.storms,
+            rx_parks: self.seen.rx_parks,
             midi_in_drops: self.seen.in_drops,
             midi_out_drops: self.seen.out_drops,
         }
@@ -1033,7 +1042,7 @@ fn with<R>(f: impl FnOnce(&mut UsbCore) -> R) -> R {
     }
     let r = f(core);
     #[cfg(feature = "midi-usb")]
-    unlock(core.irq.held);
+    unlock(&mut core.irq);
     r
 }
 
@@ -1051,21 +1060,28 @@ fn lock() {
     }
 }
 
-/// `with`'s unmask, unless a storm holds the handler off.
+/// `with`'s unmask, unless a storm holds the handler off. A parked head
+/// is let back first: the hold may have drained its class, and a console
+/// still full parks it again in one entry, so RXFLVL never stays masked
+/// past a hold.
 #[cfg(feature = "midi-usb")]
 #[inline(never)]
-fn unlock(held: bool) {
-    if !held {
+fn unlock(irq: &mut Irq) {
+    if core::mem::take(&mut irq.parked) {
+        rx_park(false);
+    }
+    if !irq.held {
         // SAFETY: as `install`'s unmask.
         unsafe { NVIC::unmask(pac::Interrupt::OTG_FS) };
     }
 }
 
-/// Polls the device. Over `STORM_LIMIT` entries in a millisecond, or
-/// while it starves SysTick (the watchdog's kick) or the UI's `service` (a
-/// full console's packet left in the RX FIFO keeps RXFLVL up), it masks
-/// itself until the UI's next `service`, whose polls carry the console
-/// meanwhile.
+/// Polls the device; a RX FIFO head the poll left (a full console's
+/// packet, which keeps RXFLVL up) parks RXFLVL until the UI's next hold,
+/// and a head gone (read, or flushed by a bus reset) lets it back. Over
+/// `STORM_LIMIT` entries in a millisecond, or while it starves SysTick
+/// (the watchdog's kick) or the UI's `service`, it masks itself until the
+/// UI's next `service`, whose polls carry the console meanwhile.
 #[cfg(feature = "midi-usb")]
 #[interrupt]
 fn OTG_FS() {
@@ -1082,12 +1098,20 @@ fn OTG_FS() {
     if tick != n.tick {
         (n.tick, n.tick_at) = (tick, now);
     }
-    if storm(&mut n.window, now, n.per_ms) || starved(now, n.tick_at, n.alive, n.per_ms) {
+    if let Some(kind) = trip(&mut n.window, now, n.tick_at, n.alive, n.per_ms) {
         n.held = true;
-        n.counts.storms = n.counts.storms.wrapping_add(1);
+        n.counts.storms.add(kind);
         NVIC::mask(pac::Interrupt::OTG_FS);
     } else {
+        let before = rx_head(true);
         core.poll_all();
+        let p = park(before, rx_head(false));
+        let n = &mut core.irq;
+        if p != n.parked {
+            n.parked = p;
+            n.counts.rx_parks = n.counts.rx_parks.wrapping_add(u32::from(p));
+            rx_park(p);
+        }
     }
     let own = own_cycles(enter, stamp(audio_cycles)).get();
     // The card IRQ's own time leaves out the MIDI level's (`card_dma::clocks`).
@@ -1096,6 +1120,39 @@ fn OTG_FS() {
     let us = own / (n.per_ms.get() / 1_000).max(1);
     n.counts.cycles = n.counts.cycles.wrapping_add(own);
     n.counts.us_max = n.counts.us_max.max(us);
+}
+
+/// OTG2's global block, for the RXFLVL park.
+#[cfg(feature = "midi-usb")]
+#[inline(always)]
+fn otg() -> &'static pac::otg1_hs_global::RegisterBlock {
+    // SAFETY: OTG2's fixed global block. Its reads here have no side
+    // effect (GRXSTSR peeks; GRXSTSP would pop), and its one write is
+    // `rx_park`'s.
+    unsafe { &*pac::OTG2_HS_GLOBAL::ptr() }
+}
+
+/// The RX FIFO's head, with RXFLVL up. `polled`: only if the crate's poll
+/// will read it, which ENUMDNE, WKUINT and USBSUSP each take first.
+#[cfg(feature = "midi-usb")]
+#[inline(always)]
+fn rx_head(polled: bool) -> Option<RxHead> {
+    let g = otg();
+    let s = g.gintsts.read();
+    let first = polled && (s.enumdne().bit() || s.wkuint().bit() || s.usbsusp().bit());
+    (s.rxflvl().bit() && !first).then(|| RxHead(g.grxstsr_device().read().bits()))
+}
+
+/// GINTMSK's RXFLVLM cleared (`park`) or set. A read-modify-write that
+/// can't race: synopsys-usb-otg writes GINTMSK only in `enable`, inside
+/// `connect`'s `build`, before `install` unmasks the handler; after that
+/// only the handler and `unlock` write it, and `with` masks the one while
+/// the other runs. USBRST stays unmasked, so a bus reset still enters the
+/// handler, whose poll flushes the FIFO and lets RXFLVL back.
+#[cfg(feature = "midi-usb")]
+#[inline(always)]
+fn rx_park(park: bool) {
+    otg().gintmsk.modify(|_, w| w.rxflvlm().bit(!park));
 }
 
 /// DSTS.FNSOF (bits 8..22): moving while the host sends start-of-frame.

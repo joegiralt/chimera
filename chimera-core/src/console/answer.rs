@@ -4,7 +4,7 @@ use core::fmt::{self, Write};
 
 use super::{
     CardAnswer, Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
-    write_board, write_card, write_shot, write_status, write_sweep,
+    StormKinds, write_board, write_card, write_shot, write_status, write_sweep,
 };
 use crate::board::BoardId;
 use crate::boot::{BootSeen, UsbRegs};
@@ -33,8 +33,10 @@ pub struct UsbTally {
     pub irq_share: PerMille,
     /// Its longest entry, the audio taken off.
     pub irq_us_max: Micros,
-    /// The storm guard's trips.
-    pub storms: u32,
+    /// The storm guard's trips, by test.
+    pub storms: StormKinds,
+    /// RXFLVL parks: entries that left the RX FIFO's head unread.
+    pub rx_parks: u32,
     /// `usb_midi_drops`' first: event packets from the host dropped (on
     /// another cable, a reserved CIN, no sinks, or the door closed).
     pub midi_in_drops: u32,
@@ -411,7 +413,10 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
     s.usb.map_or(Ok(()), |u| {
         writeln!(t, "usb_irq_pct {}", u.irq_share)?;
         writeln!(t, "usb_irq_us_max {}", u.irq_us_max.get())?;
-        writeln!(t, "usb_storms {}", u.storms)?;
+        let k = u.storms;
+        writeln!(t, "usb_storms {}", k.total())?;
+        writeln!(t, "usb_storm_kinds {} {} {}", k.entries, k.tick, k.ui)?;
+        writeln!(t, "usb_rx_parks {}", u.rx_parks)?;
         writeln!(t, "usb_midi_drops {} {}", u.midi_in_drops, u.midi_out_drops)
     })
 }
