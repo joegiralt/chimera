@@ -22,6 +22,51 @@ pub trait Out {
     fn now(&self) -> chimera_hal::Ms;
 }
 
+/// `put`'s data as an `Out` reads it: a packet a `fill` (one USB hold),
+/// handed out a byte a `pop`. The host waits on each answer, so none is
+/// left past one.
+pub struct Rx {
+    buf: [u8; Rx::PACKET],
+    at: u8,
+    len: u8,
+}
+
+impl Rx {
+    /// The console's OUT packet.
+    pub const PACKET: usize = 64;
+
+    pub const fn new() -> Rx {
+        Rx {
+            buf: [0; Rx::PACKET],
+            at: 0,
+            len: 0,
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<u8> {
+        if self.at >= self.len {
+            return None;
+        }
+        let b = self.buf.get(usize::from(self.at)).copied();
+        self.at += 1;
+        b
+    }
+
+    /// Empty, a packet from `read` (its byte count, or `None`): true if
+    /// it brought any.
+    pub fn fill(&mut self, read: impl FnOnce(&mut [u8]) -> Option<usize>) -> bool {
+        let n = read(&mut self.buf).unwrap_or(0).min(Rx::PACKET);
+        (self.at, self.len) = (0, n as u8);
+        n > 0
+    }
+}
+
+impl Default for Rx {
+    fn default() -> Rx {
+        Rx::new()
+    }
+}
+
 /// The screen as the display holds it, and the palette it flushes through.
 #[derive(Clone, Copy)]
 pub struct Frame<'a> {

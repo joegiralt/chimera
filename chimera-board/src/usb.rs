@@ -534,6 +534,7 @@ impl Usb {
             let out = &mut UsbOut {
                 link,
                 clock: AnswerClock::start(crate::controls::now_ms()),
+                rx: chimera_core::console::Rx::new(),
             };
             // A stalled answer just stops: the host tool resyncs on its next request.
             let sent = answer(req, unit, out).and_then(|()| out.flush());
@@ -769,6 +770,7 @@ fn read(serial: &mut Serial, line: &mut Console) -> Option<Result<Request, Refus
 struct UsbOut<'a> {
     link: &'a mut Link,
     clock: AnswerClock,
+    rx: chimera_core::console::Rx,
 }
 
 impl UsbOut<'_> {
@@ -814,13 +816,17 @@ impl Out for UsbOut<'_> {
     }
 
     /// Polls until a byte comes or `wait_ms` pass: `put`'s data, read in
-    /// the UI loop while audio and MIDI run above it.
+    /// the UI loop while audio and MIDI run above it, a packet a hold, so
+    /// a parked RX head waits one hold a packet, not one a byte.
     fn recv(&mut self, wait_ms: u32) -> Option<u8> {
         let start = crate::controls::now_ms();
-        let mut byte = [0u8; 1];
         loop {
-            if let Ok(1) = self.link.with(|c| c.serial.read(&mut byte)) {
-                return Some(byte[0]);
+            if let Some(b) = self.rx.pop() {
+                return Some(b);
+            }
+            let rx = &mut self.rx;
+            if self.link.with(|c| rx.fill(|buf| c.serial.read(buf).ok())) {
+                continue;
             }
             if crate::controls::now_ms().since(start) >= wait_ms {
                 return None;
@@ -981,11 +987,29 @@ impl Link {
     /// the guard can't be left asleep or forgotten awake.
     #[inline(always)]
     fn errand<R>(&mut self, f: impl FnOnce(&Errand) -> R) -> R {
-        #[cfg(feature = "midi-usb")]
-        self.with(|c| c.irq.alive = None);
-        let r = Errand::run(f);
-        #[cfg(feature = "midi-usb")]
-        self.with(|_| ());
+        // SAFETY: long: the guard sleeps.
+        unsafe { self.errand_if(true, f) }
+    }
+
+    /// `errand` when `long`; else `f` with the proof, no hold, the guard
+    /// awake.
+    ///
+    /// # Safety
+    ///
+    /// `long` false only as `Errand::run`'s contract allows: `f` short.
+    #[inline(always)]
+    unsafe fn errand_if<R>(&mut self, long: bool, f: impl FnOnce(&Errand) -> R) -> R {
+        if long {
+            #[cfg(feature = "midi-usb")]
+            self.with(|c| c.irq.alive = None);
+        }
+        // SAFETY: long, the service test sleeps until the hold below gives
+        // the stamp back; short, the caller's.
+        let r = unsafe { Errand::run(f) };
+        if long {
+            #[cfg(feature = "midi-usb")]
+            self.with(|_| ());
+        }
         r
     }
 }
@@ -1334,9 +1358,21 @@ impl PortState {
     /// `f`, with the proof. Long UI work needs the `&Errand` this hands
     /// out, so it can't run outside one.
     pub fn errand<R>(&mut self, f: impl FnOnce(&Errand) -> R) -> R {
+        // SAFETY: long: the guard sleeps.
+        unsafe { self.errand_if(true, f) }
+    }
+
+    /// `errand` when `long`; else `f` with the proof, the guard awake.
+    ///
+    /// # Safety
+    ///
+    /// `long` false only as `Errand::run`'s contract allows: `f` short.
+    pub unsafe fn errand_if<R>(&mut self, long: bool, f: impl FnOnce(&Errand) -> R) -> R {
         match self.up() {
-            Some(u) => u.link.errand(f),
-            None => Errand::run(f),
+            // SAFETY: the caller's.
+            Some(u) => unsafe { u.link.errand_if(long, f) },
+            // SAFETY: no port up: `OTG_FS` masked, no guard runs.
+            None => unsafe { Errand::run(f) },
         }
     }
 

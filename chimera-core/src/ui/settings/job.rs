@@ -93,6 +93,17 @@ impl UiState {
             || self.wants_lib_note()
     }
 
+    /// The errand has card work this lap: a job, a re-head, a fault to
+    /// recover, SYSTEM's write or DFU's (ADR 0222). False, its calls touch
+    /// no card and the board leaves the USB guard awake.
+    pub fn errand_due(&self, sync: &SystemSync, fault: chimera_hal::card_bus::CardFault) -> bool {
+        self.dfu.is_some()
+            || self.card_pending()
+            || self.src.queued()
+            || sync.leaving(self.in_settings())
+            || fault != chimera_hal::card_bus::CardFault::Clear
+    }
+
     /// LOAD or MANAGE on screen over a listing something moved.
     fn wants_list(&self) -> bool {
         self.listing.validity() == Validity::Stale

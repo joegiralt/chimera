@@ -617,6 +617,11 @@ impl SourceCell {
         };
     }
 
+    /// Card work is queued, a re-head's too.
+    pub fn queued(&self) -> bool {
+        self.job.is_some()
+    }
+
     /// Card work is queued: BUSY shows. A re-head runs unseen.
     pub fn busy(&self) -> bool {
         #[cfg(feature = "tape")]

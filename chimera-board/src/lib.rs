@@ -811,6 +811,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         midi_out(ui, &out);
         // Card work and SYSTEM's sync can hold the UI for seconds: an
         // errand, so no false storm from the guard's service test.
+        // Nothing due, its two holds skipped and the guard left awake.
+        #[cfg(feature = "usb-console")]
+        let due = ui.errand_due(&sync, chimera_hal::store::Store::read_fault(&*store));
         let errand = |e: &chimera_core::errand::Errand| {
             // SYSTEM synced first: a THEME change made in this visit is kept.
             if let Some(yes) = ui.take_dfu_synced(e, &mut sync, &mut card, store, &mut settings) {
@@ -841,10 +844,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             ui.sync_system(e, &mut sync, &mut card, store, &mut settings);
             busy
         };
+        // SAFETY: not due, it touches no card: short (`errand_due`).
         #[cfg(feature = "usb-console")]
-        let busy = usb.errand(errand);
+        let busy = unsafe { usb.errand_if(due, errand) };
+        // SAFETY: no USB guard in this build.
         #[cfg(not(feature = "usb-console"))]
-        let busy = chimera_core::errand::Errand::run(errand);
+        let busy = unsafe { chimera_core::errand::Errand::run(errand) };
         // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
         // The loop spins as fast as it can; animation runs at UI_FPS.
