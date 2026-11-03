@@ -268,13 +268,25 @@ fn storm_kinds_count_each_and_total() {
 /// One handler entry's RX FIFO head, before its poll and after.
 #[test]
 fn parks_only_a_head_the_poll_left() {
-    let full = Some(RxHead(0x0002_0402)); // a 64-byte OUT on EP2
-    let done = Some(RxHead(0x0006_0002)); // its OUT-complete behind it
+    // GRXSTSR: EPNUM 0..3, BCNT 4..14, PKTSTS 17..20.
+    let full = Some(RxHead(0x0004_0402)); // OUT data (2), 64 bytes, EP2
+    let done = Some(RxHead(0x0006_0002)); // its OUT-complete (3) behind it
     assert!(park(full, full), "nobody took it: a full console");
     assert!(!park(full, done), "read: the next entry is the poll's");
     assert!(!park(full, None), "the FIFO emptied");
     assert!(!park(None, done), "a packet came in during the poll");
     assert!(!park(None, None));
+}
+
+/// Only an OUT data entry parks: a SETUP the poll left (a host's identical
+/// retry, or a suspend served first) or an unchanged complete entry
+/// re-enters as before.
+#[test]
+fn parks_only_out_data() {
+    let setup = Some(RxHead(0x000C_0080)); // SETUP data (6), 8 bytes, EP0
+    let done = Some(RxHead(0x0006_0002));
+    assert!(!park(setup, setup));
+    assert!(!park(done, done));
 }
 
 #[test]

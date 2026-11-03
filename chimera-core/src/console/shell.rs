@@ -246,12 +246,13 @@ impl StormKinds {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RxHead(pub u32);
 
-/// The head the handler's poll was to read (`before`) is still the head
-/// after it: no class took it (a full console), and RXFLVL would re-enter
-/// the handler nonstop. Park it: mask RXFLVL until the UI drains the class.
-/// Any other head is progress; each packet leaves two entries.
+/// The head the handler's poll was to read (`before`), an OUT data entry
+/// (PKTSTS 2, bits 17..20), is still the head after it: no class took it
+/// (a full console), and RXFLVL would re-enter the handler nonstop. Park
+/// it: mask RXFLVL until the UI drains the class. Any other head is
+/// progress (each packet leaves two entries) or not a class's to take.
 pub fn park(before: Option<RxHead>, after: Option<RxHead>) -> bool {
-    before.is_some() && before == after
+    before.is_some_and(|h| (h.0 >> 17) & 0xF == 2) && before == after
 }
 
 /// Report text in a fixed buffer. The last `TRUNCATED.len()` bytes are kept
