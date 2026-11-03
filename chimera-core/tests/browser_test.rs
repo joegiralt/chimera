@@ -111,12 +111,10 @@ fn the_scroll_thumb_follows_the_list() {
 fn init_rows_lead_the_list_and_load() {
     let mut ui = chimera_core::ui::UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
-    // Opens on slot 1, the INIT rows above it.
-    assert_eq!(
-        ui.location(),
-        Location::sound_at(PartId::ALL[1], Browse::of(HEAD as u8, 0))
-    );
-    let up = (HEAD - INITS + 1) as i8;
+    // Opens on the slot Part 2 came from, the INIT rows above it.
+    let at = opened(&ui);
+    assert!(at >= HEAD, "{at}");
+    let up = (at - INITS + 1) as i8;
     feed(&mut ui, Input::turn(EncoderId::A, -up)); // the last of the INIT rows
     let fb = render_ui(&ui);
     assert_eq!(fb.at(120, row_y(INITS - 1) - 5), theme::ACCENT);
@@ -652,10 +650,8 @@ fn loading_a_soon_row_is_a_no_op() {
         feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
         let part = PartId::ALL[1];
         let before = ui.project().part(part).sound.clone();
-        feed(
-            &mut ui,
-            Input::turn(EncoderId::A, s.entry() as i8 - HEAD as i8),
-        );
+        let by = s.entry() as i8 - opened(&ui) as i8;
+        feed(&mut ui, Input::turn(EncoderId::A, by));
         assert_eq!(
             ui.location(),
             Location::sound_at(part, Browse::of(s.entry() as u8, 0))
@@ -685,10 +681,8 @@ fn clear_and_save_never_act_on_a_soon_row() {
         };
         let before = filled(&ui);
         feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-        feed(
-            &mut ui,
-            Input::turn(EncoderId::A, s.entry() as i8 - HEAD as i8),
-        );
+        let by = s.entry() as i8 - opened(&ui) as i8;
+        feed(&mut ui, Input::turn(EncoderId::A, by));
         assert_eq!(
             ui.location().browse().map(|(_, b)| b.cursor()),
             Some(s.entry())
@@ -718,5 +712,78 @@ fn library_lists_tape_sounds() {
     assert_ne!(
         with(&[EngineType::Va, EngineType::Tape]),
         with(&[EngineType::Va])
+    );
+}
+
+/// Part 1 saved to slot `n`: its origin is that slot, fresh.
+fn saved_to(n: usize) -> Box<chimera_core::ui::UiState> {
+    let mut ui = Box::new(chimera_core::ui::UiState::new());
+    chimera_core::project::test_support::save_part_to(
+        ui.project_mut(),
+        PartId::ALL[0],
+        SlotId::ALL[n],
+    );
+    ui
+}
+
+/// The cursor the Sound rung opened on.
+fn opened(ui: &chimera_core::ui::UiState) -> usize {
+    ui.location().browse().unwrap().1.cursor()
+}
+
+fn origin_entry(ui: &chimera_core::ui::UiState) -> Option<usize> {
+    let p = ui.project();
+    browser::entry_of(p.part(PartId::ALL[0]).origin(), p.pool())
+}
+
+#[test]
+fn opens_on_its_slot() {
+    let mut ui = saved_to(5);
+    assert_eq!(origin_entry(&ui), Some(HEAD + 5));
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    assert_eq!(ui.location().browse().unwrap().1.cursor(), HEAD + 5);
+}
+
+#[test]
+fn opens_on_its_init() {
+    use chimera_core::project::Origin;
+    for (i, &e) in INIT_TYPES.iter().enumerate() {
+        assert_eq!(browser::entry_of(Origin::Init(e), empty().pool()), Some(i));
+    }
+}
+
+#[test]
+fn stale_slot_opens_as_today() {
+    let mut ui = saved_to(5);
+    let mut other = Sound::init(EngineType::Modal);
+    chimera_core::project::test_support::dense(&mut other, 9);
+    ui.project_mut().pool_store(SlotId::ALL[5], &other).unwrap();
+    assert_eq!(origin_entry(&ui), None);
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    assert_eq!(
+        ui.location().browse(),
+        Some((PartId::ALL[0], Browse::default()))
+    );
+}
+
+#[test]
+fn far_slot_scrolls_into_view() {
+    let b = Browse::at(HEAD + 100);
+    assert_eq!(b.cursor(), HEAD + 100);
+    assert!(b.scroll() <= b.cursor() && b.cursor() < b.scroll() + VISIBLE_ROWS);
+    assert_eq!((b.lib_cursor(), b.lib_scroll()), (0, 0));
+}
+
+#[test]
+fn edit_and_edit_part_agree() {
+    let mut ui = saved_to(100);
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    let chord = ui.location();
+    tap(&mut ui, ButtonId::Seq);
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert_eq!(ui.location(), chord);
+    assert_eq!(
+        chord.browse(),
+        Some((PartId::ALL[0], Browse::at(HEAD + 100)))
     );
 }

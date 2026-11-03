@@ -16,7 +16,7 @@ use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::preset::MAX_SOUNDS;
 use crate::project::arena::Cost;
-use crate::project::{Line, PartId, Pool, Project, SlotId};
+use crate::project::{Line, Origin, PartId, Pool, Project, SlotId};
 use crate::storage::{BUILD_LEN, BuildStamp, HEADER_LEN, TRAILER_LEN};
 use crate::ui::components;
 use crate::ui::draw;
@@ -130,6 +130,16 @@ impl Browse {
         }
     }
 
+    /// PROJECT's cursor on `entry`, scrolled into view.
+    pub fn at(entry: usize) -> Self {
+        let (cursor, scroll) = follow(entry, 0, TOTAL_ENTRIES);
+        Browse {
+            cursor,
+            scroll,
+            ..Browse::default()
+        }
+    }
+
     /// Any cursor and scroll, unchecked: tests only.
     #[cfg(any(test, feature = "test-support"))]
     pub const fn of(cursor: u8, scroll: u8) -> Self {
@@ -154,6 +164,18 @@ fn follow(cursor: usize, scroll: usize, rows: usize) -> (u8, u8) {
 /// The pool slot at list entry `entry`; `None` for the rows above them.
 pub fn slot_at(entry: usize) -> Option<SlotId> {
     SlotId::new(u8::try_from(entry.checked_sub(HEAD)?).ok()?)
+}
+
+/// The row a Part's Sound came from: its INIT, or its slot while that
+/// still holds what was loaded.
+pub fn entry_of(origin: Origin, pool: &Pool) -> Option<usize> {
+    match origin {
+        Origin::Init(e) => INIT_TYPES.iter().position(|&t| t == e),
+        Origin::Slot {
+            slot, generation, ..
+        } => (pool.get(slot).is_some() && pool.generation(slot) == generation)
+            .then_some(HEAD + slot.index()),
+    }
 }
 
 /// The entry at `entry`; `None` past the list.

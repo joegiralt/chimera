@@ -6,7 +6,6 @@ use chimera_core::project::{
 };
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::browser::HEAD;
 use chimera_core::ui::nav::{Browse, NavCtx, OrbitCx, PartChain};
 use chimera_core::ui::page::PageKey;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
@@ -117,6 +116,7 @@ fn node(ui: &UiState) -> usize {
         orbit: OrbitCx::NONE,
         rev: chimera_core::dsp::reverb::ReverbType::Quad,
         pages: chimera_core::ui::theme_settings::Pages::Stack,
+        opens: Default::default(),
     };
     ui.location().page(&cx).unwrap().1.node() as usize
 }
@@ -422,7 +422,13 @@ fn performance_default_is_new() {
 
 /// Encoder A turned from the browser's opening row to list entry `entry`.
 fn to_entry(ui: &mut UiState, entry: usize) {
-    let d = entry as i8 - HEAD as i8;
+    let at = ui
+        .location()
+        .browse()
+        .expect("on the Sound rung")
+        .1
+        .cursor();
+    let d = entry as i8 - at as i8;
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, d));
 }
 

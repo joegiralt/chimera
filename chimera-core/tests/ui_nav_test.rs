@@ -166,7 +166,7 @@ fn edit_on_mixer_opens_sound_and_seq_comes_back() {
     let mut ui = crate::screen::stack_ui();
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B2));
     feed(&mut ui, Input::press(ButtonId::Edit));
-    assert_eq!(ui.location(), Location::sound(P[1]));
+    assert_eq!(ui.location().browse().map(|(p, _)| p), Some(P[1]));
     tap(&mut ui, ButtonId::Seq);
     let sends = Location::mixer(P[1], MixPage::Sends);
     assert_eq!(ui.location(), sends);
@@ -318,8 +318,7 @@ fn every_first_landing_is_the_chains_home() {
         .iter()
         .position(|&e| e == EngineType::Modal)
         .unwrap();
-    let d = init as i8 - chimera_core::ui::browser::HEAD as i8;
-    feed(&mut ui, Input::turn(EncoderId::A, d));
+    crate::screen::to_row(&mut ui, init);
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(ui.location(), res(P[2]), "INIT");
 
