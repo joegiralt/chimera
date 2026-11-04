@@ -286,9 +286,46 @@ impl Clean {
     #[inline(always)]
     pub(super) fn steady<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
         let c = coef::<M>(r.g.1, r.k.1, trim(CLEAN_MODES[M as usize], r.k.1));
-        for s in buf.iter_mut() {
-            *s = self.tick::<M>(*s, &c);
+        self.held::<M>(buf, &c);
+    }
+
+    /// `buf` through `tick` at `c`. A cascade's second stage runs a sample
+    /// behind its first, two chains the FPU overlaps (#793): each value is
+    /// `tick`'s arithmetic, so the same bits.
+    #[inline(always)]
+    fn held<const M: u8>(&mut self, buf: &mut [f32], c: &Coef) {
+        let mode = CLEAN_MODES[M as usize];
+        let Some((first, rest)) = buf.split_first_mut().filter(|_| cascade(mode)) else {
+            for s in buf.iter_mut() {
+                *s = self.tick::<M>(*s, c);
+            }
+            return;
+        };
+        let pick = |(lp, bp, hp): (f32, f32, f32)| match mode {
+            FilterMode::Lp24 => lp,
+            FilterMode::Bp24 => bp,
+            _ => hp,
+        };
+        let mut a = pick(self.stage(*first, c.g, c.k, c.d, 0));
+        let mut prev = first;
+        for s in rest {
+            let next = pick(self.stage(*s, c.g, c.k, c.d, 0));
+            *prev = self.second::<M>(a, c);
+            (a, prev) = (next, s);
         }
+        *prev = self.second::<M>(a, c);
+    }
+
+    /// A cascade's second stage on its first's output, trimmed: `tick`'s.
+    #[inline(always)]
+    fn second<const M: u8>(&mut self, a: f32, c: &Coef) -> f32 {
+        let (lp, bp, hp) = self.stage(a, c.g, c.k2, c.d2, 1);
+        let y = match CLEAN_MODES[M as usize] {
+            FilterMode::Lp24 => lp,
+            FilterMode::Bp24 => bp * 2.0,
+            _ => hp,
+        };
+        y * c.trim
     }
 
     /// A knob glide: `g`, `k` and the trim step `STEPS` times to this
@@ -299,9 +336,7 @@ impl Clean {
         let t = (trim(mode, r.k.0), trim(mode, r.k.1));
         for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
             let c = coef::<M>(step_to(r.g, j), step_to(r.k, j), step_to(t, j));
-            for s in sub {
-                *s = self.tick::<M>(*s, &c);
-            }
+            self.held::<M>(sub, &c);
         }
     }
 
@@ -544,6 +579,39 @@ mod tests {
         for (i, (a, b)) in s.iter().zip(&v).enumerate() {
             assert!((a - b).abs() <= 1e-6 * peak, "sample {i}: {a} vs {b}");
         }
+    }
+    /// `held`'s cascades a sample apart are `tick` a sample at a time, to
+    /// the bit, states too: driven hard, so `sat_c1` bends, and at self-
+    /// oscillation.
+    #[test]
+    fn held_is_tick_to_the_bit() {
+        fn check<const M: u8>() {
+            for (g, k) in [(0.05, 1.4), (0.7, 0.2), (2.5, -0.1)] {
+                let c = coef::<M>(g, k, trim(CLEAN_MODES[M as usize], k));
+                let mut x: [f32; BLOCK_SIZE] =
+                    core::array::from_fn(|i| 3.0 * (((i * 37) % 23) as f32 / 11.0 - 1.0));
+                let (mut a, mut b) = (Clean::new(), Clean::new());
+                let mut y = x;
+                for _ in 0..4 {
+                    a.held::<M>(&mut x, &c);
+                    for s in y.iter_mut() {
+                        *s = b.tick::<M>(*s, &c);
+                    }
+                    let bits = |v: [f32; BLOCK_SIZE]| v.map(f32::to_bits);
+                    assert_eq!(bits(x), bits(y), "mode {M} g {g} k {k}");
+                    let st = |c: &Clean| [c.s1[0], c.s1[1], c.s2[0], c.s2[1], c.ap[0], c.ap[1], c.ap[2], c.ap[3], c.w].map(f32::to_bits);
+                    assert_eq!(st(&a), st(&b));
+                }
+            }
+        }
+        check::<0>();
+        check::<1>();
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<5>();
+        check::<6>();
+        check::<7>();
     }
 }
 
