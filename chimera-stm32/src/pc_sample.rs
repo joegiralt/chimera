@@ -20,7 +20,7 @@ static TAKEN: AtomicUsize = AtomicUsize::new(0);
 static ARMED: AtomicBool = AtomicBool::new(false);
 
 // The vector's entry: the exception frame is at MSP (the bench runs on
-// MSP), its stacked PC 24 B in.
+// MSP), its stacked PC 24 B in; r7, the frame pointer, as interrupted.
 core::arch::global_asm!(
     ".section .text.TIM6_DAC,\"ax\",%progbits",
     ".global TIM6_DAC",
@@ -28,11 +28,52 @@ core::arch::global_asm!(
     ".thumb_func",
     "TIM6_DAC:",
     "mrs r0, msp",
+    "mov r1, r7",
     "b {f}",
     f = sym sample,
 );
 
-extern "C" fn sample(frame: *const u32) {
+unsafe extern "C" {
+    fn __aeabi_memclr();
+    fn __aeabi_memclr4();
+    fn __aeabi_memclr8();
+    fn __aeabi_memcpy();
+    fn __aeabi_memcpy4();
+    fn __aeabi_memcpy8();
+    fn __aeabi_memset();
+    fn __aeabi_memset4();
+    fn __aeabi_memset8();
+}
+
+/// The `mem*` builtins' span, give or take the last one's length: a PC in
+/// it is charged to its caller instead (`[r7 + 4]`), stored odd (a
+/// return address keeps its Thumb bit, a stacked PC never has it).
+fn mem_span() -> (u32, u32) {
+    let f: [unsafe extern "C" fn(); 9] = [
+        __aeabi_memclr,
+        __aeabi_memclr4,
+        __aeabi_memclr8,
+        __aeabi_memcpy,
+        __aeabi_memcpy4,
+        __aeabi_memcpy8,
+        __aeabi_memset,
+        __aeabi_memset4,
+        __aeabi_memset8,
+    ];
+    let a = f.map(|f| f as usize as u32 & !1);
+    let (lo, hi) = (a.iter().min(), a.iter().max());
+    (lo.copied().unwrap_or(0), hi.map_or(0, |h| h + 0xd0))
+}
+
+/// The caller of the frame at `fp`, if `fp` looks like RAM.
+fn caller(fp: u32) -> Option<u32> {
+    let ram = matches!(fp >> 24, 0x20 | 0x24 | 0x30) && fp & 3 == 0;
+    // SAFETY: `fp` is word-aligned in DTCM, AXI or D2 RAM, so readable;
+    // a stale one reads a wrong word, never faults.
+    ram.then(|| unsafe { ((fp + 4) as *const u32).read_volatile() } | 1)
+}
+
+extern "C" fn sample(frame: *const u32, fp: u32) {
     // SAFETY: the bench only steals TIM6 here and in `start`; this clears
     // its update flag, nothing else.
     let tim = unsafe { &*pac::TIM6::ptr() };
@@ -46,7 +87,11 @@ extern "C" fn sample(frame: *const u32) {
         // MSP; word 6 is the interrupted PC. `SAMPLES[i]` is written only
         // here, and read only once `stop` has disarmed.
         unsafe {
-            let pc = frame.add(6).read_volatile();
+            let mut pc = frame.add(6).read_volatile();
+            let (lo, hi) = mem_span();
+            if (lo..hi).contains(&pc) {
+                pc = caller(fp).unwrap_or(pc);
+            }
             (&mut *core::ptr::addr_of_mut!(SAMPLES))[i] = pc;
         }
         TAKEN.store(i + 1, Ordering::Relaxed);
