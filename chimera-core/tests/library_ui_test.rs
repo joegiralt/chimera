@@ -781,8 +781,6 @@ fn a_save_from_settings_drops_the_page_and_lists_on_entry() {
         tap(&mut r.ui, ButtonId::Menu);
     }
     r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
-    assert_eq!(r.ui.lib_tab(), Tab::Project, "a key opens PROJECT");
-    r.feed(Input::turn(EncoderId::B, 1));
     assert!(r.ui.card_pending());
     r.work();
     assert_eq!(r.cursor_id(), Some(1));

@@ -2811,8 +2811,9 @@ impl UiState {
             let at = self.loc.settings();
             match self.loc.step(k, &cx, &mut self.recall) {
                 Step::Go(to) => {
-                    // A key into the browser opens PROJECT, on the Part's row.
-                    if self.loc.browse().is_none() && to.browse().is_some() {
+                    // EDIT+Part and a Part page's EDIT open PROJECT, on the
+                    // Part's row; MENU and back keeps the tab.
+                    if matches!(k, NavKey::EditPart(_) | NavKey::Edit) && to.browse().is_some() {
                         self.lib.tab = Tab::Project;
                     }
                     self.go(to)

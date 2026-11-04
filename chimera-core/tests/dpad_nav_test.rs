@@ -350,8 +350,8 @@ fn mix_edit_in_the_browser_saves_the_sound() {
 }
 
 /// Encoder B turns the Sound rung PROJECT → LIBRARY → FACTORY, clamped at
-/// each end; the tab is kept for the session (PROJECT at boot), the Part
-/// stays, and MINUS and PLUS still move between Parts.
+/// each end; MINUS and PLUS keep it and move between Parts, and EDIT+Part
+/// opens PROJECT again.
 #[test]
 fn b_turns_three_tabs_and_the_browser_opens_on_project() {
     use chimera_core::ui::library::BrowserTab as Tab;
@@ -565,4 +565,20 @@ fn row_buttons_on_the_panel() {
     assert_eq!(sub(&ui) as usize, n - 1);
     tap(&mut ui, ButtonId::Seq);
     assert_eq!(sub(&ui), 0, "SEQ wraps from the last");
+}
+
+/// MENU and back returns to the browser as it was left.
+#[test]
+fn menu_and_back_keeps_the_tab() {
+    use chimera_core::ui::library::BrowserTab as Tab;
+    use chimera_hal::EncoderId;
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    tap(&mut ui, ButtonId::Menu);
+    while ui.in_settings() {
+        tap(&mut ui, ButtonId::Menu);
+    }
+    assert!(ui.location().browse().is_some(), "back on the browser");
+    assert_eq!(ui.lib_tab(), Tab::Library);
 }
