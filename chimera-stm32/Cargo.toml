@@ -20,6 +20,9 @@ bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "usb-console
 # `tools/loop_count.py` counts the kernel's loops on. Its bank 1 holds the
 # rig; the reverb and VA's MOD path play from bank 2 (#654).
 bench-algo = ["bench", "midi-din", "midi-usb", "chimera-core/span-count", "chimera-engine/demo-sounds", "chimera-engine/bench-warm"]
+# A PC profile of ALGO's 6 OP and 1 OP rows and the idle bus, no other
+# page and no `span-count`, so the kernel inlines as it ships (#793).
+pc-sample = ["bench", "midi-din", "midi-usb", "chimera-engine/demo-sounds"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
 bench-routing = ["bench", "midi-din", "midi-usb"]
 # MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.

@@ -1265,6 +1265,8 @@ fn algo_pages(
         algo_page(&mut rig, rec, clocks);
         hold(clocks);
     }
+    #[cfg(feature = "pc-sample")]
+    pc_page(&mut rig, rec);
     #[cfg(feature = "bench-routing")]
     routing_pages(&mut rig, rec, clocks);
     #[cfg(feature = "bench-memory")]
@@ -1276,6 +1278,50 @@ fn algo_pages(
     #[cfg(feature = "bench-orbit")]
     orbit_pages(&mut rig, rec, clocks);
     let _ = (&mut rig, rec, proj_crc);
+}
+
+/// Where ALGO's 6 OP and 1 OP rows at eight voices spend their cycles:
+/// each row's PCs as `PC COUNT`, the busiest first, until the report is
+/// full (#793). `tools` maps them to functions on the ELF.
+#[cfg(feature = "pc-sample")]
+fn pc_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
+    #[unsafe(link_section = ".bank2.rodata.bench")]
+    static PC_ROWS: [(&str, fn() -> ParamSnapshot); 2] = [
+        ("6 OP", || algo(AlgoId::A1, ALL, 0)),
+        ("1 OP", || algo(AlgoId::A1, 0b1, 0)),
+    ];
+    crate::pc_sample::start();
+    rec.clear();
+    let mut line = FmtBuf::new();
+    for &(label, patch) in &PC_ROWS {
+        let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
+        let (cycles, ..) = rig.time(&setup, &|_, _| {}, MAX_VOICES, 36, 12);
+        let s = crate::pc_sample::taken();
+        line.clear();
+        let _ = write!(line, "PC {label} {cycles} {}", s.len());
+        rec.heading(line.as_str());
+        // Runs of one 32-B granule, busiest first: at most 160 a row.
+        for p in s.iter_mut() {
+            *p &= !31;
+        }
+        let mut runs = [(0u32, 0u16); 160];
+        let mut i = 0;
+        while i < s.len() {
+            let j = s[i..].iter().position(|&p| p != s[i]).map_or(s.len(), |k| i + k);
+            let n = (j - i) as u16;
+            if let Some(m) = runs.iter_mut().min_by_key(|r| r.1).filter(|m| m.1 < n) {
+                *m = (s[i], n);
+            }
+            i = j;
+        }
+        runs.sort_unstable_by_key(|r| core::cmp::Reverse(r.1));
+        for (pc, n) in runs.iter().filter(|r| r.1 > 0) {
+            line.clear();
+            let _ = write!(line, "{pc:08X} {n}");
+            rec.line(Face::Value, line.as_str(), (4, 40));
+        }
+    }
+    rec.flush();
 }
 
 /// The ALGO screen: each patch at 1..8 voices, the kernel and the FX bus.
@@ -2532,12 +2578,16 @@ impl Rig<'_> {
             each(shared, b);
             inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
         }
+        #[cfg(feature = "pc-sample")]
+        crate::pc_sample::arm();
         let start = DWT::cycle_count();
         for b in 0..TIMED_BLOCKS {
             each(shared, WARM_BLOCKS + b);
             inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
         }
         let cycles = DWT::cycle_count().wrapping_sub(start);
+        #[cfg(feature = "pc-sample")]
+        crate::pc_sample::disarm();
         let spans = match inst.ringing() {
             0 => inst.sounding(),
             ringing => ringing,
