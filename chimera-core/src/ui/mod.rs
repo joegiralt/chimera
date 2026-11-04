@@ -2810,7 +2810,14 @@ impl UiState {
             let cx = self.cx();
             let at = self.loc.settings();
             match self.loc.step(k, &cx, &mut self.recall) {
-                Step::Go(to) => self.go(to),
+                Step::Go(to) => {
+                    // EDIT+Part and a Part page's EDIT open PROJECT, on the
+                    // Part's row; MENU and back keeps the tab.
+                    if matches!(k, NavKey::EditPart(_) | NavKey::Edit) && to.browse().is_some() {
+                        self.lib.tab = Tab::Project;
+                    }
+                    self.go(to)
+                }
                 Step::Act(a) => self.run_act(a, at),
                 Step::Screen(s @ (Screen::LoadProject | Screen::ManageProjects)) => {
                     self.queue(Job::List(s))

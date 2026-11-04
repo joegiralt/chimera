@@ -1273,3 +1273,16 @@ fn factory_peek_of_a_deleted_file_relists_once() {
     assert_eq!(r.st.reads, reads, "settled: no peek every pass");
     assert!(!r.ui.card_pending());
 }
+
+/// Back from naming a LIBRARY save, the browser is still on LIBRARY.
+#[test]
+fn naming_returns_to_library() {
+    let mut r = Rig::new();
+    r.open_library();
+    r.work();
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit));
+    tap(&mut r.ui, ButtonId::Edit);
+    r.work();
+    assert!(r.ui.location().browse().is_some());
+    assert_eq!(r.ui.lib_tab(), Tab::Library);
+}
