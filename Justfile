@@ -225,9 +225,9 @@ check-door-placed elf:
     fi
     # The MIDI UI's door entries always link; whatever of `ui::midi` the
     # inliner leaves out of them is checked too, and MIDI MAP's entries
-    # where `midi-map` links them.
-    midi_ui=('ui::UiState>::hear_in$' 'ui::UiState>::hand_in$')
-    for p in 'ui::midi::' 'ui::UiState>::map_in$' 'ui::UiState>::focus_note$' 'ui::UiState>::out_in$' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
+    # (`hear_in`, `map_in`) where `midi-map` links them.
+    midi_ui=('ui::UiState>::hand_in$')
+    for p in 'ui::midi::' 'ui::UiState>::hear_in$' 'ui::UiState>::map_in$' 'ui::UiState>::focus_note$' 'ui::UiState>::out_in$' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
         if grep -qE " [tT] .*$p" <<< "$syms"; then midi_ui+=("$p"); fi
     done
     for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on'; do
