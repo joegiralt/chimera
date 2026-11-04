@@ -887,3 +887,15 @@ fn cc_newtype_and_reserved() {
         .collect();
     assert_eq!(reserved, want);
 }
+
+/// DIN's sensing lost lets go of its pedals too, after the NotesOff (#849).
+#[test]
+fn din_sensing_lost_lifts_a_held_pedal() {
+    let mut din = Din::new();
+    din.run(&[0xB2, 64, 127, 0xB5, 64, 127, 0xB5, 64, 0, 0xFE]);
+    let mut want = all_notes_off();
+    want.push(pedal_up(2));
+    assert_eq!(din.run(&[]).0, want, "only the pedal still down");
+    din.run(&[0xFE]);
+    assert_eq!(din.run(&[]).0, all_notes_off(), "lifted once");
+}

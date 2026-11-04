@@ -403,22 +403,46 @@ pub struct DinPipe {
     stats: PipeStats,
     /// A bit a channel whose NotesOff `lost` owes the queue.
     owed: u16,
+    pedals: Pedals,
 }
 
-/// The keys and pedals USB's host holds on the note queue, and the
-/// pedal-ups `lost` owes it. USB's alone (`UsbSlot`): only its poll reads
-/// them, so DIN's pipe carries none.
+/// The pedals a source holds on the note queue, and the pedal-ups `lost`
+/// owes it.
+struct Pedals {
+    /// A bit a channel whose pedal the queue took down: cleared by its
+    /// pedal-up or Reset All Controllers.
+    down: u16,
+    /// A bit a channel whose pedal-up the queue has yet to take, after
+    /// every owed NotesOff.
+    up: u16,
+}
+
+impl Pedals {
+    fn heard(&mut self, e: InEvent) {
+        match e {
+            InEvent::Sustain(p) => {
+                let bit = 1 << (p.channel.get() & 15);
+                if p.down {
+                    self.down |= bit;
+                } else {
+                    self.down &= !bit;
+                }
+            }
+            InEvent::Mode(m) if m.mode == ChannelMode::ResetControllers => {
+                self.down &= !(1 << (m.channel.get() & 15));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The keys USB's host holds on the note queue. USB's alone (`UsbSlot`):
+/// only its poll reads them, so DIN's pipe carries none.
 struct Held {
     /// A bit a key, a word a channel: set by a note-on the queue took,
     /// cleared by its note-off, NotesOff or SoundOff. A count a channel
     /// would be fooled by a stray note-off (256 B against 16).
     keys: [u128; 16],
-    /// A bit a channel whose pedal the queue took down: cleared by its
-    /// pedal-up or Reset All Controllers.
-    pedal: u16,
-    /// A bit a channel whose pedal-up the queue has yet to take, after
-    /// every owed NotesOff.
-    up: u16,
 }
 
 impl Held {
@@ -438,17 +462,8 @@ impl Held {
                     NoteKind::Off => *k &= !bit,
                 }
             }
-            InEvent::Sustain(p) => {
-                let bit = 1 << (p.channel.get() & 15);
-                if p.down {
-                    self.pedal |= bit;
-                } else {
-                    self.pedal &= !bit;
-                }
-            }
-            InEvent::Mode(m) if m.mode == ChannelMode::ResetControllers => {
-                self.pedal &= !(1 << (m.channel.get() & 15));
-            }
+            // Pedals only (`Pedals::heard`): the keys stay down.
+            InEvent::Mode(m) if m.mode == ChannelMode::ResetControllers => {}
             InEvent::Mode(m) => *self.keys(m.channel) = 0,
             _ => {}
         }
@@ -480,6 +495,7 @@ impl DinPipe {
                 ctrl_refused: 0,
             },
             owed: 0,
+            pedals: Pedals { down: 0, up: 0 },
         }
     }
 
@@ -494,6 +510,7 @@ impl DinPipe {
             out: &mut *out,
             stats: &mut self.stats,
             owed: &mut self.owed,
+            pedals: &mut self.pedals,
             held: held.as_deref_mut(),
         }
         .settle();
@@ -505,6 +522,7 @@ impl DinPipe {
                 out: &mut *out,
                 stats: &mut self.stats,
                 owed: &mut self.owed,
+                pedals: &mut self.pedals,
                 held: held.as_deref_mut(),
             };
             match parsed {
@@ -562,20 +580,21 @@ impl DinPipe {
 
     /// The source went away (DIN's sensing timed out, USB's bus reset or
     /// suspend): every Part lets go and the UI hears it; then every pedal
-    /// `held` (USB's) has down is lifted. NotesOff and pedal-ups a full
+    /// the source has down is lifted. NotesOff and pedal-ups a full
     /// queue refuses are owed, each channel's once, and go ahead of
     /// anything fed after (`feed`).
     fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S, mut held: Option<&mut Held>) {
         self.owed = u16::MAX;
+        self.pedals.up |= self.pedals.down;
+        self.pedals.down = 0;
         if let Some(h) = held.as_deref_mut() {
             h.keys = [0; 16];
-            h.up |= h.pedal;
-            h.pedal = 0;
         }
         let mut sink = Counted {
             out,
             stats: &mut self.stats,
             owed: &mut self.owed,
+            pedals: &mut self.pedals,
             held,
         };
         sink.settle();
@@ -688,24 +707,23 @@ impl UsbSlot {
     pub const fn new() -> Self {
         Self {
             slot: PipeSlot::new(),
-            held: Held {
-                keys: [0; 16],
-                pedal: 0,
-                up: 0,
-            },
+            held: Held { keys: [0; 16] },
         }
     }
 
     /// A key or pedal the queue took down that nothing has let go since.
     #[inline(always)]
     pub fn holds(&self) -> bool {
-        self.held.pedal != 0 || self.held.keys.iter().any(|&k| k != 0)
+        self.slot.pipe().is_some_and(|p| p.pedals.down != 0)
+            || self.held.keys.iter().any(|&k| k != 0)
     }
 
     /// NotesOff or pedal-ups `lost` still owes the queue. Field reads.
     #[inline(always)]
     pub fn owes(&self) -> bool {
-        self.held.up != 0 || self.slot.pipe().is_some_and(|p| p.owed != 0)
+        self.slot
+            .pipe()
+            .is_some_and(|p| p.owed != 0 || p.pedals.up != 0)
     }
 
     /// As of the last `feed`; nothing counted before the first.
@@ -865,6 +883,7 @@ struct Counted<'a, S: Sinks + ?Sized> {
     out: &'a mut S,
     stats: &'a mut PipeStats,
     owed: &'a mut u16,
+    pedals: &'a mut Pedals,
     held: Option<&'a mut Held>,
 }
 
@@ -872,6 +891,7 @@ impl<S: Sinks + ?Sized> Counted<'_, S> {
     /// Refused while NotesOff are owed, so none overtakes them.
     fn note(&mut self, e: InEvent) {
         if self.settle() && self.out.note(e) {
+            self.pedals.heard(e);
             if let Some(h) = self.held.as_deref_mut() {
                 h.heard(e);
             }
@@ -884,9 +904,7 @@ impl<S: Sinks + ?Sized> Counted<'_, S> {
     /// leaves sustained go with the pedal), lowest channel first, until
     /// one is refused; `true`: none left.
     fn settle(&mut self) -> bool {
-        let mut none = 0;
-        let up = self.held.as_deref_mut().map_or(&mut none, |h| &mut h.up);
-        for (bits, up) in [(&mut *self.owed, false), (up, true)] {
+        for (bits, up) in [(&mut *self.owed, false), (&mut self.pedals.up, true)] {
             while *bits != 0 {
                 let channel = Channel::clamped(bits.trailing_zeros() as u8);
                 let e = if up {
