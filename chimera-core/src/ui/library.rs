@@ -30,7 +30,8 @@ use crate::ui::settings::replace::LibraryAsk;
 use crate::ui::settings::{Ask, NamingFor, PART_ROW, SAVE_TO_LIB_ROW};
 use crate::ui::source_cell::{READ_FAILED, SOURCE_MISSING, SourceLoad, SourceNote, StagedStep};
 
-/// What the Sound rung lists: kept for the session, PROJECT at boot.
+/// What the Sound rung lists: PROJECT when a key opens it; kept while it
+/// names a Sound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BrowserTab {
     Project,

@@ -2810,7 +2810,13 @@ impl UiState {
             let cx = self.cx();
             let at = self.loc.settings();
             match self.loc.step(k, &cx, &mut self.recall) {
-                Step::Go(to) => self.go(to),
+                Step::Go(to) => {
+                    // A key into the browser opens PROJECT, on the Part's row.
+                    if self.loc.browse().is_none() && to.browse().is_some() {
+                        self.lib.tab = Tab::Project;
+                    }
+                    self.go(to)
+                }
                 Step::Act(a) => self.run_act(a, at),
                 Step::Screen(s @ (Screen::LoadProject | Screen::ManageProjects)) => {
                     self.queue(Job::List(s))
