@@ -1300,10 +1300,10 @@ fn pc_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
         line.clear();
         let _ = write!(line, "PC {label} {cycles} {}", s.len());
         rec.heading(line.as_str());
-        // Runs of one 32-B granule, busiest first: at most 160 a row; a
+        // Runs of one 128-B granule, busiest first: at most 160 a row; a
         // caller (odd) apart from a PC.
         for p in s.iter_mut() {
-            *p &= !30;
+            *p &= !126;
         }
         let mut runs = [(0u32, 0u16); 160];
         let mut i = 0;
