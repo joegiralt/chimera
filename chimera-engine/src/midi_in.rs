@@ -408,7 +408,6 @@ pub struct DinPipe {
 
 /// The pedals a source holds on the note queue, and the pedal-ups `lost`
 /// owes it.
-#[derive(Clone, Copy)]
 struct Pedals {
     /// A bit a channel whose pedal the queue took down: cleared by its
     /// pedal-up or Reset All Controllers.
@@ -463,6 +462,7 @@ impl Held {
                     NoteKind::Off => *k &= !bit,
                 }
             }
+            // Pedals only (`Pedals::heard`): the keys stay down.
             InEvent::Mode(m) if m.mode == ChannelMode::ResetControllers => {}
             InEvent::Mode(m) => *self.keys(m.channel) = 0,
             _ => {}
