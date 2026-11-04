@@ -1305,6 +1305,7 @@ fn pc_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
         for p in s.iter_mut() {
             *p &= !126;
         }
+        s.sort_unstable();
         let mut runs = [(0u32, 0u16); 160];
         let mut i = 0;
         while i < s.len() {
@@ -1322,6 +1323,7 @@ fn pc_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
             rec.line(Face::Value, line.as_str(), (4, 40));
         }
     }
+    crate::pc_sample::stop();
     rec.flush();
 }
 

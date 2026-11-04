@@ -68,8 +68,9 @@ fn mem_span() -> (u32, u32) {
 /// The caller of the frame at `fp`, if `fp` looks like RAM.
 fn caller(fp: u32) -> Option<u32> {
     let ram = matches!(fp >> 24, 0x20 | 0x24 | 0x30) && fp & 3 == 0;
-    // SAFETY: `fp` is word-aligned in DTCM, AXI or D2 RAM, so readable;
-    // a stale one reads a wrong word, never faults.
+    // SAFETY: r7 is always the frame pointer in this build (no function
+    // uses it as a general register), so a RAM-region `fp` points into a
+    // live stack frame; the region check guards only the rare prologue PC.
     ram.then(|| unsafe { ((fp + 4) as *const u32).read_volatile() } | 1)
 }
 
@@ -110,6 +111,20 @@ pub fn start() {
     tim.cr1.write(|w| w.cen().set_bit());
     // SAFETY: `sample` touches only TIM6's flag and this module's statics.
     unsafe { cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM6_DAC) };
+}
+
+/// TIM6 masked, stopped and unclocked, so later pages and audio run
+/// without it.
+pub fn stop() {
+    disarm();
+    cortex_m::peripheral::NVIC::mask(pac::Interrupt::TIM6_DAC);
+    // SAFETY: as in `start`; the interrupt is masked, so `sample` no longer
+    // runs.
+    let (rcc, tim) = unsafe { (&*pac::RCC::ptr(), &*pac::TIM6::ptr()) };
+    tim.cr1.write(|w| w.cen().clear_bit());
+    tim.sr.write(|w| w.uif().clear_bit());
+    rcc.apb1lenr.modify(|_, w| w.tim6en().clear_bit());
+    cortex_m::peripheral::NVIC::unpend(pac::Interrupt::TIM6_DAC);
 }
 
 /// Samples from empty while armed.
