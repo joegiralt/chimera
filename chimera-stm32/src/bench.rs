@@ -1305,10 +1305,14 @@ fn pc_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
         for p in s.iter_mut() {
             *p &= !126;
         }
+        s.sort_unstable();
         let mut runs = [(0u32, 0u16); 160];
         let mut i = 0;
         while i < s.len() {
-            let j = s[i..].iter().position(|&p| p != s[i]).map_or(s.len(), |k| i + k);
+            let j = s[i..]
+                .iter()
+                .position(|&p| p != s[i])
+                .map_or(s.len(), |k| i + k);
             let n = (j - i) as u16;
             if let Some(m) = runs.iter_mut().min_by_key(|r| r.1).filter(|m| m.1 < n) {
                 *m = (s[i], n);
@@ -1322,6 +1326,7 @@ fn pc_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
             rec.line(Face::Value, line.as_str(), (4, 40));
         }
     }
+    crate::pc_sample::stop();
     rec.flush();
 }
 

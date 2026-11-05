@@ -15,7 +15,9 @@ compile_error!("bench and sd-probe both take over after boot: pick one");
         feature = "pc-sample"
     ))
 ))]
-compile_error!("the bench needs an area: bench-algo, -routing, -memory, -stress, -orbit, -tape or pc-sample");
+compile_error!(
+    "the bench needs an area: bench-algo, -routing, -memory, -stress, -orbit, -tape or pc-sample"
+);
 #[cfg(all(feature = "usb-console", feature = "sd-probe"))]
 compile_error!(
     "the SD probe halts after boot, so nothing would poll USB: build it with --no-default-features"
@@ -28,11 +30,11 @@ mod audio;
 mod bench;
 #[cfg(feature = "filter-probes")]
 mod filter_probes;
-#[cfg(feature = "pc-sample")]
-mod pc_sample;
 #[cfg(all(feature = "midi-din", not(feature = "sd-probe")))]
 mod midi_din;
 mod panic;
+#[cfg(feature = "pc-sample")]
+mod pc_sample;
 
 use chimera_board::dfu;
 use cortex_m_rt::entry;

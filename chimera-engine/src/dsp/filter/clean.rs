@@ -599,7 +599,13 @@ mod tests {
                     }
                     let bits = |v: [f32; BLOCK_SIZE]| v.map(f32::to_bits);
                     assert_eq!(bits(x), bits(y), "mode {M} g {g} k {k}");
-                    let st = |c: &Clean| [c.s1[0], c.s1[1], c.s2[0], c.s2[1], c.ap[0], c.ap[1], c.ap[2], c.ap[3], c.w].map(f32::to_bits);
+                    let st = |c: &Clean| {
+                        [
+                            c.s1[0], c.s1[1], c.s2[0], c.s2[1], c.ap[0], c.ap[1], c.ap[2], c.ap[3],
+                            c.w,
+                        ]
+                        .map(f32::to_bits)
+                    };
                     assert_eq!(st(&a), st(&b));
                 }
             }
