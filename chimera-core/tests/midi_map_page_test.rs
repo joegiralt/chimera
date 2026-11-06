@@ -665,3 +665,36 @@ fn learn_done_drawn_once_sure() {
         tap(&mut ui, chimera_hal::ButtonId::Menu);
     }
 }
+
+/// A pickup on VA's STABILITY waits for a CC below the knob and hints UP (#838).
+#[test]
+fn va_stability_pickup() {
+    use chimera_core::ui::block_registry::{VA_CHAIN, VA_HOME};
+    let mut ui = Box::new(screen::stack_ui());
+    screen::init_part_engine(&mut ui, P1, chimera_core::params::EngineType::Va);
+    screen::plus(&mut ui, VA_CHAIN.engine_node());
+    assert_eq!(ui.page_def().id, VA_HOME.id);
+    let ctx = SlotCtx::read(&ui.project().part(P1).sound.params, Op::A);
+    let a = view(ui.page_def(), 5, &ctx).addr().unwrap();
+    let mut m = MidiMap::EMPTY;
+    let e = bind(Input::Cc(cc(22), CcKind::Absolute(Pickup)), a);
+    m.learn(e.input, e.target).unwrap();
+    m.set(0, e);
+    ui.project_mut().edit_part(P1).sound.map = m;
+    let mut now = 20_000;
+    let pass = |ui: &mut UiState, now: &mut u32, n: u32| {
+        for _ in 0..n {
+            *now += 16;
+            ui.hear_ccs(core::iter::empty::<CtrlEvent>(), Ms(*now), true);
+        }
+    };
+    pass(&mut ui, &mut now, 2);
+    turn(&mut ui, F, 6);
+    pass(&mut ui, &mut now, 2);
+    let t = place(&ui, a);
+    assert!(t > 0.1, "the knob sits above CC 10");
+    send(&mut ui, &mut now, cc_msg(22, 10));
+    pass(&mut ui, &mut now, 100);
+    assert_eq!(place(&ui, a), t, "a pickup holds the param");
+    assert_eq!(ui.pickup(), Some(Dir::Up));
+}

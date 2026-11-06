@@ -719,9 +719,15 @@ pub fn midi_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
 /// whose subject is an INIT Part, not NEW's.
 #[allow(dead_code)]
 pub fn init_part(ui: &mut UiState, p: PartId) {
+    init_part_engine(ui, p, EngineType::Algo);
+}
+
+/// Part `p` on INIT `engine`.
+#[allow(dead_code)]
+pub fn init_part_engine(ui: &mut UiState, p: PartId, engine: EngineType) {
     let src = PartSource {
         part: p,
-        from: PartFrom::Init(EngineType::Algo),
+        from: PartFrom::Init(engine),
     };
     let c = ReplaceGuard::check(ui.project(), ui.template(), src).expect("a Clean Part");
     ui.project_mut().replace_part(c).expect("INIT loads");
