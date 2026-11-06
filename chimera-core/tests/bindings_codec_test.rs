@@ -332,7 +332,6 @@ fn bad_length_is_bounds() {
     for p in [
         vec![],
         vec![1, 0],
-        entry(0, 0, 20).to_vec(),
         bindings(&[entry(0, 0, 20)])[..8].to_vec(),
         full.clone(),
     ] {
@@ -352,17 +351,23 @@ fn bad_length_is_bounds() {
     assert!(load(&file(&[(RecordTag::Bindings, sixteen)])).is_ok());
 }
 
+/// A version this firmware can't read (#816): the Sound loads, its map
+/// skipped and counted once, and the record still wins over `0x001E`.
 #[test]
-fn version_2_is_bounds() {
+fn unknown_version_skipped() {
     let _g = open();
+    let old = vec![74, code(BlockRef::Filter), FilterParams::CUTOFF.0, 0, 255];
     for v in [0, 2, 255] {
-        let mut p = bindings(&[entry(0, 0, 20)]);
-        p[0] = v;
-        assert_eq!(
-            load(&file(&[(RecordTag::Bindings, p)])).err(),
-            Some(FileError::Bounds),
-            "version {v}"
-        );
+        for tail in [bindings(&[entry(0, 0, 20)])[1..].to_vec(), vec![9; 3]] {
+            let mut p = vec![v];
+            p.extend_from_slice(&tail);
+            let (lost, s) = load(&file(&[
+                (RecordTag::MidiMap, old.clone()),
+                (RecordTag::Bindings, p),
+            ]))
+            .unwrap();
+            assert_eq!((lost, s.map.len()), (1, 0), "version {v}");
+        }
     }
 }
 

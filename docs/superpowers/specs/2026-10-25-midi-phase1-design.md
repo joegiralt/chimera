@@ -396,7 +396,7 @@ The user corrects any guess on MIDI MAP (§ 8.2).
   - Neutral is the empty map, which writes no record (ADR 0045/0087). `MAX_SOUND_COST` grows by the difference (`1 + 16 × 8` against `80` B): ≈ +49 B, rounded per `sparse_bound` in Task 10.
 - **`0x001E` is read, never written.** Each old entry becomes `Cc(cc, Absolute(Jump))` with `Feedback::Off`. When both records are present, `0x001F` wins.
 - **Safety:**
-  - A bad length or version is `Bounds`.
+  - A bad length is `Bounds`. An unknown version leaves the map empty, one skip (SOME PARAMS SKIPPED, #816).
   - An entry with an unknown tag or kind, a reserved CC, an MSB outside `Cc14Msb`, an unknown address or a target that isn't `Mappable` is skipped: `LOADED · SOME PARAMS SKIPPED`.
   - A duplicate target keeps the last, as today.
   - The decoders join the existing Sound decode fuzz target.

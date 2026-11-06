@@ -7,7 +7,8 @@
 //! An entry this firmware can't hold (an unknown tag or kind, a kind its
 //! control can't take, a reserved CC, an MSB outside `Cc14Msb`, an unknown
 //! address or a target that isn't `Mappable`) is skipped and counted. A
-//! duplicate target keeps the last. A bad length or version is `Bounds`.
+//! duplicate target keeps the last. A version it can't read leaves the map
+//! empty, counted as one skip (#816). A bad length is `Bounds`.
 
 use chimera_midi::rel::ByteEncoding;
 use chimera_midi::take::Takeover;
@@ -148,7 +149,16 @@ pub fn decode(which: MapRecord, p: &[u8], m: Option<&mut MidiMap>) -> Result<u16
     let (entries, n) = match which {
         MapRecord::Bindings => {
             let (&v, rest) = p.split_first().ok_or(Bounds)?;
-            if v != VERSION || !rest.len().is_multiple_of(ENTRY_LEN) {
+            if v != VERSION {
+                return Ok(match m {
+                    Some(m) => {
+                        *m = MidiMap::EMPTY;
+                        1
+                    }
+                    None => 0,
+                });
+            }
+            if !rest.len().is_multiple_of(ENTRY_LEN) {
                 return Err(Bounds);
             }
             (rest, ENTRY_LEN)
