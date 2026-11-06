@@ -322,14 +322,20 @@ fn control(ui: &mut UiState, e: HeardEv) -> Option<(crate::MidiChannel, Ctl)> {
 impl UiState {
     /// Each Part's ramps `now` on, then this pass's control messages (spec
     /// §§ 5-7). After `handle_input`, before the publish: the hand's moves
-    /// are in. `taken`: the audio has taken the last publish. Card work
-    /// waiting drops them (spec § 1): a write now would refuse the load or
-    /// adopt its witness confirmed. The door's `hear`.
+    /// are in. `taken`: the audio has taken the last publish. A load
+    /// waiting drops them (spec § 1): a write now would refuse it or adopt
+    /// its witness confirmed. Saves and listings replace nothing (#528).
+    /// The door's `hear`.
     pub(super) fn hear_in(&mut self, ev: &mut dyn Iterator<Item = HeardEv>, now: Ms, taken: bool) {
         self.cc.fresh();
         let elapsed = now.since(self.cc.last);
         self.cc.last = now;
-        let busy = self.job.is_some() || self.lib.busy() || self.src.busy();
+        use crate::ui::settings::job::Job;
+        let busy = matches!(
+            self.job,
+            Some(Job::Load(_) | Job::ClearOwn(..) | Job::LibraryLoad(_))
+        ) || self.lib.busy()
+            || self.src.loading();
         let at = self.active_part;
         let chain = PartChain::of(&self.project.part(at).sound);
         let (before, rev) = (self.ctx(), self.project.rev());

@@ -531,6 +531,32 @@ fn a_cc_during_the_source_read_is_dropped() {
     assert!(r.toast().starts_with("LOADED TO SLOT "));
 }
 
+/// A CC heard while SAVE TO LIBRARY waits (#528): a save replaces
+/// nothing the bindings point at, so CUTOFF moves.
+#[cfg(feature = "midi-map")]
+#[test]
+fn a_cc_during_a_library_save_is_heard() {
+    use chimera_core::midi_in::{Cc, CcEvent};
+    use chimera_hal::Ms;
+    let mut r = Rig::new();
+    r.open_library();
+    r.work();
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit));
+    tap(&mut r.ui, ButtonId::Edit);
+    assert!(r.ui.card_pending(), "the save waits");
+    let cutoff = r.ui.project().part(P1).sound.params.filter.cutoff;
+    let ev = CcEvent {
+        channel: r.ui.project().part(P1).mix.channel,
+        cc: Cc::new(74).unwrap(),
+        value: 0,
+    };
+    r.ui.hear_ccs(core::iter::once(ev), Ms(1_000), true);
+    r.work();
+    assert_eq!(r.toast(), "SAVED TO LIBRARY");
+    r.ui.hear_ccs(core::iter::empty::<CcEvent>(), Ms(1_500), true);
+    assert_ne!(r.ui.project().part(P1).sound.params.filter.cutoff, cutoff);
+}
+
 #[test]
 fn a_tape_load_streams_its_source_then_adopts() {
     let mut r = Rig::new();
