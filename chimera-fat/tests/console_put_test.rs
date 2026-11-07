@@ -997,13 +997,14 @@ fn overwrite<S: Store>(s: &mut S, name: &str, b: &[u8]) {
 /// The Sound a library load of `n` takes.
 fn load_sound<S: Store>(s: &mut S, n: u32) -> Option<Sound> {
     let mut got = Sound::init(EngineType::Algo);
+    let mut kept = chimera_core::midi_map::KeptMap::EMPTY;
     Card::new()
         .run(s, |s, r| {
             load_ab_in_place(
                 s,
                 r,
                 library_file(LibId::new(n).unwrap()),
-                &mut LibraryDecoder::new(&mut got),
+                &mut LibraryDecoder::new(&mut got, &mut kept),
             )
         })
         .ok()?

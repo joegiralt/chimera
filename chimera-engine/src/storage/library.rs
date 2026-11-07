@@ -7,9 +7,10 @@ use chimera_hal::store::{Dir, FileName, StoreError};
 
 use super::file::{AbFile, Check, DecodeInPlace};
 use super::frame::{Event, FileError, FileKind, Generation, HEADER_LEN, peek_header};
-use super::record::{RecordTag, RecordWriter};
+use super::record::{ReadTag, RecordTag, RecordWriter};
 use super::sound::{SoundCheck, encode_sound_body};
 use crate::block::DiskCode;
+use crate::midi_map::KeptMap;
 use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::preset::Sound;
@@ -163,6 +164,21 @@ pub fn encode_library_sound(
         w.put(RecordTag::Note, n.as_str().as_bytes())?;
     }
     encode_sound_body(s, w)
+}
+
+/// `encode_library_sound`, then `kept`'s record while the Sound has no
+/// map: a Part's, saved with bank 2's door closed (#862).
+pub fn encode_library_part(
+    s: &Sound,
+    kept: &KeptMap,
+    stamp: &BuildStamp,
+    w: &mut RecordWriter<'_>,
+) -> Result<(), StoreError> {
+    encode_library_sound(s, stamp, None, w)?;
+    if s.map.is_empty() {
+        crate::midi_in::put_kept(kept, w)?;
+    }
+    Ok(())
 }
 
 /// A user Sound's number, 1..=8_999_999: the only kind a save can take.
@@ -405,13 +421,17 @@ pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
 pub struct LibraryDecoder<'a> {
     check: SoundCheck,
     target: &'a mut Sound,
+    /// The map record a closed door leaves unread (#862).
+    kept: &'a mut KeptMap,
 }
 
 impl<'a> LibraryDecoder<'a> {
-    pub fn new(target: &'a mut Sound) -> Self {
+    pub fn new(target: &'a mut Sound, kept: &'a mut KeptMap) -> Self {
+        kept.clear();
         LibraryDecoder {
             check: SoundCheck::new(),
             target,
+            kept,
         }
     }
 
@@ -440,6 +460,9 @@ impl Check for LibraryDecoder<'_> {
 
 impl DecodeInPlace for LibraryDecoder<'_> {
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        if let Event::Record(ReadTag::Known(t), p) = e {
+            crate::midi_in::keep_map(self.kept, t, p);
+        }
         self.check.step(e, Some(self.target))
     }
 

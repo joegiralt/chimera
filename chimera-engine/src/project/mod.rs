@@ -29,7 +29,7 @@ pub use ids::{PartId, PartSet, SlotId};
 pub use library::{
     AdoptError, Adopted, LibEntry, LibFile, LibNote, LibPage, LibRead, LibSeen, LibraryPart,
     PageAt, Shelf, SourceNeed, Staged, list_library, peek_note, read_library_sound,
-    save_library_sound,
+    save_library_part, save_library_sound,
 };
 pub use marks::{
     ActionRefused, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,

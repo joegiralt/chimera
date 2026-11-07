@@ -105,6 +105,9 @@ pub struct Pool {
     /// A load's slot, decoded whole before it is encoded in: here, in
     /// AXI, not on the stack. Nothing reads it but the load.
     scratch: Sound,
+    /// The scratch's map record a closed door left unread, for its slot
+    /// (#862).
+    scratch_kept: KeptMap,
 }
 
 /// A source slot.
@@ -145,7 +148,7 @@ struct Index {
 }
 
 // `init_in_place` writes each field: a new one fails to build here first.
-crate::in_place::field_list!(Pool => Pool { index, sources, clock, new_skipped, arena, scratch });
+crate::in_place::field_list!(Pool => Pool { index, sources, clock, new_skipped, arena, scratch, scratch_kept });
 crate::in_place::field_list!(Index => Index { slots, gens });
 
 impl Pool {
@@ -156,7 +159,8 @@ impl Pool {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; every field (`field_list!`
         // above names them: the index's slots and generations, the
-        // sources, the clock, the skip count, the arena and the scratch) is
+        // sources, the clock, the skip count, the arena and the scratch and
+        // its kept record) is
         // written once before `assume_init_mut`.
         unsafe {
             let slots = addr_of_mut!((*p).index.slots).cast::<Option<SoundEntry>>();
@@ -176,6 +180,7 @@ impl Pool {
             // place (`neutral_params` returns its snapshot whole);
             // stack-check guards the frame.
             addr_of_mut!((*p).scratch).write(Sound::neutral(EngineType::Algo));
+            addr_of_mut!((*p).scratch_kept).write(KeptMap::EMPTY);
             slot.assume_init_mut()
         }
     }
@@ -882,10 +887,44 @@ impl Pool {
         &self.scratch
     }
 
-    /// `store` of the scratch Sound.
-    pub(in crate::project) fn store_scratch(&mut self, s: SlotId) -> Result<(), PoolFull> {
-        self.index
-            .store(&mut self.arena, s, &self.scratch, &KeptMap::EMPTY)
+    /// The scratch Sound and its kept record, for a load to write.
+    pub(in crate::project) fn scratch_kept(&mut self) -> (&mut Sound, &mut KeptMap) {
+        (&mut self.scratch, &mut self.scratch_kept)
+    }
+
+    /// The scratch's kept record, if any.
+    pub(in crate::project) fn scratch_record(&self) -> bool {
+        self.scratch_kept.get().is_some()
+    }
+
+    /// What the scratch's kept record adds to its entry, in arena bytes.
+    #[inline(never)]
+    pub(in crate::project) fn scratch_record_cost(&self) -> u32 {
+        let len = |k| Cost::of(entry_len(&self.scratch, k)).bytes();
+        len(&self.scratch_kept) - len(&KeptMap::EMPTY)
+    }
+
+    /// `store` of the scratch Sound, with its kept record if `keep` and
+    /// it fits (a budget counts the Sound alone): without, when not.
+    #[inline(never)]
+    pub(in crate::project) fn store_scratch(
+        &mut self,
+        s: SlotId,
+        keep: bool,
+    ) -> Result<(), PoolFull> {
+        let mut r = Ok(());
+        let first = if keep {
+            &self.scratch_kept
+        } else {
+            &KeptMap::EMPTY
+        };
+        for kept in [first, &KeptMap::EMPTY] {
+            r = self.index.store(&mut self.arena, s, &self.scratch, kept);
+            if r.is_ok() {
+                break;
+            }
+        }
+        r
     }
 
     /// Moves the generation even when the slot is already empty.
@@ -1097,10 +1136,28 @@ impl EncodedSound<'_> {
         Cost::of(self.bytes.len())
     }
 
-    /// `sound_crc` of the Sound decoded: the same bytes, hashed.
+    /// `sound_crc` of the Sound decoded: the same bytes, hashed. Closed,
+    /// a map record isn't the Sound's: it isn't hashed (#862). Out of
+    /// line: bank 1 holds every caller.
+    #[inline(never)]
     pub fn crc(&self) -> u32 {
-        let mut c = Crc32::new();
-        c.update(self.bytes);
+        // One copy of the CRC's loop, not one a call site.
+        #[inline(never)]
+        fn hash(c: &mut Crc32, b: &[u8]) {
+            c.update(b);
+        }
+        let (b, mut c) = (self.bytes, Crc32::new());
+        let closed = !crate::midi_in::map_codec_open();
+        let (mut at, mut from) = (NAME_LEN, 0);
+        while let Some(&[t0, t1, l0, l1]) = b.get(at..at + 4) {
+            let end = (at + 4 + usize::from(u16::from_le_bytes([l0, l1]))).min(b.len());
+            if closed && matches!(u16::from_le_bytes([t0, t1]), 0x001E | 0x001F) {
+                hash(&mut c, &b[from..at]);
+                from = end;
+            }
+            at = end;
+        }
+        hash(&mut c, &b[from..]);
         c.finish()
     }
 

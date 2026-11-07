@@ -187,8 +187,9 @@ fn axi_counts_the_project() {
         "Project = {project} B: Performance {perf} B, pool index and scratch {pool} B, ORBIT {orbit} B, kept maps {kept} B"
     );
     // The index (128 Sound entries, 32 source entries, their
-    // generations), the arena's writer and a load's scratch Sound.
-    let scratch = size_of::<chimera_core::preset::Sound>();
+    // generations), the arena's writer and a load's scratch Sound with
+    // its kept map record (#862).
+    let scratch = size_of::<chimera_core::preset::Sound>() + size_of::<KeptMap>();
     assert!(pool - scratch <= 3072, "the pool's index is {pool} B");
     let parts = perf + pool + orbit + kept;
     assert!(

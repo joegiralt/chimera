@@ -14,7 +14,7 @@ use crate::name::SoundName;
 use crate::project::{
     AdoptError, CardOut, Confirmed, LibEntry, LibNote, LibPage, LibRead, LibraryPart, Line, PageAt,
     PartId, PartSet, ReplaceError, ReplaceGuard, Shelf, SlotId, SourceNeed, Staged, list_library,
-    peek_note, read_library_sound, save_library_sound,
+    peek_note, read_library_sound, save_library_part,
 };
 use crate::storage::{
     BuildStamp, Card, FactoryId, LibId, LibKind, Note, held_for_file_len, source_file,
@@ -425,8 +425,9 @@ impl UiState {
         part: PartId,
         name: SoundName,
     ) -> Option<Job> {
-        let s = &self.project.part(part).sound;
-        let CardOut { out, event } = save_library_sound(card, store, s, name, &about_page::THIS);
+        let p = &self.project;
+        let CardOut { out, event } =
+            save_library_part(card, store, p, part, name, &about_page::THIS);
         self.saw(event);
         match out {
             Ok(id) => {

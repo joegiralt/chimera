@@ -875,6 +875,7 @@ pub fn decode_map(r: MapRecord, p: &[u8], m: Option<&mut MidiMap>) -> Result<u16
 
 /// Record `tag`'s payload `p` onto `k` if it is a map record bank 2's
 /// closed door leaves unread (#815).
+#[inline(never)]
 pub fn keep_map(k: &mut KeptMap, tag: RecordTag, p: &[u8]) {
     let r = match tag {
         RecordTag::MidiMap => MapRecord::Legacy,

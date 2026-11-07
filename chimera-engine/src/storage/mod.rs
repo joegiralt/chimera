@@ -36,8 +36,8 @@ pub use frame::{
 };
 pub use library::{
     BUILD_LEN, BuildStamp, FactoryId, ID_WINDOW, LIB_PEEK, LibId, LibKind, LibraryDecoder, NextId,
-    Note, Peek, UserId, encode_library_sound, lib_id, library_file, next_user_id, peek_library,
-    user_file,
+    Note, Peek, UserId, encode_library_part, encode_library_sound, lib_id, library_file,
+    next_user_id, peek_library, user_file,
 };
 pub(crate) use record::records_crc;
 pub use record::{

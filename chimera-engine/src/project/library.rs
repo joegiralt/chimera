@@ -14,13 +14,14 @@ use super::store::{CardOut, MAX_LISTED, split};
 use super::{
     Absence, PartFrom, PartId, PartSource, PoolFull, Project, ReplaceError, SlotId, SourceRef,
 };
+use crate::midi_map::KeptMap;
 use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::storage::{
     BuildStamp, Card, CardFault, FileError, Generation, HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId,
     LibKind, LibraryDecoder, LoadError, NextId, Note, Peek, SaveError, Side, SideState, SoundCheck,
-    UserId, check_file, encode_library_sound, held_for_file_len, lib_id, library_file,
+    UserId, check_file, encode_library_part, held_for_file_len, lib_id, library_file,
     load_ab_in_place, next_user_id, peek_library, save_ab, sound_crc, source_file, user_file,
 };
 
@@ -102,6 +103,20 @@ fn free_id<S: Store>(s: &mut S, r: &crate::storage::Ready) -> Result<UserId, Lib
     }
 }
 
+/// Part `part`'s Sound as `save_library_sound` saves it, with the map
+/// record its closed door kept (#862).
+pub fn save_library_part<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    p: &Project,
+    part: PartId,
+    name: SoundName,
+    stamp: &BuildStamp,
+) -> CardOut<Result<UserId, LibNote>> {
+    let s = &p.part(part).sound;
+    save_library(card, store, s, &p.kept[part.index()], name, stamp)
+}
+
 /// `s` as a new library file named `name`: the directories made first, the
 /// id the next free one, the file read back whole. Any failure after the
 /// write began deletes it.
@@ -112,13 +127,24 @@ pub fn save_library_sound<S: Store>(
     name: SoundName,
     stamp: &BuildStamp,
 ) -> CardOut<Result<UserId, LibNote>> {
+    save_library(card, store, s, &KeptMap::EMPTY, name, stamp)
+}
+
+fn save_library<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    s: &Sound,
+    kept: &KeptMap,
+    name: SoundName,
+    stamp: &BuildStamp,
+) -> CardOut<Result<UserId, LibNote>> {
     let run = card.run(store, |st, r| {
         st.make_dir(r.volume(), Dir::Chimera)?;
         st.make_dir(r.volume(), Dir::Sounds)?;
         let id = free_id(st, r)?;
         let file = user_file(id);
         let saved = save_ab(st, r, file, &mut SoundCheck::new(), Some(name), &mut |w| {
-            encode_library_sound(s, stamp, None, w)
+            encode_library_part(s, kept, stamp, w)
         })
         .map_err(|e| match e {
             SaveError::Store(e) => LibNote::Store(e),
@@ -715,7 +741,8 @@ pub fn read_library_sound<S: Store>(
             return Ok(Err(n));
         }
         let ab = library_file(file.id);
-        let mut d = LibraryDecoder::new(p.pool.scratch());
+        let (scratch, kept) = p.pool.scratch_kept();
+        let mut d = LibraryDecoder::new(scratch, kept);
         match load_ab_in_place(s, r, ab, &mut d) {
             // The newer side failing its CRC leaves the older: not the row.
             Ok(h) => {
@@ -756,11 +783,14 @@ impl Project {
     /// free Sound slot, plus, for a source on the card, its cost and a
     /// free source slot. A source not on the card is stored absent: no
     /// cost, no slot.
+    /// Closed, a Sound with a kept map record never dedupes: a slot
+    /// equal to it but for the map would lose it (#862).
     pub fn library_needs(
         &self,
         src: Option<SourceNeed>,
     ) -> Result<Option<SlotId>, Option<PoolFull>> {
-        self.needs_for(self.pool.scratch_ref(), src)
+        let dedupe = !self.pool.scratch_record();
+        self.needs(self.pool.scratch_ref(), src, dedupe)
     }
 
     /// `library_needs` for `snd`: the host's demo build places a Sound as
@@ -770,10 +800,20 @@ impl Project {
         snd: &Sound,
         src: Option<SourceNeed>,
     ) -> Result<Option<SlotId>, Option<PoolFull>> {
+        self.needs(snd, src, true)
+    }
+
+    fn needs(
+        &self,
+        snd: &Sound,
+        src: Option<SourceNeed>,
+        dedupe: bool,
+    ) -> Result<Option<SlotId>, Option<PoolFull>> {
         let pool = &self.pool;
         let crc = sound_crc(snd);
         let dedupe = SlotId::ALL
             .into_iter()
+            .filter(|_| dedupe)
             .find(|&s| pool.get(s).is_some_and(|e| e.crc() == crc));
         let mut needs = Cost::default();
         if dedupe.is_none() {
@@ -848,7 +888,9 @@ impl Project {
             Some(s) => s,
             None => {
                 let s = self.pool.first_free().expect("library_needs found one");
-                self.pool.store_scratch(s).expect("library_needs: it fits");
+                self.pool
+                    .store_scratch(s, true)
+                    .expect("library_needs: it fits");
                 s
             }
         };

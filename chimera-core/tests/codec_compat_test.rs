@@ -257,7 +257,8 @@ fn v1_fixtures_load_through_the_library_path() {
         st.write(vol, library_file(id).side(Side::A), &mut |w| w.put(&bytes))
             .unwrap();
         let mut got = Sound::neutral(EngineType::Algo);
-        let mut d = LibraryDecoder::new(&mut got);
+        let mut kept = chimera_core::midi_map::KeptMap::EMPTY;
+        let mut d = LibraryDecoder::new(&mut got, &mut kept);
         Card::new()
             .run(&mut st, |s, r| {
                 load_ab_in_place(s, r, library_file(id), &mut d)

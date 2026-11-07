@@ -330,6 +330,9 @@ struct Plan {
     missing: u32,
     dropped_slots: u8,
     dropped_sources: u8,
+    /// Arena bytes the plan leaves over: a slot's kept map record takes
+    /// only these, never a planned Sound's or source's (#862).
+    left: u32,
 }
 
 impl Plan {
@@ -340,6 +343,7 @@ impl Plan {
         missing: 0,
         dropped_slots: 0,
         dropped_sources: 0,
+        left: u32::MAX,
     };
 }
 
@@ -522,7 +526,13 @@ impl ProjectCheck {
             (ReadTag::Known(RecordTag::Block), Context::Fx) => self.fx_block(p, target),
             (ReadTag::Known(_), Context::Fx) => Err(FileError::Corrupt),
             (_, Context::Slot(_)) => {
-                let staged = stage.or(target.map(|t| t.pool.scratch()));
+                let staged = stage.or(target.map(|t| {
+                    let (scratch, kept) = t.pool.scratch_kept();
+                    if let ReadTag::Known(k) = tag {
+                        crate::midi_in::keep_map(kept, k, p);
+                    }
+                    scratch
+                }));
                 self.sound.step(e, staged)
             }
             (ReadTag::Known(RecordTag::Block), Context::Part(n))
@@ -688,6 +698,9 @@ impl ProjectCheck {
                 return Err(FileError::Corrupt);
             }
             c.slots |= bit;
+            if let Some(t) = target {
+                t.pool.scratch_kept().1.clear();
+            }
             self.context = Context::Slot(s);
         } else {
             let n = PartId::new(index).ok_or(FileError::Bounds)?;
@@ -757,10 +770,18 @@ impl ProjectCheck {
             Context::Slot(s) => match (target, stage) {
                 (Some(t), _) => {
                     self.sound.finish(Some(t.pool.scratch()))?;
+                    if self.plan.slots & 1 << s.index() == 0 {
+                        return Ok(());
+                    }
+                    // Its kept map record only in what the plan left over.
+                    let record = t.pool.scratch_record_cost();
+                    let keep = record <= self.plan.left;
+                    if keep {
+                        self.plan.left -= record;
+                    }
                     // A source still sounding from the last project can
                     // hold what the plan counted on: that slot didn't fit.
-                    let planned = self.plan.slots & 1 << s.index() != 0;
-                    if planned && t.pool.store_scratch(s).is_err() {
+                    if t.pool.store_scratch(s, keep).is_err() {
                         self.dropped_slots += 1;
                     }
                     Ok(())
@@ -804,6 +825,7 @@ impl ProjectCheck {
             missing: refs & !present,
             dropped_slots: 0,
             dropped_sources: 0,
+            left: 0,
         };
         let sources = |part: bool, p: &mut Plan, left: &mut u32| {
             for (k, &r) in c.refs().iter().enumerate() {
@@ -830,6 +852,7 @@ impl ProjectCheck {
             }
         }
         sources(false, &mut p, &mut left);
+        p.left = left;
         p
     }
 
