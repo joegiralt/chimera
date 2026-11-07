@@ -212,8 +212,8 @@ impl Edge {
 pub trait ByteRing {
     fn pop(&self) -> Option<u8>;
     fn is_empty(&self) -> bool;
-    /// Everything waiting dropped, and the producer's losses forgotten.
-    fn discard(&self);
+    /// Everything waiting dropped.
+    fn clear(&self);
     /// Messages the producer lost since the last ask.
     fn take_dropped(&self) -> u32;
 }
@@ -251,23 +251,25 @@ impl InQueue {
     /// Configured, the ring's bytes packed and written while `write` takes
     /// them; busy, held for the next call; any other error, dropped. Not
     /// Configured, the ring and the held dropped, the packer reset, and
-    /// none counted: a host that comes back hears nothing stale. The drops:
-    /// the UI's lost echo messages and the refused packets.
+    /// none counted: a host that comes back hears nothing stale. The UI
+    /// lost an echo: the same, its losses counted. The drops: the UI's lost
+    /// echo messages and the refused packets.
     pub fn send(
         &mut self,
         ring: &impl ByteRing,
         up: bool,
         mut write: impl FnMut(&[u8]) -> usb_device::Result<usize>,
     ) -> u32 {
-        if self.n == 0 && ring.is_empty() {
-            return 0;
-        }
-        if !up {
-            ring.discard();
-            *self = Self::new();
-            return 0;
-        }
+        // Taken first, even with nothing waiting: the UI resends what it
+        // lost only once its loss is taken (#842).
         let mut drops = ring.take_dropped();
+        if !up || drops > 0 {
+            // Gone, or the UI lost an echo: what waits is stale, and the
+            // UI sends its Parts' values again once the ring is empty.
+            ring.clear();
+            *self = Self::new();
+            return if up { drops } else { 0 };
+        }
         loop {
             while self.n < HELD
                 && let Some(x) = ring.pop()

@@ -4,8 +4,9 @@
 //! channel, the latest value only, whole messages while DIN's ring has
 //! room, and each copied to USB's. The identity reply goes first, out of
 //! the port that asked, then the active Part, the other Parts, and last
-//! the bursts (a load, a Part change, a map change). Bank 2's, as
-//! `ui::midi` is; the state is `MidiSlot`'s, in AXI.
+//! the bursts (a load, a Part change, a map change). A copy USB lost goes
+//! again, to USB alone (#842). Bank 2's, as `ui::midi` is; the state is
+//! `MidiSlot`'s, in AXI.
 
 use chimera_hal::Ms;
 use chimera_midi::ctl::{DataValue, FreeCc};
@@ -21,7 +22,7 @@ use crate::block::{Motion, ParamSpec};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::Port;
 use crate::midi_map::{Binding, CcKind, Feedback, Input, MAP_LEN, NrpnKind};
-use crate::out_ring::OutPorts;
+use crate::out_ring::{OutPorts, OutRing, Tee};
 use crate::project::{Loads, PartId, Project};
 
 /// After a binding hears, its own echo waits this long (spec § 9, the
@@ -42,7 +43,14 @@ pub struct EchoPlan {
     loads: [Loads; MAX_PARTS],
     active: Option<PartId>,
     identity: [bool; Port::COUNT],
+    /// Entries (a bit each) whose values USB is owed: a copy was lost,
+    /// and USB's poll drops all it holds, ring and packets alike, so
+    /// every Part's (#842). Sent USB's alone once the ring is empty and
+    /// the loss taken.
+    owed: [u16; MAX_PARTS],
 }
+
+const _: () = assert!(MAP_LEN <= 16);
 
 /// Nothing sent: a named static, so its image is bank 2's.
 pub(super) static SILENT: EchoPlan = EchoPlan {
@@ -51,6 +59,7 @@ pub(super) static SILENT: EchoPlan = EchoPlan {
     loads: [Loads::NONE; MAX_PARTS],
     active: None,
     identity: [false; Port::COUNT],
+    owed: [0; MAX_PARTS],
 };
 
 impl EchoPlan {
@@ -103,7 +112,59 @@ impl EchoPlan {
                 self.burst(p);
             }
         }
+        if let Some(u) = out.usb
+            && u.is_empty()
+            && !u.losing()
+        {
+            self.resend(project, now, u);
+        }
         let mut tee = out.tee();
+        self.send(project, at, now, &mut tee);
+        // A loss, this pass's or one not yet taken: USB's poll drops all
+        // it holds.
+        if tee.lost() || out.usb.is_some_and(OutRing::losing) {
+            self.owed = [u16::MAX; MAX_PARTS];
+        }
+    }
+
+    /// What USB is owed (`owed`), into its ring alone while it has room.
+    fn resend(&mut self, project: &Project, now: Ms, usb: &OutRing) {
+        let mut run = Running::NONE;
+        let parts = PartId::ALL
+            .into_iter()
+            .zip(&mut self.owed)
+            .zip(&self.heard_at);
+        for ((p, owed), heard) in parts {
+            let part = project.part(p);
+            let entries = part.sound.map.entries();
+            for (j, t) in heard.iter().enumerate() {
+                let bit = 1u16 << j;
+                if *owed & bit == 0 || t.is_some_and(|t| now.since(t) < QUIET_MS) {
+                    continue;
+                }
+                let mut b = [0u8; MSG_MAX];
+                let mut w = Writer::after(&mut b, run);
+                let ok = entries.get(j).is_some_and(|e| {
+                    value(project, p, e)
+                        .is_some_and(|v| render(&mut w, part.mix.channel, &e.input, v))
+                });
+                let (n, r) = (w.len(), w.running());
+                if let Some(m) = b.get(..n)
+                    && ok
+                {
+                    if !usb.push_msg(m) {
+                        return;
+                    }
+                    run = r;
+                }
+                *owed &= !bit;
+            }
+        }
+    }
+
+    /// `pump`'s messages through `tee`.
+    #[inline(always)]
+    fn send(&mut self, project: &Project, at: PartId, now: Ms, tee: &mut Tee) {
         if self.identity != [false; Port::COUNT] {
             let mut b = [0u8; REPLY_LEN];
             let mut w = Writer::new(&mut b);
@@ -154,35 +215,38 @@ impl EchoPlan {
         }
     }
 
-    /// Entry `j`, `e`, of Part `p`'s value to send now, if it echoes and
-    /// changed: its echo on, its target read by the Part's engine, not in
-    /// its quiet, and no lower Part on the channel echoing the same
-    /// control (spec § 9).
+    /// Entry `j`, `e`, of Part `p`'s value to send now (spec § 9): not in
+    /// its quiet, its `value`, changed.
     fn due(&self, project: &Project, p: PartId, j: usize, e: &Binding, now: Ms) -> Option<u16> {
-        let i = p.index();
-        let part = project.part(p);
-        if e.feedback != Feedback::Value || !e.target.live(part.sound.params.engine()) {
+        if self.heard_at[p.index()][j].is_some_and(|t| now.since(t) < QUIET_MS) {
             return None;
         }
-        if self.heard_at[i][j].is_some_and(|t| now.since(t) < QUIET_MS) {
-            return None;
-        }
-        let a = e.target.addr();
-        let place = param_place(a.spec()?, stored(project, p, a)?);
-        let v = level(&e.input, span_of(e.span, place))?;
-        if self.last[i][j] == Some(v) {
-            return None;
-        }
-        let lower = PartId::ALL[..i].iter().any(|&q| {
-            let o = project.part(q);
-            o.mix.channel == part.mix.channel
-                && o.sound
-                    .map
-                    .targets_of(&e.input)
-                    .any(|(_, b)| b.feedback == Feedback::Value)
-        });
-        (!lower).then_some(v)
+        let v = value(project, p, e)?;
+        (self.last[p.index()][j] != Some(v)).then_some(v)
     }
+}
+
+/// Binding `e` of Part `p`'s value as its control sends it, if it echoes:
+/// its echo on, its target read by the Part's engine, and no lower Part
+/// on the channel echoing the same control.
+fn value(project: &Project, p: PartId, e: &Binding) -> Option<u16> {
+    let i = p.index();
+    let part = project.part(p);
+    if e.feedback != Feedback::Value || !e.target.live(part.sound.params.engine()) {
+        return None;
+    }
+    let a = e.target.addr();
+    let place = param_place(a.spec()?, stored(project, p, a)?);
+    let v = level(&e.input, span_of(e.span, place))?;
+    let lower = PartId::ALL[..i].iter().any(|&q| {
+        let o = project.part(q);
+        o.mix.channel == part.mix.channel
+            && o.sound
+                .map
+                .targets_of(&e.input)
+                .any(|(_, b)| b.feedback == Feedback::Value)
+    });
+    (!lower).then_some(v)
 }
 
 /// The place 0..1 a param at `was` sits at, as a binding sees it: a

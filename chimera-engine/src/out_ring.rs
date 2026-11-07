@@ -103,6 +103,12 @@ impl OutRing {
         self.dropped.swap(0, Ordering::Relaxed)
     }
 
+    /// Either side: losses wait for the consumer to take them.
+    #[inline(always)]
+    pub fn losing(&self) -> bool {
+        self.dropped.load(Ordering::Relaxed) != 0
+    }
+
     /// Consumer side: everything waiting dropped unread.
     #[inline(always)]
     pub fn clear(&self) {
@@ -137,8 +143,8 @@ impl chimera_midi::usb::ByteRing for OutRing {
         self.is_empty()
     }
     #[inline(always)]
-    fn discard(&self) {
-        self.discard();
+    fn clear(&self) {
+        self.clear();
     }
     #[inline(always)]
     fn take_dropped(&self) -> u32 {
@@ -210,6 +216,12 @@ impl Tee<'_> {
                 true
             }
         }
+    }
+
+    /// A copy to USB's was lost this pass.
+    #[inline(always)]
+    pub fn lost(&self) -> bool {
+        self.broken
     }
 
     #[inline(always)]

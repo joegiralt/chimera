@@ -667,3 +667,96 @@ fn usb_gets_dins_echo() {
     assert_eq!(u, want, "the same bytes into USB's ring");
     assert_eq!(usb.take_dropped(), 0);
 }
+
+/// A USB copy lost to a host that never reads (#842): once USB's poll has
+/// flushed what went stale, the active Part's values go out again, so the
+/// host ends on the latest.
+#[test]
+fn lost_usb_echo_resends_the_active_part() {
+    let mut r = Rig::new();
+    r.bind(P1, cc_in(20, JUMP), CUTOFF, Feedback::Value);
+    r.set(P1, CUTOFF, 0.2);
+    let usb = OutRing::new();
+    r.settle_ports(&usb);
+    while usb.push_msg(&[0xB5, 1, 2]) {}
+    r.set(P1, CUTOFF, 0.8);
+    r.pass_ports(&[], &usb);
+    assert_eq!(values(&r.drain(), r.ch(P1), 20), [r.want(P1, CUTOFF)]);
+    assert_eq!(usb.take_dropped(), 1, "USB's copy lost");
+    // Not read: nothing more goes.
+    r.pass_ports(&[], &usb);
+    assert!(r.drain().is_empty(), "DIN untouched while USB stays full");
+    usb.discard();
+    let (d, u) = r.settle_ports(&usb);
+    assert_eq!(values(&u, r.ch(P1), 20), [r.want(P1, CUTOFF)]);
+    assert!(d.is_empty(), "DIN heard it already: USB's alone");
+}
+
+/// The ring drained but its loss not yet taken (#842): USB's poll will
+/// drop what waits, so nothing is sent again until it has.
+#[test]
+fn a_lost_echo_waits_for_its_loss_to_be_taken() {
+    let mut r = Rig::new();
+    r.bind(P1, cc_in(20, JUMP), CUTOFF, Feedback::Value);
+    r.set(P1, CUTOFF, 0.2);
+    let usb = OutRing::new();
+    r.settle_ports(&usb);
+    while usb.push_msg(&[0xB5, 1, 2]) {}
+    r.set(P1, CUTOFF, 0.8);
+    r.pass_ports(&[], &usb);
+    usb.clear();
+    r.pass_ports(&[], &usb);
+    assert!(usb.is_empty(), "nothing before the poll takes the loss");
+    assert_eq!(usb.take_dropped(), 1);
+    let (_, u) = r.settle_ports(&usb);
+    assert_eq!(values(&u, r.ch(P1), 20), [r.want(P1, CUTOFF)]);
+}
+
+/// Every Part that lost a copy goes again, not the active one alone.
+#[test]
+fn a_lost_echo_resends_each_part_that_lost() {
+    let mut r = Rig::new();
+    for p in [P1, P2] {
+        r.bind(p, cc_in(20, JUMP), CUTOFF, Feedback::Value);
+        r.set(p, CUTOFF, 0.2);
+    }
+    let usb = OutRing::new();
+    r.settle_ports(&usb);
+    while usb.push_msg(&[0xB5, 1, 2]) {}
+    r.set(P2, CUTOFF, 0.8);
+    r.pass_ports(&[], &usb);
+    assert_eq!(values(&r.drain(), r.ch(P2), 20), [r.want(P2, CUTOFF)]);
+    usb.discard();
+    let (d, u) = r.settle_ports(&usb);
+    assert!(d.is_empty());
+    assert_eq!(values(&u, r.ch(P2), 20), [r.want(P2, CUTOFF)]);
+}
+
+/// A copy USB's poll moved out of the ring but the host hasn't taken
+/// (held, its ring empty) is dropped by a later loss too: its Part goes
+/// again.
+#[test]
+fn a_lost_echo_resends_what_the_poll_held() {
+    let mut r = Rig::new();
+    for p in [P1, P2] {
+        r.bind(p, cc_in(20, JUMP), CUTOFF, Feedback::Value);
+        r.set(p, CUTOFF, 0.2);
+    }
+    let usb = OutRing::new();
+    r.settle_ports(&usb);
+    r.set(P2, CUTOFF, 0.8);
+    r.pass_ports(&[], &usb);
+    assert_eq!(
+        values(&pop(&usb), r.ch(P2), 20),
+        [r.want(P2, CUTOFF)],
+        "held"
+    );
+    r.pass_ports(&[], &usb);
+    while usb.push_msg(&[0xB5, 1, 2]) {}
+    r.set(P1, CUTOFF, 0.8);
+    r.pass_ports(&[], &usb);
+    usb.discard();
+    r.drain();
+    let (_, u) = r.settle_ports(&usb);
+    assert_eq!(values(&u, r.ch(P2), 20), [r.want(P2, CUTOFF)]);
+}

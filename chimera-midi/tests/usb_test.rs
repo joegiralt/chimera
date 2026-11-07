@@ -159,6 +159,8 @@ use usb_device::device::UsbDeviceState as S;
 struct Ring {
     b: RefCell<VecDeque<u8>>,
     dropped: Cell<u32>,
+    /// Losses the UI counts just after a take: a concurrent `lose`.
+    late: Cell<u32>,
 }
 
 impl Ring {
@@ -184,12 +186,11 @@ impl ByteRing for Ring {
     fn is_empty(&self) -> bool {
         self.b.borrow().is_empty()
     }
-    fn discard(&self) {
+    fn clear(&self) {
         self.b.borrow_mut().clear();
-        self.dropped.set(0);
     }
     fn take_dropped(&self) -> u32 {
-        self.dropped.replace(0)
+        self.dropped.replace(self.late.take())
     }
 }
 
@@ -391,4 +392,43 @@ fn only_cable_zeros_events_pass() {
         got,
         [Some(vec![0x90, 60, 100]), None, None, Some(vec![0xF8])]
     );
+}
+
+/// The UI lost an echo (#842): what waits is stale, held and ring both
+/// dropped, the packer reset; the UI re-echoes once the ring is empty.
+#[test]
+fn a_lost_echo_flushes_what_waits() {
+    let mut q = InQueue::new();
+    let ring = Ring::of(&notes(20));
+    let mut ep = Endpoint::answering(&[UsbError::WouldBlock]);
+    send(&mut q, &ring, true, &mut ep);
+    ring.put(&[0x90, 60]);
+    ring.dropped.set(1);
+    assert_eq!(send(&mut q, &ring, true, &mut ep), 1);
+    assert!(ring.is_empty());
+    ring.put(&[0xB0, 7, 9]);
+    send(&mut q, &ring, true, &mut ep);
+    assert_eq!(ep.took, pack(&[0xB0, 7, 9]));
+}
+
+/// The UI lost an echo while its ring stood empty: the loss is taken all
+/// the same, so the UI's resend isn't held waiting on it.
+#[test]
+fn a_loss_on_an_empty_ring_is_taken() {
+    let (mut q, mut ep) = (InQueue::new(), Endpoint::default());
+    let ring = Ring::default();
+    ring.dropped.set(1);
+    assert_eq!(send(&mut q, &ring, true, &mut ep), 1);
+    assert_eq!(ring.dropped.get(), 0);
+}
+
+/// A loss the UI counts after the take is the next poll's, never erased.
+#[test]
+fn a_loss_after_the_take_survives() {
+    let (mut q, mut ep) = (InQueue::new(), Endpoint::default());
+    let ring = Ring::of(&notes(2));
+    ring.dropped.set(1);
+    ring.late.set(1);
+    assert_eq!(send(&mut q, &ring, true, &mut ep), 1);
+    assert_eq!(ring.dropped.get(), 1);
 }
