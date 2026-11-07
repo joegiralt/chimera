@@ -695,6 +695,10 @@ mv-ab type:
 mv-structure +progs:
     {{utils}} mv-structure {{progs}}
 
+# The chorus slot's TYPEs on a stab and a sine, stereo WAVs into dir, and each TYPE's host cost (#794)
+chorus-listen dir:
+    {{utils}} chorus-listen {{dir}}
+
 # TAPE's Hermite read against a polyphase sinc, 24 kHz source, -12..+24 st (#698)
 tape-interp-ab dir:
     {{utils}} tape-interp-ab {{dir}}

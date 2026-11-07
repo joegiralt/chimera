@@ -496,8 +496,9 @@ fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge, layout: Layout, ink
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    if let Gauge::Tape(_) = gauge {
-        // Beside a TAPE glyph a long word (CAPSTAN) drops to the readout size.
+    if let Gauge::Tape(_) | Gauge::Braid(_) = gauge {
+        // Beside a TAPE glyph or the braid a long word (CAPSTAN, FLANGER)
+        // drops to the readout size.
         if layout == Layout::NoGauge {
             draw::text(
                 d,
@@ -687,8 +688,11 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
 pub fn fit_gauge(value_text: &str, gauge: Gauge) -> Gauge {
     match layout(value_text, &gauge) {
         Layout::WithGauge | Layout::SmallBeside => gauge,
-        // A TAPE or LFO glyph stays: its long word drops to the readout size.
-        Layout::NoGauge if matches!(gauge, Gauge::Tape(_) | Gauge::Lfo(_)) => gauge,
+        // A TAPE or LFO glyph or the braid stays: its long word drops to
+        // the readout size.
+        Layout::NoGauge if matches!(gauge, Gauge::Tape(_) | Gauge::Lfo(_) | Gauge::Braid(_)) => {
+            gauge
+        }
         _ => Gauge::None,
     }
 }

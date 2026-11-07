@@ -85,8 +85,9 @@ fn ink(fb: &Fb, i: usize) -> bool {
 /// The value alone, and with `g`: the pixels `g` landed on, and if the
 /// band drew it at all.
 fn overlap(label: &str, text: &str, g: Gauge) -> (bool, Vec<(usize, usize)>) {
-    // Beside a TAPE glyph a long word is set at the readout size.
-    let readout = matches!(g, Gauge::Tape(_)) && components::layout(text, &g) == Layout::NoGauge;
+    // Beside a TAPE glyph or the braid a long word is set at the readout size.
+    let readout = matches!(g, Gauge::Tape(_) | Gauge::Braid(_))
+        && components::layout(text, &g) == Layout::NoGauge;
     let value = render(|d| {
         if readout {
             components::focus_band(

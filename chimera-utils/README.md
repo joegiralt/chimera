@@ -16,6 +16,7 @@ subprocess. It never enters the firmware build.
 | `mv-start [TYPE …]` | Each TYPE's START against its source program (ROOM #5, BLOOM #45), judged as `mv-verify` judges a fit. Exits 1 on any FAIL. |
 | `mv-ab TYPE` | Reference and TYPE at its fitted knobs on the listening set, RMS-matched. |
 | `mv-structure PROG …` | A program's injections, allpasses and taps, read from the decompiled listing. |
+| `chorus-listen DIR` | The chorus slot's TYPEs (OFF, I, II, I+II, FLANGER, PHASER) on a chord stab and a held sine through the full engine, CHORUS send at 1: raw stereo WAVs `DIR/<phrase>_<type>.wav`. Then each TYPE's host ns a sample against I+II. |
 | `stim DIR` | The listening set as mono 24-bit WAVs, `DIR/<name>.wav`: what the factory effects demos play through the FX bus. |
 | `voice-stats WAV …` | Measures any 48 kHz WAVs, ours or a reference's, the same way: loudness, vibrato, drift, breath share, formants, vowel motion and brightness, one row each. `--json PATH` writes the rows as JSON too. |
 

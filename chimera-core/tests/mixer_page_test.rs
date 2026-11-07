@@ -177,7 +177,7 @@ fn fx_encoders_step_like_before() {
     turn_def(&reg::DELAY, 1, 2, &mut perf);
     assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
     turn_def(&reg::CHORUS, 0, 5, &mut perf);
-    assert_eq!(perf.fx.chorus.mode, 3);
+    assert_eq!(perf.fx.chorus.mode, 5); // held at the last TYPE, PHASER
     turn_def(&reg::EFX, 5, -1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 0.0);
     turn_def(&reg::EFX, 5, 1, &mut perf);

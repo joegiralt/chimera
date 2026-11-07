@@ -31,11 +31,11 @@ const SEND: f32 = 0.5;
 const TAIL_S: f64 = 5.0;
 
 /// (seconds, note, on) and the phrase's length.
-struct Phrase {
-    name: &'static str,
-    sound: Sound,
-    notes: Vec<(f64, u8, bool)>,
-    len: f64,
+pub(crate) struct Phrase {
+    pub name: &'static str,
+    pub sound: Sound,
+    pub notes: Vec<(f64, u8, bool)>,
+    pub len: f64,
 }
 
 fn factory(name: &str) -> Result<Sound, String> {
@@ -49,7 +49,7 @@ fn factory(name: &str) -> Result<Sound, String> {
     Ok(s)
 }
 
-fn phrases() -> Result<Vec<Phrase>, String> {
+pub(crate) fn phrases() -> Result<Vec<Phrase>, String> {
     let step = 60.0 / 120.0 / 4.0;
     // A rising pluck figure in 16ths, each note a 16th long.
     let pluck: Vec<_> = [60u8, 63, 67, 70, 72, 70, 67, 63]
@@ -165,16 +165,26 @@ fn settings() -> Vec<(&'static str, DelayParams)> {
 /// `ph` on Part 1 with the DELAY send at `SEND`, the chorus and reverb
 /// returns off, the delay at `d`: mono (L+R)/2 after the limiter.
 fn render(ph: &Phrase, d: DelayParams) -> Vec<f32> {
+    let fx = FxParams {
+        delay: d,
+        ..FxParams::OFF
+    };
+    render_stereo(ph, [0.0, SEND, 0.0], fx)
+        .into_iter()
+        .map(|[l, r]| 0.5 * (l + r))
+        .collect()
+}
+
+/// `ph` on Part 1 at `sends` (chorus, delay, reverb) into the bus at
+/// `fx`, its tail `TAIL_S`: (L, R) frames after the limiter.
+pub(crate) fn render_stereo(ph: &Phrase, sends: [f32; 3], fx: FxParams) -> Vec<[f32; 2]> {
     let mut s = ph.sound.clone();
-    s.params.out.sends = [0.0, SEND, 0.0];
+    s.params.out.sends = sends;
     let sound = Tracked::fresh(s);
     let loads = Loads::NONE.next();
     let mut pubr = KnobPublisher::new();
     let mut shared = Box::<AudioShared>::default();
-    shared.fx = FxParams {
-        delay: d,
-        ..FxParams::OFF
-    };
+    shared.fx = fx;
     shared.publish_sound(0, &sound, loads, &mut pubr);
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
@@ -208,7 +218,7 @@ fn render(ph: &Phrase, d: DelayParams) -> Vec<f32> {
             next += 1;
         }
         inst.render_with(&mut fx, &mut dac, &shared, &mut scope, &gv);
-        out.extend(dac.out()[0].chunks(2).map(|f| 0.5 * (f[0] + f[1])));
+        out.extend(dac.out()[0].chunks(2).map(|f| [f[0], f[1]]));
     }
     out
 }

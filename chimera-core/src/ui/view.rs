@@ -672,11 +672,13 @@ const REV_HINTS: [Hint; 6] = [
     &[Gesture("REVERB ▸", ReverbType::NAMES[5])],
 ];
 
-const CHORUS_HINTS: [Hint; 4] = [
+const CHORUS_HINTS: [Hint; 6] = [
     &[Gesture("CHORUS ▸", MODE_NAMES[0])],
     &[Gesture("CHORUS ▸", MODE_NAMES[1])],
     &[Gesture("CHORUS ▸", MODE_NAMES[2])],
     &[Gesture("CHORUS ▸", MODE_NAMES[3])],
+    &[Gesture("CHORUS ▸", MODE_NAMES[4])],
+    &[Gesture("CHORUS ▸", MODE_NAMES[5])],
 ];
 
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];

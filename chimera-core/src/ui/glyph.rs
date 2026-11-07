@@ -5,7 +5,7 @@ use crate::block::ValFmt;
 use crate::dsp::algo::formant::Skirt;
 use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
-use crate::dsp::chorus::ChorusMode;
+use crate::dsp::chorus::{ChorusMode, MODE_NAMES};
 use crate::dsp::clampf;
 use crate::dsp::rev::sync::{FoldState, Tempo, index_of};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
@@ -704,7 +704,7 @@ impl BraidPart {
 /// the chorus's set values (normalized) and the UI clock's `frame`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Braid {
-    /// MODE: OFF, I, II or I+II.
+    /// TYPE: OFF, I, II, I+II, FLANGER or PHASER.
     pub mode: ChorusMode,
     /// How fast the twist travels.
     pub rate: f32,
@@ -720,7 +720,7 @@ impl Braid {
     /// From `BRAID_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 4], focus: Option<BraidPart>, frame: u32) -> Self {
         Self {
-            mode: ChorusMode::from_u8(index_of(set[0], 4) as u8),
+            mode: ChorusMode::from_u8(index_of(set[0], MODE_NAMES.len()) as u8),
             rate: clampf(set[1], 0.0, 1.0),
             depth: clampf(set[2], 0.0, 1.0),
             mix: clampf(set[3], 0.0, 1.0),
@@ -729,20 +729,23 @@ impl Braid {
         }
     }
 
-    /// OFF none (the dry line alone), I and II two, I+II three.
+    /// OFF none (the dry line alone), I, II, FLANGER and PHASER two (a
+    /// side each), I+II three.
     pub const fn strands(&self) -> usize {
         match self.mode {
             ChorusMode::Off => 0,
-            ChorusMode::JunoI | ChorusMode::JunoII => 2,
+            ChorusMode::JunoI | ChorusMode::JunoII | ChorusMode::Flanger | ChorusMode::Phaser => 2,
             ChorusMode::JunoBoth => 3,
         }
     }
 
     /// Twists along the box, and how fast the twist travels: II's are
-    /// tighter and faster.
+    /// tighter and faster, FLANGER's tightest and slow, PHASER's loose.
     const fn turns_and_speed(&self) -> (f32, f64) {
         match self.mode {
             ChorusMode::JunoII => (2.5, 1.6),
+            ChorusMode::Flanger => (3.5, 0.6),
+            ChorusMode::Phaser => (1.0, 1.3),
             ChorusMode::Off | ChorusMode::JunoI | ChorusMode::JunoBoth => (1.5, 1.0),
         }
     }

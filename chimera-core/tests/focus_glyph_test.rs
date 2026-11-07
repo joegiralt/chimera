@@ -356,7 +356,7 @@ fn chorus_mode_and_lfo_shape_and_sync_are_named() {
     };
     assert_eq!(
         names(BlockRef::Chorus, ChorusParams::MODE),
-        ["OFF", "I", "II", "I+II"]
+        ["OFF", "I", "II", "I+II", "FLANGER", "PHASER"]
     );
     let lfo = BlockRef::Lfo(LfoSlot::Lfo1);
     assert_eq!(
@@ -1102,20 +1102,22 @@ fn crossfader_ignores_modulation() {
 #[test]
 fn braid_reads_its_set_values() {
     let b = |mode: f32| Braid::from_set([mode, 0.5, 0.5, 0.5], None, 0);
-    // OFF a straight line; I two strands; II two, faster; I+II three.
-    let strands: Vec<_> = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
-        .iter()
-        .map(|&m| b(m).strands())
-        .collect();
-    assert_eq!(strands, [0, 2, 2, 3]);
+    // OFF a straight line; I two strands; II two, faster; I+II three;
+    // FLANGER and PHASER two, a side each.
+    let strands: Vec<_> = (0..6).map(|m| b(m as f32 / 5.0).strands()).collect();
+    assert_eq!(strands, [0, 2, 2, 3, 2, 2]);
     let at = |mode: f32, frame| Braid::from_set([mode, 0.5, 0.5, 0.5], None, frame);
     assert!(
-        at(2.0 / 3.0, 100).twist() != at(1.0 / 3.0, 100).twist(),
+        at(2.0 / 5.0, 100).twist() != at(1.0 / 5.0, 100).twist(),
         "II twists faster"
     );
-    assert_eq!(b(1.0).mode, chimera_core::dsp::chorus::ChorusMode::JunoBoth);
+    assert_eq!(
+        b(3.0 / 5.0).mode,
+        chimera_core::dsp::chorus::ChorusMode::JunoBoth
+    );
+    assert_eq!(b(1.0).mode, chimera_core::dsp::chorus::ChorusMode::Phaser);
     // RATE is how fast the twist travels: frame 0 is still, rate 0 slowest.
-    let rate = |r: f32| Braid::from_set([1.0 / 3.0, r, 0.5, 0.5], None, 20).twist();
+    let rate = |r: f32| Braid::from_set([1.0 / 5.0, r, 0.5, 0.5], None, 20).twist();
     assert!(rate(1.0) > rate(0.0));
     assert!(Gauge::Braid(b(1.0)).animates());
 }
@@ -1129,7 +1131,7 @@ fn braid_box(x: i32, y: i32) -> bool {
 fn braid_ui(slot: EncoderId) -> UiState {
     let mut ui = UiState::new();
     to_demo(&mut ui, &reg::DEMO_GLYPH_BRAID);
-    feed(&mut ui, Input::turn(EncoderId::A, 3));
+    feed(&mut ui, Input::turn(EncoderId::A, 2));
     feed(&mut ui, Input::turn(EncoderId::C, 30));
     feed(&mut ui, Input::turn(EncoderId::D, 60));
     // Focus `slot` without moving it.
@@ -1254,7 +1256,16 @@ fn composite_values_stay_clear_of_the_box() {
                 CompositeId::Reverb => theme::CUBE_X,
             };
             for w in value_texts(s) {
-                let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
+                // The braid keeps its box for a long word (FLANGER) at the
+                // readout size, as TAPE's glyph does.
+                let big = draw::text_width(&theme::FONT_FOCUS, &w, 0);
+                let fits = theme::FOCUS_VALUE_X + big + GAP <= box_x;
+                let font = if id == CompositeId::ChorusBraid && !fits {
+                    &theme::FONT_READOUT
+                } else {
+                    &theme::FONT_FOCUS
+                };
+                let right = theme::FOCUS_VALUE_X + draw::text_width(font, &w, 0);
                 assert!(
                     right + GAP <= box_x,
                     "{b:?}.{} {w}: ends at {right}",
