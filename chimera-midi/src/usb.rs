@@ -4,8 +4,9 @@
 use usb_device::UsbError;
 use usb_device::device::UsbDeviceState;
 
-/// The 1 to 3 MIDI bytes of one packet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The 1 to 3 MIDI bytes of one packet, equal by those alone: the
+/// padding is the host's.
+#[derive(Clone, Copy, Debug, Eq)]
 pub struct Bytes {
     len: u8,
     b: [u8; 3],
@@ -14,6 +15,12 @@ pub struct Bytes {
 impl Bytes {
     pub fn as_slice(&self) -> &[u8] {
         &self.b[..self.len as usize]
+    }
+}
+
+impl PartialEq for Bytes {
+    fn eq(&self, o: &Self) -> bool {
+        self.as_slice() == o.as_slice()
     }
 }
 
@@ -56,8 +63,9 @@ pub fn cable_zero(packets: &[u8]) -> impl Iterator<Item = Option<Bytes>> + '_ {
     })
 }
 
-/// Bytes to cable-0 packets; realtime passes through SysEx at once.
-#[derive(Clone, Copy, Debug, Default)]
+/// Bytes to cable-0 packets; realtime passes through SysEx at once. Not
+/// `Copy`: a copy would split one stream's state.
+#[derive(Clone, Debug, Default)]
 pub struct Packer {
     b: [u8; 3],
     n: u8,
@@ -223,7 +231,7 @@ const HELD: usize = 16;
 
 /// USB MIDI out: the ring's bytes packed, and the packets the endpoint
 /// hasn't taken.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct InQueue {
     packer: Packer,
     held: [[u8; 4]; HELD],

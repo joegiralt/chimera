@@ -584,7 +584,8 @@ impl DinPipe {
     /// held a key or pedal: a re-enumeration says nothing); then every pedal
     /// the source has down is lifted. NotesOff and pedal-ups a full
     /// queue refuses are owed, each channel's once, and go ahead of
-    /// anything fed after (`feed`).
+    /// anything fed after (`feed`); a refusal counts in `refused` (#865),
+    /// as no byte may follow to count it.
     fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S, mut held: Option<&mut Held>) {
         let told = self.pedals.down != 0
             || held
@@ -603,7 +604,9 @@ impl DinPipe {
             pedals: &mut self.pedals,
             held,
         };
-        sink.settle();
+        if !sink.settle() {
+            sink.stats.refused = sink.stats.refused.saturating_add(1);
+        }
         if told {
             sink.ctrl(CtrlEvent::SensingLost);
         }

@@ -117,8 +117,9 @@ impl Midi {
 }
 
 impl Closed {
-    /// Every packet waiting read and dropped, counted in `drops`, so none
-    /// blocks the shared RX FIFO (spec § 13.1, 13.2).
+    /// The packets the bus holds now read and dropped, counted in `drops`,
+    /// so none blocks the shared RX FIFO (spec § 13.1, 13.2); later ones
+    /// at a later poll.
     #[inline(always)]
     pub(crate) fn drain(self, dev: &Dev, drops: &mut u32) {
         let mut p = [0u8; 64];
@@ -257,7 +258,7 @@ mod door {
 
     /// The device polled with both classes; leaving Configured, every Part
     /// let go as `lets_go` rules, NotesOff still owed retried (an empty
-    /// feed); then every OUT packet read, cable 0's
+    /// feed); then the OUT packets the bus holds now read, cable 0's
     /// bytes fed to USB's pipe here in bank 2 (its ring is not DIN's), the
     /// rest dropped and counted; then the out ring sent (`InQueue::send`).
     pub(super) fn poll(
@@ -298,6 +299,10 @@ mod door {
                     _ => counts.in_drops = counts.in_drops.wrapping_add(1),
                 }
             }
+        }
+        // What the queue refused, a lost's too: `status`'s (#865).
+        if let Some(p) = pipe {
+            counts.pipe_drops = u32::from(p.stats().refused);
         }
         if let Some(ring) = out {
             let lost = queue.send(ring, edge.up(), |b| inp.write(b));

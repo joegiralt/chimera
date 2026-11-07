@@ -126,6 +126,7 @@ impl Unit for DeskUnit<'_> {
             faults: crate::midi::FAULTS.load(Ordering::Relaxed),
             drops: crate::midi::DROPS.load(Ordering::Relaxed),
             ctrl_drops: crate::midi::CTRL_DROPS.load(Ordering::Relaxed),
+            usb_drops: 0,
         })
     }
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {

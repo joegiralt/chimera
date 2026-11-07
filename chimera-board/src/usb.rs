@@ -28,12 +28,8 @@ use stm32h7xx_hal::usb_hs::UsbBus;
 use synopsys_usb_otg::UsbPeripheral;
 use usb_device::UsbError;
 use usb_device::bus::UsbBusAllocator;
-use usb_device::device::{
-    StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid,
-};
+use usb_device::device::{UsbDevice, UsbDeviceState};
 use usbd_serial::SerialPort;
-#[cfg(not(feature = "midi-usb"))]
-use usbd_serial::USB_CLASS_CDC;
 
 use crate::sd::SdStore;
 #[cfg(feature = "midi-usb")]
@@ -302,8 +298,8 @@ pub fn init(ready: Ready, midi: MidiSinks, clocks: &CoreClocks, cpu_hz: u32) -> 
         _pwrclk: pwrclk,
         hclk: clocks.hclk().raw(),
     };
-    // EP OUT packets only (EP0 and the bulk OUT, 64 bytes each); the TX
-    // FIFOs live in the core's own RAM.
+    // EP OUT packets only (EP0's, the console's bulk OUT and MIDI's, 64
+    // bytes each); the TX FIFOs live in the core's own RAM.
     let ep_memory = cortex_m::singleton!(: [u32; 256] = [0; 256]).expect("EP memory taken once");
     let bus = UsbBus::new(usb, ep_memory);
     // Here, so the device and the class can both borrow it for 'static.
@@ -339,24 +335,14 @@ impl Unconnected {
     /// starts). A bench build's screens hold for minutes before that, and
     /// an unpolled device that long is one the host gives up on.
     pub fn connect(self) -> Usb {
-        let strings = StringDescriptors::default()
-            .manufacturer("Chimera")
-            .product("Chimera")
-            .serial_number(self.uid);
-        let dev = UsbDeviceBuilder::new(self.bus, UsbVidPid(VID_PID.0, VID_PID.1))
-            .strings(&[strings])
-            .expect("one language")
-            .self_powered(true)
-            .max_power(100)
-            .expect("100 mA is within 500");
         // MIDI or not (the slot filled at `init`), fixed for the boot: a
         // host never sees the layout change under it.
         #[cfg(feature = "midi-usb")]
-        let dev = dev.composite_with_iads().device_release(MIDI_RELEASE);
+        let midi = Some(MIDI_RELEASE);
         #[cfg(not(feature = "midi-usb"))]
-        let dev = dev.device_class(USB_CLASS_CDC);
+        let midi = None;
         let core = UsbCore {
-            dev: dev.build(),
+            dev: chimera_midi::usb_class::device(self.bus, VID_PID, self.uid, midi),
             serial: self.serial,
             #[cfg(feature = "midi-usb")]
             midi: self.midi,
@@ -377,6 +363,7 @@ impl Unconnected {
                     rx_parks: 0,
                     in_drops: 0,
                     out_drops: 0,
+                    pipe_drops: 0,
                 },
             },
         };
@@ -699,6 +686,10 @@ impl Unit for ChipUnit<'_> {
             faults: MIDI_FAULTS.load(Ordering::Relaxed),
             drops: MIDI_DROPS.load(Ordering::Relaxed),
             ctrl_drops: MIDI_CTRL_DROPS.load(Ordering::Relaxed),
+            #[cfg(feature = "midi-usb")]
+            usb_drops: self.usb_irq.seen.pipe_drops,
+            #[cfg(not(feature = "midi-usb"))]
+            usb_drops: 0,
         })
     }
 
@@ -895,6 +886,9 @@ pub(crate) struct Counts {
     /// Echo messages USB's out ring lost and IN packets the endpoint
     /// refused.
     pub(crate) out_drops: u32,
+    /// Events the note queue refused USB's pipe (`PipeStats::refused`),
+    /// as of the last poll that fed it.
+    pub(crate) pipe_drops: u32,
 }
 
 impl UsbCore {

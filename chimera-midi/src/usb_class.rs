@@ -6,7 +6,40 @@
 
 use usb_device::class_prelude::{
     DescriptorWriter, EndpointIn, EndpointOut, InterfaceNumber, StringIndex, UsbBus,
+    UsbBusAllocator,
 };
+use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
+
+/// The console's class, as usbd-serial names it.
+const CDC: u8 = 0x02;
+
+/// Chimera's device on `bus`: the strings, `serial` its serial number,
+/// self-powered at 100 mA; the console alone a CDC device, with USB MIDI
+/// (`midi`, its device release) a composite of IADs. The board's `connect`
+/// and the host test build it here alike.
+#[inline(always)]
+pub fn device<'a, B: UsbBus>(
+    bus: &'a UsbBusAllocator<B>,
+    (vid, pid): (u16, u16),
+    serial: &'a str,
+    midi: Option<u16>,
+) -> UsbDevice<'a, B> {
+    let strings = StringDescriptors::default()
+        .manufacturer("Chimera")
+        .product("Chimera")
+        .serial_number(serial);
+    let dev = UsbDeviceBuilder::new(bus, UsbVidPid(vid, pid))
+        .strings(&[strings])
+        .expect("one language")
+        .self_powered(true)
+        .max_power(100)
+        .expect("100 mA is within 500");
+    match midi {
+        Some(release) => dev.composite_with_iads().device_release(release),
+        None => dev.device_class(CDC),
+    }
+    .build()
+}
 
 const IAD: u8 = 0x0B;
 const AUDIO: u8 = 0x01;

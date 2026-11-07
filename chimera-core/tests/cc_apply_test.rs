@@ -20,7 +20,9 @@ use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::va::VaParams;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-use chimera_core::midi_in::{CTRL_RING_LEN, CTRL_USB_LEN, Cc, CcEvent, CtrlEvent, CtrlRing, Port};
+use chimera_core::midi_in::{
+    CTRL_RING_LEN, CTRL_USB_LEN, Cc, CcEvent, CtrlEvent, CtrlPorts, CtrlRing,
+};
 use chimera_core::midi_map::{Input as MapInput, Mappable, Span};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
@@ -1053,9 +1055,10 @@ fn a_swept_end_shows_promptly() {
     }
 }
 
-/// DIN's and USB's control rings drained in one pass: 8 mapped knobs
-/// swept 0→127, half heard on each port, never more than `MOVES - 1`
-/// moves a publish, and every knob arrives.
+/// DIN's and USB's control rings drained in one pass, as the board does
+/// (`CtrlPorts::drain`): 8 mapped knobs swept 0→127, half heard on each
+/// port, never more than `MOVES - 1` moves a publish, and every knob
+/// arrives.
 #[test]
 fn both_rings_share_one_budget() {
     let mut b = Bench::algo();
@@ -1069,7 +1072,7 @@ fn both_rings_share_one_budget() {
     b.publish();
     b.note();
     b.reset_most();
-    let (din, usb): (CtrlRing, CtrlRing<CTRL_USB_LEN>) = (CtrlRing::new(), CtrlRing::new());
+    let ports: CtrlPorts<CTRL_USB_LEN> = CtrlPorts::new();
     let n = 500;
     for t in 0..=n {
         let v = (127 * t / n) as u8;
@@ -1083,17 +1086,13 @@ fn both_rings_share_one_budget() {
                 },
             );
             if i % 2 == 0 {
-                din.push(ctl)
+                ports.din.push(ctl)
             } else {
-                usb.push(ctl)
+                ports.usb.push(ctl)
             };
         }
         b.now += PASS_MS;
-        let ev = din
-            .drain()
-            .map(|e| (Port::Din, e))
-            .chain(usb.drain().map(|e| (Port::Usb, e)));
-        b.ui.hear_ccs(ev, Ms(b.now), b.taken);
+        b.ui.hear_ccs(ports.drain(), Ms(b.now), b.taken);
         b.publish();
         for _ in 0..PASS_BLOCKS {
             b.render();

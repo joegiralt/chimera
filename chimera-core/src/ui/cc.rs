@@ -221,9 +221,10 @@ fn through<R>(f: impl FnOnce(&MidiUiDoor) -> R) -> Option<R> {
 }
 
 impl UiState {
-    /// This pass's control messages (spec §§ 5-7), through the door: the
-    /// control rings' `CtrlEvent`s (DIN's), tagged with their `Port`, all
-    /// in one pass and one budget, or a test's plain `CcEvent`s. After
+    /// This pass's control messages (spec §§ 5-7), through the door: both
+    /// control rings' `CtrlEvent`s (`CtrlPorts::drain`), tagged with their
+    /// `Port`, all in one pass and one budget, or a test's plain
+    /// `CcEvent`s. After
     /// `handle_input`, before the publish. `taken`: the audio has taken
     /// the last publish (`Writer::taken`). Closed, drained and dropped.
     pub fn hear_ccs(&mut self, ev: impl Iterator<Item = impl HeardCc>, now: Ms, taken: bool) {

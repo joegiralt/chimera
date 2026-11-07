@@ -108,13 +108,12 @@ fn USART1() {
     };
     // Active Sensing: 300 ms without a byte. A stale flag (counted while
     // disarmed) is cleared here, before this entry's bytes can arm.
+    let mut idle = false;
     if usart.isr.read().rtof().bit_is_set() {
         usart.icr.write(|w| w.rtocf().clear());
-        if usart.cr1.read().rtoie().bit_is_set() {
+        idle = usart.cr1.read().rtoie().bit_is_set();
+        if idle {
             usart.cr1.modify(|_, w| w.rtoie().clear_bit());
-            if let (Some(notes), Some(ctrl)) = (notes.as_mut(), ctrl) {
-                midi_in::idle(pipe, &mut DinSinks { notes, ctrl });
-            }
         }
     }
     // Every byte the FIFO holds, then one door call (spec § 7.2).
@@ -138,11 +137,19 @@ fn USART1() {
         buf[n] = usart.rdr.read().rdr().bits() as u8;
         n += usize::from(!bad);
     }
-    if n > 0
+    if (idle || n > 0)
         && let (Some(notes), Some(ctrl)) = (notes.as_mut(), ctrl)
     {
+        let mut sinks = DinSinks { notes, ctrl };
+        // The silence first, so this entry's bytes may arm again; its
+        // counts too, as no byte may follow (#865).
+        if idle {
+            midi_in::idle(pipe, &mut sinks);
+        }
         // Closed, the bytes are dropped: MIDI in is deaf (spec § 13).
-        midi_in::feed(pipe, &buf[..n], &mut DinSinks { notes, ctrl });
+        if n > 0 {
+            midi_in::feed(pipe, &buf[..n], &mut sinks);
+        }
         let s = pipe.stats();
         MIDI_FAULTS.store(s.fault_total(), Ordering::Relaxed);
         MIDI_DROPS.store(u32::from(s.refused), Ordering::Relaxed);

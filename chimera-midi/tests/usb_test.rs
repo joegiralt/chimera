@@ -432,3 +432,12 @@ fn a_loss_after_the_take_survives() {
     assert_eq!(send(&mut q, &ring, true, &mut ep), 1);
     assert_eq!(ring.dropped.get(), 1);
 }
+
+/// A packet's bytes compare by what they hold: a short message's padding
+/// is no part of it.
+#[test]
+fn bytes_ignore_padding() {
+    let a = unpack([0x0C, 0xC0, 5, 0]).unwrap().1;
+    let b = unpack([0x0C, 0xC0, 5, 9]).unwrap().1;
+    assert_eq!(a, b);
+}

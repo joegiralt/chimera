@@ -7,10 +7,9 @@
 
 use std::sync::Mutex;
 
-use chimera_midi::usb_class::{Ids, MS_TOTAL, descriptors};
+use chimera_midi::usb_class::{Ids, MS_TOTAL, descriptors, device};
 use usb_device::bus::PollResult;
 use usb_device::class_prelude::*;
-use usb_device::device::{StringDescriptors, UsbDeviceBuilder, UsbVidPid};
 use usb_device::{Result, UsbDirection};
 use usbd_serial::SerialPort;
 
@@ -128,20 +127,14 @@ fn ask(midi: bool, kind: u8, index: u8) -> (Vec<u8>, bool) {
         out: alloc.bulk(64),
         inp: alloc.bulk(64),
     });
-    // As `chimera-board`'s `connect`, the serial a 96-bit UID in hex.
-    let strings = StringDescriptors::default()
-        .manufacturer("Chimera")
-        .product("Chimera")
-        .serial_number("0123456789ABCDEF01234567");
-    let mut dev = UsbDeviceBuilder::new(&alloc, UsbVidPid(0x0483, 0x5740))
-        .strings(&[strings])
-        .unwrap()
-        .self_powered(true)
-        .max_power(100)
-        .unwrap()
-        .composite_with_iads()
-        .device_release(0x0020)
-        .build();
+    // `connect`'s device, the serial a 96-bit UID in hex.
+    let release = midi.then_some(0x0020);
+    let mut dev = device(
+        &alloc,
+        (0x0483, 0x5740),
+        "0123456789ABCDEF01234567",
+        release,
+    );
     dev.bus().0.lock().unwrap().setup = Some([0x80, 6, index, kind, 0x09, 0x04, 0xFF, 0x03]);
     for _ in 0..200 {
         match class.as_mut() {
@@ -202,4 +195,14 @@ fn device_strings_and_bos_reach_the_host() {
     assert_eq!(whole(3, 4), b"\x10\x03C\0h\0i\0m\0e\0r\0a\0");
     let b = whole(0x0F, 0);
     assert_eq!(usize::from(u16::from_le_bytes([b[2], b[3]])), b.len());
+}
+
+/// The console alone is a CDC device; with MIDI, a composite of IADs.
+#[test]
+fn device_class_follows_the_layout() {
+    for (midi, class) in [(false, 0x02), (true, 0xEF)] {
+        let (d, stalled) = ask(midi, 1, 0);
+        assert!(!stalled);
+        assert_eq!(d[4], class, "MIDI {midi}");
+    }
 }

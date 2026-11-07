@@ -700,7 +700,11 @@ fn lost_waits_for_room() {
     usb.feed(&[0x91, 62, 100, 0x81, 62, 0]);
     let got = usb.take().0;
     assert_eq!(got[59..], all_notes_off()[..5], "room for 5, no note");
-    assert_eq!(usb.slot.stats().refused, 2, "the note fed meanwhile");
+    assert_eq!(
+        usb.slot.stats().refused,
+        3,
+        "the lost, the note fed meanwhile"
+    );
     assert!(usb.slot.owes());
     assert_eq!(usb.settle(), all_notes_off()[5..], "the rest");
     assert!(!usb.slot.owes());
@@ -798,7 +802,7 @@ fn a_pedal_up_waits_for_room() {
         "no room for the pedal"
     );
     assert!(usb.slot.owes());
-    assert_eq!(usb.slot.stats().refused, 1, "the note");
+    assert_eq!(usb.slot.stats().refused, 2, "the lost, the note");
     assert_eq!(usb.settle(), [pedal_up(3)]);
     assert!(!usb.slot.owes());
     assert_eq!(usb.settle(), [], "once");
@@ -905,4 +909,20 @@ fn din_sensing_lost_lifts_a_held_pedal() {
     assert_eq!(din.run(&[]).0, want, "only the pedal still down");
     din.run(&[0xFE]);
     assert_eq!(din.run(&[]).0, all_notes_off(), "lifted once");
+}
+
+/// A silence into a full queue: the NotesOff it can't place count as
+/// refused, so status shows them though no byte follows (#865).
+#[test]
+fn idle_into_a_full_queue_counts_the_refusal() {
+    let mut din = Din::new();
+    din.run(&[0xFE]);
+    din.fill();
+    din.feed(&[]);
+    assert_eq!(din.slot.stats().refused, 1);
+    let mut usb = Usb::new();
+    usb.run(&[0x90, 60, 100]);
+    usb.fill();
+    usb.lost();
+    assert_eq!(usb.slot.stats().refused, 1);
 }
