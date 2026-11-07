@@ -580,11 +580,16 @@ impl DinPipe {
     }
 
     /// The source went away (DIN's sensing timed out, USB's bus reset or
-    /// suspend): every Part lets go and the UI hears it; then every pedal
+    /// suspend): every Part lets go and the UI hears it (USB's only when it
+    /// held a key or pedal: a re-enumeration says nothing); then every pedal
     /// the source has down is lifted. NotesOff and pedal-ups a full
     /// queue refuses are owed, each channel's once, and go ahead of
     /// anything fed after (`feed`).
     fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S, mut held: Option<&mut Held>) {
+        let told = self.pedals.down != 0
+            || held
+                .as_deref()
+                .is_none_or(|h| h.keys.iter().any(|&k| k != 0));
         self.owed = u16::MAX;
         self.pedals.up |= self.pedals.down;
         self.pedals.down = 0;
@@ -599,7 +604,9 @@ impl DinPipe {
             held,
         };
         sink.settle();
-        sink.ctrl(CtrlEvent::SensingLost);
+        if told {
+            sink.ctrl(CtrlEvent::SensingLost);
+        }
     }
 
     /// A field read, so bank 1's ISR may call it: armed, it sets the

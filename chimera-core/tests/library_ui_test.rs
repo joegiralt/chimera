@@ -531,6 +531,23 @@ fn a_cc_during_the_source_read_is_dropped() {
     assert!(r.toast().starts_with("LOADED TO SLOT "));
 }
 
+/// A source lost while a load waits still says so (#818): the notes
+/// already let go, busy or not.
+#[cfg(feature = "midi-map")]
+#[test]
+fn a_lost_source_during_a_load_toasts() {
+    use chimera_core::midi_in::{CtrlEvent, Port};
+    use chimera_hal::Ms;
+    let mut r = Rig::new();
+    tape_library(&mut r, 100.0, "TAPE");
+    r.start_load();
+    r.one_pass(); // the read; the stream starts
+    assert!(r.ui.card_pending(), "still streaming");
+    let lost = (Port::Din, CtrlEvent::SensingLost);
+    r.ui.hear_ccs(core::iter::once(lost), Ms(1_000), true);
+    assert_eq!(r.toast(), "DIN MIDI LOST");
+}
+
 /// A CC heard while SAVE TO LIBRARY waits (#528): a save replaces
 /// nothing the bindings point at, so CUTOFF moves.
 #[cfg(feature = "midi-map")]

@@ -36,11 +36,11 @@ use crate::block::Motion;
 use crate::dsp::clampf;
 use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
-use crate::midi_in::{CtrlEvent, HeardEv};
+use crate::midi_in::{CtrlEvent, HeardEv, Port};
 use crate::midi_map::{Binding, MAP_LEN, Mappable, Span};
 use crate::nrpn::{self, NrpnAddr};
 use crate::part::{MAX_BEND, PartParams};
-use crate::project::{Loads, PartId, Project};
+use crate::project::{Line, Loads, PartId, Project};
 use ramp::{Ramp, bin, budget};
 use resolve::{Action, BindRuntime, resolve};
 
@@ -372,6 +372,14 @@ impl UiState {
             // that asked.
             if let HeardEv::Ctrl(port, CtrlEvent::Identity { .. }) = e {
                 self.cc.ui().echo.ask(port);
+                continue;
+            }
+            // The notes already let go: say why, busy or not (#818).
+            if let HeardEv::Ctrl(port, CtrlEvent::SensingLost) = e {
+                self.notice(Line::new(match port {
+                    Port::Din => "DIN MIDI LOST",
+                    Port::Usb => "USB MIDI LOST",
+                }));
                 continue;
             }
             if busy {

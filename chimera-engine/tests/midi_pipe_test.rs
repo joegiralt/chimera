@@ -589,14 +589,21 @@ fn fe_rearms_after_timeout() {
     assert_eq!(din.run(&[]).0, all_notes_off());
 }
 
-/// USB's detach: every channel let go and the UI told, sensing armed or
-/// not, every time.
+/// USB's detach: every channel let go, sensing armed or not, every time;
+/// the UI told only when it let go of something (a host's re-enumeration
+/// with nothing down says nothing, #818).
 #[test]
 fn lost_releases_every_channel() {
     let mut usb = Usb::new();
     usb.run(&[0x90, 60, 100, 0x99, 36, 100]);
     assert_eq!(usb.lost(), (all_notes_off(), vec![CtrlEvent::SensingLost]));
-    assert_eq!(usb.lost().0, all_notes_off(), "each transition");
+    assert_eq!(
+        usb.lost(),
+        (all_notes_off(), vec![]),
+        "each transition, told once"
+    );
+    usb.run(&[0xB0, 64, 127]);
+    assert_eq!(usb.lost().1, [CtrlEvent::SensingLost], "a pedal down");
     usb.run(&[0x91, 62, 100, 0xFE]);
     let (notes, ctrl) = usb.lost();
     assert_eq!(notes, all_notes_off(), "armed too");
@@ -708,7 +715,7 @@ fn a_second_lost_while_owed_does_not_double() {
     usb.fill();
     let (notes, ctrl) = usb.lost();
     assert_eq!(notes.len(), 64);
-    assert_eq!(ctrl, [CtrlEvent::SensingLost]);
+    assert_eq!(ctrl, [], "nothing held, nothing told");
     assert_eq!(usb.settle(), all_notes_off());
     assert_eq!(usb.settle(), []);
 }
