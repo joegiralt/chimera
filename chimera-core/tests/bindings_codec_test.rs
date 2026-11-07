@@ -619,3 +619,49 @@ fn closed_door_part_save_keeps_the_record() {
     assert!(!want.is_empty());
     assert_eq!(p.pool().get(s).unwrap().to_sound().map, want);
 }
+
+/// `f` with each `0x001F` record rewritten as the `0x001E` an old build
+/// wrote: 5 B a CC entry `[cc] [block] [param] [min] [max]`.
+fn as_legacy(f: &[u8]) -> Vec<u8> {
+    let mut out = f[..28].to_vec();
+    let o = record_offsets(f);
+    for w in o.windows(2) {
+        let r = &f[w[0]..w[1]];
+        if u16::from_le_bytes([r[0], r[1]]) != 0x001F {
+            out.extend_from_slice(r);
+            continue;
+        }
+        let p: Vec<u8> = r[5..]
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .filter(|e| e[0] >> 5 == 0)
+            .flat_map(|e| [e[2], e[3], e[4], e[5], e[6]])
+            .collect();
+        out.extend(0x001Eu16.to_le_bytes());
+        out.extend((p.len() as u16).to_le_bytes());
+        out.extend(p);
+    }
+    out.extend_from_slice(&f[f.len() - 4..]);
+    common::codec_util::fix_crc(&mut out);
+    out
+}
+
+/// A project saved before `0x001F` loads its Parts Clean (#810): slots and
+/// Parts both decode, then re-encode as `0x001F`.
+#[test]
+fn legacy_project_parts_load_clean() {
+    use chimera_core::project::{PartId, PartStatus, Project, part_status};
+    use common::codec_util::{decode_project, encode_project};
+    let _g = open();
+    let (p, _) = Project::boxed();
+    let old = as_legacy(&encode_project(&p));
+    assert!(tags(&old).contains(&0x001E) && !tags(&old).contains(&0x001F));
+    let (mut q, _) = Project::boxed();
+    decode_project(&old, &mut q).unwrap();
+    for id in PartId::ALL {
+        let part = q.part(id);
+        assert!(!part.sound.map.is_empty(), "{id:?}");
+        assert_eq!(part_status(part, q.pool()), PartStatus::Clean, "{id:?}");
+    }
+}
