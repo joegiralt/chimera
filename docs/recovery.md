@@ -30,6 +30,8 @@ just backup-bootloader
 - It needs the unit in ROM DFU (`0483:df11`). With Chimera running and the
   console up, the recipe gets there itself (`tools/chimera-usb.py to-dfu`
   sends `dfu`). Otherwise bridge BOOT0 on the back and re-plug first.
+  On macOS and Windows the tool finds the unit with pyserial
+  (`pip install pyserial`) and `dfu-util -l`; Linux needs neither.
 - It reads (`dfu-util -U`, upload only) 131072 bytes from `0x08000000` into
   `~/chimera-backups/preenfm3-bootloader-<YYYY-MM-DD>.bin`, and writes a
   `.sha256` beside it. It never writes to the unit.

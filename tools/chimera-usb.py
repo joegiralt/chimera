@@ -49,7 +49,9 @@ The port: CHIMERA_USB picks it. Unset, the first of /dev/chimera,
 device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
 add yourself to the dialout group (then log out and in again), or run the
 `sudo tee` line it prints once. Shots are saved in the current directory;
-CHIMERA_SHOTS picks another. CHIMERA_SYSFS and CHIMERA_DFU_WAIT (s,
+CHIMERA_SHOTS picks another. Where there is no /sys (macOS, Windows),
+to-dfu, wait-console and update find the unit with pyserial (pip install
+pyserial) and dfu-util -l. CHIMERA_SYSFS and CHIMERA_DFU_WAIT (s,
 default 10) are for to-dfu and wait-console; CHIMERA_POLL_S (s, default
 10) is card-wait's.
 """
@@ -64,6 +66,7 @@ import glob
 import hashlib
 import os
 import pathlib
+import re
 import select
 import socket
 import struct
@@ -76,8 +79,8 @@ from typing import NamedTuple, Union
 
 try:
     import tty
-except ImportError:  # Windows
-    sys.exit("chimera-usb.py needs Linux or macOS (Python's tty module is missing)")
+except ImportError:  # Windows: the console goes through pyserial
+    tty = None
 
 SIM = ("127.0.0.1", 7341)  # the desktop simulator (developers)
 SILENCE_S = 2.0
@@ -99,7 +102,6 @@ OLD_PUT_REFUSALS = (
     b"ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over] or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex",
     b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A [--over], its size and CRC-32 in hex",
 )
-DFU_UTIL_S = 300  # a flash is ~30 s; this is only to not hang forever
 FW_MAX = 917_504  # the stock bootloader erases itself at this size
 FLASH_AT = "0x8020000:leave"  # the firmware area, never the bootloader
 PUT_MAX = 1 << 20  # the unit's limit
@@ -146,6 +148,12 @@ Target = Union[Tcp, Tty]
 def target(env) -> Target:
     v = env.get("CHIMERA_USB")
     if v is None:
+        if not has_sysfs(env):
+            found = console_ports()
+            if len(found) > 1:
+                sys.exit(fail("several units on USB (%s): set CHIMERA_USB=<port> to pick one" % ", ".join(found)))
+            if found:
+                return Tty("tty", found[0])
         for p in ["/dev/chimera", "/dev/ttyACM0", *sorted(glob.glob("/dev/cu.usbmodem*"))]:
             if os.path.exists(p):
                 return Tty("tty", p)
@@ -179,8 +187,14 @@ class Conn:
     """A raw byte stream to the unit: a tty in raw mode or a socket."""
 
     def __init__(self, t: Target):
-        self.sock = None
-        if isinstance(t, Tcp):
+        self.sock = self.ser = None
+        if isinstance(t, Tty) and tty is None:
+            try:
+                import serial
+            except ImportError:
+                sys.exit(fail("the console on this system needs pyserial: pip install pyserial"))
+            self.ser = serial.Serial(t.path, timeout=0)
+        elif isinstance(t, Tcp):
             self.sock = socket.create_connection((t.host, t.port), timeout=SILENCE_S)
             self.sock.settimeout(None)  # blocking; reads wait in select
             self.fd = self.sock.fileno()
@@ -191,6 +205,13 @@ class Conn:
 
     def read(self, timeout) -> bytes:
         """Some bytes, or b"" after `timeout` s of silence."""
+        if self.ser:
+            try:
+                self.ser.timeout = timeout
+                first = self.ser.read(1)
+                return first + self.ser.read(self.ser.in_waiting) if first else b""
+            except OSError as e:  # serial.SerialException: the port went away
+                raise Vanished() from e
         if not select.select([self.fd], [], [], timeout)[0]:
             return b""
         try:
@@ -203,13 +224,18 @@ class Conn:
 
     def write(self, data: bytes):
         try:
+            if self.ser:
+                self.ser.write(data)
+                return
             while data:
                 data = data[os.write(self.fd, data) :]
         except OSError as e:
             raise Vanished() from e
 
     def close(self):
-        if self.sock:
+        if self.ser:
+            self.ser.close()
+        elif self.sock:
             self.sock.close()
         else:
             os.close(self.fd)
@@ -529,7 +555,7 @@ def write_new(path: pathlib.Path, data: bytes) -> pathlib.Path:
             path = path.with_name("%s-%d.png" % (stem, n))
 
 
-def usb_devices(sysfs) -> set:
+def sysfs_devices(sysfs) -> set:
     """The (vid, pid) of every USB device the kernel lists."""
     ids = set()
     for d in pathlib.Path(sysfs, "bus/usb/devices").glob("*"):
@@ -538,6 +564,54 @@ def usb_devices(sysfs) -> set:
         except (OSError, ValueError):
             pass  # interfaces and hubs without ids, or a device leaving mid-read
     return ids
+
+
+def dfu_listing() -> list:
+    """One `dfu-util -l` line per distinct 0483:df11 device (a device lists
+    one line per alt setting), [] if there is no dfu-util."""
+    try:
+        out = subprocess.run(["dfu-util", "-l"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    seen = {}
+    for ln in out.splitlines():
+        if "[0483:df11]" in ln.lower():
+            seen.setdefault(re.sub(r"alt=\d+, name=.*?(, serial=)", r"\1", ln.strip()), ln.strip())
+    return list(seen)
+
+
+def console_ports() -> list:
+    """The device paths of pyserial's ports with the console's id, [] without pyserial."""
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return []
+    return sorted(p.device for p in list_ports.comports() if (p.vid, p.pid) == tuple(CONSOLE_ID))
+
+
+def port_devices(dfu) -> set:
+    """macOS, Windows, Linux without sysfs: pyserial's serial ports (the
+    console) and, if `dfu`, `dfu-util -l` (the ROM loader is no serial port)."""
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        sys.exit(fail("no /sys here, so finding the unit needs pyserial: pip install pyserial"))
+    ids = {UsbId(p.vid, p.pid) for p in list_ports.comports() if p.vid is not None}
+    if dfu and dfu_listing():
+        ids.add(ROM_DFU_ID)
+    return ids
+
+
+def has_sysfs(env) -> bool:
+    return pathlib.Path(env.get("CHIMERA_SYSFS", "/sys"), "bus/usb/devices").is_dir()
+
+
+def usb_devices(env, dfu=True) -> set:
+    """The (vid, pid) of the USB devices we care about: sysfs where the
+    kernel has it, else pyserial and dfu-util."""
+    if has_sysfs(env):
+        return sysfs_devices(env.get("CHIMERA_SYSFS", "/sys"))
+    return port_devices(dfu)
 
 
 def fail(msg) -> int:
@@ -556,8 +630,7 @@ def open_conn(t: Target) -> Conn:
 
 
 def to_dfu(t: Target, env) -> int:
-    sysfs = env.get("CHIMERA_SYSFS", "/sys")
-    ids = usb_devices(sysfs)
+    ids = usb_devices(env)
     if ROM_DFU_ID in ids:
         return 0
     if CONSOLE_ID not in ids:
@@ -581,7 +654,7 @@ def to_dfu(t: Target, env) -> int:
         conn.close()
     deadline = time.monotonic() + float(env.get("CHIMERA_DFU_WAIT", "10"))
     while time.monotonic() < deadline:
-        if ROM_DFU_ID in usb_devices(sysfs):
+        if ROM_DFU_ID in usb_devices(env):
             return 0
         time.sleep(0.1)
     return fail("no DFU device after dfu: marker clobbered? re-plug and try again")
@@ -589,9 +662,8 @@ def to_dfu(t: Target, env) -> int:
 
 def wait_console(env, secs) -> int:
     """Exit 0 once the console is on the bus again, 1 after `secs`."""
-    sysfs = env.get("CHIMERA_SYSFS", "/sys")
     deadline = time.monotonic() + secs
-    while CONSOLE_ID not in usb_devices(sysfs):
+    while CONSOLE_ID not in usb_devices(env, dfu=False):
         if time.monotonic() >= deadline:
             return fail("console not back %g s after the flash" % secs)
         time.sleep(0.1)
@@ -747,10 +819,11 @@ def dfu_flash(t: Target, env, local: str, wait: float) -> int:
     rc = to_dfu(t, env)
     if rc:
         return rc
-    try:
-        r = subprocess.run(["dfu-util", "-a0", "-d", "0483:df11", "-D", local, "-s", FLASH_AT], capture_output=True, text=True, timeout=DFU_UTIL_S)
-    except subprocess.TimeoutExpired:
-        return fail("update: dfu-util still running after %d s" % DFU_UTIL_S)
+    devs = dfu_listing()
+    if len(devs) != 1:
+        return fail("update: want exactly one DFU device, dfu-util -l shows %d%s" % (len(devs), "".join("\n  " + d for d in devs)))
+    try:  # no timeout: killing dfu-util mid-write strands the unit
+        r = subprocess.run(["dfu-util", "-a0", "-d", "0483:df11", "-D", local, "-s", FLASH_AT], capture_output=True, text=True)
     except OSError as e:
         return fail("update: dfu-util: %s" % (e.strerror or e))
     sys.stdout.write(r.stdout)

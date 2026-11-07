@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import zlib
 
@@ -133,6 +134,66 @@ class FakeSysfs:
         self.tmp.cleanup()
 
 
+class FakePorts:
+    """No /sys: a fake `serial.tools.list_ports` on PYTHONPATH reading
+    `ports` (the console) and a fake `dfu-util -l` reading `dfu`, both
+    JSON-ish id lists in files so a test can change them mid-run."""
+
+    def __init__(self, ports, dfu=(), pyserial=True, names=None):
+        self.names = names or []
+        self.tmp = tempfile.TemporaryDirectory()
+        r = pathlib.Path(self.tmp.name)
+        self.timers = []
+        self.ports_file, self.dfu_file = r / "ports", r / "dfu"
+        self.set(ports, dfu)
+        if pyserial:
+            pkg = r / "py/serial/tools"
+            pkg.mkdir(parents=True)
+            (r / "py/serial/__init__.py").write_text("")
+            (pkg / "__init__.py").write_text("")
+            (pkg / "list_ports.py").write_text(
+                "import collections\nP = collections.namedtuple('P', 'vid pid device')\n"
+                "def comports():\n"
+                "    out = [P(None, None, 'BT')]  # a Bluetooth port without ids\n"
+                "    names = %r\n"
+                "    for i, ln in enumerate(open(%r).read().split()):\n"
+                "        v, p = ln.split(':')\n"
+                "        out.append(P(int(v, 16), int(p, 16), names[i] if i < len(names) else 'X%%d' %% i))\n"
+                "    return out\n" % (self.names, str(self.ports_file)))
+        else:  # shadow any real pyserial
+            (r / "py/serial").mkdir(parents=True)
+            (r / "py/serial/__init__.py").write_text("raise ImportError('no pyserial')\n")
+        bindir = r / "bin"
+        bindir.mkdir()
+        fake = bindir / "dfu-util"
+        fake.write_text("#!/bin/sh\nfor i in $(cat %s); do echo \"Found DFU: [$i] ver=2200, devnum=3, cfg=1, intf=0, path=\\\"1-2\\\", alt=1, name=\\\"x\\\", serial=\\\"S1\\\"\"; echo \"Found DFU: [$i] ver=2200, devnum=3, cfg=1, intf=0, path=\\\"1-2\\\", alt=0, name=\\\"y\\\", serial=\\\"S1\\\"\"; done\n" % self.dfu_file)
+        fake.chmod(0o755)
+        self.env = {
+            "CHIMERA_SYSFS": str(r / "no-sysfs"),
+            "PYTHONPATH": str(r / "py"),
+            "PATH": "%s:%s" % (bindir, os.environ["PATH"]),
+        }
+
+    def set(self, ports, dfu=()):
+        self.ports_file.write_text(" ".join(ports))
+        self.dfu_file.write_text(" ".join(dfu))
+
+    def replace(self, ports, dfu, after):
+        t = threading.Timer(after, self.set, (ports, dfu))
+        self.timers.append(t)
+        t.start()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        for t in self.timers:
+            t.cancel()
+            if t.is_alive():
+                t.join()
+        self.tmp.cleanup()
+
+
 def run_tool(args, target, cwd=None, sysfs=None, env=None):
     e = dict(os.environ)
     e["CHIMERA_USB"] = target
@@ -177,6 +238,9 @@ def rgb_at(rgb, w, x, y):
 def widen(v):
     r, g, b = v >> 11, (v >> 5) & 0x3F, v & 0x1F
     return (r << 3 | r >> 2, g << 2 | g >> 4, b << 3 | b >> 2)
+
+
+DFU1 = 'Found DFU: [0483:df11] ver=2200, devnum=3, cfg=1, intf=0, path="1-2", alt=0, name="@Internal", serial="S1"\n'
 
 
 class Tool(unittest.TestCase):
@@ -489,6 +553,131 @@ class Tool(unittest.TestCase):
             self.assertIn(b"not overwriting", r.stderr)
             self.assertEqual(old.read_bytes(), b"keep me")
             self.assertFalse(ran.exists())
+
+
+class NoSysfs(unittest.TestCase):
+    """macOS/Windows: the unit is found by pyserial and dfu-util -l."""
+
+    def test_wait_console_sees_it_come_back(self):
+        with FakePorts([]) as fp:
+            fp.replace(["0483:5740"], [], after=0.3)
+            r = run_tool(["wait-console", "5"], "tcp:127.0.0.1:9", env=fp.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_wait_console_gives_up(self):
+        with FakePorts([], ["0483:df11"]) as fp:
+            r = run_tool(["wait-console", "0.3"], "tcp:127.0.0.1:9", env=fp.env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"console not back", r.stderr)
+
+    def test_to_dfu_sends_dfu_and_waits_for_the_rom(self):
+        with FakePorts(["0483:5740"]) as fp, FakeUnit({b"dfu\n": b"OK\n"}) as u:
+            fp.replace([], ["0483:df11"], after=0.3)
+            r = run_tool(["to-dfu"], u.target, env=fp.env)
+        self.assertEqual((r.returncode, u.requests), (0, [b"dfu\n"]))
+
+    def test_to_dfu_with_the_rom_listed_sends_nothing(self):
+        with FakePorts([], ["0483:df11"]) as fp, FakeUnit({}) as u:
+            r = run_tool(["to-dfu"], u.target, env=fp.env)
+        self.assertEqual((r.returncode, u.requests), (0, []))
+
+    def test_to_dfu_without_a_console_prints_the_jumper(self):
+        with FakePorts(["10c4:ea60"]) as fp:  # someone else's serial port
+            r = run_tool(["to-dfu"], "tcp:127.0.0.1:9", env=fp.env)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn(b"bridge BOOT0", r.stdout + r.stderr)
+
+    def test_dfu_listing_counts_a_device_once_whatever_its_alt_settings(self):
+        with FakePorts([], ["0483:df11"]) as fp:
+            saved = os.environ["PATH"]
+            os.environ["PATH"] = fp.env["PATH"]
+            try:
+                self.assertEqual(len(tool.dfu_listing()), 1)
+            finally:
+                os.environ["PATH"] = saved
+
+    def test_target_takes_the_only_listed_console(self):
+        with FakePorts(["0483:5740", "10c4:ea60"], names=["COM7", "COM9"]) as fp:
+            r = run_tool(["wait-console", "0.1"], "tcp:127.0.0.1:9", env=fp.env)
+            self.assertEqual(r.returncode, 0)
+            t = self.target(fp.env)
+        self.assertEqual(t, tool.Tty("tty", "COM7"))
+
+    def test_target_refuses_several_consoles_and_lists_them(self):
+        with FakePorts(["0483:5740", "0483:5740"], names=["COM7", "COM8"]) as fp:
+            with self.assertRaises(SystemExit) as cm, contextlib.redirect_stderr(io.StringIO()) as err:
+                self.target(fp.env)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("COM7, COM8", err.getvalue())
+        self.assertIn("CHIMERA_USB", err.getvalue())
+
+    def test_target_with_no_console_keeps_the_default(self):
+        with FakePorts(["10c4:ea60"], names=["COM9"]) as fp:
+            self.assertEqual(self.target(fp.env).kind, "tty")
+
+    def test_chimera_usb_still_overrides(self):
+        with FakePorts(["0483:5740"], names=["COM7"]) as fp:
+            self.assertEqual(self.target(dict(fp.env, CHIMERA_USB="COM3")), tool.Tty("tty", "COM3"))
+
+    def target(self, env):
+        saved = sys.path[:]
+        sys.path.insert(0, env["PYTHONPATH"])
+        for m in [m for m in sys.modules if m == "serial" or m.startswith("serial.")]:
+            del sys.modules[m]
+        try:
+            return tool.target(env)
+        finally:
+            sys.path[:] = saved
+            for m in [m for m in sys.modules if m == "serial" or m.startswith("serial.")]:
+                del sys.modules[m]
+
+    def test_conn_over_pyserial_where_there_is_no_tty(self):
+        class Serial:  # a pyserial look-alike over a socket to the FakeUnit
+            def __init__(self, path, timeout=None):
+                host, port = path.split(":")
+                self.s = socket.create_connection((host, int(port)))
+                self.timeout = timeout
+                self.in_waiting = 0
+
+            def read(self, n):
+                self.s.settimeout(self.timeout)
+                try:
+                    return self.s.recv(n)
+                except socket.timeout:
+                    return b""
+
+            def write(self, d):
+                self.s.sendall(d)
+
+            def close(self):
+                self.s.close()
+
+        mod = types.ModuleType("serial")
+        mod.Serial = Serial
+        saved = tool.tty, sys.modules.get("serial")
+        tool.tty, sys.modules["serial"] = None, mod
+        try:
+            with FakeUnit({b"dfu\n": b"OK\n"}) as u:
+                conn = tool.Conn(tool.Tty("tty", u.target[4:]))
+                try:
+                    tool.send(conn, "dfu")
+                    self.assertEqual(tool.answer(conn), (tool.Status.OK, b""))
+                    self.assertEqual(conn.read(0.05), b"")
+                finally:
+                    conn.close()
+        finally:
+            tool.tty = saved[0]
+            if saved[1] is None:
+                del sys.modules["serial"]
+            else:
+                sys.modules["serial"] = saved[1]
+
+
+    def test_missing_pyserial_names_it(self):
+        with FakePorts([], pyserial=False) as fp:
+            r = run_tool(["wait-console", "0.3"], "tcp:127.0.0.1:9", env=fp.env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"pip install pyserial", r.stderr)
 
 
 class PutUnit:
@@ -923,10 +1112,12 @@ class Bank2(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(b"staged: needs firmware 0.3.0", r.stdout)
 
-    def test_dfu_util_has_a_timeout(self):
+    def test_the_flashing_dfu_util_has_no_timeout(self):
         seen = {}
 
         def run(cmd, **kw):
+            if cmd[:2] == ["dfu-util", "-l"]:
+                return subprocess.CompletedProcess(cmd, 0, DFU1, "")
             seen.update(kw)
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -936,12 +1127,35 @@ class Bank2(unittest.TestCase):
             tool.dfu_flash(None, {}, self.local("x.bin", b"fw"), 10.0)
         finally:
             tool.to_dfu, tool.wait_console, tool.subprocess.run = saved
-        self.assertEqual(seen.get("timeout"), tool.DFU_UTIL_S)
+        self.assertIn("capture_output", seen)
+        self.assertNotIn("timeout", seen)
+
+    def test_dfu_flash_wants_exactly_one_rom_device(self):
+        for listing, want in [("", "shows 0"), (DFU1 + DFU1.replace("S1", "S2"), "shows 2")]:
+            calls = []
+
+            def run(cmd, **kw):
+                calls.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, listing, "")
+
+            saved = tool.to_dfu, tool.subprocess.run
+            tool.to_dfu, tool.subprocess.run = (lambda t, e: 0), run
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(err):
+                    rc = tool.dfu_flash(None, {}, self.local("x.bin", b"fw"), 10.0)
+            finally:
+                tool.to_dfu, tool.subprocess.run = saved
+            self.assertEqual(rc, 1)
+            self.assertIn(want, err.getvalue())
+            self.assertTrue(all(c[:2] == ["dfu-util", "-l"] for c in calls), calls)
 
     def test_dfu_runs_dfu_util_on_the_firmware_area(self):
         argv = []
 
         def run(cmd, **kw):
+            if cmd[:2] == ["dfu-util", "-l"]:
+                return subprocess.CompletedProcess(cmd, 0, DFU1, "")
             argv.extend(cmd)
             return subprocess.CompletedProcess(cmd, 74, "File downloaded successfully\n", "")
 
@@ -1002,6 +1216,8 @@ class Update(unittest.TestCase):
             return send(conn, line)
 
         def run(cmd, **kw):
+            if cmd[:2] == ["dfu-util", "-l"]:
+                return subprocess.CompletedProcess(cmd, 0, DFU1, "")
             self.events.append("dfu-util")
             return subprocess.CompletedProcess(cmd, 74, "File downloaded successfully\n", "")
 
