@@ -27,6 +27,7 @@ use crate::block::{Block, DiskCode};
 use crate::dsp::clampf;
 use crate::dsp::fx_bus::{FX_SENDS, FxParams};
 use crate::hw::MAX_PARTS;
+use crate::midi_map::KeptMap;
 use crate::name::SoundName;
 use crate::orbit::records::{encode_new_orbit, encode_orbit, read as read_orbit};
 use crate::params::EngineType;
@@ -178,9 +179,19 @@ fn put_encoded(
     w.copy(sound.records())
 }
 
-fn put_part(w: &mut RecordWriter<'_>, i: usize, part: &Part) -> Result<(), StoreError> {
+/// `kept`: the map record a closed door left unread, written back while
+/// the Sound has no map of its own (#815).
+fn put_part(
+    w: &mut RecordWriter<'_>,
+    i: usize,
+    part: &Part,
+    kept: &KeptMap,
+) -> Result<(), StoreError> {
     put_context(w, RecordTag::Part, i, part.sound.name)?;
     encode_sound(&part.sound, w)?;
+    if part.sound.map.is_empty() {
+        crate::midi_in::put_kept(kept, w)?;
+    }
     put_part_end(w, &part.mix, part.origin)
 }
 
@@ -216,8 +227,8 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
             put_encoded(w, s, sound)?;
         }
     }
-    for (i, part) in p.perf.parts.iter().enumerate() {
-        put_part(w, i, part)?;
+    for (i, (part, kept)) in p.perf.parts.iter().zip(&p.kept).enumerate() {
+        put_part(w, i, part, kept)?;
     }
     encode_orbit(&p.orbit, w)
 }
@@ -275,7 +286,7 @@ fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 /// A NEW Part with no factory Sound: INIT, its Sound in a frame of its own.
 #[inline(never)]
 fn put_init_part(w: &mut RecordWriter<'_>, i: usize) -> Result<(), StoreError> {
-    put_part(w, i, &new_part(i))
+    put_part(w, i, &new_part(i), &KeptMap::EMPTY)
 }
 
 #[inline(never)]
@@ -553,7 +564,12 @@ impl ProjectCheck {
                 {
                     self.costs_mut().part_used |= 1 << k;
                 }
-                let staged = target.map(|t| &mut *t.perf.parts[n.index()].sound);
+                let staged = target.map(|t| {
+                    if let ReadTag::Known(k) = tag {
+                        crate::midi_in::keep_map(&mut t.kept[n.index()], k, p);
+                    }
+                    &mut *t.perf.parts[n.index()].sound
+                });
                 self.sound.step(e, staged)
             }
         }
@@ -682,6 +698,7 @@ impl ProjectCheck {
             if let Some(t) = target {
                 let part = &mut t.perf.parts[n.index()];
                 *part.sound = Sound::neutral(EngineType::Algo);
+                t.kept[n.index()].clear();
                 part.mix = PartParams::for_part(n.index());
                 part.origin = Origin::Init(EngineType::Algo);
             }
@@ -750,7 +767,7 @@ impl ProjectCheck {
                 }
                 (None, Some(stage)) => {
                     self.sound.finish(Some(&mut *stage))?;
-                    let c = Cost::of(entry_len(stage)).bytes();
+                    let c = Cost::of(entry_len(stage, &KeptMap::EMPTY)).bytes();
                     self.costs_mut().slot_costs[s.index()] = c as u16;
                     Ok(())
                 }

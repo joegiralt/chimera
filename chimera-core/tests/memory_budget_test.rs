@@ -167,27 +167,30 @@ fn instrument_fits_d2() {
     assert!(size <= hw::VOICE_RAM_BUDGET, "Instrument = {size} B");
 }
 
-/// The Project is the Performance and ORBIT's song, plus no more than its
-/// meta and the pool's index: the Sounds live in the arena (ADR 0087).
+/// The Project is the Performance, ORBIT's song and each Part's kept map
+/// record (#815), plus no more than its meta and the pool's index: the
+/// Sounds live in the arena (ADR 0087).
 #[test]
 fn axi_counts_the_project() {
+    use chimera_core::midi_map::KeptMap;
     use chimera_core::orbit::scene::OrbitSong;
     use chimera_core::preset::Performance;
     use chimera_core::project::{Pool, Project};
-    let (project, perf, pool, orbit) = (
+    let (project, perf, pool, orbit, kept) = (
         size_of::<Project>(),
         size_of::<Performance>(),
         size_of::<Pool>(),
         size_of::<OrbitSong>(),
+        size_of::<[KeptMap; hw::MAX_PARTS]>(),
     );
     eprintln!(
-        "Project = {project} B: Performance {perf} B, pool index and scratch {pool} B, ORBIT {orbit} B"
+        "Project = {project} B: Performance {perf} B, pool index and scratch {pool} B, ORBIT {orbit} B, kept maps {kept} B"
     );
     // The index (128 Sound entries, 32 source entries, their
     // generations), the arena's writer and a load's scratch Sound.
     let scratch = size_of::<chimera_core::preset::Sound>();
     assert!(pool - scratch <= 3072, "the pool's index is {pool} B");
-    let parts = perf + pool + orbit;
+    let parts = perf + pool + orbit + kept;
     assert!(
         project - parts <= 128,
         "Project = {project} B, {} B over its parts",

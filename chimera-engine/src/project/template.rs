@@ -6,7 +6,9 @@ use core::ptr::addr_of_mut;
 
 use super::arena::ArenaWriter;
 use crate::factory::factory_entries;
+use crate::hw::MAX_PARTS;
 use crate::in_place::uninit_at;
+use crate::midi_map::KeptMap;
 use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
 
@@ -38,13 +40,17 @@ impl Project {
     pub fn init_in_place(slot: &mut MaybeUninit<Project>, arena: ArenaWriter) -> TemplateCrc {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; `meta`, `pool`, `perf` and
-        // `orbit` (the last three in place) and `rev` are each written once
-        // before `assume_init_mut`.
+        // `orbit` (the last three in place), each of the `MAX_PARTS` `kept`
+        // and `rev` are each written once before `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
             Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)), arena);
             Performance::init_in_place(uninit_at(addr_of_mut!((*p).perf)));
             OrbitSong::init_in_place(uninit_at(addr_of_mut!((*p).orbit)));
+            let kept = addr_of_mut!((*p).kept).cast::<KeptMap>();
+            for i in 0..MAX_PARTS {
+                kept.add(i).write(KeptMap::EMPTY);
+            }
             addr_of_mut!((*p).rev).write(0);
             slot.assume_init_mut()
         };
@@ -70,6 +76,9 @@ impl Project {
         self.meta = ProjectMeta::new_project();
         self.perf.reset();
         self.orbit.reset();
+        for k in &mut self.kept {
+            k.clear();
+        }
         self.fill_new();
     }
 

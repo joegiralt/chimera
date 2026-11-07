@@ -9,6 +9,7 @@ use core::ptr::addr_of_mut;
 use chimera_hal::store::{ByteSink, StoreError};
 
 use crate::block::DiskCode;
+use crate::midi_map::KeptMap;
 use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::preset::{MAX_SOUNDS, Sound};
@@ -90,7 +91,7 @@ pub struct PoolFull {
 /// use chimera_engine::preset::Sound;
 /// use chimera_engine::project::{Pool, SlotId};
 /// fn f(pool: &mut Pool, s: SlotId, sound: Sound) {
-///     let _ = pool.store(s, &sound);
+///     let _ = pool.store(s, &sound, &chimera_engine::midi_map::KeptMap::EMPTY);
 /// }
 /// ```
 pub struct Pool {
@@ -837,7 +838,7 @@ impl Pool {
     /// What storing `sound` in `s` takes from the gap: its cost less the
     /// slot's old Sound's.
     pub fn needs(&self, s: SlotId, sound: &Sound) -> Cost {
-        self.index.needs_len(s, entry_len(sound))
+        self.index.needs_len(s, entry_len(sound, &KeptMap::EMPTY))
     }
 
     /// `needs` for a Sound already counted at `len` bytes.
@@ -845,11 +846,16 @@ impl Pool {
         self.index.needs_len(s, len)
     }
 
-    /// Encodes `sound` into slot `s`, over what was there. Refused, with
-    /// nothing moved, when it won't fit even with the old Sound's bytes
-    /// given back.
-    pub(in crate::project) fn store(&mut self, s: SlotId, sound: &Sound) -> Result<(), PoolFull> {
-        self.index.store(&mut self.arena, s, sound)
+    /// Encodes `sound` into slot `s`, over what was there, with `kept` when
+    /// it has no map (`entry_len`). Refused, with nothing moved, when it
+    /// won't fit even with the old Sound's bytes given back.
+    pub(in crate::project) fn store(
+        &mut self,
+        s: SlotId,
+        sound: &Sound,
+        kept: &KeptMap,
+    ) -> Result<(), PoolFull> {
+        self.index.store(&mut self.arena, s, sound, kept)
     }
 
     /// Slot `s` takes an entry's bytes as they are: no encode. The bytes must
@@ -878,7 +884,8 @@ impl Pool {
 
     /// `store` of the scratch Sound.
     pub(in crate::project) fn store_scratch(&mut self, s: SlotId) -> Result<(), PoolFull> {
-        self.index.store(&mut self.arena, s, &self.scratch)
+        self.index
+            .store(&mut self.arena, s, &self.scratch, &KeptMap::EMPTY)
     }
 
     /// Moves the generation even when the slot is already empty.
@@ -903,8 +910,16 @@ impl Index {
         Cost::of(Cost::of(len).bytes().saturating_sub(old) as usize)
     }
 
-    fn store(&mut self, arena: &mut ArenaWriter, s: SlotId, sound: &Sound) -> Result<(), PoolFull> {
-        self.store_with(arena, s, entry_len(sound), |to| write_entry(to, sound))
+    fn store(
+        &mut self,
+        arena: &mut ArenaWriter,
+        s: SlotId,
+        sound: &Sound,
+        kept: &KeptMap,
+    ) -> Result<(), PoolFull> {
+        self.store_with(arena, s, entry_len(sound, kept), |to| {
+            write_entry(to, sound, kept)
+        })
     }
 
     /// `len` bytes for slot `s`, filled by `fill`.
@@ -978,20 +993,31 @@ impl Index {
 }
 
 /// `sound`'s name and records into `to`, which is its `entry_len`.
-fn write_entry(to: &mut [u8], sound: &Sound) {
+fn write_entry(to: &mut [u8], sound: &Sound, kept: &KeptMap) {
     let (name, records) = to.split_at_mut(NAME_LEN);
     name.copy_from_slice(&sound.name.padded());
     let mut w = Fill(records);
-    let wrote = encode_sound(sound, &mut RecordWriter::over(&mut w));
+    let wrote = encode_entry(sound, kept, &mut RecordWriter::over(&mut w));
     debug_assert!(wrote.is_ok() && w.0.is_empty(), "the count's length");
 }
 
-/// The bytes `sound` takes in the pool: its name, then its records.
-pub(super) fn entry_len(sound: &Sound) -> usize {
+/// The bytes `sound` takes in the pool: its name, then its records, and
+/// `kept`'s while it has no map.
+pub(super) fn entry_len(sound: &Sound, kept: &KeptMap) -> usize {
     let mut n = Count(0);
     // `Count::put` is never Err.
-    let _ = encode_sound(sound, &mut RecordWriter::over(&mut n));
+    let _ = encode_entry(sound, kept, &mut RecordWriter::over(&mut n));
     NAME_LEN + n.0
+}
+
+/// `encode_sound`, then the Part's kept map record while the Sound has no
+/// map, as `put_part` writes it (#815).
+fn encode_entry(sound: &Sound, kept: &KeptMap, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+    encode_sound(sound, w)?;
+    if sound.map.is_empty() {
+        crate::midi_in::put_kept(kept, w)?;
+    }
+    Ok(())
 }
 
 /// Counts bytes, keeping none.
@@ -1119,6 +1145,17 @@ impl EncodedSound<'_> {
                 }
                 _ => false,
             }
+    }
+
+    /// Its map record onto `k`, if bank 2's closed door leaves it unread
+    /// (#815).
+    pub(in crate::project) fn keep_map(&self, k: &mut KeptMap) {
+        let _ = self.each(|e| {
+            if let Event::Record(ReadTag::Known(t), p) = e {
+                crate::midi_in::keep_map(k, t, p);
+            }
+            Ok(())
+        });
     }
 
     /// Checks, then decodes onto `s`: a refusal leaves `s` as it was.

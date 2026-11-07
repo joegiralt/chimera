@@ -18,12 +18,13 @@ use chimera_midi::sysex;
 use chimera_midi::value::{Channel, U7, U14};
 
 use crate::MidiChannel;
-use crate::midi_map::MidiMap;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
+use crate::midi_map::{KeptMap, MidiMap};
 use crate::note_queue::{
     ChannelMode, ChannelModeEvent, InEvent, NoteKind, NoteProducer, RealTime, SustainEvent,
 };
-use crate::storage::RecordBuf;
+use crate::storage::{RecordBuf, RecordTag, RecordWriter};
+use chimera_hal::store::StoreError;
 
 /// A controller number, 0..=127.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -846,15 +847,46 @@ pub fn idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
 
 /// A map record checked and, with `m`, decoded (`codec::decode`) through
 /// bank 2's door with `bank2`: closed, it is not read, `m` keeps its
-/// empty map and nothing is skipped (spec § 6.4).
+/// empty map and nothing is skipped (spec § 6.4); over a full record is
+/// `Bounds`, as open, so the Part's `KeptMap` holds any it passes (#815).
 #[inline(always)]
 pub fn decode_map(r: MapRecord, p: &[u8], m: Option<&mut MidiMap>) -> Result<u16, Bounds> {
     #[cfg(feature = "bank2")]
     return crate::bank2::DOOR_CELL
         .with(|d| (d.midi.decode_map)(r, p, m))
-        .unwrap_or(Ok(0));
+        .unwrap_or(if p.len() > crate::midi_map::KEPT_LEN {
+            Err(Bounds)
+        } else {
+            Ok(0)
+        });
     #[cfg(not(feature = "bank2"))]
     codec::decode(r, p, m)
+}
+
+/// Record `tag`'s payload `p` onto `k` if it is a map record bank 2's
+/// closed door leaves unread (#815).
+pub fn keep_map(k: &mut KeptMap, tag: RecordTag, p: &[u8]) {
+    let r = match tag {
+        RecordTag::MidiMap => MapRecord::Legacy,
+        RecordTag::Bindings => MapRecord::Bindings,
+        _ => return,
+    };
+    #[cfg(feature = "bank2")]
+    if !crate::bank2::DOOR_CELL.is_open() {
+        // Over a full record: `decode_map` refuses the file.
+        let _ = k.keep(r, p);
+    }
+    #[cfg(not(feature = "bank2"))]
+    let _ = (k, r, p);
+}
+
+/// `k`'s record, under its tag, into `w`.
+pub fn put_kept(k: &KeptMap, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+    match k.get() {
+        Some((MapRecord::Legacy, p)) => w.put(RecordTag::MidiMap, p),
+        Some((MapRecord::Bindings, p)) => w.put(RecordTag::Bindings, p),
+        None => Ok(()),
+    }
 }
 
 /// `m` as a `Bindings` payload into `out` (`codec::encode`), as

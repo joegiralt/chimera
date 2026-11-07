@@ -1,9 +1,11 @@
 //! The `Bindings` record `0x001F` (spec § 6.4): a version byte, then 8 B an
 //! entry `[tag:3 | kind:5] [number hi] [number lo] [block] [param] [min]
-//! [max] [flags]`. `0x001E` is read as JUMP without echo and never written;
+//! [max] [flags]`. `0x001E` is read as JUMP without echo and never encoded
+//! from a map, only written back verbatim as a closed door kept it;
 //! `0x001F` wins over it. Both decode behind `MidiDoor`: closed, a Sound
-//! loads with an empty map and saves none. Under `bank2` the door is the
-//! host's own (`open_host`), one test at a time.
+//! loads with an empty map and saves none, and a project keeps each Part's
+//! record for its saves (#815). Under `bank2` the door is the host's own
+//! (`open_host`), one test at a time.
 
 mod common;
 
@@ -442,7 +444,8 @@ fn neutral_is_no_record() {
     }
 }
 
-/// Closed, neither record is decoded and a save writes none (spec § 6.4).
+/// Closed, neither record is decoded and a Sound save writes none (spec
+/// § 6.4): the Part keeps it instead (`closed_door_project_keeps_the_record`).
 #[cfg(feature = "bank2")]
 #[test]
 fn closed_door_loads_empty_map() {
@@ -460,9 +463,43 @@ fn closed_door_loads_empty_map() {
     snd.map = varied();
     let t = tags(&encode(&snd));
     assert!(!t.contains(&0x001F) && !t.contains(&0x001E));
-    // Shapes the open door refuses are not even read.
-    let bad = load(&file(&[(RecordTag::Bindings, vec![2])]));
-    assert!(bad.is_ok());
+    // A version this firmware can't read loads; over a full map is
+    // refused, as open.
+    assert!(load(&file(&[(RecordTag::Bindings, vec![2])])).is_ok());
+    let long = bindings(&[entry(0x00, 0, 20); MAP_LEN + 1]);
+    assert!(load(&file(&[(RecordTag::Bindings, long)])).is_err());
+}
+
+/// Closed, a project save writes each Part's map record back as read, and
+/// opened again the map is there (#815). A Part that loads without one
+/// keeps none.
+#[cfg(feature = "bank2")]
+#[test]
+fn closed_door_project_keeps_the_record() {
+    use chimera_core::project::{PartId, Project};
+    use common::codec_util::{decode_project, encode_project};
+    let _g = open();
+    let a = PartId::ALL[0];
+    let (mut p, _) = Project::boxed();
+    p.edit_part(a).sound.map = varied();
+    let mapped = encode_project(&p);
+    p.edit_part(a).sound.map = MidiMap::EMPTY;
+    let unmapped = encode_project(&p);
+
+    chimera_core::bank2::DOOR_CELL.close();
+    let (mut q, _) = Project::boxed();
+    decode_project(&mapped, &mut q).unwrap();
+    assert!(q.part(a).sound.map.is_empty());
+    let saved = encode_project(&q);
+    decode_project(&unmapped, &mut q).unwrap();
+    let cleared = encode_project(&q);
+
+    chimera_core::bank2::DOOR_CELL.open_host();
+    let (mut r, _) = Project::boxed();
+    decode_project(&saved, &mut r).unwrap();
+    assert_eq!(r.part(a).sound.map, varied());
+    decode_project(&cleared, &mut r).unwrap();
+    assert!(r.part(a).sound.map.is_empty());
 }
 
 /// A full map is 1 + 16 × 8 B, 49 over `0x001E`'s 80: `MAX_SOUND_COST`
@@ -540,4 +577,45 @@ fn closed_door_keeps_parts_clean() {
     assert_eq!(part_status(part, p.pool()), PartStatus::Clean);
     chimera_core::bank2::DOOR_CELL.close();
     assert_eq!(part_status(part, p.pool()), PartStatus::Clean);
+}
+
+/// Closed, a Part's load that fails (an empty slot) leaves its Sound and
+/// its kept record as they were (#815).
+#[cfg(feature = "bank2")]
+#[test]
+fn closed_door_failed_load_keeps_the_record() {
+    use chimera_core::project::{
+        PartFrom, PartId, PartSource, Project, ReplaceError, ReplaceGuard,
+    };
+    use common::codec_util::encode_project;
+    let _g = open();
+    chimera_core::bank2::DOOR_CELL.close();
+    let (mut p, t) = Project::boxed();
+    let before = encode_project(&p);
+    let empty = p.pool().first_free().unwrap();
+    let src = PartSource {
+        part: PartId::ALL[0],
+        from: PartFrom::Slot(empty),
+    };
+    let c = ReplaceGuard::check(&p, t, src).unwrap();
+    assert_eq!(p.replace_part(c), Err(ReplaceError::SlotEmpty));
+    assert_eq!(encode_project(&p), before);
+}
+
+/// Closed, a Part saved to a slot keeps its record there: the slot's
+/// Sound, read open, has the Part's map (#815).
+#[cfg(feature = "bank2")]
+#[test]
+fn closed_door_part_save_keeps_the_record() {
+    use chimera_core::project::test_support::save_part_to;
+    use chimera_core::project::{PartId, Project, SlotId};
+    let _g = open();
+    chimera_core::bank2::DOOR_CELL.close();
+    let (mut p, _) = Project::boxed();
+    let s = p.pool().first_free().unwrap();
+    save_part_to(&mut p, PartId::ALL[0], s);
+    chimera_core::bank2::DOOR_CELL.open_host();
+    let want = p.pool().get(SlotId::ALL[0]).unwrap().to_sound().map;
+    assert!(!want.is_empty());
+    assert_eq!(p.pool().get(s).unwrap().to_sound().map, want);
 }

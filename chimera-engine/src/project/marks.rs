@@ -204,7 +204,7 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
     let status = part_status(x, &p.pool);
     let crc = sound_crc(&x.sound);
     // Counted once: every save below weighs the same bytes.
-    let len = entry_len(&x.sound);
+    let len = entry_len(&x.sound, &p.kept[part.index()]);
     let new_needs = Cost::of(len);
     let free = p
         .pool

@@ -56,6 +56,8 @@ pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Set
 pub use template::{NEW_PARTS, TemplateCrc};
 
 use crate::dsp::fx_bus::FxParams;
+use crate::hw::MAX_PARTS;
+use crate::midi_map::KeptMap;
 use crate::name::ProjectName;
 use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
@@ -140,11 +142,14 @@ pub struct Project {
     perf: Performance,
     /// ORBIT's scene and tempo: project data, as the Parts are.
     orbit: OrbitSong,
+    /// Each Part's map record a closed door left unread, for the save
+    /// (#815): here, not on the Sound, so no Sound copy carries it.
+    kept: [KeptMap; MAX_PARTS],
     /// Moves on every `&mut` path, so a status keyed on it is never stale.
     rev: u32,
 }
 
-crate::in_place::field_list!(Project => Project { meta, pool, perf, orbit, rev });
+crate::in_place::field_list!(Project => Project { meta, pool, perf, orbit, kept, rev });
 
 impl Project {
     /// Wrapping; any two reads with an edit between differ.
@@ -223,7 +228,7 @@ impl Project {
 
     pub fn pool_store(&mut self, s: SlotId, sound: &Sound) -> Result<(), PoolFull> {
         self.bump();
-        self.pool.store(s, sound)
+        self.pool.store(s, sound, &KeptMap::EMPTY)
     }
 
     pub fn pool_clear(&mut self, s: SlotId) -> Result<(), InUse> {
@@ -249,7 +254,8 @@ impl Project {
     pub(crate) fn save_part_to(&mut self, p: PartId, s: SlotId) -> Result<PartSet, PoolFull> {
         self.bump();
         let others = self.users(s);
-        self.pool.store(s, &self.perf.parts[p.index()].sound)?;
+        self.pool
+            .store(s, &self.perf.parts[p.index()].sound, &self.kept[p.index()])?;
         let stored = self.pool.get(s).expect("just stored");
         self.perf.parts[p.index()].origin = Origin::Slot {
             slot: s,
@@ -276,12 +282,16 @@ impl Project {
         self.bump();
         let part = &mut self.perf.parts[src.part.index()];
         part.loads.bump();
+        // Cleared only once the load can't fail: a refused one keeps it.
+        let kept = &mut self.kept[src.part.index()];
         match src.from {
             PartFrom::Slot(s) => {
                 let sound = self.pool.get(s).ok_or(ReplaceError::SlotEmpty)?;
                 sound
                     .decode_into(&mut part.sound)
                     .map_err(|_| ReplaceError::Unreadable)?;
+                kept.clear();
+                sound.keep_map(kept);
                 part.origin = Origin::Slot {
                     slot: s,
                     generation: self.pool.generation(s),
@@ -290,6 +300,7 @@ impl Project {
             }
             PartFrom::Init(e) => {
                 *part.sound = Sound::init(e);
+                kept.clear();
                 part.origin = Origin::Init(e);
             }
         }

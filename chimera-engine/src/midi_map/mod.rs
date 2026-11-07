@@ -4,6 +4,8 @@
 
 pub mod codec;
 
+use codec::{Bounds, MapRecord};
+
 pub use crate::midi_in::Cc;
 pub use chimera_midi::out::Cc14Msb;
 
@@ -239,6 +241,49 @@ pub const MAP_LEN: usize = 16;
 /// Sixteen mappings are held and one more was learned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MapFull;
+
+/// A Part's map record a closed door left unread: a project save writes it
+/// back verbatim (#815). One per Part, on the `Project`: a Sound copy never
+/// carries it.
+pub struct KeptMap {
+    which: Option<MapRecord>,
+    len: u8,
+    raw: [u8; KEPT_LEN],
+}
+
+/// A full `Bindings` payload: a version byte and 8 B an entry.
+pub const KEPT_LEN: usize = 1 + MAP_LEN * 8;
+
+impl KeptMap {
+    pub const EMPTY: Self = Self {
+        which: None,
+        len: 0,
+        raw: [0; KEPT_LEN],
+    };
+
+    pub fn get(&self) -> Option<(MapRecord, &[u8])> {
+        Some((self.which?, &self.raw[..usize::from(self.len)]))
+    }
+
+    pub fn clear(&mut self) {
+        self.which = None;
+    }
+
+    /// Keeps `r`'s payload `p`; `Bindings` wins over `Legacy`, as when
+    /// read. Over a full record is `Bounds`, as open.
+    pub fn keep(&mut self, r: MapRecord, p: &[u8]) -> Result<(), Bounds> {
+        if p.len() > KEPT_LEN {
+            return Err(Bounds);
+        }
+        if r == MapRecord::Legacy && self.which == Some(MapRecord::Bindings) {
+            return Ok(());
+        }
+        self.raw[..p.len()].copy_from_slice(p);
+        self.len = p.len() as u8;
+        self.which = Some(r);
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct MidiMap {
