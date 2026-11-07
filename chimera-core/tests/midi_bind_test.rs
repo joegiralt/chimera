@@ -587,6 +587,28 @@ fn canonical_nrpns_past_the_slots_all_land() {
 }
 
 #[test]
+fn canonical_nrpns_past_the_line_keep_the_newest() {
+    // Thirty canonical NRPNs in one pass, more than the slots and the line
+    // hold: the oldest waiting gives way, the newest (CUTOFF) still lands.
+    let mut r = Rig::algo();
+    let params = canonical_params(30);
+    for &a in &params {
+        r.set(P1, a, 0.5);
+    }
+    r.passes(2);
+    let ev: Vec<_> = params
+        .iter()
+        .map(|&a| r.nrpn(P1, addr_of(a), DataValue::Coarse(u7(10))))
+        .collect();
+    r.pass(&ev);
+    r.passes(200);
+    for &a in &params[30 - 16..] {
+        let got = r.place(P1, a);
+        assert!((got - place7(10)).abs() < 1e-4, "{a:?} at {got}");
+    }
+}
+
+#[test]
 fn canonical_nrpn_sweeps_past_the_slots_take_turns() {
     // Twelve params swept at once, every pass: each moves while the sweep
     // lasts (none starves behind the slots), and each lands on its last.

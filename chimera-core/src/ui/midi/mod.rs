@@ -46,7 +46,7 @@ use resolve::{Action, BindRuntime, resolve};
 
 /// Canonical NRPN targets a Part moves at once. The rest wait in line, each
 /// with its latest place, till a slot comes to rest (spec § 5: delayed as a
-/// CC is, not lost); past `WAIT` addresses waiting, a new one is dropped.
+/// CC is, not lost); past `WAIT` addresses waiting, the oldest gives way.
 const CANON: usize = 8;
 /// Canonical targets that wait for a slot, first come first moved.
 const WAIT: usize = 16;
@@ -141,12 +141,14 @@ impl PartMidi {
     }
 
     /// `t` waits to move to `to`: its place, if it waits already, else last
-    /// in line. Dropped when the line is full.
+    /// in line. A full line's oldest gives way: the newest is the hand's.
     fn wait_for(&mut self, t: Mappable, to: Place) {
         let at = self.wait.iter().position(|w| w.is_none_or(|(u, _)| u == t));
-        if let Some(i) = at {
-            self.wait[i] = Some((t, to));
-        }
+        let i = at.unwrap_or_else(|| {
+            self.unwait(0);
+            WAIT - 1
+        });
+        self.wait[i] = Some((t, to));
     }
 
     /// The wait at `i` leaves the line; the rest close up.
