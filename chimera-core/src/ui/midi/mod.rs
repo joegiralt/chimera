@@ -37,7 +37,7 @@ use crate::dsp::clampf;
 use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
 use crate::midi_in::{CtrlEvent, HeardEv, Port};
-use crate::midi_map::{Binding, MAP_LEN, Mappable, Span};
+use crate::midi_map::{Binding, CcKind, Input, MAP_LEN, Mappable, Span};
 use crate::nrpn::{self, NrpnAddr};
 use crate::part::{MAX_BEND, PartParams};
 use crate::project::{Line, Loads, PartId, Project};
@@ -486,6 +486,14 @@ impl UiState {
             Motion::Continuous(_) => m.ramps[j].moving(),
         };
         let place = echo::param_place(spec, was);
+        // Its echo heard back (#817): a relative CC's value is no turn.
+        if let (Input::Cc(_, CcKind::Relative(_)), Ctl::Cc { value, .. }) = (e.input, c) {
+            let v = u16::from(value.get());
+            if self.cc.ui().echo.looped(p, j, v, now) {
+                return;
+            }
+        }
+        let m = self.cc.part(i);
         let rt = &mut m.rt[j];
         let seen = match rt.wrote() {
             Some(w) if ours => w,

@@ -760,3 +760,62 @@ fn a_lost_echo_resends_what_the_poll_held() {
     let (_, u) = r.settle_ports(&usb);
     assert_eq!(values(&u, r.ch(P2), 20), [r.want(P2, CUTOFF)]);
 }
+
+/// DIN OUT back into DIN IN (a DAW's thru, a soft thru, a merger): a
+/// relative binding's echo heard back as turns never walks its param
+/// (#817), in every encoding; the same byte from the hand, after the
+/// echo's quiet, turns.
+#[test]
+fn relative_echo_heard_back_never_walks() {
+    for enc in ByteEncoding::ALL {
+        let mut r = Rig::new();
+        r.bind(
+            P1,
+            cc_in(21, CcKind::Relative(enc)),
+            CUTOFF,
+            Feedback::Value,
+        );
+        r.set(P1, CUTOFF, 0.3);
+        let was = r.want(P1, CUTOFF);
+        // Each echo comes straight back, the next pass.
+        let mut back = Vec::new();
+        for _ in 0..200 {
+            r.pass(&back);
+            back = values(&r.drain(), r.ch(P1), 21)
+                .into_iter()
+                .map(|v| r.cc(P1, 21, v))
+                .collect();
+            assert_eq!(r.want(P1, CUTOFF), was, "{enc:?}: the loop walked CUTOFF");
+        }
+        let e = r.cc(P1, 21, was);
+        r.pass(&[e]);
+        r.settle();
+        assert_ne!(r.want(P1, CUTOFF), was, "{enc:?}: a turn after the quiet");
+    }
+}
+
+/// The param moves between its echo and the echo's return: the stale
+/// byte is still the echo, never a turn (#817).
+#[test]
+fn relative_echo_back_after_a_move_is_no_turn() {
+    for enc in ByteEncoding::ALL {
+        let mut r = Rig::new();
+        r.bind(
+            P1,
+            cc_in(21, CcKind::Relative(enc)),
+            CUTOFF,
+            Feedback::Value,
+        );
+        r.set(P1, CUTOFF, 0.3);
+        let mut sent = Vec::new();
+        while sent.is_empty() {
+            r.pass(&[]);
+            sent = values(&r.drain(), r.ch(P1), 21);
+        }
+        r.set(P1, CUTOFF, 0.6);
+        let moved = r.want(P1, CUTOFF);
+        let e = r.cc(P1, 21, sent[0]);
+        r.pass(&[e]);
+        assert_eq!(r.want(P1, CUTOFF), moved, "{enc:?}: the stale echo turned");
+    }
+}

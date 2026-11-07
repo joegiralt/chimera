@@ -94,7 +94,7 @@ When two Parts share a channel and bind the same control, the lower-numbered Par
 
 With ECHO off, MIDI OUT stays silent.
 
-If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with MIDI thru on, an interface's soft thru, a controller that merges its input), turn ECHO off here, or the binding's own ECHO: a relative encoder would read its echoed value as turns and walk the cell.
+If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with MIDI thru on, an interface's soft thru, a controller that merges its input), ECHO can stay on: an echo that comes back within that quarter second is not taken as a turn, so a relative encoder's cell never walks.
 
 ## What else Chimera answers on DIN
 

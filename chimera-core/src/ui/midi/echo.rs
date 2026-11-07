@@ -40,6 +40,9 @@ const MSG_MAX: usize = 9;
 pub struct EchoPlan {
     last: [[Option<u16>; MAP_LEN]; MAX_PARTS],
     heard_at: [[Option<Ms>; MAP_LEN]; MAX_PARTS],
+    /// Each binding's last echo, out of either port: heard back as turns
+    /// within `QUIET_MS`, through a thru loop, it is not a turn (#817).
+    echoed: [[Option<Echoed>; MAP_LEN]; MAX_PARTS],
     loads: [Loads; MAX_PARTS],
     active: Option<PartId>,
     identity: [bool; Port::COUNT],
@@ -52,10 +55,18 @@ pub struct EchoPlan {
 
 const _: () = assert!(MAP_LEN <= 16);
 
+/// An echo sent: when, and its value (`level`'s).
+#[derive(Clone, Copy)]
+struct Echoed {
+    at: Ms,
+    level: u16,
+}
+
 /// Nothing sent: a named static, so its image is bank 2's.
 pub(super) static SILENT: EchoPlan = EchoPlan {
     last: [[None; MAP_LEN]; MAX_PARTS],
     heard_at: [[None; MAP_LEN]; MAX_PARTS],
+    echoed: [[None; MAP_LEN]; MAX_PARTS],
     loads: [Loads::NONE; MAX_PARTS],
     active: None,
     identity: [false; Port::COUNT],
@@ -96,6 +107,16 @@ impl EchoPlan {
         }
     }
 
+    /// Entry `j` of Part `p` hears `v` at `now`: its last echo's value,
+    /// sent within `QUIET_MS`, so its own echo come back through a thru
+    /// loop (#817), whatever moved the param since; a relative binding
+    /// takes it for no turn. A real turn of that same byte in that window
+    /// is lost with it.
+    pub fn looped(&self, p: PartId, j: usize, v: u16, now: Ms) -> bool {
+        let sent = self.echoed[p.index()].get(j).copied().flatten();
+        sent.is_some_and(|e| e.level == v && now.since(e.at) < QUIET_MS)
+    }
+
     /// One pass (spec §§ 7, 9): the identity replies, each out of the
     /// port that asked, then the active Part `at`'s changed bindings, the
     /// other Parts', then the bursts, each out of every port (`Tee`) while
@@ -133,29 +154,28 @@ impl EchoPlan {
         let parts = PartId::ALL
             .into_iter()
             .zip(&mut self.owed)
-            .zip(&self.heard_at);
+            .zip(self.heard_at.iter().zip(&mut self.echoed));
         for ((p, owed), heard) in parts {
             let part = project.part(p);
             let entries = part.sound.map.entries();
-            for (j, t) in heard.iter().enumerate() {
+            for (j, t) in heard.0.iter().enumerate() {
                 let bit = 1u16 << j;
                 if *owed & bit == 0 || t.is_some_and(|t| now.since(t) < QUIET_MS) {
                     continue;
                 }
                 let mut b = [0u8; MSG_MAX];
                 let mut w = Writer::after(&mut b, run);
-                let ok = entries.get(j).is_some_and(|e| {
-                    value(project, p, e)
-                        .is_some_and(|v| render(&mut w, part.mix.channel, &e.input, v))
+                let sent = entries.get(j).and_then(|e| {
+                    let v = value(project, p, e)?;
+                    render(&mut w, part.mix.channel, &e.input, v).then_some(v)
                 });
                 let (n, r) = (w.len(), w.running());
-                if let Some(m) = b.get(..n)
-                    && ok
-                {
+                if let (Some(m), Some(level)) = (b.get(..n), sent) {
                     if !usb.push_msg(m) {
                         return;
                     }
                     run = r;
+                    heard.1[j] = Some(Echoed { at: now, level });
                 }
                 *owed &= !bit;
             }
@@ -210,6 +230,7 @@ impl EchoPlan {
                     }
                     run = r;
                     self.last[p.index()][j] = Some(v);
+                    self.echoed[p.index()][j] = Some(Echoed { at: now, level: v });
                 }
             }
         }
