@@ -68,8 +68,14 @@ fn a_synced_cell_redraws_when_the_clock_moves() {
             Pixel(Point::new(x, y), theme::BG).draw(&mut want).unwrap();
         }
     }
-    // The mixer's jump hint runs along the band's foot; it is not the value.
-    let jump = theme::MARGIN_X + hint::width(view::mixer_hint(hint::NONE));
+    // The mixer's jump hint runs along the band's foot, with learn's on a
+    // knob a CC may drive (#512); it is not the value.
+    let own = if cfg!(feature = "midi-map") {
+        view::LEARN_HINT
+    } else {
+        hint::NONE
+    };
+    let jump = theme::MARGIN_X + hint::width(view::mixer_hint(own));
     for y in hint::FOCUS_Y - 8..theme::FOCUS_BOTTOM {
         for x in theme::MARGIN_X..jump {
             Pixel(Point::new(x, y), theme::BG).draw(&mut want).unwrap();

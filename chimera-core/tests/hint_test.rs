@@ -105,7 +105,12 @@ fn mute_names_the_ring_buttons() {
             &[Gesture("MIX + B1-5", "MUTES THAT RING")][..]
         )
     );
-    assert_eq!(band(&ui, &ORBIT_RHYTHM, 3).1, hint::NONE, "CHANCE");
+    // A ring amount takes a CC (#512).
+    assert_eq!(
+        band(&ui, &ORBIT_RHYTHM, 3).1,
+        &[Gesture("MIX + SEQ", "LEARNS A CC")][..],
+        "CHANCE"
+    );
 }
 
 /// The focus band's hint line: INK pixels in it.

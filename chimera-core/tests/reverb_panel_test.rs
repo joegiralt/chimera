@@ -127,13 +127,23 @@ fn addr(id: ParamId) -> ParamAddr {
     ParamAddr::new(BlockRef::Reverb, id)
 }
 
+/// No reverb cell has a hint of its own; a knob a CC may drive says how
+/// to learn one (#512).
 #[test]
 fn no_reverb_cell_has_a_hint() {
+    use chimera_core::midi_map::Mappable;
     for t in ALL {
         for def in [&reg::EFX, &reg::EFX_MORE] {
             for k in 0..6 {
-                assert!(view(def, k, &ctx(t)).hint(&ctx(t)).is_empty(), "{t:?} {k}");
-                assert_eq!(view(def, k, &ctx(t)).hint(&ctx(t)), hint::NONE);
+                let v = view(def, k, &ctx(t));
+                let learn =
+                    cfg!(feature = "midi-map") && v.addr().and_then(Mappable::new).is_some();
+                let want: &[hint::Gesture] = if learn {
+                    &[chimera_core::ui::view::LEARN]
+                } else {
+                    hint::NONE
+                };
+                assert_eq!(v.hint(&ctx(t)), want, "{t:?} {k}");
             }
         }
     }

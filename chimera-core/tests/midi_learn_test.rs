@@ -303,9 +303,11 @@ fn menu_hold_cancels_learn() {
     assert_eq!(ui.learn(), Learn::Off);
 }
 
+/// ORBIT's pages learn as a Part's do (#512): MIX + SEQ arms on the
+/// focused cell, no SEQ tap leaves and no scene is saved.
 #[cfg(feature = "orbit")]
 #[test]
-fn no_learn_in_orbit() {
+fn learn_in_orbit() {
     let mut ui = on_cutoff();
     screen::hold(&mut ui, Seq);
     let at = ui.location();
@@ -313,9 +315,10 @@ fn no_learn_in_orbit() {
     let rev = ui.project().rev();
     mix_seq(&mut ui);
     assert_eq!(ui.location(), at);
-    assert_eq!(ui.learn(), Learn::Off);
+    assert!(armed(&ui));
     assert_eq!(ui.project().rev(), rev, "no scene saved");
-    assert_eq!(band(&ui), "");
+    mix_seq(&mut ui);
+    assert_eq!(ui.learn(), Learn::Off);
 }
 
 /// Every word learn says fits the band at its status face, on every cell

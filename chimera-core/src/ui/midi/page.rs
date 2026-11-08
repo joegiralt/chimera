@@ -19,17 +19,18 @@ use super::super::settings::Ask;
 use super::super::settings::midi_map::{MapDelete, MapText, name};
 use super::super::settings::prompt::Choice;
 use super::learn::put_num;
+use crate::addr::BlockRef;
 use crate::dsp::voice_fx::params::FxType;
 use crate::midi_map::{Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, NrpnKind};
 
 /// The page's words, `|` between: a named static, so its bytes are bank
 /// 2's (`bank2.x`), not anonymous string rodata left in bank 1.
-static WORDS: [u8; 448] = *b"JUMP|PICKUP|SCALE|TWOS COMP|OFFSET|SIGNED|SIGNED 2|INC DEC|MOMENTARY|TOGGLE|\
+static WORDS: [u8; 491] = *b"JUMP|PICKUP|SCALE|TWOS COMP|OFFSET|SIGNED|SIGNED 2|INC DEC|MOMENTARY|TOGGLE|\
 ABSOLUTE \xc2\xb7 JUMPS TO THE KNOB|ABSOLUTE \xc2\xb7 WAITS TO PICK UP|ABSOLUTE \xc2\xb7 SCALES TO MEET|\
 RELATIVE \xc2\xb7 TWOS COMPLEMENT|RELATIVE \xc2\xb7 BINARY OFFSET|RELATIVE \xc2\xb7 SIGNED BIT|\
 RELATIVE \xc2\xb7 SIGNED BIT 2|RELATIVE \xc2\xb7 NRPN|BUTTON \xc2\xb7 HELD IS MAX|BUTTON \xc2\xb7 EACH PRESS FLIPS|\
 +1 = 1  -1 = 127|+1 = 65  -1 = 63|+1 = 1  -1 = 65|+1 = 65  -1 = 1|INCREMENT AND DECREMENT|\
-CC |NRPN |PRESSURE|OFF|ON|- ";
+CC |NRPN |PRESSURE|OFF|ON|- |CHORUS |DELAY |REVERB |REEL |MASTER |RING ";
 
 /// A word's place in `WORDS`.
 // The heads and tails are reached by offset from their kind's word.
@@ -68,6 +69,12 @@ enum W {
     Off,
     On,
     Dead,
+    Chorus,
+    Delay,
+    Reverb,
+    Reel,
+    Master,
+    Ring,
 }
 
 /// Word number `want`'s text in `WORDS`.
@@ -146,6 +153,23 @@ pub fn text(e: &Binding, fx: FxType, live: bool, out: &mut MapText) {
     }
     if !live {
         let _ = out.label.write_str(word(W::Dead as u8));
+    }
+    // A global target says whose: `REVERB MIX`, `RING 1 CHANCE`.
+    let whose = match e.target.addr().block {
+        BlockRef::Chorus => Some(W::Chorus),
+        BlockRef::Delay => Some(W::Delay),
+        BlockRef::Reverb => Some(W::Reverb),
+        BlockRef::Tape => Some(W::Reel),
+        BlockRef::Comp => Some(W::Master),
+        BlockRef::OrbitRing(_) => Some(W::Ring),
+        _ => None,
+    };
+    if let Some(w) = whose {
+        let _ = out.label.write_str(word(w as u8));
+    }
+    if let BlockRef::OrbitRing(r) = e.target.addr().block {
+        put_num(&mut out.label, r.get() + 1);
+        let _ = out.label.write_char(' ');
     }
     let _ = out.label.write_str(name(e, fx));
     let k = kind(e.input) as u8;

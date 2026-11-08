@@ -492,7 +492,8 @@ fn canonical_nrpn_moves_mappable_only() {
     r.passes(40);
     let want = f32::from(fine.get()) / 16383.0;
     assert!((r.place(P1, CUTOFF) - want).abs() < 1e-4, "14-bit");
-    // The Part's LEVEL is mappable; reverb's isn't (FX), nor FX TYPE.
+    // The Part's LEVEL is mappable; FX TYPE isn't, nor the reverb's and a
+    // ring's switches (#512).
     let level = ParamAddr::new(BlockRef::Part, PartParams::LEVEL);
     let e = r.nrpn(P1, addr_of(level), DataValue::Coarse(u7(0)));
     r.pass(&[e]);
@@ -504,14 +505,14 @@ fn canonical_nrpn_moves_mappable_only() {
         .into_iter()
         .chain(chimera_core::nrpn::chart().filter_map(|l| match l {
             chimera_core::nrpn::ChartLine::Live { block, spec, .. }
-                if block == BlockRef::Reverb =>
+                if matches!(block, BlockRef::Reverb | BlockRef::OrbitRing(_)) =>
             {
                 Some(ParamAddr::new(block, spec.id))
             }
             _ => None,
         }))
+        .filter(|&a| Mappable::new(a).is_none())
     {
-        assert!(Mappable::new(a).is_none());
         let e = r.nrpn(P1, addr_of(a), DataValue::Coarse(u7(3)));
         r.pass(&[e]);
     }

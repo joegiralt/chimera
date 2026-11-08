@@ -31,7 +31,8 @@ use super::UiState;
 use super::cc::MidiSlot;
 use super::nav::PartChain;
 use super::part_page::Edit;
-use crate::addr::{Blocks, ParamAddr};
+use crate::addr::{BlockRef, Blocks, ParamAddr};
+use crate::block::Block;
 use crate::block::Motion;
 use crate::dsp::clampf;
 use crate::dsp::knobs::MOVES;
@@ -269,10 +270,35 @@ fn pick(table: &'static [u8], want: u8) -> &'static str {
     ""
 }
 
-/// `a`'s stored value on Part `p`.
+/// `a`'s stored value on Part `p`; an ORBIT ring's on the playing scene.
 #[inline(always)]
 fn stored(project: &Project, p: PartId, a: ParamAddr) -> Option<f32> {
+    if let BlockRef::OrbitRing(r) = a.block {
+        let ring = project.orbit().live().rings.get(usize::from(r.get()))?;
+        return Some(ring.get(a.param));
+    }
     Some(project.read_part(p).block(a.block)?.get(a.param))
+}
+
+/// The bins a stepped target is cut into: one a unit of its spec, but a
+/// ring's HITS (0 to STEPS) and ROTATE (0 to STEPS - 1) follow the ring's
+/// STEPS, so a sweep covers the ring once (#512).
+#[inline(always)]
+fn bins_of(project: &Project, a: ParamAddr, spec: &crate::block::ParamSpec) -> u16 {
+    use crate::orbit::scene::SceneRing;
+    let all = (spec.max - spec.min) as u16 + 1;
+    let BlockRef::OrbitRing(r) = a.block else {
+        return all;
+    };
+    let Some(ring) = project.orbit().live().rings.get(usize::from(r.get())) else {
+        return all;
+    };
+    let n = ring.get(SceneRing::STEPS) as u16 + 1;
+    match a.param {
+        SceneRing::HITS => n + 1,
+        SceneRing::ROTATE => n,
+        _ => all,
+    }
 }
 
 /// Glided by the Part's knobs: counted by the publish (`KNOBS`).
@@ -490,7 +516,7 @@ impl UiState {
             }
             Motion::Continuous(_) => m.ramps[j].moving(),
         };
-        let place = echo::param_place(spec, was);
+        let place = echo::param_place(spec, was, bins_of(&self.project, a, spec));
         // Its echo heard back (#817): a relative CC's value is no turn.
         if let (Input::Cc(_, CcKind::Relative(_)), Ctl::Cc { value, .. }) = (e.input, c) {
             let v = u16::from(value.get());
@@ -621,7 +647,7 @@ impl UiState {
         match spec.motion() {
             Motion::Stepped(_) => {
                 // One unit a step (`ParamSpec::stepped`, `choice`).
-                let steps = (spec.max - spec.min) as u16 + 1;
+                let steps = bins_of(&self.project, a, spec);
                 let at = (was - spec.min + 0.5) as u16;
                 let last = &mut self.cc.part(i).bins[j];
                 let cur = if *last == NO_BIN {
@@ -644,7 +670,38 @@ impl UiState {
                 if !r.moving() {
                     r.settle_at(spec.normalize(was));
                 }
-                r.hear(to, span_place(s, to), now);
+                if r.hear(to, span_place(s, to), now) && !a.block.in_sound() {
+                    self.cc_claim(p, a);
+                }
+            }
+        }
+    }
+
+    /// A shared target (the master FX) heads where Part `p`'s message put
+    /// it: every other Part's glide on it stops, so two never alternate
+    /// (#512). The last message wins.
+    fn cc_claim(&mut self, p: PartId, a: ParamAddr) {
+        for q in PartId::ALL {
+            if q == p {
+                continue;
+            }
+            // Plain loops, no `Option` combinator: a core instance would be
+            // bank 1's (ADR 0175).
+            let map = &self.project.part(q).sound.map;
+            let m = self.cc.part(q.index());
+            for (k, e) in map.entries().iter().enumerate() {
+                if e.target.addr() == a {
+                    m.ramps[k].cancel(0.0);
+                    m.pend[k] = NO_BIN;
+                }
+            }
+            for k in 0..CANON {
+                if let Some(t) = m.canon[k]
+                    && t.addr() == a
+                {
+                    m.ramps[MAP_LEN + k].cancel(0.0);
+                    m.pend[MAP_LEN + k] = NO_BIN;
+                }
             }
         }
     }
@@ -720,8 +777,20 @@ impl UiState {
             return;
         }
         self.cc.room[i] -= cost;
-        let moved = self.edit_addr(p, a, d, false);
+        let moved = self.cc_nudge(p, a, d);
         self.cc.ui().stepped |= moved && p == self.active_part;
+    }
+
+    /// `a` on Part `p` moved `d` steps: an ORBIT ring's on the playing
+    /// scene and its slot (ADR 0083), as its page's turn; the rest through
+    /// the edit path. `true` when the value moved.
+    fn cc_nudge(&mut self, p: PartId, a: ParamAddr, d: i8) -> bool {
+        if !matches!(a.block, BlockRef::OrbitRing(_)) {
+            return self.edit_addr(p, a, d, false);
+        }
+        let was = stored(&self.project, p, a);
+        self.project.orbit_mut().turn(a, d, false);
+        stored(&self.project, p, a) != was
     }
 
     /// Part `p`'s entries' detents heard and not yet turned: each entry's as
@@ -753,7 +822,7 @@ impl UiState {
             }
             self.cc.room[i] -= cost;
             self.cc.part(i).turns[j] -= d;
-            let moved = self.edit_addr(p, a, d as i8, false);
+            let moved = self.cc_nudge(p, a, d as i8);
             self.cc.ui().stepped |= moved && p == self.active_part;
         }
     }

@@ -1,6 +1,6 @@
 //! A Sound's MIDI map (spec §§ 2-3): up to 16 CC -> param entries, a fixed
 //! array with no heap. `Mappable` is the whitelist type, so an address a CC
-//! may not drive (FX, ORBIT, settings) can never be stored.
+//! may not drive (a switch, a setting) can never be stored.
 
 pub mod codec;
 
@@ -15,35 +15,44 @@ use chimera_midi::take::Takeover;
 use chimera_midi::value::U14;
 
 use crate::addr::{BlockRef, ParamAddr};
-use crate::block::ParamId;
+use crate::block::{Motion, ParamId};
 use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::modulator::LfoSlot;
 use crate::dsp::va::VaParams;
 use crate::dsp::voice_fx::params::VoiceFxParams;
+use crate::orbit::scene::SceneRing;
 use crate::params::{EngineType, FilterParams, OutParams};
 use crate::part::PartParams;
 
 /// A `ParamAddr` a CC may drive: a Sound's own, stored, non-patching
-/// params, and the Part's LEVEL and PAN (CC 7 and 10).
+/// params, the Part's LEVEL and PAN (CC 7 and 10), the master FX's knobs
+/// and ORBIT's ring amounts (#512). A switch that reshapes a bus or a ring
+/// (a TYPE, STEPS, MUTE, a ring's choices) stays the hand's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mappable(ParamAddr);
 
 impl Mappable {
     pub const fn new(a: ParamAddr) -> Option<Self> {
-        let ok = if matches!(a.block, BlockRef::Part) {
-            a.param.0 == PartParams::LEVEL.0 || a.param.0 == PartParams::PAN.0
-        } else if matches!(a.block, BlockRef::VoiceFx) && a.param.0 < VoiceFxParams::P1.0 {
+        let (p, Some(s)) = (a.param.0, a.spec()) else {
+            return None;
+        };
+        let knob = s.stored && !s.patching;
+        let ok = match a.block {
+            BlockRef::Part => p == PartParams::LEVEL.0 || p == PartParams::PAN.0,
             // TYPE and PLACE crossfade a stage in and out: a switch, not a knob.
-            false
-        } else if a.block.in_sound() {
-            match a.spec() {
-                Some(s) => !s.patching && s.stored,
-                None => false,
+            BlockRef::VoiceFx => knob && p >= VoiceFxParams::P1.0,
+            BlockRef::Chorus
+            | BlockRef::Delay
+            | BlockRef::Reverb
+            | BlockRef::Tape
+            | BlockRef::Comp => knob && matches!(s.motion(), Motion::Continuous(_)),
+            // HITS to OCTAVE but MUTE.
+            BlockRef::OrbitRing(_) => {
+                p >= SceneRing::HITS.0 && p <= SceneRing::OCTAVE.0 && p != SceneRing::MUTE.0
             }
-        } else {
-            false
+            b => knob && b.in_sound(),
         };
         if ok { Some(Self(a)) } else { None }
     }

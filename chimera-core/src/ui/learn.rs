@@ -5,8 +5,9 @@
 //! (ADR 0017), under the cell's own label. Bank 1 keeps the state and the
 //! band; hearing, sensing and the words are bank 2's (`ui::midi::learn`).
 
-use chimera_hal::{ALL_ENCODERS, Controls};
+use chimera_hal::{ALL_ENCODERS, ButtonId, ButtonState, Controls};
 
+use super::nav::OrbitKey;
 use super::view::{self, View};
 use super::{PrimeStatus, UiState};
 use crate::MidiChannel;
@@ -168,6 +169,26 @@ impl UiState {
             },
             _ => Learn::Off,
         };
+    }
+
+    /// ORBIT's learn keys (#512): MIX + SEQ arms or ends it, as on a
+    /// Part's page, and takes the frame (`true`); any other ORBIT key ends
+    /// it. Out of line: `input` is big enough.
+    #[cfg_attr(feature = "midi-map", inline(never))]
+    pub(super) fn orbit_learn(&mut self, c: &impl Controls, keys: &[Option<OrbitKey>]) -> bool {
+        if !cfg!(feature = "midi-map") {
+            return false;
+        }
+        let mix = c.edges(ButtonId::Mix).down;
+        if mix && c.button_state(ButtonId::Seq) == ButtonState::Pressed {
+            #[cfg(feature = "midi-map")]
+            self.toggle_learn();
+            return true;
+        }
+        if keys.iter().any(Option::is_some) {
+            self.learn = Learn::Off;
+        }
+        false
     }
 
     /// Armed, a turn moves the focus and never a value; sensing, a turn

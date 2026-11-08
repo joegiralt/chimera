@@ -257,7 +257,12 @@ fn value(project: &Project, p: PartId, e: &Binding) -> Option<u16> {
         return None;
     }
     let a = e.target.addr();
-    let place = param_place(a.spec()?, stored(project, p, a)?);
+    let spec = a.spec()?;
+    let place = param_place(
+        spec,
+        stored(project, p, a)?,
+        super::bins_of(project, a, spec),
+    );
     let v = level(&e.input, span_of(e.span, place))?;
     let lower = PartId::ALL[..i].iter().any(|&q| {
         let o = project.part(q);
@@ -270,12 +275,11 @@ fn value(project: &Project, p: PartId, e: &Binding) -> Option<u16> {
 }
 
 /// The place 0..1 a param at `was` sits at, as a binding sees it: a
-/// stepped one at its bin's centre (`cc_bound`'s).
+/// stepped one at the centre of its bin of `steps` (`cc_bound`'s).
 #[inline(always)]
-pub(super) fn param_place(spec: &ParamSpec, was: f32) -> f32 {
+pub(super) fn param_place(spec: &ParamSpec, was: f32, steps: u16) -> f32 {
     match spec.motion() {
         Motion::Stepped(_) => {
-            let steps = (spec.max - spec.min) as u16 + 1;
             let at = (was - spec.min + 0.5) as u16;
             ((f32::from(at) + 0.5) * 256.0 / f32::from(steps)).min(255.0) / 255.0
         }

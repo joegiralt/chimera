@@ -2390,7 +2390,11 @@ impl UiState {
     /// ORBIT's frame: its keys, stepped as `OrbitKey`s, then its encoders
     /// on the page's param cells. Its acts run in `OrbitUi::act`.
     fn orbit_input(&mut self, c: &impl Controls, p: hold::Presses) {
-        for k in self.orbit_keys(c, p).into_iter().flatten() {
+        let keys = self.orbit_keys(c, p);
+        if self.orbit_learn(c, &keys) {
+            return;
+        }
+        for k in keys.into_iter().flatten() {
             if self.job.is_some() || self.modal.is_some() {
                 return;
             }
@@ -2404,6 +2408,9 @@ impl UiState {
                 },
                 _ => {}
             }
+        }
+        if self.learn_turns(c) {
+            return;
         }
         let (def, ctx) = (self.page_def(), self.ctx());
         let shift = c.edges(ButtonId::Mix).down;
@@ -2437,6 +2444,7 @@ impl UiState {
                 && matches!(a.block, BlockRef::OrbitChords | BlockRef::OrbitRing(_))
             {
                 self.project.orbit_mut().turn(a, delta, shift);
+                self.cc_hand(self.active_part, a);
                 continue;
             }
             let params = &mut UiBlocks {

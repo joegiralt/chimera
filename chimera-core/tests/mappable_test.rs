@@ -37,6 +37,20 @@ fn mappable_whitelist() {
             let want = b.in_sound() && !s.patching && s.stored && !switch;
             let part_mix =
                 b == BlockRef::Part && matches!(s.id, PartParams::LEVEL | PartParams::PAN);
+            // The master FX's knobs and ORBIT's ring amounts (#512,
+            // `midi_fx_orbit_test`).
+            let global = matches!(
+                b,
+                BlockRef::Chorus
+                    | BlockRef::Delay
+                    | BlockRef::Reverb
+                    | BlockRef::Tape
+                    | BlockRef::Comp
+                    | BlockRef::OrbitRing(_)
+            );
+            if global {
+                continue;
+            }
             assert_eq!(
                 Mappable::new(ParamAddr::new(b, s.id)).is_some(),
                 want || part_mix,
@@ -52,11 +66,11 @@ fn mappable_whitelist() {
     no(BlockRef::PartMix(PartId::ALL[0]), PartParams::LEVEL);
     no(
         BlockRef::Reverb,
-        chimera_core::dsp::reverb::ReverbParams::SIZE,
+        chimera_core::dsp::reverb::ReverbParams::TYPE,
     );
     no(
         BlockRef::OrbitRing(RingIdx::ALL[0]),
-        chimera_core::block::ParamId(0),
+        chimera_core::orbit::scene::SceneRing::STEPS,
     );
     no(BlockRef::Tempo, chimera_core::block::ParamId(0));
     no(BlockRef::Filter, FilterParams::FM3_IN);

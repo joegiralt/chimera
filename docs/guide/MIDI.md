@@ -8,6 +8,15 @@ A binding's control can be:
 - an **NRPN** (`NRPN 10:3`): a sequencer lane or a high-resolution control;
 - **PRESSURE**: channel aftertouch.
 
+## What a binding can drive
+
+- **The Sound's cells:** every engine, filter, envelope, LFO, FX slot and output cell, but the patching jacks.
+- **The Part's LEVEL and PAN.**
+- **The master FX's knobs:** CHORUS, DELAY, REVERB and MASTER, each continuous cell (RATE, TIME, MIX…). Their TYPE and MODE switches stay on the panel.
+- **ORBIT's ring amounts**, per ring: HITS, ROTATE, CHANCE, MUTATE, GATE, VEL, ACCENT and OCTAVE. STEPS, MUTE, a ring's choices and the chord ring stay on the panel.
+
+The master FX and ORBIT are shared by every Part, but a binding to them still lives in one Part's map and listens on that Part's channel: the Part you learned it on owns it. If two Parts bind the same cell, both move it, and the last message wins. A ring amount moves the playing scene and its saved slot, as a turn on its page does. A fader on HITS or ROTATE covers the ring as it is now, 0 to STEPS or 0 to STEPS − 1, once over its travel.
+
 Every stored parameter also has a fixed NRPN address of its own, which works with no binding at all: see the [NRPN chart](../midi/nrpn-chart.md). A binding on the same NRPN number wins over it.
 
 ## The mod wheel and aftertouch in the matrix
@@ -23,7 +32,7 @@ The wheel and channel pressure still reach the MIDI map as well, so a binding on
 
 ## Learn
 
-1. Touch the cell you want to control (turn its encoder a notch).
+1. Touch the cell you want to control (turn its encoder a notch), on a Part's page, a master FX page or an ORBIT page.
 2. Hold **MIX** and press **SEQ**. The value line reads `MOVE A KNOB · CUTOFF` (the cell's name).
 3. Move the control on your controller. The binding is written at once, and Chimera listens on to tell what kind of control it is.
 4. Turn it right, then left. Chimera guesses the kind and shows the guess in words.
@@ -51,7 +60,7 @@ SETTINGS › PART › MIDI MAP shows the current Part's map, one binding a row. 
 
 1. **Breadcrumb:** the Part whose map this is.
 2. **The control:** `CC 74`, `CC 2+34`, `NRPN 10:3` or `PRESSURE`.
-3. **The cell** it drives.
+3. **The cell** it drives. A master FX or ORBIT cell names its block first: `REVERB MIX`, `RING 1 CHANCE`.
 4. **How it moves**, in short: `JUMP`, `PICKUP`, `SCALE`, a relative encoding, `MOMENTARY`, `TOGGLE` or `INC DEC`.
 5. **A dimmed row** drives a cell the Part's engine doesn't have (here a MODAL cell on an ALGO Sound). It waits, and works again when the Part plays that engine.
 6. **The bar:** the selected binding. **A** moves it.
