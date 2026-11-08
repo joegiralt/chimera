@@ -38,7 +38,7 @@ pub fn part_status(part: &Part, pool: &Pool) -> PartStatus {
 /// `part_status` but for KEEP MAP.
 fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
     let (slot, generation, crc) = match part.origin {
-        Origin::Init(e) if part.sound.bits_eq(&Sound::init(e)) => return PartStatus::Clean,
+        Origin::Init(e) if is_init(&part.sound, e) => return PartStatus::Clean,
         Origin::Init(_) => return PartStatus::Edited,
         Origin::Slot {
             slot,
@@ -53,6 +53,13 @@ fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
     } else {
         PartStatus::Stale(slot)
     }
+}
+
+/// Whether `s` is engine `e`'s INIT. Out of line: the INIT Sound's frame
+/// is not under `part_status`'s CRC (ADR 0025's stack check).
+#[inline(never)]
+fn is_init(s: &Sound, e: crate::params::EngineType) -> bool {
+    s.bits_eq(&Sound::init(e))
 }
 
 /// The project against NEW and its last save or load.

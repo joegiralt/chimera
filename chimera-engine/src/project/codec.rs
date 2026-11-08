@@ -40,7 +40,6 @@ use crate::storage::{
 };
 
 use super::arena::{ARENA_BYTES, Cost, MAX_SOURCES};
-use super::parts::new_part;
 use super::pool::{Pool, entry_len};
 use super::sources::{SourceId, SourceRef, SourceSet, ref_cost};
 use super::swap::{LoadLink, Swap};
@@ -181,6 +180,8 @@ fn put_encoded(
 
 /// `kept`: the map record a closed door left unread, written back while
 /// the Sound has no map of its own (#815).
+/// Out of line, as when `put_init_part` called it too (bank 1, ADR 0198).
+#[inline(never)]
 fn put_part(
     w: &mut RecordWriter<'_>,
     i: usize,
@@ -286,10 +287,18 @@ fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// A NEW Part with no factory Sound: INIT, its Sound in a frame of its own.
+/// A NEW Part with no factory Sound: `put_part` of `new_part`, its Sound
+/// alone in a frame of its own (a whole `Part` there was a second copy
+/// under the sink's pointer call, ADR 0025's stack check).
 #[inline(never)]
 fn put_init_part(w: &mut RecordWriter<'_>, i: usize) -> Result<(), StoreError> {
-    put_part(w, i, &new_part(i), &KeptMap::EMPTY)
+    let sound = Sound::init(EngineType::Algo);
+    put_context(w, RecordTag::Part, i, sound.name)?;
+    encode_sound(&sound, w)?;
+    if sound.map.is_empty() {
+        crate::midi_in::put_kept(&KeptMap::EMPTY, w)?;
+    }
+    put_part_end(w, &PartParams::for_part(i), Origin::Init(EngineType::Algo))
 }
 
 #[inline(never)]

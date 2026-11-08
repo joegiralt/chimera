@@ -318,12 +318,26 @@ pub fn save(
         Err(LoadError::Store(e)) => return Err(e.into()),
         Err(_) => (Side::A, Generation::FIRST),
     };
-    let mut b = [0u8; FILE_MAX];
     let h = Header {
         kind: FileKind::Controller,
         generation,
         name: Some(*n),
     };
+    write_side(s, r, st, side, &h, m)
+}
+
+/// `save`'s write of side `side`. Out of line: its buffers are not under
+/// `load_stem`'s, nor in a caller's frame (ADR 0025's stack check).
+#[inline(never)]
+fn write_side(
+    s: &mut dyn Store,
+    r: &Ready,
+    st: &[u8],
+    side: Side,
+    h: &Header,
+    m: &ControllerMap,
+) -> Result<(), SaveError> {
+    let mut b = [0u8; FILE_MAX];
     let mut at = 0;
     put(&mut b, &mut at, &h.encode());
     for (i, sec) in m.sections.iter().enumerate() {

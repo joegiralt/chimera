@@ -141,6 +141,31 @@ mod tests {
         project_status,
     };
 
+    /// CLEAR's records, built a Sound at a time, are NEW's own.
+    #[test]
+    fn new_project_records_are_news() {
+        use crate::project::{encode_new_project, encode_project};
+        use crate::storage::{FileKind, Generation, Header, write_file};
+        use chimera_hal::store::{ByteSink, StoreError};
+        struct V(alloc::vec::Vec<u8>);
+        impl ByteSink for V {
+            fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
+                self.0.extend_from_slice(b);
+                Ok(())
+            }
+        }
+        let (p, _) = Project::boxed();
+        let h = Header {
+            kind: FileKind::Project,
+            generation: Generation::new(1),
+            name: Some(ProjectName::new("NEW").unwrap()),
+        };
+        let (mut a, mut b) = (V(alloc::vec::Vec::new()), V(alloc::vec::Vec::new()));
+        write_file(&mut a, &h, &mut |w| encode_new_project(w)).unwrap();
+        write_file(&mut b, &h, &mut |w| encode_project(&p, w)).unwrap();
+        assert_eq!(a.0, b.0);
+    }
+
     /// The owner's UAT pick: the init scene's Sounds, loaded clean, and NEW
     /// still reads as NEW.
     #[test]
