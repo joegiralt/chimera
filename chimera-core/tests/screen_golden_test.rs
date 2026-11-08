@@ -554,7 +554,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "midi-map")]
     ("pickup_hint", 0xa90607689d854b4f),
     #[cfg(feature = "midi-map")]
-    ("midi_map_pick", 0xacf44ee753d419aa),
+    ("midi_map_pick", 0xe200b09c0e9e62c2),
 ];
 
 #[test]

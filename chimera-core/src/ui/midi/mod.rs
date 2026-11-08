@@ -43,6 +43,8 @@ use crate::midi_map::{Binding, CcKind, Input, MAP_LEN, Mappable, MidiMap, Span};
 use crate::nrpn::{self, NrpnAddr};
 use crate::part::{MAX_BEND, PartParams};
 use crate::project::{Line, Loads, PartId, Project};
+#[cfg(feature = "midi-map")]
+use crate::project::{PartStatus, part_status};
 use ramp::{Ramp, bin, budget};
 use resolve::{Action, BindRuntime, resolve};
 
@@ -90,6 +92,13 @@ pub struct PartMidi {
     loads: Loads,
     /// Slots the hand turned this pass: nothing heard moves them till the next.
     handed: u64,
+    /// KEEP MAP (ADR 0253): the Part's own rows, as last seen, written back
+    /// over each load's. `kept` is written whenever `keep` is set, and read
+    /// only while it is: a rest leaves it as it was.
+    #[cfg(feature = "midi-map")]
+    keep: bool,
+    #[cfg(feature = "midi-map")]
+    kept: core::mem::MaybeUninit<MidiMap>,
 }
 
 /// `v` in each of the `n` slots from `p`: a rest image built in place by
@@ -140,18 +149,26 @@ unsafe fn rest_at(p: *mut PartMidi) {
         addr_of_mut!((*p).cursor).write(0);
         addr_of_mut!((*p).loads).write(Loads::NONE);
         addr_of_mut!((*p).handed).write(0);
+        #[cfg(feature = "midi-map")]
+        addr_of_mut!((*p).keep).write(false);
     }
 }
 
 impl PartMidi {
     /// At rest: its map changed (a learn, a load), and its slots are
-    /// indexed by entry. The loads it was heard on and the hand's turns
-    /// this pass stand.
+    /// indexed by entry. The loads it was heard on, the hand's turns this
+    /// pass and KEEP MAP stand.
     fn reset(&mut self) {
         let (loads, handed) = (self.loads, self.handed);
+        #[cfg(feature = "midi-map")]
+        let keep = self.keep;
         // SAFETY: `self` is a `PartMidi`'s place; every field is `Copy`.
         unsafe { rest_at(self) };
         (self.loads, self.handed) = (loads, handed);
+        #[cfg(feature = "midi-map")]
+        {
+            self.keep = keep;
+        }
     }
 
     /// Canonical slot `k` is free to move: at rest, no bin waiting, and
@@ -893,14 +910,63 @@ impl UiState {
 
     /// A new Sound (a load, NEW, Revert, CLEAR): every slot rests, its
     /// jitter forgotten. A ramp at rest takes the stored place when it
-    /// next hears (`cc_place`), so where it rests doesn't matter.
+    /// next hears (`cc_place`), so where it rests doesn't matter. With
+    /// KEEP MAP the Part's rows as last seen go back over the new Sound's,
+    /// and the Part reads Clean while it holds no other edit (ADR 0253).
     fn cc_reset_on_load(&mut self, p: PartId) {
         let (i, loads) = (p.index(), self.project.part(p).loads());
         let m = self.cc.part(i);
-        if loads != m.loads {
+        let moved = loads != m.loads;
+        if moved {
             m.loads = loads;
             m.reset();
         }
+        #[cfg(feature = "midi-map")]
+        self.cc_keep(p, moved);
+    }
+
+    /// KEEP MAP's part of `cc_reset_on_load`: after a load (`moved`), the
+    /// kept rows back; else the rows as they are now kept. Out of line, so
+    /// `hear_in` keeps its shape (the outliner's fragments of it land in
+    /// bank 1, ADR 0175).
+    #[cfg(feature = "midi-map")]
+    #[inline(never)]
+    fn cc_keep(&mut self, p: PartId, moved: bool) {
+        let i = p.index();
+        let m = self.cc.part(i);
+        if m.keep && moved {
+            // SAFETY: written with `keep` set (`keep_map`), and on every
+            // pass since.
+            let kept = unsafe { m.kept.assume_init() };
+            // Only a load that landed Clean is marked: an edited Sound
+            // (a program change's recall copy) keeps its `*` and its
+            // prompt.
+            let x = self.project.part(p);
+            let clean = part_status(x, self.project.pool()) == PartStatus::Clean;
+            self.set_map(p, kept);
+            self.project.set_map_kept(p, clean);
+        } else if m.keep {
+            let map = self.project.part(p).sound.map;
+            self.cc.part(i).kept.write(map);
+        } else if self.project.map_kept(p) {
+            self.project.set_map_kept(p, false);
+        }
+    }
+
+    /// MIX + PLUS on MIDI MAP's row 0: KEEP MAP on or off for Part `p`, its
+    /// rows now the ones kept (ADR 0253).
+    #[cfg(feature = "midi-map")]
+    pub(super) fn keep_map(&mut self, p: PartId) {
+        let map = self.project.part(p).sound.map;
+        let m = self.cc.part(p.index());
+        m.keep = !m.keep;
+        m.kept.write(map);
+    }
+
+    /// Whether Part `p` keeps its map; before the door first ran, no.
+    #[cfg(feature = "midi-map")]
+    pub(super) fn keeps_map(&self, p: PartId) -> bool {
+        self.cc.built().is_some_and(|m| m.parts[p.index()].keep)
     }
 
     /// Part `p`'s moving ramps, `elapsed` ms on: every non-knob one, and

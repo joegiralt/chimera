@@ -25,9 +25,10 @@ pub enum Origin {
 }
 
 /// A slot playing one Sound, with its MIDI channel, mode, output and mix.
-/// Only `project` makes one:
+/// Only `project` makes one (with `controller-maps` the error is the
+/// missing private `map_kept`, so no code is named):
 ///
-/// ```compile_fail,E0451
+/// ```compile_fail
 /// use chimera_engine::params::EngineType;
 /// use chimera_engine::part::PartParams;
 /// use chimera_engine::preset::Sound;
@@ -48,6 +49,11 @@ pub struct Part {
     pub(in crate::project) origin: Origin,
     pub mix: PartParams,
     pub(in crate::project) loads: Loads,
+    /// KEEP MAP (ADR 0253): the `sound_crc` the Part had once its kept
+    /// rows were written over a load's. While it matches, the Part reads
+    /// Clean. Never saved.
+    #[cfg(feature = "controller-maps")]
+    pub(in crate::project) map_kept: Option<u32>,
 }
 
 impl Part {
@@ -87,6 +93,8 @@ pub(super) fn new_part(i: usize) -> Part {
         origin: Origin::Init(EngineType::Algo),
         mix: PartParams::for_part(i),
         loads: Loads::default(),
+        #[cfg(feature = "controller-maps")]
+        map_kept: None,
     }
 }
 

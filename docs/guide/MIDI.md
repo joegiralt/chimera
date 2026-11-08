@@ -116,6 +116,17 @@ The Sound's rows move into the map, into their sections, each replacing the map 
 
 To make a map for another engine, switch the Part's engine, learn that engine's cells and save under the same name: only that engine's section and the shared one change.
 
+### Keeping the Part's rows: KEEP MAP
+
+A controller map already stays with the Part through any Sound load. The Sound's own rows don't: they belong to the Sound, so loading another Sound brings that Sound's rows. To browse Sounds with the rows you learned, turn on KEEP MAP:
+
+1. On MIDI MAP, with the bar on `CONTROLLER`, press **MIX + PLUS**. The line under the row reads `MIX + PLUS KEEP MAP ON`.
+2. Load Sounds into the Part as usual. Each one plays the Part's rows, not its own.
+
+Kept rows don't count as an edit: a Sound loaded this way shows no `*`, and the next load asks nothing. Any other change to the Sound still shows `*` and asks. Rows learned or changed while KEEP MAP is on are kept from then on; they show `*` like any edit, so the next load asks once (REPLACE keeps them). A revert keeps the rows too.
+
+Press **MIX + PLUS** again to turn it off. If the Part's rows differ from its Sound's, the Sound then shows `*`: save it to keep the rows in the Sound, or revert it to take the Sound's own. KEEP MAP is not saved: it is off for every Part after a project loads or the unit starts.
+
 ### Changing and deleting rows
 
 - **To change a map row**, learn the same control on the Part (it hides the map's row), then save.

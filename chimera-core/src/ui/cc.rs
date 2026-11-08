@@ -133,7 +133,7 @@ type Note = fn(Option<LearnNote>, &str, &mut FmtBuf);
 
 /// The door's `map_in`: `UiState::map_in`, MIDI MAP's keys.
 #[cfg(feature = "midi-map")]
-type MapIn = fn(&mut UiState, [i8; 6], bool);
+type MapIn = fn(&mut UiState, [i8; 6], u8);
 /// The door's `map_text`: `page::text`, a binding's words on MIDI MAP.
 #[cfg(feature = "midi-map")]
 type MapTextFn = fn(&Binding, FxType, bool, &mut MapText);
@@ -330,10 +330,10 @@ impl UiState {
 
 #[cfg(feature = "midi-map")]
 impl UiState {
-    /// MIDI MAP's keys this pass: A to F's detents and MIX+MINUS
-    /// (`map_in`). Closed, nothing.
-    pub(super) fn map_keys(&mut self, d: [i8; 6], delete: bool) {
-        through(|t| (t.map_in)(self, d, delete));
+    /// MIDI MAP's keys this pass: A to F's detents, and MIX, MINUS and
+    /// PLUS as `map_input`'s bits (`map_in`). Closed, nothing.
+    pub(super) fn map_keys(&mut self, d: [i8; 6], keys: u8) {
+        through(|t| (t.map_in)(self, d, keys));
     }
 
     /// MIDI out's pass, after `hear_ccs`: what waits to be sent (an

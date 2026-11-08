@@ -92,7 +92,17 @@ impl Default for MapText {
 
 impl MapText {
     /// MIN, MAX and ECHO beside their keys: `C MIN 0  D MAX 255  F ECHO OFF`.
+    /// Row 0: KEEP MAP's, `MIX + PLUS KEEP MAP OFF`, its words bank 2's
+    /// (ADR 0253).
     pub fn values(&self) -> [Gesture<'_>; 3] {
+        if self.row == MapRow::Pick {
+            let none = Gesture("", "");
+            return [
+                Gesture(self.control.as_str(), self.echo.as_str()),
+                none,
+                none,
+            ];
+        }
         [
             Gesture("C MIN", self.min.as_str()),
             Gesture("D MAX", self.max.as_str()),
@@ -180,14 +190,17 @@ impl Prompt for MapDelete {
 
 impl UiState {
     /// A key on the page: A moves the bar (`NavKey::Bar`), B the control,
-    /// C MIN, D MAX, E the input, F the echo; MIX+MINUS deletes. Bank 2's
-    /// (`map_in`); closed, nothing.
+    /// C MIN, D MAX, E the input, F the echo; MIX+MINUS deletes, MIX + PLUS
+    /// on row 0 is KEEP MAP. Bank 2's (`map_in`), from MIX down (bit 0),
+    /// MINUS's press (bit 1) and PLUS's (bit 2); closed, nothing.
     #[inline(never)]
     pub(in crate::ui) fn map_input(&mut self, c: &impl Controls) {
         let d = ALL_ENCODERS.map(|e| c.encoder_delta(e));
-        let delete =
-            c.edges(ButtonId::Mix).down && c.button_state(ButtonId::Minus) == ButtonState::Pressed;
-        self.map_keys(d, delete);
+        let pressed = |b| u8::from(c.button_state(b) == ButtonState::Pressed);
+        let keys = u8::from(c.edges(ButtonId::Mix).down)
+            | pressed(ButtonId::Minus) << 1
+            | pressed(ButtonId::Plus) << 2;
+        self.map_keys(d, keys);
     }
 
     /// The active Part's MIDI MAP as the page draws it.

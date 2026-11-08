@@ -238,6 +238,23 @@ impl Project {
         }
     }
 
+    /// KEEP MAP (ADR 0253): Part `p`'s Sound as it is now reads Clean
+    /// (its kept rows written over a load's), or, `false`, as its slot
+    /// says. Bank 2's (`bank2.x`): only the MIDI UI calls it.
+    #[cfg(feature = "controller-maps")]
+    #[inline(never)]
+    pub fn set_map_kept(&mut self, p: PartId, kept: bool) {
+        self.bump();
+        let part = &mut self.perf.parts[p.index()];
+        part.map_kept = kept.then(|| crate::storage::sound_crc(&part.sound));
+    }
+
+    /// Whether Part `p` reads Clean by KEEP MAP's rows (ADR 0253).
+    #[cfg(feature = "controller-maps")]
+    pub fn map_kept(&self, p: PartId) -> bool {
+        self.perf.parts[p.index()].map_kept.is_some()
+    }
+
     pub fn set_name(&mut self, n: ProjectName) {
         self.bump();
         self.meta.name = n;

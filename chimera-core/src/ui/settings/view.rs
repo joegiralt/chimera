@@ -531,9 +531,7 @@ fn draw_map_focus<D: DrawTarget<Color = Rgb565>>(d: &mut D, t: &super::midi_map:
         theme::MID,
         tr,
     );
-    if t.row != super::midi_map::MapRow::Pick {
-        hint::draw(d, &t.values(), x, y(2));
-    }
+    hint::draw(d, &t.values(), x, y(2));
     hint::draw(d, t.hint(), x, y(3));
 }
 

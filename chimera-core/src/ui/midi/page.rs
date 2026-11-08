@@ -31,12 +31,12 @@ use crate::midi_map::{
 
 /// The page's words, `|` between: a named static, so its bytes are bank
 /// 2's (`bank2.x`), not anonymous string rodata left in bank 1.
-static WORDS: [u8; 491] = *b"JUMP|PICKUP|SCALE|TWOS COMP|OFFSET|SIGNED|SIGNED 2|INC DEC|MOMENTARY|TOGGLE|\
+static WORDS: [u8; 511] = *b"JUMP|PICKUP|SCALE|TWOS COMP|OFFSET|SIGNED|SIGNED 2|INC DEC|MOMENTARY|TOGGLE|\
 ABSOLUTE \xc2\xb7 JUMPS TO THE KNOB|ABSOLUTE \xc2\xb7 WAITS TO PICK UP|ABSOLUTE \xc2\xb7 SCALES TO MEET|\
 RELATIVE \xc2\xb7 TWOS COMPLEMENT|RELATIVE \xc2\xb7 BINARY OFFSET|RELATIVE \xc2\xb7 SIGNED BIT|\
 RELATIVE \xc2\xb7 SIGNED BIT 2|RELATIVE \xc2\xb7 NRPN|BUTTON \xc2\xb7 HELD IS MAX|BUTTON \xc2\xb7 EACH PRESS FLIPS|\
 +1 = 1  -1 = 127|+1 = 65  -1 = 63|+1 = 1  -1 = 65|+1 = 65  -1 = 1|INCREMENT AND DECREMENT|\
-CC |NRPN |PRESSURE|OFF|ON|- |CHORUS |DELAY |REVERB |REEL |MASTER |RING ";
+CC |NRPN |PRESSURE|OFF|ON|- |CHORUS |DELAY |REVERB |REEL |MASTER |RING |MIX + PLUS KEEP MAP";
 
 /// A word's place in `WORDS`.
 // The heads and tails are reached by offset from their kind's word.
@@ -81,6 +81,7 @@ enum W {
     Reel,
     Master,
     Ring,
+    Keep,
 }
 
 /// Word number `want`'s text in `WORDS`.
@@ -354,6 +355,12 @@ impl UiState {
                     let _ = out.tail.write_str(lword(Lw::More));
                     out.key ^= 1;
                 }
+                // KEEP MAP's state beside MIX + PLUS (ADR 0253).
+                let keep = self.keeps_map(self.active_part);
+                let w = if keep { W::On } else { W::Off };
+                let _ = out.control.write_str(word(W::Keep as u8));
+                let _ = out.echo.write_str(word(w as u8));
+                out.key ^= u32::from(keep) << 1;
             }
             Some(Row::Layer(e)) => {
                 let live = e.target.live(engine) && !shadowed(&s.map, &e);
@@ -382,9 +389,12 @@ impl UiState {
         }
     }
 
-    /// A pass's keys on MIDI MAP: the encoders' detents A to F, and
-    /// MIX+MINUS. The door's `map_in`.
-    pub(in crate::ui) fn map_in(&mut self, d: [i8; 6], delete: bool) {
+    /// A pass's keys on MIDI MAP: the encoders' detents A to F, and MIX
+    /// down (bit 0) with MINUS (bit 1, delete) or PLUS (bit 2, KEEP MAP)
+    /// pressed. The door's `map_in`.
+    pub(in crate::ui) fn map_in(&mut self, d: [i8; 6], keys: u8) {
+        let delete = keys & 0b011 == 0b011;
+        let keep = keys & 0b101 == 0b101;
         let p = self.active_part;
         let (map, Some(at)) = (self.project.part(p).sound.map, self.loc.settings()) else {
             return;
@@ -396,6 +406,9 @@ impl UiState {
             Some(Row::Pick) => {
                 if d[1] != 0 {
                     self.ctl_pick(p, d[1]);
+                }
+                if keep {
+                    self.keep_map(p);
                 }
                 return;
             }

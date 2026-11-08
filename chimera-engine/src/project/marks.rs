@@ -20,6 +20,23 @@ pub enum PartStatus {
 }
 
 pub fn part_status(part: &Part, pool: &Pool) -> PartStatus {
+    let s = slot_status(part, pool);
+    // KEEP MAP's rows over a load are no edit (ADR 0253); a slot moved on
+    // since the load still reads Stale.
+    #[cfg(feature = "controller-maps")]
+    if s == PartStatus::Edited && part.map_kept == Some(sound_crc(&part.sound)) {
+        return match part.origin {
+            Origin::Slot {
+                slot, generation, ..
+            } if pool.generation(slot) != generation => PartStatus::Stale(slot),
+            _ => PartStatus::Clean,
+        };
+    }
+    s
+}
+
+/// `part_status` but for KEEP MAP.
+fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
     let (slot, generation, crc) = match part.origin {
         Origin::Init(e) if part.sound.bits_eq(&Sound::init(e)) => return PartStatus::Clean,
         Origin::Init(_) => return PartStatus::Edited,

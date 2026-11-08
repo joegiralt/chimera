@@ -229,7 +229,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // controller maps beside it (`midi_map::ctl`, ADR 0226), and
     // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
     // and rel), learn's classifier (`chimera_midi::learn`) and the 14-bit
-    // MSB check it shares with the codec (`chimera_midi::out`).
+    // MSB check it shares with the codec (`chimera_midi::out`). And KEEP
+    // MAP's mark (`Project::set_map_kept`, ADR 0253), only the MIDI UI's.
     let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
     *(.text.*8midi_map5codec* .rodata.*8midi_map5codec*);
     *(.text.*8midi_map3ctl* .rodata.*8midi_map3ctl*);
@@ -246,6 +247,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*12chimera_midi3rel* .rodata.*12chimera_midi3rel*);
     *(.text.*12chimera_midi5learn* .rodata.*12chimera_midi5learn*);
     *(.text.*12chimera_midi3out* .rodata.*12chimera_midi3out*);
+    *(.text.*7project*7Project12set_map_kept* .rodata.*7project*7Project12set_map_kept*);
 ";
     // Tuning (ADR 0240): the Scala parser and table (`chimera_theory::
     // tuning`), the tables' writers (`chimera_engine::tuning`; the audio's
