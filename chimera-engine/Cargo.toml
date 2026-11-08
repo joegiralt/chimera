@@ -53,6 +53,9 @@ host-project = []
 # only (the importer, the desktop, tests); no firmware build enables it
 # until the lost-cluster sweep frees on the unit (#360).
 source-writer = []
+# Each Part's controller map pick in the project (ADR 0226): with
+# `chimera-core/midi-map`. The bench builds hold none (their D2 is full).
+controller-maps = []
 # ORBIT's runner in bank 2's door (`orbit::door`, ADR 0199): the
 # firmware's `orbit` set. Without it a `bank2` build links no runner.
 orbit = []

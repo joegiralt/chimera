@@ -477,6 +477,10 @@ pub(crate) enum NamingFor {
     /// SAVE TO LIBRARY of the Part's Sound; from the Sound rung, `back`
     /// is its browser, where NAMING closes to.
     SaveToLibrary(PartId, Option<Browse>),
+    /// MIDI MAP's row 0: the Part's rows saved into a controller map of
+    /// this name (ADR 0226).
+    #[cfg(feature = "midi-map")]
+    Controller(PartId),
 }
 
 impl NamingFor {
@@ -485,6 +489,8 @@ impl NamingFor {
         match self {
             NamingFor::RenameLoaded | NamingFor::SaveAs(..) => "PROJECT NAME",
             NamingFor::RenamePart(_) | NamingFor::SaveToLibrary(..) => "SOUND NAME",
+            #[cfg(feature = "midi-map")]
+            NamingFor::Controller(_) => "MAP NAME",
         }
     }
 
@@ -494,6 +500,8 @@ impl NamingFor {
             NamingFor::RenameLoaded | NamingFor::RenamePart(_) => "RENAME",
             NamingFor::SaveAs(..) => "SAVE AS",
             NamingFor::SaveToLibrary(..) => "SAVE TO LIB",
+            #[cfg(feature = "midi-map")]
+            NamingFor::Controller(_) => "SAVE MAP",
         }
     }
 }

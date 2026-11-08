@@ -464,6 +464,7 @@ fn every_prompt_fits() {
                 feedback: Feedback::Off,
             },
             label: "RESONANCE",
+            layer: false,
         });
     }
     let two = AlsoUses {

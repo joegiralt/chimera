@@ -138,6 +138,19 @@ pub const SAVE_TO_LIB_ROW: u8 = {
     }
 };
 
+/// PART's MIDI MAP row, found at compile time.
+#[cfg(feature = "midi-map")]
+pub const MIDI_MAP_ROW: u8 = {
+    let mut j = 0;
+    loop {
+        assert!(j < PART.len(), "no MIDI MAP under PART");
+        if matches!(PART[j].kind, Kind::Screen(Screen::MidiMap)) {
+            break j as u8;
+        }
+        j += 1;
+    }
+};
+
 /// The playing scene's list: its crumb is `SCENE n`.
 #[cfg(feature = "orbit")]
 pub static ORBIT: [Row; 4] = [

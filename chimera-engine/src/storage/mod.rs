@@ -7,6 +7,7 @@ mod file;
 mod frame;
 mod library;
 mod record;
+mod small;
 mod sound;
 mod source_file;
 mod source_ref;
@@ -43,6 +44,7 @@ pub(crate) use record::records_crc;
 pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
 };
+pub use small::{list_stems, read_small, write_small};
 pub use sound::{MAX_SOUND_COST, SoundCheck, SoundDecoder, encode_sound, sound_crc};
 pub(crate) use sound::{addr_code, addr_of};
 pub use source_file::{

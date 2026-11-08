@@ -58,7 +58,7 @@ pub use template::{NEW_PARTS, TemplateCrc};
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
 use crate::midi_map::KeptMap;
-use crate::name::ProjectName;
+use crate::name::{ProjectName, SoundName};
 use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
 use crate::preset::Sound;
@@ -136,6 +136,14 @@ pub enum ReplaceError {
     Full(Option<PoolFull>),
 }
 
+/// The Parts a project names a controller map for: none without
+/// `controller-maps`, so a bench build's save writes no pick.
+pub(crate) const CTL_PARTS: usize = if cfg!(feature = "controller-maps") {
+    MAX_PARTS
+} else {
+    0
+};
+
 pub struct Project {
     meta: ProjectMeta,
     pool: Pool,
@@ -145,11 +153,15 @@ pub struct Project {
     /// Each Part's map record a closed door left unread, for the save
     /// (#815): here, not on the Sound, so no Sound copy carries it.
     kept: [KeptMap; MAX_PARTS],
+    /// Each Part's controller map, by name (#807, ADR 0226): the map
+    /// itself is a card file, read again on every load. None without
+    /// `controller-maps` (the bench builds, no MIDI MAP): their D2 is full.
+    ctl: [Option<SoundName>; CTL_PARTS],
     /// Moves on every `&mut` path, so a status keyed on it is never stale.
     rev: u32,
 }
 
-crate::in_place::field_list!(Project => Project { meta, pool, perf, orbit, kept, rev });
+crate::in_place::field_list!(Project => Project { meta, pool, perf, orbit, kept, ctl, rev });
 
 impl Project {
     /// Wrapping; any two reads with an edit between differ.
@@ -211,6 +223,19 @@ impl Project {
     pub fn orbit_mut(&mut self) -> &mut OrbitSong {
         self.bump();
         &mut self.orbit
+    }
+
+    /// Part `p`'s controller map's name, if it has one (ADR 0226).
+    pub fn controller(&self, p: PartId) -> Option<SoundName> {
+        self.ctl.get(p.index()).copied().flatten()
+    }
+
+    /// Part `p` plays controller map `m`, or none: a project edit.
+    pub fn set_controller(&mut self, p: PartId, m: Option<SoundName>) {
+        self.bump();
+        if let Some(c) = self.ctl.get_mut(p.index()) {
+            *c = m;
+        }
     }
 
     pub fn set_name(&mut self, n: ProjectName) {

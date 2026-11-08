@@ -40,8 +40,8 @@ impl Project {
     pub fn init_in_place(slot: &mut MaybeUninit<Project>, arena: ArenaWriter) -> TemplateCrc {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; `meta`, `pool`, `perf` and
-        // `orbit` (the last three in place), each of the `MAX_PARTS` `kept`
-        // and `rev` are each written once before `assume_init_mut`.
+        // `orbit` (the last three in place), each of the `MAX_PARTS` `kept`,
+        // `ctl` and `rev` are each written once before `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
             Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)), arena);
@@ -51,6 +51,7 @@ impl Project {
             for i in 0..MAX_PARTS {
                 kept.add(i).write(KeptMap::EMPTY);
             }
+            addr_of_mut!((*p).ctl).write([None; super::CTL_PARTS]);
             addr_of_mut!((*p).rev).write(0);
             slot.assume_init_mut()
         };
@@ -79,6 +80,7 @@ impl Project {
         for k in &mut self.kept {
             k.clear();
         }
+        self.ctl = [None; super::CTL_PARTS];
         self.fill_new();
     }
 

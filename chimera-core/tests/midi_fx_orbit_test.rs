@@ -256,8 +256,9 @@ fn midi_map_names_the_block() {
     bind(&mut ui, 20, REV_MIX);
     bind(&mut ui, 21, CHANCE);
     let t = |ui: &UiState, i: usize| ui.map_band().text(i).label.as_str().to_string();
-    assert_eq!(t(&ui, 0), "CC 20  REVERB MIX");
-    assert_eq!(t(&ui, 1), "CC 21  RING 1 CHANCE");
+    // Row 0 is the Part's controller map (ADR 0226); the Sound's rows follow.
+    assert_eq!(t(&ui, 1), "CC 20  REVERB MIX");
+    assert_eq!(t(&ui, 2), "CC 21  RING 1 CHANCE");
 }
 
 #[test]

@@ -512,7 +512,8 @@ mod midi_map {
         entry(cc, BlockRef::Filter, FilterParams::CUTOFF)
     }
 
-    /// Part 1 on INIT with `entries`, and the page open.
+    /// Part 1 on INIT with `entries`, the page open, the bar on the first
+    /// Sound row (row 1: row 0 is the controller map, ADR 0226).
     fn page(entries: &[Binding]) -> UiState {
         let mut ui = UiState::new();
         let mut m = MidiMap::EMPTY;
@@ -526,6 +527,9 @@ mod midi_map {
             ui.location(),
             Location::settings_at(screen_path(Screen::MidiMap), 0)
         );
+        if !entries.is_empty() {
+            feed(&mut ui, Input::turn(EncoderId::A, 1));
+        }
         ui
     }
 
@@ -537,12 +541,12 @@ mod midi_map {
         feed(ui, Input::turn(e, d));
     }
 
-    /// Row `i`'s label, its range as the bar's lines give it, its look.
+    /// Sound row `i`'s label, its range as the bar's lines give it, its look.
     fn text(ui: &UiState, i: usize) -> (String, String, RowLook) {
         let b = ui.map_band();
-        let t = b.text(i);
+        let t = b.text(i + 1);
         let range = format!("{}-{}", t.min.as_str(), t.max.as_str());
-        (t.label.as_str().into(), range, b.look(i))
+        (t.label.as_str().into(), range, b.look(i + 1))
     }
 
     #[test]
@@ -708,7 +712,7 @@ mod midi_map_bar {
         let row = |ui: &UiState| ui.location().settings().unwrap().row();
         let rev = ui.project().rev();
         feed(&mut ui, Input::turn(EncoderId::A, 1));
-        assert_eq!(row(&ui), 0, "one row: it wraps");
+        assert_eq!(row(&ui), 1, "past row 0, the controller map");
         assert_eq!(ui.project().rev(), rev, "the bar edits nothing");
         // MIN sits at 0 and MAX at 255: C turns up, D down; E steps the
         // input, F turns the echo on.

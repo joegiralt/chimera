@@ -104,7 +104,9 @@ fn tempo_payload(bpm: Bpm) -> [u8; 4] {
 
 /// The scenes `scene` gives, the slots in `saved` and then `live`, then
 /// the playing scene, the seeds and the tempo. A slot left out is
-/// neutral, as the reader's base is.
+/// neutral, as the reader's base is. Out of line: inlined into
+/// `encode_project` it grew bank 1 (ADR 0226).
+#[inline(never)]
 fn put_song<'a>(
     w: &mut RecordWriter<'_>,
     saved: SceneSet,

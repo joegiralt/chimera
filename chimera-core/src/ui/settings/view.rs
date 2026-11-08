@@ -531,7 +531,9 @@ fn draw_map_focus<D: DrawTarget<Color = Rgb565>>(d: &mut D, t: &super::midi_map:
         theme::MID,
         tr,
     );
-    hint::draw(d, &t.values(), x, y(2));
+    if t.row != super::midi_map::MapRow::Pick {
+        hint::draw(d, &t.values(), x, y(2));
+    }
     hint::draw(d, t.hint(), x, y(3));
 }
 
@@ -794,6 +796,9 @@ pub enum LegendFor {
     /// MIDI MAP's keys.
     #[cfg(feature = "midi-map")]
     Map,
+    /// MIDI MAP's row 0: the controller map (ADR 0226).
+    #[cfg(feature = "midi-map")]
+    MapPick,
 }
 
 impl LegendFor {
@@ -831,6 +836,8 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Load, _) => "EDIT LOAD · MENU BACK",
         #[cfg(feature = "midi-map")]
         (L::Map, _) => "A MOVE · MIX+MINUS DELETES",
+        #[cfg(feature = "midi-map")]
+        (L::MapPick, _) => "B PICK · EDIT SAVE",
     }
 }
 
@@ -856,7 +863,7 @@ pub struct Bands<'a> {
     pub part: Option<PartBand>,
     /// On MIDI MAP, the active Part's map and engine.
     #[cfg(feature = "midi-map")]
-    pub map: Option<super::midi_map::MapBand>,
+    pub map: Option<super::midi_map::MapBand<'a>>,
     /// The playing scene, for ORBIT's crumb; its band in the ORBIT branch.
     pub scene: SceneIdx,
     pub orbit: Option<OrbitBand>,
@@ -909,15 +916,12 @@ impl Bands<'_> {
             (Some(Screen::SceneSaveTo), _) => return legend(LegendFor::Action, false),
             #[cfg(feature = "midi-map")]
             (Some(Screen::MidiMap), _) => {
-                let rows = self.map.is_some_and(|m| m.open && !m.map.is_empty());
-                return legend(
-                    if rows {
-                        LegendFor::Map
-                    } else {
-                        LegendFor::Dimmed
-                    },
-                    false,
-                );
+                let on = match self.map.filter(|m| m.open) {
+                    None => LegendFor::Dimmed,
+                    Some(_) if self.at.row() == 0 => LegendFor::MapPick,
+                    Some(_) => LegendFor::Map,
+                };
+                return legend(on, false);
             }
             (_, Some(Column::Projects)) => return legend(LegendFor::ManageList, false),
             (_, Some(Column::Command(n))) => return legend(self.command_legend(n), false),
@@ -1093,21 +1097,20 @@ impl Bands<'_> {
     /// empty page's words; closed, `NEEDS UPDATE`.
     #[cfg(feature = "midi-map")]
     fn draw_map<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, m: &super::midi_map::MapBand) {
-        // Closed, or empty (two rows: the one line outruns the list).
-        let note: &[&str] = match m.open {
-            false => &[crate::bank2::NEEDS_UPDATE],
-            true => &["NO CCS", "MIX+SEQ ON A CELL"],
-        };
-        if !m.open || m.map.is_empty() {
-            return draw_rows(d, note.len(), usize::MAX, 0, self.text, |i, f| {
+        if !m.open {
+            return draw_rows(d, 1, usize::MAX, 0, self.text, |_, f| {
                 f(ListRow {
-                    label: note[i],
+                    label: crate::bank2::NEEDS_UPDATE,
                     opens: false,
                     note: None,
                     look: RowLook::Dimmed,
                 })
             });
         }
+        // No rows past the pick: how to learn one, under it (two rows: the
+        // one line outruns the list).
+        let note = ["NO CCS", "MIX+SEQ ON A CELL"];
+        let rows = if m.empty { 1 + note.len() } else { m.rows };
         let bar = self.at.row() as usize;
         let c = Col {
             size: self.text,
@@ -1117,21 +1120,29 @@ impl Bands<'_> {
             d,
             &c,
             LIST_TOP,
-            m.map.len(),
+            rows,
             bar,
             self.first,
             Bar::Keyed,
             |i, f| {
+                if m.empty && i > 0 {
+                    return f(ListRow {
+                        label: note[i - 1],
+                        opens: false,
+                        note: None,
+                        look: RowLook::Dimmed,
+                    });
+                }
                 let t = m.text(i);
                 f(ListRow {
                     label: t.label.as_str(),
                     opens: false,
                     note: Some(t.word.as_str()),
-                    look: m.look(i),
+                    look: t.look,
                 })
             },
         );
-        if bar < m.map.len() {
+        if bar < m.rows {
             draw_map_focus(d, &m.text(bar));
         }
     }
@@ -1145,7 +1156,7 @@ impl Bands<'_> {
         if !m.open {
             return 1;
         }
-        let n = m.map.len();
+        let n = m.rows;
         (0..n).fold(n as u32, |h, i| h.rotate_left(7) ^ m.text(i).key)
     }
 

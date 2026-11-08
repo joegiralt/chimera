@@ -48,6 +48,8 @@ pub enum Dir {
     /// `/CHIMERA/TUNINGS`: Scala tunings the owner copies over, read only
     /// (ADR 0240).
     Tunings,
+    /// `/CHIMERA/MAPS`: controller maps (#807), one A/B pair each.
+    Maps,
     /// The card's root: listed and read, for a dropped bank-2 image (ADR
     /// 0137). Always there; never made or removed; `write` and `delete`
     /// refuse it (`ReadOnly`), `seal` too (`Io`).

@@ -992,7 +992,7 @@ impl UiState {
             #[cfg(feature = "orbit")]
             Screen::SceneSaveTo => SceneIdx::ALL.len(),
             #[cfg(feature = "midi-map")]
-            Screen::MidiMap => self.project.part(self.active_part).sound.map.len(),
+            Screen::MidiMap => self.map_rows(),
         }
     }
 
@@ -1963,6 +1963,17 @@ impl UiState {
         self.open(Modal::Prompt(a));
     }
 
+    /// NAMING over PART's list, its bar on MIDI MAP, starting from the
+    /// Part's controller map's name (ADR 0226).
+    #[cfg(feature = "midi-map")]
+    fn name_controller(&mut self) {
+        let p = self.active_part;
+        let at = ListAt::at(&[PART_ROW], settings::tree::MIDI_MAP_ROW);
+        let n = self.project.controller(p);
+        let start = n.as_ref().map_or("CONTROLLER", |n| n.as_str());
+        self.name(at, NamingFor::Controller(p), start);
+    }
+
     /// NAMING takes a list's band, so it opens on one: `at`.
     fn name(&mut self, at: ListAt, f: NamingFor, start: &str) {
         self.go(at.location());
@@ -2175,7 +2186,7 @@ impl UiState {
             #[cfg(feature = "midi-map")]
             Answered::MapDelete(d, a) => {
                 if a.picked() == Some(prompt::DeleteAnswer::Delete) {
-                    self.map_deleted(d.part, d.entry);
+                    self.map_deleted(d);
                 }
             }
             Answered::LoadProject { reply, to, clear } => match reply {
@@ -2288,6 +2299,15 @@ impl UiState {
             }
             Done::Cancelled(NamingFor::SaveToLibrary(part, Some(b))) => {
                 self.go(Location::sound_at(part, b))
+            }
+            #[cfg(feature = "midi-map")]
+            Done::Named(NamingFor::Controller(part), name) => {
+                self.go(Location::settings_at(screen_path(Screen::MidiMap), 0));
+                self.ctl_save(part, name)
+            }
+            #[cfg(feature = "midi-map")]
+            Done::Cancelled(NamingFor::Controller(_)) => {
+                self.go(Location::settings_at(screen_path(Screen::MidiMap), 0))
             }
             Done::Cancelled(_) | Done::Answered(_) => {}
         }
@@ -2893,6 +2913,11 @@ impl UiState {
                         if let Some(&n) = SceneIdx::ALL.get(s.row() as usize) {
                             self.save_scene_in(n);
                         }
+                    }
+                    // Row 0's EDIT: the Part's rows into a controller map.
+                    #[cfg(feature = "midi-map")]
+                    (Some(Screen::MidiMap), Some(s)) if s.row() == 0 && self.map_rows() > 0 => {
+                        self.name_controller()
                     }
                     _ => {}
                 },

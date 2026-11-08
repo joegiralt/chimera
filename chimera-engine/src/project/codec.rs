@@ -229,6 +229,9 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
     }
     for (i, (part, kept)) in p.perf.parts.iter().zip(&p.kept).enumerate() {
         put_part(w, i, part, kept)?;
+        if let Some(n) = p.ctl.get(i).copied().flatten() {
+            w.put(RecordTag::Controller, &n.padded())?;
+        }
     }
     encode_orbit(&p.orbit, w)
 }
@@ -567,6 +570,14 @@ impl ProjectCheck {
                 };
                 Ok(())
             }
+            (ReadTag::Known(RecordTag::Controller), Context::Part(n)) => {
+                let p = <&[u8; 16]>::try_from(p).map_err(|_| FileError::Bounds)?;
+                // A name this firmware can't hold: the Part plays none.
+                if let Some(c) = target.and_then(|t| t.ctl.get_mut(n.index())) {
+                    *c = SoundName::from_padded(p).ok();
+                }
+                Ok(())
+            }
             (_, Context::Part(n)) => {
                 if let Event::Record(ReadTag::Known(RecordTag::SourceRef), p) = e
                     && let Some(r) = SourceRef::from_bytes(p)
@@ -712,6 +723,9 @@ impl ProjectCheck {
                 let part = &mut t.perf.parts[n.index()];
                 *part.sound = Sound::neutral(EngineType::Algo);
                 t.kept[n.index()].clear();
+                if let Some(c) = t.ctl.get_mut(n.index()) {
+                    *c = None;
+                }
                 part.mix = PartParams::for_part(n.index());
                 part.origin = Origin::Init(EngineType::Algo);
             }

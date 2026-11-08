@@ -1,8 +1,10 @@
-//! SETTINGS › PART › MIDI MAP (spec § 8.2): the active Part's map as rows,
-//! and the keys that edit it. Every edit is a Sound edit, so `*` and
-//! Revert carry it, and it rests the Part's ramps (indexed by position).
-//! The words and the keys are bank 2's (`ui::midi::page`, behind
-//! `MidiUiDoor`); here are the bands' reads and the stub.
+//! SETTINGS › PART › MIDI MAP (spec § 8.2, ADR 0226): the active Part's
+//! controller map on row 0, its layer's rows, then its Sound's own rows,
+//! and the keys that edit them. A Sound row's edit is a Sound edit, so `*`
+//! and Revert carry it, and it rests the Part's ramps (indexed by
+//! position). The rows, their words and the keys are bank 2's
+//! (`ui::midi::page`, behind `MidiUiDoor`); here are the bands' reads and
+//! the stubs.
 
 use core::fmt::Write;
 
@@ -13,7 +15,6 @@ use super::view::RowLook;
 use super::{Screen, screen_path};
 use crate::dsp::voice_fx::params::FxType;
 use crate::midi_map::{Binding, MidiMap};
-use crate::params::EngineType;
 use crate::project::{Line, PartId};
 use crate::ui::UiState;
 use crate::ui::fmt::FmtBuf;
@@ -30,10 +31,25 @@ pub fn name(e: &Binding, fx: FxType) -> &'static str {
         .unwrap_or("??")
 }
 
-/// A binding's words as MIDI MAP shows them (spec § 8.2), written whole
-/// by bank 2 (`ui::midi::page::text`, behind the door); closed, empty.
-#[derive(Default)]
+/// Which of the page's rows (ADR 0226).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MapRow {
+    /// Row 0: the Part's controller map, B picks it, EDIT saves.
+    Pick,
+    /// The controller layer's: read here, MIX+MINUS drops it from the map.
+    Layer,
+    /// The Sound's own.
+    #[default]
+    Own,
+}
+
+/// A row's words as MIDI MAP shows them (spec § 8.2), written whole by
+/// bank 2 (`ui::midi::page`, behind the door); closed, empty.
 pub struct MapText {
+    pub row: MapRow,
+    /// Dimmed: the Part's engine doesn't read it, or (a layer row) a Sound
+    /// row holds its control.
+    pub look: RowLook,
     /// `CC 74  CUTOFF`; a dead entry `CC 16  - STRUCT`.
     pub label: FmtBuf,
     /// The input's short form, right-aligned on the row: `JUMP`.
@@ -55,6 +71,25 @@ pub struct MapText {
     pub key: u32,
 }
 
+impl Default for MapText {
+    fn default() -> Self {
+        Self {
+            row: MapRow::Own,
+            look: RowLook::Normal,
+            label: FmtBuf::default(),
+            word: FmtBuf::default(),
+            head: FmtBuf::default(),
+            tail: FmtBuf::default(),
+            min: FmtBuf::default(),
+            max: FmtBuf::default(),
+            echo: FmtBuf::default(),
+            control: FmtBuf::default(),
+            fixed: false,
+            key: 0,
+        }
+    }
+}
+
 impl MapText {
     /// MIN, MAX and ECHO beside their keys: `C MIN 0  D MAX 255  F ECHO OFF`.
     pub fn values(&self) -> [Gesture<'_>; 3] {
@@ -65,9 +100,14 @@ impl MapText {
         ]
     }
 
-    /// B's and E's hint, under the values.
+    /// The keys' hint, under the values.
     pub fn hint(&self) -> Hint {
-        if self.fixed { FIXED } else { KEYS }
+        match self.row {
+            MapRow::Pick => PICK,
+            MapRow::Layer => LAYER,
+            MapRow::Own if self.fixed => FIXED,
+            MapRow::Own => KEYS,
+        }
     }
 }
 
@@ -82,31 +122,37 @@ fn text(e: &Binding, fx: FxType, live: bool) -> MapText {
 pub const KEYS: Hint = &[Gesture("B", "CONTROL"), Gesture("E", "INPUT")];
 /// An NRPN or pressure control is fixed: B can't step it.
 pub const FIXED: Hint = &[Gesture("B", "RELEARN TO CHANGE"), Gesture("E", "INPUT")];
+/// Row 0: B picks the map, EDIT saves the Part's rows into one (ADR 0226).
+pub const PICK: Hint = &[Gesture("B", "PICK"), Gesture("EDIT", "SAVE ROWS TO MAP")];
+/// A layer row: the map's, changed by learning over it and saving.
+pub const LAYER: Hint = &[
+    Gesture("MIX+SEQ", "ON A CELL"),
+    Gesture("EDIT", "ON ROW 1 SAVES"),
+];
 
-/// The active Part's map for the bands.
+/// The active Part's MIDI MAP for the bands: its rows are bank 2's.
 #[derive(Clone, Copy)]
-pub struct MapBand {
-    pub map: MidiMap,
-    engine: EngineType,
-    fx: FxType,
+pub struct MapBand<'a> {
+    ui: &'a UiState,
+    /// Row 0, the layer's rows and the Sound's.
+    pub rows: usize,
+    /// No layer row and no Sound row: the page says how to learn one.
+    pub empty: bool,
     /// Bank 2 answers: closed, the page reads `NEEDS UPDATE`.
     pub open: bool,
 }
 
-impl MapBand {
-    /// Row `i`'s words.
+impl MapBand<'_> {
+    /// Row `i`'s words and look.
     pub fn text(&self, i: usize) -> MapText {
-        let e = &self.map.entries()[i];
-        text(e, self.fx, e.target.live(self.engine))
+        let mut t = MapText::default();
+        crate::ui::cc::map_row(self.ui, i, &mut t);
+        t
     }
 
-    /// Row `i`'s look: dimmed when the Part's engine doesn't read it.
+    /// Row `i`'s look.
     pub fn look(&self, i: usize) -> RowLook {
-        if self.map.entries()[i].target.live(self.engine) {
-            RowLook::Normal
-        } else {
-            RowLook::Dimmed
-        }
+        self.text(i).look
     }
 }
 
@@ -117,6 +163,8 @@ pub struct MapDelete {
     pub part: PartId,
     pub entry: Binding,
     pub label: &'static str,
+    /// A layer row: dropped from the Part's controller map on the card.
+    pub layer: bool,
 }
 
 impl Prompt for MapDelete {
@@ -142,13 +190,13 @@ impl UiState {
         self.map_keys(d, delete);
     }
 
-    /// The active Part's map as the page draws it.
-    pub fn map_band(&self) -> MapBand {
-        let s = &self.project.part(self.active_part).sound;
+    /// The active Part's MIDI MAP as the page draws it.
+    pub fn map_band(&self) -> MapBand<'_> {
+        let rows = self.map_rows();
         MapBand {
-            map: s.map,
-            engine: s.params.engine(),
-            fx: s.params.fx.ty(),
+            ui: self,
+            rows,
+            empty: rows <= 1,
             open: crate::ui::cc::map_open(),
         }
     }
@@ -162,7 +210,11 @@ impl UiState {
     /// DELETE answered: drop the entry (found by target, as the map may
     /// not have moved but the row did), and keep the bar on a row.
     #[inline(never)]
-    pub(in crate::ui) fn map_deleted(&mut self, p: PartId, e: Binding) {
+    pub(in crate::ui) fn map_deleted(&mut self, d: MapDelete) {
+        let (p, e) = (d.part, d.entry);
+        if d.layer {
+            return self.ctl_drop(p, e);
+        }
         let mut m = self.project.part(p).sound.map;
         let Some(i) = m.entries().iter().position(|x| x.target == e.target) else {
             return;
@@ -170,7 +222,7 @@ impl UiState {
         m.remove(i);
         let at = self.loc.settings().map_or(0, |s| s.row() as usize);
         self.set_map(p, m);
-        let row = at.min(m.len().saturating_sub(1)) as u8;
+        let row = at.min(self.map_rows().saturating_sub(1)) as u8;
         self.go(Location::settings_at(screen_path(Screen::MidiMap), row));
     }
 }

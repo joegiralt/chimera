@@ -550,9 +550,11 @@ const GOLDENS: &[(&str, u64)] = &[
     // New (MIDI phase 1, Task 13): MIDI MAP with every kind of control,
     // and FINE's pickup waiting below the knob.
     #[cfg(feature = "midi-map")]
-    ("midi_map_mixed", 0xe2703e19c6e8fafa),
+    ("midi_map_mixed", 0x03fc86edcb8d1692),
     #[cfg(feature = "midi-map")]
     ("pickup_hint", 0xa90607689d854b4f),
+    #[cfg(feature = "midi-map")]
+    ("midi_map_pick", 0xacf44ee753d419aa),
 ];
 
 #[test]

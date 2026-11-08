@@ -349,7 +349,7 @@ pub(crate) enum Scan {
 /// Reads `f` through a `Framer`, handing `on` its events. A `kind` other
 /// than the file's is `WrongKind`, deferred like every verdict; `None`
 /// takes any kind.
-pub(crate) fn scan<S: Store>(
+pub(crate) fn scan<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
     f: FileName,
@@ -451,7 +451,7 @@ impl Checked {
     }
 }
 
-fn check<S: Store, C: Check>(
+fn check<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
     f: FileName,
@@ -463,7 +463,7 @@ fn check<S: Store, C: Check>(
 
 /// Pass 1: the side as `c` judges it. A store error other than `NotFound`
 /// or `Corrupt` is a card fault and comes back as is.
-pub fn check_file<S: Store, C: Check>(
+pub fn check_file<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
     f: FileName,
@@ -477,7 +477,7 @@ pub fn check_file<S: Store, C: Check>(
 /// or a delete judges a side: they run the load's own `Check` (`check_file`),
 /// so a side a load rejects is never kept over the one it loads.
 #[doc(hidden)]
-pub fn check_frame<S: Store>(
+pub fn check_frame<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
     f: FileName,
@@ -490,7 +490,7 @@ pub fn check_frame<S: Store>(
 /// Pass 2 on a side pass 1 judged: it applies only if it reads the bytes
 /// pass 1 passed. Other bytes (the card changed between the passes) are
 /// `BadCrc`, and the target is untouched.
-fn apply<S: Store, D: Decode>(
+fn apply<S: Store + ?Sized, D: Decode>(
     s: &mut S,
     r: &Ready,
     f: FileName,
@@ -510,7 +510,7 @@ fn apply<S: Store, D: Decode>(
 /// Pass 2's read, for the staged and the in-place loader alike: Ok only
 /// if it reads the bytes pass 1 passed (`crc`). Other bytes, or a side
 /// gone or broken since, are `BadCrc`; any other store error is the card's.
-fn pass_two<S: Store>(
+fn pass_two<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
     f: FileName,
@@ -528,7 +528,7 @@ fn pass_two<S: Store>(
 }
 
 /// Checks `f`, then applies it.
-pub fn load_file<S: Store, D: Decode>(
+pub fn load_file<S: Store + ?Sized, D: Decode>(
     s: &mut S,
     r: &Ready,
     f: FileName,
@@ -540,7 +540,7 @@ pub fn load_file<S: Store, D: Decode>(
 
 /// Pass 1 on both sides: the one judgement `load_ab`, `save_ab` and
 /// `delete_ab` share.
-fn sides<S: Store, C: Check>(
+fn sides<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
     f: AbFile,
@@ -553,7 +553,7 @@ fn sides<S: Store, C: Check>(
 }
 
 /// Checks both sides, `pick`s one and applies it.
-pub fn load_ab<S: Store, D: Decode>(
+pub fn load_ab<S: Store + ?Sized, D: Decode>(
     s: &mut S,
     r: &Ready,
     f: AbFile,
@@ -611,7 +611,7 @@ pub fn load_ab_in_place<S: Store, D: DecodeInPlace>(
 /// never writes the side a load would take. Returns the generation written;
 /// `File(NeedsNewerFirmware)`, with nothing written, when a load would
 /// refuse the pair as needing newer firmware.
-pub fn save_ab<S: Store, C: Check>(
+pub fn save_ab<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
     f: AbFile,
@@ -633,7 +633,7 @@ pub fn save_ab<S: Store, C: Check>(
 
 /// The side a save of `f` writes and its generation: `write_target` on
 /// both sides as `c` judges them, the pass 1 `load_ab` runs.
-pub fn save_target<S: Store, C: Check>(
+pub fn save_target<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
     f: AbFile,
@@ -645,7 +645,7 @@ pub fn save_target<S: Store, C: Check>(
 
 /// Deletes the sides there are in `delete_order`, judged by `c` as
 /// `load_ab` judges them.
-pub fn delete_ab<S: Store, C: Check>(
+pub fn delete_ab<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
     f: AbFile,

@@ -222,12 +222,14 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // rodata, linked by the MIDI UI's canonical NRPNs.
     // And the MIDI pipe (Phase 1, `MidiDoor`): `DinPipe`, its counting sink
     // (`Counted`), USB's slot and held keys (`UsbSlot`, `Held`) and the `chimera_midi` stream, controller, sensing and
-    // SysEx layers it runs. And the map's codec (`midi_map::codec`), and
+    // SysEx layers it runs. And the map's codec (`midi_map::codec`), the
+    // controller maps beside it (`midi_map::ctl`, ADR 0226), and
     // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
     // and rel), learn's classifier (`chimera_midi::learn`) and the 14-bit
     // MSB check it shares with the codec (`chimera_midi::out`).
     let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
     *(.text.*8midi_map5codec* .rodata.*8midi_map5codec*);
+    *(.text.*8midi_map3ctl* .rodata.*8midi_map3ctl*);
     *(.text.*14chimera_engine7midi_in*7DinPipe* .rodata.*14chimera_engine7midi_in*7DinPipe*);
     *(.text.*14chimera_engine7midi_in*7Counted* .rodata.*14chimera_engine7midi_in*7Counted*);
     *(.text.*14chimera_engine7midi_in*7UsbSlot* .rodata.*14chimera_engine7midi_in*7UsbSlot*);

@@ -58,11 +58,11 @@ impl UiState {
     /// `out`.
     pub(in crate::ui) fn out_in(&mut self, out: &OutPorts) {
         let (on, at, now) = (self.midi.echo(), self.active_part, self.cc.last);
-        let plan = &mut self.cc.ui().echo;
+        let super::MidiUi { echo, ctl, .. } = self.cc.ui();
         if on {
-            plan.pump(&self.project, at, now, out);
+            echo.pump(&self.project, ctl, at, now, out);
         } else {
-            plan.silence();
+            echo.silence();
         }
     }
 }

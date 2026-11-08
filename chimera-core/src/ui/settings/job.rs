@@ -140,6 +140,9 @@ impl UiState {
         if self.wants_lib_note() {
             self.lib_peek_note(cx.card, cx.store);
         }
+        // The controller layers' reads and MIDI MAP's saves (ADR 0226).
+        #[cfg(feature = "midi-map")]
+        self.ctl_card(cx.card, cx.store);
         out
     }
 

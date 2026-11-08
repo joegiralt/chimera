@@ -81,6 +81,8 @@ fn closed_reads_needs_update() {
     assert_eq!(ui.pickup(), None);
 
     DOOR_CELL.open_host();
+    // Past row 0, the controller map (ADR 0226), to the Sound's row.
+    feed(&mut ui, Key::turn(EncoderId::A, 1));
     feed(&mut ui, Key::turn(EncoderId::B, 1));
     assert_ne!(ui.project().rev(), rev, "open: B edits");
     assert!(ui.map_band().open);

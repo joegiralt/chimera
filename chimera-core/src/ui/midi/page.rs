@@ -1,5 +1,7 @@
-//! SETTINGS › PART › MIDI MAP's keys and words (spec § 8.2), and the
-//! pickup hint's reading (§ 8.3). B steps the control number (a CC past
+//! SETTINGS › PART › MIDI MAP's rows, keys and words (spec § 8.2, ADR
+//! 0226), and the pickup hint's reading (§ 8.3). Row 0 is the Part's
+//! controller map: B picks it. The layer's rows follow, read only but for
+//! MIX+MINUS, then the Sound's own. On a Sound row B steps the control number (a CC past
 //! the reserved ones, a 14-bit pair along its MSBs; an NRPN or pressure is
 //! fixed), C and D the range, E the input among the control's legal kinds
 //! (never the echo: only learn sets that), F the echo. Bank 2's, behind
@@ -16,12 +18,16 @@ use super::super::UiState;
 use super::super::fmt::FmtBuf;
 use super::super::region::settings_key;
 use super::super::settings::Ask;
-use super::super::settings::midi_map::{MapDelete, MapText, name};
+use super::super::settings::midi_map::{MapDelete, MapRow, MapText, name};
 use super::super::settings::prompt::Choice;
+use super::super::settings::view::RowLook;
+use super::layer::{W as Lw, shadowed, word as lword};
 use super::learn::put_num;
 use crate::addr::BlockRef;
 use crate::dsp::voice_fx::params::FxType;
-use crate::midi_map::{Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, NrpnKind};
+use crate::midi_map::{
+    Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, MidiMap, NrpnKind,
+};
 
 /// The page's words, `|` between: a named static, so its bytes are bank
 /// 2's (`bank2.x`), not anonymous string rodata left in bank 1.
@@ -293,7 +299,89 @@ fn takeover(i: Input) -> Option<Takeover> {
     }
 }
 
+/// A MIDI MAP row (ADR 0226).
+#[derive(Clone, Copy)]
+enum Row {
+    Pick,
+    Layer(Binding),
+    Own(usize, Binding),
+}
+
+/// Row `i` of a Part whose Sound's map is `own` and layer `layer`.
+fn row_of(own: &MidiMap, layer: &MidiMap, i: usize) -> Option<Row> {
+    let Some(k) = i.checked_sub(1) else {
+        return Some(Row::Pick);
+    };
+    match layer.entries().get(k) {
+        Some(&b) => Some(Row::Layer(b)),
+        None => {
+            let j = k - layer.len();
+            own.entries().get(j).map(|&b| Row::Own(j, b))
+        }
+    }
+}
+
 impl UiState {
+    /// The active Part's layer, empty before the door first ran.
+    fn page_layer(&self) -> MidiMap {
+        let i = self.active_part.index();
+        self.cc.built().map_or(MidiMap::EMPTY, |m| *m.ctl.layer(i))
+    }
+
+    /// The page's rows: row 0, the layer's, the Sound's. The door's
+    /// `map_rows`.
+    pub(in crate::ui) fn map_rows_in(&self) -> usize {
+        1 + self.page_layer().len() + self.project.part(self.active_part).sound.map.len()
+    }
+
+    /// Row `i`'s words and look into `out`. The door's `map_row`.
+    pub(in crate::ui) fn map_row_in(&self, i: usize, out: &mut MapText) {
+        let s = &self.project.part(self.active_part).sound;
+        let (fx, engine) = (s.params.fx.ty(), s.params.engine());
+        let layer = self.page_layer();
+        match row_of(&s.map, &layer, i) {
+            None => {}
+            Some(Row::Pick) => {
+                out.row = MapRow::Pick;
+                let _ = out.label.write_str(lword(Lw::Controller));
+                let n = self.project.controller(self.active_part);
+                let head = n.as_ref().map_or(lword(Lw::NoMap), |n| n.as_str());
+                let n = n.as_ref().map_or(lword(Lw::None), |n| n.as_str());
+                let _ = out.word.write_str(n);
+                let _ = out.head.write_str(head);
+                out.key = settings_key(&[out.label.as_str().as_bytes(), n.as_bytes()]);
+                if self.cc.built().is_some_and(|m| m.ctl.more) {
+                    let _ = out.tail.write_str(lword(Lw::More));
+                    out.key ^= 1;
+                }
+            }
+            Some(Row::Layer(e)) => {
+                let live = e.target.live(engine) && !shadowed(&s.map, &e);
+                text(&e, fx, live, out);
+                out.row = MapRow::Layer;
+                out.look = if live {
+                    RowLook::Normal
+                } else {
+                    RowLook::Dimmed
+                };
+                if out.tail.as_str().is_empty()
+                    && let Some(n) = self.project.controller(self.active_part)
+                {
+                    let _ = out.tail.write_str(lword(Lw::In));
+                    let _ = out.tail.write_str(n.as_str());
+                }
+                out.key ^= 0x9E37_79B9;
+            }
+            Some(Row::Own(_, e)) => {
+                let live = e.target.live(engine);
+                text(&e, fx, live, out);
+                if !live {
+                    out.look = RowLook::Dimmed;
+                }
+            }
+        }
+    }
+
     /// A pass's keys on MIDI MAP: the encoders' detents A to F, and
     /// MIX+MINUS. The door's `map_in`.
     pub(in crate::ui) fn map_in(&mut self, d: [i8; 6], delete: bool) {
@@ -301,16 +389,36 @@ impl UiState {
         let (map, Some(at)) = (self.project.part(p).sound.map, self.loc.settings()) else {
             return;
         };
-        let i = at.row() as usize;
-        let Some(&e) = map.entries().get(i) else {
-            return;
+        let layer = *self.cc.ui().ctl.layer(p.index());
+        let fx = self.project.part(p).sound.params.fx.ty();
+        let (i, e) = match row_of(&map, &layer, at.row() as usize) {
+            None => return,
+            Some(Row::Pick) => {
+                if d[1] != 0 {
+                    self.ctl_pick(p, d[1]);
+                }
+                return;
+            }
+            Some(Row::Layer(e)) => {
+                if delete {
+                    let ask = MapDelete {
+                        part: p,
+                        entry: e,
+                        label: name(&e, fx),
+                        layer: true,
+                    };
+                    self.ask(Ask::MapDelete(ask, Choice::new()));
+                }
+                return;
+            }
+            Some(Row::Own(i, e)) => (i, e),
         };
         if delete {
-            let fx = self.project.part(p).sound.params.fx.ty();
             let ask = MapDelete {
                 part: p,
                 entry: e,
                 label: name(&e, fx),
+                layer: false,
             };
             return self.ask(Ask::MapDelete(ask, Choice::new()));
         }
@@ -339,14 +447,14 @@ impl UiState {
         if self.cc.stale >> p & 1 != 0 {
             return None;
         }
-        let rt = &self.cc.built()?.parts[p].rt;
+        let m = self.cc.built()?;
         let t = self.learn_target()?;
-        let map = self.project.part(self.active_part).sound.map;
-        let e = map.entries();
-        for j in 0..e.len() {
-            if e[j].target == t
-                && takeover(e[j].input) == Some(Takeover::Pickup)
-                && let Some(d) = rt[j].waiting()
+        let map = &self.project.part(self.active_part).sound.map;
+        for j in 0..super::BINDS {
+            if let Some(e) = super::bind_at(map, m.ctl.layer(p), j)
+                && e.target == t
+                && takeover(e.input) == Some(Takeover::Pickup)
+                && let Some(d) = m.parts[p].rt[j].waiting()
             {
                 return Some(d);
             }

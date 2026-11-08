@@ -25,6 +25,7 @@ fn path(dir: Dir) -> &'static [Dir] {
         Dir::Tapes => &[Dir::Chimera, Dir::Tapes],
         Dir::System => &[Dir::Chimera, Dir::System],
         Dir::Tunings => &[Dir::Chimera, Dir::Tunings],
+        Dir::Maps => &[Dir::Chimera, Dir::Maps],
         Dir::Root => &[],
     }
 }
@@ -506,9 +507,13 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let parent = match dir {
             Dir::Root => return Ok(()),
             Dir::Chimera => root,
-            Dir::Projects | Dir::Sounds | Dir::Bench | Dir::Tapes | Dir::System | Dir::Tunings => {
-                self.open(Dir::Chimera)?
-            }
+            Dir::Projects
+            | Dir::Sounds
+            | Dir::Bench
+            | Dir::Tapes
+            | Dir::System
+            | Dir::Tunings
+            | Dir::Maps => self.open(Dir::Chimera)?,
         };
         let name = ShortName::dir(dir);
         let found = self.lookup(parent, name)?;

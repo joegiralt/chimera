@@ -3,6 +3,7 @@
 //! may not drive (a switch, a setting) can never be stored.
 
 pub mod codec;
+pub mod ctl;
 
 use codec::{Bounds, MapRecord};
 
@@ -70,6 +71,17 @@ impl Mappable {
             BlockRef::Algo | BlockRef::AlgoOp(_) => e == EngineType::Algo,
             BlockRef::TapeEngine => e == EngineType::Tape,
             _ => true,
+        }
+    }
+
+    /// The engine whose own block it is; `None`: every engine reads it.
+    pub fn engine(self) -> Option<EngineType> {
+        match self.0.block {
+            BlockRef::Modal => Some(EngineType::Modal),
+            BlockRef::Va => Some(EngineType::Va),
+            BlockRef::Algo | BlockRef::AlgoOp(_) => Some(EngineType::Algo),
+            BlockRef::TapeEngine => Some(EngineType::Tape),
+            _ => None,
         }
     }
 }
@@ -198,8 +210,10 @@ impl Input {
     }
 
     /// The same control, whatever its kind: a 14-bit pair is its MSB CC
-    /// and its LSB CC, MSB + 32.
-    fn same_control(&self, o: &Input) -> bool {
+    /// and its LSB CC, MSB + 32. Inlined: its callers but one are bank
+    /// 2's, so no copy is left in bank 1.
+    #[inline(always)]
+    pub fn same_control(&self, o: &Input) -> bool {
         match (*self, *o) {
             (Self::Cc(a, _), Self::Cc(b, _)) => a == b,
             (Self::Cc(c, _), Self::Cc14(m, _)) | (Self::Cc14(m, _), Self::Cc(c, _)) => {

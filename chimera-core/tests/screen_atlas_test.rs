@@ -433,7 +433,8 @@ fn manage_command(ui: &mut UiState, row: usize, c: Command, modified: bool) {
 
 /// Prompt `k`, opened by the keys that open it.
 /// SETTINGS › PART › MIDI MAP on Part 1: six entries, one dead (STRUCT
-/// is Modal's), one inverted, one narrowed; the bar on the second.
+/// is Modal's), one inverted, one narrowed, under row 0's controller
+/// map; the bar on the second.
 #[cfg(feature = "midi-map")]
 fn map_page(ui: &mut UiState, fill: bool) {
     use chimera_core::addr::{BlockRef, ParamAddr};
@@ -474,6 +475,8 @@ fn map_page(ui: &mut UiState, fill: bool) {
     ui.project_mut().edit_part(P1).sound.map = m;
     part_row(ui, chimera_core::ui::settings::tree::PART.len() - 1);
     feed(ui, Input::press(ButtonId::Edit));
+    // Past row 0, the controller map (ADR 0226).
+    feed(ui, Input::press(ButtonId::Plus));
     feed(ui, Input::press(ButtonId::Plus));
 }
 
@@ -879,7 +882,7 @@ fn midi_map_splits_the_encoders() {
     let row = |ui: &UiState| ui.location().settings().unwrap().row();
     let mut ui = crate::screen::stack_ui();
     map_page(&mut ui, true);
-    let n = ui.map_band().map.len();
+    let n = ui.map_band().rows;
     assert!(n >= 2);
     let rev = ui.project().rev();
     let at = row(&ui);

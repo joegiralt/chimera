@@ -16,12 +16,12 @@ use chimera_midi::take::Place;
 use chimera_midi::value::{U7, U14};
 
 use super::out::{ID, REPLY_LEN};
-use super::{span_of, stored};
+use super::{BINDS, bind_at, span_of, stored};
 use crate::MidiChannel;
 use crate::block::{Motion, ParamSpec};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::Port;
-use crate::midi_map::{Binding, CcKind, Feedback, Input, MAP_LEN, NrpnKind};
+use crate::midi_map::{Binding, CcKind, Feedback, Input, NrpnKind};
 use crate::out_ring::{OutPorts, OutRing, Tee};
 use crate::project::{Loads, PartId, Project};
 
@@ -38,11 +38,11 @@ const MSG_MAX: usize = 9;
 /// whether an identity reply waits, a flag a `Port`. ~1 KB, in `MidiUi`.
 #[derive(Clone, Copy)]
 pub struct EchoPlan {
-    last: [[Option<u16>; MAP_LEN]; MAX_PARTS],
-    heard_at: [[Option<Ms>; MAP_LEN]; MAX_PARTS],
+    last: [[Option<u16>; BINDS]; MAX_PARTS],
+    heard_at: [[Option<Ms>; BINDS]; MAX_PARTS],
     /// Each binding's last echo, out of either port: heard back as turns
     /// within `QUIET_MS`, through a thru loop, it is not a turn (#817).
-    echoed: [[Option<Echoed>; MAP_LEN]; MAX_PARTS],
+    echoed: [[Echoed; BINDS]; MAX_PARTS],
     loads: [Loads; MAX_PARTS],
     active: Option<PartId>,
     identity: [bool; Port::COUNT],
@@ -50,23 +50,37 @@ pub struct EchoPlan {
     /// and USB's poll drops all it holds, ring and packets alike, so
     /// every Part's (#842). Sent USB's alone once the ring is empty and
     /// the loss taken.
-    owed: [u16; MAX_PARTS],
+    owed: [u32; MAX_PARTS],
 }
 
-const _: () = assert!(MAP_LEN <= 16);
+const _: () = assert!(BINDS <= 32);
 
-/// An echo sent: when, and its value (`level`'s).
+/// Each Part's controller layer (ADR 0226), beside its Sound's map. A
+/// plain reference, never a `dyn Fn`: a closure's anonymous vtable would
+/// land in bank 1.
+pub type Layers<'a> = &'a super::layer::Layers;
+
+/// An echo sent: when, and its value (`level`'s). `NONE`'s level is past
+/// any a control sends (14 bits at most), so no `Option`: 8 B a slot, not
+/// 12, across 32 slots a Part.
 #[derive(Clone, Copy)]
 struct Echoed {
     at: Ms,
     level: u16,
 }
 
+impl Echoed {
+    const NONE: Self = Self {
+        at: Ms(0),
+        level: u16::MAX,
+    };
+}
+
 /// Nothing sent: a named static, so its image is bank 2's.
 pub(super) static SILENT: EchoPlan = EchoPlan {
-    last: [[None; MAP_LEN]; MAX_PARTS],
-    heard_at: [[None; MAP_LEN]; MAX_PARTS],
-    echoed: [[None; MAP_LEN]; MAX_PARTS],
+    last: [[None; BINDS]; MAX_PARTS],
+    heard_at: [[None; BINDS]; MAX_PARTS],
+    echoed: [[Echoed::NONE; BINDS]; MAX_PARTS],
     loads: [Loads::NONE; MAX_PARTS],
     active: None,
     identity: [false; Port::COUNT],
@@ -89,7 +103,7 @@ impl EchoPlan {
     /// Every feedback binding of Part `p` sends again: a Sound or project
     /// load, a Part change, a map change.
     pub fn burst(&mut self, p: PartId) {
-        self.last[p.index()] = [None; MAP_LEN];
+        self.last[p.index()] = [None; BINDS];
     }
 
     /// Entry `j` of Part `p` heard its control at `now`: its echo waits
@@ -98,7 +112,7 @@ impl EchoPlan {
     /// value goes out once the quiet ends.
     pub fn heard(&mut self, p: PartId, j: usize, sent: Option<u16>, now: Ms) {
         let i = p.index();
-        if j >= MAP_LEN {
+        if j >= BINDS {
             return;
         }
         self.heard_at[i][j] = Some(now);
@@ -113,15 +127,15 @@ impl EchoPlan {
     /// takes it for no turn. A real turn of that same byte in that window
     /// is lost with it.
     pub fn looped(&self, p: PartId, j: usize, v: u16, now: Ms) -> bool {
-        let sent = self.echoed[p.index()].get(j).copied().flatten();
-        sent.is_some_and(|e| e.level == v && now.since(e.at) < QUIET_MS)
+        let sent = self.echoed[p.index()].get(j);
+        sent.is_some_and(|e| e.level == v && v != Echoed::NONE.level && now.since(e.at) < QUIET_MS)
     }
 
     /// One pass (spec §§ 7, 9): the identity replies, each out of the
     /// port that asked, then the active Part `at`'s changed bindings, the
     /// other Parts', then the bursts, each out of every port (`Tee`) while
     /// DIN's ring has room; the rest wait for a later pass.
-    pub fn pump(&mut self, project: &Project, at: PartId, now: Ms, out: &OutPorts) {
+    pub fn pump(&mut self, project: &Project, ls: Layers, at: PartId, now: Ms, out: &OutPorts) {
         if self.active != Some(at) {
             self.active = Some(at);
             self.burst(at);
@@ -137,19 +151,19 @@ impl EchoPlan {
             && u.is_empty()
             && !u.losing()
         {
-            self.resend(project, now, u);
+            self.resend(project, ls, now, u);
         }
         let mut tee = out.tee();
-        self.send(project, at, now, &mut tee);
+        self.send(project, ls, at, now, &mut tee);
         // A loss, this pass's or one not yet taken: USB's poll drops all
         // it holds.
         if tee.lost() || out.usb.is_some_and(OutRing::losing) {
-            self.owed = [u16::MAX; MAX_PARTS];
+            self.owed = [u32::MAX; MAX_PARTS];
         }
     }
 
     /// What USB is owed (`owed`), into its ring alone while it has room.
-    fn resend(&mut self, project: &Project, now: Ms, usb: &OutRing) {
+    fn resend(&mut self, project: &Project, ls: Layers, now: Ms, usb: &OutRing) {
         let mut run = Running::NONE;
         let parts = PartId::ALL
             .into_iter()
@@ -157,16 +171,16 @@ impl EchoPlan {
             .zip(self.heard_at.iter().zip(&mut self.echoed));
         for ((p, owed), heard) in parts {
             let part = project.part(p);
-            let entries = part.sound.map.entries();
+            let layer = ls.layer(p.index());
             for (j, t) in heard.0.iter().enumerate() {
-                let bit = 1u16 << j;
+                let bit = 1u32 << j;
                 if *owed & bit == 0 || t.is_some_and(|t| now.since(t) < QUIET_MS) {
                     continue;
                 }
                 let mut b = [0u8; MSG_MAX];
                 let mut w = Writer::after(&mut b, run);
-                let sent = entries.get(j).and_then(|e| {
-                    let v = value(project, p, e)?;
+                let sent = bind_at(&part.sound.map, layer, j).and_then(|e| {
+                    let v = value(project, ls, p, &e)?;
                     render(&mut w, part.mix.channel, &e.input, v).then_some(v)
                 });
                 let (n, r) = (w.len(), w.running());
@@ -175,7 +189,7 @@ impl EchoPlan {
                         return;
                     }
                     run = r;
-                    heard.1[j] = Some(Echoed { at: now, level });
+                    heard.1[j] = Echoed { at: now, level };
                 }
                 *owed &= !bit;
             }
@@ -184,7 +198,7 @@ impl EchoPlan {
 
     /// `pump`'s messages through `tee`.
     #[inline(always)]
-    fn send(&mut self, project: &Project, at: PartId, now: Ms, tee: &mut Tee) {
+    fn send(&mut self, project: &Project, ls: Layers, at: PartId, now: Ms, tee: &mut Tee) {
         if self.identity != [false; Port::COUNT] {
             let mut b = [0u8; REPLY_LEN];
             let mut w = Writer::new(&mut b);
@@ -211,11 +225,16 @@ impl EchoPlan {
             for p in core::iter::once(at).chain(others) {
                 let part = project.part(p);
                 let ch = part.mix.channel;
-                for (j, e) in part.sound.map.entries().iter().enumerate() {
+                let layer = ls.layer(p.index());
+                for j in 0..BINDS {
+                    let Some(e) = bind_at(&part.sound.map, layer, j) else {
+                        continue;
+                    };
+                    let e = &e;
                     if self.last[p.index()][j].is_none() != burst {
                         continue;
                     }
-                    let Some(v) = self.due(project, p, j, e, now) else {
+                    let Some(v) = self.due(project, ls, p, j, e, now) else {
                         continue;
                     };
                     let mut b = [0u8; MSG_MAX];
@@ -230,7 +249,7 @@ impl EchoPlan {
                     }
                     run = r;
                     self.last[p.index()][j] = Some(v);
-                    self.echoed[p.index()][j] = Some(Echoed { at: now, level: v });
+                    self.echoed[p.index()][j] = Echoed { at: now, level: v };
                 }
             }
         }
@@ -238,11 +257,19 @@ impl EchoPlan {
 
     /// Entry `j`, `e`, of Part `p`'s value to send now (spec § 9): not in
     /// its quiet, its `value`, changed.
-    fn due(&self, project: &Project, p: PartId, j: usize, e: &Binding, now: Ms) -> Option<u16> {
+    fn due(
+        &self,
+        project: &Project,
+        ls: Layers,
+        p: PartId,
+        j: usize,
+        e: &Binding,
+        now: Ms,
+    ) -> Option<u16> {
         if self.heard_at[p.index()][j].is_some_and(|t| now.since(t) < QUIET_MS) {
             return None;
         }
-        let v = value(project, p, e)?;
+        let v = value(project, ls, p, e)?;
         (self.last[p.index()][j] != Some(v)).then_some(v)
     }
 }
@@ -250,7 +277,7 @@ impl EchoPlan {
 /// Binding `e` of Part `p`'s value as its control sends it, if it echoes:
 /// its echo on, its target read by the Part's engine, and no lower Part
 /// on the channel echoing the same control.
-fn value(project: &Project, p: PartId, e: &Binding) -> Option<u16> {
+fn value(project: &Project, ls: Layers, p: PartId, e: &Binding) -> Option<u16> {
     let i = p.index();
     let part = project.part(p);
     if e.feedback != Feedback::Value || !e.target.live(part.sound.params.engine()) {
@@ -267,8 +294,12 @@ fn value(project: &Project, p: PartId, e: &Binding) -> Option<u16> {
     let lower = PartId::ALL[..i].iter().any(|&q| {
         let o = project.part(q);
         o.mix.channel == part.mix.channel
-            && o.sound.map.targets_of(&e.input).any(|(_, b)| {
-                b.feedback == Feedback::Value && b.target.live(o.sound.params.engine())
+            && (0..BINDS).any(|j| {
+                bind_at(&o.sound.map, ls.layer(q.index()), j).is_some_and(|b| {
+                    b.input.same_control(&e.input)
+                        && b.feedback == Feedback::Value
+                        && b.target.live(o.sound.params.engine())
+                })
             })
     });
     (!lower).then_some(v)

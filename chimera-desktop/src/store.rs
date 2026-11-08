@@ -79,6 +79,7 @@ impl DirStore {
             Dir::Tapes => self.root.join("CHIMERA/TAPES"),
             Dir::System => self.root.join("CHIMERA/SYSTEM"),
             Dir::Tunings => self.root.join("CHIMERA/TUNINGS"),
+            Dir::Maps => self.root.join("CHIMERA/MAPS"),
             Dir::Root => self.root.clone(),
         }
     }

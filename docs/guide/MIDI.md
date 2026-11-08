@@ -2,6 +2,8 @@
 
 Each Sound carries a MIDI map of up to 16 bindings. A binding ties one control on your controller to one cell of the Sound, on the Part's own MIDI channel. The map travels with the Sound: load the Sound on another Part and its knobs come with it, on that Part's channel. Parts that share a channel each follow their own map.
 
+Each Part can also play a **controller map**: a named set of bindings kept on the card, apart from any Sound or project, so a controller is set up once and works in every project (see [Controller maps](#controller-maps)).
+
 A binding's control can be:
 - a **CC** (`CC 74`): a knob, fader, endless encoder or button;
 - a **14-bit CC pair** (`CC 2+34`): a fine control that sends CC *n* and then CC *n*+32;
@@ -54,7 +56,9 @@ Learning a relative encoder or a 14-bit control turns its **ECHO** on, so a cont
 
 ## The MIDI MAP page
 
-SETTINGS › PART › MIDI MAP shows the current Part's map, one binding a row. With no bindings it reads `NO CCS · MIX+SEQ ON A CELL`.
+SETTINGS › PART › MIDI MAP shows the current Part's bindings, one a row. The first row, `CONTROLLER`, is the Part's controller map (see [Controller maps](#controller-maps)). Then come the controller map's rows, then the Sound's own. With no bindings it reads `NO CCS · MIX+SEQ ON A CELL` under the first row.
+
+The picture below shows the Sound's rows. The first row and the controller map's rows sit above them.
 
 ![The MIDI MAP page, annotated](img/midi-map.png)
 
@@ -86,6 +90,40 @@ SETTINGS › PART › MIDI MAP shows the current Part's map, one binding a row. 
 | `TOGGLE` | `BUTTON · EACH PRESS FLIPS` | A button: each press flips between MIN and MAX |
 
 A 14-bit pair and PRESSURE take JUMP, PICKUP or SCALE. A relative encoder turns the cell exactly as Chimera's own encoder does, a step a detent.
+
+## Controller maps
+
+A controller map is a named set of bindings on the card (FADERFOX, CIRKLON, LCXL3…). It holds a **shared** section and one section an engine (ALGO, MODAL, TAPE, VA). A binding's section is its cell's: a cell of an engine's own page (MORPH, STRUCTURE, SHAPE…) belongs to that engine's section; a cell every engine has (CUTOFF, LEVEL, an LFO, an FX pot) is shared. A Part plays its engine's rows and the shared rows, so switching the Part's engine swaps the engine rows by itself. A map made for one engine just leaves the others empty.
+
+The Sound's own rows win: when the Sound and the controller map both bind a control, the Sound's binding moves and the map's row is dimmed. Inside the map, an engine's row wins over a shared row on the same control. A Part plays at most 16 controller rows.
+
+The project remembers each Part's controller map by name. It is read from the card again each time the project loads, so a map saved later reaches every project that uses it.
+
+### Picking a map
+
+1. Go to SETTINGS › PART › MIDI MAP. The bar is on `CONTROLLER`; the row names the Part's map, or `NONE`.
+2. Turn **B** to step through the maps on the card and `NONE`. The Part plays the map at once, and its rows show below the first row.
+
+Each row of the map reads as a Sound's row does; its spelled-out line ends `IN FADERFOX` (the map's name). A map's rows can't be edited here: B to F do nothing on them.
+
+### Saving a map
+
+1. Learn the controls you want on the Part, with **MIX + SEQ**, as above. They become the Sound's own rows.
+2. On MIDI MAP, with the bar on `CONTROLLER`, press **EDIT**. NAMING opens on the Part's map's name (`CONTROLLER` if it has none).
+3. Keep the name to update that map, or type a new one, and press **EDIT**.
+
+The Sound's rows move into the map, into their sections, each replacing the map row it was hiding. The Part then plays the saved map, and its Sound's map is empty, so the Sound shows `*` until you save or revert it. Saving under a new name copies the Part's map first, then adds the rows. A save that would give any engine more than 16 rows is refused with `MAP FULL`. Two names can share a file pair (see [On the card](#on-the-card)): a save whose files hold another map is refused with `NAME TAKEN`, and that map stays as it was.
+
+To make a map for another engine, switch the Part's engine, learn that engine's cells and save under the same name: only that engine's section and the shared one change.
+
+### Changing and deleting rows
+
+- **To change a map row**, learn the same control on the Part (it hides the map's row), then save.
+- **To delete a map row**, put the bar on it and press **MIX + MINUS**. Chimera asks, then removes the row from the map on the card. If the map has left the card since it was read, it says `FILE NOT FOUND` and writes nothing.
+
+### On the card
+
+Maps live in `/CHIMERA/MAPS`, one pair of files a map (`FADE3A7C.A` and `.B`): up to four letters of the name, then four characters made from the whole name. The map's full name is inside the file. MIDI MAP lists up to 16 maps; with more on the card, `CARD HOLDS MORE: 16 SHOWN` shows under the first row.
 
 ### Pickup
 

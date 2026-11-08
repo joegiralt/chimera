@@ -22,6 +22,8 @@ pub enum FileKind {
     System = 3,
     /// TAPE's audio, `/CHIMERA/TAPES/<CRC>.SRC` (ADR 0087).
     Source = 6,
+    /// A controller map, `/CHIMERA/MAPS/<stem>.A|B` (#807, ADR 0226).
+    Controller = 7,
 }
 
 impl FileKind {
@@ -31,6 +33,7 @@ impl FileKind {
             2 => Some(FileKind::Project),
             3 => Some(FileKind::System),
             6 => Some(FileKind::Source),
+            7 => Some(FileKind::Controller),
             _ => None,
         }
     }
@@ -166,7 +169,7 @@ pub struct Header {
 }
 
 impl Header {
-    pub(super) fn encode(&self) -> [u8; HEADER_LEN] {
+    pub fn encode(&self) -> [u8; HEADER_LEN] {
         let mut b = [0; HEADER_LEN];
         b[..4].copy_from_slice(&MAGIC);
         b[4..6].copy_from_slice(&FORMAT_VERSION.to_le_bytes());

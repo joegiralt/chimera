@@ -86,6 +86,12 @@ pub enum RecordTag {
     /// critical: an older build loads the Sound without them, and `Routes`
     /// keeps its 640 B bound (ADR 0102).
     PerfRoutes,
+    /// A project Part's controller map (#807, ADR 0226): its name, 16 B
+    /// padded, after the Part's `Origin`. Not critical.
+    Controller,
+    /// A controller map file's section: its code (`midi_map::ctl::Section`),
+    /// then a `Bindings` payload. Not critical.
+    MapSection,
 }
 
 impl RecordTag {
@@ -119,6 +125,8 @@ impl RecordTag {
             RecordTag::MidiMap => 0x001E,
             RecordTag::Bindings => 0x001F,
             RecordTag::PerfRoutes => 0x0020,
+            RecordTag::Controller => 0x0021,
+            RecordTag::MapSection => 0x0022,
         }
     }
 
@@ -152,6 +160,8 @@ impl RecordTag {
             0x001E => RecordTag::MidiMap,
             0x001F => RecordTag::Bindings,
             0x0020 => RecordTag::PerfRoutes,
+            0x0021 => RecordTag::Controller,
+            0x0022 => RecordTag::MapSection,
             _ => return None,
         })
     }

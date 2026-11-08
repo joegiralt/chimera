@@ -2562,13 +2562,21 @@ pub const CASES: &[ScreenCase] = &[
     // bar on the relative encoder, spelled out with its range and echo.
     #[cfg(feature = "midi-map")]
     ("midi_map_mixed", midi_map_mixed),
+    // MIDI MAP's row 0 (ADR 0226): the Part's controller map, NONE, B to
+    // pick, EDIT to save.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_pick", |ui| {
+        midi_map_mixed(ui);
+        feed(ui, Input::turn(EncoderId::A, -6));
+    }),
     // INIT Algo's PIT, FINE bound to a PICKUP CC that waits below it: the
     // focus band says which way to turn (spec § 8.3).
     #[cfg(feature = "midi-map")]
     ("pickup_hint", pickup_hint),
 ];
 
-/// Part 1 on INIT Algo with a mixed map, MIDI MAP open on its row 5.
+/// Part 1 on INIT Algo with a mixed map, MIDI MAP open on its sixth
+/// binding (row 6: row 0 is the controller map).
 #[cfg(feature = "midi-map")]
 fn midi_map_mixed(ui: &mut UiState) {
     use chimera_core::addr::{BlockRef, ParamAddr};
@@ -2640,7 +2648,7 @@ fn midi_map_mixed(ui: &mut UiState) {
     to_leaf(ui, &["PART"]);
     plus(ui, chimera_core::ui::settings::tree::PART.len() - 1);
     feed(ui, Input::press(ButtonId::Edit));
-    feed(ui, Input::turn(EncoderId::A, 5));
+    feed(ui, Input::turn(EncoderId::A, 6));
 }
 
 /// INIT Algo's PIT, FINE touched, bound to CC 21 with PICKUP; CC 21 at 0

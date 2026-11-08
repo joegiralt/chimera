@@ -66,7 +66,8 @@ fn bind(input: Input, target: ParamAddr) -> Binding {
     }
 }
 
-/// Part 1 on INIT Algo holding `entries`, MIDI MAP open, the bar on row 0.
+/// Part 1 on INIT Algo holding `entries`, MIDI MAP open, the bar on the
+/// first Sound row (row 1: row 0 is the controller map, ADR 0226).
 fn page(entries: &[Binding]) -> Box<UiState> {
     let mut ui = Box::new(screen::stack_ui());
     screen::init_part(&mut ui, P1);
@@ -84,6 +85,8 @@ fn page(entries: &[Binding]) -> Box<UiState> {
     }
     feed(&mut ui, Key::press(Edit));
     assert_eq!(ui.location().settings().unwrap().row(), 0);
+    feed(&mut ui, Key::turn(A, 1));
+    assert_eq!(ui.location().settings().unwrap().row(), 1);
     ui
 }
 
@@ -99,15 +102,20 @@ fn turn(ui: &mut UiState, e: EncoderId, d: i8) {
     feed(ui, Key::turn(e, d));
 }
 
+/// Sound row `i` (page row `i + 1`).
 fn row(ui: &UiState, i: usize) -> (String, String, RowLook) {
     let b = ui.map_band();
-    let t = b.text(i);
-    (t.label.as_str().into(), t.word.as_str().into(), b.look(i))
+    let t = b.text(i + 1);
+    (
+        t.label.as_str().into(),
+        t.word.as_str().into(),
+        b.look(i + 1),
+    )
 }
 
-/// The bar row's focus words: (head, tail).
+/// Sound row `i`'s focus words: (head, tail).
 fn focus(ui: &UiState, i: usize) -> (String, String) {
-    let t = ui.map_band().text(i);
+    let t = ui.map_band().text(i + 1);
     (t.head.as_str().into(), t.tail.as_str().into())
 }
 
@@ -232,7 +240,7 @@ fn row_words_per_kind() {
         ("CC 16  - STRUCT".into(), "JUMP".into(), RowLook::Dimmed)
     );
     // The bar's MIN, MAX and ECHO.
-    let f = ui.map_band().text(0);
+    let f = ui.map_band().text(1);
     assert_eq!(
         (f.min.as_str(), f.max.as_str(), f.echo.as_str()),
         ("0", "255", "OFF")
@@ -255,7 +263,7 @@ fn map_words_fit() {
     }
     for input in all {
         let ui = page(&[bind(input, CUTOFF)]);
-        let f = ui.map_band().text(0);
+        let f = ui.map_band().text(1);
         let head = text_width(&FONT_LABEL_BOLD, f.head.as_str(), T);
         let tail = text_width(&FONT_LABEL, f.tail.as_str(), T);
         assert!(
@@ -286,7 +294,7 @@ fn ui_legend(ui: &UiState) -> String {
 #[test]
 fn hint_names_every_key() {
     let ui = page(&[bind(Input::cc(74).unwrap(), CUTOFF)]);
-    let t = ui.map_band().text(0);
+    let t = ui.map_band().text(1);
     assert_eq!(
         t.hint(),
         &[Gesture("B", "CONTROL"), Gesture("E", "INPUT")][..]
@@ -310,11 +318,11 @@ fn a_moves_the_bar_b_to_f_edit() {
     ]);
     let bar = |ui: &UiState| ui.location().settings().unwrap().row();
     turn(&mut ui, A, 1);
-    assert_eq!(bar(&ui), 1);
+    assert_eq!(bar(&ui), 2);
     for (e, d) in [(B, 1), (C, 1), (D, -1), (E, 1), (F, 1)] {
         let rev = ui.project().rev();
         turn(&mut ui, e, d);
-        assert_eq!(bar(&ui), 1, "{e:?} keeps the bar");
+        assert_eq!(bar(&ui), 2, "{e:?} keeps the bar");
         assert_ne!(ui.project().rev(), rev, "{e:?} edits");
     }
     assert_eq!(
@@ -369,7 +377,7 @@ fn f_toggles_echo() {
     let mut ui = page(&[bind(Input::cc(74).unwrap(), CUTOFF)]);
     turn(&mut ui, F, 1);
     assert_eq!(entry(&ui, 0).feedback, Feedback::Value);
-    assert_eq!(ui.map_band().text(0).echo.as_str(), "ON");
+    assert_eq!(ui.map_band().text(1).echo.as_str(), "ON");
     let rev = ui.project().rev();
     turn(&mut ui, F, 1);
     assert_eq!(entry(&ui, 0).feedback, Feedback::Value);
@@ -456,7 +464,7 @@ fn nrpn_row_b_does_nothing_and_hints() {
         assert_eq!(ui.project().rev(), rev, "{input:?}");
         assert_eq!(entry(&ui, 0).input, input);
         assert_eq!(
-            ui.map_band().text(0).hint(),
+            ui.map_band().text(1).hint(),
             &[Gesture("B", "RELEARN TO CHANGE"), Gesture("E", "INPUT")][..]
         );
     }

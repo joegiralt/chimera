@@ -13,6 +13,7 @@
 #![cfg_attr(not(feature = "midi-map"), allow(dead_code))]
 
 pub mod echo;
+pub mod layer;
 pub mod learn;
 pub mod out;
 #[cfg(feature = "midi-map")]
@@ -38,7 +39,7 @@ use crate::dsp::clampf;
 use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
 use crate::midi_in::{CtrlEvent, HeardEv, PART_CHANNELS, Port};
-use crate::midi_map::{Binding, CcKind, Input, MAP_LEN, Mappable, Span};
+use crate::midi_map::{Binding, CcKind, Input, MAP_LEN, Mappable, MidiMap, Span};
 use crate::nrpn::{self, NrpnAddr};
 use crate::part::{MAX_BEND, PartParams};
 use crate::project::{Line, Loads, PartId, Project};
@@ -51,9 +52,17 @@ use resolve::{Action, BindRuntime, resolve};
 const CANON: usize = 8;
 /// Canonical targets that wait for a slot, first come first moved.
 const WAIT: usize = 16;
-/// A Part's slots: its map's entries, then its canonical NRPN targets.
-const SLOTS: usize = MAP_LEN + CANON;
-const _: () = assert!(SLOTS <= 32, "`handed` holds a bit a slot");
+/// A Part's bindings: its Sound's rows, then its controller layer's (ADR
+/// 0226). Without `midi-map` (the bench builds, deaf) none of the layer's:
+/// their AXI holds no room for it.
+pub const BINDS: usize = if cfg!(feature = "midi-map") {
+    2 * MAP_LEN
+} else {
+    MAP_LEN
+};
+/// A Part's slots: its bindings, then its canonical NRPN targets.
+const SLOTS: usize = BINDS + CANON;
+const _: () = assert!(SLOTS <= 64, "`handed` holds a bit a slot");
 /// No bin heard since a load or the hand: the stored value's.
 const NO_BIN: u8 = u8::MAX;
 /// RPN 0, pitch-bend sensitivity.
@@ -70,9 +79,9 @@ pub struct PartMidi {
     bins: [u8; SLOTS],
     /// A stepped slot's bin that found no room: it goes first next pass.
     pend: [u8; SLOTS],
-    rt: [BindRuntime; MAP_LEN],
+    rt: [BindRuntime; BINDS],
     /// Detents heard and not yet turned: one edit an entry a pass.
-    turns: [i16; MAP_LEN],
+    turns: [i16; BINDS],
     canon: [Option<Mappable>; CANON],
     /// Canonical targets no slot was free for, and their latest places, in
     /// the order they came: the `None`s after.
@@ -80,7 +89,7 @@ pub struct PartMidi {
     cursor: u8,
     loads: Loads,
     /// Slots the hand turned this pass: nothing heard moves them till the next.
-    handed: u32,
+    handed: u64,
 }
 
 /// A Part's slots at rest: a named static, so its image is bank 2's
@@ -89,8 +98,8 @@ static REST: PartMidi = PartMidi {
     ramps: [Ramp::rest(0.0); SLOTS],
     bins: [NO_BIN; SLOTS],
     pend: [NO_BIN; SLOTS],
-    rt: [BindRuntime::NEW; MAP_LEN],
-    turns: [0; MAP_LEN],
+    rt: [BindRuntime::NEW; BINDS],
+    turns: [0; BINDS],
     canon: [None; CANON],
     wait: [None; WAIT],
     cursor: 0,
@@ -114,7 +123,7 @@ impl PartMidi {
     /// Canonical slot `k` is free to move: at rest, no bin waiting, and
     /// not the hand's this pass (its target's message would be refused).
     fn rests(&self, k: usize) -> bool {
-        let j = MAP_LEN + k;
+        let j = BINDS + k;
         !self.ramps[j].moving() && self.pend[j] == NO_BIN && self.handed >> j & 1 == 0
     }
 
@@ -124,7 +133,7 @@ impl PartMidi {
     #[inline(never)]
     fn seat(&mut self, t: Mappable, sweep: bool) -> Seat {
         if let Some(k) = self.canon.iter().position(|&c| c == Some(t)) {
-            return if self.handed >> (MAP_LEN + k) & 1 != 0 {
+            return if self.handed >> (BINDS + k) & 1 != 0 {
                 Seat::Handed
             } else if sweep || self.rests(k) {
                 Seat::Move(k)
@@ -135,7 +144,7 @@ impl PartMidi {
         let Some(k) = (0..CANON).find(|&k| self.rests(k)) else {
             return Seat::Wait;
         };
-        let j = MAP_LEN + k;
+        let j = BINDS + k;
         self.canon[k] = Some(t);
         (self.ramps[j], self.bins[j]) = (Ramp::rest(0.0), NO_BIN);
         Seat::Move(k)
@@ -188,6 +197,8 @@ pub struct MidiUi {
     stepped: bool,
     seen: Seen,
     echo: echo::EchoPlan,
+    /// Each Part's controller layer (ADR 0226).
+    ctl: layer::Layers,
 }
 
 /// Nothing sensed: a named static, so its image is bank 2's.
@@ -208,6 +219,7 @@ impl MidiSlot {
                 core::ptr::addr_of_mut!((*m).stepped).write(false);
                 core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
                 core::ptr::addr_of_mut!((*m).echo).write(echo::SILENT);
+                core::ptr::addr_of_mut!((*m).ctl).write(layer::REST);
             }
             self.built = true;
         }
@@ -268,6 +280,20 @@ pub(crate) fn pick(table: &'static [u8], want: u8) -> &'static str {
         k += 1;
     }
     ""
+}
+
+/// Slot `j` of a Part whose Sound's map is `own` and controller layer
+/// `layer`: the Sound's row `j`, or the layer's row `j - MAP_LEN` unless
+/// a Sound row is on its control (ADR 0226).
+#[inline(always)]
+fn bind_at(own: &MidiMap, layer: &MidiMap, j: usize) -> Option<Binding> {
+    match j.checked_sub(MAP_LEN) {
+        None => own.entries().get(j).copied(),
+        Some(k) => {
+            let b = layer.entries().get(k)?;
+            (!layer::shadowed(own, b)).then_some(*b)
+        }
+    }
 }
 
 /// `a`'s stored value on Part `p`; an ORBIT ring's on the playing scene.
@@ -453,16 +479,17 @@ impl UiState {
                 _ => {}
             }
             let (i, map) = (p.index(), self.project.part(p).sound.map);
+            let layer = *self.cc.ui().ctl.layer(i);
             let handed = self.cc.part(i).handed;
             let mut bound = false;
-            for (j, e) in map.entries().iter().enumerate() {
-                if !e.input.heard(c) {
+            for j in 0..BINDS {
+                let Some(e) = bind_at(&map, &layer, j).filter(|e| e.input.heard(c)) else {
                     continue;
-                }
+                };
                 bound = true;
                 // The hand beats a message in its pass (spec § 6.2).
                 if handed >> j & 1 == 0 {
-                    self.cc_bound(p, j, *e, c, now);
+                    self.cc_bound(p, j, e, c, now);
                 }
             }
             if let (
@@ -587,7 +614,7 @@ impl UiState {
 
     /// Canonical slot `k` on Part `p` to `to`, by its target's law's place.
     fn cc_canon_move(&mut self, p: PartId, k: usize, to: Place, now: Ms) {
-        let j = MAP_LEN + k;
+        let j = BINDS + k;
         let Some(t) = self.cc.part(p.index()).canon[k] else {
             return;
         };
@@ -742,15 +769,11 @@ impl UiState {
     /// Slot `j`'s target on Part `p`: its map entry's, or a canonical one.
     #[inline(always)]
     fn cc_target(&mut self, p: PartId, j: usize) -> Option<Mappable> {
-        match j.checked_sub(MAP_LEN) {
-            None => self
-                .project
-                .part(p)
-                .sound
-                .map
-                .entries()
-                .get(j)
-                .map(|e| e.target),
+        match j.checked_sub(BINDS) {
+            None => {
+                let own = &self.project.part(p).sound.map;
+                bind_at(own, self.cc.ui().ctl.layer(p.index()), j).map(|e| e.target)
+            }
             Some(k) => self.cc.part(p.index()).canon[k],
         }
     }
@@ -798,7 +821,7 @@ impl UiState {
     /// this pass has room; the rest wait for the next.
     fn cc_turns(&mut self, p: PartId) {
         let (i, engine) = (p.index(), self.project.part(p).sound.params.engine());
-        for j in 0..MAP_LEN {
+        for j in 0..BINDS {
             let d = self.cc.part(i).turns[j];
             if d == 0 {
                 continue;
@@ -893,7 +916,7 @@ impl UiState {
         self.cc.fresh();
         let i = p.index();
         let map = self.project.part(p).sound.map;
-        let entry = map.entries().iter().position(|e| e.target.addr() == a);
+        let layer = *self.cc.ui().ctl.layer(i);
         let m = self.cc.part(i);
         let mut canon = m
             .canon
@@ -909,12 +932,14 @@ impl UiState {
             m.canon[k] = Some(t);
             canon = Some(k);
         }
-        for j in [entry, canon.map(|k| MAP_LEN + k)].into_iter().flatten() {
+        let bound =
+            (0..BINDS).filter(|&j| bind_at(&map, &layer, j).is_some_and(|e| e.target.addr() == a));
+        for j in bound.chain(canon.map(|k| BINDS + k)) {
             m.ramps[j].cancel(0.0);
             m.bins[j] = NO_BIN;
             m.pend[j] = NO_BIN;
             m.handed |= 1 << j;
-            if j < MAP_LEN {
+            if j < BINDS {
                 m.turns[j] = 0;
                 m.rt[j].unwait();
             }

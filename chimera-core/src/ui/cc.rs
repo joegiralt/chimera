@@ -24,11 +24,18 @@ use crate::midi_in::{HeardCc, HeardEv};
 #[cfg(feature = "midi-map")]
 use crate::midi_map::Binding;
 #[cfg(feature = "midi-map")]
+use crate::name::SoundName;
+#[cfg(feature = "midi-map")]
 use crate::out_ring::{OutPorts, OutRing};
 use crate::project::PartId;
+#[cfg(feature = "midi-map")]
+use crate::storage::{Card, Ready};
+#[cfg(feature = "midi-map")]
+use chimera_hal::store::{Store, StoreError};
 
-/// The MIDI UI's state: in AXI `.bss`, not in D2 with `UiState` (bench
-/// builds' D2 is full). Bank 1 keeps the hand's moves, the moves in flight
+/// The MIDI UI's state: with `midi-map` in D2 beside `UiState` (ADR 0226:
+/// its controller layers would put AXI under its margin), else in AXI
+/// `.bss` (the bench builds' D2 is full). Bank 1 keeps the hand's moves, the moves in flight
 /// to the audio, this pass's room and the clock; bank 2 builds the rest
 /// (`MidiUi`, ~5.7 KB) the first time the door runs, so bank 1 carries no
 /// image of it.
@@ -49,6 +56,8 @@ pub struct MidiSlot {
 const _: () = assert!(MAX_PARTS <= 8, "`stale` holds a bit a Part");
 
 impl MidiSlot {
+    /// A host's slot, at rest (the firmware's is written in place, `take`).
+    #[cfg(not(target_os = "none"))]
     const fn new() -> Self {
         Self {
             built: false,
@@ -61,16 +70,30 @@ impl MidiSlot {
         }
     }
 
-    /// The firmware's one slot, zeroed `.bss` in AXI.
+    /// The firmware's one slot: with `midi-map` in D2 (NOLOAD, so its
+    /// fields bar `ui` are written here, in place), else in AXI `.bss`.
     #[cfg(target_os = "none")]
     pub(super) fn take() -> &'static mut MidiSlot {
+        use core::ptr::addr_of_mut;
         use core::sync::atomic::{AtomicBool, Ordering};
-        static mut SLOT: MidiSlot = MidiSlot::new();
+        #[cfg_attr(feature = "midi-map", unsafe(link_section = ".ram_d2"))]
+        static mut SLOT: MaybeUninit<MidiSlot> = MaybeUninit::uninit();
         static TAKEN: AtomicBool = AtomicBool::new(false);
         assert!(!TAKEN.swap(true, Ordering::AcqRel));
         // SAFETY: the flag lets exactly one caller past, so this is the
-        // only reference to `SLOT` ever made.
-        unsafe { &mut *core::ptr::addr_of_mut!(SLOT) }
+        // only reference to `SLOT` ever made. Every field but `ui` (a
+        // `MaybeUninit`, built by `ui()` before `built` says so) is written
+        // before the reference is made.
+        unsafe {
+            let m = addr_of_mut!(SLOT).cast::<MidiSlot>();
+            addr_of_mut!((*m).built).write(false);
+            addr_of_mut!((*m).stale).write(0);
+            addr_of_mut!((*m).hand).write(0);
+            addr_of_mut!((*m).flight).write([0; MAX_PARTS]);
+            addr_of_mut!((*m).room).write([0; MAX_PARTS]);
+            addr_of_mut!((*m).last).write(Ms(0));
+            &mut *m
+        }
     }
 
     /// A host's: one leaked per `UiState`, as its arena is.
@@ -122,6 +145,20 @@ type FocusNote = fn(&UiState) -> Option<Dir>;
 #[cfg(feature = "midi-map")]
 type Out = fn(&mut UiState, &OutPorts);
 
+/// The door's `map_rows` and `map_row`: MIDI MAP's rows (ADR 0226).
+#[cfg(feature = "midi-map")]
+type MapRows = fn(&UiState) -> usize;
+#[cfg(feature = "midi-map")]
+type MapRowFn = fn(&UiState, usize, &mut MapText);
+/// The door's `ctl_due` and `ctl_work`: the controller layers' card work.
+#[cfg(feature = "midi-map")]
+type CtlDue = fn(&UiState) -> bool;
+#[cfg(feature = "midi-map")]
+type CtlWork = fn(&mut UiState, &mut dyn Store, Option<&Ready>);
+/// The door's `ctl_ask`: a save (a name) or a row's drop, queued.
+#[cfg(feature = "midi-map")]
+type CtlAsk = fn(&mut UiState, PartId, Option<SoundName>, Option<Binding>);
+
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
 
@@ -150,6 +187,16 @@ pub struct MidiUiDoor {
     focus_note: FocusNote,
     #[cfg(feature = "midi-map")]
     out: Out,
+    #[cfg(feature = "midi-map")]
+    map_rows: MapRows,
+    #[cfg(feature = "midi-map")]
+    map_row: MapRowFn,
+    #[cfg(feature = "midi-map")]
+    ctl_due: CtlDue,
+    #[cfg(feature = "midi-map")]
+    ctl_work: CtlWork,
+    #[cfg(feature = "midi-map")]
+    ctl_ask: CtlAsk,
 }
 
 /// `MidiUiDoor`'s mark: a table at the slot that isn't this one fails the
@@ -179,6 +226,16 @@ impl MidiUiDoor {
         focus_note: UiState::focus_note,
         #[cfg(feature = "midi-map")]
         out: UiState::out_in,
+        #[cfg(feature = "midi-map")]
+        map_rows: UiState::map_rows_in,
+        #[cfg(feature = "midi-map")]
+        map_row: UiState::map_row_in,
+        #[cfg(feature = "midi-map")]
+        ctl_due: UiState::ctl_due_in,
+        #[cfg(feature = "midi-map")]
+        ctl_work: UiState::ctl_work_in,
+        #[cfg(feature = "midi-map")]
+        ctl_ask: UiState::ctl_ask_in,
     };
 }
 
@@ -269,6 +326,46 @@ impl UiState {
     pub fn send_out(&mut self, ring: &OutRing) {
         self.send(&OutPorts::din(ring));
     }
+
+    /// MIDI MAP's rows: row 0, the controller layer's, the Sound's
+    /// (`map_rows`). Closed, none.
+    pub(super) fn map_rows(&self) -> usize {
+        through(|d| (d.map_rows)(self)).unwrap_or(0)
+    }
+
+    /// The controller layers' card work, if any waits (`ctl_due`,
+    /// `ctl_work`): the card mounted only then. Closed, none.
+    #[inline(never)]
+    pub(super) fn ctl_card(&mut self, card: &mut Card, s: &mut dyn Store) {
+        if !through(|d| (d.ctl_due)(self)).unwrap_or(false) {
+            return;
+        }
+        let ran = card.run(s, |s, r| {
+            through(|d| (d.ctl_work)(self, s, Some(r)));
+            Ok::<_, StoreError>(())
+        });
+        // No card: nothing is read till a pick, an engine or a save moves.
+        if ran.is_err() {
+            through(|d| (d.ctl_work)(self, s, None));
+        }
+    }
+
+    /// NAMING's answer on MIDI MAP's row 0: the Part's rows saved into map
+    /// `n` by the next card work (`ctl_ask`).
+    pub(super) fn ctl_save(&mut self, p: PartId, n: SoundName) {
+        through(|d| (d.ctl_ask)(self, p, Some(n), None));
+    }
+
+    /// DELETE answered on a layer row: `e` dropped from the Part's map.
+    pub(super) fn ctl_drop(&mut self, p: PartId, e: Binding) {
+        through(|d| (d.ctl_ask)(self, p, None, Some(e)));
+    }
+}
+
+/// MIDI MAP's row `i` into `out` (`map_row`). Closed, none.
+#[cfg(feature = "midi-map")]
+pub(super) fn map_row(ui: &UiState, i: usize, out: &mut MapText) {
+    through(|d| (d.map_row)(ui, i, out));
 }
 
 impl UiState {
