@@ -143,7 +143,20 @@ fn USART1() {
     if (idle || n > 0 || owes)
         && let (Some(notes), Some(ctrl)) = (notes.as_mut(), ctrl)
     {
-        let mut sinks = DinSinks { notes, ctrl };
+        let mut sinks = DinSinks {
+            notes,
+            ctrl,
+            sysex: {
+                #[cfg(feature = "midi-map")]
+                let s = Some(
+                    &chimera_core::midi_in::SYSEX_IN[chimera_core::midi_in::Port::Din as usize],
+                );
+                // No map, nobody drains a SysEx ring: none linked.
+                #[cfg(not(feature = "midi-map"))]
+                let s = None;
+                s
+            },
+        };
         // The silence first, so this entry's bytes may arm again; its
         // counts too, as no byte may follow (#865).
         if idle {

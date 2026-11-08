@@ -12,6 +12,7 @@ pub use chimera_midi::out::Cc14Msb;
 
 use chimera_midi::ctl::{Ctl, FreeCc, Sel};
 use chimera_midi::rel::ByteEncoding;
+use chimera_midi::sxmap::Shape;
 use chimera_midi::take::Takeover;
 use chimera_midi::value::U14;
 
@@ -135,6 +136,46 @@ pub enum Input {
     Cc14(Cc14Msb, Takeover),
     Nrpn(U14, NrpnKind),
     Pressure(Takeover),
+    /// A SysEx parameter message an old box sends (#846, ADR 0241):
+    /// absolute, `Jump`, never echoed.
+    SysEx(SxKey),
+}
+
+/// A learned SysEx message: where its value sits and its fixed bytes'
+/// key (`chimera_midi::sxmap`), as bytes, so `Input` stays 6 B. Without
+/// `sysex-map` (a build that hears no map: the bench's) it holds nothing
+/// and none is made, so `Binding` keeps its 10 B and D2 its room.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SxKey(#[cfg(feature = "sysex-map")] [u8; 5]);
+
+impl SxKey {
+    /// `None` without `sysex-map`: the binding is not kept.
+    pub const fn new(shape: Shape, key: u32) -> Option<Self> {
+        #[cfg(feature = "sysex-map")]
+        {
+            let k = key.to_le_bytes();
+            Some(Self([shape.bits(), k[0], k[1], k[2], k[3]]))
+        }
+        #[cfg(not(feature = "sysex-map"))]
+        {
+            let _ = (shape, key);
+            None
+        }
+    }
+
+    pub const fn shape(self) -> Option<Shape> {
+        #[cfg(feature = "sysex-map")]
+        return Shape::from_bits(self.0[0]);
+        #[cfg(not(feature = "sysex-map"))]
+        None
+    }
+
+    pub const fn key(self) -> u32 {
+        #[cfg(feature = "sysex-map")]
+        return u32::from_le_bytes([self.0[1], self.0[2], self.0[3], self.0[4]]);
+        #[cfg(not(feature = "sysex-map"))]
+        0
+    }
 }
 
 impl Input {
@@ -189,6 +230,7 @@ impl Input {
                     put(Self::Pressure(t));
                 }
             }
+            Self::SysEx(_) => put(self),
         }
         out.into_iter().take(n)
     }
@@ -222,6 +264,7 @@ impl Input {
             (Self::Cc14(a, _), Self::Cc14(b, _)) => a == b,
             (Self::Nrpn(a, _), Self::Nrpn(b, _)) => a == b,
             (Self::Pressure(_), Self::Pressure(_)) => true,
+            (Self::SysEx(a), Self::SysEx(b)) => a == b,
             _ => false,
         }
     }
@@ -278,8 +321,10 @@ pub struct KeptMap {
     raw: [u8; KEPT_LEN],
 }
 
-/// A full `Bindings` payload: a version byte and 8 B an entry.
-pub const KEPT_LEN: usize = 1 + MAP_LEN * 8;
+/// A full `Bindings` payload: a version byte and 8 B an entry, 12 with
+/// SysEx keys (`sysex-map`, #846).
+pub const KEPT_LEN: usize = 1 + MAP_LEN * if cfg!(feature = "sysex-map") { 12 } else { 8 };
+const _: () = assert!(KEPT_LEN <= u8::MAX as usize, "`KeptMap::len` is a byte");
 
 impl KeptMap {
     pub const EMPTY: Self = Self {

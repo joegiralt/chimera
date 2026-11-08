@@ -32,6 +32,7 @@ fn through(p: &mut PipeSlot, bytes: &[u8], idle: bool) -> Rec {
     let mut sinks = DinSinks {
         notes: &mut notes,
         ctrl: &ctrl,
+        sysex: None,
     };
     midi_in::feed(p, bytes, &mut sinks);
     if idle {

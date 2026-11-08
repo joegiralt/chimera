@@ -345,7 +345,7 @@ pub fn level(input: &Input, p: Place) -> Option<u16> {
         Input::Cc(_, CcKind::Button(_)) | Input::Nrpn(_, NrpnKind::Button(_)) => Some(button()),
         Input::Cc(..) => Some(((u32::from(p.get()) * 127 + 8191) / 16383) as u16),
         Input::Cc14(..) | Input::Nrpn(..) => Some(p.get()),
-        Input::Pressure(_) => None,
+        Input::Pressure(_) | Input::SysEx(_) => None,
     }
 }
 
@@ -364,6 +364,6 @@ fn render(w: &mut Writer, ch: MidiChannel, input: &Input, v: u16) -> bool {
             u7().is_some_and(|x| w.nrpn(ch, n, DataValue::Coarse(x)))
         }
         Input::Nrpn(n, _) => U14::new(v).is_some_and(|x| w.nrpn(ch, n, DataValue::Fine(x))),
-        Input::Pressure(_) => false,
+        Input::Pressure(_) | Input::SysEx(_) => false,
     }
 }

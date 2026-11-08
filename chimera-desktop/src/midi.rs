@@ -35,6 +35,7 @@ impl<'q> Port<'q> {
         let mut out = DinSinks {
             notes: &mut self.notes,
             ctrl: self.ctrl,
+            sysex: Some(&midi_in::SYSEX_IN[midi_in::Port::Din as usize]),
         };
         midi_in::feed(&mut self.pipe, bytes, &mut out);
         let s = self.pipe.stats();

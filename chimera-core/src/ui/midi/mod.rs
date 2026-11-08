@@ -38,7 +38,7 @@ use crate::block::Motion;
 use crate::dsp::clampf;
 use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
-use crate::midi_in::{CtrlEvent, HeardEv, PART_CHANNELS, Port};
+use crate::midi_in::{CtrlEvent, HeardEv, PART_CHANNELS, Port, SX_LEN, SYSEX_IN};
 use crate::midi_map::{Binding, CcKind, Input, MAP_LEN, Mappable, MidiMap, Span};
 use crate::nrpn::{self, NrpnAddr};
 use crate::part::{MAX_BEND, PartParams};
@@ -250,6 +250,10 @@ pub struct MidiUi {
     echo: echo::EchoPlan,
     /// Each Part's controller layer (ADR 0226).
     ctl: layer::Layers,
+    /// Learn's first SysEx message, its length 0 for none (#846).
+    sx_first: ([u8; SX_LEN], u8),
+    /// A carry sensing heard, waiting for a second to confirm a pair.
+    sx_carry: Option<chimera_midi::sxmap::Carry>,
 }
 
 /// Nothing sensed: a named static, so its image is bank 2's.
@@ -282,6 +286,9 @@ impl MidiSlot {
             core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
             echo::silent_at(core::ptr::addr_of_mut!((*m).echo));
             layer::rest_at(core::ptr::addr_of_mut!((*m).ctl));
+            // All zero is no message kept (#846).
+            core::ptr::write_bytes(core::ptr::addr_of_mut!((*m).sx_first), 0, 1);
+            core::ptr::addr_of_mut!((*m).sx_carry).write(None);
         }
         self.built = true;
     }
@@ -445,6 +452,12 @@ impl UiState {
             PART_CHANNELS.set(p.index(), self.project.part(p).mix.channel);
         }
         self.cc.fresh();
+        // Learn off: its kept SysEx message goes, so the next arming starts
+        // clean (a pass runs between any two MIX + SEQ).
+        if matches!(self.learn, super::learn::Learn::Off) {
+            let ui = self.cc.ui();
+            (ui.sx_first.1, ui.sx_carry) = (0, None);
+        }
         let elapsed = now.since(self.cc.last);
         self.cc.last = now;
         use crate::ui::settings::job::Job;
@@ -495,6 +508,16 @@ impl UiState {
                     Port::Din => "DIN MIDI LOST",
                     Port::Usb => "USB MIDI LOST",
                 }));
+                continue;
+            }
+            // The port's SysEx bodies: learned, or heard by their bindings.
+            if let HeardEv::Ctrl(port, CtrlEvent::SysEx) = e {
+                let mut b = [0; SX_LEN];
+                while let Some(n) = SYSEX_IN[port as usize].pop(&mut b) {
+                    if !busy && !self.learn_sysex(&b[..n]) {
+                        self.cc_sysex(&b[..n], now);
+                    }
+                }
                 continue;
             }
             if busy {
@@ -559,6 +582,36 @@ impl UiState {
             ) = (bound, *c)
             {
                 self.cc_canonical(p, n, value, now);
+            }
+        }
+    }
+
+    /// A SysEx body (#846): each Part's SysEx bindings it matches, its
+    /// value 14 bits as an absolute `Jump`. No channel: a box addresses a
+    /// synth, not a channel.
+    fn cc_sysex(&mut self, body: &[u8], now: Ms) {
+        for p in PartId::ALL {
+            // The Sound's own rows, then its controller map's layer.
+            let (i, map) = (p.index(), self.project.part(p).sound.map);
+            let layer = *self.cc.ui().ctl.layer(i);
+            let handed = self.cc.part(i).handed;
+            for j in 0..BINDS {
+                let Some(e) = bind_at(&map, &layer, j) else {
+                    continue;
+                };
+                let crate::midi_map::Input::SysEx(k) = e.input else {
+                    continue;
+                };
+                let Some(v) = k.shape().and_then(|s| s.value(body, k.key())) else {
+                    continue;
+                };
+                if handed >> j & 1 == 0 {
+                    let c = Ctl::Data {
+                        sel: Sel::Nrpn(U14::from_parts(U7::ZERO, U7::ZERO)),
+                        value: DataValue::Fine(v),
+                    };
+                    self.cc_bound(p, j, e, &c, now);
+                }
             }
         }
     }

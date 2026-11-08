@@ -22,8 +22,10 @@ use super::super::learn::{Learn, LearnNote, Line, Sensed};
 use super::super::{draw, theme};
 use super::NO_SEEN;
 use crate::MidiChannel;
-use crate::midi_in::{Cc, CcEvent};
-use crate::midi_map::{Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, NrpnKind};
+use crate::midi_in::{Cc, CcEvent, SX_LEN};
+use crate::midi_map::{
+    Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, NrpnKind, SxKey,
+};
 use crate::project::PartId;
 
 /// A guess is sure once this many samples agree on it, and a relative one
@@ -36,6 +38,8 @@ enum Control {
     Cc(u8),
     Nrpn(U14),
     Pressure,
+    /// Learned apart (`learn_sysex`), never sensed.
+    SysEx,
 }
 
 impl Control {
@@ -47,6 +51,7 @@ impl Control {
             Input::Cc14(m, _) => Self::Cc(m.get()),
             Input::Nrpn(n, _) => Self::Nrpn(n),
             Input::Pressure(_) => Self::Pressure,
+            Input::SysEx(_) => Self::SysEx,
         }
     }
 
@@ -89,6 +94,7 @@ fn first_input(k: Control) -> Option<Input> {
         Control::Cc(n) => Input::cc(n),
         Control::Nrpn(n) => Some(Input::Nrpn(n, NrpnKind::Absolute(JUMP))),
         Control::Pressure => Some(Input::Pressure(JUMP)),
+        Control::SysEx => None,
     }
 }
 
@@ -125,6 +131,7 @@ pub fn sensed_input(was: Input, seen: &Seen) -> (Input, Feedback) {
             }
         },
         Control::Pressure => (Input::Pressure(JUMP), Off),
+        Control::SysEx => (was, Off),
     }
 }
 
@@ -160,10 +167,15 @@ fn kind_code(i: Input) -> u8 {
         Input::Cc(_, CcKind::Button(x)) | Input::Nrpn(_, NrpnKind::Button(x)) => b(x),
         Input::Nrpn(_, NrpnKind::IncDec) => INC_DEC,
         Input::Cc14(_, x) | Input::Pressure(x) => t(x),
+        Input::SysEx(_) => 0,
     }
 }
 
 impl Sensed {
+    /// A SysEx entry sensing (#846): the pressure tag with a kind no input
+    /// has, sure. `input` reads it as none.
+    pub const SYSEX: Sensed = Sensed([1 | 3 << 1 | 15 << 3, 0, 0]);
+
     /// `input` and whether its guess is `sure`, packed: byte 0 the sure
     /// bit, the control's tag (bits 1-2) and the kind's code (bits 3-6);
     /// bytes 1-2 the control's number (an NRPN's MSB and LSB).
@@ -172,7 +184,8 @@ impl Sensed {
             Input::Cc(c, _) => (0, c.get(), 0),
             Input::Cc14(m, _) => (1, m.get(), 0),
             Input::Nrpn(n, _) => (2, n.msb().get(), n.lsb().get()),
-            Input::Pressure(_) => (3, 0, 0),
+            // Never sensed: learned whole (`learn_sysex`).
+            Input::Pressure(_) | Input::SysEx(_) => (3, 0, 0),
         };
         Self([u8::from(sure) | tag << 1 | kind_code(input) << 3, a, b])
     }
@@ -216,7 +229,7 @@ impl Sensed {
 /// The words this module writes, named so they link into bank 2 with it
 /// (`bank2.x`'s `.rodata.*ui4midi*`), not into bank 1's unnamed rodata;
 /// cut by `Word`. No `write!` either: its pieces would be bank 1's too.
-static WORDS: [u8; 126] = *b"14-BIT CC NRPN :PRESSURE \xe2\x86\x92 TURN IT RIGHT, THEN LEFTRELATIVE \xc2\xb7 TWOS COMPLEMENTBINARY OFFSETSIGNED BIT 2BUTTONINC DECABSOLUTE";
+static WORDS: [u8; 131] = *b"14-BIT CC NRPN :PRESSURE \xe2\x86\x92 TURN IT RIGHT, THEN LEFTRELATIVE \xc2\xb7 TWOS COMPLEMENTBINARY OFFSETSIGNED BIT 2BUTTONINC DECABSOLUTESYSEX";
 
 #[derive(Clone, Copy)]
 enum Word {
@@ -236,6 +249,7 @@ enum Word {
     Cc,
     Bits14Guess,
     Signed,
+    SysEx,
 }
 
 /// `w`'s text in `WORDS`; checked, never failing (`WORDS` is UTF-8).
@@ -260,6 +274,7 @@ fn word(w: Word) -> &'static str {
         Word::Cc => (7, 3),
         Word::Bits14Guess => (0, 9),
         Word::Signed => (93, 10),
+        Word::SysEx => (126, 5),
     };
     match WORDS.get(at..at + len) {
         Some(b) => match core::str::from_utf8(b) {
@@ -345,6 +360,19 @@ pub(super) fn put_num(out: &mut FmtBuf, n: u8) {
 /// value's place, where they fit, and bank 1 draws `MIX + SEQ  DONE` on
 /// the hint line after a sure guess. The door's `words`.
 pub fn words(s: Sensed, label: &str, line: Line, out: &mut FmtBuf) {
+    // A SysEx control: `SYSEX → CUTOFF`, read absolute, sure at once.
+    if s.0 == Sensed::SYSEX.0 {
+        let w = match line {
+            Line::Label => {
+                let _ = out.write_str(word(Word::SysEx));
+                let _ = out.write_str(word(Word::Arrow));
+                label
+            }
+            Line::Words => word(Word::Absolute),
+        };
+        let _ = out.write_str(w);
+        return;
+    }
     let Some(input) = s.input() else {
         return;
     };
@@ -357,8 +385,10 @@ pub fn words(s: Sensed, label: &str, line: Line, out: &mut FmtBuf) {
     }
 }
 
-fn label_line(input: Input, label: &str, out: &mut FmtBuf) {
-    let control = |out: &mut FmtBuf| match input {
+/// The control's words for `label_line`.
+#[inline(always)]
+fn control(input: Input, out: &mut FmtBuf) {
+    match input {
         Input::Cc(c, _) => {
             let _ = out.write_str(word(Word::Cc));
             put_num(out, c.get());
@@ -373,19 +403,25 @@ fn label_line(input: Input, label: &str, out: &mut FmtBuf) {
             let _ = out.write_str(word(Word::Colon));
             put_num(out, n.lsb().get());
         }
-        Input::Pressure(_) => {
+        Input::Pressure(_) | Input::SysEx(_) => {
             let _ = out.write_str(word(Word::Pressure));
         }
-    };
-    control(out);
+    }
+}
+
+fn label_line(input: Input, label: &str, out: &mut FmtBuf) {
+    // The control's words once: a second call's set-up is what the machine
+    // outliner shares from bank 1 (ADR 0175).
+    let mut alone = FmtBuf::new();
+    control(input, &mut alone);
+    let _ = out.write_str(alone.as_str());
     let _ = out.write_str(word(Word::Arrow));
     let _ = out.write_str(label);
     // Too wide (`NRPN 127:127 → MECHANICS`): the control alone, its target
     // the focused cell's.
     let (face, t) = (&theme::FONT_VALUE, theme::LABEL_TRACKING);
     if draw::text_width(face, out.as_str(), t) > theme::CONTENT_W {
-        *out = FmtBuf::new();
-        control(out);
+        *out = alone;
     }
 }
 
@@ -456,6 +492,104 @@ impl UiState {
             }
         }
         self.learn_start(part, k, s, v)
+    }
+
+    /// A SysEx body while learn is armed or senses a SysEx entry (#846):
+    /// `true`, taken. Armed, the first is kept, and a second of the same
+    /// control at another value maps the focused cell to its value byte
+    /// (`sxmap::learn`), absolute and unechoed; learn then senses on, and a
+    /// carry heard (`sxmap::carry`) makes it a 14-bit pair. One that isn't
+    /// the same control's starts over from it. A cell no control may drive
+    /// takes nothing: NOT MAPPABLE stands, as for a CC.
+    pub(super) fn learn_sysex(&mut self, body: &[u8]) -> bool {
+        match self.learn {
+            Learn::Off => false,
+            Learn::Armed { part, .. } => self.learn_sysex_first(part, body),
+            Learn::Sensing { part, entry } => {
+                let j = usize::from(entry);
+                let Some(&e) = self.project.part(part).sound.map.entries().get(j) else {
+                    return false;
+                };
+                let Input::SysEx(k) = e.input else {
+                    return false;
+                };
+                let (last, n) = self.cc.ui().sx_first;
+                let heard = k
+                    .shape()
+                    .and_then(|s| chimera_midi::sxmap::carry(s, &last[..usize::from(n)], body));
+                // A pair only on a second carry the same way on: one could
+                // be a neighbouring knob at the wrap.
+                let ui = self.cc.ui();
+                let up = match (heard, ui.sx_carry) {
+                    (Some(c), Some(was)) if was.confirms(c) => {
+                        ui.sx_carry = None;
+                        Some(c.pair()).and_then(|p| SxKey::new(p, p.key(body)?))
+                    }
+                    (Some(c), _) => {
+                        ui.sx_carry = Some(c);
+                        None
+                    }
+                    (None, _) => None,
+                };
+                if let Some(k) = up {
+                    let b = Binding {
+                        input: Input::SysEx(k),
+                        ..e
+                    };
+                    self.project.edit_part(part).sound.map.set(j, b);
+                    self.cc.reset_part(part);
+                }
+                self.sx_keep(body);
+                true
+            }
+        }
+    }
+
+    /// Armed: `body` the first message, or the second that maps the cell.
+    fn learn_sysex_first(&mut self, part: PartId, body: &[u8]) -> bool {
+        let Some(t) = self.learn_target() else {
+            return false;
+        };
+        let (first, n) = self.cc.ui().sx_first;
+        let shape = chimera_midi::sxmap::learn(&first[..usize::from(n)], body);
+        self.sx_keep(body);
+        let Some((shape, key)) = shape.and_then(|s| Some((s, s.key(body)?))) else {
+            return true;
+        };
+        let mut map = self.project.part(part).sound.map;
+        let Some(k) = SxKey::new(shape, key) else {
+            return true;
+        };
+        let entry = match map.learn(Input::SysEx(k), t) {
+            Ok(()) => map.entries().iter().position(|e| e.target == t),
+            Err(_) => None,
+        };
+        let Some(entry) = entry else {
+            self.learn = Learn::Off;
+            #[cfg(feature = "midi-map")]
+            {
+                self.prime_status = Some(PrimeStatus::Learn(Some(LearnNote::Full)));
+            }
+            return true;
+        };
+        self.project.edit_part(part).sound.map = map;
+        self.cc.reset_part(part);
+        self.cc.ui().sx_carry = None;
+        self.learn = Learn::Sensing {
+            part,
+            entry: entry as u8,
+        };
+        true
+    }
+
+    /// `body` the last SysEx message learn heard. Inlined: a call to it
+    /// the machine outliner shares would sit in bank 1 (ADR 0175).
+    #[inline(always)]
+    fn sx_keep(&mut self, body: &[u8]) {
+        let keep = &mut self.cc.ui().sx_first;
+        let n = body.len().min(SX_LEN);
+        keep.0[..n].copy_from_slice(&body[..n]);
+        keep.1 = n as u8;
     }
 
     /// A CC no binding may take, heard while armed: said (`CC 120
@@ -553,6 +687,10 @@ impl UiState {
             .map
             .entries()
             .get(usize::from(entry))?;
+        // A SysEx entry has no kind to guess: sure at once.
+        if matches!(e.input, Input::SysEx(_)) {
+            return Some(Sensed::SYSEX);
+        }
         let seen = &self.cc.built()?.seen;
         Some(Sensed::new(e.input, sure(e.input, seen)))
     }

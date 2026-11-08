@@ -16,6 +16,9 @@ libm = "0.2"
 chimera-waves = { path = "../chimera-waves" }
 
 [features]
+# SysEx bindings' keys (#846, ADR 0241): with the MIDI map only; off,
+# `Binding` stays 10 B (the bench builds' D2).
+sysex-map = []
 # Each Part's tuning tables (ADR 0240): off in the bench builds, for AXI.
 tuning = []
 # SYSTEM's PUSH ENCODERS' fine turn (ADR 0140): `block::nudge_fine`.

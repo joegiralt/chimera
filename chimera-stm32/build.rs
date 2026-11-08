@@ -224,8 +224,9 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The NRPN address space (ADR 0216): `chimera_engine::nrpn`, text and
     // rodata, linked by the MIDI UI's canonical NRPNs.
     // And the MIDI pipe (Phase 1, `MidiDoor`): `DinPipe`, its counting sink
-    // (`Counted`), the sinks it runs on (`PipeSinks`), USB's slot and held keys (`UsbSlot`, `Held`) and the `chimera_midi` stream, controller, sensing and
-    // SysEx layers it runs. And the map's codec (`midi_map::codec`), the
+    // (`Counted`), the sinks it runs on (`PipeSinks`), USB's slot and held keys (`UsbSlot`, `Held`), the SysEx
+    // bodies' ring (`SxRing`, #846) and the `chimera_midi` stream, controller, sensing and
+    // SysEx layers it runs, and SysEx bindings' matching (`sxmap`, #846). And the map's codec (`midi_map::codec`), the
     // controller maps beside it (`midi_map::ctl`, ADR 0226), and
     // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
     // and rel), learn's classifier (`chimera_midi::learn`) and the 14-bit
@@ -239,10 +240,12 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*14chimera_engine7midi_in*9PipeSinks* .rodata.*14chimera_engine7midi_in*9PipeSinks*);
     *(.text.*14chimera_engine7midi_in*7UsbSlot* .rodata.*14chimera_engine7midi_in*7UsbSlot*);
     *(.text.*14chimera_engine7midi_in*4Held* .rodata.*14chimera_engine7midi_in*4Held*);
+    *(.text.*14chimera_engine7midi_in*6SxRing* .rodata.*14chimera_engine7midi_in*6SxRing*);
     *(.text.*12chimera_midi6stream* .rodata.*12chimera_midi6stream*);
     *(.text.*12chimera_midi3ctl* .rodata.*12chimera_midi3ctl*);
     *(.text.*12chimera_midi5sense* .rodata.*12chimera_midi5sense*);
     *(.text.*12chimera_midi5sysex* .rodata.*12chimera_midi5sysex*);
+    *(.text.*12chimera_midi5sxmap* .rodata.*12chimera_midi5sxmap*);
     *(.text.*12chimera_midi4take* .rodata.*12chimera_midi4take* .text.*12chimera_midi3law* .rodata.*12chimera_midi3law*);
     *(.text.*12chimera_midi3rel* .rodata.*12chimera_midi3rel*);
     *(.text.*12chimera_midi5learn* .rodata.*12chimera_midi5learn*);

@@ -543,6 +543,7 @@ impl<P: Slot> Rig<P> {
         let mut out = DinSinks {
             notes: &mut self.notes,
             ctrl: self.ring,
+            sysex: None,
         };
         self.slot.feed(bytes, &mut out);
     }
@@ -570,6 +571,7 @@ impl Usb {
         let mut out = DinSinks {
             notes: &mut self.notes,
             ctrl: self.ring,
+            sysex: None,
         };
         self.slot.lost(&mut out);
         self.take()
@@ -1132,6 +1134,7 @@ fn a_part_cable_message_never_cuts_cable_zeros_sysex() {
     let mut out = DinSinks {
         notes: &mut usb.notes,
         ctrl: usb.ring,
+        sysex: None,
     };
     usb.slot.feed_msg(&[0x92, 60, 100], &mut out);
     let (notes, ctrl) = usb.run(&[0x06, 0x01, 0xF7]);
@@ -1183,6 +1186,7 @@ fn din_owes_until_an_empty_feed_lands_it() {
     let mut out = DinSinks {
         notes: &mut din.notes,
         ctrl: din.ring,
+        sysex: None,
     };
     midi_in::feed(&mut din.slot, &[], &mut out);
     assert_eq!(din.take().0, [expr(0, Expr::Wheel(u7(0)))]);
@@ -1196,8 +1200,91 @@ fn din_owes_until_an_empty_feed_lands_it() {
     let mut out = DinSinks {
         notes: &mut din.notes,
         ctrl: din.ring,
+        sysex: None,
     };
     midi_in::feed(&mut din.slot, &[], &mut out);
     assert_eq!(din.take().0.len(), 16, "every channel's NotesOff");
     assert!(!din.slot.owes());
+}
+
+mod sysex_in {
+    use chimera_engine::midi_in::{CtrlEvent, CtrlRing, DinPipe, DinSinks, SX_LEN, SxRing};
+    use chimera_engine::note_queue::NoteQueue;
+
+    /// `bytes` through a pipe into a 64-slot ring and `sx`, if any: what
+    /// the ring heard, and the bodies `sx` holds.
+    fn feed(bytes: &[u8], sx: Option<&SxRing>) -> (Vec<CtrlEvent>, Vec<Vec<u8>>, u16) {
+        let q = NoteQueue::new();
+        let (mut notes, _audio) = q.split().unwrap();
+        let ring: CtrlRing = CtrlRing::new();
+        let mut pipe = DinPipe::new();
+        pipe.feed(
+            bytes,
+            &mut DinSinks {
+                notes: &mut notes,
+                ctrl: &ring,
+                sysex: sx,
+            },
+        );
+        let mut bodies = Vec::new();
+        let mut b = [0; SX_LEN];
+        while let Some(n) = sx.and_then(|r| r.pop(&mut b)) {
+            bodies.push(b[..n].to_vec());
+        }
+        (ring.drain().collect(), bodies, pipe.stats().ctrl_refused)
+    }
+
+    const DX7: [u8; 7] = [0xF0, 0x43, 0x10, 0x01, 5, 9, 0xF7];
+
+    #[test]
+    fn a_body_lands_in_the_ring_it_is_given() {
+        // USB's sinks on a 64-slot ring (a build without the map) are
+        // still USB's: the ring is passed, never guessed from a size.
+        let usb = SxRing::new();
+        let (ev, bodies, _) = feed(&DX7, Some(&usb));
+        assert_eq!(ev, [CtrlEvent::SysEx]);
+        assert_eq!(bodies, [DX7[1..6].to_vec()]);
+    }
+
+    #[test]
+    fn a_body_reaches_its_ring_through_the_door() {
+        // The shells' path: `midi_in::feed` on a slot, as the ISR runs it.
+        let q = NoteQueue::new();
+        let (mut notes, _audio) = q.split().unwrap();
+        let ring: CtrlRing = CtrlRing::new();
+        let sx = SxRing::new();
+        let mut slot = chimera_engine::midi_in::PipeSlot::new();
+        chimera_engine::midi_in::feed(
+            &mut slot,
+            &DX7,
+            &mut DinSinks {
+                notes: &mut notes,
+                ctrl: &ring,
+                sysex: Some(&sx),
+            },
+        );
+        let mut b = [0; SX_LEN];
+        assert_eq!(sx.pop(&mut b), Some(5));
+        assert_eq!(&b[..5], &DX7[1..6]);
+        assert_eq!(ring.drain().collect::<Vec<_>>(), [CtrlEvent::SysEx]);
+    }
+
+    #[test]
+    fn no_ring_no_body_and_no_marker() {
+        // The map left out: nothing waits that nobody drains.
+        let (ev, bodies, refused) = feed(&DX7, None);
+        assert!(ev.is_empty() && bodies.is_empty());
+        assert_eq!(refused, 0);
+    }
+
+    #[test]
+    fn a_body_past_sx_len_is_dropped_uncounted() {
+        let mut m = vec![0xF0, 0x41];
+        m.extend(std::iter::repeat_n(1, SX_LEN));
+        m.push(0xF7);
+        let sx = SxRing::new();
+        let (ev, bodies, refused) = feed(&m, Some(&sx));
+        assert!(ev.is_empty() && bodies.is_empty());
+        assert_eq!(refused, 0);
+    }
 }

@@ -31,12 +31,12 @@ use crate::midi_map::{
 
 /// The page's words, `|` between: a named static, so its bytes are bank
 /// 2's (`bank2.x`), not anonymous string rodata left in bank 1.
-static WORDS: [u8; 511] = *b"JUMP|PICKUP|SCALE|TWOS COMP|OFFSET|SIGNED|SIGNED 2|INC DEC|MOMENTARY|TOGGLE|\
+static WORDS: [u8; 518] = *b"JUMP|PICKUP|SCALE|TWOS COMP|OFFSET|SIGNED|SIGNED 2|INC DEC|MOMENTARY|TOGGLE|\
 ABSOLUTE \xc2\xb7 JUMPS TO THE KNOB|ABSOLUTE \xc2\xb7 WAITS TO PICK UP|ABSOLUTE \xc2\xb7 SCALES TO MEET|\
 RELATIVE \xc2\xb7 TWOS COMPLEMENT|RELATIVE \xc2\xb7 BINARY OFFSET|RELATIVE \xc2\xb7 SIGNED BIT|\
 RELATIVE \xc2\xb7 SIGNED BIT 2|RELATIVE \xc2\xb7 NRPN|BUTTON \xc2\xb7 HELD IS MAX|BUTTON \xc2\xb7 EACH PRESS FLIPS|\
 +1 = 1  -1 = 127|+1 = 65  -1 = 63|+1 = 1  -1 = 65|+1 = 65  -1 = 1|INCREMENT AND DECREMENT|\
-CC |NRPN |PRESSURE|OFF|ON|- |CHORUS |DELAY |REVERB |REEL |MASTER |RING |MIX + PLUS KEEP MAP";
+CC |NRPN |PRESSURE|OFF|ON|- |CHORUS |DELAY |REVERB |REEL |MASTER |RING |MIX + PLUS KEEP MAP|SYSEX ";
 
 /// A word's place in `WORDS`.
 // The heads and tails are reached by offset from their kind's word.
@@ -82,6 +82,7 @@ enum W {
     Master,
     Ring,
     Keep,
+    SysEx,
 }
 
 /// Word number `want`'s text in `WORDS`.
@@ -113,6 +114,7 @@ fn kind(i: Input) -> W {
         | Input::Cc14(_, t)
         | Input::Nrpn(_, NrpnKind::Absolute(t))
         | Input::Pressure(t) => take(t),
+        Input::SysEx(_) => W::Jump,
         Input::Cc(_, CcKind::Relative(e)) | Input::Nrpn(_, NrpnKind::Relative(e)) => rel(e),
         Input::Cc(_, CcKind::Button(m)) | Input::Nrpn(_, NrpnKind::Button(m)) => button(m),
         Input::Nrpn(_, NrpnKind::IncDec) => W::IncDec,
@@ -141,6 +143,11 @@ fn control(i: Input, out: &mut FmtBuf) {
         }
         Input::Pressure(_) => {
             let _ = out.write_str(word(W::Pressure as u8));
+        }
+        // Its value's byte, F0 the first: `SYSEX 8`.
+        Input::SysEx(k) => {
+            let _ = out.write_str(word(W::SysEx as u8));
+            put_num(out, k.shape().map_or(0, |s| s.at() as u8 + 2));
         }
     }
 }
@@ -194,7 +201,10 @@ pub fn text(e: &Binding, fx: FxType, live: bool, out: &mut MapText) {
         Feedback::Value => W::On,
     };
     let _ = out.echo.write_str(word(echo as u8));
-    out.fixed = matches!(e.input, Input::Nrpn(..) | Input::Pressure(_));
+    out.fixed = matches!(
+        e.input,
+        Input::Nrpn(..) | Input::Pressure(_) | Input::SysEx(_)
+    );
     out.key = settings_key(&[
         out.label.as_str().as_bytes(),
         out.word.as_str().as_bytes(),
@@ -275,6 +285,7 @@ fn code(i: Input) -> u32 {
         Input::Cc14(m, _) => (1, u32::from(m.get())),
         Input::Nrpn(n, _) => (2, u32::from(n.get())),
         Input::Pressure(_) => (3, 0),
+        Input::SysEx(k) => (4, (k.key() ^ k.key() >> 16) & 0xFFFF),
     };
     tag << 24 | n << 8 | kind(i) as u32
 }
@@ -296,6 +307,7 @@ fn takeover(i: Input) -> Option<Takeover> {
         | Input::Cc14(_, t)
         | Input::Nrpn(_, NrpnKind::Absolute(t))
         | Input::Pressure(t) => Some(t),
+        Input::SysEx(_) => Some(Takeover::Jump),
         _ => None,
     }
 }
@@ -442,7 +454,12 @@ impl UiState {
                 min: by(e.span.min, d[2]),
                 max: by(e.span.max, d[3]),
             },
-            feedback: echo(e.feedback, d[5]),
+            // Nothing can send a learned SysEx message back: no echo.
+            feedback: if matches!(e.input, Input::SysEx(_)) {
+                Feedback::Off
+            } else {
+                echo(e.feedback, d[5])
+            },
             ..e
         };
         if !same(&n, &e) {

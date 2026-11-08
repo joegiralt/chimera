@@ -370,7 +370,7 @@ fn bad_length_is_bounds() {
 fn unknown_version_skipped() {
     let _g = open();
     let old = vec![74, code(BlockRef::Filter), FilterParams::CUTOFF.0, 0, 255];
-    for v in [0, 2, 255] {
+    for v in [0, 3, 255] {
         for tail in [bindings(&[entry(0, 0, 20)])[1..].to_vec(), vec![9; 3]] {
             let mut p = vec![v];
             p.extend_from_slice(&tail);
@@ -474,10 +474,10 @@ fn closed_door_loads_empty_map() {
     snd.map = varied();
     let t = tags(&encode(&snd));
     assert!(!t.contains(&0x001F) && !t.contains(&0x001E));
-    // A version this firmware can't read loads; over a full map is
-    // refused, as open.
-    assert!(load(&file(&[(RecordTag::Bindings, vec![2])])).is_ok());
-    let long = bindings(&[entry(0x00, 0, 20); MAP_LEN + 1]);
+    // A version this firmware can't read loads; a payload past what a
+    // Part keeps (a full map of SysEx rows, #846) is refused, as open.
+    assert!(load(&file(&[(RecordTag::Bindings, vec![3])])).is_ok());
+    let long = vec![1; chimera_core::midi_map::KEPT_LEN + 1];
     assert!(load(&file(&[(RecordTag::Bindings, long)])).is_err());
 }
 
@@ -921,4 +921,45 @@ fn closed_door_records_never_crowd_out_a_slot() {
     let out = load_project(&mut Card::new(), &mut st, &mut q, go, &LoadLink::new());
     assert!(out.swap.is_some(), "{:?}", out.note);
     assert_eq!(filled(&q), filled(&p));
+}
+
+/// A SysEx entry needs version 2's key: in a version 1 record it is
+/// skipped, never a keyless binding that hears every message (#846).
+#[test]
+fn a_sysex_entry_in_version_1_is_skipped() {
+    let _g = open();
+    let (lost, s) = load(&file(&[(
+        RecordTag::Bindings,
+        bindings(&[entry(4 << 5, 4, 0)]),
+    )]))
+    .unwrap();
+    assert_eq!((lost, s.map.len()), (1, 0));
+}
+
+/// A closed door keeps a map of sixteen SysEx rows whole (#846): version
+/// 2's 12-B rows fit what a Part keeps for its save.
+#[cfg(feature = "midi-map")]
+#[test]
+fn a_closed_door_keeps_a_full_sysex_map() {
+    use chimera_core::midi_map::{KEPT_LEN, KeptMap, Mappable, MidiMap, SxKey};
+    use chimera_midi::sxmap::Shape;
+    let mut m = MidiMap::EMPTY;
+    let targets = BlockRef::ALL
+        .into_iter()
+        .flat_map(|b| (0..64).filter_map(move |p| Mappable::new(ParamAddr::new(b, ParamId(p)))));
+    for (k, t) in targets.take(MAP_LEN).enumerate() {
+        let key = SxKey::new(Shape::new(7, false, true).unwrap(), k as u32 * 31).unwrap();
+        m.learn(Input::SysEx(key), t).unwrap();
+    }
+    assert_eq!(m.len(), MAP_LEN);
+    let mut r = RecordBuf::new();
+    codec::encode(&m, &mut r);
+    assert!(
+        r.as_slice().len() <= KEPT_LEN,
+        "{} > {KEPT_LEN}",
+        r.as_slice().len()
+    );
+    let mut kept = KeptMap::EMPTY;
+    assert_eq!(kept.keep(MapRecord::Bindings, r.as_slice()), Ok(()));
+    assert_eq!(kept.get(), Some((MapRecord::Bindings, r.as_slice())));
 }

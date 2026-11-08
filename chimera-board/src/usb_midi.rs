@@ -318,6 +318,16 @@ mod door {
             DinSinks {
                 notes: notes.as_mut()?,
                 ctrl,
+                sysex: {
+                    #[cfg(feature = "midi-map")]
+                    let s = Some(
+                        &chimera_core::midi_in::SYSEX_IN[chimera_core::midi_in::Port::Usb as usize],
+                    );
+                    // No map, nobody drains a SysEx ring: none linked.
+                    #[cfg(not(feature = "midi-map"))]
+                    let s = None;
+                    s
+                },
             },
         ))
     }

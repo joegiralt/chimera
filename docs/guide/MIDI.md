@@ -8,7 +8,8 @@ A binding's control can be:
 - a **CC** (`CC 74`): a knob, fader, endless encoder or button;
 - a **14-bit CC pair** (`CC 2+34`): a fine control that sends CC *n* and then CC *n*+32;
 - an **NRPN** (`NRPN 10:3`): a sequencer lane or a high-resolution control;
-- **PRESSURE**: channel aftertouch.
+- **PRESSURE**: channel aftertouch;
+- a **SysEx message** (`SYSEX 9`): a knob on an old hardware editor or programmer that edits a synth by SysEx (see [SysEx controllers](#sysex-controllers)).
 
 ## What a binding can drive
 
@@ -53,6 +54,20 @@ The guesses are `ABSOLUTE` (a knob or fader), `RELATIVE · TWOS COMPLEMENT`, `RE
 Learn refuses, and says why, when a cell can't be mapped (`NOT MAPPABLE`), when the control comes in on another channel than the Part's (`CC 21 ON CH 3, PART ON CH 1`), when the CC is one Chimera keeps for itself (`CC 64 RESERVED`: the sustain pedal, bank select, data entry, NRPN and RPN select, and the channel mode messages) and when the map holds 16 bindings already (`MAP FULL`).
 
 Learning a relative encoder or a 14-bit control turns its **ECHO** on, so a controller with LED rings shows the value. Knobs, faders, buttons and pressure learn with ECHO off.
+
+## SysEx controllers
+
+Old programmers and hardware editors (made to edit another synth by SysEx) can drive Chimera's cells too. They send one message a parameter, with the value in one byte (or two) and often a checksum at the end.
+
+1. Touch the cell and press **MIX + SEQ**, as for any learn.
+2. Move the knob on the box slowly, so it sends at least two different values. Chimera compares two of its messages to find the byte the value sits in and maps the cell to it.
+3. Keep turning: a box that sends a 14-bit value (two bytes) shows it when the knob crosses from one coarse step to the next, and Chimera then reads both bytes. Press **MIX + SEQ** to finish.
+
+From then on, that message moves the cell from its lowest to its highest value, gliding as a CC does. A message for another parameter of the box (another address) moves nothing. SysEx bindings listen on every Part whose Sound holds them, whatever the channel, since a box addresses a synth, not a channel.
+
+On MIDI MAP a SysEx binding reads `SYSEX` and the byte its value is in, counting F0 as the first (`SYSEX 9`). It is always absolute and `JUMP`, and has no ECHO: Chimera can't send the box its message back.
+
+Messages up to 32 bytes are heard. A box that splits one value over two bytes as two 4-bit halves (nibbles) is read as a 14-bit value and won't reach the whole range.
 
 ## The MIDI MAP page
 

@@ -191,8 +191,22 @@ pub fn stem(n: &SoundName) -> ([u8; 8], usize) {
     (out, len + 4)
 }
 
-/// The largest map file: the header, five full sections, the trailer.
+/// The largest map file: the header, five full sections of 8-B rows, the
+/// trailer. SysEx rows are 12 B (#846): a map of many past it is refused
+/// (`fits`), never cut, so the buffers on the stack stay this size.
 const FILE_MAX: usize = HEADER_LEN + SECTIONS * (4 + 2 + MAP_LEN * 8) + TRAILER_LEN;
+
+/// `m`'s file fits `FILE_MAX`: its header, each non-empty section's tag,
+/// length, code and payload, and its trailer.
+pub fn fits(m: &ControllerMap) -> bool {
+    let body: usize = m
+        .sections
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| 4 + 1 + codec::encoded_len(s))
+        .sum();
+    HEADER_LEN + body + TRAILER_LEN <= FILE_MAX
+}
 
 /// Side `side` of stem `st`.
 fn side_file(st: &[u8], side: Side) -> Option<FileName> {
@@ -308,6 +322,10 @@ pub fn save(
     n: &SoundName,
     m: &ControllerMap,
 ) -> Result<(), SaveError> {
+    // Past the file: refused before the card is touched (#846).
+    if !fits(m) {
+        return Err(SaveError::File(FileError::Bounds));
+    }
     s.make_dir(r.volume(), Dir::Chimera)?;
     s.make_dir(r.volume(), Dir::Maps)?;
     let (st, len) = stem(n);
@@ -339,7 +357,7 @@ fn write_side(
 ) -> Result<(), SaveError> {
     let mut b = [0u8; FILE_MAX];
     let mut at = 0;
-    put(&mut b, &mut at, &h.encode());
+    let mut ok = put(&mut b, &mut at, &h.encode());
     for (i, sec) in m.sections.iter().enumerate() {
         if sec.is_empty() {
             continue;
@@ -348,24 +366,31 @@ fn write_side(
         p.u8(i as u8);
         codec::encode(sec, &mut p);
         let p = p.as_slice();
-        put(&mut b, &mut at, &RecordTag::MapSection.code().to_le_bytes());
-        put(&mut b, &mut at, &(p.len() as u16).to_le_bytes());
-        put(&mut b, &mut at, p);
+        ok &= put(&mut b, &mut at, &RecordTag::MapSection.code().to_le_bytes());
+        ok &= put(&mut b, &mut at, &(p.len() as u16).to_le_bytes());
+        ok &= put(&mut b, &mut at, p);
     }
     let mut crc = Crc32::new();
     crc.update(b.get(..at).unwrap_or_default());
-    put(&mut b, &mut at, &crc.finish().to_le_bytes());
+    ok &= put(&mut b, &mut at, &crc.finish().to_le_bytes());
+    if !ok {
+        return Err(SaveError::File(FileError::Bounds));
+    }
     let f = side_file(st, side).ok_or(StoreError::Io)?;
     write_small(s, r.volume(), f, b.get(..at).unwrap_or_default())?;
     Ok(())
 }
 
-/// `x` into `b` at `at`, which moves past it; nothing past `b`'s end
-/// (`FILE_MAX` holds the largest map).
-fn put(b: &mut [u8], at: &mut usize, x: &[u8]) {
-    if let Some(to) = b.get_mut(*at..*at + x.len()) {
-        to.copy_from_slice(x);
-        *at += x.len();
+/// `x` into `b` at `at`, which moves past it; `false`, nothing written,
+/// past `b`'s end (`fits` refuses such a map first).
+fn put(b: &mut [u8], at: &mut usize, x: &[u8]) -> bool {
+    match b.get_mut(*at..*at + x.len()) {
+        Some(to) => {
+            to.copy_from_slice(x);
+            *at += x.len();
+            true
+        }
+        None => false,
     }
 }
 

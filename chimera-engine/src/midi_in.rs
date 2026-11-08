@@ -127,6 +127,8 @@ pub enum CtrlEvent {
     },
     /// Active Sensing armed, then silent past the timeout.
     SensingLost,
+    /// A SysEx body waits in the port's `SYSEX_IN` (#846).
+    SysEx,
 }
 
 const T_CC: u32 = 0;
@@ -137,6 +139,7 @@ const T_PROGRAM: u32 = 4;
 const T_PRESSURE: u32 = 5;
 const T_IDENTITY: u32 = 6;
 const T_LOST: u32 = 7;
+const T_SYSEX: u32 = 8;
 
 fn sel_bits(s: Sel) -> u32 {
     match s {
@@ -185,6 +188,7 @@ impl CtrlEvent {
             }
             CtrlEvent::Identity { dev } => (T_IDENTITY, 0, u32::from(dev.get())),
             CtrlEvent::SensingLost => (T_LOST, 0, 0),
+            CtrlEvent::SysEx => (T_SYSEX, 0, 0),
         };
         [tag << 4 | u32::from(ch), pay]
     }
@@ -221,6 +225,7 @@ impl CtrlEvent {
             T_PRESSURE => ctl(Ctl::Pressure(u7(p)?)),
             T_IDENTITY => Some(CtrlEvent::Identity { dev: u7(p)? }),
             T_LOST => Some(CtrlEvent::SensingLost),
+            T_SYSEX => Some(CtrlEvent::SysEx),
             _ => None,
         }
     }
@@ -436,7 +441,84 @@ impl Default for PartChannels {
 pub trait Sinks {
     fn note(&mut self, e: InEvent) -> bool;
     fn ctrl(&mut self, e: CtrlEvent) -> bool;
+    /// A manufacturer's SysEx body for the UI's SysEx bindings (#846);
+    /// a sink that keeps none takes it and drops it.
+    fn sysex(&mut self, _body: &[u8]) -> bool {
+        true
+    }
 }
+
+/// The longest SysEx body the UI hears: a parameter message, not a dump.
+pub const SX_LEN: usize = chimera_midi::sxmap::MAX_LEN;
+/// Bodies a port holds for the UI: a lap's worth of an editor's knob.
+pub const SX_SLOTS: usize = 4;
+const _: () = assert!(
+    SX_SLOTS.is_power_of_two(),
+    "`SxRing` indexes by `% SX_SLOTS`"
+);
+
+/// One port's SysEx bodies for the UI, as `CtrlRing`: one producer, one
+/// consumer, a slot's length then its bytes, published by `tail`. Full,
+/// the newest is dropped.
+pub struct SxRing {
+    slots: [[AtomicU32; 1 + SX_LEN / 4]; SX_SLOTS],
+    head: AtomicU32,
+    tail: AtomicU32,
+}
+
+impl Default for SxRing {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SxRing {
+    pub const fn new() -> Self {
+        Self {
+            slots: [const { [const { AtomicU32::new(0) }; 1 + SX_LEN / 4] }; SX_SLOTS],
+            head: AtomicU32::new(0),
+            tail: AtomicU32::new(0),
+        }
+    }
+
+    /// Producer side only: `false` if full or longer than `SX_LEN`.
+    pub fn push(&self, body: &[u8]) -> bool {
+        let tail = self.tail.load(Ordering::Relaxed);
+        if body.len() > SX_LEN
+            || tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= SX_SLOTS
+        {
+            return false;
+        }
+        let slot = &self.slots[tail as usize % SX_SLOTS];
+        slot[0].store(body.len() as u32, Ordering::Relaxed);
+        for (w, c) in slot[1..].iter().zip(body.chunks(4)) {
+            let mut b = [0; 4];
+            b[..c.len()].copy_from_slice(c);
+            w.store(u32::from_le_bytes(b), Ordering::Relaxed);
+        }
+        self.tail.store(tail.wrapping_add(1), Ordering::Release);
+        true
+    }
+
+    /// Consumer side only: the oldest body into `out`, its length.
+    pub fn pop(&self, out: &mut [u8; SX_LEN]) -> Option<usize> {
+        let head = self.head.load(Ordering::Relaxed);
+        if head == self.tail.load(Ordering::Acquire) {
+            return None;
+        }
+        let slot = &self.slots[head as usize % SX_SLOTS];
+        let n = (slot[0].load(Ordering::Relaxed) as usize).min(SX_LEN);
+        for (c, w) in out.chunks_mut(4).zip(&slot[1..]) {
+            c.copy_from_slice(&w.load(Ordering::Relaxed).to_le_bytes());
+        }
+        self.head.store(head.wrapping_add(1), Ordering::Release);
+        Some(n)
+    }
+}
+
+/// Each port's SysEx bodies, by `Port`: global, as `played`'s; the UI
+/// drains a port's on its `CtrlEvent::SysEx`.
+pub static SYSEX_IN: [SxRing; Port::COUNT] = [SxRing::new(), SxRing::new()];
 
 /// What a pipe lost or ignored.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -720,6 +802,12 @@ impl DinPipe {
                         && let Some(dev) = s.bytes().get(1).and_then(|&d| U7::new(d))
                     {
                         sink.ctrl(CtrlEvent::Identity { dev });
+                    } else if !matches!(s.bytes().first(), Some(0x7E | 0x7F) | None)
+                        && s.bytes().len() <= SX_LEN
+                    {
+                        // A manufacturer's message: a SysEx binding's, maybe;
+                        // a longer one (a dump) is none's.
+                        sink.sysex(s.bytes());
                     }
                 }
                 Parsed::Event(Event::Common(_) | Event::Fault(_)) => {}
@@ -791,6 +879,9 @@ impl DinPipe {
 pub struct DinSinks<'a, 'q, const N: usize = CTRL_RING_LEN> {
     pub notes: &'a mut NoteProducer<'q>,
     pub ctrl: &'a CtrlRing<N>,
+    /// The port's `SYSEX_IN` ring, where a UI drains it (`midi-map`);
+    /// `None`, a manufacturer's SysEx is dropped (#846).
+    pub sysex: Option<&'a SxRing>,
 }
 
 impl<const N: usize> Sinks for DinSinks<'_, '_, N> {
@@ -803,6 +894,15 @@ impl<const N: usize> Sinks for DinSinks<'_, '_, N> {
     fn ctrl(&mut self, e: CtrlEvent) -> bool {
         self.ctrl.push(e)
     }
+
+    /// The marker first: refused, no body waits that no marker drains.
+    #[inline]
+    fn sysex(&mut self, body: &[u8]) -> bool {
+        let Some(sx) = self.sysex else {
+            return true;
+        };
+        self.ctrl.push(CtrlEvent::SysEx) && sx.push(body)
+    }
 }
 
 impl<'q, const N: usize> DinSinks<'_, 'q, N> {
@@ -812,6 +912,7 @@ impl<'q, const N: usize> DinSinks<'_, 'q, N> {
         PipeSinks {
             notes: &mut *self.notes,
             ctrl: self.ctrl.tx(),
+            sysex: self.sysex,
         }
     }
 }
@@ -822,6 +923,7 @@ impl<'q, const N: usize> DinSinks<'_, 'q, N> {
 struct PipeSinks<'a, 'q> {
     notes: &'a mut NoteProducer<'q>,
     ctrl: RingTx<'a>,
+    sysex: Option<&'a SxRing>,
 }
 
 impl Sinks for PipeSinks<'_, '_> {
@@ -833,6 +935,15 @@ impl Sinks for PipeSinks<'_, '_> {
     #[inline]
     fn ctrl(&mut self, e: CtrlEvent) -> bool {
         self.ctrl.push(e)
+    }
+
+    /// `DinSinks::sysex`: the marker first, then the body.
+    #[inline]
+    fn sysex(&mut self, body: &[u8]) -> bool {
+        let Some(sx) = self.sysex else {
+            return true;
+        };
+        self.ctrl.push(CtrlEvent::SysEx) && sx.push(body)
     }
 }
 
@@ -1212,6 +1323,12 @@ impl<S: Sinks + ?Sized> Counted<'_, S> {
 
     fn ctrl(&mut self, e: CtrlEvent) {
         if !self.out.ctrl(e) {
+            self.stats.ctrl_refused = self.stats.ctrl_refused.saturating_add(1);
+        }
+    }
+
+    fn sysex(&mut self, body: &[u8]) {
+        if !self.out.sysex(body) {
             self.stats.ctrl_refused = self.stats.ctrl_refused.saturating_add(1);
         }
     }

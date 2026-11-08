@@ -351,3 +351,72 @@ fn a_side_failing_its_checksum_is_passed_over() {
     assert_eq!(gone, Err(LoadError::Missing));
     assert_eq!(back, one, "untouched");
 }
+
+/// A SysEx row on `t`, its key `k` (#846).
+#[cfg(feature = "midi-map")]
+fn sx(k: u32, t: Mappable) -> Binding {
+    use chimera_core::midi_map::SxKey;
+    use chimera_midi::sxmap::Shape;
+    let key = SxKey::new(Shape::new(7, false, true).unwrap(), k).unwrap();
+    let mut m = MidiMap::EMPTY;
+    m.learn(Input::SysEx(key), t).unwrap();
+    m.entries()[0]
+}
+
+/// Up to `n` SysEx rows: each engine's section in turn, full.
+#[cfg(feature = "midi-map")]
+fn sysex_map(n: usize) -> ControllerMap {
+    let mut m = ControllerMap::EMPTY;
+    let mut k = 0;
+    let mut rows = |m: &mut ControllerMap, e: Option<EngineType>, on: EngineType| {
+        let ts: Vec<_> = BlockRef::ALL
+            .into_iter()
+            .flat_map(|b| (0..64).filter_map(move |p| Mappable::new(ParamAddr::new(b, ParamId(p)))))
+            .filter(|t| t.engine() == e)
+            .take(MAP_LEN)
+            .collect();
+        let mut own = Vec::new();
+        for t in ts {
+            if k == n {
+                break;
+            }
+            k += 1;
+            own.push(sx(k as u32 * 7919, t));
+        }
+        m.absorb(&map(&own), on).unwrap();
+    };
+    // Each engine's section full (a layer holds at most `MAP_LEN`: the
+    // shared section stays empty).
+    for e in EngineType::ALL {
+        rows(&mut m, Some(e), e);
+    }
+    m
+}
+
+/// A map whose SysEx rows don't fit its file is refused, the card's map
+/// as it was; the largest that fits saves and loads back whole.
+#[cfg(feature = "midi-map")]
+#[test]
+fn a_sysex_map_past_the_file_is_refused_and_the_largest_round_trips() {
+    let _g = open();
+    let mut s = MemStore::new(1);
+    let first = saved(&[cc(21, cutoff())], EngineType::Algo);
+    on_card(&mut s, |s, r| ctl::save(s, r, &name("BOX"), &first)).unwrap();
+    let full = sysex_map(usize::MAX);
+    assert!(!ctl::fits(&full));
+    let got = on_card(&mut s, |s, r| ctl::save(s, r, &name("BOX"), &full));
+    assert_eq!(got, Err(SaveError::File(FileError::Bounds)));
+    let mut back = ControllerMap::EMPTY;
+    on_card(&mut s, |s, r| ctl::load(s, r, &name("BOX"), &mut back)).unwrap();
+    assert_eq!(back, first, "the card's map untouched");
+    // The largest that fits.
+    let n = (1..200)
+        .take_while(|&n| ctl::fits(&sysex_map(n)))
+        .last()
+        .unwrap();
+    let big = sysex_map(n);
+    on_card(&mut s, |s, r| ctl::save(s, r, &name("BOX"), &big)).unwrap();
+    let mut back = ControllerMap::EMPTY;
+    let lost = on_card(&mut s, |s, r| ctl::load(s, r, &name("BOX"), &mut back)).unwrap();
+    assert_eq!((lost, back), (0, big), "{n} rows");
+}

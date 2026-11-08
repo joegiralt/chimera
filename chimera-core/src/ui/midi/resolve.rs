@@ -114,6 +114,11 @@ pub fn resolve(b: &Binding, rt: &mut BindRuntime, c: &Ctl, now: Place) -> Option
         (Input::Pressure(t), Ctl::Pressure(v)) => {
             absolute(rt, t, Place::from_u7_replicated(v), now)
         }
+        // A matched SysEx message's value, 14 bits (`UiState::cc_sysex`).
+        (Input::SysEx(_), Ctl::Data { value, .. }) => {
+            let p = place_of(ValueLaw::Place14, value, 0, |_| None)?;
+            absolute(rt, Takeover::Jump, p, now)
+        }
         _ => None,
     }
 }

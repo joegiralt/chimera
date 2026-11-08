@@ -24,7 +24,7 @@ boot-waves = ["chimera-engine/boot-waves"]
 default = ["orbit", "card-put", "tape", "midi-map", "push-encoders", "tuning"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
 # firmware leaves it out: FLASH (#507).
-midi-map = ["chimera-engine/controller-maps"]
+midi-map = ["chimera-engine/controller-maps", "chimera-engine/sysex-map"]
 # Each Part's tuning tables (ADR 0240): off in the bench builds, for AXI.
 tuning = ["chimera-engine/tuning"]
 # The TAPE engine's DSP (ADR 0132): the firmware builds without it.

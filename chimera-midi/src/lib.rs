@@ -9,6 +9,7 @@ pub mod out;
 pub mod rel;
 pub mod sense;
 pub mod stream;
+pub mod sxmap;
 pub mod sysex;
 pub mod take;
 pub mod uac;

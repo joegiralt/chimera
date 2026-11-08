@@ -1,7 +1,10 @@
 //! A Sound's map on the card (MIDI phase 1 spec § 6.4), bank 2's behind
 //! `MidiDoor`. `Bindings` (0x001F): a version byte, then 8 B an entry,
 //! `[tag:3 | kind:5] [number hi] [number lo] [block] [param] [min] [max]
-//! [flags: bit 0 echo]`. `MidiMap` (0x001E), read only: 5 B an entry,
+//! [flags: bit 0 echo]`; version 2, written only for a map with a SysEx
+//! entry (#846, ADR 0241), adds the entry's SysEx key, 4 B LE (0 for the
+//! rest): 12 B an entry, a SysEx entry `[4 << 5 | JUMP] [shape] [0]`.
+//! `MidiMap` (0x001E), read only: 5 B an entry,
 //! `(cc, block, param, min, max)`, each CC as JUMP without echo.
 //!
 //! An entry this firmware can't hold (an unknown tag or kind, a kind its
@@ -16,10 +19,11 @@ use chimera_midi::value::{U7, U14};
 
 use super::{
     Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, MAP_LEN, Mappable, MidiMap,
-    NrpnKind, Span,
+    NrpnKind, Span, SxKey,
 };
 use crate::storage::RecordBuf;
 use crate::storage::{addr_code, addr_of};
+use chimera_midi::sxmap::Shape;
 
 /// Which of a Sound's two map records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +40,9 @@ pub struct Bounds;
 
 const VERSION: u8 = 1;
 const ENTRY_LEN: usize = 8;
+/// With SysEx keys.
+const VERSION_SX: u8 = 2;
+const ENTRY_SX_LEN: usize = 12;
 const LEGACY_LEN: usize = 5;
 const ECHO: u8 = 1;
 
@@ -44,6 +51,7 @@ const TAG_CC: u8 = 0;
 const TAG_CC14: u8 = 1;
 const TAG_NRPN: u8 = 2;
 const TAG_PRESSURE: u8 = 3;
+const TAG_SYSEX: u8 = 4;
 
 /// How a control is read, whatever the control.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -92,14 +100,21 @@ fn input_bytes(input: Input) -> [u8; 3] {
             (TAG_NRPN, k, n.msb().get(), n.lsb().get())
         }
         Input::Pressure(t) => (TAG_PRESSURE, Kind::Absolute(t), 0, 0),
+        Input::SysEx(k) => (
+            TAG_SYSEX,
+            Kind::Absolute(Takeover::Jump),
+            k.shape().map_or(0, Shape::bits),
+            0,
+        ),
     };
     // Every kind is in the table.
     let code = KINDS.iter().position(|&x| x == kind).unwrap_or(0) as u8;
     [tag << 5 | code, hi, lo]
 }
 
-/// The `Input` these bytes name, if this firmware has it.
-fn input_of(tag_kind: u8, hi: u8, lo: u8) -> Option<Input> {
+/// The `Input` these bytes name, if this firmware has it; `key` is a
+/// version 2 entry's SysEx key, and a SysEx entry without one is none.
+fn input_of(tag_kind: u8, hi: u8, lo: u8, key: Option<u32>) -> Option<Input> {
     let kind = *KINDS.get(usize::from(tag_kind & 0x1F))?;
     Some(match (tag_kind >> 5, kind) {
         (TAG_CC, k) if hi == 0 => {
@@ -125,6 +140,9 @@ fn input_of(tag_kind: u8, hi: u8, lo: u8) -> Option<Input> {
             )
         }
         (TAG_PRESSURE, Kind::Absolute(t)) if hi == 0 && lo == 0 => Input::Pressure(t),
+        (TAG_SYSEX, Kind::Absolute(Takeover::Jump)) if lo == 0 => {
+            Input::SysEx(SxKey::new(Shape::from_bits(hi)?, key?)?)
+        }
         _ => return None,
     })
 }
@@ -149,7 +167,12 @@ pub fn decode(which: MapRecord, p: &[u8], m: Option<&mut MidiMap>) -> Result<u16
     let (entries, n) = match which {
         MapRecord::Bindings => {
             let (&v, rest) = p.split_first().ok_or(Bounds)?;
-            if v != VERSION {
+            let n = if v == VERSION_SX {
+                ENTRY_SX_LEN
+            } else {
+                ENTRY_LEN
+            };
+            if v != VERSION && v != VERSION_SX {
                 return Ok(match m {
                     Some(m) => {
                         *m = MidiMap::EMPTY;
@@ -158,10 +181,10 @@ pub fn decode(which: MapRecord, p: &[u8], m: Option<&mut MidiMap>) -> Result<u16
                     None => 0,
                 });
             }
-            if !rest.len().is_multiple_of(ENTRY_LEN) {
+            if !rest.len().is_multiple_of(n) {
                 return Err(Bounds);
             }
-            (rest, ENTRY_LEN)
+            (rest, n)
         }
         MapRecord::Legacy if p.len().is_multiple_of(LEGACY_LEN) => (p, LEGACY_LEN),
         MapRecord::Legacy => return Err(Bounds),
@@ -177,7 +200,13 @@ pub fn decode(which: MapRecord, p: &[u8], m: Option<&mut MidiMap>) -> Result<u16
     for e in entries.chunks_exact(n) {
         let (input, rest, feedback) = match which {
             MapRecord::Bindings => (
-                input_of(e[0], e[1], e[2]),
+                input_of(
+                    e[0],
+                    e[1],
+                    e[2],
+                    e.get(8..12)
+                        .map(|k| u32::from_le_bytes([k[0], k[1], k[2], k[3]])),
+                ),
                 &e[3..7],
                 if e[7] & ECHO != 0 {
                     Feedback::Value
@@ -208,13 +237,29 @@ pub fn decode(which: MapRecord, p: &[u8], m: Option<&mut MidiMap>) -> Result<u16
     Ok(lost)
 }
 
+/// The bytes `encode` writes for `m`: none for an empty map.
+pub fn encoded_len(m: &MidiMap) -> usize {
+    if m.is_empty() {
+        return 0;
+    }
+    let sx = m
+        .entries()
+        .iter()
+        .any(|e| matches!(e.input, Input::SysEx(_)));
+    1 + m.len() * if sx { ENTRY_SX_LEN } else { ENTRY_LEN }
+}
+
 /// `m` as a `Bindings` payload into `r`; nothing for an empty map.
 #[inline(never)]
 pub fn encode(m: &MidiMap, r: &mut RecordBuf) {
     if m.is_empty() {
         return;
     }
-    r.u8(VERSION);
+    let sx = m
+        .entries()
+        .iter()
+        .any(|e| matches!(e.input, Input::SysEx(_)));
+    r.u8(if sx { VERSION_SX } else { VERSION });
     for e in m.entries() {
         r.bytes(&input_bytes(e.input));
         r.bytes(&addr_code(e.target.addr()));
@@ -225,5 +270,12 @@ pub fn encode(m: &MidiMap, r: &mut RecordBuf) {
         } else {
             0
         });
+        if sx {
+            let k = match e.input {
+                Input::SysEx(k) => k.key(),
+                _ => 0,
+            };
+            r.bytes(&k.to_le_bytes());
+        }
     }
 }

@@ -62,6 +62,12 @@ pub struct Layers {
     job: Option<CtlJob>,
     /// The card last worked on: another reads every layer again.
     vol: Option<VolumeId>,
+    /// A map read from the card (`ctl_work_in`): here, not on the stack,
+    /// where a door entry's depth is charged to every call through a
+    /// pointer (`stack_depth.py`); SysEx keys made its rows 12 B (#846).
+    /// With the map only: a bench build's slot is AXI's, held to its margin.
+    #[cfg(feature = "midi-map")]
+    scratch: ctl::ControllerMap,
 }
 
 /// Nothing read, built at `p`: a few stores, not a static's image (ADR
@@ -93,6 +99,8 @@ pub(super) unsafe fn rest_at(p: *mut Layers) {
         addr_of_mut!((*p).more).write(false);
         addr_of_mut!((*p).job).write(None);
         addr_of_mut!((*p).vol).write(None);
+        #[cfg(feature = "midi-map")]
+        ctl::empty_at(addr_of_mut!((*p).scratch));
     }
 }
 
@@ -196,19 +204,16 @@ impl UiState {
             if self.cc.ui().ctl.read[p.index()] == Some(want) {
                 continue;
             }
-            let mut m = core::mem::MaybeUninit::uninit();
-            // SAFETY: `empty_at` writes the whole map.
-            let m = unsafe {
-                ctl::empty_at(m.as_mut_ptr());
-                m.assume_init_mut()
-            };
+            let m = &mut self.cc.ui().ctl.scratch;
+            // SAFETY: `empty_at` writes the whole map over the last read.
+            unsafe { ctl::empty_at(m) };
             let read = want.name.map(|n| ctl::load(s, r, &n, m));
             if let Some(Err(LoadError::Store(StoreError::Busy))) = read {
                 // The streams hold the card: the next pass.
                 return;
             }
             let c = &mut self.cc.ui().ctl;
-            let layer = m.layer(want.engine).0;
+            let layer = c.scratch.layer(want.engine).0;
             c.read[p.index()] = Some(want);
             if c.layers[p.index()] != layer {
                 c.layers[p.index()] = layer;
@@ -235,61 +240,22 @@ impl UiState {
         };
         let Some(name) = name else { return };
         let engine = self.project.part(p).sound.params.engine();
-        // The map there, else (a save under a new name) the Part's own.
-        let mut m = core::mem::MaybeUninit::uninit();
-        // SAFETY: `empty_at` writes the whole map.
-        let m = unsafe {
-            ctl::empty_at(m.as_mut_ptr());
-            m.assume_init_mut()
-        };
         let mut from = [Some(name), self.project.controller(p)];
         if let CtlJob::Drop(..) = j {
             from[1] = None;
         }
-        let mut found = false;
-        for n in from.into_iter().flatten() {
-            match ctl::load(s, r, &n, m) {
-                Ok(_) => {
-                    found = true;
-                    break;
-                }
-                Err(LoadError::Missing) => {}
-                Err(LoadError::Store(StoreError::Busy)) => {
-                    self.cc.ui().ctl.job = Some(j);
-                    return;
-                }
-                Err(e) => return self.error(Line::new(load_words(e))),
-            }
-        }
-        // A row's map gone from the card (or its stem another map's):
-        // nothing to drop it from, and nothing written in its place.
-        if let (CtlJob::Drop(..), false) = (j, found) {
-            return self.error(Line::new(load_words(LoadError::Missing)));
-        }
         let own = self.project.part(p).sound.map;
-        let edited = match j {
-            CtlJob::Save(..) => m.absorb(&own, engine),
-            CtlJob::Drop(_, b) => {
-                m.drop(&b, engine);
-                Ok(())
-            }
-        };
-        if edited == Err(MapFull) {
-            return self.error(Line::new(word(W::Full)));
-        }
-        match ctl::save(s, r, &name, m) {
+        // The map works in the MIDI UI's scratch, not on the stack: this
+        // runs under `ctl_work_in`, a door entry whose depth every call
+        // through a pointer is charged (`stack_depth.py`).
+        let m = &mut self.cc.ui().ctl.scratch;
+        match job_on(s, r, j, name, from, &own, engine, m) {
             Ok(()) => {}
-            Err(SaveError::Store(StoreError::Busy)) => {
+            Err(JobErr::Busy) => {
                 self.cc.ui().ctl.job = Some(j);
                 return;
             }
-            // Another map holds the name's stem: it stays.
-            Err(SaveError::File(FileError::BadName)) => {
-                return self.error(Line::new(word(W::Taken)));
-            }
-            Err(SaveError::Store(e)) => return self.error(Line::new(e.message())),
-            Err(SaveError::File(e)) => return self.error(Line::new(e.message())),
-            Err(SaveError::Damaged) => return self.error(Line::new(StoreError::Corrupt.message())),
+            Err(JobErr::Say(l)) => return self.error(l),
         }
         let c = &mut self.cc.ui().ctl;
         c.saves = c.saves.wrapping_add(1);
@@ -361,5 +327,69 @@ fn load_words(e: LoadError) -> &'static str {
         LoadError::Store(e) => e.message(),
         LoadError::File(e) => e.message(),
         LoadError::Missing | LoadError::Busy => StoreError::NotFound.message(),
+    }
+}
+
+/// Why a map job stopped: the card busy (it runs again), or words to say.
+#[cfg(feature = "midi-map")]
+enum JobErr {
+    Busy,
+    Say(Line),
+}
+
+/// Job `j` on `m`: the map read from the first of `from` the card has
+/// (else, a save under a new name, the Part's own), `own` absorbed or a
+/// row dropped, and the map saved as `name`.
+#[cfg(feature = "midi-map")]
+#[allow(clippy::too_many_arguments)]
+fn job_on(
+    s: &mut dyn Store,
+    r: &Ready,
+    j: CtlJob,
+    name: SoundName,
+    from: [Option<SoundName>; 2],
+    own: &MidiMap,
+    engine: EngineType,
+    m: &mut ctl::ControllerMap,
+) -> Result<(), JobErr> {
+    // SAFETY: `empty_at` writes the whole map over the last one.
+    unsafe { ctl::empty_at(m) };
+    let mut found = false;
+    for n in from.into_iter().flatten() {
+        match ctl::load(s, r, &n, m) {
+            Ok(_) => {
+                found = true;
+                break;
+            }
+            Err(LoadError::Missing) => {}
+            Err(LoadError::Store(StoreError::Busy)) => return Err(JobErr::Busy),
+            Err(e) => return Err(JobErr::Say(Line::new(load_words(e)))),
+        }
+    }
+    // A row's map gone from the card (or its stem another map's):
+    // nothing to drop it from, and nothing written in its place.
+    if let (CtlJob::Drop(..), false) = (j, found) {
+        return Err(JobErr::Say(Line::new(load_words(LoadError::Missing))));
+    }
+    let edited = match j {
+        CtlJob::Save(..) => m.absorb(own, engine),
+        CtlJob::Drop(_, b) => {
+            m.drop(&b, engine);
+            Ok(())
+        }
+    };
+    if edited == Err(MapFull) {
+        return Err(JobErr::Say(Line::new(word(W::Full))));
+    }
+    match ctl::save(s, r, &name, m) {
+        Ok(()) => Ok(()),
+        Err(SaveError::Store(StoreError::Busy)) => Err(JobErr::Busy),
+        // Another map holds the name's stem: it stays.
+        Err(SaveError::File(FileError::BadName)) => Err(JobErr::Say(Line::new(word(W::Taken)))),
+        // Past the file (SysEx rows are 12 B): full, as a full layer is.
+        Err(SaveError::File(FileError::Bounds)) => Err(JobErr::Say(Line::new(word(W::Full)))),
+        Err(SaveError::Store(e)) => Err(JobErr::Say(Line::new(e.message()))),
+        Err(SaveError::File(e)) => Err(JobErr::Say(Line::new(e.message()))),
+        Err(SaveError::Damaged) => Err(JobErr::Say(Line::new(StoreError::Corrupt.message()))),
     }
 }
