@@ -10,7 +10,11 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 pub const DOOR_MAGIC: u32 = 0xB2D0_0001;
-pub const TABLE_LEN: usize = 4096;
+/// The door's data table: Phase 1's test payload (a `.bk2` with data
+/// behind the door, plan 2026-10-13). The seal and CRC prove every byte of
+/// the image; the table proves only that data reads through the door, and
+/// its first and last bytes do that at any length (ADR 0251).
+pub const TABLE_LEN: usize = 16;
 /// `probe(x)` is `x + PROBE_ADDS`.
 pub const PROBE_ADDS: u32 = 42;
 /// Where the link puts the door: right after the header (`bank2.x` asserts

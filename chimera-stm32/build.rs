@@ -221,7 +221,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The NRPN address space (ADR 0216): `chimera_engine::nrpn`, text and
     // rodata, linked by the MIDI UI's canonical NRPNs.
     // And the MIDI pipe (Phase 1, `MidiDoor`): `DinPipe`, its counting sink
-    // (`Counted`), USB's slot and held keys (`UsbSlot`, `Held`) and the `chimera_midi` stream, controller, sensing and
+    // (`Counted`), the sinks it runs on (`PipeSinks`), USB's slot and held keys (`UsbSlot`, `Held`) and the `chimera_midi` stream, controller, sensing and
     // SysEx layers it runs. And the map's codec (`midi_map::codec`), the
     // controller maps beside it (`midi_map::ctl`, ADR 0226), and
     // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
@@ -232,6 +232,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*8midi_map3ctl* .rodata.*8midi_map3ctl*);
     *(.text.*14chimera_engine7midi_in*7DinPipe* .rodata.*14chimera_engine7midi_in*7DinPipe*);
     *(.text.*14chimera_engine7midi_in*7Counted* .rodata.*14chimera_engine7midi_in*7Counted*);
+    *(.text.*14chimera_engine7midi_in*9PipeSinks* .rodata.*14chimera_engine7midi_in*9PipeSinks*);
     *(.text.*14chimera_engine7midi_in*7UsbSlot* .rodata.*14chimera_engine7midi_in*7UsbSlot*);
     *(.text.*14chimera_engine7midi_in*4Held* .rodata.*14chimera_engine7midi_in*4Held*);
     *(.text.*12chimera_midi6stream* .rodata.*12chimera_midi6stream*);

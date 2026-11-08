@@ -270,9 +270,19 @@ impl Keymap {
     }
 }
 
-/// `Keymap::LINEAR`, named: a promoted constant's image would be bank 1's
-/// anonymous rodata, a static's is this module's (bank 2).
-static LINEAR: Keymap = Keymap::LINEAR;
+/// The degree `key` plays under `map`; `None` is `Keymap::LINEAR`, read
+/// from its fields' values, so no image of it is kept (ADR 0251).
+// `degree_in`'s `None` arm is `degree` on these.
+const _: () =
+    assert!(Keymap::LINEAR.size == 0 && Keymap::LINEAR.first == 0 && Keymap::LINEAR.last == 127);
+
+#[inline(always)]
+fn degree_in(map: Option<&Keymap>, key: u8, steps: usize) -> Option<i32> {
+    match map {
+        Some(k) => k.degree(key, steps),
+        None => Some(i32::from(key) - i32::from(Keymap::LINEAR.middle)),
+    }
+}
 
 /// Each key's pitch offset from 12-TET in semitones: what it adds to its
 /// note number. A key `map` leaves unmapped or out of its range stays
@@ -286,15 +296,18 @@ pub fn offsets(s: &Scale, map: Option<&Keymap>) -> [f32; 128] {
 
 /// `offsets` into `out`: no table on the caller's stack.
 pub fn offsets_into(s: &Scale, map: Option<&Keymap>, out: &mut [f32; 128]) {
-    let k = map.unwrap_or(&LINEAR);
-    let at_ref = k
-        .degree(k.reference, s.len())
-        .unwrap_or(i32::from(k.reference) - i32::from(k.middle));
+    const L: Keymap = Keymap::LINEAR;
+    let (reference, middle, reference_st) = match map {
+        Some(k) => (k.reference, k.middle, k.reference_st),
+        None => (L.reference, L.middle, L.reference_st),
+    };
+    let at_ref =
+        degree_in(map, reference, s.len()).unwrap_or(i32::from(reference) - i32::from(middle));
     let ref_cents = s.cents(at_ref);
     for (key, o) in out.iter_mut().enumerate() {
-        *o = match k.degree(key as u8, s.len()) {
+        *o = match degree_in(map, key as u8, s.len()) {
             Some(d) => {
-                let st = k.reference_st + (s.cents(d) - ref_cents) / 100.0;
+                let st = reference_st + (s.cents(d) - ref_cents) / 100.0;
                 if st.is_finite() {
                     within(st, 0.0, 127.0) - key as f32
                 } else {

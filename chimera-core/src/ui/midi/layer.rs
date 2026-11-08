@@ -64,17 +64,37 @@ pub struct Layers {
     vol: Option<VolumeId>,
 }
 
-/// Nothing read: a named static, so its image is bank 2's.
-pub(super) static REST: Layers = Layers {
-    layers: [MidiMap::EMPTY; LAYERS],
-    read: [None; MAX_PARTS],
-    saves: 0,
-    list: [None; MAX_MAPS],
-    listed: false,
-    more: false,
-    job: None,
-    vol: None,
-};
+/// Nothing read, built at `p`: a few stores, not a static's image (ADR
+/// 0251).
+///
+/// # Safety
+/// `p` is valid for a write of `Layers`.
+#[inline(never)]
+pub(super) unsafe fn rest_at(p: *mut Layers) {
+    use core::ptr::addr_of_mut;
+    // SAFETY: each field of the caller's `*p`, written whole.
+    unsafe {
+        let maps = addr_of_mut!((*p).layers).cast::<MidiMap>();
+        for i in 0..size_of::<[MidiMap; LAYERS]>() / size_of::<MidiMap>() {
+            MidiMap::empty_at(maps.add(i));
+        }
+        super::fill(
+            addr_of_mut!((*p).read).cast::<Option<Read>>(),
+            MAX_PARTS,
+            None,
+        );
+        addr_of_mut!((*p).saves).write(0);
+        super::fill(
+            addr_of_mut!((*p).list).cast::<Option<SoundName>>(),
+            MAX_MAPS,
+            None,
+        );
+        addr_of_mut!((*p).listed).write(false);
+        addr_of_mut!((*p).more).write(false);
+        addr_of_mut!((*p).job).write(None);
+        addr_of_mut!((*p).vol).write(None);
+    }
+}
 
 /// The words a save or a delete says, `|` between: a named static, so its
 /// bytes are bank 2's.
@@ -176,8 +196,13 @@ impl UiState {
             if self.cc.ui().ctl.read[p.index()] == Some(want) {
                 continue;
             }
-            let mut m = ctl::EMPTY;
-            let read = want.name.map(|n| ctl::load(s, r, &n, &mut m));
+            let mut m = core::mem::MaybeUninit::uninit();
+            // SAFETY: `empty_at` writes the whole map.
+            let m = unsafe {
+                ctl::empty_at(m.as_mut_ptr());
+                m.assume_init_mut()
+            };
+            let read = want.name.map(|n| ctl::load(s, r, &n, m));
             if let Some(Err(LoadError::Store(StoreError::Busy))) = read {
                 // The streams hold the card: the next pass.
                 return;
@@ -211,14 +236,19 @@ impl UiState {
         let Some(name) = name else { return };
         let engine = self.project.part(p).sound.params.engine();
         // The map there, else (a save under a new name) the Part's own.
-        let mut m = ctl::EMPTY;
+        let mut m = core::mem::MaybeUninit::uninit();
+        // SAFETY: `empty_at` writes the whole map.
+        let m = unsafe {
+            ctl::empty_at(m.as_mut_ptr());
+            m.assume_init_mut()
+        };
         let mut from = [Some(name), self.project.controller(p)];
         if let CtlJob::Drop(..) = j {
             from[1] = None;
         }
         let mut found = false;
         for n in from.into_iter().flatten() {
-            match ctl::load(s, r, &n, &mut m) {
+            match ctl::load(s, r, &n, m) {
                 Ok(_) => {
                     found = true;
                     break;
@@ -247,7 +277,7 @@ impl UiState {
         if edited == Err(MapFull) {
             return self.error(Line::new(word(W::Full)));
         }
-        match ctl::save(s, r, &name, &m) {
+        match ctl::save(s, r, &name, m) {
             Ok(()) => {}
             Err(SaveError::Store(StoreError::Busy)) => {
                 self.cc.ui().ctl.job = Some(j);

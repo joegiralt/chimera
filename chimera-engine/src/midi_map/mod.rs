@@ -344,6 +344,29 @@ impl MidiMap {
         len: 0,
     };
 
+    /// `EMPTY` built at `p` by stores, no image of it copied: inlined into
+    /// a bank-2 builder (ADR 0251).
+    ///
+    /// # Safety
+    /// `p` is valid for a write of `MidiMap`.
+    #[inline(always)]
+    pub unsafe fn empty_at(p: *mut MidiMap) {
+        let filler = Binding {
+            input: Input::Pressure(Takeover::Jump),
+            target: Mappable(ParamAddr::new(BlockRef::Filter, crate::block::ParamId(0))),
+            span: Span::FULL,
+            feedback: Feedback::Off,
+        };
+        // SAFETY: each field of the caller's `*p`, written whole.
+        unsafe {
+            let e = core::ptr::addr_of_mut!((*p).entries).cast::<Binding>();
+            for i in 0..MAP_LEN {
+                e.add(i).write(filler);
+            }
+            core::ptr::addr_of_mut!((*p).len).write(0);
+        }
+    }
+
     pub const fn len(&self) -> usize {
         self.len as usize
     }

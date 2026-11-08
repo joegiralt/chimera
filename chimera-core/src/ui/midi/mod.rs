@@ -92,20 +92,56 @@ pub struct PartMidi {
     handed: u64,
 }
 
-/// A Part's slots at rest: a named static, so its image is bank 2's
-/// (`bank2.x`), not an anonymous constant left in bank 1.
-static REST: PartMidi = PartMidi {
-    ramps: [Ramp::rest(0.0); SLOTS],
-    bins: [NO_BIN; SLOTS],
-    pend: [NO_BIN; SLOTS],
-    rt: [BindRuntime::NEW; BINDS],
-    turns: [0; BINDS],
-    canon: [None; CANON],
-    wait: [None; WAIT],
-    cursor: 0,
-    loads: Loads::NONE,
-    handed: 0,
-};
+/// `v` in each of the `n` slots from `p`: a rest image built in place by
+/// a few stores, not copied from a mostly-zero static (ADR 0251).
+///
+/// # Safety
+/// `p` is valid for `n` writes of `T`.
+#[inline(always)]
+pub(crate) unsafe fn fill<T: Copy>(p: *mut T, n: usize, v: T) {
+    for i in 0..n {
+        // SAFETY: `i < n`, and the caller's `p` holds `n`.
+        unsafe { p.add(i).write(v) };
+    }
+}
+
+/// A Part's slots at rest, built at `p`: one copy, bank 2's.
+///
+/// # Safety
+/// `p` is valid for a write of `PartMidi`.
+#[inline(never)]
+unsafe fn rest_at(p: *mut PartMidi) {
+    use core::ptr::addr_of_mut;
+    // SAFETY: each field of the caller's `*p`, written whole.
+    unsafe {
+        fill(
+            addr_of_mut!((*p).ramps).cast::<Ramp>(),
+            SLOTS,
+            Ramp::rest(0.0),
+        );
+        addr_of_mut!((*p).bins).write_bytes(NO_BIN, 1);
+        addr_of_mut!((*p).pend).write_bytes(NO_BIN, 1);
+        fill(
+            addr_of_mut!((*p).rt).cast::<BindRuntime>(),
+            BINDS,
+            BindRuntime::NEW,
+        );
+        addr_of_mut!((*p).turns).write_bytes(0, 1);
+        fill(
+            addr_of_mut!((*p).canon).cast::<Option<Mappable>>(),
+            CANON,
+            None,
+        );
+        fill(
+            addr_of_mut!((*p).wait).cast::<Option<(Mappable, Place)>>(),
+            WAIT,
+            None,
+        );
+        addr_of_mut!((*p).cursor).write(0);
+        addr_of_mut!((*p).loads).write(Loads::NONE);
+        addr_of_mut!((*p).handed).write(0);
+    }
+}
 
 impl PartMidi {
     /// At rest: its map changed (a learn, a load), and its slots are
@@ -113,11 +149,9 @@ impl PartMidi {
     /// this pass stand.
     fn reset(&mut self) {
         let (loads, handed) = (self.loads, self.handed);
-        *self = PartMidi {
-            loads,
-            handed,
-            ..REST
-        };
+        // SAFETY: `self` is a `PartMidi`'s place; every field is `Copy`.
+        unsafe { rest_at(self) };
+        (self.loads, self.handed) = (loads, handed);
     }
 
     /// Canonical slot `k` is free to move: at rest, no bin waiting, and
@@ -205,27 +239,34 @@ pub struct MidiUi {
 static NO_SEEN: Seen = Seen::new();
 
 impl MidiSlot {
-    /// The state, built on first use from `REST`: bank 1 never writes it.
+    /// The state, built on first use at rest: bank 1 never writes it.
     #[inline(always)]
     fn ui(&mut self) -> &mut MidiUi {
         if !self.built {
-            let m = self.ui.as_mut_ptr();
-            // SAFETY: `m` points at the slot's own, unaliased memory; each
-            // field is written whole before `built` says it is.
-            unsafe {
-                for i in 0..MAX_PARTS {
-                    core::ptr::addr_of_mut!((*m).parts[i]).write(REST);
-                }
-                core::ptr::addr_of_mut!((*m).stepped).write(false);
-                core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
-                core::ptr::addr_of_mut!((*m).echo).write(echo::SILENT);
-                core::ptr::addr_of_mut!((*m).ctl).write(layer::REST);
-            }
-            self.built = true;
+            super::cc::build(self);
         }
-        // SAFETY: written above, or by an earlier call that set `built`;
-        // only `clear` unsets it, and the next call writes it again.
+        // SAFETY: written by `build`, which set `built`; only `clear`
+        // unsets it, and the next call builds it again.
         unsafe { self.ui.assume_init_mut() }
+    }
+
+    /// The state at rest, written in place: one copy, bank 2's, called
+    /// through the door's table (`cc::build`).
+    #[inline(never)]
+    pub(in crate::ui) fn build(&mut self) {
+        let m = self.ui.as_mut_ptr();
+        // SAFETY: `m` points at the slot's own, unaliased memory; each
+        // field is written whole before `built` says it is.
+        unsafe {
+            for i in 0..MAX_PARTS {
+                rest_at(core::ptr::addr_of_mut!((*m).parts[i]));
+            }
+            core::ptr::addr_of_mut!((*m).stepped).write(false);
+            core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
+            echo::silent_at(core::ptr::addr_of_mut!((*m).echo));
+            layer::rest_at(core::ptr::addr_of_mut!((*m).ctl));
+        }
+        self.built = true;
     }
 
     /// The state, if built: a read never builds it.

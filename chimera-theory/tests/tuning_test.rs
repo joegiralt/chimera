@@ -70,6 +70,18 @@ fn every_built_in_parses() {
     }
 }
 
+/// No map plays `Keymap::LINEAR`, bit for bit: `None` keeps no image of it.
+#[test]
+fn no_map_is_linear() {
+    let mut scales: Vec<Scale> = BUILT_IN.iter().map(|t| Scale::parse(t).unwrap()).collect();
+    scales.push(scl(TET));
+    for s in &scales {
+        let a = offsets(s, None).map(f32::to_bits);
+        let b = offsets(s, Some(&Keymap::LINEAR)).map(f32::to_bits);
+        assert_eq!(a, b);
+    }
+}
+
 const KBM_A440: &str = "! map\n12\n0\n127\n60\n69\n440.0\n12\n\
 ! the keys\n0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n";
 

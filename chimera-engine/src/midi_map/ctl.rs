@@ -50,9 +50,24 @@ pub struct ControllerMap {
     sections: [MidiMap; SECTIONS],
 }
 
-/// An empty map: a named static to copy from, so its image is bank 2's
-/// (`bank2.x`), not an anonymous constant left in bank 1.
-pub static EMPTY: ControllerMap = ControllerMap::EMPTY;
+/// An empty map built at `p`: a few stores, bank 2's, not a static's
+/// image (ADR 0251).
+///
+/// # Safety
+/// `p` is valid for a write of `ControllerMap`.
+#[inline(never)]
+pub unsafe fn empty_at(p: *mut ControllerMap) {
+    for i in 0..SECTIONS {
+        // SAFETY: section `i` of the caller's `*p`.
+        unsafe {
+            MidiMap::empty_at(
+                core::ptr::addr_of_mut!((*p).sections)
+                    .cast::<MidiMap>()
+                    .add(i),
+            )
+        };
+    }
+}
 
 impl ControllerMap {
     pub const EMPTY: Self = Self {
@@ -198,7 +213,8 @@ fn parse(b: &[u8], out: &mut ControllerMap) -> Option<(Header, u16)> {
     if crc.finish().to_le_bytes() != *b.get(body..)? {
         return None;
     }
-    *out = EMPTY;
+    // SAFETY: `out` is a map's place; every field is `Copy`.
+    unsafe { empty_at(out) };
     let (mut at, mut lost, mut seen) = (HEADER_LEN, 0u16, 0u8);
     while at < body {
         let r = b.get(at..at + 4)?;
@@ -243,7 +259,12 @@ fn load_stem(
     mut want: Option<(&SoundName, &mut ControllerMap)>,
 ) -> Result<(Header, u16, Side), LoadError> {
     let mut buf = [0u8; FILE_MAX];
-    let mut staged = EMPTY;
+    let mut staged = core::mem::MaybeUninit::uninit();
+    // SAFETY: `empty_at` writes the whole map.
+    let staged = unsafe {
+        empty_at(staged.as_mut_ptr());
+        staged.assume_init_mut()
+    };
     let mut best: Option<(Header, u16, Side)> = None;
     for side in [Side::A, Side::B] {
         let f = side_file(st, side).ok_or(LoadError::Missing)?;
@@ -252,12 +273,12 @@ fn load_stem(
             Err(StoreError::NotFound | StoreError::Corrupt) => continue,
             Err(e) => return Err(LoadError::Store(e)),
         };
-        if let Some((h, lost)) = parse(&buf[..n], &mut staged)
+        if let Some((h, lost)) = parse(&buf[..n], staged)
             && best.is_none_or(|(b, ..)| h.generation.is_newer_than(b.generation))
         {
             match want.as_mut() {
                 Some((w, _)) if h.name != Some(**w) => continue,
-                Some((_, o)) => **o = staged,
+                Some((_, o)) => **o = *staged,
                 None => {}
             }
             best = Some((h, lost, side));
@@ -392,7 +413,7 @@ mod tests {
     /// drop takes the row picked, not the other.
     #[test]
     fn a_drop_takes_the_row_picked() {
-        let mut m = EMPTY;
+        let mut m = ControllerMap::EMPTY;
         push(&mut m.sections[0], row(22));
         push(&mut m.sections[at(Some(EngineType::Algo))], row(21));
         assert!(m.drop(&row(22), EngineType::Algo));

@@ -266,18 +266,20 @@ impl<const N: usize> CtrlRing<N> {
     /// Producer side only. `false`: full, the whole event dropped. `head`
     /// `Acquire` pairs with `pop`'s `Release`; the `Release` on `tail`
     /// publishes the slot.
+    #[inline]
     pub fn push(&self, e: CtrlEvent) -> bool {
-        let tail = self.tail.load(Ordering::Relaxed);
-        if tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= N {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-            return false;
+        self.tx().push(e)
+    }
+
+    /// The producer's side, its size a value.
+    #[inline(always)]
+    fn tx(&self) -> RingTx<'_> {
+        RingTx {
+            slots: &self.slots,
+            head: &self.head,
+            tail: &self.tail,
+            dropped: &self.dropped,
         }
-        let slot = &self.slots[tail as usize % N];
-        let [a, b] = e.pack();
-        slot[0].store(a, Ordering::Relaxed);
-        slot[1].store(b, Ordering::Relaxed);
-        self.tail.store(tail.wrapping_add(1), Ordering::Release);
-        true
     }
 
     /// Consumer side only. `tail` `Acquire` pairs with `push`'s `Release`;
@@ -312,6 +314,35 @@ impl<const N: usize> CtrlRing<N> {
     /// Events dropped because the ring was full.
     pub fn dropped(&self) -> u32 {
         self.dropped.load(Ordering::Relaxed)
+    }
+}
+
+/// A ring's producer side with its size a value, not a type: DIN's ring
+/// and USB's push through one parser (`PipeSinks`, ADR 0251). `slots`'
+/// length is the ring's `N`, a power of two.
+struct RingTx<'a> {
+    slots: &'a [[AtomicU32; 2]],
+    head: &'a AtomicU32,
+    tail: &'a AtomicU32,
+    dropped: &'a AtomicU32,
+}
+
+impl RingTx<'_> {
+    /// `CtrlRing::push`.
+    #[inline(always)]
+    fn push(&self, e: CtrlEvent) -> bool {
+        let n = self.slots.len();
+        let tail = self.tail.load(Ordering::Relaxed);
+        if tail.wrapping_sub(self.head.load(Ordering::Acquire)) as usize >= n {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        let slot = &self.slots[tail as usize & (n - 1)];
+        let [a, b] = e.pack();
+        slot[0].store(a, Ordering::Relaxed);
+        slot[1].store(b, Ordering::Relaxed);
+        self.tail.store(tail.wrapping_add(1), Ordering::Release);
+        true
     }
 }
 
@@ -606,7 +637,9 @@ impl DinPipe {
         self.run(bytes, out, None);
     }
 
-    /// `feed`, keeping `held` (USB's) by what the queue takes.
+    /// `feed`, keeping `held` (USB's) by what the queue takes. One copy:
+    /// the door's and USB's entries share it.
+    #[inline(never)]
     fn run<S: Sinks + ?Sized>(&mut self, bytes: &[u8], out: &mut S, mut held: Option<&mut Held>) {
         Counted {
             out: &mut *out,
@@ -710,6 +743,7 @@ impl DinPipe {
     /// queue refuses are owed, each channel's once, and go ahead of
     /// anything fed after (`feed`); a refusal counts in `refused` (#865),
     /// as no byte may follow to count it.
+    #[inline(never)]
     fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S, mut held: Option<&mut Held>) {
         let told = self.pedals.down != 0
             || held
@@ -760,6 +794,37 @@ pub struct DinSinks<'a, 'q, const N: usize = CTRL_RING_LEN> {
 }
 
 impl<const N: usize> Sinks for DinSinks<'_, '_, N> {
+    #[inline]
+    fn note(&mut self, e: InEvent) -> bool {
+        self.notes.push(e)
+    }
+
+    #[inline]
+    fn ctrl(&mut self, e: CtrlEvent) -> bool {
+        self.ctrl.push(e)
+    }
+}
+
+impl<'q, const N: usize> DinSinks<'_, 'q, N> {
+    /// The same sinks, the ring's size a value.
+    #[inline(always)]
+    fn erased(&mut self) -> PipeSinks<'_, 'q> {
+        PipeSinks {
+            notes: &mut *self.notes,
+            ctrl: self.ctrl.tx(),
+        }
+    }
+}
+
+/// `DinSinks` of either ring: the one type the door's and USB's entries
+/// run the pipe on, so its parser links once, not once a ring size (ADR
+/// 0251).
+struct PipeSinks<'a, 'q> {
+    notes: &'a mut NoteProducer<'q>,
+    ctrl: RingTx<'a>,
+}
+
+impl Sinks for PipeSinks<'_, '_> {
     #[inline]
     fn note(&mut self, e: InEvent) -> bool {
         self.notes.push(e)
@@ -939,11 +1004,11 @@ impl MidiDoor {
 /// `DinPipe`'s so `bank2.x`'s glob places them.
 impl DinPipe {
     fn door_feed(slot: &mut PipeSlot, bytes: &[u8], out: &mut DinSinks<'_, '_>) {
-        slot.built().feed(bytes, out);
+        slot.built().feed(bytes, &mut out.erased());
     }
 
     fn door_idle(slot: &mut PipeSlot, out: &mut DinSinks<'_, '_>) {
-        slot.built().idle(out);
+        slot.built().idle(&mut out.erased());
     }
 
     /// `door_feed` on USB's ring, for a caller already in bank 2 (USB's
@@ -952,37 +1017,37 @@ impl DinPipe {
     /// a call into bank 2 in a bank-1 outline.
     #[inline(never)]
     pub fn usb_feed(slot: &mut UsbSlot, bytes: &[u8], out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
-        slot.feed(bytes, out);
+        slot.feed(bytes, &mut out.erased());
     }
 
     /// `UsbSlot::lost`, as `usb_feed`.
     #[inline(never)]
     pub fn usb_lost(slot: &mut UsbSlot, out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
-        slot.lost(out);
+        slot.lost(&mut out.erased());
     }
 
     /// `UsbSlot::feed_msg`, as `usb_feed`.
     #[inline(never)]
     pub fn usb_feed_msg(slot: &mut UsbSlot, msg: &[u8], out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
-        slot.feed_msg(msg, out);
+        slot.feed_msg(msg, &mut out.erased());
     }
 
     /// `usb_feed_msg` on DIN's ring size, as `usb_feed_short`.
     #[inline(never)]
     pub fn usb_feed_msg_short(slot: &mut UsbSlot, msg: &[u8], out: &mut DinSinks<'_, '_>) {
-        slot.feed_msg(msg, out);
+        slot.feed_msg(msg, &mut out.erased());
     }
 
     /// `usb_feed` on DIN's ring size: builds without the map.
     #[inline(never)]
     pub fn usb_feed_short(slot: &mut UsbSlot, bytes: &[u8], out: &mut DinSinks<'_, '_>) {
-        slot.feed(bytes, out);
+        slot.feed(bytes, &mut out.erased());
     }
 
     /// `usb_lost` on DIN's ring size, as `usb_feed_short`.
     #[inline(never)]
     pub fn usb_lost_short(slot: &mut UsbSlot, out: &mut DinSinks<'_, '_>) {
-        slot.lost(out);
+        slot.lost(&mut out.erased());
     }
 }
 

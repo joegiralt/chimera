@@ -174,6 +174,7 @@ fn deaf(_: &mut UiState, ev: &mut dyn Iterator<Item = HeardEv>, _: Ms, _: bool) 
 #[repr(C)]
 pub struct MidiUiDoor {
     magic: Magic,
+    build: fn(&mut MidiSlot),
     hear: Hear,
     hand: fn(&mut UiState, PartId, ParamAddr),
     sensed: SensedFn,
@@ -210,6 +211,7 @@ const MAGIC: Magic = Magic(0xB2C0_0217);
 impl MidiUiDoor {
     pub const OWN: MidiUiDoor = MidiUiDoor {
         magic: MAGIC,
+        build: MidiSlot::build,
         #[cfg(feature = "midi-map")]
         hear: UiState::hear_in,
         #[cfg(not(feature = "midi-map"))]
@@ -250,6 +252,25 @@ const SLOT: chimera_engine::bank2::DoorSlot<MidiUiDoor> =
 #[unsafe(link_section = ".bank2.door.midi_ui")]
 #[used]
 static MIDI_UI_DOOR: MidiUiDoor = MidiUiDoor::OWN;
+
+/// `MidiSlot::build`, for bank 2's own code: on the unit through this
+/// table's field at its fixed address, never by name. A call by name at
+/// each use of the state is what the machine outliner shares from a bank-1
+/// outline, a reference into bank 2 that `door-check` fails (ADR 0175,
+/// 0251).
+#[inline(always)]
+pub(super) fn build(slot: &mut MidiSlot) {
+    #[cfg(all(feature = "bank2", target_os = "none"))]
+    {
+        let d = chimera_engine::bank2::MIDI_UI_DOOR_ADDR as *const MidiUiDoor;
+        // SAFETY: bank 2's code runs only with its door open, and `bank2.x`
+        // links `MIDI_UI_DOOR`, a `MidiUiDoor`, at that address.
+        let f = unsafe { core::ptr::addr_of!((*d).build).read_volatile() };
+        f(slot);
+    }
+    #[cfg(not(all(feature = "bank2", target_os = "none")))]
+    MidiSlot::build(slot);
+}
 
 /// The MIDI UI's table in judged door `j` answers (the boot's door check,
 /// run before the door opens).

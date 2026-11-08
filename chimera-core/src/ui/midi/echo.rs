@@ -76,16 +76,32 @@ impl Echoed {
     };
 }
 
-/// Nothing sent: a named static, so its image is bank 2's.
-pub(super) static SILENT: EchoPlan = EchoPlan {
-    last: [[None; BINDS]; MAX_PARTS],
-    heard_at: [[None; BINDS]; MAX_PARTS],
-    echoed: [[Echoed::NONE; BINDS]; MAX_PARTS],
-    loads: [Loads::NONE; MAX_PARTS],
-    active: None,
-    identity: [false; Port::COUNT],
-    owed: [0; MAX_PARTS],
-};
+/// Nothing sent, built at `p`: a few stores, not a 4 KB static's image
+/// (ADR 0251).
+///
+/// # Safety
+/// `p` is valid for a write of `EchoPlan`.
+#[inline(never)]
+pub(super) unsafe fn silent_at(p: *mut EchoPlan) {
+    use super::fill;
+    use core::ptr::addr_of_mut;
+    const N: usize = BINDS * MAX_PARTS;
+    // SAFETY: each field of the caller's `*p`, written whole; a nested
+    // array's elements lie in a row.
+    unsafe {
+        fill(addr_of_mut!((*p).last).cast::<Option<u16>>(), N, None);
+        fill(addr_of_mut!((*p).heard_at).cast::<Option<Ms>>(), N, None);
+        fill(addr_of_mut!((*p).echoed).cast::<Echoed>(), N, Echoed::NONE);
+        fill(
+            addr_of_mut!((*p).loads).cast::<Loads>(),
+            MAX_PARTS,
+            Loads::NONE,
+        );
+        addr_of_mut!((*p).active).write(None);
+        addr_of_mut!((*p).identity).write([false; Port::COUNT]);
+        addr_of_mut!((*p).owed).write([0; MAX_PARTS]);
+    }
+}
 
 impl EchoPlan {
     /// A Device Inquiry was heard on `port`: one reply out of it, however

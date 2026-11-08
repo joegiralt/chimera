@@ -48,8 +48,6 @@ fn word(w: W) -> &'static str {
     crate::ui::midi::pick(&WORDS, w as u8)
 }
 
-static TWELVE: [f32; 128] = [0.0; 128];
-
 /// `tuning::files_put` as the last pass saw it.
 static SEEN_PUT: AtomicU8 = AtomicU8::new(0);
 
@@ -92,7 +90,8 @@ pub(crate) fn work_in(ui: &mut UiState, card: &mut Card, s: &mut dyn Store) {
         // One table for the Part, written in place: no copies on the stack.
         let mut table = [0.0; 128];
         match want {
-            0 => tuning::set(i, &TWELVE),
+            // 12-TET: the table as built, all zero.
+            0 => tuning::set(i, &table),
             TUNING_MTS => tuning::follow_mts(i, true),
             w if w < TUNING_MTS => {
                 if let Ok(sc) = Scale::parse(BUILT_IN[usize::from(w) - 1]) {
@@ -105,7 +104,9 @@ pub(crate) fn work_in(ui: &mut UiState, card: &mut Card, s: &mut dyn Store) {
                 match from_card(card, s, n, &mut table) {
                     Ok(()) => tuning::set(i, &table),
                     Err(why) => {
-                        tuning::set(i, &TWELVE);
+                        // 12-TET: whatever the read left, zeroed.
+                        table.fill(0.0);
+                        tuning::set(i, &table);
                         let mut text = Line::new(TUNING_NAMES[usize::from(w) % TUNING_NAMES.len()]);
                         let _ = text.write_str(word(why.0));
                         let _ = text.write_str(word(why.1));
