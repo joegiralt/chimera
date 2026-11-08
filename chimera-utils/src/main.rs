@@ -248,8 +248,10 @@ fn run() -> Result<bool, String> {
             use std::io::Write;
             // A closed pipe (`| head`) ends the listing, not the tool.
             let mut out = std::io::stdout().lock();
-            let _ = chimera_core::nrpn::chart().try_for_each(|l| writeln!(out, "{}", l.labelled()));
-            Ok(true)
+            match chimera_core::nrpn::chart().try_for_each(|l| writeln!(out, "{}", l.labelled())) {
+                Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.to_string()),
+                _ => Ok(true),
+            }
         }
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),

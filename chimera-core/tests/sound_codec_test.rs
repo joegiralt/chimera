@@ -666,10 +666,10 @@ fn worst(e: EngineType) -> (Sound, usize) {
     (s, stuck)
 }
 
-/// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 291 × 5 (params) + 164
+/// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 292 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
-/// 24 zones) + 133 (`Bindings`, 16 entries) = 2 752 B, less 5 B for each param that has nowhere to move.
+/// 24 zones) + 133 (`Bindings`, 16 entries) = 2 757 B, less 5 B for each param that has nowhere to move.
 /// TAPE's SLICE is on hold (`slice_in_play`): every code loads OFF, so a
 /// Sound never stores one, 5 B under it.
 /// A new param moves it: raise

@@ -718,6 +718,34 @@ fn hand_beats_a_cc_in_its_pass() {
     assert_eq!(b.stored(P1, TYPE), spec(TYPE).min, "the next CC steps");
 }
 
+/// The hand beats a canonical NRPN in its pass too, its param in no slot
+/// yet (#820): the turned value stands.
+#[test]
+fn hand_beats_a_canonical_nrpn_in_its_pass() {
+    use chimera_core::nrpn::NrpnAddr;
+    use chimera_midi::ctl::{Ctl, DataValue, Sel};
+    use chimera_midi::value::U7;
+    let mut b = Bench::algo();
+    b.go_to_page(FILTER.id);
+    b.passes(1);
+    let cut0 = b.stored(P1, CUTOFF);
+    b.now += PASS_MS;
+    feed(&mut b.ui, Input::turn(EncoderId::F, -3));
+    let nrpn = CtrlEvent::Ctl(
+        b.ch(P1),
+        Ctl::Data {
+            sel: Sel::Nrpn(NrpnAddr::of(CUTOFF).unwrap().get()),
+            value: DataValue::Coarse(U7::new(127).unwrap()),
+        },
+    );
+    b.ui.hear_ccs(core::iter::once(nrpn), Ms(b.now), b.taken);
+    b.publish();
+    let cut = b.stored(P1, CUTOFF);
+    assert!(cut < cut0, "F turned CUTOFF down");
+    b.passes(40);
+    assert_eq!(b.stored(P1, CUTOFF), cut, "no ramp from the pass's NRPN");
+}
+
 const MODEL: ParamAddr = ParamAddr::new(
     BlockRef::TapeEngine,
     chimera_core::dsp::tape_engine::TapeEngineParams::MODEL,

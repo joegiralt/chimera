@@ -22,6 +22,8 @@ impl Cc14Msb {
 }
 
 /// Microseconds `bytes` take on the line: 320 at 31,250 baud.
+/// `as u32`: callers pass a message's bytes, far below the 13.4 M that
+/// would overflow.
 pub const fn din_us(bytes: usize) -> u32 {
     bytes as u32 * 320
 }

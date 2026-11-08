@@ -115,7 +115,7 @@ impl Rig {
 
     /// One pass: a key, what was heard, then DIN OUT's pass.
     fn pass_with(&mut self, ev: &[CtrlEvent], key: Option<Key>) {
-        self.now += PASS_MS;
+        self.now = self.now.wrapping_add(PASS_MS);
         if let Some(k) = key {
             feed(&mut self.ui, k.at(self.now));
         }
@@ -457,6 +457,75 @@ fn shared_channel_lowest_part_echoes() {
     // Another control on Part 2 is its own.
     r.bind(P2, cc_in(21, JUMP), RESO, Feedback::Value);
     assert_eq!(values(&r.settle(), ch, 21).len(), 1);
+}
+
+/// A lower Part's binding its engine doesn't read silences nothing: the
+/// higher Part's echo is the only one on the control (#820).
+#[test]
+fn a_dead_lower_binding_leaves_the_echo() {
+    use chimera_core::dsp::modal::ModalParams;
+    let mut r = Rig::new();
+    let ch = r.ch(P1);
+    r.ui.project_mut().edit_part(P2).mix.channel = ch;
+    assert_ne!(
+        r.ui.project().part(P1).sound.params.engine(),
+        EngineType::Modal
+    );
+    let bright = ParamAddr::new(BlockRef::Modal, ModalParams::BRIGHT);
+    r.bind(P1, cc_in(20, JUMP), bright, Feedback::Value);
+    r.bind(P2, cc_in(20, JUMP), CUTOFF, Feedback::Value);
+    r.settle();
+    r.set(P2, CUTOFF, 0.5);
+    assert_eq!(values(&r.settle(), ch, 20), [r.want(P2, CUTOFF)]);
+}
+
+/// A lower Part's 14-bit pair on CC 20 (and 52) is the same control as a
+/// plain CC 20 or 52: the higher Part's never echoes on it (#820).
+#[test]
+fn a_lower_pair_silences_its_halves() {
+    let mut r = Rig::new();
+    let ch = r.ch(P1);
+    r.ui.project_mut().edit_part(P2).mix.channel = ch;
+    let m = chimera_core::midi_map::Cc14Msb::new(20).unwrap();
+    r.bind(P1, Input::Cc14(m, Takeover::Jump), CUTOFF, Feedback::Value);
+    r.bind(P2, cc_in(20, JUMP), CUTOFF, Feedback::Value);
+    r.bind(P2, cc_in(52, JUMP), RESO, Feedback::Value);
+    r.settle();
+    r.set(P2, CUTOFF, 0.25);
+    r.set(P2, RESO, 0.25);
+    let got = r.settle();
+    assert!(values(&got, ch, 20).is_empty(), "{got:02X?}");
+    assert!(values(&got, ch, 52).is_empty(), "{got:02X?}");
+}
+
+/// The quiet after a heard message ends at `QUIET_MS` to the pass, the ms
+/// clock wrapping inside it (#820).
+#[test]
+fn quiet_ends_on_time_across_the_wrap() {
+    use chimera_core::ui::midi::echo::QUIET_MS;
+    let mut r = Rig::new();
+    let ch = r.ch(P1);
+    r.bind(P1, cc_in(20, JUMP), CUTOFF, Feedback::Value);
+    r.settle();
+    r.now = u32::MAX - 100;
+    let e = r.cc(P1, 20, 10);
+    r.pass(&[e]);
+    let heard = r.now;
+    let mut got = Vec::new();
+    while r.now.wrapping_sub(heard) + PASS_MS < QUIET_MS {
+        if r.now.wrapping_sub(heard) == 40 * PASS_MS {
+            r.set(P1, CUTOFF, 0.9); // the ramp has landed; the panel moves it
+        }
+        r.pass(&[]);
+        got.extend(r.drain());
+    }
+    assert!(values(&got, ch, 20).is_empty(), "quiet: {got:02X?}");
+    r.pass(&[]);
+    assert_eq!(
+        values(&r.drain(), ch, 20),
+        [r.want(P1, CUTOFF)],
+        "due at the end"
+    );
 }
 
 #[test]

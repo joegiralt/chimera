@@ -48,6 +48,14 @@ fn bend_ends_and_centre() {
 }
 
 #[test]
+fn bend_between() {
+    assert_eq!(bend(0x00, 0x20).get(), -4096);
+    assert_eq!(bend(0x7F, 0x3F).get(), -1);
+    assert_eq!(bend(0x01, 0x40).get(), 1);
+    assert_eq!(bend(0x00, 0x20).unit(), -0.5);
+}
+
+#[test]
 fn bend_unit_hits_plus_and_minus_one() {
     assert_eq!(bend(0, 0).unit(), -1.0);
     assert_eq!(bend(0, 0x40).unit(), 0.0);

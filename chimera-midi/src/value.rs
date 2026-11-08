@@ -27,7 +27,7 @@ impl U14 {
     }
 
     pub const fn from_parts(msb: U7, lsb: U7) -> Self {
-        Self((msb.0 as u16) << 7 | lsb.0 as u16)
+        Self(((msb.0 as u16) << 7) | lsb.0 as u16)
     }
 
     pub const fn msb(self) -> U7 {
@@ -86,8 +86,8 @@ impl Key {
 }
 
 /// Note-on velocity, 1..=127. Zero means note-off and is not representable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 // The 1..=127 invariant is held by the constructor, not NonZeroU8: that niche costs ~100 B of bank 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Velocity(u8);
 
 impl Velocity {

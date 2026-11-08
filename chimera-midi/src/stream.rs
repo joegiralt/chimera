@@ -183,6 +183,9 @@ enum State {
     },
 }
 
+/// MIDI bytes in, one at a time, to events; `SYSEX` is the SysEx body
+/// it keeps.
+#[derive(Debug)]
 pub struct Parser<const SYSEX: usize> {
     state: State,
     sysex: [u8; SYSEX],
@@ -230,6 +233,7 @@ fn voice_event(s: VoiceStatus, a: U7, b: U7) -> Event<'static> {
         Kind::Control => match Ctrl::new(a.get()) {
             Some(cc) => Voice::Control { cc, value: b },
             None => {
+                // `Ctrl::new` refuses only 120..=127, all modes: never None.
                 return match mode_of(a.get(), b) {
                     Some(m) => Event::Mode(s.ch, m),
                     None => Event::Fault(Fault::Undefined),

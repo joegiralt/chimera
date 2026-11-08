@@ -15,15 +15,17 @@ proptest! {
     #[test]
     fn realtime_insertion_invariant(
         bytes in proptest::collection::vec(any::<u8>(), 0..256),
-        inserts in proptest::collection::vec((any::<usize>(), 0xF8u8..=0xFF), 0..16),
+        inserts in proptest::collection::vec((any::<usize>(), 0usize..6), 0..16),
     ) {
+        // The six real-time bytes only: F9/FD are faults (`f9_fd_fault_but_keep_state`),
+        // so the rest, F4/F5's faults too, must come out the same.
+        const RT: [u8; 6] = [0xF8, 0xFA, 0xFB, 0xFC, 0xFE, 0xFF];
         let mut with = bytes.clone();
         for (at, rt) in inserts {
             let i = at % (with.len() + 1);
-            with.insert(i, rt);
+            with.insert(i, RT[rt]);
         }
-        // F9/FD count as faults in the output, so drop every F8..FF item and compare the rest
-        let strip = |v: Vec<Item>| v.into_iter().filter(|i| !matches!(i, Item::Rt(_) | Item::Fault(Fault::Undefined))).collect::<Vec<_>>();
+        let strip = |v: Vec<Item>| v.into_iter().filter(|i| !matches!(i, Item::Rt(_))).collect::<Vec<_>>();
         prop_assert_eq!(strip(parse(&bytes)), strip(parse(&with)));
     }
 }

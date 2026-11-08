@@ -13,12 +13,17 @@ proptest! {
 
     #[test]
     fn channel_isolation(
-        a in proptest::collection::vec((0u8..=127, 0u8..=127), 0..64),
-        b in proptest::collection::vec((0u8..=119, 0u8..=127), 0..64),
+        a in proptest::collection::vec((0u8..3, 0u8..=127, 0u8..=127), 0..64),
+        b in proptest::collection::vec((0u8..3, 0u8..=119, 0u8..=127), 0..64),
         mix in proptest::collection::vec(any::<bool>(), 0..128),
     ) {
-        // Whole three-byte messages on channel 0 (A) and channel 1 (B), merged by `mix`.
-        let msg = |ch: u8, (n, v): (u8, u8)| [0xB0 | ch, n, v];
+        // Whole messages on channel 0 (A) and channel 1 (B), merged by `mix`:
+        // CCs, and Program Change and pressure, so each bank latch is crossed.
+        let msg = |ch: u8, (k, n, v): (u8, u8, u8)| match k {
+            0 => vec![0xB0 | ch, n, v],
+            1 => vec![0xC0 | ch, n],
+            _ => vec![0xD0 | ch, n],
+        };
         let alone: Vec<_> = a.iter().flat_map(|&m| msg(0, m)).collect();
         let (mut ia, mut ib) = (a.iter(), b.iter());
         let mut mixed = Vec::new();

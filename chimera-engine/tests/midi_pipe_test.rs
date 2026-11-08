@@ -227,6 +227,29 @@ fn reset_is_sound_off_and_reset_on_all_channels() {
         }
     }
     assert!(r.ctrl.is_empty());
+    // It forgets the NRPN selected: the data entry after it is inert.
+    let r = pipe(&[0xB0, 99, 1, 98, 2, 0xFF, 0xB0, 6, 9]);
+    assert!(r.ctrl.is_empty(), "{:?}", r.ctrl);
+}
+
+/// A Reset into a busy queue: each channel whose SoundOff it refused is
+/// owed a NotesOff, and each whose pedal was down a pedal-up, so no note
+/// sticks (#820).
+#[test]
+fn a_reset_refused_owes_notes_off() {
+    let mut usb = Usb::new();
+    usb.run(&[0xB7, 64, 127]); // channel 7's pedal down
+    usb.fill();
+    usb.pop(10); // room for ch 0..=4's two events
+    usb.feed(&[0xFF]);
+    usb.take();
+    let mut want: Vec<_> = (5..16).map(|c| mode(c, ChannelMode::NotesOff)).collect();
+    want.push(InEvent::Sustain(SustainEvent {
+        channel: ch(7),
+        down: false,
+    }));
+    assert_eq!(usb.settle(), want);
+    assert_eq!(usb.settle(), [], "once");
 }
 
 #[test]
@@ -878,6 +901,14 @@ proptest! {
     #[test]
     fn pack_round_trips(e in arb_ctrl()) {
         prop_assert_eq!(CtrlEvent::unpack(e.pack()), Some(e));
+    }
+
+    /// Garbage never panics, and what it reads packs back to itself.
+    #[test]
+    fn unpack_garbage(w in any::<[u32; 2]>()) {
+        if let Some(e) = CtrlEvent::unpack(w) {
+            prop_assert_eq!(CtrlEvent::unpack(e.pack()), Some(e));
+        }
     }
 }
 

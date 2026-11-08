@@ -188,10 +188,14 @@ impl Input {
         }
     }
 
-    /// The same control, whatever its kind.
+    /// The same control, whatever its kind: a 14-bit pair is its MSB CC
+    /// and its LSB CC, MSB + 32.
     fn same_control(&self, o: &Input) -> bool {
         match (*self, *o) {
             (Self::Cc(a, _), Self::Cc(b, _)) => a == b,
+            (Self::Cc(c, _), Self::Cc14(m, _)) | (Self::Cc14(m, _), Self::Cc(c, _)) => {
+                c.get() == m.get() || c.get() == m.get() + 32
+            }
             (Self::Cc14(a, _), Self::Cc14(b, _)) => a == b,
             (Self::Nrpn(a, _), Self::Nrpn(b, _)) => a == b,
             (Self::Pressure(_), Self::Pressure(_)) => true,

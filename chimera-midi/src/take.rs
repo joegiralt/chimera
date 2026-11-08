@@ -18,7 +18,7 @@ impl Place {
     /// `v << 7 | v`: 0 → 0 and 127 → 16383.
     pub const fn from_u7_replicated(v: U7) -> Self {
         let v = v.get() as u16;
-        Self(v << 7 | v)
+        Self((v << 7) | v)
     }
 
     pub const fn get(self) -> u16 {
@@ -46,7 +46,7 @@ pub enum Taken {
 }
 
 /// One binding's takeover memory.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TakeState {
     last_in: Option<Place>,
     engaged: bool,
@@ -66,7 +66,14 @@ impl TakeState {
     }
 }
 
+impl Default for TakeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `param` is the param's current place; `tol` is in `Place` units.
+/// Scale's first message moves nothing: it has no previous input.
 pub fn take(t: Takeover, s: &mut TakeState, incoming: Place, param: Place, tol: u16) -> Taken {
     let last = s.last_in.replace(incoming);
     match t {

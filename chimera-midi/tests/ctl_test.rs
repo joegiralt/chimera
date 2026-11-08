@@ -96,10 +96,7 @@ fn inc_dec_steps_once_ignoring_data() {
             dir,
         })
     };
-    assert_eq!(
-        h[2..],
-        [s(Dir::Up), s(Dir::Down), s(Dir::Up)].map(|x| x)[..]
-    );
+    assert_eq!(h[2..], [s(Dir::Up), s(Dir::Down), s(Dir::Up)][..]);
 }
 
 #[test]
@@ -134,14 +131,15 @@ fn selection_survives_reset_all_controllers() {
     // Layer 1 turns CC 121 into a Mode event, which layer 2 never sees.
     let mut c = Controllers::new();
     let mut p = Parser::<32>::new();
-    let mut got = None;
+    let (mut got, mut reset) = (None, false);
     for b in [0xB0, 99, 1, 98, 2, 121, 0, 6, 9] {
         match p.push(b) {
             Some(Parsed::Event(Event::Voice(ch, v))) => got = Some(c.hear(ch, v)),
-            Some(Parsed::Event(Event::Mode(_, ChannelMode::ResetAllControllers))) => {}
+            Some(Parsed::Event(Event::Mode(_, ChannelMode::ResetAllControllers))) => reset = true,
             _ => {}
         }
     }
+    assert!(reset, "layer 1 saw the reset");
     assert_eq!(got, Some(data(nrpn(1, 2), DataValue::Coarse(u7(9)))));
 }
 

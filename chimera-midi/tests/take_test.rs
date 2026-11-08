@@ -111,6 +111,28 @@ fn pickup_rearms_on_reset() {
     );
 }
 
+/// After a reset the crossing check still runs on the stale last input:
+/// a move across the param engages.
+#[test]
+fn pickup_reset_crosses_from_the_stale_input() {
+    let mut s = TakeState::new();
+    take(Takeover::Pickup, &mut s, p(9000), p(9000), 10);
+    s.reset();
+    assert_eq!(
+        take(Takeover::Pickup, &mut s, p(9100), p(9050), 10),
+        Taken::Move(p(9100))
+    );
+}
+
+#[test]
+fn scale_first_message_moves_nothing() {
+    let mut s = TakeState::new();
+    assert_eq!(
+        take(Takeover::Scale, &mut s, p(100), p(9000), 0),
+        Taken::Move(p(9000))
+    );
+}
+
 #[test]
 fn waiting_reports_direction() {
     let mut s = TakeState::new();

@@ -162,7 +162,7 @@ pub enum Ctl {
     Pressure(U7),
 }
 pub enum Heard { Note, Ctl(Ctl), Consumed } // Note: hand it to the note path untouched
-pub struct ChannelCtl {
+struct ChannelCtl { // private: only Controllers builds one
     rpn: (U7, U7), nrpn: (U7, U7), sel: Option<Sel>, msb: Option<U7>, bank: BankLatch,
 }
 pub struct Controllers { ch: [ChannelCtl; 16] }

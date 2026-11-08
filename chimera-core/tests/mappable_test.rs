@@ -103,6 +103,12 @@ fn learn_replaces_and_fills() {
     assert_eq!(m.len(), 2);
     assert_eq!(m.targets_of(&inp(20)).count(), 2);
     assert_eq!(m.targets_of(&inp(74)).count(), 0);
+    // Another kind on the same CC is the same control.
+    let rel = Input::Cc(
+        chimera_core::midi_map::LearnCc::new(20).unwrap(),
+        chimera_core::midi_map::CcKind::Relative(chimera_midi::rel::ByteEncoding::TwosComplement),
+    );
+    assert_eq!(m.targets_of(&rel).count(), 2);
 
     // Fill to 16 distinct targets, then a 17th is refused.
     let mut m = MidiMap::EMPTY;

@@ -213,7 +213,8 @@ check-door-placed elf:
     orbit=()
     if grep -q 'chimera_engine::orbit::door::' <<< "$syms"; then orbit=('chimera_engine::orbit::door::' 'ui::orbit::raster::' 'ui::orbit::draw::cell_text$' 'ui::orbit::draw::viz_key$'); fi
     nrpn=()
-    if grep -q 'chimera_engine::nrpn::' <<< "$syms"; then nrpn=('chimera_engine::nrpn::'); fi
+    # A text symbol: a gate on any symbol also trips on rodata alone.
+    if grep -qE ' [tT] .*chimera_engine::nrpn::' <<< "$syms"; then nrpn=('chimera_engine::nrpn::'); fi
     pipe=()
     # The pipe's layers inline into `DinPipe::feed`; any left out of line
     # are checked too.

@@ -89,13 +89,16 @@ fn writer_never_splits_a_message() {
             assert!(b[..cap].iter().all(|&x| x == 0xEE));
         }
     }
-    let mut b = [0u8; 4];
+    let mut b = [0u8; 5];
     let mut w = Writer::new(&mut b);
     assert!(w.cc(ch(0), cc(1), u7(1)));
     assert!(!w.cc(ch(1), cc(1), u7(1)));
     assert_eq!(w.len(), 3);
     assert!(!w.sysex(&[0x7E]));
     assert_eq!(w.len(), 3);
+    // Neither failure touched running status: B0 is still left out.
+    assert!(w.cc(ch(0), cc(1), u7(2)));
+    assert_eq!(b, [0xB0, 1, 1, 1, 2]);
 }
 
 #[test]

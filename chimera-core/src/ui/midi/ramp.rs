@@ -90,9 +90,22 @@ impl Ramp {
         self.left != 0
     }
 
-    /// The hand wins: rest at `place`.
+    /// The hand wins: rest at `place`. A key heard before is news again.
     pub fn cancel(&mut self, place: f32) {
         (self.at, self.to, self.left) = (place, place, 0);
+        (self.prev_k, self.last_k) = (0, 0);
+    }
+
+    /// At rest from `place`; moved off where it landed, as `cancel`. The
+    /// stored value reads back a hair off `to` (an Octaves param's
+    /// denormalize and normalize), so within half a 14-bit place is where
+    /// it landed: its jitter rejection stands.
+    pub fn settle_at(&mut self, place: f32) {
+        if (place - self.to).abs() <= 0.5 / 16383.0 {
+            self.at = place;
+        } else {
+            self.cancel(place);
+        }
     }
 }
 

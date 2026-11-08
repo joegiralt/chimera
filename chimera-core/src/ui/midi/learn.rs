@@ -441,14 +441,15 @@ impl UiState {
             return false;
         }
         if let Some(j) = entry {
+            let ours = self.learn_target();
             match self.project.part(part).sound.map.entries().get(j) {
-                Some(e) if Control::of(e.input).hears(k) => {
+                Some(e) if Some(e.target) == ours && Control::of(e.input).hears(k) => {
                     self.learn_sense(part, j, s, v);
                     return true;
                 }
-                Some(_) => {}
-                // The map changed under it: learn is over.
-                None => {
+                Some(e) if Some(e.target) == ours => {}
+                // The map changed under it (not by learn): learn is over.
+                _ => {
                     self.learn = Learn::Off;
                     return false;
                 }
@@ -457,13 +458,21 @@ impl UiState {
         self.learn_start(part, k, s, v)
     }
 
-    /// A CC no binding may take, heard while armed on the Part's channel:
-    /// said (`CC 120 RESERVED`), and learn stays armed.
+    /// A CC no binding may take, heard while armed: said (`CC 120
+    /// RESERVED`, or its channel as any CC's), and learn stays armed.
     pub(super) fn learn_reserved(&mut self, ev: CcEvent) {
-        if let Learn::Armed { part, .. } = self.learn
-            && ev.channel == self.project.part(part).mix.channel
-        {
-            self.learn_note(part, LearnNote::Reserved(ev.cc));
+        if let Learn::Armed { part, .. } = self.learn {
+            let at = self.project.part(part).mix.channel;
+            let note = if ev.channel == at {
+                LearnNote::Reserved(ev.cc)
+            } else {
+                LearnNote::WrongChannel {
+                    cc: ev.cc,
+                    got: ev.channel,
+                    part: at,
+                }
+            };
+            self.learn_note(part, note);
         }
     }
 
@@ -480,7 +489,7 @@ impl UiState {
     /// and ends learn; a cell no control may drive leaves it armed.
     fn learn_start(&mut self, part: PartId, k: Control, s: SeenCtl, v: U7) -> bool {
         let (Some(input), Some(t)) = (first_input(k), self.learn_target()) else {
-            // NOT MAPPABLE stands.
+            // Nothing learnable: learn stands, the message falls through.
             return false;
         };
         let mut map = self.project.part(part).sound.map;

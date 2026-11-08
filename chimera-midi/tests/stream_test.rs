@@ -180,6 +180,21 @@ fn sysex_cut_by_status_starts_the_new_message() {
 }
 
 #[test]
+fn f0_cuts_a_sysex_and_starts_another() {
+    assert_eq!(
+        parse(&[0xF0, 1, 0xF0, 2, 0xF7]),
+        [Item::Fault(Fault::SysExCut), Item::SysEx(vec![2])]
+    );
+}
+
+#[test]
+fn a_sysex_buffer_of_none() {
+    let mut p = Parser::<0>::new();
+    assert_eq!(run(&mut p, &[0xF0, 0xF7]), [Item::SysEx(vec![])]);
+    assert_eq!(run(&mut p, &[0xF0, 1]), [Item::Fault(Fault::SysExOverflow)]);
+}
+
+#[test]
 fn sysex_overflow_at_n_plus_one() {
     let mut p = Parser::<4>::new();
     assert!(run(&mut p, &[0xF0, 1, 2, 3, 4]).is_empty());
@@ -238,7 +253,7 @@ fn f4_f5_cancel_and_are_undefined() {
 }
 
 #[test]
-fn f9_fd_ignored_like_realtime() {
+fn f9_fd_fault_but_keep_state() {
     // state untouched: running status survives, a SysEx continues
     assert_eq!(
         parse(&[0x90, 60, 0xF9, 100, 0xFD, 61, 100]),
@@ -311,6 +326,11 @@ fn redundant_status_accepted() {
 #[test]
 fn stray_f7_is_silent_and_cancels_running_status() {
     assert_eq!(parse(&[0x90, 0xF7, 60]), [Item::Fault(Fault::Orphan)]);
+    // Mid-message: the half message is lost, and so is running status.
+    assert_eq!(
+        parse(&[0x90, 60, 0xF7, 100]),
+        [Item::Fault(Fault::Interrupted), Item::Fault(Fault::Orphan)]
+    );
 }
 
 #[test]

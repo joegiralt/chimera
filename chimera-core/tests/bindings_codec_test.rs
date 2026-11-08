@@ -351,6 +351,17 @@ fn bad_length_is_bounds() {
     // 16 entries fit.
     let sixteen = bindings(&[entry(0, 0, 20); MAP_LEN]);
     assert!(load(&file(&[(RecordTag::Bindings, sixteen)])).is_ok());
+    // `0x001E`: 5 B entries, at most 16.
+    let old = [74, code(BlockRef::Filter), FilterParams::CUTOFF.0, 0, 255];
+    for n in [4, 6, 5 * (MAP_LEN + 1)] {
+        let p: Vec<u8> = old.iter().copied().cycle().take(n).collect();
+        assert_eq!(
+            load(&file(&[(RecordTag::MidiMap, p.clone())])).err(),
+            Some(FileError::Bounds),
+            "{n} B"
+        );
+        assert_eq!(codec::decode(MapRecord::Legacy, &p, None), Err(Bounds));
+    }
 }
 
 /// A version this firmware can't read (#816): the Sound loads, its map

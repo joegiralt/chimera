@@ -535,10 +535,20 @@ impl DinPipe {
                     Rt::ActiveSensing => self.sense.heard(rt),
                     Rt::Reset => {
                         self.ctl = Controllers::new();
+                        // What a busy queue refuses is owed, as `lost`'s: a
+                        // NotesOff for a refused SoundOff, a pedal-up for a
+                        // refused ResetControllers (no note sticks). The
+                        // other controllers it would reset (bend, mod) are
+                        // not owed: they stay where they were.
                         for c in 0..16 {
-                            let channel = Channel::clamped(c);
-                            sink.mode(channel, ChannelMode::SoundOff);
-                            sink.mode(channel, ChannelMode::ResetControllers);
+                            let (channel, bit) = (Channel::clamped(c), 1 << c);
+                            if !sink.mode(channel, ChannelMode::SoundOff) {
+                                *sink.owed |= bit;
+                            }
+                            if !sink.mode(channel, ChannelMode::ResetControllers) {
+                                sink.pedals.up |= sink.pedals.down & bit;
+                                sink.pedals.down &= !bit;
+                            }
                         }
                     }
                 },
@@ -931,15 +941,22 @@ struct Counted<'a, S: Sinks + ?Sized> {
 }
 
 impl<S: Sinks + ?Sized> Counted<'_, S> {
-    /// Refused while NotesOff are owed, so none overtakes them.
     fn note(&mut self, e: InEvent) {
+        self.push(e);
+    }
+
+    /// Refused while NotesOff are owed, so none overtakes them; `false`:
+    /// refused.
+    fn push(&mut self, e: InEvent) -> bool {
         if self.settle() && self.out.note(e) {
             self.pedals.heard(e);
             if let Some(h) = self.held.as_deref_mut() {
                 h.heard(e);
             }
+            true
         } else {
             self.stats.refused = self.stats.refused.saturating_add(1);
+            false
         }
     }
 
@@ -976,7 +993,7 @@ impl<S: Sinks + ?Sized> Counted<'_, S> {
         }
     }
 
-    fn mode(&mut self, channel: Channel, mode: ChannelMode) {
-        self.note(InEvent::Mode(ChannelModeEvent { channel, mode }));
+    fn mode(&mut self, channel: Channel, mode: ChannelMode) -> bool {
+        self.push(InEvent::Mode(ChannelModeEvent { channel, mode }))
     }
 }

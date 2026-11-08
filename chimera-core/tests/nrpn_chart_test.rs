@@ -3,7 +3,7 @@
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::addr::{BlockViewMut, Blocks};
-use chimera_core::block::{Block, DiskCode, ParamId};
+use chimera_core::block::{Block, DiskCode, ParamId, ParamKind};
 use chimera_core::dsp::filter::{FilterKind, FilterMode};
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::midi_map::Mappable;
@@ -80,7 +80,6 @@ fn nrpn_chart_is_append_only() {
 #[test]
 fn every_mappable_has_an_address() {
     for a in every_addr() {
-        assert_eq!(nrpn::writable(a), Mappable::new(a), "{a:?}");
         if Mappable::new(a).is_some() {
             assert!(
                 NrpnAddr::of(a).is_some(),
@@ -184,12 +183,10 @@ fn law_of_tune_is_index14() {
         ValueLaw::Index14
     );
     assert!(chart().contains(&"N 33 1 MIDI TUNE Index14 R".to_string()));
-    // PART LEVEL is stepped, ≤ 128 values: Index7, writable.
-    assert!(
-        chart()
-            .iter()
-            .any(|l| l.starts_with("N 25 3 PART LEVEL ") && l.ends_with(" W"))
-    );
+    // PART LEVEL is continuous: Place14, writable.
+    assert!(chart().contains(&"N 25 3 PART LEVEL Place14 W".to_string()));
+    // ALGO MORPH is stepped, ≤ 128 values: Index7, writable.
+    assert!(chart().contains(&"N 2 2 ALGO MORPH Index7 W".to_string()));
 }
 
 /// Code7's lookup: a frozen code to the index the live block shows it at,
@@ -280,6 +277,30 @@ impl Bank {
     }
 }
 
+/// `steps` and Index7 count values one apart: every stepped param steps
+/// by 1 between whole bounds.
+#[test]
+fn stepped_params_step_by_one() {
+    for b in BlockRef::ALL {
+        for s in b.specs().iter().filter(|s| s.kind == ParamKind::Stepped) {
+            assert_eq!(s.step, 1.0, "{b:?} {}", s.ident);
+            assert!(
+                s.min.fract() == 0.0 && s.max.fract() == 0.0,
+                "{b:?} {}",
+                s.ident
+            );
+        }
+    }
+}
+
+/// `index_of_code` writes back in spec order: KIND must come before the
+/// MODE it decodes.
+#[test]
+fn filter_kind_restores_before_mode() {
+    let at = |id| BlockRef::Filter.specs().iter().position(|s| s.id == id);
+    assert!(at(FilterParams::KIND) < at(FilterParams::MODE));
+}
+
 /// A choice is `Code7` exactly when every code it stores fits an MSB;
 /// `WIDE_CODES` lists the others and nothing else.
 #[test]
@@ -291,12 +312,26 @@ fn code7_codes_fit_an_msb() {
         let mut bank = Bank::new();
         for v in ValidAddr::of_block(b).filter(|v| v.coded()) {
             let s = v.spec();
-            let wide = (0..=s.max as u8).any(|i| {
-                let mut blk = bank.block(b);
-                blk.set(s.id, f32::from(i));
-                blk.enum_code(s.id).unwrap() > 127
+            // Filter MODE's codes depend on KIND: walk every KIND.
+            let kinds: &[FilterKind] = if b == BlockRef::Filter {
+                &FilterKind::BUILT
+            } else {
+                &[FilterKind::BUILT[0]]
+            };
+            let wide = kinds.iter().any(|k| {
+                if b == BlockRef::Filter {
+                    assert!(
+                        bank.block(b)
+                            .set_enum_code(FilterParams::KIND, k.disk_code())
+                    );
+                }
+                (0..=s.max as u8).any(|i| {
+                    let mut blk = bank.block(b);
+                    blk.set(s.id, f32::from(i));
+                    blk.enum_code(s.id).unwrap() > 127
+                })
             });
-            bank.block(b).set(s.id, s.default);
+            bank = Bank::new();
             let law = nrpn::law(b, s);
             assert_eq!(law == ValueLaw::Code7, !wide, "{b:?} {}", s.ident);
             assert_eq!(

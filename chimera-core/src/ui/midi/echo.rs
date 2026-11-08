@@ -262,10 +262,9 @@ fn value(project: &Project, p: PartId, e: &Binding) -> Option<u16> {
     let lower = PartId::ALL[..i].iter().any(|&q| {
         let o = project.part(q);
         o.mix.channel == part.mix.channel
-            && o.sound
-                .map
-                .targets_of(&e.input)
-                .any(|(_, b)| b.feedback == Feedback::Value)
+            && o.sound.map.targets_of(&e.input).any(|(_, b)| {
+                b.feedback == Feedback::Value && b.target.live(o.sound.params.engine())
+            })
     });
     (!lower).then_some(v)
 }

@@ -23,8 +23,6 @@ pub struct BindRuntime {
     msb14: Option<U7>,
     /// A button's last state: held.
     held: bool,
-    /// A toggle's: at `span.max`.
-    toggled: bool,
     /// A pickup waiting, and which way the knob must go: the hint's.
     waiting: Option<Dir>,
 }
@@ -35,13 +33,17 @@ impl BindRuntime {
         wrote: None,
         msb14: None,
         held: false,
-        toggled: false,
         waiting: None,
     };
 
     /// A pickup waiting for the knob, and which way it must move.
     pub fn waiting(&self) -> Option<Dir> {
         self.waiting
+    }
+
+    /// The hand moved the param: the way it showed is stale.
+    pub fn unwait(&mut self) {
+        self.waiting = None;
     }
 
     /// Where this binding last put its param, if nothing moved it since.
@@ -82,7 +84,7 @@ pub fn resolve(b: &Binding, rt: &mut BindRuntime, c: &Ctl, now: Place) -> Option
         (Input::Cc(_, k), Ctl::Cc { value, .. }) => match k {
             CcKind::Absolute(t) => absolute(rt, t, Place::from_u7_replicated(value), now),
             CcKind::Relative(e) => detents(e.decode(value)),
-            CcKind::Button(m) => button(rt, m, value),
+            CcKind::Button(m) => button(rt, m, value, now),
         },
         (Input::Cc14(m, t), Ctl::Cc { cc, value }) => {
             if cc.get() == m.get() {
@@ -103,7 +105,7 @@ pub fn resolve(b: &Binding, rt: &mut BindRuntime, c: &Ctl, now: Place) -> Option
                 DataValue::Coarse(v) => detents(e.decode(v)),
                 DataValue::Fine(_) => None,
             },
-            NrpnKind::Button(m) => button(rt, m, msb(value)),
+            NrpnKind::Button(m) => button(rt, m, msb(value), now),
             NrpnKind::IncDec => None,
         },
         (Input::Nrpn(_, NrpnKind::IncDec), Ctl::Step { dir, .. }) => {
@@ -144,16 +146,14 @@ fn absolute(rt: &mut BindRuntime, t: Takeover, incoming: Place, now: Place) -> O
     }
 }
 
-/// Held is max (momentary); a press flips (toggle). `v` ≥ 64 is held.
-fn button(rt: &mut BindRuntime, m: ButtonMode, v: U7) -> Option<Action> {
+/// Held is max (momentary); a press flips the param at `now` (toggle):
+/// at max it goes to min, anywhere else to max. `v` ≥ 64 is held.
+fn button(rt: &mut BindRuntime, m: ButtonMode, v: U7, now: Place) -> Option<Action> {
     let held = v.get() >= 64;
     let was = core::mem::replace(&mut rt.held, held);
     let up = match m {
         ButtonMode::Momentary if held != was || rt.wrote.is_none() => held,
-        ButtonMode::Toggle if held && !was => {
-            rt.toggled = !rt.toggled;
-            rt.toggled
-        }
+        ButtonMode::Toggle if held && !was => now.get() + TOL_7BIT < Place::MAX.get(),
         _ => return None,
     };
     let p = if up { Place::MAX } else { Place::ZERO };

@@ -613,6 +613,54 @@ fn pickup_hint_up_and_down() {
     }
 }
 
+/// THEME HINTS OFF: a pickup waits as before, but no hint is drawn.
+#[test]
+fn pickup_hint_absent_with_hints_off() {
+    use chimera_core::ui::cc::PICKUP_UP;
+    use chimera_core::ui::theme_settings::ThemeSettings;
+    let (mut ui, a) = on_page(to_pitch);
+    ui.set_theme(ThemeSettings {
+        hints: false,
+        ..ThemeSettings::DEFAULT
+    });
+    let mut m = MidiMap::EMPTY;
+    let e = bind(Input::Cc(cc(21), CcKind::Absolute(Pickup)), a);
+    m.learn(e.input, e.target).unwrap();
+    m.set(0, e);
+    ui.project_mut().edit_part(P1).sound.map = m;
+    let mut now = 10_000;
+    send(&mut ui, &mut now, cc_msg(21, 0));
+    assert_eq!(ui.pickup(), Some(Dir::Up), "it still waits");
+    assert!(!drawn_on(&render_ui(&ui), PICKUP_UP, hint::FOCUS_Y));
+}
+
+/// A panel turn takes the hint down: the direction it showed is stale
+/// until the knob's next message (#820).
+#[test]
+fn a_panel_turn_clears_the_pickup_hint() {
+    let (mut ui, a) = on_page(to_filter);
+    let mut m = MidiMap::EMPTY;
+    let e = bind(Input::Cc(cc(21), CcKind::Absolute(Pickup)), a);
+    m.learn(e.input, e.target).unwrap();
+    m.set(0, e);
+    ui.project_mut().edit_part(P1).sound.map = m;
+    let mut now = 10_000;
+    send(&mut ui, &mut now, cc_msg(21, 0));
+    assert_eq!(ui.pickup(), Some(Dir::Up));
+    let ctx = SlotCtx::read(&ui.project().part(P1).sound.params, Op::A);
+    let def = ui.page_def();
+    let slot = (0..def.params.len())
+        .find(|&i| view(def, i, &ctx).addr() == Some(a))
+        .unwrap();
+    turn(&mut ui, chimera_hal::ALL_ENCODERS[slot], 1);
+    send(
+        &mut ui,
+        &mut now,
+        Ctl::Pressure(chimera_midi::value::U7::ZERO),
+    );
+    assert_eq!(ui.pickup(), None, "turned: no stale hint");
+}
+
 /// Redraw what changed on `fb`, as the shells do each frame.
 fn redraw(ui: &mut UiState, fb: &mut Fb) {
     ui.render_dirty_with_audio(

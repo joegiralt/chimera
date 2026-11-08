@@ -452,6 +452,12 @@ fn button_momentary_and_toggle() {
     assert_eq!(r.place(P1, CUTOFF), 1.0, "a release keeps it");
     press(&mut r, 21, 127);
     assert_eq!(r.place(P1, CUTOFF), 0.0, "the next press flips back");
+    // It flips the param, not its own memory: moved to max meanwhile, a
+    // press takes it down (#820).
+    press(&mut r, 21, 0);
+    r.set(P1, CUTOFF, 1.0);
+    press(&mut r, 21, 127);
+    assert_eq!(r.place(P1, CUTOFF), 0.0, "max flips to min");
 }
 
 #[test]
@@ -724,4 +730,108 @@ fn rpn0_sets_bend_clamped() {
         value: DataValue::Coarse(u7(70)),
     })]);
     assert_eq!(r.ui.project().rev(), rev);
+}
+
+const MORPH: ParamAddr = ParamAddr::new(
+    BlockRef::Algo,
+    chimera_core::dsp::algo::params::AlgoParams::MORPH,
+);
+
+/// Stepped, ≤ 128 values: a canonical NRPN's coarse byte is the step
+/// (Index7); a 14-bit pair bins by its MSB (#820).
+#[test]
+fn stepped_targets_index_and_bin() {
+    let mut r = Rig::algo();
+    let s = spec(MORPH);
+    let e = r.nrpn(P1, addr_of(MORPH), DataValue::Coarse(u7(5)));
+    r.pass(&[e]);
+    r.passes(5);
+    assert_eq!(r.stored(P1, MORPH), s.min + 5.0, "Index7: step 5");
+
+    let m = Cc14Msb::new(2).unwrap();
+    r.bind(P1, Input::Cc14(m, Takeover::Jump), MORPH);
+    let e = r.cc(P1, 2, 127);
+    r.pass(&[e]);
+    r.passes(5);
+    assert_eq!(r.stored(P1, MORPH), s.max, "the MSB's top bin");
+}
+
+/// An NRPN bound relative turns as detents; one bound IncDec steps on
+/// CC 96 / 97 (#820).
+#[test]
+fn nrpn_relative_and_inc_dec_turn() {
+    for kind in [
+        NrpnKind::Relative(ByteEncoding::BinaryOffset),
+        NrpnKind::IncDec,
+    ] {
+        let mut r = Rig::algo();
+        r.set(P1, CUTOFF, 0.5);
+        r.passes(2);
+        let n = addr_of(CUTOFF);
+        r.bind(P1, Input::Nrpn(n, kind), CUTOFF);
+        let start = r.stored(P1, CUTOFF);
+        let up = if kind == NrpnKind::IncDec {
+            ev(
+                r.ch(P1),
+                Ctl::Step {
+                    sel: Sel::Nrpn(n),
+                    dir: Dir::Up,
+                },
+            )
+        } else {
+            r.nrpn(P1, n, DataValue::Coarse(u7(0x41)))
+        };
+        for _ in 0..5 {
+            r.pass(&[up]);
+        }
+        r.passes(5);
+        assert!(r.stored(P1, CUTOFF) > start, "{kind:?} turned it up");
+    }
+}
+
+/// After a ramp lands on CUTOFF (Octaves: its stored value reads back a
+/// hair off the place it landed on), a ±1 reversal inside `DEAD_MS` is
+/// still jitter (#873 review).
+#[test]
+fn jitter_after_landing_is_still_rejected() {
+    let mut bad = Vec::new();
+    for v in 1..126u8 {
+        let mut r = Rig::algo();
+        r.bind(P1, cc_input(20, CcKind::Absolute(Takeover::Jump)), CUTOFF);
+        let e = r.cc(P1, 20, v);
+        r.pass(&[e]);
+        r.passes(60);
+        let e = r.cc(P1, 20, v + 1);
+        r.pass(&[e]);
+        let e = r.cc(P1, 20, v);
+        r.pass(&[e]);
+        r.passes(60);
+        if (r.place(P1, CUTOFF) - place7(v + 1)).abs() > 1e-3 {
+            bad.push(v);
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "v → v+1 → v inside DEAD_MS let back through: {bad:?}"
+    );
+}
+
+/// Moved by something else, a key heard before moves it again (#820).
+#[test]
+fn a_moved_param_hears_a_key_again() {
+    let mut r = Rig::algo();
+    r.bind(P1, cc_input(20, CcKind::Absolute(Takeover::Jump)), CUTOFF);
+    let e = r.cc(P1, 20, 64);
+    r.pass(&[e]);
+    r.passes(60);
+    r.set(P1, CUTOFF, 0.9);
+    r.passes(2);
+    let e = r.cc(P1, 20, 64);
+    r.pass(&[e]);
+    r.passes(60);
+    assert!(
+        (r.place(P1, CUTOFF) - place7(64)).abs() < 1e-3,
+        "{}",
+        r.place(P1, CUTOFF)
+    );
 }

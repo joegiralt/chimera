@@ -8,7 +8,9 @@ use std::sync::Mutex;
 
 use chimera_engine::bank2::DOOR_CELL;
 use chimera_engine::midi_in::{self, CtrlEvent, CtrlRing, DinSinks, PipeSlot};
-use chimera_engine::note_queue::{InEvent, NoteEvent, NoteKind, NoteQueue, RealTime};
+use chimera_engine::note_queue::{
+    ChannelMode, ChannelModeEvent, InEvent, NoteEvent, NoteKind, NoteQueue, RealTime,
+};
 use chimera_engine::{MidiChannel, MidiNote, Velocity};
 use chimera_midi::ctl::{Ctl, FreeCc};
 use chimera_midi::value::U7;
@@ -72,6 +74,13 @@ fn open_routes_like_before() {
         ]
     );
     assert_eq!(r.notes.len(), 3 + 16, "idle after FE: notes off × 16");
+    for (c, e) in r.notes[3..].iter().enumerate() {
+        let want = InEvent::Mode(ChannelModeEvent {
+            channel: MidiChannel::clamped(c as u8),
+            mode: ChannelMode::NotesOff,
+        });
+        assert_eq!(*e, want);
+    }
     assert_eq!(
         r.ctrl,
         [

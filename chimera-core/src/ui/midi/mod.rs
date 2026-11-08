@@ -637,7 +637,7 @@ impl UiState {
                 // At rest, it starts from the stored value, wherever the
                 // hand or the engine left it.
                 if !r.moving() {
-                    r.cancel(spec.normalize(was));
+                    r.settle_at(spec.normalize(was));
                 }
                 r.hear(to, span_place(s, to), now);
             }
@@ -821,10 +821,20 @@ impl UiState {
         let map = self.project.part(p).sound.map;
         let entry = map.entries().iter().position(|e| e.target.addr() == a);
         let m = self.cc.part(i);
-        let canon = m
+        let mut canon = m
             .canon
             .iter()
             .position(|c| c.is_some_and(|c| c.addr() == a));
+        // In no slot: a free one holds it as the hand's, so a canonical
+        // NRPN later in the pass is refused too. With none free, such an
+        // NRPN waits for a slot (`Seat::Wait`) and lands after the turn.
+        if canon.is_none()
+            && let Some(t) = Mappable::new(a)
+            && let Some(k) = (0..CANON).find(|&k| m.rests(k))
+        {
+            m.canon[k] = Some(t);
+            canon = Some(k);
+        }
         for j in [entry, canon.map(|k| MAP_LEN + k)].into_iter().flatten() {
             m.ramps[j].cancel(0.0);
             m.bins[j] = NO_BIN;
@@ -832,6 +842,7 @@ impl UiState {
             m.handed |= 1 << j;
             if j < MAP_LEN {
                 m.turns[j] = 0;
+                m.rt[j].unwait();
             }
         }
         m.unwait_addr(a);

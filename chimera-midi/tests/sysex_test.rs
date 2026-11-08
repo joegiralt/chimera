@@ -1,5 +1,5 @@
 use chimera_midi::out::Writer;
-use chimera_midi::stream::{Event, Parsed, Parser, SysEx};
+use chimera_midi::stream::{Event, Parsed, Parser};
 use chimera_midi::sysex::{Identity, Maker, Request, identity_reply, request};
 use chimera_midi::value::{U7, U14};
 
@@ -41,6 +41,9 @@ fn other_device_ignored() {
     assert_eq!(ask(&[0xF0, 0x7E, 0x7F, 6, 2, 0xF7], 0), None);
     assert_eq!(ask(&[0xF0, 0x7E, 0x7F, 6, 1, 0, 0xF7], 0), None);
     assert_eq!(ask(&[0xF0, 0xF7], 0), None);
+    // Short bodies.
+    assert_eq!(ask(&[0xF0, 0x7E, 0x7F, 6, 0xF7], 0), None);
+    assert_eq!(ask(&[0xF0, 0x7E, 0xF7], 0), None);
 }
 
 const ID: Identity = Identity {
@@ -86,5 +89,4 @@ fn reply_is_all_or_nothing_and_maker_widths() {
     };
     assert!(identity_reply(u7(0), &id, &mut w));
     assert_eq!(b[5], 0x41);
-    let _ = SysEx::bytes;
 }

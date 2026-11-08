@@ -170,6 +170,24 @@ fn learn_maps_first_cc() {
     assert_ne!(stored(&ui, CUTOFF), was);
 }
 
+/// Sensing trusts its entry only while it is still CUTOFF's: a map
+/// replaced under it (not by learn) ends learn (#820).
+#[test]
+fn a_replaced_map_ends_sensing() {
+    use chimera_core::midi_map::{Input as MapInput, MidiMap};
+    let mut ui = on_cutoff();
+    mix_seq(&mut ui);
+    let p1 = ui.project().part(P1).mix.channel;
+    cc(&mut ui, p1, 74, 100, 20_000);
+    assert_eq!(ui.learn(), Learn::Sensing { part: P1, entry: 0 });
+    let mut m = MidiMap::EMPTY;
+    m.learn(MapInput::cc(74).unwrap(), Mappable::new(RESO).unwrap())
+        .unwrap();
+    ui.project_mut().edit_part(P1).sound.map = m;
+    cc(&mut ui, p1, 74, 90, 20_004);
+    assert_eq!(ui.learn(), Learn::Off);
+}
+
 /// `n` mappable targets other than CUTOFF.
 fn others(n: usize) -> Vec<Mappable> {
     Op::ALL
@@ -203,6 +221,9 @@ fn learn_refusals() {
         }
     );
     assert!(ui.project().part(P1).sound.map.is_empty());
+    // Reserved on another channel: the channel is said, as any CC's (#820).
+    cc(&mut ui, ch(1), 121, 0, 20_008);
+    assert_eq!(band(&ui), "CC 121 ON CH 2, PART ON CH 1");
 
     // FM3 IN patches (FLT › JACK, ADR 0190): not mappable, and a CC
     // changes nothing.

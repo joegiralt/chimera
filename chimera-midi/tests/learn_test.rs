@@ -153,6 +153,16 @@ fn button_0_127() {
     );
 }
 
+/// One 01 and one 7F looks like a button; a repeat proves an encoder.
+#[test]
+fn button_then_relative_self_corrects() {
+    assert_eq!(classify(&on_cc(21, &[0x01, 0x7F])), Guess::Button);
+    assert_eq!(
+        classify(&on_cc(21, &[0x01, 0x7F, 0x01, 0x01])),
+        Guess::Relative(TwosComplement, Sure::Yes)
+    );
+}
+
 #[test]
 fn cc2_then_cc34_is_paired14() {
     let s = seen(&[
