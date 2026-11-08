@@ -86,7 +86,10 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
        serve's pick. Bank 1 keeps the handler's shim, `closed` and what it
        needs (`Held::op`/`run`, `Flying::ground`, `give`,
        `CardSide::requeue`), and `fill_done`, which the bench's TAPE rig
-       calls too. */
+       calls too. `IrqState::work` is placed by its own `link_section`
+       (`.bank2.text.card_work`): a glob can't reach an outlined helper,
+       and LLVM outlines nothing from a function with an explicit section,
+       so `Rings::wants`' fold closures stay here with it (#884). */
     *(.text.*13chimera_board8card_dma*8IrqState* .text.*13chimera_board8card_dma*4Held3end*
       .text.*13chimera_board8card_dma*4Held3fly* .text.*13chimera_board8card_dma*4Held4xfer*
       .text.*13chimera_board8card_dma*4Held5ready* .text.*13chimera_board8card_dma*4Held6polled*

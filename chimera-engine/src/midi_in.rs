@@ -871,6 +871,15 @@ impl PipeSlot {
         self.pipe().map_or_else(PipeStats::default, DinPipe::stats)
     }
 
+    /// NotesOff or pedal-ups `lost` still owes the queue, or a refused
+    /// wheel or pressure (`ExprOwed`): an empty `feed` retries them. Field
+    /// reads, so bank 1's shells may poll it (#884).
+    #[inline(always)]
+    pub fn owes(&self) -> bool {
+        self.pipe()
+            .is_some_and(|p| p.owed != 0 || p.pedals.up != 0 || p.expr.bits != 0)
+    }
+
     /// Active Sensing armed as of the last `feed` or `idle`; nothing
     /// before the first. A field read, as `stats`.
     #[inline(always)]
@@ -919,13 +928,10 @@ impl UsbSlot {
             || self.held.keys.iter().any(|&k| k != 0)
     }
 
-    /// NotesOff or pedal-ups `lost` still owes the queue, or a refused wheel
-    /// or pressure (`ExprOwed`). Field reads.
+    /// What its pipe owes (`PipeSlot::owes`).
     #[inline(always)]
     pub fn owes(&self) -> bool {
-        self.slot
-            .pipe()
-            .is_some_and(|p| p.owed != 0 || p.pedals.up != 0 || p.expr.bits != 0)
+        self.slot.owes()
     }
 
     /// As of the last `feed`; nothing counted before the first.

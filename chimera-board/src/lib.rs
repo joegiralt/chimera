@@ -396,6 +396,16 @@ fn midi_out(ui: &mut chimera_core::ui::UiState, out: &chimera_core::out_ring::Ou
     }
 }
 
+/// DIN owes the note queue with no byte to come (`MIDI_OWES`): its
+/// handler retries (#884). Out of line, as `midi_out`.
+#[cfg(feature = "midi-din")]
+#[inline(never)]
+fn din_retry() {
+    if shared::MIDI_OWES.load(core::sync::atomic::Ordering::Relaxed) {
+        cortex_m::peripheral::NVIC::pend(pac::Interrupt::USART1);
+    }
+}
+
 /// The binary's audio side, which the start-up calls at its steps. Plain
 /// function pointers: `synth` is not generic over them, so it and the UI
 /// it drives are instantiated in this crate (ADR 0108).
@@ -811,6 +821,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ctrl.clear();
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         midi_out(ui, &out);
+        #[cfg(feature = "midi-din")]
+        din_retry();
         // Card work and SYSTEM's sync can hold the UI for seconds: an
         // errand, so no false storm from the guard's service test.
         let errand = |e: &chimera_core::errand::Errand| {

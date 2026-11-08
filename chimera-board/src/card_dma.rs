@@ -1205,7 +1205,9 @@ impl IrqState {
     }
 
     /// With the bus held: a retry first, then the earliest want it can
-    /// read (`serve_step`), claimed; else the bench's read.
+    /// read (`serve_step`), claimed; else the bench's read. Bank 2's by its
+    /// own section: no outlined helper of its may land in bank 1 (#884).
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2.text.card_work"))]
     fn work(&mut self) -> Work {
         match self.retry.take() {
             Some(f) if serving() && filling() => return Work::Fill(f),

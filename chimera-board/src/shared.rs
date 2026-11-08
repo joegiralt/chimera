@@ -403,6 +403,10 @@ pub static MIDI_ERRORS: AtomicU32 = AtomicU32::new(0);
 pub static MIDI_FAULTS: AtomicU32 = AtomicU32::new(0);
 pub static MIDI_DROPS: AtomicU32 = AtomicU32::new(0);
 pub static MIDI_CTRL_DROPS: AtomicU32 = AtomicU32::new(0);
+/// MIDI DIN's pipe owes the note queue (`PipeSlot::owes`) as of the ISR's
+/// last entry: the main loop pends USART1 to retry, as no byte may come
+/// (#884).
+pub static MIDI_OWES: AtomicBool = AtomicBool::new(false);
 
 /// A saturating count, as the audio and MIDI interrupts keep them.
 #[inline]

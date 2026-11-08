@@ -10,8 +10,8 @@ use stm32h7xx_hal::pac::{self, interrupt};
 
 use chimera_board::priority::{self, Priority};
 use chimera_board::shared::{
-    MIDI_CTRL_DROPS, MIDI_CYCLES, MIDI_DROPS, MIDI_ERRORS as ERRORS, MIDI_FAULTS, audio_cycles,
-    bump, own_cycles, stamp,
+    MIDI_CTRL_DROPS, MIDI_CYCLES, MIDI_DROPS, MIDI_ERRORS as ERRORS, MIDI_FAULTS, MIDI_OWES,
+    audio_cycles, bump, own_cycles, stamp,
 };
 
 const BAUD: u32 = 31_250;
@@ -137,7 +137,10 @@ fn USART1() {
         buf[n] = usart.rdr.read().rdr().bits() as u8;
         n += usize::from(!bad);
     }
-    if (idle || n > 0)
+    // Owed (a refused wheel, a silence's NotesOff): an empty feed retries
+    // it, the main loop pending this handler while `MIDI_OWES` (#884).
+    let owes = pipe.owes();
+    if (idle || n > 0 || owes)
         && let (Some(notes), Some(ctrl)) = (notes.as_mut(), ctrl)
     {
         let mut sinks = DinSinks { notes, ctrl };
@@ -146,10 +149,14 @@ fn USART1() {
         if idle {
             midi_in::idle(pipe, &mut sinks);
         }
-        // Closed, the bytes are dropped: MIDI in is deaf (spec § 13).
-        if n > 0 {
+        // Closed, the bytes are dropped: MIDI in is deaf (spec § 13). A
+        // retry skipped here (a silence's entry) or refused again stays
+        // owed: `MIDI_OWES` holds, and the next loop pass pends this
+        // handler to land it.
+        if n > 0 || (owes && !idle) {
             midi_in::feed(pipe, &buf[..n], &mut sinks);
         }
+        MIDI_OWES.store(pipe.owes(), Ordering::Relaxed);
         let s = pipe.stats();
         MIDI_FAULTS.store(s.fault_total(), Ordering::Relaxed);
         MIDI_DROPS.store(u32::from(s.refused), Ordering::Relaxed);

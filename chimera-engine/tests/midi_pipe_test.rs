@@ -1167,3 +1167,37 @@ fn mts_retunes_the_mts_table() {
     TUNINGS.follow_mts(5, false);
     assert_eq!(TUNINGS.offset(5, 61), 0.0);
 }
+
+/// #884: DIN's slot says when it owes (a refused wheel, a silence's
+/// NotesOff), so its shell retries with no byte to come: an empty feed,
+/// as the ISR's retry calls it, lands it and clears the debt.
+#[test]
+fn din_owes_until_an_empty_feed_lands_it() {
+    let mut din = Din::new();
+    assert!(!din.slot.owes());
+    din.run(&[0xB0, 1, 10]);
+    din.fill();
+    din.feed(&[0xB0, 1, 0]);
+    assert!(din.slot.owes(), "the refused wheel is owed");
+    din.take();
+    let mut out = DinSinks {
+        notes: &mut din.notes,
+        ctrl: din.ring,
+    };
+    midi_in::feed(&mut din.slot, &[], &mut out);
+    assert_eq!(din.take().0, [expr(0, Expr::Wheel(u7(0)))]);
+    assert!(!din.slot.owes());
+    // A silence's NotesOff into a full queue: owed too.
+    din.run(&[0xFE]);
+    din.fill();
+    din.feed(&[]);
+    assert!(din.slot.owes());
+    din.take();
+    let mut out = DinSinks {
+        notes: &mut din.notes,
+        ctrl: din.ring,
+    };
+    midi_in::feed(&mut din.slot, &[], &mut out);
+    assert_eq!(din.take().0.len(), 16, "every channel's NotesOff");
+    assert!(!din.slot.owes());
+}
