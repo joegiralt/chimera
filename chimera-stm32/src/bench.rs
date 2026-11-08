@@ -476,7 +476,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 83;
+const ROUTING_ROWS: usize = 90;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -734,7 +734,53 @@ static ROUTING: [RoutingRow; ROUTING_ROWS] = [
         STILL,
     ),
     ("STRIKE", |p| one_op(p).out.gate = [0.0, 0.0, 0.5], STILL),
+    // Per-Sound billing (ADR 0249): each kind's moving path at its worst,
+    // CUTOFF stepped every block as CLEAN MOVE (its steady row the base),
+    // VA's the same and WAVE crossing a segment every block (VA the base),
+    // and CLEAN's and DIRTY's drive apart from RES (HOT RES − SVF is RES
+    // alone; LP24 HOT − HOT RES the drive).
+    ("2040 SWEEP", |p| r2(p), sweep),
+    (
+        "LADDER SWEEP",
+        |p| one_op(p).filter.set_kind(FilterKind::Ladder),
+        sweep,
+    ),
+    (
+        "SEM SWEEP",
+        |p| kind(p, FilterKind::Sem).filter.fb = 0.0,
+        sweep,
+    ),
+    ("VA SWEEP", |p| *p.params = va(VaMode::Mix), sweep),
+    ("VA WAVE", |p| *p.params = va(VaMode::Mix), wave_cross),
+    ("HOT RES", hot_res, STILL),
+    (
+        "DIRTY HOT",
+        |p| {
+            hot(p, FilterMode::Lp24);
+            p.params.filter.set_kind(FilterKind::Dirty);
+        },
+        STILL,
+    ),
 ];
+
+/// 1 OP through the 2040 at REV2, VA's VOICE.
+fn r2(p: &mut PartAudio) {
+    let f = &mut one_op(p).filter;
+    f.set_kind(FilterKind::K2040);
+    f.voice = K2040Voice::Rev2;
+}
+
+/// Both WAVEs either side of ⅓ in turn: a segment crossed every block.
+fn wave_cross(p: &mut PartAudio, block: u32) {
+    let w = if block.is_multiple_of(2) { 0.30 } else { 0.36 };
+    p.params.va.wave = [w; 2];
+}
+
+/// `hot` at LEVEL ½: RES 1 at 1 kHz without the drive.
+fn hot_res(p: &mut PartAudio) {
+    hot(p, FilterMode::Lp24);
+    p.params.filter.level = 0.5;
+}
 
 /// Destinations no voice bills a path for: MORPH, OUT LEVEL, PAN, the
 /// three sends and AMP's VEL.

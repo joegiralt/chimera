@@ -481,7 +481,10 @@ impl<'a> TapShape<'a> {
 /// for every mode adds its dispatch. Billed the costliest, EXP's 61:
 /// ceil5(61 × 1.606) = 100. The unit reads DIRTY FB 112 over DIRTY, whose
 /// moving path bills 0 (2026-10-22, ROUTING bench, rev V at 480 MHz): 115.
-pub const FB_COST: Cost = Cost(115);
+/// FB at ½ over each type's row, less the moving bill it brings (2026-10-26,
+/// ROUTING bench, rev V at 480 MHz, 4eae5d81; ADR 0249), at most the
+/// 2040's: 874 − 682 − 65 = 127: 130.
+pub const FB_COST: Cost = Cost(130);
 
 /// FB's octaves at ±1 for a unit of the filter's own output (#393): the
 /// voice's filtered saw runs at about ±0.3, so about ±2.5 octaves play at

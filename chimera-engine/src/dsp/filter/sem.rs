@@ -147,7 +147,10 @@ pub const SEM_COST: Cost = Cost(10);
 /// `vdiv`: 245) is inside `FB_COST` over it. The unit reads the moving path
 /// 47 over SEM's steady one (SEM MOVE 611 against SVF MOVE 568, CLEAN's
 /// own moving path 13 over its steady; 2026-10-22, ROUTING bench, #726): 50.
-pub const SEM_MOVE_COST: Cost = Cost(50);
+/// SEM MOVE reads 38 over 1 CUTOFF (2026-10-26, ROUTING bench, rev V at
+/// 480 MHz, 4eae5d81), 28 over the steady bill, and CLEAN's stepped
+/// CUTOFF 42 more (ADR 0249): 70.
+pub const SEM_MOVE_COST: Cost = Cost(70);
 
 /// The circuit's state in volts: BP and LP (the followers' sources), the
 /// last block's ends, and FB's signal.

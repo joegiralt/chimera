@@ -2593,8 +2593,9 @@ fn fb_bills_its_loop_and_the_moving_path() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::filter::FB_COST;
     use chimera_core::params::FilterParams;
-    // The unit reads DIRTY FB 112 over DIRTY (2026-10-22).
-    assert_eq!(FB_COST, Cost(115));
+    // The unit reads DIRTY FB 112 over DIRTY (2026-10-22); the 2040's FB
+    // 192 over its row, 65 of it the moving bill (2026-10-26, ADR 0249).
+    assert_eq!(FB_COST, Cost(130));
     let fb = ParamAddr::new(BlockRef::Filter, FilterParams::FB);
     for kind in FilterKind::BUILT {
         let mut p = on(kind);
@@ -2627,13 +2628,14 @@ fn fb_bills_its_loop_and_the_moving_path() {
 
 /// ADR 0192: SEM bills what the unit reads (#726, ROUTING bench
 /// 2026-10-22): steady 9 over CLEAN LP4, 10; its moving path 47 over its
-/// steady, 50. Its voices against CLEAN's and LADDER's, ALGO INIT and
+/// steady, 50, and with CLEAN's stepped CUTOFF (2026-10-26, ADR 0249) 70.
+/// Its voices against CLEAN's and LADDER's, ALGO INIT and
 /// VA INIT, steady and with a CUTOFF LFO, on rev V and rev Y beside the
 /// reserve (ALGO / VA, steady / moving).
 #[test]
 fn sem_bills_its_count_and_its_voices() {
     assert_eq!(SEM_COST, Cost(10));
-    assert_eq!(SEM_MOVE_COST, Cost(50));
+    assert_eq!(SEM_MOVE_COST, Cost(70));
     let rooms = [
         SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
         SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
@@ -2667,7 +2669,8 @@ fn sem_bills_its_count_and_its_voices() {
     }
     assert_eq!(
         table[3],
-        [[7, 5], [6, 5], [8, 6], [8, 6]],
+        // VA moving on SEM: 7 on rev V since its moving bill rose (ADR 0249).
+        [[7, 5], [6, 5], [8, 6], [7, 5]],
         "SEM: ALGO steady, moving; VA steady, moving"
     );
 }
