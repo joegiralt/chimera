@@ -182,7 +182,7 @@ fn init_routes_live_in_fixed_freq() {
         let m = &s.mod_state;
         let want = [ModSource::Env1, ModSource::Lfo1, ModSource::Note]
             .iter()
-            .fold(0u8, |b, s| b | 1 << s.index());
+            .fold(0u16, |b, s| b | 1 << s.index());
         assert_eq!(m.fixed_present(FixedCol::Freq), want, "{e:?}");
         for c in [FixedCol::Q, FixedCol::Fx] {
             assert_eq!(m.fixed_present(c), 0);
@@ -261,10 +261,10 @@ fn vca_rule_reads_the_fixed_vca_column() {
 
 // ── Task 11 review fold-ins and Task 12's jacks on disk ──
 
-/// Every source into 16 registry columns and the four fixed: 160 routes,
-/// the 640 B record's whole room, saved and loaded.
+/// Every source into 16 registry columns and the four fixed: the first
+/// eight's 160 routes fill the 640 B `Routes` record, saved and loaded.
 #[test]
-fn a_full_eight_by_twenty_matrix_round_trips() {
+fn a_full_ten_by_twenty_matrix_round_trips() {
     use chimera_core::modulation::MAX_MOD_DESTS;
     let mut s = Sound::plain_init(EngineType::Algo);
     let regs = others(MAX_MOD_DESTS);
@@ -288,7 +288,8 @@ fn a_full_eight_by_twenty_matrix_round_trips() {
             n += 1;
         }
     }
-    assert_eq!(n, 160);
+    // 160 in `Routes`, WHEEL's and PRESSURE's 40 in `PerfRoutes`.
+    assert_eq!(n, 200);
     let back = decode(&encode(&s)).unwrap();
     assert!(back.bits_eq(&s));
 }

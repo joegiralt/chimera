@@ -81,7 +81,9 @@ fn voice_is_its_chain_plus_one_slot() {
 /// VA NOISE adds 8 B: the played Sound's KIND and LEVEL (ADR 0197). The
 /// VCA's gate adds 72 B, its 68 B and padding (ADR 0195). STRETCH's four
 /// params in the played Sound add 16 B (ADR 0204). Merged, 6,688 B.
-const VOICE_SIZE_BEFORE: usize = 6_688;
+/// WHEEL and PRESSURE add 8 B: two source values, the voice's own
+/// pressure, the VCA routes' two rows (ADR 0236).
+const VOICE_SIZE_BEFORE: usize = 6_696;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.

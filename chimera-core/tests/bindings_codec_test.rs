@@ -536,10 +536,11 @@ fn sparse_bound_holds() {
     }
     assert_eq!(m.len(), MAP_LEN);
     assert_eq!(encoded(&m).len(), 1 + MAP_LEN * 8);
-    // `sparse_bound`'s 2 708 B with 0x001E's 4 + 80 B, now 4 + 129 B.
+    // `sparse_bound`'s 2 708 B with 0x001E's 4 + 80 B, now 4 + 129 B,
+    // and `PerfRoutes`' 4 + 160 B (#514).
     assert_eq!(
         MAX_SOUND_COST,
-        (2708 - (4 + 80) + (4 + 1 + MAP_LEN * 8)).next_multiple_of(16)
+        (2708 - (4 + 80) + (4 + 1 + MAP_LEN * 8) + (4 + 160)).next_multiple_of(16)
     );
 }
 

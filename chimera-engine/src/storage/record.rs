@@ -81,6 +81,11 @@ pub enum RecordTag {
     /// version byte, then 8 B an entry, up to 16, written last and only
     /// when the map isn't empty. Not critical; wins over `MidiMap`.
     Bindings,
+    /// The WHEEL and PRESSURE rows' routes (ADR 0236): `Routes`' 4-byte
+    /// entries, written after it and only when there is one. Not
+    /// critical: an older build loads the Sound without them, and `Routes`
+    /// keeps its 640 B bound (ADR 0102).
+    PerfRoutes,
 }
 
 impl RecordTag {
@@ -113,6 +118,7 @@ impl RecordTag {
             RecordTag::Note => 0x001D,
             RecordTag::MidiMap => 0x001E,
             RecordTag::Bindings => 0x001F,
+            RecordTag::PerfRoutes => 0x0020,
         }
     }
 
@@ -145,6 +151,7 @@ impl RecordTag {
             0x001D => RecordTag::Note,
             0x001E => RecordTag::MidiMap,
             0x001F => RecordTag::Bindings,
+            0x0020 => RecordTag::PerfRoutes,
             _ => return None,
         })
     }

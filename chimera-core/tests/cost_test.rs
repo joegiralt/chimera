@@ -23,7 +23,7 @@ use chimera_core::hw::{
     CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, FLOOR_VOICES, FLOOR_VOICES_FORMANT, MAX_VOICES, SampleBudget,
 };
 use chimera_core::instrument::{AudioShared, NoteOrigin};
-use chimera_core::modulation::{FixedCol, ModRouting, ModSource, ModState, VCA};
+use chimera_core::modulation::{FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::taps::TapOp;
 
@@ -393,7 +393,7 @@ fn dirty_bills_nothing_over_lp24() {
 }
 
 fn routed(routes: &[ModSource]) -> ModState {
-    let mut ms = ModState::with_sources(8);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
     for s in routes {
         assert!(ms.set_route_addr(s.index(), VCA, 127));
     }
@@ -402,8 +402,8 @@ fn routed(routes: &[ModSource]) -> ModState {
 
 /// The spec's shape, billed high: the defaults `BASE`; ENV 2 (A) on the
 /// VCA `BASE + CLAMP + ENV_A`; the worst case, three BURST B slots (the
-/// costliest B mode) and the five other sources,
-/// `BASE + CLAMP + 3·(ENV_B + BURST) + 5·OTHER`.
+/// costliest B mode) and the seven other sources (WHEEL and PRESSURE
+/// among them, #514), `BASE + CLAMP + 3·(ENV_B + BURST) + 7·OTHER`.
 #[test]
 fn mod_routing_bills_the_spec_shape() {
     use ModRouting as M;
@@ -421,10 +421,10 @@ fn mod_routing_bills_the_spec_shape() {
         (e.env_type, e.func.mode) = (EnvType::B, FuncMode::Burst);
     }
     let three_b = M::ENV_B + M::BURST + M::ENV_B + M::BURST + M::ENV_B + M::BURST;
-    let five_other = Cost(5 * M::OTHER.0);
+    let seven_other = Cost(7 * M::OTHER.0);
     assert_eq!(
         M::cost(&worst, &routed(&ModSource::ALL)),
-        M::BASE + M::CLAMP + three_b + five_other
+        M::BASE + M::CLAMP + three_b + seven_other
     );
     // A route into ENV 2's SHAPE bills the curve on a centred B ENV, SLIDE
     // for the coefficient rebuild the same route causes, and its sum.
@@ -447,12 +447,12 @@ fn mod_routing_bills_the_spec_shape() {
         M::BASE + M::CLAMP + M::ENV_B + M::CURVE + M::SLIDE + M::DEST_FIRST
     );
     // Measured 2026-09-28 (Task 13): 47, 47 + 24 + 28, and
-    // 47 + 24 + 3·(98 + 76) + 5·8.
+    // 47 + 24 + 3·(98 + 76) + 7·8.
     assert_eq!(
         (M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))),
         (Cost(47), Cost(99))
     );
-    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(633));
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(649));
 }
 
 /// Each destination other than the VCA with a route of nonzero amount

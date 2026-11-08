@@ -11,7 +11,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::tape_engine::{TapeMachine, machine};
 use crate::dsp::voice_fx::params::FxType;
 use crate::mod_path::LABEL_LEN;
-use crate::modulation::{FixedCol, ModState};
+use crate::modulation::{FixedCol, ModState, SourceBits};
 use crate::preset::Sound;
 use crate::taps::{TapOp, TapRoutes};
 use crate::ui::draw;
@@ -37,16 +37,18 @@ const CELL_INSET: i32 = 4;
 pub const GRID_BOTTOM: i32 = 190;
 
 /// Row pitch for `rows` display rows: they always fill `GRID_ROW0_Y` to
-/// `GRID_BOTTOM` with no scroll, 17 for 8 and 14 for ALGO's 10.
+/// `GRID_BOTTOM` with no scroll, 14 for 10 and 11 for ALGO's 12.
 pub const fn row_h(rows: usize) -> i32 {
     (GRID_BOTTOM - GRID_ROW0_Y) / if rows == 0 { 1 } else { rows as i32 }
 }
 
 /// A cell's height: 14 at 8 rows; at 14 px rows `CELL_INSET` leaves 10
-/// (filter-types spec § 7).
+/// (filter-types spec § 7); at 11 px, 9, which still holds a bold amount.
 pub const fn cell_h(rows: usize) -> i32 {
     let h = row_h(rows);
-    if h < GRID_ROW_H {
+    if h < 12 {
+        h - 2
+    } else if h < GRID_ROW_H {
         h - CELL_INSET
     } else {
         h - 3
@@ -76,11 +78,14 @@ pub const ROW_ORDER: [usize; MAX_SOURCES] = {
         S::Lfo3 as usize,
         S::Vel as usize,
         S::Note as usize,
+        S::Wheel as usize,
+        S::Press as usize,
     ]
 };
 const VISIBLE_COLS: usize = 5;
 
-/// Max sources and destinations for the amounts grid (presence is a `u8`).
+/// Max sources and destinations for the amounts grid (presence is a
+/// `SourceBits`).
 pub const MAX_SOURCES: usize = crate::modulation::MAX_MOD_SOURCES;
 pub const MAX_DESTS: usize = crate::modulation::MAX_MOD_DESTS;
 /// The permanent columns, before the registry's.
@@ -155,10 +160,10 @@ pub struct MatrixState {
     /// Modulation amounts: [source][dest_idx], -127 to +127 (0 when absent).
     pub amounts: [[i8; MAX_DESTS]; MAX_SOURCES],
     /// Route presence, one bit per source, as ModState's.
-    pub present: [u8; MAX_DESTS],
+    pub present: [SourceBits; MAX_DESTS],
     /// The permanent columns' amounts and presence, as ModState's.
     pub fixed: [[i8; FIXED_COLS]; MAX_SOURCES],
-    pub fixed_present: [u8; FIXED_COLS],
+    pub fixed_present: [SourceBits; FIXED_COLS],
     /// The taps' cells, as the Sound's `TapRoutes`; rows only on ALGO.
     pub taps: TapRoutes,
     pub tap_rows: bool,
@@ -435,7 +440,7 @@ impl MatrixState {
     }
 
     /// Column `c`'s presence bits.
-    fn present_bits(&self, c: usize) -> u8 {
+    fn present_bits(&self, c: usize) -> SourceBits {
         match self.col(c) {
             Col::Fixed(f) => self.fixed_present[f.index()],
             Col::Reg(d) if d < self.num_dests => self.present[d],

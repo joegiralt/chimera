@@ -501,12 +501,13 @@ impl KnobPublisher {
         let m = &sound.mod_state;
         let mut routes = false;
         for (was, col) in s.routes.iter_mut().zip(COLS) {
-            for (src, was) in was.iter_mut().enumerate() {
-                let a = if src < m.num_sources() {
-                    m.fixed_amount(src, col)
-                } else {
-                    0
-                };
+            // Rolled: ten rows unrolled cost bank 1 (ADR 0236).
+            for (src, was) in was
+                .iter_mut()
+                .enumerate()
+                .take(core::hint::black_box(MAX_MOD_SOURCES))
+            {
+                let a = m.fixed_amount(src, col);
                 routes |= a != *was;
                 *was = a;
             }
@@ -607,6 +608,9 @@ pub struct Knobs {
     /// The pitch bend now, semitones: the wheel's reach, glided (not a
     /// knob of the Sound).
     bend: f32,
+    /// The WHEEL and PRESSURE sources now, 0..1: the Part's channel's mod
+    /// wheel and channel pressure, glided.
+    expr: [f32; 2],
 }
 
 impl Knobs {
@@ -640,6 +644,7 @@ impl Knobs {
         reads: 0,
         k: (0, [0.0; 2]),
         bend: 0.0,
+        expr: [0.0; 2],
     };
 
     /// The pitch bend now, in semitones, added to every voice's pitch.
@@ -656,6 +661,25 @@ impl Knobs {
                 glide(&mut self.bend, to, k, BEND_LAND);
             }
             None => self.bend = to,
+        }
+    }
+
+    /// The WHEEL source now, 0..1.
+    #[inline]
+    pub fn wheel(&self) -> f32 {
+        self.expr[0]
+    }
+
+    /// The channel's PRESSURE now, 0..1.
+    #[inline]
+    pub fn press(&self) -> f32 {
+        self.expr[1]
+    }
+
+    /// One block of WHEEL and PRESSURE toward `to`, as `ease_bend`.
+    pub fn ease_expr(&mut self, to: [f32; 2], k: Option<f32>) {
+        for (v, t) in self.expr.iter_mut().zip(to) {
+            ease_expr(v, t, k);
         }
     }
 
@@ -867,15 +891,35 @@ fn step(v: &mut f32, t: f32, k: Option<[f32; 2]>, tau: GlideMs) -> bool {
 fn glide_column(v: &mut [f32; MAX_MOD_SOURCES], m: &ModState, col: FixedCol, k: f32) -> bool {
     // `m`'s sources only: one loop, not eight copies; a source it lacks
     // routes nothing.
-    let (live, absent) = v.split_at_mut(m.num_sources().min(MAX_MOD_SOURCES));
+    // Rolled: ten rows unrolled cost bank 1 (ADR 0236).
+    let n = m.num_sources();
     let mut moving = false;
-    for (s, v) in live.iter_mut().enumerate() {
-        // `amount_scale`'s value: the same IEEE divide.
-        let t = f32::from(m.fixed_amount(s, col).max(-127)) / 127.0;
-        moving |= !glide(v, t, k, LAND);
+    for (s, v) in v
+        .iter_mut()
+        .enumerate()
+        .take(core::hint::black_box(MAX_MOD_SOURCES))
+    {
+        if s < n {
+            // `amount_scale`'s value: the same IEEE divide.
+            let t = f32::from(m.fixed_amount(s, col).max(-127)) / 127.0;
+            moving |= !glide(v, t, k, LAND);
+        } else {
+            *v = 0.0;
+        }
     }
-    absent.fill(0.0);
     moving
+}
+
+/// One block of an expression source (WHEEL, PRESSURE, a voice's own
+/// pressure) toward `t` at the KNOB coefficient `k`, or landed with none.
+#[inline]
+pub(crate) fn ease_expr(v: &mut f32, t: f32, k: Option<f32>) {
+    match k {
+        Some(k) => {
+            glide(v, t, k, LAND);
+        }
+        None => *v = t,
+    }
 }
 
 /// `v` one block of the one-pole toward `t`, landing within `land`;

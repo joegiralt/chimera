@@ -115,6 +115,9 @@ impl ModSource {
             ModSource::Lfo3 => 5,
             ModSource::Vel => 6,
             ModSource::Note => 7,
+            // 8 and 9 are `Jack`'s OP 5 and OP 6.
+            ModSource::Wheel => 10,
+            ModSource::Press => 11,
         }
     }
 
@@ -130,6 +133,8 @@ impl ModSource {
             ModSource::Lfo3 => "LFO3",
             ModSource::Vel => "VEL",
             ModSource::Note => "NOTE",
+            ModSource::Wheel => "WHEEL",
+            ModSource::Press => "PRESS",
         }
     }
 

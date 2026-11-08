@@ -86,6 +86,9 @@ use screen::*;
 // ADR 0209: WALK's glyph is STRAIGHT, runners on the home straight
 // (tape_deck_* and tape_page_* of WALK's ways, tape_strip_* but stretch,
 // transwave, scrub and loop_reversed).
+// #514 (ADR 0236): the matrix gains WHEEL and PRESS rows (mod_matrix,
+// mod_matrix_wide, mod_matrix_algo_taps at 11 px rows, mod_matrix_modal,
+// mod_matrix_morph_inert); sound_browser_pool_full: MAX_SOUND_COST 2928.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -96,7 +99,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
     // then FOLD's column named FX (#614).
-    ("mod_matrix_morph_inert", 0x1ef3db3220f17a71),
+    ("mod_matrix_morph_inert", 0xa2ddcc16429d4bb9),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0x7e339372006543ce),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
@@ -350,13 +353,13 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
     // then FOLD's column named FX (#614), here and in the next three.
-    ("mod_matrix", 0x5dec043ad53b73a4),
+    ("mod_matrix", 0x1199db1f4f0e5c0b),
     // Task 9 (#614): its FX headers read SOFT's TONE, not SHAP.
-    ("mod_matrix_wide", 0x7bb6ee0e2f3c4143),
+    ("mod_matrix_wide", 0xc2cdabadca3bdbf3),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
-    ("mod_matrix_algo_taps", 0x62d4a32f114d8080),
-    ("mod_matrix_modal", 0xea127c9de06a34ec),
+    ("mod_matrix_algo_taps", 0x101a924539898618),
+    ("mod_matrix_modal", 0xd0557e04a5913319),
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
@@ -373,7 +376,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then the VCA's gate (ADR 0195): 15 B more. STRETCH GRAIN's four params
     // (ADR 0204): MAX_SOUND_COST 2720.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser_pool_full", 0x16e71cda6e99b5d3),
+    ("sound_browser_pool_full", 0x2a59ca126e69e9ea),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.

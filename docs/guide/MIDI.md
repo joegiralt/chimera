@@ -10,6 +10,17 @@ A binding's control can be:
 
 Every stored parameter also has a fixed NRPN address of its own, which works with no binding at all: see the [NRPN chart](../midi/nrpn-chart.md). A binding on the same NRPN number wins over it.
 
+## The mod wheel and aftertouch in the matrix
+
+The MOD MATRIX has two rows for your hands, after NOTE:
+
+- **WHEEL** (MOD WHEEL in the readout): the mod wheel, CC 1, on the Part's channel. At rest it is 0, fully up it is 1.
+- **PRESS** (PRESSURE in the readout): aftertouch. A keyboard with channel pressure moves every note on the Part's channel; one with poly pressure moves only the note whose key you press harder. Each note follows the higher of the two.
+
+Route them like any other source: put the cursor on the WHEEL or PRESS row, under the column you want, and turn **E** for the amount. Both glide, so a fast wheel throw or a sudden squeeze never steps the sound. A new note starts with no poly pressure of its own; the channel's wheel and pressure carry on across notes, Sound loads and project loads.
+
+The wheel and channel pressure still reach the MIDI map as well, so a binding on CC 1 or PRESSURE keeps working beside a route.
+
 ## Learn
 
 1. Touch the cell you want to control (turn its encoder a notch).
@@ -101,7 +112,7 @@ If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with M
 When SETTINGS › ABOUT reads `NEEDS UPDATE`, Chimera ignores MIDI in, notes and clock too, until the update is installed: MIDI MAP reads `NEEDS UPDATE`, and **MIX + SEQ** says `NEEDS UPDATE` instead of starting learn.
 
 - **Identity request** (`F0 7E 7F 06 01 F7`): Chimera answers with its identity and firmware version, while ECHO is on.
-- **All Notes Off** (CC 123), and the Omni and Mono/Poly messages (CC 124–127): the notes of every Part on that channel are released. **All Sound Off** (CC 120) silences them, and **Reset All Controllers** (CC 121) resets the pedal and bend.
+- **All Notes Off** (CC 123), and the Omni and Mono/Poly messages (CC 124–127): the notes of every Part on that channel are released. **All Sound Off** (CC 120) silences them, and **Reset All Controllers** (CC 121) resets the pedal, the bend, the mod wheel and pressure.
 - **System Reset** (`FF`): every sound stops and every controller resets.
 - **Active Sensing:** once a controller sends it, a pulled cable releases every held note within a third of a second, and the screen shows **DIN MIDI LOST**. A USB host that resets or sleeps while you hold a note or pedal does the same, with **USB MIDI LOST**.
 - **RPN 0** sets the Part's BEND range, in semitones (0 to 24).

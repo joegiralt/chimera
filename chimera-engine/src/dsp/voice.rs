@@ -31,7 +31,8 @@ use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::meter::Clip;
 use crate::modulation::{
-    FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, amount_scale, note_source,
+    FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, SourceBits, amount_scale,
+    note_source,
 };
 use crate::params::{EngineType, EnvParams, FilterParams, ParamSnapshot, Steal};
 use crate::project::SourceId;
@@ -95,6 +96,9 @@ pub struct Voice {
     /// The sources' values from the last block; the VCA's other routes
     /// ramp from them.
     mod_values: [f32; MAX_MOD_SOURCES],
+    /// Its own key's pressure, 0..1, glided (`ease_press`): PRESSURE reads
+    /// it or the channel's, the higher.
+    press: f32,
     /// The routes into VCA this voice plays.
     vca: VcaRoutes,
     /// The taps' amounts the last block played (`TapRoutes::amounts`), so
@@ -141,7 +145,7 @@ enum AfterFade {
 /// fade (spec § 4; a fading voice keeps its routes).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct VcaRoutes {
-    bits: u8,
+    bits: SourceBits,
     /// The stored amount per source, scaled where read: 9 B, not 33 as
     /// `f32`s, which keeps room in the voice chain (ADR 0101).
     amount: [i8; MAX_MOD_SOURCES],
@@ -484,6 +488,7 @@ impl Voice {
                 lfos: [Lfo::new(); 3],
                 env_mods: [EnvMods::NONE; 3],
                 mod_values: [0.0; MAX_MOD_SOURCES],
+                press: 0.0,
                 vca: VcaRoutes::default(),
                 tap_amt: [[0; 4]; 2],
                 retrigger: false,
@@ -695,6 +700,7 @@ impl Voice {
             // hold keeps the voice active (`vca_holds`).
             self.envs = [Envelope::new(); 3];
             self.mod_values = [0.0; MAX_MOD_SOURCES];
+            self.press = 0.0;
             self.tap_amt = [[0; 4]; 2];
             self.vca_velocity = velocity;
         }
@@ -899,6 +905,12 @@ impl Voice {
             })
     }
 
+    /// One block of its own key's pressure toward `to` (0..1), glided at
+    /// the KNOB coefficient `k`, or landed with none.
+    pub fn ease_press(&mut self, to: f32, k: Option<f32>) {
+        crate::dsp::knobs::ease_expr(&mut self.press, to, k);
+    }
+
     /// `render_knobs` on the stored knobs, uneased: a voice on its own.
     pub fn render(
         &mut self,
@@ -975,6 +987,8 @@ impl Voice {
             let mut v = self.mod_values;
             v[ModSource::Vel.index()] = self.last_velocity.unit();
             v[ModSource::Note.index()] = note_source(self.last_note);
+            v[ModSource::Wheel.index()] = knobs.wheel();
+            v[ModSource::Press.index()] = knobs.press().max(self.press);
             let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
                 if let BlockRef::Env(s) = mod_state.dest(d).block {
@@ -1007,6 +1021,8 @@ impl Voice {
         }
         mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
         mod_values[ModSource::Note.index()] = note_source(self.last_note);
+        mod_values[ModSource::Wheel.index()] = knobs.wheel();
+        mod_values[ModSource::Press.index()] = knobs.press().max(self.press);
         // The other VCA sources ramp from their last block's value.
         for (s, &cur) in mod_values.iter().enumerate() {
             if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))

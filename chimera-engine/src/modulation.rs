@@ -15,7 +15,10 @@ use crate::hw::Cost;
 use crate::mod_path::ModDestRegistry;
 use crate::params::{EnvParams, FilterParams, ParamSnapshot};
 
-pub const MAX_MOD_SOURCES: usize = 8;
+pub const MAX_MOD_SOURCES: usize = 10;
+/// A bit a source: a column's route presence.
+pub type SourceBits = u16;
+const _: () = assert!(MAX_MOD_SOURCES <= SourceBits::BITS as usize);
 pub const MAX_MOD_DESTS: usize = 16;
 
 /// CUTOFF: the default routes' column, and the filter knobs' (spec § 2, § 6).
@@ -84,6 +87,11 @@ pub enum ModSource {
     Lfo3 = 5,
     Vel = 6,
     Note = 7,
+    /// The mod wheel (CC 1) on the Part's channel, 0..1, slewed.
+    Wheel = 8,
+    /// Aftertouch, 0..1, slewed: the channel's pressure or the voice's own
+    /// key's, the higher.
+    Press = 9,
 }
 
 impl ModSource {
@@ -96,6 +104,8 @@ impl ModSource {
         ModSource::Lfo3,
         ModSource::Vel,
         ModSource::Note,
+        ModSource::Wheel,
+        ModSource::Press,
     ];
 
     /// The source ENV slot `s` feeds.
@@ -134,10 +144,12 @@ impl ModSource {
             ModSource::Lfo3 => "LFO 3",
             ModSource::Vel => "VELOCITY",
             ModSource::Note => "NOTE",
+            ModSource::Wheel => "MOD WHEEL",
+            ModSource::Press => "PRESSURE",
         }
     }
 
-    /// The matrix row's tag (4 characters).
+    /// The matrix row's tag (at most 5 characters).
     pub const fn tag(self) -> &'static str {
         match self {
             ModSource::Env1 => "ENV1",
@@ -148,7 +160,15 @@ impl ModSource {
             ModSource::Lfo3 => "LFO3",
             ModSource::Vel => "VELO",
             ModSource::Note => "NOTE",
+            ModSource::Wheel => "WHEEL",
+            ModSource::Press => "PRESS",
         }
+    }
+
+    /// A performance source: the player's hand, per channel (and per key),
+    /// never a Jack's (FM3 IN, QM IN take the first eight).
+    pub const fn is_perf(self) -> bool {
+        matches!(self, ModSource::Wheel | ModSource::Press)
     }
 }
 
@@ -188,11 +208,11 @@ pub struct ModState {
     amounts: [[i8; MAX_MOD_DESTS]; MAX_MOD_SOURCES],
     /// Route presence (spec § 2): bit s of present[d] is set when source s
     /// routes to dest d, at any amount. The audio thread's sums ignore it.
-    present: [u8; MAX_MOD_DESTS],
+    present: [SourceBits; MAX_MOD_DESTS],
     /// The fixed columns' amounts, `[source][FixedCol]`, outside the registry.
     fixed: [[i8; 4]; MAX_MOD_SOURCES],
     /// The fixed columns' presence, as `present`.
-    fixed_present: [u8; 4],
+    fixed_present: [SourceBits; 4],
 }
 
 impl ModState {
@@ -221,17 +241,17 @@ impl ModState {
     /// the live range; slots past `num_sources` and `num_dests` don't count.
     pub fn bits_eq(&self, o: &Self) -> bool {
         let (ns, nd) = (self.num_sources, self.num_dests);
-        let live = (1u16 << ns) - 1;
+        let live: SourceBits = (1 << ns) - 1;
         ns == o.num_sources
             && nd == o.num_dests
             && self.dests[..nd] == o.dests[..nd]
             && (0..nd).all(|d| {
-                (u16::from(self.present[d]) ^ u16::from(o.present[d])) & live == 0
+                (self.present[d] ^ o.present[d]) & live == 0
                     && (0..ns).all(|s| self.amounts[s][d] == o.amounts[s][d])
             })
             && FixedCol::ALL.into_iter().all(|c| {
                 let c = c.index();
-                (u16::from(self.fixed_present[c]) ^ u16::from(o.fixed_present[c])) & live == 0
+                (self.fixed_present[c] ^ o.fixed_present[c]) & live == 0
                     && (0..ns).all(|s| self.fixed[s][c] == o.fixed[s][c])
             })
     }
@@ -246,7 +266,7 @@ impl ModState {
     }
 
     /// The present bits of fixed column `c`.
-    pub fn fixed_present(&self, c: FixedCol) -> u8 {
+    pub fn fixed_present(&self, c: FixedCol) -> SourceBits {
         self.fixed_present[c.index()]
     }
 
@@ -327,7 +347,7 @@ impl ModState {
     }
 
     /// The present bits of destination `d` (0 out of range).
-    pub fn present(&self, d: usize) -> u8 {
+    pub fn present(&self, d: usize) -> SourceBits {
         if d < self.num_dests {
             self.present[d]
         } else {
@@ -342,7 +362,7 @@ impl ModState {
 
     /// The present bits of the column of `addr`, fixed or registry (0
     /// without a column).
-    pub fn routes_into(&self, addr: ParamAddr) -> u8 {
+    pub fn routes_into(&self, addr: ParamAddr) -> SourceBits {
         match FixedCol::of(addr) {
             Some(c) => self.fixed_present(c),
             None => self.find(addr).map_or(0, |d| self.present[d]),
@@ -471,8 +491,8 @@ impl ModState {
     pub fn sync_from_matrix(
         &mut self,
         sources: usize,
-        fixed: ([[i8; 4]; MAX_MOD_SOURCES], [u8; 4]),
-        columns: impl IntoIterator<Item = (Option<ParamAddr>, [i8; MAX_MOD_SOURCES], u8)>,
+        fixed: ([[i8; 4]; MAX_MOD_SOURCES], [SourceBits; 4]),
+        columns: impl IntoIterator<Item = (Option<ParamAddr>, [i8; MAX_MOD_SOURCES], SourceBits)>,
     ) {
         *self = Self::new();
         self.num_sources = sources.min(MAX_MOD_SOURCES);

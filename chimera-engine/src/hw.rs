@@ -84,8 +84,9 @@ pub const VOICE_RAM_BUDGET: usize =
 /// the played Sound's TAPE block, WALK's DIRECTION, TRON and DRIFT beside
 /// SCRUB's KEY, ADR 0203; 2,360 with STRETCH LENGTH, GRAIN, SPRAY and END,
 /// ADR 0204; 2,440 for the VCA's low-pass gate, 68 B and its padding, ADR
-/// 0195, measured on the merged tree).
-pub const VOICE_CHAIN_BYTES: usize = 2440;
+/// 0195, measured on the merged tree; 2,448 for the WHEEL and PRESSURE
+/// sources' values and the voice's own pressure, #514).
+pub const VOICE_CHAIN_BYTES: usize = 2448;
 
 /// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-board/src/display.rs`).
 pub const FB_BYTES: usize = chimera_hal::FB_SIZE * 2; // 153_600

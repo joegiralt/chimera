@@ -12,7 +12,7 @@ use chimera_core::ui::mod_grid::{
 };
 
 /// ALGO's rows: the eight sources, OP5 and OP6 (the goldens' matrix).
-const R: usize = 10;
+const R: usize = 12;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::renderer::{MATRIX_AMOUNT_SLOT, amount_of, amount_value};
 use chimera_core::ui::theme;
@@ -238,14 +238,14 @@ fn cells_print_their_amounts_and_the_cursor_is_outlined() {
     }
 }
 
-/// All eight sources are rows at once: no vertical scroll.
+/// All ten sources are rows at once: no vertical scroll.
 #[test]
 fn every_source_is_a_row_on_screen() {
     let mut ui = ui_for("mod_matrix");
     let m = &ui.matrix_state;
-    assert_eq!(m.num_sources, 8);
+    assert_eq!(m.num_sources, 10);
     let fb = render("mod_matrix");
-    for vi in 0..8 {
+    for vi in 0..10 {
         let (_, y) = cell_origin(0, vi, R);
         let label =
             (y..y + cell_h(R)).any(|y| (theme::MARGIN_X..40).any(|x| fb.at(x, y) != theme::BG));
@@ -258,9 +258,9 @@ fn every_source_is_a_row_on_screen() {
     }
     assert!(cell_origin(0, R - 1, R).1 + cell_h(R) <= GRID_BOTTOM);
     // The cursor stops on the last row: OP6's on ALGO (Task 13).
-    feed(&mut ui, Input::turn(EncoderId::A, 7));
-    assert_eq!(ui.matrix_state.rows(), 10);
-    assert_eq!(ui.matrix_state.sel_row, 9);
+    feed(&mut ui, Input::turn(EncoderId::A, 9));
+    assert_eq!(ui.matrix_state.rows(), 12);
+    assert_eq!(ui.matrix_state.sel_row, 11);
     let before = ui.matrix_state.clone();
     feed(&mut ui, Input::turn(EncoderId::C, 3));
     let after = &ui.matrix_state;
@@ -557,7 +557,7 @@ fn stats_line_renders_at_max_counts_without_overflow() {
     use chimera_core::ui::mod_grid::{MAX_DESTS, MatrixState, ModDest, draw_grid};
 
     let mut m = MatrixState::new();
-    let names: [&'static str; MAX_MOD_SOURCES] = ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7"];
+    let names: [&'static str; MAX_MOD_SOURCES] = core::array::from_fn(|_| "S0");
     m.rebuild_sources(&names);
     for (i, dest) in m.dests.iter_mut().enumerate().take(MAX_DESTS) {
         *dest = Some(ModDest {
@@ -765,7 +765,7 @@ fn every_route_readout_fits_its_line() {
                 m.dests[0] = Some(dest);
                 m.num_dests = 1;
                 m.set(src.index(), 0, -127);
-                m.sel_row = (0..8)
+                m.sel_row = (0..10)
                     .find(|&r| m.row_source(r).index() == src.index())
                     .unwrap();
                 let mut fb = Fb::new();
@@ -925,7 +925,8 @@ fn the_widest_amount_fits_its_cell() {
     }
 }
 
-/// Rows read envelopes, then LFOs, VELO, NOTE (the mockup's grouping);
+/// Rows read envelopes, then LFOs, VELO, NOTE (the mockup's grouping),
+/// then the hand's WHEEL and PRESS;
 /// the cursor walks them in that order; amounts stay by `ModSource` index.
 #[test]
 fn rows_read_envs_then_lfos_then_velo_and_note() {
@@ -938,7 +939,7 @@ fn rows_read_envs_then_lfos_then_velo_and_note() {
     assert_eq!(
         rows,
         [
-            "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3", "VELO", "NOTE"
+            "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3", "VELO", "NOTE", "WHEEL", "PRESS"
         ]
     );
     feed(&mut ui, Input::turn(EncoderId::A, -3)); // LFO1 → ENV1

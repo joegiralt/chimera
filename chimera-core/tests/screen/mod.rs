@@ -2145,7 +2145,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 3)); // LFO1 → VELO
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
-    // ALGO's ten rows: OP5 → FREQ routed, the cursor on OP5's X cell
+    // ALGO's twelve rows: OP5 → FREQ routed, the cursor on OP5's X cell
     // under INPUT's primed column, its hint (filter-types spec § 7).
     ("mod_matrix_algo_taps", |ui| {
         init_part(ui, PartId::ALL[0]);
@@ -2156,11 +2156,11 @@ pub const CASES: &[ScreenCase] = &[
         prime(ui);
         plus(ui, 2);
         to_matrix(ui);
-        feed(ui, Input::turn(EncoderId::A, 8)); // OP5
+        feed(ui, Input::turn(EncoderId::A, 10)); // OP5
         feed(ui, Input::turn(EncoderId::E, 40)); // OP5 → FREQ
         feed(ui, Input::turn(EncoderId::B, 4)); // INPUT's column: an X cell
     }),
-    // MODAL's eight rows and the four fixed columns.
+    // MODAL's ten rows and the four fixed columns.
     ("mod_matrix_modal", |ui| {
         load_init(ui, EngineType::Modal);
         to_matrix_on(ui, EngineType::Modal);

@@ -7,8 +7,8 @@ use chimera_engine::midi_in::{
     PipeSlot, Port, Sinks, UsbSlot,
 };
 use chimera_engine::note_queue::{
-    BendEvent, ChannelMode, ChannelModeEvent, InEvent, NoteConsumer, NoteEvent, NoteKind,
-    NoteProducer, NoteQueue, RealTime, SustainEvent,
+    BendEvent, ChannelMode, ChannelModeEvent, Expr, ExprEvent, InEvent, NOTE_QUEUE_LEN,
+    NoteConsumer, NoteEvent, NoteKind, NoteProducer, NoteQueue, RealTime, SustainEvent,
 };
 use chimera_engine::{MidiNote, Velocity};
 use chimera_midi::ctl::{Ctl, DataValue, Dir, FreeCc, Sel};
@@ -129,9 +129,18 @@ fn old_route_queued() -> Vec<InEvent> {
         mode(2, ChannelMode::SoundOff),
         mode(2, ChannelMode::ResetControllers),
         mode(2, ChannelMode::NotesOff),
+        // PRESSURE's source (#514); the map hears it too.
+        expr(0, Expr::Pressure(u7(50))),
         on(3, 70, 80),
         off(3, 70),
     ]
+}
+
+fn expr(c: u8, expr: Expr) -> InEvent {
+    InEvent::Expr(ExprEvent {
+        channel: ch(c),
+        expr,
+    })
 }
 
 #[test]
@@ -956,4 +965,140 @@ fn idle_into_a_full_queue_counts_the_refusal() {
     usb.fill();
     usb.lost();
     assert_eq!(usb.slot.stats().refused, 1);
+}
+
+/// #514: the wheel (CC 1) and channel pressure reach their matrix sources
+/// on the note queue and the map on the ring; poly pressure the queue only.
+#[test]
+fn wheel_and_pressure_reach_the_queue_and_the_map() {
+    let key = MidiNote::new(64).unwrap();
+    let r = pipe(&[0xB3, 1, 99]);
+    assert_eq!(r.notes, [expr(3, Expr::Wheel(u7(99)))]);
+    assert_eq!(
+        r.ctrl,
+        [CtrlEvent::Ctl(
+            ch(3),
+            Ctl::Cc {
+                cc: FreeCc::new(1).unwrap(),
+                value: u7(99)
+            }
+        )]
+    );
+    let r = pipe(&[0xD5, 7, 9]);
+    assert_eq!(
+        r.notes,
+        [
+            expr(5, Expr::Pressure(u7(7))),
+            expr(5, Expr::Pressure(u7(9)))
+        ]
+    );
+    assert_eq!(r.ctrl.len(), 2);
+    assert!(matches!(r.ctrl[0], CtrlEvent::Ctl(_, Ctl::Pressure(_))));
+    let r = pipe(&[0xAF, 64, 127]);
+    assert_eq!(r.notes, [expr(15, Expr::Poly(key, u7(127)))]);
+    assert!(r.ctrl.is_empty());
+}
+
+/// Every expression event packs and unpacks whole, at its extremes.
+#[test]
+fn expr_events_round_trip_the_queue() {
+    let q = NoteQueue::new();
+    let (mut tx, mut rx) = q.split().unwrap();
+    let evs = [0u8, 127].into_iter().flat_map(|v| {
+        [0u8, 15].into_iter().flat_map(move |c| {
+            [
+                expr(c, Expr::Wheel(u7(v))),
+                expr(c, Expr::Pressure(u7(v))),
+                expr(c, Expr::Poly(MidiNote::new(0).unwrap(), u7(v))),
+                expr(c, Expr::Poly(MidiNote::new(127).unwrap(), u7(v))),
+            ]
+        })
+    });
+    for e in evs {
+        assert!(tx.push(e));
+        assert_eq!(rx.pop(), Some(e));
+    }
+}
+
+/// A pressure flood takes half the queue at most: the note-ons that follow
+/// it, undrained, still land.
+#[test]
+fn pressure_flood_leaves_room_for_notes() {
+    let q = NoteQueue::new();
+    let (mut tx, mut rx) = q.split().unwrap();
+    let poly = expr(0, Expr::Poly(MidiNote::new(60).unwrap(), u7(64)));
+    let took = (0..NOTE_QUEUE_LEN).filter(|_| tx.push(poly)).count();
+    assert_eq!(took, NOTE_QUEUE_LEN / 2);
+    for n in 0..16 {
+        assert!(tx.push(on(0, 40 + n, 100)), "note-on {n}");
+    }
+    assert_eq!(core::iter::from_fn(|| rx.pop()).count(), took + 16);
+}
+
+/// A refused wheel or pressure is owed, latest wins: once the queue has
+/// room again the last value lands, never counted as a refusal.
+#[test]
+fn a_refused_final_wheel_still_lands() {
+    let q = NoteQueue::new();
+    let (mut tx, mut rx) = q.split().unwrap();
+    let ring = CtrlRing::new();
+    struct Door<'a, 'q> {
+        notes: &'a mut NoteProducer<'q>,
+        ring: &'a CtrlRing,
+    }
+    impl Sinks for Door<'_, '_> {
+        fn note(&mut self, e: InEvent) -> bool {
+            self.notes.push(e)
+        }
+        fn ctrl(&mut self, e: CtrlEvent) -> bool {
+            self.ring.push(e)
+        }
+    }
+    let mut p = DinPipe::new();
+    let mut feed = |p: &mut DinPipe, b: &[u8]| {
+        p.feed(
+            b,
+            &mut Door {
+                notes: &mut tx,
+                ring: &ring,
+            },
+        )
+    };
+    // A wheel sweep up then home, and pressure, past half the queue.
+    for v in (0..=127).chain((0..127).rev()) {
+        feed(&mut p, &[0xB2, 1, v, 0xD2, v]);
+    }
+    let heard: Vec<_> = core::iter::from_fn(|| rx.pop()).collect();
+    assert_eq!(heard.len(), NOTE_QUEUE_LEN / 2);
+    assert_eq!(p.stats().refused, 0, "owed, not lost");
+    feed(&mut p, &[]);
+    let last: Vec<_> = core::iter::from_fn(|| rx.pop()).collect();
+    assert_eq!(
+        last,
+        [expr(2, Expr::Wheel(u7(0))), expr(2, Expr::Pressure(u7(0)))]
+    );
+    // Nothing more owed.
+    feed(&mut p, &[]);
+    assert_eq!(rx.pop(), None);
+}
+
+/// An owed value goes ahead of what comes after it: a reset still has the
+/// last word.
+#[test]
+fn an_owed_value_lands_before_a_later_reset() {
+    let mut p = DinPipe::new();
+    let mut r = Rec {
+        refuse: true,
+        ..Rec::default()
+    };
+    p.feed(&[0xB0, 1, 99], &mut r);
+    r.refuse = false;
+    p.feed(&[0xB0, 121, 0], &mut r);
+    assert_eq!(
+        r.notes,
+        [
+            expr(0, Expr::Wheel(u7(99))),
+            mode(0, ChannelMode::ResetControllers)
+        ]
+    );
 }

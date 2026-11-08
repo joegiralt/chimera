@@ -480,13 +480,17 @@ fn mod_source_codes_round_trip() {
         (ModSource::Lfo3, 5),
         (ModSource::Vel, 6),
         (ModSource::Note, 7),
+        (ModSource::Wheel, 10),
+        (ModSource::Press, 11),
     ];
     assert_eq!(want.len(), ModSource::ALL.len());
     for (s, c) in want {
         assert_eq!(s.disk_code(), c);
         assert_eq!(ModSource::from_disk_code(c), Some(s));
     }
+    // `Jack`'s OP 5 and OP 6.
     assert_eq!(ModSource::from_disk_code(8), None);
+    assert_eq!(ModSource::from_disk_code(9), None);
     assert_eq!(ModSource::from_disk_code(255), None);
 }
 

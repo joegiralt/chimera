@@ -15,12 +15,13 @@ const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)
 #[test]
 fn sources_are_in_spec_order() {
     let tags = [
-        "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE",
+        "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE", "WHEEL", "PRESS",
     ];
     for (i, s) in ModSource::ALL.iter().enumerate() {
         assert_eq!(s.index(), i);
         assert_eq!(s.tag(), tags[i]);
-        assert_eq!(s.tag().len(), 4);
+        // The row label's column holds five.
+        assert!(s.tag().len() <= 5);
     }
     assert_eq!(PART_MOD_SOURCES, tags);
     for ct in EngineType::ALL {
@@ -106,11 +107,12 @@ fn the_amount_table_is_the_divide() {
     }
 }
 
-/// Spec § Tests "Matrix": a route from each of the eight sources moves its
-/// destination (NOTE at note 72, where it isn't 0).
+/// Spec § Tests "Matrix": a route from each of the eight voice sources
+/// moves its destination (NOTE at note 72, where it isn't 0). WHEEL and
+/// PRESSURE rest at 0: `wheel_pressure_test` moves them.
 #[test]
 fn every_source_moves_cutoff() {
-    for s in ModSource::ALL {
+    for s in ModSource::ALL.into_iter().filter(|s| !s.is_perf()) {
         let note = if s == ModSource::Note { 72 } else { 60 };
         assert_ne!(render(s, 127, note, 100), render(s, 0, note, 100), "{s:?}");
     }
@@ -120,7 +122,7 @@ use chimera_core::modulation::{CUTOFF as CUTOFF_ADDR, FixedCol, MAX_MOD_SOURCES}
 use chimera_core::preset::Sound;
 use chimera_core::ui::mod_grid::MatrixState;
 
-const DEFAULT_BITS: u8 = 1 << 0 | 1 << 1 | 1 << 7; // ENV1, LFO1, NOTE
+const DEFAULT_BITS: u16 = 1 << 0 | 1 << 1 | 1 << 7; // ENV1, LFO1, NOTE
 
 #[test]
 fn presence_is_apart_from_the_amount() {

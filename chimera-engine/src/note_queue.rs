@@ -31,6 +31,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use chimera_midi::stream::{ChannelMode as StreamMode, Voice};
+use chimera_midi::value::U7;
 
 use crate::{MidiChannel, MidiNote, Velocity};
 
@@ -124,8 +125,26 @@ pub struct ChannelModeEvent {
     pub mode: ChannelMode,
 }
 
+/// The hand's expression a matrix source reads (WHEEL, PRESSURE).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Expr {
+    /// The mod wheel, CC 1.
+    Wheel(U7),
+    /// Channel pressure.
+    Pressure(U7),
+    /// Poly pressure on one key.
+    Poly(MidiNote, U7),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExprEvent {
+    pub channel: MidiChannel,
+    pub expr: Expr,
+}
+
 /// What a note queue carries: notes, the performance controls the Parts
-/// take (bend, sustain, channel mode) and real-time, in the order they came.
+/// take (bend, sustain, channel mode, wheel and pressure) and real-time, in
+/// the order they came.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InEvent {
     Note(NoteEvent),
@@ -133,6 +152,7 @@ pub enum InEvent {
     Sustain(SustainEvent),
     Mode(ChannelModeEvent),
     Rt(RealTime),
+    Expr(ExprEvent),
 }
 
 impl From<NoteEvent> for InEvent {
@@ -147,14 +167,23 @@ impl From<RealTime> for InEvent {
     }
 }
 
-/// Bits 18..21: 0 a note, 1 + the `RealTime`'s index, then bend, sustain.
+/// Bits 18 up: 0 a note, 1 + the `RealTime`'s index, then bend, sustain,
+/// mode, wheel, pressure and poly pressure. Below them a note's 18 bits.
 const KIND_SHIFT: u32 = 18;
 const KIND_BEND: usize = RealTime::ALL.len() + 1;
 const KIND_SUSTAIN: usize = KIND_BEND + 1;
 const KIND_MODE: usize = KIND_SUSTAIN + 1;
-const _: () = assert!(KIND_MODE < 8);
+const KIND_WHEEL: usize = KIND_MODE + 1;
+const KIND_PRESSURE: usize = KIND_WHEEL + 1;
+const KIND_POLY: usize = KIND_PRESSURE + 1;
+const _: () = assert!(KIND_POLY < 1 << (32 - KIND_SHIFT));
 /// The CC that is the sustain pedal.
 const CC_SUSTAIN: u8 = 64;
+/// The CC that is the mod wheel.
+const CC_WHEEL: u8 = 1;
+/// Free slots an expression event leaves: a flood of pressure takes half the
+/// queue at most, so it never crowds out a note-on.
+const EXPR_RESERVE: usize = NOTE_QUEUE_LEN / 2;
 
 impl InEvent {
     /// The note path's share of a layer-1 voice message: notes, bend and
@@ -183,6 +212,19 @@ impl InEvent {
             }
             _ => return None,
         })
+    }
+
+    /// A matrix source's share of a voice message: the wheel (CC 1),
+    /// channel and poly pressure. CC 1 and channel pressure reach the map
+    /// too (layer 2's), so learn still sees them.
+    pub fn expr(channel: MidiChannel, v: &Voice) -> Option<Self> {
+        let expr = match *v {
+            Voice::Control { cc, value } if cc.get() == CC_WHEEL => Expr::Wheel(value),
+            Voice::ChannelPressure(value) => Expr::Pressure(value),
+            Voice::PolyPressure { key, value } => Expr::Poly(key, value),
+            _ => return None,
+        };
+        Some(InEvent::Expr(ExprEvent { channel, expr }))
     }
 
     /// Channel mode: 120 sound off, 121 reset, 123-127 notes off (the Omni
@@ -215,6 +257,18 @@ impl InEvent {
                     | ((p.down as u32) << 4)
                     | ((KIND_SUSTAIN as u32) << KIND_SHIFT)
             }
+            // A note's layout: channel, key, value.
+            InEvent::Expr(e) => {
+                let (kind, key, v) = match e.expr {
+                    Expr::Wheel(v) => (KIND_WHEEL, 0, v),
+                    Expr::Pressure(v) => (KIND_PRESSURE, 0, v),
+                    Expr::Poly(k, v) => (KIND_POLY, k.get(), v),
+                };
+                e.channel.get() as u32
+                    | (key as u32) << 4
+                    | (v.get() as u32) << 11
+                    | (kind as u32) << KIND_SHIFT
+            }
         }
     }
 
@@ -238,6 +292,17 @@ impl InEvent {
                     _ => return None,
                 },
             })),
+            k @ (KIND_WHEEL | KIND_PRESSURE | KIND_POLY) => {
+                let v = U7::new(((bits >> 11) & 0x7F) as u8)?;
+                Some(InEvent::Expr(ExprEvent {
+                    channel: MidiChannel::new((bits & 0xF) as u8)?,
+                    expr: match k {
+                        KIND_WHEEL => Expr::Wheel(v),
+                        KIND_PRESSURE => Expr::Pressure(v),
+                        _ => Expr::Poly(MidiNote::new(((bits >> 4) & 0x7F) as u8)?, v),
+                    },
+                }))
+            }
             k => RealTime::ALL.get(k - 1).copied().map(InEvent::Rt),
         }
     }
@@ -310,6 +375,8 @@ impl NoteQueue {
     /// is published by the `Release` store to `tail` right after it, which
     /// is what `pop`'s `Acquire` load of `tail` synchronizes with, so the
     /// slot write always happens-before the matching read in `pop`.
+    /// Inlined into the pipes in bank 2 (`NoteProducer::push`).
+    #[inline(always)]
     fn push(&self, ev: InEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
@@ -324,7 +391,12 @@ impl NoteQueue {
             }) | InEvent::Sustain(SustainEvent { down: false, .. })
                 | InEvent::Mode(_)
         );
-        let limit = NOTE_QUEUE_LEN - if note_off { 0 } else { NOTE_OFF_RESERVE };
+        let limit = NOTE_QUEUE_LEN
+            - match ev {
+                _ if note_off => 0,
+                InEvent::Expr(_) => EXPR_RESERVE,
+                _ => NOTE_OFF_RESERVE,
+            };
         if tail.wrapping_sub(head) as usize >= limit {
             self.dropped.fetch_add(1, Ordering::Relaxed);
             return false;

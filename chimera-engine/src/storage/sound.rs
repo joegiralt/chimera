@@ -10,7 +10,9 @@ use crate::dsp::voice_fx::legacy::{Legacy, legacy_fx};
 use crate::midi_map::MidiMap;
 use crate::midi_map::codec::MapRecord;
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
-use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::modulation::{
+    FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState, SourceBits,
+};
 use crate::name::SoundName;
 use crate::params::{EngineType, FilterParams, ParamSnapshot};
 use crate::preset::Sound;
@@ -25,9 +27,16 @@ use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter}
 
 const REGISTRY_ENTRY_LEN: usize = 2 + LABEL_LEN;
 const ROUTE_LEN: usize = 4;
+/// The sources `Routes` holds, the first eight (the jacks' too); the
+/// performance rows after them go to `PerfRoutes` (ADR 0236).
+const ROUTES_SOURCES: usize = 8;
+const JACK_SOURCES: SourceBits = (1 << ROUTES_SOURCES) - 1;
 /// Every source into every registry column and every fixed one.
-const MAX_ROUTES: usize = MAX_MOD_SOURCES * (MAX_MOD_DESTS + FixedCol::ALL.len());
+const COLS: usize = MAX_MOD_DESTS + FixedCol::ALL.len();
+const MAX_ROUTES: usize = ROUTES_SOURCES * COLS;
+const MAX_PERF_ROUTES: usize = (MAX_MOD_SOURCES - ROUTES_SOURCES) * COLS;
 const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
+const _: () = assert!(MAX_PERF_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
 const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN);
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
@@ -35,8 +44,9 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 /// `SourceRef`, a 24-zone `ZoneTune` and a full `Bindings` (2 624 + 133 =
 /// 2 757 B for 292 params: WALK's TRON and DRIFT, ADR 0203, and STRETCH
 /// GRAIN's four, ADR 0204, among them; `Bindings` 49 B over `MidiMap`'s
-/// 84), rounded up to 16 B. `sparse_bound` pins it.
-pub const MAX_SOUND_COST: usize = 2768;
+/// 84), and a full `PerfRoutes` (4 + 160 B, ADR 0236), rounded up to 16 B.
+/// `sparse_bound` pins it.
+pub const MAX_SOUND_COST: usize = 2928;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
@@ -125,33 +135,21 @@ pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(
 
     let m = &s.mod_state;
     r.clear();
-    r.u8(m.num_sources() as u8);
+    // `Routes`' sources: decode reads every source whatever this says.
+    r.u8(m.num_sources().min(ROUTES_SOURCES) as u8);
     for d in 0..m.num_dests() {
         r.bytes(&addr_code(m.dest(d)));
     }
     w.put(RecordTag::ModDests, r.as_slice())?;
 
     r.clear();
-    for d in 0..m.num_dests() {
-        for src in ModSource::ALL.into_iter().take(m.num_sources()) {
-            if m.present(d) & 1 << src.index() != 0 {
-                r.u8(src.disk_code());
-                r.bytes(&addr_code(m.dest(d)));
-                r.u8(m.amount(src.index(), d) as u8);
-            }
-        }
-    }
-    // The fixed columns: ordinary route records, by address (no ModDests).
-    for c in FixedCol::ALL {
-        for src in ModSource::ALL.into_iter().take(m.num_sources()) {
-            if m.fixed_present(c) & 1 << src.index() != 0 {
-                r.u8(src.disk_code());
-                r.bytes(&addr_code(c.addr()));
-                r.u8(m.fixed_amount(src.index(), c) as u8);
-            }
-        }
-    }
+    encode_routes(m, false, &mut r);
     w.put(RecordTag::Routes, r.as_slice())?;
+    r.clear();
+    encode_routes(m, true, &mut r);
+    if !r.as_slice().is_empty() {
+        w.put(RecordTag::PerfRoutes, r.as_slice())?;
+    }
 
     let taps = &s.params.taps;
     if !taps.is_empty() {
@@ -180,6 +178,26 @@ pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(
     Ok(())
 }
 
+/// The routes of the performance rows (`perf`) or of the others: registry
+/// columns, then the fixed ones, by address (no ModDests).
+fn encode_routes(m: &ModState, perf: bool, r: &mut RecordBuf) {
+    let cols = (0..m.num_dests()).map(|d| (m.dest(d), m.present(d)));
+    let fixed = FixedCol::ALL.map(|c| (c.addr(), m.fixed_present(c)));
+    for (d, (addr, bits)) in cols.chain(fixed).enumerate() {
+        for src in ModSource::ALL {
+            if src.is_perf() == perf && bits & 1 << src.index() != 0 {
+                let a = match FixedCol::of(addr) {
+                    Some(c) => m.fixed_amount(src.index(), c),
+                    None => m.amount(src.index(), d),
+                };
+                r.u8(src.disk_code());
+                r.bytes(&addr_code(addr));
+                r.u8(a as u8);
+            }
+        }
+    }
+}
+
 /// The CRC of the Sound's padded name, then `encode_sound`'s bytes: equal
 /// for Sounds a card round trip can't tell apart.
 pub fn sound_crc(s: &Sound) -> u32 {
@@ -200,6 +218,7 @@ const fn once_bit(tag: RecordTag) -> u16 {
         RecordTag::TapRoutes => 1 << 7,
         RecordTag::MidiMap => 1 << 8,
         RecordTag::Bindings => 1 << 9,
+        RecordTag::PerfRoutes => 1 << 10,
         // Skipped before `once` is asked.
         RecordTag::Build | RecordTag::Note => 0,
         // A project's own records: refused before `once` is asked.
@@ -482,6 +501,35 @@ impl SoundCheck {
                 self.routes_len = p.len();
                 Ok(())
             }
+            // Applied now, onto the `ModDests` written before it: `Routes`'
+            // staging is full. A source other than WHEEL or PRESSURE, an
+            // unknown address or one past a full matrix is dropped and counted.
+            RecordTag::PerfRoutes => {
+                let (routes, []) = p.as_chunks::<ROUTE_LEN>() else {
+                    return Err(FileError::Bounds);
+                };
+                if routes.len() > MAX_PERF_ROUTES {
+                    return Err(FileError::Bounds);
+                }
+                let mut lost = 0;
+                if let Some(s) = staged {
+                    for &[src, block, id, amount] in routes {
+                        match (ModSource::from_disk_code(src), addr_of(block, id)) {
+                            // No column left for it: dropped, counted.
+                            (Some(src), Some(addr)) if src.is_perf() => {
+                                lost += u16::from(!s.mod_state.set_route_addr(
+                                    src.index(),
+                                    addr,
+                                    amount as i8,
+                                ));
+                            }
+                            _ => lost += 1,
+                        }
+                    }
+                }
+                self.skip(lost);
+                Ok(())
+            }
             RecordTag::LastProject => Ok(()),
             RecordTag::TapRoutes => {
                 self.fold_tap = p
@@ -627,7 +675,11 @@ const FOLDER_BLOCK: u8 = 11;
 /// neither FM1's ENV 1 nor FM2's NOTE, QM IN the single fixed-Q route;
 /// otherwise each keeps its value. Only the jacks `fm3`/`qm` asks for.
 fn infer_jacks(f: &mut FilterParams, m: &ModState, fm3: bool, qm: bool) {
-    let single = |bits: u8| (bits.count_ones() == 1).then(|| bits.trailing_zeros() as usize);
+    // A jack's sources only: a WHEEL or PRESSURE route is never one.
+    let single = |bits: SourceBits| {
+        let bits = bits & JACK_SOURCES;
+        (bits.count_ones() == 1).then(|| bits.trailing_zeros() as usize)
+    };
     let fm1_fm2 = 1 << ModSource::Env1.index() | 1 << ModSource::Note.index();
     if fm3 && let Some(i) = single(m.fixed_present(FixedCol::Freq) & !fm1_fm2) {
         f.set_fm3_src(Jack::Mod(ModSource::ALL[i]));
@@ -682,7 +734,9 @@ fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<u16, FileError> {
 
 /// The destinations dropped for an address this firmware lacks.
 fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<u16, FileError> {
-    let (&sources, dests) = p.split_first().ok_or(FileError::Bounds)?;
+    // The source count is not read: an older file's 8 would hide WHEEL and
+    // PRESSURE.
+    let (_, dests) = p.split_first().ok_or(FileError::Bounds)?;
     let (dests, []) = dests.as_chunks::<2>() else {
         return Err(FileError::Bounds);
     };
@@ -691,7 +745,7 @@ fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<u16, FileError> {
     }
     let mut lost = 0;
     if let Some(s) = staged {
-        let mut m = ModState::with_sources(sources.into());
+        let mut m = ModState::with_sources(MAX_MOD_SOURCES);
         for &[block, id] in dests {
             if addr_of(block, id).is_none() {
                 lost += 1;

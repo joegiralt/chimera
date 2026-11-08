@@ -9,14 +9,15 @@ use chimera_core::dsp::filter::FilterMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::midi_map::{Binding, Input as MapInput, MAP_LEN, Mappable, MidiMap};
 use chimera_core::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS};
-use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
+use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams};
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    BuildStamp, Check, Decode, FileError, FileKind, Framer, Generation, HEADER_LEN, Header,
-    MAX_SOUND_COST, Migration, RecordBuf, RecordTag, SoundCheck, SoundDecoder, TRAILER_LEN,
-    ValidAddr, decode_block, encode_block, encode_library_sound, encode_sound, write_file,
+    BuildStamp, Check, Decode, Event, FileError, FileKind, Framer, Generation, HEADER_LEN, Header,
+    MAX_SOUND_COST, Migration, ReadTag, RecordBuf, RecordTag, SoundCheck, SoundDecoder,
+    TRAILER_LEN, ValidAddr, decode_block, encode_block, encode_library_sound, encode_sound,
+    write_file,
 };
 use chimera_hal::store::{ByteSink, StoreError};
 use common::XorShift;
@@ -159,8 +160,125 @@ fn full_matrix_round_trip() {
     let got = decode(&encode(&s)).unwrap();
     assert!(got.bits_eq(&s));
     assert_eq!(got.dest_registry.len(), MAX_REGISTRY_DESTS);
-    assert_eq!(got.mod_state.present(MAX_MOD_DESTS - 1), 0xFF);
-    assert_eq!(got.mod_state.fixed_present(FixedCol::Fx), 0xFF);
+    let all = (1 << MAX_MOD_SOURCES) - 1;
+    assert_eq!(got.mod_state.present(MAX_MOD_DESTS - 1), all);
+    assert_eq!(got.mod_state.fixed_present(FixedCol::Fx), all);
+}
+
+/// Every record of `bytes`, by tag, in file order.
+fn records(bytes: &[u8]) -> Vec<(ReadTag, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut f = Framer::new(bytes.len() as u32).unwrap();
+    f.push(bytes, &mut |e| {
+        if let Event::Record(t, p) = e {
+            out.push((t, p.to_vec()));
+        }
+        Ok(())
+    })
+    .unwrap();
+    out
+}
+
+fn record(bytes: &[u8], tag: RecordTag) -> Option<Vec<u8>> {
+    records(bytes)
+        .into_iter()
+        .find(|(t, _)| *t == ReadTag::Known(tag))
+        .map(|(_, p)| p)
+}
+
+/// #514: WHEEL and PRESSURE's routes go to `PerfRoutes` (codes 10 and 11),
+/// `Routes` keeps the other eight sources, and both come back.
+#[test]
+fn perf_routes_ride_their_own_record() {
+    let mut s = Sound::init(EngineType::Va);
+    let lfo_depth = modulatable(1)[0];
+    s.dest_registry.add(lfo_depth, *b"DEST\0\0\0\0").unwrap();
+    let d = s.mod_state.push(lfo_depth).unwrap();
+    s.mod_state.set_route(ModSource::Press.index(), d, -40);
+    s.mod_state
+        .set_fixed(ModSource::Wheel.index(), FixedCol::Freq, 90);
+    s.mod_state
+        .set_fixed(ModSource::Wheel.index(), FixedCol::Q, 0);
+    let bytes = encode(&s);
+    let perf = record(&bytes, RecordTag::PerfRoutes).expect("a PerfRoutes record");
+    let codes: Vec<u8> = perf.chunks(4).map(|r| r[0]).collect();
+    assert_eq!(codes, [11, 10, 10]);
+    let routes = record(&bytes, RecordTag::Routes).unwrap();
+    assert!(routes.chunks(4).all(|r| r[0] < 8), "{routes:?}");
+    let got = decode(&bytes).unwrap();
+    assert!(got.bits_eq(&s));
+    assert_eq!(
+        got.mod_state
+            .fixed_amount(ModSource::Wheel.index(), FixedCol::Freq),
+        90
+    );
+}
+
+/// A Sound without WHEEL or PRESSURE routes encodes as before: no
+/// `PerfRoutes`, `ModDests` counting eight. Such a file loads every route
+/// and all ten rows.
+#[test]
+fn a_sound_without_them_keeps_its_old_bytes() {
+    for i in 0..FACTORY_LEN {
+        let s = factory_sound(i).unwrap();
+        let bytes = encode(&s);
+        assert_eq!(record(&bytes, RecordTag::PerfRoutes), None);
+        assert_eq!(record(&bytes, RecordTag::ModDests).unwrap()[0], 8);
+        let got = decode(&bytes).unwrap();
+        assert_eq!(got.mod_state.num_sources(), MAX_MOD_SOURCES);
+        assert!(got.bits_eq(&s));
+    }
+}
+
+/// A WHEEL route into FREQ is no jack's: FM3 IN is still inferred from the
+/// one LFO 2 route beside it, the same on the way back.
+#[test]
+fn a_wheel_route_never_counts_as_a_jack() {
+    use chimera_core::taps::Jack;
+    let mut s = Sound::neutral(EngineType::Algo);
+    s.mod_state
+        .set_fixed(ModSource::Lfo2.index(), FixedCol::Freq, 30);
+    s.mod_state
+        .set_fixed(ModSource::Wheel.index(), FixedCol::Freq, 30);
+    s.params.filter.set_fm3_src(Jack::Mod(ModSource::Lfo2));
+    let got = decode(&encode(&s)).unwrap();
+    assert_eq!(got.params.filter.fm3_src(), Jack::Mod(ModSource::Lfo2));
+    assert!(got.bits_eq(&s));
+    assert_eq!(format!("{:?}", got.params), format!("{:?}", s.params));
+}
+
+/// A `PerfRoutes` entry naming another source, or too many entries, is
+/// refused: the first dropped and counted, the second `Bounds`.
+#[test]
+fn perf_routes_take_only_their_sources() {
+    let freq = |src: u8| {
+        let mut r = vec![src];
+        r.extend_from_slice(&[
+            BlockRef::Filter.disk_code().unwrap(),
+            FilterParams::CUTOFF.0,
+            50,
+        ]);
+        r
+    };
+    let mut p = freq(1);
+    p.extend(freq(10));
+    let got = decode(&file(&[
+        engine(EngineType::Algo),
+        (RecordTag::PerfRoutes, p),
+    ]))
+    .unwrap();
+    assert_eq!(
+        got.mod_state.fixed_present(FixedCol::Freq),
+        1 << ModSource::Wheel.index()
+    );
+    let many: Vec<u8> = (0..41).flat_map(|_| freq(10)).collect();
+    assert!(matches!(
+        decode(&file(&[
+            engine(EngineType::Algo),
+            (RecordTag::PerfRoutes, many)
+        ])),
+        Err(FileError::Bounds)
+    ));
 }
 
 #[test]
@@ -355,7 +473,8 @@ fn random_sound(e: EngineType, rng: &mut XorShift) -> Sound {
         let label = [b'A' + i as u8; LABEL_LEN];
         s.dest_registry.add(a, label).unwrap();
     }
-    s.mod_state = ModState::from_registry(&s.dest_registry, 1 + rng.below(MAX_MOD_SOURCES));
+    // Every Sound has every source (a file's count is not read, #514).
+    s.mod_state = ModState::from_registry(&s.dest_registry, MAX_MOD_SOURCES);
     for src in 0..s.mod_state.num_sources() {
         for d in 0..s.mod_state.num_dests() {
             if rng.below(2) == 0 {
@@ -669,7 +788,8 @@ fn worst(e: EngineType) -> (Sound, usize) {
 /// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 292 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
-/// 24 zones) + 133 (`Bindings`, 16 entries) = 2 757 B, less 5 B for each param that has nowhere to move.
+/// 24 zones) + 133 (`Bindings`, 16 entries) + 164 (`PerfRoutes`, #514)
+/// = 2 921 B, less 5 B for each param that has nowhere to move.
 /// TAPE's SLICE is on hold (`slice_in_play`): every code loads OFF, so a
 /// Sound never stores one, 5 B under it.
 /// A new param moves it: raise
@@ -684,7 +804,7 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2757);
+    assert_eq!(most, 2921);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }
 

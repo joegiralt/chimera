@@ -21,7 +21,8 @@ use crate::MidiChannel;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
 use crate::midi_map::{KeptMap, MidiMap};
 use crate::note_queue::{
-    ChannelMode, ChannelModeEvent, InEvent, NoteKind, NoteProducer, RealTime, SustainEvent,
+    ChannelMode, ChannelModeEvent, Expr, ExprEvent, InEvent, NoteKind, NoteProducer, RealTime,
+    SustainEvent,
 };
 use crate::storage::{RecordBuf, RecordTag, RecordWriter};
 use chimera_hal::store::StoreError;
@@ -405,6 +406,59 @@ pub struct DinPipe {
     /// A bit a channel whose NotesOff `lost` owes the queue.
     owed: u16,
     pedals: Pedals,
+    expr: ExprOwed,
+}
+
+/// Each channel's wheel and pressure the queue refused, latest wins: owed
+/// until it takes them, so the last value always lands (a dropped final 0
+/// would hold a source up). Poly pressure, per key, is not kept.
+struct ExprOwed {
+    /// Bit `2 × channel + kind`: kind 0 the wheel, 1 the pressure.
+    bits: u32,
+    v: [[u8; 2]; 16],
+}
+
+impl ExprOwed {
+    const NONE: Self = Self {
+        bits: 0,
+        v: [[0; 2]; 16],
+    };
+
+    /// `e` taken (`ok`) or refused: a refused wheel or pressure is owed, a
+    /// taken one clears what was. Owed values go ahead of anything later
+    /// (`settle`), so a reset after one still has the last word.
+    fn heard(&mut self, e: InEvent, ok: bool) {
+        let InEvent::Expr(ExprEvent { channel, expr }) = e else {
+            return;
+        };
+        let (k, v) = match expr {
+            Expr::Wheel(v) => (0, v),
+            Expr::Pressure(v) => (1, v),
+            Expr::Poly(..) => return,
+        };
+        let c = usize::from(channel.get()) & 15;
+        let bit = 1 << (2 * c + k);
+        if ok {
+            self.bits &= !bit;
+        } else {
+            (self.bits, self.v[c][k]) = (self.bits | bit, v.get());
+        }
+    }
+
+    /// The lowest owed event.
+    fn next(&self) -> Option<InEvent> {
+        let i = self.bits.trailing_zeros() as usize;
+        let v = U7::new(*self.v.get(i / 2)?.get(i % 2)?)?;
+        let expr = if i.is_multiple_of(2) {
+            Expr::Wheel(v)
+        } else {
+            Expr::Pressure(v)
+        };
+        Some(InEvent::Expr(ExprEvent {
+            channel: Channel::clamped((i / 2) as u8),
+            expr,
+        }))
+    }
 }
 
 /// The pedals a source holds on the note queue, and the pedal-ups `lost`
@@ -497,6 +551,7 @@ impl DinPipe {
             },
             owed: 0,
             pedals: Pedals { down: 0, up: 0 },
+            expr: ExprOwed::NONE,
         }
     }
 
@@ -512,6 +567,7 @@ impl DinPipe {
             stats: &mut self.stats,
             owed: &mut self.owed,
             pedals: &mut self.pedals,
+            expr: &mut self.expr,
             held: held.as_deref_mut(),
         }
         .settle();
@@ -524,6 +580,7 @@ impl DinPipe {
                 stats: &mut self.stats,
                 owed: &mut self.owed,
                 pedals: &mut self.pedals,
+                expr: &mut self.expr,
                 held: held.as_deref_mut(),
             };
             match parsed {
@@ -552,17 +609,24 @@ impl DinPipe {
                         }
                     }
                 },
-                Parsed::Event(Event::Voice(c, v)) => match InEvent::from_event(c, &v) {
-                    Some(e) => sink.note(e),
-                    None => match self.ctl.hear(c, v) {
-                        Heard::Ctl(Ctl::Program { .. }) => {
-                            sink.stats.programs_dropped =
-                                sink.stats.programs_dropped.saturating_add(1);
-                        }
-                        Heard::Ctl(ctl) => sink.ctrl(CtrlEvent::Ctl(c, ctl)),
-                        Heard::Note | Heard::Consumed => {}
-                    },
-                },
+                Parsed::Event(Event::Voice(c, v)) => {
+                    // The wheel and pressure feed their matrix sources; the
+                    // wheel and channel pressure reach the map too.
+                    if let Some(e) = InEvent::expr(c, &v) {
+                        sink.note(e);
+                    }
+                    match InEvent::from_event(c, &v) {
+                        Some(e) => sink.note(e),
+                        None => match self.ctl.hear(c, v) {
+                            Heard::Ctl(Ctl::Program { .. }) => {
+                                sink.stats.programs_dropped =
+                                    sink.stats.programs_dropped.saturating_add(1);
+                            }
+                            Heard::Ctl(ctl) => sink.ctrl(CtrlEvent::Ctl(c, ctl)),
+                            Heard::Note | Heard::Consumed => {}
+                        },
+                    }
+                }
                 Parsed::Event(Event::Mode(c, m)) => {
                     if let Some(e) = InEvent::from_mode(c, m) {
                         sink.note(e);
@@ -612,6 +676,7 @@ impl DinPipe {
             stats: &mut self.stats,
             owed: &mut self.owed,
             pedals: &mut self.pedals,
+            expr: &mut self.expr,
             held,
         };
         if !sink.settle() {
@@ -739,12 +804,13 @@ impl UsbSlot {
             || self.held.keys.iter().any(|&k| k != 0)
     }
 
-    /// NotesOff or pedal-ups `lost` still owes the queue. Field reads.
+    /// NotesOff or pedal-ups `lost` still owes the queue, or a refused wheel
+    /// or pressure (`ExprOwed`). Field reads.
     #[inline(always)]
     pub fn owes(&self) -> bool {
         self.slot
             .pipe()
-            .is_some_and(|p| p.owed != 0 || p.pedals.up != 0)
+            .is_some_and(|p| p.owed != 0 || p.pedals.up != 0 || p.expr.bits != 0)
     }
 
     /// As of the last `feed`; nothing counted before the first.
@@ -937,6 +1003,7 @@ struct Counted<'a, S: Sinks + ?Sized> {
     stats: &'a mut PipeStats,
     owed: &'a mut u16,
     pedals: &'a mut Pedals,
+    expr: &'a mut ExprOwed,
     held: Option<&'a mut Held>,
 }
 
@@ -946,16 +1013,21 @@ impl<S: Sinks + ?Sized> Counted<'_, S> {
     }
 
     /// Refused while NotesOff are owed, so none overtakes them; `false`:
-    /// refused.
+    /// refused. A refused wheel or pressure is owed, not counted
+    /// (`ExprOwed`).
     fn push(&mut self, e: InEvent) -> bool {
-        if self.settle() && self.out.note(e) {
+        let ok = self.settle() && self.out.note(e);
+        self.expr.heard(e, ok);
+        if ok {
             self.pedals.heard(e);
             if let Some(h) = self.held.as_deref_mut() {
                 h.heard(e);
             }
             true
         } else {
-            self.stats.refused = self.stats.refused.saturating_add(1);
+            if !matches!(e, InEvent::Expr(_)) {
+                self.stats.refused = self.stats.refused.saturating_add(1);
+            }
             false
         }
     }
@@ -983,6 +1055,12 @@ impl<S: Sinks + ?Sized> Counted<'_, S> {
                 }
                 *bits &= *bits - 1;
             }
+        }
+        while let Some(e) = self.expr.next() {
+            if !self.out.note(e) {
+                return false;
+            }
+            self.expr.heard(e, true);
         }
         true
     }

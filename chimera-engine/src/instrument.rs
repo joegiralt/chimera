@@ -28,7 +28,7 @@ use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
 use crate::note_queue::{
-    BendEvent, ChannelMode, ChannelModeEvent, NoteEvent, NoteKind, SustainEvent,
+    BendEvent, ChannelMode, ChannelModeEvent, Expr, ExprEvent, NoteEvent, NoteKind, SustainEvent,
 };
 use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
@@ -701,6 +701,11 @@ pub struct Instrument {
     costings: u32,
     /// Each MIDI channel's pitch-bend wheel, -8192..=8191.
     wheel: [i16; 16],
+    /// Each MIDI channel's mod wheel and channel pressure, 0..=127: the
+    /// WHEEL and PRESSURE sources' targets (`ease_bend` glides them).
+    expr: [[u8; 2]; 16],
+    /// Each voice's key's poly pressure, 0..=127: a struck key's only.
+    poly: [u8; MAX_VOICES],
     /// The channels whose sustain pedal is down, a bit each.
     pedal: u16,
     /// A voice whose last key is up with its channel's pedal down: let go
@@ -740,7 +745,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, streaming });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, streaming });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -801,6 +806,8 @@ impl Instrument {
             addr_of_mut!((*p).costed).write(0);
             addr_of_mut!((*p).costings).write(0);
             addr_of_mut!((*p).wheel).write([0; 16]);
+            addr_of_mut!((*p).expr).write([[0; 2]; 16]);
+            addr_of_mut!((*p).poly).write([0; MAX_VOICES]);
             addr_of_mut!((*p).pedal).write(0);
             addr_of_mut!((*p).sustained).write([false; MAX_VOICES]);
             addr_of_mut!((*p).bend_k).write(crate::dsp::knobs::coeff(
@@ -1356,6 +1363,7 @@ impl Instrument {
                     self.note_channel[v] = ev.channel;
                     self.note_origin[v] = from;
                     self.keys[v] = ev.note;
+                    self.poly[v] = 0;
                     // A key down again, or a steal, takes the voice back
                     // from the pedal.
                     self.sustained[v] = false;
@@ -1394,8 +1402,10 @@ impl Instrument {
                     }
                     self.held_keys[v] = self.held_keys[v].without(ev.note);
                     if let Some(left) = self.held_keys[v].lowest() {
-                        // A key still down names it now.
+                        // A key still down names it now, its pressure
+                        // unheard yet.
                         self.keys[v] = left;
+                        self.poly[v] = 0;
                     } else if from == NoteOrigin::Live && self.pedal_down(ev.channel) {
                         // The pedal holds it. ORBIT's rings are not the
                         // player's keys: they end on their own.
@@ -1437,6 +1447,30 @@ impl Instrument {
         self.wheel[usize::from(ev.channel.get())] = ev.value.clamp(-8192, 8191);
     }
 
+    /// A channel's mod wheel or pressure: its Parts' WHEEL and PRESSURE
+    /// glide there (`ease_bend`). Poly pressure reaches the held voices its
+    /// key struck on that channel, never ORBIT's.
+    pub fn expr(&mut self, ev: ExprEvent) {
+        let ch = usize::from(ev.channel.get()) & 15;
+        match ev.expr {
+            Expr::Wheel(v) => self.expr[ch][0] = v.get(),
+            Expr::Pressure(v) => self.expr[ch][1] = v.get(),
+            Expr::Poly(key, v) => {
+                for i in 0..MAX_VOICES {
+                    // A held key's voice: a releasing one of a re-struck
+                    // key keeps its last value.
+                    if self.alloc.slots()[i].held()
+                        && self.note_channel[i] == ev.channel
+                        && self.note_origin[i] == NoteOrigin::Live
+                        && self.keys[i] == key
+                    {
+                        self.poly[i] = v.get();
+                    }
+                }
+            }
+        }
+    }
+
     /// A channel's sustain pedal: down holds the keys it lifts; up lets
     /// them go.
     pub fn sustain(&mut self, ev: SustainEvent) {
@@ -1469,6 +1503,12 @@ impl Instrument {
                     channel: ch,
                     down: false,
                 });
+                self.expr[usize::from(ch.get()) & 15] = [0; 2];
+                for v in 0..MAX_VOICES {
+                    if self.note_channel[v] == ch {
+                        self.poly[v] = 0;
+                    }
+                }
             }
             ChannelMode::NotesOff => {
                 crate::played::clear_channel(ch.get());
@@ -1571,6 +1611,11 @@ impl Instrument {
             knobs
                 .0
                 .ease_bend(unit * f32::from(part.mix.bend), k.filter(|_| playing));
+            let [wheel, press] = self.expr[usize::from(part.mix.channel.get()) & 15];
+            knobs.0.ease_expr(
+                [f32::from(wheel) / 127.0, f32::from(press) / 127.0],
+                k.filter(|_| playing),
+            );
         }
     }
 
@@ -1920,9 +1965,11 @@ impl Instrument {
     /// Sound.
     fn ease_knobs(&mut self, shared: &AudioShared) {
         let mut playing = [false; MAX_PARTS];
+        let k = matches!(self.knob_pace, Pace::Glide(_)).then_some(self.bend_k);
         for v in 0..MAX_VOICES {
             if !self.alloc.slots()[v].is_free() {
                 playing[self.sounding[v] as usize % MAX_PARTS] = true;
+                self.voices[v].ease_press(f32::from(self.poly[v]) / 127.0, k);
             }
         }
         self.ease_bend(shared, playing);
