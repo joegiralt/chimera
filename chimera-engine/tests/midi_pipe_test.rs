@@ -1102,3 +1102,38 @@ fn an_owed_value_lands_before_a_later_reset() {
         ]
     );
 }
+
+/// USB cable n is Part n's, on the channel the UI last gave it (#840);
+/// cable 0 and any past the Parts are no Part's.
+#[test]
+fn a_part_cable_plays_on_its_parts_channel() {
+    use chimera_engine::midi_in::PartChannels;
+    use chimera_midi::usb::unpack;
+    let cable = |n: u8| unpack([n << 4 | 0x09, 0x90, 60, 100]).unwrap().0;
+    let parts = PartChannels::new();
+    assert_eq!(parts.of_cable(cable(0)), None);
+    assert_eq!(parts.of_cable(cable(1)), Some(ch(0)), "the default");
+    parts.set(2, ch(9));
+    assert_eq!(parts.of_cable(cable(3)), Some(ch(9)));
+    assert_eq!(parts.of_cable(cable(6)), Some(ch(5)));
+    assert_eq!(parts.of_cable(cable(7)), None);
+}
+
+/// A Part cable's message between cable 0's SysEx packets goes past the
+/// shared parser: the SysEx arrives whole, the note plays (#840 review).
+#[test]
+fn a_part_cable_message_never_cuts_cable_zeros_sysex() {
+    let mut usb = Usb::new();
+    usb.feed(&[0xF0, 0x7E, 0x7F]);
+    let mut out = DinSinks {
+        notes: &mut usb.notes,
+        ctrl: usb.ring,
+    };
+    usb.slot.feed_msg(&[0x92, 60, 100], &mut out);
+    let (notes, ctrl) = usb.run(&[0x06, 0x01, 0xF7]);
+    assert_eq!(notes, [on(2, 60, 100)]);
+    assert!(
+        ctrl.iter().any(|e| matches!(e, CtrlEvent::Identity { .. })),
+        "{ctrl:?}"
+    );
+}

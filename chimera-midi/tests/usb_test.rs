@@ -1,4 +1,5 @@
-use chimera_midi::usb::{Cable, Packer, unpack};
+use chimera_midi::usb::{Cable, Packer, cables, unpack};
+use chimera_midi::value::Channel;
 
 fn pack(bytes: &[u8]) -> Vec<[u8; 4]> {
     let mut p = Packer::new();
@@ -148,7 +149,7 @@ fn a_status_aborts_sysex() {
 
 // USB MIDI's IN queue, its Configured edge and OUT's cable filter.
 
-use chimera_midi::usb::{ByteRing, Edge, InQueue, Left, cable_zero};
+use chimera_midi::usb::{ByteRing, Edge, InQueue, Left};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use usb_device::UsbError;
@@ -376,24 +377,6 @@ fn coming_back_is_no_edge() {
     assert_eq!(e.poll(S::Default), Some(Left::Reset));
 }
 
-#[test]
-fn only_cable_zeros_events_pass() {
-    let p = [
-        0x09, 0x90, 60, 100, // cable 0's note-on
-        0x19, 0x90, 60, 100, // cable 1's
-        0x00, 0x00, 0x00, 0x00, // CIN 0
-        0x0F, 0xF8, 0, 0, // clock
-        0x09, 0x90, // half a packet
-    ];
-    let got: Vec<_> = cable_zero(&p)
-        .map(|e| e.map(|b| b.as_slice().to_vec()))
-        .collect();
-    assert_eq!(
-        got,
-        [Some(vec![0x90, 60, 100]), None, None, Some(vec![0xF8])]
-    );
-}
-
 /// The UI lost an echo (#842): what waits is stale, held and ring both
 /// dropped, the packer reset; the UI re-echoes once the ring is empty.
 #[test]
@@ -440,4 +423,89 @@ fn bytes_ignore_padding() {
     let a = unpack([0x0C, 0xC0, 5, 0]).unwrap().1;
     let b = unpack([0x0C, 0xC0, 5, 9]).unwrap().1;
     assert_eq!(a, b);
+}
+
+/// Each whole packet's cable and bytes; reserved CINs and a trailing part
+/// packet none.
+#[test]
+fn cables_carry_their_number() {
+    let p = [0x09, 0x90, 60, 100, 0x39, 0x91, 61, 1, 0x00, 1, 2, 3, 0x2B];
+    let got: Vec<_> = cables(&p)
+        .map(|e| e.map(|(c, b)| (c.get(), b.as_slice().to_vec())))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            Some((0, vec![0x90, 60, 100])),
+            Some((3, vec![0x91, 61, 1])),
+            None
+        ]
+    );
+}
+
+/// A Part cable's channel message moved to the Part's channel; anything
+/// else is not a Part's.
+#[test]
+fn on_channel_moves_channel_messages_only() {
+    let ch = Channel::new(9).unwrap();
+    let b = |p| unpack(p).unwrap().1;
+    let moved = |p| b(p).on_channel(ch).map(|x| x.as_slice().to_vec());
+    assert_eq!(moved([0x19, 0x90, 60, 100]), Some(vec![0x99, 60, 100]));
+    assert_eq!(moved([0x1E, 0xE3, 0, 64]), Some(vec![0xE9, 0, 64]));
+    assert_eq!(moved([0x1C, 0xC5, 7, 0]), Some(vec![0xC9, 7]));
+    assert_eq!(moved([0x14, 0xF0, 0x7E, 0x7F]), None, "SysEx");
+    assert_eq!(moved([0x1F, 0xF8, 0, 0]), None, "clock");
+    assert_eq!(moved([0x12, 0xF3, 1, 0]), None, "song select");
+}
+
+/// A Part cable's note-off and pedal-up go on the channel their note-on
+/// and pedal-down went on, though the Part's channel moved since: the
+/// Part's voice releases (#840 review).
+#[test]
+fn a_held_key_and_pedal_release_on_the_channel_they_went_on() {
+    use chimera_midi::usb::PartCables;
+    let mut parts = PartCables::new();
+    let (two, nine) = (Channel::new(2).unwrap(), Channel::new(9).unwrap());
+    let pkt = |p| unpack(p).unwrap();
+    let mut route = |p, now| {
+        let (c, b) = pkt(p);
+        parts.route(c, b, now).map(|x| x.as_slice().to_vec())
+    };
+    assert_eq!(route([0x19, 0x90, 60, 100], two), Some(vec![0x92, 60, 100]));
+    assert_eq!(route([0x1B, 0xB0, 64, 127], two), Some(vec![0xB2, 64, 127]));
+    // The Part moves to channel 9.
+    assert_eq!(route([0x18, 0x80, 60, 0], nine), Some(vec![0x82, 60, 0]));
+    assert_eq!(route([0x1B, 0xB0, 64, 0], nine), Some(vec![0xB2, 64, 0]));
+    // A note-on as velocity 0 is a note-off too.
+    route([0x19, 0x90, 61, 100], two);
+    assert_eq!(route([0x19, 0x90, 61, 0], nine), Some(vec![0x92, 61, 0]));
+    // New notes and other messages go where the Part is now.
+    assert_eq!(
+        route([0x19, 0x90, 62, 100], nine),
+        Some(vec![0x99, 62, 100])
+    );
+    assert_eq!(route([0x1B, 0xB0, 74, 5], nine), Some(vec![0xB9, 74, 5]));
+    // Cables keep their own: cable 2's key 60 is not cable 1's.
+    assert_eq!(
+        route([0x29, 0x90, 60, 100], nine),
+        Some(vec![0x99, 60, 100])
+    );
+    assert_eq!(route([0x19, 0x90, 60, 100], two), Some(vec![0x92, 60, 100]));
+    assert_eq!(route([0x28, 0x80, 60, 0], two), Some(vec![0x89, 60, 0]));
+    // A key the cable never held, a pedal it never put down: where the
+    // Part is now.
+    assert_eq!(route([0x38, 0x80, 70, 0], nine), Some(vec![0x89, 70, 0]));
+    assert_eq!(
+        route([0x18, 0x80, 61, 0], nine),
+        Some(vec![0x89, 61, 0]),
+        "let go"
+    );
+    assert_eq!(route([0x3B, 0xB0, 64, 0], nine), Some(vec![0xB9, 64, 0]));
+    assert_eq!(
+        route([0x1B, 0xB0, 64, 0], nine),
+        Some(vec![0xB9, 64, 0]),
+        "up"
+    );
+    // Not a Part's.
+    assert_eq!(route([0x14, 0xF0, 0x7E, 0x7F], two), None);
 }

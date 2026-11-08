@@ -73,10 +73,11 @@ pub(crate) type Serial = SerialPort<'static, Bus>;
 
 /// `bcdDevice` of the composite device, MIDI configured or not: a new
 /// layout under the same VID:PID, which Windows caches drivers by. 0.2's
-/// console-only device was 0x0010.
+/// console-only device was 0x0010; one cable 0x0020; a cable a Part
+/// 0x0021 (ADR 0243).
 #[cfg(all(feature = "midi-usb", not(feature = "usb-audio")))]
-const MIDI_RELEASE: u16 = 0x0020;
-/// With USB audio's stream in MIDI's function (ADR 0248).
+const MIDI_RELEASE: u16 = 0x0021;
+/// With USB audio's stream in MIDI's function (ADR 0248), one cable.
 #[cfg(feature = "usb-audio")]
 const MIDI_RELEASE: u16 = 0x0030;
 

@@ -1,7 +1,7 @@
-//! USB MIDI 1.0's class descriptors, one cable (spec § 4): an AudioControl
-//! and a MIDIStreaming interface under one IAD, one embedded and one
-//! external jack each way, all named by `name`, and a bulk endpoint each
-//! way. With USB audio (ADR 0248), its streaming interface joins the same
+//! USB MIDI 1.0's class descriptors (spec § 4): an AudioControl and a
+//! MIDIStreaming interface under one IAD, cable 0's embedded and external
+//! jack each way, an embedded IN jack a Part cable (ADR 0243), each named,
+//! and a bulk endpoint each way. With USB audio (ADR 0248), its streaming interface joins the same
 //! function, between the two: one AudioControl lists both, as the MIDI
 //! class spec's Audio function has it, so the configuration fits the
 //! control buffer. The board's class writes these from bank 2; the host
@@ -45,8 +45,12 @@ pub fn device<'a, B: UsbBus>(
 }
 
 /// usb-device's control buffer (`control-buffer-256`): a GET_DESCRIPTOR
-/// longer than this fails and the host gives the port up.
+/// longer than this fails and the host gives the port up (175 B past 128
+/// once stranded the unit).
 pub const CONTROL_BUF: usize = 256;
+
+/// Room the default configuration keeps under the buffer.
+pub const MARGIN: usize = 32;
 
 const IAD: u8 = 0x0B;
 const AUDIO: u8 = 0x01;
@@ -63,15 +67,32 @@ const EMBEDDED: u8 = 0x01;
 const EXTERNAL: u8 = 0x02;
 
 /// Jack IDs: embedded IN (the host's OUT endpoint feeds it), external IN,
-/// embedded OUT (feeds the host's IN endpoint), external OUT.
+/// embedded OUT (feeds the host's IN endpoint), external OUT: cable 0's.
+/// The Parts' embedded IN jacks follow, `PART_IN + n` Part n's.
 const IN_EMB: u8 = 1;
 const IN_EXT: u8 = 2;
 const OUT_EMB: u8 = 3;
 const OUT_EXT: u8 = 4;
+const PART_IN: u8 = 4;
+
+/// Cables into Chimera (ADR 0243): cable 0 "Chimera", every channel;
+/// cable n Part n's, whatever channel it sends on. Out of Chimera, cable 0
+/// alone. Each Part cable is an embedded IN jack and a byte of the OUT
+/// endpoint's list, 7 B.
+pub const CABLES: u8 = 7;
+
+/// The cables a build has: one beside USB audio's stream, whose 74 B
+/// leave the buffer no room for the Parts' 42 (ADR 0243, 0248).
+pub const fn cable_count(audio: bool) -> u8 {
+    if audio { 1 } else { CABLES }
+}
 
 /// The class-specific MIDIStreaming descriptors' total (class spec
-/// B.4.2): header 7, IN jacks 6 + 6, OUT jacks 9 + 9, each endpoint 9 + 5.
-pub const MS_TOTAL: u16 = 7 + 6 + 6 + 9 + 9 + (9 + 5) * 2;
+/// B.4.2) with `cables`: header 7, IN jacks 6 + 6, OUT jacks 9 + 9, each
+/// endpoint 9 + 5, and each Part cable's IN jack 6 and list byte 1.
+pub const fn ms_total(cables: u8) -> u16 {
+    7 + 6 + 6 + 9 + 9 + (9 + 5) * 2 + (cables as u16 - 1) * (6 + 1)
+}
 
 // UAC1's AudioControl and AudioStreaming subtypes (audio spec A.5, A.6).
 const INPUT_TERMINAL: u8 = 0x02;
@@ -88,9 +109,30 @@ const OT_ID: u8 = 2;
 /// terminal 12, output terminal 9.
 const AC_TOTAL: u16 = 10 + 12 + 9;
 
-// With USB audio the function keeps a single MIDI cable: per-Part cables
-// (#840) are the default build's; the stream's 7 B of control-buffer room
-// has none for their jacks. #840 adapts this writer when both land.
+/// The console's CDC function as usbd-serial writes it, its IAD included.
+const CDC_LEN: usize = 66;
+/// The stream's interface: alt 0 9, alt 1 9, AS general 7, format 11, its
+/// endpoint 9 and 7.
+const STREAM_LEN: usize = 9 + 9 + 7 + 11 + 9 + 7;
+
+/// The configuration a build serves: its own 9 B, the console, and MIDI's
+/// function (IAD 8, AudioControl 9 and its class-specific block, USB
+/// audio's stream if on, MIDIStreaming 9 and `ms_total`). The host test
+/// checks each layout against what enumerates.
+pub const fn config_len(audio: bool) -> usize {
+    let (ac, stream) = if audio {
+        (AC_TOTAL as usize, STREAM_LEN)
+    } else {
+        (9, 0)
+    };
+    9 + CDC_LEN + 8 + 9 + ac + stream + 9 + ms_total(cable_count(audio)) as usize
+}
+
+// Each layout inside usb-device's control buffer, or the build fails: the
+// default (217 B) with `MARGIN` to spare, USB audio's (249 B) with its
+// one cable (ADR 0248's 7 B of room).
+const _: () = assert!(config_len(false) + MARGIN <= CONTROL_BUF);
+const _: () = assert!(config_len(true) <= CONTROL_BUF);
 
 /// USB audio's streaming interface and its isochronous IN.
 pub struct Stream<'a, B: UsbBus> {
@@ -98,12 +140,46 @@ pub struct Stream<'a, B: UsbBus> {
     pub ep: &'a EndpointIn<'a, B>,
 }
 
-/// The interfaces and the jacks' string.
+/// The interfaces, the jacks' first string (cable n's `name + n`) and the
+/// cables.
 #[derive(Clone, Copy)]
 pub struct Ids {
     pub ac: InterfaceNumber,
     pub ms: InterfaceNumber,
     pub name: StringIndex,
+    pub cables: u8,
+}
+
+/// A string a cable, in a row: the first.
+pub fn names<B: UsbBus>(bus: &UsbBusAllocator<B>, cables: u8) -> StringIndex {
+    let first = bus.string();
+    for _ in 1..cables {
+        let _ = bus.string();
+    }
+    first
+}
+
+/// The Parts' jacks' names; cable 0's "Chimera" is their head. A named
+/// static, bytes and all, so bank 2's glob places them (a string
+/// literal's anonymous rodata would land in bank 1).
+static NAMES: [[u8; 14]; CABLES as usize - 1] = [
+    *b"Chimera Part 1",
+    *b"Chimera Part 2",
+    *b"Chimera Part 3",
+    *b"Chimera Part 4",
+    *b"Chimera Part 5",
+    *b"Chimera Part 6",
+];
+
+/// String `index`'s text if one of `ids`' jacks'.
+pub fn jack_name(ids: Ids, index: StringIndex) -> Option<&'static str> {
+    let n = u8::from(index).checked_sub(u8::from(ids.name))?;
+    let name = match n.checked_sub(1) {
+        _ if n >= ids.cables => return None,
+        None => NAMES.first()?.get(..7)?,
+        Some(p) => NAMES.get(usize::from(p))?.as_slice(),
+    };
+    core::str::from_utf8(name).ok()
 }
 
 /// The function's descriptors into `w`, with `audio`'s stream if on. The
@@ -126,7 +202,8 @@ pub fn descriptors<B: UsbBus>(
         Some(s) => stream(w, ids, s)?,
     }
     w.interface(ids.ms, AUDIO, MIDISTREAMING, 0)?;
-    let [lo, hi] = MS_TOTAL.to_le_bytes();
+    let cables = ids.cables.clamp(1, CABLES);
+    let [lo, hi] = ms_total(cables).to_le_bytes();
     w.write(CS_INTERFACE, &[HEADER, 0x00, 0x01, lo, hi])?;
     let name = ids.name.into();
     w.write(CS_INTERFACE, &[MIDI_IN_JACK, EMBEDDED, IN_EMB, name])?;
@@ -139,9 +216,22 @@ pub fn descriptors<B: UsbBus>(
         CS_INTERFACE,
         &[MIDI_OUT_JACK, EXTERNAL, OUT_EXT, 1, IN_EMB, 1, name],
     )?;
-    // Audio's 9-byte endpoints: bRefresh and bSynchAddress 0.
+    for n in 1..cables {
+        w.write(
+            CS_INTERFACE,
+            &[MIDI_IN_JACK, EMBEDDED, PART_IN + n, name + n],
+        )?;
+    }
+    // Audio's 9-byte endpoints: bRefresh and bSynchAddress 0. Host to
+    // Chimera: every cable's IN jack, in cable order.
     w.endpoint_ex(out, zeros)?;
-    w.write(CS_ENDPOINT, &[MS_GENERAL, 1, IN_EMB])?;
+    let mut cs = [IN_EMB; 2 + CABLES as usize];
+    cs[0] = MS_GENERAL;
+    cs[1] = cables;
+    for n in 1..cables {
+        cs[2 + usize::from(n)] = PART_IN + n;
+    }
+    w.write(CS_ENDPOINT, &cs[..2 + usize::from(cables)])?;
     w.endpoint_ex(inp, zeros)?;
     w.write(CS_ENDPOINT, &[MS_GENERAL, 1, OUT_EMB])
 }

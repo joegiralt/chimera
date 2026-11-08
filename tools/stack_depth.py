@@ -76,6 +76,9 @@ DOOR_CALLS = {
     "<chimera_board::usb_midi::MidiClass as usb_device::class::UsbClass<synopsys_usb_otg::bus::UsbBus<chimera_board::usb::Otg2>>>::get_configuration_descriptors": (
         "chimera_board::usb_midi::door::descriptors",
     ),
+    "<chimera_board::usb_midi::MidiClass as usb_device::class::UsbClass<synopsys_usb_otg::bus::UsbBus<chimera_board::usb::Otg2>>>::get_string": (
+        "chimera_midi::usb_class::jack_name",
+    ),
 }
 # The USB device's poll calls its classes through `dyn UsbClass`: each such
 # pointer call is charged the deepest class method linked (a name holding

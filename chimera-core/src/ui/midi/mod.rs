@@ -36,7 +36,7 @@ use crate::block::Motion;
 use crate::dsp::clampf;
 use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
-use crate::midi_in::{CtrlEvent, HeardEv, Port};
+use crate::midi_in::{CtrlEvent, HeardEv, PART_CHANNELS, Port};
 use crate::midi_map::{Binding, CcKind, Input, MAP_LEN, Mappable, Span};
 use crate::nrpn::{self, NrpnAddr};
 use crate::part::{MAX_BEND, PartParams};
@@ -329,6 +329,11 @@ impl UiState {
     /// its witness confirmed. Saves and listings replace nothing (#528).
     /// The door's `hear`.
     pub(super) fn hear_in(&mut self, ev: &mut dyn Iterator<Item = HeardEv>, now: Ms, taken: bool) {
+        // USB's Part cables play on the Parts' channels as they are now
+        // (#840, ADR 0243).
+        for p in PartId::ALL {
+            PART_CHANNELS.set(p.index(), self.project.part(p).mix.channel);
+        }
         self.cc.fresh();
         let elapsed = now.since(self.cc.last);
         self.cc.last = now;

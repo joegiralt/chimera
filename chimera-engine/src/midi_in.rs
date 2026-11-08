@@ -9,15 +9,17 @@
 //! Closed, MIDI in is deaf, notes included (spec § 13): no bank-1 parser.
 
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use chimera_midi::ctl::{Controllers, Ctl, DataValue, Dir, FreeCc, Heard, Sel};
 use chimera_midi::sense::Sensing;
 use chimera_midi::stream::{Event, FaultCounts, Parsed, Parser, RealTime as Rt};
 use chimera_midi::sysex;
+use chimera_midi::usb::Cable;
 use chimera_midi::value::{Channel, U7, U14};
 
 use crate::MidiChannel;
+use crate::hw::MAX_PARTS;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
 use crate::midi_map::{KeptMap, MidiMap};
 use crate::note_queue::{
@@ -357,6 +359,45 @@ impl<const U: usize> CtrlPorts<U> {
     pub fn clear(&self) {
         self.din.clear();
         self.usb.clear();
+    }
+}
+
+/// Each Part's MIDI channel as the UI last saw it: a USB Part cable plays
+/// on it (#840, ADR 0243). The UI stores, USB's poll reads; until the UI's
+/// first pass, the defaults (Part n on channel n). Each held plus one, 0
+/// the default: all zero, so `.bss`, no image in bank 1.
+pub struct PartChannels([AtomicU8; MAX_PARTS]);
+
+pub static PART_CHANNELS: PartChannels = PartChannels::new();
+
+const _: () = assert!(MAX_PARTS + 1 == chimera_midi::usb_class::CABLES as usize);
+
+impl PartChannels {
+    pub const fn new() -> Self {
+        Self([const { AtomicU8::new(0) }; MAX_PARTS])
+    }
+
+    /// Part `part`'s channel is `ch`.
+    #[inline(always)]
+    pub fn set(&self, part: usize, ch: Channel) {
+        if let Some(a) = self.0.get(part) {
+            a.store(ch.get() + 1, Ordering::Relaxed);
+        }
+    }
+
+    /// Cable `c`'s Part's channel: cable n is Part n's; `None` for cable 0
+    /// and any past the Parts.
+    #[inline(always)]
+    pub fn of_cable(&self, c: Cable) -> Option<Channel> {
+        let i = usize::from(c.get()).checked_sub(1)?;
+        let v = self.0.get(i)?.load(Ordering::Relaxed);
+        Some(Channel::clamped(v.checked_sub(1).unwrap_or(i as u8)))
+    }
+}
+
+impl Default for PartChannels {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -826,6 +867,18 @@ impl UsbSlot {
         self.slot.built().run(bytes, out, Some(&mut self.held));
     }
 
+    /// One whole channel message (a Part cable's, ADR 0243) through the
+    /// pipe's controllers and sinks past its parser, so cable 0's SysEx
+    /// or running status around it stands.
+    #[inline(always)]
+    pub fn feed_msg<S: Sinks + ?Sized>(&mut self, msg: &[u8], out: &mut S) {
+        let p = self.slot.built();
+        let kept = core::mem::replace(&mut p.parser, Parser::new());
+        p.run(msg, out, Some(&mut self.held));
+        p.parser = kept;
+        p.stats.faults = p.parser.faults();
+    }
+
     /// The host went away (`DinPipe::lost`): every key and pedal let go.
     #[inline(always)]
     pub fn lost<S: Sinks + ?Sized>(&mut self, out: &mut S) {
@@ -897,6 +950,18 @@ impl DinPipe {
     #[inline(never)]
     pub fn usb_lost(slot: &mut UsbSlot, out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
         slot.lost(out);
+    }
+
+    /// `UsbSlot::feed_msg`, as `usb_feed`.
+    #[inline(never)]
+    pub fn usb_feed_msg(slot: &mut UsbSlot, msg: &[u8], out: &mut DinSinks<'_, '_, CTRL_USB_LEN>) {
+        slot.feed_msg(msg, out);
+    }
+
+    /// `usb_feed_msg` on DIN's ring size, as `usb_feed_short`.
+    #[inline(never)]
+    pub fn usb_feed_msg_short(slot: &mut UsbSlot, msg: &[u8], out: &mut DinSinks<'_, '_>) {
+        slot.feed_msg(msg, out);
     }
 
     /// `usb_feed` on DIN's ring size: builds without the map.

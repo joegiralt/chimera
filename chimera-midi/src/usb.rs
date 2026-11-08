@@ -2,6 +2,8 @@
 //! and the port's state between polls: the IN queue and Configured's edge.
 
 use usb_device::UsbError;
+
+use crate::value::Channel;
 use usb_device::device::UsbDeviceState;
 
 /// The 1 to 3 MIDI bytes of one packet, equal by those alone: the
@@ -15,6 +17,16 @@ pub struct Bytes {
 impl Bytes {
     pub fn as_slice(&self) -> &[u8] {
         &self.b[..self.len as usize]
+    }
+
+    /// A channel message moved to channel `ch` (a Part cable's, #840);
+    /// `None` for anything else, which is no Part's.
+    pub fn on_channel(mut self, ch: Channel) -> Option<Bytes> {
+        let s = self.b[0];
+        (0x80..0xF0).contains(&s).then(|| {
+            self.b[0] = s & 0xF0 | ch.get();
+            self
+        })
     }
 }
 
@@ -54,13 +66,78 @@ pub fn unpack(p: [u8; 4]) -> Option<(Cable, Bytes)> {
     ))
 }
 
-/// Each whole packet's bytes if cable 0's, `None` for any other cable
-/// and the reserved CINs; a trailing part packet is ignored.
-pub fn cable_zero(packets: &[u8]) -> impl Iterator<Item = Option<Bytes>> + '_ {
-    packets.as_chunks::<4>().0.iter().map(|&p| match unpack(p) {
-        Some((Cable::ZERO, b)) => Some(b),
-        _ => None,
-    })
+/// Each whole packet's cable and bytes, `None` for the reserved CINs; a
+/// trailing part packet is ignored.
+pub fn cables(packets: &[u8]) -> impl Iterator<Item = Option<(Cable, Bytes)>> + '_ {
+    packets.as_chunks::<4>().0.iter().map(|&p| unpack(p))
+}
+
+/// The Part cables (1 to `CABLES - 1`).
+const PART_CABLES: usize = crate::usb_class::CABLES as usize - 1;
+
+/// Where each Part cable's held keys and pedal went: a held key's
+/// note-off and pressure, and a down pedal's up, go on the channel its
+/// note-on or the pedal's down went on, though the Part's channel moved
+/// since, so the voice releases (ADR 0243); a key the cable doesn't hold
+/// and a pedal it hasn't put down go where the Part is now. A nibble and a
+/// bit a key, 486 B.
+#[derive(Clone, Debug)]
+pub struct PartCables {
+    keys: [[u8; 64]; PART_CABLES],
+    held: [u128; PART_CABLES],
+    /// The pedal's channel, or `UP`.
+    pedal: [u8; PART_CABLES],
+}
+
+/// No pedal down.
+const UP: u8 = 0xFF;
+
+impl Default for PartCables {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartCables {
+    pub const fn new() -> Self {
+        Self {
+            keys: [[0; 64]; PART_CABLES],
+            held: [0; PART_CABLES],
+            pedal: [UP; PART_CABLES],
+        }
+    }
+
+    /// Cable `c`'s channel message on its Part's channel `now`, or the
+    /// channel its held key or down pedal went on; `None` for anything
+    /// else, or a cable no Part's.
+    pub fn route(&mut self, c: Cable, b: Bytes, now: Channel) -> Option<Bytes> {
+        let i = usize::from(c.get()).checked_sub(1)?;
+        let keys = self.keys.get_mut(i)?;
+        let (held, pedal) = (self.held.get_mut(i)?, self.pedal.get_mut(i)?);
+        let [s, d1, d2] = b.b;
+        let (k, bit) = (d1 & 0x7F, 1u128 << (d1 & 0x7F));
+        let (key, shift) = (usize::from(k / 2), (k & 1) * 4);
+        let was = || Channel::clamped(keys[key] >> shift & 0xF);
+        let ch = match s & 0xF0 {
+            0x90 if d2 > 0 => {
+                keys[key] = keys[key] & !(0xF << shift) | now.get() << shift;
+                *held |= bit;
+                now
+            }
+            0x80 | 0x90 if *held & bit != 0 => {
+                *held &= !bit;
+                was()
+            }
+            0xA0 if *held & bit != 0 => was(),
+            0xB0 if d1 == 64 && d2 >= 64 => {
+                *pedal = now.get();
+                now
+            }
+            0xB0 if d1 == 64 && *pedal != UP => Channel::clamped(core::mem::replace(pedal, UP)),
+            _ => now,
+        };
+        b.on_channel(ch)
+    }
 }
 
 /// Bytes to cable-0 packets; realtime passes through SysEx at once. Not

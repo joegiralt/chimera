@@ -11,7 +11,10 @@ use std::sync::Mutex;
 
 use chimera_midi::uac;
 use chimera_midi::uac_link::Alt;
-use chimera_midi::usb_class::{CONTROL_BUF, Ids, MS_TOTAL, Stream, descriptors, device};
+use chimera_midi::usb_class::{
+    CABLES, CONTROL_BUF, Ids, MARGIN, Stream, cable_count, config_len, descriptors, device,
+    jack_name, ms_total, names,
+};
 use usb_device::bus::PollResult;
 use usb_device::class_prelude::*;
 use usb_device::endpoint::{IsochronousSynchronizationType, IsochronousUsageType};
@@ -129,7 +132,7 @@ impl UsbClass<Fake> for Midi<'_> {
     }
 
     fn get_string(&self, index: StringIndex, _: LangID) -> Option<&str> {
-        (index == self.ids.name).then_some("Chimera")
+        jack_name(self.ids, index)
     }
 
     fn get_alt_setting(&mut self, iface: InterfaceNumber) -> Option<u8> {
@@ -164,7 +167,8 @@ fn session(layout: Layout, setups: &[[u8; 8]]) -> Vec<Answer> {
         let ac = alloc.interface();
         let stream = (layout == Layout::Audio).then(|| alloc.interface());
         let ms = alloc.interface();
-        let name = alloc.string();
+        let n = cable_count(layout == Layout::Audio);
+        let name = names(&alloc, n);
         let out = alloc.bulk(64);
         let inp = alloc.bulk(64);
         let audio = stream.map(|s| {
@@ -177,7 +181,12 @@ fn session(layout: Layout, setups: &[[u8; 8]]) -> Vec<Answer> {
             (ep, Alt::new(s))
         });
         Midi {
-            ids: Ids { ac, ms, name },
+            ids: Ids {
+                ac,
+                ms,
+                name,
+                cables: n,
+            },
             out,
             inp,
             audio,
@@ -186,7 +195,7 @@ fn session(layout: Layout, setups: &[[u8; 8]]) -> Vec<Answer> {
     // `connect`'s device, the serial a 96-bit UID in hex.
     let release = match layout {
         Layout::Console => None,
-        Layout::Midi => Some(0x0020),
+        Layout::Midi => Some(0x0021),
         Layout::Audio => Some(0x0030),
     };
     let mut dev = device(
@@ -284,13 +293,15 @@ fn console_alone_reaches_the_host() {
 #[test]
 fn console_and_midi_reach_the_host() {
     let c = configuration(Layout::Midi, 4);
-    assert_eq!(c.len(), 175);
+    assert_eq!(c.len(), 217);
+    assert_eq!(c.len(), config_len(false));
+    assert!(c.len() + MARGIN <= CONTROL_BUF, "{} B", c.len());
     // MIDIStreaming's class-specific total: from its MS header to the end.
     let ms = c
         .windows(3)
         .position(|w| w == [7, 0x24, 0x01])
         .expect("an MS header");
-    assert_eq!(c.len() - ms, usize::from(MS_TOTAL));
+    assert_eq!(c.len() - ms, usize::from(ms_total(CABLES)));
 }
 
 /// The audio layout's size, held to the byte: it sits 7 B under the
@@ -299,6 +310,7 @@ fn console_and_midi_reach_the_host() {
 fn audio_configuration_fits_the_control_buffer() {
     let c = configuration(Layout::Audio, 5);
     assert_eq!(c.len(), 249);
+    assert_eq!(c.len(), config_len(true));
     assert!(CONTROL_BUF - c.len() >= 7);
     // MIDI's class-specific block is unchanged by the stream before it:
     // from its MS header (AS general shares its first bytes) to the end.
@@ -306,7 +318,7 @@ fn audio_configuration_fits_the_control_buffer() {
         .windows(3)
         .rposition(|w| w == [7, 0x24, 0x01])
         .expect("an MS header");
-    assert_eq!(c.len() - ms, usize::from(MS_TOTAL));
+    assert_eq!(c.len() - ms, usize::from(ms_total(1)));
 }
 
 /// Every descriptor of the audio layout in order: the console's function,
@@ -450,8 +462,8 @@ fn device_strings_and_bos_reach_the_host() {
             d
         };
         assert_eq!(whole(1, 0).len(), 18);
-        // Languages, manufacturer, product, serial, the jacks' name.
-        for i in 0..=4 {
+        // Languages, manufacturer, product, serial, the jacks' names.
+        for i in 0..4 + cable_count(layout == Layout::Audio) {
             let d = whole(3, i);
             assert_eq!(usize::from(d[0]), d.len(), "string {i}");
         }
@@ -467,7 +479,7 @@ fn device_strings_and_bos_reach_the_host() {
 fn device_class_follows_the_layout() {
     for (layout, class, release) in [
         (Layout::Console, 0x02, None),
-        (Layout::Midi, 0xEF, Some(0x0020)),
+        (Layout::Midi, 0xEF, Some(0x0021)),
         (Layout::Audio, 0xEF, Some(0x0030)),
     ] {
         let (d, stalled) = ask(layout, 1, 0);
@@ -476,5 +488,65 @@ fn device_class_follows_the_layout() {
         if let Some(r) = release {
             assert_eq!(le16(&d, 12), r);
         }
+    }
+}
+
+/// The class-specific MIDIStreaming descriptors, each its bytes.
+fn ms_descriptors(c: &[u8]) -> Vec<&[u8]> {
+    let ms = c
+        .windows(3)
+        .rposition(|w| w == [7, 0x24, 0x01])
+        .expect("an MS header");
+    chain(&c[ms..])
+}
+
+/// Each layout's cables (ADR 0243): an embedded IN jack a cable, the bulk
+/// OUT endpoint naming them in cable order, each its own name; the IN
+/// endpoint cable 0's alone. The default build's seven, USB audio's one.
+#[test]
+fn every_cable_has_its_jack_and_name() {
+    for (layout, interfaces) in [(Layout::Midi, 4), (Layout::Audio, 5)] {
+        let c = configuration(layout, interfaces);
+        let d = ms_descriptors(&c);
+        let jacks = |kind: u8| -> Vec<(u8, u8)> {
+            d.iter()
+                .filter(|x| x[1] == 0x24 && x[2] == kind && x[3] == 0x01)
+                .map(|x| (x[4], *x.last().unwrap()))
+                .collect()
+        };
+        let (ins, outs) = (jacks(0x02), jacks(0x03));
+        let n = cable_count(layout == Layout::Audio);
+        assert_eq!(ins.len(), usize::from(n));
+        assert_eq!(outs.len(), 1);
+        let cs: Vec<&[u8]> = d.iter().filter(|x| x[1] == 0x25).copied().collect();
+        assert_eq!(cs.len(), 2);
+        let (from_host, to_host) = (cs[0], cs[1]);
+        assert_eq!(usize::from(from_host[3]), ins.len());
+        assert_eq!(
+            from_host[4..],
+            ins.iter().map(|j| j.0).collect::<Vec<_>>()[..]
+        );
+        assert_eq!(&to_host[3..], &[1, outs[0].0]);
+        let answers = session(
+            layout,
+            &ins.iter()
+                .map(|&(_, i)| get_descriptor(3, i))
+                .collect::<Vec<_>>(),
+        );
+        let names: Vec<String> = answers
+            .iter()
+            .map(|a| {
+                assert!(!a.stalled);
+                let u: Vec<u16> = a.sent[2..]
+                    .chunks(2)
+                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .collect();
+                String::from_utf16(&u).unwrap()
+            })
+            .collect();
+        let want: Vec<String> = std::iter::once("Chimera".to_string())
+            .chain((1..n).map(|p| format!("Chimera Part {p}")))
+            .collect();
+        assert_eq!(names, want, "{}", n);
     }
 }

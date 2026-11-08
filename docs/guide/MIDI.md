@@ -107,6 +107,12 @@ With ECHO off, MIDI OUT stays silent.
 
 If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with MIDI thru on, an interface's soft thru, a controller that merges its input), ECHO can stay on: an echo that comes back within that quarter second is not taken as a turn, so a relative encoder's cell never walks.
 
+## USB MIDI ports
+
+Over USB, Chimera shows up as one MIDI device with these ports:
+- **Chimera**, both ways: every channel, as on DIN. Clock, SysEx, the identity reply and ECHO use this port.
+- **Chimera Part 1** to **Chimera Part 6**, into Chimera only: each plays its Part, whatever channel your DAW track sends on. Chimera moves the notes, CCs, bend and pressure to that Part's channel, so another Part on the same channel plays them too. Clock and SysEx on these ports are ignored.
+
 ## What else Chimera answers on DIN
 
 When SETTINGS › ABOUT reads `NEEDS UPDATE`, Chimera ignores MIDI in, notes and clock too, until the update is installed: MIDI MAP reads `NEEDS UPDATE`, and **MIX + SEQ** says `NEEDS UPDATE` instead of starting learn.

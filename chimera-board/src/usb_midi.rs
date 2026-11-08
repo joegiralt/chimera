@@ -1,17 +1,20 @@
-//! USB MIDI 1.0, one cable (spec § 4), its descriptors
-//! `chimera_midi::usb_class`'s, the jacks named "Chimera". In-tree, not
+//! USB MIDI 1.0 (spec § 4), its descriptors `chimera_midi::usb_class`'s:
+//! cable 0 "Chimera" both ways, and into Chimera a cable a Part, "Chimera
+//! Part 1" to 6 (ADR 0243). In-tree, not
 //! `usbd-midi`: the same shape in fewer lines, raw packets, no new crate.
 //!
 //! `door` is bank 2's (`bank2.x` globs it): the allocation, the poll and
 //! the descriptors. The class's `UsbClass` impl stays in bank 1, shims
 //! only: its `dyn` vtable is an anonymous constant no glob can place, so
 //! bank 1 holds it, and it may name only bank 1's code. The descriptors
-//! are reached through a pointer the allocation stores in the class, and
+//! and the jacks' names are reached through pointers the allocation
+//! stores in the class, and
 //! only bank 2's poll ever hands the class to the device: `Midi` keeps the
 //! class to itself, and with the door closed gives bank 1 only `Closed`,
 //! MIDI OUT's endpoint to drain.
 //!
-//! MIDI in: each OUT packet's bytes, cable 0's, through USB's own pipe into
+//! MIDI in: each OUT packet's bytes, cable 0's as sent and a Part cable's
+//! channel messages on its Part's channel, through USB's own pipe into
 //! its note source and control ring, as DIN's (spec §§ 7, 8). Leaving
 //! Configured lets every Part go on a bus reset, and on a suspend only
 //! while USB holds a key or a pedal (`midi_in::lets_go`), every pedal it
@@ -25,11 +28,14 @@
 use chimera_core::midi_in::UsbSlot;
 use chimera_core::note_queue::NoteProducer;
 use chimera_core::out_ring::OutRing;
-use chimera_midi::usb::{Edge, InQueue};
+use chimera_midi::usb::{Edge, InQueue, PartCables};
+use chimera_midi::usb_class::Ids;
 use usb_device::bus::UsbBus as _;
+#[cfg(feature = "usb-audio")]
+use usb_device::class_prelude::InterfaceNumber;
 use usb_device::class_prelude::{
-    DescriptorWriter, EndpointAddress, EndpointIn, EndpointOut, InterfaceNumber, LangID,
-    StringIndex, UsbBusAllocator, UsbClass,
+    DescriptorWriter, EndpointAddress, EndpointIn, EndpointOut, LangID, StringIndex,
+    UsbBusAllocator, UsbClass,
 };
 
 use crate::usb::{Bus, Counts, Dev, Serial};
@@ -37,20 +43,19 @@ use crate::usb::{Bus, Counts, Dev, Serial};
 /// USB's control ring, as `shared::Ctrl` sizes it.
 type UsbCtrl = chimera_core::midi_in::CtrlRing<{ crate::shared::CTRL_USB }>;
 
-/// The jacks' name, and so the port's.
-const NAME: &str = "Chimera";
-
 /// `door::descriptors`, as the class carries it.
 type Descriptors = fn(&MidiClass, &mut DescriptorWriter) -> usb_device::Result<()>;
 
+/// `usb_class::jack_name`, as the class carries it.
+type JackName = fn(Ids, StringIndex) -> Option<&'static str>;
+
 pub(crate) struct MidiClass {
-    ac: InterfaceNumber,
-    ms: InterfaceNumber,
-    name: StringIndex,
+    ids: Ids,
     out: EndpointOut<'static, Bus>,
     inp: EndpointIn<'static, Bus>,
-    /// Bank 2's descriptor writer, stored by `door::alloc`.
+    /// Bank 2's descriptor writer and jack names, stored by `door::alloc`.
     descriptors: Descriptors,
+    jack_name: JackName,
     edge: Edge,
     port: Port,
     /// USB audio's stream (ADR 0248), in MIDI's function.
@@ -151,13 +156,15 @@ pub struct Sinks {
 }
 
 /// USB MIDI in's pipe and sinks, and out's queue: the poll's alone, in the
-/// cell. The pipe beside it: its held keys in the cell pushed the
-/// counters past bank 1's short offsets.
+/// cell. The pipe and the Part cables' keys beside it: in the cell they
+/// pushed the counters past bank 1's short offsets.
 struct Port {
     pipe: Option<&'static mut UsbSlot>,
     notes: Option<NoteProducer<'static>>,
     ctrl: &'static UsbCtrl,
     queue: InQueue,
+    /// Where the Part cables' held keys and pedals went down.
+    parts: Option<&'static mut PartCables>,
 }
 
 /// The board door's USB entries.
@@ -186,7 +193,7 @@ impl UsbClass<Bus> for MidiClass {
     }
 
     fn get_string(&self, index: StringIndex, _: LangID) -> Option<&str> {
-        (index == self.name).then_some(NAME)
+        (self.jack_name)(self.ids, index)
     }
 
     // USB audio's alt setting, the stream on or off: kept here, read by
@@ -209,11 +216,14 @@ impl UsbClass<Bus> for MidiClass {
 
 /// Bank 2's half.
 mod door {
-    use chimera_core::midi_in::{self, DinPipe, DinSinks};
+    use chimera_core::midi_in::{self, DinPipe, DinSinks, PART_CHANNELS};
     use chimera_core::note_queue::NoteProducer;
     use chimera_core::out_ring::OutRing;
-    use chimera_midi::usb::{Edge, InQueue, cable_zero};
-    use chimera_midi::usb_class::{Ids, descriptors as write};
+    use chimera_midi::usb::{Cable, Edge, InQueue, PartCables, cables};
+    use chimera_midi::usb_class::{Ids, cable_count, descriptors as write, jack_name, names};
+
+    /// This build's cables: one beside USB audio's stream (ADR 0243).
+    const CABLES: u8 = cable_count(cfg!(feature = "usb-audio"));
     use usb_device::class_prelude::{DescriptorWriter, UsbBusAllocator};
 
     use super::{MidiClass, Port, UsbCtrl, UsbSlot};
@@ -231,6 +241,19 @@ mod door {
         DinPipe::usb_feed(pipe, bytes, s);
         #[cfg(not(feature = "midi-map"))]
         DinPipe::usb_feed_short(pipe, bytes, s);
+    }
+
+    /// A Part cable's message, past the pipe's parser (ADR 0243).
+    #[inline(always)]
+    fn feed_msg(
+        pipe: &mut UsbSlot,
+        msg: &[u8],
+        s: &mut DinSinks<'_, '_, { crate::shared::CTRL_USB }>,
+    ) {
+        #[cfg(feature = "midi-map")]
+        DinPipe::usb_feed_msg(pipe, msg, s);
+        #[cfg(not(feature = "midi-map"))]
+        DinPipe::usb_feed_msg_short(pipe, msg, s);
     }
 
     #[inline(always)]
@@ -256,14 +279,18 @@ mod door {
         let stream = bus.interface();
         let ms = bus.interface();
         MidiClass {
-            ac,
-            ms,
-            name: bus.string(),
+            ids: Ids {
+                ac,
+                ms,
+                name: names(bus, CABLES),
+                cables: CABLES,
+            },
             out: bus.bulk(PACKET),
             inp: bus.bulk(PACKET),
             #[cfg(feature = "usb-audio")]
             audio: crate::usb_audio::door::alloc(bus, stream),
             descriptors,
+            jack_name,
             edge: Edge::new(),
             port: Port {
                 // `alloc` runs once a boot (`Midi::alloc`, from `init`).
@@ -271,6 +298,7 @@ mod door {
                 notes,
                 ctrl,
                 queue: InQueue::new(),
+                parts: cortex_m::singleton!(: PartCables = PartCables::new()),
             },
         }
     }
@@ -324,6 +352,7 @@ mod door {
                     notes,
                     ctrl,
                     queue,
+                    parts,
                 },
             ..
         } = m;
@@ -338,9 +367,22 @@ mod door {
         let mut p = [0u8; PACKET as usize];
         while let Ok(n) = from_host.read(&mut p) {
             let mut s = sinks(pipe, notes, ctrl);
-            for e in cable_zero(&p[..n]) {
+            for e in cables(&p[..n]) {
+                // Cable 0 as sent; a Part cable's channel message on its
+                // Part's channel (a held key's and the pedal's where they
+                // went down), past the parser; anything else on it dropped
+                // (ADR 0243).
                 match (e, s.as_mut()) {
-                    (Some(b), Some((pipe, s))) => feed(pipe, b.as_slice(), s),
+                    (Some((Cable::ZERO, b)), Some((pipe, s))) => feed(pipe, b.as_slice(), s),
+                    (Some((c, b)), Some((pipe, s))) => {
+                        match PART_CHANNELS
+                            .of_cable(c)
+                            .and_then(|ch| parts.as_deref_mut()?.route(c, b, ch))
+                        {
+                            Some(m) => feed_msg(pipe, m.as_slice(), s),
+                            None => counts.in_drops = counts.in_drops.wrapping_add(1),
+                        }
+                    }
                     _ => counts.in_drops = counts.in_drops.wrapping_add(1),
                 }
             }
@@ -357,11 +399,6 @@ mod door {
 
     /// `chimera_midi::usb_class`'s descriptors, its host test's.
     fn descriptors(c: &MidiClass, w: &mut DescriptorWriter) -> usb_device::Result<()> {
-        let ids = Ids {
-            ac: c.ac,
-            ms: c.ms,
-            name: c.name,
-        };
         #[cfg(feature = "usb-audio")]
         let audio = Some(chimera_midi::usb_class::Stream {
             iface: c.audio.alt.iface(),
@@ -369,6 +406,6 @@ mod door {
         });
         #[cfg(not(feature = "usb-audio"))]
         let audio = None;
-        write(w, ids, &c.out, &c.inp, audio)
+        write(w, c.ids, &c.out, &c.inp, audio)
     }
 }
