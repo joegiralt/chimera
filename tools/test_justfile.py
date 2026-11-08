@@ -12,7 +12,7 @@ def recipes():
     column 0, its body indented."""
     out, name = {}, None
     for l in (ROOT / "Justfile").read_text().splitlines():
-        m = re.match(r"([a-z][\w-]*)( [^:=]*)?:( |$)", l)
+        m = re.match(r"([a-z][\w-]*)( [^:]*)?:( |$)", l)
         if m:
             name = m.group(1)
             out[name] = []

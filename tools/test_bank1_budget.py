@@ -90,7 +90,9 @@ class TheFile(unittest.TestCase):
         budgets = bb.load(bb.BUDGET.read_text())
         just = (TOOLS.parent / "Justfile").read_text()
         bench = re.search(r'^bench_sets := "([^"]*)"', just, re.M).group(1).split()
-        check = just[just.index("\ncheck:") : just.index("\nstack-check:")]
+        # `check`'s header may carry parameters (`$CHIMERA_STAMP_CLEAN`).
+        start = re.search(r"^check(?: [^\n]*)?:$", just, re.M).start()
+        check = just[start : just.index("\nstack-check:")]
         # Walk check's firmware builds: each bank-2 build is measured by the
         # next `just check-bank1`, under its own name, before another set is
         # built. A new build line without its guard fails here.

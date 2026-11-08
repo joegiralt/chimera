@@ -368,7 +368,9 @@ build:
 # system-wide. The host tool's tests run first, against a fake unit.
 # chimera-circuits runs its fast tests here; its slow and ngspice
 # references are #[ignore]d (chimera-circuits/README.md).
-check:
+# Its firmware is stamped clean (CHIMERA_STAMP_CLEAN): a dirty tree's flag
+# folds into code, and bank 1 is measured as the commit would build (#874).
+check $CHIMERA_STAMP_CLEAN="1":
     python3 -m unittest discover -s tools -p 'test_*.py'
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
