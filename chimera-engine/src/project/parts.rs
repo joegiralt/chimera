@@ -243,7 +243,8 @@ pub fn part_block<'a>(
         | BlockRef::PartMix(_)
         | BlockRef::OrbitChords
         | BlockRef::OrbitRing(_)
-        | BlockRef::Tempo => None,
+        | BlockRef::Tempo
+        | BlockRef::Random => None,
         BlockRef::Modal
         | BlockRef::TapeEngine
         | BlockRef::Va
@@ -278,7 +279,8 @@ pub fn part_block_mut<'a>(
         | BlockRef::PartMix(_)
         | BlockRef::OrbitChords
         | BlockRef::OrbitRing(_)
-        | BlockRef::Tempo => None,
+        | BlockRef::Tempo
+        | BlockRef::Random => None,
         BlockRef::Modal
         | BlockRef::TapeEngine
         | BlockRef::Va

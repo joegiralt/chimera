@@ -79,7 +79,7 @@ fn page(entries: &[Binding]) -> Box<UiState> {
     ui.project_mut().edit_part(P1).sound.map = m;
     feed(&mut ui, Key::press(B1));
     screen::to_leaf(&mut ui, &["PART"]);
-    for _ in 0..6 {
+    for _ in 1..chimera_core::ui::settings::tree::PART.len() {
         feed(&mut ui, Key::press(Plus));
     }
     feed(&mut ui, Key::press(Edit));

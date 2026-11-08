@@ -131,6 +131,10 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
       .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*
       .rodata.*12chimera_core2ui9pit_tuner4calc* .rodata.*12chimera_core2ui4walk*);
+    /* RANDOMIZE's roll (ADR 0232, `UiDoor::roll`): `randomize::kern`,
+       text and rodata. The page's `Block` impl stays: its vtable is bank
+       1's, which may not point into bank 2. */
+    *(.text.*14chimera_engine9randomize4kern* .rodata.*14chimera_engine9randomize4kern*);
 ";
     // The crates the engine can't name keep their own tables, each at a
     // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):

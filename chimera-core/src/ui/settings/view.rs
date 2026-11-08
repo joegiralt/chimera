@@ -43,17 +43,9 @@ pub const STRIP_TOP: i32 = theme::HEADER_BOTTOM;
 pub const STRIP_H: i32 = 20;
 const STRIP_BASELINE: i32 = STRIP_TOP + 14;
 const PART_LIST_TOP: i32 = LIST_TOP + STRIP_H;
-// PART's lists fit beneath the strip without scrolling.
-const _: () = assert!(
-    PART_LIST_TOP
-        + (if PART.len() > SAVE_ROWS.len() {
-            PART.len()
-        } else {
-            SAVE_ROWS.len()
-        }) as i32
-            * ROW_H
-        <= FOOTER_TOP
-);
+/// PART's rows beneath the strip; a longer list scrolls (ADR 0232).
+pub const PART_ROWS: usize = ((FOOTER_TOP - PART_LIST_TOP) / ROW_H) as usize;
+const _: () = assert!(SAVE_ROWS.len() <= PART_ROWS);
 
 /// SETTINGS, one part per level of the tree, and a leaf's page or NAMING's.
 const MAX_CRUMBS: usize = 6;
@@ -346,11 +338,12 @@ fn draw_part_list<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     len: usize,
     bar: usize,
+    first: usize,
     size: TextSize,
     row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
     let c = Col { size, ..FULL };
-    draw_col::<VISIBLE_ROWS, _>(d, &c, PART_LIST_TOP, len, bar, 0, Bar::Keyed, row);
+    draw_col::<PART_ROWS, _>(d, &c, PART_LIST_TOP, len, bar, first, Bar::Keyed, row);
 }
 
 /// MANAGE PROJECTS: `rows` on the left from `first`, the bar on `bar`;
@@ -1161,7 +1154,7 @@ impl Bands<'_> {
         draw_part_strip(d, self.active, b.name.as_str(), b.mark);
         let bar = self.at.row() as usize;
         if self.at.screen() == Some(Screen::SaveToProj) {
-            return draw_part_list(d, SAVE_ROWS.len(), bar, self.text, |i, f| {
+            return draw_part_list(d, SAVE_ROWS.len(), bar, 0, self.text, |i, f| {
                 let c = SAVE_ROWS[i];
                 f(ListRow {
                     label: b.offer.label(c).as_str(),
@@ -1173,7 +1166,7 @@ impl Bands<'_> {
         }
         let rows = self.rows();
         // RELOAD's slot is in the strip: beside the label, it would cut it.
-        draw_part_list(d, rows.len(), bar, self.text, |i, f| {
+        draw_part_list(d, rows.len(), bar, self.first, self.text, |i, f| {
             let r = &rows[i];
             f(ListRow {
                 look: b.look(r.kind),

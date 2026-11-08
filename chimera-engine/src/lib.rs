@@ -53,6 +53,7 @@ pub mod preset;
 #[cfg(feature = "probe")]
 pub mod probe;
 pub mod project;
+pub mod randomize;
 pub mod reset;
 pub mod scope;
 pub mod source_table;

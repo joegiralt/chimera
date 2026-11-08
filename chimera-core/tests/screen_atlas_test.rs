@@ -472,7 +472,7 @@ fn map_page(ui: &mut UiState, fill: bool) {
         }
     }
     ui.project_mut().edit_part(P1).sound.map = m;
-    part_row(ui, 6);
+    part_row(ui, chimera_core::ui::settings::tree::PART.len() - 1);
     feed(ui, Input::press(ButtonId::Edit));
     feed(ui, Input::press(ButtonId::Plus));
 }

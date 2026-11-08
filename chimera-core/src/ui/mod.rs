@@ -97,6 +97,7 @@ use crate::storage::{ProjectId, SourceRef};
 
 /// SCRUB's FINGER: the address DECK's POSITION cell edits.
 const SCRUB_FINGER: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
+use crate::randomize::Randomize;
 use block_def::BlockDef;
 use block_def::VizType;
 use block_def::{SlotBinding, slot_addr};
@@ -293,6 +294,8 @@ pub struct UiState {
     theme: ThemeSettings,
     /// SETTINGS › MIDI CONFIG's SYNC; boot sets it from SYSTEM (`set_midi`).
     midi: MidiSettings,
+    /// SETTINGS › PART › RANDOMIZE's amounts and seed: never stored.
+    random: Randomize,
     /// The screensaver's idle timer, whether it has been drawn since the
     /// screen last woke, and the frames since it last redrew.
     idle: saver::Idle,
@@ -421,6 +424,7 @@ crate::in_place::field_list!(UiState => UiState {
     refusal,
     theme,
     midi,
+    random,
     idle,
     saver_drawn,
     saver_frames,
@@ -497,6 +501,7 @@ impl UiState {
                 part: PartId::ALL[0],
                 theme: &theme,
                 midi: &midi,
+                random: &Randomize::DEFAULT,
             };
             renderer.snap_to_current(page_values(page, def, &read, &SlotCtx::read(&read, Op::A)));
             addr_of_mut!((*p).loc).write(loc);
@@ -530,6 +535,7 @@ impl UiState {
             addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
+            addr_of_mut!((*p).random).write(Randomize::DEFAULT);
             addr_of_mut!((*p).idle).write(saver::Idle::new());
             addr_of_mut!((*p).saver_drawn).write(false);
             addr_of_mut!((*p).saver_frames).write(saver::REDRAW_FRAMES);
@@ -1018,13 +1024,19 @@ impl UiState {
                 Some(sc) => self.screen_rows(sc),
                 None => settings::rows(s.path()).len(),
             };
+            let part = core::ptr::eq(settings::rows(s.path()), &settings::tree::PART[..]);
             #[cfg(feature = "midi-map")]
             let rows = match s.screen() {
                 Some(Screen::MidiMap) => settings::view::MAP_ROWS,
+                _ if part => settings::view::PART_ROWS,
                 _ => settings::view::VISIBLE_ROWS,
             };
             #[cfg(not(feature = "midi-map"))]
-            let rows = settings::view::VISIBLE_ROWS;
+            let rows = if part {
+                settings::view::PART_ROWS
+            } else {
+                settings::view::VISIBLE_ROWS
+            };
             let row = s.row() as usize;
             self.list_first = settings::view::first_visible_of(row, len, prev, rows) as u8;
         }
@@ -1106,6 +1118,7 @@ impl UiState {
             part,
             theme: &self.theme,
             midi: &self.midi,
+            random: &self.random,
         }
     }
 
@@ -1723,8 +1736,25 @@ impl UiState {
             part,
             theme: &mut self.theme,
             midi: &mut self.midi,
+            random: &mut self.random,
         };
-        part_page::edit(params, a, how)
+        let moved = part_page::edit(params, a, how);
+        if moved && a.block == BlockRef::Random {
+            self.roll();
+        }
+        moved
+    }
+
+    /// RANDOMIZE's turn (ADR 0232): the active Part's Sound rolled, bank
+    /// 2's (`randomize::kern`). An edit like any other: the knobs glide to
+    /// it, the Part reads Edited and RELOAD FROM PROJ undoes it. Closed,
+    /// nothing.
+    fn roll(&mut self) {
+        let (r, part) = (self.random, self.active_part);
+        // The Part is written only once the door answers: closed, nothing
+        // moves, not even the revision.
+        let project = &mut self.project;
+        crate::bank2::ui_door(|d| d.roll(project.edit_part(part).sound, &r));
     }
 
     /// The keys this frame, in order: MENU, B*n*, PLUS and MINUS, SEQ, EDIT,
@@ -2414,6 +2444,7 @@ impl UiState {
                 part: self.active_part,
                 theme: &mut self.theme,
                 midi: &mut self.midi,
+                random: &mut self.random,
             };
             if shift {
                 part_page::snap_under(def, i, delta, params, &ctx);
@@ -3004,6 +3035,7 @@ impl UiState {
                         part: at,
                         theme: &mut self.theme,
                         midi: &mut self.midi,
+                        random: &mut self.random,
                     };
                     if shift {
                         p.snap_encoder(i, delta, params);
@@ -3022,6 +3054,7 @@ impl UiState {
                     part: at,
                     theme: &self.theme,
                     midi: &self.midi,
+                    random: &self.random,
                 };
                 let ctx = SlotCtx::read(&read, self.sel_op);
                 if !shift
@@ -3915,6 +3948,7 @@ struct UiBlocks<'a> {
     part: PartId,
     theme: &'a mut ThemeSettings,
     midi: &'a mut MidiSettings,
+    random: &'a mut Randomize,
 }
 
 /// `UiBlocks`' shared twin: no `block_mut`, so a frame can't write.
@@ -3923,6 +3957,7 @@ struct UiRead<'a> {
     part: PartId,
     theme: &'a ThemeSettings,
     midi: &'a MidiSettings,
+    random: &'a Randomize,
 }
 
 /// Part `part`'s block `b`, the theme, MIDI CONFIG, or ORBIT's: what both
@@ -3930,7 +3965,7 @@ struct UiRead<'a> {
 fn read_block<'a>(
     project: &'a Project,
     part: PartId,
-    (theme, midi): (&'a ThemeSettings, &'a MidiSettings),
+    (theme, midi, random): (&'a ThemeSettings, &'a MidiSettings, &'a Randomize),
     b: BlockRef,
 ) -> Option<BlockView<'a>> {
     let song = project.orbit();
@@ -3938,6 +3973,8 @@ fn read_block<'a>(
     match b {
         BlockRef::Theme => plain(theme),
         BlockRef::Midi => plain(midi),
+        // Closed, no block: a turn reaches nothing (ADR 0232).
+        BlockRef::Random => crate::bank2::ui_door(|_| ()).and_then(|_| plain(random)),
         BlockRef::PartMix(p) => plain(project.read_part(p).mix),
         BlockRef::OrbitChords => plain(&song.live().chords),
         BlockRef::OrbitRing(r) => plain(&song.live().rings[r.get() as usize]),
@@ -3948,7 +3985,12 @@ fn read_block<'a>(
 
 impl BlockRead for UiBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
-        read_block(self.project, self.part, (self.theme, self.midi), b)
+        read_block(
+            self.project,
+            self.part,
+            (self.theme, self.midi, self.random),
+            b,
+        )
     }
 }
 
@@ -3957,6 +3999,9 @@ impl Blocks for UiBlocks<'_> {
         match b {
             BlockRef::Theme => Some(BlockViewMut::Plain(self.theme)),
             BlockRef::Midi => Some(BlockViewMut::Plain(self.midi)),
+            BlockRef::Random => {
+                crate::bank2::ui_door(|_| ()).map(|_| BlockViewMut::Plain(self.random))
+            }
             BlockRef::PartMix(p) => Some(BlockViewMut::Plain(self.project.edit_part(p).mix)),
             // A scene's params change through `OrbitSong::edit`, which
             // writes its slot too (ADR 0083): never from here. A caller
@@ -3976,7 +4021,12 @@ impl Blocks for UiBlocks<'_> {
 
 impl BlockRead for UiRead<'_> {
     fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
-        read_block(self.project, self.part, (self.theme, self.midi), b)
+        read_block(
+            self.project,
+            self.part,
+            (self.theme, self.midi, self.random),
+            b,
+        )
     }
 }
 
@@ -4064,6 +4114,7 @@ mod tests {
             part: p1,
             theme: &mut theme,
             midi: &mut midi,
+            random: &mut Randomize::default(),
         };
         ui.block_mut(a.block).unwrap().set(a.param, 9.0);
         assert_eq!(ch(&project, p3), 9.0);
@@ -4073,6 +4124,7 @@ mod tests {
             part: p1,
             theme: &theme,
             midi: &midi,
+            random: &Randomize::DEFAULT,
         };
         assert_eq!(read.block(a.block).unwrap().get(a.param), 9.0);
     }

@@ -706,6 +706,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::OrbitChords => "CHD",
         BlockRef::OrbitRing(r) => ["R1", "R2", "R3", "R4", "R5"][r.get() as usize],
         BlockRef::Tempo => "BPM",
+        BlockRef::Random => "RND",
     }
 }
 
@@ -802,6 +803,7 @@ pub fn block_name(b: BlockRef) -> &'static str {
             ["RING 1", "RING 2", "RING 3", "RING 4", "RING 5"][r.get() as usize]
         }
         BlockRef::Tempo => "TEMPO",
+        BlockRef::Random => "RANDOMIZE",
     }
 }
 

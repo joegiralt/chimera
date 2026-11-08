@@ -489,7 +489,8 @@ mod midi_map {
     use chimera_core::midi_map::{Binding, Feedback, Input as MapInput, Mappable, MidiMap, Span};
     use chimera_core::params::FilterParams;
 
-    const MIDI_MAP_ROW: usize = 6;
+    /// The last row of PART.
+    const MIDI_MAP_ROW: usize = chimera_core::ui::settings::tree::PART.len() - 1;
 
     fn entry(cc: u8, block: BlockRef, id: chimera_core::block::ParamId) -> Binding {
         Binding {
@@ -698,7 +699,11 @@ mod midi_map_bar {
         let mut m = MidiMap::EMPTY;
         m.learn(cc, target).unwrap();
         ui.project_mut().edit_part(P[0]).sound.map = m;
-        part_row(&mut ui, P[0], 6);
+        part_row(
+            &mut ui,
+            P[0],
+            chimera_core::ui::settings::tree::PART.len() - 1,
+        );
         feed(&mut ui, Input::press(ButtonId::Edit));
         let row = |ui: &UiState| ui.location().settings().unwrap().row();
         let rev = ui.project().rev();
@@ -719,4 +724,59 @@ mod midi_map_bar {
             assert_ne!(ui.project().rev(), before, "{id:?} edits");
         }
     }
+}
+
+/// PART › RANDOMIZE (ADR 0232): a turn of SEED rolls the active Part's
+/// Sound, as `kern::roll` rolls it; the Part reads Edited, turning back to
+/// a seed rolls its Sound again, and RELOAD FROM PROJ undoes it.
+#[test]
+fn randomize_rolls_the_part_and_reload_undoes_it() {
+    use chimera_core::randomize::kern::roll;
+    use chimera_core::randomize::{Randomize, Seed};
+    use chimera_hal::EncoderId;
+    let mut ui = UiState::new();
+    load(&mut ui, P[0], S3);
+    let slot = crc(&ui, P[0]);
+    let seeded = |n| {
+        let mut s: Sound = (*ui.project().part(P[0]).sound).clone();
+        let r = Randomize {
+            seed: Seed::new(n),
+            ..Randomize::DEFAULT
+        };
+        roll(&mut s, &r);
+        s
+    };
+    let (one, two) = (seeded(1), seeded(2));
+    feed(&mut ui, Input::press(B[0]));
+    to_leaf(&mut ui, &["PART", "RANDOMIZE"]);
+    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    assert!(ui.project().part(P[0]).sound.bits_eq(&one), "SEED 1");
+    assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    assert!(ui.project().part(P[0]).sound.bits_eq(&two), "SEED 2");
+
+    part_row(&mut ui, P[0], 3); // RELOAD FROM PROJ
+    tap(&mut ui, ButtonId::Edit);
+    answer(&mut ui, 1); // REPLACE
+    assert_eq!(status(&ui, P[0]), PartStatus::Clean);
+    assert_eq!(crc(&ui, P[0]), slot);
+}
+
+/// PART's list scrolls past the seven rows under the strip: the bar on
+/// its last row stays above the footer.
+#[test]
+fn the_part_list_scrolls_to_its_last_row() {
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::settings::tree::PART;
+    let mut ui = UiState::new();
+    part_row(&mut ui, P[0], PART.len() - 1);
+    let mut fb = Fb::new();
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &screen::scope_fixture());
+    assert_eq!(fb.oob, 0);
+    let bar = (0..320).filter(|&y| (0..240).any(|x| fb.at(x, y) == theme::ACCENT_SOFT));
+    let (top, bottom) = (bar.clone().min().unwrap(), bar.max().unwrap());
+    assert!(
+        top > 54 && bottom < theme::MAP_TOP,
+        "bar at {top}..{bottom}"
+    );
 }

@@ -634,6 +634,7 @@ impl View {
             {
                 KEY_HINT
             }
+            Some(a) if a.block == BlockRef::Random => ROLL_HINT,
             Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => LEARN_HINT,
             _ => hint::NONE,
         }
@@ -682,6 +683,8 @@ const CHORUS_HINTS: [Hint; 6] = [
 ];
 
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
+/// RANDOMIZE's cells (ADR 0232): a turn rewrites the Part's Sound.
+pub const ROLL_HINT: Hint = &[Gesture("TURN", "ROLLS THE SOUND")];
 /// START and END: MIX + a turn snaps to the next onset its way (#698).
 pub const ONSET_HINT: Hint = &[Gesture("MIX + TURN", "NEXT ONSET")];
 /// SCRUB's FINGER at KEY POSITION (ADR 0205): a key places the finger,

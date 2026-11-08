@@ -1478,7 +1478,8 @@ impl BlockRead for ParamSnapshot {
             | BlockRef::Midi
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
-            | BlockRef::Tempo => return None,
+            | BlockRef::Tempo
+            | BlockRef::Random => return None,
         }))
     }
 }
@@ -1509,7 +1510,8 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Midi
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
-            | BlockRef::Tempo => return None,
+            | BlockRef::Tempo
+            | BlockRef::Random => return None,
         }))
     }
 }

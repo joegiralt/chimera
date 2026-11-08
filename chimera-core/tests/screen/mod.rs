@@ -2322,6 +2322,12 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 2));
         feed(ui, Input::turn(EncoderId::B, 1));
     }),
+    // Part 1's RANDOMIZE (ADR 0232): SEED turned to 42, its hint in the band.
+    ("settings_part_randomize", |ui| {
+        tap(ui, ButtonId::B1);
+        to_leaf(ui, &["PART", "RANDOMIZE"]);
+        feed(ui, Input::turn(EncoderId::E, 42));
+    }),
     // SETTINGS › ORBIT (plan Task 17): the bar on CLEAR, RENAME later,
     // RELOAD dimmed with nothing to drop.
     ("settings_orbit", |ui| {
@@ -2632,7 +2638,7 @@ fn midi_map_mixed(ui: &mut UiState) {
     }
     ui.project_mut().edit_part(PartId::ALL[0]).sound.map = m;
     to_leaf(ui, &["PART"]);
-    plus(ui, 6);
+    plus(ui, chimera_core::ui::settings::tree::PART.len() - 1);
     feed(ui, Input::press(ButtonId::Edit));
     feed(ui, Input::turn(EncoderId::A, 5));
 }

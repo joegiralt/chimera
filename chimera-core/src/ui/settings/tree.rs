@@ -6,7 +6,7 @@
 use super::leaves::PUSH_LEAF;
 use super::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, MAP_LEAF, OUTPUTS_LEAF, OnePage,
-    POOL_LEAF, SAVER_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
+    POOL_LEAF, RANDOM_LEAF, SAVER_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -110,7 +110,7 @@ static PROJECT: [Row; 5] = [
 ];
 
 /// The active Part's list: its crumb is `PART n`.
-pub static PART: [Row; 6 + cfg!(feature = "midi-map") as usize] = [
+pub static PART: [Row; 7 + cfg!(feature = "midi-map") as usize] = [
     row("RENAME", Kind::Act(Act::PartRename)),
     row("CLEAR", Kind::Act(Act::PartClear)),
     crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SaveToProj)),
@@ -121,6 +121,7 @@ pub static PART: [Row; 6 + cfg!(feature = "midi-map") as usize] = [
         "SAVE TO LIB",
         Kind::Act(Act::SaveToLibrary),
     ),
+    crumb("RANDOMIZE", "RANDOM", Leaf(&RANDOM_LEAF)),
     #[cfg(feature = "midi-map")]
     row("MIDI MAP", Kind::Screen(Screen::MidiMap)),
 ];

@@ -184,6 +184,7 @@ in-memory card.
 | ![](settings_part_save_to.png) | PART › SAVE TO | Part 1 edited from SLOT 03: OVER SLOT 03, TO NEW SLOT |
 | ![](settings_part_rename.png) | PART › RENAME | NAMING the Part's Sound |
 | ![](midi_map_mixed.png) | PART › MIDI MAP | A CC, a 14-bit pair, an NRPN, pressure, a dead target, a relative encoder; the bar's binding spelled out beneath |
+| ![](settings_part_randomize.png) | PART › RANDOMIZE | SEED turned to 42: the amounts, the seed, and `TURN  ROLLS THE SOUND` in the band |
 | ![](settings_midi.png) | MIDI | SYNC and PORT later, CHANNELS |
 | ![](settings_audio.png) | AUDIO | OUTPUTS, SENDS later, TUNING |
 | ![](settings_personal.png) | PERSONAL | THEME |

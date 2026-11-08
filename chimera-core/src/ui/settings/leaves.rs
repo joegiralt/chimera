@@ -3,6 +3,7 @@
 use crate::addr::BlockRef;
 use crate::part::PartParams;
 use crate::project::PartId;
+use crate::randomize::Randomize;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::block_registry::{
     DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_ECHO, SYS_MAP, SYS_POOL, SYS_PUSH, SYS_SAVER, SYS_SYNC,
@@ -61,6 +62,24 @@ pub static LIVE_SNAP: BlockDef = BlockDef {
     ],
 };
 
+/// PART › RANDOMIZE (ADR 0232): four amounts and the seed. A turn of any
+/// rolls the active Part's Sound.
+pub static RANDOM: BlockDef = BlockDef {
+    id: 112,
+    name: "Randomize",
+    short: "RND",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Random, Randomize::OSC),
+        ParamSlot::param(BlockRef::Random, Randomize::ENV),
+        ParamSlot::param(BlockRef::Random, Randomize::TONE),
+        ParamSlot::param(BlockRef::Random, Randomize::MOD),
+        ParamSlot::param(BlockRef::Random, Randomize::SEED),
+        ParamSlot::EMPTY,
+    ],
+};
+
 /// A SETTINGS leaf: one page, no sub-pages, so no key in it steps a page.
 /// A leaf with sub-pages fails the build:
 ///
@@ -114,6 +133,7 @@ static PUSH_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_PUSH)];
 static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ABOUT)];
 static AUDIO_LOAD_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_AUDIO)];
 static LIVE_SNAP_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&LIVE_SNAP)];
+static RANDOM_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&RANDOM)];
 static POOL_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_POOL)];
 
 pub static CHANNELS_LEAF: OnePage = OnePage::new("Channels", &CHANNELS_BLOCKS);
@@ -129,6 +149,7 @@ pub static PUSH_LEAF: OnePage = OnePage::new("Push Encoders", &PUSH_BLOCKS);
 pub static ABOUT_LEAF: OnePage = OnePage::new("About", &ABOUT_BLOCKS);
 pub static AUDIO_LOAD_LEAF: OnePage = OnePage::new("Audio Load", &AUDIO_LOAD_BLOCKS);
 pub static LIVE_SNAP_LEAF: OnePage = OnePage::new("Live Snap", &LIVE_SNAP_BLOCKS);
+pub static RANDOM_LEAF: OnePage = OnePage::new("Randomize", &RANDOM_BLOCKS);
 pub static POOL_LEAF: OnePage = OnePage::new("Pool", &POOL_BLOCKS);
 
 /// One leaf per DEMO page, in `DEMO_BLOCKS`' order.

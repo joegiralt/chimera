@@ -117,7 +117,8 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// and the FX TYPE FUZZ (ADR 0157), the filter TYPE SEM (ADR 0192), VA
 /// NOISE's KIND (ADR 0197, every KIND), the delay's TYPE and the chorus's
 /// MODE (ADR 0213, every value: both play from bank 2) and every ORBIT
-/// param (ADR 0208) read `NEEDS UPDATE` while their code can't play.
+/// param (ADR 0208) and RANDOMIZE's cells (ADR 0232) read `NEEDS UPDATE`
+/// while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     v: f32,
@@ -169,8 +170,14 @@ pub fn closed_text(
                 BlockRef::OrbitChords | BlockRef::OrbitRing(_) | BlockRef::Tempo
             )
     };
-    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type() || kind() || orbit()))
-        .then_some(NEEDS_UPDATE)
+    (closed(bank2)
+        && (named.contains(&addr)
+            || addr.block == BlockRef::Random
+            || va_mode()
+            || fx_type()
+            || kind()
+            || orbit()))
+    .then_some(NEEDS_UPDATE)
 }
 
 /// What the header of a Part playing `engine` warns under `bank2`: a TAPE
@@ -233,6 +240,8 @@ pub struct UiDoor {
     /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
     pit: fn(&mut crate::ui::UiState),
     pit_paint: fn(&mut dyn Paint, &crate::ui::pit_tuner::Shown),
+    /// RANDOMIZE's roll (`randomize::kern`, ADR 0232).
+    roll: fn(&mut Sound, &crate::randomize::Randomize),
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -242,12 +251,12 @@ type HeadKind = (SourceHead, LoadKind);
 type EnvWrites = &'static [(ParamId, f32)];
 
 /// `UiDoor::magic`.
-const UI_MAGIC: u32 = 0xB2C0_0007;
+const UI_MAGIC: u32 = 0xB2C0_0008;
 
 impl UiDoor {
     /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
-    /// `onset::detect`'s or `pit_tuner::calc`'s, the modules `bank2.x`
-    /// links into bank 2.
+    /// `onset::detect`'s, `pit_tuner::calc`'s or `randomize::kern`'s, the
+    /// modules `bank2.x` links into bank 2.
     pub const OWN: UiDoor = UiDoor {
         magic: UI_MAGIC,
         overview: Overview::of_in,
@@ -272,6 +281,7 @@ impl UiDoor {
         jog: crate::ui::jog::Jog::pass,
         pit: crate::ui::pit_tuner::calc::pass_in,
         pit_paint: crate::ui::pit_tuner::calc::paint_in,
+        roll: crate::randomize::kern::roll,
     };
 
     #[inline(always)]
@@ -350,6 +360,11 @@ impl UiDoor {
     #[inline(always)]
     pub(crate) fn pit_paint(&self, on: &mut dyn Paint, s: &crate::ui::pit_tuner::Shown) {
         (self.pit_paint)(on, s)
+    }
+
+    #[inline(always)]
+    pub(crate) fn roll(&self, s: &mut Sound, r: &crate::randomize::Randomize) {
+        (self.roll)(s, r)
     }
 
     #[inline(always)]

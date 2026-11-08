@@ -23,7 +23,8 @@ use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::reverb_panel::RevPage;
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, ECHO_LEAF, LIVE_SNAP_LEAF, MAP_LEAF,
-    OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, SAVER_LEAF, SYNC_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
+    OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, RANDOM_LEAF, SAVER_LEAF, SYNC_LEAF, TEXT_LEAF, THEME_LEAF,
+    TUNING_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -1366,7 +1367,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 21] = [
+const FIXED: [&ChainDef2; 22] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
@@ -1387,6 +1388,7 @@ const FIXED: [&ChainDef2; 21] = [
     AUDIO_LOAD_LEAF.chain(),
     POOL_LEAF.chain(),
     LIVE_SNAP_LEAF.chain(),
+    RANDOM_LEAF.chain(),
     &crate::ui::orbit::ORBIT_CHAIN,
 ];
 

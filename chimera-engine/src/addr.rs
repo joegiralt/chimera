@@ -95,6 +95,9 @@ pub enum BlockRef {
     /// ORBIT's BPM (`Bpm`): saved in its own record, so no block code and
     /// not in `ALL`.
     Tempo,
+    /// SETTINGS › PART › RANDOMIZE (`Randomize`, ADR 0232): held by the UI,
+    /// never stored, so not in `ALL`.
+    Random,
 }
 
 impl BlockRef {
@@ -160,6 +163,7 @@ impl BlockRef {
             BlockRef::OrbitChords => &crate::orbit::scene::CHORD_SPECS,
             BlockRef::OrbitRing(_) => &crate::orbit::scene::RING_SPECS,
             BlockRef::Tempo => &crate::orbit::scene::TEMPO_SPECS,
+            BlockRef::Random => &crate::randomize::RANDOM_SPECS,
         }
     }
 
@@ -189,7 +193,8 @@ impl BlockRef {
             | BlockRef::Midi
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
-            | BlockRef::Tempo => false,
+            | BlockRef::Tempo
+            | BlockRef::Random => false,
         }
     }
 
@@ -221,7 +226,8 @@ impl BlockRef {
             | BlockRef::Midi
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
-            | BlockRef::Tempo => false,
+            | BlockRef::Tempo
+            | BlockRef::Random => false,
         }
     }
 }

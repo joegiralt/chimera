@@ -648,7 +648,8 @@ pub(crate) fn other_engine(a: ParamAddr, engine: EngineType) -> Result<(), Strin
         | BlockRef::Midi
         | BlockRef::OrbitChords
         | BlockRef::OrbitRing(_)
-        | BlockRef::Tempo => None,
+        | BlockRef::Tempo
+        | BlockRef::Random => None,
     };
     match owner {
         Some(o) if o != engine => Err(format!(

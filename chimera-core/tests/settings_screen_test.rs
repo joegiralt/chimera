@@ -83,13 +83,14 @@ fn part_crumb_names_the_active_part() {
 }
 
 /// PART's sixth row: SAVE TO LIBRARY, its NAMING crumbed SAVE TO LIB
-/// (MIDI MAP follows it).
+/// (RANDOMIZE, then MIDI MAP, follow it).
 #[test]
 fn part_list_ends_with_save_to_library() {
     use chimera_core::ui::settings::view::Crumb;
     use chimera_core::ui::settings::{Act, Kind, SAVE_TO_LIB_ROW, rows};
     let part = rows(&[PART_ROW]);
-    assert_eq!(part.len(), 6 + cfg!(feature = "midi-map") as usize);
+    assert_eq!(part.len(), 7 + cfg!(feature = "midi-map") as usize);
+    assert_eq!((part[6].label, part[6].crumb), ("RANDOMIZE", "RANDOM"));
     assert_eq!(SAVE_TO_LIB_ROW, 5);
     let r = part[5];
     assert_eq!((r.label, r.crumb), ("SAVE TO LIBRARY", "SAVE TO LIB"));

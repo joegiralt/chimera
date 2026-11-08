@@ -427,6 +427,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
     ("settings_part_live_snap", 0x78c80cf3c4c1cc6a),
+    // Part 1's RANDOMIZE, SEED 42 (ADR 0232).
+    ("settings_part_randomize", 0x193c20db4f3d4eab),
     // SETTINGS › ORBIT and its SAVE TO PROJ (plan Task 17); the crumb
     // `SCENE n` (fix round 1).
     ("settings_orbit", 0xf0d520f40ac7f0bb),
