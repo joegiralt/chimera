@@ -169,6 +169,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "OUT", NONE),
     ("Part", "SNAP", NONE),
     ("Part", "HELD", NONE),
+    ("Part", "TUNING", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),

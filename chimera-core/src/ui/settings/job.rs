@@ -113,6 +113,12 @@ impl UiState {
         publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> Option<R> {
         self.src.recover(cx.card, cx.store, &mut self.project);
+        // A Part's TUNING to its table (ADR 0240); closed, 12-TET.
+        #[cfg(feature = "tuning")]
+        {
+            let (card, store) = (&mut *cx.card, &mut *cx.store);
+            crate::bank2::ui_door(|d| d.tuning(self, card, store));
+        }
         // At most one of the two streams: each refuses to start beside the other.
         if self.lib.busy() {
             self.lib_step(cx.card, cx.store);

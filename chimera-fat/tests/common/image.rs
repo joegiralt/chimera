@@ -539,6 +539,7 @@ pub fn sdmmc_write(disk: RamDisk, files: &[(Dir, &str, &[u8])]) -> RamDisk {
                 Dir::Bench => Some("BENCH"),
                 Dir::Tapes => Some("TAPES"),
                 Dir::System => Some("SYSTEM"),
+                Dir::Tunings => Some("TUNINGS"),
                 Dir::Root => unreachable!("root files are planted raw"),
             };
             if let Some(sub) = sub {

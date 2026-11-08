@@ -10,6 +10,7 @@ pub mod cc;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
+pub mod file_buf;
 pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
@@ -50,6 +51,7 @@ pub mod tape_glyph;
 pub mod tape_strip;
 pub mod theme;
 pub mod theme_settings;
+pub mod tuning;
 pub mod view;
 pub mod viz;
 pub(crate) mod walk;
@@ -362,6 +364,8 @@ pub struct UiState {
     cc: &'static mut cc::MidiSlot,
     /// MIX+SEQ's MIDI learn (spec § 4).
     learn: learn::Learn,
+    /// Each Part's TUNING its table plays (`ui::tuning`).
+    tuned: [u8; crate::hw::MAX_PARTS],
 }
 
 /// How long the LEVEL LED takes to fall from a peak to dark.
@@ -456,6 +460,7 @@ crate::in_place::field_list!(UiState => UiState {
     rev_knobs,
     cc,
     learn,
+    tuned,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -555,6 +560,7 @@ impl UiState {
             addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
             addr_of_mut!((*p).cc).write(cc::MidiSlot::take());
             addr_of_mut!((*p).learn).write(learn::Learn::Off);
+            addr_of_mut!((*p).tuned).write([0; crate::hw::MAX_PARTS]);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui

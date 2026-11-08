@@ -195,7 +195,19 @@ pub struct PartParams {
     pub held: Held,
     /// Pitch-bend range, whole semitones each way, 0..=`MAX_BEND`.
     pub bend: u8,
+    /// TUNING: an index into `TUNING_NAMES` (ADR 0240).
+    pub tuning: u8,
 }
+
+/// TUNING's choices: 12-TET, the named temperaments
+/// (`chimera_theory::tuning::BUILT_IN`), the MTS table, then the card's
+/// `TUNE1.SCL` to `TUNE8.SCL` (each with its `.KBM`, if there is one).
+pub const TUNING_NAMES: [&str; 14] = [
+    "12-TET", "JUST", "PYTHAG", "MEANTONE", "WERCK", "MTS", "TUNE1", "TUNE2", "TUNE3", "TUNE4",
+    "TUNE5", "TUNE6", "TUNE7", "TUNE8",
+];
+/// TUNING's MTS choice; the card's files follow it.
+pub const TUNING_MTS: u8 = 5;
 
 /// The widest BEND: two octaves.
 pub const MAX_BEND: u8 = 24;
@@ -211,6 +223,7 @@ impl PartParams {
     pub const SNAP: ParamId = ParamId(8);
     pub const HELD: ParamId = ParamId(9);
     pub const BEND: ParamId = ParamId(10);
+    pub const TUNING: ParamId = ParamId(11);
 
     /// Part `index` (0-based) listens on channel `index`, Poly, output P1,
     /// level 0.8, centre pan, its keys as played.
@@ -224,6 +237,7 @@ impl PartParams {
             snap: LiveSnap::Off,
             held: Held::Stay,
             bend: INIT_BEND,
+            tuning: 0,
         }
     }
 }
@@ -235,7 +249,7 @@ impl Default for PartParams {
 }
 
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
-pub static PART_SPECS: [ParamSpec; 8] = [
+pub static PART_SPECS: [ParamSpec; 9] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
     ParamSpec::choice(
         1,
@@ -314,6 +328,17 @@ pub static PART_SPECS: [ParamSpec; 8] = [
         Motion::Continuous(Smoothing::Own),
     )
     .ident("BEND"),
+    // A new note plays it: one sounding keeps its pitch.
+    ParamSpec::choice(
+        11,
+        "TUNING",
+        ValFmt::Names(&TUNING_NAMES),
+        (TUNING_NAMES.len() - 1) as f32,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("TUNING")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 /// 0 to 15 as text: CH's values by channel number (the byte is the
@@ -339,6 +364,7 @@ impl Block for PartParams {
             Self::SNAP => self.snap as u8 as f32,
             Self::HELD => self.held as u8 as f32,
             Self::BEND => f32::from(self.bend),
+            Self::TUNING => f32::from(self.tuning),
             _ => 0.0,
         }
     }
@@ -357,6 +383,7 @@ impl Block for PartParams {
             }
             Self::HELD => self.held = Held::ALL[(v as usize).min(Held::ALL.len() - 1)],
             Self::BEND => self.bend = crate::dsp::clampf(v, 0.0, f32::from(MAX_BEND)) as u8,
+            Self::TUNING => self.tuning = (v as u8).min(TUNING_NAMES.len() as u8 - 1),
             _ => {}
         }
     }
@@ -369,6 +396,8 @@ impl Block for PartParams {
             Self::OUTPUT => Some(self.output.disk_code()),
             Self::SNAP => Some(self.snap.disk_code()),
             Self::HELD => Some(self.held.disk_code()),
+            // The choice's index: names keep their places, new ones append.
+            Self::TUNING => Some(self.tuning),
             _ => None,
         }
     }
@@ -380,6 +409,7 @@ impl Block for PartParams {
             Self::OUTPUT => Some(self.output.disk_ident()),
             Self::SNAP => Some(self.snap.disk_ident()),
             Self::HELD => Some(self.held.disk_ident()),
+            Self::TUNING => TUNING_NAMES.get(usize::from(self.tuning)).copied(),
             _ => None,
         }
     }
@@ -391,6 +421,10 @@ impl Block for PartParams {
             Self::OUTPUT => apply_code(DacPair::from_disk_code(code), |o| self.output = o),
             Self::SNAP => apply_code(LiveSnap::from_disk_code(code), |s| self.snap = s),
             Self::HELD => apply_code(Held::from_disk_code(code), |h| self.held = h),
+            Self::TUNING => apply_code(
+                (usize::from(code) < TUNING_NAMES.len()).then_some(code),
+                |t| self.tuning = t,
+            ),
             _ => false,
         }
     }

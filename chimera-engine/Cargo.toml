@@ -16,6 +16,8 @@ libm = "0.2"
 chimera-waves = { path = "../chimera-waves" }
 
 [features]
+# Each Part's tuning tables (ADR 0240): off in the bench builds, for AXI.
+tuning = []
 # SYSTEM's PUSH ENCODERS' fine turn (ADR 0140): `block::nudge_fine`.
 push-encoders = []
 # The wave tables rendered into RAM at boot (`waves::render_into`), not

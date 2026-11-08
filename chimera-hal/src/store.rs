@@ -45,6 +45,9 @@ pub enum Dir {
     /// `/CHIMERA/SYSTEM`: bank 2's staged image (ADR 0137). The stock
     /// bootloader reads only `.bin` files in the root.
     System,
+    /// `/CHIMERA/TUNINGS`: Scala tunings the owner copies over, read only
+    /// (ADR 0240).
+    Tunings,
     /// The card's root: listed and read, for a dropped bank-2 image (ADR
     /// 0137). Always there; never made or removed; `write` and `delete`
     /// refuse it (`ReadOnly`), `seal` too (`Io`).

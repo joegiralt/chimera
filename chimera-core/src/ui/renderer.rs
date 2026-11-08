@@ -835,10 +835,13 @@ impl Renderer {
         if let Some(h) = f.pickup {
             return hint::draw(display, h, theme::MARGIN_X, hint::FOCUS_Y);
         }
-        let sound = &f.parts[f.active_part.index()].sound;
-        let note = view
-            .addr()
-            .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)));
+        let part = &f.parts[f.active_part.index()];
+        let sound = &part.sound;
+        let note = view.addr().and_then(|a| {
+            view::band_note(a, sound, f.ctx.src)
+                .or(view::delay_note(a, &f.ctx))
+                .or(view::tuning_note(a, part.mix.tuning))
+        });
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
             (Some(s), _) => {
                 let why = crate::ui::held::reason(s.why);

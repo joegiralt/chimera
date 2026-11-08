@@ -248,7 +248,7 @@ impl MidiSlot {
 /// outliner pulls into bank 1 (ADR 0175).
 #[inline(always)]
 #[allow(clippy::manual_unwrap_or_default)]
-fn pick(table: &'static [u8], want: u8) -> &'static str {
+pub(crate) fn pick(table: &'static [u8], want: u8) -> &'static str {
     let (mut n, mut start, mut k) = (0u8, 0usize, 0usize);
     while k <= table.len() {
         if k == table.len() || table[k] == b'|' {

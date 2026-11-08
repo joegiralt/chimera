@@ -903,7 +903,8 @@ pub static SYS_TUNING: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Midi, MidiSettings::TUNE),
-        ParamSlot::legacy("SCALE", &ValFmt::Int(2)),
+        // The active Part's, as LIVE SNAP's cells are (ADR 0240).
+        ParamSlot::param(BlockRef::Part, PartParams::TUNING),
         EMPTY,
         EMPTY,
         EMPTY,

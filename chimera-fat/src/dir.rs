@@ -63,6 +63,7 @@ impl ShortName {
                 Dir::Bench => b"BENCH",
                 Dir::Tapes => b"TAPES",
                 Dir::System => b"SYSTEM",
+                Dir::Tunings => b"TUNINGS",
                 // Never looked up: `add_dir` and `drop_dir` stop first.
                 Dir::Root => b"",
             },

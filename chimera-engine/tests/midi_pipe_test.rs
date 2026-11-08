@@ -579,7 +579,11 @@ impl Usb {
 /// DIN's slot carries no held keys: only USB's reads them.
 #[test]
 fn only_usb_tracks_what_it_holds() {
-    assert!(size_of::<PipeSlot>() < 512, "a key set is 256 B");
+    // Past the SysEx room, a pipe is under a key set (256 B) twice.
+    assert!(
+        size_of::<PipeSlot>() - midi_in::SYSEX_LEN < 512,
+        "a key set is 256 B"
+    );
     assert!(size_of::<UsbSlot>() >= size_of::<PipeSlot>() + 256);
 }
 
@@ -1136,4 +1140,30 @@ fn a_part_cable_message_never_cuts_cable_zeros_sysex() {
         ctrl.iter().any(|e| matches!(e, CtrlEvent::Identity { .. })),
         "{ctrl:?}"
     );
+}
+
+#[cfg(feature = "tuning")]
+#[test]
+fn mts_retunes_the_mts_table() {
+    use chimera_engine::tuning::TUNINGS;
+    // A Part that follows MTS plays it: key 61 to 61.5, then a bulk dump
+    // sized past the old 32 B buffer sets every key.
+    TUNINGS.follow_mts(5, true);
+    let r = pipe(&[0xF0, 0x7F, 0x7F, 8, 2, 0, 1, 61, 61, 0x40, 0, 0xF7]);
+    assert!(r.ctrl.is_empty());
+    assert_eq!(TUNINGS.offset(5, 61), 0.5);
+    let mut b = vec![0x7E, 0x7F, 8, 1, 0];
+    b.extend_from_slice(&[b' '; 16]);
+    for k in 0..128u8 {
+        b.extend_from_slice(&[k, 0x10, 0]);
+    }
+    b.push(b.iter().fold(0, |a, x| a ^ x) & 0x7F);
+    let mut m = vec![0xF0];
+    m.extend(b);
+    m.push(0xF7);
+    pipe(&m);
+    assert_eq!(TUNINGS.offset(5, 61), 0.125);
+    assert_eq!(TUNINGS.offset(5, 0), 0.125);
+    TUNINGS.follow_mts(5, false);
+    assert_eq!(TUNINGS.offset(5, 61), 0.0);
 }

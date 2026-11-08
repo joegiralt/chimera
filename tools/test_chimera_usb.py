@@ -751,10 +751,12 @@ class PutUnit:
                         continue
                     conn.sendall(b"READY\n")
                     chunk = tool.PUT_CHUNK if words[1].upper().startswith(b"/CHIMERA/TAPES/") else size
+                    # `data` keeps every put's bytes in turn; this one's from `base`.
+                    base = len(self.data)
                     bad = False
-                    while len(self.data) < size and not bad:
+                    while len(self.data) - base < size and not bad:
                         start = len(self.data)
-                        end = min(start + chunk, size)
+                        end = min(start + chunk, base + size)
                         while len(self.data) < end:
                             ln = next(lines)
                             assert len(ln) <= 64 and len(ln) % 4 == 0, ln
@@ -767,10 +769,11 @@ class PutUnit:
                             conn.sendall(b"ERR put: chunk\n")
                             bad = True
                         else:
-                            conn.sendall(b"ACK %d\n" % end)
+                            conn.sendall(b"ACK %d\n" % (end - base))
                     if self.silent or bad:
                         continue
-                    ok = zlib.crc32(self.data) == crc and len(self.data) == size
+                    mine = self.data[base:]
+                    ok = zlib.crc32(mine) == crc and len(mine) == size
                     conn.sendall(self.after or (b"OK\n" if ok else b"ERR put: CRC mismatch\n"))
 
     def __enter__(self):
@@ -891,6 +894,30 @@ class Put(unittest.TestCase):
         self.assertEqual(u.requests[0], b"put /CHIMERA/BENCH/BEDS.CHK 5000 %08x" % zlib.crc32(data))
         self.assertEqual(u.ends, [], "a whole file, not chunks")
         self.assertEqual(r.stdout, b"/CHIMERA/BENCH/BEDS.CHK 5000\n")
+
+    def test_tuning_puts_a_scala_file_and_its_map_as_tune_n(self):
+        scl = b"! pelog\nPelog\n2\n120.\n2/1\n"
+        kbm = b"0\n0\n127\n60\n69\n432.0\n2\n"
+        f, k = self.local("pelog.scl", scl), self.local("pelog.kbm", kbm)
+        with PutUnit() as u:
+            r = run_tool(["tuning", "3", f, k], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.requests[0], b"put /CHIMERA/TUNINGS/TUNE3.SCL %d %08x" % (len(scl), zlib.crc32(scl)))
+        self.assertEqual(u.requests[1], b"put /CHIMERA/TUNINGS/TUNE3.KBM %d %08x" % (len(kbm), zlib.crc32(kbm)))
+        self.assertEqual(u.data, scl + kbm)
+        self.assertEqual(r.stdout, b"/CHIMERA/TUNINGS/TUNE3.SCL %d\n/CHIMERA/TUNINGS/TUNE3.KBM %d\n" % (len(scl), len(kbm)))
+
+    def test_tuning_refuses_a_slot_past_8_and_a_file_past_4_kib(self):
+        f = self.local("big.scl", bytes(4 * 1024 + 1))
+        g = self.local("ok.scl", b"x\n1\n2/1\n")
+        with PutUnit() as u:
+            big = run_tool(["tuning", "1", f], u.target)
+            nine = run_tool(["tuning", "9", g], u.target)
+        self.assertEqual(big.returncode, 1)
+        self.assertIn(b"put takes at most 4096", big.stderr)
+        self.assertEqual(nine.returncode, 1)
+        self.assertIn(b"tuning takes <1-8>", nine.stderr)
+        self.assertEqual(u.requests, [])
 
     def test_a_beds_table_over_9_kib_is_refused_before_sending(self):
         f = self.local("BEDS.CHK", bytes(9 * 1024 + 1))

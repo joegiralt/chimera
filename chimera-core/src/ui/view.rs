@@ -936,6 +936,16 @@ pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
     crate::bank2::ui_door(|u| u.tape_note(addr, sound)).flatten()
 }
 
+/// What the focus band says on SETTINGS › TUNING's TUNING at `v` (ADR 0240):
+/// where a card choice reads from, or that MTS follows MIDI in. Bank 2's
+/// (`tuning::note_in`): closed, nothing.
+pub fn tuning_note(addr: ParamAddr, v: u8) -> Option<&'static str> {
+    if addr != ParamAddr::new(BlockRef::Part, crate::part::PartParams::TUNING) {
+        return None;
+    }
+    crate::bank2::ui_door(|u| u.tuning_note(v)).flatten()
+}
+
 /// What the focus band says in its hint's place about a TAPE cell: why
 /// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
 /// its loop head holds. Bank 2's (`walk::band_note_in`): closed, nothing.

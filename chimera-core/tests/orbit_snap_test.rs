@@ -443,16 +443,21 @@ fn live_snap_leaf_edits_the_active_part() {
 fn part_snap_default_is_neutral() {
     let d = PartParams::default();
     assert_eq!((d.snap, d.held), (LiveSnap::Off, Held::Stay));
-    // A whole PART block, less ids 8 and 9 (and BEND, 10).
+    // A whole PART block, less ids 8 and 9 (and BEND, 10, and TUNING, 11).
     let mut buf = chimera_core::storage::RecordBuf::new();
     encode_block(BlockRef::Part, &d, None, &mut buf);
     let old: Vec<u8> = {
         let b = buf.as_slice();
         let mut v = vec![b[0]];
         for e in b[1..].chunks(5) {
-            if ![PartParams::SNAP, PartParams::HELD, PartParams::BEND]
-                .map(|i| i.0)
-                .contains(&e[0])
+            if ![
+                PartParams::SNAP,
+                PartParams::HELD,
+                PartParams::BEND,
+                PartParams::TUNING,
+            ]
+            .map(|i| i.0)
+            .contains(&e[0])
             {
                 v.extend_from_slice(e);
             }

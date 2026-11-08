@@ -16,6 +16,10 @@
 //! The bench's check table goes to `/CHIMERA/BENCH/BEDS.CHK`, a whole file
 //! of at most 9 KiB, the old one replaced.
 //!
+//! A tuning goes to `/CHIMERA/TUNINGS/TUNE1.SCL` to `TUNE8.KBM` (ADR
+//! 0240), a whole file of at most 4 KiB, the old one replaced; a scale
+//! drops its slot's old map. The Parts on that `TUNEn` read it again.
+//!
 //! Bank 2's image goes to `/CHIMERA/SYSTEM/BANK2.BK2`, the old one deleted
 //! first, then read back and judged against this build's seal (ADR 0137):
 //! one sealed for another build stays (`OK staged: needs firmware <v>`),
@@ -80,6 +84,9 @@ pub(super) const SOUNDS: &[u8] = b"/CHIMERA/SOUNDS/";
 const TAPES: &[u8] = b"/CHIMERA/TAPES/";
 const BANK2: &[u8] = b"/CHIMERA/SYSTEM/BANK2.BK2";
 const BEDS: &[u8] = b"/CHIMERA/BENCH/BEDS.CHK";
+const TUNINGS: &[u8] = b"/CHIMERA/TUNINGS/";
+/// A tuning file: what the UI reads (`ui::file_buf::FILE_MAX`).
+pub const TUNING_MAX_BYTES: u32 = crate::ui::file_buf::FILE_MAX as u32;
 /// The bench's check table: 8 beds of `MAX_BED_CHUNKS` CRCs fit.
 pub const BEDS_MAX_BYTES: u32 = 9 * 1024;
 const BEDS_FILE: FileName = match FileName::new(Dir::Bench, b"BEDS", b"CHK") {
@@ -166,6 +173,36 @@ pub enum PutTo {
     Bank2,
     /// The bench's check table, replaced whole.
     Beds,
+    /// A tuning's `.SCL` or `.KBM`, replaced whole.
+    Tuning(FileName),
+}
+
+/// `/CHIMERA/TUNINGS/TUNE1.SCL` to `TUNE8.KBM`, any case.
+fn tuning(p: &[u8]) -> Option<FileName> {
+    let (dir, name) = p.split_at_checked(TUNINGS.len())?;
+    let [
+        b'T' | b't',
+        b'U' | b'u',
+        b'N' | b'n',
+        b'E' | b'e',
+        n @ b'1'..=b'8',
+        b'.',
+        ext @ ..,
+    ] = name
+    else {
+        return None;
+    };
+    if !dir.eq_ignore_ascii_case(TUNINGS) {
+        return None;
+    }
+    let ext: &[u8] = if ext.eq_ignore_ascii_case(b"SCL") {
+        b"SCL"
+    } else if ext.eq_ignore_ascii_case(b"KBM") {
+        b"KBM"
+    } else {
+        return None;
+    };
+    FileName::new(Dir::Tunings, &[b'T', b'U', b'N', b'E', *n], ext)
 }
 
 fn put_to(p: &[u8]) -> Option<PutTo> {
@@ -174,6 +211,9 @@ fn put_to(p: &[u8]) -> Option<PutTo> {
     }
     if p.eq_ignore_ascii_case(BEDS) {
         return Some(PutTo::Beds);
+    }
+    if let Some(f) = tuning(p) {
+        return Some(PutTo::Tuning(f));
     }
     let to = project(p)
         .map(PutTo::Project)
@@ -196,17 +236,18 @@ pub struct PutArg {
 impl Arg for PutArg {
     #[cfg(not(feature = "source-writer"))]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over], /CHIMERA/BENCH/BEDS.CHK or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
+        [--over], /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
         in hex";
     #[cfg(feature = "source-writer")]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over], /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK or /CHIMERA/SYSTEM/BANK2.BK2, \
+        [--over], /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, or /CHIMERA/SYSTEM/BANK2.BK2, \
         its size and CRC-32 in hex";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let mut to = put_to(words.next()?)?;
         let size = number(words.next()?, 10, 10)?;
         if (to == PutTo::Bank2 && size > chimera_image::BANK2_LEN)
             || (to == PutTo::Beds && size > BEDS_MAX_BYTES)
+            || (matches!(to, PutTo::Tuning(_)) && size > TUNING_MAX_BYTES)
         {
             return None;
         }
@@ -417,7 +458,8 @@ fn transfer<F: Files, P: Out>(
     if arg.size > PUT_MAX_BYTES {
         return Err(PutFail::TooBig);
     }
-    if arg.size < MIN_FILE {
+    // A Scala file is text, a map a few lines: no Chimera header.
+    if arg.size < MIN_FILE && !matches!(arg.to, PutTo::Tuning(_)) {
         return Err(PutFail::File(FileError::Truncated));
     }
     match arg.to {
@@ -483,11 +525,28 @@ fn transfer<F: Files, P: Out>(
                 })
                 .and_then(|o| o.result)
         }
-        PutTo::Beds => {
+        PutTo::Beds | PutTo::Tuning(_) => {
+            let (dir, file) = match arg.to {
+                PutTo::Tuning(f) => (Dir::Tunings, f),
+                _ => (Dir::Bench, BEDS_FILE),
+            };
             due.arm(files, port, 0)?;
             Card::new()
                 .run(files, |s, r| {
-                    whole_session(s, r, Dir::Bench, BEDS_FILE, arg, port, due, |_, _, _| {
+                    whole_session(s, r, dir, file, arg, port, due, |s, r, _| {
+                        if dir == Dir::Tunings {
+                            // A new scale drops its slot's old map: else it
+                            // stays applied unseen (`put` the map after).
+                            if file.ext() == b"SCL"
+                                && let Some(kbm) = FileName::new(dir, file.stem(), b"KBM")
+                            {
+                                match s.delete(r.volume(), kbm) {
+                                    Ok(()) | Err(StoreError::NotFound) => {}
+                                    Err(e) => return Err(e.into()),
+                                }
+                            }
+                            crate::tuning::file_put();
+                        }
                         Ok(Done::Saved)
                     })
                 })

@@ -1,6 +1,8 @@
 //! Music theory as const data: pitch classes, intervals, scales, chords,
-//! snapping and names. No heap, no dependencies.
+//! snapping and names; Scala tunings (`tuning`). No heap; `libm` alone.
 #![no_std]
+
+pub mod tuning;
 
 use core::fmt::{self, Display, Formatter, Write};
 use core::hash::{Hash, Hasher};

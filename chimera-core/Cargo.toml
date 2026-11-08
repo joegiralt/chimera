@@ -21,10 +21,12 @@ u8g2-fonts = "=0.8.0"
 stamp = []
 # Firmware builds only: the wave tables rendered at boot (ADR 0122).
 boot-waves = ["chimera-engine/boot-waves"]
-default = ["orbit", "card-put", "tape", "midi-map", "push-encoders"]
+default = ["orbit", "card-put", "tape", "midi-map", "push-encoders", "tuning"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
 # firmware leaves it out: FLASH (#507).
 midi-map = []
+# Each Part's tuning tables (ADR 0240): off in the bench builds, for AXI.
+tuning = ["chimera-engine/tuning"]
 # The TAPE engine's DSP (ADR 0132): the firmware builds without it.
 tape = ["chimera-engine/tape"]
 # SYSTEM's PUSH ENCODERS (ADR 0140): off, no row and no push read.

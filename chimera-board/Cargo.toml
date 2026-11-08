@@ -18,6 +18,8 @@ bench-tape = ["chimera-core/tape"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
 # firmware leaves it out: FLASH (#507).
 midi-map = ["chimera-core/midi-map"]
+# Each Part's tuning tables (ADR 0240): off in the bench builds, for AXI.
+tuning = ["chimera-core/tuning"]
 # SYSTEM's PUSH ENCODERS (ADR 0140): the 32-bit read.
 push-encoders = ["chimera-core/push-encoders"]
 # The master tape's bench build: it drops the card bench, for AXI (ADR 0087).

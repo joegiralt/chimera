@@ -365,6 +365,10 @@ dependencies = [
 [[package]]
 name = "chimera-theory"
 version = "0.2.0"
+dependencies = [
+ "libm",
+ "proptest",
+]
 
 [[package]]
 name = "chimera-utils"

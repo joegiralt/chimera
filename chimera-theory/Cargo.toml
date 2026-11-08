@@ -2,3 +2,10 @@
 name = "chimera-theory"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+libm = "0.2"
+
+[dev-dependencies]
+libm = "0.2"
+proptest = { version = "1", default-features = false, features = ["std"] }

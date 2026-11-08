@@ -131,3 +131,4 @@ When SETTINGS › ABOUT reads `NEEDS UPDATE`, Chimera ignores MIDI in, notes and
 - **System Reset** (`FF`): every sound stops and every controller resets.
 - **Active Sensing:** once a controller sends it, a pulled cable releases every held note within a third of a second, and the screen shows **DIN MIDI LOST**. A USB host that resets or sleeps while you hold a note or pedal does the same, with **USB MIDI LOST**.
 - **RPN 0** sets the Part's BEND range, in semitones (0 to 24).
+- **MIDI Tuning Standard** SysEx retunes every Part whose TUNING is `MTS`: see [Tuning](TUNING.md).

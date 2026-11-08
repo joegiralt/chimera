@@ -439,8 +439,13 @@ impl PipeStats {
 
 /// One source's byte stream, both parser layers: the note path to the note
 /// queue, every other controller to the control ring.
+/// A SysEx body's room: an MTS bulk dump with its bank, 407 B (#217),
+/// with `tuning`; without it (the bench builds, for their AXI) the 32 B a
+/// controller's messages need.
+pub const SYSEX_LEN: usize = if cfg!(feature = "tuning") { 408 } else { 32 };
+
 pub struct DinPipe {
-    parser: Parser<32>,
+    parser: Parser<SYSEX_LEN>,
     ctl: Controllers,
     sense: Sensing,
     stats: PipeStats,
@@ -674,6 +679,10 @@ impl DinPipe {
                     }
                 }
                 Parsed::Event(Event::SysEx(s)) => {
+                    // MTS retunes the MTS table at once (ADR 0240).
+                    if let Some(m) = sysex::mts(s, U7::ZERO) {
+                        m.each(|k, o| crate::tuning::set_mts(k.get(), o));
+                    }
                     if sysex::request(s, U7::ZERO).is_some()
                         && let Some(dev) = s.bytes().get(1).and_then(|&d| U7::new(d))
                     {

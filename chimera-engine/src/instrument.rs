@@ -728,6 +728,9 @@ pub struct Instrument {
     /// and in semitones as the engines read it.
     tune_ease: Ease,
     tune: f32,
+    /// Each voice's tuning offset (`tuning`, ADR 0240), eased at its
+    /// glide's pace; nothing without `tuning`.
+    tuned: crate::tuning::VoiceTunes,
     /// Each voice's stream: what admission counts.
     streaming: [Streaming; MAX_VOICES],
 }
@@ -745,7 +748,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, streaming });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -825,6 +828,7 @@ impl Instrument {
             addr_of_mut!((*p).rev_bill).write(RevBill::new());
             addr_of_mut!((*p).tune_ease).write(Ease::default());
             addr_of_mut!((*p).tune).write(0.0);
+            addr_of_mut!((*p).tuned).write(crate::tuning::VoiceTunes::NEW);
             addr_of_mut!((*p).streaming).write([Streaming::IDLE; MAX_VOICES]);
             slot.assume_init_mut()
         }
@@ -1293,6 +1297,16 @@ impl Instrument {
                     self.held_keys[v] = base.with(ev.note);
                     self.alloc.book(v, q, mode, note, cost);
                     let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
+                    // The key's tuning: a glide eases to it at its own pace,
+                    // a strike starts on it.
+                    let to = crate::tuning::offset(p, note.get());
+                    let start = match part.params.pitch.steal_glide() {
+                        Some(tau) if self.voices[v].is_active() => {
+                            let keep = crate::tuning::keep_for(tau, self.sample_rate);
+                            self.tuned.glide(v, to, keep)
+                        }
+                        _ => self.tuned.strike(v, to),
+                    };
                     // A voice taken from another Part fades out on that
                     // Part's Sound before the note starts: billed what it
                     // was (a held Modal's extra in) till then (ADR 0091). A
@@ -1328,7 +1342,7 @@ impl Instrument {
                             sym: &mut self.sym,
                             src,
                             part: part_id(q),
-                            tune: self.tune,
+                            tune: self.tune + start,
                         };
                         // Unbilled, no port (`port_of`).
                         let port = match stream {
@@ -1688,6 +1702,9 @@ impl Instrument {
                 }
                 self.clear_left -= bytes;
             }
+            let keep = crate::tuning::keep_for(RESNAP_GLIDE_MS as f32 / 3_000.0, self.sample_rate);
+            let off = crate::tuning::offset(usize::from(self.sounding[v]), to.get());
+            self.tuned.glide(v, off, keep);
             self.voices[v].retune(
                 to,
                 glide,
@@ -1757,12 +1774,15 @@ impl Instrument {
             self.streaming[v].fading = None;
         }
         let port = self.port_of(v);
+        let to = self
+            .tuned
+            .strike(v, crate::tuning::offset(usize::from(q), note.get()));
         let voice = &mut self.voices[v];
         let base = CtxBase {
             sym: &mut self.sym,
             src,
             part: part_id(q),
-            tune: self.tune,
+            tune: self.tune + to,
         };
         ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
             let _ = voice.note_on(note, w.vel, params, w.source, ctx);
@@ -2093,11 +2113,13 @@ impl Instrument {
             let p = self.sounding[v] as usize % MAX_PARTS;
             let part = &shared.parts[p];
             let port = self.port_of(v);
+            // A glide's or re-snap's tuning eases at its pace.
+            let off = self.tuned.step(v);
             let base = CtxBase {
                 sym: &mut self.sym,
                 src,
                 part: PartId::ALL[p],
-                tune: self.tune,
+                tune: self.tune + off,
             };
             let voice = &mut self.voices[v];
             let (knobs, clock) = (&self.knobs[p].0, &self.lfo_clocks[p]);

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "midi-usb", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders"]
+default = ["midi-din", "midi-usb", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders", "tuning"]
 midi-din = ["chimera-board/midi-din"]
 # The console serviced from the OTG_FS interrupt, with its storm guard; on
 # wherever MIDI DIN is.
@@ -55,6 +55,8 @@ orbit = ["chimera-core/orbit", "chimera-board/orbit"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
 # firmware leaves it out: FLASH (#507).
 midi-map = ["chimera-board/midi-map"]
+# Each Part's tuning tables (ADR 0240): off in the bench builds, for AXI.
+tuning = ["chimera-board/tuning"]
 # The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
 # loop, its interrupt never unmasked unless `midi-usb` moves it there.
 usb-console = ["chimera-board/usb-console"]

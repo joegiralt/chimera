@@ -242,6 +242,9 @@ pub struct UiDoor {
     pit_paint: fn(&mut dyn Paint, &crate::ui::pit_tuner::Shown),
     /// RANDOMIZE's roll (`randomize::kern`, ADR 0232).
     roll: fn(&mut Sound, &crate::randomize::Randomize),
+    /// Each Part's TUNING made its table (`ui::tuning`, ADR 0240).
+    tuning: fn(&mut crate::ui::UiState, &mut crate::storage::Card, &mut dyn Store),
+    tuning_note: fn(u8) -> Option<&'static str>,
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -282,6 +285,8 @@ impl UiDoor {
         pit: crate::ui::pit_tuner::calc::pass_in,
         pit_paint: crate::ui::pit_tuner::calc::paint_in,
         roll: crate::randomize::kern::roll,
+        tuning: crate::ui::tuning::work_in,
+        tuning_note: crate::ui::tuning::note_in,
     };
 
     #[inline(always)]
@@ -355,6 +360,22 @@ impl UiDoor {
     #[inline(always)]
     pub(crate) fn pit(&self, ui: &mut crate::ui::UiState) {
         (self.pit)(ui)
+    }
+
+    #[inline(always)]
+    #[cfg_attr(not(feature = "tuning"), allow(dead_code))]
+    pub(crate) fn tuning(
+        &self,
+        ui: &mut crate::ui::UiState,
+        card: &mut crate::storage::Card,
+        s: &mut dyn Store,
+    ) {
+        (self.tuning)(ui, card, s)
+    }
+
+    #[inline(always)]
+    pub(crate) fn tuning_note(&self, v: u8) -> Option<&'static str> {
+        (self.tuning_note)(v)
     }
 
     #[inline(always)]

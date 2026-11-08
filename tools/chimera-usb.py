@@ -10,6 +10,10 @@
                                                    or the bench's check table as /CHIMERA/BENCH/BEDS.CHK (9 KiB at most)
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1)
+    python3 chimera-usb.py tuning <1-8> <file.scl> [<file.kbm>]
+                                                   a Scala tuning onto the card as /CHIMERA/TUNINGS/TUNE<n>.SCL,
+                                                   with its keyboard map as TUNE<n>.KBM (4 KiB each at most):
+                                                   SETTINGS > AUDIO > TUNING's TUNE<n> plays it
     python3 chimera-usb.py update <file.bin> <file.bk2>
                                                    flash a build's pair in one go (developers, `just flash`): the
                                                    .bk2 onto the card, the .bin by DFU, and the first boot
@@ -110,6 +114,8 @@ PUT_CHUNK = 256 * 1024  # a TAPE source goes in chunks this big
 PUT_BEDS_MAX = 9 * 1024  # the bench's check table
 TAPES = "/CHIMERA/TAPES/"
 BEDS = "/CHIMERA/BENCH/BEDS.CHK"
+TUNINGS = "/CHIMERA/TUNINGS/"
+PUT_TUNING_MAX = 4 * 1024  # what the unit reads of a tuning file
 SOUNDS = "/CHIMERA/SOUNDS/"
 USER_MAX = 8_999_999  # highest user Sound id
 BUSY_TRIES = 5
@@ -399,7 +405,8 @@ def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None,
     `end <crc32>` and waited on for its `ACK <bytes so far>`.
     `progress(sent, total)` after each batch of lines. Raises NoAnswer,
     Vanished or PutRefused."""
-    cap = PUT_BEDS_MAX if remote.upper() == BEDS else PUT_MAX
+    up = remote.upper()
+    cap = PUT_BEDS_MAX if up == BEDS else PUT_TUNING_MAX if up.startswith(TUNINGS) else PUT_MAX
     if len(data) > cap:
         raise PutRefused("%d bytes: put takes at most %d" % (len(data), cap))
     send(conn, "put %s %d %08x%s" % (remote, len(data), zlib.crc32(data), " --over" if over else ""))
@@ -963,6 +970,14 @@ def main(argv, env) -> int:
         return update(t, env, pkg)
     if argv[0] == "card-wait":
         return card_wait(t, env, argv[1:]) if len(argv) > 1 else fail("card-wait takes <bench> [N|kind]")
+    if argv[0] == "tuning":
+        if len(argv) not in (3, 4) or argv[1] not in [str(n) for n in range(1, 9)]:
+            return fail("tuning takes <1-8> <file.scl> [<file.kbm>]")
+        for local, ext in zip(argv[2:], ("SCL", "KBM")):
+            rc = put_file(t, local, "%sTUNE%s.%s" % (TUNINGS, argv[1], ext))
+            if rc:
+                return rc
+        return 0
     if argv[0] == "put":
         over = argv[3:] == ["--over"]
         if len(argv) != 3 and not over:

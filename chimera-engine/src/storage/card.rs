@@ -145,7 +145,7 @@ impl Card {
     ///
     /// `Err` is a failed mount. Once mounted, the event comes back whatever
     /// `op` returns: a swap is news even when the op on the new card fails.
-    pub fn run<S: Store, R, E: CardFault + From<StoreError>>(
+    pub fn run<S: Store + ?Sized, R, E: CardFault + From<StoreError>>(
         &mut self,
         store: &mut S,
         op: impl FnOnce(&mut S, &Ready) -> Result<R, E>,

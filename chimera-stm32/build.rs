@@ -241,6 +241,14 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*12chimera_midi5learn* .rodata.*12chimera_midi5learn*);
     *(.text.*12chimera_midi3out* .rodata.*12chimera_midi3out*);
 ";
+    // Tuning (ADR 0240): the Scala parser and table (`chimera_theory::
+    // tuning`), the tables' writers (`chimera_engine::tuning`; the audio's
+    // read is inlined into bank 1) and the TUNING cell's apply
+    // (`ui::tuning`).
+    let tuning = "    *(.text.*14chimera_theory6tuning* .rodata.*14chimera_theory6tuning*);
+    *(.text.*14chimera_engine6tuning* .rodata.*14chimera_engine6tuning*);
+    *(.text.*12chimera_core2ui6tuning* .rodata.*12chimera_core2ui6tuning*);
+";
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
 ";
@@ -344,6 +352,7 @@ SECTIONS {
     /* NRPN */
     /* ORBIT */
     /* MIDI UI */
+    /* TUNING */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -377,6 +386,7 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* ORBIT SLOT */\n", orbit_slot)
         .replace("/* ORBIT ASSERT */", orbit_assert)
         .replace("    /* MIDI UI */\n", midi_ui)
+        .replace("    /* TUNING */\n", tuning)
         .replace("    /* MIDI UI SLOT */\n", midi_ui_slot)
         .replace("/* MIDI UI ASSERT */", midi_ui_assert),
     )
