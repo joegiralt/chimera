@@ -53,6 +53,9 @@ pub(crate) struct MidiClass {
     descriptors: Descriptors,
     edge: Edge,
     port: Port,
+    /// USB audio's stream (ADR 0248), in MIDI's function.
+    #[cfg(feature = "usb-audio")]
+    audio: crate::usb_audio::Stream,
 }
 
 /// USB MIDI this boot: the class, if the door was open at `init` to
@@ -116,12 +119,22 @@ impl Midi {
     }
 }
 
+impl Midi {
+    /// USB audio's `bench` line, if the class is up.
+    #[cfg(feature = "usb-audio")]
+    pub(crate) fn audio_report(&self, t: &mut impl core::fmt::Write) -> core::fmt::Result {
+        self.class.as_ref().map_or(Ok(()), |m| m.audio.report(t))
+    }
+}
+
 impl Closed {
     /// The packets the bus holds now read and dropped, counted in `drops`,
     /// so none blocks the shared RX FIFO (spec § 13.1, 13.2); later ones
     /// at a later poll.
     #[inline(always)]
     pub(crate) fn drain(self, dev: &Dev, drops: &mut u32) {
+        #[cfg(feature = "usb-audio")]
+        crate::usb_audio::closed();
         let mut p = [0u8; 64];
         while let Ok(n) = dev.bus().read(self.0, &mut p) {
             *drops = drops.wrapping_add((n / 4) as u32);
@@ -175,6 +188,23 @@ impl UsbClass<Bus> for MidiClass {
     fn get_string(&self, index: StringIndex, _: LangID) -> Option<&str> {
         (index == self.name).then_some(NAME)
     }
+
+    // USB audio's alt setting, the stream on or off: kept here, read by
+    // bank 2's pump.
+    #[cfg(feature = "usb-audio")]
+    fn get_alt_setting(&mut self, iface: InterfaceNumber) -> Option<u8> {
+        self.audio.alt.get(iface)
+    }
+
+    #[cfg(feature = "usb-audio")]
+    fn set_alt_setting(&mut self, iface: InterfaceNumber, alt: u8) -> bool {
+        self.audio.alt.set(iface, alt)
+    }
+
+    #[cfg(feature = "usb-audio")]
+    fn reset(&mut self) {
+        self.audio.alt.reset();
+    }
 }
 
 /// Bank 2's half.
@@ -219,12 +249,20 @@ mod door {
         notes: Option<NoteProducer<'static>>,
         ctrl: &'static UsbCtrl,
     ) -> MidiClass {
+        // AudioControl, USB audio's stream, MIDIStreaming: one function's
+        // interfaces, numbered in a row under its IAD.
+        let ac = bus.interface();
+        #[cfg(feature = "usb-audio")]
+        let stream = bus.interface();
+        let ms = bus.interface();
         MidiClass {
-            ac: bus.interface(),
-            ms: bus.interface(),
+            ac,
+            ms,
             name: bus.string(),
             out: bus.bulk(PACKET),
             inp: bus.bulk(PACKET),
+            #[cfg(feature = "usb-audio")]
+            audio: crate::usb_audio::door::alloc(bus, stream),
             descriptors,
             edge: Edge::new(),
             port: Port {
@@ -268,7 +306,14 @@ mod door {
         out: Option<&'static OutRing>,
         counts: &mut Counts,
     ) {
+        #[cfg(feature = "usb-audio")]
+        crate::usb_audio::door::events(&mut m.audio);
         dev.poll(&mut [serial, m]);
+        #[cfg(feature = "usb-audio")]
+        crate::usb_audio::door::pump(
+            &mut m.audio,
+            dev.state() == usb_device::device::UsbDeviceState::Configured,
+        );
         let MidiClass {
             out: from_host,
             inp,
@@ -317,6 +362,13 @@ mod door {
             ms: c.ms,
             name: c.name,
         };
-        write(w, ids, &c.out, &c.inp)
+        #[cfg(feature = "usb-audio")]
+        let audio = Some(chimera_midi::usb_class::Stream {
+            iface: c.audio.alt.iface(),
+            ep: &c.audio.ep,
+        });
+        #[cfg(not(feature = "usb-audio"))]
+        let audio = None;
+        write(w, ids, &c.out, &c.inp, audio)
     }
 }

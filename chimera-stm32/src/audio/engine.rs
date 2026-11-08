@@ -193,6 +193,22 @@ pub fn render_half(half: Half) {
             e.dma_zero[half.index()][pair.index()] = false;
         }
     }
+    #[cfg(feature = "usb-audio")]
+    usb_out(&e.dac);
+}
+
+/// The main out (DAC pair 1) into USB audio's ring as its DAC plays it
+/// (ADR 0248): the same `to_dac` words, from the cached block, not the
+/// uncached DMA half. A ring the host isn't reading is full and refuses
+/// the block whole.
+#[cfg(feature = "usb-audio")]
+#[inline(always)]
+fn usb_out(dac: &DacBlocks) {
+    use chimera_engine::audio_out::to_dac;
+    let p = &dac.out()[DacPair::P1.index()];
+    chimera_board::usb_audio::RING.push(BLOCK_SIZE, |i| {
+        [to_dac(p[2 * i]).get(), to_dac(p[2 * i + 1]).get()]
+    });
 }
 
 /// `pair`'s words of the block out into its DMA `half`: none to write

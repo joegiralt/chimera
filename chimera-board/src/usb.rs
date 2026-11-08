@@ -74,8 +74,11 @@ pub(crate) type Serial = SerialPort<'static, Bus>;
 /// `bcdDevice` of the composite device, MIDI configured or not: a new
 /// layout under the same VID:PID, which Windows caches drivers by. 0.2's
 /// console-only device was 0x0010.
-#[cfg(feature = "midi-usb")]
+#[cfg(all(feature = "midi-usb", not(feature = "usb-audio")))]
 const MIDI_RELEASE: u16 = 0x0020;
+/// With USB audio's stream in MIDI's function (ADR 0248).
+#[cfg(feature = "usb-audio")]
+const MIDI_RELEASE: u16 = 0x0030;
 
 /// OTG2, the OTG FS core on PA11/PA12, for `UsbBus`. Its `enable` only
 /// sets the clock bit, so `UsbBus::enable`'s masked, unbounded spins
@@ -424,6 +427,8 @@ impl Usb {
             .fold(Cycles::new(now), crate::controls::now_ms(), per_ms);
         #[cfg(feature = "bank2")]
         let cpu_hz = self.cycles_per_us * 1_000_000;
+        #[cfg(feature = "usb-audio")]
+        let mut audio_text = crate::usb_audio::Line::new();
         let Usb {
             link,
             line,
@@ -455,11 +460,19 @@ impl Usb {
             // A stalled answer's tail still waiting: no new request until
             // the host reads it, so a host that writes but never reads NAKs
             // itself instead of costing a stall every lap.
-            match c.serial.flush() {
+            let req = match c.serial.flush() {
                 Err(UsbError::WouldBlock) => None,
                 _ => read(&mut c.serial, line),
+            };
+            // `bench` answers USB audio's counters where nothing else does.
+            #[cfg(feature = "usb-audio")]
+            if req.is_some() {
+                let _ = c.midi.audio_report(&mut audio_text);
             }
+            req
         });
+        #[cfg(feature = "usb-audio")]
+        let bench = bench.or(Some(audio_text.as_str()));
         self.last = Served::Idle;
         if let Some(req) = req {
             // A bench `card`, `sweep`'s scan, `bank2`'s write: seconds with

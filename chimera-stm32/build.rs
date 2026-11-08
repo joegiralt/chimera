@@ -105,6 +105,13 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     *(.text.*13chimera_board8usb_midi4door* .rodata.*13chimera_board8usb_midi4door*
       .text.*12chimera_midi9usb_class* .rodata.*12chimera_midi9usb_class*
       .text.*12chimera_midi3usb* .rodata.*12chimera_midi3usb*);
+    /* USB audio (ADR 0248, through USB MIDI's door): the stream's
+       allocation, interrupt events and pump (`usb_audio::door`), and the
+       pacer, packing and parity they run (`chimera_midi::uac`). Bank 1
+       keeps the ring the audio interrupt pushes, the alt-setting shims
+       (`chimera_midi::uac_link`) and `usb_audio::closed`. */
+    *(.text.*13chimera_board9usb_audio4door* .rodata.*13chimera_board9usb_audio4door*
+      .text.*12chimera_midi3uac* .rodata.*12chimera_midi3uac*);
     /* TAPE's UI (ADR 0175, `chimera_core::bank2::UiDoor`): the strip's
        raster and the SOURCE cell's card work and turns, SCRUB's jog
        (`Jog::pass`, ADR 0205) and PIT's tuner (ADR 0201,
