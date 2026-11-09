@@ -161,14 +161,15 @@ fn presence_survives_sync_from_matrix() {
 }
 
 /// Spec § Tests "Defaults": exactly the three FREQ (CUTOFF) routes at 0,
-/// in the fixed column; the registry holds only the wheel's PITCH.
+/// in the fixed column; the registry holds only the wheel's PITCH and
+/// LFO 1 DEPTH.
 #[test]
 fn a_new_sound_has_the_default_routes() {
     for ct in EngineType::ALL {
         let s = Sound::init(ct);
-        assert_eq!(s.dest_registry.len(), 1, "{ct:?}");
+        assert_eq!(s.dest_registry.len(), 2, "{ct:?}");
         assert_eq!(s.mod_state.num_sources(), MAX_MOD_SOURCES);
-        assert_eq!(s.mod_state.num_dests(), 1);
+        assert_eq!(s.mod_state.num_dests(), 2);
         assert_eq!(s.mod_state.routes_into(CUTOFF_ADDR), DEFAULT_BITS, "{ct:?}");
         assert!((0..MAX_MOD_SOURCES).all(|src| s.mod_state.fixed_amount(src, FixedCol::Freq) == 0));
         // TAPE's loop and VA's tone have no end: their INIT routes ENV 1

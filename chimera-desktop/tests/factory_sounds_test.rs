@@ -231,15 +231,37 @@ fn every_committed_source_builds() {
     assert!(man.json().starts_with('{'));
 }
 
-/// MIDI map spec § 9: every built Source carries its engine's default map.
+/// MIDI map spec § 9, ADR 0250: every built Source carries its engine's
+/// default map, and one whose LFO 1 moves something keeps CC 1 → LFO 1
+/// DEPTH, the wheel it was voiced with.
 #[test]
 fn every_factory_source_has_the_default_map() {
+    use chimera_core::midi_map::{Input, default_for, wheel_map_for};
+    use chimera_core::modulation::{FixedCol, ModSource};
     let s = build::sources(std::path::Path::new(SOURCES)).unwrap();
     assert!(!s.is_empty());
+    let cc1 = Input::cc(1).unwrap();
+    let mut wheeled = 0;
     for x in &s {
-        let want = chimera_core::midi_map::default_for(x.engine);
-        assert!(source::to_sound(x).unwrap().map == want, "{:?}", x.name);
+        let snd = source::to_sound(x).unwrap();
+        let (m, l) = (&snd.mod_state, ModSource::Lfo1.index());
+        let lfo1 = (0..m.num_dests()).any(|d| m.amount(l, d) != 0)
+            || FixedCol::ALL.iter().any(|&c| m.fixed_amount(l, c) != 0);
+        let want = if lfo1 {
+            wheel_map_for(x.engine)
+        } else {
+            default_for(x.engine)
+        };
+        assert!(snd.map == want, "{:?}", x.name);
+        assert_eq!(
+            snd.map.entries().iter().any(|b| b.input == cc1),
+            lfo1,
+            "{:?}",
+            x.name
+        );
+        wheeled += usize::from(lfo1);
     }
+    assert!(wheeled > 0, "some Sounds play the wheel");
 }
 
 /// Spec § 8: every committed description fits FACTORY's line as drawn.

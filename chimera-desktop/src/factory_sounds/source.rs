@@ -884,7 +884,7 @@ pub fn patch(s: &Source) -> Result<Sound, String> {
 /// engine's default MIDI map (spec § 9; a map never changes the sound).
 pub fn to_sound(s: &Source) -> Result<Sound, String> {
     let mut snd = patch(s)?;
-    snd.map = chimera_core::midi_map::default_for(s.engine);
+    snd.map = snd.factory_map();
     snd.params.out.volume = trimmed(snd.params.out.volume, s.trim)
         .map_err(|m| format!("{}: {m}", s.at(s.trim_line)))?;
     Ok(snd)

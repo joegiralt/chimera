@@ -202,7 +202,8 @@ fn perf_routes_ride_their_own_record() {
     let bytes = encode(&s);
     let perf = record(&bytes, RecordTag::PerfRoutes).expect("a PerfRoutes record");
     let codes: Vec<u8> = perf.chunks(4).map(|r| r[0]).collect();
-    assert_eq!(codes, [11, 10, 10]);
+    // INIT's own WHEEL → LFO 1 DEPTH first (#876).
+    assert_eq!(codes, [10, 11, 10, 10]);
     let routes = record(&bytes, RecordTag::Routes).unwrap();
     assert!(routes.chunks(4).all(|r| r[0] < 8), "{routes:?}");
     let got = decode(&bytes).unwrap();
@@ -712,10 +713,11 @@ fn sparse_sizes() {
             "{e:?}"
         );
     }
-    // INIT as it ships: the default map's eleven entries, the wheel's
-    // vibrato (spec § 9) and STABILITY's Prophet setting (ADR 0168); the
+    // INIT as it ships: the default map's ten entries, the wheel's
+    // vibrato (spec § 9: LFO 1 → PITCH, WHEEL → LFO 1 DEPTH in
+    // `PerfRoutes`, #876) and STABILITY's Prophet setting (ADR 0168); the
     // map as `Bindings`, 34 B over `MidiMap`'s.
-    assert_eq!(encode(&Sound::init(EngineType::Algo)).len(), 227 + 34);
+    assert_eq!(encode(&Sound::init(EngineType::Algo)).len(), 239 + 34);
 }
 
 /// `neutral(e)` with every stored param that can move at another value, a

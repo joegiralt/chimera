@@ -31,6 +31,10 @@ The MOD MATRIX has two rows for your hands, after NOTE:
 
 Route them like any other source: put the cursor on the WHEEL or PRESS row, under the column you want, and turn **E** for the amount. Both glide, so a fast wheel throw or a sudden squeeze never steps the sound. A new note starts with no poly pressure of its own; the channel's wheel and pressure carry on across notes, Sound loads and project loads.
 
+A new Sound (INIT) comes with the wheel's vibrato as a route: WHEEL into LFO 1's DEPTH at +127, and LFO 1 into PITCH. LFO 1 rests at DEPTH 0, so the wheel down plays no vibrato and the wheel up plays it at full depth. Moving the wheel is playing, not editing: the Sound stays as it was saved. Factory Sounds that move LFO 1 keep the wheel they were voiced with, a MIDI map binding of CC 1 on LFO 1's DEPTH: there the wheel sets DEPTH itself, and the Sound shows as edited.
+
+Any LFO's DEPTH is a destination: prime it with **MIX + PLUS** on the LFO page and route any source into it. A DEPTH route reaches its LFO one block (1.3 ms) after its source moves.
+
 The wheel and channel pressure still reach the MIDI map as well, so a binding on CC 1 or PRESSURE keeps working beside a route.
 
 ## Learn

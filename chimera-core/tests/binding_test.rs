@@ -63,9 +63,9 @@ fn part_chains_offer_the_eight_sources() {
         );
         let sound = chimera_core::preset::Sound::init(engine);
         // The default routes live in the fixed FREQ column; the registry
-        // holds only the wheel's PITCH (spec § 9).
-        assert_eq!(sound.dest_registry.len(), 1, "{engine:?}");
-        assert_eq!(sound.mod_state.num_dests(), 1, "{engine:?}");
+        // holds only the wheel's PITCH and LFO 1 DEPTH (spec § 9, #876).
+        assert_eq!(sound.dest_registry.len(), 2, "{engine:?}");
+        assert_eq!(sound.mod_state.num_dests(), 2, "{engine:?}");
     }
 }
 

@@ -126,8 +126,9 @@ fn clear_hint_names_bytes() {
     let _ = want.clear(theme::BG);
     hint::draw(
         &mut want,
-        // Factory 0 with its default map as `Bindings` (MIDI phase 1).
-        &[Gesture("MIX + MINUS", "CLEARS · FREES 0.4K")],
+        // Factory 0 with its default map as `Bindings` (MIDI phase 1), CC 1
+        // out of it (#876).
+        &[Gesture("MIX + MINUS", "CLEARS · FREES 0.3K")],
         theme::MARGIN_X,
         browser::CLEAR_Y,
     );

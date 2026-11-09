@@ -366,6 +366,8 @@ mod authored {
             8..=11 => demo_sound(Demo::ALL[i - 8]),
             _ => return None,
         };
+        let mut sound = sound;
+        sound.map = sound.factory_map();
         Some(sound)
     }
 

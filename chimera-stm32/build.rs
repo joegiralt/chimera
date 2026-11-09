@@ -261,7 +261,9 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*12chimera_core2ui6tuning* .rodata.*12chimera_core2ui6tuning*);
 ";
     // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
+    // LFO DEPTH's routes (ADR 0250): `voice::depth::kern`, as the gate's.
     let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
+    *(.text.*5voice5depth4kern* .rodata.*5voice5depth4kern*);
 ";
     // ALGO's block (ADR 0212): `algo::engine::kern`, the render the door
     // calls with `AlgoEngine::block` inlined, and the kernel it runs,

@@ -242,6 +242,53 @@ fn cc_moves_cutoff() {
     assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Edited);
 }
 
+/// CC 1 is INIT's wheel through a route (#876), not a map entry: moving
+/// it writes nothing and leaves the Part as it was.
+#[test]
+fn cc1_leaves_init_unedited() {
+    let mut b = Bench::new(Sound::init(EngineType::Algo));
+    let p = b.ui.project();
+    let (stamp, status) = (p.part(P1).sound.stamp(), part_status(p.part(P1), p.pool()));
+    b.pass(&[(1, 127)]);
+    b.passes(12);
+    let p = b.ui.project();
+    assert_eq!(p.part(P1).sound.stamp(), stamp, "the Sound was not written");
+    assert_eq!(part_status(p.part(P1), p.pool()), status);
+}
+
+/// A factory Sound whose LFO 1 moves something keeps CC 1 → LFO 1 DEPTH
+/// (ADR 0250): the wheel closes and opens its LFO as it was voiced.
+#[test]
+fn cc1_still_plays_a_factory_sounds_lfo1() {
+    use chimera_core::dsp::lfo::LfoParams;
+    use chimera_core::dsp::modulator::LfoSlot;
+    use chimera_core::factory::{FACTORY_LEN, factory_sound};
+    use chimera_core::midi_map::Input;
+    let depth = ParamAddr::new(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH);
+    let cc1 = Input::cc(1).unwrap();
+    let wheeled: Vec<Sound> = (0..FACTORY_LEN)
+        .filter_map(factory_sound)
+        .filter(|s| s.map.entries().iter().any(|b| b.input == cc1))
+        .collect();
+    assert!(!wheeled.is_empty());
+    for s in wheeled {
+        let name = s.name;
+        let mut b = Bench::new(s);
+        assert_eq!(b.stored(P1, depth), 1.0, "{}", name.as_str());
+        b.pass(&[(1, 0)]);
+        b.passes(40);
+        assert_eq!(
+            b.stored(P1, depth),
+            0.0,
+            "{}: the wheel down closes it",
+            name.as_str()
+        );
+        b.pass(&[(1, 127)]);
+        b.passes(40);
+        assert_eq!(b.stored(P1, depth), 1.0, "{}: up opens it", name.as_str());
+    }
+}
+
 /// Hand-speed sweeps to each end of a learned range, then rest: the
 /// stored value lands on the spec's own min and max, not a hair short,
 /// for a continuous target and a stepped one, full and inverted.
@@ -922,8 +969,6 @@ fn ramps_up(b: &mut Bench, cc: u8, a: ParamAddr) {
 /// DEPTH each ramp to their CC.
 #[test]
 fn init_default_map_moves_its_targets() {
-    use chimera_core::dsp::lfo::LfoParams;
-    use chimera_core::dsp::modulator::LfoSlot;
     use chimera_core::params::OutParams;
     use chimera_core::part::PartParams;
     let mut b = Bench::new(Sound::init(EngineType::Algo));
@@ -933,10 +978,6 @@ fn init_default_map_moves_its_targets() {
         (10, ParamAddr::new(BlockRef::Part, PartParams::PAN)),
         (91, ParamAddr::new(BlockRef::Out, OutParams::SEND3)),
         (93, ParamAddr::new(BlockRef::Out, OutParams::SEND1)),
-        (
-            1,
-            ParamAddr::new(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
-        ),
     ] {
         ramps_up(&mut b, cc, a);
     }

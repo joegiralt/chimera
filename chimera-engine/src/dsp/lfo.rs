@@ -122,8 +122,8 @@ impl LfoParams {
     pub const SHAPE_B: ParamId = ParamId(10);
 }
 
-/// The LFO sources are computed from the unmodulated `params.lfos`;
-/// modulating an LFO itself is out of scope, so nothing here is modulatable.
+/// The LFO sources are computed from `params.lfos`; DEPTH alone takes
+/// routes, last block's sums, as an ENV slot's (#876).
 pub static LFO_SPECS: [ParamSpec; 11] = [
     ParamSpec::continuous(
         0,
@@ -179,10 +179,12 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         1.0,
         1.0,
         1.0 / 128.0,
-        false,
+        true,
         Smoothing::KNOB,
     )
     .ident("DEPTH")
+    // The matrix's column header: DEPTH is wider than a column.
+    .short("DPTH")
     .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::continuous(
         5,

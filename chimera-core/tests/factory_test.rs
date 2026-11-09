@@ -237,7 +237,7 @@ fn default_map_on_init_and_factory() {
     }
     for i in 0..FACTORY_LEN {
         let s = factory_sound(i).unwrap();
-        assert_eq!(s.map, default_for(s.engine()), "{}", s.name.as_str());
+        assert_eq!(s.map, s.factory_map(), "{}", s.name.as_str());
         // They keep their own LFO 1 and routes (spec § 9): DEPTH 1, no PITCH.
         assert_eq!(s.params.lfos[0].depth, 1.0, "{}", s.name.as_str());
     }

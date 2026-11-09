@@ -1,6 +1,7 @@
 //! Spec § Testing "Modulatable is true": for every address whose spec says
 //! `modulatable: true`, an LFO route changes the rendered output. Keeps the
-//! flag from lying. An ENV slot is heard through its own route into CUTOFF.
+//! flag from lying. An ENV or LFO slot is heard through its own route into
+//! CUTOFF.
 mod common;
 use common::{Rig, routes};
 
@@ -88,6 +89,8 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
         {
             p.tape.machine = chimera_core::dsp::tape_engine::TapeMachine::Stretch;
         }
+        // An LFO's DEPTH, heard through its own route into CUTOFF.
+        BlockRef::Lfo(_) => p.filter.cutoff = 1000.0,
         BlockRef::Env(s) => {
             p.filter.cutoff = 1000.0;
             p.envelopes[s.index()].env_type = match addr.param {
@@ -193,10 +196,10 @@ fn every_modulatable_param_audibly_changes_output() {
     // them); FRMT and BW per operator, VOWEL; the FX slot's pots and MIX;
     // less DRV's three and the fold's; TAPE's five macros and ONE's START
     // (#698); the filter's STABILITY, FB and SEM's MODE; the VCA's LPG, DECAY
-    // and STRIKE (ADR 0195).
+    // and STRIKE (ADR 0195); each LFO's DEPTH (#876).
     assert_eq!(
         checked,
-        17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 6 + 3 + 3
+        17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 6 + 3 + 3 + 3
     );
 }
 

@@ -149,6 +149,10 @@ pub struct Bank2Door {
     /// MIDI in's pipe (`midi_in::feed` and `idle` are bank 1's side).
     #[cfg(feature = "bank2")]
     pub midi: crate::midi_in::MidiDoor,
+    /// LFO DEPTH's routes (ADR 0250; `voice::depth::through` is bank 1's
+    /// side).
+    #[cfg(feature = "bank2")]
+    pub depth: crate::dsp::voice::depth::DepthDoor,
 }
 
 // The table fits before the board's slot (the link would fail later, and
@@ -200,6 +204,7 @@ static DOOR: Bank2Door = Bank2Door {
     orbit: crate::orbit::door::OrbitDoor::DOOR,
     algo: crate::dsp::algo::engine::AlgoDoor::DOOR,
     midi: crate::midi_in::MidiDoor::DOOR,
+    depth: crate::dsp::voice::depth::DepthDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

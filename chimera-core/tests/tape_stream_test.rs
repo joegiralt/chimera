@@ -2370,6 +2370,42 @@ fn an_init_chord_about_root_streams_whole() {
     assert!(pl.billed() <= STREAM_BUDGET_BPS.get());
 }
 
+/// #876: INIT's wheel is a route, WHEEL → LFO 1 DEPTH, so the reach
+/// counts the wheel where it sits: a held note bills its vibrato once the
+/// wheel goes up (`refresh_in`), and none of it at rest.
+#[test]
+fn inits_wheel_up_bills_the_vibrato() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = TapeEngineParams {
+        tape: 0.0,
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p)]);
+    let init = chimera_core::preset::Sound::init(EngineType::Tape);
+    *pl.rig.shared.parts[0].mod_state = init.mod_state.clone();
+    pl.rig.shared.parts[0].params.lfos = init.params.lfos;
+    pl.on(0, 60);
+    pl.block();
+    let rest = pl.billed();
+    assert!(rest > 0);
+    pl.rig.inst.expr(chimera_core::note_queue::ExprEvent {
+        channel: chimera_core::MidiChannel::new(0).unwrap(),
+        expr: chimera_core::note_queue::Expr::Wheel(chimera_midi::value::U7::new(127).unwrap()),
+    });
+    for _ in 0..200 {
+        pl.block();
+    }
+    let up = pl.billed();
+    assert!(up > rest, "{rest} → {up}");
+    // LFO 1 → PITCH at 2 at full DEPTH: ±0.38 semitone, about 2.2 %.
+    let ratio = up as f32 / rest as f32;
+    assert!((1.01..1.04).contains(&ratio), "{ratio}");
+}
+
 /// #698 finding 11: ONE's RETRIG CUT chokes the Part's other notes (a
 /// closed hat cutting an open one); STACK lets them ring.
 #[test]

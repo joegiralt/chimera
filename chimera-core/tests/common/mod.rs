@@ -214,7 +214,7 @@ pub fn lfo_route(dest: ParamAddr) -> ModState {
     ms
 }
 
-/// LFO 1 → `addr` at `lfo`; an ENV slot also routes itself into CUTOFF.
+/// LFO 1 → `addr` at `lfo`; an ENV or LFO slot also routes itself into CUTOFF.
 pub fn routes(addr: ParamAddr, lfo: i8) -> ModState {
     assert!(addr.modulatable());
     let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
@@ -223,6 +223,9 @@ pub fn routes(addr: ParamAddr, lfo: i8) -> ModState {
     }
     if let BlockRef::Env(s) = addr.block {
         ms.set_route_addr(ModSource::of_env(s).index(), CUTOFF, 127);
+    }
+    if let BlockRef::Lfo(s) = addr.block {
+        ms.set_route_addr(ModSource::of_lfo(s).index(), CUTOFF, 127);
     }
     ms
 }

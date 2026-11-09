@@ -149,7 +149,7 @@ impl Instrument {
         use crate::dsp::lfo::LfoParams;
         use crate::dsp::modulator::LfoSlot;
         use crate::dsp::tape_engine::{TapeEngineParams, ratio_max, tape_runs};
-        use crate::modulation::ModSource;
+        use crate::modulation::{ModSource, amount_scale};
         use crate::stream::admit::WOW_CENTS;
         use crate::stream::units::Cents;
         use chimera_theory::snap_reach_up;
@@ -172,10 +172,12 @@ impl Instrument {
             top = top.max(MidiNote::clamped(k.saturating_add(up)));
         }
         // The reach in use (#698): each route by its source's live swing
-        // (an LFO by its DEPTH, so INIT's wheel vibrato at rest reaches
-        // nothing), wow only while TAPE runs, and the bend the wheel holds
-        // now, up. A wheel or DEPTH moving up re-bills it (`refresh_in`).
+        // (an LFO by its DEPTH and DEPTH's routes, the wheel's where it sits,
+        // so INIT's wheel vibrato at rest reaches nothing), wow only while
+        // TAPE runs, and the bend the wheel holds now, up. A wheel or DEPTH
+        // moving up re-bills it (`refresh_in`).
         let mods = &part.mod_state;
+        let wheel = self.knobs[p.index()].0.wheel();
         let lfo_depth = |s: usize| {
             let slot = match ModSource::ALL.get(s) {
                 Some(ModSource::Lfo1) => LfoSlot::Lfo1,
@@ -184,11 +186,19 @@ impl Instrument {
                 _ => return 1.0,
             };
             let depth = ParamAddr::new(BlockRef::Lfo(slot), LfoParams::DEPTH);
-            if mods.moves_addr(depth) {
-                1.0
-            } else {
-                crate::dsp::clampf(part.params.lfos[slot.index()].depth, 0.0, 1.0)
-            }
+            let routed = mods.find(depth).map_or(0.0, |d| {
+                (0..mods.num_sources())
+                    .map(|r| {
+                        let reach = if r == ModSource::Wheel.index() {
+                            wheel
+                        } else {
+                            1.0
+                        };
+                        amount_scale(mods.amount(r, d)).abs() * reach
+                    })
+                    .sum()
+            });
+            crate::dsp::clampf(part.params.lfos[slot.index()].depth + routed, 0.0, 1.0)
         };
         let routes = pitch_reach_by(mods, lfo_depth);
         let tape = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::TAPE);

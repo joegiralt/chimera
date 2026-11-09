@@ -200,8 +200,8 @@ impl BlockRef {
 
     /// Whether `Voice::render` reads this block from its modulated copy and
     /// hears it without a route of its own. ENV slots read their LEVEL, TIME,
-    /// RISE, FALL and SHAPE sums per block; the LFO is read unmodulated; FX run
-    /// outside `Voice`.
+    /// RISE, FALL and SHAPE sums per block, LFO slots their DEPTH's, a block
+    /// late; FX run outside `Voice`.
     pub const fn voice_reads(self) -> bool {
         match self {
             BlockRef::Modal
@@ -213,9 +213,9 @@ impl BlockRef {
             | BlockRef::Pitch
             | BlockRef::VoiceFx
             | BlockRef::TapeEngine
-            | BlockRef::Env(_) => true,
-            BlockRef::Lfo(_)
-            | BlockRef::Chorus
+            | BlockRef::Env(_)
+            | BlockRef::Lfo(_) => true,
+            BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb
             | BlockRef::Tape

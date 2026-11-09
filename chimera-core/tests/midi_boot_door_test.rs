@@ -39,8 +39,10 @@ fn new_is_built_after_the_install_opens() {
     ui.boot_project(&mut Card::new(), &mut MemStore::new(1), None);
     for id in PartId::ALL {
         let p = ui.project().part(id);
-        let chart = default_for(p.sound.params.engine());
-        assert_eq!(p.sound.map, chart, "{id:?}: the default chart");
+        // A factory Sound with an LFO 1 route keeps CC 1 (ADR 0250).
+        let e = p.sound.params.engine();
+        let charts = [default_for(e), chimera_core::midi_map::wheel_map_for(e)];
+        assert!(charts.contains(&p.sound.map), "{id:?}: the default chart");
         assert_eq!(
             part_status(p, ui.project().pool()),
             PartStatus::Clean,

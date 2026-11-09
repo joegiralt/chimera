@@ -165,6 +165,13 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
             want.push(ParamAddr::new(BlockRef::Env(s), id));
         }
     }
+    // Each LFO's DEPTH (#876).
+    for s in chimera_core::dsp::modulator::LfoSlot::ALL {
+        want.push(ParamAddr::new(
+            BlockRef::Lfo(s),
+            chimera_core::dsp::lfo::LfoParams::DEPTH,
+        ));
+    }
     let got: Vec<ParamAddr> = BlockRef::ALL
         .iter()
         .flat_map(|&b| b.specs().iter().map(move |s| ParamAddr::new(b, s.id)))

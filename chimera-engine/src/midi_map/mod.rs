@@ -19,9 +19,7 @@ use chimera_midi::value::U14;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::{Motion, ParamId};
 use crate::dsp::algo::params::AlgoParams;
-use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
-use crate::dsp::modulator::LfoSlot;
 use crate::dsp::va::VaParams;
 use crate::dsp::voice_fx::params::VoiceFxParams;
 use crate::orbit::scene::SceneRing;
@@ -489,10 +487,11 @@ const fn ent(cc: u8, b: BlockRef, p: ParamId) -> Binding {
     }
 }
 
-/// Spec § 9: the seven shared entries in learn order, then CCs 16-19 for
-/// ALGO, MODAL and VA (TAPE has none, ADR 0132).
-static DEFAULTS: [Binding; 19] = {
-    use BlockRef::{Algo, Filter, Lfo, Modal, Out, Part, Va, VoiceFx};
+/// Spec § 9: the six shared entries in learn order, then CCs 16-19 for
+/// ALGO, MODAL and VA (TAPE has none, ADR 0132). CC 1 is the wheel, a
+/// matrix source, so not here (#876).
+static DEFAULTS: [Binding; 18] = {
+    use BlockRef::{Algo, Filter, Modal, Out, Part, Va, VoiceFx};
     [
         ent(74, Filter, FilterParams::CUTOFF),
         ent(71, Filter, FilterParams::RESONANCE),
@@ -500,7 +499,6 @@ static DEFAULTS: [Binding; 19] = {
         ent(10, Part, PartParams::PAN),
         ent(91, Out, OutParams::SEND3),
         ent(93, Out, OutParams::SEND1),
-        ent(1, Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
         ent(16, Algo, AlgoParams::MORPH),
         ent(17, Algo, AlgoParams::VOWEL),
         ent(18, VoiceFx, VoiceFxParams::P1),
@@ -516,18 +514,31 @@ static DEFAULTS: [Binding; 19] = {
     ]
 };
 
+/// The default map with CC 1 → LFO 1 DEPTH where it sat before WHEEL was
+/// a source: a factory Sound's whose LFO 1 is routed (ADR 0250).
+pub fn wheel_map_for(e: EngineType) -> MidiMap {
+    use crate::dsp::lfo::LfoParams;
+    use crate::dsp::modulator::LfoSlot;
+    let mut m = default_for(e);
+    let n = usize::from(m.len);
+    m.entries.copy_within(6..n, 7);
+    m.entries[6] = ent(1, BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH);
+    m.len += 1;
+    m
+}
+
 /// The map INIT and the factory Sounds ship with (spec § 9).
 #[inline(never)]
 pub fn default_for(e: EngineType) -> MidiMap {
     let own = match e {
-        EngineType::Algo => 7..11,
-        EngineType::Modal => 11..15,
-        EngineType::Va => 15..19,
-        EngineType::Tape => 7..7,
+        EngineType::Algo => 6..10,
+        EngineType::Modal => 10..14,
+        EngineType::Va => 14..18,
+        EngineType::Tape => 6..6,
     };
     let mut m = MidiMap::EMPTY;
-    m.entries[..7].copy_from_slice(&DEFAULTS[..7]);
-    m.entries[7..7 + own.len()].copy_from_slice(&DEFAULTS[own.clone()]);
-    m.len = 7 + own.len() as u8;
+    m.entries[..6].copy_from_slice(&DEFAULTS[..6]);
+    m.entries[6..6 + own.len()].copy_from_slice(&DEFAULTS[own.clone()]);
+    m.len = 6 + own.len() as u8;
     m
 }

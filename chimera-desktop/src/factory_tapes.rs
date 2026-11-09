@@ -558,7 +558,7 @@ pub fn pitch(h: &SourceHead) -> Pitch {
 
 /// `s` as a TAPE Sound on `head` (picked as SOURCE picks it).
 pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
-    let mut snd = Sound::init(EngineType::Tape);
+    let mut snd = Sound::factory_init(EngineType::Tape);
     // A factory Sound's filter stays stable, as `plain_init`'s (ADR 0168).
     snd.params.filter.stability = 1.0;
     snd.name = s.name;
@@ -605,6 +605,7 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     // On the knob's grid, as INIT's 45/128 is.
     let v = snd.params.out.volume * 10f32.powf(s.trim_db / 20.0);
     snd.params.out.volume = ((v * 128.0).round() / 128.0).min(1.0);
+    snd.map = snd.factory_map();
     snd
 }
 

@@ -62,6 +62,22 @@ fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
 }
 
+/// LFO DEPTH primes (#876), and primed again reports it.
+#[test]
+fn mix_plus_on_lfo_depth_primes() {
+    let mut ui = crate::screen::stack_ui();
+    for _ in 0..5 {
+        feed(&mut ui, Input::press(ButtonId::Plus)); // -> MOD node
+    }
+    for _ in 0..5 {
+        feed(&mut ui, Input::press(ButtonId::Edit)); // E1, E2, E3, SPD, L1
+    }
+    prime(&mut ui, EncoderId::E);
+    assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+    assert_eq!(ui.prime_status(), Some(PrimeStatus::AlreadyRouted));
+}
+
 /// The UI's mapping from the registry's refusals to the shown status;
 /// `priming_past_matrix_capacity_on_the_algo_chain_reports_full` below
 /// reaches `Full` through real input.

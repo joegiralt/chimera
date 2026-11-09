@@ -174,6 +174,8 @@ fn unrouted_they_change_nothing() {
     let play = |moved: bool| {
         let mut rig = InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
         *rig.shared.parts[0].params = tri();
+        // INIT's own routes off: its WHEEL → LFO 1 DEPTH (#876).
+        *rig.shared.parts[0].mod_state = ModState::with_sources(MAX_MOD_SOURCES);
         rig.note_on(0, 60);
         let mut out = Vec::new();
         for i in 0..64 {

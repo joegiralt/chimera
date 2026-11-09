@@ -971,9 +971,6 @@ impl Voice {
             *live = AlgoLive::from_params(&params.algo);
             knobs.apply(m, live);
         }
-        // The modulators run every block, fading or not, from the settings
-        // the voice plays (spec § Signal flow 1).
-        let src = &self.played;
         let key = self.held;
         if self.fade == 0 {
             self.vca = VcaRoutes::of(mod_state);
@@ -982,9 +979,10 @@ impl Voice {
         // The VCA's gain (spec § 4): 64 samples on the audio stack, zeroed
         // only with a route into VCA.
         let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
-        if core::mem::take(&mut self.retrigger) {
-            // The last block's ENV and LFO values; the new note's VEL and NOTE.
-            let mut v = self.mod_values;
+        // The last block's sources; on a retrigger, the new note's VEL and NOTE.
+        let mut v = self.mod_values;
+        let retrigger = core::mem::take(&mut self.retrigger);
+        if retrigger {
             v[ModSource::Vel.index()] = self.last_velocity.unit();
             v[ModSource::Note.index()] = note_source(self.last_note);
             v[ModSource::Wheel.index()] = knobs.wheel();
@@ -997,6 +995,15 @@ impl Voice {
             }
             self.env_mods = next;
         }
+        // LFO DEPTH's routes, the last block's sums, before the LFOs run
+        // (ADR 0250); a fading voice keeps the depth it last played.
+        if self.fade == 0 {
+            let lfos = &mut self.played.lfos;
+            depth::through(|d| (d.run)(mod_state, &v, lfos));
+        }
+        // The modulators run every block, fading or not, from the settings
+        // the voice plays (spec § Signal flow 1).
+        let src = &self.played;
         let mut mod_values = [0.0f32; MAX_MOD_SOURCES];
         for (s, env) in EnvSlot::ALL.iter().zip(self.envs.iter_mut()) {
             let i = ModSource::of_env(*s).index();
@@ -1063,6 +1070,10 @@ impl Voice {
                 if let BlockRef::Env(s) = a.block {
                     // ENV destinations reach their slot next block.
                     env_mod(&mut next[s.index()], mod_state, d, &mod_values);
+                    continue;
+                }
+                // LFO DEPTH's sum is next block's, from `mod_values`.
+                if let BlockRef::Lfo(_) = a.block {
                     continue;
                 }
                 let off = mod_state.sum_for(d, &mod_values);
@@ -1382,6 +1393,7 @@ fn env_mod(n: &mut EnvMods, mod_state: &ModState, d: usize, values: &[f32; MAX_M
     }
 }
 
+pub mod depth;
 pub mod gate;
 
 #[cfg(test)]

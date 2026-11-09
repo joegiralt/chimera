@@ -194,9 +194,10 @@ fn init_routes_live_in_fixed_freq() {
             0
         };
         assert_eq!(m.fixed_present(FixedCol::Vca), vca, "{e:?}");
-        // The registry holds only the wheel's PITCH (spec § 9).
-        assert_eq!(s.dest_registry.len(), 1);
-        assert_eq!(m.num_dests(), 1);
+        // The registry holds only the wheel's PITCH and LFO 1 DEPTH (spec
+        // § 9, #876).
+        assert_eq!(s.dest_registry.len(), 2);
+        assert_eq!(m.num_dests(), 2);
     }
 }
 

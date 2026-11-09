@@ -188,10 +188,10 @@ fn default_map_entries_are_mappable() {
     use chimera_core::midi_map::default_for;
     use chimera_core::params::EngineType;
     for (e, n) in [
-        (EngineType::Algo, 11),
-        (EngineType::Modal, 11),
-        (EngineType::Va, 11),
-        (EngineType::Tape, 7),
+        (EngineType::Algo, 10),
+        (EngineType::Modal, 10),
+        (EngineType::Va, 10),
+        (EngineType::Tape, 6),
     ] {
         let m = default_for(e);
         assert_eq!(m.len(), n, "{e:?}");
@@ -205,7 +205,7 @@ fn default_map_entries_are_mappable() {
         .iter()
         .map(|x| x.input)
         .collect();
-    let want = [74, 71, 7, 10, 91, 93, 1, 16, 17, 18, 19].map(inp);
+    let want = [74, 71, 7, 10, 91, 93, 16, 17, 18, 19].map(inp);
     assert_eq!(ccs, want);
 }
 
