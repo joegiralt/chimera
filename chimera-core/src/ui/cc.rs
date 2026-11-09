@@ -15,11 +15,15 @@ use super::hint::{Gesture, Hint};
 use super::learn::{LearnNote, Line, Sensed};
 use super::midi::MidiUi;
 #[cfg(feature = "midi-map")]
+use super::midi::program::Recalls;
+#[cfg(feature = "midi-map")]
 use super::settings::midi_map::MapText;
 use crate::addr::ParamAddr;
 #[cfg(feature = "midi-map")]
 use crate::dsp::voice_fx::params::FxType;
 use crate::hw::MAX_PARTS;
+#[cfg(feature = "midi-map")]
+use crate::midi_in::Port;
 use crate::midi_in::{HeardCc, HeardEv};
 #[cfg(feature = "midi-map")]
 use crate::midi_map::Binding;
@@ -48,6 +52,26 @@ pub struct MidiSlot {
     /// The knob writes left this pass.
     pub(super) room: [u8; MAX_PARTS],
     pub(super) last: Ms,
+    /// Program changes (ADR 0224): the bank each port's channel last
+    /// selected, which stands till changed; each channel's latest change
+    /// waiting (`midi::program`, 0 none); the channels applied, whose
+    /// notes go free once nothing new waits on them.
+    /// Here, not in `MidiUi`, so a project load keeps them. Only with the
+    /// map, which alone hears a program change (the bench's AXI has no
+    /// room).
+    #[cfg(feature = "midi-map")]
+    pub(super) banks: [[u8; 16]; Port::COUNT],
+    #[cfg(feature = "midi-map")]
+    pub(super) wait: [u16; 16],
+    #[cfg(feature = "midi-map")]
+    pub(super) done: u16,
+    /// The channels a program change was heard on this pass.
+    #[cfg(feature = "midi-map")]
+    pub(super) heard: u16,
+    /// Each Part's program-change recall copy (`midi::program`), 8.8 KB:
+    /// D2 on the unit, which AXI's margin can't spare. Set by `take`.
+    #[cfg(feature = "midi-map")]
+    pub(super) recall: *mut Recalls,
     pub(super) ui: MaybeUninit<MidiUi>,
 }
 
@@ -64,6 +88,16 @@ impl MidiSlot {
             flight: [0; MAX_PARTS],
             room: [0; MAX_PARTS],
             last: Ms(0),
+            #[cfg(feature = "midi-map")]
+            banks: [[0; 16]; Port::COUNT],
+            #[cfg(feature = "midi-map")]
+            wait: [0; 16],
+            #[cfg(feature = "midi-map")]
+            done: 0,
+            #[cfg(feature = "midi-map")]
+            heard: 0,
+            #[cfg(feature = "midi-map")]
+            recall: core::ptr::null_mut(),
             ui: MaybeUninit::uninit(),
         }
     }
@@ -76,6 +110,13 @@ impl MidiSlot {
         use core::sync::atomic::{AtomicBool, Ordering};
         #[cfg_attr(feature = "midi-map", unsafe(link_section = ".ram_d2"))]
         static mut SLOT: MaybeUninit<MidiSlot> = MaybeUninit::uninit();
+        // NOLOAD D2: `recall_ready` says when it is written. Only with the
+        // map: without it `midi::program` isn't built (the door's `hear` is
+        // `deaf`, so no program change is heard), and the bench's D2 has no
+        // room.
+        #[cfg(feature = "midi-map")]
+        #[unsafe(link_section = ".ram_d2")]
+        static mut RECALL: MaybeUninit<Recalls> = MaybeUninit::uninit();
         static TAKEN: AtomicBool = AtomicBool::new(false);
         assert!(!TAKEN.swap(true, Ordering::AcqRel));
         // SAFETY: the flag lets exactly one caller past, so this is the
@@ -90,6 +131,15 @@ impl MidiSlot {
             addr_of_mut!((*m).flight).write([0; MAX_PARTS]);
             addr_of_mut!((*m).room).write([0; MAX_PARTS]);
             addr_of_mut!((*m).last).write(Ms(0));
+            #[cfg(feature = "midi-map")]
+            {
+                addr_of_mut!((*m).banks).write([[0; 16]; Port::COUNT]);
+                addr_of_mut!((*m).wait).write([0; 16]);
+                addr_of_mut!((*m).done).write(0);
+                addr_of_mut!((*m).heard).write(0);
+                // `RECALL` is reached only through this pointer.
+                addr_of_mut!((*m).recall).write(addr_of_mut!(RECALL).cast());
+            }
             &mut *m
         }
     }
@@ -98,7 +148,14 @@ impl MidiSlot {
     #[cfg(not(target_os = "none"))]
     pub(super) fn take() -> &'static mut MidiSlot {
         extern crate alloc;
-        alloc::boxed::Box::leak(alloc::boxed::Box::new(MidiSlot::new()))
+        let slot = alloc::boxed::Box::leak(alloc::boxed::Box::new(MidiSlot::new()));
+        // As the firmware's: recall copies only with the map.
+        #[cfg(feature = "midi-map")]
+        {
+            let recall: alloc::boxed::Box<MaybeUninit<Recalls>> = alloc::boxed::Box::new_uninit();
+            slot.recall = alloc::boxed::Box::leak(recall).as_mut_ptr();
+        }
+        slot
     }
 
     /// A new project: no ramp or bin survives it.

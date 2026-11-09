@@ -19,6 +19,8 @@ pub mod learn;
 pub mod out;
 #[cfg(feature = "midi-map")]
 pub mod page;
+#[cfg(feature = "midi-map")]
+pub mod program;
 pub mod ramp;
 pub mod resolve;
 
@@ -250,8 +252,9 @@ enum Seat {
 }
 
 /// Each Part's, whether a stepped or relative move edited the active Part
-/// this pass, what learn has heard of the control it senses, and DIN OUT's
-/// echo plan, the identity reply among it. ~6.6 KB, AXI (`MidiSlot`).
+/// this pass, what learn has heard of the control it senses, DIN OUT's
+/// echo plan, the identity reply among it, and whether the recall copies
+/// (`program`, in D2) are written. ~6.6 KB, AXI (`MidiSlot`).
 pub struct MidiUi {
     parts: [PartMidi; MAX_PARTS],
     stepped: bool,
@@ -266,6 +269,11 @@ pub struct MidiUi {
     /// SEQUENCER's toggles last above 63: PLAY/STOP, then each ring
     /// (`control::SeqAct`).
     seq_high: u8,
+    /// The recall copies are written (`program::recalls`, on first use, so
+    /// a bank-1 caller of `MidiSlot::ui` never calls bank 2); a project
+    /// load rebuilds this, so they start afresh.
+    #[cfg(feature = "midi-map")]
+    recall_ready: bool,
 }
 
 /// Nothing sensed: a named static, so its image is bank 2's.
@@ -302,6 +310,8 @@ impl MidiSlot {
             core::ptr::write_bytes(core::ptr::addr_of_mut!((*m).sx_first), 0, 1);
             core::ptr::addr_of_mut!((*m).sx_carry).write(None);
             core::ptr::addr_of_mut!((*m).seq_high).write(0);
+            #[cfg(feature = "midi-map")]
+            core::ptr::addr_of_mut!((*m).recall_ready).write(false);
         }
         self.built = true;
     }
@@ -468,6 +478,8 @@ impl UiState {
             PART_CHANNELS.set(p.index(), self.project.part(p).mix.channel);
         }
         self.control_routes();
+        #[cfg(feature = "midi-map")]
+        self.programs_published();
         self.cc.fresh();
         // Learn off: its kept SysEx message goes, so the next arming starts
         // clean (a pass runs between any two MIX + SEQ).
@@ -537,6 +549,12 @@ impl UiState {
                 }
                 continue;
             }
+            // A program change waits for the pass's end, busy or not.
+            #[cfg(feature = "midi-map")]
+            if let HeardEv::Ctrl(port, CtrlEvent::Ctl(ch, Ctl::Program { bank, program })) = e {
+                self.cc_program(port, ch, bank, program);
+                continue;
+            }
             if busy {
                 continue;
             }
@@ -553,6 +571,8 @@ impl UiState {
                 self.cc_turns(p);
             }
         }
+        #[cfg(feature = "midi-map")]
+        self.programs(busy);
         for (f, r) in self.cc.flight.iter_mut().zip(self.cc.room) {
             *f = (*f).max(MOVES as u8 - 1) - r;
         }

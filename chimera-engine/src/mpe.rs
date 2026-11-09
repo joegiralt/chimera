@@ -191,7 +191,9 @@ pub struct OwnIn<'a> {
 }
 
 /// A call through the door's one MPE entry (`MidiDoor::mpe`): one entry,
-/// so the door's table keeps its room.
+/// so the door's table keeps its room. The audio's other MIDI call, the
+/// program-change hold's sort (`Hold`, ADR 0224), rides it for the same
+/// reason: the table is full.
 pub enum Call<'a> {
     /// `kern::master` into the channel.
     Master(Zones, &'a mut MidiChannel),
@@ -199,6 +201,12 @@ pub enum Call<'a> {
     Own(&'a OwnIn<'a>, &'a mut [Own; MAX_VOICES]),
     /// `kern::write` on the zones.
     Write(&'a mut Zones, u8, u8),
+    /// `NoteHold::step` (`midi_in::hold`).
+    Hold(
+        &'a crate::midi_in::NoteHold,
+        &'a [crate::note_queue::NoteQueue],
+        &'a [crate::note_queue::Ready],
+    ),
 }
 
 /// The door's entries, through `kern::call`.
@@ -211,6 +219,7 @@ pub mod kern {
             Call::Master(z, ch) => *ch = master(z, *ch),
             Call::Own(i, out) => own(i, out),
             Call::Write(z, which, v) => *z = write(*z, which, v),
+            Call::Hold(h, queues, ready) => crate::midi_in::NoteHold::door_hold(h, queues, ready),
         }
     }
 

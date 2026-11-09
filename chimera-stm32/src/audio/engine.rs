@@ -238,6 +238,12 @@ struct Run<'a> {
     orbit: &'a mut chimera_board::orbit::Runner,
 }
 
+/// The program-change hold (ADR 0224): AXI `.bss`, only where a program
+/// change is heard.
+#[cfg(feature = "midi-map")]
+static HOLD: chimera_engine::note_queue::ProgramHold =
+    chimera_engine::note_queue::ProgramHold::new();
+
 /// One block's notes and render, every voice's stream through `ports`:
 /// the gate, then only when it opens the drain (live notes to ORBIT's
 /// capture and then the Parts, real-time to ORBIT's clock) and ORBIT.
@@ -254,7 +260,7 @@ fn block<P: OrbitPorts>(r: Run<'_>, shared: &AudioShared, ports: &mut P) {
     inst.run_block_ported(sources, out, shared, ports, |inst, reads, ports| {
         if gate.before_block(&LOAD_LINK, inst, shared) {
             let now = orbit.now();
-            notes.drain(|src, ev| match ev {
+            let play = |src: chimera_engine::note_queue::SourceId<NOTE_SOURCES>, ev| match ev {
                 // Capture sees the raw key, before any snap.
                 InEvent::Note(n) => {
                     orbit.live(n);
@@ -265,7 +271,13 @@ fn block<P: OrbitPorts>(r: Run<'_>, shared: &AudioShared, ports: &mut P) {
                 InEvent::Mode(m) => inst.channel_mode(m),
                 InEvent::Expr(e) => inst.expr(e),
                 InEvent::Rt(rt) => orbit.realtime(src.index(), rt, now),
-            });
+            };
+            // Only the MIDI map hears a program change (ADR 0224): without
+            // it, no hold.
+            #[cfg(feature = "midi-map")]
+            notes.drain_held(&HOLD, play);
+            #[cfg(not(feature = "midi-map"))]
+            notes.drain(play);
             orbit.block(inst, shared, reads, ports);
         }
     });

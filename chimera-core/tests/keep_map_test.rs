@@ -282,3 +282,43 @@ fn drawn_at(shot: &Fb, h: &[Gesture<'_>], x: i32, y: i32) -> bool {
     }
     any
 }
+
+/// KEEP MAP and a program change (ADR 0224): to another Sound and back to
+/// the edited one, the Part brings its edits back and still reads Edited,
+/// its kept rows in place.
+#[test]
+fn a_program_change_back_to_an_edit_stays_edited() {
+    use chimera_core::midi_in::{CtrlEvent, Port};
+    use chimera_core::ui::midi_settings::MidiSettings;
+    use chimera_midi::ctl::Ctl;
+    use chimera_midi::value::U7;
+    let mut ui = ui();
+    to_map(&mut ui);
+    keep(&mut ui);
+    ui.set_midi(MidiSettings::DEFAULT.with_program_in(true));
+    let ch = ui.project().part(P1).mix.channel;
+    let pc = |ui: &mut UiState, s: SlotId| {
+        let e = CtrlEvent::Ctl(
+            ch,
+            Ctl::Program {
+                bank: None,
+                program: U7::new(s.index() as u8).unwrap(),
+            },
+        );
+        ui.hear_ccs([(Port::Din, e)].into_iter(), Ms(1000), true);
+        pass(ui);
+    };
+    pc(&mut ui, VA);
+    assert_eq!(status(&ui), PartStatus::Clean);
+    ui.project_mut().edit_part(P1).sound.params.filter.cutoff *= 0.5;
+    let edited = ui.project().part(P1).sound.params.filter.cutoff;
+    pass(&mut ui);
+    assert_eq!(status(&ui), PartStatus::Edited);
+    pc(&mut ui, MODAL);
+    assert_eq!(status(&ui), PartStatus::Clean, "MODAL, kept rows: Clean");
+    assert_eq!(map(&ui), rows());
+    pc(&mut ui, VA);
+    assert_eq!(ui.project().part(P1).sound.params.filter.cutoff, edited);
+    assert_eq!(status(&ui), PartStatus::Edited);
+    assert_eq!(map(&ui), rows());
+}

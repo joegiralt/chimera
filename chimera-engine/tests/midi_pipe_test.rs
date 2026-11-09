@@ -149,7 +149,7 @@ fn pipe_matches_old_route_for_notes_bend_sustain_clock() {
     let r = pipe(OLD_ROUTE_CORPUS);
     assert_eq!(r.notes, want);
     // The old route's one CC (71 on channel 2) rides the ring; pressure is
-    // new there, and program is dropped (Phase 1).
+    // new there, and so is the program change (#515).
     let ccs: Vec<_> = r
         .ctrl
         .iter()
@@ -165,7 +165,12 @@ fn pipe_matches_old_route_for_notes_bend_sustain_clock() {
             }
         )]
     );
-    assert_eq!(r.ctrl.len(), 2, "and channel pressure: {:?}", r.ctrl);
+    assert_eq!(
+        r.ctrl.len(),
+        3,
+        "and the program and pressure: {:?}",
+        r.ctrl
+    );
     // The same bytes in awkward slices: the pipe keeps state across `feed`s.
     let mut p = DinPipe::new();
     let mut r = Rec::default();
@@ -849,19 +854,42 @@ fn a_pedal_up_waits_for_room() {
 }
 
 #[test]
-fn stats_count_faults_dropped_programs_and_refusals() {
+fn stats_count_faults_and_refusals() {
     let mut p = DinPipe::new();
     let mut r = Rec::default();
-    p.feed(&[0xC2, 7, 0xB0, 0, 1, 32, 2, 0xC0, 9, 0x40, 0xF9], &mut r);
+    p.feed(&[0xC2, 7, 0x40, 0xF9], &mut r);
     let s = p.stats();
-    assert_eq!(s.programs_dropped, 3, "running status counts");
     assert_eq!(s.faults.undefined, 1);
     assert_eq!(s.faults.orphan, 0);
-    assert!(r.ctrl.is_empty(), "Phase 1 drops Program Change");
     r.refuse = true;
     p.feed(&[0x90, 60, 1, 0xB0, 71, 1, 0xB0, 71, 2], &mut r);
     assert_eq!(p.stats().refused, 1, "the note");
     assert_eq!(p.stats().ctrl_refused, 2, "the CCs");
+}
+
+/// #515: a program change reaches the control ring with the bank its CC 0
+/// and CC 32 selected, running status and all.
+#[test]
+fn program_change_reaches_the_ring_with_its_bank() {
+    let r = pipe(&[0xC2, 7, 0xB0, 0, 1, 32, 2, 0xC0, 9, 5]);
+    let prog = |c: u8, bank: Option<U14>, p: u8| {
+        CtrlEvent::Ctl(
+            ch(c),
+            Ctl::Program {
+                bank,
+                program: u7(p),
+            },
+        )
+    };
+    assert_eq!(
+        r.ctrl,
+        [
+            prog(2, None, 7),
+            prog(0, Some(U14::from_parts(u7(1), u7(2))), 9),
+            prog(0, None, 5),
+        ]
+    );
+    assert!(r.notes.is_empty());
 }
 
 fn arb_sel() -> impl Strategy<Value = Sel> {

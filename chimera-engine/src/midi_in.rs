@@ -9,7 +9,7 @@
 //! Closed, MIDI in is deaf, notes included (spec § 13): no bank-1 parser.
 
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use chimera_midi::ctl::{Controllers, Ctl, DataValue, Dir, FreeCc, Heard, Sel};
 use chimera_midi::sense::Sensing;
@@ -22,8 +22,8 @@ use crate::hw::MAX_PARTS;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
 use crate::midi_map::{KeptMap, MidiMap};
 use crate::note_queue::{
-    ChannelMode, ChannelModeEvent, Expr, ExprEvent, InEvent, NoteKind, NoteProducer, RealTime,
-    SustainEvent,
+    ChannelMode, ChannelModeEvent, Expr, ExprEvent, InEvent, MAX_NOTE_SOURCES, NoteKind,
+    NoteProducer, NoteQueue, READY_LEN, Ready, RealTime, SustainEvent,
 };
 use crate::storage::{RecordBuf, RecordTag, RecordWriter};
 use crate::{MidiChannel, MidiNote};
@@ -707,8 +707,6 @@ pub static SYSEX_IN: [SxRing; Port::COUNT] = [SxRing::new(), SxRing::new()];
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PipeStats {
     pub faults: FaultCounts,
-    /// Program Changes parsed and dropped (Phase 1 acts on none).
-    pub programs_dropped: u16,
     /// Events the note queue refused.
     pub refused: u16,
     /// Events the control ring refused, apart: a ring nobody drains fills
@@ -891,7 +889,6 @@ impl DinPipe {
                     sysex_overflow: 0,
                     undefined: 0,
                 },
-                programs_dropped: 0,
                 refused: 0,
                 ctrl_refused: 0,
             },
@@ -982,11 +979,18 @@ impl DinPipe {
                         match InEvent::from_event(c, &v) {
                             Some(e) => sink.note(e),
                             None => match self.ctl.hear(c, v) {
-                                Heard::Ctl(Ctl::Program { .. }) => {
-                                    sink.stats.programs_dropped =
-                                        sink.stats.programs_dropped.saturating_add(1);
+                                Heard::Ctl(ctl) => {
+                                    // Queued, a program change holds its
+                                    // channel's notes till the UI applies it
+                                    // (#515).
+                                    if sink.ctrl(CtrlEvent::Ctl(c, ctl))
+                                        && matches!(ctl, Ctl::Program { .. })
+                                        && PROGRAM_IN.load(Ordering::Relaxed)
+                                    {
+                                        PROGRAM_PENDING
+                                            .fetch_or(1 << (c.get() & 15), Ordering::Release);
+                                    }
                                 }
-                                Heard::Ctl(ctl) => sink.ctrl(CtrlEvent::Ctl(c, ctl)),
                                 Heard::Note | Heard::Consumed => {}
                             },
                         }
@@ -1287,6 +1291,166 @@ impl UsbSlot {
     }
 }
 
+/// SETTINGS › MIDI CONFIG › SYNC's PROGRAM IN as the UI last saw it: a
+/// pipe holds a channel's notes for a program change only while it is on
+/// (ADR 0224).
+pub static PROGRAM_IN: AtomicBool = AtomicBool::new(false);
+
+/// A bit a channel whose program change the UI has yet to apply: set by a
+/// pipe as it queues one, cleared by the UI the pass after it applied it
+/// (its load published) or by the drain's timeout (`NoteHold`).
+pub static PROGRAM_PENDING: AtomicU16 = AtomicU16::new(0);
+
+/// Events a hold keeps.
+pub const HOLD_LEN: usize = 16;
+/// Blocks a program change holds its channel at most: 40 ms (owner
+/// decision 7, #515).
+pub const HOLD_BLOCKS: u32 = (40 * crate::hw::SAMPLE_RATE / 1000) / crate::hw::BLOCK_SIZE as u32;
+
+/// The audio's hold (`NoteDrain::drain`): a pending channel's events, in
+/// order, each with its source, till the UI applies its program change.
+/// Each block's step moves what may play into `ready` (`ProgramHold`'s), a
+/// ring a source the drain empties instead of the source's queue that
+/// block, so the drain stays one loop and bank 1 keeps one copy of the
+/// Parts' note handling. In `ProgramHold`, a static, so no frame holds
+/// it; the audio thread's alone, atomics only so a static can hold it.
+pub struct NoteHold {
+    /// Packed events (`InEvent::pack`) and their sources.
+    at: [AtomicU32; HOLD_LEN],
+    src: [AtomicU8; HOLD_LEN],
+    len: AtomicU8,
+    /// Blocks some channel has been pending.
+    age: AtomicU32,
+}
+
+impl Default for NoteHold {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The channel an event plays on; real-time has none. Inlined into
+/// `NoteHold::step`, so it is bank 2's.
+#[inline(always)]
+fn channel_of(e: InEvent) -> Option<u8> {
+    Some(match e {
+        InEvent::Note(n) => n.channel.get(),
+        InEvent::Bend(b) => b.channel.get(),
+        InEvent::Sustain(p) => p.channel.get(),
+        InEvent::Mode(m) => m.channel.get(),
+        InEvent::Expr(x) => x.channel.get(),
+        InEvent::Rt(_) => return None,
+    })
+}
+
+impl NoteHold {
+    pub const fn new() -> Self {
+        Self {
+            at: [const { AtomicU32::new(0) }; HOLD_LEN],
+            src: [const { AtomicU8::new(0) }; HOLD_LEN],
+            len: AtomicU8::new(0),
+            age: AtomicU32::new(0),
+        }
+    }
+
+    /// Nothing held: a drain with no channel pending needs no door.
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len.load(Ordering::Relaxed) == 0
+    }
+
+    /// One block's sort (bank 2's, the door's `hold`), `ready` empty: what
+    /// waits on a channel no longer pending first, then each source's
+    /// queue, a pending channel's events kept, as many as `ready` has
+    /// room for (the rest stay queued for the next block's sort: the drain
+    /// plays only `ready`). A full hold lets its oldest go ahead of the
+    /// new one, never drops it. Past `HOLD_BLOCKS` every pending bit is
+    /// cleared.
+    fn step(&self, queues: &[NoteQueue], ready: &[Ready]) {
+        let mut pend = PROGRAM_PENDING.load(Ordering::Acquire);
+        let mut age = if pend == 0 {
+            0
+        } else {
+            self.age.load(Ordering::Relaxed) + 1
+        };
+        if age > HOLD_BLOCKS {
+            PROGRAM_PENDING.fetch_and(!pend, Ordering::Relaxed);
+            (pend, age) = (0, 0);
+        }
+        self.age.store(age, Ordering::Relaxed);
+        let held = |e: InEvent| channel_of(e).is_some_and(|c| pend >> (c & 15) & 1 != 0);
+        // The hold, unpacked: what fails to unpack was never packed.
+        let mut at = [(0u8, InEvent::Rt(RealTime::Clock)); HOLD_LEN];
+        let mut len = 0;
+        for i in 0..usize::from(self.len.load(Ordering::Relaxed)).min(HOLD_LEN) {
+            if let Some(e) = InEvent::unpack(self.at[i].load(Ordering::Relaxed)) {
+                at[len] = (self.src[i].load(Ordering::Relaxed), e);
+                len += 1;
+            }
+        }
+        let mut room = [READY_LEN; MAX_NOTE_SOURCES];
+        let mut k = 0;
+        for r in 0..len {
+            let (s, e) = at[r];
+            let si = usize::from(s);
+            if !held(e) && ready.get(si).is_some_and(|r| r.push(e)) {
+                room[si] -= 1;
+            } else {
+                at[k] = (s, e);
+                k += 1;
+            }
+        }
+        len = k;
+        for (i, q) in queues.iter().enumerate().take(ready.len()) {
+            // Full, the hold lets its oldest go to make room: only while
+            // that one's source has Ready room, else this queue waits.
+            while room[i] > 0
+                && (len < HOLD_LEN || room[usize::from(at[0].0)] > 0)
+                && let Some(e) = q.pop()
+            {
+                if !held(e) {
+                    ready[i].push(e);
+                    room[i] -= 1;
+                    continue;
+                }
+                if len == HOLD_LEN {
+                    let (s, old) = at[0];
+                    at.copy_within(1.., 0);
+                    len -= 1;
+                    ready[usize::from(s)].push(old);
+                    room[usize::from(s)] -= 1;
+                }
+                at[len] = (i as u8, e);
+                len += 1;
+            }
+        }
+        for (j, &(s, e)) in at.iter().enumerate().take(len) {
+            self.at[j].store(e.pack(), Ordering::Relaxed);
+            self.src[j].store(s, Ordering::Relaxed);
+        }
+        self.len.store(len as u8, Ordering::Relaxed);
+    }
+
+    pub(crate) fn door_hold(h: &NoteHold, queues: &[NoteQueue], ready: &[Ready]) {
+        h.step(queues, ready);
+    }
+}
+
+/// `NoteHold::step` through bank 2's door with `bank2`; whether it ran.
+/// Closed, nothing: the drain plays the queues as they are.
+#[inline(always)]
+pub fn hold(h: &NoteHold, queues: &[NoteQueue], ready: &[Ready]) -> bool {
+    #[cfg(feature = "bank2")]
+    return crate::bank2::DOOR_CELL
+        .with(|d| (d.midi.mpe)(crate::mpe::Call::Hold(h, queues, ready)))
+        .is_some();
+    #[cfg(not(feature = "bank2"))]
+    {
+        NoteHold::door_hold(h, queues, ready);
+        true
+    }
+}
+
 /// How USB left Configured (`chimera_midi::usb::Edge`).
 pub use chimera_midi::usb::Left;
 
@@ -1533,10 +1697,12 @@ impl<S: Sinks + ?Sized> Counted<'_, S> {
         true
     }
 
-    fn ctrl(&mut self, e: CtrlEvent) {
-        if !self.out.ctrl(e) {
+    fn ctrl(&mut self, e: CtrlEvent) -> bool {
+        let took = self.out.ctrl(e);
+        if !took {
             self.stats.ctrl_refused = self.stats.ctrl_refused.saturating_add(1);
         }
+        took
     }
 
     fn sysex(&mut self, body: &[u8]) {

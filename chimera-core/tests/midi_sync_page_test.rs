@@ -32,7 +32,7 @@ fn sync_page_edits_what_orbit_is_sent() {
     assert_eq!(ui.midi().sync, SyncMode::Int);
     assert_eq!(published(&ui), SyncMode::Int);
     // Empty slots edit nothing.
-    feed(&mut ui, Input::turn(EncoderId::B, 3));
+    feed(&mut ui, Input::turn(EncoderId::C, 3));
     assert_eq!(ui.midi().sync, SyncMode::Int);
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     assert_eq!(published(&ui), SyncMode::Ext);
@@ -42,6 +42,25 @@ fn sync_page_edits_what_orbit_is_sent() {
         ..MidiSettings::DEFAULT
     });
     assert_eq!(published(&ui), SyncMode::Int);
+}
+
+/// #515: B is PROGRAM IN, OFF out of the box; SYSTEM keeps it, and a
+/// SYSTEM from before it reads OFF.
+#[test]
+fn program_in_is_on_the_sync_page() {
+    use chimera_core::block::Block;
+    let mut ui = UiState::new();
+    to_leaf(&mut ui, &["MIDI CONFIG", "SYNC"]);
+    assert!(!ui.midi().program_in(), "OFF out of the box");
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert!(ui.midi().program_in());
+    assert_eq!(ui.midi().sync, SyncMode::Ext, "SYNC untouched");
+    let m = MidiSettings::DEFAULT.with_program_in(true);
+    assert_eq!(m.get(MidiSettings::PROGRAM_IN), 1.0);
+    assert!(m.with_echo(false).program_in(), "its own bit");
+    let mut w = MidiSettings::DEFAULT;
+    w.write(MidiSettings::PROGRAM_IN, 1.0);
+    assert!(w.program_in() && w.echo() && !w.push());
 }
 
 /// Leaving SETTINGS saves SYNC with the theme; a card's SYSTEM brings it.

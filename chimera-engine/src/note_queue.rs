@@ -33,6 +33,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use chimera_midi::stream::{ChannelMode as StreamMode, Voice};
 use chimera_midi::value::U7;
 
+use crate::midi_in::{NoteHold, PROGRAM_PENDING};
 use crate::{MidiChannel, MidiNote, Velocity};
 
 pub const NOTE_QUEUE_LEN: usize = 64;
@@ -248,7 +249,7 @@ impl InEvent {
     }
 
     /// A note packs as `NoteEvent::pack`, kind 0.
-    fn pack(self) -> u32 {
+    pub(crate) fn pack(self) -> u32 {
         match self {
             InEvent::Note(n) => n.pack(),
             InEvent::Rt(rt) => (rt as u32 + 1) << KIND_SHIFT,
@@ -280,7 +281,10 @@ impl InEvent {
         }
     }
 
-    fn unpack(bits: u32) -> Option<Self> {
+    /// Inlined: each caller keeps one copy, the drain one in bank 1
+    /// (`pop_bits`), the hold its own in bank 2.
+    #[inline(always)]
+    pub(crate) fn unpack(bits: u32) -> Option<Self> {
         match (bits >> KIND_SHIFT) as usize {
             0 => NoteEvent::unpack(bits).map(InEvent::Note),
             KIND_BEND => Some(InEvent::Bend(BendEvent {
@@ -386,7 +390,7 @@ impl NoteQueue {
     /// slot write always happens-before the matching read in `pop`.
     /// Inlined into the pipes in bank 2 (`NoteProducer::push`).
     #[inline(always)]
-    fn push(&self, ev: InEvent) -> bool {
+    pub(crate) fn push(&self, ev: InEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         // A velocity-0 note-on is an `Off` already (`unpack`, `from_event`).
@@ -424,14 +428,22 @@ impl NoteQueue {
     /// `Release` store to `head` afterward is what `push`'s `Acquire` load
     /// of `head` pairs with, so the producer never reuses this slot before
     /// this read of it has completed.
-    fn pop(&self) -> Option<InEvent> {
+    /// Inlined: the drain and the hold (bank 2) each keep their own copy.
+    #[inline(always)]
+    pub(crate) fn pop(&self) -> Option<InEvent> {
+        self.pop_bits().and_then(InEvent::unpack)
+    }
+
+    /// `pop`, still packed: the drain unpacks once for both its rings.
+    #[inline(always)]
+    fn pop_bits(&self) -> Option<u32> {
         let head = self.head.load(Ordering::Relaxed);
         if head == self.tail.load(Ordering::Acquire) {
             return None;
         }
         let bits = self.slots[head as usize % NOTE_QUEUE_LEN].load(Ordering::Relaxed);
         self.head.store(head.wrapping_add(1), Ordering::Release);
-        InEvent::unpack(bits)
+        Some(bits)
     }
 
     /// Events dropped because the queue was full.
@@ -441,6 +453,53 @@ impl NoteQueue {
 }
 
 pub const MAX_NOTE_SOURCES: usize = 3;
+
+/// Events a source's `Ready` holds: a block's worth and more (DIN brings
+/// about two a block); past it the rest wait in the source's queue.
+pub const READY_LEN: usize = 16;
+
+/// What the program-change hold lets play for one source this block
+/// (`midi_in::NoteHold`), drained ahead of the source's queue. The audio
+/// thread's alone; atomics only so `ProgramHold` can be a static.
+pub struct Ready {
+    slots: [AtomicU32; READY_LEN],
+    head: AtomicU32,
+    tail: AtomicU32,
+}
+
+impl Ready {
+    const fn new() -> Self {
+        Self {
+            slots: [const { AtomicU32::new(0) }; READY_LEN],
+            head: AtomicU32::new(0),
+            tail: AtomicU32::new(0),
+        }
+    }
+
+    /// `false`: full.
+    pub(crate) fn push(&self, ev: InEvent) -> bool {
+        let (h, t) = (
+            self.head.load(Ordering::Relaxed),
+            self.tail.load(Ordering::Relaxed),
+        );
+        if t.wrapping_sub(h) as usize >= READY_LEN {
+            return false;
+        }
+        self.slots[t as usize % READY_LEN].store(ev.pack(), Ordering::Relaxed);
+        self.tail.store(t.wrapping_add(1), Ordering::Relaxed);
+        true
+    }
+
+    #[inline(always)]
+    fn pop_bits(&self) -> Option<u32> {
+        let h = self.head.load(Ordering::Relaxed);
+        if h == self.tail.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.head.store(h.wrapping_add(1), Ordering::Relaxed);
+        Some(self.slots[h as usize % READY_LEN].load(Ordering::Relaxed))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceId<const N: usize>(usize);
@@ -465,7 +524,8 @@ pub struct NoteSources<const N: usize> {
     split: AtomicBool,
 }
 
-/// Every source's consumer.
+/// Every source's consumer, and the events a program change holds
+/// (`midi_in::NoteHold`).
 pub struct NoteDrain<'a, const N: usize>(&'a NoteSources<N>);
 
 /// The sources' producers, each taken once by its `SourceId`.
@@ -485,6 +545,50 @@ impl<const N: usize> NoteDrain<'_, N> {
             while let Some(ev) = q.pop() {
                 f(SourceId(i), ev);
             }
+        }
+    }
+
+    /// `drain` with `h`, the program-change hold (#515, ADR 0224): while a
+    /// change waits, its channel's events wait in the hold (bank 2's), and
+    /// this block plays only what the hold sorted into its `ready` rings;
+    /// the rest of a queue waits for the next block's sort. Only builds
+    /// with the MIDI map, which hear a program change, keep a hold.
+    pub fn drain_held(&mut self, h: &ProgramHold, mut f: impl FnMut(SourceId<N>, InEvent)) {
+        let sorted = (!h.hold.is_empty() || PROGRAM_PENDING.load(Ordering::Relaxed) != 0)
+            && crate::midi_in::hold(&h.hold, &self.0.queues, &h.ready);
+        for ((i, q), r) in self.0.queues.iter().enumerate().zip(&h.ready) {
+            while let Some(bits) = r
+                .pop_bits()
+                .or_else(|| if sorted { None } else { q.pop_bits() })
+            {
+                if let Some(ev) = InEvent::unpack(bits) {
+                    f(SourceId(i), ev);
+                }
+            }
+        }
+    }
+}
+
+/// The program-change hold's state (`NoteDrain::drain_held`): the held
+/// events and a `Ready` ring a source. A static of the shell's, only in
+/// builds with the MIDI map (AXI has no room elsewhere); the audio
+/// thread's alone, atomics only so a static can hold it.
+pub struct ProgramHold {
+    hold: NoteHold,
+    ready: [Ready; MAX_NOTE_SOURCES],
+}
+
+impl Default for ProgramHold {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProgramHold {
+    pub const fn new() -> Self {
+        Self {
+            hold: NoteHold::new(),
+            ready: [const { Ready::new() }; MAX_NOTE_SOURCES],
         }
     }
 }

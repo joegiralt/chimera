@@ -2,7 +2,8 @@
 //! CONFIG's SYNC, who drives ORBIT's transport (ADR 0080), SETTINGS >
 //! TUNING's TUNE, the A4 reference as cents off 440 Hz, SYSTEM > PUSH
 //! ENCODERS' PUSH, whether the front panel's encoders push (ADR 0140), and
-//! MIDI CONFIG's ECHO, DIN OUT's master switch (spec § 8.4), MIDI
+//! MIDI CONFIG's ECHO, DIN OUT's master switch (spec § 8.4), SYNC's
+//! PROGRAM IN, whether a program change loads a Sound (ADR 0224), MIDI
 //! CONFIG › MPE's zones (ADR 0252), and MIDI CONFIG › CONTROL's MIXER,
 //! SEQUENCER and AUTO channels (ADR 0254).
 //! They say how the unit sits in the studio, not what a project plays.
@@ -23,7 +24,7 @@ pub struct MidiSettings {
     pub sync: SyncMode,
     /// Cents, -100..=100: A4 = 440 Hz × 2^(tune / 1200). Whole cents.
     pub tune: i8,
-    /// PUSH and ECHO (`push`, `echo`).
+    /// PUSH, ECHO and PROGRAM IN (`push`, `echo`, `program_in`).
     pub switches: Switches,
     /// MPE's lower and upper zones (ADR 0252): off until set here or by an
     /// MPE Configuration Message.
@@ -47,9 +48,10 @@ impl Control {
     pub const ALL: [Control; 3] = [Control::Mixer, Control::Sequencer, Control::Auto];
 }
 
-/// SYSTEM's two switches in one byte: PUSH, the control board has push
+/// SYSTEM's switches in one byte: PUSH, the control board has push
 /// encoders, read them (ADR 0140); ECHO, DIN OUT sends value echo and
-/// identity replies (spec § 8.4). One byte keeps `MidiSettings` at three,
+/// identity replies (spec § 8.4); PROGRAM IN, a program change loads a
+/// Sound (ADR 0224). One byte keeps `MidiSettings` at three,
 /// so SYSTEM's copies in bank 1 keep their shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Switches(u8);
@@ -57,6 +59,7 @@ pub struct Switches(u8);
 impl Switches {
     const PUSH: u8 = 1;
     const ECHO: u8 = 2;
+    const PROGRAM_IN: u8 = 4;
 
     const fn has(self, bit: u8) -> bool {
         self.0 & bit != 0
@@ -80,7 +83,7 @@ impl MidiSettings {
     pub const TUNE: ParamId = ParamId(1);
     pub const PUSH: ParamId = ParamId(2);
     pub const ECHO: ParamId = ParamId(3);
-    // 4 is PROGRAM IN's (#891).
+    pub const PROGRAM_IN: ParamId = ParamId(4);
     pub const LOWER: ParamId = ParamId(5);
     pub const LOWER_BEND: ParamId = ParamId(6);
     pub const UPPER: ParamId = ParamId(7);
@@ -108,6 +111,16 @@ impl MidiSettings {
     /// DIN OUT sends: value echo and identity replies (spec § 8.4).
     pub const fn echo(&self) -> bool {
         self.switches.has(Switches::ECHO)
+    }
+
+    /// A program change loads a Sound (ADR 0224).
+    pub const fn program_in(&self) -> bool {
+        self.switches.has(Switches::PROGRAM_IN)
+    }
+
+    pub const fn with_program_in(mut self, on: bool) -> Self {
+        self.switches = self.switches.with(Switches::PROGRAM_IN, on);
+        self
     }
 
     pub const fn with_push(mut self, on: bool) -> Self {
@@ -163,7 +176,7 @@ const fn control(id: u8, label: &'static str, ident: &'static str) -> ParamSpec 
 /// SYNC by index, `SyncMode::ALL`'s order; `SYNC_NAMES` too
 /// (`midi_sync_page_test::sync_value_names_and_order_agree`). INT and EXT are two peers,
 /// neither off, so the focus shows the word.
-pub static MIDI_SPECS: [ParamSpec; 11] = [
+pub static MIDI_SPECS: [ParamSpec; 12] = [
     ParamSpec::choice(
         0,
         "SYNC",
@@ -211,6 +224,19 @@ pub static MIDI_SPECS: [ParamSpec; 11] = [
         Motion::Stepped(Change::Snap),
     )
     .ident("ECHO")
+    .glyph(crate::glyph::FocusGlyph::Switch),
+    // A SYSTEM from before PROGRAM IN has none: OFF (ADR 0224).
+    ParamSpec::stepped(
+        4,
+        "PROGRAM",
+        ValFmt::Names(&OFF_ON),
+        0.0,
+        1.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("PRGIN")
     .glyph(crate::glyph::FocusGlyph::Switch),
     // MPE (ADR 0252). A SYSTEM from before them has none: both zones OFF,
     // members bending ±48 (the MPE spec's).
@@ -286,6 +312,7 @@ impl Block for MidiSettings {
             Self::TUNE => f32::from(self.tune),
             Self::PUSH => f32::from(self.push()),
             Self::ECHO => f32::from(self.echo()),
+            Self::PROGRAM_IN => f32::from(self.program_in()),
             Self::LOWER => f32::from(self.mpe.lower()),
             Self::LOWER_BEND => f32::from(self.mpe.lower_bend()),
             Self::UPPER => f32::from(self.mpe.upper()),
@@ -302,6 +329,7 @@ impl Block for MidiSettings {
             Self::TUNE => self.tune = crate::dsp::clampf(v, -100.0, 100.0) as i8,
             Self::PUSH => *self = self.with_push(v as u8 != 0),
             Self::ECHO => *self = self.with_echo(v as u8 != 0),
+            Self::PROGRAM_IN => *self = self.with_program_in(v as u8 != 0),
             // MPE's four, bank 2's (`mpe::write`): a zone grown into the
             // other shrinks it.
             ParamId(i @ 5..=8) => self.mpe = crate::mpe::write(self.mpe, i - 5, v as u8),

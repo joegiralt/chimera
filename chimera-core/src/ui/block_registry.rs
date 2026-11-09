@@ -1038,7 +1038,8 @@ pub static SYS_MPE: BlockDef = BlockDef {
     ],
 };
 
-/// MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080).
+/// MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080), and
+/// PROGRAM IN, whether a program change loads a Sound (ADR 0224).
 pub static SYS_SYNC: BlockDef = BlockDef {
     id: 86,
     name: "Sync",
@@ -1048,7 +1049,8 @@ pub static SYS_SYNC: BlockDef = BlockDef {
     // Held by `UiState` and stored in SYSTEM (`ui::midi_settings`).
     params: [
         ParamSlot::param(BlockRef::Midi, MidiSettings::SYNC),
-        EMPTY,
+        // #515: whether a program change loads a Sound (ADR 0224).
+        ParamSlot::param(BlockRef::Midi, MidiSettings::PROGRAM_IN),
         EMPTY,
         EMPTY,
         EMPTY,

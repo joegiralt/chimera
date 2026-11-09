@@ -353,6 +353,26 @@ Over USB, Chimera shows up as one MIDI device with these ports:
 - **Chimera**, both ways: every channel, as on DIN. Clock, SysEx, the identity reply and ECHO use this port.
 - **Chimera Part 1** to **Chimera Part 6**, into Chimera only: each plays its Part, whatever channel your DAW track sends on. Chimera moves the notes, CCs, bend and pressure to that Part's channel, so another Part on the same channel plays them too. Clock and SysEx on these ports are ignored.
 
+## Program change: Sounds from a sequencer
+
+A program change on a Part's MIDI channel loads a Sound into that Part, so a sequencer can change Sounds with its patterns. Turn it on at SETTINGS › MIDI CONFIG › SYNC: B is **PROGRAM**, `OFF` (the default) or `ON`. With it off, Chimera ignores program changes and bank selects.
+
+What a program change loads depends on the bank:
+
+| Bank | Program 0 to 127 loads |
+|---|---|
+| 0 (the default) | the project's Sound slots: program 0 is SLOT 01, program 127 is SLOT 128 |
+| 1 | an INIT Sound: 0 ALGO, 1 MODAL, 2 TAPE, 3 VA |
+
+Select the bank with **CC 0** (bank select MSB) before the program change; if your sequencer sends only **CC 32** (the LSB), or CC 0 at 0 and then CC 32, Chimera reads CC 32. The bank stays selected on that channel until the next bank select. A program change to an empty slot, to a program past the last INIT, or in bank 2 or higher does nothing. LIBRARY and FACTORY Sounds can't be loaded by program change: save them into the project first.
+
+- **Every Part on the channel** loads the Sound. Parts on other channels keep theirs.
+- **A Part already playing that Sound** keeps it, edits and all, so a sequencer that sends the same program change on every pattern costs nothing. A Part marked `◦` (its slot was saved over since) loads the slot's new Sound.
+- **A Part with unsaved edits** (`*`) loads the new Sound without asking. Its edits are kept: a program change back to the Sound you edited brings them back, still marked `*`. Each Part keeps one set of edits this way, the last one it left. Loading anything into the Part another way (RELOAD, the Sound rung, a library load) or loading a project lets them go. To keep edits for good, save the Sound.
+- **The notes that follow** a program change on its channel wait for the new Sound, up to 40 ms, so a pattern's first note plays the new Sound.
+- **While Chimera is busy** loading from the card, or a prompt, learn or the Part's Sound rung is open, the last program change on each channel waits and loads when it closes.
+- **On the Part you are editing,** the pages follow the new Sound's engine. Other Parts change without moving the page.
+
 ## What else Chimera answers on DIN
 
 When SETTINGS › ABOUT reads `NEEDS UPDATE`, Chimera ignores MIDI in, notes and clock too, until the update is installed: MIDI MAP reads `NEEDS UPDATE`, and **MIX + SEQ** says `NEEDS UPDATE` instead of starting learn.

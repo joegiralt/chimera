@@ -186,6 +186,14 @@ impl Project {
         &self.pool
     }
 
+    /// Slot `s` damaged (`Pool::cut_for_test`).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn cut_slot_for_test(&mut self, s: SlotId) {
+        self.bump();
+        self.pool.cut_for_test(s);
+    }
+
     /// `Pool::sweep_scratch`: the boot's card sweep, before the project
     /// loads.
     pub fn sweep_scratch(&mut self) -> &mut [u8] {
@@ -319,7 +327,52 @@ impl Project {
         self.load_part(c.target())
     }
 
-    /// Only through `replace_part` or a Part action.
+    /// A program change's load (ADR 0224), the one that needs no guard: it
+    /// loses nothing, as the Part's Sound, edited or not, is swapped into
+    /// `keep` first. Then `adopt`: what came out of `keep` stays, as
+    /// `src`'s Sound edited (a recall copy back); else `src` loads over it,
+    /// and a refused load swaps the Part's Sound back.
+    /// Bank 2's (`bank2.x`): only the MIDI UI calls it.
+    #[inline(never)]
+    pub fn program_load(
+        &mut self,
+        src: PartSource,
+        keep: &mut Sound,
+        adopt: bool,
+    ) -> Result<(), ReplaceError> {
+        let origin = match src.from {
+            PartFrom::Slot(s) => {
+                let sound = self.pool.get(s).ok_or(ReplaceError::SlotEmpty)?;
+                Origin::Slot {
+                    slot: s,
+                    generation: self.pool.generation(s),
+                    crc: sound.crc(),
+                }
+            }
+            PartFrom::Init(e) => Origin::Init(e),
+        };
+        self.bump();
+        let i = src.part.index();
+        core::mem::swap(&mut *self.perf.parts[i].sound, keep);
+        if !adopt {
+            // Refused, the Part is as it was: its Sound back from `keep`,
+            // its loads unmoved.
+            let loads = self.perf.parts[i].loads;
+            let r = self.load_part(src);
+            if r.is_err() {
+                let part = &mut self.perf.parts[i];
+                core::mem::swap(&mut *part.sound, keep);
+                part.loads = loads;
+            }
+            return r;
+        }
+        let part = &mut self.perf.parts[i];
+        part.loads.bump();
+        part.origin = origin;
+        Ok(())
+    }
+
+    /// Only through `replace_part`, `program_load` or a Part action.
     fn load_part(&mut self, src: PartSource) -> Result<(), ReplaceError> {
         self.bump();
         let part = &mut self.perf.parts[src.part.index()];

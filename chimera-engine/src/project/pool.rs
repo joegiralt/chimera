@@ -196,6 +196,16 @@ impl Pool {
         self.index.gens[s.index()]
     }
 
+    /// Slot `s`'s entry cut to its name and a record's head: it no
+    /// longer decodes, as the bytes of a damaged arena wouldn't.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn cut_for_test(&mut self, s: SlotId) {
+        if let Some(e) = self.index.slots[s.index()].as_mut() {
+            e.len = e.len.min((NAME_LEN + HEAD_LEN - 1) as u32);
+        }
+    }
+
     pub fn first_free(&self) -> Option<SlotId> {
         SlotId::ALL
             .into_iter()

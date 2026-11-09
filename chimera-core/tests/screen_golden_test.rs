@@ -423,7 +423,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser_long", 0xe06bf7b29a2d3f15),
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
-    ("settings_midi_sync", 0x0e26ce69d0f54980),
+    // Re-recorded for ADR 0224: SYNC's B cell is PROGRAM IN, OFF.
+    ("settings_midi_sync", 0x46dea79f34ea9084),
     ("settings_midi_mpe", 0x99c383fb27b32791),
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound

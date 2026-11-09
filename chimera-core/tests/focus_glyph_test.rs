@@ -180,6 +180,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Midi", "SYNC", NONE),
     ("Midi", "PUSH", SWITCH),
     ("Midi", "ECHO", SWITCH),
+    ("Midi", "PRGIN", SWITCH),
     ("OrbitChords", "KEY", NONE),
     ("OrbitChords", "SCALE", NONE),
     ("OrbitRing", "MUTE", SWITCH),

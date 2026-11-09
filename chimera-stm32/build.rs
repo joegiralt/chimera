@@ -225,13 +225,15 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // rodata, linked by the MIDI UI's canonical NRPNs.
     // And the MIDI pipe (Phase 1, `MidiDoor`): `DinPipe`, its counting sink
     // (`Counted`), the sinks it runs on (`PipeSinks`), USB's slot and held keys (`UsbSlot`, `Held`), the SysEx
-    // bodies' ring (`SxRing`, #846), MPE's zone reads (`chimera_engine::mpe`, ADR 0252) and the `chimera_midi` stream, controller, sensing and
+    // bodies' ring (`SxRing`, #846), MPE's zone reads (`chimera_engine::mpe`, ADR 0252), the audio's program-change hold
+    // (`NoteHold`, ADR 0224) and its `Ready` rings' push, and the `chimera_midi` stream, controller, sensing and
     // SysEx layers it runs, and SysEx bindings' matching (`sxmap`, #846). And the map's codec (`midi_map::codec`), the
     // controller maps beside it (`midi_map::ctl`, ADR 0226), and
     // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
     // and rel), learn's classifier (`chimera_midi::learn`) and the 14-bit
     // MSB check it shares with the codec (`chimera_midi::out`). And KEEP
     // MAP's mark (`Project::set_map_kept`, ADR 0253), only the MIDI UI's.
+    // And a program change's load (`Project::program_load`), only the MIDI UI's.
     let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
     *(.text.*8midi_map5codec* .rodata.*8midi_map5codec*);
     *(.text.*8midi_map3ctl* .rodata.*8midi_map3ctl*);
@@ -242,6 +244,9 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     *(.text.*14chimera_engine7midi_in*4Held* .rodata.*14chimera_engine7midi_in*4Held*);
     *(.text.*14chimera_engine3mpe* .rodata.*14chimera_engine3mpe*);
     *(.text.*14chimera_engine7midi_in*6SxRing* .rodata.*14chimera_engine7midi_in*6SxRing*);
+    *(.text.*14chimera_engine7midi_in*8NoteHold* .rodata.*14chimera_engine7midi_in*8NoteHold*);
+    *(.text.*10note_queue*5Ready* .rodata.*10note_queue*5Ready*);
+    *(.text.*7project*7Project12program_load* .rodata.*7project*7Project12program_load*);
     *(.text.*12chimera_midi6stream* .rodata.*12chimera_midi6stream*);
     *(.text.*12chimera_midi3ctl* .rodata.*12chimera_midi3ctl*);
     *(.text.*12chimera_midi5sense* .rodata.*12chimera_midi5sense*);

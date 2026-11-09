@@ -32,7 +32,8 @@ fn settings() -> SystemSettings {
             ..MidiSettings::DEFAULT
         }
         .with_push(true)
-        .with_echo(false),
+        .with_echo(false)
+        .with_program_in(true),
         theme: ThemeSettings {
             bright: Bright::new(40),
             gamma: Gamma::Soft,

@@ -53,6 +53,10 @@ fn run() -> (Rec, PipeSlot) {
     (through(&mut p, BYTES, true), p)
 }
 
+/// A hold of the test's own.
+static HOLD: chimera_engine::note_queue::ProgramHold =
+    chimera_engine::note_queue::ProgramHold::new();
+
 #[test]
 fn open_routes_like_before() {
     let _g = DOOR.lock().unwrap();
@@ -161,4 +165,38 @@ fn mpe_reads_go_through_the_door() {
     // Closed: stored as given, no shrink rule (a SYSTEM load keeps it).
     let w = mpe::write(z, 2, 4);
     assert_eq!((w.lower(), w.upper()), (15, 4));
+}
+
+/// #515: the drain's hold runs through the door's `hold`: open, a pending
+/// channel's note waits; closed, it plays at once and nothing is held.
+#[test]
+fn the_hold_is_the_doors() {
+    use chimera_engine::midi_in::PROGRAM_PENDING;
+    use chimera_engine::note_queue::{NoteSources, SourceId};
+    use std::sync::atomic::Ordering;
+    let _g = DOOR.lock().unwrap();
+    let src: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
+    let (mut prods, mut drain) = src.split().unwrap();
+    let mut q = prods.take(SourceId::new(0)).unwrap();
+    let on = InEvent::Note(NoteEvent {
+        channel: MidiChannel::new(4).unwrap(),
+        note: MidiNote::new(60).unwrap(),
+        kind: NoteKind::On(Velocity::new(100).unwrap()),
+    });
+    let count = |d: &mut chimera_engine::note_queue::NoteDrain<'_, 1>| {
+        let mut n = 0;
+        d.drain_held(&HOLD, |_, _| n += 1);
+        n
+    };
+    PROGRAM_PENDING.store(1 << 4, Ordering::Relaxed);
+    DOOR_CELL.open_host();
+    assert!(q.push(on));
+    assert_eq!(count(&mut drain), 0, "open: held");
+    PROGRAM_PENDING.store(0, Ordering::Relaxed);
+    assert_eq!(count(&mut drain), 1, "applied: played");
+    DOOR_CELL.close();
+    PROGRAM_PENDING.store(1 << 4, Ordering::Relaxed);
+    assert!(q.push(on));
+    assert_eq!(count(&mut drain), 1, "closed: played at once");
+    PROGRAM_PENDING.store(0, Ordering::Relaxed);
 }

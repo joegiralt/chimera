@@ -319,7 +319,7 @@ impl Engine {
             |inst, reads, ports| {
                 if gate.before_block(link, inst, shared) {
                     let now = runner.now();
-                    drain.drain(|src, ev| match ev {
+                    drain.drain_held(&HOLD, |src, ev| match ev {
                         // Capture sees the raw key, before any snap.
                         InEvent::Note(n) => {
                             runner.live(n);
@@ -337,6 +337,9 @@ impl Engine {
         );
     }
 }
+
+/// The program-change hold (ADR 0224).
+static HOLD: chimera_core::note_queue::ProgramHold = chimera_core::note_queue::ProgramHold::new();
 
 /// The card model's side of the audio (`card_stream`): the rings' audio
 /// side, the registry the UI fills, the bus and counters both share.
