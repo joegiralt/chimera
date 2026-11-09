@@ -15,10 +15,12 @@ use super::view::RowLook;
 use super::{Screen, screen_path};
 use crate::dsp::voice_fx::params::FxType;
 use crate::midi_map::{Binding, MidiMap};
+use crate::name::SoundName;
 use crate::project::{Line, PartId};
 use crate::ui::UiState;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{Gesture, Hint};
+use crate::ui::midi::layer::CtlJob;
 use crate::ui::mod_grid;
 use crate::ui::nav::Location;
 
@@ -36,7 +38,7 @@ pub fn name(e: &Binding, fx: FxType) -> &'static str {
 pub enum MapRow {
     /// Row 0: the Part's controller map, B picks it, EDIT saves.
     Pick,
-    /// The controller layer's: read here, MIX+MINUS drops it from the map.
+    /// The controller layer's: edited, or dropped, in the map on the card.
     Layer,
     /// The Sound's own.
     #[default]
@@ -65,7 +67,7 @@ pub struct MapText {
     pub echo: FmtBuf,
     /// `CC 74`, `CC 2+34`, `NRPN 10:3`, `PRESSURE`: DELETE's question.
     pub control: FmtBuf,
-    /// An NRPN or pressure: B can't step it.
+    /// An NRPN or pressure: B can't step it. Row 0: a map is picked.
     pub fixed: bool,
     /// All of the above as one number, for the list's region key.
     pub key: u32,
@@ -113,10 +115,10 @@ impl MapText {
     /// The keys' hint, under the values.
     pub fn hint(&self) -> Hint {
         match self.row {
+            MapRow::Pick if self.fixed => PICK_MAP,
             MapRow::Pick => PICK,
-            MapRow::Layer => LAYER,
-            MapRow::Own if self.fixed => FIXED,
-            MapRow::Own => KEYS,
+            _ if self.fixed => FIXED,
+            _ => KEYS,
         }
     }
 }
@@ -134,11 +136,9 @@ pub const KEYS: Hint = &[Gesture("B", "CONTROL"), Gesture("E", "INPUT")];
 pub const FIXED: Hint = &[Gesture("B", "RELEARN TO CHANGE"), Gesture("E", "INPUT")];
 /// Row 0: B picks the map, EDIT saves the Part's rows into one (ADR 0226).
 pub const PICK: Hint = &[Gesture("B", "PICK"), Gesture("EDIT", "SAVE ROWS TO MAP")];
-/// A layer row: the map's, changed by learning over it and saving.
-pub const LAYER: Hint = &[
-    Gesture("MIX+SEQ", "ON A CELL"),
-    Gesture("EDIT", "ON ROW 1 SAVES"),
-];
+/// Row 0 with a map picked: MIX+MINUS deletes it; MIX+EDIT's rename is on
+/// the tail line (ADR 0255).
+pub const PICK_MAP: Hint = &[Gesture("EDIT", "SAVE"), Gesture("MIX+MINUS", "DELETE")];
 
 /// The active Part's MIDI MAP for the bands: its rows are bank 2's.
 #[derive(Clone, Copy)]
@@ -167,20 +167,27 @@ impl MapBand<'_> {
 }
 
 /// DELETE's panel: `DELETE CC 74?` over the target's cell label, as the
-/// entry was when asked.
+/// entry was when asked; or `DELETE MAP?` over the map's name.
 #[derive(Clone, Copy, Debug)]
 pub struct MapDelete {
     pub part: PartId,
-    pub entry: Binding,
+    /// The row; `None`, the Part's whole map (`map`).
+    pub entry: Option<Binding>,
     pub label: &'static str,
     /// A layer row: dropped from the Part's controller map on the card.
     pub layer: bool,
+    pub map: Option<SoundName>,
 }
 
 impl Prompt for MapDelete {
     type Answer = DeleteAnswer;
     fn words(&self, q: &mut Line, r: &mut Line) {
-        let t = text(&self.entry, FxType::default(), true);
+        let Some(e) = self.entry else {
+            let _ = q.write_str("DELETE MAP?");
+            let _ = r.write_str(self.map.as_ref().map_or("", |n| n.as_str()));
+            return;
+        };
+        let t = text(&e, FxType::default(), true);
         let _ = q.write_str("DELETE ");
         let _ = q.write_str(t.control.as_str());
         let _ = q.write_char('?');
@@ -224,9 +231,15 @@ impl UiState {
     /// not have moved but the row did), and keep the bar on a row.
     #[inline(never)]
     pub(in crate::ui) fn map_deleted(&mut self, d: MapDelete) {
-        let (p, e) = (d.part, d.entry);
+        let p = d.part;
+        let Some(e) = d.entry else {
+            if let Some(n) = d.map {
+                self.ctl_ask(CtlJob::Delete(p, n));
+            }
+            return;
+        };
         if d.layer {
-            return self.ctl_drop(p, e);
+            return self.ctl_ask(CtlJob::Drop(p, e));
         }
         let mut m = self.project.part(p).sound.map;
         let Some(i) = m.entries().iter().position(|x| x.target == e.target) else {

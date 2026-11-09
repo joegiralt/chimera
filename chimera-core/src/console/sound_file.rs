@@ -1,28 +1,46 @@
 //! `rm` and `get`: a library Sound's pair over the console (library spec
-//! § Audio and card rules). Only `/CHIMERA/SOUNDS/S#######` parses, so
-//! neither verb names any other file on the card.
+//! § Audio and card rules), or a controller map's (ADR 0226). Only
+//! `/CHIMERA/SOUNDS/S#######` and `/CHIMERA/MAPS/<stem>` parse, so neither
+//! verb names any other file on the card.
 
 use core::fmt::{self, Write};
 use core::ops::ControlFlow;
 
 use chimera_hal::store::{CHUNK, Files, ReadSink, Store, StoreError};
 
-use super::put::{SOUNDS, numbered};
+use super::put::{SOUNDS, map_pair, numbered};
 use super::{Arg, Out, Stalled, Words};
 use crate::storage::{
-    AbFile, Card, CardFault, Check, Crc32, FileError, LibId, Pick, Ready, Side, SoundCheck,
-    check_file, delete_ab, library_file, pick,
+    AbFile, Card, CardFault, Check, Crc32, FileError, FileKind, LibId, Pick, Ready, Side,
+    SoundCheck, check_file, check_frame, delete_ab, delete_order, library_file, pick,
 };
 
-/// `/CHIMERA/SOUNDS/S0000012`, any case: the pair, no side.
+/// `/CHIMERA/SOUNDS/S0000012` or `/CHIMERA/MAPS/FADE3C04`, any case: the
+/// pair, no side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SoundArg(pub LibId);
+pub enum PairArg {
+    Sound(LibId),
+    Map(AbFile),
+}
 
-impl Arg for SoundArg {
-    const USAGE: &'static str = "/CHIMERA/SOUNDS/S#######";
+impl Arg for PairArg {
+    const USAGE: &'static str = "/CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>";
     fn parse(mut words: Words<'_>) -> Option<Self> {
-        let id = LibId::new(numbered(words.next()?, SOUNDS, b'S')?)?;
-        words.next().is_none().then_some(SoundArg(id))
+        let w = words.next()?;
+        let got = match numbered(w, SOUNDS, b'S') {
+            Some(n) => PairArg::Sound(LibId::new(n)?),
+            None => PairArg::Map(map_pair(w)?),
+        };
+        words.next().is_none().then_some(got)
+    }
+}
+
+impl PairArg {
+    fn file(self) -> AbFile {
+        match self {
+            PairArg::Sound(id) => library_file(id),
+            PairArg::Map(f) => f,
+        }
     }
 }
 
@@ -84,16 +102,30 @@ impl CardFault for Fail {
 }
 
 /// `rm`'s whole answer: the pair deleted in ADR 0045's order, torn sides
-/// too, then `OK`. A factory id refuses before the card is touched.
+/// too, then `OK`. A factory id refuses before the card is touched. A map's
+/// pair goes in the same order, judged by its framing, and the UI's layers
+/// read again.
 #[inline(never)]
-pub fn rm<F: Files>(arg: SoundArg, f: &mut F, out: &mut impl Out) -> Result<(), Stalled> {
-    let file = library_file(arg.0);
-    let r = match arg.0.is_factory() {
-        true => Err(Fail::Factory),
-        false => Card::new()
-            .run(f, |s, r| match exists(s, r, file)? {
-                false => Err(Fail::NotFound),
-                true => Ok(delete_ab(s, r, file, &mut SoundCheck::new())?),
+pub fn rm<F: Files>(arg: PairArg, f: &mut F, out: &mut impl Out) -> Result<(), Stalled> {
+    let file = arg.file();
+    let r = match arg {
+        PairArg::Sound(id) if id.is_factory() => Err(Fail::Factory),
+        _ => Card::new()
+            .run(f, |s, r| match (exists(s, r, file)?, arg) {
+                (false, _) => Err(Fail::NotFound),
+                (true, PairArg::Sound(_)) => Ok(delete_ab(s, r, file, &mut SoundCheck::new())?),
+                (true, PairArg::Map(_)) => {
+                    let st = |s: &mut F, sd| check_frame(s, r, file.side(sd), FileKind::Controller);
+                    let (a, b) = (st(s, Side::A)?, st(s, Side::B)?);
+                    for side in delete_order(a, b) {
+                        match s.delete(r.volume(), file.side(side)) {
+                            Ok(()) | Err(StoreError::NotFound) => {}
+                            Err(e) => return Err(e.into()),
+                        }
+                    }
+                    crate::midi_map::map_put();
+                    Ok(())
+                }
             })
             .and_then(|o| o.result),
     };
@@ -185,8 +217,8 @@ impl<O: Out> ReadSink for Sent<'_, O> {
 /// lines of 48 bytes, `CRC <crc32>`, then `OK`. A pair a load refuses
 /// answers its `FileError`, both sides torn included.
 #[inline(never)]
-pub fn get<F: Files, P: Out>(arg: SoundArg, f: &mut F, out: &mut P) -> Result<(), Stalled> {
-    let file = library_file(arg.0);
+pub fn get<F: Files, P: Out>(arg: PairArg, f: &mut F, out: &mut P) -> Result<(), Stalled> {
+    let file = arg.file();
     let mut sent = Sent {
         out,
         line: [0; GET_LINE],
@@ -197,9 +229,14 @@ pub fn get<F: Files, P: Out>(arg: SoundArg, f: &mut F, out: &mut P) -> Result<()
     let r = Card::new()
         .run(f, |s, r| {
             let mut c = SoundCheck::new();
-            let mut side = |sd| {
-                c.side(sd);
-                check_file(s, r, file.side(sd), &mut c)
+            let mut side = |sd| match arg {
+                PairArg::Sound(_) => {
+                    c.side(sd);
+                    check_file(s, r, file.side(sd), &mut c)
+                }
+                // A map's own rows are judged as it loads (bank 2's): here
+                // its framing.
+                PairArg::Map(_) => check_frame(s, r, file.side(sd), FileKind::Controller),
             };
             let (a, b) = (side(Side::A)?, side(Side::B)?);
             let sd = match pick(a, b) {

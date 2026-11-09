@@ -20,23 +20,32 @@
 //! 0240), a whole file of at most 4 KiB, the old one replaced; a scale
 //! drops its slot's old map. The Parts on that `TUNEn` read it again.
 //!
+//! A controller map goes to `/CHIMERA/MAPS/<stem>.A` or `.B` (ADR 0226,
+//! 0255), a whole file of at most 4 KiB: to the side a load does not take,
+//! whichever the host names, read back as a map whose name makes the stem,
+//! then the live side deleted, so the map put is the one that loads. A put
+//! that fails leaves the live side as it was. The UI reads its layers
+//! again.
+//!
 //! Bank 2's image goes to `/CHIMERA/SYSTEM/BANK2.BK2`, the old one deleted
 //! first, then read back and judged against this build's seal (ADR 0137):
 //! one sealed for another build stays (`OK staged: needs firmware <v>`),
 //! anything else is deleted.
 
 use core::fmt::{self, Write};
+use core::ops::ControlFlow;
 
 use chimera_hal::Ms;
-use chimera_hal::store::{CHUNK, Dir, FileName, Files, StoreError};
+use chimera_hal::store::{CHUNK, Dir, FileName, Files, ReadSink, StoreError};
 
 use super::{Arg, CardImage, Out, STAGED, Stalled, Words, sound_file::exists};
 use crate::bank2::{Seal, Version};
 use crate::project::{ProjectCheck, peek_entry, project_file};
 use crate::storage::{
-    AbFile, Card, CardFault, Check, Crc32, Event, FileError, Framer, Generation, HEADER_LEN,
-    Header, LibId, Pick, ProjectId, Ready, SaveError, Side, SideState, SoundCheck, check_file,
-    library_file, peek_header, pick, save_target, write_file,
+    AbFile, Card, CardFault, Check, Crc32, Event, FileError, FileKind, Framer, Generation,
+    HEADER_LEN, Header, LibId, Pick, ProjectId, Ready, SaveError, Side, SideState, SoundCheck,
+    check_file, check_frame, library_file, peek_header, pick, save_target, write_file,
+    write_target,
 };
 #[cfg(feature = "source-writer")]
 use crate::storage::{
@@ -85,6 +94,7 @@ const TAPES: &[u8] = b"/CHIMERA/TAPES/";
 const BANK2: &[u8] = b"/CHIMERA/SYSTEM/BANK2.BK2";
 const BEDS: &[u8] = b"/CHIMERA/BENCH/BEDS.CHK";
 const TUNINGS: &[u8] = b"/CHIMERA/TUNINGS/";
+pub(super) const MAPS: &[u8] = b"/CHIMERA/MAPS/";
 /// A tuning file: what the UI reads (`ui::file_buf::FILE_MAX`).
 pub const TUNING_MAX_BYTES: u32 = crate::ui::file_buf::FILE_MAX as u32;
 /// The bench's check table: 8 beds of `MAX_BED_CHUNKS` CRCs fit.
@@ -175,6 +185,20 @@ pub enum PutTo {
     Beds,
     /// A tuning's `.SCL` or `.KBM`, replaced whole.
     Tuning(FileName),
+    /// A controller map's pair, replaced by the file.
+    Map(AbFile),
+}
+
+/// `/CHIMERA/MAPS/FADE3C04`, any case: the pair.
+pub(super) fn map_pair(p: &[u8]) -> Option<AbFile> {
+    let (dir, stem) = p.split_at_checked(MAPS.len())?;
+    let mut up = [0u8; 8];
+    let up = up.get_mut(..stem.len())?;
+    up.copy_from_slice(stem);
+    up.make_ascii_uppercase();
+    dir.eq_ignore_ascii_case(MAPS)
+        .then(|| AbFile::new(Dir::Maps, up))
+        .flatten()
 }
 
 /// `/CHIMERA/TUNINGS/TUNE1.SCL` to `TUNE8.KBM`, any case.
@@ -215,6 +239,9 @@ fn put_to(p: &[u8]) -> Option<PutTo> {
     if let Some(f) = tuning(p) {
         return Some(PutTo::Tuning(f));
     }
+    if let Some(f) = pair_name(p).and_then(map_pair) {
+        return Some(PutTo::Map(f));
+    }
     let to = project(p)
         .map(PutTo::Project)
         .or_else(|| sound(p).map(|id| PutTo::Sound { id, over: false }));
@@ -236,18 +263,18 @@ pub struct PutArg {
 impl Arg for PutArg {
     #[cfg(not(feature = "source-writer"))]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over], /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
+        [--over], /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, /CHIMERA/MAPS/<stem>.A, or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
         in hex";
     #[cfg(feature = "source-writer")]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over], /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, or /CHIMERA/SYSTEM/BANK2.BK2, \
+        [--over], /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, /CHIMERA/MAPS/<stem>.A, or /CHIMERA/SYSTEM/BANK2.BK2, \
         its size and CRC-32 in hex";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let mut to = put_to(words.next()?)?;
         let size = number(words.next()?, 10, 10)?;
         if (to == PutTo::Bank2 && size > chimera_image::BANK2_LEN)
             || (to == PutTo::Beds && size > BEDS_MAX_BYTES)
-            || (matches!(to, PutTo::Tuning(_)) && size > TUNING_MAX_BYTES)
+            || (matches!(to, PutTo::Tuning(_) | PutTo::Map(_)) && size > TUNING_MAX_BYTES)
         {
             return None;
         }
@@ -270,21 +297,23 @@ impl Arg for PutArg {
     }
 }
 
-/// `ls`'s argument: PROJECTS, `tapes` or `sounds`.
+/// `ls`'s argument: PROJECTS, `tapes`, `sounds` or `maps`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LsArg {
     Projects,
     Tapes,
     Sounds,
+    Maps,
 }
 
 impl Arg for LsArg {
-    const USAGE: &'static str = "tapes, sounds or nothing";
+    const USAGE: &'static str = "tapes, sounds, maps or nothing";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let got = match words.next() {
             None => LsArg::Projects,
             Some(w) if w.eq_ignore_ascii_case(b"tapes") => LsArg::Tapes,
             Some(w) if w.eq_ignore_ascii_case(b"sounds") => LsArg::Sounds,
+            Some(w) if w.eq_ignore_ascii_case(b"maps") => LsArg::Maps,
             Some(_) => return None,
         };
         words.next().is_none().then_some(got)
@@ -525,14 +554,27 @@ fn transfer<F: Files, P: Out>(
                 })
                 .and_then(|o| o.result)
         }
-        PutTo::Beds | PutTo::Tuning(_) => {
-            let (dir, file) = match arg.to {
-                PutTo::Tuning(f) => (Dir::Tunings, f),
-                _ => (Dir::Bench, BEDS_FILE),
+        PutTo::Beds | PutTo::Tuning(_) | PutTo::Map(_) => {
+            let dir = match arg.to {
+                PutTo::Tuning(_) => Dir::Tunings,
+                PutTo::Map(_) => Dir::Maps,
+                _ => Dir::Bench,
             };
             due.arm(files, port, 0)?;
             Card::new()
                 .run(files, |s, r| {
+                    let file = match arg.to {
+                        PutTo::Tuning(f) => f,
+                        // Never the live side: it goes once this one is
+                        // whole and judged.
+                        PutTo::Map(f) => {
+                            let st =
+                                |s: &mut F, sd| check_frame(s, r, f.side(sd), FileKind::Controller);
+                            let (a, b) = (st(s, Side::A)?, st(s, Side::B)?);
+                            f.side(write_target(a, b).map_err(PutFail::File)?.0)
+                        }
+                        _ => BEDS_FILE,
+                    };
                     whole_session(s, r, dir, file, arg, port, due, |s, r, _| {
                         if dir == Dir::Tunings {
                             // A new scale drops its slot's old map: else it
@@ -546,6 +588,9 @@ fn transfer<F: Files, P: Out>(
                                 }
                             }
                             crate::tuning::file_put();
+                        }
+                        if dir == Dir::Maps {
+                            map_judge(s, r, file)?;
                         }
                         Ok(Done::Saved)
                     })
@@ -605,6 +650,52 @@ fn whole_session<F: Files, P: Out>(
         drain(port);
     }
     done
+}
+
+/// A map's side just written: a controller map as a load frames one, its
+/// header's name making its stem, else refused (and deleted); then the
+/// pair's other side deleted, so this side loads, and the UI's layers read
+/// again.
+fn map_judge<F: Files>(s: &mut F, r: &Ready, file: FileName) -> Result<(), PutFail> {
+    match check_frame(s, r, file, FileKind::Controller)? {
+        SideState::Present { err: None, .. } => {}
+        SideState::Present { err: Some(e), .. } | SideState::Torn(e) | SideState::Headerless(e) => {
+            return Err(PutFail::File(e));
+        }
+        SideState::Missing => return Err(PutFail::File(FileError::Truncated)),
+    }
+    /// The file's first `HEADER_LEN` bytes.
+    struct Head([u8; HEADER_LEN], usize);
+    impl ReadSink for Head {
+        fn begin(&mut self, _: u32) -> ControlFlow<()> {
+            ControlFlow::Continue(())
+        }
+        fn chunk(&mut self, b: &[u8]) -> ControlFlow<()> {
+            let n = (HEADER_LEN - self.1).min(b.len());
+            self.0[self.1..self.1 + n].copy_from_slice(&b[..n]);
+            self.1 += n;
+            match self.1 == HEADER_LEN {
+                true => ControlFlow::Break(()),
+                false => ControlFlow::Continue(()),
+            }
+        }
+    }
+    let mut h = Head([0; HEADER_LEN], 0);
+    s.read(r.volume(), file, &mut h)?;
+    let name = peek_header(&h.0).map_err(PutFail::File)?.name;
+    match name.map(|n| crate::midi_map::stem(&n)) {
+        Some((st, n)) if st.get(..n) == Some(file.stem()) => {}
+        _ => return Err(PutFail::File(FileError::BadName)),
+    }
+    let other = if file.ext() == b"A" { b"B" } else { b"A" };
+    if let Some(o) = FileName::new(Dir::Maps, file.stem(), other) {
+        match s.delete(r.volume(), o) {
+            Ok(()) | Err(StoreError::NotFound) => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    crate::midi_map::map_put();
+    Ok(())
 }
 
 /// After a failure past `READY`: the rest of the host's data read and
@@ -1082,6 +1173,7 @@ pub fn ls<F: Files>(arg: LsArg, f: &mut F, out: &mut impl Out) -> Result<(), Sta
         LsArg::Projects => Dir::Projects,
         LsArg::Tapes => Dir::Tapes,
         LsArg::Sounds => Dir::Sounds,
+        LsArg::Maps => Dir::Maps,
     };
     let mut t = super::Text(out);
     let mut wrote = Ok(());

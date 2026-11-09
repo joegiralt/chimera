@@ -478,9 +478,9 @@ pub(crate) enum NamingFor {
     /// is its browser, where NAMING closes to.
     SaveToLibrary(PartId, Option<Browse>),
     /// MIDI MAP's row 0: the Part's rows saved into a controller map of
-    /// this name (ADR 0226).
+    /// this name (ADR 0226); `true`, MIX+EDIT's rename of its map (ADR 0255).
     #[cfg(feature = "midi-map")]
-    Controller(PartId),
+    Controller(PartId, bool),
 }
 
 impl NamingFor {
@@ -490,7 +490,7 @@ impl NamingFor {
             NamingFor::RenameLoaded | NamingFor::SaveAs(..) => "PROJECT NAME",
             NamingFor::RenamePart(_) | NamingFor::SaveToLibrary(..) => "SOUND NAME",
             #[cfg(feature = "midi-map")]
-            NamingFor::Controller(_) => "MAP NAME",
+            NamingFor::Controller(..) => "MAP NAME",
         }
     }
 
@@ -501,7 +501,9 @@ impl NamingFor {
             NamingFor::SaveAs(..) => "SAVE AS",
             NamingFor::SaveToLibrary(..) => "SAVE TO LIB",
             #[cfg(feature = "midi-map")]
-            NamingFor::Controller(_) => "SAVE MAP",
+            NamingFor::Controller(_, false) => "SAVE MAP",
+            #[cfg(feature = "midi-map")]
+            NamingFor::Controller(_, true) => "RENAME MAP",
         }
     }
 }

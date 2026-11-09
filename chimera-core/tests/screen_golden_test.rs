@@ -559,6 +559,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("pickup_hint", 0xa90607689d854b4f),
     #[cfg(feature = "midi-map")]
     ("midi_map_pick", 0xe200b09c0e9e62c2),
+    // Controller map EC4 picked, the bar on its first row (ADR 0255).
+    #[cfg(feature = "midi-map")]
+    ("midi_map_layer", 0xbfb631040566fdb7),
+    // The bar on its row 0: rename and delete in the tail line.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_layer_row0", 0x399716417c55b81a),
 ];
 
 #[test]

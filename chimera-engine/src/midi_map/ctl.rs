@@ -19,6 +19,7 @@
 use chimera_hal::store::{Dir, FileName, Store, StoreError};
 
 use super::codec::{self, MapRecord};
+pub use super::stem;
 use super::{Binding, MAP_LEN, MapFull, MidiMap};
 use crate::block::DiskCode;
 use crate::name::SoundName;
@@ -127,21 +128,31 @@ impl ControllerMap {
         Ok(())
     }
 
-    /// Drops row `b` that a Part on `e` plays, by its control and target:
-    /// `e`'s, or the shared one. `false`: none.
-    pub fn drop(&mut self, b: &Binding, e: EngineType) -> bool {
-        for i in [at(Some(e)), 0] {
-            let s = &mut self.sections[i];
-            if let Some(j) = s
+    /// Where row `b` that a Part on `e` plays is, by its control and
+    /// target: in `e`'s section, else the shared one.
+    fn find(&self, b: &Binding, e: EngineType) -> Option<(usize, usize)> {
+        [at(Some(e)), 0].into_iter().find_map(|i| {
+            self.sections[i]
                 .entries()
                 .iter()
                 .position(|x| x.target == b.target && x.input.same_control(&b.input))
-            {
-                s.remove(j);
-                return true;
-            }
+                .map(|j| (i, j))
+        })
+    }
+
+    /// Row `b` that a Part on `e` plays (`find`) made `to`, or dropped
+    /// with `None`, in its section. `false`: none. One method for both, so
+    /// a caller's two jobs make one call, nothing the outliner can share
+    /// into bank 1.
+    pub fn change(&mut self, b: &Binding, to: Option<Binding>, e: EngineType) -> bool {
+        let Some((i, j)) = self.find(b, e) else {
+            return false;
+        };
+        match to {
+            Some(to) => self.sections[i].set(j, to),
+            None => self.sections[i].remove(j),
         }
-        false
+        true
     }
 }
 
@@ -165,30 +176,6 @@ fn clear(m: &mut MidiMap, r: &Binding) {
             i += 1;
         }
     }
-}
-
-/// The file stem for `n`: up to four of its letters and digits, upper
-/// case, then a 16-bit FNV-1a of the whole name as four hex digits. Names
-/// that share one are told apart by the header: a load whose header names
-/// another map is `Missing`.
-pub fn stem(n: &SoundName) -> ([u8; 8], usize) {
-    let mut out = [b'M'; 8];
-    let mut len = 0;
-    let mut h: u32 = 0x811C_9DC5;
-    for c in n.as_str().bytes() {
-        h = (h ^ u32::from(c)).wrapping_mul(0x0100_0193);
-        if len < 4 && c.is_ascii_alphanumeric() {
-            out[len] = c.to_ascii_uppercase();
-            len += 1;
-        }
-    }
-    let len = len.max(1);
-    let h = (h ^ h >> 16) as u16;
-    for k in 0..4 {
-        let d = (h >> (12 - 4 * k) & 0xF) as u8;
-        out[len + k] = if d < 10 { b'0' + d } else { b'A' + d - 10 };
-    }
-    (out, len + 4)
 }
 
 /// The largest map file: the header, five full sections of 8-B rows, the
@@ -344,6 +331,27 @@ pub fn save(
     write_side(s, r, st, side, &h, m)
 }
 
+/// Map `n`'s pair deleted from the card, the side a load does not take
+/// first. `Missing`: no file names it.
+pub fn delete(s: &mut dyn Store, r: &Ready, n: &SoundName) -> Result<(), LoadError> {
+    let (st, len) = stem(n);
+    let st = &st[..len];
+    let live = match load_stem(s, r, st, None) {
+        Ok((h, _, side)) if h.name == Some(*n) => side,
+        Ok(_) => return Err(LoadError::Missing),
+        Err(e) => return Err(e),
+    };
+    // ADR 0045's order: the side a load does not take first.
+    for side in [live.other(), live] {
+        let f = side_file(st, side).ok_or(LoadError::Missing)?;
+        match s.delete(r.volume(), f) {
+            Ok(()) | Err(StoreError::NotFound) => {}
+            Err(e) => return Err(LoadError::Store(e)),
+        }
+    }
+    Ok(())
+}
+
 /// `save`'s write of side `side`. Out of line: its buffers are not under
 /// `load_stem`'s, nor in a caller's frame (ADR 0025's stack check).
 #[inline(never)]
@@ -455,7 +463,7 @@ mod tests {
         let mut m = ControllerMap::EMPTY;
         push(&mut m.sections[0], row(22));
         push(&mut m.sections[at(Some(EngineType::Algo))], row(21));
-        assert!(m.drop(&row(22), EngineType::Algo));
+        assert!(m.change(&row(22), None, EngineType::Algo));
         assert!(m.section(None).is_empty());
         assert_eq!(m.section(Some(EngineType::Algo)).entries(), &[row(21)]);
     }

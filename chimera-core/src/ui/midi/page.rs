@@ -1,7 +1,8 @@
 //! SETTINGS › PART › MIDI MAP's rows, keys and words (spec § 8.2, ADR
 //! 0226), and the pickup hint's reading (§ 8.3). Row 0 is the Part's
-//! controller map: B picks it. The layer's rows follow, read only but for
-//! MIX+MINUS, then the Sound's own. On a Sound row B steps the control number (a CC past
+//! controller map: B picks it, MIX+EDIT renames it, MIX+MINUS deletes it.
+//! The layer's rows follow, edited in the map on the card, then the
+//! Sound's own. On either B steps the control number (a CC past
 //! the reserved ones, a 14-bit pair along its MSBs; an NRPN or pressure is
 //! fixed), C and D the range, E the input among the control's legal kinds
 //! (never the echo: only learn sets that), F the echo. Bank 2's, behind
@@ -292,7 +293,7 @@ fn code(i: Input) -> u32 {
 
 /// `a` and `b` the same binding but for their targets.
 #[inline(always)]
-fn same(a: &Binding, b: &Binding) -> bool {
+pub(super) fn same(a: &Binding, b: &Binding) -> bool {
     code(a.input) == code(b.input)
         && a.span.min == b.span.min
         && a.span.max == b.span.max
@@ -312,11 +313,31 @@ fn takeover(i: Input) -> Option<Takeover> {
     }
 }
 
-/// A MIDI MAP row (ADR 0226).
+/// `e` as B to F's detents `d` leave it: B the control, C and D the
+/// range, E the input, F the echo.
+fn edited(e: &Binding, d: [i8; 6]) -> Binding {
+    let by = |v: u8, d: i8| (i16::from(v) + i16::from(d)).clamp(0, 255) as u8;
+    Binding {
+        input: cycle(step(e.input, d[1]), d[4]),
+        span: crate::midi_map::Span {
+            min: by(e.span.min, d[2]),
+            max: by(e.span.max, d[3]),
+        },
+        // Nothing can send a learned SysEx message back: no echo.
+        feedback: if matches!(e.input, Input::SysEx(_)) {
+            Feedback::Off
+        } else {
+            echo(e.feedback, d[5])
+        },
+        ..*e
+    }
+}
+
+/// A MIDI MAP row (ADR 0226): a layer's or a Sound's, at its index.
 #[derive(Clone, Copy)]
 enum Row {
     Pick,
-    Layer(Binding),
+    Layer(usize, Binding),
     Own(usize, Binding),
 }
 
@@ -326,7 +347,7 @@ fn row_of(own: &MidiMap, layer: &MidiMap, i: usize) -> Option<Row> {
         return Some(Row::Pick);
     };
     match layer.entries().get(k) {
-        Some(&b) => Some(Row::Layer(b)),
+        Some(&b) => Some(Row::Layer(k, b)),
         None => {
             let j = k - layer.len();
             own.entries().get(j).map(|&b| Row::Own(j, b))
@@ -363,7 +384,14 @@ impl UiState {
                 let _ = out.word.write_str(n);
                 let _ = out.head.write_str(head);
                 out.key = settings_key(&[out.label.as_str().as_bytes(), n.as_bytes()]);
-                if self.cc.built().is_some_and(|m| m.ctl.more) {
+                // A map picked: its rename here, its delete on the hint
+                // line (`fixed`, ADR 0255); else whether the card holds
+                // more maps than listed.
+                if self.project.controller(self.active_part).is_some() {
+                    let _ = out.tail.write_str(lword(Lw::Whole));
+                    out.fixed = true;
+                    out.key ^= 4;
+                } else if self.cc.built().is_some_and(|m| m.ctl.more) {
                     let _ = out.tail.write_str(lword(Lw::More));
                     out.key ^= 1;
                 }
@@ -374,7 +402,7 @@ impl UiState {
                 let _ = out.echo.write_str(word(w as u8));
                 out.key ^= u32::from(keep) << 1;
             }
-            Some(Row::Layer(e)) => {
+            Some(Row::Layer(_, e)) => {
                 let live = e.target.live(engine) && !shadowed(&s.map, &e);
                 text(&e, fx, live, out);
                 out.row = MapRow::Layer;
@@ -413,7 +441,7 @@ impl UiState {
         };
         let layer = *self.cc.ui().ctl.layer(p.index());
         let fx = self.project.part(p).sound.params.fx.ty();
-        let (i, e) = match row_of(&map, &layer, at.row() as usize) {
+        let (layer_at, own_at, e) = match row_of(&map, &layer, at.row() as usize) {
             None => return,
             Some(Row::Pick) => {
                 if d[1] != 0 {
@@ -422,50 +450,48 @@ impl UiState {
                 if keep {
                     self.keep_map(p);
                 }
-                return;
-            }
-            Some(Row::Layer(e)) => {
-                if delete {
+                // The whole map deleted from the card (ADR 0255).
+                if let (true, Some(n)) = (delete, self.project.controller(p)) {
                     let ask = MapDelete {
                         part: p,
-                        entry: e,
-                        label: name(&e, fx),
+                        entry: None,
+                        label: "",
                         layer: true,
+                        map: Some(n),
                     };
                     self.ask(Ask::MapDelete(ask, Choice::new()));
                 }
                 return;
             }
-            Some(Row::Own(i, e)) => (i, e),
+            Some(Row::Layer(k, e)) => (Some(k), 0, e),
+            Some(Row::Own(i, e)) => (None, i, e),
         };
         if delete {
             let ask = MapDelete {
                 part: p,
-                entry: e,
+                entry: Some(e),
                 label: name(&e, fx),
-                layer: false,
+                layer: layer_at.is_some(),
+                map: None,
             };
             return self.ask(Ask::MapDelete(ask, Choice::new()));
         }
-        let by = |v: u8, d: i8| (i16::from(v) + i16::from(d)).clamp(0, 255) as u8;
-        let n = Binding {
-            input: cycle(step(e.input, d[1]), d[4]),
-            span: crate::midi_map::Span {
-                min: by(e.span.min, d[2]),
-                max: by(e.span.max, d[3]),
-            },
-            // Nothing can send a learned SysEx message back: no echo.
-            feedback: if matches!(e.input, Input::SysEx(_)) {
-                Feedback::Off
-            } else {
-                echo(e.feedback, d[5])
-            },
-            ..e
-        };
-        if !same(&n, &e) {
-            let mut m = map;
-            m.set(i, n);
-            self.set_map(p, m);
+        let n = edited(&e, d);
+        if same(&n, &e) {
+            return;
+        }
+        match layer_at {
+            // A layer row: in the map on the card, by the next card work.
+            Some(k) => {
+                if self.cc.ui().ctl.edit(p, k, e, n) {
+                    self.cc.reset_part(p);
+                }
+            }
+            None => {
+                let mut m = map;
+                m.set(own_at, n);
+                self.set_map(p, m);
+            }
         }
     }
 

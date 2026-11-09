@@ -2,14 +2,18 @@
 """Talk to your Chimera over USB: status for bug reports, screenshots, files onto the card.
 
     python3 chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep, flash,
-                                                   ls [tapes|sounds], rm|get /CHIMERA/SOUNDS/S#######
+                                                   ls [tapes|sounds|maps], rm|get /CHIMERA/SOUNDS/S####### or
+                                                   /CHIMERA/MAPS/<stem>
+    python3 chimera-usb.py get <remote> <local>    the file `get` reads, checked and written to <local>
     python3 chimera-usb.py put <local> <remote> [--over]
                                                    a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
                                                    a library Sound as /CHIMERA/SOUNDS/S#######.A (--over replaces one there),
                                                    or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks,
-                                                   or the bench's check table as /CHIMERA/BENCH/BEDS.CHK (9 KiB at most)
+                                                   or the bench's check table as /CHIMERA/BENCH/BEDS.CHK (9 KiB at most),
+                                                   or a controller map as /CHIMERA/MAPS/<stem>.A (4 KiB at most)
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
-                                                   `ls sounds`' top user id + 1)
+                                                   `ls sounds`' top user id + 1; /CHIMERA/MAPS/ the stem of the
+                                                   map's name)
     python3 chimera-usb.py tuning <1-8> <file.scl> [<file.kbm>]
                                                    a Scala tuning onto the card as /CHIMERA/TUNINGS/TUNE<n>.SCL,
                                                    with its keyboard map as TUNE<n>.KBM (4 KiB each at most):
@@ -117,6 +121,8 @@ BEDS = "/CHIMERA/BENCH/BEDS.CHK"
 TUNINGS = "/CHIMERA/TUNINGS/"
 PUT_TUNING_MAX = 4 * 1024  # what the unit reads of a tuning file
 SOUNDS = "/CHIMERA/SOUNDS/"
+MAPS = "/CHIMERA/MAPS/"
+MAP_KIND = 7  # a Chimera file's header byte 6: a controller map
 USER_MAX = 8_999_999  # highest user Sound id
 BUSY_TRIES = 5
 BUSY_WAIT_S = 0.2  # doubling after each `ERR busy`
@@ -398,6 +404,55 @@ def next_sound(conn: Conn) -> str:
     return "%sS%07d.A" % (SOUNDS, top + 1)
 
 
+def map_stem(data: bytes) -> str:
+    """The stem a controller map's file goes under: up to four of its
+    name's letters and digits, upper case, then a 16-bit FNV-1a of the name
+    in hex (the unit's `midi_map::ctl::stem`). Raises PutRefused."""
+    if len(data) < 28 or data[:4] != b"CHIM" or data[6] != MAP_KIND:
+        raise PutRefused("put: not a controller map")
+    name = data[12:28].split(b"\0", 1)[0]
+    if not name:
+        raise PutRefused("put: the map has no name")
+    h = 0x811C9DC5
+    for c in name:
+        h = ((h ^ c) * 0x01000193) & 0xFFFFFFFF
+    letters = bytes(c for c in name if chr(c).isalnum())[:4].upper() or b"M"
+    return letters.decode() + "%04X" % ((h ^ h >> 16) & 0xFFFF)
+
+
+def get_file(t: Target, remote: str, local: str) -> int:
+    """`get <remote>`, its CRC checked, written to `local`: 0 on OK, 1 with
+    the reason. `local` is never overwritten."""
+    conn = open_conn(t)
+    try:
+        status, body = request(conn, "get " + remote)
+    except NoAnswer:
+        return fail("get: no answer from %s" % describe(t))
+    except Vanished:
+        return fail("get: %s went away" % describe(t))
+    finally:
+        conn.close()
+    if status is Status.ERR:
+        return fail(body.decode(errors="replace"))
+    lines = body.split(b"\n")
+    try:
+        size = int(lines[0].split(b" ")[1]) if lines[0].startswith(b"GET ") else -1
+        crc = [ln for ln in lines if ln.startswith(b"CRC ")]
+        data = base64.b64decode(b"".join(ln for ln in lines[1:] if ln and not ln.startswith(b"CRC ")))
+        want = int(crc[0][4:], 16) if crc else -1
+    except (ValueError, IndexError):
+        return fail("get: a garbled answer")
+    if len(data) != size or zlib.crc32(data) != want:
+        return fail("get: the file came through damaged")
+    try:
+        with open(local, "xb") as f:
+            f.write(data)
+    except OSError as e:
+        return fail("get: %s: %s" % (local, e.strerror or e))
+    print("%s %d" % (local, len(data)))
+    return 0
+
+
 def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None, over=False) -> tuple:
     """`put <remote> <size> <crc32>`, the data once the unit says READY,
     then its OK or ERR as `answer` gives it; (OK, b"PRESENT") for a source
@@ -406,7 +461,7 @@ def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None,
     `progress(sent, total)` after each batch of lines. Raises NoAnswer,
     Vanished or PutRefused."""
     up = remote.upper()
-    cap = PUT_BEDS_MAX if up == BEDS else PUT_TUNING_MAX if up.startswith(TUNINGS) else PUT_MAX
+    cap = PUT_BEDS_MAX if up == BEDS else PUT_TUNING_MAX if up.startswith((TUNINGS, MAPS)) else PUT_MAX
     if len(data) > cap:
         raise PutRefused("%d bytes: put takes at most %d" % (len(data), cap))
     send(conn, "put %s %d %08x%s" % (remote, len(data), zlib.crc32(data), " --over" if over else ""))
@@ -454,6 +509,8 @@ def put_file(t: Target, local: str, remote: str, over=False) -> int:
     try:
         if remote.upper() == SOUNDS:
             remote = next_sound(conn)
+        elif remote.upper() == MAPS:
+            remote = MAPS + map_stem(data) + ".A"
         else:
             remote = remote_path(local, remote)
         status, body = retry_busy(lambda: put(conn, data, remote, show_progress, over))
@@ -978,6 +1035,8 @@ def main(argv, env) -> int:
             if rc:
                 return rc
         return 0
+    if argv[0] == "get" and len(argv) == 3:
+        return get_file(t, argv[1], argv[2])
     if argv[0] == "put":
         over = argv[3:] == ["--over"]
         if len(argv) != 3 and not over:

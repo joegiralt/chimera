@@ -815,6 +815,66 @@ class Put(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(u.requests[0].startswith(b"put /CHIMERA/PROJECTS/AVRIL14.A 3 "))
 
+    def map_file(self, name):
+        head = b"CHIM\x01\x00\x07\x00\x01\x00\x00\x00" + name.ljust(16, b"\0")
+        return head + b"\0\0\0\0"
+
+    def test_a_map_goes_under_its_name_s_stem(self):
+        # The unit's stem for these names (controller_map_test).
+        for name, stem in ((b"FADERFOX EC4", b"FADE3C04"), (b"-", b"MBC34")):
+            f = self.local("my.map", self.map_file(name))
+            with PutUnit() as u:
+                r = run_tool(["put", f, "/CHIMERA/MAPS/"], u.target)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(u.requests[0].startswith(b"put /CHIMERA/MAPS/%s.A 32 " % stem), u.requests)
+
+    def test_a_file_that_is_no_map_is_refused_here(self):
+        sound = bytearray(self.map_file(b"PAD"))
+        sound[6] = 1
+        for data in (bytes(sound), b"CHIM"):
+            f = self.local("x.map", data)
+            with PutUnit() as u:
+                r = run_tool(["put", f, "/CHIMERA/MAPS/"], u.target)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn(b"not a controller map", r.stderr)
+            self.assertEqual(u.requests, [])
+
+    def test_a_map_over_4_kib_is_refused_here(self):
+        f = self.local("BIG.A", bytes(tool.PUT_TUNING_MAX + 1))
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/MAPS/BIG.A"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(u.requests, [])
+
+    def get_answer(self, data, crc=None):
+        lines = b"".join(base64.b64encode(data[i : i + 48]) + b"\n" for i in range(0, len(data), 48))
+        crc = zlib.crc32(data) if crc is None else crc
+        return b"GET %d\n%sCRC %08x\nOK\n" % (len(data), lines, crc)
+
+    def test_get_writes_the_file_checked(self):
+        data = self.map_file(b"FADERFOX EC4") + os.urandom(100)
+        out = pathlib.Path(self.tmp.name, "ec4.map")
+        with FakeUnit({b"get /CHIMERA/MAPS/FADE3C04\n": self.get_answer(data)}) as u:
+            r = run_tool(["get", "/CHIMERA/MAPS/FADE3C04", str(out)], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(out.read_bytes(), data)
+        # Never over a file already there.
+        with FakeUnit({b"get /CHIMERA/MAPS/FADE3C04\n": self.get_answer(data)}) as u:
+            r = run_tool(["get", "/CHIMERA/MAPS/FADE3C04", str(out)], u.target)
+        self.assertEqual(r.returncode, 1)
+
+    def test_get_refuses_a_damaged_file_and_passes_an_err(self):
+        out = pathlib.Path(self.tmp.name, "bad.map")
+        bad = self.get_answer(b"x" * 60, crc=1)
+        with FakeUnit({b"get /CHIMERA/MAPS/A\n": bad, b"get /CHIMERA/MAPS/B\n": b"ERR get: not found\n"}) as u:
+            r = run_tool(["get", "/CHIMERA/MAPS/A", str(out)], u.target)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn(b"damaged", r.stderr)
+            r = run_tool(["get", "/CHIMERA/MAPS/B", str(out)], u.target)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn(b"ERR get: not found", r.stderr)
+        self.assertFalse(out.exists())
+
     def test_an_empty_file_puts(self):
         f = self.local("E.A", b"")
         with PutUnit() as u:

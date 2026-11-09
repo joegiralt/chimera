@@ -102,21 +102,24 @@ Messages up to 32 bytes are heard. A box that splits one value over two bytes as
 
 SETTINGS › PART › MIDI MAP shows the current Part's bindings, one a row. The first row, `CONTROLLER`, is the Part's controller map (see [Controller maps](#controller-maps)). Then come the controller map's rows, then the Sound's own. With no bindings it reads `NO CCS · MIX+SEQ ON A CELL` under the first row.
 
-The picture below shows the Sound's rows. The first row and the controller map's rows sit above them.
+Here Part 1 plays the controller map `EC4`, with two rows, above its Sound's own rows.
 
 ![The MIDI MAP page, annotated](img/midi-map.png)
 
 1. **Breadcrumb:** the Part whose map this is.
-2. **The control:** `CC 74`, `CC 2+34`, `NRPN 10:3` or `PRESSURE`.
-3. **The cell** it drives. A master FX or ORBIT cell names its block first: `REVERB MIX`, `RING 1 CHANCE`.
-4. **How it moves**, in short: `JUMP`, `PICKUP`, `SCALE`, a relative encoding, `MOMENTARY`, `TOGGLE` or `INC DEC`.
-5. **A dimmed row** drives a cell the Part's engine doesn't have (here a MODAL cell on an ALGO Sound). It waits, and works again when the Part plays that engine.
-6. **The bar:** the selected binding. **A** moves it.
-7. **The bar's binding, spelled out:** its kind in full words.
-8. For a relative encoding, the bytes it sends for one step right and one step left, as controller manuals print them.
-9. **C MIN** and **D MAX**: the part of the cell's range the control sweeps; MAX below MIN turns the control round. **F ECHO**: `ON` sends the cell's value back to the controller.
-10. **B CONTROL**: the CC number. NRPN and PRESSURE controls are fixed: learn them again to change them (the line reads `RELEARN TO CHANGE`). **E INPUT**: how the control moves the cell.
-11. **The hint:** `A MOVE · MIX+MINUS DELETES`. MIX + MINUS asks before it deletes the bar's binding.
+2. **`CONTROLLER`:** the first row, the Part's controller map.
+3. **The map's name**, or `NONE`.
+4. **The bar**, here on the controller map's first row: `CC 30`, the control, then `MORPH`, the cell it drives. **A** moves the bar. A control reads `CC 74`, `CC 2+34`, `NRPN 10:3`, `PRESSURE` or `SYSEX 9`. A master FX or ORBIT cell names its block first: `REVERB MIX`, `RING 1 CHANCE`.
+5. **How it moves**, in short: `JUMP`, `PICKUP`, `SCALE`, a relative encoding, `MOMENTARY`, `TOGGLE` or `INC DEC`.
+6. **A dimmed row** does nothing now. A controller map's row is dimmed when the Sound binds the same control (here CC 74, the Sound's CUTOFF). Any row is dimmed when it drives a cell the Part's engine doesn't have (`- STRUCT`, a MODAL cell on an ALGO Sound); it works again when the Part plays that engine.
+7. **The Sound's own rows**, after the controller map's.
+8. **The bar's binding, spelled out:** its kind in full words. For a relative encoding, the line below gives the bytes it sends for one step right and one step left, as controller manuals print them.
+9. **`IN EC4`:** the row belongs to the controller map, not the Sound.
+10. **C MIN** and **D MAX**: the part of the cell's range the control sweeps; MAX below MIN turns the control round. **F ECHO**: `ON` sends the cell's value back to the controller.
+11. **B CONTROL**: the CC number. NRPN, PRESSURE and SysEx controls are fixed: learn them again to change them (the line reads `RELEARN TO CHANGE`). **E INPUT**: how the control moves the cell.
+12. **The hint:** `A MOVE · MIX+MINUS DELETES`. MIX + MINUS asks before it deletes the bar's binding.
+
+B to F edit a controller map's row as they edit a Sound's. The change is written to the map on the card, so every project that uses the map gets it; the Sound is not changed.
 
 **E INPUT** steps through the kinds the control can be:
 
@@ -148,7 +151,7 @@ The project remembers each Part's controller map by name. It is read from the ca
 1. Go to SETTINGS › PART › MIDI MAP. The bar is on `CONTROLLER`; the row names the Part's map, or `NONE`.
 2. Turn **B** to step through the maps on the card and `NONE`. The Part plays the map at once, and its rows show below the first row.
 
-Each row of the map reads as a Sound's row does; its spelled-out line ends `IN FADERFOX` (the map's name). A map's rows can't be edited here: B to F do nothing on them.
+Each row of the map reads as a Sound's row does; its spelled-out line ends `IN FADERFOX` (the map's name).
 
 ### Saving a map
 
@@ -173,12 +176,31 @@ Press **MIX + PLUS** again to turn it off. If the Part's rows differ from its So
 
 ### Changing and deleting rows
 
-- **To change a map row**, learn the same control on the Part (it hides the map's row), then save.
-- **To delete a map row**, put the bar on it and press **MIX + MINUS**. Chimera asks, then removes the row from the map on the card. If the map has left the card since it was read, it says `FILE NOT FOUND` and writes nothing.
+- **To change a map row**, put the bar on it and turn **B** to **F**, as on a Sound's row. The row changes at once and is written to the map on the card a moment later. Or learn the same control on the Part (it hides the map's row), then save.
+- **To delete a map row**, put the bar on it and press **MIX + MINUS**. Chimera asks, then removes the row from the map on the card.
+
+If the map has left the card since it was read, either says `FILE NOT FOUND` and writes nothing.
+
+### Renaming and deleting a map
+
+With the bar on `CONTROLLER` and a map picked, the line under the row reads `MIX+EDIT RENAME`, and the hint below `EDIT SAVE  MIX+MINUS DELETE`.
+
+- **To rename the map**, press **MIX + EDIT**. NAMING opens on the map's name (`RENAME MAP`). Type the new name and press **EDIT**. Every Part playing the map plays it under its new name. A name another map already has is refused with `NAME TAKEN`, and nothing changes.
+- **To delete the map**, press **MIX + MINUS**. Chimera asks `DELETE MAP?` with the map's name, then deletes it from the card. Every Part that played it plays `NONE`.
 
 ### On the card
 
-Maps live in `/CHIMERA/MAPS`, one pair of files a map (`FADE3A7C.A` and `.B`): up to four letters of the name, then four characters made from the whole name. The map's full name is inside the file. MIDI MAP lists up to 16 maps; with more on the card, `CARD HOLDS MORE: 16 SHOWN` shows under the first row.
+Maps live in `/CHIMERA/MAPS`, one pair of files a map (`FADE3C04.A` and `.B`): up to four letters of the name, then four characters made from the whole name. The map's full name is inside the file. MIDI MAP lists up to 16 maps; with more on the card and no map picked, `CARD HOLDS MORE: 16 SHOWN` shows under the first row.
+
+The card is inside the case, so maps are copied over USB with Chimera's `chimera-usb.py` tool (Python 3, Linux or macOS), with Chimera connected and on:
+
+```
+python3 chimera-usb.py ls maps
+python3 chimera-usb.py get /CHIMERA/MAPS/FADE3C04 faderfox.map
+python3 chimera-usb.py put faderfox.map /CHIMERA/MAPS/
+```
+
+`ls maps` lists the files. `get` copies a map off the card into a file on the computer; it never writes over a file that is already there. `put` copies a map file onto the card under its name's files, replacing a map of the same name; a Part playing that map plays the new one at once. The name comes from inside the file, so the file on the computer can be called anything.
 
 ### Pickup
 

@@ -82,10 +82,10 @@ flash   flash controller and bank 2, read only
 bank2   bank 2: its state; bank2 install: the staged file into it
 key     B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]
 turn    <encoder 1-6> <delta -64..64>: detents at a hand's pace
-ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs
+ls      files and sizes in PROJECTS; ls tapes|sounds|maps: theirs
 put     a project, Sound or source: <path> <size> <crc32> [--over]
-rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######
-get     a library Sound's file, base64: /CHIMERA/SOUNDS/S#######
+rm      a pair: /CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>
+get     base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>
 OK
 ```
 

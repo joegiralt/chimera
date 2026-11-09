@@ -328,6 +328,7 @@ fn refusals_before_ready_write_nothing() {
     }
     let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over], \
                  /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, \
+                 /CHIMERA/MAPS/<stem>.A, \
                  or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex\n";
     for path in [
         "/CHIMERA/PROJECTS/AVRIL14.A",

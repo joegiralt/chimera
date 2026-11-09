@@ -429,11 +429,11 @@ fn sound_paths_parse_and_others_refuse() {
     ));
     assert_eq!(
         parse_line(b"rm /chimera/sounds/s0000001"),
-        Ok(Request::Rm(SoundArg(id(1))))
+        Ok(Request::Rm(PairArg::Sound(id(1))))
     );
     assert_eq!(
         parse_line(b"GET /CHIMERA/SOUNDS/S9000001"),
-        Ok(Request::Get(SoundArg(id(9_000_001))))
+        Ok(Request::Get(PairArg::Sound(id(9_000_001))))
     );
     for bad in [
         &b"rm /CHIMERA/SOUNDS/../PROJECTS/P0000001"[..],

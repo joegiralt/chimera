@@ -1965,14 +1965,15 @@ impl UiState {
     }
 
     /// NAMING over PART's list, its bar on MIDI MAP, starting from the
-    /// Part's controller map's name (ADR 0226).
+    /// Part's controller map's name (ADR 0226); `rename`: MIX+EDIT's, the
+    /// map renamed, if the Part has one (ADR 0255).
     #[cfg(feature = "midi-map")]
-    fn name_controller(&mut self) {
+    fn name_controller(&mut self, rename: bool) {
         let p = self.active_part;
         let at = ListAt::at(&[PART_ROW], settings::tree::MIDI_MAP_ROW);
         let n = self.project.controller(p);
         let start = n.as_ref().map_or("CONTROLLER", |n| n.as_str());
-        self.name(at, NamingFor::Controller(p), start);
+        self.name(at, NamingFor::Controller(p, rename && n.is_some()), start);
     }
 
     /// NAMING takes a list's band, so it opens on one: `at`.
@@ -2302,12 +2303,16 @@ impl UiState {
                 self.go(Location::sound_at(part, b))
             }
             #[cfg(feature = "midi-map")]
-            Done::Named(NamingFor::Controller(part), name) => {
+            Done::Named(NamingFor::Controller(part, rename), name) => {
+                use crate::ui::midi::layer::CtlJob;
                 self.go(Location::settings_at(screen_path(Screen::MidiMap), 0));
-                self.ctl_save(part, name)
+                self.ctl_ask(match rename {
+                    true => CtlJob::Rename(part, name),
+                    false => CtlJob::Save(part, name),
+                })
             }
             #[cfg(feature = "midi-map")]
-            Done::Cancelled(NamingFor::Controller(_)) => {
+            Done::Cancelled(NamingFor::Controller(..)) => {
                 self.go(Location::settings_at(screen_path(Screen::MidiMap), 0))
             }
             Done::Cancelled(_) | Done::Answered(_) => {}
@@ -2916,10 +2921,11 @@ impl UiState {
                             self.save_scene_in(n);
                         }
                     }
-                    // Row 0's EDIT: the Part's rows into a controller map.
+                    // Row 0's EDIT: the Part's rows into a controller map;
+                    // MIX + EDIT renames it.
                     #[cfg(feature = "midi-map")]
                     (Some(Screen::MidiMap), Some(s)) if s.row() == 0 && self.map_rows() > 0 => {
-                        self.name_controller()
+                        self.name_controller(controls.edges(ButtonId::Mix).down)
                     }
                     _ => {}
                 },

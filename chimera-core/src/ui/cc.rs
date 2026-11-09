@@ -24,8 +24,6 @@ use crate::midi_in::{HeardCc, HeardEv};
 #[cfg(feature = "midi-map")]
 use crate::midi_map::Binding;
 #[cfg(feature = "midi-map")]
-use crate::name::SoundName;
-#[cfg(feature = "midi-map")]
 use crate::out_ring::{OutPorts, OutRing};
 use crate::project::PartId;
 #[cfg(feature = "midi-map")]
@@ -155,9 +153,9 @@ type MapRowFn = fn(&UiState, usize, &mut MapText);
 type CtlDue = fn(&UiState) -> bool;
 #[cfg(feature = "midi-map")]
 type CtlWork = fn(&mut UiState, &mut dyn Store, Option<&Ready>);
-/// The door's `ctl_ask`: a save (a name) or a row's drop, queued.
+/// The door's `ctl_ask`: MIDI MAP's card job, queued.
 #[cfg(feature = "midi-map")]
-type CtlAsk = fn(&mut UiState, PartId, Option<SoundName>, Option<Binding>);
+type CtlAsk = fn(&mut UiState, super::midi::layer::CtlJob);
 
 /// The door's `clashes`: `control::clashes`, the CONTROL channels a
 /// Part's own takes (ADR 0254).
@@ -215,8 +213,8 @@ pub struct MidiUiDoor {
 #[repr(transparent)]
 struct Magic(u32);
 
-// ADR 0254: CONTROL's entries joined the table.
-const MAGIC: Magic = Magic(0xB2C0_0254);
+// ADR 0255: `ctl_ask` takes MIDI MAP's job whole.
+const MAGIC: Magic = Magic(0xB2C0_0255);
 
 impl MidiUiDoor {
     pub const OWN: MidiUiDoor = MidiUiDoor {
@@ -385,15 +383,10 @@ impl UiState {
         }
     }
 
-    /// NAMING's answer on MIDI MAP's row 0: the Part's rows saved into map
-    /// `n` by the next card work (`ctl_ask`).
-    pub(super) fn ctl_save(&mut self, p: PartId, n: SoundName) {
-        through(|d| (d.ctl_ask)(self, p, Some(n), None));
-    }
-
-    /// DELETE answered on a layer row: `e` dropped from the Part's map.
-    pub(super) fn ctl_drop(&mut self, p: PartId, e: Binding) {
-        through(|d| (d.ctl_ask)(self, p, None, Some(e)));
+    /// MIDI MAP's card job `j` for the next card work (`ctl_ask`): NAMING's
+    /// save or rename on row 0, DELETE's drop of a row or of the map.
+    pub(super) fn ctl_ask(&mut self, j: super::midi::layer::CtlJob) {
+        through(|d| (d.ctl_ask)(self, j));
     }
 }
 

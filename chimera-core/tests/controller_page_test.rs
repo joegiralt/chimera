@@ -18,7 +18,7 @@ use chimera_core::project::PartId;
 use chimera_core::storage::{Card, Ready};
 use chimera_core::ui::UiState;
 use chimera_core::ui::settings::view::RowLook;
-use chimera_hal::store::StoreError;
+use chimera_hal::store::{Store as _, StoreError};
 use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, EncoderId, Ms};
 use screen::{Input as Key, Rig};
@@ -333,4 +333,201 @@ fn an_engine_change_swaps_the_layer() {
     assert_eq!(rows(&mut rig), ["CC 50  MORPH", "CC 21  CUTOFF"]);
     screen::init_part_engine(rig.ui, P1, EngineType::Modal);
     assert_eq!(rows(&mut rig), ["CC 51  STRUCT", "CC 21  CUTOFF"]);
+}
+
+/// A map put or removed over USB (`map_put`) reaches the Parts playing
+/// it: every layer reads the card again.
+#[test]
+fn a_map_put_over_usb_plays_at_once() {
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.work();
+    put_map(&mut rig.s, "EC4", &[(21, RESO)]);
+    chimera_core::midi_map::map_put();
+    rig.work();
+    let mut now = 100;
+    let cutoff = place(rig.ui, CUTOFF);
+    hear(rig.ui, &mut now, cc(21, 0));
+    assert!(
+        place(rig.ui, RESO) < 0.01,
+        "CC 21 is the put map's resonance"
+    );
+    assert_eq!(place(rig.ui, CUTOFF), cutoff);
+}
+
+/// The map read back from the card, as a Part on ALGO plays it.
+fn card_rows(s: &mut MemStore, n: &str) -> Option<Vec<chimera_core::midi_map::Binding>> {
+    let mut back = ControllerMap::EMPTY;
+    on_card(s, |s, r| ctl::load(s, r, &name(n), &mut back)).ok()?;
+    Some(back.layer(EngineType::Algo).0.entries().to_vec())
+}
+
+/// B to F edit a layer row as they edit a Sound's: the row changes in
+/// the map on the card, and the Sound is not edited.
+#[test]
+fn b_to_f_edit_a_layer_row_in_the_map() {
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF), (22, RESO)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    let own = rig.ui.project().part(P1).sound.map;
+    rig.bar_to(1);
+    assert_eq!(
+        rig.ui.legend_for_test().unwrap(),
+        "A MOVE · MIX+MINUS DELETES"
+    );
+    rig.feed(Key::turn(EncoderId::B, 2));
+    rig.feed(Key::turn(EncoderId::C, 10));
+    rig.feed(Key::turn(EncoderId::F, 1));
+    // Shown at once, before the card work.
+    assert_eq!(rig.ui.map_band().text(1).label.as_str(), "CC 23  CUTOFF");
+    rig.work();
+    let rows = card_rows(&mut rig.s, "EC4").unwrap();
+    let e = rows.iter().find(|b| b.target.addr() == CUTOFF).unwrap();
+    assert_eq!(e.input, Input::cc(23).unwrap());
+    assert_eq!(e.span.min, 10);
+    assert_eq!(e.feedback, chimera_core::midi_map::Feedback::Value);
+    assert_eq!(rows.len(), 2, "RESO's row stays");
+    assert_eq!(rig.ui.project().part(P1).sound.map, own, "no Sound edit");
+    let b = rig.ui.map_band();
+    assert_eq!(b.text(1).label.as_str(), "CC 23  CUTOFF");
+    assert_eq!(b.text(1).min.as_str(), "10");
+    // The edited row plays.
+    let mut now = 100;
+    hear(rig.ui, &mut now, cc(23, 0));
+    assert!(place(rig.ui, CUTOFF) < 0.05);
+}
+
+/// MIX+MINUS on row 0 asks, then deletes the Part's map from the card;
+/// the Part plays NONE.
+#[test]
+fn mix_minus_on_row_0_deletes_the_map() {
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    put_map(&mut s, "LCXL3", &[(30, RESO)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    rig.feed(Key::chord(ButtonId::Mix, ButtonId::Minus));
+    let (q, r) = rig.ui.prompt_words_for_test().expect("a prompt");
+    assert_eq!((q.as_str(), r.as_str()), ("DELETE MAP?", "EC4"));
+    rig.feed(Key::turn(EncoderId::A, -9));
+    rig.tap(ButtonId::Edit);
+    rig.work();
+    assert_eq!(card_rows(&mut rig.s, "EC4"), None);
+    assert!(card_rows(&mut rig.s, "LCXL3").is_some());
+    assert_eq!(rig.ui.project().controller(P1), None);
+    rig.work();
+    assert_eq!(rig.ui.map_band().text(0).word.as_str(), "NONE");
+    // No map: MIX+MINUS asks nothing.
+    rig.feed(Key::chord(ButtonId::Mix, ButtonId::Minus));
+    assert!(rig.ui.prompt_words_for_test().is_none());
+}
+
+/// MIX+EDIT on row 0 renames the Part's map: NAMING starts from its name,
+/// the file moves to the new name's, and every Part on it follows. A name
+/// another map holds is refused, nothing moved.
+#[test]
+fn mix_edit_on_row_0_renames_the_map() {
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    put_map(&mut s, "EC", &[(30, RESO)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    let p2 = PartId::ALL[1];
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.ui.project_mut().set_controller(p2, Some(name("EC4")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    let rename = |rig: &mut Rig| {
+        rig.feed(Key::chord(ButtonId::Mix, ButtonId::Edit));
+        assert_eq!(rig.ui.naming().unwrap().text(), "EC4");
+        rig.feed(Key::turn(EncoderId::E, -1));
+        rig.tap(ButtonId::Edit);
+        rig.work();
+    };
+    // `EC` is taken: refused, nothing moved.
+    rename(&mut rig);
+    assert_eq!(rig.ui.project().controller(P1), Some(name("EC4")));
+    assert!(card_rows(&mut rig.s, "EC4").is_some());
+    let gone = name("EC");
+    on_card(&mut rig.s, |s, r| {
+        let (st, n) = ctl::stem(&gone);
+        for side in [b"A", b"B"] {
+            let f =
+                chimera_hal::store::FileName::new(chimera_hal::store::Dir::Maps, &st[..n], side);
+            let _ = s.delete(r.volume(), f.unwrap());
+        }
+    });
+    rename(&mut rig);
+    assert_eq!(card_rows(&mut rig.s, "EC4"), None);
+    let rows = card_rows(&mut rig.s, "EC").unwrap();
+    assert_eq!(rows[0].target.addr(), CUTOFF);
+    assert_eq!(rig.ui.project().controller(P1), Some(name("EC")));
+    assert_eq!(rig.ui.project().controller(p2), Some(name("EC")));
+    assert!(
+        !rig.ui.project().part(P1).sound.map.is_empty(),
+        "the Part's rows stay its own"
+    );
+}
+
+/// A map job confirmed while another waits for the card is refused on
+/// screen (`CARD BUSY`), never dropped silently: the waiting edit still
+/// reaches the card, and the map stays.
+#[test]
+fn a_job_while_another_waits_is_refused_not_lost() {
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    rig.bar_to(1);
+    // Keys alone, no card work between them: the edit waits.
+    screen::feed(rig.ui, Key::turn(EncoderId::C, 5));
+    screen::feed(rig.ui, Key::turn(EncoderId::A, -1));
+    screen::feed(rig.ui, Key::chord(ButtonId::Mix, ButtonId::Minus));
+    screen::feed(rig.ui, Key::turn(EncoderId::A, -9));
+    screen::tap(rig.ui, ButtonId::Edit);
+    match rig.ui.step_toast(0) {
+        chimera_core::ui::busy::ToastStep::Show(l) => assert_eq!(l.as_str(), "CARD BUSY"),
+        s => panic!("no toast: {s:?}"),
+    }
+    rig.work();
+    let rows = card_rows(&mut rig.s, "EC4").expect("the map stays");
+    assert_eq!(rows[0].span.min, 5, "the waiting edit reached the card");
+    assert_eq!(rig.ui.project().controller(P1), Some(name("EC4")));
+}
+
+/// DELETE deletes the map it named, even if the Part picks another before
+/// the card work runs.
+#[test]
+fn delete_takes_the_map_it_asked_about() {
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    put_map(&mut s, "LCXL3", &[(30, RESO)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    // Keys alone: the Part picks LCXL3 before the delete runs.
+    screen::feed(rig.ui, Key::chord(ButtonId::Mix, ButtonId::Minus));
+    screen::feed(rig.ui, Key::turn(EncoderId::A, -9));
+    screen::tap(rig.ui, ButtonId::Edit);
+    screen::feed(rig.ui, Key::turn(EncoderId::B, 1));
+    assert_eq!(rig.ui.project().controller(P1), Some(name("LCXL3")));
+    rig.work();
+    assert_eq!(card_rows(&mut rig.s, "EC4"), None);
+    assert!(card_rows(&mut rig.s, "LCXL3").is_some());
+    assert_eq!(rig.ui.project().controller(P1), Some(name("LCXL3")));
 }

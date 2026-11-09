@@ -457,14 +457,23 @@ fn every_prompt_fits() {
         let target = Mappable::new(ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF));
         check(MapDelete {
             part: PartId::ALL[0],
-            entry: Binding {
+            entry: Some(Binding {
                 input: Input::cc(119).unwrap(),
                 target: target.unwrap(),
                 span: Span::FULL,
                 feedback: Feedback::Off,
-            },
+            }),
             label: "RESONANCE",
             layer: false,
+            map: None,
+        });
+        // The whole map's: its longest name fits.
+        check(MapDelete {
+            part: PartId::ALL[0],
+            entry: None,
+            label: "",
+            layer: true,
+            map: Some(chimera_core::name::SoundName::new("MMMMMMMMMMMMMMMM").unwrap()),
         });
     }
     let two = AlsoUses {

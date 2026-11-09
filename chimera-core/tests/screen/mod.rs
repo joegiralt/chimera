@@ -2574,6 +2574,16 @@ pub const CASES: &[ScreenCase] = &[
         midi_map_mixed(ui);
         feed(ui, Input::turn(EncoderId::A, -6));
     }),
+    // MIDI MAP with controller map EC4 picked (ADR 0226, 0255): row 0
+    // names it, its rows (one shadowed by the Sound's CC 74) above the
+    // Sound's, the bar on its first row.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_layer", midi_map_layer),
+    #[cfg(feature = "midi-map")]
+    ("midi_map_layer_row0", |ui| {
+        midi_map_layer(ui);
+        feed(ui, Input::turn(EncoderId::A, -1));
+    }),
     // INIT Algo's PIT, FINE bound to a PICKUP CC that waits below it: the
     // focus band says which way to turn (spec § 8.3).
     #[cfg(feature = "midi-map")]
@@ -2654,6 +2664,44 @@ fn midi_map_mixed(ui: &mut UiState) {
     plus(ui, chimera_core::ui::settings::tree::PART.len() - 1);
     feed(ui, Input::press(ButtonId::Edit));
     feed(ui, Input::turn(EncoderId::A, 6));
+}
+
+/// `midi_map_mixed`'s Part with map EC4 picked: CC 30 MORPH and CC 74
+/// RESO (shadowed by the Sound's CC 74), read from a card; the bar on the
+/// map's first row.
+#[cfg(feature = "midi-map")]
+fn midi_map_layer(ui: &mut UiState) {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::algo::params::AlgoParams;
+    use chimera_core::midi_map::ctl::{self, ControllerMap};
+    use chimera_core::midi_map::{Input as In, Mappable, MidiMap};
+    use chimera_core::name::SoundName;
+    use chimera_core::params::FilterParams;
+    midi_map_mixed(ui);
+    let n = SoundName::new("EC4").unwrap();
+    let mut own = MidiMap::EMPTY;
+    for (cc, a) in [
+        (30, ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH)),
+        (
+            74,
+            ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
+        ),
+    ] {
+        own.learn(In::cc(cc).unwrap(), Mappable::new(a).unwrap())
+            .unwrap();
+    }
+    let mut m = ControllerMap::EMPTY;
+    m.absorb(&own, EngineType::Algo).unwrap();
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let saved = card.run(&mut s, |s, r| ctl::save(s, r, &n, &m));
+    saved.unwrap().result.unwrap();
+    let mut rig = Rig::new(ui, s);
+    rig.ui.project_mut().set_controller(PartId::ALL[0], Some(n));
+    rig.work();
+    // From the top, so row 0 stays in view.
+    rig.bar_to(0);
+    rig.bar_to(1);
 }
 
 /// INIT Algo's PIT, FINE touched, bound to CC 21 with PICKUP; CC 21 at 0

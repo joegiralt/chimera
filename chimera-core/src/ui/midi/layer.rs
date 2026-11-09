@@ -45,6 +45,13 @@ pub enum CtlJob {
     Save(PartId, SoundName),
     /// Row `b` dropped from the Part's map.
     Drop(PartId, Binding),
+    /// Row `.1` of the Part's map, as the card holds it, made `.2`.
+    Edit(PartId, Binding, Binding),
+    /// The Part's map renamed: every Part on it follows.
+    Rename(PartId, SoundName),
+    /// Map `.1`, the one DELETE named, deleted from the card: every Part on
+    /// it plays NONE.
+    Delete(PartId, SoundName),
 }
 
 /// Each Part's layer and what it was read for, the card's maps as last
@@ -55,6 +62,9 @@ pub struct Layers {
     read: [Option<Read>; MAX_PARTS],
     /// Moves on every save: every layer reads again.
     saves: u8,
+    /// `maps_put` when last seen: a console `put` or `rm` since reads every
+    /// layer again.
+    puts: u8,
     list: [Option<SoundName>; MAX_MAPS],
     listed: bool,
     /// The card holds more maps than `list`.
@@ -90,6 +100,7 @@ pub(super) unsafe fn rest_at(p: *mut Layers) {
             None,
         );
         addr_of_mut!((*p).saves).write(0);
+        addr_of_mut!((*p).puts).write(crate::midi_map::maps_put());
         super::fill(
             addr_of_mut!((*p).list).cast::<Option<SoundName>>(),
             MAX_MAPS,
@@ -106,8 +117,9 @@ pub(super) unsafe fn rest_at(p: *mut Layers) {
 
 /// The words a save or a delete says, `|` between: a named static, so its
 /// bytes are bank 2's.
-static WORDS: [u8; 90] =
-    *b"SAVED |MAP FULL|CONTROLLER|NONE|IN |NO CONTROLLER MAP|NAME TAKEN|CARD HOLDS MORE: 16 SHOWN";
+static WORDS: [u8; 106] =
+    *b"SAVED |MAP FULL|CONTROLLER|NONE|IN |NO CONTROLLER MAP|NAME TAKEN|CARD HOLDS MORE: 16 SHOWN|\
+MIX+EDIT RENAME";
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -120,6 +132,7 @@ pub(super) enum W {
     NoMap,
     Taken,
     More,
+    Whole,
 }
 
 #[inline(never)]
@@ -131,6 +144,29 @@ impl Layers {
     /// Part `i`'s layer.
     pub fn layer(&self, i: usize) -> &MidiMap {
         self.layers.get(i).unwrap_or(&NO_LAYER)
+    }
+
+    /// Row `i` of Part `p`'s layer, `was`, made `to` here and, by the next
+    /// card work, in the map; an edit of the row waiting takes it on.
+    /// `false`: another job waits, nothing changed.
+    #[cfg(feature = "midi-map")]
+    pub(super) fn edit(&mut self, p: PartId, i: usize, was: Binding, to: Binding) -> bool {
+        let first = match self.job {
+            None => was,
+            // The same row: the whole binding, as two rows may share a
+            // target on two controls.
+            Some(CtlJob::Edit(q, first, last))
+                if q == p && last.target == was.target && super::page::same(&last, &was) =>
+            {
+                first
+            }
+            Some(_) => return false,
+        };
+        self.job = Some(CtlJob::Edit(p, first, to));
+        if let Some(l) = self.layers.get_mut(p.index()) {
+            l.set(i, to);
+        }
+        true
     }
 
     /// The maps listed, `None` before a listing.
@@ -163,6 +199,7 @@ impl UiState {
         };
         let c = &m.ctl;
         c.job.is_some()
+            || c.puts != crate::midi_map::maps_put()
             || (!c.listed && mapping)
             || PartId::ALL
                 .iter()
@@ -188,10 +225,13 @@ impl UiState {
             }
             let c = &mut self.cc.ui().ctl;
             (c.job, c.list, c.listed, c.more) = (None, [None; MAX_MAPS], true, false);
+            c.puts = crate::midi_map::maps_put();
             return;
         };
         let c = &mut self.cc.ui().ctl;
-        if c.vol.replace(r.volume()).is_some_and(|v| v != r.volume()) {
+        let puts = crate::midi_map::maps_put();
+        if c.vol.replace(r.volume()).is_some_and(|v| v != r.volume()) || c.puts != puts {
+            c.puts = puts;
             c.saves = c.saves.wrapping_add(1);
             c.listed = false;
         }
@@ -234,16 +274,30 @@ impl UiState {
     }
 
     fn ctl_job(&mut self, s: &mut dyn Store, r: &Ready, j: CtlJob) {
-        let (p, name) = match j {
-            CtlJob::Save(p, n) => (p, Some(n)),
-            CtlJob::Drop(p, _) => (p, self.project.controller(p)),
+        let p = match j {
+            CtlJob::Save(p, _)
+            | CtlJob::Drop(p, _)
+            | CtlJob::Edit(p, ..)
+            | CtlJob::Rename(p, _)
+            | CtlJob::Delete(p, _) => p,
         };
-        let Some(name) = name else { return };
+        let now = self.project.controller(p);
+        // The map a rename or a delete takes the Parts off.
+        let was = match j {
+            CtlJob::Delete(_, n) => Some(n),
+            _ => now,
+        };
+        // The name written, and the maps read: a save's own, else the
+        // Part's (a save as); every other job the Part's.
+        let (name, from) = match (j, now) {
+            (CtlJob::Save(_, n), _) => (n, [Some(n), now]),
+            (CtlJob::Rename(_, n), Some(was)) if n != was => (n, [Some(was), None]),
+            (CtlJob::Rename(..), _) => return,
+            (CtlJob::Delete(_, n), _) => (n, [Some(n), None]),
+            (_, None) => return,
+            (_, Some(n)) => (n, [Some(n), None]),
+        };
         let engine = self.project.part(p).sound.params.engine();
-        let mut from = [Some(name), self.project.controller(p)];
-        if let CtlJob::Drop(..) = j {
-            from[1] = None;
-        }
         let own = self.project.part(p).sound.map;
         // The map works in the MIDI UI's scratch, not on the stack: this
         // runs under `ctl_work_in`, a door entry whose depth every call
@@ -260,6 +314,18 @@ impl UiState {
         let c = &mut self.cc.ui().ctl;
         c.saves = c.saves.wrapping_add(1);
         c.listed = false;
+        let to = match j {
+            CtlJob::Rename(_, n) => Some(Some(n)),
+            CtlJob::Delete(..) => Some(None),
+            _ => None,
+        };
+        if let Some(to) = to {
+            for q in PartId::ALL {
+                if self.project.controller(q) == was {
+                    self.project.set_controller(q, to);
+                }
+            }
+        }
         if let CtlJob::Save(..) = j {
             self.project.set_controller(p, Some(name));
             if !own.is_empty() {
@@ -271,20 +337,16 @@ impl UiState {
         }
     }
 
-    /// MIDI MAP's save (`n`) or a layer row's drop (`b`), for the next card
-    /// work. The door's `ctl_ask`.
-    pub(in crate::ui) fn ctl_ask_in(
-        &mut self,
-        p: PartId,
-        n: Option<SoundName>,
-        b: Option<Binding>,
-    ) {
-        let j = match (n, b) {
-            (Some(n), _) => CtlJob::Save(p, n),
-            (None, Some(b)) => CtlJob::Drop(p, b),
-            (None, None) => return,
-        };
-        self.cc.ui().ctl.job = Some(j);
+    /// MIDI MAP's job for the next card work: a save, a rename, a layer
+    /// row's drop or the map's delete. One waits at a time: while another
+    /// waits for the card, this one is refused on screen, never dropped
+    /// unsaid. The door's `ctl_ask`.
+    pub(in crate::ui) fn ctl_ask_in(&mut self, j: CtlJob) {
+        let c = &mut self.cc.ui().ctl;
+        if c.job.is_some() {
+            return self.error(Line::new(StoreError::Busy.message()));
+        }
+        c.job = Some(j);
     }
 
     /// Part `p`'s pick `d` steps along NONE and the listed maps.
@@ -330,6 +392,16 @@ fn load_words(e: LoadError) -> &'static str {
     }
 }
 
+/// A card step's end: the card busy runs the job again; else its words.
+#[cfg(feature = "midi-map")]
+fn busy_or(r: Result<(), LoadError>) -> Result<(), JobErr> {
+    match r {
+        Ok(()) => Ok(()),
+        Err(LoadError::Store(StoreError::Busy)) => Err(JobErr::Busy),
+        Err(e) => Err(JobErr::Say(Line::new(load_words(e)))),
+    }
+}
+
 /// Why a map job stopped: the card busy (it runs again), or words to say.
 #[cfg(feature = "midi-map")]
 enum JobErr {
@@ -352,6 +424,14 @@ fn job_on(
     engine: EngineType,
     m: &mut ctl::ControllerMap,
 ) -> Result<(), JobErr> {
+    // A rename never writes over a map of its new name.
+    if let CtlJob::Rename(..) = j {
+        match ctl::load(s, r, &name, m) {
+            Ok(_) => return Err(JobErr::Say(Line::new(word(W::Taken)))),
+            Err(LoadError::Missing) => {}
+            Err(e) => return busy_or(Err(e)),
+        }
+    }
     // SAFETY: `empty_at` writes the whole map over the last one.
     unsafe { ctl::empty_at(m) };
     let mut found = false;
@@ -367,22 +447,36 @@ fn job_on(
         }
     }
     // A row's map gone from the card (or its stem another map's):
-    // nothing to drop it from, and nothing written in its place.
-    if let (CtlJob::Drop(..), false) = (j, found) {
+    // nothing to edit, and nothing written in its place.
+    if !found && !matches!(j, CtlJob::Save(..)) {
         return Err(JobErr::Say(Line::new(load_words(LoadError::Missing))));
     }
     let edited = match j {
         CtlJob::Save(..) => m.absorb(own, engine),
-        CtlJob::Drop(_, b) => {
-            m.drop(&b, engine);
+        CtlJob::Drop(_, b) | CtlJob::Edit(_, b, _) => {
+            let to = match j {
+                CtlJob::Edit(_, _, to) => Some(to),
+                _ => None,
+            };
+            m.change(&b, to, engine);
             Ok(())
         }
+        CtlJob::Delete(..) => return busy_or(ctl::delete(s, r, &name)),
+        CtlJob::Rename(..) => Ok(()),
     };
     if edited == Err(MapFull) {
         return Err(JobErr::Say(Line::new(word(W::Full))));
     }
     match ctl::save(s, r, &name, m) {
-        Ok(()) => Ok(()),
+        // The old name's pair goes once the new one is whole. Not
+        // retried: the new file would read as taken; a failed delete
+        // leaves a copy.
+        Ok(()) => {
+            if let (CtlJob::Rename(..), Some(was)) = (j, from[0]) {
+                let _ = ctl::delete(s, r, &was);
+            }
+            Ok(())
+        }
         Err(SaveError::Store(StoreError::Busy)) => Err(JobErr::Busy),
         // Another map holds the name's stem: it stays.
         Err(SaveError::File(FileError::BadName)) => Err(JobErr::Say(Line::new(word(W::Taken)))),
@@ -391,5 +485,61 @@ fn job_on(
         Err(SaveError::Store(e)) => Err(JobErr::Say(Line::new(e.message()))),
         Err(SaveError::File(e)) => Err(JobErr::Say(Line::new(e.message()))),
         Err(SaveError::Damaged) => Err(JobErr::Say(Line::new(StoreError::Corrupt.message()))),
+    }
+}
+
+#[cfg(all(test, feature = "midi-map"))]
+mod tests {
+    use super::*;
+    use crate::addr::{BlockRef, ParamAddr};
+    use crate::midi_map::{Input, Mappable};
+    use crate::params::FilterParams;
+
+    fn row(cc: u8) -> Binding {
+        let t = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+        let mut m = MidiMap::EMPTY;
+        m.learn(Input::cc(cc).unwrap(), Mappable::new(t).unwrap())
+            .unwrap();
+        m.entries()[0]
+    }
+
+    /// Two rows on one target (a hand-made file can hold them): an edit
+    /// of the second never merges into the first's waiting edit.
+    #[test]
+    fn an_edit_merges_only_into_its_own_row() {
+        let mut l = core::mem::MaybeUninit::<Layers>::uninit();
+        // SAFETY: `rest_at` writes the whole `Layers`.
+        let l = unsafe {
+            rest_at(l.as_mut_ptr());
+            l.assume_init_mut()
+        };
+        let p = PartId::ALL[0];
+        let (a, b) = (row(21), row(22));
+        // `learn` keeps one row a target: the second row set by hand.
+        let reso = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
+        let mut m = MidiMap::EMPTY;
+        m.learn(a.input, a.target).unwrap();
+        m.learn(b.input, Mappable::new(reso).unwrap()).unwrap();
+        m.set(1, b);
+        l.layers[0] = m;
+        assert_eq!(l.layers[0].entries(), &[a, b]);
+        let a2 = Binding {
+            span: crate::midi_map::Span { min: 9, max: 255 },
+            ..a
+        };
+        assert!(l.edit(p, 0, a, a2));
+        let b2 = Binding {
+            span: crate::midi_map::Span { min: 7, max: 255 },
+            ..b
+        };
+        assert!(!l.edit(p, 1, b, b2), "another row's edit waits");
+        assert_eq!(l.layers[0].entries(), &[a2, b]);
+        // The first row again: merged, from the card's row.
+        let a3 = Binding {
+            span: crate::midi_map::Span { min: 3, max: 255 },
+            ..a
+        };
+        assert!(l.edit(p, 0, a2, a3));
+        assert!(matches!(l.job, Some(CtlJob::Edit(_, x, y)) if x == a && y == a3));
     }
 }

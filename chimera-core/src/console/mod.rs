@@ -136,18 +136,18 @@ macro_rules! table {
 
 #[cfg(all(feature = "card-put", feature = "fault-inject"))]
 table! {
-    Ls     (LsArg)   => "ls",     "files and sizes in PROJECTS; ls tapes, ls sounds: theirs",
+    Ls     (LsArg)   => "ls",     "files and sizes in PROJECTS; ls tapes|sounds|maps: theirs",
     Put    (PutArg)  => "put",    "a project, Sound or source: <path> <size> <crc32> [--over]",
-    Rm     (SoundArg) => "rm",    "a library Sound's pair: /CHIMERA/SOUNDS/S#######",
-    Get    (SoundArg) => "get",   "a library Sound's file, base64: /CHIMERA/SOUNDS/S#######",
+    Rm     (PairArg) => "rm",    "a pair: /CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>",
+    Get    (PairArg) => "get",   "base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>",
     Fault  (FaultArg) => "fault",  "fault test: fault dma <1|2>, fault ndtr, fault card (fault-inject builds)",
 }
 #[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
 table! {
-    Ls     (LsArg)   => "ls",     "files and sizes in PROJECTS; ls tapes, ls sounds: theirs",
+    Ls     (LsArg)   => "ls",     "files and sizes in PROJECTS; ls tapes|sounds|maps: theirs",
     Put    (PutArg)  => "put",    "a project, Sound or source: <path> <size> <crc32> [--over]",
-    Rm     (SoundArg) => "rm",    "a library Sound's pair: /CHIMERA/SOUNDS/S#######",
-    Get    (SoundArg) => "get",   "a library Sound's file, base64: /CHIMERA/SOUNDS/S#######",
+    Rm     (PairArg) => "rm",    "a pair: /CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>",
+    Get    (PairArg) => "get",   "base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>",
 }
 #[cfg(all(not(feature = "card-put"), feature = "fault-inject"))]
 table! {

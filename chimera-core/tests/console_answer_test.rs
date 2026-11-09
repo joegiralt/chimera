@@ -193,10 +193,10 @@ fn help_is_the_specs_text() {
          bank2   bank 2: its state; bank2 install: the staged file into it\n\
          key     B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]\n\
          turn    <encoder 1-6> <delta -64..64>: detents at a hand's pace\n\
-         ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs\n\
+         ls      files and sizes in PROJECTS; ls tapes|sounds|maps: theirs\n\
          put     a project, Sound or source: <path> <size> <crc32> [--over]\n\
-         rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######\n\
-         get     a library Sound's file, base64: /CHIMERA/SOUNDS/S#######\n\
+         rm      a pair: /CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>\n\
+         get     base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>\n\
          OK\n"
     );
 }

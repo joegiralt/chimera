@@ -5,6 +5,47 @@
 pub mod codec;
 pub mod ctl;
 
+use core::sync::atomic::{AtomicU8, Ordering};
+
+/// Controller map files a console `put` or `rm` has changed, wrapping.
+static MAPS_PUT: AtomicU8 = AtomicU8::new(0);
+
+/// How many map files the console has changed: a move says every layer
+/// reads the card again (ADR 0226).
+pub fn maps_put() -> u8 {
+    MAPS_PUT.load(Ordering::Relaxed)
+}
+
+/// The console changed a map file.
+pub fn map_put() {
+    MAPS_PUT.fetch_add(1, Ordering::Relaxed);
+}
+
+/// The file stem for `n`: up to four of its letters and digits, upper
+/// case, then a 16-bit FNV-1a of the whole name as four hex digits. Names
+/// that share one are told apart by the header: a load whose header names
+/// another map is `Missing`. Bank 1's, not `ctl`'s: the console checks a
+/// map `put` by it.
+pub fn stem(n: &crate::name::SoundName) -> ([u8; 8], usize) {
+    let mut out = [b'M'; 8];
+    let mut len = 0;
+    let mut h: u32 = 0x811C_9DC5;
+    for c in n.as_str().bytes() {
+        h = (h ^ u32::from(c)).wrapping_mul(0x0100_0193);
+        if len < 4 && c.is_ascii_alphanumeric() {
+            out[len] = c.to_ascii_uppercase();
+            len += 1;
+        }
+    }
+    let len = len.max(1);
+    let h = (h ^ h >> 16) as u16;
+    for k in 0..4 {
+        let d = (h >> (12 - 4 * k) & 0xF) as u8;
+        out[len + k] = if d < 10 { b'0' + d } else { b'A' + d - 10 };
+    }
+    (out, len + 4)
+}
+
 use codec::{Bounds, MapRecord};
 
 pub use crate::midi_in::Cc;
