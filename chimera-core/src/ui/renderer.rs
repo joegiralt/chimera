@@ -837,11 +837,14 @@ impl Renderer {
         }
         let part = &f.parts[f.active_part.index()];
         let sound = &part.sound;
-        let note = view.addr().and_then(|a| {
-            view::band_note(a, sound, f.ctx.src)
-                .or(view::delay_note(a, &f.ctx))
-                .or(view::tuning_note(a, part.mix.tuning))
-        });
+        let note = view
+            .addr()
+            .and_then(|a| {
+                view::band_note(a, sound, f.ctx.src)
+                    .or(view::delay_note(a, &f.ctx))
+                    .or(view::tuning_note(a, part.mix.tuning))
+            })
+            .or_else(|| view::clash_note(&view, &f.ctx));
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
             (Some(s), _) => {
                 let why = crate::ui::held::reason(s.why);
@@ -1324,7 +1327,9 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         }
         View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
         v if held_on(f, &v).is_some() => components::Look::Dimmed,
-        v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
+        v if view::is_dimmed(&v, sound, &f.ctx) || view::clash_note(&v, &f.ctx).is_some() => {
+            components::Look::Dimmed
+        }
         _ => components::Look::Live,
     }
 }

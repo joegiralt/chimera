@@ -9,6 +9,7 @@ use crate::ui::block_registry::{
     DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_ECHO, SYS_MAP, SYS_POOL, SYS_PUSH, SYS_SAVER, SYS_SYNC,
     SYS_TEXT, SYS_THEME, SYS_TUNING,
 };
+use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageId, PageLayout};
 
 /// One cell per Part, `P1`–`P6`, each Part's `param`: the mixer's own
@@ -32,6 +33,26 @@ pub static CHANNELS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: per_part(PartParams::CHANNEL),
+};
+
+/// MIDI CONFIG › CONTROL CHANNELS (ADR 0254): MIXER, SEQUENCER and AUTO,
+/// each OFF or a channel. One a Part's own channel takes reads dimmed.
+pub static CONTROL: BlockDef = BlockDef {
+    // Never used before: a new top, past MPE's 113 (#896), one more
+    // focus slot (`MAX_PAGES`) each.
+    id: 114,
+    name: "Control",
+    short: "CTL",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Midi, MidiSettings::MIXER),
+        ParamSlot::param(BlockRef::Midi, MidiSettings::SEQUENCER),
+        ParamSlot::param(BlockRef::Midi, MidiSettings::AUTO),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+    ],
 };
 
 /// AUDIO ROUTING > OUTPUTS.
@@ -121,6 +142,7 @@ impl OnePage {
 }
 
 static CHANNELS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&CHANNELS)];
+static CONTROL_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&CONTROL)];
 static SYNC_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_SYNC)];
 static ECHO_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ECHO)];
 static OUTPUTS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&OUTPUTS)];
@@ -137,6 +159,7 @@ static RANDOM_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&RANDOM)];
 static POOL_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_POOL)];
 
 pub static CHANNELS_LEAF: OnePage = OnePage::new("Channels", &CHANNELS_BLOCKS);
+pub static CONTROL_LEAF: OnePage = OnePage::new("Control", &CONTROL_BLOCKS);
 pub static SYNC_LEAF: OnePage = OnePage::new("Sync", &SYNC_BLOCKS);
 pub static ECHO_LEAF: OnePage = OnePage::new("Echo", &ECHO_BLOCKS);
 pub static OUTPUTS_LEAF: OnePage = OnePage::new("Outputs", &OUTPUTS_BLOCKS);

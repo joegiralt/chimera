@@ -162,9 +162,125 @@ A binding on PICKUP waits for the knob. While it waits, the touched cell's value
 
 The hint shows while HINTS is on at SETTINGS › PERSONALIZE › THEME.
 
+## CONTROL CHANNELS: MIXER, SEQUENCER and AUTO
+
+SETTINGS › MIDI CONFIG › CONTROL CHANNELS gives three channels a job of their own, beside the Parts' channels. Each is `OFF` (the default) or a channel, 1 to 16.
+
+![SETTINGS › MIDI CONFIG › CONTROL CHANNELS, annotated](img/midi-control.png)
+
+1. **Breadcrumb:** `SETTINGS › MIDI › CONTROL`.
+2. **MIXER:** the channel the mixer chart below listens on. A turns it.
+3. **SEQ:** SEQUENCER's channel, ORBIT's chart below. B turns it.
+4. **AUTO:** the channel that plays whichever Part you are on. C turns it. Here it is `1`, Part 1's channel, so it reads dimmed: it does nothing.
+5. **Why:** on a dimmed cell the band reads `A PART HAS THIS CHANNEL`.
+
+A Part's own channel always wins: a CONTROL channel that a Part also listens on is the Part's, and its cell reads dimmed until you move one of them. When two CONTROL channels share a channel, MIXER wins over SEQUENCER, and SEQUENCER over AUTO. If you use MPE, keep these channels off its zones' member channels.
+
+The MIXER and SEQUENCER charts are fixed: learn does not bind on their channels, and a controller map does not apply there.
+
+### AUTO
+
+Notes, CCs, bend, pressure and the pedal sent on AUTO's channel play the Part you are on, as if you had sent them on that Part's channel (every Part on that channel plays them, and the Part's map answers the CCs). Change Part and AUTO follows. A note you are holding, or the pedal, stays with the Part that started it until you let go, so nothing hangs.
+
+### MIXER
+
+On MIXER's channel these CCs move the mixer and the FX, gliding as a knob does. They are plain 7-bit CCs (0 to 127); for finer steps on the FX, send their NRPNs. An NRPN of the FX's (CHORUS, DELAY, REVERB or COMP, by the [NRPN chart](../midi/nrpn-chart.md)) moves it too, so you reach their other parameters. Notes on MIXER's channel are ignored.
+
+| CC | Part | Parameter |
+|---|---|---|
+| 20 | Part 1 | PART LEVEL |
+| 21 | Part 2 | PART LEVEL |
+| 22 | Part 3 | PART LEVEL |
+| 23 | Part 4 | PART LEVEL |
+| 24 | Part 5 | PART LEVEL |
+| 25 | Part 6 | PART LEVEL |
+| 26 | Part 1 | PART PAN |
+| 27 | Part 2 | PART PAN |
+| 28 | Part 3 | PART PAN |
+| 29 | Part 4 | PART PAN |
+| 30 | Part 5 | PART PAN |
+| 31 | Part 6 | PART PAN |
+| 41 | Part 1 | OUT CHORUS |
+| 42 | Part 2 | OUT CHORUS |
+| 43 | Part 3 | OUT CHORUS |
+| 44 | Part 4 | OUT CHORUS |
+| 45 | Part 5 | OUT CHORUS |
+| 46 | Part 6 | OUT CHORUS |
+| 47 | Part 1 | OUT DELAY |
+| 48 | Part 2 | OUT DELAY |
+| 49 | Part 3 | OUT DELAY |
+| 50 | Part 4 | OUT DELAY |
+| 51 | Part 5 | OUT DELAY |
+| 52 | Part 6 | OUT DELAY |
+| 53 | Part 1 | OUT REVERB |
+| 54 | Part 2 | OUT REVERB |
+| 55 | Part 3 | OUT REVERB |
+| 56 | Part 4 | OUT REVERB |
+| 57 | Part 5 | OUT REVERB |
+| 58 | Part 6 | OUT REVERB |
+| 70 | FX | CHORUS RATE |
+| 71 | FX | CHORUS DEPTH |
+| 72 | FX | CHORUS MIX |
+| 73 | FX | DELAY TIME |
+| 74 | FX | DELAY FDBK |
+| 75 | FX | DELAY MECHANICS |
+| 76 | FX | DELAY SAT |
+| 77 | FX | DELAY TONE |
+| 78 | FX | DELAY MIX |
+| 79 | FX | DELAY REV |
+| 80 | FX | DELAY SIZE |
+| 81 | FX | DELAY DENSITY |
+| 82 | FX | DELAY PITCH |
+| 83 | FX | DELAY TEXTURE |
+| 84 | FX | REVERB TIME |
+| 85 | FX | REVERB DAMP |
+| 86 | FX | REVERB SIZE |
+| 87 | FX | REVERB MIX |
+| 88 | FX | REVERB TONE |
+| 89 | FX | REVERB DIFFUSE |
+| 90 | FX | REVERB PRE-DLY |
+| 91 | FX | REVERB SHAPE |
+| 92 | FX | REVERB SMEAR |
+| 93 | FX | REVERB RATE |
+| 94 | FX | REVERB DENSITY |
+| 102 | FX | COMP THRESH |
+| 103 | FX | COMP ATK |
+| 104 | FX | COMP REL |
+| 105 | FX | COMP MAKEUP |
+| 106 | FX | COMP MIX |
+| 107 | FX | COMP VOL |
+| 108 | FX | COMP PAN |
+
+OUT CHORUS, OUT DELAY and OUT REVERB are the Part's Sound's sends. MIXER uses no CC that MIDI keeps for itself (bank select, data entry and its increment and decrement, RPN and NRPN select, the sustain pedal).
+
+### SEQUENCER
+
+On SEQUENCER's channel these CCs drive ORBIT. PLAY/STOP and a ring's ON/OFF act as B6 and MIX + B*n* do, each time the value rises past 63: a button that sends 127 and then 0 is one press. CHANCE, STEPS, KEY and SCALE step through their values across 0 to 127. A note on SEQUENCER's channel sets KEY to its pitch class: play an E and ORBIT's chords move to E.
+
+| CC | Parameter |
+|---|---|
+| 20 | PLAY/STOP |
+| 21 | RING1 ON/OFF |
+| 22 | RING2 ON/OFF |
+| 23 | RING3 ON/OFF |
+| 24 | RING4 ON/OFF |
+| 25 | RING5 ON/OFF |
+| 26 | RING1 CHANCE |
+| 27 | RING2 CHANCE |
+| 28 | RING3 CHANCE |
+| 29 | RING4 CHANCE |
+| 30 | RING5 CHANCE |
+| 102 | RING1 STEPS |
+| 103 | RING2 STEPS |
+| 104 | RING3 STEPS |
+| 105 | RING4 STEPS |
+| 106 | RING5 STEPS |
+| 107 | ORBIT KEY |
+| 108 | ORBIT SCALE |
+
 ## ECHO: values back to the controller
 
-SETTINGS › MIDI CONFIG › ECHO (the last row of MIDI CONFIG, after SYNC, PORT CONFIG and CHANNELS) is the switch for everything Chimera sends from its MIDI OUT.
+SETTINGS › MIDI CONFIG › ECHO (the last row of MIDI CONFIG, after SYNC, PORT CONFIG, CHANNELS and CONTROL CHANNELS) is the switch for everything Chimera sends from its MIDI OUT.
 
 ![SETTINGS › MIDI CONFIG › ECHO, annotated](img/midi-echo.png)
 

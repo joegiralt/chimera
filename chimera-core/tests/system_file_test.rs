@@ -877,3 +877,27 @@ fn text_size_round_trips_and_an_old_system_is_normal() {
         assert_eq!(boot_bytes(f).0.theme.text, TextSize::Normal);
     }
 }
+
+/// A SYSTEM from before CONTROL CHANNELS, either v1 fixture, has MIXER,
+/// SEQUENCER and AUTO OFF (ADR 0254), the rest of its MIDI CONFIG kept.
+#[test]
+fn a_system_from_before_control_channels_has_them_off() {
+    use chimera_core::ui::midi_settings::Control;
+    for (name, want) in [
+        (SYSTEM_FIXTURE, system_fixture_settings()),
+        (SYSTEM_MIDI_FIXTURE, system_midi_fixture_settings()),
+    ] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let midi = boot_bytes(&std::fs::read(p).unwrap()).0.midi;
+        for c in Control::ALL {
+            assert_eq!(midi.channel_of(c), None, "{name}: {c:?}");
+        }
+        assert_eq!(
+            (midi.sync, midi.tune),
+            (want.midi.sync, want.midi.tune),
+            "{name}"
+        );
+    }
+}

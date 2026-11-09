@@ -424,7 +424,9 @@ impl SystemSync {
         s: &mut SystemSettings,
         why: Last,
     ) -> Result<Exit, SyncError> {
-        let (known, untouched, ram) = (self.known, self.untouched, *s);
+        // `s` written in place, never a `SystemSettings` moved out through
+        // the closure's result: each move of it cost bank 1 (ADR 0254).
+        let (known, untouched) = (self.known, self.untouched);
         let done = card
             .run(store, |st, r| {
                 let vol = r.volume();
@@ -439,8 +441,8 @@ impl SystemSync {
                 }
                 // The card's own SYSTEM, unless RAM already mirrors it.
                 let theirs = (known.map(|(v, _)| v) != Some(vol)).then(|| load(st, r));
-                let own = match theirs {
-                    None => ram.last_project,
+                let own = match &theirs {
+                    None => s.last_project,
                     Some(Ok(v)) => v.last_project,
                     Some(Err(_)) => None,
                 };
@@ -449,36 +451,44 @@ impl SystemSync {
                     Last::Deleted(_) => None,
                     _ => mine.or(own),
                 };
-                let want = SystemSettings {
-                    last_project: last,
-                    ..ram
-                };
-                let done = match (exit_plan(known, untouched, vol, body_crc(&want)), theirs) {
-                    (ExitPlan::Nothing, _) => (Exit::Unchanged, want),
-                    (_, Some(Err(LoadError::Store(e)))) => return Err(SyncError::Store(e)),
+                let ram = s.last_project;
+                s.last_project = last;
+                let exit = match (exit_plan(known, untouched, vol, body_crc(s)), theirs) {
+                    (ExitPlan::Nothing, _) => Exit::Unchanged,
+                    (_, Some(Err(LoadError::Store(e)))) => {
+                        s.last_project = ram;
+                        return Err(SyncError::Store(e));
+                    }
                     (ExitPlan::Load, Some(Ok(mut v))) => {
                         if v.last_project != last {
                             v.last_project = last;
-                            save(st, r, &v)?;
+                            if let Err(e) = save(st, r, &v) {
+                                s.last_project = ram;
+                                return Err(e.into());
+                            }
                         }
-                        (Exit::Loaded, v)
+                        *s = v;
+                        Exit::Loaded
                     }
                     (ExitPlan::Load, Some(Err(LoadError::File(e)))) => {
+                        s.last_project = ram;
                         return Err(SyncError::File(e));
                     }
                     // A card with no SYSTEM, or one RAM is written over.
                     _ => {
-                        save(st, r, &want)?;
-                        (Exit::Wrote, want)
+                        if let Err(e) = save(st, r, s) {
+                            s.last_project = ram;
+                            return Err(e.into());
+                        }
+                        Exit::Wrote
                     }
                 };
-                Ok(Some((vol, done)))
+                Ok(Some((vol, exit)))
             })
             .and_then(|o| o.result)?;
-        let Some((vol, (exit, now))) = done else {
+        let Some((vol, exit)) = done else {
             return Ok(Exit::Unchanged);
         };
-        *s = now;
         self.known = Some((vol, body_crc(s)));
         self.untouched &= exit != Exit::Loaded;
         Ok(exit)

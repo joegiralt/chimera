@@ -12,6 +12,7 @@
 // Without `midi-map` the door's `hear` is `ui::cc::deaf`: none of this runs.
 #![cfg_attr(not(feature = "midi-map"), allow(dead_code))]
 
+pub mod control;
 pub mod echo;
 pub mod layer;
 pub mod learn;
@@ -254,6 +255,9 @@ pub struct MidiUi {
     sx_first: ([u8; SX_LEN], u8),
     /// A carry sensing heard, waiting for a second to confirm a pair.
     sx_carry: Option<chimera_midi::sxmap::Carry>,
+    /// SEQUENCER's toggles last above 63: PLAY/STOP, then each ring
+    /// (`control::SeqAct`).
+    seq_high: u8,
 }
 
 /// Nothing sensed: a named static, so its image is bank 2's.
@@ -289,6 +293,7 @@ impl MidiSlot {
             // All zero is no message kept (#846).
             core::ptr::write_bytes(core::ptr::addr_of_mut!((*m).sx_first), 0, 1);
             core::ptr::addr_of_mut!((*m).sx_carry).write(None);
+            core::ptr::addr_of_mut!((*m).seq_high).write(0);
         }
         self.built = true;
     }
@@ -432,7 +437,9 @@ fn control(ui: &mut UiState, e: HeardEv) -> Option<(crate::MidiChannel, Ctl)> {
         HeardEv::Ctrl(_, CtrlEvent::Ctl(ch, c)) => (ch, c),
         HeardEv::Ctrl(..) => return None,
     };
-    if ui.learn_in(ch, &c) {
+    // MIXER's and SEQUENCER's own maps are fixed: no learn (ADR 0254).
+    let fixed = control::control_on(&ui.midi, &ui.project, ch).is_some();
+    if !fixed && ui.learn_in(ch, &c) {
         return None;
     }
     Some((ch, c))
@@ -451,6 +458,7 @@ impl UiState {
         for p in PartId::ALL {
             PART_CHANNELS.set(p.index(), self.project.part(p).mix.channel);
         }
+        self.control_routes();
         self.cc.fresh();
         // Learn off: its kept SysEx message goes, so the next arming starts
         // clean (a pass runs between any two MIX + SEQ).
@@ -523,6 +531,10 @@ impl UiState {
             if busy {
                 continue;
             }
+            if let HeardEv::Ctrl(_, CtrlEvent::Key(k)) = e {
+                self.seq_key(k);
+                continue;
+            }
             if let Some((ch, c)) = control(self, e) {
                 self.cc_control(ch, &c, now);
             }
@@ -550,6 +562,9 @@ impl UiState {
     /// One message on channel `ch`: RPN 0, then each Part's bindings on the
     /// channel, or the canonical param of an NRPN none of them names.
     fn cc_control(&mut self, ch: crate::MidiChannel, c: &Ctl, now: Ms) {
+        if self.cc_dedicated(ch, c, now) {
+            return;
+        }
         for p in PartId::ALL {
             if self.project.part(p).mix.channel != ch {
                 continue;

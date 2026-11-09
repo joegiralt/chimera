@@ -109,6 +109,9 @@ pub struct SlotCtx {
     pub op_kinds: [OpKind; OPS],
     /// THEME's PAGES: which key a hint names for the next sub-page.
     pub pages: Pages,
+    /// Who takes each MIDI CONFIG › CONTROL channel that loses it, two bits
+    /// each (`control::clashes`, ADR 0254): their cells dim.
+    pub clash: u8,
 }
 
 impl SlotCtx {
@@ -158,6 +161,7 @@ impl SlotCtx {
             op_kinds: Op::ALL
                 .map(|op| OpKind::clamped(get(BlockRef::AlgoOp(op), AlgoOpParams::WAVE) as u8)),
             pages: crate::ui::theme_settings::ThemeSettings::DEFAULT.pages,
+            clash: 0,
         }
     }
 
@@ -934,6 +938,15 @@ pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
 pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
     // Bank 2's (`ui::walk`): closed, no TAPE cell says why.
     crate::bank2::ui_door(|u| u.tape_note(addr, sound)).flatten()
+}
+
+/// Why `v`'s cell is dimmed, if it is a CONTROL channel another takes
+/// (ADR 0254): bank 2's (`control::clash_note`); closed, nothing.
+pub fn clash_note(v: &View, ctx: &SlotCtx) -> Option<&'static str> {
+    if ctx.clash == 0 {
+        return None;
+    }
+    crate::ui::cc::clash_note(v.addr()?, ctx.clash)
 }
 
 /// What the focus band says on SETTINGS › TUNING's TUNING at `v` (ADR 0240):

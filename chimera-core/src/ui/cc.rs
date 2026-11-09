@@ -159,6 +159,11 @@ type CtlWork = fn(&mut UiState, &mut dyn Store, Option<&Ready>);
 #[cfg(feature = "midi-map")]
 type CtlAsk = fn(&mut UiState, PartId, Option<SoundName>, Option<Binding>);
 
+/// The door's `clashes`: `control::clashes`, the CONTROL channels a
+/// Part's own takes (ADR 0254).
+#[cfg(feature = "midi-map")]
+type Clashes = fn(&crate::ui::midi_settings::MidiSettings, &crate::project::Project) -> u8;
+
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
 
@@ -198,6 +203,10 @@ pub struct MidiUiDoor {
     ctl_work: CtlWork,
     #[cfg(feature = "midi-map")]
     ctl_ask: CtlAsk,
+    #[cfg(feature = "midi-map")]
+    clashes: Clashes,
+    #[cfg(feature = "midi-map")]
+    clash_note: fn(ParamAddr, u8) -> Option<&'static str>,
 }
 
 /// `MidiUiDoor`'s mark: a table at the slot that isn't this one fails the
@@ -206,7 +215,8 @@ pub struct MidiUiDoor {
 #[repr(transparent)]
 struct Magic(u32);
 
-const MAGIC: Magic = Magic(0xB2C0_0217);
+// ADR 0254: CONTROL's entries joined the table.
+const MAGIC: Magic = Magic(0xB2C0_0254);
 
 impl MidiUiDoor {
     pub const OWN: MidiUiDoor = MidiUiDoor {
@@ -238,6 +248,10 @@ impl MidiUiDoor {
         ctl_work: UiState::ctl_work_in,
         #[cfg(feature = "midi-map")]
         ctl_ask: UiState::ctl_ask_in,
+        #[cfg(feature = "midi-map")]
+        clashes: super::midi::control::clashes,
+        #[cfg(feature = "midi-map")]
+        clash_note: super::midi::control::clash_note,
     };
 }
 
@@ -396,6 +410,29 @@ impl UiState {
         #[cfg(feature = "midi-map")]
         return through(|d| (d.focus_note)(self)).flatten();
         #[cfg(not(feature = "midi-map"))]
+        None
+    }
+}
+
+impl UiState {
+    /// Who takes each CONTROL channel that loses it (`clashes`).
+    /// Closed, or without `midi-map`, none.
+    pub(super) fn clashes(&self) -> u8 {
+        #[cfg(feature = "midi-map")]
+        return through(|d| (d.clashes)(&self.midi, &self.project)).unwrap_or(0);
+        #[cfg(not(feature = "midi-map"))]
+        0
+    }
+}
+
+/// Why `a`'s cell is dimmed under `clash`, if it is a CONTROL channel
+/// another takes (`clash_note`). Closed, none.
+pub(super) fn clash_note(a: ParamAddr, clash: u8) -> Option<&'static str> {
+    #[cfg(feature = "midi-map")]
+    return through(|d| (d.clash_note)(a, clash)).flatten();
+    #[cfg(not(feature = "midi-map"))]
+    {
+        let _ = (a, clash);
         None
     }
 }

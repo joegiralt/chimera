@@ -176,10 +176,15 @@ const SYNC_KIND: Kind = Leaf(&super::leaves::SYNC_LEAF);
 #[cfg(not(feature = "orbit"))]
 const SYNC_KIND: Kind = Later(issue(264));
 
-static MIDI: [Row; 4] = [
+static MIDI: [Row; 5] = [
     row("SYNC", SYNC_KIND),
     crumb("PORT CONFIG", "PORT", Later(issue(265))),
     row("CHANNELS", Leaf(&CHANNELS_LEAF)),
+    crumb(
+        "CONTROL CHANNELS",
+        "CONTROL",
+        Leaf(&super::leaves::CONTROL_LEAF),
+    ),
     row("ECHO", Leaf(&super::leaves::ECHO_LEAF)),
 ];
 

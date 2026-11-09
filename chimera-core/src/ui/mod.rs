@@ -1176,6 +1176,7 @@ impl UiState {
             .on_pages(self.theme.pages);
         let ctx = SlotCtx {
             delay: self.project.perf().fx.delay.kind(),
+            clash: self.clashes(),
             ..ctx
         };
         let base =

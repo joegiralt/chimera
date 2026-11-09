@@ -13,12 +13,11 @@ use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use chimera_midi::ctl::{Controllers, Ctl, DataValue, Dir, FreeCc, Heard, Sel};
 use chimera_midi::sense::Sensing;
-use chimera_midi::stream::{Event, FaultCounts, Parsed, Parser, RealTime as Rt};
+use chimera_midi::stream::{self, Event, FaultCounts, Parsed, Parser, RealTime as Rt, Voice};
 use chimera_midi::sysex;
 use chimera_midi::usb::Cable;
 use chimera_midi::value::{Channel, U7, U14};
 
-use crate::MidiChannel;
 use crate::hw::MAX_PARTS;
 use crate::midi_map::codec::{self, Bounds, MapRecord};
 use crate::midi_map::{KeptMap, MidiMap};
@@ -27,6 +26,7 @@ use crate::note_queue::{
     SustainEvent,
 };
 use crate::storage::{RecordBuf, RecordTag, RecordWriter};
+use crate::{MidiChannel, MidiNote};
 use chimera_hal::store::StoreError;
 
 /// A controller number, 0..=127.
@@ -129,6 +129,9 @@ pub enum CtrlEvent {
     SensingLost,
     /// A SysEx body waits in the port's `SYSEX_IN` (#846).
     SysEx,
+    /// A note-on on MIDI CONFIG › CONTROL's SEQUENCER channel: ORBIT's KEY
+    /// (ADR 0254).
+    Key(MidiNote),
 }
 
 const T_CC: u32 = 0;
@@ -140,6 +143,22 @@ const T_PRESSURE: u32 = 5;
 const T_IDENTITY: u32 = 6;
 const T_LOST: u32 = 7;
 const T_SYSEX: u32 = 8;
+const T_KEY: u32 = 9;
+// Every tag its own (ADR 0254: KEY's 8 met SYSEX's on the merge).
+const _: () = {
+    let t = [
+        T_CC, T_COARSE, T_FINE, T_STEP, T_PROGRAM, T_PRESSURE, T_IDENTITY, T_LOST, T_SYSEX, T_KEY,
+    ];
+    let mut i = 0;
+    while i < t.len() {
+        let mut j = i + 1;
+        while j < t.len() {
+            assert!(t[i] != t[j], "two CtrlEvent tags alike");
+            j += 1;
+        }
+        i += 1;
+    }
+};
 
 fn sel_bits(s: Sel) -> u32 {
     match s {
@@ -189,6 +208,7 @@ impl CtrlEvent {
             CtrlEvent::Identity { dev } => (T_IDENTITY, 0, u32::from(dev.get())),
             CtrlEvent::SensingLost => (T_LOST, 0, 0),
             CtrlEvent::SysEx => (T_SYSEX, 0, 0),
+            CtrlEvent::Key(k) => (T_KEY, 0, u32::from(k.get())),
         };
         [tag << 4 | u32::from(ch), pay]
     }
@@ -226,6 +246,7 @@ impl CtrlEvent {
             T_IDENTITY => Some(CtrlEvent::Identity { dev: u7(p)? }),
             T_LOST => Some(CtrlEvent::SensingLost),
             T_SYSEX => Some(CtrlEvent::SysEx),
+            T_KEY => Some(CtrlEvent::Key(MidiNote::new((p & 0x7F) as u8)?)),
             _ => None,
         }
     }
@@ -437,6 +458,168 @@ impl Default for PartChannels {
     }
 }
 
+/// MIDI CONFIG › CONTROL as the UI last judged it (ADR 0254): AUTO's
+/// channel and the focused Part's, and SEQUENCER's, each only where no
+/// Part's own channel takes it. The UI stores, the pipes read. Bytes 0-2:
+/// AUTO, its Part's, SEQUENCER's, each the channel plus one, 0 none; all
+/// zero, so `.bss`.
+pub struct Routes(AtomicU32);
+
+pub static ROUTES: Routes = Routes(AtomicU32::new(0));
+
+impl Routes {
+    /// `auto`: AUTO's channel and the focused Part's; `seq`: SEQUENCER's.
+    #[inline(always)]
+    pub fn set(&self, auto: Option<(Channel, Channel)>, seq: Option<Channel>) {
+        let b = |c: Option<Channel>| c.map_or(0, |c| u32::from(c.get()) + 1);
+        let (a, to) = auto.unzip();
+        self.0
+            .store(b(a) | b(to) << 8 | b(seq) << 16, Ordering::Relaxed);
+    }
+
+    /// AUTO's channel and the focused Part's, from one load.
+    #[inline(always)]
+    pub fn auto(&self) -> Option<(Channel, Channel)> {
+        let v = self.0.load(Ordering::Relaxed);
+        let at = |byte: u32| Channel::new(((v >> (8 * byte)) as u8).checked_sub(1)?);
+        Some((at(0)?, at(1)?))
+    }
+
+    #[inline(always)]
+    pub fn seq(&self) -> Option<Channel> {
+        let v = (self.0.load(Ordering::Relaxed) >> 16) as u8;
+        Channel::new(v.checked_sub(1)?)
+    }
+}
+
+/// A channel's bit in a `u16` of channels.
+#[inline(always)]
+fn bit(c: Channel) -> u16 {
+    1 << (c.get() & 15)
+}
+
+/// AUTO's keys: every key's with the MIDI UI, none without it (the bench
+/// builds, deaf, whose AXI has no room): there AUTO is never routed.
+const AUTO_KEYS: usize = if cfg!(feature = "controller-maps") {
+    128
+} else {
+    0
+};
+
+/// AUTO's held keys and pedals (ADR 0254), as Elektron's auto channel: a
+/// note-on or pedal-down plays the focused Part's channel at once; a
+/// note-off, a held key's poly pressure and a pedal-up on the channel they
+/// came on reach the channels their note-on or pedal-down went to, even
+/// once AUTO has moved or is OFF. Checked before AUTO's route.
+struct AutoLatch {
+    /// The keys held through AUTO, a bit each.
+    held: u128,
+    /// Each held key's source channel (high nibble) and Part channel (low).
+    keys: [u8; AUTO_KEYS],
+    /// The channels a pedal-down went to, a bit each, and the channel the
+    /// pedal came on.
+    pedals: u16,
+    pedal_from: u8,
+}
+
+impl AutoLatch {
+    const NONE: Self = Self {
+        held: 0,
+        keys: [0; AUTO_KEYS],
+        pedals: 0,
+        pedal_from: 0,
+    };
+
+    /// Key `k`'s source and Part channels, if held through AUTO.
+    fn latched(&self, k: u8) -> Option<(u8, u8)> {
+        let v = *self
+            .keys
+            .get(usize::from(k))
+            .filter(|_| self.held >> k & 1 != 0)?;
+        Some((v >> 4, v & 15))
+    }
+
+    /// The Part channels of the keys held from channel `src`, a bit each,
+    /// let go if `clear`.
+    fn held_from(&mut self, src: u8, clear: bool) -> u16 {
+        let mut to = 0;
+        for k in 0..128u8 {
+            if let Some((_, ch)) = self.latched(k).filter(|l| l.0 == src) {
+                to |= 1 << ch;
+                if clear {
+                    self.held &= !(1 << k);
+                }
+            }
+        }
+        to
+    }
+
+    /// The channels `v`, heard on `c`, reaches, a bit each.
+    fn voice(&mut self, c: Channel, v: &Voice) -> u16 {
+        let src = c.get() & 15;
+        // What AUTO latched answers first, wherever AUTO is now.
+        match *v {
+            Voice::NoteOff { key, .. } | Voice::PolyPressure { key, .. } => {
+                if let Some((_, to)) = self.latched(key.get()).filter(|l| l.0 == src) {
+                    if matches!(v, Voice::NoteOff { .. }) {
+                        self.held &= !(1 << key.get());
+                    }
+                    return 1 << to;
+                }
+            }
+            Voice::Control { cc, value }
+                if cc.get() == 64
+                    && value.get() < 64
+                    && self.pedals != 0
+                    && self.pedal_from == src =>
+            {
+                let now = ROUTES.auto().and_then(|(a, to)| (a == c).then_some(to));
+                return core::mem::take(&mut self.pedals) | now.map_or(bit(c), bit);
+            }
+            _ => {}
+        }
+        let Some(to) = ROUTES.auto().and_then(|(a, to)| (a == c).then_some(to)) else {
+            return bit(c);
+        };
+        match *v {
+            Voice::NoteOn { key, .. } => {
+                if let Some(k) = self.keys.get_mut(usize::from(key.get())) {
+                    *k = src << 4 | to.get();
+                    self.held |= 1 << key.get();
+                }
+            }
+            Voice::Control { cc, value } if cc.get() == 64 && value.get() >= 64 => {
+                self.pedals |= bit(to);
+                self.pedal_from = src;
+            }
+            _ => {}
+        }
+        bit(to)
+    }
+
+    /// The channels the channel mode `m`, heard on `c`, reaches: the
+    /// focus's (or `c`'s) and every channel AUTO holds something on from
+    /// `c`, each let go of what `m` ends.
+    fn mode(&mut self, c: Channel, m: &stream::ChannelMode) -> u16 {
+        let src = c.get() & 15;
+        let now = ROUTES.auto().and_then(|(a, to)| (a == c).then_some(to));
+        let pedals = if self.pedal_from == src {
+            self.pedals
+        } else {
+            0
+        };
+        let notes = !matches!(
+            m,
+            stream::ChannelMode::ResetAllControllers | stream::ChannelMode::LocalControl(_)
+        );
+        let to = now.map_or(bit(c), bit) | self.held_from(src, notes) | pedals;
+        if matches!(m, stream::ChannelMode::ResetAllControllers) && pedals != 0 {
+            self.pedals = 0;
+        }
+        to
+    }
+}
+
 /// Where a pipe's events go; `false`: refused (full), the event is lost.
 pub trait Sinks {
     fn note(&mut self, e: InEvent) -> bool;
@@ -566,6 +749,7 @@ pub struct DinPipe {
     owed: u16,
     pedals: Pedals,
     expr: ExprOwed,
+    auto: AutoLatch,
 }
 
 /// Each channel's wheel and pressure the queue refused, latest wins: owed
@@ -711,6 +895,7 @@ impl DinPipe {
             owed: 0,
             pedals: Pedals { down: 0, up: 0 },
             expr: ExprOwed::NONE,
+            auto: AutoLatch::NONE,
         }
     }
 
@@ -753,6 +938,7 @@ impl DinPipe {
                     Rt::ActiveSensing => self.sense.heard(rt),
                     Rt::Reset => {
                         self.ctl = Controllers::new();
+                        self.auto = AutoLatch::NONE;
                         // What a busy queue refuses is owed, as `lost`'s: a
                         // NotesOff for a refused SoundOff, a pedal-up for a
                         // refused ResetControllers (no note sticks). The
@@ -771,26 +957,46 @@ impl DinPipe {
                     }
                 },
                 Parsed::Event(Event::Voice(c, v)) => {
-                    // The wheel and pressure feed their matrix sources; the
-                    // wheel and channel pressure reach the map too.
-                    if let Some(e) = InEvent::expr(c, &v) {
-                        sink.note(e);
+                    // MIDI CONFIG › CONTROL (ADR 0254): SEQUENCER's notes
+                    // are ORBIT's KEY, never played; AUTO's play the focus.
+                    if ROUTES.seq() == Some(c)
+                        && matches!(v, Voice::NoteOn { .. } | Voice::NoteOff { .. })
+                    {
+                        if let Voice::NoteOn { key, .. } = v {
+                            sink.ctrl(CtrlEvent::Key(key));
+                        }
+                        continue;
                     }
-                    match InEvent::from_event(c, &v) {
-                        Some(e) => sink.note(e),
-                        None => match self.ctl.hear(c, v) {
-                            Heard::Ctl(Ctl::Program { .. }) => {
-                                sink.stats.programs_dropped =
-                                    sink.stats.programs_dropped.saturating_add(1);
-                            }
-                            Heard::Ctl(ctl) => sink.ctrl(CtrlEvent::Ctl(c, ctl)),
-                            Heard::Note | Heard::Consumed => {}
-                        },
+                    let mut to = self.auto.voice(c, &v);
+                    while to != 0 {
+                        let c = Channel::clamped(to.trailing_zeros() as u8);
+                        to &= to - 1;
+                        // The wheel and pressure feed their matrix sources; the
+                        // wheel and channel pressure reach the map too.
+                        if let Some(e) = InEvent::expr(c, &v) {
+                            sink.note(e);
+                        }
+                        match InEvent::from_event(c, &v) {
+                            Some(e) => sink.note(e),
+                            None => match self.ctl.hear(c, v) {
+                                Heard::Ctl(Ctl::Program { .. }) => {
+                                    sink.stats.programs_dropped =
+                                        sink.stats.programs_dropped.saturating_add(1);
+                                }
+                                Heard::Ctl(ctl) => sink.ctrl(CtrlEvent::Ctl(c, ctl)),
+                                Heard::Note | Heard::Consumed => {}
+                            },
+                        }
                     }
                 }
                 Parsed::Event(Event::Mode(c, m)) => {
-                    if let Some(e) = InEvent::from_mode(c, m) {
-                        sink.note(e);
+                    let mut to = self.auto.mode(c, &m);
+                    while to != 0 {
+                        let c = Channel::clamped(to.trailing_zeros() as u8);
+                        to &= to - 1;
+                        if let Some(e) = InEvent::from_mode(c, m) {
+                            sink.note(e);
+                        }
                     }
                 }
                 Parsed::Event(Event::SysEx(s)) => {
@@ -838,6 +1044,7 @@ impl DinPipe {
                 .as_deref()
                 .is_none_or(|h| h.keys.iter().any(|&k| k != 0));
         self.owed = u16::MAX;
+        self.auto = AutoLatch::NONE;
         self.pedals.up |= self.pedals.down;
         self.pedals.down = 0;
         if let Some(h) = held.as_deref_mut() {

@@ -1368,7 +1368,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 22] = [
+const FIXED: [&ChainDef2; 23] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
@@ -1376,6 +1376,7 @@ const FIXED: [&ChainDef2; 22] = [
     &VA_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     CHANNELS_LEAF.chain(),
+    super::settings::leaves::CONTROL_LEAF.chain(),
     SYNC_LEAF.chain(),
     ECHO_LEAF.chain(),
     OUTPUTS_LEAF.chain(),

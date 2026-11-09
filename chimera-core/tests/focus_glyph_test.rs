@@ -198,6 +198,10 @@ const NAMED_ARC: &[(&str, &str)] = &[
     ("Theme", "BLACK"),
     // 0 to 3 extra octaves.
     ("OrbitRing", "RANGE"),
+    // OFF, then channels 1 to 16 (ADR 0254).
+    ("Midi", "MIXER_CH"),
+    ("Midi", "SEQ_CH"),
+    ("Midi", "AUTO_CH"),
 ];
 
 /// Two-value choices that are two peers, not on and off: a toggle would
