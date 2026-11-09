@@ -111,7 +111,7 @@ pub struct SlotCtx {
     pub pages: Pages,
     /// Who takes each MIDI CONFIG › CONTROL channel that loses it, two bits
     /// each (`control::clashes`, ADR 0254): their cells dim.
-    pub clash: u8,
+    pub clash: u16,
 }
 
 impl SlotCtx {

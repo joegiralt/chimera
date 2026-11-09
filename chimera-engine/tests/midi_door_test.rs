@@ -9,7 +9,8 @@ use std::sync::Mutex;
 use chimera_engine::bank2::DOOR_CELL;
 use chimera_engine::midi_in::{self, CtrlEvent, CtrlRing, DinSinks, PipeSlot};
 use chimera_engine::note_queue::{
-    ChannelMode, ChannelModeEvent, InEvent, NoteEvent, NoteKind, NoteQueue, RealTime,
+    ChannelMode, ChannelModeEvent, Expr, ExprEvent, InEvent, NoteEvent, NoteKind, NoteQueue,
+    RealTime,
 };
 use chimera_engine::{MidiChannel, MidiNote, Velocity};
 use chimera_midi::ctl::{Ctl, FreeCc};
@@ -67,15 +68,20 @@ fn open_routes_like_before() {
         })
     };
     assert_eq!(
-        r.notes[..3],
+        r.notes[..4],
         [
             note(NoteKind::On(Velocity::new(100).unwrap())),
             InEvent::Rt(RealTime::Clock),
             note(NoteKind::Off),
+            // CC 74 is SLIDE's too (ADR 0252).
+            InEvent::Expr(ExprEvent {
+                channel: ch,
+                expr: Expr::Timbre(chimera_midi::value::U7::new(33).unwrap()),
+            }),
         ]
     );
-    assert_eq!(r.notes.len(), 3 + 16, "idle after FE: notes off × 16");
-    for (c, e) in r.notes[3..].iter().enumerate() {
+    assert_eq!(r.notes.len(), 4 + 16, "idle after FE: notes off × 16");
+    for (c, e) in r.notes[4..].iter().enumerate() {
         let want = InEvent::Mode(ChannelModeEvent {
             channel: MidiChannel::clamped(c as u8),
             mode: ChannelMode::NotesOff,
@@ -113,4 +119,46 @@ fn closed_is_deaf() {
     let r = through(&mut p, &[0x90, 61, 1], false);
     DOOR_CELL.close();
     assert_eq!(r.notes.len(), 1);
+}
+
+/// MPE's zone reads (ADR 0252) through the door: open, a member channel
+/// names its master and its note's bend; closed, every channel is its own
+/// and a voice keeps only its poly pressure.
+#[test]
+fn mpe_reads_go_through_the_door() {
+    use chimera_engine::dsp::voice::Own;
+    use chimera_engine::hw::MAX_VOICES;
+    use chimera_engine::mpe::{self, OwnIn, Zones};
+    let _g = DOOR.lock().unwrap();
+    let z = Zones::OFF.with_lower(15);
+    let ch = |c| MidiChannel::new(c).unwrap();
+    let mut wheel = [0i16; 16];
+    wheel[3] = 8191;
+    let mut poly = [0u8; MAX_VOICES];
+    poly[0] = 127;
+    let channel = [ch(3); MAX_VOICES];
+    let i = OwnIn {
+        zones: z,
+        channel: &channel,
+        origin: &[chimera_engine::instrument::NoteOrigin::Live; MAX_VOICES],
+        wheel: &wheel,
+        expr: &[[0; 3]; 16],
+        poly: &poly,
+    };
+    let mut out = [Own::default(); MAX_VOICES];
+    DOOR_CELL.open_host();
+    assert_eq!(mpe::master_of(z, ch(3)), ch(0));
+    assert!(mpe::own(&i, &mut out));
+    assert_eq!((out[0].bend, out[0].press), (48.0, 1.0));
+    assert_eq!(mpe::write(z, 2, 4).upper(), 4);
+    DOOR_CELL.close();
+    assert_eq!(mpe::master_of(z, ch(3)), ch(3));
+    assert!(
+        !mpe::own(&i, &mut out),
+        "closed: each voice its poly pressure"
+    );
+    assert_eq!(mpe::poly_only(poly[0]).press, 1.0);
+    // Closed: stored as given, no shrink rule (a SYSTEM load keeps it).
+    let w = mpe::write(z, 2, 4);
+    assert_eq!((w.lower(), w.upper()), (15, 4));
 }

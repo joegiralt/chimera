@@ -62,7 +62,7 @@ const OLD_ROUTE_CORPUS: &[u8] = &[
     0x80, 64, 40, //
     0xE0, 0x00, 0x40, 0x7F, 0x7F, // bend centre, then max
     0xB0, 64, 127, 64, 0, // pedal down, up
-    0xB1, 74, 33, // free CC: not the queue's
+    0xB1, 71, 33, // free CC: not the queue's
     0x91, 0xF8, 62, 0xF8, 99, // clock inside a message
     0xFA, 0xFB, 0xFC, 0xF8, // transport
     0xB2, 120, 0, 121, 0, 123, 0, // mode, running status
@@ -148,7 +148,7 @@ fn pipe_matches_old_route_for_notes_bend_sustain_clock() {
     let want = old_route_queued();
     let r = pipe(OLD_ROUTE_CORPUS);
     assert_eq!(r.notes, want);
-    // The old route's one CC (74 on channel 2) rides the ring; pressure is
+    // The old route's one CC (71 on channel 2) rides the ring; pressure is
     // new there, and program is dropped (Phase 1).
     let ccs: Vec<_> = r
         .ctrl
@@ -160,7 +160,7 @@ fn pipe_matches_old_route_for_notes_bend_sustain_clock() {
         [&CtrlEvent::Ctl(
             ch(1),
             Ctl::Cc {
-                cc: FreeCc::new(74).unwrap(),
+                cc: FreeCc::new(71).unwrap(),
                 value: u7(33)
             }
         )]
@@ -183,7 +183,7 @@ fn pipe_splits_ccs_from_the_queue() {
     let r = pipe(&[0x90, 60, 100, 0xE0, 100, 0x40, 0xB0, 64, 127, 0xF8]);
     assert_eq!(r.notes.len(), 4);
     assert!(r.ctrl.is_empty());
-    for n in [74, 7] {
+    for n in [71, 7] {
         let r = pipe(&[0xB0, n, 33]);
         assert!(r.notes.is_empty());
         assert_eq!(
@@ -275,13 +275,13 @@ fn nrpn_arrives_as_one_event() {
             }
         )]
     );
-    let r = pipe(&[0xB5, 74, 9]);
+    let r = pipe(&[0xB5, 71, 9]);
     assert_eq!(
         r.ctrl,
         [CtrlEvent::Ctl(
             ch(5),
             Ctl::Cc {
-                cc: FreeCc::new(74).unwrap(),
+                cc: FreeCc::new(71).unwrap(),
                 value: u7(9)
             }
         )]
@@ -415,7 +415,7 @@ fn cc_flood_never_drops_note_ons() {
             sent += 1;
             p.feed(&[0x90, 60, 100], &mut door);
         } else {
-            p.feed(&[0xB0, 74, (i % 128) as u8], &mut door);
+            p.feed(&[0xB0, 71, (i % 128) as u8], &mut door);
         }
         if i % 64 == 63 {
             while let Some(e) = audio.pop() {
@@ -581,9 +581,11 @@ impl Usb {
 /// DIN's slot carries no held keys: only USB's reads them.
 #[test]
 fn only_usb_tracks_what_it_holds() {
-    // Past the SysEx room, a pipe is under a key set (256 B) twice.
+    // Past the SysEx room, a pipe is under a key set (256 B) three times
+    // (AUTO's latch, ADR 0254, and MPE's owed slide, ADR 0252, took it
+    // past twice: 520 B with `controller-maps`).
     assert!(
-        size_of::<PipeSlot>() - midi_in::SYSEX_LEN < 512,
+        size_of::<PipeSlot>() - midi_in::SYSEX_LEN < 768,
         "a key set is 256 B"
     );
     assert!(size_of::<UsbSlot>() >= size_of::<PipeSlot>() + 256);
@@ -857,7 +859,7 @@ fn stats_count_faults_dropped_programs_and_refusals() {
     assert_eq!(s.faults.orphan, 0);
     assert!(r.ctrl.is_empty(), "Phase 1 drops Program Change");
     r.refuse = true;
-    p.feed(&[0x90, 60, 1, 0xB0, 74, 1, 0xB0, 74, 2], &mut r);
+    p.feed(&[0x90, 60, 1, 0xB0, 71, 1, 0xB0, 71, 2], &mut r);
     assert_eq!(p.stats().refused, 1, "the note");
     assert_eq!(p.stats().ctrl_refused, 2, "the CCs");
 }
@@ -1005,6 +1007,24 @@ fn wheel_and_pressure_reach_the_queue_and_the_map() {
     assert!(r.ctrl.is_empty());
 }
 
+/// CC 74 (MPE's slide, ADR 0252) reaches its matrix source on the note
+/// queue and the map on the ring, as the wheel does.
+#[test]
+fn cc74_reaches_the_queue_and_the_map() {
+    let r = pipe(&[0xB4, 74, 33]);
+    assert_eq!(r.notes, [expr(4, Expr::Timbre(u7(33)))]);
+    assert_eq!(
+        r.ctrl,
+        [CtrlEvent::Ctl(
+            ch(4),
+            Ctl::Cc {
+                cc: FreeCc::new(74).unwrap(),
+                value: u7(33)
+            }
+        )]
+    );
+}
+
 /// Every expression event packs and unpacks whole, at its extremes.
 #[test]
 fn expr_events_round_trip_the_queue() {
@@ -1017,6 +1037,7 @@ fn expr_events_round_trip_the_queue() {
                 expr(c, Expr::Pressure(u7(v))),
                 expr(c, Expr::Poly(MidiNote::new(0).unwrap(), u7(v))),
                 expr(c, Expr::Poly(MidiNote::new(127).unwrap(), u7(v))),
+                expr(c, Expr::Timbre(u7(v))),
             ]
         })
     });
@@ -1070,9 +1091,10 @@ fn a_refused_final_wheel_still_lands() {
             },
         )
     };
-    // A wheel sweep up then home, and pressure, past half the queue.
+    // A wheel sweep up then home, pressure and CC 74 (MPE's slide, on the
+    // last channel: the owed bits' top), past half the queue.
     for v in (0..=127).chain((0..127).rev()) {
-        feed(&mut p, &[0xB2, 1, v, 0xD2, v]);
+        feed(&mut p, &[0xB2, 1, v, 0xD2, v, 0xBF, 74, v]);
     }
     let heard: Vec<_> = core::iter::from_fn(|| rx.pop()).collect();
     assert_eq!(heard.len(), NOTE_QUEUE_LEN / 2);
@@ -1081,7 +1103,11 @@ fn a_refused_final_wheel_still_lands() {
     let last: Vec<_> = core::iter::from_fn(|| rx.pop()).collect();
     assert_eq!(
         last,
-        [expr(2, Expr::Wheel(u7(0))), expr(2, Expr::Pressure(u7(0)))]
+        [
+            expr(2, Expr::Wheel(u7(0))),
+            expr(2, Expr::Pressure(u7(0))),
+            expr(15, Expr::Timbre(u7(0)))
+        ]
     );
     // Nothing more owed.
     feed(&mut p, &[]);

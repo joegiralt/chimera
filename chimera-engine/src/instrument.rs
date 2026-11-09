@@ -23,10 +23,12 @@ use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::rev::RevBill;
 use crate::dsp::rev::sync::Tempo;
 use crate::dsp::tape_engine::{COST_STREAM, Heads, TapeEngine};
-use crate::dsp::voice::{HighNote, Voice};
+use crate::dsp::voice::{HighNote, Own, Voice};
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
+use crate::mpe::OwnIn;
+use crate::mpe::Zones;
 use crate::note_queue::{
     BendEvent, ChannelMode, ChannelModeEvent, Expr, ExprEvent, NoteEvent, NoteKind, SustainEvent,
 };
@@ -191,6 +193,8 @@ pub struct AudioShared {
     pub orbit: OrbitShared,
     /// SETTINGS > TUNING, cents (`MidiSettings::tune`), from SYSTEM.
     pub tune: i8,
+    /// MIDI CONFIG › MPE's zones (`MidiSettings::mpe`, ADR 0252).
+    pub mpe: Zones,
 }
 
 impl Default for AudioShared {
@@ -244,7 +248,7 @@ impl PartAudio {
 /// the chord, slow enough not to click (spec § 5.2).
 pub const RESNAP_GLIDE_MS: u32 = 40;
 
-crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch, orbit, tune });
+crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch, orbit, tune, mpe });
 
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
@@ -273,6 +277,7 @@ impl AudioShared {
             addr_of_mut!((*p).epoch).write(0);
             addr_of_mut!((*p).orbit).write(OrbitShared::default());
             addr_of_mut!((*p).tune).write(0);
+            addr_of_mut!((*p).mpe).write(Zones::OFF);
             slot.assume_init_mut()
         }
     }
@@ -339,8 +344,9 @@ impl AudioShared {
             epoch: e,
             // `UiState::publish_orbit` writes it, in the same publish.
             orbit: _,
-            // Likewise: the shells write it, from SYSTEM.
+            // Likewise: the shells write them, from SYSTEM.
             tune: _,
+            mpe: _,
         } = self;
         for (i, (d, p)) in parts.iter_mut().zip(perf.parts()).enumerate() {
             *d = PartAudio::of(p, knobs(i, p));
@@ -428,6 +434,15 @@ impl Streaming {
 
 // ADR 0013/0014: the voice pool (and its small bookkeeping) lives in D2.
 const _: () = assert!(size_of::<Instrument>() <= VOICE_RAM_BUDGET);
+
+/// A wheel's -8192..=8191 as -1..=1.
+fn bend_unit(w: i16) -> f32 {
+    if w > 0 {
+        f32::from(w) / 8191.0
+    } else {
+        f32::from(w) / 8192.0
+    }
+}
 
 /// Constant-power pan: (left, right) gains for `pan` in -1..1. Centre is
 /// -3 dB per side; hard left/right is unity on one side, exactly 0 on the
@@ -701,9 +716,15 @@ pub struct Instrument {
     costings: u32,
     /// Each MIDI channel's pitch-bend wheel, -8192..=8191.
     wheel: [i16; 16],
-    /// Each MIDI channel's mod wheel and channel pressure, 0..=127: the
-    /// WHEEL and PRESSURE sources' targets (`ease_bend` glides them).
-    expr: [[u8; 2]; 16],
+    /// Each MIDI channel's mod wheel, channel pressure and timbre, 0..=127:
+    /// the WHEEL, PRESSURE and TIMBRE sources' targets (`ease_bend` glides
+    /// them), a member channel's its note's (ADR 0252).
+    expr: [[u8; 3]; 16],
+    /// The channel whose Parts each voice's note plays: its MPE zone's
+    /// master for a live note on a member channel, else the note's own
+    /// (ADR 0252). Set at note-on, so a zone change never strands a note
+    /// the pedal holds.
+    master: [MidiChannel; MAX_VOICES],
     /// Each voice's key's poly pressure, 0..=127: a struck key's only.
     poly: [u8; MAX_VOICES],
     /// The channels whose sustain pedal is down, a bit each.
@@ -748,7 +769,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -809,7 +830,8 @@ impl Instrument {
             addr_of_mut!((*p).costed).write(0);
             addr_of_mut!((*p).costings).write(0);
             addr_of_mut!((*p).wheel).write([0; 16]);
-            addr_of_mut!((*p).expr).write([[0; 2]; 16]);
+            addr_of_mut!((*p).expr).write([[0; 3]; 16]);
+            addr_of_mut!((*p).master).write([MidiChannel::clamped(0); MAX_VOICES]);
             addr_of_mut!((*p).poly).write([0; MAX_VOICES]);
             addr_of_mut!((*p).pedal).write(0);
             addr_of_mut!((*p).sustained).write([false; MAX_VOICES]);
@@ -1212,6 +1234,13 @@ impl Instrument {
         match ev.kind {
             NoteKind::On(vel) => {
                 let live = from == NoteOrigin::Live;
+                // A zone's member channel plays its master's Parts.
+                // ORBIT's notes are on their Part's channel already.
+                let heard = if live {
+                    crate::mpe::master_of(shared.mpe, ev.channel)
+                } else {
+                    ev.channel
+                };
                 #[cfg(feature = "probe")]
                 let t0 = crate::probe::now();
                 // Judge the note against this block's patches, not the last.
@@ -1221,7 +1250,7 @@ impl Instrument {
                 #[cfg(feature = "probe")]
                 crate::probe::acc(3, 1);
                 for (p, part) in shared.parts.iter().enumerate() {
-                    if part.mix.channel != ev.channel || self.refuses(p, shared, src) {
+                    if part.mix.channel != heard || self.refuses(p, shared, src) {
                         continue;
                     }
                     let (q, mode) = (p as u8, part.mix.mode);
@@ -1378,6 +1407,9 @@ impl Instrument {
                     self.note_origin[v] = from;
                     self.keys[v] = ev.note;
                     self.poly[v] = 0;
+                    self.master[v] = heard;
+                    let own = self.own_of(&self.owns(shared.mpe), v);
+                    self.voices[v].ease_own(own, None);
                     // A key down again, or a steal, takes the voice back
                     // from the pedal.
                     self.sustained[v] = false;
@@ -1420,7 +1452,7 @@ impl Instrument {
                         // unheard yet.
                         self.keys[v] = left;
                         self.poly[v] = 0;
-                    } else if from == NoteOrigin::Live && self.pedal_down(ev.channel) {
+                    } else if from == NoteOrigin::Live && self.pedal_down(self.master[v]) {
                         // The pedal holds it. ORBIT's rings are not the
                         // player's keys: they end on their own.
                         self.sustained[v] = true;
@@ -1440,6 +1472,35 @@ impl Instrument {
 
     fn pedal_down(&self, ch: MidiChannel) -> bool {
         self.pedal & (1 << ch.get()) != 0
+    }
+
+    /// Voice `v`'s note came on `ch`, or plays `ch`'s Parts (a member of
+    /// its MPE zone).
+    fn in_zone(&self, v: usize, ch: MidiChannel) -> bool {
+        self.note_channel[v] == ch || self.master[v] == ch
+    }
+
+    /// Each voice's own expression targets (`mpe::own`, ADR 0252): its
+    /// key's poly pressure, and a live note on an MPE member channel that
+    /// channel's bend, pressure and timbre; `None` with bank 2's door
+    /// closed (`mpe::poly_only` each).
+    fn owns(&self, zones: Zones) -> Option<[Own; MAX_VOICES]> {
+        let mut out = [Own::default(); MAX_VOICES];
+        let i = OwnIn {
+            zones,
+            channel: &self.note_channel,
+            origin: &self.note_origin,
+            wheel: &self.wheel,
+            expr: &self.expr,
+            poly: &self.poly,
+        };
+        crate::mpe::own(&i, &mut out).then_some(out)
+    }
+
+    /// Voice `v`'s own of `owns`.
+    fn own_of(&self, owns: &Option<[Own; MAX_VOICES]>, v: usize) -> Own {
+        owns.as_ref()
+            .map_or_else(|| crate::mpe::poly_only(self.poly[v]), |o| o[v])
     }
 
     /// Voice `v`'s note ends (its last key up, or the pedal).
@@ -1469,6 +1530,7 @@ impl Instrument {
         match ev.expr {
             Expr::Wheel(v) => self.expr[ch][0] = v.get(),
             Expr::Pressure(v) => self.expr[ch][1] = v.get(),
+            Expr::Timbre(v) => self.expr[ch][2] = v.get(),
             Expr::Poly(key, v) => {
                 for i in 0..MAX_VOICES {
                     // A held key's voice: a releasing one of a re-struck
@@ -1495,7 +1557,7 @@ impl Instrument {
         }
         self.pedal &= !bit;
         for v in 0..MAX_VOICES {
-            if self.sustained[v] && self.note_channel[v] == ev.channel {
+            if self.sustained[v] && self.master[v] == ev.channel {
                 self.sustained[v] = false;
                 if self.alloc.slots()[v].held() && self.held_keys[v].is_empty() {
                     self.let_go(v);
@@ -1517,7 +1579,7 @@ impl Instrument {
                     channel: ch,
                     down: false,
                 });
-                self.expr[usize::from(ch.get()) & 15] = [0; 2];
+                self.expr[usize::from(ch.get()) & 15] = [0; 3];
                 for v in 0..MAX_VOICES {
                     if self.note_channel[v] == ch {
                         self.poly[v] = 0;
@@ -1528,12 +1590,12 @@ impl Instrument {
                 crate::played::clear_channel(ch.get());
                 for v in 0..MAX_VOICES {
                     if self.alloc.slots()[v].held()
-                        && self.note_channel[v] == ch
+                        && self.in_zone(v, ch)
                         && self.note_origin[v] == NoteOrigin::Live
                         && !self.held_keys[v].is_empty()
                     {
                         self.held_keys[v] = NoteSet::EMPTY;
-                        if self.pedal_down(ch) {
+                        if self.pedal_down(self.master[v]) {
                             self.sustained[v] = true;
                         } else {
                             self.let_go(v);
@@ -1544,7 +1606,7 @@ impl Instrument {
             ChannelMode::SoundOff => {
                 crate::played::clear_channel(ch.get());
                 for v in 0..MAX_VOICES {
-                    if !self.alloc.slots()[v].is_free() && self.note_channel[v] == ch {
+                    if !self.alloc.slots()[v].is_free() && self.in_zone(v, ch) {
                         self.sound_off(v);
                     }
                 }
@@ -1617,19 +1679,14 @@ impl Instrument {
         };
         for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {
             let w = self.wheel[usize::from(part.mix.channel.get())];
-            let unit = if w > 0 {
-                f32::from(w) / 8191.0
-            } else {
-                f32::from(w) / 8192.0
-            };
-            knobs
-                .0
-                .ease_bend(unit * f32::from(part.mix.bend), k.filter(|_| playing));
-            let [wheel, press] = self.expr[usize::from(part.mix.channel.get()) & 15];
-            knobs.0.ease_expr(
-                [f32::from(wheel) / 127.0, f32::from(press) / 127.0],
+            knobs.0.ease_bend(
+                bend_unit(w) * f32::from(part.mix.bend),
                 k.filter(|_| playing),
             );
+            let e = self.expr[usize::from(part.mix.channel.get()) & 15];
+            knobs
+                .0
+                .ease_expr(e.map(|x| f32::from(x) / 127.0), k.filter(|_| playing));
         }
     }
 
@@ -1852,8 +1909,12 @@ impl Instrument {
                 let part = &shared.parts[p];
                 let first = !core::mem::replace(&mut knobs[p], true);
                 if first {
-                    reach[p] =
-                        HighNote::of(&part.params, &part.mod_state, part.mix.bend, shared.tune);
+                    reach[p] = HighNote::of(
+                        &part.params,
+                        &part.mod_state,
+                        shared.mpe.reach(&part.mix),
+                        shared.tune,
+                    );
                 }
                 let high = match (self.alloc.slots()[v].note(), reach[p]) {
                     (Some(n), Some(h)) => h.bill(n, self.voices[v].algo_slide(), first),
@@ -1898,10 +1959,15 @@ impl Instrument {
                 }
             }
         }
-        HighNote::of(&part.params, &part.mod_state, part.mix.bend, shared.tune)
-            .map_or(Cost::ZERO, |h| {
-                h.bill(MidiNote::new(top).unwrap_or(note), slide, first)
-            })
+        HighNote::of(
+            &part.params,
+            &part.mod_state,
+            shared.mpe.reach(&part.mix),
+            shared.tune,
+        )
+        .map_or(Cost::ZERO, |h| {
+            h.bill(MidiNote::new(top).unwrap_or(note), slide, first)
+        })
     }
 
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped
@@ -1986,10 +2052,12 @@ impl Instrument {
     fn ease_knobs(&mut self, shared: &AudioShared) {
         let mut playing = [false; MAX_PARTS];
         let k = matches!(self.knob_pace, Pace::Glide(_)).then_some(self.bend_k);
+        let owns = self.owns(shared.mpe);
         for v in 0..MAX_VOICES {
             if !self.alloc.slots()[v].is_free() {
                 playing[self.sounding[v] as usize % MAX_PARTS] = true;
-                self.voices[v].ease_press(f32::from(self.poly[v]) / 127.0, k);
+                let own = self.own_of(&owns, v);
+                self.voices[v].ease_own(own, k);
             }
         }
         self.ease_bend(shared, playing);

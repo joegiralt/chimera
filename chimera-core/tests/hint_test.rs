@@ -277,7 +277,7 @@ fn route_knobs_name_the_delete() {
     }
 }
 
-/// The cursor on OP5's X cell (row 10, a registry column): the hint says
+/// The cursor on OP5's X cell (row 11, a registry column): the hint says
 /// what a tap can reach, and it fits.
 #[test]
 fn x_cell_names_what_a_tap_reaches() {

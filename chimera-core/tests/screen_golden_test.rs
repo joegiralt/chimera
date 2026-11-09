@@ -89,6 +89,9 @@ use screen::*;
 // #514 (ADR 0236): the matrix gains WHEEL and PRESS rows (mod_matrix,
 // mod_matrix_wide, mod_matrix_algo_taps at 11 px rows, mod_matrix_modal,
 // mod_matrix_morph_inert); sound_browser_pool_full: MAX_SOUND_COST 2928.
+// ADR 0252: the matrix gains the SLIDE row (MPE's timbre, CC 74):
+// mod_matrix, mod_matrix_wide, mod_matrix_algo_taps at 10 px rows,
+// mod_matrix_modal, mod_matrix_morph_inert.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -99,7 +102,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
     // then FOLD's column named FX (#614).
-    ("mod_matrix_morph_inert", 0xae105a0ed0d532a1),
+    ("mod_matrix_morph_inert", 0x944b388af88ae6a8),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0x7e339372006543ce),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
@@ -353,13 +356,13 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
     // then FOLD's column named FX (#614), here and in the next three.
-    ("mod_matrix", 0x1199db1f4f0e5c0b),
+    ("mod_matrix", 0x3e8a8279546f39ca),
     // Task 9 (#614): its FX headers read SOFT's TONE, not SHAP.
-    ("mod_matrix_wide", 0xc2cdabadca3bdbf3),
+    ("mod_matrix_wide", 0x2a2f8bbb0ca0416a),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
-    ("mod_matrix_algo_taps", 0xe0d95cbb41f9d6d0),
-    ("mod_matrix_modal", 0x036b3623be72e651),
+    ("mod_matrix_algo_taps", 0x75fa771c24148945),
+    ("mod_matrix_modal", 0x1efbd05266502c97),
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
@@ -421,6 +424,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
+    ("settings_midi_mpe", 0x99c383fb27b32791),
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.

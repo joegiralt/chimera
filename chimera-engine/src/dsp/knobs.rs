@@ -608,9 +608,9 @@ pub struct Knobs {
     /// The pitch bend now, semitones: the wheel's reach, glided (not a
     /// knob of the Sound).
     bend: f32,
-    /// The WHEEL and PRESSURE sources now, 0..1: the Part's channel's mod
-    /// wheel and channel pressure, glided.
-    expr: [f32; 2],
+    /// The WHEEL, PRESSURE and TIMBRE sources now, 0..1: the Part's
+    /// channel's mod wheel, channel pressure and CC 74, glided.
+    expr: [f32; 3],
 }
 
 impl Knobs {
@@ -644,7 +644,7 @@ impl Knobs {
         reads: 0,
         k: (0, [0.0; 2]),
         bend: 0.0,
-        expr: [0.0; 2],
+        expr: [0.0; 3],
     };
 
     /// The pitch bend now, in semitones, added to every voice's pitch.
@@ -676,8 +676,14 @@ impl Knobs {
         self.expr[1]
     }
 
-    /// One block of WHEEL and PRESSURE toward `to`, as `ease_bend`.
-    pub fn ease_expr(&mut self, to: [f32; 2], k: Option<f32>) {
+    /// The channel's TIMBRE (CC 74) now, 0..1.
+    #[inline]
+    pub fn timbre(&self) -> f32 {
+        self.expr[2]
+    }
+
+    /// One block of WHEEL, PRESSURE and TIMBRE toward `to`, as `ease_bend`.
+    pub fn ease_expr(&mut self, to: [f32; 3], k: Option<f32>) {
         for (v, t) in self.expr.iter_mut().zip(to) {
             ease_expr(v, t, k);
         }

@@ -435,7 +435,7 @@ Sound {
         taps: [],
     },
     mod_state: ModState {
-        num_sources: 10,
+        num_sources: 11,
         num_dests: 0,
         dests: [
             ParamAddr {
@@ -716,6 +716,24 @@ Sound {
                 0,
                 0,
             ],
+            [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
         ],
         present: [
             0,
@@ -736,6 +754,12 @@ Sound {
             0,
         ],
         fixed: [
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
             [
                 0,
                 0,

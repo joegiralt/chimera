@@ -59,6 +59,15 @@ pub const DC_HZ: f32 = 5.0;
 /// step: the DC blocker's tail after a fast release (#487).
 const END_STEP: f32 = 1.0e-4;
 
+/// A voice's own expression targets (`Voice::ease_own`): its MPE member
+/// channel's bend in semitones and timbre, its key's pressure.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Own {
+    pub bend: f32,
+    pub press: f32,
+    pub timbre: f32,
+}
+
 /// Complete voice signal chain:
 /// [Engine] → [FX PRE] → [Filter] → [FX POST] → [tap-VCA] → [DC blocker] → [VCA]
 /// Modulators: three envelopes, three LFOs
@@ -96,9 +105,14 @@ pub struct Voice {
     /// The sources' values from the last block; the VCA's other routes
     /// ramp from them.
     mod_values: [f32; MAX_MOD_SOURCES],
-    /// Its own key's pressure, 0..1, glided (`ease_press`): PRESSURE reads
+    /// Its own key's pressure, 0..1, glided (`ease_own`): PRESSURE reads
     /// it or the channel's, the higher.
     press: f32,
+    /// Its own MPE member channel's bend in semitones, on top of the
+    /// Part's, and timbre, 0..1, beside the Part's channel's (ADR 0252):
+    /// glided as `press`.
+    bend: f32,
+    timbre: f32,
     /// The routes into VCA this voice plays.
     vca: VcaRoutes,
     /// The taps' amounts the last block played (`TapRoutes::amounts`), so
@@ -489,6 +503,8 @@ impl Voice {
                 env_mods: [EnvMods::NONE; 3],
                 mod_values: [0.0; MAX_MOD_SOURCES],
                 press: 0.0,
+                bend: 0.0,
+                timbre: 0.0,
                 vca: VcaRoutes::default(),
                 tap_amt: [[0; 4]; 2],
                 retrigger: false,
@@ -905,10 +921,13 @@ impl Voice {
             })
     }
 
-    /// One block of its own key's pressure toward `to` (0..1), glided at
-    /// the KNOB coefficient `k`, or landed with none.
-    pub fn ease_press(&mut self, to: f32, k: Option<f32>) {
-        crate::dsp::knobs::ease_expr(&mut self.press, to, k);
+    /// One block of its own bend (semitones), pressure and timbre (0..1)
+    /// toward `to`, glided at the KNOB coefficient `k`, or landed with none.
+    pub fn ease_own(&mut self, to: Own, k: Option<f32>) {
+        use crate::dsp::knobs::ease_expr;
+        ease_expr(&mut self.bend, to.bend, k);
+        ease_expr(&mut self.press, to.press, k);
+        ease_expr(&mut self.timbre, to.timbre, k);
     }
 
     /// `render_knobs` on the stored knobs, uneased: a voice on its own.
@@ -987,6 +1006,7 @@ impl Voice {
             v[ModSource::Note.index()] = note_source(self.last_note);
             v[ModSource::Wheel.index()] = knobs.wheel();
             v[ModSource::Press.index()] = knobs.press().max(self.press);
+            v[ModSource::Timbre.index()] = knobs.timbre().max(self.timbre);
             let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
                 if let BlockRef::Env(s) = mod_state.dest(d).block {
@@ -1030,6 +1050,7 @@ impl Voice {
         mod_values[ModSource::Note.index()] = note_source(self.last_note);
         mod_values[ModSource::Wheel.index()] = knobs.wheel();
         mod_values[ModSource::Press.index()] = knobs.press().max(self.press);
+        mod_values[ModSource::Timbre.index()] = knobs.timbre().max(self.timbre);
         // The other VCA sources ramp from their last block's value.
         for (s, &cur) in mod_values.iter().enumerate() {
             if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
@@ -1089,9 +1110,10 @@ impl Voice {
             }
             self.env_mods = next;
             // The wheel goes on after the routes: the same pitch path,
-            // past PITCH's range.
-            if knobs.bend() != 0.0 {
-                m.pitch.pitch += knobs.bend();
+            // past PITCH's range; an MPE note's own on top.
+            let bend = knobs.bend() + self.bend;
+            if bend != 0.0 {
+                m.pitch.pitch += bend;
             }
         }
         self.mod_values = mod_values;

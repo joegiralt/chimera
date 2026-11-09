@@ -2502,11 +2502,12 @@ impl UiState {
         }
     }
 
-    /// The UI's own part of a publish: SETTINGS > TUNING, and nothing
-    /// for a Part whose SOURCE sits on a card row it hasn't loaded, as
-    /// its cell reads (#742).
+    /// The UI's own part of a publish: SETTINGS > TUNING, MIDI CONFIG ›
+    /// MPE's zones (ADR 0252), and nothing for a Part whose SOURCE sits on
+    /// a card row it hasn't loaded, as its cell reads (#742).
     pub fn publish_ui(&self, out: &mut AudioShared) {
         out.tune = self.midi.tune;
+        out.mpe = self.midi.mpe;
         if let Some(p) = self.src.on_card() {
             out.parts[p.index()].source = None;
         }

@@ -103,8 +103,10 @@ pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
     12288
 } else if cfg!(feature = "bench-algo") {
     // ALGO's D2 is 112 B over since the typed bindings (ADR 0217: a
-    // map grew 65 B in each of 7 Sounds): 128 B off is the least that links.
-    6016
+    // map grew 65 B in each of 7 Sounds): 128 B off is the least that links;
+    // 384 B more for MPE's (ADR 0252: SLIDE's matrix row, each voice's own
+    // bend and slide).
+    5632
 } else {
     6144
 };

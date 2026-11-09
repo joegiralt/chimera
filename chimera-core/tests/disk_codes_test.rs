@@ -482,6 +482,7 @@ fn mod_source_codes_round_trip() {
         (ModSource::Note, 7),
         (ModSource::Wheel, 10),
         (ModSource::Press, 11),
+        (ModSource::Timbre, 12),
     ];
     assert_eq!(want.len(), ModSource::ALL.len());
     for (s, c) in want {

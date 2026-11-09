@@ -2156,11 +2156,11 @@ pub const CASES: &[ScreenCase] = &[
         prime(ui);
         plus(ui, 2);
         to_matrix(ui);
-        feed(ui, Input::turn(EncoderId::A, 10)); // OP5
+        feed(ui, Input::turn(EncoderId::A, 11)); // OP5
         feed(ui, Input::turn(EncoderId::E, 40)); // OP5 → FREQ
         feed(ui, Input::turn(EncoderId::B, 4)); // INPUT's column: an X cell
     }),
-    // MODAL's ten rows and the four fixed columns.
+    // MODAL's eleven rows and the four fixed columns.
     ("mod_matrix_modal", |ui| {
         load_init(ui, EngineType::Modal);
         to_matrix_on(ui, EngineType::Modal);
@@ -2306,6 +2306,11 @@ pub const CASES: &[ScreenCase] = &[
     ("settings_midi_sync", |ui| {
         to_leaf(ui, &["MIDI CONFIG", "SYNC"]);
         feed(ui, Input::turn(EncoderId::A, 1));
+    }),
+    // MIDI CONFIG › MPE: the lower zone on 15 channels, LOWER focused.
+    ("settings_midi_mpe", |ui| {
+        to_leaf(ui, &["MIDI CONFIG", "MPE"]);
+        feed(ui, Input::turn(EncoderId::A, 15));
     }),
     ("settings_system_diag_aud_load", |ui| {
         to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])

@@ -15,7 +15,7 @@ const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)
 #[test]
 fn sources_are_in_spec_order() {
     let tags = [
-        "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE", "WHEEL", "PRESS",
+        "ENV1", "LFO1", "ENV2", "ENV3", "LFO2", "LFO3", "VELO", "NOTE", "WHEEL", "PRESS", "SLIDE",
     ];
     for (i, s) in ModSource::ALL.iter().enumerate() {
         assert_eq!(s.index(), i);

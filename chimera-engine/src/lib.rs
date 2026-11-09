@@ -40,6 +40,7 @@ pub mod midi_map;
 pub mod midi_settings;
 pub mod mod_path;
 pub mod modulation;
+pub mod mpe;
 pub mod name;
 pub mod note_queue;
 pub mod nrpn;

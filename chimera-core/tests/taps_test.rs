@@ -115,11 +115,11 @@ fn x_cells_refuse_every_edit() {
     let mut m = matrix(&s);
     assert!(m.num_cols() > FIXED_COLS);
     for col in FIXED_COLS..m.num_cols() {
-        assert!(m.is_x(11, col) && m.is_x(10, col), "col {col}");
+        assert!(m.is_x(12, col) && m.is_x(11, col), "col {col}");
         let (taps, rev) = (m.taps, m.rev);
         let src = RowSource::Tap(TapOp::Op6).index();
         m.set(src, col, 40);
-        (m.sel_row, m.sel_col) = (11, col);
+        (m.sel_row, m.sel_col) = (12, col);
         m.adjust_amount(10);
         m.adjust_amount(-10);
         m.delete_selected();
@@ -127,14 +127,14 @@ fn x_cells_refuse_every_edit() {
         assert_eq!(m.amount(src, col), 0);
         assert!(!m.is_present(src, col));
         assert_eq!(m.hint(), X_OP6);
-        m.sel_row = 10;
+        m.sel_row = 11;
         assert_eq!(m.hint(), X_OP5);
     }
     // The fixed columns are not X cells: they take an amount.
     for c in FixedCol::ALL {
-        assert!(!m.is_x(11, c.index()));
+        assert!(!m.is_x(12, c.index()));
     }
-    (m.sel_row, m.sel_col) = (11, FixedCol::Freq.index());
+    (m.sel_row, m.sel_col) = (12, FixedCol::Freq.index());
     m.adjust_amount(10);
     assert_eq!(m.taps.get(TapOp::Op6, FixedCol::Freq), Some(10));
     let mut t = TapRoutes::default();
@@ -145,18 +145,18 @@ fn x_cells_refuse_every_edit() {
 #[test]
 fn tap_rows_only_on_algo() {
     let m = matrix(&Sound::init(EngineType::Algo));
-    assert_eq!(m.rows(), 12);
-    assert_eq!(m.row_source(10), RowSource::Tap(TapOp::Op5));
-    assert_eq!(m.row_source(11), RowSource::Tap(TapOp::Op6));
+    assert_eq!(m.rows(), 13);
+    assert_eq!(m.row_source(11), RowSource::Tap(TapOp::Op5));
+    assert_eq!(m.row_source(12), RowSource::Tap(TapOp::Op6));
     assert_eq!(m.row_source(0), RowSource::Mod(ModSource::Env1.index()));
     let mut modal = Sound::init(EngineType::Modal);
     modal.params.taps.set(TapOp::Op5, FixedCol::Q, 50);
     let mut m = matrix(&modal);
-    assert_eq!(m.rows(), 10);
-    assert!(!m.is_x(10, FIXED_COLS));
+    assert_eq!(m.rows(), 11);
+    assert!(!m.is_x(11, FIXED_COLS));
     // A stored tap is inert off ALGO: no row reaches it.
     m.move_row(20);
-    assert_eq!(m.sel_row, 9);
+    assert_eq!(m.sel_row, 10);
     m.set(RowSource::Tap(TapOp::Op5).index(), FixedCol::Q.index(), 9);
     assert_eq!(m.taps.get(TapOp::Op5, FixedCol::Q), Some(50));
 }
@@ -208,7 +208,7 @@ fn mod_tap_mod_keeps_the_depth() {
 #[test]
 fn no_mod_source_caller_sees_a_tap() {
     assert_eq!(ModSource::ALL.len(), MAX_MOD_SOURCES);
-    assert_eq!(MAX_MOD_SOURCES, 10);
+    assert_eq!(MAX_MOD_SOURCES, 11);
     let mut s = Sound::init(EngineType::Algo);
     for op in TapOp::ALL {
         for c in FixedCol::ALL {
@@ -232,8 +232,8 @@ fn qm_on_a_tap_views_the_tap_cell() {
         m.amount(RowSource::Tap(TapOp::Op5).index(), FixedCol::Q.index()),
         30
     );
-    assert_eq!(m.amount(m.row_source(10).index(), FixedCol::Q.index()), 30);
-    assert!(m.is_present(m.row_source(10).index(), FixedCol::Q.index()));
+    assert_eq!(m.amount(m.row_source(11).index(), FixedCol::Q.index()), 30);
+    assert!(m.is_present(m.row_source(11).index(), FixedCol::Q.index()));
 }
 
 #[test]

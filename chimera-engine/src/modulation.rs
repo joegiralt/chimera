@@ -15,7 +15,7 @@ use crate::hw::Cost;
 use crate::mod_path::ModDestRegistry;
 use crate::params::{EnvParams, FilterParams, ParamSnapshot};
 
-pub const MAX_MOD_SOURCES: usize = 10;
+pub const MAX_MOD_SOURCES: usize = 11;
 /// A bit a source: a column's route presence.
 pub type SourceBits = u16;
 const _: () = assert!(MAX_MOD_SOURCES <= SourceBits::BITS as usize);
@@ -92,6 +92,9 @@ pub enum ModSource {
     /// Aftertouch, 0..1, slewed: the channel's pressure or the voice's own
     /// key's, the higher.
     Press = 9,
+    /// SLIDE: CC 74, MPE's timbre, 0..1, slewed: the Part's channel's or
+    /// the voice's own MPE member channel's, the higher (ADR 0252).
+    Timbre = 10,
 }
 
 impl ModSource {
@@ -106,6 +109,7 @@ impl ModSource {
         ModSource::Note,
         ModSource::Wheel,
         ModSource::Press,
+        ModSource::Timbre,
     ];
 
     /// The source ENV slot `s` feeds.
@@ -146,6 +150,7 @@ impl ModSource {
             ModSource::Note => "NOTE",
             ModSource::Wheel => "MOD WHEEL",
             ModSource::Press => "PRESSURE",
+            ModSource::Timbre => "SLIDE",
         }
     }
 
@@ -162,13 +167,17 @@ impl ModSource {
             ModSource::Note => "NOTE",
             ModSource::Wheel => "WHEEL",
             ModSource::Press => "PRESS",
+            ModSource::Timbre => "SLIDE",
         }
     }
 
     /// A performance source: the player's hand, per channel (and per key),
     /// never a Jack's (FM3 IN, QM IN take the first eight).
     pub const fn is_perf(self) -> bool {
-        matches!(self, ModSource::Wheel | ModSource::Press)
+        matches!(
+            self,
+            ModSource::Wheel | ModSource::Press | ModSource::Timbre
+        )
     }
 }
 

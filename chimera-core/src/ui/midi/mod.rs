@@ -41,6 +41,7 @@ use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
 use crate::midi_in::{CtrlEvent, HeardEv, PART_CHANNELS, Port, SX_LEN, SYSEX_IN};
 use crate::midi_map::{Binding, CcKind, Input, MAP_LEN, Mappable, MidiMap, Span};
+use crate::mpe;
 use crate::nrpn::{self, NrpnAddr};
 use crate::part::{MAX_BEND, PartParams};
 use crate::project::{Line, Loads, PartId, Project};
@@ -52,9 +53,11 @@ use resolve::{Action, BindRuntime, resolve};
 /// Canonical NRPN targets a Part moves at once. The rest wait in line, each
 /// with its latest place, till a slot comes to rest (spec § 5: delayed as a
 /// CC is, not lost); past `WAIT` addresses waiting, the oldest gives way.
-const CANON: usize = 8;
+/// Without `midi-map` (the bench builds, deaf) one each: nothing moves
+/// them, and their AXI margin holds no room (ADR 0252).
+const CANON: usize = if cfg!(feature = "midi-map") { 8 } else { 1 };
 /// Canonical targets that wait for a slot, first come first moved.
-const WAIT: usize = 16;
+const WAIT: usize = if cfg!(feature = "midi-map") { 16 } else { 1 };
 /// A Part's bindings: its Sound's rows, then its controller layer's (ADR
 /// 0226). Without `midi-map` (the bench builds, deaf) none of the layer's:
 /// their AXI holds no room for it.
@@ -70,6 +73,11 @@ const _: () = assert!(SLOTS <= 64, "`handed` holds a bit a slot");
 const NO_BIN: u8 = u8::MAX;
 /// RPN 0, pitch-bend sensitivity.
 const RPN0: Sel = Sel::Rpn(U14::from_parts(U7::ZERO, U7::ZERO));
+/// RPN 6, MPE's Configuration Message (ADR 0252).
+const RPN6: Sel = Sel::Rpn(match U14::new(6) {
+    Some(n) => n,
+    None => panic!(),
+});
 const BEND: ParamAddr = ParamAddr::new(crate::addr::BlockRef::Part, PartParams::BEND);
 
 /// A Part's slots' ramps, last bins and waiting bins, its entries'
@@ -437,9 +445,10 @@ fn control(ui: &mut UiState, e: HeardEv) -> Option<(crate::MidiChannel, Ctl)> {
         HeardEv::Ctrl(_, CtrlEvent::Ctl(ch, c)) => (ch, c),
         HeardEv::Ctrl(..) => return None,
     };
-    // MIXER's and SEQUENCER's own maps are fixed: no learn (ADR 0254).
+    // An MPE member channel's controls are its note's (ADR 0252), and
+    // MIXER's and SEQUENCER's own maps are fixed (ADR 0254): no learn.
     let fixed = control::control_on(&ui.midi, &ui.project, ch).is_some();
-    if !fixed && ui.learn_in(ch, &c) {
+    if !fixed && ui.midi.mpe.member(ch).is_none() && ui.learn_in(ch, &c) {
         return None;
     }
     Some((ch, c))
@@ -559,9 +568,13 @@ impl UiState {
         self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
     }
 
-    /// One message on channel `ch`: RPN 0, then each Part's bindings on the
-    /// channel, or the canonical param of an NRPN none of them names.
+    /// One message on channel `ch`: MPE's first (`cc_mpe`), then RPN 0,
+    /// then each Part's bindings on the channel, or the canonical param of
+    /// an NRPN none of them names.
     fn cc_control(&mut self, ch: crate::MidiChannel, c: &Ctl, now: Ms) {
+        if self.cc_mpe(ch, c) {
+            return;
+        }
         if self.cc_dedicated(ch, c, now) {
             return;
         }
@@ -599,6 +612,29 @@ impl UiState {
                 self.cc_canonical(p, n, value, now);
             }
         }
+    }
+
+    /// MPE (ADR 0252): an MPE Configuration Message (RPN 6 on channel 1
+    /// or 16; elsewhere it is no message of MPE's) sets that zone's members; on a zone's member channel RPN 0
+    /// sets the zone's member bend, and every other control is its note's
+    /// (the note path's), never a Part map's. Whether it took `c`.
+    fn cc_mpe(&mut self, ch: crate::MidiChannel, c: &Ctl) -> bool {
+        let msb = |v: DataValue| match v {
+            DataValue::Coarse(m) => m.get(),
+            DataValue::Fine(f) => f.msb().get(),
+        };
+        let z = self.midi.mpe;
+        self.midi.mpe = match *c {
+            Ctl::Data { sel, value }
+                if sel == RPN6 && (ch == mpe::LOWER_MASTER || ch == mpe::UPPER_MASTER) =>
+            {
+                z.configured(ch, msb(value))
+            }
+            _ if z.member(ch).is_none() => return false,
+            Ctl::Data { sel, value } if sel == RPN0 => z.with_bend_on(ch, msb(value)),
+            _ => z,
+        };
+        true
     }
 
     /// A SysEx body (#846): each Part's SysEx bindings it matches, its

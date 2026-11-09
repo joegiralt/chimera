@@ -68,6 +68,18 @@ fn others(n: usize) -> Vec<ParamAddr> {
 
 /// A file whose registry and ModDests list `dests` (`(block, id)` codes),
 /// each with a route from every source at amount `i + 1` (source `s` adds `s`).
+/// The sources a full `Routes` record holds at 640 B: ten into sixteen
+/// columns (SLIDE's go to `PerfRoutes` only).
+const FILE_SOURCES: [ModSource; 10] = {
+    let mut a = [ModSource::Env1; 10];
+    let mut i = 0;
+    while i < 10 {
+        a[i] = ModSource::ALL[i];
+        i += 1;
+    }
+    a
+};
+
 fn full_file(dests: &[[u8; 2]]) -> Vec<u8> {
     use chimera_core::block::DiskCode;
     let mut reg = Vec::new();
@@ -77,7 +89,7 @@ fn full_file(dests: &[[u8; 2]]) -> Vec<u8> {
         reg.extend_from_slice(d);
         reg.extend_from_slice(b"TEST\0\0\0\0");
         md.extend_from_slice(d);
-        for s in ModSource::ALL {
+        for s in FILE_SOURCES {
             routes.extend_from_slice(&[s.disk_code(), d[0], d[1], amount(i, s)]);
         }
     }
@@ -112,7 +124,7 @@ fn a_full_registry_patch_keeps_every_route_and_frees_four_columns() {
     let s = decode(&full_file(&dests)).unwrap();
     let m = &s.mod_state;
     for (i, &a) in addrs.iter().enumerate() {
-        for src in ModSource::ALL {
+        for src in FILE_SOURCES {
             assert_eq!(
                 read(m, src, a),
                 Some(amount(i, src) as i8),
@@ -142,12 +154,12 @@ fn full_registry_with_drive_and_cutoff_keeps_every_route() {
     let s = decode(&full_file(&dests)).unwrap();
     let m = &s.mod_state;
     let level = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
-    for src in ModSource::ALL {
+    for src in FILE_SOURCES {
         assert_eq!(read(m, src, level), Some(amount(0, src) as i8));
         assert_eq!(read(m, src, CUTOFF), Some(amount(1, src) as i8));
     }
     for (i, a) in others(14).into_iter().enumerate() {
-        for src in ModSource::ALL {
+        for src in FILE_SOURCES {
             assert_eq!(read(m, src, a), Some(amount(i + 2, src) as i8));
         }
     }
@@ -263,9 +275,10 @@ fn vca_rule_reads_the_fixed_vca_column() {
 // ── Task 11 review fold-ins and Task 12's jacks on disk ──
 
 /// Every source into 16 registry columns and the four fixed: the first
-/// eight's 160 routes fill the 640 B `Routes` record, saved and loaded.
+/// eight's 160 routes fill the 640 B `Routes` record, the rest
+/// `PerfRoutes`, saved and loaded.
 #[test]
-fn a_full_ten_by_twenty_matrix_round_trips() {
+fn an_eleven_by_twenty_matrix_round_trips() {
     use chimera_core::modulation::MAX_MOD_DESTS;
     let mut s = Sound::plain_init(EngineType::Algo);
     let regs = others(MAX_MOD_DESTS);
@@ -289,8 +302,8 @@ fn a_full_ten_by_twenty_matrix_round_trips() {
             n += 1;
         }
     }
-    // 160 in `Routes`, WHEEL's and PRESSURE's 40 in `PerfRoutes`.
-    assert_eq!(n, 200);
+    // 160 in `Routes`, WHEEL's, PRESSURE's and SLIDE's 60 in `PerfRoutes`.
+    assert_eq!(n, 220);
     let back = decode(&encode(&s)).unwrap();
     assert!(back.bits_eq(&s));
 }

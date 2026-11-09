@@ -24,18 +24,43 @@ Every stored parameter also has a fixed NRPN address of its own, which works wit
 
 ## The mod wheel and aftertouch in the matrix
 
-The MOD MATRIX has two rows for your hands, after NOTE:
+The MOD MATRIX has three rows for your hands, after NOTE:
 
 - **WHEEL** (MOD WHEEL in the readout): the mod wheel, CC 1, on the Part's channel. At rest it is 0, fully up it is 1.
 - **PRESS** (PRESSURE in the readout): aftertouch. A keyboard with channel pressure moves every note on the Part's channel; one with poly pressure moves only the note whose key you press harder. Each note follows the higher of the two.
+- **SLIDE**: CC 74 (timbre, the forward and back slide on an MPE controller) on the Part's channel, 0 to 1. Under MPE each note also has its own; each note follows the higher of the two.
 
-Route them like any other source: put the cursor on the WHEEL or PRESS row, under the column you want, and turn **E** for the amount. Both glide, so a fast wheel throw or a sudden squeeze never steps the sound. A new note starts with no poly pressure of its own; the channel's wheel and pressure carry on across notes, Sound loads and project loads.
+Route them like any other source: put the cursor on the WHEEL, PRESS or SLIDE row, under the column you want, and turn **E** for the amount. They glide, so a fast wheel throw or a sudden squeeze never steps the sound. A new note starts with no poly pressure of its own; the channel's wheel and pressure carry on across notes, Sound loads and project loads.
 
 A new Sound (INIT) comes with the wheel's vibrato as a route: WHEEL into LFO 1's DEPTH at +127, and LFO 1 into PITCH. LFO 1 rests at DEPTH 0, so the wheel down plays no vibrato and the wheel up plays it at full depth. Moving the wheel is playing, not editing: the Sound stays as it was saved. Factory Sounds that move LFO 1 keep the wheel they were voiced with, a MIDI map binding of CC 1 on LFO 1's DEPTH: there the wheel sets DEPTH itself, and the Sound shows as edited.
 
 Any LFO's DEPTH is a destination: prime it with **MIX + PLUS** on the LFO page and route any source into it. A DEPTH route reaches its LFO one block (1.3 ms) after its source moves.
 
-The wheel and channel pressure still reach the MIDI map as well, so a binding on CC 1 or PRESSURE keeps working beside a route.
+The wheel, CC 74 and channel pressure still reach the MIDI map as well, so a binding on CC 1, CC 74 or PRESSURE keeps working beside a route.
+
+## MPE
+
+An MPE controller (LinnStrument, Seaboard, Osmose and the like) sends each note on a channel of its own, so each finger bends, presses and slides its own note. Chimera plays MPE in zones:
+
+- The **lower zone**: master channel 1, its notes on channels 2 and up.
+- The **upper zone**: master channel 16, its notes on channels 15 and down.
+
+A zone's notes play the Parts on its master channel: set a Part's channel to 1 for the lower zone (Part 1 is there already) or 16 for the upper. Parts on the zone's other channels don't hear them while the zone is on.
+
+Each note's own pitch bend bends that note alone, over the zone's bend range (48 semitones each way unless the controller or you set another). Its own pressure feeds PRESS and its own CC 74 feeds SLIDE, for that note only. What comes on the master channel reaches every note of the zone: its bend on top of each note's (over the Part's BEND), its mod wheel, pressure and CC 74, and its sustain pedal and All Notes Off.
+
+Most MPE controllers set the zones themselves when they start: their configuration message (RPN 6) turns a zone on with its channel count, and sets its bend range to 48. You can also set them by hand in **SETTINGS › MIDI CONFIG › MPE** (the last row of MIDI CONFIG):
+
+![SETTINGS › MIDI CONFIG › MPE, annotated](img/midi-mpe.png)
+
+1. **Breadcrumb:** `SETTINGS › MIDI › MPE`.
+2. **LOWER** (A): the lower zone's note channels, `OFF` or 1 to 15, from channel 2 up; they play the Parts on channel 1.
+3. **L BEND** (B): the lower zone's note bend range, 0 to 96 semitones each way.
+4. **UPPER** (C): the upper zone's note channels, `OFF` or 1 to 15, from channel 15 down; they play the Parts on channel 16.
+5. **U BEND** (D): the upper zone's note bend range.
+6. **The hint:** `A-F EDIT · MENU BACK`.
+
+The zones never overlap: growing one shrinks the other. RPN 0 on a note channel sets its zone's bend range; on the master channel it sets the Part's BEND, as on any channel. The zones are kept with the rest of SETTINGS, not in the project. With both zones OFF every channel is its own, as with any keyboard.
 
 ## Learn
 
@@ -311,8 +336,9 @@ Over USB, Chimera shows up as one MIDI device with these ports:
 When SETTINGS › ABOUT reads `NEEDS UPDATE`, Chimera ignores MIDI in, notes and clock too, until the update is installed: MIDI MAP reads `NEEDS UPDATE`, and **MIX + SEQ** says `NEEDS UPDATE` instead of starting learn.
 
 - **Identity request** (`F0 7E 7F 06 01 F7`): Chimera answers with its identity and firmware version, while ECHO is on.
-- **All Notes Off** (CC 123), and the Omni and Mono/Poly messages (CC 124–127): the notes of every Part on that channel are released. **All Sound Off** (CC 120) silences them, and **Reset All Controllers** (CC 121) resets the pedal, the bend, the mod wheel and pressure.
+- **All Notes Off** (CC 123), and the Omni and Mono/Poly messages (CC 124–127): the notes of every Part on that channel are released. **All Sound Off** (CC 120) silences them, and **Reset All Controllers** (CC 121) resets the pedal, the bend, the mod wheel, pressure and CC 74.
 - **System Reset** (`FF`): every sound stops and every controller resets.
 - **Active Sensing:** once a controller sends it, a pulled cable releases every held note within a third of a second, and the screen shows **DIN MIDI LOST**. A USB host that resets or sleeps while you hold a note or pedal does the same, with **USB MIDI LOST**.
 - **RPN 0** sets the Part's BEND range, in semitones (0 to 24).
+- **RPN 6** on channel 1 or 16 sets an MPE zone (see [MPE](#mpe)).
 - **MIDI Tuning Standard** SysEx retunes every Part whose TUNING is `MTS`: see [Tuning](TUNING.md).

@@ -418,3 +418,31 @@ fn learn_words_fit_the_band() {
         }
     }
 }
+
+/// An MPE member channel's controls are its note's (ADR 0252): learn
+/// never hears one (not even to say it came on the wrong channel), and
+/// the master's still learns.
+#[test]
+fn learn_skips_an_mpe_member_channel() {
+    use chimera_core::mpe::Zones;
+    use chimera_core::ui::midi_settings::MidiSettings;
+    let mut ui = on_cutoff();
+    ui.set_midi(MidiSettings {
+        mpe: Zones::OFF.with_lower(15),
+        ..MidiSettings::DEFAULT
+    });
+    mix_seq(&mut ui);
+    assert!(armed(&ui));
+    cc(&mut ui, ch(2), 74, 100, 20_000);
+    assert_eq!(
+        ui.learn(),
+        Learn::Armed {
+            part: P1,
+            note: None
+        },
+        "still waiting, no wrong-channel note: a finger's slide is no knob"
+    );
+    assert_eq!(ui.project().part(P1).sound.map.len(), 0);
+    cc(&mut ui, ch(0), 74, 100, 20_004);
+    assert_eq!(ui.project().part(P1).sound.map.len(), 1);
+}

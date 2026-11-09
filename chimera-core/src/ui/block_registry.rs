@@ -23,8 +23,8 @@ use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::reverb_panel::RevPage;
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, ECHO_LEAF, LIVE_SNAP_LEAF, MAP_LEAF,
-    OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, RANDOM_LEAF, SAVER_LEAF, SYNC_LEAF, TEXT_LEAF, THEME_LEAF,
-    TUNING_LEAF,
+    MPE_LEAF, OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, RANDOM_LEAF, SAVER_LEAF, SYNC_LEAF, TEXT_LEAF,
+    THEME_LEAF, TUNING_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -1019,6 +1019,25 @@ pub static SYS_ECHO: BlockDef = BlockDef {
     ],
 };
 
+/// MIDI CONFIG › MPE: the lower and upper zones' member channels and
+/// their bend (ADR 0252).
+pub static SYS_MPE: BlockDef = BlockDef {
+    // Never used before: the new top, one more focus slot (`MAX_PAGES`).
+    id: 113,
+    name: "MPE",
+    short: "MPE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Midi, MidiSettings::LOWER),
+        ParamSlot::param(BlockRef::Midi, MidiSettings::LOWER_BEND),
+        ParamSlot::param(BlockRef::Midi, MidiSettings::UPPER),
+        ParamSlot::param(BlockRef::Midi, MidiSettings::UPPER_BEND),
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080).
 pub static SYS_SYNC: BlockDef = BlockDef {
     id: 86,
@@ -1368,7 +1387,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 23] = [
+const FIXED: [&ChainDef2; 24] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
@@ -1379,6 +1398,7 @@ const FIXED: [&ChainDef2; 23] = [
     super::settings::leaves::CONTROL_LEAF.chain(),
     SYNC_LEAF.chain(),
     ECHO_LEAF.chain(),
+    MPE_LEAF.chain(),
     OUTPUTS_LEAF.chain(),
     TUNING_LEAF.chain(),
     THEME_LEAF.chain(),

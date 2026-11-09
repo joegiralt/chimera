@@ -27,6 +27,8 @@ fn settings() -> SystemSettings {
         midi: MidiSettings {
             sync: SyncMode::Int,
             tune: -37,
+            // MPE's zones round-trip too (ADR 0252).
+            mpe: chimera_core::mpe::Zones::new(9, 4, 24, 96),
             ..MidiSettings::DEFAULT
         }
         .with_push(true)

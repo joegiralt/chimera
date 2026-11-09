@@ -374,3 +374,47 @@ fn a_mixer_cc_moves_the_comp_end_to_end() {
     r.passes(&out.0, 60);
     assert_eq!(r.stored(P1, mix), 0.0, "CC {cc}: COMP MIX");
 }
+
+/// A CONTROL channel inside an MPE zone is the zone's (ADR 0252): MIXER
+/// on channel 14 yields to the lower zone's member channel 14, whose
+/// RPN 0 sets the zone's bend.
+#[test]
+fn an_mpe_member_channel_wins_over_a_control_channel() {
+    use chimera_core::mpe::Zones;
+    use chimera_core::ui::midi::control::control_on;
+    let mut r = Rig::new();
+    let mut m = r.ui.midi();
+    m.mpe = Zones::OFF.with_lower(15);
+    r.ui.set_midi(m);
+    assert_eq!(control_on(&r.ui.midi(), r.ui.project(), ch(13)), None);
+    let was = r.stored(P1, LEVEL);
+    let rpn0 = CtrlEvent::Ctl(
+        ch(13),
+        Ctl::Data {
+            sel: Sel::Rpn(chimera_midi::value::U14::new(0).unwrap()),
+            value: DataValue::Coarse(U7::new(24).unwrap()),
+        },
+    );
+    r.passes(&[cc(13, 20, 0), rpn0], 40);
+    assert_eq!(r.stored(P1, LEVEL), was, "MIXER yields");
+    assert_eq!(r.ui.midi().mpe.lower_bend(), 24, "the zone took RPN 0");
+}
+
+/// A CONTROL channel inside an MPE zone says so (ADR 0252): MPE has it,
+/// not a Part.
+#[test]
+fn a_control_channel_an_mpe_zone_takes_says_mpe() {
+    use chimera_core::mpe::Zones;
+    use chimera_core::ui::midi::control::{clash_note, clashes};
+    let mut r = Rig::new();
+    let mut m = r.ui.midi();
+    m.mpe = Zones::OFF.with_lower(15);
+    r.ui.set_midi(m);
+    let note = |id| {
+        let a = ParamAddr::new(BlockRef::Midi, id);
+        clash_note(a, clashes(&r.ui.midi(), r.ui.project()))
+    };
+    for id in MidiSettings::CONTROL {
+        assert_eq!(note(id), Some("MPE HAS THIS CHANNEL"), "{id:?}");
+    }
+}

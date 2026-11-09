@@ -134,6 +134,8 @@ pub enum Expr {
     Pressure(U7),
     /// Poly pressure on one key.
     Poly(MidiNote, U7),
+    /// CC 74, timbre (MPE's third dimension, ADR 0252).
+    Timbre(U7),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,7 +170,8 @@ impl From<RealTime> for InEvent {
 }
 
 /// Bits 18 up: 0 a note, 1 + the `RealTime`'s index, then bend, sustain,
-/// mode, wheel, pressure and poly pressure. Below them a note's 18 bits.
+/// mode, wheel, pressure, poly pressure and timbre. Below them a note's 18
+/// bits.
 const KIND_SHIFT: u32 = 18;
 const KIND_BEND: usize = RealTime::ALL.len() + 1;
 const KIND_SUSTAIN: usize = KIND_BEND + 1;
@@ -176,11 +179,14 @@ const KIND_MODE: usize = KIND_SUSTAIN + 1;
 const KIND_WHEEL: usize = KIND_MODE + 1;
 const KIND_PRESSURE: usize = KIND_WHEEL + 1;
 const KIND_POLY: usize = KIND_PRESSURE + 1;
-const _: () = assert!(KIND_POLY < 1 << (32 - KIND_SHIFT));
+const KIND_TIMBRE: usize = KIND_POLY + 1;
+const _: () = assert!(KIND_TIMBRE < 1 << (32 - KIND_SHIFT));
 /// The CC that is the sustain pedal.
 const CC_SUSTAIN: u8 = 64;
 /// The CC that is the mod wheel.
 const CC_WHEEL: u8 = 1;
+/// The CC that is timbre (MPE's, and the MIDI spec's brightness).
+const CC_TIMBRE: u8 = 74;
 /// Free slots an expression event leaves: a flood of pressure takes half the
 /// queue at most, so it never crowds out a note-on.
 const EXPR_RESERVE: usize = NOTE_QUEUE_LEN / 2;
@@ -215,11 +221,12 @@ impl InEvent {
     }
 
     /// A matrix source's share of a voice message: the wheel (CC 1),
-    /// channel and poly pressure. CC 1 and channel pressure reach the map
-    /// too (layer 2's), so learn still sees them.
+    /// channel and poly pressure, timbre (CC 74). CC 1, CC 74 and channel
+    /// pressure reach the map too (layer 2's), so learn still sees them.
     pub fn expr(channel: MidiChannel, v: &Voice) -> Option<Self> {
         let expr = match *v {
             Voice::Control { cc, value } if cc.get() == CC_WHEEL => Expr::Wheel(value),
+            Voice::Control { cc, value } if cc.get() == CC_TIMBRE => Expr::Timbre(value),
             Voice::ChannelPressure(value) => Expr::Pressure(value),
             Voice::PolyPressure { key, value } => Expr::Poly(key, value),
             _ => return None,
@@ -263,6 +270,7 @@ impl InEvent {
                     Expr::Wheel(v) => (KIND_WHEEL, 0, v),
                     Expr::Pressure(v) => (KIND_PRESSURE, 0, v),
                     Expr::Poly(k, v) => (KIND_POLY, k.get(), v),
+                    Expr::Timbre(v) => (KIND_TIMBRE, 0, v),
                 };
                 e.channel.get() as u32
                     | (key as u32) << 4
@@ -292,13 +300,14 @@ impl InEvent {
                     _ => return None,
                 },
             })),
-            k @ (KIND_WHEEL | KIND_PRESSURE | KIND_POLY) => {
+            k @ (KIND_WHEEL | KIND_PRESSURE | KIND_POLY | KIND_TIMBRE) => {
                 let v = U7::new(((bits >> 11) & 0x7F) as u8)?;
                 Some(InEvent::Expr(ExprEvent {
                     channel: MidiChannel::new((bits & 0xF) as u8)?,
                     expr: match k {
                         KIND_WHEEL => Expr::Wheel(v),
                         KIND_PRESSURE => Expr::Pressure(v),
+                        KIND_TIMBRE => Expr::Timbre(v),
                         _ => Expr::Poly(MidiNote::new(((bits >> 4) & 0x7F) as u8)?, v),
                     },
                 }))

@@ -161,11 +161,13 @@ pub fn seq_target(cc: u8) -> Option<SeqAct> {
     })
 }
 
-/// Who among CONTROL's has channel `ch`: `None` where a Part's own does.
+/// Who among CONTROL's has channel `ch`: `None` where a Part's own does,
+/// or an MPE zone's member channel (ADR 0252).
 pub fn control_on(midi: &MidiSettings, project: &Project, ch: MidiChannel) -> Option<Control> {
-    if PartId::ALL
-        .iter()
-        .any(|&p| project.part(p).mix.channel == ch)
+    if midi.mpe.member(ch).is_some()
+        || PartId::ALL
+            .iter()
+            .any(|&p| project.part(p).mix.channel == ch)
     {
         return None;
     }
@@ -174,35 +176,39 @@ pub fn control_on(midi: &MidiSettings, project: &Project, ch: MidiChannel) -> Op
         .find(|&c| midi.channel_of(c) == Some(ch))
 }
 
-/// Who takes each CONTROL channel that loses its channel, two bits each in
-/// `Control`'s order: 0 it holds it (or is OFF), 1 a Part, 2 MIXER, 3
-/// SEQUENCER. The settings page's clash marks (`SlotCtx::clash`).
-pub fn clashes(midi: &MidiSettings, project: &Project) -> u8 {
+/// Who takes each CONTROL channel that loses its channel, three bits each
+/// in `Control`'s order: 0 it holds it (or is OFF), 1 a Part, 2 MIXER, 3
+/// SEQUENCER, 4 an MPE zone (ADR 0252). The settings page's clash marks
+/// (`SlotCtx::clash`).
+pub fn clashes(midi: &MidiSettings, project: &Project) -> u16 {
     Control::ALL.into_iter().fold(0, |m, c| {
-        let w = match midi.channel_of(c).map(|ch| control_on(midi, project, ch)) {
-            Some(None) => 1,
+        let w = match midi
+            .channel_of(c)
+            .map(|ch| (ch, control_on(midi, project, ch)))
+        {
+            Some((ch, None)) if midi.mpe.member(ch).is_some() => 4,
+            Some((_, None)) => 1,
             // Only an earlier one wins: AUTO never takes another's.
-            Some(Some(Control::Mixer)) if c != Control::Mixer => 2,
-            Some(Some(Control::Sequencer)) if c != Control::Sequencer => 3,
+            Some((_, Some(Control::Mixer))) if c != Control::Mixer => 2,
+            Some((_, Some(Control::Sequencer))) if c != Control::Sequencer => 3,
             _ => 0,
         };
-        m | w << (2 * c as u8)
+        m | w << (3 * c as u8)
     })
 }
 
 /// The focus band's words on a CONTROL channel another takes, by who: a
 /// named table, so its bytes are bank 2's.
-static CLASH: [u8; 73] =
-    *b"A PART HAS THIS CHANNEL|MIXER HAS THIS CHANNEL|SEQUENCER HAS THIS CHANNEL";
+static CLASH: [u8; 94] = *b"A PART HAS THIS CHANNEL|MIXER HAS THIS CHANNEL|SEQUENCER HAS THIS CHANNEL|MPE HAS THIS CHANNEL";
 
 /// Why `a`'s cell is dimmed under `clash` (`clashes`), if it is a CONTROL
 /// channel another takes: the door's `clash_note`.
-pub fn clash_note(a: ParamAddr, clash: u8) -> Option<&'static str> {
+pub fn clash_note(a: ParamAddr, clash: u16) -> Option<&'static str> {
     let i = a.param.0.wrapping_sub(MidiSettings::MIXER.0);
     if a.block != BlockRef::Midi || i >= 3 {
         return None;
     }
-    let w = clash >> (2 * i) & 3;
+    let w = (clash >> (3 * i) & 7) as u8;
     (w != 0).then(|| super::pick(&CLASH, w - 1))
 }
 

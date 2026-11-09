@@ -44,9 +44,9 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 /// `SourceRef`, a 24-zone `ZoneTune` and a full `Bindings` (2 624 + 133 =
 /// 2 757 B for 292 params: WALK's TRON and DRIFT, ADR 0203, and STRETCH
 /// GRAIN's four, ADR 0204, among them; `Bindings` 49 B over `MidiMap`'s
-/// 84), and a full `PerfRoutes` (4 + 160 B, ADR 0236), rounded up to 16 B.
-/// `sparse_bound` pins it.
-pub const MAX_SOUND_COST: usize = 2928;
+/// 84), and a full `PerfRoutes` (4 + 240 B: ADR 0236's two rows and
+/// SLIDE's, ADR 0252), rounded up to 16 B. `sparse_bound` pins it.
+pub const MAX_SOUND_COST: usize = 3008;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,

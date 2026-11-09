@@ -2,8 +2,9 @@
 //! CONFIG's SYNC, who drives ORBIT's transport (ADR 0080), SETTINGS >
 //! TUNING's TUNE, the A4 reference as cents off 440 Hz, SYSTEM > PUSH
 //! ENCODERS' PUSH, whether the front panel's encoders push (ADR 0140), and
-//! MIDI CONFIG's ECHO, DIN OUT's master switch (spec § 8.4), and MIDI
-//! CONFIG › CONTROL's MIXER, SEQUENCER and AUTO channels (ADR 0254).
+//! MIDI CONFIG's ECHO, DIN OUT's master switch (spec § 8.4), MIDI
+//! CONFIG › MPE's zones (ADR 0252), and MIDI CONFIG › CONTROL's MIXER,
+//! SEQUENCER and AUTO channels (ADR 0254).
 //! They say how the unit sits in the studio, not what a project plays.
 //! (One block, so the file keeps its `MIDI` record.)
 
@@ -11,6 +12,9 @@ use crate::MidiChannel;
 use crate::block::{
     Block, Change, DiskCode, Motion, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code,
 };
+use crate::mpe::{MAX_MEMBERS, MAX_ZONE_BEND, Zones};
+const _: () = assert!(MidiSettings::LOWER.0 == 5 && MidiSettings::LOWER_BEND.0 == 6);
+const _: () = assert!(MidiSettings::UPPER.0 == 7 && MidiSettings::UPPER_BEND.0 == 8);
 use crate::orbit::clock::SyncMode;
 
 /// Everything MIDI CONFIG sets that SYSTEM keeps.
@@ -21,6 +25,9 @@ pub struct MidiSettings {
     pub tune: i8,
     /// PUSH and ECHO (`push`, `echo`).
     pub switches: Switches,
+    /// MPE's lower and upper zones (ADR 0252): off until set here or by an
+    /// MPE Configuration Message.
+    pub mpe: Zones,
     /// MIXER, SEQUENCER and AUTO (`Control`), five bits each from bit 0:
     /// the channel plus one, 0 OFF (ADR 0254). Packed: a wider
     /// `MidiSettings` grew SYSTEM's bank-1 copies.
@@ -65,6 +72,7 @@ impl MidiSettings {
         sync: SyncMode::DEFAULT,
         tune: 0,
         switches: Switches(Switches::ECHO),
+        mpe: Zones::OFF,
         control: 0,
     };
 
@@ -72,7 +80,11 @@ impl MidiSettings {
     pub const TUNE: ParamId = ParamId(1);
     pub const PUSH: ParamId = ParamId(2);
     pub const ECHO: ParamId = ParamId(3);
-    // 4 is PROGRAM IN's (#891), 5-8 MPE's (#896).
+    // 4 is PROGRAM IN's (#891).
+    pub const LOWER: ParamId = ParamId(5);
+    pub const LOWER_BEND: ParamId = ParamId(6);
+    pub const UPPER: ParamId = ParamId(7);
+    pub const UPPER_BEND: ParamId = ParamId(8);
     pub const MIXER: ParamId = ParamId(9);
     pub const SEQUENCER: ParamId = ParamId(10);
     pub const AUTO: ParamId = ParamId(11);
@@ -122,6 +134,11 @@ impl Default for MidiSettings {
 
 const SYNC_NAMES: [&str; 2] = ["INT", "EXT"];
 
+/// A zone's member count: OFF, then 1 to 15 member channels.
+static MEMBER_NAMES: [&str; MAX_MEMBERS as usize + 1] = [
+    "OFF", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
+];
+
 /// A CONTROL channel: OFF, then 1 to 16.
 static CONTROL_NAMES: [&str; 17] = [
     "OFF", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
@@ -146,7 +163,7 @@ const fn control(id: u8, label: &'static str, ident: &'static str) -> ParamSpec 
 /// SYNC by index, `SyncMode::ALL`'s order; `SYNC_NAMES` too
 /// (`midi_sync_page_test::sync_value_names_and_order_agree`). INT and EXT are two peers,
 /// neither off, so the focus shows the word.
-pub static MIDI_SPECS: [ParamSpec; 7] = [
+pub static MIDI_SPECS: [ParamSpec; 11] = [
     ParamSpec::choice(
         0,
         "SYNC",
@@ -195,6 +212,52 @@ pub static MIDI_SPECS: [ParamSpec; 7] = [
     )
     .ident("ECHO")
     .glyph(crate::glyph::FocusGlyph::Switch),
+    // MPE (ADR 0252). A SYSTEM from before them has none: both zones OFF,
+    // members bending ±48 (the MPE spec's).
+    ParamSpec::stepped(
+        5,
+        "LOWER",
+        ValFmt::Names(&MEMBER_NAMES),
+        0.0,
+        MAX_MEMBERS as f32,
+        0.0,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("MPE_LOWER"),
+    ParamSpec::stepped(
+        6,
+        "L BEND",
+        ValFmt::Int(MAX_ZONE_BEND),
+        0.0,
+        MAX_ZONE_BEND as f32,
+        crate::mpe::DEFAULT_ZONE_BEND as f32,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("MPE_LBEND"),
+    ParamSpec::stepped(
+        7,
+        "UPPER",
+        ValFmt::Names(&MEMBER_NAMES),
+        0.0,
+        MAX_MEMBERS as f32,
+        0.0,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("MPE_UPPER"),
+    ParamSpec::stepped(
+        8,
+        "U BEND",
+        ValFmt::Int(MAX_ZONE_BEND),
+        0.0,
+        MAX_ZONE_BEND as f32,
+        crate::mpe::DEFAULT_ZONE_BEND as f32,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("MPE_UBEND"),
     control(9, "MIXER", "MIXER_CH"),
     control(10, "SEQUENCER", "SEQ_CH").short("SEQ"),
     control(11, "AUTO", "AUTO_CH"),
@@ -223,6 +286,10 @@ impl Block for MidiSettings {
             Self::TUNE => f32::from(self.tune),
             Self::PUSH => f32::from(self.push()),
             Self::ECHO => f32::from(self.echo()),
+            Self::LOWER => f32::from(self.mpe.lower()),
+            Self::LOWER_BEND => f32::from(self.mpe.lower_bend()),
+            Self::UPPER => f32::from(self.mpe.upper()),
+            Self::UPPER_BEND => f32::from(self.mpe.upper_bend()),
             ParamId(i @ 9..=11) => f32::from(self.raw(i - 9)),
             _ => 0.0,
         }
@@ -235,6 +302,9 @@ impl Block for MidiSettings {
             Self::TUNE => self.tune = crate::dsp::clampf(v, -100.0, 100.0) as i8,
             Self::PUSH => *self = self.with_push(v as u8 != 0),
             Self::ECHO => *self = self.with_echo(v as u8 != 0),
+            // MPE's four, bank 2's (`mpe::write`): a zone grown into the
+            // other shrinks it.
+            ParamId(i @ 5..=8) => self.mpe = crate::mpe::write(self.mpe, i - 5, v as u8),
             ParamId(i @ 9..=11) => {
                 let at = 5 * (i - 9);
                 let v = u16::from((v as u8).min(16));

@@ -752,24 +752,26 @@ pub struct DinPipe {
     auto: AutoLatch,
 }
 
-/// Each channel's wheel and pressure the queue refused, latest wins: owed
-/// until it takes them, so the last value always lands (a dropped final 0
-/// would hold a source up). Poly pressure, per key, is not kept.
+/// Each channel's wheel, pressure and timbre the queue refused, latest
+/// wins: owed until it takes them, so the last value always lands (a
+/// dropped final 0 would hold a source up). Poly pressure, per key, is not
+/// kept.
 struct ExprOwed {
-    /// Bit `2 × channel + kind`: kind 0 the wheel, 1 the pressure.
-    bits: u32,
-    v: [[u8; 2]; 16],
+    /// Bit `3 × channel + kind`: kind 0 the wheel, 1 the pressure, 2 the
+    /// timbre (ADR 0252).
+    bits: u64,
+    v: [[u8; 3]; 16],
 }
 
 impl ExprOwed {
     const NONE: Self = Self {
         bits: 0,
-        v: [[0; 2]; 16],
+        v: [[0; 3]; 16],
     };
 
-    /// `e` taken (`ok`) or refused: a refused wheel or pressure is owed, a
-    /// taken one clears what was. Owed values go ahead of anything later
-    /// (`settle`), so a reset after one still has the last word.
+    /// `e` taken (`ok`) or refused: a refused wheel, pressure or timbre is
+    /// owed, a taken one clears what was. Owed values go ahead of anything
+    /// later (`settle`), so a reset after one still has the last word.
     fn heard(&mut self, e: InEvent, ok: bool) {
         let InEvent::Expr(ExprEvent { channel, expr }) = e else {
             return;
@@ -777,10 +779,11 @@ impl ExprOwed {
         let (k, v) = match expr {
             Expr::Wheel(v) => (0, v),
             Expr::Pressure(v) => (1, v),
+            Expr::Timbre(v) => (2, v),
             Expr::Poly(..) => return,
         };
         let c = usize::from(channel.get()) & 15;
-        let bit = 1 << (2 * c + k);
+        let bit = 1 << (3 * c + k);
         if ok {
             self.bits &= !bit;
         } else {
@@ -791,14 +794,14 @@ impl ExprOwed {
     /// The lowest owed event.
     fn next(&self) -> Option<InEvent> {
         let i = self.bits.trailing_zeros() as usize;
-        let v = U7::new(*self.v.get(i / 2)?.get(i % 2)?)?;
-        let expr = if i.is_multiple_of(2) {
-            Expr::Wheel(v)
-        } else {
-            Expr::Pressure(v)
+        let v = U7::new(*self.v.get(i / 3)?.get(i % 3)?)?;
+        let expr = match i % 3 {
+            0 => Expr::Wheel(v),
+            1 => Expr::Pressure(v),
+            _ => Expr::Timbre(v),
         };
         Some(InEvent::Expr(ExprEvent {
-            channel: Channel::clamped((i / 2) as u8),
+            channel: Channel::clamped((i / 3) as u8),
             expr,
         }))
     }
@@ -1190,7 +1193,7 @@ impl PipeSlot {
     }
 
     /// NotesOff or pedal-ups `lost` still owes the queue, or a refused
-    /// wheel or pressure (`ExprOwed`): an empty `feed` retries them. Field
+    /// wheel, pressure or timbre (`ExprOwed`): an empty `feed` retries them. Field
     /// reads, so bank 1's shells may poll it (#884).
     #[inline(always)]
     pub fn owes(&self) -> bool {
@@ -1305,14 +1308,15 @@ pub type MapDecode = fn(MapRecord, &[u8], Option<&mut MidiMap>) -> Result<u16, B
 /// `midi_map::codec::encode` as the door carries it.
 pub type MapEncode = fn(&MidiMap, &mut RecordBuf);
 
-/// MIDI in's entries in bank 2's door: the pipe's two layers and the
-/// map's codec.
+/// MIDI in's entries in bank 2's door: the pipe's two layers, the map's
+/// codec, and MPE's zone reads for the audio (ADR 0252).
 #[repr(C)]
 pub struct MidiDoor {
     pub feed: MidiFeed,
     pub idle: MidiIdle,
     pub decode_map: MapDecode,
     pub encode_map: MapEncode,
+    pub mpe: fn(crate::mpe::Call<'_>),
 }
 
 impl MidiDoor {
@@ -1321,6 +1325,7 @@ impl MidiDoor {
         idle: DinPipe::door_idle,
         decode_map: codec::decode,
         encode_map: codec::encode,
+        mpe: crate::mpe::kern::call,
     };
 }
 

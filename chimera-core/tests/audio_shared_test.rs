@@ -112,6 +112,7 @@ fn init_in_place_matches_from_performance() {
         epoch: 0,
         orbit: Default::default(),
         tune: 0,
+        mpe: chimera_core::mpe::Zones::OFF,
     };
     let placed = format!("{placed:?}");
     assert_eq!(placed, format!("{expected:?}"));

@@ -421,10 +421,10 @@ fn mod_routing_bills_the_spec_shape() {
         (e.env_type, e.func.mode) = (EnvType::B, FuncMode::Burst);
     }
     let three_b = M::ENV_B + M::BURST + M::ENV_B + M::BURST + M::ENV_B + M::BURST;
-    let seven_other = Cost(7 * M::OTHER.0);
+    let eight_other = Cost(8 * M::OTHER.0);
     assert_eq!(
         M::cost(&worst, &routed(&ModSource::ALL)),
-        M::BASE + M::CLAMP + three_b + seven_other
+        M::BASE + M::CLAMP + three_b + eight_other
     );
     // A route into ENV 2's SHAPE bills the curve on a centred B ENV, SLIDE
     // for the coefficient rebuild the same route causes, and its sum.
@@ -447,12 +447,13 @@ fn mod_routing_bills_the_spec_shape() {
         M::BASE + M::CLAMP + M::ENV_B + M::CURVE + M::SLIDE + M::DEST_FIRST
     );
     // Measured 2026-09-28 (Task 13): 47, 47 + 24 + 28, and
-    // 47 + 24 + 3·(98 + 76) + 7·8.
+    // 47 + 24 + 3·(98 + 76) + 7·8; SLIDE's row (ADR 0252) one more 8, as
+    // WHEEL's and PRESSURE's.
     assert_eq!(
         (M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))),
         (Cost(47), Cost(99))
     );
-    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(649));
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(657));
 }
 
 /// Each destination other than the VCA with a route of nonzero amount

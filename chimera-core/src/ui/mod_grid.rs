@@ -80,6 +80,7 @@ pub const ROW_ORDER: [usize; MAX_SOURCES] = {
         S::Note as usize,
         S::Wheel as usize,
         S::Press as usize,
+        S::Timbre as usize,
     ]
 };
 const VISIBLE_COLS: usize = 5;

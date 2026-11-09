@@ -198,6 +198,9 @@ const NAMED_ARC: &[(&str, &str)] = &[
     ("Theme", "BLACK"),
     // 0 to 3 extra octaves.
     ("OrbitRing", "RANGE"),
+    // OFF, then 1 to 15 member channels (ADR 0252).
+    ("Midi", "MPE_LOWER"),
+    ("Midi", "MPE_UPPER"),
     // OFF, then channels 1 to 16 (ADR 0254).
     ("Midi", "MIXER_CH"),
     ("Midi", "SEQ_CH"),
