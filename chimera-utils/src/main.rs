@@ -11,6 +11,7 @@ mod chorus_listen;
 mod circuit;
 mod devices;
 mod dropouts;
+mod drums;
 mod filter_fb;
 mod generic;
 mod grain;
@@ -62,6 +63,8 @@ usage: chimera-utils [flags] COMMAND …
   door-check ELF           fail on any bank-1 relocation into bank 2
   nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
                            and ranges
+  drum-render OUTDIR       DRUM's host prototypes (0.4): every machine's hits and pattern, a
+                           kit groove, COMBINE's modes, low-bit clips; raw WAVs, manifest.json
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
   grain-listen OUTDIR      the delay's TAPE against GRAIN (ADR 0202): pluck, stab and
@@ -253,6 +256,7 @@ fn run() -> Result<bool, String> {
                 _ => Ok(true),
             }
         }
+        "drum-render" if rest.len() == 1 => drums::run(Path::new(&rest[0])).map(|_| true),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
         "grain-listen" => grain_listen::run(rest).map(|_| true),

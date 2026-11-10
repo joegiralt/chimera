@@ -710,6 +710,10 @@ mv-structure +progs:
 chorus-listen dir:
     {{utils}} chorus-listen {{dir}}
 
+# DRUM's host prototypes (0.4, #214): each machine's hits and pattern, a kit, COMBINE, low-bit clips
+drum-render dir="../drum-renders":
+    {{utils}} drum-render {{dir}}
+
 # TAPE's Hermite read against a polyphase sinc, 24 kHz source, -12..+24 st (#698)
 tape-interp-ab dir:
     {{utils}} tape-interp-ab {{dir}}

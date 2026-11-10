@@ -17,6 +17,7 @@ subprocess. It never enters the firmware build.
 | `mv-ab TYPE` | Reference and TYPE at its fitted knobs on the listening set, RMS-matched. |
 | `mv-structure PROG …` | A program's injections, allpasses and taps, read from the decompiled listing. |
 | `chorus-listen DIR` | The chorus slot's TYPEs (OFF, I, II, I+II, FLANGER, PHASER) on a chord stab and a held sine through the full engine, CHORUS send at 1: raw stereo WAVs `DIR/<phrase>_<type>.wav`. Then each TYPE's host ns a sample against I+II. |
+| `drum-render OUTDIR` | DRUM's host prototypes (0.4, #214; `just drum-render`): every machine of the design note's table built from chimera-engine's parts, three single hits (classic, mid, extreme) and a two-bar pattern each, a kit groove, COMBINE's modes on two pads, the clips at 12-bit, 8-bit and 4-bit ADPCM. Raw 48 kHz float WAVs and `manifest.json` (knobs, peak and RMS dBFS, what to listen for, a host cost estimate per machine). |
 | `stim DIR` | The listening set as mono 24-bit WAVs, `DIR/<name>.wav`: what the factory effects demos play through the FX bus. |
 | `voice-stats WAV …` | Measures any 48 kHz WAVs, ours or a reference's, the same way: loudness, vibrato, drift, breath share, formants, vowel motion and brightness, one row each. `--json PATH` writes the rows as JSON too. |
 
