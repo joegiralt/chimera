@@ -138,3 +138,9 @@ Research step (the manual's machine chapter; DAFx drum papers on the reading lis
 9. **Choke defaults:** the Rytm's pairs as groups A–D (RIM/CLAP, the two toms, the two hats, CYMBAL/COWBELL). CUT within a pad, STACK across pads.
 10. **RESERVE** lives in PIT's empty F cell on non-DRUM Parts.
 11. **Envelope follower:** belongs to #224 (cross-Part modulation: a Part's output level as another's mod source), not to DRUM.
+
+## Ship list, owner by ear, 2026-11-10
+
+From the audition page (host prototypes at 2cacaeae): **18 machines ship in 0.4**. TONE KICK, TONE SNARE, TONE TOM, TONE CLAP, TONE COWBELL, TONE CYMBAL, METAL HAT, FM KICK, FM SNARE, FM HAT, BODY KICK, BODY SNARE, BODY TOM, BODY BELL, BODY SHAKER, PLAIN SINE, PLAIN NOISE, PLAIN IMPULSE. **TONE RIM is cut.** Owner: "these sound great. ship."
+
+Before porting, fix the prototype issues the measurements flagged: FM KICK's stepped sweep (pitch per block, needs per-sample pitch in the FM kernel or a smoothed sweep), BODY's too-bright upper modes, and the 4-bit click's lost attack. Then check every knob set against the Machinedrum manual's machine chapter.
