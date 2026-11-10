@@ -4,6 +4,7 @@
 //! no firmware, ROM or tables. Host-only prototypes for the owner's ear.
 
 use super::parts::*;
+use super::vox::{self, VowelMod};
 use chimera_core::dsp::fast_sin_turns;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::voice_fx::{fold, soft};
@@ -38,6 +39,10 @@ pub enum Id {
     PlainSine,
     PlainNoise,
     PlainImpulse,
+    VoxKick,
+    VoxSnare,
+    VoxHat,
+    VoxClick,
 }
 
 pub struct Spec {
@@ -57,7 +62,7 @@ pub struct Spec {
 /// Knob sets checked against the Machinedrum manual's Appendix A (OS
 /// 1.63), our own names; the design note's machine table says what
 /// differs.
-pub const SPECS: [Spec; 22] = {
+pub const SPECS: [Spec; 26] = {
     const fn s(
         id: Id,
         name: &'static str,
@@ -73,7 +78,10 @@ pub const SPECS: [Spec; 22] = {
             kernel,
             knobs,
             more,
-            ships: !matches!(id, Id::ToneRim),
+            ships: !matches!(
+                id,
+                Id::ToneRim | Id::VoxKick | Id::VoxSnare | Id::VoxHat | Id::VoxClick
+            ),
         }
     }
     [
@@ -375,6 +383,74 @@ pub const SPECS: [Spec; 22] = {
             ],
             [117, 0],
         ),
+        s(
+            Id::VoxKick,
+            "VOX KICK",
+            "VOX",
+            "vox",
+            [
+                "PITCH",
+                "DECAY",
+                "DROP",
+                "POP",
+                "VOWEL",
+                "GLIDE",
+                "END VOWEL",
+                "VOICE",
+            ],
+            [0, 90],
+        ),
+        s(
+            Id::VoxSnare,
+            "VOX SNARE",
+            "VOX",
+            "vox",
+            [
+                "PITCH",
+                "DECAY",
+                "PLOSIVE",
+                "BREATH",
+                "VOWEL",
+                "GLIDE",
+                "END VOWEL",
+                "VOICE",
+            ],
+            [10, 50],
+        ),
+        s(
+            Id::VoxHat,
+            "VOX HAT",
+            "VOX",
+            "vox",
+            [
+                "PITCH",
+                "DECAY",
+                "CLICK",
+                "WIDTH",
+                "VOWEL",
+                "GLIDE",
+                "END VOWEL",
+                "AIR",
+            ],
+            [95, 60],
+        ),
+        s(
+            Id::VoxClick,
+            "VOX CLICK",
+            "VOX",
+            "vox",
+            [
+                "PITCH",
+                "DECAY",
+                "TONGUE",
+                "CAVITY",
+                "VOWEL",
+                "GLIDE",
+                "END VOWEL",
+                "RING",
+            ],
+            [0, 50],
+        ),
     ]
 };
 
@@ -413,6 +489,20 @@ pub fn build(id: Id, k: Knobs, vel: f32, seed: u32) -> Box<dyn Machine> {
         Id::PlainSine => Box::new(Plain::sine(k, vel)),
         Id::PlainNoise => Box::new(Plain::noise(k, vel, seed)),
         Id::PlainImpulse => Box::new(Plain::impulse(k, vel)),
+        Id::VoxKick | Id::VoxSnare | Id::VoxHat | Id::VoxClick => {
+            build_vox(id, k, vel, seed, VowelMod::default())
+        }
+    }
+}
+
+/// A VOX hit with VOWEL moved by `m` (a route latched at the hit, an LFO).
+pub fn build_vox(id: Id, k: Knobs, vel: f32, seed: u32, m: VowelMod) -> Box<dyn Machine> {
+    match id {
+        Id::VoxKick => Box::new(vox::Kick::new(k, vel, seed, m)),
+        Id::VoxSnare => Box::new(vox::Snare::new(k, vel, seed, m)),
+        Id::VoxHat => Box::new(vox::Hat::new(k, vel, seed, m)),
+        Id::VoxClick => Box::new(vox::Click::new(k, vel, seed, m)),
+        _ => build(id, k, vel, seed),
     }
 }
 
@@ -445,15 +535,15 @@ fn fm_at(fm: Option<&Blk>, i: usize) -> f32 {
 // ---------------------------------------------------------------- body
 
 /// A swept sine: TONE KICK's, TOM's and SNARE's body, PLAIN SINE.
-struct Swept {
-    ph: f32,
-    f0: f32,
-    oct: f32,
-    sw: Decay,
+pub(super) struct Swept {
+    pub(super) ph: f32,
+    pub(super) f0: f32,
+    pub(super) oct: f32,
+    pub(super) sw: Decay,
 }
 
 impl Swept {
-    fn new(f0: f32, st: f32, tau: f32) -> Self {
+    pub(super) fn new(f0: f32, st: f32, tau: f32) -> Self {
         Self {
             ph: 0.0,
             f0,
@@ -463,7 +553,7 @@ impl Swept {
     }
 
     #[inline]
-    fn tick(&mut self, fm: f32) -> f32 {
+    pub(super) fn tick(&mut self, fm: f32) -> f32 {
         let f = self.f0 * (self.oct * self.sw.next()).exp2() * fm;
         self.ph += f / FS;
         if self.ph >= 1.0 {
@@ -474,7 +564,7 @@ impl Swept {
 }
 
 /// Noise through a filter under an envelope: clicks, snaps, wires.
-struct NoiseLayer {
+pub(super) struct NoiseLayer {
     hiss: Hiss,
     env: Decay,
     f: Flt,
@@ -483,7 +573,14 @@ struct NoiseLayer {
 }
 
 impl NoiseLayer {
-    fn new(seed: u32, t60: f32, mode: FilterMode, hz: f32, res: f32, level: f32) -> Self {
+    pub(super) fn new(
+        seed: u32,
+        t60: f32,
+        mode: FilterMode,
+        hz: f32,
+        res: f32,
+        level: f32,
+    ) -> Self {
         Self {
             hiss: Hiss::new(seed),
             env: Decay::t60(t60),
@@ -493,7 +590,7 @@ impl NoiseLayer {
         }
     }
 
-    fn block(&mut self) -> Blk {
+    pub(super) fn block(&mut self) -> Blk {
         let mut b = self.hiss.block();
         for s in b.iter_mut() {
             *s *= self.env.next() * self.level;

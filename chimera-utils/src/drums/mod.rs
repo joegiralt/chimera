@@ -7,7 +7,8 @@
 //! (classic, mid, extreme, or named) and a two-bar pattern at 120 BPM; a
 //! kit groove; COMBINE's modes on two hits; the clips at 12-bit, 8-bit
 //! and 4-bit ADPCM; the three fixes before and after (`fixes`); ACCENT,
-//! RETRIG, kit macros and pad-to-pad modulation (`demos`). 48 kHz
+//! RETRIG, kit macros and pad-to-pad modulation (`demos`); VOX's beatbox
+//! machines, a groove and a VOWEL-per-hit demo (`vox`). 48 kHz
 //! mono float WAVs at their real levels, `manifest.json` beside them, and
 //! a host cost estimate per machine against ALGO's six-operator voice.
 
@@ -16,6 +17,7 @@ mod fixes;
 mod machines;
 mod parts;
 mod sample;
+mod vox;
 
 use crate::reference::write_f32;
 use machines::{Id, Knobs, SPECS, build, spec};
@@ -409,6 +411,74 @@ fn settings(id: Id) -> Vec<Setting> {
                 "a slow-falling buzz, long: check the narrow pulse's aliasing",
             ),
         ],
+        VoxKick => vec![
+            (
+                "classic",
+                &[50, 60, 70, 60, 0, 30, 0, 90],
+                "\"b\": a lip pop, then a voiced \"oo\" falling with the pitch over a round sine",
+            ),
+            (
+                "mid",
+                &[70, 40, 90, 100, 40, 40, 0, 110],
+                "\"bmo\": a harder pop, the vowel O closing to U as it drops, shorter",
+            ),
+            (
+                "extreme",
+                &[20, 110, 127, 127, 127, 90, 0, 127],
+                "\"bwee-oo\": a deep drop and a slow I-to-U glide on a long hum; check the formant buzz at the low end",
+            ),
+        ],
+        VoxSnare => vec![
+            (
+                "classic",
+                &[60, 50, 90, 70, 100, 40, 10, 40],
+                "\"psh\": a plosive burst, then breath through the formants gliding bright (I) to dark (U)",
+            ),
+            (
+                "mid",
+                &[100, 30, 120, 30, 75, 20, 40, 70],
+                "\"k-uh\": a sharp high plosive, short breath, more voiced \"uh\" under it",
+            ),
+            (
+                "extreme",
+                &[30, 110, 60, 127, 127, 100, 0, 20],
+                "\"pfffshhh\": a long breath with a slow vowel fall: does it read as a mouth, not a filter sweep",
+            ),
+        ],
+        VoxHat => vec![
+            (
+                "classic",
+                &[64, 20, 80, 50, 100, 40, 95, 60],
+                "\"ts\": a tick and a short bright hiss (closed)",
+            ),
+            (
+                "mid",
+                &[80, 5, 120, 30, 100, 20, 100, 40],
+                "\"t\": almost all tick, the tightest closed hat",
+            ),
+            (
+                "extreme",
+                &[50, 110, 60, 110, 127, 110, 25, 90],
+                "open \"tsssh\": a long hiss sliding from \"s\" to \"sh\" as the vowel falls",
+            ),
+        ],
+        VoxClick => vec![
+            (
+                "classic",
+                &[60, 40, 90, 70, 60, 20, 10, 50],
+                "\"ka\": a tongue pop in the mouth's cavity and a tiny voiced vowel falling to U",
+            ),
+            (
+                "mid",
+                &[80, 15, 127, 40, 25, 10, 25, 90],
+                "a tongue click \"tok\": mostly the cavity's ring, a trace of O",
+            ),
+            (
+                "extreme",
+                &[40, 100, 70, 100, 0, 90, 127, 30],
+                "\"kwee\": a slow U-to-I rise on a longer voiced tail: the most talking",
+            ),
+        ],
     }
 }
 
@@ -428,6 +498,10 @@ fn pattern(id: Id) -> &'static str {
         BodyShaker | MetalJingle => "XxxxXxxxXxxxXxxxXxxxXxxxXxxxXxxx",
         BodyWood => "X..x..x...x.x...X..x..x...x.x...",
         BodyHand => "X..xX.x.X..xx.x.X..xX.x.X.xxX.x.",
+        VoxKick => "X.....x...X.....X.....x.X...x...",
+        VoxSnare => "....X.......X.......X.......X.x.",
+        VoxHat => "x.X.x.X.x.X.x.xXx.X.x.X.x.X.x.Xx",
+        VoxClick => "..x...x...x.x.....x..x..x...x.xx",
     }
 }
 
@@ -535,6 +609,11 @@ fn knob_map(id: Id, k: &[u8]) -> Value {
     Value::Object(m)
 }
 
+/// Rendered: the ship list, and VOX for the owner's first listen.
+fn rendered(s: &machines::Spec) -> bool {
+    s.ships || s.family == "VOX"
+}
+
 fn slug(name: &str) -> String {
     name.to_ascii_lowercase().replace(' ', "-")
 }
@@ -547,7 +626,7 @@ pub fn run(dir: &Path) -> Result<(), String> {
         rows: Vec::new(),
     };
 
-    for s in SPECS.iter().filter(|s| s.ships) {
+    for s in SPECS.iter().filter(|s| rendered(s)) {
         let sets = settings(s.id);
         for (si, (name, k, listen)) in sets.iter().enumerate() {
             let x = hit(s.id, k, 1.0, 1 + si as u32, 6.0);
@@ -574,6 +653,7 @@ pub fn run(dir: &Path) -> Result<(), String> {
     combine(&mut out)?;
     let fixes = fixes::run(&mut out)?;
     demos::run(&mut out)?;
+    vox::run(&mut out)?;
 
     let cost = bench();
     let manifest = json!({
@@ -861,17 +941,18 @@ fn bench() -> Value {
         })
     });
     let mut rows = serde_json::Map::new();
-    for s in SPECS.iter().filter(|s| s.ships) {
+    for s in SPECS.iter().filter(|s| rendered(s)) {
         let k = knobs(s.id, settings(s.id)[0].1);
         let ns = time(&mut |r| {
             let mut m = build(s.id, k, 1.0, r);
             Box::new(move |b| m.block(b, None))
         });
         let ratio = ns / a;
-        rows.insert(
-            s.name.into(),
-            json!({"kernel": s.kernel, "host_ns_per_sample": (ns * 100.0).round() / 100.0, "ratio_vs_algo6": (ratio * 100.0).round() / 100.0, "est_cycles_per_sample": (ratio * 770.0).round()}),
-        );
+        let mut row = json!({"kernel": s.kernel, "host_ns_per_sample": (ns * 100.0).round() / 100.0, "ratio_vs_algo6": (ratio * 100.0).round() / 100.0, "est_cycles_per_sample": (ratio * 770.0).round()});
+        if let Some(c) = vox::billed(s.id) {
+            row["algo_billed"] = c;
+        }
+        rows.insert(s.name.into(), row);
     }
     json!({
         "estimate": true,
