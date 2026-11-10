@@ -56,7 +56,7 @@ The **Value** column says what the value carries:
 
 An ENGINE's cells move only on a Part playing that engine. The master FX are shared by every Part: their NRPNs work on any Part's channel. ORBIT's ring cells move the playing scene. Addresses not listed here are reserved and do nothing.
 
-With SETTINGS › MIDI CONFIG › ECHO › PARAM OUT at `NRPN`, Chimera sends these same NRPNs, on the Part's channel, for every cell you turn on the panel, so a sequencer can record your edits.
+With SETTINGS › MIDI CONFIG › ECHO › PARAM OUT at `NRPN`, Chimera sends these same NRPNs, on the Part's channel, for every cell you turn on the panel, so a sequencer can record your edits. A master FX or ORBIT ring cell goes out on the active Part's channel.
 ";
 
 /// The page, from the chart.

@@ -73,7 +73,7 @@ impl UiState {
         }
         // PARAM OUT (ADR 0258): the hand's turns, after the echo.
         if params {
-            param_out.pump(&self.project, &mut out.tee());
+            param_out.pump(&self.project, out);
         } else {
             param_out.clear();
         }

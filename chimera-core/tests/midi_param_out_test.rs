@@ -216,34 +216,136 @@ fn a_turn_that_moves_nothing_sends_nothing() {
     assert!(r.settle().is_empty());
 }
 
-/// What MIDI moved is never sent back: no loop through a thru box.
+fn cutoff(r: &Rig) -> f32 {
+    r.ui.project()
+        .read_part(P1)
+        .block(BlockRef::Filter)
+        .unwrap()
+        .get(CUTOFF.param)
+}
+
+/// `bytes` into DIN's pipe, as its ISR feeds it, then a pass.
+fn din(r: &mut Rig, bytes: &[u8]) {
+    use chimera_core::midi_in::{CtrlRing, DinSinks, PipeSlot, SYSEX_IN};
+    use chimera_core::note_queue::NoteQueue;
+    let q = Box::leak(Box::new(NoteQueue::new()));
+    let (mut prod, _cons) = q.split().unwrap();
+    let ring: CtrlRing = CtrlRing::new();
+    let mut slot = PipeSlot::new();
+    let mut sinks = DinSinks {
+        notes: &mut prod,
+        ctrl: &ring,
+        sysex: Some(&SYSEX_IN[0]),
+    };
+    chimera_core::midi_in::feed(&mut slot, bytes, &mut sinks);
+    r.now += PASS_MS;
+    r.ui.hear_ccs(ring.drain(), Ms(r.now), true);
+    r.ui.send_out(&r.ring);
+}
+
+/// A Roland DT1 body: 41 dev 42 12, address, value, checksum.
+fn dt1(addr: u8, v: u8) -> Vec<u8> {
+    let mut b = vec![0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x01, addr, v];
+    let sum: u32 = b[5..].iter().map(|&x| u32::from(x)).sum();
+    b.push(((128 - sum % 128) % 128) as u8);
+    b.push(0xF7);
+    b
+}
+
+/// What MIDI moved is never sent back: no loop through a thru box. An
+/// NRPN, a learned CC, a learned SysEx, a program change.
 #[test]
 fn midi_in_is_never_sent_back() {
+    use chimera_core::midi_map::{CcKind, Input, LearnCc, Mappable};
+    use chimera_hal::ButtonId::{Mix, Seq};
+    use chimera_midi::take::Takeover;
+    use chimera_midi::value::U7;
     let mut r = Rig::new(true);
-    let before =
-        r.ui.project()
-            .read_part(P1)
-            .block(BlockRef::Filter)
-            .unwrap()
-            .get(CUTOFF.param);
-    let ev = CtrlEvent::Ctl(
+    let moved = |r: &mut Rig, what: &str, f: &mut dyn FnMut(&mut Rig)| {
+        let before = cutoff(r);
+        f(r);
+        let mut got = r.drain();
+        got.extend(r.settle());
+        assert_ne!(before, cutoff(r), "{what} moved CUTOFF");
+        assert!(got.is_empty(), "{what}: {got:02X?}");
+    };
+    let nrpn = |v| {
+        CtrlEvent::Ctl(
+            r.ch(),
+            Ctl::Data {
+                sel: Sel::Nrpn(U14::new(CUTOFF_N).unwrap()),
+                value: DataValue::Fine(U14::new(v).unwrap()),
+            },
+        )
+    };
+    let (a, b) = (nrpn(3000), nrpn(12000));
+    moved(&mut r, "NRPN", &mut |r| r.pass(&[a], None));
+    moved(&mut r, "NRPN", &mut |r| r.pass(&[b], None));
+
+    let cc20 = LearnCc::new(20).unwrap();
+    let map = &mut r.ui.project_mut().edit_part(P1).sound.map;
+    map.learn(
+        Input::Cc(cc20, CcKind::Absolute(Takeover::Jump)),
+        Mappable::new(CUTOFF).unwrap(),
+    )
+    .unwrap();
+    let cc = |v| {
+        CtrlEvent::Ctl(
+            r.ch(),
+            Ctl::Cc {
+                cc: chimera_midi::ctl::FreeCc::new(20).unwrap(),
+                value: U7::new(v).unwrap(),
+            },
+        )
+    };
+    let (lo, hi) = (cc(5), cc(120));
+    moved(&mut r, "CC", &mut |r| {
+        for _ in 0..40 {
+            r.pass(&[hi], None);
+        }
+    });
+    moved(&mut r, "CC", &mut |r| {
+        for _ in 0..40 {
+            r.pass(&[lo], None);
+        }
+    });
+
+    // SysEx: learned on CUTOFF (MIX+SEQ, two messages, MIX+SEQ).
+    r.ui.project_mut().edit_part(P1).sound.map = MidiMap::EMPTY;
+    r.pass(&[], Some(Key::turn(EncoderId::F, 1)));
+    r.settle();
+    let chord = |r: &mut Rig| {
+        r.now += 100;
+        feed(&mut r.ui, Key::chord(Mix, Seq).at(r.now));
+        feed(&mut r.ui, Key::release(Seq).and_held(Mix).at(r.now + 100));
+        feed(&mut r.ui, Key::release(Mix).at(r.now + 133));
+        r.now += 200;
+    };
+    chord(&mut r);
+    din(&mut r, &dt1(0x1A, 10));
+    din(&mut r, &dt1(0x1A, 90));
+    chord(&mut r);
+    assert_eq!(r.ui.project().part(P1).sound.map.len(), 1, "learned");
+    r.settle();
+    moved(&mut r, "SysEx", &mut |r| {
+        for _ in 0..40 {
+            r.now += 16;
+            din(r, &dt1(0x1A, 0));
+        }
+    });
+
+    // A program change: INIT MODAL loads into Part 1.
+    let m = r.ui.midi().with_program_in(true);
+    r.ui.set_midi(m);
+    let pc = CtrlEvent::Ctl(
         r.ch(),
-        Ctl::Data {
-            sel: Sel::Nrpn(U14::new(CUTOFF_N).unwrap()),
-            value: DataValue::Fine(U14::new(3000).unwrap()),
+        Ctl::Program {
+            bank: Some(U14::from_parts(U7::new(1).unwrap(), U7::ZERO)),
+            program: U7::new(1).unwrap(),
         },
     );
-    r.pass(&[ev], None);
-    let mut got = r.drain();
-    got.extend(r.settle());
-    let after =
-        r.ui.project()
-            .read_part(P1)
-            .block(BlockRef::Filter)
-            .unwrap()
-            .get(CUTOFF.param);
-    assert_ne!(before, after, "the NRPN moved CUTOFF");
-    assert!(got.is_empty(), "{got:02X?}");
+    moved(&mut r, "PC", &mut |r| r.pass(&[pc], None));
+    assert_eq!(r.ui.project().part(P1).sound.engine(), EngineType::Modal);
 }
 
 /// DIN's ring full: the turns wait as one, and the latest goes alone.
@@ -322,6 +424,7 @@ fn echo_page_b_turns_param_out() {
 fn data_reads_back_through_the_in_law() {
     let mut r = Rig::new(true);
     let mut laws = std::collections::HashSet::new();
+    let mut blocks = std::collections::HashSet::new();
     for l in nrpn::chart() {
         let ChartLine::Live { block, spec, .. } = l else {
             continue;
@@ -332,25 +435,26 @@ fn data_reads_back_through_the_in_law() {
         if nrpn::writable(a).is_none() || (block, spec.ident) == (BlockRef::TapeEngine, "SLICE") {
             continue;
         }
-        // Sound blocks: the probe for Code7 needs a block to write.
-        let Some(_) = r.ui.project().part(P1).sound.params.block(block) else {
+        // The probe for Code7 needs a block to write.
+        if with_block(&mut r.ui, block, |_| ()).is_none() {
             continue;
-        };
+        }
         let law = nrpn::law(block, spec);
         for place in [0.0, 0.3, 0.71, 1.0] {
-            let s = r.ui.project_mut().edit_part(P1).sound;
-            let mut b = s.params.block_mut(block).unwrap();
-            b.set(a.param, spec.denormalize(place));
-            let was = b.get(a.param);
+            let was = with_block(&mut r.ui, block, |b| {
+                b.set(a.param, spec.denormalize(place));
+                b.get(a.param)
+            })
+            .unwrap();
             let d = param_out::data(r.ui.project(), P1, a).unwrap();
             if matches!(law, ValueLaw::Index7 | ValueLaw::Code7) {
                 assert!(matches!(d, DataValue::Coarse(_)), "{l}");
             } else {
                 assert!(matches!(d, DataValue::Fine(_)), "{l}");
             }
-            let mut probe = r.ui.project().part(P1).sound.params.clone();
+            let ui = &mut r.ui;
             let p = place_of(law, d, nrpn::steps(spec), |c| {
-                nrpn::index_of_code(&mut *probe.block_mut(block).unwrap(), a.param, c)
+                with_block(ui, block, |b| nrpn::index_of_code(b, a.param, c)).flatten()
             })
             .unwrap_or_else(|| panic!("{l} at {place}"));
             let back = match law {
@@ -363,9 +467,38 @@ fn data_reads_back_through_the_in_law() {
             let tol = (spec.max - spec.min).abs() * 2e-4;
             assert!((back - was).abs() <= tol.max(1e-4), "{l}: {was} -> {back}");
             laws.insert(law_name(law));
+            blocks.insert(block_kind(block));
         }
     }
     assert_eq!(laws.len(), 4, "every law: {laws:?}");
+    for b in ["orbit", "fx", "sound"] {
+        assert!(blocks.contains(b), "{b}: {blocks:?}");
+    }
+}
+
+/// ORBIT's rings, the master FX, the Sound's.
+fn block_kind(b: BlockRef) -> &'static str {
+    match b {
+        BlockRef::OrbitRing(_) => "orbit",
+        BlockRef::Chorus | BlockRef::Delay | BlockRef::Reverb | BlockRef::Tape | BlockRef::Comp => {
+            "fx"
+        }
+        _ => "sound",
+    }
+}
+
+/// `f` on block `b` as Part 1 writes it: ORBIT's live ring, the master FX,
+/// the Sound's or the mix's.
+fn with_block<R>(ui: &mut UiState, b: BlockRef, f: impl FnOnce(&mut dyn Block) -> R) -> Option<R> {
+    let p = ui.project_mut();
+    if let BlockRef::OrbitRing(_) = b {
+        return p
+            .orbit_mut()
+            .live_mut_for_test()
+            .block_mut(b)
+            .map(|mut v| f(&mut *v));
+    }
+    p.edit_part(P1).block_mut(b).map(|mut v| f(&mut *v))
 }
 
 fn law_name(l: ValueLaw) -> &'static str {
@@ -397,4 +530,86 @@ fn a_reverb_turn_sends_its_nrpn() {
     let n = nrpn::NrpnAddr::of(mix).unwrap().get().get();
     let heard = nrpns(&r.settle());
     assert_eq!(heard, [as_heard(r.ch(), n, r.want(mix))]);
+}
+
+/// Nine of Part 1's writable params, each with a value to send.
+fn nine(r: &Rig) -> Vec<ParamAddr> {
+    nrpn::chart()
+        .filter_map(|l| match l {
+            ChartLine::Live { block, spec, .. } => Some(ParamAddr::new(block, spec.id)),
+            _ => None,
+        })
+        .filter(|&a| {
+            nrpn::writable(a).is_some()
+                && r.ui
+                    .project()
+                    .part(P1)
+                    .sound
+                    .params
+                    .block(a.block)
+                    .is_some()
+                && param_out::data(r.ui.project(), P1, a).is_some()
+        })
+        .take(9)
+        .collect()
+}
+
+/// The addresses heard, in order.
+fn addrs(bytes: &[u8]) -> Vec<u16> {
+    nrpns(bytes).iter().map(|h| h.1).collect()
+}
+
+/// All slots waiting on a full DIN: a new turn takes the oldest's, not the
+/// first's; a turn again makes a param the newest.
+#[test]
+fn a_full_set_gives_way_oldest_first() {
+    use chimera_core::out_ring::OutPorts;
+    let r = Rig::new(true);
+    let a = nine(&r);
+    assert_eq!(a.len(), 9);
+    let n = |a: ParamAddr| nrpn::NrpnAddr::of(a).unwrap().get().get();
+    let ring = OutRing::new();
+    let mut po = param_out::ParamOut::REST;
+    // Its first pass learns the Parts' loads.
+    po.pump(r.ui.project(), &OutPorts::din(&ring));
+    for &x in &a[..8] {
+        po.turned(P1, x);
+    }
+    po.turned(P1, a[0]);
+    po.turned(P1, a[8]);
+    po.pump(r.ui.project(), &OutPorts::din(&ring));
+    let mut b = [0u8; OUT_RING_LEN];
+    let len = ring.pop_into(&mut b);
+    let want: Vec<u16> = a[2..].iter().chain(&a[..1]).map(|&x| n(x)).collect();
+    let mut got = addrs(&b[..len]);
+    got.sort();
+    let mut w = want.clone();
+    w.sort();
+    assert_eq!(got, w, "the oldest, {}, gave way", n(a[1]));
+}
+
+/// A copy USB lost (a host not reading): once USB's poll has dropped
+/// what it held, the turn's latest goes to USB alone; DIN heard it.
+#[test]
+fn a_lost_usb_copy_goes_again() {
+    use chimera_core::out_ring::OutPorts;
+    let mut r = Rig::new(true);
+    let usb = OutRing::new();
+    while usb.push_msg(&[0xB5, 1, 2]) {}
+    r.now += PASS_MS;
+    feed(&mut r.ui, Key::turn(EncoderId::F, 3).at(r.now));
+    r.ui.send(&OutPorts::new(&r.ring, &usb));
+    assert_eq!(addrs(&r.drain()), [CUTOFF_N], "DIN's");
+    assert!(usb.losing(), "USB's lost");
+    usb.discard();
+    let mut u = Vec::new();
+    for _ in 0..20 {
+        r.now += PASS_MS;
+        r.ui.send(&OutPorts::new(&r.ring, &usb));
+        assert!(r.drain().is_empty(), "DIN heard it already");
+        let mut b = [0u8; OUT_RING_LEN];
+        let len = usb.pop_into(&mut b);
+        u.extend_from_slice(&b[..len]);
+    }
+    assert_eq!(nrpns(&u), [as_heard(r.ch(), CUTOFF_N, r.want(CUTOFF))]);
 }

@@ -17,7 +17,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::hw::MAX_PARTS;
 use crate::midi_map::Mappable;
 use crate::nrpn::{self, NrpnAddr};
-use crate::out_ring::Tee;
+use crate::out_ring::{OutPorts, OutRing};
 use crate::project::{Loads, PartId, Project};
 
 /// Params turned and not yet sent: the six encoders' and a few more.
@@ -27,13 +27,14 @@ const SLOTS: usize = 8;
 const MSG_MAX: usize = 9;
 
 /// A param the hand turned: its Part and target, the value last sent
-/// (`NONE`: not yet), and whether it waits to go.
+/// (`NONE`: not yet), whether it waits to go, and whether USB is owed it.
 #[derive(Clone, Copy)]
 struct Turned {
     part: PartId,
     at: Mappable,
     sent: u16,
     due: bool,
+    owed: bool,
 }
 
 /// Past any 14-bit value: nothing sent.
@@ -41,6 +42,7 @@ const NONE: u16 = u16::MAX;
 
 #[derive(Clone, Copy)]
 pub struct ParamOut {
+    /// Oldest turn first.
     slots: [Option<Turned>; SLOTS],
     /// The loads each Part was on when its turns were noted: a load since
     /// drops them, so a turn never sends the Sound that replaced it.
@@ -54,8 +56,8 @@ impl ParamOut {
     };
 
     /// The hand turned `a` on Part `p`: its NRPN goes at the next pass, if
-    /// it is writable (`W` on the chart), so it plays back. The oldest
-    /// slot gives way when all wait.
+    /// it is writable (`W` on the chart), so it plays back. It becomes the
+    /// newest, in a free slot, else the oldest sent, else the oldest.
     #[inline(never)]
     pub fn turned(&mut self, p: PartId, a: ParamAddr) {
         let Some(at) = Mappable::new(a).filter(|_| NrpnAddr::of(a).is_some()) else {
@@ -68,12 +70,16 @@ impl ParamOut {
             .position(|s| s.is_some_and(|t| same(&t)))
             .or_else(|| self.slots.iter().position(|s| s.is_none_or(|t| !t.due)))
             .unwrap_or(0);
-        let sent = self.slots[i].filter(same).map_or(NONE, |t| t.sent);
-        self.slots[i] = Some(Turned {
+        let was = self.slots[i].filter(same);
+        for j in i..SLOTS - 1 {
+            self.slots.swap(j, j + 1);
+        }
+        self.slots[SLOTS - 1] = Some(Turned {
             part: p,
             at,
-            sent,
+            sent: was.map_or(NONE, |t| t.sent),
             due: true,
+            owed: was.is_some_and(|t| t.owed),
         });
     }
 
@@ -82,10 +88,12 @@ impl ParamOut {
         self.slots = [None; SLOTS];
     }
 
-    /// One pass: each waiting param's value now, on its Part's channel,
-    /// while DIN's ring has room; a value already sent is skipped.
+    /// One pass: what USB is owed, into its ring alone once its poll has
+    /// dropped what it held; then each waiting param's value now, on its
+    /// Part's channel, while DIN's ring has room; a value already sent is
+    /// skipped.
     #[inline(never)]
-    pub fn pump(&mut self, project: &Project, tee: &mut Tee) {
+    pub fn pump(&mut self, project: &Project, out: &OutPorts) {
         for (l, p) in self.loads.iter_mut().zip(PartId::ALL) {
             let now = project.part(p).loads();
             if *l != now {
@@ -96,13 +104,25 @@ impl ParamOut {
                     .for_each(|s| *s = None);
             }
         }
+        if let Some(u) = out.usb.filter(|u| u.is_empty() && !u.losing()) {
+            for t in self.slots.iter_mut().flatten().filter(|t| t.owed) {
+                let mut b = [0u8; MSG_MAX];
+                if let Some((st, n, d)) = now(project, t) {
+                    let len = message(&mut b, true, st, n, d);
+                    if !u.push_msg(&b[..len]) {
+                        break;
+                    }
+                }
+                t.owed = false;
+            }
+        }
+        let mut tee = out.tee();
         let mut status = 0;
         for s in self.slots.iter_mut() {
             let Some(t) = s.as_mut().filter(|t| t.due) else {
                 continue;
             };
-            let a = t.at.addr();
-            let (Some(n), Some(d)) = (NrpnAddr::of(a), data(project, t.part, a)) else {
+            let Some((st, n, d)) = now(project, t) else {
                 *s = None;
                 continue;
             };
@@ -114,17 +134,29 @@ impl ParamOut {
                 t.due = false;
                 continue;
             }
-            let st = 0xB0 | project.part(t.part).mix.channel.get();
             let mut b = [0u8; MSG_MAX];
-            let len = message(&mut b, st != status, st, n.get(), d);
+            let len = message(&mut b, st != status, st, n, d);
             if !tee.send(&b[..len]) {
-                return;
+                break;
             }
             status = st;
             t.sent = key;
             t.due = false;
         }
+        // A loss, this pass's or one not yet taken: USB's poll drops all
+        // it holds, so USB is owed every turn's value.
+        if tee.lost() || out.usb.is_some_and(OutRing::losing) {
+            self.slots.iter_mut().flatten().for_each(|t| t.owed = true);
+        }
     }
+}
+
+/// `t`'s message now: its status, NRPN and data.
+#[inline(never)]
+fn now(project: &Project, t: &Turned) -> Option<(u8, U14, DataValue)> {
+    let a = t.at.addr();
+    let (n, d) = (NrpnAddr::of(a)?, data(project, t.part, a)?);
+    Some((0xB0 | project.part(t.part).mix.channel.get(), n.get(), d))
 }
 
 /// CC 99, 98, 6 and, for `Fine`, 38 on status `st`, the status written
