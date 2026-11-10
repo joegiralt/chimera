@@ -385,7 +385,7 @@ fn audio_configuration_parses_whole() {
     assert_eq!(f[..8], [11, 0x24, 0x02, 0x01, 2, 3, 24, 1]);
     assert_eq!(u32::from_le_bytes([f[8], f[9], f[10], 0]), uac::RATE);
     // The endpoint: UAC1's 9 bytes, IN, isochronous asynchronous data,
-    // room for the frames a late frame owes, every frame, no sync.
+    // room for half again the nominal (Linux's), every frame, no sync.
     let ep = st[4];
     assert_eq!((ep[0], ep[1]), (9, 5));
     assert_eq!(ep[2] & 0x80, 0x80, "an IN endpoint");

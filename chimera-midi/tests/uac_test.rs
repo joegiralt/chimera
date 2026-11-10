@@ -80,9 +80,27 @@ fn pacer_primes_then_sends_a_frames_worth() {
     assert_eq!(p.next(TARGET - 1, 5, &mut c), Next { skip: 0, send: 0 });
     assert_eq!(p.next(TARGET, 6, &mut c).send, NOMINAL);
     assert_eq!(p.next(TARGET, 7, &mut c).send, NOMINAL);
-    // A frame missed: two frames' worth.
-    assert_eq!(p.next(TARGET + 40, 9, &mut c).send, 2 * NOMINAL);
+    // A frame missed: as much of two frames' worth as the host takes.
+    assert_eq!(p.next(TARGET + 40, 9, &mut c).send, LINUX_PACKET);
     assert_eq!((c.sent, c.missed, c.short), (3, 1, 0));
+}
+
+/// Linux's snd-usb-audio gives each capture packet room for half again
+/// the nominal (sound/usb/endpoint.c: `freqmax = freqn + (freqn >> 1)`),
+/// not wMaxPacketSize; xHCI drops a larger packet whole as a buffer
+/// overrun. A host that stalled leaves the fill high: the catch-up stays
+/// within it.
+const LINUX_PACKET: usize = NOMINAL + NOMINAL / 2;
+const _: () = assert!(MAX_FRAMES <= LINUX_PACKET);
+
+#[test]
+fn pacer_never_sends_more_than_the_host_has_room_for() {
+    let mut p = Pacer::new();
+    let mut c = Counts::default();
+    p.next(TARGET, 1, &mut c);
+    for (fill, frame) in [(HIGH, 3), (HIGH, 4), (HIGH, 6), (HIGH, 7)] {
+        assert!(p.next(fill, frame, &mut c).send <= LINUX_PACKET);
+    }
 }
 
 #[test]
@@ -140,9 +158,9 @@ struct Run {
 /// frame a packet still armed for it raises the incomplete interrupt,
 /// which aims it again. The interrupt runs at a SOF, a completion and an
 /// incomplete, once the render lets it, and arms a packet whenever none
-/// is. Every frame the host gets is checked in order: nothing lost or
-/// repeated.
-fn model(ppm: f64, load: (f64, f64), seconds: u64, seed: u64) -> Run {
+/// is. A loaded host skips a frame's token with chance `skip`. Every
+/// frame the host gets is checked in order: nothing lost or repeated.
+fn model(ppm: f64, load: (f64, f64), skip: f64, seconds: u64, seed: u64) -> Run {
     const STEP: u64 = 10; // µs
     let ring = Ring::<{ uac::RING }>::new();
     let mut rng = Lcg(seed);
@@ -193,7 +211,9 @@ fn model(ppm: f64, load: (f64, f64), seconds: u64, seed: u64) -> Run {
         // The host's token, the core's end of periodic frame.
         if in_frame == 50 {
             pending = true; // SOF
+            let token = rng.unit() >= skip;
             if let Some((n, parity)) = armed
+                && token
                 && parity == frame & 1
             {
                 armed = None;
@@ -257,7 +277,7 @@ fn clean(r: &Run) {
         (0, 0, 0),
         "{r:?}"
     );
-    assert!(r.fill_max <= HIGH && r.packet_max <= MAX_FRAMES, "{r:?}");
+    assert!(r.fill_max <= HIGH && r.packet_max <= LINUX_PACKET, "{r:?}");
 }
 
 /// The SAI's crystal against the host's: ±300 ppm, light and heavy
@@ -269,7 +289,7 @@ fn stream_holds_across_drift_and_load() {
             .into_iter()
             .enumerate()
         {
-            let r = model(ppm, load, 60, 1 + (i * 3 + j) as u64);
+            let r = model(ppm, load, 0.0, 60, 1 + (i * 3 + j) as u64);
             clean(&r);
             // The heavy render makes the interrupt late for frames: the
             // model reaches the path the pacer makes up for.
@@ -283,10 +303,22 @@ fn stream_holds_across_drift_and_load() {
     }
 }
 
+/// A loaded host skips tokens: each skipped frame's packet goes a frame
+/// late and the next owes a frame (the unit's 15:01 run: missed 11244,
+/// xHCI buffer overruns 11244). The catch-up fits the host's packets.
+#[test]
+fn stream_holds_when_the_host_skips_frames() {
+    for (i, ppm) in [-300.0, 0.0, 300.0].into_iter().enumerate() {
+        let r = model(ppm, (0.1, 0.3), 0.02, 60, 40 + i as u64);
+        clean(&r);
+        assert!(r.counts.missed > 500, "{r:?}");
+    }
+}
+
 /// Light load at the nominal rate: the packets stay 47 to 49.
 #[test]
 fn stream_sizes_stay_near_nominal_when_nothing_is_late() {
-    let r = model(100.0, (0.1, 0.3), 30, 7);
+    let r = model(100.0, (0.1, 0.3), 0.0, 30, 7);
     clean(&r);
     assert_eq!(r.counts.missed, 0, "{r:?}");
     assert!(
@@ -295,11 +327,13 @@ fn stream_sizes_stay_near_nominal_when_nothing_is_late() {
     );
 }
 
-/// An hour at the crystal's worst under a heavy render: the unit's drift
-/// test, on the host. `cargo test -p chimera-midi --test uac_test -- --ignored`.
+/// An hour at the crystal's worst under a heavy render, and under a host
+/// skipping 1 % of tokens (the unit's loaded run: 0.65 %): the unit's
+/// drift test, on the host. `cargo test -p chimera-midi --test uac_test -- --ignored`.
 #[test]
 #[ignore]
 fn stream_holds_for_an_hour() {
-    clean(&model(300.0, (0.6, 0.95), 3_600, 99));
-    clean(&model(-300.0, (0.6, 0.95), 3_600, 98));
+    clean(&model(300.0, (0.6, 0.95), 0.0, 3_600, 99));
+    clean(&model(-300.0, (0.6, 0.95), 0.0, 3_600, 98));
+    clean(&model(300.0, (0.1, 0.3), 0.01, 3_600, 97));
 }

@@ -15,10 +15,12 @@ pub const SUBFRAME: usize = 3;
 pub const FRAME_BYTES: usize = CHANNELS * SUBFRAME;
 /// Frames a 1 ms bus frame carries at the nominal rate.
 pub const NOMINAL: usize = (RATE / 1_000) as usize;
-/// Frames one packet may carry: two bus frames' worth, so a frame the
-/// interrupt missed (its packet sent a frame late) is made up in the next
-/// packet, not over the next 48 ms.
-pub const MAX_FRAMES: usize = 2 * NOMINAL;
+/// Frames one packet may carry: half again the nominal, the room Linux's
+/// snd-usb-audio gives each capture packet whatever wMaxPacketSize says
+/// (sound/usb/endpoint.c: `freqmax = freqn + (freqn >> 1)`). A larger
+/// packet overruns it and xHCI drops it whole. A frame the interrupt
+/// missed is made up over the next packets.
+pub const MAX_FRAMES: usize = NOMINAL + NOMINAL / 2;
 /// The endpoint's wMaxPacketSize.
 pub const PACKET: u16 = (MAX_FRAMES * FRAME_BYTES) as u16;
 const _: () = assert!(PACKET <= 1023, "full speed's isochronous limit");
@@ -37,7 +39,7 @@ pub const HIGH: usize = 384;
 pub struct Counts {
     /// Packets armed.
     pub sent: u32,
-    /// Bus frames a packet came too late for, made up in the next one.
+    /// Bus frames a packet came too late for, owed to the next ones.
     pub missed: u32,
     /// Packets short of what they owed: the ring ran dry, and the stream
     /// primes again.
@@ -57,15 +59,18 @@ pub struct Next {
 }
 
 /// The packet sizer. It waits until the ring holds `TARGET`, then sizes
-/// each packet at `NOMINAL` per bus frame since the last, trimmed by the
-/// smoothed fill's error over 8 (a dead band of ±8 frames): at the
-/// SAI's ±100 ppm of drift a 49 or a 47 every few hundred packets.
+/// each packet at `NOMINAL`, trimmed by the smoothed fill's error over 8
+/// (a dead band of ±8 frames): at the SAI's ±100 ppm of drift a 49 or a
+/// 47 every few hundred packets. A bus frame missed owes `NOMINAL` more,
+/// paid as the packets' room allows and kept out of the fill's error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pacer {
     /// The fill, in 1/16 frame, one pole at 1/32.
     avg: i32,
     /// The bus frame the last packet was aimed at.
     last: u16,
+    /// Frames owed for bus frames missed, not yet sent.
+    owe: usize,
     primed: bool,
 }
 
@@ -80,6 +85,7 @@ impl Pacer {
         Pacer {
             avg: 0,
             last: 0,
+            owe: 0,
             primed: false,
         }
     }
@@ -87,43 +93,47 @@ impl Pacer {
     /// The stream stopped: the next starts by priming.
     pub fn stop(&mut self) {
         self.primed = false;
+        self.owe = 0;
     }
 
     /// The next packet from `fill` frames waiting, aimed at bus `frame`.
     pub fn next(&mut self, fill: usize, frame: u16, c: &mut Counts) -> Next {
-        let gap = if self.primed {
-            match frame.wrapping_sub(self.last) & FRAME_MASK {
-                2 => {
-                    c.missed = c.missed.wrapping_add(1);
-                    2
-                }
-                // A frame again (re-aimed) or a long stall: one frame's
-                // worth, the fill's error trims the rest.
-                _ => 1,
+        if self.primed {
+            // Each bus frame skipped owes a frame's worth; a frame again
+            // (re-aimed) or a stall past `HIGH` owes nothing.
+            let gap = usize::from(frame.wrapping_sub(self.last) & FRAME_MASK);
+            if (2..=HIGH / NOMINAL).contains(&gap) {
+                c.missed = c.missed.wrapping_add(gap as u32 - 1);
+                self.owe += NOMINAL * (gap - 1);
             }
         } else if fill < TARGET {
             return Next { skip: 0, send: 0 };
         } else {
             self.primed = true;
             self.avg = (TARGET as i32) << 4;
-            1
-        };
+        }
         let mut skip = 0;
         if fill > HIGH {
             skip = fill - TARGET;
             c.resyncs = c.resyncs.wrapping_add(1);
             self.avg = (TARGET as i32) << 4;
+            self.owe = 0;
         }
         let fill = fill - skip;
-        self.avg += (((fill as i32) << 4) - self.avg) / 32;
+        self.owe = self.owe.min(fill);
+        self.avg += ((((fill - self.owe) as i32) << 4) - self.avg) / 32;
         let err = (self.avg >> 4) - TARGET as i32;
-        let trim = (err / 8).clamp(-8, NOMINAL as i32);
-        let want = ((NOMINAL * gap) as i32 + trim).clamp(0, MAX_FRAMES as i32) as usize;
+        let trim = (err / 8).clamp(-8, (MAX_FRAMES - NOMINAL) as i32);
+        let base = (NOMINAL as i32 + trim) as usize;
+        let pay = self.owe.min(MAX_FRAMES - base);
+        self.owe -= pay;
+        let want = base + pay;
         self.last = frame;
         c.sent = c.sent.wrapping_add(1);
         if want > fill {
             c.short = c.short.wrapping_add(1);
             self.primed = false;
+            self.owe = 0;
             return Next { skip, send: fill };
         }
         Next { skip, send: want }
