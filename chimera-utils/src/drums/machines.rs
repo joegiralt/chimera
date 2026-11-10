@@ -328,9 +328,9 @@ pub const SPECS: [Spec; 22] = {
             "BODY",
             "membrane",
             [
-                "PITCH", "DECAY", "HARDNESS", "SHELL", "STROKE", "TENSION", "POSITION", "SIZE",
+                "PITCH", "DECAY", "HAND", "SHELL", "STROKE", "TENSION", "BRIGHT", "POSITION",
             ],
-            [50, 64],
+            [64, 50],
         ),
         s(
             Id::MetalJingle,
@@ -1432,6 +1432,9 @@ struct Membrane {
     click: Option<NoiseLayer>,
     follow: f32,
     gain: f32,
+    /// The mallet's share of the strike (1 but under HAND).
+    mallet: f32,
+    hand: Option<Hand>,
 }
 
 impl Membrane {
@@ -1455,6 +1458,8 @@ impl Membrane {
             click: None,
             follow: 0.0,
             gain: 0.9,
+            mallet: 1.0,
+            hand: None,
         }
     }
 
@@ -1598,13 +1603,16 @@ impl Membrane {
     }
 
     /// Hand drums: BODY TOM's membrane with SHELL (bongo, conga, timbale's
-    /// metal shell) and STROKE: OPEN, SLAP or MUTE.
+    /// metal shell) and STROKE: OPEN, SLAP or MUTE. HAND crossfades the
+    /// mallet's strike into a hand's (`Hand`); at 0 it is the mallet as
+    /// first rendered. BRIGHT is the mallet's hardness and the hand's slap.
     fn hand(k: Knobs, vel: f32, seed: u32) -> Self {
-        let shell = k[3];
-        let (pos, contact, slope, grit, ring, keep) = match stroke(k[4]) {
-            Stroke::Open => (0.25 + 0.5 * k[6], 0.0018, 1.3, 0.15, 1.0, 1.0),
+        let (shell, hand, bright, place) = (k[3], k[2], k[6], k[7]);
+        let st = stroke(k[4]);
+        let (pos, contact, slope, grit, ring, keep) = match st {
+            Stroke::Open => (0.25 + 0.5 * place, 0.0018, 1.3, 0.15, 1.0, 1.0),
             Stroke::Slap => (0.9, 0.0004, 0.5, 0.9, 0.35, 0.8),
-            Stroke::Mute => (0.3 + 0.5 * k[6], 0.003, 1.5, 0.1, 0.15, 0.6),
+            Stroke::Mute => (0.3 + 0.5 * place, 0.003, 1.5, 0.1, 0.15, 0.6),
         };
         let mut ratio = stretched(lin(shell, 0.05, 0.13));
         // Timbale: the steel shell's two ringing modes in the top slots.
@@ -1616,12 +1624,12 @@ impl Membrane {
         let law = Law {
             f0: expo(k[0], 80.0, 600.0),
             ratio,
-            t60: expo(k[1], 0.08, 1.5) * lin(k[7], 0.6, 1.4) * ring,
+            t60: expo(k[1], 0.08, 1.5) * ring,
             tilt: lin(shell, 1.3, 0.9),
-            slope: slope * lin(k[2], 1.2, 0.8),
+            slope: slope * lin(bright, 1.2, 0.8),
             pos,
-            contact: contact * expo(1.0 - k[2], 0.5, 2.0),
-            grit,
+            contact: contact * expo(1.0 - bright, 0.5, 2.0),
+            grit: grit * (1.0 - hand),
         };
         let mut modes = law.modes();
         modes.amp[0] *= keep;
@@ -1631,10 +1639,15 @@ impl Membrane {
                 modes.t60[i] = 0.6 * law.t60 / ring.max(0.35);
             }
         }
-        let mut m = Self::new(law, vel, seed).tension(5.0 * k[5] * vel, 0.05);
+        let mut rng = Lcg(seed.wrapping_mul(2_654_435_761) ^ 0x4A4D);
+        // The hand's strike bend: the skin pulled tight at contact, settling
+        // in 20 to 40 ms; TENSION's own on top.
+        let lift = hand * vel * lin(rng.unit(), 0.4, 0.9);
+        let tau = lin(hand, 0.05, lin(rng.unit(), 0.02, 0.04));
+        let mut m = Self::new(law, vel, seed).tension(5.0 * k[5] * vel + lift, tau);
         m.modes = modes;
         m.modes.set(m.f0 * m.bend.exp2());
-        if matches!(stroke(k[4]), Stroke::Slap) {
+        if matches!(st, Stroke::Slap) {
             m.click = Some(NoiseLayer::new(
                 seed ^ 11,
                 0.03,
@@ -1644,8 +1657,118 @@ impl Membrane {
                 0.6,
             ));
         }
+        if hand > 0.0 {
+            m.mallet = 1.0 - hand;
+            m.hand = Some(Hand::new(st, hand, bright, vel, &mut rng, seed));
+        }
         m.gain = 0.95;
         m
+    }
+}
+
+/// The hand's strike, all from our parts: a palm's raised-cosine contact
+/// pulse (area 1, into the modes), the skin-on-skin noise (band-passed
+/// 1–5 kHz, 2–6 ms, a little into the modes and the rest heard), SLAP's
+/// crack (high-passed noise, 1–2 ms) and a 1–3 ms finger flam on some
+/// slaps; then the hand on the head: SLAP's fingers damp the upper modes,
+/// MUTE's palm stays and damps them all, OPEN's lifts. Each hit draws its
+/// contact time, noise colour and flam afresh.
+struct Hand {
+    n: u32,
+    /// Palm pulses: onset, length, weight.
+    palms: [(u32, u32, f32); 2],
+    skin_len: u32,
+    skin: Flt,
+    skin_hz: f32,
+    skin_in: f32,
+    skin_out: f32,
+    cracks: [(u32, u32, f32); 2],
+    crack: Flt,
+    hiss: Hiss,
+    /// Sample, upper modes' T60 scale (from mode 2), all modes' scale.
+    damp: Option<(u32, f32, f32)>,
+    amount: f32,
+}
+
+impl Hand {
+    fn new(st: Stroke, amount: f32, bright: f32, vel: f32, rng: &mut Lcg, seed: u32) -> Self {
+        let mut jit = |lo: f32, hi: f32| lin(rng.unit(), lo, hi);
+        let ms = |t: f32| (t * 0.001 * FS) as u32;
+        // Contact (ms), skin band centre (Hz), skin length (ms).
+        let (contact, hz, skin) = match st {
+            Stroke::Open => (jit(3.0, 4.5), jit(1400.0, 2600.0), jit(3.0, 5.0)),
+            Stroke::Mute => (jit(4.5, 6.5), jit(1000.0, 1800.0), jit(4.0, 6.0)),
+            Stroke::Slap => (jit(0.6, 1.0), jit(2600.0, 4500.0), jit(2.0, 3.0)),
+        };
+        let contact = contact * expo(1.0 - bright, 0.7, 1.4);
+        let hz = hz * expo(bright, 0.8, 1.25);
+        let flam = matches!(st, Stroke::Slap) && jit(0.0, 1.0) < 0.4;
+        let at = ms(jit(1.0, 3.0));
+        let crack = if matches!(st, Stroke::Slap) {
+            0.5 + 0.7 * bright
+        } else {
+            0.0
+        };
+        let palm = ms(contact).max(1);
+        Self {
+            n: 0,
+            palms: [(0, palm, 1.0), (at, palm, if flam { 0.35 } else { 0.0 })],
+            skin_len: ms(skin),
+            skin: Flt::clean(FilterMode::Bp12, hz, 0.25),
+            skin_hz: hz,
+            skin_in: 0.02,
+            skin_out: if matches!(st, Stroke::Slap) { 0.8 } else { 0.5 } * amount * vel.sqrt(),
+            cracks: [
+                (0, ms(jit(1.0, 2.0)), crack),
+                (at, ms(1.0), if flam { 0.5 * crack } else { 0.0 }),
+            ],
+            crack: Flt::clean(FilterMode::Hp24, 4500.0, 0.0),
+            hiss: Hiss::new(seed ^ 0x5A1),
+            damp: match st {
+                Stroke::Open => None,
+                Stroke::Slap => Some((palm + ms(jit(6.0, 10.0)), 0.25, 1.0)),
+                Stroke::Mute => Some((palm, 0.4, 0.45)),
+            },
+            amount,
+        }
+    }
+
+    /// A block: the force into the modes and what is heard directly.
+    fn block(&mut self) -> (Blk, Blk) {
+        let raised = |n: u32, (at, len, g): (u32, u32, f32)| {
+            if g == 0.0 || n < at || n >= at + len {
+                0.0
+            } else {
+                let u = (n - at) as f32 / len as f32;
+                g * (1.0 - fast_sin_turns(u + 0.25)) / len as f32
+            }
+        };
+        let noise = self.hiss.block();
+        let (mut skin, mut crack) = ([0.0; B], [0.0; B]);
+        let mut force = [0.0; B];
+        for i in 0..B {
+            let n = self.n + i as u32;
+            force[i] = self.amount * (raised(n, self.palms[0]) + raised(n, self.palms[1]));
+            if n < self.skin_len {
+                let u = n as f32 / self.skin_len as f32;
+                skin[i] = noise[i] * 0.5 * (1.0 - fast_sin_turns(u + 0.25));
+            }
+            let c: f32 = self
+                .cracks
+                .iter()
+                .map(|&(at, len, g)| raised(n, (at, len, g)) * len as f32)
+                .sum();
+            crack[i] = noise[i] * c;
+        }
+        self.n += B as u32;
+        self.skin.run(&mut skin, self.skin_hz);
+        self.crack.run(&mut crack, 4500.0);
+        let mut heard = [0.0; B];
+        for i in 0..B {
+            force[i] += self.skin_in * self.amount * skin[i];
+            heard[i] = self.skin_out * skin[i] + 0.8 * self.amount * crack[i];
+        }
+        (force, heard)
     }
 }
 
@@ -1677,9 +1800,29 @@ impl Machine for Membrane {
             self.modes.set(self.f0 * self.bend.exp2() * m);
         }
         let ends = self.pulse.max(self.burst);
-        for o in out.iter_mut() {
+        let (hf, heard) = self
+            .hand
+            .as_mut()
+            .map_or(([0.0; B], [0.0; B]), |h| h.block());
+        // The hand on the head after the strike: its damping, at once.
+        if let Some(h) = &mut self.hand
+            && let Some((at, upper, all)) = h.damp
+            && at < self.n + B as u32
+        {
+            h.damp = None;
+            for (i, t) in self.modes.t60.iter_mut().enumerate() {
+                *t *= all * if i >= 2 { upper } else { 1.0 };
+            }
+            self.modes.set(self.f0 * self.bend.exp2() * m);
+        }
+        for (i, o) in out.iter_mut().enumerate() {
             let n = self.n;
-            let mut x = if n < ends { self.force(n) } else { 0.0 };
+            let mut x = hf[i]
+                + if n < ends {
+                    self.mallet * self.force(n)
+                } else {
+                    0.0
+                };
             if let Some((at, g)) = self.dual
                 && n >= at
                 && n < at + ends
@@ -1687,7 +1830,7 @@ impl Machine for Membrane {
                 x += g * self.force(n - at);
             }
             self.n += 1;
-            *o = self.vel * self.modes.tick(x);
+            *o = self.vel * (self.modes.tick(x) + heard[i]);
         }
         if let Some(c) = &mut self.click {
             let b = c.block();

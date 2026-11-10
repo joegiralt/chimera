@@ -333,28 +333,28 @@ fn settings(id: Id) -> Vec<Setting> {
         BodyHand => vec![
             (
                 "conga-open",
-                &[45, 70, 50, 64, 0, 30, 50, 64],
-                "conga, OPEN tone: the pitched ring of a hand on the head's edge",
+                &[45, 70, 100, 64, 0, 30, 50, 50],
+                "conga, OPEN tone: the palm's contact and skin noise, the palm lifts, the head rings",
             ),
             (
                 "conga-slap",
-                &[45, 70, 80, 64, 64, 30, 50, 64],
-                "conga, SLAP: a sharp, cracking stroke, short fundamental",
+                &[45, 70, 100, 64, 64, 30, 80, 50],
+                "conga, SLAP: a short bright contact, the crack, fingers damping the upper modes, a flam on some hits",
             ),
             (
                 "conga-mute",
-                &[45, 70, 50, 64, 127, 30, 50, 64],
-                "conga, MUTE: the hand stays on the head, a damped thud",
+                &[45, 70, 100, 64, 127, 30, 50, 50],
+                "conga, MUTE: the palm stays on the head, a damped, skin-heavy thud",
             ),
             (
                 "bongo",
-                &[100, 45, 70, 10, 0, 40, 60, 40],
-                "bongo, OPEN: small, high, tight",
+                &[100, 45, 100, 10, 0, 40, 70, 60],
+                "bongo, OPEN: small, high, tight, fingertip contact",
             ),
             (
                 "timbale",
-                &[85, 70, 90, 127, 0, 20, 70, 64],
-                "timbale: the steel shell's ring over the head",
+                &[85, 70, 60, 127, 0, 20, 90, 70],
+                "timbale: the steel shell's ring over the head, a stick-and-hand mix (HAND 60)",
             ),
         ],
         MetalJingle => vec![

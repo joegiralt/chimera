@@ -33,6 +33,7 @@ pub fn run(out: &mut Out) -> Result<Value, String> {
         "fm_sweep": fm(out)?,
         "body_balance": body(out)?,
         "adpcm_attack": adpcm(out)?,
+        "hand_exciter": hand(out)?,
     }))
 }
 
@@ -333,5 +334,78 @@ fn adpcm(out: &mut Out) -> Result<Value, String> {
     Ok(json!({
         "method": "each clip at 16 kHz coded to 4-bit IMA-style ADPCM and decoded, against its 12-bit store: peak change, SNR over the first 2 ms and over the whole clip. Before: every clip from step 0; after: the encoder picks the start index that codes the first 32 ms best (header byte) and chooses each code with a one-sample look-ahead; the decoder is unchanged.",
         "clips": rows,
+    }))
+}
+
+// ---------------------------------------------------------------- hand
+
+/// The first 20 ms's centroid and its 1–5 kHz share (the skin's band), and
+/// the peak.
+fn attack(x: &[f32]) -> Value {
+    let n = 4096usize;
+    let len = (0.02 * FS) as usize;
+    let mut buf: Vec<Complex<f64>> = (0..n)
+        .map(|i| {
+            Complex::new(
+                if i < len {
+                    x.get(i).copied().unwrap_or(0.0) as f64
+                } else {
+                    0.0
+                },
+                0.0,
+            )
+        })
+        .collect();
+    FftPlanner::new().plan_fft_forward(n).process(&mut buf);
+    let hz = |i: usize| i as f64 * FS as f64 / n as f64;
+    let p: Vec<f64> = buf[..n / 2].iter().map(|c| c.norm_sqr()).collect();
+    let tot: f64 = p.iter().skip(1).sum();
+    let cen = p
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(i, v)| hz(i) * v)
+        .sum::<f64>()
+        / tot;
+    let band: f64 = (1..n / 2)
+        .filter(|&i| (1000.0..=5000.0).contains(&hz(i)))
+        .map(|i| p[i])
+        .sum();
+    json!({
+        "attack_20ms_centroid_hz": cen.round(),
+        "attack_20ms_1k_5k_share_db": db((band / tot).sqrt()),
+        "peak_dbfs": db(x.iter().fold(0.0f32, |a, v| a.max(v.abs())) as f64),
+    })
+}
+
+/// BODY HAND with HAND at 0 (the mallet, as first rendered) and at each
+/// setting's HAND.
+fn hand(out: &mut Out) -> Result<Value, String> {
+    let mut rows = serde_json::Map::new();
+    for (si, (name, k, _)) in settings(Id::BodyHand).into_iter().enumerate() {
+        let after = knobs(Id::BodyHand, k);
+        let mut before = after;
+        before[2] = 0.0;
+        let mut kb = k.to_vec();
+        kb[2] = 0;
+        let mut row = serde_json::Map::new();
+        for (tag, kn, kk) in [("before", before, kb.as_slice()), ("after", after, k)] {
+            let x = run_hit(build(Id::BodyHand, kn, 1.0, 1 + si as u32), 6.0);
+            row.insert(tag.into(), attack(&x));
+            out.write(
+                &format!("fix-hand-exciter_{name}_{tag}.wav"),
+                &x,
+                json!({
+                    "kind": "fix", "family": "FIX", "fix": "hand-exciter", "machine": "BODY HAND", "setting": name,
+                    "version": tag, "knobs": knob_map(Id::BodyHand, kk), "velocity": 127,
+                    "listen_for": if tag == "before" { "HAND 0: the mallet's strike, as first rendered" } else { "the HAND exciter: palm contact, skin noise, the stroke's damping and bend" },
+                }),
+            )?;
+        }
+        rows.insert(name.into(), Value::Object(row));
+    }
+    Ok(json!({
+        "method": "each BODY HAND setting at velocity 127, HAND 0 (mallet) against its HAND: the first 20 ms, 4096-point FFT; centroid and the 1-5 kHz (skin) share of the energy.",
+        "settings": rows,
     }))
 }
