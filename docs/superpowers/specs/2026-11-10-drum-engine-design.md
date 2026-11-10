@@ -169,3 +169,5 @@ Before porting, fix the prototype issues the measurements flagged: FM KICK's ste
 6. **Pads modulate other pads.** One pad's envelope, level or LFO as a mod source on another pad of the same kit (a kick ducking the hats, an envelope opening a filter), after the Machinedrum's control machines and track LFOs aimed at other tracks. It shares its mechanism with #224 (cross-Part modulation, which also holds the envelope follower).
 
 Not in 0.4: MIDI-sending pads (7) and the listening drummer (8).
+
+**BODY WOOD ships** (owner by ear, 2026-11-10: "the new wood sounds good"). BODY HAND and METAL JINGLE await marks.
