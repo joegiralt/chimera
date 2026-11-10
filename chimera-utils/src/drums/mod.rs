@@ -3,18 +3,22 @@
 //! list by ear (ruling 6, 2026-11-10). Built from chimera-engine's parts
 //! (`parts`); never in a firmware build. Kept as model work.
 //!
-//! `drum-render OUTDIR`: per machine three single hits (classic, mid,
-//! extreme) and a two-bar pattern at 120 BPM; a kit groove; COMBINE's
-//! modes on two hits; the clips at 12-bit, 8-bit and 4-bit ADPCM. 48 kHz
+//! `drum-render OUTDIR`: per shipping machine its settings' single hits
+//! (classic, mid, extreme, or named) and a two-bar pattern at 120 BPM; a
+//! kit groove; COMBINE's modes on two hits; the clips at 12-bit, 8-bit
+//! and 4-bit ADPCM; the three fixes before and after (`fixes`); ACCENT,
+//! RETRIG, kit macros and pad-to-pad modulation (`demos`). 48 kHz
 //! mono float WAVs at their real levels, `manifest.json` beside them, and
 //! a host cost estimate per machine against ALGO's six-operator voice.
 
+mod demos;
+mod fixes;
 mod machines;
 mod parts;
 mod sample;
 
 use crate::reference::write_f32;
-use machines::{Id, SPECS, build, spec};
+use machines::{Id, Knobs, SPECS, build, spec};
 use parts::{B, Blk, FS};
 use sample::{Depth, Dir, Mode, pad, store};
 use serde_json::{Value, json};
@@ -22,315 +26,386 @@ use std::path::Path;
 use std::time::Instant;
 
 /// A setting: its name, the six knobs (0..127) and what to listen for.
-type Setting = (&'static str, [u8; 6], &'static str);
+type Setting = (&'static str, &'static [u8], &'static str);
 
-fn settings(id: Id) -> [Setting; 3] {
+fn settings(id: Id) -> Vec<Setting> {
     use Id::*;
     match id {
-        ToneKick => [
+        ToneKick => vec![
             (
                 "classic",
-                [40, 80, 40, 40, 20, 10],
+                &[40, 80, 40, 40, 20, 10],
                 "long round low boom, short downward chirp, a soft tick on top",
             ),
             (
                 "mid",
-                [60, 50, 70, 30, 60, 50],
+                &[60, 50, 70, 30, 60, 50],
                 "tighter punchy kick: more chirp, audible click, a little saturation",
             ),
             (
                 "extreme",
-                [20, 120, 127, 100, 127, 127],
+                &[20, 120, 127, 100, 127, 127],
                 "four-octave laser drop into a driven sub; check the drive's grit and the very long tail",
             ),
         ],
-        ToneSnare => [
+        ToneSnare => vec![
             (
                 "classic",
-                [50, 40, 40, 80, 50, 70],
+                &[50, 40, 40, 80, 50, 70],
                 "two-head tonal body under a mid noise snap; balance of tone and noise",
             ),
             (
                 "mid",
-                [80, 30, 70, 100, 30, 100],
+                &[80, 30, 70, 100, 30, 100],
                 "higher, brighter, snappier: short bright noise, pitch bump on the heads",
             ),
             (
                 "extreme",
-                [20, 110, 127, 127, 127, 20],
+                &[20, 110, 127, 127, 127, 20],
                 "low tuned heads with an octave bump and a long dark noise wash",
             ),
         ],
-        ToneTom => [
+        ToneTom => vec![
             (
                 "classic",
-                [50, 70, 30, 40, 20, 20],
+                &[50, 70, 30, 40, 20, 20],
                 "classic analog floor tom: gentle downward sweep, round sine",
             ),
             (
                 "mid",
-                [80, 50, 60, 20, 50, 60],
+                &[80, 50, 60, 20, 50, 60],
                 "higher tom, faster sweep, a breath of noise, DAMP choking the tail",
             ),
             (
                 "extreme",
-                [15, 127, 127, 127, 100, 0],
+                &[15, 127, 127, 127, 100, 0],
                 "two-octave slow dive from a sub tom with noise: long and boomy",
             ),
         ],
-        ToneClap => [
+        ToneClap => vec![
             (
                 "classic",
-                [60, 50, 54, 50, 90, 30],
+                &[60, 50, 54, 50, 90, 30],
                 "four quick claps then a band-passed room tail: the 808/909 hand clap shape",
             ),
             (
                 "mid",
-                [90, 30, 36, 30, 60, 60],
+                &[90, 30, 36, 30, 60, 60],
                 "tighter, brighter three-clap, more ring on the band-pass",
             ),
             (
                 "extreme",
-                [30, 120, 127, 127, 127, 115],
+                &[30, 120, 127, 127, 127, 115],
                 "eight slow claps into a long dark resonant tail; check the ringing pitch",
             ),
         ],
-        ToneRim => [
+        ToneRim => vec![
             (
                 "classic",
-                [60, 30, 50, 60, 60, 30],
+                &[60, 30, 50, 60, 60, 30],
                 "short woody rim knock: two pinged modes and a click",
             ),
             (
                 "mid",
-                [90, 50, 80, 30, 90, 60],
+                &[90, 50, 80, 30, 90, 60],
                 "higher, ringier, more noise: closer to a clave/side-stick",
             ),
             (
                 "extreme",
-                [20, 120, 127, 127, 127, 127],
+                &[20, 120, 127, 127, 127, 127],
                 "low pinged modes ringing long with heavy click and noise: a metallic knock",
             ),
         ],
-        ToneCowbell => [
+        ToneCowbell => vec![
             (
                 "classic",
-                [55, 50, 60, 70, 40, 30],
+                &[55, 50, 60, 70, 40, 30],
                 "two detuned pulses at about 1.48 apart through a band-pass: the 808 cowbell shape",
             ),
             (
                 "mid",
-                [80, 30, 30, 90, 70, 70],
+                &[80, 30, 30, 90, 70, 70],
                 "higher, narrower interval, more ring and drive: a clank",
             ),
             (
                 "extreme",
-                [20, 120, 127, 30, 120, 127],
+                &[20, 120, 127, 30, 120, 127],
                 "low wide-interval pulses, dark resonant band-pass, heavy drive, long",
             ),
         ],
-        ToneCymbal => [
+        ToneCymbal => vec![
             (
                 "classic",
-                [64, 80, 70, 30, 30, 40],
+                &[64, 80, 70, 30, 30, 40],
                 "metallic ride/crash wash from the six squares, gentle shimmer",
             ),
             (
                 "mid",
-                [80, 60, 90, 70, 60, 80],
+                &[80, 60, 90, 70, 60, 80],
                 "brighter, more inharmonic, more resonant and moving",
             ),
             (
                 "extreme",
-                [20, 127, 30, 127, 120, 127],
+                &[20, 127, 30, 127, 120, 127],
                 "low dark gong-like wash with heavy shimmer; check the LFO's audible wobble",
             ),
         ],
-        MetalHat => [
+        MetalHat => vec![
             (
                 "classic",
-                [64, 20, 80, 0, 30, 15],
+                &[64, 20, 80, 0, 30, 15],
                 "short closed hat from the 808 square set",
             ),
             (
                 "mid",
-                [64, 75, 70, 40, 50, 30],
+                &[64, 75, 70, 40, 50, 30],
                 "open hat: longer, a little spread and ring",
             ),
             (
                 "extreme",
-                [0, 110, 20, 127, 120, 100],
+                &[0, 110, 20, 127, 120, 100],
                 "two octaves down, dark and ringing: a trashy metal hit",
             ),
         ],
-        FmKick => [
+        FmKick => vec![
             (
                 "classic",
-                [45, 70, 45, 50, 20, 30],
+                &[45, 70, 45, 50, 20, 30],
                 "FM kick: ratio-1 modulator gives a short knocky attack over a swept sine",
             ),
             (
                 "mid",
-                [60, 50, 60, 80, 50, 40],
+                &[60, 50, 60, 80, 50, 40],
                 "ratio 2, more MOD: a brighter, harder attack",
             ),
             (
                 "extreme",
-                [25, 110, 127, 127, 120, 100],
+                &[25, 110, 127, 127, 120, 100],
                 "ratio 7, full MOD, long MOD DECAY, full sweep: metallic noisy boom; listen for steps in the sweep (the kernel's pitch is a block's)",
             ),
         ],
-        FmSnare => [
+        FmSnare => vec![
             (
                 "classic",
-                [60, 40, 90, 50, 70, 40],
+                &[60, 40, 90, 50, 70, 40],
                 "FM body (ratio 1.41) under a high-passed noise: a Digitone-style snare",
             ),
             (
                 "mid",
-                [90, 30, 110, 30, 100, 80],
+                &[90, 30, 110, 30, 100, 80],
                 "higher, brighter, more noise: crack",
             ),
             (
                 "extreme",
-                [30, 100, 60, 120, 127, 127],
+                &[30, 100, 60, 120, 127, 127],
                 "ratio 7 full MOD: clangy metallic body and a long noise tail",
             ),
         ],
-        FmHat => [
+        FmHat => vec![
             (
                 "classic",
-                [70, 20, 0, 50, 80, 40],
+                &[70, 20, 0, 50, 80, 40],
                 "three-operator FM closed hat, high-passed",
             ),
             (
                 "mid",
-                [90, 60, 50, 60, 100, 70],
+                &[90, 60, 50, 60, 100, 70],
                 "open FM hat with tremolo flutter",
             ),
             (
                 "extreme",
-                [30, 110, 127, 127, 127, 127],
+                &[30, 110, 127, 127, 127, 127],
                 "full feedback and MOD, fast deep tremolo: noisy buzzing metal",
             ),
         ],
-        BodyKick => [
+        BodyKick => vec![
             (
                 "classic",
-                [40, 60, 40, 60, 40, 20],
+                &[40, 60, 40, 60, 40, 20],
                 "MODAL bank struck: a physical kick with a pitch drop (TENSION)",
             ),
             (
                 "mid",
-                [60, 40, 90, 20, 70, 40],
+                &[60, 40, 90, 20, 70, 40],
                 "harder, shorter mallet: more attack overtones, damped",
             ),
             (
                 "extreme",
-                [10, 127, 127, 0, 127, 0],
+                &[10, 127, 127, 0, 127, 0],
                 "very low, very long, hard strike, an octave tension bend",
             ),
         ],
-        BodySnare => [
+        BodySnare => vec![
             (
                 "classic",
-                [60, 40, 80, 40, 90, 50],
+                &[60, 40, 80, 40, 90, 50],
                 "struck membrane plus wires that follow the head",
             ),
             (
                 "mid",
-                [90, 30, 110, 60, 110, 30],
+                &[90, 30, 110, 60, 110, 30],
                 "tighter, higher, brighter wires",
             ),
             (
                 "extreme",
-                [20, 110, 127, 127, 127, 120],
+                &[20, 110, 127, 127, 127, 120],
                 "low ringing head with big bend and a long wire wash",
             ),
         ],
-        BodyTom => [
+        BodyTom => vec![
             (
                 "classic",
-                [50, 70, 60, 40, 20, 20],
+                &[50, 70, 60, 40, 20, 20],
                 "struck membrane tom: inharmonic modes and a pitch drop",
             ),
             (
                 "mid",
-                [85, 50, 90, 70, 50, 60],
+                &[85, 50, 90, 70, 50, 60],
                 "higher tom, harder, struck off-centre (POSITION)",
             ),
             (
                 "extreme",
-                [10, 127, 127, 127, 0, 127],
+                &[10, 127, 127, 127, 0, 127],
                 "huge low tom, long ring, an octave bend",
             ),
         ],
-        BodyBell => [
+        BodyBell => vec![
             (
                 "classic",
-                [60, 80, 80, 50, 70, 10],
+                &[60, 80, 80, 50, 70, 10],
                 "MODAL bank at bell structure: a struck bell, mid pitch",
             ),
             (
                 "mid",
-                [90, 60, 100, 90, 90, 30],
+                &[90, 60, 100, 90, 90, 30],
                 "higher, more inharmonic, brighter, shorter",
             ),
             (
                 "extreme",
-                [20, 127, 127, 127, 127, 0],
+                &[20, 127, 127, 127, 127, 0],
                 "low gong: full structure and brightness, very long",
             ),
         ],
-        BodyShaker => [
+        BodyShaker => vec![
             (
                 "classic",
-                [80, 50, 40, 80, 30, 30],
+                &[80, 50, 40, 80, 30, 30],
                 "random grains under one shake gesture, band-passed: a shaker",
             ),
             (
                 "mid",
-                [100, 70, 60, 60, 80, 60],
+                &[100, 70, 60, 60, 80, 60],
                 "denser, longer, peak later: a slower shake",
             ),
             (
                 "extreme",
-                [30, 120, 127, 20, 120, 120],
+                &[30, 120, 127, 20, 120, 120],
                 "sparse long grains, dark resonant band: rain stick",
             ),
         ],
-        PlainSine => [
+        BodyWood => vec![
+            (
+                "rim",
+                &[45, 40, 70, 0, 70, 50, 0, 64],
+                "WOOD at rim: a pitched knock with the rim's ring and a stick tick (TONE RIM's gap)",
+            ),
+            (
+                "sidestick",
+                &[30, 30, 60, 40, 30, 70, 0, 64],
+                "sidestick: lower, drier, a stick across the rim",
+            ),
+            (
+                "clave",
+                &[90, 50, 100, 85, 20, 20, 0, 64],
+                "clave: the free bar's inharmonic partials, bright and short",
+            ),
+            (
+                "woodblock",
+                &[60, 45, 80, 127, 40, 30, 0, 64],
+                "woodblock: hollow, the second mode close above the first",
+            ),
+            (
+                "dual",
+                &[85, 50, 100, 85, 20, 20, 60, 70],
+                "clave with DUAL: a second strike a few ms on (TRX-CL's), TUNE moving the second mode",
+            ),
+        ],
+        BodyHand => vec![
+            (
+                "conga-open",
+                &[45, 70, 50, 64, 0, 30, 50, 64],
+                "conga, OPEN tone: the pitched ring of a hand on the head's edge",
+            ),
+            (
+                "conga-slap",
+                &[45, 70, 80, 64, 64, 30, 50, 64],
+                "conga, SLAP: a sharp, cracking stroke, short fundamental",
+            ),
+            (
+                "conga-mute",
+                &[45, 70, 50, 64, 127, 30, 50, 64],
+                "conga, MUTE: the hand stays on the head, a damped thud",
+            ),
+            (
+                "bongo",
+                &[100, 45, 70, 10, 0, 40, 60, 40],
+                "bongo, OPEN: small, high, tight",
+            ),
+            (
+                "timbale",
+                &[85, 70, 90, 127, 0, 20, 70, 64],
+                "timbale: the steel shell's ring over the head",
+            ),
+        ],
+        MetalJingle => vec![
             (
                 "classic",
-                [20, 70, 30, 30, 0, 0],
+                &[64, 50, 70, 30, 60, 50],
+                "a tambourine hit: a burst of jingles from the metal bank, settling",
+            ),
+            (
+                "shake",
+                &[64, 90, 90, 100, 70, 60],
+                "a long shake: jingles peaking later, then thinning",
+            ),
+            (
+                "frame",
+                &[30, 60, 50, 20, 40, 40, 90, 60],
+                "a frame drum with jingles: HEAD's thump under fewer, darker jingles",
+            ),
+        ],
+        PlainSine => vec![
+            (
+                "classic",
+                &[20, 70, 30, 30, 0, 0],
                 "plain swept sine: a sub kick",
             ),
-            ("mid", [60, 40, 50, 20, 0, 0], "a mid tom/blip"),
-            ("extreme", [100, 20, 127, 10, 0, 0], "a short high zap"),
+            ("mid", &[60, 40, 50, 20, 0, 0], "a mid tom/blip"),
+            ("extreme", &[100, 20, 127, 10, 0, 0], "a short high zap"),
         ],
-        PlainNoise => [
+        PlainNoise => vec![
             (
                 "classic",
-                [30, 100, 0, 0, 0, 0],
+                &[30, 100, 0, 0, 0, 0],
                 "short high-passed noise: a utility hat",
             ),
-            ("mid", [60, 50, 0, 0, 0, 0], "medium full-band noise burst"),
+            ("mid", &[60, 50, 0, 0, 0, 0], "medium full-band noise burst"),
             (
                 "extreme",
-                [127, 10, 0, 0, 0, 0],
+                &[127, 10, 0, 0, 0, 0],
                 "long dark low-passed rumble",
             ),
         ],
-        PlainImpulse => [
+        PlainImpulse => vec![
             (
                 "classic",
-                [40, 30, 0, 0, 0, 0],
+                &[40, 30, 0, 0, 0, 0],
                 "a short buzzy click train at a low pitch",
             ),
-            ("mid", [70, 50, 60, 30, 0, 0], "a swept pulse blip"),
+            ("mid", &[70, 50, 60, 30, 0, 0], "a swept pulse blip"),
             (
                 "extreme",
-                [10, 127, 127, 127, 0, 0],
+                &[10, 127, 127, 127, 0, 0],
                 "a slow-falling buzz, long: check the narrow pulse's aliasing",
             ),
         ],
@@ -350,19 +425,30 @@ fn pattern(id: Id) -> &'static str {
         MetalHat | FmHat | PlainNoise => "XxxxXxxxXxxxXxxxXxxxXxxxXxxxXxXx",
         ToneCymbal => "X...............X...............",
         BodyBell => "X.....x.....X...X.....x...x.X...",
-        BodyShaker => "XxxxXxxxXxxxXxxxXxxxXxxxXxxxXxxx",
+        BodyShaker | MetalJingle => "XxxxXxxxXxxxXxxxXxxxXxxxXxxxXxxx",
+        BodyWood => "X..x..x...x.x...X..x..x...x.x...",
+        BodyHand => "X..xX.x.X..xx.x.X..xX.x.X.xxX.x.",
     }
 }
 
 const STEP: f32 = 0.125; // a sixteenth at 120 BPM
 
-fn knobs(k: [u8; 6]) -> [f32; 6] {
-    k.map(|v| v as f32 / 127.0)
+/// A setting's knobs, MORE's at the machine's defaults where it leaves
+/// them out, 0..1.
+fn knobs(id: Id, k: &[u8]) -> Knobs {
+    let more = spec(id).more;
+    core::array::from_fn(|i| {
+        k.get(i).copied().unwrap_or(more[(i.max(6) - 6).min(1)]) as f32 / 127.0
+    })
 }
 
 /// One hit until it falls under −80 dB (after 30 ms) or `max` seconds.
-fn hit(id: Id, k: [u8; 6], vel: f32, seed: u32, max: f32) -> Vec<f32> {
-    let mut m = build(id, knobs(k), vel, seed);
+fn hit(id: Id, k: &[u8], vel: f32, seed: u32, max: f32) -> Vec<f32> {
+    run_hit(build(id, knobs(id, k), vel, seed), max)
+}
+
+/// A built hit run until it falls under −80 dB (after 30 ms) or `max` s.
+fn run_hit(mut m: Box<dyn machines::Machine>, max: f32) -> Vec<f32> {
     let mut y = Vec::new();
     let mut quiet = 0;
     while y.len() < (max * FS) as usize {
@@ -391,7 +477,7 @@ fn add_at(out: &mut Vec<f32>, at: usize, x: &[f32], gain: f32) {
     }
 }
 
-fn play(id: Id, k: [u8; 6], steps: &str, gain: f32, seed: u32, out: &mut Vec<f32>) {
+fn play(id: Id, k: &[u8], steps: &str, gain: f32, seed: u32, out: &mut Vec<f32>) {
     for (i, c) in steps.chars().enumerate() {
         let vel = match c {
             'X' => 1.0,
@@ -437,12 +523,13 @@ impl Out<'_> {
     }
 }
 
-fn knob_map(id: Id, k: [u8; 6]) -> Value {
+fn knob_map(id: Id, k: &[u8]) -> Value {
     let s = spec(id);
+    let kn = knobs(id, k);
     let mut m = serde_json::Map::new();
-    for (n, v) in s.knobs.iter().zip(k) {
+    for (n, v) in s.knobs.iter().zip(kn) {
         if *n != "-" {
-            m.insert((*n).into(), json!(v));
+            m.insert((*n).into(), json!((v * 127.0).round() as u8));
         }
     }
     Value::Object(m)
@@ -460,13 +547,13 @@ pub fn run(dir: &Path) -> Result<(), String> {
         rows: Vec::new(),
     };
 
-    for s in &SPECS {
+    for s in SPECS.iter().filter(|s| s.ships) {
         let sets = settings(s.id);
         for (si, (name, k, listen)) in sets.iter().enumerate() {
-            let x = hit(s.id, *k, 1.0, 1 + si as u32, 6.0);
+            let x = hit(s.id, k, 1.0, 1 + si as u32, 6.0);
             let row = json!({
                 "kind": "hit", "machine": s.name, "family": s.family, "kernel": s.kernel,
-                "setting": name, "knobs": knob_map(s.id, *k), "velocity": 127, "listen_for": listen,
+                "setting": name, "knobs": knob_map(s.id, k), "velocity": 127, "listen_for": listen,
             });
             out.write(&format!("{}_{name}.wav", slug(s.name)), &x, row)?;
         }
@@ -485,11 +572,14 @@ pub fn run(dir: &Path) -> Result<(), String> {
 
     kit(&mut out)?;
     combine(&mut out)?;
+    let fixes = fixes::run(&mut out)?;
+    demos::run(&mut out)?;
 
     let cost = bench();
     let manifest = json!({
         "about": "Chimera 0.4 DRUM host prototypes (chimera-utils drum-render). 48 kHz mono 32-bit float WAVs, raw levels, never normalised. Knobs 0-127 as the cells would show them. Machines are built from chimera-engine parts: VA NOISE and oscillator, CLEAN filter, ALGO kernel, MODAL BANK (16 modes), the FX slot's SOFT and FOLD curves, VA's combine, TAPE's Hermite read.",
         "cpu_estimate": cost,
+        "fixes": fixes,
         "files": out.rows,
     });
     let p = dir.join("manifest.json");
@@ -499,10 +589,12 @@ pub fn run(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The mockup's 808ISH kit as a four-bar groove; the open hat choked by
-/// the closed (group C).
-fn kit(out: &mut Out) -> Result<(), String> {
-    let lanes: [(&str, Id, usize, &str, f32); 7] = [
+/// A kit lane: pad, machine, setting, steps over four bars, level.
+type Lane = (&'static str, Id, usize, &'static str, f32);
+
+/// The mockup's 808ISH kit.
+fn lanes() -> [Lane; 7] {
+    [
         (
             "KICK",
             Id::ToneKick,
@@ -552,7 +644,13 @@ fn kit(out: &mut Out) -> Result<(), String> {
             "........................................................X..x..x.",
             0.6,
         ),
-    ];
+    ]
+}
+
+/// The kit as a four-bar groove; the open hat choked by the closed
+/// (group C).
+fn kit(out: &mut Out) -> Result<(), String> {
+    let lanes = lanes();
     let closed: Vec<usize> = lanes[3]
         .3
         .char_indices()
@@ -621,7 +719,7 @@ fn combine(out: &mut Out) -> Result<(), String> {
         out.write(
             &format!("combine_{tag}_machine.wav"),
             &pad(
-                Some(build(id, knobs(k), 1.0, 5)),
+                Some(build(id, knobs(id, k), 1.0, 5)),
                 None,
                 lv,
                 Mode::Mix,
@@ -643,7 +741,7 @@ fn combine(out: &mut Out) -> Result<(), String> {
             r["mode"] = json!(mode.name());
             r["listen_for"] = json!(mode.listen());
             let x = pad(
-                Some(build(id, knobs(k), 1.0, 5)),
+                Some(build(id, knobs(id, k), 1.0, 5)),
                 Some((&c, Dir::Forward)),
                 lv,
                 mode,
@@ -665,7 +763,8 @@ fn combine(out: &mut Out) -> Result<(), String> {
                 "listen_for": match d {
                     Depth::B12 => "the clip as the kit pool stores it today (12-bit packed)",
                     Depth::B8 => "8-bit: a raised noise floor on the tail, 2/3 the bytes",
-                    Depth::Adpcm4 => "4-bit ADPCM: 1/3 the bytes; listen for hiss on quiet tails and a softened attack",
+                    Depth::Adpcm4 => "4-bit ADPCM: 1/3 the bytes; the encoder's fitted first step and look-ahead keep the attack; listen for hiss on quiet tails",
+                    Depth::Adpcm4First => "4-bit ADPCM from step 0 (the first prototype)",
                 },
             });
             let tag = d.name().replace(' ', "-").to_ascii_lowercase();
@@ -708,7 +807,7 @@ fn combine(out: &mut Out) -> Result<(), String> {
             });
             let tag = d.name().replace(' ', "-").to_ascii_lowercase();
             let x = pad(
-                Some(build(Id::ToneKick, knobs(k), 1.0, 5)),
+                Some(build(Id::ToneKick, knobs(Id::ToneKick, k), 1.0, 5)),
                 Some((&c, Dir::Forward)),
                 (0.7, 0.5),
                 mode,
@@ -762,8 +861,8 @@ fn bench() -> Value {
         })
     });
     let mut rows = serde_json::Map::new();
-    for s in &SPECS {
-        let k = knobs(settings(s.id)[0].1);
+    for s in SPECS.iter().filter(|s| s.ships) {
+        let k = knobs(s.id, settings(s.id)[0].1);
         let ns = time(&mut |r| {
             let mut m = build(s.id, k, 1.0, r);
             Box::new(move |b| m.block(b, None))

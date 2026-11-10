@@ -13,7 +13,7 @@ use chimera_core::dsp::modal::{
 };
 use chimera_core::dsp::va::noise::{Noise, NoiseKind};
 use chimera_core::dsp::va::osc::{Morph, VarOsc};
-use chimera_core::dsp::{Unit, note_to_freq};
+use chimera_core::dsp::{Unit, fast_sin_turns, note_to_freq};
 use chimera_core::params::FilterParams;
 use chimera_core::taps::TapRows;
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
@@ -291,5 +291,128 @@ impl Lcg {
     /// 0..1.
     pub fn unit(&mut self) -> f32 {
         0.5 * (self.next() + 1.0)
+    }
+}
+
+/// DRUM's FM path: ALGO's sine operators in a chain (op 2 → 1 → 0, or 1 → 0
+/// with two; the top one fed back), ALGO's PM law (`PM_CYCLES` a full-scale modulator) and gain
+/// ramps, but the pitch a sample's: each block's `inc` ramps linearly from
+/// the last block's, so a sweep never steps. ALGO's kernel, which holds
+/// `inc` a block, is untouched.
+pub struct FmOps {
+    ph: [u32; 3],
+    /// Phase units (2^32 a cycle) a sample, at the last block's end.
+    inc: [f32; 3],
+    gain: [f32; 3],
+    prev: f32,
+    hist: f32,
+    three: bool,
+}
+
+impl FmOps {
+    pub fn new(three: bool) -> Self {
+        Self {
+            three,
+            ph: [0; 3],
+            inc: [-1.0; 3],
+            gain: [0.0; 3],
+            prev: 0.0,
+            hist: 0.0,
+        }
+    }
+
+    /// A block ending at `hz` and `gain` (op 0 the carrier's level, ops 1
+    /// and 2 PM depths, `PM_CYCLES` at 1), the top op's feedback `fb`; `fm`
+    /// scales every op's pitch a sample (COMBINE FM MCH ← SMP).
+    pub fn block(
+        &mut self,
+        out: &mut Blk,
+        hz: [f32; 3],
+        gain: [f32; 3],
+        fb: f32,
+        fm: Option<&Blk>,
+    ) {
+        use chimera_core::dsp::algo::kernel::PM_CYCLES;
+        const TURN: f32 = 1.0 / 4_294_967_296.0;
+        let to: [f32; 3] = hz.map(|h| h.clamp(0.0, 20_000.0) / FS * 4_294_967_296.0);
+        if self.inc[0] < 0.0 {
+            self.inc = to;
+        }
+        let step = 1.0 / B as f32;
+        let sin = |p: u32, pm: f32| fast_sin_turns(p as f32 * TURN + pm);
+        for (s, o) in out.iter_mut().enumerate() {
+            let t = (s + 1) as f32 * step;
+            let m = fm.map_or(1.0, |b| (1.0 + 4.0 * b[s]).max(0.0));
+            for i in 0..3 {
+                let inc = self.inc[i] + (to[i] - self.inc[i]) * t;
+                self.ph[i] = self.ph[i].wrapping_add((inc * m) as u32);
+            }
+            let g =
+                core::array::from_fn::<f32, 3, _>(|i| self.gain[i] + (gain[i] - self.gain[i]) * t);
+            let fbk = fb * 0.5 * (self.prev + self.hist);
+            let y1 = if self.three {
+                let y2 = sin(self.ph[2], fbk) * g[2];
+                (self.hist, self.prev) = (self.prev, y2);
+                sin(self.ph[1], PM_CYCLES * y2) * g[1]
+            } else {
+                let y1 = sin(self.ph[1], fbk) * g[1];
+                (self.hist, self.prev) = (self.prev, y1);
+                y1
+            };
+            *o = sin(self.ph[0], PM_CYCLES * y1) * g[0];
+        }
+        self.inc = to;
+        self.gain = gain;
+    }
+}
+
+/// DRUM's mode bank: two-pole resonators struck by an impulse-normalised
+/// input, so a mode rings at the amplitude its law gives it whatever its
+/// pitch or Q. `set` per block (TENSION's bend).
+pub struct Modes<const N: usize> {
+    /// Per mode: `2r·cos w`, `r²`, input gain, two states.
+    c: [[f32; 5]; N],
+    pub ratio: [f32; N],
+    pub amp: [f32; N],
+    pub t60: [f32; N],
+}
+
+impl<const N: usize> Modes<N> {
+    pub fn new() -> Self {
+        Self {
+            c: [[0.0; 5]; N],
+            ratio: [0.0; N],
+            amp: [0.0; N],
+            t60: [0.0; N],
+        }
+    }
+
+    /// Tunes every mode for `f0`; modes at or past 0.45 FS go silent.
+    pub fn set(&mut self, f0: f32) {
+        for i in 0..N {
+            let f = f0 * self.ratio[i];
+            let c = &mut self.c[i];
+            if f >= 0.45 * FS || self.amp[i] == 0.0 {
+                c[2] = 0.0;
+                continue;
+            }
+            let w = core::f32::consts::TAU * f / FS;
+            let r = per_sample(self.t60[i]);
+            c[0] = 2.0 * r * w.cos();
+            c[1] = r * r;
+            c[2] = self.amp[i] * w.sin();
+        }
+    }
+
+    #[inline]
+    pub fn tick(&mut self, x: f32) -> f32 {
+        let mut y = 0.0;
+        for c in self.c.iter_mut() {
+            let v = c[0] * c[3] - c[1] * c[4] + c[2] * x;
+            c[4] = c[3];
+            c[3] = v;
+            y += v;
+        }
+        y
     }
 }

@@ -45,28 +45,42 @@ KIT ── MCH ── SMP ── MIX ── FLT ── AMP ── MOD
 - Optional: a CHAIN overview of the pad (mockup b) with one cell per box and EDIT opening its page.
 
 ## Machines
-Families map the Machinedrum's: TONE (its analog-modelled family), FM (its FM family), BODY (its physical-model family), PLAIN (its ground family). Sample-only (its ROM family) is machine OFF. Knob sets are drafted from the manual's machine chapter as remembered; the research step reads the chapter and corrects them (behaviour and parameter descriptions only).
+Families map the Machinedrum's, confirmed against its manual (Appendix A, Machine Reference, OS 1.63, Elektron's public PDF; read for behaviour and parameter descriptions only): TONE ≈ TRX ("classic analogue drum machine synthesis"), FM ≈ EFM ("Enhanced Feedback Modulation"), BODY ≈ P-I ("physically informed", acoustic drums), PLAIN ≈ GND (sine, noise, impulse). Sample-only is machine OFF: the MD's E12 (its sampled percussion, with START, RETRIG and BEND per machine) and ROM (UW user samples) both land on our sample layer. Every MD machine has up to eight parameters; ours have six (A–F) plus MORE's two, so the counts match. Host prototypes: `chimera-utils/src/drums/`, `just drum-render`.
 
-| Drum | MD structure | Our machine | Kernel / our parts | A–F | MORE | 0.4 |
+Knob sets as checked (MD names in capitals as the manual prints them; ours are full words where they fit). MORE's two follow the bar.
+
+| Drum | MD machine and its parameters | Our machine | Kernel | A–F \| MORE | Differences from Machinedrum | 0.4 |
 |---|---|---|---|---|---|---|
-| Kick | analog BD | TONE KICK | body: VA sine + exp sweep, NOISE click, SOFT | PITCH · DECAY · SWEEP · SWEEP TIME · CLICK · DRIVE | START · HARMONICS | yes |
-| Kick | FM BD | FM KICK | fm: ALGO ops 2→1 + sweep | PITCH · DECAY · SWEEP · MOD · RATIO · MOD DECAY | SWEEP TIME · FEEDBACK | yes |
-| Kick | physical BD | BODY KICK | membrane: MODAL mallet + bank | PITCH · DECAY · HARDNESS · MALLET · TENSION · DAMP | POSITION | yes |
-| Snare | analog SD | TONE SNARE | body ×2 + NOISE through CLEAN BP | PITCH · DECAY · BUMP · SNAP · SNAP DECAY · TONE | INTERVAL · DRIVE | yes |
-| Snare | FM SD | FM SNARE | fm + NOISE, CLEAN HP | PITCH · DECAY · NOISE · NOISE DECAY · MOD · RATIO | MOD DECAY · HIGH PASS | yes |
-| Snare | physical SD | BODY SNARE | membrane + wire noise | PITCH · DECAY · HARDNESS · TENSION · WIRES · WIRE DECAY | DAMP | yes |
-| Tom | analog tom | TONE TOM | body (tom ranges) | PITCH · DECAY · SWEEP · SWEEP TIME · NOISE · DAMP | — | yes |
-| Tom | physical tom | BODY TOM | membrane | PITCH · DECAY · HARDNESS · TENSION · DAMP · POSITION | MALLET | yes |
-| Clap | analog/FM clap | TONE CLAP | burst: NOISE bursts with jitter (ENV B BURST law) + BP tail | TONE · DECAY · CLAPS · SPREAD · TAIL · RING | — | yes |
-| Rim | analog rim | TONE RIM | 2 pinged modes (MODAL bank) + click | PITCH · DECAY · TONE · CLICK · RING · NOISE | — | yes |
-| Cowbell | analog CB | TONE COWBELL | 2 VA pulses + BP | PITCH · DECAY · INTERVAL · TONE · RING · DRIVE | — | yes |
-| Hats | analog CH/OH | METAL HAT | metal: 6 squares once a Part, 2 BPs a voice | PITCH · DECAY · TONE · SPREAD · RING · NOISE | — | yes |
-| Cymbal | analog/FM CY | TONE CYMBAL | metal + 3 BPs, slow shimmer | PITCH · DECAY · TONE · SPREAD · RING · SHIMMER | — | yes |
-| Bell, gong | physical bell | BODY BELL | MODAL bank, bell ratios | PITCH · DECAY · HARDNESS · STRUCTURE · BRIGHT · DAMP | — | yes |
-| Hats | FM HH | FM HAT | fm, 3 ops, high ratios | PITCH · DECAY · TREMOLO · TREMOLO RATE · MOD · FEEDBACK | RATIO · MOD DECAY | later |
-| Shaker | physical maracas | BODY SHAKER | burst: random grains + BP | GRAINS · DECAY · GRAIN LENGTH · TONE · SHAKE · RING | — | later |
-| Utility | ground SN/NS/IM | PLAIN SINE, NOISE, IMPULSE | VA osc, NOISE, a step | PITCH · DECAY · SWEEP · SWEEP TIME (NOISE: DECAY · TONE) | — | yes |
-| Sample only | ROM | OFF | none | the SMP page | — | yes |
+| Kick | TRX-BD: PTCH DEC RAMP RDEC STRT NOIS HARM CLIP | TONE KICK | body | PITCH · DECAY · SWEEP · SWEEP TIME · CLICK · DRIVE \| START · HARMONICS | One to one (NOIS → CLICK, CLIP → DRIVE, our SOFT). START starts the sine up to a quarter cycle in; HARMONICS adds the 2nd and 3rd partials. TRX-B2's HOLD, TICK, DIRT not taken (DIRT is the FX slot's BITS) | yes |
+| Kick | EFM-BD: PTCH DEC RAMP RDEC MOD MFRQ MDEC MFB | FM KICK | fm | PITCH · DECAY · SWEEP · MOD · RATIO · MOD DECAY \| SWEEP TIME · FEEDBACK | One to one. MFRQ is RATIO, stepped over eight ratios (0.5–7) rather than free | yes |
+| Kick | PI-BD: PTCH DEC HARD HAMR TENS DAMP | BODY KICK | membrane | PITCH · DECAY · HARDNESS · MALLET · TENSION · DAMP \| POSITION | One to one (HAMR → MALLET, higher softer as the MD's); POSITION is ours | yes |
+| Snare | TRX-SD: PTCH DEC BUMP BENV SNAP TONE TUNE CLIP | TONE SNARE | body | PITCH · DECAY · BUMP · SNAP · SNAP DECAY · TONE \| INTERVAL · DRIVE | BENV (the bump's length) fixed at 8 ms; we spend the knob on SNAP DECAY, the noise's own length, which the 808-style snare needs. TUNE → INTERVAL (the second head, 1.2–1.77×), CLIP → DRIVE | yes |
+| Snare | EFM-SD: PTCH DEC NOISE NDEC MOD MFRQ MDEC HPF | FM SNARE | fm | PITCH · DECAY · NOISE · NOISE DECAY · MOD · RATIO \| MOD DECAY · HIGH PASS | One to one (HPF on the noise) | yes |
+| Snare | PI-SD: PTCH DEC HARD TENS RVOL RDEC RING | BODY SNARE | membrane | PITCH · DECAY · HARDNESS · TENSION · WIRES · WIRE DECAY \| RING · DAMP | One to one (RVOL/RDEC → WIRES/WIRE DECAY; RING lets the upper modes ring nearer the fundamental's length); DAMP is ours | yes |
+| Tom | TRX-XT: PTCH DEC RAMP RDEC DAMP DIST DTYP | TONE TOM | body | PITCH · DECAY · SWEEP · SWEEP TIME · NOISE · DAMP \| DRIVE · DRIVE TYPE | One to one (DIST/DTYP → DRIVE/DRIVE TYPE: SOFT leaning to FOLD); NOISE is ours. TRX-XC (congas) has the same set: BODY HAND covers it | yes |
+| Tom | PI-XT: PTCH DEC HARD HAMR TUNE DAMP SIZE POS | BODY TOM | membrane | PITCH · DECAY · HARDNESS · TENSION · DAMP · POSITION \| MALLET · SIZE | Eight for eight, but the MD's TUNE (the two skins' tuning) is our TENSION (the hit's pitch drop); SIZE sets the shell's mode stretch and ring length | yes |
+| Clap | TRX-CP: CLPY TONE HARD RICH RATE ROOM RSIZ RTUN | TONE CLAP | burst | TONE · DECAY · CLAPS · SPREAD · TAIL · RING \| HARDNESS · ROOM TONE | CLPY → CLAPS, RATE → SPREAD, ROOM → TAIL, RSIZ → DECAY, RTUN → ROOM TONE (a low-pass on the tail alone), HARD → HARDNESS (each clap's fall). RICH folded into RING. EFM-CP not taken | yes |
+| Rim | TRX-RS: PTCH DEC DIST; PI-RS: PTCH DEC HARD RING RVOL RDEC | TONE RIM | body | PITCH · DECAY · TONE · CLICK · RING · NOISE | **Cut** by ear (2026-11-10); the code stays (model work). BODY WOOD's rim and sidestick take its place | cut |
+| Rim, clave, block | TRX-CL: PTCH DEC DUAL ENH TUNE CLIC | BODY WOOD | membrane (WOOD material) | PITCH · DECAY · HARDNESS · MATERIAL · RING · CLICK \| DUAL · TUNE | Added scope 4. MATERIAL glides rim → sidestick → clave (the free bar's modes) → woodblock; ENH → RING (the second mode's ring); DUAL a second strike 2–30 ms on; TUNE the second mode | yes |
+| Hand drums | TRX-XC; E12-BC (BC: bongo ↔ conga) | BODY HAND | membrane | PITCH · DECAY · HARDNESS · SHELL · STROKE · TENSION \| POSITION · SIZE | Added scope 4. SHELL bongo → conga → timbale (the steel shell's two ringing modes); STROKE OPEN, SLAP, MUTE in three zones. No MD equivalent of the strokes | yes |
+| Cowbell | TRX-CB: PTCH DEC ENH DAMP TONE BUMP | TONE COWBELL | metal | PITCH · DECAY · INTERVAL · TONE · RING · DRIVE \| DAMP · BUMP | ENH → RING, DAMP (the fast decay's share) and BUMP (an octave pitch blip, 6 ms) on MORE; INTERVAL and DRIVE are ours | yes |
+| Hats | TRX-CH/OH: GAP DEC HPF LPF MTAL | METAL HAT | metal | PITCH · DECAY · TONE · SPREAD · RING · NOISE \| HIGH PASS · LOW PASS | GAP → SPREAD, MTAL → RING; HPF/LPF on MORE beside our TONE (the band-passes' centre). One machine for closed and open (DECAY) | yes |
+| Hats | EFM-HH: PTCH DEC TREM TFRQ MOD MFRQ MDEC FB | FM HAT | fm | PITCH · DECAY · TREMOLO · TREMOLO RATE · MOD · FEEDBACK \| RATIO · MOD DECAY | One to one | yes |
+| Cymbal | TRX-CY: RICH DEC TOP TTUN SIZE PEAK | TONE CYMBAL | metal | PITCH · DECAY · TONE · SPREAD · RING · SHIMMER \| TOP · TOP TUNE | SIZE → PITCH, RICH → SPREAD, PEAK → RING, TOP/TTUN → TOP/TOP TUNE (the top band-pass's level and place); SHIMMER is ours. EFM-CY, PI-RC, PI-CC not taken | yes |
+| Bell, gong | PI-ML (metallica): PTCH DEC HARD TENS | BODY BELL | membrane | PITCH · DECAY · HARDNESS · STRUCTURE · BRIGHT · DAMP \| TENSION | MD's four plus our STRUCTURE (mode stretch), BRIGHT and DAMP | yes |
+| Tambourine | E12-TA (sampled): PTCH DEC HP HPQ STRT RTRG RTIM BEND | METAL JINGLE | metal + burst | PITCH · DECAY · JINGLES · SHAKE · TONE · RING \| HEAD · SPREAD | Added scope 5. Synthesised where the MD's is a sample: the metal bank gated by SHAKER's particles; HEAD a frame drum's thump. RETRIG is the pad's (added scope 2), not the machine's | yes |
+| Shaker | PI-MA: DEC GRNS GLEN SIZE HARD; TRX-MA: ATT SUS REV DAMP RATL RTYP TONE HARD | BODY SHAKER | burst | GRAINS · DECAY · GRAIN LENGTH · TONE · SHAKE · RING \| HARDNESS | PI-MA one to one (SIZE → TONE), plus SHAKE (the gesture's peak) and RING | yes |
+| Utility | GND-SN: PTCH DEC RAMP RDEC | PLAIN SINE | plain | PITCH · DECAY · SWEEP · SWEEP TIME | One to one | yes |
+| Utility | GND-NS: DEC | PLAIN NOISE | plain | DECAY · TONE | Plus TONE (low-pass below ½, high-pass above) | yes |
+| Utility | GND-IM: UP UVAL DOWN DVAL | PLAIN IMPULSE | plain | PITCH · DECAY · SWEEP · SWEEP TIME \| WIDTH | Different: the MD's is one bipolar step (times and levels of its two halves); ours a pitched, swept narrow-pulse train the owner approved. WIDTH (MORE) is the nearest of the MD's set: the positive half's share | yes |
+| Sample only | E12, ROM | OFF | none | the SMP page | E12's START, RETRIG, BEND live on SMP and the pad | yes |
+
+Not taken from the MD: E12's per-machine RTRG/RTIM (our RETRIG is per pad), INP (external input) and MID/CTR machines (MIDI-sending pads are out of 0.4), EFM-RS/CB/CP/CY and the P-I cymbals.
+
+**Fixes before porting** (measured by `just drum-render`, numbers in `manifest.json` → `fixes`; renders `fix-*_before.wav` / `_after.wav`):
+- **FM sweep:** ALGO's kernel holds `inc` a block, so FM KICK's sweep was a 750 Hz staircase (largest step 84 Hz at the extreme setting). DRUM's FM path is its own small loop on ALGO's operator law (PM_CYCLES, feedback over two samples, gain ramps) with `inc` ramped across the block: the largest per-sample move is 1.3 Hz, and the energy above 650 Hz in the sweep's first 30 ms (where the staircase's sidebands land) falls from −49 to −57 dB (extreme), −58 to −74 (mid), −62 to −78 (classic). With SWEEP at 0 the new loop nulls against ALGO's kernel at −52 dB (classic) to −38 dB (ratio 7, full MOD; the kernel's table against our sine). ALGO is untouched.
+- **BODY balance:** MODAL's bank (unnormalised band-passes, Q rising with the mode's pitch) let the upper modes lead. BODY now rings its own 8-mode bank: each mode impulse-normalised, amplitude `ratio^−slope` (HARDNESS, BRIGHT) times the strike position's weight, T60 `ratio^−tilt` (DAMP), struck by a half-sine mallet pulse (MALLET, HARDNESS) with a little of MODAL's burst noise; MODAL's STRUCTURE law keeps the mode tuning. BODY KICK extreme: centroid 102 → 44 Hz, strongest partial 75 → 40 Hz (f0 39), fundamental's share −8.5 → −0.4 dB. BODY BELL mid / extreme: centroid 1370 → 786 Hz / 6502 → 1109 Hz, strongest 4803 → 215 Hz at extreme. BODY SNARE classic: centroid 15.2 k → 503 Hz; BODY TOM extreme: 541 → 89 Hz. MODAL's bank is untouched.
+- **4-bit ADPCM attack:** the encoder now picks the start step index that codes the clip's first 32 ms best (kept in the 4-byte header) and chooses each code with a one-sample look-ahead; the decoder is IMA's, unchanged. CLICK: peak −5.2 → +0.1 dB, first-2 ms SNR 2 → 20 dB; SNARE HIT: first-2 ms SNR 14 → 34 dB; NOISE BURST 16 → 20 dB.
 
 Six kernels (body, fm, membrane, metal, burst, plain) carry every machine; a machine is a law table (ranges, curves, defaults), which is what keeps flash small. The metal bank is the Hortator idea, built our way: one set of six squares a Part, every hat and cymbal voice filtering it.
 

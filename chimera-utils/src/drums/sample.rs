@@ -18,6 +18,10 @@ pub enum Depth {
     B12,
     B8,
     Adpcm4,
+    /// The first prototype's ADPCM: every clip starts at the smallest
+    /// step, so a sharp attack takes ~10 samples to reach (kept for the
+    /// before/after).
+    Adpcm4First,
 }
 
 impl Depth {
@@ -26,6 +30,7 @@ impl Depth {
             Depth::B12 => "12-bit",
             Depth::B8 => "8-bit",
             Depth::Adpcm4 => "4-bit ADPCM",
+            Depth::Adpcm4First => "4-bit ADPCM first",
         }
     }
 
@@ -33,7 +38,8 @@ impl Depth {
         match self {
             Depth::B12 => (n * 3).div_ceil(2),
             Depth::B8 => n,
-            Depth::Adpcm4 => n.div_ceil(2) + 4,
+            // A 4-byte header: the first prediction and step index.
+            Depth::Adpcm4 | Depth::Adpcm4First => n.div_ceil(2) + 4,
         }
     }
 }
@@ -53,9 +59,15 @@ pub fn store(x: &[f32], depth: Depth) -> Clip {
             .iter()
             .map(|&v| q12(v).clamp(-2048, 2047) >> 4 << 4)
             .collect(),
-        Depth::Adpcm4 => adpcm_decode(&adpcm_encode(
-            &x.iter().map(|&v| q12(v)).collect::<Vec<_>>(),
-        )),
+        Depth::Adpcm4 => {
+            let q: Vec<i32> = x.iter().map(|&v| q12(v)).collect();
+            let (idx, codes) = adpcm_encode_fitted(&q);
+            adpcm_decode(idx, &codes)
+        }
+        Depth::Adpcm4First => adpcm_decode(
+            0,
+            &adpcm_encode(0, false, &x.iter().map(|&v| q12(v)).collect::<Vec<_>>()),
+        ),
     };
     Clip { q }
 }
@@ -83,35 +95,75 @@ fn adpcm_step(pred: &mut i32, idx: &mut i32, code: u8, st: &[i32; 89]) {
     *idx = (*idx + INDEX[(code & 7) as usize]).clamp(0, 88);
 }
 
-fn adpcm_encode(x: &[i32]) -> Vec<u8> {
-    let st = steps();
-    let (mut pred, mut idx) = (0i32, 0i32);
-    x.iter()
-        .map(|&v| {
-            let s = st[idx as usize];
-            let mut diff = v - pred;
-            let mut code = 0u8;
-            if diff < 0 {
-                code = 8;
-                diff = -diff;
-            }
-            let mut t = s;
-            for bit in [4u8, 2, 1] {
-                if diff >= t {
-                    code |= bit;
-                    diff -= t;
-                }
-                t >>= 1;
-            }
-            adpcm_step(&mut pred, &mut idx, code, &st);
-            code
-        })
-        .collect()
+/// IMA's code for `diff` at step `s`.
+fn adpcm_code(diff: i32, s: i32) -> u8 {
+    let (mut code, mut d) = if diff < 0 { (8u8, -diff) } else { (0, diff) };
+    let mut t = s;
+    for bit in [4u8, 2, 1] {
+        if d >= t {
+            code |= bit;
+            d -= t;
+        }
+        t >>= 1;
+    }
+    code
 }
 
-fn adpcm_decode(codes: &[u8]) -> Vec<i32> {
+/// Encodes from step index `idx0`. With `look` each code looks one sample
+/// ahead: of IMA's code and its two neighbours, the one whose next sample
+/// also lands nearest (the decoder is IMA's, unchanged).
+fn adpcm_encode(idx0: i32, look: bool, x: &[i32]) -> Vec<u8> {
     let st = steps();
-    let (mut pred, mut idx) = (0i32, 0i32);
+    let (mut pred, mut idx) = (0i32, idx0);
+    let mut out = Vec::with_capacity(x.len());
+    for (n, &v) in x.iter().enumerate() {
+        let base = adpcm_code(v - pred, st[idx as usize]);
+        let code = if !look {
+            base
+        } else {
+            let next = x.get(n + 1).copied().unwrap_or(v);
+            let cost = |c: u8| {
+                let (mut p, mut i) = (pred, idx);
+                adpcm_step(&mut p, &mut i, c, &st);
+                let e0 = (v - p) as i64;
+                let c1 = adpcm_code(next - p, st[i as usize]);
+                adpcm_step(&mut p, &mut i, c1, &st);
+                let e1 = (next - p) as i64;
+                e0 * e0 + e1 * e1
+            };
+            let mag = base & 7;
+            let sign = base & 8;
+            [mag, mag.saturating_sub(1), (mag + 1).min(7)]
+                .into_iter()
+                .map(|m| m | sign)
+                .min_by_key(|&c| cost(c))
+                .unwrap()
+        };
+        adpcm_step(&mut pred, &mut idx, code, &st);
+        out.push(code);
+    }
+    out
+}
+
+/// The clip encoded from the step index that codes it best (its first
+/// 32 ms weigh in), stored in the header: the attack starts at the right
+/// step instead of climbing to it.
+fn adpcm_encode_fitted(x: &[i32]) -> (i32, Vec<u8>) {
+    let head = &x[..x.len().min(512)];
+    let err = |idx: i32| {
+        let d = adpcm_decode(idx, &adpcm_encode(idx, true, head));
+        d.iter()
+            .zip(head)
+            .map(|(a, b)| ((a - b) as i64).pow(2))
+            .sum::<i64>()
+    };
+    let idx = (0..89).min_by_key(|&i| err(i)).unwrap();
+    (idx, adpcm_encode(idx, true, x))
+}
+
+fn adpcm_decode(idx0: i32, codes: &[u8]) -> Vec<i32> {
+    let st = steps();
+    let (mut pred, mut idx) = (0i32, idx0);
     codes
         .iter()
         .map(|&c| {
