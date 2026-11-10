@@ -124,3 +124,17 @@ Machinedrum: manual descriptions only; MDX's text docs for parameter ranges as i
 
 ## Next steps once answered
 Research step (the manual's machine chapter; DAFx drum papers on the reading list), an ADR for the voice and the kit, then a plan. Host-first: each kernel on the desktop with goldens and A/B renders before the unit.
+
+## Owner rulings, 2026-11-10
+
+1. **Chain map:** seven nodes, KIT · MCH · SMP · MIX · FLT · AMP · MOD.
+2. **Picking the pad:** MIX + MINUS / PLUS steps the pad on every DRUM page, and the pad also follows the last hit.
+3. **Pad channels:** collisions with Part channels are fine at first. No special default.
+4. **Pad depth** (owner asked for a recommendation; taken unless he says otherwise): compact pads, as on the Rytm. Each pad has its machine, sample, mix, filter, amp, one mod envelope, one LFO and four routes, about 200 B. The Part's three LFOs are shared by every pad. A full Sound per pad would be 8.2 KB a kit Part, and RAM can't spare that.
+5. **Per-pad output** (recommendation, taken unless he says otherwise): yes. OUTPUT is PART (default), 1, 2 or 3, as on the Rytm's individual outs. The pair buses already exist for Parts, so the cost is the routing, not new buses.
+6. **Ship list:** decided by ear. Render each machine on the host for the owner to hear first.
+7. **Samples:** they must be very short or low-bit. Default import is short clips at a low rate, and a low-bit mode (4-bit ADPCM or 8-bit) is in scope.
+8. **Pads hold only DRUM Sounds** for now. No ALGO or MODAL Sound on a pad.
+9. **Choke defaults:** the Rytm's pairs as groups A–D (RIM/CLAP, the two toms, the two hats, CYMBAL/COWBELL). CUT within a pad, STACK across pads.
+10. **RESERVE** lives in PIT's empty F cell on non-DRUM Parts.
+11. **Envelope follower:** belongs to #224 (cross-Part modulation: a Part's output level as another's mod source), not to DRUM.
