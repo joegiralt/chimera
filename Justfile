@@ -153,6 +153,10 @@ firmware-gate:
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
+# The NRPN guide page (#926), from the chart the firmware answers with.
+nrpn-guide:
+    {{utils}} nrpn-guide > docs/guide/NRPN.md
+
 # The ELF's two banks: <out>.bin (bank 1, never .bank2) and <out>.bk2. Every
 # firmware build has bank 2 (ADR 0194): an empty .bank2 fails.
 bank2-split elf out:

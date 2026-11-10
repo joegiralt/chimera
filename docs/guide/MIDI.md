@@ -20,7 +20,7 @@ A binding's control can be:
 
 The master FX and ORBIT are shared by every Part, but a binding to them still lives in one Part's map and listens on that Part's channel: the Part you learned it on owns it. If two Parts bind the same cell, both move it, and the last message wins. A ring amount moves the playing scene and its saved slot, as a turn on its page does. A fader on HITS or ROTATE covers the ring as it is now, 0 to STEPS or 0 to STEPS − 1, once over its travel.
 
-Every stored parameter also has a fixed NRPN address of its own, which works with no binding at all: see the [NRPN chart](../midi/nrpn-chart.md). A binding on the same NRPN number wins over it.
+Every stored parameter also has a fixed NRPN address of its own, which works with no binding at all: see the [NRPN chart](NRPN.md), which lists every address by engine and block. A binding on the same NRPN number wins over it.
 
 ## The mod wheel and aftertouch in the matrix
 
@@ -235,7 +235,7 @@ Notes, CCs, bend, pressure and the pedal sent on AUTO's channel play the Part yo
 
 ### MIXER
 
-On MIXER's channel these CCs move the mixer and the FX, gliding as a knob does. They are plain 7-bit CCs (0 to 127); for finer steps on the FX, send their NRPNs. An NRPN of the FX's (CHORUS, DELAY, REVERB or COMP, by the [NRPN chart](../midi/nrpn-chart.md)) moves it too, so you reach their other parameters. Notes on MIXER's channel are ignored.
+On MIXER's channel these CCs move the mixer and the FX, gliding as a knob does. They are plain 7-bit CCs (0 to 127); for finer steps on the FX, send their NRPNs. An NRPN of the FX's (CHORUS, DELAY, REVERB or COMP, by the [NRPN chart](NRPN.md)) moves it too, so you reach their other parameters. Notes on MIXER's channel are ignored.
 
 | CC | Part | Parameter |
 |---|---|---|
@@ -331,19 +331,30 @@ On SEQUENCER's channel these CCs drive ORBIT. PLAY/STOP and a ring's ON/OFF act 
 
 ## ECHO: values back to the controller
 
-SETTINGS › MIDI CONFIG › ECHO (the last row of MIDI CONFIG, after SYNC, PORT CONFIG, CHANNELS and CONTROL CHANNELS) is the switch for everything Chimera sends from its MIDI OUT.
+SETTINGS › MIDI CONFIG › ECHO (after SYNC, PORT CONFIG, CHANNELS and CONTROL CHANNELS) is the switch for everything Chimera sends from its MIDI OUT, and where PARAM OUT sends your edits.
 
 ![SETTINGS › MIDI CONFIG › ECHO, annotated](img/midi-echo.png)
 
 1. **Breadcrumb:** `SETTINGS › MIDI › ECHO`.
-2. **ECHO:** `ON` (the default) or `OFF`. A turns it.
-3. **The hint:** `A-F EDIT · MENU BACK`.
+2. **The focused cell**, large: here PARAM OUT, its switch on.
+3. **ECHO** (A): `ON` (the default) or `OFF`.
+4. **PARAM OUT** (B): `OFF` (the default) or `NRPN`.
+5. **The hint:** `A-F EDIT · MENU BACK`.
 
 With ECHO on, each binding whose own ECHO is on sends its cell's value on the Part's channel, on its own control: a CC sends the value, a 14-bit pair both halves, an NRPN its full address and value, a button MIN or MAX as 0 or 127, and a relative encoder the absolute value on its CC, so its LED ring follows. Chimera sends a value when it changes, whatever changed it: Chimera's encoders, a Sound or project load, another binding, ORBIT. It holds a binding's echo for a quarter second after that binding's control last moved, so it never fights your hand. A Part change, a Sound load and a project load send the Part's values all at once.
 
 When two Parts share a channel and bind the same control, the lower-numbered Part echoes.
 
-With ECHO off, MIDI OUT stays silent.
+With ECHO off, MIDI OUT stays silent, PARAM OUT included.
+
+### PARAM OUT: recording your edits
+
+With PARAM OUT at `NRPN`, every cell you turn on Chimera goes out of MIDI OUT and USB as its NRPN from the [NRPN chart](NRPN.md), on the Part's channel, so a sequencer or DAW can record your knob moves and play them back. A cell that is not on the chart (a jack, a mod route, a SETTINGS cell) sends nothing.
+
+- Only your hands on the panel send: a value that came in over MIDI, a Sound or project load, ORBIT's playing and the modulation never go out, so a MIDI thru loop never feeds back.
+- A fast turn sends the latest value, as often as MIDI OUT has room, never a backlog: DIN carries about 300 NRPNs a second.
+- A continuous cell sends 14 bits (CC 99, 98, 6 and 38); a stepped cell or a choice sends its MSB alone (CC 99, 98 and 6).
+- The master FX send on the channel of the Part you are on.
 
 If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with MIDI thru on, an interface's soft thru, a controller that merges its input), ECHO can stay on: an echo that comes back within that quarter second is not taken as a turn, so a relative encoder's cell never walks.
 

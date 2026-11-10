@@ -49,7 +49,9 @@ impl NrpnAddr {
     }
 
     /// `a`'s address. `None`: its block has no disk code (PartMix, Tempo),
-    /// or it isn't a stored param.
+    /// or it isn't a stored param. Inlined: bank 1's PARAM OUT reads it
+    /// too (ADR 0258), and bank 1 never calls into bank 2.
+    #[inline(always)]
     pub const fn of(a: ParamAddr) -> Option<Self> {
         let Some(code) = a.block.disk_code() else {
             return None;
@@ -81,7 +83,9 @@ const fn pack(code: u8, id: u8) -> Option<NrpnAddr> {
 /// The value law. A choice (`Enum`) is stored as its frozen code, so it is
 /// `Code7`, unless a code is past 7 bits (`WIDE_CODES`): then `Index7`. A
 /// continuous param is `Place14`; any other is discrete, `Index7` up to 128
-/// values, `Index14` past (TUNE). A change of law is a renumber.
+/// values, `Index14` past (TUNE). A change of law is a renumber. Inlined,
+/// as `NrpnAddr::of` is (ADR 0258).
+#[inline(always)]
 pub fn law(block: BlockRef, spec: &ParamSpec) -> ValueLaw {
     match spec.kind {
         ParamKind::Enum if WIDE_CODES.contains(&(block, spec.id)) => ValueLaw::Index7,

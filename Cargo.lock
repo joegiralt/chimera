@@ -379,6 +379,7 @@ dependencies = [
  "chimera-engine",
  "chimera-hal",
  "chimera-image",
+ "chimera-midi",
  "hound",
  "object",
  "rayon",

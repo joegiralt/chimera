@@ -1000,7 +1000,8 @@ pub static SYS_PUSH: BlockDef = BlockDef {
     ],
 };
 
-/// MIDI CONFIG › ECHO: DIN OUT's master switch (spec § 8.4).
+/// MIDI CONFIG › ECHO: DIN OUT's master switch (spec § 8.4), and PARAM
+/// OUT, each panel edit's NRPN (ADR 0258).
 pub static SYS_ECHO: BlockDef = BlockDef {
     // Never used before, and below the top: the focus table keeps its
     // size (`MAX_PAGES`).
@@ -1011,7 +1012,7 @@ pub static SYS_ECHO: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Midi, MidiSettings::ECHO),
-        EMPTY,
+        ParamSlot::param(BlockRef::Midi, MidiSettings::PARAM_OUT),
         EMPTY,
         EMPTY,
         EMPTY,

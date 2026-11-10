@@ -21,6 +21,7 @@ mod metrics;
 mod models;
 mod models_burst;
 mod mv;
+mod nrpn_guide;
 mod plot;
 mod reference;
 mod sig;
@@ -61,6 +62,7 @@ usage: chimera-utils [flags] COMMAND …
                            fail unless the .bk2's seal is the .bin's
   door-check ELF           fail on any bank-1 relocation into bank 2
   nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
+  nrpn-guide               docs/guide/NRPN.md: the writable NRPNs by engine and block (#926)
                            and ranges
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
@@ -252,6 +254,10 @@ fn run() -> Result<bool, String> {
                 Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.to_string()),
                 _ => Ok(true),
             }
+        }
+        "nrpn-guide" => {
+            print!("{}", nrpn_guide::page());
+            Ok(true)
         }
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),

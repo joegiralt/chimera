@@ -27,6 +27,7 @@ pub mod lfo_glyph;
 pub mod library;
 pub mod meter;
 pub mod midi;
+pub mod param_out;
 pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
@@ -3074,6 +3075,7 @@ impl UiState {
                     let (tempo, _) = crate::meter::rev_clock();
                     let rev = &mut self.project.edit_part(at).fx.reverb;
                     *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
+                    self.cc_hand(at, a);
                     continue;
                 }
                 if let PageKey::Legacy(p) = self.page {

@@ -260,6 +260,8 @@ pub struct MidiUi {
     stepped: bool,
     seen: Seen,
     echo: echo::EchoPlan,
+    /// The hand's turns waiting to go out as NRPNs (ADR 0258).
+    param_out: super::param_out::ParamOut,
     /// Each Part's controller layer (ADR 0226).
     ctl: layer::Layers,
     /// Learn's first SysEx message, its length 0 for none (#846).
@@ -305,6 +307,7 @@ impl MidiSlot {
             core::ptr::addr_of_mut!((*m).stepped).write(false);
             core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
             echo::silent_at(core::ptr::addr_of_mut!((*m).echo));
+            core::ptr::addr_of_mut!((*m).param_out).write(super::param_out::ParamOut::REST);
             layer::rest_at(core::ptr::addr_of_mut!((*m).ctl));
             // All zero is no message kept (#846).
             core::ptr::write_bytes(core::ptr::addr_of_mut!((*m).sx_first), 0, 1);
@@ -386,7 +389,7 @@ fn bind_at(own: &MidiMap, layer: &MidiMap, j: usize) -> Option<Binding> {
 
 /// `a`'s stored value on Part `p`; an ORBIT ring's on the playing scene.
 #[inline(always)]
-fn stored(project: &Project, p: PartId, a: ParamAddr) -> Option<f32> {
+pub(in crate::ui) fn stored(project: &Project, p: PartId, a: ParamAddr) -> Option<f32> {
     if let BlockRef::OrbitRing(r) = a.block {
         let ring = project.orbit().live().rings.get(usize::from(r.get()))?;
         return Some(ring.get(a.param));
@@ -1145,6 +1148,9 @@ impl UiState {
     /// stored one. The door's `hand`.
     pub(super) fn hand_in(&mut self, p: PartId, a: ParamAddr) {
         self.cc.fresh();
+        // PARAM OUT only where something is sent: the bench is deaf.
+        #[cfg(feature = "midi-map")]
+        self.cc.ui().param_out.turned(p, a);
         let i = p.index();
         let map = self.project.part(p).sound.map;
         let layer = *self.cc.ui().ctl.layer(i);
