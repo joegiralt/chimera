@@ -75,9 +75,11 @@ pub struct FileName {
 
 impl FileName {
     /// `stem` is 1..=8 and `ext` 0..=3 bytes of A-Z 0-9. Const, so a fixed
-    /// name is checked at compile time.
+    /// name is checked at compile time. The root, TUNINGS and MAPS also
+    /// take `~` in a stem: a computer's short name for a long one (ADR
+    /// 0259).
     pub const fn new(dir: Dir, stem: &[u8], ext: &[u8]) -> Option<FileName> {
-        let tilde = matches!(dir, Dir::Root);
+        let tilde = matches!(dir, Dir::Root | Dir::Tunings | Dir::Maps);
         if !name_ok(stem, 1, 8, tilde) || !name_ok(ext, 0, 3, false) {
             return None;
         }
@@ -120,6 +122,10 @@ const fn name_ok(b: &[u8], min: usize, max: usize, tilde: bool) -> bool {
     }
     true
 }
+
+/// `Store::list_long`'s callback: a file, its length and its long name;
+/// `Break` stops the listing.
+pub type LongEach<'a> = dyn FnMut(FileName, u32, &[u8]) -> ControlFlow<()> + 'a;
 
 /// Why a store operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +212,21 @@ pub trait Store {
         dir: Dir,
         f: &mut dyn FnMut(FileName, u32),
     ) -> Result<(), StoreError>;
+    /// `list`, each file with its long name as a display shows it (upper
+    /// case ASCII, `?` for the rest, at most 32 B), empty without one,
+    /// until `f` breaks: a caller bounds its time. A store that keeps no
+    /// long names lists them all empty.
+    fn list_long(
+        &mut self,
+        vol: VolumeId,
+        dir: Dir,
+        f: &mut LongEach<'_>,
+    ) -> Result<(), StoreError> {
+        let mut done = false;
+        self.list(vol, dir, &mut |n, len| {
+            done = done || f(n, len, b"").is_break();
+        })
+    }
     fn read(
         &mut self,
         vol: VolumeId,

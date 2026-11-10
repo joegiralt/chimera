@@ -3,7 +3,7 @@
 
     python3 chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep, flash,
                                                    ls [tapes|sounds|maps], rm|get /CHIMERA/SOUNDS/S####### or
-                                                   /CHIMERA/MAPS/<stem>; rm also /CHIMERA/TUNINGS/TUNE<n>.SCL|KBM
+                                                   /CHIMERA/MAPS/<stem>; rm also /CHIMERA/TUNINGS/<NAME>.SCL|KBM
     python3 chimera-usb.py get <remote> <local>    the file `get` reads, checked and written to <local>
     python3 chimera-usb.py put <local> <remote> [--over]
                                                    a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
@@ -14,11 +14,12 @@
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1; /CHIMERA/MAPS/ the stem of the
                                                    map's name)
-    python3 chimera-usb.py tuning <1-8> <file.scl> [<file.kbm>]
-                                                   a Scala tuning onto the card as /CHIMERA/TUNINGS/TUNE<n>.SCL,
-                                                   with its keyboard map as TUNE<n>.KBM (4 KiB each at most):
-                                                   SETTINGS > AUDIO > TUNING's TUNE<n> plays it; `rm` takes
-                                                   either off again (a Part on TUNE<n> then plays 12-TET)
+    python3 chimera-usb.py tuning <file.scl> [<file.kbm>]
+                                                   a Scala tuning onto the card under its own name,
+                                                   /CHIMERA/TUNINGS/<NAME>.SCL, with its keyboard map as <NAME>.KBM
+                                                   (4 KiB each at most; the name 1-8 of A-Z and 0-9): past MTS,
+                                                   SETTINGS > AUDIO > TUNING lists it; `rm` takes
+                                                   either off again (a Part on it then plays 12-TET)
     python3 chimera-usb.py update <file.bin> <file.bk2>
                                                    flash a build's pair in one go (developers, `just flash`): the
                                                    .bk2 onto the card, the .bin by DFU, and the first boot
@@ -1029,10 +1030,13 @@ def main(argv, env) -> int:
     if argv[0] == "card-wait":
         return card_wait(t, env, argv[1:]) if len(argv) > 1 else fail("card-wait takes <bench> [N|kind]")
     if argv[0] == "tuning":
-        if len(argv) not in (3, 4) or argv[1] not in [str(n) for n in range(1, 9)]:
-            return fail("tuning takes <1-8> <file.scl> [<file.kbm>]")
-        for local, ext in zip(argv[2:], ("SCL", "KBM")):
-            rc = put_file(t, local, "%sTUNE%s.%s" % (TUNINGS, argv[1], ext))
+        if len(argv) not in (2, 3) or not argv[1].lower().endswith(".scl"):
+            return fail("tuning takes <file.scl> [<file.kbm>]")
+        stem = os.path.splitext(os.path.basename(argv[1]))[0].upper()
+        if not re.fullmatch(r"[A-Z0-9]{1,8}", stem):
+            return fail("tuning: %s is not an 8.3 name: rename it to 1-8 of A-Z and 0-9" % stem)
+        for local, ext in zip(argv[1:], ("SCL", "KBM")):
+            rc = put_file(t, local, "%s%s.%s" % (TUNINGS, stem, ext))
             if rc:
                 return rc
         return 0

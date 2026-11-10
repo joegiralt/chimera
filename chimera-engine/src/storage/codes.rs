@@ -186,17 +186,29 @@ pub const RETIRED_BLOCKS: &[u8] = &[9, 11];
 /// and MODE ONE (0), which WALK's DIRECTION and TRON hold (ADR 0203).
 pub const RETIRED_CODES: &[(u8, u8, u8)] = &retired_codes();
 
-const fn retired_codes() -> [(u8, u8, u8); RetiredModel::ALL.len() + 1] {
+/// TUNING's old card slots, `TUNE1`–`TUNE8` (ADR 0240), gone for SCALA's
+/// named file (ADR 0259): a project on one plays 12-TET.
+const RETIRED_TUNES: usize = 8;
+
+const fn retired_codes() -> [(u8, u8, u8); RetiredModel::ALL.len() + 1 + RETIRED_TUNES] {
     let Some(block) = BlockRef::TapeEngine.disk_code() else {
         panic!("TAPE_ENG has a code")
     };
-    let mut out = [(0, 0, 0); RetiredModel::ALL.len() + 1];
+    let Some(part) = BlockRef::Part.disk_code() else {
+        panic!("PART has a code")
+    };
+    let mut out = [(0, 0, 0); RetiredModel::ALL.len() + 1 + RETIRED_TUNES];
     let mut i = 0;
     while i < RetiredModel::ALL.len() {
         out[i] = (block, TapeEngineParams::MODEL.0, RetiredModel::ALL[i] as u8);
         i += 1;
     }
     out[i] = (block, TapeEngineParams::MODE.0, RetiredMode::One.code());
+    let mut t = 0;
+    while t < RETIRED_TUNES {
+        out[i + 1 + t] = (part, crate::part::PartParams::TUNING.0, 6 + t as u8);
+        t += 1;
+    }
     out
 }
 

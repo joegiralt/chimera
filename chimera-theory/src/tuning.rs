@@ -120,6 +120,12 @@ fn pitch(w: &[u8]) -> Option<f32> {
     c.is_finite().then_some(c)
 }
 
+/// A `.scl`'s description: its first line that isn't a comment, trimmed
+/// (blank is allowed). What the TUNING cell names a file by (ADR 0259).
+pub fn description(text: &[u8]) -> &[u8] {
+    lines(text).next().unwrap_or_default()
+}
+
 impl Scale {
     pub fn parse(text: &[u8]) -> Result<Scale, SclError> {
         // The description line may be blank: only comments are skipped
@@ -201,6 +207,22 @@ impl Keymap {
         map: [None; MAX_STEPS],
     };
 
+    /// KEYBOARD (ADR 0259, stock's mapping): a scale of `steps` degrees
+    /// over whole octaves of keys, `steps` rounded up to a multiple of 12,
+    /// each period from a C, degree 0 on middle C at 12-TET's pitch. The
+    /// keys past the degrees are unmapped: `offsets_into` names them.
+    pub fn keyboard(steps: usize) -> Keymap {
+        let mut map = [None; MAX_STEPS];
+        for (d, m) in map.iter_mut().enumerate().take(steps) {
+            *m = Some(d as u16);
+        }
+        Keymap {
+            size: (steps.clamp(1, MAX_STEPS).div_ceil(12) * 12) as u8,
+            map,
+            ..Keymap::LINEAR
+        }
+    }
+
     pub fn parse(text: &[u8]) -> Result<Keymap, KbmError> {
         // No closure called twice: the machine outliner would share its
         // calls from bank 1 (ADR 0175).
@@ -265,7 +287,8 @@ impl Keymap {
             0 => steps as i32,
             o => i32::from(o),
         };
-        let m = self.map[i.rem_euclid(size) as usize]?;
+        // KEYBOARD's period may pass the map's 128 (`keyboard`).
+        let m = (*self.map.get(i.rem_euclid(size) as usize)?)?;
         Some(i.div_euclid(size) * octave + i32::from(m))
     }
 }
@@ -290,12 +313,13 @@ fn degree_in(map: Option<&Keymap>, key: u8, steps: usize) -> Option<i32> {
 /// `Keymap::LINEAR`.
 pub fn offsets(s: &Scale, map: Option<&Keymap>) -> [f32; 128] {
     let mut out = [0.0; 128];
-    offsets_into(s, map, &mut out);
+    let _ = offsets_into(s, map, &mut out);
     out
 }
 
-/// `offsets` into `out`: no table on the caller's stack.
-pub fn offsets_into(s: &Scale, map: Option<&Keymap>, out: &mut [f32; 128]) {
+/// `offsets` into `out`: no table on the caller's stack. Returns the keys
+/// `map` leaves unmapped or out of its range, a bit a key.
+pub fn offsets_into(s: &Scale, map: Option<&Keymap>, out: &mut [f32; 128]) -> u128 {
     const L: Keymap = Keymap::LINEAR;
     let (reference, middle, reference_st) = match map {
         Some(k) => (k.reference, k.middle, k.reference_st),
@@ -304,6 +328,7 @@ pub fn offsets_into(s: &Scale, map: Option<&Keymap>, out: &mut [f32; 128]) {
     let at_ref =
         degree_in(map, reference, s.len()).unwrap_or(i32::from(reference) - i32::from(middle));
     let ref_cents = s.cents(at_ref);
+    let mut unmapped = 0;
     for (key, o) in out.iter_mut().enumerate() {
         *o = match degree_in(map, key as u8, s.len()) {
             Some(d) => {
@@ -314,9 +339,13 @@ pub fn offsets_into(s: &Scale, map: Option<&Keymap>, out: &mut [f32; 128]) {
                     0.0
                 }
             }
-            None => 0.0,
+            None => {
+                unmapped |= 1 << key;
+                0.0
+            }
         };
     }
+    unmapped
 }
 
 /// `x` within `lo..=hi` (`clamp` links float formatting).

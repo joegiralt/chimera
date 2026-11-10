@@ -115,13 +115,43 @@ impl<'a, B: Blocks> Fs<'a, B> {
         f: &mut dyn FnMut(FileName, u32),
     ) -> Result<(), FsError<B::Error>> {
         let at = self.open(dir)?;
-        self.scan(at, |s, _| {
+        self.scan(at, |s, _, _| {
             if let Slot::File(e) = s
+                && !e.hidden
                 && let Some(name) = e.name.to_file(dir)
             {
                 f(name, e.len);
             }
             ControlFlow::<()>::Continue(())
+        })?;
+        Ok(())
+    }
+
+    /// `list`, each file with its long name as a display shows it
+    /// (`dir::Long`), empty if it has none, until `f` breaks. A long name starting `.` is a
+    /// computer's own file (a Mac's `._NAME`): never listed (ADR 0259).
+    pub fn list_long(
+        &mut self,
+        dir: Dir,
+        f: &mut chimera_hal::store::LongEach<'_>,
+    ) -> Result<(), FsError<B::Error>> {
+        let at = self.open(dir)?;
+        let mut long = dir::Long::new();
+        self.scan(at, |s, _, raw| {
+            match s {
+                Slot::Lfn(_) => long.see(raw),
+                Slot::File(e) => {
+                    let l = long.take(&e.name);
+                    if !e.hidden
+                        && l.first() != Some(&b'.')
+                        && let Some(name) = e.name.to_file(dir)
+                    {
+                        return f(name, e.len, l);
+                    }
+                }
+                _ => long.reset(),
+            }
+            ControlFlow::Continue(())
         })?;
         Ok(())
     }
@@ -361,7 +391,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
             .layout()
             .cluster_block(e.start)
             .ok_or(FsError::Corrupt)?;
-        let held = self.scan(Root::Cluster(e.start), |s, l| {
+        let held = self.scan(Root::Cluster(e.start), |s, l, _| {
             let dot = l.block == first && l.slot < 2;
             match s {
                 Slot::Free | Slot::End => ControlFlow::Continue(()),
@@ -418,6 +448,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
             name,
             start: 0,
             len: 0,
+            hidden: false,
         };
         self.put_entry(at, &empty, Attr::File)?;
         if let Some(old) = old {
@@ -542,6 +573,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
             name,
             start: c,
             len: 0,
+            hidden: false,
         };
         self.put_entry(at, &e, Attr::Dir)
     }
@@ -597,6 +629,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
                         name,
                         start,
                         len: 0,
+                        hidden: false,
                     },
                     Attr::Dir,
                     layout.kind(),
@@ -702,7 +735,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
             at: [Loc { block: 0, slot: 0 }; MAX_LFN],
             n: 0,
         };
-        let hit = self.scan(dir, |s, at| {
+        let hit = self.scan(dir, |s, at, _| {
             match s {
                 Slot::File(e) | Slot::Dir(e) if e.name == name => {
                     return ControlFlow::Break((s, at));
@@ -722,7 +755,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
     fn scan<T>(
         &mut self,
         dir: Root,
-        mut f: impl FnMut(Slot, Loc) -> ControlFlow<T>,
+        mut f: impl FnMut(Slot, Loc, &[u8; ENTRY]) -> ControlFlow<T>,
     ) -> Result<Option<T>, FsError<B::Error>> {
         let layout = *self.table.layout();
         let (mut block, mut left, mut cluster) = match dir {
@@ -752,7 +785,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
                 .map_err(FsError::Dev)?;
             for (slot, raw) in self.buf.as_chunks::<ENTRY>().0.iter().enumerate() {
                 let s = parse(raw, layout.kind());
-                if let ControlFlow::Break(t) = f(s, Loc { block, slot }) {
+                if let ControlFlow::Break(t) = f(s, Loc { block, slot }, raw) {
                     return Ok(Some(t));
                 }
                 if s == Slot::End {

@@ -28,9 +28,14 @@ pub fn file_put() {
 
 use crate::hw::MAX_PARTS;
 
+pub use crate::scala_name::ScalaName;
+
 /// The tables: one a Part, then the MTS table.
 pub struct Tunings {
     keys: [[AtomicU32; 128]; MAX_PARTS + 1],
+    /// Each Part's silent keys, a bit a key: KEYBOARD's spare ones (ADR
+    /// 0259). A note-on there is refused.
+    silent: [[AtomicU32; 4]; MAX_PARTS],
     /// A bit a Part that plays the MTS table, not its own.
     mts: AtomicU8,
 }
@@ -63,6 +68,27 @@ pub fn set(part: usize, table: &[f32; 128]) {
     let _ = (part, table);
 }
 
+/// Whether Part `part`'s `key` is silent (`Tunings::silent`); never
+/// without `tuning`.
+#[inline(always)]
+pub fn silent(part: usize, key: u8) -> bool {
+    #[cfg(feature = "tuning")]
+    return TUNINGS.silent(part, key);
+    #[cfg(not(feature = "tuning"))]
+    {
+        let _ = (part, key);
+        false
+    }
+}
+
+/// `Tunings::silence` on `TUNINGS`; nothing without `tuning`.
+pub fn silence(part: usize, keys: u128) {
+    #[cfg(feature = "tuning")]
+    TUNINGS.silence(part, keys);
+    #[cfg(not(feature = "tuning"))]
+    let _ = (part, keys);
+}
+
 /// `Tunings::follow_mts` on `TUNINGS`; nothing without `tuning`.
 pub fn follow_mts(part: usize, on: bool) {
     #[cfg(feature = "tuning")]
@@ -89,6 +115,7 @@ impl Tunings {
     pub const fn new() -> Self {
         Self {
             keys: [const { [const { AtomicU32::new(0) }; 128] }; MAX_PARTS + 1],
+            silent: [const { [const { AtomicU32::new(0) }; 4] }; MAX_PARTS],
             mts: AtomicU8::new(0),
         }
     }
@@ -105,9 +132,27 @@ impl Tunings {
         f32::from_bits(self.keys[t][usize::from(key & 127)].load(Ordering::Relaxed))
     }
 
-    /// Part `part` plays `table` (12-TET is all zero).
+    /// Whether Part `part`'s `key` sounds nothing: the audio's note-on
+    /// check. Never on the MTS table.
+    #[inline(always)]
+    pub fn silent(&self, part: usize, key: u8) -> bool {
+        let part = part % MAX_PARTS;
+        let k = usize::from(key & 127);
+        self.mts.load(Ordering::Relaxed) >> part & 1 == 0
+            && self.silent[part][k / 32].load(Ordering::Relaxed) >> (k % 32) & 1 != 0
+    }
+
+    /// Part `part`'s silent keys are `keys`, a bit a key.
+    pub fn silence(&self, part: usize, keys: u128) {
+        for (i, w) in self.silent[part % MAX_PARTS].iter().enumerate() {
+            w.store((keys >> (32 * i)) as u32, Ordering::Relaxed);
+        }
+    }
+
+    /// Part `part` plays `table` (12-TET is all zero), every key sounding.
     pub fn set(&self, part: usize, table: &[f32; 128]) {
         self.follow_mts(part, false);
+        self.silence(part, 0);
         for (k, &o) in self.keys[part % MAX_PARTS].iter().zip(table) {
             k.store(o.to_bits(), Ordering::Relaxed);
         }

@@ -955,37 +955,43 @@ class Put(unittest.TestCase):
         self.assertEqual(u.ends, [], "a whole file, not chunks")
         self.assertEqual(r.stdout, b"/CHIMERA/BENCH/BEDS.CHK 5000\n")
 
-    def test_tuning_puts_a_scala_file_and_its_map_as_tune_n(self):
+    def test_tuning_puts_a_scala_file_and_its_map_under_the_scales_stem(self):
         scl = b"! pelog\nPelog\n2\n120.\n2/1\n"
         kbm = b"0\n0\n127\n60\n69\n432.0\n2\n"
-        f, k = self.local("pelog.scl", scl), self.local("pelog.kbm", kbm)
+        f, k = self.local("pelog.scl", scl), self.local("java432.kbm", kbm)
         with PutUnit() as u:
-            r = run_tool(["tuning", "3", f, k], u.target)
+            r = run_tool(["tuning", f, k], u.target)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(u.requests[0], b"put /CHIMERA/TUNINGS/TUNE3.SCL %d %08x" % (len(scl), zlib.crc32(scl)))
-        self.assertEqual(u.requests[1], b"put /CHIMERA/TUNINGS/TUNE3.KBM %d %08x" % (len(kbm), zlib.crc32(kbm)))
+        self.assertEqual(u.requests[0], b"put /CHIMERA/TUNINGS/PELOG.SCL %d %08x" % (len(scl), zlib.crc32(scl)))
+        self.assertEqual(u.requests[1], b"put /CHIMERA/TUNINGS/PELOG.KBM %d %08x" % (len(kbm), zlib.crc32(kbm)))
         self.assertEqual(u.data, scl + kbm)
-        self.assertEqual(r.stdout, b"/CHIMERA/TUNINGS/TUNE3.SCL %d\n/CHIMERA/TUNINGS/TUNE3.KBM %d\n" % (len(scl), len(kbm)))
+        self.assertEqual(r.stdout, b"/CHIMERA/TUNINGS/PELOG.SCL %d\n/CHIMERA/TUNINGS/PELOG.KBM %d\n" % (len(scl), len(kbm)))
 
     def test_rm_takes_a_tuning_file_off_the_card(self):
-        self.assertIn("rm also /CHIMERA/TUNINGS/TUNE<n>.SCL|KBM", tool.__doc__)
-        line = b"rm /CHIMERA/TUNINGS/TUNE3.SCL"
+        self.assertIn("rm also /CHIMERA/TUNINGS/<NAME>.SCL|KBM", tool.__doc__)
+        line = b"rm /CHIMERA/TUNINGS/PELOG.SCL"
         self.assertEqual(tool.first_wait(line.decode()), tool.LS_WAIT_S)
         with PutUnit(answers={line: b"OK\n"}) as u:
-            r = run_tool(["rm", "/CHIMERA/TUNINGS/TUNE3.SCL"], u.target)
+            r = run_tool(["rm", "/CHIMERA/TUNINGS/PELOG.SCL"], u.target)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(u.requests, [line])
 
-    def test_tuning_refuses_a_slot_past_8_and_a_file_past_4_kib(self):
+    def test_tuning_refuses_a_name_past_8_3_and_a_file_past_4_kib(self):
         f = self.local("big.scl", bytes(4 * 1024 + 1))
-        g = self.local("ok.scl", b"x\n1\n2/1\n")
+        long = self.local("bohlen-pierce.scl", b"x\n1\n2/1\n")
+        txt = self.local("ok.txt", b"x\n1\n2/1\n")
         with PutUnit() as u:
-            big = run_tool(["tuning", "1", f], u.target)
-            nine = run_tool(["tuning", "9", g], u.target)
+            big = run_tool(["tuning", f], u.target)
+            named = run_tool(["tuning", long], u.target)
+            other = run_tool(["tuning", txt], u.target)
+            none = run_tool(["tuning"], u.target)
         self.assertEqual(big.returncode, 1)
         self.assertIn(b"put takes at most 4096", big.stderr)
-        self.assertEqual(nine.returncode, 1)
-        self.assertIn(b"tuning takes <1-8>", nine.stderr)
+        self.assertEqual(named.returncode, 1)
+        self.assertIn(b"BOHLEN-PIERCE is not an 8.3 name: rename it to 1-8 of A-Z and 0-9", named.stderr)
+        self.assertEqual(other.returncode, 1)
+        self.assertIn(b"tuning takes <file.scl> [<file.kbm>]", other.stderr)
+        self.assertIn(b"tuning takes <file.scl> [<file.kbm>]", none.stderr)
         self.assertEqual(u.requests, [])
 
     def test_a_beds_table_over_9_kib_is_refused_before_sending(self):

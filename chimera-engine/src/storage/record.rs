@@ -92,6 +92,11 @@ pub enum RecordTag {
     /// A controller map file's section: its code (`midi_map::ctl::Section`),
     /// then a `Bindings` payload. Not critical.
     MapSection,
+    /// A project Part's Scala file (ADR 0259): its stem, 8 B padded, then
+    /// the id of the name it shows (`scala_name::name_id`, u32 LE; a
+    /// record of 8 B, from before long names, has none), after the Part's
+    /// `Origin`. Not critical.
+    Scala,
 }
 
 impl RecordTag {
@@ -127,6 +132,7 @@ impl RecordTag {
             RecordTag::PerfRoutes => 0x0020,
             RecordTag::Controller => 0x0021,
             RecordTag::MapSection => 0x0022,
+            RecordTag::Scala => 0x0023,
         }
     }
 
@@ -162,6 +168,7 @@ impl RecordTag {
             0x0020 => RecordTag::PerfRoutes,
             0x0021 => RecordTag::Controller,
             0x0022 => RecordTag::MapSection,
+            0x0023 => RecordTag::Scala,
             _ => return None,
         })
     }

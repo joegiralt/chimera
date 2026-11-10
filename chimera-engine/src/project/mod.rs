@@ -246,6 +246,18 @@ impl Project {
         }
     }
 
+    /// Part `p`'s TUNING plays Scala file `s` (ADR 0259): a project edit.
+    /// Nothing without `tuning`.
+    pub fn set_scala(&mut self, p: PartId, s: Option<crate::tuning::ScalaName>) {
+        self.bump();
+        #[cfg(feature = "tuning")]
+        {
+            self.perf.parts[p.index()].scala = s.unwrap_or_default();
+        }
+        #[cfg(not(feature = "tuning"))]
+        let _ = (p, s);
+    }
+
     /// KEEP MAP (ADR 0253): Part `p`'s Sound as it is now reads Clean
     /// (its kept rows written over a load's), or, `false`, as its slot
     /// says. Bank 2's (`bank2.x`): only the MIDI UI calls it.

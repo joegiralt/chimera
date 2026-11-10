@@ -1,7 +1,7 @@
 //! `rm` and `get`: a library Sound's pair over the console (library spec
 //! § Audio and card rules), or a controller map's (ADR 0226); `rm` also a
-//! tuning file (ADR 0240). Only `/CHIMERA/SOUNDS/S#######`,
-//! `/CHIMERA/MAPS/<stem>` and, for `rm`, `/CHIMERA/TUNINGS/TUNE#.SCL|KBM`
+//! tuning file (ADR 0240, 0259). Only `/CHIMERA/SOUNDS/S#######`,
+//! `/CHIMERA/MAPS/<stem>` and, for `rm`, `/CHIMERA/TUNINGS/<stem>.SCL|KBM`
 //! parse, so neither verb names any other file on the card.
 
 use core::fmt::{self, Write};
@@ -45,7 +45,7 @@ pub enum RmArg {
 
 impl Arg for RmArg {
     const USAGE: &'static str =
-        "/CHIMERA/SOUNDS/S#######, /CHIMERA/MAPS/<stem> or /CHIMERA/TUNINGS/TUNE#.SCL|KBM";
+        "/CHIMERA/SOUNDS/S#######, /CHIMERA/MAPS/<stem> or /CHIMERA/TUNINGS/<stem>.SCL|KBM";
     fn parse(words: Words<'_>) -> Option<Self> {
         let mut w = words;
         match w.next().and_then(tuning) {

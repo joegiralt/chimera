@@ -23,6 +23,8 @@ const SIZE: usize = 28;
 const END: u8 = 0x00;
 const FREE: u8 = 0xE5;
 const ATTR_READ_ONLY: u8 = 0x01;
+/// A computer's hidden file (`._NAME`, `.DS_Store`): never listed.
+const ATTR_HIDDEN: u8 = 0x02;
 const ATTR_LABEL: u8 = 0x08;
 const ATTR_DIR: u8 = 0x10;
 const ATTR_FILE: u8 = 0x20;
@@ -90,6 +92,8 @@ pub struct Entry {
     pub name: ShortName,
     pub start: u32,
     pub len: u32,
+    /// The hidden attribute: matched, but never listed (ADR 0259).
+    pub hidden: bool,
 }
 
 /// What a directory slot holds.
@@ -140,6 +144,7 @@ pub fn parse(raw: &[u8; ENTRY], kind: FsKind) -> Slot {
         name,
         start: hi << 16 | u32::from(u16_at(raw, CLUSTER_LO)),
         len: u32::from_le_bytes([raw[SIZE], raw[SIZE + 1], raw[SIZE + 2], raw[SIZE + 3]]),
+        hidden: attr & ATTR_HIDDEN != 0,
     };
     if attr & ATTR_DIR != 0 {
         Slot::Dir(e)
@@ -196,4 +201,93 @@ pub fn lfn_checksum(name: &ShortName) -> u8 {
     name.0
         .iter()
         .fold(0u8, |sum, &c| sum.rotate_right(1).wrapping_add(c))
+}
+
+/// The most of a long name `Long` keeps: what a display shows of it.
+pub const LONG_MAX: usize = 32;
+/// The longest long-name run: 255 characters, 13 a slot.
+const LFN_SLOTS: u8 = 20;
+const LFN_LAST: u8 = 0x40;
+/// `Long::next` once slot 1 is read.
+const WHOLE: u8 = LFN_SLOTS + 1;
+/// A long-name slot's 13 UCS-2 characters, by byte offset.
+const LFN_CHARS: [usize; 13] = [1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30];
+
+/// A long name read off its run of slots, as a display shows it: upper
+/// case ASCII, `?` for anything else, its first `LONG_MAX` characters.
+/// Read-only: Chimera never writes one. A run whose order or checksum is
+/// off, or which doesn't end on its entry, is no name (ADR 0259).
+pub struct Long {
+    b: [u8; LONG_MAX],
+    /// Characters before the terminator, as far as seen.
+    len: usize,
+    /// The slot expected next (counting down to 1), `WHOLE` after slot 1,
+    /// 0 with none.
+    next: u8,
+    sum: u8,
+}
+
+impl Default for Long {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Long {
+    pub const fn new() -> Long {
+        Long {
+            b: [0; LONG_MAX],
+            len: 0,
+            next: 0,
+            sum: 0,
+        }
+    }
+
+    /// A long-name slot, in directory order.
+    pub fn see(&mut self, raw: &[u8; ENTRY]) {
+        let (order, sum) = (raw[0], raw[LFN_SUM]);
+        let seq = order & !LFN_LAST;
+        if order & LFN_LAST != 0 {
+            if seq == 0 || seq > LFN_SLOTS {
+                self.next = 0;
+                return;
+            }
+            (self.next, self.sum, self.len) = (seq, sum, usize::from(seq) * 13);
+        } else if self.next == 0 || seq != self.next || sum != self.sum {
+            self.next = 0;
+            return;
+        }
+        let base = usize::from(seq - 1) * 13;
+        for (i, &at) in LFN_CHARS.iter().enumerate() {
+            let c = u16::from_le_bytes([raw[at], raw[at + 1]]);
+            if c == 0 {
+                self.len = self.len.min(base + i);
+            }
+            if let Some(to) = self.b.get_mut(base + i) {
+                *to = match c {
+                    0x20..=0x7e => (c as u8).to_ascii_uppercase(),
+                    _ => b'?',
+                };
+            }
+        }
+        // After slot 1 the run is whole: its entry comes next.
+        self.next = if seq > 1 { seq - 1 } else { WHOLE };
+    }
+
+    /// Any other slot: a run not followed by its entry is no name.
+    pub fn reset(&mut self) {
+        self.next = 0;
+    }
+
+    /// The entry `name` closing the run: its long name if the run is whole
+    /// and its checksum `name`'s, else empty. The run is spent either way.
+    pub fn take(&mut self, name: &ShortName) -> &[u8] {
+        let whole = self.next == WHOLE && self.sum == lfn_checksum(name);
+        self.next = 0;
+        if whole {
+            &self.b[..self.len.min(LONG_MAX)]
+        } else {
+            &[]
+        }
+    }
 }

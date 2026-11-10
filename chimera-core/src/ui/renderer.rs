@@ -133,6 +133,8 @@ pub struct Frame<'a> {
     pub lfo: Option<crate::ui::lfo_glyph::Head>,
     /// PIT's corner (ADR 0201).
     pub tuner: &'a crate::ui::pit_tuner::Shown,
+    /// What SETTINGS › TUNING's band says of a Part's file (ADR 0259).
+    pub tuned: &'a crate::ui::tuning::Tuned,
 }
 
 impl Frame<'_> {
@@ -837,13 +839,13 @@ impl Renderer {
         }
         let part = &f.parts[f.active_part.index()];
         let sound = &part.sound;
+        let tuning = view
+            .addr()
+            .and_then(|a| view::tuning_note(a, f.tuned, f.active_part, part));
         let note = view
             .addr()
-            .and_then(|a| {
-                view::band_note(a, sound, f.ctx.src)
-                    .or(view::delay_note(a, &f.ctx))
-                    .or(view::tuning_note(a, part.mix.tuning))
-            })
+            .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)))
+            .or(tuning.as_ref().map(|l| l.as_str()))
             .or_else(|| view::clash_note(&view, &f.ctx));
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
             (Some(s), _) => {
@@ -1428,6 +1430,28 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
     {
         let mut buf = FmtBuf::new();
         crate::ui::onset::time_text(&mut buf, v, rate.get(), frames);
+        return buf;
+    }
+    // SCALA reads the Part's file by the name it shows (ADR 0259): its
+    // first 7 characters (8 wide ones run into the next cell), a longer
+    // one scrolling while the cell has focus.
+    let part = &f.parts[f.active_part.index()];
+    if view.addr() == Some(view::TUNING)
+        && part.mix.tuning == crate::part::TUNING_SCALA
+        && let Some(n) = part.scala()
+    {
+        use crate::ui::tuning_walk::{SHOWN, marquee};
+        const CELL: usize = 7;
+        let mut name = [0; crate::scala_name::LONG_MAX];
+        let len = SHOWN.name(n, &mut name);
+        let shown: &[u8] = if len > 0 { &name[..len] } else { n.as_bytes() };
+        let at = match i == f.focus {
+            true => marquee(shown.len(), CELL, f.clock.frame()),
+            false => 0,
+        };
+        let w = &shown[at..shown.len().min(at + CELL)];
+        let mut buf = FmtBuf::new();
+        let _ = core::fmt::Write::write_str(&mut buf, core::str::from_utf8(w).unwrap_or_default());
         return buf;
     }
     if let Some(t) = view

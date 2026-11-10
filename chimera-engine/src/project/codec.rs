@@ -233,6 +233,13 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
         if let Some(n) = p.ctl.get(i).copied().flatten() {
             w.put(RecordTag::Controller, &n.padded())?;
         }
+        if let Some(s) = part.scala() {
+            // The stem, then the shown name's id (ADR 0259).
+            let mut b = [0; 12];
+            b[..8].copy_from_slice(&s.padded());
+            b[8..].copy_from_slice(&s.id().to_le_bytes());
+            w.put(RecordTag::Scala, &b)?;
+        }
     }
     encode_orbit(&p.orbit, w)
 }
@@ -587,6 +594,21 @@ impl ProjectCheck {
                 }
                 Ok(())
             }
+            (ReadTag::Known(RecordTag::Scala), Context::Part(n)) => {
+                // The stem, then (since long names, ADR 0259) the shown
+                // name's id; a name this firmware can't hold: none.
+                let (stem, id) = match p.len() {
+                    8 | 12 => p.split_at(8),
+                    _ => return Err(FileError::Bounds),
+                };
+                let stem = <&[u8; 8]>::try_from(stem).map_err(|_| FileError::Bounds)?;
+                let id = id.try_into().map_or(0, u32::from_le_bytes);
+                if let Some(t) = target {
+                    let s = crate::tuning::ScalaName::from_padded(stem).map(|s| s.with_id(id));
+                    t.set_scala(n, s);
+                }
+                Ok(())
+            }
             (_, Context::Part(n)) => {
                 if let Event::Record(ReadTag::Known(RecordTag::SourceRef), p) = e
                     && let Some(r) = SourceRef::from_bytes(p)
@@ -737,6 +759,7 @@ impl ProjectCheck {
                 }
                 part.mix = PartParams::for_part(n.index());
                 part.origin = Origin::Init(EngineType::Algo);
+                t.set_scala(n, None);
             }
             (self.mix, self.origin) = (false, false);
             self.old_sends = None;

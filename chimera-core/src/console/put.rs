@@ -16,9 +16,9 @@
 //! The bench's check table goes to `/CHIMERA/BENCH/BEDS.CHK`, a whole file
 //! of at most 9 KiB, the old one replaced.
 //!
-//! A tuning goes to `/CHIMERA/TUNINGS/TUNE1.SCL` to `TUNE8.KBM` (ADR
-//! 0240), a whole file of at most 4 KiB, the old one replaced; a scale
-//! drops its slot's old map. The Parts on that `TUNEn` read it again.
+//! A tuning goes to `/CHIMERA/TUNINGS/<stem>.SCL` or `.KBM` (ADR 0240,
+//! 0259), a whole file of at most 4 KiB, the old one replaced; a scale
+//! drops its old map. The Parts on Scala files read theirs again.
 //!
 //! A controller map goes to `/CHIMERA/MAPS/<stem>.A` or `.B` (ADR 0226,
 //! 0255), a whole file of at most 4 KiB: to the side a load does not take,
@@ -201,35 +201,30 @@ pub(super) fn map_pair(p: &[u8]) -> Option<AbFile> {
         .flatten()
 }
 
-/// `/CHIMERA/TUNINGS/TUNE1.SCL` to `TUNE8.KBM`, any case.
+/// `/CHIMERA/TUNINGS/<stem>.SCL` or `.KBM`, any 8.3 stem, any case (ADR
+/// 0259).
 pub(super) fn tuning(p: &[u8]) -> Option<FileName> {
     let (dir, name) = p.split_at_checked(TUNINGS.len())?;
-    let [
-        b'T' | b't',
-        b'U' | b'u',
-        b'N' | b'n',
-        b'E' | b'e',
-        n @ b'1'..=b'8',
-        b'.',
-        ext @ ..,
-    ] = name
-    else {
-        return None;
-    };
     if !dir.eq_ignore_ascii_case(TUNINGS) {
         return None;
     }
-    let ext: &[u8] = if ext.eq_ignore_ascii_case(b"SCL") {
-        b"SCL"
-    } else if ext.eq_ignore_ascii_case(b"KBM") {
-        b"KBM"
-    } else {
-        return None;
-    };
-    FileName::new(Dir::Tunings, &[b'T', b'U', b'N', b'E', *n], ext)
+    let mut up = [0u8; 12];
+    let up = up.get_mut(..name.len())?;
+    up.copy_from_slice(name);
+    up.make_ascii_uppercase();
+    match up.split_at_checked(up.len().checked_sub(4)?)? {
+        (stem, b".SCL") => FileName::new(Dir::Tunings, stem, b"SCL"),
+        (stem, b".KBM") => FileName::new(Dir::Tunings, stem, b"KBM"),
+        _ => None,
+    }
 }
 
 fn put_to(p: &[u8]) -> Option<PutTo> {
+    // `put` names files itself: plain 8.3, never a computer's `~` short
+    // name for a long one (`rm` and `get` take those, ADR 0259).
+    if p.contains(&b'~') {
+        return None;
+    }
     if p.eq_ignore_ascii_case(BANK2) {
         return Some(PutTo::Bank2);
     }
@@ -263,11 +258,11 @@ pub struct PutArg {
 impl Arg for PutArg {
     #[cfg(not(feature = "source-writer"))]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over], /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, /CHIMERA/MAPS/<stem>.A, or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
+        [--over], /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/<stem>.SCL|KBM, /CHIMERA/MAPS/<stem>.A, or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
         in hex";
     #[cfg(feature = "source-writer")]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over], /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, /CHIMERA/MAPS/<stem>.A, or /CHIMERA/SYSTEM/BANK2.BK2, \
+        [--over], /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/<stem>.SCL|KBM, /CHIMERA/MAPS/<stem>.A, or /CHIMERA/SYSTEM/BANK2.BK2, \
         its size and CRC-32 in hex";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let mut to = put_to(words.next()?)?;

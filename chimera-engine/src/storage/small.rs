@@ -65,19 +65,24 @@ pub fn write_small(
     s.write(vol, f, &mut |sink: &mut dyn ByteSink| sink.put(bytes))
 }
 
-/// The stems in `dir` with extension `ext`, each once, into `out`: how
-/// many (at most `out.len()`). No folder is none.
+/// The stems in `dir` with one of `exts`, each once, into `out`: how many
+/// (at most `out.len()`). No folder is none. A computer's hidden files and
+/// any other extension are never listed (ADR 0259).
 #[inline(never)]
 pub fn list_stems(
     s: &mut dyn Store,
     vol: VolumeId,
     dir: Dir,
+    exts: &[&[u8]],
     out: &mut [([u8; 8], u8)],
 ) -> Result<usize, StoreError> {
     let mut n = 0;
     let r = s.list(vol, dir, &mut |f, _| {
         let st = f.stem();
-        if n == out.len() || out[..n].iter().any(|(b, l)| &b[..usize::from(*l)] == st) {
+        if n == out.len()
+            || !exts.contains(&f.ext())
+            || out[..n].iter().any(|(b, l)| &b[..usize::from(*l)] == st)
+        {
             return;
         }
         out[n].0[..st.len()].copy_from_slice(st);

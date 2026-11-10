@@ -81,12 +81,53 @@ fn twelve_tet_is_the_untuned_bits() {
     assert_ne!(before, tuned);
 }
 
+#[test]
+fn a_silent_key_refuses_its_note() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let loud = |key| bits(key).iter().any(|&b| f32::from_bits(b) != 0.0);
+    assert!(loud(61));
+    TUNINGS.silence(0, 1 << 61);
+    let (silent, other) = (loud(61), loud(60));
+    // The MTS table has no silent keys.
+    TUNINGS.follow_mts(0, true);
+    let on_mts = loud(61);
+    TUNINGS.follow_mts(0, false);
+    TUNINGS.silence(0, 0);
+    assert!(!silent, "key 61 refused");
+    assert!(other && on_mts);
+}
+
+/// A refused key's note-off finds nothing: no voice, nothing held, and
+/// the next key plays and releases as usual (ADR 0259).
+#[test]
+fn a_refused_keys_note_off_leaves_nothing_behind() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut rig = rig();
+    TUNINGS.silence(0, 1 << 61);
+    rig.note_on(0, 61);
+    rig.render(4);
+    let on = rig.inst.sounding();
+    rig.note_off(0, 61);
+    rig.render(4);
+    let off = rig.inst.sounding();
+    rig.note_on(0, 60);
+    rig.render(4);
+    let next = rig.inst.sounding();
+    rig.note_off(0, 60);
+    rig.render(2_000);
+    let after = rig.inst.sounding();
+    TUNINGS.silence(0, 0);
+    assert_eq!((on, off), (0, 0), "the refused key never sounds");
+    assert_eq!(next, 1, "the next key plays");
+    assert_eq!(after, 0, "and releases: nothing stuck");
+}
+
 mod ui {
     use super::LOCK;
-    use chimera_core::part::{PartParams, TUNING_NAMES};
+    use chimera_core::part::{PartParams, TUNING_NAMES, TUNING_SCALA};
     use chimera_core::project::{LoadLink, PartId};
     use chimera_core::storage::{Card, SystemSettings, SystemSync};
-    use chimera_core::tuning::TUNINGS;
+    use chimera_core::tuning::{ScalaName, TUNINGS};
     use chimera_core::ui::UiState;
     use chimera_core::ui::busy::ToastStep;
     use chimera_core::ui::settings::CardCx;
@@ -117,8 +158,28 @@ mod ui {
 
         /// Part `p`'s TUNING to `name`, then a pass of card work.
         fn pick(&mut self, p: usize, name: &str) {
-            let v = TUNING_NAMES.iter().position(|&n| n == name).unwrap();
-            self.ui.project_mut().edit_part(PartId::ALL[p]).mix.tuning = v as u8;
+            // A name not built in is a Scala file's (ADR 0259).
+            let v = TUNING_NAMES.iter().position(|&n| n == name);
+            let file = v
+                .is_none()
+                .then(|| ScalaName::new(name.as_bytes()).unwrap());
+            let v = v.map_or(TUNING_SCALA, |v| v as u8);
+            self.ui.project_mut().set_scala(PartId::ALL[p], file);
+            self.ui.project_mut().edit_part(PartId::ALL[p]).mix.tuning = v;
+            let cx = CardCx {
+                card: &mut self.card,
+                store: &mut self.st,
+                sync: &mut self.sync,
+                settings: &mut self.set,
+            };
+            let link = LoadLink::new();
+            let _ = self
+                .ui
+                .card_work(chimera_core::errand::Errand::HOST, cx, &link, |_, _| ());
+        }
+
+        /// A pass of card work, no edit.
+        fn pass(&mut self) {
             let cx = CardCx {
                 card: &mut self.card,
                 store: &mut self.st,
@@ -248,5 +309,27 @@ mod ui {
         assert_eq!(r.toast().as_deref(), Some("TUNE2.SCL NOT FOUND"));
         assert!(table(5).iter().all(|&o| o == 0.0));
         r.pick(5, "12-TET");
+    }
+
+    /// A Part on a file the card lacks plays 12-TET; once the console puts
+    /// the file, the next pass plays it with no edit (ADR 0259).
+    #[test]
+    fn a_missing_file_plays_once_put_with_no_edit() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut r = Rig::new();
+        r.pick(3, "PELOG");
+        assert_eq!(r.toast().as_deref(), Some("PELOG.SCL NOT FOUND"));
+        assert!(table(3).iter().all(|&o| o == 0.0));
+        let pelog = FileName::new(Dir::Tunings, b"PELOG", b"SCL").unwrap();
+        r.st.plant(pelog, b"q\n2\n50.\n2/1\n");
+        r.pass();
+        assert!(
+            table(3).iter().all(|&o| o == 0.0),
+            "not until a put says so"
+        );
+        chimera_core::tuning::file_put();
+        r.pass();
+        assert_eq!(TUNINGS.offset(3, 61), -0.5);
+        r.pick(3, "12-TET");
     }
 }

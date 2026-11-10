@@ -170,6 +170,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "SNAP", NONE),
     ("Part", "HELD", NONE),
     ("Part", "TUNING", NONE),
+    ("Part", "MAPPING", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),
@@ -242,6 +243,7 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("OrbitRing", "MODE"),
     // STAY and RE-SNAP: two ways to hold a key through a chord change.
     ("Part", "HELD"),
+    ("Part", "MAPPING"),
     // INT and EXT: two clocks to follow, neither is off.
     ("Midi", "SYNC"),
     // MONO and POLY: two ways to splice a grain.

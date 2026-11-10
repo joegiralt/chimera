@@ -1262,6 +1262,10 @@ impl Instrument {
                         NoteOrigin::Live => part.live_note(ev.note, self.harmony),
                         NoteOrigin::Orbit(_) => ev.note,
                     };
+                    // KEYBOARD's spare keys sound nothing (ADR 0259).
+                    if crate::tuning::silent(p, note.get()) {
+                        continue;
+                    }
                     #[cfg(feature = "probe")]
                     let t1 = crate::probe::now();
                     // ONE at RETRIG CUT: the note chokes the Part's others

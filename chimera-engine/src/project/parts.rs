@@ -54,11 +54,25 @@ pub struct Part {
     /// Clean. Never saved.
     #[cfg(feature = "controller-maps")]
     pub(in crate::project) map_kept: Option<u32>,
+    /// TUNING's Scala file, by name (ADR 0259): the file is the card's,
+    /// read again on every load. None without `tuning` (the bench builds).
+    #[cfg(feature = "tuning")]
+    /// All zero is none: no `Option`'s tag byte in every Part (D2).
+    pub(in crate::project) scala: crate::tuning::ScalaName,
 }
 
 impl Part {
     pub fn origin(&self) -> Origin {
         self.origin
+    }
+
+    /// TUNING's Scala file, if the Part names one (ADR 0259).
+    #[inline(always)]
+    pub fn scala(&self) -> Option<crate::tuning::ScalaName> {
+        #[cfg(feature = "tuning")]
+        return (self.scala.padded()[0] != 0).then_some(self.scala);
+        #[cfg(not(feature = "tuning"))]
+        None
     }
 
     /// Bumped by each Sound load into this Part.
@@ -95,6 +109,8 @@ pub(super) fn new_part(i: usize) -> Part {
         loads: Loads::default(),
         #[cfg(feature = "controller-maps")]
         map_kept: None,
+        #[cfg(feature = "tuning")]
+        scala: crate::tuning::ScalaName::NONE,
     }
 }
 
