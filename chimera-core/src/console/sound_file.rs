@@ -1,14 +1,15 @@
 //! `rm` and `get`: a library Sound's pair over the console (library spec
-//! § Audio and card rules), or a controller map's (ADR 0226). Only
-//! `/CHIMERA/SOUNDS/S#######` and `/CHIMERA/MAPS/<stem>` parse, so neither
-//! verb names any other file on the card.
+//! § Audio and card rules), or a controller map's (ADR 0226); `rm` also a
+//! tuning file (ADR 0240). Only `/CHIMERA/SOUNDS/S#######`,
+//! `/CHIMERA/MAPS/<stem>` and, for `rm`, `/CHIMERA/TUNINGS/TUNE#.SCL|KBM`
+//! parse, so neither verb names any other file on the card.
 
 use core::fmt::{self, Write};
 use core::ops::ControlFlow;
 
-use chimera_hal::store::{CHUNK, Files, ReadSink, Store, StoreError};
+use chimera_hal::store::{CHUNK, FileName, Files, ReadSink, Store, StoreError};
 
-use super::put::{SOUNDS, map_pair, numbered};
+use super::put::{SOUNDS, map_pair, numbered, tuning};
 use super::{Arg, Out, Stalled, Words};
 use crate::storage::{
     AbFile, Card, CardFault, Check, Crc32, FileError, FileKind, LibId, Pick, Ready, Side,
@@ -32,6 +33,25 @@ impl Arg for PairArg {
             None => PairArg::Map(map_pair(w)?),
         };
         words.next().is_none().then_some(got)
+    }
+}
+
+/// `rm`'s argument: a pair, or a tuning file `put` wrote (#906).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RmArg {
+    Pair(PairArg),
+    Tuning(FileName),
+}
+
+impl Arg for RmArg {
+    const USAGE: &'static str =
+        "/CHIMERA/SOUNDS/S#######, /CHIMERA/MAPS/<stem> or /CHIMERA/TUNINGS/TUNE#.SCL|KBM";
+    fn parse(words: Words<'_>) -> Option<Self> {
+        let mut w = words;
+        match w.next().and_then(tuning) {
+            Some(f) => w.next().is_none().then_some(RmArg::Tuning(f)),
+            None => PairArg::parse(words).map(RmArg::Pair),
+        }
     }
 }
 
@@ -106,25 +126,43 @@ impl CardFault for Fail {
 /// pair goes in the same order, judged by its framing, and the UI's layers
 /// read again.
 #[inline(never)]
-pub fn rm<F: Files>(arg: PairArg, f: &mut F, out: &mut impl Out) -> Result<(), Stalled> {
-    let file = arg.file();
+pub fn rm<F: Files>(arg: RmArg, f: &mut F, out: &mut impl Out) -> Result<(), Stalled> {
     let r = match arg {
-        PairArg::Sound(id) if id.is_factory() => Err(Fail::Factory),
+        RmArg::Pair(PairArg::Sound(id)) if id.is_factory() => Err(Fail::Factory),
         _ => Card::new()
-            .run(f, |s, r| match (exists(s, r, file)?, arg) {
-                (false, _) => Err(Fail::NotFound),
-                (true, PairArg::Sound(_)) => Ok(delete_ab(s, r, file, &mut SoundCheck::new())?),
-                (true, PairArg::Map(_)) => {
-                    let st = |s: &mut F, sd| check_frame(s, r, file.side(sd), FileKind::Controller);
-                    let (a, b) = (st(s, Side::A)?, st(s, Side::B)?);
-                    for side in delete_order(a, b) {
-                        match s.delete(r.volume(), file.side(side)) {
-                            Ok(()) | Err(StoreError::NotFound) => {}
-                            Err(e) => return Err(e.into()),
-                        }
+            .run(f, |s, r| {
+                let arg = match arg {
+                    RmArg::Pair(a) => a,
+                    // The Parts on its `TUNEn` read again: a file gone
+                    // plays 12-TET and says NOT FOUND.
+                    RmArg::Tuning(t) => {
+                        return match s.delete(r.volume(), t) {
+                            Ok(()) => {
+                                crate::tuning::file_put();
+                                Ok(())
+                            }
+                            Err(StoreError::NotFound) => Err(Fail::NotFound),
+                            Err(e) => Err(e.into()),
+                        };
                     }
-                    crate::midi_map::map_put();
-                    Ok(())
+                };
+                let file = arg.file();
+                match (exists(s, r, file)?, arg) {
+                    (false, _) => Err(Fail::NotFound),
+                    (true, PairArg::Sound(_)) => Ok(delete_ab(s, r, file, &mut SoundCheck::new())?),
+                    (true, PairArg::Map(_)) => {
+                        let st =
+                            |s: &mut F, sd| check_frame(s, r, file.side(sd), FileKind::Controller);
+                        let (a, b) = (st(s, Side::A)?, st(s, Side::B)?);
+                        for side in delete_order(a, b) {
+                            match s.delete(r.volume(), file.side(side)) {
+                                Ok(()) | Err(StoreError::NotFound) => {}
+                                Err(e) => return Err(e.into()),
+                            }
+                        }
+                        crate::midi_map::map_put();
+                        Ok(())
+                    }
                 }
             })
             .and_then(|o| o.result),

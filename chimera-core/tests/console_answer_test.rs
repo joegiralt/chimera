@@ -195,7 +195,7 @@ fn help_is_the_specs_text() {
          turn    <encoder 1-6> <delta -64..64>: detents at a hand's pace\n\
          ls      files and sizes in PROJECTS; ls tapes|sounds|maps: theirs\n\
          put     a project, Sound or source: <path> <size> <crc32> [--over]\n\
-         rm      a pair: /CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>\n\
+         rm      SOUNDS/S#######, MAPS/<stem> or TUNINGS/TUNE#.SCL|KBM\n\
          get     base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>\n\
          OK\n"
     );

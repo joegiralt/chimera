@@ -429,7 +429,7 @@ fn sound_paths_parse_and_others_refuse() {
     ));
     assert_eq!(
         parse_line(b"rm /chimera/sounds/s0000001"),
-        Ok(Request::Rm(PairArg::Sound(id(1))))
+        Ok(Request::Rm(RmArg::Pair(PairArg::Sound(id(1)))))
     );
     assert_eq!(
         parse_line(b"GET /CHIMERA/SOUNDS/S9000001"),

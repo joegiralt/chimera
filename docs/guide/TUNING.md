@@ -33,7 +33,8 @@ The number, 1 to 8, picks the slot: the file lands as `TUNE3.SCL` (and `TUNE3.KB
 - A `.scl` file holds the scale: up to 128 steps, in cents or as ratios. Thousands are in the Scala archive (huygens-fokker.org).
 - A `.kbm` file of the same name (`TUNE1.KBM`), if present, maps keys to the scale's steps and sets the reference pitch. Without one, middle C plays the scale's first step at its usual pitch, and each key up plays the next step.
 - Keys the map leaves out (`x`), or outside its range, play equal temperament.
-- A file is read when you pick its choice, when a project using it loads, and when a new one is sent to its slot. If it is missing or can't be read, the Part plays `12-TET` and the screen says why, such as `TUNE3.SCL NOT FOUND` or `TUNE3.SCL NOT SCALA`. Files up to 4 KB are read.
+- To take a file off the card again, name it: `python3 chimera-usb.py rm /CHIMERA/TUNINGS/TUNE3.SCL` (or `TUNE3.KBM`). Only `TUNE1` to `TUNE8` files can be removed this way. Every Part on that slot then plays `12-TET` (or, with only the `.kbm` gone, the scale on its own).
+- A file is read when you pick its choice, when a project using it loads, and when a new one is sent to or removed from its slot. If it is missing or can't be read, the Part plays `12-TET` and the screen says why, such as `TUNE3.SCL NOT FOUND` or `TUNE3.SCL NOT SCALA`. Files up to 4 KB are read.
 
 The project keeps the choice, not the file: change `TUNE1.SCL` on the card and every project on `TUNE1` plays the new one.
 

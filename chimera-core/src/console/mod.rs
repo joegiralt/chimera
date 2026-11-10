@@ -138,7 +138,7 @@ macro_rules! table {
 table! {
     Ls     (LsArg)   => "ls",     "files and sizes in PROJECTS; ls tapes|sounds|maps: theirs",
     Put    (PutArg)  => "put",    "a project, Sound or source: <path> <size> <crc32> [--over]",
-    Rm     (PairArg) => "rm",    "a pair: /CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>",
+    Rm     (RmArg)   => "rm",    "SOUNDS/S#######, MAPS/<stem> or TUNINGS/TUNE#.SCL|KBM",
     Get    (PairArg) => "get",   "base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>",
     Fault  (FaultArg) => "fault",  "fault test: fault dma <1|2>, fault ndtr, fault card (fault-inject builds)",
 }
@@ -146,7 +146,7 @@ table! {
 table! {
     Ls     (LsArg)   => "ls",     "files and sizes in PROJECTS; ls tapes|sounds|maps: theirs",
     Put    (PutArg)  => "put",    "a project, Sound or source: <path> <size> <crc32> [--over]",
-    Rm     (PairArg) => "rm",    "a pair: /CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>",
+    Rm     (RmArg)   => "rm",    "SOUNDS/S#######, MAPS/<stem> or TUNINGS/TUNE#.SCL|KBM",
     Get    (PairArg) => "get",   "base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>",
 }
 #[cfg(all(not(feature = "card-put"), feature = "fault-inject"))]

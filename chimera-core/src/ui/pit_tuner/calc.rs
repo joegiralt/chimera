@@ -239,11 +239,11 @@ impl Readout {
     }
 }
 
-/// `s` playing `note` under TUNING `tune` cents; `None` for TAPE with no
-/// source, which plays nothing.
-pub fn pitch(note: MidiNote, s: &Sound, tune: i8) -> Option<Reading> {
+/// `s` playing `note` under `tune` cents: SETTINGS' TUNE and the Part's
+/// TUNING at the key; `None` for TAPE with no source, which plays nothing.
+pub fn pitch(note: MidiNote, s: &Sound, tune: f32) -> Option<Reading> {
     let p = &s.params;
-    let set = p.pitch.semitones() * 100.0 + f32::from(tune);
+    let set = p.pitch.semitones() * 100.0 + tune;
     let key = Tone::of_note(note).up(set);
     let at = |extra: f32| Some(Reading::Known(Known::Note(key.up(extra))));
     match p.engine() {
@@ -408,7 +408,12 @@ pub fn pass_in(ui: &mut UiState) {
         Some(n) if sounds => (n, Light::Lit),
         Some(n) => (n, Light::Dim),
     };
-    let r = Readout::of(pitch(note, &part.sound, ui.midi.tune), light);
+    // The Part's TUNING at the key, as the voice reads it at note-on.
+    let tuning = crate::tuning::offset(at.index(), note.get()) * 100.0;
+    let r = Readout::of(
+        pitch(note, &part.sound, f32::from(ui.midi.tune) + tuning),
+        light,
+    );
     t.shown = shown(r, ui.theme.text);
 }
 

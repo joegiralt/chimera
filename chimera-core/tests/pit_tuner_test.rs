@@ -109,15 +109,15 @@ fn every_engines_offsets_sum() {
     a.params.pitch.fine = -25.0;
     a.params.algo.transpose = -12;
     assert_eq!(
-        pitch(key(60), &a, 10),
+        pitch(key(60), &a, 10.0),
         at(6_000.0 + 700.0 - 25.0 - 1_200.0 + 10.0)
     );
     let mut v = Sound::init(EngineType::Va);
     v.params.va.coarse = [12, -7];
     v.params.va.fine = [3.0, 6.0];
-    assert_eq!(pitch(key(69), &v, 0), at(6_900.0 + 1_200.0 + 3.0));
+    assert_eq!(pitch(key(69), &v, 0.0), at(6_900.0 + 1_200.0 + 3.0));
     let m = Sound::init(EngineType::Modal);
-    assert_eq!(pitch(key(69), &m, -3), at(6_897.0));
+    assert_eq!(pitch(key(69), &m, -3.0), at(6_897.0));
 }
 
 // ── TAPE ─────────────────────────────────────────────────────────────
@@ -130,14 +130,14 @@ fn tape_plays_the_key_over_its_root() {
     for m in [Way::One, Way::Loop, Way::Ping, Way::Tron, Way::Stretch] {
         let mut s = tape(m, 4_800.0, 183.4);
         s.params.pitch.pitch = 7.0;
-        assert_eq!(pitch(key(48), &s, 0), at(5_500.0), "{m:?}");
-        assert_eq!(shown_lit(pitch(key(48), &s, 0)).0, "G3 +0ct");
+        assert_eq!(pitch(key(48), &s, 0.0), at(5_500.0), "{m:?}");
+        assert_eq!(shown_lit(pitch(key(48), &s, 0.0)).0, "G3 +0ct");
         s.params.tape.root = 4_930.0;
-        assert_eq!(pitch(key(48), &s, 0), at(5_500.0), "{m:?} any root");
+        assert_eq!(pitch(key(48), &s, 0.0), at(5_500.0), "{m:?} any root");
     }
     // TRANSWAVE's cycle plays the note itself.
     let w = tape(Way::Wave, 4_800.0, 0.0);
-    assert_eq!(pitch(key(69), &w, 0), at(6_900.0));
+    assert_eq!(pitch(key(69), &w, 0.0), at(6_900.0));
 }
 
 /// No period: the import found no pitch, so the root is a guess. The
@@ -147,10 +147,10 @@ fn an_unknown_root_reads_root_unknown_and_the_shift() {
     let mut s = tape(Way::Loop, 6_000.0, 0.0);
     s.params.pitch.pitch = 7.0;
     s.params.pitch.fine = 12.0;
-    let p = pitch(key(60), &s, 0);
+    let p = pitch(key(60), &s, 0.0);
     assert_eq!(p, Some(Reading::RootUnknown(Shift::of_cents(712.0))));
     assert_eq!(shown_lit(p), ("ROOT ?".into(), "+7st +12ct".into()));
-    assert_eq!(shown_lit(pitch(key(48), &s, 0)).1, "-5st +12ct");
+    assert_eq!(shown_lit(pitch(key(48), &s, 0.0)).1, "-5st +12ct");
 }
 
 /// SCRUB runs at 2 · |MOTION| of the source's speed, and stands at 0.
@@ -158,15 +158,15 @@ fn an_unknown_root_reads_root_unknown_and_the_shift() {
 fn scrub_follows_motion() {
     let mut s = tape(Way::Scrub, 6_000.0, 100.0);
     s.params.tape.motion = 0.0;
-    assert_eq!(pitch(key(60), &s, 0), Some(Reading::Known(Known::Still)));
+    assert_eq!(pitch(key(60), &s, 0.0), Some(Reading::Known(Known::Still)));
     assert_eq!(
         read(Readout::Lit(Known::Still)),
         ("STILL".into(), String::new())
     );
     s.params.tape.motion = -0.5;
-    assert_eq!(pitch(key(60), &s, 0), at(6_000.0));
+    assert_eq!(pitch(key(60), &s, 0.0), at(6_000.0));
     s.params.tape.motion = 1.0;
-    assert_eq!(pitch(key(60), &s, 0), at(7_200.0));
+    assert_eq!(pitch(key(60), &s, 0.0), at(7_200.0));
 }
 
 /// SCRUB's KEY POSITION places the finger and plays every key at ROOT
@@ -176,10 +176,10 @@ fn scrub_key_position_reads_root() {
     let mut s = tape(Way::Scrub, 6_000.0, 100.0);
     s.params.tape.motion = 0.5;
     assert_eq!(s.params.tape.key, KeyMode::Position);
-    assert_eq!(pitch(key(72), &s, 0), at(6_000.0));
-    assert_eq!(pitch(key(48), &s, 0), at(6_000.0));
+    assert_eq!(pitch(key(72), &s, 0.0), at(6_000.0));
+    assert_eq!(pitch(key(48), &s, 0.0), at(6_000.0));
     s.params.tape.key = KeyMode::Pitch;
-    assert_eq!(pitch(key(72), &s, 0), at(7_200.0));
+    assert_eq!(pitch(key(72), &s, 0.0), at(7_200.0));
 }
 
 /// Every STRETCH TYPE plays the key's pitch (ADR 0204).
@@ -188,7 +188,7 @@ fn every_stretch_type_plays_the_key() {
     for k in [StretchType::Mono, StretchType::Poly, StretchType::Grain] {
         let mut s = tape(Way::Stretch, 4_800.0, 183.4);
         s.params.tape.kind = k;
-        assert_eq!(pitch(key(55), &s, 0), at(5_500.0), "{k:?}");
+        assert_eq!(pitch(key(55), &s, 0.0), at(5_500.0), "{k:?}");
     }
 }
 
@@ -196,7 +196,7 @@ fn every_stretch_type_plays_the_key() {
 fn tape_with_no_source_reads_nothing() {
     let mut s = tape(Way::Loop, 6_000.0, 100.0);
     s.source = None;
-    assert_eq!(pitch(key(60), &s, 0), None);
+    assert_eq!(pitch(key(60), &s, 0.0), None);
 }
 
 // ── The corner ───────────────────────────────────────────────────────
@@ -322,6 +322,26 @@ fn tape_on_pit_reads_root_and_transposition() {
     ui.project_mut().edit_part(P1).sound.params.tape.period = 0.0;
     tick(&mut ui);
     assert_eq!(texts(ui.tuner()), ["ROOT ?", "+7st +0ct"]);
+}
+
+/// The corner reads the note as the Part's TUNING plays it (ADR 0240):
+/// JUST's E4, 13.7 cents flat, reads its cents off 12-TET's E4 (#904).
+/// Part 6's table, so no other test here reads it.
+#[cfg(feature = "tuning")]
+#[test]
+fn the_parts_tuning_moves_the_reading() {
+    use chimera_core::tuning::TUNINGS;
+    let p6 = PartId::ALL[5];
+    let mut ui = pit(EngineType::Algo);
+    ui.active_part = p6;
+    let mut t = [0.0; 128];
+    t[64] = -0.136_863;
+    TUNINGS.set(5, &t);
+    ui.hear_note(p6, MidiNote::new(64), true);
+    tick(&mut ui);
+    let got = texts(ui.tuner());
+    TUNINGS.set(5, &[0.0; 128]);
+    assert_eq!(got, ["E4 -14ct", "327.0 Hz"]);
 }
 
 // ── Drawing ──────────────────────────────────────────────────────────

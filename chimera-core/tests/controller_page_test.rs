@@ -24,6 +24,14 @@ use chimera_hal::{ButtonId, EncoderId, Ms};
 use screen::{Input as Key, Rig};
 
 const P1: PartId = PartId::ALL[0];
+
+/// `map_put` is global: a test that moves it, or that reads a map gone
+/// from its card (which a move would take to NONE), holds this.
+static PUTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn puts() -> std::sync::MutexGuard<'static, ()> {
+    PUTS.lock().unwrap_or_else(|e| e.into_inner())
+}
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
 const RESO: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
 
@@ -113,6 +121,7 @@ fn a_picked_map_plays_under_the_sound_s_rows() {
 /// only on that engine.
 #[test]
 fn a_missing_map_plays_nothing() {
+    let _g = puts();
     let s = MemStore::new(1);
     let mut ui = ui();
     let mut rig = Rig::new(&mut ui, s);
@@ -264,6 +273,7 @@ fn a_project_load_reads_its_map_again() {
 /// is refused, and nothing is written in the map's place.
 #[test]
 fn a_row_of_a_map_gone_from_the_card_is_not_dropped() {
+    let _g = puts();
     use chimera_hal::store::{Dir, FileName, Store};
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF), (22, RESO)]);
@@ -339,6 +349,7 @@ fn an_engine_change_swaps_the_layer() {
 /// it: every layer reads the card again.
 #[test]
 fn a_map_put_over_usb_plays_at_once() {
+    let _g = puts();
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF)]);
     let mut ui = ui();
@@ -356,6 +367,111 @@ fn a_map_put_over_usb_plays_at_once() {
         "CC 21 is the put map's resonance"
     );
     assert_eq!(place(rig.ui, CUTOFF), cutoff);
+}
+
+/// A map removed over USB (`rm`, which bumps `map_put`) takes every Part
+/// on it to NONE, as a delete on the unit does (#905, ADR 0255).
+#[test]
+fn a_map_removed_over_usb_leaves_its_parts_on_none() {
+    let _g = puts();
+    use chimera_hal::store::{Dir, FileName, Store};
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    put_map(&mut s, "LCXL3", &[(30, RESO)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    let p2 = PartId::ALL[1];
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.ui.project_mut().set_controller(p2, Some(name("EC4")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    rig.work();
+    let (st, n) = ctl::stem(&name("EC4"));
+    let vol = rig.s.mount().unwrap();
+    for side in [b"A", b"B"] {
+        let _ = rig
+            .s
+            .delete(vol, FileName::new(Dir::Maps, &st[..n], side).unwrap());
+    }
+    chimera_core::midi_map::map_put();
+    for _ in 0..4 {
+        rig.work();
+    }
+    assert_eq!(rig.ui.project().controller(P1), None);
+    assert_eq!(rig.ui.project().controller(p2), None);
+    assert_eq!(rig.ui.map_band().text(0).word.as_str(), "NONE");
+}
+
+/// Another card without the map is not a removal: the Part keeps its name
+/// (ADR 0226) and plays nothing from it.
+#[test]
+fn another_card_without_the_map_keeps_the_name() {
+    let _g = puts();
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    rig.work();
+    // The new card's first read comes with a map put over USB.
+    rig.s.swap(2);
+    put_map(&mut rig.s, "LCXL3", &[(30, RESO)]);
+    chimera_core::midi_map::map_put();
+    for _ in 0..4 {
+        rig.work();
+    }
+    assert_eq!(rig.ui.project().controller(P1), Some(name("EC4")));
+}
+
+/// A name the card never held (a project's, ADR 0226) is no removal: read
+/// again, after a map put over USB or an engine change, it stays.
+#[test]
+fn a_missing_name_read_again_stays() {
+    let _g = puts();
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("GONE")));
+    rig.to(&["PART", "MIDI MAP"]);
+    for _ in 0..4 {
+        rig.work();
+    }
+    put_map(&mut rig.s, "LCXL3", &[(30, RESO)]);
+    chimera_core::midi_map::map_put();
+    for _ in 0..4 {
+        rig.work();
+    }
+    assert_eq!(rig.ui.project().controller(P1), Some(name("GONE")), "put");
+    screen::init_part_engine(rig.ui, P1, EngineType::Modal);
+    for _ in 0..4 {
+        rig.work();
+    }
+    assert_eq!(
+        rig.ui.project().controller(P1),
+        Some(name("GONE")),
+        "engine"
+    );
+}
+
+/// A name the card doesn't hold (a project's, ADR 0226) stays shown, and
+/// B down from it reaches NONE.
+#[test]
+fn b_down_from_a_missing_map_reaches_none() {
+    let _g = puts();
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("GONE")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    rig.work();
+    assert_eq!(rig.ui.project().controller(P1), Some(name("GONE")));
+    rig.feed(Key::turn(EncoderId::B, -1));
+    assert_eq!(rig.ui.project().controller(P1), None);
 }
 
 /// The map read back from the card, as a Part on ALGO plays it.

@@ -202,7 +202,7 @@ pub(super) fn map_pair(p: &[u8]) -> Option<AbFile> {
 }
 
 /// `/CHIMERA/TUNINGS/TUNE1.SCL` to `TUNE8.KBM`, any case.
-fn tuning(p: &[u8]) -> Option<FileName> {
+pub(super) fn tuning(p: &[u8]) -> Option<FileName> {
     let (dir, name) = p.split_at_checked(TUNINGS.len())?;
     let [
         b'T' | b't',

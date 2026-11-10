@@ -84,7 +84,7 @@ key     B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]
 turn    <encoder 1-6> <delta -64..64>: detents at a hand's pace
 ls      files and sizes in PROJECTS; ls tapes|sounds|maps: theirs
 put     a project, Sound or source: <path> <size> <crc32> [--over]
-rm      a pair: /CHIMERA/SOUNDS/S####### or /CHIMERA/MAPS/<stem>
+rm      SOUNDS/S#######, MAPS/<stem> or TUNINGS/TUNE#.SCL|KBM
 get     base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>
 OK
 ```

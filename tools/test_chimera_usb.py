@@ -967,6 +967,15 @@ class Put(unittest.TestCase):
         self.assertEqual(u.data, scl + kbm)
         self.assertEqual(r.stdout, b"/CHIMERA/TUNINGS/TUNE3.SCL %d\n/CHIMERA/TUNINGS/TUNE3.KBM %d\n" % (len(scl), len(kbm)))
 
+    def test_rm_takes_a_tuning_file_off_the_card(self):
+        self.assertIn("rm also /CHIMERA/TUNINGS/TUNE<n>.SCL|KBM", tool.__doc__)
+        line = b"rm /CHIMERA/TUNINGS/TUNE3.SCL"
+        self.assertEqual(tool.first_wait(line.decode()), tool.LS_WAIT_S)
+        with PutUnit(answers={line: b"OK\n"}) as u:
+            r = run_tool(["rm", "/CHIMERA/TUNINGS/TUNE3.SCL"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.requests, [line])
+
     def test_tuning_refuses_a_slot_past_8_and_a_file_past_4_kib(self):
         f = self.local("big.scl", bytes(4 * 1024 + 1))
         g = self.local("ok.scl", b"x\n1\n2/1\n")

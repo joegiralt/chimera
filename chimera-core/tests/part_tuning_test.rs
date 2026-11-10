@@ -230,4 +230,23 @@ mod ui {
         assert_eq!(TUNINGS.offset(5, 61), -0.5);
         r.pick(5, "12-TET");
     }
+
+    #[test]
+    fn a_file_removed_from_the_card_plays_twelve_tet() {
+        use chimera_hal::store::Store;
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut r = Rig::new();
+        r.st.plant(file(b"SCL"), b"q\n2\n50.\n2/1\n");
+        r.pick(5, "TUNE2");
+        assert_eq!(TUNINGS.offset(5, 61), -0.5);
+        // The console's `rm` deletes it (#906): the Part on TUNE2 reads
+        // again, finds nothing and plays 12-TET.
+        let vol = r.st.mount().unwrap();
+        r.st.delete(vol, file(b"SCL")).unwrap();
+        chimera_core::tuning::file_put();
+        r.pick(5, "TUNE2");
+        assert_eq!(r.toast().as_deref(), Some("TUNE2.SCL NOT FOUND"));
+        assert!(table(5).iter().all(|&o| o == 0.0));
+        r.pick(5, "12-TET");
+    }
 }

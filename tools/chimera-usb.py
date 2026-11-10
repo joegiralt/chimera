@@ -3,7 +3,7 @@
 
     python3 chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep, flash,
                                                    ls [tapes|sounds|maps], rm|get /CHIMERA/SOUNDS/S####### or
-                                                   /CHIMERA/MAPS/<stem>
+                                                   /CHIMERA/MAPS/<stem>; rm also /CHIMERA/TUNINGS/TUNE<n>.SCL|KBM
     python3 chimera-usb.py get <remote> <local>    the file `get` reads, checked and written to <local>
     python3 chimera-usb.py put <local> <remote> [--over]
                                                    a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
@@ -17,7 +17,8 @@
     python3 chimera-usb.py tuning <1-8> <file.scl> [<file.kbm>]
                                                    a Scala tuning onto the card as /CHIMERA/TUNINGS/TUNE<n>.SCL,
                                                    with its keyboard map as TUNE<n>.KBM (4 KiB each at most):
-                                                   SETTINGS > AUDIO > TUNING's TUNE<n> plays it
+                                                   SETTINGS > AUDIO > TUNING's TUNE<n> plays it; `rm` takes
+                                                   either off again (a Part on TUNE<n> then plays 12-TET)
     python3 chimera-usb.py update <file.bin> <file.bk2>
                                                    flash a build's pair in one go (developers, `just flash`): the
                                                    .bk2 onto the card, the .bin by DFU, and the first boot

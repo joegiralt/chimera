@@ -11,8 +11,8 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
-/// Bumped by each console `put` of a tuning file: the UI reads the Parts
-/// on `TUNEn` again (`files_put`).
+/// Bumped by each console `put` or `rm` of a tuning file: the UI reads
+/// the Parts on `TUNEn` again (`files_put`).
 static FILES_PUT: AtomicU8 = AtomicU8::new(0);
 
 /// How many tuning files a `put` has written, wrapping: a change says the
@@ -21,7 +21,7 @@ pub fn files_put() -> u8 {
     FILES_PUT.load(Ordering::Relaxed)
 }
 
-/// A `put` wrote a tuning file.
+/// A `put` wrote, or an `rm` removed, a tuning file.
 pub fn file_put() {
     FILES_PUT.fetch_add(1, Ordering::Relaxed);
 }

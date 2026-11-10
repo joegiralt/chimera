@@ -60,6 +60,9 @@ pub enum CtlJob {
 pub struct Layers {
     layers: [MidiMap; LAYERS],
     read: [Option<Read>; MAX_PARTS],
+    /// A bit a Part whose last read found its map: only such a map gone
+    /// since was removed (#905); a name the card never held stays.
+    found: u8,
     /// Moves on every save: every layer reads again.
     saves: u8,
     /// `maps_put` when last seen: a console `put` or `rm` since reads every
@@ -99,6 +102,7 @@ pub(super) unsafe fn rest_at(p: *mut Layers) {
             MAX_PARTS,
             None,
         );
+        addr_of_mut!((*p).found).write(0);
         addr_of_mut!((*p).saves).write(0);
         addr_of_mut!((*p).puts).write(crate::midi_map::maps_put());
         super::fill(
@@ -230,7 +234,12 @@ impl UiState {
         };
         let c = &mut self.cc.ui().ctl;
         let puts = crate::midi_map::maps_put();
-        if c.vol.replace(r.volume()).is_some_and(|v| v != r.volume()) || c.puts != puts {
+        let swapped = c.vol.replace(r.volume()).is_some_and(|v| v != r.volume());
+        if swapped {
+            // Another card: its maps are new reads, never a removal.
+            c.found = 0;
+        }
+        if swapped || c.puts != puts {
             c.puts = puts;
             c.saves = c.saves.wrapping_add(1);
             c.listed = false;
@@ -253,6 +262,17 @@ impl UiState {
                 return;
             }
             let c = &mut self.cc.ui().ctl;
+            // Found before and gone now: removed over USB (`rm`). The Parts
+            // on it play NONE, as after a delete on the unit (#905).
+            let bit = 1 << p.index();
+            if let Some(Err(LoadError::Missing)) = read
+                && c.found & bit != 0
+                && c.read[p.index()].is_some_and(|was| was.name == want.name)
+            {
+                self.project.set_controller(p, None);
+                return;
+            }
+            c.found = c.found & !bit | if matches!(read, Some(Ok(_))) { bit } else { 0 };
             let layer = c.scratch.layer(want.engine).0;
             c.read[p.index()] = Some(want);
             if c.layers[p.index()] != layer {
@@ -361,7 +381,8 @@ impl UiState {
         };
         let to = (at as i32 + i32::from(d)).clamp(0, list.len() as i32) as usize;
         let next = to.checked_sub(1).and_then(|i| list[i]);
-        if to != at && next != now {
+        // A name the card lacks sits at NONE's place: B down reaches NONE.
+        if next != now {
             self.project.set_controller(p, next);
         }
     }
