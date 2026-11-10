@@ -1,7 +1,8 @@
 //! The configuration descriptor the unit serves, enumerated through
 //! usb-device on a fake bus: the console's CDC (usbd-serial) alone (bank 2
-//! closed at boot), with USB MIDI's function, and with USB audio's stream
-//! in that function, as `chimera-board`'s `connect` builds the device. Each
+//! closed at boot), with USB MIDI's function (the bench builds'), and with
+//! USB audio's stream in that function (every shipping build's, ADR 0256),
+//! as `chimera-board`'s `connect` builds the device. Each
 //! must reach the host whole: past usb-device's control buffer,
 //! GET_DESCRIPTOR fails and the host gives the port up (11b82462 on the
 //! unit). The audio layout is parsed to the last byte: IADs, interfaces
@@ -105,7 +106,9 @@ impl UsbBus for Fake {
     }
 }
 
-/// What the device is built with.
+/// What the device is built with: the console alone (bank 2 closed), MIDI
+/// without the stream (the bench builds, a cable a Part), MIDI and the
+/// stream (`default`, `orbit`, `bank2-gate`: one cable).
 #[derive(Clone, Copy, PartialEq)]
 enum Layout {
     Console,
@@ -502,7 +505,7 @@ fn ms_descriptors(c: &[u8]) -> Vec<&[u8]> {
 
 /// Each layout's cables (ADR 0243): an embedded IN jack a cable, the bulk
 /// OUT endpoint naming them in cable order, each its own name; the IN
-/// endpoint cable 0's alone. The default build's seven, USB audio's one.
+/// endpoint cable 0's alone. The bench builds' seven, the shipping builds' one.
 #[test]
 fn every_cable_has_its_jack_and_name() {
     for (layout, interfaces) in [(Layout::Midi, 4), (Layout::Audio, 5)] {

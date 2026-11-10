@@ -35,7 +35,7 @@ card-put = ["usb-console", "chimera-core/card-put"]
 # MIDI joins it there, its class behind the board's door.
 midi-usb = ["usb-console", "bank2"]
 # USB audio (ADR 0248): the main out to the host, a UAC1 stream in USB
-# MIDI's function. Off until the unit has run it.
+# MIDI's function. chimera-stm32's default set brings it (ADR 0256).
 usb-audio = ["midi-usb"]
 sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]

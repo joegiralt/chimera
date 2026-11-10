@@ -215,8 +215,9 @@ check-door-placed elf:
     nrpn=()
     # A text symbol: a gate on any symbol also trips on rodata alone.
     if grep -qE ' [tT] .*chimera_engine::nrpn::' <<< "$syms"; then nrpn=('chimera_engine::nrpn::'); fi
-    # USB audio's stream (ADR 0248), where `usb-audio` links it: whatever
-    # of it the inliner leaves out of USB MIDI's door poll.
+    # USB audio's stream (ADR 0248), where `usb-audio` links it (every
+    # shipping build, ADR 0256): whatever of it the inliner leaves out of
+    # USB MIDI's door poll.
     if grep -qE ' [tT] .*(usb_audio::door::|chimera_midi::uac::)' <<< "$syms"; then nrpn+=('(usb_audio::door::|chimera_midi::uac::)'); fi
     pipe=()
     # The pipe's layers inline into `DinPipe::feed`; any left out of line
@@ -400,12 +401,10 @@ check $CHIMERA_STAMP_CLEAN="1":
     just check-bank1 orbit
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
-    # USB audio (ADR 0248), off until the unit has run it: built,
-    # door-checked and its stream's code placed, so it can't rot meanwhile.
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features usb-audio
+    # The gate's doors and placement, USB audio's stream among them (ADR
+    # 0256); `release-bin` checks the default and ORBIT builds'.
     {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32
     just check-door-placed target/thumbv7em-none-eabihf/release/chimera-stm32
-    just check-bank1 usb-audio
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits, and held to
     # its bank-1 budget (ADR 0198).
@@ -446,7 +445,7 @@ stack-check:
     nm="$bin/llvm-nm"
     test -x "$objdump" && test -x "$nm"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    sets=("" "--no-default-features" "--features orbit" "--features bank2-gate" "--features usb-audio")
+    sets=("" "--no-default-features" "--features orbit" "--features bank2-gate")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
     sets+=("--no-default-features --features sd-probe")
     for features in "${sets[@]}"; do
@@ -525,7 +524,6 @@ clippy:
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features bank2-gate -- -D warnings
-    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features usb-audio -- -D warnings
     cargo clippy -p chimera-core --features bank2-gate --all-targets -- -D warnings
     cargo clippy -p chimera-core --features walk-styles --test tape_walk_glyph_test -- -D warnings
     for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done

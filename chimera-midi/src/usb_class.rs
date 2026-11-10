@@ -129,8 +129,8 @@ pub const fn config_len(audio: bool) -> usize {
 }
 
 // Each layout inside usb-device's control buffer, or the build fails: the
-// default (217 B) with `MARGIN` to spare, USB audio's (249 B) with its
-// one cable (ADR 0248's 7 B of room).
+// bench builds' (217 B) with `MARGIN` to spare, the shipping builds' with
+// USB audio (249 B, ADR 0256) with its one cable (ADR 0248's 7 B of room).
 const _: () = assert!(config_len(false) + MARGIN <= CONTROL_BUF);
 const _: () = assert!(config_len(true) <= CONTROL_BUF);
 

@@ -4,14 +4,14 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "midi-usb", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders", "tuning"]
+default = ["midi-din", "midi-usb", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders", "tuning", "usb-audio"]
 midi-din = ["chimera-board/midi-din"]
 # The console serviced from the OTG_FS interrupt, with its storm guard; on
 # wherever MIDI DIN is.
 midi-usb = ["usb-console", "chimera-board/midi-usb"]
 # USB audio (ADR 0248): the main out (DAC pair 1) to the host as a class
-# compliant UAC1 stream, beside the console and USB MIDI. Off by default
-# until the unit has enumerated it on three OSes and captured an hour.
+# compliant UAC1 stream, beside the console and USB MIDI. In every shipping
+# build (ADR 0256); the bench sets go without.
 usb-audio = ["midi-usb", "chimera-board/usb-audio"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH

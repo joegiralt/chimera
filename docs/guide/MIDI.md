@@ -347,11 +347,11 @@ With ECHO off, MIDI OUT stays silent.
 
 If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with MIDI thru on, an interface's soft thru, a controller that merges its input), ECHO can stay on: an echo that comes back within that quarter second is not taken as a turn, so a relative encoder's cell never walks.
 
-## USB MIDI ports
+## USB MIDI and audio
 
-Over USB, Chimera shows up as one MIDI device with these ports:
-- **Chimera**, both ways: every channel, as on DIN. Clock, SysEx, the identity reply and ECHO use this port.
-- **Chimera Part 1** to **Chimera Part 6**, into Chimera only: each plays its Part, whatever channel your DAW track sends on. Chimera moves the notes, CCs, bend and pressure to that Part's channel, so another Part on the same channel plays them too. Clock and SysEx on these ports are ignored.
+Over USB, Chimera is class compliant: it needs no driver on Linux, macOS or Windows. It shows up as:
+- **Chimera**, one MIDI port both ways: every channel, as on DIN, each Part on its own channel. Clock, SysEx, the identity reply and ECHO use this port.
+- **Chimera**, an audio input: the main out in stereo, 24-bit, 48 kHz, exactly what the main out jacks play. Record it in your DAW like any interface's input; the jacks keep playing while it streams.
 
 ## Program change: Sounds from a sequencer
 

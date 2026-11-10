@@ -1,6 +1,6 @@
 //! USB audio toward the host (ADR 0248): the stereo main out (DAC pair 1)
-//! as a UAC1 stream in USB MIDI's function, off by default (`usb-audio`)
-//! until the unit has run it. The audio interrupt pushes each block into
+//! as a UAC1 stream in USB MIDI's function (`usb-audio`, in every
+//! shipping build: ADR 0256). The audio interrupt pushes each block into
 //! `RING`; the USB interrupt pops a packet at a time onto the isochronous
 //! IN, sized by `chimera_midi::uac::Pacer`.
 //!
