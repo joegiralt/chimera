@@ -144,3 +144,14 @@ Research step (the manual's machine chapter; DAFx drum papers on the reading lis
 From the audition page (host prototypes at 2cacaeae): **18 machines ship in 0.4**. TONE KICK, TONE SNARE, TONE TOM, TONE CLAP, TONE COWBELL, TONE CYMBAL, METAL HAT, FM KICK, FM SNARE, FM HAT, BODY KICK, BODY SNARE, BODY TOM, BODY BELL, BODY SHAKER, PLAIN SINE, PLAIN NOISE, PLAIN IMPULSE. **TONE RIM is cut.** Owner: "these sound great. ship."
 
 Before porting, fix the prototype issues the measurements flagged: FM KICK's stepped sweep (pitch per block, needs per-sample pitch in the FM kernel or a smoothed sweep), BODY's too-bright upper modes, and the 4-bit click's lost attack. Then check every knob set against the Machinedrum manual's machine chapter.
+
+## Added scope, owner 2026-11-10 ("add 1 through 6")
+
+1. **ACCENT / velocity routing per pad.** Velocity drives two or three of the pad's knobs (e.g. DECAY, TONE, PITCH), not only level, after the Machinedrum's ACCENT and the Rytm's velocity mod.
+2. **RETRIG per pad.** Rolls and flams from a single note, after the Rytm's RETRIG: RATE, LENGTH, and a velocity ramp (up or down). It works over MIDI without a sequencer.
+3. **Kit macros.** Kit-wide knobs that scale every pad's DECAY, shift every pad's TUNE and set an overall DRIVE, for live performance; routable like any mod destination.
+4. **WOOD and hand percussion.** A WOOD material on the BODY kernel (rim, sidestick, clave, woodblock), filling the gap TONE RIM left, and hand drums (conga, bongo, timbale) as BODY TOM plus an articulation knob (OPEN, SLAP, MUTE).
+5. **Tambourine and jingles.** The shared METAL bank with SHAKER's particles.
+6. **Pads modulate other pads.** One pad's envelope, level or LFO as a mod source on another pad of the same kit (a kick ducking the hats, an envelope opening a filter), after the Machinedrum's control machines and track LFOs aimed at other tracks. It shares its mechanism with #224 (cross-Part modulation, which also holds the envelope follower).
+
+Not in 0.4: MIDI-sending pads (7) and the listening drummer (8).
