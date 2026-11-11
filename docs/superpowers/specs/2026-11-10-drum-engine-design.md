@@ -171,3 +171,5 @@ Before porting, fix the prototype issues the measurements flagged: FM KICK's ste
 Not in 0.4: MIDI-sending pads (7) and the listening drummer (8).
 
 **BODY WOOD ships** (owner by ear, 2026-11-10: "the new wood sounds good"). BODY HAND and METAL JINGLE await marks.
+
+**BODY HAND and METAL JINGLE ship** (owner, by ear on the audition page, 2026-11-10/11). VOX was rebuilt consonant-first (3f46a47b) after the owner said the formant version "doesn't sound like a mouth"; its ship marks are pending.
