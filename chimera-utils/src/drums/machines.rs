@@ -5,6 +5,7 @@
 
 use super::parts::*;
 use super::vox;
+use super::world;
 use chimera_core::dsp::fast_sin_turns;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::voice_fx::{fold, soft};
@@ -44,6 +45,13 @@ pub enum Id {
     VoxHat,
     VoxClick,
     VoxRoll,
+    BodyBar,
+    BodyPan,
+    BodyGong,
+    BodyTabla,
+    BodySpring,
+    LpgBongo,
+    FilterPing,
 }
 
 pub struct Spec {
@@ -63,7 +71,7 @@ pub struct Spec {
 /// Knob sets checked against the Machinedrum manual's Appendix A (OS
 /// 1.63), our own names; the design note's machine table says what
 /// differs.
-pub const SPECS: [Spec; 27] = {
+pub const SPECS: [Spec; 34] = {
     const fn s(
         id: Id,
         name: &'static str,
@@ -81,7 +89,19 @@ pub const SPECS: [Spec; 27] = {
             more,
             ships: !matches!(
                 id,
-                Id::ToneRim | Id::VoxKick | Id::VoxSnare | Id::VoxHat | Id::VoxClick | Id::VoxRoll
+                Id::ToneRim
+                    | Id::VoxKick
+                    | Id::VoxSnare
+                    | Id::VoxHat
+                    | Id::VoxClick
+                    | Id::VoxRoll
+                    | Id::BodyBar
+                    | Id::BodyPan
+                    | Id::BodyGong
+                    | Id::BodyTabla
+                    | Id::BodySpring
+                    | Id::LpgBongo
+                    | Id::FilterPing
             ),
         }
     }
@@ -434,6 +454,97 @@ pub const SPECS: [Spec; 27] = {
             ],
             [50, 30],
         ),
+        s(
+            Id::BodyBar,
+            "BODY BAR",
+            "BODY",
+            "modes",
+            [
+                "PITCH", "DECAY", "HARDNESS", "BAR", "TREMOLO", "BUZZ", "RATE", "POSITION",
+            ],
+            [50, 40],
+        ),
+        s(
+            Id::BodyPan,
+            "BODY PAN",
+            "BODY",
+            "modes",
+            [
+                "PITCH",
+                "DECAY",
+                "HARDNESS",
+                "SHELL",
+                "OVERTONES",
+                "HAND",
+                "BLOOM",
+                "SYMPATHY",
+            ],
+            [60, 30],
+        ),
+        s(
+            Id::BodyGong,
+            "BODY GONG",
+            "BODY",
+            "modes",
+            [
+                "PITCH", "DECAY", "HARDNESS", "SHAPE", "GLIDE", "RUB", "SWELL", "BEAT",
+            ],
+            [40, 40],
+        ),
+        s(
+            Id::BodyTabla,
+            "BODY TABLA",
+            "BODY",
+            "modes",
+            [
+                "PITCH",
+                "DECAY",
+                "HAND",
+                "DRUM",
+                "STROKE",
+                "PRESS",
+                "SWOOP",
+                "SWOOP TIME",
+            ],
+            [0, 50],
+        ),
+        s(
+            Id::BodySpring,
+            "BODY SPRING",
+            "BODY",
+            "spring",
+            [
+                "PITCH", "DECAY", "CHIRP", "SHAKE", "TUBE", "DAMP", "TONE", "SPRINGS",
+            ],
+            [90, 0],
+        ),
+        s(
+            Id::LpgBongo,
+            "LPG BONGO",
+            "LPG",
+            "lpg",
+            [
+                "PITCH", "DECAY", "COLOR", "STRIKE", "FM", "TONE", "RATIO", "BEND",
+            ],
+            [40, 30],
+        ),
+        s(
+            Id::FilterPing,
+            "FILTER PING",
+            "LPG",
+            "ping",
+            [
+                "PITCH",
+                "DECAY",
+                "SWEEP",
+                "DRIVE",
+                "NOISE",
+                "TYPE",
+                "SWEEP TIME",
+                "WIDTH",
+            ],
+            [30, 10],
+        ),
     ]
 };
 
@@ -475,6 +586,13 @@ pub fn build(id: Id, k: Knobs, vel: f32, seed: u32) -> Box<dyn Machine> {
         Id::VoxKick | Id::VoxSnare | Id::VoxHat | Id::VoxClick | Id::VoxRoll => {
             vox::build(id, k, vel, seed, 0.0)
         }
+        Id::BodyBar
+        | Id::BodyPan
+        | Id::BodyGong
+        | Id::BodyTabla
+        | Id::BodySpring
+        | Id::LpgBongo
+        | Id::FilterPing => world::build(id, k, vel, seed, None),
     }
 }
 
@@ -1742,7 +1860,7 @@ impl Membrane {
 /// slaps; then the hand on the head: SLAP's fingers damp the upper modes,
 /// MUTE's palm stays and damps them all, OPEN's lifts. Each hit draws its
 /// contact time, noise colour and flam afresh.
-struct Hand {
+pub(super) struct Hand {
     n: u32,
     /// Palm pulses: onset, length, weight.
     palms: [(u32, u32, f32); 2],
@@ -1755,12 +1873,19 @@ struct Hand {
     crack: Flt,
     hiss: Hiss,
     /// Sample, upper modes' T60 scale (from mode 2), all modes' scale.
-    damp: Option<(u32, f32, f32)>,
+    pub(super) damp: Option<(u32, f32, f32)>,
     amount: f32,
 }
 
 impl Hand {
-    fn new(st: Stroke, amount: f32, bright: f32, vel: f32, rng: &mut Lcg, seed: u32) -> Self {
+    pub(super) fn new(
+        st: Stroke,
+        amount: f32,
+        bright: f32,
+        vel: f32,
+        rng: &mut Lcg,
+        seed: u32,
+    ) -> Self {
         let mut jit = |lo: f32, hi: f32| lin(rng.unit(), lo, hi);
         let ms = |t: f32| (t * 0.001 * FS) as u32;
         // Contact (ms), skin band centre (Hz), skin length (ms).
@@ -1803,7 +1928,7 @@ impl Hand {
     }
 
     /// A block: the force into the modes and what is heard directly.
-    fn block(&mut self) -> (Blk, Blk) {
+    pub(super) fn block(&mut self) -> (Blk, Blk) {
         let raised = |n: u32, (at, len, g): (u32, u32, f32)| {
             if g == 0.0 || n < at || n >= at + len {
                 0.0
@@ -1842,7 +1967,7 @@ impl Hand {
 }
 
 #[derive(Clone, Copy)]
-enum Stroke {
+pub(super) enum Stroke {
     Open,
     Slap,
     Mute,

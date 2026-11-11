@@ -43,6 +43,8 @@ mod rings;
 mod string;
 
 pub use chords::{CHORD_COUNT, CHORD_GLIDE_TAU, CHORDS, chord_of, fold};
+/// The dispersion chain's stage, for the DRUM host prototypes' springs.
+pub use loop_parts::Allpass1;
 pub use params::*;
 pub use string::MAX_STRING_DELAY;
 

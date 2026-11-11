@@ -20,6 +20,7 @@ mod parts;
 mod sample;
 mod vox;
 mod vox_formant;
+mod world;
 
 use crate::reference::write_f32;
 use machines::{Id, Knobs, SPECS, build, spec};
@@ -481,6 +482,9 @@ fn settings(id: Id) -> Vec<Setting> {
                 "a hollow alveolar \"tok\" with a back \"k\" after: lips rounded, the cavity big",
             ),
         ],
+        BodyBar | BodyPan | BodyGong | BodyTabla | BodySpring | LpgBongo | FilterPing => {
+            world::settings(id)
+        }
         VoxRoll => vec![
             (
                 "classic",
@@ -522,6 +526,8 @@ fn pattern(id: Id) -> &'static str {
         VoxHat => "x.X.x.X.x.X.x.xXx.X.x.X.x.X.x.Xx",
         VoxClick => "..x...x...x.x.....x..x..x...x.xx",
         VoxRoll => "X.......X...x...X.......X.x.x...",
+        // The world batch plays its own melodic patterns (`world`).
+        BodyBar | BodyPan | BodyGong | BodyTabla | BodySpring | LpgBongo | FilterPing => "",
     }
 }
 
@@ -674,10 +680,11 @@ pub fn run(dir: &Path) -> Result<(), String> {
     let fixes = fixes::run(&mut out)?;
     demos::run(&mut out)?;
     vox::run(&mut out)?;
+    world::run(&mut out)?;
 
     let cost = bench();
     let manifest = json!({
-        "about": "Chimera 0.4 DRUM host prototypes (chimera-utils drum-render). 48 kHz mono 32-bit float WAVs, raw levels, never normalised. Knobs 0-127 as the cells would show them. Machines are built from chimera-engine parts: VA NOISE and oscillator, CLEAN filter, ALGO kernel, MODAL BANK (16 modes), the FX slot's SOFT and FOLD curves, VA's combine, TAPE's Hermite read.",
+        "about": "Chimera 0.4 DRUM host prototypes (chimera-utils drum-render). 48 kHz mono 32-bit float WAVs, raw levels, never normalised. Knobs 0-127 as the cells would show them. Machines are built from chimera-engine parts: VA NOISE and oscillator, CLEAN filter, ALGO kernel, MODAL BANK (16 modes) and its dispersion allpass, DRUM's two-pole mode bank, the Plaits-port LPG, the filter TYPEs, the FX slot's SOFT and FOLD curves, VA's combine, TAPE's Hermite read.",
         "cpu_estimate": cost,
         "fixes": fixes,
         "files": out.rows,
@@ -961,7 +968,10 @@ fn bench() -> Value {
         })
     });
     let mut rows = serde_json::Map::new();
-    for s in SPECS.iter().filter(|s| rendered(s)) {
+    for s in SPECS
+        .iter()
+        .filter(|s| rendered(s) || world::IDS.contains(&s.id))
+    {
         let k = knobs(s.id, settings(s.id)[0].1);
         let ns = time(&mut |r| {
             let mut m = build(s.id, k, 1.0, r);
