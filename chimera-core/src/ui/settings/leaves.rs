@@ -37,6 +37,7 @@ pub static CHANNELS: BlockDef = BlockDef {
 
 /// MIDI CONFIG › CONTROL CHANNELS (ADR 0254): MIXER, SEQUENCER and AUTO,
 /// each OFF or a channel. One a Part's own channel takes reads dimmed.
+/// D: BUILT-IN, each Part's GM CCs on its own channel (ADR 0263).
 pub static CONTROL: BlockDef = BlockDef {
     // Never used before: a new top, past MPE's 113 (#896), one more
     // focus slot (`MAX_PAGES`) each.
@@ -49,7 +50,7 @@ pub static CONTROL: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Midi, MidiSettings::MIXER),
         ParamSlot::param(BlockRef::Midi, MidiSettings::SEQUENCER),
         ParamSlot::param(BlockRef::Midi, MidiSettings::AUTO),
-        ParamSlot::EMPTY,
+        ParamSlot::param(BlockRef::Midi, MidiSettings::BUILT_IN),
         ParamSlot::EMPTY,
         ParamSlot::EMPTY,
     ],

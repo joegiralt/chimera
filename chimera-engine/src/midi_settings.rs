@@ -6,7 +6,8 @@
 //! PROGRAM IN, whether a program change loads a Sound (ADR 0224), MIDI
 //! CONFIG › MPE's zones (ADR 0252), and MIDI CONFIG › CONTROL's MIXER,
 //! SEQUENCER and AUTO channels (ADR 0254), and MIDI CONFIG › ECHO's PARAM
-//! OUT, whether a panel edit goes out as its NRPN (ADR 0258).
+//! OUT, whether a panel edit goes out as its NRPN (ADR 0258), and
+//! CONTROL's BUILT-IN, whether each Part answers GM's CCs (ADR 0263).
 //! They say how the unit sits in the studio, not what a project plays.
 //! (One block, so the file keeps its `MIDI` record.)
 
@@ -25,8 +26,8 @@ pub struct MidiSettings {
     pub sync: SyncMode,
     /// Cents, -100..=100: A4 = 440 Hz × 2^(tune / 1200). Whole cents.
     pub tune: i8,
-    /// PUSH, ECHO, PROGRAM IN and PARAM OUT (`push`, `echo`,
-    /// `program_in`, `param_out`).
+    /// PUSH, ECHO, PROGRAM IN, PARAM OUT and BUILT-IN (`push`, `echo`,
+    /// `program_in`, `param_out`, `built_in`).
     pub switches: Switches,
     /// MPE's lower and upper zones (ADR 0252): off until set here or by an
     /// MPE Configuration Message.
@@ -54,7 +55,7 @@ impl Control {
 /// encoders, read them (ADR 0140); ECHO, DIN OUT sends value echo and
 /// identity replies (spec § 8.4); PROGRAM IN, a program change loads a
 /// Sound (ADR 0224); PARAM OUT, a panel edit goes out as its NRPN (ADR
-/// 0258). One byte keeps `MidiSettings` at three,
+/// 0258); BUILT-IN, each Part answers GM's CCs (ADR 0263). One byte keeps `MidiSettings` at three,
 /// so SYSTEM's copies in bank 1 keep their shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Switches(u8);
@@ -66,6 +67,7 @@ impl Switches {
     const PARAM_OUT: u8 = 8;
     /// USB IN's step, bits 4 to 6.
     const USB_IN_AT: u8 = 4;
+    const BUILT_IN: u8 = 128;
 
     const fn has(self, bit: u8) -> bool {
         self.0 & bit != 0
@@ -80,7 +82,7 @@ impl MidiSettings {
     pub const DEFAULT: MidiSettings = MidiSettings {
         sync: SyncMode::DEFAULT,
         tune: 0,
-        switches: Switches(Switches::ECHO | USB_IN_TOP << Switches::USB_IN_AT),
+        switches: Switches(Switches::ECHO | Switches::BUILT_IN | USB_IN_TOP << Switches::USB_IN_AT),
         mpe: Zones::OFF,
         control: 0,
     };
@@ -99,6 +101,7 @@ impl MidiSettings {
     pub const AUTO: ParamId = ParamId(11);
     pub const PARAM_OUT: ParamId = ParamId(12);
     pub const USB_IN: ParamId = ParamId(13);
+    pub const BUILT_IN: ParamId = ParamId(14);
     pub const CONTROL: [ParamId; 3] = [Self::MIXER, Self::SEQUENCER, Self::AUTO];
 
     /// `c`'s channel; `None`: OFF.
@@ -129,6 +132,16 @@ impl MidiSettings {
     /// A panel edit goes out as its NRPN, under ECHO (ADR 0258).
     pub const fn param_out(&self) -> bool {
         self.switches.has(Switches::PARAM_OUT)
+    }
+
+    /// Each Part answers GM's CCs on its channel (ADR 0263).
+    pub const fn built_in(&self) -> bool {
+        self.switches.has(Switches::BUILT_IN)
+    }
+
+    pub const fn with_built_in(mut self, on: bool) -> Self {
+        self.switches = self.switches.with(Switches::BUILT_IN, on);
+        self
     }
 
     pub const fn with_param_out(mut self, on: bool) -> Self {
@@ -218,7 +231,7 @@ const fn control(id: u8, label: &'static str, ident: &'static str) -> ParamSpec 
 /// SYNC by index, `SyncMode::ALL`'s order; `SYNC_NAMES` too
 /// (`midi_sync_page_test::sync_value_names_and_order_agree`). INT and EXT are two peers,
 /// neither off, so the focus shows the word.
-pub static MIDI_SPECS: [ParamSpec; 14] = [
+pub static MIDI_SPECS: [ParamSpec; 15] = [
     ParamSpec::choice(
         0,
         "SYNC",
@@ -354,6 +367,19 @@ pub static MIDI_SPECS: [ParamSpec; 14] = [
         Motion::Stepped(Change::Snap),
     )
     .ident("USB_IN"),
+    // A SYSTEM from before BUILT-IN has none: ON (ADR 0263).
+    ParamSpec::stepped(
+        14,
+        "BUILT-IN",
+        ValFmt::Names(&OFF_ON),
+        0.0,
+        1.0,
+        1.0,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("BUILT_IN")
+    .glyph(crate::glyph::FocusGlyph::Switch),
 ];
 
 const _: () = assert!(SyncMode::ALL.len() == SYNC_NAMES.len());
@@ -387,6 +413,7 @@ impl Block for MidiSettings {
             ParamId(i @ 9..=11) => f32::from(self.raw(i - 9)),
             Self::PARAM_OUT => f32::from(self.param_out()),
             Self::USB_IN => f32::from(self.usb_in()),
+            Self::BUILT_IN => f32::from(self.built_in()),
             _ => 0.0,
         }
     }
@@ -409,6 +436,7 @@ impl Block for MidiSettings {
             }
             Self::PARAM_OUT => *self = self.with_param_out(v as u8 != 0),
             Self::USB_IN => *self = self.with_usb_in(v as u8),
+            Self::BUILT_IN => *self = self.with_built_in(v as u8 != 0),
             _ => {}
         }
     }

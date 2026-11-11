@@ -203,6 +203,13 @@ pub struct PartParams {
     pub mapping: u8,
 }
 
+/// LEVEL `level` under expression `e` (CC 11, ADR 0263): (e / 127)², GM's
+/// 40 log10 law; `level` itself, bit for bit, at 127.
+pub fn expressed(level: f32, e: u8) -> f32 {
+    let e = f32::from(e) / 127.0;
+    level * (e * e)
+}
+
 /// TUNING's choices: 12-TET, the named temperaments
 /// (`chimera_theory::tuning::BUILT_IN`), the MTS table, then a Scala file
 /// from the card, the Part's own (`Part::scala`, ADR 0259).

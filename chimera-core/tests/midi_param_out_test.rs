@@ -613,3 +613,23 @@ fn a_lost_usb_copy_goes_again() {
     }
     assert_eq!(nrpns(&u), [as_heard(r.ch(), CUTOFF_N, r.want(CUTOFF))]);
 }
+
+/// The built-in layer's moves (ADR 0263) came in over MIDI: PARAM OUT
+/// sends none of them, shifts (CC 73, 72) and absolute moves (CC 7, 74)
+/// alike.
+#[test]
+fn built_in_moves_never_go_out() {
+    let mut r = Rig::new(true);
+    let ch = r.ch();
+    let cc = |n: u8, v: u8| {
+        CtrlEvent::Ctl(
+            ch,
+            Ctl::Cc {
+                cc: chimera_midi::ctl::FreeCc::new(n).unwrap(),
+                value: chimera_midi::value::U7::new(v).unwrap(),
+            },
+        )
+    };
+    r.pass(&[cc(73, 100), cc(72, 10), cc(7, 0), cc(74, 0)], None);
+    assert!(r.settle().is_empty(), "nothing sent");
+}

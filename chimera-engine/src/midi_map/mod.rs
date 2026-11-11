@@ -2,6 +2,7 @@
 //! array with no heap. `Mappable` is the whitelist type, so an address a CC
 //! may not drive (a switch, a setting) can never be stored.
 
+pub mod builtin;
 pub mod codec;
 pub mod ctl;
 

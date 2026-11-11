@@ -306,6 +306,11 @@ pub fn save_project_as<S: Store>(
             p.meta.name = name;
             p.meta.file = Some(file);
             p.meta.saved_crc = Some(project_crc(p));
+            // Saved as they sound: each Part's shifts are its own now (ADR
+            // 0263).
+            for part in &mut p.perf.parts {
+                part.env = [0; 2];
+            }
             ProjectNote::Saved(differ(p))
         }
         Err(n) => n,

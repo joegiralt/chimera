@@ -49,6 +49,14 @@ pub struct Part {
     pub(in crate::project) origin: Origin,
     pub mix: PartParams,
     pub(in crate::project) loads: Loads,
+    /// CC 11, expression (ADR 0263): the publish plays LEVEL under it
+    /// (`part::expressed`); 127 is LEVEL as set. Played, never saved: a
+    /// project load or NEW brings it back to 127. Beside `loads`, in the
+    /// Part's padding: no RAM.
+    pub(in crate::project) expression: u8,
+    /// CC 73 and 72's offsets from 64 already applied to the Sound (ADR
+    /// 0263): a Sound load clears them. In the padding too.
+    pub(in crate::project) env: [i8; 2],
     /// KEEP MAP (ADR 0253): the `sound_crc` the Part had once its kept
     /// rows were written over a load's. While it matches, the Part reads
     /// Clean. Never saved.
@@ -73,6 +81,17 @@ impl Part {
         return (self.scala.padded()[0] != 0).then_some(self.scala);
         #[cfg(not(feature = "tuning"))]
         None
+    }
+
+    /// CC 11's expression (ADR 0263), 127 none.
+    pub fn expression(&self) -> u8 {
+        self.expression
+    }
+
+    /// CC 73's (`which` 0) or 72's (1) offset from 64 applied to this
+    /// Sound (ADR 0263): 0 after a Sound load.
+    pub fn env_offset(&self, which: usize) -> i8 {
+        self.env[which & 1]
     }
 
     /// Bumped by each Sound load into this Part.
@@ -107,6 +126,8 @@ pub(super) fn new_part(i: usize) -> Part {
         origin: Origin::Init(EngineType::Algo),
         mix: PartParams::for_part(i),
         loads: Loads::default(),
+        expression: 127,
+        env: [0; 2],
         #[cfg(feature = "controller-maps")]
         map_kept: None,
         #[cfg(feature = "tuning")]

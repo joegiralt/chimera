@@ -5,6 +5,7 @@ pub mod audio_page;
 pub mod block_def;
 pub mod block_registry;
 pub mod browser;
+pub mod builtin_cc;
 pub mod busy;
 pub mod cc;
 pub mod components;

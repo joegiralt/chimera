@@ -431,6 +431,8 @@ impl UiState {
         self.saw(event);
         match out {
             Ok(id) => {
+                // Saved as it sounds: CC 64 is this Sound now (ADR 0263).
+                self.project.reset_shift(part);
                 self.toast.show(Toast {
                     text: Line::new(SAVED),
                     ms: Toast::SAVED_MS,

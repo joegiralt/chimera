@@ -758,6 +758,8 @@ impl ProjectCheck {
                     *c = None;
                 }
                 part.mix = PartParams::for_part(n.index());
+                part.expression = 127;
+                part.env = [0; 2];
                 part.origin = Origin::Init(EngineType::Algo);
                 t.set_scala(n, None);
             }
