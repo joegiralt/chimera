@@ -189,10 +189,12 @@ static MIDI: [Row; 6] = [
     row("MPE", Leaf(&super::leaves::MPE_LEAF)),
 ];
 
-static AUDIO: [Row; 3] = [
+static AUDIO: [Row; 3 + cfg!(feature = "usb-audio") as usize] = [
     row("OUTPUTS", Leaf(&OUTPUTS_LEAF)),
     row("SENDS", Later(issue(259))),
     row("TUNING", Leaf(&TUNING_LEAF)),
+    #[cfg(feature = "usb-audio")]
+    crumb("USB AUDIO", "USB", Leaf(&super::leaves::USB_AUDIO_LEAF)),
 ];
 
 static PERSONALIZE: [Row; 4] = [

@@ -12,9 +12,13 @@ use std::sync::Mutex;
 
 use chimera_midi::uac;
 use chimera_midi::uac_link::Alt;
+use chimera_midi::uac_out;
 use chimera_midi::usb_class::{
     CABLES, CONTROL_BUF, Ids, MARGIN, Stream, cable_count, config_len, descriptors, device,
     jack_name, ms_total, names,
+};
+use chimera_midi::usb_config::{
+    self, Audio as StaticAudio, Eps, Layout as StaticLayout, Owner, Replies,
 };
 use usb_device::bus::PollResult;
 use usb_device::class_prelude::*;
@@ -30,6 +34,12 @@ struct State {
     sent: Vec<u8>,
     in_done: bool,
     stalled: bool,
+    /// IN packets the host still reads this step; `None` all of them.
+    cut: Option<usize>,
+    /// A bus reset at the next poll.
+    reset: bool,
+    /// Endpoints halted, by address.
+    halted: Vec<u8>,
 }
 
 /// EP0 only: one SETUP in at a time, every IN packet kept.
@@ -57,13 +67,23 @@ impl UsbBus for Fake {
         Ok(EndpointAddress::from_parts(*n, dir))
     }
     fn enable(&mut self) {}
-    fn reset(&self) {}
+    fn reset(&self) {
+        self.0.lock().unwrap().halted.clear();
+    }
     fn set_device_address(&self, _: u8) {}
     fn write(&self, ep: EndpointAddress, buf: &[u8]) -> Result<usize> {
         let mut s = self.0.lock().unwrap();
         assert_eq!(ep.index(), 0, "only EP0 writes here");
         s.sent.extend_from_slice(buf);
-        s.in_done = true;
+        // A host that stops reading leaves the packet unacknowledged.
+        match &mut s.cut {
+            Some(0) => {}
+            Some(n) => {
+                *n -= 1;
+                s.in_done = true;
+            }
+            None => s.in_done = true,
+        }
         Ok(buf.len())
     }
     fn read(&self, ep: EndpointAddress, buf: &mut [u8]) -> Result<usize> {
@@ -76,19 +96,25 @@ impl UsbBus for Fake {
             _ => Err(UsbError::WouldBlock),
         }
     }
-    fn set_stalled(&self, _: EndpointAddress, stalled: bool) {
+    fn set_stalled(&self, ep: EndpointAddress, stalled: bool) {
+        let mut s = self.0.lock().unwrap();
+        let a = u8::from(ep);
+        s.halted.retain(|&h| h != a);
         if stalled {
-            self.0.lock().unwrap().stalled = true;
+            s.stalled = true;
+            s.halted.push(a);
         }
     }
-    fn is_stalled(&self, _: EndpointAddress) -> bool {
-        false
+    fn is_stalled(&self, ep: EndpointAddress) -> bool {
+        self.0.lock().unwrap().halted.contains(&u8::from(ep))
     }
     fn suspend(&self) {}
     fn resume(&self) {}
     fn poll(&self) -> PollResult {
         let mut s = self.0.lock().unwrap();
-        if s.setup.is_some() {
+        if std::mem::take(&mut s.reset) {
+            PollResult::Reset
+        } else if s.setup.is_some() {
             PollResult::Data {
                 ep_out: 1,
                 ep_in_complete: 0,
@@ -551,5 +577,515 @@ fn every_cable_has_its_jack_and_name() {
             .chain((1..n).map(|p| format!("Chimera Part {p}")))
             .collect();
         assert_eq!(names, want, "{}", n);
+    }
+}
+
+// The configuration as one static (#885): layouts past the control
+// buffer, answered by the class from `usb_config`'s bytes.
+
+/// The fake allocator's addresses, in `session`'s order: the console's
+/// notification IN 1, data OUT 1, data IN 2; MIDI's OUT 2 and IN 3; the
+/// capture's IN 4, the playback's OUT 3 and its feedback IN 5.
+const EPS: Eps = Eps {
+    cdc: [0x81, 0x82, 0x01],
+    midi_out: 0x02,
+    midi_in: 0x83,
+};
+
+/// The jacks' first string: the device's three, then usb-device's next.
+const NAME: u8 = 4;
+
+fn bytes(l: &StaticLayout) -> Vec<u8> {
+    let mut b = vec![0u8; usb_config::BUF];
+    let n = usb_config::write(&mut b, l).expect("fits the static");
+    assert_eq!(n, usb_config::len(l));
+    b.truncate(n);
+    b
+}
+
+/// The shipping and bench layouts as bytes are what usb-device serves
+/// today, byte for byte: the static path changes nothing it replaces.
+#[test]
+fn static_bytes_match_what_usb_device_serves() {
+    let bench = StaticLayout {
+        cables: CABLES,
+        name: NAME,
+        eps: EPS,
+        audio: None,
+    };
+    assert_eq!(bytes(&bench), configuration(Layout::Midi, 4));
+    let shipping = usb_config::shipping(NAME, EPS.midi_out, EPS.midi_in, 0x84);
+    assert_eq!(bytes(&shipping), configuration(Layout::Audio, 5));
+    assert_eq!(EPS.cdc, usb_config::CDC);
+}
+
+/// The shipping layout served from the static (`serve`), as the firmware
+/// does: Linux reads 9 bytes first, then wTotalLength; Windows asks 255
+/// first; any wLength past it gets the 249 B whole. Each is the same
+/// bytes usb-device serves itself.
+#[test]
+fn shipping_layout_served_from_the_static_cuts_to_wlength() {
+    let want = configuration(Layout::Audio, 5);
+    let l = usb_config::shipping(NAME, EPS.midi_out, EPS.midi_in, 0x84);
+    let lens = [9u16, 64, 248, 249, 255, 512, 0x03FF];
+    let setups: Vec<[u8; 8]> = lens.iter().map(|&n| get_config(n)).collect();
+    let a = static_session(bytes(&l), &setups);
+    for (n, a) in lens.iter().zip(&a) {
+        assert!(!a.stalled, "wLength {n}");
+        assert_eq!(
+            a.sent,
+            want[..usize::from(*n).min(want.len())],
+            "wLength {n}"
+        );
+    }
+    // Any other descriptor still falls to usb-device.
+    let r = static_session(bytes(&l), &[get_descriptor(1, 0)]);
+    assert_eq!(r[0].sent.len(), 18);
+}
+
+/// The shipping layout with the host's playback (ADR 0260): one cable,
+/// the stereo capture, the playback's OUT 3 and feedback IN 5.
+const DUPLEX: StaticLayout = usb_config::duplex(NAME, 0x02, 0x83, 0x84, (0x03, 0x85));
+
+/// Both streams, the six-channel capture and one cable (#885).
+const FULL: StaticLayout = StaticLayout {
+    cables: 1,
+    name: NAME,
+    eps: EPS,
+    audio: Some(StaticAudio {
+        capture: 0x84,
+        six: true,
+        playback: Some((0x03, 0x85)),
+    }),
+};
+
+/// A class answering GET_DESCRIPTOR(configuration) from its static, and
+/// the two streams' alt settings, as the board's: the capture's and the
+/// playback's `Alt`, 0 or 1 each.
+struct Whole {
+    replies: Replies,
+    owner: Owner,
+    alts: [Alt; 2],
+}
+
+impl Whole {
+    /// The board's replies: the configuration `bytes`, the device's
+    /// descriptor, and strings 0 to 4 with `SERIAL` the serial number.
+    fn new(config: &'static [u8], alts: [Alt; 2]) -> Whole {
+        let serial = Vec::leak(vec![0u8; 2 + 2 * SERIAL.len()]);
+        usb_config::string(SERIAL, serial).unwrap();
+        let device = Vec::leak(usb_config::device_descriptor(0x0483, 0x5740, 0x0040).to_vec());
+        Whole {
+            replies: Replies {
+                config,
+                device,
+                strings: [
+                    &usb_config::LANGS,
+                    &usb_config::CHIMERA,
+                    &usb_config::CHIMERA,
+                    serial,
+                    &usb_config::CHIMERA,
+                ],
+            },
+            owner: Owner::new(),
+            alts,
+        }
+    }
+}
+
+impl UsbClass<Fake> for Whole {
+    fn control_in(&mut self, xfer: ControlIn<Fake>) {
+        let alts = self.alts;
+        self.owner.control_in(xfer, &self.replies, |i| {
+            alts.iter()
+                .find(|a| u8::from(a.iface()) == i)
+                .and_then(|a| a.get(a.iface()))
+                .unwrap_or(0)
+        });
+    }
+
+    fn control_out(&mut self, xfer: ControlOut<Fake>) {
+        self.owner.control_out(xfer.request());
+    }
+
+    /// The one cable's jack, as the board's `jack_name`.
+    fn get_string(&self, index: StringIndex, _: LangID) -> Option<&str> {
+        (u8::from(index) == NAME).then_some("Chimera")
+    }
+
+    fn get_alt_setting(&mut self, iface: InterfaceNumber) -> Option<u8> {
+        self.alts.iter().find_map(|a| a.get(iface))
+    }
+
+    fn set_alt_setting(&mut self, iface: InterfaceNumber, alt: u8) -> bool {
+        self.alts.iter_mut().any(|a| a.set(iface, alt))
+    }
+
+    fn reset(&mut self) {
+        self.alts.iter_mut().for_each(Alt::reset);
+        self.owner.reset();
+    }
+}
+
+/// Each SETUP in turn on a device whose class serves `bytes`, the
+/// interfaces allocated as the board allocates them: the console, then
+/// AudioControl 2, the capture 3, MIDIStreaming 4, the playback 5.
+fn static_session(bytes: Vec<u8>, setups: &[[u8; 8]]) -> Vec<Answer> {
+    let steps: Vec<Step> = setups.iter().map(|&s| Step::Setup(s)).collect();
+    static_steps(bytes, &steps)
+}
+
+/// What the host does next: a SETUP read whole, a SETUP whose data stage
+/// it stops reading after `n` packets (a timeout, a cancel), or a bus
+/// reset.
+#[derive(Clone, Copy)]
+enum Step {
+    Setup([u8; 8]),
+    Cut([u8; 8], usize),
+    Reset,
+}
+
+fn static_steps(bytes: Vec<u8>, steps: &[Step]) -> Vec<Answer> {
+    let alloc = UsbBusAllocator::new(Fake::default());
+    let mut serial = SerialPort::new(&alloc);
+    let _ac = alloc.interface();
+    let capture = alloc.interface();
+    let _ms = alloc.interface();
+    let playback = alloc.interface();
+    let mut class = Whole::new(Vec::leak(bytes), [Alt::new(capture), Alt::new(playback)]);
+    let mut dev = device(&alloc, (0x0483, 0x5740), SERIAL, Some(0x0040));
+    steps
+        .iter()
+        .map(|&step| {
+            {
+                let mut s = dev.bus().0.lock().unwrap();
+                s.sent.clear();
+                s.stalled = false;
+                s.in_done = false;
+                match step {
+                    Step::Setup(p) => (s.setup, s.cut) = (Some(p), None),
+                    Step::Cut(p, n) => (s.setup, s.cut) = (Some(p), Some(n)),
+                    Step::Reset => s.reset = true,
+                }
+            }
+            for _ in 0..200 {
+                dev.poll(&mut [&mut serial, &mut class]);
+            }
+            let s = dev.bus().0.lock().unwrap();
+            Answer {
+                sent: s.sent.clone(),
+                stalled: s.stalled,
+            }
+        })
+        .collect()
+}
+
+/// The serial number the static sessions' device carries.
+const SERIAL: &str = "0123";
+
+fn get_status(recipient: u8, index: u8) -> [u8; 8] {
+    [0x80 | recipient, 0, 0, 0, index, 0, 2, 0]
+}
+
+const GET_CONFIGURATION: [u8; 8] = [0x80, 8, 0, 0, 0, 0, 1, 0];
+
+/// usb-device 0.3.2 keeps a static reply (`accept_in_static`) until its
+/// data stage ends; a reset, a new SETUP or a host that stops reading
+/// leaves it set, and usb-device's next buffered reply would send its
+/// bytes. After a configuration read cut short, then after a reset too,
+/// every other request is answered as on a device that was never cut.
+#[test]
+fn a_configuration_read_cut_short_answers_nothing_else_with_its_bytes() {
+    let cfg = bytes(&DUPLEX);
+    let asks = [
+        get_descriptor(1, 0),
+        get_descriptor(3, 0),
+        get_descriptor(3, 1),
+        get_descriptor(3, 2),
+        get_descriptor(3, 3),
+        get_descriptor(3, 4),
+        get_descriptor(0x0F, 0),
+        get_status(0, 0),
+        get_status(1, 3),
+        get_status(2, 0x83),
+        GET_CONFIGURATION,
+        get_interface(5),
+        get_interface(0),
+        get_config(9),
+    ];
+    let clean = static_session(cfg.clone(), &asks);
+    assert_eq!(clean[0].sent.len(), 18);
+    assert_eq!(clean[13].sent, cfg[..9]);
+    for before in [
+        vec![Step::Cut(get_config(0x03FF), 2)],
+        vec![Step::Cut(get_config(0x03FF), 2), Step::Reset],
+        vec![Step::Cut(get_config(0x03FF), 40), Step::Reset],
+    ] {
+        for (i, &ask) in asks.iter().enumerate() {
+            let mut steps = before.clone();
+            steps.push(Step::Setup(ask));
+            let got = static_steps(cfg.clone(), &steps).pop().unwrap();
+            assert_eq!(got.stalled, clean[i].stalled, "request {i}");
+            assert_eq!(got.sent, clean[i].sent, "request {i} after a cut read");
+        }
+    }
+}
+
+fn get_config(len: u16) -> [u8; 8] {
+    let [lo, hi] = len.to_le_bytes();
+    [0x80, 6, 0, 2, 0, 0, lo, hi]
+}
+
+/// The shipping layout with playback: 332 B, past the 256-B buffer,
+/// served whole through usb-device's own poll and cut to each wLength
+/// (Linux asks 9 first, Windows 255).
+#[test]
+fn duplex_layout_reaches_the_host_past_the_control_buffer() {
+    let want = bytes(&DUPLEX);
+    assert_eq!(want.len(), 332);
+    assert!(want.len() > CONTROL_BUF);
+    assert_eq!(usize::from(le16(&want, 2)), want.len());
+    let lens = [9u16, 255, 331, 332, 512, 0x03FF];
+    let a = static_session(
+        want.clone(),
+        &lens.iter().map(|&n| get_config(n)).collect::<Vec<_>>(),
+    );
+    for (n, a) in lens.iter().zip(&a) {
+        assert!(!a.stalled, "wLength {n}");
+        assert_eq!(
+            a.sent,
+            want[..usize::from(*n).min(want.len())],
+            "wLength {n}"
+        );
+    }
+}
+
+/// The full layout: 375 B, served whole.
+#[test]
+fn full_layout_reaches_the_host_past_the_control_buffer() {
+    let want = bytes(&FULL);
+    assert_eq!(want.len(), 375);
+    let a = static_session(want.clone(), &[get_config(9), get_config(0x03FF)]);
+    assert!(!a[0].stalled && !a[1].stalled);
+    assert_eq!(a[0].sent, want[..9]);
+    assert_eq!(a[1].sent, want);
+}
+
+/// Every Part cable (ADR 0243) beside both streams fits the static: 417
+/// B, served whole.
+#[test]
+fn part_cables_fit_beside_both_streams() {
+    let l = StaticLayout {
+        cables: CABLES,
+        ..FULL
+    };
+    let want = bytes(&l);
+    assert_eq!(want.len(), 417);
+    assert!(want.len() <= usb_config::BUF);
+    let a = static_session(want.clone(), &[get_config(0x03FF)]);
+    assert_eq!(a[0].sent, want);
+}
+
+/// A layout with both streams parsed: six interfaces, one Audio function
+/// over four, AudioControl's two chains, the capture's alts, MIDI on 4,
+/// the playback's two alts on 5, the feedback's pairing, and full speed's
+/// periodic budget with the largest alts on together.
+fn parses_whole(c: &[u8], six: bool) {
+    assert_eq!(c[4], 6);
+    let mut at = 0;
+    while at < c.len() {
+        assert!(c[at] >= 2);
+        at += usize::from(c[at]);
+    }
+    assert_eq!(at, c.len());
+    let d = chain(c);
+    let iads: Vec<&&[u8]> = d.iter().filter(|x| x[1] == 0x0B).collect();
+    assert_eq!(iads[1][2..5], [2, 4, 0x01]);
+
+    // AudioControl: the header lists 3, MIDI's 4 and 5; its total is the
+    // header and four terminals.
+    let ac = d.iter().position(|x| x[1] == 4 && x[2] == 2).unwrap();
+    let hdr = d[ac + 1];
+    assert_eq!(hdr[..5], [11, 0x24, 0x01, 0x00, 0x01]);
+    assert_eq!(hdr[7..], [3, 3, 4, 5]);
+    let total: usize = d[ac + 1..ac + 6].iter().map(|x| x.len()).sum();
+    assert_eq!(usize::from(le16(hdr, 5)), total);
+    // Capture: IT 1 (line, L R first) into OT 2 (USB).
+    let (it1, ot2, it3, ot4) = (d[ac + 2], d[ac + 3], d[ac + 4], d[ac + 5]);
+    let ch = if six { 6 } else { 2 };
+    assert_eq!(
+        (it1[2], it1[3], le16(it1, 4), it1[7]),
+        (0x02, 1, 0x0603, ch)
+    );
+    assert_eq!(le16(it1, 8), 0x0003);
+    assert_eq!((ot2[2], ot2[3], le16(ot2, 4), ot2[7]), (0x03, 2, 0x0101, 1));
+    // Playback: IT 3 (USB, stereo) into OT 4 (line: the main out).
+    assert_eq!((it3[2], it3[3], le16(it3, 4), it3[7]), (0x02, 3, 0x0101, 2));
+    assert_eq!((ot4[2], ot4[3], le16(ot4, 4), ot4[7]), (0x03, 4, 0x0603, 3));
+
+    // Each alt setting: its format's channels and its endpoints.
+    let mut alts: Vec<(u8, u8, Vec<&[u8]>)> = Vec::new();
+    for x in &d {
+        match x[1] {
+            4 => alts.push((x[2], x[3], vec![x])),
+            _ => {
+                if let Some(a) = alts.last_mut() {
+                    a.2.push(x)
+                }
+            }
+        }
+    }
+    let alt = |i: u8, n: u8| &alts.iter().find(|a| (a.0, a.1) == (i, n)).unwrap().2;
+    let eps = |v: &Vec<&[u8]>| -> Vec<Vec<u8>> {
+        v.iter().filter(|x| x[1] == 5).map(|x| x.to_vec()).collect()
+    };
+    let channels = |v: &Vec<&[u8]>| v.iter().find(|x| x[1] == 0x24 && x[2] == 2).unwrap()[4];
+    for (i, n) in [(3, 0), (5, 0)] {
+        assert!(eps(alt(i, n)).is_empty(), "alt 0 takes no bandwidth");
+    }
+    // MIDIStreaming on 4, its class unchanged.
+    assert_eq!(alt(4, 0)[0][5..7], [0x01, 0x03]);
+    // Capture alt 1 stereo (and alt 2 six channels), asynchronous IN.
+    let s1 = eps(alt(3, 1));
+    assert_eq!(channels(alt(3, 1)), 2);
+    assert_eq!(
+        (s1[0][2], s1[0][3], le16(&s1[0], 4)),
+        (0x84, 0x05, uac::PACKET)
+    );
+    let biggest = if six {
+        let s2 = eps(alt(3, 2));
+        assert_eq!(channels(alt(3, 2)), 6);
+        assert_eq!((s2[0][2], s2[0][3]), (0x84, 0x05));
+        assert_eq!(le16(&s2[0], 4), usb_config::SIX_PACKET);
+        le16(&s2[0], 4)
+    } else {
+        assert!(!alts.iter().any(|a| (a.0, a.1) == (3, 2)));
+        le16(&s1[0], 4)
+    };
+    // Playback alt 1: an asynchronous OUT synced by the feedback IN that
+    // follows it (Linux: the data's bSynchAddress is the feedback's, the
+    // feedback's own is 0, its type isochronous); 3 bytes, 10.14.
+    let p = eps(alt(5, 1));
+    assert_eq!(channels(alt(5, 1)), 2);
+    assert_eq!(p.len(), 2);
+    let (data, fb) = (&p[0], &p[1]);
+    assert_eq!((data[0], data[2], data[3]), (9, 0x03, 0x05));
+    assert_eq!(le16(data, 4), uac_out::PACKET);
+    assert_eq!(data[8], fb[2]);
+    assert_eq!(
+        (fb[0], fb[2] & 0x80, fb[3], le16(fb, 4)),
+        (9, 0x80, 0x11, 3)
+    );
+    assert_eq!((fb[6], fb[7], fb[8]), (1, uac_out::REFRESH, 0));
+    // Every interface's bNumEndpoints is what follows it.
+    for (i, n, v) in &alts {
+        assert_eq!(usize::from(v[0][4]), eps(v).len(), "interface {i} alt {n}");
+    }
+    // Full speed's periodic budget (USB 2.0 § 5.6.4: 90 % of 1,500 B, 9 B
+    // a transaction) with the largest capture, the playback and its
+    // feedback on together.
+    let periodic = biggest + le16(data, 4) + le16(fb, 4) + 3 * 9;
+    assert!(periodic <= 1_350, "{periodic} B a frame");
+    // Every endpoint address once in any alt, the capture's in both.
+    let mut addrs: Vec<u8> = d
+        .iter()
+        .filter(|x| x[1] == 5)
+        .map(|x| x[2])
+        .filter(|&a| a != 0x84)
+        .collect();
+    let all = addrs.len();
+    addrs.sort();
+    addrs.dedup();
+    assert_eq!(addrs.len(), all);
+}
+
+#[test]
+fn duplex_layout_parses_whole() {
+    parses_whole(&bytes(&DUPLEX), false);
+}
+
+#[test]
+fn full_layout_parses_whole() {
+    parses_whole(&bytes(&FULL), true);
+}
+
+/// The host starts and stops the capture and the playback with
+/// SET_INTERFACE, each read back; settings past alt 1 stall; MIDI's and
+/// AudioControl's only setting is still taken; a bus reset stops both.
+#[test]
+fn duplex_alt_settings_reach_the_class() {
+    let a = static_session(
+        bytes(&DUPLEX),
+        &[
+            set_interface(3, 1),
+            set_interface(5, 1),
+            get_interface(3),
+            get_interface(5),
+            set_interface(5, 2),
+            set_interface(3, 2),
+            get_interface(5),
+            set_interface(5, 0),
+            get_interface(5),
+            set_interface(4, 0),
+            set_interface(2, 0),
+        ],
+    );
+    assert!(!a[0].stalled && !a[1].stalled);
+    assert_eq!((a[2].sent.clone(), a[3].sent.clone()), (vec![1], vec![1]));
+    assert!(a[4].stalled && a[5].stalled, "alt 2 is no setting");
+    assert_eq!(a[6].sent, [1]);
+    assert!(!a[7].stalled);
+    assert_eq!(a[8].sent, [0]);
+    assert!(!a[9].stalled && !a[10].stalled);
+}
+
+fn set_feature(recipient: u8, feature: u8, index: u8) -> [u8; 8] {
+    [recipient, 3, feature, 0, index, 0, 0, 0]
+}
+
+/// After the host configured the device, set remote wakeup and halted an
+/// endpoint, a read cut short still answers GET_CONFIGURATION, every
+/// GET_STATUS and GET_INTERFACE as usb-device would; a reset after it
+/// answers as a reset device.
+#[test]
+fn a_cut_read_keeps_the_device_state_usb_device_keeps() {
+    let cfg = bytes(&DUPLEX);
+    let set = [
+        Step::Setup([0x00, 9, 1, 0, 0, 0, 0, 0]),
+        Step::Setup(set_feature(0, 1, 0)),
+        Step::Setup(set_feature(2, 0, 0x83)),
+        Step::Setup(set_interface(5, 1)),
+    ];
+    let asks = [
+        GET_CONFIGURATION,
+        get_status(0, 0),
+        get_status(2, 0x83),
+        get_status(2, 0x02),
+        get_interface(5),
+        get_interface(3),
+    ];
+    for reset in [false, true] {
+        let mut clean: Vec<Step> = set.to_vec();
+        let mut cut: Vec<Step> = set.to_vec();
+        cut.push(Step::Cut(get_config(0x03FF), 3));
+        if reset {
+            clean.push(Step::Reset);
+            cut.push(Step::Reset);
+        }
+        for (i, &ask) in asks.iter().enumerate() {
+            let want = {
+                let mut s = clean.clone();
+                s.push(Step::Setup(ask));
+                static_steps(cfg.clone(), &s).pop().unwrap()
+            };
+            let mut s = cut.clone();
+            s.push(Step::Setup(ask));
+            let got = static_steps(cfg.clone(), &s).pop().unwrap();
+            assert_eq!(
+                (got.sent, got.stalled),
+                (want.sent, want.stalled),
+                "request {i}, reset {reset}"
+            );
+        }
     }
 }

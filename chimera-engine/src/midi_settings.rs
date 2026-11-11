@@ -64,6 +64,8 @@ impl Switches {
     const ECHO: u8 = 2;
     const PROGRAM_IN: u8 = 4;
     const PARAM_OUT: u8 = 8;
+    /// USB IN's step, bits 4 to 6.
+    const USB_IN_AT: u8 = 4;
 
     const fn has(self, bit: u8) -> bool {
         self.0 & bit != 0
@@ -78,7 +80,7 @@ impl MidiSettings {
     pub const DEFAULT: MidiSettings = MidiSettings {
         sync: SyncMode::DEFAULT,
         tune: 0,
-        switches: Switches(Switches::ECHO),
+        switches: Switches(Switches::ECHO | USB_IN_TOP << Switches::USB_IN_AT),
         mpe: Zones::OFF,
         control: 0,
     };
@@ -96,6 +98,7 @@ impl MidiSettings {
     pub const SEQUENCER: ParamId = ParamId(10);
     pub const AUTO: ParamId = ParamId(11);
     pub const PARAM_OUT: ParamId = ParamId(12);
+    pub const USB_IN: ParamId = ParamId(13);
     pub const CONTROL: [ParamId; 3] = [Self::MIXER, Self::SEQUENCER, Self::AUTO];
 
     /// `c`'s channel; `None`: OFF.
@@ -133,6 +136,19 @@ impl MidiSettings {
         self
     }
 
+    /// AUDIO ROUTING › USB AUDIO's USB IN (ADR 0260): the step the host's
+    /// playback joins the main out at, 0 OFF to `USB_IN_TOP` 0 dB.
+    pub const fn usb_in(&self) -> u8 {
+        self.switches.0 >> Switches::USB_IN_AT & USB_IN_TOP
+    }
+
+    pub const fn with_usb_in(mut self, step: u8) -> Self {
+        let step = if step > USB_IN_TOP { USB_IN_TOP } else { step };
+        let at = Switches::USB_IN_AT;
+        self.switches = Switches(self.switches.0 & !(USB_IN_TOP << at) | step << at);
+        self
+    }
+
     pub const fn with_program_in(mut self, on: bool) -> Self {
         self.switches = self.switches.with(Switches::PROGRAM_IN, on);
         self
@@ -161,6 +177,14 @@ impl Default for MidiSettings {
 }
 
 const SYNC_NAMES: [&str; 2] = ["INT", "EXT"];
+
+/// USB IN's last step, 0 dB (`chimera_midi::uac_out::gain`'s order).
+pub const USB_IN_TOP: u8 = 7;
+
+/// USB IN's steps, OFF to 0 dB.
+static USB_IN_NAMES: [&str; USB_IN_TOP as usize + 1] = [
+    "OFF", "-24dB", "-18dB", "-12dB", "-9dB", "-6dB", "-3dB", "0dB",
+];
 
 /// PARAM OUT: nothing, or each panel edit's NRPN.
 static PARAM_OUT_NAMES: [&str; 2] = ["OFF", "NRPN"];
@@ -194,7 +218,7 @@ const fn control(id: u8, label: &'static str, ident: &'static str) -> ParamSpec 
 /// SYNC by index, `SyncMode::ALL`'s order; `SYNC_NAMES` too
 /// (`midi_sync_page_test::sync_value_names_and_order_agree`). INT and EXT are two peers,
 /// neither off, so the focus shows the word.
-pub static MIDI_SPECS: [ParamSpec; 13] = [
+pub static MIDI_SPECS: [ParamSpec; 14] = [
     ParamSpec::choice(
         0,
         "SYNC",
@@ -318,6 +342,18 @@ pub static MIDI_SPECS: [ParamSpec; 13] = [
     )
     .ident("PARAM_OUT")
     .glyph(crate::glyph::FocusGlyph::Switch),
+    // A SYSTEM from before USB IN plays the host at 0 dB (ADR 0260).
+    ParamSpec::stepped(
+        13,
+        "USB IN",
+        ValFmt::Names(&USB_IN_NAMES),
+        0.0,
+        USB_IN_TOP as f32,
+        USB_IN_TOP as f32,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("USB_IN"),
 ];
 
 const _: () = assert!(SyncMode::ALL.len() == SYNC_NAMES.len());
@@ -350,6 +386,7 @@ impl Block for MidiSettings {
             Self::UPPER_BEND => f32::from(self.mpe.upper_bend()),
             ParamId(i @ 9..=11) => f32::from(self.raw(i - 9)),
             Self::PARAM_OUT => f32::from(self.param_out()),
+            Self::USB_IN => f32::from(self.usb_in()),
             _ => 0.0,
         }
     }
@@ -371,6 +408,7 @@ impl Block for MidiSettings {
                 self.control = self.control & !(31 << at) | v << at;
             }
             Self::PARAM_OUT => *self = self.with_param_out(v as u8 != 0),
+            Self::USB_IN => *self = self.with_usb_in(v as u8),
             _ => {}
         }
     }

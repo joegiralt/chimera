@@ -208,6 +208,8 @@ const NAMED_ARC: &[(&str, &str)] = &[
     ("Midi", "MIXER_CH"),
     ("Midi", "SEQ_CH"),
     ("Midi", "AUTO_CH"),
+    // OFF, then -24 dB to 0 dB (ADR 0260).
+    ("Midi", "USB_IN"),
 ];
 
 /// Two-value choices that are two peers, not on and off: a toggle would

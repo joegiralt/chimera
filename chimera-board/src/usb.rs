@@ -76,10 +76,15 @@ pub(crate) type Serial = SerialPort<'static, Bus>;
 /// console-only device was 0x0010; one cable 0x0020; a cable a Part
 /// 0x0021 (ADR 0243).
 #[cfg(all(feature = "midi-usb", not(feature = "usb-audio")))]
-const MIDI_RELEASE: u16 = 0x0021;
-/// With USB audio's stream in MIDI's function (ADR 0248), one cable.
-#[cfg(feature = "usb-audio")]
-const MIDI_RELEASE: u16 = 0x0030;
+pub(crate) const MIDI_RELEASE: u16 = 0x0021;
+/// With USB audio's stream in MIDI's function (ADR 0248), one cable;
+/// the fallback build's, written by usb-device.
+#[cfg(all(feature = "usb-audio", feature = "usb-config-writer"))]
+pub(crate) const MIDI_RELEASE: u16 = 0x0030;
+/// With the host's playback too (ADR 0260), served from the class's
+/// static.
+#[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+pub(crate) const MIDI_RELEASE: u16 = 0x0040;
 
 /// OTG2, the OTG FS core on PA11/PA12, for `UsbBus`. Its `enable` only
 /// sets the clock bit, so `UsbBus::enable`'s masked, unbounded spins
@@ -311,14 +316,14 @@ pub fn init(ready: Ready, midi: MidiSinks, clocks: &CoreClocks, cpu_hz: u32) -> 
         cortex_m::singleton!(: UsbBusAllocator<UsbBus<Otg2>> = bus).expect("USB bus taken once");
 
     let serial = SerialPort::new(bus);
-    // USB MIDI only if bank 2's door is open now: this boot's layout.
-    #[cfg(feature = "midi-usb")]
-    let midi = crate::usb_midi::Midi::alloc(bus, midi);
-    #[cfg(not(feature = "midi-usb"))]
-    let () = midi;
     // The chip's 96-bit UID: a stable /dev/serial/by-id name per unit.
     let uid = cortex_m::singleton!(: chimera_core::console::SerialNumber = serial_hex(Uid::read()))
         .expect("serial number taken once");
+    // USB MIDI only if bank 2's door is open now: this boot's layout.
+    #[cfg(feature = "midi-usb")]
+    let midi = crate::usb_midi::Midi::alloc(bus, midi, uid.as_str());
+    #[cfg(not(feature = "midi-usb"))]
+    let () = midi;
     Unconnected {
         bus,
         serial,

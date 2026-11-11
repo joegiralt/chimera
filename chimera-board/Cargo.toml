@@ -37,6 +37,10 @@ midi-usb = ["usb-console", "bank2"]
 # USB audio (ADR 0248): the main out to the host, a UAC1 stream in USB
 # MIDI's function. chimera-stm32's default set brings it (ADR 0256).
 usb-audio = ["midi-usb"]
+# The fallback build: usb-device writes the configuration into its control
+# buffer, as before ADR 0260's static (which a `usb-audio` build serves
+# without this).
+usb-config-writer = []
 sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]
 # Bank 1's seal of the bank-2 image it was linked with (ADR 0137).

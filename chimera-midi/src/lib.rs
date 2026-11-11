@@ -14,6 +14,8 @@ pub mod sysex;
 pub mod take;
 pub mod uac;
 pub mod uac_link;
+pub mod uac_out;
 pub mod usb;
 pub mod usb_class;
+pub mod usb_config;
 pub mod value;

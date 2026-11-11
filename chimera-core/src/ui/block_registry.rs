@@ -1390,7 +1390,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 24] = [
+const FIXED: [&ChainDef2; 24 + cfg!(feature = "usb-audio") as usize] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
@@ -1403,6 +1403,8 @@ const FIXED: [&ChainDef2; 24] = [
     ECHO_LEAF.chain(),
     MPE_LEAF.chain(),
     OUTPUTS_LEAF.chain(),
+    #[cfg(feature = "usb-audio")]
+    super::settings::leaves::USB_AUDIO_LEAF.chain(),
     TUNING_LEAF.chain(),
     THEME_LEAF.chain(),
     SAVER_LEAF.chain(),

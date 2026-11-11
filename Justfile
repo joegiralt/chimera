@@ -143,6 +143,13 @@ firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
 
+# ORBIT with usb-device writing the configuration (`usb-config-writer`),
+# the fallback if the class's static (ADR 0260) fails on a host:
+# target/chimera-orbit-writer.bin and .bk2.
+firmware-orbit-writer:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit,usb-config-writer
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit-writer
+
 # Hardware Gate 2's power-pull aid (`bank2-gate`): the install holds 3 s at
 # each phase for a hand to pull the power, and the console takes `bank2
 # erase`. target/chimera-gate.bin and .bk2. Never flashed by a recipe, never
@@ -405,6 +412,9 @@ check $CHIMERA_STAMP_CLEAN="1":
     just check-bank1 orbit
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
+    # ORBIT with usb-device writing the configuration, the static's fallback (ADR 0260).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,usb-config-writer
+    just check-bank1 orbit,usb-config-writer
     # The gate's doors and placement, USB audio's stream among them (ADR
     # 0256); `release-bin` checks the default and ORBIT builds'.
     {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32

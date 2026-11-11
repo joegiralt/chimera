@@ -362,7 +362,20 @@ If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with M
 
 Over USB, Chimera is class compliant: it needs no driver on Linux, macOS or Windows. It shows up as:
 - **Chimera**, one MIDI port both ways: every channel, as on DIN, each Part on its own channel. Clock, SysEx, the identity reply and ECHO use this port.
-- **Chimera**, an audio input: the main out in stereo, 24-bit, 48 kHz, exactly what the main out jacks play. Record it in your DAW like any interface's input; the jacks keep playing while it streams.
+- **Chimera**, an audio input: the main out in stereo, 24-bit, 48 kHz: what the synth plays into the main out jacks. Record it in your DAW like any interface's input; the jacks keep playing while it streams.
+- **Chimera**, an audio output: stereo, 24-bit, 48 kHz from your computer, mixed into the main out jacks. Pick it as your DAW's or your system's output and Chimera plays it beside its own sound. Chimera sets the pace (the computer follows its clock), so it never drifts or clicks over a long session.
+
+Chimera plays your computer's sound at the computer's own scale: a full-scale sample is as loud as the synth at full scale. Your computer's output volume for Chimera still applies; on Linux, PipeWire starts a new output at 40 % (about −24 dB), so set Chimera's output to 100 % in your sound settings.
+
+Your computer's sound is mixed in after the synth's, so the audio input never records it back: a DAW recording Chimera while it plays a backing track records only Chimera. If you monitor the input in your DAW while playing out through Chimera, you hear Chimera twice; turn the DAW's input monitoring off.
+
+### USB AUDIO: how loud the computer plays
+
+![SETTINGS › AUDIO ROUTING › USB AUDIO, annotated](img/usb-audio.png)
+
+1. **SETTINGS › AUDIO ROUTING › USB AUDIO.**
+2. **USB IN**: how loud your computer's sound joins the main out: `OFF`, `-24dB`, `-18dB`, `-12dB`, `-9dB`, `-6dB`, `-3dB` or `0dB` (the default). A change fades in over a few milliseconds, never with a click. At `0dB` a loud computer track on top of a loud patch can pass full scale: the main out then clips hard at full scale, so turn one of them down. `OFF` keeps the output there for your computer but silent.
+3. Turn **A** to set it; **MENU** goes back.
 
 ## Program change: Sounds from a sequencer
 

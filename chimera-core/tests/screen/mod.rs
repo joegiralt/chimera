@@ -2312,6 +2312,12 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["MIDI CONFIG", "MPE"]);
         feed(ui, Input::turn(EncoderId::A, 15));
     }),
+    // AUDIO ROUTING › USB AUDIO: USB IN at -6 dB, focused.
+    #[cfg(feature = "usb-audio")]
+    ("settings_audio_usb", |ui| {
+        to_leaf(ui, &["AUDIO ROUTING", "USB AUDIO"]);
+        feed(ui, Input::turn(EncoderId::A, -2));
+    }),
     ("settings_system_diag_aud_load", |ui| {
         to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
     }),

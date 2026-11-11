@@ -354,6 +354,7 @@ dependencies = [
  "chimera-core",
  "chimera-engine",
  "chimera-hal",
+ "chimera-midi",
  "cortex-m",
  "cortex-m-rt",
  "embedded-graphics",

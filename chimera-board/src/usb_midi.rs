@@ -33,6 +33,8 @@ use chimera_midi::usb_class::Ids;
 use usb_device::bus::UsbBus as _;
 #[cfg(feature = "usb-audio")]
 use usb_device::class_prelude::InterfaceNumber;
+#[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+use usb_device::class_prelude::{ControlIn, ControlOut};
 use usb_device::class_prelude::{
     DescriptorWriter, EndpointAddress, EndpointIn, EndpointOut, LangID, StringIndex,
     UsbBusAllocator, UsbClass,
@@ -61,6 +63,18 @@ pub(crate) struct MidiClass {
     /// USB audio's stream (ADR 0248), in MIDI's function.
     #[cfg(feature = "usb-audio")]
     audio: crate::usb_audio::Stream,
+    /// The configuration whole, served by `control_in` past usb-device's
+    /// control buffer (ADR 0260); `None` leaves it to usb-device.
+    #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+    config: Option<&'static chimera_midi::usb_config::Replies>,
+    /// usb-device's control state as the class sees it, for the replies
+    /// it answers in usb-device's stead while a static one may be stale.
+    #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+    owner: chimera_midi::usb_config::Owner,
+    /// The host's playback (ADR 0260), its interface after MIDIStreaming:
+    /// allocated in bank 1 after the door's.
+    #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+    play: Option<crate::usb_audio::Play>,
 }
 
 /// USB MIDI this boot: the class, if the door was open at `init` to
@@ -87,12 +101,24 @@ pub(crate) struct Closed(EndpointAddress);
 impl Midi {
     /// The class's interfaces and endpoints, through the door: closed,
     /// nothing is allocated and MIDI stays off this boot.
-    pub(crate) fn alloc(bus: &'static UsbBusAllocator<Bus>, sinks: Sinks) -> Midi {
+    pub(crate) fn alloc(
+        bus: &'static UsbBusAllocator<Bus>,
+        sinks: Sinks,
+        #[cfg_attr(
+            any(not(feature = "usb-audio"), feature = "usb-config-writer"),
+            allow(unused)
+        )]
+        uid: &'static str,
+    ) -> Midi {
         let Sinks { notes, ctrl, out } = sinks;
-        Midi {
-            class: crate::bank2::board_door(|d| (d.usb.alloc)(bus, notes, ctrl)),
-            out,
-        }
+        let class = crate::bank2::board_door(|d| (d.usb.alloc)(bus, notes, ctrl));
+        #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+        let class = class.map(|mut c| {
+            c.play = Some(crate::usb_audio::Play::alloc(bus));
+            c.config = whole(&c, uid);
+            c
+        });
+        Midi { class, out }
     }
 
     /// Console and MIDI polled by bank 2 if the door is open now.
@@ -108,7 +134,15 @@ impl Midi {
             Some(m) => crate::bank2::board_door(|d| (d.usb.poll)(dev, serial, m, *out, counts))
                 .map_or_else(
                     || Polled::Console(Some(Closed(m.out.address()))),
-                    |()| Polled::ByBank2,
+                    |()| {
+                        #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+                        if let Some(p) = &mut m.play {
+                            let configured =
+                                dev.state() == usb_device::device::UsbDeviceState::Configured;
+                            p.pump(configured, m.audio.alt.streaming());
+                        }
+                        Polled::ByBank2
+                    },
                 ),
             None => Polled::Console(None),
         };
@@ -128,7 +162,15 @@ impl Midi {
     /// USB audio's `bench` line, if the class is up.
     #[cfg(feature = "usb-audio")]
     pub(crate) fn audio_report(&self, t: &mut impl core::fmt::Write) -> core::fmt::Result {
-        self.class.as_ref().map_or(Ok(()), |m| m.audio.report(t))
+        let Some(m) = &self.class else {
+            return Ok(());
+        };
+        m.audio.report(t)?;
+        #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+        if let Some(p) = &m.play {
+            p.report(t)?;
+        }
+        Ok(())
     }
 }
 
@@ -145,6 +187,68 @@ impl Closed {
             *drops = drops.wrapping_add((n / 4) as u32);
         }
     }
+}
+
+/// The shipping configuration with the host's playback as one static
+/// (ADR 0260, 332 B), built once at allocation, if the interfaces and
+/// endpoints are where its layout puts them: the console's first
+/// (`usb_config::CDC`), so MIDI's OUT 2 and IN 3, AudioControl 2, the
+/// capture 3, MIDIStreaming 4, the playback 5 on OUT 3 and feedback IN 5.
+/// Anywhere else, `None`: usb-device writes the 249 B without the
+/// playback, as before.
+#[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+fn whole(c: &MidiClass, uid: &str) -> Option<&'static chimera_midi::usb_config::Replies> {
+    use chimera_midi::usb_config;
+    // The layout's own length, not the static's 512 B room: AXI is short.
+    const N: usize = usb_config::len(&usb_config::duplex(0, 0, 0, 0, (0, 0)));
+    let at = (
+        u8::from(c.ids.ac),
+        u8::from(c.audio.alt.iface()),
+        u8::from(c.ids.ms),
+        u8::from(c.out.address()),
+        u8::from(c.inp.address()),
+    );
+    let play = c.play.as_ref().map(|p| {
+        (
+            u8::from(p.alt.iface()),
+            u8::from(p.out.address()),
+            u8::from(p.fb.address()),
+        )
+    });
+    if at != (2, 3, 4, 0x02, 0x83) || play != Some((5, 0x03, 0x85)) || u8::from(c.ids.name) != 4 {
+        return None;
+    }
+    let l = usb_config::duplex(
+        c.ids.name.into(),
+        0x02,
+        0x83,
+        c.audio.ep.address().into(),
+        (0x03, 0x85),
+    );
+    let buf = cortex_m::singleton!(: [u8; N] = [0; N])?;
+    let n = usb_config::write(buf, &l)?;
+    let buf: &'static [u8] = buf;
+    // The serial number's string, the UID's 24 hex digits.
+    let serial = cortex_m::singleton!(: [u8; 50] = [0; 50])?;
+    let s = usb_config::string(uid, serial)?;
+    let serial: &'static [u8] = serial;
+    static DEVICE: [u8; 18] = usb_config::device_descriptor(
+        crate::usb::VID_PID.0,
+        crate::usb::VID_PID.1,
+        crate::usb::MIDI_RELEASE,
+    );
+    cortex_m::singleton!(: usb_config::Replies = usb_config::Replies {
+        config: buf.get(..n)?,
+        device: &DEVICE,
+        strings: [
+            &usb_config::LANGS,
+            &usb_config::CHIMERA,
+            &usb_config::CHIMERA,
+            serial.get(..s)?,
+            &usb_config::CHIMERA,
+        ],
+    })
+    .map(|r| &*r)
 }
 
 /// What USB MIDI feeds and empties: in's note producer and control ring,
@@ -196,21 +300,55 @@ impl UsbClass<Bus> for MidiClass {
         (self.jack_name)(self.ids, index)
     }
 
+    // The configuration from the static (ADR 0260).
+    #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+    fn control_in(&mut self, xfer: ControlIn<Bus>) {
+        if let Some(r) = self.config {
+            let (capture, play) = (self.audio.alt, self.play.as_ref().map(|p| p.alt));
+            let alt = move |i: u8| {
+                [Some(capture), play]
+                    .into_iter()
+                    .flatten()
+                    .find(|a| u8::from(a.iface()) == i)
+                    .and_then(|a| a.get(a.iface()))
+                    .unwrap_or(0)
+            };
+            self.owner.control_in(xfer, r, alt);
+        }
+    }
+
+    #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+    fn control_out(&mut self, xfer: ControlOut<Bus>) {
+        self.owner.control_out(xfer.request());
+    }
+
     // USB audio's alt setting, the stream on or off: kept here, read by
     // bank 2's pump.
     #[cfg(feature = "usb-audio")]
     fn get_alt_setting(&mut self, iface: InterfaceNumber) -> Option<u8> {
-        self.audio.alt.get(iface)
+        let a = self.audio.alt.get(iface);
+        #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+        let a = a.or_else(|| self.play.as_ref()?.alt.get(iface));
+        a
     }
 
     #[cfg(feature = "usb-audio")]
     fn set_alt_setting(&mut self, iface: InterfaceNumber, alt: u8) -> bool {
-        self.audio.alt.set(iface, alt)
+        let ok = self.audio.alt.set(iface, alt);
+        #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+        let ok = ok || self.play.as_mut().is_some_and(|p| p.alt.set(iface, alt));
+        ok
     }
 
     #[cfg(feature = "usb-audio")]
     fn reset(&mut self) {
         self.audio.alt.reset();
+        #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+        if let Some(p) = &mut self.play {
+            p.alt.reset();
+        }
+        #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+        self.owner.reset();
     }
 }
 
@@ -289,6 +427,12 @@ mod door {
             inp: bus.bulk(PACKET),
             #[cfg(feature = "usb-audio")]
             audio: crate::usb_audio::door::alloc(bus, stream),
+            #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+            config: None,
+            #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+            owner: chimera_midi::usb_config::Owner::new(),
+            #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+            play: None,
             descriptors,
             jack_name,
             edge: Edge::new(),
