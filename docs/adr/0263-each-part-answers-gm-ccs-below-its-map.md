@@ -37,12 +37,12 @@ ORBIT's bank 2 has about 400 B free (ADR 0251), and D2 is full.
 
   - On ALGO, every operator is RANDOMIZE's precedent for "the amp envelope" (ADR 0232). MODAL rings until DAMP stops it (note-off never damps), and its strike has no attack to move.
 - **ATTACK and RELEASE are relative, RP-021's way** (review of #942: an absolute value wiped an ALGO patch's per-operator envelope shape).
-  - 64 is the Sound as it is. The CC's offset from 64, less the offset already applied, shifts each target from its own value (`UiState::cc_shift`), so the operators keep their shape.
+  - 64 is the Sound as it is. Each target is the Sound's own value shifted by the CC's offset from 64, then clamped (`UiState::cc_shift`), so the operators keep their shape.
   - A continuous cell (ENV 1 ATK and REL, DAMP) moves 1/127 of its range a step.
   - ALGO's rates move by the rounded steps of the offset (31/127 of a step for AR, 14/127 for RR), turned round, since a higher TX81Z rate is a shorter time. AR stops at 1, because AR 0 never rises.
   - The writes go through the edit path, so the voice smooths them as it does a panel turn. ATK, REL, AR and RR are not knobs; DAMP is, and waits for room.
   - The applied offsets live in the Part's padding (`Part::env`, two bytes, beside `expression`: on the chip a `Part` had three spare bytes), so they cost no RAM. A Sound load clears them (the new Sound is 64), a refused one keeps them, and a project load clears them.
-  - A cell clamped at its end comes back a little off at 64.
+  - 64 gives each cell back exactly, at any limit (unit e2e, 2026-11-11: AR at 31, CC 73 at 0 then 64 had left AR at 15). The shift never moves a clamped value again: it moves the Sound's own, kept for each shift while it is off 64 (`builtin_cc::base`, ALGO's six 5-bit rates or the cell's `f32` in a word, 48 B of AXI `.bss`: D2 is full). A cell that no longer holds what its kept value shifts to was edited since, and its unshifted value is taken instead. At 64 the cell is the Sound, so the saves and loads that reset the offset need nothing more.
   - **What you hear is what you see and save** (owner, 2026-11-11, "principle of least surprise"). The shift is written into the Sound through `edit_in`, so the page shows the shifted values and any save stores them as they sound, offset applied and clamped. A save then resets the baseline: CC 64 is the Sound as saved. The resetting saves are `Project::save_part_to` (SAVE TO PROJ, a new slot), a project save (`store`: every Part, the MENU-hold quick save among them) and a LIBRARY save (`Project::reset_shift`). Expression is unchanged: a performance control, never saved (GM).
   - Reset All Controllers takes each Part's shifts on its channel back to 64 (`cc_reset` runs `cc_shift` at 64), so RAC is the Sound as saved, and expression is back to 127.
 - **Expression (CC 11)** is `Part::expression`, a byte beside `loads` in the Part's padding (no RAM), 127 by default. It is published as `PartAudio::expression`, also in padding. The mix scales the Part's LEVEL **and its three sends** by (expression / 127)² (`part::expressed`), GM's 40 log₁₀ law: a swell to 0 silences the Part's FX feed too (review of #942). At 127 the factor is 1.0, so every gain is bit for bit as before. The mix eases the gain per sample (`MixState`), so it never steps. It was first a `PartParams` field, but that struct had no padding: +4 B a Part in D2 overflowed `bench-algo`'s D2 by 16 B.
@@ -80,6 +80,7 @@ ORBIT's bank 2 has about 400 B free (ADR 0251), and D2 is full.
   - The save-is-the-Sound round (saves reset the baseline, RAC undoes the shifts) added `default` +280 B, `orbit` +280, `bank2-gate` +272, `orbit,usb-config-writer` +248, each line raised again; the bench sets +24 to +48, within the slack.
   - ORBIT's bank 2: 523,872 → 524,096 B (+224, the dispatch, the `Reset` event's pack, unpack and push, and `slide_only`'s call), 192 B under the 512 KiB region.
   - No RAM.
+  - The exact-64 fix (the unit's e2e, measured against main f09932d9) added `default` +248 B, `orbit` +232, `bank2-gate` +248, `orbit,usb-config-writer` +248, each line raised; the bench sets 0. `.bss` +48 B (the kept values); D2, bank 2 and the stack unchanged.
 
 ## Alternatives considered
 - **The layer above the Part's map, its CCs refused to learn** (ADR 0226's sketch). The owner chose the other way: a controller that sends CC 74 for something else binds it and wins, with no switch needed.

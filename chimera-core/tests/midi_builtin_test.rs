@@ -227,9 +227,66 @@ fn attack_and_release_shift_every_operators_own_rates_on_algo() {
     }
     assert_eq!(
         r.stored(P1, op(0, AlgoOpParams::AR)),
-        9.0,
-        "op 0 clamped at 1, then +8"
+        5.0,
+        "op 0 clamped at 1, 64 gives it back"
     );
+}
+
+/// The unit's case: AR at 31 can't go higher, and 64 is still 31. Each
+/// cell is the Sound's value shifted, clamped, never the clamp shifted.
+#[test]
+fn sixty_four_restores_algo_rates_after_a_clamp() {
+    let mut r = Rig::new(EngineType::Algo);
+    for i in 0..6u8 {
+        r.set(op(i, AlgoOpParams::AR), 31.0);
+        r.set(op(i, AlgoOpParams::RR), 1.0);
+    }
+    r.set(op(1, AlgoOpParams::AR), 1.0);
+    r.set(op(1, AlgoOpParams::RR), 15.0);
+    for (ar, rr) in [(0, 127), (64, 64), (127, 0), (64, 64)] {
+        let ev = [r.cc(P1, 73, ar), r.cc(P1, 72, rr)];
+        r.passes(&ev, 2);
+    }
+    for i in 0..6u8 {
+        let (ar, rr) = if i == 1 { (1.0, 15.0) } else { (31.0, 1.0) };
+        assert_eq!(r.stored(P1, op(i, AlgoOpParams::AR)), ar, "op {i} AR");
+        assert_eq!(r.stored(P1, op(i, AlgoOpParams::RR)), rr, "op {i} RR");
+    }
+}
+
+/// 0, every value up to 127, then 64: each engine's cells exactly as the
+/// Sound had them, whatever clamped on the way.
+#[test]
+fn a_sweep_to_both_ends_and_back_to_64_is_the_sound() {
+    let cells: [(EngineType, &[(ParamAddr, f32)]); 4] = [
+        (EngineType::Va, &[(ATTACK, 0.05), (RELEASE, 0.93)]),
+        (EngineType::Tape, &[(ATTACK, 0.97), (RELEASE, 0.02)]),
+        (EngineType::Modal, &[(DAMP, 0.81)]),
+        (
+            EngineType::Algo,
+            &[
+                (op(0, AlgoOpParams::AR), 31.0),
+                (op(1, AlgoOpParams::AR), 2.0),
+                (op(2, AlgoOpParams::AR), 0.0),
+                (op(0, AlgoOpParams::RR), 15.0),
+                (op(1, AlgoOpParams::RR), 1.0),
+                (op(2, AlgoOpParams::RR), 8.0),
+            ],
+        ),
+    ];
+    for (e, cells) in cells {
+        let mut r = Rig::new(e);
+        for &(a, v) in cells {
+            r.set(a, v);
+        }
+        for v in [0].into_iter().chain(0..=127).chain([64]) {
+            let ev = [r.cc(P1, 73, v), r.cc(P1, 72, v)];
+            r.passes(&ev, 2);
+        }
+        for &(a, v) in cells {
+            assert_eq!(r.stored(P1, a), v, "{e:?} {a:?}");
+        }
+    }
 }
 
 /// MODAL rings until DAMP stops it: RELEASE shifts DAMP; ATTACK has no
