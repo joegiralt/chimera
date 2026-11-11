@@ -4,7 +4,7 @@
 //! no firmware, ROM or tables. Host-only prototypes for the owner's ear.
 
 use super::parts::*;
-use super::vox::{self, VowelMod};
+use super::vox;
 use chimera_core::dsp::fast_sin_turns;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::voice_fx::{fold, soft};
@@ -43,6 +43,7 @@ pub enum Id {
     VoxSnare,
     VoxHat,
     VoxClick,
+    VoxRoll,
 }
 
 pub struct Spec {
@@ -62,7 +63,7 @@ pub struct Spec {
 /// Knob sets checked against the Machinedrum manual's Appendix A (OS
 /// 1.63), our own names; the design note's machine table says what
 /// differs.
-pub const SPECS: [Spec; 26] = {
+pub const SPECS: [Spec; 27] = {
     const fn s(
         id: Id,
         name: &'static str,
@@ -80,7 +81,7 @@ pub const SPECS: [Spec; 26] = {
             more,
             ships: !matches!(
                 id,
-                Id::ToneRim | Id::VoxKick | Id::VoxSnare | Id::VoxHat | Id::VoxClick
+                Id::ToneRim | Id::VoxKick | Id::VoxSnare | Id::VoxHat | Id::VoxClick | Id::VoxRoll
             ),
         }
     }
@@ -389,16 +390,9 @@ pub const SPECS: [Spec; 26] = {
             "VOX",
             "vox",
             [
-                "PITCH",
-                "DECAY",
-                "DROP",
-                "POP",
-                "VOWEL",
-                "GLIDE",
-                "END VOWEL",
-                "VOICE",
+                "PITCH", "DECAY", "PRESSURE", "LIPS", "BURST", "HUM", "TRACT", "DRIVE",
             ],
-            [0, 90],
+            [50, 40],
         ),
         s(
             Id::VoxSnare,
@@ -406,16 +400,9 @@ pub const SPECS: [Spec; 26] = {
             "VOX",
             "vox",
             [
-                "PITCH",
-                "DECAY",
-                "PLOSIVE",
-                "BREATH",
-                "VOWEL",
-                "GLIDE",
-                "END VOWEL",
-                "VOICE",
+                "BURST", "HISS", "DECAY", "TRACT", "PRESSURE", "AIR", "INHALE", "PITCH",
             ],
-            [10, 50],
+            [0, 64],
         ),
         s(
             Id::VoxHat,
@@ -423,16 +410,9 @@ pub const SPECS: [Spec; 26] = {
             "VOX",
             "vox",
             [
-                "PITCH",
-                "DECAY",
-                "CLICK",
-                "WIDTH",
-                "VOWEL",
-                "GLIDE",
-                "END VOWEL",
-                "AIR",
+                "BURST", "HISS", "DECAY", "TRACT", "AIR", "EDGE", "PITCH", "PRESSURE",
             ],
-            [95, 60],
+            [64, 30],
         ),
         s(
             Id::VoxClick,
@@ -440,16 +420,19 @@ pub const SPECS: [Spec; 26] = {
             "VOX",
             "vox",
             [
-                "PITCH",
-                "DECAY",
-                "TONGUE",
-                "CAVITY",
-                "VOWEL",
-                "GLIDE",
-                "END VOWEL",
-                "RING",
+                "PITCH", "TONGUE", "RING", "BURST", "AIR", "TRACT", "HOLLOW", "PRESSURE",
             ],
-            [0, 50],
+            [10, 30],
+        ),
+        s(
+            Id::VoxRoll,
+            "VOX ROLL",
+            "VOX",
+            "vox",
+            [
+                "PITCH", "DECAY", "LIPS", "HUM", "AIR", "TRACT", "JITTER", "DRIVE",
+            ],
+            [50, 30],
         ),
     ]
 };
@@ -489,20 +472,9 @@ pub fn build(id: Id, k: Knobs, vel: f32, seed: u32) -> Box<dyn Machine> {
         Id::PlainSine => Box::new(Plain::sine(k, vel)),
         Id::PlainNoise => Box::new(Plain::noise(k, vel, seed)),
         Id::PlainImpulse => Box::new(Plain::impulse(k, vel)),
-        Id::VoxKick | Id::VoxSnare | Id::VoxHat | Id::VoxClick => {
-            build_vox(id, k, vel, seed, VowelMod::default())
+        Id::VoxKick | Id::VoxSnare | Id::VoxHat | Id::VoxClick | Id::VoxRoll => {
+            vox::build(id, k, vel, seed, 0.0)
         }
-    }
-}
-
-/// A VOX hit with VOWEL moved by `m` (a route latched at the hit, an LFO).
-pub fn build_vox(id: Id, k: Knobs, vel: f32, seed: u32, m: VowelMod) -> Box<dyn Machine> {
-    match id {
-        Id::VoxKick => Box::new(vox::Kick::new(k, vel, seed, m)),
-        Id::VoxSnare => Box::new(vox::Snare::new(k, vel, seed, m)),
-        Id::VoxHat => Box::new(vox::Hat::new(k, vel, seed, m)),
-        Id::VoxClick => Box::new(vox::Click::new(k, vel, seed, m)),
-        _ => build(id, k, vel, seed),
     }
 }
 
@@ -522,7 +494,7 @@ pub fn build_before(id: Id, k: Knobs, vel: f32, seed: u32) -> Box<dyn Machine> {
 }
 
 /// The FX slot's SOFT at `drive`, its TONE ½ and unity LEVEL.
-fn drive(x: f32, d: f32) -> f32 {
+pub(super) fn drive(x: f32, d: f32) -> f32 {
     soft::curve(x, [d, 0.5, soft::UNITY_LEVEL])
 }
 

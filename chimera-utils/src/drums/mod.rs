@@ -8,7 +8,8 @@
 //! kit groove; COMBINE's modes on two hits; the clips at 12-bit, 8-bit
 //! and 4-bit ADPCM; the three fixes before and after (`fixes`); ACCENT,
 //! RETRIG, kit macros and pad-to-pad modulation (`demos`); VOX's beatbox
-//! machines, a groove and a VOWEL-per-hit demo (`vox`). 48 kHz
+//! machines (consonant first; the formant first cut kept in `vox_formant`
+//! for its before hits), a groove and a TRACT-per-hit demo (`vox`). 48 kHz
 //! mono float WAVs at their real levels, `manifest.json` beside them, and
 //! a host cost estimate per machine against ALGO's six-operator voice.
 
@@ -18,6 +19,7 @@ mod machines;
 mod parts;
 mod sample;
 mod vox;
+mod vox_formant;
 
 use crate::reference::write_f32;
 use machines::{Id, Knobs, SPECS, build, spec};
@@ -414,69 +416,86 @@ fn settings(id: Id) -> Vec<Setting> {
         VoxKick => vec![
             (
                 "classic",
-                &[50, 60, 70, 60, 0, 30, 0, 90],
-                "\"b\": a lip pop, then a voiced \"oo\" falling with the pitch over a round sine",
+                &[50, 40, 100, 30, 70, 0, 50, 40],
+                "\"B\": lips burst open on held pressure: a low pop and its boom, a short dark breath burst, a flick of lip buzz; no voice",
             ),
             (
                 "mid",
-                &[70, 40, 90, 100, 40, 40, 0, 110],
-                "\"bmo\": a harder pop, the vowel O closing to U as it drops, shorter",
+                &[40, 70, 90, 50, 60, 90, 40, 30],
+                "\"Bm\": the same pop, then the lips close on a nasal \"m\" hum that sags a semitone",
             ),
             (
                 "extreme",
-                &[20, 110, 127, 127, 127, 90, 0, 127],
-                "\"bwee-oo\": a deep drop and a slow I-to-U glide on a long hum; check the formant buzz at the low end",
+                &[20, 120, 127, 110, 100, 60, 20, 110],
+                "a deep, driven, long pop with lips buzzing hard and a hum under it: the biggest kick a mouth makes",
             ),
         ],
         VoxSnare => vec![
             (
                 "classic",
-                &[60, 50, 90, 70, 100, 40, 10, 40],
-                "\"psh\": a plosive burst, then breath through the formants gliding bright (I) to dark (U)",
+                &[90, 90, 50, 10, 60, 50, 0, 64],
+                "\"Pf\": a lip burst and straight into a flat, breathy \"f\"",
             ),
             (
                 "mid",
-                &[100, 30, 120, 30, 75, 20, 40, 70],
-                "\"k-uh\": a sharp high plosive, short breath, more voiced \"uh\" under it",
+                &[80, 100, 60, 110, 50, 50, 0, 64],
+                "\"Psh\": the lip burst into a peaked \"sh\" (~3 kHz)",
             ),
             (
                 "extreme",
-                &[30, 110, 60, 127, 127, 100, 0, 20],
-                "\"pfffshhh\": a long breath with a slow vowel fall: does it read as a mouth, not a filter sweep",
+                &[100, 100, 55, 60, 0, 80, 127, 64],
+                "the inward K snare: a sharp velar click, then an in-breath that swells and hisses",
             ),
         ],
         VoxHat => vec![
             (
                 "classic",
-                &[64, 20, 80, 50, 100, 40, 95, 60],
-                "\"ts\": a tick and a short bright hiss (closed)",
+                &[90, 90, 15, 15, 30, 60, 64, 30],
+                "\"ts\": a tongue-tip tick and a short bright \"s\" (closed)",
             ),
             (
                 "mid",
-                &[80, 5, 120, 30, 100, 20, 100, 40],
-                "\"t\": almost all tick, the tightest closed hat",
+                &[80, 100, 25, 120, 40, 50, 64, 30],
+                "\"ch\": the tick into a lower, rounder \"sh\"-coloured hiss",
             ),
             (
                 "extreme",
-                &[50, 110, 60, 110, 127, 110, 25, 90],
-                "open \"tsssh\": a long hiss sliding from \"s\" to \"sh\" as the vowel falls",
+                &[70, 110, 110, 30, 60, 80, 64, 30],
+                "open \"tsss\": the hiss swells and holds, turbulence moving in it",
             ),
         ],
         VoxClick => vec![
             (
                 "classic",
-                &[60, 40, 90, 70, 60, 20, 10, 50],
-                "\"ka\": a tongue pop in the mouth's cavity and a tiny voiced vowel falling to U",
+                &[90, 110, 64, 0, 0, 60, 10, 30],
+                "a palatal tongue click: one sharp \"tick\" ringing ~2.7 kHz",
             ),
             (
                 "mid",
-                &[80, 15, 127, 40, 25, 10, 25, 90],
-                "a tongue click \"tok\": mostly the cavity's ring, a trace of O",
+                &[64, 0, 30, 110, 70, 70, 0, 30],
+                "\"K\": a velar burst, a second little burst, then a breath of \"kh\"",
             ),
             (
                 "extreme",
-                &[40, 100, 70, 100, 0, 90, 127, 30],
-                "\"kwee\": a slow U-to-I rise on a longer voiced tail: the most talking",
+                &[30, 120, 90, 80, 60, 30, 110, 70],
+                "a hollow alveolar \"tok\" with a back \"k\" after: lips rounded, the cavity big",
+            ),
+        ],
+        VoxRoll => vec![
+            (
+                "classic",
+                &[40, 60, 70, 0, 30, 50, 50, 30],
+                "\"brrr\": a lip trill at ~35 Hz, loose and breathy",
+            ),
+            (
+                "mid",
+                &[60, 70, 80, 90, 20, 40, 40, 40],
+                "a voiced lip-roll bass: the trill tighter (~45 Hz) with a hum under it",
+            ),
+            (
+                "extreme",
+                &[110, 110, 120, 60, 60, 90, 100, 100],
+                "tense, fast (~70 Hz), driven, very loose: the lips nearly a buzz",
             ),
         ],
     }
@@ -502,6 +521,7 @@ fn pattern(id: Id) -> &'static str {
         VoxSnare => "....X.......X.......X.......X.x.",
         VoxHat => "x.X.x.X.x.X.x.xXx.X.x.X.x.X.x.Xx",
         VoxClick => "..x...x...x.x.....x..x..x...x.xx",
+        VoxRoll => "X.......X...x...X.......X.x.x...",
     }
 }
 
@@ -949,8 +969,8 @@ fn bench() -> Value {
         });
         let ratio = ns / a;
         let mut row = json!({"kernel": s.kernel, "host_ns_per_sample": (ns * 100.0).round() / 100.0, "ratio_vs_algo6": (ratio * 100.0).round() / 100.0, "est_cycles_per_sample": (ratio * 770.0).round()});
-        if let Some(c) = vox::billed(s.id) {
-            row["algo_billed"] = c;
+        if let Some(c) = vox_formant::billed(s.id) {
+            row["first_cut_algo_billed"] = c;
         }
         rows.insert(s.name.into(), row);
     }
