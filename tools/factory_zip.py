@@ -1,11 +1,12 @@
 """`factory-v1.zip`: the card's CHIMERA folder as a tester copies it over
 the bootloader's SD card access. Every factory Sound (the public set's
 and TAPE's) in SOUNDS, the TAPE sources in TAPES, the demo projects in
-PROJECTS, one CHIMERA root and nothing beside it. Refuses a pack whose
-counts aren't the two builds' manifests', or that lacks a source a TAPE
-Sound plays. Standard library only.
+PROJECTS, the factory controller maps (`just suggest-map`) in MAPS, one
+CHIMERA root and nothing beside it. Refuses a pack whose counts aren't
+the two builds' manifests', that lacks a source a TAPE Sound plays, or
+that holds no map. Standard library only.
 
-    python3 -I tools/factory_zip.py <factory-sounds/public> <tapes-v1> <out.zip>
+    python3 -I tools/factory_zip.py <factory-sounds/public> <tapes-v1> <factory-maps> <out.zip>
 """
 
 import json
@@ -18,7 +19,7 @@ import zipfile
 PORTS = re.compile(r"CHIMERA/SOUNDS/S91000(1[0-9]|2[0-5])\.A$")
 
 
-def entries(public, tapes):
+def entries(public, tapes, maps):
     """Each zip path and the file it holds, and the two manifests."""
     pm = json.loads((public / "manifest.json").read_text())
     tm = json.loads((tapes / "manifest.json").read_text())
@@ -26,6 +27,8 @@ def entries(public, tapes):
     for sub in ("SOUNDS", "PROJECTS"):
         for p in sorted((public / "CHIMERA" / sub).glob("*.A")):
             out[f"CHIMERA/{sub}/{p.name}"] = p
+    for p in sorted((maps / "CHIMERA" / "MAPS").glob("*.A")):
+        out[f"CHIMERA/MAPS/{p.name}"] = p
     for s in tm["sounds"]:
         out[f"CHIMERA/SOUNDS/{s['file']}"] = tapes / s["file"]
     for s in tm["sources"]:
@@ -39,6 +42,9 @@ def problems(names, pm, tm):
     sounds = [n for n in names if re.fullmatch(r"CHIMERA/SOUNDS/S\d{7}\.A", n)]
     projects = [n for n in names if re.fullmatch(r"CHIMERA/PROJECTS/P\d{7}\.A", n)]
     srcs = {n for n in names if re.fullmatch(r"CHIMERA/TAPES/[0-9A-F]{8}\.SRC", n)}
+    maps = [n for n in names if re.fullmatch(r"CHIMERA/MAPS/[0-9A-Z]{5,8}\.A", n)]
+    if not maps:
+        bad.append("no controller maps")
     want = len(pm["sounds"]) + len(tm["sounds"])
     if len(sounds) != want:
         bad.append(f"{len(sounds)} Sounds, not {want}")
@@ -53,14 +59,14 @@ def problems(names, pm, tm):
             bad.append(f"{s['file']} plays {s['source']}.SRC, not in the zip")
     if sum(1 for n in names if PORTS.search(n)) != 16:
         bad.append("not all 16 ports")
-    stray = len(names) - len(sounds) - len(projects) - len(srcs)
+    stray = len(names) - len(sounds) - len(projects) - len(srcs) - len(maps)
     if stray:
-        bad.append(f"{stray} files outside SOUNDS, PROJECTS and TAPES")
+        bad.append(f"{stray} files outside SOUNDS, PROJECTS, TAPES and MAPS")
     return bad
 
 
-def pack(public, tapes, dst):
-    files, pm, tm = entries(public, tapes)
+def pack(public, tapes, maps, dst):
+    files, pm, tm = entries(public, tapes, maps)
     bad = problems(list(files), pm, tm)
     bad += [f"{n} has no {p}" for n, p in sorted(files.items()) if not p.is_file()]
     if bad:
@@ -77,11 +83,11 @@ def pack(public, tapes, dst):
     bad = problems(names, pm, tm)
     if bad:
         sys.exit("factory zip: " + "; ".join(bad))
-    for d in ("SOUNDS", "TAPES", "PROJECTS"):
+    for d in ("SOUNDS", "TAPES", "PROJECTS", "MAPS"):
         print(f"CHIMERA/{d}: {sum(1 for n in names if n.startswith(f'CHIMERA/{d}/'))}")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         sys.exit(__doc__)
-    pack(pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3])
+    pack(*(pathlib.Path(a) for a in sys.argv[1:4]), sys.argv[4])

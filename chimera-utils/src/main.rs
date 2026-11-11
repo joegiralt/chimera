@@ -26,6 +26,7 @@ mod plot;
 mod reference;
 mod sig;
 mod stim;
+mod suggest_map;
 mod unitab;
 mod vanoise;
 mod voice;
@@ -63,6 +64,9 @@ usage: chimera-utils [flags] COMMAND …
   door-check ELF           fail on any bank-1 relocation into bank 2
   nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
   nrpn-guide               docs/guide/NRPN.md: the writable NRPNs by engine and block (#926)
+  suggest-map DIR | suggest-map --tables
+                           the SUGGEST controller map into DIR/CHIMERA/MAPS; or its
+                           tables for docs/guide/MIDI.md
                            and ranges
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
@@ -259,6 +263,11 @@ fn run() -> Result<bool, String> {
             print!("{}", nrpn_guide::page());
             Ok(true)
         }
+        "suggest-map" if rest.len() == 1 && rest[0] == "--tables" => {
+            print!("{}", suggest_map::tables());
+            Ok(true)
+        }
+        "suggest-map" if rest.len() == 1 => suggest_map::write(Path::new(&rest[0])).map(|_| true),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
         "grain-listen" => grain_listen::run(rest).map(|_| true),

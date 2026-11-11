@@ -229,6 +229,38 @@ python3 chimera-usb.py put faderfox.map /CHIMERA/MAPS/
 
 `ls maps` lists the files. `get` copies a map off the card into a file on the computer; it never writes over a file that is already there. `put` copies a map file onto the card under its name's files, replacing a map of the same name; a Part playing that map plays the new one at once. The name comes from inside the file, so the file on the computer can be called anything.
 
+### SUGGEST, the factory map
+
+The factory set's `CHIMERA/MAPS` holds **SUGGEST**, a ready-made map for any controller of knobs or faders: set them to send these CCs on the Part's channel, pick `SUGGEST` on MIDI MAP, and each knob plays the same kind of control whatever the Part's engine. CC 20 is the engine's main timbre knob, CC 21 its second, CC 29 its character; the shared rows play on every engine. A Part plays 16 rows: the 6 shared and its engine's 10.
+
+| CC | Shared |
+|---|---|
+| 14 | LFO 1 RATE |
+| 15 | LFO 1 DEPTH |
+| 85 | ENV 2 LEVEL |
+| 86 | VOICE TIME |
+| 87 | FX AMOUNT |
+| 88 | FX MIX |
+
+| CC | ALGO | MODAL | VA | TAPE |
+|---|---|---|---|---|
+| 20 | MORPH | STRUCT | WAVE1 | POSITION (WALK POSITION, STRCH POSITION, SCRUB FINGER, WAVE FRAME) |
+| 21 | VOWEL | BRIGHT | WAVE2 | MOTION (STRCH SPEED, SCRUB SPEED, WAVE SCAN) |
+| 22 | OPERATOR 2 LEVEL | POS | SHAPE1 | SIZE (WALK LENGTH, STRCH D-TIME, SCRUB LENGTH, WAVE RANGE) |
+| 23 | OPERATOR 3 LEVEL | EXCITE | SHAPE2 | DRAG (WALK FADE, SCRUB DRAG) |
+| 24 | OPERATOR 4 LEVEL | BODY | AMNT | DRIFT (WALK DRIFT) |
+| 25 | OPERATOR 2 CRSE | COLOR | MODE | LENGTH (STRCH LENGTH) |
+| 26 | OPERATOR 3 CRSE | BURST | SUB | GRAIN (STRCH GRAIN) |
+| 27 | OPERATOR 4 CRSE | FORCE | NOISE | SPRAY (STRCH SPRAY) |
+| 28 | OPERATOR 2 DETUN | COUPLE | FINE2 | TAPE |
+| 29 | OPERATOR 4 FDBK | HALO | STAB | AGE |
+
+Every row is absolute, `JUMP`, as learn sets a knob; change one to PICKUP with **E** on MIDI MAP. The CCs are ones MIDI leaves undefined, so they meet no GM control: CC 1 (the wheel), 7 (LEVEL), 10 (PAN), 74 (CUTOFF) and the other [built-in CCs](#the-built-in-ccs) stay free. A TAPE row names the cell, then in brackets what each machine calls it; on a machine that doesn't read the cell, the knob does nothing. ENV 2 LEVEL sets how far ENV 2 moves what it drives (the filter, in most Sounds); VOICE TIME is the glide; FX AMOUNT and FX MIX are the Sound's FX slot.
+
+To change SUGGEST, first save it under a new name (with the bar on `CONTROLLER`, press **EDIT** and type another name), then edit that copy. Copying the factory set onto the card again replaces `SUGGEST`'s file, and any edit made to it, with the factory map; that is also how to get it back. The file is `SUGG05F6.A`.
+
+SUGGEST fills all 16 rows of every engine. Learning still works, since a learned row goes into the Sound's own rows and wins over the map's row on the same control. But saving a learned row into SUGGEST or a copy of it is refused with `MAP FULL`, unless the row takes over a control or cell the map already uses. Delete a row from your copy first (**MIX + MINUS** on it), or start a new map from `NONE`.
+
 ### Pickup
 
 A binding on PICKUP waits for the knob. While it waits, the touched cell's value line says which way to move it.
