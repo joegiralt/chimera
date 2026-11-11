@@ -316,8 +316,10 @@ impl core::fmt::Debug for TapRoutes {
 ///
 /// `TapShape::apply`, both lanes and both ops in one loop, whenever a FREQ
 /// or Q tap is present: 96 instructions for 2 samples, 0 `vdiv`, + 0.45 of
-/// block: ceil5(48.45 × 1.606) = 80. Once, however many taps.
-pub const TAP_SHAPE_COST: crate::hw::Cost = crate::hw::Cost(80);
+/// block: ceil5(48.45 × 1.606) = 80. Once, however many taps. The unit's
+/// worst block reads TAP FREQ − 1 OP 201 over a billed 170 (883b, ADR
+/// 0262): 115.
+pub const TAP_SHAPE_COST: crate::hw::Cost = crate::hw::Cost(115);
 /// The tap-VCA, both ops in one loop (`tap_vca_probe`): 61 instructions
 /// for 4 samples, 0 `vdiv`, + 0.70 of block: ceil5(15.95 × 1.606) = 30.
 /// Once, however many VCA taps.

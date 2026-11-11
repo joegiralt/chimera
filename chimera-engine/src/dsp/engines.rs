@@ -554,12 +554,25 @@ impl EngineSlot {
                 TapeEngine::cost(&p.tape, mods) + COST_WAVE_LEVEL
             }
             EngineType::Tape => TapeEngine::cost(&p.tape, mods),
-            EngineType::Va if noise_billed(p, mods) => {
-                VaEngine::cost(&p.va) + VaEngine::noise_cost(p.va.noise_kind)
+            EngineType::Va => {
+                let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+                VaEngine::cost(&p.va)
+                    + when(noise_billed(p, mods), VaEngine::noise_cost(p.va.noise_kind))
+                    + when(wave_routed(mods), COST_WAVE_MOVE)
             }
-            EngineType::Va => VaEngine::cost(&p.va),
         }
     }
+}
+
+/// A route on VA's WAVE: a segment crossed in a block costs the voice
+/// that block (VA WAVE − VA, 92, at the worst block; the MODE's bill
+/// holds the rest, ADR 0262).
+const COST_WAVE_MOVE: Cost = Cost(50);
+
+fn wave_routed(mods: &ModState) -> bool {
+    [VaParams::WAVE1, VaParams::WAVE2]
+        .into_iter()
+        .any(|q| mods.moves_addr(ParamAddr::new(BlockRef::Va, q)))
 }
 
 /// VA's NOISE plays: LEVEL above 0, or a route moves it (ADR 0197).

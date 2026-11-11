@@ -441,16 +441,16 @@ impl AlgoEngine {
     // `tick_at`'s longest path), each at its worst block for a grain clock
     // up to `SPAN_TOP_HZ`: `SPANS_COVERED` spans (fires, linked). A higher
     // clock pays `high_note_extra` per voice.
-    pub const COST_FRMT_ONE: Cost = Cost(210); // counted, ADR 0056's method, Task 15, 7 spans
-    pub const COST_FRMT: Cost = Cost(220); // counted, ADR 0056's method, Task 15, 7 spans
-    pub const COST_FRMT_ONE_LINKED: Cost = Cost(380); // counted, ADR 0056's method, Task 15, 7 fires
-    pub const COST_FRMT_LINKED: Cost = Cost(390); // counted, ADR 0056's method, Task 15, 7 fires
+    pub const COST_FRMT_ONE: Cost = Cost(220); // the 883b worst blocks (FRMT PM), charge × 1.03, rounded up (ADR 0262); was 210, counted (Task 15)
+    pub const COST_FRMT: Cost = Cost(230); // the 883b worst blocks (FRMT PM), charge × 1.03, rounded up (ADR 0262); was 220, counted (Task 15)
+    pub const COST_FRMT_ONE_LINKED: Cost = Cost(400); // the 883b worst blocks (FRMT PM), charge × 1.03, rounded up (ADR 0262); was 380, counted (Task 15)
+    pub const COST_FRMT_LINKED: Cost = Cost(410); // the 883b worst blocks (FRMT PM), charge × 1.03, rounded up (ADR 0262); was 390, counted (Task 15)
     // `run_noise::<0>` (`::<1>` with a link in, its sum and `link_sum`),
     // `noise_op` and its band law taken afresh every block
     // (`take_noise_law` 213 instructions and 5 divides or roots): a route
     // or a knob on its way moves it any block.
-    pub const COST_NOIS: Cost = Cost(80); // counted, ADR 0056's method, Task 15
-    pub const COST_NOIS_LINKED: Cost = Cost(100); // counted, ADR 0056's method, Task 15
+    pub const COST_NOIS: Cost = Cost(95); // the 883b worst blocks (NOIS), charge × 1.6, rounded up (ADR 0262); was 80, counted (Task 15)
+    pub const COST_NOIS_LINKED: Cost = Cost(125); // the 883b worst blocks (NOIS), charge × 1.6, rounded up (ADR 0262); was 100, counted (Task 15)
     /// A formant law taken afresh: `take_laws` 507 instructions and 6
     /// divides, its scan of 15 edges (+105) and its six operators' turns
     /// (+55), `formant_law_pm` 290 and 10, `LawBlock::new` 113 and 6,

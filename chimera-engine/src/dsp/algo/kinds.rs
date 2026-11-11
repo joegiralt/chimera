@@ -4,7 +4,6 @@
 use crate::block::ParamId;
 use crate::budget::{FORMANT_BUDGET, FORMANT_BUDGET_FRMT};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId};
-use crate::dsp::algo::engine::AlgoEngine;
 use crate::dsp::algo::params::AlgoOpParams as P;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::waves::{WAVE_COUNT, WAVE_IDENTS, WAVE_NAMES, WaveId};
@@ -71,12 +70,16 @@ impl OpKind {
     }
 
     /// What the kind draws from the formant budget: its cost over a
-    /// table's at its worst SKIRT, with a link into it or without.
+    /// table's at its worst SKIRT, with a link into it or without, as 0.3
+    /// billed it. The gate is frozen there (ADR 0262): the bills rose to
+    /// the unit's worst blocks, so every patch that loaded still loads.
     pub const fn charge(self, linked: bool) -> u32 {
-        match self {
-            OpKind::Table(_) => 0,
-            OpKind::Formant => AlgoEngine::frmt_cost(1, linked) - AlgoEngine::COST_OP.0,
-            OpKind::Noise => AlgoEngine::nois_cost(linked) - AlgoEngine::COST_OP.0,
+        match (self, linked) {
+            (OpKind::Table(_), _) => 0,
+            (OpKind::Formant, true) => 390,
+            (OpKind::Formant, false) => 200,
+            (OpKind::Noise, true) => 40,
+            (OpKind::Noise, false) => 20,
         }
     }
 }

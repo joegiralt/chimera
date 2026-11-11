@@ -117,7 +117,15 @@ fn algo_plays_as_before_the_move() {
     let h = hashes();
     #[cfg(all(feature = "bank2", feature = "test-support"))]
     chimera_engine::bank2::DOOR_CELL.close();
-    assert_eq!(h, BEFORE);
+    // With the master tape's bus (`master-tape`, 1,494) CHOIR's and VOX's
+    // four notes no longer fit beside their re-strike's tail since their
+    // bills rose to the unit's worst blocks (ADR 0262): their allocation,
+    // not their DSP, differs.
+    let mut before = BEFORE.to_vec();
+    if cfg!(feature = "master-tape") {
+        (before[9], before[12]) = (0x87d1_49c6_8125_5ba1, 0x4a9f_e144_9fdd_07f1);
+    }
+    assert_eq!(h, before);
 }
 
 #[cfg(all(feature = "bank2", feature = "test-support"))]

@@ -1398,7 +1398,7 @@ fn pc_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
 fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     let mut rows = [Counts::default(); ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
-        for n in 1..=MAX_VOICES {
+        for n in 0..=MAX_VOICES {
             let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
             row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
         }
@@ -1415,7 +1415,7 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     hold(clocks);
     let mut va = [Counts::default(); VA_ROWS];
     for (row, &(_, patch, low, step)) in va.iter_mut().zip(&VA) {
-        for n in 1..=MAX_VOICES {
+        for n in 0..=MAX_VOICES {
             let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
             row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
         }
@@ -1446,7 +1446,7 @@ fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
             WARM_FIRST.store(0, Relaxed);
             WARM_SECOND.store(0, Relaxed);
             chimera_engine::warm::set_hook(Some(warm_twice));
-            let (_, spans, _) = rig.time(&setup, &|_, _| {}, n, low, step);
+            let (_, _, spans, _) = rig.time(&setup, &|_, _| {}, n, low, step);
             chimera_engine::warm::set_hook(None);
             let samples = (WARM_BLOCKS + TIMED_BLOCKS) * BLOCK_SIZE as u32 * spans.max(1) as u32;
             cells[i * 2 + j] = (
@@ -1461,7 +1461,7 @@ fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
     let mut cp = unsafe { cortex_m::Peripherals::steal() };
     let mut cold = Counts::default();
     cp.SCB.disable_icache();
-    for n in 1..=MAX_VOICES {
+    for n in 0..=MAX_VOICES {
         let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(algo(AlgoId::A1, 0b1, 0));
         cold.add(n, rig.time(&setup, &|_, _| {}, n, 36, 12));
     }
@@ -1551,7 +1551,7 @@ static WARM: [Row; WARM_ROWS] = [
 /// Each of `rows` at 1..8 voices, notes `low` up by `step`.
 fn time_rows(rig: &mut Rig<'_>, rows: &[RoutingRow], counts: &mut [Counts], (low, step): (u8, u8)) {
     for (row, &(_, part, each)) in counts.iter_mut().zip(rows) {
-        for n in 1..=MAX_VOICES {
+        for n in 0..=MAX_VOICES {
             let timed = rig.time(
                 &|s| {
                     part(&mut s.parts[0]);
@@ -2620,7 +2620,10 @@ fn time_rebuild() -> u32 {
 /// the most notes, or with none ringing, those that sounded.
 #[derive(Clone, Copy)]
 struct Counts {
-    cycles: [u32; MAX_VOICES],
+    /// Cycles a sample at 0..=8 voices.
+    cycles: [u32; MAX_VOICES + 1],
+    /// Each count's costliest block, cycles a sample.
+    worst: [u32; MAX_VOICES + 1],
     spans: usize,
     /// `Voice::cost` of the row's Sound and routes, a voice: the bill its
     /// `/VOICE` answers.
@@ -2630,7 +2633,8 @@ struct Counts {
 impl Default for Counts {
     fn default() -> Self {
         Self {
-            cycles: [0; MAX_VOICES],
+            cycles: [0; MAX_VOICES + 1],
+            worst: [0; MAX_VOICES + 1],
             spans: MAX_VOICES,
             bill: 0,
         }
@@ -2638,8 +2642,9 @@ impl Default for Counts {
 }
 
 impl Counts {
-    fn add(&mut self, notes: usize, (cycles, spans, bill): (u32, usize, u32)) {
-        self.cycles[notes - 1] = cycles;
+    fn add(&mut self, notes: usize, (cycles, worst, spans, bill): (u32, u32, usize, u32)) {
+        self.cycles[notes] = cycles;
+        self.worst[notes] = worst;
         self.spans = spans;
         self.bill = bill;
     }
@@ -2649,7 +2654,16 @@ impl Counts {
     /// notes past play bare, cheaper, and would dilute the slope).
     fn per_voice(&self) -> u32 {
         let k = self.spans.clamp(2, MAX_VOICES);
-        self.cycles[k - 1].saturating_sub(self.cycles[0]) / (k as u32 - 1)
+        self.cycles[k].saturating_sub(self.cycles[1]) / (k as u32 - 1)
+    }
+
+    /// `per_voice` of the costliest blocks, rounded up: a voice's worst
+    /// marginal cost (#883).
+    fn worst_voice(&self) -> u32 {
+        let k = self.spans.clamp(2, MAX_VOICES);
+        self.worst[k]
+            .saturating_sub(self.worst[1])
+            .div_ceil(k as u32 - 1)
     }
 }
 
@@ -2661,9 +2675,11 @@ fn hold(clocks: Clocks) {
 
 impl Rig<'_> {
     /// Voice `v` plays note `low + step * v`; `each` runs before every
-    /// block, its time counted (a few cycles a block). Returns the cycles
-    /// per sample, the voices its per-voice figure spans and Part 1's bill
-    /// a voice as set up (`Counts`).
+    /// block, its time counted (a few cycles a block), every effect at its
+    /// worst and every send at ½, so the voices run under the bus's cache
+    /// traffic as STRESS's do (#883). Returns the cycles per sample, the
+    /// costliest block's, the voices its per-voice figure spans and Part
+    /// 1's bill a voice as set up (`Counts`).
     #[inline(never)]
     fn time(
         &mut self,
@@ -2672,7 +2688,7 @@ impl Rig<'_> {
         voices: usize,
         low: u8,
         step: u8,
-    ) -> (u32, usize, u32) {
+    ) -> (u32, u32, usize, u32) {
         // The allocator must not refuse what the bench wants to measure.
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
@@ -2682,6 +2698,10 @@ impl Rig<'_> {
         // ride every row that sets only a Sound (ADR 0218).
         *shared.parts[0].mod_state = ModState::with_sources(MAX_MOD_SOURCES);
         setup(shared);
+        shared.fx = FxParams::OFF;
+        for part in shared.parts.iter_mut() {
+            part.params.out.sends = [0.5; FX_SENDS];
+        }
         let bill = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
         for v in 0..voices {
             let note = MidiNote::new(low + step * v as u8).unwrap_or(MidiNote::A4);
@@ -2694,23 +2714,33 @@ impl Rig<'_> {
         }
         for b in 0..WARM_BLOCKS {
             each(shared, b);
+            worst_bus(shared, b);
             inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
         }
         #[cfg(feature = "pc-sample")]
         crate::pc_sample::arm();
-        let start = DWT::cycle_count();
-        for b in 0..TIMED_BLOCKS {
-            each(shared, WARM_BLOCKS + b);
+        let (mut cycles, mut worst) = (0u32, 0u32);
+        for b in WARM_BLOCKS..WARM_BLOCKS + TIMED_BLOCKS {
+            let start = DWT::cycle_count();
+            each(shared, b);
+            worst_bus(shared, b);
             inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
+            let c = DWT::cycle_count().wrapping_sub(start);
+            (cycles, worst) = (cycles.wrapping_add(c), worst.max(c));
         }
-        let cycles = DWT::cycle_count().wrapping_sub(start);
         #[cfg(feature = "pc-sample")]
         crate::pc_sample::disarm();
         let spans = match inst.ringing() {
             0 => inst.sounding(),
             ringing => ringing,
         };
-        (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), spans, bill)
+        let samples = BLOCK_SIZE as u32;
+        (
+            cycles / (TIMED_BLOCKS * samples),
+            worst.div_ceil(samples),
+            spans,
+            bill,
+        )
     }
 
     /// Cycles of `Instrument::handle` for one note-on of `note`, Part 0
@@ -3418,8 +3448,9 @@ const ROW_H: i32 = 25;
 /// lines end at y 302, under 310 (`ROW_H` would push the FX lines off it).
 const ALGO_ROW_H: i32 = 22;
 const _: () = assert!(46 + ROWS as i32 * ALGO_ROW_H + 16 + 2 * 10 <= 310);
-/// One count per voice across the screen: 29 px holds five digits at eight.
-const CELL_W: i32 = (theme::SCREEN_W - 8) / MAX_VOICES as i32;
+/// One count per voice across the screen, 0 to 8: 25 px holds five
+/// digits in the small face.
+const CELL_W: i32 = (theme::SCREEN_W - 8) / (MAX_VOICES as i32 + 1);
 
 /// A bench line's font: a value in INK, or a label in its colour.
 #[derive(Clone, Copy)]
@@ -3668,22 +3699,25 @@ fn show_lines<'a>(rec: &mut Recorder<'_>, lines: impl Iterator<Item = core::fmt:
     rec.flush();
 }
 
-/// `label`'s per-voice cost (`Counts::per_voice`), with the voices that
-/// sounded when fewer than all, and its count at each voice count.
+/// `label`'s per-voice cost (`Counts::per_voice`), its worst
+/// (`Counts::worst_voice`) and bill, with the voices that sounded when
+/// fewer than all, in the small face so the line never runs off the
+/// screen; then its costliest block at each voice count, 0 to 8.
 fn voice_row(rec: &mut Recorder<'_>, line: &mut FmtBuf, y: i32, label: &str, counts: &Counts) {
     line.clear();
     let _ = write!(
         line,
-        "{label} /VOICE {} B{}",
+        "{label} M{} W{} B{}",
         counts.per_voice(),
+        counts.worst_voice(),
         counts.bill
     );
     if counts.spans < MAX_VOICES {
         let _ = write!(line, " ({} V)", counts.spans);
     }
-    rec.line(Face::Value, line.as_str(), (4, y));
+    rec.line(Face::Label(theme::INK), line.as_str(), (4, y));
     // One cell per count: the counts together overflow a `FmtBuf`.
-    for (i, c) in counts.cycles.iter().enumerate() {
+    for (i, c) in counts.worst.iter().enumerate() {
         line.clear();
         let _ = write!(line, "{c}");
         rec.line(
