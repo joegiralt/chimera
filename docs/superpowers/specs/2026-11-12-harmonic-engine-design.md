@@ -219,3 +219,19 @@ Exact cost constants from the bench; magic circle against Vicanek; whether a Che
 - **Prerequisites (Claude's call):** VARIETY and the flat engine maps (ADR 0266) land before HARMONIC; their flash counts in the same "rest of 0.4" figure. Step 0 of the order of work names both.
 - **Voice cap (Claude's proposal, owner to confirm):** a per-Part cap of 5 HARMONIC voices; the CPU budget is protected by billing (ADR 0262 refuses or steals a voice whose bill doesn't fit), not by the cap. Two HARMONIC Parts can't exceed the budget; they share it. An instrument-wide cap would need cross-Part allocator state and its own ADR, so it is not proposed.
 - **Flash floor:** open, for the owner, after the DRUM flash-size investigation reports (owner approved bank 1 to ~20 KB free for DRUM; the full 0.4 list does not fit above that floor at today's cost).
+
+## Owner, 2026-11-12: "take your recommendations, but follow the main features of Loom II"
+Open questions 2–6 settled as Claude recommended: the 5-voice cap is **per Part** (billing protects the CPU budget); DENSITY **keeps loudness steady** (a timbre control, not a volume control); VARIETY **leaves STRETCH alone** (it counts as pitch); map sources are **formulas now, plus analyses of the owner's own synth recordings later** (licence-clean); two slots **may hold the same module**. The flash floor stays open (it rides on the size-optimisation ADR).
+
+### Loom II's main features and HARMONIC's answer to each (Claude's proposal)
+| Loom II | HARMONIC |
+|---|---|
+| Module chain: up to 10 interacting modules from 34 | **4 slots** (was 3) from the six (TILT, ODD/EVEN, FORMANT, STRETCH, COMB, PLUCK); duplicates allowed. Flash and CPU cap the count, not the idea. |
+| Morph Pad: up to 4 variations of the sound, one per quadrant, morphed by dragging | **Two layers moved by the same X/Y:** the spectra field (B) underneath, and **4 corner variations of the module knobs** stored per Sound on top (Loom's pad, ~16 B a Sound). X/Y glides the spectrum and the modules together. Corners are set with an EDIT-on-a-corner gesture on the MAP page (shown in the focus band, per hidden-gestures-need-hints). |
+| Morph path drawn on the pad, free or synced to 1, 4… bars | **PATH:** a shape on MAP (OFF, LINE, CIRCLE, FIGURE-8, ZIGZAG) with RATE free or synced to ORBIT's tempo (1/4 bar … 8 bars) and a phase; sums with X/Y and any mod routes. |
+| X-axis envelope mode (rhythmic morphs) | **ENV → X** as a one-cell shortcut on MAP (the mod matrix can already route it; the cell makes it Loom's one move). |
+| Spectral noise section | **AIR** (fixed control): noise shaped by the same spectrum, so breath follows the map. |
+| Subharmonic partials | **SUB:** a fixed control adding partials at ½ and ¼ of the fundamental (2 extra oscillators), taper-safe. |
+| 512 partials, 8 voices | 48 or 64 partials, 5 voices a Part: the hardware's limit, set by the bench and the ear. |
+
+Cost added by this section (estimate): corners + PATH + SUB ≈ +1.5 KB flash, +16 B a Sound, +2 partials of CPU a voice. The cut order gains, first: PATH shapes beyond LINE/CIRCLE, then SUB, then the fourth slot.
