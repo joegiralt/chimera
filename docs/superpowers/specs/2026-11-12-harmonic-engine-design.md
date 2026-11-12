@@ -245,3 +245,6 @@ Cost added by this section (estimate): corners + PATH + SUB ≈ +1.5 KB flash, +
 ## Tried and scratched, owner 2026-11-12
 - **Two-family partial-sliding morph** (pick families A and B; MORPH slides each partial's pitch and level to its partner, by strength or index): prototyped in the playground. Owner: "it sounds like a weird resonance slide from one timbre to another, scratch my idea." The map keeps amplitude-only glides between neighbouring families (as the survey advised); the oscillator bank stays harmonic-only (stretched families via STRETCH).
 - Still to choose by ear: group 9 (48–64 partials + bright tail, 5 voices) vs group 10 (160 partials + VA SUB, ≤3 voices).
+
+## SLOP, owner 2026-11-12 ("this sounds great")
+Every partial gets its own slow, smooth random walk on **level** (±60 % at full), **pitch** (±12 cents at full) and **stereo place**, updated once per block (a few cycles a partial a block, no per-sample cost). Controls: **AMOUNT**, **RATE** (slow drift → quick shimmer), **WIDTH** (stereo wander). Tiny and independent per partial, so it reads as life, not the scratched resonant slide. Prototyped in the playground (default AMOUNT 0.4, RATE 0.6, WIDTH 0.5). Stereo needs the voice to output two channels: check the voice chain's mono assumptions in the plan. Possible later reuse: spread for VA's oscillators (separate decision).
