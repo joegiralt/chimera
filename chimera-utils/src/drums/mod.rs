@@ -16,7 +16,7 @@
 mod demos;
 mod fixes;
 mod machines;
-mod parts;
+pub(crate) mod parts;
 mod sample;
 mod vox;
 mod vox_formant;

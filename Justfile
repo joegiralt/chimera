@@ -736,6 +736,10 @@ chorus-listen dir:
 drum-render dir="../drum-renders":
     {{utils}} drum-render {{dir}}
 
+# VA's macro oscillator KINDs, host prototypes: HARMONIC, SWARM, PARTICLE phrases and sweeps
+macro-render dir="../macro-osc-renders":
+    {{utils}} macro-render {{dir}}
+
 # TAPE's Hermite read against a polyphase sinc, 24 kHz source, -12..+24 st (#698)
 tape-interp-ab dir:
     {{utils}} tape-interp-ab {{dir}}

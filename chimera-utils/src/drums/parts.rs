@@ -115,6 +115,10 @@ impl Flt {
         Self::new(FilterKind::Svf, mode, hz, res)
     }
 
+    pub fn set_res(&mut self, res: f32) {
+        self.p.resonance = res;
+    }
+
     pub fn run(&mut self, b: &mut Blk, hz: f32) {
         self.p.cutoff = hz.clamp(20.0, 20_000.0);
         self.f.process(b, &self.p, SAMPLE_RATE, &FilterMods::NONE);

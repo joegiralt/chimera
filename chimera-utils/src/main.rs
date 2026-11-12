@@ -18,6 +18,7 @@ mod grain;
 mod grain_listen;
 mod interp;
 mod lpgamp;
+mod macro_osc;
 mod metrics;
 mod models;
 mod models_burst;
@@ -71,6 +72,9 @@ usage: chimera-utils [flags] COMMAND …
                            and ranges
   drum-render OUTDIR       DRUM's host prototypes (0.4): every machine's hits and pattern, a
                            kit groove, COMBINE's modes, low-bit clips; raw WAVs, manifest.json
+  macro-render OUTDIR      VA's macro oscillator KINDs (HARMONIC, SWARM, PARTICLE): phrases
+                           at three settings and a sweep per control; 24-bit WAVs at raw
+                           levels, manifest.json
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
   grain-listen OUTDIR      the delay's TAPE against GRAIN (ADR 0202): pluck, stab and
@@ -263,6 +267,7 @@ fn run() -> Result<bool, String> {
             }
         }
         "drum-render" if rest.len() == 1 => drums::run(Path::new(&rest[0])).map(|_| true),
+        "macro-render" if rest.len() == 1 => macro_osc::run(Path::new(&rest[0])).map(|_| true),
         "nrpn-guide" => {
             print!("{}", nrpn_guide::page());
             Ok(true)
