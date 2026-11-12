@@ -241,3 +241,7 @@ Cost added by this section (estimate): corners + PATH + SUB ≈ +1.5 KB flash, +
 - **SUB: VA's variable-wave oscillator, reused** (owner: "steal one of the oscillators from VA"): WAVE **SINE, TRIANGLE or SQUARE**, OCTAVE −1 or −2, LEVEL. Replaces the ½/¼ sub-partials.
 - **Voices: 4 per Part** (was 5): the C3 worst case is ~1,000–1,300 cycles a voice (estimate; the unit bench decides). Pitch-aware billing (a note above C3 costs less) is a later option needing its own ADR.
 - The bright tail and log spacing (group 9 renders) and the hybrid inverse-FFT stay alternatives, not the plan.
+
+## Tried and scratched, owner 2026-11-12
+- **Two-family partial-sliding morph** (pick families A and B; MORPH slides each partial's pitch and level to its partner, by strength or index): prototyped in the playground. Owner: "it sounds like a weird resonance slide from one timbre to another, scratch my idea." The map keeps amplitude-only glides between neighbouring families (as the survey advised); the oscillator bank stays harmonic-only (stretched families via STRETCH).
+- Still to choose by ear: group 9 (48–64 partials + bright tail, 5 voices) vs group 10 (160 partials + VA SUB, ≤3 voices).
