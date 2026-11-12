@@ -1,6 +1,6 @@
 # HARMONIC engine (0.4): design
 
-Status: design for the owner, 2026-11-12. Nothing is built beyond the host prototype (`chimera-utils/src/macro_osc/harmonic.rs`). Gated: HARMONIC ships in 0.4 only if the DRUM slices land under the bank-1 budget. History: `2026-11-12-macro-osc-kinds-design.md`. Survey: `docs/research/2026-11-12-additive-harmonic-literature.md` (cited below as "survey §n").
+Status: approved by the owner, 2026-11-12 ("sounds good"); firmware work gated on DRUM landing under the bank-1 budget.
 
 Each point is marked as the **owner's** decision (binding, 2026-11-12) or as **Claude's proposal** (open to the owner's override).
 
