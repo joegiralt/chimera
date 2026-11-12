@@ -455,6 +455,7 @@ fn part_snap_default_is_neutral() {
                 PartParams::HELD,
                 PartParams::BEND,
                 PartParams::TUNING,
+                PartParams::MAPPING,
             ]
             .map(|i| i.0)
             .contains(&e[0])

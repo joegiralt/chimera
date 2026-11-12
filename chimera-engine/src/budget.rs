@@ -4,7 +4,6 @@
 //! still bills each voice's real cost.
 
 use crate::dsp::algo::algorithms::AlgoId;
-use crate::dsp::algo::engine::AlgoEngine;
 use crate::dsp::algo::kinds::{Kinds, OpKind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
@@ -34,6 +33,14 @@ pub const HEAVY_OVERHEAD: Cost =
 /// the knobs' settle (ADR 0116) and the LFO clocks (ADR 0135).
 pub const CONTROL_RESERVE: Cost = Cost(Knobs::RESERVE.0 + LfoClock::RESERVE.0);
 
+/// `HEAVY_OVERHEAD` and `COSTLIEST_TABLE`'s bill as 0.3 billed them: the
+/// formant gate is frozen there (ADR 0262). The bills rose to the unit's
+/// worst blocks; the gate didn't, so every patch that loaded still loads,
+/// and ADR 0218's floor is no longer guaranteed for the synthetic worst
+/// patch.
+pub const GATE_HEAVY: Cost = Cost(472);
+pub const GATE_TABLE: Cost = Cost(832);
+
 /// What the costliest table voice leaves of a share of `floor` voices,
 /// for formant and noise operators' charges, less a formant Part's reach
 /// (`part` once, `voice` a voice).
@@ -44,8 +51,8 @@ const fn formant_budget(floor: u32, part: Cost, voice: Cost) -> Cost {
             - CONTROL_RESERVE.0
             - part.0)
             / floor
-            - HEAVY_OVERHEAD.0
-            - AlgoEngine::cost(&COSTLIEST_TABLE, &[false; OPS]).0
+            - GATE_HEAVY.0
+            - GATE_TABLE.0
             - voice.0,
     )
 }

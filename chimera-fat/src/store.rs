@@ -615,6 +615,15 @@ impl<D: Medium> Store for FatStore<D> {
         self.run(vol, |fs, _| fs.list(dir, f))
     }
 
+    fn list_long(
+        &mut self,
+        vol: VolumeId,
+        dir: Dir,
+        f: &mut chimera_hal::store::LongEach<'_>,
+    ) -> Result<(), StoreError> {
+        self.run(vol, |fs, _| fs.list_long(dir, f))
+    }
+
     fn runs(&mut self, vol: VolumeId, file: FileName) -> Result<FileRuns, RunsError> {
         let mut runs = Runs::new();
         let (len, seal) = FatStore::runs(self, vol, file, &mut |at, n| {

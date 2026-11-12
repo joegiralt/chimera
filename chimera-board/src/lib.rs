@@ -387,6 +387,9 @@ pub struct AudioStart<'a> {
 #[inline(never)]
 fn midi_out(ui: &mut chimera_core::ui::UiState, out: &chimera_core::out_ring::OutPorts) {
     ui.send(out);
+    // USB IN's step for the audio side (ADR 0260).
+    #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+    usb_audio::PLAY_LEVEL.store(ui.midi().usb_in(), core::sync::atomic::Ordering::Relaxed);
     if !out.din.is_empty() {
         cortex_m::peripheral::NVIC::pend(pac::Interrupt::USART1);
     }

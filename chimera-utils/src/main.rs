@@ -22,10 +22,12 @@ mod metrics;
 mod models;
 mod models_burst;
 mod mv;
+mod nrpn_guide;
 mod plot;
 mod reference;
 mod sig;
 mod stim;
+mod suggest_map;
 mod unitab;
 mod vanoise;
 mod voice;
@@ -62,6 +64,10 @@ usage: chimera-utils [flags] COMMAND …
                            fail unless the .bk2's seal is the .bin's
   door-check ELF           fail on any bank-1 relocation into bank 2
   nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
+  nrpn-guide               docs/guide/NRPN.md: the writable NRPNs by engine and block (#926)
+  suggest-map DIR | suggest-map --tables
+                           the SUGGEST controller map into DIR/CHIMERA/MAPS; or its
+                           tables for docs/guide/MIDI.md
                            and ranges
   drum-render OUTDIR       DRUM's host prototypes (0.4): every machine's hits and pattern, a
                            kit groove, COMBINE's modes, low-bit clips; raw WAVs, manifest.json
@@ -257,6 +263,15 @@ fn run() -> Result<bool, String> {
             }
         }
         "drum-render" if rest.len() == 1 => drums::run(Path::new(&rest[0])).map(|_| true),
+        "nrpn-guide" => {
+            print!("{}", nrpn_guide::page());
+            Ok(true)
+        }
+        "suggest-map" if rest.len() == 1 && rest[0] == "--tables" => {
+            print!("{}", suggest_map::tables());
+            Ok(true)
+        }
+        "suggest-map" if rest.len() == 1 => suggest_map::write(Path::new(&rest[0])).map(|_| true),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
         "grain-listen" => grain_listen::run(rest).map(|_| true),

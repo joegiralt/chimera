@@ -244,7 +244,12 @@ pub struct UiDoor {
     roll: fn(&mut Sound, &crate::randomize::Randomize),
     /// Each Part's TUNING made its table (`ui::tuning`, ADR 0240).
     tuning: fn(&mut crate::ui::UiState, &mut crate::storage::Card, &mut dyn Store),
-    tuning_note: fn(u8) -> Option<&'static str>,
+    tuning_note: fn(
+        &crate::ui::tuning::Tuned,
+        ParamId,
+        crate::project::PartId,
+        &crate::preset::Part,
+    ) -> Option<crate::project::Line>,
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -254,7 +259,7 @@ type HeadKind = (SourceHead, LoadKind);
 type EnvWrites = &'static [(ParamId, f32)];
 
 /// `UiDoor::magic`.
-const UI_MAGIC: u32 = 0xB2C0_0008;
+const UI_MAGIC: u32 = 0xB2C0_0257;
 
 impl UiDoor {
     /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
@@ -374,8 +379,14 @@ impl UiDoor {
     }
 
     #[inline(always)]
-    pub(crate) fn tuning_note(&self, v: u8) -> Option<&'static str> {
-        (self.tuning_note)(v)
+    pub(crate) fn tuning_note(
+        &self,
+        t: &crate::ui::tuning::Tuned,
+        id: ParamId,
+        p: crate::project::PartId,
+        part: &crate::preset::Part,
+    ) -> Option<crate::project::Line> {
+        (self.tuning_note)(t, id, p, part)
     }
 
     #[inline(always)]

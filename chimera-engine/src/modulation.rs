@@ -555,7 +555,9 @@ impl ModRouting {
     pub const ENV_A: Cost = Cost(28);
     /// Type B filling it: the costliest of B VCA, B LFO and B GLIDE (LFO
     /// FREE with a FORM change's glide always running) less 1 OP and CLAMP.
-    pub const ENV_B: Cost = Cost(98);
+    /// The worst block reads B GLIDE − 1 DEST's bare voice − CLAMP 119
+    /// (883b, ADR 0262).
+    pub const ENV_B: Cost = Cost(120);
     /// More for B in ENV mode with SHAPE off centre, or with a route into
     /// its SHAPE: B CURVE less B VCA.
     pub const CURVE: Cost = Cost(1);
@@ -570,17 +572,20 @@ impl ModRouting {
     /// A route into an ENV slot's TIME, RISE, FALL or SHAPE rebuilds that
     /// slot's coefficients every block: billed once per slot with any such
     /// route, whether or not that slot feeds the VCA. The costlier of A
-    /// SLIDE less A VCA and B SLIDE less B CURVE.
-    pub const SLIDE: Cost = Cost(33);
+    /// SLIDE less A VCA and B SLIDE less B CURVE: 37 at the worst block
+    /// (883b, ADR 0262).
+    pub const SLIDE: Cost = Cost(37);
     /// The first destination other than the VCA with a route of nonzero
     /// amount: its sum every block, and its offset. Measured: bench-t13d's
     /// 1 CUTOFF row (494) less that run's 1 OP (488) = 6; bench-t13c's
     /// 1 DEST row (486) less that run's 1 OP (483) = 3. Billed as the
-    /// larger: 6.
-    pub const DEST_FIRST: Cost = Cost(6);
+    /// larger: 6. The worst block reads 1 CUTOFF − 1 OP 8 (883b, ADR
+    /// 0262).
+    pub const DEST_FIRST: Cost = Cost(8);
     /// Each such destination after the first: what the MODS row leaves over
     /// every other term, over its five further destinations (0.2; the floor).
-    pub const DEST: Cost = Cost(1);
+    /// The worst block reads (VEL 4R − VEL 1R) / 3, 4.3 (883b, ADR 0262): 5.
+    pub const DEST: Cost = Cost(5);
     /// Each LFO slot of type FUNC, routed or not (every slot runs every
     /// block), over a CLASSIC one: FUNC LFO less 1 DEST.
     pub const FUNC: Cost = Cost(5);

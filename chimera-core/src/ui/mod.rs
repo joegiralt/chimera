@@ -5,6 +5,7 @@ pub mod audio_page;
 pub mod block_def;
 pub mod block_registry;
 pub mod browser;
+pub mod builtin_cc;
 pub mod busy;
 pub mod cc;
 pub mod components;
@@ -27,6 +28,7 @@ pub mod lfo_glyph;
 pub mod library;
 pub mod meter;
 pub mod midi;
+pub mod param_out;
 pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
@@ -52,6 +54,7 @@ pub mod tape_strip;
 pub mod theme;
 pub mod theme_settings;
 pub mod tuning;
+pub mod tuning_walk;
 pub mod view;
 pub mod viz;
 pub(crate) mod walk;
@@ -364,8 +367,8 @@ pub struct UiState {
     cc: &'static mut cc::MidiSlot,
     /// MIX+SEQ's MIDI learn (spec § 4).
     learn: learn::Learn,
-    /// Each Part's TUNING its table plays (`ui::tuning`).
-    tuned: [u8; crate::hw::MAX_PARTS],
+    /// Each Part's TUNING its table plays, and a turn waiting (`ui::tuning`).
+    tuned: tuning::Tuned,
 }
 
 /// How long the LEVEL LED takes to fall from a peak to dark.
@@ -560,7 +563,7 @@ impl UiState {
             addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
             addr_of_mut!((*p).cc).write(cc::MidiSlot::take());
             addr_of_mut!((*p).learn).write(learn::Learn::Off);
-            addr_of_mut!((*p).tuned).write([0; crate::hw::MAX_PARTS]);
+            addr_of_mut!((*p).tuned).write(tuning::Tuned::NEW);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -1551,6 +1554,14 @@ impl UiState {
     /// nothing is written; onto one it allows, it is written. `false` for
     /// any other cell.
     fn turn_choice(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
+        // TUNING walks the card's files past MTS: the card work turns it
+        // (`tuning::work_in`, ADR 0259); closed, the plain edit.
+        #[cfg(feature = "tuning")]
+        if a == view::TUNING && crate::bank2::ui_door(|_| ()).is_some() {
+            let d = self.tuned.turn.map_or(0, |t| t.1);
+            self.tuned.turn = Some((at, d.saturating_add(delta)));
+            return true;
+        }
         if a == held::MODEL || a == held::DIRECTION {
             return self.turn_model(at, a, delta, shift);
         }
@@ -3074,6 +3085,7 @@ impl UiState {
                     let (tempo, _) = crate::meter::rev_clock();
                     let rev = &mut self.project.edit_part(at).fx.reverb;
                     *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
+                    self.cc_hand(at, a);
                     continue;
                 }
                 if let PageKey::Legacy(p) = self.page {
@@ -3502,6 +3514,7 @@ impl UiState {
             heads: self.heads,
             lfo: self.lfo_head,
             tuner: &self.tuner.shown,
+            tuned: &self.tuned,
             formant: &self.formant,
             held: self.held_choice(),
         }

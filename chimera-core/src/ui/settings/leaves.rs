@@ -37,6 +37,7 @@ pub static CHANNELS: BlockDef = BlockDef {
 
 /// MIDI CONFIG › CONTROL CHANNELS (ADR 0254): MIXER, SEQUENCER and AUTO,
 /// each OFF or a channel. One a Part's own channel takes reads dimmed.
+/// D: BUILT-IN, each Part's GM CCs on its own channel (ADR 0263).
 pub static CONTROL: BlockDef = BlockDef {
     // Never used before: a new top, past MPE's 113 (#896), one more
     // focus slot (`MAX_PAGES`) each.
@@ -49,6 +50,27 @@ pub static CONTROL: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Midi, MidiSettings::MIXER),
         ParamSlot::param(BlockRef::Midi, MidiSettings::SEQUENCER),
         ParamSlot::param(BlockRef::Midi, MidiSettings::AUTO),
+        ParamSlot::param(BlockRef::Midi, MidiSettings::BUILT_IN),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+    ],
+};
+
+/// AUDIO ROUTING › USB AUDIO (ADR 0260): USB IN, the host's playback
+/// into the main out (Elektron's USB TO MAIN), OFF to 0 dB.
+#[cfg(feature = "usb-audio")]
+pub static USB_AUDIO: BlockDef = BlockDef {
+    // Never used before: a new top, past CONTROL's 114, one more focus
+    // slot (`MAX_PAGES`).
+    id: 115,
+    name: "USB Audio",
+    short: "USB",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Midi, MidiSettings::USB_IN),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
         ParamSlot::EMPTY,
         ParamSlot::EMPTY,
         ParamSlot::EMPTY,
@@ -147,6 +169,8 @@ static SYNC_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_SYNC)];
 static ECHO_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ECHO)];
 static MPE_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_MPE)];
 static OUTPUTS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&OUTPUTS)];
+#[cfg(feature = "usb-audio")]
+static USB_AUDIO_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&USB_AUDIO)];
 static TUNING_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_TUNING)];
 static THEME_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_THEME)];
 static SAVER_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_SAVER)];
@@ -165,6 +189,8 @@ pub static SYNC_LEAF: OnePage = OnePage::new("Sync", &SYNC_BLOCKS);
 pub static ECHO_LEAF: OnePage = OnePage::new("Echo", &ECHO_BLOCKS);
 pub static MPE_LEAF: OnePage = OnePage::new("MPE", &MPE_BLOCKS);
 pub static OUTPUTS_LEAF: OnePage = OnePage::new("Outputs", &OUTPUTS_BLOCKS);
+#[cfg(feature = "usb-audio")]
+pub static USB_AUDIO_LEAF: OnePage = OnePage::new("USB Audio", &USB_AUDIO_BLOCKS);
 pub static TUNING_LEAF: OnePage = OnePage::new("Tuning", &TUNING_BLOCKS);
 pub static THEME_LEAF: OnePage = OnePage::new("Theme", &THEME_BLOCKS);
 pub static SAVER_LEAF: OnePage = OnePage::new("Screensaver", &SAVER_BLOCKS);

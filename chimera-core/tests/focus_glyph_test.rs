@@ -170,6 +170,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "SNAP", NONE),
     ("Part", "HELD", NONE),
     ("Part", "TUNING", NONE),
+    ("Part", "MAPPING", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),
@@ -181,6 +182,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Midi", "PUSH", SWITCH),
     ("Midi", "ECHO", SWITCH),
     ("Midi", "PRGIN", SWITCH),
+    ("Midi", "PARAM_OUT", SWITCH),
+    ("Midi", "BUILT_IN", SWITCH),
     ("OrbitChords", "KEY", NONE),
     ("OrbitChords", "SCALE", NONE),
     ("OrbitRing", "MUTE", SWITCH),
@@ -206,6 +209,8 @@ const NAMED_ARC: &[(&str, &str)] = &[
     ("Midi", "MIXER_CH"),
     ("Midi", "SEQ_CH"),
     ("Midi", "AUTO_CH"),
+    // OFF, then -24 dB to 0 dB (ADR 0260).
+    ("Midi", "USB_IN"),
 ];
 
 /// Two-value choices that are two peers, not on and off: a toggle would
@@ -241,6 +246,7 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("OrbitRing", "MODE"),
     // STAY and RE-SNAP: two ways to hold a key through a chord change.
     ("Part", "HELD"),
+    ("Part", "MAPPING"),
     // INT and EXT: two clocks to follow, neither is off.
     ("Midi", "SYNC"),
     // MONO and POLY: two ways to splice a grain.

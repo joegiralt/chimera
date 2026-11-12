@@ -905,7 +905,7 @@ pub static SYS_TUNING: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Midi, MidiSettings::TUNE),
         // The active Part's, as LIVE SNAP's cells are (ADR 0240).
         ParamSlot::param(BlockRef::Part, PartParams::TUNING),
-        EMPTY,
+        ParamSlot::param(BlockRef::Part, PartParams::MAPPING),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -1000,7 +1000,8 @@ pub static SYS_PUSH: BlockDef = BlockDef {
     ],
 };
 
-/// MIDI CONFIG › ECHO: DIN OUT's master switch (spec § 8.4).
+/// MIDI CONFIG › ECHO: DIN OUT's master switch (spec § 8.4), and PARAM
+/// OUT, each panel edit's NRPN (ADR 0258).
 pub static SYS_ECHO: BlockDef = BlockDef {
     // Never used before, and below the top: the focus table keeps its
     // size (`MAX_PAGES`).
@@ -1011,7 +1012,7 @@ pub static SYS_ECHO: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Midi, MidiSettings::ECHO),
-        EMPTY,
+        ParamSlot::param(BlockRef::Midi, MidiSettings::PARAM_OUT),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -1389,7 +1390,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 24] = [
+const FIXED: [&ChainDef2; 24 + cfg!(feature = "usb-audio") as usize] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
@@ -1402,6 +1403,8 @@ const FIXED: [&ChainDef2; 24] = [
     ECHO_LEAF.chain(),
     MPE_LEAF.chain(),
     OUTPUTS_LEAF.chain(),
+    #[cfg(feature = "usb-audio")]
+    super::settings::leaves::USB_AUDIO_LEAF.chain(),
     TUNING_LEAF.chain(),
     THEME_LEAF.chain(),
     SAVER_LEAF.chain(),

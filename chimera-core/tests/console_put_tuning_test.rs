@@ -1,9 +1,9 @@
-//! `put` takes a tuning (#217, ADR 0240): `/CHIMERA/TUNINGS/TUNE1.SCL` to
-//! `TUNE8.KBM`, a whole file of at most 4 KiB, replacing an old one; the
-//! card is inside the case, so this is how a Scala file gets there.
+//! `put` takes a tuning (#217, ADR 0240, 0259): `/CHIMERA/TUNINGS/<stem>.SCL`
+//! or `.KBM`, any 8.3 stem, a whole file of at most 4 KiB, replacing an old
+//! one; the card is inside the case, so this is how a Scala file gets there.
 #![cfg(all(feature = "card-put", feature = "tuning"))]
 
-use chimera_core::console::{Console, Out, Request, Stalled, put};
+use chimera_core::console::{Console, Out, Request, Stalled, put, rm};
 use chimera_core::storage::Crc32;
 use chimera_hal::Ms;
 use chimera_hal::store::{ByteSink, Dir, FileName, Files, ReadSink, Store, StoreError, VolumeId};
@@ -188,13 +188,21 @@ fn put_takes_a_scala_file_and_a_map() {
 }
 
 #[test]
-fn put_refuses_other_names_and_a_file_past_4_kib() {
+fn put_takes_any_stem_and_refuses_other_names_and_a_file_past_4_kib() {
     let mut s = Mem(MemStore::new(7));
+    assert_eq!(
+        ask(&mut s, "/chimera/tunings/bohlen13.scl", SCL),
+        "READY\nOK\n"
+    );
+    assert_eq!(on_card(&mut s, b"BOHLEN13", b"SCL").as_deref(), Some(SCL));
     for path in [
-        "/CHIMERA/TUNINGS/TUNE9.SCL",
-        "/CHIMERA/TUNINGS/TUNE0.SCL",
-        "/CHIMERA/TUNINGS/BOHLEN.SCL",
+        "/CHIMERA/TUNINGS/BOHLENPIERCE.SCL",
+        "/CHIMERA/TUNINGS/BO-HL.SCL",
+        "/CHIMERA/TUNINGS/BOHLEN~1.SCL",
+        "/CHIMERA/MAPS/FADER~1.A",
+        "/CHIMERA/TUNINGS/.SCL",
         "/CHIMERA/TUNINGS/TUNE1.TXT",
+        "/CHIMERA/MAPS/TUNE1.SCL",
     ] {
         assert_eq!(ask(&mut s, path, SCL), "Err(Arguments(Put))", "{path}");
     }
@@ -236,4 +244,77 @@ fn a_scale_put_drops_its_slots_old_map() {
     );
     assert_eq!(on_card(&mut s, b"TUNE4", b"KBM").as_deref(), Some(&kbm[..]));
     assert_eq!(on_card(&mut s, b"TUNE4", b"SCL").as_deref(), Some(SCL));
+}
+
+/// An `rm` line: the unit's answer, or the parser's refusal.
+fn ask_rm(s: &mut Mem, path: &str) -> String {
+    let mut host = Host {
+        input: VecDeque::new(),
+        out: Vec::new(),
+        us: 0,
+    };
+    let mut c = Console::new();
+    for &b in format!("rm {path}\n").as_bytes() {
+        match c.push(b) {
+            Some(Ok(Request::Rm(arg))) => rm(arg, s, &mut host).unwrap(),
+            Some(other) => return format!("{other:?}"),
+            None => {}
+        }
+    }
+    String::from_utf8(host.out).unwrap()
+}
+
+/// `rm` takes a tuning file put there (#906): the card is inside the case,
+/// so a file `put` can always be taken off, under any 8.3 stem (ADR 0259).
+/// The Parts playing it read again (and play 12-TET with the file gone).
+#[test]
+fn rm_takes_a_tuning_file() {
+    let mut s = Mem(MemStore::new(7));
+    let kbm = b"0\n0\n127\n60\n69\n432.0\n7\n";
+    assert_eq!(
+        ask(&mut s, "/CHIMERA/TUNINGS/PELOG.SCL", SCL),
+        "READY\nOK\n"
+    );
+    assert_eq!(
+        ask(&mut s, "/CHIMERA/TUNINGS/PELOG.KBM", kbm),
+        "READY\nOK\n"
+    );
+    let was = chimera_core::tuning::files_put();
+    assert_eq!(ask_rm(&mut s, "/chimera/tunings/pelog.kbm"), "OK\n");
+    assert_eq!(on_card(&mut s, b"PELOG", b"KBM"), None);
+    assert_eq!(on_card(&mut s, b"PELOG", b"SCL").as_deref(), Some(SCL));
+    assert_ne!(
+        chimera_core::tuning::files_put(),
+        was,
+        "the UI reads it again"
+    );
+    assert_eq!(ask_rm(&mut s, "/CHIMERA/TUNINGS/PELOG.SCL"), "OK\n");
+    assert_eq!(on_card(&mut s, b"PELOG", b"SCL"), None);
+    assert_eq!(
+        ask_rm(&mut s, "/CHIMERA/TUNINGS/PELOG.SCL"),
+        "ERR rm: not found\n"
+    );
+    for path in [
+        "/CHIMERA/TUNINGS/BOHLEN-P.SCL",
+        "/CHIMERA/TUNINGS/PELOGSLEN.KBM",
+        "/CHIMERA/TUNINGS/._PELOG.SCL",
+        "/CHIMERA/TUNINGS/.SCL",
+        "/CHIMERA/TUNINGS/TUNE1.TXT",
+        "/CHIMERA/TUNINGS/TUNE1",
+        "/CHIMERA/TUNINGS/../SOUNDS/TUNE1.SCL",
+        "/CHIMERA/TUNINGS/TUNE1.SCL/..",
+    ] {
+        assert_eq!(ask_rm(&mut s, path), "Err(Arguments(Rm))", "{path}");
+    }
+}
+
+/// `rm` also takes a computer's short name for a long one, as the card
+/// keeps a file copied in USB disk mode (ADR 0259).
+#[test]
+fn rm_takes_a_long_names_short_name() {
+    let mut s = Mem(MemStore::new(7));
+    let f = FileName::new(Dir::Tunings, b"BOHLEN~1", b"SCL").unwrap();
+    s.0.plant(f, SCL);
+    assert_eq!(ask_rm(&mut s, "/CHIMERA/TUNINGS/bohlen~1.scl"), "OK\n");
+    assert_eq!(on_card(&mut s, b"BOHLEN~1", b"SCL"), None);
 }

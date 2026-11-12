@@ -7,7 +7,8 @@ mod screen;
 use chimera_core::addr::{BlockRef, Blocks, Op};
 
 use chimera_core::budget::{
-    FORMANT_BUDGET, FORMANT_BUDGET_FRMT, FORMANT_N, FORMANT_N_UNLINKED, HEAVY_OVERHEAD,
+    FORMANT_BUDGET, FORMANT_BUDGET_FRMT, FORMANT_N, FORMANT_N_UNLINKED, GATE_HEAVY, GATE_TABLE,
+    HEAVY_OVERHEAD,
 };
 use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, ALGORITHMS, AlgoId};
 use chimera_core::dsp::algo::engine::AlgoEngine;
@@ -17,11 +18,9 @@ use chimera_core::dsp::algo::kinds::{
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams, step_alg};
 use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::algo::waves::WaveId;
-use chimera_core::dsp::filter::{CLEAN_MOVE_COST, FILTER_LEVEL_COST};
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::voice::{HighNote, Voice};
+use chimera_core::dsp::voice::HighNote;
 use chimera_core::hw::{CPU_HZ_REV_V, FLOOR_VOICES, FLOOR_VOICES_FORMANT, SampleBudget};
-use chimera_core::modulation::ModRouting;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
@@ -49,16 +48,23 @@ fn op_kind_codes_are_frozen() {
     }
 }
 
+/// The formant gate is frozen at 0.3's bills (ADR 0262): the bills rose
+/// to the unit's worst blocks, the gate didn't, so every patch that loaded
+/// still loads; it never charges over today's bill.
 #[test]
-fn the_budget_is_derived_from_the_cost_model() {
+fn the_budget_is_0_3s_cost_model() {
     let bus = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0
         - FxBus::COST_TAPE.0
         - chimera_core::budget::CONTROL_RESERVE.0;
-    let table = AlgoEngine::COST_BASE.0
-        + 12 * AlgoEngine::COST_LINK.0
-        + 6 * (AlgoEngine::COST_OP.0 + AlgoEngine::COST_FEEDBACK.0);
-    let heavy = ModRouting::HEAVY.0 + CLEAN_MOVE_COST.0 + FILTER_LEVEL_COST.0 + Voice::CHAIN_COST.0;
-    assert_eq!(HEAVY_OVERHEAD.0, heavy);
+    let (heavy, table) = (GATE_HEAVY.0, GATE_TABLE.0);
+    assert_eq!((heavy, table), (472, 832));
+    assert!(heavy <= HEAVY_OVERHEAD.0);
+    assert!(
+        table
+            <= AlgoEngine::COST_BASE.0
+                + 12 * AlgoEngine::COST_LINK.0
+                + 6 * (AlgoEngine::COST_OP.0 + AlgoEngine::COST_FEEDBACK.0)
+    );
     assert_eq!(FORMANT_BUDGET.0, bus / FLOOR_VOICES - heavy - table);
     assert_eq!(
         FORMANT_BUDGET_FRMT.0,
@@ -68,23 +74,16 @@ fn the_budget_is_derived_from_the_cost_model() {
             - HighNote::VOICE_COST.0
     );
     let (linked, unlinked) = (OpKind::Formant.charge(true), OpKind::Formant.charge(false));
+    assert_eq!((linked, unlinked), (390, 200));
     assert_eq!(
-        linked,
-        AlgoEngine::COST_FRMT_LINKED.0 + AlgoEngine::COST_FRMT_MOVE_LINKED.0
-            - AlgoEngine::COST_OP.0
+        (OpKind::Noise.charge(true), OpKind::Noise.charge(false)),
+        (40, 20)
     );
-    assert_eq!(
-        unlinked,
-        AlgoEngine::COST_FRMT.0 + AlgoEngine::COST_FRMT_MOVE.0 - AlgoEngine::COST_OP.0
-    );
-    assert_eq!(
-        OpKind::Noise.charge(true),
-        AlgoEngine::COST_NOIS_LINKED.0 - AlgoEngine::COST_OP.0
-    );
-    assert_eq!(
-        OpKind::Noise.charge(false),
-        AlgoEngine::COST_NOIS.0 - AlgoEngine::COST_OP.0
-    );
+    let op = AlgoEngine::COST_OP.0;
+    assert!(linked + op <= AlgoEngine::frmt_cost(1, true));
+    assert!(unlinked + op <= AlgoEngine::frmt_cost(1, false));
+    assert!(OpKind::Noise.charge(true) + op <= AlgoEngine::nois_cost(true));
+    assert!(OpKind::Noise.charge(false) + op <= AlgoEngine::nois_cost(false));
     assert_eq!(FORMANT_N, FORMANT_BUDGET_FRMT.0 / linked);
     assert_eq!(FORMANT_N_UNLINKED, FORMANT_BUDGET_FRMT.0 / unlinked);
     println!(

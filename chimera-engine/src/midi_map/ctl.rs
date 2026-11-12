@@ -412,7 +412,7 @@ pub fn list(
     out: &mut [Option<SoundName>; MAX_MAPS],
 ) -> Result<(usize, bool), StoreError> {
     let mut stems = [([0u8; 8], 0u8); MAX_MAPS + 1];
-    let n = list_stems(s, r.volume(), Dir::Maps, &mut stems)?;
+    let n = list_stems(s, r.volume(), Dir::Maps, &[b"A", b"B"], &mut stems)?;
     let (mut k, mut more) = (0, false);
     for (b, l) in &stems[..n] {
         match load_stem(s, r, &b[..usize::from(*l)], None) {

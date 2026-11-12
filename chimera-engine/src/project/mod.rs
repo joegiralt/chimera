@@ -246,6 +246,37 @@ impl Project {
         }
     }
 
+    /// Part `p`'s expression (CC 11, ADR 0263): played, never saved.
+    pub fn set_expression(&mut self, p: PartId, v: u8) {
+        self.bump();
+        self.perf.parts[p.index()].expression = v;
+    }
+
+    /// Part `p`'s Sound saved as it sounds (ADR 0263): its shifts are its
+    /// own values now, so CC 64 is the Sound as saved.
+    pub fn reset_shift(&mut self, p: PartId) {
+        self.bump();
+        self.perf.parts[p.index()].env = [0; 2];
+    }
+
+    /// Part `p`'s CC 73 (`which` 0) or 72 (1) offset applied (ADR 0263).
+    pub fn set_env_offset(&mut self, p: PartId, which: usize, v: i8) {
+        self.bump();
+        self.perf.parts[p.index()].env[which & 1] = v;
+    }
+
+    /// Part `p`'s TUNING plays Scala file `s` (ADR 0259): a project edit.
+    /// Nothing without `tuning`.
+    pub fn set_scala(&mut self, p: PartId, s: Option<crate::tuning::ScalaName>) {
+        self.bump();
+        #[cfg(feature = "tuning")]
+        {
+            self.perf.parts[p.index()].scala = s.unwrap_or_default();
+        }
+        #[cfg(not(feature = "tuning"))]
+        let _ = (p, s);
+    }
+
     /// KEEP MAP (ADR 0253): Part `p`'s Sound as it is now reads Clean
     /// (its kept rows written over a load's), or, `false`, as its slot
     /// says. Bank 2's (`bank2.x`): only the MIDI UI calls it.
@@ -307,6 +338,8 @@ impl Project {
         self.pool
             .store(s, &self.perf.parts[p.index()].sound, &self.kept[p.index()])?;
         let stored = self.pool.get(s).expect("just stored");
+        // Saved as it sounds: CC 64 is this Sound now (ADR 0263).
+        self.perf.parts[p.index()].env = [0; 2];
         self.perf.parts[p.index()].origin = Origin::Slot {
             slot: s,
             generation: self.pool.generation(s),
@@ -357,17 +390,18 @@ impl Project {
         if !adopt {
             // Refused, the Part is as it was: its Sound back from `keep`,
             // its loads unmoved.
-            let loads = self.perf.parts[i].loads;
+            let (loads, env) = (self.perf.parts[i].loads, self.perf.parts[i].env);
             let r = self.load_part(src);
             if r.is_err() {
                 let part = &mut self.perf.parts[i];
                 core::mem::swap(&mut *part.sound, keep);
-                part.loads = loads;
+                (part.loads, part.env) = (loads, env);
             }
             return r;
         }
         let part = &mut self.perf.parts[i];
         part.loads.bump();
+        part.env = [0; 2];
         part.origin = origin;
         Ok(())
     }
@@ -377,6 +411,7 @@ impl Project {
         self.bump();
         let part = &mut self.perf.parts[src.part.index()];
         part.loads.bump();
+        part.env = [0; 2];
         // Cleared only once the load can't fail: a refused one keeps it.
         let kept = &mut self.kept[src.part.index()];
         match src.from {

@@ -132,6 +132,9 @@ pub enum CtrlEvent {
     /// A note-on on MIDI CONFIG › CONTROL's SEQUENCER channel: ORBIT's KEY
     /// (ADR 0254).
     Key(MidiNote),
+    /// Reset All Controllers on this channel: expression back to 127 (ADR
+    /// 0263). Its own event, so learn never hears it as a CC.
+    Reset(Channel),
 }
 
 const T_CC: u32 = 0;
@@ -144,10 +147,12 @@ const T_IDENTITY: u32 = 6;
 const T_LOST: u32 = 7;
 const T_SYSEX: u32 = 8;
 const T_KEY: u32 = 9;
+const T_RESET: u32 = 10;
 // Every tag its own (ADR 0254: KEY's 8 met SYSEX's on the merge).
 const _: () = {
     let t = [
         T_CC, T_COARSE, T_FINE, T_STEP, T_PROGRAM, T_PRESSURE, T_IDENTITY, T_LOST, T_SYSEX, T_KEY,
+        T_RESET,
     ];
     let mut i = 0;
     while i < t.len() {
@@ -209,6 +214,7 @@ impl CtrlEvent {
             CtrlEvent::SensingLost => (T_LOST, 0, 0),
             CtrlEvent::SysEx => (T_SYSEX, 0, 0),
             CtrlEvent::Key(k) => (T_KEY, 0, u32::from(k.get())),
+            CtrlEvent::Reset(c) => (T_RESET, c.get(), 0),
         };
         [tag << 4 | u32::from(ch), pay]
     }
@@ -247,6 +253,7 @@ impl CtrlEvent {
             T_LOST => Some(CtrlEvent::SensingLost),
             T_SYSEX => Some(CtrlEvent::SysEx),
             T_KEY => Some(CtrlEvent::Key(MidiNote::new((p & 0x7F) as u8)?)),
+            T_RESET => Some(CtrlEvent::Reset(c?)),
             _ => None,
         }
     }
@@ -1003,6 +1010,10 @@ impl DinPipe {
                         to &= to - 1;
                         if let Some(e) = InEvent::from_mode(c, m) {
                             sink.note(e);
+                        }
+                        // GM resets expression with the rest (ADR 0263).
+                        if matches!(m, stream::ChannelMode::ResetAllControllers) {
+                            sink.ctrl(CtrlEvent::Reset(c));
                         }
                     }
                 }

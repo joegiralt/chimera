@@ -453,7 +453,9 @@ fn mod_routing_bills_the_spec_shape() {
         (M::BASE, M::cost(&p, &routed(&[ModSource::Env2]))),
         (Cost(47), Cost(99))
     );
-    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(657));
+    // 657 until the 883b worst blocks raised ENV_B, SLIDE and the
+    // destinations (ADR 0262).
+    assert_eq!(M::cost(&worst, &routed(&ModSource::ALL)), Cost(723));
 }
 
 /// Each destination other than the VCA with a route of nonzero amount
@@ -2042,6 +2044,9 @@ fn floor_holds(frmt: bool, floor: u32, pairs: &[(AlgoId, AlgoId)]) {
             }
             seen += 1;
             let (tape, no_tape) = voices(&algs_with(a, b, k));
+            // The gate is 0.3's, the bills the unit's worst blocks: the
+            // synthetic worst mix keeps one voice fewer (ADR 0262).
+            let floor = floor - 1;
             assert!(tape >= floor && no_tape >= floor, "{a:?} {b:?} {k:?}");
         }
     }
@@ -2148,11 +2153,12 @@ fn a_formant_bills_its_lanes_and_its_moving_law() {
         }
     }
     assert!(linked_seen && unlinked_seen);
-    // Selecting a FRMT is never billed below its counted worst case.
+    // Selecting a FRMT is never billed below its counted worst case; the
+    // gate charges 0.3's bill, at most today's (ADR 0262).
     for linked in [false, true] {
-        assert_eq!(
-            OpKind::Formant.charge(linked) + AlgoEngine::COST_OP.0,
-            AlgoEngine::frmt_cost(1, linked)
+        assert!(
+            OpKind::Formant.charge(linked) + AlgoEngine::COST_OP.0
+                <= AlgoEngine::frmt_cost(1, linked)
         );
     }
     assert!(OpKind::Formant.charge(true) + AlgoEngine::COST_OP.0 >= AlgoEngine::COST_FRMT_LINKED.0);
@@ -2413,7 +2419,8 @@ fn formant_costs_bill_by_kind() {
     );
     let floor = HEAVY_OVERHEAD.0;
     for bus in [FxBus::COST_TAPE, FxBus::COST_NO_TAPE] {
-        assert!(voices_with(&worst, bus, floor) >= FLOOR_VOICES_FORMANT);
+        // One fewer than ADR 0218's floor: the gate is 0.3's (ADR 0262).
+        assert!(voices_with(&worst, bus, floor) >= FLOOR_VOICES_FORMANT - 1);
     }
     let light = ModRouting::BASE.0 + Voice::CHAIN_COST.0;
     for (name, p) in [
@@ -2469,10 +2476,8 @@ fn a_noise_band_bills_its_link() {
             base + term.0,
             "op {op}"
         );
-        assert_eq!(
-            OpKind::Noise.charge(l.has(op)),
-            term.0 - AlgoEngine::COST_OP.0
-        );
+        // The gate charges 0.3's bill, at most today's (ADR 0262).
+        assert!(OpKind::Noise.charge(l.has(op)) <= term.0 - AlgoEngine::COST_OP.0);
     }
     const { assert!(AlgoEngine::COST_NOIS_LINKED.0 > AlgoEngine::COST_NOIS.0) };
 }
@@ -2770,3 +2775,22 @@ const GATE_VOICES: [[[u32; 2]; 2]; 4] = [
     [[6, 5], [7, 6]],
     [[6, 4], [6, 5]],
 ];
+
+/// A route on VA's WAVE bills its worst block's segment crossing (VA WAVE
+/// − VA over the MODE's bill, 883b, ADR 0262); WAVE still bills nothing.
+#[test]
+fn a_wave_route_bills_its_crossing() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::va::VaParams;
+    let p = ParamSnapshot::for_engine(EngineType::Va);
+    let still = EngineSlot::cost(&p, &ModState::with_sources(MAX_MOD_SOURCES));
+    for wave in [VaParams::WAVE1, VaParams::WAVE2] {
+        let mut m = ModState::with_sources(MAX_MOD_SOURCES);
+        assert!(m.set_route_addr(
+            ModSource::Lfo1.index(),
+            ParamAddr::new(BlockRef::Va, wave),
+            64
+        ));
+        assert_eq!(EngineSlot::cost(&p, &m), still + Cost(50));
+    }
+}

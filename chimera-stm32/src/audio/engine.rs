@@ -52,6 +52,9 @@ struct Engine {
     dac: DacBlocks,
     /// Each DMA half's pairs holding only 0 words (`put`).
     dma_zero: [[bool; DAC_PAIRS]; 2],
+    /// The host's USB playback's audio side (ADR 0260).
+    #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+    usb_in: (chimera_midi::uac_out::Drain, chimera_midi::uac_out::Fade),
     /// Holds the note queues through a project load (ADR 0046).
     gate: LoadGate,
     orbit: chimera_board::orbit::Runner,
@@ -107,6 +110,11 @@ pub fn init(
             formant,
             dac: DacBlocks::new(),
             dma_zero: [[false; DAC_PAIRS]; 2],
+            #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+            usb_in: (
+                chimera_midi::uac_out::Drain::new(),
+                chimera_midi::uac_out::Fade::new(),
+            ),
             gate: LoadGate::new(),
             orbit,
             sources: {
@@ -178,6 +186,12 @@ pub fn render_half(half: Half) {
         VOICES.store(e.inst.sounding() as u8, Ordering::Relaxed);
         COST_PCT.store(e.inst.cost_pct(), Ordering::Relaxed);
     }
+    // The capture taps the main out before the host's playback joins it
+    // (ADR 0260): the host never records itself.
+    #[cfg(feature = "usb-audio")]
+    usb_out(&e.dac);
+    #[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+    usb_in(&mut e.dac, &mut e.usb_in);
     for pair in DacPair::ALL {
         put(
             &e.dac,
@@ -193,8 +207,6 @@ pub fn render_half(half: Half) {
             e.dma_zero[half.index()][pair.index()] = false;
         }
     }
-    #[cfg(feature = "usb-audio")]
-    usb_out(&e.dac);
 }
 
 /// The main out (DAC pair 1) into USB audio's ring as its DAC plays it
@@ -209,6 +221,37 @@ fn usb_out(dac: &DacBlocks) {
     chimera_board::usb_audio::RING.push(BLOCK_SIZE, |i| {
         [to_dac(p[2 * i]).get(), to_dac(p[2 * i + 1]).get()]
     });
+}
+
+/// The host's USB playback into the main out (ADR 0260), after the
+/// capture's tap: a block from its ring at USB IN's step, eased from the
+/// last block's gain; silence while the host isn't playing, until the
+/// ring holds its target, and whenever it runs dry (counted).
+#[cfg(all(feature = "usb-audio", not(feature = "usb-config-writer")))]
+#[inline(never)]
+fn usb_in(
+    dac: &mut DacBlocks,
+    (drain, fade): &mut (chimera_midi::uac_out::Drain, chimera_midi::uac_out::Fade),
+) {
+    use chimera_board::usb_audio::{PLAY, PLAY_LEVEL, PLAY_ON, PLAY_SHORT};
+    use chimera_midi::uac_out::{self, Counts, Fade};
+    const _: () = assert!(BLOCK_SIZE == uac_out::BLOCK);
+    if !PLAY_ON.load(Ordering::Acquire) {
+        drain.stop();
+        *fade = Fade::new();
+        PLAY.skip(PLAY.len());
+        return;
+    }
+    let level = uac_out::gain(PLAY_LEVEL.load(Ordering::Relaxed));
+    let (pairs, zero) = dac.out_mut();
+    let mut c = Counts::default();
+    let p = DacPair::P1.index();
+    if uac_out::play(&PLAY, drain, &mut c, fade, level, &mut pairs[p]) {
+        zero[p] = false;
+    }
+    if c.short != 0 {
+        PLAY_SHORT.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// `pair`'s words of the block out into its DMA `half`: none to write

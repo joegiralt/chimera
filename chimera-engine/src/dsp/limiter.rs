@@ -122,9 +122,9 @@ impl DacBlocks {
         self.zero[self.out][pair.index()]
     }
 
-    /// The last block out, to scale after the limiter (`MasterOut`), with
-    /// its pairs known +0.
-    pub(crate) fn out_mut(&mut self) -> (&mut Pairs, &mut [bool; DAC_PAIRS]) {
+    /// The last block out, to scale after the limiter (`MasterOut`) or to
+    /// add the host's USB playback to (ADR 0260), with its pairs known +0.
+    pub fn out_mut(&mut self) -> (&mut Pairs, &mut [bool; DAC_PAIRS]) {
         (&mut self.blocks[self.out], &mut self.zero[self.out])
     }
 

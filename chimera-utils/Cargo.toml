@@ -9,8 +9,9 @@ publish = false
 chimera-circuits = { path = "../chimera-circuits" }
 chimera-core = { path = "../chimera-core" }
 chimera-engine = { path = "../chimera-engine" }
-chimera-hal = { path = "../chimera-hal" }
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 chimera-image = { path = "../chimera-image" }
+chimera-midi = { path = "../chimera-midi" }
 hound = "3.5"
 object = { version = "0.36", default-features = false, features = ["read", "write", "std", "elf"] }
 rayon = "1.11"

@@ -106,6 +106,153 @@ pub(crate) fn closed() {
         .modify(|r, w| unsafe { w.bits(r.bits() & !(SOF | IISOIXFR)) });
 }
 
+/// The host's playback (ADR 0260): the USB interrupt pushes each packet,
+/// the audio interrupt pops a block into the main out after the capture's
+/// tap. Bank 1's (bank 2 is full, ADR 0251), as is everything below.
+#[cfg(not(feature = "usb-config-writer"))]
+pub static PLAY: Ring<{ chimera_midi::uac_out::RING }> = Ring::new();
+/// The host has the playback on: the audio side drains while it isn't.
+#[cfg(not(feature = "usb-config-writer"))]
+pub static PLAY_ON: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// USB IN's step, the UI's each lap (`MidiSettings::usb_in`).
+#[cfg(not(feature = "usb-config-writer"))]
+pub static PLAY_LEVEL: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(chimera_core::ui::midi_settings::USB_IN_TOP);
+/// Blocks the playback's ring was dry for: the audio side's `short`.
+#[cfg(not(feature = "usb-config-writer"))]
+pub static PLAY_SHORT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// The playback's interface, its OUT and feedback IN, and the servo. In
+/// USB MIDI's class, so in the cell, the poll's alone.
+#[cfg(not(feature = "usb-config-writer"))]
+pub(crate) struct Play {
+    pub(crate) alt: Alt,
+    pub(crate) out: usb_device::class_prelude::EndpointOut<'static, Bus>,
+    pub(crate) fb: EndpointIn<'static, Bus>,
+    on: bool,
+    servo: chimera_midi::uac_out::Feedback,
+    /// The 10.14 value the feedback carries.
+    value: u32,
+    /// The bus frame the servo last ran in.
+    last: u16,
+    counts: chimera_midi::uac_out::Counts,
+}
+
+#[cfg(not(feature = "usb-config-writer"))]
+impl Play {
+    /// The playback's interface (after MIDIStreaming's) and endpoints:
+    /// an asynchronous OUT and its 3-byte feedback IN, every frame.
+    pub(crate) fn alloc(bus: &'static usb_device::class_prelude::UsbBusAllocator<Bus>) -> Play {
+        use chimera_midi::uac_out::{self, Feedback, NOMINAL_FB};
+        use usb_device::endpoint::{
+            IsochronousSynchronizationType as Sync, IsochronousUsageType as Usage,
+        };
+        let iface = bus.interface();
+        Play {
+            alt: Alt::new(iface),
+            out: bus.isochronous(Sync::Asynchronous, Usage::Data, uac_out::PACKET, 1),
+            fb: bus.isochronous(Sync::NoSynchronization, Usage::Feedback, 3, 1),
+            on: false,
+            servo: Feedback::new(),
+            value: NOMINAL_FB,
+            last: 0,
+            counts: uac_out::Counts::default(),
+        }
+    }
+
+    /// After the device's poll, each entry: the stream on or off as the
+    /// host set it (SOF unmasked while on: the capture's pump masks it as
+    /// its own stream stops, so it is set again here); once a bus frame
+    /// the servo runs and both endpoints are aimed at the frame now (an
+    /// isochronous endpoint moves only in a frame of its parity); a packet
+    /// in goes to the ring and its endpoint is aimed at the next frame; the
+    /// feedback, once sent, is armed again. Never a disable or a flush.
+    pub(crate) fn pump(&mut self, configured: bool, capture: bool) {
+        use chimera_midi::uac;
+        use chimera_midi::uac_out::{self, Feedback, NOMINAL_FB};
+        use core::sync::atomic::Ordering;
+        let on = configured && self.alt.streaming();
+        let g = otg();
+        if on != self.on {
+            self.on = on;
+            PLAY_ON.store(on, Ordering::Release);
+            if on {
+                self.servo = Feedback::new();
+                self.value = NOMINAL_FB;
+            } else if !capture {
+                // SAFETY: SOF's mask bit cleared, every other as read:
+                // `rx_park`'s read-modify-write, under the same exclusion.
+                g.gintmsk.modify(|r, w| unsafe { w.bits(r.bits() & !SOF) });
+            }
+        }
+        if !on {
+            return;
+        }
+        if g.gintmsk.read().bits() & SOF == 0 {
+            // SAFETY: as above, SOF's bit set.
+            g.gintmsk.modify(|r, w| unsafe { w.bits(r.bits() | SOF) });
+        }
+        let now = door::now();
+        let (out, fb) = (
+            doepctl(self.out.address().index()),
+            door::diepctl(self.fb.address().index()),
+        );
+        if now != self.last {
+            self.last = now;
+            self.value = self.servo.tick(PLAY.len());
+            for p in [out, fb] {
+                // SAFETY: the playback's own endpoints' control registers;
+                // the bus writes them only from this poll's context.
+                unsafe {
+                    let v = p.read_volatile();
+                    if uac::armed(v) {
+                        p.write_volatile(uac::aim(v, now.wrapping_sub(1)));
+                    }
+                }
+            }
+        }
+        // On the stack (DTCM), not in the cell: AXI is short.
+        let mut buf = [0u8; uac_out::PACKET as usize];
+        if let Ok(n) = self.out.read(&mut buf) {
+            uac_out::receive(&buf[..n], &PLAY, &mut self.counts);
+            // SAFETY: as above; the next packet comes in the next frame.
+            unsafe {
+                let v = out.read_volatile();
+                out.write_volatile(uac::aim(v, now));
+            }
+        }
+        // SAFETY: as above.
+        let v = unsafe { fb.read_volatile() };
+        if !uac::armed(v) {
+            // SAFETY: as above; not armed, so the core isn't using it.
+            unsafe { fb.write_volatile(uac::aim(v, now.wrapping_sub(1))) };
+            let _ = self.fb.write(&uac_out::bytes(self.value));
+        }
+    }
+
+    /// `bench`'s line.
+    pub(crate) fn report(&self, t: &mut impl core::fmt::Write) -> core::fmt::Result {
+        let c = self.counts;
+        writeln!(
+            t,
+            "usb_play on {} received {} short {} overruns {} fb {:#x} fill {}",
+            u8::from(self.on),
+            c.received,
+            PLAY_SHORT.load(core::sync::atomic::Ordering::Relaxed),
+            c.overruns,
+            self.value,
+            PLAY.len()
+        )
+    }
+}
+
+/// DOEPCTL of OUT endpoint `n` (RM0433: OTG base + 0xB00 + 0x20·n).
+#[cfg(not(feature = "usb-config-writer"))]
+#[inline(always)]
+fn doepctl(n: usize) -> *mut u32 {
+    (pac::OTG2_HS_GLOBAL::ptr() as usize + 0xB00 + 0x20 * n) as *mut u32
+}
+
 /// Bank 2's half.
 pub(crate) mod door {
     use chimera_midi::uac::{self, Counts, FRAME_BYTES, PACKET, Pacer};
@@ -136,13 +283,13 @@ pub(crate) mod door {
 
     /// DIEPCTL of IN endpoint `n` (RM0433: OTG base + 0x900 + 0x20·n).
     #[inline(always)]
-    fn diepctl(n: usize) -> *mut u32 {
+    pub(super) fn diepctl(n: usize) -> *mut u32 {
         (stm32h7xx_hal::pac::OTG2_HS_GLOBAL::ptr() as usize + 0x900 + 0x20 * n) as *mut u32
     }
 
     /// The bus frame now (DSTS.FNSOF).
     #[inline(always)]
-    fn now() -> u16 {
+    pub(super) fn now() -> u16 {
         // SAFETY: a plain read of OTG2's DSTS, which has no read side effect.
         let d = unsafe { &*stm32h7xx_hal::pac::OTG2_HS_DEVICE::ptr() };
         uac::frame(d.dsts.read().bits())

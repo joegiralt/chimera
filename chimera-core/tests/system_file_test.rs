@@ -3,6 +3,7 @@
 
 mod common;
 
+use chimera_core::block::Block;
 use chimera_core::orbit::clock::SyncMode;
 use chimera_core::storage::{
     AbFile, BootNote, Card, Exit, ExitPlan, FileError, LoadError, ProjectId, Side, SyncError,
@@ -902,5 +903,47 @@ fn a_system_from_before_control_channels_has_them_off() {
             (want.midi.sync, want.midi.tune),
             "{name}"
         );
+    }
+}
+
+/// AUDIO ROUTING › USB AUDIO's USB IN (ADR 0260) round-trips by its
+/// ident; a SYSTEM from before it, either v1 fixture, plays the host at 0
+/// dB, the default.
+#[test]
+fn usb_in_round_trips_and_an_old_system_is_unity() {
+    let d = MidiSettings::DEFAULT;
+    assert_eq!(d.usb_in(), 7, "0 dB");
+    let spec = d
+        .specs()
+        .iter()
+        .find(|p| p.id == MidiSettings::USB_IN)
+        .unwrap();
+    assert_eq!(
+        (spec.label, spec.ident, spec.default),
+        ("USB IN", "USB_IN", 7.0)
+    );
+    let mut m = d;
+    m.write(MidiSettings::USB_IN, 3.0);
+    assert_eq!((m.usb_in(), m.get(MidiSettings::USB_IN)), (3, 3.0));
+    assert_eq!(
+        (m.echo(), m.param_out()),
+        (d.echo(), d.param_out()),
+        "its own bits"
+    );
+    m.write(MidiSettings::USB_IN, 99.0);
+    assert_eq!(m.usb_in(), 7);
+    m.write(MidiSettings::USB_IN, 0.0);
+    let mut s = MemStore::new(1);
+    let off = SystemSettings {
+        midi: m,
+        ..SystemSettings::DEFAULT
+    };
+    save(&mut s, &off);
+    assert_eq!(boot(&mut s).0.midi.usb_in(), 0);
+    for f in [
+        include_bytes!("fixtures/v1/system.sys").as_slice(),
+        include_bytes!("fixtures/v1/system_midi.sys").as_slice(),
+    ] {
+        assert_eq!(boot_bytes(f).0.midi.usb_in(), 7);
     }
 }

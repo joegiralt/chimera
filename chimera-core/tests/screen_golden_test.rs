@@ -426,6 +426,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded for ADR 0224: SYNC's B cell is PROGRAM IN, OFF.
     ("settings_midi_sync", 0x46dea79f34ea9084),
     ("settings_midi_mpe", 0x99c383fb27b32791),
+    // ADR 0260: AUDIO ROUTING › USB AUDIO.
+    #[cfg(feature = "usb-audio")]
+    ("settings_audio_usb", 0x51fd69f7c785bc65),
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.

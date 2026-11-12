@@ -105,6 +105,7 @@ fn init_in_place_matches_from_performance() {
                 mix: p.mix,
                 // The first publish sets it (`PartAudio::of`).
                 loads: chimera_core::project::Loads::NONE,
+                expression: 127,
                 source: None,
             }
         }),

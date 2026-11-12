@@ -542,10 +542,25 @@ fn retired_never_live() {
     );
     // TAPE's MODEL REVERSE (#369): LOOP with END before START; PING-PONG
     // and ONESHOT, folded into PLAY (ADR 0170); TRON and MODE ONE, into
-    // WALK's TRON and DIRECTION FORWARD (ADR 0203).
+    // WALK's TRON and DIRECTION FORWARD (ADR 0203). TUNING's TUNE1–TUNE8,
+    // for SCALA's named file (ADR 0259).
     assert_eq!(
         RETIRED_CODES,
-        &[(34, 0, 1), (34, 0, 2), (34, 0, 6), (34, 0, 7), (34, 15, 0)]
+        &[
+            (34, 0, 1),
+            (34, 0, 2),
+            (34, 0, 6),
+            (34, 0, 7),
+            (34, 15, 0),
+            (25, 11, 6),
+            (25, 11, 7),
+            (25, 11, 8),
+            (25, 11, 9),
+            (25, 11, 10),
+            (25, 11, 11),
+            (25, 11, 12),
+            (25, 11, 13)
+        ]
     );
     assert!(RETIRED_SOURCES.is_empty());
     // DRV and the folder (ADR 0155): never reused.

@@ -327,7 +327,7 @@ fn refusals_before_ready_write_nothing() {
         assert!(ask(&mut s, &line, b"").starts_with("ERR put: "), "{line}");
     }
     let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over], \
-                 /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/TUNE#.SCL|KBM, \
+                 /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/<stem>.SCL|KBM, \
                  /CHIMERA/MAPS/<stem>.A, \
                  or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex\n";
     for path in [

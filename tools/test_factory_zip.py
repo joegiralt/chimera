@@ -16,8 +16,10 @@ spec.loader.exec_module(factory_zip)
 
 def builds(root, sources=("0BADF00D", "12345678")):
     """A public set of 18 Sounds (the 16 ports among them) and 2 projects,
-    and a TAPE set of 2 Sounds playing `sources`."""
-    pub, tapes = root / "public", root / "tapes"
+    a TAPE set of 2 Sounds playing `sources`, and one map."""
+    pub, tapes, maps = root / "public", root / "tapes", root / "maps"
+    (maps / "CHIMERA/MAPS").mkdir(parents=True)
+    (maps / "CHIMERA/MAPS/SUGG05F6.A").write_bytes(b"m")
     for d in ("SOUNDS", "PROJECTS"):
         (pub / "CHIMERA" / d).mkdir(parents=True)
     for n in range(10, 28):
@@ -33,40 +35,50 @@ def builds(root, sources=("0BADF00D", "12345678")):
         (tapes / s["file"]).write_bytes(b"t")
     man = {"sources": [{"crc": c} for c in sources], "sounds": snd}
     (tapes / "manifest.json").write_text(json.dumps(man))
-    return pub, tapes
+    return pub, tapes, maps
 
 
 class FactoryZip(unittest.TestCase):
     def test_one_chimera_root_with_every_sound_source_and_project(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)
-            pub, tapes = builds(root)
-            factory_zip.pack(pub, tapes, root / "f.zip")
+            pub, tapes, maps = builds(root)
+            factory_zip.pack(pub, tapes, maps, root / "f.zip")
             names = zipfile.ZipFile(root / "f.zip").namelist()
         self.assertTrue(all(n.startswith("CHIMERA/") for n in names), names)
         self.assertEqual(sum(n.startswith("CHIMERA/SOUNDS/") for n in names), 20)
         self.assertEqual(sum(n.startswith("CHIMERA/PROJECTS/") for n in names), 2)
         self.assertIn("CHIMERA/TAPES/0BADF00D.SRC", names)
         self.assertIn("CHIMERA/TAPES/12345678.SRC", names)
+        self.assertIn("CHIMERA/MAPS/SUGG05F6.A", names)
+
+    def test_no_map_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            pub, tapes, maps = builds(root)
+            (maps / "CHIMERA/MAPS/SUGG05F6.A").unlink()
+            with self.assertRaises(SystemExit) as e:
+                factory_zip.pack(pub, tapes, maps, root / "f.zip")
+        self.assertIn("no controller maps", str(e.exception))
 
     def test_a_missing_source_refuses(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)
-            pub, tapes = builds(root)
+            pub, tapes, maps = builds(root)
             man = json.loads((tapes / "manifest.json").read_text())
             man["sources"].pop()
             (tapes / "manifest.json").write_text(json.dumps(man))
             with self.assertRaises(SystemExit) as e:
-                factory_zip.pack(pub, tapes, root / "f.zip")
+                factory_zip.pack(pub, tapes, maps, root / "f.zip")
         self.assertIn("12345678.SRC, not in the zip", str(e.exception))
 
     def test_a_source_missing_on_disk_is_named(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)
-            pub, tapes = builds(root)
+            pub, tapes, maps = builds(root)
             (tapes / "12345678.SRC").unlink()
             with self.assertRaises(SystemExit) as e:
-                factory_zip.pack(pub, tapes, root / "f.zip")
+                factory_zip.pack(pub, tapes, maps, root / "f.zip")
         self.assertIn("CHIMERA/TAPES/12345678.SRC has no", str(e.exception))
 
     def test_a_wrong_sound_count_refuses(self):

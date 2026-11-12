@@ -42,6 +42,7 @@ use crate::dsp::clampf;
 use crate::dsp::knobs::MOVES;
 use crate::hw::MAX_PARTS;
 use crate::midi_in::{CtrlEvent, HeardEv, PART_CHANNELS, Port, SX_LEN, SYSEX_IN};
+use crate::midi_map::builtin::{Builtin, builtin, slide_only};
 use crate::midi_map::{Binding, CcKind, Input, MAP_LEN, Mappable, MidiMap, Span};
 use crate::mpe;
 use crate::nrpn::{self, NrpnAddr};
@@ -260,6 +261,8 @@ pub struct MidiUi {
     stepped: bool,
     seen: Seen,
     echo: echo::EchoPlan,
+    /// The hand's turns waiting to go out as NRPNs (ADR 0258).
+    param_out: super::param_out::ParamOut,
     /// Each Part's controller layer (ADR 0226).
     ctl: layer::Layers,
     /// Learn's first SysEx message, its length 0 for none (#846).
@@ -305,6 +308,7 @@ impl MidiSlot {
             core::ptr::addr_of_mut!((*m).stepped).write(false);
             core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
             echo::silent_at(core::ptr::addr_of_mut!((*m).echo));
+            core::ptr::addr_of_mut!((*m).param_out).write(super::param_out::ParamOut::REST);
             layer::rest_at(core::ptr::addr_of_mut!((*m).ctl));
             // All zero is no message kept (#846).
             core::ptr::write_bytes(core::ptr::addr_of_mut!((*m).sx_first), 0, 1);
@@ -386,7 +390,7 @@ fn bind_at(own: &MidiMap, layer: &MidiMap, j: usize) -> Option<Binding> {
 
 /// `a`'s stored value on Part `p`; an ORBIT ring's on the playing scene.
 #[inline(always)]
-fn stored(project: &Project, p: PartId, a: ParamAddr) -> Option<f32> {
+pub(in crate::ui) fn stored(project: &Project, p: PartId, a: ParamAddr) -> Option<f32> {
     if let BlockRef::OrbitRing(r) = a.block {
         let ring = project.orbit().live().rings.get(usize::from(r.get()))?;
         return Some(ring.get(a.param));
@@ -558,6 +562,10 @@ impl UiState {
             if busy {
                 continue;
             }
+            if let HeardEv::Ctrl(_, CtrlEvent::Reset(ch)) = e {
+                self.cc_reset(ch);
+                continue;
+            }
             if let HeardEv::Ctrl(_, CtrlEvent::Key(k)) = e {
                 self.seq_key(k);
                 continue;
@@ -612,7 +620,9 @@ impl UiState {
             let handed = self.cc.part(i).handed;
             let mut bound = false;
             for j in 0..BINDS {
-                let Some(e) = bind_at(&map, &layer, j).filter(|e| e.input.heard(c)) else {
+                let Some(e) = bind_at(&map, &layer, j)
+                    .filter(|e| e.input.heard(c) && !slide_only(&self.midi, ch, e))
+                else {
                     continue;
                 };
                 bound = true;
@@ -621,16 +631,33 @@ impl UiState {
                     self.cc_bound(p, j, e, c, now);
                 }
             }
-            if let (
-                false,
-                Ctl::Data {
-                    sel: Sel::Nrpn(n),
-                    value,
-                },
-            ) = (bound, *c)
-            {
-                self.cc_canonical(p, n, value, now);
+            match (bound, *c) {
+                (
+                    false,
+                    Ctl::Data {
+                        sel: Sel::Nrpn(n),
+                        value,
+                    },
+                ) => self.cc_canonical(p, n, value, now),
+                (false, Ctl::Cc { cc, value }) => self.cc_builtin(p, ch, cc.get(), value, now),
+                _ => {}
             }
+        }
+    }
+
+    /// A CC Part `p`'s map doesn't bind, by the built-in layer (ADR
+    /// 0263): its cells through canonical slots, as an unbound NRPN.
+    fn cc_builtin(&mut self, p: PartId, ch: crate::MidiChannel, cc: u8, v: U7, now: Ms) {
+        let e = self.project.part(p).sound.params.engine();
+        match builtin(&self.midi, ch, cc, v, e) {
+            Builtin::Expression(v) => self.project.set_expression(p, v.get()),
+            Builtin::Move { first, value } => {
+                if let Some(n) = U14::new(first) {
+                    self.cc_canonical(p, n, DataValue::Coarse(value), now);
+                }
+            }
+            Builtin::Shift { which, at, value } => self.cc_shift(p, which, at, value),
+            Builtin::None => {}
         }
     }
 
@@ -879,7 +906,11 @@ impl UiState {
                 if !r.moving() {
                     r.settle_at(spec.normalize(was));
                 }
-                if r.hear(to, span_place(s, to), now) && !a.block.in_sound() {
+                // A Part's own LEVEL or PAN is no other Part's.
+                if r.hear(to, span_place(s, to), now)
+                    && !a.block.in_sound()
+                    && a.block != BlockRef::Part
+                {
                     self.cc_claim(p, a);
                 }
             }
@@ -908,8 +939,8 @@ impl UiState {
                 if let Some(t) = m.canon[k]
                     && t.addr() == a
                 {
-                    m.ramps[MAP_LEN + k].cancel(0.0);
-                    m.pend[MAP_LEN + k] = NO_BIN;
+                    m.ramps[BINDS + k].cancel(0.0);
+                    m.pend[BINDS + k] = NO_BIN;
                 }
             }
         }
@@ -1145,6 +1176,9 @@ impl UiState {
     /// stored one. The door's `hand`.
     pub(super) fn hand_in(&mut self, p: PartId, a: ParamAddr) {
         self.cc.fresh();
+        // PARAM OUT only where something is sent: the bench is deaf.
+        #[cfg(feature = "midi-map")]
+        self.cc.ui().param_out.turned(p, a);
         let i = p.index();
         let map = self.project.part(p).sound.map;
         let layer = *self.cc.ui().ctl.layer(i);

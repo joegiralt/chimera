@@ -190,7 +190,7 @@ const WARM_BLOCKS: u32 = 8;
 const SWITCH_WARM: u32 = 34;
 const TIMED_BLOCKS: u32 = 64;
 /// MIX DRY's warm-up: past QUAD's 726 blocks to an idle ring.
-#[cfg(feature = "bench-routing")]
+#[cfg(any(feature = "bench-routing", feature = "bench-stress"))]
 const DRY_WARM: u32 = 1024;
 const HOLD_SECONDS: u32 = 30;
 const ROWS: usize = 10;
@@ -396,6 +396,21 @@ fn worst_bus(s: &mut AudioShared, b: u32) {
     #[cfg(feature = "master-tape")]
     worst_tape(s);
     worst_comp(s);
+}
+
+/// `worst_bus` with SIZE still, so the ring may sleep (ADR 0261's readings).
+fn worst_steady(s: &mut AudioShared, _: u32) {
+    worst_chorus(s);
+    worst_delay(s);
+    worst_reverb(s, 0);
+    worst_comp(s);
+}
+
+/// `worst_steady` with REV SEND 0, so the delay awake leaves the reverb be.
+#[cfg(feature = "bench-stress")]
+fn worst_dry_delay(s: &mut AudioShared, b: u32) {
+    worst_steady(s, b);
+    s.fx.delay.rev_send = 0.0;
 }
 
 /// The delay at its worst under TYPE GRAIN: SIZE and DENSITY 1 (every
@@ -1383,7 +1398,7 @@ fn pc_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
 fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     let mut rows = [Counts::default(); ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
-        for n in 1..=MAX_VOICES {
+        for n in 0..=MAX_VOICES {
             let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
             row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
         }
@@ -1400,7 +1415,7 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     hold(clocks);
     let mut va = [Counts::default(); VA_ROWS];
     for (row, &(_, patch, low, step)) in va.iter_mut().zip(&VA) {
-        for n in 1..=MAX_VOICES {
+        for n in 0..=MAX_VOICES {
             let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
             row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
         }
@@ -1431,7 +1446,7 @@ fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
             WARM_FIRST.store(0, Relaxed);
             WARM_SECOND.store(0, Relaxed);
             chimera_engine::warm::set_hook(Some(warm_twice));
-            let (_, spans, _) = rig.time(&setup, &|_, _| {}, n, low, step);
+            let (_, _, spans, _) = rig.time(&setup, &|_, _| {}, n, low, step);
             chimera_engine::warm::set_hook(None);
             let samples = (WARM_BLOCKS + TIMED_BLOCKS) * BLOCK_SIZE as u32 * spans.max(1) as u32;
             cells[i * 2 + j] = (
@@ -1446,7 +1461,7 @@ fn warm_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>) {
     let mut cp = unsafe { cortex_m::Peripherals::steal() };
     let mut cold = Counts::default();
     cp.SCB.disable_icache();
-    for n in 1..=MAX_VOICES {
+    for n in 0..=MAX_VOICES {
         let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(algo(AlgoId::A1, 0b1, 0));
         cold.add(n, rig.time(&setup, &|_, _| {}, n, 36, 12));
     }
@@ -1536,7 +1551,7 @@ static WARM: [Row; WARM_ROWS] = [
 /// Each of `rows` at 1..8 voices, notes `low` up by `step`.
 fn time_rows(rig: &mut Rig<'_>, rows: &[RoutingRow], counts: &mut [Counts], (low, step): (u8, u8)) {
     for (row, &(_, part, each)) in counts.iter_mut().zip(rows) {
-        for n in 1..=MAX_VOICES {
+        for n in 0..=MAX_VOICES {
             let timed = rig.time(
                 &|s| {
                     part(&mut s.parts[0]);
@@ -2418,19 +2433,39 @@ fn memory_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks, proj_c
 fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
     let ((s1, sp1), (s2, sp2)) = (
-        rig.stress(true, worst_reverb, &[], false),
-        rig.stress(false, worst_reverb, &[], false),
+        rig.stress(true, worst_reverb, &[], false, None),
+        rig.stress(false, worst_reverb, &[], false, None),
     );
     // Loads published as the UI does, every frame: into Part 6, which
     // plays its six keys, then into Parts 1-5 at once (ORBIT's).
-    let (l1, _) = rig.stress(true, worst_reverb, &[MAX_PARTS - 1], false);
-    let (l5, _) = rig.stress(true, worst_reverb, &[0, 1, 2, 3, 4], false);
+    let (l1, _) = rig.stress(true, worst_reverb, &[MAX_PARTS - 1], false, None);
+    let (l5, _) = rig.stress(true, worst_reverb, &[0, 1, 2, 3, 4], false, None);
     // A knob turned on every Part every block, as moves (ADR 0116).
-    let (mv, _) = rig.stress(true, worst_reverb, &[], true);
+    let (mv, _) = rig.stress(true, worst_reverb, &[], true, None);
     let budget = BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles();
     show_stress(rec, [s1, s2, l1, l5, mv], budget);
     hold(clocks);
     show_phases(rec, &[("ST1", sp1), ("ST2", sp2)]);
+    hold(clocks);
+    // The awake bill's wakes (ADR 0261's readings), keys first, SIZE still: a live
+    // note that wakes the reverb, a send swept up under the chord; with
+    // `orbit`, ORBIT playing through both and its refusals counted.
+    let (still, _) = rig.stress(true, still_reverb, &[], false, None);
+    let (note, _) = rig.stress(true, still_reverb, &[], false, Some(wake_note));
+    let (send, _) = rig.stress(true, still_reverb, &[], false, Some(wake_send));
+    rec.clear();
+    rec.heading("WAKE");
+    let row = |r: &Stress| (r.worst, r.most, r.refused, r.billed);
+    let ((a, av, ar, ab), (n, nv, nr, nb), (w, wv, wr, wb)) = (row(&still), row(&note), row(&send));
+    show_lines(
+        rec,
+        [
+            format_args!("STILL {a}/{budget} {av}V R{ar} B{ab}"),
+            format_args!("WAKE NOTE {n}/{budget} {nv}V R{nr} B{nb}"),
+            format_args!("WAKE SEND {w}/{budget} {wv}V R{wr} B{wb}"),
+        ]
+        .into_iter(),
+    );
     hold(clocks);
 }
 
@@ -2447,8 +2482,8 @@ fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     // Each TYPE's STRESS, keys before ORBIT starts, then after.
     let mut st = |rev| {
         [
-            rig.stress(true, rev, &[], false).0.worst,
-            rig.stress(false, rev, &[], false).0.worst,
+            rig.stress(true, rev, &[], false, None).0.worst,
+            rig.stress(false, rev, &[], false, None).0.worst,
         ]
     };
     let stress = (
@@ -2463,6 +2498,35 @@ fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     );
     let switch = rig.switch_max();
     show_reverb(rec, &rev, mix, bus_v, stress, switch);
+    hold(clocks);
+    // The awake bill's (ADR 0261's readings), six A16+17 voices rendered between the
+    // blocks and every effect at its worst, steady: all asleep; each alone
+    // awake (the delay without REV SEND); each alone asleep.
+    let (o, h) = (0.0, 0.5);
+    let asleep = rig.time_bus_awake(worst_steady, [o, o, o]);
+    let alone = [
+        rig.time_bus_awake(worst_steady, [h, o, o]),
+        rig.time_bus_awake(worst_dry_delay, [o, h, o]),
+        rig.time_bus_awake(worst_bus, [o, o, h]),
+    ];
+    let without = [
+        rig.time_bus_awake(worst_bus, [o, h, h]),
+        rig.time_bus_awake(worst_bus, [h, o, h]),
+        rig.time_bus_awake(worst_dry_delay, [h, h, o]),
+    ];
+    rec.clear();
+    rec.heading("BUS AWAKE");
+    let [ac, ad, ar] = alone;
+    let [wc, wd, wr] = without;
+    show_lines(
+        rec,
+        [
+            format_args!("BUS ASLEEP {asleep}"),
+            format_args!("AWAKE CHO {ac} DLY {ad} REV {ar}"),
+            format_args!("ASLEEP CHO {wc} DLY {wd} REV {wr}"),
+        ]
+        .into_iter(),
+    );
     hold(clocks);
 }
 
@@ -2556,7 +2620,10 @@ fn time_rebuild() -> u32 {
 /// the most notes, or with none ringing, those that sounded.
 #[derive(Clone, Copy)]
 struct Counts {
-    cycles: [u32; MAX_VOICES],
+    /// Cycles a sample at 0..=8 voices.
+    cycles: [u32; MAX_VOICES + 1],
+    /// Each count's costliest block, cycles a sample.
+    worst: [u32; MAX_VOICES + 1],
     spans: usize,
     /// `Voice::cost` of the row's Sound and routes, a voice: the bill its
     /// `/VOICE` answers.
@@ -2566,7 +2633,8 @@ struct Counts {
 impl Default for Counts {
     fn default() -> Self {
         Self {
-            cycles: [0; MAX_VOICES],
+            cycles: [0; MAX_VOICES + 1],
+            worst: [0; MAX_VOICES + 1],
             spans: MAX_VOICES,
             bill: 0,
         }
@@ -2574,8 +2642,9 @@ impl Default for Counts {
 }
 
 impl Counts {
-    fn add(&mut self, notes: usize, (cycles, spans, bill): (u32, usize, u32)) {
-        self.cycles[notes - 1] = cycles;
+    fn add(&mut self, notes: usize, (cycles, worst, spans, bill): (u32, u32, usize, u32)) {
+        self.cycles[notes] = cycles;
+        self.worst[notes] = worst;
         self.spans = spans;
         self.bill = bill;
     }
@@ -2585,7 +2654,16 @@ impl Counts {
     /// notes past play bare, cheaper, and would dilute the slope).
     fn per_voice(&self) -> u32 {
         let k = self.spans.clamp(2, MAX_VOICES);
-        self.cycles[k - 1].saturating_sub(self.cycles[0]) / (k as u32 - 1)
+        self.cycles[k].saturating_sub(self.cycles[1]) / (k as u32 - 1)
+    }
+
+    /// `per_voice` of the costliest blocks, rounded up: a voice's worst
+    /// marginal cost (#883).
+    fn worst_voice(&self) -> u32 {
+        let k = self.spans.clamp(2, MAX_VOICES);
+        self.worst[k]
+            .saturating_sub(self.worst[1])
+            .div_ceil(k as u32 - 1)
     }
 }
 
@@ -2597,9 +2675,11 @@ fn hold(clocks: Clocks) {
 
 impl Rig<'_> {
     /// Voice `v` plays note `low + step * v`; `each` runs before every
-    /// block, its time counted (a few cycles a block). Returns the cycles
-    /// per sample, the voices its per-voice figure spans and Part 1's bill
-    /// a voice as set up (`Counts`).
+    /// block, its time counted (a few cycles a block), every effect at its
+    /// worst and every send at ½, so the voices run under the bus's cache
+    /// traffic as STRESS's do (#883). Returns the cycles per sample, the
+    /// costliest block's, the voices its per-voice figure spans and Part
+    /// 1's bill a voice as set up (`Counts`).
     #[inline(never)]
     fn time(
         &mut self,
@@ -2608,7 +2688,7 @@ impl Rig<'_> {
         voices: usize,
         low: u8,
         step: u8,
-    ) -> (u32, usize, u32) {
+    ) -> (u32, u32, usize, u32) {
         // The allocator must not refuse what the bench wants to measure.
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
@@ -2618,6 +2698,10 @@ impl Rig<'_> {
         // ride every row that sets only a Sound (ADR 0218).
         *shared.parts[0].mod_state = ModState::with_sources(MAX_MOD_SOURCES);
         setup(shared);
+        shared.fx = FxParams::OFF;
+        for part in shared.parts.iter_mut() {
+            part.params.out.sends = [0.5; FX_SENDS];
+        }
         let bill = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
         for v in 0..voices {
             let note = MidiNote::new(low + step * v as u8).unwrap_or(MidiNote::A4);
@@ -2630,23 +2714,33 @@ impl Rig<'_> {
         }
         for b in 0..WARM_BLOCKS {
             each(shared, b);
+            worst_bus(shared, b);
             inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
         }
         #[cfg(feature = "pc-sample")]
         crate::pc_sample::arm();
-        let start = DWT::cycle_count();
-        for b in 0..TIMED_BLOCKS {
-            each(shared, WARM_BLOCKS + b);
+        let (mut cycles, mut worst) = (0u32, 0u32);
+        for b in WARM_BLOCKS..WARM_BLOCKS + TIMED_BLOCKS {
+            let start = DWT::cycle_count();
+            each(shared, b);
+            worst_bus(shared, b);
             inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
+            let c = DWT::cycle_count().wrapping_sub(start);
+            (cycles, worst) = (cycles.wrapping_add(c), worst.max(c));
         }
-        let cycles = DWT::cycle_count().wrapping_sub(start);
         #[cfg(feature = "pc-sample")]
         crate::pc_sample::disarm();
         let spans = match inst.ringing() {
             0 => inst.sounding(),
             ringing => ringing,
         };
-        (cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32), spans, bill)
+        let samples = BLOCK_SIZE as u32;
+        (
+            cycles / (TIMED_BLOCKS * samples),
+            worst.div_ceil(samples),
+            spans,
+            bill,
+        )
     }
 
     /// Cycles of `Instrument::handle` for one note-on of `note`, Part 0
@@ -2752,7 +2846,7 @@ impl Rig<'_> {
     /// sets the FX before every block.
     #[inline(never)]
     fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
-        self.bus(each, false, 0.5, WARM_BLOCKS + SWITCH_WARM)
+        self.bus(each, false, [0.5; FX_SENDS], WARM_BLOCKS + SWITCH_WARM)
     }
 
     /// MIX DRY: `time_bus`'s MIX with every send at 0, warmed until every
@@ -2761,7 +2855,15 @@ impl Rig<'_> {
     #[cfg(feature = "bench-routing")]
     #[inline(never)]
     fn time_bus_dry(&mut self) -> u32 {
-        self.bus(|_, _| {}, false, 0.0, DRY_WARM)
+        self.bus(|_, _| {}, false, [0.0; FX_SENDS], DRY_WARM)
+    }
+
+    /// The awake bill's rows (ADR 0261's readings): `time_bus_with_voices` warmed
+    /// until every effect not sent to sleeps, with `sends` and `each`.
+    #[cfg(feature = "bench-stress")]
+    #[inline(never)]
+    fn time_bus_awake(&mut self, each: fn(&mut AudioShared, u32), sends: [f32; FX_SENDS]) -> u32 {
+        self.bus(each, true, sends, DRY_WARM)
     }
 
     /// `time_bus` with six `a16_a17` voices on Part 1 rendered, untimed,
@@ -2769,17 +2871,26 @@ impl Rig<'_> {
     /// sits between the FX blocks, as in the running synth.
     #[inline(never)]
     fn time_bus_with_voices(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
-        self.bus(each, true, 0.5, WARM_BLOCKS + SWITCH_WARM)
+        self.bus(each, true, [0.5; FX_SENDS], WARM_BLOCKS + SWITCH_WARM)
     }
 
-    fn bus(&mut self, each: fn(&mut AudioShared, u32), voices: bool, send: f32, warm: u32) -> u32 {
+    /// Out of line: one copy for every BUS row, so the voices' note-ons
+    /// inline into it, in bank 2, and not outlined into bank 1.
+    #[inline(never)]
+    fn bus(
+        &mut self,
+        each: fn(&mut AudioShared, u32),
+        voices: bool,
+        send: [f32; FX_SENDS],
+        warm: u32,
+    ) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         // Every effect off but the row's: the boot project's FX would sit
         // in MIX and every row less it.
         shared.fx = FxParams::OFF;
         for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.params.out.sends = [send; FX_SENDS];
+            part.params.out.sends = send;
             // One Part to a channel: only Part 1 plays the notes.
             part.mix.channel = MidiChannel::clamped(i as u8);
         }
@@ -2855,6 +2966,7 @@ impl Rig<'_> {
         rev: fn(&mut AudioShared, u32),
         loads: &[usize],
         turn: bool,
+        wake: Option<Wake>,
     ) -> (Stress, Phases) {
         let budget = SampleBudget::for_cpu(self.cpu_hz);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
@@ -2880,6 +2992,7 @@ impl Rig<'_> {
         // The knobs' ease (probe slot 9): the most in a block, and in the
         // costliest block.
         let (mut knob_max, mut knob_peak, mut billed) = (0u32, 0u32, 0u32);
+        let mut refused = 0u32;
         let knob_cycles = || chimera_engine::probe::ACC[9].load(Ordering::Relaxed);
         let mut ph = Phases::default();
         for b in 0..warm + STRESS_BLOCKS {
@@ -2891,6 +3004,14 @@ impl Rig<'_> {
             }
             if b == warm + 1 && !keys_first {
                 hold_notes(inst, shared, MAX_PARTS - 1);
+            }
+            if b == warm + WAKE_AT
+                && let Some(w) = wake
+            {
+                w(inst, shared);
+            }
+            if b == warm {
+                refused = inst.allocator().refused();
             }
             if b >= warm && (b - warm).is_multiple_of(LOAD_EVERY) {
                 for &p in loads {
@@ -2967,6 +3088,7 @@ impl Rig<'_> {
                 t0,
                 knobs,
                 billed,
+                refused: inst.allocator().refused().wrapping_sub(refused),
             },
             ph,
         )
@@ -3032,6 +3154,36 @@ struct Stress {
     knobs: (u32, u32),
     /// What the bill counted at its costliest block, cycles.
     billed: u32,
+    /// Notes refused over the timed blocks: ORBIT's, with `orbit`.
+    refused: u32,
+}
+
+/// A STRESS run's wake (ADR 0261's readings), `WAKE_AT` blocks into its timed ones.
+type Wake = fn(&mut Instrument, &mut AudioShared);
+const WAKE_AT: u32 = 100;
+
+/// A live note on Part 1, its reverb send up, over Part 6's full chord.
+#[cfg(feature = "bench-stress")]
+fn wake_note(inst: &mut Instrument, shared: &mut AudioShared) {
+    shared.parts[0].params.out.sends = [0.0, 0.0, 0.5];
+    let ev = NoteEvent {
+        channel: shared.parts[0].mix.channel,
+        note: MidiNote::A4,
+        kind: NoteKind::On(Velocity::DEFAULT),
+    };
+    inst.handle_with(ev, shared, &NO_POOL);
+}
+
+/// Part 6's sends swept up from 0 under its held chord.
+#[cfg(feature = "bench-stress")]
+fn wake_send(_: &mut Instrument, shared: &mut AudioShared) {
+    shared.parts[MAX_PARTS - 1].params.out.sends = [0.5; FX_SENDS];
+}
+
+/// QUAD at its worst with SIZE still, so the ring may sleep before a wake.
+#[cfg(feature = "bench-stress")]
+fn still_reverb(s: &mut AudioShared, _: u32) {
+    worst_reverb(s, 0);
 }
 
 /// One ORBIT block's phases from `chimera_engine::probe`'s stamps: 1 intake,
@@ -3270,6 +3422,7 @@ fn a16_a17() -> ParamSnapshot {
 }
 
 /// Six notes, C2 up in octaves, on Part `part`'s channel.
+#[inline(never)]
 fn hold_notes(inst: &mut Instrument, shared: &AudioShared, part: usize) {
     for v in 0..6u8 {
         let ev = NoteEvent {
@@ -3295,8 +3448,9 @@ const ROW_H: i32 = 25;
 /// lines end at y 302, under 310 (`ROW_H` would push the FX lines off it).
 const ALGO_ROW_H: i32 = 22;
 const _: () = assert!(46 + ROWS as i32 * ALGO_ROW_H + 16 + 2 * 10 <= 310);
-/// One count per voice across the screen: 29 px holds five digits at eight.
-const CELL_W: i32 = (theme::SCREEN_W - 8) / MAX_VOICES as i32;
+/// One count per voice across the screen, 0 to 8: 25 px holds five
+/// digits in the small face.
+const CELL_W: i32 = (theme::SCREEN_W - 8) / (MAX_VOICES as i32 + 1);
 
 /// A bench line's font: a value in INK, or a label in its colour.
 #[derive(Clone, Copy)]
@@ -3545,22 +3699,25 @@ fn show_lines<'a>(rec: &mut Recorder<'_>, lines: impl Iterator<Item = core::fmt:
     rec.flush();
 }
 
-/// `label`'s per-voice cost (`Counts::per_voice`), with the voices that
-/// sounded when fewer than all, and its count at each voice count.
+/// `label`'s per-voice cost (`Counts::per_voice`), its worst
+/// (`Counts::worst_voice`) and bill, with the voices that sounded when
+/// fewer than all, in the small face so the line never runs off the
+/// screen; then its costliest block at each voice count, 0 to 8.
 fn voice_row(rec: &mut Recorder<'_>, line: &mut FmtBuf, y: i32, label: &str, counts: &Counts) {
     line.clear();
     let _ = write!(
         line,
-        "{label} /VOICE {} B{}",
+        "{label} M{} W{} B{}",
         counts.per_voice(),
+        counts.worst_voice(),
         counts.bill
     );
     if counts.spans < MAX_VOICES {
         let _ = write!(line, " ({} V)", counts.spans);
     }
-    rec.line(Face::Value, line.as_str(), (4, y));
+    rec.line(Face::Label(theme::INK), line.as_str(), (4, y));
     // One cell per count: the counts together overflow a `FmtBuf`.
-    for (i, c) in counts.cycles.iter().enumerate() {
+    for (i, c) in counts.worst.iter().enumerate() {
         line.clear();
         let _ = write!(line, "{c}");
         rec.line(

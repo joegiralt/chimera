@@ -143,6 +143,13 @@ firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
 
+# ORBIT with usb-device writing the configuration (`usb-config-writer`),
+# the fallback if the class's static (ADR 0260) fails on a host:
+# target/chimera-orbit-writer.bin and .bk2.
+firmware-orbit-writer:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit,usb-config-writer
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit-writer
+
 # Hardware Gate 2's power-pull aid (`bank2-gate`): the install holds 3 s at
 # each phase for a hand to pull the power, and the console takes `bank2
 # erase`. target/chimera-gate.bin and .bk2. Never flashed by a recipe, never
@@ -152,6 +159,16 @@ firmware-gate:
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-gate
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
+
+# The NRPN guide page (#926), from the chart the firmware answers with.
+nrpn-guide:
+    {{utils}} nrpn-guide > docs/guide/NRPN.md
+
+# SUGGEST, the factory controller map, from the param tables: its card
+# file into DIR/CHIMERA/MAPS (the factory pack's), or `--tables` for
+# docs/guide/MIDI.md's controller map section.
+suggest-map dir="target/factory-maps":
+    {{utils}} suggest-map {{dir}}
 
 # The ELF's two banks: <out>.bin (bank 1, never .bank2) and <out>.bk2. Every
 # firmware build has bank 2 (ADR 0194): an empty .bank2 fails.
@@ -273,8 +290,8 @@ check-bank1 set:
 # CHIMERA.BIN (8.3, so the stock bootloader lists it, #558; the ORBIT build,
 # the only firmware shipped), CHIMERA.BK2 (sealed for that .bin: dropped in
 # the card root, the next boot installs it) and factory-v1.zip (the
-# card's whole CHIMERA folder: every factory Sound, TAPE's sources and the
-# demo projects); writes
+# card's whole CHIMERA folder: every factory Sound, TAPE's sources, the
+# demo projects and the SUGGEST controller map); writes
 # SHA256SUMS and the notes from docs/alpha/RELEASE-NOTES.md.tmpl; asserts
 # the assets are exactly those four and none is a private file's bytes. A
 # draft only: the owner publishes. --dry-run does everything but `gh release create`.
@@ -303,14 +320,16 @@ release version *flags:
     head -c 8 "$out/CHIMERA.BK2" | grep -qa CHIMERA2 || { echo "CHIMERA.BK2 is not a .bk2" >&2; exit 1; }
     # The factory set: the card's CHIMERA folder as a tester copies it, one
     # root: the public build's Sounds and demo projects, TAPE's Sounds and
-    # the sources they play in TAPES, nothing private, refused unless every
+    # the sources they play in TAPES, SUGGEST in MAPS (fresh from the param
+    # tables), nothing private, refused unless every
     # count is the builds' (tools/factory_zip.py). FACTORY_PUBLIC and
     # FACTORY_TAPES override the dirs and skip the fresh builds, --dry-run only.
     [ -z "${FACTORY_PUBLIC:-}${FACTORY_TAPES:-}" ] || [ $dry = 1 ] || { echo "FACTORY_PUBLIC and FACTORY_TAPES are for --dry-run only: a release packs fresh builds" >&2; exit 1; }
     if [ -z "${FACTORY_PUBLIC:-}" ]; then just factory-sounds; fi
     if [ -z "${FACTORY_TAPES:-}" ]; then just factory-tapes; fi
     pub=${FACTORY_PUBLIC:-target/factory-sounds/public}; tapes=${FACTORY_TAPES:-target/tapes-v1}
-    python3 -I tools/factory_zip.py "$pub" "$tapes" "$out/factory-v1.zip"
+    rm -rf target/factory-maps; just suggest-map target/factory-maps
+    python3 -I tools/factory_zip.py "$pub" "$tapes" target/factory-maps "$out/factory-v1.zip"
     (cd "$out" && sha256sum CHIMERA.BIN CHIMERA.BK2 factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
     # file (the stock bootloader backup, the bootloader, a dev chimera.bin or .bk2).
@@ -401,6 +420,9 @@ check $CHIMERA_STAMP_CLEAN="1":
     just check-bank1 orbit
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
+    # ORBIT with usb-device writing the configuration, the static's fallback (ADR 0260).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,usb-config-writer
+    just check-bank1 orbit,usb-config-writer
     # The gate's doors and placement, USB audio's stream among them (ADR
     # 0256); `release-bin` checks the default and ORBIT builds'.
     {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32

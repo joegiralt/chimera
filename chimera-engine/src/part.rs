@@ -195,19 +195,37 @@ pub struct PartParams {
     pub held: Held,
     /// Pitch-bend range, whole semitones each way, 0..=`MAX_BEND`.
     pub bend: u8,
-    /// TUNING: an index into `TUNING_NAMES` (ADR 0240).
+    /// TUNING: an index into `TUNING_NAMES` (ADR 0240); `TUNING_SCALA`
+    /// plays the Part's Scala file, by name (ADR 0259).
     pub tuning: u8,
+    /// MAPPING (ADR 0259): a Scala file's degrees on consecutive keys (0,
+    /// CONTINUOUS) or from each C, the spare keys silent (1, KEYBOARD).
+    pub mapping: u8,
+}
+
+/// LEVEL `level` under expression `e` (CC 11, ADR 0263): (e / 127)², GM's
+/// 40 log10 law; `level` itself, bit for bit, at 127.
+pub fn expressed(level: f32, e: u8) -> f32 {
+    let e = f32::from(e) / 127.0;
+    level * (e * e)
 }
 
 /// TUNING's choices: 12-TET, the named temperaments
-/// (`chimera_theory::tuning::BUILT_IN`), the MTS table, then the card's
-/// `TUNE1.SCL` to `TUNE8.SCL` (each with its `.KBM`, if there is one).
-pub const TUNING_NAMES: [&str; 14] = [
-    "12-TET", "JUST", "PYTHAG", "MEANTONE", "WERCK", "MTS", "TUNE1", "TUNE2", "TUNE3", "TUNE4",
-    "TUNE5", "TUNE6", "TUNE7", "TUNE8",
+/// (`chimera_theory::tuning::BUILT_IN`), the MTS table, then a Scala file
+/// from the card, the Part's own (`Part::scala`, ADR 0259).
+pub const TUNING_NAMES: [&str; 7] = [
+    "12-TET", "JUST", "PYTHAG", "MEANTONE", "WERCK", "MTS", "SCALA",
 ];
-/// TUNING's MTS choice; the card's files follow it.
+/// TUNING's MTS choice.
 pub const TUNING_MTS: u8 = 5;
+/// TUNING's Scala file choice: the card's files follow MTS.
+pub const TUNING_SCALA: u8 = 6;
+/// SCALA's disk code: 6–13 were the retired `TUNE1`–`TUNE8` (ADR 0259),
+/// and codes are never reused.
+const SCALA_CODE: u8 = 14;
+/// MAPPING's choices (ADR 0259): CONTINUOUS and KEYBOARD, cut to fit
+/// the cell (KEYBD as the filter's).
+pub const MAPPING_NAMES: [&str; 2] = ["CONTIN.", "KEYBD"];
 
 /// The widest BEND: two octaves.
 pub const MAX_BEND: u8 = 24;
@@ -224,6 +242,7 @@ impl PartParams {
     pub const HELD: ParamId = ParamId(9);
     pub const BEND: ParamId = ParamId(10);
     pub const TUNING: ParamId = ParamId(11);
+    pub const MAPPING: ParamId = ParamId(12);
 
     /// Part `index` (0-based) listens on channel `index`, Poly, output P1,
     /// level 0.8, centre pan, its keys as played.
@@ -238,6 +257,7 @@ impl PartParams {
             held: Held::Stay,
             bend: INIT_BEND,
             tuning: 0,
+            mapping: 0,
         }
     }
 }
@@ -249,7 +269,7 @@ impl Default for PartParams {
 }
 
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
-pub static PART_SPECS: [ParamSpec; 9] = [
+pub static PART_SPECS: [ParamSpec; 10] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
     ParamSpec::choice(
         1,
@@ -339,6 +359,16 @@ pub static PART_SPECS: [ParamSpec; 9] = [
     )
     .ident("TUNING")
     .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        12,
+        "MAPPING",
+        ValFmt::Names(&MAPPING_NAMES),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("MAPPING")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 /// 0 to 15 as text: CH's values by channel number (the byte is the
@@ -365,6 +395,7 @@ impl Block for PartParams {
             Self::HELD => self.held as u8 as f32,
             Self::BEND => f32::from(self.bend),
             Self::TUNING => f32::from(self.tuning),
+            Self::MAPPING => f32::from(self.mapping),
             _ => 0.0,
         }
     }
@@ -384,6 +415,7 @@ impl Block for PartParams {
             Self::HELD => self.held = Held::ALL[(v as usize).min(Held::ALL.len() - 1)],
             Self::BEND => self.bend = crate::dsp::clampf(v, 0.0, f32::from(MAX_BEND)) as u8,
             Self::TUNING => self.tuning = (v as u8).min(TUNING_NAMES.len() as u8 - 1),
+            Self::MAPPING => self.mapping = (v as u8).min(1),
             _ => {}
         }
     }
@@ -396,8 +428,10 @@ impl Block for PartParams {
             Self::OUTPUT => Some(self.output.disk_code()),
             Self::SNAP => Some(self.snap.disk_code()),
             Self::HELD => Some(self.held.disk_code()),
-            // The choice's index: names keep their places, new ones append.
+            // The choice's index, SCALA's its own (`SCALA_CODE`).
+            Self::TUNING if self.tuning == TUNING_SCALA => Some(SCALA_CODE),
             Self::TUNING => Some(self.tuning),
+            Self::MAPPING => Some(self.mapping),
             _ => None,
         }
     }
@@ -410,6 +444,10 @@ impl Block for PartParams {
             Self::SNAP => Some(self.snap.disk_ident()),
             Self::HELD => Some(self.held.disk_ident()),
             Self::TUNING => TUNING_NAMES.get(usize::from(self.tuning)).copied(),
+            // Whole words on disk, whatever the cell shows.
+            Self::MAPPING => ["CONTINUOUS", "KEYBOARD"]
+                .get(usize::from(self.mapping))
+                .copied(),
             _ => None,
         }
     }
@@ -422,9 +460,14 @@ impl Block for PartParams {
             Self::SNAP => apply_code(LiveSnap::from_disk_code(code), |s| self.snap = s),
             Self::HELD => apply_code(Held::from_disk_code(code), |h| self.held = h),
             Self::TUNING => apply_code(
-                (usize::from(code) < TUNING_NAMES.len()).then_some(code),
+                match code {
+                    SCALA_CODE => Some(TUNING_SCALA),
+                    c if c < TUNING_SCALA => Some(c),
+                    _ => None,
+                },
                 |t| self.tuning = t,
             ),
+            Self::MAPPING => apply_code((code < 2).then_some(code), |m| self.mapping = m),
             _ => false,
         }
     }

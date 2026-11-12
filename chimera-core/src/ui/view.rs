@@ -949,14 +949,23 @@ pub fn clash_note(v: &View, ctx: &SlotCtx) -> Option<&'static str> {
     crate::ui::cc::clash_note(v.addr()?, ctx.clash)
 }
 
-/// What the focus band says on SETTINGS › TUNING's TUNING at `v` (ADR 0240):
-/// where a card choice reads from, or that MTS follows MIDI in. Bank 2's
-/// (`tuning::note_in`): closed, nothing.
-pub fn tuning_note(addr: ParamAddr, v: u8) -> Option<&'static str> {
-    if addr != ParamAddr::new(BlockRef::Part, crate::part::PartParams::TUNING) {
+/// SETTINGS › TUNING's TUNING cell.
+pub const TUNING: ParamAddr = ParamAddr::new(BlockRef::Part, crate::part::PartParams::TUNING);
+
+/// What the focus band says on SETTINGS › TUNING's TUNING or MAPPING for
+/// Part `p` (ADR 0240, 0259): a file's description, that MTS follows MIDI
+/// in, how MAPPING lays the keys. Bank 2's (`tuning::note_in`): closed,
+/// nothing.
+pub fn tuning_note(
+    addr: ParamAddr,
+    t: &crate::ui::tuning::Tuned,
+    p: crate::project::PartId,
+    part: &crate::preset::Part,
+) -> Option<crate::project::Line> {
+    if addr.block != BlockRef::Part {
         return None;
     }
-    crate::bank2::ui_door(|u| u.tuning_note(v)).flatten()
+    crate::bank2::ui_door(|u| u.tuning_note(t, addr.param, p, part)).flatten()
 }
 
 /// What the focus band says in its hint's place about a TAPE cell: why

@@ -1,23 +1,22 @@
 //! Every factory Sound's bill is an upper bound of what the unit read it
-//! costs (#448, ADR 0249): `Voice::cost` at or over a model built only from
-//! the 0.3 bench readings (`.superpowers/ledgers/bench-0.3/`, rev V at
-//! 480 MHz, 2026-10-26, main 4eae5d81), term by term, each the worst row
-//! that holds it. Run with `--nocapture` for the census: bill, model and
-//! voices on rev V per Sound.
+//! costs (#448, #883, ADR 0249): `Voice::cost` at or over a model built
+//! only from the worst-block readings (`~/dev/unit-bench-883b/`,
+//! rev V at 480 MHz, 2026-11-11, 280c8c2e), term by term, each the worst
+//! row that holds it. Run with `--nocapture` for the census: bill, model
+//! and voices on rev V per Sound.
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::dsp::algo::algorithms::AlgoId;
-use chimera_core::dsp::algo::engine::AlgoEngine;
-use chimera_core::dsp::algo::kinds::{Kinds, OpKind};
-use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use chimera_core::dsp::algo::kinds::OpKind;
+use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::filter::k2040::K2040Voice;
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::modulator::{EnvSlot, EnvType, FuncMode, LfoType};
-use chimera_core::dsp::va::VaMode;
 use chimera_core::dsp::va::noise::NoiseKind;
+use chimera_core::dsp::va::{VaMode, VaParams};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
@@ -28,131 +27,190 @@ use chimera_core::preset::Sound;
 use chimera_desktop::factory_sounds::{build, source};
 use std::path::Path;
 
-// Bench-0.3 rows, cycles a sample a voice: each row's warm 64-block
-// average, a voice's mean (`/VOICE`) or, where a voice climbs with its
-// note (VA, ALGO's FRMT rows), its top voice. NOT a worst block: the
-// guard bounds what these averages read, and a block over them comes out
-// of the 25 % the UI keeps (ADR 0124) until the worst-block rows are read
-// on the unit (ADR 0249, "Needs the unit"). The ROUTING rows built with `matrix` carry no project
-// routes; the others carry the project's ENV 1 → VCA, ENV 1 → CUTOFF and
-// one more destination, so only their differences are used.
+// Worst-block rows, cycles a sample a voice: each row's costliest block
+// at 1..8 voices, every effect at its worst and every send at ½, the
+// slope (`W`) or, where a voice climbs with its note (VA, ALGO's FRMT and
+// table rows), the costliest one voice added (the top's). Every row
+// carries only its own routes (`matrix`, ADR 0218). What a block costs
+// with no voice is not a voice's: it is the block's own (#883).
 
 /// 1 DEST (1 OP, CLEAN LP24, LFO 1 → MORPH) less one destination: the bare
-/// one-operator voice, chain, pool and CLEAN in it.
-const BARE: u32 = 489 - DEST_FIRST;
-/// The first destination's sum and offset: no 0.3 row has it alone (VEL
-/// 1R − A VCA, 17, is VEL into VOLUME, an output's ramp); the t13 runs'
-/// 1 CUTOFF − 1 OP, 6 (ModRouting::DEST_FIRST's note).
-const DEST_FIRST: u32 = 6;
+/// one-operator voice, chain, pool, an LFO and CLEAN in it.
+const BARE: u32 = 470 - DEST_FIRST;
+/// The first destination's sum and offset: 1 CUTOFF − 1 OP.
+const DEST_FIRST: u32 = 463 - 455;
 /// (VEL 4R − VEL 1R) / 3, up: each further destination, outputs' ramps
 /// and all.
-const DEST: u32 = 4;
+const DEST: u32 = 5;
 /// VEL VCA − BARE: the VCA's clamp with one plain source.
-const VCA_OTHER: u32 = 508 - BARE;
+const VCA_OTHER: u32 = 491 - BARE;
 /// 2 VCA − VEL VCA: each further plain source.
-const VCA_MORE: u32 = 517 - 508;
+const VCA_MORE: u32 = 499 - 491;
 /// A VCA − BARE: an ENV of type A on the VCA, the clamp in it.
-const VCA_ENV_A: u32 = 528 - BARE;
+const VCA_ENV_A: u32 = 511 - BARE;
 /// B GLIDE − BARE: type B on the VCA, its costliest steady row.
-const VCA_ENV_B: u32 = 614 - BARE;
+const VCA_ENV_B: u32 = 605 - BARE;
 /// BURST AD − BARE: type B in BURST.
-const VCA_BURST: u32 = 680 - BARE;
+const VCA_BURST: u32 = 663 - BARE;
 /// A SLIDE − A VCA: a slot's TIME/RISE/FALL/SHAPE routes, their four
 /// destinations in it.
-const SLIDE: u32 = 561 - 528;
+const SLIDE: u32 = 548 - 511;
 /// FUNC LFO − 1 DEST.
-const FUNC: u32 = 494 - 489;
-/// ALGO's table operators and links over 1 OP, scaled from their bill:
-/// the worst table row's read over bill, each row at the higher of its
-/// mean and its top voice, against 1 OP's lower (top 564): WC (980 − 564)
-/// / (1017 − 647) = 1.124.
-const ALGO_SCALE: f64 = 1.13;
-/// A formant or noise operator's charge, the same way: FRMT PM's top
-/// (1061 − 564) / (1113 − 647) = 1.067, the worst FRMT row; NOIS (590 −
-/// 564) / (667 − 647) = 1.3.
-const FRMT_SCALE: f64 = 1.07;
-const NOIS_SCALE: f64 = 1.3;
-/// The filter kinds over CLEAN, as the project's rows read them (each
-/// under ENV 1 → CUTOFF, so at least still): 2040 R2 − SVF, 2040 − SVF
-/// (EXP), LADDER − SVF, SEM − SVF; DIRTY and NOTCH2 read under CLEAN.
-const K2040_REV2: u32 = 632 - 558;
-const K2040_EXP: u32 = 682 - 558;
-const LADDER: u32 = 735 - 558;
-const SEM_UNDER_ENV: u32 = 596 - 558;
-/// SEM still: the 0.2 bench's, 9 over CLEAN LP4 (2026-10-22, `SEM_COST`'s
-/// note); under ENV 1 it reads `SEM_UNDER_ENV`, its moving share.
-const SEM: u32 = 9;
-/// CLEAN MOVE − SVF: CUTOFF jumping every block, over the ENV's move: a
-/// moving filter's worst, charged on every kind (no other kind has a sweep
-/// row; bench rows to add).
-const MOVE: u32 = 600 - 558;
+const FUNC: u32 = 472 - 470;
+/// ALGO's table operators and links over 1 OP (ALGO's 463), scaled from
+/// their bill: the worst table row over bill, each at the higher of its
+/// slope and its top voice: CHAIN (853 − 463) / (853 − 513) = 1.147.
+const ALGO_SCALE: f64 = 1.15;
+/// A formant or noise operator's charge over a table operator's, the same
+/// way, less its tables at `ALGO_SCALE`: FRMT PM's costliest added voice
+/// (942 − 463 − 1.15 × 68) / 390 = 1.028; NOIS's (500 − 463) / 20 = 1.85.
+const FRMT_SCALE: f64 = 1.03;
+const NOIS_SCALE: f64 = 1.85;
+/// The filter kinds over CLEAN (SVF 455): 2040 R2, 2040 (EXP), LADDER, SEM;
+/// DIRTY and NOTCH2 read under CLEAN.
+const K2040_REV2: u32 = 554 - 455;
+const K2040_EXP: u32 = 602 - 455;
+const LADDER: u32 = 656 - 455;
+const SEM: u32 = 512 - 455;
+/// A moving filter, CUTOFF stepped every block, over its kind's steady
+/// row: CLEAN MOVE − SVF, 2040 SWEEP − 2040 R2, LADDER SWEEP − LADDER, SEM
+/// SWEEP − SEM.
+const fn moving(k: FilterKind) -> u32 {
+    match k {
+        FilterKind::Svf => 484 - 455,
+        // DIRTY's one loop reads its arrays every block: nothing moving adds.
+        FilterKind::Dirty => 0,
+        FilterKind::K2040 => 579 - 554,
+        FilterKind::Ladder => 688 - 656,
+        FilterKind::Sem => 541 - 512,
+    }
+}
 /// FB at ½ over each kind's row: the moving path every block and FB.
 const fn fb(k: FilterKind) -> u32 {
     match k {
-        FilterKind::Svf => 753 - 558,
-        FilterKind::Dirty => 647 - 532,
-        FilterKind::K2040 => 874 - 682,
-        FilterKind::Ladder => 909 - 735,
-        FilterKind::Sem => 727 - 596,
+        FilterKind::Svf => 669 - 455,
+        FilterKind::Dirty => 566 - 451,
+        FilterKind::K2040 => 796 - 602,
+        FilterKind::Ladder => 830 - 656,
+        FilterKind::Sem => 643 - 512,
     }
 }
-/// STABILITY ½ over the chip's row, the costliest (SEM STAB − SEM).
-const STAB: u32 = 5;
+/// STABILITY ½ over the chip's row, the costliest (2040 STAB − 2040).
+const STAB: u32 = 607 - 602;
 /// LP24 HOT − SVF: CLEAN's LEVEL clipper driven at LEVEL 1, RES 1.
-const LEVEL: u32 = 655 - 558;
-/// TAP FREQ − 1 OP and TAP VCA − 1 OP.
-const TAP_FREQ: u32 = 736 - 558;
-const TAP_VCA: u32 = 602 - 558;
+const LEVEL: u32 = 526 - 455;
+/// TAP FREQ − 1 OP less CLEAN's moving path (the filter's, counted
+/// there), and TAP VCA − 1 OP.
+const TAP_FREQ: u32 = 656 - 455 - (484 - 455);
+const TAP_VCA: u32 = 500 - 455;
 /// The FX slot over 1 OP: FOLD, SOFT LO (SOFT's worst), FUZZ; FOLD TAP.
-const FOLD: u32 = 635 - 558;
-const SOFT: u32 = 648 - 558;
-const FUZZ: u32 = 794 - 558;
-const FOLD_TAP: u32 = 741 - 558;
+const FOLD: u32 = 536 - 455;
+const SOFT: u32 = 547 - 455;
+const FUZZ: u32 = 696 - 455;
+const FOLD_TAP: u32 = 640 - 455;
 /// A routed slot's ramp: SOFT RT, FOLD RT, FUZZ MOVE less 1 DEST and the
 /// type at that P1 (SOFT, FOLD HALF, FUZZ).
-const SOFT_RAMP: u32 = 592 - 489 - (636 - 558);
-const FOLD_RAMP: u32 = 588 - 489 - FOLD;
-const FUZZ_RAMP: u32 = 768 - 489 - FUZZ;
-/// AMP's gate: LPG RT − A VCA (above LPG − 1 OP's 82).
-const GATE: u32 = 630 - 528;
+const SOFT_RAMP: u32 = 577 - 470 - (538 - 455);
+const FOLD_RAMP: u32 = 570 - 470 - (533 - 455);
+const FUZZ_RAMP: u32 = 751 - 470 - FUZZ;
+/// AMP's gate: LPG RT − A VCA.
+const GATE: u32 = 613 - 511;
 /// VA NOISE over VA, by KIND.
 const fn noise(k: NoiseKind) -> u32 {
     match k {
-        NoiseKind::White => 711 - 695,
-        NoiseKind::Pink => 732 - 695,
-        NoiseKind::Red => 728 - 695,
-        NoiseKind::Digital => 725 - 695,
+        NoiseKind::White => 629 - 614,
+        NoiseKind::Pink => 652 - 614,
+        NoiseKind::Red => 647 - 614,
+        NoiseKind::Digital => 643 - 614,
     }
 }
-/// VA's MODE rows at their top voice, less the project routes' 59 (ADR
-/// 0218) and the 2040 REV2 they play: the voice to CLEAN's equal.
+/// MODAL's engine bills over its rows: each model's least bill over its
+/// worst-block slope (B − W), so its engine reads at most its bill less
+/// that. STRING: STR+ 672 − 601; BOWED: BOW+ 651 − 640; SYMPATHETIC: SYM+
+/// 1001 − 987; MODAL: RES 1953 − 883.
+const fn modal_slack(m: ResonatorMode) -> u32 {
+    match m {
+        ResonatorMode::String => 672 - 601,
+        ResonatorMode::Bowed => 651 - 640,
+        ResonatorMode::Sympathetic => 1001 - 987,
+        ResonatorMode::Modal => 1953 - 883,
+    }
+}
+/// VA's WAVE crossing a segment every block: VA WAVE − VA.
+const VA_WAVE: u32 = 706 - 614;
+/// VA's MODE rows at their top voice, less the 2040 REV2 they play: the
+/// voice to CLEAN's equal.
 const fn va_core(m: VaMode) -> u32 {
     let top = match m {
-        VaMode::Mix => 744,
-        VaMode::Sync => 769,
-        VaMode::Ring => 755,
-        VaMode::Xor => 767,
-        VaMode::Bits => 760,
-        VaMode::Fm => 800,
-        VaMode::Am => 766,
-        VaMode::Max => 769,
-        VaMode::LoopFm => 701,
-        VaMode::SoftSync => 829,
-        VaMode::Phase => 809,
+        VaMode::Mix => 669,
+        VaMode::Sync => 696,
+        VaMode::Ring => 675,
+        VaMode::Xor => 673,
+        VaMode::Bits => 691,
+        VaMode::Fm => 731,
+        VaMode::Am => 680,
+        VaMode::Max => 667,
+        VaMode::LoopFm => 626,
+        VaMode::SoftSync => 716,
+        VaMode::Phase => 715,
     };
-    top - 59 - K2040_REV2
+    top - K2040_REV2
 }
 
-/// The bench's 1 OP engine (A1, OP1 a table at LEVEL 99): what `BARE`'s
-/// engine bills.
-fn one_op_bill() -> u32 {
-    let mut ops = [AlgoOpParams::DEFAULT; OPS];
-    ops[0].level = 99;
-    for o in &mut ops[1..] {
-        o.level = 0;
+/// The ALGO terms as billed when the rows were read (883b, 280c8c2e), so
+/// the model stays the readings' as the bills move: base, a table
+/// operator, a link and FDBK; a FRMT's and a NOIS's charges over a table
+/// operator.
+const OP: u32 = 60;
+const LINK: u32 = 8;
+const FEEDBACK: u32 = 1;
+const fn frmt_charge(skirt: u8, linked: bool) -> u32 {
+    match (skirt == 0, linked) {
+        (true, false) => 210 + 40 - OP,
+        (false, false) => 220 + 40 - OP,
+        (true, true) => 380 + 60 - OP,
+        (false, true) => 390 + 60 - OP,
     }
-    let p = AlgoParams::new(AlgoId::A1, AlgoId::A1, 0, Kinds::TABLE, ops);
-    AlgoEngine::cost(&p, &[false; OPS]).0
+}
+const fn nois_charge(linked: bool) -> u32 {
+    if linked { 100 - OP } else { 80 - OP }
+}
+/// The bench's 1 OP (A1, OP1 a table at LEVEL 99): its tables' term.
+const ONE_OP_TABLES: u32 = OP;
+
+/// A patch's tables (every priced operator as a table, its links and
+/// FDBK) and its FRMT and NOIS charges, at the readings' terms, as
+/// `AlgoEngine::cost` counts them.
+fn algo_shape(p: &AlgoParams, routed: &[bool; OPS]) -> (u32, u32, u32) {
+    use chimera_core::dsp::algo::algorithms::ALGORITHMS;
+    use chimera_core::dsp::algo::plan::MAX_EDGES;
+    let (a, b) = p.algs();
+    let (a, b) = (&ALGORITHMS[a.get() as usize], &ALGORITHMS[b.get() as usize]);
+    let linked = p.linked();
+    let (mut active, mut tables, mut frmt, mut nois) = (0u8, 0, 0, 0);
+    for i in (0..OPS).filter(|&i| p.ops[i].level > 0 || routed[i]) {
+        active |= 1 << i;
+        tables += OP;
+        let kind = p.kinds().get(i);
+        match kind {
+            OpKind::Formant => frmt += frmt_charge(p.ops[i].skirt, linked.has(i)),
+            OpKind::Noise => nois += nois_charge(linked.has(i)),
+            OpKind::Table(_) => {}
+        }
+        if p.ops[i].feedback > 0 && !matches!(kind, OpKind::Noise) {
+            tables += FEEDBACK;
+        }
+    }
+    let links: u32 = (0..OPS)
+        .map(|i| ((a.mods[i] | b.mods[i]) & active).count_ones())
+        .sum();
+    tables += links.min(MAX_EDGES as u32) * LINK;
+    (tables, frmt, nois)
+}
+
+/// ALGO's FREQ or Q tap: the filter moves, as a route moves it.
+fn shaped(p: &ParamSnapshot) -> bool {
+    p.engine() == EngineType::Algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q))
 }
 
 /// A CUTOFF or RES route (a FREQ or Q tap's move is in `TAP_FREQ`).
@@ -179,14 +237,8 @@ fn filter_model(p: &ParamSnapshot, m: &ModState) -> u32 {
     let fb = f.fb != 0.0 || moves(m, BlockRef::Filter, FilterParams::FB);
     let path = if fb {
         self::fb(k)
-    } else if filter_moves(m) {
-        // DIRTY's one loop reads its arrays every block (its row under
-        // ENV 1 reads under CLEAN's): no moving share.
-        match k {
-            FilterKind::Dirty => 0,
-            FilterKind::Sem => MOVE + SEM_UNDER_ENV - SEM,
-            _ => MOVE,
-        }
+    } else if filter_moves(m) || shaped(p) {
+        moving(k)
     } else {
         0
     };
@@ -302,33 +354,26 @@ fn model(s: &Sound) -> u32 {
     let (p, m) = (&s.params, &s.mod_state);
     let core = match p.engine() {
         EngineType::Algo => {
-            let routed = m.algo_levels_routed();
-            let linked = p.algo.linked();
-            let (mut frmt, mut nois) = (0, 0);
-            for i in (0..OPS).filter(|&i| p.algo.ops[i].level > 0 || routed[i]) {
-                match p.algo.kinds().get(i) {
-                    OpKind::Formant => {
-                        frmt += AlgoEngine::frmt_cost(p.algo.ops[i].skirt, linked.has(i))
-                    }
-                    OpKind::Noise => nois += AlgoEngine::nois_cost(linked.has(i)),
-                    OpKind::Table(_) => {}
-                }
-            }
-            let tables = AlgoEngine::cost(&p.algo, &routed).0 - frmt - nois;
-            let over = tables.saturating_sub(one_op_bill());
-            let scaled = f64::from(over) * ALGO_SCALE
-                + f64::from(frmt) * FRMT_SCALE
-                + f64::from(nois) * NOIS_SCALE;
+            let (tables, frmt, nois) = algo_shape(&p.algo, &m.algo_levels_routed());
+            let over = f64::from(tables) - f64::from(ONE_OP_TABLES);
+            let scaled =
+                over * ALGO_SCALE + f64::from(frmt) * FRMT_SCALE + f64::from(nois) * NOIS_SCALE;
             BARE + scaled.ceil() as u32
         }
         EngineType::Va => {
-            let nz =
-                p.va.noise > 0.0 || moves(m, BlockRef::Va, chimera_core::dsp::va::VaParams::NOISE);
-            va_core(p.va.mode) + if nz { noise(p.va.noise_kind) } else { 0 }
+            let nz = p.va.noise > 0.0 || moves(m, BlockRef::Va, VaParams::NOISE);
+            let wave = [VaParams::WAVE1, VaParams::WAVE2]
+                .iter()
+                .any(|&q| moves(m, BlockRef::Va, q));
+            va_core(p.va.mode)
+                + if nz { noise(p.va.noise_kind) } else { 0 }
+                + if wave { VA_WAVE } else { 0 }
         }
-        EngineType::Modal | EngineType::Tape => {
+        EngineType::Modal => {
             EngineSlot::cost(p, m).0 + Voice::CHAIN_COST.0 + ModRouting::BASE.0
+                - modal_slack(p.modal.mode)
         }
+        EngineType::Tape => EngineSlot::cost(p, m).0 + Voice::CHAIN_COST.0 + ModRouting::BASE.0,
     };
     core + filter_model(p, m) + routes_model(p, m) + rest_model(p, m)
 }
@@ -355,44 +400,11 @@ fn factory() -> Vec<(String, Sound)> {
         .collect()
 }
 
-/// Sounds the model reads over their bill before #448's re-bill, each
-/// with the margin it may not fall under: the formant and six-operator
-/// ALGO Sounds (ADR 0211 point 3, ADR 0218 point 4: ALGO's terms held for
-/// the formant floor), CLEAN driven over ½ (LP24 HOT, no bill for it yet)
-/// and the rest within the bench's spread (≤ 12). A bill cut that widens
-/// one fails here; closing one moves it out. ADR 0249.
-const KNOWN_UNDER: &[(&str, i64)] = &[
-    ("VOWEL BUZZ", -61),
-    ("THROAT SING", -61),
-    ("GLASS MALLET", -5),
-    ("VOCAL KEYS", -53),
-    ("SINGING BASS", -38),
-    ("WAH BRASS", -49),
-    ("TALKING BELL", -36),
-    ("HUMMING PAD", -9),
-    ("YELLING LEAD", -40),
-    ("NASAL MONO", -6),
-    ("DEAD CHOIR", -11),
-    ("CRACK SNARE", -4),
-    ("BROKEN WIRE", -6),
-    ("NULL CHOIR", -40),
-    ("RIOT STAB", -4),
-    ("ASH CHORD", -12),
-    ("SPARK GAP", -1),
-    ("NYLON", -3),
-    ("GAMELAN", -6),
-    ("GLITCH BARS", -12),
-    ("SOLID BASS", -32),
-    ("MORPH BASS", -2),
-    ("TINE PIANO", -8),
-    ("FUNK CLAV", -32),
-    ("DRIFT ORGAN", -3),
-    ("ICE BELLS", -2),
-    ("MUSIC BOX", -2),
-    ("SOFT HORNS", -39),
-    ("WARM PAD", -59),
-    ("GLASS PAD", -55),
-];
+/// Sounds the model reads over their bill, each with the margin it may
+/// not fall under: VOWEL BUZZ and THROAT SING (a 2040 tapped and routed)
+/// and MORPH BASS, 1 or 2 under, left as the owner chose (ADR 0262). A bill
+/// cut that widens one fails here; closing one moves it out.
+const KNOWN_UNDER: &[(&str, i64)] = &[("VOWEL BUZZ", -2), ("THROAT SING", -2), ("MORPH BASS", -1)];
 
 #[test]
 fn every_factory_sound_is_billed_at_or_over_its_reading() {
@@ -437,4 +449,19 @@ fn every_known_gap_is_still_open() {
             "{k}: margin {margin}, closed: take it off KNOWN_UNDER"
         );
     }
+}
+
+/// NOIS's term bills under its reading, known (ADR 0262): its charge over a
+/// table operator reads × 1.85 (NOIS's costliest added voice), billed at
+/// 95/125 so CRACK SNARE keeps six voices. Unlinked 2, linked 9 short a
+/// NOIS operator; every factory Sound still bills over its model. Raising
+/// the bill to the reading takes this off.
+#[test]
+fn nois_term_shortfall_is_known() {
+    use chimera_core::dsp::algo::engine::AlgoEngine;
+    let short = |linked| {
+        let read = (f64::from(nois_charge(linked)) * NOIS_SCALE).ceil() as u32;
+        read - (AlgoEngine::nois_cost(linked) - AlgoEngine::COST_OP.0)
+    };
+    assert_eq!((short(false), short(true)), (2, 9));
 }

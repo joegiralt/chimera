@@ -13,6 +13,8 @@ use std::vec::Vec;
 /// A `Store` in RAM: the reference behaviour the FAT stores are held to.
 pub struct MemStore {
     files: BTreeMap<FileName, Vec<u8>>,
+    /// Long names, as `list_long` gives them (`plant_long`).
+    longs: BTreeMap<FileName, Vec<u8>>,
     dirs: BTreeSet<Dir>,
     sealed: BTreeSet<FileName>,
     id: VolumeId,
@@ -30,6 +32,7 @@ impl MemStore {
     pub fn new(serial: u32) -> Self {
         MemStore {
             files: BTreeMap::new(),
+            longs: BTreeMap::new(),
             dirs: BTreeSet::new(),
             sealed: BTreeSet::new(),
             id: volume(serial),
@@ -44,7 +47,21 @@ impl MemStore {
 
     /// `bytes` as `file`, past `write`: as a host drops a file in the root.
     pub fn plant(&mut self, file: FileName, bytes: &[u8]) {
+        // A file on a card is in a folder.
+        self.dirs.insert(file.dir());
         self.files.insert(file, bytes.to_vec());
+    }
+
+    /// `plant`, the file copied under long name `long`: `list_long` gives
+    /// it as a FAT store does, upper case, its first 32 bytes.
+    pub fn plant_long(&mut self, file: FileName, long: &str, bytes: &[u8]) {
+        self.plant(file, bytes);
+        let l: Vec<u8> = long
+            .bytes()
+            .take(32)
+            .map(|c| c.to_ascii_uppercase())
+            .collect();
+        self.longs.insert(file, l);
     }
 
     /// `file`'s seal gone: as a `put` cut before its read-back leaves it.
@@ -120,6 +137,23 @@ impl Store for MemStore {
         Ok(())
     }
 
+    fn list_long(
+        &mut self,
+        vol: VolumeId,
+        dir: Dir,
+        f: &mut crate::store::LongEach<'_>,
+    ) -> Result<(), StoreError> {
+        self.open(vol)?;
+        self.has_dir(dir)?;
+        for (name, data) in self.files.iter().filter(|(n, _)| n.dir() == dir) {
+            let long = self.longs.get(name).map_or(&[][..], |l| &l[..]);
+            if f(*name, data.len() as u32, long).is_break() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     fn read(
         &mut self,
         vol: VolumeId,
@@ -181,6 +215,7 @@ impl Store for MemStore {
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
         self.open(vol)?;
         self.writable(file)?;
+        self.longs.remove(&file);
         self.files
             .remove(&file)
             .map(|_| ())

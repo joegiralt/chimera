@@ -21,7 +21,7 @@ u8g2-fonts = "=0.8.0"
 stamp = []
 # Firmware builds only: the wave tables rendered at boot (ADR 0122).
 boot-waves = ["chimera-engine/boot-waves"]
-default = ["orbit", "card-put", "tape", "midi-map", "push-encoders", "tuning"]
+default = ["orbit", "card-put", "tape", "midi-map", "push-encoders", "tuning", "usb-audio"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
 # firmware leaves it out: FLASH (#507).
 midi-map = ["chimera-engine/controller-maps", "chimera-engine/sysex-map"]
@@ -32,6 +32,9 @@ tape = ["chimera-engine/tape"]
 # SYSTEM's PUSH ENCODERS (ADR 0140): off, no row and no push read.
 # The bench builds go without it: FLASH is full.
 push-encoders = ["chimera-engine/push-encoders"]
+# AUDIO ROUTING › USB AUDIO (ADR 0260): the firmware with USB audio; the
+# bench builds go without it.
+usb-audio = []
 # ORBIT, the ring sequencer: SEQ hold opens it. Off, SEQ hold does nothing.
 orbit = ["chimera-engine/orbit"]
 # The console's `ls` and `put` (ADR 0092): project files onto the card.

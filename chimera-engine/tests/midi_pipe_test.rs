@@ -148,8 +148,9 @@ fn pipe_matches_old_route_for_notes_bend_sustain_clock() {
     let want = old_route_queued();
     let r = pipe(OLD_ROUTE_CORPUS);
     assert_eq!(r.notes, want);
-    // The old route's one CC (71 on channel 2) rides the ring; pressure is
-    // new there, and so is the program change (#515).
+    // The old route's one CC (71 on channel 2) rides the ring; Reset All
+    // Controllers its own event (ADR 0263); pressure is new there, and so
+    // is the program change (#515).
     let ccs: Vec<_> = r
         .ctrl
         .iter()
@@ -165,9 +166,10 @@ fn pipe_matches_old_route_for_notes_bend_sustain_clock() {
             }
         )]
     );
+    assert!(r.ctrl.contains(&CtrlEvent::Reset(ch(2))));
     assert_eq!(
         r.ctrl.len(),
-        3,
+        4,
         "and the program and pressure: {:?}",
         r.ctrl
     );

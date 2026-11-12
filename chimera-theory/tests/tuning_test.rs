@@ -1,4 +1,6 @@
-use chimera_theory::tuning::{BUILT_IN, KbmError, Keymap, Scale, SclError, offsets};
+use chimera_theory::tuning::{
+    BUILT_IN, KbmError, Keymap, Scale, SclError, description, offsets, offsets_into,
+};
 use proptest::prelude::*;
 
 fn scl(text: &str) -> Scale {
@@ -172,4 +174,74 @@ proptest! {
             prop_assert!((0.0..=127.0).contains(&(key as f32 + o)));
         }
     }
+}
+
+/// KEYBOARD (stock's mapping, #907): a 7-step scale starts each octave on
+/// a C, its degrees on the first 7 keys, the other 5 silent.
+#[test]
+fn keyboard_starts_each_period_on_a_c_and_silences_the_spare_keys() {
+    let s = scl("!\nmajor\n7\n9/8\n5/4\n4/3\n3/2\n5/3\n15/8\n2/1\n");
+    let mut t = [0.0; 128];
+    let silent = offsets_into(&s, Some(&Keymap::keyboard(s.len())), &mut t);
+    for o in [-60i32, -12, 0, 12, 60] {
+        let c = (60 + o) as usize;
+        assert!((t[c]).abs() < 1e-4, "C at {c}: {}", t[c]);
+        // D, the 2nd degree, on the key above C.
+        if c + 1 < 128 {
+            assert!((c as f32 + 1.0 + t[c + 1] - (c as f32 + 2.0 + 0.0391)).abs() < 1e-3);
+        }
+    }
+    for k in 0..128u32 {
+        let spare = (k as i32 - 60).rem_euclid(12) >= 7;
+        assert_eq!(silent >> k & 1 == 1, spare, "key {k}");
+        if spare {
+            assert_eq!(t[k as usize], 0.0);
+        }
+    }
+}
+
+#[test]
+fn keyboard_rounds_the_period_up_to_whole_octaves() {
+    // 19 steps: a period of 24 keys, the last 5 silent.
+    let s = scl(&format!(
+        "!\n19-TET\n19\n{}2/1\n",
+        (1..19)
+            .map(|i| format!("{:.3}\n", i as f32 * 1200.0 / 19.0))
+            .collect::<String>()
+    ));
+    let mut t = [0.0; 128];
+    let silent = offsets_into(&s, Some(&Keymap::keyboard(19)), &mut t);
+    assert_eq!(silent >> 84 & 1, 0, "the 2nd period's root, C+24, plays");
+    assert!(
+        (84.0 + t[84] - 72.0).abs() < 1e-3,
+        "C+24 plays an octave up: {}",
+        t[84]
+    );
+    for k in 79..84 {
+        assert_eq!(silent >> k & 1, 1, "key {k}");
+    }
+    // Twelve steps: KEYBOARD is CONTINUOUS, nothing silent.
+    let tet = scl(TET);
+    assert_eq!(offsets_into(&tet, Some(&Keymap::keyboard(12)), &mut t), 0);
+    assert!(t.iter().all(|&o| o.abs() < 1e-4));
+    // 128 steps: a period of 132 keys, the 4 spare ones under middle C.
+    let big = scl(&format!(
+        "!\n\n128\n{}2/1\n",
+        (1..128).map(|i| format!("{i}.0\n")).collect::<String>()
+    ));
+    assert_eq!(
+        offsets_into(&big, Some(&Keymap::keyboard(128)), &mut t),
+        0xF << 56
+    );
+}
+
+#[test]
+fn the_description_is_the_first_line_not_a_comment() {
+    assert_eq!(
+        description(b"! pelog.scl\n!\nPelog, Java\r\n7\n"),
+        b"Pelog, Java"
+    );
+    assert_eq!(description(b"!\n\n12\n"), b"");
+    assert_eq!(description(b""), b"");
+    assert_eq!(description(b"  Bohlen-Pierce  \n13\n"), b"Bohlen-Pierce");
 }

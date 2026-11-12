@@ -56,6 +56,7 @@ pub mod probe;
 pub mod project;
 pub mod randomize;
 pub mod reset;
+pub mod scala_name;
 pub mod scope;
 pub mod source_table;
 pub mod storage;

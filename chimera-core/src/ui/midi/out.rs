@@ -1,5 +1,6 @@
 //! MIDI out's pass (spec §§ 7, 8.4, 9-10): with MIDI CONFIG › ECHO on, the
-//! echo plan's identity replies and value echo into DIN's ring and USB's,
+//! echo plan's identity replies and value echo, then PARAM OUT's NRPNs
+//! (ADR 0258), into DIN's ring and USB's,
 //! each message whole when it fits, else a later pass (DIN) or lost
 //! (USB). Bank 2's, as `ui::midi` is.
 
@@ -58,11 +59,23 @@ impl UiState {
     /// `out`.
     pub(in crate::ui) fn out_in(&mut self, out: &OutPorts) {
         let (on, at, now) = (self.midi.echo(), self.active_part, self.cc.last);
-        let super::MidiUi { echo, ctl, .. } = self.cc.ui();
+        let params = on && self.midi.param_out();
+        let super::MidiUi {
+            echo,
+            ctl,
+            param_out,
+            ..
+        } = self.cc.ui();
         if on {
             echo.pump(&self.project, ctl, at, now, out);
         } else {
             echo.silence();
+        }
+        // PARAM OUT (ADR 0258): the hand's turns, after the echo.
+        if params {
+            param_out.pump(&self.project, out);
+        } else {
+            param_out.clear();
         }
     }
 }

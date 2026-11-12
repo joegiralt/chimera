@@ -178,6 +178,9 @@ pub struct PartAudio {
     pub mix: PartParams,
     /// The Part's Sound loads: a change lands its knobs.
     pub loads: Loads,
+    /// CC 11, expression (ADR 0263): the mix plays LEVEL and the sends
+    /// under it (`part::expressed`). In the struct's padding.
+    pub expression: u8,
     /// The pool's id for its Sound's source (spec § 4): what a TAPE
     /// note-on latches. `None` with no source, or none in the pool.
     pub source: Option<SourceId>,
@@ -216,6 +219,7 @@ impl PartAudio {
             knobs,
             mix: p.mix,
             loads: Loads::NONE,
+            expression: p.expression(),
             source: None,
         }
     }
@@ -541,8 +545,12 @@ pub fn mix_parts(
     let k = ease_coeff(sample_rate);
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = mix.pan_gains(p, part.mix.pan);
-        let [s0, s1, s2] = part.params.out.sends;
-        let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
+        // Expression swells the whole Part, its FX feed too (ADR 0263):
+        // 1.0, every gain bit for bit, at 127.
+        let x = crate::part::expressed(1.0, part.expression);
+        let [s0, s1, s2] = part.params.out.sends.map(|s| s * x);
+        let level = part.mix.level * x;
+        let to = [gl * level, gr * level, s0, s1, s2];
         let eases = &mut mix.gains[p];
         // A part with no voices this block has a silent bus: nothing to
         // add, and its gains land unheard.
@@ -1262,6 +1270,10 @@ impl Instrument {
                         NoteOrigin::Live => part.live_note(ev.note, self.harmony),
                         NoteOrigin::Orbit(_) => ev.note,
                     };
+                    // KEYBOARD's spare keys sound nothing (ADR 0259).
+                    if crate::tuning::silent(p, note.get()) {
+                        continue;
+                    }
                     #[cfg(feature = "probe")]
                     let t1 = crate::probe::now();
                     // ONE at RETRIG CUT: the note chokes the Part's others

@@ -323,6 +323,7 @@ fn entry_codec_round_trips() {
         name,
         start: 0x0001_2345,
         len: 5_000,
+        hidden: false,
     };
     let mut r = [0xFF; 32];
     encode(&e, Attr::Sealed, FsKind::Fat32, &mut r);
@@ -352,6 +353,7 @@ fn entry_codec_round_trips() {
         name: ShortName::dir(Dir::Projects),
         start: 7,
         len: 0,
+        hidden: false,
     };
     encode(&d, Attr::Dir, FsKind::Fat16, &mut r);
     assert_eq!((&r[..11], r[11]), (&b"PROJECTS   "[..], 0x10));
