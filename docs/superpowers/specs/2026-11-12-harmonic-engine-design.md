@@ -235,3 +235,9 @@ Open questions 2–6 settled as Claude recommended: the 5-voice cap is **per Par
 | 512 partials, 8 voices | 48 or 64 partials, 5 voices a Part: the hardware's limit, set by the bench and the ear. |
 
 Cost added by this section (estimate): corners + PATH + SUB ≈ +1.5 KB flash, +16 B a Sound, +2 partials of CPU a voice. The cut order gains, first: PATH shapes beyond LINE/CIRCLE, then SUB, then the fourth slot.
+
+## Owner, 2026-11-12: bright from C3 up (supersedes the partial count and SUB above)
+- **Partials: up to 160**, the count that reaches the top of the audio range from **C3 up** (C3 needs 152). Below C3 the same 160 play, so low notes top out lower (gracefully darker; no range cutoff). Owner's reasoning: Loom-like brightness where melodies and chords live, at a CPU this hardware can afford.
+- **SUB: VA's variable-wave oscillator, reused** (owner: "steal one of the oscillators from VA"): WAVE **SINE, TRIANGLE or SQUARE**, OCTAVE −1 or −2, LEVEL. Replaces the ½/¼ sub-partials.
+- **Voices: 4 per Part** (was 5): the C3 worst case is ~1,000–1,300 cycles a voice (estimate; the unit bench decides). Pitch-aware billing (a note above C3 costs less) is a later option needing its own ADR.
+- The bright tail and log spacing (group 9 renders) and the hybrid inverse-FFT stay alternatives, not the plan.
