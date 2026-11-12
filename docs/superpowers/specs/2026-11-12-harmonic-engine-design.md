@@ -213,3 +213,9 @@ Exact cost constants from the bench; magic circle against Vicanek; whether a Che
 3. Is the 5-voice cap per Part, or for all HARMONIC voices on the instrument together?
 4. Map sources: formulas only, or also analyses of your own synths' recordings?
 5. Duplicate module kinds across slots (two FORMANTs): allowed, or one of each?
+
+## Builder check, 2026-11-12 (answers and Claude's calls)
+- **Bank:** bank 1. ORBIT's bank 2 has 128 B free (drum-slice-1, ac04eb3e); ADR 0251's "21.3 KB after cuts" is stale. Audio-rate code runs from bank 1 (zero-wait on the H750's AXI-flash path as the other engines' bank-1 code); the cycle bench measures it there.
+- **Prerequisites (Claude's call):** VARIETY and the flat engine maps (ADR 0266) land before HARMONIC; their flash counts in the same "rest of 0.4" figure. Step 0 of the order of work names both.
+- **Voice cap (Claude's proposal, owner to confirm):** a per-Part cap of 5 HARMONIC voices; the CPU budget is protected by billing (ADR 0262 refuses or steals a voice whose bill doesn't fit), not by the cap. Two HARMONIC Parts can't exceed the budget; they share it. An instrument-wide cap would need cross-Part allocator state and its own ADR, so it is not proposed.
+- **Flash floor:** open, for the owner, after the DRUM flash-size investigation reports (owner approved bank 1 to ~20 KB free for DRUM; the full 0.4 list does not fit above that floor at today's cost).
