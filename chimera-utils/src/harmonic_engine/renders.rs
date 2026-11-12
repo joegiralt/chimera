@@ -3,7 +3,8 @@
 
 use super::voice::{EnvX, PathCtl};
 use super::{
-    Adsr, Bright, ModuleKind as K, Note, Out, Partials, PathShape, Sound, controls, render,
+    Adsr, Bright, ModuleKind as K, Note, Out, Partials, PathShape, Sound, SubKind, SubOctave,
+    SubWave, controls, render,
 };
 use serde_json::{Value, json};
 
@@ -591,6 +592,103 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
                 &|_, _| {},
                 None,
                 &format!("{about} [{tag}]"),
+            )?;
+        }
+    }
+    // 10: C3-up
+    add(
+        "10-c3-up",
+        "C3-up (owner: \"bright from C3 up\"): 160 exact partials, the whole audio range from C3 up; below C3 the same 160 top out lower (darker, no cutoff). Brighter map and taper, aligned phases; no tail, no LOG. SUB is VA's band-limited oscillator (SINE, TRIANGLE or SQUARE, -1 or -2 octaves, LEVEL) in place of the 1/2 and 1/4 partials. The six sketches with a SUB set per sketch; a melody from C1 to C7 (hear the darkening below C3); each SUB wave at -1 and -2 under a held C3 and a bass line. Same fixed gain.",
+    );
+    let mut g = G {
+        out: g.out,
+        group: "10-c3-up",
+        bright: Bright {
+            tail: false,
+            log: false,
+            ..Bright::ON
+        },
+    };
+    let n160 = Partials::P160;
+    let va = |s: Sound, wave: SubWave, octave: SubOctave, level: f32| {
+        s.with(|s| {
+            s.sub = level;
+            s.sub_kind = SubKind::Va { wave, octave };
+        })
+    };
+    use SubOctave::{Down1, Down2};
+    use SubWave::{Sine, Square, Triangle};
+    let subs: [(SubWave, SubOctave, f32, &str); 6] = [
+        (Sine, Down1, 0.35, "a 16' sine under the registration"),
+        (Sine, Down1, 0.4, "a -1 sine under the vowels"),
+        (Sine, Down1, 0.25, "a -1 sine: the bell's hum note"),
+        (Square, Down1, 0.5, "a -1 square under the reed"),
+        (Triangle, Down1, 0.3, "a -1 triangle thickening the stabs"),
+        (Triangle, Down1, 0.25, "a -1 triangle under the strings"),
+    ];
+    for (k, (w, o, l, why)) in sketches().iter().zip(subs) {
+        g.file(
+            k.name,
+            n160,
+            &va(k.sound, w, o, l),
+            &k.notes,
+            &|_, _| {},
+            None,
+            &format!(
+                "{} [160 partials; SUB {} {} at {l}: {why}]",
+                k.about,
+                w.name(),
+                o.name()
+            ),
+        )?;
+    }
+    let mel: Vec<Note> = (0..6u8)
+        .flat_map(|o| {
+            [0u8, 3, 7, 10]
+                .into_iter()
+                .enumerate()
+                .map(move |(i, d)| (24 + 12 * o + d, (o as usize * 4 + i) as f32 * 0.3, 0.27))
+        })
+        .chain([(96u8, 7.2, 0.8)])
+        .collect();
+    g.file(
+        "melody_c1_c7",
+        n160,
+        &Sound::new(0.8, 0.75).with(|s| s.amp = Adsr::new(0.003, 0.2, 0.7, 0.15)),
+        &mel,
+        &|_, _| {},
+        None,
+        "a Cm7 arpeggio climbing from C1 to C7 at 160 partials (BRASS/BOWED X 0.8, no SUB): full range from C3 up, gracefully darker below",
+    )?;
+    let base = Sound::new(0.5, 0.75);
+    for w in SubWave::ALL {
+        for o in [Down1, Down2] {
+            let tag = format!("sub_{}_{}", w.name().to_ascii_lowercase(), &o.name()[1..]);
+            g.file(
+                &format!("{tag}_c3held"),
+                n160,
+                &va(base.with(|s| s.amp = HELD), w, o, 0.6),
+                &[(48, 0.0, 2.0)],
+                &|_, _| {},
+                None,
+                &format!(
+                    "SUB {} {} at 0.6 under a held C3 (BRASS/BOWED X 0.5), 160 partials",
+                    w.name(),
+                    o.name()
+                ),
+            )?;
+            g.file(
+                &format!("{tag}_bass"),
+                n160,
+                &va(base.with(|s| s.amp = BASS), w, o, 0.6),
+                &bass_line(),
+                &|_, _| {},
+                None,
+                &format!(
+                    "SUB {} {} at 0.6 under a bass line (BRASS/BOWED X 0.5), 160 partials",
+                    w.name(),
+                    o.name()
+                ),
             )?;
         }
     }

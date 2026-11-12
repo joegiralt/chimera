@@ -18,9 +18,9 @@
 //! (`tail`) and LOG spacing; `Bright::DARK` is the first prototype, to
 //! the bit.
 
-use super::map::Map;
+use super::map::{MAP_N, Map};
 use super::modules::{Module, ModuleKind, stretch_ratio};
-use super::tail::{TAIL_BELOW, TAIL_TOP, Tail, TailSpec};
+use super::tail::{TAIL_BELOW, TAIL_TOP, Tail, TailSpec, Va};
 use super::{MAX, Partials};
 use crate::drums::parts::{B, Blk, FS};
 
@@ -35,8 +35,6 @@ pub const TOP: f32 = 0.45;
 const KNEE: f32 = 6.0;
 /// DENSITY's range: the threshold sits `RANGE·d²` dB under the peak.
 const RANGE: f32 = 96.0;
-/// The map's partials (its nodes store this many).
-pub const MAP_N: usize = 64;
 /// LOG spacing: on while N·f0 is under this; its top partial near
 /// `TAIL_TOP`.
 pub const LOG_BELOW: f32 = 16_000.0;
@@ -86,6 +84,73 @@ impl Bright {
     pub fn tail_at(&self, n: usize, f0: f32) -> bool {
         self.tail && !self.log_at(n, f0) && (n + 1) as f32 * f0 < TAIL_BELOW
     }
+}
+
+/// The VA SUB's wave: VA's own, limited to three.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubWave {
+    Sine,
+    Triangle,
+    Square,
+}
+
+impl SubWave {
+    pub const ALL: [SubWave; 3] = [SubWave::Sine, SubWave::Triangle, SubWave::Square];
+
+    /// VA's WAVE for it (SHAPE 0: the pulse is square).
+    fn wave(self) -> f32 {
+        match self {
+            SubWave::Sine => 0.0,
+            SubWave::Triangle => 1.0 / 3.0,
+            SubWave::Square => 1.0,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SubWave::Sine => "SINE",
+            SubWave::Triangle => "TRIANGLE",
+            SubWave::Square => "SQUARE",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubOctave {
+    Down1,
+    Down2,
+}
+
+impl SubOctave {
+    pub fn ratio(self) -> f32 {
+        match self {
+            SubOctave::Down1 => 0.5,
+            SubOctave::Down2 => 0.25,
+        }
+    }
+
+    /// The SUB lane whose PLUCK it shares (½ and ¼ of the pitch).
+    fn lane(self) -> usize {
+        match self {
+            SubOctave::Down1 => 0,
+            SubOctave::Down2 => 1,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SubOctave::Down1 => "-1",
+            SubOctave::Down2 => "-2",
+        }
+    }
+}
+
+/// What SUB (its LEVEL is `Sound::sub`) plays: the ½ and ¼ partials, or
+/// VA's band-limited oscillator an octave or two down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubKind {
+    Partials,
+    Va { wave: SubWave, octave: SubOctave },
 }
 
 /// VARIETY at 1 offsets each varied control by up to ±this.
@@ -190,6 +255,7 @@ pub struct Sound {
     pub env_x: EnvX,
     pub amp: Adsr,
     pub bright: Bright,
+    pub sub_kind: SubKind,
 }
 
 impl Sound {
@@ -210,6 +276,7 @@ impl Sound {
             },
             amp: Adsr::new(0.005, 0.3, 0.8, 0.3),
             bright: Bright::ON,
+            sub_kind: SubKind::Partials,
         }
     }
 
@@ -297,6 +364,8 @@ pub struct Frame {
     pub band_lo: f32,
     /// BRIGHT TAIL's ask, if it plays
     pub tail: Option<TailSpec>,
+    /// The VA SUB's amplitude as a sine's (its RMS is this / √2)
+    pub sub_va: f32,
 }
 
 /// Plaits' (1 − 2f) taper, forced to silence at `TOP`·fs; bright, flat to
@@ -397,6 +466,7 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
         band: 0.0,
         band_lo: 0.0,
         tail: None,
+        sub_va: 0.0,
     };
     let br = s.bright;
     let log = br.log_at(n, f0);
@@ -463,7 +533,15 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
             }
         }
     } else {
-        map.mix(x, y, n, &mut db);
+        map.mix(x, y, n.min(MAP_N), &mut db);
+        // past the stored partials: the top octave's law
+        if n > MAP_N
+            && let Some((d0, sl)) = fit(&db, MAP_N / 2, MAP_N)
+        {
+            for (k, d) in db.iter_mut().enumerate().take(n).skip(MAP_N) {
+                *d = d0 + sl * ((k + 1) as f32 / MAP_N as f32).log2();
+            }
+        }
         amp_db[..n].copy_from_slice(&db[..n]);
     }
     let audible = |i: usize| f.hz[SUB + i] < TOP * FS;
@@ -495,8 +573,12 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
 
     // SUB: ½ and ¼ of the pitch, against the strongest partial
     let sub = s.sub.clamp(0.0, 1.0);
-    f.amp[0] = sub * amax;
-    f.amp[1] = 0.5 * sub * amax;
+    if s.sub_kind == SubKind::Partials {
+        f.amp[0] = sub * amax;
+        f.amp[1] = 0.5 * sub * amax;
+    } else {
+        f.sub_va = sub * amax;
+    }
     for l in 0..SUB {
         f.rate[l] = mods.iter().map(|m| m.decay_rate(f.hz[l] / f0)).sum();
     }
@@ -551,7 +633,7 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
         ss += f.amp[l] * f.amp[l];
     }
     let ss_bank = ss;
-    ss += 2.0 * tail_ss;
+    ss += 2.0 * tail_ss + f.sub_va * f.sub_va;
     if ss_bank < 1e-20 {
         f.amp = [0.0; LANES];
         f.tail = None;
@@ -564,6 +646,7 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
     if let Some(t) = &mut f.tail {
         t.e_lo *= g;
     }
+    f.sub_va *= g;
 
     // AIR: noise on each partial, more on high ones, and on low notes a
     // band above the last partial at the top partials' level
@@ -609,6 +692,8 @@ pub struct Voice {
     band: [f32; 2],
     band_lvl: f32,
     tail: Option<Box<Tail>>,
+    /// The VA SUB and its last level (VA's RMS units)
+    sub: Option<(Va, f32)>,
 }
 
 impl Voice {
@@ -652,6 +737,7 @@ impl Voice {
             band: [0.0; 2],
             band_lvl: 0.0,
             tail,
+            sub: matches!(s.sub_kind, SubKind::Va { .. }).then(|| (Va::new(), 0.0)),
         }
     }
 
@@ -762,6 +848,18 @@ impl Voice {
         self.amp = to;
         if let Some(t) = &mut self.tail {
             t.block(self.on, &mut acc);
+        }
+        if let (Some((osc, last)), SubKind::Va { wave, octave }) = (&mut self.sub, s.sub_kind) {
+            // a sine of amplitude a has RMS a/√2; VA's waves have RMS R
+            let to = fr.sub_va * self.pluck[octave.lane()] * core::f32::consts::FRAC_1_SQRT_2 / RMS;
+            if to != 0.0 || *last != 0.0 {
+                let mut x = [0.0f32; B];
+                osc.render(self.f0 * octave.ratio(), wave.wave(), &mut x);
+                for (i, (a, x)) in acc.iter_mut().zip(&x).enumerate() {
+                    *a += (*last + (to - *last) * (i + 1) as f32 / B as f32) * x;
+                }
+            }
+            *last = to;
         }
 
         if air_on {

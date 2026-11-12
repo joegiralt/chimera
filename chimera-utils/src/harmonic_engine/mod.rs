@@ -32,10 +32,10 @@ use std::path::Path;
 use std::time::Instant;
 
 pub use modules::ModuleKind;
-pub use voice::{Adsr, Bright, PathShape, Sound, Voice};
+pub use voice::{Adsr, Bright, PathShape, Sound, SubKind, SubOctave, SubWave, Voice};
 
 /// The most partials a build may have.
-pub const MAX: usize = 64;
+pub const MAX: usize = 160;
 
 /// A build's partial count: a multiple of 8, at most `MAX`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +54,8 @@ impl Partials {
     pub const P32: Self = Self::new(32);
     pub const P48: Self = Self::new(48);
     pub const P64: Self = Self::new(64);
+    /// C3-up: the whole audio range from C3 (152 needed there).
+    pub const P160: Self = Self::new(160);
 }
 
 /// The one render gain for every file: a voice sits at VA's oscillator
@@ -132,6 +134,11 @@ fn controls(n: Partials, s: &Sound) -> Value {
         "air": r(s.air), "sub": r(s.sub), "variety": r(s.variety), "slots": slots,
         "amp": {"attack": r(s.amp.a), "decay": r(s.amp.d), "sustain": r(s.amp.s), "release": r(s.amp.r)},
     });
+    v["bright"] = json!({"map": s.bright.map, "phase": r(s.bright.phase), "tail": s.bright.tail, "log": s.bright.log});
+    if let SubKind::Va { wave, octave } = s.sub_kind {
+        v["sub"] =
+            json!({"kind": "VA", "wave": wave.name(), "octave": octave.name(), "level": r(s.sub)});
+    }
     if s.path.shape != PathShape::Off {
         v["path"] = json!({"shape": s.path.shape.name(), "bars": r(s.path.bars), "size": r(s.path.size), "bpm": 120});
     }
@@ -166,7 +173,7 @@ pub fn run(dir: &Path) -> Result<(), String> {
                     json!({
                         "row": map::ROWS[r], "col": c, "formula": f[r][c],
                         "log_amp_bytes": map::Map::get(bright).node(r, c).bytes().to_vec(),
-                        "centroid_partial_64": (map::centroid(bright, c as f32 / 4.0, r as f32 / 4.0, MAX) * 100.0).round() / 100.0,
+                        "centroid_partial_64": (map::centroid(bright, c as f32 / 4.0, r as f32 / 4.0, map::MAP_N) * 100.0).round() / 100.0,
                     })
                 })
             })
@@ -296,6 +303,45 @@ fn bench() -> Value {
         );
     }
     rows.push(json!({"case": "of which the control frame alone (full case, once a block)", "partials": ctl}));
+    // C3-up: 160 partials, every one live at C3 (20.9 kHz under the
+    // taper's 21.1), no tail, no LOG; the VA SUB beside
+    let c3 = Bright {
+        tail: false,
+        log: false,
+        ..Bright::ON
+    };
+    let va = |s: Sound| {
+        s.with(|s| {
+            s.sub = 0.5;
+            s.sub_kind = SubKind::Va {
+                wave: SubWave::Square,
+                octave: SubOctave::Down1,
+            };
+        })
+    };
+    let bare3 = on(saw, c3).with(|s| s.sub = 0.0);
+    let full3 = on(full, c3);
+    let mut c3_rows = Vec::new();
+    for (name, n, s) in [
+        ("64 partials, first prototype, bare", Partials::P64, saw),
+        ("160 partials, bare", Partials::P160, bare3),
+        (
+            "160 partials, bare + VA SUB (square -1)",
+            Partials::P160,
+            va(bare3),
+        ),
+        (
+            "160 partials, full chain (TILT FORMANT COMB PLUCK, AIR 0.3) + VA SUB",
+            Partials::P160,
+            va(full3),
+        ),
+    ] {
+        let mut v = Voice::new(n, 130.81, 1, &s);
+        let ns = time(&mut |b, i| {
+            v.block(b, &s, i as f32 * B as f32 / FS);
+        });
+        c3_rows.push(json!({"case": name, "host_ns_per_sample": r2(ns), "est_m7_cycles_per_sample": est(ns), "four_voices": est(ns) * 4.0}));
+    }
     let mut proto = crate::macro_osc::Harmonic::new();
     let p = time(&mut |b, _| {
         crate::macro_osc::Model::block(
@@ -310,6 +356,7 @@ fn bench() -> Value {
         "method": "one voice on a held C1 (every partial below the taper live), host ns/sample over 0.5 s, best of five, denormals flushed; est_m7 = ratio to ALGO's six-operator kernel times its billed 770 cycles. Read the ratios, not the digits: the unit bench sets the real figures. Excludes the voice chain (filter, ENVs, FX), billed by its own terms.",
         "algo6_host_ns_per_sample": r2(a),
         "cases": rows,
+        "c3_up_at_c3": c3_rows,
         "reference_macro_osc_harmonic_24_chebyshev": {"host_ns_per_sample": r2(p), "est_m7_cycles_per_sample": est(p)},
     })
 }
@@ -524,6 +571,71 @@ mod tests {
             let new = band(&spectrum(&s, 24));
             let old = band(&spectrum(&s.with(|s| s.bright = Bright::DARK), 24));
             assert!(new >= old + 30.0, "({x},{y}): {new:.1} dB against {old:.1}");
+        }
+    }
+
+    /// C3-up: 160 partials stay under 0.45·fs at every note and leave
+    /// nothing above 0.46·fs; with each VA SUB, finite and under full
+    /// scale, and LEVEL still holds the RMS within 1.5 dB of no SUB.
+    #[test]
+    fn c3_up_is_clean() {
+        let c3 = Bright {
+            tail: false,
+            log: false,
+            ..Bright::ON
+        };
+        let s = Sound::new(1.0, 0.75).with(|s| {
+            s.bright = c3;
+            s.amp = Adsr::new(0.001, 1.0, 1.0, 0.1);
+        });
+        for m in (24..=120).step_by(6) {
+            let f0 = chimera_core::dsp::note_to_freq(m);
+            let fr = frame(Partials::P160, &s, f0, &Vary::default(), 0.0, 0.0);
+            for (hz, a) in fr.hz.iter().zip(&fr.amp) {
+                assert!(*a == 0.0 || *hz < 0.45 * FS, "note {m}: {hz} Hz");
+            }
+        }
+        for m in [48, 60, 84] {
+            let x = render(Partials::P160, &s, &[(m, 0.0, 1.0)], &|_, _| {});
+            let n = 1 << 14;
+            let mut buf: Vec<Complex<f32>> = x[B * 64..B * 64 + n]
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let w = 0.5 - 0.5 * (core::f32::consts::TAU * i as f32 / n as f32).cos();
+                    Complex::new(s * w, 0.0)
+                })
+                .collect();
+            FftPlanner::new().plan_fft_forward(n).process(&mut buf);
+            let (mut lo, mut hi) = (0.0f64, 0.0f64);
+            for (i, v) in buf[..n / 2].iter().enumerate() {
+                if i as f32 * FS / n as f32 > 0.46 * FS {
+                    hi += v.norm_sqr() as f64;
+                } else {
+                    lo += v.norm_sqr() as f64;
+                }
+            }
+            let db = 10.0 * (hi / lo).log10();
+            assert!(db < -80.0, "note {m}: {db:.1} dB above 0.46 fs");
+        }
+        let level = |s: &Sound, m: u8| {
+            let v = render(Partials::P160, s, &[(m, 0.0, 1.0)], &|_, _| {});
+            assert!(v.iter().all(|v| v.is_finite()));
+            assert!(v.iter().all(|v| v.abs() <= 1.0));
+            20.0 * rms(&v[24_000..48_000]).log10()
+        };
+        for m in [24, 48, 72] {
+            let none = level(&s, m);
+            for w in SubWave::ALL {
+                for o in [SubOctave::Down1, SubOctave::Down2] {
+                    let with = s.with(|s| {
+                        s.sub = 1.0;
+                        s.sub_kind = SubKind::Va { wave: w, octave: o };
+                    });
+                    let d = level(&with, m) - none;
+                    assert!(d.abs() <= 1.5, "note {m} {w:?} {o:?}: {d:.2} dB");
+                }
+            }
         }
     }
 

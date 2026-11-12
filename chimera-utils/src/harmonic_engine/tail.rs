@@ -94,21 +94,23 @@ fn tilted(l: C, c: f32) -> C {
     C::new(1.0, 0.0) + (l - 1.0) * c
 }
 
-/// One VA saw.
-struct Saw(VarOsc);
+/// VA's variable-wave oscillator, plain (no sync, no PM), SHAPE 0.
+pub struct Va(pub VarOsc);
 
-impl Saw {
-    fn new() -> Self {
+impl Va {
+    pub fn new() -> Self {
         let mut o = VarOsc::NEW;
         o.prepare(FS);
         o.reset();
         Self(o)
     }
 
-    fn render(&mut self, hz: f32, out: &mut Blk) {
+    /// A block at `hz` on WAVE `wave` (0 sine, ⅓ triangle, ⅔ saw, 1
+    /// pulse; SHAPE 0 makes the pulse square), RMS `osc::R`.
+    pub fn render(&mut self, hz: f32, wave: f32, out: &mut Blk) {
         let r = Ramps {
             inc: (self.0.inc_for(hz), 0.0),
-            wave: (2.0 / 3.0, 0.0),
+            wave: (wave, 0.0),
             shape: (0.0, 0.0),
         };
         let mut mk = [[NO_WRAP; 2]; B];
@@ -121,6 +123,23 @@ impl Saw {
             &[0.0; B],
             (0.0, 0.0),
         );
+    }
+}
+
+/// VA's saw.
+struct Saw(Va);
+
+impl Saw {
+    fn new() -> Self {
+        Self(Va::new())
+    }
+
+    fn render(&mut self, hz: f32, out: &mut Blk) {
+        self.0.render(hz, 2.0 / 3.0, out);
+    }
+
+    fn set_phase(&mut self, p: f32) {
+        self.0.0.set_phase(p);
     }
 }
 
@@ -273,7 +292,7 @@ impl Tail {
                 break;
             }
             let hz = self.f0 * (j + 1) as f32;
-            s.0.set_phase((hz as f64 * on as f64 / FS as f64).fract() as f32);
+            s.set_phase((hz as f64 * on as f64 / FS as f64).fract() as f32);
             s.render(hz, x);
         }
         let mut y = [0.0f32; B];
@@ -309,7 +328,7 @@ mod tests {
         let mut x = Vec::new();
         for i in 0..750 {
             let mut b = [0.0; B];
-            s.0.set_phase((f0 as f64 * (i * B) as f64 / FS as f64).fract() as f32);
+            s.set_phase((f0 as f64 * (i * B) as f64 / FS as f64).fract() as f32);
             s.render(f0, &mut b);
             x.extend(b);
         }

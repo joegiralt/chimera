@@ -7,6 +7,10 @@
 
 use super::MAX;
 
+/// The partials a node stores; above them a frame reads the top octave's
+/// power law (`voice::fit`).
+pub const MAP_N: usize = 64;
+
 /// A stored strength: 0 silent, else (n − 255) × 0.375 dB (−95.6..0 dB).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LogAmp(pub u8);
@@ -27,14 +31,14 @@ impl LogAmp {
 
 /// One node: a strength per partial, its peak at 255.
 #[derive(Clone, Copy)]
-pub struct NodeSpectrum([LogAmp; MAX]);
+pub struct NodeSpectrum([LogAmp; MAP_N]);
 
 impl NodeSpectrum {
     /// From linear amplitudes (any scale): peak-normalised, then quantised.
-    fn from_linear(a: &[f32; MAX]) -> Self {
+    fn from_linear(a: &[f32; MAP_N]) -> Self {
         let pk = a.iter().fold(0.0f32, |m, &v| m.max(v));
         assert!(pk > 0.0, "a node needs one partial");
-        let mut n = [LogAmp(0); MAX];
+        let mut n = [LogAmp(0); MAP_N];
         for (n, &v) in n.iter_mut().zip(a) {
             *n = if v > 0.0 {
                 LogAmp::from_db(20.0 * (v / pk).log10())
@@ -45,7 +49,7 @@ impl NodeSpectrum {
         Self(n)
     }
 
-    pub fn bytes(&self) -> [u8; MAX] {
+    pub fn bytes(&self) -> [u8; MAP_N] {
         self.0.map(|l| l.0)
     }
 }
@@ -149,8 +153,8 @@ fn formants(f: f32, fs: &[(f32, f32)]) -> f32 {
 /// The reference note of the VOICE row: its formants sit right at C3.
 const VOICE_REF_HZ: f32 = 130.81;
 
-fn node_linear(row: usize, col: usize, bright: bool) -> [f32; MAX] {
-    let mut a = [0.0f32; MAX];
+fn node_linear(row: usize, col: usize, bright: bool) -> [f32; MAP_N] {
+    let mut a = [0.0f32; MAP_N];
     let kf = |i: usize| (i + 1) as f32;
     match row {
         0 => {
@@ -337,10 +341,11 @@ impl Map {
         &self.nodes[row][col]
     }
 
-    /// The first `n` partials' levels in dB at (x, y) ∈ [0, 1]²: the four
+    /// The first `n` (≤ `MAP_N`) partials' levels in dB at (x, y) ∈ [0, 1]²: the four
     /// nearest nodes mixed bilinearly in the byte domain. Silent partials
     /// read `f32::NEG_INFINITY`.
     pub fn mix(&self, x: f32, y: f32, n: usize, db: &mut [f32; MAX]) {
+        assert!(n <= MAP_N);
         let split = |v: f32| {
             let p = v.clamp(0.0, 1.0) * 4.0;
             let i = (p as usize).min(3);
@@ -407,7 +412,7 @@ mod tests {
             for (r, row) in ROWS.iter().enumerate().take(4) {
                 let y = r as f32 / 4.0;
                 let c: Vec<f32> = (0..=16)
-                    .map(|i| centroid(bright, i as f32 / 16.0, y, MAX))
+                    .map(|i| centroid(bright, i as f32 / 16.0, y, MAP_N))
                     .collect();
                 for w in c.windows(2) {
                     assert!(w[1] >= w[0] - 1e-3, "{row} bright {bright}: {c:?}");
