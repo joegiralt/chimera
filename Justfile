@@ -736,6 +736,10 @@ chorus-listen dir:
 drum-render dir="../drum-renders":
     {{utils}} drum-render {{dir}}
 
+# HARMONIC engine host prototype (0.4): auditions of partial count, map, DENSITY, modules, morph
+harmonic-render dir="../harmonic-renders":
+    {{utils}} harmonic-render {{dir}}
+
 # VA's macro oscillator KINDs, host prototypes: HARMONIC, SWARM, PARTICLE phrases and sweeps
 macro-render dir="../macro-osc-renders":
     {{utils}} macro-render {{dir}}

@@ -16,6 +16,7 @@ mod filter_fb;
 mod generic;
 mod grain;
 mod grain_listen;
+mod harmonic_engine;
 mod interp;
 mod lpgamp;
 mod macro_osc;
@@ -72,6 +73,9 @@ usage: chimera-utils [flags] COMMAND …
                            and ranges
   drum-render OUTDIR       DRUM's host prototypes (0.4): every machine's hits and pattern, a
                            kit groove, COMBINE's modes, low-bit clips; raw WAVs, manifest.json
+  harmonic-render OUTDIR   HARMONIC engine host prototype (0.4): partial-count A/B, the map,
+                           DENSITY, modules, morph, AIR/SUB, VARIETY, sketches; raw 24-bit
+                           WAVs, manifest.json
   macro-render OUTDIR      VA's macro oscillator KINDs (HARMONIC, SWARM, PARTICLE): phrases
                            at three settings and a sweep per control; 24-bit WAVs at raw
                            levels, manifest.json
@@ -267,6 +271,9 @@ fn run() -> Result<bool, String> {
             }
         }
         "drum-render" if rest.len() == 1 => drums::run(Path::new(&rest[0])).map(|_| true),
+        "harmonic-render" if rest.len() == 1 => {
+            harmonic_engine::run(Path::new(&rest[0])).map(|_| true)
+        }
         "macro-render" if rest.len() == 1 => macro_osc::run(Path::new(&rest[0])).map(|_| true),
         "nrpn-guide" => {
             print!("{}", nrpn_guide::page());

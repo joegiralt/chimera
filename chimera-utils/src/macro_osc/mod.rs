@@ -266,13 +266,13 @@ fn note(
     }
 }
 
-struct Out<'a> {
-    dir: &'a Path,
-    rows: Vec<Value>,
+pub(crate) struct Out<'a> {
+    pub(crate) dir: &'a Path,
+    pub(crate) rows: Vec<Value>,
 }
 
 impl Out<'_> {
-    fn write(&mut self, name: &str, x: &[f32], mut row: Value) -> Result<(), String> {
+    pub(crate) fn write(&mut self, name: &str, x: &[f32], mut row: Value) -> Result<(), String> {
         let x64: Vec<f64> = x.iter().map(|&s| s as f64).collect();
         write_pcm24(&self.dir.join(name), &x64, FS as u32)?;
         let pk = x.iter().fold(0.0f32, |m, s| m.max(s.abs()));
