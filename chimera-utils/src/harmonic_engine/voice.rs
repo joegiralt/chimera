@@ -10,16 +10,22 @@
 //! k₂ = 2k₁/(1+k₁²); exact sine and cosine, no renormalisation), the
 //! amplitude ramped linearly across the block, the loop partial-outer,
 //! sample-inner. Lanes 0 and 1 are SUB (½ and ¼ of the pitch), then the
-//! partials. Start phases are Schroeder's (πk(k−1)/N): a low crest factor,
-//! so the RMS level holds a predictable peak.
+//! partials. Start phases run from aligned (every sine at phase 0: the
+//! sharpest attack) to Schroeder's (πk(k−1)/N: a low crest factor, a
+//! softer one) on PHASE.
+//!
+//! BRIGHT (`Bright`): the brighter map and taper, PHASE, BRIGHT TAIL
+//! (`tail`) and LOG spacing; `Bright::DARK` is the first prototype, to
+//! the bit.
 
 use super::map::Map;
 use super::modules::{Module, ModuleKind, stretch_ratio};
+use super::tail::{TAIL_BELOW, TAIL_TOP, Tail, TailSpec};
 use super::{MAX, Partials};
 use crate::drums::parts::{B, Blk, FS};
 
 pub const SLOTS: usize = 4;
-const SUB: usize = 2;
+pub const SUB: usize = 2;
 pub const LANES: usize = MAX + SUB;
 /// Every voice's RMS at sustain: VA's oscillator RMS.
 pub const RMS: f32 = chimera_core::dsp::va::osc::R;
@@ -29,6 +35,59 @@ pub const TOP: f32 = 0.45;
 const KNEE: f32 = 6.0;
 /// DENSITY's range: the threshold sits `RANGE·d²` dB under the peak.
 const RANGE: f32 = 96.0;
+/// The map's partials (its nodes store this many).
+pub const MAP_N: usize = 64;
+/// LOG spacing: on while N·f0 is under this; its top partial near
+/// `TAIL_TOP`.
+pub const LOG_BELOW: f32 = 16_000.0;
+/// STRETCH's B over which the (harmonic) tail has faded out.
+const TAIL_B_FADE: f32 = 2e-5;
+
+/// The brightness options (owner's feedback: "darker than Loom").
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bright {
+    /// The brighter map (`map::FORMULAS_BRIGHT`), and the taper flat to
+    /// 0.44·fs (silent from 0.45) instead of Plaits' (1 − 2f) from DC
+    /// times a ramp from 0.40.
+    pub map: bool,
+    /// Start phases: 0 aligned (sharp, immediate), 1 Schroeder (soft).
+    pub phase: f32,
+    /// The saw tail above the last partial to ~20 kHz (`tail`).
+    pub tail: bool,
+    /// On low notes, the upper half of the lanes spread geometrically up
+    /// to ~20 kHz, each carrying its band's energy. Where it is on, the
+    /// lanes already reach the top, so the tail stays off.
+    pub log: bool,
+}
+
+impl Bright {
+    /// The first prototype.
+    pub const DARK: Self = Self {
+        map: false,
+        phase: 1.0,
+        tail: false,
+        log: false,
+    };
+    /// The defaults: everything but LOG (the tail is denser and the
+    /// ear's choice; see the renders' group 9).
+    pub const ON: Self = Self {
+        map: true,
+        phase: 0.0,
+        tail: true,
+        log: false,
+    };
+
+    /// LOG spacing at this note.
+    pub fn log_at(&self, n: usize, f0: f32) -> bool {
+        self.log && n as f32 * f0 < LOG_BELOW && (TAIL_TOP / f0) as usize > n
+    }
+
+    /// The tail at this note.
+    pub fn tail_at(&self, n: usize, f0: f32) -> bool {
+        self.tail && !self.log_at(n, f0) && (n + 1) as f32 * f0 < TAIL_BELOW
+    }
+}
+
 /// VARIETY at 1 offsets each varied control by up to ±this.
 const VARY_SPREAD: f32 = 0.25;
 /// AIR's noise streams: low-passed at this many Hz.
@@ -130,6 +189,7 @@ pub struct Sound {
     pub path: PathCtl,
     pub env_x: EnvX,
     pub amp: Adsr,
+    pub bright: Bright,
 }
 
 impl Sound {
@@ -149,6 +209,7 @@ impl Sound {
                 decay: 0.3,
             },
             amp: Adsr::new(0.005, 0.3, 0.8, 0.3),
+            bright: Bright::ON,
         }
     }
 
@@ -234,12 +295,95 @@ pub struct Frame {
     /// AIR's band above the top partial: RMS and lower edge (Hz)
     pub band: f32,
     pub band_lo: f32,
+    /// BRIGHT TAIL's ask, if it plays
+    pub tail: Option<TailSpec>,
 }
 
-/// Plaits' (1 − 2f) taper, forced to silence at `TOP`·fs.
-pub fn taper(hz: f32) -> f32 {
+/// Plaits' (1 − 2f) taper, forced to silence at `TOP`·fs; bright, flat to
+/// 0.44·fs and silent from `TOP`.
+pub fn taper(hz: f32, bright: bool) -> f32 {
     let f = hz / FS;
-    (1.0 - 2.0 * f).max(0.0) * ((TOP - f) / 0.05).clamp(0.0, 1.0)
+    if bright {
+        ((TOP - f) / 0.01).clamp(0.0, 1.0)
+    } else {
+        (1.0 - 2.0 * f).max(0.0) * ((TOP - f) / 0.05).clamp(0.0, 1.0)
+    }
+}
+
+/// Each lane's harmonic number and how many harmonics its band holds:
+/// 1..n, or with LOG 1..n/2 exact and the rest spread geometrically up to
+/// `TAIL_TOP` (exact integer harmonics, strictly rising).
+pub fn harmonics(n: usize, f0: f32, log: bool) -> ([f32; MAX], [(f32, f32); MAX]) {
+    let mut h = [0.0f32; MAX];
+    let mut band = [(0.0f32, 0.0f32); MAX];
+    for (i, h) in h.iter_mut().enumerate().take(n) {
+        *h = (i + 1) as f32;
+    }
+    if log {
+        let k = n / 2;
+        let top = (TAIL_TOP / f0).floor();
+        let r = (top / k as f32).powf(1.0 / (n - k) as f32);
+        for i in k..n {
+            let g = (k as f32 * r.powi((i - k + 1) as i32)).round();
+            h[i] = g.max(h[i - 1] + 1.0).min(top - (n - 1 - i) as f32);
+        }
+    }
+    for i in 0..n {
+        let lo = if i == 0 { 0.5 } else { 0.5 * (h[i - 1] + h[i]) };
+        let hi = if i + 1 == n {
+            h[i] + 0.5
+        } else {
+            0.5 * (h[i] + h[i + 1])
+        };
+        band[i] = (lo, hi);
+    }
+    (h, band)
+}
+
+/// A power law fitted to the top octave of `db` (`lo..=hi`, 1-based
+/// harmonics), weighted by power: (dB at `hi`, dB/oct, −24..0).
+fn fit(db: &[f32; MAX], lo: usize, hi: usize) -> Option<(f32, f32)> {
+    let (mut w, mut sx, mut sy, mut sxx, mut sxy) = (0.0f32, 0.0, 0.0, 0.0, 0.0);
+    let pk = (lo..=hi).fold(f32::NEG_INFINITY, |m, k| m.max(db[k - 1]));
+    if pk == f32::NEG_INFINITY {
+        return None;
+    }
+    for k in lo..=hi {
+        let d = db[k - 1];
+        if d == f32::NEG_INFINITY {
+            continue;
+        }
+        let x = (k as f32 / hi as f32).log2();
+        let p = 10f32.powf((d - pk) / 10.0);
+        w += p;
+        sx += p * x;
+        sy += p * d;
+        sxx += p * x * x;
+        sxy += p * x * d;
+    }
+    let var = sxx / w - (sx / w).powi(2);
+    let slope = if var > 1e-4 {
+        // never rising: a formant's edge must not extrapolate to a shriek
+        ((sxy / w - sx / w * sy / w) / var).clamp(-24.0, 0.0)
+    } else {
+        -6.0
+    };
+    Some((sy / w - slope * sx / w, slope))
+}
+
+/// Σ over harmonics in [a, b) of 10^(dB/10) on the power law `(d0 at k0,
+/// slope dB/oct)`, as its integral.
+fn law_power(d0: f32, k0: f32, slope: f32, a: f32, b: f32) -> f32 {
+    if b <= a {
+        return 0.0;
+    }
+    let q = slope / (10.0 * 2f32.log10()); // power ∝ k^q
+    let c = 10f32.powf(d0 / 10.0) / k0.powf(q);
+    if (q + 1.0).abs() < 1e-3 {
+        c * (b / a).ln()
+    } else {
+        c * (b.powf(q + 1.0) - a.powf(q + 1.0)) / (q + 1.0)
+    }
 }
 
 /// The control frame of a voice at `f0`: pure.
@@ -252,7 +396,11 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
         air: [0.0; LANES],
         band: 0.0,
         band_lo: 0.0,
+        tail: None,
     };
+    let br = s.bright;
+    let log = br.log_at(n, f0);
+    let (harm, bands) = harmonics(n, f0, log);
     let (dx, dy) = s.path.offset(clock);
     let ex = s.env_x.amount * (-since_on / s.env_x.decay.max(1e-3)).exp();
     let x = (s.x + dx + ex + vary.x).clamp(0.0, 1.0);
@@ -276,7 +424,11 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
     f.hz[0] = 0.5 * f0;
     f.hz[1] = 0.25 * f0;
     for i in 0..n {
-        let mut hz = f0 * stretch_ratio(i + 1, b);
+        let mut hz = if log {
+            f0 * stretch_ratio(harm[i] as usize, b)
+        } else {
+            f0 * stretch_ratio(i + 1, b)
+        };
         if i > 0 {
             hz = hz.max(f.hz[SUB + i - 1] + 0.05 * f0);
         }
@@ -285,7 +437,35 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
 
     // map → DENSITY: the threshold under the strongest audible partial
     let mut db = [f32::NEG_INFINITY; MAX];
-    Map::get().mix(x, y, n, &mut db);
+    let map = Map::get(br.map);
+    // with LOG, a lane's level is its band's: the stored partials, then
+    // the map's top octave's law beyond them. `db` reads per harmonic
+    // (DENSITY's), `amp_db` the band's sum.
+    let mut amp_db = [f32::NEG_INFINITY; MAX];
+    if log {
+        let mut m = [f32::NEG_INFINITY; MAX];
+        map.mix(x, y, MAP_N, &mut m);
+        let law = fit(&m, MAP_N / 2, MAP_N);
+        for i in 0..n {
+            let (lo, hi) = bands[i];
+            let mut p = 0.0f32;
+            for k in (lo.ceil() as usize).max(1)..=(hi.floor() as usize).min(MAP_N) {
+                if (k as f32) < hi && m[k - 1] > f32::NEG_INFINITY {
+                    p += 10f32.powf(m[k - 1] / 10.0);
+                }
+            }
+            if let Some((d0, sl)) = law {
+                p += law_power(d0, MAP_N as f32, sl, lo.max(MAP_N as f32 + 0.5), hi);
+            }
+            if p > 0.0 {
+                amp_db[i] = 10.0 * p.log10();
+                db[i] = amp_db[i] - 10.0 * (hi - lo).max(1.0).log10();
+            }
+        }
+    } else {
+        map.mix(x, y, n, &mut db);
+        amp_db[..n].copy_from_slice(&db[..n]);
+    }
     let audible = |i: usize| f.hz[SUB + i] < TOP * FS;
     let peak = (0..n)
         .filter(|&i| audible(i))
@@ -303,9 +483,10 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
         }
         let k = ((l - (thr - KNEE)) / KNEE).clamp(0.0, 1.0);
         let hz = f.hz[SUB + i];
-        let mut a = 10f32.powf(l / 20.0) * k * k * (3.0 - 2.0 * k);
+        let mut a = 10f32.powf(amp_db[i] / 20.0) * k * k * (3.0 - 2.0 * k);
+        let h = if log { harm[i] as usize } else { i + 1 };
         for m in &mods {
-            a *= m.gain(i + 1, hz, f0);
+            a *= m.gain(h, hz, f0);
             f.rate[SUB + i] += m.decay_rate(hz / f0);
         }
         f.amp[SUB + i] = a;
@@ -320,19 +501,68 @@ pub fn frame(n: Partials, s: &Sound, f0: f32, vary: &Vary, clock: f32, since_on:
         f.rate[l] = mods.iter().map(|m| m.decay_rate(f.hz[l] / f0)).sum();
     }
 
+    // BRIGHT TAIL: the map's top-octave law carried on above N, through
+    // DENSITY's knee and the masks (COMB at its mean, ODD/EVEN as the
+    // tail's own odd/even gains); faded out by STRETCH (it is harmonic)
+    let mut tail_ss = 0.0f32;
+    if br.tail_at(n, f0) {
+        let fade = (1.0 - b.abs() / TAIL_B_FADE).clamp(0.0, 1.0);
+        if let Some((d0, sl)) = fit(&db, n / 2, n).filter(|_| fade > 0.0) {
+            let (k_lo, k_hi) = ((n + 1) as f32, TAIL_TOP / f0);
+            let at = |k: f32| d0 + sl * (k / n as f32).log2();
+            let kn = ((at(k_lo) - (thr - KNEE)) / KNEE).clamp(0.0, 1.0);
+            let mask =
+                |k: f32| -> f32 { mods.iter().map(|m| m.tail_gain(k, k * f0, f0)).product() };
+            let (e_lo, e_hi) = (
+                10f32.powf(at(k_lo) / 20.0) * mask(k_lo),
+                10f32.powf(at(k_hi) / 20.0) * mask(k_hi),
+            );
+            let (odd, even) = mods.iter().fold((1.0f32, 1.0f32), |(o, e), m| {
+                (o * m.odd_even(false), e * m.odd_even(true))
+            });
+            if e_lo > 0.0 && e_hi > 0.0 {
+                let slope = 20.0 * (e_hi / e_lo).log10() / (k_hi / k_lo).log2();
+                let e_lo = e_lo * kn * kn * (3.0 - 2.0 * kn) * fade;
+                let mean_oe = 0.5 * (odd * odd + even * even);
+                // ½ Σ amplitude²: the law's power from N + ½ to the top
+                tail_ss = 0.5
+                    * mean_oe
+                    * law_power(
+                        20.0 * e_lo.max(1e-30).log10(),
+                        k_lo,
+                        slope,
+                        k_lo - 0.5,
+                        k_hi,
+                    );
+                f.tail = Some(TailSpec {
+                    e_lo,
+                    slope,
+                    odd,
+                    even,
+                });
+            }
+        }
+    }
+
     // TAPER, then LEVEL: the RMS held whatever the map, DENSITY or slots
     let mut ss = 0.0f32;
     for l in 0..SUB + n {
-        f.amp[l] *= taper(f.hz[l]);
+        f.amp[l] *= taper(f.hz[l], br.map);
         ss += f.amp[l] * f.amp[l];
     }
-    if ss < 1e-20 {
+    let ss_bank = ss;
+    ss += 2.0 * tail_ss;
+    if ss_bank < 1e-20 {
         f.amp = [0.0; LANES];
+        f.tail = None;
         return f;
     }
     let g = RMS / (0.5 * ss).sqrt();
     for a in &mut f.amp[..SUB + n] {
         *a *= g;
+    }
+    if let Some(t) = &mut f.tail {
+        t.e_lo *= g;
     }
 
     // AIR: noise on each partial, more on high ones, and on low notes a
@@ -378,6 +608,7 @@ pub struct Voice {
     /// the band: high-pass and low-pass states, its last RMS
     band: [f32; 2],
     band_lvl: f32,
+    tail: Option<Box<Tail>>,
 }
 
 impl Voice {
@@ -385,11 +616,23 @@ impl Voice {
         let np = n.get() as f32;
         let mut u = [1.0; LANES];
         let mut v = [0.0; LANES];
+        let mut psi = [0.0; LANES];
         for l in SUB..LANES {
             let k = (l - SUB + 1) as f32;
-            let ph = core::f32::consts::PI * k * (k - 1.0) / np;
+            let schroeder = core::f32::consts::PI * k * (k - 1.0) / np;
+            let ph = if s.bright.phase == 1.0 {
+                schroeder
+            } else {
+                // wrapped first: the blend turns each phase the short way
+                s.bright.phase * schroeder.rem_euclid(core::f32::consts::TAU)
+            };
+            psi[l] = ph;
             (u[l], v[l]) = (ph.cos(), ph.sin());
         }
+        let tail = s
+            .bright
+            .tail_at(n.get(), f0)
+            .then(|| Box::new(Tail::new(n.get(), f0, &psi)));
         Self {
             n,
             f0,
@@ -408,6 +651,7 @@ impl Voice {
             lp: [[0.0; 2]; 4],
             band: [0.0; 2],
             band_lvl: 0.0,
+            tail,
         }
     }
 
@@ -484,6 +728,12 @@ impl Voice {
             }
             to[l] = fr.amp[l] * self.pluck[l];
         }
+        if let Some(t) = &mut self.tail {
+            // the tail decays with the top partial
+            let n = self.n.get();
+            let spec = fr.tail.unwrap_or_default();
+            t.yield_to(&spec, self.pluck[SUB + n - 1], n, &mut to);
+        }
 
         let mut acc: Blk = [0.0; B];
         let mut accn = [[0.0f32; B]; 4];
@@ -510,6 +760,9 @@ impl Voice {
             i += 1;
         }
         self.amp = to;
+        if let Some(t) = &mut self.tail {
+            t.block(self.on, &mut acc);
+        }
 
         if air_on {
             let c = 1.0 - (-core::f32::consts::TAU * AIR_LP / FS).exp();

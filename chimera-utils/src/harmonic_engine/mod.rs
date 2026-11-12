@@ -10,6 +10,11 @@
 //! corner variations of the module knobs morphed by the same X/Y; PATH;
 //! ENV → X; VARIETY; and a plain ADSR standing in for the voice chain.
 //!
+//! BRIGHT (`Bright`, after the owner's "darker than Loom"): a brighter map
+//! and taper, PHASE (aligned to Schroeder), BRIGHT TAIL (`tail`: VA's saw
+//! through CLEAN above the last partial) and LOG spacing on low notes.
+//! `Bright::ON` is the default; `Bright::DARK` the first prototype.
+//!
 //! `harmonic-render OUTDIR`: the audition groups as mono 48 kHz 24-bit
 //! WAVs at one fixed gain (`GAIN`), never normalised, and `manifest.json`
 //! with each file's levels and a host cost estimate.
@@ -17,6 +22,7 @@
 mod map;
 mod modules;
 mod renders;
+mod tail;
 mod voice;
 
 use crate::drums::parts::{B, Blk, FS};
@@ -26,7 +32,7 @@ use std::path::Path;
 use std::time::Instant;
 
 pub use modules::ModuleKind;
-pub use voice::{Adsr, PathShape, Sound, Voice};
+pub use voice::{Adsr, Bright, PathShape, Sound, Voice};
 
 /// The most partials a build may have.
 pub const MAX: usize = 64;
@@ -148,22 +154,30 @@ pub fn run(dir: &Path) -> Result<(), String> {
         .iter()
         .filter_map(|r| r["peak_dbfs"].as_f64())
         .fold(f64::MIN, f64::max);
-    let nodes: Vec<Value> = (0..5)
-        .flat_map(|r| {
-            (0..5).map(move |c| {
-                json!({
-                    "row": map::ROWS[r], "col": c, "formula": map::FORMULAS[r][c],
-                    "log_amp_bytes": map::Map::get().node(r, c).bytes().to_vec(),
-                    "centroid_partial_64": (map::centroid(c as f32 / 4.0, r as f32 / 4.0, MAX) * 100.0).round() / 100.0,
+    let nodes = |bright: bool| -> Vec<Value> {
+        let f = if bright {
+            &map::FORMULAS_BRIGHT
+        } else {
+            &map::FORMULAS
+        };
+        (0..5)
+            .flat_map(|r| {
+                (0..5).map(move |c| {
+                    json!({
+                        "row": map::ROWS[r], "col": c, "formula": f[r][c],
+                        "log_amp_bytes": map::Map::get(bright).node(r, c).bytes().to_vec(),
+                        "centroid_partial_64": (map::centroid(bright, c as f32 / 4.0, r as f32 / 4.0, MAX) * 100.0).round() / 100.0,
+                    })
                 })
             })
-        })
-        .collect();
+            .collect()
+    };
     let manifest = json!({
         "about": "Chimera HARMONIC engine, host prototype (chimera-utils harmonic-render): recursive sine partials (Vicanek) with Plaits' Nyquist taper, a 5x5 map of formula spectra as 8-bit log amplitudes, DENSITY, AIR, SUB, four module slots, corner variations, PATH, ENV->X, VARIETY; a plain ADSR stands in for the voice chain (no filter, no FX). 48 kHz mono 24-bit WAVs, never normalised.",
         "render_gain": {"gain": (GAIN as f64 * 1000.0).round() / 1000.0, "voice_rms_dbfs_at_sustain": (20.0 * (voice::RMS as f64 * GAIN as f64).log10() * 10.0).round() / 10.0, "loudest_peak_dbfs": loudest, "note": "every file at the same fixed gain; LEVEL holds each voice at VA's oscillator RMS (0.2) before the amp envelope"},
         "groups": groups,
-        "map": nodes,
+        "map": nodes(false),
+        "map_bright": nodes(true),
         "cpu_estimate": bench(),
         "files": out.rows,
     });
@@ -207,7 +221,10 @@ fn bench() -> Value {
     });
     let r2 = |v: f64| (v * 100.0).round() / 100.0;
     let est = |ns: f64| (ns / a * 770.0).round();
-    let saw = Sound::new(0.5, 0.75).with(|s| s.amp = Adsr::new(0.001, 1.0, 1.0, 1.0));
+    let saw = Sound::new(0.5, 0.75).with(|s| {
+        s.amp = Adsr::new(0.001, 1.0, 1.0, 1.0);
+        s.bright = Bright::DARK;
+    });
     let full = saw
         .slot(0, ModuleKind::Tilt, [0.6, 0.2, 0.0])
         .slot(1, ModuleKind::Formant, [0.5, 0.4, 0.5])
@@ -218,14 +235,35 @@ fn bench() -> Value {
             s.sub = 0.5;
         });
     let stretch = saw.slot(0, ModuleKind::Stretch, [0.6, 0.0, 0.0]);
-    let cases: [(&str, Sound, bool); 3] = [
-        ("bare: map + DENSITY + bank", saw, false),
+    let on = |s: Sound, b: Bright| s.with(|s| s.bright = b);
+    let log = Bright {
+        log: true,
+        ..Bright::ON
+    };
+    let cases: [(&str, Sound, bool); 7] = [
+        ("bare: map + DENSITY + bank (first prototype)", saw, false),
         (
-            "full: TILT FORMANT COMB PLUCK, AIR 0.3, SUB 0.5",
+            "full: TILT FORMANT COMB PLUCK, AIR 0.3, SUB 0.5 (first prototype)",
             full,
             false,
         ),
         ("STRETCH moving every block (k re-solved)", stretch, true),
+        (
+            "bare, bright defaults (BRIGHT TAIL on)",
+            on(saw, Bright::ON),
+            false,
+        ),
+        (
+            "full, bright defaults (BRIGHT TAIL on)",
+            on(full, Bright::ON),
+            false,
+        ),
+        (
+            "bare, bright + LOG (LOG replaces the tail)",
+            on(saw, log),
+            false,
+        ),
+        ("full, bright + LOG", on(full, log), false),
     ];
     let mut rows = Vec::new();
     for (name, s, moving) in cases {
@@ -317,10 +355,16 @@ mod tests {
     fn no_partial_at_or_above_045_fs() {
         for m in (24..=120).step_by(4) {
             let f0 = chimera_core::dsp::note_to_freq(m);
-            for st in [0.0, 0.5, 0.8, 1.0] {
+            for (st, log) in [0.0, 0.5, 0.8, 1.0]
+                .into_iter()
+                .flat_map(|st| [(st, false), (st, true)])
+            {
                 let s = Sound::new(1.0, 0.75)
                     .slot(0, ModuleKind::Stretch, [st, 0.0, 0.0])
-                    .with(|s| s.sub = 1.0);
+                    .with(|s| {
+                        s.sub = 1.0;
+                        s.bright.log = log;
+                    });
                 let fr = frame(Partials::P64, &s, f0, &Vary::default(), 0.0, 0.0);
                 for (hz, a) in fr.hz.iter().zip(&fr.amp) {
                     assert!(
@@ -384,6 +428,102 @@ mod tests {
                     "({x},{y}) DENSITY {i}/10: {d:.2} vs {full:.2}"
                 );
             }
+        }
+    }
+
+    /// |X| of a held note's Hann-windowed 2^15 samples from 0.5 s.
+    fn spectrum(s: &Sound, m: u8) -> Vec<f32> {
+        let s = s.with(|s| s.amp = Adsr::new(0.001, 1.0, 1.0, 0.1));
+        let x = render(Partials::P64, &s, &[(m, 0.0, 1.5)], &|_, _| {});
+        let n = 1 << 15;
+        let mut buf: Vec<Complex<f32>> = x[24_000..24_000 + n]
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let w = 0.5 - 0.5 * (core::f32::consts::TAU * i as f32 / n as f32).cos();
+                Complex::new(s * w, 0.0)
+            })
+            .collect();
+        FftPlanner::new().plan_fft_forward(n).process(&mut buf);
+        buf[..n / 2].iter().map(|v| v.norm()).collect()
+    }
+
+    /// The level at `hz`: the strongest bin within ±2.
+    fn at(sp: &[f32], hz: f32) -> f32 {
+        let b = (hz * (1 << 15) as f32 / FS).round() as usize;
+        20.0 * sp[b - 2..=b + 2]
+            .iter()
+            .fold(0.0f32, |m, &v| m.max(v))
+            .log10()
+    }
+
+    /// BRIGHT TAIL's skirt never doubles a partial under N: with the tail
+    /// on, every partial under N moves by the same LEVEL factor (the tail
+    /// takes its share of the held RMS), within 0.5 dB.
+    #[test]
+    fn tail_leaves_partials_under_n_untouched() {
+        for (x, y) in [(1.0, 0.75), (0.5, 0.75), (1.0, 0.25), (0.6, 0.5)] {
+            for phase in [0.0, 1.0] {
+                let on = Sound::new(x, y).with(|s| {
+                    s.bright = Bright {
+                        phase,
+                        ..Bright::ON
+                    }
+                });
+                let off = on.with(|s| s.bright.tail = false);
+                for m in [24, 36] {
+                    let f0 = chimera_core::dsp::note_to_freq(m);
+                    let (a, b) = (spectrum(&on, m), spectrum(&off, m));
+                    let top = (1..64)
+                        .map(|k| at(&b, k as f32 * f0))
+                        .fold(f32::MIN, f32::max);
+                    let d: Vec<(usize, f32)> = (1..64)
+                        .filter(|&k| at(&b, k as f32 * f0) > top - 60.0)
+                        .map(|k| (k, at(&a, k as f32 * f0) - at(&b, k as f32 * f0)))
+                        .collect();
+                    let lvl = d[0].1;
+                    for &(k, v) in &d {
+                        assert!(
+                            (v - lvl).abs() <= 0.5,
+                            "({x},{y}) phase {phase} note {m} partial {k}: {v:.2} dB against {lvl:.2}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn aligned_phase_attacks_harder_than_schroeder() {
+        for (x, y) in [(1.0, 0.75), (0.5, 0.75), (1.0, 0.25)] {
+            let peak = |phase: f32| {
+                let s = Sound::new(x, y).with(|s| {
+                    s.bright.phase = phase;
+                    s.amp = Adsr::new(0.001, 0.3, 0.8, 0.1);
+                });
+                let v = render(Partials::P64, &s, &[(48, 0.0, 0.2)], &|_, _| {});
+                v[..1440].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+            };
+            let (a, s) = (peak(0.0), peak(1.0));
+            assert!(a > 1.1 * s, "({x},{y}): aligned {a} Schroeder {s}");
+        }
+    }
+
+    /// A C1 with the defaults (the tail on) has a spectrum at 12 kHz; the
+    /// first prototype stopped at 2 kHz.
+    #[test]
+    fn c1_reaches_12_khz() {
+        for (x, y) in [(1.0, 0.75), (0.5, 0.75), (1.0, 0.25)] {
+            let s = Sound::new(x, y);
+            let band = |sp: &[f32]| {
+                (11_800..12_200)
+                    .step_by(20)
+                    .map(|hz| at(sp, hz as f32))
+                    .fold(f32::MIN, f32::max)
+            };
+            let new = band(&spectrum(&s, 24));
+            let old = band(&spectrum(&s.with(|s| s.bright = Bright::DARK), 24));
+            assert!(new >= old + 30.0, "({x},{y}): {new:.1} dB against {old:.1}");
         }
     }
 

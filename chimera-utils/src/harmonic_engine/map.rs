@@ -52,7 +52,7 @@ impl NodeSpectrum {
 
 pub const ROWS: [&str; 5] = ["BELL", "ORGAN", "REED", "BRASS/BOWED", "VOICE"];
 
-/// Each node's formula, one line each (its provenance).
+/// Each node's formula, one line each (its provenance): the original map.
 pub const FORMULAS: [[&str; 5]; 5] = [
     [
         "sparse set 1 2 3 5 7 10 14 19 26 35 47 63, k^-2.2",
@@ -91,6 +91,48 @@ pub const FORMULAS: [[&str; 5]; 5] = [
     ],
 ];
 
+/// The brighter map: every power law rolls off less (BELL by 0.15..0.7,
+/// REED and BRASS/BOWED by 0.2..0.5 in the exponent, VOICE's source from
+/// −6 to −3 dB/oct); ORGAN, which has no roll-off law, pulls its upper
+/// drawbars out further and adds mixture ranks.
+pub const FORMULAS_BRIGHT: [[&str; 5]; 5] = [
+    [
+        "sparse set 1 2 3 5 7 10 14 19 26 35 47 63, k^-1.5",
+        "the same set, k^-1.1",
+        "the same set, k^-0.75",
+        "the same set, k^-0.45",
+        "the same set, k^-0.2",
+    ],
+    [
+        "drawbars 8' 4' 2' at 8 4 2 (flute with a 2')",
+        "drawbars 8' 4' 2-2/3' 2' 1' at 8 6 5 4 2",
+        "drawbars 8 8 6 6 2 2 5, mixture 1-3/5' at 2",
+        "drawbars 8 8 8 8 5 5 7, mixtures to the 24th at 5..3",
+        "all drawbars out, mixture ranks to the 64th one drawbar louder, 28th 36th 56th added",
+    ],
+    [
+        "clarinet low register: odd k^-1.0, even -30 dB, rolled off (k/30)",
+        "clarinet upper register: odd k^-1.1, even -18 dB",
+        "bassoon: k^-0.8 times a bump at the 4th",
+        "oboe: weak fundamental, k^-0.3, bump at the 5th",
+        "harmonica: k^-0.2, bump at the 10th, odd +3.5 dB",
+    ],
+    [
+        "soft horn: k^-1.5, bump at the 2nd",
+        "cello: k^-0.8, body bumps at the 3rd and 7th",
+        "bright saw: k^-0.75",
+        "trumpet: k^-0.2, bump at the 6th",
+        "buzzy brass: k^-0.1, bump at the 14th",
+    ],
+    [
+        "vowel U at C3, -3 dB/oct source",
+        "vowel O at C3, -3 dB/oct source",
+        "vowel A at C3, -3 dB/oct source",
+        "vowel E at C3, -3 dB/oct source",
+        "vowel I at C3, -3 dB/oct source",
+    ],
+];
+
 /// A Gaussian bump over log2 of the partial number, centred on partial `c`.
 fn bump(k: f32, c: f32, sigma_oct: f32) -> f32 {
     let d = (k / c).log2() / sigma_oct;
@@ -107,7 +149,7 @@ fn formants(f: f32, fs: &[(f32, f32)]) -> f32 {
 /// The reference note of the VOICE row: its formants sit right at C3.
 const VOICE_REF_HZ: f32 = 130.81;
 
-fn node_linear(row: usize, col: usize) -> [f32; MAX] {
+fn node_linear(row: usize, col: usize, bright: bool) -> [f32; MAX] {
     let mut a = [0.0f32; MAX];
     let kf = |i: usize| (i + 1) as f32;
     match row {
@@ -115,7 +157,11 @@ fn node_linear(row: usize, col: usize) -> [f32; MAX] {
             // one sparse set for the row, so the log-domain mix between
             // neighbours is a power law too: the centroid rises evenly
             const SET: [usize; 12] = [1, 2, 3, 5, 7, 10, 14, 19, 26, 35, 47, 63];
-            let s = [2.2, 1.6, 1.1, 0.7, 0.35][col];
+            let s = if bright {
+                [1.5, 1.1, 0.75, 0.45, 0.2]
+            } else {
+                [2.2, 1.6, 1.1, 0.7, 0.35]
+            }[col];
             for k in SET {
                 a[k - 1] = (k as f32).powf(-s);
             }
@@ -148,15 +194,72 @@ fn node_linear(row: usize, col: usize) -> [f32; MAX] {
                     (64, 3),
                 ],
             ];
+            const REG_B: [[u8; 7]; 5] = [
+                [8, 4, 0, 2, 0, 0, 0],
+                [8, 6, 5, 4, 0, 0, 2],
+                [8, 8, 6, 6, 2, 2, 5],
+                [8, 8, 8, 8, 5, 5, 7],
+                [8, 8, 8, 8, 8, 8, 8],
+            ];
+            const MIX_B: [&[(usize, u8)]; 5] = [
+                &[],
+                &[],
+                &[(10, 2)],
+                &[(10, 5), (12, 5), (16, 4), (20, 4), (24, 3)],
+                &[
+                    (10, 8),
+                    (12, 8),
+                    (16, 7),
+                    (20, 7),
+                    (24, 6),
+                    (28, 5),
+                    (32, 6),
+                    (36, 4),
+                    (40, 5),
+                    (48, 5),
+                    (56, 3),
+                    (64, 4),
+                ],
+            ];
+            let (reg, mix) = if bright {
+                (&REG_B, &MIX_B)
+            } else {
+                (&REG, &MIX)
+            };
             // a drawbar step is 3 dB; 0 is off
             let lvl = |bar: u8| 10f32.powf((bar as f32 - 8.0) * 3.0 / 20.0);
-            for (h, &bar) in H.iter().zip(&REG[col]) {
+            for (h, &bar) in H.iter().zip(&reg[col]) {
                 if bar > 0 {
                     a[h - 1] = lvl(bar);
                 }
             }
-            for &(h, bar) in MIX[col] {
+            for &(h, bar) in mix[col] {
                 a[h - 1] = lvl(bar);
+            }
+        }
+        2 if bright => {
+            for (i, a) in a.iter_mut().enumerate() {
+                let k = kf(i);
+                let odd = (i + 1) % 2 == 1;
+                *a = match col {
+                    0 => k.powf(-1.0) * if odd { 1.0 } else { 0.0316 } * (-k / 30.0).exp(),
+                    1 => k.powf(-1.1) * if odd { 1.0 } else { 0.126 },
+                    2 => k.powf(-0.8) * (0.3 + bump(k, 4.0, 0.5)),
+                    3 => k.powf(-0.3) * (0.1 + bump(k, 5.0, 0.6)) * if i == 0 { 0.3 } else { 1.0 },
+                    _ => k.powf(-0.2) * (0.15 + bump(k, 10.0, 0.7)) * if odd { 1.5 } else { 1.0 },
+                };
+            }
+        }
+        3 if bright => {
+            for (i, a) in a.iter_mut().enumerate() {
+                let k = kf(i);
+                *a = match col {
+                    0 => k.powf(-1.5) * (1.0 + bump(k, 2.0, 0.5)),
+                    1 => k.powf(-0.8) * (1.0 + 1.5 * bump(k, 3.0, 0.3) + bump(k, 7.0, 0.3)),
+                    2 => k.powf(-0.75),
+                    3 => k.powf(-0.2) * (0.3 + bump(k, 6.0, 0.6)),
+                    _ => k.powf(-0.1) * (0.3 + bump(k, 14.0, 0.7)),
+                };
             }
         }
         2 => {
@@ -202,7 +305,7 @@ fn node_linear(row: usize, col: usize) -> [f32; MAX] {
             ];
             for (i, a) in a.iter_mut().enumerate() {
                 let k = kf(i);
-                *a = formants(k * VOICE_REF_HZ, &fs) / k;
+                *a = formants(k * VOICE_REF_HZ, &fs) / if bright { k.sqrt() } else { k };
             }
         }
     }
@@ -215,17 +318,19 @@ pub struct Map {
 }
 
 impl Map {
-    fn build() -> Self {
+    fn build(bright: bool) -> Self {
         Self {
             nodes: core::array::from_fn(|r| {
-                core::array::from_fn(|c| NodeSpectrum::from_linear(&node_linear(r, c)))
+                core::array::from_fn(|c| NodeSpectrum::from_linear(&node_linear(r, c, bright)))
             }),
         }
     }
 
-    pub fn get() -> &'static Map {
-        static M: std::sync::OnceLock<Map> = std::sync::OnceLock::new();
-        M.get_or_init(Map::build)
+    /// The original map, or the brighter one.
+    pub fn get(bright: bool) -> &'static Map {
+        static M: [std::sync::OnceLock<Map>; 2] =
+            [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+        M[bright as usize].get_or_init(|| Map::build(bright))
     }
 
     pub fn node(&self, row: usize, col: usize) -> &NodeSpectrum {
@@ -266,9 +371,9 @@ impl Map {
 }
 
 /// The amplitude-weighted mean partial number of `n` partials at (x, y).
-pub fn centroid(x: f32, y: f32, n: usize) -> f32 {
+pub fn centroid(bright: bool, x: f32, y: f32, n: usize) -> f32 {
     let mut db = [0.0; MAX];
-    Map::get().mix(x, y, n, &mut db);
+    Map::get(bright).mix(x, y, n, &mut db);
     let (mut s, mut sk) = (0.0f32, 0.0f32);
     for (i, d) in db.iter().enumerate().take(n) {
         let a = 10f32.powf(d / 20.0);
@@ -284,11 +389,12 @@ mod tests {
 
     #[test]
     fn every_node_peaks_at_255_and_is_not_empty() {
-        let m = Map::get();
-        for r in 0..5 {
-            for c in 0..5 {
-                let b = m.node(r, c).bytes();
-                assert_eq!(b.iter().max(), Some(&255), "{r},{c}");
+        for m in [Map::get(false), Map::get(true)] {
+            for r in 0..5 {
+                for c in 0..5 {
+                    let b = m.node(r, c).bytes();
+                    assert_eq!(b.iter().max(), Some(&255), "{r},{c}");
+                }
             }
         }
     }
@@ -297,13 +403,15 @@ mod tests {
     /// out, but /i/'s low F1 puts its centroid under /e/'s (for the ear).
     #[test]
     fn centroid_rises_along_x_in_every_row_but_voice() {
-        for (r, row) in ROWS.iter().enumerate().take(4) {
-            let y = r as f32 / 4.0;
-            let c: Vec<f32> = (0..=16)
-                .map(|i| centroid(i as f32 / 16.0, y, MAX))
-                .collect();
-            for w in c.windows(2) {
-                assert!(w[1] >= w[0] - 1e-3, "{row}: {c:?}");
+        for bright in [false, true] {
+            for (r, row) in ROWS.iter().enumerate().take(4) {
+                let y = r as f32 / 4.0;
+                let c: Vec<f32> = (0..=16)
+                    .map(|i| centroid(bright, i as f32 / 16.0, y, MAX))
+                    .collect();
+                for w in c.windows(2) {
+                    assert!(w[1] >= w[0] - 1e-3, "{row} bright {bright}: {c:?}");
+                }
             }
         }
     }

@@ -182,6 +182,27 @@ impl Module {
         }
     }
 
+    /// The mask over BRIGHT TAIL's band at harmonic `k`: COMB at its mean
+    /// (its teeth are finer than the tail's slope), ODD/EVEN left to
+    /// `odd_even`.
+    pub fn tail_gain(&self, k: f32, hz: f32, f0: f32) -> f32 {
+        match *self {
+            Module::Comb { depth, .. } => 1.0 - 0.5 * depth,
+            Module::OddEven { .. } => 1.0,
+            _ => self.gain(k.round() as usize, hz, f0),
+        }
+    }
+
+    /// ODD/EVEN's gain on the even (or the odd, above the 1st) partials;
+    /// 1 for other kinds.
+    pub fn odd_even(&self, even: bool) -> f32 {
+        let k = if even { 2 } else { 3 };
+        match self {
+            Module::OddEven { .. } => self.gain(k, 0.0, 1.0),
+            _ => 1.0,
+        }
+    }
+
     /// STRETCH's B at the note `f0`, after KEY; 0 for other kinds.
     pub fn stretch_b(&self, f0: f32) -> f32 {
         match *self {

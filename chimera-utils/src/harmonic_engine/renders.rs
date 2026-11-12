@@ -2,7 +2,9 @@
 //! a bass line, a slow pad swell), per the owner's listening rules.
 
 use super::voice::{EnvX, PathCtl};
-use super::{Adsr, ModuleKind as K, Note, Out, Partials, PathShape, Sound, controls, render};
+use super::{
+    Adsr, Bright, ModuleKind as K, Note, Out, Partials, PathShape, Sound, controls, render,
+};
 use serde_json::{Value, json};
 
 const HELD: Adsr = Adsr::new(0.005, 0.3, 0.8, 0.3);
@@ -52,6 +54,7 @@ fn fk(hz: f32) -> f32 {
 struct G<'a, 'b> {
     out: &'a mut Out<'b>,
     group: &'static str,
+    bright: Bright,
 }
 
 impl G<'_, '_> {
@@ -66,6 +69,7 @@ impl G<'_, '_> {
         sweep: Option<Value>,
         about: &str,
     ) -> Result<(), String> {
+        let s = &s.with(|s| s.bright = self.bright);
         let x = render(n, s, notes, auto);
         let mut c = controls(n, s);
         if let Some(sw) = sweep {
@@ -96,6 +100,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     let mut g = G {
         out,
         group: "1-partials",
+        bright: Bright::DARK,
     };
     for (pname, s) in [
         ("organ", Sound::new(1.0, 0.25)),
@@ -145,6 +150,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     let mut g = G {
         out: g.out,
         group: "2-map",
+        bright: Bright::DARK,
     };
     for (r, row) in ROWS.iter().enumerate() {
         for (xn, x) in [("xlo", 0.0), ("xmid", 0.5), ("xhi", 1.0)] {
@@ -196,6 +202,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     let mut g = G {
         out: g.out,
         group: "3-density",
+        bright: Bright::DARK,
     };
     let pad = Sound::new(0.6, 0.75).with(|s| {
         s.amp = Adsr::new(0.8, 0.5, 1.0, 1.2);
@@ -234,6 +241,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     let mut g = G {
         out: g.out,
         group: "4-modules",
+        bright: Bright::DARK,
     };
     let saw = Sound::new(0.5, 0.75).with(|s| s.amp = HELD);
     let sweeps: [(&str, K, [f32; 3], &str); 5] = [
@@ -336,6 +344,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     let mut g = G {
         out: g.out,
         group: "5-morph",
+        bright: Bright::DARK,
     };
     let corners = Sound::new(0.5, 0.5)
         .slot(0, K::Tilt, [0.3, 0.0, 0.0])
@@ -423,6 +432,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     let mut g = G {
         out: g.out,
         group: "6-air-sub",
+        bright: Bright::DARK,
     };
     let air_pad = Sound::new(0.5, 1.0).with(|s| s.amp = PAD);
     let air_bass = Sound::new(0.6, 0.5).with(|s| s.amp = BASS);
@@ -473,6 +483,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     let mut g = G {
         out: g.out,
         group: "7-variety",
+        bright: Bright::DARK,
     };
     let hits: Vec<Note> = (0..8)
         .flat_map(|i| chord(&[48, 51, 55], i as f32 * 0.5, 0.22))
@@ -506,7 +517,95 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     let mut g = G {
         out: g.out,
         group: "8-sketches",
+        bright: Bright::DARK,
     };
+    let sk = sketches();
+    for k in &sk {
+        g.file(k.name, n64, &k.sound, &k.notes, &|_, _| {}, None, k.about)?;
+    }
+
+    // 9: brighter
+    add(
+        "9-brighter",
+        "Brighter (owner: \"darker than Loom\"): each sketch as an A/B, _dark the first prototype (regenerated identically to group 8) and _bright the new defaults (brighter map and taper, aligned phases, BRIGHT TAIL; LOG off). Then single-feature A/Bs on a buzzy BRASS C1 bass and a bright ORGAN C3 held: dark, map only (brighter map + taper), phase only (aligned), tail only, log only (log-spaced partials), and all (every option; at C1 and C3 LOG covers the top, so the tail rests). Same fixed gain; LEVEL holds a voice's RMS, the tail inside it, so bright is not louder by design: compare peaks and RMS in the files' rows.",
+    );
+    let mut g = G {
+        out: g.out,
+        group: "9-brighter",
+        bright: Bright::DARK,
+    };
+    for k in &sk {
+        for (tag, b) in [("dark", Bright::DARK), ("bright", Bright::ON)] {
+            g.bright = b;
+            g.file(
+                &format!("{}_{tag}", k.name),
+                n64,
+                &k.sound,
+                &k.notes,
+                &|_, _| {},
+                None,
+                &format!("{} [{tag}]", k.about),
+            )?;
+        }
+    }
+    let d = Bright::DARK;
+    let variants: [(&str, Bright); 6] = [
+        ("dark", d),
+        ("map", Bright { map: true, ..d }),
+        ("phase", Bright { phase: 0.0, ..d }),
+        ("tail", Bright { tail: true, ..d }),
+        ("log", Bright { log: true, ..d }),
+        (
+            "all",
+            Bright {
+                log: true,
+                ..Bright::ON
+            },
+        ),
+    ];
+    for (pname, sound, nname, notes, env, about) in [
+        (
+            "brass",
+            Sound::new(1.0, 0.75),
+            "c1bass",
+            vec![(24u8, 0.0, 0.4), (24, 0.5, 0.4), (24, 1.0, 1.0)],
+            BASS,
+            "buzzy BRASS (X 1, Y 0.75), C1 bass, three hits",
+        ),
+        (
+            "organ",
+            Sound::new(1.0, 0.25),
+            "c3held",
+            vec![(48u8, 0.0, 2.0)],
+            HELD,
+            "bright ORGAN (X 1, Y 0.25), C3 held 2 s",
+        ),
+    ] {
+        for (tag, b) in variants {
+            g.bright = b;
+            g.file(
+                &format!("{pname}_{nname}_{tag}"),
+                n64,
+                &sound.with(|s| s.amp = env),
+                &notes,
+                &|_, _| {},
+                None,
+                &format!("{about} [{tag}]"),
+            )?;
+        }
+    }
+    Ok(Value::Object(groups))
+}
+
+/// A sound sketch: a finished-sounding patch and its phrase.
+pub struct Sketch {
+    pub name: &'static str,
+    pub sound: Sound,
+    pub notes: Vec<Note>,
+    pub about: &'static str,
+}
+
+pub fn sketches() -> Vec<Sketch> {
     let organ_env = Adsr::new(0.005, 0.1, 1.0, 0.15);
     let prog: Vec<Note> = [
         chord(&[48, 51, 55, 58], 0.0, 1.9),
@@ -520,8 +619,6 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
             s.amp = organ_env;
             s.air = 0.1;
         });
-    g.file("glass_organ", n64, &glass, &prog, &|_, _| {}, None,
-        "GLASS ORGAN: ORGAN near full registration, tilted bright, a breath of AIR; Cm7, Abmaj7, Bb")?;
     let vowel = Sound::new(0.3, 0.9).with(|s| {
         s.amp = Adsr::new(1.2, 0.5, 1.0, 1.2);
         s.air = 0.35;
@@ -531,15 +628,6 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
             size: 0.25,
         };
     });
-    g.file(
-        "vowel_pad",
-        n64,
-        &vowel,
-        &chord(&[48, 55, 58, 62, 63], 0.0, 4.5),
-        &|_, _| {},
-        None,
-        "VOWEL PAD: the VOICE row circling U-O-A over 2 bars with AIR; Cm9 swell",
-    )?;
     let bell_row = Sound::new(0.55, 0.0)
         .slot(0, K::Stretch, [0.78, 0.5, 0.0])
         .slot(1, K::Pluck, [0.55, 0.6, 0.0])
@@ -549,15 +637,6 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
         .enumerate()
         .map(|(i, &m)| (m, i as f32 * 0.4, 0.3))
         .collect();
-    g.file(
-        "bell_row",
-        n64,
-        &bell_row,
-        &tune,
-        &|_, _| {},
-        None,
-        "BELL ROW: BELL spectra stretched like bars, highs dying first; a C minor tune",
-    )?;
     let reed_bass = Sound::new(0.35, 0.5)
         .slot(0, K::OddEven, [0.85, 0.0, 0.0])
         .slot(1, K::Pluck, [0.62, 0.5, 0.0])
@@ -576,15 +655,6 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     .enumerate()
     .map(|(i, &m)| (m, i as f32 * 0.25, 0.18))
     .collect();
-    g.file(
-        "reed_bass",
-        n64,
-        &reed_bass,
-        &line,
-        &|_, _| {},
-        None,
-        "REED BASS: hollow REED (odds only), ENV->X snap, SUB under it; two bars of eighths",
-    )?;
     let brass = Sound::new(0.55, 0.75)
         .slot(0, K::Formant, [fk(1100.0), 0.5, 0.3])
         .with(|s| {
@@ -604,15 +674,6 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
         chord(&[48, 51, 55], 2.75, 1.2),
     ]
     .concat();
-    g.file(
-        "brass_stabs",
-        n64,
-        &brass,
-        &stabs,
-        &|_, _| {},
-        None,
-        "BRASS STABS: BRASS/BOWED with a fixed 1.1 kHz formant and ENV->X bite; a stab riff",
-    )?;
     let comb = Sound::new(0.35, 0.7)
         .slot(0, K::Comb, [0.4, 0.0, 0.7])
         .corner(1, 0, [0.4, 1.0, 0.7])
@@ -626,7 +687,48 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
                 size: 0.3,
             };
         });
-    g.file("comb_strings", n64, &comb, &chord(&[41, 48, 55, 56, 63], 0.0, 4.0), &|_, _| {}, None,
-        "COMB STRINGS: bowed spectra through a COMB whose OFFSET rides PATH LINE across X: a slow phaser; Fm(add9)")?;
-    Ok(Value::Object(groups))
+    let sk = |name, sound, notes, about| Sketch {
+        name,
+        sound,
+        notes,
+        about,
+    };
+    vec![
+        sk(
+            "glass_organ",
+            glass,
+            prog,
+            "GLASS ORGAN: ORGAN near full registration, tilted bright, a breath of AIR; Cm7, Abmaj7, Bb",
+        ),
+        sk(
+            "vowel_pad",
+            vowel,
+            chord(&[48, 55, 58, 62, 63], 0.0, 4.5),
+            "VOWEL PAD: the VOICE row circling U-O-A over 2 bars with AIR; Cm9 swell",
+        ),
+        sk(
+            "bell_row",
+            bell_row,
+            tune,
+            "BELL ROW: BELL spectra stretched like bars, highs dying first; a C minor tune",
+        ),
+        sk(
+            "reed_bass",
+            reed_bass,
+            line,
+            "REED BASS: hollow REED (odds only), ENV->X snap, SUB under it; two bars of eighths",
+        ),
+        sk(
+            "brass_stabs",
+            brass,
+            stabs,
+            "BRASS STABS: BRASS/BOWED with a fixed 1.1 kHz formant and ENV->X bite; a stab riff",
+        ),
+        sk(
+            "comb_strings",
+            comb,
+            chord(&[41, 48, 55, 56, 63], 0.0, 4.0),
+            "COMB STRINGS: bowed spectra through a COMB whose OFFSET rides PATH LINE across X: a slow phaser; Fm(add9)",
+        ),
+    ]
 }
