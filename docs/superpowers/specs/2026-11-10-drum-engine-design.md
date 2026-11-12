@@ -173,3 +173,5 @@ Not in 0.4: MIDI-sending pads (7) and the listening drummer (8).
 **BODY WOOD ships** (owner by ear, 2026-11-10: "the new wood sounds good"). BODY HAND and METAL JINGLE await marks.
 
 **BODY HAND and METAL JINGLE ship** (owner, by ear on the audition page, 2026-11-10/11). VOX was rebuilt consonant-first (3f46a47b) after the owner said the formant version "doesn't sound like a mouth"; its ship marks are pending.
+
+**Audition marks, owner 2026-11-11** (audition page, collection `picks`): the world batch ships: BODY BAR, BODY PAN, BODY GONG, BODY TABLA, LPG BONGO, FILTER PING. VOX ships **ROLL only**; VOX KICK, SNARE, HAT and CLICK are cut (the code stays, model work). BODY SPRING has no mark. With the 18 of 2026-11-10 and BODY WOOD, BODY HAND, METAL JINGLE, **28 machines ship in 0.4**.
