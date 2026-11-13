@@ -103,6 +103,11 @@ pub enum RecordTag {
     /// DRUM refuses a DRUM Sound by its `Engine`, so the kit it skips
     /// plays on no Part of a file it loads.
     Kit,
+    /// A project Part's pad sound (ADR 0269), one record a pad: the pad's
+    /// index (0–11), then `PadSound::to_bytes` (57 B). After the Part's
+    /// `Kit`. One a pad, as a whole kit's 684 B is past `MAX_RECORD_LEN`.
+    /// Not critical: a firmware before slice 2 plays the Sound's filter.
+    KitSound,
 }
 
 impl RecordTag {
@@ -141,6 +146,7 @@ impl RecordTag {
             RecordTag::MapSection => 0x0022,
             RecordTag::Scala => 0x0023,
             RecordTag::Kit => 0x0024,
+            RecordTag::KitSound => 0x0025,
         }
     }
 
@@ -179,6 +185,7 @@ impl RecordTag {
             0x0022 => RecordTag::MapSection,
             0x0023 => RecordTag::Scala,
             0x0024 => RecordTag::Kit,
+            0x0025 => RecordTag::KitSound,
             _ => return None,
         })
     }

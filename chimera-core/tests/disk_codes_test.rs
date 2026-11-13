@@ -6,6 +6,7 @@ use chimera_core::addr::{BlockRef, BlockViewMut, Blocks, Op};
 use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};
 use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
 use chimera_core::dsp::algo::kinds::{OP_KIND_IDENTS, OP_KIND_NAMES};
+use chimera_core::dsp::drum::sound::{AmpMode, LfoMode, RouteDest, RouteSource};
 use chimera_core::dsp::drum::types::{ChokeGroup, Machine};
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxParams;
@@ -163,6 +164,22 @@ fn table() -> Vec<String> {
         &mut EngineType::ALL
             .iter()
             .map(|e| (e.disk_code(), e.disk_ident())),
+    );
+    coded(
+        "DRUM_ROUTE_SOURCE",
+        &mut RouteSource::ALL.iter().map(|s| (s.code(), s.disk_ident())),
+    );
+    coded(
+        "DRUM_ROUTE_DEST",
+        &mut RouteDest::ALL.iter().map(|d| (d.code(), d.disk_ident())),
+    );
+    coded(
+        "DRUM_LFO_MODE",
+        &mut LfoMode::ALL.iter().map(|m| (m.code(), m.disk_ident())),
+    );
+    coded(
+        "DRUM_AMP_MODE",
+        &mut AmpMode::ALL.iter().map(|m| (m.code(), m.disk_ident())),
     );
     coded(
         "TARGET_KIND",

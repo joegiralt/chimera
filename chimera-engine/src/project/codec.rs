@@ -25,8 +25,8 @@ use chimera_hal::store::{Dir, Store, StoreError};
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::block::{Block, DiskCode};
 use crate::dsp::clampf;
-use crate::dsp::drum::sound::PadSound;
-use crate::dsp::drum::types::{Kit, PAD_BYTES, Pad, PadId, Tonal};
+use crate::dsp::drum::sound::{PAD_SOUND_BYTES, PadSound};
+use crate::dsp::drum::types::{Kit, PAD_BYTES, Pad, PadId, PadSet, Tonal};
 use crate::dsp::fx_bus::{FX_SENDS, FxParams};
 use crate::hw::MAX_PARTS;
 use crate::midi_map::KeptMap;
@@ -111,13 +111,13 @@ fn put_kit(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), StoreError
     w.put(RecordTag::Kit, &b)
 }
 
-/// A `Kit` payload into `kit` (if given; else only checked), each pad
-/// with `sound`, and whether a save would write other bytes (a byte
+/// A `Kit` payload into `kit` (if given; else only checked), each pad's
+/// sound kept, and whether a save would write other bytes (a byte
 /// defaulted or held). Without TONAL's byte (before ADR 0270) it is OFF,
 /// nothing lost; an unknown code is OFF, lossy. `None`: neither length,
 /// `kit` untouched. In place: no whole `Kit` on the load's stack.
 #[optimize(size)]
-fn get_kit(b: &[u8], mut kit: Option<&mut Kit>, sound: &PadSound) -> Option<bool> {
+fn get_kit(b: &[u8], mut kit: Option<&mut Kit>) -> Option<bool> {
     let (pads, tonal) = match b.len() {
         PADS_BYTES => (b, Some(Tonal::Off)),
         KIT_BYTES => (&b[..PADS_BYTES], Tonal::from_code(b[PADS_BYTES])),
@@ -128,13 +128,39 @@ fn get_kit(b: &[u8], mut kit: Option<&mut Kit>, sound: &PadSound) -> Option<bool
         let pad = Pad::from_bytes(raw, &Kit::default_pad(p));
         lossy |= pad.to_bytes() != raw;
         if let Some(k) = kit.as_deref_mut() {
-            *k.pad_mut(p) = pad.with_sound(*sound);
+            *k.pad_mut(p) = pad.with_sound(*k.pad(p).sound());
         }
     }
     if let Some(k) = kit {
         k.set_tonal(tonal.unwrap_or(Tonal::Off));
     }
     Some(lossy)
+}
+
+/// A `KitSound` payload: the pad's index, then its sound.
+const KIT_SOUND_BYTES: usize = 1 + PAD_SOUND_BYTES;
+
+/// `kit`'s `KitSound` records, a pad each; `None` is `Kit::DEFAULT`'s.
+#[optimize(size)]
+fn put_kit_sounds(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), StoreError> {
+    for p in PadId::ALL {
+        let s = kit.map_or(&PadSound::DEFAULT, |k| k.pad(p).sound());
+        let mut b = [0; KIT_SOUND_BYTES];
+        b[0] = p.index() as u8;
+        b[1..].copy_from_slice(&s.to_bytes());
+        w.put(RecordTag::KitSound, &b)?;
+    }
+    Ok(())
+}
+
+/// A `KitSound` payload: its pad, the sound (an unknown code or a
+/// non-finite float the default's), and whether a save would write other
+/// bytes. `None`: the wrong length or no such pad.
+#[optimize(size)]
+fn get_kit_sound(b: &[u8]) -> Option<(PadId, PadSound, bool)> {
+    let [i, raw @ ..] = *<&[u8; KIT_SOUND_BYTES]>::try_from(b).ok()?;
+    let s = PadSound::from_bytes(raw, &PadSound::DEFAULT);
+    Some((PadId::new(i)?, s, s.to_bytes() != raw))
 }
 
 const ORIGIN_SLOT: u8 = 0;
@@ -257,7 +283,7 @@ fn put_part(
 }
 
 /// A Part's records after its Sound's: the mix, its `Origin`, then its
-/// kit (`None` the default's).
+/// kit and its pads' sounds (`None` the default's).
 #[optimize(size)]
 fn put_part_end(
     w: &mut RecordWriter<'_>,
@@ -271,7 +297,8 @@ fn put_part_end(
         Origin::Init(e) => [ORIGIN_INIT, e.disk_code()],
     };
     w.put(RecordTag::Origin, &origin)?;
-    put_kit(w, kit)
+    put_kit(w, kit)?;
+    put_kit_sounds(w, kit)
 }
 
 /// The pool's source refs, absent ones included, in slot order (spec
@@ -515,10 +542,12 @@ pub struct ProjectCheck {
     fx: bool,
     /// The FX blocks read, a bit each in `FX_BLOCKS` order.
     fx_blocks: u8,
-    /// The open Part's mix, Origin and kit were read.
+    /// The open Part's mix, Origin and kit were read, and the pads whose
+    /// `KitSound` was.
     mix: bool,
     origin: bool,
     kit: bool,
+    kit_sounds: PadSet,
     origins: [ReadOrigin; MAX_PARTS],
     /// The open Part's pre-ADR-0123 sends (PART ids 5-7), for its Sound.
     old_sends: Option<[f32; FX_SENDS]>,
@@ -558,6 +587,7 @@ impl ProjectCheck {
             mix: false,
             origin: false,
             kit: false,
+            kit_sounds: PadSet::EMPTY,
             origins: [ReadOrigin::Missing; MAX_PARTS],
             lossy: false,
             over: false,
@@ -679,22 +709,20 @@ impl ProjectCheck {
                 if core::mem::replace(&mut self.kit, true) {
                     return Err(FileError::Corrupt);
                 }
-                // A kit with no pad sounds on a DRUM Part (slice 1's): every
-                // pad takes the Sound's FILTER and AMP, so it sounds as it
-                // did (ADR 0269). The Sound came first.
-                let (kit, sound) = match target {
-                    Some(t) => {
-                        let s = &t.perf.parts[n.index()].sound.params;
-                        let sound = if s.engine() == EngineType::Drum {
-                            PadSound::from_sound(s)
-                        } else {
-                            PadSound::DEFAULT
-                        };
-                        (Some(t.kits.kit_mut(n)), sound)
-                    }
-                    None => (None, PadSound::DEFAULT),
-                };
-                self.lossy |= get_kit(p, kit, &sound).ok_or(FileError::Bounds)?;
+                let kit = target.map(|t| t.kits.kit_mut(n));
+                self.lossy |= get_kit(p, kit).ok_or(FileError::Bounds)?;
+                Ok(())
+            }
+            (ReadTag::Known(RecordTag::KitSound), Context::Part(n)) => {
+                let (pad, sound, lossy) = get_kit_sound(p).ok_or(FileError::Bounds)?;
+                if self.kit_sounds.contains(pad) {
+                    return Err(FileError::Corrupt);
+                }
+                self.kit_sounds = self.kit_sounds.with(pad);
+                self.lossy |= lossy;
+                if let Some(t) = target {
+                    *t.kits.kit_mut(n).pad_mut(pad).sound_mut() = sound;
+                }
                 Ok(())
             }
             (ReadTag::Known(RecordTag::Controller), Context::Part(n)) => {
@@ -751,6 +779,7 @@ impl ProjectCheck {
         (self.context, self.parts) = (Context::None, PartSet::EMPTY);
         (self.fx, self.fx_blocks, self.mix, self.origin, self.kit) =
             (false, 0, false, false, false);
+        self.kit_sounds = PadSet::EMPTY;
         self.origins = [ReadOrigin::Missing; MAX_PARTS];
         self.old_sends = None;
         (self.lossy, self.over) = (false, false);
@@ -884,6 +913,7 @@ impl ProjectCheck {
                 t.kits.kit_mut(n).reset();
             }
             (self.mix, self.origin, self.kit) = (false, false, false);
+            self.kit_sounds = PadSet::EMPTY;
             self.old_sends = None;
             self.context = Context::Part(n);
         }
@@ -966,14 +996,31 @@ impl ProjectCheck {
                 (None, None) => self.sound.finish(None),
             },
             Context::Part(n) => {
-                let mut part = target.map(|t| &mut t.perf.parts[n.index()]);
-                let staged = part.as_mut().map(|p| &mut *p.sound);
-                self.sound.finish(staged)?;
+                let Some(t) = target else {
+                    return self.sound.finish(None);
+                };
+                let part = &mut t.perf.parts[n.index()];
+                self.sound.finish(Some(&mut *part.sound))?;
                 // ADR 0123: a Sound with no sends takes the Part's old ones.
-                if let (Some(s), Some(p)) = (self.old_sends.take(), part)
-                    && p.sound.params.out.sends == [0.0; FX_SENDS]
+                if let Some(s) = self.old_sends.take()
+                    && part.sound.params.out.sends == [0.0; FX_SENDS]
                 {
-                    p.sound.params.out.sends = s;
+                    part.sound.params.out.sends = s;
+                }
+                // A kit with no pad sounds on a DRUM Part (slice 1's): each
+                // such pad takes the Sound's FILTER and AMP, so it sounds as
+                // it did (ADR 0269). Here, the Sound finished; a pad's own
+                // `KitSound` wins.
+                let s = &part.sound.params;
+                if self.kit && s.engine() == EngineType::Drum {
+                    let sound = PadSound::from_sound(s);
+                    let kit = t.kits.kit_mut(n);
+                    for p in PadId::ALL
+                        .into_iter()
+                        .filter(|&p| !self.kit_sounds.contains(p))
+                    {
+                        *kit.pad_mut(p).sound_mut() = sound;
+                    }
                 }
                 Ok(())
             }

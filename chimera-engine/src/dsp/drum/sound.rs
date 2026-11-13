@@ -289,6 +289,14 @@ impl AmpMode {
         }
     }
 
+    /// The code's frozen ident (disk_codes_v1's `C` rows).
+    pub const fn disk_ident(self) -> &'static str {
+        match self {
+            AmpMode::OneShot => "ONE_SHOT",
+            AmpMode::Gated => "GATED",
+        }
+    }
+
     pub const fn from_code(c: u8) -> Option<AmpMode> {
         match c {
             1 => Some(AmpMode::OneShot),
@@ -366,6 +374,14 @@ impl LfoMode {
         match self {
             LfoMode::Free => 1,
             LfoMode::Trig => 2,
+        }
+    }
+
+    /// The code's frozen ident (disk_codes_v1's `C` rows).
+    pub const fn disk_ident(self) -> &'static str {
+        match self {
+            LfoMode::Free => "FREE",
+            LfoMode::Trig => "TRIG",
         }
     }
 
@@ -505,6 +521,18 @@ impl RouteSource {
         self.code() as usize - 1
     }
 
+    /// The code's frozen ident (disk_codes_v1's `C` rows).
+    pub const fn disk_ident(self) -> &'static str {
+        match self {
+            RouteSource::ModEnv => "MOD_ENV",
+            RouteSource::Lfo => "LFO",
+            RouteSource::Vel => "VEL",
+            RouteSource::Lfo1 => "LFO1",
+            RouteSource::Lfo2 => "LFO2",
+            RouteSource::Lfo3 => "LFO3",
+        }
+    }
+
     pub const fn from_code(c: u8) -> Option<RouteSource> {
         match c {
             1 => Some(RouteSource::ModEnv),
@@ -544,6 +572,17 @@ impl RouteDest {
             RouteDest::Volume => 3,
             RouteDest::LfoSpeed => 4,
             RouteDest::LfoDepth => 5,
+        }
+    }
+
+    /// The code's frozen ident (disk_codes_v1's `C` rows).
+    pub const fn disk_ident(self) -> &'static str {
+        match self {
+            RouteDest::Cutoff => "CUTOFF",
+            RouteDest::Reso => "RESO",
+            RouteDest::Volume => "VOLUME",
+            RouteDest::LfoSpeed => "LFO_SPEED",
+            RouteDest::LfoDepth => "LFO_DEPTH",
         }
     }
 
