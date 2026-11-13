@@ -18,9 +18,8 @@ use crate::project::{Kits, PartId};
 
 use crate::MidiNote;
 
-use super::sound::{PAD_SOUND_BYTES, PadSound, kit_bill};
+use super::sound::{KitBill, PAD_SOUND_BYTES, PadSound, kit_bill};
 use super::types::{DrumHit, HitSeed, Kit, KitNote, PAD_BYTES, Pad, PadId, PadSet, Tonal};
-use crate::hw::Cost;
 
 /// A pad in the view: its 13 bytes (`Pad::to_bytes`), then its sound's 57
 /// (`PadSound::to_bytes`).
@@ -43,17 +42,18 @@ struct PartView {
     sounding: AtomicU16,
     /// The last hit's `HitSeed`: the audio's alone, each hit the next.
     seed: AtomicU32,
-    /// The kit's `kit_bill`, held to u16: the UI's, stored each publish.
-    bill: AtomicU16,
+    /// The kit's `kit_bill` (`KitBill::to_bits`): the UI's, stored each
+    /// publish.
+    bill: AtomicU32,
     slots: [[[AtomicU8; VIEW_BYTES]; PadId::ALL.len()]; 2],
 }
 
-/// Every Part's `PartView` (10,176 B).
+/// Every Part's `PartView` (10,200 B).
 pub struct KitView {
     parts: [PartView; MAX_PARTS],
 }
 
-const _: () = assert!(core::mem::size_of::<KitView>() == 10_176);
+const _: () = assert!(core::mem::size_of::<KitView>() == 10_200);
 
 // SAFETY: `.itcm` is the board's NOLOAD ITCM (chimera-stm32's build.rs,
 // ADR 0266), CPU-only and never DMA's; it holds garbage at boot, which
@@ -80,7 +80,7 @@ impl KitView {
                     struck: AtomicU16::new(0),
                     sounding: AtomicU16::new(0),
                     seed: AtomicU32::new(0),
-                    bill: AtomicU16::new(0),
+                    bill: AtomicU32::new(0),
                     slots: [const {
                         [const { [const { AtomicU8::new(0) }; VIEW_BYTES] }; PadId::ALL.len()]
                     }; 2],
@@ -113,12 +113,10 @@ impl KitView {
         DrumHit::new(pad, p, pitch)
     }
 
-    /// Audio: what a hit on `part`'s kit is billed for its filter and
-    /// mods (`kit_bill`), as last published: 0 from `KitWriter::take` on.
-    pub fn bill(&self, part: PartId) -> Cost {
-        Cost(u32::from(
-            self.parts[part.index()].bill.load(Ordering::Relaxed),
-        ))
+    /// Audio: what a hit on `part`'s kit is billed (`kit_bill`), as last
+    /// published: `KitBill::NONE` from `KitWriter::take` on.
+    pub fn bill(&self, part: PartId) -> KitBill {
+        KitBill::from_bits(self.parts[part.index()].bill.load(Ordering::Relaxed))
     }
 
     /// Audio: `part`'s next hit's seed (`HitSeed::next` of its last).
@@ -172,8 +170,7 @@ impl KitWriter {
     pub fn publish(&mut self, part: PartId, kit: &Kit) {
         let v = &KIT_VIEW.parts[part.index()];
         v.tonal.store(kit.tonal().code(), Ordering::Relaxed);
-        let bill = u16::try_from(kit_bill(kit).0).unwrap_or(u16::MAX);
-        v.bill.store(bill, Ordering::Relaxed);
+        v.bill.store(kit_bill(kit).to_bits(), Ordering::Relaxed);
         let b = PadId::ALL.map(|p| {
             let (pad, mut b) = (kit.pad(p), [0; VIEW_BYTES]);
             b[..PAD_BYTES].copy_from_slice(&pad.to_bytes());

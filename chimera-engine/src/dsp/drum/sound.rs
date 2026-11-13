@@ -786,18 +786,119 @@ impl RouteOffsets {
     }
 }
 
-/// A pad's AMP envelope, or its mod envelope, LFO and routes, running.
-// ponytail: placeholder bill until the unit bench
-pub const PAD_MOD_COST: Cost = Cost(20);
+/// A pad's AMP envelope running, OPEN, with no route.
+// ponytail: placeholder bill until the unit bench (#951)
+pub const PAD_AMP_COST: Cost = Cost(20);
 
-/// A kit's hit at its costliest pad (`PadSound::cost`): what a DRUM
-/// Part's voice is billed for its filter (`Voice::drum_cost`).
-pub fn kit_bill(kit: &Kit) -> Cost {
-    PadId::ALL
-        .iter()
-        .map(|&p| kit.pad(p).sound().cost())
-        .max()
-        .unwrap_or(Cost::ZERO)
+/// A pad's routes running: AMP, mod envelope, LFO and the ramps.
+// ponytail: placeholder bill until the unit bench (#951)
+pub const PAD_ROUTED_COST: Cost = Cost(55);
+
+/// A filter as billed: its KIND, and for the 2040 its VOICE. Six of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FilterShape(u8);
+
+impl FilterShape {
+    const ALL: [FilterShape; 6] = [
+        FilterShape(0),
+        FilterShape(1),
+        FilterShape(2),
+        FilterShape(3),
+        FilterShape(4),
+        FilterShape(5),
+    ];
+
+    pub const fn of(kind: FilterKind, voice: K2040Voice) -> FilterShape {
+        FilterShape(match (kind, voice) {
+            (FilterKind::Svf, _) => 0,
+            (FilterKind::Dirty, _) => 1,
+            (FilterKind::Ladder, _) => 2,
+            (FilterKind::Sem, _) => 3,
+            (FilterKind::K2040, K2040Voice::Rev2) => 4,
+            (FilterKind::K2040, K2040Voice::Exp) => 5,
+        })
+    }
+
+    pub const fn kind(self) -> FilterKind {
+        match self.0 {
+            0 => FilterKind::Svf,
+            1 => FilterKind::Dirty,
+            2 => FilterKind::Ladder,
+            3 => FilterKind::Sem,
+            _ => FilterKind::K2040,
+        }
+    }
+
+    pub const fn voice(self) -> K2040Voice {
+        if self.0 == 5 {
+            K2040Voice::Exp
+        } else {
+            K2040Voice::Rev2
+        }
+    }
+
+    const fn bit(self) -> u8 {
+        1 << self.0
+    }
+}
+
+/// What a DRUM Part's hit is billed for its kit (`Voice::drum_cost`): the
+/// filter shapes its pads play, those a pad route moves, and its costliest
+/// pad's mods. Any bits are a bill (`from_bits`), so the view needs no build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KitBill {
+    shapes: u8,
+    moving: u8,
+    mods: u16,
+}
+
+impl KitBill {
+    /// No pad: the Sound's filter alone.
+    pub const NONE: KitBill = KitBill {
+        shapes: 0,
+        moving: 0,
+        mods: 0,
+    };
+
+    /// The filter shapes the pads play, each with whether a pad route
+    /// moves it.
+    pub fn shapes(self) -> impl Iterator<Item = (FilterShape, bool)> {
+        FilterShape::ALL
+            .into_iter()
+            .filter(move |f| self.shapes & f.bit() != 0)
+            .map(move |f| (f, self.moving & f.bit() != 0))
+    }
+
+    /// The costliest pad's AMP and routes.
+    pub const fn mods(self) -> Cost {
+        Cost(self.mods as u32)
+    }
+
+    pub const fn to_bits(self) -> u32 {
+        self.mods as u32 | (self.shapes as u32) << 16 | (self.moving as u32) << 24
+    }
+
+    pub const fn from_bits(b: u32) -> KitBill {
+        KitBill {
+            mods: b as u16,
+            shapes: (b >> 16) as u8 & 0x3f,
+            moving: (b >> 24) as u8 & 0x3f,
+        }
+    }
+}
+
+/// `kit`'s bill: every pad's filter shape, and the costliest pad's mods.
+pub fn kit_bill(kit: &Kit) -> KitBill {
+    PadId::ALL.iter().fold(KitBill::NONE, |b, &p| {
+        let s = kit.pad(p).sound();
+        let f = FilterShape::of(s.filter.kind, s.filter.voice).bit();
+        let m = u16::try_from(s.mod_cost().0).unwrap_or(u16::MAX);
+        KitBill {
+            shapes: b.shapes | f,
+            moving: b.moving | if s.routes.moves_filter() { f } else { 0 },
+            mods: b.mods.max(m),
+        }
+    })
 }
 
 /// A pad's sound's bytes (`PadSound::to_bytes`).
@@ -879,18 +980,15 @@ impl PadSound {
         }
     }
 
-    /// Cycles/sample its hit adds over a voice with no filter: its
-    /// filter's steady bill, its moving path while a route moves it, and
-    /// `PAD_MOD_COST` while its AMP envelope or a route runs.
-    pub fn cost(&self) -> Cost {
-        let kind = self.filter.kind;
-        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
-        kind.cost(self.filter.voice)
-            + when(self.routes.moves_filter(), kind.move_cost())
-            + when(
-                !self.routes.is_off() || !self.amp.env.is_open(),
-                PAD_MOD_COST,
-            )
+    /// What its AMP envelope and routes add a hit, over the filter.
+    pub fn mod_cost(&self) -> Cost {
+        if !self.routes.is_off() {
+            PAD_ROUTED_COST
+        } else if !self.amp.env.is_open() {
+            PAD_AMP_COST
+        } else {
+            Cost::ZERO
+        }
     }
 
     /// Lays the FILTER and AMP cells over `m`.

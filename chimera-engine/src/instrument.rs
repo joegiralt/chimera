@@ -2148,6 +2148,10 @@ impl Instrument {
                 return Cost::ZERO;
             }
             let part = &shared.parts[p];
+            if part.params.engine() == EngineType::Drum {
+                let kit = KIT_VIEW.bill(PartId::ALL[p]);
+                return Voice::drum_glide_extra(&part.params, &part.mod_state, g, kit);
+            }
             Voice::glide_extra(&part.params, &part.mod_state, g)
         });
         let costs: [Cost; MAX_PARTS] =

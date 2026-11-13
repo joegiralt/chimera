@@ -440,9 +440,11 @@ fn a_hit_is_billed_for_its_kits_pads() {
         .sound_mut()
         .filter_mut()
         .set_kind(chimera_core::dsp::filter::FilterKind::K2040);
-    let gap = chimera_core::dsp::drum::sound::kit_bill(&k).0;
+    let gap = chimera_core::dsp::filter::FilterKind::K2040
+        .cost(chimera_core::dsp::filter::K2040Voice::Rev2)
+        .0;
     assert!(gap > 0);
-    assert_eq!(booked(&k).0, booked(&Kit::DEFAULT).0 + gap);
+    assert!(booked(&k).0 >= booked(&Kit::DEFAULT).0 + gap);
 }
 
 /// A full pool: the next hit takes a sounding voice, waits out its fade

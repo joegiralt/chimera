@@ -11,7 +11,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drum::engine::MidSide;
-use crate::dsp::drum::sound::RouteOffsets;
+use crate::dsp::drum::sound::{KitBill, RouteOffsets};
 use crate::dsp::drum::types::{DrumHit, HitSeed, SampleRate};
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
@@ -19,7 +19,8 @@ use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::fast_exp2;
 use crate::dsp::filter::stability::{self, STAB_COST};
 use crate::dsp::filter::{
-    FB_COST, FILTER_LEVEL_COST, Fed, Filter, FilterMods, FilterStability, Spread,
+    FB_COST, FILTER_LEVEL_COST, Fed, Filter, FilterKind, FilterMods, FilterStability, K2040Voice,
+    Spread,
 };
 use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
@@ -243,14 +244,17 @@ impl Voice {
             + gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO)
     }
 
-    /// `cost` of a DRUM hit: the Sound's steady filter bill swapped for its
-    /// kit's (`kit_bill`), which bills each pad's own filter and mods.
-    pub fn drum_cost(p: &ParamSnapshot, mods: &ModState, kit: Cost) -> Cost {
-        Cost(
-            Self::cost(p, mods)
-                .0
-                .saturating_sub(p.filter.filter_cost().0),
-        ) + kit
+    /// `cost` of a DRUM hit (ADR 0269): the filter billed at the costliest
+    /// of the Sound's shape and each shape its kit's pads play (a pad route
+    /// moving its path once), plus the costliest pad's AMP and routes.
+    pub fn drum_cost(p: &ParamSnapshot, mods: &ModState, kit: KitBill) -> Cost {
+        let t = FilterTerms::of(p, mods);
+        let own = t.bill(p.filter.kind(), p.filter.voice, false);
+        let pads = kit
+            .shapes()
+            .map(|(f, moves)| t.bill(f.kind(), f.voice(), moves))
+            .fold(own, Cost::max);
+        Cost(Self::cost(p, mods).0.saturating_sub(own.0)) + pads + kit.mods()
     }
 
     /// The filter as `p` and `mods` run it: the steady bill, the moving
@@ -259,20 +263,7 @@ impl Voice {
     /// clipper while it can open (stored over ½, or routed). A clipper
     /// still running after LEVEL comes back is `held_level_extra`'s.
     pub fn filter_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        let f = &p.filter;
-        let kind = f.kind();
-        let algo = p.engine() == EngineType::Algo;
-        let shaped = algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q));
-        let fb = Self::fb_runs(p, mods);
-        let moving =
-            shaped || fb || mods.fixed_moves(FixedCol::Freq) || mods.fixed_moves(FixedCol::Q);
-        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
-        f.filter_cost()
-            + when(Self::stab_runs(p, mods), STAB_COST)
-            + when(fb, FB_COST)
-            + when(moving, kind.move_cost())
-            + when(shaped, TAP_SHAPE_COST)
-            + when(Self::level_may_open(p, mods), kind.level_cost())
+        FilterTerms::of(p, mods).bill(p.filter.kind(), p.filter.voice, false)
     }
 
     /// What a Part's gliding knobs add to a voice playing `p` (ADR 0117): a
@@ -281,6 +272,20 @@ impl Voice {
     /// for a path a route or tap already bills moving. Admission counts it;
     /// shedding doesn't.
     pub fn glide_extra(p: &ParamSnapshot, mods: &ModState, g: Gliding) -> Cost {
+        Self::glide_with(p, mods, g, p.filter.kind().glide_cost())
+    }
+
+    /// `glide_extra` of a DRUM hit: the filter's glide at the costliest of
+    /// the Sound's kind and its kit's pads'.
+    pub fn drum_glide_extra(p: &ParamSnapshot, mods: &ModState, g: Gliding, kit: KitBill) -> Cost {
+        let glide = kit
+            .shapes()
+            .map(|(f, _)| f.kind().glide_cost())
+            .fold(p.filter.kind().glide_cost(), Cost::max);
+        Self::glide_with(p, mods, g, glide)
+    }
+
+    fn glide_with(p: &ParamSnapshot, mods: &ModState, g: Gliding, glide: Cost) -> Cost {
         if g == Gliding::default() {
             return Cost::ZERO;
         }
@@ -293,16 +298,14 @@ impl Voice {
             || mods.fixed_moves(FixedCol::Q);
         let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
         let fx = g.fx && Self::fx_runs(p, mods) && !Self::fx_ramps(p, mods);
-        when(g.filter && !filter_moves, p.filter.kind().glide_cost())
-            + when(fx, p.fx.ty().glide_cost())
+        when(g.filter && !filter_moves, glide) + when(fx, p.fx.ty().glide_cost())
     }
 
-    /// STABILITY spreads the voice: the 2040, LADDER or SEM, stored below 1
-    /// or routed.
-    fn stab_runs(p: &ParamSnapshot, mods: &ModState) -> bool {
-        p.filter.kind().has_chip()
-            && (p.filter.stability < 1.0
-                || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::STAB)))
+    /// STABILITY stored below 1 or routed: it spreads a kind with a chip
+    /// (`FilterKind::has_chip`).
+    fn stab_set(p: &ParamSnapshot, mods: &ModState) -> bool {
+        p.filter.stability < 1.0
+            || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::STAB))
     }
 
     /// FB runs: stored off 0, or routed (ADR 0190). It runs the filter's
@@ -1536,6 +1539,46 @@ fn env_mod(n: &mut EnvMods, mod_state: &ModState, d: usize, values: &[f32; MAX_M
 
 pub mod depth;
 pub mod gate;
+
+/// `Voice::filter_cost`'s kind-free terms, worked out once: a filter of
+/// any shape billed from them (`bill`), a DRUM kit's pads each theirs.
+struct FilterTerms {
+    stab: bool,
+    fb: bool,
+    moving: bool,
+    shaped: bool,
+    level: bool,
+}
+
+impl FilterTerms {
+    fn of(p: &ParamSnapshot, mods: &ModState) -> FilterTerms {
+        let algo = p.engine() == EngineType::Algo;
+        let shaped = algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q));
+        let fb = Voice::fb_runs(p, mods);
+        FilterTerms {
+            stab: Voice::stab_set(p, mods),
+            fb,
+            moving: shaped
+                || fb
+                || mods.fixed_moves(FixedCol::Freq)
+                || mods.fixed_moves(FixedCol::Q),
+            shaped,
+            level: Voice::level_may_open(p, mods),
+        }
+    }
+
+    /// The filter as `kind` (`voice` on the 2040), its moving path once
+    /// for these terms' or a pad route's (`moves`) move.
+    fn bill(&self, kind: FilterKind, voice: K2040Voice, moves: bool) -> Cost {
+        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+        kind.cost(voice)
+            + when(self.stab && kind.has_chip(), STAB_COST)
+            + when(self.fb, FB_COST)
+            + when(self.moving || moves, kind.move_cost())
+            + when(self.shaped, TAP_SHAPE_COST)
+            + when(self.level, kind.level_cost())
+    }
+}
 
 #[cfg(test)]
 mod tests {
