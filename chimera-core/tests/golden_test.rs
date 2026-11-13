@@ -860,3 +860,78 @@ fn tape_goldens_match() {
         .collect();
     golden::check(TAPE_GOLDENS, &got);
 }
+
+/// DRUM slice 2's baseline (Task 0): the slice-1 project written by slice-1
+/// code (`drum_kit_codec_test::write_slice1_fixture`), pads 1, 2, 8, 9 and
+/// 10 struck at once-a-block steps, 2 s through the `Instrument`. Every
+/// later task keeps it bit-identical.
+const DRUM_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[(
+    "drum_slice1_kit",
+    (
+        0x761f40bc2378fa6e,
+        [
+            744912150, 1015558105, 1021275839, 994768360, 3152329701, 3152327064, 3125714216,
+            973063012,
+        ],
+    ),
+)];
+
+fn drum_slice1_render() -> Vec<f32> {
+    use chimera_core::dsp::drum::view::KitWriter;
+    use chimera_core::dsp::fx_bus::FxBus;
+    use chimera_core::dsp::knobs::KnobPublisher;
+    use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
+    use chimera_core::note_queue::{NoteEvent, NoteKind};
+    use chimera_core::project::{PartId, Project};
+    use chimera_hal::BLOCK_SIZE;
+    let f = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/drum_slice1.prj"
+    ))
+    .unwrap();
+    let (mut p, _) = Project::boxed();
+    common::codec_util::decode_project(&f, &mut p).unwrap();
+    let mut knobs = Box::new(KnobPublisher::new());
+    let mut shared = Box::new(AudioShared::default());
+    shared.update_from_project(&p, 0, &mut knobs);
+    KitWriter::take()
+        .expect("the kit writer, once")
+        .publish_all(p.kits());
+    let mut inst = Box::new(Instrument::new(
+        chimera_hal::SAMPLE_RATE,
+        chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
+    ));
+    let mut fx = Box::new(FxBus::new());
+    let mut dac = Box::new(DacBlocks::new());
+    let mut scope = scope_writer();
+    let channel = p.part(PartId::ALL[0]).mix.channel;
+    // Pads 1, 2, 8, 9, 10 are notes 0, 1, 7, 8, 9.
+    let hits = [(0, 100), (1, 40), (7, 127), (8, 90), (9, 64)];
+    let blocks = 2 * chimera_hal::SAMPLE_RATE as usize / BLOCK_SIZE;
+    let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
+    for b in 0..blocks {
+        if let Some(&(n, v)) = hits.get(b) {
+            inst.handle(
+                NoteEvent {
+                    channel,
+                    note: MidiNote::new(n).unwrap(),
+                    kind: NoteKind::On(Velocity::new(v).unwrap()),
+                },
+                &shared,
+            );
+        }
+        inst.render(&mut fx, &mut dac, &shared, &mut scope);
+        out.extend_from_slice(inst.part_bus(0));
+    }
+    out
+}
+
+#[test]
+fn drum_slice1_kit_matches() {
+    let out = drum_slice1_render();
+    assert!(out.iter().any(|&x| x.abs() > 1e-3), "silent");
+    golden::check(
+        DRUM_GOLDENS,
+        &[("drum_slice1_kit", (fnv1a(&out), spots(&out)))],
+    );
+}

@@ -354,3 +354,36 @@ fn an_unknown_tonal_loads_off() {
     );
     assert_eq!(q.kit(PartId::ALL[1]).tonal(), Tonal::Off);
 }
+
+/// The slice-1 project the DRUM slice 2 baseline golden loads
+/// (`golden_test`'s `drum_slice1_kit`): written once from slice-1 code,
+/// never regenerated after (`--ignored`).
+pub const SLICE1_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/drum_slice1.prj"
+);
+
+#[test]
+#[ignore = "writes tests/fixtures/drum_slice1.prj from the base"]
+fn write_slice1_fixture() {
+    use chimera_core::dsp::filter::FilterKind;
+    use chimera_core::dsp::filter::FilterMode;
+    use chimera_core::project::{PartFrom, PartId, PartSource, Project};
+    let (mut p, t) = Project::boxed();
+    let (a, b) = (PartId::ALL[0], PartId::ALL[1]);
+    for (part, e) in [(a, EngineType::Drum), (b, EngineType::Va)] {
+        let from = PartFrom::Init(e);
+        load(&mut p, t, PartSource { part, from }).unwrap();
+    }
+    {
+        let s = &mut p.edit_part(a).sound.params;
+        s.filter.set_kind(FilterKind::Ladder);
+        assert!(s.filter.set_mode(FilterMode::Lp24));
+        s.filter.cutoff = 420.0;
+        s.filter.resonance = 0.62;
+        s.out.vca_vel = 0.4;
+        s.out.gate = [0.5, 0.3, 0.2];
+    }
+    p.kit_mut(a).pad_mut(pad(9)).set_pan(Pan::clamped(20));
+    std::fs::write(SLICE1_FIXTURE, encode(&p)).unwrap();
+}
