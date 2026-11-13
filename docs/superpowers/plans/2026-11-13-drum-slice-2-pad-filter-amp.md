@@ -19,7 +19,7 @@
 - **`just check` in every task that adds an enum arm or a static** (slice 1's lesson: a missed check let bank 2 overflow).
 - **Builds:** `$B` below means `CARGO_BUILD_JOBS=10 nice -n 15`. Run the targeted tests in each task and the full suite before the PR. No `git stash`.
 - **Labels and gestures:** full words where they fit (CUTOFF, ATTACK, DECAY, AMOUNT). MIX + MINUS / PLUS (pad step) shows its focus-band hint on every pad page.
-- **ADR:** ADR 0268, or the next free number if TONAL's work took it, supersedes 0265 in part. It replaces 0265's "the Sound's FILTER, AMP, LFOs and MOD are shared by every pad" and, if Task 8 ships, "the voice never reads the kit again". 0265 is not edited.
+- **ADR:** ADR 0269, or the next free number if TONAL's work took it, supersedes 0265 in part. It replaces 0265's "the Sound's FILTER, AMP, LFOs and MOD are shared by every pad" and, if Task 8 ships, "the voice never reads the kit again". 0265 is not edited.
 - **Scope fence.** TONAL, PAD FOLLOW and lit pads are being built on `drum-slice-1` and are not in this plan. Also out: SMP/MIX/combine, FM and BODY machines, a per-pad FX slot, pad OUTPUT, RESERVE, pads modulating pads, per-pad MIDI CC learn (file an issue).
 - Commits are terse, with no type prefixes. Bugs and follow-ups go to GitHub issues.
 
@@ -48,10 +48,10 @@
 - [ ] **Step 3:** Add golden `drum_slice1_kit`: load the fixture, strike pads 1, 2, 8, 9 and 10 on Part 1 at velocities 100, 40, 127, 90 and 64, one block apart, and render 2 s through the `Instrument`. Record it with `GOLDEN_RECORD=1 $B cargo test -p chimera-core --test golden_test goldens_match`, then run it without the variable → PASS.
 - [ ] **Step 4:** Commit `DRUM slice 2: slice-1 baseline golden`.
 
-### Task 1: ADR 0268 and the pad sound types
+### Task 1: ADR 0269 and the pad sound types
 
 **Files:**
-- Create: `docs/adr/0268-per-pad-filter-amp-and-modulation.md` (from `0000-template.md`, Proposed), added to `docs/adr/README.md`; `chimera-engine/src/dsp/drum/sound.rs`
+- Create: `docs/adr/0269-per-pad-filter-amp-and-modulation.md` (from `0000-template.md`, Proposed), added to `docs/adr/README.md`; `chimera-engine/src/dsp/drum/sound.rs`
 - Modify: `chimera-engine/src/dsp/drum/mod.rs`, `chimera-engine/src/dsp/drum/types.rs` (`Pad` gains `sound`)
 - Test: `chimera-core/tests/drum_sound_test.rs`
 
@@ -100,7 +100,7 @@
 ```
 - [ ] **Step 3:** Run `$B cargo test -p chimera-core --test drum_sound_test` → FAIL (unresolved `drum::sound`).
 - [ ] **Step 4:** Implement `sound.rs` and `Pad`'s field. Add `const _: () = assert!(size_of::<PadSound>() <= 60);`.
-- [ ] **Step 5:** Run → PASS. Then run `$B cargo test -p chimera-core --test drum_types_test --test drum_kit_codec_test` → PASS. Commit `DRUM: ADR 0268 and the pad sound types`.
+- [ ] **Step 5:** Run → PASS. Then run `$B cargo test -p chimera-core --test drum_types_test --test drum_kit_codec_test` → PASS. Commit `DRUM: ADR 0269 and the pad sound types`.
 
 ### Task 2: The pad's filter and AMP in the voice (latched at the hit)
 
@@ -275,13 +275,13 @@
   - `machine_knobs_stay_latched`: a DECAY knob edit doesn't reach the ringing hit.
   - `no_publish_no_read`: `sound_if_newer` → `None` while `seq` is unchanged.
 - [ ] **Step 2:** Run `$B cargo test -p chimera-core --test drum_live_test` → FAIL.
-- [ ] **Step 3:** Implement. Amend ADR 0268, still Proposed: the voice re-reads its pad's sound from the view after a publish.
+- [ ] **Step 3:** Implement. Amend ADR 0269, still Proposed: the voice re-reads its pad's sound from the view after a publish.
 - [ ] **Step 4:** Run → PASS. Task 2's goldens command → PASS. `$B just check` and `$B just stack-check` → green. Commit `DRUM: live pad edits glide into ringing hits`.
 
 ### Task 9: Playable on the desktop; flash, RAM and stack
 
 **Files:**
-- Modify: `chimera-core/tests/drum_e2e_test.rs`, `tools/bank1-budget.txt`, `docs/adr/0268-…` (measured figures), whatever `just check` names
+- Modify: `chimera-core/tests/drum_e2e_test.rs`, `tools/bank1-budget.txt`, `docs/adr/0269-…` (measured figures), whatever `just check` names
 
 **Interfaces:**
 - Consumes: everything above.
@@ -289,7 +289,7 @@
 - [ ] **Step 1: Write the failing e2e test** `pad_filter_from_the_ui`. Through `UiState` + `Instrument`: on DRUM INIT, open FLT, set KIND LADDER and CUTOFF 300 on pad 1, MIX + PLUS, set pad 2's CUTOFF 4000, then play notes 0 and 1. The two voices' played filters are LADDER/300 and SVF/4000, and the Sound's filter is unchanged.
 - [ ] **Step 2:** Run `$B cargo test -p chimera-core --test drum_e2e_test` → FAIL until the wiring is closed, then PASS.
 - [ ] **Step 3:** In `just desktop`, load DRUM INIT, give the hats a resonant LADDER and the kick a short AMP, sweep CUTOFF on a ringing cymbal, and screenshot FLT, AMP and ROUTE for the owner. If the DRUM guide page exists, add annotated shots (yellow numbered callouts). Otherwise note them on the docs issue.
-- [ ] **Step 4:** Run `$B just test` (full suite), `$B just check`, `$B just stack-check` and `$B cargo test -p chimera-utils drums::` → all green, nulls −inf. Raise bank-1 lines only as far as the build needs. Write the measured bank 1, bank 2, ITCM and stack figures into ADR 0268 and report them in one line.
+- [ ] **Step 4:** Run `$B just test` (full suite), `$B just check`, `$B just stack-check` and `$B cargo test -p chimera-utils drums::` → all green, nulls −inf. Raise bank-1 lines only as far as the build needs. Write the measured bank 1, bank 2, ITCM and stack figures into ADR 0269 and report them in one line.
 - [ ] **Step 5:** Commit `DRUM: per-pad filter and amp, playable`. Open the PR into `0.4`.
 
 ---
