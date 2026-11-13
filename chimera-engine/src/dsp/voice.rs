@@ -11,6 +11,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drum::engine::MidSide;
+use crate::dsp::drum::sound::RouteOffsets;
 use crate::dsp::drum::types::{DrumHit, HitSeed, SampleRate};
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
@@ -1135,6 +1136,15 @@ impl Voice {
         mod_values[ModSource::Wheel.index()] = knobs.wheel();
         mod_values[ModSource::Press.index()] = knobs.press().max(self.press);
         mod_values[ModSource::Timbre.index()] = knobs.timbre().max(self.timbre);
+        // A hit's pad mod envelope, LFO and routes (ADR 0269): zero unrouted.
+        let pad = match &mut self.slot {
+            EngineSlot::Drum(d) => d.mods_block(
+                LfoSlot::ALL.map(|s| mod_values[ModSource::of_lfo(s).index()]),
+                self.last_velocity,
+                sample_rate,
+            ),
+            _ => RouteOffsets::ZERO,
+        };
         // The other VCA sources ramp from their last block's value.
         for (s, &cur) in mod_values.iter().enumerate() {
             if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
@@ -1193,6 +1203,13 @@ impl Voice {
                 }
             }
             self.env_mods = next;
+            // The pad's routes after the Part's.
+            if pad.cutoff() != 0.0 {
+                apply_offset(&mut m.filter, FilterParams::CUTOFF, pad.cutoff());
+            }
+            if pad.reso() != 0.0 {
+                apply_offset(&mut m.filter, FilterParams::RESONANCE, pad.reso());
+            }
             // The wheel goes on after the routes: the same pitch path,
             // past PITCH's range; an MPE note's own on top.
             let bend = knobs.bend() + self.bend;
@@ -1254,9 +1271,10 @@ impl Voice {
                 .moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)),
             freq: lane(FixedCol::Freq),
             q: lane(FixedCol::Q),
-            // A route moves g and k at audio rate; without one, only a
-            // knob's glide does.
-            glide: !mod_state.filter_routed(),
+            // A route, the Part's or the pad's, moves g and k at audio
+            // rate; without one, only a knob's glide does.
+            glide: !(mod_state.filter_routed()
+                || matches!(&self.slot, EngineSlot::Drum(d) if d.moves_filter())),
             spread: if m.filter.kind().has_chip() {
                 self.stab.step(stability::depth(m.filter.stability))
             } else {

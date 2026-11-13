@@ -491,6 +491,11 @@ impl RouteSource {
         }
     }
 
+    /// Its place in `ALL` and in `RouteValues`.
+    pub const fn index(self) -> usize {
+        self.code() as usize - 1
+    }
+
     pub const fn from_code(c: u8) -> Option<RouteSource> {
         match c {
             1 => Some(RouteSource::ModEnv),
@@ -668,6 +673,86 @@ impl PadRoutes {
         self.0
             .iter()
             .any(|r| r.amount != Amount::ZERO && r.dest.is_filter())
+    }
+
+    /// A route with an amount moves `d`.
+    pub fn moves(&self, d: RouteDest) -> bool {
+        self.0
+            .iter()
+            .any(|r| r.amount != Amount::ZERO && r.dest == d)
+    }
+
+    /// No route has an amount: the pad moves nothing.
+    pub fn is_off(&self) -> bool {
+        self.0.iter().all(|r| r.amount == Amount::ZERO)
+    }
+
+    /// Each destination's sum, amount / 127 × its source's value.
+    pub fn offsets(&self, v: &RouteValues) -> RouteOffsets {
+        let mut o = [0.0f32; 5];
+        for r in self.0.iter().filter(|r| r.amount != Amount::ZERO) {
+            o[r.dest.code() as usize - 1] += f32::from(r.amount.0) / 127.0 * v.0[r.source.index()];
+        }
+        let [cutoff, reso, volume, lfo_speed, lfo_depth] = o;
+        RouteOffsets {
+            cutoff,
+            reso,
+            volume,
+            lfo_speed,
+            lfo_depth,
+        }
+    }
+}
+
+/// What the routes read this block, by `RouteSource::index`: the mod
+/// envelope 0..1, the LFOs −1..1, VEL 0..1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RouteValues([f32; 6]);
+
+impl RouteValues {
+    pub const fn new(v: [f32; 6]) -> RouteValues {
+        RouteValues(v)
+    }
+}
+
+/// The routes' sums by destination, in each one's offset units
+/// (`apply_offset`'s; VOLUME a gain offset from 1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RouteOffsets {
+    cutoff: f32,
+    reso: f32,
+    volume: f32,
+    lfo_speed: f32,
+    lfo_depth: f32,
+}
+
+impl RouteOffsets {
+    pub const ZERO: RouteOffsets = RouteOffsets {
+        cutoff: 0.0,
+        reso: 0.0,
+        volume: 0.0,
+        lfo_speed: 0.0,
+        lfo_depth: 0.0,
+    };
+
+    pub const fn cutoff(&self) -> f32 {
+        self.cutoff
+    }
+
+    pub const fn reso(&self) -> f32 {
+        self.reso
+    }
+
+    pub const fn volume(&self) -> f32 {
+        self.volume
+    }
+
+    pub const fn lfo_speed(&self) -> f32 {
+        self.lfo_speed
+    }
+
+    pub const fn lfo_depth(&self) -> f32 {
+        self.lfo_depth
     }
 }
 
