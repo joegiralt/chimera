@@ -97,6 +97,12 @@ DOOR_ONLY = {
     "chimera_stm32::bench::enter": ("chimera_board::synth", "chimera_stm32::bench"),
 }
 
+# Functions no pointer ever holds, though a data word may equal their
+# address: bench-algo,master-tape's ALGO block tables hold the bytes
+# 01 04 05 08, `take_ui`'s address once ADR 0267 moved it. `take_ui` is
+# called once, by name, at boot.
+NEVER_TAKEN = ("chimera_board::shared::take_ui",)
+
 HEADER = re.compile(r"^([0-9a-f]{8}) <(.+)>:$")
 # The mnemonic follows the address (and raw bytes, if shown) after a tab.
 INSN = re.compile(r"^\s*[0-9a-f]+:[^\t]*\t(\S+)\s*(.*)$")
@@ -297,7 +303,11 @@ def pointer_charge(img, out, comp=None):
     A fixed point doesn't exist: address-taken functions make pointer
     calls themselves (a `Store` body calling a sink), so the nesting is the
     stated assumption."""
-    taken = sorted(f for f, a in img.starts.items() if (a | 1) in img.words and f not in ROOTS and f not in DOOR_ONLY)
+    taken = sorted(
+        f
+        for f, a in img.starts.items()
+        if (a | 1) in img.words and f not in ROOTS and f not in DOOR_ONLY and f not in NEVER_TAKEN
+    )
     comp = comp if comp is not None else components(img.funcs)
     charge, deepest = 0, "-"
     for _ in range(POINTER_NEST):

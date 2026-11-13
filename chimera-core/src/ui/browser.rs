@@ -42,32 +42,26 @@ pub const TOTAL_ENTRIES: usize = HEAD + MAX_SOUNDS;
 pub const SOON_TAG: &str = "COMING SOON";
 
 /// An engine listed but not playable yet: its row reads COMING SOON, and
-/// EDIT only toasts (ADR 0132; TAPE left it in ADR 0187).
+/// EDIT only toasts (ADR 0132; TAPE left it in ADR 0187, DRUM in ADR
+/// 0265). None is now; the rows stay for the next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Soon {
-    /// Until the DRUM engine exists.
-    Drum,
-}
+pub enum Soon {}
 
 impl Soon {
-    pub const ALL: [Soon; 1] = [Soon::Drum];
+    pub const ALL: [Soon; 0] = [];
 
     /// Its row's entry, under the INIT rows.
     pub const fn entry(self) -> usize {
-        INITS + self as usize
+        match self {}
     }
 
     pub const fn label(self) -> &'static str {
-        match self {
-            Soon::Drum => "DRUM",
-        }
+        match self {}
     }
 
     /// Its toast on a load.
     pub const fn toast(self) -> &'static str {
-        match self {
-            Soon::Drum => "DRUM: COMING SOON",
-        }
+        match self {}
     }
 }
 

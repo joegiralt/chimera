@@ -81,6 +81,51 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
         ValFmt::Vowel => {
             let _ = buf.write_str(["U", "O", "A", "E", "I"][((val / 25.0 + 0.5) as usize).min(4)]);
         }
+        ValFmt::Knob(m, k) => fmt_knob(buf, val, m, k),
+    }
+}
+
+/// A DRUM knob at `val` (0..1 of its travel), in its machine's unit: the
+/// law's value, as `laws::resolve` hears it. Nothing for a knob the
+/// machine lacks.
+fn fmt_knob(
+    buf: &mut FmtBuf,
+    val: f32,
+    m: crate::dsp::drum::types::Machine,
+    k: crate::dsp::drum::types::Knob,
+) {
+    use crate::dsp::drum::laws::{ValFmt as F, spec};
+    use crate::dsp::drum::types::KnobValue;
+    use core::fmt::Write;
+    let Some(s) = spec(m).knob(k) else {
+        return;
+    };
+    let pos = chimera_midi::value::U7::new(libm::roundf(val * 127.0) as u8)
+        .unwrap_or(chimera_midi::value::U7::MAX);
+    let x = s.law.at(KnobValue::new(pos));
+    let sign = if x > 0.0 { "+" } else { "" };
+    match s.fmt {
+        F::Hz => hz_text(buf, libm::roundf(x) as i32),
+        F::Time if x < 1.0 => fixed(buf, x * 1000.0, 0, " ms"),
+        F::Time => fixed(buf, x, 2, " s"),
+        F::Semis => {
+            let _ = buf.write_str(sign);
+            fixed(buf, x, 1, "");
+        }
+        F::Ratio => fixed(buf, x, 2, "x"),
+        F::Amount => fixed(buf, x * 100.0, 0, ""),
+        F::Count => fixed(buf, x, 0, ""),
+        F::Octaves => fixed(buf, x, 2, " OCT"),
+        // Below the middle a low-pass closing, above a high-pass opening.
+        F::Tilt => {
+            let n = libm::roundf((2.0 * x - 1.0) * 100.0);
+            if n == 0.0 {
+                let _ = buf.write_str("FLAT");
+            } else {
+                let _ = buf.write_str(if n < 0.0 { "LP " } else { "HP " });
+                fixed(buf, libm::fabsf(n), 0, "");
+            }
+        }
     }
 }
 

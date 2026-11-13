@@ -5,6 +5,7 @@
 
 use chimera_core::audio_out::to_dac;
 use chimera_core::dsp::algo::engine::FormantViews;
+use chimera_core::dsp::drum::view::KitWriter;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
@@ -65,6 +66,8 @@ pub struct DesktopAudio {
     shared_audio: Writer<AudioShared>,
     /// The UI side of the knobs: every publish's delta (ADR 0115).
     knobs: Box<KnobPublisher>,
+    /// The kits' publisher to the audio's view (ADR 0265).
+    kits: KitWriter,
     clamp_log: ClampLog,
     #[cfg(feature = "midi")]
     _midi: Option<midir::MidiInputConnection<()>>,
@@ -159,6 +162,7 @@ impl DesktopAudio {
             keys,
             shared_audio,
             knobs: Box::new(KnobPublisher::new()),
+            kits: KitWriter::take().expect("kit writer once"),
             clamp_log: ClampLog::default(),
         }
     }
@@ -173,10 +177,16 @@ impl DesktopAudio {
             b.update_from_project(project, epoch, knobs);
             orbit(b);
         });
+        self.kits.publish_all(project.kits());
         let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);
         if let Some(n) = self.clamp_log.note(clamped, Instant::now()) {
             eprintln!("speakers: {n} frames of the pairs' sum clamped at full scale");
         }
+    }
+
+    /// The pads struck since the last call, handed to `ui`.
+    pub fn take_hits(&mut self, ui: &mut chimera_core::ui::UiState) {
+        ui.take_hits(&mut self.kits);
     }
 
     /// The audio thread has taken the last `update`.

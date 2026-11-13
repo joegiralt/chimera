@@ -46,9 +46,13 @@ impl Rng {
 /// Generate a completely random ParamSnapshot.
 fn random_params(rng: &mut Rng) -> ParamSnapshot {
     // Engine type: every engine (spec § Testing "Engines")
-    let mut p = ParamSnapshot::for_engine(
-        EngineType::ALL[rng.u8(EngineType::ALL.len() as u8 - 1) as usize],
-    );
+    // DRUM plays pads, not notes (`drum_engine_test`): the draw is over
+    // the others, as before it came.
+    let engines: Vec<_> = EngineType::ALL
+        .into_iter()
+        .filter(|&e| expects_sound(e))
+        .collect();
+    let mut p = ParamSnapshot::for_engine(engines[rng.u8(engines.len() as u8 - 1) as usize]);
 
     // Modal params
     p.modal.mode = ResonatorMode::from_u8(rng.u8(3)); // all four models
@@ -250,7 +254,10 @@ fn prop_param_change_changes_output() {
             // The engine's own parameter, where it has one.
             _ => match params_a.engine() {
                 EngineType::Algo => params_b.algo.ops[0].level = 99 - params_a.algo.ops[0].level,
-                EngineType::Modal => params_b.out.volume = params_a.out.volume * 0.2,
+                // DRUM's own params are its pads': none in the Sound.
+                EngineType::Modal | EngineType::Drum => {
+                    params_b.out.volume = params_a.out.volume * 0.2
+                }
                 // ROOT an octave up: the note reads the rig's saw an octave
                 // down (START barely moves a loop of a periodic saw).
                 EngineType::Tape => params_b.tape.root = params_a.tape.root + 1_200.0,

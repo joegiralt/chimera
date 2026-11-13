@@ -23,6 +23,7 @@ use crate::stream::units::{Frames, Packing, SourceRate};
 /// A head past any file's bytes, or a table no descriptor holds: cold, so
 /// the pass after it isn't.
 #[cold]
+#[optimize(size)]
 fn corrupted() -> StreamFail {
     StreamFail::Read(SourceReadError::Load(LoadError::File(
         crate::storage::FileError::Corrupt,
@@ -32,11 +33,13 @@ fn corrupted() -> StreamFail {
 /// The card itself failed: not a busy bus (the card untouched), nor a
 /// file missing or damaged (`CardError::from_store`). Only that ends a
 /// project load's stream pass (#761 m9).
+#[optimize(size)]
 fn card_faulted(e: &impl CardFault) -> bool {
     e.store_error().and_then(CardError::from_store).is_some()
 }
 
 /// One pass of `l` (`StreamLoad::step`).
+#[optimize(size)]
 pub(super) fn step(
     l: &mut StreamLoad,
     s: &mut dyn Store,
@@ -52,6 +55,7 @@ pub(super) fn step(
 }
 
 impl StreamLoad {
+    #[optimize(size)]
     fn pass(
         &mut self,
         s: &mut dyn Store,
@@ -130,6 +134,7 @@ impl StreamLoad {
 
     /// The first pass: the file's runs and its head; an unsealed file is
     /// checked before its heads (`check`).
+    #[optimize(size)]
     fn find(&mut self, s: &mut dyn Store, r: &Ready) -> Result<(), StreamFail> {
         let runs = s
             .runs(r.volume(), source_file(self.sref))
@@ -167,6 +172,7 @@ impl StreamLoad {
     /// unsealed and refused. The seal is best effort: a card that won't
     /// take it streams the checked file anyway, checked again next load.
     #[expect(clippy::too_many_arguments, reason = "the phase's fields, unpacked")]
+    #[optimize(size)]
     fn check(
         &mut self,
         s: &mut dyn Store,
@@ -207,6 +213,7 @@ impl StreamLoad {
     /// The file as found, on the card as found: a remount onto another
     /// volume, or the file deleted or replaced since, publishes nothing
     /// (#761 m3).
+    #[optimize(size)]
     fn still_found(
         &self,
         s: &mut dyn Store,
@@ -240,6 +247,7 @@ impl StreamLoad {
 /// forward load as their heads (slice 1 § 5.6), as the SOURCE cell's load
 /// does; one every stream row refuses, or in too many runs, stays absent
 /// and says why. How many streamed. A card fault ends them.
+// Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
 pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids: SourceSet) -> u8 {
     let (mut n, mut fault) = (0u8, false);
     for id in ids.iter() {

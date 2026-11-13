@@ -797,6 +797,8 @@ pub enum EngineType {
     Tape = 2,
     /// The virtual analog: `dsp::va`.
     Va = 3,
+    /// The drum machine (ADR 0265): `dsp::drum`.
+    Drum = 4,
 }
 
 impl DiskCode for EngineType {
@@ -806,6 +808,7 @@ impl DiskCode for EngineType {
             EngineType::Modal => 1,
             EngineType::Tape => 2,
             EngineType::Va => 3,
+            EngineType::Drum => 4,
         }
     }
 
@@ -815,6 +818,7 @@ impl DiskCode for EngineType {
             EngineType::Modal => "MODAL",
             EngineType::Tape => "TAPE",
             EngineType::Va => "VA",
+            EngineType::Drum => "DRUM",
         }
     }
 
@@ -824,6 +828,7 @@ impl DiskCode for EngineType {
             1 => Some(EngineType::Modal),
             2 => Some(EngineType::Tape),
             3 => Some(EngineType::Va),
+            4 => Some(EngineType::Drum),
             _ => None,
         }
     }
@@ -832,20 +837,22 @@ impl DiskCode for EngineType {
 impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
-    pub const ALL: [EngineType; 4] = [
+    pub const ALL: [EngineType; 5] = [
         EngineType::Algo,
         EngineType::Modal,
         EngineType::Tape,
         EngineType::Va,
+        EngineType::Drum,
     ];
 
     /// The engines a player picks: the browser's INIT rows and NEW's INIT
-    /// Sounds (TAPE since ADR 0187; DRUM is still COMING SOON, ADR 0132).
-    pub const PLAYABLE: [EngineType; 4] = [
+    /// Sounds (TAPE since ADR 0187, DRUM since ADR 0265).
+    pub const PLAYABLE: [EngineType; 5] = [
         EngineType::Algo,
         EngineType::Modal,
         EngineType::Va,
         EngineType::Tape,
+        EngineType::Drum,
     ];
 
     /// The FX slot's reference: the engine's signal is multiplied by it
@@ -861,9 +868,11 @@ impl EngineType {
     /// - TAPE 1.0: it has no level of its own, so the measure is of a
     ///   full-scale source, which reads back at peak 1.000.
     /// - VA 1.0: peak 0.989, the reference the others are set to.
+    /// - DRUM 1.0: its kernels are set near full scale (unmeasured until
+    ///   its pads play, slice 1 Task 5).
     pub const fn fx_scale(self) -> f32 {
         match self {
-            EngineType::Algo | EngineType::Tape | EngineType::Va => 1.0,
+            EngineType::Algo | EngineType::Tape | EngineType::Va | EngineType::Drum => 1.0,
             EngineType::Modal => 1.0 / 0.29,
         }
     }
@@ -875,6 +884,7 @@ impl EngineType {
             EngineType::Modal => "Modal",
             EngineType::Tape => "Tape",
             EngineType::Va => "VA",
+            EngineType::Drum => "Drum",
         }
     }
 }
@@ -1479,7 +1489,9 @@ impl BlockRead for ParamSnapshot {
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo
-            | BlockRef::Random => return None,
+            | BlockRef::Random
+            | BlockRef::Pad
+            | BlockRef::Kit => return None,
         }))
     }
 }
@@ -1511,7 +1523,9 @@ impl Blocks for ParamSnapshot {
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo
-            | BlockRef::Random => return None,
+            | BlockRef::Random
+            | BlockRef::Pad
+            | BlockRef::Kit => return None,
         }))
     }
 }

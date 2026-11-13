@@ -12,10 +12,12 @@ use crate::dsp::tape_engine::read::MAX_ZONES;
 pub struct Stem(u32);
 
 impl Stem {
+    #[optimize(size)]
     pub const fn new(crc: u32) -> Stem {
         Stem(crc)
     }
 
+    #[optimize(size)]
     pub const fn get(self) -> u32 {
         self.0
     }
@@ -34,10 +36,12 @@ impl SourceRef {
     pub const LEN: usize = 10;
 
     /// Its file's stem.
+    #[optimize(size)]
     pub const fn stem(self) -> Stem {
         Stem(self.crc)
     }
 
+    #[optimize(size)]
     pub fn to_bytes(&self) -> [u8; Self::LEN] {
         let mut b = [0; Self::LEN];
         b[..4].copy_from_slice(&self.crc.to_le_bytes());
@@ -47,6 +51,7 @@ impl SourceRef {
     }
 
     /// `None` unless exactly `LEN` bytes.
+    #[optimize(size)]
     pub fn from_bytes(b: &[u8]) -> Option<SourceRef> {
         let b: &[u8; Self::LEN] = b.try_into().ok()?;
         let (crc, rest) = b.split_first_chunk::<4>()?;
@@ -79,6 +84,7 @@ impl ZoneTune {
     /// One zone's bytes: `root`, then `period`, LE.
     pub const ZONE_LEN: usize = 6;
 
+    #[optimize(size)]
     pub fn new(zones: &[(u16, u32)]) -> Option<ZoneTune> {
         let n = u8::try_from(zones.len()).ok().and_then(NonZeroU8::new)?;
         if n.get() > MAX_ZONES {
@@ -93,6 +99,7 @@ impl ZoneTune {
     }
 
     /// Each zone's `(root, period)`, in zone order.
+    #[optimize(size)]
     pub fn zones(&self) -> impl ExactSizeIterator<Item = (u16, u32)> + '_ {
         (0..self.n.get() as usize).map(|i| self.zone(i))
     }
@@ -100,6 +107,7 @@ impl ZoneTune {
     /// Zone `i`'s `(root, period)`. The tune isn't typed against its set's
     /// zone count (the ref doesn't count zones), so a zone past it plays
     /// at the last tune's pitch; tunes past the set's zones go unused.
+    #[optimize(size)]
     pub fn zone(&self, i: usize) -> (u16, u32) {
         let b = self.zones[i.min(self.n.get() as usize - 1)];
         (
@@ -110,11 +118,13 @@ impl ZoneTune {
 
     /// The record's payload, `ZONE_LEN` bytes a zone: as it is held, so
     /// writing it builds nothing on the stack.
+    #[optimize(size)]
     pub fn record(&self) -> &[u8] {
         self.zones[..self.n.get() as usize].as_flattened()
     }
 
     /// `None` unless 1 to `MAX_ZONES` whole zones.
+    #[optimize(size)]
     pub fn from_record(p: &[u8]) -> Option<ZoneTune> {
         let (zones, rest) = p.as_chunks::<{ Self::ZONE_LEN }>();
         let n = u8::try_from(zones.len()).ok().and_then(NonZeroU8::new)?;
@@ -140,6 +150,7 @@ pub struct TapeSource {
 
 impl From<SourceRef> for TapeSource {
     /// A source with no zone tuning: a `Plain` or `Transwave`.
+    #[optimize(size)]
     fn from(r: SourceRef) -> Self {
         TapeSource { r, tune: None }
     }

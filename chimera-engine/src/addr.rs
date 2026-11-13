@@ -98,6 +98,12 @@ pub enum BlockRef {
     /// SETTINGS › PART › RANDOMIZE (`Randomize`, ADR 0232): held by the UI,
     /// never stored, so not in `ALL`.
     Random,
+    /// The Part's selected pad (`Pad`, ADR 0265): its kit's, stored in the
+    /// kit record, so not in `ALL`.
+    Pad,
+    /// The Part's kit's own params (`Kit`: TONAL, ADR 0270), stored in the
+    /// kit record, so not in `ALL`.
+    Kit,
 }
 
 impl BlockRef {
@@ -164,6 +170,8 @@ impl BlockRef {
             BlockRef::OrbitRing(_) => &crate::orbit::scene::RING_SPECS,
             BlockRef::Tempo => &crate::orbit::scene::TEMPO_SPECS,
             BlockRef::Random => &crate::randomize::RANDOM_SPECS,
+            BlockRef::Pad => &crate::dsp::drum::params::PAD_SPECS,
+            BlockRef::Kit => &crate::dsp::drum::params::KIT_SPECS,
         }
     }
 
@@ -194,7 +202,9 @@ impl BlockRef {
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo
-            | BlockRef::Random => false,
+            | BlockRef::Random
+            | BlockRef::Pad
+            | BlockRef::Kit => false,
         }
     }
 
@@ -227,7 +237,9 @@ impl BlockRef {
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo
-            | BlockRef::Random => false,
+            | BlockRef::Random
+            | BlockRef::Pad
+            | BlockRef::Kit => false,
         }
     }
 }

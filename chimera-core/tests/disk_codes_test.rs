@@ -6,13 +6,14 @@ use chimera_core::addr::{BlockRef, BlockViewMut, Blocks, Op};
 use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};
 use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
 use chimera_core::dsp::algo::kinds::{OP_KIND_IDENTS, OP_KIND_NAMES};
+use chimera_core::dsp::drum::types::{ChokeGroup, Machine};
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
 use chimera_core::modulation::ModSource;
 use chimera_core::orbit::scene::{Scene, TargetKind};
 use chimera_core::params::EnvParams;
-use chimera_core::params::{FilterParams, ParamSnapshot};
+use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::part::PartParams;
 use chimera_core::storage::{
     Crc32, DiskValue, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES, ValidAddr,
@@ -146,6 +147,22 @@ fn table() -> Vec<String> {
     coded(
         "JACK",
         &mut Jack::ALL.iter().map(|j| (j.disk_code(), j.disk_ident())),
+    );
+    coded(
+        "DRUM_MACHINE",
+        &mut Machine::ALL.iter().map(|m| (m.disk_code(), m.disk_ident())),
+    );
+    coded(
+        "CHOKE",
+        &mut ChokeGroup::ALL
+            .iter()
+            .map(|c| (c.disk_code(), c.disk_ident())),
+    );
+    coded(
+        "ENGINE",
+        &mut EngineType::ALL
+            .iter()
+            .map(|e| (e.disk_code(), e.disk_ident())),
     );
     coded(
         "TARGET_KIND",

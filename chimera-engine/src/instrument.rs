@@ -4,6 +4,9 @@
 
 use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::clampf;
+use crate::dsp::drum::types::{ChokeGroup, DrumHit, PadSet};
+use crate::dsp::drum::view::KIT_VIEW;
+use crate::dsp::tape_engine::params::Retrig;
 use core::cmp::Reverse;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::addr_of_mut;
@@ -392,6 +395,16 @@ const NO_SOURCES: GateView<'static> = GateView::empty();
 struct Waiting {
     vel: Velocity,
     source: Option<SourceId>,
+    plays: Plays,
+}
+
+/// What a waiting note plays: a key on its Part's Sound, or a DRUM pad's
+/// hit (ADR 0265). One whose Part's engine crossed DRUM while it waited
+/// is dropped unheard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Plays {
+    Note,
+    Hit,
 }
 
 /// What admission paid for a streamed note (slice 1 § 5.5): its bill,
@@ -533,6 +546,39 @@ pub fn mix_parts(
     sample_rate: u32,
     dac: &mut DacBlocks,
 ) -> [f32; BLOCK_SIZE] {
+    let none: Sides = [None; MAX_PARTS];
+    mix_sided(
+        (buses, &none),
+        written,
+        sends,
+        mix,
+        fx,
+        shared,
+        tempo,
+        sample_rate,
+        dac,
+    )
+}
+
+/// Each Part's side, beside its mono bus (the mid), where a DRUM pad's
+/// PAN put one this block (`MidSide`): its pairs' left takes mid − side,
+/// right mid + side. The sends and the scope take the mid.
+pub type Sides = [Option<[f32; BLOCK_SIZE]>; MAX_PARTS];
+
+/// `mix_parts` with each Part's side (`Sides`); a Part without one mixes
+/// bit for bit as `mix_parts` does.
+#[allow(clippy::too_many_arguments)]
+fn mix_sided(
+    (buses, sides): (&[[f32; BLOCK_SIZE]; MAX_PARTS], &Sides),
+    written: &[bool; MAX_PARTS],
+    sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
+    mix: &mut MixState,
+    fx: &mut FxBus,
+    shared: &AudioShared,
+    tempo: Tempo,
+    sample_rate: u32,
+    dac: &mut DacBlocks,
+) -> [f32; BLOCK_SIZE] {
     // The written Parts in order, gains hoisted at their block's start; by
     // pair for the dry mix. The Parts whose gains move, with their pair and
     // steps.
@@ -542,6 +588,9 @@ pub fn mix_parts(
     let mut dry_n = [0usize; DAC_PAIRS];
     let mut moving = [(&buses[0], 0usize, [0.0f32; MIX_GAINS]); MAX_PARTS];
     let mut moving_n = 0;
+    // The sided Parts, by pair: the side, its gains, their steps.
+    let mut sided = [[(&buses[0], [0.0f32; 4]); MAX_PARTS]; DAC_PAIRS];
+    let mut sided_n = [0usize; DAC_PAIRS];
     let k = ease_coeff(sample_rate);
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = mix.pan_gains(p, part.mix.pan);
@@ -570,6 +619,11 @@ pub fn mix_parts(
         if g.iter().any(|g| g.0 != g.1) {
             moving[moving_n] = (bus, k, g.map(|g| step_of(g, BLOCK_SIZE)));
             moving_n += 1;
+        }
+        if let Some(side) = &sides[p] {
+            let (l, r) = (step_of(g[0], BLOCK_SIZE), step_of(g[1], BLOCK_SIZE));
+            sided[k][sided_n[k]] = (side, [g[0].0, g[1].0, l, r]);
+            sided_n[k] += 1;
         }
     }
     let moving = &moving[..moving_n];
@@ -649,6 +703,18 @@ pub fn mix_parts(
         }
         if r != 0.0 {
             glide::<2, 1>(bus, r, &mut out[k]);
+        }
+    }
+    // The sides, after: left takes − side, right + side, each at its
+    // gain's ramp.
+    for (k, (row, n)) in sided.iter().zip(sided_n).enumerate() {
+        for &(side, [gl, gr, l, r]) in &row[..n] {
+            let mut t = 0.0f32;
+            for (o, &x) in out[k].as_chunks_mut::<2>().0.iter_mut().zip(side) {
+                t += 1.0;
+                o[0] -= x * (gl + l * t);
+                o[1] += x * (gr + r * t);
+            }
         }
     }
     // The master section, after every pair is summed; then the output stage.
@@ -892,6 +958,20 @@ impl Instrument {
             .filter(|&v| self.voices[v].is_active())
             .filter_map(|v| crate::project::PartId::new(self.sounding[v]))
             .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p))
+    }
+
+    /// Each Part's pads its DRUM voices sound, for KIT's lights (#950):
+    /// one pass over the voices.
+    #[inline(never)]
+    fn publish_pads(&self) {
+        let mut pads = [PadSet::EMPTY; MAX_PARTS];
+        for (v, &p) in self.voices.iter().zip(&self.sounding) {
+            if let (Some(h), Some(p)) = (v.drum_hit(), crate::project::PartId::new(p)) {
+                let s = &mut pads[p.index()];
+                *s = s.with(h.pad());
+            }
+        }
+        KIT_VIEW.sounding(&pads);
     }
 
     /// The voice budget booked, FX bus and ORBIT included, in percent: for
@@ -1257,8 +1337,13 @@ impl Instrument {
                 crate::probe::acc(0, crate::probe::now().wrapping_sub(t0));
                 #[cfg(feature = "probe")]
                 crate::probe::acc(3, 1);
+                // The DRUM Parts' hits, out of line: no port's.
+                self.drum_on(ev, heard, shared, from, src);
                 for (p, part) in shared.parts.iter().enumerate() {
-                    if part.mix.channel != heard || self.refuses(p, shared, src) {
+                    if part.mix.channel != heard
+                        || part.params.engine() == EngineType::Drum
+                        || self.refuses(p, shared, src)
+                    {
                         continue;
                     }
                     let (q, mode) = (p as u8, part.mix.mode);
@@ -1375,6 +1460,7 @@ impl Instrument {
                         self.waiting[v] = Some(Waiting {
                             vel,
                             source: part.source,
+                            plays: Plays::Note,
                         });
                         voice.kill()
                     } else {
@@ -1821,7 +1907,9 @@ impl Instrument {
     /// released at once unless `held`, if the block's clear budget lets it:
     /// false if it must wait on. A Sympathetic note is placed as it starts
     /// (its Part may have become Sympathetic while it waited): it keeps its
-    /// promise, takes a free slot, or plays bare.
+    /// promise, takes a free slot, or plays bare. A hit whose Part left
+    /// DRUM, or a note whose Part became DRUM, is dropped unheard: its
+    /// slot dies, freed on the next block.
     fn start<P: VoicePorts>(
         &mut self,
         v: usize,
@@ -1831,6 +1919,12 @@ impl Instrument {
         ports: &mut P,
     ) -> bool {
         let params = &shared.parts[q as usize % MAX_PARTS].params;
+        let hit = w.plays == Plays::Hit;
+        if hit != (params.engine() == EngineType::Drum) {
+            self.alloc.kill(v);
+            self.alloc.dropped_unheard();
+            return true;
+        }
         if SlotKind::of(params) == SYMPATHETIC {
             self.sym.alloc_mut().place(VoiceIdx::ALL[v]);
         }
@@ -1846,6 +1940,14 @@ impl Instrument {
         let to = self
             .tuned
             .strike(v, crate::tuning::offset(usize::from(q), note.get()));
+        self.sounding[v] = q;
+        if hit {
+            if !self.start_hit(VoiceIdx::ALL[v], w.vel, params, src) {
+                self.alloc.kill(v);
+                self.alloc.dropped_unheard();
+            }
+            return true;
+        }
         let voice = &mut self.voices[v];
         let base = CtxBase {
             sym: &mut self.sym,
@@ -1859,8 +1961,145 @@ impl Instrument {
                 voice.note_off(ctx);
             }
         });
-        self.sounding[v] = q;
         true
+    }
+
+    /// A waiting hit on DRUM, `start`'s: its pad's, from the kit as it is
+    /// now. Whether it started.
+    #[inline(never)]
+    fn start_hit(
+        &mut self,
+        v: VoiceIdx,
+        vel: Velocity,
+        params: &ParamSnapshot,
+        src: &GateView<'_>,
+    ) -> bool {
+        let s = self.alloc.slots()[v.index()];
+        let (Some(q), Some(key)) = (s.part(), s.note()) else {
+            return false;
+        };
+        let id = part_id(q);
+        let hit = KIT_VIEW.hit(id, key);
+        self.strike(v, id, (hit, vel, key, s.held()), params, (src, 0.0))
+    }
+
+    /// Every DRUM Part on `heard` (MPE's master for a live member
+    /// channel) strikes `ev`'s pad (ADR 0265): `handle_streamed`'s note-on
+    /// for a kit, outside every port's instantiation (ORBIT's is bank 2's,
+    /// ADR 0251), as a hit never streams. The key is never snapped. The
+    /// hit's CUT and chokes go first (`choke`); it takes a voice without
+    /// re-striking its key's, so STACK keeps the old one; a voice still
+    /// sounding, whoever's, is waited out (`waiting`), never queued inside
+    /// it.
+    #[inline(never)]
+    fn drum_on(
+        &mut self,
+        ev: NoteEvent,
+        heard: MidiChannel,
+        shared: &AudioShared,
+        from: NoteOrigin,
+        src: &GateView<'_>,
+    ) {
+        let NoteKind::On(vel) = ev.kind else {
+            return;
+        };
+        for (p, part) in shared.parts.iter().enumerate() {
+            if part.mix.channel != heard || part.params.engine() != EngineType::Drum {
+                continue;
+            }
+            let (q, id, key) = (p as u8, PartId::ALL[p], ev.note);
+            let hit = self.choke(id, key);
+            let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
+            let cost = self.costs[p] + if first { Knobs::COST } else { Cost::ZERO };
+            let reserved = self.reserved();
+            let mode = part.mix.mode;
+            let Some(v) = self
+                .alloc
+                .pick_where(q, mode, key, cost, reserved, &|_| false)
+            else {
+                self.alloc.refuse();
+                continue;
+            };
+            let was = self.alloc.slots()[v];
+            self.held_keys[v] = NoteSet::EMPTY.with(key);
+            self.alloc.book(v, q, mode, key, cost);
+            let waits = self.voices[v].is_active();
+            if waits && !was.dying() {
+                self.alloc.fade_from(v, was.cost());
+            }
+            let waited = self.waiting[v].take().is_some();
+            let queued = if waits {
+                self.waiting[v] = Some(Waiting {
+                    vel,
+                    source: None,
+                    plays: Plays::Hit,
+                });
+                self.voices[v].kill()
+            } else {
+                self.sounding[v] = q;
+                !self.strike(
+                    VoiceIdx::ALL[v],
+                    id,
+                    (hit, vel, key, true),
+                    &part.params,
+                    (src, 0.0),
+                )
+            };
+            #[cfg(feature = "tape")]
+            {
+                let old = self.streaming[v].billed();
+                self.streaming[v] = Streaming {
+                    fading: old.filter(|_| self.voices[v].fading()),
+                    ..Streaming::IDLE
+                };
+            }
+            if waited || queued {
+                self.alloc.dropped_unheard();
+            }
+            self.note_channel[v] = ev.channel;
+            self.note_origin[v] = from;
+            self.keys[v] = key;
+            self.poly[v] = 0;
+            self.master[v] = heard;
+            // A hit plays no MPE expression of its own.
+            self.voices[v].ease_own(Own::default(), None);
+            self.sustained[v] = false;
+            self.resnap_to[v] = None;
+            // The KIT page's pad follows the player's hits.
+            if from == NoteOrigin::Live {
+                KIT_VIEW.struck(id, hit.pad());
+            }
+        }
+    }
+
+    /// `hit` from `key` at `vel` on idle voice `v` of Part `q`, released at
+    /// once unless `held`; `to` the key's tuning offset, which DRUM ignores.
+    /// No port: a hit never streams. Out of line and not generic, so no
+    /// port's instantiation (ORBIT's is bank 2's) carries it: bank 1's
+    /// (ADR 0251). Whether it started.
+    #[inline(never)]
+    fn strike(
+        &mut self,
+        v: VoiceIdx,
+        id: PartId,
+        (hit, vel, key, held): (DrumHit, Velocity, MidiNote, bool),
+        params: &ParamSnapshot,
+        (src, to): (&GateView<'_>, f32),
+    ) -> bool {
+        let seed = KIT_VIEW.next_seed(id);
+        let ctx = &mut EngineCtx {
+            sym: &mut self.sym,
+            src,
+            streams: None,
+            part: id,
+            tune: self.tune + to,
+        };
+        let voice = &mut self.voices[v.index()];
+        let started = voice.strike(key, (hit, seed), vel, params, ctx);
+        if !held {
+            voice.note_off(ctx);
+        }
+        started
     }
 
     /// Whether voice `v` may start `note` on `params` this block: anything
@@ -1992,6 +2231,44 @@ impl Instrument {
         }
     }
 
+    /// `key`'s hit on DRUM Part `id`, after ending through the fade, as a
+    /// shed does, what it chokes (ADR 0265): its own pad's voices if it
+    /// CUTs, and every other pad's in its choke group but OFF. A hit still
+    /// waiting out a fade counts as its pad's in the kit now, and is
+    /// dropped unheard. Out of line: bank 1's (ADR 0251).
+    #[inline(never)]
+    fn choke(&mut self, id: PartId, key: MidiNote) -> DrumHit {
+        let hit = KIT_VIEW.hit(id, key);
+        let (pad, p) = (hit.pad(), hit.params());
+        let q = id.index() as u8;
+        for w in 0..MAX_VOICES {
+            let s = self.alloc.slots()[w];
+            if s.part() != Some(q) || s.dying() {
+                continue;
+            }
+            let h = match self.waiting[w] {
+                Some(Waiting {
+                    plays: Plays::Hit, ..
+                }) => s.note().map(|n| KIT_VIEW.hit(id, n)),
+                Some(_) => None,
+                None => self.voices[w].drum_hit().filter(|_| self.sounding[w] == q),
+            };
+            let Some(h) = h else {
+                continue;
+            };
+            let ends = if h.pad() == pad {
+                p.retrig() == Retrig::Cut
+            } else {
+                p.choke() != ChokeGroup::Off && h.params().choke() == p.choke()
+            };
+            if ends {
+                self.alloc.kill(w);
+                self.shed(w);
+            }
+        }
+        hit
+    }
+
     /// Every sounding voice of Part `q` fades out, as a shed one does:
     /// RETRIG CUT.
     fn cut_part(&mut self, q: u8) {
@@ -2045,7 +2322,11 @@ impl Instrument {
                 // Its note waits for the fade; a note that came mid-fade
                 // gives way to it.
                 let vel = self.voices[v].velocity();
-                self.waiting[v].get_or_insert(Waiting { vel, source: None });
+                self.waiting[v].get_or_insert(Waiting {
+                    vel,
+                    source: None,
+                    plays: Plays::Note,
+                });
                 let _ = self.voices[v].kill();
             }
         }
@@ -2173,6 +2454,7 @@ impl Instrument {
             bus.fill(0.0);
         }
         let mut block = [0.0f32; BLOCK_SIZE];
+        let mut sides: Sides = [None; MAX_PARTS];
         // 0. Notes that waited on the clear budget, their voices idle, start
         //    before the voices render: let in this block, one sounds in it.
         self.clear_backlog = false;
@@ -2202,6 +2484,7 @@ impl Instrument {
                 tune: self.tune + off,
             };
             let voice = &mut self.voices[v];
+            let side = &mut sides[p];
             let (knobs, clock) = (&self.knobs[p].0, &self.lfo_clocks[p]);
             ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
                 #[cfg(feature = "bench-warm")]
@@ -2213,6 +2496,7 @@ impl Instrument {
                         knobs,
                         Some(clock),
                         ctx,
+                        side,
                     )
                 });
                 #[cfg(not(feature = "bench-warm"))]
@@ -2223,6 +2507,7 @@ impl Instrument {
                     knobs,
                     Some(clock),
                     ctx,
+                    side,
                 );
             });
             self.age_stream(v);
@@ -2266,11 +2551,12 @@ impl Instrument {
         self.publish_heads();
         self.publish_lfo_view();
         crate::meter::publish_sounding_parts(self.sounding_set());
+        self.publish_pads();
         self.clear_left = SYM_CLEAR_BUDGET;
 
         // 2-4.
-        let scope_block = mix_parts(
-            &self.buses,
+        let scope_block = mix_sided(
+            (&self.buses, &sides),
             &written,
             &mut self.sends,
             &mut self.mix,

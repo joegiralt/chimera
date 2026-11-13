@@ -34,12 +34,14 @@ impl SystemSettings {
 }
 
 impl Default for SystemSettings {
+    #[optimize(size)]
     fn default() -> Self {
         Self::DEFAULT
     }
 }
 
 /// `Block(Theme)`, `Block(Midi)`, then `LastProject` when there is one.
+#[optimize(size)]
 pub fn encode_system(s: &SystemSettings, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     let mut r = RecordBuf::new();
     encode_block(BlockRef::Theme, &s.theme, None, &mut r);
@@ -55,6 +57,7 @@ pub fn encode_system(s: &SystemSettings, w: &mut RecordWriter<'_>) -> Result<(),
 
 /// The CRC of `encode_system`'s bytes: the body alone, so a new generation
 /// or header never reads as a change.
+#[optimize(size)]
 pub fn body_crc(s: &SystemSettings) -> u32 {
     records_crc(&[], |w| encode_system(s, w))
 }
@@ -63,6 +66,7 @@ pub fn body_crc(s: &SystemSettings) -> u32 {
 struct SystemBlocks<'a>(&'a mut SystemSettings);
 
 impl BlockRead for SystemBlocks<'_> {
+    #[optimize(size)]
     fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         match b {
             BlockRef::Theme => Some(BlockView::Plain(&self.0.theme)),
@@ -73,6 +77,7 @@ impl BlockRead for SystemBlocks<'_> {
 }
 
 impl Blocks for SystemBlocks<'_> {
+    #[optimize(size)]
     fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         match b {
             BlockRef::Theme => Some(BlockViewMut::Plain(&mut self.0.theme)),
@@ -92,6 +97,7 @@ pub struct SystemCheck {
 }
 
 impl SystemCheck {
+    #[optimize(size)]
     pub fn new() -> Self {
         SystemCheck {
             blocks: ByteSet::new(),
@@ -105,6 +111,7 @@ impl SystemCheck {
     /// read twice, a critical record SYSTEM doesn't read, or a project's. `Bounds`: a
     /// payload of the wrong shape. A block other than THEME or MIDI, and any other
     /// record, is skipped; a last project out of range is none.
+    #[optimize(size)]
     fn step(&mut self, e: Event<'_>, staged: Option<&mut SystemSettings>) -> Result<(), FileError> {
         let (tag, p) = match e {
             Event::Header(h) => {
@@ -156,6 +163,7 @@ impl SystemCheck {
 }
 
 impl Default for SystemCheck {
+    #[optimize(size)]
     fn default() -> Self {
         Self::new()
     }
@@ -164,10 +172,12 @@ impl Default for SystemCheck {
 impl Check for SystemCheck {
     const KIND: FileKind = FileKind::System;
 
+    #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
         self.step(e, None)
     }
 
+    #[optimize(size)]
     fn end(&mut self) -> Result<(), FileError> {
         Ok(())
     }
@@ -182,6 +192,7 @@ pub struct SystemDecoder<'a> {
 }
 
 impl<'a> SystemDecoder<'a> {
+    #[optimize(size)]
     pub fn new(target: &'a mut SystemSettings) -> Self {
         SystemDecoder {
             check: SystemCheck::new(),
@@ -194,16 +205,19 @@ impl<'a> SystemDecoder<'a> {
 impl Check for SystemDecoder<'_> {
     const KIND: FileKind = FileKind::System;
 
+    #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
         self.check.event(e)
     }
 
+    #[optimize(size)]
     fn end(&mut self) -> Result<(), FileError> {
         self.check.end()
     }
 }
 
 impl Decode for SystemDecoder<'_> {
+    #[optimize(size)]
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
         if let Event::Header(_) = e {
             self.staged = SystemSettings::DEFAULT;
@@ -211,6 +225,7 @@ impl Decode for SystemDecoder<'_> {
         self.check.step(e, Some(&mut self.staged))
     }
 
+    #[optimize(size)]
     fn commit(&mut self) -> Result<(), FileError> {
         self.check.end()?;
         *self.target = self.staged;
@@ -239,6 +254,7 @@ pub enum ExitPlan {
 /// hold. `known` is the volume and `body_crc` last loaded or saved;
 /// `untouched`, that RAM holds defaults no card or user gave it, which
 /// never go over a SYSTEM this card may hold.
+#[optimize(size)]
 pub fn exit_plan(
     known: Option<(VolumeId, u32)>,
     untouched: bool,
@@ -272,12 +288,14 @@ pub enum SyncError {
 }
 
 impl From<StoreError> for SyncError {
+    #[optimize(size)]
     fn from(e: StoreError) -> Self {
         SyncError::Store(e)
     }
 }
 
 impl From<SaveError> for SyncError {
+    #[optimize(size)]
     fn from(e: SaveError) -> Self {
         match e {
             SaveError::Store(e) => SyncError::Store(e),
@@ -288,6 +306,7 @@ impl From<SaveError> for SyncError {
 }
 
 impl CardFault for SyncError {
+    #[optimize(size)]
     fn store_error(&self) -> Option<StoreError> {
         match *self {
             SyncError::Store(e) => Some(e),
@@ -296,12 +315,14 @@ impl CardFault for SyncError {
     }
 }
 
+#[optimize(size)]
 fn load<S: Store>(s: &mut S, r: &Ready) -> Result<SystemSettings, LoadError> {
     let mut local = SystemSettings::DEFAULT;
     load_ab(s, r, AbFile::SYSTEM, &mut SystemDecoder::new(&mut local))?;
     Ok(local)
 }
 
+#[optimize(size)]
 fn save<S: Store>(s: &mut S, r: &Ready, v: &SystemSettings) -> Result<(), SaveError> {
     s.make_dir(r.volume(), Dir::Chimera)?;
     save_ab(
@@ -343,6 +364,7 @@ pub struct SystemSync {
 impl SystemSync {
     /// Reads SYSTEM into a local and returns it only when the whole load
     /// is Ok; otherwise the defaults, and why.
+    #[optimize(size)]
     pub fn boot<S: Store>(
         card: &mut Card,
         store: &mut S,
@@ -369,6 +391,7 @@ impl SystemSync {
     /// Once a frame: true on the frame System is left. Any theme or MIDI
     /// CONFIG change from the defaults, even one undone, marks them
     /// touched; the last project is no user setting.
+    #[optimize(size)]
     pub fn left_system(&mut self, in_system: bool, s: &SystemSettings) -> bool {
         let d = SystemSettings::DEFAULT;
         self.untouched &= s.theme == d.theme && s.midi == d.midi;
@@ -380,6 +403,7 @@ impl SystemSync {
     /// On leaving System: mounts, then does what `exit_plan` says for that
     /// volume. `Loaded` replaced `s` with the card's, to apply. `current`
     /// is the loaded project's file: SYSTEM names it only on its own card.
+    #[optimize(size)]
     pub fn on_exit<S: Store>(
         &mut self,
         card: &mut Card,
@@ -394,6 +418,7 @@ impl SystemSync {
     /// card, by the same plan as `on_exit`, so untouched defaults still
     /// never go over that card's theme. Another card in the slot is left
     /// alone (`Unchanged`).
+    #[optimize(size)]
     pub fn write<S: Store>(
         &mut self,
         card: &mut Card,
@@ -407,6 +432,7 @@ impl SystemSync {
     /// A project deleted: if it is its card's last project, SYSTEM there
     /// names none, by the same plan as `write`; otherwise nothing is
     /// written (`Unchanged`). Another card in the slot is left alone.
+    #[optimize(size)]
     pub fn forget<S: Store>(
         &mut self,
         card: &mut Card,
@@ -417,6 +443,7 @@ impl SystemSync {
         self.sync(card, store, s, Last::Deleted(deleted))
     }
 
+    #[optimize(size)]
     fn sync<S: Store>(
         &mut self,
         card: &mut Card,

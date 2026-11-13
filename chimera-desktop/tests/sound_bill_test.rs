@@ -373,7 +373,10 @@ fn model(s: &Sound) -> u32 {
             EngineSlot::cost(p, m).0 + Voice::CHAIN_COST.0 + ModRouting::BASE.0
                 - modal_slack(p.modal.mode)
         }
-        EngineType::Tape => EngineSlot::cost(p, m).0 + Voice::CHAIN_COST.0 + ModRouting::BASE.0,
+        // DRUM's bill is a placeholder until the unit bench (slice 4).
+        EngineType::Tape | EngineType::Drum => {
+            EngineSlot::cost(p, m).0 + Voice::CHAIN_COST.0 + ModRouting::BASE.0
+        }
     };
     core + filter_model(p, m) + routes_model(p, m) + rest_model(p, m)
 }

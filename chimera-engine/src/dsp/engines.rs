@@ -12,6 +12,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::block::OffsetLaw;
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::algo::plan::OPS;
+use crate::dsp::drum::engine::DrumEngine;
 use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeMachine};
 use crate::dsp::va::{VA_OUT_GAIN, VaEngine, VaParams};
@@ -26,14 +27,15 @@ use crate::sym_alloc::{Lease, SymAlloc};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
-/// What a slot holds: the engine and, for Modal, its model. TAPE and VA
-/// are one kind each: every model or MODE has the same state.
+/// What a slot holds: the engine and, for Modal, its model. TAPE, VA and
+/// DRUM are one kind each: every model, MODE or machine has the same state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlotKind {
     Algo,
     Modal(ResonatorMode),
     Tape,
     Va,
+    Drum,
 }
 
 /// What an engine reads beside its params: the sympathetic pool (MODAL's
@@ -60,6 +62,7 @@ impl SlotKind {
             EngineType::Modal => Self::Modal(p.modal.mode),
             EngineType::Tape => Self::Tape,
             EngineType::Va => Self::Va,
+            EngineType::Drum => Self::Drum,
         }
     }
 
@@ -69,6 +72,7 @@ impl SlotKind {
             Self::Modal(_) => EngineType::Modal,
             Self::Tape => EngineType::Tape,
             Self::Va => EngineType::Va,
+            Self::Drum => EngineType::Drum,
         }
     }
 
@@ -112,6 +116,7 @@ in_place_enum! {
         Modal(ModalEngine) => rebuild_modal, init_modal;
         Tape(TapeEngine) => rebuild_tape, init_tape;
         Va(VaEngine) => rebuild_va, init_va;
+        Drum(DrumEngine) => rebuild_drum, init_drum;
     }
 }
 
@@ -166,6 +171,8 @@ impl EngineSlot {
                     v
                 })
             },
+            // SAFETY: `DrumEngine::init_in_place` writes every field.
+            SlotKind::Drum => unsafe { Self::init_drum(slot, DrumEngine::init_in_place) },
         }
     }
 
@@ -175,14 +182,16 @@ impl EngineSlot {
             Self::Modal(m) => SlotKind::Modal(m.mode()),
             Self::Tape(_) => SlotKind::Tape,
             Self::Va(_) => SlotKind::Va,
+            Self::Drum(_) => SlotKind::Drum,
         }
     }
 
     /// The engine's output gain at the VCA (ADR 0058): Algo is the
-    /// reference.
+    /// reference. DRUM's kernels are set near full scale, as ALGO's
+    /// carriers.
     pub fn out_gain(&self) -> f32 {
         match self {
-            Self::Algo(_) => 1.0,
+            Self::Algo(_) | Self::Drum(_) => 1.0,
             Self::Tape(_) => TAPE_OUT_GAIN,
             Self::Va(_) => VA_OUT_GAIN,
             Self::Modal(m) => m.out_gain(),
@@ -208,7 +217,7 @@ impl EngineSlot {
             // SAFETY: the payload is rebuilt below in every arm, and
             // `rebuild_*` aborts rather than unwinds.
             Self::Modal(m) => m.lease_mut().map(|l| unsafe { move_out(l) }),
-            Self::Algo(_) | Self::Tape(_) | Self::Va(_) => None,
+            Self::Algo(_) | Self::Tape(_) | Self::Va(_) | Self::Drum(_) => None,
         };
         // Nothing between the move and the rebuild can panic: a lend only
         // when there was no old lease, a give-back only after.
@@ -274,6 +283,16 @@ impl EngineSlot {
                     }
                 }
             }
+            // SAFETY: `DrumEngine::init_in_place` writes every field.
+            SlotKind::Drum => unsafe { self.rebuild_drum(DrumEngine::init_in_place) },
+        }
+    }
+
+    /// DRUM's engine, for a hit to strike; `None` on the others.
+    pub fn drum(&mut self) -> Option<&mut DrumEngine> {
+        match self {
+            Self::Drum(d) => Some(d),
+            Self::Algo(_) | Self::Modal(_) | Self::Tape(_) | Self::Va(_) => None,
         }
     }
 
@@ -300,7 +319,9 @@ impl EngineSlot {
             Self::Modal(m) => m
                 .strike_clear(note.get(), glide, sample_rate, pool)
                 .unwrap_or_else(|| pool.note_on_clear(Some(m), voice)),
-            Self::Algo(_) | Self::Tape(_) | Self::Va(_) => pool.note_on_clear(None, voice),
+            Self::Algo(_) | Self::Tape(_) | Self::Va(_) | Self::Drum(_) => {
+                pool.note_on_clear(None, voice)
+            }
         }
     }
 
@@ -347,6 +368,9 @@ impl EngineSlot {
             }
             (Self::Va(v), None) => v.note_on(note.get(), &p.va, ctx.part, sample_rate),
             (Self::Va(v), Some(tau)) => v.glide_on(note.get(), &p.va, ctx.part, (sample_rate, tau)),
+            // A hit starts only from its pad (`DrumEngine::strike`): a note
+            // alone names no machine, so it starts nothing.
+            (Self::Drum(_), _) => {}
         }
     }
 
@@ -363,6 +387,8 @@ impl EngineSlot {
             Self::Modal(m) => m.glide_to(note.get(), (sample_rate, tau), ctx.sym),
             Self::Tape(t) => t.glide_to(note.get(), (sample_rate, tau)),
             Self::Va(v) => v.glide_to(note.get(), (sample_rate, tau)),
+            // A hit keeps the pitch it was struck at.
+            Self::Drum(_) => {}
         }
     }
 
@@ -373,7 +399,7 @@ impl EngineSlot {
             Self::Modal(m) => m
                 .strike_clear(note.get(), true, sample_rate, pool)
                 .unwrap_or(0),
-            Self::Algo(_) | Self::Tape(_) | Self::Va(_) => 0,
+            Self::Algo(_) | Self::Tape(_) | Self::Va(_) | Self::Drum(_) => 0,
         }
     }
 
@@ -397,6 +423,7 @@ impl EngineSlot {
             Self::Modal(m) => m.slide(),
             Self::Tape(t) => t.slide(),
             Self::Va(v) => v.slide(),
+            Self::Drum(_) => 1.0,
         }
     }
 
@@ -407,6 +434,8 @@ impl EngineSlot {
             Self::Modal(m) => m.note_off(ctx.sym),
             Self::Tape(t) => t.release_by(vca),
             Self::Va(v) => v.note_off(),
+            // A hit rings out: only the Sound's AMP ends it (`sustains`).
+            Self::Drum(_) => {}
         }
     }
 
@@ -414,7 +443,9 @@ impl EngineSlot {
     pub fn heads(&self) -> crate::dsp::tape_engine::Heads {
         match self {
             Self::Tape(t) => t.heads(),
-            Self::Algo(_) | Self::Modal(_) | Self::Va(_) => crate::dsp::tape_engine::Heads::NONE,
+            Self::Algo(_) | Self::Modal(_) | Self::Va(_) | Self::Drum(_) => {
+                crate::dsp::tape_engine::Heads::NONE
+            }
         }
     }
 
@@ -422,23 +453,26 @@ impl EngineSlot {
     pub fn streams(&self) -> bool {
         match self {
             Self::Tape(t) => t.streams(),
-            Self::Algo(_) | Self::Modal(_) | Self::Va(_) => false,
+            Self::Algo(_) | Self::Modal(_) | Self::Va(_) | Self::Drum(_) => false,
         }
     }
 
     /// The source TAPE latched at its last note-on; none on the others.
     pub fn source(&self) -> Option<SourceId> {
         match self {
-            Self::Algo(_) | Self::Modal(_) | Self::Va(_) => None,
+            Self::Algo(_) | Self::Modal(_) | Self::Va(_) | Self::Drum(_) => None,
             Self::Tape(t) => t.source(),
         }
     }
 
     /// The engine plays on through note-off (ONESHOT): the voice keeps its
-    /// gate. ALGO, MODAL and VA never.
+    /// gate. ALGO, MODAL and VA never. DRUM neither: its key lets go, so
+    /// the Sound's AMP (a route into VCA, the gate) can end a hit at
+    /// note-off; without one nothing does, and the hit rings its machine's
+    /// whole decay (`note_off` leaves the kernel be).
     pub fn sustains(&self) -> bool {
         match self {
-            Self::Algo(_) | Self::Modal(_) | Self::Va(_) => false,
+            Self::Algo(_) | Self::Modal(_) | Self::Va(_) | Self::Drum(_) => false,
             Self::Tape(t) => t.sustains(),
         }
     }
@@ -449,7 +483,7 @@ impl EngineSlot {
     /// values.
     pub fn hold(&mut self) {
         match self {
-            Self::Algo(_) | Self::Modal(_) => {}
+            Self::Algo(_) | Self::Modal(_) | Self::Drum(_) => {}
             Self::Tape(t) => t.hold(),
             Self::Va(v) => v.hold(),
         }
@@ -480,6 +514,7 @@ impl EngineSlot {
                 ctx.streams.as_deref_mut(),
             ),
             Self::Va(v) => v.render(out, &p.va, sample_rate),
+            Self::Drum(d) => d.render(out),
         }
     }
 
@@ -493,6 +528,9 @@ impl EngineSlot {
             Self::Modal(m) => m.set_pitch(crate::params::PitchParams::ratio_of(st)),
             Self::Tape(t) => t.set_pitch(st * 100.0),
             Self::Va(v) => v.set_pitch(st * 100.0),
+            // A hit's pitch is its pad's, fixed at the strike: slice 1 has
+            // no pitch offset on DRUM.
+            Self::Drum(_) => {}
         }
     }
 
@@ -503,6 +541,7 @@ impl EngineSlot {
             Self::Modal(m) => m.is_active(),
             Self::Tape(t) => t.is_active(),
             Self::Va(v) => v.is_active(),
+            Self::Drum(d) => d.is_active(),
         }
     }
 
@@ -510,7 +549,7 @@ impl EngineSlot {
     /// (MODAL, TAPE) or its MODE plays (VA) and it sounds.
     pub fn playing_cost(&self) -> Option<Cost> {
         match self {
-            Self::Algo(_) => None,
+            Self::Algo(_) | Self::Drum(_) => None,
             Self::Modal(m) => m.playing_cost(),
             Self::Tape(t) => t.playing_cost(),
             Self::Va(v) => v.playing_cost(),
@@ -529,7 +568,7 @@ impl EngineSlot {
     /// routes: what `playing_cost` is held against.
     pub fn model_cost(&self, p: &ParamSnapshot) -> Cost {
         match self {
-            Self::Algo(_) => Cost::ZERO,
+            Self::Algo(_) | Self::Drum(_) => Cost::ZERO,
             Self::Modal(_) => ModalEngine::cost(&p.modal),
             Self::Tape(_) => TapeEngine::model_cost(&p.tape),
             Self::Va(_) => VaEngine::cost(&p.va),
@@ -560,6 +599,8 @@ impl EngineSlot {
                     + when(noise_billed(p, mods), VaEngine::noise_cost(p.va.noise_kind))
                     + when(wave_routed(mods), COST_WAVE_MOVE)
             }
+            // private issue #951
+            EngineType::Drum => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
         }
     }
 }
@@ -677,7 +718,7 @@ mod tests {
         let kinds = [SlotKind::Algo, SlotKind::Tape, SlotKind::Va]
             .into_iter()
             .chain(MODES.map(SlotKind::Modal))
-            .chain([SlotKind::Tape, SlotKind::Va]);
+            .chain([SlotKind::Tape, SlotKind::Va, SlotKind::Drum, SlotKind::Algo]);
         for k in kinds {
             slot.rebuild(k, &mut pool, VoiceIdx::ALL[0]);
             assert_eq!(slot.kind(), k);
@@ -699,6 +740,10 @@ mod tests {
                     assert_eq!(tag, 3);
                     core::ptr::from_ref(v).cast::<u8>()
                 }
+                EngineSlot::Drum(d) => {
+                    assert_eq!(tag, 4);
+                    core::ptr::from_ref(d).cast::<u8>()
+                }
             };
             assert_eq!(addr, payload, "{k:?}");
         }
@@ -719,7 +764,9 @@ mod tests {
     /// The lease `slot`'s engine holds, if it holds one.
     fn lease_slot(slot: &mut EngineSlot) -> Option<SymSlot> {
         match slot {
-            EngineSlot::Algo(_) | EngineSlot::Tape(_) | EngineSlot::Va(_) => None,
+            EngineSlot::Algo(_) | EngineSlot::Tape(_) | EngineSlot::Va(_) | EngineSlot::Drum(_) => {
+                None
+            }
             EngineSlot::Modal(m) => m.lease_mut().map(|l| l.slot()),
         }
     }

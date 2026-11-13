@@ -201,6 +201,7 @@ fn codes_are_frozen() {
         (RecordTag::Build, 0x001C),
         (RecordTag::MidiMap, 0x001E),
         (RecordTag::Bindings, 0x001F),
+        (RecordTag::Kit, 0x0024),
     ];
     for (t, c) in table {
         assert_eq!(t.code(), c);

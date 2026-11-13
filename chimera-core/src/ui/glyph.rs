@@ -68,6 +68,8 @@ pub enum Gauge {
     /// The filter's FEEDBACK (ADR 0190): `q` in -`FEEDBACK_STEPS`..=`FEEDBACK_STEPS`,
     /// the set value in eighths, so it redraws only when a step moves.
     Feedback { q: i8 },
+    /// DRUM's machine icon, large (`kit_band::big_icon`).
+    Drum(crate::dsp::drum::types::Machine),
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -79,6 +81,8 @@ pub enum Reads {
     Tape,
     /// The focused LFO slot's params.
     Lfo,
+    /// The selected pad's machine.
+    Drum,
 }
 
 /// A staff note's accidental.
@@ -797,6 +801,7 @@ pub fn gauge(
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
         FocusGlyph::Tape => outside(Reads::Tape),
         FocusGlyph::Lfo => outside(Reads::Lfo),
+        FocusGlyph::Drum => outside(Reads::Drum),
         FocusGlyph::Stability => stability(value),
         FocusGlyph::Feedback => feedback(value),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
@@ -820,7 +825,8 @@ impl Gauge {
             | Gauge::Tape(_)
             | Gauge::Lfo(_)
             | Gauge::Stability { .. }
-            | Gauge::Feedback { .. } => false,
+            | Gauge::Feedback { .. }
+            | Gauge::Drum(_) => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
@@ -839,6 +845,8 @@ impl Gauge {
             Gauge::Tape(t) => t.key(),
             // Its quantised steps: it redraws when one moves.
             Gauge::Lfo(g) => g.key(),
+            // The machine: PAD's number stays as another pad's changes.
+            Gauge::Drum(m) => u32::from(m.code()),
             _ => 0,
         }
     }

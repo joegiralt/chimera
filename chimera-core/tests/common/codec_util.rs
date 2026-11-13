@@ -177,6 +177,7 @@ pub fn system_fixture_settings() -> SystemSettings {
             saver: Saver::DEFAULT,
             pages: Pages::Row,
             text: chimera_core::ui::theme::TextSize::Normal,
+            pad_follow: chimera_core::ui::theme_settings::PadFollow::Idle,
         },
         last_project: ProjectId::new(1_234_567),
     }
@@ -207,6 +208,7 @@ pub fn system_midi_fixture_settings() -> SystemSettings {
             saver: Saver::DEFAULT,
             pages: Pages::Row,
             text: chimera_core::ui::theme::TextSize::Normal,
+            pad_follow: chimera_core::ui::theme_settings::PadFollow::Idle,
         },
         last_project: ProjectId::new(89),
     }

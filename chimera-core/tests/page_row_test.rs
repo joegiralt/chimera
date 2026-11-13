@@ -186,7 +186,14 @@ fn every_row_page_has_a_word_that_fits() {
                 );
                 for modal in (0..4).map(ResonatorMode::from_u8) {
                     for tape in TapeMachine::ALL {
-                        let w = row_label(def, Models { modal, tape });
+                        let w = row_label(
+                            def,
+                            Models {
+                                modal,
+                                tape,
+                                pad: None,
+                            },
+                        );
                         let px = text_width(&theme::FONT_LABEL_BOLD, w, theme::LABEL_TRACKING);
                         assert!(px <= room, "{w}: {px} px");
                     }

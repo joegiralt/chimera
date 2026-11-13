@@ -14,6 +14,7 @@ struct Fill<'a> {
 }
 
 impl ReadSink for Fill<'_> {
+    #[optimize(size)]
     fn begin(&mut self, len: u32) -> ControlFlow<()> {
         self.over = len as usize > self.buf.len();
         if self.over {
@@ -23,6 +24,7 @@ impl ReadSink for Fill<'_> {
         }
     }
 
+    #[optimize(size)]
     fn chunk(&mut self, bytes: &[u8]) -> ControlFlow<()> {
         let Some(to) = self.buf.get_mut(self.len..self.len + bytes.len()) else {
             self.over = true;
@@ -36,6 +38,7 @@ impl ReadSink for Fill<'_> {
 
 /// `f` whole into `buf`: its length.
 #[inline(never)]
+#[optimize(size)]
 pub fn read_small(
     s: &mut dyn Store,
     vol: VolumeId,
@@ -56,6 +59,7 @@ pub fn read_small(
 
 /// `bytes` as the whole of `f`.
 #[inline(never)]
+#[optimize(size)]
 pub fn write_small(
     s: &mut dyn Store,
     vol: VolumeId,
@@ -69,6 +73,7 @@ pub fn write_small(
 /// (at most `out.len()`). No folder is none. A computer's hidden files and
 /// any other extension are never listed (ADR 0259).
 #[inline(never)]
+#[optimize(size)]
 pub fn list_stems(
     s: &mut dyn Store,
     vol: VolumeId,

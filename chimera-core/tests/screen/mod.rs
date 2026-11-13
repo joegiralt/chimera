@@ -1038,6 +1038,7 @@ pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
         EngineType::Modal => &MODAL_PLUCK_CHAIN,
         EngineType::Tape => &TAPE_CHAIN,
         EngineType::Va => &VA_CHAIN,
+        EngineType::Drum => panic!("DRUM has no PIT page"),
     };
     let node = chain.engine_node();
     plus(ui, node);
@@ -2302,6 +2303,12 @@ pub const CASES: &[ScreenCase] = &[
     ("settings_personal_text_size", |ui| {
         to_leaf(ui, &["PERSONALIZE", "TEXT SIZE"]);
     }),
+    // PERSONALIZE › PAD FOLLOW (ADR 0268): IDLE, the default, focused.
+    ("settings_personal_pad_follow", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "PAD FOLLOW"]);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        feed(ui, Input::turn(EncoderId::A, -1));
+    }),
     // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
     ("settings_midi_sync", |ui| {
         to_leaf(ui, &["MIDI CONFIG", "SYNC"]);
@@ -2594,6 +2601,62 @@ pub const CASES: &[ScreenCase] = &[
     // focus band says which way to turn (spec § 8.3).
     #[cfg(feature = "midi-map")]
     ("pickup_hint", pickup_hint),
+    // DRUM's pages (ADR 0265): KIT on pad 2, LEVEL touched: the twelve
+    // pads, pad 2 framed, the header naming it.
+    ("drum_kit", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        feed(ui, Input::turn(EncoderId::C, -10));
+    }),
+    // PAD touched: its machine's icon large, its hint, MIX + -/+ PAD.
+    ("drum_kit_hint", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
+    // MACHINE touched on pad 11: TONE COWBELL beside its icon, large; the
+    // cell BELL, its short name, as COWBELL runs into LEVEL.
+    ("drum_kit_machine", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 10));
+        feed(ui, Input::turn(EncoderId::B, 1));
+        feed(ui, Input::turn(EncoderId::B, -1));
+    }),
+    // TONAL on pad 3, touched (ADR 0270): C1 up plays it, tuned at C4.
+    ("drum_kit_tonal", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::E, 3));
+    }),
+    // TONAL on pad 4, CLAP: its band notes CLAP has no PITCH.
+    ("drum_kit_tonal_clap", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::E, 4));
+    }),
+    // KEYS on pad 3, CHOKE A, CHOKE touched.
+    ("drum_keys", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::B, 1));
+        feed(ui, Input::turn(EncoderId::B, -1));
+    }),
+    // MCH on pad 1, TONE KICK: its six knobs in its own words.
+    ("drum_mch_kick", |ui| {
+        load_init(ui, EngineType::Drum);
+        plus(ui, 1);
+    }),
+    // MCH on PLAIN NOISE: DECAY and TONE, the rest empty.
+    ("drum_mch_noise", |ui| {
+        load_init(ui, EngineType::Drum);
+        let to = chimera_core::dsp::drum::types::Machine::PlainNoise.index();
+        feed(ui, Input::turn(EncoderId::B, to as i8));
+        plus(ui, 1);
+    }),
+    // MORE on TONE KICK: MACHINE, START, HARMONICS.
+    ("drum_more", |ui| {
+        load_init(ui, EngineType::Drum);
+        plus(ui, 1);
+        tap(ui, ButtonId::Edit);
+    }),
 ];
 
 /// Part 1 on INIT Algo with a mixed map, MIDI MAP open on its sixth

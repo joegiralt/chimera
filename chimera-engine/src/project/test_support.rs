@@ -116,6 +116,14 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     fx.delay.mix = 0.3;
     fx.reverb.mix = 0.45;
     fx.chorus.mode = 2;
+    // Part 5's kit: a pad's every field (ADR 0265).
+    let pad = p
+        .kit_mut(PartId::ALL[4])
+        .pad_mut(crate::dsp::drum::types::PadId::ALL[6]);
+    pad.set_machine(crate::dsp::drum::types::Machine::MetalJingle);
+    pad.set_pan(crate::dsp::drum::types::Pan::clamped(-20));
+    pad.set_choke(crate::dsp::drum::types::ChokeGroup::A);
+    pad.set_retrig(crate::dsp::tape_engine::params::Retrig::Stack);
     p.set_name(ProjectName::new("FULL").expect("a valid name"));
     (p, t)
 }
@@ -191,7 +199,7 @@ pub fn full_dense_slots(n: usize) -> (Box<Project>, TemplateCrc) {
 }
 
 /// Panics with the first difference: the names, each slot (its bytes),
-/// each Part's Sound (`bits_eq`), mix, Origin (slot and CRC, or engine;
+/// each Part's Sound (`bits_eq`), mix, kit, Origin (slot and CRC, or engine;
 /// never the generation) and `part_status`, the FX, ORBIT, then
 /// `project_crc`.
 pub fn same(a: &Project, b: &Project) {
@@ -219,6 +227,7 @@ pub fn same(a: &Project, b: &Project) {
         let n = id.index();
         assert!(x.sound.bits_eq(&y.sound), "Part {n} sound");
         assert_eq!(x.mix, y.mix, "Part {n} mix");
+        assert_eq!(a.kit(id), b.kit(id), "Part {n} kit");
         match (x.origin(), y.origin()) {
             (
                 Origin::Slot {

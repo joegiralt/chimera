@@ -1,7 +1,7 @@
 //! SETTINGS › PERSONALIZE › THEME: backlight, panel gamma, accent and
 //! ground (ADR 0033), light mode (ADR 0126), whether focus bands show gesture hints (ADR
 //! 0086), how the chain map draws sub-pages (ADR 0145), and the text size
-//! (ADR 0154).
+//! (ADR 0154), and whether a live hit moves KIT's pad (ADR 0268).
 //!
 //! The values, their disk codes and the THEME block; what they look like
 //! (colours, PWM duty, the panel's gamma tables) is the UI's
@@ -236,6 +236,36 @@ impl TextSize {
     pub const ALL: [TextSize; 2] = [TextSize::Normal, TextSize::Large];
 }
 
+/// Whether a live hit on the shown Part selects its pad (ADR 0268). Disk
+/// codes are frozen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PadFollow {
+    /// Never: only MIX + MINUS / PLUS and the PAD cell move it.
+    Off,
+    /// Once the player has left the DRUM pages' encoders alone a while.
+    Idle,
+    /// Every hit.
+    Always,
+}
+
+impl DiskCode for PadFollow {
+    fn disk_code(self) -> u8 {
+        self as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        FOLLOW_NAMES[self as usize]
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        PadFollow::ALL.get(c as usize).copied()
+    }
+}
+
+impl PadFollow {
+    pub const ALL: [PadFollow; 3] = [PadFollow::Off, PadFollow::Idle, PadFollow::Always];
+}
+
 /// Ground lift in RGB565 levels, −2..=4: green (6-bit) moves one level per
 /// step, red and blue follow at half that, so the ground stays neutral and
 /// every step differs (−2 is pure black; +4 is `#181818`, still well below
@@ -331,6 +361,8 @@ pub struct ThemeSettings {
     pub pages: Pages,
     /// The reading text's size.
     pub text: TextSize,
+    /// Whether a live hit moves KIT's pad.
+    pub pad_follow: PadFollow,
 }
 
 impl Default for ThemeSettings {
@@ -351,6 +383,7 @@ impl ThemeSettings {
         saver: Saver::DEFAULT,
         pages: Pages::Row,
         text: TextSize::Normal,
+        pad_follow: PadFollow::Idle,
     };
 
     /// TEAL at ground 0: the palette the renderer draws, unchanged.
@@ -368,6 +401,7 @@ impl ThemeSettings {
     pub const SAVER: ParamId = ParamId(6);
     pub const PAGES: ParamId = ParamId(7);
     pub const TEXT: ParamId = ParamId(8);
+    pub const FOLLOW: ParamId = ParamId(9);
 }
 
 const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
@@ -378,13 +412,14 @@ const SAVER_NAMES: [&str; 9] = [
 const _: () = assert!(SAVER_NAMES.len() == Saver::SECS.len());
 const PAGES_NAMES: [&str; 2] = ["ROW", "STACK"];
 const TEXT_NAMES: [&str; 2] = ["NORMAL", "LARGE"];
+const FOLLOW_NAMES: [&str; 3] = ["OFF", "IDLE", "ALWAYS"];
 
 const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
 const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
-pub static THEME_SPECS: [ParamSpec; 9] = [
+pub static THEME_SPECS: [ParamSpec; 10] = [
     ParamSpec::choice(
         0,
         "BRIGHT",
@@ -484,6 +519,17 @@ pub static THEME_SPECS: [ParamSpec; 9] = [
     )
     .ident("TEXT")
     .glyph(crate::glyph::FocusGlyph::None),
+    // A SYSTEM from before PAD FOLLOW has none: IDLE.
+    ParamSpec::choice(
+        9,
+        "FOLLOW",
+        ValFmt::Names(&FOLLOW_NAMES),
+        2.0,
+        1.0,
+        Change::Snap,
+    )
+    .ident("FOLLOW")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for ThemeSettings {
@@ -503,6 +549,7 @@ impl Block for ThemeSettings {
             Self::SAVER => self.saver.index() as f32,
             Self::PAGES => self.pages as u8 as f32,
             Self::TEXT => self.text as u8 as f32,
+            Self::FOLLOW => self.pad_follow as u8 as f32,
             _ => 0.0,
         }
     }
@@ -520,6 +567,9 @@ impl Block for ThemeSettings {
             Self::SAVER => self.saver = Saver::from_index(i),
             Self::PAGES => self.pages = Pages::ALL[(i as usize).min(Pages::ALL.len() - 1)],
             Self::TEXT => self.text = TextSize::ALL[(i as usize).min(TextSize::ALL.len() - 1)],
+            Self::FOLLOW => {
+                self.pad_follow = PadFollow::ALL[(i as usize).min(PadFollow::ALL.len() - 1)]
+            }
             _ => {}
         }
     }
@@ -532,6 +582,7 @@ impl Block for ThemeSettings {
             Self::BLACK => Some(self.black.disk_code()),
             Self::PAGES => Some(self.pages.disk_code()),
             Self::TEXT => Some(self.text.disk_code()),
+            Self::FOLLOW => Some(self.pad_follow.disk_code()),
             _ => None,
         }
     }
@@ -544,6 +595,7 @@ impl Block for ThemeSettings {
             Self::BLACK => Some(self.black.disk_ident()),
             Self::PAGES => Some(self.pages.disk_ident()),
             Self::TEXT => Some(self.text.disk_ident()),
+            Self::FOLLOW => Some(self.pad_follow.disk_ident()),
             _ => None,
         }
     }
@@ -556,6 +608,7 @@ impl Block for ThemeSettings {
             Self::BLACK => apply_code(Black::from_disk_code(code), |b| self.black = b),
             Self::PAGES => apply_code(Pages::from_disk_code(code), |p| self.pages = p),
             Self::TEXT => apply_code(TextSize::from_disk_code(code), |t| self.text = t),
+            Self::FOLLOW => apply_code(PadFollow::from_disk_code(code), |f| self.pad_follow = f),
             _ => false,
         }
     }

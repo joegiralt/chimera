@@ -92,6 +92,7 @@ pub trait Target: Witnessed<Witness = u32> {
     /// `at_risk` but the template (a wrapped generation may alias).
     fn witness(&self, p: &Project) -> u32;
     /// The witness when nothing is at risk, else the prompt.
+    #[optimize(size)]
     fn assess(&self, p: &Project, t: TemplateCrc) -> Result<u32, Prompt> {
         match self.at_risk(p, t) {
             Some(prompt) => Err(prompt),
@@ -106,6 +107,7 @@ impl Witnessed for PartSource {
 
 /// An `Edited` Part asks; a `Clean` or `Stale` one doesn't.
 impl Target for PartSource {
+    #[optimize(size)]
     fn at_risk(&self, p: &Project, _: TemplateCrc) -> Option<Prompt> {
         (part_status(p.part(self.part), p.pool()) == PartStatus::Edited)
             .then_some(Prompt::SavePartFirst)
@@ -114,6 +116,7 @@ impl Target for PartSource {
     /// The Part's `sound_crc`, its Origin and, for a slot, the slot's
     /// generation now: `part_status` reads only these and the slot's
     /// contents, which move its generation.
+    #[optimize(size)]
     fn witness(&self, p: &Project) -> u32 {
         let part = p.part(self.part);
         let mut c = Crc32::new();
@@ -137,6 +140,7 @@ impl Target for PartSource {
 
 impl LibraryPart {
     /// The Part as a replace sees it: only the Part is witnessed.
+    #[optimize(size)]
     fn as_part(&self) -> PartSource {
         PartSource {
             part: self.part,
@@ -151,10 +155,12 @@ impl Witnessed for LibraryPart {
 
 /// `PartSource`'s: the file is checked by the load, not the guard.
 impl Target for LibraryPart {
+    #[optimize(size)]
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt> {
         self.as_part().at_risk(p, t)
     }
 
+    #[optimize(size)]
     fn witness(&self, p: &Project) -> u32 {
         self.as_part().witness(p)
     }
@@ -177,16 +183,19 @@ impl Witnessed for ProjectSource {
 
 /// A `Modified` project asks; a `Pristine` or `Saved` one doesn't.
 impl Target for ProjectSource {
+    #[optimize(size)]
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt> {
         (project_status(p, t) == ProjectStatus::Modified).then_some(Prompt::SaveProjectFirst)
     }
 
     /// The whole project is the target, whichever source replaces it.
+    #[optimize(size)]
     fn witness(&self, p: &Project) -> u32 {
         project_crc(p)
     }
 
     /// One hash for both.
+    #[optimize(size)]
     fn assess(&self, p: &Project, t: TemplateCrc) -> Result<u32, Prompt> {
         let crc = project_crc(p);
         match status_at(p, t, crc) {
@@ -205,16 +214,19 @@ pub struct Confirmed<R: Witnessed> {
 }
 
 impl<R: Witnessed> Confirmed<R> {
+    #[optimize(size)]
     pub fn target(&self) -> R {
         self.target
     }
 
+    #[optimize(size)]
     pub(crate) fn witness(&self) -> R::Witness {
         self.witness
     }
 }
 
 impl<R: Target> Confirmed<R> {
+    #[optimize(size)]
     fn now(target: R, p: &Project) -> Self {
         Confirmed {
             target,
@@ -223,6 +235,7 @@ impl<R: Target> Confirmed<R> {
     }
 
     /// The target's state still what was confirmed.
+    #[optimize(size)]
     pub fn holds(&self, p: &Project) -> bool {
         self.target.witness(p) == self.witness
     }
@@ -237,10 +250,12 @@ pub struct NeedsConfirm<R> {
 }
 
 impl<R> NeedsConfirm<R> {
+    #[optimize(size)]
     pub fn prompt(&self) -> Prompt {
         self.prompt
     }
 
+    #[optimize(size)]
     pub fn into_pending(self) -> Pending<R> {
         self.pending
     }
@@ -252,11 +267,13 @@ impl<R> NeedsConfirm<R> {
 pub struct Pending<R>(R);
 
 impl<R: Target> Pending<R> {
+    #[optimize(size)]
     pub fn source(&self) -> R {
         self.0
     }
 
     /// After the caller's save: asks again if it was cancelled or failed.
+    #[optimize(size)]
     pub fn save_then(self, p: &Project, t: TemplateCrc) -> Result<Confirmed<R>, NeedsConfirm<R>> {
         ReplaceGuard::check(p, t, self.0)
     }
@@ -265,12 +282,14 @@ impl<R: Target> Pending<R> {
 impl<R: Target> Pending<R> {
     /// REPLACE / LOAD ANYWAY, answered: the target as it is now is what's
     /// confirmed. Only a prompt's confirming pill holds a `Said` (#258).
+    #[optimize(size)]
     pub fn confirm(self, p: &Project, _: Said<R>) -> Confirmed<R> {
         Confirmed::now(self.0, p)
     }
 
     /// Confirmed without a prompt: tests only.
     #[cfg(any(test, feature = "test-support"))]
+    #[optimize(size)]
     pub fn anyway(self, p: &Project) -> Confirmed<R> {
         Confirmed::now(self.0, p)
     }
@@ -279,6 +298,7 @@ impl<R: Target> Pending<R> {
 pub struct ReplaceGuard;
 
 impl ReplaceGuard {
+    #[optimize(size)]
     pub fn check<R: Target>(
         p: &Project,
         t: TemplateCrc,
@@ -342,12 +362,14 @@ pub struct DeleteTarget {
 }
 
 impl OverwriteTarget {
+    #[optimize(size)]
     pub fn file(self) -> ProjectFile {
         self.file
     }
 }
 
 impl DeleteTarget {
+    #[optimize(size)]
     pub fn file(self) -> ProjectFile {
         self.file
     }
@@ -363,6 +385,7 @@ pub struct Seen {
 }
 
 impl Seen {
+    #[optimize(size)]
     pub(crate) fn of(e: &ProjectEntry) -> Self {
         Seen {
             generation: e.generation,
@@ -390,16 +413,19 @@ macro_rules! answered {
         $(impl Confirmed<$t> {
             #[doc = concat!($what, " answered on the listed `e`: only a prompt's")]
             /// confirming pill holds a `Said`.
+            #[optimize(size)]
             pub fn answered(e: &ProjectEntry, _: Said<$t>) -> Self {
                 Self::listed(e)
             }
 
             /// Confirmed without a prompt: tests only.
             #[cfg(any(test, feature = "test-support"))]
+            #[optimize(size)]
             pub(crate) fn unasked(e: &ProjectEntry) -> Self {
                 Self::listed(e)
             }
 
+            #[optimize(size)]
             fn listed(e: &ProjectEntry) -> Self {
                 Confirmed {
                     target: $t { file: e.file() },
@@ -450,6 +476,7 @@ answered!(OverwriteTarget: "SAVE OVER, CLEAR or OVERWRITE THAT ONE", DeleteTarge
 pub struct SceneSlot(SceneIdx);
 
 impl SceneSlot {
+    #[optimize(size)]
     pub fn index(self) -> SceneIdx {
         self.0
     }
@@ -469,6 +496,7 @@ pub struct SceneAsk {
 
 impl SceneAsk {
     /// Slot `n` of `song` now.
+    #[optimize(size)]
     pub fn of(song: &OrbitSong, n: SceneIdx) -> SceneAsk {
         SceneAsk {
             slot: SceneSlot(n),
@@ -476,6 +504,7 @@ impl SceneAsk {
         }
     }
 
+    #[optimize(size)]
     pub fn slot(&self) -> SceneSlot {
         self.slot
     }
@@ -484,6 +513,7 @@ impl SceneAsk {
 impl Confirmed<SceneSlot> {
     /// SAVE OVER answered: only a prompt's confirming pill holds a `Said`.
     /// It confirms the slot as the prompt saw it, not as it is now.
+    #[optimize(size)]
     pub fn said(a: SceneAsk, _: Said<SceneSlot>) -> Self {
         Confirmed {
             target: a.slot,
@@ -492,12 +522,14 @@ impl Confirmed<SceneSlot> {
     }
 
     /// The slot unwritten since it was confirmed.
+    #[optimize(size)]
     pub fn holds(&self, song: &OrbitSong) -> bool {
         song.slot_rev(self.target.0) == self.witness
     }
 
     /// Slot `n` confirmed now, without a prompt: tests only.
     #[cfg(any(test, feature = "test-support"))]
+    #[optimize(size)]
     pub fn unasked(song: &OrbitSong, n: SceneIdx) -> Self {
         Confirmed {
             target: SceneSlot(n),

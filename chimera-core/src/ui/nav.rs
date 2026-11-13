@@ -627,6 +627,7 @@ pub enum PartChain {
     Modal,
     Tape,
     Va,
+    Drum,
 }
 
 impl PartChain {
@@ -643,6 +644,7 @@ impl PartChain {
             EngineType::Modal => PartChain::Modal,
             EngineType::Tape => PartChain::Tape,
             EngineType::Va => PartChain::Va,
+            EngineType::Drum => PartChain::Drum,
         }
     }
 
@@ -653,6 +655,7 @@ impl PartChain {
             PartChain::Modal => &MODAL_PLUCK_CHAIN,
             PartChain::Tape => &block_registry::TAPE_CHAIN,
             PartChain::Va => &block_registry::VA_CHAIN,
+            PartChain::Drum => &block_registry::DRUM_CHAIN,
         }
     }
 
@@ -662,6 +665,7 @@ impl PartChain {
             PartChain::Modal => EngineType::Modal,
             PartChain::Tape => EngineType::Tape,
             PartChain::Va => EngineType::Va,
+            PartChain::Drum => EngineType::Drum,
         }
     }
 }

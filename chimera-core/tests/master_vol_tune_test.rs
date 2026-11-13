@@ -192,7 +192,11 @@ fn f0(e: EngineType) -> f32 {
 
 #[test]
 fn tuning_moves_every_engines_pitch_by_the_stated_amount() {
-    for engine in EngineType::ALL {
+    // DRUM plays pads, not notes: `drum_engine_test`.
+    for engine in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         let base = rig_pitch_cents(engine, 0.0);
         for tune in [1.0f32, -0.5, 0.17] {
             let moved = rig_pitch_cents(engine, tune) - base;

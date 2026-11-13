@@ -787,7 +787,7 @@ fn the_header_reads_the_playing_scene() {
     ui.render_dirty_with_scope(&mut fb, &perf, &screen::scope_fixture());
     let after = header(&ui);
     assert_ne!(after, before, "the header redraws");
-    assert!(matches!(after, Some(RegionData::Header { scene: 3, .. })));
+    assert!(matches!(after, Some(RegionData::Header { names: 3, .. })));
 }
 
 /// SEQ saves nothing on any ORBIT page (ADR 0081): scene saving is SCN's

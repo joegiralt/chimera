@@ -26,6 +26,7 @@ pub(crate) const MAX_BLOCK_PARAMS: usize = 32;
 ///
 /// # Panics
 /// For a block with no disk code: an encoder bug.
+#[optimize(size)]
 pub fn encode_block(
     b: BlockRef,
     blk: &dyn Block,
@@ -50,6 +51,7 @@ pub fn encode_block(
 }
 
 /// The same bytes on disk.
+#[optimize(size)]
 fn same(a: DiskValue, b: DiskValue) -> bool {
     match (a, b) {
         (DiskValue::Real(x), DiskValue::Real(y)) => x.to_bits() == y.to_bits(),
@@ -75,6 +77,7 @@ fn same(a: DiskValue, b: DiskValue) -> bool {
 /// kind, or an algorithm linking into one, that the formant budget refuses
 /// isn't lost: it keeps the target's, and `refused` names it, for
 /// `SoundCheck` to retry once the whole Sound is in.
+#[optimize(size)]
 pub fn decode_block(
     payload: &[u8],
     migrations: &[Migration],
@@ -195,15 +198,18 @@ pub struct Applied {
 pub(super) struct ByteSet([u32; 8]);
 
 impl ByteSet {
+    #[optimize(size)]
     pub(super) const fn new() -> Self {
         ByteSet([0; 8])
     }
 
+    #[optimize(size)]
     pub(super) fn contains(&self, b: u8) -> bool {
         self.0[usize::from(b / 32)] & 1 << (b % 32) != 0
     }
 
     /// `false`: already in.
+    #[optimize(size)]
     pub(super) fn insert(&mut self, b: u8) -> bool {
         let fresh = !self.contains(b);
         self.0[usize::from(b / 32)] |= 1 << (b % 32);
@@ -212,6 +218,7 @@ impl ByteSet {
 }
 
 /// `raw` as `a`'s value; `None` when it can't be one (NaN, a code past `u8`).
+#[optimize(size)]
 fn value(a: ValidAddr, raw: [u8; 4]) -> Option<DiskValue> {
     if a.coded() {
         u8::try_from(u32::from_le_bytes(raw))

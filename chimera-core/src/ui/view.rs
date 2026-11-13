@@ -9,6 +9,9 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
 use crate::dsp::delay::{DelayParams, DelayType};
+use crate::dsp::drum::laws::spec;
+use crate::dsp::drum::params::PadParams;
+use crate::dsp::drum::types::{Kit, Knob, Machine, PadId, Tonal};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{self, ModalParams, ResonatorMode};
@@ -112,6 +115,17 @@ pub struct SlotCtx {
     /// Who takes each MIDI CONFIG › CONTROL channel that loses it, two bits
     /// each (`control::clashes`, ADR 0254): their cells dim.
     pub clash: u16,
+    /// The selected pad's machine: which knob cells it shows. `None`
+    /// where the `BlockRead` holds no pad (a Sound's params): every knob
+    /// cell is then empty.
+    pub pad: Option<Machine>,
+    /// The Part's selected pad: what PAD shows and the header names.
+    /// `SlotCtx::read` can't see it and takes pad 1; `UiState::ctx` sets
+    /// it.
+    pub sel_pad: PadId,
+    /// The machine of the kit's TONAL pad; `None` with TONAL OFF, and
+    /// where `SlotCtx::read` sees no kit.
+    pub tonal: Option<Machine>,
 }
 
 impl SlotCtx {
@@ -162,6 +176,27 @@ impl SlotCtx {
                 .map(|op| OpKind::clamped(get(BlockRef::AlgoOp(op), AlgoOpParams::WAVE) as u8)),
             pages: crate::ui::theme_settings::ThemeSettings::DEFAULT.pages,
             clash: 0,
+            pad: params.block(BlockRef::Pad).and_then(|b| {
+                Machine::ALL
+                    .get(b.get(PadParams::MACHINE) as usize)
+                    .copied()
+            }),
+            sel_pad: PadId::ALL[0],
+            tonal: None,
+        }
+    }
+
+    /// This context on `kit` with pad `id` selected: its machine, and the
+    /// TONAL pad's.
+    pub fn on_kit(self, kit: &Kit, id: PadId) -> Self {
+        Self {
+            pad: Some(kit.pad(id).machine()),
+            sel_pad: id,
+            tonal: match kit.tonal() {
+                Tonal::Off => None,
+                Tonal::Pad(p) => Some(kit.pad(p).machine()),
+            },
+            ..self
         }
     }
 
@@ -180,6 +215,7 @@ impl SlotCtx {
         Models {
             modal: self.model,
             tape: self.tape,
+            pad: self.pad.map(|m| (self.sel_pad, m)),
         }
     }
 
@@ -223,11 +259,12 @@ impl SlotCtx {
 }
 
 /// The engines' models a page's name follows: MDL2 MODAL's, the model
-/// page TAPE's machine.
+/// page TAPE's machine, a DRUM pad's page its pad and machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Models {
     pub modal: ResonatorMode,
     pub tape: TapeMachine,
+    pub pad: Option<(PadId, Machine)>,
 }
 
 impl Default for Models {
@@ -241,6 +278,7 @@ impl From<ResonatorMode> for Models {
         Models {
             modal,
             tape: TapeMachine::Walk,
+            pad: None,
         }
     }
 }
@@ -515,6 +553,8 @@ fn seconds(buf: &mut FmtBuf, rate: u16, frames: u32) {
 pub enum View {
     Empty,
     SelectOp,
+    /// DRUM's PAD: the Part's selected pad.
+    SelectPad,
     Legacy {
         label: &'static str,
         fmt: ValFmt,
@@ -549,6 +589,7 @@ impl View {
         match *self {
             View::Empty => "--",
             View::SelectOp => "OP",
+            View::SelectPad => "PAD",
             View::Orbit(c) => c.label(),
             View::Source(_) => "SOURCE",
             View::Legacy { label, .. }
@@ -573,16 +614,21 @@ impl View {
             // A readout, not a dial: no bar.
             View::Source(_) => ValFmt::Names(&[]),
             View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
+            View::SelectPad => ValFmt::Names(&PAD_NUMBERS),
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
             View::Route { route, .. } => route.fmt(),
             View::Orbit(c) => c.fmt(),
         }
     }
 
-    /// The focus glyph: the param's spec's, else ARC; SOURCE none.
+    /// The focus glyph: the param's spec's, else ARC; SOURCE none, PAD
+    /// its machine's icon.
     pub fn glyph(&self) -> FocusGlyph {
-        if let View::Source(_) = self {
-            return FocusGlyph::None;
+        match self {
+            View::Source(_) => return FocusGlyph::None,
+            // The pad's machine, large.
+            View::SelectPad => return FocusGlyph::Drum,
+            _ => {}
         }
         self.addr()
             .and_then(|a| a.spec())
@@ -606,10 +652,14 @@ impl View {
     /// own cells give theirs through their focus. A route view's: MIX +
     /// MINUS deletes its route. A mappable param's adds MIX + SEQ's learn.
     pub fn hint(&self, ctx: &SlotCtx) -> Hint {
-        if let View::Route { .. } = self {
-            return crate::ui::mod_grid::DELETE;
+        match self {
+            View::Route { .. } => return crate::ui::mod_grid::DELETE,
+            View::SelectPad => return PAD_HINT,
+            _ => {}
         }
         match self.addr() {
+            // Every cell of a pad's pages steps the pad.
+            Some(a) if a.block == BlockRef::Pad => PAD_HINT,
             Some(ParamAddr {
                 block: BlockRef::Out,
                 param,
@@ -644,6 +694,14 @@ impl View {
         }
     }
 }
+
+/// PAD's numbers, as the band and the header write them.
+pub static PAD_NUMBERS: [&str; PadId::ALL.len()] = [
+    "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12",
+];
+
+/// MIX + MINUS / PLUS steps the pad on a pad's pages (ADR 0265).
+pub const PAD_HINT: Hint = &[Gesture("MIX + -/+", "PAD")];
 
 /// MIX + SEQ learns a CC on the cell (MIDI map spec § 4): every mappable
 /// cell's hint, but where the cell's own gesture leaves no room on the line.
@@ -731,6 +789,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         // ORBIT's pages draw and turn their own cells.
         SlotBinding::Orbit(c) => View::Orbit(c),
         SlotBinding::SelectOp => View::SelectOp,
+        SlotBinding::SelectPad => View::SelectPad,
         SlotBinding::Legacy(fmt) => View::Legacy {
             label: slot.label(),
             fmt: *fmt,
@@ -807,6 +866,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             }
         }
         SlotBinding::Machine(at) => machine_view(at, ctx),
+        SlotBinding::Knob(k) => knob_view(k, ctx),
         SlotBinding::Source => View::Source(ctx.src),
         SlotBinding::ReverbPanel(page, k) => match reverb_panel::knob(ctx.rev, page, k) {
             Some(c) => {
@@ -857,6 +917,23 @@ fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
         return View::Empty;
     };
     param(addr, label, fmt_of(addr, spec.fmt, ctx))
+}
+
+/// A DRUM knob on the selected pad's machine, labelled and read its way;
+/// empty where the machine has no such knob.
+fn knob_view(k: Knob, ctx: &SlotCtx) -> View {
+    let Some(m) = ctx.pad else {
+        return View::Empty;
+    };
+    match spec(m).knob(k) {
+        Some(s) => View::Param {
+            addr: ParamAddr::new(BlockRef::Pad, PadParams::knob(k)),
+            label: s.label,
+            fmt: ValFmt::Knob(m, k),
+            short: Some(s.short),
+        },
+        None => View::Empty,
+    }
 }
 
 /// Whether slot `i` of `def` is a reverb panel cell: its text and step
@@ -966,6 +1043,20 @@ pub fn tuning_note(
         return None;
     }
     crate::bank2::ui_door(|u| u.tuning_note(t, addr.param, p, part)).flatten()
+}
+
+/// What TONAL's focus band says when its pad's machine has no PITCH:
+/// every note plays the same hit (ADR 0270).
+pub fn tonal_note(addr: ParamAddr, ctx: &SlotCtx) -> Option<crate::project::Line> {
+    use core::fmt::Write;
+    if addr != ParamAddr::new(BlockRef::Kit, crate::dsp::drum::params::KitParams::TONAL) {
+        return None;
+    }
+    let m = ctx.tonal.filter(|m| !m.pitched())?;
+    let name = spec(m).name;
+    let mut l = crate::project::Line::new("NO PITCH ON ");
+    let _ = l.write_str(name.rsplit(' ').next().unwrap_or(name));
+    Some(l)
 }
 
 /// What the focus band says in its hint's place about a TAPE cell: why

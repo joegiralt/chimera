@@ -369,7 +369,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then, with the library_* screens: FACTORY joins the title and B ◂▸
     // moves to hint line 1 (showcase Task 4).
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser", 0xa9542eaa0bfa03b9),
+    ("sound_browser", 0x1250b92da341f724),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
@@ -379,7 +379,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then the VCA's gate (ADR 0195): 15 B more. STRETCH GRAIN's four params
     // (ADR 0204): MAX_SOUND_COST 2720.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser_pool_full", 0xd09c988de66695d9),
+    ("sound_browser_pool_full", 0x71d990054691f0f4),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -388,15 +388,15 @@ const GOLDENS: &[(&str, u64)] = &[
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("library_no_card", 0x0ef3cabc0a005fac),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_sounds", 0x8179b02b76c07912),
+    ("library_sounds", 0x2a15f5440b1a97da),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_this_build", 0xe2a5bfa32dc2f895),
+    ("library_this_build", 0x48f6b2180d7c4c4d),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("library_cut_short", 0xc82d8ec053050608),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("library_older", 0xeff7f1c0da22a8d2),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_newer", 0xbc6be4aa213e6763),
+    ("library_newer", 0x441abc78094abb3b),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("library_wont_fit", 0xba02297fe9fba3db),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
@@ -406,13 +406,13 @@ const GOLDENS: &[(&str, u64)] = &[
     // line 3; empty, no card, and a TAPE file listed.
     // Re-recorded on the merge: the pool meter at the formant cost.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("factory_described", 0xbf89b6cba5069419),
+    ("factory_described", 0x97780dcee79887d1),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("factory_empty", 0x4e7a62f82ecfe083),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("factory_no_card", 0xf2356a3f4d7b1db6),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("factory_tape_row", 0x6e1eb8d2b41543e6),
+    ("factory_tape_row", 0xea28ef2cf70ff60e),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
@@ -420,9 +420,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
     // Long user names, LARGE's pair (ADR 0154).
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser_long", 0xe06bf7b29a2d3f15),
+    ("sound_browser_long", 0x4f6aa127bd7ed558),
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
+    // PERSONALIZE › PAD FOLLOW at IDLE (ADR 0268).
+    ("settings_personal_pad_follow", 0x497d7bd253807ed7),
     // Re-recorded for ADR 0224: SYNC's B cell is PROGRAM IN, OFF.
     ("settings_midi_sync", 0x46dea79f34ea9084),
     ("settings_midi_mpe", 0x99c383fb27b32791),
@@ -433,7 +435,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("settings_project_pool", 0x553fccecbee75ba9),
+    ("settings_project_pool", 0x7eb144cdb6e752ad),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -493,13 +495,14 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("large_mixer_sends", 0x2db88c25aaaa4ce0),
     ("large_settings_top", 0x9d2976351278b0df),
-    ("large_settings_personal", 0x35b1c3eb794412f7),
+    // Re-recorded: PAD FOLLOW, a fifth row (ADR 0268).
+    ("large_settings_personal", 0x9818d7f8dc310b17),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("large_sound_browser", 0xa9166f99b85aa59c),
+    ("large_sound_browser", 0xdb7b0caeb8cae2a1),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("large_sound_browser_long", 0x8f25f993f2273cde),
+    ("large_sound_browser_long", 0x510eeba5cf4f99d7),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("large_library_sounds", 0x87eade6ec856523e),
+    ("large_library_sounds", 0xcb3cc73b5c3132c6),
     ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
@@ -569,6 +572,18 @@ const GOLDENS: &[(&str, u64)] = &[
     // The bar on its row 0: rename and delete in the tail line.
     #[cfg(feature = "midi-map")]
     ("midi_map_layer_row0", 0x399716417c55b81a),
+    // DRUM's pages (ADR 0265, slice 1 Task 8). KIT's re-recorded for ADR
+    // 0270's TONAL cell; drum_kit_machine's MACHINE reads BELL, its short;
+    // drum_more's band draws the focused MACHINE's icon, large.
+    ("drum_kit", 0x79097f6ca8f388a6),
+    ("drum_kit_hint", 0x87498c08de3fb994),
+    ("drum_kit_machine", 0x4acb3ae25bc2568c),
+    ("drum_kit_tonal", 0x777e7ecf4fb30a03),
+    ("drum_kit_tonal_clap", 0x9553786b7a45cf13),
+    ("drum_keys", 0xefaf91fd346bbc5b),
+    ("drum_mch_kick", 0x478da05a99d137ad),
+    ("drum_mch_noise", 0x03a8f4124bdeb64f),
+    ("drum_more", 0xfe656955eb63a3db),
 ];
 
 #[test]

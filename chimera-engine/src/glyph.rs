@@ -46,6 +46,9 @@ pub enum FocusGlyph {
     /// The filter's FEEDBACK (ADR 0190): a low-pass curve with the output
     /// looped back to the cutoff corner, from the set value.
     Feedback,
+    /// DRUM's machine icon, large (ADR 0265): the selected pad's machine
+    /// on PAD, the one MACHINE is on.
+    Drum,
 }
 
 /// VA's gauges: what the oscillators and the operator do to the sound.
@@ -68,6 +71,7 @@ pub enum VaOsc {
 
 impl VaOsc {
     /// Its WAVE and SHAPE.
+    #[optimize(size)]
     pub const fn params(self) -> [ParamAddr; 2] {
         let (w, s) = match self {
             VaOsc::One => (VaParams::WAVE1, VaParams::SHAPE1),
@@ -109,6 +113,7 @@ pub enum CompositeId {
 impl CompositeId {
     /// The params a composite reads, in its inputs' order: every spec that
     /// carries it, and only those (`tests/focus_glyph_test.rs` pins both).
+    #[optimize(size)]
     pub const fn params(self) -> &'static [ParamAddr] {
         match self {
             CompositeId::ChorusBraid => &BRAID_PARAMS,
@@ -119,7 +124,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 18] = [
+    pub const ALL: [FocusGlyph; 19] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -138,10 +143,12 @@ impl FocusGlyph {
         FocusGlyph::Lfo,
         FocusGlyph::Stability,
         FocusGlyph::Feedback,
+        FocusGlyph::Drum,
     ];
 
     /// Index in `ALL`. Exhaustive: a new variant fails to compile here
     /// until it is listed.
+    #[optimize(size)]
     const fn position(self) -> usize {
         match self {
             FocusGlyph::Arc => 0,
@@ -162,6 +169,7 @@ impl FocusGlyph {
             FocusGlyph::Lfo => 15,
             FocusGlyph::Stability => 16,
             FocusGlyph::Feedback => 17,
+            FocusGlyph::Drum => 18,
         }
     }
 }
@@ -224,6 +232,7 @@ pub const BRAID_PARAMS: [ParamAddr; 4] = [
 /// WALK's DIRECTION, TRON and DRIFT (ADR 0203) and STRETCH's LENGTH and
 /// TYPE (ADR 0204).
 pub const TAPE_GLYPH_PARAMS: [ParamAddr; 15] = {
+    #[optimize(size)]
     const fn t(id: crate::block::ParamId) -> ParamAddr {
         ParamAddr::new(BlockRef::TapeEngine, id)
     }

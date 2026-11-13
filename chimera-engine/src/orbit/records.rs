@@ -34,6 +34,7 @@ const UNPLAYED: u8 = 0;
 const PLAYED: u8 = 1;
 
 /// `OrbitBlock`: scene `at`, then block `b`'s payload.
+#[optimize(size)]
 fn block_payload(at: u8, b: BlockRef, blk: &dyn Block) -> RecordBuf {
     let mut r = RecordBuf::new();
     r.u8(at);
@@ -43,6 +44,7 @@ fn block_payload(at: u8, b: BlockRef, blk: &dyn Block) -> RecordBuf {
 
 /// `OrbitNotes`: scene, ring, the hits `u32`, the pool's length and notes,
 /// then the 32 step notes.
+#[optimize(size)]
 fn notes_payload(at: u8, r: RingIdx, s: &Scene) -> RecordBuf {
     let ring = &s.rings[r.get() as usize].ring;
     let mut p = RecordBuf::new();
@@ -57,6 +59,7 @@ fn notes_payload(at: u8, r: RingIdx, s: &Scene) -> RecordBuf {
 }
 
 /// `OrbitChord`: scene, segment, degree, played, bass, tones `u16`.
+#[optimize(size)]
 fn chord_payload(at: u8, seg: usize, s: &Scene) -> [u8; 7] {
     let (played, bass, tones) = match s.chords.played[seg] {
         Some(c) => (PLAYED, c.bass().disk_code(), tones_of(c)),
@@ -67,6 +70,7 @@ fn chord_payload(at: u8, seg: usize, s: &Scene) -> [u8; 7] {
     [at, seg as u8, degree, played, bass, lo, hi]
 }
 
+#[optimize(size)]
 fn put_scene(w: &mut RecordWriter<'_>, at: u8, s: &Scene) -> Result<(), StoreError> {
     let r = block_payload(at, BlockRef::OrbitChords, &s.chords);
     w.put(RecordTag::OrbitBlock, r.as_slice())?;
@@ -84,11 +88,13 @@ fn put_scene(w: &mut RecordWriter<'_>, at: u8, s: &Scene) -> Result<(), StoreErr
 }
 
 /// Bit n: pitch class n.
+#[optimize(size)]
 fn tones_of(c: Chord) -> u16 {
     c.tones().iter().fold(0, |m, pc| m | 1 << pc.disk_code())
 }
 
 /// `Orbit`: the playing scene, then each stored scene's seed.
+#[optimize(size)]
 fn orbit_payload(current: SceneIdx, seed: &dyn Fn(u8) -> u32) -> RecordBuf {
     let mut r = RecordBuf::new();
     r.u8(current.get());
@@ -98,6 +104,7 @@ fn orbit_payload(current: SceneIdx, seed: &dyn Fn(u8) -> u32) -> RecordBuf {
     r
 }
 
+#[optimize(size)]
 fn tempo_payload(bpm: Bpm) -> [u8; 4] {
     f32::from(bpm.get()).to_le_bytes()
 }
@@ -107,6 +114,7 @@ fn tempo_payload(bpm: Bpm) -> [u8; 4] {
 /// neutral, as the reader's base is. Out of line: inlined into
 /// `encode_project` it grew bank 1 (ADR 0226).
 #[inline(never)]
+#[optimize(size)]
 fn put_song<'a>(
     w: &mut RecordWriter<'_>,
     saved: SceneSet,
@@ -114,6 +122,8 @@ fn put_song<'a>(
     current: SceneIdx,
     bpm: Bpm,
 ) -> Result<(), StoreError> {
+    // Opaque, so LLVM keeps one body, not one per caller's closure.
+    let scene = core::hint::black_box(scene);
     for at in 0..STORED as u8 {
         if SceneIdx::new(at).is_none_or(|n| saved.contains(n)) {
             put_scene(w, at, scene(at))?;
@@ -126,6 +136,7 @@ fn put_song<'a>(
 
 /// `song`'s records. While a switch waits, as if it had landed: the queued
 /// slot playing, and `live` its copy (Decisions, Review Focus 7).
+#[optimize(size)]
 pub(crate) fn encode_orbit(song: &OrbitSong, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     let (current, live) = song.landing();
     let scene = |at: u8| match SceneIdx::new(at) {
@@ -136,6 +147,7 @@ pub(crate) fn encode_orbit(song: &OrbitSong, w: &mut RecordWriter<'_>) -> Result
 }
 
 /// `OrbitSong::NEW`'s records, a scene at a time: no song in RAM.
+#[optimize(size)]
 pub(crate) fn encode_new_orbit(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     let first = SceneIdx::ALL[0];
     let init = Scene::init();
@@ -150,6 +162,7 @@ pub(crate) fn encode_new_orbit(w: &mut RecordWriter<'_>) -> Result<(), StoreErro
 }
 
 /// The tempo's `f32`, rounded and held to BPM's range; NaN is 120.
+#[optimize(size)]
 fn decode_tempo(v: f32) -> Bpm {
     if v.is_nan() {
         return Bpm::DEFAULT;
@@ -161,6 +174,7 @@ fn decode_tempo(v: f32) -> Bpm {
 /// A played chord from its bass and tones: its notes rising from the bass,
 /// as `Chord::from_notes` built it. None without its bass or under two
 /// tones.
+#[optimize(size)]
 fn played_chord(bass: u8, tones: u16) -> Option<Chord> {
     let bass = PitchClass::from_disk_code(bass)?;
     let b = bass.disk_code();
@@ -183,6 +197,7 @@ fn played_chord(bass: u8, tones: u16) -> Option<Chord> {
 /// True when it was taken whole: the song now writes this very record
 /// back. False when it was skipped, or a value in it was defaulted,
 /// clamped or dropped (ADR 0078: such a load is never Saved).
+#[optimize(size)]
 pub(crate) fn read(tag: RecordTag, p: &[u8], song: Option<&mut OrbitSong>) -> bool {
     let Some(song) = song else { return true };
     match tag {
@@ -242,6 +257,7 @@ pub(crate) fn read(tag: RecordTag, p: &[u8], song: Option<&mut OrbitSong>) -> bo
 /// `OrbitNotes`: a mask is taken only as the fill's own hits moved
 /// (`with_mask`), a pool only whole (`Pool::new`), a step note only if it
 /// is one; the rest keep the base's.
+#[optimize(size)]
 fn notes(p: &[u8], song: &mut OrbitSong) -> bool {
     let &[at, ring, m0, m1, m2, m3, len, ref rest @ ..] = p else {
         return false;
@@ -273,6 +289,7 @@ fn notes(p: &[u8], song: &mut OrbitSong) -> bool {
 }
 
 /// A pool read whole: 1..=8 notes, each one.
+#[optimize(size)]
 fn pool_of(bytes: &[u8]) -> Option<Pool> {
     let mut read = [Note::MIN; MAX_POOL];
     if bytes.len() > MAX_POOL {
@@ -286,6 +303,7 @@ fn pool_of(bytes: &[u8]) -> Option<Pool> {
 
 /// `OrbitChord`: a degree this firmware lacks keeps the base's; a played
 /// chord that can't be one reads as none.
+#[optimize(size)]
 fn chord(p: &[u8], song: &mut OrbitSong) -> bool {
     let &[at, seg, degree, played, bass, lo, hi] = p else {
         return false;

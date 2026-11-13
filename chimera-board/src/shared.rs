@@ -21,6 +21,7 @@ use chimera_core::orbit::runner::OrbitView;
 #[cfg(all(feature = "midi-din", feature = "midi-map"))]
 use chimera_core::out_ring::{OutPorts, OutRing};
 use chimera_core::preset::Performance;
+use chimera_core::project::Kits;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
 use chimera_core::source_table::SOURCE_TABLE;
@@ -145,6 +146,12 @@ static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 // project once, with `UI`.
 static mut POOL_ARENA: [u8; ARENA_BYTES] = [0; ARENA_BYTES];
 
+// Each Part's kit (ADR 0265): ITCM (ADR 0266), lent to the UI's project
+// with the arena; D2, where the Parts are, is full, and AXI keeps its
+// margin (ADR 0087). CPU only: the card writes a copy. Built at `take_ui`.
+#[unsafe(link_section = ".itcm")]
+static mut KITS: MaybeUninit<Kits> = MaybeUninit::uninit();
+
 /// Out of line for flash, not the stack: built in place, its frame is
 /// 1 KB, but inlined into `synth` fat LTO reshuffles the UI loop's
 /// inlining for 6.3 KB more `.text` (ADR 0089).
@@ -154,12 +161,15 @@ pub fn take_ui() -> Option<&'static mut UiState> {
         return None;
     }
     // SAFETY: the flag lets exactly one caller past, so these are the only
-    // references to `POOL_ARENA` and `UI` ever made.
+    // references to `POOL_ARENA`, `KITS` and `UI` ever made.
     let arena = ArenaWriter::new(unsafe { &mut *addr_of_mut!(POOL_ARENA) }, &SOURCE_TABLE);
+    // SAFETY: as above.
+    let kits = Kits::init_in_place(unsafe { &mut *addr_of_mut!(KITS) });
     // SAFETY: as above.
     Some(UiState::init_in_place(
         unsafe { &mut *addr_of_mut!(UI) },
         arena,
+        kits,
     ))
 }
 

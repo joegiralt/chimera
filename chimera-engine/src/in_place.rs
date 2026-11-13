@@ -187,6 +187,7 @@ macro_rules! in_place_enum {
 
                 /// The tag byte and the payload address, read through the mirror.
                 #[cfg(test)]
+                #[allow(dead_code, reason = "only the enums whose layout a test reads")]
                 pub(crate) fn mirror_parts(&self) -> (u8, *const u8) {
                     let () = Self::LAYOUT;
                     let m = core::ptr::from_ref(self).cast::<__Mirror $(<$G>)?>();

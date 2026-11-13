@@ -543,6 +543,19 @@ pub enum Retrig {
     Cut = 1,
 }
 
+impl Retrig {
+    pub const ALL: [Retrig; 2] = [Retrig::Stack, Retrig::Cut];
+
+    /// The place in `ALL`: a choice cell's value.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub fn from_index(i: usize) -> Option<Retrig> {
+        Self::ALL.get(i).copied()
+    }
+}
+
 impl DiskCode for Retrig {
     fn disk_code(self) -> u8 {
         self as u8

@@ -124,6 +124,8 @@ impl UiClock {
 /// UI frames a second: what `update`'s easing and clock are tuned for.
 pub const UI_FPS: u32 = 20;
 pub const FRAME_MS: u32 = 1000 / UI_FPS;
+/// One UI frame, as a duration.
+pub const FRAME: chimera_hal::units::Millis = chimera_hal::units::Millis::new(FRAME_MS);
 /// Frames still owed after a stall: the rest are dropped.
 const MAX_OWED: u32 = 2;
 

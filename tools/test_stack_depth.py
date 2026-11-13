@@ -238,6 +238,16 @@ class StackDepth(unittest.TestCase):
         self.assertNotIn(0x08000101, img.words)
         self.assertIn(0x08000201, img.words, "a literal after the table still counts")
 
+    def test_a_never_taken_function_is_charged_no_pointer(self):
+        # A data word equal to `take_ui`'s address is no pointer to it
+        # (bench-algo,master-tape, ADR 0267): it stays out of the charge.
+        img = sd.parse(io.StringIO(
+            "08000000 <chimera_board::shared::take_ui>:\n 8000000:      \tsub\tsp, #0x800\n"
+            "\n08000100 <g>:\n 8000100:      \tsub\tsp, #0x10\n"
+            "\nContents of section .rodata:\n 8000c00 01000008 01010008                    ........\n"
+        ))
+        self.assertEqual(sd.pointer_charge(img, io.StringIO()), 0x10)
+
     def cycle(self, light, heavy):
         """main calls both of a cycle: `light` (16 B) and `heavy` (256 B),
         heavy also a 4 KB leaf. Whichever main enters first, the worst

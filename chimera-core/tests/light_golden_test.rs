@@ -31,17 +31,17 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.
     // Then the formant merge: the pool meter's cost.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser", 0x8d8effb4072dc3a1),
+    ("sound_browser", 0x960a58604a279685),
     ("toast_exfat", 0xd8ee278545272c31),
     // Re-recorded on the formant merge: the pool meter's cost.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("factory_described", 0xd907b5957ecebc73),
+    ("factory_described", 0x2ff92c5ec6d008d3),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("factory_empty", 0x4810724fac34527f),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("factory_no_card", 0x300770ed632bc163),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("factory_tape_row", 0x03c0cfe8741624b6),
+    ("factory_tape_row", 0x12480001d0f0c6d6),
 ];
 
 fn light(name: &str) -> Fb {

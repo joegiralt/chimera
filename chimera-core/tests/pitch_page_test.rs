@@ -41,7 +41,11 @@ fn pitch_fine_steal_time_and_snap_on_a_to_e_and_f_free() {
 #[test]
 fn snap_musical_steps_pitch_on_every_engine() {
     use chimera_core::params::Snap;
-    for engine in EngineType::ALL {
+    // DRUM has no PIT page: its pitch is its pads'.
+    for engine in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         let mut ui = crate::screen::stack_ui();
         load_init(&mut ui, engine);
         to_pitch(&mut ui, engine);
@@ -61,7 +65,11 @@ fn snap_musical_steps_pitch_on_every_engine() {
 #[test]
 fn steal_and_glide_time_turn() {
     use chimera_core::params::Steal;
-    for engine in EngineType::ALL {
+    // DRUM has no PIT page: its pitch is its pads'.
+    for engine in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         let mut ui = crate::screen::stack_ui();
         load_init(&mut ui, engine);
         to_pitch(&mut ui, engine);
@@ -79,7 +87,11 @@ fn steal_and_glide_time_turn() {
 
 #[test]
 fn both_engines_reach_the_pitch_page_and_turn_it() {
-    for engine in EngineType::ALL {
+    // DRUM has no PIT page: its pitch is its pads'.
+    for engine in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         let mut ui = crate::screen::stack_ui();
         load_init(&mut ui, engine);
         to_pitch(&mut ui, engine);

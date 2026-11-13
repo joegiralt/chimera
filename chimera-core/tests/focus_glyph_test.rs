@@ -178,6 +178,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Theme", "SAVER", NONE),
     ("Theme", "PAGES", NONE),
     ("Theme", "TEXT", NONE),
+    ("Theme", "FOLLOW", NONE),
     ("Midi", "SYNC", NONE),
     ("Midi", "PUSH", SWITCH),
     ("Midi", "ECHO", SWITCH),
@@ -450,6 +451,7 @@ fn each_glyph_maps_to_its_gauge() {
             FocusGlyph::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
             FocusGlyph::Tape => Gauge::Switch { on: 14.0 },
             FocusGlyph::Lfo => Gauge::Switch { on: 15.0 },
+            FocusGlyph::Drum => Gauge::Switch { on: 16.0 },
             // (1 − 0.25)² of the travel, the bubble at half of it.
             FocusGlyph::Stability => Gauge::Stability {
                 offset: 6,
@@ -472,6 +474,7 @@ fn each_glyph_maps_to_its_gauge() {
             Reads::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
             Reads::Tape => Gauge::Switch { on: 14.0 },
             Reads::Lfo => Gauge::Switch { on: 15.0 },
+            Reads::Drum => Gauge::Switch { on: 16.0 },
         };
         assert_eq!(gauge(g, 0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
@@ -731,6 +734,34 @@ fn a_view_reads_its_spec_glyph() {
         fmt: ValFmt::Uni,
     };
     assert_eq!(legacy.glyph(), FocusGlyph::Arc);
+}
+
+/// DRUM's PAD and MACHINE show the machine's icon large (ADR 0265);
+/// no other pad cell does.
+#[test]
+fn pad_and_machine_show_the_machine_large() {
+    use chimera_core::dsp::drum::params::PAD_SPECS;
+    assert_eq!(View::SelectPad.glyph(), FocusGlyph::Drum);
+    for s in &PAD_SPECS {
+        let drum = s.glyph == FocusGlyph::Drum;
+        assert_eq!(drum, s.ident == "MACHINE", "Pad.{}", s.ident);
+    }
+}
+
+/// Every machine's name reads beside its icon, and the icon stays.
+#[test]
+fn every_machine_name_fits_beside_its_icon() {
+    use chimera_core::dsp::drum::types::Machine;
+    use chimera_core::ui::components::{Layout, fit_gauge, layout};
+    for m in Machine::ALL {
+        let name = chimera_core::dsp::drum::laws::spec(m).name;
+        let g = Gauge::Drum(m);
+        assert!(
+            matches!(layout(name, &g), Layout::WithGauge | Layout::SmallBeside),
+            "{name}"
+        );
+        assert_eq!(fit_gauge(name, g), g, "{name}");
+    }
 }
 
 #[test]

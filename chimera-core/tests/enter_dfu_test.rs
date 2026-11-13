@@ -134,6 +134,7 @@ fn the_theme_is_saved_before_the_restart() {
         saver: Saver::from_index(4),
         pages: Pages::Stack,
         text: chimera_core::ui::theme::TextSize::Normal,
+        pad_follow: chimera_core::ui::theme_settings::PadFollow::Idle,
     };
     let mut ui = Box::new(UiState::new());
     let mut sys = Sys::new();

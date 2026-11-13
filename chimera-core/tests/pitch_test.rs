@@ -48,7 +48,11 @@ fn peak_hz(x: &[f32]) -> f32 {
 
 #[test]
 fn pitch_plus_12_doubles_the_frequency_on_every_engine() {
-    for engine in EngineType::ALL {
+    // DRUM plays pads, not notes: `drum_engine_test`.
+    for engine in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         let none = ModState::new();
         let at_0 = peak_hz(&render(&with_pitch(engine, 0.0, 0.0), &none, 200));
         let at_12 = peak_hz(&render(&with_pitch(engine, 12.0, 0.0), &none, 200));
@@ -62,7 +66,11 @@ fn pitch_plus_12_doubles_the_frequency_on_every_engine() {
 
 #[test]
 fn fine_plus_100_is_pitch_plus_1() {
-    for engine in EngineType::ALL {
+    // DRUM plays pads, not notes: `drum_engine_test`.
+    for engine in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         let none = ModState::new();
         let fine = render(&with_pitch(engine, 0.0, 100.0), &none, 50);
         let semi = render(&with_pitch(engine, 1.0, 0.0), &none, 50);

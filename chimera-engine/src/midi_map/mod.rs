@@ -576,7 +576,8 @@ pub fn default_for(e: EngineType) -> MidiMap {
         EngineType::Algo => 6..10,
         EngineType::Modal => 10..14,
         EngineType::Va => 14..18,
-        EngineType::Tape => 6..6,
+        // No engine section of their own (DRUM's knobs are its pads').
+        EngineType::Tape | EngineType::Drum => 6..6,
     };
     let mut m = MidiMap::EMPTY;
     m.entries[..6].copy_from_slice(&DEFAULTS[..6]);

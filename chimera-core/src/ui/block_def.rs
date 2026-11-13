@@ -51,6 +51,9 @@ pub enum VizType {
     FxCurve,
     /// PIT: the live output, the sounding pitch in its corner (ADR 0201).
     Tuner,
+    /// DRUM's KIT: the twelve pads, each its machine's icon and choke
+    /// group, the selected one framed, a sounding one lit.
+    Pads,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.
@@ -79,6 +82,8 @@ pub enum SlotBinding {
     SelectedOp(ParamId),
     /// The operator selector itself.
     SelectOp,
+    /// DRUM's PAD: the Part's selected pad.
+    SelectPad,
     /// Mixer/System/Demo pages, still driven by `PageId`.
     /// Its label is the slot's override; the format sits out of line, so
     /// the slot (one of 600-odd statics) stays small.
@@ -108,6 +113,9 @@ pub enum SlotBinding {
     SelectedRing(ParamId),
     /// One of ORBIT's own cells.
     Orbit(crate::ui::orbit::OrbitCell),
+    /// Knob `k` of the selected pad's machine (`laws::spec`): its label,
+    /// short and readout; empty where the machine has none.
+    Knob(crate::dsp::drum::types::Knob),
 }
 
 /// Where a TAPE cell sits: cell `k` of DECK after MODEL (the glyph's
@@ -123,8 +131,9 @@ pub enum MachineSlot {
 pub struct ParamSlot {
     pub binding: SlotBinding,
     /// Display label override; `None` shows the spec's label (plan D6).
-    /// Format and step always come from the spec.
-    pub label_override: Option<&'static str>,
+    /// Format and step always come from the spec. Behind one more
+    /// reference: a thin pointer keeps each of the 600-odd slots 12 bytes.
+    pub label_override: Option<&'static &'static str>,
 }
 
 impl ParamSlot {
@@ -161,7 +170,14 @@ impl ParamSlot {
         }
     }
 
-    pub const fn legacy(label: &'static str, fmt: &'static ValFmt) -> Self {
+    pub const fn select_pad() -> Self {
+        Self {
+            binding: SlotBinding::SelectPad,
+            label_override: None,
+        }
+    }
+
+    pub const fn legacy(label: &'static &'static str, fmt: &'static ValFmt) -> Self {
         Self {
             binding: SlotBinding::Legacy(fmt),
             label_override: Some(label),
@@ -217,6 +233,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn knob(k: crate::dsp::drum::types::Knob) -> Self {
+        Self {
+            binding: SlotBinding::Knob(k),
+            label_override: None,
+        }
+    }
+
     pub const fn source() -> Self {
         Self {
             binding: SlotBinding::Source,
@@ -238,7 +261,7 @@ impl ParamSlot {
         }
     }
 
-    pub const fn with_label(self, label: &'static str) -> Self {
+    pub const fn with_label(self, label: &'static &'static str) -> Self {
         Self {
             label_override: Some(label),
             ..self
@@ -262,6 +285,7 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::Orbit(_)
             | SlotBinding::SelectOp
+            | SlotBinding::SelectPad
             | SlotBinding::Legacy(_)
             | SlotBinding::FilterPanel(_)
             | SlotBinding::FxPanel(_)
@@ -270,6 +294,7 @@ impl ParamSlot {
             | SlotBinding::ModalPanel(..)
             | SlotBinding::ReverbPanel(..)
             | SlotBinding::Machine(_)
+            | SlotBinding::Knob(_)
             | SlotBinding::Source => None,
         }
     }
@@ -289,9 +314,11 @@ impl ParamSlot {
             | SlotBinding::ModalPanel(..)
             | SlotBinding::ReverbPanel(..)
             | SlotBinding::Legacy(_)
-            | SlotBinding::Machine(_) => "--",
+            | SlotBinding::Machine(_)
+            | SlotBinding::Knob(_) => "--",
             SlotBinding::Source => "SOURCE",
             SlotBinding::SelectOp => "OP",
+            SlotBinding::SelectPad => "PAD",
             SlotBinding::OpPanel(_, k) => crate::ui::op_page::table_cell(k).map_or("--", |c| c.1),
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
                 self.spec().map_or("??", |s| s.label)
@@ -310,8 +337,10 @@ impl ParamSlot {
             | SlotBinding::ModalPanel(..)
             | SlotBinding::ReverbPanel(..)
             | SlotBinding::Machine(_)
+            | SlotBinding::Knob(_)
             | SlotBinding::Source => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
+            SlotBinding::SelectPad => ValFmt::Names(&crate::ui::view::PAD_NUMBERS),
             SlotBinding::Legacy(fmt) => *fmt,
             SlotBinding::Param(_)
             | SlotBinding::SelectedOp(_)
@@ -336,6 +365,18 @@ pub struct BlockDef {
     pub layout: PageLayout,
     pub viz: VizType,
     pub params: [ParamSlot; 6],
+}
+
+impl BlockDef {
+    /// A DRUM pad's page (KIT, KEYS, MCH, MORE): its cells edit the
+    /// selected pad, MIX + MINUS / PLUS steps it, and the header names it.
+    pub fn edits_pad(&self) -> bool {
+        self.params.iter().any(|s| match s.binding {
+            SlotBinding::SelectPad | SlotBinding::Knob(_) => true,
+            SlotBinding::Param(a) => a.block == BlockRef::Pad,
+            _ => false,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -57,6 +57,7 @@ impl Sound {
     /// A format contract (ADR 0087): `encode_sound` omits every param at
     /// these values, so changing one changes every saved Sound. It needs a
     /// migration in the same commit; `neutral_v1.txt` pins it.
+    // Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
     pub fn neutral(engine: EngineType) -> Sound {
         Sound {
             name: Sound::init_name(),
@@ -72,6 +73,7 @@ impl Sound {
 /// `Sound::neutral`'s params, without the rest of a Sound. Out of line:
 /// inlined into each caller it cost 1.2 KB of flash.
 #[inline(never)]
+// Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
 fn neutral_params(engine: EngineType) -> ParamSnapshot {
     let mut params = ParamSnapshot::for_engine(engine);
     params.out.volume = 0.8;
@@ -83,12 +85,14 @@ fn neutral_params(engine: EngineType) -> ParamSnapshot {
 
 /// `a`'s (block code, param id). Every address a Sound routes is modulatable,
 /// so its block is stored.
+#[optimize(size)]
 pub(crate) fn addr_code(a: ParamAddr) -> [u8; 2] {
     [a.block.disk_code().expect("a stored block"), a.param.0]
 }
 
 /// The stored address with these codes, if this firmware has it; a
 /// retired one through `READDRESS` (DRIVE's routes land on LEVEL).
+#[optimize(size)]
 pub(crate) fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
     if let Some(a) = readdress(DiskAddr {
         block,
@@ -103,12 +107,14 @@ pub(crate) fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
 /// `Engine`, a `Block` per voice block holding only the params off
 /// `Sound::neutral` (none: no record), then `Registry`, `ModDests`,
 /// `Routes`, and its `SourceRef` and `ZoneTune` if it has them.
+#[optimize(size)]
 pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
     encode_sound_body(s, w)
 }
 
 /// Everything `encode_sound` writes after `Engine`.
+#[optimize(size)]
 pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     // One buffer for every record: this frame is charged to each pointer
     // call (ADR 0025's stack check), so it holds one, not one per record.
@@ -180,6 +186,7 @@ pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(
 
 /// The routes of the performance rows (`perf`) or of the others: registry
 /// columns, then the fixed ones, by address (no ModDests).
+#[optimize(size)]
 fn encode_routes(m: &ModState, perf: bool, r: &mut RecordBuf) {
     let cols = (0..m.num_dests()).map(|d| (m.dest(d), m.present(d)));
     let fixed = FixedCol::ALL.map(|c| (c.addr(), m.fixed_present(c)));
@@ -200,11 +207,13 @@ fn encode_routes(m: &ModState, perf: bool, r: &mut RecordBuf) {
 
 /// The CRC of the Sound's padded name, then `encode_sound`'s bytes: equal
 /// for Sounds a card round trip can't tell apart.
+#[optimize(size)]
 pub fn sound_crc(s: &Sound) -> u32 {
     records_crc(&s.name.padded(), |w| encode_sound(s, w))
 }
 
 /// A record's bit in `SoundCheck::seen`; `Block` repeats per block code.
+#[optimize(size)]
 const fn once_bit(tag: RecordTag) -> u16 {
     match tag {
         RecordTag::Block => 0,
@@ -238,6 +247,7 @@ const fn once_bit(tag: RecordTag) -> u16 {
         | RecordTag::SourceZones
         | RecordTag::Controller
         | RecordTag::Scala
+        | RecordTag::Kit
         | RecordTag::MapSection => 0,
     }
 }
@@ -282,11 +292,13 @@ type Refused = [u8; 3];
 const REFUSED: usize = crate::dsp::algo::plan::OPS + 2;
 
 impl SoundCheck {
+    #[optimize(size)]
     pub fn new() -> Self {
         Self::begin(None)
     }
 
     /// A Sound past its header: a project's context, whose record names it.
+    #[optimize(size)]
     pub(crate) fn begin(name: Option<SoundName>) -> Self {
         SoundCheck {
             name,
@@ -309,22 +321,26 @@ impl SoundCheck {
     /// Entries lost: a record, param, enum code, route or destination this
     /// firmware doesn't know and no migration or retirement covers. Counted
     /// in pass 2 only, so zero until it has run.
+    #[optimize(size)]
     pub fn skips(&self) -> u16 {
         self.skips
     }
 
     /// Pass 2 decoded an operator kind past the formant budget as W1 (no
     /// firmware writes one).
+    #[optimize(size)]
     pub fn over_budget(&self) -> bool {
         self.over
     }
 
+    #[optimize(size)]
     fn skip(&mut self, n: u16) {
         self.skips = self.skips.saturating_add(n);
     }
 }
 
 impl Default for SoundCheck {
+    #[optimize(size)]
     fn default() -> Self {
         Self::new()
     }
@@ -333,10 +349,12 @@ impl Default for SoundCheck {
 impl Check for SoundCheck {
     const KIND: FileKind = FileKind::Sound;
 
+    #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
         self.step(e, None)
     }
 
+    #[optimize(size)]
     fn end(&mut self) -> Result<(), FileError> {
         self.finish(None)
     }
@@ -351,6 +369,7 @@ pub struct SoundDecoder<'a> {
 }
 
 impl<'a> SoundDecoder<'a> {
+    #[optimize(size)]
     pub fn new(target: &'a mut Sound) -> Self {
         SoundDecoder {
             check: SoundCheck::new(),
@@ -362,6 +381,7 @@ impl<'a> SoundDecoder<'a> {
 
 impl SoundDecoder<'_> {
     /// `SoundCheck::over_budget`.
+    #[optimize(size)]
     pub fn over_budget(&self) -> bool {
         self.check.over_budget()
     }
@@ -370,20 +390,24 @@ impl SoundDecoder<'_> {
 impl Check for SoundDecoder<'_> {
     const KIND: FileKind = FileKind::Sound;
 
+    #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
         self.check.event(e)
     }
 
+    #[optimize(size)]
     fn end(&mut self) -> Result<(), FileError> {
         self.check.end()
     }
 }
 
 impl Decode for SoundDecoder<'_> {
+    #[optimize(size)]
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
         self.check.step(e, Some(&mut self.staged))
     }
 
+    #[optimize(size)]
     fn commit(&mut self) -> Result<(), FileError> {
         self.check.finish(Some(&mut self.staged))?;
         core::mem::swap(self.target, &mut self.staged);
@@ -398,6 +422,7 @@ impl SoundCheck {
     /// `Engine`, one we write once read twice, or a project's record.
     /// `Bounds`: a payload of the wrong shape, or more entries than the
     /// Sound holds. `WrongKind`: not a Sound file.
+    // Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
     pub fn step(&mut self, e: Event<'_>, staged: Option<&mut Sound>) -> Result<(), FileError> {
         let (tag, p) = match e {
             Event::Header(h) => {
@@ -434,6 +459,7 @@ impl SoundCheck {
                 | RecordTag::Origin
                 | RecordTag::Controller
                 | RecordTag::Scala
+                | RecordTag::Kit
                 | RecordTag::MapSection
         ) || tag.is_orbit()
         {
@@ -587,6 +613,7 @@ impl SoundCheck {
             | RecordTag::SourceZones
             | RecordTag::Controller
             | RecordTag::Scala
+            | RecordTag::Kit
             | RecordTag::MapSection => Err(FileError::Corrupt),
             RecordTag::Build | RecordTag::Note => Ok(()),
         }
@@ -594,6 +621,7 @@ impl SoundCheck {
 
     /// `Corrupt` without an Engine record. Retries the refused codes on
     /// `staged` until none lands, the rest over budget; adds the routes.
+    #[optimize(size)]
     pub fn finish(&mut self, staged: Option<&mut Sound>) -> Result<(), FileError> {
         if !self.engine {
             return Err(FileError::Corrupt);
@@ -650,6 +678,7 @@ impl SoundCheck {
 
     /// A map record, through the door: closed, it is not read and the
     /// Sound keeps an empty map (spec § 6.4).
+    #[optimize(size)]
     fn map(
         &mut self,
         which: MapRecord,
@@ -662,6 +691,7 @@ impl SoundCheck {
         Ok(())
     }
 
+    #[optimize(size)]
     fn engine_record(&mut self, p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
         let &[code] = p else {
             return Err(FileError::Bounds);
@@ -686,6 +716,7 @@ const FOLDER_BLOCK: u8 = 11;
 /// sparse encoder left out: FM3 IN is the single fixed-FREQ route that is
 /// neither FM1's ENV 1 nor FM2's NOTE, QM IN the single fixed-Q route;
 /// otherwise each keeps its value. Only the jacks `fm3`/`qm` asks for.
+#[optimize(size)]
 fn infer_jacks(f: &mut FilterParams, m: &ModState, fm3: bool, qm: bool) {
     // A jack's sources only: a WHEEL or PRESSURE route is never one.
     let single = |bits: SourceBits| {
@@ -704,6 +735,7 @@ fn infer_jacks(f: &mut FilterParams, m: &ModState, fm3: bool, qm: bool) {
 /// `(Jack code, dest block code, dest param id, amount)` entries. An entry
 /// that isn't a tap into a fixed column is dropped, and counted if its
 /// address is unknown; a partial one is `Bounds`.
+#[optimize(size)]
 fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<u16, FileError> {
     let (entries, []) = p.as_chunks::<ROUTE_LEN>() else {
         return Err(FileError::Bounds);
@@ -723,6 +755,7 @@ fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<u16, FileError
 }
 
 /// The entries dropped for an address this firmware lacks.
+#[optimize(size)]
 fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<u16, FileError> {
     let (entries, []) = p.as_chunks::<REGISTRY_ENTRY_LEN>() else {
         return Err(FileError::Bounds);
@@ -745,6 +778,7 @@ fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<u16, FileError> {
 }
 
 /// The destinations dropped for an address this firmware lacks.
+#[optimize(size)]
 fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<u16, FileError> {
     // The source count is not read: an older file's 8 would hide WHEEL and
     // PRESSURE.

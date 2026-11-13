@@ -75,7 +75,11 @@ fn render(ui: &UiState) -> Vec<f32> {
 /// and PLACE are the slot's: OFF, then a type at DRIVE 0, is silent.
 #[test]
 fn every_flt_knob_changes_a_held_note() {
-    for ct in EngineType::ALL {
+    // DRUM plays pads, not notes: `drum_engine_test`.
+    for ct in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         for (sub, slots) in [
             (0, &[3usize, 5, 2][..]),
             (1, &[0usize, 1, 2, 4][..]),

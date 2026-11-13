@@ -135,6 +135,8 @@ pub struct Frame<'a> {
     pub tuner: &'a crate::ui::pit_tuner::Shown,
     /// What SETTINGS › TUNING's band says of a Part's file (ADR 0259).
     pub tuned: &'a crate::ui::tuning::Tuned,
+    /// The active Part's kit as KIT's band draws it.
+    pub pads: crate::ui::kit_band::Pads<'a>,
 }
 
 impl Frame<'_> {
@@ -463,6 +465,7 @@ impl Renderer {
                 let w = self.lfo_wave(f, s);
                 lfo_glyph::draw_scope(display, &w, lfo_glyph::Dot::of(&w, f.lfo));
             }
+            VizType::Pads => crate::ui::kit_band::draw(display, &f.pads),
             VizType::FxCurve => {
                 use crate::dsp::voice_fx::{look, params::Place};
                 let fx = &f.parts[f.active_part.index()].sound.params.fx;
@@ -663,6 +666,7 @@ impl Renderer {
                     let tp = (fx.ty() as u32) << 1 | fx.place as u32;
                     ([0; 6], region::fold_keys(tp.into(), &bits))
                 }
+                VizType::Pads => ([0; 6], crate::ui::kit_band::key(&f.pads)),
                 // PIT's corner's key is 0 off PIT.
                 _ => ([0; 6], viz::live_key(f.scope) ^ f.tuner.key),
             },
@@ -842,10 +846,12 @@ impl Renderer {
         let tuning = view
             .addr()
             .and_then(|a| view::tuning_note(a, f.tuned, f.active_part, part));
+        let tonal = view.addr().and_then(|a| view::tonal_note(a, &f.ctx));
         let note = view
             .addr()
             .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)))
             .or(tuning.as_ref().map(|l| l.as_str()))
+            .or(tonal.as_ref().map(|l| l.as_str()))
             .or_else(|| view::clash_note(&view, &f.ctx));
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
             (Some(s), _) => {
@@ -1007,6 +1013,7 @@ impl Renderer {
                 }
                 _ => Gauge::None,
             },
+            Reads::Drum => f.ctx.pad.map_or(Gauge::None, Gauge::Drum),
             Reads::Va(VaGlyph::Blend) => {
                 let [mode, amount] = self.eased_set(f, [VA_MIX_PARAMS[0], VA_MIX_PARAMS[1]]);
                 Gauge::Blend {
@@ -1168,10 +1175,15 @@ impl Renderer {
                 _ => buf = param_text(f, i, &v, self.set[i].target()),
             }
             // A name wider than the column keeps its first word: `SOFT`,
-            // not `SOFT SYNC` (the focus band reads it whole).
-            let one = buf.as_str().split(' ').next().unwrap_or("");
+            // not `SOFT SYNC` (the focus band reads it whole); a pad's
+            // MACHINE as `pad_machine_cell` says.
+            let one = match v.addr() {
+                Some(a) if a == PAD_MACHINE => f.ctx.pad.map(pad_machine_cell),
+                _ => buf.as_str().split(' ').next(),
+            }
+            .unwrap_or("");
             if one.len() < buf.as_str().len()
-                && draw::text_width(&theme::FONT_VALUE, buf.as_str(), 0) > theme::CELL_COL_W - 4
+                && draw::text_width(&theme::FONT_VALUE, buf.as_str(), 0) > CELL_VALUE_W
             {
                 let mut first = FmtBuf::new();
                 let _ = core::fmt::Write::write_str(&mut first, one);
@@ -1510,6 +1522,29 @@ const PLACE: ParamAddr = ParamAddr::new(
     crate::dsp::voice_fx::params::VoiceFxParams::PLACE,
 );
 const KIND: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::KIND);
+/// A DRUM pad's MACHINE: its cell keeps the name's last word.
+const PAD_MACHINE: ParamAddr =
+    ParamAddr::new(BlockRef::Pad, crate::dsp::drum::params::PadParams::MACHINE);
+/// The widest value a cell draws before it runs into the next column's.
+pub const CELL_VALUE_W: i32 = theme::CELL_COL_W - 4;
+
+/// A pad's MACHINE in its cell (owner rule: full words when they fit):
+/// the name, else its last word, the instrument (`SNARE`, not `TONE
+/// SNARE`), else the machine's short name (`BELL`: `COWBELL` ran into
+/// LEVEL). The focus band reads it whole.
+pub fn pad_machine_cell(m: crate::dsp::drum::types::Machine) -> &'static str {
+    let s = crate::dsp::drum::laws::spec(m);
+    let fits = |t: &str| draw::text_width(&theme::FONT_VALUE, t, 0) <= CELL_VALUE_W;
+    let last = s.name.rsplit(' ').next().unwrap_or(s.name);
+    if fits(s.name) {
+        s.name
+    } else if fits(last) {
+        last
+    } else {
+        s.short
+    }
+}
+
 /// The LED's centre from the end of LEVEL's value, and above its baseline.
 const LED_DX: i32 = 7;
 const LED_RISE: i32 = 7;

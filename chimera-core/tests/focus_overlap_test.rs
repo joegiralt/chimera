@@ -56,6 +56,10 @@ fn gauge_at(glyph: FocusGlyph, fmt: ValFmt, v: f32, rev: ReverbType) -> Gauge {
                 chimera_core::ui::tape_glyph::Pose::Live,
             ),
         )),
+        Reads::Drum => Gauge::Drum(
+            chimera_core::dsp::drum::types::Machine::ALL
+                [(v * (chimera_core::dsp::drum::types::Machine::ALL.len() - 1) as f32) as usize],
+        ),
         Reads::Lfo => {
             use chimera_core::lfo_glyph::{Glyph, LfoGauge, Q, Wave};
             Gauge::Lfo(LfoGauge {

@@ -50,6 +50,7 @@ pub struct SourceHead {
 }
 
 impl SourceHead {
+    #[optimize(size)]
     pub fn to_bytes(&self) -> [u8; SOURCE_HEAD_LEN] {
         let mut b = [0; SOURCE_HEAD_LEN];
         b[..10].copy_from_slice(&self.sref.to_bytes());
@@ -61,6 +62,7 @@ impl SourceHead {
     }
 
     /// `None` unless exactly 34 bytes with a known shape and a valid name.
+    #[optimize(size)]
     pub fn from_bytes(b: &[u8]) -> Option<SourceHead> {
         let b: &[u8; SOURCE_HEAD_LEN] = b.try_into().ok()?;
         let (sref, rest) = b.split_at(10);
@@ -92,6 +94,7 @@ pub struct Zone {
 
 impl Zone {
     /// What `held` and the CRC carry of it: `start`, `frames`, `key`.
+    #[optimize(size)]
     fn layout(&self) -> [u8; ZONE_LAYOUT_LEN] {
         let mut b = [0; ZONE_LAYOUT_LEN];
         b[..4].copy_from_slice(&self.start.to_le_bytes());
@@ -100,6 +103,7 @@ impl Zone {
         b
     }
 
+    #[optimize(size)]
     fn to_bytes(self) -> [u8; ZONE_LEN] {
         let mut b = [0; ZONE_LEN];
         b[..ZONE_LAYOUT_LEN].copy_from_slice(&self.layout());
@@ -108,6 +112,7 @@ impl Zone {
         b
     }
 
+    #[optimize(size)]
     fn from_bytes(b: &[u8; ZONE_LEN]) -> Zone {
         let u32_at = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
         Zone {
@@ -132,6 +137,7 @@ pub struct SourceZones {
 }
 
 impl SourceZones {
+    #[optimize(size)]
     pub fn new(zones: &[Zone]) -> Option<SourceZones> {
         let n = u8::try_from(zones.len()).ok()?;
         if !(1..=MAX_ZONES).contains(&n) {
@@ -154,17 +160,20 @@ impl SourceZones {
         Some(SourceZones { zones: all, n })
     }
 
+    #[optimize(size)]
     pub fn zones(&self) -> &[Zone] {
         &self.zones[..self.n as usize]
     }
 
     /// The frames the zones cover, end to end: their source's.
+    #[optimize(size)]
     pub fn frames(&self) -> u32 {
         let last = self.zones()[self.zones().len() - 1];
         last.start + last.frames
     }
 
     /// The record's payload: `ZONE_LEN` bytes a zone.
+    #[optimize(size)]
     pub fn to_record(&self) -> RecordBuf {
         let mut r = RecordBuf::new();
         self.zones().iter().for_each(|z| r.bytes(&z.to_bytes()));
@@ -172,6 +181,7 @@ impl SourceZones {
     }
 
     /// `None` unless whole zones that `new` takes.
+    #[optimize(size)]
     pub fn from_record(p: &[u8]) -> Option<SourceZones> {
         let (zones, rest) = p.as_chunks::<ZONE_LEN>();
         if !rest.is_empty() || zones.len() > MAX_ZONE_COUNT {
@@ -198,6 +208,7 @@ pub struct SourceLayout {
 
 impl SourceLayout {
     /// A `Plain` or `Transwave` head: it has no layout.
+    // Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
     pub fn whole(head: SourceHead) -> Option<SourceLayout> {
         let l = SourceLayout { head, zones: None };
         (head.shape != Shape::ZoneSet && l.playable()).then_some(l)
@@ -205,6 +216,7 @@ impl SourceLayout {
 
     /// A `ZoneSet` head with its zones: `count` of them, ending at its
     /// frames.
+    #[optimize(size)]
     pub fn zoned(head: SourceHead, zones: SourceZones) -> Option<SourceLayout> {
         let l = SourceLayout {
             head,
@@ -216,6 +228,7 @@ impl SourceLayout {
         (fits && l.playable()).then_some(l)
     }
 
+    #[optimize(size)]
     fn playable(&self) -> bool {
         self.head.sref.frames >= MIN_SOURCE_FRAMES
             && self.descriptor().is_some()
@@ -224,41 +237,49 @@ impl SourceLayout {
                 .is_some()
     }
 
+    #[optimize(size)]
     pub fn head(&self) -> &SourceHead {
         &self.head
     }
 
     /// A `ZoneSet`'s zones; none for a whole source.
+    #[optimize(size)]
     pub fn zones(&self) -> &[Zone] {
         self.zones.as_ref().map_or(&[], SourceZones::zones)
     }
 
     /// The descriptor `held` starts with: the whole source, no head.
+    #[optimize(size)]
     fn descriptor(&self) -> Option<Descriptor> {
         Descriptor::whole(self.head.shape, self.head.count, self.head.sref.rate)
     }
 
+    #[optimize(size)]
     fn layout_len(&self) -> usize {
         ZONE_LAYOUT_LEN * self.zones().len()
     }
 
     /// Where the samples start in `held`: after the descriptor and layout.
+    #[optimize(size)]
     pub fn data_start(&self) -> usize {
         DESC_LEN + self.layout_len()
     }
 
     /// The packed samples' bytes: two frames in three.
+    #[optimize(size)]
     pub fn data_len(&self) -> usize {
         3 * self.head.sref.frames.div_ceil(2) as usize
     }
 
     /// The bytes the arena holds for the source whole (spec § 1, § 8): the
     /// descriptor, a `ZoneSet`'s layout, then the samples.
+    #[optimize(size)]
     pub fn held_len(&self) -> usize {
         self.data_start() + self.data_len()
     }
 
     /// The CRC its samples `packed` must hash to: its stem.
+    #[optimize(size)]
     pub fn crc(&self, packed: &[u8]) -> u32 {
         let mut c = self.crc_prefix();
         c.update(packed);
@@ -267,6 +288,7 @@ impl SourceLayout {
 
     /// What the CRC covers before the samples: `shape`, `count`, then a
     /// `ZoneSet`'s layout.
+    #[optimize(size)]
     fn crc_prefix(&self) -> Crc32 {
         crc_prefix(self.head.shape, self.head.count, self.zones())
     }
@@ -274,6 +296,7 @@ impl SourceLayout {
 
 /// The first `SourceData` record's offset in the file: after the header,
 /// the head record and a zoned source's `SourceZones` record.
+#[optimize(size)]
 pub fn data_offset(l: &SourceLayout) -> Bytes {
     let zones = match l.zones().len() {
         0 => 0,
@@ -282,6 +305,7 @@ pub fn data_offset(l: &SourceLayout) -> Bytes {
     Bytes::new((HEADER_LEN + RECORD_HEAD_LEN + SOURCE_HEAD_LEN + zones) as u32)
 }
 
+#[optimize(size)]
 fn crc_prefix(shape: Shape, count: u8, zones: &[Zone]) -> Crc32 {
     let mut c = Crc32::new();
     c.update(&[shape as u8, count]);
@@ -298,6 +322,7 @@ pub enum WholeShape {
 }
 
 impl From<WholeShape> for Shape {
+    #[optimize(size)]
     fn from(w: WholeShape) -> Shape {
         match w {
             WholeShape::Plain => Shape::Plain,
@@ -309,6 +334,7 @@ impl From<WholeShape> for Shape {
 /// The source's CRC, its file's stem: over `shape`, `count` and the
 /// packed bytes, never the labels. A `ZoneSet`'s is `zone_set_crc`, so a
 /// `Plain` or `Transwave` CRC never changes.
+#[optimize(size)]
 pub fn source_crc(shape: WholeShape, count: u8, packed: &[u8]) -> u32 {
     let mut c = crc_prefix(shape.into(), count, &[]);
     c.update(packed);
@@ -318,6 +344,7 @@ pub fn source_crc(shape: WholeShape, count: u8, packed: &[u8]) -> u32 {
 /// A `ZoneSet`'s CRC: `source_crc`'s, with each zone's `start`, `frames`
 /// and `key` folded in after `count`. Never a zone's `root` or `period`:
 /// a voice's reads and its zone choice depend on the layout, not on them.
+#[optimize(size)]
 pub fn zone_set_crc(zones: &SourceZones, packed: &[u8]) -> u32 {
     let mut c = crc_prefix(Shape::ZoneSet, zones.n, zones.zones());
     c.update(packed);
@@ -327,6 +354,7 @@ pub fn zone_set_crc(zones: &SourceZones, packed: &[u8]) -> u32 {
 /// The bytes the arena holds for a `Plain` or `Transwave` `r` whole: the
 /// descriptor, then two frames in three bytes. A `ZoneSet` holds its
 /// layout too (`held_len_zoned`). `None` past `usize`.
+#[optimize(size)]
 pub fn held_len(r: SourceRef) -> Option<usize> {
     let pairs = usize::try_from(r.frames.div_ceil(2)).ok()?;
     pairs.checked_mul(3)?.checked_add(DESC_LEN)
@@ -335,6 +363,7 @@ pub fn held_len(r: SourceRef) -> Option<usize> {
 /// `held`'s start for `l`: the descriptor, then a `ZoneSet`'s layout, a
 /// zone's `start`, `frames` and `key` each (spec § 8). Returns its length,
 /// where the samples start. Panics if `out` is shorter.
+#[optimize(size)]
 pub fn write_descriptor(l: &SourceLayout, out: &mut [u8]) -> usize {
     // `playable` made `Descriptor::whole` of these three accept them: held
     // whole, no heads, no reach, so the rest is zero.
@@ -352,6 +381,7 @@ pub fn write_descriptor(l: &SourceLayout, out: &mut [u8]) -> usize {
 
 /// The fewest bytes a whole file of `r` takes, its samples in full
 /// `SourceData` records: a listing shorter than this is a torn file.
+#[optimize(size)]
 pub fn source_file_min_len(r: SourceRef) -> Option<u32> {
     let data = held_len(r)? - DESC_LEN;
     let records = (1 + data.div_ceil(SOURCE_DATA_MAX)) * RECORD_HEAD_LEN;
@@ -365,6 +395,7 @@ pub fn source_file_min_len(r: SourceRef) -> Option<u32> {
 /// parse as a whole file's, and then overcounts by up to 6 B a zone and 4).
 /// `None` for a length no whole file has. A card row takes the shape from
 /// the head, not from `Some` (Task 17).
+#[optimize(size)]
 pub fn held_for_file_len(len: u32) -> Option<u32> {
     let fixed = HEADER_LEN + RECORD_HEAD_LEN + SOURCE_HEAD_LEN + TRAILER_LEN;
     // The samples and their records' heads, one a `SOURCE_DATA_MAX`.
@@ -381,6 +412,7 @@ pub fn held_for_file_len(len: u32) -> Option<u32> {
 /// source as written, `n` for a `ZoneSet`, whose `SourceZones` record adds
 /// `RECORD_HEAD_LEN + ZONE_LEN·n` B; at most `MAX_ZONES`, so a padded file
 /// counts high, never low. `None` for a file shorter than a whole one: torn.
+#[optimize(size)]
 pub fn listed_zones(r: SourceRef, size: u32) -> Option<u8> {
     let extra = size.checked_sub(source_file_min_len(r)?)? as usize;
     // The record's head is less than a zone: it drops out of the division.
@@ -390,16 +422,19 @@ pub fn listed_zones(r: SourceRef, size: u32) -> Option<u8> {
 
 /// What `held` takes for `r` with `zones` zones: `held_len`, then 9 B a
 /// zone's layout. `None` past `usize`.
+#[optimize(size)]
 pub fn held_len_zoned(r: SourceRef, zones: u8) -> Option<usize> {
     held_len(r)?.checked_add(ZONE_LAYOUT_LEN * zones as usize)
 }
 
 /// `/CHIMERA/TAPES/<CRC>.SRC`, the CRC in upper-case hex.
+#[optimize(size)]
 pub fn source_file(r: SourceRef) -> FileName {
     source_name(r.stem())
 }
 
 /// `source_file` by the stem alone, as `put` names it.
+#[optimize(size)]
 pub fn source_name(stem: Stem) -> FileName {
     let crc = stem.get();
     let hex = |n: u32| b"0123456789ABCDEF"[n as usize & 0xF];
@@ -423,11 +458,13 @@ impl TapeList {
         n: 0,
     };
 
+    #[optimize(size)]
     pub fn files(&self) -> &[(Stem, u32)] {
         &self.files[..self.n as usize]
     }
 
     /// One directory read; no file is opened. No `TAPES` is an empty list.
+    #[optimize(size)]
     pub fn list(s: &mut dyn Store, r: &Ready) -> Result<TapeList, StoreError> {
         let mut l = TapeList::EMPTY;
         let listed = s.list(r.volume(), Dir::Tapes, &mut |f, size| {
@@ -456,6 +493,7 @@ enum Expect {
 }
 
 impl Expect {
+    #[optimize(size)]
     fn file(self) -> FileName {
         match self {
             Expect::Ref(r) => source_file(r),
@@ -487,6 +525,7 @@ enum Bad {
 
 impl Bad {
     /// A load's reading: the pool's (ADR 0087).
+    #[optimize(size)]
     fn file(self) -> FileError {
         match self {
             Bad::Head | Bad::Room | Bad::Record | Bad::Long => FileError::Bounds,
@@ -495,6 +534,7 @@ impl Bad {
     }
 
     /// `put`'s reading.
+    #[optimize(size)]
     fn put(self) -> PutRefusal {
         match self {
             Bad::Long | Bad::Short => PutRefusal::Frames,
@@ -525,6 +565,7 @@ struct Records {
 }
 
 impl Records {
+    #[optimize(size)]
     fn new(expect: Expect) -> Self {
         Records {
             expect,
@@ -535,6 +576,7 @@ impl Records {
     }
 
     /// The head, once its record came.
+    #[optimize(size)]
     fn head(&self) -> Option<SourceHead> {
         match &self.step {
             Step::Head => None,
@@ -543,6 +585,7 @@ impl Records {
         }
     }
 
+    // Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
     fn record(&mut self, tag: RecordTag, p: &[u8], out: Option<&mut [u8]>) -> Result<(), Bad> {
         match (tag, &self.step) {
             (RecordTag::SourceHead, Step::Head) => {
@@ -574,6 +617,7 @@ impl Records {
     }
 
     /// Samples `p`, at `start` in `held`, of `total` bytes hashing to `crc`.
+    #[optimize(size)]
     fn data(
         &mut self,
         p: &[u8],
@@ -600,6 +644,7 @@ impl Records {
         Ok(())
     }
 
+    #[optimize(size)]
     fn begin(&mut self, l: SourceLayout, out: Option<&mut [u8]>) -> Result<(), Bad> {
         if out.is_some_and(|o| o.len() < l.held_len()) {
             return Err(Bad::Room);
@@ -611,6 +656,7 @@ impl Records {
 
     /// After the last record: the layout, its samples whole. With `out`,
     /// writes the descriptor before them.
+    #[optimize(size)]
     fn end(&mut self, out: Option<&mut [u8]>) -> Result<SourceLayout, Bad> {
         let Step::Data(l) = &self.step else {
             return Err(Bad::Order);
@@ -631,6 +677,7 @@ impl Records {
 /// frames and hash to its CRC. With `out`, `held` lands in it as it
 /// streams; the caller trusts `out` only on `Ok`. Returns the layout as
 /// stored.
+#[optimize(size)]
 fn read_source<S: Store>(
     s: &mut S,
     r: &Ready,
@@ -665,6 +712,7 @@ fn read_source<S: Store>(
 
 /// A read back with no `out`, which has no room to run out of.
 #[cfg(feature = "source-writer")]
+#[optimize(size)]
 fn read_back<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<SourceLayout, LoadError> {
     read_source(s, r, e, None).map_err(|e| match e {
         SourceReadError::Load(e) => e,
@@ -682,12 +730,14 @@ pub enum SourceReadError {
 }
 
 impl From<LoadError> for SourceReadError {
+    #[optimize(size)]
     fn from(e: LoadError) -> Self {
         SourceReadError::Load(e)
     }
 }
 
 impl From<StoreError> for SourceReadError {
+    #[optimize(size)]
     fn from(e: StoreError) -> Self {
         SourceReadError::Load(LoadError::Store(e))
     }
@@ -695,6 +745,7 @@ impl From<StoreError> for SourceReadError {
 
 /// A card fault ends a load's reads; a source that didn't fit is no fault.
 impl super::card::CardFault for SourceReadError {
+    #[optimize(size)]
     fn store_error(&self) -> Option<StoreError> {
         match self {
             SourceReadError::Load(e) => e.store_error(),
@@ -712,6 +763,7 @@ impl super::card::CardFault for SourceReadError {
 ///
 /// The FAT driver copies each block out of its own buffer, so `out` (the
 /// arena, in cached AXI) takes CPU writes only: no D-cache upkeep.
+#[optimize(size)]
 pub fn read_source_into<S: Store>(
     s: &mut S,
     r: &Ready,
@@ -723,6 +775,7 @@ pub fn read_source_into<S: Store>(
 
 /// A whole `Plain` file of `r`'s packed bytes: where its first
 /// `SourceData` record starts, and how many sample bytes there are.
+#[optimize(size)]
 fn plain_data(r: SourceRef) -> Option<(u32, u32)> {
     let off = HEADER_LEN + RECORD_HEAD_LEN + SOURCE_HEAD_LEN;
     let len = u32::try_from(held_len(r)? - DESC_LEN).ok()?;
@@ -747,10 +800,12 @@ struct HeadSink<'a> {
 }
 
 impl ReadSink for HeadSink<'_> {
+    #[optimize(size)]
     fn begin(&mut self, _len: u32) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
 
+    #[optimize(size)]
     fn chunk(&mut self, mut bytes: &[u8]) -> ControlFlow<()> {
         while !bytes.is_empty() && self.got < self.out.len() {
             if self.body == 0 {
@@ -790,6 +845,7 @@ impl ReadSink for HeadSink<'_> {
 /// `from`, read from the `SourceData` record holding it: a head, or a
 /// UI pass's share of one. Framing a record's tag and length don't match
 /// fails it (`Corrupt`), as does a file that ends first (`Truncated`).
+#[optimize(size)]
 pub fn read_packed_into<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
@@ -836,10 +892,12 @@ struct HeadOnly<'a> {
 }
 
 impl ReadSink for HeadOnly<'_> {
+    #[optimize(size)]
     fn begin(&mut self, _len: u32) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
 
+    #[optimize(size)]
     fn chunk(&mut self, bytes: &[u8]) -> ControlFlow<()> {
         let n = bytes.len().min(self.left as usize);
         self.refused = self.check.feed(&bytes[..n]).is_err();
@@ -854,6 +912,7 @@ impl ReadSink for HeadOnly<'_> {
 
 /// The head of card file `stem`, `len` bytes long, from its first records:
 /// a streamed load's descriptor, read without the samples.
+#[optimize(size)]
 pub fn read_source_head<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
@@ -894,6 +953,7 @@ pub enum PutRefusal {
 
 impl PutRefusal {
     /// `ERR put: <message>`.
+    #[optimize(size)]
     pub fn message(self) -> &'static str {
         match self {
             PutRefusal::Kind => FileError::WrongKind.message(),
@@ -920,6 +980,7 @@ pub struct SourceCheck {
 impl SourceCheck {
     /// A file of `len` bytes, put as `<stem>.SRC`. `len` is the one
     /// `put` announces: the framer needs it to find the trailer.
+    #[optimize(size)]
     pub fn new(stem: Stem, len: u32) -> Result<SourceCheck, PutRefusal> {
         Ok(SourceCheck {
             framer: Framer::new(len).map_err(PutRefusal::File)?,
@@ -930,6 +991,7 @@ impl SourceCheck {
         })
     }
 
+    #[optimize(size)]
     pub fn feed(&mut self, bytes: &[u8]) -> Result<(), PutRefusal> {
         self.feed_into(bytes, None)
     }
@@ -938,6 +1000,7 @@ impl SourceCheck {
     /// them out; the descriptor too, with the last byte. `held` must be the
     /// same each call, as long as the layout's `held_len`. `held` is
     /// trusted only once every byte came and passed.
+    #[optimize(size)]
     pub fn feed_into(
         &mut self,
         bytes: &[u8],
@@ -972,6 +1035,7 @@ impl SourceCheck {
     }
 
     /// The head, once every byte came and passed.
+    #[optimize(size)]
     pub fn finish(mut self) -> Result<SourceHead, PutRefusal> {
         if let Some(r) = self.refused {
             return Err(r);
@@ -981,12 +1045,14 @@ impl SourceCheck {
 
     /// The head, once its record came: a card row's name, read from the
     /// file's first 4 KB.
+    #[optimize(size)]
     pub fn head(&self) -> Option<SourceHead> {
         self.rec.head()
     }
 
     /// The bytes `held` takes, once the head (and a `ZoneSet`'s zones)
     /// came.
+    #[optimize(size)]
     pub fn held_len(&self) -> Option<usize> {
         match &self.rec.step {
             Step::Data(l) => Some(l.held_len()),
@@ -994,6 +1060,7 @@ impl SourceCheck {
         }
     }
 
+    #[optimize(size)]
     fn verdict(&mut self, held: Option<&mut [u8]>) -> Result<SourceHead, PutRefusal> {
         self.framer.finish().map_err(PutRefusal::File)?;
         self.rec.end(held).map(|l| l.head).map_err(Bad::put)
@@ -1025,6 +1092,7 @@ pub enum Wrote {
 /// fails its check, which only the user may remove. A file is checked
 /// before anything else: only one that fails is deleted.
 #[cfg(feature = "source-writer")]
+#[optimize(size)]
 pub fn write_source<S: Store>(
     s: &mut S,
     r: &Ready,
@@ -1038,6 +1106,7 @@ pub fn write_source<S: Store>(
 /// `write_source` for a `ZoneSet`: its head, then its `zones` in a
 /// `SourceZones` record, then the samples.
 #[cfg(feature = "source-writer")]
+#[optimize(size)]
 pub fn write_zone_set<S: Store>(
     s: &mut S,
     r: &Ready,
@@ -1055,6 +1124,7 @@ pub fn write_zone_set<S: Store>(
 /// a cut write, deleted; `New` for none. `Damaged` for a sealed file that
 /// fails: never rewritten. `TAPES` must exist.
 #[cfg(feature = "source-writer")]
+#[optimize(size)]
 pub fn source_target<S: Store>(
     s: &mut S,
     r: &Ready,
@@ -1066,6 +1136,7 @@ pub fn source_target<S: Store>(
 /// `source_target` for the file `e` names; `write_source` asks for its
 /// whole ref, so another rate under the same stem is no match.
 #[cfg(feature = "source-writer")]
+#[optimize(size)]
 fn target<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<Wrote, super::SaveError> {
     use super::SaveError;
     let (vol, file) = (r.volume(), e.file());
@@ -1092,6 +1163,7 @@ fn target<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<Wrote, super::Sav
 /// the stem, its samples hashing to it, then sealed. Unsealed on any
 /// `Err`, so the next write replaces it.
 #[cfg(feature = "source-writer")]
+#[optimize(size)]
 pub fn verify_and_seal<S: Store>(s: &mut S, r: &Ready, stem: Stem) -> Result<(), super::SaveError> {
     verify(s, r, Expect::Stem(stem))?;
     s.seal(r.volume(), source_name(stem))?;
@@ -1099,6 +1171,7 @@ pub fn verify_and_seal<S: Store>(s: &mut S, r: &Ready, stem: Stem) -> Result<(),
 }
 
 #[cfg(feature = "source-writer")]
+#[optimize(size)]
 fn verify<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<SourceLayout, super::SaveError> {
     use super::SaveError;
     read_back(s, r, e).map_err(|e| match e {
@@ -1111,6 +1184,7 @@ fn verify<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<SourceLayout, sup
 }
 
 #[cfg(feature = "source-writer")]
+#[optimize(size)]
 fn write_layout<S: Store>(
     s: &mut S,
     r: &Ready,

@@ -223,6 +223,13 @@ fn every_roll_stays_inside_its_musical_ranges() {
                     EngineType::Tape => {
                         assert_eq!(p.tape.machine, init.params.tape.machine, "{at}");
                     }
+                    // No engine section to roll: its knobs are its pads'.
+                    EngineType::Drum => {
+                        assert_eq!(
+                            p.envelopes[0].attack, init.params.envelopes[0].attack,
+                            "{at}"
+                        );
+                    }
                 }
                 if matches!(e, EngineType::Va | EngineType::Tape) {
                     let env = &p.envelopes[0];

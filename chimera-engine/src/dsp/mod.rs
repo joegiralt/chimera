@@ -240,6 +240,7 @@ pub mod chorus;
 pub mod comp;
 pub mod dc_blocker;
 pub mod delay;
+pub mod drum;
 pub mod ease;
 pub mod engines;
 pub mod envelope;

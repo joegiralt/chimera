@@ -130,12 +130,12 @@ fn init_routes_env1_to_vca() {
     assert!(play(&mut v, p, m, 4).iter().all(|&x| x == 0.0));
 }
 
-/// Every `match` lists TAPE: four engines, its own slot kind, and a voice
+/// Every `match` lists TAPE: five engines, its own slot kind, and a voice
 /// that plays ALGO, then TAPE, then MODAL starts MODAL as a fresh voice
 /// does.
 #[test]
 fn every_match_lists_tape() {
-    assert_eq!(EngineType::ALL.len(), 4);
+    assert_eq!(EngineType::ALL.len(), 5);
     let tape = Sound::init(EngineType::Tape);
     assert_eq!(SlotKind::of(&tape.params), SlotKind::Tape);
     assert_eq!(SlotKind::Tape.engine(), EngineType::Tape);

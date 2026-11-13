@@ -19,6 +19,7 @@ pub struct Cost(u32);
 
 impl Cost {
     /// `len` bytes rounded up to the granule.
+    #[optimize(size)]
     pub const fn of(len: usize) -> Cost {
         let g = len.div_ceil(GRANULE) * GRANULE;
         Cost(if g > u32::MAX as usize {
@@ -28,17 +29,20 @@ impl Cost {
         })
     }
 
+    #[optimize(size)]
     pub const fn bytes(self) -> u32 {
         self.0
     }
 
     /// KiB rounded up: `0.3K`, `9.9K` under 10, then `10K`, `41K`. What
     /// a thing costs never reads less than it takes.
+    #[optimize(size)]
     pub fn kib_label(self) -> FmtBuf {
         kib(self.0 as u64, u64::div_ceil)
     }
 
     /// KiB rounded down: free space never reads more than there is.
+    #[optimize(size)]
     pub fn kib_floor_label(self) -> FmtBuf {
         kib(self.0 as u64, |a, b| a / b)
     }
@@ -47,12 +51,14 @@ impl Cost {
 impl core::ops::Add for Cost {
     type Output = Cost;
 
+    #[optimize(size)]
     fn add(self, rhs: Cost) -> Cost {
         Cost(self.0.saturating_add(rhs.0))
     }
 }
 
 /// `b` bytes in KiB, one decimal under 10, divided by `div`.
+#[optimize(size)]
 fn kib(b: u64, div: fn(u64, u64) -> u64) -> FmtBuf {
     let tenths = div(b * 10, 1024);
     let mut f = FmtBuf::new();
@@ -78,14 +84,9 @@ pub struct Shift {
 struct Src {
     offset: u32,
     cost: u32,
-    pending: bool,
 }
 
-const NO_SRC: Src = Src {
-    offset: 0,
-    cost: 0,
-    pending: false,
-};
+const NO_SRC: Src = Src { offset: 0, cost: 0 };
 
 /// Why a source didn't get a place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,12 +114,14 @@ pub struct GateAcked<F: Fn(u32) -> bool> {
 
 impl<F: Fn(u32) -> bool> GateAcked<F> {
     /// The pool's pass, after `gate_acked` and its re-check.
+    #[optimize(size)]
     pub(super) fn after_ack(ready: F) -> Self {
         GateAcked { ready }
     }
 
     /// Tests of the arena alone.
     #[cfg(any(test, feature = "test-support"))]
+    #[optimize(size)]
     pub fn assumed(ready: F) -> Self {
         GateAcked { ready }
     }
@@ -139,6 +142,9 @@ pub struct ArenaWriter {
     /// Sounds fill `[snd_start, ARENA_BYTES)`.
     snd_start: u32,
     srcs: [Src; MAX_SOURCES],
+    /// `srcs[i]` is a pending hole. Beside the rows, not in them: a flag
+    /// in each padded `Src` to 12 B, 96 B more of D2 (ADR 0265).
+    pending: [bool; MAX_SOURCES],
     n_srcs: usize,
 }
 
@@ -150,6 +156,7 @@ impl ArenaWriter {
     /// Takes the arena's bytes for good: the AXI static on the chip, a
     /// leaked box in tests and on the desktop. `table` is the audio's view
     /// of them: `SOURCE_TABLE` where audio runs, one of its own per arena.
+    #[optimize(size)]
     pub fn new(bytes: &'static mut [u8], table: &'static SourceTable) -> ArenaWriter {
         assert_eq!(bytes.len(), ARENA_BYTES);
         let base: NonNull<u8> = NonNull::from(bytes).cast();
@@ -161,6 +168,7 @@ impl ArenaWriter {
             src_end: 0,
             snd_start: ARENA_BYTES as u32,
             srcs: [NO_SRC; MAX_SOURCES],
+            pending: [false; MAX_SOURCES],
             n_srcs: 0,
         }
     }
@@ -168,6 +176,7 @@ impl ArenaWriter {
     /// An arena of its own on the heap, leaked, with a registry of its own
     /// (host tests and tools).
     #[cfg(any(test, feature = "test-support", feature = "host-project"))]
+    #[optimize(size)]
     pub fn leaked() -> ArenaWriter {
         let mut a = ArenaWriter::new(
             alloc::boxed::Box::leak(alloc::vec![0; ARENA_BYTES].into_boxed_slice()),
@@ -180,51 +189,54 @@ impl ArenaWriter {
     }
 
     /// The audio's view of these bytes.
+    #[optimize(size)]
     pub fn table(&self) -> &'static SourceTable {
         self.table
     }
 
     /// The registry streamed sources' files go in.
+    #[optimize(size)]
     pub fn streams(&self) -> Option<&'static StreamRegistry> {
         self.streams
     }
 
+    #[optimize(size)]
     pub fn set_streams(&mut self, r: &'static StreamRegistry) {
         self.streams = Some(r);
     }
 
     /// Bytes held by Sounds and sources, pending holes included.
+    #[optimize(size)]
     pub fn used(&self) -> Cost {
         Cost(ARENA_BYTES as u32 - self.gap().0)
     }
 
     /// Bytes in pending source holes: used, but not yet free.
+    #[optimize(size)]
     pub fn pending(&self) -> Cost {
-        Cost(
-            self.live_srcs()
-                .iter()
-                .filter(|s| s.pending)
-                .map(|s| s.cost)
-                .sum(),
-        )
+        Cost(self.holes().map(|h| h.cost.0).sum())
     }
 
     /// Bytes held by Sounds.
+    #[optimize(size)]
     pub fn sounds(&self) -> Cost {
         Cost(ARENA_BYTES as u32 - self.snd_start)
     }
 
     /// Sources no hole holds.
+    #[optimize(size)]
     pub fn source_count(&self) -> usize {
-        self.live_srcs().iter().filter(|s| !s.pending).count()
+        self.live_pending().iter().filter(|&&p| !p).count()
     }
 
     /// The free space between the ends: an add fits iff its cost ≤ this.
+    #[optimize(size)]
     pub fn gap(&self) -> Cost {
         Cost(self.snd_start - self.src_end)
     }
 
     /// A Sound of `len` bytes below the others, or `None` if it won't fit.
+    #[optimize(size)]
     pub fn sound_alloc(&mut self, len: usize) -> Option<u32> {
         let c = Cost::of(len);
         if c > self.gap() {
@@ -236,6 +248,7 @@ impl ArenaWriter {
 
     /// Frees the Sound at `offset` and closes its hole at once: the audio
     /// never reads Sound bytes.
+    #[optimize(size)]
     pub fn sound_free(&mut self, offset: u32, len: usize) -> Shift {
         let by = Cost::of(len).0;
         let (lo, end) = (self.snd_start as usize, offset as usize);
@@ -247,37 +260,39 @@ impl ArenaWriter {
 
     /// Frees every Sound at once: a load or NEW refilling the pool. The
     /// sources stay.
+    #[optimize(size)]
     pub fn sounds_clear(&mut self) {
         self.snd_start = ARENA_BYTES as u32;
     }
 
     /// Where the next source's row starts: the gap's bottom.
+    #[optimize(size)]
     pub fn src_end(&self) -> u32 {
         self.src_end
     }
 
     /// Where the next source goes: `len` bytes at the bottom of the gap to
     /// stage and verify before `source_alloc` publishes them.
+    #[optimize(size)]
     pub fn source_stage(&mut self, len: usize) -> Result<&mut [u8], Refused> {
         self.source_fits(Cost::of(len))?;
         Ok(self.bytes_mut(self.src_end, len))
     }
 
     /// Takes the `len` bytes staged at the bottom of the gap as a source.
+    #[optimize(size)]
     pub fn source_alloc(&mut self, len: usize) -> Result<u32, Refused> {
         let c = Cost::of(len);
         self.source_fits(c)?;
         let offset = self.src_end;
-        self.srcs[self.n_srcs] = Src {
-            offset,
-            cost: c.0,
-            pending: false,
-        };
+        self.srcs[self.n_srcs] = Src { offset, cost: c.0 };
+        self.pending[self.n_srcs] = false;
         self.n_srcs += 1;
         self.src_end += c.0;
         Ok(offset)
     }
 
+    #[optimize(size)]
     fn source_fits(&self, c: Cost) -> Result<(), Refused> {
         if c > self.gap() {
             Err(Refused::Full)
@@ -290,14 +305,16 @@ impl ArenaWriter {
 
     /// Marks the source at `offset` a hole. Its bytes stay where they are,
     /// still readable by a ringing note, until `source_compact` closes it.
+    #[optimize(size)]
     pub fn source_free_pending(&mut self, offset: u32, len: usize) {
         let cost = Cost::of(len).0;
-        let s = self.srcs[..self.n_srcs]
-            .iter_mut()
-            .find(|s| s.offset == offset)
+        let i = self
+            .live_srcs()
+            .iter()
+            .position(|s| s.offset == offset)
             .expect("a source at that offset");
-        assert!(s.cost == cost && !s.pending);
-        s.pending = true;
+        assert!(self.srcs[i].cost == cost && !self.pending[i]);
+        self.pending[i] = true;
     }
 
     /// The hole `source_compact` closes next: the lowest. The sources at
@@ -305,25 +322,29 @@ impl ArenaWriter {
     /// pool closes the lowest hole nothing pins (`holes`).
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn next_compaction(&self) -> Option<Hole> {
-        self.live_srcs().iter().find(|s| s.pending).map(|s| Hole {
-            offset: s.offset,
-            cost: Cost(s.cost),
-        })
+        self.holes().next()
     }
 
     /// Every pending hole, lowest first.
+    #[optimize(size)]
     pub fn holes(&self) -> impl Iterator<Item = Hole> + '_ {
-        self.live_srcs().iter().filter(|s| s.pending).map(|s| Hole {
-            offset: s.offset,
-            cost: Cost(s.cost),
-        })
+        self.live_srcs()
+            .iter()
+            .zip(self.live_pending())
+            .filter(|(_, p)| **p)
+            .map(|(s, _)| Hole {
+                offset: s.offset,
+                cost: Cost(s.cost),
+            })
     }
 
     /// Closes `next_compaction()`'s hole: `source_compact_at` the lowest.
     /// Tests only.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn source_compact<F: Fn(u32) -> bool>(&mut self, gate: GateAcked<F>) -> Option<Shift> {
         let at = self.next_compaction()?.offset;
         self.source_compact_at(at, gate)
@@ -333,6 +354,7 @@ impl ArenaWriter {
     /// the gate's re-check finds the hole and every source above it ready
     /// (no voice on it). Holes below stay. `None` leaves everything where
     /// it was: no hole there, or a source above it not ready.
+    #[optimize(size)]
     pub fn source_compact_at<F: Fn(u32) -> bool>(
         &mut self,
         offset: u32,
@@ -342,18 +364,19 @@ impl ArenaWriter {
         let i = self
             .live_srcs()
             .iter()
-            .position(|s| s.pending && s.offset == offset)?;
+            .zip(self.live_pending())
+            .position(|(s, &p)| p && s.offset == offset)?;
         if !self.srcs[i..n].iter().all(|s| (gate.ready)(s.offset)) {
             return None;
         }
         let Src {
             offset: from,
             cost: by,
-            ..
         } = self.srcs[i];
         let lo = (from + by) as usize;
         self.shift(lo, from as usize, self.src_end as usize - lo);
         self.srcs.copy_within(i + 1..n, i);
+        self.pending.copy_within(i + 1..n, i);
         self.n_srcs -= 1;
         for s in &mut self.srcs[i..self.n_srcs] {
             s.offset -= by;
@@ -363,6 +386,7 @@ impl ArenaWriter {
     }
 
     /// Any entry's bytes, or the gap's. Reads only, as the audio's are.
+    #[optimize(size)]
     pub fn bytes(&self, offset: u32, len: usize) -> &[u8] {
         let o = offset as usize;
         assert!(o + len <= ARENA_BYTES);
@@ -375,6 +399,7 @@ impl ArenaWriter {
 
     /// UI only: the gap (staging an add) or Sounds, never a published
     /// source, whose bytes the audio may be reading.
+    #[optimize(size)]
     pub fn bytes_mut(&mut self, offset: u32, len: usize) -> &mut [u8] {
         let o = offset as usize;
         assert!(o >= self.src_end as usize && o + len <= ARENA_BYTES);
@@ -388,6 +413,7 @@ impl ArenaWriter {
     /// UI only: the whole gap, as scratch for a caller that hands it back
     /// before the next add (the boot's card sweep). Its bytes are no
     /// entry's; an add writes the bytes it takes.
+    #[optimize(size)]
     pub fn gap_mut(&mut self) -> &mut [u8] {
         let (o, len) = (self.src_end as usize, self.gap().bytes() as usize);
         // SAFETY: `[o, o+len)` is the gap, inside the arena and at or
@@ -398,6 +424,7 @@ impl ArenaWriter {
     }
 
     /// Moves `n` bytes from `src` to `dst`, overlapping allowed.
+    #[optimize(size)]
     fn shift(&mut self, src: usize, dst: usize, n: usize) {
         assert!(src.max(dst) + n <= ARENA_BYTES);
         // SAFETY: both ranges are inside the arena. Raw pointers, no
@@ -412,7 +439,13 @@ impl ArenaWriter {
         }
     }
 
+    #[optimize(size)]
     fn live_srcs(&self) -> &[Src] {
         &self.srcs[..self.n_srcs]
+    }
+
+    #[optimize(size)]
+    fn live_pending(&self) -> &[bool] {
+        &self.pending[..self.n_srcs]
     }
 }

@@ -24,12 +24,13 @@ pub type Blk = [f32; B];
 
 /// The per-sample factor that falls 60 dB in `t60` seconds.
 pub fn per_sample(t60: f32) -> f32 {
-    (-6.907_755 / (t60.max(1e-4) * FS)).exp()
+    libm::expf(-6.907_755 / (t60.max(1e-4) * FS))
 }
 
-/// `k` in 0..1 on an exponential law from `lo` to `hi`.
+/// `k` in 0..1 on an exponential law from `lo` to `hi`. The prototypes'
+/// powers and exponentials are libm's, the firmware's, so the kernels null.
 pub fn expo(k: f32, lo: f32, hi: f32) -> f32 {
-    lo * (hi / lo).powf(k)
+    lo * libm::powf(hi / lo, k)
 }
 
 pub fn lin(k: f32, lo: f32, hi: f32) -> f32 {
@@ -55,7 +56,7 @@ impl Decay {
     pub fn tau(tau: f32) -> Self {
         Self {
             v: 1.0,
-            k: (-1.0 / (tau.max(1e-5) * FS)).exp(),
+            k: libm::expf(-1.0 / (tau.max(1e-5) * FS)),
         }
     }
 

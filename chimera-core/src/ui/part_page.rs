@@ -18,6 +18,10 @@ pub fn read_values(def: &BlockDef, params: &impl BlockRead, sel_op: Op) -> [f32;
 pub fn values_under(def: &BlockDef, params: &impl BlockRead, ctx: &SlotCtx) -> [f32; 6] {
     core::array::from_fn(|i| match view(def, i, ctx) {
         View::SelectOp => ctx.sel_op.index() as f32 / (Op::ALL.len() - 1) as f32,
+        View::SelectPad => {
+            use crate::dsp::drum::types::PadId;
+            ctx.sel_pad.index() as f32 / (PadId::ALL.len() - 1) as f32
+        }
         v => v
             .addr()
             .and_then(|a| Some(params.block(a.block)?.normalized(a.param)))

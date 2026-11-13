@@ -35,11 +35,13 @@ pub const LOAD_DRAIN_TIMEOUT_MS: u32 = 50;
 /// A load's wait: `LOAD_DRAIN_TIMEOUT_MS`, or three of the audio's
 /// callback periods if longer, so a long buffer never times a load out
 /// (ADR 0099).
+#[optimize(size)]
 fn drain_ms(table: &SourceTable) -> u32 {
     LOAD_DRAIN_TIMEOUT_MS.max(table.period_ms().saturating_mul(3))
 }
 
 /// While `ms` haven't passed on `clock`; false at once without one.
+#[optimize(size)]
 fn deadline(clock: Option<fn() -> u32>, ms: u32) -> impl FnMut() -> bool {
     let t0 = clock.map(|c| c());
     move || match (clock, t0) {
@@ -65,6 +67,7 @@ pub enum StreamRefused {
 }
 
 impl From<PoolFull> for StreamRefused {
+    #[optimize(size)]
     fn from(e: PoolFull) -> Self {
         StreamRefused::Pool(e)
     }
@@ -154,6 +157,7 @@ crate::in_place::field_list!(Index => Index { slots, gens });
 impl Pool {
     /// Empty, every generation 0, built in place: no `Pool` passes
     /// through the stack. The arena's Sounds are dropped; its sources stay.
+    #[optimize(size)]
     pub fn init_in_place(slot: &mut MaybeUninit<Pool>, mut arena: ArenaWriter) -> &mut Pool {
         arena.sounds_clear();
         let p = slot.as_mut_ptr();
@@ -185,6 +189,7 @@ impl Pool {
         }
     }
 
+    #[optimize(size)]
     pub fn get(&self, s: SlotId) -> Option<EncodedSound<'_>> {
         let e = self.index.slots[s.index()]?;
         Some(EncodedSound {
@@ -192,6 +197,7 @@ impl Pool {
         })
     }
 
+    #[optimize(size)]
     pub fn generation(&self, s: SlotId) -> u16 {
         self.index.gens[s.index()]
     }
@@ -200,44 +206,52 @@ impl Pool {
     /// longer decodes, as the bytes of a damaged arena wouldn't.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn cut_for_test(&mut self, s: SlotId) {
         if let Some(e) = self.index.slots[s.index()].as_mut() {
             e.len = e.len.min((NAME_LEN + HEAD_LEN - 1) as u32);
         }
     }
 
+    #[optimize(size)]
     pub fn first_free(&self) -> Option<SlotId> {
         SlotId::ALL
             .into_iter()
             .find(|s| self.index.slots[s.index()].is_none())
     }
 
+    #[optimize(size)]
     pub fn sound_count(&self) -> usize {
         self.index.slots.iter().filter(|s| s.is_some()).count()
     }
 
     /// The arena's bytes in use: Sounds and sources.
+    #[optimize(size)]
     pub fn used(&self) -> Cost {
         self.arena.used()
     }
 
     /// The gap: what an add may take.
+    #[optimize(size)]
     pub fn free(&self) -> Cost {
         self.arena.gap()
     }
 
+    #[optimize(size)]
     pub fn fits(&self, c: Cost) -> bool {
         c <= self.free()
     }
 
     /// The meter's parts: Sounds, live sources, pending holes. They sum
     /// to `used`.
+    #[optimize(size)]
     pub fn split(&self) -> (Cost, Cost, Cost) {
         let (sounds, pending) = (self.arena.sounds(), self.arena.pending());
         let sources = self.used().bytes() - sounds.bytes() - pending.bytes();
         (sounds, Cost::of(sources as usize), pending)
     }
 
+    #[optimize(size)]
     pub fn source_count(&self) -> usize {
         self.arena.source_count()
     }
@@ -246,6 +260,7 @@ impl Pool {
     /// meter reads `split`.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn source_used(&self) -> Cost {
         Cost::of((self.used().bytes() - self.arena.sounds().bytes()) as usize)
     }
@@ -253,6 +268,7 @@ impl Pool {
     /// The arena's gap lent as scratch: the boot's card sweep keeps its
     /// reachability bitmap here (ADR 0094). Only while no source is
     /// published, so nothing the audio reads sits near it.
+    #[optimize(size)]
     pub fn sweep_scratch(&mut self) -> &mut [u8] {
         assert!(
             self.arena.source_count() == 0 && self.arena.pending().bytes() == 0,
@@ -262,11 +278,13 @@ impl Pool {
     }
 
     /// The audio's view of the arena.
+    #[optimize(size)]
     pub fn table(&self) -> &'static SourceTable {
         self.arena.table()
     }
 
     /// Source slot `s`, if it holds a source (absent included).
+    #[optimize(size)]
     pub fn source(&self, s: SourceId) -> Option<SourceEntry> {
         match self.sources.slots[s.index()] {
             SrcSlot::Live(e) => Some(e),
@@ -279,11 +297,13 @@ impl Pool {
         }
     }
 
+    #[optimize(size)]
     pub fn source_generation(&self, s: SourceId) -> u16 {
         self.sources.gens[s.index()]
     }
 
     /// The source `r` resolves to.
+    #[optimize(size)]
     pub fn find_source(&self, r: SourceRef) -> Option<SourceId> {
         SourceId::ALL
             .into_iter()
@@ -292,6 +312,7 @@ impl Pool {
 
     /// Source `r` as the audio reads it; `None` when the pool doesn't hold
     /// it (an absent one's empty bytes don't read).
+    #[optimize(size)]
     pub fn source_view(
         &self,
         r: SourceRef,
@@ -301,12 +322,14 @@ impl Pool {
     }
 
     /// `e`'s held bytes, past its head.
+    #[optimize(size)]
     fn entry_bytes(&self, e: SourceEntry) -> &[u8] {
         self.arena
             .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize)
     }
 
     /// Source `r` is held as heads, the rest streamed (slice 1 § 5.3).
+    #[optimize(size)]
     pub fn streamed(&self, r: SourceRef) -> bool {
         self.find_source(r)
             .and_then(|s| self.source(s))
@@ -316,16 +339,19 @@ impl Pool {
     }
 
     /// Source `r`'s held bytes; `None` when the pool doesn't hold them.
+    #[optimize(size)]
     pub fn held(&self, r: SourceRef) -> Option<&[u8]> {
         let e = self.source(self.find_source(r)?).filter(|e| !e.absent())?;
         Some(self.entry_bytes(e))
     }
 
     /// The registry streamed sources' files go in (slice 1 § 5.5).
+    #[optimize(size)]
     pub fn streams(&self) -> Option<&'static StreamRegistry> {
         self.arena.streams()
     }
 
+    #[optimize(size)]
     pub(in crate::project) fn set_streams(&mut self, r: &'static StreamRegistry) {
         self.arena.set_streams(r);
     }
@@ -333,6 +359,7 @@ impl Pool {
     /// `source_commit` for a streamed source: its file's row goes in the
     /// registry first, so the card can read it before any voice finds the
     /// pool row (slice 1 § 5.5). Nothing is published on a refusal.
+    #[optimize(size)]
     pub(in crate::project) fn source_commit_streamed(
         &mut self,
         r: SourceRef,
@@ -362,6 +389,7 @@ impl Pool {
     /// Whether source `s`'s heads can be re-staged now (#598): no voice
     /// holds it (in place), or a free slot and stream row wait for them
     /// beside it.
+    #[optimize(size)]
     pub fn can_rehead(&self, s: SourceId) -> bool {
         self.table().sounding() & s.bit() == 0
             || self.free_source().is_some() && self.streams().is_some_and(|r| r.has_room())
@@ -375,6 +403,7 @@ impl Pool {
     /// old heads, never cut, while new notes find the new id at once. The
     /// id the heads are under; `None`, nothing moved, when `s` sounds and
     /// no slot or stream row is free.
+    #[optimize(size)]
     pub(in crate::project) fn source_rehead(
         &mut self,
         s: SourceId,
@@ -392,6 +421,7 @@ impl Pool {
 
     /// `s`'s row rewritten under an acked gate; a nack (a note started on
     /// it) or a timeout moves nothing.
+    #[optimize(size)]
     fn rehead_in_place(
         &mut self,
         s: SourceId,
@@ -427,6 +457,7 @@ impl Pool {
 
     /// The heads published under a free id streaming `s`'s file, then `s`
     /// retired: no gate, as nothing the audio reads moves.
+    #[optimize(size)]
     fn rehead_beside(&mut self, s: SourceId, old: SourceEntry, len: usize) -> Option<SourceId> {
         let reg = self.arena.streams()?;
         let file = *reg.get(s)?;
@@ -448,6 +479,7 @@ impl Pool {
     }
 
     /// `source_rehead` against the pool's clock.
+    #[optimize(size)]
     pub(in crate::project) fn source_rehead_timed(
         &mut self,
         s: SourceId,
@@ -460,6 +492,7 @@ impl Pool {
     /// is shared, and an absent one takes the bytes in its own slot.
     /// Refused, with nothing moved, when the gap can't take it, or when
     /// every slot is taken (`free` then reads 0).
+    #[optimize(size)]
     pub(in crate::project) fn source_store(
         &mut self,
         r: SourceRef,
@@ -493,6 +526,7 @@ impl Pool {
     /// They publish only when `fill` says they are good: `Ok(false)` leaves
     /// `s` absent. Refused, with nothing moved, when the gap can't take
     /// `len`.
+    #[optimize(size)]
     pub(in crate::project) fn source_fill(
         &mut self,
         s: SourceId,
@@ -508,6 +542,7 @@ impl Pool {
     /// Slot `s` holds `r` with the bytes `fill` writes, at least `len`,
     /// staged in the whole gap (a zone set's layout is known only once its
     /// file is read) and published only if `fill` gives their length.
+    #[optimize(size)]
     fn source_put(
         &mut self,
         s: SourceId,
@@ -551,6 +586,7 @@ impl Pool {
 
     /// Source `r` as an absent entry: its ref kept, no bytes, cost 0. The
     /// slot `r` already has, if any; `None` with every slot taken.
+    #[optimize(size)]
     pub(in crate::project) fn source_absent(&mut self, r: SourceRef) -> Option<SourceId> {
         if let Some(s) = self.find_source(r) {
             return Some(s);
@@ -562,6 +598,7 @@ impl Pool {
     }
 
     /// Why absent source `s` holds no bytes; `None` unless it is absent.
+    #[optimize(size)]
     pub fn absence(&self, s: SourceId) -> Option<Absence> {
         match self.sources.slots[s.index()] {
             SrcSlot::Absent(_, why) => Some(why),
@@ -569,6 +606,7 @@ impl Pool {
         }
     }
 
+    #[optimize(size)]
     pub(in crate::project) fn mark_absent(&mut self, s: SourceId, why: Absence) {
         if let SrcSlot::Absent(_, w) = &mut self.sources.slots[s.index()] {
             *w = why;
@@ -579,6 +617,7 @@ impl Pool {
     /// Task 17): past a row's head at the gap's bottom, as `source_put`
     /// lays them, with the arena offset there, so a load sees the gap
     /// move under it. `None` when they don't fit or every row is taken.
+    #[optimize(size)]
     pub(in crate::project) fn source_staging(&mut self, len: usize) -> Option<(u32, &mut [u8])> {
         let at = self.arena.src_end();
         let to = self.arena.source_stage(SOURCE_HEAD + len).ok()?;
@@ -587,6 +626,7 @@ impl Pool {
 
     /// The `len` bytes `source_staging` holds, published as source `r`:
     /// into its absent slot, or a free one. An `r` already held is shared.
+    #[optimize(size)]
     pub(in crate::project) fn source_commit(
         &mut self,
         r: SourceRef,
@@ -598,6 +638,7 @@ impl Pool {
     /// `source_commit`, with `first` run on the slot before its row is
     /// published: its refusal publishes nothing, and `undo` takes it back
     /// if the publish then fails.
+    #[optimize(size)]
     fn commit_with<E: From<PoolFull>>(
         &mut self,
         r: SourceRef,
@@ -621,6 +662,7 @@ impl Pool {
         Ok(s)
     }
 
+    #[optimize(size)]
     pub(in crate::project) fn free_source(&self) -> Option<SourceId> {
         SourceId::ALL.into_iter().find(|&s| {
             matches!(self.sources.slots[s.index()], SrcSlot::Empty)
@@ -631,6 +673,7 @@ impl Pool {
     /// Takes source `s` out of the index. Its bytes become a pending hole
     /// and its row stays live until `source_pass` compacts it: a voice
     /// may still hold it, and is never cut.
+    #[optimize(size)]
     pub(in crate::project) fn source_free(&mut self, s: SourceId) {
         let e = match self.sources.slots[s.index()] {
             SrcSlot::Live(e) => Some(e),
@@ -649,6 +692,7 @@ impl Pool {
 
     /// The ids at or above arena `offset`: what closing the hole there
     /// moves (ADR 0087's `above`).
+    #[optimize(size)]
     fn above(&self, offset: u32) -> u32 {
         SourceId::ALL
             .into_iter()
@@ -668,6 +712,8 @@ impl Pool {
     /// nothing. The gate is open again on return, always. True when a
     /// hole closed. Through `dyn`, so every caller shares one copy.
     #[inline(never)]
+    // Not size-optimised: at size it keeps `within`'s vtable, which a bank-2
+    // caller's closure (the bench's) leaves in bank 1 pointing over the door (ADR 0267).
     pub(in crate::project) fn source_pass(&mut self, within: &mut dyn FnMut() -> bool) -> bool {
         self.drain_retired();
         let table = self.table();
@@ -717,6 +763,7 @@ impl Pool {
 
     /// `source_pass` against the pool's clock: `GATE_ACK_TIMEOUT_MS`, or
     /// one look with no clock.
+    #[optimize(size)]
     pub(in crate::project) fn source_pass_timed(&mut self) -> bool {
         self.source_pass(&mut deadline(self.clock, GATE_ACK_TIMEOUT_MS))
     }
@@ -726,6 +773,7 @@ impl Pool {
     /// (one look with no clock). The ack means a block began after the
     /// kill, so `sounding` isn't the block's before it. No reader: no audio
     /// to wait for.
+    #[optimize(size)]
     pub(in crate::project) fn quiet_timed(&self, acked: impl Fn() -> bool) -> bool {
         let table = self.table();
         let mut within = deadline(self.clock, drain_ms(table));
@@ -742,6 +790,7 @@ impl Pool {
     /// each hole closed and each slot freed, waiting `LOAD_DRAIN_TIMEOUT_MS`
     /// on the pool's clock. True once the arena holds no source and every
     /// slot is free, so pass 2 gets what pass 1 planned for.
+    #[optimize(size)]
     pub(in crate::project) fn sources_drain_timed(&mut self) -> bool {
         let mut within = deadline(self.clock, drain_ms(self.table()));
         for s in SourceId::ALL {
@@ -768,6 +817,7 @@ impl Pool {
 
     /// Every source out of the index (NEW, a failed load): retired, and
     /// compacted at once unless one still sounds.
+    #[optimize(size)]
     pub(in crate::project) fn sources_clear(&mut self) {
         for s in SourceId::ALL {
             self.source_free(s);
@@ -776,6 +826,7 @@ impl Pool {
     }
 
     /// The clock `source_pass_timed` waits by, in ms.
+    #[optimize(size)]
     pub(in crate::project) fn set_clock(&mut self, now_ms: fn() -> u32) {
         self.clock = Some(now_ms);
     }
@@ -783,6 +834,7 @@ impl Pool {
     /// A drained slot whose source no voice held since its row emptied
     /// is free again: a held note-on never finds its id reused. An owed
     /// stream row (`source_commit_streamed`'s undo) is freed too.
+    #[optimize(size)]
     fn drain_retired(&mut self) {
         let table = self.table();
         let (reader, blocks) = (table.has_reader(), table.blocks());
@@ -818,6 +870,7 @@ impl Pool {
     /// The index and the rows after `source_compact` closed the hole at
     /// `from`: its retired slot empties, every source above moves down.
     /// Under the closed gate.
+    #[optimize(size)]
     fn rebase_sources(&mut self, Shift { from, by }: Shift, since: u32) {
         let table = self.table();
         for s in SourceId::ALL {
@@ -842,6 +895,7 @@ impl Pool {
         }
     }
 
+    #[optimize(size)]
     fn source_offset(&self, s: SourceId) -> Option<u32> {
         match self.sources.slots[s.index()] {
             SrcSlot::Live(e) => Some(e.offset),
@@ -852,11 +906,13 @@ impl Pool {
 
     /// What storing `sound` in `s` takes from the gap: its cost less the
     /// slot's old Sound's.
+    #[optimize(size)]
     pub fn needs(&self, s: SlotId, sound: &Sound) -> Cost {
         self.index.needs_len(s, entry_len(sound, &KeptMap::EMPTY))
     }
 
     /// `needs` for a Sound already counted at `len` bytes.
+    #[optimize(size)]
     pub(super) fn needs_len(&self, s: SlotId, len: usize) -> Cost {
         self.index.needs_len(s, len)
     }
@@ -864,6 +920,7 @@ impl Pool {
     /// Encodes `sound` into slot `s`, over what was there, with `kept` when
     /// it has no map (`entry_len`). Refused, with nothing moved, when it
     /// won't fit even with the old Sound's bytes given back.
+    #[optimize(size)]
     pub(in crate::project) fn store(
         &mut self,
         s: SlotId,
@@ -876,6 +933,7 @@ impl Pool {
     /// Slot `s` takes an entry's bytes as they are: no encode. The bytes must
     /// already be valid: the compile-time blob only; anything from disk or USB
     /// goes through `store`.
+    #[optimize(size)]
     pub(in crate::project) fn store_bytes(
         &mut self,
         s: SlotId,
@@ -888,27 +946,32 @@ impl Pool {
     }
 
     /// The load's scratch Sound.
+    #[optimize(size)]
     pub(in crate::project) fn scratch(&mut self) -> &mut Sound {
         &mut self.scratch
     }
 
     /// The scratch Sound, as the last load left it.
+    #[optimize(size)]
     pub(in crate::project) fn scratch_ref(&self) -> &Sound {
         &self.scratch
     }
 
     /// The scratch Sound and its kept record, for a load to write.
+    #[optimize(size)]
     pub(in crate::project) fn scratch_kept(&mut self) -> (&mut Sound, &mut KeptMap) {
         (&mut self.scratch, &mut self.scratch_kept)
     }
 
     /// The scratch's kept record, if any.
+    #[optimize(size)]
     pub(in crate::project) fn scratch_record(&self) -> bool {
         self.scratch_kept.get().is_some()
     }
 
     /// What the scratch's kept record adds to its entry, in arena bytes.
     #[inline(never)]
+    #[optimize(size)]
     pub(in crate::project) fn scratch_record_cost(&self) -> u32 {
         let len = |k| Cost::of(entry_len(&self.scratch, k)).bytes();
         len(&self.scratch_kept) - len(&KeptMap::EMPTY)
@@ -917,6 +980,7 @@ impl Pool {
     /// `store` of the scratch Sound, with its kept record if `keep` and
     /// it fits (a budget counts the Sound alone): without, when not.
     #[inline(never)]
+    #[optimize(size)]
     pub(in crate::project) fn store_scratch(
         &mut self,
         s: SlotId,
@@ -938,12 +1002,14 @@ impl Pool {
     }
 
     /// Moves the generation even when the slot is already empty.
+    #[optimize(size)]
     pub(in crate::project) fn clear(&mut self, s: SlotId) {
         self.index.drop_entry(&mut self.arena, s);
         self.index.bump(s);
     }
 
     /// Every slot cleared at once: a load or NEW about to refill.
+    #[optimize(size)]
     pub(in crate::project) fn clear_all(&mut self) {
         self.arena.sounds_clear();
         self.index.slots = [None; MAX_SOUNDS];
@@ -954,11 +1020,13 @@ impl Pool {
 }
 
 impl Index {
+    #[optimize(size)]
     fn needs_len(&self, s: SlotId, len: usize) -> Cost {
         let old = self.slots[s.index()].map_or(0, |e| Cost::of(e.len as usize).bytes());
         Cost::of(Cost::of(len).bytes().saturating_sub(old) as usize)
     }
 
+    #[optimize(size)]
     fn store(
         &mut self,
         arena: &mut ArenaWriter,
@@ -972,6 +1040,7 @@ impl Index {
     }
 
     /// `len` bytes for slot `s`, filled by `fill`.
+    #[optimize(size)]
     fn store_with(
         &mut self,
         arena: &mut ArenaWriter,
@@ -1024,6 +1093,7 @@ impl Index {
 
     /// Frees the slot's bytes; the Sounds below move up over them, as the
     /// shift says.
+    #[optimize(size)]
     fn drop_entry(&mut self, arena: &mut ArenaWriter, s: SlotId) -> Option<Shift> {
         let e = self.slots[s.index()].take()?;
         let shift = arena.sound_free(e.offset, e.len as usize);
@@ -1035,6 +1105,7 @@ impl Index {
         Some(shift)
     }
 
+    #[optimize(size)]
     fn bump(&mut self, s: SlotId) {
         let g = &mut self.gens[s.index()];
         *g = g.wrapping_add(1);
@@ -1042,6 +1113,7 @@ impl Index {
 }
 
 /// `sound`'s name and records into `to`, which is its `entry_len`.
+#[optimize(size)]
 fn write_entry(to: &mut [u8], sound: &Sound, kept: &KeptMap) {
     let (name, records) = to.split_at_mut(NAME_LEN);
     name.copy_from_slice(&sound.name.padded());
@@ -1052,6 +1124,7 @@ fn write_entry(to: &mut [u8], sound: &Sound, kept: &KeptMap) {
 
 /// The bytes `sound` takes in the pool: its name, then its records, and
 /// `kept`'s while it has no map.
+#[optimize(size)]
 pub(super) fn entry_len(sound: &Sound, kept: &KeptMap) -> usize {
     let mut n = Count(0);
     // `Count::put` is never Err.
@@ -1061,6 +1134,7 @@ pub(super) fn entry_len(sound: &Sound, kept: &KeptMap) -> usize {
 
 /// `encode_sound`, then the Part's kept map record while the Sound has no
 /// map, as `put_part` writes it (#815).
+#[optimize(size)]
 fn encode_entry(sound: &Sound, kept: &KeptMap, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     encode_sound(sound, w)?;
     if sound.map.is_empty() {
@@ -1073,6 +1147,7 @@ fn encode_entry(sound: &Sound, kept: &KeptMap, w: &mut RecordWriter<'_>) -> Resu
 struct Count(usize);
 
 impl ByteSink for Count {
+    #[optimize(size)]
     fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
         self.0 += b.len();
         Ok(())
@@ -1083,6 +1158,7 @@ impl ByteSink for Count {
 struct Fill<'a>(&'a mut [u8]);
 
 impl ByteSink for Fill<'_> {
+    #[optimize(size)]
     fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
         if b.len() > self.0.len() {
             return Err(StoreError::Full);
@@ -1101,6 +1177,7 @@ struct Same<'a> {
 }
 
 impl ByteSink for Same<'_> {
+    #[optimize(size)]
     fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
         match self.expect.strip_prefix(b) {
             Some(rest) => {
@@ -1121,12 +1198,14 @@ pub struct EncodedSound<'a> {
 
 impl<'a> EncodedSound<'a> {
     /// `bytes` as an entry: padded name, then records.
+    #[optimize(size)]
     pub fn new(bytes: &'a [u8]) -> Self {
         Self { bytes }
     }
 }
 
 impl EncodedSound<'_> {
+    #[optimize(size)]
     pub fn name(&self) -> SoundName {
         <&[u8; NAME_LEN]>::try_from(&self.bytes[..NAME_LEN])
             .ok()
@@ -1135,6 +1214,7 @@ impl EncodedSound<'_> {
     }
 
     /// From the first record, `Engine`, which `encode_sound` writes first.
+    #[optimize(size)]
     pub fn engine(&self) -> EngineType {
         self.bytes
             .get(NAME_LEN + HEAD_LEN)
@@ -1142,6 +1222,7 @@ impl EncodedSound<'_> {
             .unwrap_or(EngineType::Algo)
     }
 
+    #[optimize(size)]
     pub fn cost(&self) -> Cost {
         Cost::of(self.bytes.len())
     }
@@ -1150,9 +1231,11 @@ impl EncodedSound<'_> {
     /// a map record isn't the Sound's: it isn't hashed (#862). Out of
     /// line: bank 1 holds every caller.
     #[inline(never)]
+    #[optimize(size)]
     pub fn crc(&self) -> u32 {
         // One copy of the CRC's loop, not one a call site.
         #[inline(never)]
+        #[optimize(size)]
         fn hash(c: &mut Crc32, b: &[u8]) {
             c.update(b);
         }
@@ -1172,6 +1255,7 @@ impl EncodedSound<'_> {
     }
 
     /// Its `SourceRef` record's, if it has one.
+    #[optimize(size)]
     pub fn source_ref(&self) -> Option<SourceRef> {
         let mut found = None;
         let _ = self.each(|e| {
@@ -1184,11 +1268,13 @@ impl EncodedSound<'_> {
     }
 
     /// The bytes, name first.
+    #[optimize(size)]
     pub fn bytes(&self) -> &[u8] {
         self.bytes
     }
 
     /// The records alone, as `encode_sound` wrote them.
+    #[optimize(size)]
     pub(crate) fn records(&self) -> &[u8] {
         &self.bytes[NAME_LEN..]
     }
@@ -1196,6 +1282,7 @@ impl EncodedSound<'_> {
     /// `s` encodes to these bytes: a Part on this Sound is Clean. With
     /// bank 2 closed no map is written (spec § 6.4), so a last map record
     /// left over matches: closed, nothing edits a map.
+    #[optimize(size)]
     pub fn matches(&self, s: &Sound) -> bool {
         let (name, records) = self.bytes.split_at(NAME_LEN);
         if name != s.name.padded() {
@@ -1216,6 +1303,7 @@ impl EncodedSound<'_> {
 
     /// Its map record onto `k`, if bank 2's closed door leaves it unread
     /// (#815).
+    #[optimize(size)]
     pub(in crate::project) fn keep_map(&self, k: &mut KeptMap) {
         let _ = self.each(|e| {
             if let Event::Record(ReadTag::Known(t), p) = e {
@@ -1226,6 +1314,7 @@ impl EncodedSound<'_> {
     }
 
     /// Checks, then decodes onto `s`: a refusal leaves `s` as it was.
+    #[optimize(size)]
     pub fn decode_into(&self, s: &mut Sound) -> Result<(), FileError> {
         self.check()?;
         let mut c = SoundCheck::begin(Some(self.name()));
@@ -1235,12 +1324,14 @@ impl EncodedSound<'_> {
 
     /// The Sound, decoded (host tests).
     #[cfg(any(test, feature = "test-support"))]
+    #[optimize(size)]
     pub fn to_sound(&self) -> Sound {
         let mut s = Sound::neutral(EngineType::Algo);
         self.decode_into(&mut s).expect("the pool's bytes decode");
         s
     }
 
+    #[optimize(size)]
     fn check(&self) -> Result<(), FileError> {
         let mut c = SoundCheck::begin(Some(self.name()));
         self.each(|e| c.step(e, None))?;
@@ -1248,6 +1339,7 @@ impl EncodedSound<'_> {
     }
 
     /// Each record, in order.
+    #[optimize(size)]
     fn each(&self, mut f: impl FnMut(Event<'_>) -> Result<(), FileError>) -> Result<(), FileError> {
         let mut r = &self.bytes[NAME_LEN..];
         while let [t0, t1, l0, l1, rest @ ..] = r {

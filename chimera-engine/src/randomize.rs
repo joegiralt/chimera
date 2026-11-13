@@ -17,10 +17,12 @@ impl Amount {
     pub const OFF: Amount = Amount(0);
     pub const MAX: u8 = 3;
 
+    #[optimize(size)]
     pub const fn new(v: u8) -> Self {
         Amount(if v > Self::MAX { Self::MAX } else { v })
     }
 
+    #[optimize(size)]
     pub const fn get(self) -> u8 {
         self.0
     }
@@ -31,10 +33,12 @@ impl Amount {
 pub struct Seed(u8);
 
 impl Seed {
+    #[optimize(size)]
     pub const fn new(v: u8) -> Self {
         Seed(v)
     }
 
+    #[optimize(size)]
     pub const fn get(self) -> u8 {
         self.0
     }
@@ -52,6 +56,7 @@ pub struct Randomize {
 }
 
 impl Default for Randomize {
+    #[optimize(size)]
     fn default() -> Self {
         Self::DEFAULT
     }
@@ -80,6 +85,7 @@ const ENV_NAMES: [&str; 4] = ["OFF", "PLUCK", "PAD", "ANY"];
 const TONE_NAMES: [&str; 4] = ["OFF", "SOFT", "BRIGHT", "WILD"];
 const MOD_NAMES: [&str; 4] = ["OFF", "SUBTLE", "MOVING", "WILD"];
 
+#[optimize(size)]
 const fn amount(id: u8, label: &'static str, names: &'static [&'static str], d: f32) -> ParamSpec {
     ParamSpec::choice(id, label, ValFmt::Names(names), 3.0, d, Change::Snap)
         .ident(label)
@@ -105,10 +111,12 @@ pub static RANDOM_SPECS: [ParamSpec; 5] = [
 ];
 
 impl Block for Randomize {
+    #[optimize(size)]
     fn specs(&self) -> &'static [ParamSpec] {
         &RANDOM_SPECS
     }
 
+    #[optimize(size)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::OSC => self.osc.get() as f32,
@@ -120,6 +128,7 @@ impl Block for Randomize {
         }
     }
 
+    #[optimize(size)]
     fn write(&mut self, id: ParamId, v: f32) {
         let a = Amount::new(v as u8);
         match id {

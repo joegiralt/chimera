@@ -25,6 +25,7 @@ use chimera_hal::store::{Dir, Store, StoreError};
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::block::{Block, DiskCode};
 use crate::dsp::clampf;
+use crate::dsp::drum::types::{Kit, PAD_BYTES, Pad, PadId, Tonal};
 use crate::dsp::fx_bus::{FX_SENDS, FxParams};
 use crate::hw::MAX_PARTS;
 use crate::midi_map::KeptMap;
@@ -67,6 +68,7 @@ const OLD_SEND_IDS: [u8; FX_SENDS] = [5, 6, 7];
 
 /// A PART payload's old sends: non-finite as 0, the rest in 0..=1; `None`
 /// when it holds none.
+#[optimize(size)]
 fn old_sends(payload: &[u8]) -> Option<[f32; FX_SENDS]> {
     let mut out = [0.0; FX_SENDS];
     let mut any = false;
@@ -88,9 +90,45 @@ fn old_sends(payload: &[u8]) -> Option<[f32; FX_SENDS]> {
 /// A `Slot` or `Part` payload: the index, then the padded name.
 const CONTEXT_LEN: usize = 1 + 16;
 
+/// The pads, then TONAL's code (ADR 0270); a kit from before TONAL is
+/// the pads alone.
+const PADS_BYTES: usize = PAD_BYTES * PadId::ALL.len();
+const KIT_BYTES: usize = PADS_BYTES + 1;
+
+#[optimize(size)]
+fn put_kit(w: &mut RecordWriter<'_>, kit: &Kit) -> Result<(), StoreError> {
+    let mut b = [0; KIT_BYTES];
+    for (p, out) in PadId::ALL.into_iter().zip(b.as_chunks_mut().0) {
+        *out = kit.pad(p).to_bytes();
+    }
+    b[PADS_BYTES] = kit.tonal().code();
+    w.put(RecordTag::Kit, &b)
+}
+
+/// A `Kit` payload, and whether a save would write other bytes (a byte
+/// defaulted or held). Without TONAL's byte (before ADR 0270) it is OFF,
+/// nothing lost; an unknown code is OFF, lossy. `None`: neither length.
+#[optimize(size)]
+fn get_kit(b: &[u8]) -> Option<(Kit, bool)> {
+    let (pads, tonal) = match b.len() {
+        PADS_BYTES => (b, Some(Tonal::Off)),
+        KIT_BYTES => (&b[..PADS_BYTES], Tonal::from_code(b[PADS_BYTES])),
+        _ => return None,
+    };
+    let (mut kit, mut lossy) = (Kit::DEFAULT, tonal.is_none());
+    for (p, &raw) in PadId::ALL.into_iter().zip(pads.as_chunks().0) {
+        let pad = Pad::from_bytes(raw, Kit::DEFAULT.pad(p));
+        lossy |= pad.to_bytes() != raw;
+        *kit.pad_mut(p) = pad;
+    }
+    kit.set_tonal(tonal.unwrap_or(Tonal::Off));
+    Some((kit, lossy))
+}
+
 const ORIGIN_SLOT: u8 = 0;
 const ORIGIN_INIT: u8 = 1;
 
+#[optimize(size)]
 fn fx_block(fx: &FxParams, b: BlockRef) -> Option<&dyn Block> {
     Some(match b {
         BlockRef::Chorus => &fx.chorus,
@@ -106,12 +144,14 @@ fn fx_block(fx: &FxParams, b: BlockRef) -> Option<&dyn Block> {
 struct FxBlocks<'a>(&'a mut FxParams);
 
 impl BlockRead for FxBlocks<'_> {
+    #[optimize(size)]
     fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         fx_block(self.0, b).map(BlockView::Plain)
     }
 }
 
 impl Blocks for FxBlocks<'_> {
+    #[optimize(size)]
     fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         let fx = &mut *self.0;
         Some(BlockViewMut::Plain(match b {
@@ -129,23 +169,27 @@ impl Blocks for FxBlocks<'_> {
 struct MixBlocks<'a>(&'a mut PartParams);
 
 impl BlockRead for MixBlocks<'_> {
+    #[optimize(size)]
     fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         (b == BlockRef::Part).then_some(BlockView::Plain(&*self.0))
     }
 }
 
 impl Blocks for MixBlocks<'_> {
+    #[optimize(size)]
     fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         (b == BlockRef::Part).then_some(BlockViewMut::Plain(&mut *self.0))
     }
 }
 
+#[optimize(size)]
 fn put_block(w: &mut RecordWriter<'_>, b: BlockRef, blk: &dyn Block) -> Result<(), StoreError> {
     let mut r = RecordBuf::new();
     encode_block(b, blk, None, &mut r);
     w.put(RecordTag::Block, r.as_slice())
 }
 
+#[optimize(size)]
 fn put_context(
     w: &mut RecordWriter<'_>,
     tag: RecordTag,
@@ -158,6 +202,7 @@ fn put_context(
     w.put(tag, &p)
 }
 
+#[optimize(size)]
 fn put_fx(w: &mut RecordWriter<'_>, fx: &FxParams) -> Result<(), StoreError> {
     w.put(RecordTag::Fx, &[])?;
     for b in FX_BLOCKS {
@@ -169,6 +214,7 @@ fn put_fx(w: &mut RecordWriter<'_>, fx: &FxParams) -> Result<(), StoreError> {
 }
 
 /// A pool slot: its bytes are the records `encode_sound` writes for it.
+#[optimize(size)]
 fn put_encoded(
     w: &mut RecordWriter<'_>,
     s: SlotId,
@@ -182,36 +228,43 @@ fn put_encoded(
 /// the Sound has no map of its own (#815).
 /// Out of line, as when `put_init_part` called it too (bank 1, ADR 0198).
 #[inline(never)]
+#[optimize(size)]
 fn put_part(
     w: &mut RecordWriter<'_>,
     i: usize,
     part: &Part,
     kept: &KeptMap,
+    kit: &Kit,
 ) -> Result<(), StoreError> {
     put_context(w, RecordTag::Part, i, part.sound.name)?;
     encode_sound(&part.sound, w)?;
     if part.sound.map.is_empty() {
         crate::midi_in::put_kept(kept, w)?;
     }
-    put_part_end(w, &part.mix, part.origin)
+    put_part_end(w, &part.mix, part.origin, kit)
 }
 
-/// A Part's records after its Sound's: the mix, then its `Origin`.
+/// A Part's records after its Sound's: the mix, its `Origin`, then its
+/// kit.
+#[optimize(size)]
 fn put_part_end(
     w: &mut RecordWriter<'_>,
     mix: &PartParams,
     origin: Origin,
+    kit: &Kit,
 ) -> Result<(), StoreError> {
     put_block(w, BlockRef::Part, mix)?;
     let origin = match origin {
         Origin::Slot { slot, .. } => [ORIGIN_SLOT, slot.index() as u8],
         Origin::Init(e) => [ORIGIN_INIT, e.disk_code()],
     };
-    w.put(RecordTag::Origin, &origin)
+    w.put(RecordTag::Origin, &origin)?;
+    put_kit(w, kit)
 }
 
 /// The pool's source refs, absent ones included, in slot order (spec
 /// § Format). A load takes them into the same slots, in the same order.
+#[optimize(size)]
 fn put_sources(w: &mut RecordWriter<'_>, pool: &Pool) -> Result<(), StoreError> {
     for e in SourceId::ALL.into_iter().filter_map(|s| pool.source(s)) {
         w.put(RecordTag::PoolSource, &e.r.to_bytes())?;
@@ -220,6 +273,7 @@ fn put_sources(w: &mut RecordWriter<'_>, pool: &Pool) -> Result<(), StoreError> 
 }
 
 /// Streams `p` from live state: no copy, no buffer past one record.
+#[optimize(size)]
 pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     put_fx(w, &p.perf.fx)?;
     put_sources(w, &p.pool)?;
@@ -228,8 +282,12 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
             put_encoded(w, s, sound)?;
         }
     }
-    for (i, (part, kept)) in p.perf.parts.iter().zip(&p.kept).enumerate() {
-        put_part(w, i, part, kept)?;
+    for (id, (part, kept)) in PartId::ALL
+        .into_iter()
+        .zip(p.perf.parts.iter().zip(&p.kept))
+    {
+        let i = id.index();
+        put_part(w, i, part, kept, p.kits.kit(id))?;
         if let Some(n) = p.ctl.get(i).copied().flatten() {
             w.put(RecordTag::Controller, &n.padded())?;
         }
@@ -246,6 +304,7 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
 
 /// NEW's records, as `encode_project` of NEW puts them, built a Sound at a
 /// time: no second project in RAM (CLEAR of a file not loaded).
+#[optimize(size)]
 pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     put_new_fx(w)?;
     put_new_slots(w)?;
@@ -259,11 +318,13 @@ pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 // (the stack check). The factory Sounds go as the blob's bytes, which are
 // the records `encode_sound` writes for them: no Sound on the stack.
 #[inline(never)]
+#[optimize(size)]
 fn put_new_fx(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     put_fx(w, &FxParams::default())
 }
 
 #[inline(never)]
+#[optimize(size)]
 fn put_new_slots(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     for (s, (_, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
         put_encoded(w, s, EncodedSound::new(bytes))?;
@@ -272,6 +333,7 @@ fn put_new_slots(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 }
 
 #[inline(never)]
+#[optimize(size)]
 fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     for i in 0..MAX_PARTS {
         let new = NEW_PARTS
@@ -289,7 +351,7 @@ fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
             generation: 0,
             crc: 0,
         };
-        put_part_end(w, &PartParams::for_part(i), origin)?;
+        put_part_end(w, &PartParams::for_part(i), origin, &Kit::DEFAULT)?;
     }
     Ok(())
 }
@@ -298,6 +360,7 @@ fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 /// alone in a frame of its own (a whole `Part` there was a second copy
 /// under the sink's pointer call, ADR 0025's stack check).
 #[inline(never)]
+#[optimize(size)]
 fn put_init_part(w: &mut RecordWriter<'_>, i: usize) -> Result<(), StoreError> {
     let sound = Sound::init(EngineType::Algo);
     put_context(w, RecordTag::Part, i, sound.name)?;
@@ -305,16 +368,23 @@ fn put_init_part(w: &mut RecordWriter<'_>, i: usize) -> Result<(), StoreError> {
     if sound.map.is_empty() {
         crate::midi_in::put_kept(&KeptMap::EMPTY, w)?;
     }
-    put_part_end(w, &PartParams::for_part(i), Origin::Init(EngineType::Algo))
+    put_part_end(
+        w,
+        &PartParams::for_part(i),
+        Origin::Init(EngineType::Algo),
+        &Kit::DEFAULT,
+    )
 }
 
 #[inline(never)]
+#[optimize(size)]
 fn put_new_orbit(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     encode_new_orbit(w)
 }
 
 /// The project's canonical CRC: its padded name, then `encode_project`'s
 /// bytes. Content only: generations and the header don't count.
+#[optimize(size)]
 pub fn project_crc(p: &Project) -> u32 {
     records_crc(&p.meta.name.padded(), |w| encode_project(p, w))
 }
@@ -391,12 +461,14 @@ impl Costs {
         part_used: 0,
     };
 
+    #[optimize(size)]
     fn refs(&self) -> &[SourceRef] {
         &self.refs[..self.n_refs as usize]
     }
 }
 
 /// Takes `c` from `left` if it fits.
+#[optimize(size)]
 fn take(left: &mut u32, c: Option<Cost>) -> bool {
     match c {
         Some(c) if c.bytes() <= *left => {
@@ -431,9 +503,10 @@ pub struct ProjectCheck {
     fx: bool,
     /// The FX blocks read, a bit each in `FX_BLOCKS` order.
     fx_blocks: u8,
-    /// The open Part's mix and Origin were read.
+    /// The open Part's mix, Origin and kit were read.
     mix: bool,
     origin: bool,
+    kit: bool,
     origins: [ReadOrigin; MAX_PARTS],
     /// The open Part's pre-ADR-0123 sends (PART ids 5-7), for its Sound.
     old_sends: Option<[f32; FX_SENDS]>,
@@ -448,12 +521,14 @@ pub struct ProjectCheck {
 const _: () = assert!(SlotId::ALL.len() <= u128::BITS as usize);
 
 impl Default for ProjectCheck {
+    #[optimize(size)]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl ProjectCheck {
+    #[optimize(size)]
     pub fn new() -> Self {
         ProjectCheck {
             sound: SoundCheck::begin(None),
@@ -470,6 +545,7 @@ impl ProjectCheck {
             fx_blocks: 0,
             mix: false,
             origin: false,
+            kit: false,
             origins: [ReadOrigin::Missing; MAX_PARTS],
             lossy: false,
             over: false,
@@ -492,6 +568,7 @@ impl ProjectCheck {
     /// `stage`: where pass 1 of a load decodes each `Slot`'s Sound whole,
     /// to cost it. Pass 2 decodes into `target`'s pool scratch and stores
     /// it. A check alone holds no Sound.
+    #[optimize(size)]
     fn step(
         &mut self,
         e: Event<'_>,
@@ -586,6 +663,17 @@ impl ProjectCheck {
                 };
                 Ok(())
             }
+            (ReadTag::Known(RecordTag::Kit), Context::Part(n)) => {
+                if core::mem::replace(&mut self.kit, true) {
+                    return Err(FileError::Corrupt);
+                }
+                let (kit, lossy) = get_kit(p).ok_or(FileError::Bounds)?;
+                self.lossy |= lossy;
+                if let Some(t) = target {
+                    *t.kits.kit_mut(n) = kit;
+                }
+                Ok(())
+            }
             (ReadTag::Known(RecordTag::Controller), Context::Part(n)) => {
                 let p = <&[u8; 16]>::try_from(p).map_err(|_| FileError::Bounds)?;
                 // A name this firmware can't hold: the Part plays none.
@@ -629,6 +717,7 @@ impl ProjectCheck {
 
     /// A pass's fresh start, in place: no whole `ProjectCheck` built on
     /// the stack. The side and the plan stay.
+    #[optimize(size)]
     fn restart(&mut self) {
         self.sound = SoundCheck::begin(None);
         let c = self.costs_mut();
@@ -637,22 +726,26 @@ impl ProjectCheck {
         (self.dropped_slots, self.dropped_sources) = (0, 0);
         (self.to_read, self.to_stream) = (SourceSet::EMPTY, SourceSet::EMPTY);
         (self.context, self.parts) = (Context::None, PartSet::EMPTY);
-        (self.fx, self.fx_blocks, self.mix, self.origin) = (false, 0, false, false);
+        (self.fx, self.fx_blocks, self.mix, self.origin, self.kit) =
+            (false, 0, false, false, false);
         self.origins = [ReadOrigin::Missing; MAX_PARTS];
         self.old_sends = None;
         (self.lossy, self.over) = (false, false);
     }
 
+    #[optimize(size)]
     fn costs(&self) -> &Costs {
         &self.costs
     }
 
+    #[optimize(size)]
     fn costs_mut(&mut self) -> &mut Costs {
         &mut self.costs
     }
 
     /// A `PoolSource`: its ref, each once. Pass 2 makes it an absent
     /// entry, and marks it for the card read if the plan takes it.
+    #[optimize(size)]
     fn pool_source(&mut self, p: &[u8], target: Option<&mut Project>) -> Result<(), FileError> {
         let r = SourceRef::from_bytes(p).ok_or(FileError::Bounds)?;
         let c = self.costs_mut();
@@ -689,6 +782,7 @@ impl ProjectCheck {
 
     /// An ORBIT record: the first closes the last Part, so all six must be
     /// read; then into the song.
+    #[optimize(size)]
     fn orbit(
         &mut self,
         tag: RecordTag,
@@ -710,6 +804,7 @@ impl ProjectCheck {
     }
 
     /// Closes the open context, then opens `tag`'s.
+    #[optimize(size)]
     fn open(
         &mut self,
         tag: RecordTag,
@@ -762,8 +857,10 @@ impl ProjectCheck {
                 part.env = [0; 2];
                 part.origin = Origin::Init(EngineType::Algo);
                 t.set_scala(n, None);
+                // A file from before kits has none: the default.
+                *t.kits.kit_mut(n) = Kit::DEFAULT;
             }
-            (self.mix, self.origin) = (false, false);
+            (self.mix, self.origin, self.kit) = (false, false, false);
             self.old_sends = None;
             self.context = Context::Part(n);
         }
@@ -773,6 +870,7 @@ impl ProjectCheck {
 
     /// A `Block` in `Fx`: an FX block, each once. A block this firmware
     /// doesn't know is checked and skipped.
+    #[optimize(size)]
     fn fx_block(&mut self, p: &[u8], target: Option<&mut Project>) -> Result<(), FileError> {
         let &code = p.first().ok_or(FileError::Bounds)?;
         match FX_BLOCKS.iter().position(|b| b.disk_code() == Some(code)) {
@@ -797,6 +895,7 @@ impl ProjectCheck {
     }
 
     /// Ends a `Slot` or `Part`: its Sound's `finish`, which adds the routes.
+    #[optimize(size)]
     fn close(
         &mut self,
         target: Option<&mut Project>,
@@ -809,6 +908,7 @@ impl ProjectCheck {
         r
     }
 
+    #[optimize(size)]
     fn close_sound(
         &mut self,
         target: Option<&mut Project>,
@@ -863,6 +963,7 @@ impl ProjectCheck {
     /// each taken while it fits, at its listed size (`zones`, a ref's
     /// layout). A source not `present` on the card is neither taken nor
     /// counted.
+    #[optimize(size)]
     fn plan_load(&self, present: u32, zones: &[u8; MAX_SOURCES]) -> Plan {
         let c = self.costs();
         let mut left = ARENA_BYTES as u32;
@@ -906,6 +1007,7 @@ impl ProjectCheck {
 
     /// Closes the last context; `Corrupt` unless all six Parts were read.
     /// Then resolves each Part's Origin against the pool as loaded.
+    #[optimize(size)]
     fn finish(
         &mut self,
         mut target: Option<&mut Project>,
@@ -947,14 +1049,17 @@ impl ProjectCheck {
 impl Check for ProjectCheck {
     const KIND: FileKind = FileKind::Project;
 
+    #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
         self.step(e, None, None)
     }
 
+    #[optimize(size)]
     fn end(&mut self) -> Result<(), FileError> {
         self.finish(None, None)
     }
 
+    #[optimize(size)]
     fn side(&mut self, s: Side) {
         self.side = s;
     }
@@ -984,6 +1089,7 @@ pub struct ProjectDecoder<'a> {
 }
 
 impl<'a> ProjectDecoder<'a> {
+    #[optimize(size)]
     pub(crate) fn new(target: &'a mut Project, link: Option<&'a LoadLink>) -> Self {
         target.bump();
         ProjectDecoder {
@@ -998,46 +1104,54 @@ impl<'a> ProjectDecoder<'a> {
     /// `new` with no epoch, for tests.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn new_for_test(target: &'a mut Project) -> Self {
         Self::new(target, None)
     }
 
     /// The epoch `begin` bumped, if it did: the caller settles it and
     /// publishes, whatever came of the load.
+    #[optimize(size)]
     pub(crate) fn take_swap(&mut self) -> Option<Swap> {
         self.swap.take()
     }
 
     /// After pass 2: the sources the loader reads from the card, each an
     /// absent entry until it does.
+    #[optimize(size)]
     pub(crate) fn to_read(&self) -> SourceSet {
         self.check.to_read
     }
 
     /// After pass 2: the sources too big for the arena's room, each an
     /// absent entry: the loader streams those a TAPE Part plays.
+    #[optimize(size)]
     pub(crate) fn to_stream(&self) -> SourceSet {
         self.check.to_stream
     }
 
     /// After `begin`: the refs `/CHIMERA/TAPES` doesn't list.
+    #[optimize(size)]
     pub(crate) fn missing(&self) -> u8 {
         self.check.plan.missing.count_ones() as u8
     }
 
     /// After pass 2: the Sounds and sources the arena didn't take.
+    #[optimize(size)]
     pub(crate) fn dropped(&self) -> (u8, u8) {
         (self.check.dropped_slots, self.check.dropped_sources)
     }
 
     /// After pass 2: the project holds less than the file, or other bytes
     /// than a save would write (ADR 0078). The load is then not Saved.
+    #[optimize(size)]
     pub fn lossy(&self) -> bool {
         self.check.lossy
     }
 
     /// After pass 2: a Sound's operator kinds past the formant budget read
     /// as W1 (`SoundCheck::over_budget`).
+    #[optimize(size)]
     pub fn over_budget(&self) -> bool {
         self.check.over
     }
@@ -1046,16 +1160,19 @@ impl<'a> ProjectDecoder<'a> {
 impl Check for ProjectDecoder<'_> {
     const KIND: FileKind = FileKind::Project;
 
+    #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
         // The pool's scratch only: nothing a pass 1 refusal could leave.
         self.check.step(e, None, Some(self.target.pool.scratch()))
     }
 
+    #[optimize(size)]
     fn end(&mut self) -> Result<(), FileError> {
         self.check.finish(None, Some(self.target.pool.scratch()))
     }
 
     /// Keeps each side's costs: the side read last moves to `other`.
+    #[optimize(size)]
     fn side(&mut self, s: Side) {
         if s != self.check.side {
             core::mem::swap(&mut self.check.costs, &mut self.other);
@@ -1069,6 +1186,7 @@ impl DecodeInPlace for ProjectDecoder<'_> {
     /// and sizes, no data read), then bumps the epoch (ADR 0046's kill) and
     /// waits for every voice to let go of its source. `Busy` when one
     /// doesn't: nothing is touched, and the caller still publishes.
+    #[optimize(size)]
     fn begin<S: Store>(&mut self, s: &mut S, r: &Ready) -> Result<(), LoadError> {
         let (mut present, mut zones) = (0u32, [0u8; MAX_SOURCES]);
         let refs = self.check.costs().refs();
@@ -1100,10 +1218,12 @@ impl DecodeInPlace for ProjectDecoder<'_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
         self.check.step(e, Some(self.target), None)
     }
 
+    #[optimize(size)]
     fn finish(&mut self) -> Result<(), FileError> {
         self.check.finish(Some(self.target), None)
     }

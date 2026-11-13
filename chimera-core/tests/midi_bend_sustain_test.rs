@@ -146,7 +146,11 @@ fn a_silent_part_lands_its_bend() {
 #[test]
 fn the_bend_moves_the_pitch_of_every_engine() {
     let f0 = chimera_core::dsp::note_to_freq(60);
-    for engine in EngineType::ALL {
+    // DRUM plays pads, not notes: `drum_engine_test`.
+    for engine in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         let p = init_params(engine);
         // The window's energy at `hz`, a note of C4 bent by `bend`.
         let energy = |bend: f32, hz: f32| {

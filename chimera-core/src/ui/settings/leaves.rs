@@ -6,8 +6,8 @@ use crate::project::PartId;
 use crate::randomize::Randomize;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::block_registry::{
-    DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_ECHO, SYS_MAP, SYS_MPE, SYS_POOL, SYS_PUSH, SYS_SAVER,
-    SYS_SYNC, SYS_TEXT, SYS_THEME, SYS_TUNING,
+    DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_ECHO, SYS_FOLLOW, SYS_MAP, SYS_MPE, SYS_POOL, SYS_PUSH,
+    SYS_SAVER, SYS_SYNC, SYS_TEXT, SYS_THEME, SYS_TUNING,
 };
 use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageId, PageLayout};
@@ -15,11 +15,12 @@ use crate::ui::page::{PageId, PageLayout};
 /// One cell per Part, `P1`–`P6`, each Part's `param`: the mixer's own
 /// value, so editing either edits both.
 const fn per_part(param: crate::block::ParamId) -> [ParamSlot; 6] {
-    const LABELS: [&str; 6] = ["P1", "P2", "P3", "P4", "P5", "P6"];
+    static LABELS: [&str; 6] = ["P1", "P2", "P3", "P4", "P5", "P6"];
     let mut slots = [ParamSlot::EMPTY; 6];
     let mut i = 0;
     while i < 6 {
-        slots[i] = ParamSlot::param(BlockRef::PartMix(PartId::ALL[i]), param).with_label(LABELS[i]);
+        slots[i] =
+            ParamSlot::param(BlockRef::PartMix(PartId::ALL[i]), param).with_label(&LABELS[i]);
         i += 1;
     }
     slots
@@ -176,6 +177,7 @@ static THEME_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_THEME)];
 static SAVER_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_SAVER)];
 static MAP_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_MAP)];
 static TEXT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_TEXT)];
+static FOLLOW_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_FOLLOW)];
 static PUSH_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_PUSH)];
 static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ABOUT)];
 static AUDIO_LOAD_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_AUDIO)];
@@ -196,6 +198,7 @@ pub static THEME_LEAF: OnePage = OnePage::new("Theme", &THEME_BLOCKS);
 pub static SAVER_LEAF: OnePage = OnePage::new("Screensaver", &SAVER_BLOCKS);
 pub static MAP_LEAF: OnePage = OnePage::new("Chain Map", &MAP_BLOCKS);
 pub static TEXT_LEAF: OnePage = OnePage::new("Text Size", &TEXT_BLOCKS);
+pub static FOLLOW_LEAF: OnePage = OnePage::new("Pad Follow", &FOLLOW_BLOCKS);
 pub static PUSH_LEAF: OnePage = OnePage::new("Push Encoders", &PUSH_BLOCKS);
 pub static ABOUT_LEAF: OnePage = OnePage::new("About", &ABOUT_BLOCKS);
 pub static AUDIO_LOAD_LEAF: OnePage = OnePage::new("Audio Load", &AUDIO_LOAD_BLOCKS);

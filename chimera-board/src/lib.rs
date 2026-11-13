@@ -629,6 +629,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (formant_w, mut formant_r) = shared::take_formant().expect("formant views taken once");
     let (mut shared_w, shared_r, knobs) =
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
+    // The kits, published before the audio starts (ADR 0265).
+    let mut kits = chimera_core::dsp::drum::view::KitWriter::take().expect("kit writer once");
+    kits.publish_all(ui.project().kits());
     // Without MIDI DIN, USB or `card` nothing takes a producer.
     #[cfg_attr(
         not(any(
@@ -852,6 +855,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                     controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
                 });
                 shared_w.publish(|b| publish(b, u, knobs));
+                kits.publish_all(u.project().kits());
             });
             // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save
             // is quicker than BUSY can be read. A toast says how it went.
@@ -872,6 +876,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             orbit.beat(ui);
         }
         shared_w.publish(|b| publish(b, ui, knobs));
+        kits.publish_all(ui.project().kits());
+        ui.take_hits(&mut kits);
         let stats = audio_stats(stats_r.as_mut());
         // Read after the card work; the toast's first step ignores it.
         let now = controls::ticks();

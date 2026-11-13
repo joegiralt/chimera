@@ -10,6 +10,7 @@ use chimera_hal::store::{
 
 /// The boot's sweep: the mark read, then the sweep if it owes one or
 /// didn't read. A clean boot costs the mount and the mark's few blocks.
+#[optimize(size)]
 pub fn boot_sweep(s: &mut impl Store, mode: Sweep, marks: &mut [u8]) -> SweepRun {
     let vol = match s.mount() {
         Ok(v) => v,
@@ -23,6 +24,7 @@ pub fn boot_sweep(s: &mut impl Store, mode: Sweep, marks: &mut [u8]) -> SweepRun
     }
 }
 
+#[optimize(size)]
 fn run(s: &mut impl Store, vol: VolumeId, mode: Sweep, why: Trigger, marks: &mut [u8]) -> SweepRun {
     let seen = s.sweep(vol, mode, marks);
     let then = match &seen {
@@ -49,6 +51,7 @@ fn run(s: &mut impl Store, vol: VolumeId, mode: Sweep, why: Trigger, marks: &mut
     }
 }
 
+#[optimize(size)]
 fn counts(d: Doubt) -> bool {
     !matches!(
         d,
@@ -56,6 +59,7 @@ fn counts(d: Doubt) -> bool {
     )
 }
 
+#[optimize(size)]
 fn no_card(mode: Sweep, why: Trigger, e: StoreError) -> SweepRun {
     SweepRun::Ran {
         mode,

@@ -240,7 +240,8 @@ impl Readout {
 }
 
 /// `s` playing `note` under `tune` cents: SETTINGS' TUNE and the Part's
-/// TUNING at the key; `None` for TAPE with no source, which plays nothing.
+/// TUNING at the key; `None` for TAPE with no source, which plays nothing,
+/// and for DRUM, whose key names a pad, not a pitch.
 pub fn pitch(note: MidiNote, s: &Sound, tune: f32) -> Option<Reading> {
     let p = &s.params;
     let set = p.pitch.semitones() * 100.0 + tune;
@@ -249,6 +250,7 @@ pub fn pitch(note: MidiNote, s: &Sound, tune: f32) -> Option<Reading> {
     match p.engine() {
         EngineType::Algo => at(f32::from(p.algo.transpose) * 100.0),
         EngineType::Modal => at(0.0),
+        EngineType::Drum => None,
         EngineType::Va => at(f32::from(p.va.coarse[0].clamp(-24, 24)) * 100.0 + p.va.fine[0]),
         EngineType::Tape => {
             s.source?;

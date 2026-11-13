@@ -197,8 +197,7 @@ bank2-split elf out:
 # path remapped (#413), so no home directory, user name or registry path
 # survives in the .bin. `--config` arrays append to .cargo/config.toml's
 # target rustflags (RUSTFLAGS would replace them).
-# Panic locations keep their relative in-crate paths (removing them needs
-# nightly's -Zlocation-detail). Output: target/release-bin/chimera{,-orbit}.{bin,bk2}
+# Panics carry no locations (.cargo/config.toml). Output: target/release-bin/chimera{,-orbit}.{bin,bk2}
 release-bin:
     #!/usr/bin/env bash
     set -euo pipefail

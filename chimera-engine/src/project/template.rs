@@ -13,7 +13,8 @@ use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
 
 use super::{
-    PartFrom, PartId, PartSource, Performance, Pool, Project, ProjectMeta, SlotId, project_crc,
+    Kits, PartFrom, PartId, PartSource, Performance, Pool, Project, ProjectMeta, SlotId,
+    project_crc,
 };
 
 /// The CRC of NEW, as `init_in_place` built it (`reset_new` builds the
@@ -28,20 +29,27 @@ pub struct TemplateCrc(u32);
 
 impl TemplateCrc {
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn get(self) -> u32 {
         self.0
     }
 }
 
 impl Project {
-    /// NEW, built in place, its pool's Sounds in `arena`; `slot` is
-    /// initialised on return. Its CRC is the template: a project equal to
-    /// it is `Pristine`.
-    pub fn init_in_place(slot: &mut MaybeUninit<Project>, arena: ArenaWriter) -> TemplateCrc {
+    /// NEW, built in place, its pool's Sounds in `arena`, its Parts' kits
+    /// in `kits`; `slot` is initialised on return. Its CRC is the
+    /// template: a project equal to it is `Pristine`.
+    #[optimize(size)]
+    pub fn init_in_place(
+        slot: &mut MaybeUninit<Project>,
+        arena: ArenaWriter,
+        kits: &'static mut Kits,
+    ) -> TemplateCrc {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; `meta`, `pool`, `perf` and
         // `orbit` (the last three in place), each of the `MAX_PARTS` `kept`,
-        // `ctl` and `rev` are each written once before `assume_init_mut`.
+        // `ctl`, `kits` and `rev` are each written once before
+        // `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
             Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)), arena);
@@ -52,6 +60,7 @@ impl Project {
                 kept.add(i).write(KeptMap::EMPTY);
             }
             addr_of_mut!((*p).ctl).write([None; super::CTL_PARTS]);
+            addr_of_mut!((*p).kits).write(kits);
             addr_of_mut!((*p).rev).write(0);
             slot.assume_init_mut()
         };
@@ -59,12 +68,13 @@ impl Project {
         TemplateCrc(project_crc(project))
     }
 
-    /// NEW on the heap, on an arena of its own, leaked (host tests and
+    /// NEW on the heap, on an arena and kits of its own, leaked (host tests and
     /// tools).
     #[cfg(any(test, feature = "test-support", feature = "host-project"))]
+    #[optimize(size)]
     pub fn boxed() -> (alloc::boxed::Box<Project>, TemplateCrc) {
         let mut raw = alloc::boxed::Box::<Project>::new_uninit();
-        let t = Self::init_in_place(&mut raw, ArenaWriter::leaked());
+        let t = Self::init_in_place(&mut raw, ArenaWriter::leaked(), Kits::leaked());
         // SAFETY: `init_in_place` built a valid project in the box.
         (unsafe { raw.assume_init() }, t)
     }
@@ -72,6 +82,7 @@ impl Project {
     /// Back to NEW, in place: `+ NEW`, and a failed load's fallback. No
     /// CRC: the template was taken once, at `init_in_place`, and a hash
     /// here is a whole project's (about 0.5–0.9 ms on the chip).
+    #[optimize(size)]
     pub(crate) fn reset_new(&mut self) {
         self.bump();
         self.meta = ProjectMeta::new_project();
@@ -81,6 +92,7 @@ impl Project {
             k.clear();
         }
         self.ctl = [None; super::CTL_PARTS];
+        self.kits.reset();
         self.fill_new();
     }
 
@@ -91,6 +103,7 @@ impl Project {
     /// Never panics: a factory Sound a sounding source still leaves no
     /// room for is skipped (`take_new_skipped` counts them), and a Part
     /// whose slot is missing or won't load loads INIT.
+    #[optimize(size)]
     fn fill_new(&mut self) {
         self.pool.sources_clear();
         self.pool.clear_all();
@@ -116,6 +129,7 @@ impl Project {
 
     /// Factory Sounds the last NEW had no room for, once: a sounding
     /// source held their bytes. `None` when NEW came up whole.
+    #[optimize(size)]
     pub fn take_new_skipped(&mut self) -> Option<u8> {
         let n = core::mem::take(&mut self.pool.new_skipped);
         (n > 0).then_some(n)

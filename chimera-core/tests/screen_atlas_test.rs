@@ -138,6 +138,7 @@ impl Ctx {
             // Not walked until TAPE Task 15 puts SRC and DECK on its chain.
             Ctx::Part(EngineType::Tape) => "tape".into(),
             Ctx::Part(EngineType::Va) => "va".into(),
+            Ctx::Part(EngineType::Drum) => "drum".into(),
             Ctx::Mixer => "mixer".into(),
             Ctx::Orbit => "orbit".into(),
             Ctx::Settings(i) => leaves()[i].name(),

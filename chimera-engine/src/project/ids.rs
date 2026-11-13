@@ -22,6 +22,7 @@ macro_rules! bounded_index {
                 a
             };
 
+            #[optimize(size)]
             pub const fn new(n: u8) -> Option<$name> {
                 if (n as usize) < $len {
                     Some($name(n))
@@ -41,6 +42,7 @@ bounded_index!(
 );
 
 impl PartId {
+    #[optimize(size)]
     pub const fn index(self) -> usize {
         self.0 as usize
     }
@@ -53,6 +55,7 @@ bounded_index!(
 );
 
 impl SlotId {
+    #[optimize(size)]
     pub const fn index(self) -> usize {
         self.0 as usize
     }
@@ -67,33 +70,40 @@ const _: () = assert!(MAX_PARTS <= u8::BITS as usize);
 impl PartSet {
     pub const EMPTY: PartSet = PartSet(0);
 
+    #[optimize(size)]
     pub fn with(self, p: PartId) -> PartSet {
         PartSet(self.0 | 1 << p.0)
     }
 
     /// The bits, for an atomic word.
+    #[optimize(size)]
     pub const fn bits(self) -> u8 {
         self.0
     }
 
     /// `bits` back, the bits past the Parts dropped.
+    #[optimize(size)]
     pub const fn from_bits(b: u8) -> PartSet {
         PartSet(b & ((1u16 << MAX_PARTS) - 1) as u8)
     }
 
+    #[optimize(size)]
     pub fn contains(self, p: PartId) -> bool {
         self.0 & 1 << p.0 != 0
     }
 
+    #[optimize(size)]
     pub fn len(self) -> usize {
         self.0.count_ones() as usize
     }
 
+    #[optimize(size)]
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }
 
     /// In Part order.
+    #[optimize(size)]
     pub fn iter(self) -> impl Iterator<Item = PartId> {
         PartId::ALL.into_iter().filter(move |&p| self.contains(p))
     }

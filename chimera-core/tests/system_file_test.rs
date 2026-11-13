@@ -11,7 +11,7 @@ use chimera_core::storage::{
 };
 use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::{
-    Accent, Black, Bright, Gamma, Pages, Saver, TextSize, ThemeSettings,
+    Accent, Black, Bright, Gamma, PadFollow, Pages, Saver, TextSize, ThemeSettings,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -45,6 +45,7 @@ fn settings() -> SystemSettings {
             saver: Saver::from_index(3),
             pages: Pages::Stack,
             text: TextSize::Large,
+            pad_follow: PadFollow::Always,
         },
         last_project: ProjectId::new(7),
     }
@@ -657,6 +658,35 @@ fn a_system_from_before_invert_is_dark() {
             .join(name);
         let f = std::fs::read(p).unwrap();
         assert!(!boot_bytes(&f).0.theme.invert, "{name}");
+    }
+}
+
+/// A SYSTEM from before PAD FOLLOW, either v1 fixture, is IDLE (ADR 0268).
+#[test]
+fn a_system_from_before_pad_follow_is_idle() {
+    for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let f = std::fs::read(p).unwrap();
+        assert_eq!(boot_bytes(&f).0.theme.pad_follow, PadFollow::Idle, "{name}");
+    }
+}
+
+/// PAD FOLLOW's every choice round-trips.
+#[test]
+fn pad_follow_round_trips() {
+    for f in PadFollow::ALL {
+        let mut s = MemStore::new(1);
+        let want = SystemSettings {
+            theme: ThemeSettings {
+                pad_follow: f,
+                ..ThemeSettings::DEFAULT
+            },
+            ..SystemSettings::DEFAULT
+        };
+        save(&mut s, &want);
+        assert_eq!(boot(&mut s).0.theme.pad_follow, f);
     }
 }
 

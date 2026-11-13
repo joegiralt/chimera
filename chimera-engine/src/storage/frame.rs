@@ -27,6 +27,7 @@ pub enum FileKind {
 }
 
 impl FileKind {
+    #[optimize(size)]
     fn from_code(c: u8) -> Option<Self> {
         match c {
             1 => Some(FileKind::Sound),
@@ -46,19 +47,23 @@ pub struct Generation(u32);
 impl Generation {
     pub const FIRST: Self = Generation(1);
 
+    #[optimize(size)]
     pub const fn new(n: u32) -> Self {
         Generation(n)
     }
 
+    #[optimize(size)]
     pub fn next(self) -> Self {
         Generation(self.0.wrapping_add(1))
     }
 
     /// Serial-number order: newer when at most 2³¹ − 1 saves ahead.
+    #[optimize(size)]
     pub fn is_newer_than(self, o: Self) -> bool {
         (self.0.wrapping_sub(o.0) as i32) > 0
     }
 
+    #[optimize(size)]
     pub fn get(self) -> u32 {
         self.0
     }
@@ -73,6 +78,7 @@ pub enum Side {
 
 impl Side {
     /// The 8.3 extension.
+    #[optimize(size)]
     pub fn ext(self) -> &'static [u8] {
         match self {
             Side::A => b"A",
@@ -80,6 +86,7 @@ impl Side {
         }
     }
 
+    #[optimize(size)]
     pub fn other(self) -> Side {
         match self {
             Side::A => Side::B,
@@ -106,6 +113,7 @@ pub struct ProjectFile {
 }
 
 impl ProjectFile {
+    #[optimize(size)]
     pub(crate) fn new(id: ProjectId, vol: chimera_hal::store::VolumeId) -> Self {
         ProjectFile { id, vol }
     }
@@ -113,15 +121,18 @@ impl ProjectFile {
     /// For tests that write a project's files by hand.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn for_test(id: ProjectId, vol: chimera_hal::store::VolumeId) -> Self {
         Self::new(id, vol)
     }
 
+    #[optimize(size)]
     pub fn id(self) -> ProjectId {
         self.id
     }
 
     /// The card it is on.
+    #[optimize(size)]
     pub fn vol(self) -> chimera_hal::store::VolumeId {
         self.vol
     }
@@ -141,14 +152,17 @@ impl ProjectId {
     /// The lowest id.
     pub const MIN: Self = ProjectId(1);
 
+    #[optimize(size)]
     pub fn new(n: u32) -> Option<Self> {
         (1..=Self::MAX).contains(&n).then_some(ProjectId(n))
     }
 
+    #[optimize(size)]
     pub fn get(self) -> u32 {
         self.0
     }
 
+    #[optimize(size)]
     pub fn stem(self) -> [u8; 8] {
         let mut s = *b"P0000000";
         let mut n = self.0;
@@ -169,6 +183,7 @@ pub struct Header {
 }
 
 impl Header {
+    #[optimize(size)]
     pub fn encode(&self) -> [u8; HEADER_LEN] {
         let mut b = [0; HEADER_LEN];
         b[..4].copy_from_slice(&MAGIC);
@@ -184,6 +199,7 @@ impl Header {
 
 /// A header alone, as the framer decodes it: the project list reads one
 /// block a side, with no CRC to wait for.
+#[optimize(size)]
 pub fn peek_header(b: &[u8; HEADER_LEN]) -> Result<Header, FileError> {
     if b[..4] != MAGIC {
         return Err(FileError::BadMagic);
@@ -228,6 +244,7 @@ pub enum FileError {
 
 impl FileError {
     /// The line the UI shows.
+    #[optimize(size)]
     pub fn message(self) -> &'static str {
         match self {
             FileError::Truncated => "FILE IS CUT SHORT",
@@ -244,6 +261,7 @@ impl FileError {
     /// A side a cut write could have left: its bytes fail the CRC, or stop
     /// short of the length. Every other error is a verdict on bytes whose CRC
     /// matched, because the framer defers every verdict until the CRC is known.
+    #[optimize(size)]
     pub fn is_torn(self) -> bool {
         matches!(self, FileError::Truncated | FileError::BadCrc)
     }
@@ -302,6 +320,7 @@ pub struct Framer {
 impl Framer {
     /// `file_len` is the length the store reports. Under 32 B there is no
     /// header and trailer to check, so the file is `Truncated`: torn.
+    #[optimize(size)]
     pub fn new(file_len: u32) -> Result<Self, FileError> {
         let file_len = file_len as usize;
         if file_len < HEADER_LEN + TRAILER_LEN {
@@ -322,6 +341,7 @@ impl Framer {
     /// Errs only on bytes past `file_len` (`Corrupt`, sticky): the stream
     /// disagrees with its own length. Every verdict on the file comes from
     /// `finish`.
+    #[optimize(size)]
     pub fn push(
         &mut self,
         chunk: &[u8],
@@ -339,6 +359,7 @@ impl Framer {
 
     /// `Truncated` short of `file_len`; else `BadCrc` if the trailer doesn't
     /// match; else the first deferred error, if any.
+    #[optimize(size)]
     pub fn finish(&self) -> Result<(), FileError> {
         match self.state {
             State::Failed(e) => Err(e),
@@ -354,11 +375,13 @@ impl Framer {
     }
 
     /// The CRC of the body hashed so far: once `finish` is Ok, the file's.
+    #[optimize(size)]
     pub fn crc(&self) -> u32 {
         self.crc.finish()
     }
 
     /// Record the first verdict, then hash the rest of the body unparsed.
+    #[optimize(size)]
     fn defer(&mut self, e: FileError) {
         self.verdict.get_or_insert(e);
         match self.body_end() - self.pos {
@@ -367,10 +390,12 @@ impl Framer {
         }
     }
 
+    #[optimize(size)]
     fn body_end(&self) -> usize {
         self.file_len - TRAILER_LEN
     }
 
+    #[optimize(size)]
     fn run(
         &mut self,
         mut chunk: &[u8],
@@ -409,6 +434,7 @@ impl Framer {
     }
 
     /// The current unit is whole: act on it and move on.
+    #[optimize(size)]
     fn complete(
         &mut self,
         on: &mut dyn FnMut(Event<'_>) -> Result<(), FileError>,
@@ -462,12 +488,14 @@ impl Framer {
         }
     }
 
+    #[optimize(size)]
     fn start(&mut self, s: State) {
         self.state = s;
         self.have = 0;
     }
 
     /// Another record head, or the trailer when the body is spent.
+    #[optimize(size)]
     fn next_record(&mut self) -> Result<(), FileError> {
         match self.body_end() - self.pos {
             0 => self.start(State::Trailer),

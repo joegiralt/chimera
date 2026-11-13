@@ -37,6 +37,7 @@ pub enum LibNote {
 }
 
 impl LibNote {
+    #[optimize(size)]
     pub fn message(self) -> &'static str {
         match self {
             LibNote::Store(e) => e.message(),
@@ -49,12 +50,14 @@ impl LibNote {
 }
 
 impl From<StoreError> for LibNote {
+    #[optimize(size)]
     fn from(e: StoreError) -> Self {
         LibNote::Store(e)
     }
 }
 
 impl CardFault for LibNote {
+    #[optimize(size)]
     fn store_error(&self) -> Option<StoreError> {
         match self {
             LibNote::Store(e) => Some(*e),
@@ -64,6 +67,7 @@ impl CardFault for LibNote {
 }
 
 /// The user ids in `[base, base + ID_WINDOW)` there are, as a bitmap.
+#[optimize(size)]
 fn window<S: Store>(
     s: &mut S,
     r: &crate::storage::Ready,
@@ -81,6 +85,7 @@ fn window<S: Store>(
 }
 
 /// The next free user id: `top + 1` from one pass, else the lowest gap.
+#[optimize(size)]
 fn free_id<S: Store>(s: &mut S, r: &crate::storage::Ready) -> Result<UserId, LibNote> {
     let mut top = 0;
     s.list(r.volume(), Dir::Sounds, &mut |f, _| {
@@ -105,6 +110,7 @@ fn free_id<S: Store>(s: &mut S, r: &crate::storage::Ready) -> Result<UserId, Lib
 
 /// Part `part`'s Sound as `save_library_sound` saves it, with the map
 /// record its closed door kept (#862).
+#[optimize(size)]
 pub fn save_library_part<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -120,6 +126,7 @@ pub fn save_library_part<S: Store>(
 /// `s` as a new library file named `name`: the directories made first, the
 /// id the next free one, the file read back whole. Any failure after the
 /// write began deletes it.
+#[optimize(size)]
 pub fn save_library_sound<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -130,6 +137,7 @@ pub fn save_library_sound<S: Store>(
     save_library(card, store, s, &KeptMap::EMPTY, name, stamp)
 }
 
+#[optimize(size)]
 fn save_library<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -202,6 +210,7 @@ pub struct LibEntry {
 }
 
 impl LibEntry {
+    #[optimize(size)]
     pub fn stamp(&self) -> Option<BuildStamp> {
         self.stamp
     }
@@ -217,6 +226,7 @@ pub enum Shelf {
 
 impl Shelf {
     /// `id`'s place down this shelf's pages, if it is on it.
+    #[optimize(size)]
     fn rank(self, id: LibId) -> Option<u32> {
         match (self, id.kind()) {
             (Shelf::User, LibKind::User(u)) => Some(LibId::USER_MAX - u.get()),
@@ -265,6 +275,7 @@ impl LibPage {
 
     /// `EMPTY`, written in place a row at a time: a `const` page would put
     /// its 48-row image in flash for the copy (about 3.8 KB).
+    #[optimize(size)]
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` comes from `slot`, so it is non-null, aligned for
@@ -292,11 +303,13 @@ impl LibPage {
         }
     }
 
+    #[optimize(size)]
     pub fn entries(&self) -> &[Option<LibEntry>] {
         &self.entries[..usize::from(self.len)]
     }
 
     /// Only the rows `keep` takes, in order.
+    #[optimize(size)]
     pub fn retain(&mut self, keep: impl Fn(&LibEntry) -> bool) {
         let len = usize::from(self.len);
         let mut n = 0;
@@ -312,6 +325,7 @@ impl LibPage {
         self.len = n as u8;
     }
 
+    #[optimize(size)]
     pub fn position(&self, id: LibId) -> Option<usize> {
         self.entries()
             .iter()
@@ -319,6 +333,7 @@ impl LibPage {
     }
 
     /// `e`, a row of this page, as the file a load re-checks.
+    #[optimize(size)]
     pub fn file(&self, e: &LibEntry) -> Option<LibFile> {
         Some(LibFile {
             id: e.id,
@@ -346,6 +361,7 @@ struct Near {
 
 impl Near {
     /// `at` is its id's rank (`First`'s none).
+    #[optimize(size)]
     fn see(&mut self, at: PageAt, at_rank: u32, n: u32, id: LibId, side: usize, size: u32) {
         let (lo, hi) = match at {
             PageAt::First => (0, u32::MAX),
@@ -398,10 +414,12 @@ struct PeekSink {
 }
 
 impl ReadSink for PeekSink {
+    #[optimize(size)]
     fn begin(&mut self, _: u32) -> ControlFlow<()> {
         ControlFlow::Continue(())
     }
 
+    #[optimize(size)]
     fn chunk(&mut self, b: &[u8]) -> ControlFlow<()> {
         let n = b.len().min(LIB_PEEK - self.len);
         self.buf[self.len..self.len + n].copy_from_slice(&b[..n]);
@@ -416,6 +434,7 @@ impl ReadSink for PeekSink {
 
 /// One side's peek; `None` when it vanished since the pass. Under a
 /// header and a record it is `Truncated` with no read.
+#[optimize(size)]
 fn peek_side<S: Store>(
     s: &mut S,
     vol: VolumeId,
@@ -442,6 +461,7 @@ fn peek_side<S: Store>(
 /// needs newer firmware is the error even beside a readable one; else the
 /// newer readable side; else the first error. With it, that side's stamp,
 /// which a factory row doesn't keep, and its description.
+#[optimize(size)]
 fn lib_entry(
     id: LibId,
     sides: [Option<(Result<Peek, FileError>, u32)>; 2],
@@ -490,6 +510,7 @@ fn lib_entry(
 /// An id's row from the sides of the sizes listed: the one rule the
 /// listing and a load's re-check share. A side that vanished since is
 /// skipped; with neither read, no generation and no error.
+#[optimize(size)]
 fn peek_pair<S: Store>(
     s: &mut S,
     vol: VolumeId,
@@ -510,6 +531,7 @@ fn peek_pair<S: Store>(
 
 /// The page of `shelf`'s Sounds at `at`, in its order, into `out` in
 /// place: one directory pass, then a peek of each seen side of the kept ids.
+#[optimize(size)]
 pub fn list_library<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -590,11 +612,13 @@ pub struct SourceNeed {
 impl SourceNeed {
     /// A `.SRC` to read: on the card with bytes. Anything else is stored
     /// absent, at no cost.
+    #[optimize(size)]
     pub fn readable(&self) -> bool {
         self.on_card && self.held > 0
     }
 
     /// Why it is stored absent: damaged on the card, or not there.
+    #[optimize(size)]
     fn absence(&self) -> Absence {
         if self.on_card {
             Absence::Missing
@@ -635,6 +659,7 @@ pub enum AdoptError {
 }
 
 impl From<AdoptError> for ReplaceError {
+    #[optimize(size)]
     fn from(e: AdoptError) -> Self {
         match e {
             AdoptError::Changed => ReplaceError::Changed,
@@ -644,6 +669,7 @@ impl From<AdoptError> for ReplaceError {
 }
 
 /// `source`'s pool need now: `None` when the pool holds it with its bytes.
+#[optimize(size)]
 fn source_need<S: Store>(
     s: &mut S,
     vol: VolumeId,
@@ -676,6 +702,7 @@ fn source_need<S: Store>(
 }
 
 /// The sizes of `id`'s two sides on `vol`, as the directory has them.
+#[optimize(size)]
 fn sides_of<S: Store>(s: &mut S, vol: VolumeId, id: LibId) -> Result<[Option<u32>; 2], StoreError> {
     let mut sizes = [None; 2];
     match s.list(vol, Dir::Sounds, &mut |f, size| {
@@ -691,6 +718,7 @@ fn sides_of<S: Store>(s: &mut S, vol: VolumeId, id: LibId) -> Result<[Option<u32
 /// `file` still the row listed, on the card in the slot (`vol`): its
 /// sides re-listed and re-peeked, refused when the card, or the pair,
 /// moved since; with its description. A load and `peek_note` share it.
+#[optimize(size)]
 fn recheck<S: Store>(
     s: &mut S,
     vol: VolumeId,
@@ -713,6 +741,7 @@ fn recheck<S: Store>(
 /// The description of `file`, a listed factory row, peeked as the listing
 /// peeks it: FACTORY keeps the selected row's alone (showcase spec § 1,
 /// Cost). Refused as a load is when the card or the file moved since.
+#[optimize(size)]
 pub fn peek_note<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -729,6 +758,7 @@ pub fn peek_note<S: Store>(
 /// `file` decoded into the pool's scratch, nothing else touched: its
 /// sides re-peeked first, so a pair gone or re-written since the listing
 /// refuses. A clobbered scratch is harmless: only `adopt` reads it.
+#[optimize(size)]
 pub fn read_library_sound<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -785,6 +815,7 @@ impl Project {
     /// cost, no slot.
     /// Closed, a Sound with a kept map record never dedupes: a slot
     /// equal to it but for the map would lose it (#862).
+    #[optimize(size)]
     pub fn library_needs(
         &self,
         src: Option<SourceNeed>,
@@ -795,6 +826,7 @@ impl Project {
 
     /// `library_needs` for `snd`: the host's demo build places a Sound as
     /// a library load would.
+    #[optimize(size)]
     pub fn needs_for(
         &self,
         snd: &Sound,
@@ -803,6 +835,7 @@ impl Project {
         self.needs(snd, src, true)
     }
 
+    #[optimize(size)]
     fn needs(
         &self,
         snd: &Sound,
@@ -853,6 +886,7 @@ impl Project {
     ///     }
     /// }
     /// ```
+    #[optimize(size)]
     pub fn adopt(
         &mut self,
         c: Confirmed<LibraryPart>,

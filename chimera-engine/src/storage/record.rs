@@ -97,9 +97,16 @@ pub enum RecordTag {
     /// record of 8 B, from before long names, has none), after the Part's
     /// `Origin`. Not critical.
     Scala,
+    /// A project Part's kit (ADR 0265): 13 B a pad, pads 1–12 in order:
+    /// machine code, knobs A–H, level, pan (`i8`), choke code, RETRIG
+    /// code. After the Part's `Origin`. Not critical: a firmware before
+    /// DRUM refuses a DRUM Sound by its `Engine`, so the kit it skips
+    /// plays on no Part of a file it loads.
+    Kit,
 }
 
 impl RecordTag {
+    #[optimize(size)]
     pub const fn code(self) -> u16 {
         match self {
             RecordTag::Block => 0x0001,
@@ -133,9 +140,11 @@ impl RecordTag {
             RecordTag::Controller => 0x0021,
             RecordTag::MapSection => 0x0022,
             RecordTag::Scala => 0x0023,
+            RecordTag::Kit => 0x0024,
         }
     }
 
+    #[optimize(size)]
     pub fn from_code(c: u16) -> Option<Self> {
         Some(match c {
             0x0001 => RecordTag::Block,
@@ -169,12 +178,14 @@ impl RecordTag {
             0x0021 => RecordTag::Controller,
             0x0022 => RecordTag::MapSection,
             0x0023 => RecordTag::Scala,
+            0x0024 => RecordTag::Kit,
             _ => return None,
         })
     }
 
     /// ORBIT's, which a project keeps after its six Parts: no Sound or
     /// SYSTEM holds one.
+    #[optimize(size)]
     pub const fn is_orbit(self) -> bool {
         matches!(
             self,
@@ -196,6 +207,7 @@ pub enum ReadTag {
 }
 
 impl ReadTag {
+    #[optimize(size)]
     pub fn critical(self) -> bool {
         let code = match self {
             ReadTag::Known(t) => t.code(),
@@ -216,6 +228,7 @@ pub struct RecordBuf {
 }
 
 impl RecordBuf {
+    #[optimize(size)]
     pub fn new() -> Self {
         RecordBuf {
             buf: [0; MAX_RECORD_LEN],
@@ -223,18 +236,22 @@ impl RecordBuf {
         }
     }
 
+    #[optimize(size)]
     pub fn u8(&mut self, v: u8) {
         self.bytes(&[v]);
     }
 
+    #[optimize(size)]
     pub fn u32(&mut self, v: u32) {
         self.bytes(&v.to_le_bytes());
     }
 
+    #[optimize(size)]
     pub fn f32(&mut self, v: f32) {
         self.bytes(&v.to_le_bytes());
     }
 
+    #[optimize(size)]
     pub fn bytes(&mut self, b: &[u8]) {
         let end = self.len + b.len();
         assert!(end <= MAX_RECORD_LEN, "record over MAX_RECORD_LEN");
@@ -242,17 +259,20 @@ impl RecordBuf {
         self.len = end;
     }
 
+    #[optimize(size)]
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[..self.len]
     }
 
     /// Empty, for the next record.
+    #[optimize(size)]
     pub fn clear(&mut self) {
         self.len = 0;
     }
 }
 
 impl Default for RecordBuf {
+    #[optimize(size)]
     fn default() -> Self {
         Self::new()
     }
@@ -266,6 +286,7 @@ pub struct RecordWriter<'s> {
 
 impl<'s> RecordWriter<'s> {
     /// A writer with a fresh CRC: the file's, or a body's alone.
+    #[optimize(size)]
     fn new(sink: &'s mut dyn ByteSink) -> Self {
         RecordWriter {
             sink,
@@ -274,10 +295,12 @@ impl<'s> RecordWriter<'s> {
     }
 
     /// A writer of records alone, no header: a pool entry's.
+    #[optimize(size)]
     pub(crate) fn over(sink: &'s mut dyn ByteSink) -> Self {
         Self::new(sink)
     }
 
+    #[optimize(size)]
     fn raw(&mut self, b: &[u8]) -> Result<(), StoreError> {
         self.crc.update(b);
         self.sink.put(b)
@@ -286,6 +309,7 @@ impl<'s> RecordWriter<'s> {
     /// Records copied as they are, hashed into this file's CRC like any
     /// other: a pool entry's, or a whole file the console was sent. The
     /// kind's check judges them once they are on the card.
+    #[optimize(size)]
     pub fn copy(&mut self, records: &[u8]) -> Result<(), StoreError> {
         self.raw(records)
     }
@@ -299,6 +323,7 @@ impl<'s> RecordWriter<'s> {
     ///
     /// # Panics
     /// When `payload` is over `MAX_RECORD_LEN`, which no reader would accept.
+    #[optimize(size)]
     pub fn put(&mut self, tag: RecordTag, payload: &[u8]) -> Result<(), StoreError> {
         assert!(
             payload.len() <= MAX_RECORD_LEN,
@@ -316,6 +341,7 @@ impl<'s> RecordWriter<'s> {
 struct Discard;
 
 impl ByteSink for Discard {
+    #[optimize(size)]
     fn put(&mut self, _: &[u8]) -> Result<(), StoreError> {
         Ok(())
     }
@@ -323,6 +349,7 @@ impl ByteSink for Discard {
 
 /// The CRC of `prefix`, then of the records `body` puts: one pass, the
 /// writer's own CRC, nothing kept.
+#[optimize(size)]
 pub(crate) fn records_crc(
     prefix: &[u8],
     body: impl FnOnce(&mut RecordWriter<'_>) -> Result<(), StoreError>,
@@ -336,6 +363,7 @@ pub(crate) fn records_crc(
 }
 
 /// Header, then whatever `body` puts, then the CRC trailer.
+#[optimize(size)]
 pub fn write_file(
     sink: &mut dyn ByteSink,
     h: &Header,

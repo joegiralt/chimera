@@ -20,6 +20,7 @@ use super::block_codec::{ByteSet, MAX_BLOCK_PARAMS};
 impl BlockRef {
     /// The block's code. `Option`, so a block that is never stored can be
     /// added without a code.
+    #[optimize(size)]
     pub const fn disk_code(self) -> Option<u8> {
         Some(match self {
             BlockRef::Modal => 1,
@@ -54,12 +55,19 @@ impl BlockRef {
             BlockRef::TapeEngine => 34,
             BlockRef::Va => 35,
             BlockRef::VoiceFx => 36,
-            BlockRef::PartMix(_) | BlockRef::Tempo | BlockRef::Random => return None,
+            BlockRef::PartMix(_)
+            | BlockRef::Tempo
+            | BlockRef::Random
+            | BlockRef::Pad
+            | BlockRef::Kit => {
+                return None;
+            }
         })
     }
 
     /// The block's frozen ident, an explicit literal; the fixture pins it
     /// beside the code, so swapping two blocks' codes (ENV 1 and 2) is caught.
+    #[optimize(size)]
     pub const fn disk_ident(self) -> Option<&'static str> {
         Some(match self {
             BlockRef::Modal => "MODAL",
@@ -94,17 +102,25 @@ impl BlockRef {
             BlockRef::TapeEngine => "TAPE_ENG",
             BlockRef::Va => "VA",
             BlockRef::VoiceFx => "VOICEFX",
-            BlockRef::PartMix(_) | BlockRef::Tempo | BlockRef::Random => return None,
+            BlockRef::PartMix(_)
+            | BlockRef::Tempo
+            | BlockRef::Random
+            | BlockRef::Pad
+            | BlockRef::Kit => {
+                return None;
+            }
         })
     }
 
     /// The block with code `c`; `None`: retired or from a newer firmware.
+    #[optimize(size)]
     pub fn from_disk_code(c: u8) -> Option<BlockRef> {
         BlockRef::ALL.into_iter().find(|b| b.disk_code() == Some(c))
     }
 }
 
 impl ModSource {
+    #[optimize(size)]
     pub const fn disk_code(self) -> u8 {
         match self {
             ModSource::Env1 => 0,
@@ -124,6 +140,7 @@ impl ModSource {
 
     /// The source's frozen ident, an explicit literal (not `name` or `tag`,
     /// which are display text).
+    #[optimize(size)]
     pub const fn disk_ident(self) -> &'static str {
         match self {
             ModSource::Env1 => "ENV1",
@@ -140,6 +157,7 @@ impl ModSource {
         }
     }
 
+    #[optimize(size)]
     pub fn from_disk_code(c: u8) -> Option<ModSource> {
         ModSource::ALL.into_iter().find(|s| s.disk_code() == c)
     }
@@ -190,6 +208,7 @@ pub const RETIRED_CODES: &[(u8, u8, u8)] = &retired_codes();
 /// named file (ADR 0259): a project on one plays 12-TET.
 const RETIRED_TUNES: usize = 8;
 
+#[optimize(size)]
 const fn retired_codes() -> [(u8, u8, u8); RetiredModel::ALL.len() + 1 + RETIRED_TUNES] {
     let Some(block) = BlockRef::TapeEngine.disk_code() else {
         panic!("TAPE_ENG has a code")
@@ -236,6 +255,7 @@ pub struct Retired {
 }
 
 impl Retired {
+    #[optimize(size)]
     pub(super) const fn new(held: ByteSet) -> Self {
         Retired {
             vals: [None; MAX_BLOCK_PARAMS],
@@ -244,31 +264,37 @@ impl Retired {
         }
     }
 
+    #[optimize(size)]
     pub(super) fn put(&mut self, id: ParamId, v: f32) {
         self.vals[usize::from(id.0)] = Some(v);
     }
 
+    #[optimize(size)]
     pub(super) fn put_code(&mut self, id: ParamId, c: u8) {
         if let Some(x) = self.codes.get_mut(usize::from(id.0)) {
             *x = Some(c);
         }
     }
 
+    #[optimize(size)]
     pub fn get(&self, id: ParamId) -> Option<f32> {
         self.vals.get(usize::from(id.0)).copied().flatten()
     }
 
     /// The retired code `id` held in the file.
+    #[optimize(size)]
     pub fn code(&self, id: ParamId) -> Option<u8> {
         self.codes.get(usize::from(id.0)).copied().flatten()
     }
 
+    #[optimize(size)]
     pub fn any(&self) -> bool {
         self.vals.iter().any(Option::is_some) || self.codes.iter().any(Option::is_some)
     }
 
     /// The file named `id`, live or retired, whatever its value: a stored
     /// param beats one translated into it.
+    #[optimize(size)]
     pub fn held(&self, id: ParamId) -> bool {
         self.held.contains(id.0)
     }
@@ -314,6 +340,7 @@ pub struct DiskAddr {
 
 impl DiskAddr {
     /// `id` of the stored block `b`: a block without a code fails the build.
+    #[optimize(size)]
     pub const fn of(b: BlockRef, id: ParamId) -> DiskAddr {
         match b.disk_code() {
             Some(block) => DiskAddr { block, id },
@@ -341,6 +368,7 @@ pub const READDRESS: &[(DiskAddr, ParamAddr)] = &[
 ];
 
 /// DRV (block 9) and the folder (block 11), retired into the FX slot.
+#[optimize(size)]
 const fn old(block: u8, id: u8) -> DiskAddr {
     DiskAddr {
         block,
@@ -379,6 +407,7 @@ const _: () = {
 };
 
 /// The live param a retired address's routes load at, if any.
+#[optimize(size)]
 pub fn readdress(a: DiskAddr) -> Option<ParamAddr> {
     READDRESS
         .iter()
@@ -402,6 +431,7 @@ pub struct ValidAddr {
 impl ValidAddr {
     /// `b`'s stored params in spec-table order: the canonical save and load
     /// order, so a param whose decoding needs another comes after it.
+    #[optimize(size)]
     pub fn of_block(b: BlockRef) -> impl Iterator<Item = ValidAddr> {
         b.specs()
             .iter()
@@ -409,19 +439,23 @@ impl ValidAddr {
             .map(move |spec| ValidAddr { block: b, spec })
     }
 
+    #[optimize(size)]
     pub fn find(b: BlockRef, id: ParamId) -> Option<ValidAddr> {
         Self::of_block(b).find(|a| a.spec.id == id)
     }
 
+    #[optimize(size)]
     pub fn addr(self) -> ParamAddr {
         ParamAddr::new(self.block, self.spec.id)
     }
 
+    #[optimize(size)]
     pub fn spec(self) -> &'static ParamSpec {
         self.spec
     }
 
     /// Stored as a disk code, not a float.
+    #[optimize(size)]
     pub fn coded(self) -> bool {
         self.spec.kind == ParamKind::Enum
     }
@@ -435,6 +469,7 @@ pub enum DiskValue {
 }
 
 /// `a`'s value in `b`, which must be `a`'s block.
+#[optimize(size)]
 pub fn read_value(b: &dyn Block, a: ValidAddr) -> DiskValue {
     debug_assert!(
         core::ptr::eq(b.specs(), a.block.specs()),
@@ -453,11 +488,13 @@ pub fn read_value(b: &dyn Block, a: ValidAddr) -> DiskValue {
 // explicit code, as `BlockRef` does, so a variant's place never matters.
 
 /// The one of `all` stored as `c`.
+#[optimize(size)]
 fn find_code<T: DiskCode>(all: &[T], c: u8) -> Option<T> {
     all.iter().copied().find(|x| x.disk_code() == c)
 }
 
 impl DiskCode for ScaleKind {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             ScaleKind::Major => 0,
@@ -474,6 +511,7 @@ impl DiskCode for ScaleKind {
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             ScaleKind::Major => "MAJOR",
@@ -490,12 +528,14 @@ impl DiskCode for ScaleKind {
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         find_code(&ScaleKind::ALL, c)
     }
 }
 
 impl DiskCode for PitchClass {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             PitchClass::C => 0,
@@ -513,6 +553,7 @@ impl DiskCode for PitchClass {
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             PitchClass::C => "C",
@@ -530,6 +571,7 @@ impl DiskCode for PitchClass {
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         find_code(&PitchClass::ALL, c)
     }
@@ -541,20 +583,24 @@ const DEGREE_IDENTS: [&str; 12] = [
 ];
 
 impl DiskCode for Degree {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         self.index() as u8
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         DEGREE_IDENTS[self.index()]
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         Degree::ALL.get(c as usize).copied()
     }
 }
 
 impl DiskCode for Range {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             Range::Zero => 0,
@@ -564,6 +610,7 @@ impl DiskCode for Range {
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             Range::Zero => "0",
@@ -573,12 +620,14 @@ impl DiskCode for Range {
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         find_code(&Range::ALL, c)
     }
 }
 
 impl DiskCode for SnapTo {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             SnapTo::Scale => 0,
@@ -586,6 +635,7 @@ impl DiskCode for SnapTo {
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             SnapTo::Scale => "SCALE",
@@ -593,12 +643,14 @@ impl DiskCode for SnapTo {
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         find_code(&SnapTo::ALL, c)
     }
 }
 
 impl DiskCode for NoteMode {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             NoteMode::Step => 0,
@@ -606,6 +658,7 @@ impl DiskCode for NoteMode {
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             NoteMode::Step => "STEP",
@@ -613,12 +666,14 @@ impl DiskCode for NoteMode {
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         find_code(&NoteMode::ALL, c)
     }
 }
 
 impl DiskCode for Walk {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             Walk::Up => 0,
@@ -628,6 +683,7 @@ impl DiskCode for Walk {
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             Walk::Up => "UP",
@@ -637,24 +693,28 @@ impl DiskCode for Walk {
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         find_code(&Walk::ALL, c)
     }
 }
 
 impl DiskCode for TargetKind {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             TargetKind::Part => 0,
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             TargetKind::Part => "PART",
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         (c == 0).then_some(TargetKind::Part)
     }
@@ -664,6 +724,7 @@ impl DiskCode for TargetKind {
 // assigned: ECHO never shipped.
 
 impl DiskCode for ReverbType {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             ReverbType::Quad => 0,
@@ -675,6 +736,7 @@ impl DiskCode for ReverbType {
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             ReverbType::Quad => "QUAD",
@@ -686,12 +748,14 @@ impl DiskCode for ReverbType {
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         find_code(&ReverbType::ALL, c)
     }
 }
 
 impl DiskCode for RevSync {
+    #[optimize(size)]
     fn disk_code(self) -> u8 {
         match self {
             RevSync::Off => 0,
@@ -700,6 +764,7 @@ impl DiskCode for RevSync {
         }
     }
 
+    #[optimize(size)]
     fn disk_ident(self) -> &'static str {
         match self {
             RevSync::Off => "OFF",
@@ -708,6 +773,7 @@ impl DiskCode for RevSync {
         }
     }
 
+    #[optimize(size)]
     fn from_disk_code(c: u8) -> Option<Self> {
         find_code(&RevSync::ALL, c)
     }

@@ -386,6 +386,8 @@ pub fn expects_sound(e: EngineType) -> bool {
     match e {
         // TAPE on a source; with none it plays nothing.
         EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => true,
+        // A note alone names no pad: a hit starts from its kit (`strike`).
+        EngineType::Drum => false,
     }
 }
 

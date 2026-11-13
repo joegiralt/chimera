@@ -29,20 +29,24 @@ use crate::storage::{
     RecordTag, SaveError, Side, TRAILER_LEN, list_stems, peek_header, read_small, write_small,
 };
 
-/// The shared section and one an engine.
+/// The shared section and one an engine, DRUM aside.
 pub const SECTIONS: usize = 5;
 
 /// The maps a listing holds.
 pub const MAX_MAPS: usize = 16;
 
-/// Section `i`'s engine: `None` for 0, the shared one.
+/// Section `i`'s engine: `None` for 0, the shared one, and past the last.
 fn engine_at(i: usize) -> Option<EngineType> {
-    EngineType::from_disk_code(u8::try_from(i.checked_sub(1)?).ok()?)
+    EngineType::from_disk_code(u8::try_from(i.checked_sub(1)?).ok()?).filter(|&e| at(Some(e)) == i)
 }
 
-/// The section of `e`'s rows; `None` is shared.
+/// The section of `e`'s rows; `None` is shared. DRUM has none of its own
+/// (its knobs are its pads'): its rows are the shared ones.
 fn at(e: Option<EngineType>) -> usize {
-    e.map_or(0, |e| 1 + usize::from(e.disk_code()))
+    match e {
+        None | Some(EngineType::Drum) => 0,
+        Some(e) => 1 + usize::from(e.disk_code()),
+    }
 }
 
 /// A controller map: its sections, each a `MidiMap`.
@@ -466,5 +470,19 @@ mod tests {
         assert!(m.change(&row(22), None, EngineType::Algo));
         assert!(m.section(None).is_empty());
         assert_eq!(m.section(Some(EngineType::Algo)).entries(), &[row(21)]);
+    }
+
+    /// DRUM has no section of its own: a Part on it plays the shared rows,
+    /// and a section coded past the last engine's stays a later
+    /// firmware's.
+    #[test]
+    fn drum_plays_the_shared_section() {
+        let mut m = ControllerMap::EMPTY;
+        push(&mut m.sections[0], row(22));
+        assert_eq!(m.section(Some(EngineType::Drum)).entries(), &[row(22)]);
+        assert_eq!(m.layer(EngineType::Drum), (*m.section(None), 0));
+        assert!(m.absorb(&MidiMap::EMPTY, EngineType::Drum).is_ok());
+        assert_eq!(engine_at(SECTIONS), None);
+        assert_eq!(engine_at(SECTIONS - 1), Some(EngineType::Va));
     }
 }

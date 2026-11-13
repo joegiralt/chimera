@@ -16,6 +16,8 @@
 mod demos;
 mod fixes;
 mod machines;
+#[cfg(test)]
+mod null_test;
 pub(crate) mod parts;
 mod sample;
 mod vox;

@@ -302,6 +302,7 @@ fn in_settings_and_set_theme() {
         saver: Saver::from_index(5),
         pages: Pages::Stack,
         text: chimera_core::ui::theme::TextSize::Large,
+        pad_follow: chimera_core::ui::theme_settings::PadFollow::Off,
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);

@@ -21,6 +21,7 @@ pub struct Line {
 }
 
 impl Line {
+    #[optimize(size)]
     pub fn new(s: &str) -> Line {
         let mut l = Line {
             buf: [0; LINE_LEN],
@@ -30,6 +31,7 @@ impl Line {
         l
     }
 
+    #[optimize(size)]
     pub fn as_str(&self) -> &str {
         // Only `write_str` fills it, at char boundaries.
         core::str::from_utf8(&self.buf[..self.len as usize]).unwrap_or("")
@@ -38,6 +40,7 @@ impl Line {
 
 /// Truncating: what doesn't fit is dropped, never an error.
 impl Write for Line {
+    #[optimize(size)]
     fn write_str(&mut self, s: &str) -> fmt::Result {
         let at = self.len as usize;
         let mut n = s.len().min(LINE_LEN - at);
@@ -58,6 +61,7 @@ pub enum Subject {
 }
 
 impl fmt::Display for Subject {
+    #[optimize(size)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Subject::Name(n) => f.write_str(n.as_str()),
@@ -122,6 +126,7 @@ pub enum ProjectNote {
 /// `msg: subject`. Past `LINE_LEN` the message gives way, so the name or
 /// file always shows whole: it drops its last `: ` clause, else its last
 /// words, never half a word.
+#[optimize(size)]
 fn naming(msg: &str, subject: Subject) -> Line {
     let mut sub = Line::new("");
     let _ = write!(sub, "{subject}");
@@ -148,6 +153,7 @@ fn naming(msg: &str, subject: Subject) -> Line {
 
 impl ProjectNote {
     /// Parts and slots are 1-based, slots in two digits.
+    #[optimize(size)]
     pub fn line(&self) -> Line {
         let mut l = Line::new("");
         let _ = match *self {

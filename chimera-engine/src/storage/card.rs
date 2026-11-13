@@ -15,6 +15,7 @@ impl CardError {
     /// `None` for NO CARD, for a busy bus (the card untouched), and for
     /// file-level conditions: `NotFound`, `Corrupt`, and `Full`, which
     /// leaves a healthy card a delete can make room on.
+    #[optimize(size)]
     pub fn from_store(e: StoreError) -> Option<CardError> {
         match e {
             StoreError::NoCard
@@ -34,6 +35,7 @@ impl CardError {
 
 /// For `StoreError::message`.
 impl From<CardError> for StoreError {
+    #[optimize(size)]
     fn from(e: CardError) -> StoreError {
         match e {
             CardError::Unsupported(u) => StoreError::Unsupported(u),
@@ -88,6 +90,7 @@ pub struct Ready {
 }
 
 impl Ready {
+    #[optimize(size)]
     pub fn volume(&self) -> VolumeId {
         self.vol
     }
@@ -122,16 +125,19 @@ pub trait CardFault {
 }
 
 impl CardFault for StoreError {
+    #[optimize(size)]
     fn store_error(&self) -> Option<StoreError> {
         Some(*self)
     }
 }
 
 impl Card {
+    #[optimize(size)]
     pub const fn new() -> Card {
         Card::Absent
     }
 
+    #[optimize(size)]
     fn last(self) -> Option<VolumeId> {
         match self {
             Card::Absent => None,
@@ -145,6 +151,7 @@ impl Card {
     ///
     /// `Err` is a failed mount. Once mounted, the event comes back whatever
     /// `op` returns: a swap is news even when the op on the new card fails.
+    #[optimize(size)]
     pub fn run<S: Store + ?Sized, R, E: CardFault + From<StoreError>>(
         &mut self,
         store: &mut S,
@@ -160,6 +167,7 @@ impl Card {
 
     /// `run`'s mount bookkeeping, out of line: one copy, not one per op.
     #[inline(never)]
+    #[optimize(size)]
     fn mount(
         &mut self,
         r: Result<VolumeId, StoreError>,
@@ -180,11 +188,13 @@ pub struct Outcome<R, E> {
 }
 
 impl Default for Card {
+    #[optimize(size)]
     fn default() -> Card {
         Card::new()
     }
 }
 
+#[optimize(size)]
 fn mounted(card: Card, vol: VolumeId) -> (Card, CardEvent) {
     let event = match card.last() {
         None => CardEvent::Mounted,
@@ -198,6 +208,7 @@ fn mounted(card: Card, vol: VolumeId) -> (Card, CardEvent) {
 /// fault, and one that names no card fault (a file error from `mount`) is
 /// `Io`. The type-driven fix is a `MountError`:
 /// private issue #196
+#[optimize(size)]
 fn mount_failed(card: Card, e: StoreError) -> Card {
     match e {
         StoreError::NoCard => return Card::Absent,
@@ -212,6 +223,7 @@ fn mount_failed(card: Card, e: StoreError) -> Card {
 }
 
 /// The card after a mount: an event on success, none on failure.
+#[optimize(size)]
 pub fn after_mount(card: Card, r: Result<VolumeId, StoreError>) -> (Card, Option<CardEvent>) {
     match r {
         Ok(vol) => {
@@ -224,6 +236,7 @@ pub fn after_mount(card: Card, r: Result<VolumeId, StoreError>) -> (Card, Option
 
 /// NO CARD is `Absent`; a card fault is `Failed`, keeping the last volume; a
 /// file error or a full card leaves the card alone.
+#[optimize(size)]
 pub fn after_error(card: Card, e: StoreError) -> Card {
     if e == StoreError::NoCard {
         return Card::Absent;

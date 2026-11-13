@@ -1,6 +1,7 @@
 [target.thumbv7em-none-eabihf]
-# link.x comes from chimera-stm32/build.rs, after bank2.x.
-rustflags = ["-C", "target-cpu=cortex-m7"]
+# link.x comes from chimera-stm32/build.rs, after bank2.x. The panic handler
+# reads nothing of its info, so panics carry no file, line or column.
+rustflags = ["-C", "target-cpu=cortex-m7", "-Z", "location-detail=none"]
 
 [env]
 # Test threads construct the 250 KB voice pool and FX bus by value; debug

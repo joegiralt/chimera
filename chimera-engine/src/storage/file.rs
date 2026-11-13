@@ -23,6 +23,7 @@ pub trait Check {
     /// The side of a pair the next pass reads: before each side's pass 1,
     /// and before pass 2 in place. A check that plans a load keeps one
     /// plan a side.
+    #[optimize(size)]
     fn side(&mut self, _s: Side) {}
 }
 
@@ -42,6 +43,7 @@ pub trait Decode: Check {
 pub trait DecodeInPlace: Check {
     /// After pass 1 and the pick, before pass 2: an `Err` refuses the
     /// load with the target untouched.
+    #[optimize(size)]
     fn begin<S: Store>(&mut self, _s: &mut S, _r: &Ready) -> Result<(), LoadError> {
         Ok(())
     }
@@ -72,12 +74,14 @@ pub enum SaveError {
 }
 
 impl From<StoreError> for LoadError {
+    #[optimize(size)]
     fn from(e: StoreError) -> Self {
         LoadError::Store(e)
     }
 }
 
 impl From<StoreError> for SaveError {
+    #[optimize(size)]
     fn from(e: StoreError) -> Self {
         SaveError::Store(e)
     }
@@ -93,6 +97,7 @@ pub struct InPlaceError {
 
 /// Before pass 2: the target is untouched.
 impl From<StoreError> for InPlaceError {
+    #[optimize(size)]
     fn from(e: StoreError) -> Self {
         InPlaceError {
             err: LoadError::Store(e),
@@ -102,6 +107,7 @@ impl From<StoreError> for InPlaceError {
 }
 
 impl CardFault for InPlaceError {
+    #[optimize(size)]
     fn store_error(&self) -> Option<StoreError> {
         self.err.store_error()
     }
@@ -109,6 +115,7 @@ impl CardFault for InPlaceError {
 
 /// A file error is the file's, never the card's.
 impl CardFault for LoadError {
+    #[optimize(size)]
     fn store_error(&self) -> Option<StoreError> {
         match *self {
             LoadError::Store(e) => Some(e),
@@ -118,6 +125,7 @@ impl CardFault for LoadError {
 }
 
 impl CardFault for SaveError {
+    #[optimize(size)]
     fn store_error(&self) -> Option<StoreError> {
         match *self {
             SaveError::Store(e) => Some(e),
@@ -142,6 +150,7 @@ impl AbFile {
     };
 
     /// `stem` is 1..=8 bytes of A-Z 0-9.
+    #[optimize(size)]
     pub fn new(dir: Dir, stem: &[u8]) -> Option<AbFile> {
         FileName::new(dir, stem, Side::A.ext())?;
         let mut s = [0; 8];
@@ -153,6 +162,7 @@ impl AbFile {
         })
     }
 
+    #[optimize(size)]
     pub fn side(&self, s: Side) -> FileName {
         FileName::new(self.dir, &self.stem[..self.len as usize], s.ext())
             .expect("a stem `new` checked, or SYSTEM's")
@@ -191,6 +201,7 @@ const NNF: FileError = FileError::NeedsNewerFirmware;
 /// present sides, a tie to A. A side that needs newer firmware and has no
 /// header can't be shown to be older, so it goes first; then any present
 /// side.
+#[optimize(size)]
 fn b_first(a: SideState, b: SideState) -> bool {
     use SideState::{Headerless, Present};
     match (a, b) {
@@ -208,6 +219,7 @@ fn b_first(a: SideState, b: SideState) -> bool {
 /// other error falls back. With nothing to load, the error is the newest
 /// present side's, else a headerless one's, else a torn one's, A first;
 /// `Missing` only when neither side exists.
+#[optimize(size)]
 pub fn pick(a: SideState, b: SideState) -> Pick {
     use SideState::{Headerless, Present, Torn};
     let ab = [(Side::A, a), (Side::B, b)];
@@ -247,6 +259,7 @@ pub fn pick(a: SideState, b: SideState) -> Pick {
 /// newer firmware). With nothing kept, the side holding less: missing
 /// before torn before headerless before present, the older of two present
 /// sides (a tie gives B, as A is taken for the newer), else A.
+#[optimize(size)]
 fn unkept(a: SideState, b: SideState) -> Side {
     use SideState::{Headerless, Missing, Present, Torn};
     match pick(a, b) {
@@ -275,6 +288,7 @@ fn unkept(a: SideState, b: SideState) -> Side {
 /// firmware, whether its header was read or not: a load would never get
 /// past that side to what the save wrote, so nothing is written. Never
 /// shadow, never write.
+#[optimize(size)]
 pub fn write_target(a: SideState, b: SideState) -> Result<(Side, Generation), FileError> {
     if let Pick::Refuse(_, NNF) = pick(a, b) {
         return Err(NNF);
@@ -296,6 +310,7 @@ pub fn write_target(a: SideState, b: SideState) -> Result<(Side, Generation), Fi
 /// The side a load wouldn't keep goes first, so a cut between the two
 /// deletes leaves the kept one: "not deleted". A pair a save refuses
 /// deletes too: that is how the user overrides a newer file.
+#[optimize(size)]
 pub fn delete_order(a: SideState, b: SideState) -> [Side; 2] {
     let first = unkept(a, b);
     [first, first.other()]
@@ -309,6 +324,7 @@ struct Feed<'a> {
 }
 
 impl ReadSink for Feed<'_> {
+    #[optimize(size)]
     fn begin(&mut self, len: u32) -> ControlFlow<()> {
         match Framer::new(len) {
             Ok(f) => {
@@ -322,6 +338,7 @@ impl ReadSink for Feed<'_> {
         }
     }
 
+    #[optimize(size)]
     fn chunk(&mut self, bytes: &[u8]) -> ControlFlow<()> {
         let Some(f) = self.framer.as_mut() else {
             return ControlFlow::Break(());
@@ -349,6 +366,7 @@ pub(crate) enum Scan {
 /// Reads `f` through a `Framer`, handing `on` its events. A `kind` other
 /// than the file's is `WrongKind`, deferred like every verdict; `None`
 /// takes any kind.
+#[optimize(size)]
 pub(crate) fn scan<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
@@ -407,6 +425,7 @@ enum Checked {
 
 impl Checked {
     /// `end` runs only on a side whose framing passed.
+    #[optimize(size)]
     fn of(
         scan: Result<Scan, StoreError>,
         end: impl FnOnce() -> Result<(), FileError>,
@@ -428,6 +447,7 @@ impl Checked {
         })
     }
 
+    #[optimize(size)]
     fn state(&self) -> SideState {
         match *self {
             Checked::Missing => SideState::Missing,
@@ -451,6 +471,7 @@ impl Checked {
     }
 }
 
+#[optimize(size)]
 fn check<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
@@ -463,6 +484,7 @@ fn check<S: Store + ?Sized, C: Check>(
 
 /// Pass 1: the side as `c` judges it. A store error other than `NotFound`
 /// or `Corrupt` is a card fault and comes back as is.
+#[optimize(size)]
 pub fn check_file<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
@@ -477,6 +499,7 @@ pub fn check_file<S: Store + ?Sized, C: Check>(
 /// or a delete judges a side: they run the load's own `Check` (`check_file`),
 /// so a side a load rejects is never kept over the one it loads.
 #[doc(hidden)]
+#[optimize(size)]
 pub fn check_frame<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
@@ -490,6 +513,7 @@ pub fn check_frame<S: Store + ?Sized>(
 /// Pass 2 on a side pass 1 judged: it applies only if it reads the bytes
 /// pass 1 passed. Other bytes (the card changed between the passes) are
 /// `BadCrc`, and the target is untouched.
+#[optimize(size)]
 fn apply<S: Store + ?Sized, D: Decode>(
     s: &mut S,
     r: &Ready,
@@ -510,6 +534,7 @@ fn apply<S: Store + ?Sized, D: Decode>(
 /// Pass 2's read, for the staged and the in-place loader alike: Ok only
 /// if it reads the bytes pass 1 passed (`crc`). Other bytes, or a side
 /// gone or broken since, are `BadCrc`; any other store error is the card's.
+#[optimize(size)]
 fn pass_two<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
@@ -528,6 +553,7 @@ fn pass_two<S: Store + ?Sized>(
 }
 
 /// Checks `f`, then applies it.
+#[optimize(size)]
 pub fn load_file<S: Store + ?Sized, D: Decode>(
     s: &mut S,
     r: &Ready,
@@ -540,6 +566,7 @@ pub fn load_file<S: Store + ?Sized, D: Decode>(
 
 /// Pass 1 on both sides: the one judgement `load_ab`, `save_ab` and
 /// `delete_ab` share.
+#[optimize(size)]
 fn sides<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
@@ -553,6 +580,7 @@ fn sides<S: Store + ?Sized, C: Check>(
 }
 
 /// Checks both sides, `pick`s one and applies it.
+#[optimize(size)]
 pub fn load_ab<S: Store + ?Sized, D: Decode>(
     s: &mut S,
     r: &Ready,
@@ -572,6 +600,7 @@ pub fn load_ab<S: Store + ?Sized, D: Decode>(
 /// `load_ab`, so a failure there leaves the target untouched. Pass 2 then
 /// writes the target as it reads; any failure from there, or a CRC other
 /// than pass 1's, is `clobbered`.
+#[optimize(size)]
 pub fn load_ab_in_place<S: Store, D: DecodeInPlace>(
     s: &mut S,
     r: &Ready,
@@ -611,6 +640,7 @@ pub fn load_ab_in_place<S: Store, D: DecodeInPlace>(
 /// never writes the side a load would take. Returns the generation written;
 /// `File(NeedsNewerFirmware)`, with nothing written, when a load would
 /// refuse the pair as needing newer firmware.
+#[optimize(size)]
 pub fn save_ab<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
@@ -633,6 +663,7 @@ pub fn save_ab<S: Store + ?Sized, C: Check>(
 
 /// The side a save of `f` writes and its generation: `write_target` on
 /// both sides as `c` judges them, the pass 1 `load_ab` runs.
+#[optimize(size)]
 pub fn save_target<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,
@@ -645,6 +676,7 @@ pub fn save_target<S: Store + ?Sized, C: Check>(
 
 /// Deletes the sides there are in `delete_order`, judged by `c` as
 /// `load_ab` judges them.
+#[optimize(size)]
 pub fn delete_ab<S: Store + ?Sized, C: Check>(
     s: &mut S,
     r: &Ready,

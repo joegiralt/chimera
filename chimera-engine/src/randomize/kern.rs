@@ -27,6 +27,7 @@ use crate::preset::Sound;
 struct Rng(u32);
 
 impl Rng {
+    #[optimize(size)]
     fn new(seed: u8, dim: u32) -> Self {
         let mut z = u32::from(seed).wrapping_mul(0x9E37_79B9) ^ dim.wrapping_mul(0x85EB_CA6B);
         z ^= z >> 16;
@@ -37,6 +38,7 @@ impl Rng {
         Rng(z | 1)
     }
 
+    #[optimize(size)]
     fn next(&mut self) -> u32 {
         let mut x = self.0;
         x ^= x << 13;
@@ -47,34 +49,41 @@ impl Rng {
     }
 
     /// 0..1.
+    #[optimize(size)]
     fn unit(&mut self) -> f32 {
         (self.next() >> 8) as f32 / (1u32 << 24) as f32
     }
 
+    #[optimize(size)]
     fn range(&mut self, (lo, hi): (f32, f32)) -> f32 {
         lo + (hi - lo) * self.unit()
     }
 
     /// `lo..=hi`.
+    #[optimize(size)]
     fn int(&mut self, (lo, hi): (i32, i32)) -> i32 {
         lo + (self.next() % (hi - lo + 1) as u32) as i32
     }
 
+    #[optimize(size)]
     fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
         xs[self.next() as usize % xs.len()]
     }
 
+    #[optimize(size)]
     fn chance(&mut self, p: f32) -> bool {
         self.unit() < p
     }
 
     /// `lo..hi`, even in octaves.
+    #[optimize(size)]
     fn log(&mut self, (lo, hi): (f32, f32)) -> f32 {
         lo * libm::powf(hi / lo, self.unit())
     }
 }
 
 /// Amount `a`'s row of `t` (1..=3); `None` at OFF.
+#[optimize(size)]
 fn row<T: Copy>(a: Amount, t: [T; 3]) -> Option<T> {
     a.get().checked_sub(1).map(|i| t[usize::from(i)])
 }
@@ -82,6 +91,7 @@ fn row<T: Copy>(a: Amount, t: [T; 3]) -> Option<T> {
 /// `r` rolled into `s`: OSC, then ENV, TONE and MOD, each over what the
 /// one before left.
 #[inline(never)]
+#[optimize(size)]
 pub fn roll(s: &mut Sound, r: &Randomize) {
     let e = s.engine();
     let p = &mut s.params;
@@ -92,8 +102,9 @@ pub fn roll(s: &mut Sound, r: &Randomize) {
             EngineType::Algo => algo_osc(&mut p.algo, n, &mut g(1)),
             EngineType::Va => va_osc(&mut p.va, n, &mut g(1)),
             EngineType::Modal => modal_osc(&mut p.modal, n, &mut g(1)),
-            // A sample's own pitch and place: nothing safe to roll.
-            EngineType::Tape => {}
+            // A sample's own pitch and place: nothing safe to roll. DRUM's
+            // knobs are its pads', not the Sound's: none to roll yet.
+            EngineType::Tape | EngineType::Drum => {}
         }
     }
     if let Some(f) = row(r.env, [Family::Pluck, Family::Pad, Family::Any]) {
@@ -105,6 +116,8 @@ pub fn roll(s: &mut Sound, r: &Randomize) {
             }
             // ENV 1 into VCA is their amp (`Sound::plain_init`).
             EngineType::Va | EngineType::Tape => amp_env(&mut p.envelopes[0], f, g),
+            // Its machines carry their own decays: no amp to roll yet.
+            EngineType::Drum => {}
         }
     }
     if r.tone != Amount::OFF {
@@ -113,7 +126,7 @@ pub fn roll(s: &mut Sound, r: &Randomize) {
         match e {
             EngineType::Algo => algo_tone(&mut p.algo, n, g),
             EngineType::Modal => modal_tone(&mut p.modal, n, g),
-            EngineType::Va | EngineType::Tape => {}
+            EngineType::Va | EngineType::Tape | EngineType::Drum => {}
         }
     }
     if r.mods != Amount::OFF {
@@ -131,6 +144,7 @@ enum Family {
 }
 
 impl Family {
+    #[optimize(size)]
     fn pick<T>(self, pluck: T, pad: T, any: T) -> T {
         match self {
             Family::Pluck => pluck,
@@ -154,6 +168,7 @@ const R8: u8 = 25;
 
 /// Which operators sound (carriers) and which modulate, on ALG A (and B
 /// while MORPH blends it in).
+#[optimize(size)]
 fn roles(a: &AlgoParams) -> (u8, u8) {
     let (x, y) = a.algs();
     let sides: &[AlgoId] = if a.morph > 0 { &[x, y] } else { &[x] };
@@ -167,6 +182,7 @@ fn roles(a: &AlgoParams) -> (u8, u8) {
 }
 
 /// Stock's OPER: the algorithm, ratios and waves, carriers' levels.
+#[optimize(size)]
 fn algo_osc(a: &mut AlgoParams, n: u8, g: &mut Rng) {
     // Plain tables first, so any algorithm fits the formant budget.
     for op in 0..OPS {
@@ -231,6 +247,7 @@ fn algo_osc(a: &mut AlgoParams, n: u8, g: &mut Rng) {
 
 /// Every operator on family `f`; modulators a little quicker, so the tone
 /// closes as the note fades, as a real instrument's does.
+#[optimize(size)]
 fn algo_env(a: &mut AlgoParams, f: Family, g: &mut Rng) {
     let (carriers, _) = roles(a);
     let ar = f.pick((26, 31), (8, 14), (8, 31));
@@ -253,6 +270,7 @@ fn algo_env(a: &mut AlgoParams, f: Family, g: &mut Rng) {
 }
 
 /// Stock's IM: the modulators' depth, their feedback and velocity.
+#[optimize(size)]
 fn algo_tone(a: &mut AlgoParams, n: u8, g: &mut Rng) {
     let (carriers, modulators) = roles(a);
     // Stock bounds the index per amount; here per modulator too, so five
@@ -281,6 +299,7 @@ fn algo_tone(a: &mut AlgoParams, n: u8, g: &mut Rng) {
 /// OSC 2's intervals in semitones: octaves, then fifths, then fourths.
 const INTERVALS: [i8; 8] = [0, 12, -12, 7, 19, 24, 5, -5];
 
+#[optimize(size)]
 fn va_osc(v: &mut VaParams, n: u8, g: &mut Rng) {
     let i = usize::from(n - 1);
     v.mode = match n {
@@ -310,6 +329,7 @@ fn va_osc(v: &mut VaParams, n: u8, g: &mut Rng) {
 // ── MODAL ──────────────────────────────────────────────────────────────
 
 /// The model and where it is struck. The exciter always strikes.
+#[optimize(size)]
 fn modal_osc(m: &mut ModalParams, n: u8, g: &mut Rng) {
     let i = usize::from(n - 1);
     if n > 1 {
@@ -321,6 +341,7 @@ fn modal_osc(m: &mut ModalParams, n: u8, g: &mut Rng) {
     m.excite = g.range((0.6, 1.0));
 }
 
+#[optimize(size)]
 fn modal_tone(m: &mut ModalParams, n: u8, g: &mut Rng) {
     let i = usize::from(n - 1);
     m.bright = g.range([(0.2, 0.5), (0.2, 0.75), (0.05, 0.95)][i]);
@@ -332,6 +353,7 @@ fn modal_tone(m: &mut ModalParams, n: u8, g: &mut Rng) {
 // ── Every engine ───────────────────────────────────────────────────────
 
 /// ENV 1 as the amp: a pluck decays, a pad swells and holds.
+#[optimize(size)]
 fn amp_env(e: &mut EnvParams, f: Family, g: &mut Rng) {
     e.attack = g.range(f.pick((0.0, 0.12), (0.45, 0.7), (0.0, 0.7)));
     e.decay = g.range(f.pick((0.4, 0.62), (0.55, 0.75), (0.35, 0.8)));
@@ -343,6 +365,7 @@ fn amp_env(e: &mut EnvParams, f: Family, g: &mut Rng) {
 /// CUTOFF and RESO: the TYPE and MODE stay the Sound's.
 /// A struck resonator's tone is its BRIGHT: a dark CUTOFF on MODAL only
 /// takes level, so its WILD opens no lower than BRIGHT's.
+#[optimize(size)]
 fn filter(f: &mut FilterParams, n: u8, modal: bool, g: &mut Rng) {
     let i = usize::from(n - 1);
     let c = if modal { i.min(1) } else { i };
@@ -352,6 +375,7 @@ fn filter(f: &mut FilterParams, n: u8, modal: bool, g: &mut Rng) {
 
 /// Stock's MODL: LFO 2 and 3 and ENV 2 into the fixed FREQ and Q columns.
 /// MODAL's ensemble too.
+#[optimize(size)]
 fn mods(p: &mut crate::params::ParamSnapshot, m: &mut ModState, n: u8, g: &mut Rng) {
     let i = usize::from(n - 1);
     for lfo in &mut p.lfos[1..] {

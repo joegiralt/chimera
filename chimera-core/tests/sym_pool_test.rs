@@ -448,7 +448,9 @@ fn storm(budget: SampleBudget) -> usize {
             let p = &mut s.shared.parts[next(3) as usize].params;
             let engine = match p.engine() {
                 EngineType::Algo => EngineType::Modal,
-                EngineType::Modal | EngineType::Tape | EngineType::Va => EngineType::Algo,
+                EngineType::Modal | EngineType::Tape | EngineType::Va | EngineType::Drum => {
+                    EngineType::Algo
+                }
             };
             let mode = p.modal.mode;
             **p = ParamSnapshot::for_engine(engine);

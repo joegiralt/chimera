@@ -19,6 +19,7 @@ pub enum PartStatus {
     Stale(SlotId),
 }
 
+#[optimize(size)]
 pub fn part_status(part: &Part, pool: &Pool) -> PartStatus {
     let s = slot_status(part, pool);
     // KEEP MAP's rows over a load are no edit (ADR 0253); a slot moved on
@@ -36,6 +37,7 @@ pub fn part_status(part: &Part, pool: &Pool) -> PartStatus {
 }
 
 /// `part_status` but for KEEP MAP.
+#[optimize(size)]
 fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
     let (slot, generation, crc) = match part.origin {
         Origin::Init(e) if is_init(&part.sound, e) => return PartStatus::Clean,
@@ -58,6 +60,7 @@ fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
 /// Whether `s` is engine `e`'s INIT. Out of line: the INIT Sound's frame
 /// is not under `part_status`'s CRC (ADR 0025's stack check).
 #[inline(never)]
+#[optimize(size)]
 fn is_init(s: &Sound, e: crate::params::EngineType) -> bool {
     s.bits_eq(&Sound::init(e))
 }
@@ -70,11 +73,13 @@ pub enum ProjectStatus {
     Modified,
 }
 
+#[optimize(size)]
 pub fn project_status(p: &Project, t: TemplateCrc) -> ProjectStatus {
     status_at(p, t, project_crc(p))
 }
 
 /// `project_status` given the project's CRC, for a caller that needs both.
+#[optimize(size)]
 pub(super) fn status_at(p: &Project, t: TemplateCrc, crc: u32) -> ProjectStatus {
     if crc == t.get() {
         ProjectStatus::Pristine
@@ -99,12 +104,14 @@ pub struct StatusCache {
 }
 
 impl Default for StatusCache {
+    #[optimize(size)]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl StatusCache {
+    #[optimize(size)]
     pub const fn new() -> Self {
         StatusCache {
             rev: None,
@@ -115,17 +122,20 @@ impl StatusCache {
     }
 
     /// The next `get` hashes, whatever the revision.
+    #[optimize(size)]
     pub fn invalidate(&mut self) {
         self.rev = None;
     }
 
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn hashes_for_test(&self) -> u32 {
         self.hashes
     }
 
     /// Hashes with `crc` only when `p.rev()` moved since the last call.
+    #[optimize(size)]
     pub fn get_with(
         &mut self,
         p: &Project,
@@ -150,11 +160,13 @@ impl StatusCache {
         self.status
     }
 
+    #[optimize(size)]
     pub fn get(&mut self, p: &Project, t: TemplateCrc) -> ProjectStatus {
         self.get_with(p, t, project_crc)
     }
 
     /// The last result while it is current; otherwise a hash, not kept.
+    #[optimize(size)]
     pub fn peek(&self, p: &Project, t: TemplateCrc) -> ProjectStatus {
         if self.rev == Some(p.rev()) {
             self.status
@@ -164,6 +176,7 @@ impl StatusCache {
     }
 
     /// The last result; `Pristine` before any.
+    #[optimize(size)]
     pub fn cached(&self) -> ProjectStatus {
         self.status
     }
@@ -191,6 +204,7 @@ pub struct PartAction {
 }
 
 impl PartAction {
+    #[optimize(size)]
     pub fn kind(self) -> PartActionKind {
         self.kind
     }
@@ -204,17 +218,20 @@ pub struct PartActions {
 }
 
 impl PartActions {
+    #[optimize(size)]
     pub fn iter(&self) -> impl Iterator<Item = PartAction> + '_ {
         self.items.iter().flatten().copied()
     }
 
     /// The Part's status as they were offered against it.
+    #[optimize(size)]
     pub fn status(&self) -> PartStatus {
         self.status
     }
 
     /// What the Part's save takes from the gap, offered or not: over its
     /// slot when it is Edited from one, else a whole new slot.
+    #[optimize(size)]
     pub fn save_needs(&self) -> Cost {
         self.save_needs
     }
@@ -223,6 +240,7 @@ impl PartActions {
 /// What applies to `part` now (§ Copy rules). A Stale Part never offers
 /// `OverSlot`: that would undo the other Part's save. An offer that
 /// can't apply isn't made (ADR 0043): a save that won't fit is no save.
+#[optimize(size)]
 pub fn part_actions(p: &Project, part: PartId) -> PartActions {
     let x = p.part(part);
     let status = part_status(x, &p.pool);
@@ -276,6 +294,7 @@ pub enum ActionRefused {
 
 impl Project {
     /// Ok: the other users of the slot that now derive Stale (as `save_part_to`).
+    #[optimize(size)]
     pub fn apply_part_action(&mut self, a: PartAction) -> Result<PartSet, ActionRefused> {
         self.bump();
         let x = self.part(a.part);
@@ -306,6 +325,7 @@ impl Project {
 
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn mark_saved_for_test(&mut self) {
         self.bump();
         self.meta.saved_crc = Some(project_crc(self));

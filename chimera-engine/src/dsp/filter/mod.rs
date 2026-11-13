@@ -252,7 +252,9 @@ impl FilterKind {
     /// 0096).
     pub const fn default_for(e: EngineType) -> FilterKind {
         match e {
-            EngineType::Algo | EngineType::Modal | EngineType::Tape => FilterKind::Svf,
+            EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Drum => {
+                FilterKind::Svf
+            }
             EngineType::Va => FilterKind::K2040,
         }
     }

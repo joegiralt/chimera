@@ -65,13 +65,20 @@ pub enum ValFmt {
     /// VOWEL, 0–100 over U O A E I, 25 apart. Snaps each vowel.
     /// `fmt_val` takes the stored value.
     Vowel,
+    /// A DRUM knob, 0 to 127, shown in its machine's unit (`laws::spec`).
+    Knob(
+        crate::dsp::drum::types::Machine,
+        crate::dsp::drum::types::Knob,
+    ),
 }
 
 impl ValFmt {
     /// Coarse snap points in normalized 0..1 space.
     pub fn snap_points(self) -> &'static [f32] {
         match self {
-            ValFmt::Uni | ValFmt::Hold | ValFmt::Law(_) => &[0.0, 100.0 / 127.0, 1.0],
+            ValFmt::Uni | ValFmt::Hold | ValFmt::Law(_) | ValFmt::Knob(..) => {
+                &[0.0, 100.0 / 127.0, 1.0]
+            }
             ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Keybd => {
                 &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
             }
@@ -123,7 +130,8 @@ impl ValFmt {
             | ValFmt::Law(_)
             | ValFmt::Bpm
             | ValFmt::LogHz { .. }
-            | ValFmt::Vowel => 127,
+            | ValFmt::Vowel
+            | ValFmt::Knob(..) => 127,
         }
     }
 }

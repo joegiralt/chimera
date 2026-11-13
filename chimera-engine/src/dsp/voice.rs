@@ -10,6 +10,8 @@ use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
+use crate::dsp::drum::engine::MidSide;
+use crate::dsp::drum::types::{DrumHit, HitSeed, SampleRate};
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
@@ -650,7 +652,9 @@ impl Voice {
 
     /// On a fading voice, or one sounding another engine or model, the note
     /// waits for the fade-out and then starts clean. Returns whether it replaced
-    /// a note still waiting, unheard. A TAPE note plays `source`.
+    /// a note still waiting, unheard. A TAPE note plays `source`. Out of
+    /// line: one copy for every port's note-on (ORBIT's is bank 2's).
+    #[inline(never)]
     pub fn note_on(
         &mut self,
         note: MidiNote,
@@ -669,8 +673,45 @@ impl Voice {
             self.fade_out();
             return replaced;
         }
-        self.trigger(note, velocity, params, source, ctx);
+        self.trigger(note, velocity, params, source, None, ctx);
         replaced
+    }
+
+    /// `hit` at `velocity` on a voice at rest, from `key`, its noise seeded
+    /// `seed`. Never on a voice sounding or fading, nor on a Sound other
+    /// than DRUM: the `Instrument` waits a voice's fade out itself (its
+    /// `waiting`), so no hit is ever queued inside a voice to replay into
+    /// a slot of another engine. Returns whether it started.
+    pub fn strike(
+        &mut self,
+        key: MidiNote,
+        (hit, seed): (DrumHit, HitSeed),
+        velocity: Velocity,
+        params: &ParamSnapshot,
+        ctx: &mut EngineCtx<'_>,
+    ) -> bool {
+        if self.fade > 0 || self.active || params.engine() != EngineType::Drum {
+            return false;
+        }
+        self.held = true;
+        self.trigger(key, velocity, params, None, Some((hit, seed)), ctx);
+        true
+    }
+
+    /// The PAN of the hit its DRUM slot sounds, off centre.
+    pub fn drum_pan(&self) -> Option<MidSide> {
+        match &self.slot {
+            EngineSlot::Drum(d) if self.active => d.pan(),
+            _ => None,
+        }
+    }
+
+    /// The hit its DRUM slot sounds, if it does.
+    pub fn drum_hit(&self) -> Option<DrumHit> {
+        match &self.slot {
+            EngineSlot::Drum(d) if self.active => d.hit(),
+            _ => None,
+        }
     }
 
     fn trigger(
@@ -679,6 +720,7 @@ impl Voice {
         velocity: Velocity,
         params: &ParamSnapshot,
         source: Option<SourceId>,
+        hit: Option<(DrumHit, HitSeed)>,
         ctx: &mut EngineCtx<'_>,
     ) {
         let pool = &mut *ctx.sym;
@@ -731,6 +773,10 @@ impl Voice {
         let t0 = crate::probe::now();
         self.slot
             .note_on(note, velocity, params, self.sample_rate, source, ctx);
+        if let (Some((hit, seed)), EngineSlot::Drum(d)) = (hit, &mut self.slot) {
+            let sr = SampleRate::new(self.sample_rate).unwrap_or(SampleRate::HW);
+            d.strike(hit, velocity, seed, sr);
+        }
         #[cfg(feature = "probe")]
         let t1 = crate::probe::now();
         #[cfg(feature = "probe")]
@@ -838,7 +884,7 @@ impl Voice {
         if then_plays {
             // The slot holds `params`' kind, clean: `trigger` has none to rebuild.
             self.held = true;
-            self.trigger(note, velocity, params, source, ctx);
+            self.trigger(note, velocity, params, source, None, ctx);
             if !held {
                 self.note_off(ctx);
             }
@@ -938,14 +984,43 @@ impl Voice {
         mod_state: &ModState,
         ctx: &mut EngineCtx<'_>,
     ) {
-        self.render_knobs(output, params, mod_state, &Knobs::UNPRIMED, None, ctx);
+        self.render_knobs(
+            output,
+            params,
+            mod_state,
+            &Knobs::UNPRIMED,
+            None,
+            ctx,
+            &mut None,
+        );
     }
 
     /// One block of `params` with its Part's `knobs` in place of the stored
     /// values they glide (ADR 0112), and of the FREQ/Q amounts. Its FREE
     /// LFOs play the Part's `clock` (ADR 0135); without one (a voice on its
     /// own) they run their own phase.
+    /// A DRUM hit off centre (its pad's PAN) leaves its mid in `output`
+    /// and adds its side to `side` (`MidSide::split`).
+    #[allow(clippy::too_many_arguments)]
     pub fn render_knobs(
+        &mut self,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ParamSnapshot,
+        mod_state: &ModState,
+        knobs: &Knobs,
+        clock: Option<&LfoClock>,
+        ctx: &mut EngineCtx<'_>,
+        side: &mut Option<[f32; BLOCK_SIZE]>,
+    ) {
+        // Read before the block: a hit ending in it pans to its end.
+        let pan = self.drum_pan();
+        self.render_mono(output, params, mod_state, knobs, clock, ctx);
+        if let Some(ms) = pan {
+            ms.split(output, side);
+        }
+    }
+
+    fn render_mono(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
         params: &ParamSnapshot,
@@ -957,9 +1032,11 @@ impl Voice {
         let sample_rate = self.sample_rate();
 
         // The Sound changed engine or model: fade the old one out; a held
-        // note then restarts on the new one.
+        // note then restarts on the new one. A hit never restarts, nor
+        // does a note on DRUM, which only a pad's hit sounds.
         if self.active && self.fade == 0 && self.switched(params) {
-            if self.held {
+            let drum = |k: SlotKind| k == SlotKind::Drum;
+            if self.held && !drum(self.slot.kind()) && !drum(SlotKind::of(params)) {
                 self.after_fade = AfterFade::Restart;
             }
             self.fade_out();
@@ -1236,10 +1313,12 @@ impl Voice {
                     // engine can't inherit the pass-through (VA gates: #148).
                     match &self.slot {
                         // TAPE's and VA's key ends it (`key_gates`), through the fade.
+                        // DRUM's kernels carry their own decays.
                         EngineSlot::Algo(_)
                         | EngineSlot::Modal(_)
                         | EngineSlot::Tape(_)
-                        | EngineSlot::Va(_) => {
+                        | EngineSlot::Va(_)
+                        | EngineSlot::Drum(_) => {
                             // Its own envelopes shape the sound: today's expression, bit for bit.
                             if dv == 0.0 {
                                 for sample in output.iter_mut() {

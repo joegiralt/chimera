@@ -49,6 +49,26 @@ ASSERT(SIZEOF(.sram4) <= LENGTH(RAM_D3), "SRAM4 overflows");
     .unwrap();
 
     fs::write(
+        out_dir.join("itcm.x"),
+        r#"
+/* ITCM (ADR 0266): CPU-only state, never DMA's, built in place at boot
+   (NOLOAD: nothing zeroes or copies it). The kits first (ADR 0265). */
+SECTIONS {
+    .itcm (NOLOAD) : ALIGN(8) {
+        __sitcm = .;
+        *(.itcm .itcm.*);
+        . = ALIGN(8);
+        __eitcm = .;
+    } > ITCM
+}
+INSERT AFTER .uninit;
+ASSERT(__sitcm == 0x00000400, "ITCM's state starts at 0x400, clear of address 0");
+ASSERT(__eitcm <= ORIGIN(ITCM) + LENGTH(ITCM), "ITCM overflows");
+"#,
+    )
+    .unwrap();
+
+    fs::write(
         out_dir.join("dtcm.x"),
         r#"
 /* The zero-wait working copy of the wave tables, filled from flash at boot
@@ -436,6 +456,7 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
     println!("cargo:rustc-link-arg=-Tram_d2.x");
     println!("cargo:rustc-link-arg=-Tsram4.x");
     println!("cargo:rustc-link-arg=-Tdtcm.x");
+    println!("cargo:rustc-link-arg=-Titcm.x");
     println!("cargo:rustc-link-arg=-Taxi_margin.x");
     // The relocations stay in the ELF: the door check reads them.
     println!("cargo:rustc-link-arg=--emit-relocs");

@@ -48,6 +48,7 @@ pub enum Refusal {
 
 impl LoadKind {
     /// What it takes of the arena: `whole` held, or the heads' row.
+    #[optimize(size)]
     pub fn cost(&self, whole: Cost) -> Cost {
         match self {
             LoadKind::Streamed(h) => Cost::of(SOURCE_HEAD + h.held_len()),
@@ -59,6 +60,7 @@ impl LoadKind {
 /// Card file `h` for a Part playing it with `p`, `free` bytes left: whole
 /// if it fits, else streamed if `p` plays it forward (a `Plain` only),
 /// else refused, saying why.
+// Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
 pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
     let whole = SourceLayout::whole(*h)
         .map(|l| l.held_len())
@@ -93,11 +95,13 @@ impl LoadDoor {
     };
 
     #[inline(always)]
+    #[optimize(size)]
     pub(crate) fn heads_for(&self, r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refusal> {
         (self.heads_for)(r, p)
     }
 
     #[inline(always)]
+    #[optimize(size)]
     pub(crate) fn step(
         &self,
         l: &mut StreamLoad,
@@ -111,6 +115,7 @@ impl LoadDoor {
 
     #[cfg(feature = "tape")]
     #[inline(always)]
+    #[optimize(size)]
     pub(crate) fn sources(
         &self,
         s: &mut dyn Store,
@@ -124,6 +129,7 @@ impl LoadDoor {
     /// `f` on the door: bank 2's through the door with `bank2`, `None`
     /// closed; this build's own without.
     #[inline(always)]
+    #[optimize(size)]
     pub(crate) fn with<R>(f: impl FnOnce(&LoadDoor) -> R) -> Option<R> {
         #[cfg(feature = "bank2")]
         return crate::bank2::DOOR_CELL.with(|d| f(&d.load));
@@ -190,6 +196,7 @@ enum Phase {
 }
 
 impl Phase {
+    #[optimize(size)]
     fn heads(file: StreamFile) -> Phase {
         Phase::Heads {
             file,
@@ -200,6 +207,7 @@ impl Phase {
 
 impl StreamLoad {
     /// Card file `head` as `heads`; `None` when they don't fit the gap.
+    #[optimize(size)]
     pub fn start(p: &mut Project, head: SourceHead, heads: Heads) -> Option<StreamLoad> {
         let (stage, _) = p.source_staging(heads.held_len())?;
         Some(StreamLoad {
@@ -217,6 +225,7 @@ impl StreamLoad {
     /// (never checked against its CRC): that first pass checks it whole
     /// and seals it. `None` as `start`, or when the runs don't hold its
     /// samples.
+    #[optimize(size)]
     pub fn found(
         p: &mut Project,
         head: SourceHead,
@@ -237,6 +246,7 @@ impl StreamLoad {
     /// Streamed pool source `id`'s heads re-staged as `heads` (spec § 5.6:
     /// START or the loop turned); `None` when it isn't streamed, or they
     /// don't fit the gap beside its old ones.
+    #[optimize(size)]
     pub fn rehead(p: &mut Project, id: SourceId, heads: Heads) -> Option<StreamLoad> {
         let reg = p.pool.streams()?;
         let (file, epoch) = (*reg.get(id)?, reg.epoch());
@@ -253,6 +263,7 @@ impl StreamLoad {
     }
 
     /// The source it loads.
+    #[optimize(size)]
     pub fn sref(&self) -> SourceRef {
         self.sref
     }
@@ -261,6 +272,7 @@ impl StreamLoad {
     /// after reads up to `budget` bytes of heads; the last writes the
     /// descriptor and table, the registry row, then the pool row. With
     /// bank 2 shut it fails as a missing file.
+    #[optimize(size)]
     pub fn step(
         &mut self,
         s: &mut dyn Store,

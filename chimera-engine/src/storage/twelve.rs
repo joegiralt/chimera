@@ -9,6 +9,7 @@
 /// written. Each sample is in −2048..=2047: a debug build asserts it, and
 /// a release build drops the higher bits. An odd count's last pair takes
 /// a 0 for its second sample. Panics if `out` is short.
+#[optimize(size)]
 pub fn pack12(samples: &[i16], out: &mut [u8]) -> usize {
     let mut n = 0;
     for (pair, o) in samples.chunks(2).zip(out.as_chunks_mut::<3>().0) {
@@ -23,6 +24,7 @@ pub fn pack12(samples: &[i16], out: &mut [u8]) -> usize {
 }
 
 /// The two samples of pair `pair` in `bytes`, sign-extended.
+#[optimize(size)]
 pub fn unpack12(bytes: &[u8], pair: usize) -> (i16, i16) {
     let [b0, b1, b2] = [0, 1, 2].map(|k| bytes[3 * pair + k] as i16);
     let even = b0 | (b1 & 0xF) << 8;

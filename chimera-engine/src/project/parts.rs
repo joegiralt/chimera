@@ -70,12 +70,14 @@ pub struct Part {
 }
 
 impl Part {
+    #[optimize(size)]
     pub fn origin(&self) -> Origin {
         self.origin
     }
 
     /// TUNING's Scala file, if the Part names one (ADR 0259).
     #[inline(always)]
+    #[optimize(size)]
     pub fn scala(&self) -> Option<crate::tuning::ScalaName> {
         #[cfg(feature = "tuning")]
         return (self.scala.padded()[0] != 0).then_some(self.scala);
@@ -84,17 +86,20 @@ impl Part {
     }
 
     /// CC 11's expression (ADR 0263), 127 none.
+    #[optimize(size)]
     pub fn expression(&self) -> u8 {
         self.expression
     }
 
     /// CC 73's (`which` 0) or 72's (1) offset from 64 applied to this
     /// Sound (ADR 0263): 0 after a Sound load.
+    #[optimize(size)]
     pub fn env_offset(&self, which: usize) -> i8 {
         self.env[which & 1]
     }
 
     /// Bumped by each Sound load into this Part.
+    #[optimize(size)]
     pub fn loads(&self) -> Loads {
         self.loads
     }
@@ -109,17 +114,20 @@ impl Loads {
     /// No load yet.
     pub const NONE: Self = Self(0);
 
+    #[optimize(size)]
     pub(in crate::project) fn bump(&mut self) {
         *self = self.next();
     }
 
     /// The count after one more load: what a Sound loaded outside a
     /// Project (the bench's) is published with.
+    #[optimize(size)]
     pub const fn next(self) -> Self {
         Self(self.0.wrapping_add(1))
     }
 }
 
+#[optimize(size)]
 pub(super) fn new_part(i: usize) -> Part {
     Part {
         sound: Tracked::fresh(Sound::init(EngineType::Algo)),
@@ -154,6 +162,7 @@ pub struct Performance {
 crate::in_place::field_list!(Performance => Performance { parts, fx });
 
 impl Default for Performance {
+    #[optimize(size)]
     fn default() -> Self {
         Self::new()
     }
@@ -161,6 +170,7 @@ impl Default for Performance {
 
 impl Performance {
     /// Every Part an INIT Algo Sound on its own channel; the FX off.
+    #[optimize(size)]
     pub fn new() -> Self {
         Self {
             parts: core::array::from_fn(new_part),
@@ -170,6 +180,7 @@ impl Performance {
 
     /// `new`, built in place a Part at a time: no 6 KB temporary on the
     /// stack, one Part's at most.
+    #[optimize(size)]
     pub fn init_in_place(slot: &mut core::mem::MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; each of the `MAX_PARTS` Parts
@@ -186,6 +197,7 @@ impl Performance {
     }
 
     /// `new`, a Part at a time: no 6 KB temporary on the stack.
+    #[optimize(size)]
     pub(in crate::project) fn reset(&mut self) {
         for (i, p) in self.parts.iter_mut().enumerate() {
             *p = new_part(i);
@@ -193,15 +205,18 @@ impl Performance {
         self.fx = FxParams::default();
     }
 
+    #[optimize(size)]
     pub fn part(&self, p: PartId) -> &Part {
         &self.parts[p.index()]
     }
 
+    #[optimize(size)]
     pub fn parts(&self) -> &[Part; MAX_PARTS] {
         &self.parts
     }
 
     /// Part `p` as the pages edit it: its Sound and mix plus the shared FX.
+    #[optimize(size)]
     pub fn edit(&mut self, p: PartId) -> PartEdit<'_> {
         let Part { sound, mix, .. } = &mut self.parts[p.index()];
         PartEdit {
@@ -235,12 +250,14 @@ pub struct PartEdit<'a> {
 }
 
 impl BlockRead for PartEdit<'_> {
+    #[optimize(size)]
     fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         part_block(self.sound, self.mix, self.fx, b)
     }
 }
 
 impl Blocks for PartEdit<'_> {
+    #[optimize(size)]
     fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         part_block_mut(self.sound, self.mix, self.fx, b)
     }
@@ -256,12 +273,14 @@ pub struct PartRead<'a> {
 
 impl<'a> PartRead<'a> {
     /// `BlockRead::block`, for as long as the Part is borrowed, not the view.
+    #[optimize(size)]
     pub fn block(&self, b: BlockRef) -> Option<BlockView<'a>> {
         part_block(self.sound, self.mix, self.fx, b)
     }
 }
 
 impl BlockRead for PartRead<'_> {
+    #[optimize(size)]
     fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         PartRead::block(self, b)
     }
@@ -269,6 +288,7 @@ impl BlockRead for PartRead<'_> {
 
 /// A Part's block `b` (its Sound's or its mix), or the FX's; `None` for the
 /// blocks the UI holds.
+#[optimize(size)]
 pub fn part_block<'a>(
     sound: &'a Sound,
     mix: &'a PartParams,
@@ -289,7 +309,9 @@ pub fn part_block<'a>(
         | BlockRef::OrbitChords
         | BlockRef::OrbitRing(_)
         | BlockRef::Tempo
-        | BlockRef::Random => None,
+        | BlockRef::Random
+        | BlockRef::Pad
+        | BlockRef::Kit => None,
         BlockRef::Modal
         | BlockRef::TapeEngine
         | BlockRef::Va
@@ -305,6 +327,7 @@ pub fn part_block<'a>(
 }
 
 /// `part_block`, mutable.
+#[optimize(size)]
 pub fn part_block_mut<'a>(
     sound: &'a mut Tracked<Sound>,
     mix: &'a mut PartParams,
@@ -325,7 +348,9 @@ pub fn part_block_mut<'a>(
         | BlockRef::OrbitChords
         | BlockRef::OrbitRing(_)
         | BlockRef::Tempo
-        | BlockRef::Random => None,
+        | BlockRef::Random
+        | BlockRef::Pad
+        | BlockRef::Kit => None,
         BlockRef::Modal
         | BlockRef::TapeEngine
         | BlockRef::Va

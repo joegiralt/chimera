@@ -22,6 +22,7 @@ pub mod hint;
 pub mod hold;
 pub mod installing;
 pub mod jog;
+pub mod kit_band;
 pub mod learn;
 pub mod led;
 pub mod lfo_glyph;
@@ -75,6 +76,7 @@ use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::algo::kinds::{OpKind, step_kind};
 use crate::dsp::algo::params::step_alg;
+use crate::dsp::drum::types::{Machine, PadId};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
@@ -91,6 +93,7 @@ use crate::orbit::runner::{OrbitShared, OrbitView};
 use crate::orbit::scene::{OrbitSong, Refused, SceneIdx, SceneSave};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
+use crate::project::Kits;
 use crate::project::arena::ArenaWriter;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSet,
@@ -133,7 +136,7 @@ use settings::view::PartBand;
 use settings::{
     Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
 };
-use theme_settings::{Pages, ThemeSettings};
+use theme_settings::{PadFollow, Pages, ThemeSettings};
 use view::{SlotCtx, View};
 
 /// A replace aimed at one Part: SAVE PART FIRST saves that Part.
@@ -477,25 +480,31 @@ impl UiState {
     /// On an arena of its own, leaked (host tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn new() -> Self {
-        Self::with_arena(ArenaWriter::leaked())
+        Self::with_arena(ArenaWriter::leaked(), Kits::leaked())
     }
 
-    /// By value, its pool's Sounds in `arena`: the desktop's. Host only:
-    /// the chip builds its state in place (`init_in_place`).
+    /// By value, its pool's Sounds in `arena`, its Parts' kits in `kits`:
+    /// the desktop's. Host only: the chip builds its state in place
+    /// (`init_in_place`).
     #[cfg(not(target_os = "none"))]
-    pub fn with_arena(arena: ArenaWriter) -> Self {
+    pub fn with_arena(arena: ArenaWriter, kits: &'static mut Kits) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { crate::in_place::by_value(|s| Self::init_in_place(s, arena)) }
+        unsafe { crate::in_place::by_value(|s| Self::init_in_place(s, arena, kits)) }
     }
 
     // In place so the state never passes through the firmware's stack.
-    pub fn init_in_place(slot: &mut MaybeUninit<Self>, arena: ArenaWriter) -> &mut Self {
+    pub fn init_in_place<'a>(
+        slot: &'a mut MaybeUninit<Self>,
+        arena: ArenaWriter,
+        kits: &'static mut Kits,
+    ) -> &'a mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the project is built in
         // place before it is borrowed, and every other field is written
         // once, all before `assume_init_mut`.
         unsafe {
-            let template = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)), arena);
+            let template =
+                Project::init_in_place(uninit_at(addr_of_mut!((*p).project)), arena, kits);
             let project = &mut *addr_of_mut!((*p).project);
             let cx = nav_cx(project);
             let loc = Location::home(&cx);
@@ -1177,11 +1186,13 @@ impl UiState {
             .on_rev(&self.project.perf().fx.reverb)
             .on_chorus(&self.project.perf().fx.chorus)
             .on_pages(self.theme.pages);
+        let pad = self.project.selected_pad(self.active_part);
         let ctx = SlotCtx {
             delay: self.project.perf().fx.delay.kind(),
             clash: self.clashes(),
             ..ctx
-        };
+        }
+        .on_kit(self.project.kit(self.active_part), pad);
         let base =
             view::SourceState::of(&sound.params.tape, sound.source_ref(), self.project.pool())
                 .tape_routed(view::tape_routed(sound));
@@ -1674,6 +1685,68 @@ impl UiState {
             .then(|| h.why(&self.project.part(at).sound, self.streams(at)))
             .flatten()
             .map(|why| held::Shown { held: h, why })
+    }
+
+    /// Part `part`'s selected pad: what its pad cells edit.
+    pub fn selected_pad(&self, part: PartId) -> PadId {
+        self.project.selected_pad(part)
+    }
+
+    /// Selects `pad` on Part `part`. On the shown Part a new pad's cells
+    /// start at its own values: nothing glides from the last pad's.
+    pub fn select_pad(&mut self, part: PartId, pad: PadId) {
+        if self.project.selected_pad(part) == pad {
+            return;
+        }
+        self.project.select_pad(part, pad);
+        if part == self.active_part {
+            let values = self.display_values();
+            self.renderer.snap_to_current(values);
+        }
+    }
+
+    /// A live hit on Part `part`'s `pad`: it lights, and on the shown Part
+    /// it is selected as PAD FOLLOW says (ADR 0268).
+    pub fn pad_struck(&mut self, part: PartId, pad: PadId) {
+        self.project.light_pad(part, pad);
+        let follows = match self.theme.pad_follow {
+            PadFollow::Off => false,
+            PadFollow::Idle => !self.project.pad_follow_hold(part).holds(),
+            PadFollow::Always => true,
+        };
+        if part == self.active_part && follows {
+            self.select_pad(part, pad);
+        }
+    }
+
+    /// An edit on a DRUM Part's own pages, an encoder turn or a pad step,
+    /// holds PAD FOLLOW IDLE's pad on that Part (ADR 0268).
+    fn pad_edited(&mut self) {
+        if let Rung::Pages(p, _) = self.loc.rung()
+            && PartChain::of(&self.project.part(p).sound) == PartChain::Drum
+        {
+            self.project.pad_edited(p);
+        }
+    }
+
+    /// Every Part's live hits since the last pass and sounding pads, from
+    /// the audio's view: each lights, the last struck last.
+    pub fn take_hits(&mut self, kits: &mut crate::dsp::drum::view::KitWriter) {
+        for p in PartId::ALL {
+            self.project.sound_pads(p, kits.sounding(p));
+            if let Some(s) = kits.take_hit(p) {
+                for pad in s.pads().iter().filter(|&pad| pad != s.last()) {
+                    self.project.light_pad(p, pad);
+                }
+                self.pad_struck(p, s.last());
+            }
+        }
+    }
+
+    /// The slots' context, as the pages read it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slot_ctx_for_test(&self) -> SlotCtx {
+        self.ctx()
     }
 
     /// The encoder's edit path (spec § 6): `a` on Part `part` turned
@@ -2811,8 +2884,13 @@ impl UiState {
             return;
         }
         self.focus.touch(def.id, slot);
-        if let Some(spec) = a.spec() {
-            self.edit_in(at, a, part_page::Edit::To(spec.default));
+        // A pad knob's default is its machine's.
+        let own = ctx
+            .pad
+            .filter(|_| a.block == BlockRef::Pad)
+            .and_then(|m| crate::dsp::drum::params::PadParams::default_on(m, a.param));
+        if let Some(d) = own.or_else(|| a.spec().map(|s| s.default)) {
+            self.edit_in(at, a, part_page::Edit::To(d));
         }
     }
 
@@ -2984,6 +3062,10 @@ impl UiState {
             return;
         }
 
+        if any_turn(controls) {
+            self.pad_edited();
+        }
+
         // Encoder deltas -> parameter changes
         let shift = matches!(
             controls.button_state(ButtonId::Mix),
@@ -3123,6 +3205,11 @@ impl UiState {
                         .is_some_and(|s| s.binding == SlotBinding::SelectOp)
                 {
                     self.sel_op = self.sel_op.nudged(delta);
+                } else if v == View::SelectPad {
+                    // A turn stops at pad 1 and 12.
+                    let n = self.project.selected_pad(at).index() as i32 + i32::from(delta);
+                    let last = PadId::ALL.len() as i32 - 1;
+                    self.select_pad(at, PadId::ALL[n.clamp(0, last) as usize]);
                 } else if let Some(a) = slot_addr(def, i, &ctx) {
                     if self.turn_window(at, a, delta, shift) {
                     } else if fine {
@@ -3141,8 +3228,20 @@ impl UiState {
             }
             let def = self.after_edit(at, chain, before, def);
 
+            // MIX + MINUS / PLUS on a pad's page steps the pad, wrapping.
+            let step = |b| controls.button_state(b) == ButtonState::Pressed;
+            if shift && def.edits_pad() {
+                let at = self.active_part;
+                let pad = self.project.selected_pad(at);
+                if step(ButtonId::Plus) {
+                    self.select_pad(at, pad.next());
+                    self.pad_edited();
+                } else if step(ButtonId::Minus) {
+                    self.select_pad(at, pad.prev());
+                    self.pad_edited();
+                }
             // MIX + Plus/Minus: prime/un-prime parameter for modulation
-            if shift {
+            } else if shift {
                 let at = self.active_part;
                 let plus = controls.button_state(ButtonId::Plus) == ButtonState::Pressed;
                 let on_source = matches!(
@@ -3226,6 +3325,7 @@ impl UiState {
         }
         self.refresh_status();
         self.clock.tick();
+        self.project.fade_pad_lights(animation::FRAME);
         // Every Part's, so a Part not shown never keeps a stale clip.
         for (h, m) in self.clip.iter_mut().zip(&crate::meter::FILTER_CLIP) {
             h.step(m.take().get(), animation::FRAME_MS as u16);
@@ -3517,6 +3617,11 @@ impl UiState {
             tuned: &self.tuned,
             formant: &self.formant,
             held: self.held_choice(),
+            pads: crate::ui::kit_band::Pads {
+                kit: self.project.kit(self.active_part),
+                selected: self.project.selected_pad(self.active_part),
+                lit: self.project.pad_lights(self.active_part).lit(),
+            },
         }
     }
 
@@ -3589,8 +3694,11 @@ impl UiState {
                 renderer::header_out(f) as u8,
                 f.header_status(),
             )
-            .with_scene(match f.head {
-                Head::Orbit(n) => n.get() + 1,
+            .with_names(match (f.head, f.ctx.pad) {
+                (Head::Orbit(n), _) => u16::from(n.get()) + 1,
+                (Head::Sound(_), Some(m)) if f.def.edits_pad() => {
+                    1 + (f.ctx.sel_pad.index() * Machine::ALL.len() + m.index()) as u16
+                }
                 _ => 0,
             }),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
@@ -4039,6 +4147,8 @@ fn read_block<'a>(
         BlockRef::OrbitChords => plain(&song.live().chords),
         BlockRef::OrbitRing(r) => plain(&song.live().rings[r.get() as usize]),
         BlockRef::Tempo => plain(&song.bpm),
+        BlockRef::Pad => plain(project.kit(part).pad(project.selected_pad(part))),
+        BlockRef::Kit => plain(project.kit(part)),
         _ => project.read_part(part).block(b),
     }
 }
@@ -4071,6 +4181,13 @@ impl Blocks for UiBlocks<'_> {
                 None
             }
             BlockRef::Tempo => Some(BlockViewMut::Plain(&mut self.project.orbit_mut().bpm)),
+            BlockRef::Pad => {
+                let pad = self.project.selected_pad(self.part);
+                Some(BlockViewMut::Plain(
+                    self.project.kit_mut(self.part).pad_mut(pad),
+                ))
+            }
+            BlockRef::Kit => Some(BlockViewMut::Plain(self.project.kit_mut(self.part))),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
                 part_block_mut(sound, mix, fx, b)

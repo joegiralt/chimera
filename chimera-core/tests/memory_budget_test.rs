@@ -119,7 +119,7 @@ fn fx_bus_fits_its_axi_share() {
 }
 
 /// The AXI residents, reported (the linker enforces the margin, ADR 0087):
-/// the Project (Performance and pool), the framebuffer, the UI,
+/// the Project (Performance and pool), the Parts' kits, the framebuffer, the UI,
 /// the AudioShared, scope, AudioStats and
 /// ORBIT view triple buffers, the scope's writer, ORBIT's runner, the FX bus
 /// and the card's store (ADR 0014, ADR 0021).
@@ -391,4 +391,25 @@ fn d2_holds_the_knob_publisher() {
 fn rings_fit_sram4() {
     use chimera_core::stream::ring::Rings;
     assert!(size_of::<Rings>() <= 64 * 1024, "{} B", size_of::<Rings>());
+}
+
+/// ADR 0265: a pad is 13 B and a kit 12 of them and TONAL (ADR 0270: an
+/// enum over `PadId`, 2 B), held by the Project
+/// through a pointer to an ITCM static (ADR 0266): the Parts, in D2, and
+/// AXI don't grow.
+#[test]
+fn kits_are_compact_and_outside_the_parts() {
+    use chimera_core::dsp::drum::types::{Kit, Pad};
+    use chimera_core::project::Kits;
+    eprintln!(
+        "Pad = {} B, Kit = {} B, Kits = {} B",
+        size_of::<Pad>(),
+        size_of::<Kit>(),
+        size_of::<Kits>()
+    );
+    assert_eq!(size_of::<Pad>(), 13);
+    assert_eq!(size_of::<Kit>(), 12 * 13 + 2);
+    // A kit, a selected pad, two `PadSet`s of lights and PAD FOLLOW's
+    // hold (ADR 0268) a Part.
+    assert_eq!(size_of::<Kits>(), hw::MAX_PARTS * (12 * 13 + 2 + 1 + 4 + 2));
 }

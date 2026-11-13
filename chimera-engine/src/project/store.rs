@@ -22,6 +22,7 @@ use super::{
     Swap, encode_project, part_status, project_crc,
 };
 
+#[optimize(size)]
 pub fn project_file(id: ProjectId) -> AbFile {
     AbFile::new(Dir::Projects, &id.stem()).expect("P + 7 digits is a stem")
 }
@@ -30,11 +31,13 @@ pub fn project_file(id: ProjectId) -> AbFile {
 pub const PROJECT_DEMO_TOP: u32 = 9;
 
 /// The id a new project takes: above the highest on the card and the demos.
+#[optimize(size)]
 fn next_project_id(top: u32) -> Option<ProjectId> {
     ProjectId::new(top.max(PROJECT_DEMO_TOP) + 1)
 }
 
 /// A `P#######.A` or `.B` name's id.
+#[optimize(size)]
 fn file_id(f: FileName) -> Option<ProjectId> {
     let (&[b'P', ref digits @ ..], b"A" | b"B") = (f.stem(), f.ext()) else {
         return None;
@@ -48,6 +51,7 @@ fn file_id(f: FileName) -> Option<ProjectId> {
 
 /// `op` on the card `vol` only. Another card in the slot is `Ok(Err(now))`:
 /// nothing is read or written, and the healthy card isn't marked failed.
+#[optimize(size)]
 fn run_on<S: Store, R, E: CardFault + From<StoreError>>(
     card: &mut Card,
     store: &mut S,
@@ -62,14 +66,17 @@ fn run_on<S: Store, R, E: CardFault + From<StoreError>>(
     })
 }
 
+#[optimize(size)]
 fn changed(now: VolumeId, subject: Subject) -> ProjectNote {
     card_note(StoreError::VolumeChanged(now), Some(subject))
 }
 
+#[optimize(size)]
 fn card_note(err: StoreError, subject: Option<Subject>) -> ProjectNote {
     ProjectNote::Card { err, subject }
 }
 
+#[optimize(size)]
 fn load_note(e: LoadError, subject: Subject) -> ProjectNote {
     match e {
         LoadError::Store(err) => card_note(err, Some(subject)),
@@ -92,6 +99,7 @@ fn load_note(e: LoadError, subject: Subject) -> ProjectNote {
 pub struct FreshFile(ProjectFile);
 
 impl FreshFile {
+    #[optimize(size)]
     pub fn file(&self) -> ProjectFile {
         self.0
     }
@@ -100,6 +108,7 @@ impl FreshFile {
     /// pair already there.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn for_test(f: ProjectFile) -> Self {
         FreshFile(f)
     }
@@ -126,12 +135,14 @@ pub struct CardOut<T> {
 }
 
 impl<T> CardOut<T> {
+    #[optimize(size)]
     fn none(out: T) -> Self {
         CardOut { out, event: None }
     }
 }
 
 /// The event of a `Card::run`, and its result flattened.
+#[optimize(size)]
 pub(super) fn split<R, E>(run: Result<Outcome<R, E>, E>) -> (Result<R, E>, Option<CardEvent>) {
     match run {
         Ok(o) => (o.result, Some(o.event)),
@@ -141,6 +152,7 @@ pub(super) fn split<R, E>(run: Result<Outcome<R, E>, E>) -> (Result<R, E>, Optio
 
 /// A new file on the card in the slot: the highest id there + 1; 1 with
 /// no `PROJECTS` directory.
+#[optimize(size)]
 pub fn new_project_id<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -168,6 +180,7 @@ pub fn new_project_id<S: Store>(
 }
 
 /// The Parts saved `Edited` from a slot.
+#[optimize(size)]
 fn differ(p: &Project) -> Differ {
     let mut edited = PartId::ALL.into_iter().filter_map(|id| {
         let part = p.part(id);
@@ -197,6 +210,7 @@ enum Expect {
 }
 
 /// `Err` with the file's subject when it moved from `e`.
+#[optimize(size)]
 fn still<S: Store>(
     s: &mut S,
     vol: VolumeId,
@@ -221,6 +235,7 @@ fn still<S: Store>(
 /// `body` to `file`'s write side, named `name`, making the directories
 /// first; only on `file.vol` and only if it still is as `e` says. A card
 /// or file error names `subject`.
+#[optimize(size)]
 fn write_project<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -264,6 +279,7 @@ fn write_project<S: Store>(
 /// `CARD CHANGED`, and a fresh or confirmed file that moved since is
 /// `FileChanged`, with nothing written. On success the project is
 /// `Saved` as that file; on any error its meta is untouched.
+#[optimize(size)]
 pub fn save_project<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -276,6 +292,7 @@ pub fn save_project<S: Store>(
 
 /// `save_project` under `name`: the project takes it only once saved, so
 /// a refused save leaves it as it was.
+#[optimize(size)]
 pub fn save_project_as<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -323,6 +340,7 @@ pub fn save_project_as<S: Store>(
 
 /// Whether a save over `c` would pass `write_project`'s checks, writing
 /// nothing: CLEAR of the loaded file asks before NEW replaces RAM.
+#[optimize(size)]
 pub fn still_over<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -348,6 +366,7 @@ pub fn still_over<S: Store>(
 /// since it was listed. The loaded project's own file is refused
 /// (`ClearLoaded`), as RAM would still read `Saved`: clearing your own is
 /// a guarded load of NEW, then `SaveTo::Over`.
+#[optimize(size)]
 pub fn clear_project<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -397,6 +416,7 @@ impl Loaded {
     /// `LOADED · a SOUNDS, b SRC DIDN'T FIT` when any didn't, else
     /// `LOADED · n SRC MISSING` when any is, else `FORMANT BUDGET FULL`
     /// when a kind was read as W1.
+    #[optimize(size)]
     fn note(&self) -> Option<ProjectNote> {
         if self.sounds > 0 || self.sources > 0 {
             return Some(ProjectNote::DidntFit {
@@ -417,6 +437,7 @@ impl Loaded {
 /// takes, has faded the voices. Its own frame: the decoder's two sides of
 /// pass 1 costs stay out of the UI loop's (the 8 KB stack-check).
 #[inline(never)]
+// Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
 fn load_into<S: Store>(
     s: &mut S,
     r: &Ready,
@@ -446,12 +467,14 @@ fn load_into<S: Store>(
 /// forward load as their heads (`LoadDoor::sources`): how many streamed.
 /// With bank 2 shut none.
 #[cfg(feature = "tape")]
+#[optimize(size)]
 fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet) -> u8 {
     super::LoadDoor::with(|d| d.sources(s, r, p, ids)).unwrap_or(0)
 }
 
 /// No TAPE: nothing streams.
 #[cfg(not(feature = "tape"))]
+#[optimize(size)]
 fn stream_sources<S: Store>(_: &mut S, _: &Ready, _: &mut Project, _: SourceSet) -> u8 {
     0
 }
@@ -461,6 +484,7 @@ fn stream_sources<S: Store>(_: &mut S, _: &Ready, _: &mut Project, _: SourceSet)
 /// absent otherwise. A file missing, short, damaged or naming another ref
 /// leaves its entry absent: the ref is kept, and its Parts are silent. A
 /// card fault ends the reads there.
+#[optimize(size)]
 fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet) -> (u8, u8) {
     p.bump();
     let (mut missed, mut unread) = (0u8, 0u8);
@@ -508,6 +532,7 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet)
 /// moved since `go`; a file listed on another card is refused before any
 /// read. A pass 1 failure leaves `p` untouched; a pass 2 failure resets it
 /// to NEW, and still swaps.
+#[optimize(size)]
 pub fn load_project<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -578,6 +603,7 @@ pub fn load_project<S: Store>(
 /// yet, so there is no epoch to bump (ADR 0046). A load binds the project
 /// to the card it came from; anything else leaves `p` NEW, whatever it
 /// held, and says why.
+#[optimize(size)]
 pub fn boot_project<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -621,6 +647,7 @@ pub fn boot_project<S: Store>(
 /// What a loaded project was saved as: none when the load was lossy, so
 /// it reads Modified and offers the save that would write it whole (ADR
 /// 0078).
+#[optimize(size)]
 fn loaded_crc(p: &Project, lossy: bool) -> Option<u32> {
     (!lossy).then(|| project_crc(p))
 }
@@ -640,11 +667,13 @@ pub struct ProjectEntry {
 
 impl ProjectEntry {
     /// The file to load or delete: on the card it was listed on.
+    #[optimize(size)]
     pub fn file(&self) -> ProjectFile {
         ProjectFile::new(self.id, self.vol)
     }
 
     /// Named `n`, ignoring case: NAME EXISTS' test.
+    #[optimize(size)]
     pub fn is_named(&self, n: &ProjectName) -> bool {
         self.name
             .is_some_and(|m| m.as_str().eq_ignore_ascii_case(n.as_str()))
@@ -673,6 +702,7 @@ struct HeadSink {
 }
 
 impl ReadSink for HeadSink {
+    #[optimize(size)]
     fn begin(&mut self, len: u32) -> ControlFlow<()> {
         if (len as usize) < HEADER_LEN {
             ControlFlow::Break(())
@@ -681,6 +711,7 @@ impl ReadSink for HeadSink {
         }
     }
 
+    #[optimize(size)]
     fn chunk(&mut self, bytes: &[u8]) -> ControlFlow<()> {
         let n = bytes.len().min(HEADER_LEN - self.len);
         self.buf[self.len..self.len + n].copy_from_slice(&bytes[..n]);
@@ -694,6 +725,7 @@ impl ReadSink for HeadSink {
 }
 
 /// One side's header: `None` when it doesn't exist.
+#[optimize(size)]
 fn peek_side<S: Store>(
     s: &mut S,
     vol: VolumeId,
@@ -724,6 +756,7 @@ fn peek_side<S: Store>(
 /// An id's entry from its two headers. A side that needs newer firmware
 /// is the entry's error even beside a readable one, as `pick` refuses it
 /// first; else the newer readable side's name; else the first error.
+#[optimize(size)]
 fn entry(
     id: ProjectId,
     vol: VolumeId,
@@ -754,6 +787,7 @@ fn entry(
 }
 
 /// `id`'s entry from its headers; `None` when neither side exists.
+#[optimize(size)]
 pub fn peek_entry<S: Store>(
     s: &mut S,
     vol: VolumeId,
@@ -776,6 +810,7 @@ struct Ids {
 }
 
 impl Ids {
+    #[optimize(size)]
     fn see(&mut self, id: ProjectId) {
         self.top = self.top.max(id.get());
         let at = match self.low[..self.len].binary_search(&id) {
@@ -798,6 +833,7 @@ impl Ids {
 
 /// One pass over `PROJECTS` for the ids past `after`: an empty card has no
 /// directory.
+#[optimize(size)]
 fn scan<S: Store>(s: &mut S, vol: VolumeId, after: u32) -> Result<Ids, StoreError> {
     let mut ids = Ids {
         low: [ProjectId::MIN; MAX_LISTED],
@@ -819,6 +855,7 @@ fn scan<S: Store>(s: &mut S, vol: VolumeId, after: u32) -> Result<Ids, StoreErro
 
 /// The `MAX_LISTED` lowest projects on the card, in id order, from their
 /// headers alone (one block a side), after one directory pass.
+#[optimize(size)]
 pub fn list_projects<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -867,6 +904,7 @@ pub fn list_projects<S: Store>(
 
 /// The lowest id past `after` whose name is `n`, ignoring case: one
 /// directory pass per `MAX_LISTED` ids, stopping at the first match.
+#[optimize(size)]
 pub fn find_named<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -902,6 +940,7 @@ pub fn find_named<S: Store>(
 /// first, on its card only (another card is `CARD CHANGED`). The loaded
 /// project's own file is refused, and so is a file that moved since it
 /// was listed (`FileChanged`, gone included): nothing is deleted.
+#[optimize(size)]
 pub fn delete_project<S: Store>(
     card: &mut Card,
     store: &mut S,

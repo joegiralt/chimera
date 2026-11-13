@@ -28,6 +28,7 @@ pub struct BuildStamp {
     dirty: bool,
 }
 
+#[optimize(size)]
 const fn pad<const N: usize>(s: &str) -> [u8; N] {
     let b = s.as_bytes();
     assert!(b.len() <= N, "build stamp field too long");
@@ -41,6 +42,7 @@ const fn pad<const N: usize>(s: &str) -> [u8; N] {
 }
 
 /// Stored bytes up to the first NUL, a non-printable one as `?`.
+#[optimize(size)]
 fn clean<const N: usize>(p: &[u8]) -> [u8; N] {
     let mut out = [0; N];
     for (o, &c) in out.iter_mut().zip(p).take_while(|(_, c)| **c != 0) {
@@ -49,6 +51,7 @@ fn clean<const N: usize>(p: &[u8]) -> [u8; N] {
     out
 }
 
+#[optimize(size)]
 fn text(b: &[u8]) -> &str {
     let n = b.iter().position(|&c| c == 0).unwrap_or(b.len());
     // Printable ASCII by construction (`new` takes a `&str`, `parse` cleans).
@@ -56,6 +59,7 @@ fn text(b: &[u8]) -> &str {
 }
 
 impl BuildStamp {
+    #[optimize(size)]
     pub const fn new(version: &str, hash: &str, dirty: bool) -> BuildStamp {
         BuildStamp {
             version: pad(version),
@@ -64,6 +68,7 @@ impl BuildStamp {
         }
     }
 
+    #[optimize(size)]
     pub fn to_bytes(&self) -> [u8; BUILD_LEN] {
         let mut b = [0; BUILD_LEN];
         b[..VERSION_LEN].copy_from_slice(&self.version);
@@ -73,6 +78,7 @@ impl BuildStamp {
     }
 
     /// `None` under `BUILD_LEN` bytes; the rest is read leniently.
+    #[optimize(size)]
     pub fn parse(p: &[u8]) -> Option<BuildStamp> {
         (p.len() >= BUILD_LEN).then(|| BuildStamp {
             version: clean(&p[..VERSION_LEN]),
@@ -81,19 +87,23 @@ impl BuildStamp {
         })
     }
 
+    #[optimize(size)]
     pub fn version(&self) -> &str {
         text(&self.version)
     }
 
+    #[optimize(size)]
     pub fn hash(&self) -> &str {
         text(&self.hash)
     }
 
+    #[optimize(size)]
     pub fn dirty(&self) -> bool {
         self.dirty
     }
 
     /// Both clean, one real hash: a `dev` or `unknown` build names no commit.
+    #[optimize(size)]
     pub fn is_this_build(&self, this: &BuildStamp) -> bool {
         self.hash == this.hash
             && !self.dirty
@@ -104,6 +114,7 @@ impl BuildStamp {
 
 /// `0.1.0 02e440e2`, with `+` after the hash when dirty.
 impl fmt::Display for BuildStamp {
+    #[optimize(size)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}", self.version(), self.hash())?;
         if self.dirty {
@@ -123,6 +134,7 @@ impl Note {
 
     /// A description to write: `None` for any character outside the set.
     /// A stored one is read leniently (`peek_library`).
+    #[optimize(size)]
     pub fn new(t: &str) -> Option<Note> {
         let ok =
             |c: u8| c.is_ascii_uppercase() || c.is_ascii_digit() || b" .,'-+/:()&%".contains(&c);
@@ -132,6 +144,7 @@ impl Note {
     }
 
     /// A stored payload, leniently: 1-40 B, a byte outside 0x20-0x7E as `?`.
+    #[optimize(size)]
     fn parse(p: &[u8]) -> Option<Note> {
         if p.len() > Self::MAX {
             return None;
@@ -145,6 +158,7 @@ impl Note {
         Some(Note(b, len))
     }
 
+    #[optimize(size)]
     pub fn as_str(&self) -> &str {
         // Printable ASCII by construction.
         core::str::from_utf8(&self.0[..usize::from(self.1.get())]).unwrap_or("?")
@@ -152,6 +166,7 @@ impl Note {
 }
 
 /// `Engine`, `Build`, `Note` if any, then the rest of the Sound.
+#[optimize(size)]
 pub fn encode_library_sound(
     s: &Sound,
     stamp: &BuildStamp,
@@ -168,6 +183,7 @@ pub fn encode_library_sound(
 
 /// `encode_library_sound`, then `kept`'s record while the Sound has no
 /// map: a Part's, saved with bank 2's door closed (#862).
+#[optimize(size)]
 pub fn encode_library_part(
     s: &Sound,
     kept: &KeptMap,
@@ -186,10 +202,12 @@ pub fn encode_library_part(
 pub struct UserId(u32);
 
 impl UserId {
+    // Not size-optimised: an interrupt reaches it (ADR 0267).
     pub fn new(n: u32) -> Option<UserId> {
         (1..=LibId::USER_MAX).contains(&n).then_some(UserId(n))
     }
 
+    #[optimize(size)]
     pub fn get(self) -> u32 {
         self.0
     }
@@ -200,12 +218,14 @@ impl UserId {
 pub struct FactoryId(u32);
 
 impl FactoryId {
+    // Not size-optimised: an interrupt reaches it (ADR 0267).
     pub fn new(n: u32) -> Option<FactoryId> {
         (LibId::FACTORY_MIN..=9_999_999)
             .contains(&n)
             .then_some(FactoryId(n))
     }
 
+    #[optimize(size)]
     pub fn get(self) -> u32 {
         self.0
     }
@@ -213,6 +233,7 @@ impl FactoryId {
 
 /// `S9100001`: always seven digits, by its range.
 impl core::fmt::Display for FactoryId {
+    #[optimize(size)]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "S{}", self.0)
     }
@@ -231,12 +252,14 @@ pub enum LibKind {
 }
 
 impl From<UserId> for LibId {
+    #[optimize(size)]
     fn from(id: UserId) -> LibId {
         LibId(id.0)
     }
 }
 
 impl From<FactoryId> for LibId {
+    #[optimize(size)]
     fn from(id: FactoryId) -> LibId {
         LibId(id.0)
     }
@@ -246,6 +269,7 @@ impl LibId {
     pub const USER_MAX: u32 = 8_999_999;
     pub const FACTORY_MIN: u32 = 9_000_001;
 
+    // Not size-optimised: an interrupt reaches it (ADR 0267).
     pub fn new(n: u32) -> Option<LibId> {
         UserId::new(n)
             .map(LibId::from)
@@ -253,6 +277,7 @@ impl LibId {
     }
 
     /// `S` and 7 digits, nothing else.
+    #[optimize(size)]
     pub fn parse(s: &str) -> Option<LibId> {
         let digits = s.strip_prefix('S')?;
         if digits.len() != 7 || !digits.bytes().all(|d| d.is_ascii_digit()) {
@@ -261,10 +286,12 @@ impl LibId {
         LibId::new(digits.parse().ok()?)
     }
 
+    #[optimize(size)]
     pub fn get(self) -> u32 {
         self.0
     }
 
+    #[optimize(size)]
     pub fn kind(self) -> LibKind {
         // In range by construction: every `LibId` came from a `UserId` or a `FactoryId`.
         if self.is_factory() {
@@ -274,11 +301,13 @@ impl LibId {
         }
     }
 
+    #[optimize(size)]
     pub fn is_factory(self) -> bool {
         self.0 >= LibId::FACTORY_MIN
     }
 
     /// `S` and 7 digits.
+    #[optimize(size)]
     pub fn stem(self) -> [u8; 8] {
         let mut s = [b'S'; 8];
         let mut n = self.get();
@@ -291,6 +320,7 @@ impl LibId {
 }
 
 /// A library pair for reads, peeks, `rm` and console `put`; writes go through `user_file`.
+#[optimize(size)]
 pub fn library_file(id: LibId) -> AbFile {
     AbFile::new(Dir::Sounds, &id.stem()).expect("S + 7 digits is a stem")
 }
@@ -301,11 +331,13 @@ pub fn library_file(id: LibId) -> AbFile {
 /// use chimera_engine::storage::{FactoryId, user_file};
 /// let _ = user_file(FactoryId::new(9_100_001).unwrap());
 /// ```
+#[optimize(size)]
 pub fn user_file(id: UserId) -> AbFile {
     library_file(id.into())
 }
 
 /// A `S#######.A` or `.B` in `SOUNDS`.
+#[optimize(size)]
 pub fn lib_id(f: FileName) -> Option<LibId> {
     let (Dir::Sounds, &[b'S', ref digits @ ..], b"A" | b"B") = (f.dir(), f.stem(), f.ext()) else {
         return None;
@@ -329,6 +361,7 @@ pub enum NextId {
 
 /// The id a save takes: `top + 1`, else the lowest clear bit of the window
 /// at `window_base` (bit i is id `window_base + i`), else the next window.
+#[optimize(size)]
 pub fn next_user_id(top: u32, window_base: u32, taken: &[u8; 512]) -> NextId {
     if top < LibId::USER_MAX {
         return UserId::new(top + 1).map_or(NextId::NoIds, NextId::Id);
@@ -365,6 +398,7 @@ pub struct Peek {
 /// (from its declared length), when whole in the file (before the CRC
 /// trailer of a `file_len` file). The payload is cut at the end of `b`: a
 /// record grown by a later build still shows its leading bytes.
+#[optimize(size)]
 fn record_at(b: &[u8], at: usize, file_len: u32) -> Option<(u16, &[u8], usize)> {
     let h = b.get(at..at + 4)?;
     let len = usize::from(u16::from_le_bytes([h[2], h[3]]));
@@ -378,6 +412,7 @@ fn record_at(b: &[u8], at: usize, file_len: u32) -> Option<(u16, &[u8], usize)> 
 
 /// A library Sound's header, engine, stamp and description (`Note`) from
 /// its first `LIB_PEEK` bytes; no CRC check.
+#[optimize(size)]
 pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
     let head: &[u8; HEADER_LEN] = b
         .get(..HEADER_LEN)
@@ -426,6 +461,7 @@ pub struct LibraryDecoder<'a> {
 }
 
 impl<'a> LibraryDecoder<'a> {
+    #[optimize(size)]
     pub fn new(target: &'a mut Sound, kept: &'a mut KeptMap) -> Self {
         kept.clear();
         LibraryDecoder {
@@ -436,11 +472,13 @@ impl<'a> LibraryDecoder<'a> {
     }
 
     /// Entries pass 2 dropped (`SoundCheck::skips`).
+    #[optimize(size)]
     pub fn skips(&self) -> u16 {
         self.check.skips()
     }
 
     /// `SoundCheck::over_budget`.
+    #[optimize(size)]
     pub fn over_budget(&self) -> bool {
         self.check.over_budget()
     }
@@ -449,16 +487,19 @@ impl<'a> LibraryDecoder<'a> {
 impl Check for LibraryDecoder<'_> {
     const KIND: FileKind = FileKind::Sound;
 
+    #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
         self.check.event(e)
     }
 
+    #[optimize(size)]
     fn end(&mut self) -> Result<(), FileError> {
         self.check.end()
     }
 }
 
 impl DecodeInPlace for LibraryDecoder<'_> {
+    #[optimize(size)]
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
         if let Event::Record(ReadTag::Known(t), p) = e {
             crate::midi_in::keep_map(self.kept, t, p);
@@ -466,6 +507,7 @@ impl DecodeInPlace for LibraryDecoder<'_> {
         self.check.step(e, Some(self.target))
     }
 
+    #[optimize(size)]
     fn finish(&mut self) -> Result<(), FileError> {
         self.check.finish(Some(self.target))
     }

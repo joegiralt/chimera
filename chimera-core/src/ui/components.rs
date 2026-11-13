@@ -62,6 +62,8 @@ pub struct HeaderText {
 }
 
 /// `PART 2 · SOUND` or `PART 2 · MIX` and the page (`FILTER`, `SENDS`),
+/// on a DRUM pad's page `PART 2 · 02 TONE SNARE` (`02 SNARE` where the
+/// short page name leaves it too long),
 /// or `SETTINGS`; `suffix` follows the name (`/ B`). A page of the
 /// exciter's cells is named after MODAL's exciter (PLUCK, STRIKE, BOW),
 /// TAPE's model page after its machine (STRETCH); FLT › MOD on DIRTY or
@@ -79,13 +81,26 @@ pub fn header_text(
     closed: Option<&'static str>,
 ) -> HeaderText {
     let models = models.into();
-    let mut context = FmtBuf::new();
-    let _ = match head {
-        Head::Sound(p) => write!(context, "PART {} · SOUND", p.index() + 1),
-        Head::Mix(p) => write!(context, "PART {} · MIX", p.index() + 1),
-        Head::Settings => context.write_str("SETTINGS"),
-        Head::Ring(r) => write!(context, "RING {}", r.get() + 1),
-        Head::Orbit(n) => write!(context, "SCENE {}", n.get() + 1),
+    // A pad's page names the pad and its machine in full where it fits.
+    let pad = models.pad.filter(|_| def.edits_pad());
+    let context = |full: bool| {
+        let mut context = FmtBuf::new();
+        let _ = match (head, pad) {
+            (Head::Sound(p), Some((n, m))) => {
+                let name = match full {
+                    true => crate::dsp::drum::laws::spec(m).name,
+                    false => crate::ui::kit_band::word(m),
+                };
+                let n = crate::ui::view::PAD_NUMBERS[n.index()];
+                write!(context, "PART {} · {n} {name}", p.index() + 1)
+            }
+            (Head::Sound(p), None) => write!(context, "PART {} · SOUND", p.index() + 1),
+            (Head::Mix(p), _) => write!(context, "PART {} · MIX", p.index() + 1),
+            (Head::Settings, _) => context.write_str("SETTINGS"),
+            (Head::Ring(r), _) => write!(context, "RING {}", r.get() + 1),
+            (Head::Orbit(n), _) => write!(context, "SCENE {}", n.get() + 1),
+        };
+        context
     };
     let warn = match (head, out) {
         (Head::Settings | Head::Ring(_) | Head::Orbit(_), _) => None,
@@ -114,12 +129,15 @@ pub fn header_text(
         name
     };
     let mut h = HeaderText {
-        context,
+        context: context(true),
         name: named(true),
         warn,
     };
     if !header_fits(&h) {
         h.name = named(false);
+    }
+    if !header_fits(&h) && pad.is_some() {
+        h.context = context(false);
     }
     h
 }
@@ -626,10 +644,12 @@ pub fn big_width(value_text: &str) -> i32 {
 /// large, the value alone, the value font. Never overlapping.
 pub fn layout(value_text: &str, gauge: &Gauge) -> Layout {
     let w = big_width(value_text);
-    // VA's MODE scope keeps its place for a word the large numerals can't hold
+    // VA's MODE scope and DRUM's icon keep their place for a word the
+    // large numerals can't hold
     let beside = |left: i32| {
         let small = draw::text_width(&theme::FONT_VALUE, value_text, theme::LABEL_TRACKING);
-        matches!(gauge, Gauge::VaMix(_)) && theme::MARGIN_X + small + gap(gauge) <= left
+        matches!(gauge, Gauge::VaMix(_) | Gauge::Drum(_))
+            && theme::MARGIN_X + small + gap(gauge) <= left
     };
     let left = gauge_left(gauge);
     if w > theme::CONTENT_W {
@@ -681,6 +701,7 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
         Gauge::Rings(_) => Some(theme::RINGS_X),
         Gauge::Cube(_) | Gauge::Tail(_) => Some(theme::CUBE_X),
         Gauge::Tape(_) => Some(theme::WAVE_X),
+        Gauge::Drum(_) => Some(crate::ui::kit_band::BIG_LEFT),
     }
 }
 
@@ -729,7 +750,8 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::Tape(_)
         | Gauge::Lfo(_)
         | Gauge::Stability { .. }
-        | Gauge::Feedback { .. } => None,
+        | Gauge::Feedback { .. }
+        | Gauge::Drum(_) => None,
     }
 }
 
@@ -759,6 +781,7 @@ where
         Gauge::Lfo(g) => crate::ui::lfo_glyph::draw(d, &g),
         Gauge::Stability { offset, reach } => spirit_level(d, offset.into(), reach.into()),
         Gauge::Feedback { q } => feedback_loop(d, q.into()),
+        Gauge::Drum(m) => crate::ui::kit_band::big_icon(d, m),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,

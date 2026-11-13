@@ -175,3 +175,9 @@ Not in 0.4: MIDI-sending pads (7) and the listening drummer (8).
 **BODY HAND and METAL JINGLE ship** (owner, by ear on the audition page, 2026-11-10/11). VOX was rebuilt consonant-first (3f46a47b) after the owner said the formant version "doesn't sound like a mouth"; its ship marks are pending.
 
 **Audition marks, owner 2026-11-11** (audition page, collection `picks`): the world batch ships: BODY BAR, BODY PAN, BODY GONG, BODY TABLA, LPG BONGO, FILTER PING. VOX ships **ROLL only**; VOX KICK, SNARE, HAT and CLICK are cut (the code stays, model work). BODY SPRING has no mark. With the 18 of 2026-11-10 and BODY WOOD, BODY HAND, METAL JINGLE, **28 machines ship in 0.4**.
+
+## Glyphs and icons, owner 2026-11-12
+
+Mockup: an unpublished page, source `docs/mockups/drum-glyphs.html` (the bitmaps in `INST`, `FAM` and `L3` are the reference pixels).
+- **KIT icons land "for the time being":** every machine is a composite of a family mark (TONE, FM, BODY, METAL, PLAIN, LPG, VOX) and a 14×12 instrument mark (22 marks cover the 28 machines); `#` full colour, `+` the dim second tone. Snare and tom are flat side views (short with crossed sticks and wires; tall floor tom on legs). Badge style (3×5 letter or 5×5 symbol) is still open.
+- **Focus-band glyphs:** eight gauges (SWEEP, DECAY, TRANSIENT, PARTIALS, CLAPS, GRAINS, DRIVE, FILTER). Per knob or one whole-hit picture: owner "it depends", to be settled per machine family before Task 8.

@@ -1086,6 +1086,37 @@ impl VarOsc {
         }
     }
 
+    /// `tick` with no sync at WAVE's pulse end (1), where `render` plays
+    /// only the SAW–PULSE pair: one run linked, not three.
+    #[inline(never)]
+    pub fn tick_pulse(&mut self, inc: f32, shape: Unit) -> f32 {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.logged = 0;
+            self.runs = 1;
+        }
+        let r = Ramps {
+            inc: (inc, 0.0),
+            wave: (1.0, 0.0),
+            shape: (shape.get(), 0.0),
+        };
+        let mut out = [0.0f32];
+        let mut mk = [[NO_WRAP, NO_WRAP]];
+        let blk = self.block::<false, false>(&r, 1, 1.0);
+        self.run::<Saw, Pulse, 1, false, false, false, false>(
+            &blk,
+            (0, 1),
+            &r,
+            &mut out,
+            &mut mk,
+            &mut 1.0,
+            &mut || 1.0,
+            &[0.0],
+            (0.0, 0.0),
+        );
+        out[0]
+    }
+
     /// `tick` on the `MOD` path: the read moves `dir·inc + rr_extra` (PM's
     /// form, `k = (0, 1)`); `turn` is a reversing sync's turn `t` samples
     /// ago (the reversing branch). `wrap` and `flip` are the clock's.

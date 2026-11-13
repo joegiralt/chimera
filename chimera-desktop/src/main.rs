@@ -103,7 +103,7 @@ fn main() {
         audio::connect_midi_out(&name);
     }
 
-    let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
+    let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE), leaked_kits());
     ui.project_mut().set_gate_clock(gate_ms);
     // Streamed sources' files, registered as on the chip (slice 1 § 5.5).
     ui.project_mut().set_streams(streams);
@@ -264,6 +264,8 @@ fn main() {
             ui.publish_orbit(&mut b.orbit);
             ui.publish_ui(b);
         });
+        // The pads struck since: lit, and the shown Part's selected.
+        audio.take_hits(&mut ui);
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();
@@ -316,4 +318,9 @@ fn gate_ms() -> u32 {
 /// `table`: `SOURCE_TABLE` where the audio runs.
 fn leaked_arena(table: &'static SourceTable) -> ArenaWriter {
     ArenaWriter::new(Box::leak(vec![0; ARENA_BYTES].into_boxed_slice()), table)
+}
+
+/// The Parts' kits: the chip's ITCM static, here a leaked box.
+fn leaked_kits() -> &'static mut chimera_core::project::Kits {
+    Box::leak(Box::new(chimera_core::project::Kits::DEFAULT))
 }

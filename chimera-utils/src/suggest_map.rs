@@ -260,7 +260,8 @@ mod tests {
         assert_eq!(lost, 0);
         assert_eq!(back, map());
         assert_eq!(back.section(None).len(), SHARED.len());
-        for e in EngineType::ALL {
+        // DRUM has no SUGGEST section: ADR 0266's flat maps give it its own.
+        for e in ENGINES.map(|(e, _)| e) {
             let (layer, lost) = back.layer(e);
             assert_eq!((layer.len(), lost), (16, 0), "{e:?}");
             for b in layer.entries() {

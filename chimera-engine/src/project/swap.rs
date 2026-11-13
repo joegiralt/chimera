@@ -34,12 +34,14 @@ pub struct LoadLink {
 pub static LOAD_LINK: LoadLink = LoadLink::new();
 
 impl Default for LoadLink {
+    #[optimize(size)]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl LoadLink {
+    #[optimize(size)]
     pub const fn new() -> Self {
         Self {
             epoch: AtomicU32::new(0),
@@ -54,6 +56,7 @@ impl LoadLink {
     /// The UI, before bank 2's door closes: TAPE's voices go off, and stay
     /// off until `open_tape`.
     #[cfg(feature = "bank2-gate")]
+    #[optimize(size)]
     pub fn shut_tape(&self) {
         self.tape_quiet.store(false, Ordering::Release);
         self.tape_shut.store(true, Ordering::Release);
@@ -61,22 +64,26 @@ impl LoadLink {
 
     /// The UI, once the write is done: TAPE may sound again.
     #[cfg(feature = "bank2-gate")]
+    #[optimize(size)]
     pub fn open_tape(&self) {
         self.tape_shut.store(false, Ordering::Release);
     }
 
     /// The UI: the audio reports no TAPE voice sounding.
     #[cfg(feature = "bank2-gate")]
+    #[optimize(size)]
     pub fn tape_quiet(&self) -> bool {
         self.tape_quiet.load(Ordering::Acquire)
     }
 
     /// The latest epoch: what the UI tags each snapshot with.
+    #[optimize(size)]
     pub fn epoch(&self) -> u32 {
         self.epoch.load(Ordering::Acquire)
     }
 
     /// A new epoch. Only the project load functions call it.
+    #[optimize(size)]
     pub(in crate::project) fn bump(&self) -> Swap {
         Swap {
             epoch: self.epoch.fetch_add(1, Ordering::Release).wrapping_add(1),
@@ -85,16 +92,19 @@ impl LoadLink {
 
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    #[optimize(size)]
     pub fn bump_for_test(&self) -> Swap {
         self.bump()
     }
 
     /// The audio: every voice of epoch `e` is quiet.
+    #[optimize(size)]
     pub fn ack(&self, e: u32) {
         self.ack.store(e, Ordering::Release);
     }
 
     /// The UI: the audio acked epoch `e`.
+    #[optimize(size)]
     pub fn acked(&self, e: u32) -> bool {
         self.ack.load(Ordering::Acquire) == e
     }
@@ -114,12 +124,14 @@ pub enum Settled {
 }
 
 impl Swap {
+    #[optimize(size)]
     pub(in crate::project) fn epoch(&self) -> u32 {
         self.epoch
     }
 
     /// Spins until the audio acks this epoch or `within` says time is up
     /// (`LOAD_ACK_TIMEOUT_MS`). Either way the UI publishes next.
+    #[optimize(size)]
     pub fn settle(self, link: &LoadLink, mut within: impl FnMut() -> bool) -> Settled {
         while !link.acked(self.epoch) && within() {
             core::hint::spin_loop();
@@ -160,12 +172,14 @@ pub struct LoadGate {
 }
 
 impl Default for LoadGate {
+    #[optimize(size)]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl LoadGate {
+    #[optimize(size)]
     pub const fn new() -> Self {
         Self {
             seen: 0,
@@ -175,6 +189,7 @@ impl LoadGate {
 
     /// One block's step, given the epoch `requested`, the `snapshot`'s
     /// tag and whether every voice is `quiet` (ADR 0046's table).
+    #[optimize(size)]
     pub fn step(&mut self, requested: u32, snapshot: u32, quiet: bool) -> GateStep {
         let mut out = GateStep::default();
         if requested != self.seen {
@@ -206,6 +221,7 @@ impl LoadGate {
 
     /// Before the drain: kills and acks as `step` says. Returns whether
     /// to drain.
+    #[optimize(size)]
     pub fn before_block(
         &mut self,
         link: &LoadLink,

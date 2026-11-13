@@ -32,6 +32,7 @@ pub struct Sound {
 impl Sound {
     // Out of line: inlined into its dozen callers it cost ~15 KB of flash.
     #[inline(never)]
+    #[optimize(size)]
     pub fn init(engine: EngineType) -> Self {
         let mut s = Self::factory_init(engine);
         s.map = default_for(engine);
@@ -46,6 +47,7 @@ impl Sound {
     /// vibrato without its WHEEL route, and no map (`factory_map`'s).
     /// Inlined into `init`, its one firmware caller.
     #[inline(always)]
+    #[optimize(size)]
     pub fn factory_init(engine: EngineType) -> Self {
         let mut s = Self::plain_init(engine);
         // A new Sound's 2040 or LADDER is a Prophet's voices, each its own
@@ -60,6 +62,7 @@ impl Sound {
     }
 
     /// `src` → `a` at `amt`, its column primed as `label`.
+    #[optimize(size)]
     fn route(&mut self, a: ParamAddr, label: [u8; 8], src: ModSource, amt: i8) {
         if self.dest_registry.add(a, label).is_ok()
             && let Some(d) = self.mod_state.push(a)
@@ -71,6 +74,7 @@ impl Sound {
     /// The map a factory Sound ships (ADR 0250): the default, and where its
     /// LFO 1 moves something, CC 1 → LFO 1 DEPTH, the wheel it was voiced
     /// with (so the wheel still edits it).
+    #[optimize(size)]
     pub fn factory_map(&self) -> MidiMap {
         let (m, lfo1) = (&self.mod_state, ModSource::Lfo1.index());
         let moves = (0..m.num_dests()).any(|d| m.amount(lfo1, d) != 0)
@@ -85,6 +89,7 @@ impl Sound {
     /// INIT without the wheel or the map: the base the factory Sounds are
     /// authored on, with LFO 1 at DEPTH 1.
     #[inline(never)]
+    // Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
     pub fn plain_init(engine: EngineType) -> Self {
         // The default routes (spec § 2): ENV 1, LFO 1 and NOTE → FREQ, the
         // fixed CUTOFF column, at 0, on every engine (a kind that wants
@@ -121,6 +126,7 @@ impl Sound {
     /// SOURCE picked (spec § 1): the head's ref, and its root and period
     /// copied into ROOT and PERIOD, with a zone set's `tune`. The voice
     /// reads them from here, never from the file.
+    #[optimize(size)]
     pub fn pick_source(&mut self, head: &SourceHead, tune: Option<ZoneTune>) {
         self.source = Some(TapeSource { r: head.sref, tune });
         self.params.tape.root = f32::from(head.root);
@@ -128,22 +134,26 @@ impl Sound {
     }
 
     /// Its source's ref, if it has one.
+    #[optimize(size)]
     pub fn source_ref(&self) -> Option<SourceRef> {
         self.source.map(|s| s.r)
     }
 
     /// The engine this Sound plays, and so the chain the UI shows for it.
+    #[optimize(size)]
     pub fn engine(&self) -> EngineType {
         self.params.engine()
     }
 
     /// An init or neutral Sound's name.
+    #[optimize(size)]
     pub fn init_name() -> SoundName {
         SoundName::new("INIT").expect("a valid name")
     }
 
     /// Same name, engine, voice-block params (by bits), routes, taps and
     /// registry: what a card round trip must keep. Unused slots don't count.
+    #[optimize(size)]
     pub fn bits_eq(&self, o: &Sound) -> bool {
         self.name == o.name
             && self.engine() == o.engine()

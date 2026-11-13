@@ -644,7 +644,7 @@ impl Swept {
 
     #[inline]
     pub(super) fn tick(&mut self, fm: f32) -> f32 {
-        let f = self.f0 * (self.oct * self.sw.next()).exp2() * fm;
+        let f = self.f0 * libm::exp2f(self.oct * self.sw.next()) * fm;
         self.ph += f / FS;
         if self.ph >= 1.0 {
             self.ph -= self.ph.floor();
@@ -937,7 +937,7 @@ struct Metal {
 
 impl Metal {
     fn bank(pitch: f32, spread: f32) -> [f32; 6] {
-        let r = (lin(pitch, -24.0, 24.0) / 12.0).exp2();
+        let r = libm::exp2f(lin(pitch, -24.0, 24.0) / 12.0);
         core::array::from_fn(|i| METAL[i] * r * (1.0 + spread * SPREAD[i]))
     }
 
@@ -1088,7 +1088,7 @@ impl Machine for Cowbell {
         let mut x = [0.0; B];
         for (i, s) in x.iter_mut().enumerate() {
             // BUMP: up to an octave above, falling in 6 ms.
-            let m = fm_at(fm, i) * (self.bump_oct * self.bump.next()).exp2();
+            let m = fm_at(fm, i) * libm::exp2f(self.bump_oct * self.bump.next());
             *s = 0.5 * (self.p[0].tick(self.hz[0] * m) + self.p[1].tick(self.hz[1] * m));
         }
         self.bp.run(&mut x, self.tone);
@@ -1251,7 +1251,7 @@ impl Burst {
             bp: Flt::clean(FilterMode::Bp12, hz, 0.9 * k[5]),
             hz,
             onsets,
-            burst: (-1.0 / (expo(1.0 - k[6], 0.15, 0.8) * spread)).exp(),
+            burst: libm::expf(-1.0 / (expo(1.0 - k[6], 0.15, 0.8) * spread)),
             tail_at,
             tail: Decay::t60(expo(k[1], 0.05, 1.0)),
             tail_level: k[4],
@@ -1263,7 +1263,7 @@ impl Burst {
             shaker: false,
             n: 0,
             env: 0.0,
-            room: 1.0 - (-core::f32::consts::TAU * expo(k[7], 400.0, 24_000.0) / FS).exp(),
+            room: 1.0 - libm::expf(-core::f32::consts::TAU * expo(k[7], 400.0, 24_000.0) / FS),
             room_lp: 0.0,
             hard: 0.5,
             hard_lp: 0.0,
@@ -2258,7 +2258,7 @@ impl Machine for Plain {
             }
         } else if let Some((p, f0, oct, sw, hp)) = &mut self.pulse {
             for (i, o) in out.iter_mut().enumerate() {
-                *o = -1.2 * p.tick(*f0 * (*oct * sw.next()).exp2() * fm_at(fm, i));
+                *o = -1.2 * p.tick(*f0 * libm::exp2f(*oct * sw.next()) * fm_at(fm, i));
             }
             hp.run(out, 20.0);
         } else if let Some((h, f, hz)) = &mut self.noise {

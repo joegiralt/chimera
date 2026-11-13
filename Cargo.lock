@@ -382,6 +382,7 @@ dependencies = [
  "chimera-image",
  "chimera-midi",
  "hound",
+ "libm",
  "object",
  "rayon",
  "rustfft",

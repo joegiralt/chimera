@@ -121,7 +121,7 @@ fn init_rows_lead_the_list_and_load() {
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(
         ui.project().part(PartId::ALL[1]).sound.engine(),
-        EngineType::Tape
+        EngineType::Drum
     );
 }
 

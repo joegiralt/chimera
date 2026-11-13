@@ -12,11 +12,13 @@ bounded_index!(
 );
 
 impl SourceId {
+    #[optimize(size)]
     pub const fn index(self) -> usize {
         self.0 as usize
     }
 
     /// Its bit in a `SourceTable` mask.
+    #[optimize(size)]
     pub const fn bit(self) -> u32 {
         1 << self.0
     }
@@ -33,19 +35,23 @@ pub struct SourceSet(u32);
 impl SourceSet {
     pub const EMPTY: SourceSet = SourceSet(0);
 
+    #[optimize(size)]
     pub const fn with(self, s: SourceId) -> SourceSet {
         SourceSet(self.0 | s.bit())
     }
 
+    #[optimize(size)]
     pub const fn without(self, s: SourceId) -> SourceSet {
         SourceSet(self.0 & !s.bit())
     }
 
+    #[optimize(size)]
     pub const fn contains(self, s: SourceId) -> bool {
         self.0 & s.bit() != 0
     }
 
     /// Its sources, in id order.
+    #[optimize(size)]
     pub fn iter(self) -> impl Iterator<Item = SourceId> {
         SourceId::ALL.into_iter().filter(move |&s| self.contains(s))
     }
@@ -86,10 +92,12 @@ pub struct SourceEntry {
 }
 
 impl SourceEntry {
+    #[optimize(size)]
     pub fn absent(&self) -> bool {
         self.held == 0
     }
 
+    #[optimize(size)]
     pub fn cost(&self) -> Cost {
         source_cost(self.held as usize)
     }
@@ -97,6 +105,7 @@ impl SourceEntry {
 
 /// What source `r` with `zones` zones (`listed_zones`, 0 for a whole
 /// source) takes held whole; `None` when it could never fit.
+#[optimize(size)]
 pub(super) fn ref_cost(r: SourceRef, zones: u8) -> Option<Cost> {
     crate::storage::held_len_zoned(r, zones)
         .filter(|&n| n <= super::arena::ARENA_BYTES)
@@ -104,6 +113,7 @@ pub(super) fn ref_cost(r: SourceRef, zones: u8) -> Option<Cost> {
 }
 
 /// What `held` bytes take: none when absent, else the head and the bytes.
+#[optimize(size)]
 pub(super) fn source_cost(held: usize) -> Cost {
     if held == 0 {
         Cost::default()
@@ -120,19 +130,23 @@ pub struct Users {
 }
 
 impl Users {
+    #[optimize(size)]
     pub fn is_empty(&self) -> bool {
         self.parts.is_empty() && self.sounds == [0; 2]
     }
 
+    #[optimize(size)]
     pub fn has_sound(&self, s: SlotId) -> bool {
         self.sounds[s.index() / 64] & 1 << (s.index() % 64) != 0
     }
 
+    #[optimize(size)]
     fn with_sound(mut self, s: SlotId) -> Users {
         self.sounds[s.index() / 64] |= 1 << (s.index() % 64);
         self
     }
 
+    #[optimize(size)]
     fn without_sound(mut self, s: SlotId) -> Users {
         self.sounds[s.index() / 64] &= !(1 << (s.index() % 64));
         self
@@ -141,6 +155,7 @@ impl Users {
 
 /// The Parts and pool Sounds whose `SourceRef` is source `s`'s: none for
 /// an empty slot.
+#[optimize(size)]
 pub fn source_users(p: &Project, s: SourceId) -> Users {
     let Some(e) = p.pool.source(s) else {
         return Users::default();
@@ -176,6 +191,7 @@ pub struct Unused {
 
 impl Project {
     /// The sources nothing uses, absent ones included.
+    #[optimize(size)]
     fn unused(&self) -> impl Iterator<Item = (SourceId, SourceEntry)> + '_ {
         SourceId::ALL.into_iter().filter_map(|s| {
             let e = self.pool.source(s)?;
@@ -186,6 +202,7 @@ impl Project {
     /// PURGE UNUSED SOURCES' count, as it would run now: sources holding
     /// bytes only. An unused absent entry goes with them, but alone it is
     /// nothing to offer.
+    #[optimize(size)]
     pub fn unused_sources(&self) -> Unused {
         self.unused()
             .filter(|(_, e)| !e.absent())
@@ -198,6 +215,7 @@ impl Project {
     /// Every source nothing uses, recounted now (ADR 0087). A source in
     /// `sounding` is retired: its bytes stay pending until its note ends.
     /// The card is never touched. With none, nothing moves.
+    #[optimize(size)]
     pub fn purge_unused_sources(&mut self, sounding: u32) -> Purged {
         let mut gone = [None; MAX_SOURCES];
         for (i, (s, e)) in self.unused().enumerate() {
@@ -220,6 +238,7 @@ impl Project {
 
     /// Clearing slot `s` would leave its source with no user: that source's
     /// cost. `None` when the slot holds no ref, or another still uses it.
+    #[optimize(size)]
     pub fn orphaned_by_clear(&self, s: SlotId) -> Option<Cost> {
         let r = self.pool.get(s)?.source_ref()?;
         let id = self.pool.find_source(r)?;
@@ -231,6 +250,7 @@ impl Project {
 
     /// Stores source `r`, its `held` bytes copied into the arena (Task 9's
     /// loader; tests). An identical source already held is shared.
+    #[optimize(size)]
     pub fn source_store(&mut self, r: SourceRef, held: &[u8]) -> Result<SourceId, super::PoolFull> {
         self.bump();
         self.pool.source_store(r, held)
@@ -239,6 +259,7 @@ impl Project {
     /// Stores source `r`, its `len` held bytes written by `fill` straight
     /// into the arena, with no copy (the bench's synthetic sources). `None`
     /// when it doesn't fit, or `r` is already held.
+    #[optimize(size)]
     pub fn source_write(
         &mut self,
         r: SourceRef,
@@ -256,17 +277,20 @@ impl Project {
 
     /// A card-row load's staging (`Pool::source_staging`): nothing moves,
     /// nothing is published, so the meter and the gap stay as they were.
+    #[optimize(size)]
     pub fn source_staging(&mut self, len: usize) -> Option<(u32, &mut [u8])> {
         self.pool.source_staging(len)
     }
 
     /// The staged bytes published as source `r` (`Pool::source_commit`).
+    #[optimize(size)]
     pub fn source_commit(&mut self, r: SourceRef, len: usize) -> Result<SourceId, super::PoolFull> {
         self.bump();
         self.pool.source_commit(r, len)
     }
 
     /// Source `r` as an absent entry, costing nothing.
+    #[optimize(size)]
     pub fn source_absent(&mut self, r: SourceRef) -> Option<SourceId> {
         self.bump();
         self.pool.source_absent(r)
@@ -275,6 +299,7 @@ impl Project {
     /// One UI pass of the sources' gated compaction (ADR 0087), waiting
     /// by the gate clock: true when a hole closed. Bumps only then, so a
     /// status cache keyed on `rev` isn't redone each frame.
+    #[optimize(size)]
     pub fn sources_pass(&mut self) -> bool {
         let moved = self.pool.source_pass_timed();
         if moved {
@@ -285,6 +310,7 @@ impl Project {
 
     /// `sources_pass`, waiting for the audio while `within` says so: tests,
     /// and the bench, which answers the gate itself.
+    #[optimize(size)]
     pub fn sources_pass_with(&mut self, mut within: impl FnMut() -> bool) -> bool {
         let moved = self.pool.source_pass(&mut within);
         if moved {
@@ -298,6 +324,7 @@ impl Project {
     /// index, so its Parts read SOURCE MISSING, and every stream row
     /// freed, so no read lands another card's blocks. A voice holding a
     /// retired source is never cut (ADR 0087); its wants go unserved.
+    #[optimize(size)]
     pub fn lose_streams(&mut self) {
         let Some(reg) = self.pool.streams() else {
             return;
@@ -322,12 +349,14 @@ impl Project {
 
     /// The registry streamed sources' files go in: the shell's, lent once
     /// (a bench build's beds keep theirs).
+    #[optimize(size)]
     pub fn set_streams(&mut self, r: &'static crate::stream::registry::StreamRegistry) {
         self.pool.set_streams(r);
     }
 
     /// The UI loop's clock in ms, which a gate waits by
     /// (`GATE_ACK_TIMEOUT_MS`).
+    #[optimize(size)]
     pub fn set_gate_clock(&mut self, now_ms: fn() -> u32) {
         self.pool.set_clock(now_ms);
     }

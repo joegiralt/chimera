@@ -265,7 +265,11 @@ fn mix_zero_is_dry_on_every_engine() {
 
 #[test]
 fn each_engine_meets_the_fx_reference() {
-    for kind in EngineType::ALL {
+    // DRUM plays pads, not notes: `drum_engine_test`.
+    for kind in EngineType::ALL
+        .into_iter()
+        .filter(|&e| e != EngineType::Drum)
+    {
         let (_, notes) = engine_blocks(kind, &[60], 100);
         let peak = notes[0]
             .iter()

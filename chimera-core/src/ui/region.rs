@@ -55,8 +55,9 @@ pub enum RegionData {
         out: u8,
         /// The load and the dots.
         status: HeaderStatus,
-        /// ORBIT's `SCENE n`, one-based; 0 where the header reads no scene.
-        scene: u8,
+        /// What the context names past the Part: ORBIT's `SCENE n`
+        /// one-based, a DRUM pad's page its pad and machine; 0 for none.
+        names: u16,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -168,14 +169,15 @@ impl RegionData {
             title_type,
             out,
             status,
-            scene: 0,
+            names: 0,
         }
     }
 
-    /// A header reading `SCENE n`: it redraws when a switch lands.
-    pub fn with_scene(mut self, n: u8) -> Self {
-        if let Self::Header { scene, .. } = &mut self {
-            *scene = n;
+    /// A header naming `n` (`SCENE n`, a pad and its machine): it redraws
+    /// when that changes.
+    pub fn with_names(mut self, n: u16) -> Self {
+        if let Self::Header { names, .. } = &mut self {
+            *names = n;
         }
         self
     }
@@ -360,7 +362,7 @@ impl RegionData {
                 load_pct: u8::MAX,
                 orbit_dot: None,
             },
-            scene: u8::MAX,
+            names: u16::MAX,
         }
     }
 

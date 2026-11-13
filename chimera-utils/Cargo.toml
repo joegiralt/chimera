@@ -13,6 +13,7 @@ chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 chimera-image = { path = "../chimera-image" }
 chimera-midi = { path = "../chimera-midi" }
 hound = "3.5"
+libm = "0.2"
 object = { version = "0.36", default-features = false, features = ["read", "write", "std", "elf"] }
 rayon = "1.11"
 rustfft = "6.4"

@@ -703,7 +703,7 @@ fn sparse_sizes() {
     // VA's too, and its FINE2 and STAB: one block of two params, 15 B.
     for e in EngineType::ALL {
         let more = match e {
-            EngineType::Algo | EngineType::Modal => 0,
+            EngineType::Algo | EngineType::Modal | EngineType::Drum => 0,
             EngineType::Tape => 4 + 10,
             EngineType::Va => 4 + 15,
         };

@@ -756,7 +756,7 @@ fn pool_leaf_lists_breakdown() {
     let labels = SYS_POOL.params.map(|p| p.label());
     assert_eq!(labels[..4], ["SOUNDS", "SOURCES", "FREE", "PENDING"]);
     // NEW's maps as `Bindings` (MIDI phase 1): 5.0K as `MidiMap`.
-    assert_eq!(text(0).as_deref(), Some("16 · 5.5K"));
+    assert_eq!(text(0).as_deref(), Some("17 · 5.8K"));
     assert_eq!(text(1).as_deref(), Some("0 · 0.0K"));
     assert_eq!(
         text(2).as_deref(),

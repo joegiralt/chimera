@@ -4,6 +4,8 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
+use crate::dsp::drum::params::{KitParams, PadParams};
+use crate::dsp::drum::types::Knob;
 use crate::dsp::modal::{ModalPage, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
@@ -22,9 +24,9 @@ use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::reverb_panel::RevPage;
 use crate::ui::settings::leaves::{
-    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, ECHO_LEAF, LIVE_SNAP_LEAF, MAP_LEAF,
-    MPE_LEAF, OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, RANDOM_LEAF, SAVER_LEAF, SYNC_LEAF, TEXT_LEAF,
-    THEME_LEAF, TUNING_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, ECHO_LEAF, FOLLOW_LEAF,
+    LIVE_SNAP_LEAF, MAP_LEAF, MPE_LEAF, OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, RANDOM_LEAF,
+    SAVER_LEAF, SYNC_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -100,7 +102,7 @@ pub static TAPE_SRC: BlockDef = BlockDef {
         ParamSlot::source(),
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::START),
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::END),
-        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label("VOL"),
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label(&"VOL"),
         EMPTY,
         EMPTY,
     ],
@@ -158,9 +160,9 @@ pub static VA_HOME: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Va, VaParams::WAVE1),
         ParamSlot::param(BlockRef::Va, VaParams::WAVE2),
         ParamSlot::param(BlockRef::Va, VaParams::MODE),
-        ParamSlot::param(BlockRef::Va, VaParams::AMOUNT).with_label("BLEND"),
+        ParamSlot::param(BlockRef::Va, VaParams::AMOUNT).with_label(&"BLEND"),
         ParamSlot::param(BlockRef::Va, VaParams::SUB),
-        ParamSlot::param(BlockRef::Va, VaParams::STAB).with_label("STABILITY"),
+        ParamSlot::param(BlockRef::Va, VaParams::STAB).with_label(&"STABILITY"),
     ],
 };
 
@@ -171,9 +173,9 @@ pub static VA_OSC1: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Va, VaParams::CRSE1).with_label("CRSE"),
-        ParamSlot::param(BlockRef::Va, VaParams::FINE1).with_label("FINE"),
-        ParamSlot::param(BlockRef::Va, VaParams::SHAPE1).with_label("SHAPE"),
+        ParamSlot::param(BlockRef::Va, VaParams::CRSE1).with_label(&"CRSE"),
+        ParamSlot::param(BlockRef::Va, VaParams::FINE1).with_label(&"FINE"),
+        ParamSlot::param(BlockRef::Va, VaParams::SHAPE1).with_label(&"SHAPE"),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -187,9 +189,9 @@ pub static VA_OSC2: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Va, VaParams::CRSE2).with_label("CRSE"),
-        ParamSlot::param(BlockRef::Va, VaParams::FINE2).with_label("FINE"),
-        ParamSlot::param(BlockRef::Va, VaParams::SHAPE2).with_label("SHAPE"),
+        ParamSlot::param(BlockRef::Va, VaParams::CRSE2).with_label(&"CRSE"),
+        ParamSlot::param(BlockRef::Va, VaParams::FINE2).with_label(&"FINE"),
+        ParamSlot::param(BlockRef::Va, VaParams::SHAPE2).with_label(&"SHAPE"),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -206,7 +208,7 @@ pub static VA_NOISE: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Va, VaParams::NOISE_KIND),
-        ParamSlot::param(BlockRef::Va, VaParams::NOISE).with_label("LEVEL"),
+        ParamSlot::param(BlockRef::Va, VaParams::NOISE).with_label(&"LEVEL"),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -281,7 +283,7 @@ pub static FILTER: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::TYPE),
         ParamSlot::filter_panel(2),
         ParamSlot::filter_panel(0),
-        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::PLACE).with_label("FX PLACE"),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::PLACE).with_label(&"FX PLACE"),
         ParamSlot::filter_panel(1),
     ],
 };
@@ -335,7 +337,7 @@ pub static FILTER_FX: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::FxCurve,
     params: [
-        ParamSlot::param(BlockRef::Filter, FilterParams::LEVEL).with_label("INPUT"),
+        ParamSlot::param(BlockRef::Filter, FilterParams::LEVEL).with_label(&"INPUT"),
         ParamSlot::fx_panel(0),
         ParamSlot::fx_panel(1),
         ParamSlot::fx_panel(2),
@@ -406,12 +408,12 @@ pub static ENV_SPEED: BlockDef = BlockDef {
     viz: VizType::EnvSpeed,
     // A column per slot, under its pills: SPEED on top, HOLD below.
     params: [
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::SPEED).with_label("E1 SPEED"),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env2), EnvParams::SPEED).with_label("E2 SPEED"),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env3), EnvParams::SPEED).with_label("E3 SPEED"),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::HOLD_POS).with_label("E1 HOLD"),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env2), EnvParams::HOLD_POS).with_label("E2 HOLD"),
-        ParamSlot::param(BlockRef::Env(EnvSlot::Env3), EnvParams::HOLD_POS).with_label("E3 HOLD"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::SPEED).with_label(&"E1 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env2), EnvParams::SPEED).with_label(&"E2 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env3), EnvParams::SPEED).with_label(&"E3 SPEED"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env1), EnvParams::HOLD_POS).with_label(&"E1 HOLD"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env2), EnvParams::HOLD_POS).with_label(&"E2 HOLD"),
+        ParamSlot::param(BlockRef::Env(EnvSlot::Env3), EnvParams::HOLD_POS).with_label(&"E3 HOLD"),
     ],
 };
 
@@ -622,12 +624,12 @@ pub static MOD_MATRIX: BlockDef = BlockDef {
 
 const fn op_row(id: ParamId) -> [ParamSlot; 6] {
     [
-        ParamSlot::param(BlockRef::AlgoOp(Op::A), id).with_label("OP1"),
-        ParamSlot::param(BlockRef::AlgoOp(Op::B), id).with_label("OP2"),
-        ParamSlot::param(BlockRef::AlgoOp(Op::C), id).with_label("OP3"),
-        ParamSlot::param(BlockRef::AlgoOp(Op::D), id).with_label("OP4"),
-        ParamSlot::param(BlockRef::AlgoOp(Op::E), id).with_label("OP5"),
-        ParamSlot::param(BlockRef::AlgoOp(Op::F), id).with_label("OP6"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::A), id).with_label(&"OP1"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::B), id).with_label(&"OP2"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::C), id).with_label(&"OP3"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::D), id).with_label(&"OP4"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::E), id).with_label(&"OP5"),
+        ParamSlot::param(BlockRef::AlgoOp(Op::F), id).with_label(&"OP6"),
     ]
 }
 
@@ -679,7 +681,7 @@ pub static ALGO_ALG: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Algo, AlgoParams::ALG_B),
         ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH),
         ParamSlot::param(BlockRef::Algo, AlgoParams::TRANSPOSE),
-        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label("VOL"),
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label(&"VOL"),
         ParamSlot::param(BlockRef::Algo, AlgoParams::VOWEL),
     ],
 };
@@ -823,6 +825,97 @@ static VA_BLOCKS: [ChainBlock; 4] = [
 
 pub static VA_CHAIN: ChainDef2 =
     ChainDef2::new("VA", &VA_BLOCKS, &PART_MOD_SOURCES).with_home_def(&VA_HOME);
+
+// ---------------------------------------------------------------------------
+// DRUM pages (ADR 0265): every one edits the Part's selected pad. Ids 4-7:
+// free, under the focus table's top.
+// ---------------------------------------------------------------------------
+
+/// KIT, the home: which pad, its machine, level and pan, and the kit's
+/// TONAL (ADR 0270); the band the twelve pads.
+pub static DRUM_KIT: BlockDef = BlockDef {
+    id: 4,
+    name: "Kit",
+    short: "KIT",
+    layout: PageLayout::CellGrid,
+    viz: VizType::Pads,
+    params: [
+        ParamSlot::select_pad(),
+        ParamSlot::param(BlockRef::Pad, PadParams::MACHINE),
+        ParamSlot::param(BlockRef::Pad, PadParams::LEVEL),
+        ParamSlot::param(BlockRef::Pad, PadParams::PAN),
+        ParamSlot::param(BlockRef::Kit, KitParams::TONAL),
+        EMPTY,
+    ],
+};
+
+/// KEYS: how the pad's hits meet: its choke group and retrigger.
+pub static DRUM_KEYS: BlockDef = BlockDef {
+    id: 5,
+    name: "Keys",
+    short: "KEYS",
+    layout: PageLayout::CellGrid,
+    viz: VizType::Pads,
+    params: [
+        ParamSlot::select_pad(),
+        ParamSlot::param(BlockRef::Pad, PadParams::CHOKE),
+        ParamSlot::param(BlockRef::Pad, PadParams::RETRIG),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// MCH: the pad's machine's knobs A-F, each its machine's; the header
+/// names the machine.
+pub static DRUM_MCH: BlockDef = BlockDef {
+    id: 6,
+    name: "Machine",
+    short: "MCH",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::knob(Knob::A),
+        ParamSlot::knob(Knob::B),
+        ParamSlot::knob(Knob::C),
+        ParamSlot::knob(Knob::D),
+        ParamSlot::knob(Knob::E),
+        ParamSlot::knob(Knob::F),
+    ],
+};
+
+/// MORE: MACHINE again, and the machine's knobs G and H.
+pub static DRUM_MORE: BlockDef = BlockDef {
+    id: 7,
+    name: "More",
+    short: "MORE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Pad, PadParams::MACHINE),
+        ParamSlot::knob(Knob::G),
+        ParamSlot::knob(Knob::H),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// KIT · MCH · FLT · AMP · MOD: the pad's pages, then DRUM's shared Sound
+/// blocks as VA's chain has them; KEYS under KIT, MORE under MCH.
+static DRUM_BLOCKS: [ChainBlock; 5] = [
+    ChainBlock::with_subs(&DRUM_KIT, &[&DRUM_KEYS]),
+    ChainBlock::with_subs(&DRUM_MCH, &[&DRUM_MORE]),
+    ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
+    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_SUB_PAGES,
+        map: Some("MOD"),
+    },
+];
+
+pub static DRUM_CHAIN: ChainDef2 = ChainDef2::new("Drum", &DRUM_BLOCKS, &PART_MOD_SOURCES);
 
 // ---------------------------------------------------------------------------
 // Mixer channel strip
@@ -983,6 +1076,24 @@ pub static SYS_TEXT: BlockDef = BlockDef {
     ],
 };
 
+/// SETTINGS › PERSONALIZE › PAD FOLLOW: whether a live hit moves KIT's pad
+/// (ADR 0268). Held in the THEME block, stored in SYSTEM with it.
+pub static SYS_FOLLOW: BlockDef = BlockDef {
+    id: 116,
+    name: "Pad Follow",
+    short: "FOL",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::FOLLOW),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// SYSTEM › PUSH ENCODERS: the control board's encoders push (ADR 0140).
 pub static SYS_PUSH: BlockDef = BlockDef {
     id: 107,
@@ -1067,12 +1178,12 @@ pub static SYS_ABOUT: BlockDef = BlockDef {
     viz: VizType::About,
     // Read-only: `about_page` fills them.
     params: [
-        ParamSlot::legacy("VERSION", &ValFmt::Int(0)),
-        ParamSlot::legacy("BUILD", &ValFmt::Int(0)),
-        ParamSlot::legacy("CHIP", &ValFmt::Int(0)),
-        ParamSlot::legacy("CLOCK", &ValFmt::Int(0)),
-        ParamSlot::legacy("RESET", &ValFmt::Int(0)),
-        ParamSlot::legacy("CARD", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"VERSION", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"BUILD", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"CHIP", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"CLOCK", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"RESET", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"CARD", &ValFmt::Int(0)),
     ],
 };
 
@@ -1083,12 +1194,12 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::AudioStats,
     params: [
-        ParamSlot::legacy("LOAD", &ValFmt::Int(0)),
-        ParamSlot::legacy("PEAK", &ValFmt::Int(0)),
-        ParamSlot::legacy("OVER", &ValFmt::Int(0)),
-        ParamSlot::legacy("DROPS", &ValFmt::Int(0)),
-        ParamSlot::legacy("DESYNC", &ValFmt::Int(0)),
-        ParamSlot::legacy("STACK", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"LOAD", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"PEAK", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"OVER", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"DROPS", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"DESYNC", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"STACK", &ValFmt::Int(0)),
     ],
 };
 
@@ -1101,10 +1212,10 @@ pub static SYS_POOL: BlockDef = BlockDef {
     viz: VizType::Pool,
     // Read-only: `pool_page` fills them.
     params: [
-        ParamSlot::legacy("SOUNDS", &ValFmt::Int(0)),
-        ParamSlot::legacy("SOURCES", &ValFmt::Int(0)),
-        ParamSlot::legacy("FREE", &ValFmt::Int(0)),
-        ParamSlot::legacy("PENDING", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"SOUNDS", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"SOURCES", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"FREE", &ValFmt::Int(0)),
+        ParamSlot::legacy(&"PENDING", &ValFmt::Int(0)),
         EMPTY,
         EMPTY,
     ],
@@ -1121,12 +1232,12 @@ pub static DEMO_WAVES: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("CLIP", &ValFmt::Uni),
-        ParamSlot::legacy("WAVE", &ValFmt::Uni),
-        ParamSlot::legacy("PW", &ValFmt::Uni),
-        ParamSlot::legacy("FOLD", &ValFmt::Uni),
-        ParamSlot::legacy("TILT", &ValFmt::Bi),
-        ParamSlot::legacy("SYM", &ValFmt::Bi),
+        ParamSlot::legacy(&"CLIP", &ValFmt::Uni),
+        ParamSlot::legacy(&"WAVE", &ValFmt::Uni),
+        ParamSlot::legacy(&"PW", &ValFmt::Uni),
+        ParamSlot::legacy(&"FOLD", &ValFmt::Uni),
+        ParamSlot::legacy(&"TILT", &ValFmt::Bi),
+        ParamSlot::legacy(&"SYM", &ValFmt::Bi),
     ],
 };
 
@@ -1137,12 +1248,12 @@ pub static DEMO_SHAPES: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("ARC", &ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", &ValFmt::Uni),
-        ParamSlot::legacy("PAN", &ValFmt::Bi),
-        ParamSlot::legacy("D/W", &ValFmt::Bi),
-        ParamSlot::legacy("CUBE", &ValFmt::Uni),
-        ParamSlot::legacy("STACK", &ValFmt::Uni),
+        ParamSlot::legacy(&"ARC", &ValFmt::Uni),
+        ParamSlot::legacy(&"LEVEL", &ValFmt::Uni),
+        ParamSlot::legacy(&"PAN", &ValFmt::Bi),
+        ParamSlot::legacy(&"D/W", &ValFmt::Bi),
+        ParamSlot::legacy(&"CUBE", &ValFmt::Uni),
+        ParamSlot::legacy(&"STACK", &ValFmt::Uni),
     ],
 };
 
@@ -1153,12 +1264,12 @@ pub static DEMO_MOTION: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("RIPPL", &ValFmt::Uni),
-        ParamSlot::legacy("BURST", &ValFmt::Uni),
-        ParamSlot::legacy("ORBIT", &ValFmt::Uni),
-        ParamSlot::legacy("SCATR", &ValFmt::Uni),
-        ParamSlot::legacy("BOUNC", &ValFmt::Bi),
-        ParamSlot::legacy("PULSE", &ValFmt::Uni),
+        ParamSlot::legacy(&"RIPPL", &ValFmt::Uni),
+        ParamSlot::legacy(&"BURST", &ValFmt::Uni),
+        ParamSlot::legacy(&"ORBIT", &ValFmt::Uni),
+        ParamSlot::legacy(&"SCATR", &ValFmt::Uni),
+        ParamSlot::legacy(&"BOUNC", &ValFmt::Bi),
+        ParamSlot::legacy(&"PULSE", &ValFmt::Uni),
     ],
 };
 
@@ -1178,10 +1289,10 @@ pub static DEMO_FM: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("ALGO", &ValFmt::Int(7)),
-        ParamSlot::legacy("LOOP", &ValFmt::Uni),
-        ParamSlot::legacy("SPIRL", &ValFmt::Uni),
-        ParamSlot::legacy("WAVE", &ValFmt::Uni),
+        ParamSlot::legacy(&"ALGO", &ValFmt::Int(7)),
+        ParamSlot::legacy(&"LOOP", &ValFmt::Uni),
+        ParamSlot::legacy(&"SPIRL", &ValFmt::Uni),
+        ParamSlot::legacy(&"WAVE", &ValFmt::Uni),
         EMPTY,
         EMPTY,
     ],
@@ -1198,8 +1309,8 @@ pub static DEMO_GLYPH_ARC: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE).with_label("UNI"),
-        ParamSlot::param(BlockRef::Out, OutParams::PAN).with_label("BI"),
+        ParamSlot::param(BlockRef::Filter, FilterParams::RESONANCE).with_label(&"UNI"),
+        ParamSlot::param(BlockRef::Out, OutParams::PAN).with_label(&"BI"),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -1390,12 +1501,13 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 24 + cfg!(feature = "usb-audio") as usize] = [
+const FIXED: [&ChainDef2; 26 + cfg!(feature = "usb-audio") as usize] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &TAPE_CHAIN,
     &VA_CHAIN,
+    &DRUM_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     CHANNELS_LEAF.chain(),
     super::settings::leaves::CONTROL_LEAF.chain(),
@@ -1410,6 +1522,7 @@ const FIXED: [&ChainDef2; 24 + cfg!(feature = "usb-audio") as usize] = [
     SAVER_LEAF.chain(),
     MAP_LEAF.chain(),
     TEXT_LEAF.chain(),
+    FOLLOW_LEAF.chain(),
     PUSH_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),
