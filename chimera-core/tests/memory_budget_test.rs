@@ -393,7 +393,7 @@ fn rings_fit_sram4() {
     assert!(size_of::<Rings>() <= 64 * 1024, "{} B", size_of::<Rings>());
 }
 
-/// ADR 0265: a pad is 13 B and a kit 12 of them and TONAL (ADR 0270: an
+/// ADR 0265, 0269: a pad is 80 B and a kit 12 of them and TONAL (ADR 0270: an
 /// enum over `PadId`, 2 B), held by the Project
 /// through a pointer to an ITCM static (ADR 0266): the Parts, in D2, and
 /// AXI don't grow.
@@ -407,9 +407,15 @@ fn kits_are_compact_and_outside_the_parts() {
         size_of::<Kit>(),
         size_of::<Kits>()
     );
-    assert_eq!(size_of::<Pad>(), 13);
-    assert_eq!(size_of::<Kit>(), 12 * 13 + 2);
+    // ADR 0269: 13 B of machine and mix, and a 64 B `PadSound` (57 B of
+    // values, padded to its f32s' alignment); a kit 12 of them and TONAL,
+    // padded to 4.
+    assert_eq!(size_of::<Pad>(), 80);
+    assert_eq!(size_of::<Kit>(), 12 * 80 + 4);
     // A kit, a selected pad, two `PadSet`s of lights and PAD FOLLOW's
-    // hold (ADR 0268) a Part.
-    assert_eq!(size_of::<Kits>(), hw::MAX_PARTS * (12 * 13 + 2 + 1 + 4 + 2));
+    // hold (ADR 0268) a Part, the whole padded to 4.
+    assert_eq!(
+        size_of::<Kits>(),
+        hw::MAX_PARTS * (12 * 80 + 4 + 1 + 4 + 2) + 2
+    );
 }

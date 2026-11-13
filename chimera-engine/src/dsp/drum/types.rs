@@ -3,6 +3,7 @@
 
 use chimera_midi::value::U7;
 
+use super::sound::PadSound;
 use crate::MidiNote;
 use crate::block::DiskCode;
 use crate::dsp::tape_engine::params::Retrig;
@@ -444,7 +445,8 @@ impl Tonal {
     }
 }
 
-/// A pad's compact params, copied into the voice at the hit.
+/// A pad's compact params and its sound (ADR 0269), copied into the
+/// voice at the hit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pad {
     machine: Machine,
@@ -453,6 +455,7 @@ pub struct Pad {
     pan: Pan,
     choke: ChokeGroup,
     retrig: Retrig,
+    sound: PadSound,
 }
 
 impl Pad {
@@ -471,7 +474,21 @@ impl Pad {
             pan,
             choke,
             retrig,
+            sound: PadSound::DEFAULT,
         }
+    }
+
+    /// The pad with `sound`.
+    pub const fn with_sound(self, sound: PadSound) -> Pad {
+        Pad { sound, ..self }
+    }
+
+    pub const fn sound(&self) -> &PadSound {
+        &self.sound
+    }
+
+    pub fn sound_mut(&mut self) -> &mut PadSound {
+        &mut self.sound
     }
 
     pub const fn machine(&self) -> Machine {
@@ -540,7 +557,8 @@ impl Pad {
     /// A pad from `to_bytes`' bytes, `d` the pad's default: an unknown
     /// machine is `d`'s with its knobs (a newer firmware's machine), an
     /// unknown choke or RETRIG code `d`'s, a byte past its range held to
-    /// it. Total: any bytes are a pad.
+    /// it; the sound is `d`'s (not in these bytes). Total: any bytes are a
+    /// pad.
     pub fn from_bytes(b: PadBytes, d: &Pad) -> Pad {
         let [m, knobs @ .., level, pan, choke, retrig] = b;
         let u7 = |v: u8| U7::new(v).unwrap_or(U7::MAX);
@@ -556,6 +574,7 @@ impl Pad {
             ChokeGroup::from_disk_code(choke).unwrap_or(d.choke),
             Retrig::from_disk_code(retrig).unwrap_or(d.retrig),
         )
+        .with_sound(d.sound)
     }
 }
 
