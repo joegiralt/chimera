@@ -434,8 +434,9 @@ impl EngineSlot {
             Self::Modal(m) => m.note_off(ctx.sym),
             Self::Tape(t) => t.release_by(vca),
             Self::Va(v) => v.note_off(),
-            // A hit rings out: only the Sound's AMP ends it (`sustains`).
-            Self::Drum(_) => {}
+            // A hit rings out but for a GATED pad AMP (ADR 0269); a
+            // Part VCA route ends it too.
+            Self::Drum(d) => d.note_off(),
         }
     }
 

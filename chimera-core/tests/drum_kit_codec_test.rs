@@ -387,3 +387,25 @@ fn write_slice1_fixture() {
     p.kit_mut(a).pad_mut(pad(9)).set_pan(Pan::clamped(20));
     std::fs::write(SLICE1_FIXTURE, encode(&p)).unwrap();
 }
+
+/// ADR 0269: a slice-1 project's DRUM Part had one FILTER and AMP; its
+/// pads take them, so its kit sounds as it did. Its VA Part's kit stays
+/// the default's.
+#[test]
+fn slice1_file_takes_the_sounds_filter() {
+    use chimera_core::dsp::drum::sound::PadSound;
+    use chimera_core::dsp::filter::FilterKind;
+    let f = std::fs::read(SLICE1_FIXTURE).unwrap();
+    let (mut p, _) = Project::boxed();
+    assert!(!decode_project_lossy(&f, &mut p).unwrap());
+    let (a, b) = (PartId::ALL[0], PartId::ALL[1]);
+    let s = PadSound::from_sound(&p.part(a).sound.params);
+    assert_eq!(
+        (s.filter().kind(), s.filter().cutoff().get()),
+        (FilterKind::Ladder, 420.0)
+    );
+    for q in PadId::ALL {
+        assert_eq!(*p.kit(a).pad(q).sound(), s);
+        assert_eq!(*p.kit(b).pad(q).sound(), PadSound::DEFAULT);
+    }
+}

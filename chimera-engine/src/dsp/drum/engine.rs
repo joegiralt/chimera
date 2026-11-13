@@ -8,10 +8,13 @@ use chimera_midi::value::U7;
 
 use crate::Velocity;
 use crate::dsp::modal::ModalEngine;
+use crate::dsp::modulator::env_a::{ACoefs, EnvA, Stage};
 use crate::hw::BLOCK_SIZE;
+use crate::params::{EnvParams, ParamSnapshot};
 
 use super::kernel::KernelState;
 use super::laws::resolve;
+use super::sound::{AmpMode, EnvDecay, PadAmp};
 use super::types::{DrumHit, HitSeed, Pan, SampleRate};
 
 /// A pad's PAN off centre, as the gains of the voice's mid (its Part's
@@ -51,15 +54,66 @@ impl MidSide {
     }
 }
 
+/// A hit's AMP envelope (ADR 0269), latched at the strike: Envelope A's
+/// stages on the pad's AHD. ONE-SHOT runs with its key held for good, so
+/// it ends where the decay reaches 0. GATED holds at full until note-off,
+/// then releases over the decay. An infinite decay holds either way.
+#[derive(Clone, Copy, Debug)]
+struct AmpEnv {
+    coefs: ACoefs,
+    env: EnvA,
+    /// Held: GATED until note-off, else always.
+    key: bool,
+    /// Note-off lets go of the key: GATED with a finite decay.
+    gated: bool,
+}
+
+impl AmpEnv {
+    /// `amp`'s envelope at `sr`, struck; `None` when OPEN (a constant 1).
+    fn strike(amp: &PadAmp, sr: SampleRate) -> Option<AmpEnv> {
+        let e = amp.env();
+        if e.is_open() {
+            return None;
+        }
+        let gated = amp.mode() == AmpMode::Gated && e.decay() != EnvDecay::Infinite;
+        let p = e.env_params();
+        // GATED: sustain at full, the decay its release.
+        let p = if gated {
+            EnvParams { sustain: 1.0, ..p }
+        } else {
+            p
+        };
+        let mut env = EnvA::new();
+        env.note_on();
+        Some(AmpEnv {
+            coefs: ACoefs::new(&p, 0.0, sr.get()),
+            env,
+            key: true,
+            gated,
+        })
+    }
+
+    /// Done: released to idle, or decayed to a sustain of 0.
+    fn ended(&self) -> bool {
+        match self.env.stage() {
+            Stage::Idle => true,
+            Stage::Sustain => self.env.level() == 0.0,
+            _ => false,
+        }
+    }
+}
+
 /// The voice's drum: idle, or one hit, its kernel in place.
 pub struct DrumEngine {
-    /// What was struck, while a hit sounds: `kernel` and `pan` are its.
+    /// What was struck, while a hit sounds: `kernel`, `pan` and `amp` are its.
     hit: Option<DrumHit>,
     kernel: KernelState,
     pan: Option<MidSide>,
+    /// Its AMP envelope, unless OPEN.
+    amp: Option<AmpEnv>,
 }
 
-crate::in_place::field_list!(DrumEngine => DrumEngine { hit, kernel, pan });
+crate::in_place::field_list!(DrumEngine => DrumEngine { hit, kernel, pan, amp });
 
 // A hit plays in a voice slot, which MODAL's engine sizes.
 const _: () = assert!(size_of::<DrumEngine>() <= size_of::<ModalEngine>());
@@ -75,20 +129,45 @@ impl DrumEngine {
             addr_of_mut!((*p).hit).write(None);
             KernelState::init_in_place(crate::in_place::uninit_at(addr_of_mut!((*p).kernel)));
             addr_of_mut!((*p).pan).write(None);
+            addr_of_mut!((*p).amp).write(None);
             slot.assume_init_mut()
         }
     }
 
     /// `hit` at `vel`, cutting what played: its pad's machine and knobs,
-    /// `hit.pitch()` semitones over the pad's PITCH.
+    /// `hit.pitch()` semitones over the pad's PITCH, its sound latched.
     #[inline(never)]
     #[optimize(size)]
-    pub fn strike(&mut self, hit: DrumHit, vel: Velocity, seed: HitSeed, sr: SampleRate) {
+    pub fn strike(&mut self, hit: &DrumHit, vel: Velocity, seed: HitSeed, sr: SampleRate) {
         let pad = hit.params();
         let p = resolve(pad.machine(), pad.knobs()).transposed(hit.pitch());
-        self.hit = Some(hit);
+        self.hit = Some(*hit);
         self.kernel.strike_in_place(p, vel, seed, sr);
         self.pan = MidSide::of(pad.pan());
+        self.amp = AmpEnv::strike(pad.sound().amp(), sr);
+    }
+
+    /// The hit's FILTER and AMP cells over `m` (`PadSound::overlay`).
+    pub fn overlay(&self, m: &mut ParamSnapshot) {
+        if let Some(h) = &self.hit {
+            h.params().sound().overlay(m);
+        }
+    }
+
+    /// The key is up: a GATED AMP releases; ONE-SHOT plays on.
+    pub fn note_off(&mut self) {
+        if let Some(a) = self.amp.as_mut().filter(|a| a.gated) {
+            a.key = false;
+        }
+    }
+
+    /// The AMP envelope as a per-sample gain on `out`; none while OPEN.
+    pub fn amp_block(&mut self, out: &mut [f32; BLOCK_SIZE]) {
+        if let Some(a) = &mut self.amp {
+            for x in out.iter_mut() {
+                *x *= a.env.tick(&a.coefs, a.key);
+            }
+        }
     }
 
     /// The hit sounding, if one is.
@@ -117,7 +196,10 @@ impl DrumEngine {
         self.hit.and(self.pan)
     }
 
+    /// A hit sounds: its kernel rings and its AMP hasn't ended.
     pub fn is_active(&self) -> bool {
-        self.hit.is_some() && !self.kernel.finished()
+        self.hit.is_some()
+            && !self.kernel.finished()
+            && !self.amp.as_ref().is_some_and(AmpEnv::ended)
     }
 }

@@ -1980,7 +1980,7 @@ impl Instrument {
         };
         let id = part_id(q);
         let hit = KIT_VIEW.hit(id, key);
-        self.strike(v, id, (hit, vel, key, s.held()), params, (src, 0.0))
+        self.strike(v, id, (&hit, vel, key, s.held()), params, (src, 0.0))
     }
 
     /// Every DRUM Part on `heard` (MPE's master for a live member
@@ -2040,7 +2040,7 @@ impl Instrument {
                 !self.strike(
                     VoiceIdx::ALL[v],
                     id,
-                    (hit, vel, key, true),
+                    (&hit, vel, key, true),
                     &part.params,
                     (src, 0.0),
                 )
@@ -2082,7 +2082,7 @@ impl Instrument {
         &mut self,
         v: VoiceIdx,
         id: PartId,
-        (hit, vel, key, held): (DrumHit, Velocity, MidiNote, bool),
+        (hit, vel, key, held): (&DrumHit, Velocity, MidiNote, bool),
         params: &ParamSnapshot,
         (src, to): (&GateView<'_>, f32),
     ) -> bool {

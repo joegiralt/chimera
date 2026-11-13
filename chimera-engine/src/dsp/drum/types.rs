@@ -593,41 +593,77 @@ impl Kit {
     /// CYMBAL, COWBELL, SHAKER. Chokes as the Rytm's pairs: A 3+4, B 6+7,
     /// C 8+9, D 10+11.
     pub const DEFAULT: Kit = {
-        use ChokeGroup::{A, B, C, D, Off};
-        use Machine::*;
-        const fn at(m: Machine, choke: ChokeGroup, knob: Option<(Knob, u8)>) -> Pad {
-            let mut knobs = KnobSet::defaults(m);
-            if let Some((k, v)) = knob {
-                knobs.set(
-                    k,
-                    KnobValue(match U7::new(v) {
-                        Some(u) => u,
-                        None => panic!("a knob position is 0..=127"),
-                    }),
-                );
-            }
-            Pad::new(m, knobs, U7::MAX, Pan::CENTRE, choke, Retrig::Cut)
+        let mut pads = [Kit::init_pad(PadId(0)); PADS as usize];
+        let mut i = 1;
+        while i < PADS {
+            pads[i as usize] = Kit::init_pad(PadId(i));
+            i += 1;
         }
-        // TOM's PITCH 50 (113 Hz) the mid, 30 and 70 a fourth-odd either
-        // side; HAT's DECAY 20 (40 ms) closed, 80 (0.3 s) open.
         Kit {
-            pads: [
-                at(ToneKick, Off, None),
-                at(ToneSnare, Off, None),
-                at(PlainImpulse, A, None),
-                at(ToneClap, A, None),
-                at(ToneTom, Off, Some((Knob::A, 30))),
-                at(ToneTom, B, Some((Knob::A, 50))),
-                at(ToneTom, B, Some((Knob::A, 70))),
-                at(MetalHat, C, Some((Knob::B, 20))),
-                at(MetalHat, C, Some((Knob::B, 80))),
-                at(ToneCymbal, D, None),
-                at(ToneCowbell, D, None),
-                at(BodyShaker, Off, None),
-            ],
+            pads,
             tonal: Tonal::Off,
         }
     };
+
+    /// `DEFAULT`'s pad `p`, built from its row: one machine, choke and
+    /// knob a pad, not `DEFAULT`'s 80 B pads copied.
+    const fn init_pad(p: PadId) -> Pad {
+        use ChokeGroup::{A, B, C, D, Off};
+        use Machine::*;
+        // TOM's PITCH 50 (113 Hz) the mid, 30 and 70 a fourth-odd either
+        // side; HAT's DECAY 20 (40 ms) closed, 80 (0.3 s) open.
+        let (m, choke, knob) = match p.0 {
+            0 => (ToneKick, Off, None),
+            1 => (ToneSnare, Off, None),
+            2 => (PlainImpulse, A, None),
+            3 => (ToneClap, A, None),
+            4 => (ToneTom, Off, Some((Knob::A, 30))),
+            5 => (ToneTom, B, Some((Knob::A, 50))),
+            6 => (ToneTom, B, Some((Knob::A, 70))),
+            7 => (MetalHat, C, Some((Knob::B, 20))),
+            8 => (MetalHat, C, Some((Knob::B, 80))),
+            9 => (ToneCymbal, D, None),
+            10 => (ToneCowbell, D, None),
+            _ => (BodyShaker, Off, None),
+        };
+        let mut knobs = KnobSet::defaults(m);
+        if let Some((k, v)) = knob {
+            knobs.set(
+                k,
+                KnobValue(match U7::new(v) {
+                    Some(u) => u,
+                    None => panic!("a knob position is 0..=127"),
+                }),
+            );
+        }
+        Pad::new(m, knobs, U7::MAX, Pan::CENTRE, choke, Retrig::Cut)
+    }
+
+    /// `DEFAULT`'s pad `p`, built at run time: the firmware keeps no
+    /// copy of `DEFAULT` (964 B) in flash.
+    #[inline(never)]
+    #[optimize(size)]
+    pub fn default_pad(p: PadId) -> Pad {
+        Kit::init_pad(p)
+    }
+
+    /// Back to `DEFAULT`, in place (`default_pad`).
+    #[optimize(size)]
+    pub fn reset(&mut self) {
+        for p in PadId::ALL {
+            self.pads[p.index()] = Kit::default_pad(p);
+        }
+        self.tonal = Tonal::Off;
+    }
+
+    /// `DEFAULT`, built at run time (`default_pad`).
+    #[optimize(size)]
+    pub fn init() -> Kit {
+        Kit {
+            pads: PadId::ALL.map(Kit::default_pad),
+            tonal: Tonal::Off,
+        }
+    }
 
     pub const fn pad(&self, p: PadId) -> &Pad {
         &self.pads[p.index()]

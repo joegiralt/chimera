@@ -946,7 +946,7 @@ fn drum_slice1_kit_matches() {
     let (out, lr) = drum_slice1_render();
     assert!(out.iter().any(|&x| x.abs() > 1e-3), "silent");
     assert!(
-        lr.chunks_exact(2).any(|c| c[0] != c[1]),
+        lr.as_chunks::<2>().0.iter().any(|c| c[0] != c[1]),
         "L and R never differ: the pad pan is not heard"
     );
     golden::check(

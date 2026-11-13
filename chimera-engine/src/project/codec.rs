@@ -25,6 +25,7 @@ use chimera_hal::store::{Dir, Store, StoreError};
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::block::{Block, DiskCode};
 use crate::dsp::clampf;
+use crate::dsp::drum::sound::PadSound;
 use crate::dsp::drum::types::{Kit, PAD_BYTES, Pad, PadId, Tonal};
 use crate::dsp::fx_bus::{FX_SENDS, FxParams};
 use crate::hw::MAX_PARTS;
@@ -95,34 +96,45 @@ const CONTEXT_LEN: usize = 1 + 16;
 const PADS_BYTES: usize = PAD_BYTES * PadId::ALL.len();
 const KIT_BYTES: usize = PADS_BYTES + 1;
 
+/// `kit`'s record; `None` is `Kit::DEFAULT`'s, built a pad at a time (no
+/// whole `Kit` on the save's stack).
 #[optimize(size)]
-fn put_kit(w: &mut RecordWriter<'_>, kit: &Kit) -> Result<(), StoreError> {
+fn put_kit(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), StoreError> {
     let mut b = [0; KIT_BYTES];
     for (p, out) in PadId::ALL.into_iter().zip(b.as_chunks_mut().0) {
-        *out = kit.pad(p).to_bytes();
+        *out = match kit {
+            Some(k) => k.pad(p).to_bytes(),
+            None => Kit::default_pad(p).to_bytes(),
+        };
     }
-    b[PADS_BYTES] = kit.tonal().code();
+    b[PADS_BYTES] = kit.map_or(Tonal::Off, Kit::tonal).code();
     w.put(RecordTag::Kit, &b)
 }
 
-/// A `Kit` payload, and whether a save would write other bytes (a byte
+/// A `Kit` payload into `kit` (if given; else only checked), each pad
+/// with `sound`, and whether a save would write other bytes (a byte
 /// defaulted or held). Without TONAL's byte (before ADR 0270) it is OFF,
-/// nothing lost; an unknown code is OFF, lossy. `None`: neither length.
+/// nothing lost; an unknown code is OFF, lossy. `None`: neither length,
+/// `kit` untouched. In place: no whole `Kit` on the load's stack.
 #[optimize(size)]
-fn get_kit(b: &[u8]) -> Option<(Kit, bool)> {
+fn get_kit(b: &[u8], mut kit: Option<&mut Kit>, sound: &PadSound) -> Option<bool> {
     let (pads, tonal) = match b.len() {
         PADS_BYTES => (b, Some(Tonal::Off)),
         KIT_BYTES => (&b[..PADS_BYTES], Tonal::from_code(b[PADS_BYTES])),
         _ => return None,
     };
-    let (mut kit, mut lossy) = (Kit::DEFAULT, tonal.is_none());
+    let mut lossy = tonal.is_none();
     for (p, &raw) in PadId::ALL.into_iter().zip(pads.as_chunks().0) {
-        let pad = Pad::from_bytes(raw, Kit::DEFAULT.pad(p));
+        let pad = Pad::from_bytes(raw, &Kit::default_pad(p));
         lossy |= pad.to_bytes() != raw;
-        *kit.pad_mut(p) = pad;
+        if let Some(k) = kit.as_deref_mut() {
+            *k.pad_mut(p) = pad.with_sound(*sound);
+        }
     }
-    kit.set_tonal(tonal.unwrap_or(Tonal::Off));
-    Some((kit, lossy))
+    if let Some(k) = kit {
+        k.set_tonal(tonal.unwrap_or(Tonal::Off));
+    }
+    Some(lossy)
 }
 
 const ORIGIN_SLOT: u8 = 0;
@@ -241,17 +253,17 @@ fn put_part(
     if part.sound.map.is_empty() {
         crate::midi_in::put_kept(kept, w)?;
     }
-    put_part_end(w, &part.mix, part.origin, kit)
+    put_part_end(w, &part.mix, part.origin, Some(kit))
 }
 
 /// A Part's records after its Sound's: the mix, its `Origin`, then its
-/// kit.
+/// kit (`None` the default's).
 #[optimize(size)]
 fn put_part_end(
     w: &mut RecordWriter<'_>,
     mix: &PartParams,
     origin: Origin,
-    kit: &Kit,
+    kit: Option<&Kit>,
 ) -> Result<(), StoreError> {
     put_block(w, BlockRef::Part, mix)?;
     let origin = match origin {
@@ -351,7 +363,7 @@ fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
             generation: 0,
             crc: 0,
         };
-        put_part_end(w, &PartParams::for_part(i), origin, &Kit::DEFAULT)?;
+        put_part_end(w, &PartParams::for_part(i), origin, None)?;
     }
     Ok(())
 }
@@ -372,7 +384,7 @@ fn put_init_part(w: &mut RecordWriter<'_>, i: usize) -> Result<(), StoreError> {
         w,
         &PartParams::for_part(i),
         Origin::Init(EngineType::Algo),
-        &Kit::DEFAULT,
+        None,
     )
 }
 
@@ -667,11 +679,22 @@ impl ProjectCheck {
                 if core::mem::replace(&mut self.kit, true) {
                     return Err(FileError::Corrupt);
                 }
-                let (kit, lossy) = get_kit(p).ok_or(FileError::Bounds)?;
-                self.lossy |= lossy;
-                if let Some(t) = target {
-                    *t.kits.kit_mut(n) = kit;
-                }
+                // A kit with no pad sounds on a DRUM Part (slice 1's): every
+                // pad takes the Sound's FILTER and AMP, so it sounds as it
+                // did (ADR 0269). The Sound came first.
+                let (kit, sound) = match target {
+                    Some(t) => {
+                        let s = &t.perf.parts[n.index()].sound.params;
+                        let sound = if s.engine() == EngineType::Drum {
+                            PadSound::from_sound(s)
+                        } else {
+                            PadSound::DEFAULT
+                        };
+                        (Some(t.kits.kit_mut(n)), sound)
+                    }
+                    None => (None, PadSound::DEFAULT),
+                };
+                self.lossy |= get_kit(p, kit, &sound).ok_or(FileError::Bounds)?;
                 Ok(())
             }
             (ReadTag::Known(RecordTag::Controller), Context::Part(n)) => {
@@ -858,7 +881,7 @@ impl ProjectCheck {
                 part.origin = Origin::Init(EngineType::Algo);
                 t.set_scala(n, None);
                 // A file from before kits has none: the default.
-                *t.kits.kit_mut(n) = Kit::DEFAULT;
+                t.kits.kit_mut(n).reset();
             }
             (self.mix, self.origin, self.kit) = (false, false, false);
             self.old_sends = None;

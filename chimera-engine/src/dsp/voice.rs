@@ -685,7 +685,7 @@ impl Voice {
     pub fn strike(
         &mut self,
         key: MidiNote,
-        (hit, seed): (DrumHit, HitSeed),
+        (hit, seed): (&DrumHit, HitSeed),
         velocity: Velocity,
         params: &ParamSnapshot,
         ctx: &mut EngineCtx<'_>,
@@ -720,7 +720,7 @@ impl Voice {
         velocity: Velocity,
         params: &ParamSnapshot,
         source: Option<SourceId>,
-        hit: Option<(DrumHit, HitSeed)>,
+        hit: Option<(&DrumHit, HitSeed)>,
         ctx: &mut EngineCtx<'_>,
     ) {
         let pool = &mut *ctx.sym;
@@ -790,6 +790,9 @@ impl Voice {
         self.active = true;
         // Until the first block renders, a fade has these to keep.
         self.played.clone_from(params);
+        if let EngineSlot::Drum(d) = &self.slot {
+            d.overlay(&mut self.played);
+        }
         self.played_live = AlgoLive::from_params(&params.algo);
         #[cfg(feature = "probe")]
         crate::probe::acc(7, crate::probe::now().wrapping_sub(t1));
@@ -1066,6 +1069,10 @@ impl Voice {
             m.clone_from(params);
             *live = AlgoLive::from_params(&params.algo);
             knobs.apply(m, live);
+            // A hit's pad FILTER and AMP over the Part's (ADR 0269).
+            if let EngineSlot::Drum(d) = &self.slot {
+                d.overlay(m);
+            }
         }
         let key = self.held;
         if self.fade == 0 {
@@ -1277,6 +1284,11 @@ impl Voice {
         // 6. DC from the engine, the FX slot, the filter and the tap-VCA:
         // none reaches the VCA (ADR 0060).
         self.dc.run(output);
+
+        // A hit's pad AMP envelope, ahead of the VCA (ADR 0269).
+        if let EngineSlot::Drum(d) = &mut self.slot {
+            d.amp_block(output);
+        }
 
         if gated {
             self.gate.apply(output, self.held);

@@ -418,4 +418,11 @@ fn kits_are_compact_and_outside_the_parts() {
         size_of::<Kits>(),
         hw::MAX_PARTS * (12 * 80 + 4 + 1 + 4 + 2) + 2
     );
+    // The audio's view (ITCM too): a Part's seqlock, TONAL, hit, two
+    // `PadSet`s and seed, and two slots of 12 pads at 13 + 57 B each.
+    use chimera_core::dsp::drum::view::KitView;
+    assert_eq!(
+        size_of::<KitView>(),
+        hw::MAX_PARTS * (4 + 1 + 1 + 2 + 2 + 4 + 2 * 12 * 70 + 2)
+    );
 }
