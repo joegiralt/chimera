@@ -243,6 +243,16 @@ impl Voice {
             + gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO)
     }
 
+    /// `cost` of a DRUM hit: the Sound's steady filter bill swapped for its
+    /// kit's (`kit_bill`), which bills each pad's own filter and mods.
+    pub fn drum_cost(p: &ParamSnapshot, mods: &ModState, kit: Cost) -> Cost {
+        Cost(
+            Self::cost(p, mods)
+                .0
+                .saturating_sub(p.filter.filter_cost().0),
+        ) + kit
+    }
+
     /// The filter as `p` and `mods` run it: the steady bill, the moving
     /// path once if a CUTOFF or RES route or (on ALGO) a FREQ or Q tap
     /// moves it, `TapShape::apply` once for those taps, and LEVEL's

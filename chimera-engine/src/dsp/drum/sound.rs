@@ -4,13 +4,14 @@
 
 use chimera_midi::value::U7;
 
-use super::types::Hz;
+use super::types::{Hz, Kit, PadId};
 use crate::block::{DiskCode, ParamId};
 use crate::dsp::Unit;
 use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use crate::dsp::lfo::{LFO_SPECS, LfoParams, LfoShape};
 use crate::dsp::lpg;
 use crate::dsp::modulator::{EnvSpeed, EnvType, HoldPos};
+use crate::hw::Cost;
 use crate::params::{EnvParams, FilterParams, ParamSnapshot};
 
 /// `v` as a U7, past 127 held to it.
@@ -785,6 +786,20 @@ impl RouteOffsets {
     }
 }
 
+/// A pad's AMP envelope, or its mod envelope, LFO and routes, running.
+// ponytail: placeholder bill until the unit bench
+pub const PAD_MOD_COST: Cost = Cost(20);
+
+/// A kit's hit at its costliest pad (`PadSound::cost`): what a DRUM
+/// Part's voice is billed for its filter (`Voice::drum_cost`).
+pub fn kit_bill(kit: &Kit) -> Cost {
+    PadId::ALL
+        .iter()
+        .map(|&p| kit.pad(p).sound().cost())
+        .max()
+        .unwrap_or(Cost::ZERO)
+}
+
 /// A pad's sound's bytes (`PadSound::to_bytes`).
 pub const PAD_SOUND_BYTES: usize = 57;
 pub type PadSoundBytes = [u8; PAD_SOUND_BYTES];
@@ -862,6 +877,20 @@ impl PadSound {
             },
             ..PadSound::DEFAULT
         }
+    }
+
+    /// Cycles/sample its hit adds over a voice with no filter: its
+    /// filter's steady bill, its moving path while a route moves it, and
+    /// `PAD_MOD_COST` while its AMP envelope or a route runs.
+    pub fn cost(&self) -> Cost {
+        let kind = self.filter.kind;
+        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+        kind.cost(self.filter.voice)
+            + when(self.routes.moves_filter(), kind.move_cost())
+            + when(
+                !self.routes.is_off() || !self.amp.env.is_open(),
+                PAD_MOD_COST,
+            )
     }
 
     /// Lays the FILTER and AMP cells over `m`.

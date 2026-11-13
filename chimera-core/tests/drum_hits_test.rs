@@ -424,6 +424,27 @@ fn the_view_reads_what_was_published() {
     }
 }
 
+/// A hit is booked at its kit's bill (`Voice::drum_cost`), a 2040 pad
+/// over the Sound's CLEAN.
+#[test]
+fn a_hit_is_billed_for_its_kits_pads() {
+    let booked = |kit: &Kit| {
+        let (_w, mut r) = rig(kit);
+        r.note_on(0, 0);
+        r.render(1);
+        let s = r.inst.allocator().slots();
+        s.iter().map(|s| s.cost()).max().expect("a voice")
+    };
+    let mut k = Kit::DEFAULT;
+    k.pad_mut(pad(5))
+        .sound_mut()
+        .filter_mut()
+        .set_kind(chimera_core::dsp::filter::FilterKind::K2040);
+    let gap = chimera_core::dsp::drum::sound::kit_bill(&k).0;
+    assert!(gap > 0);
+    assert_eq!(booked(&k).0, booked(&Kit::DEFAULT).0 + gap);
+}
+
 /// A full pool: the next hit takes a sounding voice, waits out its fade
 /// (`waiting`), then strikes.
 #[test]
