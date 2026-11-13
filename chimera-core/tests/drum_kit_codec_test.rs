@@ -656,7 +656,8 @@ fn new_resets_pad_sounds() {
     let go = ReplaceGuard::check(&p, t, ProjectSource::New)
         .unwrap_or_else(|n| n.into_pending().anyway(&p));
     let (mut card, mut s) = (Card::new(), MemStore::new(1));
-    let _ = load_project(&mut card, &mut s, &mut p, go, &LoadLink::new());
+    let out = load_project(&mut card, &mut s, &mut p, go, &LoadLink::new());
+    assert!(out.swap.is_some() && out.note.is_none(), "{:?}", out.note);
     for id in PartId::ALL {
         for n in PadId::ALL {
             assert_eq!(*p.kit(id).pad(n).sound(), PadSound::DEFAULT);
@@ -677,13 +678,41 @@ fn new_resets_pad_sounds() {
     }
 }
 
-/// Review Focus 4: the pad sounds are the Part's, not the Sound's. A VA
-/// Sound plays its own filter; DRUM again finds pad 3 as it was.
-#[test]
-fn engine_switch_keeps_pad_sounds() {
+/// Pad 3's hit (note 62, TONAL OFF) on Part 1 playing `params`, with
+/// `kit` published as Part 1's: the voice's played filter.
+fn played_on_pad3(
+    w: &mut chimera_core::dsp::drum::view::KitWriter,
+    kit: &Kit,
+    params: &chimera_core::params::ParamSnapshot,
+) -> PadFilter {
     use chimera_core::MidiChannel;
     use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
     use common::InstRig;
+    for id in PartId::ALL {
+        w.publish(id, &Kit::DEFAULT);
+    }
+    w.publish(PartId::ALL[0], kit);
+    let mut r = InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
+    for (i, part) in r.shared.parts.iter_mut().enumerate() {
+        part.mix.channel = MidiChannel::new(if i == 0 { 0 } else { 15 }).unwrap();
+    }
+    *r.shared.parts[0].params = params.clone();
+    r.note_on(0, 62);
+    r.render(1);
+    let v = (0..MAX_VOICES)
+        .find(|&v| r.inst.voice(v).is_active())
+        .expect("a voice sounds");
+    PadFilter::of(&r.inst.voice(v).played_filter())
+}
+
+/// Review Focus 4: the pad sounds are the Part's, not the Sound's. With
+/// the kit published, DRUM plays pad 3's LADDER 333 (the control) and a
+/// VA Sound its own filter; DRUM again finds pad 3 as it was.
+#[test]
+fn engine_switch_keeps_pad_sounds() {
+    use chimera_core::dsp::drum::view::KitWriter;
+    // The only test in this binary that takes the writer.
+    let mut w = KitWriter::take().expect("the kit writer, once");
     let (mut p, t) = Project::boxed();
     let a = PartId::ALL[0];
     let init = |e| PartSource {
@@ -695,20 +724,14 @@ fn engine_switch_keeps_pad_sounds() {
     f.set_kind(FilterKind::Ladder);
     f.set_cutoff(Hz::new(333.0));
     let want = *p.kit(a).pad(pad(3)).sound();
+    let drum = p.part(a).sound.params.clone();
+    assert_ne!(PadFilter::of(&drum.filter), *want.filter());
+    assert_eq!(played_on_pad3(&mut w, p.kit(a), &drum), *want.filter());
     load(&mut p, t, init(EngineType::Va)).unwrap();
     let va = p.part(a).sound.params.clone();
-    let mut r = InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
-    for (i, part) in r.shared.parts.iter_mut().enumerate() {
-        part.mix.channel = MidiChannel::new(if i == 0 { 0 } else { 15 }).unwrap();
-    }
-    *r.shared.parts[0].params = va.clone();
-    r.note_on(0, 60);
-    r.render(1);
-    let v = (0..MAX_VOICES)
-        .find(|&v| r.inst.voice(v).is_active())
-        .expect("a VA voice");
+    assert_ne!(PadFilter::of(&va.filter), *want.filter());
     assert_eq!(
-        PadFilter::of(&r.inst.voice(v).played_filter()),
+        played_on_pad3(&mut w, p.kit(a), &va),
         PadFilter::of(&va.filter)
     );
     load(&mut p, t, init(EngineType::Drum)).unwrap();
