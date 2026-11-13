@@ -181,3 +181,10 @@ Not in 0.4: MIDI-sending pads (7) and the listening drummer (8).
 Mockup: an unpublished page, source `docs/mockups/drum-glyphs.html` (the bitmaps in `INST`, `FAM` and `L3` are the reference pixels).
 - **KIT icons land "for the time being":** every machine is a composite of a family mark (TONE, FM, BODY, METAL, PLAIN, LPG, VOX) and a 14×12 instrument mark (22 marks cover the 28 machines); `#` full colour, `+` the dim second tone. Snare and tom are flat side views (short with crossed sticks and wires; tall floor tom on legs). Badge style (3×5 letter or 5×5 symbol) is still open.
 - **Focus-band glyphs:** eight gauges (SWEEP, DECAY, TRANSIENT, PARTIALS, CLAPS, GRAINS, DRIVE, FILTER). Per knob or one whole-hit picture: owner "it depends", to be settled per machine family before Task 8.
+||||||| parent of 18e99b8c (DRUM: slice 2 is per-pad filter and amp; TONAL; PAD FOLLOW)
+
+
+## Owner, 2026-11-13: slice order and kit playing
+- **Slice 2 = per-pad FILTER and AMP** (ahead of the FM and BODY machines): each pad its own filter (TYPE, CUTOFF, RESO…), amp envelope, a mod envelope, an LFO and 4 routes (the compact Rytm-style pad); the Part's three LFOs stay shared. FLT/AMP follow the selected pad as MCH does. Pad data in ITCM.
+- **TONAL** on the KIT page (OFF / pad 1–12): C0–B0 trigger the kit; from C1 up the TONAL pad plays chromatically with its tuned pitch at middle C (MIDI 60), "principle of least surprise". TONAL OFF: the kit repeats in every octave. A TONAL 2 split is a later option.
+- **PAD FOLLOW** (SETTINGS › PERSONALIZE): OFF / IDLE (default) / ALWAYS. **Pads stay lit while they sound.**
