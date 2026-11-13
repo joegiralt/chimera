@@ -865,18 +865,31 @@ fn tape_goldens_match() {
 /// code (`drum_kit_codec_test::write_slice1_fixture`), pads 1, 2, 8, 9 and
 /// 10 struck at once-a-block steps, 2 s through the `Instrument`. Every
 /// later task keeps it bit-identical.
-const DRUM_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[(
-    "drum_slice1_kit",
+const DRUM_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
-        0x761f40bc2378fa6e,
-        [
-            744912150, 1015558105, 1021275839, 994768360, 3152329701, 3152327064, 3125714216,
-            973063012,
-        ],
+        "drum_slice1_kit",
+        (
+            0x761f40bc2378fa6e,
+            [
+                744912150, 1015558105, 1021275839, 994768360, 3152329701, 3152327064, 3125714216,
+                973063012,
+            ],
+        ),
     ),
-)];
+    (
+        "drum_slice1_kit_lr",
+        (
+            0xd7862cb238b8a8de,
+            [
+                0, 3147991076, 3169244237, 1015513075, 965131471, 958524652, 3148130774, 3147266680,
+            ],
+        ),
+    ),
+];
 
-fn drum_slice1_render() -> Vec<f32> {
+/// Part 1's mono bus, then pair 1's interleaved L/R as the DACs play it
+/// (pad PAN lives only there).
+fn drum_slice1_render() -> (Vec<f32>, Vec<f32>) {
     use chimera_core::dsp::drum::view::KitWriter;
     use chimera_core::dsp::fx_bus::FxBus;
     use chimera_core::dsp::knobs::KnobPublisher;
@@ -909,6 +922,7 @@ fn drum_slice1_render() -> Vec<f32> {
     let hits = [(0, 100), (1, 40), (7, 127), (8, 90), (9, 64)];
     let blocks = 2 * chimera_hal::SAMPLE_RATE as usize / BLOCK_SIZE;
     let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
+    let mut lr = Vec::with_capacity(2 * blocks * BLOCK_SIZE);
     for b in 0..blocks {
         if let Some(&(n, v)) = hits.get(b) {
             inst.handle(
@@ -922,16 +936,24 @@ fn drum_slice1_render() -> Vec<f32> {
         }
         inst.render(&mut fx, &mut dac, &shared, &mut scope);
         out.extend_from_slice(inst.part_bus(0));
+        lr.extend_from_slice(&dac.out()[0]);
     }
-    out
+    (out, lr)
 }
 
 #[test]
 fn drum_slice1_kit_matches() {
-    let out = drum_slice1_render();
+    let (out, lr) = drum_slice1_render();
     assert!(out.iter().any(|&x| x.abs() > 1e-3), "silent");
+    assert!(
+        lr.chunks_exact(2).any(|c| c[0] != c[1]),
+        "L and R never differ: the pad pan is not heard"
+    );
     golden::check(
         DRUM_GOLDENS,
-        &[("drum_slice1_kit", (fnv1a(&out), spots(&out)))],
+        &[
+            ("drum_slice1_kit", (fnv1a(&out), spots(&out))),
+            ("drum_slice1_kit_lr", (fnv1a(&lr), spots(&lr))),
+        ],
     );
 }
