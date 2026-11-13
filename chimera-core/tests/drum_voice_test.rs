@@ -229,3 +229,27 @@ fn amp_gated_infinite_holds_past_note_off() {
     let (_, on) = play(&sine_kit(env, AmpMode::Gated), 300, Some(10));
     assert!(on, "an infinite GATED hit released");
 }
+
+/// GATED, note-off with the note-on, before a block: attack and hold
+/// still play, then the decay releases it.
+#[test]
+fn amp_gated_short_gate_plays_attack_hold() {
+    let env = PadEnv::new(
+        EnvPos::new(u7(20)),
+        EnvPos::new(u7(40)),
+        EnvDecay::Time(EnvPos::new(u7(10))),
+        EnvSpeed::Fast,
+    );
+    let k = sine_kit(env, AmpMode::Gated);
+    let (_w, mut r) = rig(&k);
+    r.note_on(0, 0);
+    r.note_off(0, 0);
+    let mut out = Vec::new();
+    for _ in 0..(SR as usize / 2 / BLOCK_SIZE) {
+        r.render(1);
+        out.extend_from_slice(r.inst.part_bus(0));
+    }
+    let first = peak(&out[..10 * SR as usize / 1000]);
+    assert!(first > 1e-3, "silent through attack and hold: {first}");
+    assert!(!sounding(&r), "still sounding at 500 ms");
+}

@@ -162,10 +162,12 @@ impl DrumEngine {
     }
 
     /// The AMP envelope as a per-sample gain on `out`; none while OPEN.
+    /// A GATED key let go early still plays attack and hold first.
     pub fn amp_block(&mut self, out: &mut [f32; BLOCK_SIZE]) {
         if let Some(a) = &mut self.amp {
             for x in out.iter_mut() {
-                *x *= a.env.tick(&a.coefs, a.key);
+                let key = a.key || matches!(a.env.stage(), Stage::Attack | Stage::Hold);
+                *x *= a.env.tick(&a.coefs, key);
             }
         }
     }
