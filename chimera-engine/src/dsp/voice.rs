@@ -1141,9 +1141,9 @@ impl Voice {
             EngineSlot::Drum(d) => d.mods_block(
                 LfoSlot::ALL.map(|s| mod_values[ModSource::of_lfo(s).index()]),
                 self.last_velocity,
-                sample_rate,
+                SampleRate::new(sample_rate).unwrap_or(SampleRate::HW),
             ),
-            _ => RouteOffsets::ZERO,
+            _ => RouteOffsets::NONE,
         };
         // The other VCA sources ramp from their last block's value.
         for (s, &cur) in mod_values.iter().enumerate() {

@@ -118,6 +118,8 @@ struct PadMods {
     lfo: LfoParams,
     /// LFO SPEED's and DEPTH's sums, last block's (ADR 0250's DEPTH).
     lfo_off: (f32, f32),
+    /// A route moves VOLUME.
+    vol_routed: bool,
     /// VOLUME's gain, last block's and this one's; `None` before the
     /// first block, or with no VOLUME route.
     vol: Option<(f32, f32)>,
@@ -138,6 +140,7 @@ impl PadMods {
             env,
             lfo: s.lfo().lfo_params(),
             lfo_off: (0.0, 0.0),
+            vol_routed: routes.moves(RouteDest::Volume),
             vol: None,
         })
     }
@@ -204,9 +207,14 @@ impl DrumEngine {
     /// LFO SPEED and DEPTH kept for the next block. Each source's value is
     /// the block's end (the filter's ramp lands there), the LFO's its
     /// start (`Lfo::run_block`). Nothing to do, and zero, unrouted.
-    pub fn mods_block(&mut self, part_lfos: [f32; 3], vel: Velocity, sr: u32) -> RouteOffsets {
+    pub fn mods_block(
+        &mut self,
+        part_lfos: [f32; 3],
+        vel: Velocity,
+        sr: SampleRate,
+    ) -> RouteOffsets {
         let Some(m) = &mut self.mods else {
-            return RouteOffsets::ZERO;
+            return RouteOffsets::NONE;
         };
         let mut p = m.lfo;
         let (speed, depth) = m.lfo_off;
@@ -216,15 +224,14 @@ impl DrumEngine {
         if depth != 0.0 {
             apply_offset(&mut p, LfoParams::DEPTH, depth);
         }
-        let lfo = self.lfo.run_block(&p, sr);
+        let lfo = self.lfo.run_block(&p, sr.get());
         m.env.advance(&m.coefs, true, BLOCK_SIZE as u32);
         let [l1, l2, l3] = part_lfos;
         let v = RouteValues::new([m.env.level(), lfo, vel.unit(), l1, l2, l3]);
         let off = m.routes.offsets(&v);
         m.lfo_off = (off.lfo_speed(), off.lfo_depth());
-        if m.routes.moves(RouteDest::Volume) {
-            // A gain off unity, never over it.
-            let g = crate::dsp::clampf(1.0 + off.volume(), 0.0, 1.0);
+        if m.vol_routed {
+            let g = off.volume().get();
             m.vol = Some((m.vol.map_or(g, |v| v.1), g));
         }
         off

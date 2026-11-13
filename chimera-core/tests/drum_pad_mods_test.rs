@@ -8,6 +8,7 @@ mod common;
 
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
+use chimera_core::dsp::Unit;
 use chimera_core::dsp::drum::sound::{
     Amount, EnvDecay, EnvPos, PadEnv, PadRoute, PadRoutes, PadSound, RouteDest, RouteOffsets,
     RouteSource, RouteValues,
@@ -18,6 +19,7 @@ use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::modulator::EnvSpeed;
 use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
+use chimera_core::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FILTER_SPECS, FilterParams, ParamSnapshot};
 use chimera_core::project::PartId;
@@ -131,7 +133,7 @@ fn offsets_sum_by_dest() {
         "{o:?}"
     );
     assert!((o.reso() - 32.0 / 127.0).abs() < 1e-6, "{o:?}");
-    assert!(o.volume().abs() < 1e-6, "{o:?}");
+    assert_eq!(o.volume(), Unit::ONE, "{o:?}");
     assert_eq!((o.lfo_speed(), o.lfo_depth()), (0.0, 0.0));
 }
 
@@ -139,7 +141,7 @@ fn offsets_sum_by_dest() {
 fn no_routes_no_offsets() {
     let r = *PadSound::DEFAULT.routes();
     for v in [[0.0; 6], [1.0; 6], [-1.0, 0.3, 0.7, -0.2, 1.0, 0.5]] {
-        assert_eq!(r.offsets(&RouteValues::new(v)), RouteOffsets::ZERO);
+        assert_eq!(r.offsets(&RouteValues::new(v)), RouteOffsets::NONE);
     }
 }
 
@@ -149,12 +151,12 @@ fn values_read_by_source() {
     let v = RouteValues::new([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
     for (i, s) in RouteSource::ALL.into_iter().enumerate() {
         let r = routes([
-            route(s, RouteDest::Volume, 127),
+            route(s, RouteDest::LfoDepth, 127),
             PadRoute::OFF,
             PadRoute::OFF,
             PadRoute::OFF,
         ]);
-        assert_eq!(r.offsets(&v).volume(), (i + 1) as f32 / 10.0);
+        assert_eq!(r.offsets(&v).lfo_depth(), (i + 1) as f32 / 10.0);
     }
 }
 
@@ -255,38 +257,51 @@ fn pad_lfo_and_its_speed() {
     assert!(fast > slow * 2, "SPEED: {fast} vs {slow}");
 }
 
+/// Pad 1's hit on a long PLAIN SINE at `vel`, its mod envelope `env`
+/// and routes `r`: Part 1's bus over `ms`.
+fn play_vol(r: PadRoutes, env: PadEnv, vel: u8, ms: usize) -> Vec<f32> {
+    let mut k = kit(r);
+    let p = k.pad_mut(pad(1));
+    p.set_machine(Machine::PlainSine);
+    p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
+    *p.sound_mut().env_mut() = env;
+    let (_w, mut rg) = rig(&k, &sound());
+    hit(&mut rg, vel);
+    let mut out = Vec::new();
+    for _ in 0..blocks(ms) {
+        rg.render(1);
+        out.extend_from_slice(rg.inst.part_bus(0));
+    }
+    out
+}
+
+fn peak(x: &[f32]) -> f32 {
+    x.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+}
+
+fn one(r: PadRoute) -> PadRoutes {
+    routes([r, PadRoute::OFF, PadRoute::OFF, PadRoute::OFF])
+}
+
+/// The rise of a mod envelope, A 60 MED, held at 1.
+fn rise() -> PadEnv {
+    PadEnv::new(
+        EnvPos::new(u7(60)),
+        EnvPos::ZERO,
+        EnvDecay::Infinite,
+        EnvSpeed::Med,
+    )
+}
+
 /// VOLUME from the mod envelope: it ramps, never steps.
 #[test]
 fn volume_ramps() {
-    let r = routes([
-        route(RouteSource::ModEnv, RouteDest::Volume, -127),
-        PadRoute::OFF,
-        PadRoute::OFF,
-        PadRoute::OFF,
-    ]);
-    let play = |r: PadRoutes| {
-        let mut k = kit(r);
-        let p = k.pad_mut(pad(1));
-        p.set_machine(Machine::PlainSine);
-        p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
-        *p.sound_mut().env_mut() = PadEnv::new(
-            EnvPos::new(u7(60)),
-            EnvPos::ZERO,
-            EnvDecay::Infinite,
-            EnvSpeed::Med,
-        );
-        let (_w, mut rg) = rig(&k, &sound());
-        hit(&mut rg, 100);
-        let mut out = Vec::new();
-        for _ in 0..blocks(300) {
-            rg.render(1);
-            out.extend_from_slice(rg.inst.part_bus(0));
-        }
-        out
-    };
-    let (dry, wet) = (play(PadRoutes::OFF), play(r));
-    let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-    // The mod envelope rises to 1 and holds: VOLUME falls to 0.
+    let r = one(route(RouteSource::ModEnv, RouteDest::Volume, -127));
+    let (dry, wet) = (
+        play_vol(PadRoutes::OFF, rise(), 100, 300),
+        play_vol(r, rise(), 100, 300),
+    );
+    // The mod envelope rises to 1 and holds: VOLUME ducks to 0.
     let tail = 250 * SR as usize / 1000;
     assert!(peak(&dry[tail..]) > 1e-2);
     assert!(peak(&wet[tail..]) < 1e-3 * peak(&dry[tail..]), "not closed");
@@ -300,6 +315,107 @@ fn volume_ramps() {
         .collect();
     let jump = g.windows(2).fold(0.0f32, |m, w| m.max((w[1] - w[0]).abs()));
     assert!(jump < 0.01, "VOLUME stepped by {jump}");
+}
+
+/// The VOLUME law (ADR 0269): each route's gain from unity, a > 0 opening
+/// with its source, a < 0 ducking, a bipolar LFO as (v + 1) / 2.
+#[test]
+fn volume_law_by_route() {
+    use RouteSource::*;
+    let gain = |s: RouteSource, a: i8, x: f32| {
+        let mut v = [0.0; 6];
+        v[s.index()] = x;
+        one(route(s, RouteDest::Volume, a))
+            .offsets(&RouteValues::new(v))
+            .volume()
+            .get()
+    };
+    for x in [0.0, 0.25, 0.5, 1.0] {
+        // +127 follows the source; −127 is its inverse.
+        assert!((gain(ModEnv, 127, x) - x).abs() < 1e-6, "{x}");
+        assert!((gain(Vel, -127, x) - (1.0 - x)).abs() < 1e-6, "{x}");
+        // +64 opens from 1 − 64/127 to 1; −64 ducks from 1 to 1 − 64/127.
+        let a = 64.0 / 127.0;
+        assert!((gain(ModEnv, 64, x) - (1.0 - a * (1.0 - x))).abs() < 1e-6);
+        assert!((gain(ModEnv, -64, x) - (1.0 - a * x)).abs() < 1e-6);
+    }
+    // A bipolar LFO: −1 closes, +1 opens fully, 0 halfway, at +127.
+    for (x, want) in [(-1.0, 0.0), (0.0, 0.5), (1.0, 1.0)] {
+        assert!((gain(Lfo, 127, x) - want).abs() < 1e-6, "LFO {x}");
+        assert!(
+            (gain(Lfo2, -127, x) - (1.0 - want)).abs() < 1e-6,
+            "LFO 2 {x}"
+        );
+    }
+    // Every amount is heard: +1 at a source of 0 already dips.
+    assert!(gain(ModEnv, 1, 0.0) < 1.0);
+}
+
+#[test]
+fn volume_routes_multiply() {
+    use RouteSource::*;
+    let r = routes([
+        route(ModEnv, RouteDest::Volume, 127),
+        route(Vel, RouteDest::Volume, -64),
+        route(ModEnv, RouteDest::Cutoff, 30),
+        PadRoute::OFF,
+    ]);
+    let (env, vel) = (0.6, 0.8);
+    let g = r
+        .offsets(&RouteValues::new([env, 0.0, vel, 0.0, 0.0, 0.0]))
+        .volume()
+        .get();
+    let want = env * (1.0 - 64.0 / 127.0 * vel);
+    assert!((g - want).abs() < 1e-6, "{g} vs {want}");
+    // Never over unity, never under 0.
+    let all = routes([ModEnv, Lfo, Vel, Lfo1].map(|s| route(s, RouteDest::Volume, -127)));
+    for x in [-1.0, 0.0, 1.0] {
+        let g = all.offsets(&RouteValues::new([x; 6])).volume().get();
+        assert!((0.0..=1.0).contains(&g), "{g}");
+    }
+}
+
+/// MOD ENV → VOLUME +127 plays the hit through the envelope's shape: up
+/// with its attack, down with its decay.
+#[test]
+fn volume_follows_the_mod_env() {
+    let r = one(route(RouteSource::ModEnv, RouteDest::Volume, 127));
+    let decay = PadEnv::new(
+        EnvPos::new(u7(50)),
+        EnvPos::ZERO,
+        EnvDecay::Time(EnvPos::new(u7(60))),
+        EnvSpeed::Med,
+    );
+    let (dry, wet) = (
+        play_vol(PadRoutes::OFF, decay, 100, 600),
+        play_vol(r, decay, 100, 600),
+    );
+    let ratio = |ms: usize| {
+        let b = ms * SR as usize / 1000;
+        peak(&wet[b..b + 480]) / peak(&dry[b..b + 480])
+    };
+    let (start, top, end) = (
+        // The first block: the ramp from its first gain.
+        peak(&wet[..BLOCK_SIZE]) / peak(&dry[..BLOCK_SIZE]),
+        (5..120).map(ratio).fold(0.0, f32::max),
+        ratio(580),
+    );
+    assert!(start < 0.2, "attack starts closed: {start}");
+    assert!(top > 0.8, "opens: {top}");
+    assert!(end < 0.05, "decays shut: {end}");
+}
+
+/// VEL → VOLUME −127: a hard hit ducks itself near silent, a soft one
+/// plays near full (each against its own unrouted hit).
+#[test]
+fn vel_volume_ducks_hard_hits() {
+    let r = one(route(RouteSource::Vel, RouteDest::Volume, -127));
+    for (vel, lo, hi) in [(127u8, 0.0, 0.02), (1, 0.97, 1.0001)] {
+        let dry = play_vol(PadRoutes::OFF, rise(), vel, 100);
+        let wet = play_vol(r, rise(), vel, 100);
+        let g = peak(&wet) / peak(&dry);
+        assert!((lo..=hi).contains(&g), "vel {vel}: {g}");
+    }
 }
 
 /// Review Focus 5: every route at its extreme stays finite and bounded.
@@ -374,7 +490,7 @@ fn routed_pad_sweep_is_smooth() {
         matches!(rg.inst.voice(voice(rg).expect("pad 1 sounds")).slot(),
             EngineSlot::Drum(d) if d.moves_filter())
     };
-    assert!(moves(&rg), "a routed pad's filter glides in steps");
+    assert!(moves(&rg), "a routed pad's filter isn't on the moving path");
     let mut out = Vec::new();
     for _ in 1..blocks(100) {
         rg.render(1);
@@ -410,4 +526,53 @@ fn unrouted_pad_keeps_the_knob_glide() {
             "{r:?}"
         );
     }
+}
+
+/// The voice's glide rule sees the pad's routes: a routed pad renders bit
+/// for bit as it does with a Part route forcing the moving path anyway
+/// (WHEEL → FREQ with the wheel at rest, which moves nothing). Without
+/// the pad in the rule, the lone pad takes the knob glide's steps.
+#[test]
+fn pad_routes_take_the_moving_path() {
+    let r = one(route(RouteSource::ModEnv, RouteDest::Cutoff, 127));
+    let mut k = kit(r);
+    let p = k.pad_mut(pad(1));
+    p.set_machine(Machine::PlainSine);
+    p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
+    let s = p.sound_mut();
+    s.filter_mut().set_cutoff(Hz::new(100.0));
+    *s.env_mut() = PadEnv::new(
+        EnvPos::ZERO,
+        EnvPos::ZERO,
+        EnvDecay::Time(EnvPos::new(u7(50))),
+        EnvSpeed::Med,
+    );
+    let play = |wheel_route: bool| {
+        let (_w, mut rg) = rig(&k, &sound());
+        if wheel_route {
+            let mut m = ModState::with_sources(MAX_MOD_SOURCES);
+            m.set_fixed(ModSource::Wheel.index(), FixedCol::Freq, 1);
+            assert!(m.filter_routed());
+            *rg.shared.parts[0].mod_state = m;
+        }
+        hit(&mut rg, 100);
+        let mut out = Vec::new();
+        let mut cut = Vec::new();
+        for _ in 0..blocks(100) {
+            rg.render(1);
+            out.extend_from_slice(rg.inst.part_bus(0));
+            cut.push(cutoff(&rg));
+        }
+        (out, cut)
+    };
+    let (alone, forced) = (play(false), play(true));
+    // The dummy route moves nothing: the same cutoffs, block by block.
+    assert_eq!(alone.1, forced.1, "the wheel route moved CUTOFF");
+    assert!(peak(&alone.0) > 1e-2, "silent");
+    let same = alone
+        .0
+        .iter()
+        .zip(&forced.0)
+        .all(|(a, b)| a.to_bits() == b.to_bits());
+    assert!(same, "a routed pad's filter isn't on the moving path");
 }

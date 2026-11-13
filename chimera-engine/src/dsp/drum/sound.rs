@@ -491,6 +491,14 @@ impl RouteSource {
         }
     }
 
+    /// −1..1, the LFOs; else 0..1.
+    pub const fn is_bipolar(self) -> bool {
+        matches!(
+            self,
+            RouteSource::Lfo | RouteSource::Lfo1 | RouteSource::Lfo2 | RouteSource::Lfo3
+        )
+    }
+
     /// Its place in `ALL` and in `RouteValues`.
     pub const fn index(self) -> usize {
         self.code() as usize - 1
@@ -687,17 +695,36 @@ impl PadRoutes {
         self.0.iter().all(|r| r.amount == Amount::ZERO)
     }
 
-    /// Each destination's sum, amount / 127 × its source's value.
+    /// Each destination's sum, a × its source's value (a = amount / 127);
+    /// VOLUME the product of each route's gain from unity (ADR 0269): the
+    /// source as 0..1 (a bipolar LFO's (v + 1) / 2), a > 0 opening with it,
+    /// 1 − a·(1 − v), a < 0 ducking, 1 − |a|·v; never over 1.
     pub fn offsets(&self, v: &RouteValues) -> RouteOffsets {
         let mut o = [0.0f32; 5];
+        let mut gain = 1.0f32;
         for r in self.0.iter().filter(|r| r.amount != Amount::ZERO) {
-            o[r.dest.code() as usize - 1] += f32::from(r.amount.0) / 127.0 * v.0[r.source.index()];
+            let (a, x) = (f32::from(r.amount.0) / 127.0, v.0[r.source.index()]);
+            if r.dest == RouteDest::Volume {
+                let u = Unit::new(if r.source.is_bipolar() {
+                    (x + 1.0) / 2.0
+                } else {
+                    x
+                })
+                .get();
+                gain *= if a > 0.0 {
+                    1.0 - a * (1.0 - u)
+                } else {
+                    1.0 + a * u
+                };
+            } else {
+                o[r.dest.code() as usize - 1] += a * x;
+            }
         }
-        let [cutoff, reso, volume, lfo_speed, lfo_depth] = o;
+        let [cutoff, reso, _, lfo_speed, lfo_depth] = o;
         RouteOffsets {
             cutoff,
             reso,
-            volume,
+            volume: Unit::new(gain),
             lfo_speed,
             lfo_depth,
         }
@@ -716,21 +743,22 @@ impl RouteValues {
 }
 
 /// The routes' sums by destination, in each one's offset units
-/// (`apply_offset`'s; VOLUME a gain offset from 1).
+/// (`apply_offset`'s), and VOLUME's gain.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RouteOffsets {
     cutoff: f32,
     reso: f32,
-    volume: f32,
+    volume: Unit,
     lfo_speed: f32,
     lfo_depth: f32,
 }
 
 impl RouteOffsets {
-    pub const ZERO: RouteOffsets = RouteOffsets {
+    /// No route: nothing moved, VOLUME at unity.
+    pub const NONE: RouteOffsets = RouteOffsets {
         cutoff: 0.0,
         reso: 0.0,
-        volume: 0.0,
+        volume: Unit::ONE,
         lfo_speed: 0.0,
         lfo_depth: 0.0,
     };
@@ -743,7 +771,8 @@ impl RouteOffsets {
         self.reso
     }
 
-    pub const fn volume(&self) -> f32 {
+    /// VOLUME's gain, 0..=1.
+    pub const fn volume(&self) -> Unit {
         self.volume
     }
 
