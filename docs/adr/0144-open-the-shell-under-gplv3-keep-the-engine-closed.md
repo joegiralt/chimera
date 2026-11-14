@@ -1,6 +1,6 @@
 # 0144. Ship binary-only through alpha; at beta open the shell under GPLv3 with a linking exception and keep the engine closed
 
-- **Status:** Proposed
+- **Status:** Superseded by [0271](0271-open-everything-under-gplv3-at-1-0.md)
 - **Deciders:** owner
 
 ## Context
