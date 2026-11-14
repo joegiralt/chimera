@@ -430,6 +430,7 @@ fn a_lap_past_the_dwt_wrap_counts_whole() {
 
 /// N5: a 1 MiB `put` at 16 KiB/s (64 s, a 512-byte block every 31 ms,
 /// well inside `PUT_STALL_MS`) ends with 30 s left for the card.
+#[cfg(feature = "card-put")]
 #[test]
 fn a_1mb_put_at_16kib_per_s_beats_the_deadline() {
     use chimera_core::console::{PUT_DEADLINE_MS, PUT_MAX_BYTES, PUT_STALL_MS};

@@ -1,0 +1,12 @@
+# Bank 2's budget per firmware set (ADR 0272): the bytes of `.bank2` in use
+# in `just check`'s plain release build, S0-S3 from 0x08100000 to
+# __bank2_lo_end, S4-S5 from 0x08180400 to __bank2_s4_end and S6-S7 from
+# 0x081C0400 to __bank2_s6_end. `just check-bank2` fails a set under 8 KB
+# free in all (ADR 0251), more than 64 B over its line or more than 1 KB
+# under it, as bank 1's (`BANK2_LOWER=1 just check` lowers lines). A raise
+# names its ADR, as bank 1's do.
+#
+# <set: features as check builds it>  <bytes>  # ADR NNNN: why
+default      487648  # ADR 0272: seeded at the 1 MB link (bank2-slots), 36640 B free in S0-S3, S4-S7 empty
+orbit        515616  # ADR 0272: seeded at the 1 MB link (bank2-slots), 8672 B free in S0-S3, S4-S7 empty
+bank2-gate   487648  # ADR 0272: seeded at the 1 MB link (bank2-slots), 36640 B free in S0-S3, S4-S7 empty

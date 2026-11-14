@@ -61,6 +61,46 @@ static BOARD_DOOR: BoardDoor = BoardDoor {
 const BOARD_SLOT: chimera_core::bank2::DoorSlot<BoardDoor> =
     unsafe { chimera_core::bank2::DoorSlot::new(chimera_core::bank2::BOARD_DOOR_ADDR) };
 
+/// A slot's stub: its code word, then its tag word (ADR 0272).
+#[cfg(feature = "bank2")]
+const fn stub(s: chimera_image::Slot) -> [u8; 64] {
+    let (code, tag) = (
+        chimera_image::slot::code_word(s),
+        chimera_image::slot::tag_word(s),
+    );
+    let mut w = [0u8; 64];
+    let mut i = 0;
+    while i < 32 {
+        w[i] = code[i];
+        w[32 + i] = tag[i];
+        i += 1;
+    }
+    w
+}
+
+// The slots' stubs and end markers, data in every image: `bank2.x` puts
+// them at 0x08180000, 0x081BFFE0, 0x081C0000 and 0x081FFFE0, and
+// `just check-slots` reads them back from the .bk2.
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.slot.mixer")]
+#[used]
+static SLOT_MIXER: [u8; 64] = stub(chimera_image::Slot::Mixer);
+
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.slot.mixer_end")]
+#[used]
+static SLOT_MIXER_END: [u8; 32] = chimera_image::slot::end_marker(chimera_image::Slot::Mixer);
+
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.slot.edit")]
+#[used]
+static SLOT_EDIT: [u8; 64] = stub(chimera_image::Slot::Edit);
+
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.slot.edit_end")]
+#[used]
+static SLOT_EDIT_END: [u8; 32] = chimera_image::slot::end_marker(chimera_image::Slot::Edit);
+
 /// `f` on the board's table, `None` closed (see `DoorCell::with`).
 #[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
 #[inline(always)]

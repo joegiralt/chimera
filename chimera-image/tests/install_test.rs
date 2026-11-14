@@ -833,17 +833,22 @@ fn guarded(f: &mut SimFlash, img: &[u8], s: [u8; 8]) -> Result<Result<Header, In
 
 /// A unit that installed `s`'s image uncut.
 fn installed(s: [u8; 8]) -> SimFlash {
+    installed_with(&img(s))
+}
+
+/// A unit that installed `img` uncut.
+fn installed_with(img: &[u8]) -> SimFlash {
     let mut f = SimFlash::new();
-    assert!(guarded(&mut f, &img(s), s).unwrap().is_ok());
+    assert!(guarded(&mut f, img, header(img).seal).unwrap().is_ok());
     f.ops.clear();
     f
 }
 
-/// A cut that tears op `n` of a guarded install, then power back.
+/// A cut that tears op `n` of a guarded install of `img`, then power back.
 fn cut(f: &mut SimFlash, n: usize, img: &[u8], seed: u32) {
     f.rng = Rng(seed | 1);
     f.cut_after(n);
-    guarded(f, img, SEAL_B)
+    guarded(f, img, header(img).seal)
         .expect("slots ours before the cut")
         .ok();
     f.reboot();
@@ -852,9 +857,10 @@ fn cut(f: &mut SimFlash, n: usize, img: &[u8], seed: u32) {
 /// After whatever came before, the guard reads both slots ours and an
 /// install ends open with exactly the image.
 fn ends_open(f: &mut SimFlash, img: &[u8], what: &str) {
-    let r = guarded(f, img, SEAL_B).unwrap_or_else(|s| panic!("{s:?} foreign: {what}"));
+    let s = header(img).seal;
+    let r = guarded(f, img, s).unwrap_or_else(|s| panic!("{s:?} foreign: {what}"));
     assert!(r.is_ok(), "{what}: {r:?}");
-    assert!(Door::open(f, &seal(SEAL_B)).is_ok(), "{what}");
+    assert!(Door::open(f, &seal(s)).is_ok(), "{what}");
     assert_eq!(f.image(img.len()), img, "{what}");
     for s in Slot::ALL {
         assert_eq!(guard(f, SlotSet::NONE).unwrap().evidence(s), Evidence::Tag);
@@ -863,10 +869,15 @@ fn ends_open(f: &mut SimFlash, img: &[u8], what: &str) {
 
 /// Ops of an uncut install over `f`.
 fn ops_in_full_install(f: &SimFlash, img: &[u8]) -> usize {
+    full_install_ops(f, img).len()
+}
+
+/// The ops of an uncut install of `img` over `f`, in order.
+fn full_install_ops(f: &SimFlash, img: &[u8]) -> Vec<Op> {
     let mut f = f.clone();
     f.ops.clear();
-    assert!(guarded(&mut f, img, SEAL_B).unwrap().is_ok());
-    f.ops.len()
+    assert!(guarded(&mut f, img, header(img).seal).unwrap().is_ok());
+    f.ops
 }
 
 #[derive(Clone, Copy)]
@@ -1103,26 +1114,127 @@ fn a_cut_from_a_tag_or_marker_keeps_one() {
 /// here must pass.
 #[test]
 fn two_tears_on_consecutive_installs_leave_both_slots_ours() {
-    let b = img(SEAL_B);
-    let starts = [SimFlash::new(), installed(SEAL_A)];
+    let pairs = pair_matrix(&img(SEAL_B), installed(SEAL_A));
+    eprintln!("{pairs} pairs");
+}
+
+/// The pair matrix over `b`, from a first install and from `old`; the
+/// number of pairs tried.
+fn pair_matrix(b: &[u8], old: SimFlash) -> usize {
+    let starts = [SimFlash::new(), old];
     let mut pairs = 0;
     for tear in TEARS {
         for (i, start) in starts.iter().enumerate() {
-            let n1s = ops_in_full_install(start, &b);
+            let n1s = ops_in_full_install(start, b);
             for n1 in 0..n1s {
                 let mut once = start.clone();
                 once.tear = tear;
-                cut(&mut once, n1, &b, 0xBB67_AE85 ^ n1 as u32);
-                let n2s = ops_in_full_install(&once, &b);
+                cut(&mut once, n1, b, 0xBB67_AE85 ^ n1 as u32);
+                let n2s = ops_in_full_install(&once, b);
                 for n2 in 0..n2s {
                     let mut f = once.clone();
                     let what = format!("{tear:?} start {i} cuts {n1} {n2}");
-                    cut(&mut f, n2, &b, 0x3C6E_F372 ^ (n1 << 8 | n2) as u32);
-                    ends_open(&mut f, &b, &what);
+                    cut(&mut f, n2, b, 0x3C6E_F372 ^ (n1 << 8 | n2) as u32);
+                    ends_open(&mut f, b, &what);
                     pairs += 1;
                 }
             }
         }
     }
-    eprintln!("{pairs} pairs");
+    pairs
+}
+
+/// `img`'s words and three more in each of S0..S7: past the header or the
+/// reserve, mid-sector and just short of the sector's end (clear of the
+/// end markers), so torn erases in S0..S3 leave old bytes too.
+fn sparse_8_sector(s: [u8; 8]) -> Vec<u8> {
+    let mut body = img(s)[HEADER_LEN as usize..].to_vec();
+    for sector in 0..8 {
+        for off in [0x440, SECTOR / 2, SECTOR - 0x80] {
+            let o = sector * SECTOR + off - HEADER_LEN as usize;
+            for (i, b) in body[o..o + 32].iter_mut().enumerate() {
+                *b = (i as u8).wrapping_mul(29) ^ s[1] ^ (sector as u8) << 4;
+            }
+        }
+    }
+    sealed(&body, s)
+}
+
+/// The pair matrix again with body words in every sector, from an erased
+/// bank and from a unit holding another such image. Release only: tens of
+/// thousands of 1 MB installs (`just check` runs it).
+#[test]
+#[ignore = "slow in debug: just check runs it with --release"]
+fn two_tears_with_words_in_every_sector_leave_both_slots_ours() {
+    let t = std::time::Instant::now();
+    let pairs = pair_matrix(
+        &sparse_8_sector(SEAL_B),
+        installed_with(&sparse_8_sector(SEAL_A)),
+    );
+    eprintln!("{pairs} pairs in {:.1} s", t.elapsed().as_secs_f64());
+}
+
+/// The linked image (`CHIMERA_BK2`, or `just firmware-orbit`'s
+/// target/chimera-orbit.bk2), and the same with words added through S4..S7
+/// (its S4 and S6 groups are empty until 0.4's code lands), each cut once
+/// at every erase, at each of the six slot words and at a sample of
+/// S4..S7 body programs, under every tear model, from a first install and
+/// over an installed unit: the guard reads both slots ours and a reinstall
+/// ends open.
+#[test]
+#[ignore = "needs a linked .bk2: just check runs it after release-bin"]
+fn single_cuts_through_the_linked_image_leave_both_slots_ours() {
+    let path = std::env::var("CHIMERA_BK2").unwrap_or_else(|_| {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../target/chimera-orbit.bk2").into()
+    });
+    let real = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    assert_eq!(real.len(), LEN, "{path}");
+    let h = header(&real);
+    let mut body = real[HEADER_LEN as usize..].to_vec();
+    for w in (0x8_0000..LEN).step_by(0x2000) {
+        let o = w + 0x800 - HEADER_LEN as usize;
+        body[o..o + 32].fill(w as u8 ^ 0x5A);
+    }
+    let high = sealed(&body, h.seal);
+    let slot_words: Vec<u32> = Slot::ALL
+        .into_iter()
+        .flat_map(own_words)
+        .map(|(a, _)| a)
+        .collect();
+    let t = std::time::Instant::now();
+    let mut n_cuts = 0;
+    for (name, b) in [("linked", &real), ("linked + S4..S7 words", &high)] {
+        for (i, start) in [SimFlash::new(), installed(SEAL_A)].iter().enumerate() {
+            let ops = full_install_ops(start, b);
+            let body: Vec<usize> = (0..ops.len())
+                .filter(|&n| matches!(ops[n], Op::Program(a) if a >= Slot::Mixer.base() && !slot_words.contains(&a)))
+                .collect();
+            let sample = body.iter().step_by(body.len().div_ceil(16).max(1)).copied();
+            let cuts: Vec<usize> = (0..ops.len())
+                .filter(|&n| match ops[n] {
+                    Op::Erase(_) => true,
+                    Op::Program(a) => slot_words.contains(&a),
+                })
+                .chain(sample)
+                .collect();
+            eprintln!(
+                "{name}, start {i}: {} ops, {} S4..S7 body programs, {} cuts",
+                ops.len(),
+                body.len(),
+                cuts.len()
+            );
+            for tear in TEARS {
+                for &n in &cuts {
+                    let mut f = start.clone();
+                    f.tear = tear;
+                    let what = format!("{name} start {i} cut {n} ({:?}) {tear:?}", ops[n]);
+                    cut(&mut f, n, b, 0x510E_527F ^ n as u32);
+                    assert!(guard(&mut f, SlotSet::NONE).is_ok(), "{what}");
+                    ends_open(&mut f, b, &what);
+                    n_cuts += 1;
+                }
+            }
+        }
+    }
+    eprintln!("{n_cuts} cuts in {:.1} s", t.elapsed().as_secs_f64());
 }

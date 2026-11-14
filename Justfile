@@ -188,6 +188,7 @@ bank2-split elf out:
         {{utils}} door-check {{elf}}
         just check-door-placed {{elf}}
         {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
+        just check-slots {{elf}} {{out}}.bk2
         just check-bin-paths {{out}}.bk2
     else
         echo "{{elf}} has no bank 2 (ADR 0194)" >&2; exit 1
@@ -221,7 +222,9 @@ release-bin:
 # bank 2's on a bank-2 build: a `bank2.x` glob that misses a new door entry
 # or run leaves it silently in bank 1. ORBIT's runner and pages (ADR 0208)
 # too, on a build that links them; and the NRPN address space (ADR 0216)
-# once anything links it. The map's codec (MidiDoor) always.
+# once anything links it. The map's codec (MidiDoor) always. Bank 2 runs to
+# 0x08200000; nothing checked may sit in a slot's 1 KB reserve or its end
+# marker (ADR 0272).
 check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -252,7 +255,7 @@ check-door-placed elf:
         if grep -qE " [tT] .*$p" <<< "$syms"; then midi_ui+=("$p"); fi
     done
     for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'voice::depth::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on' 'randomize::kern::'; do
-        grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
+        grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); o = (a - 0x08100000) % 0x40000; if (a < 0x08100000 || a >= 0x08200000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } else if (a - 0x08100000 >= 0x80000 && (o < 0x400 || o >= 0x3FFE0)) { print "in a slot reserve or end marker: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
 
 check-no-gate bin:
@@ -282,6 +285,47 @@ check-bank1 set:
     mkdir -p target/bank1
     rust-objcopy -R .bank2 -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 "target/bank1/{{set}}.bin"
     python3 tools/bank1_budget.py "{{set}}" "target/bank1/{{set}}.bin"
+
+# Bank 2's room (ADR 0272): the last-built firmware's free space in S0-S3,
+# S4-S5 and S6-S7, from its end symbols. Under 8 KB free in all fails (ADR
+# 0251), and the bytes in use are held to the set's line in
+# tools/bank2-budget.txt under bank 1's rules.
+check-bank2 set:
+    python3 tools/bank2_budget.py "{{set}}" target/thumbv7em-none-eabihf/release/chimera-stm32
+
+# The .bk2's slot stubs and end markers (ADR 0272): chimera-utils checks
+# their bytes, the size and the 0xFF reserves; here, every gap from a
+# region's end symbol to its fixed point is 0xFF (lld's fill), each stub
+# decodes to the trampoline, and no symbol but the stubs' own lies in a
+# reserve or an end marker.
+check-slots elf bk2:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{utils}} check-slots {{bk2}}
+    syms=$(rust-nm -C {{elf}})
+    sym() { awk -v s="$1" '$3 == s { print strtonum("0x" $1) }' <<< "$syms"; }
+    for gap in "__bank2_lo_end 0x08180000" "__bank2_s4_end 0x081BFFE0" "__bank2_s6_end 0x081FFFE0"; do
+        read -r name to <<< "$gap"
+        from=$(sym "$name"); to=$((to))
+        n=$(head -c $((to - 0x08100000)) {{bk2}} | tail -c $((to - from)) | tr -d '\377' | wc -c)
+        if [ "$n" != 0 ]; then echo "{{bk2}}: $n B not 0xFF from $name to $(printf %#x $to): lld's fill did not hold" >&2; exit 1; fi
+    done
+    # The stubs are data to the ELF (objdump shows .word): their code bytes
+    # from the .bk2, disassembled as Thumb.
+    mkdir -p target/slots
+    want='ldr r0, [pc, #0x14]; ldr r1, [pc, #0x18]; str r0, [r1]; dsb sy; isb sy; ldr r1, [r0]; ldr r2, [r0, #0x4]; msr msp, r1; bx r2; '
+    for off in 0x80008 0xC0008; do
+        dd if={{bk2}} of=target/slots/stub.raw bs=1 skip=$((off)) count=24 status=none
+        rust-objcopy -I binary -O elf32-littlearm --rename-section .data=.text,code target/slots/stub.raw target/slots/stub.elf
+        ops=$(rust-objdump -d --triple=thumbv7em-none-eabihf --no-show-raw-insn target/slots/stub.elf \
+            | awk '/^ *[0-9a-f]+:/ { sub(/^ *[0-9a-f]+:[ \t]*/, ""); sub(/[ \t]*@.*/, ""); gsub(/\t/, " "); printf "%s; ", $0 }')
+        if [ "$ops" != "$want" ]; then echo "{{bk2}}: the stub at +$off decodes to: $ops" >&2; exit 1; fi
+    done
+    awk '{ a = strtonum("0x" $1); o = (a - 0x08100000) % 0x40000; name = $3; for (i = 4; i <= NF; i++) name = name " " $i }
+        a >= 0x08180000 && a < 0x08200000 && (o < 0x400 || o >= 0x3FFE0) && name !~ /^(__slot_(mixer|edit)|__bank2_.*|\$.*|.*::SLOT_(MIXER|EDIT)(_END)?)$/ {
+            print "in a slot reserve or end marker: " $0 > "/dev/stderr"; bad = 1 }
+        END { exit bad }' <<< "$syms"
+    echo "{{bk2}}: slots, fill and stubs ok"
 
 # Draft a release of the path-clean firmware on the PUBLIC chimera-releases
 # repo (#413): `just release 0.1.0 [--dry-run]`. Refuses a dirty tree or a
@@ -414,11 +458,14 @@ check $CHIMERA_STAMP_CLEAN="1":
     # (private issue #303).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     just check-bank1 default
+    just check-bank2 default
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     just check-bank1 orbit
+    just check-bank2 orbit
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
+    just check-bank2 bank2-gate
     # ORBIT with usb-device writing the configuration, the static's fallback (ADR 0260).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,usb-config-writer
     just check-bank1 orbit,usb-config-writer
@@ -440,6 +487,10 @@ check $CHIMERA_STAMP_CLEAN="1":
     just loom
     cargo fmt --all -- --check
     just release-bin
+    # The tear tests over the linked ORBIT .bk2, and the pair matrix with
+    # words in every sector (ADR 0272): release, as tens of thousands of
+    # 1 MB installs.
+    CHIMERA_BK2={{justfile_directory()}}/target/release-bin/chimera-orbit.bk2 cargo test --release -p chimera-image --test install_test -- --ignored
     just stack-check
 
 # The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves

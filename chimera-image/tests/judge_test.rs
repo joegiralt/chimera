@@ -277,3 +277,43 @@ fn pick_staged_stops_at_the_first_good() {
     assert_eq!(got, Some((1, h)));
     assert_eq!(judged, 2, "nothing after the pick is judged");
 }
+
+/// Bank 2 past S0's header, unreadable: a torn install's S4..S7 (spec § 4).
+/// Logs each read.
+struct HeaderOnly(Vec<u8>, Vec<(u32, usize)>);
+
+impl ImageRead for HeaderOnly {
+    fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
+        self.1.push((off, buf.len()));
+        if off as usize + buf.len() > HEADER_LEN as usize {
+            return Err(ReadFail);
+        }
+        buf.copy_from_slice(&self.0[off as usize..off as usize + buf.len()]);
+        Ok(())
+    }
+}
+
+/// Until the commit word is good the judge reads S0's header and nothing
+/// else, so a torn install's slot words, anywhere in the 1 MB, are only
+/// ever read by the guard (spec § 4).
+#[test]
+fn the_judge_reads_only_the_header_until_committed() {
+    let (img, s) = sealed(&body(1024));
+    let c = COMMIT_OFF as usize;
+    let mut erased = img.clone();
+    erased[c..c + 32].fill(0xFF);
+    let mut torn = img.clone();
+    torn[c + 9] &= 0x7F;
+    for (what, img, want) in [
+        ("erased", erased, Verdict::Empty),
+        ("torn", torn, Verdict::Torn),
+    ] {
+        let mut m = HeaderOnly(img, Vec::new());
+        assert_eq!(judge(&mut m, &s), want, "{what}");
+        assert_eq!(m.1, [(0, HEADER_LEN as usize)], "{what}");
+    }
+    // A committed header reads on, past the header: the body's CRC.
+    let mut m = HeaderOnly(img, Vec::new());
+    assert_eq!(judge(&mut m, &s), Verdict::Unreadable);
+    assert_eq!(m.1, [(0, 256), (HEADER_LEN, 512)]);
+}

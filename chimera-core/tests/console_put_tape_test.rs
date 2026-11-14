@@ -3,7 +3,9 @@
 //! and sealed; any failure leaves no file, and a re-run is the retry.
 #![cfg(feature = "card-put")]
 
-use chimera_core::console::{Console, Out, PUT_CHUNK_BYTES, Request, Stalled, put};
+use chimera_core::console::{
+    Console, Out, PUT_CHUNK_BYTES, PUT_DEADLINE_MS, Request, Stalled, put,
+};
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
 use chimera_core::name::SoundName;
 use chimera_core::project::encode_new_project;
@@ -403,23 +405,25 @@ fn a_torn_unsealed_file_is_replaced() {
     loads_sealed(&mut s, &h);
 }
 
-/// Each chunk has its own 30 s: a host that takes 40 s for the whole file
-/// and 15 s a chunk lands it; one that takes 35 s for a chunk doesn't.
+/// Each chunk has its own `PUT_DEADLINE_MS`: a host that takes longer
+/// than it for the whole file at half of it a chunk lands it; one that
+/// takes it and 5 s more for a chunk doesn't.
 #[test]
 fn each_chunk_has_its_own_deadline() {
     let (h, file) = big();
     let data = chunked(&file);
     let per_chunk = lines(&file[..PUT_CHUNK_BYTES as usize]).len() as u64;
     let line = put_line(h.sref.crc, &file);
-    let us = 15_000_000 / per_chunk;
-    assert!(data.len() as u64 * us > 30_000_000);
+    let deadline_us = PUT_DEADLINE_MS as u64 * 1000;
+    let us = deadline_us / 2 / per_chunk;
+    assert!(data.len() as u64 * us > deadline_us);
     let mut s = mem();
     assert_eq!(
         ask(&mut s, &line, &data, us).0,
         format!("READY\n{}OK\n", acks(&file))
     );
     let mut s = mem();
-    let us = 35_000_000 / per_chunk;
+    let us = (deadline_us + 5_000_000) / per_chunk;
     assert_eq!(ask(&mut s, &line, &data, us).0, "READY\nERR put: timeout\n");
     assert_eq!(tapes(&mut s), []);
 }

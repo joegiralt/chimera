@@ -304,8 +304,11 @@ fn bad_lines_are_refused() {
 
 #[test]
 fn a_put_past_the_deadline_times_out() {
-    // 0.6 ms a byte: each block in time, the whole file past 30 s.
-    let body = big_project_bytes("AVRIL 14", 1);
+    // 0.6 ms a byte: each block in time, the whole file past the deadline.
+    // The deadline fires mid-data, so the bytes past a project's needn't be
+    // one: as many copies as it takes.
+    let one = big_project_bytes("AVRIL 14", 1);
+    let body = one.repeat(3);
     assert!(
         lines(&body).len() as u64 * 600 > u64::from(PUT_DEADLINE_MS) * 1_000,
         "{} B",

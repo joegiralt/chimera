@@ -336,9 +336,15 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
    then what the door reaches. Inserted before .text, and read before
    link.x so its statements match first: cortex-m-rt's *(.text .text.*)
    never takes a section named here. Every firmware build has
-   it (ADR 0194). */
+   it (ADR 0194). One section, exactly 1 MB (ADR 0272): the low groups in
+   S0-S3, then fixed points for bootloader 1.09's slots, each a 1 KB
+   reserve holding its stub at 0x08180000 (MIXER) and 0x081C0000 (EDIT)
+   and an end marker on the last flash word of S5 and of S7, with room for
+   S4's and S6's groups between. Every gap is filled 0xFF, as erased flash
+   reads (lld's fill is a 32-bit pattern: all four bytes). */
 SECTIONS {
   .bank2 : ALIGN(32) {
+    __bank2_base = .;
     KEEP(*(.bank2.header));
     . = ALIGN(32); __bank2_door = .;
     KEEP(*(.bank2.door));
@@ -392,11 +398,31 @@ SECTIONS {
     /* ORBIT */
     /* MIDI UI */
     /* TUNING */
-    . = ALIGN(32); __bank2_end = .;
-  } > BANK2
+    . = ALIGN(32); __bank2_lo_end = .;
+    . = __bank2_base + 0x80000; __slot_mixer = .;
+    KEEP(*(.bank2.slot.mixer));
+    . = __bank2_base + 0x80400;
+    /* S4 GROUPS */
+    . = ALIGN(32); __bank2_s4_end = .;
+    . = __bank2_base + 0xBFFE0;
+    KEEP(*(.bank2.slot.mixer_end));
+    . = __bank2_base + 0xC0000; __slot_edit = .;
+    KEEP(*(.bank2.slot.edit));
+    . = __bank2_base + 0xC0400;
+    /* S6 GROUPS */
+    . = ALIGN(32); __bank2_s6_end = .;
+    . = __bank2_base + 0xFFFE0;
+    KEEP(*(.bank2.slot.edit_end));
+    __bank2_end = .;
+  } > BANK2 =0xFFFFFFFF
 } INSERT BEFORE .text;
 ASSERT(ADDR(.bank2) == 0x08100000, "bank 2 starts at 0x08100000");
-ASSERT(__bank2_end <= 0x08180000, "bank 2 stays clear of bootloader 1.09's slots at 0x08180000");
+ASSERT(__bank2_lo_end <= 0x08180000, "bank 2's low groups fit S0-S3, clear of MIXER's slot at 0x08180000");
+ASSERT(__bank2_s4_end <= 0x081BFFE0, "the S4 groups fit S4-S5, clear of S5's end marker at 0x081BFFE0");
+ASSERT(__bank2_s6_end <= 0x081FFFE0, "the S6 groups fit S6-S7, clear of S7's end marker at 0x081FFFE0");
+ASSERT(__slot_mixer == 0x08180000, "MIXER's stub at 0x08180000, where bootloader 1.09 jumps");
+ASSERT(__slot_edit == 0x081C0000, "EDIT's stub at 0x081C0000, where bootloader 1.09 jumps");
+ASSERT(__bank2_end == 0x08200000, "bank 2 is exactly 1 MB, S7's end marker last");
 ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
 /* ASSERTS */
 /* BENCH ASSERT */
