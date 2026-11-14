@@ -12,7 +12,7 @@ use crate::in_place::{field_list, in_place_enum};
 
 use super::super::laws::{BankParams, CowbellParams, JingleParams, MetalParams};
 use super::super::types::{Hz, SampleRate, Seconds, Semis};
-use super::{Blk, Decay, Hiss, Hit, Lcg, Pulse, Svf, Swept, drive, octaves, per_sample, quiet};
+use super::{Blk, Decay, Hiss, Hit, Lcg, Square, Svf, Swept, drive, octaves, per_sample, quiet};
 
 in_place_enum! {
     pub enum Metal {
@@ -44,7 +44,7 @@ impl Metal {
     }
 
     /// The next block; `TICKED`, the squares a sample at a time
-    /// (`Pulse::add`, `Pulse::sweep`).
+    /// (`Square::add`, `Square::sweep`).
     pub(super) fn render<const TICKED: bool>(&mut self, out: &mut Blk) {
         match self {
             Metal::Cowbell(k) => k.render::<TICKED>(out),
@@ -64,11 +64,9 @@ impl Metal {
     }
 }
 
-const SQUARE: Unit = Unit::ZERO;
-
 /// `Cowbell`, machines.rs:1052: two of VA's pulses, a band-pass and SOFT.
 pub struct Cowbell {
-    p: [Pulse; 2],
+    p: [Square; 2],
     hz: [f32; 2],
     bp: Svf,
     slow: Decay,
@@ -85,7 +83,7 @@ impl Cowbell {
     fn new(p: CowbellParams, h: Hit) -> Cowbell {
         let f = p.pitch.get();
         Cowbell {
-            p: [Pulse::new(SQUARE, h.sr), Pulse::new(SQUARE, h.sr)],
+            p: [Square::new(h.sr), Square::new(h.sr)],
             hz: [f, f * p.interval.get()],
             bp: Svf::new(FilterMode::Bp12, p.tone, p.ring, h.sr),
             slow: Decay::t60(p.decay, h.sr),
@@ -127,7 +125,7 @@ struct Bp {
 
 /// `Metal`, machines.rs:921: six squares and band-passes; HAT and CYMBAL.
 pub struct Bank {
-    sq: [Pulse; 6],
+    sq: [Square; 6],
     hz: [f32; 6],
     bps: [Option<Bp>; 3],
     hp: Svf,
@@ -154,9 +152,9 @@ impl Bank {
         // above) is written once, the arrays an element at a time, before
         // `assume_init_mut`.
         unsafe {
-            let sq = addr_of_mut!((*k).sq).cast::<Pulse>();
+            let sq = addr_of_mut!((*k).sq).cast::<Square>();
             for i in 0..6 {
-                sq.add(i).write(Pulse::new(SQUARE, h.sr));
+                sq.add(i).write(Square::new(h.sr));
             }
             addr_of_mut!((*k).hz).write(p.hz.map(|f| f.get()));
             let bps = addr_of_mut!((*k).bps).cast::<Option<Bp>>();
@@ -228,7 +226,7 @@ impl Bank {
 /// narrower, gated by burst particles (each a jingle pair colliding); HEAD
 /// a frame drum's thump under them.
 pub struct Jingle {
-    sq: [Pulse; 6],
+    sq: [Square; 6],
     hz: [f32; 6],
     bps: [Bp; 2],
     hp: Svf,
@@ -261,9 +259,9 @@ impl Jingle {
         // above) is written once, the arrays an element at a time, before
         // `assume_init_mut`.
         unsafe {
-            let sq = addr_of_mut!((*k).sq).cast::<Pulse>();
+            let sq = addr_of_mut!((*k).sq).cast::<Square>();
             for i in 0..6 {
-                sq.add(i).write(Pulse::new(SQUARE, h.sr));
+                sq.add(i).write(Square::new(h.sr));
             }
             addr_of_mut!((*k).hz).write(p.hz.map(|f| f.get()));
             let bps = addr_of_mut!((*k).bps).cast::<Bp>();

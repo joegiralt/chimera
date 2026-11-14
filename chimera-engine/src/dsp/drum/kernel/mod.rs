@@ -22,7 +22,7 @@ use crate::dsp::fast_sin_turns;
 use crate::dsp::filter::{Clean, FilterKind, FilterMode, FilterMods};
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::va::noise::{Noise, NoiseKind};
-use crate::dsp::va::osc::{Morph, VarOsc};
+use crate::dsp::va::osc::{MAX_INC, Morph, VarOsc};
 use crate::dsp::voice_fx::soft;
 use crate::dsp::{Unit, clampf};
 use crate::hw::BLOCK_SIZE;
@@ -304,25 +304,9 @@ impl Pulse {
         self.o.tick_pulse(inc, self.m.shape)
     }
 
-    /// A block at a steady `hz`, added to `acc`: `tick`'s samples, bit for
-    /// bit, as one run (`VarOsc::block_pulse`). `TICKED` plays it a `tick`
-    /// at a time (the null test's reference).
-    #[inline(never)]
-    pub fn add<const TICKED: bool>(&mut self, hz: f32, acc: &mut Blk) {
-        let mut b = [0.0; BLOCK_SIZE];
-        if TICKED {
-            b.fill_with(|| self.tick(hz));
-        } else {
-            let inc = self.o.inc_for(hz);
-            self.o.block_pulse(inc, self.m.shape, &mut b);
-        }
-        for (a, v) in acc.iter_mut().zip(&b) {
-            *a += v;
-        }
-    }
-
     /// A block at `f0` × `m` a sample: `tick`'s samples, bit for bit, at
-    /// one SHAPE fill a block (`VarOsc::tick_pulses`). `TICKED` as `add`.
+    /// one SHAPE fill a block (`VarOsc::tick_pulses`). `TICKED` plays it a
+    /// `tick` at a time (the null test's reference).
     #[inline(never)]
     pub fn sweep<const TICKED: bool>(&mut self, f0: f32, m: &Blk, out: &mut Blk) {
         if TICKED {
@@ -332,6 +316,44 @@ impl Pulse {
         } else {
             self.o.tick_pulses(f0, m, self.m.shape, out);
         }
+    }
+}
+
+/// `Pulse` at SHAPE 0: its width, ½, is above any `inc` (`MAX_INC`), so
+/// never floored, and it alone renders a held pitch a block at a time
+/// (`add`).
+pub(super) struct Square(Pulse);
+
+const _: () = assert!(MAX_INC < 0.5);
+
+impl Square {
+    #[inline(never)]
+    pub fn new(sr: SampleRate) -> Square {
+        Square(Pulse::new(Unit::ZERO, sr))
+    }
+
+    /// A block at a steady `hz`, added to `acc`: `Pulse::tick`'s samples,
+    /// bit for bit, as one run (`VarOsc::block_pulse`). `TICKED` plays it
+    /// a `tick` at a time (the null test's reference).
+    #[inline(never)]
+    pub fn add<const TICKED: bool>(&mut self, hz: f32, acc: &mut Blk) {
+        let p = &mut self.0;
+        let mut b = [0.0; BLOCK_SIZE];
+        if TICKED {
+            b.fill_with(|| p.tick(hz));
+        } else {
+            let inc = p.o.inc_for(hz);
+            p.o.block_pulse(inc, p.m.shape, &mut b);
+        }
+        for (a, v) in acc.iter_mut().zip(&b) {
+            *a += v;
+        }
+    }
+
+    /// `Pulse::sweep`.
+    #[inline(always)]
+    pub fn sweep<const TICKED: bool>(&mut self, f0: f32, m: &Blk, out: &mut Blk) {
+        self.0.sweep::<TICKED>(f0, m, out);
     }
 }
 
