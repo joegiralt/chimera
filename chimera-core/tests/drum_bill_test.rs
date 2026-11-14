@@ -14,11 +14,12 @@ use std::sync::{LazyLock, Mutex};
 use chimera_core::MidiChannel;
 use chimera_core::budget::CONTROL_RESERVE;
 use chimera_core::dsp::drum::sound::{
-    Amount, KitBill, PAD_AMP_COST, PAD_ROUTED_COST, PadRoute, PadSound, RouteDest, RouteId,
-    RouteSource, kit_bill,
+    Amount, HitKernel, KitBill, PAD_AMP_COST, PAD_ROUTED_COST, PadRoute, PadSound, RouteDest,
+    RouteId, RouteSource, kit_bill,
 };
 use chimera_core::dsp::drum::types::{Kit, Machine, PadId};
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
+use chimera_core::dsp::tape_engine::params::Retrig;
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::lpg::{self, LPG_COST};
@@ -46,9 +47,8 @@ fn cost(p: &ParamSnapshot) -> Cost {
 /// `kit`'s bill on `p` at `Voice::cost`'s kernel, the costliest machine,
 /// so its filter and mods compare with `cost`'s.
 fn drum(p: &ParamSnapshot, kit: &Kit) -> Cost {
-    let b = kit_bill(kit);
-    let c = Voice::drum_cost(p, &ModState::new(), b);
-    Cost(c.0 + Machine::MAX_COST.0 - b.kernel().0)
+    let b = Voice::drum_cost(p, &ModState::new(), kit_bill(kit));
+    b.hit(HitKernel::Ended) + Machine::MAX_COST
 }
 
 /// `p` as its pad plays it: the same Sound on the pad's kind.
@@ -222,52 +222,59 @@ fn a_pads_gate_bills_the_lpg() {
 fn the_sounds_shape_bills_only_before_a_publish() {
     let p = as_kind(&drum_init(), FilterKind::Ladder);
     let m = ModState::new();
-    assert_eq!(Voice::drum_cost(&p, &m, KitBill::NONE), cost(&p));
+    assert_eq!(Voice::drum_cost(&p, &m, KitBill::NONE).whole(), cost(&p));
     // Published: the pads' CLEAN, not the Sound's masked LADDER.
     assert_eq!(drum(&p, &Kit::DEFAULT), cost(&as_kind(&p, FilterKind::Svf)));
     assert!(drum(&p, &Kit::DEFAULT) < cost(&p));
 }
 
-/// Each machine's whole voice over idle on the unit, INIT DRUM's pad struck
-/// alone (9c2cfd1d, 2026-11-14), or its estimate where the unit read low
-/// or never played it (`Machine::cost`).
-const READ: [(Machine, u32); 12] = [
-    (Machine::ToneKick, 800),
-    (Machine::ToneSnare, 800),
-    (Machine::ToneTom, 700),
-    (Machine::ToneClap, 600),
-    (Machine::ToneCowbell, 1400),
-    (Machine::ToneCymbal, 1400),
-    (Machine::MetalHat, 1400),
-    (Machine::MetalJingle, 1600),
-    (Machine::BodyShaker, 700),
-    (Machine::PlainSine, 600),
-    (Machine::PlainNoise, 600),
-    (Machine::PlainImpulse, 1500),
+/// INIT DRUM's pads struck alone on the unit, whole voice over idle,
+/// cycles a sample (`.superpowers/sdd/2026-11-14-drum-perf/
+/// unit-costs-9c2cfd1d.md`: rev V, build 9c2cfd1d, 2026-11-14). Pad 8, the
+/// closed hat, ended inside the window and read nothing; pads 3 and 12
+/// ended inside it too, so read low. JINGLE, SINE and NOISE are not in
+/// INIT DRUM: unmeasured, so not here.
+const READ: [(u8, u32); 11] = [
+    (1, 800),
+    (2, 800),
+    (3, 1200),
+    (4, 600),
+    (5, 700),
+    (6, 700),
+    (7, 700),
+    (9, 1400),
+    (10, 1400),
+    (11, 1400),
+    (12, 300),
 ];
 
+/// The unit's reading of INIT DRUM's pad `n`.
+fn reading(n: PadId) -> Option<u32> {
+    READ.iter()
+        .find(|&&(p, _)| pad(p) == n)
+        .map(|&(_, r)| r)
+}
+
+/// Each INIT DRUM pad, struck alone through the admission on rev V, is
+/// booked at least its unit reading × 1.1 (ADR 0056's margin).
 #[test]
-fn every_machine_bills_its_reading() {
-    let p = drum_init();
-    for (m, read) in READ {
-        let mut kit = Kit::DEFAULT;
-        kit.pad_mut(pad(1)).set_machine(m);
-        let b = kit_bill(&kit);
-        let hit = b.hit(Voice::drum_cost(&p, &ModState::new(), b), Some(m));
-        assert!(hit.0 * 10 >= read * 11, "{m:?}: {} for {read} × 1.1", hit.0);
+fn every_pad_books_its_reading() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    for (n, read) in READ {
+        let mut r = drum_rig(&mut w, &Kit::DEFAULT);
+        let key = n - 1;
+        r.note_on_vel(0, key, 127);
+        let c = booked(&r, key).0;
+        assert!(c * 10 >= read * 11, "pad {n}: {c} for {read} × 1.1");
+    }
+    for m in Machine::ALL {
         assert!(m.cost() <= Machine::MAX_COST);
     }
 }
 
 #[test]
 fn a_part_bills_its_costliest_machine() {
-    let kicks = {
-        let mut k = Kit::DEFAULT;
-        for id in PadId::ALL {
-            k.pad_mut(id).set_machine(Machine::ToneKick);
-        }
-        k
-    };
+    let kicks = kicks();
     assert_eq!(kit_bill(&kicks).kernel(), Machine::ToneKick.cost());
     assert_eq!(
         kit_bill(&Kit::DEFAULT).kernel(),
@@ -280,67 +287,190 @@ fn a_part_bills_its_costliest_machine() {
     assert_eq!(KitBill::NONE.kernel(), Machine::MAX_COST);
     let p = drum_init();
     assert_eq!(
-        Voice::drum_cost(&p, &ModState::new(), KitBill::NONE),
+        Voice::drum_cost(&p, &ModState::new(), KitBill::NONE).whole(),
         cost(&p)
     );
-    // A hit of a cheaper machine bills under its Part.
-    let b = kit_bill(&Kit::DEFAULT);
-    let part = Voice::drum_cost(&p, &ModState::new(), b);
-    assert!(b.hit(part, Some(Machine::ToneKick)) < part);
-    assert_eq!(b.hit(part, Some(Machine::PlainImpulse)), part);
+    // A hit of a cheaper machine bills under its Part; an ended one, no
+    // kernel.
+    let part = Voice::drum_cost(&p, &ModState::new(), kit_bill(&Kit::DEFAULT));
+    let kick = part.hit(HitKernel::Sounding(Machine::ToneKick));
+    assert!(kick < part.whole());
+    assert_eq!(
+        part.hit(HitKernel::Sounding(Machine::PlainImpulse)),
+        part.whole()
+    );
+    assert_eq!(part.hit(HitKernel::Ended) + Machine::ToneKick.cost(), kick);
 }
 
 /// INIT DRUM's 12 pads struck 60 ms apart, three times over, on rev V's
-/// budget: the live voices booked never pass it, and the hits sounding,
-/// fading ones too, each at its machine's bill, fit beside the bus and
-/// the control reserve.
+/// budget, each key up a block later: every sounding hit is booked at
+/// least its pad's unit reading × 1.1 (`READ`), and only the hits the
+/// one steal can't make room for are refused.
 #[test]
 fn init_drum_roll_stays_in_budget() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
-    for id in PartId::ALL {
-        w.publish(id, &Kit::DEFAULT);
-    }
+    let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V);
-    let mut r = common::InstRig::with_budget(budget);
-    for part in r.shared.parts.iter_mut().skip(1) {
-        part.mix.channel = MidiChannel::new(15).unwrap();
-    }
-    r.shared.parts[0].mix.channel = MidiChannel::new(0).unwrap();
-    *r.shared.parts[0].params = drum_init();
-    let b = kit_bill(&Kit::DEFAULT);
-    let part = Voice::drum_cost(&drum_init(), &ModState::new(), b);
     let gap = (0.06 * common::SR as f32) as usize / chimera_hal::BLOCK_SIZE;
     let reserved = FxBus::COST.0 + CONTROL_RESERVE.0;
-    let (mut most, mut struck) = (0, 0);
+    let (mut most, mut struck, mut refused) = (0, 0, vec![]);
     let tail = 4 * common::SR as usize / chimera_hal::BLOCK_SIZE;
     for blk in 0..36 * gap + tail {
         if blk % gap == 0 && struck < 36 {
+            let was = r.inst.allocator().refused();
             r.note_on_vel(0, (struck % 12) as u8, 127);
+            if r.inst.allocator().refused() != was {
+                refused.push(struck);
+            }
             struck += 1;
         }
         r.render(1);
-        // A choked or cut hit's fade overlaps its successor (ADR 0027).
-        let live: u32 = r
-            .inst
-            .allocator()
-            .slots()
-            .iter()
-            .filter(|s| !s.dying())
-            .map(|s| s.cost().0)
-            .sum();
-        assert!(
-            live + reserved <= budget.as_cost().0,
-            "block {blk}: live {live}"
-        );
-        let hits = (0..MAX_VOICES).filter_map(|v| r.inst.voice(v).drum_hit());
-        let (n, sum) = hits.fold((0, reserved), |(n, c), h| {
-            (n + 1, c + b.hit(part, Some(h.params().machine())).0)
-        });
-        assert!(
-            sum <= budget.as_cost().0,
-            "block {blk}: {n} hits bill {sum}"
-        );
+        // A sequencer's gate: each key up a block after its strike.
+        if blk % gap == 1 && struck <= 36 {
+            r.note_off(0, ((struck - 1) % 12) as u8);
+        }
+        let slots = r.inst.allocator().slots();
+        let mut n = 0;
+        for v in 0..MAX_VOICES {
+            let Some(h) = r.inst.voice(v).drum_hit() else {
+                continue;
+            };
+            n += 1;
+            let c = slots[v].cost().0;
+            if let Some(read) = reading(h.pad()) {
+                assert!(c * 10 >= read * 11, "block {blk}: {:?} {c} for {read}", h.pad());
+            }
+        }
+        let live: u32 = slots.iter().filter(|s| !s.dying()).map(|s| s.cost().0).sum();
+        assert!(live + reserved <= budget.as_cost().0, "block {blk}: live {live}");
         most = most.max(n);
     }
+    // PLAIN IMPULSE (pad 3, billed at its high estimate) in rounds 2 and
+    // 3: the oldest tail, a TOM, is the one voice a hit may steal, and it
+    // frees too little beside the two metals still ringing.
+    assert_eq!(refused, [14, 26], "the strikes refused");
+    assert_eq!(r.inst.allocator().refused(), 2);
     assert!(most >= 4, "the roll keeps {most} hits");
+}
+
+/// Every pad on TONE KICK.
+fn kicks() -> Kit {
+    let mut k = Kit::DEFAULT;
+    for id in PadId::ALL {
+        k.pad_mut(id).set_machine(Machine::ToneKick);
+    }
+    k
+}
+
+/// Part 1 (channel 1) DRUM on rev V's budget, the others on channel 16,
+/// every Part playing `kit`.
+fn drum_rig(w: &mut KitWriter, kit: &Kit) -> common::InstRig {
+    for id in PartId::ALL {
+        w.publish(id, kit);
+        let _ = w.take_hit(id);
+    }
+    let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
+    for (i, part) in r.shared.parts.iter_mut().enumerate() {
+        part.mix.channel = MidiChannel::new(if i == 0 { 0 } else { 15 }).unwrap();
+    }
+    *r.shared.parts[0].params = drum_init();
+    r
+}
+
+/// Part 1's slot booked for `key`, not dying.
+fn booked(r: &common::InstRig, key: u8) -> Cost {
+    let s = r.inst.allocator().slots();
+    let s = s
+        .iter()
+        .find(|s| s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(key));
+    s.expect("a slot for the key").cost()
+}
+
+/// A kit of KICKs, pad 1 switched to JINGLE and struck before the next
+/// snapshot (the view moves between two of the audio's snapshots): its
+/// hit bills JINGLE over the Part's rest, and a KICK beside it its own,
+/// never under what a fresh snapshot bills.
+#[test]
+fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let kicks = kicks();
+    let mut r = drum_rig(&mut w, &kicks);
+    // Pad 2's KICK: the block's Part bills are worked out on the KICKs.
+    r.note_on_vel(0, 1, 127);
+    let mut jingle = kicks;
+    jingle.pad_mut(pad(1)).set_machine(Machine::MetalJingle);
+    w.publish(PartId::ALL[0], &jingle);
+    r.note_on_vel(0, 0, 127);
+    r.note_on_vel(0, 2, 127);
+    let p = drum_init();
+    let m = ModState::new();
+    let want_jingle = Voice::drum_cost(&p, &m, kit_bill(&jingle)).whole();
+    let want_kick = Voice::drum_cost(&p, &m, kit_bill(&kicks)).whole();
+    assert!(booked(&r, 0) >= want_jingle, "JINGLE {:?} for {want_jingle:?}", booked(&r, 0));
+    assert!(booked(&r, 2) >= want_kick, "KICK {:?} for {want_kick:?}", booked(&r, 2));
+}
+
+/// The pads sounding, by pad number.
+fn sounding(r: &common::InstRig) -> Vec<u8> {
+    let mut p: Vec<u8> = (0..MAX_VOICES)
+        .filter_map(|v| r.inst.voice(v).drum_hit())
+        .map(|h| h.pad().index() as u8 + 1)
+        .collect();
+    p.sort_unstable();
+    p
+}
+
+/// `n` STACK KICKs a block apart on rev V, their key let go, then a
+/// closed HAT: the pads heard over the next four blocks, and the notes
+/// refused.
+fn hat_after_kicks(w: &mut KitWriter, n: usize) -> (bool, u32) {
+    let mut k = Kit::DEFAULT;
+    k.pad_mut(pad(1)).set_retrig(Retrig::Stack);
+    let mut r = drum_rig(w, &k);
+    for _ in 0..n {
+        r.note_on_vel(0, 0, 127);
+        r.render(1);
+    }
+    r.note_off(0, 0);
+    r.render(1);
+    r.note_on_vel(0, 7, 127);
+    let mut heard = false;
+    for _ in 0..4 {
+        r.render(1);
+        heard |= sounding(&r).contains(&8);
+    }
+    (heard, r.inst.allocator().refused())
+}
+
+/// Rev V's budget, where `drum_hits_test` and `drum_e2e_test` play at
+/// twice it: a fresh closed HAT among four KICK tails sounds; among eight
+/// it is refused, as the one tail a hit may steal frees too little.
+#[test]
+fn a_hat_among_kick_tails_on_rev_v() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    assert_eq!(hat_after_kicks(&mut w, 4), (true, 0));
+    assert_eq!(hat_after_kicks(&mut w, 8), (false, 1));
+}
+
+/// INIT DRUM's 12 pads a block apart, keys held, on rev V's budget (the
+/// e2e test plays them at twice it): every pad is heard but the CYMBAL
+/// (pad 10), which waits on a stolen KICK and is dropped unheard when
+/// the COWBELL's bill comes in a block later.
+#[test]
+fn twelve_pads_a_block_apart_on_rev_v() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut r = drum_rig(&mut w, &Kit::DEFAULT);
+    let mut heard = [false; 12];
+    for b in 0..15u8 {
+        if b < 12 {
+            r.note_on_vel(0, b, 127);
+        }
+        r.render(1);
+        for p in sounding(&r) {
+            heard[usize::from(p - 1)] = true;
+        }
+    }
+    let unheard: Vec<usize> = (1..=12).filter(|&p| !heard[p - 1]).collect();
+    assert_eq!(unheard, [10], "pads never heard");
+    assert_eq!(r.inst.allocator().refused(), 1);
 }

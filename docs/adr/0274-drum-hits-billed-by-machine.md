@@ -7,9 +7,9 @@
 DRUM was admitted on ALGO's bill (`EngineType::Drum => AlgoEngine::cost(...)`, #951). On the unit (2026-11-14, ce1f5243, INIT DRUM) the open METAL HAT and TONE CYMBAL cost about 53 % of a block each, far above that bill. Eight overlapping hits overran the audio and twelve reset the unit (ADR 0273). The machines differ by more than 2× (TONE CLAP about 600 a sample, the metals about 1,400). One bill for all of them would either under-bill the metals or cost a light kit most of its voices. ADR 0269's "Billed by the pads" covers the pads' filters, AMP and mods only, not the kernel.
 
 ## Decision
-- **A hit bills its own machine.** A sounding or waiting hit's voice bills the Part's bill less the kit's kernel, plus its own machine's `Machine::cost` (`KitBill::hit`). Admission (`drum_on`) and the per-block recost (`recost`, through `hit_of`) compute the same bill.
+- **A hit bills its own machine.** A Part's bill is split at its kernel (`PartBill { rest, kernel }`, from `Voice::drum_cost`). A sounding or waiting hit's voice bills the rest plus its own machine's `Machine::cost` (`PartBill::hit`). Nothing is subtracted, so no bill falls under its machine's cost. `recost` reads each Part's kit bill (`KIT_VIEW`) once per snapshot and keeps the Part's `PartBill` (`Instrument::costs`). Admission (`drum_on`) bills from that kept bill, and the per-block recost (through `hit_of`) from the same read, so both compute the same bill from one kit. A pad switched to another machine after that read, before the next snapshot, still bills its new machine over the kept rest.
 - **A Part bills its kit's costliest machine.** The Part's bill (`Voice::drum_cost`, `Instrument::costs`) carries the costliest machine among its kit's pads (`KitBill::kernel`, the `machine` field read from `KIT_VIEW`). It is the bill a hit's own replaces the kernel in, and the one a Part's voice count reads. With no kit read (`KitBill::NONE`) it bills `Machine::MAX_COST`, the costliest machine of all.
-- **An ended hit whose key is still held bills no kernel.** Its voice renders no kernel, so `KitBill::hit(part, None)` bills the Part's bill less the kernel.
+- **An ended hit whose key is still held bills no kernel.** Its voice renders no kernel, so `PartBill::hit(HitKernel::Ended)` bills the rest alone.
 - **The constants.** Each `Machine::cost` is `ceil(1.1 × reading) − 83` cycles a sample.
   - The reading is INIT DRUM's pad struck alone on the unit: the console's `stats` load_pct 80 ms after a vel-127 strike, whole voice over idle, 1 % = 100 cycles a sample. Rev V at 480 MHz, build 9c2cfd1d, 2026-11-14.
   - × 1.1 is the usual 10 % margin on a unit reading.
@@ -25,11 +25,11 @@ DRUM was admitted on ALGO's bill (`EngineType::Drum => AlgoEngine::cost(...)`, #
 ## Consequences
 - A kit's light hits keep many voices. A Part's voice count, read at its kit's costliest machine, shows 2–3 for a kit with a metal or PLAIN IMPULSE pad.
 - The bills of the estimated machines err high and cost voices until they are read on the unit.
-- A new machine needs a unit reading (or a high estimate) before it ships, and `KitBill`'s 4-bit `machine` field holds at most 15 machines.
+- A new machine needs a unit reading (or a high estimate) before it ships, and `KitBill`'s 4-bit `machine` field holds at most 15 machines (a const assert on `Machine::ALL` holds it).
 - An under-bill that slips through is caught by ADR 0273's load net, not a reset.
 
 ## Sources
-- `chimera-engine/src/dsp/drum/types.rs` (`Machine::cost`, `MAX_COST`), `chimera-engine/src/dsp/drum/sound.rs` (`KitBill::kernel`, `KitBill::hit`), `chimera-engine/src/instrument.rs` (`drum_on`, `recost`, `hit_of`).
+- `chimera-engine/src/dsp/drum/types.rs` (`Machine::cost`, `MAX_COST`), `chimera-engine/src/dsp/drum/sound.rs` (`KitBill::kernel`, `PartBill::hit`), `chimera-engine/src/instrument.rs` (`drum_on`, `recost`, `hit_of`).
 - Tests: `chimera-core/tests/drum_bill_test.rs`, `cost_test.rs`.
 - #951, #975; commits afdce176, 006bafaa; unit readings on 9c2cfd1d.
 - ADR 0026 (bill by patch shape), 0202 (voice floor), 0269 (pads' bill), 0273 (load net).
