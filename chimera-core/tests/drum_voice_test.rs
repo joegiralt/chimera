@@ -312,60 +312,29 @@ fn vel_zero_ignores_velocity() {
     assert!(db(soft / hard).abs() < 0.001, "{} dB", db(soft / hard));
 }
 
-/// Pad 1 on `sine_kit` at VEL 1, hit at velocity 32: Part 1's bus for
-/// 20 blocks, then (VEL 0 published if `turn`) for 300 ms more.
-fn soft_sine(turn: bool) -> Vec<f32> {
-    let mut k = sine_kit(PadEnv::OPEN, AmpMode::OneShot);
-    k.pad_mut(pad(1)).sound_mut().amp_mut().set_vel(Unit::ONE);
-    let (mut w, mut r) = rig(&k);
-    r.note_on_vel(0, 0, 32);
-    let mut out = Vec::new();
-    for b in 0..20 + SR as usize * 3 / 10 / BLOCK_SIZE {
-        if b == 20 && turn {
-            k.pad_mut(pad(1)).sound_mut().amp_mut().set_vel(Unit::ZERO);
-            w.publish(P1, &k);
-        }
-        r.render(1);
-        out.extend_from_slice(r.inst.part_bus(0));
-    }
-    out
-}
-
-/// VEL follows a ringing hit glided (Task 8): VEL 1 → 0 published on a
-/// soft hit raises its gain over blocks, never a step, to the full level.
-/// The gain is the turned render over the untouched one, sample by sample.
+/// The law is the kernel's level, before the filter: a soft hit drives a
+/// resonant LADDER less, so it comes out louder than the hard hit scaled
+/// by the law (the hard one saturates), and still quieter than the hard.
+/// Through CLEAN at RES 0, linear, the two agree.
 #[test]
-fn vel_glides_on_a_ringing_hit() {
-    let (held, turned) = (soft_sine(false), soft_sine(true));
-    let gain: Vec<(usize, f32)> = held
-        .iter()
-        .zip(&turned)
-        .enumerate()
-        .filter(|(_, (h, _))| h.abs() > 1e-2)
-        .map(|(n, (h, t))| (n, t / h))
-        .collect();
-    let at = 20 * BLOCK_SIZE;
+fn a_soft_hit_drives_the_ladder_less() {
+    let over = |kind: FilterKind, res: f32| {
+        let mut k = init_kit(1.0);
+        let f = k.pad_mut(pad(1)).sound_mut().filter_mut();
+        f.set_kind(kind);
+        f.set_cutoff(Hz::new(5000.0));
+        f.set_resonance(Unit::new(res));
+        let (hard, soft) = (hit_peak(&k, 127), hit_peak(&k, 32));
+        assert!(soft < hard, "{kind:?}: {soft} vs {hard}");
+        db(soft / hard) - db(32.0 / 127.0)
+    };
+    let (ladder, clean) = (over(FilterKind::Ladder, 0.95), over(FilterKind::Svf, 0.0));
     assert!(
-        gain.iter()
-            .filter(|g| g.0 < at)
-            .all(|g| (g.1 - 1.0).abs() < 1e-6)
+        clean.abs() < 0.1,
+        "CLEAN at RES 0 is {clean} dB off the law"
     );
-    let want = 127.0 / 32.0;
-    let end = gain.last().unwrap().1;
-    assert!((end / want - 1.0).abs() < 1e-3, "{end} vs {want}");
-    let after: Vec<f32> = gain.iter().filter(|g| g.0 >= at).map(|g| g.1).collect();
     assert!(
-        after.windows(2).all(|w| w[1] >= w[0] * (1.0 - 1e-4)),
-        "it never falls back"
+        ladder > 0.3,
+        "the soft hit is only {ladder} dB over the hard one scaled"
     );
-    // Per sample, never more than a few thousandths of the way.
-    let big = gain
-        .windows(2)
-        .filter(|w| w[0].0 >= at)
-        .map(|w| (w[1].1 - w[0].1) / (w[1].0 - w[0].0) as f32)
-        .fold(0.0f32, f32::max);
-    assert!(big < 0.002 * (want - 1.0), "a step of {big} a sample");
-    // Gliding: a block in, well short of the way.
-    let first = gain.iter().find(|g| g.0 >= at + BLOCK_SIZE).unwrap().1;
-    assert!(first < 1.0 + 0.5 * (want - 1.0), "{first}");
 }

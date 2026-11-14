@@ -349,10 +349,12 @@ impl PadAmp {
         self.vel
     }
 
-    /// The hit's gain by its velocity `v` (ADR 0269): 1 − VEL·(1 − v).
-    /// VEL 0 is 1, any velocity; VEL 1 is the velocity's level.
-    pub fn vel_gain(&self, v: crate::Velocity) -> f32 {
-        1.0 - self.vel.get() * (1.0 - v.unit())
+    /// The kernel's level at velocity `v` (ADR 0269): 1 − VEL·(1 − v),
+    /// as v + (1 − VEL)·(1 − v), exact at both ends: VEL 1 is v (slice
+    /// 1's), VEL 0 is 1 at any velocity.
+    pub fn level(&self, v: crate::Velocity) -> Unit {
+        let v = v.unit();
+        Unit::new(v + (1.0 - self.vel.get()) * (1.0 - v))
     }
 
     pub const fn gate(&self) -> lpg::Knobs {

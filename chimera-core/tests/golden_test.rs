@@ -865,24 +865,26 @@ fn tape_goldens_match() {
 /// code (`drum_kit_codec_test::write_slice1_fixture`), pads 1, 2, 8, 9 and
 /// 10 struck at once-a-block steps, 2 s through the `Instrument`. Every
 /// later task keeps it bit-identical, but for one deliberate change: a
-/// pad's VEL drives its own amp (owner ruling 2026-11-14, ADR 0269).
+/// pad's VEL law is its kernel's level (owner ruling 2026-11-14, ADR
+/// 0269), and the fixture's pads are on VEL 0.6. At VEL 1 it is slice 1's
+/// own render, bit for bit (`drum_slice1_vel_test`).
 const DRUM_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "drum_slice1_kit",
         (
-            0xc500ff1f335ebc3a,
+            0x273d876f9949f470,
             [
-                746955665, 1017071112, 1023522576, 996917720, 3154437706, 3154436229, 3127902333,
-                974431948,
+                746962870, 1017080427, 1023522724, 996919478, 3154437683, 3154436208, 3127902028,
+                974431999,
             ],
         ),
     ),
     (
         "drum_slice1_kit_lr",
         (
-            0xc2568485027151b1,
+            0x245aea342ae28ff4,
             [
-                0, 3147879852, 3171464047, 1016935799, 966369591, 959848905, 3149878640, 3148876228,
+                0, 3147699544, 3171463022, 1016935995, 966347089, 959800543, 3149879276, 3148876157,
             ],
         ),
     ),
@@ -891,55 +893,7 @@ const DRUM_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 /// Part 1's mono bus, then pair 1's interleaved L/R as the DACs play it
 /// (pad PAN lives only there).
 fn drum_slice1_render() -> (Vec<f32>, Vec<f32>) {
-    use chimera_core::dsp::drum::view::KitWriter;
-    use chimera_core::dsp::fx_bus::FxBus;
-    use chimera_core::dsp::knobs::KnobPublisher;
-    use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-    use chimera_core::note_queue::{NoteEvent, NoteKind};
-    use chimera_core::project::{PartId, Project};
-    use chimera_hal::BLOCK_SIZE;
-    let f = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/drum_slice1.prj"
-    ))
-    .unwrap();
-    let (mut p, _) = Project::boxed();
-    common::codec_util::decode_project(&f, &mut p).unwrap();
-    let mut knobs = Box::new(KnobPublisher::new());
-    let mut shared = Box::new(AudioShared::default());
-    shared.update_from_project(&p, 0, &mut knobs);
-    KitWriter::take()
-        .expect("the kit writer, once")
-        .publish_all(p.kits());
-    let mut inst = Box::new(Instrument::new(
-        chimera_hal::SAMPLE_RATE,
-        chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
-    ));
-    let mut fx = Box::new(FxBus::new());
-    let mut dac = Box::new(DacBlocks::new());
-    let mut scope = scope_writer();
-    let channel = p.part(PartId::ALL[0]).mix.channel;
-    // Pads 1, 2, 8, 9, 10 are notes 0, 1, 7, 8, 9.
-    let hits = [(0, 100), (1, 40), (7, 127), (8, 90), (9, 64)];
-    let blocks = 2 * chimera_hal::SAMPLE_RATE as usize / BLOCK_SIZE;
-    let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
-    let mut lr = Vec::with_capacity(2 * blocks * BLOCK_SIZE);
-    for b in 0..blocks {
-        if let Some(&(n, v)) = hits.get(b) {
-            inst.handle(
-                NoteEvent {
-                    channel,
-                    note: MidiNote::new(n).unwrap(),
-                    kind: NoteKind::On(Velocity::new(v).unwrap()),
-                },
-                &shared,
-            );
-        }
-        inst.render(&mut fx, &mut dac, &shared, &mut scope);
-        out.extend_from_slice(inst.part_bus(0));
-        lr.extend_from_slice(&dac.out()[0]);
-    }
-    (out, lr)
+    common::drum_slice1::render(|_| ())
 }
 
 #[test]

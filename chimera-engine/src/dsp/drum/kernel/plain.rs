@@ -65,7 +65,7 @@ impl Plain {
         Plain {
             src,
             amp: Decay::t60(decay, h.sr),
-            vel: h.vel.unit(),
+            vel: h.level.get(),
             quiet: false,
         }
     }

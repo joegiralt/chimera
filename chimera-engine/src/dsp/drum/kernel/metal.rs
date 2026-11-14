@@ -92,7 +92,7 @@ impl Cowbell {
             damp: p.damp.get(),
             bump: Decay::tau(Seconds::new(0.006), h.sr),
             bump_oct: p.bump.get(),
-            vel: h.vel.unit(),
+            vel: h.level.get(),
             quiet: false,
         }
     }
@@ -172,7 +172,7 @@ impl Bank {
             addr_of_mut!((*k).shimmer).write(p.shimmer.get());
             addr_of_mut!((*k).t).write(0.0);
             addr_of_mut!((*k).sr).write(h.sr);
-            addr_of_mut!((*k).vel).write(h.vel.unit());
+            addr_of_mut!((*k).vel).write(h.level.get());
             addr_of_mut!((*k).gain).write(p.gain.get());
             addr_of_mut!((*k).quiet).write(false);
             slot.assume_init_mut()
@@ -293,7 +293,7 @@ impl Jingle {
             addr_of_mut!((*k).head_amp).write(Decay::t60(Seconds::new(0.12), h.sr));
             addr_of_mut!((*k).head_level).write(p.head.get());
             addr_of_mut!((*k).n).write(0);
-            addr_of_mut!((*k).vel).write(h.vel.unit());
+            addr_of_mut!((*k).vel).write(h.level.get());
             addr_of_mut!((*k).quiet).write(false);
             slot.assume_init_mut()
         }

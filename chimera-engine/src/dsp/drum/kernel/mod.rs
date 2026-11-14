@@ -64,26 +64,22 @@ impl KernelState {
         unsafe { Self::init_idle(slot, |s| s.write(Idle)) }
     }
 
-    /// A hit of `p` at `vel`, by value through the stack: tests and the
-    /// null test. A voice strikes in place (`strike_in_place`).
+    /// A hit of `p` at `vel` (its level `vel` / 127), by value through
+    /// the stack: tests and the null test. A voice strikes in place
+    /// (`strike_in_place`).
     pub fn strike(p: KernelParams, vel: Velocity, seed: HitSeed, sr: SampleRate) -> KernelState {
         // SAFETY: `init_in_place` writes the whole slot.
         let mut k = unsafe { crate::in_place::by_value(Self::init_in_place) };
-        k.strike_in_place(p, vel, seed, sr);
+        k.strike_in_place(p, Unit::new(vel.unit()), seed, sr);
         k
     }
 
-    /// A hit of `p` at `vel`, cutting what played.
+    /// A hit of `p` at `level` (the pad's VEL law, ADR 0269), cutting
+    /// what played.
     #[inline(never)]
     #[optimize(size)]
-    pub fn strike_in_place(
-        &mut self,
-        p: KernelParams,
-        vel: Velocity,
-        seed: HitSeed,
-        sr: SampleRate,
-    ) {
-        let h = Hit { vel, seed, sr };
+    pub fn strike_in_place(&mut self, p: KernelParams, level: Unit, seed: HitSeed, sr: SampleRate) {
+        let h = Hit { level, seed, sr };
         // SAFETY: each machine's `init_in_place` writes every field.
         unsafe {
             match p {
@@ -142,7 +138,8 @@ fn ceiling(x: f32) -> f32 {
 /// What every kernel takes at the strike.
 #[derive(Clone, Copy)]
 pub(super) struct Hit {
-    pub vel: Velocity,
+    /// The output's scale, 0..1: slice 1's `vel` / 127.
+    pub level: Unit,
     pub seed: HitSeed,
     pub sr: SampleRate,
 }
