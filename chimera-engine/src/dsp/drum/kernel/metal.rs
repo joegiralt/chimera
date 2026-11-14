@@ -12,7 +12,9 @@ use crate::in_place::{field_list, in_place_enum};
 
 use super::super::laws::{BankParams, CowbellParams, JingleParams, MetalParams};
 use super::super::types::{Hz, SampleRate, Seconds, Semis};
-use super::{Blk, Decay, Hiss, Hit, Lcg, Square, Svf, Swept, drive, octaves, per_sample, quiet};
+use super::{
+    Blk, Decay, Hiss, Hit, Lcg, Pulse, Square, Svf, Swept, drive, octaves, per_sample, quiet,
+};
 
 in_place_enum! {
     pub enum Metal {
@@ -44,7 +46,7 @@ impl Metal {
     }
 
     /// The next block; `TICKED`, the squares a sample at a time
-    /// (`Square::add`, `Square::sweep`).
+    /// (`Square::add`, `Pulse::sweep`).
     pub(super) fn render<const TICKED: bool>(&mut self, out: &mut Blk) {
         match self {
             Metal::Cowbell(k) => k.render::<TICKED>(out),
@@ -66,7 +68,7 @@ impl Metal {
 
 /// `Cowbell`, machines.rs:1052: two of VA's pulses, a band-pass and SOFT.
 pub struct Cowbell {
-    p: [Square; 2],
+    p: [Pulse; 2],
     hz: [f32; 2],
     bp: Svf,
     slow: Decay,
@@ -83,7 +85,7 @@ impl Cowbell {
     fn new(p: CowbellParams, h: Hit) -> Cowbell {
         let f = p.pitch.get();
         Cowbell {
-            p: [Square::new(h.sr), Square::new(h.sr)],
+            p: [Pulse::new(Unit::ZERO, h.sr), Pulse::new(Unit::ZERO, h.sr)],
             hz: [f, f * p.interval.get()],
             bp: Svf::new(FilterMode::Bp12, p.tone, p.ring, h.sr),
             slow: Decay::t60(p.decay, h.sr),
@@ -192,10 +194,10 @@ impl Bank {
         let l1 = fast_sin_turns(4.3 * self.t);
         let l2 = fast_sin_turns(6.1 * self.t + 0.3);
         let det = 0.015 * self.shimmer;
-        let mut x = [0.0; BLOCK_SIZE];
+        let (mut x, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
         for (j, (o, &hz)) in self.sq.iter_mut().zip(&self.hz).enumerate() {
             let d = if j % 2 == 0 { l1 } else { l2 };
-            o.add::<TICKED>(hz * (1.0 + det * d), &mut x);
+            o.add::<TICKED>(hz * (1.0 + det * d), &mut x, &mut b);
         }
         for (s, v) in x.iter_mut().zip(&n) {
             *s = *s * (1.0 / 6.0) + self.noise * v;
@@ -306,9 +308,9 @@ impl Jingle {
         let mut nz = [0.0; BLOCK_SIZE];
         self.hiss.block(&mut nz);
         // the squares' sum, a block at a time (their pitches hold)
-        let mut x = [0.0; BLOCK_SIZE];
+        let (mut x, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
         for (o, &hz) in self.sq.iter_mut().zip(&self.hz) {
-            o.add::<TICKED>(hz, &mut x);
+            o.add::<TICKED>(hz, &mut x, &mut b);
         }
         for (i, s) in x.iter_mut().enumerate() {
             let u = self.n as f32 / self.len;

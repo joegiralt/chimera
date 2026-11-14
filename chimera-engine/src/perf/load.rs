@@ -1,4 +1,3 @@
-
 use crate::board::BoardId;
 use crate::clock_plan::SiliconRev;
 use crate::hw::{BlockBudget, Cycles};

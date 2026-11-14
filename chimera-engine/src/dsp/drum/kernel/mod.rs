@@ -333,27 +333,21 @@ impl Square {
     }
 
     /// A block at a steady `hz`, added to `acc`: `Pulse::tick`'s samples,
-    /// bit for bit, as one run (`VarOsc::block_pulse`). `TICKED` plays it
-    /// a `tick` at a time (the null test's reference).
+    /// bit for bit, as one run (`VarOsc::block_pulse`), rendered into the
+    /// caller's `scratch` (overwritten, so it needs no clearing). `TICKED`
+    /// plays it a `tick` at a time (the null test's reference).
     #[inline(never)]
-    pub fn add<const TICKED: bool>(&mut self, hz: f32, acc: &mut Blk) {
+    pub fn add<const TICKED: bool>(&mut self, hz: f32, acc: &mut Blk, scratch: &mut Blk) {
         let p = &mut self.0;
-        let mut b = [0.0; BLOCK_SIZE];
         if TICKED {
-            b.fill_with(|| p.tick(hz));
+            scratch.fill_with(|| p.tick(hz));
         } else {
             let inc = p.o.inc_for(hz);
-            p.o.block_pulse(inc, p.m.shape, &mut b);
+            p.o.block_pulse(inc, p.m.shape, scratch);
         }
-        for (a, v) in acc.iter_mut().zip(&b) {
+        for (a, v) in acc.iter_mut().zip(scratch.iter()) {
             *a += v;
         }
-    }
-
-    /// `Pulse::sweep`.
-    #[inline(always)]
-    pub fn sweep<const TICKED: bool>(&mut self, f0: f32, m: &Blk, out: &mut Blk) {
-        self.0.sweep::<TICKED>(f0, m, out);
     }
 }
 

@@ -854,8 +854,6 @@ struct Run {
     /// sync reset's landing.
     y0: f32,
     d0: f32,
-    /// Each edge's place at the run's end (`ANCHOR`).
-    end: [f32; 4],
 }
 
 impl Run {
@@ -870,7 +868,6 @@ impl Run {
         dinc: 0.0,
         y0: 0.0,
         d0: 0.0,
-        end: [0.0; 4],
     };
 }
 
@@ -1435,7 +1432,6 @@ impl VarOsc {
             Some(_) => at_lerp::<A, B>(ends, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0)),
         };
         (self.pair, self.c, self.pos) = (Some(pair), c1, p1);
-        run.end = p1;
         (run.rinc, run.inc, run.dinc) = (blk.rinc, val(r.inc, i0), r.inc.1);
         for (k, l) in run.c.iter_mut().enumerate() {
             *l = Lin {
@@ -1575,6 +1571,8 @@ impl VarOsc {
         km: (f32, f32),
     ) {
         let run = self.setup::<A, B, SYNC, MOD>(blk, (i0, i1), r, N);
+        // each edge's place at the run's end, set by `setup` (`ANCHOR`)
+        let end = self.pos;
         // PHASE (ADR 0160): OSC 1 takes jumps at their marks (`MOD`), OSC 2
         // reports its steps for them
         let (jumps, steps) = (MOD && PH && !SYNC, PH && !MOD);
@@ -1599,7 +1597,7 @@ impl VarOsc {
             if ANCHOR && !MOD {
                 // each edge's place re-anchored this sample, as a lone
                 // `tick`'s setup does (`glide`, a one-sample run)
-                for (k, (d, &end)) in od.iter_mut().zip(&run.end).enumerate() {
+                for (k, (d, &end)) in od.iter_mut().zip(&end).enumerate() {
                     if edged(k) {
                         let o = p - u[k];
                         *d = end + floor(o - end + 0.5) - o;

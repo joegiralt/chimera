@@ -549,7 +549,10 @@ fn the_load_net_sheds_only_a_sounding_voice() {
     let counter = CycleCounter::new(true).expect("a counting DWT");
     let net = LoadNet::new(counter, block);
     let over = Cycles::new(block.block_cycles());
-    assert!(!net.after(over, &mut r.inst), "nothing shed, nothing counted");
+    assert!(
+        !net.after(over, &mut r.inst),
+        "nothing shed, nothing counted"
+    );
     r.note_on_vel(0, key(pad(1)), 127);
     r.render(1);
     assert!(net.after(over, &mut r.inst), "one shed, counted once");
