@@ -32,7 +32,7 @@ A shed voice keeps rendering at its old cost through its two-block fade. Its res
 - `load_sheds` makes under-billing visible on the unit without a probe build.
 - A single healthy block that spikes past 95 % (no billed load does, per ADR 0262) would shed one voice. `load_sheds` shows it if it ever happens.
 - The console's `stats` gains a line (the usb-console spec's `stats` block, which `console_answer_test` holds the answer to), and `status` the `load_net` line (`console_status_test`).
-- Bank 1 (ORBIT): +496 B (ADR 0251).
+- Bank 1 (ORBIT): +496 B (ADR 0251); the review fixes (typed net, `load_net` status, `PartBill`) +824 B more.
 
 ## Sources
 - `docs/superpowers/plans/2026-11-14-drum-perf.md` (Task 3); #951.
