@@ -148,7 +148,18 @@ For each slot, MIXER (S4 + S5) then EDIT (S6 + S7):
 
 These are separate writes, tag word first; the first draft's "two words at once" is gone.
 
-**The invariant: one clean piece of evidence survives at every instant.** The order above keeps S4's tag while S5 is rewritten, then S5's marker while S4 is. It is the order for a slot the guard took by its tag or by its scan (§ 3.2). A slot taken by its marker alone has no clean tag to keep, so erasing S5 first would leave nothing: a cut in reinstall 1 between S4's erase and the tag, then a cut in reinstall 2 during S5's erase or marker, would read foreign for good. For that slot, and for one taken from the boot's slot mark, the order is: **erase S4, program the tag word, program the code word, erase S5, program S5's marker.** The marker stays until the tag is clean. The whole install is then:
+**The invariant: one clean piece of evidence survives at every instant.** The order above keeps S4's tag while S5 is rewritten, then S5's marker while S4 is. A slot taken by its marker alone has no clean tag to keep, so erasing S5 first would leave nothing: a cut in reinstall 1 between S4's erase and the tag, then a cut in reinstall 2 during S5's erase or marker, would read foreign for good. We assume the pessimistic tear model: **a torn erase may leave ECC-flagged words anywhere in its sector, even in words that were 0xFF.** So an erase is only safe while the other sector holds clean evidence, and a sector that is already erased is never erased again. The install picks each slot's order from the guard's evidence (§ 3.2):
+
+| Evidence | Order |
+|---|---|
+| `Tag` | erase S5, marker, erase S4, tag, code (S5 first) |
+| `Marker`, `Mark` | erase S4, tag, code, erase S5, marker (S4 first) |
+| `Scan`, both erased | marker, erase S4, tag, code (S5 first, its erase skipped) |
+| `Scan`, S4 erased only | tag, code, erase S5, marker (S4's erase skipped: a clean tag before any erase) |
+| `Scan`, S5 erased only | marker, erase S4, tag, code (S5's erase skipped: a clean marker before any erase) |
+| `Scan`, neither erased | erase S4, tag, code, erase S5, marker (S4 first) |
+
+`Scan` with S4 erased only is a first install cut during the marker write. Under the pessimistic model, erasing either sector first could leave ECC words beside the torn marker and read foreign, so the tag goes first onto the erased S4. *Residual:* `Scan` with neither sector erased has no clean evidence to keep. It takes two cuts in a row to reach it: a torn tag program (≤ 260 µs) on top of a torn marker, and then a torn erase. Under the pessimistic model that sequence can still read foreign. The whole install is then:
 - `slot_guard()` (§ 3.2);
 - erase S0 (the commit word goes first, as now), then S1–S3;
 - the MIXER sequence, then the EDIT sequence;
@@ -167,18 +178,18 @@ A cut at any instant leaves the slot ours by the guard's rule:
 | code word write (torn) | clean | clean | ours | hangs, or garbage: a power cycle recovers |
 | after the code word | clean | clean | ours | stub → boots |
 
-The table is for the S5-first order. In the S4-first order the marker covers S4's erase and both S4 writes, and the tag covers S5's erase and the marker write.
+The table above is for the S5-first order. In the S4-first order the marker covers S4's erase and both S4 writes, and the tag covers S5's erase and the marker write.
 
 The held-button window lasts from S4's erase until its code word is programmed. Each erase is typically ~1 s and at most 4 s (DS12117 Table 51, quoted at `chimera-image/src/regs.rs:78-80`; the timeout is 6 s). So the window is **~1 s typical and up to ~4 s per slot**, twice per install. Only a power cut inside it followed by a held button at the next power-on hits it, and a plain power-on reinstalls.
 
 ### 3.2 `slot_guard()` (review B1, B2, should-fix 6)
 
-`chimera_image::slot::guard(&mut impl SlotRead) -> Result<SlotPlan, SlotForeign>` is pure, and `InstallFail::SlotForeign` comes from it, not from `install_with`. `SlotPlan` records, per slot, the evidence the guard accepted: `Tag`, `Marker`, `Scan { erased }` (rule c; `erased` when both sectors read 0xFF, step 1's skip), or `Mark` (taken from the boot's slot mark, unread). The install picks the slot's order from it (§ 3.1). For each slot it reads, in this order:
+`chimera_image::slot::guard(&mut impl SlotRead) -> Result<SlotPlan, SlotForeign>` is pure, and `InstallFail::SlotForeign` comes from it, not from `install_with`. `SlotPlan` records, per slot, the evidence the guard accepted: `Tag`, `Marker`, `Scan { s4_erased, s5_erased }` (rule c, with a flag for each sector that read wholly 0xFF and clean, so the install skips that erase), or `Mark` (taken from the boot's slot mark, unread). The install picks the slot's order from it (§ 3.1). For each slot it reads, in this order:
 
 - **(a) S4's tag word**, then **(b) S5's marker**. If the tag word reads cleanly (no ECC error, exact text), the slot is ours and nothing else is read. A clean marker makes the slot ours only if S4's code word also passes: erased, ECC-flagged, or `(w & e) == e` against `code_word`. A marker alone would survive a revert that flashed other code into S4 only. This relies on the stub's code bytes staying the same across versions.
 - **(c) Otherwise** it scans both sectors. The slot is ours if every word is erased, except possibly S4's code word, S4's tag word and S5's marker word. Only Chimera writes those three positions, in this order, so this covers a torn first install. Any other word not 0xFF makes the slot foreign. *Where this differs from the review's rule ("otherwise it must be fully erased"):* that rule locks Chimera out after a cut during the marker write on a first install, because S4 is erased and the marker is torn. Rule (c) closes that case. A foreign application in slot 2 would need its vector table at 0x08180000, which is S4's code word, but rule (c) only accepts that word when everything else is erased. One word of foreign code with nothing behind it is not an application. The bitwise test does pass a code word that is a bit-superset of ours, but its reset target then carries 0x0818_0009's (or 0x081C_0009's) bits. That puts it in S4–S7, which must hold ours, or in memory that is unmapped or not set up at reset, so no working trampoline into system memory, RAM or bank 1 can pass.
 
-**ECC-safe reads.** Every guard read can meet a torn word with a double ECC error. Each read runs with FAULTMASK set and SCB->CCR.BFHFNMIGN = 1. Under those, a precise data bus fault is ignored and the load returns. After each read the guard checks FLASH_SR2.DBECCERR (and FA2R's word) and clears it. A flagged word counts as "not clean" in (a) and (b), and as "not erased" in (c), except at the three positions (c) allows.
+**ECC-safe reads.** Every guard read can meet a torn word with a double ECC error. Each read runs with FAULTMASK set and SCB->CCR.BFHFNMIGN = 1. Under those, a precise data bus fault is ignored and the load returns. After each read the guard checks FLASH_SR2.DBECCERR (and FA2R's word) and SNECCERR, then clears both. SEC-DED can silently correct a torn word, flipping a bit with only SNECCERR set, and a flipped 1 would fail the bitwise test. So at the three positions, in (b)'s code-word check and in (c), a word flagged either way passes. Everywhere else a flagged word counts as "not clean" in (a) and (b) and as "not erased" in (c).
 - *Verify on a spike gate* (§ 6.3, gate 1b) that a flash double-ECC error is a **precise** bus error that BFHFNMIGN masks. RM0433 doesn't say so plainly.
 - *Fallback if it isn't:* a reset mark, `BANK2_SLOT_TORN | slot` in RTC_BKP14R, set before each slot's reads. The HardFault handler keeps it, and the next boot's guard treats that slot as ours-torn, which the install then erases. The cost: a foreign slot with an ECC error would be erased instead of refused. That is accepted only in the fallback, because no foreign slot is known.
 

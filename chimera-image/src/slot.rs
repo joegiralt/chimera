@@ -134,25 +134,38 @@ pub const fn end_marker(s: Slot) -> [u8; 32] {
     w
 }
 
-/// One flash word as a masked read saw it: `ecc` is a double-ECC flag.
+/// One flash word as a masked read saw it: `ecc` is a double-ECC flag
+/// (SR2.DBECCERR), `corrected` a silent single-bit fix (SR2.SNECCERR).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Word {
     pub bytes: [u8; 32],
     pub ecc: bool,
+    pub corrected: bool,
 }
 
 impl Word {
+    pub const ERASED: Word = Word {
+        bytes: [0xFF; 32],
+        ecc: false,
+        corrected: false,
+    };
+
+    fn clean(&self) -> bool {
+        !self.ecc && !self.corrected
+    }
+
     fn erased(&self) -> bool {
-        !self.ecc && self.bytes == [0xFF; 32]
+        self.clean() && self.bytes == [0xFF; 32]
     }
 
     /// `want`, or `want` torn: a program only clears bits, so every 1 in
-    /// `want` is still 1. A bit-superset of the code word passes too, but its
-    /// reset then carries `base + 9`'s bits: S4..S7 (which must hold ours),
-    /// or memory unmapped or not set up at reset. No working trampoline into
-    /// system memory, RAM or bank 1 can pass.
+    /// `want` is still 1, unless ECC flagged or flipped one. A bit-superset
+    /// of the code word passes too, but its reset then carries `base + 9`'s
+    /// bits: S4..S7 (which must hold ours), or memory unmapped or not set up
+    /// at reset. No working trampoline into system memory, RAM or bank 1 can
+    /// pass.
     fn may_be(&self, want: &[u8; 32]) -> bool {
-        self.ecc || self.bytes.iter().zip(want).all(|(w, e)| w & e == *e)
+        !self.clean() || self.bytes.iter().zip(want).all(|(w, e)| w & e == *e)
     }
 }
 
@@ -161,18 +174,17 @@ pub trait SlotRead {
     fn word(&mut self, addr: u32) -> Word;
 }
 
-/// How the guard took a slot as ours. The install keeps one clean piece of
-/// it alive at every instant: after `Marker` (or `Mark`) it rewrites S4
-/// before erasing S5; otherwise S5 first.
+/// How the guard took a slot as ours; the install picks its order from it
+/// so that one clean tag or marker survives at every instant (spec § 3.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Evidence {
     /// S4's tag word read clean.
     Tag,
     /// S5's marker read clean, S4's code word ours, torn or erased.
     Marker,
-    /// Rule (c): only the three Chimera words, maybe torn; `erased` when
-    /// both sectors read 0xFF.
-    Scan { erased: bool },
+    /// Rule (c): nothing but the three Chimera words, maybe torn; a flag
+    /// per sector that read wholly 0xFF.
+    Scan { s4_erased: bool, s5_erased: bool },
     /// Taken as ours from the boot's slot mark, unread.
     Mark,
 }
@@ -188,9 +200,13 @@ impl SlotPlan {
 
     /// The slots whose two sectors read fully erased.
     pub fn erased(&self) -> SlotSet {
+        let all = Evidence::Scan {
+            s4_erased: true,
+            s5_erased: true,
+        };
         Slot::ALL
             .into_iter()
-            .filter(|&s| self.evidence(s) == Evidence::Scan { erased: true })
+            .filter(|&s| self.evidence(s) == all)
             .fold(SlotSet::NONE, SlotSet::with)
     }
 }
@@ -215,25 +231,29 @@ pub fn guard(r: &mut impl SlotRead, ours: SlotSet) -> Result<SlotPlan, SlotForei
 
 fn judge(r: &mut impl SlotRead, s: Slot) -> Option<Evidence> {
     let t = r.word(s.base() + 0x20);
-    if !t.ecc && t.bytes[0x10..0x1C] == *TAG {
+    if t.clean() && t.bytes[0x10..0x1C] == *TAG {
         return Some(Evidence::Tag);
     }
     let m = r.word(s.marker_addr());
     // A marker alone outlives a revert that refilled S4 with other code.
-    if !m.ecc && m.bytes[..16] == *MARKER && r.word(s.base()).may_be(&code_word(s)) {
+    if m.clean() && m.bytes[..16] == *MARKER && r.word(s.base()).may_be(&code_word(s)) {
         return Some(Evidence::Marker);
     }
-    scan(r, s).map(|erased| Evidence::Scan { erased })
+    let (s4_erased, s5_erased) = scan(r, s)?;
+    Some(Evidence::Scan {
+        s4_erased,
+        s5_erased,
+    })
 }
 
-/// Some(fully erased) if the slot may be ours, None if foreign.
-fn scan(r: &mut impl SlotRead, s: Slot) -> Option<bool> {
+/// (S4, S5) each wholly erased if the slot may be ours; None if foreign.
+fn scan(r: &mut impl SlotRead, s: Slot) -> Option<(bool, bool)> {
     let own = [
         (s.base(), code_word(s)),
         (s.base() + 0x20, tag_word(s)),
         (s.marker_addr(), end_marker(s)),
     ];
-    let mut all = true;
+    let mut erased = [true; 2];
     for addr in (s.base()..s.base() + SLOT_LEN).step_by(32) {
         let w = r.word(addr);
         let ok = match own.iter().find(|(a, _)| *a == addr) {
@@ -243,7 +263,7 @@ fn scan(r: &mut impl SlotRead, s: Slot) -> Option<bool> {
         if !ok {
             return None;
         }
-        all &= w.erased();
+        erased[((addr - s.base()) / (SLOT_LEN / 2)) as usize] &= w.erased();
     }
-    Some(all)
+    Some((erased[0], erased[1]))
 }
