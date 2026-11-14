@@ -128,10 +128,15 @@ impl Out for Host {
 /// `line` through the console's parser and `put`: what the unit said, and
 /// how many of the host's bytes it left unread.
 fn ask(s: &mut Mem, line: &str, data: &[u8], per_byte_us: u64) -> (String, usize) {
+    ask_from(s, line, data, per_byte_us, 0)
+}
+
+/// `ask` with the host's clock starting at `us`.
+fn ask_from(s: &mut Mem, line: &str, data: &[u8], per_byte_us: u64, us: u64) -> (String, usize) {
     let mut host = Host {
         input: data.iter().copied().collect(),
         out: Vec::new(),
-        us: 0,
+        us,
         per_byte_us,
     };
     let mut c = Console::new();
@@ -426,6 +431,32 @@ fn each_chunk_has_its_own_deadline() {
     let mut s = mem();
     let us = (deadline_us + 5_000_000) / per_chunk;
     assert_eq!(ask(&mut s, &line, &data, us).0, "READY\nERR put: timeout\n");
+    assert_eq!(tapes(&mut s), []);
+}
+
+/// The same across the link clock's u32 wrap: the put starts 10 s before
+/// it, so a chunk's 30 s straddles it.
+#[test]
+fn each_chunk_has_its_own_deadline_across_the_wrap() {
+    let (h, file) = big();
+    let data = chunked(&file);
+    let per_chunk = lines(&file[..PUT_CHUNK_BYTES as usize]).len() as u64;
+    let line = put_line(h.sref.crc, &file);
+    let deadline_us = u64::from(PUT_CHUNK_DEADLINE_MS) * 1000;
+    let start = (u64::from(u32::MAX) - 10_000) * 1000;
+    let us = deadline_us / 2 / per_chunk;
+    assert!(data.len() as u64 * us > deadline_us);
+    let mut s = mem();
+    assert_eq!(
+        ask_from(&mut s, &line, &data, us, start).0,
+        format!("READY\n{}OK\n", acks(&file))
+    );
+    let mut s = mem();
+    let us = (deadline_us + 5_000_000) / per_chunk;
+    assert_eq!(
+        ask_from(&mut s, &line, &data, us, start).0,
+        "READY\nERR put: timeout\n"
+    );
     assert_eq!(tapes(&mut s), []);
 }
 

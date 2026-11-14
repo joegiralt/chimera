@@ -511,6 +511,22 @@ impl Usb {
                     Ok(Request::Bank2(chimera_core::console::Bank2Arg::Erase)) => {
                         Some(crate::bank2::run_erase(e, ui, cpu_hz))
                     }
+                    #[cfg(feature = "bank2-gate")]
+                    Ok(Request::Bank2(chimera_core::console::Bank2Arg::SlotPoke)) => {
+                        Some(crate::bank2::run_slot_poke(e, ui, cpu_hz))
+                    }
+                    #[cfg(feature = "bank2-gate")]
+                    Ok(Request::Bank2(chimera_core::console::Bank2Arg::EraseSlots)) => {
+                        Some(crate::bank2::run_erase_slots(e, ui, cpu_hz))
+                    }
+                    #[cfg(feature = "bank2-gate")]
+                    Ok(Request::Bank2(chimera_core::console::Bank2Arg::EccRead(at))) => {
+                        Some(crate::bank2::run_ecc_read(e, ui, at, cpu_hz))
+                    }
+                    #[cfg(feature = "bank2-gate")]
+                    Ok(Request::Bank2(chimera_core::console::Bank2Arg::Pull(p))) => {
+                        Some(crate::bank2::run_pull(p))
+                    }
                     _ => None,
                 };
                 (card, sweep_ask, bank2)

@@ -365,16 +365,87 @@ fn bank2_takes_install_or_nothing() {
     }
     #[cfg(not(feature = "bank2-gate"))]
     {
-        assert_eq!(
-            one("bank2 erase\n"),
-            Err(Refusal::Arguments(Command::Bank2))
-        );
+        for gate in [
+            "bank2 erase",
+            "bank2 slot-poke",
+            "bank2 erase slots",
+            "bank2 ecc-read 081a0000",
+            "bank2 pull erase-s4",
+            "bank2 pull tag-edit",
+        ] {
+            assert_eq!(
+                one(&format!("{gate}\n")),
+                Err(Refusal::Arguments(Command::Bank2)),
+                "{gate}"
+            );
+        }
         assert_eq!(Command::Bank2.usage(), "install or nothing");
     }
     #[cfg(feature = "bank2-gate")]
     {
         assert_eq!(one("Bank2 ERASE\n"), Ok(Request::Bank2(Bank2Arg::Erase)));
-        assert_eq!(Command::Bank2.usage(), "install, erase or nothing");
+        assert_eq!(
+            Command::Bank2.usage(),
+            "install, erase, erase slots, slot-poke, ecc-read <hex addr>, pull <point> or nothing"
+        );
+    }
+}
+
+/// The gate build's hardware-test commands (spec § 6.3, gates 1b, 6, 8).
+#[cfg(feature = "bank2-gate")]
+#[test]
+fn bank2_gate_commands_parse() {
+    let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
+    let ok = |a| Ok(Request::Bank2(a));
+    assert_eq!(one("bank2 slot-poke\n"), ok(Bank2Arg::SlotPoke));
+    assert_eq!(one("BANK2 Erase SLOTS\n"), ok(Bank2Arg::EraseSlots));
+    let word = |a| chimera_image::Bank2Word::new(a).unwrap();
+    for (line, at) in [
+        ("bank2 ecc-read 081a0000", 0x081A_0000),
+        ("bank2 ecc-read 0x081A0020", 0x081A_0020),
+        ("bank2 ECC-READ 8100000", 0x0810_0000),
+        ("bank2 ecc-read 081fffe0", 0x081F_FFE0),
+    ] {
+        assert_eq!(
+            one(&format!("{line}\n")),
+            ok(Bank2Arg::EccRead(word(at))),
+            "{line}"
+        );
+    }
+    for (w, p) in [
+        ("erase-s4", PullAt::EraseS4),
+        ("ERASE-S6", PullAt::EraseS6),
+        ("tag-mixer", PullAt::TagMixer),
+        ("Tag-Edit", PullAt::TagEdit),
+    ] {
+        assert_eq!(
+            one(&format!("bank2 pull {w}\n")),
+            ok(Bank2Arg::Pull(p)),
+            "{w}"
+        );
+        assert!(p.word().eq_ignore_ascii_case(w), "{w}");
+    }
+    for bad in [
+        "bank2 slot-poke now",
+        "bank2 erase slots now",
+        "bank2 erase slot",
+        "bank2 ecc-read",
+        "bank2 ecc-read 081a0010",
+        "bank2 ecc-read 08200000",
+        "bank2 ecc-read 080fffe0",
+        "bank2 ecc-read 0x",
+        "bank2 ecc-read 1081a0000",
+        "bank2 ecc-read 081g0000",
+        "bank2 ecc-read 081a0000 1",
+        "bank2 pull",
+        "bank2 pull erase-s5",
+        "bank2 pull tag-mixer now",
+    ] {
+        assert_eq!(
+            one(&format!("{bad}\n")),
+            Err(Refusal::Arguments(Command::Bank2)),
+            "{bad}"
+        );
     }
 }
 

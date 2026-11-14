@@ -774,13 +774,16 @@ fn write_staged(
 ) {
     chimera_core::ui::installing::draw(display, h.version.as_str());
     let mut buf = [0u8; 512];
-    let mut shown = Shown {
-        d: display,
-        at: chimera_image::Phase::Erasing,
-        #[cfg(feature = "bank2-gate")]
-        cpu_hz: flash.cpu_hz,
+    #[cfg(not(feature = "bank2-gate"))]
+    let r = {
+        let mut shown = Shown {
+            d: display,
+            at: chimera_image::Phase::Erasing,
+        };
+        chimera_image::install_with(flash, staged, seal, &mut buf, &mut shown, plan)
     };
-    let r = chimera_image::install_with(flash, staged, seal, &mut buf, &mut shown, plan);
+    #[cfg(feature = "bank2-gate")]
+    let r = gate::install(flash, staged, display, seal, &mut buf, plan);
     let now = open_door(seal).0;
     // As the boot's judge: no stale DBECCERR left to read a later bus fault
     // as bank 2's.
@@ -788,42 +791,196 @@ fn write_staged(
     (r, now)
 }
 
-/// The install's phase under DON'T POWER OFF; a gate build holds at each
-/// mark for a hand to pull the power.
-#[cfg(feature = "bank2")]
+/// The install's phase under DON'T POWER OFF (a gate build's is
+/// `gate::Shown`).
+#[cfg(all(feature = "bank2", not(feature = "bank2-gate")))]
 #[cfg_attr(feature = "sd-probe", allow(dead_code))]
 struct Shown<'a, D> {
     d: &'a mut D,
     at: chimera_image::Phase,
-    #[cfg(feature = "bank2-gate")]
-    cpu_hz: u32,
 }
 
-#[cfg(feature = "bank2")]
+#[cfg(all(feature = "bank2", not(feature = "bank2-gate")))]
 impl<D: chimera_hal::ChimeraDisplay> chimera_image::Progress for Shown<'_, D> {
     fn phase(&mut self, p: chimera_image::Phase) {
         self.at = p;
         chimera_core::ui::installing::phase(self.d, p);
     }
 
-    fn mark(&mut self, _: chimera_image::Mark) {
-        #[cfg(feature = "bank2-gate")]
-        gate::hold(self.d, self.at, self.cpu_hz);
-    }
+    fn mark(&mut self, _: chimera_image::Mark) {}
 }
 
 /// The power-pull aid (`bank2-gate`): never in a shipping build; `just
-/// release-bin` refuses a .bin holding `BANK2_GATE` or `PULL NOW`.
+/// release-bin` refuses a .bin holding `BANK2_GATE`, `SLOT_GATE` or
+/// `PULL NOW`.
 #[cfg(feature = "bank2-gate")]
 mod gate {
+    use core::cell::RefCell;
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    use chimera_core::console::PullAt;
     use chimera_core::ui::installing;
-    use chimera_image::Phase;
+    use chimera_hal::ChimeraDisplay;
     use chimera_image::regs::ms_cycles;
+    use chimera_image::slot::SlotPlan;
+    use chimera_image::{
+        Bank2Memory, Bank2Sector, Bank2Word, Flash, FlashFail, Header, ImageRead, InstallFail,
+        Mark, Phase, Progress, ReadFail, Seal,
+    };
     use cortex_m::peripheral::DWT;
+
+    use super::FlashBank2;
 
     /// The build's marker, which release-bin greps for.
     #[used]
     static BANK2_GATE: [u8; 16] = *b"BANK2-GATE-BUILD";
+
+    /// The slot commands' marker (`bank2 slot-poke`, `erase slots`,
+    /// `ecc-read`, `pull`), which `check-no-gate` greps for.
+    #[used]
+    static SLOT_GATE: [u8; 15] = *b"SLOT-GATE-BUILD";
+
+    /// `bank2 pull`'s point for the next install: 0 none, else
+    /// `PullAt::ALL`'s index + 1. RAM only: the boot after a pull holds
+    /// nowhere.
+    static ARMED: AtomicU8 = AtomicU8::new(0);
+
+    /// The next install holds at `p`.
+    pub fn arm(p: PullAt) {
+        core::hint::black_box(&SLOT_GATE);
+        let i = PullAt::ALL.iter().position(|&a| a == p).unwrap_or(0);
+        ARMED.store(i as u8 + 1, Ordering::Relaxed);
+    }
+
+    /// The armed point, disarmed.
+    fn take() -> Option<PullAt> {
+        let i = ARMED.swap(0, Ordering::Relaxed);
+        PullAt::ALL.get(usize::from(i).wrapping_sub(1)).copied()
+    }
+
+    /// `install_with` as the shipping build's, with the gate's holds: at
+    /// each mark (`hold`), and at the armed `bank2 pull` point
+    /// (`Pulling`). The screen is shared by the two.
+    pub fn install<D: ChimeraDisplay>(
+        flash: &mut FlashBank2,
+        staged: &mut impl ImageRead,
+        display: &mut D,
+        seal: &Seal,
+        buf: &mut [u8; 512],
+        plan: &SlotPlan,
+    ) -> Result<Header, InstallFail> {
+        let cpu_hz = flash.cpu_hz;
+        let d = RefCell::new(display);
+        let mut pulling = Pulling {
+            flash,
+            d: &d,
+            armed: take(),
+            marker: false,
+        };
+        let mut shown = Shown {
+            d: &d,
+            at: Phase::Erasing,
+            cpu_hz,
+        };
+        chimera_image::install_with(&mut pulling, staged, seal, buf, &mut shown, plan)
+    }
+
+    /// The phase under DON'T POWER OFF, held at each mark.
+    struct Shown<'a, 'd, D> {
+        d: &'a RefCell<&'d mut D>,
+        at: Phase,
+        cpu_hz: u32,
+    }
+
+    impl<D: ChimeraDisplay> Progress for Shown<'_, '_, D> {
+        fn phase(&mut self, p: Phase) {
+            self.at = p;
+            installing::phase(&mut **self.d.borrow_mut(), p);
+        }
+
+        fn mark(&mut self, _: Mark) {
+            hold(&mut **self.d.borrow_mut(), self.at, self.cpu_hz);
+        }
+    }
+
+    /// `FlashBank2` with `bank2 pull`'s hold: the armed slot's entry
+    /// sector, erased after its marker word, is re-erased back to back for
+    /// 3 s under PULL NOW; or 3 s held after its tag word. A plan that
+    /// erases the entry sector before the marker (a torn tag) or not at
+    /// all (read erased) never holds there: no PULL NOW shows.
+    struct Pulling<'a, 'd, D> {
+        flash: &'a mut FlashBank2,
+        d: &'a RefCell<&'d mut D>,
+        armed: Option<PullAt>,
+        /// The armed slot's marker word programmed this install.
+        marker: bool,
+    }
+
+    impl<D: ChimeraDisplay> Pulling<'_, '_, D> {
+        /// `s` erased again and again until 3 s have passed, PULL NOW
+        /// counting down a second at a time; at least once.
+        fn tear_erase(&mut self, s: Bank2Sector) -> Result<(), FlashFail> {
+            let second = ms_cycles(1000, self.flash.cpu_hz);
+            let t = DWT::cycle_count();
+            let mut shown = 0;
+            loop {
+                let gone = DWT::cycle_count().wrapping_sub(t) / second;
+                let left = 3u32.saturating_sub(gone) as u8;
+                if left == 0 {
+                    break;
+                }
+                if left != shown {
+                    installing::hold(&mut **self.d.borrow_mut(), Phase::Erasing, left);
+                    shown = left;
+                }
+                self.flash.erase(s)?;
+            }
+            installing::phase(&mut **self.d.borrow_mut(), Phase::Erasing);
+            Ok(())
+        }
+    }
+
+    impl<D> ImageRead for Pulling<'_, '_, D> {
+        fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
+            self.flash.read(off, buf)
+        }
+    }
+
+    // SAFETY: `read` is `FlashBank2`'s, unchanged.
+    unsafe impl<D> Bank2Memory for Pulling<'_, '_, D> {}
+
+    // SAFETY: every erase and program is `FlashBank2`'s, on the sector or
+    // word named; the hold only repeats an erase of the same sector and
+    // returns its last result.
+    unsafe impl<D: ChimeraDisplay> Flash for Pulling<'_, '_, D> {
+        fn erase(&mut self, s: Bank2Sector) -> Result<(), FlashFail> {
+            match self.armed {
+                Some(p) if p.erase() && self.marker && p.slot().sectors().0 == s => {
+                    self.armed = None;
+                    self.tear_erase(s)
+                }
+                _ => self.flash.erase(s),
+            }
+        }
+
+        fn program(&mut self, w: Bank2Word, data: &[u8; 32]) -> Result<(), FlashFail> {
+            self.flash.program(w, data)?;
+            if let Some(p) = self.armed {
+                let slot = p.slot();
+                if w.get() == slot.marker_addr() {
+                    self.marker = true;
+                } else if !p.erase() && w.get() == slot.tag_addr() {
+                    self.armed = None;
+                    hold(
+                        &mut **self.d.borrow_mut(),
+                        Phase::Erasing,
+                        self.flash.cpu_hz,
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
 
     /// `PULL NOW 3`, `2`, `1`, a second each, then the phase again. A busy
     /// wait on the cycle counter, interrupts on: the audio plays and the
@@ -882,6 +1039,98 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
 
 #[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
 const TAPE_OFF_MS: u32 = 30;
+
+/// A gate command's flash work, from the UI loop before its answer starts:
+/// TAPE lets go, the door closes, region 2 `Write`, `f`, region 2 `Read`.
+/// Then bank 2 judged again (`open_door`) unless `judge` says no: the
+/// door opens only on this seal's sound image.
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
+fn with_door_closed<R>(
+    ui: &mut chimera_core::ui::UiState,
+    cpu_hz: u32,
+    f: impl FnOnce(&mut FlashBank2) -> R,
+    judge: impl FnOnce(&R) -> Option<Bank2Status>,
+) -> R {
+    close_tape(ui);
+    let r = f(&mut FlashBank2::new(cpu_hz));
+    set_mpu(Mpu2::Read);
+    let now = match (judge(&r), crate::bank2_seal()) {
+        (Some(s), _) => s,
+        (None, Some(seal)) => open_door(&seal).0,
+        (None, None) => Bank2Status::Unsealed,
+    };
+    chimera_core::project::LOAD_LINK.open_tape();
+    ui.set_bank2(now);
+    r
+}
+
+/// `bank2 slot-poke` (`bank2-gate`, spec § 6.3 gate 8): `POKE_WORD`
+/// programmed at `POKE_AT`, S5's middle, so the guard reads MIXER's slot
+/// foreign. Refused `not erased` unless that word reads erased.
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
+#[inline(never)]
+pub fn run_slot_poke(
+    _: &chimera_core::errand::Errand,
+    ui: &mut chimera_core::ui::UiState,
+    cpu_hz: u32,
+) -> chimera_core::console::Bank2Answer {
+    use chimera_core::console::{POKE_AT, POKE_WORD};
+    let r = with_door_closed(ui, cpu_hz, |f| f.program(POKE_AT, &POKE_WORD), |_| None);
+    chimera_core::console::Bank2Answer::SlotPoked(r)
+}
+
+/// `bank2 erase slots` (`bank2-gate`, gate 8's clear): S4–S7 erased in
+/// order, the first failure stops it.
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
+#[inline(never)]
+pub fn run_erase_slots(
+    _: &chimera_core::errand::Errand,
+    ui: &mut chimera_core::ui::UiState,
+    cpu_hz: u32,
+) -> chimera_core::console::Bank2Answer {
+    use Bank2Sector::{S4, S5, S6, S7};
+    let r = with_door_closed(
+        ui,
+        cpu_hz,
+        |f| {
+            [S4, S5, S6, S7]
+                .into_iter()
+                .try_for_each(|s| f.erase(s).map_err(|e| (e, s)))
+        },
+        |_| None,
+    );
+    chimera_core::console::Bank2Answer::SlotsErased(r)
+}
+
+/// `bank2 ecc-read <addr>` (`bank2-gate`, gate 1b): the guard's masked
+/// read of one word. With DBECCERR set, bank 2 stays closed as `Corrupt`:
+/// the judge's unmasked read of that word would fault.
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
+#[inline(never)]
+pub fn run_ecc_read(
+    _: &chimera_core::errand::Errand,
+    ui: &mut chimera_core::ui::UiState,
+    at: Bank2Word,
+    cpu_hz: u32,
+) -> chimera_core::console::Bank2Answer {
+    let w = with_door_closed(
+        ui,
+        cpu_hz,
+        |f| f.word(at.get()),
+        |w: &Word| w.ecc.then_some(Bank2Status::Corrupt),
+    );
+    let mut head = [0u8; 8];
+    head.copy_from_slice(&w.bytes[..8]);
+    chimera_core::console::Bank2Answer::Ecc { ecc: w.ecc, head }
+}
+
+/// `bank2 pull <point>` (`bank2-gate`, gate 6): the next install holds
+/// there.
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
+pub fn run_pull(p: chimera_core::console::PullAt) -> chimera_core::console::Bank2Answer {
+    gate::arm(p);
+    chimera_core::console::Bank2Answer::Armed(p)
+}
 
 /// `bank2 erase` (`bank2-gate`), from the UI loop before its answer
 /// starts: TAPE lets go, the door closes, region 2 `Write`, S0 erased

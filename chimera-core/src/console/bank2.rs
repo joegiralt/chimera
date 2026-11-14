@@ -7,6 +7,8 @@ use core::fmt::{self, Write};
 use core::ops::ControlFlow;
 
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
+#[cfg(feature = "bank2-gate")]
+use chimera_image::{Bank2Sector, Bank2Word};
 use chimera_image::{
     FlashAt, FlashFail, Header, ImageRead, InstallFail, ReadFail, Seal, Slot, Verdict, judge,
     pick_staged, wants_staged,
@@ -22,11 +24,23 @@ pub enum Bank2Arg {
     /// S0 erased: bank 2 empty again, for the next power pull.
     #[cfg(feature = "bank2-gate")]
     Erase,
+    /// `slot-poke`: one foreign word at `POKE_AT`, S5's middle (gate 8).
+    #[cfg(feature = "bank2-gate")]
+    SlotPoke,
+    /// `erase slots`: S4–S7 erased (gate 8's clear).
+    #[cfg(feature = "bank2-gate")]
+    EraseSlots,
+    /// `ecc-read <hex addr>`: one masked read of that word (gate 1b).
+    #[cfg(feature = "bank2-gate")]
+    EccRead(Bank2Word),
+    /// `pull <point>`: the next install holds there (gate 6).
+    #[cfg(feature = "bank2-gate")]
+    Pull(PullAt),
 }
 
 impl Arg for Bank2Arg {
     const USAGE: &'static str = if cfg!(feature = "bank2-gate") {
-        "install, erase or nothing"
+        "install, erase, erase slots, slot-poke, ecc-read <hex addr>, pull <point> or nothing"
     } else {
         "install or nothing"
     };
@@ -35,11 +49,110 @@ impl Arg for Bank2Arg {
             None => Bank2Arg::Status,
             Some(w) if w.eq_ignore_ascii_case(b"install") => Bank2Arg::Install,
             #[cfg(feature = "bank2-gate")]
-            Some(w) if w.eq_ignore_ascii_case(b"erase") => Bank2Arg::Erase,
+            Some(w) => gate_arg(w, &mut words)?,
+            #[cfg(not(feature = "bank2-gate"))]
             Some(_) => return None,
         };
         words.next().is_none().then_some(got)
     }
+}
+
+/// Where the gate's `slot-poke` programs its foreign word: S5's middle.
+#[cfg(feature = "bank2-gate")]
+pub const POKE_AT: Bank2Word = match Bank2Word::new(0x081A_0000) {
+    Some(w) => w,
+    None => panic!("a bank-2 word"),
+};
+
+/// The foreign word `slot-poke` programs.
+#[cfg(feature = "bank2-gate")]
+pub const POKE_WORD: [u8; 32] = [0x5A; 32];
+
+/// Where `bank2 pull` stops the next install for a hand on the power
+/// (spec § 6.3, gate 6).
+#[cfg(feature = "bank2-gate")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PullAt {
+    /// S4 re-erased back to back for 3 s, after S5's marker.
+    EraseS4,
+    /// S6 the same, after S7's marker.
+    EraseS6,
+    /// 3 s after MIXER's tag word, before its code word.
+    TagMixer,
+    /// The same for EDIT.
+    TagEdit,
+}
+
+#[cfg(feature = "bank2-gate")]
+impl PullAt {
+    pub const ALL: [PullAt; 4] = [
+        PullAt::EraseS4,
+        PullAt::EraseS6,
+        PullAt::TagMixer,
+        PullAt::TagEdit,
+    ];
+
+    pub const fn word(self) -> &'static str {
+        match self {
+            PullAt::EraseS4 => "erase-s4",
+            PullAt::EraseS6 => "erase-s6",
+            PullAt::TagMixer => "tag-mixer",
+            PullAt::TagEdit => "tag-edit",
+        }
+    }
+
+    pub const fn slot(self) -> Slot {
+        match self {
+            PullAt::EraseS4 | PullAt::TagMixer => Slot::Mixer,
+            PullAt::EraseS6 | PullAt::TagEdit => Slot::Edit,
+        }
+    }
+
+    /// The entry sector's erase, not the tag word.
+    pub const fn erase(self) -> bool {
+        matches!(self, PullAt::EraseS4 | PullAt::EraseS6)
+    }
+}
+
+/// A gate command's words after `bank2`.
+#[cfg(feature = "bank2-gate")]
+fn gate_arg(w: &[u8], words: &mut Words<'_>) -> Option<Bank2Arg> {
+    let is = |s: &[u8]| w.eq_ignore_ascii_case(s);
+    if is(b"erase") {
+        return match words.next() {
+            None => Some(Bank2Arg::Erase),
+            Some(s) if s.eq_ignore_ascii_case(b"slots") => Some(Bank2Arg::EraseSlots),
+            Some(_) => None,
+        };
+    }
+    if is(b"slot-poke") {
+        return Some(Bank2Arg::SlotPoke);
+    }
+    if is(b"ecc-read") {
+        return Bank2Word::new(hex(words.next()?)?).map(Bank2Arg::EccRead);
+    }
+    if is(b"pull") {
+        let p = words.next()?;
+        return PullAt::ALL
+            .into_iter()
+            .find(|a| p.eq_ignore_ascii_case(a.word().as_bytes()))
+            .map(Bank2Arg::Pull);
+    }
+    None
+}
+
+/// 1–8 hex digits, `0x` optional.
+#[cfg(feature = "bank2-gate")]
+fn hex(w: &[u8]) -> Option<u32> {
+    let w = match w {
+        [b'0', b'x' | b'X', rest @ ..] => rest,
+        _ => w,
+    };
+    if w.is_empty() || w.len() > 8 {
+        return None;
+    }
+    w.iter()
+        .try_fold(0u32, |n, &c| Some(n << 4 | char::from(c).to_digit(16)?))
 }
 
 /// The staged image: `/CHIMERA/SYSTEM/BANK2.BK2`. Not a `.bin`, and not in
@@ -218,6 +331,22 @@ pub enum Bank2Answer {
     /// `bank2 erase`: S0's erase.
     #[cfg(feature = "bank2-gate")]
     Erased(Result<(), FlashFail>),
+    /// `bank2 slot-poke`: the foreign word's program.
+    #[cfg(feature = "bank2-gate")]
+    SlotPoked(Result<(), FlashFail>),
+    /// `bank2 erase slots`: S4–S7's erases, the first failure's sector.
+    #[cfg(feature = "bank2-gate")]
+    SlotsErased(Result<(), (FlashFail, Bank2Sector)>),
+    /// `bank2 ecc-read`: SR2.DBECCERR after the masked read, and the word's
+    /// first 8 bytes.
+    #[cfg(feature = "bank2-gate")]
+    Ecc {
+        ecc: bool,
+        head: [u8; 8],
+    },
+    /// `bank2 pull`: the next install holds there.
+    #[cfg(feature = "bank2-gate")]
+    Armed(PullAt),
 }
 
 /// The staged file's verdict, and the card error behind an unreadable one,
@@ -321,10 +450,28 @@ fn lines(a: &Bank2Answer, t: &mut impl Write) -> fmt::Result {
         #[cfg(feature = "bank2-gate")]
         Bank2Answer::Erased(Ok(())) => t.write_str("OK bank2 erased\n"),
         #[cfg(feature = "bank2-gate")]
-        Bank2Answer::Erased(Err(f)) => {
+        Bank2Answer::Erased(Err(f)) | Bank2Answer::SlotPoked(Err(f)) => {
             t.write_str("ERR bank2: flash ")?;
             crate::bank2::write_flash_fail(*f, t)?;
             t.write_char('\n')
         }
+        #[cfg(feature = "bank2-gate")]
+        Bank2Answer::SlotPoked(Ok(())) => t.write_str("OK slot poked\n"),
+        #[cfg(feature = "bank2-gate")]
+        Bank2Answer::SlotsErased(Ok(())) => t.write_str("OK slots erased\n"),
+        #[cfg(feature = "bank2-gate")]
+        Bank2Answer::SlotsErased(Err((f, s))) => {
+            t.write_str("ERR bank2: flash ")?;
+            write_flash(*f, FlashAt::Sector(*s), t)?;
+            t.write_char('\n')
+        }
+        #[cfg(feature = "bank2-gate")]
+        Bank2Answer::Ecc { ecc, head } => {
+            write!(t, "ecc={} ", u8::from(*ecc))?;
+            head.iter().try_for_each(|b| write!(t, "{b:02x}"))?;
+            t.write_char('\n')
+        }
+        #[cfg(feature = "bank2-gate")]
+        Bank2Answer::Armed(p) => writeln!(t, "OK pull {} armed", p.word()),
     }
 }

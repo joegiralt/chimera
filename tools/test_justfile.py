@@ -32,7 +32,12 @@ class Bank2Gate(unittest.TestCase):
         body = "\n".join(recipes()["check-no-gate"])
         self.assertIn("BANK2-GATE-BUILD", body)
         self.assertIn("PULL NOW", body)
+        self.assertIn("SLOT-GATE-BUILD", body)
         self.assertIn("set -euo pipefail", body)
+
+    def test_the_slot_marker_is_in_the_gate_build(self):
+        src = (ROOT / "chimera-board/src/bank2.rs").read_text()
+        self.assertIn('*b"SLOT-GATE-BUILD"', src)
 
     def test_split_guards_all_but_the_gate(self):
         body = "\n".join(recipes()["bank2-split"])

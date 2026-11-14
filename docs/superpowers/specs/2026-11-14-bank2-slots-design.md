@@ -87,7 +87,7 @@ There is still **one image**, for ADR 0137's reasons: same compiler, same link, 
 - **Which code goes high:** whole glob groups, placed by hand, the way `bank2.x` already places subsystems. The S4 and S6 groups are new 0.4 work only (decided); DRUM stays in bank 1. Fixed door tables stay in S0.
 - **The door doesn't change.** It is still one table at 0x08100100. Entries may point anywhere in `.bank2`, and `door_hits` already bounds bank 2 by `BANK2_BASE + BANK2_LEN`.
 
-*Verified (Task 9):* lld's fill covers the gaps made by `. =` inside the section, and the ALIGN padding too. lld reads a fill as a 32-bit big-endian value, so `=0xFF` would fill `00 00 00 FF`; the fill is `=0xFFFFFFFF`. `check-slots` (§ 6.1) asserts it from the bytes.
+*Verified (Task 9):* lld's fill covers the gaps made by `. =` inside the section; the ALIGN padding is covered by the same fill. lld reads a fill as a 32-bit big-endian value, so `=0xFF` would fill `00 00 00 FF`; the fill is `=0xFFFFFFFF`. `check-slots` (§ 6.1) asserts it from the bytes.
 
 **Rejected:**
 - *A second image or door for S4–S7:* this is ADR 0137's rejected stable-ABI option.

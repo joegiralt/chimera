@@ -152,7 +152,8 @@ firmware-orbit-writer:
 
 # Hardware Gate 2's power-pull aid (`bank2-gate`): the install holds 3 s at
 # each phase for a hand to pull the power, and the console takes `bank2
-# erase`. target/chimera-gate.bin and .bk2. Never flashed by a recipe, never
+# erase`; and the slot gates' (ADR 0272): `bank2 slot-poke`, `erase slots`,
+# `ecc-read <addr>` and `pull erase-s4|erase-s6|tag-mixer|tag-edit`. target/chimera-gate.bin and .bk2. Never flashed by a recipe, never
 # released: every other .bin is refused if it holds the aid.
 firmware-gate:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bank2-gate
@@ -214,8 +215,8 @@ release-bin:
         just check-no-gate target/release-bin/$out.bin
     done
 
-# A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
-# NOW) never ships.
+# A .bin holding the power-pull aid (`bank2-gate`: its markers, the slot
+# commands' among them, or its PULL NOW) never ships.
 # VA's MOD path (ADR 0163), the LFO page's raster (ADR 0177) and PIT's
 # tuner (ADR 0201), the delay's TAPE loop and the chorus's (ADR 0213), and TAPE's UI door entries and STRETCH GRAIN's note-on
 # (its own-period search inlined there, ADR 0204) are all
@@ -261,7 +262,7 @@ check-door-placed elf:
 check-no-gate bin:
     #!/usr/bin/env bash
     set -euo pipefail
-    n=$(grep -a -c -e BANK2-GATE-BUILD -e 'PULL NOW' "{{bin}}") || [ $? -eq 1 ]
+    n=$(grep -a -c -e BANK2-GATE-BUILD -e SLOT-GATE-BUILD -e 'PULL NOW' "{{bin}}") || [ $? -eq 1 ]
     if [ "${n:-0}" != 0 ]; then echo "{{bin}} is a bank2-gate build: never ship it" >&2; exit 1; fi
 
 # Stock bootloader SD flash erases sectors 1..size/128K+1: a .bin of 917,504 B
