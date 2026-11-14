@@ -101,16 +101,28 @@ impl AudioStats {
     }
 }
 
+/// Proof the cycle counter counts (`CycleCounter::new`): the load net is
+/// built only on one (ADR 0273).
+#[derive(Clone, Copy, Debug)]
+pub struct CycleCounter(());
+
+impl CycleCounter {
+    /// The proof, if the cycle counter `counting` moves.
+    pub const fn new(counting: bool) -> Option<Self> {
+        if counting { Some(Self(())) } else { None }
+    }
+}
+
 /// The load net (ADR 0273): a block rendered past its `shed_at` sheds one
-/// voice before the next. The firmware builds it only on a cycle counter
-/// that counts; the audio interrupt calls `after` once a half.
+/// voice before the next. Built only with a `CycleCounter`, proof the DWT
+/// counts; the audio interrupt calls `after` once a half.
 #[derive(Clone, Copy, Debug)]
 pub struct LoadNet {
     shed_at: Cycles,
 }
 
 impl LoadNet {
-    pub const fn new(block: BlockBudget) -> Self {
+    pub const fn new(_counter: CycleCounter, block: BlockBudget) -> Self {
         Self {
             shed_at: block.shed_at(),
         }

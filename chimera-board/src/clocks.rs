@@ -1,6 +1,7 @@
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::clock_plan::{Pll3Config, PllRange, VcoRange};
 use chimera_core::clock_plan::{SiliconRev, cycles_for_us};
+pub use chimera_core::perf::load::CycleCounter;
 use cortex_m::peripheral::{DCB, DWT};
 use stm32h7xx_hal::pac;
 use stm32h7xx_hal::prelude::*;
@@ -60,14 +61,9 @@ pub fn delay_us(cpu_hz: u32, us: u32) {
     cortex_m::asm::delay(cycles_for_us(cpu_hz, us));
 }
 
-/// Proof the DWT cycle counter counts (`cycle_counter`): the load net is
-/// built only on one (ADR 0273).
-#[derive(Clone, Copy, Debug)]
-pub struct CycleCounter(());
-
 /// Starts the DWT cycle counter: `None` if it will not count.
 pub fn cycle_counter(dcb: &mut DCB, dwt: &mut DWT) -> Option<CycleCounter> {
-    enable_cycle_counter(dcb, dwt).then_some(CycleCounter(()))
+    CycleCounter::new(enable_cycle_counter(dcb, dwt))
 }
 
 /// Starts the DWT cycle counter; false if it will not count.

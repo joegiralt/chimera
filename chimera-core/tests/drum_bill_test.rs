@@ -28,7 +28,7 @@ use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{BlockBudget, CPU_HZ_REV_V, Cost, Cycles, MAX_VOICES, SampleBudget};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::perf::load::LoadNet;
+use chimera_core::perf::load::{CycleCounter, LoadNet};
 use chimera_core::project::PartId;
 
 static WRITER: LazyLock<Mutex<KitWriter>> =
@@ -262,9 +262,9 @@ fn every_pad_books_its_reading() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     for (n, read) in READ {
         let mut r = drum_rig(&mut w, &Kit::DEFAULT);
-        let key = n - 1;
-        r.note_on_vel(0, key, 127);
-        let c = booked(&r, key).0;
+        let k = key(pad(n));
+        r.note_on_vel(0, k, 127);
+        let c = booked(&r, k).0;
         assert!(c * 10 >= read * 11, "pad {n}: {c} for {read} × 1.1");
     }
     for m in Machine::ALL {
@@ -318,7 +318,7 @@ fn init_drum_roll_stays_in_budget() {
     for blk in 0..36 * gap + tail {
         if blk % gap == 0 && struck < 36 {
             let was = r.inst.allocator().refused();
-            r.note_on_vel(0, (struck % 12) as u8, 127);
+            r.note_on_vel(0, key(PadId::ALL[struck % 12]), 127);
             if r.inst.allocator().refused() != was {
                 refused.push(struck);
             }
@@ -327,7 +327,7 @@ fn init_drum_roll_stays_in_budget() {
         r.render(1);
         // A sequencer's gate: each key up a block after its strike.
         if blk % gap == 1 && struck <= 36 {
-            r.note_off(0, ((struck - 1) % 12) as u8);
+            r.note_off(0, key(PadId::ALL[(struck - 1) % 12]));
         }
         let slots = r.inst.allocator().slots();
         let mut n = 0;
@@ -410,12 +410,12 @@ fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
     let kicks = kicks();
     let mut r = drum_rig(&mut w, &kicks);
     // Pad 2's KICK: the block's Part bills are worked out on the KICKs.
-    r.note_on_vel(0, 1, 127);
+    r.note_on_vel(0, key(pad(2)), 127);
     let mut jingle = kicks;
     jingle.pad_mut(pad(1)).set_machine(Machine::MetalJingle);
     w.publish(PartId::ALL[0], &jingle);
-    r.note_on_vel(0, 0, 127);
-    r.note_on_vel(0, 2, 127);
+    r.note_on_vel(0, key(pad(1)), 127);
+    r.note_on_vel(0, key(pad(3)), 127);
     let p = drum_init();
     let m = ModState::new();
     let want_jingle = Voice::drum_cost(&p, &m, kit_bill(&jingle)).whole();
@@ -432,11 +432,16 @@ fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
     );
 }
 
-/// The pads sounding, by pad number.
-fn sounding(r: &common::InstRig) -> Vec<u8> {
-    let mut p: Vec<u8> = (0..MAX_VOICES)
+/// The MIDI key INIT DRUM's pad `p` answers to.
+fn key(p: PadId) -> u8 {
+    p.index() as u8
+}
+
+/// The pads sounding.
+fn sounding(r: &common::InstRig) -> Vec<PadId> {
+    let mut p: Vec<PadId> = (0..MAX_VOICES)
         .filter_map(|v| r.inst.voice(v).drum_hit())
-        .map(|h| h.pad().index() as u8 + 1)
+        .map(|h| h.pad())
         .collect();
     p.sort_unstable();
     p
@@ -450,16 +455,16 @@ fn hat_after_kicks(w: &mut KitWriter, n: usize) -> (bool, u32) {
     k.pad_mut(pad(1)).set_retrig(Retrig::Stack);
     let mut r = drum_rig(w, &k);
     for _ in 0..n {
-        r.note_on_vel(0, 0, 127);
+        r.note_on_vel(0, key(pad(1)), 127);
         r.render(1);
     }
     r.note_off(0, 0);
     r.render(1);
-    r.note_on_vel(0, 7, 127);
+    r.note_on_vel(0, key(pad(8)), 127);
     let mut heard = false;
     for _ in 0..4 {
         r.render(1);
-        heard |= sounding(&r).contains(&8);
+        heard |= sounding(&r).contains(&pad(8));
     }
     (heard, r.inst.allocator().refused())
 }
@@ -475,34 +480,57 @@ fn a_hat_among_kick_tails_on_rev_v() {
 }
 
 /// INIT DRUM's 12 pads a block apart, keys held, on rev V's budget (the
-/// e2e test plays them at twice it): every pad is heard but the CYMBAL
-/// (pad 10), which waits on a stolen KICK and is dropped unheard when
-/// the COWBELL's bill comes in a block later, and each unheard pad is
-/// counted refused.
+/// e2e test plays them at twice it). At default the CYMBAL (pad 10) books
+/// by stealing a KICK and waits out its fade, and the COWBELL (pad 11),
+/// in its choke group D, chokes it unheard a block later: one choke, no
+/// budget refusal. With `master-tape` the bus bills 1494, not 1190, and
+/// the CYMBAL and the COWBELL are each refused at admission: two
+/// refusals, no choke. Each unheard pad is counted refused either way.
 #[test]
 fn twelve_pads_a_block_apart_on_rev_v() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     let mut heard = [false; 12];
+    let (mut chokes, mut refusals) = (0, 0);
     for b in 0..15u8 {
         if b < 12 {
-            r.note_on_vel(0, b, 127);
+            let was = r.inst.allocator().refused();
+            r.note_on_vel(0, key(PadId::ALL[usize::from(b)]), 127);
+            if r.inst.allocator().refused() != was {
+                // A refused hit books nothing; a choke drops an earlier one.
+                let booked = r.inst.allocator().slots().iter().any(|s| {
+                    s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(b)
+                });
+                if booked {
+                    chokes += 1;
+                } else {
+                    refusals += 1;
+                }
+            }
         }
         r.render(1);
         for p in sounding(&r) {
-            heard[usize::from(p - 1)] = true;
+            heard[p.index()] = true;
         }
     }
-    let unheard: Vec<usize> = (1..=12).filter(|&p| !heard[p - 1]).collect();
-    // Alone the run leaves only the CYMBAL unheard; inside the full suite
-    // the COWBELL has been too (one run in `just check`, not reproduced
-    // alone): only the late metals, each one counted.
-    assert!(
-        unheard.contains(&10) && unheard.iter().all(|p| [10, 11].contains(p)),
-        "pads never heard: {unheard:?}"
+    let unheard: Vec<u8> = PadId::ALL
+        .into_iter()
+        .filter(|p| !heard[p.index()])
+        .map(PadId::number)
+        .collect();
+    let (want_unheard, want_chokes, want_refusals): (&[u8], u32, u32) =
+        if cfg!(feature = "master-tape") {
+            (&[10, 11], 0, 2)
+        } else {
+            (&[10], 1, 0)
+        };
+    assert_eq!(unheard, want_unheard, "pads never heard");
+    assert_eq!((chokes, refusals), (want_chokes, want_refusals));
+    assert_eq!(
+        r.inst.allocator().refused(),
+        want_chokes + want_refusals,
+        "refused"
     );
-    let refused = r.inst.allocator().refused() as usize;
-    assert!((unheard.len()..=2).contains(&refused), "{refused} refused");
 }
 
 /// The load net (ADR 0273) passes over a booked voice gone silent: a
@@ -512,18 +540,19 @@ fn twelve_pads_a_block_apart_on_rev_v() {
 fn the_load_net_sheds_only_a_sounding_voice() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
-    r.note_on_vel(0, 7, 127);
+    r.note_on_vel(0, key(pad(8)), 127);
     r.render(SR_BLOCKS / 2);
     let hat = (0..MAX_VOICES)
         .find(|&v| r.inst.allocator().slots()[v].note().map(|n| n.get()) == Some(7))
         .expect("the HAT's key still books its voice");
     assert!(!r.inst.voice(hat).is_active(), "the HAT has ended");
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
-    let (net, sheds) = (LoadNet::new(block), AtomicU32::new(0));
+    let counter = CycleCounter::new(true).expect("a counting DWT");
+    let (net, sheds) = (LoadNet::new(counter, block), AtomicU32::new(0));
     let over = Cycles::new(block.block_cycles());
     assert!(!net.after(over, &mut r.inst, &sheds));
     assert_eq!(sheds.load(Ordering::Relaxed), 0);
-    r.note_on_vel(0, 0, 127);
+    r.note_on_vel(0, key(pad(1)), 127);
     r.render(1);
     assert!(net.after(over, &mut r.inst, &sheds));
     assert_eq!(sheds.load(Ordering::Relaxed), 1);

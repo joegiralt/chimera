@@ -24,7 +24,7 @@ pub fn start(a: AudioStart<'_>) {
     engine::init(
         SampleBudget::for_cpu(a.clk.cpu_hz),
         a.counter
-            .map(|_| LoadNet::new(BlockBudget::for_cpu(a.clk.cpu_hz))),
+            .map(|c| LoadNet::new(c, BlockBudget::for_cpu(a.clk.cpu_hz))),
         a.shared,
         a.notes,
         a.scope,

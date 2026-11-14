@@ -33,7 +33,7 @@ use common::fnv1a;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use chimera_core::hw::{AUDIO_BUDGET_PERCENT, BlockBudget, CPU_HZ_REV_V, Cycles, SampleBudget};
-use chimera_core::perf::load::LoadNet;
+use chimera_core::perf::load::{CycleCounter, LoadNet};
 
 /// The budget a voice share of `voice_share` cycles/sample gives, the FX
 /// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
@@ -516,7 +516,7 @@ fn each_overloaded_block_sheds_one_voice_until_none_is_left() {
     // The firmware's glue: `LoadNet::after`, as the audio interrupt calls it.
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
     let sheds = AtomicU32::new(0);
-    let load = LoadNet::new(block);
+    let load = LoadNet::new(CycleCounter::new(true).expect("a counting DWT"), block);
     let (at, over) = (block.shed_at(), Cycles::new(block.block_cycles()));
     let net = |rig: &mut Rig, took: Cycles| load.after(took, &mut rig.inst, &sheds);
     for _ in 0..8 {
