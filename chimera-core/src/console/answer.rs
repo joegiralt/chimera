@@ -396,6 +396,7 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
     writeln!(t, "load_pct {}", a.load_avg)?;
     writeln!(t, "peak_pct {}", a.load_peak)?;
     writeln!(t, "overruns {}", a.overruns)?;
+    writeln!(t, "load_sheds {}", a.load_sheds)?;
     t.write_str("drops")?;
     match a.active_drops() {
         [] => t.write_str(" -")?,

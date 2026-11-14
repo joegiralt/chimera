@@ -4,6 +4,7 @@
 
 use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::clampf;
+use crate::dsp::drum::sound::{HitKernel, KitBill, PartBill};
 use crate::dsp::drum::types::{ChokeGroup, DrumHit, PadSet};
 use crate::dsp::drum::view::KIT_VIEW;
 use crate::dsp::tape_engine::params::Retrig;
@@ -227,21 +228,21 @@ impl PartAudio {
         }
     }
 
-    /// Cycles/sample of a voice of this Part, `id`: its Sound's (a DRUM
-    /// Part's with its kit's filter bill), and where a re-snap can move it
+    /// Cycles/sample of a voice of this Part: its Sound's (a DRUM Part's
+    /// at `kit`, split at its kernel), and where a re-snap can move it
     /// (SNAP on, HELD RE-SNAP) the retune its glide runs each block.
-    fn voice_cost(&self, id: PartId) -> Cost {
+    fn voice_cost(&self, kit: KitBill) -> PartBill {
         let glide = match (self.mix.snap, self.mix.held) {
             (LiveSnap::Off, _) | (_, Held::Stay) => Cost::ZERO,
             (_, Held::Resnap) => Voice::glide_cost(&self.params, &self.mod_state),
         };
         let (p, m) = (&*self.params, &*self.mod_state);
         let own = if p.engine() == EngineType::Drum {
-            Voice::drum_cost(p, m, KIT_VIEW.bill(id))
+            Voice::drum_cost(p, m, kit)
         } else {
-            Voice::cost(p, m)
+            PartBill::flat(Voice::cost(p, m))
         };
-        own + glide
+        own.with(glide)
     }
 
     /// `key` as this Part plays it live under `h` (spec § 5.2): snapped to
@@ -787,8 +788,9 @@ pub struct Instrument {
     /// A note waits on the clear budget: later Sympathetic notes queue
     /// behind it, until render step 0 serves the queue oldest first.
     clear_backlog: bool,
-    /// Each Part's `voice_cost`, worked out once a block (`recost`).
-    costs: [Cost; MAX_PARTS],
+    /// Each Part's `voice_cost` with its glide, worked out once a block
+    /// (`recost`) from one read of its kit's bill.
+    costs: [PartBill; MAX_PARTS],
     /// The snapshot `costs` were worked out from this block, by address;
     /// 0 when not yet (each `render` ends the block).
     costed: usize,
@@ -906,7 +908,7 @@ impl Instrument {
             addr_of_mut!((*p).last_kind).write([SlotKind::Algo; MAX_PARTS]);
             addr_of_mut!((*p).clear_left).write(SYM_CLEAR_BUDGET);
             addr_of_mut!((*p).clear_backlog).write(false);
-            addr_of_mut!((*p).costs).write([Cost::ZERO; MAX_PARTS]);
+            addr_of_mut!((*p).costs).write([PartBill::ZERO; MAX_PARTS]);
             addr_of_mut!((*p).costed).write(0);
             addr_of_mut!((*p).costings).write(0);
             addr_of_mut!((*p).wheel).write([0; 16]);
@@ -1378,7 +1380,8 @@ impl Instrument {
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first { Knobs::COST } else { Cost::ZERO };
-                    let mut cost = self.costs[p] + knobs + self.high_note(p, shared, note, first);
+                    let mut cost =
+                        self.costs[p].whole() + knobs + self.high_note(p, shared, note, first);
                     let at = admission::BillAt {
                         key: ev.note,
                         note,
@@ -2016,7 +2019,9 @@ impl Instrument {
             let (q, id, key) = (p as u8, PartId::ALL[p], ev.note);
             let hit = self.choke(id, key);
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
-            let cost = self.costs[p] + if first { Knobs::COST } else { Cost::ZERO };
+            // The bill `recost` worked out, so the kit it read.
+            let own = self.costs[p].hit(HitKernel::Sounding(hit.params().machine()));
+            let cost = own + if first { Knobs::COST } else { Cost::ZERO };
             let reserved = self.reserved();
             let mode = part.mix.mode;
             let Some(v) = self
@@ -2141,6 +2146,9 @@ impl Instrument {
         }
         #[cfg(feature = "probe")]
         let t0 = crate::probe::now();
+        // Each kit's bill read once: the Part's bill, its glide and its
+        // hits' all from the same kit.
+        let kits: [KitBill; MAX_PARTS] = core::array::from_fn(|p| KIT_VIEW.bill(PartId::ALL[p]));
         // Only a Part with a gliding knob pays the glide scans (ADR 0117).
         let glides: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
             let g = self.knobs[p].0.gliding();
@@ -2149,15 +2157,14 @@ impl Instrument {
             }
             let part = &shared.parts[p];
             if part.params.engine() == EngineType::Drum {
-                let kit = KIT_VIEW.bill(PartId::ALL[p]);
-                return Voice::drum_glide_extra(&part.params, &part.mod_state, g, kit);
+                return Voice::drum_glide_extra(&part.params, &part.mod_state, g, kits[p]);
             }
             Voice::glide_extra(&part.params, &part.mod_state, g)
         });
-        let costs: [Cost; MAX_PARTS] =
-            core::array::from_fn(|p| shared.parts[p].voice_cost(PartId::ALL[p]));
+        let costs: [PartBill; MAX_PARTS] =
+            core::array::from_fn(|p| shared.parts[p].voice_cost(kits[p]));
         // A new note is judged with its Part's glide on it (ADR 0117).
-        self.costs = core::array::from_fn(|p| costs[p] + glides[p]);
+        self.costs = core::array::from_fn(|p| costs[p].with(glides[p]));
         (self.costed, self.costings) = (at, self.costings.wrapping_add(1));
         #[cfg(feature = "probe")]
         crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
@@ -2188,8 +2195,17 @@ impl Instrument {
                     + self.streaming[v].looped
                     + high;
                 let k = if first { Knobs::COST } else { Cost::ZERO };
-                self.alloc
-                    .recost_with_glide(v, costs[p] + held + k, glides[p]);
+                // A hit bills its own machine, not its kit's costliest; a
+                // flat bill (not DRUM) has no kernel, so `Ended` is whole.
+                let hit = match part.params.engine() {
+                    EngineType::Drum => self.hit_of(VoiceIdx::ALL[v], PartId::ALL[p]),
+                    _ => None,
+                };
+                let own = costs[p].hit(match hit {
+                    Some(h) => HitKernel::Sounding(h.params().machine()),
+                    None => HitKernel::Ended,
+                });
+                self.alloc.recost_with_glide(v, own + held + k, glides[p]);
             }
         }
         // Only the bus, the reverb's extra, the knobs' reads and the LFO
@@ -2232,6 +2248,23 @@ impl Instrument {
         })
     }
 
+    /// The load net (ADR 0273): a block ran past `BlockBudget::shed_at`,
+    /// so one voice fades out before the next, the one a budget shed takes
+    /// among those sounding and not yet fading (a silent or fading one
+    /// frees nothing), whatever the bills say. `false` when none is left.
+    pub fn shed_for_load(&mut self) -> bool {
+        let voices = &self.voices;
+        let sounds = |v: VoiceIdx| {
+            let v = &voices[v.index()];
+            v.is_active() && !v.fading()
+        };
+        let Some(v) = self.alloc.shed_one(sounds) else {
+            return false;
+        };
+        self.shed(v.index());
+        true
+    }
+
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped
     /// unheard (ADR 0027). Any slot promised or bound to it goes when it
     /// rests, freed.
@@ -2257,14 +2290,7 @@ impl Instrument {
             if s.part() != Some(q) || s.dying() {
                 continue;
             }
-            let h = match self.waiting[w] {
-                Some(Waiting {
-                    plays: Plays::Hit, ..
-                }) => s.note().map(|n| KIT_VIEW.hit(id, n)),
-                Some(_) => None,
-                None => self.voices[w].drum_hit().filter(|_| self.sounding[w] == q),
-            };
-            let Some(h) = h else {
+            let Some(h) = self.hit_of(VoiceIdx::ALL[w], id) else {
                 continue;
             };
             let ends = if h.pad() == pad {
@@ -2278,6 +2304,22 @@ impl Instrument {
             }
         }
         hit
+    }
+
+    /// The hit voice `w`, booked by DRUM Part `id`, plays: the one
+    /// waiting out its fade as its pad's in the kit now, else the one
+    /// sounding.
+    fn hit_of(&self, w: VoiceIdx, id: PartId) -> Option<DrumHit> {
+        let w = w.index();
+        match self.waiting[w] {
+            Some(Waiting {
+                plays: Plays::Hit, ..
+            }) => self.alloc.slots()[w].note().map(|n| KIT_VIEW.hit(id, n)),
+            Some(_) => None,
+            None => self.voices[w]
+                .drum_hit()
+                .filter(|_| self.sounding[w] == id.index() as u8),
+        }
     }
 
     /// Every sounding voice of Part `q` fades out, as a shed one does:

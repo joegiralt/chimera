@@ -1,6 +1,6 @@
 //! Target limits (ADR 0013): the budgets derived from the chip's constants.
 
-use chimera_core::hw::{self, BlockBudget, Cost, SampleBudget};
+use chimera_core::hw::{self, BlockBudget, Cost, Cycles, SampleBudget};
 
 /// 75 % of each clock's cycles per 48 kHz sample.
 #[test]
@@ -22,6 +22,17 @@ fn block_budgets_follow_the_cpu_clock() {
     assert_eq!((v.block_cycles(), v.budget_cycles()), (640_000, 480_000));
     let y = BlockBudget::for_cpu(hw::CPU_HZ_REV_Y);
     assert_eq!((y.block_cycles(), y.budget_cycles()), (533_333, 399_999));
+}
+
+/// The load net fires past 95 % of the block's deadline (ADR 0273): a
+/// span over `shed_at` is over 95 %, one at it is not.
+#[test]
+fn a_block_sheds_past_95_percent_of_its_deadline() {
+    let v = BlockBudget::for_cpu(hw::CPU_HZ_REV_V);
+    assert_eq!(v.shed_at(), Cycles::new(608_000));
+    let y = BlockBudget::for_cpu(hw::CPU_HZ_REV_Y);
+    // 533,333 × 0.95 = 506,666.35: 506,667 is the first span over it.
+    assert_eq!(y.shed_at(), Cycles::new(506_666));
 }
 
 #[test]

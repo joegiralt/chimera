@@ -5,9 +5,10 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_board::controls::now_ms;
 use chimera_board::sd::BUS;
-use chimera_board::shared::{BLOCKS, NOTE_SOURCES, STREAM_STATS, registry};
+use chimera_board::shared::{BLOCKS, LOAD_SHEDS, NOTE_SOURCES, STREAM_STATS, bump, registry};
 #[cfg(feature = "perf-probe")]
 use chimera_board::shared::{COST_PCT, VOICES};
+use chimera_core::console::{LOAD_NET, LoadNetState};
 #[cfg(feature = "bench")]
 use chimera_engine::audio_out::DacSample;
 use chimera_engine::audio_out::{Half, interleave};
@@ -18,6 +19,7 @@ use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument, NoteOrigin}
 use chimera_engine::note_queue::{InEvent, NoteDrain};
 use chimera_engine::orbit::door::OrbitPorts;
 use chimera_engine::part::DacPair;
+use chimera_engine::perf::load::LoadNet;
 use chimera_engine::project::SourceId;
 use chimera_engine::project::{LOAD_LINK, LoadGate};
 use chimera_engine::scope::{ScopeFrame, ScopeWriter};
@@ -63,6 +65,8 @@ struct Engine {
     /// The stream rings' audio side: the voices' ports, or the card
     /// bench's heads where it runs.
     streams: AudioSide<'static>,
+    /// The load net (ADR 0273): none where the cycle counter won't count.
+    net: Option<LoadNet>,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -82,6 +86,7 @@ pub unsafe fn slots() -> (
 #[allow(clippy::too_many_arguments)]
 pub fn init(
     budget: SampleBudget,
+    net: Option<LoadNet>,
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
@@ -123,24 +128,67 @@ pub fn init(
                 sources
             },
             streams,
+            net,
         });
     }
+    // The console's `status` says whether the net runs.
+    LOAD_NET.store(match net {
+        Some(_) => LoadNetState::On,
+        None => LoadNetState::Off,
+    });
     ENGINE_READY.store(true, Ordering::Release);
+}
+
+/// One half rendered before the audio interrupt runs (`prefill`).
+pub fn render_half(half: Half) {
+    // SAFETY: only `prefill` (before the audio interrupt is unmasked) calls
+    // this, so no other reference to `ENGINE` is live.
+    if let Some(e) = unsafe { engine() } {
+        render(e, half);
+    }
+}
+
+/// The audio interrupt's half: `render_half`, timed into the probe; one
+/// past the load net's threshold sheds a voice before the next (ADR 0273,
+/// `LoadNet::after`), counted in `LOAD_SHEDS`.
+///
+/// # Safety
+/// Only from the audio interrupt, `probe::measure`'s one caller.
+pub unsafe fn render_half_timed(half: Half) {
+    // SAFETY: the caller is the audio interrupt (this fn's contract), which
+    // does not re-enter and runs only after `prefill`: the one reference to
+    // `ENGINE`, and `measure`'s one caller.
+    unsafe {
+        let Some(e) = engine() else {
+            return;
+        };
+        let took = chimera_board::probe::measure(|| render(e, half));
+        if e.net.is_some_and(|net| net.after(took, e.inst)) {
+            bump(&LOAD_SHEDS, 1);
+        }
+    }
+}
+
+/// `ENGINE`, once `init` has written it.
+///
+/// # Safety
+/// Only from the audio interrupt or `prefill` (before that interrupt is
+/// unmasked), never concurrently or re-entrantly: no other reference to
+/// `ENGINE` may be live.
+unsafe fn engine() -> Option<&'static mut Engine> {
+    if !ENGINE_READY.load(Ordering::Acquire) {
+        return None;
+    }
+    // SAFETY: `ENGINE` is initialised (READY is set only after its write),
+    // and the caller holds no other reference to it (this fn's contract).
+    Some(unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() })
 }
 
 /// One half, as the desktop's `Engine::block` renders a block: the gate,
 /// then only when it opens the drain (live notes to ORBIT's capture and
 /// then the Parts, real-time to ORBIT's clock) and ORBIT, then the render
 /// and ORBIT's view.
-pub fn render_half(half: Half) {
-    if !ENGINE_READY.load(Ordering::Acquire) {
-        return;
-    }
-    // SAFETY: `ENGINE` is initialised (READY is set only after its write).
-    // Only the DMA1 stream 0 interrupt and `prefill` (before that interrupt
-    // is unmasked) call this, never concurrently and never re-entrantly, so
-    // this is the only live reference to `ENGINE`.
-    let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
+fn render(e: &mut Engine, half: Half) {
     let shared = e.shared.read();
     let run = Run {
         inst: &mut *e.inst,

@@ -1,6 +1,7 @@
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::clock_plan::{Pll3Config, PllRange, VcoRange};
 use chimera_core::clock_plan::{SiliconRev, cycles_for_us};
+pub use chimera_core::perf::load::CycleCounter;
 use cortex_m::peripheral::{DCB, DWT};
 use stm32h7xx_hal::pac;
 use stm32h7xx_hal::prelude::*;

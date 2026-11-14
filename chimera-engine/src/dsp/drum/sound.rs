@@ -4,7 +4,7 @@
 
 use chimera_midi::value::U7;
 
-use super::types::{Hz, Kit, PadId};
+use super::types::{Hz, Kit, Machine, PadId};
 use crate::block::{DiskCode, ParamId, ParamSpec, find_spec};
 use crate::dsp::Unit;
 use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice};
@@ -929,24 +929,61 @@ impl FilterShape {
     }
 }
 
+/// What a pad's AMP envelope and routes add a hit (`PadSound::mods`):
+/// three bills, so `KitBill`'s field holds any of them. Ordered as their
+/// costs are, so the costlier is the `max`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PadMods {
+    None,
+    /// The AMP envelope runs (`PAD_AMP_COST`).
+    Amp,
+    /// A route runs (`PAD_ROUTED_COST`).
+    Routed,
+}
+
+const _: () = assert!(Cost::ZERO.0 < PAD_AMP_COST.0 && PAD_AMP_COST.0 < PAD_ROUTED_COST.0);
+
+impl PadMods {
+    const ALL: [PadMods; 3] = [PadMods::None, PadMods::Amp, PadMods::Routed];
+
+    pub const fn cost(self) -> Cost {
+        match self {
+            PadMods::None => Cost::ZERO,
+            PadMods::Amp => PAD_AMP_COST,
+            PadMods::Routed => PAD_ROUTED_COST,
+        }
+    }
+}
+
+/// `KitBill::to_bits`' fields: mods 2 bits, the machine 4 (`Machine::index`
+/// + 1, 0 for none), the shapes 6 and the moving shapes 6, the gate 1.
+const MODS_BITS: u32 = 0x3;
+const MACHINE_BITS: u32 = 0xf;
+const _: () = assert!(PadMods::ALL.len() <= MODS_BITS as usize + 1);
+const _: () = assert!(Machine::ALL.len() <= MACHINE_BITS as usize);
+
 /// What a DRUM Part's hit is billed for its kit (`Voice::drum_cost`): the
-/// filter shapes its pads play, those a pad route moves, and its costliest
-/// pad's mods. Any bits are a bill (`from_bits`), so the view needs no build.
+/// filter shapes its pads play, those a pad route moves, its costliest
+/// pad's mods and its costliest machine. Any bits are a bill
+/// (`from_bits`), so the view needs no build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KitBill {
     shapes: u8,
     moving: u8,
-    mods: u16,
+    mods: PadMods,
+    /// The costliest machine; none before a kit is read.
+    machine: Option<Machine>,
     /// A pad's LPG, DECAY or STRIKE above 0: the gate runs.
     gated: bool,
 }
 
 impl KitBill {
-    /// No pad: the Sound's filter alone.
+    /// No pad: the Sound's filter alone, the costliest machine.
     pub const NONE: KitBill = KitBill {
         shapes: 0,
         moving: 0,
-        mods: 0,
+        mods: PadMods::None,
+        machine: None,
         gated: false,
     };
 
@@ -961,7 +998,7 @@ impl KitBill {
 
     /// The costliest pad's AMP and routes.
     pub const fn mods(self) -> Cost {
-        Cost(self.mods as u32)
+        self.mods.cost()
     }
 
     /// A pad's gate runs (`lpg::Knobs` above 0).
@@ -969,16 +1006,41 @@ impl KitBill {
         self.gated
     }
 
+    /// The Part's kernel bill: its costliest machine's `Machine::cost`,
+    /// the costliest of all with no kit read.
+    pub const fn kernel(self) -> Cost {
+        match self.machine {
+            Some(m) => m.cost(),
+            None => Machine::MAX_COST,
+        }
+    }
+
     pub const fn to_bits(self) -> u32 {
+        let machine = match self.machine {
+            Some(m) => m.index() as u32 + 1,
+            None => 0,
+        };
         self.mods as u32
+            | machine << 4
             | (self.shapes as u32) << 16
             | (self.moving as u32) << 24
             | (self.gated as u32) << 31
     }
 
     pub const fn from_bits(b: u32) -> KitBill {
+        let m = (b >> 4 & MACHINE_BITS) as usize;
+        let mods = (b & MODS_BITS) as usize;
         KitBill {
-            mods: b as u16,
+            mods: if mods < PadMods::ALL.len() {
+                PadMods::ALL[mods]
+            } else {
+                PadMods::Routed
+            },
+            machine: if m >= 1 && m <= Machine::ALL.len() {
+                Some(Machine::ALL[m - 1])
+            } else {
+                None
+            },
             shapes: (b >> 16) as u8 & 0x3f,
             moving: (b >> 24) as u8 & 0x3f,
             gated: b >> 31 != 0,
@@ -986,20 +1048,77 @@ impl KitBill {
     }
 }
 
-/// `kit`'s bill: every pad's filter shape, whether a pad's gate runs, and
-/// the costliest pad's mods.
+/// `kit`'s bill: every pad's filter shape, whether a pad's gate runs, the
+/// costliest pad's mods and the costliest machine.
 pub fn kit_bill(kit: &Kit) -> KitBill {
     PadId::ALL.iter().fold(KitBill::NONE, |b, &p| {
         let s = kit.pad(p).sound();
         let f = FilterShape::of(s.filter.kind, s.filter.voice).bit();
-        let m = u16::try_from(s.mod_cost().0).unwrap_or(u16::MAX);
+        let m = s.mods();
+        let mc = kit.pad(p).machine();
         KitBill {
             shapes: b.shapes | f,
             moving: b.moving | if s.routes.moves_filter() { f } else { 0 },
             mods: b.mods.max(m),
+            machine: match b.machine {
+                Some(was) if was.cost() >= mc.cost() => Some(was),
+                _ => Some(mc),
+            },
             gated: b.gated || s.amp.gate != lpg::Knobs::default(),
         }
     })
+}
+
+/// A Part's voice bill split at its DRUM kernel (`Voice::drum_cost`): a
+/// hit bills the rest and its own machine, nothing taken off, so no
+/// later kit can bring it under its cost. Other engines' have no kernel
+/// (`flat`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartBill {
+    rest: Cost,
+    kernel: Cost,
+}
+
+/// What a DRUM voice's kernel plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HitKernel {
+    /// A hit sounding or waiting to: its machine.
+    Sounding(Machine),
+    /// It ended, its key still held: no kernel runs.
+    Ended,
+}
+
+impl PartBill {
+    pub const ZERO: PartBill = PartBill::flat(Cost::ZERO);
+
+    /// `rest` beside a kernel billed `kernel`.
+    pub const fn new(rest: Cost, kernel: Cost) -> PartBill {
+        PartBill { rest, kernel }
+    }
+
+    /// A bill with no kernel: not DRUM.
+    pub const fn flat(c: Cost) -> PartBill {
+        PartBill::new(c, Cost::ZERO)
+    }
+
+    /// `extra` on every voice of the Part (a knob's glide).
+    pub fn with(self, extra: Cost) -> PartBill {
+        PartBill::new(self.rest + extra, self.kernel)
+    }
+
+    /// The Part's voice: the rest at its kit's costliest machine.
+    pub fn whole(self) -> Cost {
+        self.rest + self.kernel
+    }
+
+    /// A hit's voice: the rest and its own kernel.
+    pub fn hit(self, k: HitKernel) -> Cost {
+        self.rest
+            + match k {
+                HitKernel::Sounding(m) => m.cost(),
+                HitKernel::Ended => Cost::ZERO,
+            }
+    }
 }
 
 /// The values a ringing hit follows (`Places`).
@@ -1242,14 +1361,14 @@ impl PadSound {
         self.lfo.params_at(p.lfo())
     }
 
-    /// What its AMP envelope and routes add a hit, over the filter.
-    pub fn mod_cost(&self) -> Cost {
+    /// Which of its AMP envelope and routes run.
+    pub fn mods(&self) -> PadMods {
         if !self.routes.is_off() {
-            PAD_ROUTED_COST
+            PadMods::Routed
         } else if !self.amp.env.is_open() {
-            PAD_AMP_COST
+            PadMods::Amp
         } else {
-            Cost::ZERO
+            PadMods::None
         }
     }
 

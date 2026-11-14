@@ -30,7 +30,12 @@ pub fn render(edit: impl FnOnce(&mut chimera_core::project::Project)) -> (Vec<f3
         .publish_all(p.kits());
     let mut inst = Box::new(Instrument::new(
         chimera_hal::SAMPLE_RATE,
-        chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
+        // Rev V's; twice that at master-tape, whose bus leaves the kit short (#951).
+        if cfg!(feature = "master-tape") {
+            super::drum::PLAY_BUDGET
+        } else {
+            super::drum::REV_V_BUDGET
+        },
     ));
     let mut fx = Box::new(FxBus::new());
     let mut dac = Box::new(DacBlocks::new());

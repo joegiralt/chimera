@@ -11,7 +11,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drum::engine::MidSide;
-use crate::dsp::drum::sound::{KitBill, RouteOffsets};
+use crate::dsp::drum::sound::{KitBill, PartBill, RouteOffsets};
 use crate::dsp::drum::types::{DrumHit, HitSeed, SampleRate};
 use crate::dsp::drum::view::KIT_VIEW;
 use crate::dsp::ease::{Ramp, at, step_of};
@@ -237,13 +237,12 @@ impl Voice {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         // The VCA's gate (ADR 0195), bank 2's: none with its door closed.
         let gate = gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO);
-        Self::cost_with(p, mods, Self::filter_cost(p, mods), gate)
+        EngineSlot::cost(p, mods) + Self::cost_with(p, mods, Self::filter_cost(p, mods), gate)
     }
 
-    /// `cost` with its filter's and gate's bills given.
+    /// `cost` past its engine, with its filter's and gate's bills given.
     fn cost_with(p: &ParamSnapshot, mods: &ModState, filter: Cost, gate: Cost) -> Cost {
-        EngineSlot::cost(p, mods)
-            + Self::CHAIN_COST
+        Self::CHAIN_COST
             + filter
             + ModRouting::cost(p, mods)
             + Self::fx_cost(p, mods)
@@ -255,8 +254,9 @@ impl Voice {
     /// Sound's place: the filter at the costliest shape its kit's pads
     /// play (a pad route moving its path once; the Sound's own before the
     /// first publish), the gate while a pad's or a Part route's runs it,
-    /// plus the costliest pad's AMP and routes.
-    pub fn drum_cost(p: &ParamSnapshot, mods: &ModState, kit: KitBill) -> Cost {
+    /// plus the costliest pad's AMP and routes, beside its kernel at the
+    /// kit's costliest machine (`PartBill::hit` bills one hit's own).
+    pub fn drum_cost(p: &ParamSnapshot, mods: &ModState, kit: KitBill) -> PartBill {
         let t = FilterTerms::of(p, mods);
         let own = t.bill(p.filter.kind(), p.filter.voice, false);
         let filter = kit
@@ -271,7 +271,8 @@ impl Voice {
             Some(()) if kit.gated() || routed => LPG_COST,
             _ => Cost::ZERO,
         };
-        Self::cost_with(p, mods, filter, gate) + kit.mods()
+        let rest = Self::cost_with(p, mods, filter, gate) + kit.mods();
+        PartBill::new(rest, kit.kernel())
     }
 
     /// The filter as `p` and `mods` run it: the steady bill, the moving

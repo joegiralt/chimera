@@ -4,6 +4,7 @@
 use core::iter::Sum;
 use core::ops::Add;
 
+pub use chimera_hal::units::Cycles;
 pub use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
 pub const MAX_VOICES: usize = 8;
@@ -50,7 +51,22 @@ impl BlockBudget {
     pub const fn budget_cycles(self) -> u32 {
         (self.0 as u64 * AUDIO_BUDGET_PERCENT as u64 / 100) as u32
     }
+
+    /// The render span past which a block sheds a voice (ADR 0273):
+    /// `LOAD_SHED_PERCENT` of its deadline, rounded down, so a span over
+    /// it is over the share.
+    pub const fn shed_at(self) -> Cycles {
+        Cycles::new((self.0 as u64 * LOAD_SHED_PERCENT / 100) as u32)
+    }
 }
+
+/// The share of a block's deadline, in percent, past which a rendered
+/// block sheds a voice (ADR 0273): above ADR 0262's worst billed block,
+/// short of the overrun. Six Parts read about 89 % on rev V and about
+/// 92 % on rev Y (the same overhead cycles over a smaller deadline):
+/// about 6 points of margin on rev V, 3 on rev Y. Read through
+/// `BlockBudget::shed_at`.
+const LOAD_SHED_PERCENT: u64 = 95;
 
 /// Memory regions, in bytes (STM32H750 map, RM0433 §2.3).
 pub const AXI_SRAM: usize = 512 * 1024; // D1: framebuffer, UI, Performance, FX bus
@@ -107,6 +123,11 @@ pub struct Cost(pub u32);
 
 impl Cost {
     pub const ZERO: Cost = Cost(0);
+
+    /// The costlier of the two (`Ord::max`, in a const).
+    pub const fn max(self, other: Cost) -> Cost {
+        if other.0 > self.0 { other } else { self }
+    }
 }
 
 impl Add for Cost {

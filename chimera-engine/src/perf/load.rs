@@ -1,6 +1,7 @@
 use crate::board::BoardId;
 use crate::clock_plan::SiliconRev;
-use crate::hw::BlockBudget;
+use crate::hw::{BlockBudget, Cycles};
+use crate::instrument::Instrument;
 use crate::note_queue::MAX_NOTE_SOURCES;
 use crate::reset::ResetCause;
 
@@ -16,6 +17,8 @@ pub struct AudioStats {
     pub load_avg: u16,
     pub load_peak: u16,
     pub overruns: u32,
+    /// Voices the load net shed (ADR 0273).
+    pub load_sheds: u32,
     pub desyncs: u32,
     /// DMA transfer errors on the trailing streams, each re-armed.
     pub dma_errors: u32,
@@ -47,6 +50,7 @@ impl AudioStats {
             load_avg: 0,
             load_peak: 0,
             overruns: 0,
+            load_sheds: 0,
             desyncs: 0,
             dma_errors: 0,
             fifo_errors: 0,
@@ -92,5 +96,40 @@ impl AudioStats {
             self.window_sum = 0;
             self.window_len = 0;
         }
+    }
+}
+
+/// Proof the cycle counter counts (`CycleCounter::new`): the load net is
+/// built only on one (ADR 0273).
+#[derive(Clone, Copy, Debug)]
+pub struct CycleCounter(());
+
+impl CycleCounter {
+    /// The proof, if the cycle counter `counting` moves.
+    pub const fn new(counting: bool) -> Option<Self> {
+        if counting { Some(Self(())) } else { None }
+    }
+}
+
+/// The load net (ADR 0273): a block rendered past its `shed_at` sheds one
+/// voice before the next. Built only with a `CycleCounter`, proof the DWT
+/// counts; the audio interrupt calls `after` once a half.
+#[derive(Clone, Copy, Debug)]
+pub struct LoadNet {
+    shed_at: Cycles,
+}
+
+impl LoadNet {
+    pub const fn new(_counter: CycleCounter, block: BlockBudget) -> Self {
+        Self {
+            shed_at: block.shed_at(),
+        }
+    }
+
+    /// After a block that took `took`: past `shed_at`, one sounding voice
+    /// of `inst` fades out (`Instrument::shed_for_load`). True when one
+    /// did: the caller counts it.
+    pub fn after(self, took: Cycles, inst: &mut Instrument) -> bool {
+        took > self.shed_at && inst.shed_for_load()
     }
 }

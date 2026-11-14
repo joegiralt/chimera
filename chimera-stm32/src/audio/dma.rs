@@ -249,8 +249,8 @@ fn DMA1_STR0() {
     }
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
-        // SAFETY: this is the audio interrupt, `measure`'s one caller.
-        unsafe { chimera_board::probe::measure(|| super::render_half(half)) };
+        // SAFETY: this is the audio interrupt, as `render_half_timed` asks.
+        unsafe { super::engine::render_half_timed(half) };
         BLOCKS.fetch_add(1, Ordering::Relaxed);
     }
     let after = dma1.lisr.read();

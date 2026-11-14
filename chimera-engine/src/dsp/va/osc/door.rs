@@ -285,5 +285,5 @@ pub(super) fn run<
     m: &[f32; N],
     k: (f32, f32),
 ) {
-    o.run_in::<A, B, N, REC, SYNC, FLIP, MOD, PH>(blk, span, r, out, mk, jit, draw, m, k);
+    o.run_in::<A, B, N, REC, SYNC, FLIP, MOD, PH, false>(blk, span, r, out, mk, jit, draw, m, k);
 }

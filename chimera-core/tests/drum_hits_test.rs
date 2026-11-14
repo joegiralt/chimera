@@ -15,14 +15,15 @@ use chimera_core::dsp::drum::types::{
     ChokeGroup, DrumHit, Kit, Knob, KnobValue, PadId, Pan, Tonal, Transpose,
 };
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
-use chimera_core::dsp::engines::{EngineSlot, SlotKind};
+use chimera_core::dsp::engines::SlotKind;
 use chimera_core::dsp::tape_engine::params::Retrig;
-use chimera_core::hw::{CPU_HZ_REV_V, MAX_PARTS, MAX_VOICES, SampleBudget};
+use chimera_core::hw::{MAX_PARTS, MAX_VOICES};
 use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 use chimera_midi::value::U7;
+use common::drum::{PLAY_BUDGET, drum_hits, drum_rig};
 use common::{InstRig, SR};
 
 static WRITER: LazyLock<Mutex<KitWriter>> =
@@ -30,20 +31,12 @@ static WRITER: LazyLock<Mutex<KitWriter>> =
 
 const P1: PartId = PartId::ALL[0];
 
-/// The writer, with every Part on `Kit::DEFAULT` (TONAL OFF) but Part 1, which plays `kit`; and a rig whose Part 1 (channel 1) is DRUM,
-/// the other Parts on channel 16.
+/// The writer, and a DRUM rig on `kit` beside Parts on `Kit::DEFAULT`
+/// (TONAL OFF), on twice rev V's budget: these pin how hits play, eight at
+/// once (`PLAY_BUDGET`).
 fn rig(kit: &Kit) -> (MutexGuard<'static, KitWriter>, InstRig) {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
-    for p in PartId::ALL {
-        w.publish(p, &Kit::DEFAULT);
-        let _ = w.take_hit(p);
-    }
-    w.publish(P1, kit);
-    let mut r = InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
-    for (i, part) in r.shared.parts.iter_mut().enumerate() {
-        part.mix.channel = MidiChannel::new(if i == 0 { 0 } else { 15 }).unwrap();
-    }
-    *r.shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Drum);
+    let r = drum_rig(&mut w, PLAY_BUDGET, &Kit::DEFAULT, kit);
     (w, r)
 }
 
@@ -53,13 +46,7 @@ fn pad(n: u8) -> PadId {
 
 /// The hits sounding, by voice.
 fn hits(r: &InstRig) -> Vec<DrumHit> {
-    (0..MAX_VOICES)
-        .filter(|&v| r.inst.voice(v).is_active())
-        .filter_map(|v| match r.inst.voice(v).slot() {
-            EngineSlot::Drum(d) => d.hit(),
-            _ => None,
-        })
-        .collect()
+    drum_hits(&r.inst).map(|(_, h)| h).collect()
 }
 
 #[test]

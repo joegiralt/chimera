@@ -100,6 +100,8 @@ project LATE SET
 state MODIFIED
 part 3
 at SETTINGS > SYSTEM > DIAG > AUD LOAD
+sram4 ok
+load_net on
 bank2 empty
 OK
 ```
@@ -108,6 +110,8 @@ OK
 - `project` is the project's name, as the footer draws it.
 - `state` is one of `NEW`, `SAVED` or `MODIFIED`, the footer's words for `ProjectStatus::Pristine`, `Saved` and `Modified`. It comes from `UiState::project_status()`, which may hash the project once (about 1.7 ms on the chip, the B1 row). That is acceptable once per request.
 - `part` is the active Part, 1 to 6.
+- `sram4` is SRAM4's boot self-test: `ok`, `FAIL` or `untested`.
+- `load_net` is the load net (ADR 0273): `on` once the audio built it, `OFF` where the cycle counter would not count (no net, and `load_sheds` stays 0), `none` before audio and on the desktop.
 - `bank2` is bank 2 as the boot judged it (ADR 0137), on the chip only: `bank2 open <version> seal=<16 hex>`, `bank2 stale have <version>`, `bank2 ecc erase failed <why>` (a double ECC error marked bank 2 bad, and the boot's erase of S0 failed: bank 2 not read this boot), or `bank2 empty|torn|foreign|corrupt|format <n>|unsealed`. ABOUT shows `OK` for `open`, else `NEEDS UPDATE`.
 - On the chip only, three more lines after `bank2`: `boot marker=<hex> readback=<hex> action=Synth rsr=<hex> dbp=<0|1> boots=<n> from=<menu|console|none> jump_rsr=<hex> last_stage=<stage> last_usb=<state> last_usb_step=<step>(try <n>)`, then `last_usb_regs <regs>` and `usb_regs <regs>`, where `<regs>` is `gotgctl=<hex> gccfg=<hex> dctl=<hex> gintsts=<hex> dsts=<hex> pwr_cr3=<hex>`. The `boot` line is what the top of `main` saw (`boot::BootSeen`). `marker` and `readback` are RTC_BKP0R before and after the clear, `rsr` is RCC_RSR before RMVF, `dbp` is PWR_CR1.DBP on entry, `boots` counts in BKP1R (it carries on through a power-off only if VBAT kept the backup domain), `from` is BKP2R, written by `dfu::enter`, `jump_rsr` is BKP3R, RCC_RSR at the last jump to the ROM, and `last_stage` is BKP4R on entry, the `boot::BootStage` the boot before this one reached (`entry`, `card`, `audio`, `armed`, `running`, or `none`), and `last_usb` is BKP5R, how that boot's USB step ended and on which try: `on(try <n>)`, `off(<hsi48|usb33|ahbidl|csrst>, try <n>)`, or `none`; `last_usb_step` is BKP6R, the latest bring-up step it recorded and on which try: `preflight`, `init`, `connect`, `up`, then the host's `sof`, `addressed`, `configured` or `suspended` (a later step overwrites an earlier one, so `suspended` replaces `configured`). `last_usb_regs` is BKP7R..12R, that boot's last snapshot of those registers (taken every 500 ms; each synth boot clears BKP5R..12R first, so a boot that never reached USB reads zeros), and `usb_regs` is the same registers now. A boot that jumps to the ROM loader leaves the record untouched, so a cold boot's record is read through OS UPGRADE, a flash and `:leave`. § Bring-up has the USB sequence. Known limitation: from a cold power-on CSRST never clears, so the console is off until one pass through the ROM loader (OS UPGRADE, then `dfu-util … :leave`), after which it stays up until power-off (private issue #331, `docs/recovery.md`).
 - `at` is `Location` in ASCII, with ` > ` between levels:
@@ -129,6 +133,7 @@ OK
 load_pct 23
 peak_pct 41
 overruns 0
+load_sheds 0
 drops 0
 desyncs 0
 dma_errors 0
@@ -141,7 +146,8 @@ loop_peak_us 4210
 OK
 ```
 
-- The first eight lines are `AudioStats` as the AUDIO LOAD page reads them.
+- The first nine lines are `AudioStats` as the AUDIO LOAD page reads them.
+- `load_sheds` counts the voices the load net shed: a block past 95 % of its deadline fades one voice out before the next (ADR 0273). Above 0 means a bill is under the voices' real cost.
 - `drops` holds one count per note source (`sources` of them), separated by spaces; `-` when `sources` is 0.
 - `desyncs` counts trailing DMA streams drifting from stream 0; `dma_errors` and `fifo_errors` count transfer and FIFO errors on streams 1 and 2 (each transfer error re-arms the stream).
 - `stack_bytes` is `stack_used` (the page rounds it to K; this does not).

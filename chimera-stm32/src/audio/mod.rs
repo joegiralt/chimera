@@ -6,15 +6,12 @@ use chimera_board::AudioStart;
 use chimera_board::clocks;
 use chimera_engine::audio_out::Half;
 use chimera_engine::clock_plan::pll3_for;
-use chimera_engine::hw::SampleBudget;
-
-pub fn render_half(half: Half) {
-    engine::render_half(half);
-}
+use chimera_engine::hw::{BlockBudget, SampleBudget};
+use chimera_engine::perf::load::LoadNet;
 
 pub fn prefill() {
-    render_half(Half::First);
-    render_half(Half::Second);
+    engine::render_half(Half::First);
+    engine::render_half(Half::Second);
 }
 
 /// Start-up step 2 (`chimera_board::synth`): the engine built, then the
@@ -22,6 +19,8 @@ pub fn prefill() {
 pub fn start(a: AudioStart<'_>) {
     engine::init(
         SampleBudget::for_cpu(a.clk.cpu_hz),
+        a.counter
+            .map(|c| LoadNet::new(c, BlockBudget::for_cpu(a.clk.cpu_hz))),
         a.shared,
         a.notes,
         a.scope,
