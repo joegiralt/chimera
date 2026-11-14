@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 pub mod codec_util;
+pub mod drum;
 pub mod drum_slice1;
 pub mod filter_ref;
 pub mod formant;

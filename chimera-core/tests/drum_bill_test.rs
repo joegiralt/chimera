@@ -11,7 +11,6 @@ mod common;
 
 use std::sync::{LazyLock, Mutex};
 
-use chimera_core::MidiChannel;
 use chimera_core::budget::CONTROL_RESERVE;
 use chimera_core::dsp::drum::sound::{
     Amount, HitKernel, KitBill, PAD_AMP_COST, PAD_ROUTED_COST, PadMods, PadRoute, PadSound,
@@ -24,11 +23,12 @@ use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::lpg::{self, LPG_COST};
 use chimera_core::dsp::tape_engine::params::Retrig;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{BlockBudget, CPU_HZ_REV_V, Cost, Cycles, MAX_VOICES, SampleBudget};
+use chimera_core::hw::{BlockBudget, CPU_HZ_REV_V, Cost, Cycles};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::perf::load::{CycleCounter, LoadNet};
 use chimera_core::project::PartId;
+use common::drum::{REV_V_BUDGET, drum_hits};
 
 static WRITER: LazyLock<Mutex<KitWriter>> =
     LazyLock::new(|| Mutex::new(KitWriter::take().expect("the kit writer, once")));
@@ -306,7 +306,7 @@ fn a_part_bills_its_costliest_machine() {
 fn init_drum_roll_stays_in_budget() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
-    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+    let budget = REV_V_BUDGET;
     let gap = (0.06 * common::SR as f32) as usize / chimera_hal::BLOCK_SIZE;
     let reserved = FxBus::COST.0 + CONTROL_RESERVE.0;
     let (mut most, mut struck, mut refused) = (0, 0, vec![]);
@@ -327,12 +327,9 @@ fn init_drum_roll_stays_in_budget() {
         }
         let slots = r.inst.allocator().slots();
         let mut n = 0;
-        for (v, s) in slots.iter().enumerate() {
-            let Some(h) = r.inst.voice(v).drum_hit() else {
-                continue;
-            };
+        for (v, h) in drum_hits(&r.inst) {
             n += 1;
-            let c = s.cost().0;
+            let c = slots[v].cost().0;
             if let Some(read) = reading(h.pad()) {
                 assert!(
                     c * 10 >= read * 11,
@@ -375,25 +372,22 @@ fn kicks() -> Kit {
 /// Part 1 (channel 1) DRUM on rev V's budget, the others on channel 16,
 /// every Part playing `kit`.
 fn drum_rig(w: &mut KitWriter, kit: &Kit) -> common::InstRig {
-    for id in PartId::ALL {
-        w.publish(id, kit);
-        let _ = w.take_hit(id);
-    }
-    let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
-    for (i, part) in r.shared.parts.iter_mut().enumerate() {
-        part.mix.channel = MidiChannel::new(if i == 0 { 0 } else { 15 }).unwrap();
-    }
-    *r.shared.parts[0].params = drum_init();
-    r
+    common::drum::drum_rig(w, REV_V_BUDGET, kit, kit)
 }
 
 /// Part 1's slot booked for `key`, not dying.
-fn booked(r: &common::InstRig, key: u8) -> Cost {
-    let s = r.inst.allocator().slots();
-    let s = s
+fn slot_for(r: &common::InstRig, key: u8) -> Option<usize> {
+    r.inst
+        .allocator()
+        .slots()
         .iter()
-        .find(|s| s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(key));
-    s.expect("a slot for the key").cost()
+        .position(|s| s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(key))
+}
+
+/// What Part 1's slot for `key` books.
+fn booked(r: &common::InstRig, key: u8) -> Cost {
+    let v = slot_for(r, key).expect("a slot for the key");
+    r.inst.allocator().slots()[v].cost()
 }
 
 /// A kit of KICKs, pad 1 switched to JINGLE and struck before the next
@@ -435,10 +429,7 @@ fn key(p: PadId) -> u8 {
 
 /// The pads sounding.
 fn sounding(r: &common::InstRig) -> Vec<PadId> {
-    let mut p: Vec<PadId> = (0..MAX_VOICES)
-        .filter_map(|v| r.inst.voice(v).drum_hit())
-        .map(|h| h.pad())
-        .collect();
+    let mut p: Vec<PadId> = drum_hits(&r.inst).map(|(_, h)| h.pad()).collect();
     p.sort_unstable();
     p
 }
@@ -494,10 +485,7 @@ fn twelve_pads_a_block_apart_on_rev_v() {
             r.note_on_vel(0, key(PadId::ALL[usize::from(b)]), 127);
             if r.inst.allocator().refused() != was {
                 // A refused hit books nothing; a choke drops an earlier one.
-                let booked = r.inst.allocator().slots().iter().any(|s| {
-                    s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(b)
-                });
-                if booked {
+                if slot_for(&r, b).is_some() {
                     chokes += 1;
                 } else {
                     refusals += 1;
@@ -538,9 +526,7 @@ fn the_load_net_sheds_only_a_sounding_voice() {
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     r.note_on_vel(0, key(pad(8)), 127);
     r.render(SR_BLOCKS / 2);
-    let hat = (0..MAX_VOICES)
-        .find(|&v| r.inst.allocator().slots()[v].note().map(|n| n.get()) == Some(7))
-        .expect("the HAT's key still books its voice");
+    let hat = slot_for(&r, key(pad(8))).expect("the HAT's key still books its voice");
     assert!(!r.inst.voice(hat).is_active(), "the HAT has ended");
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
     let counter = CycleCounter::new(true).expect("a counting DWT");

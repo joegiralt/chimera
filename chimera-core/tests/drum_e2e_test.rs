@@ -15,7 +15,6 @@ use chimera_core::dsp::drum::types::PadId;
 use chimera_core::dsp::drum::view::KitWriter;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::KnobPublisher;
-use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::EngineType;
@@ -25,6 +24,7 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::DRUM_KIT;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, ButtonId, EncoderId, SAMPLE_RATE};
+use common::drum::{PLAY_BUDGET, drum_hits};
 use screen::{Input, feed};
 
 const P1: PartId = PartId::ALL[0];
@@ -54,7 +54,7 @@ impl Desk {
         let mut d = Self {
             ui,
             shared: Box::new(AudioShared::default()),
-            inst: Box::new(Instrument::new(SAMPLE_RATE, BUDGET)),
+            inst: Box::new(Instrument::new(SAMPLE_RATE, PLAY_BUDGET)),
             fx: Box::new(FxBus::new()),
             dac: Box::new(DacBlocks::new()),
             scope: common::scope_writer(),
@@ -91,7 +91,7 @@ impl Desk {
 
     /// A new Instrument, FX bus and DAC: nothing sounding.
     fn fresh_audio(&mut self) {
-        *self.inst = Instrument::new(SAMPLE_RATE, BUDGET);
+        *self.inst = Instrument::new(SAMPLE_RATE, PLAY_BUDGET);
         *self.fx = FxBus::new();
         *self.dac = DacBlocks::new();
     }
@@ -100,10 +100,6 @@ impl Desk {
         self.ui.project().pad_lights(P1).lit().bits()
     }
 }
-
-/// Twice rev V's: all 12 pads at once, a block apart, must sound here;
-/// `drum_bill_test` pins what fits rev V (#951).
-const BUDGET: SampleBudget = SampleBudget::for_cpu(2 * CPU_HZ_REV_V);
 
 /// One test: the kit writer is the process's once, and `KIT_VIEW` is
 /// shared by every Instrument in it.
@@ -295,12 +291,7 @@ fn mix(ui: &mut UiState, b: ButtonId) {
 
 /// The active voice sounding pad `p`'s hit.
 fn voice_of(d: &Desk, p: PadId) -> usize {
-    use chimera_core::dsp::engines::EngineSlot;
-    (0..chimera_core::hw::MAX_VOICES)
-        .find(|&v| {
-            let voice = d.inst.voice(v);
-            voice.is_active()
-                && matches!(voice.slot(), EngineSlot::Drum(dr) if dr.hit().is_some_and(|h| h.pad() == p))
-        })
+    drum_hits(&d.inst)
+        .find_map(|(v, h)| (h.pad() == p).then_some(v))
         .expect("a voice sounds the pad")
 }
