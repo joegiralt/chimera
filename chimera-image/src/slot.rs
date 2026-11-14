@@ -147,7 +147,10 @@ impl Word {
     }
 
     /// `want`, or `want` torn: a program only clears bits, so every 1 in
-    /// `want` is still 1.
+    /// `want` is still 1. A bit-superset of the code word passes too, but its
+    /// reset then carries `base + 9`'s bits: S4..S7 (which must hold ours),
+    /// or memory unmapped or not set up at reset. No working trampoline into
+    /// system memory, RAM or bank 1 can pass.
     fn may_be(&self, want: &[u8; 32]) -> bool {
         self.ecc || self.bytes.iter().zip(want).all(|(w, e)| w & e == *e)
     }
@@ -169,8 +172,9 @@ pub struct SlotPlan {
 pub struct SlotForeign(pub Slot);
 
 /// Judge each slot not in `ours` before anything is written (spec § 3.2).
-/// A clean tag or marker makes it ours; otherwise every word must be
-/// erased, bar the three Chimera writes, which may be torn.
+/// A clean tag, or a clean marker with S4's code word ours or torn, makes
+/// it ours; otherwise every word must be erased, bar the three Chimera
+/// writes, which may be torn. The stub's code bytes never change.
 pub fn guard(r: &mut impl SlotRead, ours: SlotSet) -> Result<SlotPlan, SlotForeign> {
     let mut erased = SlotSet::NONE;
     for s in Slot::ALL {
@@ -190,7 +194,8 @@ fn tagged(r: &mut impl SlotRead, s: Slot) -> bool {
         return true;
     }
     let m = r.word(s.marker_addr());
-    !m.ecc && m.bytes[..16] == *MARKER
+    // A marker alone outlives a revert that refilled S4 with other code.
+    !m.ecc && m.bytes[..16] == *MARKER && r.word(s.base()).may_be(&code_word(s))
 }
 
 /// Some(fully erased) if the slot may be ours, None if foreign.

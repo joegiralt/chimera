@@ -83,8 +83,59 @@ fn a_clean_marker_is_ours() {
         let p = guard(&mut r, SlotSet::NONE).unwrap();
         assert!(!p.erased.has(s));
         let reads: Vec<u32> = r.reads.iter().copied().filter(|&a| in_slot(s, a)).collect();
-        assert_eq!(reads, [s.base() + 0x20, s.marker_addr()], "{s:?}");
+        assert_eq!(reads, [s.base() + 0x20, s.marker_addr(), s.base()], "{s:?}");
     }
+}
+
+#[test]
+fn a_clean_marker_with_foreign_code_in_s4_is_refused() {
+    for s in Slot::ALL {
+        let mut v = [0xFF; 32];
+        v[..4].copy_from_slice(&0x2002_0000u32.to_le_bytes());
+        v[4..8].copy_from_slice(&0x1FF0_9800u32.to_le_bytes());
+        let mut r = SimSlots::default();
+        r.set(s.marker_addr(), end_marker(s));
+        r.set(s.base(), v);
+        r.set(s.base() + 0x40, [0; 32]);
+        assert_eq!(guard(&mut r, SlotSet::NONE), Err(SlotForeign(s)));
+    }
+}
+
+#[test]
+fn a_clean_marker_with_our_code_torn_or_erased_is_ours() {
+    let s = Slot::Mixer;
+    let mut r = SimSlots::default();
+    r.set(s.marker_addr(), end_marker(s));
+    r.ecc(s.base());
+    assert!(guard(&mut r, SlotSet::NONE).is_ok());
+}
+
+#[test]
+fn an_ecc_tag_with_its_text_falls_to_the_scan() {
+    let s = Slot::Mixer;
+    let ecc_tag = Word {
+        bytes: tag_word(s),
+        ecc: true,
+    };
+    let mut r = SimSlots::default();
+    r.words.insert(s.base() + 0x20, ecc_tag);
+    let p = guard(&mut r, SlotSet::NONE).unwrap();
+    assert!(!p.erased.has(s));
+    assert!(p.erased.has(Slot::Edit));
+
+    let mut r = SimSlots::default();
+    r.words.insert(s.base() + 0x20, ecc_tag);
+    r.set(s.marker_addr() - 0x1_0000, [0; 32]);
+    assert_eq!(guard(&mut r, SlotSet::NONE), Err(SlotForeign(s)));
+}
+
+#[test]
+fn an_ecc_marker_with_s4_erased_is_ours() {
+    let s = Slot::Edit;
+    let mut r = SimSlots::default();
+    r.ecc(s.marker_addr());
+    let p = guard(&mut r, SlotSet::NONE).unwrap();
+    assert!(!p.erased.has(s));
 }
 
 #[test]
