@@ -2,7 +2,8 @@
 //! by one 8-byte seal, and nothing in bank 1 may reach bank 2 but the door.
 
 use chimera_image::crc::Crc32;
-use chimera_image::{BANK2_BASE, BANK2_LEN, HEADER_LEN, Header, MAGIC, Seal, Version};
+use chimera_image::slot::{RESERVE, code_word, end_marker, tag_word};
+use chimera_image::{BANK2_BASE, BANK2_LEN, HEADER_LEN, Header, MAGIC, Seal, Slot, Version};
 use object::elf::{SHF_ALLOC, SHT_REL, SHT_RELA};
 use object::read::elf::{ElfFile32, SectionHeader};
 use object::{Endianness, Object, ObjectSection, ObjectSymbol, RelocationTarget, SymbolSection};
@@ -57,6 +58,44 @@ pub fn seal_images(
     Ok(seal)
 }
 
+/// The `.bk2`'s slot words: its exact size, each slot's stub, tag and end
+/// marker at their flash words, and 0xFF in the reserve after each tag.
+pub fn check_slots(bk2: &[u8]) -> Result<(), String> {
+    if bk2.len() != BANK2_LEN as usize {
+        return Err(format!("the .bk2 is {} B, not {BANK2_LEN}", bk2.len()));
+    }
+    let at = |addr: u32| (addr - BANK2_BASE) as usize;
+    for s in Slot::ALL {
+        let words = [
+            (s.base(), code_word(s), "stub"),
+            (s.tag_addr(), tag_word(s), "tag"),
+            (s.marker_addr(), end_marker(s), "end marker"),
+        ];
+        for (addr, want, what) in words {
+            if bk2[at(addr)..at(addr) + 32] != want {
+                return Err(format!("slot {s:?} {what} at {addr:#010x} is wrong"));
+            }
+        }
+        let from = s.tag_addr() + 32;
+        let r = at(from)..at(from) + RESERVE as usize - 32;
+        if let Some(i) = bk2[r.clone()].iter().position(|&b| b != 0xFF) {
+            return Err(format!(
+                "slot {s:?} reserve at {:#010x} is not 0xFF",
+                from + i as u32
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `chimera-utils check-slots BK2`.
+pub fn check_slots_file(bk2: &str) -> Result<(), String> {
+    let b = std::fs::read(bk2).map_err(|e| format!("{bk2}: {e}"))?;
+    check_slots(&b).map_err(|e| format!("{bk2}: {e}"))?;
+    println!("{bk2}: slots ok");
+    Ok(())
+}
+
 /// The `.bk2`'s header seal, found once in the `.bin`: the two are one build.
 pub fn check_pair(bin: &[u8], bk2: &[u8]) -> Result<Seal, String> {
     let hb: &[u8; HEADER_LEN as usize] = bk2
@@ -65,6 +104,7 @@ pub fn check_pair(bin: &[u8], bk2: &[u8]) -> Result<Seal, String> {
         .ok_or("the .bk2 is shorter than its header")?;
     let h = Header::parse(hb).map_err(|v| format!("the .bk2 header judges {v:?}"))?;
     let seal = Seal::new(h.seal).ok_or("the .bk2 seal is a reserved value")?;
+    check_slots(bk2)?;
     let body = &bk2[HEADER_LEN as usize..];
     if body.len() != h.body_len as usize {
         return Err(format!(

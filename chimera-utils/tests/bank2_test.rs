@@ -27,6 +27,16 @@ fn fake() -> (Vec<u8>, Vec<u8>) {
     let mut bk2 = UNSEALED_HEADER.to_vec();
     bk2.extend((0..1024).map(|i| (i * 7) as u8));
     bk2.resize(BANK2_LEN as usize, 0xFF);
+    for s in chimera_image::Slot::ALL {
+        for (addr, w) in [
+            (s.base(), chimera_image::slot::code_word(s)),
+            (s.tag_addr(), chimera_image::slot::tag_word(s)),
+            (s.marker_addr(), chimera_image::slot::end_marker(s)),
+        ] {
+            let o = (addr - chimera_image::BANK2_BASE) as usize;
+            bk2[o..o + 32].copy_from_slice(&w);
+        }
+    }
     (bin, bk2)
 }
 
