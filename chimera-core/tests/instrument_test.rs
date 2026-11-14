@@ -30,9 +30,10 @@ use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::fnv1a;
 
-use chimera_core::hw::{
-    AUDIO_BUDGET_PERCENT, BlockBudget, CPU_HZ_REV_V, LOAD_SHED_PERCENT, SampleBudget,
-};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use chimera_core::hw::{AUDIO_BUDGET_PERCENT, BlockBudget, CPU_HZ_REV_V, Cycles, SampleBudget};
+use chimera_core::perf::load::LoadNet;
 
 /// The budget a voice share of `voice_share` cycles/sample gives, the FX
 /// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
@@ -512,13 +513,17 @@ fn each_overloaded_block_sheds_one_voice_until_none_is_left() {
         s.iter().filter(|s| !s.is_free() && !s.dying()).count()
     };
     assert_eq!(live(&rig), 4);
+    // The firmware's glue: `LoadNet::after`, as the audio interrupt calls it.
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
-    let under = block.block_cycles() / 100 * LOAD_SHED_PERCENT;
-    let net = |rig: &mut Rig, cycles: u32| block.overloaded(cycles) && rig.inst.shed_for_load();
+    let sheds = AtomicU32::new(0);
+    let load = LoadNet::new(block);
+    let (at, over) = (block.shed_at(), Cycles::new(block.block_cycles()));
+    let net = |rig: &mut Rig, took: Cycles| load.after(took, &mut rig.inst, &sheds);
     for _ in 0..8 {
-        assert!(!net(&mut rig, under));
+        assert!(!net(&mut rig, at));
         rig.block(&shared);
     }
+    assert_eq!(sheds.load(Ordering::Relaxed), 0);
     assert_eq!(live(&rig), 4);
     let shed_note = |r: &Rig| {
         let s = r.inst.allocator().slots();
@@ -531,16 +536,17 @@ fn each_overloaded_block_sheds_one_voice_until_none_is_left() {
                 .map(MidiNote::get),
         )
     };
-    assert!(net(&mut rig, block.block_cycles()));
+    assert!(net(&mut rig, Cycles::new(at.get() + 1)));
     assert_eq!(shed_note(&rig), (1, Some(62)), "the tail goes first");
     assert_eq!(live(&rig), 3);
     rig.block(&shared);
     for left in (0..3).rev() {
-        assert!(net(&mut rig, block.block_cycles()));
+        assert!(net(&mut rig, over));
         assert_eq!(live(&rig), left);
         rig.block(&shared);
     }
-    assert!(!net(&mut rig, block.block_cycles()), "nothing left to shed");
+    assert!(!net(&mut rig, over), "nothing left to shed");
+    assert_eq!(sheds.load(Ordering::Relaxed), 4, "each shed counted once");
     rig.block(&shared);
     rig.block(&shared);
     assert!(rig.inst.allocator().slots().iter().all(|s| s.is_free()));

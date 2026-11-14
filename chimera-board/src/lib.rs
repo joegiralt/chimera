@@ -360,6 +360,8 @@ pub struct AudioStart<'a> {
     pub clk: clocks::Clocks,
     pub pclk2_hz: u32,
     pub shared: chimera_core::triple::Reader<chimera_core::instrument::AudioShared>,
+    /// The cycle counter, if it counts: the load net's (ADR 0273).
+    pub counter: Option<clocks::CycleCounter>,
     pub notes: chimera_core::note_queue::NoteDrain<'static, { shared::NOTE_SOURCES }>,
     pub scope: chimera_core::triple::Writer<chimera_core::scope::ScopeFrame>,
     /// The voices' formant views, once a block, for the OP pages.
@@ -663,9 +665,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     #[cfg(all(feature = "usb-console", not(feature = "midi-usb")))]
     let usb_midi = ();
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
+    let counter = clocks::cycle_counter(&mut cp.DCB, &mut cp.DWT);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
         clk,
+        counter,
         pclk2_hz: clocks.pclk2().raw(),
         shared: shared_r,
         notes,

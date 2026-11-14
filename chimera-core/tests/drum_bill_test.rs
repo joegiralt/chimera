@@ -9,6 +9,7 @@
 
 mod common;
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use chimera_core::MidiChannel;
@@ -19,14 +20,15 @@ use chimera_core::dsp::drum::sound::{
 };
 use chimera_core::dsp::drum::types::{Kit, Machine, PadId};
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
-use chimera_core::dsp::tape_engine::params::Retrig;
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::lpg::{self, LPG_COST};
+use chimera_core::dsp::tape_engine::params::Retrig;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
+use chimera_core::hw::{BlockBudget, CPU_HZ_REV_V, Cost, Cycles, MAX_VOICES, SampleBudget};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::perf::load::LoadNet;
 use chimera_core::project::PartId;
 
 static WRITER: LazyLock<Mutex<KitWriter>> =
@@ -250,9 +252,7 @@ const READ: [(u8, u32); 11] = [
 
 /// The unit's reading of INIT DRUM's pad `n`.
 fn reading(n: PadId) -> Option<u32> {
-    READ.iter()
-        .find(|&&(p, _)| pad(p) == n)
-        .map(|&(_, r)| r)
+    READ.iter().find(|&&(p, _)| pad(p) == n).map(|&(_, r)| r)
 }
 
 /// Each INIT DRUM pad, struck alone through the admission on rev V, is
@@ -331,18 +331,29 @@ fn init_drum_roll_stays_in_budget() {
         }
         let slots = r.inst.allocator().slots();
         let mut n = 0;
-        for v in 0..MAX_VOICES {
+        for (v, s) in slots.iter().enumerate() {
             let Some(h) = r.inst.voice(v).drum_hit() else {
                 continue;
             };
             n += 1;
-            let c = slots[v].cost().0;
+            let c = s.cost().0;
             if let Some(read) = reading(h.pad()) {
-                assert!(c * 10 >= read * 11, "block {blk}: {:?} {c} for {read}", h.pad());
+                assert!(
+                    c * 10 >= read * 11,
+                    "block {blk}: {:?} {c} for {read}",
+                    h.pad()
+                );
             }
         }
-        let live: u32 = slots.iter().filter(|s| !s.dying()).map(|s| s.cost().0).sum();
-        assert!(live + reserved <= budget.as_cost().0, "block {blk}: live {live}");
+        let live: u32 = slots
+            .iter()
+            .filter(|s| !s.dying())
+            .map(|s| s.cost().0)
+            .sum();
+        assert!(
+            live + reserved <= budget.as_cost().0,
+            "block {blk}: live {live}"
+        );
         most = most.max(n);
     }
     // PLAIN IMPULSE (pad 3, billed at its high estimate) in rounds 2 and
@@ -352,6 +363,9 @@ fn init_drum_roll_stays_in_budget() {
     assert_eq!(r.inst.allocator().refused(), 2);
     assert!(most >= 4, "the roll keeps {most} hits");
 }
+
+/// A second of blocks.
+const SR_BLOCKS: usize = common::SR as usize / chimera_hal::BLOCK_SIZE;
 
 /// Every pad on TONE KICK.
 fn kicks() -> Kit {
@@ -406,8 +420,16 @@ fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
     let m = ModState::new();
     let want_jingle = Voice::drum_cost(&p, &m, kit_bill(&jingle)).whole();
     let want_kick = Voice::drum_cost(&p, &m, kit_bill(&kicks)).whole();
-    assert!(booked(&r, 0) >= want_jingle, "JINGLE {:?} for {want_jingle:?}", booked(&r, 0));
-    assert!(booked(&r, 2) >= want_kick, "KICK {:?} for {want_kick:?}", booked(&r, 2));
+    assert!(
+        booked(&r, 0) >= want_jingle,
+        "JINGLE {:?} for {want_jingle:?}",
+        booked(&r, 0)
+    );
+    assert!(
+        booked(&r, 2) >= want_kick,
+        "KICK {:?} for {want_kick:?}",
+        booked(&r, 2)
+    );
 }
 
 /// The pads sounding, by pad number.
@@ -473,4 +495,34 @@ fn twelve_pads_a_block_apart_on_rev_v() {
     let unheard: Vec<usize> = (1..=12).filter(|&p| !heard[p - 1]).collect();
     assert_eq!(unheard, [10], "pads never heard");
     assert_eq!(r.inst.allocator().refused(), 1);
+}
+
+/// The load net (ADR 0273) passes over a booked voice gone silent: a
+/// closed HAT ended with its key still held frees nothing, so it is
+/// neither shed nor counted; a ringing KICK beside it is.
+#[test]
+fn the_load_net_sheds_only_a_sounding_voice() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut r = drum_rig(&mut w, &Kit::DEFAULT);
+    r.note_on_vel(0, 7, 127);
+    r.render(SR_BLOCKS / 2);
+    let hat = (0..MAX_VOICES)
+        .find(|&v| r.inst.allocator().slots()[v].note().map(|n| n.get()) == Some(7))
+        .expect("the HAT's key still books its voice");
+    assert!(!r.inst.voice(hat).is_active(), "the HAT has ended");
+    let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
+    let (net, sheds) = (LoadNet::new(block), AtomicU32::new(0));
+    let over = Cycles::new(block.block_cycles());
+    assert!(!net.after(over, &mut r.inst, &sheds));
+    assert_eq!(sheds.load(Ordering::Relaxed), 0);
+    r.note_on_vel(0, 0, 127);
+    r.render(1);
+    assert!(net.after(over, &mut r.inst, &sheds));
+    assert_eq!(sheds.load(Ordering::Relaxed), 1);
+    let s = r.inst.allocator().slots();
+    assert!(!s[hat].dying(), "the silent HAT left booked");
+    assert!(
+        s.iter()
+            .any(|s| s.dying() && s.note().map(|n| n.get()) == Some(0))
+    );
 }

@@ -57,6 +57,46 @@ impl Sram4Cell {
 
 pub static SRAM4: Sram4Cell = Sram4Cell(AtomicU8::new(Sram4::Untested as u8));
 
+/// The load net (ADR 0273) as the boot built it: only on a cycle counter
+/// that counts, else every block would read 0 cycles and it never fire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadNetState {
+    /// No audio interrupt built one: the desktop, or before audio.
+    Absent,
+    On,
+    /// The cycle counter would not count: no net.
+    Off,
+}
+
+impl LoadNetState {
+    fn word(self) -> &'static str {
+        match self {
+            LoadNetState::Absent => "none",
+            LoadNetState::On => "on",
+            LoadNetState::Off => "OFF",
+        }
+    }
+}
+
+/// The net's state: stored once at boot, before audio.
+pub struct LoadNetCell(AtomicU8);
+
+impl LoadNetCell {
+    pub fn store(&self, s: LoadNetState) {
+        self.0.store(s as u8, Ordering::Relaxed);
+    }
+
+    pub fn load(&self) -> LoadNetState {
+        match self.0.load(Ordering::Relaxed) {
+            1 => LoadNetState::On,
+            2 => LoadNetState::Off,
+            _ => LoadNetState::Absent,
+        }
+    }
+}
+
+pub static LOAD_NET: LoadNetCell = LoadNetCell(AtomicU8::new(LoadNetState::Absent as u8));
+
 /// MIDI in's pipe (`PipeStats`): the faults its parser counted, the events
 /// a full note queue refused (`drops`) and those a full control ring
 /// refused (`ctrl_drops`), DIN's; the events the note queue refused USB's
@@ -95,6 +135,7 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     write_at(ui, w)?;
     w.write_char('\n')?;
     writeln!(w, "sram4 {}", SRAM4.load().word())?;
+    writeln!(w, "load_net {}", LOAD_NET.load().word())?;
     match ui.bank2() {
         Some(b) => {
             b.line(w)?;

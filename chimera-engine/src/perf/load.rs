@@ -1,6 +1,9 @@
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use crate::board::BoardId;
 use crate::clock_plan::SiliconRev;
-use crate::hw::BlockBudget;
+use crate::hw::{BlockBudget, Cycles};
+use crate::instrument::Instrument;
 use crate::note_queue::MAX_NOTE_SOURCES;
 use crate::reset::ResetCause;
 
@@ -95,5 +98,34 @@ impl AudioStats {
             self.window_sum = 0;
             self.window_len = 0;
         }
+    }
+}
+
+/// The load net (ADR 0273): a block rendered past its `shed_at` sheds one
+/// voice before the next. The firmware builds it only on a cycle counter
+/// that counts; the audio interrupt calls `after` once a half.
+#[derive(Clone, Copy, Debug)]
+pub struct LoadNet {
+    shed_at: Cycles,
+}
+
+impl LoadNet {
+    pub const fn new(block: BlockBudget) -> Self {
+        Self {
+            shed_at: block.shed_at(),
+        }
+    }
+
+    /// After a block that took `took`: past `shed_at`, one sounding voice
+    /// of `inst` fades out (`Instrument::shed_for_load`), counted in
+    /// `sheds`, saturating. True when one did.
+    pub fn after(self, took: Cycles, inst: &mut Instrument, sheds: &AtomicU32) -> bool {
+        if took <= self.shed_at || !inst.shed_for_load() {
+            return false;
+        }
+        let _ = sheds.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+            Some(n.saturating_add(1))
+        });
+        true
     }
 }

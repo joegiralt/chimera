@@ -5,19 +5,21 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_board::controls::now_ms;
 use chimera_board::sd::BUS;
-use chimera_board::shared::{BLOCKS, LOAD_SHEDS, NOTE_SOURCES, STREAM_STATS, bump, registry};
+use chimera_board::shared::{BLOCKS, LOAD_SHEDS, NOTE_SOURCES, STREAM_STATS, registry};
 #[cfg(feature = "perf-probe")]
 use chimera_board::shared::{COST_PCT, VOICES};
+use chimera_core::console::{LOAD_NET, LoadNetState};
 #[cfg(feature = "bench")]
 use chimera_engine::audio_out::DacSample;
 use chimera_engine::audio_out::{Half, interleave};
 use chimera_engine::dsp::algo::engine::FormantViews;
 use chimera_engine::dsp::fx_bus::FxBus;
-use chimera_engine::hw::{BLOCK_SIZE, BlockBudget, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
+use chimera_engine::hw::{BLOCK_SIZE, Cycles, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument, NoteOrigin};
 use chimera_engine::note_queue::{InEvent, NoteDrain};
 use chimera_engine::orbit::door::OrbitPorts;
 use chimera_engine::part::DacPair;
+use chimera_engine::perf::load::LoadNet;
 use chimera_engine::project::SourceId;
 use chimera_engine::project::{LOAD_LINK, LoadGate};
 use chimera_engine::scope::{ScopeFrame, ScopeWriter};
@@ -63,8 +65,8 @@ struct Engine {
     /// The stream rings' audio side: the voices' ports, or the card
     /// bench's heads where it runs.
     streams: AudioSide<'static>,
-    /// A block's deadline, which the load net measures against (ADR 0273).
-    block: BlockBudget,
+    /// The load net (ADR 0273): none where the cycle counter won't count.
+    net: Option<LoadNet>,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -84,7 +86,7 @@ pub unsafe fn slots() -> (
 #[allow(clippy::too_many_arguments)]
 pub fn init(
     budget: SampleBudget,
-    block: BlockBudget,
+    net: Option<LoadNet>,
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
@@ -126,15 +128,21 @@ pub fn init(
                 sources
             },
             streams,
-            block,
+            net,
         });
     }
+    // The console's `status` says whether the net runs.
+    LOAD_NET.store(match net {
+        Some(_) => LoadNetState::On,
+        None => LoadNetState::Off,
+    });
     ENGINE_READY.store(true, Ordering::Release);
 }
 
-/// A half that took `cycles` past `BlockBudget::overloaded` sheds one
-/// voice before the next (ADR 0273), counted in `LOAD_SHEDS`.
-pub fn shed_for_load(cycles: u32) {
+/// A half that took `took` past the load net's threshold sheds one
+/// voice before the next (ADR 0273, `LoadNet::after`), counted in
+/// `LOAD_SHEDS`.
+pub fn shed_for_load(took: Cycles) {
     if !ENGINE_READY.load(Ordering::Acquire) {
         return;
     }
@@ -142,8 +150,8 @@ pub fn shed_for_load(cycles: u32) {
     // after `render_half` has returned, so this is the only live reference
     // to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
-    if e.block.overloaded(cycles) && e.inst.shed_for_load() {
-        bump(&LOAD_SHEDS, 1);
+    if let Some(net) = e.net {
+        net.after(took, &mut e.inst, &LOAD_SHEDS);
     }
 }
 

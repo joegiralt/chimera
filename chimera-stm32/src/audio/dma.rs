@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use chimera_engine::audio_out::{
     DacSample, Half, WARMUP_BLOCKS, desynced, plan_halves, rearm_due, trail_verdict,
 };
-use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS};
+use chimera_engine::hw::{BLOCK_SIZE, Cycles, DAC_PAIRS};
 use chimera_engine::part::DacPair;
 use cortex_m::peripheral::{DWT, NVIC};
 use stm32h7xx_hal::pac::{self, interrupt};
@@ -249,16 +249,16 @@ fn DMA1_STR0() {
     }
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
-        let mut cycles = 0;
+        let mut took = Cycles::new(0);
         // SAFETY: this is the audio interrupt, `measure`'s one caller.
         unsafe {
             chimera_board::probe::measure(|| {
-                let t = DWT::cycle_count();
+                let t = chimera_board::shared::dwt();
                 super::render_half(half);
-                cycles = DWT::cycle_count().wrapping_sub(t);
+                took = chimera_board::shared::dwt().since(t);
             })
         };
-        super::engine::shed_for_load(cycles);
+        super::engine::shed_for_load(took);
         BLOCKS.fetch_add(1, Ordering::Relaxed);
     }
     let after = dma1.lisr.read();

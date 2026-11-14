@@ -1380,7 +1380,8 @@ impl Instrument {
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first { Knobs::COST } else { Cost::ZERO };
-                    let mut cost = self.costs[p].whole() + knobs + self.high_note(p, shared, note, first);
+                    let mut cost =
+                        self.costs[p].whole() + knobs + self.high_note(p, shared, note, first);
                     let at = admission::BillAt {
                         key: ev.note,
                         note,
@@ -2247,15 +2248,20 @@ impl Instrument {
         })
     }
 
-    /// The load net (ADR 0273): a block ran past `BlockBudget::overloaded`,
-    /// so one voice fades out before the next, the one a budget shed takes,
-    /// whatever the bills say. `false` when every voice is already fading
-    /// or none sounds.
+    /// The load net (ADR 0273): a block ran past `BlockBudget::shed_at`,
+    /// so one voice fades out before the next, the one a budget shed takes
+    /// among those sounding and not yet fading (a silent or fading one
+    /// frees nothing), whatever the bills say. `false` when none is left.
     pub fn shed_for_load(&mut self) -> bool {
-        let Some(v) = self.alloc.shed_one() else {
+        let voices = &self.voices;
+        let sounds = |v: VoiceIdx| {
+            let v = &voices[v.index()];
+            v.is_active() && !v.fading()
+        };
+        let Some(v) = self.alloc.shed_one(sounds) else {
             return false;
         };
-        self.shed(v);
+        self.shed(v.index());
         true
     }
 

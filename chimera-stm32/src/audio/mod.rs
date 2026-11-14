@@ -7,6 +7,7 @@ use chimera_board::clocks;
 use chimera_engine::audio_out::Half;
 use chimera_engine::clock_plan::pll3_for;
 use chimera_engine::hw::{BlockBudget, SampleBudget};
+use chimera_engine::perf::load::LoadNet;
 
 pub fn render_half(half: Half) {
     engine::render_half(half);
@@ -22,7 +23,8 @@ pub fn prefill() {
 pub fn start(a: AudioStart<'_>) {
     engine::init(
         SampleBudget::for_cpu(a.clk.cpu_hz),
-        BlockBudget::for_cpu(a.clk.cpu_hz),
+        a.counter
+            .map(|_| LoadNet::new(BlockBudget::for_cpu(a.clk.cpu_hz))),
         a.shared,
         a.notes,
         a.scope,

@@ -1,6 +1,6 @@
 mod screen;
 
-use chimera_core::console::{SRAM4, Sram4, state_word, write_status};
+use chimera_core::console::{LOAD_NET, LoadNetState, SRAM4, Sram4, state_word, write_status};
 use chimera_core::part::DacPair;
 use chimera_core::project::{PartId, ProjectStatus};
 use chimera_core::ui::UiState;
@@ -38,6 +38,17 @@ fn status_reports_sram4() {
 }
 
 #[test]
+fn status_reports_the_load_net() {
+    let ui = Box::new(UiState::new());
+    assert_eq!(line(&status(&ui), "load_net"), "none");
+    LOAD_NET.store(LoadNetState::On);
+    assert_eq!(line(&status(&ui), "load_net"), "on");
+    LOAD_NET.store(LoadNetState::Off);
+    assert_eq!(line(&status(&ui), "load_net"), "OFF");
+    LOAD_NET.store(LoadNetState::Absent);
+}
+
+#[test]
 fn status_has_its_lines_in_order() {
     let ui = Box::new(UiState::new());
     let s = status(&ui);
@@ -45,7 +56,7 @@ fn status_has_its_lines_in_order() {
     assert_eq!(
         keys,
         [
-            "firmware", "build", "protocol", "project", "state", "part", "at", "sram4"
+            "firmware", "build", "protocol", "project", "state", "part", "at", "sram4", "load_net"
         ]
     );
     assert_eq!(

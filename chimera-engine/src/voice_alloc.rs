@@ -316,15 +316,17 @@ impl Allocator {
         if reserved + self.steady_live_cost() <= self.budget.as_cost() {
             return None;
         }
-        self.shed_one()
+        self.shed_one(|_| true).map(VoiceIdx::index)
     }
 
-    /// Mark the voice `shed` would pick dying, whatever the budget, and
-    /// return it: the load net's (ADR 0273). `None` once every booked
-    /// voice is dying or the pool is empty.
-    pub fn shed_one(&mut self) -> Option<usize> {
+    /// Mark the voice `shed` would pick among those `sounds` accepts dying,
+    /// whatever the budget, and return it: the load net's (ADR 0273), which
+    /// takes only a voice whose fade frees something. `None` once no booked
+    /// voice is both live and accepted.
+    pub fn shed_one(&mut self, sounds: impl Fn(VoiceIdx) -> bool) -> Option<VoiceIdx> {
         let v = (0..MAX_VOICES)
             .filter(|&v| !self.slots[v].is_free() && !self.slots[v].dying())
+            .filter(|&v| sounds(VoiceIdx::ALL[v]))
             .min_by_key(|&v| {
                 let s = &self.slots[v];
                 (
@@ -335,7 +337,7 @@ impl Allocator {
             })?;
         self.sheds = self.sheds.wrapping_add(1);
         self.slots[v].dying = Some(self.sheds);
-        Some(v)
+        Some(VoiceIdx::ALL[v])
     }
 
     /// A project load (ADR 0046): every booked slot dying, as if shed, so
