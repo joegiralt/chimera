@@ -24,7 +24,7 @@ fn block_budgets_follow_the_cpu_clock() {
     assert_eq!((y.block_cycles(), y.budget_cycles()), (533_333, 399_999));
 }
 
-/// The load net fires past 95 % of the block's deadline (ADR 0272).
+/// The load net fires past 95 % of the block's deadline (ADR 0273).
 #[test]
 fn a_block_past_95_percent_of_its_deadline_is_overloaded() {
     let v = BlockBudget::for_cpu(hw::CPU_HZ_REV_V);

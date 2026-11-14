@@ -340,7 +340,7 @@ pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(NOTE_SOURCES - 1);
 pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
 
 pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
-/// Voices the load net shed (ADR 0272).
+/// Voices the load net shed (ADR 0273).
 pub static LOAD_SHEDS: AtomicU32 = AtomicU32::new(0);
 /// Trailing DMA streams drifting from stream 0.
 pub static DESYNCS: AtomicU32 = AtomicU32::new(0);

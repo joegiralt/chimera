@@ -52,15 +52,17 @@ impl BlockBudget {
     }
 
     /// A block that took `cycles` to render came near its deadline: the
-    /// load net sheds a voice (ADR 0272).
+    /// load net sheds a voice (ADR 0273).
     pub const fn overloaded(self, cycles: u32) -> bool {
         cycles as u64 * 100 > self.0 as u64 * LOAD_SHED_PERCENT as u64
     }
 }
 
 /// The share of a block's deadline past which a rendered block sheds a
-/// voice (ADR 0272): above ADR 0262's worst billed block (89 %), short
-/// of the overrun.
+/// voice (ADR 0273): above ADR 0262's worst billed block, short of the
+/// overrun. Six Parts read about 89 % on rev V and about 92 % on rev Y
+/// (the same overhead cycles over a smaller deadline): about 6 points of
+/// margin on rev V, 3 on rev Y.
 pub const LOAD_SHED_PERCENT: u32 = 95;
 
 /// Memory regions, in bytes (STM32H750 map, RM0433 §2.3).

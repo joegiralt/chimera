@@ -143,7 +143,7 @@ OK
 ```
 
 - The first nine lines are `AudioStats` as the AUDIO LOAD page reads them.
-- `load_sheds` counts the voices the load net shed: a block past 95 % of its deadline fades one voice out before the next (ADR 0272). Above 0 means a bill is under the voices' real cost.
+- `load_sheds` counts the voices the load net shed: a block past 95 % of its deadline fades one voice out before the next (ADR 0273). Above 0 means a bill is under the voices' real cost.
 - `drops` holds one count per note source (`sources` of them), separated by spaces; `-` when `sources` is 0.
 - `desyncs` counts trailing DMA streams drifting from stream 0; `dma_errors` and `fifo_errors` count transfer and FIFO errors on streams 1 and 2 (each transfer error re-arms the stream).
 - `stack_bytes` is `stack_used` (the page rounds it to K; this does not).

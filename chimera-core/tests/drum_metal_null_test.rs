@@ -101,6 +101,6 @@ fn metal_block_squares_null_against_ticked() {
     for (name, m, sets) in cases {
         let db = null(m, &sets);
         eprintln!("{name}: null {db} dB");
-        assert!(db < -120.0, "{name}: null {db} dB");
+        assert_eq!(db, f32::NEG_INFINITY, "{name}: null {db} dB");
     }
 }

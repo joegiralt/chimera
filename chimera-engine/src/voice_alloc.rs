@@ -320,7 +320,7 @@ impl Allocator {
     }
 
     /// Mark the voice `shed` would pick dying, whatever the budget, and
-    /// return it: the load net's (ADR 0272). `None` once every booked
+    /// return it: the load net's (ADR 0273). `None` once every booked
     /// voice is dying or the pool is empty.
     pub fn shed_one(&mut self) -> Option<usize> {
         let v = (0..MAX_VOICES)

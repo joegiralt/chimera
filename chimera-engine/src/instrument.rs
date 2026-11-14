@@ -2242,7 +2242,7 @@ impl Instrument {
         })
     }
 
-    /// The load net (ADR 0272): a block ran past `BlockBudget::overloaded`,
+    /// The load net (ADR 0273): a block ran past `BlockBudget::overloaded`,
     /// so one voice fades out before the next, the one a budget shed takes,
     /// whatever the bills say. `false` when every voice is already fading
     /// or none sounds.

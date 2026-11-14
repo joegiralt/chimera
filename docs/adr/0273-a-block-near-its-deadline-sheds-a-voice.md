@@ -1,4 +1,4 @@
-# 0272. A block near its deadline sheds a voice
+# 0273. A block near its deadline sheds a voice
 
 - **Status:** Proposed (owner approved the feature 2026-11-14: "add the safety net too")
 - **Deciders:** owner, firmware
@@ -9,7 +9,7 @@ Voices are admitted by bill (ADR 0026, 0262). When a bill is under a voice's rea
 ## Decision
 - **Admission is unchanged.** Voices are still admitted, stolen and shed by bill. The net is only a backstop for a bill that is wrong.
 - **The measure.** The audio interrupt times each half's `render_half` with the cycle counter (`chimera-stm32` `audio/dma.rs`). This is the whole block: voices, bus, ORBIT and USB audio, the same span the AUDIO page's load reads.
-- **The threshold.** `BlockBudget::overloaded(cycles)` is true past `LOAD_SHED_PERCENT` (95) % of the block's deadline (`block_cycles`: 640,000 on rev V, 533,333 on rev Y). It does not use the 75 % audio share. ADR 0262 lets the unbilled fixed overhead use the UI's share, so a correctly billed worst block reads up to 81 % with one Part and about 89 % with six. A threshold on the share would fire on healthy loads. 95 % sits above every billed load and below the overrun.
+- **The threshold.** `BlockBudget::overloaded(cycles)` is true past `LOAD_SHED_PERCENT` (95) % of the block's deadline (`block_cycles`: 640,000 on rev V, 533,333 on rev Y). It does not use the 75 % audio share. ADR 0262 lets the unbilled fixed overhead use the UI's share, so a correctly billed worst block reads up to 81 % with one Part and about 89 % with six. A threshold on the share would fire on healthy loads. 95 % sits above every billed load and below the overrun. The margin is thinner on rev Y: the overhead is the same cycles over a smaller deadline, so a six-Part worst block, ADR 0262's 89,700 over the 400,000 share (75 % of 533,333), reads about 92 %. That leaves about 3 points under the net, against about 6 on rev V.
 - **The response.** An overloaded block calls `Instrument::shed_for_load` before the next block. It sheds exactly one voice: the one a budget shed picks (`Allocator::shed_one`: non-mono first, the oldest released tail, then the newest held note). The voice fades out as any shed voice does (ADR 0027: `Voice::FADE`, two blocks, then reset and freed). A note waiting on it is dropped unheard and counted in `refused`. The net sheds one voice per overloaded block, so a burst keeps shedding until the load is back under 95 %.
 - **Already fading.** A dying voice is never picked again (`shed_one` skips dying slots), so the net never sheds the same voice twice.
 - **Nothing left to shed.** When every booked voice is already dying, or none is booked, `shed_for_load` returns `false` and does nothing. The load is then the bus, ORBIT or fades, which the net cannot reduce. ADR 0034's watchdog remains the last line.

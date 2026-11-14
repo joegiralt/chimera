@@ -16,7 +16,7 @@ pub struct AudioStats {
     pub load_avg: u16,
     pub load_peak: u16,
     pub overruns: u32,
-    /// Voices the load net shed (ADR 0272).
+    /// Voices the load net shed (ADR 0273).
     pub load_sheds: u32,
     pub desyncs: u32,
     /// DMA transfer errors on the trailing streams, each re-armed.

@@ -1111,9 +1111,9 @@ impl VarOsc {
 
     /// `tick_pulse` at `f0` × `m` Hz a sample (`inc_for`), bit for bit,
     /// its setup hoisted: SHAPE's constants are filled once, and a sample
-    /// at the last one's `inc` reuses its edge rates. Both hold while the
-    /// pulse's width is not floored by `inc` (`Shaped::fill`), as at a
-    /// square (SHAPE 0, `inc` under `MAX_INC`).
+    /// at the last one's `inc` reuses its edge rates. A sample whose width
+    /// `inc` floors (`Shaped::fill`), or that follows one, takes the full
+    /// setup, so it holds at any SHAPE and `inc`.
     #[inline(never)]
     pub fn tick_pulses<const N: usize>(
         &mut self,

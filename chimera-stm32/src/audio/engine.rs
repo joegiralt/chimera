@@ -63,7 +63,7 @@ struct Engine {
     /// The stream rings' audio side: the voices' ports, or the card
     /// bench's heads where it runs.
     streams: AudioSide<'static>,
-    /// A block's deadline, which the load net measures against (ADR 0272).
+    /// A block's deadline, which the load net measures against (ADR 0273).
     block: BlockBudget,
 }
 
@@ -133,7 +133,7 @@ pub fn init(
 }
 
 /// A half that took `cycles` past `BlockBudget::overloaded` sheds one
-/// voice before the next (ADR 0272), counted in `LOAD_SHEDS`.
+/// voice before the next (ADR 0273), counted in `LOAD_SHEDS`.
 pub fn shed_for_load(cycles: u32) {
     if !ENGINE_READY.load(Ordering::Acquire) {
         return;

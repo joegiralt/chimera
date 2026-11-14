@@ -492,7 +492,7 @@ fn tails_ring_out_then_free_the_voice() {
     );
 }
 
-/// The load net (ADR 0272): a block past the threshold sheds one voice
+/// The load net (ADR 0273): a block past the threshold sheds one voice
 /// before the next, the released tail first, then the newest held note,
 /// until every voice fades; under it nothing is shed.
 #[test]
