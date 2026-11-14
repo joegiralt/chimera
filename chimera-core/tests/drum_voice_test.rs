@@ -259,14 +259,14 @@ fn amp_gated_short_gate_plays_attack_hold() {
 // VEL: the pad's own amp (ADR 0269, owner ruling 2026-11-14)
 // ---------------------------------------------------------------------------
 
-/// DRUM INIT's kit with pad 1 (TONE KICK, which ignores velocity) on
-/// VEL `vel`.
+/// DRUM INIT's kit with pad 1 (TONE KICK) on VEL `vel`, its CLICK (E)
+/// at 0: no click or blip, so nothing reads the hit's seed and two rigs
+/// render alike.
 fn init_kit(vel: f32) -> Kit {
     let mut k = Kit::DEFAULT;
-    k.pad_mut(pad(1))
-        .sound_mut()
-        .amp_mut()
-        .set_vel(Unit::new(vel));
+    let p = k.pad_mut(pad(1));
+    p.knobs_mut().set(Knob::E, KnobValue::new(u7(0)));
+    p.sound_mut().amp_mut().set_vel(Unit::new(vel));
     k
 }
 
@@ -308,33 +308,33 @@ fn vel_zero_ignores_velocity() {
     let k = init_kit(0.0);
     let (hard, soft) = (hit_peak(&k, 127), hit_peak(&k, 32));
     assert!(hard > 1e-3, "silent: {hard}");
-    // Equal but for the kick's seed, which moves from rig to rig.
-    assert!(db(soft / hard).abs() < 0.001, "{} dB", db(soft / hard));
+    assert_eq!(hard.to_bits(), soft.to_bits());
 }
 
 /// The law is the kernel's level, before the filter: a soft hit drives a
-/// resonant LADDER less, so it comes out louder than the hard hit scaled
-/// by the law (the hard one saturates), and still quieter than the hard.
-/// Through CLEAN at RES 0, linear, the two agree.
+/// LADDER at 50 Hz, RES 0.5 (the kick's body in its passband) less, so it
+/// comes out louder than the hard hit scaled by the law (the hard one
+/// saturates; 1.96 dB measured), and still quieter than the hard. Through
+/// CLEAN at RES 0, linear, the two agree.
 #[test]
 fn a_soft_hit_drives_the_ladder_less() {
     let over = |kind: FilterKind, res: f32| {
         let mut k = init_kit(1.0);
         let f = k.pad_mut(pad(1)).sound_mut().filter_mut();
         f.set_kind(kind);
-        f.set_cutoff(Hz::new(5000.0));
+        f.set_cutoff(Hz::new(50.0));
         f.set_resonance(Unit::new(res));
         let (hard, soft) = (hit_peak(&k, 127), hit_peak(&k, 32));
         assert!(soft < hard, "{kind:?}: {soft} vs {hard}");
         db(soft / hard) - db(32.0 / 127.0)
     };
-    let (ladder, clean) = (over(FilterKind::Ladder, 0.95), over(FilterKind::Svf, 0.0));
+    let (ladder, clean) = (over(FilterKind::Ladder, 0.5), over(FilterKind::Svf, 0.0));
     assert!(
         clean.abs() < 0.1,
         "CLEAN at RES 0 is {clean} dB off the law"
     );
     assert!(
-        ladder > 0.3,
+        ladder > 1.0,
         "the soft hit is only {ladder} dB over the hard one scaled"
     );
 }

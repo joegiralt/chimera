@@ -1240,7 +1240,7 @@ impl PadSound {
     }
 
     /// Lays the FILTER and AMP's gate cells over `m`. VEL is the pad's
-    /// own (`PadAmp::vel_gain`): a Part VCA route keeps the Sound's.
+    /// own (`PadAmp::level`): a Part VCA route keeps the Sound's.
     pub fn overlay(&self, m: &mut ParamSnapshot) {
         self.filter.apply(&mut m.filter);
         let g = self.amp.gate;
