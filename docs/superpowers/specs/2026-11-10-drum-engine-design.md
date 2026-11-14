@@ -206,7 +206,23 @@ Owner: a transient shouldn't cost a sample, and a recorded click cross-modulatin
 - **Cost:** an exciter or a layer runs only for its own few milliseconds and is billed only while it sounds, as the strike is.
 - **Open:** whether the machines' own CLICK/SNAP/BUMP knobs stay beside a TRANS layer; whether exciter TYPE and HARDNESS get pad mod destinations.
 
-## BLOOM and a physical mallet, owner 2026-11-14 (candidates for a later slice)
+## Physical additions, order after research round 2 (owner 2026-11-14)
+Sources: `(private notes) physical modelling models.md` (round 1) and `Physical models round 2.md` (round 2). The owner's test for every candidate: **does the existing pad chain already get there?** Machine → FILTER → FX slot (SOFT, FUZZ, FOLD) → AMP with the LPG (STRIKE, DECAY) plus VEL already gives "a soft hit is darker", "darker as it dies" and "brighter when driven". A model earns its cycles only for what the chain can't do: brightness that rises after the hit, pitch that follows the hit's energy, self-oscillation, rattle driven by the head, timing within one hit. Every cost below is an operation-count estimate, not measured.
+
+1. **ENERGY → PITCH.** A pad mod source ENERGY: a one-pole leaky integrator of hit energy (Bank, DAFx-09, "energy storage model"), with a new **PITCH** pad route destination (today's `RouteDest` has CUTOFF, RESO, VOLUME, LFO SPEED, LFO DEPTH). Every machine gets a physical pitch drop that follows how hard and how often it's hit; rolls and flams climb in pitch. ~1–3 cycles a sample.
+2. **STICK + BOUNCE exciters, with the mallet law.** STICK with a geometric bounce train for press rolls and buzz (~5 cycles). The Hunt–Crossley mallet is **reduced to its law**: the strike pulse shortens as velocity rises (≈ v^−0.2 Hertzian, v^−0.43 felt), since the LPG and VEL already do its main audible job. If a true contact is ever wanted, use the DAFx-24 QSA scheme (CC-BY, no iterations), never an open-ended solve.
+3. **BLOOM** (Poirot coupled mode bank): the only block that makes a sound brighter after the hit, and only past a threshold. A slow envelope into CUTOFF fakes the swell but can't add partials the source lacks. Knobs, cost and risk as below.
+4. **A head-gated snare rattle**: a cheap rattle gated by the head's motion (no new real-time papers since round 1); before any collision model.
+5. **SCRAPE** (DAFx-21 scraping model; its tanh-limited trajectory is the main realism factor). **BRUSH** is a SCRAPE preset: there is no physical brush model in the literature.
+6. **Experimental:** a Puckette-style delay-network drum as a character machine, host prototype first.
+
+**Ranked down for DRUM:** PIPE (a struck bottle or udu is a pinged resonance, which FILTER PING already is; PIPE's value is sustained blowing in MODAL, #421) and HARMONIC as a drum source (overlaps TONE, METAL and BODY at more cost; a ratio-table module is for melodic bells).
+
+**Licences:** use the papers' equations; avoid the code of jaxdiffmodal (GPL-3.0), the Russo bowed-string repo (no licence), SDT (GPLv3) and the Schmalfuß snare repo (unchecked). Patent search still owed before release.
+
+**Recipes first:** round 2 lists ten drum patches built only from today's machines and chain (vactrol tom, bottle/udu, a kick that brightens with force via FOLD before the filter, fake-bloom gong, brush swirl, wire snare via FUZZ, agogo, sheet-metal thunder, MODAL wood, bowed bowl). Render them on the host for the owner before building any of the above.
+
+### BLOOM and the mallet: detail (from round 1; the mallet is reduced by item 2 above)
 From the physical-modelling survey (private notes physical modelling models.md`, ranks 6 and 4). Both are cheap operations on the modal bank BODY already has, not new engines, and both serve MODAL too.
 
 - **BLOOM: a coupled mode bank** (Poirot, Kronland-Martinet & Bilbao, DAFx 2023, CC-BY; not the reverb's BLOOM). Energy moves between modes by t = M·[p − τ]+: only above a threshold τ, so it blooms only when hit hard. Knobs: BLOOM (λ, how fast energy moves), THRESHOLD (τ), SPREAD (Δf, how far up it cascades), CHAOS (random-phase injection, shimmer). Stable when M's column sums are ≤ 0. Sounds: a gong that swells after the hit, shimmer only on hard hits, a cymbal body, sitar/tanpura buzz (the collision variant). For BODY GONG, BELL, PAN, BAR and a cymbal body. Cost about 50–60 cycles a sample with transfers once a block (estimate; K ≈ 4–8 neighbours, 48 modes). **Risk:** the paper ran transfers per sample; block-rate transfers must pass an ear test (the "never steppy" rule) on the host first, then the unit.
