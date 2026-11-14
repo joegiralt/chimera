@@ -7,6 +7,6 @@
 # names its ADR, as bank 1's do.
 #
 # <set: features as check builds it>  <bytes>  # ADR NNNN: why
-default      487648  # ADR 0272: seeded at the 1 MB link (bank2-slots), 36640 B free in S0-S3, S4-S7 empty
-orbit        515616  # ADR 0272: seeded at the 1 MB link (bank2-slots), 8672 B free in S0-S3, S4-S7 empty
-bank2-gate   487648  # ADR 0272: seeded at the 1 MB link (bank2-slots), 36640 B free in S0-S3, S4-S7 empty
+default      487744  # ADR 0272: seeded at the 1 MB link (bank2-slots), 36640 B free in S0-S3, S4-S7 empty; ADR 0251 +96 rebased on 0.4: DRUM slice 2's bank-2 code (from 487648)
+orbit        515712  # ADR 0272: seeded at the 1 MB link (bank2-slots), 8672 B free in S0-S3, S4-S7 empty; ADR 0251 +96 rebased on 0.4: DRUM slice 2's bank-2 code (from 515616)
+bank2-gate   487744  # ADR 0272: seeded at the 1 MB link (bank2-slots), 36640 B free in S0-S3, S4-S7 empty; ADR 0251 +96 rebased on 0.4: DRUM slice 2's bank-2 code (from 487648)
