@@ -1,6 +1,6 @@
 //! Bank 2's flash-controller register values (RM0433 FLASH_KEYR2, CR2, SR2,
 //! CCR2), pure: the board writes them, this decides them. Bank erase has no
-//! public bit and no helper sets it; a sector is a `Bank2Sector`, S0-S3.
+//! public bit and no helper sets it; a sector is a `Bank2Sector`, S0-S7.
 
 use crate::install::{Bank2Sector, FlashFail};
 

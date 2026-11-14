@@ -5,23 +5,30 @@ use crate::header::{BANK2_BASE, BANK2_LEN, COMMIT_OFF, FLASH_WORD, HEADER_LEN, H
 use crate::judge::{Bank2Memory, Door, ImageRead, Verdict, judge, judge_uncommitted};
 
 const SECTOR_LEN: u32 = 128 * 1024;
-const _: () = assert!(4 * SECTOR_LEN == BANK2_LEN);
+const _: () = assert!(8 * SECTOR_LEN == BANK2_LEN);
 
-/// A bank-2 sector Chimera may erase. S4..S7 are the bootloader's and have
-/// no name here.
+/// A bank-2 sector Chimera may erase. S4..S7 hold the slots (ADR 0272).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bank2Sector {
     S0,
     S1,
     S2,
     S3,
+    S4,
+    S5,
+    S6,
+    S7,
 }
 
-const SECTORS: [Bank2Sector; 4] = [
+const SECTORS: [Bank2Sector; 8] = [
     Bank2Sector::S0,
     Bank2Sector::S1,
     Bank2Sector::S2,
     Bank2Sector::S3,
+    Bank2Sector::S4,
+    Bank2Sector::S5,
+    Bank2Sector::S6,
+    Bank2Sector::S7,
 ];
 
 impl Bank2Sector {
@@ -34,7 +41,7 @@ impl Bank2Sector {
     }
 }
 
-/// A flash-word address inside S0..=S3, 32-byte aligned.
+/// A flash-word address inside S0..=S7, 32-byte aligned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bank2Word(u32);
 
@@ -224,7 +231,7 @@ fn program_words(flash: &mut impl Flash, off: u32, data: &[u8]) -> Result<(), In
     Ok(())
 }
 
-/// RTC_BKP14R after a double ECC error read from S0-S3: the HardFault
+/// RTC_BKP14R after a double ECC error read from bank 2: the HardFault
 /// handler's mark before it resets. The backup domain survives the reset.
 pub const BANK2_BAD: u32 = 0xB2BA_D0EC;
 /// RTC_BKP14R while the boot installs the staged file: cleared when the
@@ -280,9 +287,11 @@ const CFSR_BUS: u32 = 0b111 << 8;
 /// in bank 2 (RM0433 § FLASH_ECC_FA2R; 2^15 words span the 1 MiB bank).
 const FA_WORD: u32 = 0x7fff;
 
-/// A fault that a double ECC error in S0-S3 explains: a bus fault (CFSR),
-/// SR2.DBECCERR, and FA2R's word inside S0-S3. Anything else is not
-/// bank 2's to clear.
+/// A fault that a double ECC error in bank 2 explains: a bus fault (CFSR),
+/// SR2.DBECCERR, and FA2R's word inside the bank (every index is, now that
+/// it spans S0-S7). Anything else is not bank 2's to clear.
+// Always true at 1 MB; kept so a shorter bank re-arms it.
+#[allow(clippy::bad_bit_mask)]
 pub const fn bank2_ecc_fault(cfsr: u32, sr2: u32, fa2r: u32) -> bool {
     cfsr & CFSR_BUS != 0
         && sr2 & crate::regs::SR_DBECCERR != 0

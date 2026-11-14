@@ -30,6 +30,13 @@ fn version(s: &str) -> Version {
     Version::new(s)
 }
 
+/// `body` padded with 0xFF to the one image size.
+fn padded(body: &[u8]) -> Vec<u8> {
+    let mut b = body.to_vec();
+    b.resize(IMAGE_BODY as usize, 0xFF);
+    b
+}
+
 fn header_for(body: &[u8]) -> Header {
     let mut c = Crc32::new();
     c.update(body);
@@ -43,8 +50,9 @@ fn header_for(body: &[u8]) -> Header {
 }
 
 fn sealed(body: &[u8]) -> (Vec<u8>, Seal) {
-    let mut v = header_for(body).to_bytes(true).to_vec();
-    v.extend_from_slice(body);
+    let body = padded(body);
+    let mut v = header_for(&body).to_bytes(true).to_vec();
+    v.extend_from_slice(&body);
     (v, seal())
 }
 
@@ -90,27 +98,47 @@ fn foreign_magic() {
 #[test]
 fn future_format() {
     let (mut img, s) = sealed(&body(1024));
-    img[8] = 2;
-    assert_eq!(judged(img, &s), Verdict::Format(2));
+    img[8] = 3;
+    assert_eq!(judged(img, &s), Verdict::Format(3));
 }
 
 #[test]
 fn bounds_are_corrupt() {
-    let b = body(1024);
-    for len in [0, BANK2_LEN - 224, 33] {
+    let b = padded(&body(1024));
+    for len in [0, BANK2_LEN - 224, IMAGE_BODY - 32, IMAGE_BODY + 32, 33] {
         let mut h = header_for(&b);
         h.body_len = len;
         let mut img = h.to_bytes(true).to_vec();
         img.extend_from_slice(&b);
         assert_eq!(judged(img, &seal()), Verdict::Corrupt, "len {len}");
     }
-    for off in [0x80, 0x100 + 1024, 0x104] {
+    for off in [0x80, BANK2_LEN, 0x104, u32::MAX - 31] {
         let mut h = header_for(&b);
         h.door_off = off;
         let mut img = h.to_bytes(true).to_vec();
         img.extend_from_slice(&b);
         assert_eq!(judged(img, &seal()), Verdict::Corrupt, "off {off:#x}");
     }
+}
+
+/// Review Focus 1: a 0.3 image (format 1, S0..S3 only) or a short one never
+/// installs over the slots; only the full 1 MB format-2 image does.
+#[test]
+fn old_or_short_images_never_install() {
+    let (mut old, s) = sealed(&body(1024));
+    old[8] = 1;
+    assert_eq!(judged(old, &s), Verdict::Format(1));
+    let short = body(512 * 1024 - 256);
+    let mut h = header_for(&short);
+    h.body_len = 512 * 1024 - 256;
+    let mut img = h.to_bytes(true).to_vec();
+    img.extend_from_slice(&short);
+    assert_eq!(judged(img, &s), Verdict::Corrupt);
+    let full = body(IMAGE_BODY as usize);
+    let mut img = header_for(&full).to_bytes(true).to_vec();
+    img.extend_from_slice(&full);
+    assert_eq!(img.len(), 1 << 20);
+    assert!(matches!(judged(img, &s), Verdict::Good(_)));
 }
 
 #[test]
@@ -126,7 +154,14 @@ fn other_seal_is_stale_with_version() {
 #[test]
 fn every_single_byte_flip_is_never_good() {
     let (img, s) = sealed(&body(1024));
-    for i in (0..img.len()).filter(|i| !(0x20..0x40).contains(i)) {
+    // The header, the live body, and the padding's edges: a full 1 MB
+    // sweep is a CRC of 1 MB per byte. Skipped: the version text, and
+    // door_off's upper bytes, which now land inside the 1 MB body; bank 1
+    // opens only a door at its own link's address (bank2_door_test).
+    let n = img.len();
+    let at = (0..0x100 + 1024 + 64).chain(n - 64..n);
+    let free = |i: &usize| (0x20..0x40).contains(i) || (0x15..0x18).contains(i);
+    for i in at.filter(|i| !free(i)) {
         let mut f = img.clone();
         f[i] ^= 1;
         let v = judged(f, &s);

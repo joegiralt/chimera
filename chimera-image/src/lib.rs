@@ -7,10 +7,11 @@ mod header;
 mod install;
 mod judge;
 pub mod regs;
+pub mod slot;
 
 pub use header::{
-    BANK2_BASE, BANK2_LEN, COMMIT, COMMIT_OFF, FLASH_WORD, FORMAT, HEADER_LEN, Header, MAGIC, Seal,
-    UNSEALED_HEADER, Version,
+    BANK2_BASE, BANK2_LEN, COMMIT, COMMIT_OFF, FLASH_WORD, FORMAT, HEADER_LEN, Header, IMAGE_BODY,
+    MAGIC, Seal, UNSEALED_HEADER, Version,
 };
 pub use install::{
     AutoInstall, BANK2_BAD, BANK2_INSTALLING, Bank2Sector, Bank2Word, BootAction, Flash, FlashAt,
@@ -18,3 +19,4 @@ pub use install::{
     boot_action, fault_mark, install, install_with, pick_staged, plan, wants_staged,
 };
 pub use judge::{Bank2Memory, Door, ImageRead, ReadFail, Verdict, judge, judge_uncommitted};
+pub use slot::{Slot, SlotSet};

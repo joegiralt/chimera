@@ -196,18 +196,21 @@ fn seal(b: [u8; 8]) -> Seal {
     Seal::new(b).unwrap()
 }
 
+/// `body` padded with 0xFF to the one image size.
 fn sealed(body: &[u8], s: [u8; 8]) -> Vec<u8> {
+    let mut body = body.to_vec();
+    body.resize(IMAGE_BODY as usize, 0xFF);
     let mut c = Crc32::new();
-    c.update(body);
+    c.update(&body);
     let h = Header {
-        body_len: body.len() as u32,
+        body_len: IMAGE_BODY,
         body_crc: c.finish(),
         door_off: 0x100,
         seal: s,
         version: Version::new("0.2.0 02e440e2"),
     };
     let mut v = h.to_bytes(true).to_vec();
-    v.extend_from_slice(body);
+    v.extend_from_slice(&body);
     v
 }
 
@@ -256,22 +259,26 @@ fn plan_spans_s0_first() {
     assert_eq!(plan(&h(128 * 1024 - 224)).sectors, &[S0, S1]);
     assert_eq!(plan(&h(200 * 1024)).sectors, &[S0, S1]);
     assert_eq!(plan(&h(512 * 1024 - 256)).sectors, &[S0, S1, S2, S3]);
-    // A header never parsed can't reach S4.
-    assert_eq!(plan(&h(u32::MAX)).sectors, &[S0, S1, S2, S3]);
+    let all = [S0, S1, S2, S3, S4, S5, S6, S7];
+    assert_eq!(plan(&h(IMAGE_BODY)).sectors, &all);
+    // A header never parsed is clamped to the bank.
+    assert_eq!(plan(&h(u32::MAX)).sectors, &all);
 }
 
 #[test]
 fn sectors_are_bank_2() {
     use Bank2Sector::*;
-    let a: Vec<u32> = [S0, S1, S2, S3].iter().map(|s| s.addr()).collect();
-    assert_eq!(a, [0x0810_0000, 0x0812_0000, 0x0814_0000, 0x0816_0000]);
-    assert_eq!([S0, S1, S2, S3].map(|s| s.index()), [0, 1, 2, 3]);
+    let all = [S0, S1, S2, S3, S4, S5, S6, S7];
+    for (i, s) in all.iter().enumerate() {
+        assert_eq!(s.addr(), 0x0810_0000 + i as u32 * 0x2_0000, "{s:?}");
+        assert_eq!(s.index(), i as u8);
+    }
 }
 
 #[test]
 fn bank2_word_refuses_outside() {
     for a in [
-        0x0818_0000,
+        0x0820_0000,
         0x080F_FFE0,
         0x0810_0010,
         0,
@@ -280,7 +287,13 @@ fn bank2_word_refuses_outside() {
     ] {
         assert!(Bank2Word::new(a).is_none(), "{a:#x}");
     }
-    for a in [0x0810_0000, 0x0817_FFE0, 0x0812_0020] {
+    for a in [
+        0x0810_0000,
+        0x0817_FFE0,
+        0x0818_0000,
+        0x081F_FFE0,
+        0x0812_0020,
+    ] {
         assert_eq!(Bank2Word::new(a).map(|w| w.get()), Some(a));
     }
 }
@@ -350,7 +363,7 @@ fn staged_failing_mid_copy_never_commits() {
     let img = sealed(&dense(8192, 3), SEAL_A);
     let mut f = SimFlash::new();
     let mut s = Staged::new(img);
-    s.fail_from = Some(1 + 16 + 5);
+    s.fail_from = Some(1 + IMAGE_BODY.div_ceil(512) as usize + 5);
     let r = install(&mut f, &mut s, &seal(SEAL_A), &mut [0u8; 512]);
     assert_eq!(r, Err(InstallFail::Io));
     assert_eq!(judge(&mut f, &seal(SEAL_A)), Verdict::Empty);
@@ -362,9 +375,10 @@ fn commit_word_is_last_op() {
     let mut f = SimFlash::new();
     assert!(run(&mut f, &img, &seal(SEAL_A)).is_ok());
     use Bank2Sector::*;
-    assert_eq!(f.ops[..3], [Op::Erase(S0), Op::Erase(S1), Op::Erase(S2)]);
+    let all = [S0, S1, S2, S3, S4, S5, S6, S7];
+    assert_eq!(f.ops[..8], all.map(Op::Erase));
     assert_eq!(f.ops.last(), Some(&Op::Program(0x0810_00E0)));
-    let progs: Vec<u32> = f.ops[3..]
+    let progs: Vec<u32> = f.ops[8..]
         .iter()
         .map(|o| match o {
             Op::Program(a) => *a,
@@ -406,12 +420,18 @@ fn flash_errors_never_open() {
     assert!(Door::open(&mut f, &seal(SEAL_A)).is_err());
 }
 
-/// A failed op names its sector or word: the first body word after S0.
+/// A failed op names its sector or word: S1's erase, then the first body
+/// word after the eight erases.
 #[test]
 fn a_flash_failure_says_where() {
     let img = sealed(&dense(4096, 2), SEAL_A);
     let mut f = SimFlash::new();
     f.cut_after(1);
+    let r = run(&mut f, &img, &seal(SEAL_A));
+    let s1 = FlashAt::Sector(Bank2Sector::S1);
+    assert_eq!(r, Err(InstallFail::Flash(FlashFail::Timeout, s1)));
+    let mut f = SimFlash::new();
+    f.cut_after(8);
     let r = run(&mut f, &img, &seal(SEAL_A));
     let at = Bank2Word::new(BANK2_BASE + HEADER_LEN).unwrap();
     assert_eq!(
@@ -524,8 +544,8 @@ fn an_ecc_fault_is_bank2s_only_with_all_three() {
     const IBUSERR: u32 = 1 << 8;
     const MMARVALID: u32 = 1 << 7 | 1 << 1;
     const UNDEFINSTR: u32 = 1 << 16;
-    // FA2R: the 256-bit word's index in bank 2; S0-S3 are words 0..16384.
-    let last = BANK2_LEN / FLASH_WORD - 1;
+    // FA2R: the 256-bit word's index in bank 2; S0-S7 are words 0..32768.
+    let last = (1 << 20) / 32 - 1;
     for cfsr in [PRECISERR, IMPRECISERR, IBUSERR, PRECISERR | 1 << 15] {
         for far in [0, 7, last] {
             assert!(bank2_ecc_fault(cfsr, DBECC, far), "{cfsr:x} {far}");
@@ -533,9 +553,8 @@ fn an_ecc_fault_is_bank2s_only_with_all_three() {
             assert!(!bank2_ecc_fault(cfsr, SNECC, far));
             assert!(!bank2_ecc_fault(cfsr, 0, far));
         }
-        // S4-S7: the bootloader's, never mapped.
-        assert!(!bank2_ecc_fault(cfsr, DBECC, last + 1));
-        assert!(!bank2_ecc_fault(cfsr, DBECC, 0x7fff));
+        // Every index FAIL_ECC_ADDR2[14:0] holds is in bank 2.
+        assert_eq!(last, 0x7fff);
         // Bits above FAIL_ECC_ADDR2[14:0] are reserved.
         assert!(bank2_ecc_fault(cfsr, DBECC, 0xffff_8000));
     }
@@ -660,16 +679,21 @@ fn progress_lands_between_the_ops() {
         Ev::Mark(Mark::EraseStarted),
         Ev::Op(Op::Erase(S1)),
         Ev::Op(Op::Erase(S2)),
+        Ev::Op(Op::Erase(S3)),
+        Ev::Op(Op::Erase(S4)),
+        Ev::Op(Op::Erase(S5)),
+        Ev::Op(Op::Erase(S6)),
+        Ev::Op(Op::Erase(S7)),
         Ev::Phase(Phase::Writing),
     ];
     let len = body.len() as u32;
-    let half_block_end = (len / 2 / 512 + 1) * 512;
+    let half_block_end = (IMAGE_BODY / 2 / 512 + 1) * 512;
     for off in (0..len).step_by(32) {
         want.push(Ev::Op(Op::Program(BANK2_BASE + HEADER_LEN + off)));
-        if off + 32 == half_block_end {
-            want.push(Ev::Mark(Mark::HalfBody));
-        }
     }
+    // The body's middle is in the 0xFF padding: no op after the mark.
+    assert!(half_block_end > len);
+    want.push(Ev::Mark(Mark::HalfBody));
     want.push(Ev::Phase(Phase::Sealing));
     want.extend((0..7).map(|i| Ev::Op(Op::Program(BANK2_BASE + 32 * i))));
     want.push(Ev::Mark(Mark::BeforeCommit));

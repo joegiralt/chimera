@@ -3,13 +3,16 @@
 use crate::judge::Verdict;
 
 pub const BANK2_BASE: u32 = 0x0810_0000;
-/// Sectors S0..S3; S4..S7 are the bootloader's.
-pub const BANK2_LEN: u32 = 512 * 1024;
+/// Sectors S0..S7; S4..S7 hold the slots (ADR 0272).
+pub const BANK2_LEN: u32 = 1 << 20;
 pub const HEADER_LEN: u32 = 256;
+/// Every image's body: the whole bank after the header (format 2).
+pub const IMAGE_BODY: u32 = BANK2_LEN - HEADER_LEN;
 /// One flash word: the programming and body-length granule.
 pub const FLASH_WORD: u32 = 32;
 pub const MAGIC: [u8; 8] = *b"CHIMERA2";
-pub const FORMAT: u16 = 1;
+/// 2: the 1 MB image with the slots; format 1 was S0..S3 only.
+pub const FORMAT: u16 = 2;
 /// The commit word, eight of these, is programmed last.
 pub const COMMIT: u32 = 0xB2C0_FFEE;
 pub const COMMIT_OFF: u32 = 0xE0;
@@ -137,14 +140,10 @@ impl Header {
         }
         let body_len = u32_at(b, LEN_OFF);
         let door_off = u32_at(b, DOOR_OFF);
-        let end = HEADER_LEN.checked_add(body_len);
         let ok = b[FLAGS_OFF..FLAGS_OFF + 2] == [0, 0]
             && b[SPARE_OFF..c].iter().all(|&x| x == 0)
-            && body_len != 0
-            && body_len <= BANK2_LEN - HEADER_LEN
-            && body_len.is_multiple_of(FLASH_WORD)
-            && door_off >= HEADER_LEN
-            && end.is_some_and(|e| door_off < e)
+            && body_len == IMAGE_BODY
+            && (HEADER_LEN..BANK2_LEN).contains(&door_off)
             && door_off.is_multiple_of(FLASH_WORD);
         if !ok {
             return Err(Verdict::Corrupt);
