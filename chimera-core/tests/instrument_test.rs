@@ -30,7 +30,7 @@ use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::fnv1a;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::cell::Cell;
 
 use chimera_core::hw::{AUDIO_BUDGET_PERCENT, BlockBudget, CPU_HZ_REV_V, Cycles, SampleBudget};
 use chimera_core::perf::load::{CycleCounter, LoadNet};
@@ -515,15 +515,19 @@ fn each_overloaded_block_sheds_one_voice_until_none_is_left() {
     assert_eq!(live(&rig), 4);
     // The firmware's glue: `LoadNet::after`, as the audio interrupt calls it.
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
-    let sheds = AtomicU32::new(0);
+    let sheds = Cell::new(0);
     let load = LoadNet::new(CycleCounter::new(true).expect("a counting DWT"), block);
     let (at, over) = (block.shed_at(), Cycles::new(block.block_cycles()));
-    let net = |rig: &mut Rig, took: Cycles| load.after(took, &mut rig.inst, &sheds);
+    let net = |rig: &mut Rig, took: Cycles| {
+        let shed = load.after(took, &mut rig.inst);
+        sheds.set(sheds.get() + u32::from(shed));
+        shed
+    };
     for _ in 0..8 {
         assert!(!net(&mut rig, at));
         rig.block(&shared);
     }
-    assert_eq!(sheds.load(Ordering::Relaxed), 0);
+    assert_eq!(sheds.get(), 0);
     assert_eq!(live(&rig), 4);
     let shed_note = |r: &Rig| {
         let s = r.inst.allocator().slots();
@@ -546,7 +550,7 @@ fn each_overloaded_block_sheds_one_voice_until_none_is_left() {
         rig.block(&shared);
     }
     assert!(!net(&mut rig, over), "nothing left to shed");
-    assert_eq!(sheds.load(Ordering::Relaxed), 4, "each shed counted once");
+    assert_eq!(sheds.get(), 4, "each shed counted once");
     rig.block(&shared);
     rig.block(&shared);
     assert!(rig.inst.allocator().slots().iter().all(|s| s.is_free()));

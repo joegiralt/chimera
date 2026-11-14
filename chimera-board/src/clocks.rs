@@ -61,11 +61,6 @@ pub fn delay_us(cpu_hz: u32, us: u32) {
     cortex_m::asm::delay(cycles_for_us(cpu_hz, us));
 }
 
-/// Starts the DWT cycle counter: `None` if it will not count.
-pub fn cycle_counter(dcb: &mut DCB, dwt: &mut DWT) -> Option<CycleCounter> {
-    CycleCounter::new(enable_cycle_counter(dcb, dwt))
-}
-
 /// Starts the DWT cycle counter; false if it will not count.
 pub fn enable_cycle_counter(dcb: &mut DCB, dwt: &mut DWT) -> bool {
     dcb.enable_trace();

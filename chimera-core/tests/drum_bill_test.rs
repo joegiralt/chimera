@@ -9,7 +9,6 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use chimera_core::MidiChannel;
@@ -548,14 +547,12 @@ fn the_load_net_sheds_only_a_sounding_voice() {
     assert!(!r.inst.voice(hat).is_active(), "the HAT has ended");
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
     let counter = CycleCounter::new(true).expect("a counting DWT");
-    let (net, sheds) = (LoadNet::new(counter, block), AtomicU32::new(0));
+    let net = LoadNet::new(counter, block);
     let over = Cycles::new(block.block_cycles());
-    assert!(!net.after(over, &mut r.inst, &sheds));
-    assert_eq!(sheds.load(Ordering::Relaxed), 0);
+    assert!(!net.after(over, &mut r.inst), "nothing shed, nothing counted");
     r.note_on_vel(0, key(pad(1)), 127);
     r.render(1);
-    assert!(net.after(over, &mut r.inst, &sheds));
-    assert_eq!(sheds.load(Ordering::Relaxed), 1);
+    assert!(net.after(over, &mut r.inst), "one shed, counted once");
     let s = r.inst.allocator().slots();
     assert!(!s[hat].dying(), "the silent HAT left booked");
     assert!(

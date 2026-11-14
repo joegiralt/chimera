@@ -665,7 +665,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     #[cfg(all(feature = "usb-console", not(feature = "midi-usb")))]
     let usb_midi = ();
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
-    let counter = clocks::cycle_counter(&mut cp.DCB, &mut cp.DWT);
+    // The cycle counter started: `None` if it will not count.
+    let counter = clocks::CycleCounter::new(clocks::enable_cycle_counter(&mut cp.DCB, &mut cp.DWT));
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
         clk,

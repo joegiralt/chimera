@@ -1,4 +1,3 @@
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::board::BoardId;
 use crate::clock_plan::SiliconRev;
@@ -129,15 +128,9 @@ impl LoadNet {
     }
 
     /// After a block that took `took`: past `shed_at`, one sounding voice
-    /// of `inst` fades out (`Instrument::shed_for_load`), counted in
-    /// `sheds`, saturating. True when one did.
-    pub fn after(self, took: Cycles, inst: &mut Instrument, sheds: &AtomicU32) -> bool {
-        if took <= self.shed_at || !inst.shed_for_load() {
-            return false;
-        }
-        let _ = sheds.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-            Some(n.saturating_add(1))
-        });
-        true
+    /// of `inst` fades out (`Instrument::shed_for_load`). True when one
+    /// did: the caller counts it.
+    pub fn after(self, took: Cycles, inst: &mut Instrument) -> bool {
+        took > self.shed_at && inst.shed_for_load()
     }
 }

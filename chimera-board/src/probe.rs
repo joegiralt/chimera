@@ -18,7 +18,7 @@ mod imp {
     use cortex_m::peripheral::{DCB, DWT};
 
     use crate::clocks::Clocks;
-    use crate::shared;
+    use crate::shared::{self, Cycles};
 
     const BLANK: AudioStats = AudioStats::new(
         SiliconRev::Unknown(0),
@@ -103,18 +103,19 @@ mod imp {
         }
     }
 
-    /// `render`, timed into the stats.
+    /// `render`, timed into the stats: the cycles it took.
     ///
     /// # Safety
     /// Only from the audio interrupt (`DMA1_STR0`), which does not re-enter:
     /// it is the stats' one writer.
-    pub unsafe fn measure(render: impl FnOnce()) {
-        if !READY.load(Ordering::Acquire) {
-            return render();
-        }
-        let start = DWT::cycle_count();
+    pub unsafe fn measure(render: impl FnOnce()) -> Cycles {
+        let start = shared::dwt();
         render();
-        let cycles = DWT::cycle_count().wrapping_sub(start);
+        let took = shared::dwt().since(start);
+        if !READY.load(Ordering::Acquire) {
+            return took;
+        }
+        let cycles = took.get();
         // SAFETY: the caller is the audio interrupt (this fn's contract),
         // which does not re-enter; `init` has run (READY).
         let (stats, budget, writer) = unsafe {
@@ -147,6 +148,7 @@ mod imp {
             let s = *stats;
             w.publish(|out| *out = s);
         }
+        took
     }
 }
 
@@ -158,6 +160,7 @@ mod stub {
     use cortex_m::peripheral::{DCB, DWT};
 
     use crate::clocks::Clocks;
+    use crate::shared::{self, Cycles};
 
     pub fn paint_stack() {}
 
@@ -175,10 +178,14 @@ mod stub {
         None
     }
 
+    /// `render`: the cycles it took.
+    ///
     /// # Safety
     /// As the probe's: only from the audio interrupt.
-    pub unsafe fn measure(render: impl FnOnce()) {
-        render()
+    pub unsafe fn measure(render: impl FnOnce()) -> Cycles {
+        let start = shared::dwt();
+        render();
+        shared::dwt().since(start)
     }
 
     #[cfg(feature = "usb-console")]

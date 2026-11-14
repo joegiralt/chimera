@@ -9,13 +9,9 @@ use chimera_engine::clock_plan::pll3_for;
 use chimera_engine::hw::{BlockBudget, SampleBudget};
 use chimera_engine::perf::load::LoadNet;
 
-pub fn render_half(half: Half) {
-    engine::render_half(half);
-}
-
 pub fn prefill() {
-    render_half(Half::First);
-    render_half(Half::Second);
+    engine::render_half(Half::First);
+    engine::render_half(Half::Second);
 }
 
 /// Start-up step 2 (`chimera_board::synth`): the engine built, then the
