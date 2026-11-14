@@ -1198,8 +1198,18 @@ class Bank2(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn(b"ERR bank2: flash timeout", r.stderr)
 
+    def test_a_foreign_slot_exits_2_with_its_address(self):
+        for name, addr in ((b"mixer", "0x08180000"), (b"edit", "0x081C0000")):
+            answers = self.status(bytes(8), "empty")
+            answers[b"bank2 install"] = b"ERR bank2 slot foreign " + name + b"\n"
+            with PutUnit(answers=answers) as u:
+                r = self.run_bank2(u)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn(addr.encode(), r.stderr)
+            self.assertIn(b"holds other code", r.stderr)
+
     def test_the_install_answer_waits_a_minute(self):
-        self.assertEqual(tool.BANK2_WAIT_S, 60.0)
+        self.assertEqual(tool.BANK2_WAIT_S, 120.0)
 
     def test_a_missing_console_fails(self):
         with PutUnit() as u, FakeSysfs(set()) as fs:
@@ -1400,6 +1410,43 @@ class Update(unittest.TestCase):
         self.assertLess(puts[1], install[0])
         self.assertLess(install[0], status[0])
         self.assertEqual(u.data, self.bk2)
+
+    def flash_first(self, line, bk2=None):
+        if bk2 is not None:
+            self.bk2 = bk2
+        answers = {b"bank2": b"bank2 empty\nOK\n", b"bank2 install": b"OK bank2 open 0.2.0 02e440e2\n", b"status": self.status(self.open_line())}
+        with PutUnit(answers=answers, refuse=line, refuse_once=True) as u:
+            return u, self.update(u, self.package())
+
+    def test_a_1mb_package_passes_check_pair(self):
+        _, bk2, _ = make_pair(bytes(1 << 20)[: (1 << 20) - 256])
+        self.assertEqual(len(bk2), 1 << 20)
+        self.assertEqual(tool.check_pair("x", b"\x7fFW" + bk2[0x18:0x20], bk2).bk2, bk2)
+
+    def test_old_03_and_02_firmware_take_flash_first(self):
+        lines = (
+            b"ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over], /CHIMERA/TAPES/<CRC>.SRC, "
+            b"/CHIMERA/BENCH/BEDS.CHK, /CHIMERA/TUNINGS/<stem>.SCL|KBM, /CHIMERA/MAPS/<stem>.A, or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex\n",
+            b"ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over], /CHIMERA/TAPES/<CRC>.SRC, "
+            b"/CHIMERA/BENCH/BEDS.CHK or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex\n",
+        )
+        for line in lines:
+            self.events.clear()
+            self.bin, self.bk2, self.seal = make_pair(bytes((1 << 20) - 256))
+            u, (rc, out, err) = self.flash_first(line)
+            self.assertEqual(rc, 0, err)
+            puts, dfu = self.sent("put "), self.sent("dfu-util")
+            self.assertEqual(len(puts), 2, self.events)
+            self.assertLess(puts[0], dfu[0])
+            self.assertLess(dfu[0], puts[1])
+            self.assertLess(puts[1], self.sent("bank2 install")[0])
+            self.assertLess(self.sent("bank2 install")[0], self.sent("status")[0])
+
+    def test_a_usage_refusal_of_a_small_bk2_is_an_error(self):
+        line = b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex\n"
+        u, (rc, out, err) = self.flash_first(line)
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.sent("dfu-util"), [])
 
     def test_old_firmware_without_source_puts_is_deferred_too(self):
         old = b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A [--over], its size and CRC-32 in hex\n"

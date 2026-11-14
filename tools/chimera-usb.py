@@ -98,20 +98,30 @@ CARD_POLL_S = 10.0  # card-wait's `card dma report`, a bench's minutes apart eno
 CARD_WAIT_S = 60.0  # `card` measures before it answers: ~5 s, ~15 s writing its test file
 LS_WAIT_S = 15.0  # a cold card acquire, then one listing under the card's 10 s cap
 SWEEP_WAIT_S = 15.0  # a cold acquire, then the mark's one write; the unit restarts after OK
-PUT_WAIT_S = 35.0  # the unit's whole put is 30 s (PUT_DEADLINE_MS), card work included
-BANK2_WAIT_S = 60.0  # the unit holds its UI loop for the whole write
+PUT_WAIT_S = 125.0  # the unit's put deadline (120 s for a 1 MB .bk2) plus 5 s
+BANK2_WAIT_S = 120.0  # the unit holds its UI loop for the whole write
 LATER = " (it installs at that firmware's next boot)"
 BANK2_REMOTE = "/CHIMERA/SYSTEM/BANK2.BK2"
 BANK2_SEAL = slice(0x18, 0x20)  # the .bk2 header's seal
 BK2_HEADER = 256
-BK2_MAX = 512 * 1024  # bank 2's four sectors
-UPDATE_BOOT_WAIT_S = 90.0  # the first boot installs the .bk2 behind DON'T POWER OFF, then the console comes up
+BK2_MAX = 1 << 20  # bank 2's slots: 1 MB
+UPDATE_BOOT_WAIT_S = 120.0  # the first boot installs the .bk2 behind DON'T POWER OFF, then the console comes up
 # Firmware from before bank 2 refuses the path (its `put` usage, exactly): the
 # .bk2 then goes after the flash.
 OLD_PUT_REFUSALS = (
     b"ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over] or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex",
     b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A [--over], its size and CRC-32 in hex",
 )
+FOREIGN_SLOTS = {b"mixer": ("MIXER", "0x08180000"), b"edit": ("EDIT", "0x081C0000")}
+
+
+def old_put_refusal(body: bytes, bk2_len: int) -> bool:
+    """Firmware from before bank 2 refuses the path: its usage line exactly,
+    or (0.2, 0.3 word it differently) any `put takes` line naming BANK2.BK2
+    when the .bk2 is over the old 512 KB."""
+    return body in OLD_PUT_REFUSALS or (body.startswith(b"ERR put takes") and b"BANK2.BK2" in body and bk2_len > 512 * 1024)
+
+
 FW_MAX = 917_504  # the stock bootloader erases itself at this size
 FLASH_AT = "0x8020000:leave"  # the firmware area, never the bootloader
 PUT_MAX = 1 << 20  # the unit's limit
@@ -795,6 +805,11 @@ def bank2_install(t: Target, env, local: str) -> int:
     if text.startswith("OK"):
         print(text)
         return 0
+    if text.startswith("ERR bank2 slot foreign "):
+        slot = FOREIGN_SLOTS.get(text.split()[-1].encode())
+        if slot:
+            fail("the unit's %s slot (%s) holds other code; bank 2 not installed" % slot)
+            return 2
     if "staged: needs firmware" in text:
         fail(text + LATER)
         return 2
@@ -921,7 +936,7 @@ def stage(t: Target, env, pkg: Package):
     print(file=sys.stderr)
     if status is Status.OK:
         return True
-    if bytes(body) in OLD_PUT_REFUSALS:
+    if old_put_refusal(bytes(body), len(pkg.bk2)):
         print("this firmware can't take the .bk2 yet: it goes after the flash", file=sys.stderr)
         return False
     return fail("%s: nothing flashed" % body.decode(errors="replace"))
