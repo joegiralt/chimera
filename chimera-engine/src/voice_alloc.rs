@@ -316,6 +316,13 @@ impl Allocator {
         if reserved + self.steady_live_cost() <= self.budget.as_cost() {
             return None;
         }
+        self.shed_one()
+    }
+
+    /// Mark the voice `shed` would pick dying, whatever the budget, and
+    /// return it: the load net's (ADR 0272). `None` once every booked
+    /// voice is dying or the pool is empty.
+    pub fn shed_one(&mut self) -> Option<usize> {
         let v = (0..MAX_VOICES)
             .filter(|&v| !self.slots[v].is_free() && !self.slots[v].dying())
             .min_by_key(|&v| {

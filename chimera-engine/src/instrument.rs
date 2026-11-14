@@ -2242,6 +2242,18 @@ impl Instrument {
         })
     }
 
+    /// The load net (ADR 0272): a block ran past `BlockBudget::overloaded`,
+    /// so one voice fades out before the next, the one a budget shed takes,
+    /// whatever the bills say. `false` when every voice is already fading
+    /// or none sounds.
+    pub fn shed_for_load(&mut self) -> bool {
+        let Some(v) = self.alloc.shed_one() else {
+            return false;
+        };
+        self.shed(v);
+        true
+    }
+
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped
     /// unheard (ADR 0027). Any slot promised or bound to it goes when it
     /// rests, freed.

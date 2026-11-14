@@ -126,6 +126,7 @@ mod imp {
         };
         stats.record(cycles, budget);
         stats.overruns = shared::OVERRUNS.load(Ordering::Relaxed);
+        stats.load_sheds = shared::LOAD_SHEDS.load(Ordering::Relaxed);
         stats.desyncs = shared::DESYNCS.load(Ordering::Relaxed);
         stats.dma_errors = shared::DMA_ERRORS.load(Ordering::Relaxed);
         stats.fifo_errors = shared::FIFO_ERRORS.load(Ordering::Relaxed);

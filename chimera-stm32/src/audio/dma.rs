@@ -249,8 +249,16 @@ fn DMA1_STR0() {
     }
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
+        let mut cycles = 0;
         // SAFETY: this is the audio interrupt, `measure`'s one caller.
-        unsafe { chimera_board::probe::measure(|| super::render_half(half)) };
+        unsafe {
+            chimera_board::probe::measure(|| {
+                let t = DWT::cycle_count();
+                super::render_half(half);
+                cycles = DWT::cycle_count().wrapping_sub(t);
+            })
+        };
+        super::engine::shed_for_load(cycles);
         BLOCKS.fetch_add(1, Ordering::Relaxed);
     }
     let after = dma1.lisr.read();

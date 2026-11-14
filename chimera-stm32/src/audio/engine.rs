@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_board::controls::now_ms;
 use chimera_board::sd::BUS;
-use chimera_board::shared::{BLOCKS, NOTE_SOURCES, STREAM_STATS, registry};
+use chimera_board::shared::{BLOCKS, LOAD_SHEDS, NOTE_SOURCES, STREAM_STATS, bump, registry};
 #[cfg(feature = "perf-probe")]
 use chimera_board::shared::{COST_PCT, VOICES};
 #[cfg(feature = "bench")]
@@ -13,7 +13,7 @@ use chimera_engine::audio_out::DacSample;
 use chimera_engine::audio_out::{Half, interleave};
 use chimera_engine::dsp::algo::engine::FormantViews;
 use chimera_engine::dsp::fx_bus::FxBus;
-use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
+use chimera_engine::hw::{BLOCK_SIZE, BlockBudget, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument, NoteOrigin};
 use chimera_engine::note_queue::{InEvent, NoteDrain};
 use chimera_engine::orbit::door::OrbitPorts;
@@ -63,6 +63,8 @@ struct Engine {
     /// The stream rings' audio side: the voices' ports, or the card
     /// bench's heads where it runs.
     streams: AudioSide<'static>,
+    /// A block's deadline, which the load net measures against (ADR 0272).
+    block: BlockBudget,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -82,6 +84,7 @@ pub unsafe fn slots() -> (
 #[allow(clippy::too_many_arguments)]
 pub fn init(
     budget: SampleBudget,
+    block: BlockBudget,
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
@@ -123,9 +126,25 @@ pub fn init(
                 sources
             },
             streams,
+            block,
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
+}
+
+/// A half that took `cycles` past `BlockBudget::overloaded` sheds one
+/// voice before the next (ADR 0272), counted in `LOAD_SHEDS`.
+pub fn shed_for_load(cycles: u32) {
+    if !ENGINE_READY.load(Ordering::Acquire) {
+        return;
+    }
+    // SAFETY: as `render_half`'s: only the audio interrupt calls this,
+    // after `render_half` has returned, so this is the only live reference
+    // to `ENGINE`.
+    let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
+    if e.block.overloaded(cycles) && e.inst.shed_for_load() {
+        bump(&LOAD_SHEDS, 1);
+    }
 }
 
 /// One half, as the desktop's `Engine::block` renders a block: the gate,

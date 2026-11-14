@@ -30,7 +30,9 @@ use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::fnv1a;
 
-use chimera_core::hw::{AUDIO_BUDGET_PERCENT, CPU_HZ_REV_V, SampleBudget};
+use chimera_core::hw::{
+    AUDIO_BUDGET_PERCENT, BlockBudget, CPU_HZ_REV_V, LOAD_SHED_PERCENT, SampleBudget,
+};
 
 /// The budget a voice share of `voice_share` cycles/sample gives, the FX
 /// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
@@ -488,6 +490,61 @@ fn tails_ring_out_then_free_the_voice() {
         blocks > 50,
         "freed after {blocks} blocks: before the 0.3 s release ended"
     );
+}
+
+/// The load net (ADR 0272): a block past the threshold sheds one voice
+/// before the next, the released tail first, then the newest held note,
+/// until every voice fades; under it nothing is shed.
+#[test]
+fn each_overloaded_block_sheds_one_voice_until_none_is_left() {
+    let mut rig = Rig::rev_v();
+    let shared = AudioShared::default();
+    for n in 60..64 {
+        rig.inst.handle(on(0, n), &shared);
+    }
+    for _ in 0..20 {
+        rig.block(&shared);
+    }
+    rig.inst.handle(off(0, 62), &shared);
+    rig.block(&shared);
+    let live = |r: &Rig| {
+        let s = r.inst.allocator().slots();
+        s.iter().filter(|s| !s.is_free() && !s.dying()).count()
+    };
+    assert_eq!(live(&rig), 4);
+    let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
+    let under = block.block_cycles() / 100 * LOAD_SHED_PERCENT;
+    let net = |rig: &mut Rig, cycles: u32| block.overloaded(cycles) && rig.inst.shed_for_load();
+    for _ in 0..8 {
+        assert!(!net(&mut rig, under));
+        rig.block(&shared);
+    }
+    assert_eq!(live(&rig), 4);
+    let shed_note = |r: &Rig| {
+        let s = r.inst.allocator().slots();
+        let v = s.iter().filter(|s| s.dying()).count();
+        (
+            v,
+            s.iter()
+                .find(|s| s.dying())
+                .and_then(|s| s.note())
+                .map(MidiNote::get),
+        )
+    };
+    assert!(net(&mut rig, block.block_cycles()));
+    assert_eq!(shed_note(&rig), (1, Some(62)), "the tail goes first");
+    assert_eq!(live(&rig), 3);
+    rig.block(&shared);
+    for left in (0..3).rev() {
+        assert!(net(&mut rig, block.block_cycles()));
+        assert_eq!(live(&rig), left);
+        rig.block(&shared);
+    }
+    assert!(!net(&mut rig, block.block_cycles()), "nothing left to shed");
+    rig.block(&shared);
+    rig.block(&shared);
+    assert!(rig.inst.allocator().slots().iter().all(|s| s.is_free()));
+    assert_eq!(rig.inst.sounding(), 0);
 }
 
 /// Six Mono Parts of the costliest factory Sound, MORPH KEYS, spend a
