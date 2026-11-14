@@ -170,7 +170,7 @@ fn the_table_is_the_one_list() {
     let names: Vec<_> = Command::ALL.iter().map(|c| c.name()).collect();
     let mut want = vec![
         "help", "status", "stats", "bench", "card", "shot", "dfu", "sweep", "flash", "bank2",
-        "key", "turn",
+        "key", "turn", "ed",
     ];
     if cfg!(feature = "card-put") {
         want.extend(["ls", "put", "rm", "get"]);

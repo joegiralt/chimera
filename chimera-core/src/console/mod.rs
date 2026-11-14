@@ -3,7 +3,7 @@
 use core::fmt;
 
 pub const MAX_LINE: usize = 64;
-pub const PROTOCOL: u8 = 1;
+pub const PROTOCOL: u8 = 2;
 /// An answer gives up after this long with no byte taken…
 pub const STALL_MS: u32 = 250;
 /// …or after this long in all, however the bytes dribble out.
@@ -129,6 +129,7 @@ macro_rules! table {
             Bank2  (Bank2Arg) => "bank2", "bank 2: its state; bank2 install: the staged file into it",
             Key    (KeyArg)  => "key",    "B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]",
             Turn   (TurnArg) => "turn",   "<encoder 1-6> <delta -64..64>: detents at a hand's pace",
+            Ed     (EdArg)   => "ed",     "editor protocol",
             $($card)*
         }
     };
@@ -239,6 +240,8 @@ impl Console {
     }
 }
 
+mod ed;
+pub use ed::{EdAddr, EdArg, EdValue};
 mod status;
 pub use status::*;
 mod out;

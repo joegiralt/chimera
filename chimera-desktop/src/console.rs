@@ -382,7 +382,7 @@ mod tests {
         };
         assert!(serve_until_answered(&mut con, &mut unit));
         let first = read_until_terminal(&mut c);
-        assert!(first.starts_with("chimera console 1\n"), "{first}");
+        assert!(first.starts_with("chimera console 2\n"), "{first}");
         assert_eq!(
             con.service(&mut unit),
             Served::Answered,
@@ -510,7 +510,7 @@ mod tests {
         new.write_all(b"help\n").unwrap();
         assert!(serve_until_answered(&mut con, &mut unit));
         let text = read_until_terminal(&mut new);
-        assert!(text.starts_with("chimera console 1\n"), "{text}");
+        assert!(text.starts_with("chimera console 2\n"), "{text}");
     }
 
     /// The keyboard keys that press and turn what `h` does this frame.

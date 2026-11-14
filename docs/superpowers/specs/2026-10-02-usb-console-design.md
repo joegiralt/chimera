@@ -69,7 +69,7 @@ A text body is lines of `<key> <value>`: a lowercase key, one space, then the va
 **`help`**
 
 ```
-chimera console 1
+chimera console 2
 help    this list
 status  firmware, project, Part and where the UI is
 stats   AUDIO LOAD and the UI loop's time
@@ -82,6 +82,7 @@ flash   flash controller and bank 2, read only
 bank2   bank 2: its state; bank2 install: the staged file into it
 key     B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]
 turn    <encoder 1-6> <delta -64..64>: detents at a hand's pace
+ed      editor protocol
 ls      files and sizes in PROJECTS; ls tapes|sounds|maps: theirs
 put     a project, Sound or source: <path> <size> <crc32> [--over]
 rm      SOUNDS/S#######, MAPS/<stem> or TUNINGS/<stem>.SCL|KBM
@@ -89,13 +90,13 @@ get     base64 of a pair: /CHIMERA/SOUNDS/S####### or MAPS/<stem>
 OK
 ```
 
-The first line names the protocol version, `1`. A change that breaks a host parser bumps it. Rows come from the command table in table order.
+The first line names the protocol version, `2`. A change that breaks a host parser bumps it. Rows come from the command table in table order.
 
 **`status`**
 
 ```
 firmware 0.1.0 release
-protocol 1
+protocol 2
 project LATE SET
 state MODIFIED
 part 3
@@ -343,7 +344,7 @@ pub struct NoArg;                                    // only an empty `Words` pa
 pub enum Colours { Theme, Raw }                      // nothing, or `raw`
 
 pub const MAX_LINE: usize = 64;
-pub const PROTOCOL: u8 = 1;
+pub const PROTOCOL: u8 = 2;
 
 pub enum Refusal { Unknown(Word), Arguments(Command), TooLong }   // Arguments: `ERR <name> takes <usage>`
 pub struct Word { bytes: [u8; 16], len: u8 }        // the unknown word, cut to 16

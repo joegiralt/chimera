@@ -1,146 +1,20 @@
+mod common;
+use common::console_fake::{Fake, Sink, ask};
 use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     Bank2Answer, Bank2Audio, Bank2Fail, Bank2Refusal, CardAnswer, CardFail, CardSpeed, Colours,
-    Command, Console, FlashPeek, FlashRegs, Frame, Hands, NoArg, Out, PerMille, QUEUE, Request,
-    SHOT_HEADER, Stalled, Stats, StormKinds, StreamTally, SweepAsk, Unit, UsbTally, answer,
+    Command, Console, FlashPeek, FlashRegs, Hands, NoArg, Out, PerMille, QUEUE, Request,
+    SHOT_HEADER, Stalled, Stats, StormKinds, StreamTally, SweepAsk, UsbTally, answer,
     check_staged, installed,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
 use chimera_core::ui::UiState;
-use chimera_core::ui::theme_settings::{ThemeSettings, palette};
-use chimera_hal::FB_SIZE;
 use chimera_hal::store::{
     Doubt, Mark, StoreError, Sweep, SweepRun, SweepStats, Swept, Then, Trigger,
 };
 use chimera_hal::units::{Micros, Millis};
-
-struct Sink(Vec<u8>);
-impl Out for Sink {
-    fn now(&self) -> chimera_hal::Ms {
-        chimera_hal::Ms(0)
-    }
-    fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
-        self.0.extend_from_slice(b);
-        Ok(())
-    }
-}
-
-struct Fake {
-    ui: Box<UiState>,
-    fb: Box<[u16; FB_SIZE]>,
-    stats: Option<Stats>,
-    bench: Option<String>,
-    card: Option<CardAnswer>,
-    stats_reads: usize,
-    dfu: Option<()>,
-    dfu_calls: usize,
-    boot: Option<BootSeen>,
-    sweep: Option<SweepRun>,
-    board: Option<chimera_core::board::BoardId>,
-    sweep_ask: Option<SweepAsk>,
-    sweeps: usize,
-    usb_regs: Option<UsbRegs>,
-    flash: Option<(FlashRegs, FlashPeek)>,
-    forgotten: usize,
-    bank2: Option<Bank2Answer>,
-    installs: usize,
-    hands: Option<Hands>,
-    midi: Option<chimera_core::console::MidiStats>,
-}
-
-impl Fake {
-    fn new() -> Fake {
-        Fake {
-            ui: Box::new(UiState::new()),
-            fb: Box::new([0xBEEF; FB_SIZE]),
-            stats: None,
-            bench: None,
-            card: None,
-            stats_reads: 0,
-            dfu: None,
-            dfu_calls: 0,
-            boot: None,
-            sweep: None,
-            board: None,
-            sweep_ask: None,
-            sweeps: 0,
-            usb_regs: None,
-            flash: None,
-            forgotten: 0,
-            bank2: None,
-            installs: 0,
-            hands: None,
-            midi: None,
-        }
-    }
-}
-
-impl Unit for Fake {
-    fn ui(&self) -> &UiState {
-        &self.ui
-    }
-    fn stats(&mut self) -> Option<Stats> {
-        self.stats_reads += 1;
-        self.stats
-    }
-    fn bench(&self) -> Option<&str> {
-        self.bench.as_deref()
-    }
-    fn card(&mut self) -> Option<CardAnswer> {
-        self.card
-    }
-    fn frame(&self) -> Frame<'_> {
-        Frame {
-            fb: &self.fb,
-            palette: palette(&ThemeSettings::DEFAULT),
-        }
-    }
-    fn dfu(&mut self) -> Option<()> {
-        self.dfu_calls += 1;
-        self.dfu
-    }
-    fn boot(&self) -> Option<BootSeen> {
-        self.boot
-    }
-    fn sweep(&self) -> Option<SweepRun> {
-        self.sweep
-    }
-    fn board(&self) -> Option<chimera_core::board::BoardId> {
-        self.board
-    }
-    fn request_sweep(&mut self) -> Option<SweepAsk> {
-        self.sweeps += 1;
-        self.sweep_ask
-    }
-    fn usb_regs(&self) -> Option<UsbRegs> {
-        self.usb_regs
-    }
-    fn midi(&self) -> Option<chimera_core::console::MidiStats> {
-        self.midi
-    }
-    fn flash_regs(&self) -> Option<FlashRegs> {
-        self.flash.map(|f| f.0)
-    }
-    fn flash_peek(&self) -> Option<FlashPeek> {
-        self.flash.map(|f| f.1)
-    }
-    fn hands(&mut self) -> Option<&mut Hands> {
-        self.hands.as_mut()
-    }
-    fn bank2_install(&mut self) -> Option<Bank2Answer> {
-        self.installs += 1;
-        self.bank2
-    }
-    type Files = chimera_core::console::NoCard;
-    fn files(&mut self) -> Option<&mut Self::Files> {
-        None
-    }
-    fn forget_library(&mut self) {
-        self.forgotten += 1;
-    }
-}
 
 fn audio() -> AudioStats {
     AudioStats::new(
@@ -151,22 +25,10 @@ fn audio() -> AudioStats {
     )
 }
 
-fn ask(u: &mut Fake, line: &str) -> String {
-    let mut c = Console::new();
-    let mut s = Sink(Vec::new());
-    for &b in line.as_bytes() {
-        if let Some(r) = c.push(b) {
-            answer(r, u, &mut s).unwrap();
-        }
-    }
-    // Lossy: a shot's body is not text.
-    String::from_utf8_lossy(&s.0).into_owned()
-}
-
 #[test]
 fn help_lists_the_table_in_order() {
     let mut u = Fake::new();
-    let mut want = String::from("chimera console 1\n");
+    let mut want = String::from("chimera console 2\n");
     for c in Command::ALL {
         want += &format!("{:<8}{}\n", c.name(), c.about());
     }
@@ -180,7 +42,7 @@ fn help_is_the_specs_text() {
     let mut u = Fake::new();
     assert_eq!(
         ask(&mut u, "help\n"),
-        "chimera console 1\n\
+        "chimera console 2\n\
          help    this list\n\
          status  firmware, project, Part and where the UI is\n\
          stats   AUDIO LOAD and the UI loop's time\n\
@@ -193,6 +55,7 @@ fn help_is_the_specs_text() {
          bank2   bank 2: its state; bank2 install: the staged file into it\n\
          key     B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]\n\
          turn    <encoder 1-6> <delta -64..64>: detents at a hand's pace\n\
+         ed      editor protocol\n\
          ls      files and sizes in PROJECTS; ls tapes|sounds|maps: theirs\n\
          put     a project, Sound or source: <path> <size> <crc32> [--over]\n\
          rm      SOUNDS/S#######, MAPS/<stem> or TUNINGS/<stem>.SCL|KBM\n\
