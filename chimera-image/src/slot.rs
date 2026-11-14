@@ -133,3 +133,84 @@ pub const fn end_marker(s: Slot) -> [u8; 32] {
     w[17] = s.index();
     w
 }
+
+/// One flash word as a masked read saw it: `ecc` is a double-ECC flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Word {
+    pub bytes: [u8; 32],
+    pub ecc: bool,
+}
+
+impl Word {
+    fn erased(&self) -> bool {
+        !self.ecc && self.bytes == [0xFF; 32]
+    }
+
+    /// `want`, or `want` torn: a program only clears bits, so every 1 in
+    /// `want` is still 1.
+    fn may_be(&self, want: &[u8; 32]) -> bool {
+        self.ecc || self.bytes.iter().zip(want).all(|(w, e)| w & e == *e)
+    }
+}
+
+/// Flash read for the guard: one masked read of the 32-byte word at `addr`.
+pub trait SlotRead {
+    fn word(&mut self, addr: u32) -> Word;
+}
+
+/// What the guard found: `erased` slots read 0xFF across both sectors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotPlan {
+    pub erased: SlotSet,
+}
+
+/// The slot holds code that isn't Chimera's: nothing may be written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotForeign(pub Slot);
+
+/// Judge each slot not in `ours` before anything is written (spec § 3.2).
+/// A clean tag or marker makes it ours; otherwise every word must be
+/// erased, bar the three Chimera writes, which may be torn.
+pub fn guard(r: &mut impl SlotRead, ours: SlotSet) -> Result<SlotPlan, SlotForeign> {
+    let mut erased = SlotSet::NONE;
+    for s in Slot::ALL {
+        if ours.has(s) || tagged(r, s) {
+            continue;
+        }
+        if scan(r, s).ok_or(SlotForeign(s))? {
+            erased = erased.with(s);
+        }
+    }
+    Ok(SlotPlan { erased })
+}
+
+fn tagged(r: &mut impl SlotRead, s: Slot) -> bool {
+    let t = r.word(s.base() + 0x20);
+    if !t.ecc && t.bytes[0x10..0x1C] == *TAG {
+        return true;
+    }
+    let m = r.word(s.marker_addr());
+    !m.ecc && m.bytes[..16] == *MARKER
+}
+
+/// Some(fully erased) if the slot may be ours, None if foreign.
+fn scan(r: &mut impl SlotRead, s: Slot) -> Option<bool> {
+    let own = [
+        (s.base(), code_word(s)),
+        (s.base() + 0x20, tag_word(s)),
+        (s.marker_addr(), end_marker(s)),
+    ];
+    let mut all = true;
+    for addr in (s.base()..s.base() + SLOT_LEN).step_by(32) {
+        let w = r.word(addr);
+        let ok = match own.iter().find(|(a, _)| *a == addr) {
+            Some((_, want)) => w.may_be(want),
+            None => w.erased(),
+        };
+        if !ok {
+            return None;
+        }
+        all &= w.erased();
+    }
+    Some(all)
+}

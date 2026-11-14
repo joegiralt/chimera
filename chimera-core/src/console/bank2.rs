@@ -256,6 +256,8 @@ pub fn installed(
         Err(InstallFail::Io) => Bank2Fail::StagedRead,
         Err(InstallFail::Flash(f, at)) => Bank2Fail::Flash(f, at),
         Err(InstallFail::Readback(v)) => Bank2Fail::Readback(Bank2Status::from_verdict(&v)),
+        // The guard refuses before an install starts, so none reaches here.
+        Err(InstallFail::SlotForeign(_)) => Bank2Fail::Door,
     };
     Bank2Answer::Failed { why, audio }
 }
