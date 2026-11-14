@@ -115,6 +115,13 @@ OLD_PUT_REFUSALS = (
 FOREIGN_SLOTS = {b"mixer": ("MIXER", "0x08180000"), b"edit": ("EDIT", "0x081C0000")}
 
 
+def foreign_slot(line: str):
+    """What `bank2 slot foreign <slot>` (`status`'s line, `bank2 install`'s
+    after ERR) means for the user; None for a slot it doesn't name."""
+    slot = FOREIGN_SLOTS.get(line.split()[-1].encode())
+    return slot and "the unit's %s slot (%s) holds other code; bank 2 not installed" % slot
+
+
 def old_put_refusal(body: bytes, bk2_len: int) -> bool:
     """Firmware from before bank 2 refuses the path: its usage line exactly,
     or (0.2, 0.3 word it differently) any `put takes` line naming BANK2.BK2
@@ -812,11 +819,10 @@ def bank2_install(t: Target, env, local: str, note: str = "") -> int:
     if text.startswith("OK"):
         print(text)
         return 0
-    if text.startswith("ERR bank2 slot foreign "):
-        slot = FOREIGN_SLOTS.get(text.split()[-1].encode())
-        if slot:
-            fail("the unit's %s slot (%s) holds other code; bank 2 not installed" % slot)
-            return 2
+    foreign = text.startswith("ERR bank2 slot foreign ") and foreign_slot(text)
+    if foreign:
+        fail(foreign)
+        return 2
     if "staged: needs firmware" in text:
         fail(text + LATER)
         return 2
@@ -970,6 +976,10 @@ def updated(t: Target, pkg: Package) -> int:
     if status is Status.OK and (not hash_ or build.rstrip("+").split()[-1:] != hash_):
         return fail("update: flashed, but status says %r: the new firmware (%s) isn't the one running" % (build or text.strip(), pkg.version))
     got = next((ln for ln in text.splitlines() if ln.startswith("bank2 ")), text.strip())
+    foreign = status is Status.OK and got.startswith("bank2 slot foreign ") and foreign_slot(got)
+    if foreign:
+        fail("update: flashed, but " + foreign)
+        return 2
     if status is Status.OK and got.startswith("bank2 open ") and got.endswith(" seal=" + pkg.seal):
         print("OK updated %s" % pkg.version)
         return 0

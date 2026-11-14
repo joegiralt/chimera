@@ -2992,6 +2992,10 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
     ("toast_exfat", Overlay::Toast("CARD IS EXFAT: FORMAT FAT32")),
     ("installing", Overlay::Installing("0.2.0 02e440e2")),
     ("installing_writing", Overlay::Writing("0.2.0 02e440e2")),
+    (
+        "install_refused",
+        Overlay::Refused(chimera_image::Slot::Mixer),
+    ),
 ];
 
 /// The two faces of the one overlay component.
@@ -3003,6 +3007,8 @@ pub enum Overlay {
     Installing(&'static str),
     /// The same, its phase line at WRITING.
     Writing(&'static str),
+    /// The install refused: the slot holds other code.
+    Refused(chimera_image::Slot),
 }
 
 /// Every case name: the screens, then the overlays.
@@ -3027,6 +3033,10 @@ pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
             use chimera_core::ui::installing;
             installing::draw(&mut fb, line);
             installing::phase(&mut fb, chimera_image::Phase::Writing);
+            (0, chimera_hal::SCREEN_HEIGHT)
+        }
+        Overlay::Refused(slot) => {
+            chimera_core::ui::installing::refused(&mut fb, slot);
             (0, chimera_hal::SCREEN_HEIGHT)
         }
     };

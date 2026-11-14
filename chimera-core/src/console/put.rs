@@ -56,8 +56,9 @@ use crate::stream::layout::FRAMED_CHUNK_BYTES;
 
 /// The largest file `put` takes: a project is about 130 KB.
 pub const PUT_MAX_BYTES: u32 = 1 << 20;
-/// The whole `put`, from its line to its answer, card work included.
-pub const PUT_DEADLINE_MS: u32 = 30_000;
+/// The whole `put`, from its line to its answer, card work included: a
+/// 1 MB bank-2 image at 16 KiB/s is 64 s.
+pub const PUT_DEADLINE_MS: u32 = 120_000;
 /// Each 512-byte block of data must arrive within this of the last.
 pub const PUT_STALL_MS: u32 = 500;
 /// Base64 characters a data line holds at most: 48 bytes.

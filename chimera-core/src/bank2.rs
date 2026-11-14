@@ -8,7 +8,7 @@ pub use chimera_engine::bank2::{
     TABLE_LEN, UI_DOOR_ADDR,
 };
 use chimera_hal::store::Store;
-use chimera_image::{FlashFail, Verdict};
+use chimera_image::{FlashFail, Slot, Verdict};
 pub use chimera_image::{Seal, Version};
 
 use crate::addr::ParamAddr;
@@ -44,6 +44,8 @@ pub enum Bank2Status {
     /// A double ECC error marked bank 2 bad and S0's erase failed: never
     /// read this boot.
     EccEraseFailed(FlashFail),
+    /// The slot guard found other code in a slot: nothing written.
+    SlotForeign(Slot),
 }
 
 impl Bank2Status {
@@ -87,6 +89,7 @@ impl Bank2Status {
                 w.write_str("ecc erase failed ")?;
                 write_flash_fail(*f, w)
             }
+            Self::SlotForeign(s) => write!(w, "slot foreign {}", slot_word(*s)),
         }
     }
 
@@ -96,7 +99,19 @@ impl Bank2Status {
 
     /// What ABOUT shows: no bank jargon (owner decision 8).
     pub fn label(&self) -> &'static str {
-        if self.is_open() { "OK" } else { NEEDS_UPDATE }
+        match self {
+            Self::Open { .. } => "OK",
+            Self::SlotForeign(_) => "SLOT IN USE",
+            _ => NEEDS_UPDATE,
+        }
+    }
+}
+
+/// A slot as the console names it: `mixer`, `edit`.
+pub const fn slot_word(s: Slot) -> &'static str {
+    match s {
+        Slot::Mixer => "mixer",
+        Slot::Edit => "edit",
     }
 }
 

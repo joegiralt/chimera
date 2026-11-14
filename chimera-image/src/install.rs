@@ -179,8 +179,6 @@ pub enum InstallFail {
     Readback(Verdict),
     /// The staged file failed a read mid-copy.
     Io,
-    /// The slot guard refused: the slot holds foreign code; flash untouched.
-    SlotForeign(Slot),
 }
 
 /// What `install_with` is doing, for the screen.

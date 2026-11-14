@@ -327,14 +327,14 @@ fn put_takes_the_staged_bank2_file() {
         want(4608)
     );
     assert_eq!(
-        one("put /CHIMERA/SYSTEM/BANK2.BK2 524288 1a2b3c4d\n"),
-        want(524_288)
+        one("put /CHIMERA/SYSTEM/BANK2.BK2 1048576 1a2b3c4d\n"),
+        want(1_048_576)
     );
     for bad in [
         "put /CHIMERA/SYSTEM/BANK2.BIN 4608 1a2b3c4d",
         "put /CHIMERA/BANK2.BK2 4608 1a2b3c4d",
         "put /BANK2.BK2 4608 1a2b3c4d",
-        "put /CHIMERA/SYSTEM/BANK2.BK2 524289 1a2b3c4d",
+        "put /CHIMERA/SYSTEM/BANK2.BK2 1048577 1a2b3c4d",
         "put /CHIMERA/SYSTEM/BANK3.BK2 4608 1a2b3c4d",
         "put /CHIMERA/SYSTEM//BANK2.BK2 4608 1a2b3c4d",
         "put /CHIMERA/SYSTEM/BANK2.BK2.BIN 4608 1a2b3c4d",

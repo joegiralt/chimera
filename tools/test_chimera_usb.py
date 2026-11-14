@@ -1380,6 +1380,16 @@ class Update(unittest.TestCase):
         self.assertEqual(self.sent("bank2"), [], "the boot installs it, not the console")
         self.assertGreaterEqual(max(self.waits), 60.0, "the first boot installs before the console comes up")
 
+    def test_a_boot_refused_for_a_foreign_slot_exits_2_with_its_address(self):
+        # chimera-core's own words: `Bank2Status::SlotForeign`'s status line.
+        for word, name, addr in ((b"mixer", "MIXER", "0x08180000"), (b"edit", "EDIT", "0x081C0000")):
+            answers = {b"status": self.status(b"bank2 slot foreign " + word)}
+            with PutUnit(answers=answers, after=b"OK staged: needs firmware 0.2.0 02e440e2\n") as u:
+                rc, out, err = self.update(u, self.package())
+            self.assertEqual(rc, 2, err)
+            self.assertIn("flashed, but the unit's %s slot (%s) holds other code" % (name, addr), err)
+            self.assertNotIn("OK updated", out)
+
     def test_a_plain_ok_stages_too(self):
         with PutUnit(answers={b"status": self.status(self.open_line())}) as u:
             rc, out, err = self.update(u, self.package())

@@ -8,12 +8,12 @@ use core::ops::ControlFlow;
 
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_image::{
-    FlashAt, FlashFail, Header, ImageRead, InstallFail, ReadFail, Seal, Verdict, judge,
+    FlashAt, FlashFail, Header, ImageRead, InstallFail, ReadFail, Seal, Slot, Verdict, judge,
     pick_staged, wants_staged,
 };
 
 use super::{Arg, Out, Stalled, Words};
-use crate::bank2::{Bank2Status, Version};
+use crate::bank2::{Bank2Status, Version, slot_word};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bank2Arg {
@@ -183,6 +183,8 @@ pub enum Bank2Refusal {
     Stale(Version),
     /// The staged file judged neither good nor stale.
     Staged(Bank2Status),
+    /// The slot guard found other code in a slot.
+    SlotForeign(Slot),
 }
 
 /// Why bank 2, written to, isn't open.
@@ -256,8 +258,6 @@ pub fn installed(
         Err(InstallFail::Io) => Bank2Fail::StagedRead,
         Err(InstallFail::Flash(f, at)) => Bank2Fail::Flash(f, at),
         Err(InstallFail::Readback(v)) => Bank2Fail::Readback(Bank2Status::from_verdict(&v)),
-        // The guard refuses before an install starts, so none reaches here.
-        Err(InstallFail::SlotForeign(_)) => Bank2Fail::Door,
     };
     Bank2Answer::Failed { why, audio }
 }
@@ -277,9 +277,9 @@ fn write_flash(f: FlashFail, at: FlashAt, t: &mut impl Write) -> fmt::Result {
 }
 
 /// `bank2 install`'s whole answer: an `audio` line if flash was written,
-/// then `OK bank2 open <version>`, `OK already installed` or
-/// `ERR bank2: <why>`; `bank2 erase`'s `OK bank2 erased` or
-/// `ERR bank2: flash <fail>`.
+/// then `OK bank2 open <version>`, `OK already installed`,
+/// `ERR bank2 slot foreign <slot>` or `ERR bank2: <why>`; `bank2 erase`'s
+/// `OK bank2 erased` or `ERR bank2: flash <fail>`.
 pub fn write_bank2<O: Out>(a: &Bank2Answer, out: &mut O) -> Result<(), Stalled> {
     lines(a, &mut super::Text(out)).map_err(|fmt::Error| Stalled)
 }
@@ -291,16 +291,16 @@ fn lines(a: &Bank2Answer, t: &mut impl Write) -> fmt::Result {
         }
         Bank2Answer::Already => t.write_str("OK already installed\n"),
         Bank2Answer::Refused(r) => {
-            t.write_str("ERR bank2: ")?;
+            t.write_str("ERR bank2")?;
             match r {
-                Bank2Refusal::Unsealed => t.write_str("firmware unsealed"),
-                Bank2Refusal::Busy => t.write_str("busy"),
-                Bank2Refusal::Nothing => t.write_str("nothing staged"),
-                Bank2Refusal::Card(e) => t.write_str(e.message()),
-                Bank2Refusal::Stale(v) => {
-                    write!(t, "staged: needs firmware {}", v.as_str())
-                }
-                Bank2Refusal::Staged(s) => t.write_str("staged: ").and_then(|()| s.state(t)),
+                Bank2Refusal::Unsealed => t.write_str(": firmware unsealed"),
+                Bank2Refusal::Busy => t.write_str(": busy"),
+                Bank2Refusal::Nothing => t.write_str(": nothing staged"),
+                Bank2Refusal::Card(e) => write!(t, ": {}", e.message()),
+                Bank2Refusal::Stale(v) => write!(t, ": staged: needs firmware {}", v.as_str()),
+                Bank2Refusal::Staged(s) => t.write_str(": staged: ").and_then(|()| s.state(t)),
+                // `status`'s own words, no colon: the host tool matches them.
+                Bank2Refusal::SlotForeign(s) => write!(t, " slot foreign {}", slot_word(*s)),
             }
             .and_then(|()| t.write_char('\n'))
         }

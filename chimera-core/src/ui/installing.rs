@@ -1,9 +1,9 @@
 //! Bank 2's install (ADR 0137): DON'T POWER OFF over the whole screen,
 //! what it is doing under it. The UI loop is held until it ends; the
-//! audio plays on.
+//! audio plays on. Or, a slot holding other code, the refusal.
 
 use chimera_hal::ChimeraDisplay;
-use chimera_image::Phase;
+use chimera_image::{Phase, Slot};
 
 use super::fmt::FmtBuf;
 use super::{draw, theme};
@@ -33,6 +33,45 @@ pub fn draw<D: ChimeraDisplay>(d: &mut D, version: &str) {
         theme::INK,
         theme::LABEL_TRACKING,
     );
+    d.flush();
+}
+
+/// The refusal's baselines: its heading, then its body.
+const REFUSED_Y: [i32; 4] = [140, 180, 200, LINE_Y];
+
+/// The refusal: its heading, then why and what it did.
+pub fn refused_lines(s: Slot) -> [&'static str; 4] {
+    let holds = match s {
+        Slot::Mixer => "THE MIXER SLOT HOLDS",
+        Slot::Edit => "THE EDIT SLOT HOLDS",
+    };
+    [
+        "NOT INSTALLED",
+        holds,
+        "OTHER CODE.",
+        "NOTHING WAS WRITTEN.",
+    ]
+}
+
+/// The refusal, drawn and flushed: its heading in the readout's font (the
+/// warning's is too wide for it), the rest in the version line's.
+pub fn refused<D: ChimeraDisplay>(d: &mut D, s: Slot) {
+    let cx = theme::SCREEN_W / 2;
+    let _ = d.clear(theme::BG);
+    let [head, body @ ..] = refused_lines(s);
+    let [head_y, body_y @ ..] = REFUSED_Y;
+    draw::text_center(d, &theme::FONT_READOUT, head, cx, head_y, theme::WARN, 0);
+    for (l, y) in body.into_iter().zip(body_y) {
+        draw::text_center(
+            d,
+            &theme::FONT_VALUE,
+            l,
+            cx,
+            y,
+            theme::INK,
+            theme::LABEL_TRACKING,
+        );
+    }
     d.flush();
 }
 

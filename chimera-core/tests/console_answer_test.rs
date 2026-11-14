@@ -1074,6 +1074,15 @@ fn bank2_install_answers() {
             "ERR bank2: firmware unsealed\n",
         ),
         (refused(Bank2Refusal::Busy), "ERR bank2: busy\n"),
+        // The words `chimera-usb update` matches: `status`'s line after ERR.
+        (
+            refused(Bank2Refusal::SlotForeign(chimera_image::Slot::Mixer)),
+            "ERR bank2 slot foreign mixer\n",
+        ),
+        (
+            refused(Bank2Refusal::SlotForeign(chimera_image::Slot::Edit)),
+            "ERR bank2 slot foreign edit\n",
+        ),
         (
             fail(Bank2Fail::Flash(
                 FlashFail::Timeout,
