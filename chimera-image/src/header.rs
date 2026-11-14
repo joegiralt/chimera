@@ -143,8 +143,7 @@ impl Header {
         let ok = b[FLAGS_OFF..FLAGS_OFF + 2] == [0, 0]
             && b[SPARE_OFF..c].iter().all(|&x| x == 0)
             && body_len == IMAGE_BODY
-            && (HEADER_LEN..BANK2_LEN).contains(&door_off)
-            && door_off.is_multiple_of(FLASH_WORD);
+            && door_off == HEADER_LEN;
         if !ok {
             return Err(Verdict::Corrupt);
         }

@@ -13,8 +13,7 @@ use chimera_image::regs::{
     erase_cr, ms_cycles, program_cr, relock_cr, settle,
 };
 use chimera_image::{
-    BANK2_BASE, BANK2_LEN, Bank2Memory, Bank2Sector, Bank2Word, Flash, FlashFail, ImageRead,
-    ReadFail, Verdict,
+    BANK2_BASE, Bank2Memory, Bank2Sector, Bank2Word, Flash, FlashFail, ImageRead, ReadFail, Verdict,
 };
 use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::pac;
@@ -178,11 +177,14 @@ fn clear_flags() {
 /// maps them.
 pub struct FlashRead;
 
+// ponytail: S0-S3 only until Task 8 maps region 2 over the 1 MB bank.
+const READ_LEN: u32 = 512 * 1024;
+
 impl ImageRead for FlashRead {
     fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
         let len = u32::try_from(buf.len()).map_err(|_| ReadFail)?;
         let end = off.checked_add(len).ok_or(ReadFail)?;
-        if end > BANK2_LEN || !mpu().readable() {
+        if end > READ_LEN || !mpu().readable() {
             return Err(ReadFail);
         }
         if len == 0 {
@@ -190,7 +192,7 @@ impl ImageRead for FlashRead {
         }
         let at = BANK2_BASE + off;
         for (a, b) in (at..).zip(buf.iter_mut()) {
-            // SAFETY: `a` is inside S0-S3 (`end <= BANK2_LEN`), which
+            // SAFETY: `a` is inside S0-S3 (`end <= READ_LEN`), which
             // region 2 maps readable (`mpu()`); a load never programs or
             // erases flash.
             *b = unsafe { core::ptr::read_volatile(a as *const u8) };

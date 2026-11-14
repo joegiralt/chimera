@@ -1287,7 +1287,7 @@ fn a_bank2_image_is_staged_whole() {
     let mut s = FatStore::new(fat16(16_384, 1));
     let vol = card(&mut s);
     let img = bank2_image(&body(4352), console::SEAL);
-    assert_eq!(img.len(), 4608);
+    assert_eq!(img.len(), 1 << 20);
     assert_eq!(
         ask(&mut s, &put_line(BANK2, &img), &lines(&img)),
         "READY\nOK\n"
@@ -1299,7 +1299,7 @@ fn a_bank2_image_is_staged_whole() {
         ask(&mut s, &put_line(BANK2, &new), &lines(&new)),
         "READY\nOK\n"
     );
-    assert_eq!(system(&mut s, vol), [(bank2_file(), 8192)]);
+    assert_eq!(system(&mut s, vol), [(bank2_file(), 1 << 20)]);
     assert_eq!(read(&mut s, vol, bank2_file()), Some(new));
     clean(s.device());
 }

@@ -239,14 +239,17 @@ pub fn chunked(file: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// A committed bank-2 image of `body` sealed `seal`, version 0.2.0.
+/// A committed bank-2 image of `body`, padded with 0xFF to the one image
+/// size, sealed `seal`, version 0.2.0.
 pub fn bank2_image(body: &[u8], seal: [u8; 8]) -> Vec<u8> {
+    let mut body = body.to_vec();
+    body.resize(chimera_image::IMAGE_BODY as usize, 0xFF);
     let h = chimera_image::Header {
-        body_len: body.len() as u32,
-        body_crc: crc(body),
+        body_len: chimera_image::IMAGE_BODY,
+        body_crc: crc(&body),
         door_off: 0x100,
         seal,
         version: chimera_core::bank2::Version::new("0.2.0 02e440e2"),
     };
-    [&h.to_bytes(true)[..], body].concat()
+    [&h.to_bytes(true)[..], &body].concat()
 }

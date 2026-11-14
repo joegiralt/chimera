@@ -7,7 +7,7 @@ use chimera_core::console::{ROOT_BK2_MAX, STAGED, find_staged};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use chimera_image::crc::Crc32;
-use chimera_image::{Header, ImageRead, Seal, Verdict, Version};
+use chimera_image::{Header, IMAGE_BODY, ImageRead, Seal, Verdict, Version};
 
 const SEAL: [u8; 8] = *b"SEAL0001";
 const OTHER: [u8; 8] = *b"SEAL0002";
@@ -16,18 +16,21 @@ fn seal() -> Seal {
     Seal::new(SEAL).unwrap()
 }
 
-/// A committed image of `body` sealed `seal`, named `version`.
+/// A committed image of `body`, padded with 0xFF to the one image size,
+/// sealed `seal`, named `version`.
 fn image(seal: [u8; 8], version: &str, body: &[u8]) -> Vec<u8> {
+    let mut body = body.to_vec();
+    body.resize(IMAGE_BODY as usize, 0xFF);
     let mut c = Crc32::new();
-    c.update(body);
+    c.update(&body);
     let h = Header {
-        body_len: body.len() as u32,
+        body_len: IMAGE_BODY,
         body_crc: c.finish(),
         door_off: 0x100,
         seal,
         version: Version::new(version),
     };
-    [&h.to_bytes(true)[..], body].concat()
+    [&h.to_bytes(true)[..], &body].concat()
 }
 
 fn body(seed: u8) -> Vec<u8> {

@@ -112,7 +112,7 @@ fn bounds_are_corrupt() {
         img.extend_from_slice(&b);
         assert_eq!(judged(img, &seal()), Verdict::Corrupt, "len {len}");
     }
-    for off in [0x80, BANK2_LEN, 0x104, u32::MAX - 31] {
+    for off in [0x80, 0x104, 0x200, BANK2_LEN, u32::MAX - 31] {
         let mut h = header_for(&b);
         h.door_off = off;
         let mut img = h.to_bytes(true).to_vec();
@@ -155,13 +155,10 @@ fn other_seal_is_stale_with_version() {
 fn every_single_byte_flip_is_never_good() {
     let (img, s) = sealed(&body(1024));
     // The header, the live body, and the padding's edges: a full 1 MB
-    // sweep is a CRC of 1 MB per byte. Skipped: the version text, and
-    // door_off's upper bytes, which now land inside the 1 MB body; bank 1
-    // opens only a door at its own link's address (bank2_door_test).
+    // sweep is a CRC of 1 MB per byte.
     let n = img.len();
     let at = (0..0x100 + 1024 + 64).chain(n - 64..n);
-    let free = |i: &usize| (0x20..0x40).contains(i) || (0x15..0x18).contains(i);
-    for i in at.filter(|i| !free(i)) {
+    for i in at.filter(|i| !(0x20..0x40).contains(i)) {
         let mut f = img.clone();
         f[i] ^= 1;
         let v = judged(f, &s);

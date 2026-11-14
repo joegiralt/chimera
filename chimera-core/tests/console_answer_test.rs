@@ -1167,7 +1167,7 @@ fn every_flash_failure_has_its_words() {
 
 fn header() -> Header {
     Header {
-        body_len: 4352,
+        body_len: chimera_image::IMAGE_BODY,
         body_crc: 0x1234_5678,
         door_off: 0x100,
         seal: *b"SEAL0001",

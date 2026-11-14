@@ -71,7 +71,7 @@ fn only_open_is_ok() {
 fn from_verdict_keeps_what_the_judge_saw() {
     let have = Version::new("0.1.9 aaaaaaaa");
     let h = Header {
-        body_len: 32,
+        body_len: chimera_image::IMAGE_BODY,
         body_crc: 0,
         door_off: 256,
         seal: SEAL,

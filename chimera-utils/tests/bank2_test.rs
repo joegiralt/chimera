@@ -4,7 +4,7 @@
 #[path = "../src/bank2.rs"]
 mod bank2;
 
-use chimera_image::{Header, Seal, UNSEALED_HEADER, Verdict, judge};
+use chimera_image::{BANK2_LEN, Header, Seal, UNSEALED_HEADER, Verdict, judge};
 use object::write::{Object, Relocation, Symbol, SymbolSection};
 use object::{
     Architecture, BinaryFormat, Endianness, RelocationFlags, SectionKind, SymbolFlags, SymbolKind,
@@ -26,6 +26,7 @@ fn fake() -> (Vec<u8>, Vec<u8>) {
     bin[100..108].copy_from_slice(b"UNSEALED");
     let mut bk2 = UNSEALED_HEADER.to_vec();
     bk2.extend((0..1024).map(|i| (i * 7) as u8));
+    bk2.resize(BANK2_LEN as usize, 0xFF);
     (bin, bk2)
 }
 

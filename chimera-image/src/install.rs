@@ -290,8 +290,10 @@ const FA_WORD: u32 = 0x7fff;
 /// A fault that a double ECC error in bank 2 explains: a bus fault (CFSR),
 /// SR2.DBECCERR, and FA2R's word inside the bank (every index is, now that
 /// it spans S0-S7). Anything else is not bank 2's to clear.
-// Always true at 1 MB; kept so a shorter bank re-arms it.
-#[allow(clippy::bad_bit_mask)]
+#[allow(
+    clippy::bad_bit_mask,
+    reason = "always true at 1 MB; kept so a shorter bank re-arms it"
+)]
 pub const fn bank2_ecc_fault(cfsr: u32, sr2: u32, fa2r: u32) -> bool {
     cfsr & CFSR_BUS != 0
         && sr2 & crate::regs::SR_DBECCERR != 0
