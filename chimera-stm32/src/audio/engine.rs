@@ -151,7 +151,7 @@ pub fn shed_for_load(took: Cycles) {
     // to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     if let Some(net) = e.net {
-        net.after(took, &mut e.inst, &LOAD_SHEDS);
+        net.after(took, e.inst, &LOAD_SHEDS);
     }
 }
 
