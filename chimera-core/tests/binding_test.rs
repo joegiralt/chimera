@@ -30,7 +30,9 @@ fn every_part_slot_resolves_to_a_spec() {
                 SlotBinding::Empty
                 | SlotBinding::SelectOp
                 | SlotBinding::SelectPad
+                | SlotBinding::SelectRoute
                 | SlotBinding::FilterPanel(_)
+                | SlotBinding::PadFilterPanel(_)
                 | SlotBinding::FxPanel(_)
                 | SlotBinding::EnvPanel(..)
                 | SlotBinding::LfoPanel(..)
@@ -39,7 +41,10 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::Machine(_)
                 | SlotBinding::Knob(_)
                 | SlotBinding::Source => {}
-                SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::OpPanel(..) => {
+                SlotBinding::Param(_)
+                | SlotBinding::SelectedOp(_)
+                | SlotBinding::SelectedRoute(_)
+                | SlotBinding::OpPanel(..) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
                 SlotBinding::Legacy(_) => {

@@ -311,7 +311,12 @@ pub fn part_block<'a>(
         | BlockRef::Tempo
         | BlockRef::Random
         | BlockRef::Pad
-        | BlockRef::Kit => None,
+        | BlockRef::Kit
+        | BlockRef::PadFilter
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => None,
         BlockRef::Modal
         | BlockRef::TapeEngine
         | BlockRef::Va
@@ -350,7 +355,12 @@ pub fn part_block_mut<'a>(
         | BlockRef::Tempo
         | BlockRef::Random
         | BlockRef::Pad
-        | BlockRef::Kit => None,
+        | BlockRef::Kit
+        | BlockRef::PadFilter
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => None,
         BlockRef::Modal
         | BlockRef::TapeEngine
         | BlockRef::Va

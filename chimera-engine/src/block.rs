@@ -36,6 +36,8 @@ pub enum ValFmt {
     Uni,
     /// `Uni`, its top step reading HOLD.
     Hold,
+    /// `Uni`, its top step reading INF: a decay that never ends.
+    Inf,
     /// Bipolar: -64 to +63. Snaps: -64, -44, 0, +43, +63.
     Bi,
     /// Discrete integer 0..N. N is stored in the variant.
@@ -76,7 +78,7 @@ impl ValFmt {
     /// Coarse snap points in normalized 0..1 space.
     pub fn snap_points(self) -> &'static [f32] {
         match self {
-            ValFmt::Uni | ValFmt::Hold | ValFmt::Law(_) | ValFmt::Knob(..) => {
+            ValFmt::Uni | ValFmt::Hold | ValFmt::Inf | ValFmt::Law(_) | ValFmt::Knob(..) => {
                 &[0.0, 100.0 / 127.0, 1.0]
             }
             ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Keybd => {
@@ -123,6 +125,7 @@ impl ValFmt {
             ValFmt::Names(names) => names.len().saturating_sub(1) as u8,
             ValFmt::Uni
             | ValFmt::Hold
+            | ValFmt::Inf
             | ValFmt::Bi
             | ValFmt::Pan
             | ValFmt::Route
@@ -513,6 +516,14 @@ impl ParamSpec {
         Self {
             step: 1.0 / n,
             scale: Scale::Octaves,
+            ..self
+        }
+    }
+
+    /// This spec under id `id`: another block's entry as its own.
+    pub const fn with_id(self, id: u8) -> Self {
+        Self {
+            id: ParamId(id),
             ..self
         }
     }

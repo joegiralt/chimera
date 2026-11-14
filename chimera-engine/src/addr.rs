@@ -104,6 +104,13 @@ pub enum BlockRef {
     /// The Part's kit's own params (`Kit`: TONAL, ADR 0270), stored in the
     /// kit record, so not in `ALL`.
     Kit,
+    /// The selected pad's FILTER, AMP, mod envelope, LFO and route `n`
+    /// (`PadSound`, ADR 0269): the kit's, so not in `ALL`.
+    PadFilter,
+    PadAmp,
+    PadEnv,
+    PadLfo,
+    PadRoute(crate::dsp::drum::sound::RouteId),
 }
 
 impl BlockRef {
@@ -172,7 +179,25 @@ impl BlockRef {
             BlockRef::Random => &crate::randomize::RANDOM_SPECS,
             BlockRef::Pad => &crate::dsp::drum::params::PAD_SPECS,
             BlockRef::Kit => &crate::dsp::drum::params::KIT_SPECS,
+            BlockRef::PadFilter => &crate::dsp::drum::params::PAD_FILTER_SPECS,
+            BlockRef::PadAmp => &crate::dsp::drum::params::PAD_AMP_SPECS,
+            BlockRef::PadEnv => &crate::dsp::drum::params::PAD_ENV_SPECS,
+            BlockRef::PadLfo => &crate::dsp::drum::params::PAD_LFO_SPECS,
+            BlockRef::PadRoute(_) => &crate::dsp::drum::params::PAD_ROUTE_SPECS,
         }
+    }
+
+    /// The selected pad's: its own params or its sound's (ADR 0265, 0269).
+    pub const fn is_pad(self) -> bool {
+        matches!(
+            self,
+            BlockRef::Pad
+                | BlockRef::PadFilter
+                | BlockRef::PadAmp
+                | BlockRef::PadEnv
+                | BlockRef::PadLfo
+                | BlockRef::PadRoute(_)
+        )
     }
 
     /// A Sound holds it (`ParamSnapshot`'s blocks): what a Part's knobs
@@ -204,7 +229,12 @@ impl BlockRef {
             | BlockRef::Tempo
             | BlockRef::Random
             | BlockRef::Pad
-            | BlockRef::Kit => false,
+            | BlockRef::Kit
+            | BlockRef::PadFilter
+            | BlockRef::PadAmp
+            | BlockRef::PadEnv
+            | BlockRef::PadLfo
+            | BlockRef::PadRoute(_) => false,
         }
     }
 
@@ -239,7 +269,12 @@ impl BlockRef {
             | BlockRef::Tempo
             | BlockRef::Random
             | BlockRef::Pad
-            | BlockRef::Kit => false,
+            | BlockRef::Kit
+            | BlockRef::PadFilter
+            | BlockRef::PadAmp
+            | BlockRef::PadEnv
+            | BlockRef::PadLfo
+            | BlockRef::PadRoute(_) => false,
         }
     }
 }

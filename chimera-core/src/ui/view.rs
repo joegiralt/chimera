@@ -10,7 +10,8 @@ use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
 use crate::dsp::delay::{DelayParams, DelayType};
 use crate::dsp::drum::laws::spec;
-use crate::dsp::drum::params::PadParams;
+use crate::dsp::drum::params::{PadAmpParams, PadParams};
+use crate::dsp::drum::sound::{PadFilter, PadSound, RouteId};
 use crate::dsp::drum::types::{Kit, Knob, Machine, PadId, Tonal};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
@@ -126,6 +127,14 @@ pub struct SlotCtx {
     /// The machine of the kit's TONAL pad; `None` with TONAL OFF, and
     /// where `SlotCtx::read` sees no kit.
     pub tonal: Option<Machine>,
+    /// The selected pad's filter KIND: which panel its FLT cells show.
+    pub pad_kind: FilterKind,
+    /// The selected pad's route the route cells edit: the UI's
+    /// (`UiState::ctx`), route 1 elsewhere.
+    pub route: RouteId,
+    /// A DRUM Part's pages: the Sound's FILTER and AMP cells a pad
+    /// overlays edit the pad (`on_pad`), and `kind` is the pad's.
+    pub drum: bool,
 }
 
 impl SlotCtx {
@@ -183,6 +192,13 @@ impl SlotCtx {
             }),
             sel_pad: PadId::ALL[0],
             tonal: None,
+            pad_kind: params
+                .block(BlockRef::PadFilter)
+                .map_or(PadSound::DEFAULT.filter().kind(), |b| {
+                    FilterKind::from_index(b.get(FilterParams::KIND))
+                }),
+            route: RouteId::ALL[0],
+            drum: false,
         }
     }
 
@@ -196,8 +212,23 @@ impl SlotCtx {
                 Tonal::Off => None,
                 Tonal::Pad(p) => Some(kit.pad(p).machine()),
             },
+            pad_kind: kit.pad(id).sound().filter().kind(),
             ..self
         }
+    }
+
+    /// This context on a DRUM Part: FLT shows the selected pad's KIND.
+    pub fn on_drum(self) -> Self {
+        Self {
+            drum: true,
+            kind: self.pad_kind,
+            ..self
+        }
+    }
+
+    /// This context with the pad's route `route` selected.
+    pub fn on_route(self, route: RouteId) -> Self {
+        Self { route, ..self }
     }
 
     /// This context under THEME's PAGES.
@@ -555,6 +586,8 @@ pub enum View {
     SelectOp,
     /// DRUM's PAD: the Part's selected pad.
     SelectPad,
+    /// DRUM's ROUTE: the selected pad's route.
+    SelectRoute,
     Legacy {
         label: &'static str,
         fmt: ValFmt,
@@ -590,6 +623,7 @@ impl View {
             View::Empty => "--",
             View::SelectOp => "OP",
             View::SelectPad => "PAD",
+            View::SelectRoute => "ROUTE",
             View::Orbit(c) => c.label(),
             View::Source(_) => "SOURCE",
             View::Legacy { label, .. }
@@ -615,6 +649,7 @@ impl View {
             View::Source(_) => ValFmt::Names(&[]),
             View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             View::SelectPad => ValFmt::Names(&PAD_NUMBERS),
+            View::SelectRoute => ROUTE_FMT,
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
             View::Route { route, .. } => route.fmt(),
             View::Orbit(c) => c.fmt(),
@@ -654,12 +689,12 @@ impl View {
     pub fn hint(&self, ctx: &SlotCtx) -> Hint {
         match self {
             View::Route { .. } => return crate::ui::mod_grid::DELETE,
-            View::SelectPad => return PAD_HINT,
+            View::SelectPad | View::SelectRoute => return PAD_HINT,
             _ => {}
         }
         match self.addr() {
             // Every cell of a pad's pages steps the pad.
-            Some(a) if a.block == BlockRef::Pad => PAD_HINT,
+            Some(a) if a.block.is_pad() => PAD_HINT,
             Some(ParamAddr {
                 block: BlockRef::Out,
                 param,
@@ -699,6 +734,9 @@ impl View {
 pub static PAD_NUMBERS: [&str; PadId::ALL.len()] = [
     "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12",
 ];
+
+/// ROUTE's numbers, 1–4.
+pub const ROUTE_FMT: ValFmt = ValFmt::OneBased(RouteId::ALL.len() as u8 - 1);
 
 /// MIX + MINUS / PLUS steps the pad on a pad's pages (ADR 0265).
 pub const PAD_HINT: Hint = &[Gesture("MIX + -/+", "PAD")];
@@ -772,6 +810,7 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
 fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
+        (BlockRef::PadFilter, FilterParams::MODE) => ValFmt::Names(ctx.pad_kind.mode_labels()),
         (BlockRef::TapeEngine, id) => crate::bank2::ui_door(|u| u.tape_fmt(id, ctx.tape, ctx.once))
             .flatten()
             .unwrap_or(fmt),
@@ -790,6 +829,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         SlotBinding::Orbit(c) => View::Orbit(c),
         SlotBinding::SelectOp => View::SelectOp,
         SlotBinding::SelectPad => View::SelectPad,
+        SlotBinding::SelectRoute => View::SelectRoute,
         SlotBinding::Legacy(fmt) => View::Legacy {
             label: slot.label(),
             fmt: *fmt,
@@ -798,7 +838,10 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             label: slot.label(),
             text: "TYPE B",
         },
-        SlotBinding::Param(addr) => param(addr, slot.label(), fmt_of(addr, slot.format(), ctx)),
+        SlotBinding::Param(addr) => {
+            let addr = on_pad(addr, ctx);
+            param(addr, slot.label(), fmt_of(addr, slot.format(), ctx))
+        }
         SlotBinding::SelectedOp(id) => param(
             ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
             slot.label(),
@@ -809,14 +852,33 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             slot.label(),
             slot.format(),
         ),
+        SlotBinding::SelectedRoute(id) => param(
+            ParamAddr::new(BlockRef::PadRoute(ctx.route), id),
+            slot.label(),
+            slot.format(),
+        ),
+        SlotBinding::PadFilterPanel(k) => match filter_panel::knob(ctx.pad_kind, k) {
+            Some(&PanelKnob {
+                target: PanelTarget::Filter(id),
+                label,
+            }) if PadFilter::IDS.contains(&id) => {
+                filter_cell(ParamAddr::new(BlockRef::PadFilter, id), label, ctx)
+            }
+            _ => View::Empty,
+        },
         SlotBinding::FilterPanel(k) => match filter_panel::knob(ctx.kind, k) {
             None => View::Empty,
             Some(&PanelKnob { target, label }) => match target {
-                PanelTarget::Filter(id) => {
-                    let addr = ParamAddr::new(BlockRef::Filter, id);
-                    let fmt = addr.spec().map_or(ValFmt::Uni, |s| s.fmt);
-                    param(addr, label, fmt_of(addr, fmt, ctx))
+                // FLT › MOD's SEM OUTPUT on a DRUM Part: the pad's MODE,
+                // which its FLT cells leave out.
+                PanelTarget::Filter(id) if ctx.drum && k > 2 && PadFilter::IDS.contains(&id) => {
+                    View::Empty
                 }
+                PanelTarget::Filter(id) => filter_cell(
+                    on_pad(ParamAddr::new(BlockRef::Filter, id), ctx),
+                    label,
+                    ctx,
+                ),
                 PanelTarget::Route(_) | PanelTarget::Keybd | PanelTarget::JackAmount(_) => {
                     match target.route() {
                         Some(route) => View::Route { route, label },
@@ -896,6 +958,39 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             None => View::Empty,
         },
     }
+}
+
+/// A filter panel's cell on `addr`, the Sound's or the pad's, in the
+/// panel's word.
+fn filter_cell(addr: ParamAddr, label: &'static str, ctx: &SlotCtx) -> View {
+    let fmt = addr.spec().map_or(ValFmt::Uni, |s| s.fmt);
+    param(addr, label, fmt_of(addr, fmt, ctx))
+}
+
+/// `a` on a DRUM Part (`ctx.drum`): the Sound's FILTER and AMP cells a
+/// pad overlays are the selected pad's, as the Sound's are never heard
+/// there (ADR 0269); the rest, and every other Part's, as they are.
+pub fn on_pad(a: ParamAddr, ctx: &SlotCtx) -> ParamAddr {
+    if !ctx.drum {
+        return a;
+    }
+    let (block, param) = match (a.block, a.param) {
+        (BlockRef::Filter, id) if PadFilter::IDS.contains(&id) => (BlockRef::PadFilter, id),
+        (BlockRef::Out, OutParams::VCA_VEL) => (BlockRef::PadAmp, PadAmpParams::VEL),
+        (BlockRef::Out, OutParams::LPG) => (BlockRef::PadAmp, PadAmpParams::LPG),
+        (BlockRef::Out, OutParams::DECAY) => (BlockRef::PadAmp, PadAmpParams::GATE_DECAY),
+        (BlockRef::Out, OutParams::STRIKE) => (BlockRef::PadAmp, PadAmpParams::STRIKE),
+        _ => return a,
+    };
+    ParamAddr::new(block, param)
+}
+
+/// `def` edits the selected pad under `ctx`: a pad's page, or one whose
+/// cells `on_pad` turns to the pad (a DRUM Part's FLT and AMP). MIX +
+/// MINUS / PLUS steps the pad there.
+pub fn edits_pad(def: &BlockDef, ctx: &SlotCtx) -> bool {
+    def.edits_pad()
+        || (0..def.params.len()).any(|i| view(def, i, ctx).addr().is_some_and(|a| a.block.is_pad()))
 }
 
 /// A TAPE cell on the Sound's machine, labelled its way: DECK's after
@@ -1076,8 +1171,11 @@ pub fn tape_routed(sound: &Sound) -> bool {
 /// (spec § UI "Dimmed").
 pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     match (addr.block, addr.param) {
-        // AMP's VEL under the Algo/Modal pass-through (spec § 5).
-        (BlockRef::Out, OutParams::VCA_VEL) => sound.mod_state.routes_into(VCA) == 0,
+        // AMP's VEL under the Algo/Modal pass-through (spec § 5); a pad's
+        // VEL is laid over it.
+        (BlockRef::Out, OutParams::VCA_VEL) | (BlockRef::PadAmp, PadAmpParams::VEL) => {
+            sound.mod_state.routes_into(VCA) == 0
+        }
         // MIX mixes nothing with TYPE OFF.
         (BlockRef::VoiceFx, VoiceFxParams::MIX) => sound.params.fx.ty() == FxType::Off,
         // KIND lists built kinds only; with one it is fixed.
@@ -1124,6 +1222,23 @@ pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
                 },
             ..
         } => ctx.clock == ClockSource::Midi,
+        // A pad's KIND and MODE, by its own kind.
+        View::Param {
+            addr:
+                ParamAddr {
+                    block: BlockRef::PadFilter,
+                    param: FilterParams::KIND,
+                },
+            ..
+        } => FilterKind::BUILT.len() == 1,
+        View::Param {
+            addr:
+                ParamAddr {
+                    block: BlockRef::PadFilter,
+                    param: FilterParams::MODE,
+                },
+            ..
+        } => ctx.pad_kind.modes().len() == 1,
         View::Param { addr, .. } => dimmed(addr, sound) || delay_note(addr, ctx).is_some(),
         _ => false,
     }

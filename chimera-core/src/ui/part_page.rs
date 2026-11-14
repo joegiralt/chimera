@@ -22,6 +22,10 @@ pub fn values_under(def: &BlockDef, params: &impl BlockRead, ctx: &SlotCtx) -> [
             use crate::dsp::drum::types::PadId;
             ctx.sel_pad.index() as f32 / (PadId::ALL.len() - 1) as f32
         }
+        View::SelectRoute => {
+            use crate::dsp::drum::sound::RouteId;
+            ctx.route.index() as f32 / (RouteId::ALL.len() - 1) as f32
+        }
         v => v
             .addr()
             .and_then(|a| Some(params.block(a.block)?.normalized(a.param)))

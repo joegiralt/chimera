@@ -716,6 +716,14 @@ impl PadRoutes {
         self.0[i.index()] = r;
     }
 
+    pub const fn route(&self, i: RouteId) -> &PadRoute {
+        &self.0[i.index()]
+    }
+
+    pub fn route_mut(&mut self, i: RouteId) -> &mut PadRoute {
+        &mut self.0[i.index()]
+    }
+
     /// A route with an amount moves CUTOFF or RESO.
     pub fn moves_filter(&self) -> bool {
         self.0

@@ -715,6 +715,11 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Random => "RND",
         BlockRef::Pad => "PAD",
         BlockRef::Kit => "KIT",
+        BlockRef::PadFilter => "PFL",
+        BlockRef::PadAmp => "PAM",
+        BlockRef::PadEnv => "PEN",
+        BlockRef::PadLfo => "PLF",
+        BlockRef::PadRoute(_) => "RTE",
     }
 }
 
@@ -814,6 +819,11 @@ pub fn block_name(b: BlockRef) -> &'static str {
         BlockRef::Random => "RANDOMIZE",
         BlockRef::Pad => "PAD",
         BlockRef::Kit => "KIT",
+        BlockRef::PadFilter => "PAD FILTER",
+        BlockRef::PadAmp => "PAD AMP",
+        BlockRef::PadEnv => "PAD ENV",
+        BlockRef::PadLfo => "PAD LFO",
+        BlockRef::PadRoute(_) => "PAD ROUTE",
     }
 }
 

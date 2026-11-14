@@ -651,7 +651,12 @@ pub(crate) fn other_engine(a: ParamAddr, engine: EngineType) -> Result<(), Strin
         | BlockRef::Tempo
         | BlockRef::Random
         | BlockRef::Pad
-        | BlockRef::Kit => None,
+        | BlockRef::Kit
+        | BlockRef::PadFilter
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => None,
     };
     match owner {
         Some(o) if o != engine => Err(format!(

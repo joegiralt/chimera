@@ -124,16 +124,23 @@ fn mix_minus_and_plus_step_the_pad_on_every_pad_page() {
     }
 }
 
+/// FLT's cells on DRUM are the selected pad's (ADR 0269): MIX + PLUS
+/// steps the pad there, as on every pad page, and FREQ turns that pad.
 #[test]
-fn mix_plus_on_flt_primes_and_leaves_the_pad() {
+fn mix_plus_on_flt_steps_the_pad() {
     let mut ui = drum();
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     assert!(on(&ui, &FILTER));
     feed(&mut ui, Input::turn(EncoderId::F, 1));
     mix(&mut ui, ButtonId::Plus);
-    assert_eq!(ui.selected_pad(P1), pad(1));
-    assert!(ui.prime_status().is_some(), "MIX + PLUS still primes");
+    assert_eq!(ui.selected_pad(P1), pad(2));
+    assert!(ui.prime_status().is_none(), "nothing primed");
+    let cutoff = |ui: &UiState, n| ui.project().kit(P1).pad(pad(n)).sound().filter().cutoff();
+    let before = cutoff(&ui, 1);
+    feed(&mut ui, Input::turn(EncoderId::F, -3));
+    assert!(cutoff(&ui, 2) < before, "FREQ turns pad 2");
+    assert_eq!(cutoff(&ui, 1), before, "pad 1 is left");
 }
 
 /// Review Focus 5: on MTX, MIX + MINUS deletes the route under the cursor

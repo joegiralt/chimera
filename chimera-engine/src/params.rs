@@ -1491,7 +1491,12 @@ impl BlockRead for ParamSnapshot {
             | BlockRef::Tempo
             | BlockRef::Random
             | BlockRef::Pad
-            | BlockRef::Kit => return None,
+            | BlockRef::Kit
+            | BlockRef::PadFilter
+            | BlockRef::PadAmp
+            | BlockRef::PadEnv
+            | BlockRef::PadLfo
+            | BlockRef::PadRoute(_) => return None,
         }))
     }
 }
@@ -1525,7 +1530,12 @@ impl Blocks for ParamSnapshot {
             | BlockRef::Tempo
             | BlockRef::Random
             | BlockRef::Pad
-            | BlockRef::Kit => return None,
+            | BlockRef::Kit
+            | BlockRef::PadFilter
+            | BlockRef::PadAmp
+            | BlockRef::PadEnv
+            | BlockRef::PadLfo
+            | BlockRef::PadRoute(_) => return None,
         }))
     }
 }
