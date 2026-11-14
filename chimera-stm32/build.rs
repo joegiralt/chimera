@@ -423,7 +423,7 @@ ASSERT(__bank2_s6_end <= 0x081FFFE0, "the S6 groups fit S6-S7, clear of S7's end
 ASSERT(__slot_mixer == 0x08180000, "MIXER's stub at 0x08180000, where bootloader 1.09 jumps");
 ASSERT(__slot_edit == 0x081C0000, "EDIT's stub at 0x081C0000, where bootloader 1.09 jumps");
 ASSERT(__bank2_end == 0x08200000, "bank 2 is exactly 1 MB, S7's end marker last");
-ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
+ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
 /* ASSERTS */
 /* BENCH ASSERT */
 /* ORBIT ASSERT */

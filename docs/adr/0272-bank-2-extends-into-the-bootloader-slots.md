@@ -66,6 +66,7 @@ Research of Ixox/preenfm3 at 65cb963 (private notes) found:
 - A unit with a foreign slot refuses every install and runs the new bank 1 with bank 2 closed until it is reflashed with 0.3. No such unit is known.
 - Chimera ≤ 0.3 reads a 0.4 header as `format 2` and reinstalls into S0–S3 only.
 - Chimera now occupies the slots, and giving them back takes a new ADR.
+- **Bank 1 grows by ~3.9 KB, an ADR 0198/0251 exception.** The slot guard, its masked ECC-safe reads and slot marks, the refusal screen and the 1 MB install must run before bank 2 is valid: when it is empty, torn, stale or foreign, no door is open, so none of it can live behind one. `tools/bank1-budget.txt` raises every set's line by its measured growth and cites this ADR.
 
 ## Sources
 - Spec `docs/superpowers/specs/2026-11-14-bank2-slots-design.md` (revised after review B1–B6); ADR 0137, 0251; spec `2026-10-11-bank2-design.md` (decision 6, reversed here).

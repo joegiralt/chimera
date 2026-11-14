@@ -1161,10 +1161,11 @@ fn sparse_8_sector(s: [u8; 8]) -> Vec<u8> {
 }
 
 /// The pair matrix again with body words in every sector, from an erased
-/// bank and from a unit holding another such image. Release only: tens of
-/// thousands of 1 MB installs (`just check` runs it).
+/// bank and from a unit holding another such image. Tens of thousands of
+/// 1 MB installs: `just tear-matrix`, before any PR touching chimera-image,
+/// the slot layout or bank2.x.
 #[test]
-#[ignore = "slow in debug: just check runs it with --release"]
+#[ignore = "minutes even in release: `just tear-matrix` runs it"]
 fn two_tears_with_words_in_every_sector_leave_both_slots_ours() {
     let t = std::time::Instant::now();
     let pairs = pair_matrix(

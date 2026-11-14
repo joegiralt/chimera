@@ -52,7 +52,7 @@ The facts the design rests on (research report, upstream source; § 7 lists what
 0x081E0000  S7  S6 groups ... __bank2_s6_end (<= 0x081FFFE0) | 0xFF | S7 marker @ 0x081FFFE0
 ```
 
-The room for code and data is 512 KB + 2 × (256 KB − 1 KB − 32 B), which is **1,046,400 B**. That is ~510 KB more than today, and ~518 KB free in all. Every image is exactly 1 MB: `body_len` is 1 MB − 256, the `.bk2` is 1,048,576 B, and every install erases S0–S3 and each slot sector not already erased (§ 3.1). The S7 marker, on the bank's last word, is what fixes the length. The cost is up to eight erases on every seal change, and a 1 MB CRC at each boot (§ 6.3 measures both). In return the image never varies in size or in the sectors an install touches, and S7 never holds stale bytes.
+The room for code and data is 512 KB + 2 × (256 KB − 1 KB − 32 B), which is **1,046,464 B**. That is ~510 KB more than today, and ~518 KB free in all. Every image is exactly 1 MB: `body_len` is 1 MB − 256, the `.bk2` is 1,048,576 B, and every install erases S0–S3 and each slot sector not already erased (§ 3.1). The S7 marker, on the bank's last word, is what fixes the length. The cost is up to eight erases on every seal change, and a 1 MB CRC at each boot (§ 6.3 measures both). In return the image never varies in size or in the sectors an install touches, and S7 never holds stale bytes.
 
 ### 1.2 One output section with fixed points (review B3, B4, should-fix 1)
 
@@ -77,7 +77,7 @@ There is still **one image**, for ADR 0137's reasons: same compiler, same link, 
     . = ALIGN(32); __bank2_s6_end = .;
     . = __bank2_base + 0xFFFE0;  KEEP(*(.bank2.slot.edit_end));
     __bank2_end = .;
-  } > BANK2 =0xFF
+  } > BANK2 =0xFFFFFFFF
   ```
   The asserts:
   - `__bank2_lo_end <= 0x08180000`, `__bank2_s4_end <= 0x081BFFE0` and `__bank2_s6_end <= 0x081FFFE0`, each with a message naming its group. lld also refuses to move the location counter backwards.
@@ -87,7 +87,7 @@ There is still **one image**, for ADR 0137's reasons: same compiler, same link, 
 - **Which code goes high:** whole glob groups, placed by hand, the way `bank2.x` already places subsystems. The S4 and S6 groups are new 0.4 work only (decided); DRUM stays in bank 1. Fixed door tables stay in S0.
 - **The door doesn't change.** It is still one table at 0x08100100. Entries may point anywhere in `.bank2`, and `door_hits` already bounds bank 2 by `BANK2_BASE + BANK2_LEN`.
 
-*Verify on the first spike:* that lld's `=0xFF` fill covers gaps made by `. =` inside the section. `check-slots` (§ 6.1) asserts it from the bytes.
+*Verified (Task 9):* lld's fill covers the gaps made by `. =` inside the section, and the ALIGN padding too. lld reads a fill as a 32-bit big-endian value, so `=0xFF` would fill `00 00 00 FF`; the fill is `=0xFFFFFFFF`. `check-slots` (§ 6.1) asserts it from the bytes.
 
 **Rejected:**
 - *A second image or door for S4–S7:* this is ADR 0137's rejected stable-ABI option.
@@ -263,10 +263,11 @@ NOTHING WAS WRITTEN.
   bank 2 total
   ```
   It fails under ADR 0251's 8 KB floor, which now applies to the total, and holds each set to `tools/bank2-budget.txt` under bank 1's rules.
+- **`just tear-matrix`** (not in `check`: ~2.5 min) runs the tear pair matrix with words in every sector. Run it before any PR that touches chimera-image, the slot layout or the linker script.
 - **`just check-slots <elf> <bk2>`** (new, run by `bank2-split`) checks that:
   - the `.bk2` is exactly 1,048,576 B;
   - the bytes at file offsets 0x80000, 0x80020, 0xBFFE0, 0xC0000, 0xC0020 and 0xFFFE0 equal `chimera_image::slot`'s;
-  - the 960 B after each stub and every gap byte in its region are 0xFF (the `=0xFF` fill);
+  - the 960 B after each stub and the gap from each region's end symbol to its fixed point are 0xFF (the `=0xFFFFFFFF` fill);
   - `rust-objdump -d` of each code word decodes to § 2.1's sequence;
   - no symbol lies in a reserve or a marker word.
 - **`check-door-placed`:** the bound `a >= 0x08180000` becomes `>= 0x08200000`, and it also fails on a symbol in a reserve or marker.
@@ -337,7 +338,7 @@ These are run over the USB console with `chimera-usb.py update`, never inside a 
 | **The unit's 1.09 binary may not match the source** | Gate 0, read-only, before any write |
 | **The erased-slot hang is inferred** | Only the "before" row of § 5 rests on it |
 | **A flash double-ECC error may not be a precise, maskable bus error** | Gate 1b; § 3.2's fallback mark if it isn't |
-| **lld's `=0xFF` fill over `. =` gaps** | First spike; `check-slots` checks the bytes in every build |
+| **lld's fill over `. =` gaps** | Verified in Task 9: `=0xFFFFFFFF` (lld reads a fill as a 32-bit big-endian value; `=0xFF` is `00 00 00 FF`); `check-slots` checks the bytes in every build |
 | **A foreign slot on a tester's unit** | Refused, nothing written; recovery is the 0.3 package (§ 3.5). None known |
 | **A refused unit already has the new bank 1** and runs with bank 2 closed, mostly silent | No DFU pre-check in 0.4 (decided); recovery as above |
 | **A stray MIXER/EDIT press at boot** (the button still down) | Not checked in code; gates 2–3 look for it. The fix, if needed: ignore buttons already down at the first scan |

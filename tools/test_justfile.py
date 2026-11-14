@@ -68,8 +68,10 @@ class Bank2Split(unittest.TestCase):
 
     def test_bank2_x_asserts(self):
         src = (ROOT / "chimera-stm32/build.rs").read_text()
-        for want in ("0x08180000", "0x081C0000", "0x081BFFE0", "0x081FFFE0", "=0xFF", "INSERT BEFORE .text"):
+        for want in ("0x08180000", "0x081C0000", "0x081BFFE0", "0x081FFFE0", "INSERT BEFORE .text"):
             self.assertIn(want, src)
+        # lld reads a fill as a 32-bit big-endian value: `=0xFF` is 00 00 00 FF.
+        self.assertIn("} > BANK2 =0xFFFFFFFF\n", src)
         self.assertIn("LENGTH = 1M", (ROOT / "chimera-stm32/memory.x").read_text())
 
     def test_bank2_split_runs_check_slots(self):

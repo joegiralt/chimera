@@ -24,7 +24,8 @@ REGIONS = (
     ("S6-S7", "__bank2_s6_end", 0x081C0400, 0x081FFFE0, "(1 KB slot, 32 B marker)"),
 )
 ROOM = sum(hi - lo for _, _, lo, hi, _ in REGIONS)
-# ADR 0251: bank 2 keeps 8 KB free, now over all three regions.
+# ADR 0251: bank 2 keeps 8 KB free, now over all three regions; a region
+# under it only warns, ahead of its link failing.
 FLOOR = 8192
 
 
@@ -35,19 +36,22 @@ def run(name, nm, budget_text):
         f = l.split()
         if len(f) == 3:
             syms[f[2]] = int(f[0], 16)
-    out, free = [], 0
+    out, warn, free = [], [], 0
     for region, sym, lo, hi, note in REGIONS:
         if sym not in syms:
             return 1, f"{sym} missing from the ELF"
         n = hi - syms[sym]
         free += n
         out.append(f"bank 2 {region}   free = {n} B   {note}".rstrip())
+        if n < FLOOR:
+            warn.append(f"warning: bank 2 {region} has {n} B free, under {FLOOR} B: new code goes to another region's groups before it fails to link")
     used = ROOM - free
     budgets = load(budget_text)
     if name not in budgets:
         return 1, f"bank 2: no budget for {name}: add its line to tools/bank2-budget.txt (ADR 0272)"
     b = budgets[name]
     out.append(f"bank 2 total   free = {free} B, used {used} B, budget {b} B")
+    out += warn
     if free < FLOOR:
         out.append(f"bank 2 of {name} has {free} B free, under ADR 0251's {FLOOR} B floor")
         return 1, "\n".join(out)

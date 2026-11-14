@@ -47,6 +47,23 @@ class Floor(unittest.TestCase):
         rc, out = b2.run("orbit", nm, f"orbit {used}  # ADR 0272\n")
         self.assertEqual(rc, 1, out)
         self.assertIn("ADR 0251", out)
+        self.assertIn("warning: bank 2 S0-S3 has 0 B free", out)
+
+
+class RegionWarning(unittest.TestCase):
+    def test_a_region_under_8_kb_warns_but_passes(self):
+        nm = NM.replace("08170000 T __bank2_lo_end", f"{0x08180000 - 8191:08x} T __bank2_lo_end")
+        used = USED + 0x10000 - 8191
+        rc, out = b2.run("orbit", nm, f"orbit {used}  # ADR 0272\n")
+        self.assertEqual(rc, 0, out)
+        self.assertRegex(out.splitlines()[4], r"^warning: bank 2 S0-S3 has 8191 B free")
+        self.assertEqual(len(out.splitlines()), 5)
+
+    def test_no_warning_at_8_kb(self):
+        nm = NM.replace("08170000 T __bank2_lo_end", f"{0x08180000 - 8192:08x} T __bank2_lo_end")
+        rc, out = b2.run("orbit", nm, f"orbit {USED + 0x10000 - 8192}  # ADR 0272\n")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("warning", out)
 
 
 class Budget(unittest.TestCase):

@@ -307,6 +307,7 @@ check-slots elf bk2:
     for gap in "__bank2_lo_end 0x08180000" "__bank2_s4_end 0x081BFFE0" "__bank2_s6_end 0x081FFFE0"; do
         read -r name to <<< "$gap"
         from=$(sym "$name"); to=$((to))
+        [ -n "$from" ] || { echo "{{elf}}: $name missing: not the 1 MB bank2.x layout (ADR 0272)" >&2; exit 1; }
         n=$(head -c $((to - 0x08100000)) {{bk2}} | tail -c $((to - from)) | tr -d '\377' | wc -c)
         if [ "$n" != 0 ]; then echo "{{bk2}}: $n B not 0xFF from $name to $(printf %#x $to): lld's fill did not hold" >&2; exit 1; fi
     done
@@ -487,11 +488,15 @@ check $CHIMERA_STAMP_CLEAN="1":
     just loom
     cargo fmt --all -- --check
     just release-bin
-    # The tear tests over the linked ORBIT .bk2, and the pair matrix with
-    # words in every sector (ADR 0272): release, as tens of thousands of
-    # 1 MB installs.
-    CHIMERA_BK2={{justfile_directory()}}/target/release-bin/chimera-orbit.bk2 cargo test --release -p chimera-image --test install_test -- --ignored
+    # The single-cut sweep over the linked ORBIT .bk2 (ADR 0272), release.
+    CHIMERA_BK2={{justfile_directory()}}/target/release-bin/chimera-orbit.bk2 cargo test --release -p chimera-image --test install_test -- --ignored single_cuts_through_the_linked_image
     just stack-check
+
+# The tear pair matrix with words in every sector (ADR 0272): ~2.5 min in
+# release, so not in `check`. Run it before any PR that touches
+# chimera-image, the slot layout or bank2.x.
+tear-matrix:
+    cargo test --release -p chimera-image --test install_test -- --ignored two_tears_with_words_in_every_sector --nocapture
 
 # The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves
 # SP by 8 KB or more in one step, or by a register (a large value built on

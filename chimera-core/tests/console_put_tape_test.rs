@@ -4,7 +4,7 @@
 #![cfg(feature = "card-put")]
 
 use chimera_core::console::{
-    Console, Out, PUT_CHUNK_BYTES, PUT_DEADLINE_MS, Request, Stalled, put,
+    Console, Out, PUT_CHUNK_BYTES, PUT_CHUNK_DEADLINE_MS, Request, Stalled, put,
 };
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
 use chimera_core::name::SoundName;
@@ -405,16 +405,17 @@ fn a_torn_unsealed_file_is_replaced() {
     loads_sealed(&mut s, &h);
 }
 
-/// Each chunk has its own `PUT_DEADLINE_MS`: a host that takes longer
-/// than it for the whole file at half of it a chunk lands it; one that
-/// takes it and 5 s more for a chunk doesn't.
+/// Each chunk has its own 30 s (`PUT_CHUNK_DEADLINE_MS`): a host that
+/// takes longer than that for the whole file at 15 s a chunk lands it; one
+/// that takes 35 s for a chunk doesn't.
 #[test]
 fn each_chunk_has_its_own_deadline() {
     let (h, file) = big();
     let data = chunked(&file);
     let per_chunk = lines(&file[..PUT_CHUNK_BYTES as usize]).len() as u64;
     let line = put_line(h.sref.crc, &file);
-    let deadline_us = PUT_DEADLINE_MS as u64 * 1000;
+    let deadline_us = u64::from(PUT_CHUNK_DEADLINE_MS) * 1000;
+    assert_eq!(PUT_CHUNK_DEADLINE_MS, 30_000);
     let us = deadline_us / 2 / per_chunk;
     assert!(data.len() as u64 * us > deadline_us);
     let mut s = mem();
