@@ -1177,7 +1177,7 @@ fn two_tears_with_words_in_every_sector_leave_both_slots_ours() {
 
 /// The linked image (`CHIMERA_BK2`, or `just firmware-orbit`'s
 /// target/chimera-orbit.bk2), and the same with words added through S4..S7
-/// (its S4 and S6 groups are empty until 0.4's code lands), each cut once
+/// (its S6 group is still empty; S4 holds the console's ed), each cut once
 /// at every erase, at each of the six slot words and at a sample of
 /// S4..S7 body programs, under every tear model, from a first install and
 /// over an installed unit: the guard reads both slots ours and a reinstall

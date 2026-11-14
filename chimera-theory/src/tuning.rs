@@ -79,9 +79,11 @@ pub fn decimal(w: &[u8]) -> Option<f32> {
         Some((b'+', r)) => (false, r),
         _ => (false, w),
     };
-    let mut parts = w.splitn(2, |&b| b == b'.');
-    let int = parts.next()?;
-    let frac = parts.next().unwrap_or_default();
+    // Not `splitn`: its iterator links out of line in each caller's bank.
+    let (int, frac) = match w.iter().position(|&b| b == b'.') {
+        Some(i) => (&w[..i], &w[i + 1..]),
+        None => (w, &[][..]),
+    };
     if int.is_empty() && frac.is_empty() {
         return None;
     }

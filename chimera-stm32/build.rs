@@ -331,7 +331,9 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     );
     // The console's `ed` (ADR 0251): `console::ed`, the browser editor's
     // parse and answers, text and rodata, its table at its slot after the
-    // MIDI UI's (`ED_DOOR_ADDR`). Bank 1 keeps `EdLine` and the stub.
+    // MIDI UI's (`ED_DOOR_ADDR`). Bank 1 keeps `EdLine` and the stub. The
+    // first S4 group (ADR 0272: new 0.4 work goes high), after MIXER's
+    // reserve; its table stays in S0 with the other doors.
     let (ed, ed_slot, ed_assert) = (
         "    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n",
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
@@ -406,7 +408,6 @@ SECTIONS {
     /* NRPN */
     /* ORBIT */
     /* MIDI UI */
-    /* ED */
     /* TUNING */
     . = ALIGN(32); __bank2_lo_end = .;
     . = __bank2_base + 0x80000; __slot_mixer = .;
@@ -465,7 +466,7 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
         .replace("    /* TUNING */\n", tuning)
         .replace("    /* MIDI UI SLOT */\n", midi_ui_slot)
         .replace("/* MIDI UI ASSERT */", midi_ui_assert)
-        .replace("    /* ED */\n", ed)
+        .replace("    /* S4 GROUPS */\n", ed)
         .replace("    /* ED SLOT */\n", ed_slot)
         .replace("/* ED ASSERT */", ed_assert),
     )
