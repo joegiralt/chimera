@@ -65,3 +65,46 @@ fn a_wrong_stub_byte_fails() {
     b[0x80000 + 9] ^= 1;
     assert!(bank2::check_slots(&b).is_err());
 }
+
+#[test]
+fn every_word_of_every_slot_is_checked() {
+    for s in Slot::ALL {
+        let base = (s.base() - BANK2_BASE) as usize;
+        for (off, what) in [(0, "stub"), (0x20, "tag"), (0x3FFE0, "end marker")] {
+            let mut b = good();
+            b[base + off] ^= 1;
+            let e = bank2::check_slots(&b).unwrap_err();
+            assert!(
+                e.contains(&format!("{:#010x}", s.base() + off as u32)),
+                "{e}"
+            );
+            assert!(e.contains(what) && e.contains(&format!("{s:?}")), "{e}");
+        }
+    }
+}
+
+#[test]
+fn the_reserve_is_base_0x40_to_0x400() {
+    for s in Slot::ALL {
+        let base = (s.base() - BANK2_BASE) as usize;
+        for off in [0x40, 0x3FF] {
+            let mut b = good();
+            b[base + off] = 0;
+            let e = bank2::check_slots(&b).unwrap_err();
+            assert!(
+                e.contains(&format!("{:#010x}", s.base() + off as u32)),
+                "{e}"
+            );
+        }
+        let mut b = good();
+        b[base + 0x400] = 0x12;
+        assert_eq!(bank2::check_slots(&b), Ok(()));
+    }
+}
+
+#[test]
+fn too_long_fails() {
+    let mut b = good();
+    b.extend([0xFF; 32]);
+    assert!(bank2::check_slots(&b).unwrap_err().contains("1048576"));
+}

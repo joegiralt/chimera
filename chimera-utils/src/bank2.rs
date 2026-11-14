@@ -77,7 +77,7 @@ pub fn check_slots(bk2: &[u8]) -> Result<(), String> {
             }
         }
         let from = s.tag_addr() + 32;
-        let r = at(from)..at(from) + RESERVE as usize - 32;
+        let r = at(from)..at(from) + RESERVE as usize - 64;
         if let Some(i) = bk2[r.clone()].iter().position(|&b| b != 0xFF) {
             return Err(format!(
                 "slot {s:?} reserve at {:#010x} is not 0xFF",
