@@ -7,19 +7,22 @@ use core::ptr::addr_of_mut;
 use chimera_midi::value::U7;
 
 use crate::Velocity;
-use crate::block::apply_offset;
+use crate::block::{GlideMs, apply_offset};
+use crate::dsp::knobs::coeff;
 use crate::dsp::lfo::{Lfo, LfoParams};
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::modulator::env_a::{ACoefs, EnvA, Stage};
 use crate::hw::BLOCK_SIZE;
 use crate::params::{EnvParams, ParamSnapshot};
+use crate::project::PartId;
 
 use super::kernel::KernelState;
 use super::laws::resolve;
 use super::sound::{
-    AmpMode, EnvDecay, PadAmp, PadRoutes, PadSound, RouteDest, RouteOffsets, RouteValues,
+    AmpMode, EnvDecay, PadAmp, PadRoutes, PadSound, Places, RouteDest, RouteOffsets, RouteValues,
 };
 use super::types::{DrumHit, HitSeed, Pan, SampleRate};
+use super::view::KIT_VIEW;
 
 /// A pad's PAN off centre, as the gains of the voice's mid (its Part's
 /// mono bus) and side: constant power, unity at centre, as the Part's own
@@ -80,21 +83,26 @@ impl AmpEnv {
             return None;
         }
         let gated = amp.mode() == AmpMode::Gated && e.decay() != EnvDecay::Infinite;
-        let p = e.env_params();
-        // GATED: sustain at full, the decay its release.
+        let mut env = EnvA::new();
+        env.note_on();
+        Some(AmpEnv {
+            coefs: AmpEnv::coefs(e.env_params(), gated, sr),
+            env,
+            key: true,
+            gated,
+        })
+    }
+
+    /// `p`'s stages; GATED: sustain at full, the decay its release. Out
+    /// of line: the strike's and `follow`'s one copy.
+    #[inline(never)]
+    fn coefs(p: EnvParams, gated: bool, sr: SampleRate) -> ACoefs {
         let p = if gated {
             EnvParams { sustain: 1.0, ..p }
         } else {
             p
         };
-        let mut env = EnvA::new();
-        env.note_on();
-        Some(AmpEnv {
-            coefs: ACoefs::new(&p, 0.0, sr.get()),
-            env,
-            key: true,
-            gated,
-        })
+        ACoefs::new(&p, 0.0, sr.get())
     }
 
     /// Done: released to idle, or decayed to a sustain of 0.
@@ -116,6 +124,8 @@ struct PadMods {
     /// The mod envelope: AHD, its key held for good.
     env: EnvA,
     lfo: LfoParams,
+    /// Each route's a (`PadRoutes::amounts`), glided by `follow`.
+    amounts: [f32; 4],
     /// LFO SPEED's and DEPTH's sums, last block's (ADR 0250's DEPTH).
     lfo_off: (f32, f32),
     /// A route moves VOLUME.
@@ -139,11 +149,28 @@ impl PadMods {
             coefs: ACoefs::new(&s.env().env_params(), 0.0, sr.get()),
             env,
             lfo: s.lfo().lfo_params(),
+            amounts: routes.amounts(),
             lfo_off: (0.0, 0.0),
             vol_routed: routes.moves(RouteDest::Volume),
             vol: None,
         })
     }
+}
+
+/// A hit following its pad's live edits (ADR 0269): the view's publishes
+/// seen, and its continuous values gliding to the pad's.
+#[derive(Clone, Copy, Debug)]
+struct Follow {
+    /// `KitView::sound_if_newer`'s.
+    seen: u32,
+    sr: SampleRate,
+    /// The KNOB coefficient at `sr`, worked out at the first glide.
+    k: Option<f32>,
+    /// Where the hit goes: its sound, the pad's live values on its
+    /// choices (`PadSound::live_target`).
+    target: PadSound,
+    /// Where the places are and where they go, while they glide.
+    glide: Option<(Places, Places)>,
 }
 
 /// The voice's drum: idle, or one hit, its kernel in place.
@@ -160,9 +187,10 @@ pub struct DrumEngine {
     /// The pad LFO, the voice's: FREE runs on from hit to hit, TRIG
     /// restarts at its PHASE.
     lfo: Lfo,
+    follow: Follow,
 }
 
-crate::in_place::field_list!(DrumEngine => DrumEngine { hit, kernel, pan, amp, mods, lfo });
+crate::in_place::field_list!(DrumEngine => DrumEngine { hit, kernel, pan, amp, mods, lfo, follow });
 
 // A hit plays in a voice slot, which MODAL's engine sizes.
 const _: () = assert!(size_of::<DrumEngine>() <= size_of::<ModalEngine>());
@@ -181,6 +209,13 @@ impl DrumEngine {
             addr_of_mut!((*p).amp).write(None);
             addr_of_mut!((*p).mods).write(None);
             addr_of_mut!((*p).lfo).write(Lfo::new());
+            addr_of_mut!((*p).follow).write(Follow {
+                seen: 0,
+                sr: SampleRate::HW,
+                k: None,
+                target: PadSound::DEFAULT,
+                glide: None,
+            });
             slot.assume_init_mut()
         }
     }
@@ -199,6 +234,74 @@ impl DrumEngine {
         self.mods = PadMods::strike(pad.sound(), sr);
         if let Some(m) = &self.mods {
             self.lfo.note_on(&m.lfo);
+        }
+        let k = self.follow.k.filter(|_| self.follow.sr == sr);
+        self.follow = Follow {
+            seen: self.follow.seen,
+            sr,
+            k,
+            target: *pad.sound(),
+            glide: None,
+        };
+    }
+
+    /// The hit has seen `part`'s view up to `seq` (`KitView::seq`): it
+    /// follows the publishes after it.
+    pub fn watch(&mut self, seq: u32) {
+        self.follow.seen = seq;
+    }
+
+    /// Once a block, before `overlay`: a publish since the hit's last
+    /// moves where its continuous values go (`PadSound::live_target`),
+    /// and they glide there at the KNOB coefficient on their places, as a
+    /// Part's knob; the AMP and mod envelopes' stages are rebuilt only as
+    /// they move. Nothing published, one load.
+    #[inline(never)]
+    #[optimize(size)]
+    pub fn follow(&mut self, part: PartId) {
+        let Some(hit) = &mut self.hit else {
+            return;
+        };
+        let f = &mut self.follow;
+        if let Some(live) = KIT_VIEW.sound_if_newer(part, hit.pad(), &mut f.seen) {
+            let target = hit.params().sound().live_target(&live);
+            if target != f.target {
+                f.target = target;
+                let at = f
+                    .glide
+                    .map_or_else(|| hit.params().sound().places(), |g| g.0);
+                f.glide = Some((at, target.places()));
+            }
+        }
+        let Some((was, to)) = f.glide else {
+            return;
+        };
+        let sr = f.sr;
+        let k = *f.k.get_or_insert_with(|| coeff(GlideMs::KNOB, sr.get()));
+        let mut at = was;
+        let s = hit.sound_mut();
+        if at.ease(&to, k) {
+            // Landed: the pad's values, bit for bit.
+            *s = f.target;
+            f.glide = None;
+        } else {
+            s.set_places(&at);
+            f.glide = Some((at, to));
+        }
+        if let Some(a) = &mut self.amp
+            && at.amp_env() != was.amp_env()
+        {
+            a.coefs = AmpEnv::coefs(s.amp_env_at(&at), a.gated, sr);
+        }
+        if let Some(m) = &mut self.mods {
+            if at.env() != was.env() {
+                m.coefs = AmpEnv::coefs(s.env_at(&at), false, sr);
+            }
+            if at.lfo() != was.lfo() {
+                m.lfo = s.lfo_at(&at);
+            }
+            m.amounts = at.amounts();
+            m.vol_routed = m.routes.moves_at(&m.amounts, |d| d == RouteDest::Volume);
         }
     }
 
@@ -228,11 +331,13 @@ impl DrumEngine {
         m.env.advance(&m.coefs, true, BLOCK_SIZE as u32);
         let [l1, l2, l3] = part_lfos;
         let v = RouteValues::new([m.env.level(), lfo, vel.unit(), l1, l2, l3]);
-        let off = m.routes.offsets(&v);
+        let off = m.routes.offsets_at(&m.amounts, &v);
         m.lfo_off = (off.lfo_speed(), off.lfo_depth());
-        if m.vol_routed {
+        // A VOLUME route glided to 0 ramps on to unity, then stops.
+        if m.vol_routed || m.vol.is_some() {
             let g = off.volume().get();
-            m.vol = Some((m.vol.map_or(g, |v| v.1), g));
+            let routed = m.vol_routed;
+            m.vol = Some((m.vol.map_or(g, |v| v.1), g)).filter(|&(a, b)| routed || a != b);
         }
         off
     }
@@ -240,7 +345,9 @@ impl DrumEngine {
     /// A route moves the hit's CUTOFF or RES: the filter takes its moving
     /// path, as under a Part route.
     pub fn moves_filter(&self) -> bool {
-        self.mods.as_ref().is_some_and(|m| m.routes.moves_filter())
+        self.mods
+            .as_ref()
+            .is_some_and(|m| m.routes.moves_at(&m.amounts, RouteDest::is_filter))
     }
 
     /// The hit's FILTER and AMP cells over `m` (`PadSound::overlay`).

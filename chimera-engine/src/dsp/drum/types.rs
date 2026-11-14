@@ -734,6 +734,11 @@ impl DrumHit {
     pub const fn pitch(&self) -> Transpose {
         self.pitch
     }
+
+    /// Its pad's sound, as a ringing hit follows it (`DrumEngine::follow`).
+    pub(crate) fn sound_mut(&mut self) -> &mut super::sound::PadSound {
+        self.params.sound_mut()
+    }
 }
 
 /// A frequency in Hz, 0..=24 000 (the rate's Nyquist); NaN is 0.

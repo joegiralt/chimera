@@ -5,14 +5,14 @@
 use chimera_midi::value::U7;
 
 use super::types::{Hz, Kit, PadId};
-use crate::block::{DiskCode, ParamId};
+use crate::block::{DiskCode, ParamId, ParamSpec, find_spec};
 use crate::dsp::Unit;
 use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use crate::dsp::lfo::{LFO_SPECS, LfoParams, LfoShape};
 use crate::dsp::lpg;
 use crate::dsp::modulator::{EnvSpeed, EnvType, HoldPos};
 use crate::hw::Cost;
-use crate::params::{EnvParams, FilterParams, ParamSnapshot};
+use crate::params::{EnvParams, FILTER_SPECS, FilterParams, ParamSnapshot};
 
 /// `v` as a U7, past 127 held to it.
 const fn u7(v: u8) -> U7 {
@@ -149,13 +149,25 @@ impl PadEnv {
     /// As Envelope A runs it: AHD one-shot, sustain 0 and release the
     /// decay. An infinite decay is a sustain at 1 (the level holds).
     pub fn env_params(&self) -> EnvParams {
+        self.params_at(self.places())
+    }
+
+    /// A, H and D as 0..1 places (k / 127); an infinite decay 1.
+    fn places(&self) -> [f32; 3] {
+        let d = self.decay.code();
+        [self.attack.0, self.hold.0, d].map(|v| unit7(v).get())
+    }
+
+    /// `env_params` with A, H and D at the places `p`; an infinite decay
+    /// holds whatever its place.
+    fn params_at(&self, [attack, hold, d]: [f32; 3]) -> EnvParams {
         let (decay, sustain) = match self.decay {
-            EnvDecay::Time(p) => (p.unit().get(), 0.0),
+            EnvDecay::Time(_) => (d, 0.0),
             EnvDecay::Infinite => (1.0, 1.0),
         };
         EnvParams {
-            attack: self.attack.unit().get(),
-            hold: self.hold.unit().get(),
+            attack,
+            hold,
             decay,
             sustain,
             release: decay,
@@ -461,15 +473,20 @@ impl PadLfo {
 
     /// As `Lfo` runs it: SPEED on LFO RATE's range.
     pub fn lfo_params(&self) -> LfoParams {
+        self.params_at([self.speed, self.depth, self.phase].map(|v| unit7(v).get()))
+    }
+
+    /// `lfo_params` with SPEED, DEPTH and PHASE at the 0..1 places `p`.
+    fn params_at(&self, [speed, depth, phase]: [f32; 3]) -> LfoParams {
         LfoParams {
-            rate: LFO_SPECS[LfoParams::RATE.0 as usize].denormalize(unit7(self.speed).get()),
+            rate: LFO_SPECS[LfoParams::RATE.0 as usize].denormalize(speed),
             shape: self.wave.disk_code(),
             sync: match self.mode {
                 LfoMode::Free => 0,
                 LfoMode::Trig => 1,
             },
-            phase_offset: unit7(self.phase).get(),
-            depth: unit7(self.depth).get(),
+            phase_offset: phase,
+            depth,
             ..LfoParams::default()
         }
     }
@@ -748,10 +765,25 @@ impl PadRoutes {
     /// source as 0..1 (a bipolar LFO's (v + 1) / 2), a > 0 opening with it,
     /// 1 − a·(1 − v), a < 0 ducking, 1 − |a|·v; never over 1.
     pub fn offsets(&self, v: &RouteValues) -> RouteOffsets {
+        self.offsets_at(&self.amounts(), v)
+    }
+
+    /// Each route's a = amount / 127.
+    pub fn amounts(&self) -> [f32; ROUTES] {
+        self.0.map(|r| f32::from(r.amount.0) / 127.0)
+    }
+
+    /// A route with an amount in `a` moves a destination `dest` admits.
+    pub fn moves_at(&self, a: &[f32; ROUTES], dest: impl Fn(RouteDest) -> bool) -> bool {
+        self.0.iter().zip(a).any(|(r, a)| *a != 0.0 && dest(r.dest))
+    }
+
+    /// `offsets` with each route's a from `a`: a glided AMOUNT.
+    pub fn offsets_at(&self, a: &[f32; ROUTES], v: &RouteValues) -> RouteOffsets {
         let mut o = [0.0f32; 5];
         let mut gain = 1.0f32;
-        for r in self.0.iter().filter(|r| r.amount != Amount::ZERO) {
-            let (a, x) = (f32::from(r.amount.0) / 127.0, v.0[r.source.index()]);
+        for (r, &a) in self.0.iter().zip(a).filter(|(_, a)| **a != 0.0) {
+            let x = v.0[r.source.index()];
             if r.dest == RouteDest::Volume {
                 let u = Unit::new(if r.source.is_bipolar() {
                     (x + 1.0) / 2.0
@@ -948,6 +980,75 @@ pub fn kit_bill(kit: &Kit) -> KitBill {
     })
 }
 
+/// The values a ringing hit follows (`Places`).
+const PLACES: usize = 20;
+
+/// CUTOFF's, RES's and MORPH's specs (`PadFilter::IDS`): what a hit's
+/// filter glides on.
+static FOLLOWED: [&ParamSpec; 3] = [
+    filter_spec(PadFilter::IDS[3]),
+    filter_spec(PadFilter::IDS[4]),
+    filter_spec(PadFilter::IDS[5]),
+];
+
+const fn filter_spec(id: ParamId) -> &'static ParamSpec {
+    match find_spec(&FILTER_SPECS, id) {
+        Some(s) => s,
+        None => panic!("a filter id"),
+    }
+}
+
+/// A pad sound's continuous values as 0..1 places (ADR 0269), what a
+/// ringing hit glides at the KNOB coefficient: CUTOFF, RES and MORPH on
+/// their specs (CUTOFF's octaves), VEL and the gate's three as themselves,
+/// the AMP's and the mod envelope's A, H and D and LFO SPEED, DEPTH and
+/// PHASE as k / 127, each route's AMOUNT as a / 127. A linear spec glides
+/// alike on either scale.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Places([f32; PLACES]);
+
+impl Places {
+    const AMP: usize = 3;
+    const AMP_ENV: usize = 7;
+    const ENV: usize = 10;
+    const LFO: usize = 13;
+    const ROUTES: usize = 16;
+
+    fn three(&self, at: usize) -> [f32; 3] {
+        [self.0[at], self.0[at + 1], self.0[at + 2]]
+    }
+
+    /// One block toward `to` at the KNOB coefficient `k`, as a Part's
+    /// knob glides; whether every place landed.
+    pub fn ease(&mut self, to: &Places, k: f32) -> bool {
+        let mut landed = true;
+        for (v, t) in self.0.iter_mut().zip(to.0) {
+            landed &= crate::dsp::knobs::glide_knob(v, t, k);
+        }
+        landed
+    }
+
+    /// The AMP envelope's A, H and D.
+    pub fn amp_env(&self) -> [f32; 3] {
+        self.three(Self::AMP_ENV)
+    }
+
+    /// The mod envelope's A, H and D.
+    pub fn env(&self) -> [f32; 3] {
+        self.three(Self::ENV)
+    }
+
+    /// LFO SPEED, DEPTH and PHASE.
+    pub fn lfo(&self) -> [f32; 3] {
+        self.three(Self::LFO)
+    }
+
+    /// Each route's a.
+    pub fn amounts(&self) -> [f32; ROUTES] {
+        core::array::from_fn(|i| self.0[Self::ROUTES + i])
+    }
+}
+
 /// A pad's sound's bytes (`PadSound::to_bytes`).
 pub const PAD_SOUND_BYTES: usize = 57;
 pub type PadSoundBytes = [u8; PAD_SOUND_BYTES];
@@ -1025,6 +1126,98 @@ impl PadSound {
             },
             ..PadSound::DEFAULT
         }
+    }
+
+    /// Its continuous values as places (`Places`).
+    #[optimize(size)]
+    pub fn places(&self) -> Places {
+        let f = &self.filter;
+        let a = &self.amp;
+        let mut p = [0.0; PLACES];
+        let filter = [f.cutoff.get(), f.resonance.get(), f.morph.get()];
+        for ((o, v), s) in p.iter_mut().zip(filter).zip(FOLLOWED) {
+            *o = s.normalize(v);
+        }
+        let amp = [a.vel, a.gate.lpg, a.gate.decay, a.gate.strike].map(Unit::get);
+        p[Places::AMP..Places::AMP_ENV].copy_from_slice(&amp);
+        p[Places::AMP_ENV..Places::ENV].copy_from_slice(&a.env.places());
+        p[Places::ENV..Places::LFO].copy_from_slice(&self.env.places());
+        let l = &self.lfo;
+        let lfo = [l.speed, l.depth, l.phase].map(|v| unit7(v).get());
+        p[Places::LFO..Places::ROUTES].copy_from_slice(&lfo);
+        p[Places::ROUTES..].copy_from_slice(&self.routes.amounts());
+        Places(p)
+    }
+
+    /// What a hit struck on `self` plays once `live` is the pad's (ADR
+    /// 0269): `self`'s choices (filter KIND, MODE, VOICE, AMP MODE, each
+    /// envelope's SPEED, LFO WAVE and MODE, each route's SOURCE and DEST)
+    /// with `live`'s continuous values. A decay's hold (127) is a choice
+    /// too: a held decay stays held, a timed one stays timed.
+    #[optimize(size)]
+    pub fn live_target(&self, live: &PadSound) -> PadSound {
+        let env = |s: &PadEnv, l: &PadEnv| PadEnv {
+            attack: l.attack,
+            hold: l.hold,
+            decay: match (s.decay, l.decay) {
+                (EnvDecay::Time(_), EnvDecay::Time(_)) => l.decay,
+                _ => s.decay,
+            },
+            speed: s.speed,
+        };
+        let (s, l) = (self, live);
+        PadSound {
+            filter: PadFilter {
+                cutoff: l.filter.cutoff,
+                resonance: l.filter.resonance,
+                morph: l.filter.morph,
+                ..s.filter
+            },
+            amp: PadAmp {
+                env: env(&s.amp.env, &l.amp.env),
+                vel: l.amp.vel,
+                gate: l.amp.gate,
+                mode: s.amp.mode,
+            },
+            env: env(&s.env, &l.env),
+            lfo: PadLfo {
+                speed: l.lfo.speed,
+                depth: l.lfo.depth,
+                phase: l.lfo.phase,
+                ..s.lfo
+            },
+            routes: PadRoutes(core::array::from_fn(|i| PadRoute {
+                amount: l.routes.0[i].amount,
+                ..s.routes.0[i]
+            })),
+        }
+    }
+
+    /// The FILTER's CUTOFF, RES and MORPH and the AMP's VEL and gate at
+    /// `p`'s places: what `overlay` lays on, mid-glide.
+    #[optimize(size)]
+    pub fn set_places(&mut self, p: &Places) {
+        let [c, r, m] = core::array::from_fn(|i| FOLLOWED[i].denormalize(p.0[i]));
+        let f = &mut self.filter;
+        (f.cutoff, f.resonance, f.morph) = (Hz::new(c), Unit::new(r), Unit::new(m));
+        let [vel, lpg, decay, strike] = core::array::from_fn(|i| Unit::new(p.0[Places::AMP + i]));
+        self.amp.vel = vel;
+        self.amp.gate = lpg::Knobs { lpg, decay, strike };
+    }
+
+    /// The AMP envelope's `EnvParams` at `p`'s places.
+    pub fn amp_env_at(&self, p: &Places) -> EnvParams {
+        self.amp.env.params_at(p.amp_env())
+    }
+
+    /// The mod envelope's `EnvParams` at `p`'s places.
+    pub fn env_at(&self, p: &Places) -> EnvParams {
+        self.env.params_at(p.env())
+    }
+
+    /// The LFO's `LfoParams` at `p`'s places.
+    pub fn lfo_at(&self, p: &Places) -> LfoParams {
+        self.lfo.params_at(p.lfo())
     }
 
     /// What its AMP envelope and routes add a hit, over the filter.
@@ -1124,6 +1317,8 @@ impl PadSound {
     /// a non-finite float takes `d`'s field, a value past its range is held
     /// to it, a MODE the KIND lacks is `d`'s if the KIND has it, else the
     /// KIND's default. Total: any bytes are a sound.
+    #[inline(never)]
+    #[optimize(size)]
     pub fn from_bytes(b: PadSoundBytes, d: &PadSound) -> PadSound {
         let mut r = Reader { b: &b, at: 0 };
         let df = &d.filter;

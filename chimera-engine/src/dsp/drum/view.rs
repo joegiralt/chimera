@@ -69,6 +69,26 @@ const fn slot(seq: u32) -> usize {
     (seq >> 1 & 1) as usize
 }
 
+impl PartView {
+    /// `pad`'s published bytes, and the `seq` they were read under.
+    fn read(&self, pad: PadId) -> (u32, [u8; VIEW_BYTES]) {
+        let mut b = [0; VIEW_BYTES];
+        let mut s = 0;
+        for _ in 0..3 {
+            s = self.seq.load(Ordering::Acquire);
+            for (o, a) in b.iter_mut().zip(&self.slots[slot(s)][pad.index()]) {
+                *o = a.load(Ordering::Relaxed);
+            }
+            fence(Ordering::Acquire);
+            // Its slot is written again from `(s & !1) + 3` on.
+            if self.seq.load(Ordering::Relaxed).wrapping_sub(s & !1) < 3 {
+                break;
+            }
+        }
+        (s, b)
+    }
+}
+
 impl KitView {
     const fn new() -> KitView {
         KitView {
@@ -95,22 +115,35 @@ impl KitView {
         let v = &self.parts[part.index()];
         let tonal = Tonal::from_code(v.tonal.load(Ordering::Relaxed)).unwrap_or(Tonal::Off);
         let (pad, pitch) = KitNote::new(note, tonal).pad();
-        let mut b = [0; VIEW_BYTES];
-        for _ in 0..3 {
-            let s = v.seq.load(Ordering::Acquire);
-            for (o, a) in b.iter_mut().zip(&v.slots[slot(s)][pad.index()]) {
-                *o = a.load(Ordering::Relaxed);
-            }
-            fence(Ordering::Acquire);
-            // Its slot is written again from `(s & !1) + 3` on.
-            if v.seq.load(Ordering::Relaxed).wrapping_sub(s & !1) < 3 {
-                break;
-            }
-        }
+        let (_, b) = v.read(pad);
         let d = Kit::default_pad(pad);
         let sound = PadSound::from_bytes(core::array::from_fn(|i| b[PAD_BYTES + i]), d.sound());
         let p = Pad::from_bytes(core::array::from_fn(|i| b[i]), &d).with_sound(sound);
         DrumHit::new(pad, p, pitch)
+    }
+
+    /// Audio: `part`'s publishes so far, as `sound_if_newer` counts them.
+    pub fn seq(&self, part: PartId) -> u32 {
+        self.parts[part.index()].seq.load(Ordering::Acquire)
+    }
+
+    /// Audio: `pad`'s sound on `part`'s kit if a publish came since `seen`,
+    /// which then moves on; else `None` from one load. It decodes only
+    /// after a publish, and never waits.
+    #[inline(never)]
+    pub fn sound_if_newer(&self, part: PartId, pad: PadId, seen: &mut u32) -> Option<PadSound> {
+        let v = &self.parts[part.index()];
+        if v.seq.load(Ordering::Relaxed) == *seen {
+            return None;
+        }
+        let (s, b) = v.read(pad);
+        // Read mid-publish (odd), the next block reads again.
+        *seen = s;
+        let d = Kit::default_pad(pad);
+        Some(PadSound::from_bytes(
+            core::array::from_fn(|i| b[PAD_BYTES + i]),
+            d.sound(),
+        ))
     }
 
     /// Audio: what a hit on `part`'s kit is billed (`kit_bill`), as last

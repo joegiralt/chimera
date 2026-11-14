@@ -109,7 +109,7 @@ fn pad_filter_reaches_the_voice() {
     assert_eq!(PadFilter::of(&f), PadFilter::of(&sound().filter));
 }
 
-/// Task 8 narrows this to TYPE alone: CUTOFF will follow, glided.
+/// TYPE latches at the hit; CUTOFF follows, glided (drum_live_test).
 #[test]
 fn latched_at_the_hit() {
     let mut k = kit();
@@ -124,7 +124,7 @@ fn latched_at_the_hit() {
     w.publish(P1, &k);
     r.render(4);
     let f = r.inst.voice(v).played_filter();
-    assert_eq!((f.kind(), f.cutoff), (FilterKind::Ladder, 200.0));
+    assert_eq!(f.kind(), FilterKind::Ladder);
 }
 
 /// Pad 1 on PLAIN SINE, DECAY 127 (the kernel rings long), its AMP `env`
