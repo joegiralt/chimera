@@ -132,8 +132,8 @@ pub struct SlotCtx {
     /// The selected pad's route the route cells edit: the UI's
     /// (`UiState::ctx`), route 1 elsewhere.
     pub route: RouteId,
-    /// A DRUM Part's pages: the Sound's FILTER and AMP cells a pad
-    /// overlays edit the pad (`on_pad`), and `kind` is the pad's.
+    /// A DRUM Part's pages: `kind` is the pad's, and FLT › MOD's SEM
+    /// OUTPUT the pad's MODE.
     pub drum: bool,
 }
 
@@ -838,10 +838,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             label: slot.label(),
             text: "TYPE B",
         },
-        SlotBinding::Param(addr) => {
-            let addr = on_pad(addr, ctx);
-            param(addr, slot.label(), fmt_of(addr, slot.format(), ctx))
-        }
+        SlotBinding::Param(addr) => param(addr, slot.label(), fmt_of(addr, slot.format(), ctx)),
         SlotBinding::SelectedOp(id) => param(
             ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
             slot.label(),
@@ -869,16 +866,15 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         SlotBinding::FilterPanel(k) => match filter_panel::knob(ctx.kind, k) {
             None => View::Empty,
             Some(&PanelKnob { target, label }) => match target {
-                // FLT › MOD's SEM OUTPUT on a DRUM Part: the pad's MODE,
-                // which its FLT cells leave out.
-                PanelTarget::Filter(id) if ctx.drum && k > 2 && PadFilter::IDS.contains(&id) => {
-                    View::Empty
+                // FLT › MOD's SEM OUTPUT on a DRUM Part: the pad's MODE
+                // (the Sound's is masked there).
+                PanelTarget::Filter(id) => {
+                    let block = match ctx.drum && PadFilter::IDS.contains(&id) {
+                        true => BlockRef::PadFilter,
+                        false => BlockRef::Filter,
+                    };
+                    filter_cell(ParamAddr::new(block, id), label, ctx)
                 }
-                PanelTarget::Filter(id) => filter_cell(
-                    on_pad(ParamAddr::new(BlockRef::Filter, id), ctx),
-                    label,
-                    ctx,
-                ),
                 PanelTarget::Route(_) | PanelTarget::Keybd | PanelTarget::JackAmount(_) => {
                     match target.route() {
                         Some(route) => View::Route { route, label },
@@ -967,31 +963,14 @@ fn filter_cell(addr: ParamAddr, label: &'static str, ctx: &SlotCtx) -> View {
     param(addr, label, fmt_of(addr, fmt, ctx))
 }
 
-/// `a` on a DRUM Part (`ctx.drum`): the Sound's FILTER and AMP cells a
-/// pad overlays are the selected pad's, as the Sound's are never heard
-/// there (ADR 0269); the rest, and every other Part's, as they are.
-#[inline(never)]
-pub fn on_pad(a: ParamAddr, ctx: &SlotCtx) -> ParamAddr {
-    if !ctx.drum {
-        return a;
-    }
-    let (block, param) = match (a.block, a.param) {
-        (BlockRef::Filter, id) if PadFilter::IDS.contains(&id) => (BlockRef::PadFilter, id),
-        (BlockRef::Out, OutParams::VCA_VEL) => (BlockRef::PadAmp, PadAmpParams::VEL),
-        (BlockRef::Out, OutParams::LPG) => (BlockRef::PadAmp, PadAmpParams::LPG),
-        (BlockRef::Out, OutParams::DECAY) => (BlockRef::PadAmp, PadAmpParams::GATE_DECAY),
-        (BlockRef::Out, OutParams::STRIKE) => (BlockRef::PadAmp, PadAmpParams::STRIKE),
-        _ => return a,
-    };
-    ParamAddr::new(block, param)
-}
-
-/// `def` edits the selected pad under `ctx`: a pad's page, or one whose
-/// cells `on_pad` turns to the pad (a DRUM Part's FLT and AMP). MIX +
-/// MINUS / PLUS steps the pad there.
-pub fn edits_pad(def: &BlockDef, ctx: &SlotCtx) -> bool {
+/// `def` edits the selected pad with slot `focus` touched: a pad's page,
+/// or a pad cell on a Part's page (FLT › MOD's SEM OUTPUT on DRUM). The
+/// header names the pad there, and MIX + MINUS / PLUS steps it.
+pub fn edits_pad(def: &BlockDef, focus: usize, ctx: &SlotCtx) -> bool {
     def.edits_pad()
-        || (0..def.params.len()).any(|i| view(def, i, ctx).addr().is_some_and(|a| a.block.is_pad()))
+        || view(def, focus, ctx)
+            .addr()
+            .is_some_and(|a| a.block.is_pad())
 }
 
 /// A TAPE cell on the Sound's machine, labelled its way: DECK's after

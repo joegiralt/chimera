@@ -62,8 +62,9 @@ pub struct HeaderText {
 }
 
 /// `PART 2 · SOUND` or `PART 2 · MIX` and the page (`FILTER`, `SENDS`),
-/// on a DRUM pad's page `PART 2 · 02 TONE SNARE` (`02 SNARE` where the
-/// short page name leaves it too long),
+/// with `models`' pad (the caller's: a page that edits it)
+/// `PART 2 · 02 TONE SNARE` (`02 SNARE` where the short page name leaves
+/// it too long),
 /// or `SETTINGS`; `suffix` follows the name (`/ B`). A page of the
 /// exciter's cells is named after MODAL's exciter (PLUCK, STRIKE, BOW),
 /// TAPE's model page after its machine (STRETCH); FLT › MOD on DIRTY or
@@ -81,8 +82,9 @@ pub fn header_text(
     closed: Option<&'static str>,
 ) -> HeaderText {
     let models = models.into();
-    // A pad's page names the pad and its machine in full where it fits.
-    let pad = models.pad.filter(|_| def.edits_pad());
+    // A pad's page (the caller's `pad`) names the pad and its machine in
+    // full where it fits.
+    let pad = models.pad;
     let context = |full: bool| {
         let mut context = FmtBuf::new();
         let _ = match (head, pad) {

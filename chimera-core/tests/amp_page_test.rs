@@ -17,11 +17,19 @@ use screen::*;
 
 const VEL: ParamAddr = ParamAddr::new(BlockRef::Out, OutParams::VCA_VEL);
 
+/// DRUM's AMP is its pad's (`DRUM_AMP`), in the same place.
+fn amp_of(ct: EngineType) -> u16 {
+    match ct {
+        EngineType::Drum => chimera_core::ui::block_registry::DRUM_AMP.id,
+        _ => AMP.id,
+    }
+}
+
 #[test]
 fn every_part_chain_has_amp_last_before_mod() {
     for ct in EngineType::ALL {
         let blocks = chain_def_for(ct).blocks;
-        assert_eq!(blocks[blocks.len() - 2].def.id, AMP.id, "{ct:?}");
+        assert_eq!(blocks[blocks.len() - 2].def.id, amp_of(ct), "{ct:?}");
     }
     assert_eq!((AMP.name, AMP.short), ("Amp", "AMP"));
 }
@@ -105,9 +113,11 @@ fn amp_sends_is_the_mixers_sends() {
     use chimera_core::ui::block_registry::SENDS;
     for ct in EngineType::ALL {
         let c = chain_def_for(ct);
-        let b = c.blocks.iter().find(|b| b.def.id == AMP.id).unwrap();
-        assert_eq!(b.sub_page_count(), 2, "{ct:?}: AMP, SENDS");
-        assert_eq!(b.sub_pages[0].id, SENDS.id, "{ct:?}");
+        let b = c.blocks.iter().find(|b| b.def.id == amp_of(ct)).unwrap();
+        // DRUM's: the pad's GATE, then SENDS.
+        let last = b.sub_pages.len() - 1;
+        assert_eq!(b.sub_page_count(), 2 + last, "{ct:?}: AMP, SENDS");
+        assert_eq!(b.sub_pages[last].id, SENDS.id, "{ct:?}");
     }
 }
 

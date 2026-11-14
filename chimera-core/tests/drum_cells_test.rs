@@ -2,8 +2,7 @@
 //! pad, and a knob cell takes its label, short and readout from that pad's
 //! machine, empty where the machine has no such knob. The pad's sound's
 //! cells (ADR 0269): `PadFilter`, `PadAmp`, `PadEnv`, `PadLfo` and
-//! `PadRoute` edit the selected pad's, and a DRUM Part's own FLT and AMP
-//! cells are the pad's.
+//! `PadRoute` edit the selected pad's, on DRUM's FLT, AMP and MOD pages.
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::drum::laws::spec;
@@ -306,11 +305,10 @@ use chimera_core::dsp::drum::sound::{
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::project::{PartFrom, PartSource};
-use chimera_core::ui::block_registry::{AMP, FILTER};
+use chimera_core::ui::block_registry::{DRUM_AMP, DRUM_FLT, DRUM_ROUTE, FILTER};
 use chimera_core::ui::filter_panel;
 
-/// A page of the pad's FLT panel cells, and one of its ROUTE (Task 7
-/// builds the real ones).
+/// A page of the pad's FLT panel cells, routes and jacks among them.
 static PAD_FLT: BlockDef = BlockDef {
     id: 9_998,
     name: "Pad filter",
@@ -324,22 +322,6 @@ static PAD_FLT: BlockDef = BlockDef {
         ParamSlot::pad_filter_panel(3),
         ParamSlot::pad_filter_panel(10),
         ParamSlot::param(BlockRef::PadFilter, FilterParams::KIND),
-    ],
-};
-
-static PAD_ROUTE: BlockDef = BlockDef {
-    id: 9_997,
-    name: "Route",
-    short: "RTE",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::select_route(),
-        ParamSlot::selected_route(PadRouteParams::SOURCE),
-        ParamSlot::selected_route(PadRouteParams::DEST),
-        ParamSlot::selected_route(PadRouteParams::AMOUNT),
-        ParamSlot::EMPTY,
-        ParamSlot::EMPTY,
     ],
 };
 
@@ -387,35 +369,72 @@ fn flt_cutoff_edits_the_selected_pad_only() {
     assert!((ratio - 2.0).abs() < 1e-3, "{ratio}");
 }
 
-/// The Part's own FLT and AMP pages on a DRUM Part edit the pad: the
-/// Sound's FILTER and AMP cells the pad overlays are never heard there.
+/// DRUM's FLT and AMP pages edit the pad: KIND and the panel cells on
+/// FLT, every AMP cell; FX TYPE and FX PLACE stay the Part's.
 #[test]
-fn a_drum_part_s_flt_and_amp_cells_edit_the_pad() {
+fn drum_flt_and_amp_cells_edit_the_pad() {
     let mut ui = drum_on(2);
     let ctx = ui.slot_ctx_for_test();
     assert!(ctx.drum);
     let sound_before = ui.project().part(P1).sound.params.clone();
-    for (def, cells) in [(&FILTER, &[0usize, 2, 3, 5][..]), (&AMP, &[0, 1, 2, 3][..])] {
+    for (def, cells) in [
+        (&DRUM_FLT, &[0usize, 2, 3, 5][..]),
+        (&DRUM_AMP, &[0, 1, 2, 3, 4, 5][..]),
+    ] {
         for &i in cells {
             let v = view::view(def, i, &ctx);
             let a = v.addr().unwrap_or_else(|| panic!("{} {i}", def.short));
             assert!(a.block.is_pad(), "{} {i}: {a:?}", def.short);
             assert_eq!(v.hint(&ctx), view::PAD_HINT, "{} {i}", def.short);
         }
-        assert!(view::edits_pad(def, &ctx), "{}", def.short);
+        assert!(def.edits_pad(), "{}", def.short);
+    }
+    for i in [1, 4] {
+        let a = view::view(&DRUM_FLT, i, &ctx).addr().unwrap();
+        assert_eq!(a.block, BlockRef::VoiceFx, "FLT {i} is the Part's");
     }
     // FREQ, FLT's F, turns pad 2's CUTOFF.
-    let freq = view::view(&FILTER, 5, &ctx).addr().unwrap();
+    let freq = view::view(&DRUM_FLT, 5, &ctx).addr().unwrap();
     assert_eq!(freq, at(BlockRef::PadFilter, FilterParams::CUTOFF));
     assert!(ui.edit_addr(P1, freq, -12, false));
-    let vel = view::view(&AMP, 0, &ctx).addr().unwrap();
+    let vel = view::view(&DRUM_AMP, 4, &ctx).addr().unwrap();
     assert_eq!(vel, at(BlockRef::PadAmp, PadAmpParams::VEL));
     assert!(ui.edit_addr(P1, vel, -10, false));
+    let mode = view::view(&DRUM_AMP, 5, &ctx).addr().unwrap();
+    assert_eq!(mode, at(BlockRef::PadAmp, PadAmpParams::MODE));
     let after = ui.project().part(P1).sound.params.clone();
     assert_eq!(after.filter.cutoff, sound_before.filter.cutoff);
     assert_eq!(after.out.vca_vel, sound_before.out.vca_vel);
     assert!(sound(&ui, 2).filter().cutoff().get() < sound(&ui, 1).filter().cutoff().get());
     assert!(sound(&ui, 2).amp().vel().get() < 1.0);
+}
+
+/// FLT › MOD's OUTPUT on DRUM is a SEM pad's MODE, never the Sound's
+/// (masked there); off SEM the cell is empty. Touched, it names the pad.
+#[test]
+fn fmd_output_is_a_sem_pad_s() {
+    use chimera_core::ui::block_registry::FILTER_MOD;
+    let mut ui = drum_on(2);
+    let ctx = ui.slot_ctx_for_test();
+    assert_eq!(view::view(&FILTER_MOD, 5, &ctx), View::Empty);
+    assert!(!view::edits_pad(&FILTER_MOD, 5, &ctx));
+    set_kind(&mut ui, 2, FilterKind::Sem);
+    let ctx = ui.slot_ctx_for_test();
+    let v = view::view(&FILTER_MOD, 5, &ctx);
+    assert_eq!(v.label(), "OUTPUT");
+    let a = v.addr().unwrap();
+    assert_eq!(a, at(BlockRef::PadFilter, FilterParams::MODE));
+    assert_eq!(v.hint(&ctx), view::PAD_HINT);
+    assert!(view::edits_pad(&FILTER_MOD, 5, &ctx));
+    assert!(
+        !view::edits_pad(&FILTER_MOD, 0, &ctx),
+        "ENV AMT is the Part's"
+    );
+    let mode = ui.project().part(P1).sound.params.filter.mode();
+    let pad_mode = sound(&ui, 2).filter().mode();
+    assert!(ui.edit_addr(P1, a, 1, false));
+    assert_ne!(sound(&ui, 2).filter().mode(), pad_mode);
+    assert_eq!(ui.project().part(P1).sound.params.filter.mode(), mode);
     // Not a DRUM Part: the Sound's, as ever.
     let mut va = UiState::new();
     va.load_for_test(PartSource {
@@ -427,7 +446,7 @@ fn a_drum_part_s_flt_and_amp_cells_edit_the_pad() {
         view::view(&FILTER, 5, &ctx).addr(),
         Some(at(BlockRef::Filter, FilterParams::CUTOFF))
     );
-    assert!(!view::edits_pad(&FILTER, &ctx));
+    assert!(!view::edits_pad(&FILTER, 5, &ctx));
 }
 
 #[test]
@@ -500,18 +519,18 @@ fn route_cells_edit_the_selected_route() {
     assert_eq!(ui.selected_route(), RouteId::ALL[0]);
     ui.select_route(r2);
     let ctx = ui.slot_ctx_for_test();
-    assert_eq!(view::view(&PAD_ROUTE, 0, &ctx), View::SelectRoute);
-    assert_eq!(view::view(&PAD_ROUTE, 0, &ctx).hint(&ctx), view::PAD_HINT);
-    assert!(PAD_ROUTE.edits_pad());
+    assert_eq!(view::view(&DRUM_ROUTE, 0, &ctx), View::SelectRoute);
+    assert_eq!(view::view(&DRUM_ROUTE, 0, &ctx).hint(&ctx), view::PAD_HINT);
+    assert!(DRUM_ROUTE.edits_pad());
     let shown = chimera_core::ui::part_page::values_under(
-        &PAD_ROUTE,
+        &DRUM_ROUTE,
         &ui.project().part(P1).sound.params,
         &ctx,
     );
     let mut b = FmtBuf::new();
     fmt_val(&mut b, shown[0], view::ROUTE_FMT);
     assert_eq!(b.as_str(), "2", "ROUTE reads 2");
-    let src = view::view(&PAD_ROUTE, 1, &ctx).addr().unwrap();
+    let src = view::view(&DRUM_ROUTE, 1, &ctx).addr().unwrap();
     assert_eq!(src, at(BlockRef::PadRoute(r2), PadRouteParams::SOURCE));
     let before = *sound(&ui, 4).routes();
     assert!(ui.edit_addr(P1, src, 2, false));
@@ -520,11 +539,11 @@ fn route_cells_edit_the_selected_route() {
     for r in RouteId::ALL.into_iter().filter(|&r| r != r2) {
         assert_eq!(after.get(r), before.get(r), "{r:?}");
     }
-    let dest = view::view(&PAD_ROUTE, 2, &ctx).addr().unwrap();
+    let dest = view::view(&DRUM_ROUTE, 2, &ctx).addr().unwrap();
     ui.edit_addr(P1, dest, 2, false);
     assert_eq!(sound(&ui, 4).routes().get(r2).dest(), RouteDest::Volume);
     // AMOUNT runs -127..=127.
-    let amt = view::view(&PAD_ROUTE, 3, &ctx).addr().unwrap();
+    let amt = view::view(&DRUM_ROUTE, 3, &ctx).addr().unwrap();
     let spec = amt.spec().unwrap();
     assert_eq!((spec.min, spec.max), (-127.0, 127.0));
     ui.edit_addr(P1, amt, 127, false);

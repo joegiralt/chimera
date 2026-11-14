@@ -3259,7 +3259,7 @@ impl UiState {
 
             // MIX + MINUS / PLUS on a pad's page steps the pad, wrapping.
             let step = |b| controls.button_state(b) == ButtonState::Pressed;
-            if shift && view::edits_pad(def, &self.ctx()) {
+            if shift && view::edits_pad(def, self.focus.get(def.id), &self.ctx()) {
                 let at = self.active_part;
                 let pad = self.project.selected_pad(at);
                 if step(ButtonId::Plus) {
@@ -3581,6 +3581,7 @@ impl UiState {
         renderer::page_header(
             self.head(),
             self.page_def(),
+            self.focused_slot(),
             &self.ctx(),
             self.project.perf().parts(),
             self.bank2,
@@ -3725,7 +3726,7 @@ impl UiState {
             )
             .with_names(match (f.head, f.ctx.pad) {
                 (Head::Orbit(n), _) => u16::from(n.get()) + 1,
-                (Head::Sound(_), Some(m)) if f.def.edits_pad() => {
+                (Head::Sound(_), Some(m)) if view::edits_pad(f.def, f.focus, &f.ctx) => {
                     1 + (f.ctx.sel_pad.index() * Machine::ALL.len() + m.index()) as u16
                 }
                 _ => 0,

@@ -4,7 +4,9 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
-use crate::dsp::drum::params::{KitParams, PadParams};
+use crate::dsp::drum::params::{
+    KitParams, PadAmpParams, PadEnvParams, PadLfoParams, PadParams, PadRouteParams,
+};
 use crate::dsp::drum::types::Knob;
 use crate::dsp::modal::{ModalPage, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
@@ -827,8 +829,8 @@ pub static VA_CHAIN: ChainDef2 =
     ChainDef2::new("VA", &VA_BLOCKS, &PART_MOD_SOURCES).with_home_def(&VA_HOME);
 
 // ---------------------------------------------------------------------------
-// DRUM pages (ADR 0265): every one edits the Part's selected pad. Ids 4-7:
-// free, under the focus table's top.
+// DRUM pages (ADR 0265): every one edits the Part's selected pad. Ids 4-7,
+// 13-15, 17, 21 and 23: free, under the focus table's top.
 // ---------------------------------------------------------------------------
 
 /// KIT, the home: which pad, its machine, level and pan, and the kit's
@@ -901,16 +903,135 @@ pub static DRUM_MORE: BlockDef = BlockDef {
     ],
 };
 
-/// KIT · MCH · FLT · AMP · MOD: the pad's pages, then DRUM's shared Sound
-/// blocks as VA's chain has them; KEYS under KIT, MORE under MCH.
+/// DRUM's FLT (ADR 0269): FLT's front on the pad's filter, the Part's FX
+/// TYPE and FX PLACE between; the curve the pad's.
+pub static DRUM_FLT: BlockDef = BlockDef {
+    id: 13,
+    params: [
+        ParamSlot::param(BlockRef::PadFilter, FilterParams::KIND),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::TYPE),
+        ParamSlot::pad_filter_panel(2),
+        ParamSlot::pad_filter_panel(0),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::PLACE).with_label(&"FX PLACE"),
+        ParamSlot::pad_filter_panel(1),
+    ],
+    ..FILTER
+};
+
+/// An AHD page on `b`'s envelope: ATTACK · HOLD · DECAY · SPEED, the
+/// curve the pad's; E and F `e`, `f`.
+const fn pad_env_page(
+    id: u16,
+    name: &'static str,
+    short: &'static str,
+    b: BlockRef,
+    e: ParamSlot,
+    f: ParamSlot,
+) -> BlockDef {
+    BlockDef {
+        id,
+        name,
+        short,
+        layout: PageLayout::BigViz,
+        viz: VizType::Adsr,
+        params: [
+            ParamSlot::param(b, PadEnvParams::ATTACK),
+            ParamSlot::param(b, PadEnvParams::HOLD),
+            ParamSlot::param(b, PadEnvParams::DECAY),
+            ParamSlot::param(b, PadEnvParams::SPEED),
+            e,
+            f,
+        ],
+    }
+}
+
+/// DRUM's AMP: the pad's AHD, its VEL and its MODE (ONE-SHOT or GATED).
+pub static DRUM_AMP: BlockDef = pad_env_page(
+    14,
+    "Amp",
+    "AMP",
+    BlockRef::PadAmp,
+    ParamSlot::param(BlockRef::PadAmp, PadAmpParams::VEL),
+    ParamSlot::param(BlockRef::PadAmp, PadAmpParams::MODE),
+);
+
+/// AMP › GATE: the pad's low-pass gate, in AMP's places.
+pub static DRUM_GATE: BlockDef = BlockDef {
+    id: 15,
+    name: "Gate",
+    short: "GATE",
+    params: [
+        EMPTY,
+        ParamSlot::param(BlockRef::PadAmp, PadAmpParams::LPG),
+        ParamSlot::param(BlockRef::PadAmp, PadAmpParams::GATE_DECAY),
+        ParamSlot::param(BlockRef::PadAmp, PadAmpParams::STRIKE),
+        EMPTY,
+        EMPTY,
+    ],
+    ..AMP
+};
+
+/// MOD › PENV: the pad's mod envelope.
+pub static DRUM_PENV: BlockDef =
+    pad_env_page(17, "Pad Env", "PENV", BlockRef::PadEnv, EMPTY, EMPTY);
+
+/// MOD › PLFO: the pad's LFO.
+pub static DRUM_PLFO: BlockDef = BlockDef {
+    id: 21,
+    name: "Pad LFO",
+    short: "PLFO",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::PadLfo, PadLfoParams::WAVE),
+        ParamSlot::param(BlockRef::PadLfo, PadLfoParams::SPEED),
+        ParamSlot::param(BlockRef::PadLfo, PadLfoParams::DEPTH),
+        ParamSlot::param(BlockRef::PadLfo, PadLfoParams::PHASE),
+        ParamSlot::param(BlockRef::PadLfo, PadLfoParams::MODE),
+        EMPTY,
+    ],
+};
+
+/// MOD › ROUTE: the pad's four routes, one at a time.
+pub static DRUM_ROUTE: BlockDef = BlockDef {
+    id: 23,
+    name: "Route",
+    short: "ROUTE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::select_route(),
+        ParamSlot::selected_route(PadRouteParams::SOURCE),
+        ParamSlot::selected_route(PadRouteParams::DEST),
+        ParamSlot::selected_route(PadRouteParams::AMOUNT),
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// DRUM's MOD sub-list: the pad's PENV, PLFO and ROUTE, then the Part's.
+static DRUM_MOD_SUB_PAGES: [&BlockDef; 10] = {
+    let mut a = [&DRUM_PENV; 10];
+    a[1] = &DRUM_PLFO;
+    a[2] = &DRUM_ROUTE;
+    let mut i = 0;
+    while i < MOD_SUB_PAGES.len() {
+        a[i + 3] = MOD_SUB_PAGES[i];
+        i += 1;
+    }
+    a
+};
+
+/// KIT · MCH · FLT · AMP · MOD: the pad's pages; KEYS under KIT, MORE
+/// under MCH; FLT's subs and AMP's SENDS the Part's.
 static DRUM_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::with_subs(&DRUM_KIT, &[&DRUM_KEYS]),
     ChainBlock::with_subs(&DRUM_MCH, &[&DRUM_MORE]),
-    ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::with_subs(&AMP, &AMP_SUB_PAGES),
+    ChainBlock::with_subs(&DRUM_FLT, &FILTER_SUB_PAGES),
+    ChainBlock::with_subs(&DRUM_AMP, &[&DRUM_GATE, &SENDS]),
     ChainBlock {
         def: &MOD_MATRIX,
-        sub_pages: &MOD_SUB_PAGES,
+        sub_pages: &DRUM_MOD_SUB_PAGES,
         map: Some("MOD"),
     },
 ];
