@@ -286,6 +286,9 @@ pub struct UiState {
     page: PageKey,
     /// Selected operator — one global selection, as before (spec §5).
     sel_op: Op,
+    /// The selected pad's route the route cells edit: one selection, the
+    /// UI's, never saved (ADR 0269).
+    sel_route: crate::dsp::drum::sound::RouteId,
     region_set: region::RegionSet,
     /// Last-touched slot per page: the focus band and MIX + Plus/Minus.
     focus: focus::FocusMemory,
@@ -426,6 +429,7 @@ crate::in_place::field_list!(UiState => UiState {
     browser_dirty,
     page,
     sel_op,
+    sel_route,
     region_set,
     focus,
     display_lfos,
@@ -544,6 +548,7 @@ impl UiState {
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
+            addr_of_mut!((*p).sel_route).write(crate::dsp::drum::sound::RouteId::ALL[0]);
             addr_of_mut!((*p).region_set).write(region::RegionSet::new());
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
@@ -1196,7 +1201,13 @@ impl UiState {
         let base =
             view::SourceState::of(&sound.params.tape, sound.source_ref(), self.project.pool())
                 .tape_routed(view::tape_routed(sound));
-        let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
+        let ctx = ctx
+            .on_source(self.src.state(self.active_part, base, &self.project))
+            .on_route(self.sel_route);
+        let ctx = match PartChain::of(sound) {
+            PartChain::Drum => ctx.on_drum(),
+            _ => ctx,
+        };
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
             None => ctx,
@@ -1207,8 +1218,7 @@ impl UiState {
     fn enter_page(&mut self) {
         self.src.leave();
         self.page = PageKey::from_location(self.loc, self.page_def(), self.sel_op);
-        let values = self.display_values();
-        self.renderer.snap_to_current(values);
+        self.snap_display();
         self.renderer.orbit_cursor.snap(self.orbit.cursor as f32);
     }
 
@@ -1700,9 +1710,31 @@ impl UiState {
         }
         self.project.select_pad(part, pad);
         if part == self.active_part {
-            let values = self.display_values();
-            self.renderer.snap_to_current(values);
+            self.snap_display();
         }
+    }
+
+    /// The display jumps to the page's values: nothing glides from the
+    /// last pad's, route's or page's.
+    #[inline(never)]
+    fn snap_display(&mut self) {
+        let values = self.display_values();
+        self.renderer.snap_to_current(values);
+    }
+
+    /// The selected pad's route the route cells edit.
+    pub fn selected_route(&self) -> crate::dsp::drum::sound::RouteId {
+        self.sel_route
+    }
+
+    /// Selects route `r`: its cells start at its own values, as a new
+    /// pad's do.
+    pub fn select_route(&mut self, r: crate::dsp::drum::sound::RouteId) {
+        if self.sel_route == r {
+            return;
+        }
+        self.sel_route = r;
+        self.snap_display();
     }
 
     /// A live hit on Part `part`'s `pad`: it lights, and on the shown Part
@@ -1798,8 +1830,7 @@ impl UiState {
                 ..before
             })
         {
-            let values = self.display_values();
-            self.renderer.snap_to_current(values);
+            self.snap_display();
         }
         // The operator selection is part of the page identity.
         self.page = PageKey::from_location(self.loc, def, self.sel_op);
@@ -3190,14 +3221,6 @@ impl UiState {
                     }
                     continue;
                 }
-                let read = UiRead {
-                    project: &self.project,
-                    part: at,
-                    theme: &self.theme,
-                    midi: &self.midi,
-                    random: &self.random,
-                };
-                let ctx = SlotCtx::read(&read, self.sel_op);
                 if !shift
                     && def
                         .params
@@ -3210,7 +3233,13 @@ impl UiState {
                     let n = self.project.selected_pad(at).index() as i32 + i32::from(delta);
                     let last = PadId::ALL.len() as i32 - 1;
                     self.select_pad(at, PadId::ALL[n.clamp(0, last) as usize]);
-                } else if let Some(a) = slot_addr(def, i, &ctx) {
+                } else if v == View::SelectRoute {
+                    // A turn stops at route 1 and 4.
+                    use crate::dsp::drum::sound::RouteId;
+                    let n = self.sel_route.index() as i32 + i32::from(delta);
+                    let last = RouteId::ALL.len() as i32 - 1;
+                    self.select_route(RouteId::ALL[n.clamp(0, last) as usize]);
+                } else if let Some(a) = v.addr() {
                     if self.turn_window(at, a, delta, shift) {
                     } else if fine {
                         self.edit_fine(at, a, delta);
@@ -3230,7 +3259,7 @@ impl UiState {
 
             // MIX + MINUS / PLUS on a pad's page steps the pad, wrapping.
             let step = |b| controls.button_state(b) == ButtonState::Pressed;
-            if shift && def.edits_pad() {
+            if shift && view::edits_pad(def, self.focus.get(def.id), &self.ctx()) {
                 let at = self.active_part;
                 let pad = self.project.selected_pad(at);
                 if step(ButtonId::Plus) {
@@ -3552,6 +3581,7 @@ impl UiState {
         renderer::page_header(
             self.head(),
             self.page_def(),
+            self.focused_slot(),
             &self.ctx(),
             self.project.perf().parts(),
             self.bank2,
@@ -3696,7 +3726,7 @@ impl UiState {
             )
             .with_names(match (f.head, f.ctx.pad) {
                 (Head::Orbit(n), _) => u16::from(n.get()) + 1,
-                (Head::Sound(_), Some(m)) if f.def.edits_pad() => {
+                (Head::Sound(_), Some(m)) if view::edits_pad(f.def, f.focus, &f.ctx) => {
                     1 + (f.ctx.sel_pad.index() * Machine::ALL.len() + m.index()) as u16
                 }
                 _ => 0,
@@ -4128,6 +4158,11 @@ struct UiRead<'a> {
     random: &'a Randomize,
 }
 
+/// Part `part`'s selected pad's sound.
+fn pad_sound(project: &Project, part: PartId) -> &crate::dsp::drum::sound::PadSound {
+    project.kit(part).pad(project.selected_pad(part)).sound()
+}
+
 /// Part `part`'s block `b`, the theme, MIDI CONFIG, or ORBIT's: what both
 /// views read.
 fn read_block<'a>(
@@ -4149,6 +4184,11 @@ fn read_block<'a>(
         BlockRef::Tempo => plain(&song.bpm),
         BlockRef::Pad => plain(project.kit(part).pad(project.selected_pad(part))),
         BlockRef::Kit => plain(project.kit(part)),
+        BlockRef::PadFilter => plain(pad_sound(project, part).filter()),
+        BlockRef::PadAmp => plain(pad_sound(project, part).amp()),
+        BlockRef::PadEnv => plain(pad_sound(project, part).env()),
+        BlockRef::PadLfo => plain(pad_sound(project, part).lfo()),
+        BlockRef::PadRoute(r) => plain(pad_sound(project, part).routes().route(r)),
         _ => project.read_part(part).block(b),
     }
 }
@@ -4188,6 +4228,24 @@ impl Blocks for UiBlocks<'_> {
                 ))
             }
             BlockRef::Kit => Some(BlockViewMut::Plain(self.project.kit_mut(self.part))),
+            // The pad's sound: `KitWriter::publish` takes the edit to the
+            // audio, whose next hit plays it.
+            BlockRef::PadFilter
+            | BlockRef::PadAmp
+            | BlockRef::PadEnv
+            | BlockRef::PadLfo
+            | BlockRef::PadRoute(_) => {
+                let pad = self.project.selected_pad(self.part);
+                let s = self.project.kit_mut(self.part).pad_mut(pad).sound_mut();
+                Some(BlockViewMut::Plain(match b {
+                    BlockRef::PadFilter => s.filter_mut(),
+                    BlockRef::PadAmp => s.amp_mut(),
+                    BlockRef::PadEnv => s.env_mut(),
+                    BlockRef::PadLfo => s.lfo_mut(),
+                    BlockRef::PadRoute(r) => s.routes_mut().route_mut(r),
+                    _ => return None,
+                }))
+            }
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
                 part_block_mut(sound, mix, fx, b)

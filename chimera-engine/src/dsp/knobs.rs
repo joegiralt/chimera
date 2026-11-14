@@ -928,6 +928,13 @@ pub(crate) fn ease_expr(v: &mut f32, t: f32, k: Option<f32>) {
     }
 }
 
+/// `v`, a 0..1 place, one block toward `t` at the KNOB coefficient `k`,
+/// as a knob glides; whether it landed.
+#[inline]
+pub(crate) fn glide_knob(v: &mut f32, t: f32, k: f32) -> bool {
+    glide(v, t, k, LAND)
+}
+
 /// `v` one block of the one-pole toward `t`, landing within `land`;
 /// whether it landed. A NaN lands too, so a bad target never sticks once
 /// it is fixed.

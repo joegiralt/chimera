@@ -116,6 +116,14 @@ pub enum SlotBinding {
     /// Knob `k` of the selected pad's machine (`laws::spec`): its label,
     /// short and readout; empty where the machine has none.
     Knob(crate::dsp::drum::types::Knob),
+    /// Knob `k` of the selected pad's filter type's panel
+    /// (`filter_panel::knob` on its KIND), the pad's param; empty where
+    /// the panel's knob is a route or a jack, which a pad lacks.
+    PadFilterPanel(u8),
+    /// DRUM's ROUTE: the selected pad's route the route cells edit.
+    SelectRoute,
+    /// A param of the selected pad's selected route (`BlockRef::PadRoute`).
+    SelectedRoute(ParamId),
 }
 
 /// Where a TAPE cell sits: cell `k` of DECK after MODEL (the glyph's
@@ -173,6 +181,27 @@ impl ParamSlot {
     pub const fn select_pad() -> Self {
         Self {
             binding: SlotBinding::SelectPad,
+            label_override: None,
+        }
+    }
+
+    pub const fn select_route() -> Self {
+        Self {
+            binding: SlotBinding::SelectRoute,
+            label_override: None,
+        }
+    }
+
+    pub const fn selected_route(param: ParamId) -> Self {
+        Self {
+            binding: SlotBinding::SelectedRoute(param),
+            label_override: None,
+        }
+    }
+
+    pub const fn pad_filter_panel(k: u8) -> Self {
+        Self {
+            binding: SlotBinding::PadFilterPanel(k),
             label_override: None,
         }
     }
@@ -277,6 +306,9 @@ impl ParamSlot {
             SlotBinding::SelectedRing(id) => {
                 find_spec(BlockRef::OrbitRing(RingIdx::ALL[0]).specs(), id)
             }
+            SlotBinding::SelectedRoute(id) => {
+                find_spec(&crate::dsp::drum::params::PAD_ROUTE_SPECS, id)
+            }
             // Out of context: a table operator's cell (views resolve the kind).
             SlotBinding::OpPanel(op, k) => {
                 let (id, _) = crate::ui::op_page::table_cell(k)?;
@@ -286,6 +318,8 @@ impl ParamSlot {
             | SlotBinding::Orbit(_)
             | SlotBinding::SelectOp
             | SlotBinding::SelectPad
+            | SlotBinding::SelectRoute
+            | SlotBinding::PadFilterPanel(_)
             | SlotBinding::Legacy(_)
             | SlotBinding::FilterPanel(_)
             | SlotBinding::FxPanel(_)
@@ -308,6 +342,7 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::Orbit(_)
             | SlotBinding::FilterPanel(_)
+            | SlotBinding::PadFilterPanel(_)
             | SlotBinding::FxPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
@@ -319,10 +354,12 @@ impl ParamSlot {
             SlotBinding::Source => "SOURCE",
             SlotBinding::SelectOp => "OP",
             SlotBinding::SelectPad => "PAD",
+            SlotBinding::SelectRoute => "ROUTE",
             SlotBinding::OpPanel(_, k) => crate::ui::op_page::table_cell(k).map_or("--", |c| c.1),
-            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
-                self.spec().map_or("??", |s| s.label)
-            }
+            SlotBinding::Param(_)
+            | SlotBinding::SelectedOp(_)
+            | SlotBinding::SelectedRing(_)
+            | SlotBinding::SelectedRoute(_) => self.spec().map_or("??", |s| s.label),
         }
     }
 
@@ -331,6 +368,7 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::Orbit(_)
             | SlotBinding::FilterPanel(_)
+            | SlotBinding::PadFilterPanel(_)
             | SlotBinding::FxPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
@@ -340,11 +378,13 @@ impl ParamSlot {
             | SlotBinding::Knob(_)
             | SlotBinding::Source => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
+            SlotBinding::SelectRoute => crate::ui::view::ROUTE_FMT,
             SlotBinding::SelectPad => ValFmt::Names(&crate::ui::view::PAD_NUMBERS),
             SlotBinding::Legacy(fmt) => *fmt,
             SlotBinding::Param(_)
             | SlotBinding::SelectedOp(_)
             | SlotBinding::SelectedRing(_)
+            | SlotBinding::SelectedRoute(_)
             | SlotBinding::OpPanel(..) => self.spec().map_or(ValFmt::Uni, |s| s.fmt),
         }
     }
@@ -368,12 +408,17 @@ pub struct BlockDef {
 }
 
 impl BlockDef {
-    /// A DRUM pad's page (KIT, KEYS, MCH, MORE): its cells edit the
-    /// selected pad, MIX + MINUS / PLUS steps it, and the header names it.
+    /// A DRUM pad's page (KIT, KEYS, MCH, MORE, and the pad's FLT, AMP
+    /// and MOD pages): its cells edit the selected pad, MIX + MINUS / PLUS
+    /// steps it, and the header names it.
     pub fn edits_pad(&self) -> bool {
         self.params.iter().any(|s| match s.binding {
-            SlotBinding::SelectPad | SlotBinding::Knob(_) => true,
-            SlotBinding::Param(a) => a.block == BlockRef::Pad,
+            SlotBinding::SelectPad
+            | SlotBinding::Knob(_)
+            | SlotBinding::PadFilterPanel(_)
+            | SlotBinding::SelectRoute
+            | SlotBinding::SelectedRoute(_) => true,
+            SlotBinding::Param(a) => a.block.is_pad(),
             _ => false,
         })
     }

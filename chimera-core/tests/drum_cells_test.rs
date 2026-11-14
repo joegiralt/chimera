@@ -1,6 +1,8 @@
 //! DRUM's pad cells (ADR 0265): `BlockRef::Pad` edits the Part's selected
 //! pad, and a knob cell takes its label, short and readout from that pad's
-//! machine, empty where the machine has no such knob.
+//! machine, empty where the machine has no such knob. The pad's sound's
+//! cells (ADR 0269): `PadFilter`, `PadAmp`, `PadEnv`, `PadLfo` and
+//! `PadRoute` edit the selected pad's, on DRUM's FLT, AMP and MOD pages.
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::drum::laws::spec;
@@ -15,6 +17,15 @@ use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::{PageLayout, ValFmt};
 use chimera_core::ui::view::{self, View};
 use chimera_midi::value::U7;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+/// The one `KitWriter`, shared by the tests that publish.
+fn writer() -> MutexGuard<'static, KitWriter> {
+    static W: OnceLock<Mutex<KitWriter>> = OnceLock::new();
+    W.get_or_init(|| Mutex::new(KitWriter::take().expect("the kit writer, once")))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
 
 const P1: PartId = PartId::ALL[0];
 const P2: PartId = PartId::ALL[1];
@@ -182,7 +193,7 @@ fn a_knob_reads_in_its_machine_s_unit() {
 /// decides what a note plays.
 #[test]
 fn tonal_reaches_the_audio() {
-    let mut w = KitWriter::take().expect("the kit writer, once");
+    let mut w = writer();
     let mut ui = ui_on(7);
     ui.select_pad(P2, pad(11));
     ui.project_mut().kit_mut(P2).set_tonal(Tonal::Pad(pad(4)));
@@ -281,4 +292,466 @@ fn tonal_on_an_unpitched_pad_notes_it() {
     assert_eq!(note(&ui).unwrap().as_str(), "NO PITCH ON SHAKER");
     let other = ParamAddr::new(BlockRef::Pad, PadParams::MACHINE);
     assert!(view::tonal_note(other, &ui.slot_ctx_for_test()).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// The pad's sound (ADR 0269)
+// ---------------------------------------------------------------------------
+
+use chimera_core::dsp::drum::params::{PadAmpParams, PadRouteParams};
+use chimera_core::dsp::drum::sound::{
+    AmpMode, EnvDecay, PadSound, RouteDest, RouteId, RouteSource,
+};
+use chimera_core::dsp::filter::FilterKind;
+use chimera_core::params::{EngineType, FilterParams};
+use chimera_core::project::{PartFrom, PartSource};
+use chimera_core::ui::block_registry::{DRUM_AMP, DRUM_FLT, DRUM_ROUTE, FILTER};
+use chimera_core::ui::filter_panel;
+
+/// A page of the pad's FLT panel cells, routes and jacks among them.
+static PAD_FLT: BlockDef = BlockDef {
+    id: 9_998,
+    name: "Pad filter",
+    short: "PFL",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::pad_filter_panel(0),
+        ParamSlot::pad_filter_panel(1),
+        ParamSlot::pad_filter_panel(2),
+        ParamSlot::pad_filter_panel(3),
+        ParamSlot::pad_filter_panel(10),
+        ParamSlot::param(BlockRef::PadFilter, FilterParams::KIND),
+    ],
+};
+
+/// Part 1 on DRUM INIT with pad `n` selected.
+fn drum_on(n: u8) -> UiState {
+    let mut ui = UiState::new();
+    ui.load_for_test(PartSource {
+        part: P1,
+        from: PartFrom::Init(EngineType::Drum),
+    });
+    ui.select_pad(P1, pad(n));
+    ui
+}
+
+fn sound(ui: &UiState, n: u8) -> PadSound {
+    *ui.project().kit(P1).pad(pad(n)).sound()
+}
+
+fn at(b: BlockRef, id: chimera_core::block::ParamId) -> ParamAddr {
+    ParamAddr::new(b, id)
+}
+
+/// Sets pad `n`'s filter KIND to `k` through its cell.
+fn set_kind(ui: &mut UiState, n: u8, k: FilterKind) {
+    ui.select_pad(P1, pad(n));
+    let to = FilterKind::BUILT.iter().position(|&x| x == k).unwrap() as i8;
+    ui.edit_addr(P1, at(BlockRef::PadFilter, FilterParams::KIND), -10, false);
+    ui.edit_addr(P1, at(BlockRef::PadFilter, FilterParams::KIND), to, false);
+    assert_eq!(sound(ui, n).filter().kind(), k);
+}
+
+#[test]
+fn flt_cutoff_edits_the_selected_pad_only() {
+    let mut ui = drum_on(2);
+    let flt = ui.project().part(P1).sound.params.filter;
+    let (p1, p2) = (sound(&ui, 1), sound(&ui, 2));
+    let a = at(BlockRef::PadFilter, FilterParams::CUTOFF);
+    assert!(ui.edit_addr(P1, a, -24, false));
+    assert_ne!(sound(&ui, 2).filter().cutoff(), p2.filter().cutoff());
+    assert_eq!(sound(&ui, 1), p1);
+    let now = ui.project().part(P1).sound.params.filter;
+    assert_eq!(now.cutoff, flt.cutoff, "the Sound's filter is left");
+    // A cutoff a full octave down: 24 ticks of 1/24 octave.
+    let ratio = p2.filter().cutoff().get() / sound(&ui, 2).filter().cutoff().get();
+    assert!((ratio - 2.0).abs() < 1e-3, "{ratio}");
+}
+
+/// DRUM's FLT and AMP pages edit the pad: KIND and the panel cells on
+/// FLT, every AMP cell; FX TYPE and FX PLACE stay the Part's.
+#[test]
+fn drum_flt_and_amp_cells_edit_the_pad() {
+    let mut ui = drum_on(2);
+    let ctx = ui.slot_ctx_for_test();
+    assert!(ctx.drum);
+    let sound_before = ui.project().part(P1).sound.params.clone();
+    for (def, cells) in [
+        (&DRUM_FLT, &[0usize, 2, 3, 5][..]),
+        (&DRUM_AMP, &[0, 1, 2, 3, 4, 5][..]),
+    ] {
+        for &i in cells {
+            let v = view::view(def, i, &ctx);
+            let a = v.addr().unwrap_or_else(|| panic!("{} {i}", def.short));
+            assert!(a.block.is_pad(), "{} {i}: {a:?}", def.short);
+            assert_eq!(v.hint(&ctx), view::PAD_HINT, "{} {i}", def.short);
+        }
+        assert!(def.edits_pad(), "{}", def.short);
+    }
+    for i in [1, 4] {
+        let a = view::view(&DRUM_FLT, i, &ctx).addr().unwrap();
+        assert_eq!(a.block, BlockRef::VoiceFx, "FLT {i} is the Part's");
+    }
+    // FREQ, FLT's F, turns pad 2's CUTOFF.
+    let freq = view::view(&DRUM_FLT, 5, &ctx).addr().unwrap();
+    assert_eq!(freq, at(BlockRef::PadFilter, FilterParams::CUTOFF));
+    assert!(ui.edit_addr(P1, freq, -12, false));
+    let vel = view::view(&DRUM_AMP, 4, &ctx).addr().unwrap();
+    assert_eq!(vel, at(BlockRef::PadAmp, PadAmpParams::VEL));
+    assert!(ui.edit_addr(P1, vel, -10, false));
+    let mode = view::view(&DRUM_AMP, 5, &ctx).addr().unwrap();
+    assert_eq!(mode, at(BlockRef::PadAmp, PadAmpParams::MODE));
+    let after = ui.project().part(P1).sound.params.clone();
+    assert_eq!(after.filter.cutoff, sound_before.filter.cutoff);
+    assert_eq!(after.out.vca_vel, sound_before.out.vca_vel);
+    assert!(sound(&ui, 2).filter().cutoff().get() < sound(&ui, 1).filter().cutoff().get());
+    assert!(sound(&ui, 2).amp().vel().get() < 1.0);
+}
+
+/// A pad's VEL drives its own amp (ADR 0269): lit on DRUM INIT, which
+/// has no Part VCA route.
+#[test]
+fn pad_vel_is_not_dimmed() {
+    let ui = drum_on(1);
+    let ctx = ui.slot_ctx_for_test();
+    let s = &ui.project().part(P1).sound;
+    assert_eq!(s.mod_state.routes_into(chimera_core::modulation::VCA), 0);
+    let v = view::view(&DRUM_AMP, 4, &ctx);
+    assert_eq!(v.addr(), Some(at(BlockRef::PadAmp, PadAmpParams::VEL)));
+    assert!(!view::is_dimmed(&v, s, &ctx));
+}
+
+/// FLT › MOD's OUTPUT on DRUM is a SEM pad's MODE, never the Sound's
+/// (masked there); off SEM the cell is empty. Touched, it names the pad.
+#[test]
+fn fmd_output_is_a_sem_pad_s() {
+    use chimera_core::ui::block_registry::FILTER_MOD;
+    let mut ui = drum_on(2);
+    let ctx = ui.slot_ctx_for_test();
+    assert_eq!(view::view(&FILTER_MOD, 5, &ctx), View::Empty);
+    assert!(!view::edits_pad(&FILTER_MOD, 5, &ctx));
+    set_kind(&mut ui, 2, FilterKind::Sem);
+    let ctx = ui.slot_ctx_for_test();
+    let v = view::view(&FILTER_MOD, 5, &ctx);
+    assert_eq!(v.label(), "OUTPUT");
+    let a = v.addr().unwrap();
+    assert_eq!(a, at(BlockRef::PadFilter, FilterParams::MODE));
+    assert_eq!(v.hint(&ctx), view::PAD_HINT);
+    assert!(view::edits_pad(&FILTER_MOD, 5, &ctx));
+    assert!(
+        !view::edits_pad(&FILTER_MOD, 0, &ctx),
+        "ENV AMT is the Part's"
+    );
+    let mode = ui.project().part(P1).sound.params.filter.mode();
+    let pad_mode = sound(&ui, 2).filter().mode();
+    assert!(ui.edit_addr(P1, a, 1, false));
+    assert_ne!(sound(&ui, 2).filter().mode(), pad_mode);
+    assert_eq!(ui.project().part(P1).sound.params.filter.mode(), mode);
+    // Not a DRUM Part: the Sound's, as ever.
+    let mut va = UiState::new();
+    va.load_for_test(PartSource {
+        part: P1,
+        from: PartFrom::Init(EngineType::Va),
+    });
+    let ctx = va.slot_ctx_for_test();
+    assert_eq!(
+        view::view(&FILTER, 5, &ctx).addr(),
+        Some(at(BlockRef::Filter, FilterParams::CUTOFF))
+    );
+    assert!(!view::edits_pad(&FILTER, 5, &ctx));
+}
+
+#[test]
+fn pad_filter_panel_follows_the_pad() {
+    let mut ui = drum_on(1);
+    set_kind(&mut ui, 1, FilterKind::Ladder);
+    set_kind(&mut ui, 2, FilterKind::Sem);
+    for (n, kind) in [(1, FilterKind::Ladder), (2, FilterKind::Sem)] {
+        ui.select_pad(P1, pad(n));
+        let ctx = ui.slot_ctx_for_test();
+        assert_eq!(ctx.pad_kind, kind);
+        for k in 0..=2u8 {
+            let v = view::view(&PAD_FLT, k as usize, &ctx);
+            let want = filter_panel::knob(kind, k).unwrap();
+            assert_eq!(v.label(), want.label, "pad {n} cell {k}");
+            assert_eq!(v.addr().unwrap().block, BlockRef::PadFilter);
+        }
+        // A route and a jack: a pad has neither.
+        assert_eq!(view::view(&PAD_FLT, 3, &ctx), View::Empty);
+        assert_eq!(view::view(&PAD_FLT, 4, &ctx), View::Empty);
+    }
+    // SEM's MODE cell is its MORPH knob, the pad's.
+    let ctx = ui.slot_ctx_for_test();
+    assert_eq!(
+        view::view(&PAD_FLT, 0, &ctx).addr(),
+        Some(at(BlockRef::PadFilter, FilterParams::MORPH))
+    );
+}
+
+#[test]
+fn kind_change_keeps_mode_valid() {
+    let mut ui = drum_on(3);
+    let a = at(BlockRef::PadFilter, FilterParams::KIND);
+    let m = at(BlockRef::PadFilter, FilterParams::MODE);
+    let mut seen = vec![sound(&ui, 3).filter().kind()];
+    for step in [1i8, 1, 1, 1, -1, -1, -1, -1] {
+        // Every MODE the kind has, then the next KIND.
+        for _ in 0..8 {
+            ui.edit_addr(P1, m, 1, false);
+            let f = *sound(&ui, 3).filter();
+            assert!(f.kind().modes().contains(&f.mode()), "{f:?}");
+        }
+        assert!(ui.edit_addr(P1, a, step, false), "KIND moves");
+        let f = *sound(&ui, 3).filter();
+        assert!(f.kind().modes().contains(&f.mode()), "{f:?}");
+        if !seen.contains(&f.kind()) {
+            seen.push(f.kind());
+        }
+        // MODE reads in the kind's own names.
+        let ctx = ui.slot_ctx_for_test();
+        let v = view::view(&PAD_FLT, 5, &ctx);
+        assert_eq!(v.addr(), Some(a));
+        let mode = ParamAddr::new(BlockRef::PadFilter, FilterParams::MODE);
+        assert_eq!(
+            view::shown_fmt(mode, &ctx),
+            Some(ValFmt::Names(f.kind().mode_labels()))
+        );
+    }
+    // Every built KIND visited: the KIND turns were never no-ops.
+    for k in FilterKind::BUILT {
+        assert!(seen.contains(&k), "{k:?} never reached");
+    }
+}
+
+#[test]
+fn route_cells_edit_the_selected_route() {
+    let mut ui = drum_on(4);
+    let r2 = RouteId::new(1).unwrap();
+    // ROUTE turns 1-4.
+    assert_eq!(ui.selected_route(), RouteId::ALL[0]);
+    ui.select_route(r2);
+    let ctx = ui.slot_ctx_for_test();
+    assert_eq!(view::view(&DRUM_ROUTE, 0, &ctx), View::SelectRoute);
+    assert_eq!(view::view(&DRUM_ROUTE, 0, &ctx).hint(&ctx), view::PAD_HINT);
+    assert!(DRUM_ROUTE.edits_pad());
+    let shown = chimera_core::ui::part_page::values_under(
+        &DRUM_ROUTE,
+        &ui.project().part(P1).sound.params,
+        &ctx,
+    );
+    let mut b = FmtBuf::new();
+    fmt_val(&mut b, shown[0], view::ROUTE_FMT);
+    assert_eq!(b.as_str(), "2", "ROUTE reads 2");
+    let src = view::view(&DRUM_ROUTE, 1, &ctx).addr().unwrap();
+    assert_eq!(src, at(BlockRef::PadRoute(r2), PadRouteParams::SOURCE));
+    let before = *sound(&ui, 4).routes();
+    assert!(ui.edit_addr(P1, src, 2, false));
+    let after = *sound(&ui, 4).routes();
+    assert_eq!(after.get(r2).source(), RouteSource::Vel);
+    for r in RouteId::ALL.into_iter().filter(|&r| r != r2) {
+        assert_eq!(after.get(r), before.get(r), "{r:?}");
+    }
+    let dest = view::view(&DRUM_ROUTE, 2, &ctx).addr().unwrap();
+    ui.edit_addr(P1, dest, 2, false);
+    assert_eq!(sound(&ui, 4).routes().get(r2).dest(), RouteDest::Volume);
+    // AMOUNT runs -127..=127.
+    let amt = view::view(&DRUM_ROUTE, 3, &ctx).addr().unwrap();
+    let spec = amt.spec().unwrap();
+    assert_eq!((spec.min, spec.max), (-127.0, 127.0));
+    ui.edit_addr(P1, amt, 127, false);
+    ui.edit_addr(P1, amt, 127, false);
+    assert_eq!(sound(&ui, 4).routes().get(r2).amount().get(), 127);
+    for _ in 0..3 {
+        ui.edit_addr(P1, amt, -127, false);
+    }
+    assert_eq!(sound(&ui, 4).routes().get(r2).amount().get(), -127);
+    // Route 1 is left; the selection is the UI's.
+    assert_eq!(
+        sound(&ui, 4).routes().get(RouteId::ALL[0]),
+        before.get(RouteId::ALL[0])
+    );
+}
+
+#[test]
+fn amp_decay_reads_inf_at_127() {
+    let mut ui = drum_on(5);
+    let d = at(BlockRef::PadAmp, PadAmpParams::DECAY);
+    let spec = d.spec().unwrap();
+    assert_eq!(spec.fmt, ValFmt::Inf);
+    let show = |v: f32| {
+        let mut b = FmtBuf::new();
+        fmt_val(&mut b, spec.normalize(v), spec.fmt);
+        b.as_str().to_owned()
+    };
+    assert_eq!(show(127.0), "INF");
+    assert_eq!(show(126.0), "126");
+    // An open AMP: decay INF, so the pad sounds as in slice 1.
+    assert_eq!(sound(&ui, 5).amp().env().decay(), EnvDecay::Infinite);
+    ui.edit_addr(P1, d, -1, false);
+    assert_eq!(sound(&ui, 5).amp().env().decay().code().get(), 126);
+    ui.edit_addr(P1, d, 1, false);
+    assert_eq!(sound(&ui, 5).amp().env().decay(), EnvDecay::Infinite);
+    // MODE: ONE-SHOT, then GATED.
+    let m = at(BlockRef::PadAmp, PadAmpParams::MODE);
+    assert_eq!(sound(&ui, 5).amp().mode(), AmpMode::OneShot);
+    ui.edit_addr(P1, m, 1, false);
+    assert_eq!(sound(&ui, 5).amp().mode(), AmpMode::Gated);
+    let ValFmt::Names(n) = m.spec().unwrap().fmt else {
+        panic!("MODE names")
+    };
+    assert_eq!(n, ["1-SHOT", "GATED"]);
+}
+
+/// The pad's blocks are the UI's: no Sound holds them, none is
+/// modulatable, and no CC learns them (the pad path, as `BlockRef::Pad`).
+#[test]
+fn pad_sound_blocks_are_the_ui_s() {
+    use chimera_core::midi_map::Mappable;
+    let blocks = [
+        BlockRef::PadFilter,
+        BlockRef::PadAmp,
+        BlockRef::PadEnv,
+        BlockRef::PadLfo,
+        BlockRef::PadRoute(RouteId::ALL[3]),
+    ];
+    for b in blocks {
+        assert!(b.is_pad() && !b.in_sound() && !b.voice_reads(), "{b:?}");
+        assert!(!BlockRef::ALL.contains(&b));
+        for s in b.specs() {
+            let a = ParamAddr::new(b, s.id);
+            assert!(!a.modulatable(), "{b:?} {}", s.label);
+            assert!(Mappable::new(a).is_none(), "{b:?} {}", s.label);
+        }
+    }
+    // A pad's filter speaks the Sound filter's table, but only its
+    // `PadFilter::IDS` cells resolve: on the block, and in every view.
+    use chimera_core::block::Block;
+    use chimera_core::dsp::drum::sound::PadFilter;
+    let f = *PadSound::DEFAULT.filter();
+    for s in BlockRef::PadFilter.specs() {
+        assert_eq!(
+            f.spec(s.id).is_some(),
+            PadFilter::IDS.contains(&s.id),
+            "{}",
+            s.label
+        );
+    }
+    let mut ui = drum_on(1);
+    for kind in FilterKind::BUILT {
+        set_kind(&mut ui, 1, kind);
+        let ctx = ui.slot_ctx_for_test();
+        for def in [
+            &PAD_FLT,
+            &FILTER,
+            &chimera_core::ui::block_registry::FILTER_MOD,
+        ] {
+            for i in 0..6 {
+                if let Some(a) = view::view(def, i, &ctx).addr()
+                    && a.block == BlockRef::PadFilter
+                {
+                    assert!(PadFilter::IDS.contains(&a.param), "{kind:?} {}", def.short);
+                }
+            }
+        }
+    }
+}
+
+/// Each cell reads back what it writes, at every step of its range.
+#[test]
+fn pad_sound_cells_round_trip() {
+    use chimera_core::block::Block;
+    let ui = drum_on(1);
+    let mut s = sound(&ui, 1);
+    let r = RouteId::ALL[2];
+    let check = |b: &mut dyn Block, name: &str| {
+        for spec in b.specs() {
+            let mut v = spec.min;
+            while v <= spec.max {
+                b.set(spec.id, v);
+                assert!(
+                    (b.get(spec.id) - v).abs() < 1e-6,
+                    "{name} {} {v}",
+                    spec.label
+                );
+                v += spec.step.max(1.0 / 127.0);
+            }
+        }
+    };
+    check(s.amp_mut(), "amp");
+    check(s.env_mut(), "env");
+    check(s.lfo_mut(), "lfo");
+    check(s.routes_mut().route_mut(r), "route");
+    // The filter, on every KIND: each cell at each of its steps (MODE's
+    // range is the kind's), CUTOFF by its 1/24-octave ticks.
+    use chimera_core::dsp::drum::sound::PadFilter;
+    let f = s.filter_mut();
+    for (i, kind) in FilterKind::BUILT.into_iter().enumerate() {
+        f.set(FilterParams::KIND, i as f32);
+        assert_eq!(f.kind(), kind);
+        assert_eq!(f.get(FilterParams::KIND), i as f32);
+        for id in PadFilter::IDS
+            .into_iter()
+            .filter(|&id| id != FilterParams::KIND)
+        {
+            let spec = *f.spec(id).unwrap();
+            let mut v = spec.min;
+            loop {
+                f.set(id, v);
+                let got = f.get(id);
+                assert!(
+                    (got - v).abs() <= 1e-4 * v.abs().max(1.0),
+                    "{kind:?} {} {v}: {got}",
+                    spec.label
+                );
+                let next = spec.nudged(v, 1);
+                if next <= v {
+                    break;
+                }
+                v = next;
+            }
+            assert_eq!(v, spec.max, "{kind:?} {} reaches its max", spec.label);
+        }
+    }
+}
+
+/// An edit reaches the audio's kit: the next hit plays it.
+#[test]
+fn a_pad_sound_edit_reaches_the_audio() {
+    let mut w = writer();
+    let mut ui = drum_on(1);
+    let c4 = chimera_core::MidiNote::new(60).unwrap();
+    ui.edit_addr(
+        P1,
+        at(BlockRef::PadFilter, FilterParams::CUTOFF),
+        -48,
+        false,
+    );
+    ui.edit_addr(P1, at(BlockRef::PadAmp, PadAmpParams::MODE), 1, false);
+    w.publish_all(ui.project().kits());
+    let hit = KIT_VIEW.hit(P1, c4);
+    assert_eq!(hit.pad(), pad(1));
+    assert_eq!(*hit.params().sound(), sound(&ui, 1));
+    assert_eq!(hit.params().sound().amp().mode(), AmpMode::Gated);
+}
+
+/// Every new name fits its cell (full words where they fit).
+#[test]
+fn pad_sound_names_fit_their_cells() {
+    use chimera_core::ui::renderer::CELL_VALUE_W;
+    use chimera_core::ui::{draw, theme};
+    for b in [
+        BlockRef::PadAmp,
+        BlockRef::PadLfo,
+        BlockRef::PadRoute(RouteId::ALL[0]),
+    ] {
+        for s in b.specs() {
+            if let ValFmt::Names(n) = s.fmt {
+                for name in n {
+                    let w = draw::text_width(&theme::FONT_VALUE, name, 0);
+                    assert!(w <= CELL_VALUE_W, "{b:?} {}: {name} is {w}", s.label);
+                }
+            }
+        }
+    }
 }

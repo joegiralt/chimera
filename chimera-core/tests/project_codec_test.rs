@@ -20,6 +20,9 @@ const PART: u16 = 0x8008;
 const FX: u16 = 0x8009;
 const ORIGIN: u16 = 0x000A;
 const KIT: u16 = 0x0024;
+const KIT_SOUND: u16 = 0x0025;
+/// A Part's last records: its Origin, its Kit, then a `KitSound` a pad.
+const ORIGIN_FROM_END: usize = 2 + 12;
 const BLOCK: u16 = 0x0001;
 const ENGINE: u16 = 0x8002;
 const PART_BLOCK: u8 = 25;
@@ -222,14 +225,17 @@ fn record_order_is_fx_then_slots_then_parts() {
     // FX: its five blocks, chorus to comp.
     let fx: Vec<u8> = recs[1..6].iter().map(|(_, b)| b[0]).collect();
     assert_eq!(fx, [20, 21, 22, 23, 24]);
-    // A Part: Engine first, its mix, Origin and kit last.
+    // A Part: Engine first, its mix, Origin, kit and pad sounds last.
     let r = part_ctx(&recs, PartId::ALL[1]);
     let part = &recs[r];
     assert_eq!(part[1].0, ENGINE);
-    let n = part.len();
+    let n = part.len() - 12;
     assert_eq!((part[n - 3].0, part[n - 3].1[0]), (BLOCK, PART_BLOCK));
     assert_eq!(part[n - 2].0, ORIGIN);
     assert_eq!(part[n - 1].0, KIT);
+    for (i, (t, b)) in part[n..].iter().enumerate() {
+        assert_eq!((*t, b[0]), (KIT_SOUND, i as u8));
+    }
 }
 
 #[test]
@@ -327,7 +333,7 @@ fn unknown_or_missing_origins_read_as_init() {
     decode(
         &edited(&p, |recs| {
             let r = part_ctx(recs, PartId::ALL[0]);
-            recs[r.end - 2].1 = vec![1, 0xEE];
+            recs[r.end - ORIGIN_FROM_END].1 = vec![1, 0xEE];
         }),
         &mut q,
     )
@@ -337,7 +343,7 @@ fn unknown_or_missing_origins_read_as_init() {
     decode(
         &edited(&p, |recs| {
             let r = part_ctx(recs, PartId::ALL[0]);
-            recs.remove(r.end - 2);
+            recs.remove(r.end - ORIGIN_FROM_END);
         }),
         &mut q,
     )

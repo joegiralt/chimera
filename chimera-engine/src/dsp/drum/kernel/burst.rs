@@ -101,7 +101,7 @@ impl Burst {
             hard_lp: 0.0,
             wet: 0.0,
             gain: 0.6,
-            vel: h.vel.unit(),
+            vel: h.level.get(),
             quiet: false,
         }
     }
@@ -135,7 +135,7 @@ impl Burst {
             hard_lp: 0.0,
             wet,
             gain: 0.8,
-            vel: h.vel.unit(),
+            vel: h.level.get(),
             quiet: false,
         }
     }

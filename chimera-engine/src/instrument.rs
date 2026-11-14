@@ -227,15 +227,21 @@ impl PartAudio {
         }
     }
 
-    /// Cycles/sample of a voice of this Part: its Sound's, and where a
-    /// re-snap can move it (SNAP on, HELD RE-SNAP) the retune its glide
-    /// runs each block.
-    fn voice_cost(&self) -> Cost {
+    /// Cycles/sample of a voice of this Part, `id`: its Sound's (a DRUM
+    /// Part's with its kit's filter bill), and where a re-snap can move it
+    /// (SNAP on, HELD RE-SNAP) the retune its glide runs each block.
+    fn voice_cost(&self, id: PartId) -> Cost {
         let glide = match (self.mix.snap, self.mix.held) {
             (LiveSnap::Off, _) | (_, Held::Stay) => Cost::ZERO,
             (_, Held::Resnap) => Voice::glide_cost(&self.params, &self.mod_state),
         };
-        Voice::cost(&self.params, &self.mod_state) + glide
+        let (p, m) = (&*self.params, &*self.mod_state);
+        let own = if p.engine() == EngineType::Drum {
+            Voice::drum_cost(p, m, KIT_VIEW.bill(id))
+        } else {
+            Voice::cost(p, m)
+        };
+        own + glide
     }
 
     /// `key` as this Part plays it live under `h` (spec § 5.2): snapped to
@@ -1980,7 +1986,7 @@ impl Instrument {
         };
         let id = part_id(q);
         let hit = KIT_VIEW.hit(id, key);
-        self.strike(v, id, (hit, vel, key, s.held()), params, (src, 0.0))
+        self.strike(v, id, (&hit, vel, key, s.held()), params, (src, 0.0))
     }
 
     /// Every DRUM Part on `heard` (MPE's master for a live member
@@ -2040,7 +2046,7 @@ impl Instrument {
                 !self.strike(
                     VoiceIdx::ALL[v],
                     id,
-                    (hit, vel, key, true),
+                    (&hit, vel, key, true),
                     &part.params,
                     (src, 0.0),
                 )
@@ -2082,7 +2088,7 @@ impl Instrument {
         &mut self,
         v: VoiceIdx,
         id: PartId,
-        (hit, vel, key, held): (DrumHit, Velocity, MidiNote, bool),
+        (hit, vel, key, held): (&DrumHit, Velocity, MidiNote, bool),
         params: &ParamSnapshot,
         (src, to): (&GateView<'_>, f32),
     ) -> bool {
@@ -2142,9 +2148,14 @@ impl Instrument {
                 return Cost::ZERO;
             }
             let part = &shared.parts[p];
+            if part.params.engine() == EngineType::Drum {
+                let kit = KIT_VIEW.bill(PartId::ALL[p]);
+                return Voice::drum_glide_extra(&part.params, &part.mod_state, g, kit);
+            }
             Voice::glide_extra(&part.params, &part.mod_state, g)
         });
-        let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| shared.parts[p].voice_cost());
+        let costs: [Cost; MAX_PARTS] =
+            core::array::from_fn(|p| shared.parts[p].voice_cost(PartId::ALL[p]));
         // A new note is judged with its Part's glide on it (ADR 0117).
         self.costs = core::array::from_fn(|p| costs[p] + glides[p]);
         (self.costed, self.costings) = (at, self.costings.wrapping_add(1));

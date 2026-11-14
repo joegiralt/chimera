@@ -860,3 +860,55 @@ fn tape_goldens_match() {
         .collect();
     golden::check(TAPE_GOLDENS, &got);
 }
+
+/// DRUM slice 2's baseline (Task 0): the slice-1 project written by slice-1
+/// code (`drum_kit_codec_test::write_slice1_fixture`), pads 1, 2, 8, 9 and
+/// 10 struck at once-a-block steps, 2 s through the `Instrument`. Every
+/// later task keeps it bit-identical, but for one deliberate change: a
+/// pad's VEL law is its kernel's level (owner ruling 2026-11-14, ADR
+/// 0269), and the fixture's pads are on VEL 0.6. At VEL 1 it is slice 1's
+/// own render, bit for bit (`drum_slice1_vel_test`).
+const DRUM_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
+    (
+        "drum_slice1_kit",
+        (
+            0x273d876f9949f470,
+            [
+                746962870, 1017080427, 1023522724, 996919478, 3154437683, 3154436208, 3127902028,
+                974431999,
+            ],
+        ),
+    ),
+    (
+        "drum_slice1_kit_lr",
+        (
+            0x245aea342ae28ff4,
+            [
+                0, 3147699544, 3171463022, 1016935995, 966347089, 959800543, 3149879276, 3148876157,
+            ],
+        ),
+    ),
+];
+
+/// Part 1's mono bus, then pair 1's interleaved L/R as the DACs play it
+/// (pad PAN lives only there).
+fn drum_slice1_render() -> (Vec<f32>, Vec<f32>) {
+    common::drum_slice1::render(|_| ())
+}
+
+#[test]
+fn drum_slice1_kit_matches() {
+    let (out, lr) = drum_slice1_render();
+    assert!(out.iter().any(|&x| x.abs() > 1e-3), "silent");
+    assert!(
+        lr.as_chunks::<2>().0.iter().any(|c| c[0] != c[1]),
+        "L and R never differ: the pad pan is not heard"
+    );
+    golden::check(
+        DRUM_GOLDENS,
+        &[
+            ("drum_slice1_kit", (fnv1a(&out), spots(&out))),
+            ("drum_slice1_kit_lr", (fnv1a(&lr), spots(&lr))),
+        ],
+    );
+}

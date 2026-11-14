@@ -82,7 +82,7 @@ impl Kick {
             blip: Decay::t60(Seconds::new(0.004), h.sr),
             drive: p.drive.get(),
             harm: p.harmonics.get(),
-            vel: h.vel.unit(),
+            vel: h.level.get(),
             quiet: false,
         }
     }
@@ -137,7 +137,7 @@ impl Snare {
                 h.sr,
             ),
             drive: p.drive.get(),
-            vel: h.vel.unit(),
+            vel: h.level.get(),
             quiet: false,
         }
     }
@@ -194,7 +194,7 @@ impl Tom {
             ),
             drive: p.drive.get(),
             hard: p.drive_type.get(),
-            vel: h.vel.unit(),
+            vel: h.level.get(),
             quiet: false,
         }
     }

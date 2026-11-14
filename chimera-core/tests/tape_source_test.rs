@@ -416,6 +416,9 @@ fn tuning_lives_in_the_sound() {
 
 #[test]
 fn project_round_trip_carries_no_audio() {
+    // A second, so the source outweighs the project's own records (the
+    // kits' pad sounds, ADR 0269).
+    const FRAMES: u32 = 48_000;
     let data: Vec<u8> = held_plain(&sine(RATE, 100.0, FRAMES), RATE)[DESC_LEN..].to_vec();
     let h = SourceHead {
         sref: SourceRef {

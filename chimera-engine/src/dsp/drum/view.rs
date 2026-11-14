@@ -8,7 +8,7 @@
 //! isn't reading, then flips. The audio's read never waits. On the chip
 //! the UI can't run inside the audio's interrupt, so a read is never
 //! overtaken; on the desktop a lapped read (two publishes during one pad's
-//! 13 loads) reads again, at most twice more, and any bytes it ends with
+//! 70 loads) reads again, at most twice more, and any bytes it ends with
 //! are still a valid pad.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering, fence};
@@ -18,7 +18,12 @@ use crate::project::{Kits, PartId};
 
 use crate::MidiNote;
 
+use super::sound::{KitBill, PAD_SOUND_BYTES, PadSound, kit_bill};
 use super::types::{DrumHit, HitSeed, Kit, KitNote, PAD_BYTES, Pad, PadId, PadSet, Tonal};
+
+/// A pad in the view: its 13 bytes (`Pad::to_bytes`), then its sound's 57
+/// (`PadSound::to_bytes`).
+const VIEW_BYTES: usize = PAD_BYTES + PAD_SOUND_BYTES;
 
 /// One Part's kit, selected pad and live hits.
 struct PartView {
@@ -37,15 +42,18 @@ struct PartView {
     sounding: AtomicU16,
     /// The last hit's `HitSeed`: the audio's alone, each hit the next.
     seed: AtomicU32,
-    slots: [[[AtomicU8; PAD_BYTES]; PadId::ALL.len()]; 2],
+    /// The kit's `kit_bill` (`KitBill::to_bits`): the UI's, stored each
+    /// publish.
+    bill: AtomicU32,
+    slots: [[[AtomicU8; VIEW_BYTES]; PadId::ALL.len()]; 2],
 }
 
-/// Every Part's `PartView` (1,968 B).
+/// Every Part's `PartView` (10,200 B).
 pub struct KitView {
     parts: [PartView; MAX_PARTS],
 }
 
-const _: () = assert!(core::mem::size_of::<KitView>() == 1_968);
+const _: () = assert!(core::mem::size_of::<KitView>() == 10_200);
 
 // SAFETY: `.itcm` is the board's NOLOAD ITCM (chimera-stm32's build.rs,
 // ADR 0266), CPU-only and never DMA's; it holds garbage at boot, which
@@ -61,6 +69,26 @@ const fn slot(seq: u32) -> usize {
     (seq >> 1 & 1) as usize
 }
 
+impl PartView {
+    /// `pad`'s published bytes, and the `seq` they were read under.
+    fn read(&self, pad: PadId) -> (u32, [u8; VIEW_BYTES]) {
+        let mut b = [0; VIEW_BYTES];
+        let mut s = 0;
+        for _ in 0..3 {
+            s = self.seq.load(Ordering::Acquire);
+            for (o, a) in b.iter_mut().zip(&self.slots[slot(s)][pad.index()]) {
+                *o = a.load(Ordering::Relaxed);
+            }
+            fence(Ordering::Acquire);
+            // Its slot is written again from `(s & !1) + 3` on.
+            if self.seq.load(Ordering::Relaxed).wrapping_sub(s & !1) < 3 {
+                break;
+            }
+        }
+        (s, b)
+    }
+}
+
 impl KitView {
     const fn new() -> KitView {
         KitView {
@@ -72,8 +100,9 @@ impl KitView {
                     struck: AtomicU16::new(0),
                     sounding: AtomicU16::new(0),
                     seed: AtomicU32::new(0),
+                    bill: AtomicU32::new(0),
                     slots: [const {
-                        [const { [const { AtomicU8::new(0) }; PAD_BYTES] }; PadId::ALL.len()]
+                        [const { [const { AtomicU8::new(0) }; VIEW_BYTES] }; PadId::ALL.len()]
                     }; 2],
                 }
             }; MAX_PARTS],
@@ -86,19 +115,41 @@ impl KitView {
         let v = &self.parts[part.index()];
         let tonal = Tonal::from_code(v.tonal.load(Ordering::Relaxed)).unwrap_or(Tonal::Off);
         let (pad, pitch) = KitNote::new(note, tonal).pad();
-        let mut b = [0; PAD_BYTES];
-        for _ in 0..3 {
-            let s = v.seq.load(Ordering::Acquire);
-            for (o, a) in b.iter_mut().zip(&v.slots[slot(s)][pad.index()]) {
-                *o = a.load(Ordering::Relaxed);
-            }
-            fence(Ordering::Acquire);
-            // Its slot is written again from `(s & !1) + 3` on.
-            if v.seq.load(Ordering::Relaxed).wrapping_sub(s & !1) < 3 {
-                break;
-            }
+        let (_, b) = v.read(pad);
+        let d = Kit::default_pad(pad);
+        let sound = PadSound::from_bytes(core::array::from_fn(|i| b[PAD_BYTES + i]), d.sound());
+        let p = Pad::from_bytes(core::array::from_fn(|i| b[i]), &d).with_sound(sound);
+        DrumHit::new(pad, p, pitch)
+    }
+
+    /// Audio: `part`'s publishes so far, as `sound_if_newer` counts them.
+    pub fn seq(&self, part: PartId) -> u32 {
+        self.parts[part.index()].seq.load(Ordering::Acquire)
+    }
+
+    /// Audio: `pad`'s sound on `part`'s kit if a publish came since `seen`,
+    /// which then moves on; else `None` from one load. It decodes only
+    /// after a publish, and never waits.
+    #[inline(never)]
+    pub fn sound_if_newer(&self, part: PartId, pad: PadId, seen: &mut u32) -> Option<PadSound> {
+        let v = &self.parts[part.index()];
+        if v.seq.load(Ordering::Relaxed) == *seen {
+            return None;
         }
-        DrumHit::new(pad, Pad::from_bytes(b, Kit::DEFAULT.pad(pad)), pitch)
+        let (s, b) = v.read(pad);
+        // Read mid-publish (odd), the next block reads again.
+        *seen = s;
+        let d = Kit::default_pad(pad);
+        Some(PadSound::from_bytes(
+            core::array::from_fn(|i| b[PAD_BYTES + i]),
+            d.sound(),
+        ))
+    }
+
+    /// Audio: what a hit on `part`'s kit is billed (`kit_bill`), as last
+    /// published: `KitBill::NONE` from `KitWriter::take` on.
+    pub fn bill(&self, part: PartId) -> KitBill {
+        KitBill::from_bits(self.parts[part.index()].bill.load(Ordering::Relaxed))
     }
 
     /// Audio: `part`'s next hit's seed (`HitSeed::next` of its last).
@@ -141,16 +192,24 @@ impl KitWriter {
             v.hit.store(0, Ordering::Relaxed);
             v.struck.store(0, Ordering::Relaxed);
             v.sounding.store(0, Ordering::Relaxed);
+            v.bill.store(0, Ordering::Relaxed);
         }
         Some(KitWriter { _once: () })
     }
 
-    /// `kit` as `part`'s, if it changed: one publish an edit. TONAL is
-    /// one byte, stored apart from the pads' slots.
+    /// `kit` as `part`'s, if it changed: one publish an edit. TONAL and
+    /// the bill are stored apart from the pads' slots, each publish: a hit
+    /// may play its first block on the last bill.
     pub fn publish(&mut self, part: PartId, kit: &Kit) {
         let v = &KIT_VIEW.parts[part.index()];
         v.tonal.store(kit.tonal().code(), Ordering::Relaxed);
-        let b = PadId::ALL.map(|p| kit.pad(p).to_bytes());
+        v.bill.store(kit_bill(kit).to_bits(), Ordering::Relaxed);
+        let b = PadId::ALL.map(|p| {
+            let (pad, mut b) = (kit.pad(p), [0; VIEW_BYTES]);
+            b[..PAD_BYTES].copy_from_slice(&pad.to_bytes());
+            b[PAD_BYTES..].copy_from_slice(&pad.sound().to_bytes());
+            b
+        });
         // Only this writer stores it; odd is a garbage boot value.
         let s = v.seq.load(Ordering::Relaxed) & !1;
         let bytes = |slot: usize| b.iter().flatten().zip(v.slots[slot].iter().flatten());

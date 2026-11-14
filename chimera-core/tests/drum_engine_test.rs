@@ -85,7 +85,7 @@ fn a_struck_kick_sounds_then_ends_within_3_s() {
     let sr = SampleRate::new(SR).expect("a rate");
     slot.drum()
         .expect("a drum slot")
-        .strike(kick(), Velocity::DEFAULT, HitSeed::new(1), sr);
+        .strike(&kick(), Velocity::DEFAULT, HitSeed::new(1), sr);
     assert!(slot.is_active());
     let three_s = 3 * SR as usize / BLOCK_SIZE;
     let (peak, ended) = play(&mut slot, three_s);
@@ -99,7 +99,7 @@ fn a_hit_keeps_its_pad() {
     let sr = SampleRate::new(SR).expect("a rate");
     let d = slot.drum().expect("a drum slot");
     assert_eq!(d.hit(), None);
-    d.strike(kick(), Velocity::DEFAULT, HitSeed::new(1), sr);
+    d.strike(&kick(), Velocity::DEFAULT, HitSeed::new(1), sr);
     assert_eq!(d.hit(), Some(kick()));
 }
 
@@ -113,7 +113,7 @@ fn tonal_pitch_moves_the_kick_both_ways() {
         let hit = DrumHit::new(k.pad(), k.params(), Transpose::new(st).expect("in range"));
         slot.drum()
             .expect("a drum slot")
-            .strike(hit, Velocity::DEFAULT, HitSeed::new(1), sr);
+            .strike(&hit, Velocity::DEFAULT, HitSeed::new(1), sr);
         let p = ParamSnapshot::for_engine(EngineType::Drum);
         let live = AlgoLive::from_params(&p.algo);
         let mut sym = SymPool::boxed();

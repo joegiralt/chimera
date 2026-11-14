@@ -2657,6 +2657,95 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 1);
         tap(ui, ButtonId::Edit);
     }),
+    // DRUM's FLT on pad 2, LADDER (ADR 0269): the pad's curve, Q up and
+    // FREQ down, FREQ touched; FX TYPE and FX PLACE the Part's.
+    ("drum_flt_ladder", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::A, 3));
+        feed(ui, Input::turn(EncoderId::C, 60));
+        feed(ui, Input::turn(EncoderId::F, -80));
+    }),
+    // A SEM pad, FREQ down: MODE (the LP-notch-HP pot) mid-way and
+    // touched, the curve a notch.
+    ("drum_flt_sem", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::A, 4));
+        feed(ui, Input::turn(EncoderId::F, -80));
+        feed(ui, Input::turn(EncoderId::D, 64));
+    }),
+    // KIND touched: the band's hint, MIX + -/+ PAD.
+    ("drum_flt_hint", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        feed(ui, Input::turn(EncoderId::A, -1));
+    }),
+    // FX TYPE touched, the Part's on the pad's page: MIX + -/+ steps the
+    // pad there too, said in its band.
+    ("drum_flt_fx_hint", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::B, 1));
+        feed(ui, Input::turn(EncoderId::B, -1));
+    }),
+    // FLT › MOD on a SEM pad: OUTPUT the pad's, touched, the header the pad.
+    ("drum_fmd_sem", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::A, 4));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::F, 1));
+    }),
+    // AMP on pad 2: its AHD, DECAY touched down from INF.
+    ("drum_amp", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 3);
+        feed(ui, Input::turn(EncoderId::C, -40));
+    }),
+    // AMP › GATE: LPG up, touched.
+    ("drum_gate", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 3);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::B, 40));
+    }),
+    // MOD › PENV: the pad's mod envelope, ATTACK touched.
+    ("drum_penv", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 4);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, 20));
+    }),
+    // MOD › PLFO: WAVE SQUARE, touched, in full.
+    ("drum_plfo", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 4);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, 3));
+    }),
+    // MOD › ROUTE: route 2, SOURCE touched.
+    ("drum_route", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 4);
+        for _ in 0..3 {
+            tap(ui, ButtonId::Edit);
+        }
+        feed(ui, Input::turn(EncoderId::A, 1));
+        feed(ui, Input::turn(EncoderId::B, 2));
+    }),
 ];
 
 /// Part 1 on INIT Algo with a mixed map, MIDI MAP open on its sixth

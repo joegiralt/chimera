@@ -5,5 +5,6 @@ pub mod engine;
 pub mod kernel;
 pub mod laws;
 pub mod params;
+pub mod sound;
 pub mod types;
 pub mod view;

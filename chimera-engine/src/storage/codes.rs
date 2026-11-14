@@ -59,7 +59,12 @@ impl BlockRef {
             | BlockRef::Tempo
             | BlockRef::Random
             | BlockRef::Pad
-            | BlockRef::Kit => {
+            | BlockRef::Kit
+            | BlockRef::PadFilter
+            | BlockRef::PadAmp
+            | BlockRef::PadEnv
+            | BlockRef::PadLfo
+            | BlockRef::PadRoute(_) => {
                 return None;
             }
         })
@@ -106,7 +111,12 @@ impl BlockRef {
             | BlockRef::Tempo
             | BlockRef::Random
             | BlockRef::Pad
-            | BlockRef::Kit => {
+            | BlockRef::Kit
+            | BlockRef::PadFilter
+            | BlockRef::PadAmp
+            | BlockRef::PadEnv
+            | BlockRef::PadLfo
+            | BlockRef::PadRoute(_) => {
                 return None;
             }
         })

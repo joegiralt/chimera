@@ -96,7 +96,7 @@ impl Kits {
         unsafe {
             let kits = addr_of_mut!((*p).kits).cast::<Kit>();
             for i in 0..MAX_PARTS {
-                kits.add(i).write(Kit::DEFAULT);
+                kits.add(i).write(Kit::init());
             }
             addr_of_mut!((*p).selected).write([PadId::ALL[0]; MAX_PARTS]);
             addr_of_mut!((*p).lights).write([PadLights::DARK; MAX_PARTS]);
@@ -179,7 +179,7 @@ impl Kits {
     /// Every kit back to `Kit::DEFAULT`, pad 1 selected, none lit: NEW.
     #[optimize(size)]
     pub fn reset(&mut self) {
-        self.kits.fill(Kit::DEFAULT);
+        self.kits.iter_mut().for_each(Kit::reset);
         self.selected = [PadId::ALL[0]; MAX_PARTS];
         self.lights = [PadLights::DARK; MAX_PARTS];
         self.hold = [FollowHold::FREE; MAX_PARTS];

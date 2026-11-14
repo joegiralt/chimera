@@ -11,20 +11,23 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drum::engine::MidSide;
+use crate::dsp::drum::sound::{KitBill, RouteOffsets};
 use crate::dsp::drum::types::{DrumHit, HitSeed, SampleRate};
+use crate::dsp::drum::view::KIT_VIEW;
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::fast_exp2;
 use crate::dsp::filter::stability::{self, STAB_COST};
 use crate::dsp::filter::{
-    FB_COST, FILTER_LEVEL_COST, Fed, Filter, FilterMods, FilterStability, Spread,
+    FB_COST, FILTER_LEVEL_COST, Fed, Filter, FilterKind, FilterMods, FilterStability, K2040Voice,
+    Spread,
 };
 use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
 use crate::dsp::lfo::{Lfo, LfoClock};
-use crate::dsp::lpg::{Lpg, Onset};
+use crate::dsp::lpg::{LPG_COST, Lpg, Onset};
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::voice_fx::VoiceFx;
@@ -36,7 +39,7 @@ use crate::modulation::{
     FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, SourceBits, amount_scale,
     note_source,
 };
-use crate::params::{EngineType, EnvParams, FilterParams, ParamSnapshot, Steal};
+use crate::params::{EngineType, EnvParams, FilterParams, OutParams, ParamSnapshot, Steal};
 use crate::project::SourceId;
 use crate::taps::{
     TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapOp, TapRoutes,
@@ -232,14 +235,43 @@ impl Voice {
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        // The VCA's gate (ADR 0195), bank 2's: none with its door closed.
+        let gate = gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO);
+        Self::cost_with(p, mods, Self::filter_cost(p, mods), gate)
+    }
+
+    /// `cost` with its filter's and gate's bills given.
+    fn cost_with(p: &ParamSnapshot, mods: &ModState, filter: Cost, gate: Cost) -> Cost {
         EngineSlot::cost(p, mods)
             + Self::CHAIN_COST
-            + Self::filter_cost(p, mods)
+            + filter
             + ModRouting::cost(p, mods)
             + Self::fx_cost(p, mods)
             + Self::tap_cost(p)
-            // The VCA's gate (ADR 0195), bank 2's: none with its door closed.
-            + gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO)
+            + gate
+    }
+
+    /// `cost` of a DRUM hit (ADR 0269), the pads' FILTER and AMP in the
+    /// Sound's place: the filter at the costliest shape its kit's pads
+    /// play (a pad route moving its path once; the Sound's own before the
+    /// first publish), the gate while a pad's or a Part route's runs it,
+    /// plus the costliest pad's AMP and routes.
+    pub fn drum_cost(p: &ParamSnapshot, mods: &ModState, kit: KitBill) -> Cost {
+        let t = FilterTerms::of(p, mods);
+        let own = t.bill(p.filter.kind(), p.filter.voice, false);
+        let filter = kit
+            .shapes()
+            .map(|(f, moves)| t.bill(f.kind(), f.voice(), moves))
+            .max()
+            .unwrap_or(own);
+        let routed = [OutParams::LPG, OutParams::DECAY, OutParams::STRIKE]
+            .iter()
+            .any(|&id| mods.moves_addr(ParamAddr::new(BlockRef::Out, id)));
+        let gate = match gate::through(|_| ()) {
+            Some(()) if kit.gated() || routed => LPG_COST,
+            _ => Cost::ZERO,
+        };
+        Self::cost_with(p, mods, filter, gate) + kit.mods()
     }
 
     /// The filter as `p` and `mods` run it: the steady bill, the moving
@@ -248,20 +280,7 @@ impl Voice {
     /// clipper while it can open (stored over ½, or routed). A clipper
     /// still running after LEVEL comes back is `held_level_extra`'s.
     pub fn filter_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        let f = &p.filter;
-        let kind = f.kind();
-        let algo = p.engine() == EngineType::Algo;
-        let shaped = algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q));
-        let fb = Self::fb_runs(p, mods);
-        let moving =
-            shaped || fb || mods.fixed_moves(FixedCol::Freq) || mods.fixed_moves(FixedCol::Q);
-        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
-        f.filter_cost()
-            + when(Self::stab_runs(p, mods), STAB_COST)
-            + when(fb, FB_COST)
-            + when(moving, kind.move_cost())
-            + when(shaped, TAP_SHAPE_COST)
-            + when(Self::level_may_open(p, mods), kind.level_cost())
+        FilterTerms::of(p, mods).bill(p.filter.kind(), p.filter.voice, false)
     }
 
     /// What a Part's gliding knobs add to a voice playing `p` (ADR 0117): a
@@ -270,6 +289,20 @@ impl Voice {
     /// for a path a route or tap already bills moving. Admission counts it;
     /// shedding doesn't.
     pub fn glide_extra(p: &ParamSnapshot, mods: &ModState, g: Gliding) -> Cost {
+        Self::glide_with(p, mods, g, p.filter.kind().glide_cost())
+    }
+
+    /// `glide_extra` of a DRUM hit: the filter's glide at the costliest of
+    /// the Sound's kind and its kit's pads'.
+    pub fn drum_glide_extra(p: &ParamSnapshot, mods: &ModState, g: Gliding, kit: KitBill) -> Cost {
+        let glide = kit
+            .shapes()
+            .map(|(f, _)| f.kind().glide_cost())
+            .fold(p.filter.kind().glide_cost(), Cost::max);
+        Self::glide_with(p, mods, g, glide)
+    }
+
+    fn glide_with(p: &ParamSnapshot, mods: &ModState, g: Gliding, glide: Cost) -> Cost {
         if g == Gliding::default() {
             return Cost::ZERO;
         }
@@ -282,16 +315,14 @@ impl Voice {
             || mods.fixed_moves(FixedCol::Q);
         let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
         let fx = g.fx && Self::fx_runs(p, mods) && !Self::fx_ramps(p, mods);
-        when(g.filter && !filter_moves, p.filter.kind().glide_cost())
-            + when(fx, p.fx.ty().glide_cost())
+        when(g.filter && !filter_moves, glide) + when(fx, p.fx.ty().glide_cost())
     }
 
-    /// STABILITY spreads the voice: the 2040, LADDER or SEM, stored below 1
-    /// or routed.
-    fn stab_runs(p: &ParamSnapshot, mods: &ModState) -> bool {
-        p.filter.kind().has_chip()
-            && (p.filter.stability < 1.0
-                || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::STAB)))
+    /// STABILITY stored below 1 or routed: it spreads a kind with a chip
+    /// (`FilterKind::has_chip`).
+    fn stab_set(p: &ParamSnapshot, mods: &ModState) -> bool {
+        p.filter.stability < 1.0
+            || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::STAB))
     }
 
     /// FB runs: stored off 0, or routed (ADR 0190). It runs the filter's
@@ -685,7 +716,7 @@ impl Voice {
     pub fn strike(
         &mut self,
         key: MidiNote,
-        (hit, seed): (DrumHit, HitSeed),
+        (hit, seed): (&DrumHit, HitSeed),
         velocity: Velocity,
         params: &ParamSnapshot,
         ctx: &mut EngineCtx<'_>,
@@ -720,7 +751,7 @@ impl Voice {
         velocity: Velocity,
         params: &ParamSnapshot,
         source: Option<SourceId>,
-        hit: Option<(DrumHit, HitSeed)>,
+        hit: Option<(&DrumHit, HitSeed)>,
         ctx: &mut EngineCtx<'_>,
     ) {
         let pool = &mut *ctx.sym;
@@ -776,6 +807,7 @@ impl Voice {
         if let (Some((hit, seed)), EngineSlot::Drum(d)) = (hit, &mut self.slot) {
             let sr = SampleRate::new(self.sample_rate).unwrap_or(SampleRate::HW);
             d.strike(hit, velocity, seed, sr);
+            d.watch(KIT_VIEW.seq(ctx.part));
         }
         #[cfg(feature = "probe")]
         let t1 = crate::probe::now();
@@ -790,6 +822,9 @@ impl Voice {
         self.active = true;
         // Until the first block renders, a fade has these to keep.
         self.played.clone_from(params);
+        if let EngineSlot::Drum(d) = &self.slot {
+            d.overlay(&mut self.played);
+        }
         self.played_live = AlgoLive::from_params(&params.algo);
         #[cfg(feature = "probe")]
         crate::probe::acc(7, crate::probe::now().wrapping_sub(t1));
@@ -1066,6 +1101,12 @@ impl Voice {
             m.clone_from(params);
             *live = AlgoLive::from_params(&params.algo);
             knobs.apply(m, live);
+            // A hit's pad FILTER and AMP over the Part's (ADR 0269),
+            // following the pad's live edits, glided.
+            if let EngineSlot::Drum(d) = &mut self.slot {
+                d.follow(ctx.part);
+                d.overlay(m);
+            }
         }
         let key = self.held;
         if self.fade == 0 {
@@ -1128,6 +1169,15 @@ impl Voice {
         mod_values[ModSource::Wheel.index()] = knobs.wheel();
         mod_values[ModSource::Press.index()] = knobs.press().max(self.press);
         mod_values[ModSource::Timbre.index()] = knobs.timbre().max(self.timbre);
+        // A hit's pad mod envelope, LFO and routes (ADR 0269): zero unrouted.
+        let pad = match &mut self.slot {
+            EngineSlot::Drum(d) => d.mods_block(
+                LfoSlot::ALL.map(|s| mod_values[ModSource::of_lfo(s).index()]),
+                self.last_velocity,
+                SampleRate::new(sample_rate).unwrap_or(SampleRate::HW),
+            ),
+            _ => RouteOffsets::NONE,
+        };
         // The other VCA sources ramp from their last block's value.
         for (s, &cur) in mod_values.iter().enumerate() {
             if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
@@ -1186,6 +1236,13 @@ impl Voice {
                 }
             }
             self.env_mods = next;
+            // The pad's routes after the Part's.
+            if pad.cutoff() != 0.0 {
+                apply_offset(&mut m.filter, FilterParams::CUTOFF, pad.cutoff());
+            }
+            if pad.reso() != 0.0 {
+                apply_offset(&mut m.filter, FilterParams::RESONANCE, pad.reso());
+            }
             // The wheel goes on after the routes: the same pitch path,
             // past PITCH's range; an MPE note's own on top.
             let bend = knobs.bend() + self.bend;
@@ -1247,9 +1304,10 @@ impl Voice {
                 .moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)),
             freq: lane(FixedCol::Freq),
             q: lane(FixedCol::Q),
-            // A route moves g and k at audio rate; without one, only a
-            // knob's glide does.
-            glide: !mod_state.filter_routed(),
+            // A route, the Part's or the pad's, moves g and k at audio
+            // rate; without one, only a knob's glide does.
+            glide: !(mod_state.filter_routed()
+                || matches!(&self.slot, EngineSlot::Drum(d) if d.moves_filter())),
             spread: if m.filter.kind().has_chip() {
                 self.stab.step(stability::depth(m.filter.stability))
             } else {
@@ -1277,6 +1335,11 @@ impl Voice {
         // 6. DC from the engine, the FX slot, the filter and the tap-VCA:
         // none reaches the VCA (ADR 0060).
         self.dc.run(output);
+
+        // A hit's pad AMP envelope, ahead of the VCA (ADR 0269).
+        if let EngineSlot::Drum(d) = &mut self.slot {
+            d.amp_block(output);
+        }
 
         if gated {
             self.gate.apply(output, self.held);
@@ -1496,6 +1559,46 @@ fn env_mod(n: &mut EnvMods, mod_state: &ModState, d: usize, values: &[f32; MAX_M
 
 pub mod depth;
 pub mod gate;
+
+/// `Voice::filter_cost`'s kind-free terms, worked out once: a filter of
+/// any shape billed from them (`bill`), a DRUM kit's pads each theirs.
+struct FilterTerms {
+    stab: bool,
+    fb: bool,
+    moving: bool,
+    shaped: bool,
+    level: bool,
+}
+
+impl FilterTerms {
+    fn of(p: &ParamSnapshot, mods: &ModState) -> FilterTerms {
+        let algo = p.engine() == EngineType::Algo;
+        let shaped = algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q));
+        let fb = Voice::fb_runs(p, mods);
+        FilterTerms {
+            stab: Voice::stab_set(p, mods),
+            fb,
+            moving: shaped
+                || fb
+                || mods.fixed_moves(FixedCol::Freq)
+                || mods.fixed_moves(FixedCol::Q),
+            shaped,
+            level: Voice::level_may_open(p, mods),
+        }
+    }
+
+    /// The filter as `kind` (`voice` on the 2040), its moving path once
+    /// for these terms' or a pad route's (`moves`) move.
+    fn bill(&self, kind: FilterKind, voice: K2040Voice, moves: bool) -> Cost {
+        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+        kind.cost(voice)
+            + when(self.stab && kind.has_chip(), STAB_COST)
+            + when(self.fb, FB_COST)
+            + when(self.moving || moves, kind.move_cost())
+            + when(self.shaped, TAP_SHAPE_COST)
+            + when(self.level, kind.level_cost())
+    }
+}
 
 #[cfg(test)]
 mod tests {

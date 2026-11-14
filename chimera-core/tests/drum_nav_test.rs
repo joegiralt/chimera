@@ -14,7 +14,8 @@ use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry::{
-    AMP, DRUM_CHAIN, DRUM_KEYS, DRUM_KIT, DRUM_MCH, DRUM_MORE, FILTER, MOD_MATRIX,
+    DRUM_AMP, DRUM_CHAIN, DRUM_FLT, DRUM_GATE, DRUM_KEYS, DRUM_KIT, DRUM_MCH, DRUM_MORE, DRUM_PENV,
+    DRUM_PLFO, DRUM_ROUTE, ENVELOPE, FILTER_MOD, MOD_MATRIX, SENDS,
 };
 use chimera_core::ui::theme_settings::{PadFollow, ThemeSettings};
 use chimera_core::ui::view::{self, View};
@@ -61,11 +62,11 @@ fn the_chain_is_kit_mch_flt_amp_mod() {
 fn minus_and_plus_walk_the_chain() {
     let mut ui = drum();
     assert!(on(&ui, &DRUM_KIT), "a load lands on KIT");
-    for def in [&DRUM_MCH, &FILTER, &AMP, &MOD_MATRIX] {
+    for def in [&DRUM_MCH, &DRUM_FLT, &DRUM_AMP, &MOD_MATRIX] {
         feed(&mut ui, Input::press(ButtonId::Plus));
         assert!(on(&ui, def), "PLUS to {}", def.short);
     }
-    for def in [&AMP, &FILTER, &DRUM_MCH, &DRUM_KIT] {
+    for def in [&DRUM_AMP, &DRUM_FLT, &DRUM_MCH, &DRUM_KIT] {
         feed(&mut ui, Input::press(ButtonId::Minus));
         assert!(on(&ui, def), "MINUS to {}", def.short);
     }
@@ -124,16 +125,127 @@ fn mix_minus_and_plus_step_the_pad_on_every_pad_page() {
     }
 }
 
+/// EDIT walks AMP's subs, GATE then SENDS; MOD's start PENV, PLFO,
+/// ROUTE, then the Part's E1.
 #[test]
-fn mix_plus_on_flt_primes_and_leaves_the_pad() {
+fn edit_opens_gate_and_sends_under_amp_and_the_pad_s_mod_pages() {
+    let mut ui = drum();
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    assert!(on(&ui, &DRUM_AMP));
+    for def in [&DRUM_GATE, &SENDS] {
+        tap(&mut ui, ButtonId::Edit);
+        assert!(on(&ui, def), "EDIT to {}", def.short);
+    }
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    assert!(on(&ui, &MOD_MATRIX));
+    for def in [&DRUM_PENV, &DRUM_PLFO, &DRUM_ROUTE, &ENVELOPE] {
+        tap(&mut ui, ButtonId::Edit);
+        assert!(on(&ui, def), "EDIT to {}", def.short);
+    }
+    let subs: Vec<_> = DRUM_CHAIN.blocks[4]
+        .sub_pages
+        .iter()
+        .map(|d| d.short)
+        .collect();
+    assert_eq!(
+        subs,
+        [
+            "PENV", "PLFO", "ROUTE", "E1", "E2", "E3", "SPD", "L1", "L2", "L3"
+        ]
+    );
+}
+
+/// DRUM's FLT is the pad's (ADR 0269): MIX + PLUS steps pad 1 to 2, and
+/// the CUTOFF cell then shows pad 2's.
+#[test]
+fn mix_plus_on_flt_steps_the_pad() {
+    use chimera_core::block::Block;
+    use chimera_core::params::FilterParams;
+    let mut ui = drum();
+    ui.select_pad(P1, pad(2));
+    let a = ParamAddr::new(BlockRef::PadFilter, FilterParams::CUTOFF);
+    assert!(ui.edit_addr(P1, a, -30, false));
+    ui.select_pad(P1, pad(1));
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    assert!(on(&ui, &DRUM_FLT));
+    feed(&mut ui, Input::turn(EncoderId::F, 1));
+    feed(&mut ui, Input::turn(EncoderId::F, -1));
+    mix(&mut ui, ButtonId::Plus);
+    assert_eq!(ui.selected_pad(P1), pad(2));
+    assert!(ui.prime_status().is_none(), "nothing primed");
+    let flt = |ui: &UiState, n| *ui.project().kit(P1).pad(pad(n)).sound().filter();
+    let want = flt(&ui, 2).normalized(FilterParams::CUTOFF);
+    assert_ne!(want, flt(&ui, 1).normalized(FilterParams::CUTOFF));
+    let shown = ui.renderer.anim[5].current();
+    assert!((shown - want).abs() < 1e-6, "CUTOFF shows pad 2's");
+    let (p1, p2) = (flt(&ui, 1).cutoff(), flt(&ui, 2).cutoff());
+    feed(&mut ui, Input::turn(EncoderId::F, -3));
+    assert!(flt(&ui, 2).cutoff() < p2, "FREQ turns pad 2");
+    assert_eq!(flt(&ui, 1).cutoff(), p1, "pad 1 is left");
+}
+
+/// GATE's cells are the pad's (ADR 0269): a turn of LPG moves pad 2's
+/// gate, never the Sound's.
+#[test]
+fn a_gate_turn_edits_the_pad() {
+    let mut ui = drum();
+    ui.select_pad(P1, pad(2));
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    tap(&mut ui, ButtonId::Edit);
+    assert!(on(&ui, &DRUM_GATE));
+    let sound = ui.project().part(P1).sound.params.out.gate;
+    feed(&mut ui, Input::turn(EncoderId::B, 5));
+    let lpg = |ui: &UiState, n| {
+        ui.project()
+            .kit(P1)
+            .pad(pad(n))
+            .sound()
+            .amp()
+            .gate()
+            .lpg
+            .get()
+    };
+    assert!(lpg(&ui, 2) > 0.0, "LPG turns pad 2");
+    assert_eq!(lpg(&ui, 1), 0.0, "pad 1 is left");
+    assert_eq!(
+        ui.project().part(P1).sound.params.out.gate,
+        sound,
+        "the Sound is left"
+    );
+}
+
+/// FLT › MOD on a SEM pad: OUTPUT touched names the pad and MIX + PLUS
+/// steps it; ENV AMT touched, the Part's, neither.
+#[test]
+fn fmd_s_output_steps_the_pad_while_touched() {
     let mut ui = drum();
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
-    assert!(on(&ui, &FILTER));
-    feed(&mut ui, Input::turn(EncoderId::F, 1));
+    for n in 1..=3 {
+        ui.select_pad(P1, pad(n));
+        feed(&mut ui, Input::turn(EncoderId::A, 4));
+    }
+    ui.select_pad(P1, pad(2));
+    tap(&mut ui, ButtonId::Edit);
+    assert!(on(&ui, &FILTER_MOD));
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(ui.page_header().context.as_str(), "PART 1 · SOUND");
     mix(&mut ui, ButtonId::Plus);
-    assert_eq!(ui.selected_pad(P1), pad(1));
-    assert!(ui.prime_status().is_some(), "MIX + PLUS still primes");
+    assert_eq!(ui.selected_pad(P1), pad(2), "ENV AMT keeps the pad");
+    feed(&mut ui, Input::turn(EncoderId::F, 1));
+    assert!(
+        ui.page_header().context.as_str().starts_with("PART 1 · 02"),
+        "{}",
+        ui.page_header().context.as_str()
+    );
+    mix(&mut ui, ButtonId::Plus);
+    assert_eq!(ui.selected_pad(P1), pad(3), "OUTPUT steps the pad");
 }
 
 /// Review Focus 5: on MTX, MIX + MINUS deletes the route under the cursor
@@ -208,6 +320,11 @@ fn the_header_names_the_pad_and_its_machine() {
     let h = ui.page_header();
     assert_eq!(h.context.as_str(), "PART 1 · 02 TONE SNARE");
     assert_eq!(h.name.as_str(), "KIT");
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    // FLT is the pad's: TONE SNARE in full, the page its short name.
+    assert_eq!(ui.page_header().context.as_str(), "PART 1 · 02 TONE SNARE");
+    assert_eq!(ui.page_header().name.as_str(), "FLT");
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     assert_eq!(ui.page_header().context.as_str(), "PART 1 · SOUND");

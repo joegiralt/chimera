@@ -205,28 +205,22 @@ impl Renderer {
     /// FLT's CUTOFF and RES slots, by address (spec § UI "Vizzes read by
     /// address").
     fn filter_slots(&self, f: &Frame) -> (Option<usize>, Option<usize>) {
-        use crate::addr::{BlockRef, ParamAddr};
         use crate::params::FilterParams;
-        let slot = |id| {
-            let addr = ParamAddr::new(BlockRef::Filter, id);
-            (0..f.def.params.len()).find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
-        };
-        (slot(FilterParams::CUTOFF), slot(FilterParams::RESONANCE))
+        (
+            filter_slot(f, FilterParams::CUTOFF),
+            filter_slot(f, FilterParams::RESONANCE),
+        )
     }
 
     /// The curve the viz draws: SEM's at MODE's set value, eased as the
     /// knob's cell is (its stored value off the page).
     fn filter_response(&self, f: &Frame, flt: &crate::params::FilterParams) -> viz::Response {
-        use crate::addr::{BlockRef, ParamAddr};
         use crate::dsp::filter::FilterKind;
         use crate::params::FilterParams;
         if flt.kind() != FilterKind::Sem {
             return viz::Response::of_voice(flt.kind(), flt.mode(), flt.voice);
         }
-        let addr = ParamAddr::new(BlockRef::Filter, FilterParams::MORPH);
-        let m = (0..f.def.params.len())
-            .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
-            .map_or(flt.morph, |s| self.set[s].current());
+        let m = filter_slot(f, FilterParams::MORPH).map_or(flt.morph, |s| self.set[s].current());
         viz::Response::sem(flt.mode(), m)
     }
 
@@ -272,14 +266,25 @@ impl Renderer {
         match f.def.viz {
             VizType::FilterResponse => {
                 let (c, r) = self.filter_slots(f);
-                let flt = &f.parts[f.active_part.index()].sound.params.filter;
+                // A DRUM Part's curve is its selected pad's.
+                let mut flt = f.parts[f.active_part.index()].sound.params.filter;
+                if f.ctx.drum {
+                    f.pads
+                        .kit
+                        .pad(f.ctx.sel_pad)
+                        .sound()
+                        .filter()
+                        .apply(&mut flt);
+                }
+                let flt = &flt;
                 let v = view::view(f.def, f.focus, &f.ctx);
                 let buf = value_text(f, f.focus, self.set[f.focus].target());
                 // KIND names a mode that has no cell: `TYPE · 4-POLE LP`.
                 use core::fmt::Write;
                 let mut label = FmtBuf::new();
+                let kind = filter_slot(f, crate::params::FilterParams::KIND) == Some(f.focus);
                 let _ = match crate::ui::filter_panel::kind_note(flt.kind()) {
-                    Some(n) if v.addr() == Some(KIND) => write!(label, "{} · {n}", v.label()),
+                    Some(n) if kind => write!(label, "{} · {n}", v.label()),
                     _ => label.write_str(v.label()),
                 };
                 let readout = (v != View::Empty).then(|| (label.as_str(), buf.as_str()));
@@ -292,65 +297,79 @@ impl Renderer {
                 }
             }
             VizType::Adsr => {
-                let Some(SlotBinding::EnvPanel(s, _)) = f.def.params.first().map(|p| p.binding)
-                else {
-                    return;
-                };
-                let addr = |id| crate::addr::ParamAddr::new(crate::addr::BlockRef::Env(s), id);
-                let at = |id| {
-                    (0..f.def.params.len())
-                        .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr(id)))
-                        .map(a)
-                };
-                use crate::params::EnvParams as E;
-                let p = &f.parts[f.active_part.index()].sound.params.envelopes[s.index()];
-                match f.ctx.envs[s.index()] {
-                    EnvKind::A(_) => {
-                        let (atk, dec, sus, rel) = (
-                            at(E::ATTACK).unwrap_or(0.0).max(0.02),
-                            at(E::DECAY).unwrap_or(0.0).max(0.02),
-                            at(E::SUSTAIN).unwrap_or(0.0),
-                            at(E::RELEASE).unwrap_or(0.0).max(0.02),
-                        );
-                        // H is a stage under AHDSR only, wide enough for its
-                        // label even at 0.
-                        let hold = if p.hold_pos == HoldPos::Ahdsr {
-                            let floor = viz::label_floor("H", atk + dec + 0.3 + rel);
-                            at(E::HOLD).unwrap_or(0.0).max(floor)
-                        } else {
-                            0.0
-                        };
-                        let total = atk + hold + dec + 0.3 + rel;
-                        let focus = view::view(f.def, f.focus, &f.ctx).addr().map(|x| x.param);
-                        let lit = match focus {
-                            Some(E::ATTACK) => Some(0),
-                            Some(E::HOLD) => Some(1),
-                            Some(E::DECAY) => Some(2),
-                            Some(E::SUSTAIN) => Some(3),
-                            Some(E::RELEASE) => Some(4),
-                            _ => None,
-                        };
-                        viz::envelope(
-                            display,
-                            &[
-                                atk / total,
-                                hold / total,
-                                dec / total,
-                                0.3 / total,
-                                rel / total,
-                            ],
-                            &[0.0, 1.0, 1.0, sus, sus, 0.0],
-                            &["A", "H", "D", "S", "R"],
-                            lit,
-                        );
-                    }
-                    EnvKind::B(func) => viz::func(
+                let first = f.def.params.first().map(|p| p.binding);
+                // A pad's AHD: ATTACK, HOLD, DECAY in A-C, DECAY's top INF.
+                if let Some(SlotBinding::Param(_)) = first {
+                    let (atk, dec) = (a(0).max(0.02), a(2).max(0.02));
+                    let hold = a(1).max(viz::label_floor("H", atk + dec));
+                    let total = atk + hold + dec;
+                    let end = if a(2) >= 1.0 { 1.0 } else { 0.0 };
+                    // Its top clear of the status line's PAD hint.
+                    viz::envelope_from(
                         display,
-                        func,
-                        at(E::RISE).unwrap_or(p.func.rise),
-                        at(E::FALL).unwrap_or(p.func.fall),
-                        at(E::SHAPE).unwrap_or(p.func.shape),
-                    ),
+                        viz::PLOT_TOP + 8,
+                        &[atk / total, hold / total, dec / total],
+                        &[0.0, 1.0, 1.0, end],
+                        &["A", "H", "D"],
+                        (f.focus < 3).then_some(f.focus),
+                    );
+                } else if let Some(SlotBinding::EnvPanel(s, _)) = first {
+                    let addr = |id| crate::addr::ParamAddr::new(crate::addr::BlockRef::Env(s), id);
+                    let at = |id| {
+                        (0..f.def.params.len())
+                            .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr(id)))
+                            .map(a)
+                    };
+                    use crate::params::EnvParams as E;
+                    let p = &f.parts[f.active_part.index()].sound.params.envelopes[s.index()];
+                    match f.ctx.envs[s.index()] {
+                        EnvKind::A(_) => {
+                            let (atk, dec, sus, rel) = (
+                                at(E::ATTACK).unwrap_or(0.0).max(0.02),
+                                at(E::DECAY).unwrap_or(0.0).max(0.02),
+                                at(E::SUSTAIN).unwrap_or(0.0),
+                                at(E::RELEASE).unwrap_or(0.0).max(0.02),
+                            );
+                            // H is a stage under AHDSR only, wide enough for its
+                            // label even at 0.
+                            let hold = if p.hold_pos == HoldPos::Ahdsr {
+                                let floor = viz::label_floor("H", atk + dec + 0.3 + rel);
+                                at(E::HOLD).unwrap_or(0.0).max(floor)
+                            } else {
+                                0.0
+                            };
+                            let total = atk + hold + dec + 0.3 + rel;
+                            let focus = view::view(f.def, f.focus, &f.ctx).addr().map(|x| x.param);
+                            let lit = match focus {
+                                Some(E::ATTACK) => Some(0),
+                                Some(E::HOLD) => Some(1),
+                                Some(E::DECAY) => Some(2),
+                                Some(E::SUSTAIN) => Some(3),
+                                Some(E::RELEASE) => Some(4),
+                                _ => None,
+                            };
+                            viz::envelope(
+                                display,
+                                &[
+                                    atk / total,
+                                    hold / total,
+                                    dec / total,
+                                    0.3 / total,
+                                    rel / total,
+                                ],
+                                &[0.0, 1.0, 1.0, sus, sus, 0.0],
+                                &["A", "H", "D", "S", "R"],
+                                lit,
+                            );
+                        }
+                        EnvKind::B(func) => viz::func(
+                            display,
+                            func,
+                            at(E::RISE).unwrap_or(p.func.rise),
+                            at(E::FALL).unwrap_or(p.func.fall),
+                            at(E::SHAPE).unwrap_or(p.func.shape),
+                        ),
+                    }
                 }
             }
             VizType::CompressorCurve => {
@@ -388,6 +407,23 @@ impl Renderer {
             let _ = w;
         } else if let Some(h) = f.pickup {
             hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
+        } else if Self::focus_hint(f) == view::PAD_HINT {
+            // A pad cell: MIX + -/+ steps the pad, said where the band
+            // would, on the status line's own backing (`viz_status`'s).
+            draw::fill_rect(
+                display,
+                theme::MARGIN_X - 2,
+                theme::HEADER_BOTTOM,
+                hint::width_at(view::PAD_HINT, theme::TextSize::Normal) + 4,
+                viz::PLOT_TOP - theme::HEADER_BOTTOM,
+                theme::BG,
+            );
+            hint::draw(
+                display,
+                view::PAD_HINT,
+                theme::MARGIN_X,
+                theme::BIGVIZ_STATUS_Y,
+            );
         }
     }
 
@@ -874,7 +910,12 @@ impl Renderer {
             return f.hint(o.hint);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
-        let own = view.hint(&f.ctx);
+        // A Part cell on a pad's page (DRUM FLT's FX TYPE and PLACE): MIX
+        // + -/+ steps the pad there too (`view::edits_pad`).
+        let own = match view.addr() {
+            Some(a) if f.def.edits_pad() && !a.block.is_pad() => view::PAD_HINT,
+            _ => view.hint(&f.ctx),
+        };
         let generic = own.is_empty() || own == view::LEARN_HINT;
         let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
             crate::ui::push::HINT
@@ -1220,7 +1261,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let h = page_header(f.head, f.def, &f.ctx, f.parts, f.bank2);
+        let h = page_header(f.head, f.def, f.focus, &f.ctx, f.parts, f.bank2);
         components::header(
             display,
             h.context.as_str(),
@@ -1280,6 +1321,7 @@ impl BlockRead for Stored<'_, '_> {
 pub fn page_header(
     head: Head,
     def: &BlockDef,
+    focus: usize,
     ctx: &SlotCtx,
     parts: &Parts,
     bank2: Option<crate::bank2::Bank2Status>,
@@ -1295,7 +1337,14 @@ pub fn page_header(
     components::header_text(
         head,
         def,
-        ctx.models(),
+        // The pad's name only where the page edits it.
+        view::Models {
+            pad: ctx
+                .models()
+                .pad
+                .filter(|_| view::edits_pad(def, focus, ctx)),
+            ..ctx.models()
+        },
         ctx.kind,
         suffix,
         out_of(head, parts),
@@ -1516,12 +1565,19 @@ pub const MATRIX_AMOUNT_SLOT: usize = 4;
 /// Amount −127..127 as a 0..1 display value (0 at the centre).
 /// The filter LEVEL, whose cell (FLT › FX's INPUT) carries the clip LED.
 const LEVEL: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL);
-/// The filter KIND, whose readout names the 2040's mode.
 const PLACE: ParamAddr = ParamAddr::new(
     BlockRef::VoiceFx,
     crate::dsp::voice_fx::params::VoiceFxParams::PLACE,
 );
-const KIND: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::KIND);
+
+/// The page's slot on filter param `id`: the Sound's, or on DRUM the pad's.
+fn filter_slot(f: &Frame, id: crate::block::ParamId) -> Option<usize> {
+    (0..f.def.params.len()).find(|&i| {
+        slot_addr(f.def, i, &f.ctx).is_some_and(|a| {
+            a.param == id && matches!(a.block, BlockRef::Filter | BlockRef::PadFilter)
+        })
+    })
+}
 /// A DRUM pad's MACHINE: its cell keeps the name's last word.
 const PAD_MACHINE: ParamAddr =
     ParamAddr::new(BlockRef::Pad, crate::dsp::drum::params::PadParams::MACHINE);

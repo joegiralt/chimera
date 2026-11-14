@@ -9,7 +9,10 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
         ValFmt::Hold if val >= 0.999 => {
             let _ = buf.write_str("HOLD");
         }
-        ValFmt::Uni | ValFmt::Hold => {
+        ValFmt::Inf if val >= 0.999 => {
+            let _ = buf.write_str("INF");
+        }
+        ValFmt::Uni | ValFmt::Hold | ValFmt::Inf => {
             let midi = (val * 127.0 + 0.5) as i32;
             let _ = write!(buf, "{}", midi);
         }

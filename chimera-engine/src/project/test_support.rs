@@ -124,6 +124,10 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     pad.set_pan(crate::dsp::drum::types::Pan::clamped(-20));
     pad.set_choke(crate::dsp::drum::types::ChokeGroup::A);
     pad.set_retrig(crate::dsp::tape_engine::params::Retrig::Stack);
+    // Its sound (ADR 0269).
+    pad.sound_mut()
+        .filter_mut()
+        .set_kind(crate::dsp::filter::FilterKind::Ladder);
     p.set_name(ProjectName::new("FULL").expect("a valid name"));
     (p, t)
 }
