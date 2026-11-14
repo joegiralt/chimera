@@ -15,10 +15,10 @@ A drum Part in the Analog Rytm's shape with the Machinedrum's machines: every pa
 ```
 MACHINE ─ LEVEL ─┐
                  ├─ COMBINE (MODE, AMOUNT, DIRECTION) ─ FILTER ─ FX slot ─ AMP (VCA/LPG) ─ PAN ─ Part bus / OUT
-LAYER   ─ LEVEL ─┘   (LAYER = TRANS or SAMPLE, owner 2026-11-14)
+SAMPLE  ─ LEVEL ─┘
 ```
 - **Machine:** one of the kernels below with a machine's law over its six knobs (plus up to two on MORE). Its internal decay is the hit's life; its PITCH the pitch. Machine OFF makes the sample the carrier (the Rytm's sample-only track; the Machinedrum's ROM machines).
-- **Layer:** the second source is **TRANS** (a synthesized transient, below) or **SAMPLE**. Everything said of the sample layer here (its LEVEL, COMBINE, DIRECTION) holds for TRANS too.
+- **TRANS:** BODY machines take a choice of exciter, and a synthesized TRANS layer for the other families is under audition (see TRANS below).
 - **Sample:** a clip of the kit pool, read by TAPE's WALK head (12-bit decode, Hermite, `inc` from the clip's rate and root), once through: FORWARD, REVERSE or PING-PONG over START and LENGTH. PITCH is an offset from the machine's pitch. CLIP = the pad's base clip + a modulation offset, rounded and clamped to the pad's reach, latched at note-on (round robin, velocity layers, random).
 - **Combine:** `chimera-engine/src/dsp/va/combine.rs`'s MIX, RING, XOR, BITS, MAX and AM reused as they are (they take two signals), plus FOLD-into and FM. RING, AM and FOLD use `c·(1 + m)` so a finished clip never mutes the machine. FM and FOLD read DIRECTION; the rest dim it with `<MODE> HAS NO DIRECTION`. FM MCH ← SMP moves the machine's phase increment; SMP ← MCH moves the head's read rate (through zero clamp as VA FM, ADR 0159).
 - **After combine:** the existing chain unchanged (FILTER TYPEs, FMD, FX slot ADR 0155, AMP with LPG/DECAY/STRIKE ADR 0195, SENDS). A pad's voice ends when the AMP gate or the machine's decay is under −80 dB, as today.
@@ -189,13 +189,19 @@ Mockup: an unpublished page, source `docs/mockups/drum-glyphs.html` (the bitmaps
 - **TONAL** on the KIT page (OFF / pad 1–12): C0–B0 trigger the kit; from C1 up the TONAL pad plays chromatically with its tuned pitch at middle C (MIDI 60), "principle of least surprise". TONAL OFF: the kit repeats in every octave. A TONAL 2 split is a later option.
 - **PAD FOLLOW** (SETTINGS › PERSONALIZE): OFF / IDLE (default) / ALWAYS. **Pads stay lit while they sound.**
 
-## TRANS: a synthesized transient layer, owner 2026-11-14
-Owner: a transient shouldn't cost a sample, and a recorded click cross-modulating with the machine can be weird. So the layer under every machine takes a **SOURCE: TRANS or SAMPLE**. TRANS is synthesized: no sample memory, nothing on the card, always available. SAMPLE stays for a recorded attack.
+## TRANS: exciters for BODY, maybe a layer for the rest (owner 2026-11-14)
+Owner: a transient shouldn't cost a sample, and a recorded click cross-modulating with the machine can be weird. Then: "body no… the others… maybe".
 
-- **TYPEs:** CLICK (a band-limited impulse or short pulse: beater, rim edge), NOISE (a filtered noise burst: snare snap, hat attack, brush), CHIRP (a very fast pitch drop: 909 punch, laser tick), PING (a resonant filter struck once: wood, clave tick), BLIP (a two-operator FM burst: metallic or digital attacks), MALLET (a soft raised-cosine contact: toms, hand drums).
-- **Knobs:** TYPE, LEVEL, DECAY (about 1–20 ms), TONE (colour), PITCH (an offset from the machine's pitch, as the sample's).
-- **Combine:** the layer's COMBINE applies as to a sample: MIX adds it before the filter; FM (MCH ← TRANS) moves the machine's phase at the attack, so the click sits inside the tone; RING and AM multiply; FOLD-into folds the machine by it. A synthesized transient is a known shape, so these behave predictably where a recorded one may not. The pad's FX slot (FOLD, FUZZ) still acts on the sum after combine.
-- **Built from what exists:** the CLICK of TONE KICK, SNAP of TONE SNARE, BUMP of TONE COWBELL, PLAIN IMPULSE's pulse train, BODY's mallet pulse and MODAL's exciters. Each TYPE should reuse one of these rather than add a new generator.
-- **Cost:** it runs only for its DECAY (a few blocks a hit) and is billed only while it sounds, as the strike is (ADR 0269/0273 billing). After that it costs nothing.
-- **Open (owner, when it's built):** whether the machines' own CLICK/SNAP/BUMP knobs stay beside TRANS or move into it; TRANS's default per INIT pad; whether TRANS gets a pad mod destination (DECAY, TONE).
-
+- **BODY machines (membrane, wood, bell, hand): TRANS is the EXCITER**, fed into the mode bank, not layered on top. A layer on a resonator gives two sounds glued together; exciting the resonator gives one drum whose hit has character (Elements' exciter → resonator). This replaces BODY's hard-wired half-sine mallet pulse and BODY HAND's hand exciter with a choice. BODY gets no TRANS layer.
+- **Exciter TYPEs:**
+  - MALLET: a soft half-sine contact (exists) — felt beater, tom, timpani.
+  - STICK: a hard, very short click — snare crack, rimshot, woodblock.
+  - HAND: palm contact plus skin noise (exists, BODY HAND) — conga, bongo, tabla.
+  - BRUSH: a smeared noise burst — brushed snare.
+  - FLAM: two strikes a few ms apart (WOOD's DUAL exists) — flams, ruffs.
+  - NOISE: a filtered noise burst (MODAL's exciters) — noisy, gated, electronic hits.
+  - SCRAPE: rough noise grains over tens of ms — guiro, cymbal scrape.
+- **Exciter knobs:** TYPE plus what each type needs (HARDNESS, DECAY, TONE); BODY's existing HARDNESS and MALLET knobs map onto them. Each machine keeps its current exciter as its default, so today's sounds don't change.
+- **TONE, FM, METAL and PLAIN machines: a TRANS layer, maybe.** The idea: the same generators layered beside the machine through the layer's COMBINE (MIX before the filter; FM moving the machine's phase at the attack; RING, AM, FOLD-into), as SAMPLE is (the layer's SOURCE: TRANS or SAMPLE). **Undecided: the owner wants to hear it first.** Build a host prototype (`chimera-utils/src/drums/`, `just drum-render`) of a few machines with and without a TRANS layer before it goes into the spec as a feature.
+- **Cost:** an exciter or a layer runs only for its own few milliseconds and is billed only while it sounds, as the strike is.
+- **Open:** whether the machines' own CLICK/SNAP/BUMP knobs stay beside a TRANS layer; whether exciter TYPE and HARDNESS get pad mod destinations.
