@@ -15,9 +15,10 @@ A drum Part in the Analog Rytm's shape with the Machinedrum's machines: every pa
 ```
 MACHINE ─ LEVEL ─┐
                  ├─ COMBINE (MODE, AMOUNT, DIRECTION) ─ FILTER ─ FX slot ─ AMP (VCA/LPG) ─ PAN ─ Part bus / OUT
-SAMPLE  ─ LEVEL ─┘
+LAYER   ─ LEVEL ─┘   (LAYER = TRANS or SAMPLE, owner 2026-11-14)
 ```
 - **Machine:** one of the kernels below with a machine's law over its six knobs (plus up to two on MORE). Its internal decay is the hit's life; its PITCH the pitch. Machine OFF makes the sample the carrier (the Rytm's sample-only track; the Machinedrum's ROM machines).
+- **Layer:** the second source is **TRANS** (a synthesized transient, below) or **SAMPLE**. Everything said of the sample layer here (its LEVEL, COMBINE, DIRECTION) holds for TRANS too.
 - **Sample:** a clip of the kit pool, read by TAPE's WALK head (12-bit decode, Hermite, `inc` from the clip's rate and root), once through: FORWARD, REVERSE or PING-PONG over START and LENGTH. PITCH is an offset from the machine's pitch. CLIP = the pad's base clip + a modulation offset, rounded and clamped to the pad's reach, latched at note-on (round robin, velocity layers, random).
 - **Combine:** `chimera-engine/src/dsp/va/combine.rs`'s MIX, RING, XOR, BITS, MAX and AM reused as they are (they take two signals), plus FOLD-into and FM. RING, AM and FOLD use `c·(1 + m)` so a finished clip never mutes the machine. FM and FOLD read DIRECTION; the rest dim it with `<MODE> HAS NO DIRECTION`. FM MCH ← SMP moves the machine's phase increment; SMP ← MCH moves the head's read rate (through zero clamp as VA FM, ADR 0159).
 - **After combine:** the existing chain unchanged (FILTER TYPEs, FMD, FX slot ADR 0155, AMP with LPG/DECAY/STRIKE ADR 0195, SENDS). A pad's voice ends when the AMP gate or the machine's decay is under −80 dB, as today.
@@ -181,10 +182,20 @@ Not in 0.4: MIDI-sending pads (7) and the listening drummer (8).
 Mockup: an unpublished page, source `docs/mockups/drum-glyphs.html` (the bitmaps in `INST`, `FAM` and `L3` are the reference pixels).
 - **KIT icons land "for the time being":** every machine is a composite of a family mark (TONE, FM, BODY, METAL, PLAIN, LPG, VOX) and a 14×12 instrument mark (22 marks cover the 28 machines); `#` full colour, `+` the dim second tone. Snare and tom are flat side views (short with crossed sticks and wires; tall floor tom on legs). Badge style (3×5 letter or 5×5 symbol) is still open.
 - **Focus-band glyphs:** eight gauges (SWEEP, DECAY, TRANSIENT, PARTIALS, CLAPS, GRAINS, DRIVE, FILTER). Per knob or one whole-hit picture: owner "it depends", to be settled per machine family before Task 8.
-||||||| parent of 18e99b8c (DRUM: slice 2 is per-pad filter and amp; TONAL; PAD FOLLOW)
 
 
 ## Owner, 2026-11-13: slice order and kit playing
 - **Slice 2 = per-pad FILTER and AMP** (ahead of the FM and BODY machines): each pad its own filter (TYPE, CUTOFF, RESO…), amp envelope, a mod envelope, an LFO and 4 routes (the compact Rytm-style pad); the Part's three LFOs stay shared. FLT/AMP follow the selected pad as MCH does. Pad data in ITCM.
 - **TONAL** on the KIT page (OFF / pad 1–12): C0–B0 trigger the kit; from C1 up the TONAL pad plays chromatically with its tuned pitch at middle C (MIDI 60), "principle of least surprise". TONAL OFF: the kit repeats in every octave. A TONAL 2 split is a later option.
 - **PAD FOLLOW** (SETTINGS › PERSONALIZE): OFF / IDLE (default) / ALWAYS. **Pads stay lit while they sound.**
+
+## TRANS: a synthesized transient layer, owner 2026-11-14
+Owner: a transient shouldn't cost a sample, and a recorded click cross-modulating with the machine can be weird. So the layer under every machine takes a **SOURCE: TRANS or SAMPLE**. TRANS is synthesized: no sample memory, nothing on the card, always available. SAMPLE stays for a recorded attack.
+
+- **TYPEs:** CLICK (a band-limited impulse or short pulse: beater, rim edge), NOISE (a filtered noise burst: snare snap, hat attack, brush), CHIRP (a very fast pitch drop: 909 punch, laser tick), PING (a resonant filter struck once: wood, clave tick), BLIP (a two-operator FM burst: metallic or digital attacks), MALLET (a soft raised-cosine contact: toms, hand drums).
+- **Knobs:** TYPE, LEVEL, DECAY (about 1–20 ms), TONE (colour), PITCH (an offset from the machine's pitch, as the sample's).
+- **Combine:** the layer's COMBINE applies as to a sample: MIX adds it before the filter; FM (MCH ← TRANS) moves the machine's phase at the attack, so the click sits inside the tone; RING and AM multiply; FOLD-into folds the machine by it. A synthesized transient is a known shape, so these behave predictably where a recorded one may not. The pad's FX slot (FOLD, FUZZ) still acts on the sum after combine.
+- **Built from what exists:** the CLICK of TONE KICK, SNAP of TONE SNARE, BUMP of TONE COWBELL, PLAIN IMPULSE's pulse train, BODY's mallet pulse and MODAL's exciters. Each TYPE should reuse one of these rather than add a new generator.
+- **Cost:** it runs only for its DECAY (a few blocks a hit) and is billed only while it sounds, as the strike is (ADR 0269/0273 billing). After that it costs nothing.
+- **Open (owner, when it's built):** whether the machines' own CLICK/SNAP/BUMP knobs stay beside TRANS or move into it; TRANS's default per INIT pad; whether TRANS gets a pad mod destination (DECAY, TONE).
+
