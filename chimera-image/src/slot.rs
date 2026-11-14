@@ -92,6 +92,11 @@ impl SlotSet {
         SlotSet(self.0 | s.bit())
     }
 
+    /// The set whose bits are `b`'s low two.
+    pub(crate) const fn from_bits(b: u8) -> SlotSet {
+        SlotSet(b & SlotSet::ALL.0)
+    }
+
     /// Bit `index` per slot; only the low two bits are ever set.
     pub const fn bits(self) -> u8 {
         self.0

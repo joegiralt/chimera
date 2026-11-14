@@ -3,7 +3,7 @@
 
 use crate::header::{BANK2_BASE, BANK2_LEN, COMMIT_OFF, FLASH_WORD, HEADER_LEN, Header, Seal};
 use crate::judge::{Bank2Memory, Door, ImageRead, Verdict, judge, judge_uncommitted};
-use crate::slot::{Evidence, Slot, SlotPlan, own_words};
+use crate::slot::{Evidence, Slot, SlotPlan, SlotSet, own_words};
 
 const SECTOR_LEN: u32 = 128 * 1024;
 const _: () = assert!(8 * SECTOR_LEN == BANK2_LEN);
@@ -311,6 +311,33 @@ pub const BANK2_BAD: u32 = 0xB2BA_D0EC;
 /// install ends, kept by a fault during it.
 pub const BANK2_INSTALLING: u32 = 0xB21A_57A1;
 
+/// RTC_BKP14R while the guard reads slots (the § 3.2 fallback): this base
+/// with the slots' bits in its low two. A fault keeps it, and the next boot
+/// takes those slots as ours, torn, and installs over them.
+pub const SLOT_TORN: u32 = 0xB25C_0700;
+const SLOT_BITS: u32 = 3;
+const _: () = assert!(SLOT_TORN & SLOT_BITS == 0);
+const _: () = assert!(BANK2_BAD & !SLOT_BITS != SLOT_TORN);
+const _: () = assert!(BANK2_INSTALLING & !SLOT_BITS != SLOT_TORN);
+
+/// BKP14R's slot mark for `torn`.
+pub const fn slot_mark(torn: SlotSet) -> u32 {
+    SLOT_TORN | torn.bits() as u32
+}
+
+/// The slots a slot mark names; `None` for any other word.
+pub fn slot_mark_set(m: u32) -> Option<SlotSet> {
+    (m & !SLOT_BITS == SLOT_TORN).then(|| SlotSet::from_bits((m & SLOT_BITS) as u8))
+}
+
+/// The mark the boot writes before the guard reads `reading`'s words, on a
+/// boot that took `torn` as ours: a fault keeps both, so the bits only grow
+/// and a fault on each slot in turn ends with nothing left to read. The
+/// boot puts `BANK2_INSTALLING` back once the guard returns.
+pub const fn guard_marks(torn: SlotSet, reading: Slot) -> u32 {
+    slot_mark(torn.with(reading))
+}
+
 /// What the boot does with bank 2 before reading it, by BKP14R.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootAction {
@@ -321,6 +348,9 @@ pub enum BootAction {
     /// The last boot's install never ended: erase S0, read nothing, install
     /// nothing this boot, so a word that faults again costs one more reset.
     EraseS0NoInstall,
+    /// A guard read faulted: no erase, judge as normal, install allowed,
+    /// and the guard takes these slots as ours unread.
+    InstallSlotsOurs(SlotSet),
 }
 
 impl BootAction {
@@ -333,7 +363,10 @@ impl BootAction {
     /// over, `Empty` without a read (a word that faults even after its
     /// erase can't fault this boot), or `None`.
     pub fn after_erase(self) -> Option<Verdict> {
-        self.may_install().then_some(Verdict::Empty)
+        match self {
+            BootAction::EraseS0ThenJudge => Some(Verdict::Empty),
+            _ => None,
+        }
     }
 }
 
@@ -341,14 +374,18 @@ pub fn boot_action(mark: u32) -> BootAction {
     match mark {
         BANK2_BAD => BootAction::EraseS0ThenJudge,
         BANK2_INSTALLING => BootAction::EraseS0NoInstall,
-        _ => BootAction::Judge,
+        m => match slot_mark_set(m) {
+            Some(torn) => BootAction::InstallSlotsOurs(torn),
+            None => BootAction::Judge,
+        },
     }
 }
 
-/// BKP14R's word after a bank-2 ECC fault, from what it held.
+/// BKP14R's word after a bank-2 ECC fault, from what it held: the install's
+/// mark and a slot mark stay, anything else becomes `BANK2_BAD`.
 pub const fn fault_mark(before: u32) -> u32 {
-    if before == BANK2_INSTALLING {
-        BANK2_INSTALLING
+    if before == BANK2_INSTALLING || before & !SLOT_BITS == SLOT_TORN {
+        before
     } else {
         BANK2_BAD
     }

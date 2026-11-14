@@ -15,8 +15,9 @@ pub use header::{
 };
 pub use install::{
     AutoInstall, BANK2_BAD, BANK2_INSTALLING, Bank2Sector, Bank2Word, BootAction, Flash, FlashAt,
-    FlashFail, InstallFail, Mark, Phase, Plan, PlanOp, Progress, auto_install, bank2_ecc_fault,
-    boot_action, fault_mark, install_with, pick_staged, plan, wants_staged,
+    FlashFail, InstallFail, Mark, Phase, Plan, PlanOp, Progress, SLOT_TORN, auto_install,
+    bank2_ecc_fault, boot_action, fault_mark, guard_marks, install_with, pick_staged, plan,
+    slot_mark, slot_mark_set, wants_staged,
 };
 pub use judge::{Bank2Memory, Door, ImageRead, ReadFail, Verdict, judge, judge_uncommitted};
 pub use slot::{Slot, SlotSet};
