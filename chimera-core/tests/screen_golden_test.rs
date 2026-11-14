@@ -574,11 +574,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("midi_map_layer_row0", 0x399716417c55b81a),
     // DRUM's pages (ADR 0265, slice 1 Task 8). KIT's re-recorded for ADR
     // 0270's TONAL cell; drum_kit_machine's MACHINE reads BELL, its short;
-    // drum_more's band draws the focused MACHINE's icon, large.
+    // drum_more's band draws the focused MACHINE's icon, large;
+    // drum_kit_tonal's band says MIX + -/+ PAD, which steps the pad there.
     ("drum_kit", 0x79097f6ca8f388a6),
     ("drum_kit_hint", 0x87498c08de3fb994),
     ("drum_kit_machine", 0x4acb3ae25bc2568c),
-    ("drum_kit_tonal", 0x777e7ecf4fb30a03),
+    ("drum_kit_tonal", 0x243c1e4a583d619a),
     ("drum_kit_tonal_clap", 0x9553786b7a45cf13),
     ("drum_keys", 0xefaf91fd346bbc5b),
     ("drum_mch_kick", 0x478da05a99d137ad),
@@ -589,6 +590,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("drum_flt_ladder", 0xb4451676164f0c33),
     ("drum_flt_sem", 0x4f974adf9833c7ef),
     ("drum_flt_hint", 0xccf8e1fb22330f04),
+    ("drum_flt_fx_hint", 0x25a3921478d46209),
     ("drum_fmd_sem", 0xbbcb0e8e59f85ea9),
     ("drum_amp", 0x117dce57572b1983),
     ("drum_gate", 0x70c6cd2001f6ba4d),

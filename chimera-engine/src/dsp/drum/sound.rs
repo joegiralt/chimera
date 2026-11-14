@@ -937,6 +937,8 @@ pub struct KitBill {
     shapes: u8,
     moving: u8,
     mods: u16,
+    /// A pad's LPG, DECAY or STRIKE above 0: the gate runs.
+    gated: bool,
 }
 
 impl KitBill {
@@ -945,6 +947,7 @@ impl KitBill {
         shapes: 0,
         moving: 0,
         mods: 0,
+        gated: false,
     };
 
     /// The filter shapes the pads play, each with whether a pad route
@@ -961,8 +964,16 @@ impl KitBill {
         Cost(self.mods as u32)
     }
 
+    /// A pad's gate runs (`lpg::Knobs` above 0).
+    pub const fn gated(self) -> bool {
+        self.gated
+    }
+
     pub const fn to_bits(self) -> u32 {
-        self.mods as u32 | (self.shapes as u32) << 16 | (self.moving as u32) << 24
+        self.mods as u32
+            | (self.shapes as u32) << 16
+            | (self.moving as u32) << 24
+            | (self.gated as u32) << 31
     }
 
     pub const fn from_bits(b: u32) -> KitBill {
@@ -970,11 +981,13 @@ impl KitBill {
             mods: b as u16,
             shapes: (b >> 16) as u8 & 0x3f,
             moving: (b >> 24) as u8 & 0x3f,
+            gated: b >> 31 != 0,
         }
     }
 }
 
-/// `kit`'s bill: every pad's filter shape, and the costliest pad's mods.
+/// `kit`'s bill: every pad's filter shape, whether a pad's gate runs, and
+/// the costliest pad's mods.
 pub fn kit_bill(kit: &Kit) -> KitBill {
     PadId::ALL.iter().fold(KitBill::NONE, |b, &p| {
         let s = kit.pad(p).sound();
@@ -984,6 +997,7 @@ pub fn kit_bill(kit: &Kit) -> KitBill {
             shapes: b.shapes | f,
             moving: b.moving | if s.routes.moves_filter() { f } else { 0 },
             mods: b.mods.max(m),
+            gated: b.gated || s.amp.gate != lpg::Knobs::default(),
         }
     })
 }

@@ -27,7 +27,7 @@ use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
 use crate::dsp::lfo::{Lfo, LfoClock};
-use crate::dsp::lpg::{Lpg, Onset};
+use crate::dsp::lpg::{LPG_COST, Lpg, Onset};
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::voice_fx::VoiceFx;
@@ -39,7 +39,7 @@ use crate::modulation::{
     FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, SourceBits, amount_scale,
     note_source,
 };
-use crate::params::{EngineType, EnvParams, FilterParams, ParamSnapshot, Steal};
+use crate::params::{EngineType, EnvParams, FilterParams, OutParams, ParamSnapshot, Steal};
 use crate::project::SourceId;
 use crate::taps::{
     TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapOp, TapRoutes,
@@ -235,27 +235,43 @@ impl Voice {
 
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        // The VCA's gate (ADR 0195), bank 2's: none with its door closed.
+        let gate = gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO);
+        Self::cost_with(p, mods, Self::filter_cost(p, mods), gate)
+    }
+
+    /// `cost` with its filter's and gate's bills given.
+    fn cost_with(p: &ParamSnapshot, mods: &ModState, filter: Cost, gate: Cost) -> Cost {
         EngineSlot::cost(p, mods)
             + Self::CHAIN_COST
-            + Self::filter_cost(p, mods)
+            + filter
             + ModRouting::cost(p, mods)
             + Self::fx_cost(p, mods)
             + Self::tap_cost(p)
-            // The VCA's gate (ADR 0195), bank 2's: none with its door closed.
-            + gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO)
+            + gate
     }
 
-    /// `cost` of a DRUM hit (ADR 0269): the filter billed at the costliest
-    /// of the Sound's shape and each shape its kit's pads play (a pad route
-    /// moving its path once), plus the costliest pad's AMP and routes.
+    /// `cost` of a DRUM hit (ADR 0269), the pads' FILTER and AMP in the
+    /// Sound's place: the filter at the costliest shape its kit's pads
+    /// play (a pad route moving its path once; the Sound's own before the
+    /// first publish), the gate while a pad's or a Part route's runs it,
+    /// plus the costliest pad's AMP and routes.
     pub fn drum_cost(p: &ParamSnapshot, mods: &ModState, kit: KitBill) -> Cost {
         let t = FilterTerms::of(p, mods);
         let own = t.bill(p.filter.kind(), p.filter.voice, false);
-        let pads = kit
+        let filter = kit
             .shapes()
             .map(|(f, moves)| t.bill(f.kind(), f.voice(), moves))
-            .fold(own, Cost::max);
-        Cost(Self::cost(p, mods).0.saturating_sub(own.0)) + pads + kit.mods()
+            .max()
+            .unwrap_or(own);
+        let routed = [OutParams::LPG, OutParams::DECAY, OutParams::STRIKE]
+            .iter()
+            .any(|&id| mods.moves_addr(ParamAddr::new(BlockRef::Out, id)));
+        let gate = match gate::through(|_| ()) {
+            Some(()) if kit.gated() || routed => LPG_COST,
+            _ => Cost::ZERO,
+        };
+        Self::cost_with(p, mods, filter, gate) + kit.mods()
     }
 
     /// The filter as `p` and `mods` run it: the steady bill, the moving

@@ -7,12 +7,13 @@
 use std::sync::{LazyLock, Mutex};
 
 use chimera_core::dsp::drum::sound::{
-    Amount, PAD_AMP_COST, PAD_ROUTED_COST, PadRoute, PadSound, RouteDest, RouteId, RouteSource,
-    kit_bill,
+    Amount, KitBill, PAD_AMP_COST, PAD_ROUTED_COST, PadRoute, PadSound, RouteDest, RouteId,
+    RouteSource, kit_bill,
 };
 use chimera_core::dsp::drum::types::{Kit, PadId};
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
 use chimera_core::dsp::filter::FilterKind;
+use chimera_core::dsp::lpg::{self, LPG_COST};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::Cost;
 use chimera_core::modulation::ModState;
@@ -71,6 +72,7 @@ fn default_kit_bills_as_slice1() {
     p.filter.cutoff = 420.0;
     p.filter.level = 0.8;
     p.filter.stability = 0.5;
+    p.out.gate = [0.4, 0.2, 0.0];
     let mut kit = Kit::DEFAULT;
     for id in PadId::ALL {
         *kit.pad_mut(id).sound_mut() = PadSound::from_sound(&p);
@@ -184,4 +186,32 @@ fn the_view_carries_each_parts_bill() {
     assert_ne!(kit_bill(&kit), kit_bill(&Kit::DEFAULT));
     w.publish(p1, &Kit::DEFAULT);
     assert_eq!(KIT_VIEW.bill(p1), kit_bill(&Kit::DEFAULT));
+}
+
+#[test]
+fn a_pads_gate_bills_the_lpg() {
+    let p = drum_init();
+    assert!(!p.out.gated());
+    let mut kit = Kit::DEFAULT;
+    kit.pad_mut(pad(3))
+        .sound_mut()
+        .amp_mut()
+        .set_gate(lpg::Knobs::of([0.5, 0.0, 0.0]));
+    assert!(kit_bill(&kit).gated());
+    assert!(drum(&p, &kit).0 >= drum(&p, &Kit::DEFAULT).0 + LPG_COST.0);
+    // The Sound's gate is the pads' on DRUM: a gated Sound over open pads
+    // runs none.
+    let mut g = drum_init();
+    g.out.gate = [0.5, 0.0, 0.0];
+    assert_eq!(drum(&g, &Kit::DEFAULT), drum(&p, &Kit::DEFAULT));
+}
+
+#[test]
+fn the_sounds_shape_bills_only_before_a_publish() {
+    let p = as_kind(&drum_init(), FilterKind::Ladder);
+    let m = ModState::new();
+    assert_eq!(Voice::drum_cost(&p, &m, KitBill::NONE), cost(&p));
+    // Published: the pads' CLEAN, not the Sound's masked LADDER.
+    assert_eq!(drum(&p, &Kit::DEFAULT), cost(&as_kind(&p, FilterKind::Svf)));
+    assert!(drum(&p, &Kit::DEFAULT) < cost(&p));
 }

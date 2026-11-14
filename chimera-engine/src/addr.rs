@@ -180,7 +180,7 @@ impl BlockRef {
             BlockRef::Pad => &crate::dsp::drum::params::PAD_SPECS,
             BlockRef::Kit => &crate::dsp::drum::params::KIT_SPECS,
             // The Sound filter's own table: a pad holds only `PadFilter::IDS`,
-            // the only ids `view` and `on_pad` give it.
+            // the only ids its `Block::spec`, `get` and `write` admit.
             BlockRef::PadFilter => &crate::params::FILTER_SPECS,
             BlockRef::PadAmp => &crate::dsp::drum::params::PAD_AMP_SPECS,
             BlockRef::PadEnv => &crate::dsp::drum::params::PAD_ENV_SPECS,

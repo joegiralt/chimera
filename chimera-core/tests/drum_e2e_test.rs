@@ -268,7 +268,7 @@ fn pad_filter_from_the_ui(d: &mut Desk) {
         let off = (f.cutoff().get() / want).log2().abs();
         assert!(off <= 1.0 / 48.0, "{} for {want}", f.cutoff().get());
     }
-    assert_eq!(p2.kind(), FilterKind::Svf, "pad 2 keeps the Sound's SVF");
+    assert_eq!(p2.kind(), FilterKind::Svf, "pad 2 keeps its default SVF");
 
     d.note_on(0);
     d.note_on(1);

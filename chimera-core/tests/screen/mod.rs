@@ -2685,6 +2685,15 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 1));
         feed(ui, Input::turn(EncoderId::A, -1));
     }),
+    // FX TYPE touched, the Part's on the pad's page: MIX + -/+ steps the
+    // pad there too, said in its band.
+    ("drum_flt_fx_hint", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 1));
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::B, 1));
+        feed(ui, Input::turn(EncoderId::B, -1));
+    }),
     // FLT › MOD on a SEM pad: OUTPUT the pad's, touched, the header the pad.
     ("drum_fmd_sem", |ui| {
         load_init(ui, EngineType::Drum);

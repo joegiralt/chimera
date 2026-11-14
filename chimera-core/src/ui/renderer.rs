@@ -910,7 +910,12 @@ impl Renderer {
             return f.hint(o.hint);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
-        let own = view.hint(&f.ctx);
+        // A Part cell on a pad's page (DRUM FLT's FX TYPE and PLACE): MIX
+        // + -/+ steps the pad there too (`view::edits_pad`).
+        let own = match view.addr() {
+            Some(a) if f.def.edits_pad() && !a.block.is_pad() => view::PAD_HINT,
+            _ => view.hint(&f.ctx),
+        };
         let generic = own.is_empty() || own == view::LEARN_HINT;
         let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
             crate::ui::push::HINT

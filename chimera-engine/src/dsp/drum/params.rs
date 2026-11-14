@@ -336,7 +336,7 @@ const fn stage(id: ParamId, label: &'static str, fmt: ValFmt, default: f32) -> P
         127.0,
         default,
         false,
-        Motion::Continuous(Smoothing::NoteOn),
+        Motion::Continuous(Smoothing::Own),
     )
     .ident(label)
 }
@@ -617,7 +617,7 @@ pub static PAD_ROUTE_SPECS: [ParamSpec; 3] = [
         127.0,
         0.0,
         false,
-        Motion::Continuous(Smoothing::NoteOn),
+        Motion::Continuous(Smoothing::Own),
     )
     .ident("AMOUNT"),
 ];
