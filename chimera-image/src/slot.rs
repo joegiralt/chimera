@@ -161,10 +161,38 @@ pub trait SlotRead {
     fn word(&mut self, addr: u32) -> Word;
 }
 
-/// What the guard found: `erased` slots read 0xFF across both sectors.
+/// How the guard took a slot as ours. The install keeps one clean piece of
+/// it alive at every instant: after `Marker` (or `Mark`) it rewrites S4
+/// before erasing S5; otherwise S5 first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SlotPlan {
-    pub erased: SlotSet,
+pub enum Evidence {
+    /// S4's tag word read clean.
+    Tag,
+    /// S5's marker read clean, S4's code word ours, torn or erased.
+    Marker,
+    /// Rule (c): only the three Chimera words, maybe torn; `erased` when
+    /// both sectors read 0xFF.
+    Scan { erased: bool },
+    /// Taken as ours from the boot's slot mark, unread.
+    Mark,
+}
+
+/// What the guard found, per slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotPlan([Evidence; 2]);
+
+impl SlotPlan {
+    pub const fn evidence(&self, s: Slot) -> Evidence {
+        self.0[s.index() as usize]
+    }
+
+    /// The slots whose two sectors read fully erased.
+    pub fn erased(&self) -> SlotSet {
+        Slot::ALL
+            .into_iter()
+            .filter(|&s| self.evidence(s) == Evidence::Scan { erased: true })
+            .fold(SlotSet::NONE, SlotSet::with)
+    }
 }
 
 /// The slot holds code that isn't Chimera's: nothing may be written.
@@ -176,26 +204,26 @@ pub struct SlotForeign(pub Slot);
 /// it ours; otherwise every word must be erased, bar the three Chimera
 /// writes, which may be torn. The stub's code bytes never change.
 pub fn guard(r: &mut impl SlotRead, ours: SlotSet) -> Result<SlotPlan, SlotForeign> {
-    let mut erased = SlotSet::NONE;
+    let mut e = [Evidence::Mark; 2];
     for s in Slot::ALL {
-        if ours.has(s) || tagged(r, s) {
-            continue;
-        }
-        if scan(r, s).ok_or(SlotForeign(s))? {
-            erased = erased.with(s);
+        if !ours.has(s) {
+            e[s.index() as usize] = judge(r, s).ok_or(SlotForeign(s))?;
         }
     }
-    Ok(SlotPlan { erased })
+    Ok(SlotPlan(e))
 }
 
-fn tagged(r: &mut impl SlotRead, s: Slot) -> bool {
+fn judge(r: &mut impl SlotRead, s: Slot) -> Option<Evidence> {
     let t = r.word(s.base() + 0x20);
     if !t.ecc && t.bytes[0x10..0x1C] == *TAG {
-        return true;
+        return Some(Evidence::Tag);
     }
     let m = r.word(s.marker_addr());
     // A marker alone outlives a revert that refilled S4 with other code.
-    !m.ecc && m.bytes[..16] == *MARKER && r.word(s.base()).may_be(&code_word(s))
+    if !m.ecc && m.bytes[..16] == *MARKER && r.word(s.base()).may_be(&code_word(s)) {
+        return Some(Evidence::Marker);
+    }
+    scan(r, s).map(|erased| Evidence::Scan { erased })
 }
 
 /// Some(fully erased) if the slot may be ours, None if foreign.

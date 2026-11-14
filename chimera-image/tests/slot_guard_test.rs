@@ -52,12 +52,11 @@ fn in_slot(s: Slot, addr: u32) -> bool {
 #[test]
 fn erased_slots_pass_and_are_planned_erased() {
     let mut r = SimSlots::default();
-    assert_eq!(
-        guard(&mut r, SlotSet::NONE),
-        Ok(SlotPlan {
-            erased: SlotSet::ALL
-        })
-    );
+    let p = guard(&mut r, SlotSet::NONE).unwrap();
+    assert_eq!(p.erased(), SlotSet::ALL);
+    for s in Slot::ALL {
+        assert_eq!(p.evidence(s), Evidence::Scan { erased: true });
+    }
     // Both sectors of both slots, every word.
     assert_eq!(r.reads.len() as u32, 2 * (2 + SLOT_LEN / 32));
 }
@@ -68,7 +67,8 @@ fn a_clean_tag_is_ours_and_nothing_else_is_read() {
         let mut r = SimSlots::default();
         r.set(s.base() + 0x20, tag_word(s));
         let p = guard(&mut r, SlotSet::NONE).unwrap();
-        assert!(!p.erased.has(s));
+        assert_eq!(p.evidence(s), Evidence::Tag);
+        assert!(!p.erased().has(s));
         let reads: Vec<u32> = r.reads.iter().copied().filter(|&a| in_slot(s, a)).collect();
         assert_eq!(reads, [s.base() + 0x20], "{s:?}");
     }
@@ -81,7 +81,8 @@ fn a_clean_marker_is_ours() {
         r.set(s.marker_addr(), end_marker(s));
         r.set(s.base() + 0x1000, [0; 32]); // never scanned
         let p = guard(&mut r, SlotSet::NONE).unwrap();
-        assert!(!p.erased.has(s));
+        assert_eq!(p.evidence(s), Evidence::Marker);
+        assert!(!p.erased().has(s));
         let reads: Vec<u32> = r.reads.iter().copied().filter(|&a| in_slot(s, a)).collect();
         assert_eq!(reads, [s.base() + 0x20, s.marker_addr(), s.base()], "{s:?}");
     }
@@ -107,7 +108,8 @@ fn a_clean_marker_with_our_code_torn_or_erased_is_ours() {
     let mut r = SimSlots::default();
     r.set(s.marker_addr(), end_marker(s));
     r.ecc(s.base());
-    assert!(guard(&mut r, SlotSet::NONE).is_ok());
+    let p = guard(&mut r, SlotSet::NONE).unwrap();
+    assert_eq!(p.evidence(s), Evidence::Marker);
 }
 
 #[test]
@@ -120,8 +122,9 @@ fn an_ecc_tag_with_its_text_falls_to_the_scan() {
     let mut r = SimSlots::default();
     r.words.insert(s.base() + 0x20, ecc_tag);
     let p = guard(&mut r, SlotSet::NONE).unwrap();
-    assert!(!p.erased.has(s));
-    assert!(p.erased.has(Slot::Edit));
+    assert_eq!(p.evidence(s), Evidence::Scan { erased: false });
+    assert!(!p.erased().has(s));
+    assert!(p.erased().has(Slot::Edit));
 
     let mut r = SimSlots::default();
     r.words.insert(s.base() + 0x20, ecc_tag);
@@ -135,7 +138,8 @@ fn an_ecc_marker_with_s4_erased_is_ours() {
     let mut r = SimSlots::default();
     r.ecc(s.marker_addr());
     let p = guard(&mut r, SlotSet::NONE).unwrap();
-    assert!(!p.erased.has(s));
+    assert_eq!(p.evidence(s), Evidence::Scan { erased: false });
+    assert!(!p.erased().has(s));
 }
 
 #[test]
@@ -166,7 +170,7 @@ fn torn_own_words_in_an_erased_slot_are_ours() {
             r.ecc(addr);
             let p = guard(&mut r, SlotSet::NONE)
                 .unwrap_or_else(|e| panic!("{s:?} {addr:#x} ecc: {e:?}"));
-            assert!(!p.erased.has(s));
+            assert!(!p.erased().has(s));
 
             for _ in 0..64 {
                 let mut w = want;
@@ -241,7 +245,8 @@ fn ours_mark_skips_the_slot() {
     let mut r = SimSlots::default();
     r.set(Slot::Edit.base() + 0x80, [0; 32]); // foreign, but marked ours
     let p = guard(&mut r, SlotSet::NONE.with(Slot::Edit)).unwrap();
-    assert!(p.erased.has(Slot::Mixer));
-    assert!(!p.erased.has(Slot::Edit));
+    assert_eq!(p.evidence(Slot::Edit), Evidence::Mark);
+    assert!(p.erased().has(Slot::Mixer));
+    assert!(!p.erased().has(Slot::Edit));
     assert!(r.reads.iter().all(|&a| !in_slot(Slot::Edit, a)));
 }
