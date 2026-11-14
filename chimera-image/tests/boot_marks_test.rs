@@ -155,6 +155,8 @@ enum Outcome {
     NoInstall,
     /// Flash already `Good`: nothing to install.
     Kept,
+    /// No staged file on the card.
+    NoStaged,
 }
 
 /// The guard's reads; the boot's slot mark goes in before each slot's
@@ -186,10 +188,22 @@ impl SlotRead for Guarded<'_> {
     }
 }
 
-/// One boot, in the board's order: `boot_action` -> (erase S0 if asked) ->
-/// judge -> `BANK2_INSTALLING` -> each slot's mark and reads ->
-/// `BANK2_INSTALLING` -> install -> 0.
+/// One boot with a staged file.
 fn boot(flash: &mut SimFlash, bkp: &mut u32, faults: &mut dyn FnMut(Stage) -> bool) -> Outcome {
+    boot_with(flash, bkp, faults, true)
+}
+
+/// One boot, in the board's order: `boot_action` -> (erase S0 if asked;
+/// a slot mark's set kept in RAM and BKP14R 0) -> judge -> (staged file?)
+/// -> `BANK2_INSTALLING` -> each slot's mark and reads ->
+/// `BANK2_INSTALLING` -> install -> 0. A torn S0 header word faults the
+/// judge, every boot, until S0 is erased.
+fn boot_with(
+    flash: &mut SimFlash,
+    bkp: &mut u32,
+    faults: &mut dyn FnMut(Stage) -> bool,
+    staged: bool,
+) -> Outcome {
     flash.ops.clear();
     let seal = Seal::new(SEAL).unwrap();
     let action = boot_action(*bkp);
@@ -207,7 +221,10 @@ fn boot(flash: &mut SimFlash, bkp: &mut u32, faults: &mut dyn FnMut(Stage) -> bo
             }
         }
         BootAction::Judge | BootAction::InstallSlotsOurs(_) => {
-            if faults(Stage::Judge) {
+            if let BootAction::InstallSlotsOurs(_) = action {
+                *bkp = 0;
+            }
+            if faults(Stage::Judge) || flash.bad[0] {
                 *bkp = fault_mark(*bkp);
                 return Outcome::Reset;
             }
@@ -216,8 +233,10 @@ fn boot(flash: &mut SimFlash, bkp: &mut u32, faults: &mut dyn FnMut(Stage) -> bo
     };
     assert!(action.may_install());
     if !wants_staged(&over) {
-        *bkp = 0;
         return Outcome::Kept;
+    }
+    if !staged {
+        return Outcome::NoStaged;
     }
     let torn = match action {
         BootAction::InstallSlotsOurs(t) => t,
@@ -384,4 +403,49 @@ fn refused_boot_repeats_without_writing() {
         assert_eq!(f.ops, [], "boot {n}");
         assert_eq!(bkp, 0, "boot {n}");
     }
+}
+
+/// Review N3 (minor): a judge that faults under a slot mark (here a torn S0
+/// header word, every boot until S0 is erased) marks `BANK2_BAD`, not the
+/// slot mark again: the next boot erases S0 and the slots' marks converge.
+#[test]
+fn judge_faults_once() {
+    let mut f = torn_slots();
+    f.bad[0] = true;
+    let mut bkp = slot_mark(SlotSet::NONE.with(Slot::Mixer));
+    let mut faults = |s: Stage| s == Stage::Guard(Slot::Mixer);
+    assert_eq!(boot(&mut f, &mut bkp, &mut faults), Outcome::Reset);
+    assert_eq!(bkp, BANK2_BAD, "the judge's fault is BAD's, once");
+    assert_eq!(boot(&mut f, &mut bkp, &mut faults), Outcome::Reset);
+    assert_eq!(f.ops[0], Op::Erase(Bank2Sector::S0));
+    assert_eq!(bkp, slot_mark(SlotSet::NONE.with(Slot::Mixer)));
+    assert_eq!(boot(&mut f, &mut bkp, &mut faults), Outcome::Open);
+    assert_eq!(bkp, 0);
+    assert_eq!(boot(&mut f, &mut bkp, &mut faults), Outcome::Kept);
+}
+
+/// Review (Important): a slot-mark boot that installs nothing (flash kept,
+/// or no staged file) leaves BKP14R 0, so a slot refilled with foreign code
+/// later is guarded, not taken as ours.
+#[test]
+fn a_slot_mark_never_outlives_its_boot() {
+    let mut f = SimFlash::new();
+    let mut bkp = 0;
+    assert_eq!(boot(&mut f, &mut bkp, &mut |_| false), Outcome::Open);
+    bkp = slot_mark(SlotSet::ALL);
+    assert_eq!(boot(&mut f, &mut bkp, &mut |_| false), Outcome::Kept);
+    assert_eq!(bkp, 0);
+    // Bank 2 emptied, the mark back, no staged file.
+    f.mem.fill(0xFF);
+    bkp = slot_mark(SlotSet::ALL);
+    assert_eq!(
+        boot_with(&mut f, &mut bkp, &mut |_| false, false),
+        Outcome::NoStaged
+    );
+    assert_eq!(bkp, 0);
+    // MIXER refilled with other code: the next install is refused.
+    let mid = (Slot::Mixer.marker_addr() - BANK2_BASE - 0x1_0000) as usize;
+    f.mem[mid] = 0x42;
+    assert_eq!(boot(&mut f, &mut bkp, &mut |_| false), Outcome::Refused);
+    assert_eq!(f.ops, []);
 }

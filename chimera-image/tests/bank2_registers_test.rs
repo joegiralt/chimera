@@ -4,8 +4,10 @@
 
 const SRC: &str = include_str!("../../chimera-board/src/bank2.rs");
 
-/// The first address past S3: the bootloader's sectors 4-7 start here.
-const S4: u64 = 0x0818_0000;
+/// The first address past bank 2's S7.
+const BANK2_END: u64 = 0x0820_0000;
+/// Peripheral and system registers start here.
+const REGS: u64 = 0x4000_0000;
 
 fn ident(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'
@@ -64,9 +66,6 @@ fn only_bank2_registers() {
     for no in ["_prg", ".ber(", ".mer(", "0x5200_200", "0x5200200"] {
         assert!(!src.contains(no), "chimera-board/src/bank2.rs names {no}");
     }
-    for (lit, v) in hex_literals(&src) {
-        assert!(v < S4, "chimera-board/src/bank2.rs has {lit}, past S3");
-    }
     // Not vacuous: the driver is here and goes through bank 2's block.
     for yes in [
         "bank2()",
@@ -91,4 +90,54 @@ fn the_scan_catches_what_it_forbids() {
             ("0xb2".to_string(), 0xb2)
         ]
     );
+}
+
+#[test]
+fn no_literal_past_bank_2() {
+    for (lit, v) in hex_literals(SRC) {
+        assert!(
+            !(BANK2_END..REGS).contains(&v),
+            "chimera-board/src/bank2.rs has {lit}, past bank 2"
+        );
+    }
+}
+
+/// From `at` to the end of its fn: the first `}` at an indent of 0 or 4.
+fn rest_of_fn(src: &str, at: usize) -> &str {
+    let end = ["\n}\n", "\n    }\n"]
+        .iter()
+        .filter_map(|c| src[at..].find(c))
+        .min()
+        .map_or(src.len(), |e| at + e);
+    &src[at..end]
+}
+
+/// Each masked read (review B2, N3): `cpsid f` is followed in its own fn by
+/// BFHFNMIGN cleared, then `cpsie f`, and only then SR2's ECC flags read
+/// and cleared, so a pended fault still sees DBECCERR.
+#[test]
+fn masked_reads_clear_bfhfnmign() {
+    let starts: Vec<usize> = SRC.match_indices("\"cpsid f\"").map(|(i, _)| i).collect();
+    assert!(
+        !starts.is_empty(),
+        "no masked read in chimera-board/src/bank2.rs"
+    );
+    for at in starts {
+        let body = rest_of_fn(SRC, at);
+        let pos = |what: &str| {
+            body.find(what)
+                .unwrap_or_else(|| panic!("masked read at {at} lacks {what}"))
+        };
+        let set = pos("| CCR_BFHFNMIGN");
+        let clear = pos("& !CCR_BFHFNMIGN");
+        let on = pos("\"cpsie f\"");
+        let sr2 = pos("clear_ecc(");
+        assert!(set < clear, "BFHFNMIGN cleared before it is set");
+        assert!(clear < on, "faults unmasked before BFHFNMIGN is cleared");
+        assert!(on < sr2, "SR2 cleared before `cpsie f`");
+        assert!(
+            body[..on].matches("\"cpsid f\"").count() == 1,
+            "one `cpsid f` per masked read"
+        );
+    }
 }

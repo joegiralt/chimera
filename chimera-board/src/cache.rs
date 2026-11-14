@@ -11,9 +11,9 @@ const _: () = assert!(DMA_REGION_RASR == 0x1308_001B);
 const MPU_CTRL: u32 = 0b101;
 
 // Bank 2 (ADR 0137). Region 1 is all of it, 1 MB: no access, XN,
-// strongly-ordered, so nothing reads or speculates into the stock
-// bootloader's slots at 0x08180000+, ever. Region 2, numbered higher so it
-// wins, is ours, S0-S3, in one of `bank2::Mpu2`'s states.
+// strongly-ordered, the floor while region 2 is closed. Region 2, numbered
+// higher so it wins, is all of it too, S0–S7 (the image and the two slot
+// stubs), in one of `bank2::Mpu2`'s states.
 pub(crate) const BANK2_BASE: u32 = 0x0810_0000;
 const XN: u32 = 1 << 28;
 const AP_NONE: u32 = 0b000 << 24;
@@ -26,20 +26,19 @@ const NORMAL_NC: u32 = 0b001 << 19;
 /// TEX 000 C 0 B 0.
 const STRONGLY_ORDERED: u32 = 0;
 const SIZE_1M: u32 = 19 << 1;
-const SIZE_512K: u32 = 18 << 1;
 const ENABLE: u32 = 1;
 const BANK2_ALL_RASR: u32 = XN | AP_NONE | STRONGLY_ORDERED | SIZE_1M | ENABLE;
 const _: () = assert!(BANK2_ALL_RASR == 0x1000_0027);
 /// Read-only, never executed, never cached: the judge's reads and the
 /// console's `flash` see the flash itself, with no cache maintenance.
-pub(crate) const BANK2_READ_RASR: u32 = XN | AP_RO | NORMAL_NC | SIZE_512K | ENABLE;
-const _: () = assert!(BANK2_READ_RASR == 0x1608_0025);
+pub(crate) const BANK2_READ_RASR: u32 = XN | AP_RO | NORMAL_NC | SIZE_1M | ENABLE;
+const _: () = assert!(BANK2_READ_RASR == 0x1608_0027);
 /// Read-write for the flash interface, never cached nor speculated.
-pub(crate) const BANK2_WRITE_RASR: u32 = XN | AP_RW | STRONGLY_ORDERED | SIZE_512K | ENABLE;
-const _: () = assert!(BANK2_WRITE_RASR == 0x1300_0025);
+pub(crate) const BANK2_WRITE_RASR: u32 = XN | AP_RW | STRONGLY_ORDERED | SIZE_1M | ENABLE;
+const _: () = assert!(BANK2_WRITE_RASR == 0x1300_0027);
 /// Read-only and executable: the door open.
-pub(crate) const BANK2_OPEN_RASR: u32 = AP_RO | NORMAL_WT | SIZE_512K | ENABLE;
-const _: () = assert!(BANK2_OPEN_RASR == 0x0602_0025);
+pub(crate) const BANK2_OPEN_RASR: u32 = AP_RO | NORMAL_WT | SIZE_1M | ENABLE;
+const _: () = assert!(BANK2_OPEN_RASR == 0x0602_0027);
 pub(crate) const BANK2_REGION: u32 = 2;
 
 /// One word per `words`: write a pattern, push it out to the RAM and read it

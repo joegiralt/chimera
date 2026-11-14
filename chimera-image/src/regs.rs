@@ -26,12 +26,15 @@ pub const SR_QW: u32 = 1 << 2;
 const SR_EOP: u32 = 1 << 16;
 /// A read hit a double ECC error.
 pub const SR_DBECCERR: u32 = 1 << 26;
+/// A read's single ECC error, corrected silently.
+pub const SR_SNECCERR: u32 = 1 << 25;
 /// WRPERR, PGSERR, STRBERR, INCERR, OPERR, RDPERR, RDSERR, SNECCERR,
 /// DBECCERR.
 pub const SR_ERRORS: u32 = (0b111 << 17) | (0x3f << 21);
 /// The CCR2 word that clears every error flag and EOP.
 pub const CCR_CLEAR: u32 = SR_ERRORS | SR_EOP;
 const _: () = assert!(SR_ERRORS & SR_DBECCERR != 0);
+const _: () = assert!(SR_ERRORS & SR_SNECCERR != 0);
 
 /// `cr` with sector `s`'s erase set up, START not yet: SER, SNB, PSIZE ×32;
 /// PG, BER, FW and START clear; the rest kept.

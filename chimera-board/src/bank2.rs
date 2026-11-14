@@ -1,19 +1,22 @@
 //! Bank 2 from bank 1 (ADR 0137): the MPU's view of it, its live reads,
-//! its flash controller and the boot's judgement. Only S0-S3
-//! (0x08100000..0x0817FFFF) are ever mapped, erased or programmed; MPU
-//! region 1 keeps sectors 4-7, the stock bootloader's slots, no-access for
-//! good. Only bank 2's own key, control, status and clear registers are
-//! named; their values are `chimera_image::regs`'.
+//! its flash controller and the boot's judgement. Region 2 maps all of it,
+//! S0–S7 (0x08100000..0x081FFFFF): the image, with the stock bootloader's
+//! two slots in S4–S7 holding our stubs. Nothing is written there until the
+//! guard has read each slot as ours, by masked one-word reads. Only bank 2's
+//! own key, control, status and clear registers are named; their values are
+//! `chimera_image::regs`'.
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use chimera_core::bank2::{Bank2Status, DOOR_CELL};
 use chimera_image::regs::{
-    CCR_CLEAR, CR_LOCK, CR_START, ERASE_TIMEOUT_MS, KEYS, SR_DBECCERR, WORD_TIMEOUT_MS, busy,
-    erase_cr, ms_cycles, program_cr, relock_cr, settle,
+    CCR_CLEAR, CR_LOCK, CR_START, ERASE_TIMEOUT_MS, KEYS, SR_DBECCERR, SR_SNECCERR,
+    WORD_TIMEOUT_MS, busy, erase_cr, ms_cycles, program_cr, relock_cr, settle,
 };
+use chimera_image::slot::{SlotForeign, SlotPlan, SlotRead, Word};
 use chimera_image::{
-    BANK2_BASE, Bank2Memory, Bank2Sector, Bank2Word, Flash, FlashFail, ImageRead, ReadFail, Verdict,
+    BANK2_BASE, BANK2_INSTALLING, BANK2_LEN, Bank2Memory, Bank2Sector, Bank2Word, Flash, FlashFail,
+    ImageRead, ReadFail, Slot, SlotSet, Verdict,
 };
 use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::pac;
@@ -65,11 +68,11 @@ pub(crate) fn board_door<R>(f: impl FnOnce(&BoardDoor) -> R) -> Option<R> {
     DOOR_CELL.with_slot(BOARD_SLOT, f)
 }
 
-/// MPU region 2's state over S0-S3; region 1 (no access) is under it.
+/// MPU region 2's state over S0–S7; region 1 (no access) is under it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Mpu2 {
-    /// Region 2 off: S0-S3 no-access, as the rest of bank 2.
+    /// Region 2 off: bank 2 no-access, region 1's floor.
     Closed,
     /// Read-only, never executed: the judge, the console's `flash`. The
     /// state `cache::init` leaves.
@@ -99,7 +102,7 @@ impl Mpu2 {
         }
     }
 
-    /// A load from S0-S3 does not fault.
+    /// A load from bank 2 does not fault (an MPU fault, not ECC's).
     pub fn readable(self) -> bool {
         self != Mpu2::Closed
     }
@@ -173,18 +176,15 @@ fn clear_flags() {
 /// Bank 2 read live: volatile loads through region 2, uncached in `Read`
 /// and `Write`, and in `Open` cached only since the last whole-cache
 /// invalidate (nothing writes bank 2 while it is open); a double ECC error
-/// in SR2 after them is an `Err`. Bounded to S0-S3, and only while region 2
-/// maps them.
+/// in SR2 after them is an `Err`. Bounded to bank 2, and only while region
+/// 2 maps it.
 pub struct FlashRead;
-
-// ponytail: S0-S3 only until Task 8 maps region 2 over the 1 MB bank.
-const READ_LEN: u32 = 512 * 1024;
 
 impl ImageRead for FlashRead {
     fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
         let len = u32::try_from(buf.len()).map_err(|_| ReadFail)?;
         let end = off.checked_add(len).ok_or(ReadFail)?;
-        if end > READ_LEN || !mpu().readable() {
+        if end > BANK2_LEN || !mpu().readable() {
             return Err(ReadFail);
         }
         if len == 0 {
@@ -192,7 +192,7 @@ impl ImageRead for FlashRead {
         }
         let at = BANK2_BASE + off;
         for (a, b) in (at..).zip(buf.iter_mut()) {
-            // SAFETY: `a` is inside S0-S3 (`end <= READ_LEN`), which
+            // SAFETY: `a` is inside bank 2 (`end <= BANK2_LEN`), which
             // region 2 maps readable (`mpu()`); a load never programs or
             // erases flash.
             *b = unsafe { core::ptr::read_volatile(a as *const u8) };
@@ -234,7 +234,7 @@ impl Unlocked {
 
     /// `v` from `erase_cr` or `program_cr`, or either with START.
     fn set_cr(&self, v: u32) {
-        // SAFETY: a CR2 word from `erase_cr` (one of S0-S3) or `program_cr`,
+        // SAFETY: a CR2 word from `erase_cr` (one of S0–S7) or `program_cr`,
         // maybe with START: neither can hold a bank erase.
         bank2().cr.write(|w| unsafe { w.bits(v) });
         cortex_m::asm::dsb();
@@ -264,7 +264,7 @@ fn wait(start: u32, limit: u32) -> Result<(), FlashFail> {
     }
 }
 
-/// Bank 2's flash controller over S0-S3, built only by `new`: the door
+/// Bank 2's flash controller over S0–S7, built only by `new`: the door
 /// closed and region 2 `Write` (strongly-ordered, uncached), so its reads
 /// are live and no cache line holds bank 2 across an erase or program
 /// (`set_mpu` invalidates the whole caches out of `Open`). From the boot or
@@ -311,10 +311,10 @@ impl FlashBank2 {
     }
 
     /// The word at `w` as the flash holds it now.
-    fn word(w: Bank2Word) -> [u32; 8] {
+    fn held(w: Bank2Word) -> [u32; 8] {
         let mut got = [0; 8];
         for (a, x) in (w.get()..).step_by(4).zip(got.iter_mut()) {
-            // SAFETY: an aligned word inside S0-S3 (`Bank2Word`), region 2
+            // SAFETY: an aligned word inside bank 2 (`Bank2Word`), region 2
             // `Write` (`writable`); a load never programs or erases.
             *x = unsafe { core::ptr::read_volatile(a as *const u32) };
         }
@@ -337,8 +337,8 @@ impl ImageRead for FlashBank2 {
 unsafe impl Bank2Memory for FlashBank2 {}
 
 // SAFETY: the registers are bank 2's own (`bank2()`); an erase names a
-// `Bank2Sector` (S0-S3) through `erase_cr`, a program a `Bank2Word`
-// (S0-S3) under `program_cr`; neither can start a bank erase. Each runs
+// `Bank2Sector` (S0–S7) through `erase_cr`, a program a `Bank2Word`
+// (inside bank 2) under `program_cr`; neither can start a bank erase. Each runs
 // only with region 2 `Write` and the door closed, and returns `Ok` only
 // once SR2 shows the op done with no error flag.
 unsafe impl Flash for FlashBank2 {
@@ -359,7 +359,7 @@ unsafe impl Flash for FlashBank2 {
     /// then WBNE and QW polled against `WORD_TIMEOUT_MS`.
     fn program(&mut self, w: Bank2Word, data: &[u8; 32]) -> Result<(), FlashFail> {
         self.ready()?;
-        if Self::word(w) != [u32::MAX; 8] {
+        if Self::held(w) != [u32::MAX; 8] {
             return Err(FlashFail::NotErased);
         }
         let u = Unlocked::new()?;
@@ -368,7 +368,7 @@ unsafe impl Flash for FlashBank2 {
         let (words, _) = data.as_chunks::<4>();
         for (a, &b) in (w.get()..).step_by(4).zip(words) {
             let x = u32::from_le_bytes(b);
-            // SAFETY: an aligned word of a flash word in S0-S3
+            // SAFETY: an aligned word of a flash word in bank 2
             // (`Bank2Word`), region 2 `Write`, CR2.PG set: the store fills
             // bank 2's write buffer, eight make one 256-bit word.
             unsafe { core::ptr::write_volatile(a as *mut u32, x) };
@@ -378,20 +378,152 @@ unsafe impl Flash for FlashBank2 {
     }
 }
 
+/// SCB_CCR.BFHFNMIGN: at FAULTMASK's priority, a precise data bus fault is
+/// ignored and its load returns.
+const CCR_BFHFNMIGN: u32 = 1 << 8;
+
+/// SR2's ECC flags, read and then cleared: (double, single corrected).
+fn clear_ecc() -> (bool, bool) {
+    let s = sr();
+    // SAFETY: CCR2's two ECC clear bits only.
+    bank2()
+        .ccr
+        .write(|w| unsafe { w.bits(SR_DBECCERR | SR_SNECCERR) });
+    (s & SR_DBECCERR != 0, s & SR_SNECCERR != 0)
+}
+
+/// The guard's reads (spec § 3.2): one 32-byte word, masked. Region 2 must
+/// be `Write` (strongly-ordered, uncached: the load reaches the flash, so
+/// its flags are its own). FAULTMASK, then CCR.BFHFNMIGN, the eight loads,
+/// BFHFNMIGN cleared, `cpsie f`; only then SR2's ECC flags are read and
+/// cleared, so a fault the mask did not swallow (pended, not precise) still
+/// finds DBECCERR in the HardFault handler, which resets on the caller's
+/// slot mark. The mask spans this one word, never the scan.
+impl SlotRead for FlashBank2 {
+    fn word(&mut self, addr: u32) -> Word {
+        let w = Bank2Word::new(addr).expect("a guard read inside bank 2");
+        assert_eq!(mpu(), Mpu2::Write);
+        clear_flags();
+        // SAFETY: SCB's fixed block; only its CCR is touched, here, from
+        // the boot or the UI loop, never an interrupt.
+        let scb = unsafe { &*cortex_m::peripheral::SCB::PTR };
+        let mut got = [0u32; 8];
+        // SAFETY: FAULTMASK and CCR.BFHFNMIGN are set for eight loads of
+        // one aligned word inside bank 2 (`Bank2Word`), which region 2 maps
+        // `Write`, and cleared again in this block: no other code runs
+        // masked. A load never programs or erases. Under them a precise bus
+        // fault (a double ECC error) is ignored and the load returns.
+        unsafe {
+            core::arch::asm!("cpsid f", options(nostack, preserves_flags));
+            scb.ccr.modify(|c| c | CCR_BFHFNMIGN);
+            cortex_m::asm::dsb();
+            cortex_m::asm::isb();
+            for (a, x) in (w.get()..).step_by(4).zip(got.iter_mut()) {
+                *x = core::ptr::read_volatile(a as *const u32);
+            }
+            cortex_m::asm::dsb();
+            scb.ccr.modify(|c| c & !CCR_BFHFNMIGN);
+            cortex_m::asm::dsb();
+            cortex_m::asm::isb();
+            core::arch::asm!("cpsie f", options(nostack, preserves_flags));
+        }
+        let (ecc, corrected) = clear_ecc();
+        let mut bytes = [0u8; 32];
+        for (b, x) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(got) {
+            *b = x.to_le_bytes();
+        }
+        Word {
+            bytes,
+            ecc,
+            corrected,
+        }
+    }
+}
+
+/// `flash`'s masked reads with BKP14R `guard_marks(ours, s)` written before
+/// slot `s`'s first: a fault the mask misses resets into a boot that takes
+/// `s` as ours, unread.
+struct Marked<'a> {
+    rtc: &'a pac::rtc::RegisterBlock,
+    flash: &'a mut FlashBank2,
+    ours: SlotSet,
+    reading: Option<Slot>,
+}
+
+impl SlotRead for Marked<'_> {
+    fn word(&mut self, addr: u32) -> Word {
+        let s = Slot::ALL
+            .into_iter()
+            .find(|s| (s.base()..=s.marker_addr()).contains(&addr))
+            .expect("a guard read inside a slot");
+        if self.reading != Some(s) {
+            self.reading = Some(s);
+            crate::dfu::set_bank2_mark(self.rtc, chimera_image::guard_marks(self.ours, s));
+            // The mark lands before the read it covers.
+            cortex_m::asm::dsb();
+        }
+        self.flash.word(addr)
+    }
+}
+
+/// The slot guard before an install (spec § 3.2), `ours` taken unread (the
+/// boot's slot mark). BKP14R: each slot's mark before its reads, then
+/// `BANK2_INSTALLING` back for the install. Refused: BKP14R 0 and region 2
+/// `Read` (`after_refusal`), so nothing can be written.
+#[cfg(feature = "bank2")]
+#[cfg_attr(feature = "sd-probe", allow(dead_code))]
+pub(crate) fn slot_guard(
+    rtc: &pac::rtc::RegisterBlock,
+    flash: &mut FlashBank2,
+    ours: SlotSet,
+) -> Result<SlotPlan, SlotForeign> {
+    let mut m = Marked {
+        rtc,
+        flash,
+        ours,
+        reading: None,
+    };
+    let r = chimera_image::slot::guard(&mut m, ours);
+    match r {
+        Ok(_) => crate::dfu::set_bank2_mark(rtc, BANK2_INSTALLING),
+        Err(_) => {
+            crate::dfu::set_bank2_mark(rtc, 0);
+            after_refusal();
+        }
+    }
+    r
+}
+
+/// After the guard refused: region 2 `Read`, so `FlashBank2` refuses every
+/// erase and program (`writable`).
+#[cfg(feature = "bank2")]
+#[cfg_attr(feature = "sd-probe", allow(dead_code))]
+pub(crate) fn after_refusal() -> Mpu2 {
+    set_mpu(Mpu2::Read);
+    mpu()
+}
+
 /// Bank 2 as the boot left it.
 pub struct Bank2Boot {
     pub status: Bank2Status,
     /// Flash's verdict, when the boot may install the staged file over it;
     /// `None`: unsealed, or bank 2 marked and not to be installed this boot.
     pub install_over: Option<Verdict>,
+    /// The slots a slot mark said a guard read faulted in: the install's
+    /// guard takes them as ours, unread.
+    pub ours: SlotSet,
 }
 
 /// The boot's bank-2 step, before anything reads bank 2: BKP14R's mark
-/// first (`boot_action`). A mark erases S0 (erase clears its ECC), then
-/// clears the mark, and bank 2 is `Empty` by construction: nothing of it is
-/// read that boot, so a word that faults even after its erase can't loop
-/// the boot. A failed erase keeps the mark and leaves bank 2 closed. No
-/// mark: the judge; on `Good`, region 2 `Open`, the door cell opened and
+/// first (`boot_action`). `BANK2_BAD` or `BANK2_INSTALLING` erases S0
+/// (erase clears its ECC), then clears the mark, and bank 2 is `Empty` by
+/// construction: nothing of it is read that boot, so a word that faults
+/// even after its erase can't loop the boot. A failed erase keeps the mark
+/// and leaves bank 2 closed. A slot mark is taken into `ours` and BKP14R
+/// cleared before the judge: a judge fault then marks `BANK2_BAD` (the next
+/// boot erases S0) instead of repeating this boot, and a boot that installs
+/// nothing leaves no stale mark to let a later install skip a refilled
+/// slot's guard. Then, as with no mark, the judge; on `Good`, region 2 `Open`, the door cell opened and
 /// the door checked; SR2's flags cleared after, so a stale DBECCERR can't
 /// make a later, unrelated bus fault reset. The cycle counter must already
 /// run: it bounds the erase.
@@ -402,23 +534,34 @@ pub fn boot_judge(rtc: &pac::RTC, cpu_hz: u32) -> Bank2Boot {
     let closed = |status| Bank2Boot {
         status,
         install_over: None,
+        ours: SlotSet::NONE,
     };
     let action = boot_action(crate::dfu::bank2_mark(rtc));
-    if action != BootAction::Judge {
-        let erased = FlashBank2::new(cpu_hz).erase(Bank2Sector::S0);
-        set_mpu(Mpu2::Read);
-        if let Err(f) = erased {
-            return closed(Bank2Status::EccEraseFailed(f));
+    let ours = match action {
+        BootAction::Judge => SlotSet::NONE,
+        BootAction::InstallSlotsOurs(set) => {
+            crate::dfu::set_bank2_mark(rtc, 0);
+            // Cleared before the judge's first read.
+            cortex_m::asm::dsb();
+            set
         }
-        crate::dfu::set_bank2_mark(rtc, 0);
-        if crate::bank2_seal().is_none() {
-            return closed(Bank2Status::Unsealed);
+        BootAction::EraseS0ThenJudge | BootAction::EraseS0NoInstall => {
+            let erased = FlashBank2::new(cpu_hz).erase(Bank2Sector::S0);
+            set_mpu(Mpu2::Read);
+            if let Err(f) = erased {
+                return closed(Bank2Status::EccEraseFailed(f));
+            }
+            crate::dfu::set_bank2_mark(rtc, 0);
+            if crate::bank2_seal().is_none() {
+                return closed(Bank2Status::Unsealed);
+            }
+            return Bank2Boot {
+                status: Bank2Status::Empty,
+                install_over: action.after_erase(),
+                ours: SlotSet::NONE,
+            };
         }
-        return Bank2Boot {
-            status: Bank2Status::Empty,
-            install_over: action.after_erase(),
-        };
-    }
+    };
     let Some(seal) = crate::bank2_seal() else {
         return closed(Bank2Status::Unsealed);
     };
@@ -427,6 +570,7 @@ pub fn boot_judge(rtc: &pac::RTC, cpu_hz: u32) -> Bank2Boot {
     Bank2Boot {
         status,
         install_over: Some(flash),
+        ours,
     }
 }
 
@@ -436,11 +580,12 @@ pub fn boot_judge(_: &pac::RTC, _: u32) -> Bank2Boot {
     Bank2Boot {
         status: Bank2Status::Unsealed,
         install_over: None,
+        ours: SlotSet::NONE,
     }
 }
 
-/// The HardFault handler's first step: a double ECC error read from S0-S3
-/// (a bus fault, SR2.DBECCERR, FA2R in S0-S3) marks BKP14R and resets.
+/// The HardFault handler's first step: a double ECC error read from bank 2
+/// (a bus fault, SR2.DBECCERR, FA2R in S0–S7) marks BKP14R and resets.
 /// Anything else returns, to the handler's halt. Register reads only, no
 /// HAL object: safe in a fault handler.
 #[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
@@ -506,9 +651,12 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
 /// The boot's install, once the card is mounted and before the project
 /// loads: only if `flash` could take a staged file, `find_staged` picks one
 /// (SYSTEM's, else a `.BK2` dropped in the root) judged `Good` for this
-/// build's seal. Then BKP14R `BANK2_INSTALLING`, DON'T POWER OFF,
-/// `install`, the door, BKP14R cleared. A fault meanwhile keeps the mark,
-/// so the next boot installs nothing. No audio yet and no watchdog (it
+/// build's seal. Then BKP14R `BANK2_INSTALLING`, region 2 `Write`, the slot
+/// guard (`ours` unread; its slot marks; `BANK2_INSTALLING` again), DON'T
+/// POWER OFF, `install`, the door, BKP14R cleared. A fault meanwhile keeps
+/// the mark, so the next boot installs nothing (or, from a guard read,
+/// takes that slot as ours). Refused: NOT INSTALLED for 5 s or until a
+/// button is pressed, BKP14R 0, region 2 `Read`, `SlotForeign`. No audio yet and no watchdog (it
 /// arms in step 3): nothing to feed. A failure leaves the file for the
 /// next boot; so does success (nothing renames it), and a boot with flash
 /// `Good` never reads it. `None`: nothing written; else bank 2 as the door
@@ -521,42 +669,75 @@ pub fn boot_install(
     display: &mut impl chimera_hal::ChimeraDisplay,
     marker: &crate::dfu::Marker,
     flash: &Verdict,
+    ours: SlotSet,
+    buttons: chimera_core::board::Hc165Pins,
     cpu_hz: u32,
 ) -> Option<Bank2Status> {
     let seal = crate::bank2_seal()?;
     let (mut staged, h) = chimera_core::console::find_staged(store, flash, &seal)?;
-    marker.bank2_mark(chimera_image::BANK2_INSTALLING);
-    let (_, now) = write_staged(&mut staged, display, &h, &seal, cpu_hz);
+    marker.bank2_mark(BANK2_INSTALLING);
+    let mut bank2 = FlashBank2::new(cpu_hz);
+    let plan = match slot_guard(marker.rtc(), &mut bank2, ours) {
+        Ok(p) => p,
+        Err(SlotForeign(s)) => {
+            chimera_core::ui::installing::refused(display, s);
+            hold_refusal(buttons, cpu_hz);
+            return Some(Bank2Status::SlotForeign(s));
+        }
+    };
+    let (_, now) = write_staged(&mut bank2, &mut staged, display, &h, &seal, &plan);
     marker.bank2_mark(0);
     Some(now)
 }
 
-/// `h`, judged `Good` in `staged`, written into bank 2 behind DON'T POWER
-/// OFF, then the door: the install's result and bank 2 as the door then
-/// judged it. The boot's install and the console's, one copy.
+/// How long the boot shows NOT INSTALLED, unless a button is pressed.
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
+const REFUSAL_MS: u32 = 5_000;
+
+/// NOT INSTALLED held `REFUSAL_MS`, or until a button goes down after all
+/// were up (a button still held from power-on doesn't skip it). Before the
+/// controls tick: the buttons are read directly, every 10 ms.
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
+fn hold_refusal(buttons: chimera_core::board::Hc165Pins, cpu_hz: u32) {
+    const STEP_MS: u32 = 10;
+    let mut up = false;
+    for _ in 0..REFUSAL_MS / STEP_MS {
+        let down = crate::controls::any_button_down(buttons, cpu_hz);
+        if up && down {
+            return;
+        }
+        up |= !down;
+        crate::clocks::delay_us(cpu_hz, STEP_MS * 1000);
+    }
+}
+
+/// `h`, judged `Good` in `staged`, written into bank 2 by `plan` (the
+/// guard's) behind DON'T POWER OFF, then the door: the install's result and
+/// bank 2 as the door then judged it. The boot's install and the console's,
+/// one copy.
 #[cfg(feature = "bank2")]
 #[cfg_attr(feature = "sd-probe", allow(dead_code))]
 #[inline(never)]
 fn write_staged(
+    flash: &mut FlashBank2,
     staged: &mut impl ImageRead,
     display: &mut impl chimera_hal::ChimeraDisplay,
     h: &chimera_image::Header,
     seal: &chimera_image::Seal,
-    cpu_hz: u32,
+    plan: &SlotPlan,
 ) -> (
     Result<chimera_image::Header, chimera_image::InstallFail>,
     Bank2Status,
 ) {
-    let mut flash = FlashBank2::new(cpu_hz);
     chimera_core::ui::installing::draw(display, h.version.as_str());
     let mut buf = [0u8; 512];
     let mut shown = Shown {
         d: display,
         at: chimera_image::Phase::Erasing,
         #[cfg(feature = "bank2-gate")]
-        cpu_hz,
+        cpu_hz: flash.cpu_hz,
     };
-    let r = chimera_image::install_with(&mut flash, staged, seal, &mut buf, &mut shown);
+    let r = chimera_image::install_with(flash, staged, seal, &mut buf, &mut shown, plan);
     let now = open_door(seal).0;
     // As the boot's judge: no stale DBECCERR left to read a later bus fault
     // as bank 2's.
@@ -685,9 +866,11 @@ pub fn run_erase(
 
 /// `bank2 install`, from the UI loop before its answer starts. The staged
 /// file is judged first; unless that refuses it (an open bank 2 always
-/// refuses: the door is closed here, TAPE silent), region 2 goes `Write`,
-/// DON'T POWER OFF goes up and the file is
-/// written while the audio plays from bank 1. Then `open_door` judges and
+/// refuses: the door is closed here, TAPE silent), BKP14R
+/// `BANK2_INSTALLING`, region 2 `Write` and the slot guard, as the boot's
+/// (a slot that isn't ours refuses `SlotForeign`, nothing written, region 2
+/// `Read`); then DON'T POWER OFF goes up and the file is written while the
+/// audio plays from bank 1, BKP14R cleared after. Then `open_door` judges and
 /// checks bank 2 again: open, or region 2 `Read` and the cell closed. The
 /// caller redraws the whole screen after.
 #[cfg(all(feature = "bank2", feature = "usb-console"))]
@@ -725,7 +908,21 @@ pub fn run_install(
     // `check_staged` refuses a write while open (`Good` there is this seal,
     // so `Already`): TAPE has nothing sounding to let go.
     debug_assert!(!DOOR_CELL.is_open());
-    let (r, now) = write_staged(&mut staged, display, &h, &seal, cpu_hz);
+    // SAFETY: the RTC's fixed register block, BKP14R only: bank 2's mark,
+    // which only this module and the HardFault handler (which resets
+    // after) write; `Marker` writes other backup registers.
+    let rtc = unsafe { &*pac::RTC::ptr() };
+    crate::dfu::set_bank2_mark(rtc, BANK2_INSTALLING);
+    let mut bank2 = FlashBank2::new(cpu_hz);
+    let plan = match slot_guard(rtc, &mut bank2, SlotSet::NONE) {
+        Ok(p) => p,
+        Err(SlotForeign(s)) => {
+            ui.set_bank2(Bank2Status::SlotForeign(s));
+            return refuse(Bank2Refusal::SlotForeign(s));
+        }
+    };
+    let (r, now) = write_staged(&mut bank2, &mut staged, display, &h, &seal, &plan);
+    crate::dfu::set_bank2_mark(rtc, 0);
     ui.set_bank2(now);
     let after = audio();
     let audio = Bank2Audio {

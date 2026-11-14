@@ -23,8 +23,8 @@ pub struct FlashRegs {
     pub banks: [BankRegs; 2],
 }
 
-/// Where `FlashPeek`'s words come from: bank 2's start. The bootloader's
-/// slot at 0x08180000 is never read: the MPU makes it no-access (ADR 0137).
+/// Where `FlashPeek`'s words come from: bank 2's start, S0. It never peeks
+/// at the slots (0x08180000+); only the install's guard reads them.
 pub const PEEK_AT: u32 = 0x0810_0000;
 
 /// The first 32 bytes at `PEEK_AT`, then SR1 and SR2 read after them.
