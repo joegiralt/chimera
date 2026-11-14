@@ -245,3 +245,36 @@ fn the_description_is_the_first_line_not_a_comment() {
     assert_eq!(description(b""), b"");
     assert_eq!(description(b"  Bohlen-Pierce  \n13\n"), b"Bohlen-Pierce");
 }
+
+/// `decimal`'s edges as they read today.
+#[test]
+fn decimal_edges() {
+    use chimera_theory::tuning::decimal;
+    let cases: &[(&str, Option<f32>)] = &[
+        ("", None),
+        ("-", None),
+        ("+", None),
+        (".", None),
+        ("-.", None),
+        ("--1", None),
+        ("+-1", None),
+        ("-12.5", Some(-12.5)),
+        ("+3", Some(3.0)),
+        (".5", Some(0.5)),
+        ("-.5", Some(-0.5)),
+        ("440.", Some(440.0)),
+        ("1.2.3", None),
+        ("1..2", None),
+        ("1.2a", None),
+        ("1 ", None),
+        ("123456789", Some(123_456_789.0)),
+        ("1234567890", None),
+        ("0.5000000001", Some(0.5)),
+    ];
+    for &(w, want) in cases {
+        assert_eq!(decimal(w.as_bytes()), want, "{w:?}");
+    }
+    // Past nine places the fraction is read and dropped, digits only.
+    assert_eq!(decimal(b"1.1234567891"), decimal(b"1.123456789"));
+    assert_eq!(decimal(b"1.123456789x"), None);
+}

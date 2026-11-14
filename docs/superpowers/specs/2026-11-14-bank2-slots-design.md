@@ -159,7 +159,7 @@ These are separate writes, tag word first; the first draft's "two words at once"
 | `Scan`, S5 erased only | marker, erase S4, tag, code (S5's erase skipped: a clean marker before any erase) |
 | `Scan`, neither erased | erase S4, tag, code, erase S5, marker (S4 first) |
 
-`Scan` with S4 erased only is a first install cut during the marker write. Under the pessimistic model, erasing either sector first could leave ECC words beside the torn marker and read foreign, so the tag goes first onto the erased S4. *Residual:* `Scan` with neither sector erased has no clean evidence to keep. It takes three cuts on consecutive installs: a torn first-install marker, then a torn tag program (≤ 260 µs), then a torn erase. Under the pessimistic model that sequence can still read foreign. The whole install is then:
+`Scan` with S4 erased only is a first install cut during the marker write. Under the pessimistic model, erasing either sector first could leave ECC words beside the torn marker and read foreign, so the tag goes first onto the erased S4. *Residual:* `Scan` with neither sector erased has no clean evidence to keep. It takes three cuts on consecutive installs: a torn first-install marker, then a torn tag program (≤ 260 µs), then a torn erase. Under the pessimistic model that sequence can still read foreign. *Residual:* rule (c) assumes S4's body is erased, and with code in S4 (`ed`) it is not. No power-cut sequence reaches (c) then, since every state with that code descends from a clean tag and marker. A torn marker (a cut during S5's erase) plus a retention bit error in the tag word, which then reads corrected rather than clean, does reach it, and is refused as foreign: safe, nothing written, cleared only by the gate build's `bank2 erase slots`. Widening (c) to accept any S4 bytes would let foreign code through. The whole install is then:
 - `slot_guard()` (§ 3.2);
 - erase S0 (the commit word goes first, as now), then S1–S3;
 - the MIXER sequence, then the EDIT sequence;
@@ -173,7 +173,7 @@ A cut at any instant leaves the slot ours by the guard's rule:
 | S5 erase (torn) | old, clean | torn / gone | ours (tag) | old code word → boots |
 | S5 marker write (torn), old S4 | old, clean | torn | ours (tag) | boots |
 | S5 marker write (torn), first install (S4 erased) | erased | torn | ours (§ 3.2 rule c) | hangs, as today |
-| S4 erase (torn or done) | torn / erased | clean | ours (marker) | **hangs**, up to the erase time |
+| S4 erase (torn or done) | torn / erased | clean | ours (marker) | **hangs**, up to the erase time; a torn erase only sets bits, so the code word may now point into S4's code (`ed`): garbage, a power cycle recovers |
 | tag word write (torn) | torn | clean | ours (marker) | hangs |
 | code word write (torn) | clean | clean | ours | hangs, or garbage: a power cycle recovers |
 | after the code word | clean | clean | ours | stub → boots |
