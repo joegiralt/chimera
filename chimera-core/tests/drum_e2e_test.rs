@@ -5,7 +5,8 @@
 //! onset, KIT's band lights every pad a UI frame struck, and the last
 //! struck, pad 12, ends selected. Then two pads struck together both
 //! light, and each stays lit while it sounds and goes dark when it ends
-//! (#950).
+//! (#950). Slice 2 (ADR 0269): FLT's turns set each pad's own filter,
+//! and its hits play it.
 
 mod common;
 mod screen;
@@ -23,7 +24,8 @@ use chimera_core::scope::ScopeWriter;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::DRUM_KIT;
 use chimera_core::{MidiNote, Velocity};
-use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
+use chimera_hal::{BLOCK_SIZE, ButtonId, EncoderId, SAMPLE_RATE};
+use screen::{Input, feed};
 
 const P1: PartId = PartId::ALL[0];
 /// Two seconds of blocks.
@@ -109,6 +111,7 @@ fn drum_end_to_end() {
     let mut d = Desk::new();
     drum_init_plays_its_twelve_pads_from_midi(&mut d);
     pads_stay_lit_while_they_sound(&mut d);
+    pad_filter_from_the_ui(&mut d);
 }
 
 fn drum_init_plays_its_twelve_pads_from_midi(d: &mut Desk) {
@@ -213,4 +216,90 @@ fn pads_stay_lit_while_they_sound(d: &mut Desk) {
     let longest = lit_frames.into_iter().max().unwrap();
     assert!(longest >= 10, "a pad lit only {lit_frames:?} frames");
     assert_eq!(d.lit(), 0, "dark once they end");
+}
+
+/// Turns `e` a tick at a time while `at` comes nearer `want`: the cell's
+/// nearest step.
+fn turn_to(d: &mut Desk, e: EncoderId, want: f32, at: impl Fn(&UiState) -> f32) {
+    let off = |ui: &UiState| (at(ui) / want).log2().abs();
+    for dir in [1i8, -1] {
+        for _ in 0..400 {
+            let before = off(&d.ui);
+            feed(&mut d.ui, Input::turn(e, dir));
+            if off(&d.ui) >= before {
+                feed(&mut d.ui, Input::turn(e, -dir));
+                break;
+            }
+        }
+    }
+}
+
+/// On FLT, pad 1 to LADDER at 300 Hz; MIX + PLUS, pad 2's CUTOFF to
+/// 4000 Hz. Notes 0 and 1 play those, and the Sound's filter is left.
+fn pad_filter_from_the_ui(d: &mut Desk) {
+    use chimera_core::dsp::drum::sound::PadFilter;
+    use chimera_core::dsp::filter::FilterKind;
+    use chimera_core::ui::block_registry::DRUM_FLT;
+    d.fresh_audio();
+    d.ui.select_pad(P1, PadId::ALL[0]);
+    feed(&mut d.ui, Input::press(ButtonId::Plus));
+    feed(&mut d.ui, Input::press(ButtonId::Plus));
+    assert_eq!(d.ui.page_def().id, DRUM_FLT.id, "on FLT");
+    let sound = PadFilter::of(&d.ui.project().part(P1).sound.params.filter);
+    let flt = |ui: &UiState, n: usize| *ui.project().kit(P1).pad(PadId::ALL[n]).sound().filter();
+
+    for _ in 0..FilterKind::BUILT.len() {
+        if flt(&d.ui, 0).kind() == FilterKind::Ladder {
+            break;
+        }
+        feed(&mut d.ui, Input::turn(EncoderId::A, 1));
+    }
+    assert_eq!(flt(&d.ui, 0).kind(), FilterKind::Ladder);
+    turn_to(d, EncoderId::F, 300.0, |ui| flt(ui, 0).cutoff().get());
+
+    mix(&mut d.ui, ButtonId::Plus);
+    assert_eq!(d.ui.selected_pad(P1), PadId::ALL[1]);
+    turn_to(d, EncoderId::F, 4000.0, |ui| flt(ui, 1).cutoff().get());
+    d.publish();
+
+    let (p1, p2) = (flt(&d.ui, 0), flt(&d.ui, 1));
+    // FREQ steps 1/24 octave: the nearest is within half a step.
+    for (f, want) in [(p1, 300.0f32), (p2, 4000.0)] {
+        let off = (f.cutoff().get() / want).log2().abs();
+        assert!(off <= 1.0 / 48.0, "{} for {want}", f.cutoff().get());
+    }
+    assert_eq!(p2.kind(), FilterKind::Svf, "pad 2 keeps the Sound's SVF");
+
+    d.note_on(0);
+    d.note_on(1);
+    d.block();
+    for (n, want) in [(0, p1), (1, p2)] {
+        let v = voice_of(d, PadId::ALL[n]);
+        let f = d.inst.voice(v).played_filter();
+        assert_eq!(f.kind(), want.kind(), "pad {}", n + 1);
+        assert_eq!(f.cutoff, want.cutoff().get(), "pad {}", n + 1);
+    }
+    assert_eq!(
+        PadFilter::of(&d.ui.project().part(P1).sound.params.filter),
+        sound,
+        "the Sound's filter is left"
+    );
+}
+
+fn mix(ui: &mut UiState, b: ButtonId) {
+    feed(ui, Input::chord(ButtonId::Mix, b));
+    feed(ui, Input::release(b));
+    feed(ui, Input::release(ButtonId::Mix));
+}
+
+/// The active voice sounding pad `p`'s hit.
+fn voice_of(d: &Desk, p: PadId) -> usize {
+    use chimera_core::dsp::engines::EngineSlot;
+    (0..chimera_core::hw::MAX_VOICES)
+        .find(|&v| {
+            let voice = d.inst.voice(v);
+            voice.is_active()
+                && matches!(voice.slot(), EngineSlot::Drum(dr) if dr.hit().is_some_and(|h| h.pad() == p))
+        })
+        .expect("a voice sounds the pad")
 }

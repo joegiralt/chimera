@@ -36,7 +36,8 @@ Slice 1 (ADR 0265) gave a DRUM Part a kit of 12 pads, each with a machine, eight
 ## Consequences
 - Each pad shapes its own sound; every non-DRUM Sound sounds exactly as before (goldens, drum nulls). A slice-1 kit did too until the VEL ruling, its one deliberate change: its hits' level follows the pad's VEL law (the fixture's VEL 0.6, `drum_slice1_kit` re-recorded); at VEL 1 it renders slice 1 bit for bit (`drum_slice1_vel_test`).
 - `Pad`, `Kit` and `DrumHit` grow: a hit copies ~80 B, so `DrumHit` is passed by reference on the stack-checked path.
-- ITCM's free room falls to ~38 KB.
+- ITCM's free room falls to 48,480 B (measured below; the ~51 KB free before was an underestimate).
+- **Measured at the slice's end** (ORBIT release build, `just check` green): bank 1 877,532 B, +19,720 B over slice 1's 857,812 (over the +9–14 KB estimate: the pad pages, cells and live follow cost more than the types), 39,972 B under the 917,504 B SD-flash limit; bank 2 515,712 B of 524,288, 8,576 B free; `.itcm` 16,032 B of 64,512 (`Kits` 5,828 + `KIT_VIEW` 10,200), 48,480 B free; stack, nested, ORBIT 62,840 B and default 62,592 B of the 63,232 B line.
 - The pad's routes and LFO are a second, smaller modulation layer beside the Part's: the Part's MTX still reaches the overlaid filter and VCA.
 
 ## Sources
