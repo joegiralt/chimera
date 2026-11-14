@@ -159,7 +159,7 @@ These are separate writes, tag word first; the first draft's "two words at once"
 | `Scan`, S5 erased only | marker, erase S4, tag, code (S5's erase skipped: a clean marker before any erase) |
 | `Scan`, neither erased | erase S4, tag, code, erase S5, marker (S4 first) |
 
-`Scan` with S4 erased only is a first install cut during the marker write. Under the pessimistic model, erasing either sector first could leave ECC words beside the torn marker and read foreign, so the tag goes first onto the erased S4. *Residual:* `Scan` with neither sector erased has no clean evidence to keep. It takes two cuts in a row to reach it: a torn tag program (≤ 260 µs) on top of a torn marker, and then a torn erase. Under the pessimistic model that sequence can still read foreign. The whole install is then:
+`Scan` with S4 erased only is a first install cut during the marker write. Under the pessimistic model, erasing either sector first could leave ECC words beside the torn marker and read foreign, so the tag goes first onto the erased S4. *Residual:* `Scan` with neither sector erased has no clean evidence to keep. It takes three cuts on consecutive installs: a torn first-install marker, then a torn tag program (≤ 260 µs), then a torn erase. Under the pessimistic model that sequence can still read foreign. The whole install is then:
 - `slot_guard()` (§ 3.2);
 - erase S0 (the commit word goes first, as now), then S1–S3;
 - the MIXER sequence, then the EDIT sequence;
