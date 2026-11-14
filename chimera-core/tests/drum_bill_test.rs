@@ -1,21 +1,29 @@
 //! DRUM slice 2 (ADR 0269): a DRUM hit is billed for its kit's pads'
 //! filters and mods, not its Sound's filter.
 //!
+//! A hit bills its pad's machine; a Part's bill, its kit's costliest
+//! (#951).
+//!
 //! The kits reach the audio through one global view (`KIT_VIEW`): every
 //! test holds its writer for its whole run, so they play one at a time.
 
+mod common;
+
 use std::sync::{LazyLock, Mutex};
 
+use chimera_core::MidiChannel;
+use chimera_core::budget::CONTROL_RESERVE;
 use chimera_core::dsp::drum::sound::{
     Amount, KitBill, PAD_AMP_COST, PAD_ROUTED_COST, PadRoute, PadSound, RouteDest, RouteId,
     RouteSource, kit_bill,
 };
-use chimera_core::dsp::drum::types::{Kit, PadId};
+use chimera_core::dsp::drum::types::{Kit, Machine, PadId};
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
 use chimera_core::dsp::filter::FilterKind;
+use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::lpg::{self, LPG_COST};
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::Cost;
+use chimera_core::hw::{CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::project::PartId;
@@ -35,8 +43,12 @@ fn cost(p: &ParamSnapshot) -> Cost {
     Voice::cost(p, &ModState::new())
 }
 
+/// `kit`'s bill on `p` at `Voice::cost`'s kernel, the costliest machine,
+/// so its filter and mods compare with `cost`'s.
 fn drum(p: &ParamSnapshot, kit: &Kit) -> Cost {
-    Voice::drum_cost(p, &ModState::new(), kit_bill(kit))
+    let b = kit_bill(kit);
+    let c = Voice::drum_cost(p, &ModState::new(), b);
+    Cost(c.0 + Machine::MAX_COST.0 - b.kernel().0)
 }
 
 /// `p` as its pad plays it: the same Sound on the pad's kind.
@@ -214,4 +226,121 @@ fn the_sounds_shape_bills_only_before_a_publish() {
     // Published: the pads' CLEAN, not the Sound's masked LADDER.
     assert_eq!(drum(&p, &Kit::DEFAULT), cost(&as_kind(&p, FilterKind::Svf)));
     assert!(drum(&p, &Kit::DEFAULT) < cost(&p));
+}
+
+/// Each machine's whole voice over idle on the unit, INIT DRUM's pad struck
+/// alone (9c2cfd1d, 2026-11-14), or its estimate where the unit read low
+/// or never played it (`Machine::cost`).
+const READ: [(Machine, u32); 12] = [
+    (Machine::ToneKick, 800),
+    (Machine::ToneSnare, 800),
+    (Machine::ToneTom, 700),
+    (Machine::ToneClap, 600),
+    (Machine::ToneCowbell, 1400),
+    (Machine::ToneCymbal, 1400),
+    (Machine::MetalHat, 1400),
+    (Machine::MetalJingle, 1600),
+    (Machine::BodyShaker, 700),
+    (Machine::PlainSine, 600),
+    (Machine::PlainNoise, 600),
+    (Machine::PlainImpulse, 1500),
+];
+
+#[test]
+fn every_machine_bills_its_reading() {
+    let p = drum_init();
+    for (m, read) in READ {
+        let mut kit = Kit::DEFAULT;
+        kit.pad_mut(pad(1)).set_machine(m);
+        let b = kit_bill(&kit);
+        let hit = b.hit(Voice::drum_cost(&p, &ModState::new(), b), Some(m));
+        assert!(hit.0 * 10 >= read * 11, "{m:?}: {} for {read} × 1.1", hit.0);
+        assert!(m.cost() <= Machine::MAX_COST);
+    }
+}
+
+#[test]
+fn a_part_bills_its_costliest_machine() {
+    let kicks = {
+        let mut k = Kit::DEFAULT;
+        for id in PadId::ALL {
+            k.pad_mut(id).set_machine(Machine::ToneKick);
+        }
+        k
+    };
+    assert_eq!(kit_bill(&kicks).kernel(), Machine::ToneKick.cost());
+    assert_eq!(
+        kit_bill(&Kit::DEFAULT).kernel(),
+        Machine::PlainImpulse.cost()
+    );
+    let mut one = kicks;
+    one.pad_mut(pad(7)).set_machine(Machine::MetalJingle);
+    assert_eq!(kit_bill(&one).kernel(), Machine::MetalJingle.cost());
+    // No kit read yet: the costliest of all, as `Voice::cost` bills.
+    assert_eq!(KitBill::NONE.kernel(), Machine::MAX_COST);
+    let p = drum_init();
+    assert_eq!(
+        Voice::drum_cost(&p, &ModState::new(), KitBill::NONE),
+        cost(&p)
+    );
+    // A hit of a cheaper machine bills under its Part.
+    let b = kit_bill(&Kit::DEFAULT);
+    let part = Voice::drum_cost(&p, &ModState::new(), b);
+    assert!(b.hit(part, Some(Machine::ToneKick)) < part);
+    assert_eq!(b.hit(part, Some(Machine::PlainImpulse)), part);
+}
+
+/// INIT DRUM's 12 pads struck 60 ms apart, three times over, on rev V's
+/// budget: the live voices booked never pass it, and the hits sounding,
+/// fading ones too, each at its machine's bill, fit beside the bus and
+/// the control reserve.
+#[test]
+fn init_drum_roll_stays_in_budget() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    for id in PartId::ALL {
+        w.publish(id, &Kit::DEFAULT);
+    }
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+    let mut r = common::InstRig::with_budget(budget);
+    for part in r.shared.parts.iter_mut().skip(1) {
+        part.mix.channel = MidiChannel::new(15).unwrap();
+    }
+    r.shared.parts[0].mix.channel = MidiChannel::new(0).unwrap();
+    *r.shared.parts[0].params = drum_init();
+    let b = kit_bill(&Kit::DEFAULT);
+    let part = Voice::drum_cost(&drum_init(), &ModState::new(), b);
+    let gap = (0.06 * common::SR as f32) as usize / chimera_hal::BLOCK_SIZE;
+    let reserved = FxBus::COST.0 + CONTROL_RESERVE.0;
+    let (mut most, mut struck) = (0, 0);
+    let tail = 4 * common::SR as usize / chimera_hal::BLOCK_SIZE;
+    for blk in 0..36 * gap + tail {
+        if blk % gap == 0 && struck < 36 {
+            r.note_on_vel(0, (struck % 12) as u8, 127);
+            struck += 1;
+        }
+        r.render(1);
+        // A choked or cut hit's fade overlaps its successor (ADR 0027).
+        let live: u32 = r
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| !s.dying())
+            .map(|s| s.cost().0)
+            .sum();
+        assert!(
+            live + reserved <= budget.as_cost().0,
+            "block {blk}: live {live}"
+        );
+        let hits = (0..MAX_VOICES).filter_map(|v| r.inst.voice(v).drum_hit());
+        let (n, sum) = hits.fold((0, reserved), |(n, c), h| {
+            (n + 1, c + b.hit(part, Some(h.params().machine())).0)
+        });
+        assert!(
+            sum <= budget.as_cost().0,
+            "block {blk}: {n} hits bill {sum}"
+        );
+        most = most.max(n);
+    }
+    assert!(most >= 4, "the roll keeps {most} hits");
 }

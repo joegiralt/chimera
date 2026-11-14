@@ -13,6 +13,7 @@ use crate::block::OffsetLaw;
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::drum::engine::DrumEngine;
+use crate::dsp::drum::types::Machine;
 use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeMachine};
 use crate::dsp::va::{VA_OUT_GAIN, VaEngine, VaParams};
@@ -600,8 +601,8 @@ impl EngineSlot {
                     + when(noise_billed(p, mods), VaEngine::noise_cost(p.va.noise_kind))
                     + when(wave_routed(mods), COST_WAVE_MOVE)
             }
-            // private issue #951
-            EngineType::Drum => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
+            // With no kit to read (`Voice::drum_cost` reads one).
+            EngineType::Drum => Machine::MAX_COST,
         }
     }
 }

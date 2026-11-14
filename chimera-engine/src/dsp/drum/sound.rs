@@ -4,7 +4,7 @@
 
 use chimera_midi::value::U7;
 
-use super::types::{Hz, Kit, PadId};
+use super::types::{Hz, Kit, Machine, PadId};
 use crate::block::{DiskCode, ParamId, ParamSpec, find_spec};
 use crate::dsp::Unit;
 use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice};
@@ -930,23 +930,28 @@ impl FilterShape {
 }
 
 /// What a DRUM Part's hit is billed for its kit (`Voice::drum_cost`): the
-/// filter shapes its pads play, those a pad route moves, and its costliest
-/// pad's mods. Any bits are a bill (`from_bits`), so the view needs no build.
+/// filter shapes its pads play, those a pad route moves, its costliest
+/// pad's mods and its costliest machine. Any bits are a bill
+/// (`from_bits`), so the view needs no build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KitBill {
     shapes: u8,
     moving: u8,
+    /// Under 4,096: `PAD_ROUTED_COST` at most.
     mods: u16,
+    /// The costliest machine's `Machine::index` + 1; 0, none read yet.
+    machine: u8,
     /// A pad's LPG, DECAY or STRIKE above 0: the gate runs.
     gated: bool,
 }
 
 impl KitBill {
-    /// No pad: the Sound's filter alone.
+    /// No pad: the Sound's filter alone, the costliest machine.
     pub const NONE: KitBill = KitBill {
         shapes: 0,
         moving: 0,
         mods: 0,
+        machine: 0,
         gated: false,
     };
 
@@ -969,8 +974,22 @@ impl KitBill {
         self.gated
     }
 
+    /// The Part's kernel bill: its costliest machine's `Machine::cost`,
+    /// the costliest of all with no kit read.
+    pub fn kernel(self) -> Cost {
+        let m = Machine::ALL.get(usize::from(self.machine).wrapping_sub(1));
+        m.map_or(Machine::MAX_COST, |m| m.cost())
+    }
+
+    /// `part`, a voice's bill at `kernel`, for a hit of `m`; with none (it
+    /// ended, its key still held), no kernel.
+    pub fn hit(self, part: Cost, m: Option<Machine>) -> Cost {
+        Cost(part.0.saturating_sub(self.kernel().0)) + m.map_or(Cost::ZERO, Machine::cost)
+    }
+
     pub const fn to_bits(self) -> u32 {
-        self.mods as u32
+        self.mods as u32 & 0xfff
+            | (self.machine as u32 & 0xf) << 12
             | (self.shapes as u32) << 16
             | (self.moving as u32) << 24
             | (self.gated as u32) << 31
@@ -978,7 +997,8 @@ impl KitBill {
 
     pub const fn from_bits(b: u32) -> KitBill {
         KitBill {
-            mods: b as u16,
+            mods: b as u16 & 0xfff,
+            machine: (b >> 12) as u8 & 0xf,
             shapes: (b >> 16) as u8 & 0x3f,
             moving: (b >> 24) as u8 & 0x3f,
             gated: b >> 31 != 0,
@@ -986,17 +1006,24 @@ impl KitBill {
     }
 }
 
-/// `kit`'s bill: every pad's filter shape, whether a pad's gate runs, and
-/// the costliest pad's mods.
+/// `kit`'s bill: every pad's filter shape, whether a pad's gate runs, the
+/// costliest pad's mods and the costliest machine.
 pub fn kit_bill(kit: &Kit) -> KitBill {
     PadId::ALL.iter().fold(KitBill::NONE, |b, &p| {
         let s = kit.pad(p).sound();
         let f = FilterShape::of(s.filter.kind, s.filter.voice).bit();
-        let m = u16::try_from(s.mod_cost().0).unwrap_or(u16::MAX);
+        let m = u16::try_from(s.mod_cost().0).unwrap_or(u16::MAX).min(0xfff);
+        let mc = kit.pad(p).machine();
+        let costlier = b.machine == 0 || mc.cost() > b.kernel();
         KitBill {
             shapes: b.shapes | f,
             moving: b.moving | if s.routes.moves_filter() { f } else { 0 },
             mods: b.mods.max(m),
+            machine: if costlier {
+                mc.index() as u8 + 1
+            } else {
+                b.machine
+            },
             gated: b.gated || s.amp.gate != lpg::Knobs::default(),
         }
     })

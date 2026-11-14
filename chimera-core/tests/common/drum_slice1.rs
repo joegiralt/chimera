@@ -30,7 +30,8 @@ pub fn render(edit: impl FnOnce(&mut chimera_core::project::Project)) -> (Vec<f3
         .publish_all(p.kits());
     let mut inst = Box::new(Instrument::new(
         chimera_hal::SAMPLE_RATE,
-        chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
+        // Twice rev V's: every hit fits under any bus; the goldens pin sound, not admission (#951).
+        chimera_core::hw::SampleBudget::for_cpu(2 * chimera_core::hw::CPU_HZ_REV_V),
     ));
     let mut fx = Box::new(FxBus::new());
     let mut dac = Box::new(DacBlocks::new());

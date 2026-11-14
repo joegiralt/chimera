@@ -2016,7 +2016,10 @@ impl Instrument {
             let (q, id, key) = (p as u8, PartId::ALL[p], ev.note);
             let hit = self.choke(id, key);
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
-            let cost = self.costs[p] + if first { Knobs::COST } else { Cost::ZERO };
+            let own = KIT_VIEW
+                .bill(id)
+                .hit(self.costs[p], Some(hit.params().machine()));
+            let cost = own + if first { Knobs::COST } else { Cost::ZERO };
             let reserved = self.reserved();
             let mode = part.mix.mode;
             let Some(v) = self
@@ -2188,8 +2191,15 @@ impl Instrument {
                     + self.streaming[v].looped
                     + high;
                 let k = if first { Knobs::COST } else { Cost::ZERO };
-                self.alloc
-                    .recost_with_glide(v, costs[p] + held + k, glides[p]);
+                // A hit bills its own machine, not its kit's costliest.
+                let id = PartId::ALL[p];
+                let own = if part.params.engine() == EngineType::Drum {
+                    let m = self.hit_of(v, id).map(|h| h.params().machine());
+                    KIT_VIEW.bill(id).hit(costs[p], m)
+                } else {
+                    costs[p]
+                };
+                self.alloc.recost_with_glide(v, own + held + k, glides[p]);
             }
         }
         // Only the bus, the reverb's extra, the knobs' reads and the LFO
@@ -2257,14 +2267,7 @@ impl Instrument {
             if s.part() != Some(q) || s.dying() {
                 continue;
             }
-            let h = match self.waiting[w] {
-                Some(Waiting {
-                    plays: Plays::Hit, ..
-                }) => s.note().map(|n| KIT_VIEW.hit(id, n)),
-                Some(_) => None,
-                None => self.voices[w].drum_hit().filter(|_| self.sounding[w] == q),
-            };
-            let Some(h) = h else {
+            let Some(h) = self.hit_of(w, id) else {
                 continue;
             };
             let ends = if h.pad() == pad {
@@ -2278,6 +2281,21 @@ impl Instrument {
             }
         }
         hit
+    }
+
+    /// The hit voice `w`, booked by DRUM Part `id`, plays: the one
+    /// waiting out its fade as its pad's in the kit now, else the one
+    /// sounding.
+    fn hit_of(&self, w: usize, id: PartId) -> Option<DrumHit> {
+        match self.waiting[w] {
+            Some(Waiting {
+                plays: Plays::Hit, ..
+            }) => self.alloc.slots()[w].note().map(|n| KIT_VIEW.hit(id, n)),
+            Some(_) => None,
+            None => self.voices[w]
+                .drum_hit()
+                .filter(|_| self.sounding[w] == id.index() as u8),
+        }
     }
 
     /// Every sounding voice of Part `q` fades out, as a shed one does:

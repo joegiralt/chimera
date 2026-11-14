@@ -8,6 +8,7 @@ use crate::MidiNote;
 use crate::block::DiskCode;
 use crate::dsp::tape_engine::params::Retrig;
 use crate::dsp::{Unit, clampf};
+use crate::hw::Cost;
 
 /// Pads in a kit.
 const PADS: u8 = 12;
@@ -250,6 +251,45 @@ impl Machine {
             Machine::PlainSine | Machine::PlainNoise | Machine::PlainImpulse => Kernel::Plain,
         }
     }
+
+    /// Cycles/sample of its kernel (#951): a hit's `EngineSlot::cost`.
+    /// Each is INIT DRUM's pad struck alone on the unit, whole voice over
+    /// idle × 1.1 by ADR 0056's count, less the 83 the rest of INIT DRUM's
+    /// bill holds (chain, AMP, pads' mods). Unit: `stats` load_pct 80 ms
+    /// after a vel-127 strike, 1 % = 100, rev V at 480 MHz, 9c2cfd1d,
+    /// 2026-11-14. load_pct averages its window, so a hit that ended in it
+    /// reads low (*): those, and the machines INIT DRUM doesn't play, are
+    /// placed from desktop release ns per block against measured
+    /// machines, erring high.
+    pub const fn cost(self) -> Cost {
+        Cost(match self {
+            Machine::ToneKick => 797,      // 800 (pad 1)
+            Machine::ToneSnare => 797,     // 800 (pad 2)
+            Machine::ToneTom => 687,       // 700 (pads 5–7)
+            Machine::ToneClap => 577,      // 600 (pad 4)
+            Machine::ToneCowbell => 1457,  // 1400 (pad 11)
+            Machine::ToneCymbal => 1457,   // 1400 (pad 10)
+            Machine::MetalHat => 1457, // 1400 (pad 9, open; closed pad 8 ends inside the window)
+            Machine::MetalJingle => 1677, // est. 1600: unmeasured; desktop 7,000 ns, 1.12 × HAT's 6,250
+            Machine::BodyShaker => 687, // est. 700: pad 12 read 300 *; desktop 1,370 ns, CLAP's 1,360 (600)
+            Machine::PlainSine => 577, // est. 600: unmeasured; desktop 1,100 ns, under CLAP's 1,360 (600)
+            Machine::PlainNoise => 577, // est. 600: unmeasured; desktop 1,090 ns, under CLAP's 1,360 (600)
+            Machine::PlainImpulse => 1567, // est. 1500: pad 3 read 1200 *; desktop 3,320 ns, COWBELL's 3,200 (1400)
+        })
+    }
+
+    /// The costliest `cost`: a DRUM hit's bill with no kit to read.
+    pub const MAX_COST: Cost = {
+        let (mut i, mut m) = (0, 0);
+        while i < Machine::ALL.len() {
+            let c = Machine::ALL[i].cost().0;
+            if c > m {
+                m = c;
+            }
+            i += 1;
+        }
+        Cost(m)
+    };
 }
 
 impl DiskCode for Machine {

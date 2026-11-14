@@ -54,10 +54,7 @@ impl Desk {
         let mut d = Self {
             ui,
             shared: Box::new(AudioShared::default()),
-            inst: Box::new(Instrument::new(
-                SAMPLE_RATE,
-                SampleBudget::for_cpu(CPU_HZ_REV_V),
-            )),
+            inst: Box::new(Instrument::new(SAMPLE_RATE, BUDGET)),
             fx: Box::new(FxBus::new()),
             dac: Box::new(DacBlocks::new()),
             scope: common::scope_writer(),
@@ -94,7 +91,7 @@ impl Desk {
 
     /// A new Instrument, FX bus and DAC: nothing sounding.
     fn fresh_audio(&mut self) {
-        *self.inst = Instrument::new(SAMPLE_RATE, SampleBudget::for_cpu(CPU_HZ_REV_V));
+        *self.inst = Instrument::new(SAMPLE_RATE, BUDGET);
         *self.fx = FxBus::new();
         *self.dac = DacBlocks::new();
     }
@@ -103,6 +100,10 @@ impl Desk {
         self.ui.project().pad_lights(P1).lit().bits()
     }
 }
+
+/// Twice rev V's: all 12 pads at once, a block apart, must sound here;
+/// `drum_bill_test` pins what fits rev V (#951).
+const BUDGET: SampleBudget = SampleBudget::for_cpu(2 * CPU_HZ_REV_V);
 
 /// One test: the kit writer is the process's once, and `KIT_VIEW` is
 /// shared by every Instrument in it.

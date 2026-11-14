@@ -31,7 +31,8 @@ static WRITER: LazyLock<Mutex<KitWriter>> =
 const P1: PartId = PartId::ALL[0];
 
 /// The writer, with every Part on `Kit::DEFAULT` (TONAL OFF) but Part 1, which plays `kit`; and a rig whose Part 1 (channel 1) is DRUM,
-/// the other Parts on channel 16.
+/// the other Parts on channel 16. Twice rev V's budget: these pin how hits
+/// play, eight at once; `drum_bill_test` pins what fits rev V (#951).
 fn rig(kit: &Kit) -> (MutexGuard<'static, KitWriter>, InstRig) {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     for p in PartId::ALL {
@@ -39,7 +40,7 @@ fn rig(kit: &Kit) -> (MutexGuard<'static, KitWriter>, InstRig) {
         let _ = w.take_hit(p);
     }
     w.publish(P1, kit);
-    let mut r = InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
+    let mut r = InstRig::with_budget(SampleBudget::for_cpu(2 * CPU_HZ_REV_V));
     for (i, part) in r.shared.parts.iter_mut().enumerate() {
         part.mix.channel = MidiChannel::new(if i == 0 { 0 } else { 15 }).unwrap();
     }
