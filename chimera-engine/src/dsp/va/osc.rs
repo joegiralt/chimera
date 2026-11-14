@@ -1123,21 +1123,27 @@ impl VarOsc {
         out: &mut [f32; N],
     ) {
         let w = 0.5 - 0.45 * shape.get();
-        // the last sample's `inc` and edge rates, if its width was free
+        // the last sample's `inc` and edge rates, if both its ends were free
         let mut last: Option<(f32, Blk)> = None;
+        let mut was_free = false;
         for (o, &m) in out.iter_mut().zip(m) {
             let inc = self.inc_for(f0 * m);
             let r = pulse_ramps(inc, shape);
             let free = inc <= w;
+            let flat = was_free && free;
             let blk = match last {
                 Some((i, b)) if i == inc => b,
                 _ => {
-                    // the last sample's ends are this one's
-                    self.next_ok = last.is_some() && free;
+                    // free after free: the last sample's end is both ends
+                    if flat {
+                        self.sh[0] = self.sh[1];
+                    }
+                    self.next_ok = flat;
                     self.block::<false, false>(&r, 1, 1.0)
                 }
             };
-            last = free.then_some((inc, blk));
+            last = flat.then_some((inc, blk));
+            was_free = free;
             *o = self.pulse_run(&r, &blk);
         }
     }

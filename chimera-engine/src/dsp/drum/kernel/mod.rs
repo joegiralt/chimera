@@ -97,8 +97,9 @@ impl KernelState {
         self.render_with::<false>(out);
     }
 
-    /// `render` with METAL's squares a sample at a time, as they played
-    /// before their block render: the null test's reference.
+    /// `render` with METAL's squares and PLAIN IMPULSE's pulse a sample at
+    /// a time, as they played before their block render: the null test's
+    /// reference.
     #[cfg(any(test, feature = "test-support"))]
     pub fn render_ticked(&mut self, out: &mut Blk) {
         self.render_with::<true>(out);
@@ -111,7 +112,7 @@ impl KernelState {
             KernelState::Tone(k) => k.render(out),
             KernelState::Metal(k) => k.render::<TICKED>(out),
             KernelState::Burst(k) => k.render(out),
-            KernelState::Plain(k) => k.render(out),
+            KernelState::Plain(k) => k.render::<TICKED>(out),
         }
         for o in out.iter_mut() {
             *o = ceiling(*o);

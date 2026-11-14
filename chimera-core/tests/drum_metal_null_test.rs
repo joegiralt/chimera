@@ -1,7 +1,8 @@
-//! METAL's squares a block at a time null against their old render, a
-//! sample at a time (`render_ticked`): HAT closed and open, CYMBAL,
-//! COWBELL and JINGLE, at their defaults, their knobs' ends and the keys'
-//! ends. Bit-identical, or under −120 dB.
+//! METAL's squares and PLAIN IMPULSE's pulse a block at a time null
+//! against their old render, a sample at a time (`render_ticked`): HAT
+//! closed and open, CYMBAL, COWBELL, JINGLE and IMPULSE, at their
+//! defaults, their knobs' ends and the keys' ends. Bit-identical, or under
+//! −120 dB.
 
 use chimera_core::Velocity;
 use chimera_core::dsp::drum::kernel::KernelState;
@@ -90,6 +91,11 @@ fn metal_block_squares_null_against_ticked() {
             "JINGLE",
             Machine::MetalJingle,
             vec![KnobSet::defaults(Machine::MetalJingle), all(0), all(127)],
+        ),
+        (
+            "IMPULSE",
+            Machine::PlainImpulse,
+            vec![KnobSet::defaults(Machine::PlainImpulse), all(0), all(127)],
         ),
     ];
     for (name, m, sets) in cases {

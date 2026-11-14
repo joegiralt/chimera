@@ -3,6 +3,7 @@
 
 use crate::dsp::Unit;
 use crate::dsp::filter::FilterMode;
+use crate::hw::BLOCK_SIZE;
 
 use super::super::laws::{NoiseTone, PlainParams};
 use super::super::types::Hz;
@@ -70,8 +71,10 @@ impl Plain {
         }
     }
 
+    /// The next block; `TICKED`, the impulse a sample at a time
+    /// (`Pulse::sweep`).
     #[inline(never)]
-    pub(super) fn render(&mut self, out: &mut Blk) {
+    pub(super) fn render<const TICKED: bool>(&mut self, out: &mut Blk) {
         match &mut self.src {
             Source::Sine(b) => {
                 b.block(out, None);
@@ -80,9 +83,11 @@ impl Plain {
                 }
             }
             Source::Impulse { p, f0, oct, sw, hp } => {
-                octaves(sw, *oct, out);
+                let mut m = [0.0; BLOCK_SIZE];
+                octaves(sw, *oct, &mut m);
+                p.sweep::<TICKED>(*f0, &m, out);
                 for o in out.iter_mut() {
-                    *o = -1.2 * p.tick(*f0 * *o);
+                    *o *= -1.2;
                 }
                 hp.run(out);
             }
