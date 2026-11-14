@@ -304,8 +304,10 @@ impl Renderer {
                     let hold = a(1).max(viz::label_floor("H", atk + dec));
                     let total = atk + hold + dec;
                     let end = if a(2) >= 1.0 { 1.0 } else { 0.0 };
-                    viz::envelope(
+                    // Its top clear of the status line's PAD hint.
+                    viz::envelope_from(
                         display,
+                        viz::PLOT_TOP + 8,
                         &[atk / total, hold / total, dec / total],
                         &[0.0, 1.0, 1.0, end],
                         &["A", "H", "D"],
@@ -406,7 +408,16 @@ impl Renderer {
         } else if let Some(h) = f.pickup {
             hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
         } else if Self::focus_hint(f) == view::PAD_HINT {
-            // A pad cell: MIX + -/+ steps the pad, said where the band would.
+            // A pad cell: MIX + -/+ steps the pad, said where the band
+            // would, on the status line's own backing (`viz_status`'s).
+            draw::fill_rect(
+                display,
+                theme::MARGIN_X - 2,
+                theme::HEADER_BOTTOM,
+                hint::width_at(view::PAD_HINT, theme::TextSize::Normal) + 4,
+                viz::PLOT_TOP - theme::HEADER_BOTTOM,
+                theme::BG,
+            );
             hint::draw(
                 display,
                 view::PAD_HINT,

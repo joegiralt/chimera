@@ -162,13 +162,15 @@ where
             theme::FAINT,
         );
     }
-    // The sub-pages' labels own their rows: a node label on the right
-    // they'd run into (DECK's `DECK` into `FLT`) gives way.
-    let reach = branch_reach(chain, at, models, node_x(node, n));
+    // The sub-pages' labels own their rows: a node label they'd run into,
+    // on the right (DECK's `DECK` into `FLT`) or, hanging left, on the
+    // left (DRUM's `PENV` into `AMP`), gives way.
+    let (left, right) = branch_span(chain, at, models, node_x(node, n));
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);
         let mut label = block.map.unwrap_or(block.def.short);
-        if i > node && x - draw::text_width(&theme::FONT_LABEL, label, 0) / 2 < reach {
+        let half = draw::text_width(&theme::FONT_LABEL, label, 0) / 2;
+        if (i > node && x - half < right) || (i < node && x + half > left) {
             label = "";
         }
         if i == node {
@@ -180,11 +182,12 @@ where
     draw_branches(d, chain, at, models, node_x(node, n), branch_scroll_px);
 }
 
-/// The right edge of the labels hanging right of the
-/// current node's trunk; 0 with none, or hanging left.
-fn branch_reach(chain: &ChainDef2, at: PageAt, models: Models, pill_x: i32) -> i32 {
+/// The span the current node's sub-page labels take: `(SCREEN_W, right
+/// edge)` hanging right of the trunk, `(left edge, 0)` hanging left (as
+/// `draw_branches` hangs them), `(SCREEN_W, 0)` with none.
+fn branch_span(chain: &ChainDef2, at: PageAt, models: Models, pill_x: i32) -> (i32, i32) {
     let Some(block) = chain.block_at(at.node() as usize) else {
-        return 0;
+        return (theme::SCREEN_W, 0);
     };
     let count = block.sub_page_count();
     let widest = (0..count)
@@ -198,11 +201,11 @@ fn branch_reach(chain: &ChainDef2, at: PageAt, models: Models, pill_x: i32) -> i
         })
         .max()
         .unwrap_or(0);
-    let right = pill_x - 8 + 6 + widest;
-    if count == 0 || right > theme::SCREEN_W {
-        0
-    } else {
-        right
+    let x = pill_x - 8;
+    match (count, x + 6 + widest > theme::SCREEN_W) {
+        (0, _) => (theme::SCREEN_W, 0),
+        (_, true) => (x - 6 - widest, 0),
+        (_, false) => (theme::SCREEN_W, x + 6 + widest),
     }
 }
 

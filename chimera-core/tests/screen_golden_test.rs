@@ -590,11 +590,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("drum_flt_sem", 0x4f974adf9833c7ef),
     ("drum_flt_hint", 0xccf8e1fb22330f04),
     ("drum_fmd_sem", 0xbbcb0e8e59f85ea9),
-    ("drum_amp", 0x45770f95478512f6),
+    ("drum_amp", 0x8e11c0686f006303),
     ("drum_gate", 0x70c6cd2001f6ba4d),
-    ("drum_penv", 0x7c032e09580c568a),
-    ("drum_plfo", 0x5aa18f4976303bc9),
-    ("drum_route", 0x12a56bc7512ca990),
+    ("drum_penv", 0xd8dd6ea03a79a8f9),
+    ("drum_plfo", 0x4288bb33f5c25535),
+    ("drum_route", 0x63d94ff420faf8b4),
 ];
 
 #[test]
