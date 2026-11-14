@@ -271,7 +271,9 @@ unsafe fn shift_in(
 /// the boot before the tick, which must not be running yet.
 #[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
 pub(crate) fn any_button_down(pins: Hc165Pins, cpu_hz: u32) -> bool {
-    debug_assert!(!READY.load(Ordering::Acquire));
+    if READY.load(Ordering::Acquire) {
+        return false;
+    }
     let base = match pins.port {
         Port::A => GPIOA_BASE,
         Port::F => GPIOF_BASE,
@@ -280,7 +282,7 @@ pub(crate) fn any_button_down(pins: Hc165Pins, cpu_hz: u32) -> bool {
     let pins = (1 << pins.data, 1 << pins.load, 1 << pins.clk);
     // SAFETY: `pins` are the board's HC165 pins (`BoardId::hc165`), which
     // `boot` configured on `base`'s port; the tick is not enabled yet
-    // (`READY` false), so nothing else drives LOAD/CLK.
+    // (`READY` false, checked above), so nothing else drives LOAD/CLK.
     let bits = unsafe { shift_in(regs, pins, cycles_for_ns(cpu_hz, HC165_HALF_PERIOD_NS), 24) };
     BTN_BITS.iter().any(|&m| bits & m == 0)
 }

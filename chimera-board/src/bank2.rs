@@ -426,6 +426,9 @@ impl SlotRead for FlashBank2 {
             cortex_m::asm::dsb();
             cortex_m::asm::isb();
             core::arch::asm!("cpsie f", options(nostack, preserves_flags));
+            // CPS isn't self-synchronising: a pended fault is taken here,
+            // while SR2 still holds its DBECCERR.
+            cortex_m::asm::isb();
         }
         let (ecc, corrected) = clear_ecc();
         let mut bytes = [0u8; 32];
@@ -908,9 +911,10 @@ pub fn run_install(
     // `check_staged` refuses a write while open (`Good` there is this seal,
     // so `Already`): TAPE has nothing sounding to let go.
     debug_assert!(!DOOR_CELL.is_open());
-    // SAFETY: the RTC's fixed register block, BKP14R only: bank 2's mark,
-    // which only this module and the HardFault handler (which resets
-    // after) write; `Marker` writes other backup registers.
+    // SAFETY: the RTC's fixed register block, BKP14R only: bank 2's mark.
+    // Its other writers are the HardFault handler (which resets after) and
+    // `Marker::bank2_mark`, called only by the boot's install, long before
+    // the UI loop runs this; nothing writes it concurrently.
     let rtc = unsafe { &*pac::RTC::ptr() };
     crate::dfu::set_bank2_mark(rtc, BANK2_INSTALLING);
     let mut bank2 = FlashBank2::new(cpu_hz);

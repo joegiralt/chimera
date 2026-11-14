@@ -136,6 +136,10 @@ fn masked_reads_clear_bfhfnmign() {
         assert!(clear < on, "faults unmasked before BFHFNMIGN is cleared");
         assert!(on < sr2, "SR2 cleared before `cpsie f`");
         assert!(
+            body[on..sr2].contains("isb()"),
+            "no `isb` between `cpsie f` and SR2's clear"
+        );
+        assert!(
             body[..on].matches("\"cpsid f\"").count() == 1,
             "one `cpsid f` per masked read"
         );

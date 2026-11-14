@@ -311,7 +311,7 @@ These are run over the USB console with `chimera-usb.py update`, never inside a 
    - 0x08180000–0x081FFFFF read as all 0xFF;
    - bank 2's write-protect bits read through the console's `flash` (`WPSN_CUR2R`: expected 0xFF, nothing protected, as Phase 0a found on 2026-10-11).
 1. **Flash** the 0.4 package from 0.3, which exercises B5's flash-first path. `status` must read `bank2 open … seal=<the package's>`. Log the install time (expected ~10 s, worst ~32 s of erase plus programming), each slot's held-button window (S4's and S6's erase times), and the boot time with flash `Good` (the 1 MB CRC).
-   - **1b. ECC spike** (gate build): create a torn word with gate 6's word pull, or the gate build's deliberate double program if the controller allows it. Read it through the guard's masked read. It must return with DBECCERR set and no fault. If it faults, adopt § 3.2's fallback mark.
+   - **1b. ECC spike** (gate build): create a torn word with gate 6's word pull, or the gate build's deliberate double program if the controller allows it. Read it through the guard's masked read. It must return with DBECCERR set and no fault. If it faults, adopt § 3.2's fallback mark. If it locks up (no HardFault under FAULTMASK), add a boot-time IWDG around the guard as a follow-up; there is none until then.
 2. **Held MIXER at power-on** (owner): Chimera boots to its normal screen, `status` reads open, and audio plays. A stray MIXER press at boot is noted (§ 7).
 3. **Held EDIT at power-on** (owner): the same.
 4. **Cold boot** (power pulled, no button): Chimera, open.
