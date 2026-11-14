@@ -319,7 +319,13 @@ pub fn answer(
             None => Err(Why::Absent(r.command())),
             Some(a) => return super::write_bank2(&a, t.0),
         },
-        Ok(Request::Ed(a)) => return super::ed::answer(a, unit, t.0),
+        // Bank 2's (`EdDoor`): its parse and answer, `OK` or `ERR`.
+        Ok(Request::Ed(line)) => {
+            let ui = unit.ui();
+            return crate::bank2::ed_door(|d| d.answer(&line, ui, &mut t))
+                .unwrap_or_else(|| t.write_str("ERR ed needs bank 2, update the unit\n"))
+                .map_err(|fmt::Error| Stalled);
+        }
         Ok(r @ Request::Key(k)) => queue(unit, r, super::Gesture::Key(k)),
         Ok(r @ Request::Turn(tn)) => queue(unit, r, super::Gesture::Turn(tn)),
         #[cfg(feature = "fault-inject")]

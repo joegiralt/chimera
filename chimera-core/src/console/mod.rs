@@ -66,6 +66,32 @@ impl Arg for Colours {
     }
 }
 
+/// `ed`'s words as they came: bank 2 reads them (`EdDoor`, ADR 0251), so
+/// bank 1 links none of their parse, and refuses none of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EdLine {
+    bytes: [u8; MAX_LINE],
+    len: u8,
+}
+
+impl EdLine {
+    pub fn words(&self) -> Words<'_> {
+        Words {
+            rest: self.bytes.get(..usize::from(self.len)).unwrap_or(&[]),
+        }
+    }
+}
+
+impl Arg for EdLine {
+    const USAGE: &'static str = EdArg::USAGE;
+    fn parse(words: Words<'_>) -> Option<Self> {
+        let mut bytes = [0; MAX_LINE];
+        bytes.iter_mut().zip(words.rest).for_each(|(d, &s)| *d = s);
+        let len = words.rest.len().min(MAX_LINE) as u8;
+        Some(EdLine { bytes, len })
+    }
+}
+
 /// One entry per command: the variant, its argument type, its name and its help line.
 macro_rules! commands {
     ($($(#[$m:meta])* $v:ident ($arg:ty) => $name:literal, $about:literal),+ $(,)?) => {
@@ -129,7 +155,7 @@ macro_rules! table {
             Bank2  (Bank2Arg) => "bank2", "bank 2: its state; bank2 install: the staged file into it",
             Key    (KeyArg)  => "key",    "B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]",
             Turn   (TurnArg) => "turn",   "<encoder 1-6> <delta -64..64>: detents at a hand's pace",
-            Ed     (EdArg)   => "ed",     "editor protocol",
+            Ed     (EdLine)  => "ed",     "editor protocol",
             $($card)*
         }
     };
@@ -241,6 +267,7 @@ impl Console {
 }
 
 mod ed;
+pub(crate) use ed::answer_in as ed_answer_in;
 pub use ed::{EdAddr, EdArg, EdValue};
 mod status;
 pub use status::*;

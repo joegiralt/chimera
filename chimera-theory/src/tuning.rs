@@ -57,7 +57,7 @@ fn word(line: &[u8]) -> &[u8] {
 /// A whole number of up to nine digits: no `FromStr`, whose float and
 /// integer machinery would land in bank 1.
 #[inline(always)]
-fn uint(w: &[u8]) -> Option<u32> {
+pub fn uint(w: &[u8]) -> Option<u32> {
     if w.is_empty() || w.len() > 9 {
         return None;
     }
@@ -73,7 +73,7 @@ fn uint(w: &[u8]) -> Option<u32> {
 
 /// A decimal, `-12.5`, `440.`, `.5` or `440`: up to nine whole digits.
 #[inline(always)]
-fn decimal(w: &[u8]) -> Option<f32> {
+pub fn decimal(w: &[u8]) -> Option<f32> {
     let (neg, w) = match w.split_first() {
         Some((b'-', r)) => (true, r),
         Some((b'+', r)) => (false, r),

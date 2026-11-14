@@ -1,10 +1,12 @@
 //! `ed`: the browser editor's namespace. `ed hello` here; the rest follow.
+//! Bank 2's, behind `EdDoor` (`crate::bank2`, ADR 0251): `bank2.x` links
+//! this module there, so bank 1 keeps only `EdLine` and the door's stub.
 
 use core::fmt::{self, Write};
 
-use super::answer::Text;
-use super::{Arg, Out, PROTOCOL, Stalled, Unit, Word, Words};
-use crate::ui::about_page::write_build_rev;
+use super::{Arg, EdLine, PROTOCOL, WORD_MAX, Word, Words};
+use crate::ui::UiState;
+use crate::ui::about_page::{DIRTY, HASH, VERSION};
 use chimera_engine::block::DiskCode;
 use chimera_engine::params::EngineType;
 
@@ -37,11 +39,21 @@ fn engine(w: &[u8]) -> Option<EngineType> {
         .find(|e| e.disk_ident().as_bytes().eq_ignore_ascii_case(w))
 }
 
-fn value(w: &[u8]) -> EdValue {
-    match core::str::from_utf8(w).ok().and_then(|s| s.parse::<f32>().ok()) {
-        Some(n) if n.is_finite() => EdValue::Num(n),
-        _ => EdValue::Name(Word::new(w)),
+/// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
+/// or a choice's name of at most `WORD_MAX`. `inf` and `nan` are refused,
+/// never names: `Num` is always finite.
+fn value(w: &[u8]) -> Option<EdValue> {
+    if let Some(n) = chimera_theory::tuning::decimal(w) {
+        return Some(EdValue::Num(n));
     }
+    let bare = match w {
+        [b'+' | b'-', rest @ ..] => rest,
+        _ => w,
+    };
+    let not_finite = [&b"inf"[..], b"infinity", b"nan"]
+        .iter()
+        .any(|n| bare.eq_ignore_ascii_case(n));
+    (w.len() <= WORD_MAX && !not_finite).then(|| EdValue::Name(Word::new(w)))
 }
 
 impl Arg for EdArg {
@@ -57,13 +69,15 @@ impl Arg for EdArg {
             EdArg::Unwatch
         } else if is(b"describe") {
             let engine = engine(words.next()?)?;
-            let page = core::str::from_utf8(words.next()?).ok()?.parse().ok()?;
+            let page = chimera_theory::tuning::uint(words.next()?)?
+                .try_into()
+                .ok()?;
             EdArg::Describe { engine, page }
         } else if is(b"get") {
             EdArg::Get(EdAddr::parse(words.next()?)?)
         } else if is(b"set") {
             let a = EdAddr::parse(words.next()?)?;
-            EdArg::Set(a, value(words.next()?))
+            EdArg::Set(a, value(words.next()?)?)
         } else {
             return None;
         };
@@ -84,21 +98,24 @@ impl EdArg {
     }
 }
 
-/// The whole answer, `OK` or `ERR` included.
-pub fn answer(arg: EdArg, unit: &mut impl Unit, out: &mut impl Out) -> Result<(), Stalled> {
-    let mut t = Text(out);
-    let wrote = match arg {
-        EdArg::Hello => hello(unit, &mut t).and_then(|()| t.write_str("OK\n")),
-        other => writeln!(t, "ERR ed {} is not in this build", other.sub()),
-    };
-    wrote.map_err(|fmt::Error| Stalled)
+/// The whole answer, `OK` or `ERR` included: `EdDoor::answer`'s entry.
+pub(crate) fn answer_in(line: &EdLine, ui: &UiState, w: &mut dyn Write) -> fmt::Result {
+    match EdArg::parse(line.words()) {
+        None => writeln!(w, "ERR ed takes {}", EdArg::USAGE),
+        Some(EdArg::Hello) => hello(ui, w).and_then(|()| w.write_str("OK\n")),
+        Some(other) => writeln!(w, "ERR ed {} is not in this build", other.sub()),
+    }
 }
 
-/// `ed hello <protocol> <build> part <n> <engine>`: the build is `status`'s.
-fn hello(unit: &impl Unit, w: &mut impl Write) -> fmt::Result {
-    let ui = unit.ui();
-    write!(w, "ed hello {PROTOCOL} ")?;
-    write_build_rev(w)?;
+/// `ed hello <protocol> <build> part <n> <engine>`: the build is `status`'s
+/// as one word, `0.3.0-a1b2c3d4`, `+` after a dirty tree's hash.
+fn hello(ui: &UiState, w: &mut dyn Write) -> fmt::Result {
+    let dirty = if DIRTY { "+" } else { "" };
     let engine = ui.project().part(ui.active_part).sound.engine();
-    writeln!(w, " part {} {}", ui.active_part.index() + 1, engine.disk_ident())
+    writeln!(
+        w,
+        "ed hello {PROTOCOL} {VERSION}-{HASH}{dirty} part {} {}",
+        ui.active_part.index() + 1,
+        engine.disk_ident()
+    )
 }

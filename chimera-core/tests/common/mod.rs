@@ -6,8 +6,8 @@
 //! note 60 vel 100 on, ON_BLOCKS blocks, note off, OFF_BLOCKS blocks.
 #![allow(dead_code)]
 
-pub mod console_fake;
 pub mod codec_util;
+pub mod console_fake;
 pub mod drum;
 pub mod drum_slice1;
 pub mod filter_ref;

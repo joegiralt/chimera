@@ -148,4 +148,3 @@ pub fn ask(u: &mut Fake, line: &str) -> String {
     // Lossy: a shot's body is not text.
     String::from_utf8_lossy(&s.0).into_owned()
 }
-

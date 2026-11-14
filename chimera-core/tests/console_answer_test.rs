@@ -1,12 +1,11 @@
 mod common;
-use common::console_fake::{Fake, Sink, ask};
 use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     Bank2Answer, Bank2Audio, Bank2Fail, Bank2Refusal, CardAnswer, CardFail, CardSpeed, Colours,
     Command, Console, FlashPeek, FlashRegs, Hands, NoArg, Out, PerMille, QUEUE, Request,
-    SHOT_HEADER, Stalled, Stats, StormKinds, StreamTally, SweepAsk, UsbTally, answer,
-    check_staged, installed,
+    SHOT_HEADER, Stalled, Stats, StormKinds, StreamTally, SweepAsk, UsbTally, answer, check_staged,
+    installed,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -15,6 +14,7 @@ use chimera_hal::store::{
     Doubt, Mark, StoreError, Sweep, SweepRun, SweepStats, Swept, Then, Trigger,
 };
 use chimera_hal::units::{Micros, Millis};
+use common::console_fake::{Fake, Sink, ask};
 
 fn audio() -> AudioStats {
     AudioStats::new(

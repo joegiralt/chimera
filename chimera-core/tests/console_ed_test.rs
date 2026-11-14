@@ -49,10 +49,38 @@ fn hello_reports_protocol_build_part_engine() {
     let mut f = Fake::new();
     let mut build = String::new();
     chimera_core::ui::about_page::write_build_rev(&mut build).unwrap();
-    assert_eq!(
-        ask(&mut f, "ed hello\n"),
-        format!("ed hello 2 {build} part 1 ALGO\nOK\n")
-    );
+    let build = build.replace(' ', "-");
+    let got = ask(&mut f, "ed hello\n");
+    assert_eq!(got, format!("ed hello 2 {build} part 1 ALGO\nOK\n"));
+    // One word for the build: a fixed word count.
+    assert_eq!(got.lines().next().unwrap().split(' ').count(), 7, "{got}");
+}
+
+#[test]
+fn set_refuses_non_finite_and_long_names() {
+    let mut f = Fake::new();
+    for line in [
+        "ed set OP_C.CRSE inf\n",
+        "ed set OP_C.CRSE -INF\n",
+        "ed set OP_C.CRSE NaN\n",
+        "ed set OP_C.CRSE +infinity\n",
+        "ed set OP_C.CRSE ABCDEFGHIJKLMNOPQ\n",
+    ] {
+        let got = ask(&mut f, line);
+        assert!(got.starts_with("ERR ed takes "), "{line}: {got}");
+    }
+    // Sixteen characters is a name; decimals are numbers.
+    for line in [
+        "ed set OP_C.CRSE ABCDEFGHIJKLMNOP\n",
+        "ed set OP_C.CRSE -12.5\n",
+        "ed set OP_C.CRSE .5\n",
+    ] {
+        assert_eq!(
+            ask(&mut f, line),
+            "ERR ed set is not in this build\n",
+            "{line}"
+        );
+    }
 }
 
 #[test]
