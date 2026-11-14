@@ -31,10 +31,14 @@ enum Op {
 enum Tear {
     /// A prefix of the sector erased, the rest as it was: bits only rise.
     M,
-    /// As M, and ECC-flagged words anywhere in the sector, erased ones too:
-    /// every word, or a random scatter.
-    G,
+    /// As M, and every word of the sector ECC-flagged, erased ones too.
+    GAll,
+    /// As M, and one word in eight of the sector ECC-flagged at random,
+    /// erased ones too.
+    GScatter,
 }
+
+const TEARS: [Tear; 3] = [Tear::M, Tear::GAll, Tear::GScatter];
 
 /// Bank 2 as flash behaves: erase to 0xFF, program once, and a power cut
 /// that tears the op it lands on. A torn program only clears bits (1 -> 0)
@@ -142,8 +146,8 @@ unsafe impl Flash for SimFlash {
         if whole {
             return Ok(());
         }
-        if self.tear == Tear::G {
-            let all = self.rng.next() & 1 == 0;
+        if self.tear != Tear::M {
+            let all = self.tear == Tear::GAll;
             for w in base / 32..(base + SECTOR) / 32 {
                 if all || self.rng.next().is_multiple_of(8) {
                     self.bad[w] = true;
@@ -785,10 +789,21 @@ fn progress_lands_between_the_ops() {
     assert_eq!(*log.borrow(), want);
 }
 
-/// An image whose body is 0xFF bar the six slot words: an install is a
-/// handful of ops, so every pair of tears can be tried.
+/// An image whose body is 0xFF bar the six slot words and two words in
+/// each of S4..S7, near its start and its end (clear of the reserves and
+/// markers), so a torn erase there leaves old bytes as a reinstall's would.
+/// An install is a handful of ops, so every pair of tears can be tried.
 fn img(s: [u8; 8]) -> Vec<u8> {
-    sealed(&[], s)
+    let mut body = vec![0xFFu8; IMAGE_BODY as usize];
+    for sector in 4..8 {
+        for off in [0x800, SECTOR - 0x40] {
+            let o = sector * SECTOR + off - HEADER_LEN as usize;
+            for (i, b) in body[o..o + 32].iter_mut().enumerate() {
+                *b = (i as u8).wrapping_mul(13) ^ s[0] ^ sector as u8;
+            }
+        }
+    }
+    sealed(&body, s)
 }
 
 /// The staged file, borrowed.
@@ -1035,7 +1050,7 @@ fn a_reinstall_with_slots_already_ours_ends_open() {
 fn every_tear_leaves_both_slots_ours() {
     let b = img(SEAL_B);
     let starts = [SimFlash::new(), installed(SEAL_A)];
-    for tear in [Tear::M, Tear::G] {
+    for tear in TEARS {
         for start in &starts {
             for n in 0..ops_in_full_install(start, &b) {
                 let mut f = start.clone();
@@ -1057,7 +1072,7 @@ fn a_cut_from_a_tag_or_marker_keeps_one() {
     let mut marker = tag.clone();
     marker.erase(Bank2Sector::S4).unwrap();
     marker.erase(Bank2Sector::S6).unwrap();
-    for tear in [Tear::M, Tear::G] {
+    for tear in TEARS {
         for start in [&tag, &marker] {
             for n in 0..ops_in_full_install(start, &b) {
                 let mut f = start.clone();
@@ -1091,7 +1106,7 @@ fn two_tears_on_consecutive_installs_leave_both_slots_ours() {
     let b = img(SEAL_B);
     let starts = [SimFlash::new(), installed(SEAL_A)];
     let mut pairs = 0;
-    for tear in [Tear::M, Tear::G] {
+    for tear in TEARS {
         for (i, start) in starts.iter().enumerate() {
             let n1s = ops_in_full_install(start, &b);
             for n1 in 0..n1s {
