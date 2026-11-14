@@ -930,8 +930,9 @@ impl FilterShape {
 }
 
 /// What a pad's AMP envelope and routes add a hit (`PadSound::mods`):
-/// three bills, so `KitBill`'s field holds any of them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// three bills, so `KitBill`'s field holds any of them. Ordered as their
+/// costs are, so the costlier is the `max`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PadMods {
     None,
     /// The AMP envelope runs (`PAD_AMP_COST`).
@@ -939,6 +940,8 @@ pub enum PadMods {
     /// A route runs (`PAD_ROUTED_COST`).
     Routed,
 }
+
+const _: () = assert!(Cost::ZERO.0 < PAD_AMP_COST.0 && PAD_AMP_COST.0 < PAD_ROUTED_COST.0);
 
 impl PadMods {
     const ALL: [PadMods; 3] = [PadMods::None, PadMods::Amp, PadMods::Routed];
@@ -1056,9 +1059,9 @@ pub fn kit_bill(kit: &Kit) -> KitBill {
         KitBill {
             shapes: b.shapes | f,
             moving: b.moving | if s.routes.moves_filter() { f } else { 0 },
-            mods: if m.cost() > b.mods.cost() { m } else { b.mods },
+            mods: b.mods.max(m),
             machine: match b.machine {
-                Some(was) if was.cost().0 >= mc.cost().0 => Some(was),
+                Some(was) if was.cost() >= mc.cost() => Some(was),
                 _ => Some(mc),
             },
             gated: b.gated || s.amp.gate != lpg::Knobs::default(),
@@ -1356,11 +1359,6 @@ impl PadSound {
     /// The LFO's `LfoParams` at `p`'s places.
     pub fn lfo_at(&self, p: &Places) -> LfoParams {
         self.lfo.params_at(p.lfo())
-    }
-
-    /// What its AMP envelope and routes add a hit, over the filter.
-    pub fn mod_cost(&self) -> Cost {
-        self.mods().cost()
     }
 
     /// Which of its AMP envelope and routes run.

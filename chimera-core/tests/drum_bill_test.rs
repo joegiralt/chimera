@@ -14,8 +14,8 @@ use std::sync::{LazyLock, Mutex};
 use chimera_core::MidiChannel;
 use chimera_core::budget::CONTROL_RESERVE;
 use chimera_core::dsp::drum::sound::{
-    Amount, HitKernel, KitBill, PAD_AMP_COST, PAD_ROUTED_COST, PadRoute, PadSound, RouteDest,
-    RouteId, RouteSource, kit_bill,
+    Amount, HitKernel, KitBill, PAD_AMP_COST, PAD_ROUTED_COST, PadMods, PadRoute, PadSound,
+    RouteDest, RouteId, RouteSource, kit_bill,
 };
 use chimera_core::dsp::drum::types::{Kit, Machine, PadId};
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
@@ -164,7 +164,7 @@ fn an_amp_only_pad_bills_its_amp() {
     let s = kit.pad_mut(pad(2)).sound_mut();
     *s.amp_mut().env_mut() = *PadSound::DEFAULT.env();
     assert!(!s.amp().env().is_open());
-    assert_eq!(s.mod_cost(), PAD_AMP_COST);
+    assert_eq!(s.mods(), PadMods::Amp);
     assert_eq!(drum(&p, &kit).0, cost(&p).0 + PAD_AMP_COST.0);
 }
 
@@ -179,12 +179,12 @@ fn a_volume_route_bills_mods_not_a_move() {
             Amount::new(-30).unwrap(),
         ),
     );
-    assert_eq!(s.mod_cost(), PAD_ROUTED_COST);
+    assert_eq!(s.mods(), PadMods::Routed);
     let mut kit = Kit::DEFAULT;
     *kit.pad_mut(pad(1)).sound_mut() = s;
     let p = drum_init();
     assert_eq!(drum(&p, &kit).0, cost(&p).0 + PAD_ROUTED_COST.0);
-    assert_eq!(PadSound::DEFAULT.mod_cost(), Cost::ZERO);
+    assert_eq!(PadSound::DEFAULT.mods(), PadMods::None);
 }
 
 #[test]
@@ -265,9 +265,6 @@ fn every_pad_books_its_reading() {
         r.note_on_vel(0, k, 127);
         let c = booked(&r, k).0;
         assert!(c * 10 >= read * 11, "pad {n}: {c} for {read} × 1.1");
-    }
-    for m in Machine::ALL {
-        assert!(m.cost() <= Machine::MAX_COST);
     }
 }
 

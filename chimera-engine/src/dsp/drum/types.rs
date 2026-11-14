@@ -280,15 +280,12 @@ impl Machine {
 
     /// The costliest `cost`: a DRUM hit's bill with no kit to read.
     pub const MAX_COST: Cost = {
-        let (mut i, mut m) = (0, 0);
+        let (mut i, mut m) = (0, Cost::ZERO);
         while i < Machine::ALL.len() {
-            let c = Machine::ALL[i].cost().0;
-            if c > m {
-                m = c;
-            }
+            m = m.max(Machine::ALL[i].cost());
             i += 1;
         }
-        Cost(m)
+        m
     };
 }
 

@@ -123,6 +123,11 @@ pub struct Cost(pub u32);
 
 impl Cost {
     pub const ZERO: Cost = Cost(0);
+
+    /// The costlier of the two (`Ord::max`, in a const).
+    pub const fn max(self, other: Cost) -> Cost {
+        if other.0 > self.0 { other } else { self }
+    }
 }
 
 impl Add for Cost {

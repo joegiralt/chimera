@@ -2195,16 +2195,16 @@ impl Instrument {
                     + self.streaming[v].looped
                     + high;
                 let k = if first { Knobs::COST } else { Cost::ZERO };
-                // A hit bills its own machine, not its kit's costliest.
-                let own = if part.params.engine() == EngineType::Drum {
-                    let k = match self.hit_of(VoiceIdx::ALL[v], PartId::ALL[p]) {
-                        Some(h) => HitKernel::Sounding(h.params().machine()),
-                        None => HitKernel::Ended,
-                    };
-                    costs[p].hit(k)
-                } else {
-                    costs[p].whole()
+                // A hit bills its own machine, not its kit's costliest; a
+                // flat bill (not DRUM) has no kernel, so `Ended` is whole.
+                let hit = match part.params.engine() {
+                    EngineType::Drum => self.hit_of(VoiceIdx::ALL[v], PartId::ALL[p]),
+                    _ => None,
                 };
+                let own = costs[p].hit(match hit {
+                    Some(h) => HitKernel::Sounding(h.params().machine()),
+                    None => HitKernel::Ended,
+                });
                 self.alloc.recost_with_glide(v, own + held + k, glides[p]);
             }
         }

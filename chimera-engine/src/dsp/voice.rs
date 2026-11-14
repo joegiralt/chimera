@@ -237,20 +237,12 @@ impl Voice {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         // The VCA's gate (ADR 0195), bank 2's: none with its door closed.
         let gate = gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO);
-        let engine = EngineSlot::cost(p, mods);
-        Self::cost_with(p, mods, engine, Self::filter_cost(p, mods), gate)
+        EngineSlot::cost(p, mods) + Self::cost_with(p, mods, Self::filter_cost(p, mods), gate)
     }
 
-    /// `cost` with its engine's, filter's and gate's bills given.
-    fn cost_with(
-        p: &ParamSnapshot,
-        mods: &ModState,
-        engine: Cost,
-        filter: Cost,
-        gate: Cost,
-    ) -> Cost {
-        engine
-            + Self::CHAIN_COST
+    /// `cost` past its engine, with its filter's and gate's bills given.
+    fn cost_with(p: &ParamSnapshot, mods: &ModState, filter: Cost, gate: Cost) -> Cost {
+        Self::CHAIN_COST
             + filter
             + ModRouting::cost(p, mods)
             + Self::fx_cost(p, mods)
@@ -279,7 +271,7 @@ impl Voice {
             Some(()) if kit.gated() || routed => LPG_COST,
             _ => Cost::ZERO,
         };
-        let rest = Self::cost_with(p, mods, Cost::ZERO, filter, gate) + kit.mods();
+        let rest = Self::cost_with(p, mods, filter, gate) + kit.mods();
         PartBill::new(rest, kit.kernel())
     }
 
