@@ -43,6 +43,12 @@ impl InstRig {
         self.inst.handle(ev, &self.shared);
     }
 
+    #[allow(dead_code)]
+    pub fn note_on_vel(&mut self, ch: u8, note: u8, vel: u8) {
+        let ev = event(ch, note, NoteKind::On(Velocity::new(vel).unwrap()));
+        self.inst.handle(ev, &self.shared);
+    }
+
     pub fn note_off(&mut self, ch: u8, note: u8) {
         self.inst
             .handle(event(ch, note, NoteKind::Off), &self.shared);

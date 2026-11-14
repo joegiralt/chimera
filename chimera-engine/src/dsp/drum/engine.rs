@@ -188,9 +188,13 @@ pub struct DrumEngine {
     /// restarts at its PHASE.
     lfo: Lfo,
     follow: Follow,
+    /// The hit's velocity, latched at the strike.
+    vel: Velocity,
+    /// Its VEL gain (`PadAmp::vel_gain`), last block's.
+    vel_g: f32,
 }
 
-crate::in_place::field_list!(DrumEngine => DrumEngine { hit, kernel, pan, amp, mods, lfo, follow });
+crate::in_place::field_list!(DrumEngine => DrumEngine { hit, kernel, pan, amp, mods, lfo, follow, vel, vel_g });
 
 // A hit plays in a voice slot, which MODAL's engine sizes.
 const _: () = assert!(size_of::<DrumEngine>() <= size_of::<ModalEngine>());
@@ -216,21 +220,27 @@ impl DrumEngine {
                 target: PadSound::DEFAULT,
                 glide: None,
             });
+            addr_of_mut!((*p).vel).write(Velocity::DEFAULT);
+            addr_of_mut!((*p).vel_g).write(1.0);
             slot.assume_init_mut()
         }
     }
 
     /// `hit` at `vel`, cutting what played: its pad's machine and knobs,
     /// `hit.pitch()` semitones over the pad's PITCH, its sound latched.
+    /// The kernel plays at full velocity: the pad's VEL is the hit's level
+    /// by `vel` (`amp_block`), its only one.
     #[inline(never)]
     #[optimize(size)]
     pub fn strike(&mut self, hit: &DrumHit, vel: Velocity, seed: HitSeed, sr: SampleRate) {
         let pad = hit.params();
         let p = resolve(pad.machine(), pad.knobs()).transposed(hit.pitch());
         self.hit = Some(*hit);
-        self.kernel.strike_in_place(p, vel, seed, sr);
+        self.kernel.strike_in_place(p, Velocity::MAX, seed, sr);
         self.pan = MidSide::of(pad.pan());
         self.amp = AmpEnv::strike(pad.sound().amp(), sr);
+        self.vel = vel;
+        self.vel_g = pad.sound().amp().vel_gain(vel);
         self.mods = PadMods::strike(pad.sound(), sr);
         if let Some(m) = &self.mods {
             self.lfo.note_on(&m.lfo);
@@ -366,7 +376,9 @@ impl DrumEngine {
 
     /// The AMP envelope as a per-sample gain on `out`; none while OPEN.
     /// A GATED key let go early still plays attack and hold first. Then
-    /// VOLUME's routes, ramped from last block's gain as a VCA source.
+    /// VEL's gain on the hit's velocity times VOLUME's routes, ramped
+    /// from last block's as a VCA source; a constant while VEL holds, and
+    /// nothing at VEL 0 unrouted.
     pub fn amp_block(&mut self, out: &mut [f32; BLOCK_SIZE]) {
         if let Some(a) = &mut self.amp {
             for x in out.iter_mut() {
@@ -374,7 +386,14 @@ impl DrumEngine {
                 *x *= a.env.tick(&a.coefs, key);
             }
         }
-        if let Some((from, to)) = self.mods.as_ref().and_then(|m| m.vol) {
+        let g = self
+            .hit
+            .as_ref()
+            .map_or(1.0, |h| h.params().sound().amp().vel_gain(self.vel));
+        let was = core::mem::replace(&mut self.vel_g, g);
+        let (vf, vt) = self.mods.as_ref().and_then(|m| m.vol).unwrap_or((1.0, 1.0));
+        let (from, to) = (vf * was, vt * g);
+        if from != 1.0 || to != 1.0 {
             let step = (to - from) / BLOCK_SIZE as f32;
             for (n, x) in out.iter_mut().enumerate() {
                 *x *= from + step * n as f32;

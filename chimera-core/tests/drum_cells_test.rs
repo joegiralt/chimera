@@ -409,6 +409,19 @@ fn drum_flt_and_amp_cells_edit_the_pad() {
     assert!(sound(&ui, 2).amp().vel().get() < 1.0);
 }
 
+/// A pad's VEL drives its own amp (ADR 0269): lit on DRUM INIT, which
+/// has no Part VCA route.
+#[test]
+fn pad_vel_is_not_dimmed() {
+    let ui = drum_on(1);
+    let ctx = ui.slot_ctx_for_test();
+    let s = &ui.project().part(P1).sound;
+    assert_eq!(s.mod_state.routes_into(chimera_core::modulation::VCA), 0);
+    let v = view::view(&DRUM_AMP, 4, &ctx);
+    assert_eq!(v.addr(), Some(at(BlockRef::PadAmp, PadAmpParams::VEL)));
+    assert!(!view::is_dimmed(&v, s, &ctx));
+}
+
 /// FLT › MOD's OUTPUT on DRUM is a SEM pad's MODE, never the Sound's
 /// (masked there); off SEM the cell is empty. Touched, it names the pad.
 #[test]

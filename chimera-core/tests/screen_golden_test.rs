@@ -585,12 +585,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("drum_mch_noise", 0x03a8f4124bdeb64f),
     ("drum_more", 0xfe656955eb63a3db),
     // DRUM's FLT, AMP and MOD pages on pad 2 (ADR 0269, slice 2 Task 7):
-    // the pad's curve and AHD, FMD's SEM OUTPUT the pad's.
+    // the pad's curve and AHD, FMD's SEM OUTPUT the pad's; AMP's VEL lit (the pad's own).
     ("drum_flt_ladder", 0xb4451676164f0c33),
     ("drum_flt_sem", 0x4f974adf9833c7ef),
     ("drum_flt_hint", 0xccf8e1fb22330f04),
     ("drum_fmd_sem", 0xbbcb0e8e59f85ea9),
-    ("drum_amp", 0x8e11c0686f006303),
+    ("drum_amp", 0x117dce57572b1983),
     ("drum_gate", 0x70c6cd2001f6ba4d),
     ("drum_penv", 0xd8dd6ea03a79a8f9),
     ("drum_plfo", 0x4288bb33f5c25535),

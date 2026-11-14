@@ -864,24 +864,25 @@ fn tape_goldens_match() {
 /// DRUM slice 2's baseline (Task 0): the slice-1 project written by slice-1
 /// code (`drum_kit_codec_test::write_slice1_fixture`), pads 1, 2, 8, 9 and
 /// 10 struck at once-a-block steps, 2 s through the `Instrument`. Every
-/// later task keeps it bit-identical.
+/// later task keeps it bit-identical, but for one deliberate change: a
+/// pad's VEL drives its own amp (owner ruling 2026-11-14, ADR 0269).
 const DRUM_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "drum_slice1_kit",
         (
-            0x761f40bc2378fa6e,
+            0xc500ff1f335ebc3a,
             [
-                744912150, 1015558105, 1021275839, 994768360, 3152329701, 3152327064, 3125714216,
-                973063012,
+                746955665, 1017071112, 1023522576, 996917720, 3154437706, 3154436229, 3127902333,
+                974431948,
             ],
         ),
     ),
     (
         "drum_slice1_kit_lr",
         (
-            0xd7862cb238b8a8de,
+            0xc2568485027151b1,
             [
-                0, 3147991076, 3169244237, 1015513075, 965131471, 958524652, 3148130774, 3147266680,
+                0, 3147879852, 3171464047, 1016935799, 966369591, 959848905, 3149878640, 3148876228,
             ],
         ),
     ),

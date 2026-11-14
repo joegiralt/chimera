@@ -10,7 +10,7 @@ use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
 use crate::dsp::delay::{DelayParams, DelayType};
 use crate::dsp::drum::laws::spec;
-use crate::dsp::drum::params::{PadAmpParams, PadParams};
+use crate::dsp::drum::params::PadParams;
 use crate::dsp::drum::sound::{PadFilter, PadSound, RouteId};
 use crate::dsp::drum::types::{Kit, Knob, Machine, PadId, Tonal};
 use crate::dsp::filter::FilterKind;
@@ -1151,11 +1151,9 @@ pub fn tape_routed(sound: &Sound) -> bool {
 /// (spec § UI "Dimmed").
 pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     match (addr.block, addr.param) {
-        // AMP's VEL under the Algo/Modal pass-through (spec § 5); a pad's
-        // VEL is laid over it.
-        (BlockRef::Out, OutParams::VCA_VEL) | (BlockRef::PadAmp, PadAmpParams::VEL) => {
-            sound.mod_state.routes_into(VCA) == 0
-        }
+        // AMP's VEL under the Algo/Modal pass-through (spec § 5). A pad's
+        // VEL drives its own amp, routed or not (ADR 0269).
+        (BlockRef::Out, OutParams::VCA_VEL) => sound.mod_state.routes_into(VCA) == 0,
         // MIX mixes nothing with TYPE OFF.
         (BlockRef::VoiceFx, VoiceFxParams::MIX) => sound.params.fx.ty() == FxType::Off,
         // KIND lists built kinds only; with one it is fixed.

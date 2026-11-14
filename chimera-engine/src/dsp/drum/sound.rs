@@ -349,6 +349,12 @@ impl PadAmp {
         self.vel
     }
 
+    /// The hit's gain by its velocity `v` (ADR 0269): 1 − VEL·(1 − v).
+    /// VEL 0 is 1, any velocity; VEL 1 is the velocity's level.
+    pub fn vel_gain(&self, v: crate::Velocity) -> f32 {
+        1.0 - self.vel.get() * (1.0 - v.unit())
+    }
+
     pub const fn gate(&self) -> lpg::Knobs {
         self.gate
     }
@@ -1231,10 +1237,10 @@ impl PadSound {
         }
     }
 
-    /// Lays the FILTER and AMP cells over `m`.
+    /// Lays the FILTER and AMP's gate cells over `m`. VEL is the pad's
+    /// own (`PadAmp::vel_gain`): a Part VCA route keeps the Sound's.
     pub fn overlay(&self, m: &mut ParamSnapshot) {
         self.filter.apply(&mut m.filter);
-        m.out.vca_vel = self.amp.vel.get();
         let g = self.amp.gate;
         m.out.gate = [g.lpg.get(), g.decay.get(), g.strike.get()];
     }

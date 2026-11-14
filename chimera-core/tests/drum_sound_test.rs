@@ -111,6 +111,7 @@ fn overlay_of_from_sound_is_identity() {
         q.filter.set_kind(FilterKind::Dirty);
         q.filter.cutoff = 50.0;
         q.out.gate = [0.9; 3];
+        q.out.vca_vel = 0.25;
         PadSound::from_sound(&p).overlay(&mut q);
         let (a, b) = (&q.filter, &p.filter);
         assert_eq!(a.cutoff.to_bits(), b.cutoff.to_bits());
@@ -119,7 +120,7 @@ fn overlay_of_from_sound_is_identity() {
         assert_eq!(a.kind(), b.kind());
         assert_eq!(a.mode(), b.mode());
         assert_eq!(a.voice, b.voice);
-        assert_eq!(q.out.vca_vel.to_bits(), p.out.vca_vel.to_bits());
+        assert_eq!(q.out.vca_vel, 0.25, "VEL is the pad's own, not the VCA's");
         for i in 0..3 {
             assert_eq!(q.out.gate[i].to_bits(), p.out.gate[i].to_bits());
         }

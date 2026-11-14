@@ -11,6 +11,7 @@ mod common;
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use chimera_core::MidiChannel;
+use chimera_core::dsp::Unit;
 use chimera_core::dsp::drum::sound::{AmpMode, EnvDecay, EnvPos, PadEnv, PadFilter, PadSound};
 use chimera_core::dsp::drum::types::{Hz, Kit, Knob, KnobValue, Machine, PadId};
 use chimera_core::dsp::drum::view::KitWriter;
@@ -252,4 +253,119 @@ fn amp_gated_short_gate_plays_attack_hold() {
     let first = peak(&out[..10 * SR as usize / 1000]);
     assert!(first > 1e-3, "silent through attack and hold: {first}");
     assert!(!sounding(&r), "still sounding at 500 ms");
+}
+
+// ---------------------------------------------------------------------------
+// VEL: the pad's own amp (ADR 0269, owner ruling 2026-11-14)
+// ---------------------------------------------------------------------------
+
+/// DRUM INIT's kit with pad 1 (TONE KICK, which ignores velocity) on
+/// VEL `vel`.
+fn init_kit(vel: f32) -> Kit {
+    let mut k = Kit::DEFAULT;
+    k.pad_mut(pad(1))
+        .sound_mut()
+        .amp_mut()
+        .set_vel(Unit::new(vel));
+    k
+}
+
+/// Part 1's peak over 100 ms after a hit on pad 1 at `vel`.
+fn hit_peak(k: &Kit, vel: u8) -> f32 {
+    let (_w, mut r) = rig(k);
+    r.note_on_vel(0, 0, vel);
+    let mut p = 0.0f32;
+    for _ in 0..(SR as usize / 10 / BLOCK_SIZE) {
+        r.render(1);
+        p = p.max(peak(r.inst.part_bus(0)));
+    }
+    p
+}
+
+fn db(x: f32) -> f32 {
+    20.0 * x.log10()
+}
+
+#[test]
+fn pad_vel_scales_the_hit() {
+    let vel = Kit::DEFAULT.pad(pad(1)).sound().amp().vel().get();
+    assert_eq!(vel, 1.0, "DRUM INIT's VEL: its Sound's");
+    let k = init_kit(vel);
+    let (hard, soft) = (hit_peak(&k, 127), hit_peak(&k, 32));
+    assert!(hard > 1e-3, "silent: {hard}");
+    let want = 1.0 - vel * (1.0 - 32.0 / 127.0);
+    let err = db(soft / hard) - db(want);
+    assert!(err.abs() < 0.5, "{} dB vs {} dB", db(soft / hard), db(want));
+    // Half VEL, half the way.
+    let k = init_kit(0.5);
+    let (hard, soft) = (hit_peak(&k, 127), hit_peak(&k, 32));
+    let want = 1.0 - 0.5 * (1.0 - 32.0 / 127.0);
+    assert!((db(soft / hard) - db(want)).abs() < 0.5);
+}
+
+#[test]
+fn vel_zero_ignores_velocity() {
+    let k = init_kit(0.0);
+    let (hard, soft) = (hit_peak(&k, 127), hit_peak(&k, 32));
+    assert!(hard > 1e-3, "silent: {hard}");
+    // Equal but for the kick's seed, which moves from rig to rig.
+    assert!(db(soft / hard).abs() < 0.001, "{} dB", db(soft / hard));
+}
+
+/// Pad 1 on `sine_kit` at VEL 1, hit at velocity 32: Part 1's bus for
+/// 20 blocks, then (VEL 0 published if `turn`) for 300 ms more.
+fn soft_sine(turn: bool) -> Vec<f32> {
+    let mut k = sine_kit(PadEnv::OPEN, AmpMode::OneShot);
+    k.pad_mut(pad(1)).sound_mut().amp_mut().set_vel(Unit::ONE);
+    let (mut w, mut r) = rig(&k);
+    r.note_on_vel(0, 0, 32);
+    let mut out = Vec::new();
+    for b in 0..20 + SR as usize * 3 / 10 / BLOCK_SIZE {
+        if b == 20 && turn {
+            k.pad_mut(pad(1)).sound_mut().amp_mut().set_vel(Unit::ZERO);
+            w.publish(P1, &k);
+        }
+        r.render(1);
+        out.extend_from_slice(r.inst.part_bus(0));
+    }
+    out
+}
+
+/// VEL follows a ringing hit glided (Task 8): VEL 1 → 0 published on a
+/// soft hit raises its gain over blocks, never a step, to the full level.
+/// The gain is the turned render over the untouched one, sample by sample.
+#[test]
+fn vel_glides_on_a_ringing_hit() {
+    let (held, turned) = (soft_sine(false), soft_sine(true));
+    let gain: Vec<(usize, f32)> = held
+        .iter()
+        .zip(&turned)
+        .enumerate()
+        .filter(|(_, (h, _))| h.abs() > 1e-2)
+        .map(|(n, (h, t))| (n, t / h))
+        .collect();
+    let at = 20 * BLOCK_SIZE;
+    assert!(
+        gain.iter()
+            .filter(|g| g.0 < at)
+            .all(|g| (g.1 - 1.0).abs() < 1e-6)
+    );
+    let want = 127.0 / 32.0;
+    let end = gain.last().unwrap().1;
+    assert!((end / want - 1.0).abs() < 1e-3, "{end} vs {want}");
+    let after: Vec<f32> = gain.iter().filter(|g| g.0 >= at).map(|g| g.1).collect();
+    assert!(
+        after.windows(2).all(|w| w[1] >= w[0] * (1.0 - 1e-4)),
+        "it never falls back"
+    );
+    // Per sample, never more than a few thousandths of the way.
+    let big = gain
+        .windows(2)
+        .filter(|w| w[0].0 >= at)
+        .map(|w| (w[1].1 - w[0].1) / (w[1].0 - w[0].0) as f32)
+        .fold(0.0f32, f32::max);
+    assert!(big < 0.002 * (want - 1.0), "a step of {big} a sample");
+    // Gliding: a block in, well short of the way.
+    let first = gain.iter().find(|g| g.0 >= at + BLOCK_SIZE).unwrap().1;
+    assert!(first < 1.0 + 0.5 * (want - 1.0), "{first}");
 }
