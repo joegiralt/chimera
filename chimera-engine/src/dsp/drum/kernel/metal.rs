@@ -43,11 +43,13 @@ impl Metal {
         }
     }
 
-    pub(super) fn render(&mut self, out: &mut Blk) {
+    /// The next block; `TICKED`, the squares a sample at a time
+    /// (`Pulse::add`, `Pulse::sweep`).
+    pub(super) fn render<const TICKED: bool>(&mut self, out: &mut Blk) {
         match self {
-            Metal::Cowbell(k) => k.render(out),
-            Metal::Bank(k) => k.render(out),
-            Metal::Jingle(k) => k.render(out),
+            Metal::Cowbell(k) => k.render::<TICKED>(out),
+            Metal::Bank(k) => k.render::<TICKED>(out),
+            Metal::Jingle(k) => k.render::<TICKED>(out),
         }
     }
 
@@ -98,13 +100,15 @@ impl Cowbell {
     }
 
     #[inline(never)]
-    fn render(&mut self, out: &mut Blk) {
+    fn render<const TICKED: bool>(&mut self, out: &mut Blk) {
         let mut x = [0.0; BLOCK_SIZE];
         // BUMP: up to an octave above, falling in 6 ms.
         octaves(&mut self.bump, self.bump_oct, &mut x);
-        for s in x.iter_mut() {
-            let m = *s;
-            *s = 0.5 * (self.p[0].tick(self.hz[0] * m) + self.p[1].tick(self.hz[1] * m));
+        let (a, b) = (&mut [0.0; BLOCK_SIZE], &mut [0.0; BLOCK_SIZE]);
+        self.p[0].sweep::<TICKED>(self.hz[0], &x, a);
+        self.p[1].sweep::<TICKED>(self.hz[1], &x, b);
+        for (s, (a, b)) in x.iter_mut().zip(a.iter().zip(b.iter())) {
+            *s = 0.5 * (a + b);
         }
         self.bp.run(&mut x);
         for (o, v) in out.iter_mut().zip(&x) {
@@ -180,23 +184,23 @@ impl Bank {
     }
 
     #[inline(never)]
-    fn render(&mut self, out: &mut Blk) {
+    fn render<const TICKED: bool>(&mut self, out: &mut Blk) {
         let mut n = [0.0; BLOCK_SIZE];
         self.hiss.block(&mut n);
-        let mut x = [0.0; BLOCK_SIZE];
         // SHIMMER: two slow LFOs detune the squares (±1.5 %) and sway the
-        // band-passes' weights; once a block.
+        // band-passes' weights; once a block, so a square's pitch holds a
+        // block and it renders a block at a time.
         self.t += BLOCK_SIZE as f32 / self.sr.hz();
         let l1 = fast_sin_turns(4.3 * self.t);
         let l2 = fast_sin_turns(6.1 * self.t + 0.3);
         let det = 0.015 * self.shimmer;
-        for (i, s) in x.iter_mut().enumerate() {
-            let mut sum = 0.0;
-            for (j, (o, &hz)) in self.sq.iter_mut().zip(&self.hz).enumerate() {
-                let d = if j % 2 == 0 { l1 } else { l2 };
-                sum += o.tick(hz * (1.0 + det * d));
-            }
-            *s = sum * (1.0 / 6.0) + self.noise * n[i];
+        let mut x = [0.0; BLOCK_SIZE];
+        for (j, (o, &hz)) in self.sq.iter_mut().zip(&self.hz).enumerate() {
+            let d = if j % 2 == 0 { l1 } else { l2 };
+            o.add::<TICKED>(hz * (1.0 + det * d), &mut x);
+        }
+        for (s, v) in x.iter_mut().zip(&n) {
+            *s = *s * (1.0 / 6.0) + self.noise * v;
         }
         let mut y = [0.0; BLOCK_SIZE];
         for (j, bp) in self.bps.iter_mut().enumerate() {
@@ -300,10 +304,14 @@ impl Jingle {
     }
 
     #[inline(never)]
-    fn render(&mut self, out: &mut Blk) {
+    fn render<const TICKED: bool>(&mut self, out: &mut Blk) {
         let mut nz = [0.0; BLOCK_SIZE];
         self.hiss.block(&mut nz);
+        // the squares' sum, a block at a time (their pitches hold)
         let mut x = [0.0; BLOCK_SIZE];
+        for (o, &hz) in self.sq.iter_mut().zip(&self.hz) {
+            o.add::<TICKED>(hz, &mut x);
+        }
         for (i, s) in x.iter_mut().enumerate() {
             let u = self.n as f32 / self.len;
             let shape = if u < self.peak {
@@ -318,11 +326,7 @@ impl Jingle {
                 self.env = (self.env + 0.3 + 0.5 * self.rng.unit()).min(1.5);
             }
             self.env *= self.env_k;
-            let mut sum = 0.0;
-            for (o, &hz) in self.sq.iter_mut().zip(&self.hz) {
-                sum += o.tick(hz);
-            }
-            *s = self.env * (sum * (1.0 / 6.0) + 0.3 * nz[i]);
+            *s = self.env * (*s * (1.0 / 6.0) + 0.3 * nz[i]);
             self.n = self.n.saturating_add(1);
         }
         let mut y = [0.0; BLOCK_SIZE];

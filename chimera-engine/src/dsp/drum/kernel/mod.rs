@@ -94,10 +94,22 @@ impl KernelState {
     /// The hit's next block.
     #[inline(never)]
     pub fn render(&mut self, out: &mut Blk) {
+        self.render_with::<false>(out);
+    }
+
+    /// `render` with METAL's squares a sample at a time, as they played
+    /// before their block render: the null test's reference.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn render_ticked(&mut self, out: &mut Blk) {
+        self.render_with::<true>(out);
+    }
+
+    #[inline(always)]
+    fn render_with<const TICKED: bool>(&mut self, out: &mut Blk) {
         match self {
             KernelState::Idle(_) => out.fill(0.0),
             KernelState::Tone(k) => k.render(out),
-            KernelState::Metal(k) => k.render(out),
+            KernelState::Metal(k) => k.render::<TICKED>(out),
             KernelState::Burst(k) => k.render(out),
             KernelState::Plain(k) => k.render(out),
         }
@@ -289,6 +301,36 @@ impl Pulse {
     pub fn tick(&mut self, hz: f32) -> f32 {
         let inc = self.o.inc_for(hz);
         self.o.tick_pulse(inc, self.m.shape)
+    }
+
+    /// A block at a steady `hz`, added to `acc`: `tick`'s samples, bit for
+    /// bit, as one run (`VarOsc::block_pulse`). `TICKED` plays it a `tick`
+    /// at a time (the null test's reference).
+    #[inline(never)]
+    pub fn add<const TICKED: bool>(&mut self, hz: f32, acc: &mut Blk) {
+        let mut b = [0.0; BLOCK_SIZE];
+        if TICKED {
+            b.fill_with(|| self.tick(hz));
+        } else {
+            let inc = self.o.inc_for(hz);
+            self.o.block_pulse(inc, self.m.shape, &mut b);
+        }
+        for (a, v) in acc.iter_mut().zip(&b) {
+            *a += v;
+        }
+    }
+
+    /// A block at `f0` × `m` a sample: `tick`'s samples, bit for bit, at
+    /// one SHAPE fill a block (`VarOsc::tick_pulses`). `TICKED` as `add`.
+    #[inline(never)]
+    pub fn sweep<const TICKED: bool>(&mut self, f0: f32, m: &Blk, out: &mut Blk) {
+        if TICKED {
+            for (o, &m) in out.iter_mut().zip(m) {
+                *o = self.tick(f0 * m);
+            }
+        } else {
+            self.o.tick_pulses(f0, m, self.m.shape, out);
+        }
     }
 }
 

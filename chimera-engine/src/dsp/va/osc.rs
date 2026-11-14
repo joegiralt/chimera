@@ -750,6 +750,7 @@ fn piece<const K: usize>(
 
 /// One block's edge rates (`VarOsc::block`); its SHAPE ends are
 /// `VarOsc::sh`.
+#[derive(Clone, Copy)]
 struct Blk {
     /// Tri, saw, pulse: each edge's `1/r` and `|r|/6`.
     rate: [[(f32, f32); 2]; 3],
@@ -760,6 +761,16 @@ struct Blk {
     /// loop pays no lerp; a SHAPE moving a whole unit in one block puts it
     /// at most 1/16 of a cycle off the saw's edge, a SHAPE LFO a hair.
     flip: f32,
+}
+
+/// WAVE's pulse end at `inc` and SHAPE `shape`, held (`tick_pulse`).
+#[inline(always)]
+fn pulse_ramps(inc: f32, shape: Unit) -> Ramps {
+    Ramps {
+        inc: (inc, 0.0),
+        wave: (1.0, 0.0),
+        shape: (shape.get(), 0.0),
+    }
 }
 
 /// "No wrap" in a wrap buffer (a wrap's `t` is in 0..=1).
@@ -843,6 +854,8 @@ struct Run {
     /// sync reset's landing.
     y0: f32,
     d0: f32,
+    /// Each edge's place at the run's end (`ANCHOR`).
+    end: [f32; 4],
 }
 
 impl Run {
@@ -857,6 +870,7 @@ impl Run {
         dinc: 0.0,
         y0: 0.0,
         d0: 0.0,
+        end: [0.0; 4],
     };
 }
 
@@ -1090,23 +1104,85 @@ impl VarOsc {
     /// only the SAW–PULSE pair: one run linked, not three.
     #[inline(never)]
     pub fn tick_pulse(&mut self, inc: f32, shape: Unit) -> f32 {
+        let r = pulse_ramps(inc, shape);
+        let blk = self.block::<false, false>(&r, 1, 1.0);
+        self.pulse_run(&r, &blk)
+    }
+
+    /// `tick_pulse` at `f0` × `m` Hz a sample (`inc_for`), bit for bit,
+    /// its setup hoisted: SHAPE's constants are filled once, and a sample
+    /// at the last one's `inc` reuses its edge rates. Both hold while the
+    /// pulse's width is not floored by `inc` (`Shaped::fill`), as at a
+    /// square (SHAPE 0, `inc` under `MAX_INC`).
+    #[inline(never)]
+    pub fn tick_pulses<const N: usize>(
+        &mut self,
+        f0: f32,
+        m: &[f32; N],
+        shape: Unit,
+        out: &mut [f32; N],
+    ) {
+        let w = 0.5 - 0.45 * shape.get();
+        // the last sample's `inc` and edge rates, if its width was free
+        let mut last: Option<(f32, Blk)> = None;
+        for (o, &m) in out.iter_mut().zip(m) {
+            let inc = self.inc_for(f0 * m);
+            let r = pulse_ramps(inc, shape);
+            let free = inc <= w;
+            let blk = match last {
+                Some((i, b)) if i == inc => b,
+                _ => {
+                    // the last sample's ends are this one's
+                    self.next_ok = last.is_some() && free;
+                    self.block::<false, false>(&r, 1, 1.0)
+                }
+            };
+            last = free.then_some((inc, blk));
+            *o = self.pulse_run(&r, &blk);
+        }
+    }
+
+    /// `tick_pulse` `N` times at a steady `inc`, bit for bit, as one run:
+    /// its edges re-anchored a sample (`ANCHOR`), as `tick_pulse`'s own
+    /// setup does, the rest of the setup once. It holds while the pulse's
+    /// width is not floored by `inc` (`Shaped::fill`), as at a square.
+    #[inline(never)]
+    pub fn block_pulse<const N: usize>(&mut self, inc: f32, shape: Unit, out: &mut [f32; N]) {
         #[cfg(any(test, feature = "test-support"))]
         {
             self.logged = 0;
             self.runs = 1;
         }
-        let r = Ramps {
-            inc: (inc, 0.0),
-            wave: (1.0, 0.0),
-            shape: (shape.get(), 0.0),
-        };
+        let r = pulse_ramps(inc, shape);
+        let blk = self.block::<false, false>(&r, N, 1.0);
+        let mut mk = [[NO_WRAP, NO_WRAP]; N];
+        self.run_in::<Saw, Pulse, N, false, false, false, false, false, true>(
+            &blk,
+            (0, N),
+            &r,
+            out,
+            &mut mk,
+            &mut 1.0,
+            &mut || 1.0,
+            &[0.0; N],
+            (0.0, 0.0),
+        );
+    }
+
+    /// `tick_pulse`'s run, on its block's edge rates.
+    #[inline(always)]
+    fn pulse_run(&mut self, r: &Ramps, blk: &Blk) -> f32 {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.logged = 0;
+            self.runs = 1;
+        }
         let mut out = [0.0f32];
         let mut mk = [[NO_WRAP, NO_WRAP]];
-        let blk = self.block::<false, false>(&r, 1, 1.0);
         self.run::<Saw, Pulse, 1, false, false, false, false>(
-            &blk,
+            blk,
             (0, 1),
-            &r,
+            r,
             &mut out,
             &mut mk,
             &mut 1.0,
@@ -1353,6 +1429,7 @@ impl VarOsc {
             Some(_) => at_lerp::<A, B>(ends, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0)),
         };
         (self.pair, self.c, self.pos) = (Some(pair), c1, p1);
+        run.end = p1;
         (run.rinc, run.inc, run.dinc) = (blk.rinc, val(r.inc, i0), r.inc.1);
         for (k, l) in run.c.iter_mut().enumerate() {
             *l = Lin {
@@ -1461,7 +1538,7 @@ impl VarOsc {
         m: &[f32; N],
         km: (f32, f32),
     ) {
-        self.run_in::<A, B, N, REC, SYNC, FLIP, MOD, false>(
+        self.run_in::<A, B, N, REC, SYNC, FLIP, MOD, false, false>(
             blk, span, r, out, mk, jit, draw, m, km,
         );
     }
@@ -1478,6 +1555,7 @@ impl VarOsc {
         const FLIP: bool,
         const MOD: bool,
         const PH: bool,
+        const ANCHOR: bool,
     >(
         &mut self,
         blk: &Blk,
@@ -1502,7 +1580,7 @@ impl VarOsc {
         // exactly at SHAPE 0, so the flip is the wrap, bit for bit
         let (th, mut done) = (blk.flip, self.flipped);
         let mut g = if FLIP && !done { th } else { 1.0 };
-        let (mut c, mut u, od, rcp, ar) = (run.c, run.u, run.od, run.rcp, run.ar);
+        let (mut c, mut u, mut od, rcp, ar) = (run.c, run.u, run.od, run.rcp, run.ar);
         let (mut inc, dinc) = (run.inc, run.dinc);
         // each edge's phase since it moves with the phase and against its
         // place; a wrap moves both, so it leaves `u` alone
@@ -1512,6 +1590,16 @@ impl VarOsc {
         let merged = A::BIAS && B::BIAS;
         let bias = |l: Lin| if merged { -0.0 } else { l.v };
         for i in i0..i1.min(N) {
+            if ANCHOR && !MOD {
+                // each edge's place re-anchored this sample, as a lone
+                // `tick`'s setup does (`glide`, a one-sample run)
+                for (k, (d, &end)) in od.iter_mut().zip(&run.end).enumerate() {
+                    if edged(k) {
+                        let o = p - u[k];
+                        *d = end + floor(o - end + 0.5) - o;
+                    }
+                }
+            }
             inc += dinc;
             let ie = inc * j;
             for (k, l) in c.iter_mut().enumerate() {
