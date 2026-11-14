@@ -272,26 +272,6 @@ fn u7(v: f32) -> U7 {
     U7::new(v as u8).unwrap_or(U7::MAX)
 }
 
-/// `FILTER_SPECS`' entry `id`, as is.
-const fn filter_spec(id: ParamId) -> ParamSpec {
-    match find_spec(&FILTER_SPECS, id) {
-        Some(s) => *s,
-        None => panic!("a pad's filter param is the Sound filter's"),
-    }
-}
-
-/// The FLT front's cells a pad holds (`PadFilter::IDS`): the Sound
-/// filter's own entries and ids, so `filter_panel::knob`'s targets are a
-/// pad's one for one.
-pub static PAD_FILTER_SPECS: [ParamSpec; PadFilter::IDS.len()] = [
-    filter_spec(PadFilter::IDS[0]),
-    filter_spec(PadFilter::IDS[1]),
-    filter_spec(PadFilter::IDS[2]),
-    filter_spec(PadFilter::IDS[3]),
-    filter_spec(PadFilter::IDS[4]),
-    filter_spec(PadFilter::IDS[5]),
-];
-
 /// `f` as the Sound's filter, the rest of it `FilterParams`' default: its
 /// get, write and MODE spec are a pad's.
 fn as_filter(f: &PadFilter) -> FilterParams {
@@ -301,8 +281,9 @@ fn as_filter(f: &PadFilter) -> FilterParams {
 }
 
 impl Block for PadFilter {
+    /// The Sound filter's own table: `spec` admits only `PadFilter::IDS`.
     fn specs(&self) -> &'static [ParamSpec] {
-        &PAD_FILTER_SPECS
+        &FILTER_SPECS
     }
 
     /// MODE's range and names are the kind's, as the Sound filter's.

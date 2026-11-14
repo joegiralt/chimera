@@ -1218,8 +1218,7 @@ impl UiState {
     fn enter_page(&mut self) {
         self.src.leave();
         self.page = PageKey::from_location(self.loc, self.page_def(), self.sel_op);
-        let values = self.display_values();
-        self.renderer.snap_to_current(values);
+        self.snap_display();
         self.renderer.orbit_cursor.snap(self.orbit.cursor as f32);
     }
 
@@ -1711,9 +1710,16 @@ impl UiState {
         }
         self.project.select_pad(part, pad);
         if part == self.active_part {
-            let values = self.display_values();
-            self.renderer.snap_to_current(values);
+            self.snap_display();
         }
+    }
+
+    /// The display jumps to the page's values: nothing glides from the
+    /// last pad's, route's or page's.
+    #[inline(never)]
+    fn snap_display(&mut self) {
+        let values = self.display_values();
+        self.renderer.snap_to_current(values);
     }
 
     /// The selected pad's route the route cells edit.
@@ -1728,8 +1734,7 @@ impl UiState {
             return;
         }
         self.sel_route = r;
-        let values = self.display_values();
-        self.renderer.snap_to_current(values);
+        self.snap_display();
     }
 
     /// A live hit on Part `part`'s `pad`: it lights, and on the shown Part
@@ -1825,8 +1830,7 @@ impl UiState {
                 ..before
             })
         {
-            let values = self.display_values();
-            self.renderer.snap_to_current(values);
+            self.snap_display();
         }
         // The operator selection is part of the page identity.
         self.page = PageKey::from_location(self.loc, def, self.sel_op);

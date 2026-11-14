@@ -179,7 +179,9 @@ impl BlockRef {
             BlockRef::Random => &crate::randomize::RANDOM_SPECS,
             BlockRef::Pad => &crate::dsp::drum::params::PAD_SPECS,
             BlockRef::Kit => &crate::dsp::drum::params::KIT_SPECS,
-            BlockRef::PadFilter => &crate::dsp::drum::params::PAD_FILTER_SPECS,
+            // The Sound filter's own table: a pad holds only `PadFilter::IDS`,
+            // the only ids `view` and `on_pad` give it.
+            BlockRef::PadFilter => &crate::params::FILTER_SPECS,
             BlockRef::PadAmp => &crate::dsp::drum::params::PAD_AMP_SPECS,
             BlockRef::PadEnv => &crate::dsp::drum::params::PAD_ENV_SPECS,
             BlockRef::PadLfo => &crate::dsp::drum::params::PAD_LFO_SPECS,

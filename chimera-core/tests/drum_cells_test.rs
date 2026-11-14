@@ -462,6 +462,7 @@ fn kind_change_keeps_mode_valid() {
     let mut ui = drum_on(3);
     let a = at(BlockRef::PadFilter, FilterParams::KIND);
     let m = at(BlockRef::PadFilter, FilterParams::MODE);
+    let mut seen = vec![sound(&ui, 3).filter().kind()];
     for step in [1i8, 1, 1, 1, -1, -1, -1, -1] {
         // Every MODE the kind has, then the next KIND.
         for _ in 0..8 {
@@ -469,9 +470,12 @@ fn kind_change_keeps_mode_valid() {
             let f = *sound(&ui, 3).filter();
             assert!(f.kind().modes().contains(&f.mode()), "{f:?}");
         }
-        ui.edit_addr(P1, a, step, false);
+        assert!(ui.edit_addr(P1, a, step, false), "KIND moves");
         let f = *sound(&ui, 3).filter();
         assert!(f.kind().modes().contains(&f.mode()), "{f:?}");
+        if !seen.contains(&f.kind()) {
+            seen.push(f.kind());
+        }
         // MODE reads in the kind's own names.
         let ctx = ui.slot_ctx_for_test();
         let v = view::view(&PAD_FLT, 5, &ctx);
@@ -481,6 +485,10 @@ fn kind_change_keeps_mode_valid() {
             view::shown_fmt(mode, &ctx),
             Some(ValFmt::Names(f.kind().mode_labels()))
         );
+    }
+    // Every built KIND visited: the KIND turns were never no-ops.
+    for k in FilterKind::BUILT {
+        assert!(seen.contains(&k), "{k:?} never reached");
     }
 }
 
@@ -584,13 +592,36 @@ fn pad_sound_blocks_are_the_ui_s() {
             assert!(Mappable::new(a).is_none(), "{b:?} {}", s.label);
         }
     }
-    // PAD_FILTER_SPECS are the Sound filter's own, id for id.
+    // A pad's filter speaks the Sound filter's table, but only its
+    // `PadFilter::IDS` cells resolve: on the block, and in every view.
+    use chimera_core::block::Block;
+    use chimera_core::dsp::drum::sound::PadFilter;
+    let f = *PadSound::DEFAULT.filter();
     for s in BlockRef::PadFilter.specs() {
-        let f = ParamAddr::new(BlockRef::Filter, s.id).spec().unwrap();
         assert_eq!(
-            (s.label, s.ident, s.min, s.max),
-            (f.label, f.ident, f.min, f.max)
+            f.spec(s.id).is_some(),
+            PadFilter::IDS.contains(&s.id),
+            "{}",
+            s.label
         );
+    }
+    let mut ui = drum_on(1);
+    for kind in FilterKind::BUILT {
+        set_kind(&mut ui, 1, kind);
+        let ctx = ui.slot_ctx_for_test();
+        for def in [
+            &PAD_FLT,
+            &FILTER,
+            &chimera_core::ui::block_registry::FILTER_MOD,
+        ] {
+            for i in 0..6 {
+                if let Some(a) = view::view(def, i, &ctx).addr()
+                    && a.block == BlockRef::PadFilter
+                {
+                    assert!(PadFilter::IDS.contains(&a.param), "{kind:?} {}", def.short);
+                }
+            }
+        }
     }
 }
 
@@ -619,6 +650,37 @@ fn pad_sound_cells_round_trip() {
     check(s.env_mut(), "env");
     check(s.lfo_mut(), "lfo");
     check(s.routes_mut().route_mut(r), "route");
+    // The filter, on every KIND: each cell at each of its steps (MODE's
+    // range is the kind's), CUTOFF by its 1/24-octave ticks.
+    use chimera_core::dsp::drum::sound::PadFilter;
+    let f = s.filter_mut();
+    for (i, kind) in FilterKind::BUILT.into_iter().enumerate() {
+        f.set(FilterParams::KIND, i as f32);
+        assert_eq!(f.kind(), kind);
+        assert_eq!(f.get(FilterParams::KIND), i as f32);
+        for id in PadFilter::IDS
+            .into_iter()
+            .filter(|&id| id != FilterParams::KIND)
+        {
+            let spec = *f.spec(id).unwrap();
+            let mut v = spec.min;
+            loop {
+                f.set(id, v);
+                let got = f.get(id);
+                assert!(
+                    (got - v).abs() <= 1e-4 * v.abs().max(1.0),
+                    "{kind:?} {} {v}: {got}",
+                    spec.label
+                );
+                let next = spec.nudged(v, 1);
+                if next <= v {
+                    break;
+                }
+                v = next;
+            }
+            assert_eq!(v, spec.max, "{kind:?} {} reaches its max", spec.label);
+        }
+    }
 }
 
 /// An edit reaches the audio's kit: the next hit plays it.

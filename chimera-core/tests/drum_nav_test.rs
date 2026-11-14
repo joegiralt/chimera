@@ -143,6 +143,37 @@ fn mix_plus_on_flt_steps_the_pad() {
     assert_eq!(cutoff(&ui, 1), before, "pad 1 is left");
 }
 
+/// AMP's cells on DRUM are the selected pad's (ADR 0269): a turn of LPG
+/// moves pad 2's gate, never the Sound's.
+#[test]
+fn an_amp_turn_edits_the_pad() {
+    let mut ui = drum();
+    ui.select_pad(P1, pad(2));
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    assert!(on(&ui, &AMP));
+    let sound = ui.project().part(P1).sound.params.out.gate;
+    feed(&mut ui, Input::turn(EncoderId::B, 5));
+    let lpg = |ui: &UiState, n| {
+        ui.project()
+            .kit(P1)
+            .pad(pad(n))
+            .sound()
+            .amp()
+            .gate()
+            .lpg
+            .get()
+    };
+    assert!(lpg(&ui, 2) > 0.0, "LPG turns pad 2");
+    assert_eq!(lpg(&ui, 1), 0.0, "pad 1 is left");
+    assert_eq!(
+        ui.project().part(P1).sound.params.out.gate,
+        sound,
+        "the Sound is left"
+    );
+}
+
 /// Review Focus 5: on MTX, MIX + MINUS deletes the route under the cursor
 /// and leaves the pad.
 #[test]

@@ -970,6 +970,7 @@ fn filter_cell(addr: ParamAddr, label: &'static str, ctx: &SlotCtx) -> View {
 /// `a` on a DRUM Part (`ctx.drum`): the Sound's FILTER and AMP cells a
 /// pad overlays are the selected pad's, as the Sound's are never heard
 /// there (ADR 0269); the rest, and every other Part's, as they are.
+#[inline(never)]
 pub fn on_pad(a: ParamAddr, ctx: &SlotCtx) -> ParamAddr {
     if !ctx.drum {
         return a;
