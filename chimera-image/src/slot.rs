@@ -53,6 +53,11 @@ impl Slot {
         BANK2_BASE + 0x8_0000 + self.index() as u32 * SLOT_LEN
     }
 
+    /// The tag word, the slot's second.
+    pub const fn tag_addr(self) -> u32 {
+        self.base() + 0x20
+    }
+
     /// The end marker's flash word, the slot's last.
     pub const fn marker_addr(self) -> u32 {
         self.base() + SLOT_LEN - 32
@@ -230,7 +235,7 @@ pub fn guard(r: &mut impl SlotRead, ours: SlotSet) -> Result<SlotPlan, SlotForei
 }
 
 fn judge(r: &mut impl SlotRead, s: Slot) -> Option<Evidence> {
-    let t = r.word(s.base() + 0x20);
+    let t = r.word(s.tag_addr());
     if t.clean() && t.bytes[0x10..0x1C] == *TAG {
         return Some(Evidence::Tag);
     }
@@ -246,13 +251,19 @@ fn judge(r: &mut impl SlotRead, s: Slot) -> Option<Evidence> {
     })
 }
 
+/// The three words only Chimera writes in a slot, with their bytes: code,
+/// tag, marker.
+pub const fn own_words(s: Slot) -> [(u32, [u8; 32]); 3] {
+    [
+        (s.base(), code_word(s)),
+        (s.tag_addr(), tag_word(s)),
+        (s.marker_addr(), end_marker(s)),
+    ]
+}
+
 /// (S4, S5) each wholly erased if the slot may be ours; None if foreign.
 fn scan(r: &mut impl SlotRead, s: Slot) -> Option<(bool, bool)> {
-    let own = [
-        (s.base(), code_word(s)),
-        (s.base() + 0x20, tag_word(s)),
-        (s.marker_addr(), end_marker(s)),
-    ];
+    let own = own_words(s);
     let mut erased = [true; 2];
     for addr in (s.base()..s.base() + SLOT_LEN).step_by(32) {
         let w = r.word(addr);

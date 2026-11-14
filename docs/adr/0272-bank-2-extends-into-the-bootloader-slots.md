@@ -26,8 +26,9 @@ Research of Ixox/preenfm3 at 65cb963 (private notes) found:
 - **Install order a slot:** erase S5 (skipped when the guard found it erased), program S5's marker, erase S4, program the tag word, then the code word. The invariant is that one clean tag or marker survives at every instant, so two cuts on consecutive installs can't leave a slot that reads foreign. A torn erase is assumed to leave ECC words anywhere in its sector, so a sector is erased only while the other holds clean evidence, and an erased sector is never erased again. The order follows the guard's evidence (spec § 3.1):
   - a tag goes S5 first;
   - a marker alone, or the boot's slot mark, goes S4 first: erase S4, tag word, code word, erase S5, marker;
-  - a scan with S4 erased writes tag and code before any erase;
-  - a scan with S5 erased writes the marker first;
+  - a scan with both erased writes marker, tag and code, with no erase;
+  - a scan with S4 erased only writes tag and code before any erase;
+  - a scan with S5 erased only writes the marker first;
   - a scan with neither erased goes S4 first. That case has a residual: three cuts on consecutive installs (a torn marker, a torn tag program, then a torn erase) can still read foreign. These are separate writes, and the EDIT slot (S7/S6) goes the same way. The full order is: S0 first (the commit word), S1–S3, the MIXER slot, the EDIT slot, the body (skipping those six words), the header, and the commit word last. Erases stay per sector: no bank or mass erase, no bank-1 register, no option bytes.
 - **`slot_guard()`** runs separately, after `bank2_mark(BANK2_INSTALLING)` and before the install screen, in the boot path and in the console's install. `InstallFail::SlotForeign(Slot)` comes from it, before any erase or program. A slot is ours if (a) S4's tag word reads cleanly, or (b) S5's marker reads cleanly and S4's code word is ours, torn or erased; it reads those first. The guard reports which evidence it accepted, and the install picks the order from it. The stub's code bytes are frozen: changing the stub needs a new ADR and a new guard rule. Otherwise (c) every word of both sectors must be erased, except S4's code word, S4's tag word and S5's marker word, the positions only Chimera writes. Rule (c) widens the review's "fully erased", so that a power cut during a first install's marker write can't lock Chimera out.
 - **ECC-safe reads.** The guard reads with FAULTMASK set and CCR.BFHFNMIGN = 1, then checks and clears FLASH_SR2.DBECCERR and SNECCERR. A flagged word is not clean. At the three Chimera positions, a word that was silently corrected (SNECCERR) passes as a torn one does. That a flash double-ECC error is a precise, maskable bus error must be verified on a spike gate first. If it isn't, the fallback is a `BANK2_SLOT_TORN | slot` reset mark that makes the next guard treat that slot as ours-torn.
@@ -61,7 +62,7 @@ Research of Ixox/preenfm3 at 65cb963 (private notes) found:
 ## Consequences
 - Bank 2 grows by ~510 KB. New 0.4 work goes to S4–S7, and DRUM stays in bank 1.
 - A held MIXER or EDIT at power-on boots normally on every unit that ran a 0.4+ install, including after a revert to stock or to ≤ 0.3. It still hangs before the first install, and after a power cut inside a slot's window. The window lasts from S4's (or S6's) erase to its code word: ~1 s typical, up to ~4 s.
-- Every install erases all eight sectors: ~8 s typical, ~32 s worst before programming. Every boot CRCs 1 MB. The `.bk2` is always 1,048,576 B.
+- Every install erases S0–S3 and each slot sector not already erased: up to eight sectors, ~8 s typical, ~32 s worst before programming. Every boot CRCs 1 MB. The `.bk2` is always 1,048,576 B.
 - A unit with a foreign slot refuses every install and runs the new bank 1 with bank 2 closed until it is reflashed with 0.3. No such unit is known.
 - Chimera ≤ 0.3 reads a 0.4 header as `format 2` and reinstalls into S0–S3 only.
 - Chimera now occupies the slots, and giving them back takes a new ADR.

@@ -52,7 +52,7 @@ The facts the design rests on (research report, upstream source; § 7 lists what
 0x081E0000  S7  S6 groups ... __bank2_s6_end (<= 0x081FFFE0) | 0xFF | S7 marker @ 0x081FFFE0
 ```
 
-The room for code and data is 512 KB + 2 × (256 KB − 1 KB − 32 B), which is **1,046,400 B**. That is ~510 KB more than today, and ~518 KB free in all. Every image is exactly 1 MB: `body_len` is 1 MB − 256, the `.bk2` is 1,048,576 B, and every install erases S0–S7. The S7 marker, on the bank's last word, is what fixes the length. The cost is all eight erases on every seal change, and a 1 MB CRC at each boot (§ 6.3 measures both). In return the image never varies in size or in the sectors an install touches, and S7 never holds stale bytes.
+The room for code and data is 512 KB + 2 × (256 KB − 1 KB − 32 B), which is **1,046,400 B**. That is ~510 KB more than today, and ~518 KB free in all. Every image is exactly 1 MB: `body_len` is 1 MB − 256, the `.bk2` is 1,048,576 B, and every install erases S0–S3 and each slot sector not already erased (§ 3.1). The S7 marker, on the bank's last word, is what fixes the length. The cost is up to eight erases on every seal change, and a 1 MB CRC at each boot (§ 6.3 measures both). In return the image never varies in size or in the sectors an install touches, and S7 never holds stale bytes.
 
 ### 1.2 One output section with fixed points (review B3, B4, should-fix 1)
 
@@ -154,7 +154,7 @@ These are separate writes, tag word first; the first draft's "two words at once"
 |---|---|
 | `Tag` | erase S5, marker, erase S4, tag, code (S5 first) |
 | `Marker`, `Mark` | erase S4, tag, code, erase S5, marker (S4 first) |
-| `Scan`, both erased | marker, erase S4, tag, code (S5 first, its erase skipped) |
+| `Scan`, both erased | marker, tag, code (no erase: an erased sector is never erased again) |
 | `Scan`, S4 erased only | tag, code, erase S5, marker (S4's erase skipped: a clean tag before any erase) |
 | `Scan`, S5 erased only | marker, erase S4, tag, code (S5's erase skipped: a clean marker before any erase) |
 | `Scan`, neither erased | erase S4, tag, code, erase S5, marker (S4 first) |
@@ -286,7 +286,7 @@ NOTHING WAS WRITTEN.
 
 - **Stub and marker bytes** (`slot_test.rs`): word 0 is SP 8-aligned in DTCM, word 1 is `base + 9`, the code decodes by a table of expected Thumb-2 encodings to § 2.1, the literals are 0x08020000 and 0xE000ED08, and the tag and marker sit at their offsets.
 - **Layout** (`install_test.rs`):
-  - `plan()` always orders S0–S3, then S5 (skipped when erased), S4, then S7 (skipped when erased), S6;
+  - `plan()` always orders S0–S3, then the MIXER slot, then the EDIT slot, each in its evidence's order above, with no erase of a sector the guard read erased;
   - `Bank2Sector::addr` holds for S0–S7, and `Bank2Word` takes 0x081FFFE0 and refuses 0x08200000;
   - `judge` gives `Format(1)` for an old header and `Corrupt` for a `body_len` ≠ 1 MB − 256 (format 2 fixes the length);
   - the body copy never programs one of the six pre-programmed words, since `SimFlash` refuses a second program.
@@ -350,5 +350,5 @@ These are run over the USB console with `chimera-usb.py update`, never inside a 
 
 ## Open questions for the owner
 
-1. **Every image is exactly 1 MB,** so every install erases all eight sectors (§ 1.1). It is simpler than an image that ends where its code does, at a few seconds more per install. Agreed?
+1. **Every image is exactly 1 MB,** so every install erases up to eight sectors (§ 1.1). It is simpler than an image that ends where its code does, at a few seconds more per install. Agreed?
 2. **The fallback mark (§ 3.2),** if gate 1b shows ECC faults can't be masked: a foreign slot with an ECC error would then be erased rather than refused. Acceptable, given no foreign slot is known?

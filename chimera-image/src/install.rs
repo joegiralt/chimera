@@ -3,7 +3,7 @@
 
 use crate::header::{BANK2_BASE, BANK2_LEN, COMMIT_OFF, FLASH_WORD, HEADER_LEN, Header, Seal};
 use crate::judge::{Bank2Memory, Door, ImageRead, Verdict, judge, judge_uncommitted};
-use crate::slot::Slot;
+use crate::slot::{Evidence, Slot, SlotPlan, own_words};
 
 const SECTOR_LEN: u32 = 128 * 1024;
 const _: () = assert!(8 * SECTOR_LEN == BANK2_LEN);
@@ -86,19 +86,79 @@ pub unsafe trait Flash: Bank2Memory {
     fn program(&mut self, w: Bank2Word, data: &[u8; 32]) -> Result<(), FlashFail>;
 }
 
+/// One step before the body: an erase, or one of a slot's three words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Plan {
-    /// S0 first: erasing it removes the commit word before anything else.
-    pub sectors: &'static [Bank2Sector],
+pub enum PlanOp {
+    Erase(Bank2Sector),
+    Program(Bank2Word, [u8; 32]),
 }
 
-/// The sectors the image spans, S0 up to the last; a body past the bank is
-/// clamped to it (`judge` refuses one anyway).
-pub fn plan(h: &Header) -> Plan {
+const PLAN_MAX: usize = 4 + 2 * 5;
+
+/// The erases and slot words, in order, before the body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Plan {
+    ops: [PlanOp; PLAN_MAX],
+    len: usize,
+}
+
+impl Plan {
+    pub fn ops(&self) -> &[PlanOp] {
+        &self.ops[..self.len]
+    }
+
+    fn push(&mut self, op: PlanOp) {
+        self.ops[self.len] = op;
+        self.len += 1;
+    }
+}
+
+/// S0 first (it holds the commit word), up to S3 as the body spans them;
+/// then MIXER, then EDIT, each in the order its evidence asks (spec § 3.1):
+/// one clean tag or marker survives at every instant, and a sector the
+/// guard read erased is never erased again.
+pub fn plan(h: &Header, slots: &SlotPlan) -> Plan {
+    let mut p = Plan {
+        ops: [PlanOp::Erase(Bank2Sector::S0); PLAN_MAX],
+        len: 0,
+    };
     let body = h.body_len.min(BANK2_LEN - HEADER_LEN);
-    let last = (HEADER_LEN + body - 1) / SECTOR_LEN;
-    Plan {
-        sectors: SECTORS.get(..=last as usize).unwrap_or(&SECTORS),
+    let last = ((HEADER_LEN + body - 1) / SECTOR_LEN).min(3) as usize;
+    for &s in &SECTORS[..=last] {
+        p.push(PlanOp::Erase(s));
+    }
+    for s in Slot::ALL {
+        slot_ops(&mut p, s, slots.evidence(s));
+    }
+    p
+}
+
+/// The entry half (S4 erase, tag, code) and the end half (S5 erase,
+/// marker): the half holding the live evidence goes last.
+fn slot_ops(p: &mut Plan, s: Slot, e: Evidence) {
+    let (s4_erased, s5_erased, end_first) = match e {
+        Evidence::Tag => (false, false, true),
+        Evidence::Marker | Evidence::Mark => (false, false, false),
+        // An erased sector takes its words before anything is erased.
+        Evidence::Scan {
+            s4_erased,
+            s5_erased,
+        } => (s4_erased, s5_erased, s5_erased),
+    };
+    let (entry, end) = s.sectors();
+    // Slot words sit inside S4..S7, 32-byte aligned (slot_test).
+    let [code, tag, marker] = own_words(s).map(|(a, w)| PlanOp::Program(Bank2Word(a), w));
+    let halves = [
+        (entry, s4_erased, [Some(tag), Some(code)]),
+        (end, s5_erased, [Some(marker), None]),
+    ];
+    let order = if end_first { [1, 0] } else { [0, 1] };
+    for i in order {
+        let (sector, erased, words) = halves[i];
+        if !erased {
+            p.push(PlanOp::Erase(sector));
+        }
+        words.into_iter().flatten().for_each(|w| p.push(w));
     }
 }
 
@@ -132,10 +192,12 @@ pub enum Phase {
 }
 
 /// Points inside an install where a power cut leaves a known state: S0
-/// erased, half the body written, all but the commit word.
+/// erased, a slot's code word written, half the body written, all but the
+/// commit word.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {
     EraseStarted,
+    SlotWritten(Slot),
     HalfBody,
     BeforeCommit,
 }
@@ -151,43 +213,47 @@ impl Progress for () {
     fn mark(&mut self, _: Mark) {}
 }
 
-/// `install_with` and no progress.
-pub fn install(
-    flash: &mut impl Flash,
-    staged: &mut impl ImageRead,
-    want: &Seal,
-    buf: &mut [u8; 512],
-) -> Result<Header, InstallFail> {
-    install_with(flash, staged, want, buf, &mut ())
-}
-
-/// Writes `staged` into bank 2: judge it, erase S0 first, body from 0x100
-/// up, header words 0x00..0xDF, judge flash uncommitted, commit word last,
-/// then open. Stopped anywhere short of the commit, bank 2 is never `Good`
+/// Writes `staged` into bank 2: judge it, erase S0 first, then S1-S3 and
+/// the slots as `slots` (the guard's, run first) orders them, body from
+/// 0x100 up bar the six slot words, header words 0x00..0xDF, judge flash
+/// uncommitted, commit word last, then open. Stopped anywhere short of the commit, bank 2 is never `Good`
 /// for `want`: its commit word is erased or torn, or, S0's erase not begun,
 /// the old image is untouched. `done < body_len <= BANK2_LEN - HEADER_LEN`
 /// (a `Good` header) bounds the offsets. `progress` hears each phase
 /// before it starts, and each `Mark` once reached: after S0's erase, after
-/// the block holding the body's middle word, before the commit word.
+/// each slot's code word, after the block holding the body's middle word,
+/// before the commit word.
 pub fn install_with(
     flash: &mut impl Flash,
     staged: &mut impl ImageRead,
     want: &Seal,
     buf: &mut [u8; 512],
     progress: &mut impl Progress,
+    slots: &SlotPlan,
 ) -> Result<Header, InstallFail> {
     let h = match judge(staged, want) {
         Verdict::Good(h) => h,
         v => return Err(InstallFail::Staged(v)),
     };
-    let p = plan(&h);
     progress.phase(Phase::Erasing);
-    for &s in p.sectors {
-        flash
-            .erase(s)
-            .map_err(|f| InstallFail::Flash(f, FlashAt::Sector(s)))?;
-        if s == Bank2Sector::S0 {
-            progress.mark(Mark::EraseStarted);
+    for &op in plan(&h, slots).ops() {
+        match op {
+            PlanOp::Erase(s) => {
+                flash
+                    .erase(s)
+                    .map_err(|f| InstallFail::Flash(f, FlashAt::Sector(s)))?;
+                if s == Bank2Sector::S0 {
+                    progress.mark(Mark::EraseStarted);
+                }
+            }
+            PlanOp::Program(w, data) => {
+                flash
+                    .program(w, &data)
+                    .map_err(|f| InstallFail::Flash(f, FlashAt::Word(w)))?;
+                if let Some(s) = Slot::ALL.into_iter().find(|s| s.base() == w.get()) {
+                    progress.mark(Mark::SlotWritten(s));
+                }
+            }
         }
     }
     progress.phase(Phase::Writing);
@@ -219,11 +285,15 @@ pub fn install_with(
     Ok(h)
 }
 
-/// `data` at bank-2 offset `off`, word by word; erased words are skipped.
+/// `data` at bank-2 offset `off`, word by word; erased words and the six
+/// slot words (the plan's, and the read-back CRC checks them) are skipped.
 fn program_words(flash: &mut impl Flash, off: u32, data: &[u8]) -> Result<(), InstallFail> {
     let mut addr = BANK2_BASE + off;
     for w in data.as_chunks::<32>().0 {
-        if w.iter().any(|&b| b != 0xFF) {
+        let slot_word = Slot::ALL
+            .into_iter()
+            .any(|s| [s.base(), s.tag_addr(), s.marker_addr()].contains(&addr));
+        if !slot_word && w.iter().any(|&b| b != 0xFF) {
             let at = Bank2Word::new(addr).ok_or(InstallFail::Readback(Verdict::Corrupt))?;
             flash
                 .program(at, w)

@@ -1,10 +1,12 @@
 use chimera_image::crc::Crc32;
+use chimera_image::slot::{Evidence, SlotPlan, SlotRead, Word, guard, own_words};
 use chimera_image::*;
 
 const SECTOR: usize = 128 * 1024;
 const LEN: usize = BANK2_LEN as usize;
 
 /// Fixed-seed xorshift32: every run cuts the same way.
+#[derive(Clone)]
 struct Rng(u32);
 
 impl Rng {
@@ -24,13 +26,29 @@ enum Op {
     Program(u32),
 }
 
+/// What a torn erase leaves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tear {
+    /// A prefix of the sector erased, the rest as it was: bits only rise.
+    M,
+    /// As M, and ECC-flagged words anywhere in the sector, erased ones too:
+    /// every word, or a random scatter.
+    G,
+}
+
 /// Bank 2 as flash behaves: erase to 0xFF, program once, and a power cut
 /// that tears the op it lands on. A torn program only clears bits (1 -> 0)
-/// and may leave the word failing ECC on read until it is erased.
+/// and may leave the word failing ECC on read, or silently corrected, until
+/// it is erased. A second program of a word panics: the installer never
+/// does one.
+#[derive(Clone)]
 struct SimFlash {
     mem: Vec<u8>,
-    /// Words whose ECC a torn program broke: reads over them fault.
+    /// Words whose ECC a tear broke: reads over them fault.
     bad: Vec<bool>,
+    /// Words SEC-DED corrected on read (SR2.SNECCERR).
+    corrected: Vec<bool>,
+    tear: Tear,
     /// Ops left before the power goes; `None` is unlimited.
     budget: Option<usize>,
     dead: bool,
@@ -43,6 +61,8 @@ impl SimFlash {
         SimFlash {
             mem: vec![0xFF; LEN],
             bad: vec![false; LEN / 32],
+            corrected: vec![false; LEN / 32],
+            tear: Tear::M,
             budget: None,
             dead: false,
             ops: Vec::new(),
@@ -117,12 +137,20 @@ unsafe impl Flash for SimFlash {
         };
         self.mem[base..base + n].fill(0xFF);
         let words = base / 32..(base + n) / 32;
-        self.bad[words].fill(false);
+        self.bad[words.clone()].fill(false);
+        self.corrected[words].fill(false);
         if whole {
-            Ok(())
-        } else {
-            Err(FlashFail::Timeout)
+            return Ok(());
         }
+        if self.tear == Tear::G {
+            let all = self.rng.next() & 1 == 0;
+            for w in base / 32..(base + SECTOR) / 32 {
+                if all || self.rng.next().is_multiple_of(8) {
+                    self.bad[w] = true;
+                }
+            }
+        }
+        Err(FlashFail::Timeout)
     }
 
     fn program(&mut self, w: Bank2Word, data: &[u8; 32]) -> Result<(), FlashFail> {
@@ -131,9 +159,10 @@ unsafe impl Flash for SimFlash {
         }
         let o = (w.get() - BANK2_BASE) as usize;
         assert!(o.is_multiple_of(32) && o + 32 <= LEN);
-        if self.mem[o..o + 32].iter().any(|&b| b != 0xFF) {
-            return Err(FlashFail::NotErased);
-        }
+        let fresh = self.mem[o..o + 32].iter().all(|&b| b == 0xFF)
+            && !self.bad[o / 32]
+            && !self.corrected[o / 32];
+        assert!(fresh, "second program of {:#x}", w.get());
         let whole = self.spend()?;
         self.ops.push(Op::Program(w.get()));
         if whole {
@@ -145,8 +174,23 @@ unsafe impl Flash for SimFlash {
             let r = self.rng.next() as u8;
             *m &= d | !r;
         }
-        self.bad[o / 32] = self.rng.next() & 1 != 0;
+        match self.rng.next() % 3 {
+            0 => self.bad[o / 32] = true,
+            1 => self.corrected[o / 32] = true,
+            _ => {}
+        }
         Err(FlashFail::Timeout)
+    }
+}
+
+impl SlotRead for SimFlash {
+    fn word(&mut self, addr: u32) -> Word {
+        let o = (addr - BANK2_BASE) as usize;
+        Word {
+            bytes: self.mem[o..o + 32].try_into().unwrap(),
+            ecc: self.bad[o / 32],
+            corrected: self.corrected[o / 32],
+        }
     }
 }
 
@@ -196,10 +240,14 @@ fn seal(b: [u8; 8]) -> Seal {
     Seal::new(b).unwrap()
 }
 
-/// `body` padded with 0xFF to the one image size.
+/// `body` padded with 0xFF to the one image size, the six slot words in.
 fn sealed(body: &[u8], s: [u8; 8]) -> Vec<u8> {
     let mut body = body.to_vec();
     body.resize(IMAGE_BODY as usize, 0xFF);
+    for (a, w) in Slot::ALL.into_iter().flat_map(own_words) {
+        let o = (a - BANK2_BASE - HEADER_LEN) as usize;
+        body[o..o + 32].copy_from_slice(&w);
+    }
     let mut c = Crc32::new();
     c.update(&body);
     let h = Header {
@@ -242,9 +290,35 @@ fn header(img: &[u8]) -> Header {
     Header::parse(img[..256].try_into().unwrap()).unwrap()
 }
 
+fn slot_plan(f: &mut SimFlash) -> SlotPlan {
+    guard(f, SlotSet::NONE).expect("slots ours")
+}
+
+/// The guard, then `install_with` and no progress.
+fn install(
+    f: &mut SimFlash,
+    staged: &mut impl ImageRead,
+    want: &Seal,
+    buf: &mut [u8; 512],
+) -> Result<Header, InstallFail> {
+    let p = slot_plan(f);
+    install_with(f, staged, want, buf, &mut (), &p)
+}
+
 fn run(flash: &mut SimFlash, img: &[u8], want: &Seal) -> Result<Header, InstallFail> {
     let mut buf = [0u8; 512];
     install(flash, &mut Staged::new(img.to_vec()), want, &mut buf)
+}
+
+/// The plan's erases of S0..S3, in order.
+fn low_erases(p: &Plan) -> Vec<Bank2Sector> {
+    p.ops()
+        .iter()
+        .filter_map(|o| match o {
+            PlanOp::Erase(s) if s.index() < 4 => Some(*s),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -254,15 +328,17 @@ fn plan_spans_s0_first() {
         body_len: n,
         ..header(&sealed(&dense(32, 0), SEAL_A))
     };
-    assert_eq!(plan(&h(100 * 1024)).sectors, &[S0]);
-    assert_eq!(plan(&h(128 * 1024 - 256)).sectors, &[S0]);
-    assert_eq!(plan(&h(128 * 1024 - 224)).sectors, &[S0, S1]);
-    assert_eq!(plan(&h(200 * 1024)).sectors, &[S0, S1]);
-    assert_eq!(plan(&h(512 * 1024 - 256)).sectors, &[S0, S1, S2, S3]);
-    let all = [S0, S1, S2, S3, S4, S5, S6, S7];
-    assert_eq!(plan(&h(IMAGE_BODY)).sectors, &all);
+    let p = slot_plan(&mut SimFlash::new());
+    assert_eq!(low_erases(&plan(&h(100 * 1024), &p)), [S0]);
+    assert_eq!(low_erases(&plan(&h(128 * 1024 - 256), &p)), [S0]);
+    assert_eq!(low_erases(&plan(&h(128 * 1024 - 224), &p)), [S0, S1]);
+    assert_eq!(low_erases(&plan(&h(200 * 1024), &p)), [S0, S1]);
+    let low = [S0, S1, S2, S3];
+    assert_eq!(low_erases(&plan(&h(512 * 1024 - 256), &p)), low);
+    assert_eq!(low_erases(&plan(&h(IMAGE_BODY), &p)), low);
     // A header never parsed is clamped to the bank.
-    assert_eq!(plan(&h(u32::MAX)).sectors, &all);
+    assert_eq!(low_erases(&plan(&h(u32::MAX), &p)), low);
+    assert_eq!(plan(&h(IMAGE_BODY), &p).ops()[..4], low.map(PlanOp::Erase));
 }
 
 #[test]
@@ -375,10 +451,16 @@ fn commit_word_is_last_op() {
     let mut f = SimFlash::new();
     assert!(run(&mut f, &img, &seal(SEAL_A)).is_ok());
     use Bank2Sector::*;
-    let all = [S0, S1, S2, S3, S4, S5, S6, S7];
-    assert_eq!(f.ops[..8], all.map(Op::Erase));
+    // Fresh slots read erased: marker, tag, code each, no erase.
+    assert_eq!(f.ops[..4], [S0, S1, S2, S3].map(Op::Erase));
+    let slot_words: Vec<Op> = Slot::ALL
+        .into_iter()
+        .flat_map(|s| [s.marker_addr(), s.tag_addr(), s.base()])
+        .map(Op::Program)
+        .collect();
+    assert_eq!(f.ops[4..10], slot_words[..]);
     assert_eq!(f.ops.last(), Some(&Op::Program(0x0810_00E0)));
-    let progs: Vec<u32> = f.ops[8..]
+    let progs: Vec<u32> = f.ops[10..]
         .iter()
         .map(|o| match o {
             Op::Program(a) => *a,
@@ -421,7 +503,7 @@ fn flash_errors_never_open() {
 }
 
 /// A failed op names its sector or word: S1's erase, then the first body
-/// word after the eight erases.
+/// word after the four erases and the six slot words.
 #[test]
 fn a_flash_failure_says_where() {
     let img = sealed(&dense(4096, 2), SEAL_A);
@@ -431,7 +513,7 @@ fn a_flash_failure_says_where() {
     let s1 = FlashAt::Sector(Bank2Sector::S1);
     assert_eq!(r, Err(InstallFail::Flash(FlashFail::Timeout, s1)));
     let mut f = SimFlash::new();
-    f.cut_after(8);
+    f.cut_after(10);
     let r = run(&mut f, &img, &seal(SEAL_A));
     let at = Bank2Word::new(BANK2_BASE + HEADER_LEN).unwrap();
     assert_eq!(
@@ -663,12 +745,14 @@ fn progress_lands_between_the_ops() {
     };
     let mut buf = [0u8; 512];
     let mut st = Staged::new(img.clone());
+    let p = slot_plan(&mut f.f);
     let r = install_with(
         &mut f,
         &mut st,
         &seal(SEAL_A),
         &mut buf,
         &mut Rec(log.clone()),
+        &p,
     );
     assert_eq!(r, Ok(header(&img)));
 
@@ -680,12 +764,12 @@ fn progress_lands_between_the_ops() {
         Ev::Op(Op::Erase(S1)),
         Ev::Op(Op::Erase(S2)),
         Ev::Op(Op::Erase(S3)),
-        Ev::Op(Op::Erase(S4)),
-        Ev::Op(Op::Erase(S5)),
-        Ev::Op(Op::Erase(S6)),
-        Ev::Op(Op::Erase(S7)),
-        Ev::Phase(Phase::Writing),
     ];
+    for s in Slot::ALL {
+        want.extend([s.marker_addr(), s.tag_addr(), s.base()].map(|a| Ev::Op(Op::Program(a))));
+        want.push(Ev::Mark(Mark::SlotWritten(s)));
+    }
+    want.push(Ev::Phase(Phase::Writing));
     let len = body.len() as u32;
     let half_block_end = (IMAGE_BODY / 2 / 512 + 1) * 512;
     for off in (0..len).step_by(32) {
@@ -701,17 +785,329 @@ fn progress_lands_between_the_ops() {
     assert_eq!(*log.borrow(), want);
 }
 
-/// `install` is `install_with` and no progress: the same ops, the same
-/// bytes.
+/// An image whose body is 0xFF bar the six slot words: an install is a
+/// handful of ops, so every pair of tears can be tried.
+fn img(s: [u8; 8]) -> Vec<u8> {
+    sealed(&[], s)
+}
+
+/// The staged file, borrowed.
+struct Img<'a>(&'a [u8]);
+
+impl ImageRead for Img<'_> {
+    fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
+        let o = off as usize;
+        let src = o.checked_add(buf.len()).and_then(|e| self.0.get(o..e));
+        buf.copy_from_slice(src.ok_or(ReadFail)?);
+        Ok(())
+    }
+}
+
+/// An install planned from the guard's evidence; `Err` if the guard refused.
+fn guarded(f: &mut SimFlash, img: &[u8], s: [u8; 8]) -> Result<Result<Header, InstallFail>, Slot> {
+    let p = guard(f, SlotSet::NONE).map_err(|e| e.0)?;
+    Ok(install_with(
+        f,
+        &mut Img(img),
+        &seal(s),
+        &mut [0u8; 512],
+        &mut (),
+        &p,
+    ))
+}
+
+/// A unit that installed `s`'s image uncut.
+fn installed(s: [u8; 8]) -> SimFlash {
+    let mut f = SimFlash::new();
+    assert!(guarded(&mut f, &img(s), s).unwrap().is_ok());
+    f.ops.clear();
+    f
+}
+
+/// A cut that tears op `n` of a guarded install, then power back.
+fn cut(f: &mut SimFlash, n: usize, img: &[u8], seed: u32) {
+    f.rng = Rng(seed | 1);
+    f.cut_after(n);
+    guarded(f, img, SEAL_B)
+        .expect("slots ours before the cut")
+        .ok();
+    f.reboot();
+}
+
+/// After whatever came before, the guard reads both slots ours and an
+/// install ends open with exactly the image.
+fn ends_open(f: &mut SimFlash, img: &[u8], what: &str) {
+    let r = guarded(f, img, SEAL_B).unwrap_or_else(|s| panic!("{s:?} foreign: {what}"));
+    assert!(r.is_ok(), "{what}: {r:?}");
+    assert!(Door::open(f, &seal(SEAL_B)).is_ok(), "{what}");
+    assert_eq!(f.image(img.len()), img, "{what}");
+    for s in Slot::ALL {
+        assert_eq!(guard(f, SlotSet::NONE).unwrap().evidence(s), Evidence::Tag);
+    }
+}
+
+/// Ops of an uncut install over `f`.
+fn ops_in_full_install(f: &SimFlash, img: &[u8]) -> usize {
+    let mut f = f.clone();
+    f.ops.clear();
+    assert!(guarded(&mut f, img, SEAL_B).unwrap().is_ok());
+    f.ops.len()
+}
+
+#[derive(Clone, Copy)]
+enum K {
+    E4,
+    E5,
+    Tag,
+    Code,
+    Marker,
+}
+
+fn slot_seq(s: Slot, ks: &[K]) -> Vec<PlanOp> {
+    let (s4, s5) = s.sectors();
+    let [code, tag, marker] =
+        own_words(s).map(|(a, w)| PlanOp::Program(Bank2Word::new(a).unwrap(), w));
+    ks.iter()
+        .map(|k| match k {
+            K::E4 => PlanOp::Erase(s4),
+            K::E5 => PlanOp::Erase(s5),
+            K::Tag => tag,
+            K::Code => code,
+            K::Marker => marker,
+        })
+        .collect()
+}
+
+/// The slots' part of the plan for `f`'s evidence.
+fn slot_part(f: &mut SimFlash, ours: SlotSet) -> (SlotPlan, Vec<PlanOp>) {
+    let p = guard(f, ours).unwrap();
+    let ops = plan(&header(&img(SEAL_B)), &p).ops()[4..].to_vec();
+    (p, ops)
+}
+
+fn both(ks: &[K]) -> Vec<PlanOp> {
+    let mut v = slot_seq(Slot::Mixer, ks);
+    v.extend(slot_seq(Slot::Edit, ks));
+    v
+}
+
+/// Flags the word at `addr` as failing ECC.
+fn flag(f: &mut SimFlash, addr: u32) {
+    f.bad[((addr - BANK2_BASE) / 32) as usize] = true;
+}
+
 #[test]
-fn install_is_install_with_nothing() {
-    let img = sealed(&sparse_3_sector(5), SEAL_A);
-    let mut a = SimFlash::new();
-    let mut b = SimFlash::new();
-    assert!(run(&mut a, &img, &seal(SEAL_A)).is_ok());
-    let mut st = Staged::new(img.clone());
-    let r = install_with(&mut b, &mut st, &seal(SEAL_A), &mut [0u8; 512], &mut ());
-    assert!(r.is_ok());
-    assert_eq!(a.ops, b.ops);
-    assert_eq!(a.mem, b.mem);
+fn plan_orders_the_slots() {
+    use K::*;
+    let (p, ops) = slot_part(&mut installed(SEAL_A), SlotSet::NONE);
+    for s in Slot::ALL {
+        assert_eq!(p.evidence(s), Evidence::Tag);
+    }
+    assert_eq!(ops, both(&[E5, Marker, E4, Tag, Code]));
+}
+
+/// Both sectors erased: marker, tag, code and no erase. An erased sector is
+/// never erased again.
+#[test]
+fn plan_skips_an_erased_end_sector() {
+    use K::*;
+    let (p, ops) = slot_part(&mut SimFlash::new(), SlotSet::NONE);
+    let erased = Evidence::Scan {
+        s4_erased: true,
+        s5_erased: true,
+    };
+    for s in Slot::ALL {
+        assert_eq!(p.evidence(s), erased);
+    }
+    assert_eq!(ops, both(&[Marker, Tag, Code]));
+}
+
+#[test]
+fn plan_goes_s4_first_after_a_marker() {
+    use K::*;
+    let mut f = installed(SEAL_A);
+    f.erase(Bank2Sector::S4).unwrap();
+    f.erase(Bank2Sector::S6).unwrap();
+    let (p, ops) = slot_part(&mut f, SlotSet::NONE);
+    for s in Slot::ALL {
+        assert_eq!(p.evidence(s), Evidence::Marker);
+    }
+    let s4_first = both(&[E4, Tag, Code, E5, Marker]);
+    assert_eq!(ops, s4_first);
+    // The boot's slot mark, unread: the same.
+    let (p, ops) = slot_part(&mut SimFlash::new(), SlotSet::ALL);
+    for s in Slot::ALL {
+        assert_eq!(p.evidence(s), Evidence::Mark);
+    }
+    assert_eq!(ops, s4_first);
+    // A scan with neither sector erased: the same.
+    let mut f = SimFlash::new();
+    for s in Slot::ALL {
+        flag(&mut f, s.tag_addr());
+        flag(&mut f, s.marker_addr());
+    }
+    let (p, ops) = slot_part(&mut f, SlotSet::NONE);
+    let neither = Evidence::Scan {
+        s4_erased: false,
+        s5_erased: false,
+    };
+    for s in Slot::ALL {
+        assert_eq!(p.evidence(s), neither);
+    }
+    assert_eq!(ops, s4_first);
+}
+
+#[test]
+fn plan_writes_the_tag_first_onto_an_erased_s4() {
+    use K::*;
+    let mut f = SimFlash::new();
+    for s in Slot::ALL {
+        flag(&mut f, s.marker_addr());
+    }
+    let (p, ops) = slot_part(&mut f, SlotSet::NONE);
+    let s4_erased = Evidence::Scan {
+        s4_erased: true,
+        s5_erased: false,
+    };
+    for s in Slot::ALL {
+        assert_eq!(p.evidence(s), s4_erased);
+    }
+    assert_eq!(ops, both(&[Tag, Code, E5, Marker]));
+}
+
+#[test]
+fn plan_writes_the_marker_first_into_an_erased_s5() {
+    use K::*;
+    let mut f = SimFlash::new();
+    for s in Slot::ALL {
+        flag(&mut f, s.tag_addr());
+    }
+    let (p, ops) = slot_part(&mut f, SlotSet::NONE);
+    let s5_erased = Evidence::Scan {
+        s4_erased: false,
+        s5_erased: true,
+    };
+    for s in Slot::ALL {
+        assert_eq!(p.evidence(s), s5_erased);
+    }
+    assert_eq!(ops, both(&[Marker, E4, Tag, Code]));
+}
+
+/// SimFlash panics on a second program; each slot word is programmed once,
+/// by the plan, on a first install and over an installed unit.
+#[test]
+fn the_body_never_reprograms_a_slot_word() {
+    let b = img(SEAL_B);
+    for mut f in [SimFlash::new(), installed(SEAL_A)] {
+        assert!(guarded(&mut f, &b, SEAL_B).unwrap().is_ok());
+        for (a, _) in Slot::ALL.into_iter().flat_map(own_words) {
+            let n = f.ops.iter().filter(|o| **o == Op::Program(a)).count();
+            assert_eq!(n, 1, "{a:#x}");
+        }
+        assert_eq!(f.image(b.len()), &b[..]);
+    }
+}
+
+#[test]
+fn a_reinstall_with_slots_already_ours_ends_open() {
+    let b = img(SEAL_B);
+    let mut f = installed(SEAL_A);
+    let p = guard(&mut f, SlotSet::ALL).unwrap();
+    let r = install_with(
+        &mut f,
+        &mut Img(&b),
+        &seal(SEAL_B),
+        &mut [0u8; 512],
+        &mut (),
+        &p,
+    );
+    assert!(r.is_ok(), "{r:?}");
+    assert!(Door::open(&mut f, &seal(SEAL_B)).is_ok());
+    for s in Slot::ALL {
+        assert_eq!(
+            guard(&mut f, SlotSet::NONE).unwrap().evidence(s),
+            Evidence::Tag
+        );
+    }
+}
+
+#[test]
+fn every_tear_leaves_both_slots_ours() {
+    let b = img(SEAL_B);
+    let starts = [SimFlash::new(), installed(SEAL_A)];
+    for tear in [Tear::M, Tear::G] {
+        for start in &starts {
+            for n in 0..ops_in_full_install(start, &b) {
+                let mut f = start.clone();
+                f.tear = tear;
+                cut(&mut f, n, &b, 0x9E37_79B9 ^ n as u32);
+                assert!(guard(&mut f, SlotSet::NONE).is_ok(), "cut {n} {tear:?}");
+                ends_open(&mut f, &b, &format!("cut {n} {tear:?}"));
+            }
+        }
+    }
+}
+
+/// One cut from a clean tag or marker leaves a clean tag or marker: never
+/// a scan, so a second cut still has evidence to keep.
+#[test]
+fn a_cut_from_a_tag_or_marker_keeps_one() {
+    let b = img(SEAL_B);
+    let tag = installed(SEAL_A);
+    let mut marker = tag.clone();
+    marker.erase(Bank2Sector::S4).unwrap();
+    marker.erase(Bank2Sector::S6).unwrap();
+    for tear in [Tear::M, Tear::G] {
+        for start in [&tag, &marker] {
+            for n in 0..ops_in_full_install(start, &b) {
+                let mut f = start.clone();
+                f.tear = tear;
+                cut(&mut f, n, &b, 0x6A09_E667 ^ n as u32);
+                let p = guard(&mut f, SlotSet::NONE).unwrap();
+                for s in Slot::ALL {
+                    let e = p.evidence(s);
+                    assert!(
+                        matches!(e, Evidence::Tag | Evidence::Marker),
+                        "cut {n} {tear:?} {s:?}: {e:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Install 1 torn at every op, then install 2 (planned from the guard's
+/// evidence) torn at every op, under both tear models, from a first install
+/// and from an installed unit: the guard reads both slots ours and a third
+/// install ends open.
+///
+/// Not tested, and the one accepted lockout (spec § 3.1's residual): a
+/// `Scan` with neither sector erased keeps no clean evidence. Reaching it
+/// takes a torn first-install marker and then a torn tag program; a third
+/// cut, tearing the next erase under model G, can read foreign. Every pair
+/// here must pass.
+#[test]
+fn two_tears_on_consecutive_installs_leave_both_slots_ours() {
+    let b = img(SEAL_B);
+    let starts = [SimFlash::new(), installed(SEAL_A)];
+    let mut pairs = 0;
+    for tear in [Tear::M, Tear::G] {
+        for (i, start) in starts.iter().enumerate() {
+            let n1s = ops_in_full_install(start, &b);
+            for n1 in 0..n1s {
+                let mut once = start.clone();
+                once.tear = tear;
+                cut(&mut once, n1, &b, 0xBB67_AE85 ^ n1 as u32);
+                let n2s = ops_in_full_install(&once, &b);
+                for n2 in 0..n2s {
+                    let mut f = once.clone();
+                    let what = format!("{tear:?} start {i} cuts {n1} {n2}");
+                    cut(&mut f, n2, &b, 0x3C6E_F372 ^ (n1 << 8 | n2) as u32);
+                    ends_open(&mut f, &b, &what);
+                    pairs += 1;
+                }
+            }
+        }
+    }
+    eprintln!("{pairs} pairs");
 }
