@@ -695,6 +695,9 @@ def fail(msg) -> int:
     return 1
 
 
+_fail = fail
+
+
 def open_conn(t: Target) -> Conn:
     """A Conn, or a one-line reason on stderr and SystemExit(1)."""
     try:
@@ -758,9 +761,11 @@ def bank2_answer(conn: Conn) -> tuple:
         body += ln + b"\n"
 
 
-def bank2_install(t: Target, env, local: str) -> int:
+def bank2_install(t: Target, env, local: str, note: str = "") -> int:
     """Put `local` where the unit stages it and have the unit write it:
-    0 on OK, 2 if it is for another firmware, else 1."""
+    0 on OK, 2 if it is for another firmware or the unit's slot holds other
+    code, else 1. `note` leads every failure message (update: \"flashed, but \")."""
+    fail = lambda m: _fail(note + m)
     if not local.lower().endswith(".bk2"):
         return fail("bank2 takes a .bk2 file, not %s (the .bin goes by DFU)" % local)
     try:
@@ -785,7 +790,7 @@ def bank2_install(t: Target, env, local: str) -> int:
         if status is Status.ERR:
             return fail(body.decode(errors="replace"))
         if body.startswith(b"staged:"):
-            return stage_only(body)
+            return stage_only(body, note)
         for _ in range(BUSY_TRIES):
             send(conn, "bank2 install")
             ln, before = bank2_answer(conn)
@@ -795,9 +800,11 @@ def bank2_install(t: Target, env, local: str) -> int:
     except PutRefused as e:
         return fail(str(e))
     except NoAnswer:
-        return fail("\nbank2: no answer from %s" % describe(t))
+        print(file=sys.stderr)
+        return fail("bank2: no answer from %s" % describe(t))
     except Vanished:
-        return fail("\nbank2: %s went away" % describe(t))
+        print(file=sys.stderr)
+        return fail("bank2: %s went away" % describe(t))
     finally:
         conn.close()
     sys.stdout.buffer.write(before)
@@ -837,8 +844,8 @@ def bank2_erase(t: Target) -> int:
     return fail(text)
 
 
-def stage_only(body: bytes) -> int:
-    fail(body.decode(errors="replace") + LATER)
+def stage_only(body: bytes, note: str = "") -> int:
+    fail(note + body.decode(errors="replace") + LATER)
     return 2
 
 
@@ -983,8 +990,10 @@ def update(t: Target, env, pkg: Package) -> int:
         rc = dfu_flash(t, env, str(b), UPDATE_BOOT_WAIT_S)
         if rc:
             return rc
-        if not staged and bank2_install(t, env, str(k)):
-            return 1
+        if not staged:
+            rc = bank2_install(t, env, str(k), "update: flashed, but ")
+            if rc:
+                return rc
     return updated(t, pkg)
 
 
