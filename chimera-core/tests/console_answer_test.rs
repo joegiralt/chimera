@@ -1175,6 +1175,16 @@ fn bank2_gate_answers() {
             "OK slots erased\n",
         ),
         (
+            Bank2Answer::EccTorn(Ok(())),
+            "bank2 ecc-tear",
+            "OK ecc torn 081a0020\n",
+        ),
+        (
+            Bank2Answer::EccTorn(Err(FlashFail::Errors(1 << 17))),
+            "bank2 ecc-tear",
+            "ERR bank2: flash errors 00020000\n",
+        ),
+        (
             Bank2Answer::SlotsErased(Err((FlashFail::Timeout, Bank2Sector::S6))),
             "bank2 erase slots",
             "ERR bank2: flash timeout at S6\n",

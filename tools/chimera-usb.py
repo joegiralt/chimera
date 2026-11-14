@@ -129,6 +129,8 @@ def old_put_refusal(body: bytes, bk2_len: int) -> bool:
     return body in OLD_PUT_REFUSALS or (body.startswith(b"ERR put takes") and b"BANK2.BK2" in body and bk2_len > 512 * 1024)
 
 
+BK2_FORMAT = slice(8, 10)  # the .bk2 header's format, little-endian
+BK2_FORMAT_NOW = 2  # 0.4's: the 1 MB image with the slots (0.3's is 1)
 FW_MAX = 917_504  # the stock bootloader erases itself at this size
 FLASH_AT = "0x8020000:leave"  # the firmware area, never the bootloader
 PUT_MAX = 1 << 20  # the unit's limit
@@ -951,6 +953,11 @@ def stage(t: Target, env, pkg: Package):
         return True
     if old_put_refusal(bytes(body), len(pkg.bk2)):
         print("this firmware can't take the .bk2 yet: it goes after the flash", file=sys.stderr)
+        return False
+    # A newer firmware judges an older format's .bk2 (0.3's, going back)
+    # not a bank-2 image: the .bin it pairs with takes it after the flash.
+    if b"not a bank-2 image" in body and int.from_bytes(pkg.bk2[BK2_FORMAT], "little") != BK2_FORMAT_NOW:
+        print("this firmware can't take an older .bk2: it goes after the flash", file=sys.stderr)
         return False
     return fail("%s: nothing flashed" % body.decode(errors="replace"))
 

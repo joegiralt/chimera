@@ -424,6 +424,7 @@ impl Due {
 
     /// A source chunk's, or its read back's: `PUT_CHUNK_DEADLINE_MS` from
     /// now, as a whole put's started that much earlier (no field to carry).
+    #[cfg(feature = "source-writer")]
     fn chunk(now: Ms) -> Self {
         Due(Ms(now
             .0

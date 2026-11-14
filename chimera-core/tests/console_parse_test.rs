@@ -368,6 +368,7 @@ fn bank2_takes_install_or_nothing() {
         for gate in [
             "bank2 erase",
             "bank2 slot-poke",
+            "bank2 ecc-tear",
             "bank2 erase slots",
             "bank2 ecc-read 081a0000",
             "bank2 pull erase-s4",
@@ -386,7 +387,7 @@ fn bank2_takes_install_or_nothing() {
         assert_eq!(one("Bank2 ERASE\n"), Ok(Request::Bank2(Bank2Arg::Erase)));
         assert_eq!(
             Command::Bank2.usage(),
-            "install, erase, erase slots, slot-poke, ecc-read <hex addr>, pull <point> or nothing"
+            "install, erase, erase slots, slot-poke, ecc-tear, ecc-read <hex addr>, pull <point> or nothing"
         );
     }
 }
@@ -399,6 +400,7 @@ fn bank2_gate_commands_parse() {
     let ok = |a| Ok(Request::Bank2(a));
     assert_eq!(one("bank2 slot-poke\n"), ok(Bank2Arg::SlotPoke));
     assert_eq!(one("BANK2 Erase SLOTS\n"), ok(Bank2Arg::EraseSlots));
+    assert_eq!(one("bank2 ECC-tear\n"), ok(Bank2Arg::EccTear));
     let word = |a| chimera_image::Bank2Word::new(a).unwrap();
     for (line, at) in [
         ("bank2 ecc-read 081a0000", 0x081A_0000),
@@ -427,6 +429,7 @@ fn bank2_gate_commands_parse() {
     }
     for bad in [
         "bank2 slot-poke now",
+        "bank2 ecc-tear 081a0020",
         "bank2 erase slots now",
         "bank2 erase slot",
         "bank2 ecc-read",

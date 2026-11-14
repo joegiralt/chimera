@@ -852,6 +852,37 @@ mod gate {
         ARMED.store(i as u8 + 1, Ordering::Relaxed);
     }
 
+    impl FlashBank2 {
+        /// `data` programmed at `w` whatever the word holds: no erased
+        /// check (`program`'s `held`). Gate 1b only: over a programmed word
+        /// its whole point is a double ECC error there, which only an
+        /// erase clears.
+        pub(super) fn program_over(
+            &mut self,
+            w: Bank2Word,
+            data: &[u8; 32],
+        ) -> Result<(), FlashFail> {
+            self.ready()?;
+            let u = super::Unlocked::new()?;
+            super::clear_flags();
+            u.set_cr(chimera_image::regs::program_cr(super::cr()));
+            let (words, _) = data.as_chunks::<4>();
+            for (a, &b) in (w.get()..).step_by(4).zip(words) {
+                // SAFETY: as `program`'s stores: an aligned word of a flash
+                // word in bank 2 (`Bank2Word`), region 2 `Write`
+                // (`ready`), CR2.PG set. The word may already be
+                // programmed: corrupting its ECC is this function's
+                // purpose, and it touches no other word.
+                unsafe { core::ptr::write_volatile(a as *mut u32, u32::from_le_bytes(b)) };
+            }
+            cortex_m::asm::dsb();
+            super::wait(
+                DWT::cycle_count(),
+                ms_cycles(chimera_image::regs::WORD_TIMEOUT_MS, self.cpu_hz),
+            )
+        }
+    }
+
     /// The armed point, disarmed.
     fn take() -> Option<PullAt> {
         let i = ARMED.swap(0, Ordering::Relaxed);
@@ -918,12 +949,14 @@ mod gate {
 
     impl<D: ChimeraDisplay> Pulling<'_, '_, D> {
         /// `s` erased again and again until 3 s have passed, PULL NOW
-        /// counting down a second at a time; at least once.
+        /// counting down a second at a time; at least once, at most
+        /// `TEAR_ERASES` times (the sector's endurance).
         fn tear_erase(&mut self, s: Bank2Sector) -> Result<(), FlashFail> {
+            const TEAR_ERASES: u32 = 8;
             let second = ms_cycles(1000, self.flash.cpu_hz);
             let t = DWT::cycle_count();
             let mut shown = 0;
-            loop {
+            for _ in 0..TEAR_ERASES {
                 let gone = DWT::cycle_count().wrapping_sub(t) / second;
                 let left = 3u32.saturating_sub(gone) as u8;
                 if left == 0 {
@@ -1043,7 +1076,9 @@ const TAPE_OFF_MS: u32 = 30;
 /// A gate command's flash work, from the UI loop before its answer starts:
 /// TAPE lets go, the door closes, region 2 `Write`, `f`, region 2 `Read`.
 /// Then bank 2 judged again (`open_door`) unless `judge` says no: the
-/// door opens only on this seal's sound image.
+/// door opens only on this seal's sound image. That judge, as
+/// `slot-poke`'s erased check, reads unmasked: a torn word anywhere faults
+/// and resets, and the boot's `BANK2_BAD` erase converges (gate only).
 #[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
 fn with_door_closed<R>(
     ui: &mut chimera_core::ui::UiState,
@@ -1077,6 +1112,33 @@ pub fn run_slot_poke(
     use chimera_core::console::{POKE_AT, POKE_WORD};
     let r = with_door_closed(ui, cpu_hz, |f| f.program(POKE_AT, &POKE_WORD), |_| None);
     chimera_core::console::Bank2Answer::SlotPoked(r)
+}
+
+/// `bank2 ecc-tear` (`bank2-gate`, gate 1b): `TEAR_WORDS[0]` programmed at
+/// `TEAR_AT` (`not erased` from an earlier run is passed over), then
+/// `TEAR_WORDS[1]` over it with no erased check, for a double ECC error
+/// there. Whether this chip makes one must be verified on it (`ecc-read`
+/// at `TEAR_AT`). Bank 2 is not judged after: its unmasked read of that
+/// word would fault; it stays closed as `Corrupt`. `bank2 erase slots`
+/// clears it.
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
+#[inline(never)]
+pub fn run_ecc_tear(
+    _: &chimera_core::errand::Errand,
+    ui: &mut chimera_core::ui::UiState,
+    cpu_hz: u32,
+) -> chimera_core::console::Bank2Answer {
+    use chimera_core::console::{TEAR_AT, TEAR_WORDS};
+    let r = with_door_closed(
+        ui,
+        cpu_hz,
+        |f| match f.program(TEAR_AT, &TEAR_WORDS[0]) {
+            Ok(()) | Err(FlashFail::NotErased) => f.program_over(TEAR_AT, &TEAR_WORDS[1]),
+            Err(e) => Err(e),
+        },
+        |_| Some(Bank2Status::Corrupt),
+    );
+    chimera_core::console::Bank2Answer::EccTorn(r)
 }
 
 /// `bank2 erase slots` (`bank2-gate`, gate 8's clear): S4–S7 erased in

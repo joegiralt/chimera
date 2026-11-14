@@ -516,6 +516,10 @@ impl Usb {
                         Some(crate::bank2::run_slot_poke(e, ui, cpu_hz))
                     }
                     #[cfg(feature = "bank2-gate")]
+                    Ok(Request::Bank2(chimera_core::console::Bank2Arg::EccTear)) => {
+                        Some(crate::bank2::run_ecc_tear(e, ui, cpu_hz))
+                    }
+                    #[cfg(feature = "bank2-gate")]
                     Ok(Request::Bank2(chimera_core::console::Bank2Arg::EraseSlots)) => {
                         Some(crate::bank2::run_erase_slots(e, ui, cpu_hz))
                     }

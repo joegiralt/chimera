@@ -689,12 +689,13 @@ class PutUnit:
     answered `ACK <bytes so far>`, or `ERR put: chunk` at the chunk
     `bad_chunk` names; `present` answers `OK PRESENT` before any data.
     The first `busy` puts answer `ERR busy`; `answers` maps other request
-    lines to their answers. `refuse_once`: only the first put is refused."""
+    lines to their answers. `refuse_once`: only the first put is refused;
+    `after_once`: only the first put's answer is `after`."""
 
-    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n", present=False, bad_chunk=None, busy=0, answers=None, refuse_once=False):
+    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n", present=False, bad_chunk=None, busy=0, answers=None, refuse_once=False, after_once=False):
         self.answers = answers or {}
         self.refuse, self.after, self.silent, self.listing = refuse, after, silent, listing
-        self.refuse_once = refuse_once
+        self.refuse_once, self.after_once = refuse_once, after_once
         self.busy = busy
         self.present, self.bad_chunk = present, bad_chunk
         self.requests, self.data, self.ends = [], b"", []
@@ -775,6 +776,8 @@ class PutUnit:
                     mine = self.data[base:]
                     ok = zlib.crc32(mine) == crc and len(mine) == size
                     conn.sendall(self.after or (b"OK\n" if ok else b"ERR put: CRC mismatch\n"))
+                    if self.after_once:
+                        self.after = None
 
     def __enter__(self):
         self.thread.start()
@@ -1295,13 +1298,13 @@ OLD_PUT = (
 )
 
 
-def make_pair(body=b"door" * 64, version=VERSION):
+def make_pair(body=b"door" * 64, version=VERSION, fmt=1):
     """A .bin and its .bk2 as `bank2-split` makes them: the .bk2's header
     seals its body (SHA-256 prefix, CRC-32), the .bin holds the seal once."""
     seal = hashlib.sha256(body).digest()[:8]
     h = bytearray(256)
     h[0:8] = b"CHIMERA2"
-    h[8:10] = (1).to_bytes(2, "little")
+    h[8:10] = fmt.to_bytes(2, "little")
     h[0x0C:0x10] = len(body).to_bytes(4, "little")
     h[0x10:0x14] = zlib.crc32(body).to_bytes(4, "little")
     h[0x14:0x18] = (0x100).to_bytes(4, "little")
@@ -1397,6 +1400,8 @@ class Update(unittest.TestCase):
         self.assertEqual(len(self.sent("dfu-util")), 1)
 
     def test_a_staging_failure_stops_before_any_flash(self):
+        # This format's .bk2: a refusal is the package's fault, not the firmware's age.
+        self.bin, self.bk2, self.seal = make_pair(fmt=tool.BK2_FORMAT_NOW)
         for refusal in (b"ERR put: CARD FULL\n", b"ERR put: firmware unsealed\n", b"ERR put: not a bank-2 image\n"):
             self.events.clear()
             with PutUnit(refuse=refusal) as u:
@@ -1404,6 +1409,27 @@ class Update(unittest.TestCase):
             self.assertEqual(rc, 1, refusal)
             self.assertIn(refusal.strip().decode(), err)
             self.assertEqual(self.sent("to-dfu") + self.sent("dfu-util"), [], refusal)
+
+    def test_an_older_format_package_on_newer_firmware_flashes_first(self):
+        # 0.4 judges 0.3's format-1 .bk2 not a bank-2 image: the downgrade
+        # (the documented recovery) still runs as one command, ending flashed.
+        self.bin, self.bk2, self.seal = make_pair(fmt=1)
+        answers = {
+            b"bank2": b"bank2 open 0.4.0 x seal=0000000000000000\nOK\n",
+            b"bank2 install": b"audio overruns 0 -> 0 blocks +40\nOK bank2 open 0.2.0 02e440e2\n",
+            b"status": self.status(self.open_line()),
+        }
+        with PutUnit(answers=answers, after=b"ERR put: not a bank-2 image\n", after_once=True) as u:
+            rc, out, err = self.update(u, self.package())
+        self.assertEqual(rc, 0, err)
+        self.assertIn("OK updated 0.2.0 02e440e2", out)
+        puts, dfu = self.sent("put "), self.sent("dfu-util")
+        install, status = self.sent("bank2 install"), self.sent("status")
+        self.assertEqual((len(puts), len(dfu)), (2, 1), self.events)
+        self.assertLess(puts[0], dfu[0])
+        self.assertLess(dfu[0], puts[1])
+        self.assertLess(puts[1], install[0])
+        self.assertLess(install[0], status[0])
 
     def test_old_firmware_flashes_first_then_puts_and_installs(self):
         answers = {

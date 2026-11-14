@@ -30,6 +30,10 @@ pub enum Bank2Arg {
     /// `erase slots`: S4–S7 erased (gate 8's clear).
     #[cfg(feature = "bank2-gate")]
     EraseSlots,
+    /// `ecc-tear`: a word programmed twice at `TEAR_AT`, for gate 1b's
+    /// double ECC error.
+    #[cfg(feature = "bank2-gate")]
+    EccTear,
     /// `ecc-read <hex addr>`: one masked read of that word (gate 1b).
     #[cfg(feature = "bank2-gate")]
     EccRead(Bank2Word),
@@ -40,7 +44,7 @@ pub enum Bank2Arg {
 
 impl Arg for Bank2Arg {
     const USAGE: &'static str = if cfg!(feature = "bank2-gate") {
-        "install, erase, erase slots, slot-poke, ecc-read <hex addr>, pull <point> or nothing"
+        "install, erase, erase slots, slot-poke, ecc-tear, ecc-read <hex addr>, pull <point> or nothing"
     } else {
         "install or nothing"
     };
@@ -67,6 +71,18 @@ pub const POKE_AT: Bank2Word = match Bank2Word::new(0x081A_0000) {
 /// The foreign word `slot-poke` programs.
 #[cfg(feature = "bank2-gate")]
 pub const POKE_WORD: [u8; 32] = [0x5A; 32];
+
+/// Where `ecc-tear` programs a word twice: the word after `POKE_AT`.
+#[cfg(feature = "bank2-gate")]
+pub const TEAR_AT: Bank2Word = match Bank2Word::new(0x081A_0020) {
+    Some(w) => w,
+    None => panic!("a bank-2 word"),
+};
+
+/// `ecc-tear`'s two programs, first and second: every bit pair differs,
+/// so the second's ECC can't match what the cells hold.
+#[cfg(feature = "bank2-gate")]
+pub const TEAR_WORDS: [[u8; 32]; 2] = [[0x5A; 32], [0xA5; 32]];
 
 /// Where `bank2 pull` stops the next install for a hand on the power
 /// (spec § 6.3, gate 6).
@@ -127,6 +143,9 @@ fn gate_arg(w: &[u8], words: &mut Words<'_>) -> Option<Bank2Arg> {
     }
     if is(b"slot-poke") {
         return Some(Bank2Arg::SlotPoke);
+    }
+    if is(b"ecc-tear") {
+        return Some(Bank2Arg::EccTear);
     }
     if is(b"ecc-read") {
         return Bank2Word::new(hex(words.next()?)?).map(Bank2Arg::EccRead);
@@ -334,6 +353,9 @@ pub enum Bank2Answer {
     /// `bank2 slot-poke`: the foreign word's program.
     #[cfg(feature = "bank2-gate")]
     SlotPoked(Result<(), FlashFail>),
+    /// `bank2 ecc-tear`: the second program over `TEAR_AT`.
+    #[cfg(feature = "bank2-gate")]
+    EccTorn(Result<(), FlashFail>),
     /// `bank2 erase slots`: S4–S7's erases, the first failure's sector.
     #[cfg(feature = "bank2-gate")]
     SlotsErased(Result<(), (FlashFail, Bank2Sector)>),
@@ -450,13 +472,17 @@ fn lines(a: &Bank2Answer, t: &mut impl Write) -> fmt::Result {
         #[cfg(feature = "bank2-gate")]
         Bank2Answer::Erased(Ok(())) => t.write_str("OK bank2 erased\n"),
         #[cfg(feature = "bank2-gate")]
-        Bank2Answer::Erased(Err(f)) | Bank2Answer::SlotPoked(Err(f)) => {
+        Bank2Answer::Erased(Err(f))
+        | Bank2Answer::SlotPoked(Err(f))
+        | Bank2Answer::EccTorn(Err(f)) => {
             t.write_str("ERR bank2: flash ")?;
             crate::bank2::write_flash_fail(*f, t)?;
             t.write_char('\n')
         }
         #[cfg(feature = "bank2-gate")]
         Bank2Answer::SlotPoked(Ok(())) => t.write_str("OK slot poked\n"),
+        #[cfg(feature = "bank2-gate")]
+        Bank2Answer::EccTorn(Ok(())) => writeln!(t, "OK ecc torn {:08x}", TEAR_AT.get()),
         #[cfg(feature = "bank2-gate")]
         Bank2Answer::SlotsErased(Ok(())) => t.write_str("OK slots erased\n"),
         #[cfg(feature = "bank2-gate")]

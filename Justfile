@@ -153,7 +153,7 @@ firmware-orbit-writer:
 # Hardware Gate 2's power-pull aid (`bank2-gate`): the install holds 3 s at
 # each phase for a hand to pull the power, and the console takes `bank2
 # erase`; and the slot gates' (ADR 0272): `bank2 slot-poke`, `erase slots`,
-# `ecc-read <addr>` and `pull erase-s4|erase-s6|tag-mixer|tag-edit`. target/chimera-gate.bin and .bk2. Never flashed by a recipe, never
+# `ecc-tear`, `ecc-read <addr>` and `pull erase-s4|erase-s6|tag-mixer|tag-edit`. target/chimera-gate.bin and .bk2. Never flashed by a recipe, never
 # released: every other .bin is refused if it holds the aid.
 firmware-gate:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bank2-gate
