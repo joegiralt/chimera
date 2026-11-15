@@ -12,6 +12,7 @@ use chimera_engine::params::EngineType;
 
 mod addr;
 mod describe;
+mod value;
 pub use addr::EdAddr;
 pub use describe::{env_variant, filter_variant, fx_variant, lfo_variant, op_variant, pages};
 
@@ -113,6 +114,10 @@ pub(crate) fn answer_in(line: &EdLine, ui: &UiState, w: &mut dyn Write) -> fmt::
                 engine.disk_ident(),
                 pages(engine)
             ),
+        },
+        Some(EdArg::Get(a)) => match value::get(a, ui, w) {
+            Some(done) => done.and_then(|()| w.write_str("OK\n")),
+            None => writeln!(w, "ERR ed get has no {} here", a),
         },
         Some(other) => writeln!(w, "ERR ed {} is not in this build", other.sub()),
     }

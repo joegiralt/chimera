@@ -45,7 +45,7 @@ pub fn pages(engine: EngineType) -> u8 {
 }
 
 /// Flat page `n` of the chain: each node's home, then its sub-pages.
-fn def_at(mut n: usize) -> Option<&'static BlockDef> {
+pub(super) fn def_at(mut n: usize) -> Option<&'static BlockDef> {
     for b in ALGO_FORMANT_CHAIN.blocks {
         if n == 0 {
             return Some(b.def);
@@ -179,7 +179,7 @@ impl Cell {
 
 /// `v` to seven decimals, trailing zeros dropped. Core's float `Display`
 /// is 20 KB of bank 1 this module can't be placed out of.
-fn num(w: &mut dyn Write, v: f32) -> fmt::Result {
+pub(super) fn num(w: &mut dyn Write, v: f32) -> fmt::Result {
     let mut whole = v.abs() as u32;
     let mut frac = ((v.abs() - whole as f32) * 1e7 + 0.5) as u32;
     if frac >= 10_000_000 {

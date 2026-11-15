@@ -96,7 +96,6 @@ fn ed_without_sub_is_refused() {
 fn the_rest_wait_for_their_tasks() {
     let mut f = Fake::new();
     for (line, sub) in [
-        ("ed get OP_C.CRSE\n", "get"),
         ("ed set OP_C.CRSE 3.5\n", "set"),
         ("ed watch\n", "watch"),
         ("ed unwatch\n", "unwatch"),
@@ -380,4 +379,84 @@ fn writes_editor_schema_fixture() {
         "the schema changed: BLESS=1 rewrites {}",
         path.display()
     );
+}
+
+// ---- get ----
+
+use chimera_core::project::PartId;
+use chimera_core::ui::block_def::slot_addr;
+use chimera_core::ui::nav::Location;
+use chimera_engine::addr::Blocks;
+
+/// `val <addr> <normalized> <stored> "<text>"` then `OK`.
+fn parse_val(got: &str) -> (f32, f32, String) {
+    let line = got.lines().next().unwrap();
+    let rest = line.strip_prefix("val ").unwrap_or_else(|| panic!("{got}"));
+    assert_eq!(got.lines().nth(1), Some("OK"), "{got}");
+    let mut w = rest.splitn(4, ' ');
+    w.next().unwrap();
+    let n = w.next().unwrap().parse().unwrap();
+    let s = w.next().unwrap().parse().unwrap();
+    let t = w.next().unwrap();
+    (
+        n,
+        s,
+        t.strip_prefix('"')
+            .unwrap()
+            .strip_suffix('"')
+            .unwrap()
+            .to_string(),
+    )
+}
+
+#[test]
+fn get_text_matches_the_box_for_every_algo_param() {
+    let mut f = Fake::new();
+    let mut seen = BTreeSet::new();
+    for n in [0.0_f32, 0.37, 1.0] {
+        for b in algo_blocks() {
+            let mut view = f.ui.params_mut().block_mut(b).unwrap();
+            for spec in view.specs() {
+                view.set(spec.id, spec.denormalize(n));
+            }
+        }
+        for node in 0..ALGO_CHAIN.blocks.len() {
+            let mut sub = 0;
+            while let Some(at) = ALGO_CHAIN.page(node, sub) {
+                sub += 1;
+                f.ui.go_for_test(Location::pages(PartId::ALL[0], at));
+                let (def, ctx) = (f.ui.page_def(), f.ui.slot_ctx_for_test());
+                for i in 0..6 {
+                    let Some(a) = slot_addr(def, i, &ctx) else {
+                        continue;
+                    };
+                    let want = f.ui.cell_text_for_test(i);
+                    let got = ask(&mut f, &format!("ed get {}\n", EdAddr(a)));
+                    let (norm, stored, text) = parse_val(&got);
+                    assert_eq!(text, want.as_str(), "{a:?} at {n} on {}", def.short);
+                    let p = f.ui.params();
+                    let blk = chimera_engine::addr::BlockRead::block(p, a.block).unwrap();
+                    assert!((stored - blk.get(a.param)).abs() < 1e-5, "{a:?}");
+                    assert!((norm - blk.normalized(a.param)).abs() < 1e-5, "{a:?}");
+                    seen.insert(EdAddr(a).to_string());
+                }
+            }
+        }
+    }
+    assert!(seen.len() > 60, "{}", seen.len());
+}
+
+#[test]
+fn get_unknown_addr_is_refused() {
+    let mut f = Fake::new();
+    for line in [
+        "ed get NOPE.X\n",
+        "ed get OP_C.NOPE\n",
+        "ed get OP_C\n",
+        "ed get\n",
+    ] {
+        let got = ask(&mut f, line);
+        assert!(got.starts_with("ERR "), "{line}: {got}");
+        assert!(!got.contains("not in this build"), "{line}: {got}");
+    }
 }
