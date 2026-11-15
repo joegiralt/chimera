@@ -11,7 +11,7 @@ use crate::addr::{BlockRead, ParamAddr};
 use crate::ui::UiState;
 use crate::ui::block_def::slot_addr;
 use crate::ui::cell_text::{self, CellCx};
-use crate::ui::fmt::{FmtBuf, fmt_val};
+use crate::ui::fmt::FmtBuf;
 use chimera_engine::params::EngineType;
 
 /// The slot of the page `cx` that shows `a`.
@@ -26,7 +26,9 @@ fn shown_on(cx: &CellCx, a: ParamAddr) -> Option<usize> {
     None
 }
 
-/// The answer but for the closing `OK`; `None` for an address the Part's
+/// The answer but for the closing `OK`. The value is the Sound's stored
+/// one, as the unit holds it: a refused choice the box shows dimmed is not
+/// reported; `None` for an address the Part's
 /// Sound doesn't hold (not ALGO's, or a block it lacks).
 pub(super) fn get(addr: EdAddr, ui: &UiState, w: &mut dyn Write) -> Option<fmt::Result> {
     let sound = &ui.project().part(ui.active_part).sound;
@@ -50,7 +52,7 @@ pub(super) fn get(addr: EdAddr, ui: &UiState, w: &mut dyn Write) -> Option<fmt::
         n += 1;
     }
     if !found {
-        fmt_val(&mut text, norm, spec.fmt);
+        text = cell_text::fmt_text(Some(a), spec.fmt, norm);
     }
     Some(line(addr, norm, stored, text.as_str(), w))
 }

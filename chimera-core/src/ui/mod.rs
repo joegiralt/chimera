@@ -1049,6 +1049,8 @@ impl UiState {
             ctx: &own.ctx,
             held: &None,
             part: self.project.part(self.active_part),
+            // No cell has the focus here: SCALA's marquee (the one reader)
+            // draws from its first letter.
             focus: usize::MAX,
             clock: &own.clock,
             bank2: &own.bank2,
@@ -1813,6 +1815,13 @@ impl UiState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn slot_ctx_for_test(&self) -> SlotCtx {
         self.ctx()
+    }
+
+    /// Select operator `op`, as the OP page's selector does.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn select_op_for_test(&mut self, op: Op) {
+        self.sel_op = op;
     }
 
     /// Slot `slot`'s text as the page draws it: the box's own words.

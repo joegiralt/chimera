@@ -136,19 +136,26 @@ pub(crate) fn param_text(cx: &CellCx, i: usize, view: &View, v: f32) -> FmtBuf {
             let (tempo, fold) = *cx.rev_clock;
             crate::ui::reverb_panel::value_text(a.param, &p, tempo, fold)
         }
-        None => {
-            let mut buf = FmtBuf::new();
-            let fmt = view.fmt();
-            // These two read the stored value (`ValFmt::LogHz`).
-            let v = match (fmt, view.addr().and_then(|a| a.spec())) {
-                (
-                    crate::ui::page::ValFmt::LogHz { .. } | crate::ui::page::ValFmt::Vowel,
-                    Some(s),
-                ) => s.denormalize(v),
-                _ => v,
-            };
-            fmt::fmt_val(&mut buf, v, fmt);
-            buf
-        }
+        None => fmt_text(view.addr(), view.fmt(), v),
     }
+}
+
+/// `v`, a 0..1 display value, in `fmt`: the box's way for any cell, and
+/// `ed get`'s for a param no cell shows now.
+#[inline(always)]
+pub(crate) fn fmt_text(
+    addr: Option<crate::addr::ParamAddr>,
+    fmt: crate::ui::page::ValFmt,
+    v: f32,
+) -> FmtBuf {
+    let mut buf = FmtBuf::new();
+    // These two read the stored value (`ValFmt::LogHz`).
+    let v = match (fmt, addr.and_then(|a| a.spec())) {
+        (crate::ui::page::ValFmt::LogHz { .. } | crate::ui::page::ValFmt::Vowel, Some(s)) => {
+            s.denormalize(v)
+        }
+        _ => v,
+    };
+    fmt::fmt_val(&mut buf, v, fmt);
+    buf
 }

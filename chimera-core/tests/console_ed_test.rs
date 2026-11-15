@@ -446,6 +446,96 @@ fn get_text_matches_the_box_for_every_algo_param() {
     assert!(seen.len() > 60, "{}", seen.len());
 }
 
+use chimera_core::ui::fmt::{FmtBuf, fmt_val};
+use chimera_core::ui::page::ValFmt;
+
+/// The spec's format at the stored value, as the box reads it: LogHz and
+/// Vowel take the stored value, every other format the 0..1 one.
+fn spec_text(f: &Fake, a: ParamAddr) -> String {
+    let blk = chimera_engine::addr::BlockRead::block(f.ui.params(), a.block).unwrap();
+    let spec = a.spec().unwrap();
+    let v = match spec.fmt {
+        ValFmt::LogHz { .. } | ValFmt::Vowel => blk.get(a.param),
+        _ => blk.normalized(a.param),
+    };
+    let mut b = FmtBuf::new();
+    fmt_val(&mut b, v, spec.fmt);
+    b.as_str().to_string()
+}
+
+fn shown_now(f: &mut Fake) -> Vec<ParamAddr> {
+    let mut shown = Vec::new();
+    for node in 0..ALGO_FORMANT_CHAIN.blocks.len() {
+        let mut sub = 0;
+        while let Some(at) = ALGO_FORMANT_CHAIN.page(node, sub) {
+            sub += 1;
+            f.ui.go_for_test(Location::pages(PartId::ALL[0], at));
+            let (def, ctx) = (f.ui.page_def(), f.ui.slot_ctx_for_test());
+            for i in 0..6 {
+                shown.extend(slot_addr(def, i, &ctx));
+            }
+        }
+    }
+    shown
+}
+
+#[test]
+fn get_reads_a_param_no_cell_shows_by_its_stored_value() {
+    let mut f = Fake::new();
+    for n in [0.0_f32, 0.33, 1.0] {
+        for b in algo_blocks() {
+            let mut view = f.ui.params_mut().block_mut(b).unwrap();
+            for spec in view.specs() {
+                view.set(spec.id, spec.denormalize(n));
+            }
+        }
+        let shown = shown_now(&mut f);
+        let mut hidden = 0;
+        for b in algo_blocks() {
+            for spec in b.specs() {
+                let a = ParamAddr::new(b, spec.id);
+                if shown.contains(&a) {
+                    continue;
+                }
+                hidden += 1;
+                let (_, _, text) = parse_val(&ask(&mut f, &format!("ed get {}\n", EdAddr(a))));
+                assert_eq!(text, spec_text(&f, a), "{a:?} at {n}");
+            }
+        }
+        assert!(hidden > 3, "{hidden}");
+    }
+}
+
+#[test]
+fn get_bw_and_vowel_read_right_in_every_ui_state() {
+    use chimera_engine::dsp::algo::params::{AlgoOpParams, AlgoParams};
+    let bw = ParamAddr::new(BlockRef::AlgoOp(Op::B), AlgoOpParams::BW);
+    let vowel = ParamAddr::new(BlockRef::Algo, AlgoParams::VOWEL);
+    let mut f = Fake::new();
+    // Op B a table (BW hidden), then a formant (BW on its page), then the
+    // sound edited with another op selected.
+    for wave in [None, Some(16.0_f32)] {
+        if let Some(w) = wave {
+            let mut v =
+                f.ui.params_mut()
+                    .block_mut(BlockRef::AlgoOp(Op::B))
+                    .unwrap();
+            v.set(AlgoOpParams::WAVE, w);
+            assert_eq!(
+                f.ui.slot_ctx_for_test().op_kinds[1],
+                chimera_engine::dsp::algo::kinds::OpKind::Formant
+            );
+        }
+        for sel in [Op::A, Op::B, Op::F] {
+            f.ui.select_op_for_test(sel);
+            for a in [bw, vowel] {
+                let (_, _, text) = parse_val(&ask(&mut f, &format!("ed get {}\n", EdAddr(a))));
+                assert_eq!(text, spec_text(&f, a), "{a:?} wave {wave:?} sel {sel:?}");
+            }
+        }
+    }
+}
+
 #[test]
 fn get_unknown_addr_is_refused() {
     let mut f = Fake::new();
@@ -456,7 +546,11 @@ fn get_unknown_addr_is_refused() {
         "ed get\n",
     ] {
         let got = ask(&mut f, line);
-        assert!(got.starts_with("ERR "), "{line}: {got}");
-        assert!(!got.contains("not in this build"), "{line}: {got}");
+        assert!(got.starts_with("ERR ed takes "), "{line}: {got}");
     }
+    // A real address the ALGO Sound doesn't hold is another refusal.
+    assert_eq!(
+        ask(&mut f, "ed get CHORUS.MODE\n"),
+        "ERR ed get has no CHORUS.MODE here\n"
+    );
 }
