@@ -96,7 +96,6 @@ fn ed_without_sub_is_refused() {
 fn the_rest_wait_for_their_tasks() {
     let mut f = Fake::new();
     for (line, sub) in [
-        ("ed describe ALGO 0\n", "describe"),
         ("ed get OP_C.CRSE\n", "get"),
         ("ed set OP_C.CRSE 3.5\n", "set"),
         ("ed watch\n", "watch"),
@@ -108,4 +107,265 @@ fn the_rest_wait_for_their_tasks() {
             "{line}"
         );
     }
+}
+
+// ---- describe ----
+
+use chimera_core::console::{
+    ed_pages, env_variant, filter_variant, fx_variant, lfo_variant, op_variant,
+};
+use chimera_core::ui::block_def::{ChainDef2, SlotBinding};
+use chimera_core::ui::block_registry::{ALGO_CHAIN, ALGO_FORMANT_CHAIN};
+use chimera_core::ui::view::{EnvKind, LfoKind};
+use chimera_core::ui::{filter_panel, fx_panel, mod_panel, op_page};
+use chimera_engine::addr::BlockRef as B;
+use chimera_engine::dsp::algo::kinds::OpKind;
+use chimera_engine::dsp::filter::FilterKind;
+use chimera_engine::dsp::modulator::{EnvForm, EnvSpeed, Func, LfoForm};
+use chimera_engine::dsp::voice_fx::params::FxType;
+use chimera_engine::params::EngineType;
+use std::collections::BTreeSet;
+
+/// USB full speed's bulk ceiling, about 1 MB/s, for the 1 s answer clock,
+/// halved for margin: the console has no measured rate to use instead.
+const ANSWER_BYTES_MAX: usize = 500_000;
+
+fn page_text(f: &mut Fake, n: u8) -> String {
+    ask(f, &format!("ed describe ALGO {n}\n"))
+}
+
+fn all_pages(f: &mut Fake) -> Vec<String> {
+    (0..ed_pages(EngineType::Algo))
+        .map(|n| page_text(f, n))
+        .collect()
+}
+
+fn chain_pages(c: &ChainDef2) -> usize {
+    c.blocks.iter().map(|b| 1 + b.sub_pages.len()).sum()
+}
+
+#[test]
+fn describe_walks_every_algo_page() {
+    let mut f = Fake::new();
+    let n = ed_pages(EngineType::Algo);
+    assert_eq!(usize::from(n), chain_pages(&ALGO_FORMANT_CHAIN));
+    assert_eq!(
+        chain_pages(&ALGO_FORMANT_CHAIN),
+        chain_pages(&ALGO_CHAIN) + 1
+    );
+    for i in 0..n {
+        let t = page_text(&mut f, i);
+        assert!(t.starts_with(&format!("page {i} ")), "{t}");
+        assert!(
+            t.lines().next().unwrap().ends_with(&format!(" of {n}")),
+            "{t}"
+        );
+        assert!(t.ends_with("\nOK\n"), "{t}");
+    }
+    assert!(page_text(&mut f, n).starts_with("ERR ed describe ALGO has"));
+    assert!(ask(&mut f, "ed describe VA 0\n").starts_with("ERR ed describe VA has 0"));
+}
+
+fn addrs(texts: &[String]) -> BTreeSet<String> {
+    texts
+        .iter()
+        .flat_map(|t| t.lines())
+        .filter_map(|l| l.strip_prefix("param "))
+        .map(|l| l.split(' ').next().unwrap().to_string())
+        .collect()
+}
+
+fn add(set: &mut BTreeSet<String>, b: B, id: chimera_engine::block::ParamId) {
+    set.insert(EdAddr(ParamAddr::new(b, id)).to_string());
+}
+
+#[test]
+fn describe_covers_every_param_every_variant() {
+    let mut f = Fake::new();
+    let got = addrs(&all_pages(&mut f));
+    let mut want = BTreeSet::new();
+    let mut routes = 0;
+    for b in ALGO_FORMANT_CHAIN.blocks {
+        for def in std::iter::once(b.def).chain(b.sub_pages.iter().copied()) {
+            for s in &def.params {
+                match s.binding {
+                    SlotBinding::Empty | SlotBinding::SelectOp => {}
+                    SlotBinding::Param(a) => add(&mut want, a.block, a.param),
+                    SlotBinding::FilterPanel(k) => {
+                        for kind in FilterKind::BUILT {
+                            match filter_panel::knob(kind, k).map(|n| n.target) {
+                                Some(filter_panel::PanelTarget::Filter(id)) => {
+                                    add(&mut want, B::Filter, id)
+                                }
+                                Some(_) => routes += 1,
+                                None => {}
+                            }
+                        }
+                    }
+                    SlotBinding::FxPanel(k) => {
+                        for t in FxType::LIST {
+                            if let Some(c) = fx_panel::cells(t) {
+                                add(&mut want, B::VoiceFx, c[usize::from(k)].id);
+                            }
+                        }
+                    }
+                    SlotBinding::EnvPanel(slot, k) => {
+                        for e in all_env_kinds() {
+                            if let Some(Some(mod_panel::PanelSlot::Param { id, .. })) =
+                                mod_panel::env_panel(e).slots.get(usize::from(k))
+                            {
+                                add(&mut want, B::Env(slot), *id);
+                            }
+                        }
+                    }
+                    SlotBinding::LfoPanel(slot, k) => {
+                        for l in all_lfo_kinds() {
+                            if let Some(Some(mod_panel::PanelSlot::Param { id, .. })) =
+                                mod_panel::lfo_panel(l).slots.get(usize::from(k))
+                            {
+                                add(&mut want, B::Lfo(slot), *id);
+                            }
+                        }
+                    }
+                    SlotBinding::OpPanel(op, k) => {
+                        for kind in all_op_kinds() {
+                            if let Some((id, _)) = op_page::page_cells(kind)[usize::from(k)] {
+                                add(&mut want, B::AlgoOp(op), id);
+                            }
+                        }
+                    }
+                    other => panic!("an ALGO page has a {other:?} the schema doesn't know"),
+                }
+            }
+        }
+    }
+    assert_eq!(got, want);
+    assert!(routes > 0);
+    let flt = all_pages(&mut f).join("");
+    assert!(flt.contains("route \"ENV AMT\" next-slice"));
+}
+
+fn all_env_kinds() -> Vec<EnvKind> {
+    let mut v: Vec<EnvKind> = EnvSpeed::ALL.into_iter().map(EnvKind::A).collect();
+    for f in EnvForm::ALL {
+        v.push(EnvKind::B(Func::Env(f)));
+        v.push(EnvKind::B(Func::Burst(f)));
+    }
+    v.extend(LfoForm::ALL.into_iter().map(|f| EnvKind::B(Func::Lfo(f))));
+    v
+}
+
+fn all_lfo_kinds() -> Vec<LfoKind> {
+    let mut v = vec![LfoKind::Classic];
+    v.extend(LfoForm::ALL.into_iter().map(LfoKind::Func));
+    v
+}
+
+fn all_op_kinds() -> Vec<OpKind> {
+    (0..=17).map(|c| OpKind::from_code(c).unwrap()).collect()
+}
+
+#[test]
+fn every_variant_of_every_kind_is_a_described_panel() {
+    let mut f = Fake::new();
+    let text = all_pages(&mut f).join("");
+    let has = |name: &str, v: &str| text.contains(&format!("panel {name} {v}\n"));
+    for k in FilterKind::BUILT {
+        assert!(has("FILTER", filter_variant(k)), "{k:?}");
+    }
+    for t in FxType::LIST {
+        assert!(has("FX", fx_variant(t)), "{t:?}");
+    }
+    for k in all_env_kinds() {
+        assert!(has("ENV2", env_variant(k)), "{k:?}");
+    }
+    for k in all_lfo_kinds() {
+        assert!(has("LFO3", lfo_variant(k)), "{k:?}");
+    }
+    for k in all_op_kinds() {
+        assert!(has("OP6", op_variant(k)), "{k:?}");
+    }
+    // Same-named variants are the same panel: no two kinds share a name
+    // with different cells.
+    for a in all_env_kinds() {
+        for b in all_env_kinds() {
+            let same = std::ptr::eq(mod_panel::env_panel(a), mod_panel::env_panel(b));
+            assert_eq!(same, env_variant(a) == env_variant(b), "{a:?} {b:?}");
+        }
+    }
+    for a in all_lfo_kinds() {
+        for b in all_lfo_kinds() {
+            let same = std::ptr::eq(mod_panel::lfo_panel(a), mod_panel::lfo_panel(b));
+            assert_eq!(same, lfo_variant(a) == lfo_variant(b), "{a:?} {b:?}");
+        }
+    }
+}
+
+#[test]
+fn filter_mode_options_are_per_kind() {
+    let mut f = Fake::new();
+    let flt = all_pages(&mut f)
+        .into_iter()
+        .find(|t| t.contains(" FLT of "))
+        .unwrap();
+    let section = |kind: &str| {
+        let head = format!("panel FILTER {kind}\n");
+        let at = flt.find(&head).unwrap();
+        let rest = &flt[at + head.len()..];
+        rest[..rest.find("panel ").unwrap_or(rest.len())].to_string()
+    };
+    let opts = |s: &str| {
+        s.lines()
+            .filter(|l| l.starts_with("opt FILTER.MODE "))
+            .count()
+    };
+    assert!(opts(&section("CLEAN")) > 1);
+    assert_eq!(opts(&section("2040")), 0, "the 2040 has no MODE cell");
+    assert_ne!(section("CLEAN"), section("LADDER"));
+}
+
+#[test]
+fn describe_is_static() {
+    use chimera_core::block::Block;
+    use chimera_core::params::EnvParams;
+    use chimera_core::preset::Sound;
+    use chimera_core::project::PartId;
+    let mut f = Fake::new();
+    let before = all_pages(&mut f);
+    let mut s = Sound::init(EngineType::Algo);
+    s.params.filter.set_kind(FilterKind::Sem);
+    s.params.fx.set_type(FxType::Fold);
+    s.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
+    s.params.algo.try_set_kind(1, OpKind::Noise).unwrap();
+    s.params.envelopes[0].set(EnvParams::TYPE, 1.0);
+    let was = chimera_core::ui::nav::PartChain::of(&f.ui.project().part(PartId::ALL[0]).sound);
+    **f.ui.project_mut().edit_part(PartId::ALL[0]).sound = s;
+    f.ui.replaced_for_test(was);
+    assert_eq!(all_pages(&mut f), before);
+}
+
+#[test]
+fn describe_fits_the_answer_clock() {
+    let mut f = Fake::new();
+    for (i, t) in all_pages(&mut f).iter().enumerate() {
+        assert!(t.len() < ANSWER_BYTES_MAX, "page {i}: {} B", t.len());
+    }
+}
+
+#[test]
+fn writes_editor_schema_fixture() {
+    let mut f = Fake::new();
+    let text = all_pages(&mut f).join("");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../editor/tests/fixtures/algo-schema.txt");
+    if std::env::var_os("BLESS").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &text).unwrap();
+    }
+    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        on_disk == text,
+        "the schema changed: BLESS=1 rewrites {}",
+        path.display()
+    );
 }

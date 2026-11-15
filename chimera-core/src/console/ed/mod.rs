@@ -11,7 +11,9 @@ use chimera_engine::block::DiskCode;
 use chimera_engine::params::EngineType;
 
 mod addr;
+mod describe;
 pub use addr::EdAddr;
+pub use describe::{env_variant, filter_variant, fx_variant, lfo_variant, op_variant, pages};
 
 /// A value to set: a number, or a word (a choice's name).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,6 +105,15 @@ pub(crate) fn answer_in(line: &EdLine, ui: &UiState, w: &mut dyn Write) -> fmt::
     match EdArg::parse(line.words()) {
         None => writeln!(w, "ERR ed takes {}", EdArg::USAGE),
         Some(EdArg::Hello) => hello(ui, w).and_then(|()| w.write_str("OK\n")),
+        Some(EdArg::Describe { engine, page }) => match describe::describe(engine, page, w) {
+            Some(done) => done.and_then(|()| w.write_str("OK\n")),
+            None => writeln!(
+                w,
+                "ERR ed describe {} has {} pages",
+                engine.disk_ident(),
+                pages(engine)
+            ),
+        },
         Some(other) => writeln!(w, "ERR ed {} is not in this build", other.sub()),
     }
 }
