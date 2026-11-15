@@ -126,9 +126,15 @@ use chimera_engine::dsp::voice_fx::params::FxType;
 use chimera_engine::params::EngineType;
 use std::collections::BTreeSet;
 
-/// USB full speed's bulk ceiling, about 1 MB/s, for the 1 s answer clock,
-/// halved for margin: the console has no measured rate to use instead.
-const ANSWER_BYTES_MAX: usize = 500_000;
+/// What one answer can carry. The console has no measured bytes/s, so the
+/// rate is its documented floor: the CDC bulk IN endpoint is 64 B and full
+/// speed polls it once a 1 ms frame (`chimera-board/src/usb.rs`, `DRAIN_MS`),
+/// so 64,000 B/s. An answer is cut at `ANSWER_MS` (`console::ANSWER_MS`),
+/// and half that is the margin.
+const BULK_PACKET_BYTES: usize = 64;
+const BULK_PACKETS_PER_S: usize = 1000;
+const ANSWER_BYTES_MAX: usize =
+    BULK_PACKET_BYTES * BULK_PACKETS_PER_S * chimera_core::console::ANSWER_MS as usize / 1000 / 2;
 
 fn page_text(f: &mut Fake, n: u8) -> String {
     ask(f, &format!("ed describe ALGO {n}\n"))
@@ -347,9 +353,15 @@ fn describe_is_static() {
 #[test]
 fn describe_fits_the_answer_clock() {
     let mut f = Fake::new();
-    for (i, t) in all_pages(&mut f).iter().enumerate() {
-        assert!(t.len() < ANSWER_BYTES_MAX, "page {i}: {} B", t.len());
-    }
+    let sizes: Vec<usize> = all_pages(&mut f).iter().map(String::len).collect();
+    let (at, max) = sizes
+        .iter()
+        .copied()
+        .enumerate()
+        .max_by_key(|&(_, n)| n)
+        .unwrap();
+    assert_eq!(ANSWER_BYTES_MAX, 32_000);
+    assert!(max < ANSWER_BYTES_MAX, "page {at}: {max} B");
 }
 
 #[test]

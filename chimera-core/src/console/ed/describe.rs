@@ -191,12 +191,20 @@ fn num(w: &mut dyn Write, v: f32) -> fmt::Result {
     }
     write!(w, "{whole}")?;
     if frac != 0 {
-        let mut digits = 7;
-        while frac.is_multiple_of(10) {
+        // Seven places, zero-padded; the trailing zeros dropped.
+        let mut digits = [b'0'; 7];
+        let mut n = 7;
+        for d in digits.iter_mut().rev() {
+            *d += (frac % 10) as u8;
             frac /= 10;
-            digits -= 1;
         }
-        write!(w, ".{frac:0digits$}")?;
+        while digits[n - 1] == b'0' {
+            n -= 1;
+        }
+        w.write_char('.')?;
+        for &d in &digits[..n] {
+            w.write_char(char::from(d))?;
+        }
     }
     Ok(())
 }
