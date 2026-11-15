@@ -201,6 +201,38 @@ impl Wave {
     }
 }
 
+/// The wave a block plays alone, WAVE held on its anchor (ADR 0251): its
+/// pair's other wave has weight 0, its edges only tracked (`quiet_kind!`). The sine's
+/// anchor has none: its solo run measured no faster.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Solo {
+    /// WAVE ⅓: the triangle, its saw off.
+    Tri,
+    /// WAVE ⅔: the saw, its pulse off.
+    Saw,
+    /// WAVE 1: the pulse, its saw off.
+    Pulse,
+}
+
+impl Solo {
+    /// The solo of a block on `r`: WAVE steady on an anchor (its weight in
+    /// the pair exactly 0 or 1), the sine's excepted.
+    #[inline(always)]
+    pub fn at(r: &Ramps) -> Option<Solo> {
+        if r.wave.1 != 0.0 {
+            return None;
+        }
+        let pair = seg(r, 0);
+        let f = 3.0 * Unit::new(r.wave.0).get() - pair as usize as f32;
+        match pair {
+            Pair::TriSaw if f == 0.0 => Some(Solo::Tri),
+            Pair::SawPulse if f == 0.0 => Some(Solo::Saw),
+            Pair::SawPulse if f == 1.0 => Some(Solo::Pulse),
+            _ => None,
+        }
+    }
+}
+
 /// The two live waves: WAVE's segment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pair {
@@ -264,6 +296,9 @@ trait Kind {
     /// `c[0]` is a constant term (all but the sine): a pair of two keeps
     /// one, their sum.
     const BIAS: bool;
+    /// At weight 0 (`quiet_kind!`): its edges are tracked and crossed, never
+    /// corrected (their steps are ±0).
+    const SILENT: bool = false;
 
     /// The value at phase `p`, `u` the phases since the edges.
     fn value(c: [f32; 3], p: f32, u: [f32; 2], h: f32) -> f32;
@@ -386,7 +421,8 @@ impl Kind for Saw {
 
 /// A wave at weight 0 in its pair (WAVE on an anchor): its constants are
 /// ±0, so its value is its bias and its steps and slopes ±0. No edges: the
-/// pair's run plays its live wave alone, bit for bit.
+/// pair's run plays its live wave alone, bit for bit, while its partner's
+/// edges are never read again (DRUM's pulses).
 macro_rules! off_kind {
     ($(#[$doc:meta])* $name:ident, $w:expr) => {
         $(#[$doc])*
@@ -425,6 +461,51 @@ off_kind!(
     /// The saw at WAVE's pulse end (DRUM's pulses).
     SawOff,
     Wave::Saw
+);
+
+/// `$base` at weight 0 in a VA pair (`Solo`): `off_kind!`'s value, steps
+/// and slopes, but its edges tracked, crossed and flipped as `$base`'s
+/// (`SILENT`: never corrected), so the pair leaving the anchor finds them
+/// where its own run would have, bit for bit.
+macro_rules! quiet_kind {
+    ($(#[$doc:meta])* $name:ident, $base:ty) => {
+        $(#[$doc])*
+        struct $name;
+
+        impl Kind for $name {
+            const WAVE: Wave = <$base>::WAVE;
+            const EDGES: bool = <$base>::EDGES;
+            const CORNERS: bool = false;
+            const FLIPS: bool = <$base>::FLIPS;
+            const BIAS: bool = true;
+            const SILENT: bool = true;
+
+            #[inline(always)]
+            fn value(c: [f32; 3], _: f32, _: [f32; 2], _: f32) -> f32 {
+                c[0]
+            }
+
+            #[inline(always)]
+            fn jump(_: [Lin; 3], _: f32, _: usize, _: bool, _: f32) -> f32 {
+                0.0
+            }
+
+            #[inline(always)]
+            fn slope(_: [f32; 3], _: f32, _: [f32; 2]) -> f32 {
+                0.0
+            }
+
+            fn value_slope(c: [f32; 3], _: f32, _: [f32; 2]) -> (f32, f32) {
+                (c[0], 0.0)
+            }
+        }
+    };
+}
+
+quiet_kind!(
+    /// The pulse beside a solo saw.
+    PulseQuiet,
+    Pulse
 );
 
 impl Kind for Pulse {
@@ -978,6 +1059,9 @@ pub struct VarOsc {
     /// Runs the last `render` started (two at most).
     #[cfg(any(test, feature = "test-support"))]
     runs: u8,
+    /// The solo the last `render` played, `None` its pair.
+    #[cfg(any(test, feature = "test-support"))]
+    played: Option<Solo>,
 }
 
 impl VarOsc {
@@ -1011,6 +1095,8 @@ impl VarOsc {
         skip: None,
         #[cfg(any(test, feature = "test-support"))]
         runs: 0,
+        #[cfg(any(test, feature = "test-support"))]
+        played: None,
     };
 
     pub fn prepare(&mut self, sample_rate: f32) {
@@ -1328,7 +1414,7 @@ impl VarOsc {
         let blk = self.block::<SYNC, MOD, false>(r, N, *jit);
         #[cfg(any(test, feature = "test-support"))]
         {
-            self.runs = 0;
+            (self.runs, self.played) = (0, None);
         }
         // WAVE's ramp is linear: the pairs run from the first sample's to
         // the last's, one segment at a time
@@ -1372,6 +1458,51 @@ impl VarOsc {
             i0 = i1;
             pair = pair.next(up);
         }
+    }
+
+    /// `render`'s plain block with WAVE on `solo`'s anchor: one run of the
+    /// live wave `A` or `B`, its weight-0 partner quiet (`quiet_kind!`).
+    /// Every sample `render`'s, bit for bit, and the partner's edges left
+    /// as its run leaves them; its runs are `door::run`'s, bank 2's with
+    /// `bank2` (ADR 0251), reached through `door::SoloDoor`.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn render_solo<
+        A: Kind,
+        B: Kind,
+        const N: usize,
+        const REC: bool,
+        const SYNC: bool,
+        const FLIP: bool,
+    >(
+        &mut self,
+        solo: Solo,
+        out: &mut [f32; N],
+        mk: &mut [[f32; 2]; N],
+        r: &Ramps,
+        jit: &mut f32,
+        draw: &mut impl FnMut() -> f32,
+        m: &[f32; N],
+    ) {
+        let blk = self.block::<SYNC, false, false>(r, N, *jit);
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            (self.runs, self.played) = (1, Some(solo));
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        let _ = solo;
+        door::run::<A, B, N, REC, SYNC, FLIP, false, false>(
+            self,
+            &blk,
+            (0, N),
+            r,
+            out,
+            mk,
+            jit,
+            draw,
+            m,
+            (0.0, 0.0),
+        );
     }
 
     /// Every wave's SHAPE constants at the end of the block on `r` (`n`
@@ -2037,7 +2168,9 @@ impl VarOsc {
         if K::FLIPS {
             *h = 1.0 - *h;
         }
-        if K::CORNERS {
+        if K::SILENT {
+            // a step of ±0: nothing to correct
+        } else if K::CORNERS {
             // `ar` is |r|/6: the slope a sample over 6
             let s6 = jump * ar;
             if self.apply(t, 0.0, 6.0 * s6) {
@@ -2084,6 +2217,12 @@ impl VarOsc {
     #[cfg(any(test, feature = "test-support"))]
     pub fn runs(&self) -> u8 {
         self.runs
+    }
+
+    /// The solo the last `render` played, `None` its pair.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn played(&self) -> Option<Solo> {
+        self.played
     }
 
     /// The `(t, step, slope)` corrected in the last `tick`, up to 8.

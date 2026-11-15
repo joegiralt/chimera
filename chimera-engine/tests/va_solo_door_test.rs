@@ -1,11 +1,12 @@
 //! VA's oscillators with WAVE on an anchor (ADR 0251, bank 2's door).
 //! Held on an anchor, every MODE that plays the plain runs (MIX's, SYNC's
-//! slave) plays every bit it played at origin/0.4 `262039d9`. WAVE moving
-//! on and off anchors mid-note, it nulls under −120 dB against the pair
-//! runs (the door closed: bank 1's path, as at 262039d9).
+//! slave) plays every bit it played at origin/0.4 `262039d9`; so does WAVE
+//! moving on and off the anchors mid-note, door open, closed (bank 1's
+//! pair runs) or absent.
 
 use core::mem::MaybeUninit;
 
+use chimera_engine::dsp::va::osc::Solo;
 use chimera_engine::dsp::va::{VaEngine, VaMode, VaParams};
 use chimera_engine::project::PartId;
 use chimera_hal::BLOCK_SIZE;
@@ -77,6 +78,43 @@ fn take(note: u8, params: impl Fn(usize) -> VaParams) -> Vec<[f32; BLOCK_SIZE]> 
         .collect()
 }
 
+/// The solos each block played, held on each anchor, from block 4 (WAVE
+/// settled).
+fn solos(mode: VaMode) -> [Vec<[Option<Solo>; 2]>; 4] {
+    ANCHORS.map(|a| {
+        let mut slot = Box::new(MaybeUninit::<VaEngine>::uninit());
+        let e = VaEngine::init_in_place(&mut slot);
+        let p = held(mode, [a; 2]);
+        e.hold();
+        e.note_on(48, &p, PartId::new(0).unwrap(), SR);
+        (0..40)
+            .map(|_| {
+                let mut out = [0.0f32; BLOCK_SIZE];
+                e.render(&mut out, &p, SR);
+                e.solos()
+            })
+            .skip(4)
+            .collect()
+    })
+}
+
+/// Held on WAVE's saw anchor, OSC 1 and MIX's OSC 2 play the saw alone
+/// (the instances bank 2 holds, ADR 0251); every other anchor, and SYNC's
+/// slave, their pairs.
+fn plays_solos() {
+    for mode in [VaMode::Mix, VaMode::Sync] {
+        let osc2 = if mode == VaMode::Mix {
+            Some(Solo::Saw)
+        } else {
+            None
+        };
+        let want = [[None; 2], [None; 2], [Some(Solo::Saw), osc2], [None; 2]];
+        for (s, w) in solos(mode).iter().zip(want) {
+            assert!(s.iter().all(|b| *b == w), "{mode:?} {w:?}: {s:?}");
+        }
+    }
+}
+
 /// FNV-1a over the blocks' bits, of a scene that sounds.
 fn print(blocks: &[[f32; BLOCK_SIZE]]) -> u64 {
     assert!(blocks.iter().flatten().any(|v| v.abs() > 0.01), "silent");
@@ -145,55 +183,43 @@ const MOVING: [u64; 4] = [
     0x192eea060f91785f,
 ];
 
+/// With no door (a host build without `bank2`), the solos are called
+/// directly: held, bit for bit as before.
+#[cfg(not(all(feature = "bank2", feature = "test-support")))]
 #[test]
 fn held_on_an_anchor_plays_as_before() {
-    #[cfg(all(feature = "bank2", feature = "test-support"))]
-    chimera_engine::bank2::DOOR_CELL.open_host();
     assert_eq!(held_prints(), HELD);
 }
 
-/// The worst null of `a` against `b`, in dB.
-fn null_db(a: &[[f32; BLOCK_SIZE]], b: &[[f32; BLOCK_SIZE]]) -> f64 {
-    let (mut er, mut ed) = (0.0f64, 0.0f64);
-    for (x, y) in a.iter().flatten().zip(b.iter().flatten()) {
-        er += f64::from(*y) * f64::from(*y);
-        ed += f64::from(x - y) * f64::from(x - y);
-    }
-    if ed == 0.0 {
-        f64::NEG_INFINITY
-    } else {
-        10.0 * (ed / er).log10()
-    }
-}
-
 /// One test: the door is a process-wide static. Closed, VA plays bank 1's
-/// pair runs: every bit as at 262039d9. Open, the moving scenes null
-/// against them under −120 dB.
+/// pair runs; open, the saw's solos: both every bit as at 262039d9.
 #[cfg(all(feature = "bank2", feature = "test-support"))]
 #[test]
-fn leaving_an_anchor_nulls_against_the_pair_runs() {
+fn the_door_plays_solos_open_pairs_closed_as_before() {
     use chimera_engine::bank2::DOOR_CELL;
     DOOR_CELL.close();
-    assert_eq!(held_prints(), HELD, "closed, held");
-    let closed = moving_scenes();
-    assert_eq!(
-        closed.iter().map(|s| print(s)).collect::<Vec<_>>(),
-        MOVING,
-        "closed, moving"
-    );
-    DOOR_CELL.open_host();
-    let open = moving_scenes();
-    for (i, (o, c)) in open.iter().zip(&closed).enumerate() {
-        let db = null_db(o, c);
-        assert!(db < -120.0, "scene {i}: null {db:.1} dB");
+    for mode in [VaMode::Mix, VaMode::Sync] {
+        for s in solos(mode) {
+            assert!(s.iter().all(|b| *b == [None; 2]), "closed {mode:?}: {s:?}");
+        }
     }
+    assert_eq!(held_prints(), HELD, "closed, held");
+    let closed: Vec<u64> = moving_scenes().iter().map(|s| print(s)).collect();
+    assert_eq!(closed, MOVING, "closed, moving");
+    DOOR_CELL.open_host();
+    plays_solos();
+    assert_eq!(held_prints(), HELD, "open, held");
+    let open: Vec<u64> = moving_scenes().iter().map(|s| print(s)).collect();
+    assert_eq!(open, MOVING, "open, moving");
     DOOR_CELL.close();
 }
 
-/// With no door (a host build without `bank2`), the moving scenes play.
+/// With no door (a host build without `bank2`), the solos play, called
+/// directly; the moving scenes as before.
 #[cfg(not(all(feature = "bank2", feature = "test-support")))]
 #[test]
-fn leaving_an_anchor_plays_with_no_door() {
-    let now = moving_scenes();
-    assert!(now.iter().flatten().flatten().all(|v| v.is_finite()));
+fn leaving_an_anchor_plays_as_before_with_no_door() {
+    let now: Vec<u64> = moving_scenes().iter().map(|s| print(s)).collect();
+    assert_eq!(now, MOVING);
+    plays_solos();
 }

@@ -334,10 +334,12 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // MIDI UI's (`ED_DOOR_ADDR`). Bank 1 keeps `EdLine` and the stub. The
     // first S4 group (ADR 0272: new 0.4 work goes high), after MIXER's
     // reserve; its table stays in S0 with the other doors.
+    // VA's solos' table (ADR 0251) after it: the door's own is full. Its
+    // code is `va`'s (`*3osc4door*`).
     let (ed, ed_slot, ed_assert) = (
         "    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n",
-        "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
-        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");",
+        "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n    . = __bank2_door + 0x400; __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n",
+        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08100500, \"VA's solos' table at its slot\");",
     );
     fs::write(
         out_dir.join("bank2.x"),

@@ -39,6 +39,9 @@ pub const MIDI_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x300;
 /// The console's `ed` table (`chimera_core::bank2::EdDoor`, ADR 0251): the
 /// browser editor's answers.
 pub const ED_DOOR_ADDR: u32 = DOOR_ADDR + 0x380;
+/// VA's solos' table (`dsp::va::osc::door::SoloDoor`, ADR 0251): the
+/// door's own table is full.
+pub const VA_SOLO_DOOR_ADDR: u32 = DOOR_ADDR + 0x400;
 
 /// A fixed slot after the door and the type `bank2.x` links there: a crate
 /// the engine can't name declares its table's slot once, beside the

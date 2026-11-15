@@ -27,7 +27,8 @@ use crate::voice_alloc::VoiceIdx;
 use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, am_reach, ring_gain};
 use noise::Noise;
 pub use noise::{KIND_NAMES, NoiseKind};
-use osc::{MAX_INC, NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
+use osc::door::SoloRun;
+use osc::{MAX_INC, NO_WRAP, R, Ramps, Solo, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
@@ -464,6 +465,29 @@ fn jitter_depth(d: f32) -> f32 {
 fn jitter_draw(stab: &mut Stability, d: f32) -> impl FnMut() -> f32 + '_ {
     let jd = jitter_depth(d);
     move || 1.0 + jd * stab.jitter_word() as f32
+}
+
+/// `o`'s plain block (`run`) played alone, WAVE on an anchor
+/// (`osc::Solo`), through bank 2's door (ADR 0251): `false` off an anchor
+/// or with the door closed, when the pair's runs play it as ever. Once a
+/// block an oscillator.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn solo(
+    o: &mut VarOsc,
+    run: SoloRun,
+    out: &mut [f32; BLOCK_SIZE],
+    mk: &mut [[f32; 2]; BLOCK_SIZE],
+    r: &Ramps,
+    jit: &mut f32,
+    stab: &mut Stability,
+    d: f32,
+) -> bool {
+    let Some(s) = Solo::at(r) else {
+        return false;
+    };
+    let jd = jitter_depth(d);
+    osc::door::through(|d| d.solo().render(o, run, s, out, mk, r, jit, stab, jd)) == Some(true)
 }
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
@@ -1364,13 +1388,11 @@ impl VaEngine {
         }
     }
 
-    /// One block in `mode`, a constant in each caller, so each mode's loop
-    /// is its own (the count sees each). OSC 1 renders into `out` with its
-    /// sub flips and its wraps, OSC 2 beside it (synced to the
-    /// wraps in SYNC), then the operator, the sub, the chain gain and a
-    /// duck's gain run over both.
-    #[inline(always)]
-    fn run(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode, gain: Gain) {
+    /// `run`'s two oscillators, out of line: one copy for every MODE
+    /// (flash). Each plays alone on WAVE's anchor through bank 2's door
+    /// (`solo`), else its pair's runs. `sync`: OSC 2 is SYNC's slave.
+    #[inline(never)]
+    fn oscs(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, sync: bool) {
         let Self {
             osc: [o1, o2],
             stab,
@@ -1379,47 +1401,77 @@ impl VaEngine {
             marks: mk,
             ..
         } = self;
-        // a wrap's factor, `1 + jitter(d)·CENT`, from the raw draw: exactly
-        // 1 at d = 0 (STAB 1)
-        let mut draw = jitter_draw(stab, l.d);
         // these MODEs read no modulated phase (FM's and SOFT SYNC's
-        // renders are their own, through the door)
+        // renders are their own, through the door); a wrap's factor,
+        // `1 + jitter(d)·CENT`, from the raw draw: exactly 1 at d = 0
+        // (STAB 1)
         let (z, nk) = (&ZEROS, (0.0, 0.0));
         // OSC 1 marks its sub flips and its wraps, one instance for every
         // MODE (flash): only SYNC's slave reads the wraps here, resetting
         // at them (ADR 0118 point 13); SOFT SYNC's turns at them (its own
         // render)
-        o1.render::<BLOCK_SIZE, true, false, true, false>(
+        if !solo(
+            o1,
+            SoloRun::Osc1,
             out,
             mk,
             &l.osc[0],
             &mut jit[0],
-            &mut draw,
-            z,
-            nk,
-        );
-        if mode == VaMode::Sync {
-            o2.render::<BLOCK_SIZE, false, true, false, false>(
+            stab,
+            l.d,
+        ) {
+            o1.render::<BLOCK_SIZE, true, false, true, false>(
+                out,
+                mk,
+                &l.osc[0],
+                &mut jit[0],
+                &mut jitter_draw(stab, l.d),
+                z,
+                nk,
+            );
+        }
+        if sync {
+            if !solo(
+                o2,
+                SoloRun::Osc2Sync,
                 b,
                 mk,
                 &l.osc[1],
                 &mut jit[1],
-                &mut draw,
-                z,
-                nk,
-            );
-        } else {
+                stab,
+                l.d,
+            ) {
+                o2.render::<BLOCK_SIZE, false, true, false, false>(
+                    b,
+                    mk,
+                    &l.osc[1],
+                    &mut jit[1],
+                    &mut jitter_draw(stab, l.d),
+                    z,
+                    nk,
+                );
+            }
+        } else if !solo(o2, SoloRun::Osc2, b, mk, &l.osc[1], &mut jit[1], stab, l.d) {
             o2.render::<BLOCK_SIZE, false, false, false, false>(
                 b,
                 mk,
                 &l.osc[1],
                 &mut jit[1],
-                &mut draw,
+                &mut jitter_draw(stab, l.d),
                 z,
                 nk,
             );
         }
-        drop(draw);
+    }
+
+    /// One block in `mode`, a constant in each caller, so each mode's loop
+    /// is its own (the count sees each). OSC 1 renders into `out` with its
+    /// sub flips and its wraps, OSC 2 beside it (synced to the
+    /// wraps in SYNC), then the operator, the sub, the chain gain and a
+    /// duck's gain run over both.
+    #[inline(always)]
+    fn run(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode, gain: Gain) {
+        self.oscs(out, l, mode == VaMode::Sync);
         // a loop of its own while the duck runs (the count bills it)
         match gain {
             Some(g) => self.operator::<true>(out, l, mode, g),
@@ -1529,6 +1581,12 @@ impl VaEngine {
     #[cfg(any(test, feature = "test-support"))]
     pub fn runs(&self) -> [u8; 2] {
         [self.osc[0].runs(), self.osc[1].runs()]
+    }
+
+    /// The solo each oscillator's last block played, `None` its pair.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn solos(&self) -> [Option<osc::Solo>; 2] {
+        [self.osc[0].played(), self.osc[1].played()]
     }
 
     /// Whether OSC 1's read ran backwards in the last FM block (its rate

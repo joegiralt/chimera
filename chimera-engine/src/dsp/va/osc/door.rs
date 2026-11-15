@@ -11,7 +11,7 @@
 use chimera_hal::BLOCK_SIZE;
 
 use super::super::blep::blep_into;
-use super::{Blk, Kind, Leg, Lin, PM_JUMPS, Ramps, VarOsc, ZEROS, frac};
+use super::{Blk, Kind, Leg, Lin, PM_JUMPS, PulseQuiet, Ramps, Saw, Solo, VarOsc, ZEROS, frac};
 use crate::dsp::va::stability::Stability;
 
 /// A `MOD` render as the door carries it: the oscillator, its block, its
@@ -56,6 +56,122 @@ pub const OSC1_MOD: ModEntry = ModEntry(osc1_mod);
 pub const OSC2_REV: ModEntry = ModEntry(osc2_rev);
 pub const OSC1_PHASE: ModEntry = ModEntry(osc1_phase);
 pub const OSC2_STEPS: ModEntry = ModEntry(osc2_steps);
+
+/// A plain render with WAVE on an anchor (`VarOsc::render_solo`, ADR
+/// 0251): the oscillator, its instance and solo, its block, its marks, its
+/// lanes and jitter, STABILITY (the jitter's draws, `1 + jd · word`).
+pub type SoloRender = fn(
+    &mut VarOsc,
+    SoloRun,
+    Solo,
+    &mut [f32; BLOCK_SIZE],
+    &mut [[f32; 2]; BLOCK_SIZE],
+    &Ramps,
+    &mut f32,
+    &mut Stability,
+    f32,
+) -> bool;
+
+/// A solo render as `VaDoor` holds it: called, never handed out.
+#[repr(transparent)]
+pub struct SoloEntry(SoloRender);
+
+impl SoloEntry {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &self,
+        o: &mut VarOsc,
+        run: SoloRun,
+        solo: Solo,
+        out: &mut [f32; BLOCK_SIZE],
+        mk: &mut [[f32; 2]; BLOCK_SIZE],
+        r: &Ramps,
+        jit: &mut f32,
+        stab: &mut Stability,
+        jd: f32,
+    ) -> bool {
+        (self.0)(o, run, solo, out, mk, r, jit, stab, jd)
+    }
+}
+
+/// Which plain instance a solo plays: the engine's three (`VaEngine::run`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SoloRun {
+    /// OSC 1, marking its wraps and the sub's flips.
+    Osc1,
+    /// OSC 2 as SYNC's slave, resetting at OSC 1's wraps.
+    Osc2Sync,
+    /// OSC 2, plain.
+    Osc2,
+}
+
+/// The solos' table, at its own slot after the door (`VA_SOLO_DOOR_ADDR`,
+/// `bank2.x`): the door's table has no room. Its entry is private, called
+/// only through `through`.
+#[repr(C)]
+pub struct SoloDoor {
+    magic: Magic,
+    solo: SoloEntry,
+}
+
+/// `SoloDoor`'s mark: a table at the slot that isn't this one fails the
+/// boot's door check (`door_ok`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+struct Magic(u32);
+
+const MAGIC: Magic = Magic(0xB2A5_0251);
+
+impl SoloDoor {
+    const OWN: SoloDoor = SoloDoor {
+        magic: MAGIC,
+        solo: SoloEntry(solo),
+    };
+
+    /// The plain render's solo (`solo`).
+    #[inline(always)]
+    pub fn solo(&self) -> &SoloEntry {
+        &self.solo
+    }
+}
+
+#[cfg(feature = "bank2")]
+// SAFETY: `bank2.x` links `SOLO_DOOR`, a `SoloDoor`, at `VA_SOLO_DOOR_ADDR`
+// in every firmware build with `bank2` (its assert, `__bank2_va_solo_door`).
+const SLOT: crate::bank2::DoorSlot<SoloDoor> =
+    unsafe { crate::bank2::DoorSlot::new(crate::bank2::VA_SOLO_DOOR_ADDR) };
+
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.door.va_solo")]
+#[used]
+static SOLO_DOOR: SoloDoor = SoloDoor::OWN;
+
+/// The solos' table in judged door `j` answers (the boot's door check, run
+/// before the door opens).
+#[cfg(feature = "bank2")]
+pub fn door_ok(j: &crate::bank2::Judged) -> bool {
+    j.with_slot(SLOT, |d| d.magic == MAGIC)
+}
+
+/// `f` on the solos' table: bank 2's through the door on the unit, `None`
+/// closed; this build's own elsewhere. A host test under `bank2` answers
+/// as the unit does: only while the door cell is open.
+#[inline(always)]
+pub fn through<R>(f: impl FnOnce(&SoloDoor) -> R) -> Option<R> {
+    #[cfg(all(feature = "bank2", target_os = "none"))]
+    {
+        crate::bank2::DOOR_CELL.with_slot(SLOT, f)
+    }
+    #[cfg(not(all(feature = "bank2", target_os = "none")))]
+    {
+        #[cfg(feature = "bank2")]
+        if !crate::bank2::DOOR_CELL.is_open() {
+            return None;
+        }
+        Some(f(&SoloDoor::OWN))
+    }
+}
 
 /// The VA's entries in the door's table.
 #[cfg(feature = "bank2")]
@@ -188,6 +304,40 @@ pub fn osc2_steps(
         &ZEROS,
         (0.0, 0.0),
     );
+}
+
+/// A plain render's solo, if bank 2 holds its instance: OSC 1's shared
+/// one (`<64, true, false, true>`), OSC 2's as SYNC's slave (`<64, false,
+/// true, false>`) or plain (`<64, false, false, false>`). `false`, nothing
+/// played: the pair's runs play it (bank 2's room, ADR 0251).
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub fn solo(
+    o: &mut VarOsc,
+    run: SoloRun,
+    solo: Solo,
+    out: &mut [f32; BLOCK_SIZE],
+    mk: &mut [[f32; 2]; BLOCK_SIZE],
+    r: &Ramps,
+    jit: &mut f32,
+    stab: &mut Stability,
+    jd: f32,
+) -> bool {
+    let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+    let d = &mut draw;
+    macro_rules! play {
+        ($a:ty, $b:ty, $rec:literal, $sync:literal, $flip:literal) => {
+            o.render_solo::<$a, $b, BLOCK_SIZE, $rec, $sync, $flip>(
+                solo, out, mk, r, jit, d, &ZEROS,
+            )
+        };
+    }
+    match (run, solo) {
+        (SoloRun::Osc1, Solo::Saw) => play!(Saw, PulseQuiet, true, false, true),
+        (SoloRun::Osc2, Solo::Saw) => play!(Saw, PulseQuiet, false, false, false),
+        _ => return false,
+    }
+    true
 }
 
 /// A jump of the read by `jj` cycles `t` samples ago, `rr` the read's rate
