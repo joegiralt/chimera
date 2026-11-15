@@ -1850,6 +1850,13 @@ impl UiState {
         self.edit_in(part, a, how)
     }
 
+    /// `a` on Part `part` set to the stored value `v`, clamped and
+    /// quantized, as a knob's turn lands (the console's `ed set`). `true`
+    /// when the value moved.
+    pub fn edit_to(&mut self, part: PartId, a: ParamAddr, v: f32) -> bool {
+        self.edit_in(part, a, part_page::Edit::To(v))
+    }
+
     /// After an edit of Part `at`, whose chain was `chain` and slots read
     /// `before` on page `def`: the page kept by id, the animators re-seeded
     /// and the page identity refreshed. The page it is now on.

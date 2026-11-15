@@ -201,8 +201,14 @@ impl Word {
         Word { bytes, len }
     }
 
+    /// The bytes, with no UTF-8 check: a name compare needs none.
+    #[inline(always)]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.bytes.get(..usize::from(self.len)).unwrap_or(&[])
+    }
+
     pub fn as_str(&self) -> &str {
-        let used = self.bytes.get(..usize::from(self.len)).unwrap_or(&[]);
+        let used = self.as_bytes();
         core::str::from_utf8(used).unwrap_or("?")
     }
 }
@@ -269,8 +275,8 @@ impl Console {
 mod ed;
 pub(crate) use ed::answer_in as ed_answer_in;
 pub use ed::{
-    EdAddr, EdArg, EdValue, env_variant, filter_variant, fx_variant, lfo_variant, op_variant,
-    pages as ed_pages,
+    EdAddr, EdArg, EdQueue, EdValue, Pushed, env_variant, filter_variant, fx_variant, lfo_variant,
+    op_variant, pages as ed_pages,
 };
 mod status;
 pub use status::*;

@@ -69,17 +69,15 @@ fn set_refuses_non_finite_and_long_names() {
         let got = ask(&mut f, line);
         assert!(got.starts_with("ERR ed takes "), "{line}: {got}");
     }
-    // Sixteen characters is a name; decimals are numbers.
+    // Sixteen characters is a name, a decimal a number: they parse, and
+    // the answer is the value's own (a choice's name, a param's number).
     for line in [
         "ed set OP_C.CRSE ABCDEFGHIJKLMNOP\n",
         "ed set OP_C.CRSE -12.5\n",
-        "ed set OP_C.CRSE .5\n",
+        "ed set FILTER.CUTOFF ABCDEFGHIJKLMNOP\n",
     ] {
-        assert_eq!(
-            ask(&mut f, line),
-            "ERR ed set is not in this build\n",
-            "{line}"
-        );
+        let got = ask(&mut f, line);
+        assert!(got.starts_with("ERR ed set "), "{line}: {got}");
     }
 }
 
@@ -95,11 +93,7 @@ fn ed_without_sub_is_refused() {
 #[test]
 fn the_rest_wait_for_their_tasks() {
     let mut f = Fake::new();
-    for (line, sub) in [
-        ("ed set OP_C.CRSE 3.5\n", "set"),
-        ("ed watch\n", "watch"),
-        ("ed unwatch\n", "unwatch"),
-    ] {
+    for (line, sub) in [("ed watch\n", "watch"), ("ed unwatch\n", "unwatch")] {
         assert_eq!(
             ask(&mut f, line),
             format!("ERR ed {sub} is not in this build\n"),
@@ -553,4 +547,231 @@ fn get_unknown_addr_is_refused() {
         ask(&mut f, "ed get CHORUS.MODE\n"),
         "ERR ed get has no CHORUS.MODE here\n"
     );
+}
+
+// ---- set ----
+
+use chimera_core::console::{EdQueue, Pushed};
+use chimera_engine::block::ParamKind;
+
+fn apply(f: &mut Fake) {
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+    let q = f.ed.as_mut().unwrap();
+    chimera_core::bank2::ed_apply(q, &mut f.ui);
+}
+
+fn is_choice(a: ParamAddr) -> bool {
+    matches!(a.spec().unwrap().fmt, ValFmt::Names(_))
+}
+
+fn stored_of(f: &mut Fake, a: ParamAddr) -> f32 {
+    parse_val(&ask(f, &format!("ed get {}\n", EdAddr(a)))).1
+}
+
+/// `v` in a word the decimal parse reads back exactly enough.
+fn word(v: f32) -> String {
+    format!("{v:.6}")
+}
+
+#[test]
+fn set_then_get_round_trips() {
+    let mut f = Fake::new();
+    let mut n = 0;
+    for b in algo_blocks() {
+        for spec in b.specs() {
+            let a = ParamAddr::new(b, spec.id);
+            if is_choice(a) || !spec.stored || spec.patching {
+                continue;
+            }
+            for at in [spec.min, spec.max, (spec.min + spec.max) / 2.0] {
+                let want = spec.quantized(at);
+                let got = ask(&mut f, &format!("ed set {} {}\n", EdAddr(a), word(at)));
+                assert_eq!(got, "OK queued\n", "{a:?} {at}");
+                apply(&mut f);
+                let stored = stored_of(&mut f, a);
+                let tol = 1e-4 * want.abs().max(1.0);
+                assert!(
+                    (stored - want).abs() <= tol,
+                    "{a:?}: {at} -> {stored} not {want}"
+                );
+                n += 1;
+            }
+        }
+    }
+    assert!(n > 150, "{n}");
+}
+
+#[test]
+fn set_glides_like_a_knob() {
+    use chimera_core::dsp::knobs::KnobPublisher;
+    use chimera_core::instrument::AudioShared;
+    use chimera_core::params::FilterParams;
+    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+    let mut by_ed = Fake::new();
+    let mut by_knob = Fake::new();
+    let (mut ka, mut kb) = (KnobPublisher::new(), KnobPublisher::new());
+    let (mut sa, mut sb) = (AudioShared::default(), AudioShared::default());
+    sa.update_from_project(by_ed.ui.project(), 0, &mut ka);
+    sb.update_from_project(by_knob.ui.project(), 0, &mut kb);
+    // One tick of the knob, and the value it lands on.
+    let part = PartId::ALL[0];
+    assert!(by_knob.ui.edit_addr(part, cutoff, -1, false));
+    let to = stored_of(&mut by_knob, cutoff);
+    assert_eq!(
+        ask(&mut by_ed, &format!("ed set FILTER.CUTOFF {}\n", word(to))),
+        "OK queued\n"
+    );
+    // Queued, not applied: nothing moved yet.
+    sa.update_from_project(by_ed.ui.project(), 0, &mut ka);
+    assert_eq!(sa.parts[0].knobs.count(), 0);
+    apply(&mut by_ed);
+    sa.update_from_project(by_ed.ui.project(), 0, &mut ka);
+    sb.update_from_project(by_knob.ui.project(), 0, &mut kb);
+    // One move, a glide, never the whole Sound landing at once.
+    assert_eq!(sa.parts[0].knobs.count(), 1);
+    assert_eq!(sa.parts[0].knobs.count(), sb.parts[0].knobs.count());
+    assert!((stored_of(&mut by_ed, cutoff) - to).abs() < 1e-2 * to);
+}
+
+#[test]
+fn set_clamps_quantizes_and_refuses() {
+    use chimera_engine::dsp::algo::params::AlgoOpParams;
+    use chimera_engine::params::FilterParams;
+    let mut f = Fake::new();
+    let cut = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+    let spec = cut.spec().unwrap();
+    assert_eq!(
+        ask(&mut f, "ed set FILTER.CUTOFF 99999999\n"),
+        "OK queued\n"
+    );
+    apply(&mut f);
+    assert_eq!(stored_of(&mut f, cut), spec.max);
+    // A stepped param lands on a step.
+    let lvl = ParamAddr::new(BlockRef::AlgoOp(Op::C), AlgoOpParams::COARSE);
+    assert!(is_choice(lvl));
+    let steppy = BlockRef::AlgoOp(Op::C)
+        .specs()
+        .iter()
+        .find(|s| s.kind == ParamKind::Stepped && !matches!(s.fmt, ValFmt::Names(_)))
+        .expect("a stepped, nameless param");
+    let a = ParamAddr::new(BlockRef::AlgoOp(Op::C), steppy.id);
+    let mid = (steppy.min + steppy.max) / 2.0 + 0.3;
+    assert_eq!(
+        ask(&mut f, &format!("ed set {} {}\n", EdAddr(a), word(mid))),
+        "OK queued\n"
+    );
+    apply(&mut f);
+    let got = stored_of(&mut f, a);
+    assert_eq!(got, got.round(), "{a:?} {got}");
+    // A choice by name, the typed word kept: CRSE's "1.00" is the name.
+    let ValFmt::Names(names) = lvl.spec().unwrap().fmt else {
+        unreachable!()
+    };
+    let at = names.iter().position(|&n| n == "1.00").expect("1.00");
+    assert_eq!(ask(&mut f, "ed set OP_C.CRSE 1.00\n"), "OK queued\n");
+    apply(&mut f);
+    assert_eq!(stored_of(&mut f, lvl), at as f32);
+    // FILTER.KIND by name.
+    let kind = ParamAddr::new(BlockRef::Filter, FilterParams::KIND);
+    let ValFmt::Names(kinds) = kind.spec().unwrap().fmt else {
+        unreachable!()
+    };
+    let lad = kinds.iter().position(|&n| n == "LADDER").expect("LADDER");
+    assert_eq!(ask(&mut f, "ed set FILTER.KIND LADDER\n"), "OK queued\n");
+    apply(&mut f);
+    assert_eq!(stored_of(&mut f, kind), lad as f32);
+    // Refusals: a choice takes only its own names, a number param only a number.
+    for line in [
+        "ed set FILTER.KIND NOPE\n",
+        "ed set FILTER.KIND 1\n",
+        "ed set OP_C.CRSE 1.0\n",
+        "ed set FILTER.CUTOFF LADDER\n",
+    ] {
+        let got = ask(&mut f, line);
+        assert!(got.starts_with("ERR ed set "), "{line}: {got}");
+    }
+    let before = stored_of(&mut f, kind);
+    apply(&mut f);
+    assert_eq!(stored_of(&mut f, kind), before, "a refusal queues nothing");
+    // An unknown address is a parse refusal.
+    let got = ask(&mut f, "ed set NOPE.X 1\n");
+    assert!(got.starts_with("ERR ed takes "), "{got}");
+}
+
+#[test]
+fn set_stores_a_param_the_variant_hides() {
+    use chimera_engine::dsp::algo::params::AlgoOpParams;
+    let mut f = Fake::new();
+    // Op B is a table: BW is hidden, and still set.
+    let bw = ParamAddr::new(BlockRef::AlgoOp(Op::B), AlgoOpParams::BW);
+    let spec = bw.spec().unwrap();
+    let to = (spec.min + spec.max) / 2.0;
+    assert_eq!(
+        ask(&mut f, &format!("ed set OP_B.BW {}\n", word(to))),
+        "OK queued\n"
+    );
+    apply(&mut f);
+    let got = stored_of(&mut f, bw);
+    assert!(
+        (got - spec.quantized(to)).abs() <= 1e-3 * to.abs().max(1.0),
+        "{got}"
+    );
+}
+
+#[test]
+fn set_queue_full_is_busy() {
+    let mut f = Fake::new();
+    let mut taken = 0;
+    while ask(&mut f, "ed set FILTER.CUTOFF 1000\n") == "OK queued\n" {
+        taken += 1;
+        assert!(taken < 1000, "never full");
+    }
+    assert_eq!(ask(&mut f, "ed set FILTER.CUTOFF 1000\n"), "ERR busy\n");
+    assert!(taken >= 8, "{taken}");
+    // An apply empties it.
+    apply(&mut f);
+    assert_eq!(ask(&mut f, "ed set FILTER.CUTOFF 1000\n"), "OK queued\n");
+    let mut q = EdQueue::new();
+    assert_eq!(
+        q.push(
+            PartId::ALL[0],
+            ParamAddr::new(BlockRef::Filter, chimera_core::block::ParamId(0)),
+            1.0
+        ),
+        Pushed::Queued
+    );
+}
+
+#[test]
+fn set_on_a_non_algo_part_is_refused() {
+    use chimera_core::preset::Sound;
+    let mut f = Fake::new();
+    let was = chimera_core::ui::nav::PartChain::of(&f.ui.project().part(PartId::ALL[0]).sound);
+    **f.ui.project_mut().edit_part(PartId::ALL[0]).sound = Sound::init(EngineType::Modal);
+    f.ui.replaced_for_test(was);
+    let got = ask(&mut f, "ed set FILTER.CUTOFF 1000\n");
+    assert!(got.starts_with("ERR ed set has no FILTER.CUTOFF"), "{got}");
+}
+
+#[test]
+fn set_without_a_queue_is_not_in_this_build() {
+    let mut f = Fake::new();
+    f.ed = None;
+    assert_eq!(
+        ask(&mut f, "ed set FILTER.CUTOFF 1000\n"),
+        "ERR ed set is not in this build\n"
+    );
+}
+
+#[test]
+fn apply_drops_a_set_for_a_part_that_changed_engine() {
+    use chimera_core::preset::Sound;
+    let mut f = Fake::new();
+    assert_eq!(ask(&mut f, "ed set FILTER.CUTOFF 1000\n"), "OK queued\n");
+    let was = chimera_core::ui::nav::PartChain::of(&f.ui.project().part(PartId::ALL[0]).sound);
+    **f.ui.project_mut().edit_part(PartId::ALL[0]).sound = Sound::init(EngineType::Modal);
+    f.ui.replaced_for_test(was);
+    let rev = f.ui.project().part(PartId::ALL[0]).sound.stamp();
+    apply(&mut f);
+    assert_eq!(f.ui.project().part(PartId::ALL[0]).sound.stamp(), rev);
 }

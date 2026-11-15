@@ -178,6 +178,11 @@ pub trait Unit {
     fn bank2_install(&mut self) -> Option<super::Bank2Answer> {
         None
     }
+    /// The UI, and `ed set`'s queue (the shell drains it each UI pass).
+    /// `None`: not in this build.
+    fn ed(&mut self) -> (&UiState, Option<&mut super::EdQueue>) {
+        (self.ui(), None)
+    }
     /// The console's hands, which `key` and `turn` queue on. `None`: not
     /// in this build.
     fn hands(&mut self) -> Option<&mut super::Hands> {
@@ -321,8 +326,8 @@ pub fn answer(
         },
         // Bank 2's (`EdDoor`): its parse and answer, `OK` or `ERR`.
         Ok(Request::Ed(line)) => {
-            let ui = unit.ui();
-            return crate::bank2::ed_door(|d| d.answer(&line, ui, &mut t))
+            let (ui, q) = unit.ed();
+            return crate::bank2::ed_door(|d| d.answer(&line, ui, q, &mut t))
                 .unwrap_or_else(|| t.write_str("ERR ed needs bank 2, update the unit\n"))
                 .map_err(|fmt::Error| Stalled);
         }

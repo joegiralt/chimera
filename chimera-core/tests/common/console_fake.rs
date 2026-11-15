@@ -42,6 +42,7 @@ pub struct Fake {
     pub bank2: Option<Bank2Answer>,
     pub installs: usize,
     pub hands: Option<Hands>,
+    pub ed: Option<chimera_core::console::EdQueue>,
     pub midi: Option<chimera_core::console::MidiStats>,
 }
 
@@ -67,6 +68,7 @@ impl Fake {
             bank2: None,
             installs: 0,
             hands: None,
+            ed: Some(chimera_core::console::EdQueue::new()),
             midi: None,
         }
     }
@@ -123,6 +125,9 @@ impl Unit for Fake {
     }
     fn hands(&mut self) -> Option<&mut Hands> {
         self.hands.as_mut()
+    }
+    fn ed(&mut self) -> (&UiState, Option<&mut chimera_core::console::EdQueue>) {
+        (&self.ui, self.ed.as_mut())
     }
     fn bank2_install(&mut self) -> Option<Bank2Answer> {
         self.installs += 1;

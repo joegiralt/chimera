@@ -820,6 +820,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             &usb.up()
                 .map_or_else(Default::default, |u| u.hand(controls::now_ms())),
         );
+        // The console's `ed set`s, as knob turns before the frame's input.
+        #[cfg(feature = "usb-console")]
+        if let Some(u) = usb.up() {
+            u.apply_ed(ui);
+        }
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);

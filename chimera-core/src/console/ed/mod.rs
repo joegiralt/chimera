@@ -12,14 +12,18 @@ use chimera_engine::params::EngineType;
 
 mod addr;
 mod describe;
+mod edits;
 mod value;
 pub use addr::EdAddr;
 pub use describe::{env_variant, filter_variant, fx_variant, lfo_variant, op_variant, pages};
+pub use edits::{EdQueue, Pushed};
 
 /// A value to set: a number, or a word (a choice's name).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EdValue {
-    Num(f32),
+    /// A decimal, and the word it was typed as: a choice's name may be one
+    /// (CRSE's `1.00`).
+    Num(f32, Word),
     Name(Word),
 }
 
@@ -47,7 +51,7 @@ fn engine(w: &[u8]) -> Option<EngineType> {
 /// never names: `Num` is always finite.
 fn value(w: &[u8]) -> Option<EdValue> {
     if let Some(n) = chimera_theory::tuning::decimal(w) {
-        return Some(EdValue::Num(n));
+        return Some(EdValue::Num(n, Word::new(w)));
     }
     let bare = match w {
         [b'+' | b'-', rest @ ..] => rest,
@@ -102,7 +106,12 @@ impl EdArg {
 }
 
 /// The whole answer, `OK` or `ERR` included: `EdDoor::answer`'s entry.
-pub(crate) fn answer_in(line: &EdLine, ui: &UiState, w: &mut dyn Write) -> fmt::Result {
+pub(crate) fn answer_in(
+    line: &EdLine,
+    ui: &UiState,
+    q: Option<&mut EdQueue>,
+    w: &mut dyn Write,
+) -> fmt::Result {
     match EdArg::parse(line.words()) {
         None => writeln!(w, "ERR ed takes {}", EdArg::USAGE),
         Some(EdArg::Hello) => hello(ui, w).and_then(|()| w.write_str("OK\n")),
@@ -119,6 +128,7 @@ pub(crate) fn answer_in(line: &EdLine, ui: &UiState, w: &mut dyn Write) -> fmt::
             Some(done) => done.and_then(|()| w.write_str("OK\n")),
             None => writeln!(w, "ERR ed get has no {} here", a),
         },
+        Some(EdArg::Set(a, v)) => edits::set(a, v, ui, q, w),
         Some(other) => writeln!(w, "ERR ed {} is not in this build", other.sub()),
     }
 }

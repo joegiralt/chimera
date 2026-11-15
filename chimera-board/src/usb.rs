@@ -200,6 +200,8 @@ pub struct Usb {
     board: BoardId,
     /// `key` and `turn`'s gestures, played into the controls each lap.
     hands: Hands,
+    /// `ed set`'s, applied in the UI pass.
+    ed: chimera_core::console::EdQueue,
 }
 
 /// The port set up but not on the bus: no pull-up, so the host sees
@@ -395,6 +397,7 @@ impl Unconnected {
             redraw: false,
             board: self.board,
             hands: Hands::new(),
+            ed: chimera_core::console::EdQueue::new(),
         }
     }
 }
@@ -450,6 +453,7 @@ impl Usb {
             redraw,
             board,
             hands,
+            ed,
             ..
         } = self;
         // One hold a lap: a storm's mask lifted (`unlock` then unmasks), the
@@ -556,6 +560,7 @@ impl Usb {
                 forget: false,
                 bank2,
                 hands,
+                ed,
             };
             let out = &mut UsbOut {
                 link,
@@ -591,6 +596,11 @@ impl Usb {
     /// The console's hand at `now`: what `key` and `turn` hold and turn.
     pub fn hand(&mut self, now: Ms) -> Hand {
         self.hands.step(now)
+    }
+
+    /// `ed set`'s queue, applied to `ui` as knob turns.
+    pub fn apply_ed(&mut self, ui: &mut UiState) {
+        chimera_core::bank2::ed_apply(&mut self.ed, ui);
     }
 
     /// `bank2 install` drew over the screen since the last call.
@@ -632,6 +642,7 @@ struct ChipUnit<'a> {
     /// `bank2 install`'s outcome, before the answer.
     bank2: Option<Bank2Answer>,
     hands: &'a mut Hands,
+    ed: &'a mut chimera_core::console::EdQueue,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -747,6 +758,10 @@ impl Unit for ChipUnit<'_> {
 
     fn forget_library(&mut self) {
         self.forget = true;
+    }
+
+    fn ed(&mut self) -> (&UiState, Option<&mut chimera_core::console::EdQueue>) {
+        (self.ui, Some(&mut *self.ed))
     }
 
     fn hands(&mut self) -> Option<&mut Hands> {

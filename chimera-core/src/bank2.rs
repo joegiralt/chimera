@@ -548,16 +548,23 @@ pub fn ui_door<R>(f: impl FnOnce(&UiDoor) -> R) -> Option<R> {
 #[repr(C)]
 pub struct EdDoor {
     magic: u32,
-    answer: fn(&crate::console::EdLine, &crate::ui::UiState, &mut dyn Write) -> fmt::Result,
+    answer: fn(
+        &crate::console::EdLine,
+        &crate::ui::UiState,
+        Option<&mut crate::console::EdQueue>,
+        &mut dyn Write,
+    ) -> fmt::Result,
+    apply: fn(&mut crate::console::EdQueue, &mut crate::ui::UiState),
 }
 
 /// `EdDoor::magic`.
-const ED_MAGIC: u32 = 0xB2C0_0ED1;
+const ED_MAGIC: u32 = 0xB2C0_0ED2;
 
 impl EdDoor {
     pub const OWN: EdDoor = EdDoor {
         magic: ED_MAGIC,
         answer: crate::console::ed_answer_in,
+        apply: crate::console::EdQueue::apply,
     };
 
     /// `ed`'s whole answer, `OK` or `ERR` included.
@@ -566,9 +573,16 @@ impl EdDoor {
         &self,
         line: &crate::console::EdLine,
         ui: &crate::ui::UiState,
+        q: Option<&mut crate::console::EdQueue>,
         w: &mut dyn Write,
     ) -> fmt::Result {
-        (self.answer)(line, ui, w)
+        (self.answer)(line, ui, q, w)
+    }
+
+    /// The queued sets, as knob turns.
+    #[inline(always)]
+    pub fn apply(&self, q: &mut crate::console::EdQueue, ui: &mut crate::ui::UiState) {
+        (self.apply)(q, ui)
     }
 }
 
@@ -600,6 +614,13 @@ pub fn ed_door<R>(f: impl FnOnce(&EdDoor) -> R) -> Option<R> {
         }
         Some(f(&EdDoor::OWN))
     }
+}
+
+/// The shell's UI pass: `q`'s sets applied as knob turns. Closed, they
+/// are dropped with the door (`ed` itself answers `ERR` then).
+#[inline(always)]
+pub fn ed_apply(q: &mut crate::console::EdQueue, ui: &mut crate::ui::UiState) {
+    let _ = ed_door(|d| d.apply(q, ui));
 }
 
 /// `ed`'s table in judged door `j` answers (the boot's door check, run
