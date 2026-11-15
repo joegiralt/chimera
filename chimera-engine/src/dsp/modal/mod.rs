@@ -1170,6 +1170,8 @@ impl ModalBank {
     /// Configure filters — called every render block (not just note_on).
     /// Matches Rings' ComputeFilters().
     fn compute_filters(&mut self, m: &Macros, frequency: f32) {
+        #[cfg(test)]
+        tests::FILTER_SETS.with(|n| n.set(n.get() + 1));
         let num = self.resolution;
 
         // Q from DAMP (Rings-style range).
@@ -2400,6 +2402,80 @@ mod tests {
         assert!(pool.alloc.place(v1));
         let fresh = (1 + NUM_SYMPATHETIC) * FRESH_CLEAR_BYTES;
         assert_eq!(pool.note_on_clear(None, v1), fresh);
+    }
+
+    std::thread_local! {
+        /// `compute_filters` calls on this thread.
+        pub(super) static FILTER_SETS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    }
+
+    /// `compute_filters` calls over `blocks` renders of `e` at `p`.
+    fn sets_over(e: &mut ModalEngine, p: &ModalParams, pool: &mut SymPool, blocks: usize) -> usize {
+        let at = FILTER_SETS.with(|n| n.get());
+        for _ in 0..blocks {
+            let mut out = [0.0; BLOCK_SIZE];
+            e.render(&mut out, p, SR, pool);
+        }
+        FILTER_SETS.with(|n| n.get()) - at
+    }
+
+    /// BANK sets its filters only when what they read moves: DAMP,
+    /// STRUCTURE, BRIGHT, the pitch (a glide's every block), MODES (a
+    /// note-on). Held still, a block sets none.
+    #[test]
+    fn bank_sets_its_filters_only_when_their_inputs_move() {
+        let p = ModalParams {
+            mode: ResonatorMode::Modal,
+            ..Default::default()
+        };
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, p.mode);
+        e.note_on(60, 100, &p, SR, &mut pool);
+        // the macros ease in, then hold
+        sets_over(&mut e, &p, &mut pool, 400);
+        assert_eq!(sets_over(&mut e, &p, &mut pool, 20), 0, "held");
+        for (name, q) in [
+            (
+                "DAMP",
+                ModalParams {
+                    damp: p.damp + 0.2,
+                    ..p
+                },
+            ),
+            (
+                "STRUCTURE",
+                ModalParams {
+                    structure: p.structure + 0.2,
+                    ..p
+                },
+            ),
+            (
+                "BRIGHT",
+                ModalParams {
+                    bright: p.bright + 0.2,
+                    ..p
+                },
+            ),
+        ] {
+            assert!(sets_over(&mut e, &q, &mut pool, 1) == 1, "{name} moved");
+            sets_over(&mut e, &q, &mut pool, 400);
+            assert_eq!(sets_over(&mut e, &q, &mut pool, 20), 0, "{name} held");
+            sets_over(&mut e, &p, &mut pool, 400);
+        }
+        // a glide moves the pitch each block, then lands
+        e.glide_on(67, 100, &p, (SR, 0.05), &mut pool);
+        assert_eq!(sets_over(&mut e, &p, &mut pool, 10), 10, "gliding");
+        sets_over(&mut e, &p, &mut pool, 400);
+        assert_eq!(sets_over(&mut e, &p, &mut pool, 20), 0, "landed");
+        // MODES is latched at a note-on, which sets them
+        let q = ModalParams {
+            modes: BankModes::M48,
+            ..p
+        };
+        let at = FILTER_SETS.with(|n| n.get());
+        e.note_on(72, 100, &q, SR, &mut pool);
+        assert_eq!(FILTER_SETS.with(|n| n.get()) - at, 1, "note-on");
+        assert_eq!(sets_over(&mut e, &q, &mut pool, 1), 1, "first block");
     }
 
     /// The modes a bank renders, after its last `compute_filters`.
