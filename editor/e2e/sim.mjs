@@ -8,7 +8,6 @@ const SETTLE_MS = 4000; // a queued set or a key's effect to show in the values
 
 const failures = [];
 const skipped = [];
-let undescribed = [];
 const fail = (where, step, msg) => {
   failures.push(`${where} [${step}]: ${msg}`);
   console.log(`FAIL ${where} [${step}]: ${msg}`);
@@ -326,12 +325,12 @@ async function main() {
     const all = await ask(`ed since ${stale}`);
     const vals = all.map(parseVal).filter(Boolean);
     const addrs = new Set(vals.map((v) => v.addr));
-    if (all[0] !== "part 1 ALGO") fail("since", `stale ${stale}`, `first line ${all[0]}`);
+    if (all[0] !== "" || all[1] !== "part 1 ALGO") fail("since", `stale ${stale}`, `first lines ${JSON.stringify(all.slice(0, 2))}: a full answer opens with an empty line`);
     if (addrs.size !== vals.length) fail("since", `stale ${stale}`, "an address twice");
     for (const a of params.keys()) if (!addrs.has(a)) fail(a, `stale ${stale}`, "missing from the full answer");
-    // Stored params no page cell carries are answered all the same: the editor keeps them unused.
+    // `since` answers only what `describe` lists.
     const extra = [...addrs].filter((a) => !params.has(a));
-    if (extra.length) undescribed = extra;
+    if (extra.length) fail("since", `stale ${stale}`, `answered but not described: ${extra.join(" ")}`);
     const ps = all.filter((l) => l.startsWith("panel ")).map((l) => tokens(l)[1]);
     if (ps.length === 0) fail("since", `stale ${stale}`, "no panel lines");
     info(`stale ${stale}: ${all.length - 1} lines, ${vals.length} vals, ${ps.length} panels`);
@@ -348,7 +347,6 @@ try {
   failures.push(String(e.message ?? e));
   console.log(`FAIL ${e.message ?? e}`);
 }
-if (undescribed.length) console.log(`answered by since, described on no page (${undescribed.length}): ${undescribed.join(" ")}`);
 if (skipped.length) console.log(`skipped (a name with a space cannot be set): ${skipped.join("; ")}`);
 try {
   ws?.close();
