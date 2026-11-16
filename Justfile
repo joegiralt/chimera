@@ -27,6 +27,10 @@ editor-sim:
     trap 'pkill -P $bridge || true; kill $bridge 2>/dev/null || true' EXIT
     cargo run -p chimera-desktop
 
+# The editor's protocol end to end, against a running `just editor-sim` (the simulator has no headless mode)
+editor-e2e:
+    node editor/e2e/sim.mjs
+
 # The browser editor's Elm tests
 editor-test:
     cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && node public/ports.check.js
