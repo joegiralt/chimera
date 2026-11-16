@@ -201,7 +201,9 @@ pub struct Usb {
     /// `key` and `turn`'s gestures, played into the controls each lap.
     hands: Hands,
     /// `ed set`'s, applied in the UI pass.
-    ed: chimera_core::console::EdQueue,
+    /// In D2 (`shared::take_ed`), not this frame: `since`'s copy of the values
+    /// would take `main`'s stack. `None`: the cell was taken twice.
+    ed: Option<&'static mut chimera_core::console::EdState>,
 }
 
 /// The port set up but not on the bus: no pull-up, so the host sees
@@ -397,7 +399,7 @@ impl Unconnected {
             redraw: false,
             board: self.board,
             hands: Hands::new(),
-            ed: chimera_core::console::EdQueue::new(),
+            ed: crate::shared::take_ed(),
         }
     }
 }
@@ -560,7 +562,7 @@ impl Usb {
                 forget: false,
                 bank2,
                 hands,
-                ed,
+                ed: ed.as_deref_mut(),
             };
             let out = &mut UsbOut {
                 link,
@@ -600,7 +602,9 @@ impl Usb {
 
     /// `ed set`'s queue, applied to `ui` as knob turns.
     pub fn apply_ed(&mut self, ui: &mut UiState) {
-        chimera_core::bank2::ed_apply(&mut self.ed, ui);
+        if let Some(ed) = self.ed.as_deref_mut() {
+            chimera_core::bank2::ed_apply(ed, ui);
+        }
     }
 
     /// `bank2 install` drew over the screen since the last call.
@@ -642,7 +646,7 @@ struct ChipUnit<'a> {
     /// `bank2 install`'s outcome, before the answer.
     bank2: Option<Bank2Answer>,
     hands: &'a mut Hands,
-    ed: &'a mut chimera_core::console::EdQueue,
+    ed: Option<&'a mut chimera_core::console::EdState>,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -760,8 +764,8 @@ impl Unit for ChipUnit<'_> {
         self.forget = true;
     }
 
-    fn ed(&mut self) -> (&UiState, Option<&mut chimera_core::console::EdQueue>) {
-        (self.ui, Some(&mut *self.ed))
+    fn ed(&mut self) -> (&UiState, Option<&mut chimera_core::console::EdState>) {
+        (self.ui, self.ed.as_deref_mut())
     }
 
     fn hands(&mut self) -> Option<&mut Hands> {

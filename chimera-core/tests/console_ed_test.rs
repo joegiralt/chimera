@@ -1,4 +1,5 @@
 mod common;
+mod screen;
 use common::console_fake::{Fake, ask};
 
 use chimera_core::console::EdAddr;
@@ -91,14 +92,11 @@ fn ed_without_sub_is_refused() {
 }
 
 #[test]
-fn the_rest_wait_for_their_tasks() {
+fn ed_watch_is_unknown() {
     let mut f = Fake::new();
-    for (line, sub) in [("ed watch\n", "watch"), ("ed unwatch\n", "unwatch")] {
-        assert_eq!(
-            ask(&mut f, line),
-            format!("ERR ed {sub} is not in this build\n"),
-            "{line}"
-        );
+    for line in ["ed watch\n", "ed unwatch\n"] {
+        let got = ask(&mut f, line);
+        assert!(got.starts_with("ERR ed takes "), "{line}: {got}");
     }
 }
 
@@ -551,7 +549,7 @@ fn get_unknown_addr_is_refused() {
 
 // ---- set ----
 
-use chimera_core::console::{EdQueue, Pushed};
+use chimera_core::console::{EdState, Pushed};
 use chimera_engine::block::ParamKind;
 
 fn apply(f: &mut Fake) {
@@ -631,6 +629,27 @@ fn set_glides_like_a_knob() {
     assert_eq!(sa.parts[0].knobs.count(), 1);
     assert_eq!(sa.parts[0].knobs.count(), sb.parts[0].knobs.count());
     assert!((stored_of(&mut by_ed, cutoff) - to).abs() < 1e-2 * to);
+    // The very move the knob made, from where it was to where it lands: a
+    // snap would publish `from == to`, or another target.
+    let (ed_move, knob_move) = (moves(&sa.parts[0].knobs), moves(&sb.parts[0].knobs));
+    assert_eq!(ed_move, knob_move);
+    let (from, to) = ed_move;
+    assert!(from != to, "{from} -> {to}: a landing, not a glide");
+}
+
+/// The published delta's moves as its `Debug` says them, `(from, to)` of
+/// the one move: its stamp (one a copy of the Sound) is left out.
+fn moves(d: &chimera_core::dsp::knobs::KnobDelta) -> (f32, f32) {
+    let text = format!("{d:?}");
+    let field = |name: &str| -> f32 {
+        let at = text
+            .find(name)
+            .unwrap_or_else(|| panic!("{name} in {text}"))
+            + name.len();
+        let rest = &text[at..];
+        rest[..rest.find([',', ' ']).unwrap()].parse().unwrap()
+    };
+    (field("from: "), field("to: "))
 }
 
 #[test]
@@ -727,11 +746,11 @@ fn set_queue_full_is_busy() {
         assert!(taken < 1000, "never full");
     }
     assert_eq!(ask(&mut f, "ed set FILTER.CUTOFF 1000\n"), "ERR busy\n");
-    assert!(taken >= 8, "{taken}");
+    assert_eq!(taken, EdState::CAP);
     // An apply empties it.
     apply(&mut f);
     assert_eq!(ask(&mut f, "ed set FILTER.CUTOFF 1000\n"), "OK queued\n");
-    let mut q = EdQueue::new();
+    let mut q = EdState::new();
     assert_eq!(
         q.push(
             PartId::ALL[0],
@@ -774,4 +793,318 @@ fn apply_drops_a_set_for_a_part_that_changed_engine() {
     let rev = f.ui.project().part(PartId::ALL[0]).sound.stamp();
     apply(&mut f);
     assert_eq!(f.ui.project().part(PartId::ALL[0]).sound.stamp(), rev);
+}
+
+// ---- since ----
+
+use chimera_core::midi_in::{Cc, CcEvent};
+use chimera_core::midi_map::{Input as MapInput, Mappable};
+use chimera_hal::{ButtonId, Ms};
+use screen::{Input, feed};
+
+const P1: PartId = PartId::ALL[0];
+const P2: PartId = PartId::ALL[1];
+
+fn cutoff() -> ParamAddr {
+    ParamAddr::new(
+        BlockRef::Filter,
+        chimera_engine::params::FilterParams::CUTOFF,
+    )
+}
+
+/// What `ed since <n>` answered: its lines but the closing `OK <m>`, and `m`.
+fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
+    let got = ask(f, &format!("ed since {n}\n"));
+    assert!(got.ends_with('\n'), "{got}");
+    let mut lines: Vec<String> = got.lines().map(str::to_string).collect();
+    let last = lines.pop().unwrap();
+    let m = last
+        .strip_prefix("OK ")
+        .unwrap_or_else(|| panic!("{last}"))
+        .parse()
+        .unwrap();
+    (lines, m)
+}
+
+/// `ed get`'s `val` line for `addr`.
+fn get_line(f: &mut Fake, addr: &str) -> String {
+    ask(f, &format!("ed get {addr}\n"))
+        .lines()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+fn vals(lines: &[String]) -> Vec<&String> {
+    lines.iter().filter(|l| l.starts_with("val ")).collect()
+}
+
+#[test]
+fn since_zero_answers_everything() {
+    let mut f = Fake::new();
+    let (lines, m) = since(&mut f, 0);
+    assert_ne!(m, 0);
+    assert_eq!(lines[0], "part 1 ALGO");
+    let panels: Vec<&String> = lines.iter().filter(|l| l.starts_with("panel ")).collect();
+    assert_eq!(panels.len(), 14, "{panels:?}");
+    assert!(panels.iter().any(|l| l.starts_with("panel FILTER ")));
+    assert!(panels.iter().any(|l| l.starts_with("panel OP6 ")));
+    // Every address of the schema once, in `get`'s own words.
+    let mut want = 0;
+    for b in algo_blocks() {
+        for s in b.specs() {
+            let a = EdAddr(ParamAddr::new(b, s.id));
+            let line = get_line(&mut f, &a.to_string());
+            assert_eq!(
+                lines.iter().filter(|l| **l == line).count(),
+                1,
+                "{a}: {line}"
+            );
+            want += 1;
+        }
+    }
+    assert_eq!(vals(&lines).len(), want);
+    assert_eq!(lines.len(), 1 + 14 + want);
+}
+
+#[test]
+fn since_current_with_no_change_is_just_ok() {
+    let mut f = Fake::new();
+    let (_, m) = since(&mut f, 0);
+    let (lines, m2) = since(&mut f, m);
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_ne!(m2, 0);
+    assert_ne!(m2, m, "advances on every answer");
+    assert!(since(&mut f, m2).0.is_empty());
+}
+
+#[test]
+fn since_reports_knob_cc_load_and_set() {
+    use chimera_core::project::{PartFrom, PartSource, ReplaceGuard};
+    let mut f = Fake::new();
+    let (_, mut m) = since(&mut f, 0);
+    // A knob turn.
+    assert!(f.ui.edit_addr(P1, cutoff(), -1, false));
+    let (lines, m2) = since(&mut f, m);
+    m = m2;
+    assert_eq!(lines, [get_line(&mut f, "FILTER.CUTOFF")]);
+    // A set: through the queue, applied as a knob turn.
+    assert_eq!(ask(&mut f, "ed set FILTER.CUTOFF 1234\n"), "OK queued\n");
+    apply(&mut f);
+    let (lines, m2) = since(&mut f, m);
+    m = m2;
+    assert_eq!(lines, [get_line(&mut f, "FILTER.CUTOFF")]);
+    // A CC, learned onto the cutoff.
+    f.ui.project_mut()
+        .edit_part(P1)
+        .sound
+        .map
+        .learn(MapInput::cc(74).unwrap(), Mappable::new(cutoff()).unwrap())
+        .unwrap();
+    since(&mut f, m);
+    let (_, m2) = since(&mut f, 0);
+    m = m2;
+    let ev = CcEvent {
+        channel: f.ui.project().part(P1).mix.channel,
+        cc: Cc::new(74).unwrap(),
+        value: 0,
+    };
+    if cfg!(feature = "midi-map") {
+        f.ui.hear_ccs(vec![ev].into_iter(), Ms(1000), true);
+        for i in 1..=40 {
+            f.ui.hear_ccs(std::iter::empty::<CcEvent>(), Ms(1000 + 4 * i), true);
+        }
+        let (lines, m2) = since(&mut f, m);
+        m = m2;
+        assert_eq!(lines, [get_line(&mut f, "FILTER.CUTOFF")], "the CC");
+    }
+    // A Sound load: only the values it changed.
+    let before = get_line(&mut f, "FILTER.CUTOFF");
+    let src = PartSource {
+        part: P1,
+        from: PartFrom::Init(EngineType::Algo),
+    };
+    let proj = f.ui.project();
+    let c = match ReplaceGuard::check(proj, f.ui.template(), src) {
+        Ok(c) => c,
+        Err(n) => n.into_pending().anyway(proj),
+    };
+    f.ui.project_mut().replace_part(c).unwrap();
+    let (lines, _) = since(&mut f, m);
+    assert!(!lines.is_empty());
+    assert!(lines.iter().all(|l| l.starts_with("val ")), "{lines:?}");
+    let after = get_line(&mut f, "FILTER.CUTOFF");
+    assert_ne!(before, after);
+    assert!(lines.contains(&after), "{lines:?}");
+}
+
+#[test]
+fn since_reports_load_part_and_engine() {
+    use chimera_core::preset::Sound;
+    let mut f = Fake::new();
+    screen::init_part_engine(&mut f.ui, P2, EngineType::Va);
+    let (_, m) = since(&mut f, 0);
+    // Another Part is selected: its engine is told, never its values.
+    feed(&mut f.ui, Input::press(ButtonId::B2));
+    assert_eq!(f.ui.active_part, P2);
+    let (lines, m) = since(&mut f, m);
+    assert_eq!(lines, ["part 2 VA"]);
+    // Back: the editor reads the whole Sound again.
+    feed(&mut f.ui, Input::press(ButtonId::B1));
+    let (lines, m) = since(&mut f, m);
+    assert_eq!(lines[0], "part 1 ALGO");
+    assert!(vals(&lines).len() > 100, "{}", lines.len());
+    // The engine of the selected Part changes under it.
+    let was = chimera_core::ui::nav::PartChain::of(&f.ui.project().part(P1).sound);
+    **f.ui.project_mut().edit_part(P1).sound = Sound::init(EngineType::Modal);
+    f.ui.replaced_for_test(was);
+    let (lines, m) = since(&mut f, m);
+    assert_eq!(lines, ["part 1 MODAL"]);
+    assert!(since(&mut f, m).0.is_empty());
+}
+
+#[test]
+fn since_reports_variant_change() {
+    let mut f = Fake::new();
+    let (_, m) = since(&mut f, 0);
+    assert_eq!(ask(&mut f, "ed set FILTER.KIND LADDER\n"), "OK queued\n");
+    apply(&mut f);
+    let (lines, m) = since(&mut f, m);
+    assert_eq!(
+        lines.iter().filter(|l| *l == "panel FILTER LADDER").count(),
+        1,
+        "{lines:?}"
+    );
+    assert!(lines.iter().any(|l| l.starts_with("val FILTER.KIND ")));
+    // The panel comes before the values that read under it.
+    let panel = lines.iter().position(|l| l.starts_with("panel")).unwrap();
+    let val = lines.iter().position(|l| l.starts_with("val")).unwrap();
+    assert!(panel < val, "{lines:?}");
+    assert!(since(&mut f, m).0.is_empty());
+}
+
+#[test]
+fn since_coalesces_a_fast_turn() {
+    let mut f = Fake::new();
+    let (_, m) = since(&mut f, 0);
+    for _ in 0..20 {
+        f.ui.edit_addr(P1, cutoff(), -1, false);
+    }
+    let (lines, _) = since(&mut f, m);
+    assert_eq!(lines, [get_line(&mut f, "FILTER.CUTOFF")]);
+}
+
+#[test]
+fn stale_number_answers_everything() {
+    let mut f = Fake::new();
+    let (all, m1) = since(&mut f, 0);
+    f.ui.edit_addr(P1, cutoff(), -1, false);
+    // The answer for `m1` never reached the editor: it asks with 0 again,
+    // or with the number before: both are everything.
+    let (_, m2) = since(&mut f, m1);
+    f.ui.edit_addr(P1, cutoff(), -1, false);
+    let (again, m3) = since(&mut f, m1);
+    assert_eq!(again.len(), all.len());
+    assert_ne!(m3, m2);
+    // A number never issued is as stale.
+    let (never, _) = since(&mut f, m3 + 5);
+    assert_eq!(never.len(), all.len());
+    // The editor's current number still gets a diff.
+    let (_, m4) = since(&mut f, 0);
+    assert!(since(&mut f, m4).0.is_empty());
+}
+
+#[test]
+fn refused_set_reports_nothing() {
+    let mut f = Fake::new();
+    let (_, m) = since(&mut f, 0);
+    // Every op a FRMT: the formant budget holds fewer, so the writer
+    // refuses the last (`OK queued` all the same).
+    let ops = ["OP_A", "OP_B", "OP_C", "OP_D", "OP_E", "OP_F"];
+    for o in ops {
+        assert_eq!(
+            ask(&mut f, &format!("ed set {o}.WAVE FRMT\n")),
+            "OK queued\n"
+        );
+        apply(&mut f);
+    }
+    let (lines, m) = since(&mut f, m);
+    let refused: Vec<&str> = ops
+        .iter()
+        .copied()
+        .filter(|o| !get_line(&mut f, &format!("{o}.WAVE")).contains("FRMT"))
+        .collect();
+    assert!(
+        !refused.is_empty() && refused.len() < ops.len(),
+        "{refused:?}"
+    );
+    for o in &refused {
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.starts_with(&format!("val {o}.WAVE ")))
+        );
+    }
+    // Asked again, still refused: nothing to report.
+    assert_eq!(
+        ask(&mut f, &format!("ed set {}.WAVE FRMT\n", refused[0])),
+        "OK queued\n"
+    );
+    apply(&mut f);
+    let (lines, _) = since(&mut f, m);
+    assert!(lines.is_empty(), "{lines:?}");
+}
+
+#[test]
+fn full_answer_fits_the_answer_clock() {
+    let mut f = Fake::new();
+    let got = ask(&mut f, "ed since 0\n");
+    assert!(got.len() < ANSWER_BYTES_MAX, "{} B", got.len());
+    // A load changes everything: no more than the full answer.
+    for b in algo_blocks() {
+        if let Some(mut blk) = f.ui.params_mut().block_mut(b) {
+            for s in b.specs() {
+                blk.set(s.id, s.max);
+            }
+        }
+    }
+    let got = ask(&mut f, "ed since 0\n");
+    assert!(got.len() < ANSWER_BYTES_MAX, "{} B", got.len());
+}
+
+#[test]
+fn since_malformed_and_unbuilt_are_refused() {
+    let mut f = Fake::new();
+    for line in [
+        "ed since\n",
+        "ed since x\n",
+        "ed since 1 2\n",
+        "ed since -1\n",
+    ] {
+        let got = ask(&mut f, line);
+        assert!(got.starts_with("ERR ed takes "), "{line}: {got}");
+    }
+    f.ed = None;
+    assert_eq!(
+        ask(&mut f, "ed since 0\n"),
+        "ERR ed since is not in this build\n"
+    );
+}
+
+#[test]
+fn gen_is_never_zero_and_wraps_past_it() {
+    use chimera_core::console::{ED_SLOTS, Gen, ed_slots_used};
+    assert_eq!(Gen::new(0), None);
+    assert_eq!(Gen::new(1_000_000_000), None);
+    let last = Gen::new(999_999_999).unwrap();
+    assert_eq!(last.next(), Gen::FIRST);
+    assert_eq!(Gen::FIRST.next().get(), 2);
+    // The copy holds every param of every block.
+    let schema: usize = algo_blocks().iter().map(|b| b.specs().len()).sum();
+    assert_eq!(ed_slots_used(), schema);
+    assert!(schema <= ED_SLOTS, "{schema} of {ED_SLOTS}");
+    // A number past nine digits is refused, not wrapped.
+    let mut f = Fake::new();
+    let got = ask(&mut f, "ed since 1000000000\n");
+    assert!(got.starts_with("ERR ed takes "), "{got}");
 }

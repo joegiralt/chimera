@@ -275,8 +275,8 @@ impl Console {
 mod ed;
 pub(crate) use ed::answer_in as ed_answer_in;
 pub use ed::{
-    EdAddr, EdArg, EdQueue, EdValue, Pushed, env_variant, filter_variant, fx_variant, lfo_variant,
-    op_variant, pages as ed_pages,
+    ED_SLOTS, EdAddr, EdArg, EdSince, EdState, EdValue, Gen, Pushed, ed_slots_used, env_variant,
+    filter_variant, fx_variant, lfo_variant, op_variant, pages as ed_pages,
 };
 mod status;
 pub use status::*;

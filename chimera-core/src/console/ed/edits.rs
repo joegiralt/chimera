@@ -17,7 +17,7 @@ use chimera_engine::params::EngineType;
 
 /// Sets waiting for the next UI pass. A lap of a browser's sliders is a
 /// handful; more than this is the host outrunning the pass.
-const CAP: usize = 16;
+pub const CAP: usize = 16;
 
 #[derive(Clone, Copy)]
 struct Pending {
@@ -36,25 +36,32 @@ impl Pending {
     };
 }
 
-/// What `EdQueue::push` made of a set.
+/// What `EdState::push` made of a set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pushed {
     Queued,
     Full,
 }
 
-/// The sets the console has taken and the UI pass has not yet applied: as
-/// `Hands` queues `Gesture`s, a fixed array the shell owns.
-pub struct EdQueue {
+/// What the console keeps for `ed`, which the shell owns: the sets taken
+/// and not yet applied by the UI pass (as `Hands` queues `Gesture`s, a fixed
+/// array), and `ed since`'s copy of what it last reported.
+pub struct EdState {
     items: [Pending; CAP],
     len: u8,
+    /// `ed since`'s copy and number (`since.rs`).
+    pub(super) since: super::EdSince,
 }
 
-impl EdQueue {
+impl EdState {
+    /// Sets the queue holds.
+    pub const CAP: usize = CAP;
+
     pub const fn new() -> Self {
-        EdQueue {
+        EdState {
             items: [Pending::SPARE; CAP],
             len: 0,
+            since: super::EdSince::new(),
         }
     }
 
@@ -85,7 +92,7 @@ impl EdQueue {
     }
 }
 
-impl Default for EdQueue {
+impl Default for EdState {
     fn default() -> Self {
         Self::new()
     }
@@ -137,7 +144,7 @@ pub(super) fn set(
     addr: EdAddr,
     val: EdValue,
     ui: &UiState,
-    q: Option<&mut EdQueue>,
+    q: Option<&mut EdState>,
     w: &mut dyn Write,
 ) -> fmt::Result {
     let part = ui.active_part;

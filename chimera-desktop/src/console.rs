@@ -96,7 +96,7 @@ pub struct DeskUnit<'a> {
     /// `key` and `turn`'s queue. `None`: they answer not in this build.
     pub hands: Option<&'a mut Hands>,
     /// `ed set`'s queue. `None`: it answers not in this build.
-    pub ed: Option<&'a mut chimera_core::console::EdQueue>,
+    pub ed: Option<&'a mut chimera_core::console::EdState>,
 }
 
 impl Unit for DeskUnit<'_> {
@@ -134,7 +134,7 @@ impl Unit for DeskUnit<'_> {
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
         None
     }
-    fn ed(&mut self) -> (&UiState, Option<&mut chimera_core::console::EdQueue>) {
+    fn ed(&mut self) -> (&UiState, Option<&mut chimera_core::console::EdState>) {
         (self.ui, self.ed.as_deref_mut())
     }
     fn hands(&mut self) -> Option<&mut Hands> {

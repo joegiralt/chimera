@@ -141,7 +141,7 @@ fn main() {
 
     let mut console = console::bind_or_off(console::ADDR);
     let mut hands = chimera_core::console::Hands::new();
-    let mut ed = chimera_core::console::EdQueue::new();
+    let mut ed = chimera_core::console::EdState::new();
 
     while display.is_open() {
         // Before the frame's input and draw: the snapshot point the chip uses.

@@ -13,10 +13,12 @@ use chimera_engine::params::EngineType;
 mod addr;
 mod describe;
 mod edits;
+mod since;
 mod value;
 pub use addr::EdAddr;
 pub use describe::{env_variant, filter_variant, fx_variant, lfo_variant, op_variant, pages};
-pub use edits::{EdQueue, Pushed};
+pub use edits::{EdState, Pushed};
+pub use since::{EdSince, Gen, SLOTS as ED_SLOTS, slots_used as ed_slots_used};
 
 /// A value to set: a number, or a word (a choice's name).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,11 +35,14 @@ impl Eq for EdValue {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EdArg {
     Hello,
-    Describe { engine: EngineType, page: u8 },
+    Describe {
+        engine: EngineType,
+        page: u8,
+    },
     Get(EdAddr),
     Set(EdAddr, EdValue),
-    Watch,
-    Unwatch,
+    /// The editor's last answer's number; `None`: it holds nothing.
+    Since(Option<Gen>),
 }
 
 fn engine(w: &[u8]) -> Option<EngineType> {
@@ -64,16 +69,15 @@ fn value(w: &[u8]) -> Option<EdValue> {
 }
 
 impl Arg for EdArg {
-    const USAGE: &'static str = "hello, describe, get, set, watch or unwatch";
+    const USAGE: &'static str = "hello, describe, get, set or since";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let sub = words.next()?;
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
         let got = if is(b"hello") {
             EdArg::Hello
-        } else if is(b"watch") {
-            EdArg::Watch
-        } else if is(b"unwatch") {
-            EdArg::Unwatch
+        } else if is(b"since") {
+            let n = chimera_theory::tuning::uint(words.next()?)?;
+            EdArg::Since(Gen::new(n))
         } else if is(b"describe") {
             let engine = engine(words.next()?)?;
             let page = chimera_theory::tuning::uint(words.next()?)?
@@ -92,24 +96,11 @@ impl Arg for EdArg {
     }
 }
 
-impl EdArg {
-    const fn sub(self) -> &'static str {
-        match self {
-            EdArg::Hello => "hello",
-            EdArg::Describe { .. } => "describe",
-            EdArg::Get(_) => "get",
-            EdArg::Set(..) => "set",
-            EdArg::Watch => "watch",
-            EdArg::Unwatch => "unwatch",
-        }
-    }
-}
-
 /// The whole answer, `OK` or `ERR` included: `EdDoor::answer`'s entry.
 pub(crate) fn answer_in(
     line: &EdLine,
     ui: &UiState,
-    q: Option<&mut EdQueue>,
+    q: Option<&mut EdState>,
     w: &mut dyn Write,
 ) -> fmt::Result {
     match EdArg::parse(line.words()) {
@@ -129,7 +120,10 @@ pub(crate) fn answer_in(
             None => writeln!(w, "ERR ed get has no {} here", a),
         },
         Some(EdArg::Set(a, v)) => edits::set(a, v, ui, q, w),
-        Some(other) => writeln!(w, "ERR ed {} is not in this build", other.sub()),
+        Some(EdArg::Since(held)) => match q {
+            Some(st) => st.since.answer(held, ui, w),
+            None => writeln!(w, "ERR ed since is not in this build"),
+        },
     }
 }
 

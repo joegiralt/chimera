@@ -180,7 +180,7 @@ pub trait Unit {
     }
     /// The UI, and `ed set`'s queue (the shell drains it each UI pass).
     /// `None`: not in this build.
-    fn ed(&mut self) -> (&UiState, Option<&mut super::EdQueue>) {
+    fn ed(&mut self) -> (&UiState, Option<&mut super::EdState>) {
         (self.ui(), None)
     }
     /// The console's hands, which `key` and `turn` queue on. `None`: not
