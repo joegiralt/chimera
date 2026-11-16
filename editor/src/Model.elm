@@ -84,9 +84,10 @@ supported =
 {-| A request unanswered this long has timed out. While connecting, that
 halts: a late `OK` could not be told from the next request's, so it would
 skip a step. Following, a `since` is asked once more with the last number we
-did get, and no further until every answer owed has come (`owed`): the unit
-answers in order, so a late `OK` is only counted, and its `val` lines are
-true, as the number only moves forward.
+did get, and no further until every answer owed has come (`owed`); if that
+re-ask is lost too, the count resets and it asks afresh, never halting (the
+unit heals a lost answer on the next ask). The unit answers in order, so a late `OK` is only
+counted, and its `val` lines are true, as the number only moves forward.
 -}
 answerTimeoutMs : Int
 answerTimeoutMs =
@@ -264,7 +265,12 @@ tick t m0 =
                     ask (Since m.gen)
 
                 else if timedOut then
-                    silent
+                    -- The re-ask went unanswered too: count the answers lost and ask afresh. The unit heals a lost answer on the next ask.
+                    let
+                        ( fresh, cs ) =
+                            ask (Since m.gen)
+                    in
+                    ( { fresh | owed = 1 }, cs )
 
                 else
                     ( m, [] )

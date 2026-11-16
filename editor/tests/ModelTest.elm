@@ -257,17 +257,32 @@ suite =
                         m3 |> feed [ "OK 5" ] |> tick 1165
                 in
                 Expect.equal [ [ Since Nothing ], [ Since Nothing ], [], [ Since (gen 5) ] ] [ c1, c2, c3, c4 ]
-        , test "two_silent_asks_halt" <|
+        , test "following_never_halts_a_lost_answer_is_asked_for_again" <|
             \_ ->
                 let
-                    m =
-                        following |> tick 99 |> Tuple.first |> tick 1099 |> Tuple.first |> tick 2099 |> Tuple.first
+                    ( m1, _ ) =
+                        following |> tick 99
+
+                    ( m2, c2 ) =
+                        m1 |> tick 1099
+
+                    ( m3, c3 ) =
+                        m2 |> tick 2099
+
+                    m4 =
+                        m3 |> feed [ cutoffLine "777", "OK 7" ]
+
+                    ( _, c4 ) =
+                        m4 |> tick 2132
                 in
                 Expect.all
-                    [ \x -> Expect.equal (Just "THE UNIT STOPPED ANSWERING") (Model.notice x)
-                    , \x -> Expect.equal [] (tick 2132 x |> Tuple.second)
+                    [ \_ -> Expect.equal [ [ Since Nothing ], [ Since Nothing ] ] [ c2, c3 ]
+                    , \_ -> Expect.equal Nothing (Model.notice m3)
+                    , \_ -> Expect.equal (Just "777 Hz") (shown m4)
+                    , \_ -> Expect.equal (gen 7) m4.gen
+                    , \_ -> Expect.equal [ Since (gen 7) ] c4
                     ]
-                    m
+                    ()
         , test "a_lost_link_clears_the_values" <|
             \_ ->
                 Expect.equal Nothing
