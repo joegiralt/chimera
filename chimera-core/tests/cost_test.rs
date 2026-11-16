@@ -1269,7 +1269,8 @@ fn a_structure_route_on_symp_bills_the_chord_glide() {
 /// costlier models get fewer, as they must. BANK's and SYMP's out clip,
 /// stmlib's rational curve for `tanhf` (ADR 0097), gave BANK a third voice
 /// on rev V and SYMP one more on most rows. STRING and BOWED then billed as
-/// the 0.3 unit reads them (ADR 0218).
+/// the 0.3 unit reads them (ADR 0218); SYMP and BOWED from the 2026-11-16
+/// readings (ADR 0275).
 #[test]
 fn modal_bills_each_model() {
     use chimera_core::dsp::modal::{BankModes, ModalEngine, ResonatorMode};
@@ -1284,10 +1285,10 @@ fn modal_bills_each_model() {
         (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.5), 550, (8, 7), (8, 7)),
-        (sound(Bowed, 0.3, 0.5), 530, (8, 7), (8, 7)),
-        (sound(Sympathetic, 0.0, 0.0), 645, (8, 6), (7, 6)),
-        (sound(Sympathetic, 0.3, 0.0), 725, (7, 5), (6, 5)),
-        (sound(Sympathetic, 0.3, 0.5), 865, (6, 5), (6, 4)),
+        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
+        (sound(Sympathetic, 0.0, 0.0), 740, (7, 5), (6, 5)),
+        (sound(Sympathetic, 0.3, 0.0), 820, (6, 5), (6, 4)),
+        (sound(Sympathetic, 0.3, 0.5), 960, (5, 4), (5, 4)),
         (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (3, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
@@ -1320,6 +1321,28 @@ fn modal_bills_each_model() {
     let mut bank = sound(Modal, 0.0, 0.0);
     bank.modal.modes = BankModes::M48;
     assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_840 + 16 * 45));
+}
+
+/// MODAL's SYMP and BOWED are billed from the unit's 2026-11-16 readings
+/// (ADR 0275): INIT MODAL, one note held, whole voice over idle, at the
+/// top of the spread (SYMP at C7 870, BOWED's max window 750). The model
+/// term is the reading less the rest of the voice (chain, PITCH, SYMP's
+/// halo retune), rounded up to 10, so the whole voice bills at least it.
+#[test]
+fn modal_symp_and_bowed_bill_the_2026_11_16_readings() {
+    use chimera_core::dsp::modal::{ModalEngine, ResonatorMode};
+    for (mode, read) in [
+        (ResonatorMode::Bowed, 750),
+        (ResonatorMode::Sympathetic, 870),
+    ] {
+        let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+        (p.modal.mode, p.modal.body, p.modal.ens_mix) = (mode, 0.0, 0.0);
+        let model = ModalEngine::cost(&p.modal).0;
+        let voice = Voice::cost(&p, &ModState::new()).0;
+        let rest = voice - model;
+        assert!(voice >= read, "{mode:?}: {voice} under its reading {read}");
+        assert_eq!(model, (read - rest).div_ceil(10) * 10, "{mode:?}");
+    }
 }
 
 /// A bow from C6 up re-takes its lock correction each block while FORCE

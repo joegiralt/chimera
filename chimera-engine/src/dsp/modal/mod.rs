@@ -445,7 +445,10 @@ impl ModalEngine {
     /// (135), with the two `vdiv.f32`s at 14 cycles: 620 + (270 − 143 −
     /// 135) × 1.46 × 1.1 + 2 × (14 − 1.46) × 1.1 = 634.8, rounded up to 640.
     /// The 0.3 unit's worst row, MDL BOW+, reads 117 under (ADR 0218): 530.
-    pub const COST_BOWED: Cost = Cost(530);
+    /// Then the unit's 2026-11-16 max window, 750 whole voice (INIT MODAL
+    /// C4, eb442a48), less the voice's other 113 (643 − 530: chain, PITCH),
+    /// 637, rounded up to 640 (ADR 0275).
+    pub const COST_BOWED: Cost = Cost(640);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -457,7 +460,10 @@ impl ModalEngine {
     /// The unit read 2026-10-22 (ROUTING bench, rev V at 480 MHz, four
     /// ringing voices): MDL SYM 928 a voice against 769 billed, SYM0 860
     /// against 689, SYM+ 1,081 against 909: +175.
-    pub const COST_SYMPATHETIC: Cost = Cost(645);
+    /// Then the 2026-11-16 reading, C7 whole voice 870 (INIT MODAL, no
+    /// routes), less the voice's other 136 (781 − 645: chain, PITCH, the
+    /// halo's retune), 734, rounded up to 740 (ADR 0275).
+    pub const COST_SYMPATHETIC: Cost = Cost(740);
     /// The resonator bank: this plus `COST_MODE` per mode. Its sample loop
     /// as benched (MDL RES /VOICE 1,865; less the chain's 57, 1,808 at 32
     /// modes against 1,900 billed), and the macros' easing is a few
