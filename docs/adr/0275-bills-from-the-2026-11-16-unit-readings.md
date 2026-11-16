@@ -4,7 +4,7 @@
 - **Deciders:** owner (approved 2026-11-16), firmware
 
 ## Context
-PR #994 billed DRUM by machine (ADR 0274), two of whose constants were estimates or margins thin at the top, and kept MODAL's SYMP and BOWED at ADR 0211 and 0218's figures. The unit read them again on 2026-11-16 (rev V, 480 MHz, build 0.3.0 eb442a48, INIT DRUM and INIT MODAL on Part 1, `stats` load_pct polled every 51 ms, 1 % = 100 cycles a sample, whole voice over idle): (private notes), #991 and #992.
+PR #994 billed DRUM by machine (ADR 0274), two of whose constants were estimates or margins thin at the top, and kept MODAL's SYMP and BOWED at ADR 0211 and 0218's figures. The unit read them again on 2026-11-16 (rev V, 480 MHz, build 0.3.0 eb442a48, INIT DRUM and INIT MODAL on Part 1, `stats` load_pct polled every 51 ms, 1 % = 100 cycles a sample, whole voice over idle; #991, #992):
 
 | Row | Reading (cycles a sample) | Spread |
 |---|---|---|
@@ -39,6 +39,6 @@ This supersedes in part ADR 0274 (PLAIN IMPULSE's estimate, TONE COWBELL's const
 - Bills change admission, not sound: every golden is bit-identical. Bank 1: const values only.
 
 ## Sources
-- (private notes); private issue #991, private issue #992; PR #994.
+- private issue #991, private issue #992; PR #994.
 - `chimera-engine/src/dsp/drum/types.rs` (`Machine::cost`), `chimera-engine/src/dsp/modal/mod.rs` (`COST_BOWED`, `COST_SYMPATHETIC`).
 - ADR 0211, 0218, 0273, 0274.
