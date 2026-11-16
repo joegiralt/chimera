@@ -283,6 +283,36 @@ suite =
                     , \_ -> Expect.equal [ Since (gen 7) ] c4
                     ]
                     ()
+        , test "only_the_re_asks_ok_arrives_and_following_goes_on" <|
+            \_ ->
+                let
+                    m =
+                        following
+                            |> tick 99
+                            |> Tuple.first
+                            |> tick 1099
+                            |> Tuple.first
+                            |> feed [ "OK 5" ]
+                in
+                Expect.all
+                    [ \x -> Expect.equal [] (tick 1500 x |> Tuple.second)
+                    , \x -> Expect.equal [ Since (gen 5) ] (tick 2100 x |> Tuple.second)
+                    , \x -> Expect.equal Nothing (Model.notice (tick 2100 x |> Tuple.first))
+                    ]
+                    m
+        , test "a_refused_first_since_is_settled_the_same_way" <|
+            \_ ->
+                let
+                    m =
+                        following
+                            |> tick 99
+                            |> Tuple.first
+                            |> feed [ "ERR busy" ]
+                            |> tick 1099
+                            |> Tuple.first
+                            |> feed [ "OK 5" ]
+                in
+                Expect.equal [ Since (gen 5) ] (tick 2100 m |> Tuple.second)
         , test "a_lost_link_clears_the_values" <|
             \_ ->
                 Expect.equal Nothing

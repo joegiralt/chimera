@@ -60,6 +60,7 @@ type alias Model =
     , stage : Stage
     , asked : Maybe Time.Posix
     , owed : Int
+    , leftover : Bool
     , now : Time.Posix
     }
 
@@ -83,11 +84,13 @@ supported =
 
 {-| A request unanswered this long has timed out. While connecting, that
 halts: a late `OK` could not be told from the next request's, so it would
-skip a step. Following, a `since` is asked once more with the last number we
-did get, and no further until every answer owed has come (`owed`); if that
-re-ask is lost too, the count resets and it asks afresh, never halting (the
-unit heals a lost answer on the next ask). The unit answers in order, so a late `OK` is only
-counted, and its `val` lines are true, as the number only moves forward.
+skip a step. Following never halts. A `since` is asked once more with the last
+number we did get, and no further until every answer owed (`owed`) has come;
+the unit answers in order, so a late `OK` is only counted, and its `val` lines
+are true, as the number only moves forward. An `OK` that leaves answers owed
+restarts the clock (`leftover`): if the rest never come, the next timeout
+counts them lost and asks afresh, as does a re-ask that is lost too. The unit
+heals a lost answer on the next ask.
 -}
 answerTimeoutMs : Int
 answerTimeoutMs =
@@ -117,6 +120,7 @@ init =
     , stage = Greeting
     , asked = Nothing
     , owed = 0
+    , leftover = False
     , now = Time.millisToPosix 0
     }
 
@@ -227,7 +231,10 @@ step msg m =
                     ( m, [] )
 
         -- Connecting is `update`'s: it only asks the shim.
-        _ ->
+        ConnectSerial ->
+            ( m, [] )
+
+        ConnectSocket ->
             ( m, [] )
 
 
@@ -244,7 +251,7 @@ tick t m0 =
             m.asked |> Maybe.map (\at -> ms t - ms at >= answerTimeoutMs) |> Maybe.withDefault False
 
         ask c =
-            ( { m | asked = Just t, owed = m.owed + 1 }, [ c ] )
+            ( { m | asked = Just t, owed = m.owed + 1, leftover = False }, [ c ] )
 
         silent =
             ( { m | stage = Halted Silent, asked = Nothing }, [] )
@@ -261,11 +268,11 @@ tick t m0 =
                 if m.owed == 0 then
                     ask (Since m.gen)
 
-                else if timedOut && m.owed == 1 then
+                else if timedOut && m.owed == 1 && not m.leftover then
                     ask (Since m.gen)
 
                 else if timedOut then
-                    -- The re-ask went unanswered too: count the answers lost and ask afresh. The unit heals a lost answer on the next ask.
+                    -- Answers still owed after a re-ask: count them lost and ask afresh.
                     let
                         ( fresh, cs ) =
                             ask (Since m.gen)
@@ -343,7 +350,7 @@ lineIn l m =
         Err_ why ->
             case m.stage of
                 Following ->
-                    -- Ignored: a `set`'s ERR looks the same, and only the `OK` counts a `since` answered (a lost one times out).
+                    -- Ignored: a `set`'s ERR looks the same. A refused `since` stays owed; the timeout re-asks, then settles it as lost.
                     m
 
                 _ ->
@@ -419,7 +426,21 @@ ok done m =
         Following ->
             case done |> Maybe.andThen Unit.genFromInt of
                 Just g ->
-                    { m | gen = Just g, owed = max 0 (m.owed - 1), asked = Nothing }
+                    let
+                        owed =
+                            max 0 (m.owed - 1)
+                    in
+                    { m
+                        | gen = Just g
+                        , owed = owed
+                        , leftover = owed > 0
+                        , asked =
+                            if owed > 0 then
+                                Just m.now
+
+                            else
+                                Nothing
+                    }
 
                 Nothing ->
                     m
