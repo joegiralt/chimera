@@ -14,7 +14,7 @@ bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator
 desktop:
-    cargo run -p chimera-desktop
+    cargo run -p chimera-desktop --bin chimera-desktop
 
 # The browser editor against the simulator: the sim, and its console on ws://127.0.0.1:7342
 editor-sim:
@@ -25,7 +25,7 @@ editor-sim:
     bridge=$!
     # cargo run's child is the bridge: take both, never the whole group.
     trap 'pkill -P $bridge || true; kill $bridge 2>/dev/null || true' EXIT
-    cargo run -p chimera-desktop
+    cargo run -p chimera-desktop --bin chimera-desktop
 
 # The editor's protocol end to end, against a running `just editor-sim` (the simulator has no headless mode)
 editor-e2e:
