@@ -90,4 +90,9 @@ suite =
                 run [ Algo.Hand (Controls.Pick (Addr "FILTER.KIND") 1), Algo.Hand (Controls.Pick (Addr "FILTER.KIND") 2), Algo.Frame ]
                     |> Tuple.second
                     |> Expect.equal [ Model.Pick (Addr "FILTER.KIND") 2 ]
+        , test "a_sideways_wheel_edits_nothing" <|
+            \_ ->
+                run [ Algo.Hand (Controls.Wheel cutoff Hero 0), Algo.Frame ]
+                    |> Tuple.second
+                    |> Expect.equal []
         ]

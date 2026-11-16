@@ -136,7 +136,7 @@ update : Msg -> Model -> State -> ( State, List Model.Msg )
 update msg m s =
     case msg of
         Hand (Controls.Grab a control y) ->
-            case Schema.param a m.schema of
+            case Schema.paramIn m.variants a m.schema of
                 Just p ->
                     ( { s | drag = Just { addr = a, param = p, control = control, startY = y, from = position m s p } }, [] )
 
@@ -144,8 +144,8 @@ update msg m s =
                     ( s, [] )
 
         Hand (Controls.Wheel a _ dy) ->
-            case Schema.param a m.schema of
-                Just p ->
+            case ( dy == 0, Schema.paramIn m.variants a m.schema ) of
+                ( False, Just p ) ->
                     let
                         dir =
                             if dy < 0 then
@@ -165,11 +165,11 @@ update msg m s =
                     , []
                     )
 
-                Nothing ->
+                _ ->
                     ( s, [] )
 
         Hand (Controls.Pick a i) ->
-            case Schema.param a m.schema of
+            case Schema.paramIn m.variants a m.schema of
                 Just p ->
                     ( setOption p i s, [] )
 

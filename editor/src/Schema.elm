@@ -9,6 +9,7 @@ module Schema exposing
     , pageCount
     , pages
     , param
+    , paramIn
     )
 
 {-| What `ed describe` says: the static schema, built line by line as the
@@ -76,9 +77,46 @@ param a (Schema s) =
     Dict.get (addrKey a) s.index
 
 
-optionName : Addr -> Int -> Schema -> Maybe String
-optionName a i sch =
-    param a sch
+{-| The parameter as the panels now showing describe it. One address can be
+described by several variants (FILTER.MODE has different names per kind), so
+`param` alone is the last described, and editing needs this: a variant panel
+beats a generic one.
+-}
+paramIn : Dict String String -> Addr -> Schema -> Maybe Param
+paramIn variants a (Schema s) =
+    let
+        key =
+            addrKey a
+
+        shown pn =
+            pn.variant == "-" || Dict.get pn.name variants == Just pn.variant
+
+        mine pn =
+            pn.params |> List.filter (\p -> addrKey p.addr == key) |> List.head |> Maybe.map (\p -> ( pn.variant /= "-", p ))
+
+        found =
+            s.pages
+                |> List.concatMap (\pg -> pg.panels |> List.filter shown |> List.filterMap mine)
+
+        specific =
+            found |> List.filter Tuple.first |> List.head
+    in
+    case specific of
+        Just ( _, p ) ->
+            Just p
+
+        Nothing ->
+            case found of
+                ( _, p ) :: _ ->
+                    Just p
+
+                [] ->
+                    Dict.get key s.index
+
+
+optionName : Dict String String -> Addr -> Int -> Schema -> Maybe String
+optionName variants a i sch =
+    paramIn variants a sch
         |> Maybe.andThen (\p -> p.options |> List.filter (\( k, _ ) -> k == i) |> List.head)
         |> Maybe.map Tuple.second
 

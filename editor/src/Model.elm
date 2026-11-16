@@ -223,7 +223,7 @@ step msg m =
             edit a v m
 
         Pick a i ->
-            case Schema.optionName a i m.schema of
+            case Schema.optionName m.variants a i m.schema of
                 Just name ->
                     edit a (Protocol.Name name) m
 

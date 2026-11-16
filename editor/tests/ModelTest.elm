@@ -2,6 +2,7 @@ module ModelTest exposing (suite)
 
 import Dict
 import Expect
+import Fixture
 import Model exposing (Msg(..))
 import Protocol exposing (Addr(..), Command(..), Value(..))
 import Schema
@@ -72,7 +73,52 @@ shown m =
 suite : Test
 suite =
     describe "Model"
-        [ test "connect_runs_hello_describe_then_since_0" <|
+        [ test "a_choice_pick_uses_the_active_variants_names" <|
+            \_ ->
+                let
+                    pick v a i =
+                        { following | schema = Fixture.schema, variants = Dict.fromList v }
+                            |> Model.step (Pick (Addr a) i)
+                            |> Tuple.second
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ Set (Addr "FILTER.MODE") (Name "LP4") ] (pick [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
+                    , \_ -> Expect.equal [ Set (Addr "ENV1.FORM") (Name "FREE") ] (pick [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
+                    ]
+                    ()
+        , test "every_choice_under_every_variant_sends_a_name_that_variant_lists" <|
+            \_ ->
+                let
+                    bad =
+                        Schema.pages Fixture.schema
+                            |> List.concatMap .panels
+                            |> List.filter (\pn -> pn.variant /= "-")
+                            |> List.concatMap
+                                (\pn ->
+                                    pn.params
+                                        |> List.filter (\p -> p.options /= [])
+                                        |> List.concatMap
+                                            (\p ->
+                                                p.options
+                                                    |> List.filterMap
+                                                        (\( i, name ) ->
+                                                            let
+                                                                sent =
+                                                                    { following | schema = Fixture.schema, variants = Dict.fromList [ ( pn.name, pn.variant ) ] }
+                                                                        |> Model.step (Pick p.addr i)
+                                                                        |> Tuple.second
+                                                            in
+                                                            if sent == [ Set p.addr (Name name) ] then
+                                                                Nothing
+
+                                                            else
+                                                                Just ( pn.name, pn.variant, i )
+                                                        )
+                                            )
+                                )
+                in
+                Expect.equal [] bad
+        , test "connect_runs_hello_describe_then_since_0" <|
             \_ ->
                 let
                     ( m, c ) =
