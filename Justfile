@@ -27,6 +27,14 @@ editor-sim:
     trap 'pkill -P $bridge || true; kill $bridge 2>/dev/null || true' EXIT
     cargo run -p chimera-desktop
 
+# The browser editor's Elm tests
+editor-test:
+    cd editor && npm install --no-audit --no-fund --silent && npx elm-test
+
+# The browser editor, optimised, into editor/dist/
+editor-build:
+    cd editor && mkdir -p dist && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js dist/
+
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes
 # QA). `just tape-listen loop --src chimera --src <file.wav>`; a bare file
