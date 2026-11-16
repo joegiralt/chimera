@@ -260,21 +260,22 @@ impl Machine {
     /// 2026-11-14. load_pct averages its window, so a hit that ended in it
     /// reads low (*): those, and the machines INIT DRUM doesn't play, are
     /// placed from desktop release ns per block against measured
-    /// machines, erring high.
+    /// machines, erring high. COWBELL and IMPULSE are re-read on eb442a48,
+    /// 2026-11-16, at the top of their spread (ADR 0275).
     pub const fn cost(self) -> Cost {
         Cost(match self {
-            Machine::ToneKick => 797,      // 800 (pad 1)
-            Machine::ToneSnare => 797,     // 800 (pad 2)
-            Machine::ToneTom => 687,       // 700 (pads 5–7)
-            Machine::ToneClap => 577,      // 600 (pad 4)
-            Machine::ToneCowbell => 1457,  // 1400 (pad 11)
-            Machine::ToneCymbal => 1457,   // 1400 (pad 10)
-            Machine::MetalHat => 1457, // 1400 (pad 9, open; closed pad 8 ends inside the window)
+            Machine::ToneKick => 797,     // 800 (pad 1)
+            Machine::ToneSnare => 797,    // 800 (pad 2)
+            Machine::ToneTom => 687,      // 700 (pads 5–7)
+            Machine::ToneClap => 577,     // 600 (pad 4)
+            Machine::ToneCowbell => 1567, // 1500 (pad 11, BUMP 127 sweep head; ADR 0275)
+            Machine::ToneCymbal => 1457,  // 1400 (pad 10)
+            Machine::MetalHat => 1457,    // 1400 (pad 9, open; closed pad 8 ends inside the window)
             Machine::MetalJingle => 1677, // est. 1600: unmeasured; desktop 7,000 ns, 1.12 × HAT's 6,250
             Machine::BodyShaker => 687, // est. 700: pad 12 read 300 *; desktop 1,370 ns, CLAP's 1,360 (600)
             Machine::PlainSine => 577, // est. 600: unmeasured; desktop 1,100 ns, under CLAP's 1,360 (600)
             Machine::PlainNoise => 577, // est. 600: unmeasured; desktop 1,090 ns, under CLAP's 1,360 (600)
-            Machine::PlainImpulse => 1567, // est. 1500: pad 3 read 1200 *; desktop 3,320 ns, COWBELL's 3,200 (1400)
+            Machine::PlainImpulse => 577, // 600 (pad 3, DECAY 1.12 s head; plateau 500; ADR 0275)
         })
     }
 

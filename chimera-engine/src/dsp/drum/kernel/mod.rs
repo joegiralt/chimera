@@ -313,9 +313,20 @@ impl Pulse {
             for (o, &m) in out.iter_mut().zip(m) {
                 *o = self.tick(f0 * m);
             }
+        } else if let Some(inc) = self.steady(f0, m) {
+            self.o.block_pulse(inc, self.m.shape, out);
         } else {
             self.o.tick_pulses(f0, m, self.m.shape, out);
         }
+    }
+
+    /// The block's `inc` when every `m` is exactly 1 (no sweep, or one
+    /// spent) and its width is not floored (`Shaped::fill`): a square run's
+    /// (`block_pulse`), bit for bit.
+    #[inline(always)]
+    fn steady(&self, f0: f32, m: &Blk) -> Option<f32> {
+        let inc = self.o.inc_for(f0);
+        (m.iter().all(|&x| x == 1.0) && inc <= 0.5 - 0.45 * self.m.shape.get()).then_some(inc)
     }
 }
 
@@ -398,11 +409,23 @@ impl Swept {
     }
 }
 
+/// Under this many octaves libm's `exp2f` is exactly 1: 2^-26.
+const EXP2_ONE: f32 = 1.0 / 67_108_864.0;
+
 /// 2^(`oct` × each of `d`'s next block of values) into `m`: a sweep's
 /// pitch factor, its one `exp2f` for every kernel. A recurrence:
 /// private issue #952
 #[inline(never)]
 pub(super) fn octaves(d: &mut Decay, oct: f32, m: &mut Blk) {
+    // under 2^-26 octaves libm's exp2f is exactly 1 and a decay only
+    // falls: a spent (or zero) sweep is 1s without the calls
+    if (oct * d.v).abs() < EXP2_ONE {
+        for m in m.iter_mut() {
+            d.next();
+            *m = 1.0;
+        }
+        return;
+    }
     for m in m.iter_mut() {
         *m = libm::exp2f(oct * d.next());
     }
@@ -453,4 +476,18 @@ impl NoiseLayer {
 /// The FX slot's SOFT at `drive`, its TONE ½ and unity LEVEL.
 pub(super) fn drive(x: f32, d: f32) -> f32 {
     soft::curve(x, [d, 0.5, soft::UNITY_LEVEL])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EXP2_ONE;
+
+    /// `octaves`' skip leans on libm: under `EXP2_ONE` its `exp2f` is 1.
+    #[test]
+    fn exp2f_is_one_under_its_threshold() {
+        let under = f32::from_bits(EXP2_ONE.to_bits() - 1);
+        for x in [0.0, -0.0, under, -under] {
+            assert_eq!(libm::exp2f(x), 1.0, "{x:e}");
+        }
+    }
 }

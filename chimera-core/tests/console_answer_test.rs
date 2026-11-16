@@ -1058,7 +1058,7 @@ fn bank2_gate_answers() {
                 head: [0x5A; 8],
             },
             "bank2 ecc-read 081a0000",
-            "ecc=0 5a5a5a5a5a5a5a5a\n",
+            "ecc=0 5a5a5a5a5a5a5a5a\nOK\n",
         ),
         (
             Bank2Answer::Ecc {
@@ -1066,7 +1066,7 @@ fn bank2_gate_answers() {
                 head: [0, 1, 2, 3, 0xAB, 0xCD, 0xEF, 0xFF],
             },
             "bank2 ecc-read 081a0000",
-            "ecc=1 00010203abcdefff\n",
+            "ecc=1 00010203abcdefff\nOK\n",
         ),
         (
             Bank2Answer::Armed(PullAt::EraseS4),

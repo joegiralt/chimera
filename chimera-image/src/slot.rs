@@ -168,6 +168,11 @@ impl Word {
         self.clean() && self.bytes == [0xFF; 32]
     }
 
+    /// What a torn H7 erase leaves: no vector table starts SP 0, reset 0.
+    fn zeroed(&self) -> bool {
+        self.clean() && self.bytes == [0; 32]
+    }
+
     /// `want`, or `want` torn: a program only clears bits, so every 1 in
     /// `want` is still 1, unless ECC flagged or flipped one. A bit-superset
     /// of the code word passes too, but its reset then carries `base + 9`'s
@@ -190,7 +195,7 @@ pub trait SlotRead {
 pub enum Evidence {
     /// S4's tag word read clean.
     Tag,
-    /// S5's marker read clean, S4's code word ours, torn or erased.
+    /// S5's marker read clean, S4's code word ours, torn, erased or zeroed.
     Marker,
     /// Rule (c): nothing but the three Chimera words, maybe torn; a flag
     /// per sector that read wholly 0xFF.
@@ -226,7 +231,7 @@ impl SlotPlan {
 pub struct SlotForeign(pub Slot);
 
 /// Judge each slot not in `ours` before anything is written (spec § 3.2).
-/// A clean tag, or a clean marker with S4's code word ours or torn, makes
+/// A clean tag, or a clean marker with S4's code word ours, torn or zeroed, makes
 /// it ours; otherwise every word must be erased, bar the three Chimera
 /// writes, which may be torn. The stub's code bytes never change.
 pub fn guard(r: &mut impl SlotRead, ours: SlotSet) -> Result<SlotPlan, SlotForeign> {
@@ -245,9 +250,13 @@ fn judge(r: &mut impl SlotRead, s: Slot) -> Option<Evidence> {
         return Some(Evidence::Tag);
     }
     let m = r.word(s.marker_addr());
-    // A marker alone outlives a revert that refilled S4 with other code.
-    if m.clean() && m.bytes[..16] == *MARKER && r.word(s.base()).may_be(&code_word(s)) {
-        return Some(Evidence::Marker);
+    // A marker alone outlives a revert that refilled S4 with other code;
+    // a torn erase leaves S4 zeroed, ECC valid (unit, 2026-11-16).
+    if m.clean() && m.bytes[..16] == *MARKER {
+        let code = r.word(s.base());
+        if code.may_be(&code_word(s)) || code.zeroed() {
+            return Some(Evidence::Marker);
+        }
     }
     let (s4_erased, s5_erased) = scan(r, s)?;
     Some(Evidence::Scan {

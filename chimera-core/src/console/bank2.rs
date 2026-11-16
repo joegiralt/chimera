@@ -360,7 +360,7 @@ pub enum Bank2Answer {
     #[cfg(feature = "bank2-gate")]
     SlotsErased(Result<(), (FlashFail, Bank2Sector)>),
     /// `bank2 ecc-read`: SR2.DBECCERR after the masked read, and the word's
-    /// first 8 bytes.
+    /// first 8 bytes, then OK.
     #[cfg(feature = "bank2-gate")]
     Ecc {
         ecc: bool,
@@ -495,7 +495,8 @@ fn lines(a: &Bank2Answer, t: &mut impl Write) -> fmt::Result {
         Bank2Answer::Ecc { ecc, head } => {
             write!(t, "ecc={} ", u8::from(*ecc))?;
             head.iter().try_for_each(|b| write!(t, "{b:02x}"))?;
-            t.write_char('\n')
+            // `request` ends on a bare OK line.
+            t.write_str("\nOK\n")
         }
         #[cfg(feature = "bank2-gate")]
         Bank2Answer::Armed(p) => writeln!(t, "OK pull {} armed", p.word()),
