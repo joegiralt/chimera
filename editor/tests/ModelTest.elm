@@ -136,11 +136,11 @@ suite =
             \_ ->
                 let
                     sim =
-                        following |> Model.step ConnectSocket |> Tuple.first
+                        following |> Model.update ConnectSocket |> Tuple.first
                 in
                 Expect.all
                     [ \_ -> Expect.equal (Just "SIMULATOR · PART 1 · ALGO") (Model.status sim)
-                    , \_ -> Expect.equal (Just "UNIT · PART 1 · ALGO") (Model.status (Model.step ConnectSerial following |> Tuple.first))
+                    , \_ -> Expect.equal (Just "UNIT · PART 1 · ALGO") (Model.status (Model.update ConnectSerial following |> Tuple.first))
                     , \_ -> Expect.equal Nothing (Model.status Model.init)
                     ]
                     ()

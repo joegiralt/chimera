@@ -148,10 +148,10 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         ConnectSerial ->
-            ( model, Transport.connectSerial () )
+            ( { model | via = Just ViaUnit }, Transport.connectSerial () )
 
         ConnectSocket ->
-            ( model, Transport.connectSocket "ws://127.0.0.1:7342" )
+            ( { model | via = Just ViaSimulator }, Transport.connectSocket "ws://127.0.0.1:7342" )
 
         _ ->
             step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
@@ -262,12 +262,12 @@ step msg m =
                 Nothing ->
                     ( m, [] )
 
-        -- Connecting is `update`'s: it only asks the shim.
+        -- Connecting is `update`'s (it asks the shim).
         ConnectSerial ->
-            ( { m | via = Just ViaUnit }, [] )
+            ( m, [] )
 
         ConnectSocket ->
-            ( { m | via = Just ViaSimulator }, [] )
+            ( m, [] )
 
 
 tick : Time.Posix -> Model -> ( Model, List Command )
