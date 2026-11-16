@@ -32,7 +32,12 @@ class Bank2Gate(unittest.TestCase):
         body = "\n".join(recipes()["check-no-gate"])
         self.assertIn("BANK2-GATE-BUILD", body)
         self.assertIn("PULL NOW", body)
+        self.assertIn("SLOT-GATE-BUILD", body)
         self.assertIn("set -euo pipefail", body)
+
+    def test_the_slot_marker_is_in_the_gate_build(self):
+        src = (ROOT / "chimera-board/src/bank2.rs").read_text()
+        self.assertIn('*b"SLOT-GATE-BUILD"', src)
 
     def test_split_guards_all_but_the_gate(self):
         body = "\n".join(recipes()["bank2-split"])
@@ -68,8 +73,29 @@ class Bank2Split(unittest.TestCase):
 
     def test_bank2_x_asserts(self):
         src = (ROOT / "chimera-stm32/build.rs").read_text()
-        self.assertIn("0x08180000", src)
-        self.assertIn("INSERT BEFORE .text", src)
+        for want in ("0x08180000", "0x081C0000", "0x081BFFE0", "0x081FFFE0", "INSERT BEFORE .text"):
+            self.assertIn(want, src)
+        # lld reads a fill as a 32-bit big-endian value: `=0xFF` is 00 00 00 FF.
+        self.assertIn("} > BANK2 =0xFFFFFFFF\n", src)
+        self.assertIn("LENGTH = 1M", (ROOT / "chimera-stm32/memory.x").read_text())
+
+    def test_bank2_split_runs_check_slots(self):
+        body = "\n".join(recipes()["bank2-split"])
+        self.assertIn("just check-slots {{elf}} {{out}}.bk2", body)
+        self.assertLess(body.index("bank2-seal {{elf}}"), body.index("just check-slots"))
+
+    def test_check_runs_check_bank2_for_each_budgeted_set(self):
+        body = recipes()["check"]
+        for s in ("default", "orbit", "bank2-gate"):
+            b1 = [i for i, l in enumerate(body) if l.strip() == f"just check-bank1 {s}"]
+            b2 = [i for i, l in enumerate(body) if l.strip() == f"just check-bank2 {s}"]
+            self.assertEqual(len(b1), 1, s)
+            self.assertEqual(b2, [b1[0] + 1], s)
+
+    def test_check_door_placed_bound(self):
+        body = "\n".join(recipes()["check-door-placed"])
+        self.assertIn("0x08200000", body)
+        self.assertNotIn("0x08180000", body)
 
 
 class Bank2Code(unittest.TestCase):

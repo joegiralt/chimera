@@ -549,7 +549,15 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let mut status = bank2.status;
     #[cfg(feature = "bank2")]
     if let Some(flash) = &bank2.install_over
-        && let Some(now) = bank2::boot_install(store, &mut display, &marker, flash, clk.cpu_hz)
+        && let Some(now) = bank2::boot_install(
+            store,
+            &mut display,
+            &marker,
+            flash,
+            bank2.ours,
+            board_id.hc165(),
+            clk.cpu_hz,
+        )
     {
         status = now;
     }

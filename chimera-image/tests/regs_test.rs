@@ -1,11 +1,15 @@
 use chimera_image::regs::*;
 use chimera_image::{Bank2Sector, FlashFail};
 
-const SECTORS: [Bank2Sector; 4] = [
+const SECTORS: [Bank2Sector; 8] = [
     Bank2Sector::S0,
     Bank2Sector::S1,
     Bank2Sector::S2,
     Bank2Sector::S3,
+    Bank2Sector::S4,
+    Bank2Sector::S5,
+    Bank2Sector::S6,
+    Bank2Sector::S7,
 ];
 const BER: u32 = 1 << 3;
 const SNB: u32 = 7 << 8;

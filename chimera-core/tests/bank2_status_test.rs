@@ -71,7 +71,7 @@ fn only_open_is_ok() {
 fn from_verdict_keeps_what_the_judge_saw() {
     let have = Version::new("0.1.9 aaaaaaaa");
     let h = Header {
-        body_len: 32,
+        body_len: chimera_image::IMAGE_BODY,
         body_crc: 0,
         door_off: 256,
         seal: SEAL,
@@ -135,6 +135,75 @@ fn status_has_the_bank2_line() {
     let mut w = String::new();
     chimera_core::console::write_status(&ui, &mut w).unwrap();
     assert!(w.ends_with("\nbank2 empty\n"), "{w}");
+}
+
+#[test]
+fn slot_foreign_reads_and_labels() {
+    use chimera_image::Slot;
+    let s = Bank2Status::SlotForeign(Slot::Edit);
+    assert_eq!(line(&s), "bank2 slot foreign edit");
+    assert_eq!(
+        line(&Bank2Status::SlotForeign(Slot::Mixer)),
+        "bank2 slot foreign mixer"
+    );
+    assert_eq!(s.label(), "SLOT IN USE");
+    assert!(!s.is_open());
+    let label = viz_lines(Some(&s))[2].as_str().to_string();
+    assert_eq!(label, "SLOT IN USE");
+}
+
+/// ABOUT under a refused install: SLOT IN USE, not NEEDS UPDATE. Not a
+/// hash golden: ABOUT shows the build's hash (`SCREEN_DUMP` shows it).
+#[test]
+fn about_draws_slot_in_use() {
+    let shot = |s: Bank2Status, name: &str| {
+        let mut ui = UiState::new();
+        ui.set_bank2(s);
+        to_leaf(&mut ui, &["SYSTEM", "ABOUT"]);
+        settle(&mut ui);
+        let mut fb = Fb::new();
+        ui.render_with_audio(&mut fb, &PerfStats::zero(), None, &scope_fixture());
+        assert_eq!(fb.oob, 0);
+        fb.dump(name);
+        fb.hash()
+    };
+    let foreign = Bank2Status::SlotForeign(chimera_image::Slot::Mixer);
+    assert_ne!(
+        shot(foreign, "about_slot_in_use"),
+        shot(Bank2Status::Empty, "about_needs_update")
+    );
+}
+
+#[test]
+fn refusal_lines_name_the_slot() {
+    use chimera_core::ui::installing::refused_lines;
+    use chimera_image::Slot;
+    assert_eq!(
+        refused_lines(Slot::Mixer),
+        [
+            "NOT INSTALLED",
+            "THE MIXER SLOT HOLDS",
+            "OTHER CODE.",
+            "NOTHING WAS WRITTEN."
+        ]
+    );
+    assert_eq!(refused_lines(Slot::Edit)[1], "THE EDIT SLOT HOLDS");
+}
+
+/// The heading in the readout's font, the rest in the version line's:
+/// each inside the screen.
+#[test]
+fn refusal_fits_the_screen() {
+    use chimera_core::ui::{draw, installing, theme};
+    for s in chimera_image::Slot::ALL {
+        let [head, body @ ..] = installing::refused_lines(s);
+        let px = draw::text_width(&theme::FONT_READOUT, head, 0);
+        assert!(px <= installing::MAX_W, "{head} is {px} px");
+        for l in body {
+            let px = draw::text_width(&theme::FONT_VALUE, l, theme::LABEL_TRACKING);
+            assert!(px <= installing::MAX_W, "{l} is {px} px");
+        }
+    }
 }
 
 /// `INSTALLING <version>` inside the screen: the hash goes first, then

@@ -56,8 +56,12 @@ use crate::stream::layout::FRAMED_CHUNK_BYTES;
 
 /// The largest file `put` takes: a project is about 130 KB.
 pub const PUT_MAX_BYTES: u32 = 1 << 20;
-/// The whole `put`, from its line to its answer, card work included.
-pub const PUT_DEADLINE_MS: u32 = 30_000;
+/// The whole `put`, from its line to its answer, card work included: a
+/// 1 MB bank-2 image at 16 KiB/s is 64 s.
+pub const PUT_DEADLINE_MS: u32 = 120_000;
+/// A source's chunk, from the last one's end to its ACK, and the source's
+/// read back and seal after: each its own deadline (ADR 0106).
+pub const PUT_CHUNK_DEADLINE_MS: u32 = 30_000;
 /// Each 512-byte block of data must arrive within this of the last.
 pub const PUT_STALL_MS: u32 = 500;
 /// Base64 characters a data line holds at most: 48 bytes.
@@ -407,11 +411,26 @@ impl CardFault for PutFail {
     }
 }
 
-/// The one deadline, on the host link's clock.
+/// The one deadline, `PUT_DEADLINE_MS` from its start, on the host link's
+/// clock.
 #[derive(Clone, Copy)]
 struct Due(Ms);
 
 impl Due {
+    /// The whole `put`'s: `PUT_DEADLINE_MS` from now.
+    fn whole(now: Ms) -> Self {
+        Due(now)
+    }
+
+    /// A source chunk's, or its read back's: `PUT_CHUNK_DEADLINE_MS` from
+    /// now, as a whole put's started that much earlier (no field to carry).
+    #[cfg(feature = "source-writer")]
+    fn chunk(now: Ms) -> Self {
+        Due(Ms(now
+            .0
+            .wrapping_sub(PUT_DEADLINE_MS - PUT_CHUNK_DEADLINE_MS)))
+    }
+
     fn left_ms(self, port: &impl Out) -> u32 {
         PUT_DEADLINE_MS.saturating_sub(port.now().since(self.0))
     }
@@ -453,7 +472,7 @@ pub fn put<F: Files, P: Out>(
     files: &mut F,
     port: &mut P,
 ) -> Result<(), Stalled> {
-    let due = Due(port.now());
+    let due = Due::whole(port.now());
     let r = transfer(arg, open, seal, files, port, due);
     files.cap(None);
     port.fresh();
@@ -538,8 +557,8 @@ fn transfer<F: Files, P: Out>(
             Card::new()
                 .run(files, |s, r| {
                     whole_session(s, r, Dir::System, STAGED, arg, port, due, |s, r, port| {
-                        // The read back: a deadline of its own, as a source's.
-                        Due(port.now()).arm(s, port, 0)?;
+                        // The read back, 1 MB of card: a whole put's deadline of its own.
+                        Due::whole(port.now()).arm(s, port, 0)?;
                         match chimera_image::judge(&mut CardImage::new(s, r.volume()), &seal) {
                             chimera_image::Verdict::Good(_) => Ok(Done::Saved),
                             chimera_image::Verdict::Stale { have } => Ok(Done::Stale(have)),
@@ -752,13 +771,13 @@ fn source_session<F: Files, P: Out>(
     port.put(READY.as_bytes())
         .map_err(|Stalled| PutFail::Stalled)?;
     let file = source_name(stem);
-    let mut src = Incoming::new(arg, port, Due(port.now()));
+    let mut src = Incoming::new(arg, port, Due::chunk(port.now()));
     src.chunk = Some(Chunk::after(0, arg.size));
     src.reserve_ms = 0;
     // Each chunk ends within its deadline of the last one's end, so the
     // data is in by the chunks' deadlines from now.
     s.cap(Some(
-        arg.size.div_ceil(PUT_CHUNK_BYTES) * PUT_DEADLINE_MS + SD_MARGIN_MS,
+        arg.size.div_ceil(PUT_CHUNK_BYTES) * PUT_CHUNK_DEADLINE_MS + SD_MARGIN_MS,
     ));
     let mut why = None;
     let wrote = s.write(r.volume(), file, &mut |sink| {
@@ -775,7 +794,7 @@ fn source_session<F: Files, P: Out>(
     let done = match wrote {
         Err(e) => Err(why.unwrap_or(PutFail::Store(e))),
         // The read back and the seal: a deadline of their own.
-        Ok(_) => Due(port.now())
+        Ok(_) => Due::chunk(port.now())
             .arm(s, port, 0)
             .and_then(|()| Ok(verify_and_seal(s, r, stem)?)),
     };
@@ -1106,7 +1125,7 @@ impl<'p, P: Out> Incoming<'p, P> {
         self.port.fresh();
         writeln!(super::Text(&mut *self.port), "ACK {end}")
             .map_err(|fmt::Error| PutFail::Stalled)?;
-        self.due = Due(self.port.now());
+        self.due = Due::chunk(self.port.now());
         Ok(())
     }
 }

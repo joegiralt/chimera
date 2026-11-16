@@ -98,20 +98,39 @@ CARD_POLL_S = 10.0  # card-wait's `card dma report`, a bench's minutes apart eno
 CARD_WAIT_S = 60.0  # `card` measures before it answers: ~5 s, ~15 s writing its test file
 LS_WAIT_S = 15.0  # a cold card acquire, then one listing under the card's 10 s cap
 SWEEP_WAIT_S = 15.0  # a cold acquire, then the mark's one write; the unit restarts after OK
-PUT_WAIT_S = 35.0  # the unit's whole put is 30 s (PUT_DEADLINE_MS), card work included
-BANK2_WAIT_S = 60.0  # the unit holds its UI loop for the whole write
+PUT_WAIT_S = 125.0  # the unit's put deadline (120 s for a 1 MB .bk2) plus 5 s
+BANK2_WAIT_S = 120.0  # the unit holds its UI loop for the whole write
 LATER = " (it installs at that firmware's next boot)"
 BANK2_REMOTE = "/CHIMERA/SYSTEM/BANK2.BK2"
 BANK2_SEAL = slice(0x18, 0x20)  # the .bk2 header's seal
 BK2_HEADER = 256
-BK2_MAX = 512 * 1024  # bank 2's four sectors
-UPDATE_BOOT_WAIT_S = 90.0  # the first boot installs the .bk2 behind DON'T POWER OFF, then the console comes up
+BK2_MAX = 1 << 20  # bank 2's slots: 1 MB
+UPDATE_BOOT_WAIT_S = 120.0  # the first boot installs the .bk2 behind DON'T POWER OFF, then the console comes up
 # Firmware from before bank 2 refuses the path (its `put` usage, exactly): the
 # .bk2 then goes after the flash.
 OLD_PUT_REFUSALS = (
     b"ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over] or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex",
     b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A [--over], its size and CRC-32 in hex",
 )
+FOREIGN_SLOTS = {b"mixer": ("MIXER", "0x08180000"), b"edit": ("EDIT", "0x081C0000")}
+
+
+def foreign_slot(line: str):
+    """What `bank2 slot foreign <slot>` (`status`'s line, `bank2 install`'s
+    after ERR) means for the user; None for a slot it doesn't name."""
+    slot = FOREIGN_SLOTS.get(line.split()[-1].encode())
+    return slot and "the unit's %s slot (%s) holds other code; bank 2 not installed" % slot
+
+
+def old_put_refusal(body: bytes, bk2_len: int) -> bool:
+    """Firmware from before bank 2 refuses the path: its usage line exactly,
+    or (0.2, 0.3 word it differently) any `put takes` line naming BANK2.BK2
+    when the .bk2 is over the old 512 KB."""
+    return body in OLD_PUT_REFUSALS or (body.startswith(b"ERR put takes") and b"BANK2.BK2" in body and bk2_len > 512 * 1024)
+
+
+BK2_FORMAT = slice(8, 10)  # the .bk2 header's format, little-endian
+BK2_FORMAT_NOW = 2  # 0.4's: the 1 MB image with the slots (0.3's is 1)
 FW_MAX = 917_504  # the stock bootloader erases itself at this size
 FLASH_AT = "0x8020000:leave"  # the firmware area, never the bootloader
 PUT_MAX = 1 << 20  # the unit's limit
@@ -685,6 +704,9 @@ def fail(msg) -> int:
     return 1
 
 
+_fail = fail
+
+
 def open_conn(t: Target) -> Conn:
     """A Conn, or a one-line reason on stderr and SystemExit(1)."""
     try:
@@ -748,9 +770,11 @@ def bank2_answer(conn: Conn) -> tuple:
         body += ln + b"\n"
 
 
-def bank2_install(t: Target, env, local: str) -> int:
+def bank2_install(t: Target, env, local: str, note: str = "") -> int:
     """Put `local` where the unit stages it and have the unit write it:
-    0 on OK, 2 if it is for another firmware, else 1."""
+    0 on OK, 2 if it is for another firmware or the unit's slot holds other
+    code, else 1. `note` leads every failure message (update: \"flashed, but \")."""
+    fail = lambda m: _fail(note + m)
     if not local.lower().endswith(".bk2"):
         return fail("bank2 takes a .bk2 file, not %s (the .bin goes by DFU)" % local)
     try:
@@ -775,7 +799,7 @@ def bank2_install(t: Target, env, local: str) -> int:
         if status is Status.ERR:
             return fail(body.decode(errors="replace"))
         if body.startswith(b"staged:"):
-            return stage_only(body)
+            return stage_only(body, note)
         for _ in range(BUSY_TRIES):
             send(conn, "bank2 install")
             ln, before = bank2_answer(conn)
@@ -785,9 +809,11 @@ def bank2_install(t: Target, env, local: str) -> int:
     except PutRefused as e:
         return fail(str(e))
     except NoAnswer:
-        return fail("\nbank2: no answer from %s" % describe(t))
+        print(file=sys.stderr)
+        return fail("bank2: no answer from %s" % describe(t))
     except Vanished:
-        return fail("\nbank2: %s went away" % describe(t))
+        print(file=sys.stderr)
+        return fail("bank2: %s went away" % describe(t))
     finally:
         conn.close()
     sys.stdout.buffer.write(before)
@@ -795,6 +821,10 @@ def bank2_install(t: Target, env, local: str) -> int:
     if text.startswith("OK"):
         print(text)
         return 0
+    foreign = text.startswith("ERR bank2 slot foreign ") and foreign_slot(text)
+    if foreign:
+        fail(foreign)
+        return 2
     if "staged: needs firmware" in text:
         fail(text + LATER)
         return 2
@@ -822,8 +852,8 @@ def bank2_erase(t: Target) -> int:
     return fail(text)
 
 
-def stage_only(body: bytes) -> int:
-    fail(body.decode(errors="replace") + LATER)
+def stage_only(body: bytes, note: str = "") -> int:
+    fail(note + body.decode(errors="replace") + LATER)
     return 2
 
 
@@ -921,8 +951,13 @@ def stage(t: Target, env, pkg: Package):
     print(file=sys.stderr)
     if status is Status.OK:
         return True
-    if bytes(body) in OLD_PUT_REFUSALS:
+    if old_put_refusal(bytes(body), len(pkg.bk2)):
         print("this firmware can't take the .bk2 yet: it goes after the flash", file=sys.stderr)
+        return False
+    # A newer firmware judges an older format's .bk2 (0.3's, going back)
+    # not a bank-2 image: the .bin it pairs with takes it after the flash.
+    if b"not a bank-2 image" in body and int.from_bytes(pkg.bk2[BK2_FORMAT], "little") != BK2_FORMAT_NOW:
+        print("this firmware can't take an older .bk2: it goes after the flash", file=sys.stderr)
         return False
     return fail("%s: nothing flashed" % body.decode(errors="replace"))
 
@@ -948,6 +983,10 @@ def updated(t: Target, pkg: Package) -> int:
     if status is Status.OK and (not hash_ or build.rstrip("+").split()[-1:] != hash_):
         return fail("update: flashed, but status says %r: the new firmware (%s) isn't the one running" % (build or text.strip(), pkg.version))
     got = next((ln for ln in text.splitlines() if ln.startswith("bank2 ")), text.strip())
+    foreign = status is Status.OK and got.startswith("bank2 slot foreign ") and foreign_slot(got)
+    if foreign:
+        fail("update: flashed, but " + foreign)
+        return 2
     if status is Status.OK and got.startswith("bank2 open ") and got.endswith(" seal=" + pkg.seal):
         print("OK updated %s" % pkg.version)
         return 0
@@ -968,8 +1007,10 @@ def update(t: Target, env, pkg: Package) -> int:
         rc = dfu_flash(t, env, str(b), UPDATE_BOOT_WAIT_S)
         if rc:
             return rc
-        if not staged and bank2_install(t, env, str(k)):
-            return 1
+        if not staged:
+            rc = bank2_install(t, env, str(k), "update: flashed, but ")
+            if rc:
+                return rc
     return updated(t, pkg)
 
 

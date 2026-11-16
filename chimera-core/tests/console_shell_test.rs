@@ -427,3 +427,14 @@ fn a_lap_past_the_dwt_wrap_counts_whole() {
     let dwt = Cycles::new(dwt.get().wrapping_add(nine_s as u32));
     assert_eq!(wall.fold(dwt, Ms(18_980), Cycles::new(MS)), ten_s + nine_s);
 }
+
+/// N5: a 1 MiB `put` at 16 KiB/s (64 s, a 512-byte block every 31 ms,
+/// well inside `PUT_STALL_MS`) ends with 30 s left for the card.
+#[cfg(feature = "card-put")]
+#[test]
+fn a_1mb_put_at_16kib_per_s_beats_the_deadline() {
+    use chimera_core::console::{PUT_DEADLINE_MS, PUT_MAX_BYTES, PUT_STALL_MS};
+    let rate = 16 * 1024;
+    assert!(512 * 1000 / rate < u64::from(PUT_STALL_MS));
+    assert!(u64::from(PUT_DEADLINE_MS) >= u64::from(PUT_MAX_BYTES) * 1000 / rate + 30_000);
+}

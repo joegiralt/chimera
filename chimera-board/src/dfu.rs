@@ -36,9 +36,9 @@ const USB_STEP: usize = 6;
 const USB_REGS: usize = 7;
 /// BKP13R: `SOFT_INTENT` before a firmware reset, cleared every boot.
 const INTENT: usize = 13;
-/// BKP14R: bank 2's mark, `BANK2_BAD` or `BANK2_INSTALLING`. The HardFault
-/// handler and the boot's install write it; only the boot's bank-2 judge
-/// reads and clears it.
+/// BKP14R: bank 2's mark, `BANK2_BAD`, `BANK2_INSTALLING` or a slot mark
+/// (`SLOT_TORN | torn`). The HardFault handler and both installs write it;
+/// only the boot's bank-2 judge reads it, and clears it.
 #[cfg(feature = "bank2")]
 const BANK2_MARK: usize = 14;
 
@@ -53,9 +53,10 @@ pub fn set_bank2_mark(rtc: &pac::rtc::RegisterBlock, v: u32) {
     rtc.bkpr[BANK2_MARK].write(|w| w.bkp().bits(v));
 }
 
-/// From the HardFault handler, on a double ECC error read from S0-S3:
-/// BKP14R by `fault_mark`, the soft-reset intent, then reset; the next boot
-/// erases S0 before it reads bank 2. Raw registers only. Returns only if
+/// From the HardFault handler, on a double ECC error read from S0–S7:
+/// BKP14R by `fault_mark` (`INSTALLING` and a slot mark kept, else
+/// `BANK2_BAD`), the soft-reset intent, then reset; the next boot acts on
+/// the mark before it reads bank 2. Raw registers only. Returns only if
 /// the mark did not land (no DBP): a reset would then fault again every
 /// boot, so the handler halts instead.
 #[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
@@ -110,10 +111,17 @@ impl Marker {
         cortex_m::peripheral::SCB::sys_reset()
     }
 
-    /// BKP14R: `BANK2_INSTALLING` around the boot's install, 0 after.
+    /// BKP14R: `BANK2_INSTALLING` or a slot mark around the boot's guard
+    /// and install, 0 after.
     #[cfg(feature = "bank2")]
     pub fn bank2_mark(&self, v: u32) {
         set_bank2_mark(&self.0, v);
+    }
+
+    /// The RTC's registers, for BKP14R's slot marks around the guard.
+    #[cfg(feature = "bank2")]
+    pub fn rtc(&self) -> &pac::rtc::RegisterBlock {
+        &self.0
     }
 
     /// How far start-up got, for the next boot's `last_stage`.

@@ -30,6 +30,13 @@ fn version(s: &str) -> Version {
     Version::new(s)
 }
 
+/// `body` padded with 0xFF to the one image size.
+fn padded(body: &[u8]) -> Vec<u8> {
+    let mut b = body.to_vec();
+    b.resize(IMAGE_BODY as usize, 0xFF);
+    b
+}
+
 fn header_for(body: &[u8]) -> Header {
     let mut c = Crc32::new();
     c.update(body);
@@ -43,8 +50,9 @@ fn header_for(body: &[u8]) -> Header {
 }
 
 fn sealed(body: &[u8]) -> (Vec<u8>, Seal) {
-    let mut v = header_for(body).to_bytes(true).to_vec();
-    v.extend_from_slice(body);
+    let body = padded(body);
+    let mut v = header_for(&body).to_bytes(true).to_vec();
+    v.extend_from_slice(&body);
     (v, seal())
 }
 
@@ -90,27 +98,47 @@ fn foreign_magic() {
 #[test]
 fn future_format() {
     let (mut img, s) = sealed(&body(1024));
-    img[8] = 2;
-    assert_eq!(judged(img, &s), Verdict::Format(2));
+    img[8] = 3;
+    assert_eq!(judged(img, &s), Verdict::Format(3));
 }
 
 #[test]
 fn bounds_are_corrupt() {
-    let b = body(1024);
-    for len in [0, BANK2_LEN - 224, 33] {
+    let b = padded(&body(1024));
+    for len in [0, BANK2_LEN - 224, IMAGE_BODY - 32, IMAGE_BODY + 32, 33] {
         let mut h = header_for(&b);
         h.body_len = len;
         let mut img = h.to_bytes(true).to_vec();
         img.extend_from_slice(&b);
         assert_eq!(judged(img, &seal()), Verdict::Corrupt, "len {len}");
     }
-    for off in [0x80, 0x100 + 1024, 0x104] {
+    for off in [0x80, 0x104, 0x200, BANK2_LEN, u32::MAX - 31] {
         let mut h = header_for(&b);
         h.door_off = off;
         let mut img = h.to_bytes(true).to_vec();
         img.extend_from_slice(&b);
         assert_eq!(judged(img, &seal()), Verdict::Corrupt, "off {off:#x}");
     }
+}
+
+/// Review Focus 1: a 0.3 image (format 1, S0..S3 only) or a short one never
+/// installs over the slots; only the full 1 MB format-2 image does.
+#[test]
+fn old_or_short_images_never_install() {
+    let (mut old, s) = sealed(&body(1024));
+    old[8] = 1;
+    assert_eq!(judged(old, &s), Verdict::Format(1));
+    let short = body(512 * 1024 - 256);
+    let mut h = header_for(&short);
+    h.body_len = 512 * 1024 - 256;
+    let mut img = h.to_bytes(true).to_vec();
+    img.extend_from_slice(&short);
+    assert_eq!(judged(img, &s), Verdict::Corrupt);
+    let full = body(IMAGE_BODY as usize);
+    let mut img = header_for(&full).to_bytes(true).to_vec();
+    img.extend_from_slice(&full);
+    assert_eq!(img.len(), 1 << 20);
+    assert!(matches!(judged(img, &s), Verdict::Good(_)));
 }
 
 #[test]
@@ -126,7 +154,11 @@ fn other_seal_is_stale_with_version() {
 #[test]
 fn every_single_byte_flip_is_never_good() {
     let (img, s) = sealed(&body(1024));
-    for i in (0..img.len()).filter(|i| !(0x20..0x40).contains(i)) {
+    // The header, the live body, and the padding's edges: a full 1 MB
+    // sweep is a CRC of 1 MB per byte.
+    let n = img.len();
+    let at = (0..0x100 + 1024 + 64).chain(n - 64..n);
+    for i in at.filter(|i| !(0x20..0x40).contains(i)) {
         let mut f = img.clone();
         f[i] ^= 1;
         let v = judged(f, &s);
@@ -244,4 +276,44 @@ fn pick_staged_stops_at_the_first_good() {
     let got = pick_staged(verdicts.into_iter().inspect(|_| judged += 1));
     assert_eq!(got, Some((1, h)));
     assert_eq!(judged, 2, "nothing after the pick is judged");
+}
+
+/// Bank 2 past S0's header, unreadable: a torn install's S4..S7 (spec § 4).
+/// Logs each read.
+struct HeaderOnly(Vec<u8>, Vec<(u32, usize)>);
+
+impl ImageRead for HeaderOnly {
+    fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
+        self.1.push((off, buf.len()));
+        if off as usize + buf.len() > HEADER_LEN as usize {
+            return Err(ReadFail);
+        }
+        buf.copy_from_slice(&self.0[off as usize..off as usize + buf.len()]);
+        Ok(())
+    }
+}
+
+/// Until the commit word is good the judge reads S0's header and nothing
+/// else, so a torn install's slot words, anywhere in the 1 MB, are only
+/// ever read by the guard (spec § 4).
+#[test]
+fn the_judge_reads_only_the_header_until_committed() {
+    let (img, s) = sealed(&body(1024));
+    let c = COMMIT_OFF as usize;
+    let mut erased = img.clone();
+    erased[c..c + 32].fill(0xFF);
+    let mut torn = img.clone();
+    torn[c + 9] &= 0x7F;
+    for (what, img, want) in [
+        ("erased", erased, Verdict::Empty),
+        ("torn", torn, Verdict::Torn),
+    ] {
+        let mut m = HeaderOnly(img, Vec::new());
+        assert_eq!(judge(&mut m, &s), want, "{what}");
+        assert_eq!(m.1, [(0, HEADER_LEN as usize)], "{what}");
+    }
+    // A committed header reads on, past the header: the body's CRC.
+    let mut m = HeaderOnly(img, Vec::new());
+    assert_eq!(judge(&mut m, &s), Verdict::Unreadable);
+    assert_eq!(m.1, [(0, 256), (HEADER_LEN, 512)]);
 }

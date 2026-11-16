@@ -64,6 +64,7 @@ usage: chimera-utils [flags] COMMAND …
                            fill the .bk2 header; patch its seal into the .bin
   bank2-seal --check BIN BK2
                            fail unless the .bk2's seal is the .bin's
+  check-slots BK2          fail unless the .bk2's size, slot stubs, markers and 0xFF reserves hold
   door-check ELF           fail on any bank-1 relocation into bank 2
   nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
   nrpn-guide               docs/guide/NRPN.md: the writable NRPNs by engine and block (#926)
@@ -260,6 +261,7 @@ fn run() -> Result<bool, String> {
             let v = version.ok_or("bank2-seal needs --version")?;
             bank2::seal_files(&rest[0], &rest[1], &rest[2], &v).map(|_| true)
         }
+        "check-slots" if rest.len() == 1 => bank2::check_slots_file(&rest[0]).map(|_| true),
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
         "nrpn-chart" => {
             use std::io::Write;

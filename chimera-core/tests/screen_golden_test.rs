@@ -558,6 +558,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("installing", 0xb2af55fe85e8e58d),
     // Its phase line at WRITING.
     ("installing_writing", 0x7f68e79694a6310d),
+    // A slot holding other code: the install refused, nothing written.
+    ("install_refused", 0xc046b081ce36613d),
     // New (MIDI phase 1, Task 13): MIDI MAP with every kind of control,
     // and FINE's pickup waiting below the knob.
     #[cfg(feature = "midi-map")]

@@ -1,9 +1,10 @@
 MEMORY
 {
     FLASH (rx) : ORIGIN = 0x08020000, LENGTH = 896K
-    /* Bank 2's S0..S3 (ADR 0137): `.bank2` only, split off into the .bk2.
-       S4..S7 (0x08180000+) are bootloader 1.09's. */
-    BANK2 (rx) : ORIGIN = 0x08100000, LENGTH = 512K
+    /* Bank 2, S0..S7 (ADR 0137, 0272): `.bank2` only, split off into the
+       .bk2. Bootloader 1.09's slots at 0x08180000 and 0x081C0000 hold
+       Chimera's stubs (bank2.x). */
+    BANK2 (rx) : ORIGIN = 0x08100000, LENGTH = 1M
     RAM  (rwx) : ORIGIN = 0x24000000, LENGTH = 512K
     /* D2 SRAM1 (128K) + SRAM2 (128K) + SRAM3 (32K), contiguous (RM0433 §2.3) */
     RAM_D2 (rwx) : ORIGIN = 0x30000000, LENGTH = 288K

@@ -1074,6 +1074,15 @@ fn bank2_install_answers() {
             "ERR bank2: firmware unsealed\n",
         ),
         (refused(Bank2Refusal::Busy), "ERR bank2: busy\n"),
+        // The words `chimera-usb update` matches: `status`'s line after ERR.
+        (
+            refused(Bank2Refusal::SlotForeign(chimera_image::Slot::Mixer)),
+            "ERR bank2 slot foreign mixer\n",
+        ),
+        (
+            refused(Bank2Refusal::SlotForeign(chimera_image::Slot::Edit)),
+            "ERR bank2 slot foreign edit\n",
+        ),
         (
             fail(Bank2Fail::Flash(
                 FlashFail::Timeout,
@@ -1144,6 +1153,75 @@ fn bank2_erase_answers() {
     );
 }
 
+/// The gate's slot commands: the board's outcome, word for word.
+#[cfg(feature = "bank2-gate")]
+#[test]
+fn bank2_gate_answers() {
+    use chimera_core::console::PullAt;
+    for (a, line, want) in [
+        (
+            Bank2Answer::SlotPoked(Ok(())),
+            "bank2 slot-poke",
+            "OK slot poked\n",
+        ),
+        (
+            Bank2Answer::SlotPoked(Err(FlashFail::NotErased)),
+            "bank2 slot-poke",
+            "ERR bank2: flash not erased\n",
+        ),
+        (
+            Bank2Answer::SlotsErased(Ok(())),
+            "bank2 erase slots",
+            "OK slots erased\n",
+        ),
+        (
+            Bank2Answer::EccTorn(Ok(())),
+            "bank2 ecc-tear",
+            "OK ecc torn 081a0020\n",
+        ),
+        (
+            Bank2Answer::EccTorn(Err(FlashFail::Errors(1 << 17))),
+            "bank2 ecc-tear",
+            "ERR bank2: flash errors 00020000\n",
+        ),
+        (
+            Bank2Answer::SlotsErased(Err((FlashFail::Timeout, Bank2Sector::S6))),
+            "bank2 erase slots",
+            "ERR bank2: flash timeout at S6\n",
+        ),
+        (
+            Bank2Answer::Ecc {
+                ecc: false,
+                head: [0x5A; 8],
+            },
+            "bank2 ecc-read 081a0000",
+            "ecc=0 5a5a5a5a5a5a5a5a\nOK\n",
+        ),
+        (
+            Bank2Answer::Ecc {
+                ecc: true,
+                head: [0, 1, 2, 3, 0xAB, 0xCD, 0xEF, 0xFF],
+            },
+            "bank2 ecc-read 081a0000",
+            "ecc=1 00010203abcdefff\nOK\n",
+        ),
+        (
+            Bank2Answer::Armed(PullAt::EraseS4),
+            "bank2 pull erase-s4",
+            "OK pull erase-s4 armed\n",
+        ),
+        (
+            Bank2Answer::Armed(PullAt::TagEdit),
+            "bank2 pull tag-edit",
+            "OK pull tag-edit armed\n",
+        ),
+    ] {
+        let mut u = Fake::new();
+        u.bank2 = Some(a);
+        assert_eq!(ask(&mut u, &format!("{line}\n")), want, "{a:?}");
+    }
+}
+
 #[test]
 fn every_flash_failure_has_its_words() {
     for (f, want) in [
@@ -1167,7 +1245,7 @@ fn every_flash_failure_has_its_words() {
 
 fn header() -> Header {
     Header {
-        body_len: 4352,
+        body_len: chimera_image::IMAGE_BODY,
         body_crc: 0x1234_5678,
         door_off: 0x100,
         seal: *b"SEAL0001",

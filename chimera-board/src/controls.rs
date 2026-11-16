@@ -165,30 +165,10 @@ pub unsafe fn isr_tick() {
     );
     let push = cfg!(feature = "push-encoders") && PUSH.load(Ordering::Relaxed);
     let n = if push { 32 } else { 24 };
-    // Shift the HC165 chain in: LOAD low then high, then `n` clocks, DATA
-    // read while CLK is low. BSRR's top half resets, its bottom half sets.
     // SAFETY: `base` is GPIOA's or GPIOF's fixed register block (`wire`
-    // stores no other); IDR and BSRR are its 32-bit registers. The caller
-    // is SysTick (this fn's contract), the only one driving LOAD/CLK and
-    // reading DATA; BSRR writes touch only those pins.
-    let bits = unsafe {
-        core::ptr::write_volatile(bsrr, load << 16);
-        cortex_m::asm::delay(d);
-        core::ptr::write_volatile(bsrr, load);
-        cortex_m::asm::delay(d);
-
-        let mut b: u32 = 0;
-        for i in 0..n {
-            core::ptr::write_volatile(bsrr, clk << 16);
-            cortex_m::asm::delay(d);
-            if core::ptr::read_volatile(idr) & data != 0 {
-                b |= 1 << i;
-            }
-            core::ptr::write_volatile(bsrr, clk);
-            cortex_m::asm::delay(d);
-        }
-        b
-    };
+    // stores no other). The caller is SysTick (this fn's contract), the only
+    // one driving LOAD/CLK and reading DATA.
+    let bits = unsafe { shift_in((idr, bsrr), (data, load, clk), d, n) };
 
     // Buttons and pushes: active low, debounced, edges latched. Pushes
     // off read released, so one held when they are switched off lets go.
@@ -250,6 +230,61 @@ pub unsafe fn isr_tick() {
             }
         }
     }
+}
+
+/// The HC165 chain shifted in: LOAD low then high, then `n` clocks, DATA
+/// read while CLK is low. BSRR's top half resets, its bottom half sets.
+///
+/// # Safety
+/// `idr` and `bsrr` are one GPIO port's IDR and BSRR, the port the HC165's
+/// `data`, `load` and `clk` pins are on and configured for; nothing else
+/// drives LOAD/CLK or reads DATA meanwhile.
+unsafe fn shift_in(
+    (idr, bsrr): (*const u32, *mut u32),
+    (data, load, clk): (u32, u32, u32),
+    d: u32,
+    n: u32,
+) -> u32 {
+    // SAFETY: the registers and the pins are as this fn's contract says;
+    // BSRR writes touch only LOAD and CLK.
+    unsafe {
+        core::ptr::write_volatile(bsrr, load << 16);
+        cortex_m::asm::delay(d);
+        core::ptr::write_volatile(bsrr, load);
+        cortex_m::asm::delay(d);
+
+        let mut b: u32 = 0;
+        for i in 0..n {
+            core::ptr::write_volatile(bsrr, clk << 16);
+            cortex_m::asm::delay(d);
+            if core::ptr::read_volatile(idr) & data != 0 {
+                b |= 1 << i;
+            }
+            core::ptr::write_volatile(bsrr, clk);
+            cortex_m::asm::delay(d);
+        }
+        b
+    }
+}
+
+/// Any of the twelve buttons down now, read once, raw (no debounce): for
+/// the boot before the tick, which must not be running yet.
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
+pub(crate) fn any_button_down(pins: Hc165Pins, cpu_hz: u32) -> bool {
+    if READY.load(Ordering::Acquire) {
+        return false;
+    }
+    let base = match pins.port {
+        Port::A => GPIOA_BASE,
+        Port::F => GPIOF_BASE,
+    };
+    let regs = ((base + IDR) as *const u32, (base + BSRR) as *mut u32);
+    let pins = (1 << pins.data, 1 << pins.load, 1 << pins.clk);
+    // SAFETY: `pins` are the board's HC165 pins (`BoardId::hc165`), which
+    // `boot` configured on `base`'s port; the tick is not enabled yet
+    // (`READY` false, checked above), so nothing else drives LOAD/CLK.
+    let bits = unsafe { shift_in(regs, pins, cycles_for_ns(cpu_hz, HC165_HALF_PERIOD_NS), 24) };
+    BTN_BITS.iter().any(|&m| bits & m == 0)
 }
 
 // --- Main-thread interface ---

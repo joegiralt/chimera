@@ -304,8 +304,11 @@ fn bad_lines_are_refused() {
 
 #[test]
 fn a_put_past_the_deadline_times_out() {
-    // 0.6 ms a byte: each block in time, the whole file past 30 s.
-    let body = big_project_bytes("AVRIL 14", 1);
+    // 0.6 ms a byte: each block in time, the whole file past the deadline.
+    // The deadline fires mid-data, so the bytes past a project's needn't be
+    // one: as many copies as it takes.
+    let one = big_project_bytes("AVRIL 14", 1);
+    let body = one.repeat(3);
     assert!(
         lines(&body).len() as u64 * 600 > u64::from(PUT_DEADLINE_MS) * 1_000,
         "{} B",
@@ -1287,7 +1290,7 @@ fn a_bank2_image_is_staged_whole() {
     let mut s = FatStore::new(fat16(16_384, 1));
     let vol = card(&mut s);
     let img = bank2_image(&body(4352), console::SEAL);
-    assert_eq!(img.len(), 4608);
+    assert_eq!(img.len(), 1 << 20);
     assert_eq!(
         ask(&mut s, &put_line(BANK2, &img), &lines(&img)),
         "READY\nOK\n"
@@ -1299,7 +1302,7 @@ fn a_bank2_image_is_staged_whole() {
         ask(&mut s, &put_line(BANK2, &new), &lines(&new)),
         "READY\nOK\n"
     );
-    assert_eq!(system(&mut s, vol), [(bank2_file(), 8192)]);
+    assert_eq!(system(&mut s, vol), [(bank2_file(), 1 << 20)]);
     assert_eq!(read(&mut s, vol, bank2_file()), Some(new));
     clean(s.device());
 }
