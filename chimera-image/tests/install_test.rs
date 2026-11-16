@@ -36,9 +36,12 @@ enum Tear {
     /// As M, and one word in eight of the sector ECC-flagged at random,
     /// erased ones too.
     GScatter,
+    /// The whole sector 0x00, ECC valid: an H7 erase cut on the unit
+    /// (2026-11-16).
+    Z,
 }
 
-const TEARS: [Tear; 3] = [Tear::M, Tear::GAll, Tear::GScatter];
+const TEARS: [Tear; 4] = [Tear::M, Tear::GAll, Tear::GScatter, Tear::Z];
 
 /// Bank 2 as flash behaves: erase to 0xFF, program once, and a power cut
 /// that tears the op it lands on. A torn program only clears bits (1 -> 0)
@@ -146,7 +149,9 @@ unsafe impl Flash for SimFlash {
         if whole {
             return Ok(());
         }
-        if self.tear != Tear::M {
+        if self.tear == Tear::Z {
+            self.mem[base..base + SECTOR].fill(0);
+        } else if self.tear != Tear::M {
             let all = self.tear == Tear::GAll;
             for w in base / 32..(base + SECTOR) / 32 {
                 if all || self.rng.next().is_multiple_of(8) {
@@ -1074,6 +1079,32 @@ fn every_tear_leaves_both_slots_ours() {
     }
 }
 
+/// Gate 6 pull 3 (2026-11-16): over an installed unit, each slot's entry
+/// erase cut after its marker, the sector left 0x00 with ECC valid. The
+/// clean marker keeps the slot ours, the next install still erases the
+/// entry sector before its tag and code, and it ends open.
+#[test]
+fn a_zeroed_entry_sector_after_the_marker_ends_open() {
+    use K::*;
+    let b = img(SEAL_B);
+    let start = installed(SEAL_A);
+    let ops = full_install_ops(&start, &b);
+    for s in Slot::ALL {
+        let entry = Op::Erase(s.sectors().0);
+        let n = ops.iter().position(|&o| o == entry).unwrap();
+        let mut f = start.clone();
+        f.tear = Tear::Z;
+        cut(&mut f, n, &b, 0x243F_6A88);
+        let at = (s.base() - BANK2_BASE) as usize;
+        assert!(f.mem[at..at + SECTOR].iter().all(|&x| x == 0), "{s:?}");
+        let (p, plan) = slot_part(&mut f, SlotSet::NONE);
+        assert_eq!(p.evidence(s), Evidence::Marker, "{s:?}");
+        let mine = slot_seq(s, &[E4, Tag, Code, E5, Marker]);
+        assert!(plan.windows(5).any(|w| w == mine), "{s:?}: {plan:?}");
+        ends_open(&mut f, &b, &format!("{s:?} zeroed"));
+    }
+}
+
 /// One cut from a clean tag or marker leaves a clean tag or marker: never
 /// a scan, so a second cut still has evidence to keep.
 #[test]
@@ -1103,14 +1134,14 @@ fn a_cut_from_a_tag_or_marker_keeps_one() {
 }
 
 /// Install 1 torn at every op, then install 2 (planned from the guard's
-/// evidence) torn at every op, under both tear models, from a first install
+/// evidence) torn at every op, under every tear model, from a first install
 /// and from an installed unit: the guard reads both slots ours and a third
 /// install ends open.
 ///
 /// Not tested, and the one accepted lockout (spec § 3.1's residual): a
 /// `Scan` with neither sector erased keeps no clean evidence. Reaching it
 /// takes a torn first-install marker and then a torn tag program; a third
-/// cut, tearing the next erase under model G, can read foreign. Every pair
+/// cut, tearing the next erase under model G or Z, can read foreign. Every pair
 /// here must pass.
 #[test]
 fn two_tears_on_consecutive_installs_leave_both_slots_ours() {

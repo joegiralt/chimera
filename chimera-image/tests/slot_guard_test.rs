@@ -122,6 +122,30 @@ fn a_clean_marker_with_our_code_torn_or_erased_is_ours() {
     assert_eq!(p.evidence(s), Evidence::Marker);
 }
 
+/// A torn H7 erase leaves its sector 0x00 with valid ECC (unit, 2026-11-16).
+#[test]
+fn a_clean_marker_over_a_zeroed_entry_sector_is_ours() {
+    for s in Slot::ALL {
+        let mut r = SimSlots::default();
+        r.set(s.marker_addr(), end_marker(s));
+        for a in (s.base()..s.base() + SLOT_LEN / 2).step_by(32) {
+            r.set(a, [0; 32]);
+        }
+        let p = guard(&mut r, SlotSet::NONE).unwrap();
+        assert_eq!(p.evidence(s), Evidence::Marker, "{s:?}");
+    }
+}
+
+#[test]
+fn a_zeroed_entry_sector_without_a_clean_marker_is_refused() {
+    let s = Slot::Edit;
+    let mut r = SimSlots::default();
+    for a in (s.base()..s.base() + SLOT_LEN / 2).step_by(32) {
+        r.set(a, [0; 32]);
+    }
+    assert_eq!(guard(&mut r, SlotSet::NONE), Err(SlotForeign(s)));
+}
+
 #[test]
 fn an_ecc_tag_with_its_text_falls_to_the_scan() {
     let s = Slot::Mixer;
