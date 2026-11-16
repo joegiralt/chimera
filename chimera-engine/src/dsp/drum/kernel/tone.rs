@@ -97,8 +97,12 @@ impl Kick {
         for (i, o) in out.iter_mut().enumerate() {
             let b = body[i];
             // HARMONICS: the second and third partials folded in.
-            let h = self.harm
-                * (0.5 * fast_sin_turns(2.0 * ph[i]) + 0.25 * fast_sin_turns(3.0 * ph[i]));
+            // HARMONICS 0 adds ±0: its sines skipped
+            let h = if self.harm == 0.0 {
+                0.0
+            } else {
+                self.harm * (0.5 * fast_sin_turns(2.0 * ph[i]) + 0.25 * fast_sin_turns(3.0 * ph[i]))
+            };
             let x = 0.9 * (b + h) * self.amp.next() + c[i] + blip * self.blip.next();
             *o = 0.8 * self.vel * drive(x, self.drive);
         }

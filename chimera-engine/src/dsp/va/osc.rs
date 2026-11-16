@@ -384,6 +384,49 @@ impl Kind for Saw {
     }
 }
 
+/// A wave at weight 0 in its pair (WAVE on an anchor): its constants are
+/// ±0, so its value is its bias and its steps and slopes ±0. No edges: the
+/// pair's run plays its live wave alone, bit for bit.
+macro_rules! off_kind {
+    ($(#[$doc:meta])* $name:ident, $w:expr) => {
+        $(#[$doc])*
+        struct $name;
+
+        impl Kind for $name {
+            const WAVE: Wave = $w;
+            const EDGES: bool = false;
+            const CORNERS: bool = false;
+            const FLIPS: bool = false;
+            const BIAS: bool = true;
+
+            #[inline(always)]
+            fn value(c: [f32; 3], _: f32, _: [f32; 2], _: f32) -> f32 {
+                c[0]
+            }
+
+            #[inline(always)]
+            fn jump(_: [Lin; 3], _: f32, _: usize, _: bool, _: f32) -> f32 {
+                0.0
+            }
+
+            #[inline(always)]
+            fn slope(_: [f32; 3], _: f32, _: [f32; 2]) -> f32 {
+                0.0
+            }
+
+            fn value_slope(c: [f32; 3], _: f32, _: [f32; 2]) -> (f32, f32) {
+                (c[0], 0.0)
+            }
+        }
+    };
+}
+
+off_kind!(
+    /// The saw at WAVE's pulse end (DRUM's pulses).
+    SawOff,
+    Wave::Saw
+);
+
 impl Kind for Pulse {
     const WAVE: Wave = Wave::Pulse;
     const EDGES: bool = true;
@@ -1102,7 +1145,7 @@ impl VarOsc {
     #[inline(never)]
     pub fn tick_pulse(&mut self, inc: f32, shape: Unit) -> f32 {
         let r = pulse_ramps(inc, shape);
-        let blk = self.block::<false, false>(&r, 1, 1.0);
+        let blk = self.block::<false, false, true>(&r, 1, 1.0);
         self.pulse_run(&r, &blk)
     }
 
@@ -1136,7 +1179,7 @@ impl VarOsc {
                         self.sh[0] = self.sh[1];
                     }
                     self.next_ok = flat;
-                    self.block::<false, false>(&r, 1, 1.0)
+                    self.block::<false, false, true>(&r, 1, 1.0)
                 }
             };
             last = flat.then_some((inc, blk));
@@ -1157,9 +1200,9 @@ impl VarOsc {
             self.runs = 1;
         }
         let r = pulse_ramps(inc, shape);
-        let blk = self.block::<false, false>(&r, N, 1.0);
+        let blk = self.block::<false, false, true>(&r, N, 1.0);
         let mut mk = [[NO_WRAP, NO_WRAP]; N];
-        self.run_in::<Saw, Pulse, N, false, false, false, false, false, true>(
+        self.run_in::<SawOff, Pulse, N, false, false, false, false, false, true>(
             &blk,
             (0, N),
             &r,
@@ -1182,7 +1225,7 @@ impl VarOsc {
         }
         let mut out = [0.0f32];
         let mut mk = [[NO_WRAP, NO_WRAP]];
-        self.run::<Saw, Pulse, 1, false, false, false, false>(
+        self.run::<SawOff, Pulse, 1, false, false, false, false>(
             blk,
             (0, 1),
             r,
@@ -1282,7 +1325,7 @@ impl VarOsc {
         m: &[f32; N],
         k: (f32, f32),
     ) {
-        let blk = self.block::<SYNC, MOD>(r, N, *jit);
+        let blk = self.block::<SYNC, MOD, false>(r, N, *jit);
         #[cfg(any(test, feature = "test-support"))]
         {
             self.runs = 0;
@@ -1359,12 +1402,26 @@ impl VarOsc {
     /// wave's `1/r` and `|r|/6` (`r` the phase's speed past an edge at the
     /// block's middle increment; places move linearly across a block) and,
     /// for a sync slave, each wave's value and slope at phase 0 (unit weight)
-    /// at the block's end.
+    /// at the block's end. `PULSE` fills the pulse's alone (DRUM's runs,
+    /// `SawOff` with `Pulse`): the other lanes are never read.
     #[inline(never)]
-    fn block<const SYNC: bool, const MOD: bool>(&mut self, r: &Ramps, n: usize, jit: f32) -> Blk {
+    fn block<const SYNC: bool, const MOD: bool, const PULSE: bool>(
+        &mut self,
+        r: &Ramps,
+        n: usize,
+        jit: f32,
+    ) -> Blk {
         // the engine's blocks have `begin`'s; a lone `tick` fills here
         if !self.next_ok {
-            self.ends(end_shape(r, n));
+            // `PULSE`: the pulse alone (`SawOff`, `Pulse`), only its lanes
+            let e = if PULSE {
+                let mut sh = Shaped::ZERO;
+                sh.fill(Wave::Pulse, Unit::new(val(r.shape, n)).get(), val(r.inc, n));
+                sh
+            } else {
+                end_shape(r, n)
+            };
+            self.ends(e);
         }
         self.next_ok = false;
         let [sh0, sh1] = &self.sh;
@@ -1382,6 +1439,9 @@ impl VarOsc {
         // a `MOD` read's rates are its samples' own (`cross`)
         if !MOD {
             for (e, w) in [Wave::Tri, Wave::Saw, Wave::Pulse].into_iter().enumerate() {
+                if PULSE && w != Wave::Pulse {
+                    continue;
+                }
                 let (p0, p1) = (w.pos(sh0), w.pos(sh1));
                 for q in 0..2 {
                     let rate = ie - (p1[q] - p0[q]) * il;
