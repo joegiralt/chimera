@@ -1,0 +1,38 @@
+# 0275. Browser editor protocol: `ed` over the console, pulled
+
+- **Status:** Proposed
+- **Deciders:** owner, firmware
+
+## Context
+The browser editor (slice 1: ALGO on one screen) talks to the unit, or to the desktop simulator, over the console's text protocol (Web Serial, or a WebSocket bridge to the simulator's TCP console). Several choices in that slice constrain later slices, firmware releases and any other client, and none was recorded. Earlier console changes each got an ADR (0068, 0092, 0106, 0222). The code is in `chimera-core/src/console/ed/`, `editor/src/`, `chimera-utils/src/ed_bridge.rs`. The spec is `docs/superpowers/specs/2026-11-14-editor-algo-slice-design.md`.
+
+## Decision
+- **`PROTOCOL` is 2, and `ed` is a namespace.** `ed hello`, `ed describe ALGO <page>`, `ed get`, `ed set` and `ed since <n>` are the editor's commands, and nothing outside `ed` is the editor's. `ed hello` answers the protocol number, the build, the followed Part and its engine. An editor that reads a lower number says UPDATE THE UNIT, a higher one UPDATE THE EDITOR. A firmware that predates `ed` answers `ERR unknown command ...` to `ed hello`, which the editor also shows as UPDATE THE UNIT. Unknown or garbled messages are refused, never guessed at.
+- **Addresses are frozen: `<BLOCK>.<IDENT>`.** The block's `disk_ident` and the param's `ParamSpec::ident` (`FILTER.CUTOFF`, `ENV1.HOLD`), the same literals the patch files use. They never change once shipped. Choices are set by their option names, never by number.
+- **The editor holds no parameter list.** `ed describe` is generated from the firmware's own panel tables and chain (`ALGO_FORMANT_CHAIN`, `filter_panel`, `fx_panel`, `mod_panel`, `op_page`): pages hold panels (one per variant of what a cell resolves against, `-` for none), panels hold params with their options, so one address can be described by several variants (FILTER.MODE has different names per filter kind). An editor resolves a param through the variant now active. `ed since` reports only addresses `describe` lists.
+- **Values read as the box writes them.** A `val` line is `ed get`'s own line, built by the same text path as the renderer (`cell_text::value_text`).
+- **The pull model.** The editor asks `ed since <n>`, `n` being the number of the last answer it got (`0`: nothing). The unit keeps one copy of what it last reported and that answer's number (`Gen`, never 0, wrapping at 999,999,999 to 1). If `n` is the last number, the live Sound is compared with the copy at f32 bits and only what differs is answered, else everything. The number moves before the answer is written, so an answer that never reached the editor leaves it asking with a stale number, and the next answer is whole: that is the whole recovery. There is no push, no sequence number beyond `n`, no checksum or hash, and no timer on the unit. A change in what the box's text depends on (`SlotCtx`, bank 2 closed) answers the values whole.
+- **A full answer opens with an empty line.** Every `ed since` answer that isn't a diff (a stale or zero `n`, a new Part or engine) starts with `\n`. A cut-off answer leaves an unfinished line in the editor's liner (and the bridge's reader); the empty line ends it, so the healing answer's first line, `part <n> <ENGINE>`, is not glued onto it and lost. The editor ignores empty lines (`Protocol.parse ""` is `Unknown`). A diff has none.
+- **`Bits::ABSENT` means a block vanished.** The kept copy marks the slots of a block the Sound lacks with a value that is never stored (an f32 NaN pattern), so a block that appears is reported whatever it holds. The editor never reads absence from `since`: it reads it from the `panel` lines, which say which variant of each panel the Sound shows.
+- **`since` does not report the selected operator.** The spec listed it. The one-screen editor shows all six operators, so nothing needs it. It is a drift from the spec, kept: add it when an editor view shows one operator.
+- **`ed` lives in bank 2 behind `EdDoor`.** The door is at `DOOR_ADDR + 0x380` (`bank2.x`, linker asserts it at 0x08100480), `#[repr(C)]` with `ED_MAGIC` `0xB2C0_0ED3`, checked when the door is opened (`open_door`). With the door closed the console answers `ERR ed needs bank 2, update the unit`. Bank 1 only gains the stub and the shared text path; the `console::ed::` code is placed in S4 (`check-door-placed`), and `ed_door_test` is in `just check`. ADR 0251 notes the bank 1 bytes.
+- **`ED`'s state is in ITCM.** `EdState` (the queue of edits, the `since` copy of 256 slots of 4 bytes, the numbers) is about 1.4 KB, in the CPU-only ITCM region (ADR 0266), built in place at boot, taken once (`take_ed`, an `AtomicBool` swap) and used only through the USB driver. ITCM now has three users: the flat engine maps (ADR 0266), the kit keymaps (ADR 0265) and `ED`. Any ITCM budget counts it.
+- **`set` takes the knob path.** `ed set` is queued and applied in the UI pass as an edit to a value (`UiState::edit_to`), so it glides like a knob. A refused or no-op `set` answers `OK queued` and changes nothing; the editor learns the truth from `since`.
+
+## Alternatives considered
+- **Push changes from the unit.** Needs a send queue, sequence numbers and flow control against a host that may be slow or gone, in the console's answer path. The pull model costs a poll, and recovery is one stale number.
+- **Sequence numbers per line, or a checksum.** A lost or cut answer is healed by asking again with a stale number. Rejected as machinery.
+- **MIDI SysEx.** The spec's table: 7-bit packing, slow file transfer, Windows holds MIDI ports, and the console is still needed for files and updates, so two protocols.
+- **A parameter list in the editor.** It would drift from the firmware. `describe` is generated from it.
+- **Start only a diff-less answer with the empty line, or every `ed` answer.** The diff is short and comes after a good full answer; only a full answer can follow a lost one. Every answer would add a byte per poll for nothing.
+
+## Consequences
+- Addresses and option names cannot be renamed once shipped, and `describe`'s line forms (`page`, `panel`, `param`, `opt`, `route`) are the editor's grammar. `route "<label>" next-slice` is quoted and is slice 2's mod matrix, which needs its own addressing.
+- Another client (a plugin, a tool) can use the same protocol; it must ignore empty lines.
+- A full answer costs a `reading` of every described slot, about 218 addresses. A change in `SlotCtx` (selected operator, ORBIT ring, a reverb or delay type) asks for one. The unit gate should time it.
+- Bank 1 grew about 1 KB for the door and the shared text path (ADR 0251 line by line in the budget).
+
+## Sources
+- `docs/superpowers/specs/2026-11-14-editor-algo-slice-design.md`
+- ADR 0251 (bank 2 and the doors), 0265 and 0266 (ITCM), 0272 (bank 2 slots)
+- `.superpowers/sdd/2026-11-14-editor-algo-slice/final-review.md`
