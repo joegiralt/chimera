@@ -45,6 +45,7 @@ type Why
     = UpdateEditor
     | UpdateUnit
     | Refused String
+    | Silent
 
 
 type alias Model =
@@ -58,6 +59,7 @@ type alias Model =
     , gen : Maybe Gen
     , stage : Stage
     , asked : Maybe Time.Posix
+    , owed : Int
     , now : Time.Posix
     }
 
@@ -79,9 +81,12 @@ supported =
     2
 
 
-{-| A request unanswered this long is given up on: the slot frees and the
-same ask goes out again (a `since` with the last number we did get, so a
-late answer cannot desync us).
+{-| A request unanswered this long has timed out. While connecting, that
+halts: a late `OK` could not be told from the next request's, so it would
+skip a step. Following, a `since` is asked once more with the last number we
+did get, and no further until every answer owed has come (`owed`): the unit
+answers in order, so a late `OK` is only counted, and its `val` lines are
+true, as the number only moves forward.
 -}
 answerTimeoutMs : Int
 answerTimeoutMs =
@@ -110,6 +115,7 @@ init =
     , gen = Nothing
     , stage = Greeting
     , asked = Nothing
+    , owed = 0
     , now = Time.millisToPosix 0
     }
 
@@ -169,6 +175,9 @@ stageNotice m =
         Halted (Refused t) ->
             Just ("THE UNIT REFUSED: " ++ t)
 
+        Halted Silent ->
+            Just "THE UNIT STOPPED ANSWERING"
+
         _ ->
             case ( m.part, m.engine ) of
                 ( Just p, Just e ) ->
@@ -196,11 +205,8 @@ step : Msg -> Model -> ( Model, List Command )
 step msg m =
     case msg of
         LinkChanged l ->
-            if l == Open then
-                ( { init | link = Just Open, now = m.now }, [] )
-
-            else
-                ( { m | link = Just l, stage = Greeting, asked = Nothing }, [] )
+            -- Any link change starts over: nothing of the last link is shown.
+            ( { init | link = Just l, now = m.now }, [] )
 
         Tick t ->
             tick t m
@@ -211,12 +217,6 @@ step msg m =
         Edit a v ->
             edit a v m
 
-        ConnectSerial ->
-            ( m, [] )
-
-        ConnectSocket ->
-            ( m, [] )
-
         Pick a i ->
             case Schema.optionName a i m.schema of
                 Just name ->
@@ -224,6 +224,10 @@ step msg m =
 
                 Nothing ->
                     ( m, [] )
+
+        -- Connecting is `update`'s: it only asks the shim.
+        _ ->
+            ( m, [] )
 
 
 tick : Time.Posix -> Model -> ( Model, List Command )
@@ -235,44 +239,53 @@ tick t m0 =
                 , pending = Dict.filter (\_ at -> ms t - ms at < pendingMs) m0.pending
             }
 
-        free =
-            case m.asked of
-                Just at ->
-                    if ms t - ms at >= answerTimeoutMs then
-                        { m | asked = Nothing }
+        timedOut =
+            m.asked |> Maybe.map (\at -> ms t - ms at >= answerTimeoutMs) |> Maybe.withDefault False
 
-                    else
-                        m
+        ask c =
+            ( { m | asked = Just t, owed = m.owed + 1 }, [ c ] )
 
-                Nothing ->
-                    m
+        silent =
+            ( { m | stage = Halted Silent, asked = Nothing }, [] )
     in
-    if free.link /= Just Open || free.asked /= Nothing then
-        ( free, [] )
+    if m.link /= Just Open then
+        ( m, [] )
 
     else
-        case request free of
-            Just c ->
-                ( { free | asked = Just t }, [ c ] )
+        case m.stage of
+            Halted _ ->
+                ( m, [] )
 
-            Nothing ->
-                ( free, [] )
+            Following ->
+                if m.owed == 0 then
+                    ask (Since m.gen)
+
+                else if timedOut && m.owed == 1 then
+                    ask (Since m.gen)
+
+                else if timedOut then
+                    silent
+
+                else
+                    ( m, [] )
+
+            Greeting ->
+                connecting timedOut silent (ask Hello) m
+
+            Describing n ->
+                connecting timedOut silent (ask (Describe "ALGO" n)) m
 
 
-request : Model -> Maybe Command
-request m =
-    case m.stage of
-        Greeting ->
-            Just Hello
+connecting : Bool -> ( Model, List Command ) -> ( Model, List Command ) -> Model -> ( Model, List Command )
+connecting timedOut silent go m =
+    if timedOut then
+        silent
 
-        Describing n ->
-            Just (Describe "ALGO" n)
+    else if m.asked == Nothing then
+        go
 
-        Following ->
-            Just (Since m.gen)
-
-        Halted _ ->
-            Nothing
+    else
+        ( m, [] )
 
 
 ms : Time.Posix -> Int
@@ -295,6 +308,25 @@ edit a v m =
 
 line : Line -> Model -> Model
 line l m =
+    if isHalted m then
+        m
+
+    else
+        lineIn l m
+
+
+isHalted : Model -> Bool
+isHalted m =
+    case m.stage of
+        Halted _ ->
+            True
+
+        _ ->
+            False
+
+
+lineIn : Line -> Model -> Model
+lineIn l m =
     case l of
         Answer a ->
             answer a m
@@ -305,10 +337,7 @@ line l m =
         Err_ why ->
             case m.stage of
                 Following ->
-                    -- A refused `set` or a late `since` error: nothing shown changes.
-                    m
-
-                Halted _ ->
+                    -- Ignored: a `set`'s ERR looks the same, and only the `OK` counts a `since` answered (a lost one times out).
                     m
 
                 _ ->
@@ -372,19 +401,19 @@ ok : Maybe Int -> Model -> Model
 ok done m =
     case m.stage of
         Greeting ->
-            { m | stage = Describing 0, asked = Nothing }
+            { m | stage = Describing 0, asked = Nothing, owed = 0 }
 
         Describing n ->
             let
                 more =
                     Schema.pageCount m.schema |> Maybe.map (\c -> n + 1 < c) |> Maybe.withDefault False
             in
-            { m | stage = nextPage n more, asked = Nothing }
+            { m | stage = nextPage n more, asked = Nothing, owed = 0 }
 
         Following ->
             case done |> Maybe.andThen Unit.genFromInt of
                 Just g ->
-                    { m | gen = Just g, asked = Nothing }
+                    { m | gen = Just g, owed = max 0 (m.owed - 1), asked = Nothing }
 
                 Nothing ->
                     m

@@ -97,7 +97,7 @@ add line (Schema s) =
                 }
 
         Protocol.Panel p ->
-            Schema { s | pages = onLastPage (\pg -> { pg | panels = pg.panels ++ [ { name = p.name, variant = p.variant, params = [], routes = [] } ] }) s.pages }
+            Schema { s | pages = onLast (\pg -> { pg | panels = pg.panels ++ [ { name = p.name, variant = p.variant, params = [], routes = [] } ] }) s.pages }
 
         Protocol.Param p ->
             let
@@ -112,32 +112,17 @@ add line (Schema s) =
 
         Protocol.Opt o ->
             let
-                key =
-                    addrKey o.addr
+                withOpt q =
+                    if q.addr == o.addr then
+                        { q | options = q.options ++ [ ( o.index, o.name ) ] }
 
-                add_ q =
-                    { q | options = q.options ++ [ ( o.index, o.name ) ] }
+                    else
+                        q
             in
             Schema
                 { s
-                    | pages =
-                        onLastPanel
-                            (\pn ->
-                                { pn
-                                    | params =
-                                        List.map
-                                            (\q ->
-                                                if q.addr == o.addr then
-                                                    add_ q
-
-                                                else
-                                                    q
-                                            )
-                                            pn.params
-                                }
-                            )
-                            s.pages
-                    , index = Dict.update key (Maybe.map add_) s.index
+                    | pages = onLastPanel (\pn -> { pn | params = List.map withOpt pn.params }) s.pages
+                    , index = Dict.update (addrKey o.addr) (Maybe.map withOpt) s.index
                 }
 
         Protocol.Route r ->
@@ -147,19 +132,9 @@ add line (Schema s) =
             Schema s
 
 
-onLastPage : (Page -> Page) -> List Page -> List Page
-onLastPage f ps =
-    case List.reverse ps of
-        last :: before ->
-            List.reverse (f last :: before)
-
-        [] ->
-            []
-
-
 onLastPanel : (Panel -> Panel) -> List Page -> List Page
 onLastPanel f =
-    onLastPage (\pg -> { pg | panels = onLast f pg.panels })
+    onLast (\pg -> { pg | panels = onLast f pg.panels })
 
 
 onLast : (a -> a) -> List a -> List a

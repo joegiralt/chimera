@@ -198,30 +198,103 @@ suite =
                         m3 |> tick 198
                 in
                 Expect.equal [ [ Since Nothing ], [], [ Since (gen 4) ], [] ] [ c1, c2, c3, c4 ]
-        , test "a_lost_answer_frees_the_slot_after_a_second_and_asks_again_with_the_old_number" <|
+        , test "a_hello_timeout_halts_and_a_late_ok_never_reaches_following" <|
+            \_ ->
+                let
+                    m =
+                        Model.init
+                            |> Model.step (LinkChanged Open)
+                            |> Tuple.first
+                            |> tick 0
+                            |> Tuple.first
+                            |> tick 1000
+                            |> Tuple.first
+                            |> feed [ "ed hello 2 b part 1 ALGO", "OK" ]
+                in
+                Expect.all
+                    [ \x -> Expect.equal (Just "THE UNIT STOPPED ANSWERING") (Model.notice x)
+                    , \x -> Expect.equal [] (tick 1033 x |> Tuple.second)
+                    , \x -> Expect.equal [] (tick 5000 x |> Tuple.second)
+                    ]
+                    m
+        , test "a_describe_timeout_halts_the_same_way" <|
+            \_ ->
+                let
+                    m =
+                        Model.init
+                            |> Model.step (LinkChanged Open)
+                            |> Tuple.first
+                            |> tick 0
+                            |> Tuple.first
+                            |> feed [ "ed hello 2 b part 1 ALGO", "OK" ]
+                            |> tick 33
+                            |> Tuple.first
+                            |> feed [ "page 0 A of 2", "panel A -" ]
+                            |> tick 1033
+                            |> Tuple.first
+                            |> feed [ "OK" ]
+                in
+                Expect.all
+                    [ \x -> Expect.equal (Just "THE UNIT STOPPED ANSWERING") (Model.notice x)
+                    , \x -> Expect.equal [] (tick 1066 x |> Tuple.second)
+                    ]
+                    m
+        , test "a_since_timeout_re_asks_once_and_no_third_goes_out_until_the_re_asks_answer" <|
+            \_ ->
+                let
+                    ( m1, c1 ) =
+                        following |> tick 99
+
+                    ( m2, c2 ) =
+                        m1 |> tick 1099
+
+                    -- the late answer to the first ask
+                    ( m3, c3 ) =
+                        m2 |> feed [ "OK 4" ] |> tick 1132
+
+                    -- the re-ask's answer
+                    ( m4, c4 ) =
+                        m3 |> feed [ "OK 5" ] |> tick 1165
+                in
+                Expect.equal [ [ Since Nothing ], [ Since Nothing ], [], [ Since (gen 5) ] ] [ c1, c2, c3, c4 ]
+        , test "two_silent_asks_halt" <|
+            \_ ->
+                let
+                    m =
+                        following |> tick 99 |> Tuple.first |> tick 1099 |> Tuple.first |> tick 2099 |> Tuple.first
+                in
+                Expect.all
+                    [ \x -> Expect.equal (Just "THE UNIT STOPPED ANSWERING") (Model.notice x)
+                    , \x -> Expect.equal [] (tick 2132 x |> Tuple.second)
+                    ]
+                    m
+        , test "a_lost_link_clears_the_values" <|
+            \_ ->
+                Expect.equal Nothing
+                    (following |> feed [ cutoffLine "1000", "OK 1" ] |> Model.step (LinkChanged Lost) |> Tuple.first |> shown)
+        , test "an_echo_of_the_same_value_clears_pending" <|
             \_ ->
                 let
                     m =
                         following
-                            |> tick 99
-                            |> Tuple.first
-                            |> feed [ "OK 4" ]
-                            |> tick 132
+                            |> feed [ cutoffLine "1000", "OK 1" ]
+                            |> Model.step (Edit cutoff (Num 1000))
                             |> Tuple.first
                 in
-                Expect.equal
-                    [ [], [ Since (gen 4) ] ]
-                    [ m |> tick 1131 |> Tuple.second, m |> tick 1132 |> Tuple.second ]
+                Expect.equal ( True, False ) ( Model.isPending cutoff m, Model.isPending cutoff (feed [ cutoffLine "1000" ] m) )
         , test "part_change_follows_the_box" <|
             \_ ->
                 let
                     m =
                         following
                             |> feed [ cutoffLine "1000", "OK 1" ]
+                            |> Model.step (Edit (Addr "ENV1.HOLD") (Num 1))
+                            |> Tuple.first
                             |> feed [ "part 3 ALGO", cutoffLine "300", "OK 2" ]
                 in
                 Expect.all
                     [ \_ -> Expect.equal (Unit.partFromInt 3) m.part
+                    , \_ -> Expect.equal False (Model.isPending (Addr "ENV1.HOLD") m)
                     , \_ -> Expect.equal (Just "300 Hz") (shown m)
                     , \_ -> Expect.equal Nothing (Model.notice m)
                     ]
@@ -232,9 +305,11 @@ suite =
                     m =
                         following
                             |> feed [ cutoffLine "1000", "panel FILTER CLEAN", "OK 1" ]
+                            |> Model.step (Edit cutoff (Num 5))
+                            |> Tuple.first
                             |> feed [ "part 2 VA", "OK 2" ]
                 in
-                Expect.equal ( Nothing, Dict.empty ) ( Model.shown cutoff m, m.variants )
+                Expect.equal ( Nothing, Dict.empty, False ) ( Model.shown cutoff m, m.variants, Model.isPending cutoff m )
         , test "non_algo_part_shows_message" <|
             \_ ->
                 let
