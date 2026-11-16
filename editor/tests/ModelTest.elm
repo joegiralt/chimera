@@ -122,6 +122,28 @@ suite =
             \_ ->
                 Expect.equal Nothing
                     (following |> feed [ "val OUT.PAN 0.5 0 \"C\"" ] |> Model.shown (Addr "OUT.PAN"))
+        , test "an_old_unit_refusing_hello_says_update_the_unit" <|
+            \_ ->
+                Model.init
+                    |> Model.step (LinkChanged Open)
+                    |> Tuple.first
+                    |> tick 0
+                    |> Tuple.first
+                    |> feed [ "ERR unknown command ed, try help" ]
+                    |> Model.notice
+                    |> Expect.equal (Just "UPDATE THE UNIT")
+        , test "the_status_names_the_link_part_and_engine_once_following" <|
+            \_ ->
+                let
+                    sim =
+                        following |> Model.step ConnectSocket |> Tuple.first
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just "SIMULATOR · PART 1 · ALGO") (Model.status sim)
+                    , \_ -> Expect.equal (Just "UNIT · PART 1 · ALGO") (Model.status (Model.step ConnectSerial following |> Tuple.first))
+                    , \_ -> Expect.equal Nothing (Model.status Model.init)
+                    ]
+                    ()
         , test "connect_runs_hello_describe_then_since_0" <|
             \_ ->
                 let

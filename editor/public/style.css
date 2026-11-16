@@ -60,3 +60,4 @@ fieldset.n1 legend { margin-left: 2px; letter-spacing: .06em; }
 .unplaced { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 0; width: calc(22 * var(--u) - 6px); }
 .unplaced .cell { width: var(--u); height: var(--uh); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.status { color: var(--ink); opacity: .7; letter-spacing: .06em; }

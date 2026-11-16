@@ -12,9 +12,9 @@ use tungstenite::{Message, WebSocket};
 
 const LISTEN: &str = "127.0.0.1:7342";
 const CONSOLE: &str = "127.0.0.1:7341";
-/// How long the socket's reader waits before looking at the console's lines.
 /// How long a browser has to finish its upgrade request.
 const HANDSHAKE: Duration = Duration::from_secs(5);
+/// How long the socket's reader waits before looking at the console's lines.
 const POLL: Duration = Duration::from_millis(10);
 
 pub fn run(args: &[String]) -> Result<(), String> {

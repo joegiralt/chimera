@@ -6,6 +6,7 @@ module Model exposing
     , isPending
     , notice
     , shown
+    , status
     , step
     , subscriptions
     , update
@@ -50,6 +51,7 @@ type Why
 
 type alias Model =
     { link : Maybe Link
+    , via : Maybe Via
     , schema : Schema
     , values : Dict String Reading
     , pending : Dict String Time.Posix
@@ -63,6 +65,13 @@ type alias Model =
     , leftover : Bool
     , now : Time.Posix
     }
+
+
+{-| What the user chose to connect to.
+-}
+type Via
+    = ViaUnit
+    | ViaSimulator
 
 
 type Msg
@@ -110,6 +119,7 @@ pollMs =
 init : Model
 init =
     { link = Nothing
+    , via = Nothing
     , schema = Schema.empty
     , values = Dict.empty
     , pending = Dict.empty
@@ -150,6 +160,28 @@ update msg model =
 send : Command -> Cmd msg
 send c =
     encode c |> Maybe.map Transport.send |> Maybe.withDefault Cmd.none
+
+
+{-| Once connected and following: the link and the Part and engine it follows.
+-}
+status : Model -> Maybe String
+status m =
+    case ( ( m.link, m.stage ), ( m.part, m.engine ) ) of
+        ( ( Just Open, Following ), ( Just p, Just e ) ) ->
+            Just
+                (String.join " · "
+                    [ if m.via == Just ViaSimulator then
+                        "SIMULATOR"
+
+                      else
+                        "UNIT"
+                    , "PART " ++ String.fromInt (Unit.partNumber p)
+                    , Unit.engineName e
+                    ]
+                )
+
+        _ ->
+            Nothing
 
 
 {-| What to tell the user instead of the editor, if anything.
@@ -211,7 +243,7 @@ step msg m =
     case msg of
         LinkChanged l ->
             -- Any link change starts over: nothing of the last link is shown.
-            ( { init | link = Just l, now = m.now }, [] )
+            ( { init | link = Just l, via = m.via, now = m.now }, [] )
 
         Tick t ->
             tick t m
@@ -232,10 +264,10 @@ step msg m =
 
         -- Connecting is `update`'s: it only asks the shim.
         ConnectSerial ->
-            ( m, [] )
+            ( { m | via = Just ViaUnit }, [] )
 
         ConnectSocket ->
-            ( m, [] )
+            ( { m | via = Just ViaSimulator }, [] )
 
 
 tick : Time.Posix -> Model -> ( Model, List Command )
@@ -354,7 +386,12 @@ lineIn l m =
                     m
 
                 _ ->
-                    { m | stage = Halted (Refused why), asked = Nothing }
+                    -- Firmware without `ed` doesn't know the command.
+                    if m.stage == Greeting && String.startsWith "unknown command" why then
+                        { m | stage = Halted UpdateUnit, asked = Nothing }
+
+                    else
+                        { m | stage = Halted (Refused why), asked = Nothing }
 
         Queued ->
             m

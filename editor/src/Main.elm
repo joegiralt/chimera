@@ -67,6 +67,7 @@ view app =
             [ button [ class "part", onClick (Unit Model.ConnectSerial) ] [ text "CONNECT UNIT" ]
             , button [ class "part", onClick (Unit Model.ConnectSocket) ] [ text "CONNECT SIMULATOR" ]
             , div [ class "notice" ] [ text (Maybe.withDefault "" notice) ]
+            , div [ class "status" ] [ text (Maybe.withDefault "" (Model.status app.unit)) ]
             ]
         , if notice == Nothing && app.unit.engine == Just Algo then
             Html.map Panel (Algo.view app.unit app.panel)
