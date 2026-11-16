@@ -109,9 +109,12 @@ struct Seen {
     panels: [&'static str; PANELS],
     /// What the box's text reads beside the bits (`cell_text`): the cells
     /// resolve against it, so a change moves texts under unchanged bits and
-    /// the values are answered whole. The reverb clock and the bank 2 status
-    /// are read only by cells no ALGO page has (a test says so).
+    /// the values are answered whole. The reverb clock is read only by cells
+    /// no ALGO page has (a test says so).
     ctx: SlotCtx,
+    /// Bank 2 can't play: `closed_text` reads FILTER.KIND and VOICEFX.TYPE as
+    /// NEEDS UPDATE then, so it moves those texts under unchanged bits.
+    closed: bool,
 }
 
 /// What `ed since` keeps: the last answer's number, and what it said.
@@ -163,8 +166,9 @@ impl EdSince {
         };
         let ctx = ui.cell_own().ctx;
         // The texts too: whole again if the cells' context moved.
+        let closed = ui.bank2().is_some_and(|b| !b.is_open());
         let texts = match known {
-            Some(k) => same && k.ctx == ctx,
+            Some(k) => same && k.ctx == ctx && k.closed == closed,
             None => false,
         };
         let now = if algo { panels(ui) } else { [""; PANELS] };
@@ -177,6 +181,7 @@ impl EdSince {
             engine,
             panels: now,
             ctx,
+            closed,
         });
         if !same {
             writeln!(w, "part {} {}", part.index() + 1, engine.disk_ident())?;
@@ -194,8 +199,9 @@ impl EdSince {
         writeln!(w, "OK {}", m.get())
     }
 
-    /// The `val` lines of what differs from the copy (all, if not `same`: the Sound and the texts' context as last reported),
-    /// and the copy brought up to date.
+    /// The `val` lines of what differs from the copy, all of them unless
+    /// `same` (the Sound and the texts' context as last reported); the copy
+    /// is brought up to date.
     fn values(&mut self, ui: &UiState, same: bool, w: &mut dyn Write) -> fmt::Result {
         let own = ui.cell_own();
         let (mut slot, mut b) = (0usize, 0);

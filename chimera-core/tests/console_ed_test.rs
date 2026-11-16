@@ -1018,7 +1018,7 @@ fn refused_set_reports_nothing() {
         );
         apply(&mut f);
     }
-    let (_, m) = since(&mut f, m);
+    let (lines, m) = since(&mut f, m);
     let refused: Vec<&str> = ops
         .iter()
         .copied()
@@ -1030,6 +1030,10 @@ fn refused_set_reports_nothing() {
     );
     // The landed formants moved the panels' context, so that answer is
     // whole (a refused op's line among them, as `get` has it).
+    for o in &refused {
+        let want = get_line(&mut f, &format!("{o}.WAVE"));
+        assert!(lines.contains(&want), "{want}");
+    }
     // Asked again, still refused: nothing to report.
     assert_eq!(
         ask(&mut f, &format!("ed set {}.WAVE FRMT\n", refused[0])),
@@ -1163,4 +1167,34 @@ fn no_algo_cell_reads_the_reverb_clock() {
             }
         }
     }
+}
+
+#[test]
+fn a_bank2_status_change_resends_the_closed_text() {
+    use chimera_core::bank2::Bank2Status;
+    let kind = chimera_engine::params::FilterParams::KIND;
+    let spec = ParamAddr::new(BlockRef::Filter, kind).spec().unwrap();
+    // A KIND that plays from bank 2 reads NEEDS UPDATE while bank 2 is closed.
+    let mut found = false;
+    let mut v = spec.min;
+    while v <= spec.max && !found {
+        // A fresh unit each: a status, once set, stays.
+        let mut f = Fake::new();
+        f.ui.params_mut()
+            .block_mut(BlockRef::Filter)
+            .unwrap()
+            .set(kind, v);
+        let (_, m) = since(&mut f, 0);
+        let open = get_line(&mut f, "FILTER.KIND");
+        f.ui.set_bank2(Bank2Status::Empty);
+        let closed = get_line(&mut f, "FILTER.KIND");
+        if open != closed {
+            found = true;
+            assert!(closed.contains("NEEDS UPDATE"), "{closed}");
+            let (lines, _) = since(&mut f, m);
+            assert!(lines.contains(&closed), "{closed} not resent: {lines:?}");
+        }
+        v += 1.0;
+    }
+    assert!(found, "no bank 2 FILTER.KIND");
 }
