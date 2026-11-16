@@ -178,7 +178,8 @@ pub trait Unit {
     fn bank2_install(&mut self) -> Option<super::Bank2Answer> {
         None
     }
-    /// The UI, and `ed set`'s queue (the shell drains it each UI pass).
+    /// The UI, and `ed`'s state: `set`'s queue (the shell drains it each UI
+    /// pass) and `since`'s copy.
     /// `None`: not in this build.
     fn ed(&mut self) -> (&UiState, Option<&mut super::EdState>) {
         (self.ui(), None)

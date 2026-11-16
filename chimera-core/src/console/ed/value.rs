@@ -26,8 +26,8 @@ fn shown_on(cx: &CellCx, a: ParamAddr) -> Option<usize> {
     None
 }
 
-/// What `ed get` and `watch`'s `val` line say of an address: its place, the
-/// stored value and the box's own text. One path, so a pushed line and a get
+/// What `ed get` and `ed since`'s `val` line say of an address: its place, the
+/// stored value and the box's own text. One path, so a since line and a get
 /// never disagree. `None` for an address the Part's Sound doesn't hold (not
 /// ALGO's, or a block it lacks). The value is the Sound's stored one, as the
 /// unit holds it: a refused choice the box shows dimmed is not reported.

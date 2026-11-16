@@ -26,6 +26,7 @@ use super::{EdAddr, describe};
 use crate::addr::{BlockRead, BlockRef, ParamAddr};
 use crate::project::PartId;
 use crate::ui::UiState;
+use crate::ui::view::SlotCtx;
 use chimera_engine::block::DiskCode;
 use chimera_engine::params::EngineType;
 
@@ -106,6 +107,11 @@ struct Seen {
     part: PartId,
     engine: EngineType,
     panels: [&'static str; PANELS],
+    /// What the box's text reads beside the bits (`cell_text`): the cells
+    /// resolve against it, so a change moves texts under unchanged bits and
+    /// the values are answered whole. The reverb clock and the bank 2 status
+    /// are read only by cells no ALGO page has (a test says so).
+    ctx: SlotCtx,
 }
 
 /// What `ed since` keeps: the last answer's number, and what it said.
@@ -155,6 +161,12 @@ impl EdSince {
             Some(k) => k.part == part && k.engine == engine,
             None => false,
         };
+        let ctx = ui.cell_own().ctx;
+        // The texts too: whole again if the cells' context moved.
+        let texts = match known {
+            Some(k) => same && k.ctx == ctx,
+            None => false,
+        };
         let now = if algo { panels(ui) } else { [""; PANELS] };
         let was = match known {
             Some(k) if same => k.panels,
@@ -164,6 +176,7 @@ impl EdSince {
             part,
             engine,
             panels: now,
+            ctx,
         });
         if !same {
             writeln!(w, "part {} {}", part.index() + 1, engine.disk_ident())?;
@@ -176,12 +189,12 @@ impl EdSince {
                 }
                 i += 1;
             }
-            self.values(ui, same, w)?;
+            self.values(ui, texts, w)?;
         }
         writeln!(w, "OK {}", m.get())
     }
 
-    /// The `val` lines of what differs from the copy (all, if not `same`),
+    /// The `val` lines of what differs from the copy (all, if not `same`: the Sound and the texts' context as last reported),
     /// and the copy brought up to date.
     fn values(&mut self, ui: &UiState, same: bool, w: &mut dyn Write) -> fmt::Result {
         let own = ui.cell_own();

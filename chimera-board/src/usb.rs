@@ -200,9 +200,9 @@ pub struct Usb {
     board: BoardId,
     /// `key` and `turn`'s gestures, played into the controls each lap.
     hands: Hands,
-    /// `ed set`'s, applied in the UI pass.
-    /// In D2 (`shared::take_ed`), not this frame: `since`'s copy of the values
-    /// would take `main`'s stack. `None`: the cell was taken twice.
+    /// `ed set`'s queue, applied in the UI pass, and `ed since`'s copy. In
+    /// ITCM (`shared::take_ed`), not this frame: the copy of the values would
+    /// take `main`'s stack. `None`: the cell was taken twice.
     ed: Option<&'static mut chimera_core::console::EdState>,
 }
 

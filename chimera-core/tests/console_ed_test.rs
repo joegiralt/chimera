@@ -637,19 +637,9 @@ fn set_glides_like_a_knob() {
     assert!(from != to, "{from} -> {to}: a landing, not a glide");
 }
 
-/// The published delta's moves as its `Debug` says them, `(from, to)` of
-/// the one move: its stamp (one a copy of the Sound) is left out.
+/// The delta's newest move, `(from, to)`.
 fn moves(d: &chimera_core::dsp::knobs::KnobDelta) -> (f32, f32) {
-    let text = format!("{d:?}");
-    let field = |name: &str| -> f32 {
-        let at = text
-            .find(name)
-            .unwrap_or_else(|| panic!("{name} in {text}"))
-            + name.len();
-        let rest = &text[at..];
-        rest[..rest.find([',', ' ']).unwrap()].parse().unwrap()
-    };
-    (field("from: "), field("to: "))
+    d.last_move().expect("a move")
 }
 
 #[test]
@@ -894,7 +884,7 @@ fn since_reports_knob_cc_load_and_set() {
     let (lines, m2) = since(&mut f, m);
     m = m2;
     assert_eq!(lines, [get_line(&mut f, "FILTER.CUTOFF")]);
-    // A CC, learned onto the cutoff.
+    // A CC, learned onto the cutoff (the since() after it only takes in the learn's own write).
     f.ui.project_mut()
         .edit_part(P1)
         .sound
@@ -1028,7 +1018,7 @@ fn refused_set_reports_nothing() {
         );
         apply(&mut f);
     }
-    let (lines, m) = since(&mut f, m);
+    let (_, m) = since(&mut f, m);
     let refused: Vec<&str> = ops
         .iter()
         .copied()
@@ -1038,13 +1028,8 @@ fn refused_set_reports_nothing() {
         !refused.is_empty() && refused.len() < ops.len(),
         "{refused:?}"
     );
-    for o in &refused {
-        assert!(
-            !lines
-                .iter()
-                .any(|l| l.starts_with(&format!("val {o}.WAVE ")))
-        );
-    }
+    // The landed formants moved the panels' context, so that answer is
+    // whole (a refused op's line among them, as `get` has it).
     // Asked again, still refused: nothing to report.
     assert_eq!(
         ask(&mut f, &format!("ed set {}.WAVE FRMT\n", refused[0])),
@@ -1107,4 +1092,75 @@ fn gen_is_never_zero_and_wraps_past_it() {
     let mut f = Fake::new();
     let got = ask(&mut f, "ed since 1000000000\n");
     assert!(got.starts_with("ERR ed takes "), "{got}");
+}
+
+/// Every ALGO address's `get` line: its bits and its text.
+fn all_lines(f: &mut Fake) -> Vec<(String, String)> {
+    let mut v = Vec::new();
+    for b in algo_blocks() {
+        for s in b.specs() {
+            let a = EdAddr(ParamAddr::new(b, s.id)).to_string();
+            v.push((a.clone(), get_line(f, &a)));
+        }
+    }
+    v
+}
+
+fn bits_of(line: &str) -> &str {
+    // `val <addr> <norm> <stored> "<text>"`: the numbers.
+    line.rsplit_once(" \"").unwrap().0
+}
+
+#[test]
+fn a_variant_change_resends_text_that_changed_under_unchanged_bits() {
+    let mut f = Fake::new();
+    let mut vacuous = true;
+    // Each switch the Sound has: its panel variant changes with the param's
+    // own write, every other param's bits stay.
+    let switches = [
+        (BlockRef::Filter, chimera_engine::params::FilterParams::KIND),
+        (BlockRef::VoiceFx, chimera_core::block::ParamId(0)),
+        (
+            BlockRef::AlgoOp(Op::A),
+            chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
+        ),
+    ];
+    for (block, id) in switches {
+        let spec = ParamAddr::new(block, id).spec().unwrap();
+        let (_, m0) = since(&mut f, 0);
+        let mut m = m0;
+        let mut v = spec.min;
+        while v <= spec.max {
+            let before = all_lines(&mut f);
+            if let Some(mut blk) = f.ui.params_mut().block_mut(block) {
+                blk.set(id, v);
+            }
+            let after = all_lines(&mut f);
+            let (lines, m2) = since(&mut f, m);
+            m = m2;
+            for ((a, x), (_, y)) in before.iter().zip(&after) {
+                if x != y && bits_of(x) == bits_of(y) {
+                    vacuous = false;
+                    assert!(lines.contains(y), "{a}: text {x} -> {y} not resent");
+                }
+            }
+            v += 1.0;
+        }
+    }
+    assert!(!vacuous, "no param's text moved under unchanged bits");
+}
+
+#[test]
+fn no_algo_cell_reads_the_reverb_clock() {
+    // A tempo or fold change moves a text only through a reverb panel cell
+    // (`cell_text::param_text`); the ALGO pages have none, so `since` keeps
+    // no clock in its copy.
+    use chimera_core::ui::view::is_reverb_panel;
+    for b in ALGO_FORMANT_CHAIN.blocks {
+        for def in std::iter::once(b.def).chain(b.sub_pages.iter().copied()) {
+            for i in 0..def.params.len() {
+                assert!(!is_reverb_panel(def, i), "slot {i}");
+            }
+        }
+    }
 }
