@@ -17,6 +17,7 @@ side is `ports.js`; Elm only sees lines and a link state.
 type Link
     = Open
     | Busy
+    | Absent
     | Lost
     | Unsupported
 
@@ -47,6 +48,9 @@ parseLink s =
         "busy" ->
             Busy
 
+        "absent" ->
+            Absent
+
         "unsupported" ->
             Unsupported
 
@@ -54,14 +58,17 @@ parseLink s =
             Lost
 
 
-linkText : String -> Maybe String
-linkText s =
-    case parseLink s of
+linkText : Link -> Maybe String
+linkText l =
+    case l of
         Open ->
             Nothing
 
         Busy ->
             Just "THE PORT IS IN USE (CLOSE chimera-usb.py)"
+
+        Absent ->
+            Just "THE SIMULATOR IS NOT RUNNING (just editor-sim)"
 
         Lost ->
             Just "THE UNIT WAS DISCONNECTED"

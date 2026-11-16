@@ -29,7 +29,7 @@ editor-sim:
 
 # The browser editor's Elm tests
 editor-test:
-    cd editor && npm install --no-audit --no-fund --silent && npx elm-test
+    cd editor && npm install --no-audit --no-fund --silent && npx elm-test && node public/ports.check.js
 
 # The browser editor, optimised, into editor/dist/
 editor-build:

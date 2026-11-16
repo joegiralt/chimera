@@ -25,11 +25,14 @@ suite =
             , p "route" "route \"ENV AMT\" next-slice" (Answer (Route "ENV AMT"))
             , p "get val" "val OP_C.CRSE 0.0634921 4 \"1.00\"" (Answer (Val { addr = Addr "OP_C.CRSE", norm = 0.0634921, stored = 4, text = "1.00" }))
             , p "val with unit" "val FILTER.CUTOFF 1 20000 \"20.0 kHz\"" (Answer (Val { addr = Addr "FILTER.CUTOFF", norm = 1, stored = 20000, text = "20.0 kHz" }))
+            , p "val text with a space and sign" "val PIT.NOTE 0.5 60 \"C4 +12ct\"" (Answer (Val { addr = Addr "PIT.NOTE", norm = 0.5, stored = 60, text = "C4 +12ct" }))
+            , p "val empty text" "val A.B 0 0 \"\"" (Answer (Val { addr = Addr "A.B", norm = 0, stored = 0, text = "" }))
+            , p "val inner quote not before a space" "val A.B 0 0 \"5\" wide\"" (Unknown "val A.B 0 0 \"5\" wide\"")
             , p "val signed text" "val VOICEFX.MIX 1 1 \"+63\"" (Answer (Val { addr = Addr "VOICEFX.MIX", norm = 1, stored = 1, text = "+63" }))
             , p "since part" "part 1 ALGO" (Answer (PartIs 1 "ALGO"))
             , p "since panel" "panel LFO3 CLASSIC" (Answer (Panel { name = "LFO3", variant = "CLASSIC" }))
             , p "since val" "val OUT.PAN 0.5 0 \"C\"" (Answer (Val { addr = Addr "OUT.PAN", norm = 0.5, stored = 0, text = "C" }))
-            , p "queued" "OK queued" (Answer Queued)
+            , p "queued" "OK queued" Queued
             ]
         , describe "terminators"
             [ p "OK" "OK" (Ok_ Nothing)
@@ -39,6 +42,9 @@ suite =
             , p "ERR get" "ERR ed get has no CHORUS.MODE here" (Err_ "ed get has no CHORUS.MODE here")
             , p "ERR busy" "ERR busy" (Err_ "busy")
             , p "ERR not in build" "ERR ed since is not in this build" (Err_ "ed since is not in this build")
+            , p "ERR unterminated quote" "ERR ed set has no \"X here" (Err_ "ed set has no \"X here")
+            , p "ERR leading space" "  ERR busy" (Err_ "busy")
+            , p "ERR alone" "ERR" (Err_ "")
             , p "CR stripped" "OK 3\u{000D}" (Ok_ (Just 3))
             ]
         , describe "garbage is ignorable"
@@ -57,12 +63,27 @@ suite =
                         |> Expect.equal (List.repeat 11 True)
             ]
         , describe "commands"
-            [ test "hello" <| \_ -> Expect.equal "ed hello" (encode Hello)
-            , test "describe" <| \_ -> Expect.equal "ed describe ALGO 3" (encode (Describe "ALGO" 3))
-            , test "get" <| \_ -> Expect.equal "ed get OP_C.CRSE" (encode (Get (Addr "OP_C.CRSE")))
-            , test "set num" <| \_ -> Expect.equal "ed set FILTER.CUTOFF 1234.5" (encode (Set (Addr "FILTER.CUTOFF") (Num 1234.5)))
-            , test "set name" <| \_ -> Expect.equal "ed set FILTER.KIND LADDER" (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))
-            , test "since" <| \_ -> Expect.equal "ed since 7" (encode (Since 7))
+            [ test "hello" <| \_ -> Expect.equal (Just "ed hello") (encode Hello)
+            , test "describe" <| \_ -> Expect.equal (Just "ed describe ALGO 3") (encode (Describe "ALGO" 3))
+            , test "get" <| \_ -> Expect.equal (Just "ed get OP_C.CRSE") (encode (Get (Addr "OP_C.CRSE")))
+            , test "set num" <| \_ -> Expect.equal (Just "ed set FILTER.CUTOFF 1234.5") (encode (Set (Addr "FILTER.CUTOFF") (Num 1234.5)))
+            , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))
+            , test "since" <| \_ -> Expect.equal (Just "ed since 7") (encode (Since 7))
+            , test "refuses what would split or inject" <|
+                \_ ->
+                    [ encode (Get (Addr "A.B\ned hello"))
+                    , encode (Get (Addr "A B"))
+                    , encode (Get (Addr ""))
+                    , encode (Set (Addr "A.B") (Name "X Y"))
+                    , encode (Set (Addr "A.B") (Name "X\u{000D}"))
+                    , encode (Describe "AL GO" 0)
+                    ]
+                        |> Expect.equal (List.repeat 6 Nothing)
+            , test "refuses non-decimal floats" <|
+                \_ ->
+                    [ 0 / 0, 1 / 0, -1 / 0, 1.0e-7, 1.0e21 ]
+                        |> List.map (\n -> encode (Set (Addr "A.B") (Num n)))
+                        |> Expect.equal (List.repeat 5 Nothing)
             ]
         ]
 

@@ -19,12 +19,27 @@ var ChimeraPorts = (function () {
     };
   }
 
-  function drop() {
-    if (link) { try { link.close(); } catch (e) {} link = null; }
+  // Release a serial port in the only order that lets it close: cancel the
+  // reader (ends its read loop), release its lock, close the writer (drains
+  // pending writes), release it, and only then close the port. A port closed
+  // while a stream is still locked rejects, stays open, and the next
+  // requestPort/open fails.
+  async function release(port, reader, writer) {
+    try { await reader.cancel(); } catch (e) {}
+    try { reader.releaseLock(); } catch (e) {}
+    try { await writer.close(); } catch (e) {}
+    try { writer.releaseLock(); } catch (e) {}
+    try { await port.close(); } catch (e) {}
+  }
+
+  async function drop() {
+    var old = link;
+    link = null;
+    if (old) { try { await old.close(); } catch (e) {} }
   }
 
   async function connectSerial() {
-    drop();
+    await drop();
     if (!('serial' in navigator)) { state('unsupported'); return; }
     var port;
     try {
@@ -43,7 +58,7 @@ var ChimeraPorts = (function () {
     var feed = liner(function (l) { app.ports.lineIn.send(l); });
     var mine = {
       write: function (line) { return writer.write(enc.encode(line + '\n')); },
-      close: function () { reader.cancel().catch(function () {}); writer.releaseLock(); port.close().catch(function () {}); },
+      close: function () { return release(port, reader, writer); },
     };
     link = mine;
     state('open');
@@ -57,10 +72,10 @@ var ChimeraPorts = (function () {
     if (link === mine) { link = null; state('lost'); }
   }
 
-  function connectSocket(url) {
-    drop();
+  async function connectSocket(url) {
+    await drop();
     var ws;
-    try { ws = new WebSocket(url); } catch (e) { state('busy'); return; }
+    try { ws = new WebSocket(url); } catch (e) { state('absent'); return; }
     var mine = {
       write: function (line) { ws.send(line); return Promise.resolve(); },
       close: function () { ws.close(); },
@@ -75,15 +90,17 @@ var ChimeraPorts = (function () {
       });
     };
     ws.onclose = function () {
-      if (link === mine) { link = null; state(opened ? 'lost' : 'busy'); }
+      if (link === mine) { link = null; state(opened ? 'lost' : 'absent'); }
     };
   }
 
   function send(line) {
-    if (link) link.write(line).catch(function () { state('lost'); });
+    var l = link;
+    if (l) l.write(line).catch(function () { if (link === l) { link = null; } state('lost'); });
   }
 
   return {
+    release: release,
     attach: function (a) {
       app = a;
       app.ports.connectSerial.subscribe(connectSerial);
@@ -92,3 +109,8 @@ var ChimeraPorts = (function () {
     },
   };
 })();
+
+if (typeof module !== 'undefined') module.exports = ChimeraPorts;
+if (typeof Elm !== 'undefined' && typeof document !== 'undefined') {
+  ChimeraPorts.attach(Elm.Main.init({ node: document.getElementById('app') }));
+}

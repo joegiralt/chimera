@@ -48,36 +48,63 @@ type AnswerLine
     | Route String
     | Val { addr : Addr, norm : Float, stored : Float, text : String }
     | PartIs Int String
-    | Queued
 
 
 type Line
     = Answer AnswerLine
     | Ok_ (Maybe Int)
+    | Queued
     | Err_ String
     | Unknown String
 
 
-encode : Command -> String
+{-| The line to send, or `Nothing` if it could not be one command: an address
+or name with whitespace or a control character would split or inject a second
+command, and a float that is not a plain decimal (NaN, Infinity, `1.0e-7`)
+is not one the unit reads.
+-}
+encode : Command -> Maybe String
 encode c =
     case c of
         Hello ->
-            "ed hello"
+            Just "ed hello"
 
         Describe engine page ->
-            "ed describe " ++ engine ++ " " ++ String.fromInt page
+            word engine |> Maybe.map (\e -> "ed describe " ++ e ++ " " ++ String.fromInt page)
 
         Get (Addr a) ->
-            "ed get " ++ a
+            word a |> Maybe.map (\x -> "ed get " ++ x)
 
         Set (Addr a) (Num n) ->
-            "ed set " ++ a ++ " " ++ String.fromFloat n
+            Maybe.map2 (\x v -> "ed set " ++ x ++ " " ++ v) (word a) (decimal n)
 
         Set (Addr a) (Name n) ->
-            "ed set " ++ a ++ " " ++ n
+            Maybe.map2 (\x v -> "ed set " ++ x ++ " " ++ v) (word a) (word n)
 
         Since n ->
-            "ed since " ++ String.fromInt n
+            Just ("ed since " ++ String.fromInt n)
+
+
+word : String -> Maybe String
+word w =
+    if w /= "" && String.all (\ch -> Char.toCode ch > 32 && Char.toCode ch /= 127) w then
+        Just w
+
+    else
+        Nothing
+
+
+decimal : Float -> Maybe String
+decimal n =
+    let
+        t =
+            String.fromFloat n
+    in
+    if isNaN n || isInfinite n || String.contains "e" t then
+        Nothing
+
+    else
+        Just t
 
 
 parse : String -> Line
@@ -85,25 +112,32 @@ parse raw =
     let
         line =
             stripCr raw
+
+        trimmed =
+            String.trimLeft line
     in
-    case tokens line of
-        Just ("OK" :: []) ->
-            Ok_ Nothing
+    if trimmed == "ERR" || String.startsWith "ERR " trimmed then
+        -- By prefix, not tokens: a refusal's text may hold a stray quote.
+        Err_ (String.trim (String.dropLeft 3 trimmed))
 
-        Just [ "OK", "queued" ] ->
-            Answer Queued
+    else if trimmed == "OK" || String.startsWith "OK " trimmed then
+        case String.trim (String.dropLeft 2 trimmed) of
+            "" ->
+                Ok_ Nothing
 
-        Just [ "OK", m ] ->
-            nat m |> Maybe.map (Just >> Ok_) |> Maybe.withDefault (Unknown line)
+            "queued" ->
+                Queued
 
-        Just ("ERR" :: _) ->
-            Err_ (String.dropLeft 4 line)
+            m ->
+                nat m |> Maybe.map (Just >> Ok_) |> Maybe.withDefault (Unknown line)
 
-        Just ts ->
-            answer ts |> Maybe.map Answer |> Maybe.withDefault (Unknown line)
+    else
+        case tokens line of
+            Just ts ->
+                answer ts |> Maybe.map Answer |> Maybe.withDefault (Unknown line)
 
-        Nothing ->
-            Unknown line
+            Nothing ->
+                Unknown line
 
 
 stripCr : String -> String
