@@ -2,7 +2,7 @@
 
 **Goal:** a Chrome/Edge page that connects to Chimera over USB (or to the desktop simulator) and shows and edits every ALGO parameter live, both ways.
 
-**Architecture:** new `ed` console commands in `chimera-core/src/console/ed/` (pure, host-tested; in bank 2 on the firmware) give the editor a static schema (`describe`), values with the box's own text (`get`), edits through the knob path (`set`) and pushed changes (`watch`). A WebSocket bridge in `chimera-utils` exposes the simulator's TCP console to a browser. The editor is Elm with a small JS port shim for Web Serial and WebSocket.
+**Architecture:** new `ed` console commands in `chimera-core/src/console/ed/` (pure, host-tested; in bank 2 on the firmware) give the editor a static schema (`describe`), values with the box's own text (`get`), edits through the knob path (`set`) and pulled changes (`since`; owner 2026-11-16, replacing pushed `watch`). A WebSocket bridge in `chimera-utils` exposes the simulator's TCP console to a browser. The editor is Elm with a small JS port shim for Web Serial and WebSocket.
 
 **Tech Stack:** Rust (no_std core, nightly), Elm 0.19.1, elm-test, node 22 (tooling only), tungstenite (host bridge only).
 
@@ -25,18 +25,19 @@
 - Addresses are `<disk_ident>.<ident>`, never labels or numeric ids.
 - `ed set` goes through the box's own edit path (`part_page::edit` with `Edit::To`, via `UiState`), so smoothing (ADR 0112) applies.
 - Value text is the box's own text: one shared function, used by both the renderer and `ed`.
-- Unit→editor lines that `watch` pushes carry a sequence number; there's no checksum (USB bulk transfers are CRC-checked).
+- The unit never pushes: it only answers. The editor pulls with `ed since <n>`; a stale `<n>` gets everything. No sequence numbers, no checksum (USB bulk transfers are CRC-checked).
+- The editor never guesses: it shows only what the unit last answered (a pending mark while an edit is unconfirmed).
 - The editor follows the Part selected on the box; a non-ALGO Part shows `PART 2 PLAYS VA. THE EDITOR EDITS ALGO FOR NOW.`
 - Elm only for the editor's logic and view; JS only in the port shim. Chrome/Edge (Web Serial).
 - Builds: `CARGO_BUILD_JOBS=10 nice -n 15 …`; targeted tests in a task, `just check` before each firmware task's commit.
 - Commits: terse, no type prefix; never stage `chimera.bin` or `docs/chimera-ui-ux-spec.md`; no git stash.
 
 ## Review Focus
-1. **A knob turned on the box while the editor's own `set` is in flight**: the editor ends on the box's value, never its stale optimistic one. Pinned in Task 9 (`echo_wins_over_pending`).
-2. **A Sound load on the box (or a Part switch, or an engine change) while watching**: the editor redraws from fresh values, not from a mix of old and new. Pinned in Task 5 (`watch_reports_load_part_and_engine`) and Task 9 (`load_resyncs_page`).
+1. **A knob turned on the box while the editor's own `set` is pending**: the editor shows the box's value. Pinned in Task 9 (`shows_only_the_units_value`).
+2. **A Sound load on the box (or a Part switch, or an engine change)**: the next `since` answer carries every value that differs, so the editor never shows a mix. Pinned in Task 5 (`since_reports_load_part_and_engine`) and Task 9 (`part_change_follows_the_box`).
 3. **The USB cable is pulled or the port is busy (`chimera-usb.py` holds it)**: the editor says so plainly and can reconnect, never hangs. Pinned in Task 8 (`port_busy_and_lost_are_reported`).
 4. **`set` out of range, on a choice by name, or on a param the current variant hides**: clamped and quantized as a knob would; an unknown address or value is `ERR`, never a panic. Pinned in Task 4 (`set_clamps_quantizes_and_refuses`).
-5. **A knob turned fast while watching**: pushes are coalesced to at most one line per address per UI frame, and audio never overruns. Pinned in Task 5 (`watch_coalesces_a_fast_turn`) and in the unit gate.
+5. **A knob turned fast, or a lost answer**: a fast turn is one `val` per address per `since`; a lost answer is healed by the next `since` answering everything; audio never overruns. Pinned in Task 5 (`since_coalesces_a_fast_turn`, `stale_number_answers_everything`) and in the unit gate.
 
 ---
 
@@ -48,7 +49,7 @@
 - Test: `chimera-core/tests/console_ed_test.rs` (reuse `console_answer_test.rs`'s `Sink`/`Fake`/`ask` pattern; extract them to `tests/common/console_fake.rs` if both need them)
 
 **Interfaces:**
-- Produces: `pub struct EdAddr(pub ParamAddr)`, with `EdAddr::parse(&[u8]) -> Option<EdAddr>` (`<disk_ident>.<ident>`, the ident matched against `BlockRef::specs()`) and `impl fmt::Display` (the same text back); `pub enum EdArg { Hello, Describe { engine: EngineType, page: u8 }, Get(EdAddr), Set(EdAddr, EdValue), Watch, Unwatch }`; `pub enum EdValue { Num(f32), Name(Word) }`; `pub fn answer(arg: EdArg, unit: &mut impl Unit, out: &mut impl Out) -> Result<(), Stalled>`.
+- Produces: `pub struct EdAddr(pub ParamAddr)`, with `EdAddr::parse(&[u8]) -> Option<EdAddr>` (`<disk_ident>.<ident>`, the ident matched against `BlockRef::specs()`) and `impl fmt::Display` (the same text back); `pub enum EdArg { Hello, Describe { engine: EngineType, page: u8 }, Get(EdAddr), Set(EdAddr, EdValue), Since(Gen) }` (Task 5 replaces Task 1's `Watch, Unwatch` with `Since`); `pub enum EdValue { Num(f32), Name(Word) }`; `pub fn answer(arg: EdArg, unit: &mut impl Unit, out: &mut impl Out) -> Result<(), Stalled>`.
 
 - [ ] **Step 1: Write failing tests**: `addr_round_trips_every_algo_param` (every `ParamAddr` of ALGO's blocks parses back from its own `Display`); `addr_refuses_unknown_block_and_ident` (`OP_G.CRSE`, `OP_A.NOPE`, `CRSE`, `OP_A.` → `None`); `hello_reports_protocol_build_part_engine` (`ask(&mut f, "ed hello")` yields `ed hello 2 <build> part 1 ALGO` then `OK`); `ed_without_sub_is_refused` (`ERR ed takes …`).
 - [ ] **Step 2:** run `cargo test -p chimera-core --test console_ed_test`; expect them to fail to compile or to fail.
@@ -106,7 +107,7 @@
 - Test: `chimera-core/tests/console_ed_test.rs`
 
 **Interfaces:**
-- Produces: `ed set <addr> <number|"name">` → `OK queued` (applied on the next UI pass; the value comes back through `watch` or a later `get`). `EdQueue::push(addr, v) -> bool` (false when full → `ERR busy`); `EdQueue::apply(&mut self, ui: &mut UiState)`.
+- Produces: `ed set <addr> <number|"name">` → `OK queued` (applied on the next UI pass; the value comes back through `since` or a later `get`). `EdQueue::push(addr, v) -> bool` (false when full → `ERR busy`); `EdQueue::apply(&mut self, ui: &mut UiState)`.
 
 - [ ] **Step 1: Write failing tests**:
   - `set_then_get_round_trips` for every continuous ALGO param at min, max and mid.
@@ -119,29 +120,34 @@
 - [ ] **Step 4:** the tests pass; the goldens are bit-identical.
 - [ ] **Step 5:** `just check`, then commit `Console: ed set through the knob path`.
 
-### Task 5: `ed watch` — pushed changes
+### Task 5: `ed since` — the editor pulls changes
+
+*(Owner 2026-11-16: replaces the pushed `ed watch`. The stopped push attempt is on branch `editor-watch-wip`; its snapshot and variant reporting may be reused, its push machinery not.)*
 
 **Files:**
-- Create: `chimera-core/src/console/ed/watch.rs` (`EdWatch`: last-sent values for the followed Part, plus the last `Stamp`, `Loads`, `active_part`, engine and variants; `fn pending(&mut self, ui: &UiState, out: &mut impl Out) -> Result<(), Stalled>`)
-- Modify: the `Unit` trait (`fn ed_watch(&mut self) -> Option<&mut EdWatch>`); both shells call a new push step on every frame or UI lap when no request came (desktop `console.rs` `service` :55; firmware `usb.rs` `service` :416, after `serial.flush()`)
-- Test: `chimera-core/tests/console_ed_test.rs`, `chimera-desktop/src/console.rs` tests
+- Create: `chimera-core/src/console/ed/since.rs` (`EdSince`: the last-reported copy — followed Part, engine, panel variants, every value of the ALGO schema at f32 bits — and its `Gen`)
+- Modify: `EdArg` (`Watch`/`Unwatch` → `Since(Gen)`; `ed watch` becomes an unknown command); the `Unit` trait gives the door the `EdSince` alongside the UI (as `ed()` does for `EdQueue`); the door (bump `ED_MAGIC` to 0xB2C0_0ED3 if its layout or signatures change)
+- Test: `chimera-core/tests/console_ed_test.rs`
 
 **Interfaces:**
-- Produces pushed lines, each starting `@<seq>` (u16, wrapping) so they never look like an answer's `OK`/`ERR`: `@<seq> val <addr> <norm> <stored> "<text>"`; `@<seq> panel <name> <variant>`; `@<seq> part <n> <ENGINE>`; `@<seq> load` (the Sound was replaced; the editor re-reads). `ed watch` / `ed unwatch` answer `OK`. A disconnect ends watching.
+- Produces: `ed since <n>` → zero or more of `part <n> <ENGINE>`, `panel <name> <variant>`, `val <addr> <norm> <stored> "<text>"` (the same text path as `ed get`), then `OK <m>`. `Gen` is a u32 newtype that is never 0 (0 means "I have nothing", so the editor's first ask is `ed since 0`); it advances on every `since` answer. If `<n>` ≠ the saved `Gen`, everything is answered. A non-ALGO Part answers only its `part` line.
 
 - [ ] **Step 1: Write failing tests**:
-  - `watch_reports_a_knob_turn` (via `Hands`).
-  - `watch_reports_set_cc_and_load`: an `ed set`, a MIDI CC (`cc_step`) and a Sound load each produce lines; a load produces `@n load` and then the full set of changed values.
-  - `watch_reports_load_part_and_engine`: `key B2` → `@n part 2 VA`.
-  - `watch_reports_variant_change`: KIND → `@n panel FILTER LADDER`.
-  - `watch_coalesces_a_fast_turn`: 20 detents in one frame → one `val` line for that address.
-  - `seq_increments_and_wraps`.
-  - `pushes_never_split_an_answer`: a request answered in the same lap as pending pushes yields the whole answer first, then pushes.
-  - `watch_diffs_only_on_stamp_change` (cost: no value reads when the `Stamp` hasn't moved).
+  - `since_zero_answers_everything`: every schema address once, the Part, the engine and every panel variant, then `OK <m>`, m ≠ 0.
+  - `since_current_with_no_change_is_just_ok`.
+  - `since_reports_knob_cc_load_and_set`: a knob turn (via `Hands`), a MIDI CC (`cc_step`), a Sound load and an applied `ed set` each show up as `val` lines in the next answer, and nothing else.
+  - `since_reports_load_part_and_engine`: `key B2` → `part 2 VA`.
+  - `since_reports_variant_change`: KIND → `panel FILTER LADDER`.
+  - `since_coalesces_a_fast_turn`: 20 detents between two asks → one `val` line for that address.
+  - `stale_number_answers_everything`: an answer the editor never saw (ask with the older number) → everything again.
+  - `refused_set_reports_nothing`: an over-budget formant `set` that the writer refuses leaves no `val` line.
+  - `full_answer_fits_the_answer_clock`: the full answer is under `ANSWER_BYTES_MAX`.
+  - `ed_watch_is_unknown`.
+  - From Task 4's review: `set_glides_like_a_knob` must fail if smoothing were bypassed (compare the published move with a knob turn's, or show a ramp, not a jump); `set_queue_full_is_busy` asserts the real capacity (16, an exported const).
 - [ ] **Step 2:** run them; they fail.
-- [ ] **Step 3: Implement.** The diff runs only when `Part.sound`'s `Stamp`, `loads()`, `active_part` or the engine changed. Values are compared at f32 bits.
-- [ ] **Step 4:** the tests pass; `chimera-usb.py`'s tests (`tools/test_chimera_usb.py`) still pass (it never sends `ed watch`).
-- [ ] **Step 5:** `just check`, then commit `Console: ed watch pushes changes`.
+- [ ] **Step 3: Implement.** Compare every value each ask (no `Stamp` shortcut: real values, not write paths). Runs only in the console's answer path, never in audio.
+- [ ] **Step 4:** the tests pass; goldens bit-identical; `tools/test_chimera_usb.py` passes.
+- [ ] **Step 5:** `just check`, then commit `Console: ed since, the editor pulls`.
 
 ### Task 6: `ed` in bank 2
 
@@ -183,28 +189,27 @@
 **Interfaces:**
 - Produces:
   - `ports.js`: `connectSerial()` (`navigator.serial.requestPort({filters:[{usbVendorId:0x0483, usbProductId:0x5740}]})`, 115200 8N1, line-split UTF-8), `connectSocket(url)`, `send(line)`. Ports in: `lineIn : (String -> msg) -> Sub msg`, `linkState : (String -> msg) -> Sub msg` with `"open" | "busy" | "lost" | "unsupported"`.
-  - `Protocol.elm`: `type Line = Answer AnswerLine | Push Int PushLine | Ok_ | Err_ String`; `parse : String -> Line`; `encode : Command -> String`, where `type Command = Hello | Describe String Int | Get Addr | Set Addr Value | Watch | Unwatch`.
+  - `Protocol.elm`: `type Line = Answer AnswerLine | Ok_ (Maybe Int) | Err_ String`; `parse : String -> Line`; `encode : Command -> String`, where `type Command = Hello | Describe String Int | Get Addr | Set Addr Value | Since Int`.
 
-- [ ] **Step 1: Write failing tests**: `ProtocolTest`: every line form from Tasks 1–5 parses (use lines copied from the Rust tests' expected output), and garbage parses to an `Err_`-like `Unknown` that is ignored, never crashes; `TransportTest.port_busy_and_lost_are_reported`: the `busy`/`lost`/`unsupported` link states map to the user texts `THE PORT IS IN USE (CLOSE chimera-usb.py)`, `THE UNIT WAS DISCONNECTED`, `USE CHROME OR EDGE`.
+- [ ] **Step 1: Write failing tests**: `ProtocolTest`: every line form from Tasks 1–5 parses (including `OK <m>`) (use lines copied from the Rust tests' expected output), and garbage parses to an `Err_`-like `Unknown` that is ignored, never crashes; `TransportTest.port_busy_and_lost_are_reported`: the `busy`/`lost`/`unsupported` link states map to the user texts `THE PORT IS IN USE (CLOSE chimera-usb.py)`, `THE UNIT WAS DISCONNECTED`, `USE CHROME OR EDGE`.
 - [ ] **Step 2:** `just editor-test` fails.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4:** `just editor-test` passes; `just editor-build` produces `editor/dist/index.html`.
 - [ ] **Step 5:** commit `Editor: scaffold, port shim and protocol`.
 
-### Task 9: editor model — the unit's state plus edits in flight
+### Task 9: editor model — only the unit's state
 
 **Files:**
 - Create: `editor/src/Model.elm`, `editor/src/Schema.elm`, `editor/tests/ModelTest.elm`
 
 **Interfaces:**
-- Produces: `type alias Model = { link : Link, schema : Schema, values : Dict String Value, pending : Dict String Value, part : Int, engine : String, variants : Dict String String, lastSeq : Maybe Int }`; `update : Msg -> Model -> ( Model, Cmd Msg )`. On connect it runs `ed hello`, then `ed describe ALGO 0..n-1`, then `ed get` for each address on the shown page, then `ed watch`.
+- Produces: `type alias Model = { link : Link, schema : Schema, values : Dict String Value, pending : Dict String Time.Posix, part : Int, engine : String, variants : Dict String String, gen : Int }`; `update : Msg -> Model -> ( Model, Cmd Msg )`. On connect it runs `ed hello`, then `ed describe ALGO 0..n-1`, then `ed since 0`, then `ed since <gen>` every 33 ms, one request in flight at a time.
 
 - [ ] **Step 1: Write failing tests**:
-  - `edit_is_optimistic_then_confirmed`.
-  - `echo_wins_over_pending`: a pushed `val` for an address with a pending edit replaces it, even if it differs.
-  - `refusal_reverts`.
-  - `seq_gap_resyncs` (a skipped `@n` re-gets the page).
-  - `load_resyncs_page`.
+  - `shows_only_the_units_value`: after an edit, the shown value is the unit's until a `since` answer changes it; the control is marked pending.
+  - `pending_clears_on_report_or_timeout`: on a `val` for that address, or after 250 ms with none.
+  - `since_answer_replaces_values_and_gen`.
+  - `one_since_in_flight`: no second `since` before the first answer.
   - `part_change_follows_the_box`.
   - `non_algo_part_shows_message` (exact text `PART 2 PLAYS VA. THE EDITOR EDITS ALGO FOR NOW.`).
 - [ ] **Step 2:** the tests fail.
@@ -232,7 +237,7 @@
 **Files:**
 - Create: `editor/e2e/sim.mjs` (node 22's built-in `WebSocket`, no deps), `Justfile` `editor-e2e` (starts the simulator headless if `chimera-desktop` supports it, or documents `just editor-sim` first; then runs the script)
 
-- [ ] **Step 1: Write the script**: connect to the bridge; `ed hello`; describe every page; for every `param`, `ed set` to its max then min and `ed get` each back; turn a simulator knob with `key`/`turn` (the console's `Hands`) and see an `@n val`; switch Part with `key B2` and see `@n part 2 …`; load a Sound via the browser keys and see `@n load`. Exit non-zero on any mismatch.
+- [ ] **Step 1: Write the script**: connect to the bridge; `ed hello`; describe every page; for every `param`, `ed set` to its max then min and `ed get` each back; turn a simulator knob with `key`/`turn` (the console's `Hands`) and see its `val` in the next `ed since`; switch Part with `key B2` and see `part 2 …`; load a Sound via the browser keys and see the changed values; ask with a stale number and get everything. Exit non-zero on any mismatch.
 - [ ] **Step 2:** `just editor-e2e` passes against the simulator.
 - [ ] **Step 3: Manual browser pass (controller):** `just editor-sim`, open `editor/dist/index.html` in Chrome, connect to `ws://127.0.0.1:7342`, sweep every control, and turn knobs in the simulator; record any mismatch as a fix.
 - [ ] **Step 4:** commit `Editor: end-to-end run against the simulator`.

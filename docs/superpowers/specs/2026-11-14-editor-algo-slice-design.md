@@ -1,6 +1,6 @@
 # Browser editor, slice 1: ALGO on one screen
 
-**Status:** draft for the owner's approval (2026-11-14)
+**Status:** approved 2026-11-14; changed 2026-11-16 (owner): the editor pulls state with `ed since`, replacing the pushed `ed watch`.
 
 ## Intent
 
@@ -58,25 +58,25 @@ These are new console commands. They follow the existing console's style: text l
 - **Addresses (my call):** a parameter is addressed by a frozen block token plus its `ident`, e.g. `OP3.CRSE`, `ENV2.ATK`, `FLT.CUT`. Idents are only unique within a block, so the block part needs the same discipline: block tokens are explicit literals pinned by a fixture test, exactly as `(id, ident)` already is.
 - **`ed hello`:** the protocol version, the firmware build, the Part selected on the box and its engine. If the editor doesn't support the unit's protocol version, it says "update the editor" or "update the unit". It never runs half-working.
 - **`ed describe <engine>` gives the full, static schema (my call):** every parameter any of that engine's pages can show, in every state: every filter type's, every ENV MODE/FORM's, every operator kind's (formant FRMT/BW/SKIRT included), every FX TYPE's. Each comes with its label, kind (continuous/choice/toggle), min, max, step, default and option names, grouped by page and panel. The schema never changes while connected, so the layout is laid out once.
-- **What the box shows right now is state, not schema (my call):** `watch` reports which panel variant each switching page shows (`FLT shows LADDER`, `OP3 shows FORMANT`, `ENV1 shows ADSR`) and which operator is selected. The editor shows the matching panel, the way the box does. The coverage test loops over every variant: every parameter in the schema is placed in some variant of the layout.
+- **What the box shows right now is state, not schema (my call):** `ed since` reports which panel variant each switching page shows (`FLT shows LADDER`, `OP3 shows FORMANT`, `ENV1 shows ADSR`) and which operator is selected. The editor shows the matching panel, the way the box does. The coverage test loops over every variant: every parameter in the schema is placed in some variant of the layout.
 - **`ed get <addr>` / `ed set <addr> <value>`:** read or write one parameter of the Part the editor follows. A `set` goes through the same path a knob turn takes on the box (ADR 0112 smoothing, `Part` knob path), so it can never snap or zipper. The answer carries the value and its text as the box formats it (`ValFmt`), so the editor never re-implements formatting.
-- **`ed watch`:** the unit pushes a line for every parameter that changes on the followed Part from any source (knob, MIDI, the editor itself, loading a Sound), with value and text, plus panel-variant changes, a change of selected Part, and a change of engine. It runs until `ed unwatch` or disconnect. Changes are coalesced per UI frame so a turning knob can't flood the link.
+- **`ed since <n>` (owner, 2026-11-16):** the editor pulls; the unit never pushes. The editor asks about 30 times a second, one request at a time, with the number of the last answer it got. The unit keeps one copy of what it last reported (the followed Part, its engine, panel variants and every value) and that answer's number. If `<n>` matches, it compares the live Sound with the copy, at f32 bits, and answers only what differs; if not (the editor's first ask, or it missed an answer), it answers everything. Either way it saves the copy and ends with `OK <m>`, the new number. Nothing changed is just `OK <m>`. It compares real values rather than trusting each write path to say it wrote, so a knob, MIDI, a Sound load, the editor's own `set` or any future source is caught the same way.
 - **Which Part (my call):** the editor follows the Part selected on the box (live mirror: the unit is the instrument). Changing Part on the box changes it in the editor; the editor also has Part buttons that select the Part on the box, as B1–B6 do. A Part that isn't ALGO shows a plain screen in slice 1: "PART 2 PLAYS VA. THE EDITOR EDITS ALGO FOR NOW."
-- **Integrity (my call):** every unit-to-editor line carries a sequence number, so a dropped line is noticed and the editor resyncs with fresh `ed get`s. No checksum: USB bulk transfers are already CRC-checked by the hardware, so a line arrives whole or not at all. Unknown commands and malformed arguments are refused with `ERR`.
+- **Integrity:** there are no pushes, so no sequence numbers or gap detection: a lost answer just means the next `ed since` carries an old number and gets everything again. No checksum: USB bulk transfers are already CRC-checked by the hardware, so a line arrives whole or not at all. Unknown commands and malformed arguments are refused with `ERR`. The unit owns the state and the editor holds only its last answer, so the two can't drift; this replaces a periodic hash check (considered 2026-11-16).
 
 ### The unit side
-- The describe, get, set and watch handlers live in `chimera-core`'s console module (pure, host-tested), behind bank-2 doors on the firmware (bank 1 frozen). Only door stubs touch bank 1.
+- The describe, get, set and since handlers live in `chimera-core`'s console module (pure, host-tested), behind bank-2 doors on the firmware (bank 1 frozen). Only door stubs touch bank 1.
 - Text formatting reuses the box's own `ValFmt`, so a value reads identically on the box and in the editor.
 
 ### The editor side
 - **Elm**, all the way, with a thin JavaScript port shim for Web Serial and WebSocket (Elm can't call them directly).
-- The Elm model is "the last state the unit reported + edits in flight". `update` sends a `set` and shows the change optimistically until the unit's echo confirms it, and a refused edit snaps back to the unit's value.
+- The Elm model is the last state the unit reported, nothing else. The editor never guesses: an edit sends a `set`, and the control is marked pending (the slider follows the mouse while dragging) but always shows the unit's value and text. Pending clears when an `ed since` answer reports that address, or after 250 ms with no report (a refused or no-op set).
 - **The look comes from the editor, the facts from the unit.** The ALGO panel follows mockup v10: the Prophet-6 grid, DX touches, the algorithm chart, operator rows, envelopes as sliders, CUTOFF as the hero knob. It places controls by `ident`. If the unit describes a parameter the layout doesn't place, the editor shows it in a plain "unplaced" strip and never hides it. A test fails if any `ident` is unplaced for the current firmware.
 - **Glyphs** (algorithm chart, envelope and wave screens) are drawn by the firmware's own Rust glyph code compiled to WebAssembly and called through the port shim, so they match the box (owner, 2026-11-14).
 - **Hosting:** a static site on GitHub Pages, from the public `chimera-releases` repo, because a private repo's Pages needs a paid plan.
 
 ### Testing
-- **Firmware (host):** describe covers every ALGO cell on every page; `set` then `get` round-trips through the knob path; `watch` reports a knob turn, a MIDI CC and a Sound load; malformed lines are refused; bank-1 size delta reported with an ADR 0251 line.
+- **Firmware (host):** describe covers every ALGO cell on every page; `set` then `get` round-trips through the knob path; `ed since` reports a knob turn, a MIDI CC, a Sound load and the editor's own `set`, answers everything to a stale number, and a full answer fits the answer clock; malformed lines are refused; bank-1 size delta reported with an ADR 0251 line.
 - **Editor:** Elm unit tests on the model (echo confirms, refusal reverts, resync); an end-to-end run against `chimera-desktop` (connect, change every ALGO parameter, see each reflected in the simulator's state, turn a simulated knob and see the editor follow).
 - **Unit gate:** the same end-to-end run against the PreenFM3 over USB, with audio recorded while sweeping parameters, and no overrun or glitch.
 
