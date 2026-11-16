@@ -29,11 +29,11 @@ editor-sim:
 
 # The browser editor's Elm tests
 editor-test:
-    cd editor && npm install --no-audit --no-fund --silent && npx elm-test && node public/ports.check.js
+    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && node public/ports.check.js
 
 # The browser editor, optimised, into editor/dist/
 editor-build:
-    cd editor && mkdir -p dist && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js dist/
+    cd editor && mkdir -p dist && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/style.css dist/
 
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes
