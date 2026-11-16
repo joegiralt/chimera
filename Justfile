@@ -21,8 +21,10 @@ editor-sim:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build -q --profile utils -p chimera-utils
-    trap 'kill 0' EXIT
     {{utils}} ed-bridge &
+    bridge=$!
+    # cargo run's child is the bridge: take both, never the whole group.
+    trap 'pkill -P $bridge || true; kill $bridge 2>/dev/null || true' EXIT
     cargo run -p chimera-desktop
 
 # TAPE's listening rig (spec § 9): each model on each source into

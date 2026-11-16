@@ -13,6 +13,8 @@ use tungstenite::{Message, WebSocket};
 const LISTEN: &str = "127.0.0.1:7342";
 const CONSOLE: &str = "127.0.0.1:7341";
 /// How long the socket's reader waits before looking at the console's lines.
+/// How long a browser has to finish its upgrade request.
+const HANDSHAKE: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(10);
 
 pub fn run(args: &[String]) -> Result<(), String> {
@@ -43,14 +45,16 @@ pub fn serve(listener: TcpListener, console: &str) {
         }
         let console = console.to_owned();
         std::thread::spawn(move || {
-            if let Err(e) = session(stream, &console) {
+            if let Err(e) = session(&stream, &console) {
                 eprintln!("ed-bridge: {e}");
             }
+            // `current` keeps a clone open: close the socket whatever ended the session.
+            let _ = stream.shutdown(Shutdown::Both);
         });
     }
 }
 
-fn session(stream: TcpStream, console: &str) -> Result<(), String> {
+fn session(stream: &TcpStream, console: &str) -> Result<(), String> {
     let to_console = TcpStream::connect(console).map_err(|e| format!("{console}: {e}"))?;
     let from_console = to_console.try_clone().map_err(|e| e.to_string())?;
     let (lines, rx) = mpsc::channel::<String>();
@@ -62,6 +66,7 @@ fn session(stream: TcpStream, console: &str) -> Result<(), String> {
             }
         }
     });
+    let stream = stream.try_clone().map_err(|e| e.to_string())?;
     let result = bridge(stream, &to_console, &rx);
     let _ = to_console.shutdown(Shutdown::Both);
     result
@@ -72,14 +77,23 @@ fn bridge(
     mut console: &TcpStream,
     rx: &mpsc::Receiver<String>,
 ) -> Result<(), String> {
+    // The handshake blocks (a slow client gets a while); only then poll.
     stream
-        .set_read_timeout(Some(POLL))
+        .set_read_timeout(Some(HANDSHAKE))
         .map_err(|e| e.to_string())?;
     let mut ws: WebSocket<TcpStream> = tungstenite::accept(stream).map_err(|e| e.to_string())?;
+    ws.get_ref()
+        .set_read_timeout(Some(POLL))
+        .map_err(|e| e.to_string())?;
     loop {
         match ws.read() {
             Ok(Message::Text(t)) => {
-                let line = format!("{}\n", t.as_str().trim_end_matches(['\r', '\n']));
+                let line = t.as_str().trim_end_matches(['\r', '\n']);
+                // One message, one command: an embedded newline is dropped.
+                if line.contains(['\r', '\n']) {
+                    continue;
+                }
+                let line = format!("{line}\n");
                 console
                     .write_all(line.as_bytes())
                     .map_err(|e| e.to_string())?;
