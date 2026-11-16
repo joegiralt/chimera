@@ -5,6 +5,7 @@ module Protocol exposing
     , Kind(..)
     , Line(..)
     , Value(..)
+    , addrKey
     , encode
     , parse
     )
@@ -13,11 +14,18 @@ module Protocol exposing
 Parsing never fails: a line that isn't understood is `Unknown` and is ignored.
 -}
 
+import Unit exposing (Gen)
+
 
 {-| A parameter address, `OP3.CRSE`. The unit's own text, opaque here.
 -}
 type Addr
     = Addr String
+
+
+addrKey : Addr -> String
+addrKey (Addr a) =
+    a
 
 
 type Value
@@ -36,7 +44,7 @@ type Command
     | Describe String Int
     | Get Addr
     | Set Addr Value
-    | Since Int
+    | Since (Maybe Gen)
 
 
 type AnswerLine
@@ -81,8 +89,8 @@ encode c =
         Set (Addr a) (Name n) ->
             Maybe.map2 (\x v -> "ed set " ++ x ++ " " ++ v) (word a) (word n)
 
-        Since n ->
-            Just ("ed since " ++ String.fromInt n)
+        Since held ->
+            Just ("ed since " ++ String.fromInt (held |> Maybe.map Unit.genToInt |> Maybe.withDefault 0))
 
 
 word : String -> Maybe String

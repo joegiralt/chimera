@@ -1,0 +1,402 @@
+module Model exposing
+    ( Model
+    , Msg(..)
+    , Reading
+    , init
+    , isPending
+    , notice
+    , shown
+    , step
+    , subscriptions
+    , update
+    )
+
+{-| Only the unit's state: what it last reported, and which edits wait to be
+confirmed. The editor never guesses a value; a control always shows the unit's.
+
+`step` is the pure core (messages in, commands out); `update` only sends them.
+
+-}
+
+import Dict exposing (Dict)
+import Protocol exposing (Addr, AnswerLine(..), Command(..), Line(..), Value, addrKey, encode, parse)
+import Schema exposing (Schema)
+import Time
+import Transport exposing (Link(..))
+import Unit exposing (Engine(..), Gen, Part)
+
+
+{-| One value as the unit reported it: its text is the box's own.
+-}
+type alias Reading =
+    { norm : Float, stored : Float, text : String }
+
+
+{-| Where the connect sequence is. One request is in flight at a time.
+-}
+type Stage
+    = Greeting
+    | Describing Int
+    | Following
+    | Halted Why
+
+
+type Why
+    = UpdateEditor
+    | UpdateUnit
+    | Refused String
+
+
+type alias Model =
+    { link : Maybe Link
+    , schema : Schema
+    , values : Dict String Reading
+    , pending : Dict String Time.Posix
+    , part : Maybe Part
+    , engine : Maybe Engine
+    , variants : Dict String String
+    , gen : Maybe Gen
+    , stage : Stage
+    , asked : Maybe Time.Posix
+    , now : Time.Posix
+    }
+
+
+type Msg
+    = LinkChanged Link
+    | Line String
+    | Tick Time.Posix
+    | Edit Addr Value
+    | Pick Addr Int
+    | ConnectSerial
+    | ConnectSocket
+
+
+{-| The console protocol this editor speaks.
+-}
+supported : Int
+supported =
+    2
+
+
+{-| A request unanswered this long is given up on: the slot frees and the
+same ask goes out again (a `since` with the last number we did get, so a
+late answer cannot desync us).
+-}
+answerTimeoutMs : Int
+answerTimeoutMs =
+    1000
+
+
+pendingMs : Int
+pendingMs =
+    250
+
+
+pollMs : Float
+pollMs =
+    33
+
+
+init : Model
+init =
+    { link = Nothing
+    , schema = Schema.empty
+    , values = Dict.empty
+    , pending = Dict.empty
+    , part = Nothing
+    , engine = Nothing
+    , variants = Dict.empty
+    , gen = Nothing
+    , stage = Greeting
+    , asked = Nothing
+    , now = Time.millisToPosix 0
+    }
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.batch
+        [ Transport.lineIn Line
+        , Transport.linkState (Transport.parseLink >> LinkChanged)
+        , Time.every pollMs Tick
+        ]
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        ConnectSerial ->
+            ( model, Transport.connectSerial () )
+
+        ConnectSocket ->
+            ( model, Transport.connectSocket "ws://127.0.0.1:7342" )
+
+        _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+
+send : Command -> Cmd msg
+send c =
+    encode c |> Maybe.map Transport.send |> Maybe.withDefault Cmd.none
+
+
+{-| What to tell the user instead of the editor, if anything.
+-}
+notice : Model -> Maybe String
+notice m =
+    case m.link of
+        Just l ->
+            if l /= Open then
+                Transport.linkText l
+
+            else
+                stageNotice m
+
+        Nothing ->
+            Nothing
+
+
+stageNotice : Model -> Maybe String
+stageNotice m =
+    case m.stage of
+        Halted UpdateEditor ->
+            Just "UPDATE THE EDITOR"
+
+        Halted UpdateUnit ->
+            Just "UPDATE THE UNIT"
+
+        Halted (Refused t) ->
+            Just ("THE UNIT REFUSED: " ++ t)
+
+        _ ->
+            case ( m.part, m.engine ) of
+                ( Just p, Just e ) ->
+                    if e /= Algo then
+                        Just ("PART " ++ String.fromInt (Unit.partNumber p) ++ " PLAYS " ++ Unit.engineName e ++ ". THE EDITOR EDITS ALGO FOR NOW.")
+
+                    else
+                        Nothing
+
+                _ ->
+                    Nothing
+
+
+shown : Addr -> Model -> Maybe Reading
+shown a m =
+    Dict.get (addrKey a) m.values
+
+
+isPending : Addr -> Model -> Bool
+isPending a m =
+    Dict.member (addrKey a) m.pending
+
+
+step : Msg -> Model -> ( Model, List Command )
+step msg m =
+    case msg of
+        LinkChanged l ->
+            if l == Open then
+                ( { init | link = Just Open, now = m.now }, [] )
+
+            else
+                ( { m | link = Just l, stage = Greeting, asked = Nothing }, [] )
+
+        Tick t ->
+            tick t m
+
+        Line raw ->
+            ( line (parse raw) m, [] )
+
+        Edit a v ->
+            edit a v m
+
+        ConnectSerial ->
+            ( m, [] )
+
+        ConnectSocket ->
+            ( m, [] )
+
+        Pick a i ->
+            case Schema.optionName a i m.schema of
+                Just name ->
+                    edit a (Protocol.Name name) m
+
+                Nothing ->
+                    ( m, [] )
+
+
+tick : Time.Posix -> Model -> ( Model, List Command )
+tick t m0 =
+    let
+        m =
+            { m0
+                | now = t
+                , pending = Dict.filter (\_ at -> ms t - ms at < pendingMs) m0.pending
+            }
+
+        free =
+            case m.asked of
+                Just at ->
+                    if ms t - ms at >= answerTimeoutMs then
+                        { m | asked = Nothing }
+
+                    else
+                        m
+
+                Nothing ->
+                    m
+    in
+    if free.link /= Just Open || free.asked /= Nothing then
+        ( free, [] )
+
+    else
+        case request free of
+            Just c ->
+                ( { free | asked = Just t }, [ c ] )
+
+            Nothing ->
+                ( free, [] )
+
+
+request : Model -> Maybe Command
+request m =
+    case m.stage of
+        Greeting ->
+            Just Hello
+
+        Describing n ->
+            Just (Describe "ALGO" n)
+
+        Following ->
+            Just (Since m.gen)
+
+        Halted _ ->
+            Nothing
+
+
+ms : Time.Posix -> Int
+ms =
+    Time.posixToMillis
+
+
+edit : Addr -> Value -> Model -> ( Model, List Command )
+edit a v m =
+    let
+        c =
+            Set a v
+    in
+    if m.stage == Following && m.engine == Just Algo && encode c /= Nothing then
+        ( { m | pending = Dict.insert (addrKey a) m.now m.pending }, [ c ] )
+
+    else
+        ( m, [] )
+
+
+line : Line -> Model -> Model
+line l m =
+    case l of
+        Answer a ->
+            answer a m
+
+        Ok_ done ->
+            ok done m
+
+        Err_ why ->
+            case m.stage of
+                Following ->
+                    -- A refused `set` or a late `since` error: nothing shown changes.
+                    m
+
+                Halted _ ->
+                    m
+
+                _ ->
+                    { m | stage = Halted (Refused why), asked = Nothing }
+
+        Queued ->
+            m
+
+        Unknown _ ->
+            m
+
+
+answer : AnswerLine -> Model -> Model
+answer a m =
+    case a of
+        HelloIs h ->
+            if h.protocol == supported then
+                { m | part = Unit.partFromInt h.part, engine = Just (Unit.engineFromName h.engine) }
+
+            else
+                { m
+                    | stage =
+                        Halted
+                            (if h.protocol > supported then
+                                UpdateEditor
+
+                             else
+                                UpdateUnit
+                            )
+                }
+
+        PartIs n e ->
+            { m
+                | part = Unit.partFromInt n
+                , engine = Just (Unit.engineFromName e)
+                , values = Dict.empty
+                , variants = Dict.empty
+                , pending = Dict.empty
+            }
+
+        Panel p ->
+            if m.stage == Following then
+                { m | variants = Dict.insert p.name p.variant m.variants }
+
+            else
+                { m | schema = Schema.add a m.schema }
+
+        Val v ->
+            { m
+                | values = Dict.insert (addrKey v.addr) { norm = v.norm, stored = v.stored, text = v.text } m.values
+                , pending = Dict.remove (addrKey v.addr) m.pending
+            }
+
+        _ ->
+            { m | schema = Schema.add a m.schema }
+
+
+{-| `OK` ends the request in flight.
+-}
+ok : Maybe Int -> Model -> Model
+ok done m =
+    case m.stage of
+        Greeting ->
+            { m | stage = Describing 0, asked = Nothing }
+
+        Describing n ->
+            let
+                more =
+                    Schema.pageCount m.schema |> Maybe.map (\c -> n + 1 < c) |> Maybe.withDefault False
+            in
+            { m | stage = nextPage n more, asked = Nothing }
+
+        Following ->
+            case done |> Maybe.andThen Unit.genFromInt of
+                Just g ->
+                    { m | gen = Just g, asked = Nothing }
+
+                Nothing ->
+                    m
+
+        Halted _ ->
+            m
+
+
+nextPage : Int -> Bool -> Stage
+nextPage n more =
+    if more then
+        Describing (n + 1)
+
+    else
+        Following

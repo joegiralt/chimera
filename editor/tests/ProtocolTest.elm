@@ -3,6 +3,7 @@ module ProtocolTest exposing (suite)
 import Expect
 import Protocol exposing (..)
 import Test exposing (Test, describe, test)
+import Unit
 
 
 p : String -> String -> Line -> Test
@@ -68,7 +69,8 @@ suite =
             , test "get" <| \_ -> Expect.equal (Just "ed get OP_C.CRSE") (encode (Get (Addr "OP_C.CRSE")))
             , test "set num" <| \_ -> Expect.equal (Just "ed set FILTER.CUTOFF 1234.5") (encode (Set (Addr "FILTER.CUTOFF") (Num 1234.5)))
             , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))
-            , test "since" <| \_ -> Expect.equal (Just "ed since 7") (encode (Since 7))
+            , test "since" <| \_ -> Expect.equal (Just "ed since 7") (encode (Since (Unit.genFromInt 7)))
+            , test "since nothing held is 0" <| \_ -> Expect.equal (Just "ed since 0") (encode (Since Nothing))
             , test "refuses what would split or inject" <|
                 \_ ->
                     [ encode (Get (Addr "A.B\ned hello"))

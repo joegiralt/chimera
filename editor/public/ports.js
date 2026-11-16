@@ -38,18 +38,31 @@ var ChimeraPorts = (function () {
     if (old) { try { await old.close(); } catch (e) {} }
   }
 
-  async function connectSerial() {
+  // True while a connect is between its click and its link: a second click
+  // then does nothing, so two connects never interleave their awaits.
+  var connecting = false;
+
+  async function connect(setup) {
+    if (connecting) return;
+    connecting = true;
+    var run;
+    try { run = await setup(); } finally { connecting = false; }
+    if (run) await run();
+  }
+
+  // Open the port and make it the link; resolves to the read loop, or nothing.
+  async function openSerial() {
     await drop();
-    if (!('serial' in navigator)) { state('unsupported'); return; }
+    if (!('serial' in navigator)) { state('unsupported'); return null; }
     var port;
     try {
       port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x0483, usbProductId: 0x5740 }] });
       await port.open({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: 'none' });
     } catch (e) {
       // A cancelled chooser is not a fault; a port someone else holds is.
-      if (e && e.name === 'NotFoundError') { return; }
+      if (e && e.name === 'NotFoundError') { return null; }
       state('busy');
-      return;
+      return null;
     }
     var enc = new TextEncoder();
     var writer = port.writable.getWriter();
@@ -62,20 +75,25 @@ var ChimeraPorts = (function () {
     };
     link = mine;
     state('open');
-    try {
-      for (;;) {
-        var r = await reader.read();
-        if (r.done) break;
-        feed(dec.decode(r.value, { stream: true }));
-      }
-    } catch (e) { /* unplugged: fall through */ }
-    if (link === mine) { link = null; state('lost'); }
+    return async function () {
+      try {
+        for (;;) {
+          var r = await reader.read();
+          if (r.done) break;
+          feed(dec.decode(r.value, { stream: true }));
+        }
+      } catch (e) { /* unplugged: fall through */ }
+      // Still current: nobody dropped it, so release it here, or a reconnect to the same port finds it held.
+      if (link === mine) { link = null; state('lost'); await mine.close(); }
+    };
   }
 
-  async function connectSocket(url) {
+  function connectSerial() { return connect(openSerial); }
+
+  async function openSocket(url) {
     await drop();
     var ws;
-    try { ws = new WebSocket(url); } catch (e) { state('absent'); return; }
+    try { ws = new WebSocket(url); } catch (e) { state('absent'); return null; }
     var mine = {
       write: function (line) { ws.send(line); return Promise.resolve(); },
       close: function () { ws.close(); },
@@ -92,11 +110,17 @@ var ChimeraPorts = (function () {
     ws.onclose = function () {
       if (link === mine) { link = null; state(opened ? 'lost' : 'absent'); }
     };
+    return null;
   }
+
+  function connectSocket(url) { return connect(function () { return openSocket(url); }); }
 
   function send(line) {
     var l = link;
-    if (l) l.write(line).catch(function () { if (link === l) { link = null; } state('lost'); });
+    if (l) l.write(line).catch(function () {
+      // A write that fails ends the link; release it so a reconnect can open the same port.
+      if (link === l) { link = null; state('lost'); Promise.resolve(l.close()).catch(function () {}); }
+    });
   }
 
   return {
