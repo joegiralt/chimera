@@ -1,4 +1,4 @@
-# 0275. Browser editor protocol: `ed` over the console, pulled
+# 0276. Browser editor protocol: `ed` over the console, pulled
 
 - **Status:** Proposed
 - **Deciders:** owner, firmware
@@ -35,4 +35,3 @@ The browser editor (slice 1: ALGO on one screen) talks to the unit, or to the de
 ## Sources
 - `docs/superpowers/specs/2026-11-14-editor-algo-slice-design.md`
 - ADR 0251 (bank 2 and the doors), 0265 and 0266 (ITCM), 0272 (bank 2 slots)
-- `.superpowers/sdd/2026-11-14-editor-algo-slice/final-review.md`
