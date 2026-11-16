@@ -125,6 +125,7 @@ var ChimeraPorts = (function () {
 
   return {
     release: release,
+    liner: liner,
     attach: function (a) {
       app = a;
       app.ports.connectSerial.subscribe(connectSerial);

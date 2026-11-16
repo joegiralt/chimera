@@ -5,6 +5,7 @@
 //! f32 bits, and only what differs is answered, else everything. The answer:
 //!
 //! ```text
+//! (an empty line, opening every answer that isn't a diff)
 //! part <n> <ENGINE>
 //! panel <name> <variant>
 //! val <addr> <normalized> <stored> "<text>"
@@ -27,7 +28,7 @@ use crate::addr::{BlockRead, BlockRef, ParamAddr};
 use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::view::SlotCtx;
-use chimera_engine::block::DiskCode;
+use chimera_engine::block::{DiskCode, ParamId};
 use chimera_engine::params::EngineType;
 
 /// The number of an answer: never 0 (that is the editor's "I have
@@ -101,6 +102,49 @@ fn in_schema(b: BlockRef) -> bool {
     )
 }
 
+/// The slots `describe` lists a param for: the editor is told only of what
+/// it was told exists. Built from `describe`'s own walk, so the two can't
+/// disagree.
+pub(super) struct Described([u32; SLOTS / 32]);
+
+impl Described {
+    /// Slot `block`'s param `id` takes in `last`: after the blocks before it
+    /// that `in_schema` keeps.
+    fn slot(block: BlockRef, id: ParamId) -> Option<usize> {
+        let (mut n, mut b) = (0usize, 0);
+        while let Some(&x) = BlockRef::ALL.get(b) {
+            b += 1;
+            if !in_schema(x) {
+                continue;
+            }
+            if x == block {
+                return block.specs().iter().position(|s| s.id == id).map(|i| n + i);
+            }
+            n += x.specs().len();
+        }
+        None
+    }
+
+    /// Note that `describe` lists `block`'s `id`.
+    pub(super) fn mark(&mut self, block: BlockRef, id: ParamId) {
+        if let Some(n) = Described::slot(block, id)
+            && let Some(w) = self.0.get_mut(n / 32)
+        {
+            *w |= 1 << (n % 32);
+        }
+    }
+
+    fn has(&self, n: usize) -> bool {
+        self.0.get(n / 32).is_some_and(|w| w & (1 << (n % 32)) != 0)
+    }
+
+    fn built() -> Described {
+        let mut d = Described([0; SLOTS / 32]);
+        describe::mark_described(&mut d);
+        d
+    }
+}
+
 /// What the Part looked like when last reported.
 #[derive(Clone, Copy)]
 struct Seen {
@@ -123,6 +167,8 @@ pub struct EdSince {
     issued: Option<Gen>,
     seen: Option<Seen>,
     last: [Bits; SLOTS],
+    /// Built on the first answer that has values.
+    described: Option<Described>,
 }
 
 impl EdSince {
@@ -131,6 +177,7 @@ impl EdSince {
             issued: None,
             seen: None,
             last: [Bits(0); SLOTS],
+            described: None,
         }
     }
 
@@ -184,6 +231,9 @@ impl EdSince {
             closed,
         });
         if !same {
+            // The editor ignores an empty line. It ends a fragment a cut-off
+            // answer left, so `part` is never glued onto it.
+            writeln!(w)?;
             writeln!(w, "part {} {}", part.index() + 1, engine.disk_ident())?;
         }
         if algo {
@@ -204,6 +254,7 @@ impl EdSince {
     /// is brought up to date.
     fn values(&mut self, ui: &UiState, same: bool, w: &mut dyn Write) -> fmt::Result {
         let own = ui.cell_own();
+        let described = self.described.get_or_insert_with(Described::built);
         let (mut slot, mut b) = (0usize, 0);
         while let Some(&block) = BlockRef::ALL.get(b) {
             b += 1;
@@ -225,7 +276,8 @@ impl EdSince {
             let mut i = 0;
             while let Some(spec) = specs.get(i) {
                 let now = Bits(blk.get(spec.id).to_bits());
-                if let Some(last) = self.last.get_mut(slot + i)
+                if described.has(slot + i)
+                    && let Some(last) = self.last.get_mut(slot + i)
                     && (!same || *last != now)
                 {
                     *last = now;

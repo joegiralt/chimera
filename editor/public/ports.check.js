@@ -15,6 +15,16 @@ async function teardownOrder() {
   eq(log.join(), 'reader.cancel,reader.releaseLock,writer.close,writer.releaseLock,port.close', 'teardown order');
 }
 
+// A cut-off answer leaves a fragment; the empty line that opens the next full
+// answer ends it, so `part` arrives whole.
+function fragmentThenFullAnswer() {
+  var got = [];
+  var feed = P.liner(function (l) { got.push(l); });
+  feed('val A.B 0 0 "te');
+  feed('\npart 2 VA\nOK 7\n');
+  eq(got.indexOf('part 2 VA') >= 0, true, 'the part line survives a fragment: ' + JSON.stringify(got));
+}
+
 // A fake Elm app and a fake Web Serial port.
 function fakeApp() {
   var states = [];
@@ -81,6 +91,7 @@ async function quickClicksDoNotInterleave() {
 
 (async function () {
   await teardownOrder();
+  fragmentThenFullAnswer();
   await serialEnds();
   await failedWriteReleases();
   await quickClicksDoNotInterleave();

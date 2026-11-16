@@ -393,3 +393,21 @@ fn write_page(def: &BlockDef, page: u8, total: u8, w: &mut dyn Write) -> fmt::Re
     }
     Ok(())
 }
+
+/// Note in `d` every param `describe` lists for ALGO: `write_page`'s walk,
+/// to a mask and not a writer.
+pub(super) fn mark_described(d: &mut super::since::Described) {
+    let mut page = 0;
+    while let Some(def) = def_at(page) {
+        page += 1;
+        let mut i = 0;
+        while let Some(g) = group_at(i) {
+            i += 1;
+            for s in &def.params {
+                if let Some(Cell::Param { block, spec, .. }) = g.cell(s) {
+                    d.mark(block, spec.id);
+                }
+            }
+        }
+    }
+}

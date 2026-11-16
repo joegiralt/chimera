@@ -118,6 +118,10 @@ suite =
                                 )
                 in
                 Expect.equal [] bad
+        , test "a_val_the_schema_does_not_list_is_dropped" <|
+            \_ ->
+                Expect.equal Nothing
+                    (following |> feed [ "val OUT.PAN 0.5 0 \"C\"" ] |> Model.shown (Addr "OUT.PAN"))
         , test "connect_runs_hello_describe_then_since_0" <|
             \_ ->
                 let

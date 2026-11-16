@@ -399,10 +399,15 @@ answer a m =
                 { m | schema = Schema.add a m.schema }
 
         Val v ->
-            { m
-                | values = Dict.insert (addrKey v.addr) { norm = v.norm, stored = v.stored, text = v.text } m.values
-                , pending = Dict.remove (addrKey v.addr) m.pending
-            }
+            if Schema.param v.addr m.schema == Nothing then
+                -- The unit says nothing of it in `describe`: not the editor's.
+                m
+
+            else
+                { m
+                    | values = Dict.insert (addrKey v.addr) { norm = v.norm, stored = v.stored, text = v.text } m.values
+                    , pending = Dict.remove (addrKey v.addr) m.pending
+                }
 
         _ ->
             { m | schema = Schema.add a m.schema }

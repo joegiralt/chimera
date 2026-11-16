@@ -807,6 +807,10 @@ fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
     let got = ask(f, &format!("ed since {n}\n"));
     assert!(got.ends_with('\n'), "{got}");
     let mut lines: Vec<String> = got.lines().map(str::to_string).collect();
+    // A full answer opens with an empty line (its own test below).
+    if lines.first().is_some_and(String::is_empty) {
+        lines.remove(0);
+    }
     let last = lines.pop().unwrap();
     let m = last
         .strip_prefix("OK ")
@@ -839,22 +843,33 @@ fn since_zero_answers_everything() {
     assert_eq!(panels.len(), 14, "{panels:?}");
     assert!(panels.iter().any(|l| l.starts_with("panel FILTER ")));
     assert!(panels.iter().any(|l| l.starts_with("panel OP6 ")));
-    // Every address of the schema once, in `get`'s own words.
+    // Every address `describe` lists once, in `get`'s own words, and no other.
     let mut want = 0;
-    for b in algo_blocks() {
-        for s in b.specs() {
-            let a = EdAddr(ParamAddr::new(b, s.id));
-            let line = get_line(&mut f, &a.to_string());
-            assert_eq!(
-                lines.iter().filter(|l| **l == line).count(),
-                1,
-                "{a}: {line}"
-            );
-            want += 1;
-        }
+    for name in addrs(&all_pages(&mut f)) {
+        let line = get_line(&mut f, &name);
+        assert_eq!(
+            lines.iter().filter(|l| **l == line).count(),
+            1,
+            "{name}: {line}"
+        );
+        want += 1;
     }
+    assert_eq!(want, 218, "the schema's addresses");
     assert_eq!(vals(&lines).len(), want);
     assert_eq!(lines.len(), 1 + 14 + want);
+}
+
+#[test]
+fn a_full_answer_starts_with_an_empty_line() {
+    let mut f = Fake::new();
+    let got = ask(&mut f, "ed since 0\n");
+    assert!(got.starts_with("\npart 1 ALGO\n"), "{got:?}");
+    // A stale number is a full answer again; a current one is a diff, with none.
+    let again = ask(&mut f, "ed since 7\n");
+    assert!(again.starts_with("\npart 1 ALGO\n"), "{again:?}");
+    let m: u32 = again.lines().last().unwrap()[3..].parse().unwrap();
+    let diff = ask(&mut f, &format!("ed since {m}\n"));
+    assert!(!diff.starts_with('\n'), "{diff:?}");
 }
 
 #[test]
