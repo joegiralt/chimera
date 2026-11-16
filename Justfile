@@ -16,6 +16,15 @@ bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 desktop:
     cargo run -p chimera-desktop
 
+# The browser editor against the simulator: the sim, and its console on ws://127.0.0.1:7342
+editor-sim:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -q --profile utils -p chimera-utils
+    trap 'kill 0' EXIT
+    {{utils}} ed-bridge &
+    cargo run -p chimera-desktop
+
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes
 # QA). `just tape-listen loop --src chimera --src <file.wav>`; a bare file
