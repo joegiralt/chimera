@@ -104,17 +104,43 @@ struct ModalBank {
     noise_state: u32,
     /// The burst's one-pole lowpass.
     burst_lp: f32,
-    /// What the filters were last set for in a block (`FiltersKey`): the
-    /// same again, `compute_filters` would write what is there.
-    key: FiltersKey,
+    /// What the filters were last set for in a block: the same again,
+    /// `compute_filters` would write what is there. `None` after a note-on.
+    key: Option<FiltersKey>,
 }
 
 /// `compute_filters`' inputs, bit for bit: MODES, DAMP, STRUCTURE, BRIGHT
-/// and the frequency.
-type FiltersKey = [u32; 5];
+/// and the frequency (cycles a sample, a glide's included).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FiltersKey {
+    modes: usize,
+    damp: Bits,
+    structure: Bits,
+    bright: Bits,
+    frequency: Bits,
+}
 
-/// No block's: a note-on set the filters.
-const NO_KEY: FiltersKey = [u32::MAX; 5];
+/// An `f32`'s bits: equal only to itself, `-0.0` and NaN included.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Bits(u32);
+
+impl From<f32> for Bits {
+    fn from(x: f32) -> Bits {
+        Bits(x.to_bits())
+    }
+}
+
+impl FiltersKey {
+    fn of(bank: &ModalBank, m: &Macros, frequency: f32) -> FiltersKey {
+        FiltersKey {
+            modes: bank.resolution,
+            damp: m.damp.into(),
+            structure: m.structure.into(),
+            bright: m.bright.into(),
+            frequency: frequency.into(),
+        }
+    }
+}
 
 crate::in_place::field_list!(ModalBank => ModalBank {
     filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp, key,
@@ -419,7 +445,10 @@ impl ModalEngine {
     /// (135), with the two `vdiv.f32`s at 14 cycles: 620 + (270 − 143 −
     /// 135) × 1.46 × 1.1 + 2 × (14 − 1.46) × 1.1 = 634.8, rounded up to 640.
     /// The 0.3 unit's worst row, MDL BOW+, reads 117 under (ADR 0218): 530.
-    pub const COST_BOWED: Cost = Cost(530);
+    /// Then the unit's 2026-11-16 max window, 750 whole voice (INIT MODAL
+    /// C4, eb442a48), less the voice's other 113 (643 − 530: chain, PITCH),
+    /// 637, rounded up to 640 (ADR 0275).
+    pub const COST_BOWED: Cost = Cost(640);
     /// 809 (benched, ADR 0054) − 271, rounded up to 540: 419 instructions a
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
@@ -431,7 +460,10 @@ impl ModalEngine {
     /// The unit read 2026-10-22 (ROUTING bench, rev V at 480 MHz, four
     /// ringing voices): MDL SYM 928 a voice against 769 billed, SYM0 860
     /// against 689, SYM+ 1,081 against 909: +175.
-    pub const COST_SYMPATHETIC: Cost = Cost(645);
+    /// Then the 2026-11-16 reading, C7 whole voice 870 (INIT MODAL, no
+    /// routes), less the voice's other 136 (781 − 645: chain, PITCH, the
+    /// halo's retune), 734, rounded up to 740 (ADR 0275).
+    pub const COST_SYMPATHETIC: Cost = Cost(740);
     /// The resonator bank: this plus `COST_MODE` per mode. Its sample loop
     /// as benched (MDL RES /VOICE 1,865; less the chain's 57, 1,808 at 32
     /// modes against 1,900 billed), and the macros' easing is a few
@@ -729,7 +761,7 @@ impl ModalEngine {
             ModelSlot::Bank(bank) => {
                 bank.resolution = params.modes.count();
                 bank.compute_filters(m, bank_freq);
-                bank.key = NO_KEY;
+                bank.key = None;
                 if !restrike {
                     bank.cos_osc.init(params::beta(m.pos, params::END));
                 }
@@ -1010,13 +1042,7 @@ impl ModalEngine {
                 // Recompute filters every block (Rings does this — allows
                 // live parameter changes), unless nothing they read moved:
                 // a pure function of the key, so skipping it is exact.
-                let key = [
-                    bank.resolution as u32,
-                    m.damp.to_bits(),
-                    m.structure.to_bits(),
-                    m.bright.to_bits(),
-                    bank_freq.to_bits(),
-                ];
+                let key = Some(FiltersKey::of(bank, &m, bank_freq));
                 if key != bank.key {
                     bank.compute_filters(&m, bank_freq);
                     bank.key = key;
@@ -1148,7 +1174,7 @@ impl ModalBank {
             addr_of_mut!((*p).burst_amp).write(0.0);
             addr_of_mut!((*p).noise_state).write(0x1234_5678);
             addr_of_mut!((*p).burst_lp).write(0.0);
-            addr_of_mut!((*p).key).write(NO_KEY);
+            addr_of_mut!((*p).key).write(None);
             slot.assume_init_mut()
         }
     }
@@ -1170,6 +1196,8 @@ impl ModalBank {
     /// Configure filters — called every render block (not just note_on).
     /// Matches Rings' ComputeFilters().
     fn compute_filters(&mut self, m: &Macros, frequency: f32) {
+        #[cfg(test)]
+        tests::FILTER_SETS.with(|n| n.set(n.get() + 1));
         let num = self.resolution;
 
         // Q from DAMP (Rings-style range).
@@ -2400,6 +2428,80 @@ mod tests {
         assert!(pool.alloc.place(v1));
         let fresh = (1 + NUM_SYMPATHETIC) * FRESH_CLEAR_BYTES;
         assert_eq!(pool.note_on_clear(None, v1), fresh);
+    }
+
+    std::thread_local! {
+        /// `compute_filters` calls on this thread.
+        pub(super) static FILTER_SETS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    }
+
+    /// `compute_filters` calls over `blocks` renders of `e` at `p`.
+    fn sets_over(e: &mut ModalEngine, p: &ModalParams, pool: &mut SymPool, blocks: usize) -> usize {
+        let at = FILTER_SETS.with(|n| n.get());
+        for _ in 0..blocks {
+            let mut out = [0.0; BLOCK_SIZE];
+            e.render(&mut out, p, SR, pool);
+        }
+        FILTER_SETS.with(|n| n.get()) - at
+    }
+
+    /// BANK sets its filters only when what they read moves: DAMP,
+    /// STRUCTURE, BRIGHT, the pitch (a glide's every block), MODES (a
+    /// note-on). Held still, a block sets none.
+    #[test]
+    fn bank_sets_its_filters_only_when_their_inputs_move() {
+        let p = ModalParams {
+            mode: ResonatorMode::Modal,
+            ..Default::default()
+        };
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, p.mode);
+        e.note_on(60, 100, &p, SR, &mut pool);
+        // the macros ease in, then hold
+        sets_over(&mut e, &p, &mut pool, 400);
+        assert_eq!(sets_over(&mut e, &p, &mut pool, 20), 0, "held");
+        for (name, q) in [
+            (
+                "DAMP",
+                ModalParams {
+                    damp: p.damp + 0.2,
+                    ..p
+                },
+            ),
+            (
+                "STRUCTURE",
+                ModalParams {
+                    structure: p.structure + 0.2,
+                    ..p
+                },
+            ),
+            (
+                "BRIGHT",
+                ModalParams {
+                    bright: p.bright + 0.2,
+                    ..p
+                },
+            ),
+        ] {
+            assert!(sets_over(&mut e, &q, &mut pool, 1) == 1, "{name} moved");
+            sets_over(&mut e, &q, &mut pool, 400);
+            assert_eq!(sets_over(&mut e, &q, &mut pool, 20), 0, "{name} held");
+            sets_over(&mut e, &p, &mut pool, 400);
+        }
+        // a glide moves the pitch each block, then lands
+        e.glide_on(67, 100, &p, (SR, 0.05), &mut pool);
+        assert_eq!(sets_over(&mut e, &p, &mut pool, 10), 10, "gliding");
+        sets_over(&mut e, &p, &mut pool, 400);
+        assert_eq!(sets_over(&mut e, &p, &mut pool, 20), 0, "landed");
+        // MODES is latched at a note-on, which sets them
+        let q = ModalParams {
+            modes: BankModes::M48,
+            ..p
+        };
+        let at = FILTER_SETS.with(|n| n.get());
+        e.note_on(72, 100, &q, SR, &mut pool);
+        assert_eq!(FILTER_SETS.with(|n| n.get()) - at, 1, "note-on");
+        assert_eq!(sets_over(&mut e, &q, &mut pool, 1), 1, "first block");
     }
 
     /// The modes a bank renders, after its last `compute_filters`.

@@ -238,14 +238,14 @@ fn the_sounds_shape_bills_only_before_a_publish() {
 const READ: [(u8, u32); 11] = [
     (1, 800),
     (2, 800),
-    (3, 1200),
+    (3, 600),
     (4, 600),
     (5, 700),
     (6, 700),
     (7, 700),
     (9, 1400),
     (10, 1400),
-    (11, 1400),
+    (11, 1500),
     (12, 300),
 ];
 
@@ -268,13 +268,24 @@ fn every_pad_books_its_reading() {
     }
 }
 
+/// A machine the unit read bills `ceil(1.1 × reading) − 83` (ADR 0274),
+/// exactly: nothing high, nothing low. Pad 12 (BODY SHAKER) read low and
+/// is an estimate, so it is out.
+#[test]
+fn a_read_machine_bills_its_reading() {
+    for (n, read) in READ.into_iter().filter(|&(n, _)| n != 12) {
+        let m = Kit::DEFAULT.pad(pad(n)).machine();
+        assert_eq!(m.cost().0, (read * 11).div_ceil(10) - 83, "pad {n}");
+    }
+}
+
 #[test]
 fn a_part_bills_its_costliest_machine() {
     let kicks = kicks();
     assert_eq!(kit_bill(&kicks).kernel(), Machine::ToneKick.cost());
     assert_eq!(
         kit_bill(&Kit::DEFAULT).kernel(),
-        Machine::PlainImpulse.cost()
+        Machine::ToneCowbell.cost()
     );
     let mut one = kicks;
     one.pad_mut(pad(7)).set_machine(Machine::MetalJingle);
@@ -292,7 +303,7 @@ fn a_part_bills_its_costliest_machine() {
     let kick = part.hit(HitKernel::Sounding(Machine::ToneKick));
     assert!(kick < part.whole());
     assert_eq!(
-        part.hit(HitKernel::Sounding(Machine::PlainImpulse)),
+        part.hit(HitKernel::Sounding(Machine::ToneCowbell)),
         part.whole()
     );
     assert_eq!(part.hit(HitKernel::Ended) + Machine::ToneKick.cost(), kick);
@@ -349,11 +360,10 @@ fn init_drum_roll_stays_in_budget() {
         );
         most = most.max(n);
     }
-    // PLAIN IMPULSE (pad 3, billed at its high estimate) in rounds 2 and
-    // 3: the oldest tail, a TOM, is the one voice a hit may steal, and it
-    // frees too little beside the two metals still ringing.
-    assert_eq!(refused, [14, 26], "the strikes refused");
-    assert_eq!(r.inst.allocator().refused(), 2);
+    // PLAIN IMPULSE read 600 (ADR 0275), no longer billed beside the
+    // metals' 1,457: no strike is refused.
+    assert_eq!(refused, [], "the strikes refused");
+    assert_eq!(r.inst.allocator().refused(), 0);
     assert!(most >= 4, "the roll keeps {most} hits");
 }
 
