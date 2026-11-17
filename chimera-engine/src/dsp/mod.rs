@@ -262,8 +262,16 @@ impl Gain {
 /// delay's REV SEND, 0..=1, shown 0–127 on the 1/128 grid (MIDI, NRPN and
 /// the editor write between). It reaches an effect only as `gain`, the
 /// squared taper (ADR 0278).
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd)]
 pub struct SendLevel(Unit);
+
+/// Its value alone, as the plain `f32` it was (the neutral Sound's pinned
+/// dump, ADR 0087).
+impl core::fmt::Debug for SendLevel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.get(), f)
+    }
+}
 
 impl SendLevel {
     pub const OFF: Self = Self(Unit::ZERO);
