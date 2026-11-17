@@ -70,6 +70,16 @@ const _: () = assert!(MAX_VOICES <= u8::BITS as usize);
 impl VoiceSet {
     pub const EMPTY: VoiceSet = VoiceSet(0);
 
+    /// Every voice of the pool.
+    pub const ALL: VoiceSet = {
+        let (mut s, mut i) = (VoiceSet::EMPTY, 0);
+        while i < MAX_VOICES {
+            s = s.with(VoiceIdx::ALL[i]);
+            i += 1;
+        }
+        s
+    };
+
     pub const fn with(self, v: VoiceIdx) -> VoiceSet {
         VoiceSet(self.0 | 1 << v.0)
     }
@@ -77,9 +87,32 @@ impl VoiceSet {
     pub const fn contains(self, v: VoiceIdx) -> bool {
         self.0 & 1 << v.0 != 0
     }
+}
 
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
+/// Which voices rules 3 and 4 may steal (ADR 0280).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Steal {
+    /// Any: the oldest voice of the pool.
+    Any,
+    /// Only these: a DRUM hit's pad's live voices (a STACK pad's).
+    Only(VoiceSet),
+}
+
+impl Steal {
+    /// With voice `v` the hit's own: from `Any`, only it.
+    pub const fn mine(self, v: VoiceIdx) -> Steal {
+        match self {
+            Steal::Any => Steal::Only(VoiceSet::EMPTY.with(v)),
+            Steal::Only(s) => Steal::Only(s.with(v)),
+        }
+    }
+
+    /// The voices it may take.
+    pub const fn pool(self) -> VoiceSet {
+        match self {
+            Steal::Any => VoiceSet::ALL,
+            Steal::Only(s) => s,
+        }
     }
 }
 
@@ -385,19 +418,12 @@ impl Allocator {
         cost: Cost,
         reserved: Cost,
     ) -> Option<usize> {
-        self.pick_where(
-            part,
-            mode,
-            note,
-            (cost, reserved),
-            &|_| true,
-            VoiceSet::EMPTY,
-        )
+        self.pick_where(part, mode, note, (cost, reserved), &|_| true, Steal::Any)
     }
 
-    /// A DRUM hit's voice (ADR 0280): no re-strike, and where `own` (its
-    /// pad's live voices: a STACK pad's) holds any, rule 3 takes only from
-    /// them, its oldest tail first, never another pad's.
+    /// A DRUM hit's voice (ADR 0280): no re-strike; rule 3 within `steal`,
+    /// a STACK pad's own live voices (`Steal::Only`), its oldest tail
+    /// first, never another pad's.
     #[inline(always)]
     pub fn pick_hit(
         &self,
@@ -406,23 +432,22 @@ impl Allocator {
         note: MidiNote,
         cost: Cost,
         reserved: Cost,
-        own: VoiceSet,
+        steal: Steal,
     ) -> Option<usize> {
-        self.pick_where(part, mode, note, (cost, reserved), &|_| false, own)
+        self.pick_where(part, mode, note, (cost, reserved), &|_| false, steal)
     }
 
     /// `pick`, where rule 2 re-strikes only voices `restrike` accepts: a key
     /// held by another origin is a voice of its own (`Instrument::handle_from`).
-    /// Rules 3 and 4 steal only from `own` unless it is empty: a DRUM hit's
-    /// pad's live voices (ADR 0280).
+    /// Rules 3 and 4 steal within `steal` (ADR 0280).
     pub fn pick_where(
         &self,
         part: u8,
         mode: PartMode,
         note: MidiNote,
         (cost, reserved): (Cost, Cost),
-        restrike: &dyn Fn(usize) -> bool,
-        own: VoiceSet,
+        restrike: &dyn Fn(VoiceIdx) -> bool,
+        steal: Steal,
     ) -> Option<usize> {
         let fits = |freed: Cost| {
             let total = reserved.0 + self.live_cost().0 + cost.0;
@@ -443,7 +468,11 @@ impl Allocator {
         // nearest the end of its fade — if it fits.
         if mode != PartMode::Mono
             && let Some(v) = self.slots.iter().enumerate().position(|(v, s)| {
-                !s.mono && !s.dying() && s.part == Some(part) && s.note == Some(note) && restrike(v)
+                !s.mono
+                    && !s.dying()
+                    && s.part == Some(part)
+                    && s.note == Some(note)
+                    && restrike(VoiceIdx::ALL[v])
             })
             && fits(self.slots[v].cost())
         {
@@ -465,10 +494,10 @@ impl Allocator {
         }
         // Rules 3 and 4: steal the oldest non-mono voice — tails before held
         // notes — if that makes room.
-        let pool = if own.is_empty() { u8::MAX } else { own.0 };
+        let pool = steal.pool();
         let oldest = (0..MAX_VOICES)
             .filter(|&v| {
-                pool >> v & 1 != 0
+                pool.contains(VoiceIdx::ALL[v])
                     && !self.slots[v].is_free()
                     && !self.slots[v].mono
                     && !self.slots[v].dying()

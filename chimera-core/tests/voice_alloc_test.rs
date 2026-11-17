@@ -566,12 +566,12 @@ fn a_glide_bills_admission_but_never_sheds() {
 // pad's; a pad with none steals as rule 3 does.
 // ---------------------------------------------------------------------------
 
-use chimera_core::voice_alloc::{VoiceIdx, VoiceSet};
+use chimera_core::voice_alloc::{Steal, VoiceIdx, VoiceSet};
 
 /// Part 0's pool: voice 0 another pad's, the oldest; voices 1–7 one
 /// pad's, stacked (the allocator knows pads only by `own`; each booked
 /// under its own key, as `note_on` re-strikes a key). `own`: that pad's.
-fn stacked() -> (Allocator, VoiceSet) {
+fn stacked() -> (Allocator, Steal) {
     let mut a = Allocator::new(BUDGET);
     on(&mut a, 0, Poly, 1);
     let mut own = VoiceSet::EMPTY;
@@ -579,7 +579,20 @@ fn stacked() -> (Allocator, VoiceSet) {
         let v = voice(a.note_on(0, Poly, n(10 + i), NOTE_COST, NONE));
         own = own.with(VoiceIdx::new(v).unwrap());
     }
-    (a, own)
+    (a, Steal::Only(own))
+}
+
+#[test]
+fn every_voice_is_in_the_pool_and_any_steals_from_it() {
+    for v in VoiceIdx::ALL {
+        assert!(VoiceSet::ALL.contains(v));
+        assert!(!VoiceSet::EMPTY.contains(v));
+    }
+    assert_eq!(Steal::Any.pool(), VoiceSet::ALL);
+    let (v1, v2) = (VoiceIdx::ALL[1], VoiceIdx::ALL[2]);
+    let mine = Steal::Any.mine(v1).mine(v2);
+    assert_eq!(mine, Steal::Only(VoiceSet::EMPTY.with(v1).with(v2)));
+    assert!(!mine.pool().contains(VoiceIdx::ALL[0]));
 }
 
 #[test]
@@ -601,7 +614,7 @@ fn a_stacked_pad_ends_its_own_tail_before_its_held_voice() {
 #[test]
 fn a_pad_with_no_voice_steals_as_rule_3() {
     let (a, _) = stacked();
-    let v = a.pick_hit(0, Poly, n(2), NOTE_COST, NONE, VoiceSet::EMPTY);
+    let v = a.pick_hit(0, Poly, n(2), NOTE_COST, NONE, Steal::Any);
     assert_eq!(v, Some(0), "the oldest voice, as `pick`");
     assert_eq!(v, a.pick(0, Poly, n(2), NOTE_COST, NONE));
 }
@@ -610,7 +623,7 @@ fn a_pad_with_no_voice_steals_as_rule_3() {
 fn a_stacked_pad_takes_a_free_voice_first() {
     let mut a = Allocator::new(BUDGET);
     let v = voice(on(&mut a, 0, Poly, 0));
-    let own = VoiceSet::EMPTY.with(VoiceIdx::new(v).unwrap());
+    let own = Steal::Only(VoiceSet::EMPTY.with(VoiceIdx::new(v).unwrap()));
     let got = a.pick_hit(0, Poly, n(0), NOTE_COST, NONE, own);
     assert_ne!(
         got,
@@ -629,7 +642,7 @@ fn a_stacked_pad_never_takes_another_pads_voice() {
     // Pad 2's big voice, oldest; pad 1's small one; the pool's budget full.
     voice(a.note_on(0, Poly, n(1), Cost(5_000), fx));
     let v = voice(a.note_on(0, Poly, n(0), Cost(500), fx));
-    let own = VoiceSet::EMPTY.with(VoiceIdx::new(v).unwrap());
+    let own = Steal::Only(VoiceSet::EMPTY.with(VoiceIdx::new(v).unwrap()));
     let big = Cost(1_500);
     assert_eq!(
         a.pick(0, Poly, n(0), big, fx),

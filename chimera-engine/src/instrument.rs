@@ -49,7 +49,7 @@ use crate::stream::admit::{Age, Bill, ReadRatio};
 use crate::stream::port::{CtxBase, NoPorts, Port, VoicePorts};
 use crate::stream::stats::StreamStats;
 use crate::tracked::Tracked;
-use crate::voice_alloc::{Allocator, VoiceIdx, VoiceSet};
+use crate::voice_alloc::{Allocator, Steal, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 
 mod admission;
@@ -1241,8 +1241,8 @@ impl Instrument {
             at.mode,
             at.note,
             (cost, reserved),
-            &|v| origins[v] == at.origin,
-            VoiceSet::EMPTY,
+            &|v| origins[v.index()] == at.origin,
+            Steal::Any,
         )
     }
 
@@ -2280,15 +2280,15 @@ impl Instrument {
     /// shed does, what it chokes (ADR 0265): its own pad's voices if it
     /// CUTs, and every other pad's in its choke group but OFF. A hit still
     /// waiting out a fade counts as its pad's in the kit now, and is
-    /// dropped unheard. With it, the pad's live voices left: a STACK
-    /// pad's own, all a hit that needs room may end (ADR 0280). Out of
+    /// dropped unheard. With it, what a hit that needs room may steal: a
+    /// pad's live voices left, a STACK pad's own (ADR 0280), else any. Out of
     /// line: bank 1's (ADR 0251).
     #[inline(never)]
-    fn choke(&mut self, id: PartId, key: MidiNote) -> (DrumHit, VoiceSet) {
+    fn choke(&mut self, id: PartId, key: MidiNote) -> (DrumHit, Steal) {
         let hit = KIT_VIEW.hit(id, key);
         let (pad, p) = (hit.pad(), hit.params());
         let q = id.index() as u8;
-        let mut own = VoiceSet::EMPTY;
+        let mut own = Steal::Any;
         for w in 0..MAX_VOICES {
             let s = self.alloc.slots()[w];
             if s.part() != Some(q) || s.dying() {
@@ -2306,7 +2306,7 @@ impl Instrument {
                 self.alloc.kill(w);
                 self.shed(w);
             } else if h.pad() == pad {
-                own = own.with(VoiceIdx::ALL[w]);
+                own = own.mine(VoiceIdx::ALL[w]);
             }
         }
         (hit, own)
