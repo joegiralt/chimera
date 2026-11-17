@@ -399,6 +399,14 @@ impl KnobDelta {
         self.count
     }
 
+    /// The newest move's `(from, to)`: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn last_move(&self) -> Option<(f32, f32)> {
+        let n = self.count.checked_sub(1)?;
+        let m = self.moves[n as usize % MOVES];
+        Some((m.from, m.to))
+    }
+
     /// The moves since `seen` was the count, oldest first; `None` past the
     /// window.
     fn since(&self, seen: u32) -> Option<impl Iterator<Item = KnobMove> + '_> {

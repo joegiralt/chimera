@@ -329,6 +329,16 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
         "    . = __bank2_door + 0x300; __bank2_midi_ui_door = .;\n    KEEP(*(.bank2.door.midi_ui));\n",
         "ASSERT(__bank2_midi_ui_door == 0x08100400, \"the MIDI UI's table at its slot\");",
     );
+    // The console's `ed` (ADR 0251): `console::ed`, the browser editor's
+    // parse and answers, text and rodata, its table at its slot after the
+    // MIDI UI's (`ED_DOOR_ADDR`). Bank 1 keeps `EdLine` and the stub. The
+    // first S4 group (ADR 0272: new 0.4 work goes high), after MIXER's
+    // reserve; its table stays in S0 with the other doors.
+    let (ed, ed_slot, ed_assert) = (
+        "    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n",
+        "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
+        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");",
+    );
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -352,6 +362,7 @@ SECTIONS {
     /* BENCH SLOT */
     /* ORBIT SLOT */
     /* MIDI UI SLOT */
+    /* ED SLOT */
     *(.bank2.text .bank2.text.*);
     *(.bank2.rodata .bank2.rodata.*);
     /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
@@ -428,6 +439,7 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
 /* BENCH ASSERT */
 /* ORBIT ASSERT */
 /* MIDI UI ASSERT */
+/* ED ASSERT */
 "#
         .replace("    /* REVERB */\n", reverb)
         .replace("    /* SLOTS */\n", slots)
@@ -453,7 +465,10 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
         .replace("    /* MIDI UI */\n", midi_ui)
         .replace("    /* TUNING */\n", tuning)
         .replace("    /* MIDI UI SLOT */\n", midi_ui_slot)
-        .replace("/* MIDI UI ASSERT */", midi_ui_assert),
+        .replace("/* MIDI UI ASSERT */", midi_ui_assert)
+        .replace("    /* S4 GROUPS */\n", ed)
+        .replace("    /* ED SLOT */\n", ed_slot)
+        .replace("/* ED ASSERT */", ed_assert),
     )
     .unwrap();
 

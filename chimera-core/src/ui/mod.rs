@@ -8,6 +8,7 @@ pub mod browser;
 pub mod builtin_cc;
 pub mod busy;
 pub mod cc;
+pub mod cell_text;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
@@ -1023,6 +1024,41 @@ impl UiState {
         self.listing.load_row(i, self.project.meta().file())
     }
 
+    /// What `cell_cx` borrows. Inlined into its one caller, `ed get` in
+    /// bank 2: the box draws from `Frame`.
+    #[inline(always)]
+    pub(crate) fn cell_own(&self) -> cell_text::CellOwn {
+        cell_text::CellOwn {
+            ctx: self.ctx(),
+            clock: self.clock,
+            bank2: self.bank2,
+            rev_clock: crate::meter::rev_clock(),
+        }
+    }
+
+    /// What the edited Part's cells read for their text on `def`. A
+    /// refused choice held on a cell is the box's, not the Sound's: none.
+    #[inline(always)]
+    pub(crate) fn cell_cx<'a>(
+        &'a self,
+        def: &'static BlockDef,
+        own: &'a cell_text::CellOwn,
+    ) -> cell_text::CellCx<'a> {
+        cell_text::CellCx {
+            def,
+            ctx: &own.ctx,
+            held: &None,
+            part: self.project.part(self.active_part),
+            // No cell has the focus here: SCALA's marquee (the one reader)
+            // draws from its first letter.
+            focus: usize::MAX,
+            clock: &own.clock,
+            bank2: &own.bank2,
+            fx: &self.project.perf().fx,
+            rev_clock: &own.rev_clock,
+        }
+    }
+
     /// The page shown: its def, `NO_PAGE` on lists, Screens and the Sound
     /// rung.
     pub fn page_def(&self) -> &'static BlockDef {
@@ -1184,7 +1220,7 @@ impl UiState {
     /// What the edited Part's page slots resolve against, on the ORBIT
     /// ring the location selects and under ORBIT's clock.
     #[inline(never)]
-    fn ctx(&self) -> SlotCtx {
+    pub(crate) fn ctx(&self) -> SlotCtx {
         let sound = &self.project.part(self.active_part).sound;
         let ctx = SlotCtx::read(&sound.params, self.sel_op)
             .on_clock(self.orbit.status.source)
@@ -1781,6 +1817,23 @@ impl UiState {
         self.ctx()
     }
 
+    /// Select operator `op`, as the OP page's selector does.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn select_op_for_test(&mut self, op: Op) {
+        self.sel_op = op;
+    }
+
+    /// Slot `slot`'s text as the page draws it: the box's own words.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn cell_text_for_test(&self, slot: usize) -> FmtBuf {
+        let scope = [0.0; SCOPE_LEN];
+        let perf = PerfStats::zero();
+        let f = self.frame(&perf, None, &scope);
+        renderer::value_text(&f, slot, self.display_values()[slot])
+    }
+
     /// The encoder's edit path (spec § 6): `a` on Part `part` turned
     /// `delta`, or snapped, with the formant budget's refusal said on the
     /// active Part. A mapped CC's stepped target moves through it too.
@@ -1795,6 +1848,13 @@ impl UiState {
             part_page::Edit::Nudge(delta)
         };
         self.edit_in(part, a, how)
+    }
+
+    /// `a` on Part `part` set to the stored value `v`, clamped and
+    /// quantized, as a knob's turn lands (the console's `ed set`). `true`
+    /// when the value moved.
+    pub fn edit_to(&mut self, part: PartId, a: ParamAddr, v: f32) -> bool {
+        self.edit_in(part, a, part_page::Edit::To(v))
     }
 
     /// After an edit of Part `at`, whose chain was `chain` and slots read

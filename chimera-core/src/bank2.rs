@@ -4,8 +4,8 @@ use core::fmt::{self, Write};
 
 /// Bank 1's state of the door, for the board.
 pub use chimera_engine::bank2::{
-    BENCH_DOOR_ADDR, BOARD_DOOR_ADDR, Checked, DOOR_CELL, DOOR_MAGIC, DoorSlot, Judged, PROBE_ADDS,
-    TABLE_LEN, UI_DOOR_ADDR,
+    BENCH_DOOR_ADDR, BOARD_DOOR_ADDR, Checked, DOOR_CELL, DOOR_MAGIC, DoorSlot, ED_DOOR_ADDR,
+    Judged, PROBE_ADDS, TABLE_LEN, UI_DOOR_ADDR,
 };
 use chimera_hal::store::Store;
 use chimera_image::{FlashFail, Slot, Verdict};
@@ -540,6 +540,94 @@ pub fn ui_door<R>(f: impl FnOnce(&UiDoor) -> R) -> Option<R> {
         let _ = f;
         None
     }
+}
+
+/// The console's `ed` table (ADR 0251), at `ED_DOOR_ADDR`: the browser
+/// editor's parse and answers, `console::ed`, which `bank2.x` links into
+/// bank 2. Bank 1 keeps `EdLine` and the stub in `console::answer`.
+#[repr(C)]
+pub struct EdDoor {
+    magic: u32,
+    answer: fn(
+        &crate::console::EdLine,
+        &crate::ui::UiState,
+        Option<&mut crate::console::EdState>,
+        &mut dyn Write,
+    ) -> fmt::Result,
+    apply: fn(&mut crate::console::EdState, &mut crate::ui::UiState),
+}
+
+/// `EdDoor::magic`.
+const ED_MAGIC: u32 = 0xB2C0_0ED3;
+
+impl EdDoor {
+    pub const OWN: EdDoor = EdDoor {
+        magic: ED_MAGIC,
+        answer: crate::console::ed_answer_in,
+        apply: crate::console::EdState::apply,
+    };
+
+    /// `ed`'s whole answer, `OK` or `ERR` included.
+    #[inline(always)]
+    pub fn answer(
+        &self,
+        line: &crate::console::EdLine,
+        ui: &crate::ui::UiState,
+        q: Option<&mut crate::console::EdState>,
+        w: &mut dyn Write,
+    ) -> fmt::Result {
+        (self.answer)(line, ui, q, w)
+    }
+
+    /// The queued sets, as knob turns.
+    #[inline(always)]
+    pub fn apply(&self, q: &mut crate::console::EdState, ui: &mut crate::ui::UiState) {
+        (self.apply)(q, ui)
+    }
+}
+
+/// `ED_DOOR`'s slot.
+#[cfg(feature = "bank2")]
+// SAFETY: `bank2.x` links `ED_DOOR`, an `EdDoor`, at `ED_DOOR_ADDR` in
+// every firmware build with `bank2` (its assert, `__bank2_ed_door`).
+const ED_SLOT: DoorSlot<EdDoor> = unsafe { DoorSlot::new(ED_DOOR_ADDR) };
+
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.door.ed")]
+#[used]
+static ED_DOOR: EdDoor = EdDoor::OWN;
+
+/// `f` on `ed`'s table: bank 2's through the door on the unit with
+/// `bank2`, `None` closed; this build's own elsewhere. A host test under
+/// `bank2` answers as the unit does: only while the door cell is open.
+#[inline(always)]
+pub fn ed_door<R>(f: impl FnOnce(&EdDoor) -> R) -> Option<R> {
+    #[cfg(all(feature = "bank2", target_os = "none"))]
+    {
+        DOOR_CELL.with_slot(ED_SLOT, f)
+    }
+    #[cfg(not(all(feature = "bank2", target_os = "none")))]
+    {
+        #[cfg(feature = "bank2")]
+        if !DOOR_CELL.is_open() {
+            return None;
+        }
+        Some(f(&EdDoor::OWN))
+    }
+}
+
+/// The shell's UI pass: `q`'s sets applied as knob turns. Closed, they
+/// are dropped with the door (`ed` itself answers `ERR` then).
+#[inline(always)]
+pub fn ed_apply(q: &mut crate::console::EdState, ui: &mut crate::ui::UiState) {
+    let _ = ed_door(|d| d.apply(q, ui));
+}
+
+/// `ed`'s table in judged door `j` answers (the boot's door check, run
+/// before the door opens).
+#[cfg(feature = "bank2")]
+pub fn ed_door_ok(j: &chimera_engine::bank2::Judged) -> bool {
+    j.with_slot(ED_SLOT, |d| d.magic == ED_MAGIC)
 }
 
 /// TAPE's UI can't run: bank 2 closed. A build without `tape` plays TAPE

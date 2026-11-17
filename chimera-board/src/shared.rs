@@ -173,6 +173,23 @@ pub fn take_ui() -> Option<&'static mut UiState> {
     ))
 }
 
+// `ed`'s state (the queue and `since`'s copy, ~1.4 KB): ITCM, as `KITS`, CPU
+// only (the console's answer path). Not `main`'s stack (ADR 0025), where it
+// was +1 KB; not AXI, which the margin (ADR 0087) holds; not D2, full in the
+// bench builds. NOLOAD: built in place by `take_ed`.
+#[unsafe(link_section = ".itcm")]
+static mut ED: MaybeUninit<chimera_core::console::EdState> = MaybeUninit::uninit();
+static ED_TAKEN: AtomicBool = AtomicBool::new(false);
+
+pub fn take_ed() -> Option<&'static mut chimera_core::console::EdState> {
+    if ED_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `ED` ever made.
+    Some(unsafe { &mut *addr_of_mut!(ED) }.write(chimera_core::console::EdState::new()))
+}
+
 static mut AUDIO: MaybeUninit<TripleBuffer<AudioShared>> = MaybeUninit::uninit();
 static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 

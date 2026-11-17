@@ -101,6 +101,7 @@ static B_BURST: ModPanel = ModPanel {
     ],
 };
 
+#[inline(always)]
 pub fn env_panel(k: EnvKind) -> &'static ModPanel {
     match k {
         EnvKind::A(EnvSpeed::Fast) => &A_FAST,

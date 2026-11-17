@@ -3,7 +3,7 @@
 use core::fmt;
 
 pub const MAX_LINE: usize = 64;
-pub const PROTOCOL: u8 = 1;
+pub const PROTOCOL: u8 = 2;
 /// An answer gives up after this long with no byte taken…
 pub const STALL_MS: u32 = 250;
 /// …or after this long in all, however the bytes dribble out.
@@ -63,6 +63,32 @@ impl Arg for Colours {
             Some(_) => return None,
         };
         words.next().is_none().then_some(got)
+    }
+}
+
+/// `ed`'s words as they came: bank 2 reads them (`EdDoor`, ADR 0251), so
+/// bank 1 links none of their parse, and refuses none of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EdLine {
+    bytes: [u8; MAX_LINE],
+    len: u8,
+}
+
+impl EdLine {
+    pub fn words(&self) -> Words<'_> {
+        Words {
+            rest: self.bytes.get(..usize::from(self.len)).unwrap_or(&[]),
+        }
+    }
+}
+
+impl Arg for EdLine {
+    const USAGE: &'static str = EdArg::USAGE;
+    fn parse(words: Words<'_>) -> Option<Self> {
+        let mut bytes = [0; MAX_LINE];
+        bytes.iter_mut().zip(words.rest).for_each(|(d, &s)| *d = s);
+        let len = words.rest.len().min(MAX_LINE) as u8;
+        Some(EdLine { bytes, len })
     }
 }
 
@@ -129,6 +155,7 @@ macro_rules! table {
             Bank2  (Bank2Arg) => "bank2", "bank 2: its state; bank2 install: the staged file into it",
             Key    (KeyArg)  => "key",    "B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]",
             Turn   (TurnArg) => "turn",   "<encoder 1-6> <delta -64..64>: detents at a hand's pace",
+            Ed     (EdLine)  => "ed",     "editor protocol",
             $($card)*
         }
     };
@@ -174,8 +201,14 @@ impl Word {
         Word { bytes, len }
     }
 
+    /// The bytes, with no UTF-8 check: a name compare needs none.
+    #[inline(always)]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.bytes.get(..usize::from(self.len)).unwrap_or(&[])
+    }
+
     pub fn as_str(&self) -> &str {
-        let used = self.bytes.get(..usize::from(self.len)).unwrap_or(&[]);
+        let used = self.as_bytes();
         core::str::from_utf8(used).unwrap_or("?")
     }
 }
@@ -239,6 +272,12 @@ impl Console {
     }
 }
 
+mod ed;
+pub(crate) use ed::answer_in as ed_answer_in;
+pub use ed::{
+    ED_SLOTS, EdAddr, EdArg, EdSince, EdState, EdValue, Gen, Pushed, ed_slots_used, env_variant,
+    filter_variant, fx_variant, lfo_variant, op_variant, pages as ed_pages,
+};
 mod status;
 pub use status::*;
 mod out;

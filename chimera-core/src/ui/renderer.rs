@@ -20,10 +20,11 @@ use crate::ui::PrimeStatus;
 use crate::ui::animation::{AnimatedValue, KNOB_SPEED};
 use crate::ui::audio_page;
 use crate::ui::block_def::{BlockDef, ChainDef2, FxFlow, SlotBinding, VizType, slot_addr};
+use crate::ui::cell_text::{self, CellCx};
 use crate::ui::components::{self, Head};
 use crate::ui::draw;
 use crate::ui::dungeon_map;
-use crate::ui::fmt::{self, FmtBuf};
+use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::{
     BRAID_PARAMS, Braid, BraidPart, CompositeId, Cube, CubePart, FocusGlyph, Gauge, REVERB_PARAMS,
     RINGS_PARAMS, Reads, Rings, RingsPart, TAPE_GLYPH_PARAMS, Tail, VA_MIX_PARAMS, VaGlyph, VaMix,
@@ -139,7 +140,23 @@ pub struct Frame<'a> {
     pub pads: crate::ui::kit_band::Pads<'a>,
 }
 
-impl Frame<'_> {
+impl<'a> Frame<'a> {
+    /// What a cell's text reads from this frame.
+    #[inline(always)]
+    pub(crate) fn cell(&self) -> CellCx<'_> {
+        CellCx {
+            def: self.def,
+            ctx: &self.ctx,
+            held: &self.held,
+            part: &self.parts[self.active_part.index()],
+            focus: self.focus,
+            clock: &self.clock,
+            bank2: &self.bank2,
+            fx: self.fx,
+            rev_clock: &self.rev_clock,
+        }
+    }
+
     /// `h`, or none with HINTS off.
     pub fn hint(&self, h: hint::Hint) -> hint::Hint {
         if self.hints { h } else { hint::NONE }
@@ -1381,13 +1398,10 @@ pub fn title_type(def: &BlockDef, envs: &[EnvKind; 3]) -> u8 {
 pub fn look(f: &Frame, i: usize) -> components::Look {
     let sound = &f.parts[f.active_part.index()].sound;
     match view::view(f.def, i, &f.ctx) {
-        View::Route { route, .. } => {
-            let (row, c) = route.cell(sound);
-            match crate::ui::filter_panel::cell_route(sound, row, c) {
-                Some(_) => components::Look::Live,
-                None => components::Look::Absent,
-            }
-        }
+        View::Route { route, .. } => match cell_text::route_absent(sound, route) {
+            false => components::Look::Live,
+            true => components::Look::Absent,
+        },
         View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
         v if held_on(f, &v).is_some() => components::Look::Dimmed,
         v if view::is_dimmed(&v, sound, &f.ctx) || view::clash_note(&v, &f.ctx).is_some() => {
@@ -1431,21 +1445,11 @@ pub(crate) fn mod_info(f: &Frame, i: usize) -> Option<f32> {
     slot_addr(f.def, i, &f.ctx).and_then(|a| f.matrix.mod_info_for(a))
 }
 
-/// Slot `i`'s value as a cell, the focus band and a viz readout show it:
-/// `--` for an absent route, a fixed readout's text.
-fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
-    let mut buf = FmtBuf::new();
-    match view::view(f.def, i, &f.ctx) {
-        View::Text { text, .. } => {
-            let _ = core::fmt::Write::write_str(&mut buf, text);
-        }
-        View::Source(s) => s.text(&mut buf),
-        _ if look(f, i) == components::Look::Absent => {
-            let _ = core::fmt::Write::write_str(&mut buf, "--");
-        }
-        view => buf = param_text(f, i, &view, v),
-    }
-    buf
+/// Slot `i`'s value as a cell, the focus band and a viz readout show it
+/// (`cell_text::value_text`).
+#[inline(never)]
+pub(crate) fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
+    cell_text::value_text(&f.cell(), i, v)
 }
 
 /// The ALGO page's picked cell (ALG A or B is the focus) and the refused
@@ -1461,90 +1465,17 @@ fn alg_pick(f: &Frame) -> Option<(bool, Option<u8>)> {
         })
 }
 
-/// The refused choice `view` shows in place of its value, if it is the cell.
-fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
-    f.held
-        .map(|s| s.held)
-        .filter(|h| view.addr() == Some(h.addr))
+/// A param's text at display value `v` (`cell_text::param_text`), out of
+/// line as it was: a caller builds no `CellCx`.
+#[inline(never)]
+fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    cell_text::param_text(&f.cell(), i, view, v)
 }
 
-/// A param's text at display value `v`: a reverb panel cell's in its
-/// units (`reverb_panel::value_text`), any other by its format.
-fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
-    if let Some(h) = held_on(f, view) {
-        let mut buf = FmtBuf::new();
-        let fmt = view.fmt();
-        fmt::fmt_val(
-            &mut buf,
-            f32::from(h.code) / f32::from(fmt.max_int().max(1)),
-            fmt,
-        );
-        return buf;
-    }
-    if let (Some(a), view::SourceState::Held { rate, frames, .. }) = (view.addr(), f.ctx.src)
-        && a.block == BlockRef::TapeEngine
-        && matches!(
-            a.param,
-            crate::dsp::tape_engine::TapeEngineParams::START
-                | crate::dsp::tape_engine::TapeEngineParams::END
-        )
-    {
-        let mut buf = FmtBuf::new();
-        crate::ui::onset::time_text(&mut buf, v, rate.get(), frames);
-        return buf;
-    }
-    // SCALA reads the Part's file by the name it shows (ADR 0259): its
-    // first 7 characters (8 wide ones run into the next cell), a longer
-    // one scrolling while the cell has focus.
-    let part = &f.parts[f.active_part.index()];
-    if view.addr() == Some(view::TUNING)
-        && part.mix.tuning == crate::part::TUNING_SCALA
-        && let Some(n) = part.scala()
-    {
-        use crate::ui::tuning_walk::{SHOWN, marquee};
-        const CELL: usize = 7;
-        let mut name = [0; crate::scala_name::LONG_MAX];
-        let len = SHOWN.name(n, &mut name);
-        let shown: &[u8] = if len > 0 { &name[..len] } else { n.as_bytes() };
-        let at = match i == f.focus {
-            true => marquee(shown.len(), CELL, f.clock.frame()),
-            false => 0,
-        };
-        let w = &shown[at..shown.len().min(at + CELL)];
-        let mut buf = FmtBuf::new();
-        let _ = core::fmt::Write::write_str(&mut buf, core::str::from_utf8(w).unwrap_or_default());
-        return buf;
-    }
-    if let Some(t) = view
-        .addr()
-        .and_then(|a| crate::bank2::closed_text(a, v, f.bank2))
-    {
-        let mut buf = FmtBuf::new();
-        let _ = core::fmt::Write::write_str(&mut buf, t);
-        return buf;
-    }
-    match view.addr().filter(|_| view::is_reverb_panel(f.def, i)) {
-        Some(a) => {
-            let mut p = f.fx.reverb;
-            crate::block::Block::set(&mut p, a.param, v);
-            let (tempo, fold) = f.rev_clock;
-            crate::ui::reverb_panel::value_text(a.param, &p, tempo, fold)
-        }
-        None => {
-            let mut buf = FmtBuf::new();
-            let fmt = view.fmt();
-            // These two read the stored value (`ValFmt::LogHz`).
-            let v = match (fmt, view.addr().and_then(|a| a.spec())) {
-                (
-                    crate::ui::page::ValFmt::LogHz { .. } | crate::ui::page::ValFmt::Vowel,
-                    Some(s),
-                ) => s.denormalize(v),
-                _ => v,
-            };
-            fmt::fmt_val(&mut buf, v, fmt);
-            buf
-        }
-    }
+/// The refused choice `view` shows in place of its value, if it is the cell.
+#[inline(always)]
+fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
+    cell_text::held_on(f.held, view)
 }
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).

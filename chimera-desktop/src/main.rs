@@ -141,6 +141,7 @@ fn main() {
 
     let mut console = console::bind_or_off(console::ADDR);
     let mut hands = chimera_core::console::Hands::new();
+    let mut ed = chimera_core::console::EdState::new();
 
     while display.is_open() {
         // Before the frame's input and draw: the snapshot point the chip uses.
@@ -149,8 +150,11 @@ fn main() {
                 ui: &ui,
                 frame: display.frame(),
                 hands: Some(&mut hands),
+                ed: Some(&mut ed),
             })
         });
+        // The console's `ed set`s, applied as knob turns.
+        chimera_core::bank2::ed_apply(&mut ed, &mut ui);
         let now = Instant::now();
         let frame_us = now.duration_since(frame_start).as_micros() as u32;
         frame_start = now;

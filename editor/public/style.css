@@ -1,0 +1,63 @@
+/* The face: a strict unit grid, Prophet-6 style (mockup v10). One knob is one 64x92 unit; every section is a whole number of units, outlined in white with its title in the line. One dark panel by choice. */
+:root {
+  --u: 64px; --uh: 92px;
+  --ground: #0b0e0f; --panel: #16191a; --ink: #f1f4f3; --mute: #97a3a1; --line: #e9eeed; --dim: #3a4544;
+  --teal: #36c8b8; --pos: #e8b44a; --led: #ff4d3a;
+  --disp: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}
+html, body { background: var(--ground); color: var(--ink); font-family: var(--disp); font-size: 14px; line-height: 1.45; margin: 0; }
+.editor { width: max-content; min-width: 100%; box-sizing: border-box; padding: 10px 30px 14px; background: var(--panel); }
+.top { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 11px; color: var(--mute); padding: 2px 4px 8px; }
+.notice { color: var(--ink); letter-spacing: .06em; }
+button.part { padding: 2px 7px; border-radius: 3px; border: 1px solid var(--dim); background: none; color: var(--mute); font: inherit; cursor: pointer; }
+button.part:hover { color: var(--ink); border-color: var(--line); }
+.waiting { padding: 40px 4px; color: var(--mute); letter-spacing: .14em; }
+
+.face { display: grid; grid-template-columns: repeat(22, var(--u)); gap: 0; }
+fieldset { margin: 3px; padding: 0; border: 1.5px solid var(--line); border-radius: 7px; display: grid; grid-auto-flow: row; align-items: center; justify-items: center; min-width: 0; position: relative; }
+legend { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; padding: 0 5px; margin-left: 8px; white-space: nowrap; }
+fieldset.n1 legend { margin-left: 2px; letter-spacing: .06em; }
+.slot { display: grid; min-width: 0; width: 100%; height: 100%; }
+.cell { display: grid; justify-items: center; align-content: center; gap: 1px; user-select: none; touch-action: none; width: 100%; height: 100%; min-width: 0; position: relative; }
+.lab { font-weight: 600; font-size: 9.5px; letter-spacing: .05em; color: var(--ink); text-transform: uppercase; text-align: center; line-height: 1.05; max-width: 60px; }
+.val { font-family: var(--mono); font-size: 9.5px; color: var(--mute); font-variant-numeric: tabular-nums; height: 12px; line-height: 12px; white-space: nowrap; max-width: 62px; overflow: hidden; }
+.big .val { max-width: 126px; }
+/* an edit the unit has not yet confirmed */
+.pending .val { color: var(--pos); }
+.pending::after { content: ""; position: absolute; top: 4px; right: 8px; width: 5px; height: 5px; border-radius: 50%; background: var(--pos); }
+
+.knob { width: 36px; height: 36px; border-radius: 50%; background: radial-gradient(circle at 50% 40%, #2c3233 0 62%, #1d2122 63%); border: 2px solid #2c3233; box-sizing: border-box; position: relative; cursor: ns-resize; }
+.big .knob { width: 104px; height: 104px; }
+.knob .ind { position: absolute; inset: 0; }
+.knob .ind::before { content: ""; position: absolute; left: calc(50% - 1px); top: 3px; width: 2px; height: 36%; background: var(--ink); border-radius: 1px; }
+.big .knob .ind::before { width: 3.4px; left: calc(50% - 1.7px); top: 6px; }
+.knob:focus-visible, .slider:focus-visible, button:focus-visible { outline: 2px solid var(--pos); outline-offset: 2px; border-radius: 6px; }
+.slider { width: 14px; height: 34px; background: #0f1212; border: 1px solid var(--dim); border-radius: 3px; position: relative; cursor: ns-resize; }
+.slider .cap { position: absolute; left: -5px; right: -5px; height: 8px; background: var(--ink); border-radius: 2px; }
+
+.sw { display: grid; gap: 2px; justify-items: start; }
+.opt { display: flex; align-items: center; gap: 4px; background: none; border: 0; padding: 0; cursor: pointer; font-family: var(--disp); font-size: 9px; font-weight: 600; letter-spacing: .04em; color: var(--mute); text-transform: uppercase; white-space: nowrap; line-height: 10px; }
+.opt i { width: 6px; height: 6px; border-radius: 50%; background: #3b1714; display: inline-block; }
+.opt.on { color: var(--ink); }
+.opt.on i { background: var(--led); box-shadow: 0 0 6px var(--led); }
+
+.tog { display: grid; grid-template-columns: auto auto; align-items: center; gap: 2px 5px; cursor: pointer; background: none; border: 0; padding: 0; color: var(--ink); }
+.tog .pos { display: grid; gap: 3px; font-size: 9px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--mute); text-align: right; line-height: 10px; }
+.tog .pos span.on { color: var(--ink); }
+.tog .body { width: 14px; border-radius: 7px; background: #0f1212; border: 1.5px solid var(--line); position: relative; box-sizing: border-box; }
+.tog .lever { position: absolute; left: 1px; right: 1px; height: 10px; border-radius: 5px; background: linear-gradient(#f4f6f6, #9aa3a2); transition: top .08s; }
+
+/* a screen slice 1 does not draw yet: a black placeholder */
+.lcd { width: 46px; height: 46px; border-radius: 4px; background: #000; border: 1px solid #2a3433; box-shadow: inset 0 0 8px rgba(0, 0, 0, .8); }
+.lcdcell .lab { color: var(--mute); }
+.slot:has(> .lcdcell) { align-items: stretch; }
+.note { display: grid; gap: 2px; justify-items: center; text-align: center; padding: 0 6px; }
+.note .val { max-width: none; white-space: normal; height: auto; line-height: 1.2; font-size: 8.5px; }
+
+/* what the unit describes and the face does not place */
+.unplaced { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 0; width: calc(22 * var(--u) - 6px); }
+.unplaced .cell { width: var(--u); height: var(--uh); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.status { color: var(--ink); opacity: .7; letter-spacing: .06em; }

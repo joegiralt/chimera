@@ -95,6 +95,8 @@ pub struct DeskUnit<'a> {
     pub frame: Frame<'a>,
     /// `key` and `turn`'s queue. `None`: they answer not in this build.
     pub hands: Option<&'a mut Hands>,
+    /// `ed set`'s queue. `None`: it answers not in this build.
+    pub ed: Option<&'a mut chimera_core::console::EdState>,
 }
 
 impl Unit for DeskUnit<'_> {
@@ -131,6 +133,9 @@ impl Unit for DeskUnit<'_> {
     }
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
         None
+    }
+    fn ed(&mut self) -> (&UiState, Option<&mut chimera_core::console::EdState>) {
+        (self.ui, self.ed.as_deref_mut())
     }
     fn hands(&mut self) -> Option<&mut Hands> {
         self.hands.as_deref_mut()
@@ -272,6 +277,7 @@ mod tests {
         c.write_all(request).unwrap();
         let unit = &mut DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -299,6 +305,7 @@ mod tests {
         c.write_all(b"status\n").unwrap();
         let unit = &mut DeskUnit {
             hands: None,
+            ed: None,
             ui: &desk.ui,
             frame: Frame {
                 fb: &fb,
@@ -330,6 +337,7 @@ mod tests {
         c.write_all(b"stats\nbench\n").unwrap();
         let mut unit = DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -353,6 +361,7 @@ mod tests {
         c.write_all(b"dfu\n").unwrap();
         let mut unit = DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -374,6 +383,7 @@ mod tests {
         c.write_all(b"help\nstatus\n").unwrap();
         let mut unit = DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -382,7 +392,7 @@ mod tests {
         };
         assert!(serve_until_answered(&mut con, &mut unit));
         let first = read_until_terminal(&mut c);
-        assert!(first.starts_with("chimera console 1\n"), "{first}");
+        assert!(first.starts_with("chimera console 2\n"), "{first}");
         assert_eq!(
             con.service(&mut unit),
             Served::Answered,
@@ -400,6 +410,7 @@ mod tests {
         new.write_all(b"help\n").unwrap();
         let unit = &mut DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -419,6 +430,7 @@ mod tests {
         let mut c = client(&con);
         let mut unit = DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -457,6 +469,7 @@ mod tests {
         drop(client(&con));
         let mut unit = DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -479,6 +492,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         let unit = &mut DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -497,6 +511,7 @@ mod tests {
         let mut old = client(&con);
         let mut unit = DeskUnit {
             hands: None,
+            ed: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -510,7 +525,7 @@ mod tests {
         new.write_all(b"help\n").unwrap();
         assert!(serve_until_answered(&mut con, &mut unit));
         let text = read_until_terminal(&mut new);
-        assert!(text.starts_with("chimera console 1\n"), "{text}");
+        assert!(text.starts_with("chimera console 2\n"), "{text}");
     }
 
     /// The keyboard keys that press and turn what `h` does this frame.
@@ -574,6 +589,7 @@ mod tests {
                     palette: Palette::IDENTITY,
                 },
                 hands: Some(&mut by_console.hands),
+                ed: None,
             };
             assert!(serve_until_answered(&mut con, unit));
             assert_eq!(read_line(&mut c), "OK\n", "{line}");

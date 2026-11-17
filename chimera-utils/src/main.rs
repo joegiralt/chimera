@@ -12,6 +12,7 @@ mod circuit;
 mod devices;
 mod dropouts;
 mod drums;
+mod ed_bridge;
 mod filter_fb;
 mod generic;
 mod grain;
@@ -66,6 +67,8 @@ usage: chimera-utils [flags] COMMAND …
                            fail unless the .bk2's seal is the .bin's
   check-slots BK2          fail unless the .bk2's size, slot stubs, markers and 0xFF reserves hold
   door-check ELF           fail on any bank-1 relocation into bank 2
+  ed-bridge [--listen 127.0.0.1:7342] [--console 127.0.0.1:7341]
+                           the simulator console over WebSocket, for the browser editor
   nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
   nrpn-guide               docs/guide/NRPN.md: the writable NRPNs by engine and block (#926)
   suggest-map DIR | suggest-map --tables
@@ -263,6 +266,7 @@ fn run() -> Result<bool, String> {
         }
         "check-slots" if rest.len() == 1 => bank2::check_slots_file(&rest[0]).map(|_| true),
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
+        "ed-bridge" => ed_bridge::run(rest).map(|_| true),
         "nrpn-chart" => {
             use std::io::Write;
             // A closed pipe (`| head`) ends the listing, not the tool.

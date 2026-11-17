@@ -24,8 +24,9 @@ pub const BUILD: &str = if cfg!(debug_assertions) {
 pub const THIS: BuildStamp = BuildStamp::new(VERSION, HASH, DIRTY);
 const _: () = assert!(VERSION.len() <= 12);
 
-const HASH: &str = env!("CHIMERA_HASH");
-const DIRTY: bool = env!("CHIMERA_DIRTY").len() == 1 && env!("CHIMERA_DIRTY").as_bytes()[0] == b'1';
+pub const HASH: &str = env!("CHIMERA_HASH");
+pub const DIRTY: bool =
+    env!("CHIMERA_DIRTY").len() == 1 && env!("CHIMERA_DIRTY").as_bytes()[0] == b'1';
 
 /// The build's identity as testers quote it: `0.1.0 a1b2c3d4`, `+` after
 /// the hash when the tree had uncommitted changes.
