@@ -236,7 +236,7 @@ pub struct UiDoor {
     machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
     band_note: fn(ParamAddr, &Sound, crate::ui::view::SourceState) -> Option<&'static str>,
-    tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
+    tape_held: fn(&TapeEngineParams, crate::ui::held::TapeTurn) -> Option<NeedsRam>,
     /// TAPE cells' units where the engine has a law (`ui::walk`).
     tape_fmt: fn(
         ParamId,
@@ -247,7 +247,7 @@ pub struct UiDoor {
     /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
     delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,
     /// A TAPE MODEL or DIRECTION edit's knob writes (`ui::walk`).
-    tape_writes: fn(ParamId, u8, &TapeEngineParams) -> u8,
+    tape_writes: fn(crate::ui::held::TapeTurn, &TapeEngineParams) -> u8,
     /// The focus readout's full words for TAPE's MODEL and DIRECTION.
     readout_word: fn(ParamAddr, f32, Option<u8>) -> Option<&'static str>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
@@ -451,10 +451,9 @@ impl UiDoor {
     pub(crate) fn tape_held(
         &self,
         t: &TapeEngineParams,
-        id: ParamId,
-        code: u8,
+        turn: crate::ui::held::TapeTurn,
     ) -> Option<NeedsRam> {
-        (self.tape_held)(t, id, code)
+        (self.tape_held)(t, turn)
     }
 
     #[inline(always)]
@@ -497,8 +496,8 @@ impl UiDoor {
     }
 
     #[inline(always)]
-    pub(crate) fn tape_writes(&self, id: ParamId, code: u8, t: &TapeEngineParams) -> u8 {
-        (self.tape_writes)(id, code, t)
+    pub(crate) fn tape_writes(&self, turn: crate::ui::held::TapeTurn, t: &TapeEngineParams) -> u8 {
+        (self.tape_writes)(turn, t)
     }
 
     #[inline(always)]

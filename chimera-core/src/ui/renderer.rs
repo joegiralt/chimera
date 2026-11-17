@@ -1462,7 +1462,7 @@ fn alg_pick(f: &Frame) -> Option<(bool, Option<u8>)> {
         .into_iter()
         .find(|&id| at == ParamAddr::new(BlockRef::Algo, id))
         .map(|id| {
-            let held = f.held.filter(|s| s.held.addr.param == id);
+            let held = f.held.filter(|s| s.held.addr().param == id);
             (id == AlgoParams::ALG_B, held.map(|s| s.held.code()))
         })
 }

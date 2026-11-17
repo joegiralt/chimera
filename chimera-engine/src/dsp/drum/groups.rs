@@ -35,6 +35,25 @@ impl ChokeSet {
     }
 }
 
+/// A kit's chokes, a pad each: what a held CHOKE was judged against
+/// (`ui::held::ChokeHold`). Equal while no pad's choke has changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KitChokes([ChokeGroup; PadId::ALL.len()]);
+
+impl KitChokes {
+    /// A plain loop: `array::map`'s instance would be core's and link
+    /// into bank 1.
+    pub fn of(kit: &Kit) -> KitChokes {
+        let mut c = [ChokeGroup::Off; PadId::ALL.len()];
+        let mut i = 0;
+        while i < c.len() {
+            c[i] = kit.pad(PadId::ALL[i]).choke();
+            i += 1;
+        }
+        KitChokes(c)
+    }
+}
+
 /// A kit's voice groups: 1..=12 by construction, the pads' choke groups
 /// in use and the pads with choke OFF.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

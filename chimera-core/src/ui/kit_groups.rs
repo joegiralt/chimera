@@ -6,10 +6,10 @@
 use core::fmt::Write;
 
 use super::UiState;
-use super::held::{self, Choice, Held};
+use super::held::{self, ChokeHold, Held};
 use super::part_page::Edit;
 use crate::block::Block;
-use crate::dsp::drum::groups::VoiceGroups;
+use crate::dsp::drum::groups::{KitChokes, VoiceGroups};
 use crate::dsp::drum::types::{ChokeGroup, Kit, PadId};
 use crate::project::{Line, PartId};
 
@@ -22,9 +22,9 @@ pub(crate) enum Ask<'a> {
     /// would make a 9th; one that can't land is refused with a toast, the
     /// kit and its revision untouched.
     Edit(&'a mut UiState, PartId, Edit),
-    /// A held CHOKE `to` on Part `at`'s selected pad: why it is refused,
-    /// if it still is and the project hasn't changed since the hold.
-    Held(&'a UiState, PartId, ChokeGroup),
+    /// A held CHOKE on pad `p` of `kit`: why it is refused, if it still
+    /// is and the kit's chokes are as they were at the hold.
+    Held(&'a Kit, PadId, ChokeHold),
     /// The refusal's words for a count.
     Why(VoiceGroups),
     /// CHOKE's focus band: the kit's count.
@@ -67,36 +67,24 @@ pub(crate) fn ask_in(a: Ask<'_>) -> Said {
     match a {
         Ask::Turn(ui, at, delta, shift) => Said::Moved(turn(ui, at, delta, shift)),
         Ask::Edit(ui, at, how) => Said::Moved(edit(ui, at, how)),
-        Ask::Held(ui, at, to) => {
-            let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
-            match VoiceGroups::choke(kit, p, to) {
-                Err(n) if ui.held_rev == ui.project.rev() => Said::Refused(n),
-                _ => Said::Fits,
-            }
-        }
+        Ask::Held(kit, p, hold) => match VoiceGroups::choke(kit, p, hold.to) {
+            Err(n) if hold.kit == KitChokes::of(kit) => Said::Refused(n),
+            _ => Said::Fits,
+        },
         Ask::Why(n) => Said::Line(why(n)),
         Ask::Note(kit) => Said::Line(note(kit)),
     }
 }
 
 /// A CHOKE turn `delta` (to an end with `shift`) on Part `at`'s selected
-/// pad, from its held group (if the project hasn't changed since) or its
-/// own.
+/// pad, from its held group (while the kit's chokes are as they were at
+/// the hold) or its own.
 #[optimize(speed)]
 fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
-    let (kit, p, rev) = (
-        ui.project.kit(at),
-        ui.project.selected_pad(at),
-        ui.project.rev(),
-    );
+    let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
+    let chokes = KitChokes::of(kit);
     let from = match ui.held {
-        Some((
-            h,
-            Held {
-                choice: Choice::Choke(to),
-                ..
-            },
-        )) if h == at && ui.held_rev == rev => to,
+        Some((h, Held::Choke(c))) if h == at && c.kit == chokes => c.to,
         _ => kit.pad(p).choke(),
     };
     let to = if shift {
@@ -105,14 +93,7 @@ fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
         from.step(delta)
     };
     let refused = VoiceGroups::choke(kit, p, to).is_err();
-    ui.held = refused.then_some((
-        at,
-        Held {
-            addr: held::CHOKE,
-            choice: Choice::Choke(to),
-        },
-    ));
-    ui.held_rev = rev;
+    ui.held = refused.then_some((at, Held::Choke(ChokeHold { to, kit: chokes })));
     if !refused && to != kit.pad(p).choke() {
         ui.project.kit_mut(at).pad_mut(p).set_choke(to);
     }
@@ -127,22 +108,20 @@ fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
 fn edit(ui: &mut UiState, at: PartId, how: Edit) -> bool {
     let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
     let now = kit.pad(p).choke();
+    let id = held::CHOKE.param;
+    let set = |edit: &dyn Fn(&mut dyn Block)| {
+        let mut pad = *kit.pad(p);
+        edit(&mut pad);
+        let to = pad.choke();
+        VoiceGroups::choke(kit, p, to).map(|_| to)
+    };
     let to = match how {
+        // A pushed turn on a list moves a whole step, as a turn does.
+        #[cfg(feature = "push-encoders")]
+        Edit::Fine(d) => step(kit, p, now, d),
         Edit::Nudge(d) => step(kit, p, now, d),
-        how => {
-            let mut pad = *kit.pad(p);
-            let b: &mut dyn Block = &mut pad;
-            let id = held::CHOKE.param;
-            match how {
-                Edit::Snap(d) => b.snap(id, d),
-                #[cfg(feature = "push-encoders")]
-                Edit::Fine(d) => crate::block::nudge_fine(b, id, d),
-                Edit::To(v) => b.set(id, v),
-                Edit::Nudge(d) => b.nudge(id, d),
-            }
-            let to = pad.choke();
-            VoiceGroups::choke(kit, p, to).map(|_| to)
-        }
+        Edit::Snap(d) => set(&|b| b.snap(id, d)),
+        Edit::To(v) => set(&|b| b.set(id, v)),
     };
     match to {
         Ok(to) if to == now => false,

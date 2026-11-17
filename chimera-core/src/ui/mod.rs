@@ -299,9 +299,6 @@ pub struct UiState {
     prime_status: Option<PrimeStatus>,
     /// A WAVE or ALG choice the budget refused, shown dimmed (ADR 0151).
     held: Option<(PartId, held::Held)>,
-    /// The project's revision when a CHOKE was held: a kit changed since
-    /// (a load, a CC) drops it (ADR 0280, `kit_groups`).
-    held_rev: u32,
     /// A save the pool had no room for, in the browser's band until the
     /// next input (ADR 0017's convention).
     refusal: Option<Line>,
@@ -439,7 +436,6 @@ crate::in_place::field_list!(UiState => UiState {
     display_lfos,
     prime_status,
     held,
-    held_rev,
     refusal,
     theme,
     midi,
@@ -559,7 +555,6 @@ impl UiState {
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).held).write(None);
-            addr_of_mut!((*p).held_rev).write(0);
             addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
@@ -1637,8 +1632,8 @@ impl UiState {
             return false;
         }
         let p = &self.project.part(at).sound.params.algo;
-        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
-        let (choice, refused) = match a.block {
+        let held = self.held.filter(|&(h, c)| h == at && c.addr() == a);
+        let (pick, refused) = match a.block {
             BlockRef::AlgoOp(op) => {
                 let d = if shift {
                     delta.signum() * i8::MAX
@@ -1646,38 +1641,27 @@ impl UiState {
                     delta
                 };
                 let from = match held {
-                    Some((
-                        _,
-                        held::Held {
-                            choice: held::Choice::Kind(k),
-                            ..
-                        },
-                    )) => k,
+                    Some((_, held::Held::Sound(held::Pick::Wave(_, k)))) => k,
                     _ => p.kinds().get(op.index()),
                 };
                 let s = step_kind(p.kinds(), p.linked(), op.index(), from, d);
-                (held::Choice::Kind(s.to), s.refused)
+                (held::Pick::Wave(op, s.to), s.refused)
             }
             _ => {
                 let from = match held {
-                    Some((
-                        _,
-                        held::Held {
-                            choice: held::Choice::Alg(x),
-                            ..
-                        },
-                    )) => x,
+                    Some((_, held::Held::Sound(held::Pick::Alg(_, x)))) => x,
                     _ => p.side(a.param),
                 };
                 let s = step_alg(p, a.param, from, delta);
-                (held::Choice::Alg(s.to), s.refused)
+                (held::Pick::Alg(held::AlgSide::of(a.param), s.to), s.refused)
             }
         };
+        let h = held::Held::Sound(pick);
         if refused {
-            self.held = Some((at, held::Held { addr: a, choice }));
+            self.held = Some((at, h));
         } else {
             self.held = None;
-            self.edit_in(at, a, part_page::Edit::To(f32::from(choice.code())));
+            self.edit_in(at, a, part_page::Edit::To(f32::from(h.code())));
         }
         true
     }
@@ -1691,29 +1675,23 @@ impl UiState {
             return false;
         }
         let sound = &self.project.part(at).sound;
-        let now =
-            held::TapeCode::clamped(crate::block::Block::get(&sound.params.tape, a.param) as u8);
+        let Some(now) =
+            held::TapeTurn::of(a, crate::block::Block::get(&sound.params.tape, a.param))
+        else {
+            return false;
+        };
         let from = match self.held {
-            Some((
-                h,
-                held::Held {
-                    addr,
-                    choice: held::Choice::Tape(c),
-                },
-            )) if h == at && addr == a => c,
+            Some((h, held::Held::Sound(held::Pick::Tape(t)))) if h == at && t.addr() == a => t,
             _ => now,
         };
         let to = from.step(delta, shift);
-        let h = held::Held {
-            addr: a,
-            choice: held::Choice::Tape(to),
-        };
-        if h.why(sound, true).is_some() {
-            self.held = Some((at, h));
+        let pick = held::Pick::Tape(to);
+        if pick.why(sound, true).is_some() {
+            self.held = Some((at, held::Held::Sound(pick)));
         } else {
             self.held = None;
             if to != now {
-                self.edit_in(at, a, part_page::Edit::To(f32::from(to.get())));
+                self.edit_in(at, a, part_page::Edit::To(f32::from(to.code())));
             }
         }
         true
@@ -1758,18 +1736,16 @@ impl UiState {
         let (at, h) = self.held?;
         let def = self.page_def();
         let on = slot_addr(def, self.focused_slot(), &self.ctx());
-        (at == self.active_part && on == Some(h.addr))
-            .then(|| match h.addr {
-                held::CHOKE => match h.choice {
-                    held::Choice::Choke(to) => {
-                        match crate::bank2::groups(kit_groups::Ask::Held(self, at, to)) {
-                            Some(kit_groups::Said::Refused(n)) => Some(held::Reason::Groups(n)),
-                            _ => None,
-                        }
+        (at == self.active_part && on == Some(h.addr()))
+            .then(|| match h {
+                held::Held::Choke(hold) => {
+                    let (kit, p) = (self.project.kit(at), self.project.selected_pad(at));
+                    match crate::bank2::groups(kit_groups::Ask::Held(kit, p, hold)) {
+                        Some(kit_groups::Said::Refused(n)) => Some(held::Reason::Groups(n)),
+                        _ => None,
                     }
-                    _ => None,
-                },
-                _ => h.why(&self.project.part(at).sound, self.streams(at)),
+                }
+                held::Held::Sound(pick) => pick.why(&self.project.part(at).sound, self.streams(at)),
             })
             .flatten()
             .map(|why| held::Shown { held: h, why })
@@ -2859,9 +2835,8 @@ impl UiState {
             // At most a MODEL turn's writes (`walk::tape_writes_in`).
             let t = &self.project.part(self.active_part).sound.params.tape;
             let defaults = if now != was {
-                let code = now.0.index();
-                crate::bank2::ui_door(|u| u.tape_writes(TapeEngineParams::MODEL, code, t))
-                    .unwrap_or(0)
+                let turn = held::TapeTurn::Model(now.0);
+                crate::bank2::ui_door(|u| u.tape_writes(turn, t)).unwrap_or(0)
             } else {
                 0
             };
@@ -3255,7 +3230,7 @@ impl UiState {
                     self.focus.touch(def.id, i);
                 }
                 // A turn elsewhere ends the held choice.
-                if self.held.is_some_and(|(_, h)| v.addr() != Some(h.addr)) {
+                if self.held.is_some_and(|(_, h)| v.addr() != Some(h.addr())) {
                     self.held = None;
                 }
                 if let View::Route { route, .. } = v {

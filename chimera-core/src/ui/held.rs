@@ -4,91 +4,149 @@
 //! cell shows it dimmed with the reason in the focus band, and nothing is
 //! written.
 
-use crate::addr::{BlockRef, ParamAddr};
+use crate::addr::{BlockRef, Op, ParamAddr};
+use crate::block::ParamId;
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::kinds::{Linked, OpKind, Why, why_kind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
-use crate::dsp::drum::groups::VoiceGroups;
+use crate::dsp::drum::groups::{KitChokes, VoiceGroups};
 use crate::dsp::drum::params::PadParams;
 use crate::dsp::drum::types::ChokeGroup;
-use crate::dsp::tape_engine::{NeedsRam, TapeEngineParams};
+use crate::dsp::tape_engine::{Direction, NeedsRam, TapeEngineParams, TapeMachine};
 use crate::preset::Sound;
 use crate::project::Line;
 
-/// The choice a turn stopped on, on cell `addr`.
+/// The choice a turn stopped on, typed by its cell: the cell is the
+/// choice's, so the two can't disagree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Held {
-    pub addr: ParamAddr,
-    pub choice: Choice,
+pub enum Held {
+    /// A Sound's cell the formant budget or a streamed source refuses.
+    Sound(Pick),
+    /// A pad's CHOKE that makes a 9th voice group (ADR 0280).
+    Choke(ChokeHold),
 }
 
-/// What a held turn points at, typed by its cell.
+/// A Sound's held choice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Choice {
-    /// An operator's WAVE.
-    Kind(OpKind),
+pub enum Pick {
+    /// Operator `Op`'s WAVE.
+    Wave(Op, OpKind),
     /// ALG A or B.
-    Alg(AlgoId),
+    Alg(AlgSide, AlgoId),
     /// TAPE's MODEL or DIRECTION.
-    Tape(TapeCode),
-    /// A pad's CHOKE (ADR 0280).
-    Choke(ChokeGroup),
+    Tape(TapeTurn),
 }
 
-impl Choice {
-    /// The cell's enum code: what its text shows.
-    pub fn code(self) -> u8 {
+/// Which ALG cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlgSide {
+    A,
+    B,
+}
+
+impl AlgSide {
+    /// ALG A's or B's param; any other is B's.
+    pub fn of(id: ParamId) -> AlgSide {
+        if id == AlgoParams::ALG_A {
+            AlgSide::A
+        } else {
+            AlgSide::B
+        }
+    }
+
+    pub const fn param(self) -> ParamId {
         match self {
-            Choice::Kind(k) => k.code(),
-            Choice::Alg(a) => a.get(),
-            Choice::Tape(c) => c.get(),
-            Choice::Choke(to) => to.index() as u8,
+            AlgSide::A => AlgoParams::ALG_A,
+            AlgSide::B => AlgoParams::ALG_B,
         }
     }
 }
 
-impl Held {
-    /// `choice`'s enum code.
-    pub fn code(self) -> u8 {
-        self.choice.code()
+/// A TAPE MODEL or DIRECTION choice: its own type, the cell with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TapeTurn {
+    Model(TapeMachine),
+    Direction(Direction),
+}
+
+impl TapeTurn {
+    /// Cell `a`'s (MODEL or DIRECTION) at stored value `v`; `None` off
+    /// them.
+    pub fn of(a: ParamAddr, v: f32) -> Option<TapeTurn> {
+        let i = (v as usize).min(Direction::ALL.len() - 1);
+        match a {
+            MODEL => Some(TapeTurn::Model(TapeMachine::ALL[i])),
+            DIRECTION => Some(TapeTurn::Direction(Direction::ALL[i])),
+            _ => None,
+        }
+    }
+
+    pub const fn addr(self) -> ParamAddr {
+        match self {
+            TapeTurn::Model(_) => MODEL,
+            TapeTurn::Direction(_) => DIRECTION,
+        }
+    }
+
+    /// The cell's stored value.
+    pub const fn code(self) -> u8 {
+        match self {
+            TapeTurn::Model(m) => m.index(),
+            TapeTurn::Direction(d) => d as u8,
+        }
+    }
+
+    /// Turned `delta` along its list, saturating; with `shift`, to its end
+    /// that way.
+    pub fn step(self, delta: i8, shift: bool) -> TapeTurn {
+        let last = Direction::ALL.len() - 1;
+        let to = match (shift, delta > 0) {
+            (true, true) => last,
+            (true, false) => 0,
+            _ => usize::from(self.code())
+                .saturating_add_signed(isize::from(delta))
+                .min(last),
+        };
+        match self {
+            TapeTurn::Model(_) => TapeTurn::Model(TapeMachine::ALL[to]),
+            TapeTurn::Direction(_) => TapeTurn::Direction(Direction::ALL[to]),
+        }
     }
 }
 
-/// A TAPE MODEL or DIRECTION code: each lists four, 0..=3 by
-/// construction.
+// MODEL and DIRECTION list four each: one index walks both.
+const _: () = assert!(TapeMachine::ALL.len() == Direction::ALL.len());
+
+/// A held CHOKE: the group, and the kit's chokes at the hold. The kit's
+/// chokes changed since (a kit loaded in, a CC on another pad) drop it;
+/// any other edit (another Part's, a pedal's) leaves it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TapeCode(u8);
+pub struct ChokeHold {
+    pub to: ChokeGroup,
+    pub kit: KitChokes,
+}
 
-const _: () = assert!(
-    crate::dsp::tape_engine::TapeMachine::ALL.len() == TapeCode::LEN
-        && crate::dsp::tape_engine::Direction::ALL.len() == TapeCode::LEN
-);
-
-impl TapeCode {
-    const LEN: usize = 4;
-
-    /// `c`, clamped into the list.
-    pub const fn clamped(c: u8) -> TapeCode {
-        TapeCode(if c < Self::LEN as u8 {
-            c
-        } else {
-            Self::LEN as u8 - 1
-        })
+impl Held {
+    /// The cell it is held on.
+    pub fn addr(self) -> ParamAddr {
+        match self {
+            Held::Sound(Pick::Wave(op, _)) => {
+                ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::WAVE)
+            }
+            Held::Sound(Pick::Alg(side, _)) => ParamAddr::new(BlockRef::Algo, side.param()),
+            Held::Sound(Pick::Tape(t)) => t.addr(),
+            Held::Choke(_) => CHOKE,
+        }
     }
 
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-
-    /// Turned `delta` along the list, saturating; with `shift`, to its end
-    /// that way.
-    pub fn step(self, delta: i8, shift: bool) -> TapeCode {
-        let last = Self::LEN as u8 - 1;
-        TapeCode(match (shift, delta > 0) {
-            (true, true) => last,
-            (true, false) => 0,
-            _ => self.0.saturating_add_signed(delta).min(last),
-        })
+    /// The cell's enum code: what its text shows.
+    pub fn code(self) -> u8 {
+        match self {
+            Held::Sound(Pick::Wave(_, k)) => k.code(),
+            Held::Sound(Pick::Alg(_, a)) => a.get(),
+            Held::Sound(Pick::Tape(t)) => t.code(),
+            Held::Choke(c) => c.to.index() as u8,
+        }
     }
 }
 
@@ -131,35 +189,31 @@ pub fn applies(a: ParamAddr, shift: bool) -> bool {
     }
 }
 
-impl Held {
+impl Pick {
     /// Why `sound` refuses it, or `None` where it would land. `streamed`:
-    /// the Sound's source streams. A CHOKE is the kit's (`kit_groups`).
+    /// the Sound's source streams.
     pub fn why(self, sound: &Sound, streamed: bool) -> Option<Reason> {
         let p = &sound.params.algo;
-        let why = match (self.addr.block, self.choice) {
-            (_, Choice::Tape(c)) => {
+        let why = match self {
+            Pick::Tape(t) => {
                 if !streamed {
                     return None;
                 }
                 // Bank 2's (`ui::walk`): closed, nothing is held.
-                let t = &sound.params.tape;
-                return crate::bank2::ui_door(|u| u.tape_held(t, self.addr.param, c.get()))
+                let tape = &sound.params.tape;
+                return crate::bank2::ui_door(|u| u.tape_held(tape, t))
                     .flatten()
                     .map(Reason::NeedsRam);
             }
-            (BlockRef::AlgoOp(op), Choice::Kind(k)) => {
-                why_kind(p.kinds(), p.linked(), op.index(), k)
-            }
-            (BlockRef::Algo, Choice::Alg(to)) => {
+            Pick::Wave(op, k) => why_kind(p.kinds(), p.linked(), op.index(), k),
+            Pick::Alg(side, to) => {
                 let (a, b) = p.algs();
-                let l = if self.addr.param == AlgoParams::ALG_A {
-                    Linked::of(to, b)
-                } else {
-                    Linked::of(a, to)
+                let l = match side {
+                    AlgSide::A => Linked::of(to, b),
+                    AlgSide::B => Linked::of(a, to),
                 };
                 (!p.kinds().fit(l)).then_some(Why::Links)
             }
-            _ => None,
         };
         why.map(Reason::Formant)
     }

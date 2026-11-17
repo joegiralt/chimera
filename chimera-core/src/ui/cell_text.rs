@@ -71,7 +71,8 @@ pub(crate) fn held_on(
     held: Option<crate::ui::held::Shown>,
     view: &View,
 ) -> Option<crate::ui::held::Held> {
-    held.map(|s| s.held).filter(|h| view.addr() == Some(h.addr))
+    held.map(|s| s.held)
+        .filter(|h| view.addr() == Some(h.addr()))
 }
 
 /// A param's text at display value `v`: a reverb panel cell's in its

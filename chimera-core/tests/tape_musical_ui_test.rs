@@ -169,7 +169,7 @@ fn a_cc_is_refused_what_a_turn_is() {
 #[test]
 fn direction_holds_what_a_streamed_source_refuses() {
     use chimera_core::dsp::tape_engine::{Direction, TapeMachine};
-    use chimera_core::ui::held::{Choice, TapeCode};
+    use chimera_core::ui::held::{Pick, TapeTurn};
     let mut ui = streamed_ui();
     assert_eq!(ui.params().tape.way(), Way::Loop);
     feed(&mut ui, Input::turn(EncoderId::D, 1)); // LOOP → PING-PONG: refused
@@ -196,17 +196,11 @@ fn direction_holds_what_a_streamed_source_refuses() {
     // TRON streams.
     let mut t = ui.project().part(PartId::ALL[0]).sound.clone();
     t.params.tape.tron = chimera_core::dsp::tape_engine::Tron::On;
-    let h = chimera_core::ui::held::Held {
-        addr: chimera_core::ui::held::DIRECTION,
-        choice: Choice::Tape(TapeCode::clamped(Direction::Forward as u8)),
-    };
+    let h = Pick::Tape(TapeTurn::Direction(Direction::Forward));
     assert_eq!(h.why(&t, true), None);
     // Each machine that seeks says so.
     for m in [TapeMachine::Scrub, TapeMachine::Stretch, TapeMachine::Wave] {
-        let h = chimera_core::ui::held::Held {
-            addr: chimera_core::ui::held::MODEL,
-            choice: Choice::Tape(TapeCode::clamped(m.index())),
-        };
+        let h = Pick::Tape(TapeTurn::Model(m));
         let s = &ui.project().part(PartId::ALL[0]).sound;
         let w = h.why(s, true).expect("refused");
         fits_band(chimera_core::ui::held::reason(w).as_str());

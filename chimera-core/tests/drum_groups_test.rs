@@ -493,9 +493,9 @@ fn a_cc_ramp_through_a_ninth_group_says_nothing() {
     assert_eq!(choke(&ui, 1), ChokeGroup::D);
 }
 
-/// A held CHOKE is dropped once the kit changes under it: a CC on
-/// another pad's choke, or a kit loaded in. The next turn starts from
-/// the pad's own group.
+/// A held CHOKE is dropped once the kit's chokes change under it: a CC
+/// on another pad's choke, or a kit loaded in with other chokes. The
+/// next turn starts from the pad's own group.
 #[test]
 fn a_held_choke_is_dropped_when_the_kit_changes() {
     let mut ui = keys_on(3, &Kit::DEFAULT);
@@ -517,8 +517,44 @@ fn a_held_choke_is_dropped_when_the_kit_changes() {
     let mut ui = keys_on(3, &Kit::DEFAULT);
     feed(&mut ui, Input::turn(EncoderId::B, -1));
     assert!(ui.held_choice().is_some());
-    *ui.project_mut().kit_mut(P1) = Kit::DEFAULT;
+    *ui.project_mut().kit_mut(P1) = spread();
     assert!(ui.held_choice().is_none(), "a kit loaded: dropped");
+}
+
+/// An expression pedal streaming to Part 2 moves the project's revision
+/// every message; it leaves Part 1's kit alone, so a held CHOKE stays
+/// and the next turn goes on past it (pad 1: A, B held, on to C).
+#[test]
+fn a_pedal_on_another_part_keeps_the_held_choke() {
+    let mut ui = keys_on(1, &spread());
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(choke(&ui, 1), ChokeGroup::A);
+    assert!(ui.held_choice().is_some(), "B held");
+    use chimera_core::midi_in::CtrlEvent;
+    use chimera_midi::ctl::{Ctl, FreeCc};
+    use chimera_midi::value::U7;
+    let ch = ui.project().part(PartId::ALL[1]).mix.channel;
+    assert_ne!(ch, ui.project().part(P1).mix.channel, "Part 2 its own");
+    let rev = ui.project().rev();
+    for (i, v) in [100u8, 90, 80, 70].into_iter().enumerate() {
+        let pedal = CtrlEvent::Ctl(
+            ch,
+            Ctl::Cc {
+                cc: FreeCc::new(11).unwrap(),
+                value: U7::new(v).unwrap(),
+            },
+        );
+        ui.hear_ccs(
+            [pedal].into_iter(),
+            chimera_hal::Ms(2_000 + 4 * i as u32),
+            true,
+        );
+    }
+    assert_eq!(ui.project().part(PartId::ALL[1]).expression(), 70);
+    assert_ne!(ui.project().rev(), rev, "the pedal moved the revision");
+    assert!(ui.held_choice().is_some(), "still held");
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(choke(&ui, 1), ChokeGroup::C, "on past B");
 }
 
 #[test]

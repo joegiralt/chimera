@@ -15,6 +15,7 @@ use crate::dsp::tape_engine::{
 use crate::modulation::VCA;
 use crate::preset::Sound;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::held::TapeTurn;
 use crate::ui::page::ValFmt;
 use crate::ui::view::{
     FADE_ASIDE, FADE_HOLD_ONLY, RETRIG_ONCE_ONLY, SourceState, WOW_AT_REST, XFADE_CAPPED,
@@ -251,20 +252,16 @@ fn secs_text(buf: &mut FmtBuf, s: f32) {
 /// (`machine_edit_in`): MODEL its machine's defaults in `t`'s DIRECTION
 /// and their ENV 1; DIRECTION, crossing once through and a loop, LENGTH
 /// and FADE and then ENV 1's. A CC's budget (`cc_bin`) and the hand's.
-pub(crate) fn tape_writes_in(param: ParamId, code: u8, t: &T) -> u8 {
+pub(crate) fn tape_writes_in(turn: TapeTurn, t: &T) -> u8 {
     let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
-    match param {
-        T::MODEL => {
-            let m = TapeMachine::from_index(MachineIndex(code));
+    match turn {
+        TapeTurn::Model(m) => {
             // `defaults`' cells, by id alone: no iterator's instance, which
             // would be core's and link into bank 1.
             let k = machine(m);
             cell_knobs(k.deck) + cell_knobs(k.cells) + knobs(env1, env_defaults(m, t.direction))
         }
-        T::MODE => {
-            let Some(now) = Direction::from_value(f32::from(code)) else {
-                return 0;
-            };
+        TapeTurn::Direction(now) => {
             let writes = direction_defaults(t.direction, now);
             if writes.is_empty() {
                 0
@@ -273,7 +270,6 @@ pub(crate) fn tape_writes_in(param: ParamId, code: u8, t: &T) -> u8 {
                     + knobs(env1, env_defaults(TapeMachine::Walk, now))
             }
         }
-        _ => 0,
     }
 }
 
@@ -355,9 +351,9 @@ pub(crate) fn band_note_in(
 
 /// What `t` with `param` (MODEL or DIRECTION) at `code` can't play from a
 /// streamed source (`held::Held::why`).
-pub(crate) fn tape_held_in(t: &T, param: ParamId, code: u8) -> Option<NeedsRam> {
+pub(crate) fn tape_held_in(t: &T, turn: TapeTurn) -> Option<NeedsRam> {
     let mut t = *t;
-    t.set(param, f32::from(code));
+    t.set(turn.addr().param, f32::from(turn.code()));
     needs_ram(&t)
 }
 
@@ -383,7 +379,7 @@ mod tests {
                         .iter()
                         .filter(|&&(id, _)| knob(env1, id))
                         .count();
-                assert_eq!(usize::from(tape_writes_in(T::MODEL, m.index(), &t)), want);
+                assert_eq!(usize::from(tape_writes_in(TapeTurn::Model(m), &t)), want);
             }
         }
     }
@@ -401,7 +397,7 @@ mod tests {
                 // Unlike every default, so each write moves its knob.
                 (s.params.tape.size, s.params.tape.drag) = (0.123, 0.456);
                 let before = s.params.tape;
-                let want = tape_writes_in(T::MODE, now as u8, &before);
+                let want = tape_writes_in(TapeTurn::Direction(now), &before);
                 s.params.tape.set(T::MODE, now as u8 as f32);
                 let addr = ParamAddr::new(BlockRef::TapeEngine, T::MODE);
                 let envs = machine_edit_in(addr, f32::from(was as u8), &mut s.params.tape);
