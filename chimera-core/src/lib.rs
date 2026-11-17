@@ -2,6 +2,7 @@
 //! `chimera-engine`, whose modules are re-exported here under their own
 //! names: `chimera_core::dsp` is `chimera_engine::dsp`.
 #![no_std]
+#![feature(optimize_attribute)]
 
 #[cfg(all(feature = "test-support", target_os = "none"))]
 compile_error!("test-support is for host tests: it forges confirmations and fresh files");

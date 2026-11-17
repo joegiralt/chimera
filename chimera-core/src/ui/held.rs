@@ -31,9 +31,8 @@ pub enum Choice {
     Alg(AlgoId),
     /// TAPE's MODEL or DIRECTION.
     Tape(TapeCode),
-    /// A pad's CHOKE, held on the project at revision `rev`: a kit changed
-    /// since (a load, a CC) drops it (ADR 0280).
-    Choke { to: ChokeGroup, rev: u32 },
+    /// A pad's CHOKE (ADR 0280).
+    Choke(ChokeGroup),
 }
 
 impl Choice {
@@ -43,7 +42,7 @@ impl Choice {
             Choice::Kind(k) => k.code(),
             Choice::Alg(a) => a.get(),
             Choice::Tape(c) => c.get(),
-            Choice::Choke { to, .. } => to.index() as u8,
+            Choice::Choke(to) => to.index() as u8,
         }
     }
 }

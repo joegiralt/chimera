@@ -299,6 +299,9 @@ pub struct UiState {
     prime_status: Option<PrimeStatus>,
     /// A WAVE or ALG choice the budget refused, shown dimmed (ADR 0151).
     held: Option<(PartId, held::Held)>,
+    /// The project's revision when a CHOKE was held: a kit changed since
+    /// (a load, a CC) drops it (ADR 0280, `kit_groups`).
+    held_rev: u32,
     /// A save the pool had no room for, in the browser's band until the
     /// next input (ADR 0017's convention).
     refusal: Option<Line>,
@@ -436,6 +439,7 @@ crate::in_place::field_list!(UiState => UiState {
     display_lfos,
     prime_status,
     held,
+    held_rev,
     refusal,
     theme,
     midi,
@@ -555,6 +559,7 @@ impl UiState {
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).held).write(None);
+            addr_of_mut!((*p).held_rev).write(0);
             addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
@@ -1756,8 +1761,8 @@ impl UiState {
         (at == self.active_part && on == Some(h.addr))
             .then(|| match h.addr {
                 held::CHOKE => match h.choice {
-                    held::Choice::Choke { to, rev } => {
-                        match crate::bank2::groups(kit_groups::Ask::Held(self, at, to, rev)) {
+                    held::Choice::Choke(to) => {
+                        match crate::bank2::groups(kit_groups::Ask::Held(self, at, to)) {
                             Some(kit_groups::Said::Refused(n)) => Some(held::Reason::Groups(n)),
                             _ => None,
                         }

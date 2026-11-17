@@ -22,9 +22,9 @@ pub(crate) enum Ask<'a> {
     /// would make a 9th; one that can't land is refused with a toast, the
     /// kit and its revision untouched.
     Edit(&'a mut UiState, PartId, Edit),
-    /// A held CHOKE `to` on Part `at`'s selected pad, held at revision
-    /// `rev`: why it is refused, if it still is.
-    Held(&'a UiState, PartId, ChokeGroup, u32),
+    /// A held CHOKE `to` on Part `at`'s selected pad: why it is refused,
+    /// if it still is and the project hasn't changed since the hold.
+    Held(&'a UiState, PartId, ChokeGroup),
     /// The refusal's words for a count.
     Why(VoiceGroups),
     /// CHOKE's focus band: the kit's count.
@@ -58,15 +58,19 @@ const fn text(b: &'static [u8]) -> &'static str {
     }
 }
 
-/// The door's entry.
+/// The door's entry. This module's functions that check a choke are
+/// built for speed, not size: from minsize code the machine outliner
+/// shares their calls to `VoiceGroups::choke` as a fragment it places in
+/// bank 1 (ADR 0175).
+#[optimize(speed)]
 pub(crate) fn ask_in(a: Ask<'_>) -> Said {
     match a {
         Ask::Turn(ui, at, delta, shift) => Said::Moved(turn(ui, at, delta, shift)),
         Ask::Edit(ui, at, how) => Said::Moved(edit(ui, at, how)),
-        Ask::Held(ui, at, to, rev) => {
+        Ask::Held(ui, at, to) => {
             let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
             match VoiceGroups::choke(kit, p, to) {
-                Err(n) if rev == ui.project.rev() => Said::Refused(n),
+                Err(n) if ui.held_rev == ui.project.rev() => Said::Refused(n),
                 _ => Said::Fits,
             }
         }
@@ -78,6 +82,7 @@ pub(crate) fn ask_in(a: Ask<'_>) -> Said {
 /// A CHOKE turn `delta` (to an end with `shift`) on Part `at`'s selected
 /// pad, from its held group (if the project hasn't changed since) or its
 /// own.
+#[optimize(speed)]
 fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
     let (kit, p, rev) = (
         ui.project.kit(at),
@@ -88,10 +93,10 @@ fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
         Some((
             h,
             Held {
-                choice: Choice::Choke { to, rev: r },
+                choice: Choice::Choke(to),
                 ..
             },
-        )) if h == at && r == rev => to,
+        )) if h == at && ui.held_rev == rev => to,
         _ => kit.pad(p).choke(),
     };
     let to = if shift {
@@ -104,9 +109,10 @@ fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
         at,
         Held {
             addr: held::CHOKE,
-            choice: Choice::Choke { to, rev },
+            choice: Choice::Choke(to),
         },
     ));
+    ui.held_rev = rev;
     if !refused && to != kit.pad(p).choke() {
         ui.project.kit_mut(at).pad_mut(p).set_choke(to);
     }
@@ -117,6 +123,7 @@ fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
 /// lands. A step (a relative CC, a stepped CC's bin) skips the groups
 /// that would make a 9th, on to the next that fits its way; a set lands
 /// where it points. A refused one says why, once while its toast is up.
+#[optimize(speed)]
 fn edit(ui: &mut UiState, at: PartId, how: Edit) -> bool {
     let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
     let now = kit.pad(p).choke();
@@ -156,6 +163,7 @@ fn edit(ui: &mut UiState, at: PartId, how: Edit) -> bool {
 /// Pad `p` of `kit` stepped `d` from `now`, on past each group that would
 /// make a 9th to the first that fits that way; else the count the first
 /// step would make.
+#[optimize(speed)]
 fn step(kit: &Kit, p: PadId, now: ChokeGroup, d: i8) -> Result<ChokeGroup, VoiceGroups> {
     let mut to = now.step(d);
     let mut first = None;
