@@ -33,6 +33,7 @@ The browser editor (slice 1: ALGO on one screen) talks to the unit, or to the de
 - Another client (a plugin, a tool) can use the same protocol; it must ignore empty lines.
 - A full answer costs a `reading` of every described slot, about 218 addresses. A change in `SlotCtx` (selected operator, ORBIT ring, a reverb or delay type) asks for one. The unit gate should time it.
 - Bank 1 grew about 1 KB for the door and the shared text path (ADR 0251 line by line in the budget).
+- `ed part` costs about 420 B of bank 2 and 30 to 60 B of bank 1: `Location::step` is inlined into both its callers, so bank 2 can take the key's own path without bank 1 holding a second copy of the ladder.
 
 ## Sources
 - `docs/superpowers/specs/2026-11-14-editor-algo-slice-design.md`
