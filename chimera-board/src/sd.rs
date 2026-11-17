@@ -16,7 +16,7 @@ use chimera_fat::sd_addr::CardAddr;
 use chimera_fat::shared_card::{Hooks, SharedCard};
 use chimera_fat::{BusPhase, FatStore, SdBus};
 use chimera_hal::card_bus::CardBus;
-use chimera_hal::units::{Cycles, Millis};
+use chimera_hal::units::{Cycles, Hz, Millis};
 use cortex_m::peripheral::{DCB, DWT};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::{self as ehspi, ErrorKind, ErrorType, Operation, SpiDevice};
@@ -67,7 +67,7 @@ pub struct SdSpi {
     spi: Spi<SPI2, Enabled>,
     cs: PE12<Output<PushPull>>,
     clocks: CoreClocks,
-    cpu_hz: u32,
+    cpu: Hz,
     counting: bool,
     hz: Hertz,
     mode: spi::Mode,
@@ -87,7 +87,7 @@ impl SdSpi {
         spi: Spi<SPI2, Enabled>,
         cs: PE12<Output<PushPull>>,
         clocks: CoreClocks,
-        cpu_hz: u32,
+        cpu: Hz,
         counting: bool,
         hz: Hertz,
         mode: spi::Mode,
@@ -96,7 +96,7 @@ impl SdSpi {
             spi,
             cs,
             clocks,
-            cpu_hz,
+            cpu,
             counting,
             hz,
             mode,
@@ -147,7 +147,7 @@ impl SdSpi {
     pub fn arm(&mut self, idle_ms: u32) {
         let (idle, cap) = (u64::from(idle_ms), u64::from(self.cap_ms));
         self.per_ms = if self.counting {
-            u64::from(self.cpu_hz / 1_000)
+            u64::from(self.cpu.per_ms().map_or(0, NonZeroU32::get))
         } else {
             // ponytail: coarse. Each transaction counts as its shortest (one
             // byte at SCK), so this never times out early but runs long by
@@ -182,8 +182,8 @@ impl SdSpi {
     }
 
     /// Time since `start` on the cycle counter; `ZERO` when it won't count.
-    fn since(cpu_hz: u32, counting: bool, start: Cycles) -> Millis {
-        match NonZeroU32::new(cpu_hz / 1_000).filter(|_| counting) {
+    fn since(cpu: Hz, counting: bool, start: Cycles) -> Millis {
+        match cpu.per_ms().filter(|_| counting) {
             Some(per_ms) => Cycles::new(DWT::cycle_count())
                 .since(start)
                 .as_millis(per_ms),
@@ -195,7 +195,7 @@ impl SdSpi {
     /// cycle counter).
     #[cfg(feature = "sd-probe")]
     pub fn max_gap_us(&self) -> u32 {
-        (self.deadline.max_gap() * 1_000_000 / u64::from(self.cpu_hz)) as u32
+        (self.deadline.max_gap() * 1_000_000 / u64::from(self.cpu.get())) as u32
     }
 
     /// The kernel clock and the SCK it divides down to, in Hz.
@@ -245,7 +245,7 @@ impl SdSpi {
                     buf.len()
                 }
                 Operation::DelayNs(ns) => {
-                    CycleDelay::new(self.cpu_hz).delay_ns(*ns);
+                    CycleDelay::new(self.cpu.get()).delay_ns(*ns);
                     0
                 }
             };
@@ -279,15 +279,15 @@ impl SdBus for SdSpi {
             BusPhase::Data => self.arm(SD_IDLE_MS),
             // Only an acquire asks: CMD0 would reset a mounted card.
             BusPhase::Acquire => {
-                let (cpu_hz, counting, mut p) = (self.cpu_hz, self.counting, self.presence);
+                let (cpu, counting, mut p) = (self.cpu, self.counting, self.presence);
                 let start = Cycles::new(DWT::cycle_count());
                 let there = p.ask(
                     || {
                         self.wake();
                         self.card_r1()
                     },
-                    |ms| clocks::delay_us(cpu_hz, ms.get().as_micros().get()),
-                    || Self::since(cpu_hz, counting, start),
+                    |ms| clocks::delay_us(cpu.get(), ms.get().as_micros().get()),
+                    || Self::since(cpu, counting, start),
                 );
                 if p.boot() != self.presence.boot() {
                     chimera_core::console::BOOT_CARD.store(p.boot());
@@ -443,7 +443,7 @@ pub fn init(
     let spi = parts
         .spi2
         .spi_unchecked(spi::Config::new(SD_MODE), hz, parts.rec, clocks);
-    let mut sd = SdSpi::new(spi, cs, *clocks, cpu_hz, counting, hz, SD_MODE);
+    let mut sd = SdSpi::new(spi, cs, *clocks, Hz::new(cpu_hz), counting, hz, SD_MODE);
     sd.wake();
     SdCard::new_with_options(
         sd,

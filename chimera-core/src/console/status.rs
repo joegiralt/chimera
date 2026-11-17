@@ -154,15 +154,19 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     w.write_char('\n')?;
     writeln!(w, "sram4 {}", SRAM4.load().word())?;
     writeln!(w, "load_net {}", LOAD_NET.load().word())?;
-    w.write_str("boot_card ")?;
+    // `Late`: nothing in the boot's window; a later ask found the card.
     match BOOT_CARD.load() {
-        None => w.write_str("untried")?,
-        Some(BootCard::Ready(ms)) => write!(w, "ready after {} ms", ms.get())?,
-        Some(BootCard::Busy(ms)) => write!(w, "busy after {} ms", ms.get())?,
-        Some(BootCard::Absent(ms)) => write!(w, "no answer after {} ms", ms.get())?,
-        Some(BootCard::Late(ms)) => write!(w, "late after {} ms", ms.get())?,
+        None => w.write_str("boot_card untried\n")?,
+        Some(b) => {
+            let (word, ms) = match b {
+                BootCard::Ready(ms) => ("ready after", ms),
+                BootCard::Busy(ms) => ("busy after", ms),
+                BootCard::Absent(ms) => ("no answer after", ms),
+                BootCard::Late(ms) => ("late, none in", ms),
+            };
+            writeln!(w, "boot_card {word} {} ms", ms.get())?;
+        }
     }
-    w.write_char('\n')?;
     match ui.bank2() {
         Some(b) => {
             b.line(w)?;

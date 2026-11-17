@@ -76,7 +76,7 @@ fn status_reports_the_boot_card() {
     );
     assert_eq!(
         say(Some(BootCard::Late(Millis::new(1_004)))),
-        "late after 1004 ms"
+        "late, none in 1004 ms"
     );
     BOOT_CARD.store(None);
 }

@@ -132,3 +132,12 @@ fn cycles_as_millis_rounds_down() {
         Millis::new(7)
     );
 }
+
+#[test]
+fn hz_per_ms_rounds_down_and_refuses_under_1_khz() {
+    assert_eq!(
+        Hz::new(480_000_000).per_ms().map(|n| n.get()),
+        Some(480_000)
+    );
+    assert_eq!(Hz::new(999).per_ms(), None);
+}

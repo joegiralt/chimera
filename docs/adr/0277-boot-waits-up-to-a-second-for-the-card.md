@@ -43,8 +43,10 @@ barrel power, a card with a long internal start, a card that answers
 - What boot found is a `BootCard`, its time measured from the first CMD0:
   `Ready` (idle), `Busy` (answered, never idle), `Absent` (no answer), or
   `Late` (no answer in the window, found by a later ask, such as mount's
-  re-init retry). `status` prints `boot_card ready|busy|no answer|late
-  after N ms`, or `boot_card untried`. With the boot's toast: NO CARD and
+  re-init retry). A card put in by hand after an empty-slot boot
+  also reads `Late` (rare: the card is inside the case). `status` prints
+  `boot_card ready|busy|no answer after N ms`, `boot_card late, none in
+  N ms` (N the window, not when it answered), or `boot_card untried`. With the boot's toast: NO CARD and
   `no answer` is an empty or dead slot; NO CARD and `ready` or `busy` a
   failed init; any other card message a failed mount.
 - The status cell stores `BootCard::to_bits` (a 3-bit tag over 29 bits of
@@ -68,8 +70,8 @@ barrel power, a card with a long internal start, a card that answers
   project.
 - The watchdog is armed after the card's boot work (the start-up order in
   chimera-board's `run`), so the wait never runs on its clock.
-- Bank 1 grows 208 to 736 B a set (default +584, orbit +608, bank2-gate
-  +736, orbit,usb-config-writer +632, the bench sets +208 to +544): the
+- Bank 1 grows 160 to 712 B a set (default +576, orbit +568, bank2-gate
+  +712, orbit,usb-config-writer +584, the bench sets +160 to +488): the
   wait sits in the SD bus's `start_op`, bank-1 code with no door, and the
   `status` line in the console, which has none either; an ADR 0251 bank-1
   exception.

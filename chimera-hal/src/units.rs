@@ -134,6 +134,25 @@ impl NonZeroMillis {
     }
 }
 
+/// A clock rate in hertz.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Hz(u32);
+
+impl Hz {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Cycles in a ms, rounded down; `None` under 1 kHz.
+    pub const fn per_ms(self) -> Option<NonZeroU32> {
+        NonZeroU32::new(self.0 / 1_000)
+    }
+}
+
 /// A count of CPU cycles, or a reading of the wrapping cycle counter (DWT).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cycles(u32);
