@@ -1,20 +1,22 @@
 //! SD card in SPI mode on SPI2, polled (spec § Card): SCK PA9, MISO PB14,
 //! MOSI PB15, CS PE12. Every transaction checks the operation's deadline.
 //! An acquire first asks whether a card is there (#186), so an empty slot
-//! fails in about a millisecond instead of at `SD_ACQUIRE_MS`.
+//! fails in about a millisecond instead of at `SD_ACQUIRE_MS`; boot's first
+//! acquire waits up to `BOOT_WINDOW` for it (ADR 0277).
 
 use core::mem::{MaybeUninit, size_of};
+use core::num::NonZeroU32;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::hw::STORE_RESERVE;
 use chimera_fat::deadline::{Deadline, Over};
-use chimera_fat::sd::{CMD0, NCR_BYTES, PRESENCE_TRIES, r1_within_ncr};
+use chimera_fat::sd::{CMD0, NCR_BYTES, Presence, presence, r1_within_ncr};
 use chimera_fat::sd_addr::CardAddr;
 use chimera_fat::shared_card::{Hooks, SharedCard};
 use chimera_fat::{BusPhase, FatStore, SdBus};
 use chimera_hal::card_bus::CardBus;
-use chimera_hal::units::Millis;
+use chimera_hal::units::{Cycles, Hz, Millis};
 use cortex_m::peripheral::{DCB, DWT};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::{self as ehspi, ErrorKind, ErrorType, Operation, SpiDevice};
@@ -65,7 +67,7 @@ pub struct SdSpi {
     spi: Spi<SPI2, Enabled>,
     cs: PE12<Output<PushPull>>,
     clocks: CoreClocks,
-    cpu_hz: u32,
+    cpu: Hz,
     counting: bool,
     hz: Hertz,
     mode: spi::Mode,
@@ -76,6 +78,7 @@ pub struct SdSpi {
     /// Each operation's cap: `SD_OP_CAP_MS` but while the bench's `card` or
     /// a console `put` runs under its own deadline.
     cap_ms: u32,
+    presence: Presence,
 }
 
 impl SdSpi {
@@ -84,7 +87,7 @@ impl SdSpi {
         spi: Spi<SPI2, Enabled>,
         cs: PE12<Output<PushPull>>,
         clocks: CoreClocks,
-        cpu_hz: u32,
+        cpu: Hz,
         counting: bool,
         hz: Hertz,
         mode: spi::Mode,
@@ -93,7 +96,7 @@ impl SdSpi {
             spi,
             cs,
             clocks,
-            cpu_hz,
+            cpu,
             counting,
             hz,
             mode,
@@ -101,6 +104,7 @@ impl SdSpi {
             deadline: Deadline::arm_transfers(0, 0),
             per_ms: 1,
             cap_ms: SD_OP_CAP_MS,
+            presence: Presence::new(),
         };
         s.arm(SD_IDLE_MS);
         s
@@ -143,7 +147,7 @@ impl SdSpi {
     pub fn arm(&mut self, idle_ms: u32) {
         let (idle, cap) = (u64::from(idle_ms), u64::from(self.cap_ms));
         self.per_ms = if self.counting {
-            u64::from(self.cpu_hz / 1_000)
+            u64::from(self.cpu.per_ms().map_or(0, NonZeroU32::get))
         } else {
             // ponytail: coarse. Each transaction counts as its shortest (one
             // byte at SCK), so this never times out early but runs long by
@@ -163,25 +167,35 @@ impl SdSpi {
         self.deadline.is_over()
     }
 
-    /// #186: CMD0 with CS low, `PRESENCE_TRIES` times at most; an R1 within
-    /// NCR is a card. About 0.3 ms a try at the init clock.
-    fn card_answers(&mut self) -> bool {
-        (0..PRESENCE_TRIES).any(|_| {
+    /// #186: a burst of CMD0s with CS low (`presence`): the best R1 within
+    /// NCR, idle first. About 0.3 ms a try at the init clock.
+    fn card_r1(&mut self) -> Option<u8> {
+        presence(|| {
             let mut r = [0xFF; NCR_BYTES];
             self.cs.set_low();
             let sent = self.spi.write(&CMD0).is_ok() && self.spi.transfer(&mut r).is_ok();
             self.cs.set_high();
             // A byte with CS high lets the card release DO.
             let _ = self.spi.write(&[0xFF]);
-            sent && r1_within_ncr(&r).is_some()
+            if sent { r1_within_ncr(&r) } else { None }
         })
+    }
+
+    /// Time since `start` on the cycle counter; `ZERO` when it won't count.
+    fn since(cpu: Hz, counting: bool, start: Cycles) -> Millis {
+        match cpu.per_ms().filter(|_| counting) {
+            Some(per_ms) => Cycles::new(DWT::cycle_count())
+                .since(start)
+                .as_millis(per_ms),
+            None => Millis::ZERO,
+        }
     }
 
     /// The longest time between blocks since `arm`, in µs (0 without the
     /// cycle counter).
     #[cfg(feature = "sd-probe")]
     pub fn max_gap_us(&self) -> u32 {
-        (self.deadline.max_gap() * 1_000_000 / u64::from(self.cpu_hz)) as u32
+        (self.deadline.max_gap() * 1_000_000 / u64::from(self.cpu.get())) as u32
     }
 
     /// The kernel clock and the SCK it divides down to, in Hz.
@@ -231,7 +245,7 @@ impl SdSpi {
                     buf.len()
                 }
                 Operation::DelayNs(ns) => {
-                    CycleDelay::new(self.cpu_hz).delay_ns(*ns);
+                    CycleDelay::new(self.cpu.get()).delay_ns(*ns);
                     0
                 }
             };
@@ -259,12 +273,27 @@ impl SdBus for SdSpi {
 
     /// An acquire on an empty slot starts with its deadline passed: the
     /// driver's first transaction fails, and `FatStore` reads `NoCard`.
+    /// Boot's first asks for up to `BOOT_WINDOW` (`Presence`).
     fn start_op(&mut self) {
         match self.phase {
             BusPhase::Data => self.arm(SD_IDLE_MS),
             // Only an acquire asks: CMD0 would reset a mounted card.
             BusPhase::Acquire => {
-                if self.card_answers() {
+                let (cpu, counting, mut p) = (self.cpu, self.counting, self.presence);
+                let start = Cycles::new(DWT::cycle_count());
+                let there = p.ask(
+                    || {
+                        self.wake();
+                        self.card_r1()
+                    },
+                    |ms| clocks::delay_us(cpu.get(), ms.get().as_micros().get()),
+                    || Self::since(cpu, counting, start),
+                );
+                if p.boot() != self.presence.boot() {
+                    chimera_core::console::BOOT_CARD.store(p.boot());
+                }
+                self.presence = p;
+                if there {
                     self.arm(SD_ACQUIRE_MS);
                 } else {
                     self.deadline = Deadline::passed();
@@ -414,7 +443,7 @@ pub fn init(
     let spi = parts
         .spi2
         .spi_unchecked(spi::Config::new(SD_MODE), hz, parts.rec, clocks);
-    let mut sd = SdSpi::new(spi, cs, *clocks, cpu_hz, counting, hz, SD_MODE);
+    let mut sd = SdSpi::new(spi, cs, *clocks, Hz::new(cpu_hz), counting, hz, SD_MODE);
     sd.wake();
     SdCard::new_with_options(
         sd,
