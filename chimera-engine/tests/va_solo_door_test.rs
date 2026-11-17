@@ -1,4 +1,5 @@
-//! VA's oscillators with WAVE on an anchor (ADR 0251, bank 2's door).
+//! VA's oscillators with WAVE on and off its anchors (ADR 0283, the saw's
+//! solo behind bank 2's door; they share `osc.rs` with DRUM's pulses).
 //! Held on an anchor, every MODE that plays the plain runs (MIX's, SYNC's
 //! slave) plays every bit it played at origin/0.4 `262039d9`; so does WAVE
 //! moving on and off the anchors mid-note, door open, closed (bank 1's
@@ -98,17 +99,21 @@ fn solos(mode: VaMode) -> [Vec<[Option<Solo>; 2]>; 4] {
     })
 }
 
-/// Held on WAVE's saw anchor, OSC 1 and MIX's OSC 2 play the saw alone
-/// (the instances bank 2 holds, ADR 0251); every other anchor, and SYNC's
-/// slave, their pairs.
+/// Held on WAVE's saw anchor, OSC 1 and OSC 2 of every MODE that plays
+/// the plain renders play the saw alone (the instances bank 2 holds, ADR
+/// 0283), SYNC's slave its pair; every other anchor, and the MODEs with
+/// renders of their own, their pairs.
 fn plays_solos() {
-    for mode in [VaMode::Mix, VaMode::Sync] {
-        let osc2 = if mode == VaMode::Mix {
-            Some(Solo::Saw)
-        } else {
-            None
+    use VaMode::*;
+    for mode in [
+        Mix, Sync, Ring, Xor, Bits, Fm, Am, Max, LoopFm, SoftSync, Phase,
+    ] {
+        let saw = match mode {
+            Mix | Ring | Xor | Bits | Am | Max => [Some(Solo::Saw); 2],
+            Sync => [Some(Solo::Saw), None],
+            Fm | LoopFm | SoftSync | Phase => [None; 2],
         };
-        let want = [[None; 2], [None; 2], [Some(Solo::Saw), osc2], [None; 2]];
+        let want = [[None; 2], [None; 2], saw, [None; 2]];
         for (s, w) in solos(mode).iter().zip(want) {
             assert!(s.iter().all(|b| *b == w), "{mode:?} {w:?}: {s:?}");
         }
@@ -155,6 +160,87 @@ fn moving_scenes() -> Vec<Vec<[f32; BLOCK_SIZE]>> {
     v
 }
 
+/// The other MODEs at BLEND 1, as the bench plays them: RING, XOR, BITS,
+/// AM and MAX run the plain renders as MIX does; FM, LOOPFM, SOFT SYNC and
+/// PHASE their own, untouched by the solos.
+const OTHERS: [VaMode; 9] = [
+    VaMode::Ring,
+    VaMode::Xor,
+    VaMode::Bits,
+    VaMode::Am,
+    VaMode::Max,
+    VaMode::Fm,
+    VaMode::LoopFm,
+    VaMode::SoftSync,
+    VaMode::Phase,
+];
+
+/// The first `n` of `OTHERS` on C3: held on each anchor, then `moving`.
+/// With bank 2's door closed only the first five play (the rest are its).
+fn other_prints(n: usize) -> Vec<u64> {
+    let blend = |p: VaParams| VaParams { amount: 1.0, ..p };
+    let mut v = Vec::new();
+    for &mode in &OTHERS[..n] {
+        for a in ANCHORS {
+            v.push(print(&take(48, |_| blend(held(mode, [a; 2])))));
+        }
+        v.push(print(&take(48, |b| {
+            blend(held(mode, [moving(b), moving(b + 13)]))
+        })));
+    }
+    v
+}
+
+/// `other_prints` at origin/0.4 `807e740d` (VA's oscillators as at
+/// `262039d9`): five a MODE, the four anchors then `moving`.
+const OTHER: [u64; 45] = [
+    0x44b546c94c265857,
+    0x4c7711c123beaf92,
+    0xb041ab148343f65e,
+    0x9ff09b1c1154c7a3,
+    0xc1d0518ef2a37625,
+    0x04b541229149fdda,
+    0xf7c48606817f3fce,
+    0x6a25e306b9791558,
+    0x1648ab81ecfd7ee7,
+    0xd38a6730410ef06d,
+    0xda47af245e13deb6,
+    0xeed413aa4da1c613,
+    0x6b288df36883fe17,
+    0xa4b041a6f267ead9,
+    0x1893a7b880b527e1,
+    0x8152a1739d7c09a5,
+    0x1a344d7a77fd13d5,
+    0xae9c956fc726637a,
+    0xbc77d3e7d72c6f9d,
+    0xb24d2c95850f4b46,
+    0xa4141ee928f4c96c,
+    0x152b7a359be93a4e,
+    0x180e450ff9a25aac,
+    0x18dca0790b3f5fdd,
+    0xdf14011ac64ecfbc,
+    0xdde401b6589f3228,
+    0x590117201e0f0074,
+    0x2a7dfeda71ac0848,
+    0x50a44e9ab0b8cef2,
+    0x20d7f03af2fc24e9,
+    0xcc7e1ddd4a3b1784,
+    0x410abdd116b6b9de,
+    0x03f5fb06ebb611cb,
+    0x03f5fb06ebb611cb,
+    0xd35ad7915cd9de2e,
+    0x90d9865cfbb4eba5,
+    0xf14a8442a54732e0,
+    0x62151a773f96ce44,
+    0xa8e739e1a30b1b8d,
+    0x58ef5373b11e63b4,
+    0x7826f3b3024a689c,
+    0x202bfd6fac2dd6a0,
+    0x4ec2787c619e85c4,
+    0xaa7a3c18a3db57a3,
+    0xaf9b77f1074bd21c,
+];
+
 /// `held_prints` at origin/0.4 `262039d9`.
 const HELD: [u64; 16] = [
     0x9396f73c16762493,
@@ -189,6 +275,7 @@ const MOVING: [u64; 4] = [
 #[test]
 fn held_on_an_anchor_plays_as_before() {
     assert_eq!(held_prints(), HELD);
+    assert_eq!(other_prints(OTHERS.len()), OTHER);
 }
 
 /// One test: the door is a process-wide static. Closed, VA plays bank 1's
@@ -198,7 +285,7 @@ fn held_on_an_anchor_plays_as_before() {
 fn the_door_plays_solos_open_pairs_closed_as_before() {
     use chimera_engine::bank2::DOOR_CELL;
     DOOR_CELL.close();
-    for mode in [VaMode::Mix, VaMode::Sync] {
+    for mode in [VaMode::Mix, VaMode::Sync, VaMode::Ring, VaMode::Max] {
         for s in solos(mode) {
             assert!(s.iter().all(|b| *b == [None; 2]), "closed {mode:?}: {s:?}");
         }
@@ -206,11 +293,13 @@ fn the_door_plays_solos_open_pairs_closed_as_before() {
     assert_eq!(held_prints(), HELD, "closed, held");
     let closed: Vec<u64> = moving_scenes().iter().map(|s| print(s)).collect();
     assert_eq!(closed, MOVING, "closed, moving");
+    assert_eq!(other_prints(5), OTHER[..25], "closed, the plain MODEs");
     DOOR_CELL.open_host();
     plays_solos();
     assert_eq!(held_prints(), HELD, "open, held");
     let open: Vec<u64> = moving_scenes().iter().map(|s| print(s)).collect();
     assert_eq!(open, MOVING, "open, moving");
+    assert_eq!(other_prints(OTHERS.len()), OTHER, "open, other MODEs");
     DOOR_CELL.close();
 }
 
