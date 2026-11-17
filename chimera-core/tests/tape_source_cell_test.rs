@@ -1638,3 +1638,30 @@ fn an_unsealed_damaged_file_doesnt_stream_from_the_cell() {
         chimera_hal::store::Seal::Open
     );
 }
+
+/// A Part change, by key or `ed part`, retires Part 1's READ FAILED: it is
+/// never Part 2's.
+#[test]
+fn a_part_change_clears_the_source_note() {
+    for by_key in [true, false] {
+        let old = source(40, 3_000, "OLD");
+        let mut rig = Rig::new(&[choir()]);
+        rig.pool(&[&old]);
+        rig.ui.project_mut().edit_part(P1).sound.source = Some(TapeSource::from(old.0.sref));
+        rig.turn(1);
+        rig.mix_plus();
+        rig.s.fail_reads = true;
+        rig.work();
+        assert_eq!(rig.band(), READ_FAILED, "by key {by_key}");
+        if by_key {
+            feed(&mut rig.ui, Input::press(ButtonId::B2));
+        } else {
+            let mut q = chimera_core::console::EdState::new();
+            q.follow(PartId::ALL[1]);
+            chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+            chimera_core::bank2::ed_apply(&mut q, &mut rig.ui);
+        }
+        assert_eq!(rig.ui.active_part, PartId::ALL[1], "by key {by_key}");
+        assert_ne!(rig.band(), READ_FAILED, "by key {by_key}");
+    }
+}

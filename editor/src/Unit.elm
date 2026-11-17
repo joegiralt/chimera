@@ -2,10 +2,12 @@ module Unit exposing
     ( Engine(..)
     , Gen
     , Part
+    , allParts
     , engineFromName
     , engineName
     , genFromInt
     , genToInt
+    , partCount
     , partFromInt
     , partNumber
     )
@@ -36,24 +38,57 @@ genToInt (Gen n) =
     n
 
 
-{-| A Part as the box numbers it, from 1.
+{-| One of the box's Parts, B1 to B6: no other value exists.
 -}
 type Part
-    = Part Int
+    = P1
+    | P2
+    | P3
+    | P4
+    | P5
+    | P6
+
+
+{-| Every Part, in the box's order. The unit's own count is pinned against
+it (`UnitTest`, from `console_ed_test`'s fixture).
+-}
+allParts : List Part
+allParts =
+    [ P1, P2, P3, P4, P5, P6 ]
+
+
+partCount : Int
+partCount =
+    List.length allParts
+
+
+{-| As the box numbers it, from 1.
+-}
+partNumber : Part -> Int
+partNumber p =
+    case p of
+        P1 ->
+            1
+
+        P2 ->
+            2
+
+        P3 ->
+            3
+
+        P4 ->
+            4
+
+        P5 ->
+            5
+
+        P6 ->
+            6
 
 
 partFromInt : Int -> Maybe Part
 partFromInt n =
-    if n >= 1 then
-        Just (Part n)
-
-    else
-        Nothing
-
-
-partNumber : Part -> Int
-partNumber (Part n) =
-    n
+    allParts |> List.filter (\p -> partNumber p == n) |> List.head
 
 
 {-| The editor edits ALGO; any other engine is named, so it can be said.

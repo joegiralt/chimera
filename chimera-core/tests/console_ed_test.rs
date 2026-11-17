@@ -1213,3 +1213,245 @@ fn a_bank2_status_change_resends_the_closed_text() {
     }
     assert!(found, "no bank 2 FILTER.KIND");
 }
+
+// ---- part ----
+
+#[test]
+fn part_follows_as_its_key_does() {
+    let mut f = Fake::new();
+    screen::init_part_engine(&mut f.ui, P2, EngineType::Va);
+    let mut keyed = Fake::new();
+    screen::init_part_engine(&mut keyed.ui, P2, EngineType::Va);
+    feed(&mut keyed.ui, Input::press(ButtonId::B2));
+    let (_, m) = since(&mut f, 0);
+    assert_eq!(ask(&mut f, "ed part 2\n"), "OK\n");
+    // Queued: the UI pass moves it.
+    assert_eq!(f.ui.active_part, P1);
+    apply(&mut f);
+    assert_eq!(f.ui.active_part, P2);
+    assert_eq!(f.ui.location(), keyed.ui.location());
+    let (lines, m) = since(&mut f, m);
+    assert_eq!(lines, ["part 2 VA"]);
+    assert_eq!(ask(&mut f, "ed part 1\n"), "OK\n");
+    apply(&mut f);
+    let (lines, _) = since(&mut f, m);
+    assert_eq!(lines[0], "part 1 ALGO");
+    assert!(vals(&lines).len() > 100, "{}", lines.len());
+}
+
+#[test]
+fn part_already_followed_stays_put() {
+    // Its key would flip pages and mixer; `ed part` is the editor's
+    // "follow", so asking again changes nothing.
+    let mut f = Fake::new();
+    let at = f.ui.location();
+    assert_eq!(ask(&mut f, "ed part 1\n"), "OK\n");
+    apply(&mut f);
+    assert_eq!(f.ui.location(), at);
+}
+
+#[test]
+fn part_out_of_range_is_refused() {
+    let mut f = Fake::new();
+    let max = PartId::ALL.len();
+    let want = format!("ERR ed part takes 1-{max}\n");
+    for line in [
+        "ed part 0\n",
+        "ed part 7\n",
+        "ed part x\n",
+        "ed part\n",
+        "ed part -1\n",
+    ] {
+        assert_eq!(ask(&mut f, line), want, "{line}");
+    }
+    assert!(ask(&mut f, "ed part 2 3\n").starts_with("ERR ed takes "));
+    apply(&mut f);
+    assert_eq!(f.ui.active_part, P1);
+}
+
+#[test]
+fn part_without_a_queue_is_not_in_this_build() {
+    let mut f = Fake::new();
+    f.ed = None;
+    assert_eq!(
+        ask(&mut f, "ed part 2\n"),
+        "ERR ed part is not in this build\n"
+    );
+}
+
+/// `ed part` straight into the UI pass, as the shell applies it.
+fn ed_part(f: &mut Fake, n: u32) {
+    assert_eq!(ask(f, &format!("ed part {n}\n")), "OK\n");
+    apply(f);
+}
+
+/// MIX + SEQ: learn armed on the page's focused cell.
+#[cfg(feature = "midi-map")]
+fn arm_learn(f: &mut Fake) {
+    use chimera_core::ui::learn::Learn;
+    feed(
+        &mut f.ui,
+        Input::chord(ButtonId::Mix, ButtonId::Seq).at(10_000),
+    );
+    feed(
+        &mut f.ui,
+        Input::release(ButtonId::Seq)
+            .and_held(ButtonId::Mix)
+            .at(10_100),
+    );
+    feed(&mut f.ui, Input::release(ButtonId::Mix).at(10_133));
+    assert!(matches!(f.ui.learn(), Learn::Armed { .. }));
+}
+
+#[test]
+fn part_drops_a_prompt_as_its_key_does() {
+    use chimera_core::project::{PartFrom, PartSource};
+    let open = |f: &mut Fake| {
+        f.ui.edit_to(P1, cutoff(), 500.0);
+        let src = PartSource {
+            part: P1,
+            from: PartFrom::Init(EngineType::Va),
+        };
+        assert!(f.ui.ask_replace_for_test(src), "an edited Part asks");
+    };
+    let mut keyed = Fake::new();
+    open(&mut keyed);
+    feed(&mut keyed.ui, Input::press(ButtonId::B2));
+    let mut f = Fake::new();
+    open(&mut f);
+    ed_part(&mut f, 2);
+    assert_eq!(f.ui.prompt_kind_for_test(), None);
+    assert_eq!(keyed.ui.prompt_kind_for_test(), None);
+    assert_eq!(f.ui.active_part, P2);
+    assert_eq!(f.ui.location(), keyed.ui.location());
+}
+
+// Learn is MIDI MAP's.
+#[cfg(feature = "midi-map")]
+#[test]
+fn part_waits_for_a_job_and_keeps_learn_as_its_key_does() {
+    use chimera_core::ui::learn::Learn;
+    let mut f = Fake::new();
+    arm_learn(&mut f);
+    f.ui.queue_load_list_for_test();
+    assert!(f.ui.job_queued_for_test());
+    let at = f.ui.location();
+    ed_part(&mut f, 2);
+    assert_eq!(f.ui.active_part, P1);
+    assert_eq!(f.ui.location(), at);
+    assert!(
+        matches!(f.ui.learn(), Learn::Armed { .. }),
+        "the key breaks before learn"
+    );
+}
+
+#[test]
+fn part_from_the_mixer_goes_where_its_key_does() {
+    let mut keyed = Fake::new();
+    feed(&mut keyed.ui, Input::press(ButtonId::B1));
+    let mixer = keyed.ui.location();
+    assert!(mixer.part().is_some_and(|p| p == P1));
+    feed(&mut keyed.ui, Input::press(ButtonId::B2));
+    let mut f = Fake::new();
+    feed(&mut f.ui, Input::press(ButtonId::B1));
+    assert_eq!(f.ui.location(), mixer);
+    ed_part(&mut f, 2);
+    assert_eq!(f.ui.active_part, P2);
+    assert_eq!(f.ui.location(), keyed.ui.location());
+}
+
+#[test]
+fn part_wakes_the_screen_only_when_it_moves() {
+    let mut f = Fake::new();
+    f.ui.step_idle(24 * 3_600_000, false);
+    assert!(f.ui.asleep());
+    ed_part(&mut f, 1);
+    assert!(f.ui.asleep(), "nothing moved");
+    ed_part(&mut f, 2);
+    assert!(!f.ui.asleep());
+}
+
+#[test]
+fn part_numbers_count_from_one() {
+    assert_eq!(PartId::from_number(0), None);
+    assert_eq!(PartId::from_number(1), Some(P1));
+    assert_eq!(PartId::from_number(2), Some(P2));
+    let last = PartId::ALL.len() as u32;
+    assert_eq!(PartId::from_number(last), PartId::ALL.last().copied());
+    assert_eq!(PartId::from_number(last + 1), None);
+    assert_eq!(PartId::from_number(u32::MAX), None);
+    for p in PartId::ALL {
+        assert_eq!(PartId::from_number(u32::from(p.number())), Some(p));
+    }
+}
+
+/// Where a test starts, by name.
+type Start = (&'static str, fn(&mut Fake));
+
+#[test]
+fn part_from_off_its_ladder_comes_back_as_its_key_does() {
+    use chimera_core::ui::settings::{Screen, screen_path};
+    let starts: [Start; _] = [
+        ("SETTINGS", |f| screen::tap(&mut f.ui, ButtonId::Menu)),
+        ("LOAD PROJECT", |f| {
+            f.ui.go_for_test(Location::settings_at(screen_path(Screen::LoadProject), 0))
+        }),
+        ("browser", |f| {
+            feed(&mut f.ui, Input::chord(ButtonId::Edit, ButtonId::B1))
+        }),
+        #[cfg(feature = "midi-map")]
+        ("MIDI MAP", |f| {
+            f.ui.go_for_test(Location::settings_at(screen_path(Screen::MidiMap), 0))
+        }),
+    ];
+    for (name, start) in starts {
+        let mut keyed = Fake::new();
+        start(&mut keyed);
+        let off = keyed.ui.location();
+        assert_eq!(keyed.ui.active_part, P1, "{name}");
+        feed(&mut keyed.ui, Input::press(ButtonId::B1));
+        assert_ne!(keyed.ui.location(), off, "{name}: the key comes back");
+        let mut f = Fake::new();
+        start(&mut f);
+        assert_eq!(f.ui.location(), off, "{name}");
+        ed_part(&mut f, 1);
+        assert_eq!(f.ui.location(), keyed.ui.location(), "{name}");
+    }
+}
+
+#[test]
+fn part_on_its_own_mixer_stays_put() {
+    let mut f = Fake::new();
+    feed(&mut f.ui, Input::press(ButtonId::B1));
+    let at = f.ui.location();
+    assert!(at.part() == Some(P1));
+    ed_part(&mut f, 1);
+    assert_eq!(f.ui.location(), at);
+}
+
+#[test]
+fn a_key_and_ed_part_in_one_frame_land_once() {
+    let mut keyed = Fake::new();
+    feed(&mut keyed.ui, Input::press(ButtonId::B2));
+    let mut f = Fake::new();
+    assert_eq!(ask(&mut f, "ed part 2\n"), "OK\n");
+    // One frame as the shells run it: the hand's input, then the console's.
+    feed(&mut f.ui, Input::press(ButtonId::B2));
+    apply(&mut f);
+    assert_eq!(f.ui.location(), keyed.ui.location());
+}
+
+/// The unit's refusal of a Part it hasn't, for the editor's tests to pin
+/// its Part count against (`editor/tests/UnitTest.elm`).
+#[test]
+fn writes_editor_part_fixture() {
+    let mut f = Fake::new();
+    let text = ask(&mut f, "ed part 0\n");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../editor/tests/fixtures/part-refusal.txt");
+    if std::env::var_os("BLESS").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(on_disk == text, "BLESS=1 rewrites {}", path.display());
+}

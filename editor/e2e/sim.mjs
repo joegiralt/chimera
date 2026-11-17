@@ -324,6 +324,18 @@ async function main() {
   const back = await sinceUntil((l) => l === "part 1 ALGO");
   if (!back.includes("part 1 ALGO")) fail("part", "key B1", `no "part 1 ALGO": ${back.join(" | ")}`);
 
+  // The editor's Part buttons: `ed part`, as the keys
+  await since();
+  for (const [n, want] of [[2, /^part 2 \S+$/], [1, /^part 1 ALGO$/]]) {
+    const got = await ask(`ed part ${n}`);
+    if (got.at(-1) !== "OK") fail("part", `ed part ${n}`, got.join(" | "));
+    const seen = await sinceUntil((l) => want.test(l));
+    if (!seen.some((l) => want.test(l))) fail("part", `ed part ${n}`, `no ${want}: ${seen.join(" | ")}`);
+    else info(`part: ed part ${n} -> ${seen.find((l) => want.test(l))}`);
+  }
+  const bad = await ask("ed part 7");
+  if (bad.at(-1) !== "ERR ed part takes 1-6") fail("part", "ed part 7", bad.join(" | "));
+
   // load a Sound through the browser keys: INIT ALGO, the top row
   await send("ed set FILTER.CUTOFF 500");
   await settle("FILTER.CUTOFF", (v) => near(v.stored, 500));
