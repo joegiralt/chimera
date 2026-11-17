@@ -1278,3 +1278,92 @@ fn part_without_a_queue_is_not_in_this_build() {
         "ERR ed part is not in this build\n"
     );
 }
+
+/// `ed part` straight into the UI pass, as the shell applies it.
+fn ed_part(f: &mut Fake, n: u32) {
+    assert_eq!(ask(f, &format!("ed part {n}\n")), "OK\n");
+    apply(f);
+}
+
+/// MIX + SEQ: learn armed on the page's focused cell.
+fn arm_learn(f: &mut Fake) {
+    use chimera_core::ui::learn::Learn;
+    feed(
+        &mut f.ui,
+        Input::chord(ButtonId::Mix, ButtonId::Seq).at(10_000),
+    );
+    feed(
+        &mut f.ui,
+        Input::release(ButtonId::Seq)
+            .and_held(ButtonId::Mix)
+            .at(10_100),
+    );
+    feed(&mut f.ui, Input::release(ButtonId::Mix).at(10_133));
+    assert!(matches!(f.ui.learn(), Learn::Armed { .. }));
+}
+
+#[test]
+fn part_drops_a_prompt_as_its_key_does() {
+    use chimera_core::project::{PartFrom, PartSource};
+    let open = |f: &mut Fake| {
+        f.ui.edit_to(P1, cutoff(), 500.0);
+        let src = PartSource {
+            part: P1,
+            from: PartFrom::Init(EngineType::Va),
+        };
+        assert!(f.ui.ask_replace_for_test(src), "an edited Part asks");
+    };
+    let mut keyed = Fake::new();
+    open(&mut keyed);
+    feed(&mut keyed.ui, Input::press(ButtonId::B2));
+    let mut f = Fake::new();
+    open(&mut f);
+    ed_part(&mut f, 2);
+    assert_eq!(f.ui.prompt_kind_for_test(), None);
+    assert_eq!(keyed.ui.prompt_kind_for_test(), None);
+    assert_eq!(f.ui.active_part, P2);
+    assert_eq!(f.ui.location(), keyed.ui.location());
+}
+
+#[test]
+fn part_waits_for_a_job_and_keeps_learn_as_its_key_does() {
+    use chimera_core::ui::learn::Learn;
+    let mut f = Fake::new();
+    arm_learn(&mut f);
+    f.ui.queue_load_list_for_test();
+    assert!(f.ui.job_queued_for_test());
+    let at = f.ui.location();
+    ed_part(&mut f, 2);
+    assert_eq!(f.ui.active_part, P1);
+    assert_eq!(f.ui.location(), at);
+    assert!(
+        matches!(f.ui.learn(), Learn::Armed { .. }),
+        "the key breaks before learn"
+    );
+}
+
+#[test]
+fn part_from_the_mixer_goes_where_its_key_does() {
+    let mut keyed = Fake::new();
+    feed(&mut keyed.ui, Input::press(ButtonId::B1));
+    let mixer = keyed.ui.location();
+    assert!(mixer.part().is_some_and(|p| p == P1));
+    feed(&mut keyed.ui, Input::press(ButtonId::B2));
+    let mut f = Fake::new();
+    feed(&mut f.ui, Input::press(ButtonId::B1));
+    assert_eq!(f.ui.location(), mixer);
+    ed_part(&mut f, 2);
+    assert_eq!(f.ui.active_part, P2);
+    assert_eq!(f.ui.location(), keyed.ui.location());
+}
+
+#[test]
+fn part_wakes_the_screen_only_when_it_moves() {
+    let mut f = Fake::new();
+    f.ui.step_idle(24 * 3_600_000, false);
+    assert!(f.ui.asleep());
+    ed_part(&mut f, 1);
+    assert!(f.ui.asleep(), "nothing moved");
+    ed_part(&mut f, 2);
+    assert!(!f.ui.asleep());
+}
