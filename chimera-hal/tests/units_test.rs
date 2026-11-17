@@ -60,3 +60,84 @@ fn bytes_add_refuses_overflow() {
     );
     assert_eq!(Bytes::new(u32::MAX).checked_add(Bytes::new(1)), None);
 }
+
+mod boot_card_units {
+    use chimera_hal::store::BootCard;
+    use chimera_hal::units::{Micros, Millis, NonZeroMillis};
+
+    #[test]
+    fn millis_add_saturates() {
+        assert_eq!(
+            Millis::new(3).saturating_add(Millis::new(4)),
+            Millis::new(7)
+        );
+        assert_eq!(Millis::MAX.saturating_add(Millis::new(1)), Millis::MAX);
+        assert_eq!(Millis::ZERO, Millis::new(0));
+    }
+
+    #[test]
+    fn millis_as_micros_saturates() {
+        assert_eq!(Millis::new(10).as_micros(), Micros::new(10_000));
+        assert_eq!(Millis::MAX.as_micros(), Micros::new(u32::MAX));
+    }
+
+    #[test]
+    fn non_zero_millis_refuses_zero() {
+        assert_eq!(NonZeroMillis::new(0), None);
+        assert_eq!(
+            NonZeroMillis::new(10).map(NonZeroMillis::get),
+            Some(Millis::new(10))
+        );
+    }
+
+    fn all(ms: Millis) -> [Option<BootCard>; 5] {
+        [
+            None,
+            Some(BootCard::Ready(ms)),
+            Some(BootCard::Busy(ms)),
+            Some(BootCard::Absent(ms)),
+            Some(BootCard::Late(ms)),
+        ]
+    }
+
+    #[test]
+    fn boot_card_bits_round_trip() {
+        for ms in [0, 1, 999, 1_000, BootCard::MAX_MS.get()] {
+            for b in all(Millis::new(ms)) {
+                assert_eq!(BootCard::from_bits(BootCard::to_bits(b)), b, "{b:?}");
+            }
+        }
+    }
+
+    /// Past `MAX_MS` a time saturates there, never wraps into the tag.
+    #[test]
+    fn boot_card_bits_saturate_at_max_ms() {
+        for (b, max) in all(Millis::MAX).into_iter().zip(all(BootCard::MAX_MS)) {
+            assert_eq!(BootCard::from_bits(BootCard::to_bits(b)), max);
+        }
+    }
+
+    #[test]
+    fn unknown_bits_read_as_untried() {
+        assert_eq!(BootCard::from_bits(u32::MAX), None);
+    }
+}
+
+#[test]
+fn cycles_as_millis_rounds_down() {
+    let per_ms = core::num::NonZeroU32::new(480_000).unwrap();
+    assert_eq!(Cycles::new(479_999).as_millis(per_ms), Millis::new(0));
+    assert_eq!(
+        Cycles::new(480_000 * 7 + 5).as_millis(per_ms),
+        Millis::new(7)
+    );
+}
+
+#[test]
+fn hz_per_ms_rounds_down_and_refuses_under_1_khz() {
+    assert_eq!(
+        Hz::new(480_000_000).per_ms().map(|n| n.get()),
+        Some(480_000)
+    );
+    assert_eq!(Hz::new(999).per_ms(), None);
+}
