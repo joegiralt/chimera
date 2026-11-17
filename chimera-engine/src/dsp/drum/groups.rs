@@ -8,9 +8,40 @@ use crate::hw::MAX_VOICES;
 
 use super::types::{ChokeGroup, Kit, PadId};
 
-/// A kit's voice groups: 1..=12 (a kit has 12 pads).
+/// The choke groups (A–D) a kit has in use, a bit each; OFF is no group.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChokeSet(u8);
+
+const _: () = assert!(ChokeGroup::ALL.len() <= u8::BITS as usize);
+
+impl ChokeSet {
+    pub const EMPTY: ChokeSet = ChokeSet(0);
+
+    /// With `c` in it; OFF adds nothing.
+    pub const fn with(self, c: ChokeGroup) -> ChokeSet {
+        match c {
+            ChokeGroup::Off => self,
+            c => ChokeSet(self.0 | 1 << c.index()),
+        }
+    }
+
+    /// How many groups.
+    pub const fn len(self) -> u8 {
+        self.0.count_ones() as u8
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+/// A kit's voice groups: 1..=12 by construction, the pads' choke groups
+/// in use and the pads with choke OFF.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VoiceGroups(u8);
+
+// One group fits a voice; a kit of only OFF pads has a group a pad.
+const _: () = assert!(MAX_VOICES >= 1 && MAX_VOICES <= PadId::ALL.len());
 
 impl VoiceGroups {
     /// The most a choke edit may take a kit to: one group a voice.
@@ -21,12 +52,12 @@ impl VoiceGroups {
         Self::count(kit, None)
     }
 
-    /// The groups of `kit`, with `with`'s pad in its choke group if given:
-    /// a bit a choke group (A–D), the OFF pads counted apart.
+    /// The groups of `kit`, with `with`'s pad in its choke group if given.
+    /// Every pad is in one group or OFF, so 1..=12.
     #[inline(never)]
     #[optimize(size)]
     fn count(kit: &Kit, with: Option<(PadId, ChokeGroup)>) -> VoiceGroups {
-        let (mut groups, mut off) = (0u8, 0u8);
+        let (mut groups, mut off) = (ChokeSet::EMPTY, 0u8);
         for p in PadId::ALL {
             let c = match with {
                 Some((q, c)) if q == p => c,
@@ -34,10 +65,10 @@ impl VoiceGroups {
             };
             match c {
                 ChokeGroup::Off => off += 1,
-                c => groups |= 1 << c.index(),
+                c => groups = groups.with(c),
             }
         }
-        VoiceGroups(groups.count_ones() as u8 + off)
+        VoiceGroups(groups.len() + off)
     }
 
     pub const fn get(self) -> u8 {

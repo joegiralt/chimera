@@ -358,6 +358,27 @@ impl ChokeGroup {
     pub fn from_index(i: usize) -> Option<ChokeGroup> {
         Self::ALL.get(i).copied()
     }
+
+    /// `delta` along `ALL`, saturating at its ends. Inlined: bank 2's
+    /// CHOKE turn (`ui::kit_groups`) is its caller.
+    #[inline(always)]
+    pub fn step(self, delta: i8) -> ChokeGroup {
+        let last = Self::ALL.len() - 1;
+        Self::ALL[self
+            .index()
+            .saturating_add_signed(isize::from(delta))
+            .min(last)]
+    }
+
+    /// The end of `ALL` the way of `delta`.
+    #[inline(always)]
+    pub fn end(delta: i8) -> ChokeGroup {
+        if delta > 0 {
+            Self::ALL[Self::ALL.len() - 1]
+        } else {
+            Self::ALL[0]
+        }
+    }
 }
 
 impl DiskCode for ChokeGroup {
