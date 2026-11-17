@@ -1370,3 +1370,85 @@ fn part_wakes_the_screen_only_when_it_moves() {
     ed_part(&mut f, 2);
     assert!(!f.ui.asleep());
 }
+
+#[test]
+fn part_numbers_count_from_one() {
+    assert_eq!(PartId::from_number(0), None);
+    assert_eq!(PartId::from_number(1), Some(P1));
+    assert_eq!(PartId::from_number(2), Some(P2));
+    let last = PartId::ALL.len() as u32;
+    assert_eq!(PartId::from_number(last), PartId::ALL.last().copied());
+    assert_eq!(PartId::from_number(last + 1), None);
+    assert_eq!(PartId::from_number(u32::MAX), None);
+    for p in PartId::ALL {
+        assert_eq!(PartId::from_number(u32::from(p.number())), Some(p));
+    }
+}
+
+#[test]
+fn part_from_off_its_ladder_comes_back_as_its_key_does() {
+    use chimera_core::ui::settings::{Screen, screen_path};
+    let mut starts: Vec<(&str, fn(&mut Fake))> = vec![
+        ("SETTINGS", |f| screen::tap(&mut f.ui, ButtonId::Menu)),
+        ("LOAD PROJECT", |f| {
+            f.ui.go_for_test(Location::settings_at(screen_path(Screen::LoadProject), 0))
+        }),
+        ("browser", |f| {
+            feed(&mut f.ui, Input::chord(ButtonId::Edit, ButtonId::B1))
+        }),
+    ];
+    #[cfg(feature = "midi-map")]
+    starts.push(("MIDI MAP", |f| {
+        f.ui.go_for_test(Location::settings_at(screen_path(Screen::MidiMap), 0))
+    }));
+    for (name, start) in starts {
+        let mut keyed = Fake::new();
+        start(&mut keyed);
+        let off = keyed.ui.location();
+        assert_eq!(keyed.ui.active_part, P1, "{name}");
+        feed(&mut keyed.ui, Input::press(ButtonId::B1));
+        assert_ne!(keyed.ui.location(), off, "{name}: the key comes back");
+        let mut f = Fake::new();
+        start(&mut f);
+        assert_eq!(f.ui.location(), off, "{name}");
+        ed_part(&mut f, 1);
+        assert_eq!(f.ui.location(), keyed.ui.location(), "{name}");
+    }
+}
+
+#[test]
+fn part_on_its_own_mixer_stays_put() {
+    let mut f = Fake::new();
+    feed(&mut f.ui, Input::press(ButtonId::B1));
+    let at = f.ui.location();
+    assert!(at.part() == Some(P1));
+    ed_part(&mut f, 1);
+    assert_eq!(f.ui.location(), at);
+}
+
+#[test]
+fn a_key_and_ed_part_in_one_frame_land_once() {
+    let mut keyed = Fake::new();
+    feed(&mut keyed.ui, Input::press(ButtonId::B2));
+    let mut f = Fake::new();
+    assert_eq!(ask(&mut f, "ed part 2\n"), "OK\n");
+    // One frame as the shells run it: the hand's input, then the console's.
+    feed(&mut f.ui, Input::press(ButtonId::B2));
+    apply(&mut f);
+    assert_eq!(f.ui.location(), keyed.ui.location());
+}
+
+/// The unit's refusal of a Part it hasn't, for the editor's tests to pin
+/// its Part count against (`editor/tests/UnitTest.elm`).
+#[test]
+fn writes_editor_part_fixture() {
+    let mut f = Fake::new();
+    let text = ask(&mut f, "ed part 0\n");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../editor/tests/fixtures/part-refusal.txt");
+    if std::env::var_os("BLESS").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(on_disk == text, "BLESS=1 rewrites {}", path.display());
+}

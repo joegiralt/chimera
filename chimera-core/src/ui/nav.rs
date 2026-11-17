@@ -897,6 +897,16 @@ impl Location {
         }
     }
 
+    /// The Part whose pages or mixer this is: where its key flips between
+    /// the two (`next`), not where it comes back to them.
+    #[inline(always)]
+    pub fn ladder_part(self) -> Option<PartId> {
+        match self.0 {
+            Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Fx(p, _) => Some(p),
+            _ => None,
+        }
+    }
+
     pub fn orbit(self) -> Option<OrbitAt> {
         match self.0 {
             Loc::Orbit(o) => Some(o),

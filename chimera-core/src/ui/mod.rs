@@ -1108,14 +1108,15 @@ impl UiState {
     }
 
     /// `ed part`: Part `p`'s key alone, in `input`'s order (a card or
-    /// library load swallows it, it drops a prompt, waits for a job, then
-    /// cancels learn), but a Part already followed stays put: its key would
-    /// flip pages and mixer. In ORBIT the keys are rings: nothing at all.
-    /// A move wakes the screen and retires the toast, as a press does.
+    /// library load swallows it, it drops a prompt or a half-typed NAMING,
+    /// waits for a job, then cancels learn), but on `p`'s own pages or
+    /// mixer it stays put: there its key would flip between them. In ORBIT
+    /// the keys are rings: nothing at all. A move retires what any press
+    /// does (the toast, the prime and source notes) and wakes the screen.
     /// Inlined into `EdState::apply`, so it sits in bank 2 with it.
     #[inline(always)]
     pub(crate) fn follow_part(&mut self, p: PartId) {
-        if p == self.active_part
+        if self.loc.ladder_part() == Some(p)
             || self.loc.orbit().is_some()
             || self.src.loading()
             || self.lib.busy()
@@ -1133,7 +1134,10 @@ impl UiState {
         if let Step::Go(to) = self.loc.step(NavKey::Part(p), &cx, &mut self.recall) {
             self.idle.touch(false, true);
             self.prime_status = None;
+            self.held = None;
             self.toast.dismiss();
+            self.browser_dirty |= self.refusal.take().is_some();
+            self.src.input();
             self.go(to)
         }
     }

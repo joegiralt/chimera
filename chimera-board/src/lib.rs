@@ -820,11 +820,6 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             &usb.up()
                 .map_or_else(Default::default, |u| u.hand(controls::now_ms())),
         );
-        // The console's `ed set`s, as knob turns before the frame's input.
-        #[cfg(feature = "usb-console")]
-        if let Some(u) = usb.up() {
-            u.apply_ed(ui);
-        }
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);
@@ -832,6 +827,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ui.set_formant_views(formant_r.read());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
+        // The console's `ed`: sets as knob turns, then `ed part`, after the
+        // hand's keys so a B*n* and `ed part n` in one frame land once.
+        #[cfg(feature = "usb-console")]
+        if let Some(u) = usb.up() {
+            u.apply_ed(ui);
+        }
         // Mapped CCs, in the room the hand's moves left: DIN's then USB's,
         // one pass, one budget. No bench run plays a controller: bench
         // firmware leaves the MIDI map out (FLASH, #507) and drops the rings
