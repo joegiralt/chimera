@@ -583,7 +583,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("drum_kit_machine", 0x4acb3ae25bc2568c),
     ("drum_kit_tonal", 0x243c1e4a583d619a),
     ("drum_kit_tonal_clap", 0x9553786b7a45cf13),
-    ("drum_keys", 0xefaf91fd346bbc5b),
+    // drum_keys re-recorded for ADR 0280: CHOKE's hint line reads GROUPS 8/8.
+    ("drum_keys", 0xbd45e466f4cede4b),
+    ("drum_keys_ninth", 0xf31caeebd7a1c4ad),
     ("drum_mch_kick", 0x478da05a99d137ad),
     ("drum_mch_noise", 0x03a8f4124bdeb64f),
     ("drum_more", 0xfe656955eb63a3db),

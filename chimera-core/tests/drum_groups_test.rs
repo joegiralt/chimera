@@ -1,0 +1,369 @@
+//! DRUM's voice groups (ADR 0280, #993): a kit has at most 8, each choke
+//! group in use once and each pad with choke OFF once; a choke edit that
+//! would make a 9th is refused on the cell with its reason; a STACK pad
+//! that needs room ends its own oldest voice, never another pad's; an old
+//! kit over 8 loads and plays as before, the page showing its count.
+//!
+//! The kits reach the audio through one global view (`KIT_VIEW`): every
+//! test that publishes holds the one writer.
+
+mod common;
+mod screen;
+
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::drum::groups::VoiceGroups;
+use chimera_core::dsp::drum::params::PadParams;
+use chimera_core::dsp::drum::types::{ChokeGroup, Kit, PadId};
+use chimera_core::dsp::drum::view::KitWriter;
+use chimera_core::dsp::tape_engine::params::Retrig;
+use chimera_core::params::EngineType;
+use chimera_core::project::{PartId, Project};
+use chimera_core::ui::busy::ToastStep;
+use chimera_core::ui::held::Reason;
+use chimera_core::ui::{UiState, draw, theme, view};
+use chimera_hal::{ButtonId, EncoderId};
+use common::drum::{PLAY_BUDGET, drum_hits, drum_rig};
+use screen::{Input, feed, load_init, tap};
+
+fn writer() -> MutexGuard<'static, KitWriter> {
+    static W: OnceLock<Mutex<KitWriter>> = OnceLock::new();
+    W.get_or_init(|| Mutex::new(KitWriter::take().expect("the kit writer, once")))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+const P1: PartId = PartId::ALL[0];
+
+fn pad(n: u8) -> PadId {
+    PadId::new(n - 1).unwrap()
+}
+
+/// INIT DRUM with every choke OFF: twelve groups, a kit from before
+/// the bound.
+fn all_off() -> Kit {
+    let mut k = Kit::DEFAULT;
+    for p in PadId::ALL {
+        k.pad_mut(p).set_choke(ChokeGroup::Off);
+    }
+    k
+}
+
+// ---------------------------------------------------------------------------
+// The count
+// ---------------------------------------------------------------------------
+
+#[test]
+fn init_drum_has_exactly_eight_groups() {
+    let g = VoiceGroups::of(&Kit::DEFAULT);
+    assert_eq!(g.get(), 8);
+    assert_eq!(g, VoiceGroups::MAX);
+    assert!(!g.over());
+}
+
+#[test]
+fn a_group_counts_once_and_an_off_pad_once() {
+    assert_eq!(VoiceGroups::of(&all_off()).get(), 12);
+    let mut k = Kit::DEFAULT;
+    for p in PadId::ALL {
+        k.pad_mut(p).set_choke(ChokeGroup::A);
+    }
+    assert_eq!(VoiceGroups::of(&k).get(), 1);
+    k.pad_mut(pad(1)).set_choke(ChokeGroup::Off);
+    k.pad_mut(pad(2)).set_choke(ChokeGroup::B);
+    assert_eq!(VoiceGroups::of(&k).get(), 3);
+    assert!(VoiceGroups::of(&all_off()).over());
+}
+
+/// Pad 3 leaving A (pad 4 keeps it) for OFF makes a 9th: refused, the
+/// count it would make. Pad 1 (OFF) joining A makes 7; pad 4 moving A to
+/// B keeps 8 (pad 3 keeps A).
+#[test]
+fn a_choke_edit_past_eight_is_refused() {
+    let k = Kit::DEFAULT;
+    let ninth = VoiceGroups::choke(&k, pad(3), ChokeGroup::Off).unwrap_err();
+    assert_eq!(ninth.get(), 9);
+    assert_eq!(
+        VoiceGroups::choke(&k, pad(1), ChokeGroup::A).map(VoiceGroups::get),
+        Ok(7)
+    );
+    assert_eq!(
+        VoiceGroups::choke(&k, pad(4), ChokeGroup::B).map(VoiceGroups::get),
+        Ok(8)
+    );
+}
+
+/// An old kit over 8: an edit that lowers or keeps the count lands, one
+/// that raises it is refused.
+#[test]
+fn an_old_kit_over_eight_may_only_come_down() {
+    let mut k = all_off();
+    let to_a = VoiceGroups::choke(&k, pad(1), ChokeGroup::A).unwrap();
+    assert_eq!(to_a.get(), 12, "A alone: one group for another");
+    k.pad_mut(pad(1)).set_choke(ChokeGroup::A);
+    assert_eq!(
+        VoiceGroups::choke(&k, pad(2), ChokeGroup::A).map(VoiceGroups::get),
+        Ok(11)
+    );
+    k.pad_mut(pad(2)).set_choke(ChokeGroup::A);
+    assert_eq!(
+        VoiceGroups::choke(&k, pad(2), ChokeGroup::Off).map_err(VoiceGroups::get),
+        Err(12)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The allocator
+// ---------------------------------------------------------------------------
+
+/// The MIDI key INIT DRUM's pad `p` answers to.
+fn key(p: PadId) -> u8 {
+    p.index() as u8
+}
+
+/// Part 1's live (not dying) voices: each one's pad.
+fn live(r: &common::InstRig) -> Vec<(usize, PadId)> {
+    let slots = r.inst.allocator().slots();
+    drum_hits(&r.inst)
+        .filter(|&(v, _)| slots[v].part() == Some(0) && !slots[v].dying())
+        .map(|(v, h)| (v, h.pad()))
+        .collect()
+}
+
+/// A SNARE, then a STACK KICK struck until it fills the pool, then once
+/// more: the KICK ends its own oldest voice, never the SNARE's, older.
+#[test]
+fn a_stack_pad_ends_its_own_oldest_voice_not_another_pads() {
+    let mut w = writer();
+    let mut k = Kit::DEFAULT;
+    k.pad_mut(pad(1)).set_retrig(Retrig::Stack);
+    let mut r = drum_rig(&mut w, PLAY_BUDGET, &k, &k);
+    r.note_on_vel(0, key(pad(2)), 127);
+    r.render(1);
+    for _ in 1..chimera_core::hw::MAX_VOICES {
+        r.note_on_vel(0, key(pad(1)), 127);
+        r.render(1);
+    }
+    let before = live(&r);
+    assert_eq!(before.len(), chimera_core::hw::MAX_VOICES, "the pool full");
+    let snare = before.iter().find(|&&(_, p)| p == pad(2)).unwrap().0;
+    let oldest_kick = r
+        .inst
+        .allocator()
+        .slots()
+        .iter()
+        .enumerate()
+        .filter(|&(v, _)| before.contains(&(v, pad(1))))
+        .min_by_key(|(_, s)| s.age())
+        .unwrap()
+        .0;
+    r.note_on_vel(0, key(pad(1)), 127);
+    assert_eq!(r.inst.allocator().refused(), 0);
+    let slots = r.inst.allocator().slots();
+    assert!(!slots[snare].dying(), "the SNARE keeps its voice");
+    assert_eq!(slots[snare].note().map(|n| n.get()), Some(key(pad(2))));
+    assert_eq!(
+        slots[oldest_kick].note().map(|n| n.get()),
+        Some(key(pad(1))),
+        "the KICK took its own oldest voice"
+    );
+    r.render(4);
+    assert!(
+        live(&r).contains(&(snare, pad(2))),
+        "the SNARE still sounds"
+    );
+}
+
+/// INIT DRUM's 8 groups, every pad CUT, struck round the kit 16ths apart
+/// three times over with the pool to itself: no hit is refused and none
+/// ends a pad outside its own choke group.
+#[test]
+fn eight_groups_play_without_taking_each_others_voices() {
+    let mut w = writer();
+    let k = Kit::DEFAULT;
+    let mut r = drum_rig(&mut w, PLAY_BUDGET, &k, &k);
+    let gap = (0.054 * common::SR as f32) as usize / chimera_hal::BLOCK_SIZE;
+    for i in 0..36 {
+        let p = PadId::ALL[i % 12];
+        let before = live(&r);
+        r.note_on_vel(0, key(p), 110);
+        let choke = k.pad(p).choke();
+        let after = live(&r);
+        for &(v, q) in &before {
+            let mine = q == p || (choke != ChokeGroup::Off && k.pad(q).choke() == choke);
+            if !mine {
+                assert!(
+                    after.contains(&(v, q)),
+                    "hit {i} (pad {}) ended pad {}",
+                    p.number(),
+                    q.number()
+                );
+            }
+        }
+        r.render(1);
+        r.note_off(0, key(p));
+        r.render(gap - 1);
+    }
+    assert_eq!(r.inst.allocator().refused(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// An old kit over 8
+// ---------------------------------------------------------------------------
+
+/// A project whose Part 1 kit has every choke OFF saves and loads as it
+/// is, Saved, its count 12.
+#[test]
+fn an_old_kit_over_eight_loads_as_it_is() {
+    let (mut p, _) = Project::boxed();
+    *p.kit_mut(P1) = all_off();
+    let f = common::project::encode(&p);
+    let (mut q, _) = Project::boxed();
+    common::project::decode(&f, &mut q).unwrap();
+    assert_eq!(*q.kit(P1), all_off());
+    assert_eq!(VoiceGroups::of(q.kit(P1)).get(), 12);
+}
+
+/// The old kit's twelve pads struck a block apart: every hit books a
+/// voice, as before the bound (a pad with no voice of its own steals as
+/// rule 3, its hit starting once the stolen voice has faded).
+#[test]
+fn an_old_kit_over_eight_plays_every_hit() {
+    let mut w = writer();
+    let k = all_off();
+    let mut r = drum_rig(&mut w, PLAY_BUDGET, &k, &k);
+    for p in PadId::ALL {
+        r.note_on_vel(0, key(p), 120);
+        let booked = r.inst.allocator().slots().iter().any(|s| {
+            s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(key(p))
+        });
+        assert!(booked, "pad {} books a voice", p.number());
+        r.render(1);
+    }
+    assert_eq!(r.inst.allocator().refused(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// The KEYS page
+// ---------------------------------------------------------------------------
+
+fn choke_addr() -> ParamAddr {
+    ParamAddr::new(BlockRef::Pad, PadParams::CHOKE)
+}
+
+/// Part 1 on INIT DRUM's KEYS page, pad `n` selected, CHOKE touched.
+fn keys_on(n: u8, kit: &Kit) -> UiState {
+    let mut ui = UiState::new();
+    // EDIT steps down to KEYS under STACK, as the goldens are recorded.
+    screen::stack_map(&mut ui);
+    load_init(&mut ui, EngineType::Drum);
+    *ui.project_mut().kit_mut(P1) = *kit;
+    // PAD, KIT's first cell, turned to pad `n` (as `drum_keys`' golden).
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    feed(&mut ui, Input::turn(EncoderId::A, n as i8 - 2));
+    assert_eq!(ui.selected_pad(P1), pad(n));
+    tap(&mut ui, ButtonId::Edit);
+    assert_eq!(
+        ui.page_def().id,
+        chimera_core::ui::block_registry::DRUM_KEYS.id
+    );
+    // CHOKE is the second cell: touch it without moving it.
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    ui.step_toast(60_000);
+    ui
+}
+
+fn choke(ui: &UiState, n: u8) -> ChokeGroup {
+    ui.project().kit(P1).pad(pad(n)).choke()
+}
+
+fn fits_band(s: &str) {
+    let w = draw::text_width(&theme::FONT_LABEL, s, 0);
+    assert!(w <= theme::CONTENT_W, "{s}: {w} px");
+}
+
+#[test]
+fn the_choke_cell_shows_the_count() {
+    let ui = keys_on(3, &Kit::DEFAULT);
+    let note = view::groups_note(choke_addr(), ui.project().kit(P1)).unwrap();
+    assert_eq!(note.as_str(), "GROUPS 8/8");
+    let other = ParamAddr::new(BlockRef::Pad, PadParams::RETRIG);
+    assert!(view::groups_note(other, ui.project().kit(P1)).is_none());
+    let old = keys_on(1, &all_off());
+    let note = view::groups_note(choke_addr(), old.project().kit(P1)).unwrap();
+    assert_eq!(
+        note.as_str(),
+        "GROUPS 12/8",
+        "over 8 until the player fixes it"
+    );
+}
+
+/// Pad 3 (A, with pad 4) turned to OFF would make a 9th group: the turn
+/// lands on OFF dimmed with the reason, nothing written; on to A again,
+/// nothing held.
+#[test]
+fn a_ninth_group_is_held_with_its_reason() {
+    let mut ui = keys_on(3, &Kit::DEFAULT);
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert_eq!(choke(&ui, 3), ChokeGroup::A, "nothing written");
+    let shown = ui.held_choice().expect("OFF held");
+    assert_eq!(shown.held.code, ChokeGroup::Off.index() as u8);
+    assert!(matches!(shown.why, Reason::Groups(g) if g.get() == 9));
+    let why = chimera_core::ui::held::reason(shown.why);
+    assert_eq!(why.as_str(), "9 GROUPS · KIT HOLDS 8");
+    fits_band(why.as_str());
+    let shot = screen::render_ui(&ui);
+    assert!(screen::cell_reads(&shot, 1, "OFF"), "the held OFF shows");
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert!(ui.held_choice().is_none());
+    assert_eq!(choke(&ui, 3), ChokeGroup::A);
+    // On to B: pad 3 leaves A to pad 4 and joins B, still 8.
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(choke(&ui, 3), ChokeGroup::B);
+    assert!(ui.held_choice().is_none());
+}
+
+#[test]
+fn a_choke_edit_within_eight_lands() {
+    let mut ui = keys_on(1, &Kit::DEFAULT);
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(choke(&ui, 1), ChokeGroup::A);
+    assert!(ui.held_choice().is_none());
+    assert_eq!(VoiceGroups::of(ui.project().kit(P1)).get(), 7);
+}
+
+/// A CC or the console's `ed set` onto a 9th group: refused with the
+/// reason as a toast, never silently.
+#[test]
+fn a_set_onto_a_ninth_group_is_refused_aloud() {
+    let mut ui = keys_on(3, &Kit::DEFAULT);
+    assert!(!ui.edit_to(P1, choke_addr(), 0.0), "nothing moved");
+    assert_eq!(choke(&ui, 3), ChokeGroup::A);
+    match ui.step_toast(0) {
+        ToastStep::Show(l) => assert_eq!(l.as_str(), "9 GROUPS · KIT HOLDS 8"),
+        s => panic!("no toast: {s:?}"),
+    }
+    // Within the bound it lands.
+    ui.select_pad(P1, pad(1));
+    assert!(ui.edit_to(P1, choke_addr(), 1.0));
+    assert_eq!(choke(&ui, 1), ChokeGroup::A);
+}
+
+/// On an old kit (12 groups) a turn that lowers the count lands; one that
+/// raises it is held, the count it would make in the reason.
+#[test]
+fn an_old_kit_edits_only_downward() {
+    let mut ui = keys_on(1, &all_off());
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(choke(&ui, 1), ChokeGroup::A, "12 stays 12: lands");
+    ui.select_pad(P1, pad(2));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(choke(&ui, 2), ChokeGroup::A, "11: lands");
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert_eq!(choke(&ui, 2), ChokeGroup::A, "back to 12: refused");
+    let shown = ui.held_choice().expect("OFF held");
+    let why = chimera_core::ui::held::reason(shown.why);
+    assert_eq!(why.as_str(), "12 GROUPS · KIT HOLDS 8");
+}

@@ -13,6 +13,8 @@ pub use chimera_image::{Seal, Version};
 
 use crate::addr::ParamAddr;
 use crate::block::{Block, ParamId};
+use crate::dsp::drum::groups::VoiceGroups;
+use crate::dsp::drum::types::{ChokeGroup, Kit, PadId};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::tape_engine::read::SourceView;
 use crate::dsp::tape_engine::{Heads, NeedsRam};
@@ -265,7 +267,18 @@ pub struct UiDoor {
         crate::project::PartId,
         &crate::preset::Part,
     ) -> Option<crate::project::Line>,
+    /// DRUM's voice groups (`ui::kit_groups`, ADR 0280): a CHOKE turn,
+    /// a held one's reason, a CHOKE set put back, the count and the reason.
+    choke_turn: fn(&Kit, PadId, Option<u8>, i8, bool) -> (u8, bool),
+    choke_held: fn(&Kit, PadId, u8) -> Option<VoiceGroups>,
+    choke_undo: fn(&mut Kit, PadId, ChokeGroup) -> Option<VoiceGroups>,
+    groups_note: fn(&Kit) -> crate::project::Line,
+    groups_why: fn(VoiceGroups) -> crate::project::Line,
 }
+
+// The table fits its 128 B before the next door's (`bank2.x`): 32 words
+// on the unit, as wide as a pointer on the host.
+const _: () = assert!(core::mem::size_of::<UiDoor>() <= 32 * core::mem::size_of::<usize>());
 
 /// A card row's head and how it loads (`SourceCell::kind`).
 type HeadKind = (SourceHead, LoadKind);
@@ -307,6 +320,11 @@ impl UiDoor {
         roll: crate::randomize::kern::roll,
         tuning: crate::ui::tuning::work_in,
         tuning_note: crate::ui::tuning::note_in,
+        choke_turn: crate::ui::kit_groups::choke_turn_in,
+        choke_held: crate::ui::kit_groups::choke_held_in,
+        choke_undo: crate::ui::kit_groups::choke_undo_in,
+        groups_note: crate::ui::kit_groups::groups_note_in,
+        groups_why: crate::ui::kit_groups::groups_why_in,
     };
 
     #[inline(always)]
@@ -501,6 +519,43 @@ impl UiDoor {
         drag: f32,
     ) -> f32 {
         (self.jog)(j, now_ms, drag)
+    }
+
+    #[inline(always)]
+    pub(crate) fn choke_turn(
+        &self,
+        kit: &Kit,
+        p: PadId,
+        held: Option<u8>,
+        delta: i8,
+        shift: bool,
+    ) -> (u8, bool) {
+        (self.choke_turn)(kit, p, held, delta, shift)
+    }
+
+    #[inline(always)]
+    pub(crate) fn choke_held(&self, kit: &Kit, p: PadId, code: u8) -> Option<VoiceGroups> {
+        (self.choke_held)(kit, p, code)
+    }
+
+    #[inline(always)]
+    pub(crate) fn choke_undo(
+        &self,
+        kit: &mut Kit,
+        p: PadId,
+        was: ChokeGroup,
+    ) -> Option<VoiceGroups> {
+        (self.choke_undo)(kit, p, was)
+    }
+
+    #[inline(always)]
+    pub(crate) fn groups_note(&self, kit: &Kit) -> crate::project::Line {
+        (self.groups_note)(kit)
+    }
+
+    #[inline(always)]
+    pub(crate) fn groups_why(&self, n: VoiceGroups) -> crate::project::Line {
+        (self.groups_why)(n)
     }
 }
 

@@ -13,6 +13,8 @@
 //!    refuse if every voice is mono.
 //! 4. Over the CPU budget: steal one voice as in rule 3 if that makes room,
 //!    else refuse (and steal nothing).
+//!    A DRUM hit whose pad has live voices of its own (STACK) steals only
+//!    from them (`pick_hit`, ADR 0280).
 //! 5. Note-off releases the voice (`release`); the voice is free once its
 //!    engine reports inactive (`release_finished`), so tails ring out.
 //!
@@ -74,6 +76,10 @@ impl VoiceSet {
 
     pub const fn contains(self, v: VoiceIdx) -> bool {
         self.0 & 1 << v.0 != 0
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
     }
 }
 
@@ -393,6 +399,41 @@ impl Allocator {
         reserved: Cost,
         restrike: &dyn Fn(usize) -> bool,
     ) -> Option<usize> {
+        self.pick_in(
+            part,
+            mode,
+            note,
+            (cost, reserved),
+            restrike,
+            VoiceSet::EMPTY,
+        )
+    }
+
+    /// A DRUM hit's voice (ADR 0280): `pick_where` with no re-strike, but
+    /// where `own` (its pad's live voices: a STACK pad's) holds any, rule
+    /// 3 takes only from them, its oldest tail first, never another pad's.
+    pub fn pick_hit(
+        &self,
+        part: u8,
+        mode: PartMode,
+        note: MidiNote,
+        cost: Cost,
+        reserved: Cost,
+        own: VoiceSet,
+    ) -> Option<usize> {
+        self.pick_in(part, mode, note, (cost, reserved), &|_| false, own)
+    }
+
+    /// `pick_where`, rule 3 within `own` unless it is empty.
+    fn pick_in(
+        &self,
+        part: u8,
+        mode: PartMode,
+        note: MidiNote,
+        (cost, reserved): (Cost, Cost),
+        restrike: &dyn Fn(usize) -> bool,
+        own: VoiceSet,
+    ) -> Option<usize> {
         let fits = |freed: Cost| {
             let total = reserved.0 + self.live_cost().0 + cost.0;
             total.saturating_sub(freed.0) <= self.budget.as_cost().0
@@ -436,6 +477,7 @@ impl Allocator {
         // notes — if that makes room.
         let oldest = (0..MAX_VOICES)
             .filter(|&v| !self.slots[v].is_free() && !self.slots[v].mono && !self.slots[v].dying())
+            .filter(|&v| own.is_empty() || own.contains(VoiceIdx::ALL[v]))
             .min_by_key(|&v| (self.slots[v].held, self.slots[v].age))?;
         fits(self.slots[oldest].cost()).then_some(oldest)
     }

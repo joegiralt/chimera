@@ -24,6 +24,7 @@ pub mod hold;
 pub mod installing;
 pub mod jog;
 pub mod kit_band;
+pub mod kit_groups;
 pub mod learn;
 pub mod led;
 pub mod lfo_glyph;
@@ -77,7 +78,7 @@ use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::algo::kinds::{OpKind, step_kind};
 use crate::dsp::algo::params::step_alg;
-use crate::dsp::drum::types::{Machine, PadId};
+use crate::dsp::drum::types::{ChokeGroup, Machine, PadId};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
@@ -1622,6 +1623,9 @@ impl UiState {
         if a == held::MODEL || a == held::DIRECTION {
             return self.turn_model(at, a, delta, shift);
         }
+        if a == held::CHOKE {
+            return self.turn_choke(at, delta, shift);
+        }
         if !held::applies(a, shift) {
             return false;
         }
@@ -1688,6 +1692,31 @@ impl UiState {
         true
     }
 
+    /// A CHOKE turn (ADR 0280, ADR 0151's rule): onto a group that makes
+    /// the kit's 9th it lands dimmed with the reason, nothing written.
+    /// Bank 2's (`kit_groups::choke_turn_in`): closed, the plain edit.
+    #[inline(never)]
+    fn turn_choke(&mut self, at: PartId, delta: i8, shift: bool) -> bool {
+        let (kit, p) = (self.project.kit(at), self.project.selected_pad(at));
+        let held = self.held.filter(|&(h, c)| h == at && c.addr == held::CHOKE);
+        let Some((to, refused)) = crate::bank2::ui_door(|u| {
+            u.choke_turn(kit, p, held.map(|(_, c)| c.code), delta, shift)
+        }) else {
+            return false;
+        };
+        self.held = refused.then_some((
+            at,
+            held::Held {
+                addr: held::CHOKE,
+                code: to,
+            },
+        ));
+        if !refused {
+            self.edit_in(at, held::CHOKE, part_page::Edit::To(f32::from(to)));
+        }
+        true
+    }
+
     /// START or END turned on a held source (#698 finding 6): in time,
     /// `onset::stepped`; with MIX, to the next onset the turn's way, or
     /// left where it is with none in RAM. `false` for any other cell.
@@ -1728,7 +1757,10 @@ impl UiState {
         let def = self.page_def();
         let on = slot_addr(def, self.focused_slot(), &self.ctx());
         (at == self.active_part && on == Some(h.addr))
-            .then(|| h.why(&self.project.part(at).sound, self.streams(at)))
+            .then(|| match h.addr {
+                held::CHOKE => h.why_kit(self.project.kit(at), self.project.selected_pad(at)),
+                _ => h.why(&self.project.part(at).sound, self.streams(at)),
+            })
             .flatten()
             .map(|why| held::Shown { held: h, why })
     }
@@ -1746,6 +1778,8 @@ impl UiState {
         }
         self.project.select_pad(part, pad);
         if part == self.active_part {
+            // A held CHOKE was the last pad's.
+            self.held = None;
             self.snap_display();
         }
     }
@@ -1913,6 +1947,8 @@ impl UiState {
 
     /// `part_page::edit` on Part `part`'s blocks.
     fn edit_in(&mut self, part: PartId, a: ParamAddr, how: part_page::Edit) -> bool {
+        let pad = self.project.selected_pad(part);
+        let was = self.project.kit(part).pad(pad).choke();
         let params = &mut UiBlocks {
             project: &mut self.project,
             part,
@@ -1924,7 +1960,22 @@ impl UiState {
         if moved && a.block == BlockRef::Random {
             self.roll();
         }
+        if moved && a == held::CHOKE {
+            return !self.choke_undo(part, pad, was);
+        }
         moved
+    }
+
+    /// A CHOKE set no turn held (a CC, `ed set`) that grew the kit past 8
+    /// voice groups: put back, the reason said (ADR 0280). Whether it was.
+    #[inline(never)]
+    fn choke_undo(&mut self, part: PartId, pad: PadId, was: ChokeGroup) -> bool {
+        let kit = self.project.kit_mut(part);
+        let Some(n) = crate::bank2::ui_door(|u| u.choke_undo(kit, pad, was)).flatten() else {
+            return false;
+        };
+        self.error(held::reason(held::Reason::Groups(n)));
+        true
     }
 
     /// RANDOMIZE's turn (ADR 0232): the active Part's Sound rolled, bank
