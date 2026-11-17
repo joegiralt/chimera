@@ -2,6 +2,7 @@ module Unit exposing
     ( Engine(..)
     , Gen
     , Part
+    , allParts
     , engineFromName
     , engineName
     , genFromInt
@@ -36,19 +37,31 @@ genToInt (Gen n) =
     n
 
 
-{-| A Part as the box numbers it, from 1.
+{-| A Part as the box numbers it, 1 to 6.
 -}
 type Part
     = Part Int
 
 
+{-| The box's Parts (`MAX_PARTS`), one key each.
+-}
+partCount : Int
+partCount =
+    6
+
+
 partFromInt : Int -> Maybe Part
 partFromInt n =
-    if n >= 1 then
+    if n >= 1 && n <= partCount then
         Just (Part n)
 
     else
         Nothing
+
+
+allParts : List Part
+allParts =
+    List.range 1 partCount |> List.map Part
 
 
 partNumber : Part -> Int

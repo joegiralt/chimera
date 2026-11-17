@@ -41,6 +41,7 @@ suite =
             , p "OK big" "OK 999999999" (Ok_ (Just 999999999))
             , p "ERR takes" "ERR ed takes hello, describe, get, set or since" (Err_ "ed takes hello, describe, get, set or since")
             , p "ERR get" "ERR ed get has no CHORUS.MODE here" (Err_ "ed get has no CHORUS.MODE here")
+            , p "ERR part" "ERR ed part takes 1-6" (Err_ "ed part takes 1-6")
             , p "ERR busy" "ERR busy" (Err_ "busy")
             , p "ERR not in build" "ERR ed since is not in this build" (Err_ "ed since is not in this build")
             , p "ERR unterminated quote" "ERR ed set has no \"X here" (Err_ "ed set has no \"X here")
@@ -71,6 +72,7 @@ suite =
             , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))
             , test "since" <| \_ -> Expect.equal (Just "ed since 7") (encode (Since (Unit.genFromInt 7)))
             , test "since nothing held is 0" <| \_ -> Expect.equal (Just "ed since 0") (encode (Since Nothing))
+            , test "part" <| \_ -> Expect.equal (Just (Just "ed part 2")) (Unit.partFromInt 2 |> Maybe.map (Follow >> encode))
             , test "refuses what would split or inject" <|
                 \_ ->
                     [ encode (Get (Addr "A.B\ned hello"))
