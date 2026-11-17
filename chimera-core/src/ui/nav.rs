@@ -903,7 +903,7 @@ impl Location {
     pub fn ladder_part(self) -> Option<PartId> {
         match self.0 {
             Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Fx(p, _) => Some(p),
-            _ => None,
+            Loc::Sound(..) | Loc::Settings(..) | Loc::Orbit(..) => None,
         }
     }
 
