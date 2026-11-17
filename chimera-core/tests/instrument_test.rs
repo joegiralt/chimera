@@ -23,7 +23,7 @@ use chimera_core::instrument::{
 };
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
-use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::params::{EngineType, ParamSnapshot, send_gain};
 use chimera_core::part::{DacPair, PartMode};
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
@@ -228,7 +228,7 @@ fn mix_parts_reference(
     let mut moving = Vec::new();
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = pan_gains(part.mix.pan);
-        let [s0, s1, s2] = part.params.out.sends;
+        let [s0, s1, s2] = part.params.out.sends.map(send_gain);
         let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
         if !written[p] {
             for (e, &t) in eases[p].iter_mut().zip(&to) {
@@ -393,7 +393,11 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
     for b in 0..120 {
         rig.block(&shared);
         let bus = *rig.inst.part_bus(0);
-        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * SEND)];
+        let mut sends = [
+            [0.0; BLOCK_SIZE],
+            [0.0; BLOCK_SIZE],
+            bus.map(|s| s * send_gain(SEND)),
+        ];
         let mut ret = Stereo::SILENT;
         fx.process(&mut sends, &shared.fx, Tempo::DEFAULT, SR, &mut ret);
         let (l, r) = lr(&rig.out()[0]);
@@ -785,9 +789,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x99176e24a041d1ea),
     ("reverb_send_off", 0xfd4ac36e6db74819), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0x815a3b73b4db0061),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0xe5a7b0d605929052), // ADR 0049 INIT, the ADR 0050 output trim, then ADR 0278 send taper
     ("six_voice_chord", 0x38adad839982e05d), // ADR 0049 INIT, then the ADR 0050 output trim
-                                             // Every row re-recorded for ADR 0109's master gain and soft knee.
+                                            // Every row re-recorded for ADR 0109's master gain and soft knee.
 ];
 
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
@@ -803,7 +807,7 @@ const PRE_LIMITER: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x39011cff1c61c20f),
     ("reverb_send_off", 0xfa51f05d4383455d),
-    ("reverb_send_on", 0x6c4f0bdf615a9cd5),
+    ("reverb_send_on", 0x42383402b998ed9e), // ADR 0278 send taper
     ("six_voice_chord", 0x5132735055c0c78d),
 ];
 

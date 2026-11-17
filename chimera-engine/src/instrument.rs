@@ -604,7 +604,11 @@ fn mix_sided(
         // Expression swells the whole Part, its FX feed too (ADR 0263):
         // 1.0, every gain bit for bit, at 127.
         let x = crate::part::expressed(1.0, part.expression);
-        let [s0, s1, s2] = part.params.out.sends.map(|s| s * x);
+        let [s0, s1, s2] = part
+            .params
+            .out
+            .sends
+            .map(|s| crate::params::send_gain(s) * x);
         let level = part.mix.level * x;
         let to = [gl * level, gr * level, s0, s1, s2];
         let eases = &mut mix.gains[p];

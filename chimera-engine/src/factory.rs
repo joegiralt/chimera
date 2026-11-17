@@ -548,7 +548,7 @@ mod authored {
                 p.envelopes[1] = env(A_1S, D_1S, 1.0, D_1S);
                 p.filter.cutoff = 7_000.0;
                 p.filter.level = 0.6;
-                p.out.sends = [0.35, 0.0, 0.3];
+                p.out.sends = [76.0 / 128.0, 0.0, 70.0 / 128.0];
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Env2, 38);
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Lfo1, 10);
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Note, 100);
@@ -645,7 +645,7 @@ mod authored {
                 p.envelopes[2] = env(A_2MS, D_80MS, 0.0, D_80MS);
                 p.filter.cutoff = 12_000.0;
                 p.filter.level = 0.62;
-                p.out.sends = [0.25, 0.0, 0.35];
+                p.out.sends = [0.5, 0.0, 76.0 / 128.0];
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Lfo3, 8);
                 route(&mut s, lvl(2), b"OP3LEVEL", ModSource::Lfo1, 4);
                 route(&mut s, lvl(3), b"OP4LEVEL", ModSource::Lfo3, 5);
@@ -695,7 +695,7 @@ mod authored {
                 p.filter.cutoff = 2_500.0;
                 p.filter.resonance = 0.35;
                 soft(p, 0.45, 0.55);
-                p.out.sends = [0.0, 0.3, 0.15];
+                p.out.sends = [0.0, 70.0 / 128.0, 50.0 / 128.0];
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Env2, 75);
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Lfo1, 20);
                 route(&mut s, PITCH, b"PITCH\0\0\0", ModSource::Env3, 16);

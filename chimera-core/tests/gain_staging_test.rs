@@ -18,6 +18,7 @@ use chimera_core::factory::factory_sound;
 use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument, pan_gains};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
+use chimera_core::params::send_gain;
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
@@ -335,7 +336,7 @@ fn everything_before_the_limiter_is_mains_mix() {
     let (mut blocks, mut peak) = (0, 0.0f32);
     chord(Voices::Init, fxp, 0.05, SEND, |inst, fx, dac| {
         let bus = inst.part_bus(0);
-        let mut sends = [bus.map(|b| b * SEND); 3];
+        let mut sends = [bus.map(|b| b * send_gain(SEND)); 3];
         let mut ret = chimera_core::dsp::Stereo::SILENT;
         reference.process(&mut sends, &fxp, Tempo::DEFAULT, SAMPLE_RATE, &mut ret);
         assert_eq!(

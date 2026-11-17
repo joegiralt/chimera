@@ -907,6 +907,14 @@ pub struct OutParams {
     pub gate: [f32; 3],
 }
 
+/// A send's stored level (0..1) as the gain the mixer feeds its FX
+/// (ADR 0278, #1004): squared, so 0 is off, the top unity, half −12 dB and
+/// the first step −84 dB, where linear jumped to −42.
+#[inline(always)]
+pub const fn send_gain(level: f32) -> f32 {
+    level * level
+}
+
 /// INIT's OUT LEVEL: ALGO INIT's C4 at velocity 100 at the factory median,
 /// −22 LUFS on P1 (ADR 0063); 45/128, on the knob's grid.
 pub const INIT_VOLUME: f32 = 45.0 / 128.0;
