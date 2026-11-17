@@ -1385,10 +1385,13 @@ fn part_numbers_count_from_one() {
     }
 }
 
+/// Where a test starts, by name.
+type Start = (&'static str, fn(&mut Fake));
+
 #[test]
 fn part_from_off_its_ladder_comes_back_as_its_key_does() {
     use chimera_core::ui::settings::{Screen, screen_path};
-    let mut starts: Vec<(&str, fn(&mut Fake))> = vec![
+    let starts: [Start; _] = [
         ("SETTINGS", |f| screen::tap(&mut f.ui, ButtonId::Menu)),
         ("LOAD PROJECT", |f| {
             f.ui.go_for_test(Location::settings_at(screen_path(Screen::LoadProject), 0))
@@ -1396,11 +1399,11 @@ fn part_from_off_its_ladder_comes_back_as_its_key_does() {
         ("browser", |f| {
             feed(&mut f.ui, Input::chord(ButtonId::Edit, ButtonId::B1))
         }),
+        #[cfg(feature = "midi-map")]
+        ("MIDI MAP", |f| {
+            f.ui.go_for_test(Location::settings_at(screen_path(Screen::MidiMap), 0))
+        }),
     ];
-    #[cfg(feature = "midi-map")]
-    starts.push(("MIDI MAP", |f| {
-        f.ui.go_for_test(Location::settings_at(screen_path(Screen::MidiMap), 0))
-    }));
     for (name, start) in starts {
         let mut keyed = Fake::new();
         start(&mut keyed);
