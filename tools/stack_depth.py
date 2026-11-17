@@ -100,8 +100,11 @@ DOOR_ONLY = {
 # Functions no pointer ever holds, though a data word may equal their
 # address: bench-algo,master-tape's ALGO block tables hold the bytes
 # 01 04 05 08, `take_ui`'s address once ADR 0267 moved it. `take_ui` is
-# called once, by name, at boot.
-NEVER_TAKEN = ("chimera_board::shared::take_ui",)
+# called once, by name, at boot. `synth`, the same (ADR 0278's typed
+# sends): bench-algo,master-tape's bench `time_kernel` in bank 2 holds the
+# instruction `movw r8, #0x1004` (41 f2 04 08), `synth`'s address with its
+# Thumb bit. `main` calls it once, by name.
+NEVER_TAKEN = ("chimera_board::shared::take_ui", "chimera_board::synth")
 
 HEADER = re.compile(r"^([0-9a-f]{8}) <(.+)>:$")
 # The mnemonic follows the address (and raw bytes, if shown) after a tab.
