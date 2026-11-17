@@ -2,7 +2,7 @@
 //! never a byte count and a duration is never an instant; a conversion is
 //! one of these methods, never an `as` across units.
 
-use core::num::NonZeroU8;
+use core::num::{NonZeroU8, NonZeroU32};
 
 const BLOCK_BYTES: u32 = 512;
 
@@ -96,12 +96,41 @@ impl Bytes {
 pub struct Millis(u32);
 
 impl Millis {
+    pub const ZERO: Millis = Millis(0);
+    pub const MAX: Millis = Millis(u32::MAX);
+
     pub const fn new(n: u32) -> Self {
         Self(n)
     }
 
     pub const fn get(self) -> u32 {
         self.0
+    }
+
+    pub const fn saturating_add(self, o: Millis) -> Millis {
+        Millis(self.0.saturating_add(o.0))
+    }
+
+    /// Saturating at `u32::MAX` µs (about 71 minutes).
+    pub const fn as_micros(self) -> Micros {
+        Micros(self.0.saturating_mul(1_000))
+    }
+}
+
+/// A duration that is never zero: a period, so a loop over it advances.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NonZeroMillis(NonZeroU32);
+
+impl NonZeroMillis {
+    pub const fn new(n: u32) -> Option<Self> {
+        match NonZeroU32::new(n) {
+            Some(nz) => Some(Self(nz)),
+            None => None,
+        }
+    }
+
+    pub const fn get(self) -> Millis {
+        Millis(self.0.get())
     }
 }
 
@@ -116,6 +145,11 @@ impl Cycles {
 
     pub const fn get(self) -> u32 {
         self.0
+    }
+
+    /// This many cycles in ms, rounded down.
+    pub const fn as_millis(self, cycles_per_ms: NonZeroU32) -> Millis {
+        Millis(self.0 / cycles_per_ms.get())
     }
 
     /// Cycles from `then` to this reading, wrapping.

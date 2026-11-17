@@ -12,7 +12,6 @@ use crate::ui::nav::{MixPage, Rung};
 use chimera_hal::store::{
     BootCard, DOUBT_HALT, Doubt, Mark, Sweep, SweepRun, SweepStats, Then, Trigger,
 };
-use chimera_hal::units::Millis;
 
 /// The footer's word for `s`.
 pub fn state_word(s: ProjectStatus) -> &'static str {
@@ -100,33 +99,21 @@ impl LoadNetCell {
 
 pub static LOAD_NET: LoadNetCell = LoadNetCell(AtomicU8::new(LoadNetState::Absent as u8));
 
-/// How the card answered boot's first acquire (chimera-releases#16):
-/// bit 31 set is `Ready`, the rest its ms; `UNTRIED` before it.
+/// How the card answered at boot (`BootCard::to_bits`).
 pub struct BootCardCell(AtomicU32);
 
-const UNTRIED: u32 = u32::MAX;
-const READY: u32 = 1 << 31;
-
 impl BootCardCell {
-    pub fn store(&self, b: BootCard) {
-        let v = match b {
-            BootCard::Ready(ms) => READY | ms.get().min(READY - 1),
-            BootCard::Absent(ms) => ms.get().min(READY - 1),
-        };
-        self.0.store(v, Ordering::Relaxed);
+    pub fn store(&self, b: Option<BootCard>) {
+        self.0.store(BootCard::to_bits(b), Ordering::Relaxed);
     }
 
     pub fn load(&self) -> Option<BootCard> {
-        match self.0.load(Ordering::Relaxed) {
-            UNTRIED => None,
-            v if v & READY != 0 => Some(BootCard::Ready(Millis::new(v & !READY))),
-            v => Some(BootCard::Absent(Millis::new(v))),
-        }
+        BootCard::from_bits(self.0.load(Ordering::Relaxed))
     }
 }
 
-/// Stored once, by the board's first acquire.
-pub static BOOT_CARD: BootCardCell = BootCardCell(AtomicU32::new(UNTRIED));
+/// Stored by the board's boot acquire.
+pub static BOOT_CARD: BootCardCell = BootCardCell(AtomicU32::new(BootCard::to_bits(None)));
 
 /// MIDI in's pipe (`PipeStats`): the faults its parser counted, the events
 /// a full note queue refused (`drops`) and those a full control ring
@@ -171,7 +158,9 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     match BOOT_CARD.load() {
         None => w.write_str("untried")?,
         Some(BootCard::Ready(ms)) => write!(w, "ready after {} ms", ms.get())?,
+        Some(BootCard::Busy(ms)) => write!(w, "busy after {} ms", ms.get())?,
         Some(BootCard::Absent(ms)) => write!(w, "no answer after {} ms", ms.get())?,
+        Some(BootCard::Late(ms)) => write!(w, "late after {} ms", ms.get())?,
     }
     w.write_char('\n')?;
     match ui.bank2() {

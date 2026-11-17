@@ -5,17 +5,18 @@
 //! acquire waits up to `BOOT_WINDOW` for it (ADR 0277).
 
 use core::mem::{MaybeUninit, size_of};
+use core::num::NonZeroU32;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::hw::STORE_RESERVE;
 use chimera_fat::deadline::{Deadline, Over};
-use chimera_fat::sd::{CMD0, NCR_BYTES, PRESENCE_TRIES, Presence, r1_within_ncr};
+use chimera_fat::sd::{CMD0, NCR_BYTES, Presence, presence, r1_within_ncr};
 use chimera_fat::sd_addr::CardAddr;
 use chimera_fat::shared_card::{Hooks, SharedCard};
 use chimera_fat::{BusPhase, FatStore, SdBus};
 use chimera_hal::card_bus::CardBus;
-use chimera_hal::units::Millis;
+use chimera_hal::units::{Cycles, Millis};
 use cortex_m::peripheral::{DCB, DWT};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::{self as ehspi, ErrorKind, ErrorType, Operation, SpiDevice};
@@ -166,18 +167,28 @@ impl SdSpi {
         self.deadline.is_over()
     }
 
-    /// #186: CMD0 with CS low, `PRESENCE_TRIES` times at most; an R1 within
-    /// NCR is a card. About 0.3 ms a try at the init clock.
-    fn card_answers(&mut self) -> bool {
-        (0..PRESENCE_TRIES).any(|_| {
+    /// #186: a burst of CMD0s with CS low (`presence`): the best R1 within
+    /// NCR, idle first. About 0.3 ms a try at the init clock.
+    fn card_r1(&mut self) -> Option<u8> {
+        presence(|| {
             let mut r = [0xFF; NCR_BYTES];
             self.cs.set_low();
             let sent = self.spi.write(&CMD0).is_ok() && self.spi.transfer(&mut r).is_ok();
             self.cs.set_high();
             // A byte with CS high lets the card release DO.
             let _ = self.spi.write(&[0xFF]);
-            sent && r1_within_ncr(&r).is_some()
+            if sent { r1_within_ncr(&r) } else { None }
         })
+    }
+
+    /// Time since `start` on the cycle counter; `ZERO` when it won't count.
+    fn since(cpu_hz: u32, counting: bool, start: Cycles) -> Millis {
+        match NonZeroU32::new(cpu_hz / 1_000).filter(|_| counting) {
+            Some(per_ms) => Cycles::new(DWT::cycle_count())
+                .since(start)
+                .as_millis(per_ms),
+            None => Millis::ZERO,
+        }
     }
 
     /// The longest time between blocks since `arm`, in µs (0 without the
@@ -268,19 +279,20 @@ impl SdBus for SdSpi {
             BusPhase::Data => self.arm(SD_IDLE_MS),
             // Only an acquire asks: CMD0 would reset a mounted card.
             BusPhase::Acquire => {
-                let (cpu_hz, mut p) = (self.cpu_hz, self.presence);
-                let first = p.boot().is_none();
+                let (cpu_hz, counting, mut p) = (self.cpu_hz, self.counting, self.presence);
+                let start = Cycles::new(DWT::cycle_count());
                 let there = p.ask(
                     || {
                         self.wake();
-                        self.card_answers()
+                        self.card_r1()
                     },
-                    |ms| clocks::delay_us(cpu_hz, ms.get() * 1_000),
+                    |ms| clocks::delay_us(cpu_hz, ms.get().as_micros().get()),
+                    || Self::since(cpu_hz, counting, start),
                 );
-                self.presence = p;
-                if first && let Some(b) = p.boot() {
-                    chimera_core::console::BOOT_CARD.store(b);
+                if p.boot() != self.presence.boot() {
+                    chimera_core::console::BOOT_CARD.store(p.boot());
                 }
+                self.presence = p;
                 if there {
                     self.arm(SD_ACQUIRE_MS);
                 } else {

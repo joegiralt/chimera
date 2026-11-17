@@ -127,14 +127,57 @@ const fn name_ok(b: &[u8], min: usize, max: usize, tilde: bool) -> bool {
 /// `Break` stops the listing.
 pub type LongEach<'a> = dyn FnMut(FileName, u32, &[u8]) -> ControlFlow<()> + 'a;
 
-/// How the card answered at boot (chimera-releases#16): CMD0 answered
-/// after `Millis` of waiting, or never within the boot's window. A boot's
-/// NO CARD after `Ready` is a failed init, not an empty slot.
+/// How the card answered at boot (chimera-releases#16, ADR 0277), with the
+/// time measured from boot's first CMD0. A boot's NO CARD after `Ready` or
+/// `Busy` is a failed init, not an empty slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootCard {
+    /// Idle (R1 0x01) after this long.
     Ready(Millis),
+    /// Answered but never idle in the window, this long.
+    Busy(Millis),
+    /// No answer in the window, this long.
     Absent(Millis),
+    /// No answer in a window this long; a later ask found it.
+    Late(Millis),
 }
+
+impl BootCard {
+    /// The longest time `to_bits` keeps: 2^29 - 1 ms, about six days.
+    /// Longer saturates here.
+    pub const MAX_MS: Millis = Millis::new((1 << MS_BITS) - 1);
+
+    /// One atomic word: a 3-bit tag over 29 bits of ms; 0 is none.
+    pub const fn to_bits(b: Option<BootCard>) -> u32 {
+        let (tag, ms) = match b {
+            None => return 0,
+            Some(BootCard::Ready(ms)) => (1, ms),
+            Some(BootCard::Busy(ms)) => (2, ms),
+            Some(BootCard::Absent(ms)) => (3, ms),
+            Some(BootCard::Late(ms)) => (4, ms),
+        };
+        let ms = if ms.get() > Self::MAX_MS.get() {
+            Self::MAX_MS
+        } else {
+            ms
+        };
+        tag << MS_BITS | ms.get()
+    }
+
+    /// `to_bits`'s inverse; a tag it never writes reads as none.
+    pub const fn from_bits(v: u32) -> Option<BootCard> {
+        let ms = Millis::new(v & Self::MAX_MS.get());
+        match v >> MS_BITS {
+            1 => Some(BootCard::Ready(ms)),
+            2 => Some(BootCard::Busy(ms)),
+            3 => Some(BootCard::Absent(ms)),
+            4 => Some(BootCard::Late(ms)),
+            _ => None,
+        }
+    }
+}
+
+const MS_BITS: u32 = 29;
 
 /// Why a store operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

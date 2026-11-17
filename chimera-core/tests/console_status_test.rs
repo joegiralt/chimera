@@ -52,16 +52,33 @@ fn status_reports_the_load_net() {
     LOAD_NET.store(LoadNetState::Absent);
 }
 
-/// chimera-releases#16: how long the card took to answer CMD0 at boot,
-/// or that it never did (NO CARD then means no answer, not a failed mount).
+/// chimera-releases#16: how the card answered boot's CMD0s, measured.
+/// NO CARD with `ready` is a failed init; with `no answer` an empty slot.
 #[test]
 fn status_reports_the_boot_card() {
     let ui = Box::new(UiState::new());
-    assert_eq!(line(&status(&ui), "boot_card"), "untried");
-    BOOT_CARD.store(BootCard::Ready(Millis::new(30)));
-    assert_eq!(line(&status(&ui), "boot_card"), "ready after 30 ms");
-    BOOT_CARD.store(BootCard::Absent(Millis::new(1_000)));
-    assert_eq!(line(&status(&ui), "boot_card"), "no answer after 1000 ms");
+    let say = |b| {
+        BOOT_CARD.store(b);
+        line(&status(&ui), "boot_card")
+    };
+    assert_eq!(say(None), "untried");
+    assert_eq!(
+        say(Some(BootCard::Ready(Millis::new(30)))),
+        "ready after 30 ms"
+    );
+    assert_eq!(
+        say(Some(BootCard::Busy(Millis::new(1_004)))),
+        "busy after 1004 ms"
+    );
+    assert_eq!(
+        say(Some(BootCard::Absent(Millis::new(1_004)))),
+        "no answer after 1004 ms"
+    );
+    assert_eq!(
+        say(Some(BootCard::Late(Millis::new(1_004)))),
+        "late after 1004 ms"
+    );
+    BOOT_CARD.store(None);
 }
 
 #[test]
