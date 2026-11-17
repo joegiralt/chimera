@@ -22,9 +22,9 @@ pub(crate) enum Ask<'a> {
     /// would make a 9th; one that can't land is refused with a toast, the
     /// kit and its revision untouched.
     Edit(&'a mut UiState, PartId, Edit),
-    /// A held CHOKE on pad `p` of `kit`: why it is refused, if it still
-    /// is and the kit's chokes are as they were at the hold.
-    Held(&'a Kit, PadId, ChokeHold),
+    /// A held CHOKE on Part `at`'s selected pad: why it is refused, if it
+    /// still is and the kit's chokes are as they were at the hold.
+    Held(&'a UiState, PartId, ChokeHold),
     /// The refusal's words for a count.
     Why(VoiceGroups),
     /// CHOKE's focus band: the kit's count.
@@ -67,10 +67,13 @@ pub(crate) fn ask_in(a: Ask<'_>) -> Said {
     match a {
         Ask::Turn(ui, at, delta, shift) => Said::Moved(turn(ui, at, delta, shift)),
         Ask::Edit(ui, at, how) => Said::Moved(edit(ui, at, how)),
-        Ask::Held(kit, p, hold) => match VoiceGroups::choke(kit, p, hold.to) {
-            Err(n) if hold.kit == KitChokes::of(kit) => Said::Refused(n),
-            _ => Said::Fits,
-        },
+        Ask::Held(ui, at, hold) => {
+            let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
+            match VoiceGroups::choke(kit, p, hold.to) {
+                Err(n) if hold.kit == KitChokes::of(kit) => Said::Refused(n),
+                _ => Said::Fits,
+            }
+        }
         Ask::Why(n) => Said::Line(why(n)),
         Ask::Note(kit) => Said::Line(note(kit)),
     }

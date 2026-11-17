@@ -938,3 +938,23 @@ fn a_frmt_steps_to_every_kind_the_whole_patch_fits() {
         assert!(!st.refused);
     }
 }
+
+/// The cells a turn can hold a refused choice on, named: an operator's
+/// WAVE, ALG A or B (not with MIX); nothing else.
+#[test]
+fn held_cells_are_named() {
+    use chimera_core::addr::ParamAddr;
+    use chimera_core::ui::held::{AlgSide, Cell, applies};
+    let wave = ParamAddr::new(BlockRef::AlgoOp(Op::ALL[2]), AlgoOpParams::WAVE);
+    assert_eq!(applies(wave, false), Some(Cell::Wave(Op::ALL[2])));
+    assert_eq!(applies(wave, true), Some(Cell::Wave(Op::ALL[2])));
+    let a = ParamAddr::new(BlockRef::Algo, AlgoParams::ALG_A);
+    let b = ParamAddr::new(BlockRef::Algo, AlgoParams::ALG_B);
+    assert_eq!(applies(a, false), Some(Cell::Alg(AlgSide::A)));
+    assert_eq!(applies(b, false), Some(Cell::Alg(AlgSide::B)));
+    assert_eq!(applies(a, true), None, "MIX + ALG snaps");
+    let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    assert_eq!(applies(morph, false), None, "not an ALG cell");
+    let coarse = ParamAddr::new(BlockRef::AlgoOp(Op::ALL[0]), AlgoOpParams::COARSE);
+    assert_eq!(applies(coarse, false), None);
+}

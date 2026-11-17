@@ -353,7 +353,10 @@ pub(crate) fn band_note_in(
 /// streamed source (`held::Held::why`).
 pub(crate) fn tape_held_in(t: &T, turn: TapeTurn) -> Option<NeedsRam> {
     let mut t = *t;
-    t.set(turn.addr().param, f32::from(turn.code()));
+    match turn {
+        TapeTurn::Model(m) => t.set_machine(m),
+        TapeTurn::Direction(d) => t.direction = d,
+    }
     needs_ram(&t)
 }
 

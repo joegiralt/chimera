@@ -45,21 +45,19 @@ pub enum AlgSide {
 }
 
 impl AlgSide {
-    /// ALG A's or B's param; any other is B's.
-    pub fn of(id: ParamId) -> AlgSide {
-        if id == AlgoParams::ALG_A {
-            AlgSide::A
-        } else {
-            AlgSide::B
-        }
-    }
-
     pub const fn param(self) -> ParamId {
         match self {
             AlgSide::A => AlgoParams::ALG_A,
             AlgSide::B => AlgoParams::ALG_B,
         }
     }
+}
+
+/// A Sound's cell a turn can hold a refused choice on (ADR 0151).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cell {
+    Wave(Op),
+    Alg(AlgSide),
 }
 
 /// A TAPE MODEL or DIRECTION choice: its own type, the cell with it.
@@ -180,12 +178,13 @@ pub const DIRECTION: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngine
 /// A pad's CHOKE: a turn holds a 9th voice group (ADR 0280).
 pub const CHOKE: ParamAddr = ParamAddr::new(BlockRef::Pad, PadParams::CHOKE);
 
-/// Whether `a` is a cell this applies to.
-pub fn applies(a: ParamAddr, shift: bool) -> bool {
-    match a.block {
-        BlockRef::AlgoOp(_) => a.param == AlgoOpParams::WAVE,
-        BlockRef::Algo => !shift && matches!(a.param, AlgoParams::ALG_A | AlgoParams::ALG_B),
-        _ => false,
+/// The cell `a` is, if it is one this applies to (ALG A/B not with MIX).
+pub fn applies(a: ParamAddr, shift: bool) -> Option<Cell> {
+    match (a.block, a.param) {
+        (BlockRef::AlgoOp(op), AlgoOpParams::WAVE) => Some(Cell::Wave(op)),
+        (BlockRef::Algo, AlgoParams::ALG_A) if !shift => Some(Cell::Alg(AlgSide::A)),
+        (BlockRef::Algo, AlgoParams::ALG_B) if !shift => Some(Cell::Alg(AlgSide::B)),
+        _ => None,
     }
 }
 

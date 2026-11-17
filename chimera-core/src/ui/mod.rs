@@ -1585,12 +1585,12 @@ impl UiState {
     /// budget refuses: say so (an encoder turn shows it dimmed instead).
     #[inline(never)]
     fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) {
-        if !held::applies(a, shift) {
+        let Some(cell) = held::applies(a, shift) else {
             return;
-        }
+        };
         let p = &self.project.part(at).sound.params.algo;
-        let refused = match a.block {
-            BlockRef::AlgoOp(op) => {
+        let refused = match cell {
+            held::Cell::Wave(op) => {
                 let d = if shift {
                     delta.signum() * i8::MAX
                 } else {
@@ -1599,7 +1599,10 @@ impl UiState {
                 let from = p.kinds().get(op.index());
                 step_kind(p.kinds(), p.linked(), op.index(), from, d).refused
             }
-            _ => step_alg(p, a.param, p.side(a.param), delta).refused,
+            held::Cell::Alg(side) => {
+                let id = side.param();
+                step_alg(p, id, p.side(id), delta).refused
+            }
         };
         if refused {
             self.error(Line::new(prompt::FORMANT_FULL));
@@ -1628,13 +1631,13 @@ impl UiState {
         {
             return matches!(s, kit_groups::Said::Moved(true));
         }
-        if !held::applies(a, shift) {
+        let Some(cell) = held::applies(a, shift) else {
             return false;
-        }
+        };
         let p = &self.project.part(at).sound.params.algo;
         let held = self.held.filter(|&(h, c)| h == at && c.addr() == a);
-        let (pick, refused) = match a.block {
-            BlockRef::AlgoOp(op) => {
+        let (pick, refused) = match cell {
+            held::Cell::Wave(op) => {
                 let d = if shift {
                     delta.signum() * i8::MAX
                 } else {
@@ -1647,13 +1650,13 @@ impl UiState {
                 let s = step_kind(p.kinds(), p.linked(), op.index(), from, d);
                 (held::Pick::Wave(op, s.to), s.refused)
             }
-            _ => {
+            held::Cell::Alg(side) => {
                 let from = match held {
                     Some((_, held::Held::Sound(held::Pick::Alg(_, x)))) => x,
-                    _ => p.side(a.param),
+                    _ => p.side(side.param()),
                 };
-                let s = step_alg(p, a.param, from, delta);
-                (held::Pick::Alg(held::AlgSide::of(a.param), s.to), s.refused)
+                let s = step_alg(p, side.param(), from, delta);
+                (held::Pick::Alg(side, s.to), s.refused)
             }
         };
         let h = held::Held::Sound(pick);
@@ -1739,8 +1742,7 @@ impl UiState {
         (at == self.active_part && on == Some(h.addr()))
             .then(|| match h {
                 held::Held::Choke(hold) => {
-                    let (kit, p) = (self.project.kit(at), self.project.selected_pad(at));
-                    match crate::bank2::groups(kit_groups::Ask::Held(kit, p, hold)) {
+                    match crate::bank2::groups(kit_groups::Ask::Held(self, at, hold)) {
                         Some(kit_groups::Said::Refused(n)) => Some(held::Reason::Groups(n)),
                         _ => None,
                     }
