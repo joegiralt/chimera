@@ -39,7 +39,7 @@ suite =
             [ p "OK" "OK" (Ok_ Nothing)
             , p "OK m" "OK 2" (Ok_ (Just 2))
             , p "OK big" "OK 999999999" (Ok_ (Just 999999999))
-            , p "ERR takes" "ERR ed takes hello, describe, get, set or since" (Err_ "ed takes hello, describe, get, set or since")
+            , p "ERR takes" "ERR ed takes hello, describe, get, set, since or part" (Err_ "ed takes hello, describe, get, set, since or part")
             , p "ERR get" "ERR ed get has no CHORUS.MODE here" (Err_ "ed get has no CHORUS.MODE here")
             , p "ERR part" "ERR ed part takes 1-6" (Err_ "ed part takes 1-6")
             , p "ERR busy" "ERR busy" (Err_ "busy")
