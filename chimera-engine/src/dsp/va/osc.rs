@@ -20,6 +20,7 @@
 //! touches `read` but to leave it on the clock.
 
 pub mod door;
+pub mod solo;
 
 use super::blep::{blamp_into, blamp6_into, blep_into};
 use crate::dsp::provenance::{PatentLine, Provenance};
@@ -201,22 +202,20 @@ impl Wave {
     }
 }
 
-/// The wave a block plays alone, WAVE held on its anchor (ADR 0251): its
-/// pair's other wave has weight 0, its edges only tracked (`quiet_kind!`). The sine's
-/// anchor has none: its solo run measured no faster.
+/// The wave a block plays alone, WAVE held on its anchor (ADR 0283): its
+/// pair's other wave has weight 0, its edges only tracked (`quiet_kind!`).
+/// Only the saw's: WAVE's default (⅔), and its pair's dearest partner, the
+/// pulse, is the one it drops. The other anchors play their pairs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Solo {
-    /// WAVE ⅓: the triangle, its saw off.
-    Tri,
-    /// WAVE ⅔: the saw, its pulse off.
+    /// WAVE ⅔: the saw, its pulse at weight 0.
     Saw,
-    /// WAVE 1: the pulse, its saw off.
-    Pulse,
 }
 
 impl Solo {
-    /// The solo of a block on `r`: WAVE steady on an anchor (its weight in
-    /// the pair exactly 0 or 1), the sine's excepted.
+    /// The solo of a block on `r`: WAVE steady on the saw's anchor, the
+    /// pulse's weight in the pair (`3·WAVE − 2`, as the run reads it)
+    /// exactly 0.
     #[inline(always)]
     pub fn at(r: &Ramps) -> Option<Solo> {
         if r.wave.1 != 0.0 {
@@ -224,12 +223,7 @@ impl Solo {
         }
         let pair = seg(r, 0);
         let f = 3.0 * Unit::new(r.wave.0).get() - pair as usize as f32;
-        match pair {
-            Pair::TriSaw if f == 0.0 => Some(Solo::Tri),
-            Pair::SawPulse if f == 0.0 => Some(Solo::Saw),
-            Pair::SawPulse if f == 1.0 => Some(Solo::Pulse),
-            _ => None,
-        }
+        (pair == Pair::SawPulse && f == 0.0).then_some(Solo::Saw)
     }
 }
 
@@ -1461,10 +1455,10 @@ impl VarOsc {
     }
 
     /// `render`'s plain block with WAVE on `solo`'s anchor: one run of the
-    /// live wave `A` or `B`, its weight-0 partner quiet (`quiet_kind!`).
-    /// Every sample `render`'s, bit for bit, and the partner's edges left
-    /// as its run leaves them; its runs are `door::run`'s, bank 2's with
-    /// `bank2` (ADR 0251), reached through `door::SoloDoor`.
+    /// live wave `A`, its weight-0 partner `B` quiet (`quiet_kind!`). Every
+    /// sample `render`'s, bit for bit, and the partner's edges left as its
+    /// run leaves them. Inlined into `solo::play`, so with `bank2` the run
+    /// links with it in bank 2 (ADR 0283).
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
     fn render_solo<
@@ -1491,8 +1485,7 @@ impl VarOsc {
         }
         #[cfg(not(any(test, feature = "test-support")))]
         let _ = solo;
-        door::run::<A, B, N, REC, SYNC, FLIP, false, false>(
-            self,
+        self.run_in::<A, B, N, REC, SYNC, FLIP, false, false, false>(
             &blk,
             (0, N),
             r,

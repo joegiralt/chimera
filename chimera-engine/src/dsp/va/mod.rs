@@ -27,7 +27,7 @@ use crate::voice_alloc::VoiceIdx;
 use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, am_reach, ring_gain};
 use noise::Noise;
 pub use noise::{KIND_NAMES, NoiseKind};
-use osc::door::SoloRun;
+use osc::solo::SoloRun;
 use osc::{MAX_INC, NO_WRAP, R, Ramps, Solo, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
@@ -467,10 +467,10 @@ fn jitter_draw(stab: &mut Stability, d: f32) -> impl FnMut() -> f32 + '_ {
     move || 1.0 + jd * stab.jitter_word() as f32
 }
 
-/// `o`'s plain block (`run`) played alone, WAVE on an anchor
-/// (`osc::Solo`), through bank 2's door (ADR 0251): `false` off an anchor
-/// or with the door closed, when the pair's runs play it as ever. Once a
-/// block an oscillator.
+/// `o`'s plain block (`run`) played alone, WAVE on the saw's anchor
+/// (`osc::Solo`), through bank 2's door (ADR 0283): the solo it played,
+/// `None` off the anchor or with the door closed, when the pair's runs play
+/// it as ever.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn solo(
@@ -482,12 +482,10 @@ fn solo(
     jit: &mut f32,
     stab: &mut Stability,
     d: f32,
-) -> bool {
-    let Some(s) = Solo::at(r) else {
-        return false;
-    };
+) -> Option<Solo> {
+    let s = Solo::at(r)?;
     let jd = jitter_depth(d);
-    osc::door::through(|d| d.solo().render(o, run, s, out, mk, r, jit, stab, jd)) == Some(true)
+    osc::solo::through(|t| t.solo().render(o, run, s, out, mk, r, jit, stab, jd)).map(|()| s)
 }
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
@@ -1389,10 +1387,10 @@ impl VaEngine {
     }
 
     /// `run`'s two oscillators, out of line: one copy for every MODE
-    /// (flash). Each plays alone on WAVE's anchor through bank 2's door
-    /// (`solo`), else its pair's runs. `sync`: OSC 2 is SYNC's slave.
+    /// (flash). OSC 1, and OSC 2 but as SYNC's slave, play alone on the
+    /// saw's anchor through bank 2's door (`solo`), else their pairs' runs.
     #[inline(never)]
-    fn oscs(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, sync: bool) {
+    fn oscs(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode) {
         let Self {
             osc: [o1, o2],
             stab,
@@ -1410,54 +1408,30 @@ impl VaEngine {
         // MODE (flash): only SYNC's slave reads the wraps here, resetting
         // at them (ADR 0118 point 13); SOFT SYNC's turns at them (its own
         // render)
-        if !solo(
-            o1,
-            SoloRun::Osc1,
-            out,
-            mk,
-            &l.osc[0],
-            &mut jit[0],
-            stab,
-            l.d,
-        ) {
+        let (r1, r2) = (&l.osc[0], &l.osc[1]);
+        if solo(o1, SoloRun::Osc1, out, mk, r1, &mut jit[0], stab, l.d).is_none() {
+            let draw = &mut jitter_draw(stab, l.d);
             o1.render::<BLOCK_SIZE, true, false, true, false>(
                 out,
                 mk,
-                &l.osc[0],
+                r1,
                 &mut jit[0],
-                &mut jitter_draw(stab, l.d),
+                draw,
                 z,
                 nk,
             );
         }
-        if sync {
-            if !solo(
-                o2,
-                SoloRun::Osc2Sync,
-                b,
-                mk,
-                &l.osc[1],
-                &mut jit[1],
-                stab,
-                l.d,
-            ) {
-                o2.render::<BLOCK_SIZE, false, true, false, false>(
-                    b,
-                    mk,
-                    &l.osc[1],
-                    &mut jit[1],
-                    &mut jitter_draw(stab, l.d),
-                    z,
-                    nk,
-                );
-            }
-        } else if !solo(o2, SoloRun::Osc2, b, mk, &l.osc[1], &mut jit[1], stab, l.d) {
+        if mode == VaMode::Sync {
+            let draw = &mut jitter_draw(stab, l.d);
+            o2.render::<BLOCK_SIZE, false, true, false, false>(b, mk, r2, &mut jit[1], draw, z, nk);
+        } else if solo(o2, SoloRun::Osc2, b, mk, r2, &mut jit[1], stab, l.d).is_none() {
+            let draw = &mut jitter_draw(stab, l.d);
             o2.render::<BLOCK_SIZE, false, false, false, false>(
                 b,
                 mk,
-                &l.osc[1],
+                r2,
                 &mut jit[1],
-                &mut jitter_draw(stab, l.d),
+                draw,
                 z,
                 nk,
             );
@@ -1471,7 +1445,7 @@ impl VaEngine {
     /// duck's gain run over both.
     #[inline(always)]
     fn run(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode, gain: Gain) {
-        self.oscs(out, l, mode == VaMode::Sync);
+        self.oscs(out, l, mode);
         // a loop of its own while the duck runs (the count bills it)
         match gain {
             Some(g) => self.operator::<true>(out, l, mode, g),

@@ -678,7 +678,7 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
                 && chimera_core::ui::orbit::door::door_ok(j)
                 && chimera_core::ui::cc::door_ok(j)
                 && chimera_core::bank2::ed_door_ok(j)
-                && chimera_core::dsp::va::osc::door::door_ok(j)
+                && chimera_core::dsp::va::osc::solo::door_ok(j)
         })
     });
     let Some(checked) = checked else {

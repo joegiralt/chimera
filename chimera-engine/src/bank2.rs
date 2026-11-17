@@ -39,7 +39,7 @@ pub const MIDI_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x300;
 /// The console's `ed` table (`chimera_core::bank2::EdDoor`, ADR 0251): the
 /// browser editor's answers.
 pub const ED_DOOR_ADDR: u32 = DOOR_ADDR + 0x380;
-/// VA's solos' table (`dsp::va::osc::door::SoloDoor`, ADR 0251): the
+/// VA's solos' table (`dsp::va::osc::solo::SoloDoor`, ADR 0283): the
 /// door's own table is full.
 pub const VA_SOLO_DOOR_ADDR: u32 = DOOR_ADDR + 0x400;
 
