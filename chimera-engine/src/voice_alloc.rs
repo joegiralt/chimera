@@ -15,6 +15,9 @@
 //!    else refuse (and steal nothing).
 //!    A DRUM hit whose pad has live voices of its own (STACK) steals only
 //!    from them (`pick_hit`, ADR 0280).
+//! A Part at its MAX VOICES cap takes no free voice: rules 3 and 4 steal
+//! only its own. A Part at or below its RESERVE is guarded: another Part's
+//! note never steals its voices, and a shed takes them last (ADR 0281).
 //! 5. Note-off releases the voice (`release`); the voice is free once its
 //!    engine reports inactive (`release_finished`), so tails ring out.
 //!
@@ -32,6 +35,8 @@
 use crate::MidiNote;
 use crate::hw::{Cost, MAX_VOICES, SampleBudget};
 use crate::part::PartMode;
+use crate::project::PartId;
+use crate::voice_limit::{Limits, MaxVoices, VoiceCount};
 
 /// A voice's index in the pool: always `< MAX_VOICES`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +91,29 @@ impl VoiceSet {
 
     pub const fn contains(self, v: VoiceIdx) -> bool {
         self.0 & 1 << v.0 != 0
+    }
+
+    /// The voices in both.
+    pub const fn and(self, o: VoiceSet) -> VoiceSet {
+        VoiceSet(self.0 & o.0)
+    }
+
+    /// The voices in either.
+    pub const fn or(self, o: VoiceSet) -> VoiceSet {
+        VoiceSet(self.0 | o.0)
+    }
+
+    /// These voices but `o`'s.
+    pub const fn without(self, o: VoiceSet) -> VoiceSet {
+        VoiceSet(self.0 & !o.0)
+    }
+
+    /// How many: at most the pool, as only `VoiceIdx` sets a bit.
+    pub const fn count(self) -> VoiceCount {
+        match VoiceCount::new(self.0.count_ones() as u8) {
+            Some(n) => n,
+            None => VoiceCount::POOL,
+        }
     }
 }
 
@@ -191,6 +219,8 @@ pub struct Allocator {
     /// Counts sheds: a lower `dying` is nearer the end of its fade.
     sheds: u32,
     budget: SampleBudget,
+    /// Each Part's MAX VOICES and RESERVE (ADR 0281).
+    limits: Limits,
 }
 
 impl Allocator {
@@ -202,7 +232,52 @@ impl Allocator {
             refused: 0,
             sheds: 0,
             budget,
+            limits: Limits::AUTO,
         }
+    }
+
+    /// The Parts' MAX VOICES and RESERVE the next picks and sheds honour
+    /// (ADR 0281): once a snapshot, before its note-ons.
+    pub fn set_limits(&mut self, l: Limits) {
+        self.limits = l;
+    }
+
+    /// Part `part`'s live voices: booked, not dying.
+    fn live(&self, part: u8) -> VoiceSet {
+        VoiceIdx::ALL.iter().fold(VoiceSet::EMPTY, |s, &v| {
+            let slot = &self.slots[v.index()];
+            if slot.part == Some(part) && slot.dying.is_none() {
+                s.with(v)
+            } else {
+                s
+            }
+        })
+    }
+
+    /// Part `part`'s note may take no more voices: it is at its cap.
+    fn capped(&self, part: u8) -> bool {
+        match PartId::new(part).map(|p| self.limits.get(p).max) {
+            Some(m @ MaxVoices::Cap(_)) => m.reached(self.live(part).count()),
+            _ => false,
+        }
+    }
+
+    /// The voices of every Part but `but` at or below its reserve: what
+    /// another Part's note may not steal (ADR 0281). Empty with no
+    /// reserve set.
+    fn guarded(&self, but: Option<u8>) -> VoiceSet {
+        if self.limits.booked().get() == 0 {
+            return VoiceSet::EMPTY;
+        }
+        PartId::ALL.iter().fold(VoiceSet::EMPTY, |g, &p| {
+            let q = p.index() as u8;
+            let live = self.live(q);
+            if but != Some(q) && self.limits.get(p).reserve.guards(live.count()) {
+                g.or(live)
+            } else {
+                g
+            }
+        })
     }
 
     pub fn budget(&self) -> SampleBudget {
@@ -363,12 +438,15 @@ impl Allocator {
     /// takes only a voice whose fade frees something. `None` once no booked
     /// voice is both live and accepted.
     pub fn shed_one(&mut self, sounds: impl Fn(VoiceIdx) -> bool) -> Option<VoiceIdx> {
+        // A Part at or below its reserve last (ADR 0281).
+        let guarded = self.guarded(None);
         let v = (0..MAX_VOICES)
             .filter(|&v| !self.slots[v].is_free() && !self.slots[v].dying())
             .filter(|&v| sounds(VoiceIdx::ALL[v]))
             .min_by_key(|&v| {
                 let s = &self.slots[v];
                 (
+                    guarded.contains(VoiceIdx::ALL[v]),
                     s.mono,
                     s.held,
                     if s.held { u32::MAX - s.age } else { s.age },
@@ -478,6 +556,8 @@ impl Allocator {
         {
             return Some(v);
         }
+        // At its cap a Part steals its own, free voices or not (ADR 0281).
+        let capped = self.capped(part);
         let free = (0..MAX_VOICES)
             .map(|i| (self.rr + i) % MAX_VOICES)
             .find(|&v| self.slots[v].is_free())
@@ -487,14 +567,20 @@ impl Allocator {
                     .min()
                     .map(|(_, v)| v)
             });
-        if let Some(v) = free
+        if !capped
+            && let Some(v) = free
             && fits(Cost::ZERO)
         {
             return Some(v);
         }
         // Rules 3 and 4: steal the oldest non-mono voice — tails before held
-        // notes — if that makes room.
-        let pool = steal.pool();
+        // notes — if that makes room: at the cap the Part's own, else none
+        // of a guarded Part's (ADR 0281).
+        let pool = if capped {
+            steal.pool().and(self.live(part))
+        } else {
+            steal.pool().without(self.guarded(Some(part)))
+        };
         let oldest = (0..MAX_VOICES)
             .filter(|&v| {
                 pool.contains(VoiceIdx::ALL[v])

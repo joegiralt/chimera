@@ -8,6 +8,7 @@ use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
 use crate::orbit::ring::SnapTo;
+use crate::voice_limit::{MaxVoices, Reserve, VoiceLimit};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -201,6 +202,8 @@ pub struct PartParams {
     /// MAPPING (ADR 0259): a Scala file's degrees on consecutive keys (0,
     /// CONTINUOUS) or from each C, the spare keys silent (1, KEYBOARD).
     pub mapping: u8,
+    /// MAX VOICES and RESERVE: the Part's share of the pool (ADR 0281).
+    pub voices: VoiceLimit,
 }
 
 /// LEVEL `level` under expression `e` (CC 11, ADR 0263): (e / 127)², GM's
@@ -243,6 +246,8 @@ impl PartParams {
     pub const BEND: ParamId = ParamId(10);
     pub const TUNING: ParamId = ParamId(11);
     pub const MAPPING: ParamId = ParamId(12);
+    pub const MAX_VOICES: ParamId = ParamId(13);
+    pub const RESERVE: ParamId = ParamId(14);
 
     /// Part `index` (0-based) listens on channel `index`, Poly, output P1,
     /// level 0.8, centre pan, its keys as played.
@@ -258,6 +263,7 @@ impl PartParams {
             bend: INIT_BEND,
             tuning: 0,
             mapping: 0,
+            voices: VoiceLimit::AUTO,
         }
     }
 }
@@ -269,7 +275,13 @@ impl Default for PartParams {
 }
 
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
-pub static PART_SPECS: [ParamSpec; 10] = [
+/// MAX VOICES' choices (ADR 0281): AUTO, then a cap of 1 to 8; a
+/// choice's index is its code (`MaxVoices::code`).
+pub const MAX_VOICES_NAMES: [&str; MaxVoices::LAST as usize + 1] =
+    ["AUTO", "1", "2", "3", "4", "5", "6", "7", "8"];
+const _: () = assert!(MaxVoices::LAST == 8 && Reserve::LAST == 8);
+
+pub static PART_SPECS: [ParamSpec; 12] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
     ParamSpec::choice(
         1,
@@ -369,6 +381,28 @@ pub static PART_SPECS: [ParamSpec; 10] = [
     )
     .ident("MAPPING")
     .glyph(crate::glyph::FocusGlyph::None),
+    // A new note honours them; sounding voices keep theirs (ADR 0281).
+    ParamSpec::choice(
+        13,
+        // MAX VOICES is 76 px, past the cell's 62: the cap reads VOICES.
+        "VOICES",
+        ValFmt::Names(&MAX_VOICES_NAMES),
+        MaxVoices::LAST as f32,
+        0.0,
+        Change::Snap,
+    )
+    .ident("MAX_VOICES")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        14,
+        "RESERVE",
+        ValFmt::Names(NUMERALS.split_at(Reserve::LAST as usize + 1).0),
+        Reserve::LAST as f32,
+        0.0,
+        Change::Snap,
+    )
+    .ident("RESERVE")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 /// 0 to 15 as text: CH's values by channel number (the byte is the
@@ -396,6 +430,8 @@ impl Block for PartParams {
             Self::BEND => f32::from(self.bend),
             Self::TUNING => f32::from(self.tuning),
             Self::MAPPING => f32::from(self.mapping),
+            Self::MAX_VOICES => f32::from(self.voices.max.code()),
+            Self::RESERVE => f32::from(self.voices.reserve.code()),
             _ => 0.0,
         }
     }
@@ -416,6 +452,14 @@ impl Block for PartParams {
             Self::BEND => self.bend = crate::dsp::clampf(v, 0.0, f32::from(MAX_BEND)) as u8,
             Self::TUNING => self.tuning = (v as u8).min(TUNING_NAMES.len() as u8 - 1),
             Self::MAPPING => self.mapping = (v as u8).min(1),
+            Self::MAX_VOICES => {
+                let c = (v as u8).min(MaxVoices::LAST);
+                self.voices.max = MaxVoices::from_code(c).unwrap_or_default();
+            }
+            Self::RESERVE => {
+                let c = (v as u8).min(Reserve::LAST);
+                self.voices.reserve = Reserve::from_code(c).unwrap_or_default();
+            }
             _ => {}
         }
     }
@@ -432,6 +476,8 @@ impl Block for PartParams {
             Self::TUNING if self.tuning == TUNING_SCALA => Some(SCALA_CODE),
             Self::TUNING => Some(self.tuning),
             Self::MAPPING => Some(self.mapping),
+            Self::MAX_VOICES => Some(self.voices.max.code()),
+            Self::RESERVE => Some(self.voices.reserve.code()),
             _ => None,
         }
     }
@@ -448,6 +494,10 @@ impl Block for PartParams {
             Self::MAPPING => ["CONTINUOUS", "KEYBOARD"]
                 .get(usize::from(self.mapping))
                 .copied(),
+            Self::MAX_VOICES => MAX_VOICES_NAMES
+                .get(usize::from(self.voices.max.code()))
+                .copied(),
+            Self::RESERVE => NUMERALS.get(usize::from(self.voices.reserve.code())).copied(),
             _ => None,
         }
     }
@@ -468,6 +518,8 @@ impl Block for PartParams {
                 |t| self.tuning = t,
             ),
             Self::MAPPING => apply_code((code < 2).then_some(code), |m| self.mapping = m),
+            Self::MAX_VOICES => apply_code(MaxVoices::from_code(code), |m| self.voices.max = m),
+            Self::RESERVE => apply_code(Reserve::from_code(code), |r| self.voices.reserve = r),
             _ => false,
         }
     }

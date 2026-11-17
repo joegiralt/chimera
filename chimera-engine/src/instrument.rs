@@ -2167,6 +2167,10 @@ impl Instrument {
         // A new note is judged with its Part's glide on it (ADR 0117).
         self.costs = core::array::from_fn(|p| costs[p].with(glides[p]));
         (self.costed, self.costings) = (at, self.costings.wrapping_add(1));
+        // The Parts' MAX VOICES and RESERVE for this snapshot's picks (ADR 0281).
+        self.alloc.set_limits(crate::voice_limit::Limits::of(|p| {
+            shared.parts[p.index()].mix.voices
+        }));
         #[cfg(feature = "probe")]
         crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
         // A sounding Part's knobs and formant reach, once: on its first
