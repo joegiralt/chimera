@@ -21,7 +21,28 @@ let ws;
 let inbox = [];
 let waiter = null;
 
+// ED_SERIAL=/dev/ttyACM0: the unit's console instead of the bridge.
+async function connectSerial(path) {
+  const { execFileSync } = await import("node:child_process");
+  const fs = await import("node:fs");
+  execFileSync("stty", ["-F", path, "raw", "-echo", "115200"]);
+  const fd = fs.openSync(path, "r+");
+  let buf = "";
+  const tty = await import("node:tty"); // a tty handle, not a pool read: exit isn't held
+  new tty.ReadStream(fd).on("data", (d) => {
+    buf += d.toString("utf8");
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      inbox.push(buf.slice(0, i).replace(/\r$/, ""));
+      buf = buf.slice(i + 1);
+      if (waiter) waiter(true);
+    }
+  });
+  ws = { send: (c) => fs.writeSync(fd, c + "\n"), close: () => {} }; // the script's exit closes the fd
+}
+
 function connect() {
+  if (process.env.ED_SERIAL) return connectSerial(process.env.ED_SERIAL);
   return new Promise((resolve, reject) => {
     ws = new WebSocket(URL);
     ws.onopen = () => resolve();
@@ -137,7 +158,8 @@ async function key(k) {
 async function onPart1() {
   for (let i = 0; i < 3; i++) {
     await key("B1");
-    const at = (await ask("status")).find((l) => l.startsWith("at "));
+    await sleep(500); // the unit's UI takes a frame or more to turn the page
+    const at =(await ask("status")).find((l) => l.startsWith("at "));
     if (/^at PART 1 /.test(at ?? "")) return;
   }
   throw new Error("cannot get to a Part 1 page with B1");
