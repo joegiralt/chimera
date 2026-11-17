@@ -234,7 +234,7 @@ impl EdSince {
             // The editor ignores an empty line. It ends a fragment a cut-off
             // answer left, so `part` is never glued onto it.
             writeln!(w)?;
-            writeln!(w, "part {} {}", part.index() + 1, engine.disk_ident())?;
+            writeln!(w, "part {} {}", part.number(), engine.disk_ident())?;
         }
         if algo {
             let mut i = 0;

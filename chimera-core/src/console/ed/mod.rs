@@ -4,7 +4,7 @@
 
 use core::fmt::{self, Write};
 
-use super::{Arg, EdLine, PROTOCOL, WORD_MAX, Word, Words};
+use super::{EdLine, PROTOCOL, WORD_MAX, Word, Words};
 use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::about_page::{DIRTY, HASH, VERSION};
@@ -44,8 +44,17 @@ pub enum EdArg {
     Set(EdAddr, EdValue),
     /// The editor's last answer's number; `None`: it holds nothing.
     Since(Option<Gen>),
-    /// The Part to follow; `None`: the word was no Part's number.
-    Part(Option<PartId>),
+    /// The Part to follow.
+    Part(PartId),
+}
+
+/// Why a line is no `ed` command: each its own `ERR`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdRefusal {
+    /// `ERR ed takes <USAGE>`.
+    Usage,
+    /// `ed part` with no Part's number: `ERR ed part takes 1-6`.
+    NoSuchPart,
 }
 
 fn engine(w: &[u8]) -> Option<EngineType> {
@@ -71,21 +80,36 @@ fn value(w: &[u8]) -> Option<EdValue> {
     (w.len() <= WORD_MAX && !not_finite).then(|| EdValue::Name(Word::new(w)))
 }
 
-impl Arg for EdArg {
-    const USAGE: &'static str = "hello, describe, get, set, since or part";
-    fn parse(mut words: Words<'_>) -> Option<Self> {
-        let sub = words.next()?;
+impl EdArg {
+    pub const USAGE: &'static str = "hello, describe, get, set, since or part";
+
+    /// The command, or the refusal it gets. `Since`'s `None` is no
+    /// failure: 0 is the editor holding nothing.
+    pub fn parse(mut words: Words<'_>) -> Result<Self, EdRefusal> {
+        let Some(sub) = words.next() else {
+            return Err(EdRefusal::Usage);
+        };
+        let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
+        if is(b"part") {
+            let n = words.next().and_then(chimera_theory::tuning::uint);
+            let p = n
+                .and_then(PartId::from_number)
+                .ok_or(EdRefusal::NoSuchPart)?;
+            return match words.next() {
+                None => Ok(EdArg::Part(p)),
+                Some(_) => Err(EdRefusal::Usage),
+            };
+        }
+        EdArg::parse_rest(sub, words).ok_or(EdRefusal::Usage)
+    }
+
+    fn parse_rest(sub: &[u8], mut words: Words<'_>) -> Option<Self> {
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
         let got = if is(b"hello") {
             EdArg::Hello
         } else if is(b"since") {
             let n = chimera_theory::tuning::uint(words.next()?)?;
             EdArg::Since(Gen::new(n))
-        } else if is(b"part") {
-            // Numbered from 1, as the box's keys are.
-            let n = words.next().and_then(chimera_theory::tuning::uint);
-            let p = n.and_then(|n| u8::try_from(n).ok()?.checked_sub(1));
-            EdArg::Part(p.and_then(PartId::new))
         } else if is(b"describe") {
             let engine = engine(words.next()?)?;
             let page = chimera_theory::tuning::uint(words.next()?)?
@@ -112,9 +136,15 @@ pub(crate) fn answer_in(
     w: &mut dyn Write,
 ) -> fmt::Result {
     match EdArg::parse(line.words()) {
-        None => writeln!(w, "ERR ed takes {}", EdArg::USAGE),
-        Some(EdArg::Hello) => hello(ui, w).and_then(|()| w.write_str("OK\n")),
-        Some(EdArg::Describe { engine, page }) => match describe::describe(engine, page, w) {
+        Err(EdRefusal::Usage) => writeln!(w, "ERR ed takes {}", EdArg::USAGE),
+        Err(EdRefusal::NoSuchPart) => writeln!(
+            w,
+            "ERR ed part takes {}-{}",
+            PartId::FIRST.number(),
+            PartId::LAST.number()
+        ),
+        Ok(EdArg::Hello) => hello(ui, w).and_then(|()| w.write_str("OK\n")),
+        Ok(EdArg::Describe { engine, page }) => match describe::describe(engine, page, w) {
             Some(done) => done.and_then(|()| w.write_str("OK\n")),
             None => writeln!(
                 w,
@@ -123,19 +153,18 @@ pub(crate) fn answer_in(
                 pages(engine)
             ),
         },
-        Some(EdArg::Get(a)) => match value::get(a, ui, w) {
+        Ok(EdArg::Get(a)) => match value::get(a, ui, w) {
             Some(done) => done.and_then(|()| w.write_str("OK\n")),
             None => writeln!(w, "ERR ed get has no {} here", a),
         },
-        Some(EdArg::Set(a, v)) => edits::set(a, v, ui, q, w),
-        Some(EdArg::Since(held)) => match q {
+        Ok(EdArg::Set(a, v)) => edits::set(a, v, ui, q, w),
+        Ok(EdArg::Since(held)) => match q {
             Some(st) => st.since.answer(held, ui, w),
             None => writeln!(w, "ERR ed since is not in this build"),
         },
-        Some(EdArg::Part(p)) => match (p, q) {
-            (None, _) => writeln!(w, "ERR ed part takes 1-{}", PartId::ALL.len()),
-            (Some(_), None) => w.write_str("ERR ed part is not in this build\n"),
-            (Some(p), Some(q)) => {
+        Ok(EdArg::Part(p)) => match q {
+            None => w.write_str("ERR ed part is not in this build\n"),
+            Some(q) => {
                 q.follow(p);
                 w.write_str("OK\n")
             }
@@ -151,7 +180,7 @@ fn hello(ui: &UiState, w: &mut dyn Write) -> fmt::Result {
     writeln!(
         w,
         "ed hello {PROTOCOL} {VERSION}-{HASH}{dirty} part {} {}",
-        ui.active_part.index() + 1,
+        ui.active_part.number(),
         engine.disk_ident()
     )
 }
