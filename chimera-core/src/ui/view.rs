@@ -1135,7 +1135,7 @@ pub fn tonal_note(addr: ParamAddr, ctx: &SlotCtx) -> Option<crate::project::Line
 }
 
 /// What CHOKE's focus band says: the kit's voice groups, `GROUPS 6/8`
-/// (ADR 0280). Bank 2's (`kit_groups::groups_note_in`): closed, nothing.
+/// (ADR 0280). Bank 2's (`kit_groups`, `Ask::Note`): closed, nothing.
 pub fn groups_note(
     addr: ParamAddr,
     kit: &crate::dsp::drum::types::Kit,
@@ -1143,7 +1143,7 @@ pub fn groups_note(
     if addr != crate::ui::held::CHOKE {
         return None;
     }
-    crate::bank2::ui_door(|u| u.groups_note(kit))
+    crate::bank2::groups(crate::ui::kit_groups::Ask::Note(kit))?.line
 }
 
 /// What the focus band says in its hint's place about a TAPE cell: why

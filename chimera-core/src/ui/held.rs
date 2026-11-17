@@ -10,7 +10,6 @@ use crate::dsp::algo::kinds::{Linked, OpKind, Why, why_kind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::drum::groups::VoiceGroups;
 use crate::dsp::drum::params::PadParams;
-use crate::dsp::drum::types::{Kit, PadId};
 use crate::dsp::tape_engine::{NeedsRam, TapeEngineParams};
 use crate::preset::Sound;
 use crate::project::Line;
@@ -62,14 +61,6 @@ pub fn applies(a: ParamAddr, shift: bool) -> bool {
 }
 
 impl Held {
-    /// Why `kit` refuses it on pad `p`, a CHOKE: the groups it would make.
-    /// Bank 2's (`ui::kit_groups`): closed, nothing is held.
-    pub fn why_kit(self, kit: &Kit, p: PadId) -> Option<Reason> {
-        crate::bank2::ui_door(|u| u.choke_held(kit, p, self.code))
-            .flatten()
-            .map(Reason::Groups)
-    }
-
     /// Why `sound` refuses it, or `None` where it would land. `streamed`:
     /// the Sound's source streams.
     pub fn why(self, sound: &Sound, streamed: bool) -> Option<Reason> {
@@ -117,7 +108,9 @@ pub fn reason(w: impl Into<Reason>) -> Line {
             return l;
         }
         Reason::Groups(n) => {
-            return crate::bank2::ui_door(|u| u.groups_why(n)).unwrap_or(Line::new(""));
+            return crate::bank2::groups(super::kit_groups::Ask::Why(n))
+                .and_then(|s| s.line)
+                .unwrap_or(Line::new(""));
         }
     };
     match w {

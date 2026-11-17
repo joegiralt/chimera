@@ -339,8 +339,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");",
     );
-    // DRUM's voice groups (ADR 0280, `UiDoor::choke_turn` and its
-    // siblings): `ui::kit_groups` and the count it reads, `drum::groups`;
+    // DRUM's voice groups (ADR 0280, `UiDoor::groups`, its one entry):
+    // `ui::kit_groups` and the count it reads, `drum::groups`;
     // an S4 group after `ed`'s (ADR 0272: new 0.4 work goes high).
     let groups =
         "    *(.text.*12chimera_core2ui10kit_groups* .rodata.*12chimera_core2ui10kit_groups*

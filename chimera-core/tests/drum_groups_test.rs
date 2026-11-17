@@ -175,6 +175,69 @@ fn a_stack_pad_ends_its_own_oldest_voice_not_another_pads() {
     );
 }
 
+/// A STACK pad whose own voice frees too little for its hit, beside
+/// another pad's tail that would free enough: the hit is refused and
+/// neither voice is taken (ADR 0280). Pad 1, STACK, rings a KICK; pad 11
+/// rings a COWBELL; pad 1 is then made a COWBELL too, so its next hit
+/// costs a COWBELL while its own KICK frees a KICK's worth. The budget
+/// leaves room only for a steal of the COWBELL's size.
+#[test]
+fn a_stack_pad_refuses_where_only_another_pads_voice_would_fit() {
+    use chimera_core::dsp::drum::types::Machine;
+    use chimera_core::hw::SampleBudget;
+    let mut w = writer();
+    let mut k = Kit::DEFAULT;
+    k.pad_mut(pad(1)).set_retrig(Retrig::Stack);
+    k.pad_mut(pad(11)).set_machine(Machine::ToneCowbell);
+    let mut k2 = k;
+    k2.pad_mut(pad(1)).set_machine(Machine::ToneCowbell);
+    // Pad 11's tail, then pad 1's KICK, then pad 1 a COWBELL.
+    let play = |r: &mut common::InstRig, w: &mut KitWriter| {
+        r.note_on_vel(0, key(pad(11)), 127);
+        r.render(1);
+        r.note_off(0, key(pad(11)));
+        r.note_on_vel(0, key(pad(1)), 127);
+        r.render(1);
+        w.publish(P1, &k2);
+        r.render(1);
+    };
+    // A first pass on a wide budget measures the pool and the reserve.
+    let mut probe = drum_rig(&mut w, PLAY_BUDGET, &k, &k);
+    play(&mut probe, &mut w);
+    let a = probe.inst.allocator();
+    let pool: u32 = a
+        .slots()
+        .iter()
+        .filter(|s| !s.is_free() && !s.dying())
+        .map(|s| s.cost().0)
+        .sum();
+    let booked = |pct: u8| u32::from(pct) * a.budget().as_cost().0 / 100;
+    let reserve = booked(probe.inst.cost_pct()) - a.sounding_cost().0;
+    let (kick, cowbell) = (Machine::ToneKick.cost().0, Machine::ToneCowbell.cost().0);
+    // Free room under the COWBELL hit by midway between a KICK and a
+    // COWBELL: the KICK's steal doesn't fit, the COWBELL's would.
+    let budget = reserve + pool + cowbell - (kick + cowbell) / 2;
+    let mut r = drum_rig(&mut w, SampleBudget::for_cpu(budget * 64_000), &k, &k);
+    assert_eq!(r.inst.allocator().budget().as_cost().0, budget);
+    play(&mut r, &mut w);
+    let before = live(&r);
+    assert_eq!(before.len(), 2, "pad 11's tail and pad 1's KICK");
+    let a = r.inst.allocator();
+    let any = a.pick(
+        0,
+        chimera_core::part::PartMode::Poly,
+        chimera_core::MidiNote::new(key(pad(1))).unwrap(),
+        chimera_core::hw::Cost(cowbell),
+        chimera_core::hw::Cost(reserve),
+    );
+    let tail = before.iter().find(|&&(_, p)| p == pad(11)).unwrap().0;
+    assert_eq!(any, Some(tail), "rule 3 across pads would take pad 11's");
+    let was = a.refused();
+    r.note_on_vel(0, key(pad(1)), 127);
+    assert_eq!(r.inst.allocator().refused(), was + 1, "refused");
+    assert_eq!(live(&r), before, "neither voice taken");
+}
+
 /// INIT DRUM's 8 groups, every pad CUT, struck round the kit 16ths apart
 /// three times over with the pool to itself: no hit is refused and none
 /// ends a pad outside its own choke group.
@@ -349,6 +412,30 @@ fn a_set_onto_a_ninth_group_is_refused_aloud() {
     ui.select_pad(P1, pad(1));
     assert!(ui.edit_to(P1, choke_addr(), 1.0));
     assert_eq!(choke(&ui, 1), ChokeGroup::A);
+}
+
+/// A controller sweep onto a 9th group: each message is refused, the
+/// kit and its revision untouched (the Part doesn't read Edited), and the
+/// reason is said once while its toast is up, not again per message.
+#[test]
+fn a_controller_sweep_onto_a_ninth_group_is_refused_once() {
+    let mut ui = keys_on(3, &Kit::DEFAULT);
+    let rev = ui.project().rev();
+    assert!(!ui.edit_to(P1, choke_addr(), 0.0));
+    assert!(!ui.edit_addr(P1, choke_addr(), -1, false));
+    assert_eq!(ui.project().rev(), rev, "a refused edit is no edit");
+    assert_eq!(choke(&ui, 3), ChokeGroup::A);
+    assert!(matches!(ui.step_toast(0), ToastStep::Show(_)));
+    assert!(matches!(ui.step_toast(700), ToastStep::Show(_)));
+    for _ in 0..8 {
+        assert!(!ui.edit_to(P1, choke_addr(), 0.0));
+    }
+    assert_eq!(ui.project().rev(), rev);
+    // Not shown again: its 1.2 s ran on from the first.
+    assert_eq!(ui.step_toast(700), ToastStep::Ended);
+    // Once it is down, a new refusal is said again.
+    assert!(!ui.edit_to(P1, choke_addr(), 0.0));
+    assert!(matches!(ui.step_toast(0), ToastStep::Show(_)));
 }
 
 /// On an old kit (12 groups) a turn that lowers the count lands; one that

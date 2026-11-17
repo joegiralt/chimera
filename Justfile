@@ -278,7 +278,7 @@ check-door-placed elf:
     for p in 'ui::midi::' 'ui::UiState>::hear_in$' 'ui::UiState>::map_in$' 'ui::UiState>::focus_note$' 'ui::UiState>::out_in$' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
         if grep -qE " [tT] .*$p" <<< "$syms"; then midi_ui+=("$p"); fi
     done
-    # DRUM's voice groups (ADR 0280): the door's entries always link, the
+    # DRUM's voice groups (ADR 0280): the door's entry always links, the
     # count where the inliner leaves it out of them.
     midi_ui+=('ui::kit_groups::')
     if grep -qE ' [tT] .*drum::groups::' <<< "$syms"; then midi_ui+=('drum::groups::'); fi
@@ -478,7 +478,7 @@ check $CHIMERA_STAMP_CLEAN="1":
     # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's, ALGO's and the streamed loads' bank-1 sides through the host's own door.
     cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test --test depth_proxy_test --test algo_door_test --test modal_door_test --test midi_door_test
     # ORBIT's runner and pages through the host's own door: open it plays as before the move, closed nothing (ADR 0208); a closed door keeps each Part's map record for its saves (#815).
-    cargo test -p chimera-core --features bank2 --test orbit_door_test --test randomize_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test --test ed_door_test --test mpe_closed_door_test --test bindings_codec_test --test replace_guard_test
+    cargo test -p chimera-core --features bank2 --test orbit_door_test --test randomize_door_test --test drum_groups_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test --test ed_door_test --test mpe_closed_door_test --test bindings_codec_test --test replace_guard_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
