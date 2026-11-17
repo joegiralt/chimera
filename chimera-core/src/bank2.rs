@@ -269,6 +269,7 @@ pub struct UiDoor {
     ) -> Option<crate::project::Line>,
     /// DRUM's voice groups (`ui::kit_groups`, ADR 0280): a CHOKE turn,
     /// a held one's reason, a CHOKE set put back, the count and the reason.
+    #[allow(clippy::type_complexity)]
     choke_turn: fn(&Kit, PadId, Option<u8>, i8, bool) -> (u8, bool),
     choke_held: fn(&Kit, PadId, u8) -> Option<VoiceGroups>,
     choke_undo: fn(&mut Kit, PadId, ChokeGroup) -> Option<VoiceGroups>,
