@@ -1213,3 +1213,68 @@ fn a_bank2_status_change_resends_the_closed_text() {
     }
     assert!(found, "no bank 2 FILTER.KIND");
 }
+
+// ---- part ----
+
+#[test]
+fn part_follows_as_its_key_does() {
+    let mut f = Fake::new();
+    screen::init_part_engine(&mut f.ui, P2, EngineType::Va);
+    let mut keyed = Fake::new();
+    screen::init_part_engine(&mut keyed.ui, P2, EngineType::Va);
+    feed(&mut keyed.ui, Input::press(ButtonId::B2));
+    let (_, m) = since(&mut f, 0);
+    assert_eq!(ask(&mut f, "ed part 2\n"), "OK\n");
+    // Queued: the UI pass moves it.
+    assert_eq!(f.ui.active_part, P1);
+    apply(&mut f);
+    assert_eq!(f.ui.active_part, P2);
+    assert_eq!(f.ui.location(), keyed.ui.location());
+    let (lines, m) = since(&mut f, m);
+    assert_eq!(lines, ["part 2 VA"]);
+    assert_eq!(ask(&mut f, "ed part 1\n"), "OK\n");
+    apply(&mut f);
+    let (lines, _) = since(&mut f, m);
+    assert_eq!(lines[0], "part 1 ALGO");
+    assert!(vals(&lines).len() > 100, "{}", lines.len());
+}
+
+#[test]
+fn part_already_followed_stays_put() {
+    // Its key would flip pages and mixer; `ed part` is the editor's
+    // "follow", so asking again changes nothing.
+    let mut f = Fake::new();
+    let at = f.ui.location();
+    assert_eq!(ask(&mut f, "ed part 1\n"), "OK\n");
+    apply(&mut f);
+    assert_eq!(f.ui.location(), at);
+}
+
+#[test]
+fn part_out_of_range_is_refused() {
+    let mut f = Fake::new();
+    let max = PartId::ALL.len();
+    let want = format!("ERR ed part takes 1-{max}\n");
+    for line in [
+        "ed part 0\n",
+        "ed part 7\n",
+        "ed part x\n",
+        "ed part\n",
+        "ed part -1\n",
+    ] {
+        assert_eq!(ask(&mut f, line), want, "{line}");
+    }
+    assert!(ask(&mut f, "ed part 2 3\n").starts_with("ERR ed takes "));
+    apply(&mut f);
+    assert_eq!(f.ui.active_part, P1);
+}
+
+#[test]
+fn part_without_a_queue_is_not_in_this_build() {
+    let mut f = Fake::new();
+    f.ed = None;
+    assert_eq!(
+        ask(&mut f, "ed part 2\n"),
+        "ERR ed part is not in this build\n"
+    );
+}

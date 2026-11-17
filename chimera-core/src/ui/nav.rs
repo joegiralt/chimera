@@ -805,6 +805,9 @@ impl Location {
         }
     }
 
+    // Inlined into its two callers, the keys' pass and `ed part`'s (bank
+    // 2), so bank 1 keeps one copy; `ed part`'s folds to the Part arms.
+    #[inline(always)]
     pub fn step(self, k: NavKey, cx: &NavCtx, r: &mut Recall) -> Step {
         let s = self.next(k, cx, r);
         self.went(s, cx, r)

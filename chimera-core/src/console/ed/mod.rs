@@ -5,6 +5,7 @@
 use core::fmt::{self, Write};
 
 use super::{Arg, EdLine, PROTOCOL, WORD_MAX, Word, Words};
+use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::about_page::{DIRTY, HASH, VERSION};
 use chimera_engine::block::DiskCode;
@@ -43,6 +44,8 @@ pub enum EdArg {
     Set(EdAddr, EdValue),
     /// The editor's last answer's number; `None`: it holds nothing.
     Since(Option<Gen>),
+    /// The Part to follow; `None`: the word was no Part's number.
+    Part(Option<PartId>),
 }
 
 fn engine(w: &[u8]) -> Option<EngineType> {
@@ -69,7 +72,7 @@ fn value(w: &[u8]) -> Option<EdValue> {
 }
 
 impl Arg for EdArg {
-    const USAGE: &'static str = "hello, describe, get, set or since";
+    const USAGE: &'static str = "hello, describe, get, set, since or part";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let sub = words.next()?;
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
@@ -78,6 +81,11 @@ impl Arg for EdArg {
         } else if is(b"since") {
             let n = chimera_theory::tuning::uint(words.next()?)?;
             EdArg::Since(Gen::new(n))
+        } else if is(b"part") {
+            // Numbered from 1, as the box's keys are.
+            let n = words.next().and_then(chimera_theory::tuning::uint);
+            let p = n.and_then(|n| u8::try_from(n).ok()?.checked_sub(1));
+            EdArg::Part(p.and_then(PartId::new))
         } else if is(b"describe") {
             let engine = engine(words.next()?)?;
             let page = chimera_theory::tuning::uint(words.next()?)?
@@ -123,6 +131,14 @@ pub(crate) fn answer_in(
         Some(EdArg::Since(held)) => match q {
             Some(st) => st.since.answer(held, ui, w),
             None => writeln!(w, "ERR ed since is not in this build"),
+        },
+        Some(EdArg::Part(p)) => match (p, q) {
+            (None, _) => writeln!(w, "ERR ed part takes 1-{}", PartId::ALL.len()),
+            (Some(_), None) => w.write_str("ERR ed part is not in this build\n"),
+            (Some(p), Some(q)) => {
+                q.follow(p);
+                w.write_str("OK\n")
+            }
         },
     }
 }
