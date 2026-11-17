@@ -251,10 +251,12 @@ impl Gain {
         self.0
     }
 
-    /// One gain after the other.
+    /// One gain after the other: two gains 0 or more make one, unclamped
+    /// (the mixer's per-Part product; only an overflow, never NaN, can
+    /// leave it non-finite).
     #[inline(always)]
     pub const fn times(self, g: Gain) -> Self {
-        Self::new(self.0 * g.0)
+        Self(self.0 * g.0)
     }
 }
 
