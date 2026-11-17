@@ -209,7 +209,7 @@ fn write_wav(path: &str, lr: &[f32]) {
     b.extend_from_slice(b"data");
     b.extend_from_slice(&data.to_le_bytes());
     for &x in lr {
-        let v = (f64::from(x.clamp(-1.0, 1.0)) * 8_388_607.0).round() as i32;
+        let v = (f64::from(chimera_core::dsp::clampf(x, -1.0, 1.0)) * 8_388_607.0).round() as i32;
         b.extend_from_slice(&v.to_le_bytes()[..3]);
     }
     std::fs::write(path, b).unwrap();
