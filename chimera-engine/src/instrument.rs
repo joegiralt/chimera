@@ -1236,10 +1236,14 @@ impl Instrument {
         let reserved = self.reserved();
         let origins = &self.note_origin;
         let q = at.part.index() as u8;
-        self.alloc
-            .pick_where(q, at.mode, at.note, cost, reserved, &|v| {
-                origins[v] == at.origin
-            })
+        self.alloc.pick_where(
+            q,
+            at.mode,
+            at.note,
+            (cost, reserved),
+            &|v| origins[v] == at.origin,
+            VoiceSet::EMPTY,
+        )
     }
 
     /// Voice `v`'s port this call, capped at what it is paid, only while

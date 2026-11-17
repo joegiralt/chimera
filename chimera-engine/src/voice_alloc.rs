@@ -385,33 +385,20 @@ impl Allocator {
         cost: Cost,
         reserved: Cost,
     ) -> Option<usize> {
-        self.pick_where(part, mode, note, cost, reserved, &|_| true)
-    }
-
-    /// `pick`, where rule 2 re-strikes only voices `restrike` accepts: a key
-    /// held by another origin is a voice of its own (`Instrument::handle_from`).
-    pub fn pick_where(
-        &self,
-        part: u8,
-        mode: PartMode,
-        note: MidiNote,
-        cost: Cost,
-        reserved: Cost,
-        restrike: &dyn Fn(usize) -> bool,
-    ) -> Option<usize> {
-        self.pick_in(
+        self.pick_where(
             part,
             mode,
             note,
             (cost, reserved),
-            restrike,
+            &|_| true,
             VoiceSet::EMPTY,
         )
     }
 
-    /// A DRUM hit's voice (ADR 0280): `pick_where` with no re-strike, but
-    /// where `own` (its pad's live voices: a STACK pad's) holds any, rule
-    /// 3 takes only from them, its oldest tail first, never another pad's.
+    /// A DRUM hit's voice (ADR 0280): no re-strike, and where `own` (its
+    /// pad's live voices: a STACK pad's) holds any, rule 3 takes only from
+    /// them, its oldest tail first, never another pad's.
+    #[inline(always)]
     pub fn pick_hit(
         &self,
         part: u8,
@@ -421,11 +408,14 @@ impl Allocator {
         reserved: Cost,
         own: VoiceSet,
     ) -> Option<usize> {
-        self.pick_in(part, mode, note, (cost, reserved), &|_| false, own)
+        self.pick_where(part, mode, note, (cost, reserved), &|_| false, own)
     }
 
-    /// `pick_where`, rule 3 within `own` unless it is empty.
-    fn pick_in(
+    /// `pick`, where rule 2 re-strikes only voices `restrike` accepts: a key
+    /// held by another origin is a voice of its own (`Instrument::handle_from`).
+    /// Rules 3 and 4 steal only from `own` unless it is empty: a DRUM hit's
+    /// pad's live voices (ADR 0280).
+    pub fn pick_where(
         &self,
         part: u8,
         mode: PartMode,
@@ -475,9 +465,14 @@ impl Allocator {
         }
         // Rules 3 and 4: steal the oldest non-mono voice — tails before held
         // notes — if that makes room.
+        let pool = if own.is_empty() { u8::MAX } else { own.0 };
         let oldest = (0..MAX_VOICES)
-            .filter(|&v| !self.slots[v].is_free() && !self.slots[v].mono && !self.slots[v].dying())
-            .filter(|&v| own.is_empty() || own.contains(VoiceIdx::ALL[v]))
+            .filter(|&v| {
+                pool >> v & 1 != 0
+                    && !self.slots[v].is_free()
+                    && !self.slots[v].mono
+                    && !self.slots[v].dying()
+            })
             .min_by_key(|&v| (self.slots[v].held, self.slots[v].age))?;
         fits(self.slots[oldest].cost()).then_some(oldest)
     }
