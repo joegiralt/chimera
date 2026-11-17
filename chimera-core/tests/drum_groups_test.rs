@@ -523,7 +523,9 @@ fn a_held_choke_is_dropped_when_the_kit_changes() {
 
 /// An expression pedal streaming to Part 2 moves the project's revision
 /// every message; it leaves Part 1's kit alone, so a held CHOKE stays
-/// and the next turn goes on past it (pad 1: A, B held, on to C).
+/// and the next turn goes on past it (pad 1: A, B held, on to C). CC 11
+/// reaches a Part through MIDI's map.
+#[cfg(feature = "midi-map")]
 #[test]
 fn a_pedal_on_another_part_keeps_the_held_choke() {
     let mut ui = keys_on(1, &spread());
