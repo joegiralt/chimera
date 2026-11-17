@@ -670,6 +670,28 @@ impl View {
             .map_or(FocusGlyph::Arc, |s| s.glyph)
     }
 
+    /// How a turn on it accelerates (ADR 0279): a pick from names (a
+    /// choice, SOURCE, OP, PAD, ROUTE) as a list, the rest as a parameter.
+    pub fn accel(&self) -> chimera_hal::Accel {
+        let names = matches!(self.fmt(), ValFmt::Names(_))
+            || self
+                .addr()
+                .and_then(|a| a.spec())
+                .is_some_and(|s| s.kind == crate::block::ParamKind::Enum);
+        if names || matches!(self, View::SelectOp | View::SelectPad | View::SelectRoute) {
+            chimera_hal::Accel::List
+        } else {
+            chimera_hal::Accel::Param
+        }
+    }
+
+    /// A value SEQ + turn steps fine, its band saying so (ADR 0279): a
+    /// param, but not one drawn on the staff, whose notes fill the hint's
+    /// line.
+    pub fn fine_turns(&self) -> bool {
+        matches!(self, View::Param { .. }) && self.glyph() != FocusGlyph::Staff
+    }
+
     /// A value a push can set or fine-tune (ADR 0140).
     pub fn pushes(&self) -> bool {
         matches!(self, View::Param { .. } | View::Route { .. })
@@ -746,6 +768,26 @@ pub const PAD_HINT: Hint = &[Gesture("MIX + -/+", "PAD")];
 pub const LEARN: Gesture<'static> = Gesture("MIX + SEQ", "LEARNS A CC");
 /// Every mappable cell's hint; PUSH ENCODERS' replaces it when on.
 pub const LEARN_HINT: Hint = &[LEARN];
+
+/// SEQ held, a turn steps fine (ADR 0279).
+pub const FINE: Gesture<'static> = Gesture("SEQ + TURN", "FINE");
+/// A value cell with no words of its own.
+pub const FINE_HINT: Hint = &[FINE];
+/// A mappable value cell: the fine turn, then learn's short form, both
+/// unspaced: spaced, the pair runs a pixel past the line.
+pub const FINE_LEARN_HINT: Hint = &[Gesture("SEQ+TURN", "FINE"), Gesture("MIX+SEQ", "LEARN")];
+
+/// A value cell's generic hint with the fine turn in it: `own` where the
+/// cell has words of its own.
+pub fn fine_hint(own: Hint) -> Hint {
+    if own == LEARN_HINT {
+        FINE_LEARN_HINT
+    } else if own.is_empty() {
+        FINE_HINT
+    } else {
+        own
+    }
+}
 
 /// MIX + B*n* in the mixer keeps the page and opens Part *n*'s (ADR 0044).
 const PART_JUMP: Gesture<'static> = Gesture("MIX + B1-6", "PART");

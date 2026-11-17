@@ -9,8 +9,8 @@ use chimera_core::board::{Hc165Pins, Port};
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_core::console::Hand;
 use chimera_hal::{
-    ButtonId, ButtonState, Controls, Debounce, Edges, EncoderId, Latch, Ms, NUM_BUTTONS,
-    NUM_ENCODERS, push_levels,
+    Accel, ButtonId, ButtonState, Controls, Debounce, Edges, EncoderId, Latch, Ms, NUM_BUTTONS,
+    NUM_ENCODERS, Turn, push_levels,
 };
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, AtomicUsize, Ordering};
@@ -306,7 +306,7 @@ pub struct Stm32Controls {
     /// The buttons', then the pushes'.
     edges: [Edges; NUM_SWITCHES],
     now_ms: Ms,
-    enc: [i8; NUM_ENCODERS],
+    enc: [Turn; NUM_ENCODERS],
     burst: [u8; NUM_ENCODERS],
 }
 
@@ -315,7 +315,7 @@ impl Stm32Controls {
         Self {
             edges: [Edges::default(); NUM_SWITCHES],
             now_ms: Ms(0),
-            enc: [0; NUM_ENCODERS],
+            enc: [Turn::default(); NUM_ENCODERS],
             burst: [0; NUM_ENCODERS],
         }
     }
@@ -339,24 +339,24 @@ impl Stm32Controls {
             if now.wrapping_sub(last) > chimera_hal::ENCODER_BURST_GAP_MS / 2 {
                 self.burst[i] = 0;
             }
-            if raw != 0 {
-                let dir: i8 = if raw > 0 { 1 } else { -1 };
-                let edges = raw.unsigned_abs();
-                let mut total: i8 = 0;
-                for _ in 0..edges {
-                    total = total.saturating_add(dir * chimera_hal::encoder_accel(self.burst[i]));
-                    self.burst[i] = self.burst[i].saturating_add(1);
-                }
-                self.enc[i] = total;
-            } else {
-                self.enc[i] = 0;
-            }
+            // The detents and their place in the burst; the UI picks the
+            // acceleration (ADR 0279).
+            let detents = raw.clamp(-127, 127);
+            self.enc[i] = Turn {
+                detents,
+                burst: Some(self.burst[i]),
+            };
+            self.burst[i] = self.burst[i].saturating_add(detents.unsigned_abs());
         }
     }
 }
 
 impl Controls for Stm32Controls {
     fn encoder_delta(&self, id: EncoderId) -> i8 {
+        Accel::Param.ticks(self.enc[id as usize])
+    }
+
+    fn turn(&self, id: EncoderId) -> Turn {
         self.enc[id as usize]
     }
 

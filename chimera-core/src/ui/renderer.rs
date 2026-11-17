@@ -122,6 +122,9 @@ pub struct Frame<'a> {
     /// SYSTEM's PUSH ENCODERS: a value cell with no hint of its own hints
     /// the pushes (ADR 0140).
     pub push: bool,
+    /// SEQ is down: on a mixer cell the band hints the fine turn in place
+    /// of the PART jump (ADR 0279).
+    pub seq: bool,
     /// TAPE's strip: the active Part's source, and its newest note's heads.
     pub strip: &'a crate::ui::tape_strip::Overview,
     pub heads: crate::dsp::tape_engine::Heads,
@@ -937,7 +940,13 @@ impl Renderer {
         let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
             crate::ui::push::HINT
         } else if matches!(f.head, Head::Mix(_)) {
-            view::mixer_hint(own)
+            if f.seq && view.fine_turns() {
+                view::FINE_HINT
+            } else {
+                view::mixer_hint(own)
+            }
+        } else if matches!(f.head, Head::Sound(_)) && view.fine_turns() {
+            view::fine_hint(own)
         } else {
             own
         };

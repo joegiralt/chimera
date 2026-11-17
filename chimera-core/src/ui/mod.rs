@@ -67,7 +67,8 @@ use core::ptr::addr_of_mut;
 use crate::storage::{Card, CardEvent, Exit, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{
-    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms, PART_BUTTONS,
+    ALL_BUTTONS, ALL_ENCODERS, Accel, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms,
+    PART_BUTTONS, Turn,
 };
 
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
@@ -284,6 +285,9 @@ pub struct UiState {
     /// `render_dirty_with_scope` redraws the Sound rung's browser only
     /// then, and clears the flag once flushed (#7).
     browser_dirty: bool,
+    /// SEQ is down this frame: a turn steps fine, and the focus band says so
+    /// on a mixer cell in place of the PART jump (ADR 0279).
+    seq_held: bool,
     page: PageKey,
     /// Selected operator — one global selection, as before (spec §5).
     sel_op: Op,
@@ -428,6 +432,7 @@ crate::in_place::field_list!(UiState => UiState {
     renderer,
     matrix_state,
     browser_dirty,
+    seq_held,
     page,
     sel_op,
     sel_route,
@@ -547,6 +552,7 @@ impl UiState {
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
             library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
             addr_of_mut!((*p).browser_dirty).write(false);
+            addr_of_mut!((*p).seq_held).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
             addr_of_mut!((*p).sel_route).write(crate::dsp::drum::sound::RouteId::ALL[0]);
@@ -2791,6 +2797,7 @@ impl UiState {
     }
 
     fn handle_frame(&mut self, controls: &impl Controls) {
+        self.seq_held = controls.edges(ButtonId::Seq).down;
         let rev = self.project.rev();
         let model = |ui: &Self| {
             let t = &ui.project.part(ui.active_part).sound.params.tape;
@@ -3124,7 +3131,10 @@ impl UiState {
                 return;
             }
             // B turns between the tabs.
-            let tab = self.lib.tab.turned(controls.encoder_delta(EncoderId::B));
+            let tab = self
+                .lib
+                .tab
+                .turned(Accel::List.ticks(controls.turn(EncoderId::B)));
             if tab != self.lib.tab {
                 self.browser_dirty = true;
                 self.lib.entered();
@@ -3162,6 +3172,11 @@ impl UiState {
             controls.button_state(ButtonId::Mix),
             ButtonState::Pressed | ButtonState::Held
         );
+        // SEQ held, a turn steps fine (ADR 0279); its gate takes no tap.
+        let seq = matches!(
+            controls.button_state(ButtonId::Seq),
+            ButtonState::Pressed | ButtonState::Held
+        );
 
         let def = self.page_def();
         if def.layout == PageLayout::Matrix {
@@ -3196,10 +3211,24 @@ impl UiState {
                     continue;
                 }
                 // Pushed, a turn is fine: a tick a frame, no acceleration,
-                // and a tenth of a continuous param's step. MIX wins.
-                let fine = cfg!(feature = "push-encoders") && pushes[i].fine && !shift;
-                let delta = if fine { delta.signum() } else { delta };
+                // and a tenth of a continuous param's step. SEQ held, the
+                // same a detent (ADR 0279). MIX wins.
+                let pushed = cfg!(feature = "push-encoders") && pushes[i].fine && !shift;
                 let v = view::view(def, i, &self.ctx());
+                // A Part's or its mixer's value cell, where the band says so.
+                let seq_fine = seq && !shift && self.loc.settings().is_none() && v.fine_turns();
+                let fine = pushed || seq_fine;
+                let turn = controls.turn(enc);
+                let delta = if seq_fine {
+                    turn.detents
+                } else if pushed {
+                    delta.signum()
+                } else {
+                    match v.accel() {
+                        Accel::Param => delta,
+                        list => list.ticks(turn),
+                    }
+                };
                 // An empty slot edits nothing, so it does not take the focus.
                 if v != View::Empty {
                     self.focus.touch(def.id, i);
@@ -3677,6 +3706,7 @@ impl UiState {
             pages: self.theme.pages,
             text: self.theme.text,
             push: self.push_on(),
+            seq: self.seq_held,
             ctx,
             focus,
             scope,
@@ -3819,7 +3849,7 @@ impl UiState {
                         .as_ref()
                         .map_or_else(|| rev_clock_key(f), |o| o.key())
                         .into(),
-                    &[self.renderer.text_key(f, f.focus)],
+                    &[self.renderer.text_key(f, f.focus), u32::from(f.seq)],
                 ),
                 f.hints,
                 matches!(f.head, Head::Mix(_)),
@@ -4129,11 +4159,12 @@ const MAP_EDITS: [EncoderId; 0] = [];
 
 /// A list's bar move this frame: the biggest turn among the encoders not
 /// in `taken` (the first on a tie), so two brushed together move it once.
+/// A list's rows take the gentler acceleration (ADR 0279).
 pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
     ALL_ENCODERS
         .iter()
         .filter(|e| !taken.contains(e))
-        .map(|&e| c.encoder_delta(e))
+        .map(|&e| Accel::List.ticks(c.turn(e)))
         .fold(0i8, |m, d| {
             if d.unsigned_abs() > m.unsigned_abs() {
                 d
@@ -4163,6 +4194,18 @@ impl<C: Controls> Controls for Frame<'_, C> {
             d - d.signum()
         } else {
             d
+        }
+    }
+    fn turn(&self, id: EncoderId) -> Turn {
+        let t = self.0.turn(id);
+        let first = ALL_ENCODERS.iter().find(|&&e| self.0.encoder_delta(e) != 0);
+        if self.1 && first == Some(&id) {
+            Turn {
+                detents: t.detents - t.detents.signum(),
+                burst: t.burst.map(|b| b.saturating_add(1)),
+            }
+        } else {
+            t
         }
     }
     fn button_state(&self, id: ButtonId) -> ButtonState {

@@ -28,6 +28,54 @@ pub const fn encoder_accel(n: u8) -> i8 {
     }
 }
 
+/// One encoder's frame: its raw detents (signed) and the burst position of
+/// the first of them, 0 for a turn after a rest; `None` from a shell that
+/// does not accelerate, whose detents are ticks as they are. The board
+/// counts; the UI picks the acceleration (`Accel`, ADR 0279).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Turn {
+    pub detents: i8,
+    pub burst: Option<u8>,
+}
+
+/// How a turn accelerates (ADR 0279): a parameter's sweep, or a list's,
+/// menu's or name's rows, which must not skip past the one wanted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Accel {
+    /// `encoder_accel`: 1, 2, 4, 5, 10, then 10 ticks a detent.
+    Param,
+    /// 1 for four detents, 2 for four, then 3.
+    List,
+}
+
+impl Accel {
+    /// The ticks of the burst's `n`-th detent.
+    pub const fn at(self, n: u8) -> i8 {
+        match self {
+            Accel::Param => encoder_accel(n),
+            Accel::List => match n {
+                0..=3 => 1,
+                4..=7 => 2,
+                _ => 3,
+            },
+        }
+    }
+
+    /// `turn`'s ticks, signed, saturating at ±127.
+    pub const fn ticks(self, turn: Turn) -> i8 {
+        let Some(burst) = turn.burst else {
+            return turn.detents;
+        };
+        let mut total: i8 = 0;
+        let mut k: u8 = 0;
+        while k < turn.detents.unsigned_abs() {
+            total = total.saturating_add(self.at(burst.saturating_add(k)));
+            k += 1;
+        }
+        if turn.detents < 0 { -total } else { total }
+    }
+}
+
 /// A burst ends after this long with no detent.
 pub const ENCODER_BURST_GAP_MS: u32 = 150;
 
@@ -254,8 +302,19 @@ impl Latch {
 }
 
 pub trait Controls {
+    /// Encoder `id`'s ticks this frame, a parameter's acceleration in them.
     fn encoder_delta(&self, id: EncoderId) -> i8;
     fn button_state(&self, id: ButtonId) -> ButtonState;
+
+    /// Encoder `id`'s raw detents this frame and where in its burst they
+    /// fell (ADR 0279). Shells with no acceleration: `encoder_delta`, as
+    /// ticks.
+    fn turn(&self, id: EncoderId) -> Turn {
+        Turn {
+            detents: self.encoder_delta(id),
+            burst: None,
+        }
+    }
 
     /// The button's edges this frame. Shells that latch override it; this
     /// one stamps `button_state`'s edge at `now_ms`.
