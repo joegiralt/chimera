@@ -1,7 +1,9 @@
-# 0278. Put the Part sends on a squared taper
+# 0278. Put the sends on a squared taper
 
 - **Status:** Proposed
-- **Deciders:** owner (approved the change in #1004), Claude (law)
+- **Deciders:** owner (approved the change in #1004; on 2026-11-17 chose
+  the squared law over dB-linear and cubed, where #1004 had said
+  "dB-shaped"), Claude (law)
 
 ## Context
 A Part's CHORUS, DELAY and REVERB sends (`OutParams::sends`, 0..1 on a
@@ -9,15 +11,24 @@ A Part's CHORUS, DELAY and REVERB sends (`OutParams::sends`, 0..1 on a
 from off to −42 dB and each low step after it moved 6 dB, 3.5 dB…; a
 tester heard the reverb snap in at the bottom of the knob
 (joegiralt/chimera-releases#6, filed as private issue #1004). The
-upper half of the knob also covered only the top 6 dB.
+upper half of the knob also covered only the top 6 dB. The delay's REV
+SEND (its return into the reverb's send, FX diet spec § REV SEND) is the
+same 0–127 knob and fed the reverb the same linear way.
 
 ## Decision
-The mixer feeds each send `send_gain(level) = level²` (`params::send_gain`,
-a `const fn`, one multiply per send per Part per block in `mix_sided`),
-then expression (ADR 0263) as before. The stored level, its grid, its
-0–127 readout, MIDI CC and NRPN mapping are unchanged; only the gain they
-make changes. The gain is still eased by `MixState` (20 ms one-pole,
-ADR 0123): a turn never snaps.
+A send's stored level is a `dsp::SendLevel` (0..=1, held there on every
+write; `SendLevel::step::<N>()` names grid step N and refuses N > 128 at
+compile time). Its only way to an effect is `SendLevel::gain`, level²
+(a `dsp::Gain`, one multiply): the mixer feeds each Part send's gain,
+then expression (ADR 0263) as before, one multiply per send per Part per
+block in `mix_sided`; the FX bus feeds the reverb the delay's return at
+REV SEND's gain. A level cannot reach the mixer untapered, nor a gain be
+tapered twice: neither type converts to the other but by `gain` and
+`SendLevel::from_gain` (re-voicing, below). The stored level, its grid,
+its 0–127 readout, MIDI CC and NRPN mapping are unchanged; only the gain
+they make changes. Both gains are still eased (the Part sends by
+`MixState`, 20 ms one-pole, ADR 0123; REV SEND by its own `Ease`): a
+turn never snaps.
 
 | step | linear (old) | squared (this) | cubed | dB-linear, −60 dB floor |
 |---:|---:|---:|---:|---:|
@@ -39,9 +50,12 @@ spans 12 dB instead of 6.
 The factory Sounds keep their voicing: the three authored demos in
 `factory.rs` (CHOIR, BREATH, VOX) and the 46 sends of the factory
 library's recipes (`tools/factory-sounds/*.toml`, TINZ in
-`tools/factory-tapes/recipes.toml`) move to the grid level whose square
-is their old gain (0.35 → 76, 0.3 → 70, 0.25 → 64, 0.15 → 50 of 128),
-each within 0.21 dB of before.
+`tools/factory-tapes/recipes.toml`) move to `SendLevel::from_gain` of
+their old level, the grid level whose square is their old gain (0.35 →
+76, 0.3 → 70, 0.25 → 64, 0.15 → 50 of 128), each within 0.21 dB of
+before; demo project REVERB GATE's REV SEND 0.5 → 91 (+0.05 dB). The
+demo QA's `MIN_SEND`, the least that counts as hearing an effect, is a
+`Gain` (0.1, −20 dB) compared with the sends' gains.
 
 ## Alternatives considered
 - **dB-linear with a −60 dB floor:** the most even per-step loudness, but
@@ -55,8 +69,8 @@ each within 0.21 dB of before.
   values), so it would need interpolation.
 
 ## Consequences
-- Saved user Sounds and projects play their sends quieter except at 0
-  and 127 (a send at 64 drops 6 dB). No legacy compatibility is kept: they load
+- Saved user Sounds and projects play their sends and REV SEND quieter
+  except at 0 and 127 (a send at 64 drops 6 dB). No legacy compatibility is kept: they load
   safely, they do not sound the same (owner rule).
 - Goldens whose renders use a nonzero send below 1.0 change; those are
   regenerated and named in the PR.

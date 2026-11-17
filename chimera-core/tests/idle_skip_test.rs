@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
 use chimera_core::audio_out::{DacSample, interleave};
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::{NEVER_SKIP, SKIPS, Skip};
 use chimera_core::hw::{BLOCK_SIZE, SampleBudget};
@@ -65,7 +66,7 @@ fn render(fx: FxParams, send: f32, pair: DacPair, skip: bool, back: Option<usize
     let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
     let mut shared = Box::new(AudioShared::default());
     shared.fx = fx;
-    shared.parts[0].params.out.sends = [send; 3];
+    shared.parts[0].params.out.sends = [SendLevel::new(send); 3];
     shared.parts[0].mix.output = pair;
     let ch = shared.parts[0].mix.channel;
     let mut out = Vec::new();

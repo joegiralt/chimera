@@ -116,7 +116,7 @@ pub fn engine(snd: &Sound, voice: K2040Voice, sc: &Script, res_cc: u8) -> Vec<f3
     let mut s = snd.clone();
     s.params.filter.voice = voice;
     s.params.filter.resonance = res_of(res_cc);
-    s.params.out.sends = [0.0; FX_SENDS];
+    s.params.out.sends = [chimera_core::dsp::SendLevel::OFF; FX_SENDS];
     let mut sound = Tracked::fresh(s);
     let loads = Loads::NONE.next();
     let mut pubr = KnobPublisher::new();

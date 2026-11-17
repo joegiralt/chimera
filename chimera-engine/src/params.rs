@@ -2,6 +2,7 @@ use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, ParamAdd
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
+use crate::dsp::SendLevel;
 use crate::dsp::filter::k2040::VOICE_LABELS;
 use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice, KIND_NAMES};
 use crate::dsp::modulator::{
@@ -898,21 +899,13 @@ pub struct OutParams {
     pub vca: f32,
     /// AMP's VEL: the VCA's velocity sensitivity, 0..1.
     pub vca_vel: f32,
-    /// Chorus, delay, reverb sends (`FxBus` order), 0..1 each: the Sound's
-    /// own, eased by the mixer (ADR 0123).
-    pub sends: [f32; crate::dsp::fx_bus::FX_SENDS],
+    /// Chorus, delay, reverb sends (`FxBus` order): the Sound's own, eased
+    /// by the mixer (ADR 0123) as their tapered gain (ADR 0278).
+    pub sends: [SendLevel; crate::dsp::fx_bus::FX_SENDS],
     /// The VCA's low-pass gate (ADR 0195), `[LPG, DECAY, STRIKE]`, 0..1
     /// each, all 0 a plain VCA: LPG couples darkening to gain, DECAY is the
     /// vactrol's fall, STRIKE pings it at each note-on.
     pub gate: [f32; 3],
-}
-
-/// A send's stored level (0..1) as the gain the mixer feeds its FX
-/// (ADR 0278, #1004): squared, so 0 is off, the top unity, half −12 dB and
-/// the first step −84 dB, where linear jumped to −42.
-#[inline(always)]
-pub const fn send_gain(level: f32) -> f32 {
-    level * level
 }
 
 /// INIT's OUT LEVEL: ALGO INIT's C4 at velocity 100 at the factory median,
@@ -926,7 +919,7 @@ impl Default for OutParams {
             pan: 0.0,
             vca: 0.0,
             vca_vel: 1.0,
-            sends: [0.0; crate::dsp::fx_bus::FX_SENDS],
+            sends: [SendLevel::OFF; crate::dsp::fx_bus::FX_SENDS],
             gate: [0.0; 3],
         }
     }
@@ -1098,7 +1091,7 @@ impl Block for OutParams {
             Self::VCA => self.vca,
             Self::VCA_VEL => self.vca_vel,
             // The sends, then the gate (ADR 0195): ids 4–6 and 7–9.
-            ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)],
+            ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)].get(),
             ParamId(i @ 7..=9) => self.gate[usize::from(i - 7)],
             _ => 0.0,
         }
@@ -1111,7 +1104,7 @@ impl Block for OutParams {
             Self::PAN => self.pan = v,
             Self::VCA => self.vca = v,
             Self::VCA_VEL => self.vca_vel = v,
-            ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)] = v,
+            ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)] = SendLevel::new(v),
             ParamId(i @ 7..=9) => self.gate[usize::from(i - 7)] = v,
             _ => {}
         }

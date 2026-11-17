@@ -3,6 +3,7 @@
 //! effects, gated.
 
 use chimera_core::block::DiskCode;
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::fx_bus::FX_SENDS;
 use chimera_core::project::{PartId, Performance};
 use chimera_hal::BLOCK_SIZE;
@@ -190,13 +191,15 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
     let project = project::build(d, sounds)?;
     let settings = project::settings(d, sounds)?;
     let parts = part_lines(d, sounds)?;
-    let mut sends = [0.0f32; FX_SENDS];
+    let mut sends = [SendLevel::OFF; FX_SENDS];
     let mut exempt = Vec::new();
     for p in &d.parts {
         let src = demo_source(p, sounds);
         let snd = to_sound(src)?;
         for (m, v) in sends.iter_mut().zip(snd.params.out.sends) {
-            *m = m.max(v);
+            if v > *m {
+                *m = v;
+            }
         }
         // Each Part's click exemption and home note.
         exempt.push((p.part, listen::click_exempt(&snd), src.home));

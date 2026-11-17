@@ -179,7 +179,7 @@ fn render(ph: &Phrase, d: DelayParams) -> Vec<f32> {
 /// `fx`, its tail `TAIL_S`: (L, R) frames after the limiter.
 pub(crate) fn render_stereo(ph: &Phrase, sends: [f32; 3], fx: FxParams) -> Vec<[f32; 2]> {
     let mut s = ph.sound.clone();
-    s.params.out.sends = sends;
+    s.params.out.sends = sends.map(chimera_core::dsp::SendLevel::new);
     let sound = Tracked::fresh(s);
     let loads = Loads::NONE.next();
     let mut pubr = KnobPublisher::new();

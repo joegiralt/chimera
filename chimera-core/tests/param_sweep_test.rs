@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chimera_core::addr::{BlockRef, Op};
 use chimera_core::block::ParamId;
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::comp::CompParams;
@@ -62,7 +63,7 @@ impl Case {
         let mut b = Bench::new(self.patch, PartParams::default(), fx);
         if self.wet {
             // After the patch: it is the Sound that carries the sends.
-            b.edit_sound(|s| s.params.out.sends = [0.5; 3]);
+            b.edit_sound(|s| s.params.out.sends = [SendLevel::new(0.5); 3]);
         }
         b
     }
@@ -847,7 +848,7 @@ fn out_moves_the_part_to_its_pair() {
                 .sound
                 .params
                 .out
-                .sends = [0.03; 3];
+                .sends = [SendLevel::new(0.03); 3];
             b.set(&out, pair);
             let mut t = Tape::default();
             for blk in 0..400 {

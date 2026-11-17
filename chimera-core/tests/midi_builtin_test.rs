@@ -8,6 +8,7 @@ mod common;
 mod screen;
 
 use chimera_core::addr::{BlockRef, Blocks, Op, ParamAddr};
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::EnvSlot;
@@ -497,7 +498,7 @@ fn the_mix_plays_expression_into_the_sends() {
     use chimera_hal::BLOCK_SIZE;
     let run = |expression: u8| {
         let mut shared = Box::new(AudioShared::default());
-        shared.parts[0].params.out.sends = [0.2, 0.3, 0.4];
+        shared.parts[0].params.out.sends = [0.2, 0.3, 0.4].map(SendLevel::new);
         shared.parts[0].expression = expression;
         let mut buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
         buses[0] = core::array::from_fn(|i| (i as f32 * 0.37).sin() * 0.5);
