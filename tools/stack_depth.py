@@ -11,8 +11,10 @@ start) runs after the frame is popped, so it counts alone. A call back into
 the chain (recursion) counts 0 and is named. Indirect calls (`blx rN`) are
 each charged the deepest function whose address the image holds (in
 `.word` literals but a `tbb`/`tbh`'s table, `movw`/`movt` pairs, or the data sections' words when the
-`-s` dump follows the disassembly; `.bank2` holds the door's table, ADR
-0137): any pointer's target is one of them.
+`-s` dump follows the disassembly, less any word inside a disassembled
+function: `.bank2` holds the door's table, ADR 0137, among bank 2's code,
+whose instruction bytes are not pointers): any pointer's target is one of
+them.
 Pointer calls are assumed to nest at most `POINTER_NEST` deep, and a
 recursive direct call to run once (the sorts' and `core::str`'s).
 
@@ -27,6 +29,7 @@ function or a generic instantiated with its types.
 Standard library only.
 """
 
+import bisect
 import re
 import sys
 
@@ -97,15 +100,6 @@ DOOR_ONLY = {
     "chimera_stm32::bench::enter": ("chimera_board::synth", "chimera_stm32::bench"),
 }
 
-# Functions no pointer ever holds, though a data word may equal their
-# address: bench-algo,master-tape's ALGO block tables hold the bytes
-# 01 04 05 08, `take_ui`'s address once ADR 0267 moved it. `take_ui` is
-# called once, by name, at boot. `synth`, the same (ADR 0278's typed
-# sends): bench-algo,master-tape's bench `time_kernel` in bank 2 holds the
-# instruction `movw r8, #0x1004` (41 f2 04 08), `synth`'s address with its
-# Thumb bit. `main` calls it once, by name.
-NEVER_TAKEN = ("chimera_board::shared::take_ui", "chimera_board::synth")
-
 HEADER = re.compile(r"^([0-9a-f]{8}) <(.+)>:$")
 # The mnemonic follows the address (and raw bytes, if shown) after a tab.
 INSN = re.compile(r"^\s*[0-9a-f]+:[^\t]*\t(\S+)\s*(.*)$")
@@ -138,12 +132,15 @@ class Image:
 
     def __init__(self):
         self.funcs, self.starts, self.words = {}, {}, set()
+        # Each function's end: past its last instruction.
+        self.ends = {}
 
 
 def parse(lines) -> Image:
     """`llvm-objdump -d` output, optionally followed by `-s` of the data
     sections: their words are where function pointers live."""
     img, cur, data, lo, table = Image(), None, False, {}, False
+    dumped = []
     for line in lines:
         line = line.rstrip("\n")
         if line.startswith("Contents of section"):
@@ -152,9 +149,10 @@ def parse(lines) -> Image:
         if data:
             m = DATA_ROW.match(line)
             if m:
-                for g in m.group(2).split():
+                at = int(m.group(1), 16)
+                for k, g in enumerate(m.group(2).split()):
                     if len(g) == 8:
-                        img.words.add(int.from_bytes(bytes.fromhex(g), "little"))
+                        dumped.append((at + 4 * k, int.from_bytes(bytes.fromhex(g), "little")))
             continue
         h = HEADER.match(line)
         if h:
@@ -166,6 +164,7 @@ def parse(lines) -> Image:
         i = INSN.match(line)
         if not i or cur is None:
             continue
+        img.ends[cur] = int(line.split(":", 1)[0], 16) + 4
         op, args = i.group(1), i.group(2)
         f = img.funcs[cur]
         # A `tbb`/`tbh` table's offsets, up to the next instruction, are
@@ -202,6 +201,15 @@ def parse(lines) -> Image:
         elif op.startswith("blx") or (op == "bx" and args.strip() != "lr"):
             if re.match(r"(r\d+|ip|lr)\b", args.strip()):
                 f[3] += 1
+    # A dumped word inside a function is its instruction bytes (bank 2's
+    # code shares `.bank2` with the door's table): its literals came in as
+    # `.word`s above, the rest is never a pointer.
+    spans = sorted((img.starts[f], img.ends.get(f, img.starts[f])) for f in img.starts)
+    starts = [a for a, _ in spans]
+    for at, w in dumped:
+        k = bisect.bisect_right(starts, at) - 1
+        if k < 0 or at >= spans[k][1]:
+            img.words.add(w)
     img.funcs = {k: tuple(v) for k, v in img.funcs.items()}
     return img
 
@@ -309,7 +317,7 @@ def pointer_charge(img, out, comp=None):
     taken = sorted(
         f
         for f, a in img.starts.items()
-        if (a | 1) in img.words and f not in ROOTS and f not in DOOR_ONLY and f not in NEVER_TAKEN
+        if (a | 1) in img.words and f not in ROOTS and f not in DOOR_ONLY
     )
     comp = comp if comp is not None else components(img.funcs)
     charge, deepest = 0, "-"

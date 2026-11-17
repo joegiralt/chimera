@@ -251,12 +251,11 @@ impl Gain {
         self.0
     }
 
-    /// One gain after the other: two gains 0 or more make one, unclamped
-    /// (the mixer's per-Part product; only an overflow, never NaN, can
-    /// leave it non-finite).
+    /// One gain after the other. Two finite gains 0 or more multiply to 0
+    /// or more, never NaN; an overflow saturates at `f32::MAX`.
     #[inline(always)]
     pub const fn times(self, g: Gain) -> Self {
-        Self(self.0 * g.0)
+        Self((self.0 * g.0).min(f32::MAX))
     }
 }
 

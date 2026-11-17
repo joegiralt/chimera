@@ -2504,7 +2504,7 @@ fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     // The awake bill's (ADR 0261's readings), six A16+17 voices rendered between the
     // blocks and every effect at its worst, steady: all asleep; each alone
     // awake (the delay without REV SEND); each alone asleep.
-    let (o, h) = (0.0, 0.5);
+    let (o, h) = (SendLevel::OFF, SendLevel::new(0.5));
     let asleep = rig.time_bus_awake(worst_steady, [o, o, o]);
     let alone = [
         rig.time_bus_awake(worst_steady, [h, o, o]),
@@ -2848,7 +2848,12 @@ impl Rig<'_> {
     /// sets the FX before every block.
     #[inline(never)]
     fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
-        self.bus(each, false, [0.5; FX_SENDS], WARM_BLOCKS + SWITCH_WARM)
+        self.bus(
+            each,
+            false,
+            [SendLevel::new(0.5); FX_SENDS],
+            WARM_BLOCKS + SWITCH_WARM,
+        )
     }
 
     /// MIX DRY: `time_bus`'s MIX with every send at 0, warmed until every
@@ -2857,14 +2862,18 @@ impl Rig<'_> {
     #[cfg(feature = "bench-routing")]
     #[inline(never)]
     fn time_bus_dry(&mut self) -> u32 {
-        self.bus(|_, _| {}, false, [0.0; FX_SENDS], DRY_WARM)
+        self.bus(|_, _| {}, false, [SendLevel::OFF; FX_SENDS], DRY_WARM)
     }
 
     /// The awake bill's rows (ADR 0261's readings): `time_bus_with_voices` warmed
     /// until every effect not sent to sleeps, with `sends` and `each`.
     #[cfg(feature = "bench-stress")]
     #[inline(never)]
-    fn time_bus_awake(&mut self, each: fn(&mut AudioShared, u32), sends: [f32; FX_SENDS]) -> u32 {
+    fn time_bus_awake(
+        &mut self,
+        each: fn(&mut AudioShared, u32),
+        sends: [SendLevel; FX_SENDS],
+    ) -> u32 {
         self.bus(each, true, sends, DRY_WARM)
     }
 
@@ -2873,7 +2882,12 @@ impl Rig<'_> {
     /// sits between the FX blocks, as in the running synth.
     #[inline(never)]
     fn time_bus_with_voices(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
-        self.bus(each, true, [0.5; FX_SENDS], WARM_BLOCKS + SWITCH_WARM)
+        self.bus(
+            each,
+            true,
+            [SendLevel::new(0.5); FX_SENDS],
+            WARM_BLOCKS + SWITCH_WARM,
+        )
     }
 
     /// Out of line: one copy for every BUS row, so the voices' note-ons
@@ -2883,7 +2897,7 @@ impl Rig<'_> {
         &mut self,
         each: fn(&mut AudioShared, u32),
         voices: bool,
-        send: [f32; FX_SENDS],
+        send: [SendLevel; FX_SENDS],
         warm: u32,
     ) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -2892,7 +2906,7 @@ impl Rig<'_> {
         // in MIX and every row less it.
         shared.fx = FxParams::OFF;
         for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.params.out.sends = send.map(SendLevel::new);
+            part.params.out.sends = send;
             // One Part to a channel: only Part 1 plays the notes.
             part.mix.channel = MidiChannel::clamped(i as u8);
         }
