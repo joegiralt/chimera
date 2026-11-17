@@ -283,7 +283,7 @@ check-door-placed elf:
     done
     # ed is pinned to the S4 group (ADR 0272), not anywhere in bank 2.
     grep -E ' [tT] .*console::ed::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "ed outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
-    # So are VA's solos (ADR 0283).
+    # So are VA's solos and their table (ADR 0283).
     grep -E ' [tT] .*va::osc::solo::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "VA solo outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
 
 check-no-gate bin:

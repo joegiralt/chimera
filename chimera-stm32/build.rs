@@ -335,12 +335,13 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // first S4 group (ADR 0272: new 0.4 work goes high), after MIXER's
     // reserve; its table stays in S0 with the other doors.
     // VA's solos (ADR 0283): `va::osc::solo`, the saw's runs on its
-    // anchor, the next S4 group, its table at its own slot after ed's
-    // (`VA_SOLO_DOOR_ADDR`): the door's own is full.
+    // anchor, the next S4 group. Its table heads the S4 groups
+    // (`VA_SOLO_DOOR_ADDR`): the door's own is full, and a slot in S0
+    // would take S0-S3 under ADR 0251's 8 KB.
     let (ed, ed_slot, ed_assert) = (
-        "    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n",
-        "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n    . = __bank2_door + 0x400; __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n",
-        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08100500, \"VA's solos' table at its slot\");",
+        "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n",
+        "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
+        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08180400, \"VA's solos' table heads the S4 groups\");",
     );
     fs::write(
         out_dir.join("bank2.x"),
