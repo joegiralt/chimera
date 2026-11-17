@@ -1286,6 +1286,7 @@ fn ed_part(f: &mut Fake, n: u32) {
 }
 
 /// MIX + SEQ: learn armed on the page's focused cell.
+#[cfg(feature = "midi-map")]
 fn arm_learn(f: &mut Fake) {
     use chimera_core::ui::learn::Learn;
     feed(
@@ -1325,6 +1326,8 @@ fn part_drops_a_prompt_as_its_key_does() {
     assert_eq!(f.ui.location(), keyed.ui.location());
 }
 
+// Learn is MIDI MAP's.
+#[cfg(feature = "midi-map")]
 #[test]
 fn part_waits_for_a_job_and_keeps_learn_as_its_key_does() {
     use chimera_core::ui::learn::Learn;
