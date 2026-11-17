@@ -5,8 +5,9 @@
 
 use core::fmt::Write;
 
+use super::UiState;
+use super::held::{self, Choice, Held};
 use super::part_page::Edit;
-use super::{UiState, held};
 use crate::block::Block;
 use crate::dsp::drum::groups::VoiceGroups;
 use crate::dsp::drum::types::{ChokeGroup, Kit, PadId};
@@ -17,107 +18,128 @@ pub(crate) enum Ask<'a> {
     /// An encoder turn on CHOKE: onto a 9th group it is held, dimmed with
     /// its reason, and nothing is written (ADR 0151's rule).
     Turn(&'a mut UiState, PartId, i8, bool),
-    /// A CHOKE edit no turn held (a CC): one onto a 9th group is refused
-    /// with a toast, the kit and its revision untouched.
+    /// A CHOKE edit no turn held (a CC): a step skips the groups that
+    /// would make a 9th; one that can't land is refused with a toast, the
+    /// kit and its revision untouched.
     Edit(&'a mut UiState, PartId, Edit),
-    /// The count a held code on a pad would make, where refused.
-    Held(&'a Kit, PadId, u8),
-    /// The refusal's words for that count.
+    /// A held CHOKE `to` on Part `at`'s selected pad, held at revision
+    /// `rev`: why it is refused, if it still is.
+    Held(&'a UiState, PartId, ChokeGroup, u32),
+    /// The refusal's words for a count.
     Why(VoiceGroups),
     /// CHOKE's focus band: the kit's count.
     Note(&'a Kit),
 }
 
-/// The answer: whether an edit moved, a refused count, or the words.
-pub(crate) struct Said {
-    pub moved: bool,
-    pub groups: Option<VoiceGroups>,
-    pub line: Option<Line>,
+/// The answer to each `Ask`.
+pub(crate) enum Said {
+    /// `Turn` (handled) and `Edit` (whether it moved).
+    Moved(bool),
+    /// `Held`: refused, with the count it would make.
+    Refused(VoiceGroups),
+    /// `Held`: it would land, or the kit changed since.
+    Fits,
+    /// `Why` and `Note`.
+    Line(Line),
 }
 
-/// The words, named so they link into bank 2 with this module
-/// (`bank2.x`'s `.rodata.*kit_groups*`), not into bank 1's unnamed
-/// rodata.
-static WORDS: [u8; 28] = *b"GROUPS  GROUPS \xc2\xb7 KIT HOLDS ";
+/// The words, byte statics named so they link into bank 2 with this
+/// module (`bank2.x`'s `.rodata.*kit_groups*`), not into bank 1's
+/// unnamed rodata; read as text checked when built.
+static GROUPS_BYTES: [u8; 7] = *b"GROUPS ";
+static HOLDS_BYTES: [u8; 21] = *b" GROUPS \xc2\xb7 KIT HOLDS ";
+static GROUPS: &str = text(&GROUPS_BYTES);
+static HOLDS: &str = text(&HOLDS_BYTES);
 
-fn words(r: core::ops::Range<usize>) -> &'static str {
-    core::str::from_utf8(&WORDS[r]).unwrap_or_default()
+const fn text(b: &'static [u8]) -> &'static str {
+    match core::str::from_utf8(b) {
+        Ok(s) => s,
+        Err(_) => panic!("the words are UTF-8"),
+    }
 }
 
 /// The door's entry.
 pub(crate) fn ask_in(a: Ask<'_>) -> Said {
-    let mut s = Said {
-        moved: false,
-        groups: None,
-        line: None,
-    };
     match a {
-        Ask::Turn(ui, at, delta, shift) => s.moved = turn(ui, at, delta, shift),
-        Ask::Edit(ui, at, how) => s.moved = edit(ui, at, how),
-        Ask::Held(kit, p, code) => s.groups = refused(kit, p, code),
-        Ask::Why(n) => s.line = Some(why(n)),
-        Ask::Note(kit) => s.line = Some(note(kit)),
+        Ask::Turn(ui, at, delta, shift) => Said::Moved(turn(ui, at, delta, shift)),
+        Ask::Edit(ui, at, how) => Said::Moved(edit(ui, at, how)),
+        Ask::Held(ui, at, to, rev) => {
+            let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
+            match VoiceGroups::choke(kit, p, to) {
+                Err(n) if rev == ui.project.rev() => Said::Refused(n),
+                _ => Said::Fits,
+            }
+        }
+        Ask::Why(n) => Said::Line(why(n)),
+        Ask::Note(kit) => Said::Line(note(kit)),
     }
-    s
-}
-
-/// The count pad `p` of `kit` in choke group `code` would make, where
-/// that grows the kit past 8.
-fn refused(kit: &Kit, p: PadId, code: u8) -> Option<VoiceGroups> {
-    let c = ChokeGroup::from_index(usize::from(code))?;
-    VoiceGroups::choke(kit, p, c).err()
 }
 
 /// A CHOKE turn `delta` (to an end with `shift`) on Part `at`'s selected
-/// pad, from its held code or its group.
+/// pad, from its held group (if the project hasn't changed since) or its
+/// own.
 fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
-    let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
-    let held = ui
-        .held
-        .filter(|&(h, c)| h == at && c.addr == held::CHOKE)
-        .map(|(_, c)| c.code);
-    let from = held.unwrap_or(kit.pad(p).choke().index() as u8);
-    let last = (ChokeGroup::ALL.len() - 1) as i16;
-    let to = match (shift, delta > 0) {
-        (true, true) => last,
-        (true, false) => 0,
-        _ => (i16::from(from) + i16::from(delta)).clamp(0, last),
-    } as u8;
-    let no = refused(kit, p, to).is_some();
-    ui.held = no.then_some((
+    let (kit, p, rev) = (
+        ui.project.kit(at),
+        ui.project.selected_pad(at),
+        ui.project.rev(),
+    );
+    let from = match ui.held {
+        Some((
+            h,
+            Held {
+                choice: Choice::Choke { to, rev: r },
+                ..
+            },
+        )) if h == at && r == rev => to,
+        _ => kit.pad(p).choke(),
+    };
+    let to = if shift {
+        ChokeGroup::end(delta)
+    } else {
+        from.step(delta)
+    };
+    let refused = VoiceGroups::choke(kit, p, to).is_err();
+    ui.held = refused.then_some((
         at,
-        held::Held {
+        Held {
             addr: held::CHOKE,
-            code: to,
+            choice: Choice::Choke { to, rev },
         },
     ));
-    if !no {
-        edit(ui, at, Edit::To(f32::from(to)));
+    if !refused && to != kit.pad(p).choke() {
+        ui.project.kit_mut(at).pad_mut(p).set_choke(to);
     }
     true
 }
 
-/// `how` on Part `at`'s selected pad's CHOKE, worked out on a copy: it is
-/// written only where it lands. A refused one says why, once while its
-/// toast is up (a controller sweep sends many).
+/// `how` on Part `at`'s selected pad's CHOKE: written only where it
+/// lands. A step (a relative CC, a stepped CC's bin) skips the groups
+/// that would make a 9th, on to the next that fits its way; a set lands
+/// where it points. A refused one says why, once while its toast is up.
 fn edit(ui: &mut UiState, at: PartId, how: Edit) -> bool {
     let (kit, p) = (ui.project.kit(at), ui.project.selected_pad(at));
-    let mut pad = *kit.pad(p);
-    let b: &mut dyn Block = &mut pad;
-    let id = held::CHOKE.param;
-    match how {
-        Edit::Nudge(d) => b.nudge(id, d),
-        Edit::Snap(d) => b.snap(id, d),
-        #[cfg(feature = "push-encoders")]
-        Edit::Fine(d) => crate::block::nudge_fine(b, id, d),
-        Edit::To(v) => b.set(id, v),
-    }
-    let to = pad.choke();
-    if to == kit.pad(p).choke() {
-        return false;
-    }
-    match VoiceGroups::choke(kit, p, to) {
-        Ok(_) => {
+    let now = kit.pad(p).choke();
+    let to = match how {
+        Edit::Nudge(d) => step(kit, p, now, d),
+        how => {
+            let mut pad = *kit.pad(p);
+            let b: &mut dyn Block = &mut pad;
+            let id = held::CHOKE.param;
+            match how {
+                Edit::Snap(d) => b.snap(id, d),
+                #[cfg(feature = "push-encoders")]
+                Edit::Fine(d) => crate::block::nudge_fine(b, id, d),
+                Edit::To(v) => b.set(id, v),
+                Edit::Nudge(d) => b.nudge(id, d),
+            }
+            let to = pad.choke();
+            VoiceGroups::choke(kit, p, to).map(|_| to)
+        }
+    };
+    match to {
+        Ok(to) if to == now => false,
+        Ok(to) => {
             ui.project.kit_mut(at).pad_mut(p).set_choke(to);
             true
         }
@@ -131,10 +153,31 @@ fn edit(ui: &mut UiState, at: PartId, how: Edit) -> bool {
     }
 }
 
+/// Pad `p` of `kit` stepped `d` from `now`, on past each group that would
+/// make a 9th to the first that fits that way; else the count the first
+/// step would make.
+fn step(kit: &Kit, p: PadId, now: ChokeGroup, d: i8) -> Result<ChokeGroup, VoiceGroups> {
+    let mut to = now.step(d);
+    let mut first = None;
+    loop {
+        match VoiceGroups::choke(kit, p, to) {
+            Ok(_) => return Ok(to),
+            Err(n) => {
+                let n = *first.get_or_insert(n);
+                let next = to.step(d.signum());
+                if next == to {
+                    return Err(n);
+                }
+                to = next;
+            }
+        }
+    }
+}
+
 /// CHOKE's focus band: `GROUPS 6/8`, over 8 on a kit from before the
 /// bound.
 fn note(kit: &Kit) -> Line {
-    let mut l = Line::new(words(0..7));
+    let mut l = Line::new(GROUPS);
     let _ = write!(
         l,
         "{}/{}",
@@ -147,6 +190,6 @@ fn note(kit: &Kit) -> Line {
 /// Why a choke is refused: `9 GROUPS · KIT HOLDS 8`.
 fn why(n: VoiceGroups) -> Line {
     let mut l = Line::new("");
-    let _ = write!(l, "{}{}{}", n.get(), words(7..28), VoiceGroups::MAX.get());
+    let _ = write!(l, "{}{}{}", n.get(), HOLDS, VoiceGroups::MAX.get());
     l
 }

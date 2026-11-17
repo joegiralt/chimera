@@ -372,7 +372,7 @@ fn a_ninth_group_is_held_with_its_reason() {
     feed(&mut ui, Input::turn(EncoderId::B, -1));
     assert_eq!(choke(&ui, 3), ChokeGroup::A, "nothing written");
     let shown = ui.held_choice().expect("OFF held");
-    assert_eq!(shown.held.code, ChokeGroup::Off.index() as u8);
+    assert_eq!(shown.held.code(), ChokeGroup::Off.index() as u8);
     assert!(matches!(shown.why, Reason::Groups(g) if g.get() == 9));
     let why = chimera_core::ui::held::reason(shown.why);
     assert_eq!(why.as_str(), "9 GROUPS · KIT HOLDS 8");
@@ -436,6 +436,102 @@ fn a_controller_sweep_onto_a_ninth_group_is_refused_once() {
     // Once it is down, a new refusal is said again.
     assert!(!ui.edit_to(P1, choke_addr(), 0.0));
     assert!(matches!(ui.step_toast(0), ToastStep::Show(_)));
+}
+
+/// A={1,2,3}, C={4,5}, D={6,7}, pads 8–12 OFF: 8 groups.
+fn spread() -> Kit {
+    use ChokeGroup::{A, C, D, Off};
+    let mut k = Kit::DEFAULT;
+    for (n, c) in [A, A, A, C, C, D, D, Off, Off, Off, Off, Off]
+        .into_iter()
+        .enumerate()
+    {
+        k.pad_mut(pad(n as u8 + 1)).set_choke(c);
+    }
+    assert_eq!(VoiceGroups::of(&k).get(), 8);
+    k
+}
+
+/// A relative CC's step onto a 9th group (pad 1, A → B) skips on to the
+/// next group that fits its way (C), as the encoder's held turn can: it
+/// lands, with no toast.
+#[test]
+fn a_cc_step_skips_a_ninth_group_to_the_next_that_fits() {
+    let mut ui = keys_on(1, &spread());
+    assert!(ui.edit_addr(P1, choke_addr(), 1, false));
+    assert_eq!(choke(&ui, 1), ChokeGroup::C, "B skipped");
+    assert_eq!(ui.step_toast(0), ToastStep::Idle, "no refusal said");
+    // Back down: C → B refused, on to A, which fits.
+    assert!(ui.edit_addr(P1, choke_addr(), -1, false));
+    assert_eq!(choke(&ui, 1), ChokeGroup::A);
+}
+
+/// A step with nothing that fits its way (pad 1, A → OFF, the end) is
+/// refused and said.
+#[test]
+fn a_cc_step_with_nothing_that_fits_is_refused_aloud() {
+    let mut ui = keys_on(1, &spread());
+    let rev = ui.project().rev();
+    assert!(!ui.edit_addr(P1, choke_addr(), -1, false));
+    assert_eq!(choke(&ui, 1), ChokeGroup::A);
+    assert_eq!(ui.project().rev(), rev);
+    match ui.step_toast(0) {
+        ToastStep::Show(l) => assert_eq!(l.as_str(), "9 GROUPS · KIT HOLDS 8"),
+        s => panic!("no toast: {s:?}"),
+    }
+}
+
+/// A stepped CC's ramp from A up through B (refused) to D: each bin a
+/// step; it never says a refusal for a group it passes, and ends on D.
+#[test]
+fn a_cc_ramp_through_a_ninth_group_says_nothing() {
+    let mut ui = keys_on(1, &spread());
+    for _ in 0..3 {
+        ui.edit_addr(P1, choke_addr(), 1, false);
+        assert_eq!(ui.step_toast(0), ToastStep::Idle);
+    }
+    assert_eq!(choke(&ui, 1), ChokeGroup::D);
+}
+
+/// A held CHOKE is dropped once the kit changes under it: a CC on
+/// another pad's choke, or a kit loaded in. The next turn starts from
+/// the pad's own group.
+#[test]
+fn a_held_choke_is_dropped_when_the_kit_changes() {
+    let mut ui = keys_on(3, &Kit::DEFAULT);
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert!(ui.held_choice().is_some(), "OFF held");
+    // Pad 12 (OFF) moved into D, as a CC on its cell does: the kit
+    // changed.
+    let p12 = pad(12);
+    {
+        let k = ui.project_mut().kit_mut(P1);
+        k.pad_mut(p12).set_choke(ChokeGroup::D);
+    }
+    assert!(ui.held_choice().is_none(), "the kit changed: dropped");
+    // A turn starts from pad 3's own A, not the held OFF: on to B.
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(choke(&ui, 3), ChokeGroup::B);
+
+    // Held again, then a kit loaded in.
+    let mut ui = keys_on(3, &Kit::DEFAULT);
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert!(ui.held_choice().is_some());
+    *ui.project_mut().kit_mut(P1) = Kit::DEFAULT;
+    assert!(ui.held_choice().is_none(), "a kit loaded: dropped");
+}
+
+#[test]
+fn a_choke_steps_saturating() {
+    use ChokeGroup::{A, B, D, Off};
+    assert_eq!(Off.step(1), A);
+    assert_eq!(A.step(-1), Off);
+    assert_eq!(Off.step(-1), Off);
+    assert_eq!(D.step(1), D);
+    assert_eq!(A.step(i8::MAX), D);
+    assert_eq!(B.step(i8::MIN), Off);
+    assert_eq!(ChokeGroup::end(1), D);
+    assert_eq!(ChokeGroup::end(-1), Off);
 }
 
 /// On an old kit (12 groups) a turn that lowers the count lands; one that

@@ -318,7 +318,7 @@ impl TestUi {
     /// them.
     fn refusal(&self) -> Option<(u8, String)> {
         let s = self.0.held_choice()?;
-        Some((s.held.code, held::reason(s.why).as_str().to_string()))
+        Some((s.held.code(), held::reason(s.why).as_str().to_string()))
     }
 }
 

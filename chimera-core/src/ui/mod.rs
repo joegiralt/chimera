@@ -74,9 +74,8 @@ use chimera_hal::{
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::boot::RomDfu;
-use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::engine::{FormantView, FormantViews};
-use crate::dsp::algo::kinds::{OpKind, step_kind};
+use crate::dsp::algo::kinds::step_kind;
 use crate::dsp::algo::params::step_alg;
 use crate::dsp::drum::types::{Machine, PadId};
 use crate::dsp::lfo::Lfo;
@@ -1627,35 +1626,53 @@ impl UiState {
         if a == held::CHOKE
             && let Some(s) = crate::bank2::groups(kit_groups::Ask::Turn(self, at, delta, shift))
         {
-            return s.moved;
+            return matches!(s, kit_groups::Said::Moved(true));
         }
         if !held::applies(a, shift) {
             return false;
         }
         let p = &self.project.part(at).sound.params.algo;
         let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
-        let (code, refused) = match a.block {
+        let (choice, refused) = match a.block {
             BlockRef::AlgoOp(op) => {
                 let d = if shift {
                     delta.signum() * i8::MAX
                 } else {
                     delta
                 };
-                let from = held.map_or(p.kinds().get(op.index()), |(_, c)| OpKind::clamped(c.code));
+                let from = match held {
+                    Some((
+                        _,
+                        held::Held {
+                            choice: held::Choice::Kind(k),
+                            ..
+                        },
+                    )) => k,
+                    _ => p.kinds().get(op.index()),
+                };
                 let s = step_kind(p.kinds(), p.linked(), op.index(), from, d);
-                (s.to.code(), s.refused)
+                (held::Choice::Kind(s.to), s.refused)
             }
             _ => {
-                let from = held.map_or(p.side(a.param), |(_, c)| AlgoId::clamped(c.code));
+                let from = match held {
+                    Some((
+                        _,
+                        held::Held {
+                            choice: held::Choice::Alg(x),
+                            ..
+                        },
+                    )) => x,
+                    _ => p.side(a.param),
+                };
                 let s = step_alg(p, a.param, from, delta);
-                (s.to.get(), s.refused)
+                (held::Choice::Alg(s.to), s.refused)
             }
         };
         if refused {
-            self.held = Some((at, held::Held { addr: a, code }));
+            self.held = Some((at, held::Held { addr: a, choice }));
         } else {
             self.held = None;
-            self.edit_in(at, a, part_page::Edit::To(f32::from(code)));
+            self.edit_in(at, a, part_page::Edit::To(f32::from(choice.code())));
         }
         true
     }
@@ -1669,27 +1686,29 @@ impl UiState {
             return false;
         }
         let sound = &self.project.part(at).sound;
-        let now = crate::block::Block::get(&sound.params.tape, a.param) as u8;
-        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
-        let from = held.map_or(now, |(_, c)| c.code);
-        // MODEL and DIRECTION each list four.
-        const _: () = assert!(
-            crate::dsp::tape_engine::TapeMachine::ALL.len() == 4
-                && crate::dsp::tape_engine::Direction::ALL.len() == 4
-        );
-        let last = 3;
-        let to = match (shift, delta > 0) {
-            (true, true) => last,
-            (true, false) => 0,
-            _ => (i16::from(from) + i16::from(delta)).clamp(0, last),
-        } as u8;
-        let h = held::Held { addr: a, code: to };
+        let now =
+            held::TapeCode::clamped(crate::block::Block::get(&sound.params.tape, a.param) as u8);
+        let from = match self.held {
+            Some((
+                h,
+                held::Held {
+                    addr,
+                    choice: held::Choice::Tape(c),
+                },
+            )) if h == at && addr == a => c,
+            _ => now,
+        };
+        let to = from.step(delta, shift);
+        let h = held::Held {
+            addr: a,
+            choice: held::Choice::Tape(to),
+        };
         if h.why(sound, true).is_some() {
             self.held = Some((at, h));
         } else {
             self.held = None;
             if to != now {
-                self.edit_in(at, a, part_page::Edit::To(f32::from(to)));
+                self.edit_in(at, a, part_page::Edit::To(f32::from(to.get())));
             }
         }
         true
@@ -1736,12 +1755,15 @@ impl UiState {
         let on = slot_addr(def, self.focused_slot(), &self.ctx());
         (at == self.active_part && on == Some(h.addr))
             .then(|| match h.addr {
-                held::CHOKE => {
-                    let (kit, p) = (self.project.kit(at), self.project.selected_pad(at));
-                    crate::bank2::groups(kit_groups::Ask::Held(kit, p, h.code))
-                        .and_then(|s| s.groups)
-                        .map(held::Reason::Groups)
-                }
+                held::CHOKE => match h.choice {
+                    held::Choice::Choke { to, rev } => {
+                        match crate::bank2::groups(kit_groups::Ask::Held(self, at, to, rev)) {
+                            Some(kit_groups::Said::Refused(n)) => Some(held::Reason::Groups(n)),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
                 _ => h.why(&self.project.part(at).sound, self.streams(at)),
             })
             .flatten()
@@ -1934,7 +1956,7 @@ impl UiState {
         if a == held::CHOKE
             && let Some(s) = crate::bank2::groups(kit_groups::Ask::Edit(self, part, how))
         {
-            return s.moved;
+            return matches!(s, kit_groups::Said::Moved(true));
         }
         let params = &mut UiBlocks {
             project: &mut self.project,

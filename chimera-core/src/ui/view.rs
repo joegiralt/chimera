@@ -1143,7 +1143,10 @@ pub fn groups_note(
     if addr != crate::ui::held::CHOKE {
         return None;
     }
-    crate::bank2::groups(crate::ui::kit_groups::Ask::Note(kit))?.line
+    match crate::bank2::groups(crate::ui::kit_groups::Ask::Note(kit))? {
+        crate::ui::kit_groups::Said::Line(l) => Some(l),
+        _ => None,
+    }
 }
 
 /// What the focus band says in its hint's place about a TAPE cell: why
