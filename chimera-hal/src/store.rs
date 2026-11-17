@@ -3,7 +3,7 @@
 use core::ops::ControlFlow;
 
 use crate::card_bus::CardFault;
-use crate::units::{BlockCount, Bytes, FileBlock, Lba};
+use crate::units::{BlockCount, Bytes, FileBlock, Lba, Millis};
 
 /// A mounted volume's identity: a swap changes one or both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +126,15 @@ const fn name_ok(b: &[u8], min: usize, max: usize, tilde: bool) -> bool {
 /// `Store::list_long`'s callback: a file, its length and its long name;
 /// `Break` stops the listing.
 pub type LongEach<'a> = dyn FnMut(FileName, u32, &[u8]) -> ControlFlow<()> + 'a;
+
+/// How the card answered at boot (chimera-releases#16): CMD0 answered
+/// after `Millis` of waiting, or never within the boot's window. A boot's
+/// NO CARD after `Ready` is a failed init, not an empty slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BootCard {
+    Ready(Millis),
+    Absent(Millis),
+}
 
 /// Why a store operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

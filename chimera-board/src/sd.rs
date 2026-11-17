@@ -1,7 +1,8 @@
 //! SD card in SPI mode on SPI2, polled (spec § Card): SCK PA9, MISO PB14,
 //! MOSI PB15, CS PE12. Every transaction checks the operation's deadline.
 //! An acquire first asks whether a card is there (#186), so an empty slot
-//! fails in about a millisecond instead of at `SD_ACQUIRE_MS`.
+//! fails in about a millisecond instead of at `SD_ACQUIRE_MS`; boot's first
+//! acquire waits up to `BOOT_WINDOW` for it (ADR 0277).
 
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::addr_of_mut;
@@ -9,7 +10,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::hw::STORE_RESERVE;
 use chimera_fat::deadline::{Deadline, Over};
-use chimera_fat::sd::{CMD0, NCR_BYTES, PRESENCE_TRIES, r1_within_ncr};
+use chimera_fat::sd::{CMD0, NCR_BYTES, PRESENCE_TRIES, Presence, r1_within_ncr};
 use chimera_fat::sd_addr::CardAddr;
 use chimera_fat::shared_card::{Hooks, SharedCard};
 use chimera_fat::{BusPhase, FatStore, SdBus};
@@ -76,6 +77,7 @@ pub struct SdSpi {
     /// Each operation's cap: `SD_OP_CAP_MS` but while the bench's `card` or
     /// a console `put` runs under its own deadline.
     cap_ms: u32,
+    presence: Presence,
 }
 
 impl SdSpi {
@@ -101,6 +103,7 @@ impl SdSpi {
             deadline: Deadline::arm_transfers(0, 0),
             per_ms: 1,
             cap_ms: SD_OP_CAP_MS,
+            presence: Presence::new(),
         };
         s.arm(SD_IDLE_MS);
         s
@@ -259,12 +262,26 @@ impl SdBus for SdSpi {
 
     /// An acquire on an empty slot starts with its deadline passed: the
     /// driver's first transaction fails, and `FatStore` reads `NoCard`.
+    /// Boot's first asks for up to `BOOT_WINDOW` (`Presence`).
     fn start_op(&mut self) {
         match self.phase {
             BusPhase::Data => self.arm(SD_IDLE_MS),
             // Only an acquire asks: CMD0 would reset a mounted card.
             BusPhase::Acquire => {
-                if self.card_answers() {
+                let (cpu_hz, mut p) = (self.cpu_hz, self.presence);
+                let first = p.boot().is_none();
+                let there = p.ask(
+                    || {
+                        self.wake();
+                        self.card_answers()
+                    },
+                    |ms| clocks::delay_us(cpu_hz, ms.get() * 1_000),
+                );
+                self.presence = p;
+                if first && let Some(b) = p.boot() {
+                    chimera_core::console::BOOT_CARD.store(b);
+                }
+                if there {
                     self.arm(SD_ACQUIRE_MS);
                 } else {
                     self.deadline = Deadline::passed();

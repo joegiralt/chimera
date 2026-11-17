@@ -43,3 +43,100 @@ fn answer_past_ncr_is_none() {
     b[NCR_BYTES] = 0x01;
     assert_eq!(r1_within_ncr(&b), None);
 }
+
+use chimera_fat::sd::{BOOT_RETRY_EVERY, BOOT_WINDOW, Presence};
+use chimera_hal::store::BootCard;
+use chimera_hal::units::Millis;
+
+/// A slot whose card first answers on try `answers_on` (0 is the first),
+/// or never.
+struct Slot {
+    answers_on: Option<u32>,
+    tries: u32,
+    paused: u32,
+}
+
+impl Slot {
+    fn new(answers_on: Option<u32>) -> Self {
+        Self {
+            answers_on,
+            tries: 0,
+            paused: 0,
+        }
+    }
+
+    fn ask(&mut self, p: &mut Presence) -> bool {
+        p.ask(
+            || {
+                let t = self.tries;
+                self.tries += 1;
+                self.answers_on.is_some_and(|n| t >= n)
+            },
+            |ms: Millis| self.paused += ms.get(),
+        )
+    }
+}
+
+fn ms(n: u32) -> Millis {
+    Millis::new(n)
+}
+
+#[test]
+fn nothing_asked_no_boot_result() {
+    assert_eq!(Presence::new().boot(), None);
+}
+
+/// The usual boot: the card answers the first CMD0s, nothing waits.
+#[test]
+fn a_ready_card_costs_no_wait() {
+    let (mut p, mut s) = (Presence::new(), Slot::new(Some(0)));
+    assert!(s.ask(&mut p));
+    assert_eq!((s.tries, s.paused), (1, 0));
+    assert_eq!(p.boot(), Some(BootCard::Ready(ms(0))));
+}
+
+/// chimera-releases#16: a card still powering up when boot first asks is
+/// asked again until it answers, not read as an empty slot.
+#[test]
+fn boot_waits_for_a_slow_card() {
+    let (mut p, mut s) = (Presence::new(), Slot::new(Some(30)));
+    assert!(s.ask(&mut p));
+    assert_eq!(s.tries, 31);
+    assert_eq!(s.paused, 30 * BOOT_RETRY_EVERY.get());
+    assert_eq!(p.boot(), Some(BootCard::Ready(ms(s.paused))));
+}
+
+/// An empty slot at boot costs the window, and no more.
+#[test]
+fn boot_gives_up_after_the_window() {
+    let (mut p, mut s) = (Presence::new(), Slot::new(None));
+    assert!(!s.ask(&mut p));
+    assert_eq!(s.paused, BOOT_WINDOW.get());
+    assert_eq!(s.tries, BOOT_WINDOW.get() / BOOT_RETRY_EVERY.get() + 1);
+    assert_eq!(p.boot(), Some(BootCard::Absent(BOOT_WINDOW)));
+}
+
+/// The window is the spec's power-up time with room for slow cards.
+#[test]
+fn the_window_covers_power_up() {
+    assert!(BOOT_WINDOW.get() >= 1_000);
+    assert!(BOOT_RETRY_EVERY.get() > 0 && BOOT_RETRY_EVERY.get() <= 20);
+}
+
+/// #186 after boot: a re-read of an empty slot asks once and never
+/// waits, so the UI doesn't stall; the boot's result stays.
+#[test]
+fn after_boot_an_ask_is_one_try() {
+    for first in [Some(0), Some(5), None] {
+        let mut p = Presence::new();
+        Slot::new(first).ask(&mut p);
+        let boot = p.boot();
+        let mut empty = Slot::new(None);
+        assert!(!empty.ask(&mut p));
+        assert_eq!((empty.tries, empty.paused), (1, 0), "after {first:?}");
+        let mut there = Slot::new(Some(0));
+        assert!(there.ask(&mut p));
+        assert_eq!((there.tries, there.paused), (1, 0));
+        assert_eq!(p.boot(), boot);
+    }
+}
