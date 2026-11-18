@@ -238,14 +238,23 @@ class StackDepth(unittest.TestCase):
         self.assertNotIn(0x08000101, img.words)
         self.assertIn(0x08000201, img.words, "a literal after the table still counts")
 
-    def test_a_never_taken_function_is_charged_no_pointer(self):
-        # A data word equal to `take_ui`'s address is no pointer to it
-        # (bench-algo,master-tape, ADR 0267): it stays out of the charge.
+    def test_instruction_bytes_in_a_dumped_section_are_no_pointer(self):
+        # Bank 2's code shares `.bank2` with the door's table, so `-s` dumps
+        # its instructions as words: `movw r8, #0x1004` (41 f2 04 08) reads
+        # as `synth`'s address (bench-algo,master-tape, ADR 0278). A word
+        # inside a disassembled function is no pointer; one outside (the
+        # table) still is.
         img = sd.parse(io.StringIO(
-            "08000000 <chimera_board::shared::take_ui>:\n 8000000:      \tsub\tsp, #0x800\n"
-            "\n08000100 <g>:\n 8000100:      \tsub\tsp, #0x10\n"
-            "\nContents of section .rodata:\n 8000c00 01000008 01010008                    ........\n"
+            "0804f240 <synth>:\n 804f240:      \tsub\tsp, #0x800\n"
+            "\n08100000 <bench>:\n 8100000:      \tmovw\tr8, #0x1004\n"
+            " 8100004:      \tbx\tlr\n"
+            "\n08100100 <g>:\n 8100100:      \tsub\tsp, #0x10\n"
+            "\nContents of section .bank2:\n"
+            " 8100000 41f20408 70470000                    A...pG..\n"
+            " 8100200 01011008                             ....\n"
         ))
+        self.assertNotIn(0x0804F241, img.words)
+        self.assertIn(0x08100101, img.words, "the table's word still counts")
         self.assertEqual(sd.pointer_charge(img, io.StringIO()), 0x10)
 
     def cycle(self, light, heavy):

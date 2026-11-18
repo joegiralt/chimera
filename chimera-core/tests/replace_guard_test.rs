@@ -4,6 +4,7 @@
 
 mod common;
 
+use chimera_core::dsp::SendLevel;
 use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -258,9 +259,12 @@ fn a_confirmation_is_refused_once_its_slot_moves() {
 fn a_pool_load_brings_the_sends() {
     let (mut p, t) = Project::boxed();
     let (a, b, s) = (PartId::ALL[0], PartId::ALL[1], SlotId::ALL[3]);
-    p.edit_part(a).sound.params.out.sends = [0.25, 0.5, 0.75];
+    p.edit_part(a).sound.params.out.sends = [0.25, 0.5, 0.75].map(SendLevel::new);
     save_part_to(&mut p, a, s);
     let c = ReplaceGuard::check(&p, t, slot(b, s)).unwrap();
     p.replace_part(c).unwrap();
-    assert_eq!(p.part(b).sound.params.out.sends, [0.25, 0.5, 0.75]);
+    assert_eq!(
+        p.part(b).sound.params.out.sends,
+        [0.25, 0.5, 0.75].map(SendLevel::new)
+    );
 }

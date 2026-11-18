@@ -75,7 +75,7 @@ fn load(bytes: &[u8]) -> (Box<Project>, bool, chimera_core::project::TemplateCrc
 }
 
 fn sends(p: &Project, n: usize) -> [f32; 3] {
-    p.perf().parts()[n].sound.params.out.sends
+    p.perf().parts()[n].sound.params.out.sends.map(|s| s.get())
 }
 
 fn entry(id: u8, v: f32) -> [u8; 5] {

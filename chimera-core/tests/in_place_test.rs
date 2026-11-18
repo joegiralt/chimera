@@ -1,4 +1,5 @@
 mod common;
+use chimera_core::dsp::SendLevel;
 use chimera_core::taps::TapRows;
 use common::tape::{OneSource, held_plain, saw_with_burst};
 use common::{SR, tri};
@@ -60,7 +61,7 @@ fn every_engine_and_every_effect() -> AudioShared {
     *s.parts[3].params = ParamSnapshot::for_engine(EngineType::Modal);
     s.parts[3].params.modal.mode = ResonatorMode::Sympathetic;
     for part in &mut s.parts[..4] {
-        part.params.out.sends = [0.3; FX_SENDS];
+        part.params.out.sends = [SendLevel::new(0.3); FX_SENDS];
     }
     s.fx.chorus.mode = 1;
     s.fx.chorus.mix = 0.5;

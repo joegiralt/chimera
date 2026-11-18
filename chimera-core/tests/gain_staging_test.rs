@@ -3,6 +3,7 @@
 //! and bends it along a soft knee to −1 dBFS, the only stage that bends
 //! it; `to_dac`'s clamp is never reached.
 
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
@@ -63,7 +64,7 @@ fn max() -> FxParams {
             feedback: 1.0,
             saturation: 0.0,
             tone: 1.0,
-            rev_send: 1.0,
+            rev_send: SendLevel::FULL,
             ..Default::default()
         },
         reverb: ReverbParams {
@@ -104,7 +105,7 @@ fn chord(
     voices: Voices,
     fx_params: FxParams,
     level: f32,
-    send: f32,
+    send: SendLevel,
     mut each: impl FnMut(&Instrument, &FxBus, &DacBlocks),
 ) {
     let mut shared = Box::new(AudioShared::default());
@@ -169,7 +170,7 @@ fn clamped(dac: &DacOut) -> usize {
 #[test]
 fn no_stage_exceeds_ceiling() {
     for voices in [Voices::Saw, Voices::Init] {
-        for send in [0.3, 1.0] {
+        for send in [0.3, 1.0].map(SendLevel::new) {
             let (mut pre, mut ring, mut rails, mut over) = (0.0f32, 0i32, 0usize, 0usize);
             chord(voices, typical(), 1.0, send, |_, fx, dac| {
                 let input = dac.input();
@@ -184,15 +185,15 @@ fn no_stage_exceeds_ceiling() {
                 over += clamped(dac.out());
             });
             eprintln!(
-                "{voices:?} send {send}: trimmed peak {pre}, ring peak {ring}, rail words {rails}"
+                "{voices:?} send {send:?}: trimmed peak {pre}, ring peak {ring}, rail words {rails}"
             );
             // The gained mix passes full scale at eight voices (ADR 0109,
             // #193): only the limiter keeps it off the clamp.
             assert_eq!(
                 over, 0,
-                "{voices:?} send {send}: samples clamped at the DAC"
+                "{voices:?} send {send:?}: samples clamped at the DAC"
             );
-            if send < 1.0 {
+            if send < SendLevel::FULL {
                 assert_eq!(rails, 0, "{voices:?}: ring words on the i16 rail");
             }
         }
@@ -210,10 +211,16 @@ fn only_final_limiter_is_nonlinear() {
         // The same products `mix_parts` hoists.
         let (gl, gr) = (gl * level, gr * level);
         let (mut bus, mut out) = (Vec::new(), Vec::new());
-        chord(Voices::Init, FxParams::OFF, level, 0.0, |inst, _, dac| {
-            bus.extend_from_slice(inst.part_bus(0));
-            out.extend_from_slice(&dac.out()[0]);
-        });
+        chord(
+            Voices::Init,
+            FxParams::OFF,
+            level,
+            SendLevel::OFF,
+            |inst, _, dac| {
+                bus.extend_from_slice(inst.part_bus(0));
+                out.extend_from_slice(&dac.out()[0]);
+            },
+        );
         let over = bus
             .iter()
             .position(|&b| (b * gl).abs() > THRESHOLD || (b * gr).abs() > THRESHOLD);
@@ -239,7 +246,7 @@ fn only_final_limiter_is_nonlinear() {
 fn max_settings_bounded() {
     for voices in [Voices::Saw, Voices::Init] {
         let (mut peak, mut over) = (0.0f32, 0usize);
-        chord(voices, max(), 1.0, 1.0, |_, _, dac| {
+        chord(voices, max(), 1.0, SendLevel::FULL, |_, _, dac| {
             peak = dac.out().iter().flatten().fold(peak, |m, x| m.max(x.abs()));
             over += clamped(dac.out());
         });
@@ -323,10 +330,10 @@ fn limiter_catches_a_step_and_releases() {
 #[test]
 fn everything_before_the_limiter_is_mains_mix() {
     // Low enough that the mix stays under the knee (ADR 0109).
-    const SEND: f32 = 0.01;
+    const SEND: SendLevel = SendLevel::new(0.01);
     let mut fxp = typical();
     fxp.tape = TapeParams::default();
-    fxp.delay.rev_send = 0.5;
+    fxp.delay.rev_send = SendLevel::new(0.5);
     fxp.reverb.time = 0.7;
     let (gl, gr) = pan_gains(0.0);
     let (gl, gr) = (gl * 0.05, gr * 0.05);
@@ -335,7 +342,7 @@ fn everything_before_the_limiter_is_mains_mix() {
     let (mut blocks, mut peak) = (0, 0.0f32);
     chord(Voices::Init, fxp, 0.05, SEND, |inst, fx, dac| {
         let bus = inst.part_bus(0);
-        let mut sends = [bus.map(|b| b * SEND); 3];
+        let mut sends = [bus.map(|b| b * SEND.gain().get()); 3];
         let mut ret = chimera_core::dsp::Stereo::SILENT;
         reference.process(&mut sends, &fxp, Tempo::DEFAULT, SAMPLE_RATE, &mut ret);
         assert_eq!(

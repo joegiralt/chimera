@@ -31,7 +31,7 @@ pub const SCRIPTS: [&str; 2] = ["bass", "stab"];
 /// as the UI publishes a knob's turn.
 pub fn engine(snd: &Sound, sc: &Script, tweak: &dyn Fn(f64, &mut Sound) -> bool) -> Vec<f32> {
     let mut s = snd.clone();
-    s.params.out.sends = [0.0; FX_SENDS];
+    s.params.out.sends = [chimera_core::dsp::SendLevel::OFF; FX_SENDS];
     tweak(-PRE_S, &mut s);
     let mut sound = Tracked::fresh(s);
     let loads = Loads::NONE.next();

@@ -25,6 +25,7 @@ use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::{draw, theme};
 use chimera_engine::addr::{BlockRef, ParamAddr};
 use chimera_engine::audio_out::{DacSample, interleave};
+use chimera_engine::dsp::SendLevel;
 use chimera_engine::dsp::algo::algorithms::AlgoId;
 use chimera_engine::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use chimera_engine::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, OpBlock, SAMPLE_SCALE};
@@ -410,7 +411,7 @@ fn worst_steady(s: &mut AudioShared, _: u32) {
 #[cfg(feature = "bench-stress")]
 fn worst_dry_delay(s: &mut AudioShared, b: u32) {
     worst_steady(s, b);
-    s.fx.delay.rev_send = 0.0;
+    s.fx.delay.rev_send = SendLevel::OFF;
 }
 
 /// The delay at its worst under TYPE GRAIN: SIZE and DENSITY 1 (every
@@ -434,7 +435,8 @@ fn worst_chorus(s: &mut AudioShared) {
 /// REV SEND costs only with the reverb on: the BUS row pays it.
 fn worst_delay(s: &mut AudioShared) {
     let d = &mut s.fx.delay;
-    (d.time_ms, d.wow_flutter, d.saturation, d.mix, d.rev_send) = (500.0, 1.0, 1.0, 0.5, 1.0);
+    (d.time_ms, d.wow_flutter, d.saturation, d.mix, d.rev_send) =
+        (500.0, 1.0, 1.0, 0.5, SendLevel::FULL);
 }
 
 /// The ring at its costliest: longest TIME and SIZE, with a SIZE
@@ -2502,7 +2504,7 @@ fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     // The awake bill's (ADR 0261's readings), six A16+17 voices rendered between the
     // blocks and every effect at its worst, steady: all asleep; each alone
     // awake (the delay without REV SEND); each alone asleep.
-    let (o, h) = (0.0, 0.5);
+    let (o, h) = (SendLevel::OFF, SendLevel::new(0.5));
     let asleep = rig.time_bus_awake(worst_steady, [o, o, o]);
     let alone = [
         rig.time_bus_awake(worst_steady, [h, o, o]),
@@ -2700,7 +2702,7 @@ impl Rig<'_> {
         setup(shared);
         shared.fx = FxParams::OFF;
         for part in shared.parts.iter_mut() {
-            part.params.out.sends = [0.5; FX_SENDS];
+            part.params.out.sends = [SendLevel::new(0.5); FX_SENDS];
         }
         let bill = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
         for v in 0..voices {
@@ -2846,7 +2848,12 @@ impl Rig<'_> {
     /// sets the FX before every block.
     #[inline(never)]
     fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
-        self.bus(each, false, [0.5; FX_SENDS], WARM_BLOCKS + SWITCH_WARM)
+        self.bus(
+            each,
+            false,
+            [SendLevel::new(0.5); FX_SENDS],
+            WARM_BLOCKS + SWITCH_WARM,
+        )
     }
 
     /// MIX DRY: `time_bus`'s MIX with every send at 0, warmed until every
@@ -2855,14 +2862,18 @@ impl Rig<'_> {
     #[cfg(feature = "bench-routing")]
     #[inline(never)]
     fn time_bus_dry(&mut self) -> u32 {
-        self.bus(|_, _| {}, false, [0.0; FX_SENDS], DRY_WARM)
+        self.bus(|_, _| {}, false, [SendLevel::OFF; FX_SENDS], DRY_WARM)
     }
 
     /// The awake bill's rows (ADR 0261's readings): `time_bus_with_voices` warmed
     /// until every effect not sent to sleeps, with `sends` and `each`.
     #[cfg(feature = "bench-stress")]
     #[inline(never)]
-    fn time_bus_awake(&mut self, each: fn(&mut AudioShared, u32), sends: [f32; FX_SENDS]) -> u32 {
+    fn time_bus_awake(
+        &mut self,
+        each: fn(&mut AudioShared, u32),
+        sends: [SendLevel; FX_SENDS],
+    ) -> u32 {
         self.bus(each, true, sends, DRY_WARM)
     }
 
@@ -2871,7 +2882,12 @@ impl Rig<'_> {
     /// sits between the FX blocks, as in the running synth.
     #[inline(never)]
     fn time_bus_with_voices(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
-        self.bus(each, true, [0.5; FX_SENDS], WARM_BLOCKS + SWITCH_WARM)
+        self.bus(
+            each,
+            true,
+            [SendLevel::new(0.5); FX_SENDS],
+            WARM_BLOCKS + SWITCH_WARM,
+        )
     }
 
     /// Out of line: one copy for every BUS row, so the voices' note-ons
@@ -2881,7 +2897,7 @@ impl Rig<'_> {
         &mut self,
         each: fn(&mut AudioShared, u32),
         voices: bool,
-        send: [f32; FX_SENDS],
+        send: [SendLevel; FX_SENDS],
         warm: u32,
     ) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -3111,7 +3127,7 @@ impl Rig<'_> {
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         shared.fx = FxParams::OFF;
         for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.params.out.sends = [0.5; FX_SENDS];
+            part.params.out.sends = [SendLevel::new(0.5); FX_SENDS];
             part.mix.channel = MidiChannel::clamped(i as u8);
         }
         *shared.parts[0].params = a16_a17();
@@ -3165,7 +3181,7 @@ const WAKE_AT: u32 = 100;
 /// A live note on Part 1, its reverb send up, over Part 6's full chord.
 #[cfg(feature = "bench-stress")]
 fn wake_note(inst: &mut Instrument, shared: &mut AudioShared) {
-    shared.parts[0].params.out.sends = [0.0, 0.0, 0.5];
+    shared.parts[0].params.out.sends = [0.0, 0.0, 0.5].map(SendLevel::new);
     let ev = NoteEvent {
         channel: shared.parts[0].mix.channel,
         note: MidiNote::A4,
@@ -3177,7 +3193,7 @@ fn wake_note(inst: &mut Instrument, shared: &mut AudioShared) {
 /// Part 6's sends swept up from 0 under its held chord.
 #[cfg(feature = "bench-stress")]
 fn wake_send(_: &mut Instrument, shared: &mut AudioShared) {
-    shared.parts[MAX_PARTS - 1].params.out.sends = [0.5; FX_SENDS];
+    shared.parts[MAX_PARTS - 1].params.out.sends = [SendLevel::new(0.5); FX_SENDS];
 }
 
 /// QUAD at its worst with SIZE still, so the ring may sleep before a wake.
@@ -3748,7 +3764,7 @@ fn publish_new(
         if p == MAX_PARTS - 1 {
             sound.params = a16_a17();
         }
-        sound.params.out.sends = [0.5; FX_SENDS];
+        sound.params.out.sends = [SendLevel::new(0.5); FX_SENDS];
         *count = count.next();
         shared.publish_sound(p, sound, *count, knobs);
     }

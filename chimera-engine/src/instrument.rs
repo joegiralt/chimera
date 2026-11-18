@@ -17,7 +17,6 @@ use chimera_hal::BLOCK_SIZE;
 use chimera_hal::card_bus::CardFault;
 use chimera_hal::units::StreamCount;
 
-use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
@@ -28,6 +27,7 @@ use crate::dsp::rev::RevBill;
 use crate::dsp::rev::sync::Tempo;
 use crate::dsp::tape_engine::{COST_STREAM, Heads, TapeEngine};
 use crate::dsp::voice::{HighNote, Own, Voice};
+use crate::dsp::{Gain, Stereo};
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
@@ -610,20 +610,26 @@ fn mix_sided(
         let (gl, gr) = mix.pan_gains(p, part.mix.pan);
         // Expression swells the whole Part, its FX feed too (ADR 0263):
         // 1.0, every gain bit for bit, at 127.
-        let x = crate::part::expressed(1.0, part.expression);
-        let [s0, s1, s2] = part.params.out.sends.map(|s| s * x);
-        let level = part.mix.level * x;
-        let to = [gl * level, gr * level, s0, s1, s2];
+        let x = Gain::new(crate::part::expressed(1.0, part.expression));
+        let [s0, s1, s2] = part.params.out.sends.map(|s| s.gain().times(x));
+        let level = Gain::new(part.mix.level).times(x);
+        let to: [Gain; MIX_GAINS] = [
+            Gain::new(gl).times(level),
+            Gain::new(gr).times(level),
+            s0,
+            s1,
+            s2,
+        ];
         let eases = &mut mix.gains[p];
         // A part with no voices this block has a silent bus: nothing to
         // add, and its gains land unheard.
         if !written[p] {
-            for (e, &t) in eases.iter_mut().zip(&to) {
-                e.land(t);
+            for (e, t) in eases.iter_mut().zip(to) {
+                e.land(t.get());
             }
             continue;
         }
-        let g: [(f32, f32); MIX_GAINS] = core::array::from_fn(|j| eases[j].step(to[j], k));
+        let g: [(f32, f32); MIX_GAINS] = core::array::from_fn(|j| eases[j].step(to[j].get(), k));
         let bus = &buses[p];
         src[n] = (bus, [g[2].0, g[3].0, g[4].0]);
         n += 1;

@@ -581,7 +581,8 @@ name = "TINZ"
 # frames, a resonant SEM low-pass under the LPG, an octave down with GLIDE;
 # LFO 1 walks POSITION once the mod wheel opens its DEPTH (CC1, at 0).
 # Its values as the unit stored them, its own filter STAB 0.5 among them;
-# OUT LEVEL 22/128 is its trim.
+# OUT LEVEL 22/128 is its trim. Its sends are re-voiced for the send
+# taper (ADR 0278): the level whose square is the gain it stored.
 source = "WAVE MORPH"
 model = "SCRUB"
 position = "0.14233711"
@@ -603,8 +604,8 @@ ENV1.ATK = "0"
 ENV1.SUS = "1"
 ENV1.SPEED = "FAST"
 LFO1.DEPTH = "0"
-OUT.SEND2 = "0.0703125"
-OUT.SEND3 = "0.1796875"
+OUT.SEND2 = "0.265625"
+OUT.SEND3 = "0.421875"
 OUT.LPG = "0.2890625"
 OUT.DECAY = "0.40625"
 OUT.STRIKE = "0.328125"

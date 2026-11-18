@@ -16,6 +16,7 @@ use chimera_core::block::{Block, DiskCode};
 use chimera_core::dsp::chorus::{ChorusMode, MODE_NAMES};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxParams};
 use chimera_core::dsp::reverb::ReverbType;
+use chimera_core::dsp::{Gain, SendLevel};
 use chimera_core::name::ProjectName;
 use chimera_core::part::PartMode;
 use chimera_core::part::PartParams;
@@ -353,19 +354,20 @@ fn sound_of<'a>(p: &DemoPart, sounds: &'a [Source]) -> Result<&'a Source, String
     Ok(s)
 }
 
-/// The least send into an effect that counts as hearing it.
-pub const MIN_SEND: f32 = 0.1;
+/// The least gain into an effect that counts as hearing it (−20 dB).
+pub const MIN_SEND: Gain = Gain::new(0.1);
 
 /// What `fx` plays audibly when Parts send `sends` (each effect's most).
 /// An effect is heard when `MIN_SEND` or more reaches it, its return is
 /// above 0 and it is on; the reverb's send includes the delay's REV SEND.
-pub fn heard(fx: &FxParams, sends: [f32; FX_SENDS]) -> Vec<Effect> {
+pub fn heard(fx: &FxParams, sends: [SendLevel; FX_SENDS]) -> Vec<Effect> {
+    let fed = |s: SendLevel| s.gain() >= MIN_SEND;
     let [chorus, delay, reverb] = sends;
-    let delay_on = delay >= MIN_SEND && fx.delay.mix > 0.0;
-    let reverb_in = reverb >= MIN_SEND || (delay_on && fx.delay.rev_send >= MIN_SEND);
+    let delay_on = fed(delay) && fx.delay.mix > 0.0;
+    let reverb_in = fed(reverb) || (delay_on && fed(fx.delay.rev_send));
     let mode = ChorusMode::from_u8(fx.chorus.mode);
     let mut out = Vec::new();
-    if chorus >= MIN_SEND && fx.chorus.mix > 0.0 && mode != ChorusMode::Off {
+    if fed(chorus) && fx.chorus.mix > 0.0 && mode != ChorusMode::Off {
         out.push(Effect::Chorus(mode));
     }
     if delay_on {
@@ -379,11 +381,13 @@ pub fn heard(fx: &FxParams, sends: [f32; FX_SENDS]) -> Vec<Effect> {
 
 /// Its own FX, then each `hear` setting, with what each is heard through.
 pub fn settings(d: &Demo, sounds: &[Source]) -> Result<Vec<Setting>, String> {
-    let mut sends = [0.0f32; FX_SENDS];
+    let mut sends = [SendLevel::OFF; FX_SENDS];
     for p in &d.parts {
         let s = source::to_sound(sound_of(p, sounds)?)?.params.out.sends;
         for (m, v) in sends.iter_mut().zip(s) {
-            *m = m.max(v);
+            if v > *m {
+                *m = v;
+            }
         }
     }
     Ok(std::iter::once(d.fx)
