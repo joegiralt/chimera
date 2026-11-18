@@ -505,7 +505,7 @@ pub static PART_SPECS: [ParamSpec; 14] = [
         Change::Snap,
     )
     .ident("LO_CUT")
-    .glyph(crate::glyph::FocusGlyph::None),
+    .glyph(crate::glyph::FocusGlyph::Switch),
 ];
 
 /// LO CUT's choices, by `LoCut::code`.
