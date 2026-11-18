@@ -362,15 +362,34 @@ fn a_part_above_its_reserve_loses_down_to_it() {
     assert_eq!(got, [0, 1, 2, 5], "three of Part 0's, then Part 1's own");
 }
 
+/// The owner's ruling (2026-11-18): RESERVE guards held notes only. A
+/// guarded Part's released tail is fair game for another Part, and only
+/// its held notes count toward the reserve.
 #[test]
-fn a_tail_of_a_guarded_part_is_kept_too() {
+fn a_tail_of_a_guarded_part_is_fair_game() {
     let mut a = limited(&[reserved(0, 1)]);
     on(&mut a, 0, 60);
     a.release(0);
     for i in 0..7 {
         on(&mut a, 1, 70 + i);
     }
-    assert_eq!(voice(on(&mut a, 1, 80)), 1, "Part 1's oldest held");
+    assert_eq!(voice(on(&mut a, 1, 80)), 0, "Part 1's tail, oldest first");
+}
+
+/// Two held notes and a tail on RESERVE 2: the held ones count, so the
+/// Part is at its reserve and both held notes are guarded; the tail goes.
+#[test]
+fn only_held_notes_count_toward_the_reserve() {
+    let mut a = limited(&[reserved(0, 2)]);
+    for i in 0..3 {
+        on(&mut a, 0, 60 + i);
+    }
+    a.release(2);
+    for i in 0..5 {
+        on(&mut a, 1, 70 + i);
+    }
+    assert_eq!(voice(on(&mut a, 1, 80)), 2, "the tail");
+    assert_eq!(voice(on(&mut a, 1, 81)), 3, "then Part 2's own: both held guarded");
 }
 
 #[test]
@@ -396,32 +415,41 @@ fn a_reserve_takes_nothing_while_voices_are_free() {
 // Shed
 // ---------------------------------------------------------------------------
 
-/// Part 0's tails on RESERVE 4, Part 1's held notes: a shed takes Part
-/// 1's newest held note before any guarded tail, and a guarded voice only
-/// once none else is left.
+/// Part 1's older held notes, Part 0's newer ones on RESERVE 4: a shed
+/// takes Part 1's newest held note before any guarded one (today's order
+/// would take Part 0's newest first), and a guarded voice only once none
+/// else is left.
 #[test]
 fn a_shed_takes_guarded_voices_last() {
-    let mut a = limited(&[reserved(0, 4)]);
-    for i in 0..4 {
-        on(&mut a, 0, 60 + i);
-        a.release(i as usize);
-    }
-    for i in 0..4 {
-        on(&mut a, 1, 70 + i);
-    }
+    let fill = |a: &mut Allocator| {
+        for i in 0..4 {
+            on(a, 1, 70 + i);
+        }
+        for i in 0..4 {
+            on(a, 0, 60 + i);
+        }
+    };
     let mut plain = Allocator::new(BUDGET);
-    for i in 0..4 {
-        on(&mut plain, 0, 60 + i);
-        plain.release(i as usize);
-    }
-    for i in 0..4 {
-        on(&mut plain, 1, 70 + i);
-    }
-    assert_eq!(plain.shed_one(|_| true), VoiceIdx::new(0), "today: a tail");
+    fill(&mut plain);
+    assert_eq!(plain.shed_one(|_| true), VoiceIdx::new(7), "today: the newest");
+    let mut a = limited(&[reserved(0, 4)]);
+    fill(&mut a);
     let order: Vec<usize> = std::iter::from_fn(|| a.shed_one(|_| true))
         .map(VoiceIdx::index)
         .collect();
-    assert_eq!(order, [7, 6, 5, 4, 0, 1, 2, 3]);
+    assert_eq!(order, [3, 2, 1, 0, 7, 6, 5, 4]);
+}
+
+/// A guarded Part's tail is shed as any tail is, ahead of every held note.
+#[test]
+fn a_guarded_parts_tail_sheds_first() {
+    let mut a = limited(&[reserved(0, 4)]);
+    for i in 0..3 {
+        on(&mut a, 0, 60 + i);
+    }
+    a.release(0);
+    on(&mut a, 1, 70);
+    assert_eq!(a.shed_one(|_| true), VoiceIdx::new(0));
 }
 
 // ---------------------------------------------------------------------------

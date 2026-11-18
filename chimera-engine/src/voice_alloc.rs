@@ -16,8 +16,9 @@
 //!    A DRUM hit whose pad has live voices of its own (STACK) steals only
 //!    from them (`pick_hit`, ADR 0280).
 //!    A Part at its MAX VOICES cap takes no free voice: rules 3 and 4 steal
-//!    only its own. A Part at or below its RESERVE is guarded: another Part's
-//!    note never steals its voices, and a shed takes them last (ADR 0281).
+//!    only its own. A Part with no more held notes than its RESERVE is
+//!    guarded: another Part's note never steals those held notes, and a
+//!    shed takes them last; its released tails are fair game (ADR 0281).
 //! 5. Note-off releases the voice (`release`); the voice is free once its
 //!    engine reports inactive (`release_finished`), so tails ring out.
 //!
@@ -270,9 +271,24 @@ impl Allocator {
         }
     }
 
-    /// The live voices of every Part but `but` at or below its reserve:
-    /// what another Part's note may not steal (ADR 0281). Empty with no
-    /// reserve set.
+    /// Part `part`'s held notes: live, key still down. Only these count
+    /// toward a reserve (the owner's ruling, 2026-11-18).
+    #[inline(never)]
+    #[optimize(size)]
+    fn held(&self, part: PartId) -> VoiceSet {
+        let mut s = VoiceSet::EMPTY;
+        for v in VoiceIdx::ALL {
+            let slot = self.slot(v);
+            if slot.part == Some(part) && slot.dying.is_none() && slot.held {
+                s = s.with(v);
+            }
+        }
+        s
+    }
+
+    /// The held notes of every Part but `but` with no more of them than its
+    /// reserve: what another Part's note may not steal (ADR 0281). A
+    /// released tail is never guarded. Empty with no reserve set.
     #[inline(never)]
     #[optimize(size)]
     fn guarded(&self, but: Option<PartId>) -> VoiceSet {
@@ -282,8 +298,8 @@ impl Allocator {
         }
         for v in VoiceIdx::ALL {
             let s = self.slot(v);
-            if let Some(q) = s.part.filter(|&q| s.dying.is_none() && Some(q) != but)
-                && self.shares.ask(q).reserve.guards(self.live(q).count())
+            if let Some(q) = s.part.filter(|&q| s.dying.is_none() && s.held && Some(q) != but)
+                && self.shares.ask(q).reserve.guards(self.held(q).count())
             {
                 g = g.with(v);
             }
