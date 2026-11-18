@@ -11,7 +11,7 @@ use chimera_theory::Note;
 
 use chimera_hal::units::BytesPerSec;
 
-use super::{AudioShared, Instrument, NoteOrigin, Paid, part_id};
+use super::{AudioShared, Instrument, NoteOrigin, Paid};
 use crate::MidiNote;
 use crate::hw::{Cost, MAX_VOICES};
 use crate::params::EngineType;
@@ -156,12 +156,7 @@ impl Instrument {
         let part = &shared.parts[p.index()];
         let mut top = note;
         if part.params.pitch.steal_glide().is_some() {
-            for s in self
-                .alloc
-                .slots()
-                .iter()
-                .filter(|s| s.part() == Some(p.index() as u8))
-            {
+            for s in self.alloc.slots().iter().filter(|s| s.part() == Some(p)) {
                 top = top.max(s.note().unwrap_or(top));
             }
         }
@@ -288,8 +283,10 @@ impl Instrument {
     /// `Steal(v)` frees one more, released first, the oldest (umbrella open
     /// question 2). A voice still fading counts until it is freed; a shed
     /// one goes first. Under a card fault nothing streams: refused, no
-    /// voice stolen.
-    fn admit_stream(&self, new: Bill, gone: VoiceSet, fault: CardFault) -> Admit {
+    /// voice stolen. Only a voice the note's Part may steal goes
+    /// (`Allocator::stealable`: its own at its cap, never a guarded Part's,
+    /// ADR 0281).
+    fn admit_stream(&self, new: Bill, gone: VoiceSet, part: PartId, fault: CardFault) -> Admit {
         if fault == CardFault::Read {
             return Admit::Refuse;
         }
@@ -300,7 +297,7 @@ impl Instrument {
                 let b = s.billed().filter(|_| !gone.contains(v))?;
                 Some((v, b, self.age_now(v, s.age)))
             });
-        admit(new, playing, STREAM_BUDGET_BPS)
+        admit(new, playing, STREAM_BUDGET_BPS, self.alloc.stealable(part))
     }
 
     /// Voice `v`'s age as a steal sees it: shed or cut this block (dying
@@ -315,9 +312,13 @@ impl Instrument {
 
     /// Admits voice `v`'s bill `new` mid-note (#595): only released voices
     /// go, each fading out as a shed one does; a held note is never cut.
-    /// False: it doesn't fit, nothing stolen.
+    /// Only voices `v`'s Part may steal go (ADR 0281). False: it doesn't
+    /// fit, nothing stolen.
     fn admit_mid(&mut self, v: VoiceIdx, new: Bill) -> bool {
         let mut gone = VoiceSet::EMPTY.with(v);
+        let Some(part) = self.alloc.slot(v).part() else {
+            return false;
+        };
         // Each steal adds a voice to `gone`: at most one a voice.
         for _ in 0..=MAX_VOICES {
             let st = &self.streaming;
@@ -333,7 +334,7 @@ impl Instrument {
                 .fold(0u32, |a, o| a.saturating_add(o.1.get()));
             let released = others().filter(|o| o.2.released());
             let room = BytesPerSec::new(STREAM_BUDGET_BPS.get().saturating_sub(held));
-            match admit(new, released, room) {
+            match admit(new, released, room, self.alloc.stealable(part)) {
                 Admit::Ok => return true,
                 Admit::Steal(w) => {
                     gone = gone.with(w);
@@ -395,7 +396,7 @@ impl Instrument {
                 note,
                 source: voice.reads()[0],
             };
-            let Some(new) = self.bill_in(part_id(q), shared, src, at) else {
+            let Some(new) = self.bill_in(q, shared, src, at) else {
                 continue;
             };
             if self.streaming[v].paid.is_some() {
@@ -435,7 +436,7 @@ impl Instrument {
             let v = vi.index();
             let s = self.alloc.slots()[v];
             let replaces = !s.dying()
-                && s.part() == Some(at.part.index() as u8)
+                && s.part() == Some(at.part)
                 && (at.mode == PartMode::Mono || s.note() == Some(at.note));
             if replaces && glides && self.voices[v].is_active() && self.streaming[v].paid.is_some()
             {
@@ -443,7 +444,7 @@ impl Instrument {
                 return Some((v, self.streaming[v].paid));
             }
             let ask = if replaces { gone.with(vi) } else { gone };
-            match self.admit_stream(new.bill, ask, fault) {
+            match self.admit_stream(new.bill, ask, at.part, fault) {
                 Admit::Ok => return Some((v, Some(new))),
                 Admit::Steal(w) => {
                     gone = gone.with(w);

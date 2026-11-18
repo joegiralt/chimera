@@ -2,35 +2,64 @@
 //! Part never grows past (at it, a new note steals one of its own), and
 //! RESERVE, a floor at or below which another Part's note can't steal its
 //! voices. The defaults, AUTO and 0, change nothing.
+//!
+//! The rule an edit must keep (`Shares::refusal`) lives here, once: a
+//! Part's reserve within its own cap (`VoiceLimit`), the six reserves
+//! within the pool (`Limits`). A project saved past it (an old or
+//! hand-edited file) loads as it is, an explicit second type (`Over`),
+//! plays as saved and may only come down.
 
 use crate::hw::{MAX_PARTS, MAX_VOICES};
 use crate::project::PartId;
 
-/// A number of voices, 0..=`MAX_VOICES` by construction.
+/// A number of voices, 0..=`POOL` by construction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VoiceCount(u8);
 
-const _: () = assert!(MAX_VOICES <= u8::MAX as usize);
+const _: () = assert!(MAX_VOICES < u8::MAX as usize);
 
 impl VoiceCount {
     pub const ZERO: VoiceCount = VoiceCount(0);
     /// The whole pool.
     pub const POOL: VoiceCount = VoiceCount(MAX_VOICES as u8);
+    /// How many counts there are, 0 to `POOL`: each cell's list length.
+    pub const VALUES: u8 = Self::POOL.0 + 1;
 
     pub const fn new(n: u8) -> Option<VoiceCount> {
-        if n as usize <= MAX_VOICES {
+        if n <= Self::POOL.0 {
             Some(VoiceCount(n))
         } else {
             None
         }
     }
 
+    /// `n`, held to the pool.
+    pub const fn saturating(n: u8) -> VoiceCount {
+        if n <= Self::POOL.0 {
+            VoiceCount(n)
+        } else {
+            Self::POOL
+        }
+    }
+
+    /// A cell's stored value: truncated, then held to the pool (NaN and
+    /// below 0 are 0).
+    pub fn from_f32(v: f32) -> VoiceCount {
+        // `as` saturates: NaN and negatives are 0, past 255 is 255.
+        Self::saturating(v as u8)
+    }
+
     pub const fn get(self) -> u8 {
         self.0
     }
+
+    /// `delta` along 0..=`POOL`, saturating at both ends.
+    pub const fn stepped(self, delta: i8) -> VoiceCount {
+        Self::saturating(self.0.saturating_add_signed(delta))
+    }
 }
 
-/// A cap: 1..=`MAX_VOICES` by construction (a Part always gets a voice).
+/// A cap: 1..=`POOL` by construction (a Part always gets a voice).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VoiceCap(VoiceCount);
 
@@ -47,7 +76,22 @@ impl VoiceCap {
     }
 }
 
-/// MAX VOICES: none (AUTO, the pool's rules alone) or a cap.
+/// A list's end: where MIX + turn runs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edge {
+    Low,
+    High,
+}
+
+impl Edge {
+    /// The end a turn of `delta` runs to.
+    pub const fn of(delta: i8) -> Edge {
+        if delta > 0 { Edge::High } else { Edge::Low }
+    }
+}
+
+/// MAX VOICES: none (AUTO, the pool's rules alone) or a cap. Its cell
+/// lists AUTO, then 1 to 8: a choice's place is its code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MaxVoices {
     #[default]
@@ -56,9 +100,6 @@ pub enum MaxVoices {
 }
 
 impl MaxVoices {
-    /// The cell's list: AUTO, then 1..=8; a choice's code is its place.
-    pub const LAST: u8 = MAX_VOICES as u8;
-
     /// A Part with `live` voices may not take another: steal its own.
     pub const fn reached(self, live: VoiceCount) -> bool {
         match self {
@@ -84,16 +125,50 @@ impl MaxVoices {
             None => None,
         }
     }
+
+    /// Place `c` in the list (0 AUTO, else a cap of `c`): total, as every
+    /// count is a place.
+    pub const fn at(c: VoiceCount) -> MaxVoices {
+        match VoiceCap::new(c.0) {
+            Some(cap) => MaxVoices::Cap(cap),
+            None => MaxVoices::Auto,
+        }
+    }
+
+    /// A cell's stored value, held to the list.
+    pub fn from_f32(v: f32) -> MaxVoices {
+        Self::at(VoiceCount::from_f32(v))
+    }
+
+    /// `delta` along the list, saturating.
+    pub const fn stepped(self, delta: i8) -> MaxVoices {
+        Self::at(VoiceCount(self.code()).stepped(delta))
+    }
+
+    /// The list's end `e`: AUTO or a cap of the pool.
+    pub const fn ended(e: Edge) -> MaxVoices {
+        match e {
+            Edge::Low => MaxVoices::Auto,
+            Edge::High => MaxVoices::Cap(VoiceCap(VoiceCount::POOL)),
+        }
+    }
 }
 
-/// RESERVE: the voices of a Part no other Part's note may steal.
+/// RESERVE: the voices of a Part no other Part's note may steal. Its cell
+/// lists 0 to 8.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Reserve(pub VoiceCount);
+pub struct Reserve(VoiceCount);
 
 impl Reserve {
     pub const NONE: Reserve = Reserve(VoiceCount::ZERO);
-    /// The cell's last code: the whole pool.
-    pub const LAST: u8 = MAX_VOICES as u8;
+
+    pub const fn new(n: VoiceCount) -> Reserve {
+        Reserve(n)
+    }
+
+    pub const fn count(self) -> VoiceCount {
+        self.0
+    }
 
     /// A Part with `live` voices is at or below it: guarded. A Part with a
     /// voice counts at least 1, so `NONE` guards nothing.
@@ -111,13 +186,75 @@ impl Reserve {
             None => None,
         }
     }
+
+    /// A cell's stored value, held to the list.
+    pub fn from_f32(v: f32) -> Reserve {
+        Reserve(VoiceCount::from_f32(v))
+    }
+
+    pub const fn stepped(self, delta: i8) -> Reserve {
+        Reserve(self.0.stepped(delta))
+    }
+
+    pub const fn ended(e: Edge) -> Reserve {
+        match e {
+            Edge::Low => Reserve::NONE,
+            Edge::High => Reserve(VoiceCount::POOL),
+        }
+    }
 }
 
-/// A Part's MAX VOICES and RESERVE.
+/// A reserve over its own Part's cap: it can't be honoured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverCap {
+    reserve: Reserve,
+    cap: VoiceCap,
+}
+
+impl OverCap {
+    pub const fn reserve(self) -> Reserve {
+        self.reserve
+    }
+
+    pub const fn cap(self) -> VoiceCap {
+        self.cap
+    }
+}
+
+/// A Part's two cells as set or saved, lawful or not: what the Part block
+/// holds, and what an old project may load past the rule.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct VoiceLimit {
+pub struct Asked {
     pub max: MaxVoices,
     pub reserve: Reserve,
+}
+
+impl Asked {
+    pub const AUTO: Asked = Asked {
+        max: MaxVoices::Auto,
+        reserve: Reserve::NONE,
+    };
+
+    /// The pair, if its reserve is within its cap.
+    pub const fn lawful(self) -> Result<VoiceLimit, OverCap> {
+        VoiceLimit::new(self.max, self.reserve)
+    }
+
+    /// By how many voices the reserve passes the cap: 0 when lawful.
+    pub const fn over_cap(self) -> u8 {
+        match self.max {
+            MaxVoices::Cap(c) => self.reserve.code().saturating_sub(c.0.0),
+            MaxVoices::Auto => 0,
+        }
+    }
+}
+
+/// A Part's MAX VOICES and RESERVE, its reserve within its cap by
+/// construction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VoiceLimit {
+    max: MaxVoices,
+    reserve: Reserve,
 }
 
 impl VoiceLimit {
@@ -126,11 +263,83 @@ impl VoiceLimit {
         max: MaxVoices::Auto,
         reserve: Reserve::NONE,
     };
+
+    pub const fn new(max: MaxVoices, reserve: Reserve) -> Result<VoiceLimit, OverCap> {
+        match max {
+            MaxVoices::Cap(cap) if reserve.0.0 > cap.0.0 => Err(OverCap { reserve, cap }),
+            _ => Ok(VoiceLimit { max, reserve }),
+        }
+    }
+
+    pub const fn max(self) -> MaxVoices {
+        self.max
+    }
+
+    pub const fn reserve(self) -> Reserve {
+        self.reserve
+    }
+
+    pub const fn asked(self) -> Asked {
+        Asked {
+            max: self.max,
+            reserve: self.reserve,
+        }
+    }
 }
 
-/// Each Part's limit, as the allocator reads them.
+/// The six Parts' reserves summed, within the pool by construction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Booked(VoiceCount);
+
+/// The six Parts' reserves summed past the pool: they can't all hold.
+/// 9..=48 (`MAX_PARTS` × `POOL`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Overbooked(u8);
+
+const _: () = assert!(MAX_PARTS * MAX_VOICES <= u8::MAX as usize);
+
+impl Booked {
+    pub const fn new(sum: u8) -> Option<Booked> {
+        match VoiceCount::new(sum) {
+            Some(n) => Some(Booked(n)),
+            None => None,
+        }
+    }
+
+    /// The reserves `r` summed: booked, or past the pool.
+    pub fn sum(r: impl Iterator<Item = Reserve>) -> Result<Booked, Overbooked> {
+        // At most `MAX_PARTS` × `POOL`: no overflow (asserted above).
+        let n = r.map(Reserve::code).fold(0u8, u8::saturating_add);
+        Booked::new(n).ok_or(Overbooked(n))
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0.0
+    }
+}
+
+impl Overbooked {
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Why an edit can't be honoured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Limits([VoiceLimit; MAX_PARTS]);
+pub enum Refusal {
+    /// The Part's RESERVE over its own MAX VOICES.
+    OverCap(OverCap),
+    /// The six Parts' reserves past the pool.
+    Overbooked(Overbooked),
+}
+
+/// Each Part's limit, lawful: each reserve within its cap, the reserves
+/// within the pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    parts: [VoiceLimit; MAX_PARTS],
+    booked: Booked,
+}
 
 impl Default for Limits {
     fn default() -> Self {
@@ -139,46 +348,148 @@ impl Default for Limits {
 }
 
 impl Limits {
-    pub const AUTO: Limits = Limits([VoiceLimit::AUTO; MAX_PARTS]);
-
-    pub fn of(f: impl Fn(PartId) -> VoiceLimit) -> Limits {
-        Limits(PartId::ALL.map(f))
-    }
+    pub const AUTO: Limits = Limits {
+        parts: [VoiceLimit::AUTO; MAX_PARTS],
+        booked: Booked(VoiceCount::ZERO),
+    };
 
     pub const fn get(&self, p: PartId) -> VoiceLimit {
-        self.0[p.index()]
+        self.parts[p.index()]
     }
 
-    pub fn set(&mut self, p: PartId, l: VoiceLimit) {
-        self.0[p.index()] = l;
+    /// Part `p` to `l`, if the reserves still fit the pool.
+    pub fn try_set(&mut self, p: PartId, l: VoiceLimit) -> Result<(), Refusal> {
+        let mut parts = self.parts;
+        parts[p.index()] = l;
+        let booked = Booked::sum(parts.iter().map(|l| l.reserve)).map_err(Refusal::Overbooked)?;
+        *self = Limits { parts, booked };
+        Ok(())
     }
 
-    /// Every limit AUTO: the allocator's plain rules (its fast path).
-    pub fn is_auto(&self) -> bool {
-        *self == Limits::AUTO
-    }
-
-    /// The six reserves summed: over `MAX_VOICES` they can't all hold.
-    pub fn booked(&self) -> Booked {
-        Booked(self.0.iter().map(|l| l.reserve.0.0).sum())
+    /// The reserves booked.
+    pub const fn booked(&self) -> Booked {
+        self.booked
     }
 }
 
-/// The Parts' reserves summed, 0..=`MAX_PARTS` × `MAX_VOICES`: the pool
-/// holds `MAX_VOICES` of them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Booked(u8);
+/// Each Part's pair as saved past the rule: plays as saved and may only
+/// come down (ADR 0281).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Over([Asked; MAX_PARTS]);
 
-const _: () = assert!(MAX_PARTS * MAX_VOICES <= u8::MAX as usize);
-
-impl Booked {
-    pub const fn get(self) -> u8 {
-        self.0
+impl Over {
+    pub const fn get(&self, p: PartId) -> Asked {
+        self.0[p.index()]
     }
 
-    /// Past what the pool holds, the reserves can't all be honoured: by
-    /// how many.
-    pub const fn excess(self) -> u8 {
-        self.0.saturating_sub(MAX_VOICES as u8)
+    /// The reserves summed, past the pool or not.
+    fn sum(&self) -> u8 {
+        self.0
+            .iter()
+            .map(|a| a.reserve.code())
+            .fold(0, u8::saturating_add)
+    }
+
+    /// By how many voices the reserves pass the pool.
+    fn overbooked(&self) -> u8 {
+        self.sum().saturating_sub(VoiceCount::POOL.0)
+    }
+}
+
+/// What the allocator plays and an edit is judged against: a lawful set,
+/// or one saved past the rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shares {
+    Lawful(Limits),
+    Over(Over),
+}
+
+impl Default for Shares {
+    fn default() -> Self {
+        Shares::AUTO
+    }
+}
+
+impl Shares {
+    pub const AUTO: Shares = Shares::Lawful(Limits::AUTO);
+
+    /// The six Parts' pairs as held: lawful, or loaded past the rule.
+    pub fn of(asks: [Asked; MAX_PARTS]) -> Shares {
+        let mut l = Limits::AUTO;
+        for (p, a) in PartId::ALL.into_iter().zip(asks) {
+            let fits = a.lawful().ok().is_some_and(|v| l.try_set(p, v).is_ok());
+            if !fits {
+                return Shares::Over(Over(asks));
+            }
+        }
+        Shares::Lawful(l)
+    }
+
+    /// Part `p`'s pair.
+    pub const fn ask(&self, p: PartId) -> Asked {
+        match self {
+            Shares::Lawful(l) => l.get(p).asked(),
+            Shares::Over(o) => o.get(p),
+        }
+    }
+
+    /// The reserves summed, past the pool or not.
+    pub fn reserved(&self) -> u8 {
+        match self {
+            Shares::Lawful(l) => l.booked().get(),
+            Shares::Over(o) => o.sum(),
+        }
+    }
+
+    /// Why Part `p` may not become `to`, if it may not: the one rule of
+    /// ADR 0281. A lawful set refuses anything past the rule; a set saved
+    /// past it refuses an edit that raises either excess, its reserve over
+    /// its cap or the reserves over the pool, so it may only come down.
+    pub fn refusal(&self, p: PartId, to: Asked) -> Option<Refusal> {
+        match self {
+            Shares::Lawful(l) => match to.lawful() {
+                Err(o) => Some(Refusal::OverCap(o)),
+                Ok(v) => {
+                    let mut next = *l;
+                    next.try_set(p, v).err()
+                }
+            },
+            Shares::Over(o) => {
+                if to.over_cap() > o.get(p).over_cap()
+                    && let Err(over) = to.lawful()
+                {
+                    return Some(Refusal::OverCap(over));
+                }
+                let mut next = *o;
+                next.0[p.index()] = to;
+                match Booked::sum(next.0.iter().map(|a| a.reserve)) {
+                    Err(b) if next.overbooked() > o.overbooked() => Some(Refusal::Overbooked(b)),
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
+/// What an edit of Part `p`'s pair is judged against: its own pair and the
+/// other Parts' reserves summed. Equal while neither changed, so a held
+/// refusal stands through any other edit (ADR 0281).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Seen {
+    own: Asked,
+    others: Result<Booked, Overbooked>,
+}
+
+impl Shares {
+    /// Part `p`'s `Seen`.
+    pub fn seen(&self, p: PartId) -> Seen {
+        let others = PartId::ALL
+            .into_iter()
+            .filter(|&q| q != p)
+            .map(|q| self.ask(q).reserve);
+        Seen {
+            own: self.ask(p),
+            others: Booked::sum(others),
+        }
     }
 }

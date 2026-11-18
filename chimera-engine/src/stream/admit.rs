@@ -8,7 +8,7 @@ use super::layout::{CHUNK_BYTES, RAW_CHUNK_BYTES};
 use super::units::{Blocks, Cents, SourceRate};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
-use crate::voice_alloc::VoiceIdx;
+use crate::voice_alloc::{VoiceIdx, VoiceSet};
 
 /// Head of a source kept in RAM, in milliseconds.
 pub const HEAD_MS: u32 = 100;
@@ -194,11 +194,14 @@ pub enum Admit {
 
 /// Admit `new` against `budget`. Released voices go before held, the oldest
 /// first, then the quietest held (`Age::rank`); a bill over the whole
-/// budget refuses outright.
+/// budget refuses outright. Only a voice in `stealable` may go: the note's
+/// Part's MAX VOICES and RESERVE (`Allocator::stealable`, ADR 0281); with
+/// none of them left to free room, refused.
 pub fn admit(
     new: Bill,
     playing: impl Iterator<Item = (VoiceIdx, Bill, Age)>,
     budget: BytesPerSec,
+    stealable: VoiceSet,
 ) -> Admit {
     let budget = budget.get();
     if new.0 > budget {
@@ -208,7 +211,7 @@ pub fn admit(
     let mut victim: Option<(VoiceIdx, Age)> = None;
     for (i, b, age) in playing {
         used = used.saturating_add(b.0);
-        let older = victim.is_none_or(|(_, v)| age.rank() > v.rank());
+        let older = stealable.contains(i) && victim.is_none_or(|(_, v)| age.rank() > v.rank());
         if older {
             victim = Some((i, age));
         }

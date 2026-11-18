@@ -50,7 +50,7 @@ fn play(snd: &Sound, mode: PartMode, hits: &[Hit], secs: f32) -> (Vec<f32>, Vec<
     let mut perf = Performance::new();
     let e = perf.edit(PartId::ALL[0]);
     **e.sound = snd.clone();
-    e.mix.mode = mode;
+    e.mix.set_mode(mode);
     let shared = Box::new(AudioShared::from_performance(&perf));
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,

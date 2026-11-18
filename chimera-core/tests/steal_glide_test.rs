@@ -5,6 +5,7 @@
 mod common;
 
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::project::PartId;
 use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::dsp::modal::{ResonatorMode, out_gain};
 use chimera_core::dsp::note_to_freq;
@@ -263,7 +264,7 @@ fn another_parts_steal_cuts() {
     assert!(ratios.iter().all(|&r| r == 1.0), "{ratios:?}");
     let s = rig.inst.allocator().slots();
     assert!(
-        s.iter().any(|s| s.part() == Some(1)),
+        s.iter().any(|s| s.part() == Some(PartId::ALL[1])),
         "Part 2 took the voice"
     );
 }

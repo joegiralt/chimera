@@ -391,7 +391,7 @@ fn slot_for(r: &common::InstRig, key: u8) -> Option<usize> {
         .allocator()
         .slots()
         .iter()
-        .position(|s| s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(key))
+        .position(|s| s.part() == Some(PartId::ALL[0]) && !s.dying() && s.note().map(|n| n.get()) == Some(key))
 }
 
 /// What Part 1's slot for `key` books.

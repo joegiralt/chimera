@@ -13,8 +13,10 @@ use crate::dsp::drum::groups::{KitChokes, VoiceGroups};
 use crate::dsp::drum::params::PadParams;
 use crate::dsp::drum::types::ChokeGroup;
 use crate::dsp::tape_engine::{Direction, NeedsRam, TapeEngineParams, TapeMachine};
+use crate::part::PartParams;
 use crate::preset::Sound;
 use crate::project::Line;
+use crate::voice_limit::{Asked, Edge, MaxVoices, Refusal, Reserve, Seen};
 
 /// The choice a turn stopped on, typed by its cell: the cell is the
 /// choice's, so the two can't disagree.
@@ -24,6 +26,8 @@ pub enum Held {
     Sound(Pick),
     /// A pad's CHOKE that makes a 9th voice group (ADR 0280).
     Choke(ChokeHold),
+    /// A Part's MAX VOICES or RESERVE that can't be honoured (ADR 0281).
+    Voices(VoicesHold),
 }
 
 /// A Sound's held choice.
@@ -115,6 +119,92 @@ impl TapeTurn {
 // MODEL and DIRECTION list four each: one index walks both.
 const _: () = assert!(TapeMachine::ALL.len() == Direction::ALL.len());
 
+/// A Part's MAX VOICES or RESERVE cell (ADR 0281).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceCell {
+    Max,
+    Reserve,
+}
+
+impl VoiceCell {
+    pub const fn addr(self) -> ParamAddr {
+        match self {
+            VoiceCell::Max => MAX_VOICES,
+            VoiceCell::Reserve => RESERVE,
+        }
+    }
+
+    /// The cell `a` is, if it is one of them.
+    pub fn of(a: ParamAddr) -> Option<VoiceCell> {
+        match a {
+            MAX_VOICES => Some(VoiceCell::Max),
+            RESERVE => Some(VoiceCell::Reserve),
+            _ => None,
+        }
+    }
+}
+
+/// A MAX VOICES or RESERVE choice: its own type, the cell with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceTurn {
+    Max(MaxVoices),
+    Reserve(Reserve),
+}
+
+impl VoiceTurn {
+    /// Cell `c`'s choice in `a`.
+    pub const fn of(c: VoiceCell, a: Asked) -> VoiceTurn {
+        match c {
+            VoiceCell::Max => VoiceTurn::Max(a.max),
+            VoiceCell::Reserve => VoiceTurn::Reserve(a.reserve),
+        }
+    }
+
+    pub const fn cell(self) -> VoiceCell {
+        match self {
+            VoiceTurn::Max(_) => VoiceCell::Max,
+            VoiceTurn::Reserve(_) => VoiceCell::Reserve,
+        }
+    }
+
+    /// The cell's stored value.
+    pub const fn code(self) -> u8 {
+        match self {
+            VoiceTurn::Max(m) => m.code(),
+            VoiceTurn::Reserve(r) => r.code(),
+        }
+    }
+
+    /// `a` with this choice in its cell.
+    pub const fn on(self, a: Asked) -> Asked {
+        match self {
+            VoiceTurn::Max(max) => Asked { max, ..a },
+            VoiceTurn::Reserve(reserve) => Asked { reserve, ..a },
+        }
+    }
+
+    /// Turned `delta` along its list, saturating; with `shift`, to its end
+    /// that way.
+    pub const fn step(self, delta: i8, shift: bool) -> VoiceTurn {
+        match (self, shift) {
+            (VoiceTurn::Max(_), true) => VoiceTurn::Max(MaxVoices::ended(Edge::of(delta))),
+            (VoiceTurn::Reserve(_), true) => VoiceTurn::Reserve(Reserve::ended(Edge::of(delta))),
+            (VoiceTurn::Max(m), false) => VoiceTurn::Max(m.stepped(delta)),
+            (VoiceTurn::Reserve(r), false) => VoiceTurn::Reserve(r.stepped(delta)),
+        }
+    }
+}
+
+/// A held MAX VOICES or RESERVE, and what it was judged against: the
+/// Part's own pair and the other Parts' reserves. A change to them (a
+/// load, another Part's RESERVE) drops it; any other edit (a CC on any
+/// Part) leaves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VoicesHold {
+    pub to: VoiceTurn,
+    pub seen: Seen,
+}
+
 /// A held CHOKE: the group, and the kit's chokes at the hold. The kit's
 /// chokes changed since (a kit loaded in, a CC on another pad) drop it;
 /// any other edit (another Part's, a pedal's) leaves it.
@@ -134,6 +224,7 @@ impl Held {
             Held::Sound(Pick::Alg(side, _)) => ParamAddr::new(BlockRef::Algo, side.param()),
             Held::Sound(Pick::Tape(t)) => t.addr(),
             Held::Choke(_) => CHOKE,
+            Held::Voices(v) => v.to.cell().addr(),
         }
     }
 
@@ -144,6 +235,7 @@ impl Held {
             Held::Sound(Pick::Alg(_, a)) => a.get(),
             Held::Sound(Pick::Tape(t)) => t.code(),
             Held::Choke(c) => c.to.index() as u8,
+            Held::Voices(v) => v.to.code(),
         }
     }
 }
@@ -155,6 +247,7 @@ pub enum Reason {
     Formant(Why),
     NeedsRam(NeedsRam),
     Groups(VoiceGroups),
+    Voices(Refusal),
 }
 
 impl From<Why> for Reason {
@@ -177,6 +270,11 @@ pub const DIRECTION: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngine
 
 /// A pad's CHOKE: a turn holds a 9th voice group (ADR 0280).
 pub const CHOKE: ParamAddr = ParamAddr::new(BlockRef::Pad, PadParams::CHOKE);
+
+/// A Part's MAX VOICES and RESERVE: a turn holds what can't be honoured
+/// (ADR 0281).
+pub const MAX_VOICES: ParamAddr = ParamAddr::new(BlockRef::Part, PartParams::MAX_VOICES);
+pub const RESERVE: ParamAddr = ParamAddr::new(BlockRef::Part, PartParams::RESERVE);
 
 /// The cell `a` is, if it is one this applies to (ALG A/B not with MIX).
 pub fn applies(a: ParamAddr, shift: bool) -> Option<Cell> {
@@ -264,6 +362,12 @@ pub fn reason(w: impl Into<Reason>) -> Line {
                 Some(super::kit_groups::Said::Line(l)) => l,
                 _ => Line::new(""),
             };
+        }
+        Reason::Voices(r) => {
+            // Bank 2's words (`part_voices`): closed, none.
+            let mut l = Line::new("");
+            crate::bank2::voices(super::part_voices::Ask::Why(r, &mut l));
+            return l;
         }
     };
     match w {

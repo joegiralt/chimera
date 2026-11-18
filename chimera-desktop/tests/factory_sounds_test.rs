@@ -2541,7 +2541,7 @@ fn demo_round_trips() {
         assert_eq!(sound_crc(&part.sound), sound_crc(&want), "Part {}", i + 1);
         assert_eq!(part.sound.params.out.sends, want.params.out.sends);
         assert_eq!(part.mix.channel, MidiChannel::new(i as u8).unwrap());
-        assert_eq!(part.mix.mode, PartMode::Poly);
+        assert_eq!(part.mix.mode(), PartMode::Poly);
         // From a pool slot, as a library load leaves it.
         assert!(
             matches!(part.origin(), Origin::Slot { .. }),
@@ -2654,9 +2654,9 @@ fn mono_part_mode_set() {
     let p =
         decoded(&run_demo(&demo_with(7, "part.2 = \"TEST TWO, MONO, CH 7\""), &sounds).unwrap());
     let two = p.part(PartId::ALL[1]);
-    assert_eq!(two.mix.mode, PartMode::Mono);
+    assert_eq!(two.mix.mode(), PartMode::Mono);
     assert_eq!(two.mix.channel, MidiChannel::new(6).unwrap());
-    assert_eq!(p.part(PartId::ALL[0]).mix.mode, PartMode::Poly);
+    assert_eq!(p.part(PartId::ALL[0]).mix.mode(), PartMode::Poly);
 }
 
 #[test]

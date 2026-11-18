@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::project::PartId;
 use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::Way;
 use chimera_core::stream::units::{Cents, SourceRate};
@@ -1012,7 +1013,7 @@ impl<'r> Played<'r> {
             .allocator()
             .slots()
             .iter()
-            .position(|s| s.part() == Some(part as u8) && s.note().map(MidiNote::get) == Some(note))
+            .position(|s| s.part() == Some(PartId::ALL[part as usize]) && s.note().map(MidiNote::get) == Some(note))
     }
 
     fn booked(&self) -> usize {
@@ -1249,7 +1250,7 @@ fn streamed_speed_stays_under_its_cap() {
         let mut pl = Played::new(st, src, &[(0, p)]);
         {
             let part = &mut pl.rig.shared.parts[0];
-            part.mix.mode = PartMode::Mono;
+            part.mix.set_mode(PartMode::Mono);
             part.params.pitch.steal = Steal::Glide;
             let mut ms = (*part.mod_state).clone();
             let pitch = ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH);
@@ -1681,7 +1682,7 @@ fn a_slice_note_glide_holds_pitch() {
         };
         let src = OneSource::new(&row);
         let mut pl = Played::new(st, src, &[(0, p)]);
-        pl.rig.shared.parts[0].mix.mode = PartMode::Mono;
+        pl.rig.shared.parts[0].mix.set_mode(PartMode::Mono);
         pl.rig.shared.parts[0].params.pitch.steal = Steal::Glide;
         pl.on(0, 60);
         for _ in 0..5 {

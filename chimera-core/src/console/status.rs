@@ -199,6 +199,7 @@ fn write_at(ui: &UiState, w: &mut impl Write) -> fmt::Result {
         Rung::Mixer(p, m) => {
             let page = match m {
                 MixPage::Part => "PART",
+                MixPage::Voices => "VOICES",
                 MixPage::Sends => "SENDS",
             };
             write!(w, "MIXER {} > {page}", p.index() + 1)

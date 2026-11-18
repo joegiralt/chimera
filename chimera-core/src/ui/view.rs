@@ -1149,6 +1149,32 @@ pub fn groups_note(
     }
 }
 
+/// What MAX VOICES' and RESERVE's focus band says (ADR 0281): on RESERVE
+/// the reserves booked across the Parts, `RESERVES 3/8` (bank 2's,
+/// `part_voices`); with the door closed, on either, that the rule is off.
+#[inline(never)]
+pub fn voices_note(
+    addr: ParamAddr,
+    parts: &[crate::preset::Part; crate::hw::MAX_PARTS],
+) -> Option<crate::project::Line> {
+    let cell = crate::ui::held::VoiceCell::of(addr)?;
+    let mut out = None;
+    let open = match cell {
+        crate::ui::held::VoiceCell::Reserve => {
+            crate::bank2::voices(crate::ui::part_voices::Ask::Note(parts, &mut out))
+        }
+        crate::ui::held::VoiceCell::Max => crate::bank2::ui_door(|_| ()),
+    };
+    match open {
+        Some(()) => out,
+        None => Some(crate::project::Line::new(RULE_OFF)),
+    }
+}
+
+/// MAX VOICES' and RESERVE's band with bank 2 closed: nothing checks
+/// them (ADR 0281).
+pub const RULE_OFF: &str = "NO VOICE RULE \u{b7} NEEDS UPDATE";
+
 /// What the focus band says in its hint's place about a TAPE cell: why
 /// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
 /// its loop head holds. Bank 2's (`walk::band_note_in`): closed, nothing.

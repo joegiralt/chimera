@@ -7,6 +7,7 @@ mod common;
 use common::{SR, peak, scope_writer};
 
 use chimera_core::dsp::engines::SlotKind;
+use chimera_core::project::PartId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::{ResonatorMode, take_cleared_bytes};
 use chimera_core::dsp::voice::Voice;
@@ -74,7 +75,7 @@ impl Stage {
         let mut shared = AudioShared::default();
         for (part, (p, mode)) in shared.parts.iter_mut().zip(parts) {
             *part.params = p.clone();
-            part.mix.mode = *mode;
+            part.mix.set_mode(*mode);
         }
         Self {
             inst: Box::new(Instrument::new(SR, budget)),
@@ -129,7 +130,7 @@ impl Stage {
         let slots = self.inst.allocator().slots();
         slots
             .iter()
-            .filter(|s| s.part() == Some(part as u8) && !s.dying())
+            .filter(|s| s.part() == Some(PartId::ALL[part as usize]) && !s.dying())
             .count()
     }
 
@@ -143,7 +144,7 @@ impl Stage {
         (0..MAX_VOICES)
             .find(|&v| {
                 let s = &slots[v];
-                s.held() && s.part() == Some(part as u8) && s.note() == MidiNote::new(n)
+                s.held() && s.part() == Some(PartId::ALL[part as usize]) && s.note() == MidiNote::new(n)
             })
             .unwrap_or_else(|| panic!("no voice plays {n} for part {part}"))
     }
@@ -319,7 +320,7 @@ fn other_models_keep_eight_voices() {
         }
         let slots = s.inst.allocator().slots();
         assert!(
-            slots.iter().all(|v| v.held() && v.part() == Some(0)),
+            slots.iter().all(|v| v.held() && v.part() == Some(PartId::ALL[0])),
             "{mode:?}: eight notes booked"
         );
         assert_eq!(s.inst.active(), [true; MAX_VOICES], "{mode:?}: eight sound");
@@ -745,7 +746,7 @@ fn a_note_waiting_across_a_switch_to_sympathetic_is_placed() {
     }
     let held_silent = (0..MAX_VOICES).any(|u| {
         let slot = s.inst.allocator().slots()[u];
-        slot.held() && slot.part() == Some(1) && !s.inst.active()[u]
+        slot.held() && slot.part() == Some(PartId::ALL[1]) && !s.inst.active()[u]
     });
     assert!(
         sounded || s.inst.allocator().refused() > 0,

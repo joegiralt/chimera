@@ -480,7 +480,7 @@ fn tails_ring_out_then_free_the_voice() {
     rig.inst.handle(off(0, 60), &shared);
     rig.block(&shared);
     assert!(peak(rig.inst.part_bus(0)) > 0.0, "tail");
-    assert_eq!(rig.inst.allocator().slots()[0].part(), Some(0));
+    assert_eq!(rig.inst.allocator().slots()[0].part(), Some(PartId::ALL[0]));
     let mut blocks = 0;
     while !rig.inst.allocator().slots()[0].is_free() {
         rig.block(&shared);
@@ -572,12 +572,12 @@ fn refused_notes_are_counted_and_silent() {
     }
     let mut shared = AudioShared::from_performance(&perf);
     for p in 0..MAX_PARTS {
-        shared.parts[p].mix.mode = PartMode::Mono;
+        shared.parts[p].mix.set_mode(PartMode::Mono);
         rig.inst.handle(on(p as u8, 60), &shared);
     }
     assert_eq!(rig.inst.allocator().refused(), 0);
     assert!(rig.inst.allocator().slots().iter().any(|s| s.is_free()));
-    shared.parts[0].mix.mode = PartMode::Poly;
+    shared.parts[0].mix.set_mode(PartMode::Poly);
     shared.parts[0].mix.channel = MidiChannel::new(9).unwrap();
     rig.inst.handle(on(9, 72), &shared);
     assert_eq!(rig.inst.allocator().refused(), 1);
@@ -1021,7 +1021,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
         let s = rig.inst.allocator().slots()[0];
         assert_eq!(
             (s.part(), s.note(), s.held()),
-            (Some(1), MidiNote::new(72), true),
+            (Some(PartId::ALL[1]), MidiNote::new(72), true),
             "{after_off}: voice 0 took it"
         );
         for b in 0..held {
@@ -1053,7 +1053,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
 fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
     let n = blocks_until_free();
     let mut init = AudioShared::default();
-    init.parts[0].mix.mode = PartMode::Mono;
+    init.parts[0].mix.set_mode(PartMode::Mono);
     let mut modal = init.clone();
     *modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
@@ -1116,7 +1116,7 @@ fn same_note_from_two_channels_releases_both_voices() {
             .allocator()
             .slots()
             .iter()
-            .filter(|s| s.part() == Some(0));
+            .filter(|s| s.part() == Some(PartId::ALL[0]));
         assert_eq!(part0.count(), 1, "one voice");
         let (first, second) = if ch4_first { (3, 0) } else { (0, 3) };
         rig.inst.handle(off(first, 60), &shared);
@@ -1289,7 +1289,7 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
     let held: Vec<_> = a
         .slots()
         .iter()
-        .filter(|s| s.part() == Some(0) && s.held() && !s.dying())
+        .filter(|s| s.part() == Some(PartId::ALL[0]) && s.held() && !s.dying())
         .collect();
     assert_eq!(held.len(), MAX_VOICES - 2, "no held note stolen");
     let (v, d) = slots_of(&rig, 40)[0];
@@ -1369,7 +1369,7 @@ fn full_pool(mode: PartMode) -> (Rig, AudioShared) {
     for q in [1, 2] {
         **p.edit(PartId::ALL[q]).sound = chimera_core::factory::factory_sound(4).unwrap();
     }
-    p.edit(PartId::ALL[1]).mix.mode = mode;
+    p.edit(PartId::ALL[1]).mix.set_mode(mode);
     let shared = AudioShared::from_performance(&p);
     let mut rig = Rig::new();
     for n in CHORD6 {

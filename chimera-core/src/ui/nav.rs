@@ -39,12 +39,19 @@ const fn mixer_page(node: usize) -> PageAt {
     }
 }
 const PART_PAGE: PageAt = mixer_page(MIXER_PART);
+/// PART's sub-page, VOICES (ADR 0281).
+const VOICES_PAGE: PageAt = match MIXER_CHANNEL_CHAIN.page(MIXER_PART, 1) {
+    Some(p) => p,
+    None => panic!("PART has VOICES"),
+};
 const SENDS_PAGE: PageAt = mixer_page(MIXER_HOME);
 const FX_FIRST_PAGE: PageAt = mixer_page(FX_FIRST as usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MixPage {
     Part,
+    /// PART's sub-page: MAX VOICES and RESERVE (ADR 0281).
+    Voices,
     Sends,
 }
 
@@ -61,6 +68,7 @@ impl MixPage {
     fn page(self) -> PageAt {
         match self {
             MixPage::Part => PART_PAGE,
+            MixPage::Voices => VOICES_PAGE,
             MixPage::Sends => SENDS_PAGE,
         }
     }
@@ -856,6 +864,15 @@ impl Location {
                 .map_or(Step::Stay, |at| go(Pages(p, at))),
             (Part(p, m), NavKey::Plus) => go(mix_walk(p, m, 1)),
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
+            // PART's sub-page, VOICES, is down from it (ADR 0281): EDIT
+            // under STACK, SEQ under ROW; EDIT on from it under STACK, the
+            // Sound rung.
+            (Part(p, m), k) if voices_step(m, k, cx.pages).is_some() => {
+                match voices_step(m, k, cx.pages) {
+                    Some(Some(m)) => go(Part(p, m)),
+                    _ => go(Sound(p, cx.opens[p.index()])),
+                }
+            }
             (Part(p, _), NavKey::Edit) => go(Sound(p, cx.opens[p.index()])),
             // The mixer is the top of its chain; the Sound rung is under it.
             (Part(..), NavKey::SeqTap) => Step::Stay,
@@ -938,9 +955,23 @@ impl Location {
 /// other Parts' by MIX+B*n* (owner, 2026-10-02).
 fn mix_walk(p: PartId, m: MixPage, d: i8) -> Loc {
     match (m, d > 0) {
-        (MixPage::Part, true) => Loc::Part(p, MixPage::Sends),
+        (MixPage::Part | MixPage::Voices, true) => Loc::Part(p, MixPage::Sends),
         (MixPage::Sends, true) => Loc::Fx(p, FX_FIRST_PAGE),
         (_, false) => Loc::Part(p, MixPage::Part),
+    }
+}
+
+/// A sub-page key on PART or VOICES (ADR 0281): `Some(Some(m))` to
+/// mixer page `m`, `Some(None)` down past VOICES to the Sound rung,
+/// `None` for any other key or page.
+fn voices_step(m: MixPage, k: NavKey, pages: Pages) -> Option<Option<MixPage>> {
+    match (m, sub_move(pages, k)?) {
+        (MixPage::Part, Move::Down) => Some(Some(MixPage::Voices)),
+        (MixPage::Voices, Move::Up) => Some(Some(MixPage::Part)),
+        // Under STACK, down is EDIT, the way to the Sound rung; under ROW
+        // it is SEQ, and the mixer stays its top (`SeqTap` stays).
+        (MixPage::Voices, Move::Down) if pages == Pages::Stack => Some(None),
+        _ => None,
     }
 }
 
@@ -1011,6 +1042,7 @@ fn skip_empty_rev(
 /// Part `n`'s mixer place showing `at`: PART, SENDS or an FX page.
 fn mix_loc(n: PartId, at: PageAt) -> Loc {
     match at.node() as usize {
+        MIXER_PART if at == VOICES_PAGE => Loc::Part(n, MixPage::Voices),
         MIXER_PART => Loc::Part(n, MixPage::Part),
         MIXER_HOME => Loc::Part(n, MixPage::Sends),
         _ => Loc::Fx(n, at),

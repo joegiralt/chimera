@@ -126,7 +126,7 @@ fn key(p: PadId) -> u8 {
 fn live(r: &common::InstRig) -> Vec<(usize, PadId)> {
     let slots = r.inst.allocator().slots();
     drum_hits(&r.inst)
-        .filter(|&(v, _)| slots[v].part() == Some(0) && !slots[v].dying())
+        .filter(|&(v, _)| slots[v].part() == Some(PartId::ALL[0]) && !slots[v].dying())
         .map(|(v, h)| (v, h.pad()))
         .collect()
 }
@@ -224,14 +224,18 @@ fn a_stack_pad_refuses_where_only_another_pads_voice_would_fit() {
     assert_eq!(before.len(), 2, "pad 11's tail and pad 1's KICK");
     let a = r.inst.allocator();
     let any = a.pick(
-        0,
+        P1,
         chimera_core::part::PartMode::Poly,
         chimera_core::MidiNote::new(key(pad(1))).unwrap(),
         chimera_core::hw::Cost(cowbell),
         chimera_core::hw::Cost(reserve),
     );
     let tail = before.iter().find(|&&(_, p)| p == pad(11)).unwrap().0;
-    assert_eq!(any, Some(tail), "rule 3 across pads would take pad 11's");
+    assert_eq!(
+        any.map(|v| v.index()),
+        Some(tail),
+        "rule 3 across pads would take pad 11's"
+    );
     let was = a.refused();
     r.note_on_vel(0, key(pad(1)), 127);
     assert_eq!(r.inst.allocator().refused(), was + 1, "refused");
@@ -299,7 +303,7 @@ fn an_old_kit_over_eight_plays_every_hit() {
     for p in PadId::ALL {
         r.note_on_vel(0, key(p), 120);
         let booked = r.inst.allocator().slots().iter().any(|s| {
-            s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(key(p))
+            s.part() == Some(PartId::ALL[0]) && !s.dying() && s.note().map(|n| n.get()) == Some(key(p))
         });
         assert!(booked, "pad {} books a voice", p.number());
         r.render(1);

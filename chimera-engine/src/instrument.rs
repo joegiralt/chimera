@@ -372,9 +372,16 @@ impl AudioShared {
     }
 }
 
-/// Part index `q`, as a voice's `sounding` holds it.
-fn part_id(q: u8) -> PartId {
-    PartId::ALL[q as usize % MAX_PARTS]
+/// Every Part's MAX VOICES and RESERVE in `shared` (ADR 0281). Out of
+/// line and rolled: bank 1's, once a snapshot.
+#[inline(never)]
+#[optimize(size)]
+fn shares_of(shared: &AudioShared) -> crate::voice_limit::Shares {
+    let mut asks = [crate::voice_limit::Asked::AUTO; MAX_PARTS];
+    for (a, part) in asks.iter_mut().zip(&shared.parts) {
+        *a = part.mix.voices();
+    }
+    crate::voice_limit::Shares::of(asks)
 }
 
 /// A new Sound in `part` (its `loads` moved): its knobs read whole and
@@ -772,7 +779,7 @@ pub struct Instrument {
     resnap_to: [Option<MidiNote>; MAX_VOICES],
     /// The Part whose Sound each voice renders: its slot's Part, except
     /// while another Part's sound fades out ahead of a waiting note.
-    sounding: [u8; MAX_VOICES],
+    sounding: [PartId; MAX_VOICES],
     /// A note waiting for its voice's fade to end.
     waiting: [Option<Waiting>; MAX_VOICES],
     /// Each Part's mono bus from the last `render`: the sum of its voices.
@@ -898,7 +905,7 @@ impl Instrument {
             addr_of_mut!((*p).harmony).write(None);
             addr_of_mut!((*p).tempo).write(Tempo::DEFAULT);
             addr_of_mut!((*p).resnap_to).write([None; MAX_VOICES]);
-            addr_of_mut!((*p).sounding).write([0; MAX_VOICES]);
+            addr_of_mut!((*p).sounding).write([PartId::ALL[0]; MAX_VOICES]);
             addr_of_mut!((*p).waiting).write([None; MAX_VOICES]);
             addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
             addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
@@ -964,7 +971,7 @@ impl Instrument {
     pub fn sounding_set(&self) -> crate::project::PartSet {
         (0..MAX_VOICES)
             .filter(|&v| self.voices[v].is_active())
-            .filter_map(|v| crate::project::PartId::new(self.sounding[v]))
+            .map(|v| self.sounding[v])
             .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p))
     }
 
@@ -974,7 +981,7 @@ impl Instrument {
     fn publish_pads(&self) {
         let mut pads = [PadSet::EMPTY; MAX_PARTS];
         for (v, &p) in self.voices.iter().zip(&self.sounding) {
-            if let (Some(h), Some(p)) = (v.drum_hit(), crate::project::PartId::new(p)) {
+            if let Some(h) = v.drum_hit() {
                 let s = &mut pads[p.index()];
                 *s = s.with(h.pad());
             }
@@ -1087,7 +1094,7 @@ impl Instrument {
 
     /// The Part whose Sound each voice renders: for the tests.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn sounding_parts(&self) -> [u8; MAX_VOICES] {
+    pub fn sounding_parts(&self) -> [PartId; MAX_VOICES] {
         self.sounding
     }
 
@@ -1235,15 +1242,16 @@ impl Instrument {
     fn pick_one(&mut self, at: admission::PickAt, cost: Cost) -> Option<usize> {
         let reserved = self.reserved();
         let origins = &self.note_origin;
-        let q = at.part.index() as u8;
-        self.alloc.pick_where(
-            q,
-            at.mode,
-            at.note,
-            (cost, reserved),
-            &|v| origins[v.index()] == at.origin,
-            Steal::Any,
-        )
+        self.alloc
+            .pick_where(
+                at.part,
+                at.mode,
+                at.note,
+                (cost, reserved),
+                &|v| origins[v.index()] == at.origin,
+                Steal::Any,
+            )
+            .map(VoiceIdx::index)
     }
 
     /// Voice `v`'s port this call, capped at what it is paid, only while
@@ -1358,10 +1366,8 @@ impl Instrument {
                     {
                         continue;
                     }
-                    let (q, mode) = (p as u8, part.mix.mode);
-                    let Some(id) = PartId::new(q) else {
-                        continue;
-                    };
+                    let (q, mode) = (PartId::ALL[p], part.mix.mode());
+                    let id = q;
                     // ORBIT's notes are snapped in their ring.
                     let note = match from {
                         NoteOrigin::Live => part.live_note(ev.note, self.harmony),
@@ -1434,8 +1440,8 @@ impl Instrument {
                         NoteSet::EMPTY
                     };
                     self.held_keys[v] = base.with(ev.note);
-                    self.alloc.book(v, q, mode, note, cost);
-                    let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
+                    self.alloc.book(VoiceIdx::ALL[v], q, mode, note, cost);
+                    let waits = self.sounding[v].index() != p && self.voices[v].is_active();
                     // The key's tuning: a glide eases to it at its own pace,
                     // a strike starts on it.
                     let to = crate::tuning::offset(p, note.get());
@@ -1481,7 +1487,7 @@ impl Instrument {
                         let base = CtxBase {
                             sym: &mut self.sym,
                             src,
-                            part: part_id(q),
+                            part: q,
                             tune: self.tune + start,
                         };
                         // Unbilled, no port (`port_of`).
@@ -1530,7 +1536,7 @@ impl Instrument {
                         let cents = libm::roundf(part.params.pitch.semitones() * 100.0) as i16;
                         crate::played::note_on(
                             ev.channel.get(),
-                            q,
+                            q.index() as u8,
                             ev.note.get(),
                             vel.get(),
                             note.get(),
@@ -1622,7 +1628,7 @@ impl Instrument {
             sym: &mut self.sym,
             streams: None,
             src: &NO_SOURCES,
-            part: part_id(self.sounding[v]),
+            part: self.sounding[v],
             tune: self.tune,
         });
     }
@@ -1736,8 +1742,8 @@ impl Instrument {
 
     /// Whether `part`'s Sound is TAPE.
     #[cfg(feature = "bank2-gate")]
-    fn part_is_tape(shared: &AudioShared, part: usize) -> bool {
-        shared.parts[part % MAX_PARTS].params.engine() == EngineType::Tape
+    fn part_is_tape(shared: &AudioShared, part: PartId) -> bool {
+        shared.parts[part.index()].params.engine() == EngineType::Tape
     }
 
     /// Whether voice `v` still plays a TAPE Part's Sound, or is booked to
@@ -1746,10 +1752,8 @@ impl Instrument {
     fn is_tape(&self, v: usize, shared: &AudioShared) -> bool {
         let slot = self.alloc.slots()[v];
         !slot.is_free()
-            && (Self::part_is_tape(shared, self.sounding[v] as usize)
-                || slot
-                    .part()
-                    .is_some_and(|q| Self::part_is_tape(shared, q as usize)))
+            && (Self::part_is_tape(shared, self.sounding[v])
+                || slot.part().is_some_and(|q| Self::part_is_tape(shared, q)))
     }
 
     /// CC 120 for TAPE's voices alone, on any channel: a bank-2 write is
@@ -1765,9 +1769,7 @@ impl Instrument {
                 continue;
             }
             let owner = self.alloc.slots()[v].part();
-            if owner.is_some_and(|q| !Self::part_is_tape(shared, q as usize))
-                && self.waiting[v].is_some()
-            {
+            if owner.is_some_and(|q| !Self::part_is_tape(shared, q)) && self.waiting[v].is_some() {
                 let _ = self.voices[v].kill();
             } else {
                 self.sound_off(v);
@@ -1832,7 +1834,7 @@ impl Instrument {
             let (Some(q), Some(now)) = (s.part(), s.note()) else {
                 continue;
             };
-            let part = &shared.parts[q as usize % MAX_PARTS];
+            let part = &shared.parts[q.index()];
             if !s.held()
                 || s.dying()
                 || self.note_origin[v] != NoteOrigin::Live
@@ -1871,7 +1873,7 @@ impl Instrument {
                 self.clear_left -= bytes;
             }
             let keep = crate::tuning::keep_for(RESNAP_GLIDE_MS as f32 / 3_000.0, self.sample_rate);
-            let off = crate::tuning::offset(usize::from(self.sounding[v]), to.get());
+            let off = crate::tuning::offset(self.sounding[v].index(), to.get());
             self.tuned.glide(v, off, keep);
             self.voices[v].retune(
                 to,
@@ -1880,7 +1882,7 @@ impl Instrument {
                     sym: &mut self.sym,
                     streams: None,
                     src: &NO_SOURCES,
-                    part: part_id(self.sounding[v]),
+                    part: self.sounding[v],
                     tune: self.tune,
                 },
             );
@@ -1926,12 +1928,12 @@ impl Instrument {
     fn start<P: VoicePorts>(
         &mut self,
         v: usize,
-        (w, q, note, held): (Waiting, u8, MidiNote, bool),
+        (w, q, note, held): (Waiting, PartId, MidiNote, bool),
         shared: &AudioShared,
         src: &GateView<'_>,
         ports: &mut P,
     ) -> bool {
-        let params = &shared.parts[q as usize % MAX_PARTS].params;
+        let params = &shared.parts[q.index()].params;
         let hit = w.plays == Plays::Hit;
         if hit != (params.engine() == EngineType::Drum) {
             self.alloc.kill(v);
@@ -1952,7 +1954,7 @@ impl Instrument {
         let port = self.port_of(v);
         let to = self
             .tuned
-            .strike(v, crate::tuning::offset(usize::from(q), note.get()));
+            .strike(v, crate::tuning::offset(q.index(), note.get()));
         self.sounding[v] = q;
         if hit {
             if !self.start_hit(VoiceIdx::ALL[v], w.vel, params, src) {
@@ -1965,7 +1967,7 @@ impl Instrument {
         let base = CtxBase {
             sym: &mut self.sym,
             src,
-            part: part_id(q),
+            part: q,
             tune: self.tune + to,
         };
         ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
@@ -1991,7 +1993,7 @@ impl Instrument {
         let (Some(q), Some(key)) = (s.part(), s.note()) else {
             return false;
         };
-        let id = part_id(q);
+        let id = q;
         let hit = KIT_VIEW.hit(id, key);
         self.strike(v, id, (&hit, vel, key, s.held()), params, (src, 0.0))
     }
@@ -2020,21 +2022,22 @@ impl Instrument {
             if part.mix.channel != heard || part.params.engine() != EngineType::Drum {
                 continue;
             }
-            let (q, id, key) = (p as u8, PartId::ALL[p], ev.note);
+            let (q, id, key) = (PartId::ALL[p], PartId::ALL[p], ev.note);
             let (hit, mine) = self.choke(id, key);
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
             // The bill `recost` worked out, so the kit it read.
             let own = self.costs[p].hit(HitKernel::Sounding(hit.params().machine()));
             let cost = own + if first { Knobs::COST } else { Cost::ZERO };
             let reserved = self.reserved();
-            let mode = part.mix.mode;
+            let mode = part.mix.mode();
             let Some(v) = self.alloc.pick_hit(q, mode, key, cost, reserved, mine) else {
                 self.alloc.refuse();
                 continue;
             };
+            let (vi, v) = (v, v.index());
             let was = self.alloc.slots()[v];
             self.held_keys[v] = NoteSet::EMPTY.with(key);
-            self.alloc.book(v, q, mode, key, cost);
+            self.alloc.book(vi, q, mode, key, cost);
             let waits = self.voices[v].is_active();
             if waits && !was.dying() {
                 self.alloc.fade_from(v, was.cost());
@@ -2168,9 +2171,7 @@ impl Instrument {
         self.costs = core::array::from_fn(|p| costs[p].with(glides[p]));
         (self.costed, self.costings) = (at, self.costings.wrapping_add(1));
         // The Parts' MAX VOICES and RESERVE for this snapshot's picks (ADR 0281).
-        self.alloc.set_limits(crate::voice_limit::Limits::of(|p| {
-            shared.parts[p.index()].mix.voices
-        }));
+        self.alloc.set_shares(shares_of(shared));
         #[cfg(feature = "probe")]
         crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
         // A sounding Part's knobs and formant reach, once: on its first
@@ -2179,7 +2180,7 @@ impl Instrument {
         let mut reach: [Option<HighNote>; MAX_PARTS] = [None; MAX_PARTS];
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
-                let p = p as usize % MAX_PARTS;
+                let p = p.index();
                 let part = &shared.parts[p];
                 let first = !core::mem::replace(&mut knobs[p], true);
                 if first {
@@ -2236,7 +2237,7 @@ impl Instrument {
         if part.params.pitch.steal_glide().is_some() {
             for v in 0..MAX_VOICES {
                 let s = self.alloc.slots()[v];
-                if s.part() == Some(p as u8) {
+                if s.part() == Some(PartId::ALL[p]) {
                     top = top.max(s.note().map_or(0, MidiNote::get));
                     slide = slide.max(self.voices[v].algo_slide());
                 }
@@ -2291,7 +2292,7 @@ impl Instrument {
     fn choke(&mut self, id: PartId, key: MidiNote) -> (DrumHit, Steal) {
         let hit = KIT_VIEW.hit(id, key);
         let (pad, p) = (hit.pad(), hit.params());
-        let q = id.index() as u8;
+        let q = id;
         let mut own = Steal::Any;
         for w in 0..MAX_VOICES {
             let s = self.alloc.slots()[w];
@@ -2326,15 +2327,13 @@ impl Instrument {
                 plays: Plays::Hit, ..
             }) => self.alloc.slots()[w].note().map(|n| KIT_VIEW.hit(id, n)),
             Some(_) => None,
-            None => self.voices[w]
-                .drum_hit()
-                .filter(|_| self.sounding[w] == id.index() as u8),
+            None => self.voices[w].drum_hit().filter(|_| self.sounding[w] == id),
         }
     }
 
     /// Every sounding voice of Part `q` fades out, as a shed one does:
     /// RETRIG CUT.
-    fn cut_part(&mut self, q: u8) {
+    fn cut_part(&mut self, q: PartId) {
         for w in 0..MAX_VOICES {
             let s = self.alloc.slots()[w];
             if s.part() == Some(q) && !s.dying() && !s.is_free() {
@@ -2368,8 +2367,8 @@ impl Instrument {
                 let voice = &self.voices[v];
                 if s.held()
                     && !s.dying()
-                    && s.part() == Some(p as u8)
-                    && self.sounding[v] as usize == p
+                    && s.part() == Some(PartId::ALL[p])
+                    && self.sounding[v].index() == p
                     && voice.is_active()
                     && (voice.kind() != SYMPATHETIC || voice.restarts())
                 {
@@ -2411,7 +2410,7 @@ impl Instrument {
         let owns = self.owns(shared.mpe);
         for v in 0..MAX_VOICES {
             if !self.alloc.slots()[v].is_free() {
-                playing[self.sounding[v] as usize % MAX_PARTS] = true;
+                playing[self.sounding[v].index()] = true;
                 let own = self.own_of(&owns, v);
                 self.voices[v].ease_own(own, k);
             }
@@ -2535,7 +2534,7 @@ impl Instrument {
                 ports.drop_ring(VoiceIdx::ALL[v]);
                 continue;
             }
-            let p = self.sounding[v] as usize % MAX_PARTS;
+            let p = self.sounding[v].index();
             let part = &shared.parts[p];
             let port = self.port_of(v);
             // A glide's or re-snap's tuning eases at its pace.
@@ -2661,7 +2660,7 @@ impl Instrument {
             if s.is_free() || !self.voices[v].is_active() {
                 continue;
             }
-            let p = self.sounding[v] as usize % MAX_PARTS;
+            let p = self.sounding[v].index();
             if let Some(f) = self.voices[v].formant_view()
                 && age[p].is_none_or(|a| s.age() >= a)
             {
@@ -2701,7 +2700,7 @@ impl Instrument {
         let mut newest = None;
         for (v, s) in self.alloc.slots().iter().enumerate() {
             if !s.is_free()
-                && self.sounding[v] as usize % MAX_PARTS == part
+                && self.sounding[v].index() == part
                 && self.voices[v].is_active()
                 && newest.is_none_or(|(a, _)| s.age() >= a)
             {
@@ -2717,7 +2716,7 @@ impl Instrument {
         let mut newest = [(0, Heads::NONE); MAX_PARTS];
         for (v, s) in self.alloc.slots().iter().enumerate() {
             let h = self.voices[v].heads();
-            let n = &mut newest[self.sounding[v] as usize % MAX_PARTS];
+            let n = &mut newest[self.sounding[v].index()];
             if h != Heads::NONE && (n.1 == Heads::NONE || s.age() >= n.0) {
                 *n = (s.age(), h);
             }
