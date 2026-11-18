@@ -38,26 +38,37 @@ changes nothing that reads it.
   `take_audio`, `take_ed` and `bench_audio` each take, so no build into
   ITCM can be written before the zeroing. sd-probe has no ITCM state and
   no zeroing.
+- **ITCM's geometry has one source.** `chimera-engine/src/itcm_geometry.rs`
+  holds `ITCM_ORIGIN` (0x400), `ITCM_STATE` (63 KiB) and `ITCM_MARGIN`
+  (8 KiB). `hw` includes it, and `chimera-stm32/build.rs` includes it and
+  writes `memory.x`'s ITCM region and `itcm.x`'s start and margin asserts
+  from the same values, so there is nothing to keep in step and no text to
+  compare. `hw` asserts at compile time that origin plus state is the
+  64 KiB and the margin is under the state.
 - **ITCM keeps 8 KiB free.** `itcm.x` asserts
-  `ORIGIN(ITCM) + LENGTH(ITCM) - __eitcm >= 8K`, as ADR 0087's bench
-  margin, written by `build.rs` from one constant, `ITCM_MARGIN_KIB`.
-  `hw::ITCM_STATE` (63 KiB) and `hw::ITCM_MARGIN` (8 KiB) mirror `memory.x`
-  and that constant, and `memory_budget_test::itcm_geometry_is_hws` reads
-  both files and holds them equal. The linker's assert is the proof;
-  `itcm_residents_fit` is a conservative host estimate (host `usize` is
-  8 B, each rounded up to 8 though `.itcm` packs them at 4) that prints the
-  sizes.
+  `ORIGIN(ITCM) + LENGTH(ITCM) - __eitcm >= ITCM_MARGIN`, as ADR 0087's
+  bench margin. The linker's assert is the proof; `itcm_residents_fit` is
+  a conservative host estimate (host `usize` is 8 B, each rounded up to 8
+  though `.itcm` packs them at 4) that prints the sizes.
 - **ITCM holds only listed CPU-only state, one list.**
-  `tools/itcm-residents.txt` names the residents (`ED`, `KITS`,
-  `KIT_VIEW`, `AUDIO`) and their types. `just check-itcm <elf>`
-  (`tools/check_itcm.py`) reads `__sitcm`/`__eitcm` from the ELF and fails
-  when a symbol in that range is data not on the list, or any non-data
-  kind (weak `V`/`W`, text, read-only, common); absolute `A` symbols are
-  linker constants, not storage, and are not judged. A resident with a
-  third field must be in ITCM wherever that symbol is linked: `AUDIO`
-  wherever `take_audio` is, so sd-probe, which links no synth and leaves
-  ITCM empty, passes. `memory_budget_test::itcm_residents_are_the_files`
-  holds the host test's types to the file. The check runs in every
+  `tools/itcm-residents.txt` names each resident, its type, how many of
+  that type the static holds, and an owner symbol where one is linked
+  out of line: `ED` (`EdState`, 1), `KITS` (`Kits`, 1, `take_ui`),
+  `KIT_VIEW` (`KitView`, 1, `KitWriter::publish_all`) and `AUDIO`
+  (`AudioShared`, 3, `take_audio`). `take_ed` is inlined, so `ED` has no
+  owner to key on. `just check-itcm <elf>` (`tools/check_itcm.py`) reads
+  `__sitcm`/`__eitcm` from the ELF and fails:
+  - a symbol in that range that is data (`b`, `B`, `d`, `D`, by exact
+    kind) not on the list, or of any other kind (weak `V`/`W`, text,
+    read-only, common); absolute `A`/`a` symbols are linker constants, not
+    storage, and are not judged;
+  - a listed resident linked outside the range;
+  - a listed resident missing where its owner is linked, so sd-probe,
+    which links no synth and leaves ITCM empty, passes;
+  - a line of `rust-nm` output it cannot read.
+
+  `memory_budget_test::itcm_residents_are_the_files` holds the host
+  test's types and counts to the file. The check runs in every
   `bank2-split` (sd-probe's among them, which `just check` now runs as
   `flash-sd-probe` does) and on every set `just check` budget-checks.
   Adding to ITCM means adding a line there, under an ADR.
@@ -98,10 +109,28 @@ changes nothing that reads it.
 - **ITCM** on every set: 17,432 → 40,536 B used, 23,976 B free, 15,784 B
   above its margin.
 - **Flash:** the move alone left bank 1 byte-identical on every set above
-  (clean stamp). The zeroing adds 8 to 40 B (default +32, orbit +24,
-  bank2-gate +32, orbit,usb-config-writer +32, the bench sets +8 to +40),
-  inside ADR 0198's 64 B slack: no budget line moves. It must be bank 1's,
-  as it runs before bank 2 is judged. Bank 2 unchanged on every set.
+  (clean stamp). The zeroing adds 8 to 40 B, and must be bank 1's, as it
+  runs before bank 2 is judged. Our own growth gets a measured raise,
+  never ADR 0198's 64 B slack: each set whose bank 1 now exceeds its line
+  is raised by exactly its growth, its note "ADR 0286 +N ITCM zeroing at
+  boot (from X)":
+
+  | Set | Line before | Raise | Line after |
+  |---|---:|---:|---:|
+  | orbit,usb-config-writer | 885,104 | +32 | 885,136 |
+  | fault-inject | 833,468 | +40 | 833,508 |
+  | bench-algo | 873,944 | +24 | 873,968 |
+  | bench-algo,master-tape | 852,404 | +32 | 852,436 |
+  | bench-routing | 873,480 | +24 | 873,504 |
+  | bench-memory | 875,884 | +32 | 875,916 |
+  | bench-stress | 878,852 | +40 | 878,892 |
+  | bench-tape | 839,848 | +8 | 839,856 |
+  | filter-probes | 834,420 | +24 | 834,444 |
+
+  default (+32, 875,920 under 876,088), orbit (+24, 890,216 under
+  890,224), bank2-gate (+32, 880,944 under 881,152) and bench-orbit (+40,
+  850,808 under 850,824) are not raised: their use is still under their
+  lines. Bank 2 is unchanged on every set.
 - **Speed:** the audio reads its Part params from the snapshot each block.
   ITCM is zero wait; AXI is zero wait on a D-cache hit and a line fill on a
   miss, so the move can only remove misses. Not measured on the unit (no

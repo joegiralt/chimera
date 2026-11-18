@@ -182,8 +182,10 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
     // ITCM's state word-zeroed before anything builds into it (ADR 0286),
     // at full clock. The probe has none.
-    // SAFETY: `boot` runs once (it takes the one `Peripherals`), here with
-    // no interrupt enabled yet and nothing in ITCM.
+    // SAFETY: once: `main` takes the core's and the chip's peripherals
+    // (`take().unwrap()`, a second take panics) and hands them to this one
+    // call of `boot`, which consumes them. Here no interrupt is enabled yet
+    // and nothing is in ITCM.
     #[cfg(not(feature = "sd-probe"))]
     let itcm = unsafe { shared::zero_itcm() };
     // SAFETY: once, before audio and the rings' owner exist, so the eight

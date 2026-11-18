@@ -431,14 +431,15 @@ fn kits_are_compact_and_outside_the_parts() {
 /// margin to spare. The linker's assert (`itcm.x`) is the proof; this is a
 /// conservative host estimate (each rounded up to 8, though `.itcm` packs
 /// them at their own alignment, 4 here; the host's `usize` is 8 B), which
-/// prints the sizes and fails first.
+/// prints the sizes and fails first. `hw`'s geometry is the linker's own
+/// (`itcm_geometry.rs`, which `chimera-stm32/build.rs` writes both from).
 #[test]
 fn itcm_residents_fit() {
     let parts = itcm_parts();
-    for (name, size) in parts {
-        eprintln!("{name:>15} {size:>7} B");
+    for (name, count, size) in parts {
+        eprintln!("{name:>12} x{count} {size:>7} B");
     }
-    let total: usize = parts.iter().map(|p| p.1.next_multiple_of(8)).sum();
+    let total: usize = parts.iter().map(|p| p.2.next_multiple_of(8)).sum();
     eprintln!(
         "{:>15} {total:>7} B of {} B, margin {} B",
         "ITCM",
@@ -451,64 +452,39 @@ fn itcm_residents_fit() {
     );
 }
 
-/// ITCM's residents by the type names `tools/itcm-residents.txt` gives.
-fn itcm_parts() -> [(&'static str, usize); 4] {
+/// ITCM's residents: the type and count `tools/itcm-residents.txt` gives
+/// each, and the bytes of the static holding them.
+fn itcm_parts() -> [(&'static str, usize, usize); 4] {
     use chimera_core::console::EdState;
     use chimera_core::dsp::drum::view::KitView;
     use chimera_core::instrument::AudioShared;
     use chimera_core::project::Kits;
     use chimera_core::triple::TripleBuffer;
     [
-        ("Kits", size_of::<Kits>()),
-        ("KitView", size_of::<KitView>()),
-        ("EdState", size_of::<EdState>()),
-        ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
+        ("Kits", 1, size_of::<Kits>()),
+        ("KitView", 1, size_of::<KitView>()),
+        ("EdState", 1, size_of::<EdState>()),
+        ("AudioShared", 3, size_of::<TripleBuffer<AudioShared>>()),
     ]
 }
 
 /// ADR 0286: one list of ITCM's residents. `check_itcm.py` holds the ELF to
-/// `tools/itcm-residents.txt`; this sizes the same types.
+/// `tools/itcm-residents.txt`; this sizes the same types, as many of each.
 #[test]
 fn itcm_residents_are_the_files() {
     const FILE: &str = include_str!("../../tools/itcm-residents.txt");
-    let mut listed: Vec<&str> = FILE
+    let mut listed: Vec<(&str, usize)> = FILE
         .lines()
         .map(|l| l.split('#').next().unwrap_or("").trim())
         .filter(|l| !l.is_empty())
-        .map(|l| l.split('|').nth(1).expect("<symbol> | <type>").trim())
+        .map(|l| {
+            let f: Vec<&str> = l.split('|').map(str::trim).collect();
+            let count = f.get(2).and_then(|c| c.parse().ok());
+            (f[1], count.expect("<symbol> | <type> | <count>"))
+        })
         .collect();
-    let mut sized: Vec<&str> = itcm_parts().iter().map(|p| p.0).collect();
+    let mut sized: Vec<(&str, usize)> = itcm_parts().iter().map(|p| (p.0, p.1)).collect();
     listed.sort_unstable();
     sized.sort_unstable();
     assert_eq!(listed, sized);
-}
-
-/// ADR 0266, 0286: ITCM's geometry has one source. `memory.x`'s ITCM
-/// region and `build.rs`'s margin constant, which writes `itcm.x`'s
-/// assert, are `hw::ITCM_STATE` and `hw::ITCM_MARGIN`.
-#[test]
-fn itcm_geometry_is_hws() {
-    const MEMORY_X: &str = include_str!("../../chimera-stm32/memory.x");
-    const BUILD_RS: &str = include_str!("../../chimera-stm32/build.rs");
-    let region = MEMORY_X
-        .lines()
-        .find(|l| l.trim_start().starts_with("ITCM (rwx)"))
-        .expect("memory.x: an ITCM region");
-    assert!(
-        region.contains("ORIGIN = 0x00000400"),
-        "ITCM from 0x400: {region}"
-    );
-    let kib = |line: &str, after: &str, unit: &str| -> usize {
-        let rest = &line[line.find(after).expect(after) + after.len()..];
-        rest[..rest.find(unit).expect(unit)]
-            .trim()
-            .parse()
-            .expect("a number")
-    };
-    assert_eq!(kib(region, "LENGTH =", "K") * 1024, hw::ITCM_STATE);
-    let margin = BUILD_RS
-        .lines()
-        .find(|l| l.trim_start().starts_with("const ITCM_MARGIN_KIB: usize ="))
-        .expect("build.rs: `const ITCM_MARGIN_KIB: usize = N;`");
-    assert_eq!(kib(margin, "=", ";") * 1024, hw::ITCM_MARGIN);
 }

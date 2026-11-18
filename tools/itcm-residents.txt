@@ -1,10 +1,12 @@
 # ITCM's residents (ADR 0266, 0286): CPU-only state, never a DMA's, built in
 # place at boot after `shared::zero_itcm`. `just check-itcm` (check_itcm.py)
-# fails a build with any other data in `.itcm`; memory_budget_test's
-# `itcm_residents_fit` sizes these types. Adding a line takes an ADR.
+# fails a build with anything else in `[__sitcm, __eitcm)`, or with one of
+# these linked outside it; memory_budget_test's `itcm_residents_are_the_files`
+# sizes these types. Adding a line takes an ADR.
 #
-# <symbol> | <type, as itcm_residents_fit names it> [| <symbol whose presence requires it>]
-chimera_board::shared::ED | EdState
-chimera_board::shared::KITS | Kits
-chimera_engine::dsp::drum::view::KIT_VIEW | KitView
-chimera_board::shared::AUDIO | AudioShared x3 | chimera_board::shared::take_audio
+# <symbol> | <type> | <count of it> [| <owner: linked, the resident must be in ITCM>]
+# `take_ed` is inlined, so `ED` has no owner symbol to key on.
+chimera_board::shared::ED | EdState | 1
+chimera_board::shared::KITS | Kits | 1 | chimera_board::shared::take_ui
+chimera_engine::dsp::drum::view::KIT_VIEW | KitView | 1 | <chimera_engine::dsp::drum::view::KitWriter>::publish_all
+chimera_board::shared::AUDIO | AudioShared | 3 | chimera_board::shared::take_audio

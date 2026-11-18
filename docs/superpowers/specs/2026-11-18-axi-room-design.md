@@ -62,7 +62,8 @@ No product trade-off: placement only, no behaviour, no limit changes.
   after `cache::init` (ITCM is ECC RAM; the builds store bytes), and its
   `ItcmZeroed` token is what every ITCM build takes.
 - `itcm.x` gains a margin: 8 KiB of ITCM stay free (ADR 0286), written from
-  `build.rs`'s `ITCM_MARGIN_KIB`, which a host test holds to `hw`.
+  `chimera-engine/src/itcm_geometry.rs`, which `hw` and `build.rs` both
+  include (`build.rs` writes `memory.x`'s ITCM region from it too).
 - `tools/itcm-residents.txt` is the one resident list. `just check-itcm`
   (`tools/check_itcm.py`) fails any other symbol in `[__sitcm, __eitcm)`
   and requires `AUDIO` wherever `take_audio` is linked (not sd-probe).

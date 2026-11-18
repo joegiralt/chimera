@@ -2,10 +2,25 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+// ITCM's geometry (ADR 0266, 0286), `hw`'s own constants: one source.
+include!("../chimera-engine/src/itcm_geometry.rs");
+
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    fs::copy("memory.x", out_dir.join("memory.x")).unwrap();
+    let memory = fs::read_to_string("memory.x").unwrap();
+    assert!(
+        memory.contains("    /* ITCM REGION */\n"),
+        "memory.x: the ITCM region's place"
+    );
+    fs::write(
+        out_dir.join("memory.x"),
+        memory.replace(
+            "    /* ITCM REGION */\n",
+            &format!("    ITCM (rwx) : ORIGIN = 0x{ITCM_ORIGIN:08X}, LENGTH = {ITCM_STATE}\n"),
+        ),
+    )
+    .unwrap();
 
     fs::write(
         out_dir.join("ram_d2.x"),
@@ -48,9 +63,6 @@ ASSERT(SIZEOF(.sram4) <= LENGTH(RAM_D3), "SRAM4 overflows");
     )
     .unwrap();
 
-    // ITCM's free floor (ADR 0286): `hw::ITCM_MARGIN`, which
-    // `memory_budget_test::itcm_geometry_is_hws` holds this to.
-    const ITCM_MARGIN_KIB: usize = 8;
     fs::write(
         out_dir.join("itcm.x"),
         format!(
@@ -68,10 +80,10 @@ SECTIONS {{
     }} > ITCM
 }}
 INSERT AFTER .uninit;
-ASSERT(__sitcm == 0x00000400, "ITCM's state starts at 0x400, clear of address 0");
+ASSERT(__sitcm == 0x{ITCM_ORIGIN:08X}, "ITCM's state starts at ITCM_ORIGIN, clear of address 0");
 ASSERT(__eitcm <= ORIGIN(ITCM) + LENGTH(ITCM), "ITCM overflows");
 /* What a later move or a hot kernel may still take (ADR 0286). */
-ASSERT(ORIGIN(ITCM) + LENGTH(ITCM) - __eitcm >= {ITCM_MARGIN_KIB}K, "ITCM: under the margin (ADR 0286)");
+ASSERT(ORIGIN(ITCM) + LENGTH(ITCM) - __eitcm >= {ITCM_MARGIN}, "ITCM: under the margin (ADR 0286)");
 "#
         ),
     )
@@ -518,5 +530,6 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
     // The relocations stay in the ELF: the door check reads them.
     println!("cargo:rustc-link-arg=--emit-relocs");
     println!("cargo:rerun-if-changed=memory.x");
+    println!("cargo:rerun-if-changed=../chimera-engine/src/itcm_geometry.rs");
     println!("cargo:rerun-if-changed=build.rs");
 }

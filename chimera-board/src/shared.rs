@@ -153,8 +153,9 @@ pub struct ItcmZeroed(());
 /// whose ECC is still power-on noise.
 ///
 /// # Safety
-/// Once, in `boot`, before any interrupt is enabled: a second call would wipe what the
-/// builds wrote, and nothing else may touch ITCM while it runs.
+/// Once, in `boot`, before any interrupt is enabled: a second call would
+/// wipe what the builds wrote, and nothing else may touch ITCM while it
+/// runs.
 pub(crate) unsafe fn zero_itcm() -> ItcmZeroed {
     unsafe extern "C" {
         static mut __sitcm: u64;
