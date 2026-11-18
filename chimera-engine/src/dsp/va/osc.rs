@@ -1676,10 +1676,11 @@ impl VarOsc {
         // the block's end is its SHAPE end itself; a run ending earlier
         // (a WAVE segment crossing) lerps the two ends
         let ends = (&self.sh[0], &self.sh[1]);
+        let w1 = weight(i1);
         let (c1, p1) = if i1 == n {
-            at(a, b, ends.1, weight(i1))
+            at(a, b, ends.1, w1)
         } else {
-            at_lerp::<A, B>(ends, i1 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i1))
+            at_lerp::<A, B>(ends, i1 as f32 * RECIP[n.min(RECIP.len() - 1)], w1)
         };
         // held: lerp on; a new note: start on the values (as its ramps do);
         // a new segment: the pair's lines from the sample before
@@ -1688,10 +1689,7 @@ impl VarOsc {
             None => (c1, p1),
             Some(_) => at_lerp::<A, B>(ends, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0)),
         };
-        let held = HeldPair {
-            pair,
-            weight: weight(i1),
-        };
+        let held = HeldPair { pair, weight: w1 };
         (self.held_pair, self.c, self.pos) = (Some(held), c1, p1);
         (run.rinc, run.inc, run.dinc) = (blk.rinc, val(r.inc, i0), r.inc.1);
         for (k, l) in run.c.iter_mut().enumerate() {
@@ -1706,7 +1704,7 @@ impl VarOsc {
             run.c[0] = Lin { v, d: (e - v) * il };
         }
         if SYNC && !MOD {
-            let f = weight(i1).get();
+            let f = w1.get();
             let (za, zb) = (blk.zero[a as usize], blk.zero[b as usize]);
             run.y0 = (1.0 - f) * za.0 + f * zb.0;
             run.d0 = (1.0 - f) * za.1 + f * zb.1;
