@@ -16,7 +16,7 @@ const VALID: u32 = 1 << 31;
 pub struct NoteIn {
     pub note: u8,
     pub vel: u8,
-    pub part: u8,
+    pub part: crate::project::PartId,
 }
 
 /// The pitch the last note sounds at: the note after snap, and the Part's
@@ -80,10 +80,14 @@ pub fn any_held() -> bool {
 #[inline(always)]
 pub fn last_in() -> Option<NoteIn> {
     let w = LAST_IN.load(Ordering::Relaxed);
-    (w & VALID != 0).then_some(NoteIn {
+    if w & VALID == 0 {
+        return None;
+    }
+    // `note_on` stored a `PartId`'s index: always one.
+    Some(NoteIn {
         note: (w & 127) as u8,
         vel: (w >> 7 & 127) as u8,
-        part: (w >> 14 & 15) as u8,
+        part: crate::project::PartId::new((w >> 14 & 15) as u8)?,
     })
 }
 

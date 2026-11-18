@@ -922,3 +922,42 @@ fn restarts_whose_fades_end_together_start_oldest_first() {
     let rang = rang.map(|b| b.expect("each restart rings"));
     assert!(rang.windows(2).all(|w| w[1] == w[0] + 1), "{rang:?}");
 }
+
+/// A booked voice that never sounded (a Sympathetic note deferred on the
+/// clear budget, on a voice idle since boot) and is then shed (CC 120)
+/// frees its slot and its promise once its fade ends, as any shed voice
+/// does: nothing leaks, and the pool takes four Sympathetic notes again.
+#[test]
+fn a_shed_voice_that_never_sounded_frees_its_slot_and_promise() {
+    use chimera_core::note_queue::{ChannelMode, ChannelModeEvent};
+    let mut s = after(0);
+    for (part, &n) in CHORD.iter().enumerate() {
+        s.on(part, n);
+    }
+    s.block();
+    for part in 0..4u8 {
+        s.inst.channel_mode(ChannelModeEvent {
+            channel: MidiChannel::new(part).unwrap(),
+            mode: ChannelMode::SoundOff,
+        });
+    }
+    for _ in 0..FADE_BLOCKS + 400 {
+        s.block();
+    }
+    let slots = s.inst.allocator().slots();
+    assert!(slots.iter().all(|v| v.is_free()), "every slot freed");
+    for v in VoiceIdx::ALL {
+        assert!(!s.inst.sym().promised(v), "voice {v:?} still promised");
+    }
+    for n in [40, 44, 47, 52] {
+        s.on(0, n);
+        for _ in 0..FADE_BLOCKS + 2 {
+            s.block();
+        }
+    }
+    assert_eq!(
+        s.inst.sym().lent(),
+        SYM_SLOTS,
+        "four Sympathetic notes ring"
+    );
+}

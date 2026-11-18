@@ -31,7 +31,7 @@ fn notes_publish_the_pitch_the_voice_is_given() {
         Some(NoteIn {
             note: 60,
             vel: Velocity::DEFAULT.get(),
-            part: 0
+            part: chimera_core::project::PartId::ALL[0]
         })
     );
     let out = played::last_out().unwrap();

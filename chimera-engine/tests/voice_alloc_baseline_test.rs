@@ -217,5 +217,5 @@ fn a_cap_of_the_pool_picks_as_the_baseline() {
         max: MaxVoices::Cap(VoiceCap::new(MAX_VOICES as u8).unwrap()),
         reserve: Reserve::NONE,
     };
-    walk(Shares::of([eight; MAX_PARTS]));
+    walk(Shares::from_parts(&[eight; MAX_PARTS]));
 }

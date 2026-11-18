@@ -110,7 +110,7 @@ pub(crate) fn ask_in(a: Ask<'_>) {
         Ask::Why(r, out) => *out = Some(why(r)),
         Ask::Note(parts, out) => {
             *out = Some(note(&Shares::from_parts(
-                parts.iter().map(|p| p.mix.voices()),
+                &parts.each_ref().map(|p| p.mix.voices()),
             )))
         }
     }
@@ -118,7 +118,7 @@ pub(crate) fn ask_in(a: Ask<'_>) {
 
 /// Every Part's pair in `project`.
 pub fn shares(project: &Project) -> Shares {
-    Shares::from_parts(project.perf().parts().iter().map(|p| p.mix.voices()))
+    Shares::from_parts(&project.perf().parts().each_ref().map(|p| p.mix.voices()))
 }
 
 /// `job` against the rule. `Shares::refusal` is called once, here: a

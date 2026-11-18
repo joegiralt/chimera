@@ -297,19 +297,31 @@ impl VoiceLimit {
 }
 
 /// The six Parts' reserves summed, past the pool or not: 0..=48
-/// (`MAX_PARTS` × `POOL`) by construction.
+/// (`MAX_PARTS` × `POOL`) by construction, as it sums exactly one
+/// `Reserve` (0..=`POOL`) a Part.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Reserved(u8);
 
+/// Six Parts' worth of `POOL` fits the sum's `u8`.
+const _: () = assert!(MAX_PARTS * MAX_VOICES <= u8::MAX as usize);
+
 impl Reserved {
     pub const NONE: Reserved = Reserved(0);
+    /// The most it can be: every Part reserving the pool.
+    pub const MOST: Reserved = Reserved((MAX_PARTS * MAX_VOICES) as u8);
 
-    /// The reserves `r` summed.
-    pub fn of(r: impl Iterator<Item = Reserve>) -> Reserved {
-        // At most `MAX_PARTS` × `POOL`: no overflow (asserted below).
-        Reserved(r.map(Reserve::code).fold(0u8, u8::saturating_add))
+    /// Each Part's reserve `r` summed: at most `MOST` (asserted above), so
+    /// no overflow.
+    pub const fn of(r: &[Reserve; MAX_PARTS]) -> Reserved {
+        let (mut sum, mut i) = (0u8, 0);
+        while i < MAX_PARTS {
+            sum += r[i].0.0;
+            i += 1;
+        }
+        Reserved(sum)
     }
 
+    /// The sum in voices, 0..=`MOST`'s: for its words.
     pub const fn get(self) -> u8 {
         self.0
     }
@@ -337,8 +349,6 @@ pub struct Booked(VoiceCount);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Overbooked(Reserved);
 
-const _: () = assert!(MAX_PARTS * MAX_VOICES <= u8::MAX as usize);
-
 impl Booked {
     pub const fn new(sum: u8) -> Option<Booked> {
         match VoiceCount::new(sum) {
@@ -347,8 +357,8 @@ impl Booked {
         }
     }
 
-    /// The reserves `r` summed: booked, or past the pool.
-    pub fn sum(r: impl Iterator<Item = Reserve>) -> Result<Booked, Overbooked> {
+    /// Each Part's reserve `r` summed: booked, or past the pool.
+    pub const fn sum(r: &[Reserve; MAX_PARTS]) -> Result<Booked, Overbooked> {
         Reserved::of(r).fits()
     }
 
@@ -400,7 +410,7 @@ impl Limits {
     pub fn try_set(&mut self, p: PartId, l: VoiceLimit) -> Result<(), Refusal> {
         let mut parts = self.parts;
         parts[p.index()] = l;
-        let booked = Booked::sum(parts.iter().map(|l| l.reserve)).map_err(Refusal::Overbooked)?;
+        let booked = Booked::sum(&parts.map(|l| l.reserve)).map_err(Refusal::Overbooked)?;
         *self = Limits { parts, booked };
         Ok(())
     }
@@ -423,7 +433,7 @@ impl Over {
 
     /// The reserves summed, past the pool or not.
     fn sum(&self) -> Reserved {
-        Reserved::of(self.0.iter().map(|a| a.reserve))
+        Reserved::of(&self.0.map(|a| a.reserve))
     }
 }
 
@@ -444,26 +454,18 @@ impl Default for Shares {
 impl Shares {
     pub const AUTO: Shares = Shares::Lawful(Limits::AUTO);
 
-    /// The six Parts' pairs as held: lawful, or loaded past the rule.
-    pub fn of(asks: [Asked; MAX_PARTS]) -> Shares {
+    /// The six Parts' pairs as held, in Part order (each Part's mix's
+    /// `voices`): lawful, or loaded past the rule. The one way the
+    /// allocator, the UI and the renderer read them.
+    pub fn from_parts(asks: &[Asked; MAX_PARTS]) -> Shares {
         let mut l = Limits::AUTO;
-        for (p, a) in PartId::ALL.into_iter().zip(asks) {
+        for (p, &a) in PartId::ALL.into_iter().zip(asks) {
             let fits = a.lawful().ok().is_some_and(|v| l.try_set(p, v).is_ok());
             if !fits {
-                return Shares::Over(Over(asks));
+                return Shares::Over(Over(*asks));
             }
         }
         Shares::Lawful(l)
-    }
-
-    /// The six Parts' pairs, in Part order (each Part's mix's `voices`):
-    /// the one way the allocator, the UI and the renderer read them.
-    pub fn from_parts(asks: impl IntoIterator<Item = Asked>) -> Shares {
-        let mut a = [Asked::AUTO; MAX_PARTS];
-        for (slot, x) in a.iter_mut().zip(asks) {
-            *slot = x;
-        }
-        Shares::of(a)
     }
 
     /// Part `p`'s pair.
@@ -503,7 +505,7 @@ impl Shares {
                 }
                 let mut next = *o;
                 next.0[p.index()] = to;
-                match Booked::sum(next.0.iter().map(|a| a.reserve)) {
+                match Booked::sum(&next.0.map(|a| a.reserve)) {
                     Err(b) if next.sum().excess() > o.sum().excess() => {
                         Some(Refusal::Overbooked(b))
                     }
@@ -528,13 +530,16 @@ impl Shares {
     /// inlined there, not linked in bank 1.
     #[inline(always)]
     pub fn seen(&self, p: PartId) -> Seen {
-        let others = PartId::ALL
-            .into_iter()
-            .filter(|&q| q != p)
-            .map(|q| self.ask(q).reserve);
+        let others = PartId::ALL.map(|q| {
+            if q == p {
+                Reserve::NONE
+            } else {
+                self.ask(q).reserve
+            }
+        });
         Seen {
             own: self.ask(p),
-            others: Booked::sum(others),
+            others: Booked::sum(&others),
         }
     }
 }

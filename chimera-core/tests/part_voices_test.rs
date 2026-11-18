@@ -70,7 +70,7 @@ fn asks(l: &[(usize, Asked)]) -> [Asked; MAX_PARTS] {
 /// An allocator whose Part `p` has `l`, the rest AUTO.
 fn limited(l: &[(usize, Asked)]) -> Allocator {
     let mut a = Allocator::new(BUDGET);
-    a.set_shares(Shares::of(asks(l)));
+    a.set_shares(Shares::from_parts(&asks(l)));
     a
 }
 
@@ -138,7 +138,15 @@ fn reserves_are_booked_within_the_pool() {
     assert_eq!(l.booked().count(), VoiceCount::POOL, "nothing written");
     assert_eq!(Booked::new(9), None);
     assert_eq!(
-        Booked::sum([reserve(5), reserve(4)].into_iter()).map_err(|o| o.sum().get()),
+        Booked::sum(&[
+            reserve(5),
+            reserve(4),
+            Reserve::NONE,
+            Reserve::NONE,
+            Reserve::NONE,
+            Reserve::NONE
+        ])
+        .map_err(|o| o.sum().get()),
         Err(9)
     );
 }
@@ -160,18 +168,18 @@ fn a_reserve_over_its_cap_is_unlawful() {
 #[test]
 fn shares_are_lawful_or_over() {
     assert!(matches!(
-        Shares::of(asks(&[reserved(0, 8)])),
+        Shares::from_parts(&asks(&[reserved(0, 8)])),
         Shares::Lawful(_)
     ));
     assert!(matches!(
-        Shares::of(asks(&[reserved(0, 5), reserved(1, 4)])),
+        Shares::from_parts(&asks(&[reserved(0, 5), reserved(1, 4)])),
         Shares::Over(_)
     ));
     let over_cap = Asked {
         max: cap(1),
         reserve: reserve(2),
     };
-    let s = Shares::of(asks(&[(3, over_cap)]));
+    let s = Shares::from_parts(&asks(&[(3, over_cap)]));
     assert!(matches!(s, Shares::Over(_)));
     assert_eq!(s.ask(part(3)), over_cap, "loaded as saved");
 }
@@ -308,7 +316,7 @@ fn a_cap_lowered_mid_note_takes_effect_at_the_next_note() {
     for i in 0..4 {
         on(&mut a, 0, 60 + i);
     }
-    a.set_shares(Shares::of(asks(&[capped(0, 2)])));
+    a.set_shares(Shares::from_parts(&asks(&[capped(0, 2)])));
     assert_eq!(
         a.slots()
             .iter()
@@ -317,7 +325,7 @@ fn a_cap_lowered_mid_note_takes_effect_at_the_next_note() {
         4
     );
     assert_eq!(voice(on(&mut a, 0, 70)), 0, "its own oldest");
-    a.set_shares(Shares::of(asks(&[capped(0, 6)])));
+    a.set_shares(Shares::from_parts(&asks(&[capped(0, 6)])));
     assert_eq!(voice(on(&mut a, 0, 71)), 4, "a free voice again");
 }
 
@@ -332,7 +340,7 @@ fn a_reserve_raised_mid_note_guards_from_then_on() {
         on(&mut a, 1, 70 + i);
     }
     assert_eq!(voice(on(&mut a, 1, 80)), 0, "unguarded: Part 1's oldest");
-    a.set_shares(Shares::of(asks(&[reserved(0, 3)])));
+    a.set_shares(Shares::from_parts(&asks(&[reserved(0, 3)])));
     assert_eq!(voice(on(&mut a, 1, 81)), 4, "guarded: Part 2's own");
 }
 
@@ -581,6 +589,44 @@ fn a_reserved_drum_part_keeps_its_hits_through_a_busy_part() {
     }
 }
 
+/// R1, "until its voice finishes": a hit whose voice has ended frees its
+/// slot and its guard though its pad's key is still down (a source with
+/// no note-off). The kit's three hits, keys never let go, end; another
+/// Part's eight notes then get all eight voices, and the late note-offs
+/// change nothing.
+#[test]
+fn a_finished_hit_frees_its_slot_with_its_key_down() {
+    let mut w = writer();
+    let k = Kit::DEFAULT;
+    let mut r = drum_rig(&mut w, PLAY_BUDGET, &k, &k);
+    r.shared.parts[0].mix.set_voices(reserved(0, 3).1);
+    r.shared.parts[1].mix.channel = chimera_core::MidiChannel::new(1).unwrap();
+    for p in [1, 2, 5] {
+        r.note_on_vel(0, key(p), 127);
+        r.render(1);
+    }
+    r.render(20_000);
+    assert_eq!(drum_hits(&r.inst).count(), 0, "every hit has ended");
+    for i in 0..8 {
+        r.note_on_vel(1, 60 + i, 100);
+        r.render(1);
+    }
+    let part1 = |r: &common::InstRig| {
+        r.inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| s.part() == Some(part(1)) && !s.dying())
+            .count()
+    };
+    assert_eq!(part1(&r), 8, "the kit's ended hits hold nothing");
+    for p in [1, 2, 5] {
+        r.note_off(0, key(p));
+    }
+    r.render(1);
+    assert_eq!(part1(&r), 8, "a late note-off is a no-op");
+}
+
 /// A project load mid-note (ADR 0046): the held voices fade, and the
 /// loaded project's limits (AUTO here, the old Part capped at 1) rule the
 /// next notes: three keys take three voices.
@@ -766,24 +812,24 @@ fn the_labels_fit_their_cells() {
 #[test]
 fn the_rule_refuses_a_reserve_over_its_cap_and_reserves_past_the_pool() {
     let p = part(0);
-    let s = Shares::of(asks(&[]));
+    let s = Shares::from_parts(&asks(&[]));
     assert_eq!(s.refusal(p, limit(2, 2)), None);
     assert!(matches!(
         s.refusal(p, limit(2, 3)),
         Some(Refusal::OverCap(o)) if o.reserve() == reserve(3) && o.cap() == VoiceCap::new(2).unwrap()
     ));
-    let s = Shares::of(asks(&[(1, limit(0, 6))]));
+    let s = Shares::from_parts(&asks(&[(1, limit(0, 6))]));
     assert_eq!(s.refusal(p, limit(0, 2)), None, "8 fits");
     assert!(matches!(
         s.refusal(p, limit(0, 3)),
         Some(Refusal::Overbooked(b)) if b.sum().get() == 9
     ));
     // Past the rule already (a file): coming down lands, going up doesn't.
-    let s = Shares::of(asks(&[(1, limit(0, 6)), (0, limit(0, 5))]));
+    let s = Shares::from_parts(&asks(&[(1, limit(0, 6)), (0, limit(0, 5))]));
     assert!(matches!(s, Shares::Over(_)));
     assert_eq!(s.refusal(p, limit(0, 4)), None);
     assert!(s.refusal(p, limit(0, 6)).is_some());
-    let s = Shares::of(asks(&[(0, limit(1, 4))]));
+    let s = Shares::from_parts(&asks(&[(0, limit(1, 4))]));
     assert_eq!(s.refusal(p, limit(2, 4)), None, "cap up, the excess down");
     assert!(s.refusal(p, limit(1, 5)).is_some(), "the excess up");
 }

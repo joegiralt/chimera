@@ -187,20 +187,14 @@ impl Strike {
     }
 }
 
-impl Default for Strike {
-    /// A free slot's: nothing held.
-    fn default() -> Self {
-        Strike::Note(Key::Up)
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VoiceSlot {
     part: Option<PartId>,
     note: Option<MidiNote>,
     /// `Allocator::clock` at the last note-on: lower is older.
     age: u32,
-    strike: Strike,
+    /// What it plays; `None` while free.
+    strike: Option<Strike>,
     mono: bool,
     /// Shed, fading out, freed by `release_finished`: the shed's order.
     dying: Option<u32>,
@@ -230,12 +224,17 @@ impl VoiceSlot {
 
     /// Key still down (no note-off yet).
     pub fn held(&self) -> bool {
-        self.strike.held()
+        self.strike.is_some_and(Strike::held)
     }
 
-    /// What it plays: a note or a DRUM hit, and its key.
-    pub fn strike(&self) -> Strike {
+    /// What it plays: a note or a DRUM hit, and its key; `None` while free.
+    pub fn strike(&self) -> Option<Strike> {
         self.strike
+    }
+
+    /// It counts toward its Part's RESERVE (`Strike::reserves`).
+    fn reserves(&self) -> bool {
+        self.strike.is_some_and(Strike::reserves)
     }
 
     /// Shed and fading out.
@@ -334,7 +333,7 @@ impl Allocator {
         let mut s = VoiceSet::EMPTY;
         for v in VoiceIdx::ALL {
             let slot = self.slot(v);
-            if slot.part == Some(part) && slot.dying.is_none() && slot.strike.reserves() {
+            if slot.part == Some(part) && slot.dying.is_none() && slot.reserves() {
                 s = s.with(v);
             }
         }
@@ -356,7 +355,7 @@ impl Allocator {
             let s = self.slot(v);
             if let Some(q) = s
                 .part
-                .filter(|&q| s.dying.is_none() && s.strike.reserves() && Some(q) != but)
+                .filter(|&q| s.dying.is_none() && s.reserves() && Some(q) != but)
                 && self.shares.ask(q).reserve.guards(self.reserving(q).count())
             {
                 g = g.with(v);
@@ -518,7 +517,7 @@ impl Allocator {
             part: Some(part),
             note: Some(note),
             age: self.clock,
-            strike,
+            strike: Some(strike),
             mono,
             dying: None,
             cost,
@@ -534,7 +533,7 @@ impl Allocator {
     /// lookup cannot tell apart when one Part holds a key from two channels.
     pub fn release(&mut self, voice: VoiceIdx) {
         if let Some(s) = self.slots.get_mut(voice.index()) {
-            s.strike = s.strike.released();
+            s.strike = s.strike.map(Strike::released);
         }
     }
 
@@ -625,10 +624,13 @@ impl Allocator {
         }
     }
 
-    /// The voice's engine went silent: free it if it was released or shed.
+    /// The voice's engine went silent: free it if it was released or shed,
+    /// or played a DRUM hit, which ends with its voice whatever its pad's
+    /// key (the owner's ruling, 2026-11-18): a later note-off finds
+    /// nothing held.
     pub fn release_finished(&mut self, voice: VoiceIdx) {
         if let Some(s) = self.slots.get_mut(voice.index())
-            && (!s.strike.held() || s.dying())
+            && (!s.held() || s.dying() || matches!(s.strike, Some(Strike::Hit(_))))
         {
             *s = VoiceSlot::default();
         }

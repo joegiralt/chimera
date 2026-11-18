@@ -283,9 +283,9 @@ impl Instrument {
     /// `Steal(v)` frees one more, released first, the oldest (umbrella open
     /// question 2). A voice still fading counts until it is freed; a shed
     /// one goes first. Under a card fault nothing streams: refused, no
-    /// voice stolen. Only a voice the note's Part may steal goes
-    /// (`Allocator::stealable`: its own at its cap, never a guarded Part's,
-    /// ADR 0281).
+    /// voice stolen. Only a voice that isn't another Part's guarded one
+    /// goes (`Allocator::card_stealable`, ADR 0281), at the note's Part's
+    /// cap too: the cap limits voices, not bandwidth.
     fn admit_stream(&self, new: Bill, gone: VoiceSet, part: PartId, fault: CardFault) -> Admit {
         if fault == CardFault::Read {
             return Admit::Refuse;
@@ -317,8 +317,9 @@ impl Instrument {
 
     /// Admits voice `v`'s bill `new` mid-note (#595): only released voices
     /// go, each fading out as a shed one does; a held note is never cut.
-    /// Only voices `v`'s Part may steal go (ADR 0281). False: it doesn't
-    /// fit, nothing stolen.
+    /// Only voices that aren't another Part's guarded ones go
+    /// (`Allocator::card_stealable`, ADR 0281). False: it doesn't fit,
+    /// nothing stolen.
     fn admit_mid(&mut self, v: VoiceIdx, new: Bill) -> bool {
         let mut gone = VoiceSet::EMPTY.with(v);
         let Some(part) = self.alloc.slot(v).part() else {

@@ -377,7 +377,7 @@ impl AudioShared {
 #[inline(never)]
 #[optimize(size)]
 fn shares_of(shared: &AudioShared) -> crate::voice_limit::Shares {
-    crate::voice_limit::Shares::from_parts(shared.parts.iter().map(|p| p.mix.voices()))
+    crate::voice_limit::Shares::from_parts(&shared.parts.each_ref().map(|p| p.mix.voices()))
 }
 
 /// A new Sound in `part` (its `loads` moved): its knobs read whole and
@@ -2050,11 +2050,11 @@ impl Instrument {
             let cost = own + if first { Knobs::COST } else { Cost::ZERO };
             let reserved = self.reserved();
             let mode = part.mix.mode();
-            let Some(v) = self.alloc.pick_hit(q, mode, key, cost, reserved, mine) else {
+            let Some(vi) = self.alloc.pick_hit(q, mode, key, cost, reserved, mine) else {
                 self.alloc.refuse();
                 continue;
             };
-            let (vi, v) = (v, v.index());
+            let v = vi.index();
             let was = self.alloc.slots()[v];
             self.held_keys[v] = NoteSet::EMPTY.with(key);
             self.alloc.book_hit(vi, q, mode, key, cost);
@@ -2072,13 +2072,7 @@ impl Instrument {
                 self.voices[v].kill()
             } else {
                 self.sounding[v] = Some(q);
-                !self.strike(
-                    VoiceIdx::ALL[v],
-                    q,
-                    (&hit, vel, key, true),
-                    &part.params,
-                    (src, 0.0),
-                )
+                !self.strike(vi, q, (&hit, vel, key, true), &part.params, (src, 0.0))
             };
             #[cfg(feature = "tape")]
             {
@@ -2200,8 +2194,8 @@ impl Instrument {
         let mut reach: [Option<HighNote>; MAX_PARTS] = [None; MAX_PARTS];
         for vi in VoiceIdx::ALL {
             let v = vi.index();
-            if let Some(p) = self.alloc.slots()[v].part() {
-                let p = p.index();
+            if let Some(q) = self.alloc.slot(vi).part() {
+                let p = q.index();
                 let part = &shared.parts[p];
                 let first = !core::mem::replace(&mut knobs[p], true);
                 if first {
@@ -2225,7 +2219,7 @@ impl Instrument {
                 // A hit bills its own machine, not its kit's costliest; a
                 // flat bill (not DRUM) has no kernel, so `Ended` is whole.
                 let hit = match part.params.engine() {
-                    EngineType::Drum => self.hit_of(VoiceIdx::ALL[v], PartId::ALL[p]),
+                    EngineType::Drum => self.hit_of(vi, q),
                     _ => None,
                 };
                 let own = costs[p].hit(match hit {
@@ -2293,6 +2287,23 @@ impl Instrument {
         true
     }
 
+    /// Render's step 5 for voice `vi`: quiet and with no note waiting, it is
+    /// freed as released or shed (`release_finished`), and rests.
+    fn free_if_quiet(&mut self, vi: VoiceIdx) {
+        let v = vi.index();
+        if !self.voices[v].is_active()
+            && (self.waiting[v].is_none() || self.alloc.slot(vi).note().is_none())
+        {
+            self.waiting[v] = None;
+            self.alloc.release_finished(vi);
+            #[cfg(feature = "tape")]
+            if self.alloc.slot(vi).is_free() {
+                self.streaming[v] = Streaming::IDLE;
+            }
+            self.voices[v].rest(&mut self.sym);
+        }
+    }
+
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped
     /// unheard (ADR 0027). Any slot promised or bound to it goes when it
     /// rests, freed.
@@ -2314,15 +2325,14 @@ impl Instrument {
     fn choke(&mut self, id: PartId, key: MidiNote) -> (DrumHit, Steal) {
         let hit = KIT_VIEW.hit(id, key);
         let (pad, p) = (hit.pad(), hit.params());
-        let q = id;
         let mut own = Steal::Any;
         for wi in VoiceIdx::ALL {
             let w = wi.index();
             let s = self.alloc.slots()[w];
-            if s.part() != Some(q) || s.dying() {
+            if s.part() != Some(id) || s.dying() {
                 continue;
             }
-            let Some(h) = self.hit_of(VoiceIdx::ALL[w], id) else {
+            let Some(h) = self.hit_of(wi, id) else {
                 continue;
             };
             let ends = if h.pad() == pad {
@@ -2334,7 +2344,7 @@ impl Instrument {
                 self.alloc.kill(wi);
                 self.shed(wi);
             } else if h.pad() == pad {
-                own = own.mine(VoiceIdx::ALL[w]);
+                own = own.mine(wi);
             }
         }
         (hit, own)
@@ -2389,16 +2399,17 @@ impl Instrument {
             // shed.
             let mut held = [(VoiceIdx::ALL[0], 0u32); MAX_VOICES];
             let mut n = 0;
-            for (v, s) in self.alloc.slots().iter().enumerate() {
-                let voice = &self.voices[v];
+            let q = PartId::ALL[p];
+            for vi in VoiceIdx::ALL {
+                let (s, voice) = (self.alloc.slot(vi), &self.voices[vi.index()]);
                 if s.held()
                     && !s.dying()
-                    && s.part() == Some(PartId::ALL[p])
-                    && self.sounding[v] == Some(PartId::ALL[p])
+                    && s.part() == Some(q)
+                    && self.sounding[vi.index()] == Some(q)
                     && voice.is_active()
                     && (voice.kind() != SYMPATHETIC || voice.restarts())
                 {
-                    held[n] = (VoiceIdx::ALL[v], s.age());
+                    held[n] = (vi, s.age());
                     n += 1;
                 }
             }
@@ -2560,12 +2571,17 @@ impl Instrument {
         crate::probe::acc(9, crate::probe::now().wrapping_sub(t0));
         for vi in VoiceIdx::ALL {
             let v = vi.index();
-            // Free, or booked but never sounded: nothing to render.
-            let Some(p) = self.sounding[v].filter(|_| !self.alloc.slot(vi).is_free()) else {
+            // Free, or booked but never sounded: nothing to render. A
+            // booked one is freed as step 5 frees any, once nothing waits
+            // on it (a shed deferred note).
+            let Some(q) = self.sounding[v].filter(|_| !self.alloc.slot(vi).is_free()) else {
                 ports.drop_ring(vi);
+                if !self.alloc.slot(vi).is_free() {
+                    self.free_if_quiet(vi);
+                }
                 continue;
             };
-            let p = p.index();
+            let p = q.index();
             let part = &shared.parts[p];
             let port = self.port_of(v);
             // A glide's or re-snap's tuning eases at its pace.
@@ -2573,13 +2589,13 @@ impl Instrument {
             let base = CtxBase {
                 sym: &mut self.sym,
                 src,
-                part: PartId::ALL[p],
+                part: q,
                 tune: self.tune + off,
             };
             let voice = &mut self.voices[v];
             let side = &mut sides[p];
             let (knobs, clock) = (&self.knobs[p].0, &self.lfo_clocks[p]);
-            ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
+            ports.ctx(base, vi, port, |ctx| {
                 #[cfg(feature = "bench-warm")]
                 crate::warm::twice(voice, &mut |voice| {
                     voice.render_knobs(
@@ -2606,7 +2622,7 @@ impl Instrument {
             self.age_stream(v);
             // Killed, rebuilt or ended: its deck no longer tends the ring.
             if !self.voices[v].streams() {
-                ports.drop_ring(VoiceIdx::ALL[v]);
+                ports.drop_ring(vi);
             }
             clip[p] = clip[p].max(self.voices[v].filter_clip());
             if written[p] {
@@ -2623,17 +2639,7 @@ impl Instrument {
             //    so a steal or retrigger since the last block is never freed
             //    by a report about the note it replaced.
             //    A voice with a note waiting keeps it for step 6.
-            if !self.voices[v].is_active()
-                && (self.waiting[v].is_none() || self.alloc.slots()[v].note().is_none())
-            {
-                self.waiting[v] = None;
-                self.alloc.release_finished(vi);
-                #[cfg(feature = "tape")]
-                if self.alloc.slots()[v].is_free() {
-                    self.streaming[v] = Streaming::IDLE;
-                }
-                self.voices[v].rest(&mut self.sym);
-            }
+            self.free_if_quiet(vi);
         }
         // 6. Waiting notes whose voices went idle this block start, oldest
         //    first, behind any the budget still queues.

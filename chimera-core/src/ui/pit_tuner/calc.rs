@@ -393,7 +393,7 @@ pub fn pass_in(ui: &mut UiState) {
     let heard = t.heard();
     if heard.is_none()
         && let (Some(n), Some(o)) = (crate::played::last_in(), crate::played::last_out())
-        && let Some(last) = t.last.get_mut(usize::from(n.part))
+        && let Some(last) = t.last.get_mut(n.part.index())
     {
         *last = Some(crate::MidiNote::clamped(o.note));
     }

@@ -194,9 +194,9 @@ pub enum Admit {
 
 /// Admit `new` against `budget`. Released voices go before held, the oldest
 /// first, then the quietest held (`Age::rank`); a bill over the whole
-/// budget refuses outright. Only a voice in `stealable` may go: the note's
-/// Part's MAX VOICES and RESERVE (`Allocator::stealable`, ADR 0281); with
-/// none of them left to free room, refused.
+/// budget refuses outright. Only a voice in `stealable` may go: every voice
+/// but another Part's guarded ones (`Allocator::card_stealable`, ADR 0281);
+/// with none of them left to free room, refused.
 pub fn admit(
     new: Bill,
     playing: impl Iterator<Item = (VoiceIdx, Bill, Age)>,
