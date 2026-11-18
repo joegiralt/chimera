@@ -253,6 +253,12 @@ impl JitterScale {
     pub fn draw(self, stab: &mut Stability) -> f32 {
         1.0 + self.0 * stab.jitter_word() as f32
     }
+
+    /// The most a draw moves the factor from 1 (a full word's), before
+    /// the sum's rounding.
+    pub fn reach(self) -> f32 {
+        self.0 * 2_147_483_648.0
+    }
 }
 
 /// An oscillator's pitch factor for the cycle under way, drawn at its last

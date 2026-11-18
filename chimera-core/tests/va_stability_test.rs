@@ -4,8 +4,8 @@
 
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::va::stability::{
-    Character, DRIFT_OWN_CENTS, DRIFT_SHARED_CENTS, JITTER_CENTS, SALT_SCALE, SALT_TAU, SALT_TRIM,
-    Seed, Stability, TRIM_CENTS, depth,
+    Character, DRIFT_OWN_CENTS, DRIFT_SHARED_CENTS, JITTER_CENTS, JitterScale, SALT_SCALE,
+    SALT_TAU, SALT_TRIM, Seed, Stability, TRIM_CENTS, depth,
 };
 
 const RATES: [f32; 4] = [
@@ -216,16 +216,20 @@ fn jitter_in_bounds() {
         let mut st = Stability::NEW;
         st.prepare(BLOCK);
         st.seed(Seed::of(3, 5));
+        let js = JitterScale::new(d);
+        // a full word moves the factor `JITTER_CENTS · d` cents
+        let reach = js.reach();
+        let cents = |x: f32| x / reach * JITTER_CENTS * d;
         let mut sum = 0.0f64;
         let mut worst = 0.0f32;
         for _ in 0..100_000 {
-            let j = st.jitter(d);
-            assert!(j.abs() <= JITTER_CENTS * d, "d {d}: {j}");
-            worst = worst.max(j.abs());
-            sum += j as f64;
+            let x = js.draw(&mut st) - 1.0;
+            assert!(x.abs() <= reach + f32::EPSILON, "d {d}: {x}");
+            worst = worst.max(cents(x).abs());
+            sum += cents(x) as f64;
         }
         let mean = sum / 1e5;
-        println!("d {d}: max |jitter| {worst:.4}, mean {mean:.5}");
+        println!("d {d}: max |jitter| {worst:.4} cents, mean {mean:.5}");
         assert!(mean.abs() <= 0.02 * d as f64, "d {d}: mean {mean}");
     }
 }
@@ -318,7 +322,7 @@ fn character_is_the_seeds() {
     st.seed(Seed::of(2, 3));
     for _ in 0..10_000 {
         st.step(0.5);
-        st.jitter(0.5);
+        JitterScale::new(0.5).draw(&mut st);
     }
     assert_eq!(st.character(), Character::of(Seed::of(2, 3)));
     assert_ne!(st.character(), Character::of(Seed::of(1, 3)));
@@ -331,6 +335,9 @@ fn depth_zero_is_silent_bits() {
     st.seed(Seed::of(4, 1));
     for _ in 0..10_000 {
         assert_eq!(st.step(0.0).map(f32::to_bits), [0.0f32.to_bits(); 2]);
-        assert_eq!(st.jitter(0.0).to_bits(), 0.0f32.to_bits());
+        assert_eq!(
+            JitterScale::new(0.0).draw(&mut st).to_bits(),
+            1.0f32.to_bits()
+        );
     }
 }
