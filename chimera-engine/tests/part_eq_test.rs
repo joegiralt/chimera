@@ -58,3 +58,56 @@ fn a_tilt_s_code_is_its_cc_value_64_flat() {
     }
     assert_eq!(Tilt::from_code(128), None);
 }
+
+mod block {
+    use chimera_engine::addr::{BlockRef, ParamAddr};
+    use chimera_engine::block::Block;
+    use chimera_engine::midi_map::Mappable;
+    use chimera_engine::part::PartParams;
+    use chimera_engine::part_eq::{LoCut, PartEq, Tilt};
+
+    #[test]
+    fn a_part_starts_flat_and_off() {
+        for i in 0..6 {
+            let m = PartParams::for_part(i);
+            assert_eq!(m.eq, PartEq::FLAT);
+            assert_eq!(m.get(PartParams::TILT), 0.0);
+            assert_eq!(m.get(PartParams::LO_CUT), 0.0);
+        }
+    }
+
+    #[test]
+    fn tilt_and_lo_cut_are_the_part_block_s_15_and_16() {
+        assert_eq!(PartParams::TILT.0, 15);
+        assert_eq!(PartParams::LO_CUT.0, 16);
+        let mut m = PartParams::default();
+        m.write(PartParams::TILT, -12.0);
+        m.write(PartParams::LO_CUT, 1.0);
+        assert_eq!(m.eq, PartEq::new(Tilt::at(-12), LoCut::On));
+        assert_eq!(m.get(PartParams::TILT), -12.0);
+        assert_eq!(m.get(PartParams::LO_CUT), 1.0);
+        assert_eq!(m.enum_code(PartParams::LO_CUT), Some(1));
+        assert_eq!(m.enum_ident(PartParams::LO_CUT), Some("ON"));
+        // TILT is a value, not a choice: stored as its step.
+        assert_eq!(m.enum_code(PartParams::TILT), None);
+        // Each leaves the other be.
+        m.write(PartParams::TILT, 63.0);
+        assert_eq!(m.eq.lo_cut(), LoCut::On);
+        assert!(m.set_enum_code(PartParams::LO_CUT, 0));
+        assert_eq!(m.eq, PartEq::new(Tilt::at(63), LoCut::Off));
+        assert!(!m.set_enum_code(PartParams::LO_CUT, 2));
+        // Clamped, rounded.
+        m.write(PartParams::TILT, 200.0);
+        assert_eq!(m.eq.tilt().step(), Tilt::MAX_STEP);
+        m.write(PartParams::TILT, -3.6);
+        assert_eq!(m.eq.tilt().step(), -4);
+    }
+
+    #[test]
+    fn tilt_maps_to_a_cc_and_lo_cut_does_not() {
+        let at = |p| Mappable::new(ParamAddr::new(BlockRef::Part, p));
+        assert!(at(PartParams::TILT).is_some());
+        assert!(at(PartParams::LO_CUT).is_none());
+        assert!(at(PartParams::LEVEL).is_some() && at(PartParams::PAN).is_some());
+    }
+}
