@@ -24,8 +24,7 @@ use chimera_engine::dsp::voice_fx::params::FxType;
 use chimera_engine::params::EngineType;
 
 const P1: PartId = PartId::ALL[0];
-/// What one answer can carry (`console_ed_test`'s, from the CDC floor).
-const ANSWER_BYTES_MAX: usize = 32_000;
+use chimera_core::console::ANSWER_BYTES_MAX;
 
 fn fake(e: EngineType) -> Fake {
     let mut f = Fake::new();
@@ -376,7 +375,7 @@ fn check_box_cells(f: &mut Fake, e: EngineType, listed: &BTreeSet<String>) -> us
     let chain = PartChain::of(&f.ui.project().part(P1).sound).def();
     let drum = e == EngineType::Drum;
     let pads: Vec<Option<PadId>> = if drum {
-        vec![Some(pad(1)), Some(pad(12))]
+        PadId::ALL.iter().map(|&p| Some(p)).collect()
     } else {
         vec![None]
     };
@@ -420,41 +419,106 @@ fn check_box_cells(f: &mut Fake, e: EngineType, listed: &BTreeSet<String>) -> us
 }
 
 /// The variant edits that move what a page shows on `e`: each axis
-/// through every value, by option number.
-fn variant_edits(e: EngineType) -> Vec<(String, usize)> {
-    let mut v = vec![("VOICEFX.TYPE".to_string(), FxType::LIST.len())];
+/// through every value, by option number; on DRUM every pad at once.
+fn variant_edits(e: EngineType) -> Vec<(Vec<String>, usize)> {
+    let every_pad = |suffix: &str, ident: &str| -> Vec<String> {
+        (1..=12)
+            .map(|n| format!("PAD{n}{suffix}.{ident}"))
+            .collect()
+    };
+    let mut v = vec![(vec!["VOICEFX.TYPE".to_string()], FxType::LIST.len())];
     match e {
         EngineType::Drum => {
-            v.push(("PAD1.MACHINE".to_string(), Machine::ALL.len()));
-            v.push(("PAD12_FLT.KIND".to_string(), FilterKind::BUILT.len()));
+            v.push((every_pad("", "MACHINE"), Machine::ALL.len()));
+            v.push((every_pad("_FLT", "KIND"), FilterKind::BUILT.len()));
         }
         EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => {
-            v.push(("FILTER.KIND".to_string(), FilterKind::BUILT.len()));
+            v.push((vec!["FILTER.KIND".to_string()], FilterKind::BUILT.len()));
         }
     }
     match e {
-        EngineType::Modal => v.push(("MODAL.MODE".to_string(), MODELS.len())),
-        EngineType::Tape => v.push(("TAPE_ENG.MODEL".to_string(), TapeMachine::ALL.len())),
+        EngineType::Modal => v.push((vec!["MODAL.MODE".to_string()], MODELS.len())),
+        EngineType::Tape => v.push((vec!["TAPE_ENG.MODEL".to_string()], TapeMachine::ALL.len())),
         EngineType::Algo | EngineType::Va | EngineType::Drum => {}
     }
     v
+}
+
+/// Every continuous param `describe` lists at an untidy value: a third of
+/// the way, plus a little, so readouts carry their longest decimals.
+fn mess(f: &mut Fake, texts: &[String]) {
+    for p in params(texts) {
+        if p[3] != "cont" {
+            continue;
+        }
+        let a = EdAddr::parse(p[1].as_bytes()).unwrap();
+        let spec = a.param().spec().unwrap();
+        if !spec.stored || spec.patching {
+            continue;
+        }
+        let (min, max): (f32, f32) = (p[5].parse().unwrap(), p[6].parse().unwrap());
+        let at = min + (max - min) * 0.371;
+        assert_eq!(
+            ask(f, &format!("ed set {} {at:.6}\n", p[1])),
+            "OK queued\n",
+            "{}",
+            p[1]
+        );
+        apply(f);
+    }
 }
 
 #[test]
 fn every_box_cell_of_every_engine_is_described_and_reads_as_the_box() {
     for e in OTHERS {
         let mut f = fake(e);
-        let listed = listed(&page_texts(&mut f, e));
+        let texts = page_texts(&mut f, e);
+        let listed = listed(&texts);
         let mut n = check_box_cells(&mut f, e, &listed);
-        for (addr, count) in variant_edits(e) {
+        // Untidy values too: the longest readouts.
+        mess(&mut f, &texts);
+        n += check_box_cells(&mut f, e, &listed);
+        for (addrs, count) in variant_edits(e) {
             for i in 0..count {
-                set(&mut f, &addr, &format!("#{i}"));
+                for a in &addrs {
+                    set(&mut f, a, &format!("#{i}"));
+                }
                 n += check_box_cells(&mut f, e, &listed);
             }
-            set(&mut f, &addr, "#0");
+            for a in &addrs {
+                set(&mut f, a, "#0");
+            }
         }
         assert!(n > 100, "{e:?}: {n}");
     }
+}
+
+/// The worst DRUM answer: every pad on each machine in turn, the longest
+/// filter name, untidy values. Under the bound with room, and timed.
+#[test]
+fn a_messy_kit_fits_one_answer() {
+    let mut f = fake(EngineType::Drum);
+    let texts = page_texts(&mut f, EngineType::Drum);
+    let kinds = FilterKind::BUILT;
+    let longest = (0..kinds.len())
+        .max_by_key(|&k| filter_variant(kinds[k]).len())
+        .unwrap();
+    let mut worst = 0;
+    let mut slowest = std::time::Duration::ZERO;
+    for m in 0..Machine::ALL.len() {
+        for n in 1..=12 {
+            set(&mut f, &format!("PAD{n}.MACHINE"), &format!("#{m}"));
+            set(&mut f, &format!("PAD{n}_FLT.KIND"), &format!("#{longest}"));
+        }
+        mess(&mut f, &texts);
+        let t = std::time::Instant::now();
+        let (lines, _, bytes) = since(&mut f, 0);
+        slowest = slowest.max(t.elapsed());
+        assert!(lines[0].starts_with("part 1 DRUM"), "{:?}", &lines[..2]);
+        worst = worst.max(bytes);
+    }
+    println!("a messy kit's full answer: {worst} B of {ANSWER_BYTES_MAX}, the slowest {slowest:?}");
+    assert!(worst < ANSWER_BYTES_MAX, "{worst} B");
 }
 
 // ---- set ----
@@ -686,4 +750,102 @@ fn reads_follow_the_named_pad_not_the_selection() {
         "ERR ed get has no PAD1.LEVEL here\n"
     );
     let _ = BlockRead::block(a.ui.params(), BlockRef::Va).is_some();
+}
+
+// ---- refusals: what the box's turn refuses, `ed set` writes nothing of ----
+
+use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::kinds::OpKind;
+use chimera_core::ui::held::{self, AlgSide, Pick, TapeTurn};
+use chimera_engine::addr::Op;
+use chimera_engine::addr::ParamAddr;
+
+/// Part 1 TAPE on a streamed 30 s 24 kHz source (tape_musical_ui_test's).
+fn streamed() -> Fake {
+    use chimera_core::storage::{SourceRef, TapeSource};
+    use chimera_core::stream::ring::{Rings, ThirdSlots};
+    use chimera_core::stream::test_card::TestCard;
+    use common::tape::{held_plain, sine};
+    let whole = held_plain(&sine(24_000, 100.7, 720_000), 24_000);
+    let rings: &'static Rings = Box::leak(Box::new(Rings::new()));
+    let third: &'static ThirdSlots = Box::leak(Box::new(ThirdSlots::new()));
+    let (_, card) = rings.sides(third).unwrap();
+    let bytes = TestCard::new(card, &whole, 0).held(&[0, 0], 4_800);
+    let r = SourceRef {
+        crc: 0x5EED,
+        frames: 720_000,
+        rate: 24_000,
+    };
+    let mut f = fake(EngineType::Tape);
+    f.ui.project_mut().source_store(r, &bytes).unwrap();
+    f.ui.project_mut().edit_part(P1).sound.source = Some(TapeSource { r, tune: None });
+    let s = &f.ui.project().part(P1).sound;
+    assert!(f.ui.project().pool().streamed(s.source_ref().unwrap()));
+    f
+}
+
+fn ed(a: ParamAddr) -> String {
+    EdAddr::sound(a).unwrap().to_string()
+}
+
+#[test]
+fn a_tape_turn_a_streamed_source_refuses_writes_nothing() {
+    let mut f = streamed();
+    // The review's repro: SCRUB on a streamed source.
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    assert_eq!(get(&mut f, "TAPE_ENG.MODEL").1, "WALK");
+    let (lines, _, _) = since(&mut f, 0);
+    assert!(!lines.iter().any(|l| l.contains("NEEDS RAM")), "{lines:?}");
+    // Every MODEL and DIRECTION: lands where the box's turn lands, else
+    // nothing written.
+    let mut refused = 0;
+    for a in [held::MODEL, held::DIRECTION] {
+        for i in 0..4u8 {
+            set(&mut f, "TAPE_ENG.MODEL", "#0");
+            set(&mut f, &ed(a), "#0");
+            let turn = TapeTurn::of(a, f32::from(i)).unwrap();
+            let why = Pick::Tape(turn).why(&f.ui.project().part(P1).sound, true);
+            set(&mut f, &ed(a), &format!("#{i}"));
+            let want = if why.is_some() { 0.0 } else { f32::from(i) };
+            assert_eq!(get(&mut f, &ed(a)).0, want, "{} #{i}: {why:?}", ed(a));
+            refused += usize::from(why.is_some());
+        }
+    }
+    assert!(refused >= 3, "{refused}");
+}
+
+#[test]
+fn a_formant_kind_or_algorithm_past_the_budget_writes_nothing() {
+    let mut f = fake(EngineType::Algo);
+    let formant = OpKind::Formant.code();
+    let mut refused = 0;
+    for op in Op::ALL {
+        let a = ParamAddr::new(
+            BlockRef::AlgoOp(op),
+            chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
+        );
+        let was = get(&mut f, &ed(a)).0;
+        let why = Pick::Wave(op, OpKind::Formant).why(&f.ui.project().part(P1).sound, false);
+        set(&mut f, &ed(a), &format!("#{formant}"));
+        let want = if why.is_some() {
+            was
+        } else {
+            f32::from(formant)
+        };
+        assert_eq!(get(&mut f, &ed(a)).0, want, "{op:?}: {why:?}");
+        refused += usize::from(why.is_some());
+    }
+    assert!(refused > 0, "the budget never refused a formant");
+    for side in [AlgSide::A, AlgSide::B] {
+        let a = ParamAddr::new(BlockRef::Algo, side.param());
+        for code in 0..32u8 {
+            let was = get(&mut f, &ed(a)).0;
+            let why =
+                Pick::Alg(side, AlgoId::clamped(code)).why(&f.ui.project().part(P1).sound, false);
+            set(&mut f, &ed(a), &format!("#{code}"));
+            let want = if why.is_some() { was } else { f32::from(code) };
+            assert_eq!(get(&mut f, &ed(a)).0, want, "{side:?} {code}: {why:?}");
+            refused += usize::from(why.is_some());
+        }
+    }
 }

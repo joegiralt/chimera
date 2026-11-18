@@ -6,7 +6,8 @@
 use core::fmt::{self, Write};
 
 use super::addr::{EdBlock, PadBlock};
-use super::describe::{num, page_at};
+use super::describe::num;
+use super::pages::Pages;
 use super::{EdAddr, since};
 use crate::addr::{BlockRead, BlockRef};
 use crate::dsp::drum::sound::RouteId;
@@ -92,24 +93,29 @@ pub(super) fn find(
     a: EdAddr,
 ) -> Option<(&'static BlockDef, usize, SlotCtx)> {
     let ctx = ctx_for(ui, own, a);
-    let want = a.pad();
     let engine = engine_of(ui);
-    let mut n = 0;
-    while let Some((def, pad)) = page_at(engine, n) {
-        n += 1;
-        let on = match (want, pad) {
-            (Some(w), Some(p)) => w == p,
-            (None, None) => true,
-            (None, Some(p)) => p == PadId::ALL[0],
-            (Some(_), None) => false,
-        };
-        if !on {
-            continue;
-        }
+    // A pad's address is on its own pad's pages alone; the Sound's on the
+    // Part's, else pad 1's (a Sound cell on a pad page reads the same on
+    // every pad).
+    let (first, then) = match a.pad() {
+        Some(p) => (Pages::pad(engine, p), None),
+        None => (Pages::part(engine), Some(Pages::pad(engine, PadId::ALL[0]))),
+    };
+    if let Some((def, i)) = slot_in(first, a, &ctx) {
+        return Some((def, i, ctx));
+    }
+    let (def, i) = slot_in(then?, a, &ctx)?;
+    Some((def, i, ctx))
+}
+
+/// The first page of `pages` with a slot that shows `a` under `ctx`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.slot_in"))]
+fn slot_in(pages: Pages, a: EdAddr, ctx: &SlotCtx) -> Option<(&'static BlockDef, usize)> {
+    for (def, _) in pages {
         let mut i = 0;
         while i < def.params.len() {
-            if view::view(def, i, &ctx).addr() == Some(a.param()) {
-                return Some((def, i, ctx));
+            if view::view(def, i, ctx).addr() == Some(a.param()) {
+                return Some((def, i));
             }
             i += 1;
         }
@@ -150,9 +156,7 @@ pub(super) fn reading(addr: EdAddr, ui: &UiState, own: &CellOwn) -> Option<(f32,
 )]
 pub(super) fn source_text(ui: &UiState, own: &CellOwn) -> Option<FmtBuf> {
     let ctx = text_ctx(ui, own);
-    let mut n = 0;
-    while let Some((def, _)) = page_at(engine_of(ui), n) {
-        n += 1;
+    for (def, _) in Pages::part(engine_of(ui)) {
         let mut i = 0;
         while let Some(s) = def.params.get(i) {
             if let SlotBinding::Source = s.binding {

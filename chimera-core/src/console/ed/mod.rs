@@ -14,6 +14,7 @@ use chimera_engine::params::EngineType;
 mod addr;
 mod describe;
 mod edits;
+mod pages;
 mod since;
 mod value;
 pub use addr::{EdAddr, EdBlock, PadBlock, SoundBlock};
@@ -21,7 +22,7 @@ pub use describe::{
     MODELS, chain, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
     modal_variant, op_variant, pages, tape_variant,
 };
-pub use edits::{EdState, Pushed};
+pub use edits::{EdState, Pushed, SetRefusal};
 pub use since::{
     EdSince, Gen, PANELS_MAX as ED_PANELS, SLOTS as ED_SLOTS, panels_used as ed_panels_used,
     slots_used as ed_slots_used,

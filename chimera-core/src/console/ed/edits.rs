@@ -10,7 +10,7 @@ use super::{EdAddr, EdValue};
 use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::page::ValFmt;
-use crate::ui::view;
+use crate::ui::{held, view};
 use chimera_engine::params::EngineType;
 
 /// Sets waiting for the next UI pass. A lap of a browser's sliders is a
@@ -120,6 +120,9 @@ impl EdState {
 /// check with it).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.turn"))]
 fn turn(ui: &mut UiState, p: Pending) {
+    if refused(ui, p) {
+        return;
+    }
     match p.addr.pad() {
         None => {
             ui.edit_to(p.part, p.addr.param(), p.to);
@@ -129,6 +132,48 @@ fn turn(ui: &mut UiState, p: Pending) {
             ui.project_mut().select_pad(p.part, n);
             ui.edit_to(p.part, p.addr.param(), p.to);
             ui.project_mut().select_pad(p.part, was);
+        }
+    }
+}
+
+/// A choice the box's own turn refuses and its write path doesn't (ADR
+/// 0151): TAPE's MODEL or DIRECTION onto what a streamed source can't
+/// play (`turn_model`, and a CC's `cc_cost`). Nothing is written, as
+/// the hand's turn writes nothing. The rest refuse in the write itself:
+/// WAVE and ALG A/B in `try_set_kind` and `try_set_algs` (the formant
+/// budget), CHOKE in `edit_in` (ADR 0280).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.refused"))]
+fn refused(ui: &UiState, p: Pending) -> bool {
+    let Some(t) = held::TapeTurn::of(p.addr.param(), p.to) else {
+        return false;
+    };
+    let project = ui.project();
+    let sound = &project.part(p.part).sound;
+    let streamed = match sound.source_ref() {
+        Some(r) => project.pool().streamed(r),
+        None => false,
+    };
+    held::Pick::Tape(t).why(sound, streamed).is_some()
+}
+
+/// Why `ed set` can't take a value: each its own `ERR`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetRefusal {
+    /// `#n` past the choice's last option.
+    NoSuchOption,
+    /// A name or `#n` on a continuous param.
+    TakesANumber,
+    /// A word that names none of the choice's options.
+    TakesAName,
+}
+
+impl SetRefusal {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.words"))]
+    pub const fn words(self) -> &'static str {
+        match self {
+            SetRefusal::NoSuchOption => "has no such option",
+            SetRefusal::TakesANumber => "takes a number",
+            SetRefusal::TakesAName => "takes one of its names",
         }
     }
 }
@@ -155,14 +200,14 @@ fn fmt_of(ui: &UiState, a: EdAddr) -> Option<ValFmt> {
 /// own, matched exactly, the typed word kept), its option number, or a
 /// number.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.resolve"))]
-fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, &'static str> {
+fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, SetRefusal> {
     let names = fmt_of(ui, a).and_then(super::describe::names);
     match (val, names) {
         (EdValue::Index(n), Some(names)) => match names.get(usize::from(n.get())) {
             Some(_) => Ok(f32::from(n.get())),
-            None => Err("has no such option"),
+            None => Err(SetRefusal::NoSuchOption),
         },
-        (EdValue::Index(_), None) => Err("takes a number"),
+        (EdValue::Index(_), None) => Err(SetRefusal::TakesANumber),
         (EdValue::Num(_, word) | EdValue::Name(word), Some(names)) => {
             let mut i = 0;
             while i < names.len() {
@@ -171,10 +216,10 @@ fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, &'static str> {
                 }
                 i += 1;
             }
-            Err("takes one of its names")
+            Err(SetRefusal::TakesAName)
         }
         (EdValue::Num(n, _), None) => Ok(n),
-        (EdValue::Name(_), None) => Err("takes a number"),
+        (EdValue::Name(_), None) => Err(SetRefusal::TakesANumber),
     }
 }
 
@@ -197,7 +242,7 @@ pub(super) fn set(
     }
     let to = match resolve(ui, addr, val) {
         Ok(to) => to,
-        Err(why) => return writeln!(w, "ERR ed set {addr} {why}"),
+        Err(why) => return writeln!(w, "ERR ed set {addr} {}", why.words()),
     };
     match q.push(part, engine, addr, to) {
         Pushed::Full => w.write_str("ERR busy\n"),

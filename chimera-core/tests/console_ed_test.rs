@@ -122,10 +122,7 @@ use std::collections::BTreeSet;
 /// speed polls it once a 1 ms frame (`chimera-board/src/usb.rs`, `DRAIN_MS`),
 /// so 64,000 B/s. An answer is cut at `ANSWER_MS` (`console::ANSWER_MS`),
 /// and half that is the margin.
-const BULK_PACKET_BYTES: usize = 64;
-const BULK_PACKETS_PER_S: usize = 1000;
-const ANSWER_BYTES_MAX: usize =
-    BULK_PACKET_BYTES * BULK_PACKETS_PER_S * chimera_core::console::ANSWER_MS as usize / 1000 / 2;
+use chimera_core::console::ANSWER_BYTES_MAX;
 
 fn page_text(f: &mut Fake, n: u8) -> String {
     ask(f, &format!("ed describe ALGO {n}\n"))

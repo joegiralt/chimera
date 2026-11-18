@@ -32,141 +32,14 @@ use crate::dsp::modulator::{EnvForm, EnvSlot, EnvSpeed, Func, LfoForm, LfoSlot};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::voice_fx::params::FxType;
 use crate::params::{EngineType, FilterParams};
-use crate::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
-use crate::ui::block_registry::{
-    ALGO_FORMANT_CHAIN, DRUM_CHAIN, MODAL_PLUCK_CHAIN, TAPE_CHAIN, VA_CHAIN,
-};
+use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::view::{self, EnvKind, LfoKind, SlotCtx, View};
 use chimera_engine::addr::{BlockRead, BlockView};
 use chimera_engine::dsp::drum::params::PadParams;
 use chimera_engine::dsp::modal::ModalParams;
 
-/// The chain the editor walks for `engine`.
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.chain"))]
-pub fn chain(engine: EngineType) -> &'static ChainDef2 {
-    match engine {
-        EngineType::Algo => &ALGO_FORMANT_CHAIN,
-        EngineType::Modal => &MODAL_PLUCK_CHAIN,
-        EngineType::Tape => &TAPE_CHAIN,
-        EngineType::Va => &VA_CHAIN,
-        EngineType::Drum => &DRUM_CHAIN,
-    }
-}
-
-/// Whether a cell bound `b` resolves against the pad (DRUM's): a pad's
-/// param, its machine's knobs, its filter's panel, its routes. FLT's
-/// sub-pages' panel cells count: on DRUM they read the pad's KIND.
-#[cfg_attr(
-    target_os = "none",
-    unsafe(link_section = ".bank2_ed.describe.pad_binding")
-)]
-fn pad_binding(b: SlotBinding) -> bool {
-    match b {
-        SlotBinding::Param(a) => a.block.is_pad(),
-        SlotBinding::SelectPad
-        | SlotBinding::Knob(_)
-        | SlotBinding::PadFilterPanel(_)
-        | SlotBinding::FilterPanel(_)
-        | SlotBinding::SelectRoute
-        | SlotBinding::SelectedRoute(_) => true,
-        SlotBinding::Empty
-        | SlotBinding::SelectedOp(_)
-        | SlotBinding::SelectOp
-        | SlotBinding::Legacy(_)
-        | SlotBinding::FxPanel(_)
-        | SlotBinding::EnvPanel(..)
-        | SlotBinding::LfoPanel(..)
-        | SlotBinding::ModalPanel(..)
-        | SlotBinding::OpPanel(..)
-        | SlotBinding::Machine(_)
-        | SlotBinding::Source
-        | SlotBinding::ReverbPanel(..)
-        | SlotBinding::SelectedRing(_)
-        | SlotBinding::Orbit(_) => false,
-    }
-}
-
-/// `def` is described once a pad on `engine`.
-#[cfg_attr(
-    target_os = "none",
-    unsafe(link_section = ".bank2_ed.describe.per_pad")
-)]
-fn per_pad(engine: EngineType, def: &BlockDef) -> bool {
-    let mut any = false;
-    for s in &def.params {
-        any |= pad_binding(s.binding);
-    }
-    engine == EngineType::Drum && any
-}
-
-/// Flat page `n` of the chain: each node's home, then its sub-pages.
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.def_in"))]
-fn def_in(c: &ChainDef2, mut n: usize) -> Option<&'static BlockDef> {
-    for b in c.blocks {
-        if n == 0 {
-            return Some(b.def);
-        }
-        n -= 1;
-        if let Some(d) = b.sub_pages.get(n) {
-            return Some(d);
-        }
-        n -= b.sub_pages.len();
-    }
-    None
-}
-
-/// The chain's pages, `(the Part's, a pad's)`.
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.counts"))]
-fn counts(engine: EngineType) -> (usize, usize) {
-    let c = chain(engine);
-    let (mut part, mut pad) = (0, 0);
-    let mut n = 0;
-    while let Some(def) = def_in(c, n) {
-        n += 1;
-        if per_pad(engine, def) {
-            pad += 1;
-        } else {
-            part += 1;
-        }
-    }
-    (part, pad)
-}
-
-/// The pages the editor walks for `engine`.
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.pages"))]
-pub fn pages(engine: EngineType) -> u8 {
-    let (part, pad) = counts(engine);
-    let pads = if pad == 0 { 0 } else { PadId::ALL.len() };
-    (part + pad * pads) as u8
-}
-
-/// Page `n`: the Part's pages in chain order, then each pad's.
-#[cfg_attr(
-    target_os = "none",
-    unsafe(link_section = ".bank2_ed.describe.page_at")
-)]
-pub(super) fn page_at(engine: EngineType, n: usize) -> Option<(&'static BlockDef, Option<PadId>)> {
-    let c = chain(engine);
-    let (part, pad) = counts(engine);
-    let (want_pad, mut k) = if n < part {
-        (None, n)
-    } else {
-        // No pad pages (every engine but DRUM): nothing past the Part's.
-        let p = *PadId::ALL.get((n - part).checked_div(pad)?)?;
-        (Some(p), (n - part).checked_rem(pad)?)
-    };
-    let mut i = 0;
-    while let Some(def) = def_in(c, i) {
-        i += 1;
-        if per_pad(engine, def) == want_pad.is_some() {
-            if k == 0 {
-                return Some((def, want_pad));
-            }
-            k -= 1;
-        }
-    }
-    None
-}
+use super::pages::{Pages, page_at};
+pub use super::pages::{chain, pages};
 
 /// A variant as one token: a name's spaces as `-` (`TONE KICK` is
 /// `TONE-KICK`). `since` writes them the same way.
@@ -332,7 +205,35 @@ pub(super) fn spec_under(a: ParamAddr, ctx: &SlotCtx) -> Option<&'static ParamSp
     let kind = match a.block {
         BlockRef::Filter => ctx.kind,
         BlockRef::PadFilter => ctx.pad_kind,
-        _ => return a.spec(),
+        BlockRef::Modal
+        | BlockRef::Algo
+        | BlockRef::AlgoOp(_)
+        | BlockRef::Env(_)
+        | BlockRef::Lfo(_)
+        | BlockRef::Out
+        | BlockRef::Pitch
+        | BlockRef::Chorus
+        | BlockRef::Delay
+        | BlockRef::Reverb
+        | BlockRef::Tape
+        | BlockRef::Comp
+        | BlockRef::Part
+        | BlockRef::PartMix(_)
+        | BlockRef::Theme
+        | BlockRef::OrbitChords
+        | BlockRef::OrbitRing(_)
+        | BlockRef::Tempo
+        | BlockRef::Midi
+        | BlockRef::Random
+        | BlockRef::TapeEngine
+        | BlockRef::Va
+        | BlockRef::VoiceFx
+        | BlockRef::Pad
+        | BlockRef::Kit
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => return a.spec(),
     };
     let mut f = FilterParams::default();
     f.set_kind(kind);
@@ -481,6 +382,99 @@ fn axis_of(b: SlotBinding) -> Option<Axis> {
     })
 }
 
+/// A panel's name, as `describe` lists it and `since` reports its
+/// variant: one table for both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PanelName {
+    Filter,
+    Fx,
+    Env(EnvSlot),
+    Lfo(LfoSlot),
+    Op(Op),
+    Resonator,
+    Machine,
+    PadFilter(PadId),
+    PadMachine(PadId),
+    PadRoute(PadId, RouteId),
+    /// A page's own cells, a pad's when it has one.
+    Page(&'static str, Option<PadId>),
+}
+
+impl PanelName {
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.describe.write.1")
+    )]
+    pub(super) fn write(self, w: &mut dyn Write) -> fmt::Result {
+        let (pad, name) = match self {
+            PanelName::Filter => (None, "FILTER"),
+            PanelName::Fx => (None, "FX"),
+            PanelName::Env(s) => (None, env_name(s)),
+            PanelName::Lfo(s) => (None, lfo_name(s)),
+            PanelName::Op(o) => (None, op_name(o)),
+            PanelName::Resonator => (None, "RESONATOR"),
+            PanelName::Machine => (None, "MACHINE"),
+            PanelName::PadFilter(p) => (Some(p), "FLT"),
+            PanelName::PadMachine(p) => (Some(p), "MCH"),
+            PanelName::PadRoute(p, r) => (Some(p), route_name(r)),
+            PanelName::Page(short, p) => (p, short),
+        };
+        pad_prefix(pad, w)?;
+        w.write_str(name)
+    }
+}
+
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.env_name")
+)]
+const fn env_name(s: EnvSlot) -> &'static str {
+    match s {
+        EnvSlot::Env1 => "ENV1",
+        EnvSlot::Env2 => "ENV2",
+        EnvSlot::Env3 => "ENV3",
+    }
+}
+
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.lfo_name")
+)]
+const fn lfo_name(s: LfoSlot) -> &'static str {
+    match s {
+        LfoSlot::Lfo1 => "LFO1",
+        LfoSlot::Lfo2 => "LFO2",
+        LfoSlot::Lfo3 => "LFO3",
+    }
+}
+
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.op_name")
+)]
+const fn op_name(o: Op) -> &'static str {
+    match o {
+        Op::A => "OP1",
+        Op::B => "OP2",
+        Op::C => "OP3",
+        Op::D => "OP4",
+        Op::E => "OP5",
+        Op::F => "OP6",
+    }
+}
+
+/// `RT1`–`RT4`: a route is a number, 1–4.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.route_name")
+)]
+fn route_name(r: RouteId) -> &'static str {
+    ["RT1", "RT2", "RT3", "RT4"]
+        .get(r.index())
+        .copied()
+        .unwrap_or("RT")
+}
+
 /// A page's panels: what its cells resolve against, one per variant.
 #[derive(Clone, Copy)]
 enum Group {
@@ -530,30 +524,32 @@ impl Group {
         target_os = "none",
         unsafe(link_section = ".bank2_ed.describe.write_head")
     )]
-    fn write_head(self, def: &BlockDef, pad: Option<PadId>, w: &mut dyn Write) -> fmt::Result {
-        // The name, and whether it is a pad's: one write of each, so no
-        // call sequence repeats for the outliner to share with bank 1.
-        let (pads, name) = match (self, pad) {
-            (Group::Fixed, _) => (true, def.short),
-            (Group::Filter(_), Some(_)) => (true, "FLT"),
-            (Group::Filter(_), None) => (false, "FILTER"),
-            (Group::Fx(_), _) => (false, "FX"),
-            (Group::Env(s, _), _) => (false, ["ENV1", "ENV2", "ENV3"][s.index()]),
-            (Group::Lfo(s, _), _) => (false, ["LFO1", "LFO2", "LFO3"][s.index()]),
-            (Group::Op(o, _), _) => (false, ["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"][o.index()]),
-            (Group::Modal(_), _) => (false, "RESONATOR"),
-            (Group::Tape(_), _) => (false, "MACHINE"),
-            (Group::Machine(_), _) => (true, "MCH"),
-            (Group::Route(r), _) => (true, ["RT1", "RT2", "RT3", "RT4"][r.index()]),
-        };
+    fn write_head(self, name: PanelName, w: &mut dyn Write) -> fmt::Result {
         w.write_str("panel ")?;
-        if pads {
-            pad_prefix(pad, w)?;
-        }
-        w.write_str(name)?;
+        name.write(w)?;
         w.write_char(' ')?;
         variant_token(self.variant(), w)?;
         w.write_char('\n')
+    }
+
+    /// Its panel's name on `def`, a pad's page when `pad`; `None` for a
+    /// pad's group off a pad's page (no chain has one).
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.name"))]
+    fn name(self, def: &'static BlockDef, pad: Option<PadId>) -> Option<PanelName> {
+        Some(match (self, pad) {
+            (Group::Fixed, _) => PanelName::Page(def.short, pad),
+            (Group::Filter(_), Some(p)) => PanelName::PadFilter(p),
+            (Group::Filter(_), None) => PanelName::Filter,
+            (Group::Fx(_), _) => PanelName::Fx,
+            (Group::Env(s, _), _) => PanelName::Env(s),
+            (Group::Lfo(s, _), _) => PanelName::Lfo(s),
+            (Group::Op(o, _), _) => PanelName::Op(o),
+            (Group::Modal(_), _) => PanelName::Resonator,
+            (Group::Tape(_), _) => PanelName::Machine,
+            (Group::Machine(_), Some(p)) => PanelName::PadMachine(p),
+            (Group::Route(r), Some(p)) => PanelName::PadRoute(p, r),
+            (Group::Machine(_) | Group::Route(_), None) => return None,
+        })
     }
 
     #[cfg_attr(
@@ -712,7 +708,7 @@ pub(super) fn describe(engine: EngineType, page: u8, w: &mut dyn Write) -> Optio
 )]
 fn write_page(
     engine: EngineType,
-    def: &BlockDef,
+    def: &'static BlockDef,
     pad: Option<PadId>,
     page: u8,
     w: &mut dyn Write,
@@ -733,7 +729,10 @@ fn write_page(
         if !on {
             continue;
         }
-        group.write_head(def, pad, w)?;
+        let Some(name) = group.name(def, pad) else {
+            continue;
+        };
+        group.write_head(name, w)?;
         let ctx = group.ctx(base);
         for i in 0..def.params.len() {
             if let Some(c) = group.cell(def, i, &ctx, pad) {
@@ -752,9 +751,7 @@ fn write_page(
 )]
 pub(super) fn mark_described(engine: EngineType, d: &mut super::since::Described) {
     let base = base_ctx(engine);
-    let mut page = 0;
-    while let Some((def, pad)) = page_at(engine, page) {
-        page += 1;
+    for (def, pad) in Pages::all(engine) {
         let mut g = 0;
         while let Some(group) = group_at(g) {
             g += 1;

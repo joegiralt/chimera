@@ -25,12 +25,13 @@ use core::fmt::{self, Write};
 
 use super::addr::{EdBlock, PadBlock, SoundBlock};
 use super::describe::{
-    env_variant, filter_variant, fx_variant, lfo_variant, machine_variant, modal_variant,
-    op_variant, tape_variant,
+    PanelName, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
+    modal_variant, op_variant, tape_variant,
 };
 use super::value::{block, engine_of, line, reading, source_text, text_ctx};
 use super::{EdAddr, describe};
 use crate::addr::{BlockRef, Op};
+use crate::console::ANSWER_BYTES_MAX;
 use crate::dsp::drum::types::{Kit, PadId};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::project::PartId;
@@ -225,95 +226,91 @@ impl Described {
     }
 }
 
-/// A panel `since` reports the variant of: the Sound's, or a pad's.
-#[derive(Clone, Copy)]
-enum Shown {
-    Filter,
-    Fx,
-    Env(EnvSlot),
-    Lfo(LfoSlot),
-    Op(Op),
-    Resonator,
-    Machine,
-    PadFilter(PadId),
-    PadMachine(PadId),
-}
-
-/// The most panels an engine shows: DRUM's FX, three ENVs, three LFOs and
+/// The most panels an engine reports: DRUM's FX, its ENVs and LFOs, and
 /// each pad's filter and machine.
-const PANELS: usize = 1 + 3 + 3 + 2 * 12;
-const _: () = assert!(PadId::ALL.len() == 12);
+const PANELS: usize = 1 + EnvSlot::ALL.len() + LfoSlot::ALL.len() + 2 * PadId::ALL.len();
 
-/// Panel `i` of `engine`'s, in the order `since` lists them.
+/// Panel `i` of `engine`'s, in the order `since` lists them: names from
+/// `describe`'s own table (`PanelName`).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.shown_at"))]
-fn shown_at(engine: EngineType, mut i: usize) -> Option<Shown> {
+fn shown_at(engine: EngineType, mut i: usize) -> Option<PanelName> {
     let filter = match engine {
         EngineType::Drum => 0,
         EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => 1,
     };
     if i < filter {
-        return Some(Shown::Filter);
+        return Some(PanelName::Filter);
     }
     i -= filter;
     if i == 0 {
-        return Some(Shown::Fx);
+        return Some(PanelName::Fx);
     }
     i -= 1;
     if let Some(&s) = EnvSlot::ALL.get(i) {
-        return Some(Shown::Env(s));
+        return Some(PanelName::Env(s));
     }
     i -= EnvSlot::ALL.len();
     if let Some(&s) = LfoSlot::ALL.get(i) {
-        return Some(Shown::Lfo(s));
+        return Some(PanelName::Lfo(s));
     }
     i -= LfoSlot::ALL.len();
     match engine {
-        EngineType::Algo => Op::ALL.get(i).map(|&o| Shown::Op(o)),
-        EngineType::Modal => (i == 0).then_some(Shown::Resonator),
-        EngineType::Tape => (i == 0).then_some(Shown::Machine),
+        EngineType::Algo => match Op::ALL.get(i) {
+            Some(&o) => Some(PanelName::Op(o)),
+            None => None,
+        },
+        EngineType::Modal => (i == 0).then_some(PanelName::Resonator),
+        EngineType::Tape => (i == 0).then_some(PanelName::Machine),
         EngineType::Va => None,
         EngineType::Drum => {
             let pad = *PadId::ALL.get(i / 2)?;
-            Some(match i % 2 {
-                0 => Shown::PadFilter(pad),
-                _ => Shown::PadMachine(pad),
+            Some(if i % 2 == 0 {
+                PanelName::PadFilter(pad)
+            } else {
+                PanelName::PadMachine(pad)
             })
         }
     }
 }
 
-impl Shown {
-    #[cfg_attr(
-        target_os = "none",
-        unsafe(link_section = ".bank2_ed.since.write_name")
-    )]
-    fn write_name(self, w: &mut dyn Write) -> fmt::Result {
-        match self {
-            Shown::Filter => w.write_str("FILTER"),
-            Shown::Fx => w.write_str("FX"),
-            Shown::Env(s) => w.write_str(["ENV1", "ENV2", "ENV3"][s.index()]),
-            Shown::Lfo(s) => w.write_str(["LFO1", "LFO2", "LFO3"][s.index()]),
-            Shown::Op(o) => w.write_str(["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"][o.index()]),
-            Shown::Resonator => w.write_str("RESONATOR"),
-            Shown::Machine => w.write_str("MACHINE"),
-            Shown::PadFilter(p) => write!(w, "PAD{}_FLT", p.number()),
-            Shown::PadMachine(p) => write!(w, "PAD{}_MCH", p.number()),
-        }
+/// Panel `n`'s variant now; `-` for a panel with none (a page's own
+/// cells, a route), which `since` never lists.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.since.variant_of")
+)]
+fn variant_of(n: PanelName, c: &SlotCtx, kit: &Kit) -> &'static str {
+    match n {
+        PanelName::Filter => filter_variant(c.kind),
+        PanelName::Fx => fx_variant(c.fx),
+        PanelName::Env(s) => env_variant(c.envs[s.index()]),
+        PanelName::Lfo(s) => lfo_variant(c.lfos[s.index()]),
+        PanelName::Op(o) => op_variant(c.op_kinds[o.index()]),
+        PanelName::Resonator => modal_variant(c.model),
+        PanelName::Machine => tape_variant(c.tape),
+        PanelName::PadFilter(p) => filter_variant(kit.pad(p).sound().filter().kind()),
+        PanelName::PadMachine(p) => machine_variant(kit.pad(p).machine()),
+        PanelName::PadRoute(..) | PanelName::Page(..) => "-",
     }
+}
 
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.variant"))]
-    fn variant(self, c: &SlotCtx, kit: &Kit) -> &'static str {
-        match self {
-            Shown::Filter => filter_variant(c.kind),
-            Shown::Fx => fx_variant(c.fx),
-            Shown::Env(s) => env_variant(c.envs[s.index()]),
-            Shown::Lfo(s) => lfo_variant(c.lfos[s.index()]),
-            Shown::Op(o) => op_variant(c.op_kinds[o.index()]),
-            Shown::Resonator => modal_variant(c.model),
-            Shown::Machine => tape_variant(c.tape),
-            Shown::PadFilter(p) => filter_variant(kit.pad(p).sound().filter().kind()),
-            Shown::PadMachine(p) => machine_variant(kit.pad(p).machine()),
-        }
+/// What a pass of `since`'s answer does with it.
+#[derive(Clone, Copy)]
+enum Pass {
+    /// Count its bytes; keep nothing.
+    Measure,
+    /// Write it, and keep what it said.
+    Commit,
+}
+
+/// A writer that counts and keeps nothing.
+struct Count(usize);
+
+impl Write for Count {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.write_str"))]
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0 += s.len();
+        Ok(())
     }
 }
 
@@ -382,12 +379,47 @@ impl EdSince {
         ui: &UiState,
         w: &mut dyn Write,
     ) -> fmt::Result {
+        self.answer_within(held, ui, w, ANSWER_BYTES_MAX)
+    }
+
+    /// The answer if it is at most `max` bytes, else `ERR ed since too
+    /// large` and nothing kept: the answer is measured first (writing
+    /// nothing, keeping nothing), so it is never cut by the answer clock
+    /// mid-line. The editor shows the refusal and stops asking.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.answer_within")
+    )]
+    pub(super) fn answer_within(
+        &mut self,
+        held: Option<Gen>,
+        ui: &UiState,
+        w: &mut dyn Write,
+        max: usize,
+    ) -> fmt::Result {
+        let mut size = Count(0);
+        self.pass(held, ui, Pass::Measure, &mut size)?;
+        if size.0 > max {
+            return w.write_str("ERR ed since too large\n");
+        }
+        self.pass(held, ui, Pass::Commit, w)
+    }
+
+    /// One pass of the answer: `Measure` writes to a counter and keeps
+    /// nothing, `Commit` writes it and keeps what it said.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.pass"))]
+    fn pass(
+        &mut self,
+        held: Option<Gen>,
+        ui: &UiState,
+        pass: Pass,
+        w: &mut dyn Write,
+    ) -> fmt::Result {
         let known = self.known(held);
         let m = match self.issued {
             Some(g) => g.next(),
             None => Gen::FIRST,
         };
-        self.issued = Some(m);
         let part = ui.active_part;
         let engine = engine_of(ui);
         // Another Part or engine is a new Sound: all of it.
@@ -409,13 +441,16 @@ impl EdSince {
             Some(k) => same && k.ctx == ctx && k.closed == closed && same_panels(&now, &was),
             None => false,
         };
-        self.seen = Some(Seen {
-            part,
-            engine,
-            panels: now,
-            ctx,
-            closed,
-        });
+        if let Pass::Commit = pass {
+            self.issued = Some(m);
+            self.seen = Some(Seen {
+                part,
+                engine,
+                panels: now,
+                ctx,
+                closed,
+            });
+        }
         if !same {
             // The editor ignores an empty line. It ends a fragment a cut-off
             // answer left, so `part` is never glued onto it.
@@ -428,14 +463,14 @@ impl EdSince {
                 && n != v
             {
                 w.write_str("panel ")?;
-                s.write_name(w)?;
+                s.write(w)?;
                 w.write_char(' ')?;
                 describe::variant_token(n, w)?;
                 w.write_char('\n')?;
             }
             i += 1;
         }
-        self.values(ui, engine, texts, w)?;
+        self.values(ui, engine, texts, pass, w)?;
         if !texts && let Some(t) = source_text(ui, &own) {
             writeln!(w, "source \"{}\"", t.as_str())?;
         }
@@ -451,9 +486,14 @@ impl EdSince {
         ui: &UiState,
         engine: EngineType,
         same: bool,
+        pass: Pass,
         w: &mut dyn Write,
     ) -> fmt::Result {
         let own = ui.cell_own();
+        let commit = match pass {
+            Pass::Measure => false,
+            Pass::Commit => true,
+        };
         self.described(engine);
         let (mut slot, mut b) = (0usize, 0);
         while let Some(at) = block_at(engine, b) {
@@ -461,7 +501,7 @@ impl EdSince {
             let width = at.width();
             let Some(blk) = block(ui, at) else {
                 let mut i = 0;
-                while i < width {
+                while commit && i < width {
                     if let Some(last) = self.last.get_mut(slot + i) {
                         *last = Bits::ABSENT;
                     }
@@ -481,7 +521,9 @@ impl EdSince {
                     && let Some(last) = self.last.get_mut(slot + i)
                     && (!same || *last != now)
                 {
-                    *last = now;
+                    if commit {
+                        *last = now;
+                    }
                     if let Some(a) = EdAddr::new(at, id)
                         && let Some((norm, stored, text)) = reading(a, ui, &own)
                     {
@@ -527,7 +569,7 @@ fn panels(engine: EngineType, c: &SlotCtx, kit: &Kit) -> [&'static str; PANELS] 
     let mut i = 0;
     while let Some(s) = shown_at(engine, i) {
         if let Some(slot) = v.get_mut(i) {
-            *slot = s.variant(c, kit);
+            *slot = variant_of(s, c, kit);
         }
         i += 1;
     }
@@ -565,3 +607,63 @@ pub fn panels_used(engine: EngineType) -> usize {
 
 /// `PANELS`, for the same test.
 pub const PANELS_MAX: usize = PANELS;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An answer past the bound is one `ERR` line, nothing kept: the next
+    /// ask of the same number is still answered whole.
+    #[test]
+    fn too_large_is_a_refusal_and_keeps_nothing() {
+        let ui = UiState::new();
+        let mut s = EdSince::new();
+        let mut out = alloc_free::Buf::new();
+        s.answer_within(None, &ui, &mut out, 100).unwrap();
+        assert_eq!(out.as_str(), "ERR ed since too large\n");
+        assert_eq!(s.issued, None);
+        assert!(s.seen.is_none());
+        let mut out = alloc_free::Buf::new();
+        s.answer_within(None, &ui, &mut out, ANSWER_BYTES_MAX)
+            .unwrap();
+        assert!(
+            out.as_str().starts_with("\npart 1 ALGO\n"),
+            "{}",
+            out.as_str()
+        );
+        assert!(out.as_str().ends_with("OK 1\n"));
+    }
+
+    mod alloc_free {
+        /// A big fixed buffer: the lib's tests have no `String` here.
+        pub struct Buf {
+            b: [u8; 16384],
+            n: usize,
+        }
+
+        impl Buf {
+            pub fn new() -> Buf {
+                Buf {
+                    b: [0; 16384],
+                    n: 0,
+                }
+            }
+
+            pub fn as_str(&self) -> &str {
+                core::str::from_utf8(&self.b[..self.n]).unwrap_or("")
+            }
+        }
+
+        impl core::fmt::Write for Buf {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let end = self.n + s.len();
+                self.b
+                    .get_mut(self.n..end)
+                    .ok_or(core::fmt::Error)?
+                    .copy_from_slice(s.as_bytes());
+                self.n = end;
+                Ok(())
+            }
+        }
+    }
+}

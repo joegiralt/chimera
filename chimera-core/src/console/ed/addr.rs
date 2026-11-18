@@ -40,7 +40,36 @@ impl SoundBlock {
 fn token(b: BlockRef) -> Option<&'static str> {
     match b {
         BlockRef::Kit => Some(KIT),
-        _ => b.disk_ident(),
+        BlockRef::Modal
+        | BlockRef::Algo
+        | BlockRef::AlgoOp(_)
+        | BlockRef::Filter
+        | BlockRef::Env(_)
+        | BlockRef::Lfo(_)
+        | BlockRef::Out
+        | BlockRef::Pitch
+        | BlockRef::Chorus
+        | BlockRef::Delay
+        | BlockRef::Reverb
+        | BlockRef::Tape
+        | BlockRef::Comp
+        | BlockRef::Part
+        | BlockRef::PartMix(_)
+        | BlockRef::Theme
+        | BlockRef::OrbitChords
+        | BlockRef::OrbitRing(_)
+        | BlockRef::Tempo
+        | BlockRef::Midi
+        | BlockRef::Random
+        | BlockRef::TapeEngine
+        | BlockRef::Va
+        | BlockRef::VoiceFx
+        | BlockRef::Pad
+        | BlockRef::PadFilter
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => b.disk_ident(),
     }
 }
 
