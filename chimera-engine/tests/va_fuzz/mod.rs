@@ -131,7 +131,7 @@ pub fn play(seed: u64, mut door: impl FnMut(bool), mut seen: impl FnMut(&VaEngin
     let part = PartId::new((seed % 4) as u8).unwrap();
     let mut slot = Box::new(MaybeUninit::<VaEngine>::uninit());
     let e = VaEngine::init_in_place(&mut slot);
-    let plain_heavy = seed % 3 == 0;
+    let plain_heavy = seed.is_multiple_of(3);
     let mut p = VaParams {
         // every MODE starts some scene
         mode: MODES[(seed % MODES.len() as u64) as usize],
