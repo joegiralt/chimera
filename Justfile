@@ -211,6 +211,7 @@ bank2-split elf out:
         rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2
         {{utils}} door-check {{elf}}
         just check-door-placed {{elf}}
+        just check-itcm {{elf}}
         {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
         just check-slots {{elf}} {{out}}.bk2
         just check-bin-paths {{out}}.bk2
@@ -287,6 +288,22 @@ check-door-placed elf:
     done
     # ed is pinned to the S4 group (ADR 0272), not anywhere in bank 2.
     grep -E ' [tT] .*console::ed::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "ed outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+
+# ITCM's state (ADR 0266, 0286): CPU-only, never a DMA's. Each data symbol
+# there is one named here, and `AUDIO`'s snapshots are there.
+check-itcm elf:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    allowed='^(chimera_board::shared::(AUDIO|KITS|ED)|chimera_engine::dsp::drum::view::KIT_VIEW|__[se]itcm)$'
+    in_itcm=$(rust-nm -C {{elf}} | while read -r addr kind name; do
+        case $kind in b|B|d|D) ;; *) continue ;; esac
+        a=$((16#$addr))
+        if [ $a -ge $((0x400)) ] && [ $a -lt $((0x10000)) ]; then echo "$name"; fi
+    done)
+    bad=$(grep -Ev "$allowed" <<< "$in_itcm" || true)
+    if [ -n "$bad" ]; then echo "{{elf}}: in ITCM but not on its CPU-only list (ADR 0286):" >&2; echo "$bad" >&2; exit 1; fi
+    if ! grep -qx 'chimera_board::shared::AUDIO' <<< "$in_itcm"; then echo "{{elf}}: AUDIO is not in ITCM (ADR 0286)" >&2; exit 1; fi
+    echo "{{elf}}: ITCM holds $(wc -l <<< "$in_itcm") symbols, all CPU-only"
 
 check-no-gate bin:
     #!/usr/bin/env bash
@@ -492,16 +509,20 @@ check $CHIMERA_STAMP_CLEAN="1":
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     just check-bank1 default
     just check-bank2 default
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     just check-bank1 orbit
     just check-bank2 orbit
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
     just check-bank2 bank2-gate
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     # ORBIT with usb-device writing the configuration, the static's fallback (ADR 0260).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,usb-config-writer
     just check-bank1 orbit,usb-config-writer
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     # The gate's doors and placement, USB audio's stream among them (ADR
     # 0256); `release-bin` checks the default and ORBIT builds'.
     {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32
@@ -509,7 +530,7 @@ check $CHIMERA_STAMP_CLEAN="1":
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits, and held to
     # its bank-1 budget (ADR 0198).
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; done
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.

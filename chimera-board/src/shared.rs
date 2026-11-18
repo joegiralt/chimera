@@ -190,11 +190,16 @@ pub fn take_ed() -> Option<&'static mut chimera_core::console::EdState> {
     Some(unsafe { &mut *addr_of_mut!(ED) }.write(chimera_core::console::EdState::new()))
 }
 
+// The audio's three Performance snapshots (ADR 0021, ~23 KB): ITCM (ADR
+// 0286), as `KITS`, not AXI, which the per-Part settings need above its
+// margin (ADR 0087). CPU only: the UI writes, the audio interrupt reads,
+// the bench lends slot 0 first. NOLOAD: built in place by `take_audio`.
+#[unsafe(link_section = ".itcm")]
 static mut AUDIO: MaybeUninit<TripleBuffer<AudioShared>> = MaybeUninit::uninit();
 static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 
 /// `AUDIO`'s first slot, lent to the bench, which runs before
-/// `take_audio`: its `AudioShared` needs no 7 KB of AXI of its own.
+/// `take_audio`: its `AudioShared` needs no 7 KB of RAM of its own.
 ///
 /// # Safety
 /// At most once, and only before `take_audio`, which builds every slot;
@@ -256,7 +261,7 @@ pub fn take_audio(
     Some((w, r, knobs))
 }
 
-// ORBIT's view, from the runner to the UI: AXI, beside `AUDIO`.
+// ORBIT's view, from the runner to the UI: AXI.
 #[cfg(feature = "orbit")]
 static mut ORBIT: MaybeUninit<TripleBuffer<OrbitView>> = MaybeUninit::uninit();
 #[cfg(feature = "orbit")]

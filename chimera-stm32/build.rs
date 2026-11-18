@@ -51,8 +51,10 @@ ASSERT(SIZEOF(.sram4) <= LENGTH(RAM_D3), "SRAM4 overflows");
     fs::write(
         out_dir.join("itcm.x"),
         r#"
-/* ITCM (ADR 0266): CPU-only state, never DMA's, built in place at boot
-   (NOLOAD: nothing zeroes or copies it). The kits first (ADR 0265). */
+/* ITCM (ADR 0266, 0286): CPU-only state, never DMA's, built in place at
+   boot (NOLOAD: nothing zeroes or copies it): the kits (ADR 0265), `ed`'s
+   state and the audio's snapshots (`AUDIO`). `just check-itcm` holds the
+   list. */
 SECTIONS {
     .itcm (NOLOAD) : ALIGN(8) {
         __sitcm = .;
@@ -64,6 +66,8 @@ SECTIONS {
 INSERT AFTER .uninit;
 ASSERT(__sitcm == 0x00000400, "ITCM's state starts at 0x400, clear of address 0");
 ASSERT(__eitcm <= ORIGIN(ITCM) + LENGTH(ITCM), "ITCM overflows");
+/* What a later move or a hot kernel may still take (ADR 0286). */
+ASSERT(ORIGIN(ITCM) + LENGTH(ITCM) - __eitcm >= 8K, "ITCM: under the margin (ADR 0286)");
 "#,
     )
     .unwrap();

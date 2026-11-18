@@ -119,16 +119,15 @@ fn fx_bus_fits_its_axi_share() {
 }
 
 /// The AXI residents, reported (the linker enforces the margin, ADR 0087):
-/// the Project (Performance and pool), the Parts' kits, the framebuffer, the UI,
-/// the AudioShared, scope, AudioStats and
+/// the Project (Performance and pool), the framebuffer, the UI, the scope,
+/// AudioStats and
 /// ORBIT view triple buffers, the scope's writer, ORBIT's runner, the FX bus
-/// and the card's store (ADR 0014, ADR 0021).
-/// ORBIT's settings ride inside `AudioShared` and its song inside `Project`,
-/// so neither is counted again.
+/// and the card's store (ADR 0014, ADR 0021). ORBIT's song rides inside
+/// `Project`, so is not counted again; `AudioShared`'s snapshots are ITCM's
+/// (ADR 0286, `itcm_residents_fit`).
 #[test]
 fn axi_report() {
     use chimera_core::dsp::fx_bus::FxBus;
-    use chimera_core::instrument::AudioShared;
     use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
     use chimera_core::perf::load::AudioStats;
     use chimera_core::project::Project;
@@ -146,7 +145,6 @@ fn axi_report() {
             "source table",
             size_of::<chimera_core::source_table::SourceTable>(),
         ),
-        ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
         ("AudioStats x3", size_of::<TripleBuffer<AudioStats>>()),
@@ -425,5 +423,38 @@ fn kits_are_compact_and_outside_the_parts() {
     assert_eq!(
         size_of::<KitView>(),
         hw::MAX_PARTS * (4 + 1 + 1 + 2 + 2 + 4 + 4 + 2 * 12 * 70usize).next_multiple_of(4)
+    );
+}
+
+/// ADR 0266, 0286: ITCM's residents, the kits, the audio's kit view, `ed`'s
+/// state and the audio's three `AudioShared` snapshots, fit with the
+/// linker's margin to spare (`itcm.x`; `just check-itcm` holds the list).
+#[test]
+fn itcm_residents_fit() {
+    use chimera_core::console::EdState;
+    use chimera_core::dsp::drum::view::KitView;
+    use chimera_core::instrument::AudioShared;
+    use chimera_core::project::Kits;
+    use chimera_core::triple::TripleBuffer;
+    // `.itcm` aligns each to 8 at most.
+    let parts = [
+        ("Kits", size_of::<Kits>()),
+        ("KitView", size_of::<KitView>()),
+        ("EdState", size_of::<EdState>()),
+        ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
+    ];
+    for (name, size) in parts {
+        eprintln!("{name:>15} {size:>7} B");
+    }
+    let total: usize = parts.iter().map(|p| p.1.next_multiple_of(8)).sum();
+    eprintln!(
+        "{:>15} {total:>7} B of {} B, margin {} B",
+        "ITCM",
+        hw::ITCM_STATE,
+        hw::ITCM_MARGIN
+    );
+    assert!(
+        total + hw::ITCM_MARGIN <= hw::ITCM_STATE,
+        "ITCM: {total} B over its margin"
     );
 }
