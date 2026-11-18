@@ -2,6 +2,8 @@ module Model exposing
     ( Model
     , Msg(..)
     , Reading
+    , Stage
+    , Via
     , init
     , isPending
     , notice
@@ -47,6 +49,7 @@ type Why
     | UpdateUnit
     | Refused String
     | Silent
+    | TooLarge
 
 
 type alias Model =
@@ -58,6 +61,7 @@ type alias Model =
     , part : Maybe Part
     , engine : Maybe Engine
     , variants : Dict String String
+    , source : Maybe String
     , gen : Maybe Gen
     , stage : Stage
     , asked : Maybe Time.Posix
@@ -89,7 +93,7 @@ type Msg
 -}
 supported : Int
 supported =
-    2
+    3
 
 
 {-| A request unanswered this long has timed out. While connecting, that
@@ -127,6 +131,7 @@ init =
     , part = Nothing
     , engine = Nothing
     , variants = Dict.empty
+    , source = Nothing
     , gen = Nothing
     , stage = Greeting
     , asked = Nothing
@@ -136,8 +141,8 @@ init =
     }
 
 
-subscriptions : Model -> Sub Msg
-subscriptions _ =
+subscriptions : Sub Msg
+subscriptions =
     Sub.batch
         [ Transport.lineIn Line
         , Transport.linkState (Transport.parseLink >> LinkChanged)
@@ -154,7 +159,22 @@ update msg model =
         ConnectSocket ->
             ( { model | via = Just ViaSimulator }, Transport.connectSocket "ws://127.0.0.1:7342" )
 
-        _ ->
+        LinkChanged _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        Line _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        Tick _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        Edit _ _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        Pick _ _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        FollowPart _ ->
             step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
 
 
@@ -216,6 +236,9 @@ stageNotice m =
         Halted Silent ->
             Just "THE UNIT STOPPED ANSWERING"
 
+        Halted TooLarge ->
+            Just "THE UNIT'S ANSWER IS TOO LARGE FOR ONE READ"
+
         _ ->
             case ( m.part, m.engine ) of
                 ( Just p, Just e ) ->
@@ -255,12 +278,16 @@ step msg m =
         Edit a v ->
             edit a v m
 
+        -- By its number: a name with a space (GATE EXT) is one word so.
         Pick a i ->
-            case Schema.optionName m.variants a i m.schema of
-                Just name ->
-                    edit a (Protocol.Name name) m
+            case ( Schema.optionName m.variants a i m.schema, Protocol.optIndex i ) of
+                ( Just _, Just ix ) ->
+                    edit a (Protocol.Index ix) m
 
-                Nothing ->
+                ( Just _, Nothing ) ->
+                    ( m, [] )
+
+                ( Nothing, _ ) ->
                     ( m, [] )
 
         -- The box moves; the mark follows when `since` says so.
@@ -282,25 +309,30 @@ step msg m =
 tick : Time.Posix -> Model -> ( Model, List Command )
 tick t m0 =
     let
+        m : Model
         m =
             { m0
                 | now = t
                 , pending = Dict.filter (\_ at -> ms t - ms at < pendingMs) m0.pending
             }
 
-        timedOut =
-            m.asked |> Maybe.map (\at -> ms t - ms at >= answerTimeoutMs) |> Maybe.withDefault False
-
+        ask : Command -> ( Model, List Command )
         ask c =
             ( { m | asked = Just t, owed = m.owed + 1, leftover = False }, [ c ] )
-
-        silent =
-            ( { m | stage = Halted Silent, asked = Nothing }, [] )
     in
     if m.link /= Just Open then
         ( m, [] )
 
     else
+        let
+            timedOut : Bool
+            timedOut =
+                m.asked |> Maybe.map (\at -> ms t - ms at >= answerTimeoutMs) |> Maybe.withDefault False
+
+            silent : ( Model, List Command )
+            silent =
+                ( { m | stage = Halted Silent, asked = Nothing }, [] )
+        in
         case m.stage of
             Halted _ ->
                 ( m, [] )
@@ -327,7 +359,7 @@ tick t m0 =
                 connecting timedOut silent (ask Hello) m
 
             Describing n ->
-                connecting timedOut silent (ask (Describe "ALGO" n)) m
+                connecting timedOut silent (ask (Describe Algo n)) m
 
 
 connecting : Bool -> ( Model, List Command ) -> ( Model, List Command ) -> Model -> ( Model, List Command )
@@ -350,6 +382,7 @@ ms =
 edit : Addr -> Value -> Model -> ( Model, List Command )
 edit a v m =
     let
+        c : Command
         c =
             Set a v
     in
@@ -375,7 +408,13 @@ isHalted m =
         Halted _ ->
             True
 
-        _ ->
+        Greeting ->
+            False
+
+        Describing _ ->
+            False
+
+        Following ->
             False
 
 
@@ -394,8 +433,21 @@ lineIn l m =
                     -- Ignored: a `set`'s ERR looks the same. A refused `since` stays owed; the timeout re-asks, then settles it as lost.
                     m
 
-                _ ->
-                    -- Firmware without `ed` doesn't know the command.
+                Greeting ->
+                    if m.stage == Greeting && String.startsWith "unknown command" why then
+                        { m | stage = Halted UpdateUnit, asked = Nothing }
+
+                    else
+                        { m | stage = Halted (Refused why), asked = Nothing }
+
+                Describing _ ->
+                    if m.stage == Greeting && String.startsWith "unknown command" why then
+                        { m | stage = Halted UpdateUnit, asked = Nothing }
+
+                    else
+                        { m | stage = Halted (Refused why), asked = Nothing }
+
+                Halted _ ->
                     if m.stage == Greeting && String.startsWith "unknown command" why then
                         { m | stage = Halted UpdateUnit, asked = Nothing }
 
@@ -405,7 +457,11 @@ lineIn l m =
         Queued ->
             m
 
-        Unknown _ ->
+        -- Asking again gets the same: stop, and say so.
+        SinceTooLarge ->
+            { m | stage = Halted TooLarge, asked = Nothing }
+
+        Unknown ->
             m
 
 
@@ -414,7 +470,12 @@ answer a m =
     case a of
         HelloIs h ->
             if h.protocol == supported then
-                { m | part = Unit.partFromInt h.part, engine = Just (Unit.engineFromName h.engine) }
+                case Unit.engineFromName h.engine of
+                    Just e ->
+                        { m | part = Unit.partFromInt h.part, engine = Just e }
+
+                    Nothing ->
+                        { m | stage = Halted UpdateEditor }
 
             else
                 { m
@@ -428,14 +489,20 @@ answer a m =
                             )
                 }
 
-        PartIs n e ->
-            { m
-                | part = Unit.partFromInt n
-                , engine = Just (Unit.engineFromName e)
-                , values = Dict.empty
-                , variants = Dict.empty
-                , pending = Dict.empty
-            }
+        PartIs n name ->
+            case Unit.engineFromName name of
+                Just e ->
+                    { m
+                        | part = Unit.partFromInt n
+                        , engine = Just e
+                        , values = Dict.empty
+                        , variants = Dict.empty
+                        , pending = Dict.empty
+                        , source = Nothing
+                    }
+
+                Nothing ->
+                    { m | stage = Halted UpdateEditor }
 
         Panel p ->
             if m.stage == Following then
@@ -455,7 +522,23 @@ answer a m =
                     , pending = Dict.remove (addrKey v.addr) m.pending
                 }
 
-        _ ->
+        Source text ->
+            if m.stage == Following then
+                { m | source = Just text }
+
+            else
+                { m | schema = Schema.add a m.schema }
+
+        Page _ ->
+            { m | schema = Schema.add a m.schema }
+
+        Param _ ->
+            { m | schema = Schema.add a m.schema }
+
+        Opt _ ->
+            { m | schema = Schema.add a m.schema }
+
+        Route _ ->
             { m | schema = Schema.add a m.schema }
 
 
@@ -469,6 +552,7 @@ ok done m =
 
         Describing n ->
             let
+                more : Bool
                 more =
                     Schema.pageCount m.schema |> Maybe.map (\c -> n + 1 < c) |> Maybe.withDefault False
             in
@@ -478,6 +562,7 @@ ok done m =
             case done |> Maybe.andThen Unit.genFromInt of
                 Just g ->
                     let
+                        owed : Int
                         owed =
                             max 0 (m.owed - 1)
                     in

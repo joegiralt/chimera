@@ -29,7 +29,7 @@ main =
         { init = \_ -> ( { unit = Model.init, panel = Algo.init }, Cmd.none )
         , update = update
         , view = view
-        , subscriptions = \app -> Sub.batch [ Sub.map Unit (Model.subscriptions app.unit), Sub.map Panel (Algo.subscriptions app.panel) ]
+        , subscriptions = \app -> Sub.batch [ Sub.map Unit Model.subscriptions, Sub.map Panel (Algo.subscriptions app.panel) ]
         }
 
 
@@ -60,6 +60,7 @@ update msg app =
 view : App -> Html Msg
 view app =
     let
+        notice : Maybe String
         notice =
             Model.notice app.unit
     in

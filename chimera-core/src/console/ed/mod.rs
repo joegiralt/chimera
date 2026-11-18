@@ -14,12 +14,36 @@ use chimera_engine::params::EngineType;
 mod addr;
 mod describe;
 mod edits;
+mod pages;
 mod since;
 mod value;
-pub use addr::EdAddr;
-pub use describe::{env_variant, filter_variant, fx_variant, lfo_variant, op_variant, pages};
-pub use edits::{EdState, Pushed};
-pub use since::{EdSince, Gen, SLOTS as ED_SLOTS, slots_used as ed_slots_used};
+pub use addr::{EdAddr, EdBlock, PadBlock, SoundBlock};
+pub use describe::{
+    MODELS, chain, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
+    modal_variant, op_variant, pages, tape_variant,
+};
+pub use edits::{EdState, Pushed, SetRefusal};
+pub use since::{
+    EdSince, Gen, PANELS_MAX as ED_PANELS, SLOTS as ED_SLOTS, panels_used as ed_panels_used,
+    slots_used as ed_slots_used,
+};
+
+/// A choice's option by its number, `#<n>` (`opt`'s index): a name with a
+/// space (`GATE EXT`) is one word this way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OptIndex(u8);
+
+impl OptIndex {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.new"))]
+    pub const fn new(n: u8) -> OptIndex {
+        OptIndex(n)
+    }
+
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.get"))]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
 
 /// A value to set: a number, or a word (a choice's name).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,6 +52,8 @@ pub enum EdValue {
     /// (CRSE's `1.00`).
     Num(f32, Word),
     Name(Word),
+    /// `#<n>`: option `n` of a choice.
+    Index(OptIndex),
 }
 
 // `parse` only builds `Num` from a finite number, so `==` is total.
@@ -57,6 +83,7 @@ pub enum EdRefusal {
     NoSuchPart,
 }
 
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.engine"))]
 fn engine(w: &[u8]) -> Option<EngineType> {
     EngineType::ALL
         .into_iter()
@@ -66,7 +93,12 @@ fn engine(w: &[u8]) -> Option<EngineType> {
 /// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
 /// or a choice's name of at most `WORD_MAX`. `inf` and `nan` are refused,
 /// never names: `Num` is always finite.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.value"))]
 fn value(w: &[u8]) -> Option<EdValue> {
+    if let Some(n) = w.strip_prefix(b"#") {
+        let n = chimera_theory::tuning::uint(n)?;
+        return u8::try_from(n).ok().map(|n| EdValue::Index(OptIndex(n)));
+    }
     if let Some(n) = chimera_theory::tuning::decimal(w) {
         return Some(EdValue::Num(n, Word::new(w)));
     }
@@ -85,6 +117,7 @@ impl EdArg {
 
     /// The command, or the refusal it gets. `Since`'s `None` is no
     /// failure: 0 is the editor holding nothing.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.parse"))]
     pub fn parse(mut words: Words<'_>) -> Result<Self, EdRefusal> {
         let Some(sub) = words.next() else {
             return Err(EdRefusal::Usage);
@@ -103,6 +136,7 @@ impl EdArg {
         EdArg::parse_rest(sub, words).ok_or(EdRefusal::Usage)
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.parse_rest"))]
     fn parse_rest(sub: &[u8], mut words: Words<'_>) -> Option<Self> {
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
         let got = if is(b"hello") {
@@ -129,6 +163,7 @@ impl EdArg {
 }
 
 /// The whole answer, `OK` or `ERR` included: `EdDoor::answer`'s entry.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.answer_in"))]
 pub(crate) fn answer_in(
     line: &EdLine,
     ui: &UiState,
@@ -174,6 +209,7 @@ pub(crate) fn answer_in(
 
 /// `ed hello <protocol> <build> part <n> <engine>`: the build is `status`'s
 /// as one word, `0.3.0-a1b2c3d4`, `+` after a dirty tree's hash.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.hello"))]
 fn hello(ui: &UiState, w: &mut dyn Write) -> fmt::Result {
     let dirty = if DIRTY { "+" } else { "" };
     let engine = ui.project().part(ui.active_part).sound.engine();

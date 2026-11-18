@@ -258,7 +258,9 @@ impl Project {
         self.kits.selected(p)
     }
 
-    #[optimize(size)]
+    /// Inlined into each caller: bank 2's `ed` calls it too (ADR 0285),
+    /// and bank 1 keeps no out-of-line copy for it.
+    #[inline(always)]
     pub fn select_pad(&mut self, p: PartId, pad: crate::dsp::drum::types::PadId) {
         self.kits.select(p, pad);
     }

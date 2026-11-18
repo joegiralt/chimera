@@ -15,7 +15,19 @@ schema =
                 Answer a ->
                     Schema.add a s
 
-                _ ->
+                Ok_ _ ->
+                    s
+
+                Queued ->
+                    s
+
+                Err_ _ ->
+                    s
+
+                SinceTooLarge ->
+                    s
+
+                Unknown ->
                     s
         )
         Schema.empty
