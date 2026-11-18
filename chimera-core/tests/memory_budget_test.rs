@@ -428,21 +428,13 @@ fn kits_are_compact_and_outside_the_parts() {
 
 /// ADR 0266, 0286: ITCM's residents, the kits, the audio's kit view, `ed`'s
 /// state and the audio's three `AudioShared` snapshots, fit with the
-/// linker's margin to spare (`itcm.x`; `just check-itcm` holds the list).
+/// margin to spare. The linker's assert (`itcm.x`) is the proof; this is a
+/// conservative host estimate (each rounded up to 8, though `.itcm` packs
+/// them at their own alignment, 4 here; the host's `usize` is 8 B), which
+/// prints the sizes and fails first.
 #[test]
 fn itcm_residents_fit() {
-    use chimera_core::console::EdState;
-    use chimera_core::dsp::drum::view::KitView;
-    use chimera_core::instrument::AudioShared;
-    use chimera_core::project::Kits;
-    use chimera_core::triple::TripleBuffer;
-    // `.itcm` aligns each to 8 at most.
-    let parts = [
-        ("Kits", size_of::<Kits>()),
-        ("KitView", size_of::<KitView>()),
-        ("EdState", size_of::<EdState>()),
-        ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
-    ];
+    let parts = itcm_parts();
     for (name, size) in parts {
         eprintln!("{name:>15} {size:>7} B");
     }
@@ -457,4 +449,66 @@ fn itcm_residents_fit() {
         total + hw::ITCM_MARGIN <= hw::ITCM_STATE,
         "ITCM: {total} B over its margin"
     );
+}
+
+/// ITCM's residents by the type names `tools/itcm-residents.txt` gives.
+fn itcm_parts() -> [(&'static str, usize); 4] {
+    use chimera_core::console::EdState;
+    use chimera_core::dsp::drum::view::KitView;
+    use chimera_core::instrument::AudioShared;
+    use chimera_core::project::Kits;
+    use chimera_core::triple::TripleBuffer;
+    [
+        ("Kits", size_of::<Kits>()),
+        ("KitView", size_of::<KitView>()),
+        ("EdState", size_of::<EdState>()),
+        ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
+    ]
+}
+
+/// ADR 0286: one list of ITCM's residents. `check_itcm.py` holds the ELF to
+/// `tools/itcm-residents.txt`; this sizes the same types.
+#[test]
+fn itcm_residents_are_the_files() {
+    const FILE: &str = include_str!("../../tools/itcm-residents.txt");
+    let mut listed: Vec<&str> = FILE
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.split('|').nth(1).expect("<symbol> | <type>").trim())
+        .collect();
+    let mut sized: Vec<&str> = itcm_parts().iter().map(|p| p.0).collect();
+    listed.sort_unstable();
+    sized.sort_unstable();
+    assert_eq!(listed, sized);
+}
+
+/// ADR 0266, 0286: ITCM's geometry has one source. `memory.x`'s ITCM
+/// region and `build.rs`'s margin constant, which writes `itcm.x`'s
+/// assert, are `hw::ITCM_STATE` and `hw::ITCM_MARGIN`.
+#[test]
+fn itcm_geometry_is_hws() {
+    const MEMORY_X: &str = include_str!("../../chimera-stm32/memory.x");
+    const BUILD_RS: &str = include_str!("../../chimera-stm32/build.rs");
+    let region = MEMORY_X
+        .lines()
+        .find(|l| l.trim_start().starts_with("ITCM (rwx)"))
+        .expect("memory.x: an ITCM region");
+    assert!(
+        region.contains("ORIGIN = 0x00000400"),
+        "ITCM from 0x400: {region}"
+    );
+    let kib = |line: &str, after: &str, unit: &str| -> usize {
+        let rest = &line[line.find(after).expect(after) + after.len()..];
+        rest[..rest.find(unit).expect(unit)]
+            .trim()
+            .parse()
+            .expect("a number")
+    };
+    assert_eq!(kib(region, "LENGTH =", "K") * 1024, hw::ITCM_STATE);
+    let margin = BUILD_RS
+        .lines()
+        .find(|l| l.trim_start().starts_with("const ITCM_MARGIN_KIB: usize ="))
+        .expect("build.rs: `const ITCM_MARGIN_KIB: usize = N;`");
+    assert_eq!(kib(margin, "=", ";") * 1024, hw::ITCM_MARGIN);
 }

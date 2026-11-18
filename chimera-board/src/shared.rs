@@ -142,6 +142,41 @@ pub fn build_waves() {
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// Proof that ITCM's state (`__sitcm`..`__eitcm`) was zeroed in whole
+/// 64-bit words (ADR 0286): each in-place build into `.itcm` takes one, so
+/// none can run first. Only `zero_itcm` makes one, once.
+#[derive(Clone, Copy)]
+pub struct ItcmZeroed(());
+
+static ITCM_ZEROED: AtomicBool = AtomicBool::new(false);
+
+/// Zeroes ITCM's state with aligned 64-bit stores, the ECC word (RM0433
+/// § 2.4, AN5342): no write into it is ever a sub-word one onto a word
+/// whose ECC is still power-on noise. Once, at the top of `boot`; `None`
+/// a second time, which would wipe the builds.
+pub fn zero_itcm() -> Option<ItcmZeroed> {
+    if ITCM_ZEROED.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    unsafe extern "C" {
+        static mut __sitcm: u64;
+        static mut __eitcm: u64;
+    }
+    let end = addr_of_mut!(__eitcm);
+    let mut p = addr_of_mut!(__sitcm);
+    while p < end {
+        // SAFETY: `itcm.x` aligns both ends to 8 and puts `.itcm` in ITCM,
+        // CPU-only RAM; the flag lets one caller past, before any `take_*`
+        // (they need its `ItcmZeroed`) or anything else touches it.
+        // `KIT_VIEW`'s atomics accept any bytes, zero among them.
+        unsafe {
+            p.write_volatile(0);
+            p = p.add(1);
+        }
+    }
+    Some(ItcmZeroed(()))
+}
+
 // The pool's Sounds (ADR 0087): 160 KiB of AXI `.bss`, lent to the UI's
 // project once, with `UI`.
 static mut POOL_ARENA: [u8; ARENA_BYTES] = [0; ARENA_BYTES];
@@ -156,7 +191,7 @@ static mut KITS: MaybeUninit<Kits> = MaybeUninit::uninit();
 /// 1 KB, but inlined into `synth` fat LTO reshuffles the UI loop's
 /// inlining for 6.3 KB more `.text` (ADR 0089).
 #[inline(never)]
-pub fn take_ui() -> Option<&'static mut UiState> {
+pub fn take_ui(_: ItcmZeroed) -> Option<&'static mut UiState> {
     if UI_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
@@ -181,7 +216,7 @@ pub fn take_ui() -> Option<&'static mut UiState> {
 static mut ED: MaybeUninit<chimera_core::console::EdState> = MaybeUninit::uninit();
 static ED_TAKEN: AtomicBool = AtomicBool::new(false);
 
-pub fn take_ed() -> Option<&'static mut chimera_core::console::EdState> {
+pub fn take_ed(_: ItcmZeroed) -> Option<&'static mut chimera_core::console::EdState> {
     if ED_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
@@ -206,7 +241,7 @@ static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 /// the reference must be gone by then. Both orders are asserted: a second
 /// call, or one after `take_audio`, panics.
 #[cfg(feature = "bench")]
-pub unsafe fn bench_audio() -> &'static mut MaybeUninit<AudioShared> {
+pub unsafe fn bench_audio(_: ItcmZeroed) -> &'static mut MaybeUninit<AudioShared> {
     static BENCH_TAKEN: AtomicBool = AtomicBool::new(false);
     assert!(
         !BENCH_TAKEN.swap(true, Ordering::AcqRel),
@@ -235,6 +270,7 @@ static mut KNOBS: MaybeUninit<KnobPublisher> = MaybeUninit::uninit();
 /// `synth`'s frame (the stack check's 8 KB a step).
 #[inline(never)]
 pub fn take_audio(
+    _: ItcmZeroed,
     perf: &Performance,
 ) -> Option<(
     Writer<AudioShared>,

@@ -1,0 +1,10 @@
+# ITCM's residents (ADR 0266, 0286): CPU-only state, never a DMA's, built in
+# place at boot after `shared::zero_itcm`. `just check-itcm` (check_itcm.py)
+# fails a build with any other data in `.itcm`; memory_budget_test's
+# `itcm_residents_fit` sizes these types. Adding a line takes an ADR.
+#
+# <symbol> | <type, as itcm_residents_fit names it> [| <symbol whose presence requires it>]
+chimera_board::shared::ED | EdState
+chimera_board::shared::KITS | Kits
+chimera_engine::dsp::drum::view::KIT_VIEW | KitView
+chimera_board::shared::AUDIO | AudioShared x3 | chimera_board::shared::take_audio

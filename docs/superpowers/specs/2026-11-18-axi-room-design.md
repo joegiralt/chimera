@@ -58,14 +58,18 @@ No product trade-off: placement only, no behaviour, no limit changes.
 
 ## Guards
 
-- `itcm.x` gains a margin: 8 KiB of ITCM stay free (ADR 0286), as ADR
-  0087's bench margin.
-- `just check-itcm <elf>`: every data symbol in ITCM is on an allowlist of
-  CPU-only state (`ED`, `KITS`, `KIT_VIEW`, `AUDIO`), so a DMA buffer can't
-  land there unreviewed, and `AUDIO` must be there. Run on every set
-  `just check` builds and on every `bank2-split`.
-- The host's `memory_budget_test` reports ITCM's residents and asserts they
-  fit under the margin.
+- `shared::zero_itcm` zeroes `__sitcm`..`__eitcm` in 64-bit words right
+  after `cache::init` (ITCM is ECC RAM; the builds store bytes), and its
+  `ItcmZeroed` token is what every ITCM build takes.
+- `itcm.x` gains a margin: 8 KiB of ITCM stay free (ADR 0286), written from
+  `build.rs`'s `ITCM_MARGIN_KIB`, which a host test holds to `hw`.
+- `tools/itcm-residents.txt` is the one resident list. `just check-itcm`
+  (`tools/check_itcm.py`) fails any other symbol in `[__sitcm, __eitcm)`
+  and requires `AUDIO` wherever `take_audio` is linked (not sd-probe).
+  Run on every `bank2-split`, sd-probe's included, and every set
+  `just check` builds.
+- The host's `memory_budget_test` reports ITCM's residents (by the file's
+  types) and asserts they fit under the margin.
 
 ## Speed
 

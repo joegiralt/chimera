@@ -161,5 +161,23 @@ class OneUpdate(unittest.TestCase):
         self.assertNotIn('"$out/chimera-usb.py"', body)
 
 
+class Itcm(unittest.TestCase):
+    def test_every_split_checks_itcm(self):
+        body = "\n".join(recipes()["bank2-split"])
+        self.assertIn("just check-itcm {{elf}}", body)
+
+    def test_check_splits_sd_probe_as_its_flash_recipe_does(self):
+        # sd-probe links no synth and leaves ITCM empty: its split
+        # runs in `check`, so check-itcm can't break `flash-sd-probe` unseen.
+        split = "just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe"
+        self.assertIn(split, "\n".join(recipes()["flash-sd-probe"]))
+        body = recipes()["check"]
+        i = next(n for n, l in enumerate(body) if "--features sd-probe" in l)
+        self.assertIn(split, "\n".join(body[i + 1 : i + 3]))
+
+    def test_check_itcm_reads_the_residents_file(self):
+        self.assertIn("tools/check_itcm.py", "\n".join(recipes()["check-itcm"]))
+
+
 if __name__ == "__main__":
     unittest.main()

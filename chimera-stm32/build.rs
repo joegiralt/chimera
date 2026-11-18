@@ -48,27 +48,32 @@ ASSERT(SIZEOF(.sram4) <= LENGTH(RAM_D3), "SRAM4 overflows");
     )
     .unwrap();
 
+    // ITCM's free floor (ADR 0286): `hw::ITCM_MARGIN`, which
+    // `memory_budget_test::itcm_geometry_is_hws` holds this to.
+    const ITCM_MARGIN_KIB: usize = 8;
     fs::write(
         out_dir.join("itcm.x"),
-        r#"
+        format!(
+            r#"
 /* ITCM (ADR 0266, 0286): CPU-only state, never DMA's, built in place at
-   boot (NOLOAD: nothing zeroes or copies it): the kits (ADR 0265), `ed`'s
-   state and the audio's snapshots (`AUDIO`). `just check-itcm` holds the
-   list. */
-SECTIONS {
-    .itcm (NOLOAD) : ALIGN(8) {
+   boot (NOLOAD: `shared::zero_itcm` word-fills it first, then the builds):
+   the kits (ADR 0265), `ed`'s state and the audio's snapshots (`AUDIO`).
+   tools/itcm-residents.txt is the list `just check-itcm` holds. */
+SECTIONS {{
+    .itcm (NOLOAD) : ALIGN(8) {{
         __sitcm = .;
         *(.itcm .itcm.*);
         . = ALIGN(8);
         __eitcm = .;
-    } > ITCM
-}
+    }} > ITCM
+}}
 INSERT AFTER .uninit;
 ASSERT(__sitcm == 0x00000400, "ITCM's state starts at 0x400, clear of address 0");
 ASSERT(__eitcm <= ORIGIN(ITCM) + LENGTH(ITCM), "ITCM overflows");
 /* What a later move or a hot kernel may still take (ADR 0286). */
-ASSERT(ORIGIN(ITCM) + LENGTH(ITCM) - __eitcm >= 8K, "ITCM: under the margin (ADR 0286)");
-"#,
+ASSERT(ORIGIN(ITCM) + LENGTH(ITCM) - __eitcm >= {ITCM_MARGIN_KIB}K, "ITCM: under the margin (ADR 0286)");
+"#
+        ),
     )
     .unwrap();
 

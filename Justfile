@@ -289,21 +289,11 @@ check-door-placed elf:
     # ed is pinned to the S4 group (ADR 0272), not anywhere in bank 2.
     grep -E ' [tT] .*console::ed::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "ed outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
 
-# ITCM's state (ADR 0266, 0286): CPU-only, never a DMA's. Each data symbol
-# there is one named here, and `AUDIO`'s snapshots are there.
+# ITCM's state (ADR 0266, 0286): CPU-only, never a DMA's. Only the
+# residents tools/itcm-residents.txt lists lie in `[__sitcm, __eitcm)`, and
+# `AUDIO` is there wherever the synth is linked (not in sd-probe).
 check-itcm elf:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    allowed='^(chimera_board::shared::(AUDIO|KITS|ED)|chimera_engine::dsp::drum::view::KIT_VIEW|__[se]itcm)$'
-    in_itcm=$(rust-nm -C {{elf}} | while read -r addr kind name; do
-        case $kind in b|B|d|D) ;; *) continue ;; esac
-        a=$((16#$addr))
-        if [ $a -ge $((0x400)) ] && [ $a -lt $((0x10000)) ]; then echo "$name"; fi
-    done)
-    bad=$(grep -Ev "$allowed" <<< "$in_itcm" || true)
-    if [ -n "$bad" ]; then echo "{{elf}}: in ITCM but not on its CPU-only list (ADR 0286):" >&2; echo "$bad" >&2; exit 1; fi
-    if ! grep -qx 'chimera_board::shared::AUDIO' <<< "$in_itcm"; then echo "{{elf}}: AUDIO is not in ITCM (ADR 0286)" >&2; exit 1; fi
-    echo "{{elf}}: ITCM holds $(wc -l <<< "$in_itcm") symbols, all CPU-only"
+    python3 tools/check_itcm.py {{elf}}
 
 check-no-gate bin:
     #!/usr/bin/env bash
@@ -532,6 +522,8 @@ check $CHIMERA_STAMP_CLEAN="1":
     # its bank-1 budget (ADR 0198).
     for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
+    # Its split as `flash-sd-probe` makes it (the seal, check-itcm with ITCM empty).
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
     out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
