@@ -144,9 +144,7 @@ impl Stage {
         (0..MAX_VOICES)
             .find(|&v| {
                 let s = &slots[v];
-                s.held()
-                    && s.part() == Some(PartId::ALL[part])
-                    && s.note() == MidiNote::new(n)
+                s.held() && s.part() == Some(PartId::ALL[part]) && s.note() == MidiNote::new(n)
             })
             .unwrap_or_else(|| panic!("no voice plays {n} for part {part}"))
     }

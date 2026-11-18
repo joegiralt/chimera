@@ -349,7 +349,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // one entry): `ui::part_voices`, beside the voice groups.
     // `ToastTimer::shows`' instance (`Option<Toast>::is_some_and` with
     // its closure): only kit_groups and part_voices call it.
-    let voices = "    *(.text.*12chimera_core2ui11part_voices* .rodata.*12chimera_core2ui11part_voices*
+    let voices =
+        "    *(.text.*12chimera_core2ui11part_voices* .rodata.*12chimera_core2ui11part_voices*
       .text.*10ToastTimer5shows*);\n";
     let s4 = format!("{ed}{groups}{voices}");
     fs::write(
