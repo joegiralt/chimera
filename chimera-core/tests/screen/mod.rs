@@ -2639,6 +2639,14 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, 1));
         feed(ui, Input::turn(EncoderId::B, -1));
     }),
+    // KEYS on pad 3, CHOKE turned A to OFF: a 9th voice group, held
+    // dimmed with its reason (ADR 0280).
+    ("drum_keys_ninth", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::B, -1));
+    }),
     // MCH on pad 1, TONE KICK: its six knobs in its own words.
     ("drum_mch_kick", |ui| {
         load_init(ui, EngineType::Drum);

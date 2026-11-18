@@ -849,7 +849,7 @@ impl Renderer {
             return hint::focus(display, f.hint(o.hint), f.text, right);
         }
         let v = self.set[f.focus].target();
-        let held = held_on(f, &view).map(|h| h.code);
+        let held = held_on(f, &view).map(|h| h.code());
         // The cell's own text where bank 2 can't say (NEEDS UPDATE).
         let word = view
             .addr()
@@ -899,7 +899,9 @@ impl Renderer {
         let tuning = view
             .addr()
             .and_then(|a| view::tuning_note(a, f.tuned, f.active_part, part));
-        let tonal = view.addr().and_then(|a| view::tonal_note(a, &f.ctx));
+        let tonal = view
+            .addr()
+            .and_then(|a| view::tonal_note(a, &f.ctx).or_else(|| view::groups_note(a, f.pads.kit)));
         let note = view
             .addr()
             .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)))
@@ -1460,8 +1462,8 @@ fn alg_pick(f: &Frame) -> Option<(bool, Option<u8>)> {
         .into_iter()
         .find(|&id| at == ParamAddr::new(BlockRef::Algo, id))
         .map(|id| {
-            let held = f.held.filter(|s| s.held.addr.param == id);
-            (id == AlgoParams::ALG_B, held.map(|s| s.held.code))
+            let held = f.held.filter(|s| s.held.addr().param == id);
+            (id == AlgoParams::ALG_B, held.map(|s| s.held.code()))
         })
 }
 

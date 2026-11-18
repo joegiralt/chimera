@@ -2,6 +2,7 @@
 //! own knobs, level, pan, choke group and retrig.
 
 pub mod engine;
+pub mod groups;
 pub mod kernel;
 pub mod laws;
 pub mod params;
