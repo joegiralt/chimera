@@ -3,7 +3,7 @@
 use core::fmt;
 
 pub const MAX_LINE: usize = 64;
-pub const PROTOCOL: u8 = 2;
+pub const PROTOCOL: u8 = 3;
 /// An answer gives up after this long with no byte taken…
 pub const STALL_MS: u32 = 250;
 /// …or after this long in all, however the bytes dribble out.
@@ -275,8 +275,10 @@ impl Console {
 mod ed;
 pub(crate) use ed::answer_in as ed_answer_in;
 pub use ed::{
-    ED_SLOTS, EdAddr, EdArg, EdSince, EdState, EdValue, Gen, Pushed, ed_slots_used, env_variant,
-    filter_variant, fx_variant, lfo_variant, op_variant, pages as ed_pages,
+    ED_PANELS, ED_SLOTS, EdAddr, EdArg, EdBlock, EdSince, EdState, EdValue, Gen, MODELS, OptIndex,
+    PadBlock, Pushed, SoundBlock, chain as ed_chain, ed_panels_used, ed_slots_used, env_variant,
+    filter_variant, fx_variant, lfo_variant, machine_variant, modal_variant, op_variant,
+    pages as ed_pages, tape_variant,
 };
 mod status;
 pub use status::*;

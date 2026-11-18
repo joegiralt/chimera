@@ -31,7 +31,7 @@ fn algo_blocks() -> Vec<BlockRef> {
 fn addr_round_trips_every_algo_param() {
     for b in algo_blocks() {
         for s in b.specs() {
-            let a = EdAddr(ParamAddr::new(b, s.id));
+            let a = EdAddr::sound(ParamAddr::new(b, s.id)).unwrap();
             let text = a.to_string();
             assert_eq!(EdAddr::parse(text.as_bytes()), Some(a), "{text}");
         }
@@ -52,7 +52,7 @@ fn hello_reports_protocol_build_part_engine() {
     chimera_core::ui::about_page::write_build_rev(&mut build).unwrap();
     let build = build.replace(' ', "-");
     let got = ask(&mut f, "ed hello\n");
-    assert_eq!(got, format!("ed hello 2 {build} part 1 ALGO\nOK\n"));
+    assert_eq!(got, format!("ed hello 3 {build} part 1 ALGO\nOK\n"));
     // One word for the build: a fixed word count.
     assert_eq!(got.lines().next().unwrap().split(' ').count(), 7, "{got}");
 }
@@ -160,7 +160,9 @@ fn describe_walks_every_algo_page() {
         assert!(t.ends_with("\nOK\n"), "{t}");
     }
     assert!(page_text(&mut f, n).starts_with("ERR ed describe ALGO has"));
-    assert!(ask(&mut f, "ed describe VA 0\n").starts_with("ERR ed describe VA has 0"));
+    let va = ed_pages(EngineType::Va);
+    assert!(va > 0);
+    assert!(ask(&mut f, &format!("ed describe VA {va}\n")).starts_with("ERR ed describe VA has"));
 }
 
 fn addrs(texts: &[String]) -> BTreeSet<String> {
@@ -173,7 +175,7 @@ fn addrs(texts: &[String]) -> BTreeSet<String> {
 }
 
 fn add(set: &mut BTreeSet<String>, b: B, id: chimera_engine::block::ParamId) {
-    set.insert(EdAddr(ParamAddr::new(b, id)).to_string());
+    set.insert(EdAddr::sound(ParamAddr::new(b, id)).unwrap().to_string());
 }
 
 #[test]
@@ -423,14 +425,14 @@ fn get_text_matches_the_box_for_every_algo_param() {
                         continue;
                     };
                     let want = f.ui.cell_text_for_test(i);
-                    let got = ask(&mut f, &format!("ed get {}\n", EdAddr(a)));
+                    let got = ask(&mut f, &format!("ed get {}\n", EdAddr::sound(a).unwrap()));
                     let (norm, stored, text) = parse_val(&got);
                     assert_eq!(text, want.as_str(), "{a:?} at {n} on {}", def.short);
                     let p = f.ui.params();
                     let blk = chimera_engine::addr::BlockRead::block(p, a.block).unwrap();
                     assert!((stored - blk.get(a.param)).abs() < 1e-5, "{a:?}");
                     assert!((norm - blk.normalized(a.param)).abs() < 1e-5, "{a:?}");
-                    seen.insert(EdAddr(a).to_string());
+                    seen.insert(EdAddr::sound(a).unwrap().to_string());
                 }
             }
         }
@@ -490,7 +492,10 @@ fn get_reads_a_param_no_cell_shows_by_its_stored_value() {
                     continue;
                 }
                 hidden += 1;
-                let (_, _, text) = parse_val(&ask(&mut f, &format!("ed get {}\n", EdAddr(a))));
+                let (_, _, text) = parse_val(&ask(
+                    &mut f,
+                    &format!("ed get {}\n", EdAddr::sound(a).unwrap()),
+                ));
                 assert_eq!(text, spec_text(&f, a), "{a:?} at {n}");
             }
         }
@@ -521,7 +526,10 @@ fn get_bw_and_vowel_read_right_in_every_ui_state() {
         for sel in [Op::A, Op::B, Op::F] {
             f.ui.select_op_for_test(sel);
             for a in [bw, vowel] {
-                let (_, _, text) = parse_val(&ask(&mut f, &format!("ed get {}\n", EdAddr(a))));
+                let (_, _, text) = parse_val(&ask(
+                    &mut f,
+                    &format!("ed get {}\n", EdAddr::sound(a).unwrap()),
+                ));
                 assert_eq!(text, spec_text(&f, a), "{a:?} wave {wave:?} sel {sel:?}");
             }
         }
@@ -549,7 +557,7 @@ fn get_unknown_addr_is_refused() {
 
 // ---- set ----
 
-use chimera_core::console::{EdState, Pushed};
+use chimera_core::console::EdState;
 use chimera_engine::block::ParamKind;
 
 fn apply(f: &mut Fake) {
@@ -563,7 +571,7 @@ fn is_choice(a: ParamAddr) -> bool {
 }
 
 fn stored_of(f: &mut Fake, a: ParamAddr) -> f32 {
-    parse_val(&ask(f, &format!("ed get {}\n", EdAddr(a)))).1
+    parse_val(&ask(f, &format!("ed get {}\n", EdAddr::sound(a).unwrap()))).1
 }
 
 /// `v` in a word the decimal parse reads back exactly enough.
@@ -575,15 +583,28 @@ fn word(v: f32) -> String {
 fn set_then_get_round_trips() {
     let mut f = Fake::new();
     let mut n = 0;
+    // `set` takes what `describe` lists, nothing else.
+    let listed = addrs(&all_pages(&mut f));
     for b in algo_blocks() {
         for spec in b.specs() {
             let a = ParamAddr::new(b, spec.id);
+            let ed = EdAddr::sound(a).unwrap().to_string();
+            if !listed.contains(&ed) {
+                assert!(
+                    ask(&mut f, &format!("ed set {ed} 0\n")).starts_with("ERR ed set has no "),
+                    "{ed}"
+                );
+                continue;
+            }
             if is_choice(a) || !spec.stored || spec.patching {
                 continue;
             }
             for at in [spec.min, spec.max, (spec.min + spec.max) / 2.0] {
                 let want = spec.quantized(at);
-                let got = ask(&mut f, &format!("ed set {} {}\n", EdAddr(a), word(at)));
+                let got = ask(
+                    &mut f,
+                    &format!("ed set {} {}\n", EdAddr::sound(a).unwrap(), word(at)),
+                );
                 assert_eq!(got, "OK queued\n", "{a:?} {at}");
                 apply(&mut f);
                 let stored = stored_of(&mut f, a);
@@ -666,7 +687,10 @@ fn set_clamps_quantizes_and_refuses() {
     let a = ParamAddr::new(BlockRef::AlgoOp(Op::C), steppy.id);
     let mid = (steppy.min + steppy.max) / 2.0 + 0.3;
     assert_eq!(
-        ask(&mut f, &format!("ed set {} {}\n", EdAddr(a), word(mid))),
+        ask(
+            &mut f,
+            &format!("ed set {} {}\n", EdAddr::sound(a).unwrap(), word(mid))
+        ),
         "OK queued\n"
     );
     apply(&mut f);
@@ -740,26 +764,19 @@ fn set_queue_full_is_busy() {
     // An apply empties it.
     apply(&mut f);
     assert_eq!(ask(&mut f, "ed set FILTER.CUTOFF 1000\n"), "OK queued\n");
-    let mut q = EdState::new();
-    assert_eq!(
-        q.push(
-            PartId::ALL[0],
-            ParamAddr::new(BlockRef::Filter, chimera_core::block::ParamId(0)),
-            1.0
-        ),
-        Pushed::Queued
-    );
 }
 
 #[test]
-fn set_on_a_non_algo_part_is_refused() {
+fn set_takes_only_the_engines_addresses() {
     use chimera_core::preset::Sound;
     let mut f = Fake::new();
     let was = chimera_core::ui::nav::PartChain::of(&f.ui.project().part(PartId::ALL[0]).sound);
     **f.ui.project_mut().edit_part(PartId::ALL[0]).sound = Sound::init(EngineType::Modal);
     f.ui.replaced_for_test(was);
-    let got = ask(&mut f, "ed set FILTER.CUTOFF 1000\n");
-    assert!(got.starts_with("ERR ed set has no FILTER.CUTOFF"), "{got}");
+    let got = ask(&mut f, "ed set OP_A.CRSE 2\n");
+    assert!(got.starts_with("ERR ed set has no OP_A.CRSE"), "{got}");
+    assert_eq!(ask(&mut f, "ed set FILTER.CUTOFF 1000\n"), "OK queued\n");
+    assert_eq!(ask(&mut f, "ed set MODAL.BRIGHT 0.5\n"), "OK queued\n");
 }
 
 #[test]
@@ -953,7 +970,8 @@ fn since_reports_load_part_and_engine() {
     feed(&mut f.ui, Input::press(ButtonId::B2));
     assert_eq!(f.ui.active_part, P2);
     let (lines, m) = since(&mut f, m);
-    assert_eq!(lines, ["part 2 VA"]);
+    assert_eq!(lines[0], "part 2 VA");
+    assert!(lines.iter().any(|l| l.starts_with("val VA.")), "{lines:?}");
     // Back: the editor reads the whole Sound again.
     feed(&mut f.ui, Input::press(ButtonId::B1));
     let (lines, m) = since(&mut f, m);
@@ -964,7 +982,16 @@ fn since_reports_load_part_and_engine() {
     **f.ui.project_mut().edit_part(P1).sound = Sound::init(EngineType::Modal);
     f.ui.replaced_for_test(was);
     let (lines, m) = since(&mut f, m);
-    assert_eq!(lines, ["part 1 MODAL"]);
+    assert_eq!(lines[0], "part 1 MODAL");
+    assert!(
+        lines.iter().any(|l| l.starts_with("panel RESONATOR ")),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.starts_with("val MODAL.")),
+        "{lines:?}"
+    );
+    assert!(!lines.iter().any(|l| l.starts_with("val OP_")), "{lines:?}");
     assert!(since(&mut f, m).0.is_empty());
 }
 
@@ -1105,8 +1132,16 @@ fn gen_is_never_zero_and_wraps_past_it() {
     assert_eq!(Gen::FIRST.next().get(), 2);
     // The copy holds every param of every block.
     let schema: usize = algo_blocks().iter().map(|b| b.specs().len()).sum();
-    assert_eq!(ed_slots_used(), schema);
-    assert!(schema <= ED_SLOTS, "{schema} of {ED_SLOTS}");
+    assert_eq!(ed_slots_used(EngineType::Algo), schema);
+    for e in EngineType::ALL {
+        assert!(
+            ed_slots_used(e) <= ED_SLOTS,
+            "{e:?}: {} of {ED_SLOTS}",
+            ed_slots_used(e)
+        );
+    }
+    // DRUM, the most, sets it: no slot held for nothing.
+    assert_eq!(ed_slots_used(EngineType::Drum), ED_SLOTS);
     // A number past nine digits is refused, not wrapped.
     let mut f = Fake::new();
     let got = ask(&mut f, "ed since 1000000000\n");
@@ -1118,7 +1153,7 @@ fn all_lines(f: &mut Fake) -> Vec<(String, String)> {
     let mut v = Vec::new();
     for b in algo_blocks() {
         for s in b.specs() {
-            let a = EdAddr(ParamAddr::new(b, s.id)).to_string();
+            let a = EdAddr::sound(ParamAddr::new(b, s.id)).unwrap().to_string();
             v.push((a.clone(), get_line(f, &a)));
         }
     }
@@ -1231,7 +1266,8 @@ fn part_follows_as_its_key_does() {
     assert_eq!(f.ui.active_part, P2);
     assert_eq!(f.ui.location(), keyed.ui.location());
     let (lines, m) = since(&mut f, m);
-    assert_eq!(lines, ["part 2 VA"]);
+    assert_eq!(lines[0], "part 2 VA");
+    assert!(lines.iter().any(|l| l.starts_with("val VA.")), "{lines:?}");
     assert_eq!(ask(&mut f, "ed part 1\n"), "OK\n");
     apply(&mut f);
     let (lines, _) = since(&mut f, m);

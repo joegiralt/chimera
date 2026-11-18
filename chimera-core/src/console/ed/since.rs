@@ -9,11 +9,12 @@
 //! part <n> <ENGINE>
 //! panel <name> <variant>
 //! val <addr> <normalized> <stored> "<text>"
+//! source "<text>"
 //! OK <m>
 //! ```
 //!
 //! `m` is the new number. A `val` is `ed get`'s own line (`value::reading`),
-//! so the two never disagree. A non-ALGO Part answers only its `part` line.
+//! so the two never disagree. `source` is TAPE's, in every whole answer.
 //! The number moves before the answer is written, so an answer that never
 //! reached the editor leaves it asking with a stale one: everything again.
 //!
@@ -22,13 +23,20 @@
 
 use core::fmt::{self, Write};
 
-use super::value::{line, reading};
+use super::addr::{EdBlock, PadBlock, SoundBlock};
+use super::describe::{
+    env_variant, filter_variant, fx_variant, lfo_variant, machine_variant, modal_variant,
+    op_variant, tape_variant,
+};
+use super::value::{block, engine_of, line, reading, source_text, text_ctx};
 use super::{EdAddr, describe};
-use crate::addr::{BlockRead, BlockRef, ParamAddr};
+use crate::addr::{BlockRef, Op};
+use crate::dsp::drum::types::{Kit, PadId};
+use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::view::SlotCtx;
-use chimera_engine::block::{DiskCode, ParamId};
+use chimera_engine::block::DiskCode;
 use chimera_engine::params::EngineType;
 
 /// The number of an answer: never 0 (that is the editor's "I have
@@ -73,75 +81,222 @@ impl Bits {
     const ABSENT: Bits = Bits(u32::MAX);
 }
 
-/// The values kept: one for each param of every block an ALGO Sound shows
-/// (`in_schema`), in `BlockRef::ALL` order, a block it lacks included (so a
-/// slot never moves). A test says it holds them.
-pub const SLOTS: usize = 256;
+/// The values kept: one for each param of every block the followed
+/// engine's schema has (`in_engine`), in `block_at` order, a block the
+/// Sound lacks included (so a slot never moves). DRUM's twelve pads take
+/// the most; a test says it holds every engine's.
+pub const SLOTS: usize = 711;
+/// `Described`'s words.
+const MASK_WORDS: usize = SLOTS.div_ceil(32);
 
-/// The panels a Sound shows a variant of: FILTER, FX, three ENVs, three
-/// LFOs, six OPs, in `describe`'s names.
-const PANELS: usize = 14;
-const PANEL_NAMES: [&str; PANELS] = [
-    "FILTER", "FX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3", "OP1", "OP2", "OP3", "OP4",
-    "OP5", "OP6",
-];
+/// The Sound's blocks an engine's editor shows: the other engines' params
+/// sit in the Sound too, and are no part of it. The kit's and the pads'
+/// are DRUM's.
+fn in_schema(engine: EngineType, b: BlockRef) -> bool {
+    match b {
+        BlockRef::Algo | BlockRef::AlgoOp(_) => engine == EngineType::Algo,
+        BlockRef::Modal => engine == EngineType::Modal,
+        BlockRef::TapeEngine => engine == EngineType::Tape,
+        BlockRef::Va => engine == EngineType::Va,
+        BlockRef::Kit
+        | BlockRef::Pad
+        | BlockRef::PadFilter
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => engine == EngineType::Drum,
+        BlockRef::Filter
+        | BlockRef::VoiceFx
+        | BlockRef::Env(_)
+        | BlockRef::Lfo(_)
+        | BlockRef::Out
+        | BlockRef::Pitch => true,
+        BlockRef::Chorus
+        | BlockRef::Delay
+        | BlockRef::Reverb
+        | BlockRef::Tape
+        | BlockRef::Comp
+        | BlockRef::Part
+        | BlockRef::PartMix(_)
+        | BlockRef::Theme
+        | BlockRef::OrbitChords
+        | BlockRef::OrbitRing(_)
+        | BlockRef::Tempo
+        | BlockRef::Midi
+        | BlockRef::Random => false,
+    }
+}
 
-/// The blocks the editor's ALGO schema has: the other engines' params sit in
-/// the Sound too, and are no part of it.
-fn in_schema(b: BlockRef) -> bool {
-    matches!(
-        b,
-        BlockRef::Algo
-            | BlockRef::Filter
-            | BlockRef::VoiceFx
-            | BlockRef::AlgoOp(_)
-            | BlockRef::Env(_)
-            | BlockRef::Lfo(_)
-            | BlockRef::Out
-            | BlockRef::Pitch
-    )
+/// `at` is one of `engine`'s blocks.
+pub(super) fn in_engine(engine: EngineType, at: EdBlock) -> bool {
+    in_schema(engine, at.block())
+}
+
+/// Block `i` of `engine`'s slots: the Sound's in `BlockRef::ALL` order,
+/// then on DRUM the kit's and each pad's in `PadBlock::ALL` order.
+fn block_at(engine: EngineType, mut i: usize) -> Option<EdBlock> {
+    let mut b = 0;
+    while let Some(&r) = BlockRef::ALL.get(b) {
+        b += 1;
+        if in_schema(engine, r)
+            && let Some(s) = SoundBlock::new(r)
+        {
+            if i == 0 {
+                return Some(EdBlock::Sound(s));
+            }
+            i -= 1;
+        }
+    }
+    if engine != EngineType::Drum {
+        return None;
+    }
+    if i == 0 {
+        return SoundBlock::new(BlockRef::Kit).map(EdBlock::Sound);
+    }
+    i -= 1;
+    let pad = *PadId::ALL.get(i / PadBlock::ALL.len())?;
+    Some(EdBlock::Pad(
+        pad,
+        *PadBlock::ALL.get(i % PadBlock::ALL.len())?,
+    ))
+}
+
+/// Slot `a` takes in `engine`'s copy.
+fn slot_of(engine: EngineType, a: EdAddr) -> Option<usize> {
+    let mut n = 0;
+    let mut i = 0;
+    while let Some(at) = block_at(engine, i) {
+        i += 1;
+        if at == a.at() {
+            return at.slot(a.id()).map(|k| n + k);
+        }
+        n += at.width();
+    }
+    None
 }
 
 /// The slots `describe` lists a param for: the editor is told only of what
-/// it was told exists. Built from `describe`'s own walk, so the two can't
-/// disagree.
-pub(super) struct Described([u32; SLOTS / 32]);
+/// it was told exists, and `set` takes only these. Built from `describe`'s
+/// own walk, so the two can't disagree.
+pub(super) struct Described {
+    engine: EngineType,
+    mask: [u32; MASK_WORDS],
+}
 
 impl Described {
-    /// Slot `block`'s param `id` takes in `last`: after the blocks before it
-    /// that `in_schema` keeps.
-    fn slot(block: BlockRef, id: ParamId) -> Option<usize> {
-        let (mut n, mut b) = (0usize, 0);
-        while let Some(&x) = BlockRef::ALL.get(b) {
-            b += 1;
-            if !in_schema(x) {
-                continue;
-            }
-            if x == block {
-                return block.specs().iter().position(|s| s.id == id).map(|i| n + i);
-            }
-            n += x.specs().len();
-        }
-        None
-    }
-
-    /// Note that `describe` lists `block`'s `id`.
-    pub(super) fn mark(&mut self, block: BlockRef, id: ParamId) {
-        if let Some(n) = Described::slot(block, id)
-            && let Some(w) = self.0.get_mut(n / 32)
+    /// Note that `describe` lists `a`.
+    pub(super) fn mark(&mut self, a: EdAddr) {
+        if let Some(n) = slot_of(self.engine, a)
+            && let Some(w) = self.mask.get_mut(n / 32)
         {
             *w |= 1 << (n % 32);
         }
     }
 
-    fn has(&self, n: usize) -> bool {
-        self.0.get(n / 32).is_some_and(|w| w & (1 << (n % 32)) != 0)
+    fn has_slot(&self, n: usize) -> bool {
+        self.mask
+            .get(n / 32)
+            .is_some_and(|w| w & (1 << (n % 32)) != 0)
     }
 
-    fn built() -> Described {
-        let mut d = Described([0; SLOTS / 32]);
-        describe::mark_described(&mut d);
+    /// `describe` lists `a` for this engine.
+    pub(super) fn has(&self, a: EdAddr) -> bool {
+        slot_of(self.engine, a).is_some_and(|n| self.has_slot(n))
+    }
+
+    pub(super) fn built(engine: EngineType) -> Described {
+        let mut d = Described {
+            engine,
+            mask: [0; MASK_WORDS],
+        };
+        describe::mark_described(engine, &mut d);
         d
+    }
+}
+
+/// A panel `since` reports the variant of: the Sound's, or a pad's.
+#[derive(Clone, Copy)]
+enum Shown {
+    Filter,
+    Fx,
+    Env(EnvSlot),
+    Lfo(LfoSlot),
+    Op(Op),
+    Resonator,
+    Machine,
+    PadFilter(PadId),
+    PadMachine(PadId),
+}
+
+/// The most panels an engine shows: DRUM's FX, three ENVs, three LFOs and
+/// each pad's filter and machine.
+const PANELS: usize = 1 + 3 + 3 + 2 * 12;
+const _: () = assert!(PadId::ALL.len() == 12);
+
+/// Panel `i` of `engine`'s, in the order `since` lists them.
+fn shown_at(engine: EngineType, mut i: usize) -> Option<Shown> {
+    let filter = match engine {
+        EngineType::Drum => 0,
+        EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => 1,
+    };
+    if i < filter {
+        return Some(Shown::Filter);
+    }
+    i -= filter;
+    if i == 0 {
+        return Some(Shown::Fx);
+    }
+    i -= 1;
+    if let Some(&s) = EnvSlot::ALL.get(i) {
+        return Some(Shown::Env(s));
+    }
+    i -= EnvSlot::ALL.len();
+    if let Some(&s) = LfoSlot::ALL.get(i) {
+        return Some(Shown::Lfo(s));
+    }
+    i -= LfoSlot::ALL.len();
+    match engine {
+        EngineType::Algo => Op::ALL.get(i).map(|&o| Shown::Op(o)),
+        EngineType::Modal => (i == 0).then_some(Shown::Resonator),
+        EngineType::Tape => (i == 0).then_some(Shown::Machine),
+        EngineType::Va => None,
+        EngineType::Drum => {
+            let pad = *PadId::ALL.get(i / 2)?;
+            Some(match i % 2 {
+                0 => Shown::PadFilter(pad),
+                _ => Shown::PadMachine(pad),
+            })
+        }
+    }
+}
+
+impl Shown {
+    fn write_name(self, w: &mut dyn Write) -> fmt::Result {
+        match self {
+            Shown::Filter => w.write_str("FILTER"),
+            Shown::Fx => w.write_str("FX"),
+            Shown::Env(s) => w.write_str(["ENV1", "ENV2", "ENV3"][s.index()]),
+            Shown::Lfo(s) => w.write_str(["LFO1", "LFO2", "LFO3"][s.index()]),
+            Shown::Op(o) => w.write_str(["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"][o.index()]),
+            Shown::Resonator => w.write_str("RESONATOR"),
+            Shown::Machine => w.write_str("MACHINE"),
+            Shown::PadFilter(p) => write!(w, "PAD{}_FLT", p.number()),
+            Shown::PadMachine(p) => write!(w, "PAD{}_MCH", p.number()),
+        }
+    }
+
+    fn variant(self, c: &SlotCtx, kit: &Kit) -> &'static str {
+        match self {
+            Shown::Filter => filter_variant(c.kind),
+            Shown::Fx => fx_variant(c.fx),
+            Shown::Env(s) => env_variant(c.envs[s.index()]),
+            Shown::Lfo(s) => lfo_variant(c.lfos[s.index()]),
+            Shown::Op(o) => op_variant(c.op_kinds[o.index()]),
+            Shown::Resonator => modal_variant(c.model),
+            Shown::Machine => tape_variant(c.tape),
+            Shown::PadFilter(p) => filter_variant(kit.pad(p).sound().filter().kind()),
+            Shown::PadMachine(p) => machine_variant(kit.pad(p).machine()),
+        }
     }
 }
 
@@ -151,10 +306,9 @@ struct Seen {
     part: PartId,
     engine: EngineType,
     panels: [&'static str; PANELS],
-    /// What the box's text reads beside the bits (`cell_text`): the cells
-    /// resolve against it, so a change moves texts under unchanged bits and
-    /// the values are answered whole. The reverb clock is read only by cells
-    /// no ALGO page has (a test says so).
+    /// What the box's text reads beside the bits (`cell_text`), as
+    /// `value::text_ctx` has it: the cells resolve against it, so a change
+    /// moves texts under unchanged bits and the values are answered whole.
     ctx: SlotCtx,
     /// Bank 2 can't play: `closed_text` reads FILTER.KIND and VOICEFX.TYPE as
     /// NEEDS UPDATE then, so it moves those texts under unchanged bits.
@@ -167,7 +321,7 @@ pub struct EdSince {
     issued: Option<Gen>,
     seen: Option<Seen>,
     last: [Bits; SLOTS],
-    /// Built on the first answer that has values.
+    /// Built on the first answer that has values, again for another engine.
     described: Option<Described>,
 }
 
@@ -190,6 +344,16 @@ impl EdSince {
         }
     }
 
+    /// What `describe` lists for `engine`, built once an engine.
+    pub(super) fn described(&mut self, engine: EngineType) -> &Described {
+        let stale = self.described.as_ref().is_none_or(|d| d.engine != engine);
+        if stale {
+            self.described = None;
+        }
+        self.described
+            .get_or_insert_with(|| Described::built(engine))
+    }
+
     /// The whole answer, `OK <m>` included.
     pub(super) fn answer(
         &mut self,
@@ -204,24 +368,25 @@ impl EdSince {
         };
         self.issued = Some(m);
         let part = ui.active_part;
-        let engine = ui.project().part(part).sound.engine();
-        let algo = engine == EngineType::Algo;
+        let engine = engine_of(ui);
         // Another Part or engine is a new Sound: all of it.
         let same = match known {
             Some(k) => k.part == part && k.engine == engine,
             None => false,
         };
-        let ctx = ui.cell_own().ctx;
-        // The texts too: whole again if the cells' context moved.
+        let own = ui.cell_own();
+        let ctx = text_ctx(ui, &own);
         let closed = ui.bank2().is_some_and(|b| !b.is_open());
-        let texts = match known {
-            Some(k) => same && k.ctx == ctx && k.closed == closed,
-            None => false,
-        };
-        let now = if algo { panels(ui) } else { [""; PANELS] };
+        let now = panels(engine, &ctx, ui.project().kit(part));
         let was = match known {
             Some(k) if same => k.panels,
             _ => [""; PANELS],
+        };
+        // The texts too: whole again if the cells' context moved, or a
+        // panel did (a pad's machine labels its knobs).
+        let texts = match known {
+            Some(k) => same && k.ctx == ctx && k.closed == closed && now == was,
+            None => false,
         };
         self.seen = Some(Seen {
             part,
@@ -236,15 +401,22 @@ impl EdSince {
             writeln!(w)?;
             writeln!(w, "part {} {}", part.number(), engine.disk_ident())?;
         }
-        if algo {
-            let mut i = 0;
-            while i < PANELS {
-                if now[i] != was[i] {
-                    writeln!(w, "panel {} {}", PANEL_NAMES[i], now[i])?;
-                }
-                i += 1;
+        let mut i = 0;
+        while let Some(s) = shown_at(engine, i) {
+            if let (Some(n), Some(v)) = (now.get(i), was.get(i))
+                && n != v
+            {
+                w.write_str("panel ")?;
+                s.write_name(w)?;
+                w.write_char(' ')?;
+                describe::variant_token(n, w)?;
+                w.write_char('\n')?;
             }
-            self.values(ui, texts, w)?;
+            i += 1;
+        }
+        self.values(ui, engine, texts, w)?;
+        if !texts && let Some(t) = source_text(ui, &own) {
+            writeln!(w, "source \"{}\"", t.as_str())?;
         }
         writeln!(w, "OK {}", m.get())
     }
@@ -252,43 +424,51 @@ impl EdSince {
     /// The `val` lines of what differs from the copy, all of them unless
     /// `same` (the Sound and the texts' context as last reported); the copy
     /// is brought up to date.
-    fn values(&mut self, ui: &UiState, same: bool, w: &mut dyn Write) -> fmt::Result {
+    fn values(
+        &mut self,
+        ui: &UiState,
+        engine: EngineType,
+        same: bool,
+        w: &mut dyn Write,
+    ) -> fmt::Result {
         let own = ui.cell_own();
-        let described = self.described.get_or_insert_with(Described::built);
+        self.described(engine);
         let (mut slot, mut b) = (0usize, 0);
-        while let Some(&block) = BlockRef::ALL.get(b) {
+        while let Some(at) = block_at(engine, b) {
             b += 1;
-            if !in_schema(block) {
-                continue;
-            }
-            let specs = block.specs();
-            let Some(blk) = ui.params().block(block) else {
+            let width = at.width();
+            let Some(blk) = block(ui, at) else {
                 let mut i = 0;
-                while i < specs.len() {
+                while i < width {
                     if let Some(last) = self.last.get_mut(slot + i) {
                         *last = Bits::ABSENT;
                     }
                     i += 1;
                 }
-                slot += specs.len();
+                slot += width;
                 continue;
             };
             let mut i = 0;
-            while let Some(spec) = specs.get(i) {
-                let now = Bits(blk.get(spec.id).to_bits());
-                if described.has(slot + i)
+            while let Some(id) = at.id_at(i) {
+                let now = Bits(blk.get(id).to_bits());
+                let listed = self
+                    .described
+                    .as_ref()
+                    .is_some_and(|d| d.has_slot(slot + i));
+                if listed
                     && let Some(last) = self.last.get_mut(slot + i)
                     && (!same || *last != now)
                 {
                     *last = now;
-                    let a = EdAddr(ParamAddr::new(block, spec.id));
-                    if let Some((norm, stored, text)) = reading(a, ui, &own) {
+                    if let Some(a) = EdAddr::new(at, id)
+                        && let Some((norm, stored, text)) = reading(a, ui, &own)
+                    {
                         line(a, norm, stored, text.as_str(), w)?;
                     }
                 }
                 i += 1;
             }
-            slot += specs.len();
+            slot += width;
         }
         Ok(())
     }
@@ -300,35 +480,39 @@ impl Default for EdSince {
     }
 }
 
-/// Each panel's variant under `ui`'s Sound, in `PANEL_NAMES` order.
-fn panels(ui: &UiState) -> [&'static str; PANELS] {
-    let c = ui.cell_own().ctx;
+/// Each panel's variant under `engine`, in `shown_at` order; the rest empty.
+fn panels(engine: EngineType, c: &SlotCtx, kit: &Kit) -> [&'static str; PANELS] {
     let mut v = [""; PANELS];
-    v[0] = describe::filter_variant(c.kind);
-    v[1] = describe::fx_variant(c.fx);
     let mut i = 0;
-    while i < 3 {
-        v[2 + i] = describe::env_variant(c.envs[i]);
-        v[5 + i] = describe::lfo_variant(c.lfos[i]);
-        i += 1;
-    }
-    let mut i = 0;
-    while i < 6 {
-        v[8 + i] = describe::op_variant(c.op_kinds[i]);
+    while let Some(s) = shown_at(engine, i) {
+        if let Some(slot) = v.get_mut(i) {
+            *slot = s.variant(c, kit);
+        }
         i += 1;
     }
     v
 }
 
-/// How many slots the blocks take: for the test that `SLOTS` holds them.
-pub fn slots_used() -> usize {
+/// How many slots `engine`'s blocks take: for the test that `SLOTS`
+/// holds them.
+pub fn slots_used(engine: EngineType) -> usize {
     let mut n = 0;
-    let mut b = 0;
-    while let Some(&block) = BlockRef::ALL.get(b) {
-        b += 1;
-        if in_schema(block) {
-            n += block.specs().len();
-        }
+    let mut i = 0;
+    while let Some(at) = block_at(engine, i) {
+        i += 1;
+        n += at.width();
     }
     n
 }
+
+/// How many panels `engine` reports: for the test that `PANELS` holds them.
+pub fn panels_used(engine: EngineType) -> usize {
+    let mut i = 0;
+    while shown_at(engine, i).is_some() {
+        i += 1;
+    }
+    i
+}
+
+/// `PANELS`, for the same test.
+pub const PANELS_MAX: usize = PANELS;

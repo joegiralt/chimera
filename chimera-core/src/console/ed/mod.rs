@@ -16,10 +16,31 @@ mod describe;
 mod edits;
 mod since;
 mod value;
-pub use addr::EdAddr;
-pub use describe::{env_variant, filter_variant, fx_variant, lfo_variant, op_variant, pages};
+pub use addr::{EdAddr, EdBlock, PadBlock, SoundBlock};
+pub use describe::{
+    MODELS, chain, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
+    modal_variant, op_variant, pages, tape_variant,
+};
 pub use edits::{EdState, Pushed};
-pub use since::{EdSince, Gen, SLOTS as ED_SLOTS, slots_used as ed_slots_used};
+pub use since::{
+    EdSince, Gen, PANELS_MAX as ED_PANELS, SLOTS as ED_SLOTS, panels_used as ed_panels_used,
+    slots_used as ed_slots_used,
+};
+
+/// A choice's option by its number, `#<n>` (`opt`'s index): a name with a
+/// space (`GATE EXT`) is one word this way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OptIndex(u8);
+
+impl OptIndex {
+    pub const fn new(n: u8) -> OptIndex {
+        OptIndex(n)
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
 
 /// A value to set: a number, or a word (a choice's name).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,6 +49,8 @@ pub enum EdValue {
     /// (CRSE's `1.00`).
     Num(f32, Word),
     Name(Word),
+    /// `#<n>`: option `n` of a choice.
+    Index(OptIndex),
 }
 
 // `parse` only builds `Num` from a finite number, so `==` is total.
@@ -67,6 +90,10 @@ fn engine(w: &[u8]) -> Option<EngineType> {
 /// or a choice's name of at most `WORD_MAX`. `inf` and `nan` are refused,
 /// never names: `Num` is always finite.
 fn value(w: &[u8]) -> Option<EdValue> {
+    if let Some(n) = w.strip_prefix(b"#") {
+        let n = chimera_theory::tuning::uint(n)?;
+        return u8::try_from(n).ok().map(|n| EdValue::Index(OptIndex(n)));
+    }
     if let Some(n) = chimera_theory::tuning::decimal(w) {
         return Some(EdValue::Num(n, Word::new(w)));
     }

@@ -1,16 +1,14 @@
 //! `ed set <addr> <value>`: the value resolved here, bank 2's, queued for
 //! the shell's UI pass, which applies it as a knob turn (`UiState::edit_to`,
-//! ADR 0112's glide): never a snap, never a zipper.
+//! ADR 0112's glide): never a snap, never a zipper. A pad's lands on that
+//! pad, whichever the box has selected (ADR 0285).
 
 use core::fmt::{self, Write};
 
-use super::describe::{def_at, pages};
+use super::value::{engine_of, find};
 use super::{EdAddr, EdValue};
-use crate::addr::{BlockRead, BlockRef, ParamAddr};
-use crate::block::ParamId;
 use crate::project::PartId;
 use crate::ui::UiState;
-use crate::ui::block_def::slot_addr;
 use crate::ui::page::ValFmt;
 use crate::ui::view;
 use chimera_engine::params::EngineType;
@@ -22,16 +20,19 @@ pub const CAP: usize = 16;
 #[derive(Clone, Copy)]
 struct Pending {
     part: PartId,
-    addr: ParamAddr,
+    /// The engine the set was taken for: a Part that changed engine since
+    /// drops it.
+    engine: EngineType,
+    addr: EdAddr,
     to: f32,
 }
 
 impl Pending {
-    /// A slot nothing is queued in (`len` says so): all zeros, so the
-    /// queue sits in `.bss` with no init code.
+    /// A slot nothing is queued in (`len` says so).
     const SPARE: Pending = Pending {
         part: PartId::ALL[0],
-        addr: ParamAddr::new(BlockRef::Algo, ParamId(0)),
+        engine: EngineType::Algo,
+        addr: EdAddr::SPARE,
         to: 0.0,
     };
 }
@@ -68,11 +69,16 @@ impl EdState {
         }
     }
 
-    pub fn push(&mut self, part: PartId, addr: ParamAddr, to: f32) -> Pushed {
+    fn push(&mut self, part: PartId, engine: EngineType, addr: EdAddr, to: f32) -> Pushed {
         match self.items.get_mut(usize::from(self.len)) {
             None => Pushed::Full,
             Some(slot) => {
-                *slot = Pending { part, addr, to };
+                *slot = Pending {
+                    part,
+                    engine,
+                    addr,
+                    to,
+                };
                 self.len += 1;
                 Pushed::Queued
             }
@@ -85,15 +91,15 @@ impl EdState {
     }
 
     /// Every queued set, oldest first, as a knob turn on the Part it was
-    /// taken for (a Part that is no longer ALGO drops its sets), then the
-    /// Part to follow: the sets were taken for theirs.
+    /// taken for (a Part that has changed engine since drops its sets),
+    /// then the Part to follow: the sets were taken for theirs.
     pub fn apply(&mut self, ui: &mut UiState) {
         let mut i = 0;
         while i < usize::from(self.len) {
             if let Some(&p) = self.items.get(i)
-                && ui.project().part(p.part).sound.engine() == EngineType::Algo
+                && ui.project().part(p.part).sound.engine() == p.engine
             {
-                ui.edit_to(p.part, p.addr, p.to);
+                turn(ui, p);
             }
             i += 1;
         }
@@ -104,40 +110,52 @@ impl EdState {
     }
 }
 
+/// `p` as a knob turn. A pad's is the selected pad's turn with its pad
+/// selected for it, and the box's selection put back: the box never sees
+/// it move, and the edit takes the knob's whole path (ADR 0280's CHOKE
+/// check with it).
+fn turn(ui: &mut UiState, p: Pending) {
+    match p.addr.pad() {
+        None => {
+            ui.edit_to(p.part, p.addr.param(), p.to);
+        }
+        Some(n) => {
+            let was = ui.project().selected_pad(p.part);
+            ui.project_mut().select_pad(p.part, n);
+            ui.edit_to(p.part, p.addr.param(), p.to);
+            ui.project_mut().select_pad(p.part, was);
+        }
+    }
+}
+
 impl Default for EdState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// `a`'s format as the Sound shows it now: its cell's where a page shows
+/// `a`'s format as the Part shows it now: its cell's where a page shows
 /// it, else its spec's (as `ed get` reads it).
-fn fmt_of(ui: &UiState, a: ParamAddr) -> Option<ValFmt> {
+fn fmt_of(ui: &UiState, a: EdAddr) -> Option<ValFmt> {
     let own = ui.cell_own();
-    let mut n = 0;
-    while n < pages(EngineType::Algo) {
-        let cx = ui.cell_cx(def_at(usize::from(n))?, &own);
-        let mut i = 0;
-        while i < cx.def.params.len() {
-            if slot_addr(cx.def, i, cx.ctx) == Some(a) {
-                return Some(view::view(cx.def, i, cx.ctx).fmt());
-            }
-            i += 1;
-        }
-        n += 1;
+    match find(ui, &own, a) {
+        Some((def, i, ctx)) => Some(view::view(def, i, &ctx).fmt()),
+        None => Some(a.param().spec()?.fmt),
     }
-    Some(a.spec()?.fmt)
 }
 
 /// The stored value `val` means for `a`, or why not: a choice's name (its
-/// own, matched exactly, the typed word kept) or a number.
-fn resolve(ui: &UiState, a: ParamAddr, val: EdValue) -> Result<f32, &'static str> {
-    let (word, num) = match val {
-        EdValue::Num(n, w) => (w, Some(n)),
-        EdValue::Name(w) => (w, None),
-    };
-    match fmt_of(ui, a) {
-        Some(ValFmt::Names(names)) => {
+/// own, matched exactly, the typed word kept), its option number, or a
+/// number.
+fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, &'static str> {
+    let names = fmt_of(ui, a).and_then(|f| super::describe::names(f));
+    match (val, names) {
+        (EdValue::Index(n), Some(names)) => match names.get(usize::from(n.get())) {
+            Some(_) => Ok(f32::from(n.get())),
+            None => Err("has no such option"),
+        },
+        (EdValue::Index(_), None) => Err("takes a number"),
+        (EdValue::Num(_, word) | EdValue::Name(word), Some(names)) => {
             let mut i = 0;
             while i < names.len() {
                 if names[i].as_bytes() == word.as_bytes() {
@@ -147,7 +165,8 @@ fn resolve(ui: &UiState, a: ParamAddr, val: EdValue) -> Result<f32, &'static str
             }
             Err("takes one of its names")
         }
-        _ => num.ok_or("takes a number"),
+        (EdValue::Num(n, _), None) => Ok(n),
+        (EdValue::Name(_), None) => Err("takes a number"),
     }
 }
 
@@ -160,20 +179,19 @@ pub(super) fn set(
     w: &mut dyn Write,
 ) -> fmt::Result {
     let part = ui.active_part;
-    let a = addr.0;
-    if ui.project().part(part).sound.engine() != EngineType::Algo
-        || ui.params().block(a.block).is_none()
-        || a.spec().is_none()
-    {
+    let engine = engine_of(ui);
+    let Some(q) = q else {
+        return w.write_str("ERR ed set is not in this build\n");
+    };
+    if !q.since.described(engine).has(addr) {
         return writeln!(w, "ERR ed set has no {addr} here");
     }
-    let to = match resolve(ui, a, val) {
+    let to = match resolve(ui, addr, val) {
         Ok(to) => to,
         Err(why) => return writeln!(w, "ERR ed set {addr} {why}"),
     };
-    match q.map(|q| q.push(part, a, to)) {
-        None => w.write_str("ERR ed set is not in this build\n"),
-        Some(Pushed::Full) => w.write_str("ERR busy\n"),
-        Some(Pushed::Queued) => w.write_str("OK queued\n"),
+    match q.push(part, engine, addr, to) {
+        Pushed::Full => w.write_str("ERR busy\n"),
+        Pushed::Queued => w.write_str("OK queued\n"),
     }
 }
