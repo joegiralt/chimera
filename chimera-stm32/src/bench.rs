@@ -497,7 +497,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 90;
+const ROUTING_ROWS: usize = 91;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -773,6 +773,9 @@ static ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ),
     ("VA SWEEP", |p| *p.params = va(VaMode::Mix), sweep),
     ("VA WAVE", |p| *p.params = va(VaMode::Mix), wave_cross),
+    // VA held off WAVE's anchors (`VA`, the base, sits on the saw's: its
+    // solo, ADR 0283): the pair's runs, steady
+    ("VA OFF", |p| va_with(p).va.wave = [VA_OFF_WAVE; 2], STILL),
     ("HOT RES", hot_res, STILL),
     (
         "DIRTY HOT",
@@ -790,6 +793,9 @@ fn r2(p: &mut PartAudio) {
     f.set_kind(FilterKind::K2040);
     f.voice = K2040Voice::Rev2;
 }
+
+/// WAVE off every anchor, the saw–pulse pair at weight 0.1: `VA OFF`.
+const VA_OFF_WAVE: f32 = 0.7;
 
 /// Both WAVEs either side of ⅓ in turn: a segment crossed every block.
 fn wave_cross(p: &mut PartAudio, block: u32) {

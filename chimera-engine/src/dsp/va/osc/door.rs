@@ -13,18 +13,19 @@ use chimera_hal::BLOCK_SIZE;
 use super::super::blep::blep_into;
 use super::{Blk, Kind, Leg, Lin, PM_JUMPS, Ramps, VarOsc, ZEROS, frac};
 use crate::dsp::va::stability::Stability;
+use crate::dsp::va::stability::{JitterScale, WrapJitter};
 
 /// A `MOD` render as the door carries it: the oscillator, its block, its
-/// marks, its lanes and jitter, STABILITY (the jitter's draws, `1 + jd ·
-/// word`), the modulation `m` and its form `k` (ADR 0158 point 2).
+/// marks, its lanes and jitter, STABILITY and the jitter's scale, the
+/// modulation `m` and its form `k` (ADR 0158 point 2).
 pub type ModRender = fn(
     &mut VarOsc,
     &mut [f32; BLOCK_SIZE],
     &mut [[f32; 2]; BLOCK_SIZE],
     &Ramps,
-    &mut f32,
+    &mut WrapJitter,
     &mut Stability,
-    f32,
+    JitterScale,
     &[f32; BLOCK_SIZE],
     (f32, f32),
 );
@@ -42,13 +43,13 @@ impl ModEntry {
         out: &mut [f32; BLOCK_SIZE],
         mk: &mut [[f32; 2]; BLOCK_SIZE],
         r: &Ramps,
-        jit: &mut f32,
+        jit: &mut WrapJitter,
         stab: &mut Stability,
-        jd: f32,
+        js: JitterScale,
         m: &[f32; BLOCK_SIZE],
         k: (f32, f32),
     ) {
-        (self.0)(o, out, mk, r, jit, stab, jd, m, k)
+        (self.0)(o, out, mk, r, jit, stab, js, m, k)
     }
 }
 
@@ -108,13 +109,13 @@ pub fn osc1_mod(
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
     r: &Ramps,
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
-    jd: f32,
+    js: JitterScale,
     m: &[f32; BLOCK_SIZE],
     k: (f32, f32),
 ) {
-    let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+    let mut draw = || js.draw(stab);
     o.render_in::<BLOCK_SIZE, true, false, true, true, false>(out, mk, r, jit, &mut draw, m, k);
 }
 
@@ -127,13 +128,13 @@ pub fn osc2_rev(
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
     r: &Ramps,
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
-    jd: f32,
+    js: JitterScale,
     m: &[f32; BLOCK_SIZE],
     k: (f32, f32),
 ) {
-    let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+    let mut draw = || js.draw(stab);
     o.render_in::<BLOCK_SIZE, false, true, false, true, false>(out, mk, r, jit, &mut draw, m, k);
 }
 
@@ -147,13 +148,13 @@ pub fn osc1_phase(
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
     r: &Ramps,
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
-    jd: f32,
+    js: JitterScale,
     m: &[f32; BLOCK_SIZE],
     k: (f32, f32),
 ) {
-    let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+    let mut draw = || js.draw(stab);
     o.render_in::<BLOCK_SIZE, true, false, true, true, true>(out, mk, r, jit, &mut draw, m, k);
 }
 
@@ -171,13 +172,13 @@ pub fn osc2_steps(
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
     r: &Ramps,
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
-    jd: f32,
+    js: JitterScale,
     _: &[f32; BLOCK_SIZE],
     _: (f32, f32),
 ) {
-    let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+    let mut draw = || js.draw(stab);
     o.pm_jumps = PM_JUMPS;
     o.render_in::<BLOCK_SIZE, false, false, false, false, true>(
         out,
@@ -207,7 +208,13 @@ pub(super) fn jump<A: Kind, B: Kind>(
     od: &[f32; 4],
     (ca, cb): ([Lin; 3], [Lin; 3]),
 ) {
-    let edged = |k: usize| if k < 2 { A::EDGES } else { B::EDGES };
+    let edged = |k: usize| {
+        if k < 2 {
+            A::EDGES.tracked()
+        } else {
+            B::EDGES.tracked()
+        }
+    };
     let bias = |l: Lin| if A::BIAS && B::BIAS { -0.0 } else { l.v };
     let a = 1.0 - t;
     let mut rep = [0.0f32; 2];
@@ -218,14 +225,14 @@ pub(super) fn jump<A: Kind, B: Kind>(
     }
     let (u, h) = (&mut s.u, &mut s.h);
     let ha = (&mut s.held, &mut s.acc);
-    if A::EDGES {
+    if A::EDGES.tracked() {
         for e in 0..2 {
             let v = rr - od[e];
             let c = (&mut *ha.0, &mut *ha.1);
             o.cross::<A, true, false>(e, &mut u[e], t, (0.0, 0.0), v, ca, h, c, &mut rep);
         }
     }
-    if B::EDGES {
+    if B::EDGES.tracked() {
         for e in 0..2 {
             let v = rr - od[e + 2];
             let c = (&mut *ha.0, &mut *ha.1);
@@ -280,8 +287,8 @@ pub(super) fn run<
     r: &Ramps,
     out: &mut [f32; N],
     mk: &mut [[f32; 2]; N],
-    jit: &mut f32,
-    draw: &mut impl FnMut() -> f32,
+    jit: &mut WrapJitter,
+    draw: &mut impl FnMut() -> WrapJitter,
     m: &[f32; N],
     k: (f32, f32),
 ) {
