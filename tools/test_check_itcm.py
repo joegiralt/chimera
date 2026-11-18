@@ -38,7 +38,7 @@ PROBE = """\
 
 
 class Load(unittest.TestCase):
-    def test_the_file_lists_the_four(self):
+    def test_the_file_lists_the_five(self):
         self.assertEqual(
             sorted(RESIDENTS),
             sorted(
@@ -47,6 +47,7 @@ class Load(unittest.TestCase):
                     "chimera_board::shared::ED",
                     "chimera_board::shared::KITS",
                     "chimera_engine::dsp::drum::view::KIT_VIEW",
+                    "chimera_engine::part_eq::PART_EQS",
                 ]
             ),
         )
@@ -55,6 +56,12 @@ class Load(unittest.TestCase):
         self.assertEqual(
             RESIDENTS["chimera_board::shared::AUDIO"],
             ci.Resident("AudioShared", 3, "chimera_board::shared::take_audio"),
+        )
+
+    def test_the_eqs_are_one_owned_by_the_render_stub(self):
+        self.assertEqual(
+            RESIDENTS["chimera_engine::part_eq::PART_EQS"],
+            ci.Resident("PartEqs", 1, "<chimera_engine::instrument::Instrument>::part_eq"),
         )
 
     def test_malformed_and_twice(self):
