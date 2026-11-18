@@ -364,6 +364,41 @@ pub(crate) fn tape_held_in(t: &T, turn: TapeTurn) -> Option<NeedsRam> {
 mod tests {
     use super::*;
 
+    /// The typed held check writes what `set` wrote from the cell's code,
+    /// for every machine and DIRECTION from every starting machine,
+    /// DIRECTION and TRON.
+    #[test]
+    fn tape_held_is_the_coded_set() {
+        let old = |t: &T, id: ParamId, code: u8| {
+            let mut t = *t;
+            t.set(id, f32::from(code));
+            needs_ram(&t)
+        };
+        for from_m in TapeMachine::ALL {
+            for from_d in Direction::ALL {
+                for tron in Tron::ALL {
+                    let mut t = Sound::init(crate::params::EngineType::Tape).params.tape;
+                    t.set_machine(from_m);
+                    (t.direction, t.tron) = (from_d, tron);
+                    for m in TapeMachine::ALL {
+                        assert_eq!(
+                            tape_held_in(&t, TapeTurn::Model(m)),
+                            old(&t, T::MODEL, m.index()),
+                            "{from_m:?} {from_d:?} {tron:?} → {m:?}"
+                        );
+                    }
+                    for d in Direction::ALL {
+                        assert_eq!(
+                            tape_held_in(&t, TapeTurn::Direction(d)),
+                            old(&t, T::MODE, d as u8),
+                            "{from_m:?} {from_d:?} {tron:?} → {d:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// A MODEL change's budget is its defaults' knobs and its ENV 1's, on
     /// every machine and DIRECTION.
     #[test]

@@ -180,11 +180,43 @@ pub const CHOKE: ParamAddr = ParamAddr::new(BlockRef::Pad, PadParams::CHOKE);
 
 /// The cell `a` is, if it is one this applies to (ALG A/B not with MIX).
 pub fn applies(a: ParamAddr, shift: bool) -> Option<Cell> {
-    match (a.block, a.param) {
-        (BlockRef::AlgoOp(op), AlgoOpParams::WAVE) => Some(Cell::Wave(op)),
-        (BlockRef::Algo, AlgoParams::ALG_A) if !shift => Some(Cell::Alg(AlgSide::A)),
-        (BlockRef::Algo, AlgoParams::ALG_B) if !shift => Some(Cell::Alg(AlgSide::B)),
-        _ => None,
+    match a.block {
+        BlockRef::AlgoOp(op) => (a.param == AlgoOpParams::WAVE).then_some(Cell::Wave(op)),
+        BlockRef::Algo if shift => None,
+        BlockRef::Algo => match a.param {
+            AlgoParams::ALG_A => Some(Cell::Alg(AlgSide::A)),
+            AlgoParams::ALG_B => Some(Cell::Alg(AlgSide::B)),
+            _ => None,
+        },
+        BlockRef::Modal
+        | BlockRef::TapeEngine
+        | BlockRef::Va
+        | BlockRef::Filter
+        | BlockRef::VoiceFx
+        | BlockRef::Env(_)
+        | BlockRef::Lfo(_)
+        | BlockRef::Out
+        | BlockRef::Pitch
+        | BlockRef::Chorus
+        | BlockRef::Delay
+        | BlockRef::Reverb
+        | BlockRef::Tape
+        | BlockRef::Comp
+        | BlockRef::Part
+        | BlockRef::Theme
+        | BlockRef::Midi
+        | BlockRef::PartMix(_)
+        | BlockRef::OrbitChords
+        | BlockRef::OrbitRing(_)
+        | BlockRef::Tempo
+        | BlockRef::Random
+        | BlockRef::Pad
+        | BlockRef::Kit
+        | BlockRef::PadFilter
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => None,
     }
 }
 

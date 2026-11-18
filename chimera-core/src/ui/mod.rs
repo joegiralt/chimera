@@ -1645,7 +1645,9 @@ impl UiState {
                 };
                 let from = match held {
                     Some((_, held::Held::Sound(held::Pick::Wave(_, k)))) => k,
-                    _ => p.kinds().get(op.index()),
+                    Some((_, held::Held::Sound(held::Pick::Alg(..) | held::Pick::Tape(_))))
+                    | Some((_, held::Held::Choke(_)))
+                    | None => p.kinds().get(op.index()),
                 };
                 let s = step_kind(p.kinds(), p.linked(), op.index(), from, d);
                 (held::Pick::Wave(op, s.to), s.refused)
@@ -1653,7 +1655,9 @@ impl UiState {
             held::Cell::Alg(side) => {
                 let from = match held {
                     Some((_, held::Held::Sound(held::Pick::Alg(_, x)))) => x,
-                    _ => p.side(side.param()),
+                    Some((_, held::Held::Sound(held::Pick::Wave(..) | held::Pick::Tape(_))))
+                    | Some((_, held::Held::Choke(_)))
+                    | None => p.side(side.param()),
                 };
                 let s = step_alg(p, side.param(), from, delta);
                 (held::Pick::Alg(side, s.to), s.refused)
@@ -1685,7 +1689,7 @@ impl UiState {
         };
         let from = match self.held {
             Some((h, held::Held::Sound(held::Pick::Tape(t)))) if h == at && t.addr() == a => t,
-            _ => now,
+            Some((_, held::Held::Sound(_) | held::Held::Choke(_))) | None => now,
         };
         let to = from.step(delta, shift);
         let pick = held::Pick::Tape(to);
