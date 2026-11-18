@@ -142,6 +142,41 @@ pub fn build_waves() {
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// Proof that ITCM's state (`__sitcm`..`__eitcm`) was zeroed in whole
+/// 64-bit words (ADR 0286): each in-place build into `.itcm` takes one, so
+/// none can run first. Only `zero_itcm` makes one.
+#[derive(Clone, Copy)]
+pub struct ItcmZeroed(());
+
+/// Zeroes ITCM's state with aligned 64-bit stores, the ECC word (RM0433
+/// § 2.4, AN5342): no write into it is ever a sub-word one onto a word
+/// whose ECC is still power-on noise.
+///
+/// # Safety
+/// Once, in `boot`, before any interrupt is enabled: a second call would
+/// wipe what the builds wrote, and nothing else may touch ITCM while it
+/// runs.
+pub(crate) unsafe fn zero_itcm() -> ItcmZeroed {
+    unsafe extern "C" {
+        static mut __sitcm: u64;
+        static mut __eitcm: u64;
+    }
+    let end = addr_of_mut!(__eitcm);
+    let mut p = addr_of_mut!(__sitcm);
+    while p < end {
+        // SAFETY: `itcm.x` aligns both ends to 8 and puts `.itcm` in ITCM,
+        // CPU-only RAM; the caller's contract makes this the one pass, and
+        // no `take_*` can have built anything yet (each needs the
+        // `ItcmZeroed` made below).
+        // `KIT_VIEW`'s atomics accept any bytes, zero among them.
+        unsafe {
+            p.write_volatile(0);
+            p = p.add(1);
+        }
+    }
+    ItcmZeroed(())
+}
+
 // The pool's Sounds (ADR 0087): 160 KiB of AXI `.bss`, lent to the UI's
 // project once, with `UI`.
 static mut POOL_ARENA: [u8; ARENA_BYTES] = [0; ARENA_BYTES];
@@ -156,7 +191,7 @@ static mut KITS: MaybeUninit<Kits> = MaybeUninit::uninit();
 /// 1 KB, but inlined into `synth` fat LTO reshuffles the UI loop's
 /// inlining for 6.3 KB more `.text` (ADR 0089).
 #[inline(never)]
-pub fn take_ui() -> Option<&'static mut UiState> {
+pub fn take_ui(_: ItcmZeroed) -> Option<&'static mut UiState> {
     if UI_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
@@ -181,7 +216,7 @@ pub fn take_ui() -> Option<&'static mut UiState> {
 static mut ED: MaybeUninit<chimera_core::console::EdState> = MaybeUninit::uninit();
 static ED_TAKEN: AtomicBool = AtomicBool::new(false);
 
-pub fn take_ed() -> Option<&'static mut chimera_core::console::EdState> {
+pub fn take_ed(_: ItcmZeroed) -> Option<&'static mut chimera_core::console::EdState> {
     if ED_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
@@ -190,18 +225,23 @@ pub fn take_ed() -> Option<&'static mut chimera_core::console::EdState> {
     Some(unsafe { &mut *addr_of_mut!(ED) }.write(chimera_core::console::EdState::new()))
 }
 
+// The audio's three Performance snapshots (ADR 0021, ~23 KB): ITCM (ADR
+// 0286), as `KITS`, not AXI, which the per-Part settings need above its
+// margin (ADR 0087). CPU only: the UI writes, the audio interrupt reads,
+// the bench lends slot 0 first. NOLOAD: built in place by `take_audio`.
+#[unsafe(link_section = ".itcm")]
 static mut AUDIO: MaybeUninit<TripleBuffer<AudioShared>> = MaybeUninit::uninit();
 static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 
 /// `AUDIO`'s first slot, lent to the bench, which runs before
-/// `take_audio`: its `AudioShared` needs no 7 KB of AXI of its own.
+/// `take_audio`: its `AudioShared` needs no 7 KB of RAM of its own.
 ///
 /// # Safety
 /// At most once, and only before `take_audio`, which builds every slot;
 /// the reference must be gone by then. Both orders are asserted: a second
 /// call, or one after `take_audio`, panics.
 #[cfg(feature = "bench")]
-pub unsafe fn bench_audio() -> &'static mut MaybeUninit<AudioShared> {
+pub unsafe fn bench_audio(_: ItcmZeroed) -> &'static mut MaybeUninit<AudioShared> {
     static BENCH_TAKEN: AtomicBool = AtomicBool::new(false);
     assert!(
         !BENCH_TAKEN.swap(true, Ordering::AcqRel),
@@ -230,6 +270,7 @@ static mut KNOBS: MaybeUninit<KnobPublisher> = MaybeUninit::uninit();
 /// `synth`'s frame (the stack check's 8 KB a step).
 #[inline(never)]
 pub fn take_audio(
+    _: ItcmZeroed,
     perf: &Performance,
 ) -> Option<(
     Writer<AudioShared>,
@@ -256,7 +297,7 @@ pub fn take_audio(
     Some((w, r, knobs))
 }
 
-// ORBIT's view, from the runner to the UI: AXI, beside `AUDIO`.
+// ORBIT's view, from the runner to the UI: AXI.
 #[cfg(feature = "orbit")]
 static mut ORBIT: MaybeUninit<TripleBuffer<OrbitView>> = MaybeUninit::uninit();
 #[cfg(feature = "orbit")]

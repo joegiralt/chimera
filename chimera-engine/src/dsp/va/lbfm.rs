@@ -4,6 +4,7 @@
 //! the clock's pitch.
 
 use super::osc::{R, psin};
+use super::stability::WrapJitter;
 use crate::dsp::provenance::{Patent, PatentLine, Provenance};
 use crate::dsp::{clampf, sqrt};
 
@@ -104,8 +105,8 @@ pub fn render_loop<const N: usize, const MARKS: bool>(
     inc: (f32, f32),
     out: &mut [f32; N],
     mk: &mut [[f32; 2]; N],
-    jit: &mut f32,
-    draw: &mut impl FnMut() -> f32,
+    jit: &mut WrapJitter,
+    draw: &mut impl FnMut() -> WrapJitter,
 ) {
     let (mut p, mut j) = (*phase, *jit);
     let ((mut b, db), (mut ic, di)) = (b0, inc);
@@ -116,7 +117,7 @@ pub fn render_loop<const N: usize, const MARKS: bool>(
         b += db;
         sc += dsc;
         ic += di;
-        let step = ic * j;
+        let step = ic * j.factor();
         p += step;
         let mut w = super::osc::NO_WRAP;
         if p >= 1.0 {

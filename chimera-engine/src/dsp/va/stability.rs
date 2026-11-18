@@ -48,11 +48,42 @@ pub const SALT_JITTER: u32 = 0x1177;
 /// C4 in the pitch conversion's cents (MIDI note × 100).
 const C4_CENTS: f32 = 6000.0;
 
-/// The depth curve: fine-grained at the top of the knob; NaN is 0 (d 1).
-pub fn depth(stability: f32) -> f32 {
-    let x = 1.0 - clampf(stability, 0.0, 1.0);
-    x * x
+/// STABILITY's depth, 0 (stable) to 1 (the most drift and jitter): the
+/// knob through `depth`'s curve, the scale of every drift term.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct Depth(f32);
+
+impl Depth {
+    /// No drift, no jitter: STABILITY 1.
+    pub const NONE: Depth = Depth(0.0);
+
+    /// A raw depth, unchecked, for host tests that drive the drift at a
+    /// depth directly; the instrument's come only from `depth`'s curve.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn new(d: f32) -> Depth {
+        Depth(d)
+    }
+
+    #[inline(always)]
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+
+    /// No drift and no jitter (`NONE`, ±0): every term returns its rest.
+    #[inline(always)]
+    pub fn is_none(self) -> bool {
+        self.0 == 0.0
+    }
 }
+
+/// The depth curve: fine-grained at the top of the knob; NaN is 0 (d 1).
+pub fn depth(stability: f32) -> Depth {
+    let x = 1.0 - clampf(stability, 0.0, 1.0);
+    Depth(x * x)
+}
+
+/// A raw 32-bit word's full scale, 2³¹: a word over it is −1..1.
+pub(super) const WORD: f32 = 2_147_483_648.0;
 
 /// splitmix32's finaliser on a golden step: every input bit reaches
 /// every output bit, so neighbouring (Part, slot)s draw apart.
@@ -65,7 +96,7 @@ pub const fn mix32(z: u32) -> u32 {
 
 /// A word as −1..1.
 pub fn uni(x: u32) -> f32 {
-    (x as i32) as f32 / 2_147_483_648.0
+    (x as i32) as f32 / WORD
 }
 
 /// A voice's identity: (Part, voice slot), hashed.
@@ -182,7 +213,7 @@ impl Stability {
 
     /// Once a block: each oscillator's drift + trim in cents. The walks
     /// advance at any `d`; `d == 0` returns exactly 0.
-    pub fn step(&mut self, d: f32) -> [f32; 2] {
+    pub fn step(&mut self, d: Depth) -> [f32; 2] {
         let mut w = [0.0f32; 3];
         for (k, w) in w.iter_mut().enumerate() {
             let x = xorshift(&mut self.rng[k]);
@@ -190,9 +221,10 @@ impl Stability {
             self.y2[k] += self.a * (self.y1[k] - self.y2[k]);
             *w = clampf(self.g * self.y2[k], -1.0, 1.0);
         }
-        if d == 0.0 {
+        if d.is_none() {
             return [0.0; 2];
         }
+        let d = d.get();
         let shared = DRIFT_SHARED_CENTS * w[0];
         let t = self.character.trim;
         [
@@ -208,31 +240,26 @@ impl Stability {
 
     /// HF tracking: `f/(1 + f·τ)`, τ = d·τ_max·u, the divisor floored at
     /// ½. `d == 0` returns `hz` untouched.
-    pub fn tracked(&self, hz: [f32; 2], d: f32) -> [f32; 2] {
-        if d == 0.0 {
+    pub fn tracked(&self, hz: [f32; 2], d: Depth) -> [f32; 2] {
+        if d.is_none() {
             return hz;
         }
+        let d = d.get();
         let u = self.character.tau_u;
         [0, 1].map(|k| hz[k] / (1.0 + hz[k] * d * TAU_MAX_S * u[k]).max(0.5))
     }
 
     /// Scale error: the extra cents for pitches `cents` (C4 = 6000).
-    pub fn scale_cents(&self, cents: [f32; 2], d: f32) -> [f32; 2] {
-        if d == 0.0 {
+    pub fn scale_cents(&self, cents: [f32; 2], d: Depth) -> [f32; 2] {
+        if d.is_none() {
             return [0.0; 2];
         }
+        let d = d.get();
         let s = self.character.scale;
         [0, 1].map(|k| (cents[k] - C4_CENTS) * SCALE_ERR * s[k] * d)
     }
 
-    /// The cents for the cycle a wrap starts.
-    pub fn jitter(&mut self, d: f32) -> f32 {
-        let x = uni(self.jitter_word() as u32);
-        if d == 0.0 { 0.0 } else { JITTER_CENTS * d * x }
-    }
-
-    /// `jitter`'s draw as a raw word: `jitter(d)` is `JITTER_CENTS · d ·
-    /// uni(word)` (0 at `d == 0`), the scale set once a block.
+    /// The jitter's draw as a raw word, scaled once a block (`JitterScale`).
     #[inline(always)]
     pub fn jitter_word(&mut self) -> i32 {
         let mut x = self.rng[3];
@@ -241,5 +268,44 @@ impl Stability {
         x ^= x << 5;
         self.rng[3] = x;
         x as i32
+    }
+}
+
+/// STABILITY's jitter at depth `d` (`depth`): a raw word's scale, so a
+/// wrap's pitch factor is `1 + scale·word` (`draw`), `JITTER_CENTS · d`
+/// cents at a full word. Defined here once; every render draws through it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JitterScale(f32);
+
+impl JitterScale {
+    pub fn new(d: Depth) -> Self {
+        JitterScale(JITTER_CENTS * d.get() * super::CENT * (1.0 / WORD))
+    }
+
+    /// A wrap's factor from the next raw draw: exactly 1 at depth 0.
+    #[inline(always)]
+    pub fn draw(self, stab: &mut Stability) -> WrapJitter {
+        WrapJitter(1.0 + self.0 * stab.jitter_word() as f32)
+    }
+
+    /// The most a draw moves the factor from 1 (a full word's), before
+    /// the sum's rounding.
+    pub fn reach(self) -> f32 {
+        self.0 * WORD
+    }
+}
+
+/// An oscillator's pitch factor for the cycle under way, drawn at its last
+/// wrap (`JitterScale::draw`): 1 at rest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(transparent)]
+pub struct WrapJitter(f32);
+
+impl WrapJitter {
+    pub const NONE: WrapJitter = WrapJitter(1.0);
+
+    #[inline(always)]
+    pub fn factor(self) -> f32 {
+        self.0
     }
 }

@@ -52,7 +52,7 @@ fn held_notes(inst: &Instrument, p: PartId) -> Vec<u8> {
         .allocator()
         .slots()
         .iter()
-        .filter(|s| s.held() && s.part() == Some(p.index() as u8))
+        .filter(|s| s.held() && s.part() == Some(p))
         .filter_map(|s| s.note().map(|n| n.get()))
         .collect();
     n.sort_unstable();
@@ -63,7 +63,7 @@ fn held_notes(inst: &Instrument, p: PartId) -> Vec<u8> {
 fn slide_of(inst: &Instrument, p: PartId) -> f32 {
     let slots = inst.allocator().slots();
     let v = (0..slots.len())
-        .find(|&v| slots[v].held() && slots[v].part() == Some(p.index() as u8))
+        .find(|&v| slots[v].held() && slots[v].part() == Some(p))
         .expect("a held voice");
     inst.slides()[v]
 }
@@ -456,6 +456,8 @@ fn part_snap_default_is_neutral() {
                 PartParams::BEND,
                 PartParams::TUNING,
                 PartParams::MAPPING,
+                PartParams::MAX_VOICES,
+                PartParams::RESERVE,
             ]
             .map(|i| i.0)
             .contains(&e[0])

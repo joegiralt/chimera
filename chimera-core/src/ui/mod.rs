@@ -41,6 +41,7 @@ pub mod op_page;
 pub mod orbit;
 pub mod page;
 pub mod part_page;
+pub mod part_voices;
 pub mod perf;
 pub mod pit_tuner;
 pub mod pool_page;
@@ -1666,6 +1667,13 @@ impl UiState {
         {
             return matches!(s, kit_groups::Said::Moved(true));
         }
+        // MAX VOICES and RESERVE (ADR 0281): bank 2's; closed, the plain
+        // edit.
+        if let Some(cell) = held::VoiceCell::of(a)
+            && let Some(t) = self.voices_act(at, cell, part_voices::Act::Turn { delta, shift })
+        {
+            return t != part_voices::Turned::Refused;
+        }
         let Some(cell) = held::applies(a, shift) else {
             return false;
         };
@@ -1681,7 +1689,7 @@ impl UiState {
                 let from = match held {
                     Some((_, held::Held::Sound(held::Pick::Wave(_, k)))) => k,
                     Some((_, held::Held::Sound(held::Pick::Alg(..) | held::Pick::Tape(_))))
-                    | Some((_, held::Held::Choke(_)))
+                    | Some((_, held::Held::Choke(_) | held::Held::Voices(_)))
                     | None => p.kinds().get(op.index()),
                 };
                 let s = step_kind(p.kinds(), p.linked(), op.index(), from, d);
@@ -1691,7 +1699,7 @@ impl UiState {
                 let from = match held {
                     Some((_, held::Held::Sound(held::Pick::Alg(_, x)))) => x,
                     Some((_, held::Held::Sound(held::Pick::Wave(..) | held::Pick::Tape(_))))
-                    | Some((_, held::Held::Choke(_)))
+                    | Some((_, held::Held::Choke(_) | held::Held::Voices(_)))
                     | None => p.side(side.param()),
                 };
                 let s = step_alg(p, side.param(), from, delta);
@@ -1724,7 +1732,8 @@ impl UiState {
         };
         let from = match self.held {
             Some((h, held::Held::Sound(held::Pick::Tape(t)))) if h == at && t.addr() == a => t,
-            Some((_, held::Held::Sound(_) | held::Held::Choke(_))) | None => now,
+            Some((_, held::Held::Sound(_) | held::Held::Choke(_) | held::Held::Voices(_)))
+            | None => now,
         };
         let to = from.step(delta, shift);
         let pick = held::Pick::Tape(to);
@@ -1773,6 +1782,43 @@ impl UiState {
         r.is_some_and(|r| self.project.pool().streamed(r))
     }
 
+    /// A turn or an edit on MAX VOICES or RESERVE, bank 2's
+    /// (`part_voices`): `None` with the door closed. Out of line: bank 1's
+    /// one stub for both.
+    #[inline(never)]
+    fn voices_act(
+        &mut self,
+        at: PartId,
+        cell: held::VoiceCell,
+        act: part_voices::Act,
+    ) -> Option<part_voices::Turned> {
+        let mut out = None;
+        let job = part_voices::Job::Act {
+            ui: self,
+            at,
+            cell,
+            act,
+            out: &mut out,
+        };
+        crate::bank2::voices(part_voices::Ask::Judge(job));
+        out
+    }
+
+    /// Why a held MAX VOICES or RESERVE is refused, if it still is: bank
+    /// 2's (`part_voices`), `None` closed. Out of line: bank 1's stub.
+    #[inline(never)]
+    fn voices_held(&self, at: PartId, hold: held::VoicesHold) -> Option<held::Reason> {
+        let mut out = None;
+        let job = part_voices::Job::Held {
+            ui: self,
+            at,
+            hold,
+            out: &mut out,
+        };
+        crate::bank2::voices(part_voices::Ask::Judge(job));
+        out.and_then(Result::err).map(held::Reason::Voices)
+    }
+
     /// The choice the focused cell shows dimmed and why, if any.
     pub fn held_choice(&self) -> Option<held::Shown> {
         let (at, h) = self.held?;
@@ -1787,6 +1833,7 @@ impl UiState {
                     }
                 }
                 held::Held::Sound(pick) => pick.why(&self.project.part(at).sound, self.streams(at)),
+                held::Held::Voices(hold) => self.voices_held(at, hold),
             })
             .flatten()
             .map(|why| held::Shown { held: h, why })
@@ -1979,6 +2026,11 @@ impl UiState {
             && let Some(s) = crate::bank2::groups(kit_groups::Ask::Edit(self, part, how))
         {
             return matches!(s, kit_groups::Said::Moved(true));
+        }
+        if let Some(cell) = held::VoiceCell::of(a)
+            && let Some(t) = self.voices_act(part, cell, part_voices::Act::Edit(how))
+        {
+            return t.moved();
         }
         let params = &mut UiBlocks {
             project: &mut self.project,

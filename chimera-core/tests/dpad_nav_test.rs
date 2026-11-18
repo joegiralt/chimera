@@ -148,13 +148,19 @@ fn the_mixer_and_the_sound_rung() {
     let step = |l: Location, k| l.step(k, &cx, &mut Recall::new());
     let go = Step::Go;
     let part = Location::mixer(p, MixPage::Part);
+    let voices = Location::mixer(p, MixPage::Voices);
     let sends = Location::mixer(p, MixPage::Sends);
     let sound = Location::sound(p);
     let table = [
         (part, NavKey::Minus, Step::Stay),
         (part, NavKey::Plus, go(sends)),
-        (part, NavKey::Edit, go(sound)),
+        // PART's sub-page, VOICES, is down, then the Sound rung (ADR 0281).
+        (part, NavKey::Edit, go(voices)),
         (part, NavKey::SeqTap, Step::Stay),
+        (voices, NavKey::Minus, go(part)),
+        (voices, NavKey::Plus, go(sends)),
+        (voices, NavKey::Edit, go(sound)),
+        (voices, NavKey::SeqTap, go(part)),
         (sends, NavKey::Minus, go(part)),
         (sends, NavKey::Edit, go(sound)),
         (sends, NavKey::SeqTap, Step::Stay),
@@ -193,7 +199,11 @@ fn the_fx_pages_move_as_a_chain() {
             }
         }
     }
-    assert_eq!(fx.len(), pages(c).len() - FX_FIRST);
+    let fx_pages = pages(c)
+        .iter()
+        .filter(|a| a.node() as usize >= FX_FIRST)
+        .count();
+    assert_eq!(fx.len(), fx_pages);
     for l in fx {
         let at = l.page(&cx).unwrap().1;
         for k in DPAD {

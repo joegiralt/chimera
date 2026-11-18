@@ -119,16 +119,15 @@ fn fx_bus_fits_its_axi_share() {
 }
 
 /// The AXI residents, reported (the linker enforces the margin, ADR 0087):
-/// the Project (Performance and pool), the Parts' kits, the framebuffer, the UI,
-/// the AudioShared, scope, AudioStats and
+/// the Project (Performance and pool), the framebuffer, the UI, the scope,
+/// AudioStats and
 /// ORBIT view triple buffers, the scope's writer, ORBIT's runner, the FX bus
-/// and the card's store (ADR 0014, ADR 0021).
-/// ORBIT's settings ride inside `AudioShared` and its song inside `Project`,
-/// so neither is counted again.
+/// and the card's store (ADR 0014, ADR 0021). ORBIT's song rides inside
+/// `Project`, so is not counted again; `AudioShared`'s snapshots are ITCM's
+/// (ADR 0286, `itcm_residents_fit`).
 #[test]
 fn axi_report() {
     use chimera_core::dsp::fx_bus::FxBus;
-    use chimera_core::instrument::AudioShared;
     use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
     use chimera_core::perf::load::AudioStats;
     use chimera_core::project::Project;
@@ -146,7 +145,6 @@ fn axi_report() {
             "source table",
             size_of::<chimera_core::source_table::SourceTable>(),
         ),
-        ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
         ("AudioStats x3", size_of::<TripleBuffer<AudioStats>>()),
@@ -426,4 +424,67 @@ fn kits_are_compact_and_outside_the_parts() {
         size_of::<KitView>(),
         hw::MAX_PARTS * (4 + 1 + 1 + 2 + 2 + 4 + 4 + 2 * 12 * 70usize).next_multiple_of(4)
     );
+}
+
+/// ADR 0266, 0286: ITCM's residents, the kits, the audio's kit view, `ed`'s
+/// state and the audio's three `AudioShared` snapshots, fit with the
+/// margin to spare. The linker's assert (`itcm.x`) is the proof; this is a
+/// conservative host estimate (each rounded up to 8, though `.itcm` packs
+/// them at their own alignment, 4 here; the host's `usize` is 8 B), which
+/// prints the sizes and fails first. `hw`'s geometry is the linker's own
+/// (`itcm_geometry.rs`, which `chimera-stm32/build.rs` writes both from).
+#[test]
+fn itcm_residents_fit() {
+    let parts = itcm_parts();
+    for (name, count, size) in parts {
+        eprintln!("{name:>12} x{count} {size:>7} B");
+    }
+    let total: usize = parts.iter().map(|p| p.2.next_multiple_of(8)).sum();
+    eprintln!(
+        "{:>15} {total:>7} B of {} B, margin {} B",
+        "ITCM",
+        hw::ITCM_STATE,
+        hw::ITCM_MARGIN
+    );
+    assert!(
+        total + hw::ITCM_MARGIN <= hw::ITCM_STATE,
+        "ITCM: {total} B over its margin"
+    );
+}
+
+/// ITCM's residents: the type and count `tools/itcm-residents.txt` gives
+/// each, and the bytes of the static holding them.
+fn itcm_parts() -> [(&'static str, usize, usize); 4] {
+    use chimera_core::console::EdState;
+    use chimera_core::dsp::drum::view::KitView;
+    use chimera_core::instrument::AudioShared;
+    use chimera_core::project::Kits;
+    use chimera_core::triple::TripleBuffer;
+    [
+        ("Kits", 1, size_of::<Kits>()),
+        ("KitView", 1, size_of::<KitView>()),
+        ("EdState", 1, size_of::<EdState>()),
+        ("AudioShared", 3, size_of::<TripleBuffer<AudioShared>>()),
+    ]
+}
+
+/// ADR 0286: one list of ITCM's residents. `check_itcm.py` holds the ELF to
+/// `tools/itcm-residents.txt`; this sizes the same types, as many of each.
+#[test]
+fn itcm_residents_are_the_files() {
+    const FILE: &str = include_str!("../../tools/itcm-residents.txt");
+    let mut listed: Vec<(&str, usize)> = FILE
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let f: Vec<&str> = l.split('|').map(str::trim).collect();
+            let count = f.get(2).and_then(|c| c.parse().ok());
+            (f[1], count.expect("<symbol> | <type> | <count>"))
+        })
+        .collect();
+    let mut sized: Vec<(&str, usize)> = itcm_parts().iter().map(|p| (p.0, p.1)).collect();
+    listed.sort_unstable();
+    sized.sort_unstable();
+    assert_eq!(listed, sized);
 }

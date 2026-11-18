@@ -234,7 +234,7 @@ fn a_landed_scene_resnaps_held_keys() {
             .allocator()
             .slots()
             .iter()
-            .filter(|s| s.held() && s.part() == Some(0))
+            .filter(|s| s.held() && s.part() == Some(PartId::ALL[0]))
             .filter_map(|s| s.note().map(|n| n.get()))
             .collect()
     };
