@@ -3,20 +3,29 @@
 //! Held on an anchor, every MODE that plays the plain runs (MIX's, SYNC's
 //! slave) plays every bit it played at origin/0.4 `262039d9`; so does WAVE
 //! moving on and off the anchors mid-note, door open, closed (bank 1's
-//! pair runs) or absent.
+//! pair runs) or absent. The scenes around the solo (`va_scenes`: MODE
+//! detours, a Sound browsed, glide, steal, restart, SHAPE) play every bit
+//! they played at origin/0.4 `807e740d`.
+
+mod va_scenes;
 
 use core::mem::MaybeUninit;
 
-use chimera_engine::dsp::va::osc::Solo;
-use chimera_engine::dsp::va::{VaEngine, VaMode, VaParams};
+use chimera_engine::dsp::va::osc::{ANCHORS as WAVE_ANCHORS, SAW_ANCHOR};
+use chimera_engine::dsp::va::{Played, VaEngine, VaMode, VaParams};
 use chimera_engine::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 
 const SR: u32 = 48_000;
 const BLOCKS: usize = 200;
 
-/// WAVE's anchors: sine, triangle, saw, pulse.
-const ANCHORS: [f32; 4] = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0];
+/// WAVE's anchors: sine, triangle, saw, pulse (`osc::ANCHORS`).
+const ANCHORS: [f32; 4] = [
+    WAVE_ANCHORS[0].get(),
+    WAVE_ANCHORS[1].get(),
+    WAVE_ANCHORS[2].get(),
+    WAVE_ANCHORS[3].get(),
+];
 
 /// A held note on `mode`, both oscillators at WAVE `w`, a sub, STABILITY's
 /// jitter, SHAPE off the ends; OSC 2 a fifth up.
@@ -79,9 +88,9 @@ fn take(note: u8, params: impl Fn(usize) -> VaParams) -> Vec<[f32; BLOCK_SIZE]> 
         .collect()
 }
 
-/// The solos each block played, held on each anchor, from block 4 (WAVE
-/// settled).
-fn solos(mode: VaMode) -> [Vec<[Option<Solo>; 2]>; 4] {
+/// What each block's plain renders played, held on each anchor, from block
+/// 4 (WAVE settled).
+fn solos(mode: VaMode) -> [Vec<[Option<Played>; 2]>; 4] {
     ANCHORS.map(|a| {
         let mut slot = Box::new(MaybeUninit::<VaEngine>::uninit());
         let e = VaEngine::init_in_place(&mut slot);
@@ -92,7 +101,7 @@ fn solos(mode: VaMode) -> [Vec<[Option<Solo>; 2]>; 4] {
             .map(|_| {
                 let mut out = [0.0f32; BLOCK_SIZE];
                 e.render(&mut out, &p, SR);
-                e.solos()
+                e.played()
             })
             .skip(4)
             .collect()
@@ -101,19 +110,20 @@ fn solos(mode: VaMode) -> [Vec<[Option<Solo>; 2]>; 4] {
 
 /// Held on WAVE's saw anchor, OSC 1 and OSC 2 of every MODE that plays
 /// the plain renders play the saw alone (the instances bank 2 holds, ADR
-/// 0283), SYNC's slave its pair; every other anchor, and the MODEs with
-/// renders of their own, their pairs.
+/// 0283), SYNC's slave its pair; every other anchor their pairs. The MODEs
+/// with renders of their own run no plain render at all.
 fn plays_solos() {
+    use Played::{Alone, Pair};
     use VaMode::*;
     for mode in [
         Mix, Sync, Ring, Xor, Bits, Fm, Am, Max, LoopFm, SoftSync, Phase,
     ] {
-        let saw = match mode {
-            Mix | Ring | Xor | Bits | Am | Max => [Some(Solo::Saw); 2],
-            Sync => [Some(Solo::Saw), None],
-            Fm | LoopFm | SoftSync | Phase => [None; 2],
+        let (saw, pair) = match mode {
+            Mix | Ring | Xor | Bits | Am | Max => ([Some(Alone); 2], [Some(Pair); 2]),
+            Sync => ([Some(Alone), Some(Pair)], [Some(Pair); 2]),
+            Fm | LoopFm | SoftSync | Phase => ([None; 2], [None; 2]),
         };
-        let want = [[None; 2], [None; 2], saw, [None; 2]];
+        let want = [pair, pair, saw, pair];
         for (s, w) in solos(mode).iter().zip(want) {
             assert!(s.iter().all(|b| *b == w), "{mode:?} {w:?}: {s:?}");
         }
@@ -287,7 +297,8 @@ fn the_door_plays_solos_open_pairs_closed_as_before() {
     DOOR_CELL.close();
     for mode in [VaMode::Mix, VaMode::Sync, VaMode::Ring, VaMode::Max] {
         for s in solos(mode) {
-            assert!(s.iter().all(|b| *b == [None; 2]), "closed {mode:?}: {s:?}");
+            let pair = [Some(Played::Pair); 2];
+            assert!(s.iter().all(|b| *b == pair), "closed {mode:?}: {s:?}");
         }
     }
     assert_eq!(held_prints(), HELD, "closed, held");
@@ -300,6 +311,8 @@ fn the_door_plays_solos_open_pairs_closed_as_before() {
     let open: Vec<u64> = moving_scenes().iter().map(|s| print(s)).collect();
     assert_eq!(open, MOVING, "open, moving");
     assert_eq!(other_prints(OTHERS.len()), OTHER, "open, other MODEs");
+    // the scenes' detours are bank 2's MODEs: open only
+    the_scenes_play_as_before();
     DOOR_CELL.close();
 }
 
@@ -311,4 +324,77 @@ fn leaving_an_anchor_plays_as_before_with_no_door() {
     let now: Vec<u64> = moving_scenes().iter().map(|s| print(s)).collect();
     assert_eq!(now, MOVING);
     plays_solos();
+}
+
+/// `va_scenes::prints` at origin/0.4 `807e740d`, door open: every scene as
+/// before the solo.
+const SCENES: [u64; 21] = [
+    0xf8c013c5830747d2,
+    0xb69e917b497e4636,
+    0x5a5466ea4ac0de9a,
+    0x6ceae1f3378ae011,
+    0xb8798484a4c61738,
+    0x4eb691f721d322e3,
+    0x830a77cf92e51e48,
+    0x68ec412a8b85a2e1,
+    0x7689ac8285627fe5,
+    0x421ab479f81ae0cd,
+    0xb2ff66e25af7e855,
+    0x4176827baec83b64,
+    0x6f8bac5461ef61fe,
+    0xf35dd5460946e525,
+    0x8d50a4bb43e4ca21,
+    0x84ec05f12b7416d1,
+    0xb15e9108a2ef9251,
+    0x1c65ff2c6bd9ed12,
+    0x51bd2db1d682e7d7,
+    0xc4c008a34202303c,
+    0xd7a2cc34ef0b02c7,
+];
+
+/// The scenes name the saw's anchor as the engine does.
+#[test]
+fn the_scenes_saw_is_the_anchor() {
+    assert_eq!(va_scenes::SAW, SAW_ANCHOR.get());
+    assert_eq!(ANCHORS[2], SAW_ANCHOR.get());
+}
+
+/// What the plain renders played in each block of `scene`.
+fn played_in(scene: &va_scenes::Scene) -> Vec<[Option<Played>; 2]> {
+    let mut v = Vec::new();
+    va_scenes::play(scene, |_, e| v.push(e.played()));
+    v
+}
+
+/// A detour off the anchor (WAVE 0.8) through LOOPFM, back on it with MIX:
+/// LOOPFM holds no constants, so the first MIX block finds the pulse's at
+/// weight 0.4 and plays the pair, which lerps them home; the next plays
+/// alone. LOOPFM's own blocks run no plain render.
+fn a_detour_returns_through_the_pair() {
+    use Played::{Alone, Pair};
+    let p = played_in(&va_scenes::SCENES[2]);
+    let back = (40..).find(|&b| p[b] != [None; 2]).unwrap();
+    assert!(
+        p[22..back].iter().all(|b| *b == [None; 2]),
+        "LOOPFM: {:?}",
+        &p[20..back]
+    );
+    assert_eq!(p[back], [Some(Pair); 2], "block {back}");
+    assert_eq!(p[back + 1], [Some(Alone); 2], "block {}", back + 1);
+}
+
+/// With no door (a host build without `bank2`), every scene as before.
+#[cfg(not(all(feature = "bank2", feature = "test-support")))]
+#[test]
+fn the_scenes_play_as_before_with_no_door() {
+    the_scenes_play_as_before();
+}
+
+/// Every scene, as before; and the detour's blocks.
+fn the_scenes_play_as_before() {
+    let now = va_scenes::prints();
+    for (i, (n, w)) in now.iter().zip(SCENES).enumerate() {
+        assert_eq!(*n, w, "{}", va_scenes::SCENES[i].name);
+    }
+    a_detour_returns_through_the_pair();
 }

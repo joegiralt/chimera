@@ -1,14 +1,16 @@
 //! VA's saw alone on its anchor behind bank 2's door (ADR 0283). With
-//! WAVE held on ⅔, OSC 1 and MIX's OSC 2 play one run of the saw, the
-//! pulse quiet (`Solo`), instead of the pair's. `play` holds both runs,
+//! WAVE held on ⅔, OSC 1 and, but as SYNC's slave, OSC 2 play one run of
+//! the saw, the pulse quiet (`OnAnchor`), instead of the pair's. `play` holds both runs,
 //! inlined, so with `bank2` the module links into an S4 group whole
 //! (`bank2.x`, `*3osc4solo*`), reached through `SoloDoor` at its own slot:
 //! the door's table has no room. Without `bank2` it is bank 1's, called
-//! directly. `Solo::at`, `block` and the pair's runs stay in bank 1.
+//! directly. `VarOsc::on_anchor`, `block` and the pair's runs stay in
+//! bank 1.
 
 use chimera_hal::BLOCK_SIZE;
 
-use super::{PulseQuiet, Ramps, Saw, Solo, VarOsc, ZEROS};
+use super::{OnAnchor, VarOsc};
+use crate::dsp::va::JitterScale;
 use crate::dsp::va::stability::Stability;
 
 /// Which plain instance a solo plays: two of the engine's three
@@ -21,19 +23,18 @@ pub enum SoloRun {
     Osc2,
 }
 
-/// A solo render as the table carries it: the oscillator, its instance and
-/// solo, its block, its marks, its lanes and jitter, STABILITY (the
-/// jitter's draws, `1 + jd · word`).
-pub type SoloRender = fn(
+/// A solo render as the table carries it: the oscillator, its instance,
+/// the proof and its ramps, its block, its marks, its jitter, STABILITY
+/// and the jitter's scale.
+pub type SoloRender = for<'r> fn(
     &mut VarOsc,
     SoloRun,
-    Solo,
+    OnAnchor<'r>,
     &mut [f32; BLOCK_SIZE],
     &mut [[f32; 2]; BLOCK_SIZE],
-    &Ramps,
     &mut f32,
     &mut Stability,
-    f32,
+    JitterScale,
 );
 
 /// A solo render as `SoloDoor` holds it: called, never handed out.
@@ -47,15 +48,14 @@ impl SoloEntry {
         &self,
         o: &mut VarOsc,
         run: SoloRun,
-        solo: Solo,
+        at: OnAnchor<'_>,
         out: &mut [f32; BLOCK_SIZE],
         mk: &mut [[f32; 2]; BLOCK_SIZE],
-        r: &Ramps,
         jit: &mut f32,
         stab: &mut Stability,
-        jd: f32,
+        js: JitterScale,
     ) {
-        (self.0)(o, run, solo, out, mk, r, jit, stab, jd)
+        (self.0)(o, run, at, out, mk, jit, stab, js)
     }
 }
 
@@ -125,31 +125,23 @@ pub fn through<R>(f: impl FnOnce(&SoloDoor) -> R) -> Option<R> {
     }
 }
 
-/// A plain render's solo: OSC 1's instance (`<64, true, false, true>`) or
-/// OSC 2's (`<64, false, false, false>`), the saw with the pulse quiet.
+/// A plain render's solo: OSC 1's instance (`<true, true>`, recording,
+/// flipping) or OSC 2's (`<false, false>`), the saw with the pulse quiet.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn play(
     o: &mut VarOsc,
     run: SoloRun,
-    solo: Solo,
+    at: OnAnchor<'_>,
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
-    r: &Ramps,
     jit: &mut f32,
     stab: &mut Stability,
-    jd: f32,
+    js: JitterScale,
 ) {
-    let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
-    let d = &mut draw;
-    match (run, solo) {
-        (SoloRun::Osc1, Solo::Saw) => o
-            .render_solo::<Saw, PulseQuiet, BLOCK_SIZE, true, false, true>(
-                solo, out, mk, r, jit, d, &ZEROS,
-            ),
-        (SoloRun::Osc2, Solo::Saw) => o
-            .render_solo::<Saw, PulseQuiet, BLOCK_SIZE, false, false, false>(
-                solo, out, mk, r, jit, d, &ZEROS,
-            ),
+    let d = &mut || js.draw(stab);
+    match run {
+        SoloRun::Osc1 => o.render_solo::<true, true>(at, out, mk, jit, d),
+        SoloRun::Osc2 => o.render_solo::<false, false>(at, out, mk, jit, d),
     }
 }

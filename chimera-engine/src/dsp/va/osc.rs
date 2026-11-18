@@ -25,6 +25,7 @@ pub mod solo;
 use super::blep::{blamp_into, blamp6_into, blep_into};
 use crate::dsp::provenance::{PatentLine, Provenance};
 use crate::dsp::{clampf, sqrt};
+use chimera_hal::BLOCK_SIZE;
 
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
@@ -128,10 +129,9 @@ pub struct Morph {
 impl Morph {
     /// The live pair and the second wave's weight.
     #[inline(always)]
-    fn segment(self) -> (Pair, f32) {
-        let x3 = 3.0 * self.wave.get();
-        let p = Pair::of(x3);
-        (p, x3 - p as usize as f32)
+    fn segment(self) -> (Pair, Weight) {
+        let p = Pair::of(3.0 * self.wave.get());
+        (p, p.weight(self.wave))
     }
 }
 
@@ -144,6 +144,16 @@ enum Wave {
 }
 
 impl Wave {
+    /// Its anchor: the WAVE where it plays alone, `k/3`.
+    const fn anchor(self) -> Unit {
+        Unit::new(match self {
+            Wave::Sine => 0.0,
+            Wave::Tri => 1.0 / 3.0,
+            Wave::Saw => 2.0 / 3.0,
+            Wave::Pulse => 1.0,
+        })
+    }
+
     /// The slot of a wave with edges (the sine has none).
     #[inline(always)]
     fn edge_slot(self) -> Option<usize> {
@@ -202,29 +212,38 @@ impl Wave {
     }
 }
 
-/// The wave a block plays alone, WAVE held on its anchor (ADR 0283): its
-/// pair's other wave has weight 0, its edges only tracked (`quiet_kind!`).
-/// Only the saw's: WAVE's default (⅔), and its pair's dearest partner, the
-/// pulse, is the one it drops. The other anchors play their pairs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Solo {
-    /// WAVE ⅔: the saw, its pulse at weight 0.
-    Saw,
+/// The proof that a plain block plays the saw alone (ADR 0283): WAVE held
+/// on the saw's anchor, the pulse at weight 0 through the block, and the
+/// pulse's held constants, which the run lerps from, its weight-0 ones.
+/// Only `VarOsc::on_anchor` builds one, for the ramps it binds.
+pub struct OnAnchor<'r> {
+    r: &'r Ramps,
 }
 
-impl Solo {
-    /// The solo of a block on `r`: WAVE steady on the saw's anchor, the
-    /// pulse's weight in the pair (`3·WAVE − 2`, as the run reads it)
-    /// exactly 0.
+/// The second wave's weight in its pair: `3·WAVE` less the pair's base.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Weight(f32);
+
+impl Weight {
     #[inline(always)]
-    pub fn at(r: &Ramps) -> Option<Solo> {
-        if r.wave.1 != 0.0 {
-            return None;
-        }
-        let pair = seg(r, 0);
-        let f = 3.0 * Unit::new(r.wave.0).get() - pair as usize as f32;
-        (pair == Pair::SawPulse && f == 0.0).then_some(Solo::Saw)
+    fn get(self) -> f32 {
+        self.0
     }
+
+    /// On the first wave's anchor: the second's constants are its weight-0
+    /// ones, ±0.
+    #[inline(always)]
+    fn is_anchor(self) -> bool {
+        self.0 == 0.0
+    }
+}
+
+/// The pair whose constants and edge places (at its last sample) a
+/// `VarOsc` holds, and the weight they were taken at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HeldPair {
+    pair: Pair,
+    weight: Weight,
 }
 
 /// The two live waves: WAVE's segment.
@@ -236,6 +255,28 @@ enum Pair {
 }
 
 impl Pair {
+    /// The pair whose first wave is `a` (the pulse's is saw–pulse).
+    #[inline(always)]
+    fn led_by(a: Wave) -> Pair {
+        match a {
+            Wave::Sine => Pair::SineTri,
+            Wave::Tri => Pair::TriSaw,
+            Wave::Saw | Wave::Pulse => Pair::SawPulse,
+        }
+    }
+
+    /// `3·WAVE` at the pair's first anchor.
+    #[inline(always)]
+    fn base(self) -> f32 {
+        self as usize as f32
+    }
+
+    /// The second wave's weight at `wave`.
+    #[inline(always)]
+    fn weight(self, wave: Unit) -> Weight {
+        Weight(3.0 * wave.get() - self.base())
+    }
+
     /// The pair at `3 × WAVE`.
     #[inline(always)]
     fn of(x3: f32) -> Pair {
@@ -272,7 +313,28 @@ impl Pair {
         let mut sh = Shaped::ZERO;
         sh.fill(a, m.shape.get(), inc);
         sh.fill(b, m.shape.get(), inc);
-        at(a, b, &sh, 3.0 * m.wave.get() - self as usize as f32)
+        at(a, b, &sh, self.weight(m.wave))
+    }
+}
+
+/// A wave's edges and how a crossing is corrected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Edges {
+    /// None to track (the sine, a wave off its pair).
+    None,
+    /// Steps, corrected by a BLEP (the saw, the pulse).
+    Steps,
+    /// Corners, corrected by a BLAMP (the triangle).
+    Corners,
+    /// Tracked, crossed and flipped but never corrected: a wave at weight 0
+    /// (`quiet_kind!`), whose steps are ±0.
+    Silent,
+}
+
+impl Edges {
+    /// Whether there are edges to track.
+    const fn tracked(self) -> bool {
+        !matches!(self, Edges::None)
     }
 }
 
@@ -281,18 +343,13 @@ impl Pair {
 /// `Wave::consts`.
 trait Kind {
     const WAVE: Wave;
-    /// Two edges (all but the sine).
-    const EDGES: bool;
-    /// The edges are corners (BLAMP), not steps (BLEP).
-    const CORNERS: bool;
+    /// Its edges and how they're corrected.
+    const EDGES: Edges;
     /// The pulse: its level `h` (0 or 1) flips at every crossing.
     const FLIPS: bool;
     /// `c[0]` is a constant term (all but the sine): a pair of two keeps
     /// one, their sum.
     const BIAS: bool;
-    /// At weight 0 (`quiet_kind!`): its edges are tracked and crossed, never
-    /// corrected (their steps are ±0).
-    const SILENT: bool = false;
 
     /// The value at phase `p`, `u` the phases since the edges.
     fn value(c: [f32; 3], p: f32, u: [f32; 2], h: f32) -> f32;
@@ -316,8 +373,7 @@ struct Pulse;
 
 impl Kind for Sine {
     const WAVE: Wave = Wave::Sine;
-    const EDGES: bool = false;
-    const CORNERS: bool = false;
+    const EDGES: Edges = Edges::None;
     const FLIPS: bool = false;
     const BIAS: bool = false;
 
@@ -344,8 +400,7 @@ impl Kind for Sine {
 
 impl Kind for Tri {
     const WAVE: Wave = Wave::Tri;
-    const EDGES: bool = true;
-    const CORNERS: bool = true;
+    const EDGES: Edges = Edges::Corners;
     const FLIPS: bool = false;
     const BIAS: bool = true;
 
@@ -386,8 +441,7 @@ impl Kind for Tri {
 
 impl Kind for Saw {
     const WAVE: Wave = Wave::Saw;
-    const EDGES: bool = true;
-    const CORNERS: bool = false;
+    const EDGES: Edges = Edges::Steps;
     const FLIPS: bool = false;
     const BIAS: bool = true;
 
@@ -424,8 +478,7 @@ macro_rules! off_kind {
 
         impl Kind for $name {
             const WAVE: Wave = $w;
-            const EDGES: bool = false;
-            const CORNERS: bool = false;
+            const EDGES: Edges = Edges::None;
             const FLIPS: bool = false;
             const BIAS: bool = true;
 
@@ -457,10 +510,10 @@ off_kind!(
     Wave::Saw
 );
 
-/// `$base` at weight 0 in a VA pair (`Solo`): `off_kind!`'s value, steps
-/// and slopes, but its edges tracked, crossed and flipped as `$base`'s
-/// (`SILENT`: never corrected), so the pair leaving the anchor finds them
-/// where its own run would have, bit for bit.
+/// `$base` at weight 0 in a VA pair (`OnAnchor`): `off_kind!`'s value,
+/// steps and slopes, but its edges tracked, crossed and flipped as
+/// `$base`'s (`Edges::Silent`: never corrected), so the pair leaving the
+/// anchor finds them where its own run would have, bit for bit.
 macro_rules! quiet_kind {
     ($(#[$doc:meta])* $name:ident, $base:ty) => {
         $(#[$doc])*
@@ -468,11 +521,9 @@ macro_rules! quiet_kind {
 
         impl Kind for $name {
             const WAVE: Wave = <$base>::WAVE;
-            const EDGES: bool = <$base>::EDGES;
-            const CORNERS: bool = false;
+            const EDGES: Edges = Edges::Silent;
             const FLIPS: bool = <$base>::FLIPS;
             const BIAS: bool = true;
-            const SILENT: bool = true;
 
             #[inline(always)]
             fn value(c: [f32; 3], _: f32, _: [f32; 2], _: f32) -> f32 {
@@ -504,8 +555,7 @@ quiet_kind!(
 
 impl Kind for Pulse {
     const WAVE: Wave = Wave::Pulse;
-    const EDGES: bool = true;
-    const CORNERS: bool = false;
+    const EDGES: Edges = Edges::Steps;
     const FLIPS: bool = true;
     const BIAS: bool = true;
 
@@ -645,6 +695,7 @@ pub fn peak_bound(m: Morph, inc: f32) -> f32 {
     let mut sh = Shaped::ZERO;
     sh.fill(a, m.shape.get(), inc);
     sh.fill(b, m.shape.get(), inc);
+    let f = f.get();
     (1.0 - f) * sh.peak(a) + f * sh.peak(b)
 }
 
@@ -708,8 +759,24 @@ fn seg(r: &Ramps, i: usize) -> Pair {
     Pair::of(3.0 * Unit::new(val(r.wave, i + 1)).get())
 }
 
-/// WAVE's segment edges, `k/3`.
-const THIRDS: [f32; 4] = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0];
+/// WAVE's anchors: sine, triangle, saw, pulse.
+pub const ANCHORS: [Unit; 4] = [
+    Wave::Sine.anchor(),
+    Wave::Tri.anchor(),
+    Wave::Saw.anchor(),
+    Wave::Pulse.anchor(),
+];
+
+/// WAVE's anchor that plays the saw alone (`OnAnchor`).
+pub const SAW_ANCHOR: Unit = Wave::Saw.anchor();
+
+/// WAVE's segment edges, its anchors.
+const THIRDS: [f32; 4] = [
+    ANCHORS[0].get(),
+    ANCHORS[1].get(),
+    ANCHORS[2].get(),
+    ANCHORS[3].get(),
+];
 
 /// How far a block's WAVE ramp may go from `from` toward `to`: across one
 /// segment edge at most (owner, 2026-10-11; ADR 0118). Past a second edge it
@@ -749,7 +816,8 @@ fn run_end(r: &Ramps, pair: Pair, i0: usize, n: usize) -> usize {
 /// The pair `a`, `b`'s constants and places from SHAPE constants `sh`,
 /// `b` weighted `f`.
 #[inline(always)]
-fn at(a: Wave, b: Wave, sh: &Shaped, f: f32) -> ([f32; 6], [f32; 4]) {
+fn at(a: Wave, b: Wave, sh: &Shaped, f: Weight) -> ([f32; 6], [f32; 4]) {
+    let f = f.get();
     let (ca, cb) = (a.consts(sh, 1.0 - f), b.consts(sh, f));
     let (pa, pb) = (a.pos(sh), b.pos(sh));
     (
@@ -767,7 +835,7 @@ fn at(a: Wave, b: Wave, sh: &Shaped, f: f32) -> ([f32; 6], [f32; 4]) {
 fn at_lerp<A: Kind, B: Kind>(
     (sh0, sh1): (&Shaped, &Shaped),
     x: f32,
-    f: f32,
+    f: Weight,
 ) -> ([f32; 6], [f32; 4]) {
     let (c0, p0) = at(A::WAVE, B::WAVE, sh0, f);
     let (c1, p1) = at(A::WAVE, B::WAVE, sh1, f);
@@ -1025,7 +1093,7 @@ pub struct VarOsc {
     held: f32,
     /// The pair whose constants and edge places (at the last sample) are
     /// held, if they are current.
-    pair: Option<Pair>,
+    held_pair: Option<HeldPair>,
     c: [f32; 6],
     pos: [f32; 4],
     /// Each edged wave's phase since its edges (tri, saw, pulse), where
@@ -1053,9 +1121,6 @@ pub struct VarOsc {
     /// Runs the last `render` started (two at most).
     #[cfg(any(test, feature = "test-support"))]
     runs: u8,
-    /// The solo the last `render` played, `None` its pair.
-    #[cfg(any(test, feature = "test-support"))]
-    played: Option<Solo>,
 }
 
 impl VarOsc {
@@ -1070,7 +1135,7 @@ impl VarOsc {
         #[cfg(any(test, feature = "test-support"))]
         correction: Correction::On,
         held: 0.0,
-        pair: None,
+        held_pair: None,
         c: [0.0; 6],
         pos: [0.0; 4],
         since: [[0.0; 2]; 3],
@@ -1089,8 +1154,6 @@ impl VarOsc {
         skip: None,
         #[cfg(any(test, feature = "test-support"))]
         runs: 0,
-        #[cfg(any(test, feature = "test-support"))]
-        played: None,
     };
 
     pub fn prepare(&mut self, sample_rate: f32) {
@@ -1111,14 +1174,14 @@ impl VarOsc {
         self.held = 0.0;
         self.live = 0;
         self.flipped = false;
-        self.pair = None;
+        self.held_pair = None;
         self.sh_ok = false;
     }
 
     /// The next block's constants start on its settings, not where the
     /// last block left them (a fresh note's ramps start on their values).
     pub fn hold(&mut self) {
-        self.pair = None;
+        self.held_pair = None;
         self.sh_ok = false;
     }
 
@@ -1408,7 +1471,7 @@ impl VarOsc {
         let blk = self.block::<SYNC, MOD, false>(r, N, *jit);
         #[cfg(any(test, feature = "test-support"))]
         {
-            (self.runs, self.played) = (0, None);
+            self.runs = 0;
         }
         // WAVE's ramp is linear: the pairs run from the first sample's to
         // the last's, one segment at a time
@@ -1454,46 +1517,56 @@ impl VarOsc {
         }
     }
 
-    /// `render`'s plain block with WAVE on `solo`'s anchor: one run of the
-    /// live wave `A`, its weight-0 partner `B` quiet (`quiet_kind!`). Every
-    /// sample `render`'s, bit for bit, and the partner's edges left as its
-    /// run leaves them. Inlined into `solo::play`, so with `bank2` the run
-    /// links with it in bank 2 (ADR 0283).
+    /// Whether the block on `r` plays the saw alone (`OnAnchor`): WAVE
+    /// steady on the saw's anchor, and the pulse's held constants its
+    /// weight-0 ones. A block that left them elsewhere (a LOOPFM block
+    /// between, which holds none) plays the pair, which lerps them home.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn render_solo<
-        A: Kind,
-        B: Kind,
-        const N: usize,
-        const REC: bool,
-        const SYNC: bool,
-        const FLIP: bool,
-    >(
+    pub fn on_anchor<'r>(&self, r: &'r Ramps) -> Option<OnAnchor<'r>> {
+        let pair = seg(r, 0);
+        let steady = r.wave.1 == 0.0;
+        let anchored = pair == Pair::SawPulse && pair.weight(Unit::new(r.wave.0)).is_anchor();
+        // a held saw–pulse is the run's start; any other pair's start is
+        // taken at this block's WAVE
+        let held_quiet = match self.held_pair {
+            Some(HeldPair {
+                pair: Pair::SawPulse,
+                weight,
+            }) => weight.is_anchor(),
+            _ => true,
+        };
+        (steady && anchored && held_quiet).then_some(OnAnchor { r })
+    }
+
+    /// `render`'s plain block on the saw's anchor (`at`): one run of the
+    /// saw, the pulse quiet (`quiet_kind!`). Every sample `render`'s, bit
+    /// for bit, and the pulse's edges left as its run leaves them. Inlined
+    /// into `solo::play`, so with `bank2` the run links with it in bank 2
+    /// (ADR 0283).
+    #[inline(always)]
+    fn render_solo<const REC: bool, const FLIP: bool>(
         &mut self,
-        solo: Solo,
-        out: &mut [f32; N],
-        mk: &mut [[f32; 2]; N],
-        r: &Ramps,
+        at: OnAnchor<'_>,
+        out: &mut [f32; BLOCK_SIZE],
+        mk: &mut [[f32; 2]; BLOCK_SIZE],
         jit: &mut f32,
         draw: &mut impl FnMut() -> f32,
-        m: &[f32; N],
     ) {
-        let blk = self.block::<SYNC, false, false>(r, N, *jit);
+        let r = at.r;
+        let blk = self.block::<false, false, false>(r, BLOCK_SIZE, *jit);
         #[cfg(any(test, feature = "test-support"))]
         {
-            (self.runs, self.played) = (1, Some(solo));
+            self.runs = 1;
         }
-        #[cfg(not(any(test, feature = "test-support")))]
-        let _ = solo;
-        self.run_in::<A, B, N, REC, SYNC, FLIP, false, false, false>(
+        self.run_in::<Saw, PulseQuiet, BLOCK_SIZE, REC, false, FLIP, false, false, false>(
             &blk,
-            (0, N),
+            (0, BLOCK_SIZE),
             r,
             out,
             mk,
             jit,
             draw,
-            m,
+            &ZEROS,
             (0.0, 0.0),
         );
     }
@@ -1598,8 +1671,8 @@ impl VarOsc {
         let mut run = Run::ZERO;
         let il = RECIP[(i1 - i0).min(RECIP.len() - 1)];
         let (a, b) = (A::WAVE, B::WAVE);
-        let pair = Pair::of(a as usize as f32);
-        let weight = |j: usize| 3.0 * Unit::new(val(r.wave, j)).get() - pair as usize as f32;
+        let pair = Pair::led_by(a);
+        let weight = |j: usize| pair.weight(Unit::new(val(r.wave, j)));
         // the block's end is its SHAPE end itself; a run ending earlier
         // (a WAVE segment crossing) lerps the two ends
         let ends = (&self.sh[0], &self.sh[1]);
@@ -1610,12 +1683,16 @@ impl VarOsc {
         };
         // held: lerp on; a new note: start on the values (as its ramps do);
         // a new segment: the pair's lines from the sample before
-        let (c0, p0) = match self.pair {
-            Some(q) if q == pair => (self.c, self.pos),
+        let (c0, p0) = match self.held_pair {
+            Some(q) if q.pair == pair => (self.c, self.pos),
             None => (c1, p1),
             Some(_) => at_lerp::<A, B>(ends, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0)),
         };
-        (self.pair, self.c, self.pos) = (Some(pair), c1, p1);
+        let held = HeldPair {
+            pair,
+            weight: weight(i1),
+        };
+        (self.held_pair, self.c, self.pos) = (Some(held), c1, p1);
         (run.rinc, run.inc, run.dinc) = (blk.rinc, val(r.inc, i0), r.inc.1);
         for (k, l) in run.c.iter_mut().enumerate() {
             *l = Lin {
@@ -1629,7 +1706,7 @@ impl VarOsc {
             run.c[0] = Lin { v, d: (e - v) * il };
         }
         if SYNC && !MOD {
-            let f = weight(i1);
+            let f = weight(i1).get();
             let (za, zb) = (blk.zero[a as usize], blk.zero[b as usize]);
             run.y0 = (1.0 - f) * za.0 + f * zb.0;
             run.d0 = (1.0 - f) * za.1 + f * zb.1;
@@ -1772,7 +1849,13 @@ impl VarOsc {
         let (mut inc, dinc) = (run.inc, run.dinc);
         // each edge's phase since it moves with the phase and against its
         // place; a wrap moves both, so it leaves `u` alone
-        let edged = |k: usize| if k < 2 { A::EDGES } else { B::EDGES };
+        let edged = |k: usize| {
+            if k < 2 {
+                A::EDGES.tracked()
+            } else {
+                B::EDGES.tracked()
+            }
+        };
         // B's constant term rides in A's when both have one; -0.0 in its
         // place adds nothing (`x + -0.0` is `x`)
         let merged = A::BIAS && B::BIAS;
@@ -1849,7 +1932,7 @@ impl VarOsc {
                         *u += dp - od[k];
                     }
                 }
-                if A::EDGES {
+                if A::EDGES.tracked() {
                     for e in 0..2 {
                         let k = (rcp[e], ar[e]);
                         self.cross::<A, false, false>(
@@ -1865,7 +1948,7 @@ impl VarOsc {
                         );
                     }
                 }
-                if B::EDGES {
+                if B::EDGES.tracked() {
                     for e in 0..2 {
                         let k = (rcp[e + 2], ar[e + 2]);
                         let ue = &mut u[e + 2];
@@ -1974,7 +2057,7 @@ impl VarOsc {
                             *u += (rr - od[k]) * a;
                         }
                     }
-                    if A::EDGES {
+                    if A::EDGES.tracked() {
                         for e in 0..2 {
                             let v = rr - od[e];
                             let ue = &mut u[e];
@@ -1991,7 +2074,7 @@ impl VarOsc {
                             );
                         }
                     }
-                    if B::EDGES {
+                    if B::EDGES.tracked() {
                         for e in 0..2 {
                             let v = rr - od[e + 2];
                             let ue = &mut u[e + 2];
@@ -2036,7 +2119,7 @@ impl VarOsc {
                 }
             }
             // -0.0: no time offset (`x + -0.0` is `x`)
-            if A::EDGES {
+            if A::EDGES.tracked() {
                 for e in 0..2 {
                     let (k, v) = ((rcp[e], ar[e]), rr - od[e]);
                     self.cross::<A, MOD, PH>(
@@ -2052,7 +2135,7 @@ impl VarOsc {
                     );
                 }
             }
-            if B::EDGES {
+            if B::EDGES.tracked() {
                 for e in 0..2 {
                     let (k, v) = ((rcp[e + 2], ar[e + 2]), rr - od[e + 2]);
                     let ue = &mut u[e + 2];
@@ -2161,19 +2244,25 @@ impl VarOsc {
         if K::FLIPS {
             *h = 1.0 - *h;
         }
-        if K::SILENT {
-            // a step of ±0: nothing to correct
-        } else if K::CORNERS {
-            // `ar` is |r|/6: the slope a sample over 6
-            let s6 = jump * ar;
-            if self.apply(t, 0.0, 6.0 * s6) {
-                blamp6_into(held, acc, t, s6);
+        match K::EDGES {
+            // a step of ±0, or no edge: nothing to correct
+            Edges::Silent | Edges::None => {}
+            Edges::Corners => {
+                // `ar` is |r|/6: the slope a sample over 6
+                let s6 = jump * ar;
+                if self.apply(t, 0.0, 6.0 * s6) {
+                    blamp6_into(held, acc, t, s6);
+                }
             }
-        } else if PH && !MOD && self.pm_jumps > 0 {
-            rep[0] += jump * t;
-            rep[1] += jump;
-        } else if self.apply(t, jump, 0.0) {
-            blep_into(held, acc, t, jump);
+            Edges::Steps if PH && !MOD && self.pm_jumps > 0 => {
+                rep[0] += jump * t;
+                rep[1] += jump;
+            }
+            Edges::Steps => {
+                if self.apply(t, jump, 0.0) {
+                    blep_into(held, acc, t, jump);
+                }
+            }
         }
     }
 
@@ -2210,12 +2299,6 @@ impl VarOsc {
     #[cfg(any(test, feature = "test-support"))]
     pub fn runs(&self) -> u8 {
         self.runs
-    }
-
-    /// The solo the last `render` played, `None` its pair.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn played(&self) -> Option<Solo> {
-        self.played
     }
 
     /// The `(t, step, slope)` corrected in the last `tick`, up to 8.

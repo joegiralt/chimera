@@ -5,6 +5,7 @@
 //! Justfile splits into the `.bk2`. Bank 1 never names them: it reaches the
 //! door only through the address a judged `Door` carries.
 
+use chimera_image::slot::{self, Slot};
 use chimera_image::{BANK2_BASE, Door, HEADER_LEN};
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -42,11 +43,12 @@ pub const ED_DOOR_ADDR: u32 = DOOR_ADDR + 0x380;
 /// VA's solos' table (`dsp::va::osc::solo::SoloDoor`, ADR 0283): the
 /// door's own table is full, and a slot after it would take S0-S3 under
 /// ADR 0251's 8 KB; the head of the S4 groups, after MIXER's reserve.
-pub const VA_SOLO_DOOR_ADDR: u32 = BANK2_BASE + 0x8_0400;
+pub const VA_SOLO_DOOR_ADDR: u32 = Slot::Mixer.base() + slot::RESERVE;
 
-/// A fixed slot after the door and the type `bank2.x` links there: a crate
-/// the engine can't name declares its table's slot once, beside the
-/// assert, and reads it only through `DoorCell::with_slot`.
+/// A table's fixed address in bank 2 (after the door in S0, or at the head
+/// of the S4 groups) and the type `bank2.x` links there: a crate the engine
+/// can't name declares its table's slot once, beside the assert, and reads
+/// it only through `DoorCell::with_slot`.
 ///
 /// ```compile_fail,E0133
 /// use chimera_engine::bank2::{DoorSlot, UI_DOOR_ADDR};
