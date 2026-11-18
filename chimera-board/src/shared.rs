@@ -144,20 +144,18 @@ static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
 /// Proof that ITCM's state (`__sitcm`..`__eitcm`) was zeroed in whole
 /// 64-bit words (ADR 0286): each in-place build into `.itcm` takes one, so
-/// none can run first. Only `zero_itcm` makes one, once.
+/// none can run first. Only `zero_itcm` makes one.
 #[derive(Clone, Copy)]
 pub struct ItcmZeroed(());
 
-static ITCM_ZEROED: AtomicBool = AtomicBool::new(false);
-
 /// Zeroes ITCM's state with aligned 64-bit stores, the ECC word (RM0433
 /// § 2.4, AN5342): no write into it is ever a sub-word one onto a word
-/// whose ECC is still power-on noise. Once, at the top of `boot`; `None`
-/// a second time, which would wipe the builds.
-pub fn zero_itcm() -> Option<ItcmZeroed> {
-    if ITCM_ZEROED.swap(true, Ordering::AcqRel) {
-        return None;
-    }
+/// whose ECC is still power-on noise.
+///
+/// # Safety
+/// Once, in `boot`, before any interrupt is enabled: a second call would wipe what the
+/// builds wrote, and nothing else may touch ITCM while it runs.
+pub(crate) unsafe fn zero_itcm() -> ItcmZeroed {
     unsafe extern "C" {
         static mut __sitcm: u64;
         static mut __eitcm: u64;
@@ -166,15 +164,16 @@ pub fn zero_itcm() -> Option<ItcmZeroed> {
     let mut p = addr_of_mut!(__sitcm);
     while p < end {
         // SAFETY: `itcm.x` aligns both ends to 8 and puts `.itcm` in ITCM,
-        // CPU-only RAM; the flag lets one caller past, before any `take_*`
-        // (they need its `ItcmZeroed`) or anything else touches it.
+        // CPU-only RAM; the caller's contract makes this the one pass, and
+        // no `take_*` can have built anything yet (each needs the
+        // `ItcmZeroed` made below).
         // `KIT_VIEW`'s atomics accept any bytes, zero among them.
         unsafe {
             p.write_volatile(0);
             p = p.add(1);
         }
     }
-    Some(ItcmZeroed(()))
+    ItcmZeroed(())
 }
 
 // The pool's Sounds (ADR 0087): 160 KiB of AXI `.bss`, lent to the UI's

@@ -181,9 +181,11 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
     // ITCM's state word-zeroed before anything builds into it (ADR 0286),
-    // at full clock: nothing before here touches it. The probe has none.
+    // at full clock. The probe has none.
+    // SAFETY: `boot` runs once (it takes the one `Peripherals`), here with
+    // no interrupt enabled yet and nothing in ITCM.
     #[cfg(not(feature = "sd-probe"))]
-    let itcm = shared::zero_itcm().expect("ITCM zeroed once");
+    let itcm = unsafe { shared::zero_itcm() };
     // SAFETY: once, before audio and the rings' owner exist, so the eight
     // words (8 KiB apart, so in different lines) are nothing else's yet.
     #[cfg(not(feature = "sd-probe"))]

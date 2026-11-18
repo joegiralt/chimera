@@ -31,8 +31,10 @@ changes nothing that reads it.
   word, and a power-on word's ECC is noise. The in-place builds (`Kits`,
   `EdState`, `AudioShared`) store bytes. `shared::zero_itcm` writes
   `__sitcm`..`__eitcm` with aligned 64-bit stores (one `strd` each, the
-  ITCM's word) right after `cache::init` in `boot`, at full clock, once.
-  It returns `ItcmZeroed`, a token only it makes, which `take_ui`,
+  ITCM's word) right after `cache::init` in `boot`, at full clock, before
+  any interrupt is enabled. It is `unsafe` and crate-private, its contract
+  "once, in `boot`" (a flag and a panic path cost 32 B more of bank 1). It
+  returns `ItcmZeroed`, a token only it makes, which `take_ui`,
   `take_audio`, `take_ed` and `bench_audio` each take, so no build into
   ITCM can be written before the zeroing. sd-probe has no ITCM state and
   no zeroing.
