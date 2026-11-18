@@ -16,23 +16,24 @@ The solo's runs are two new monomorphs of the run loop (OSC 1's recording, flipp
 
 ## Decision
 1. **The block plays the saw alone only with its proof.** `VarOsc::on_anchor` (bank 1) takes the oscillator and the block's `Ramps` and gives back an `OnAnchor` (its own module, `osc::anchor`, private fields: `osc::solo` and `osc::door` can't build one), or the oscillator for its pair's runs. It holds when WAVE equals the saw's anchor (`Wave::anchor`, a `Unit`) at both ends of the block, so through it, and the oscillator's `HeldPair` (the pair and the WAVE its held constants were taken at) is not saw–pulse at any WAVE but the anchor. Anchor-ness is WAVE against the anchor, never a weight read as 0: a WAVE a ulp off the anchor plays the pair. The proof owns the oscillator until it plays or is released, so it plays only that one and nothing changes its held pair in between. OSC 1 and OSC 2 but as SYNC's slave play it through the solos' table: `run` takes a `PlainMode` (exactly MIX, SYNC, RING, XOR, BITS, AM, MAX) from its seven callers, which gives OSC 2's `Osc2Run`. Anything else, or a closed door, plays the pair's runs as before (`Played::Pair`).
+   `on_anchor` admits a block whose WAVE ramp has a nonzero step too small to move it: both ends round to ⅔ exactly, so every sample between them does (the ramp is linear, its rounding monotone), and the pair's run would read weight 0 at every sample too, bit for bit. Nothing in the proof may depend on the ramp's `step` again; only WAVE's values decide.
 2. **Sound-identical: the tests.** `chimera-engine/tests/va_solo_door_test.rs` pins, at origin/0.4's `262039d9` and `807e740d` prints: MIX and SYNC held on each anchor at C2 and C6; MIX and SYNC with WAVE stepped on and off the anchors mid-note; RING, XOR, BITS, AM, MAX, FM, LOOPFM, SOFT SYNC and PHASE at BLEND 1 held on each anchor and moving; and the scenes of `tests/va_scenes`: LOOPFM, FM, PHASE and SOFT SYNC detours from the solo and from off the anchor (WAVE onto it inside the detour or with MIX back), SYNC through LOOPFM, two Sounds browsed (MODE and WAVE in one block), glide, a steal onto the anchor, a restart, SHAPE swept and at its ends. Door open, closed (where bank 1 plays the MODE) and absent: bit for bit. It also pins what each block's plain renders played (`VaEngine::played`), and that the first block back from LOOPFM plays the pair.
 3. **Only the saw's anchor.** The sine's solo measured no faster (on the first draft of this work, `engine-cost-va-solo`); the triangle's (⅓) and the pulse's (1) would each be two more run instances in flash, and are left to their pairs.
 4. **Its own table, at the head of the S4 groups.** `osc::solo::SoloDoor` (magic 0xB2A5_0283, one entry) at `VA_SOLO_DOOR_ADDR` = `Slot::Mixer.base() + slot::RESERVE` (0x08180400), just after MIXER's 1 KB reserve, checked by the boot's door check (`solo::door_ok`). Its code, `va::osc::solo` (`*2va3osc4solo*`), is the S4 group after ed's; `check-door-placed` pins both to S4–S5 and fails on any `PulseQuiet` code outside bank 2. It is the first door table outside S0: a slot after ed's (`DOOR_ADDR + 0x400`) costs 128 B of S0–S3 and took ORBIT's S0–S3 to 8,160 B free, under ADR 0251's 8 KB.
-5. **Bank 1 gains only the stub** (`on_anchor`, the table call) and shrinks: `oscs`, the two oscillators, is now one out-of-line copy for every MODE instead of one inlined into each. No bank-1 line moves (ADR 0198, 0223 not needed). Bank 2's three lines are re-based on their measured use (+2,688, ORBIT +2,720 over the lines before), naming this ADR.
+5. **Bank 1 gains only the stub** (`on_anchor`, the table call) and shrinks: `oscs`, the two oscillators, is now one out-of-line copy for every MODE instead of one inlined into each. No bank-1 line moves (ADR 0198, 0223 not needed). Bank 2's three lines are re-based on their measured use (+2,656, ORBIT +2,688 over the lines before), naming this ADR.
 
 ## Measurements
 Flash, `CHIMERA_STAMP_CLEAN=1` release builds, origin/0.4 `807e740d` against this change, every budget set:
 
 | Sets | Bank 1 (B) | Bank 2 S0–S3 | Bank 2 S4–S5 |
 |---|---|---|---|
-| default, bank2-gate | −352 | −384 | +3,040 |
-| orbit, orbit,usb-config-writer | −320 | −384 | +3,072 |
-| bench-algo, bench-routing, bench-memory, bench-stress, bench-tape | −368 to −376 | −320 to −384 | +3,040 |
-| bench-algo,master-tape, bench-orbit | −368, −360 | −384, −352 | +3,072 |
-| fault-inject, filter-probes | −56 | −384, −352 | +3,040 |
+| default, bank2-gate | −400 | −416 | +3,040 |
+| orbit, orbit,usb-config-writer | −368 | −416 | +3,072 |
+| bench-algo, bench-routing, bench-memory, bench-stress, bench-tape | −416 to −424 | −352 to −416 | +3,040 |
+| bench-algo,master-tape, bench-orbit | −416, −408 | −416, −384 | +3,072 |
+| fault-inject, filter-probes | −104 | −416, −384 | +3,040 |
 
-ORBIT's S0–S3 goes 8,288 → 8,672 B free: the WAVE each run ends on is now read once (`Ramps::wave_at`, kept in `HeldPair`), which the plain and `MOD` runs share. S4–S5 holds the 8 B table at 0x08180400 and `solo::play` (both runs inlined) after ed's group, plus alignment. No `PulseQuiet` code links outside it. Bank 2's lines are re-based on the measured use: default and bank2-gate 498,304 B, orbit 526,464 B.
+ORBIT's S0–S3 goes 8,288 → 8,704 B free: the WAVE each run ends on is now read once (`Ramps::wave_at`, kept in `HeldPair`), which the plain and `MOD` runs share. S4–S5 holds the 8 B table at 0x08180400 and `solo::play` (both runs inlined) after ed's group, plus alignment. No `PulseQuiet` code links outside it. Bank 2's lines are re-based on the measured use: default and bank2-gate 498,272 B, orbit 526,432 B.
 
 Cost, host only so far (x86, release, `VaEngine::render` of one held C3 voice, oscillators and operator, best of 8 interleaved rounds of 40,000 blocks, STABILITY ½, OSC 2 a fifth up; door closed = the pair runs as before):
 
