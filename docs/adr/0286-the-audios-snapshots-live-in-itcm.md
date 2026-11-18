@@ -97,8 +97,11 @@ changes nothing that reads it.
 
 - **ITCM** on every set: 17,432 → 40,536 B used, 23,976 B free, 15,784 B
   above its margin.
-- **Flash:** bank 1 is byte-identical in size on every set above (clean
-  stamp); no budget line moves. Bank 2 unchanged.
+- **Flash:** the move alone left bank 1 byte-identical on every set above
+  (clean stamp). The zeroing adds 8 to 40 B (default +32, orbit +24,
+  bank2-gate +32, orbit,usb-config-writer +32, the bench sets +8 to +40),
+  inside ADR 0198's 64 B slack: no budget line moves. It must be bank 1's,
+  as it runs before bank 2 is judged. Bank 2 unchanged on every set.
 - **Speed:** the audio reads its Part params from the snapshot each block.
   ITCM is zero wait; AXI is zero wait on a D-cache hit and a line fill on a
   miss, so the move can only remove misses. Not measured on the unit (no
