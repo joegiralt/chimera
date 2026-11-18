@@ -47,7 +47,7 @@ view control f =
                 [ div (class "slider" :: handle control f) [ div [ class "cap", style "bottom" (px (f.pos * 25)) ] [] ], readout f, label f ]
 
             Choice ->
-                if List.length f.options <= 5 && f.options /= [] then
+                if List.length f.options <= 5 && not (List.isEmpty f.options) then
                     [ div [ class "sw" ] (List.map (lit f) f.options), label f ]
 
                 else

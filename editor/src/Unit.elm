@@ -2,6 +2,7 @@ module Unit exposing
     ( Engine(..)
     , Gen
     , Part
+    , allEngines
     , allParts
     , engineFromName
     , engineName
@@ -102,26 +103,17 @@ type Engine
     | Drum
 
 
+{-| Every engine, in the box's order (`EngineType::PLAYABLE`): the names
+the editor knows come from this list alone.
+-}
+allEngines : List Engine
+allEngines =
+    [ Algo, Modal, Va, Tape, Drum ]
+
+
 engineFromName : String -> Maybe Engine
 engineFromName s =
-    case s of
-        "ALGO" ->
-            Just Algo
-
-        "MODAL" ->
-            Just Modal
-
-        "VA" ->
-            Just Va
-
-        "TAPE" ->
-            Just Tape
-
-        "DRUM" ->
-            Just Drum
-
-        _ ->
-            Nothing
+    List.filter (\e -> engineName e == s) allEngines |> List.head
 
 
 engineName : Engine -> String

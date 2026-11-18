@@ -1,7 +1,7 @@
 module ProtocolTest exposing (suite)
 
 import Expect
-import Protocol exposing (..)
+import Protocol exposing (Addr(..), AnswerLine(..), Command(..), Kind(..), Line(..), Scale(..), Value(..), encode, optIndex, parse)
 import Test exposing (Test, describe, test)
 import Unit
 
@@ -9,6 +9,18 @@ import Unit
 p : String -> String -> Line -> Test
 p name raw want =
     test name <| \_ -> Expect.equal want (parse raw)
+
+
+{-| Option `n` as a set's value; a negative `n` is no option at all.
+-}
+idx : Int -> Value
+idx n =
+    case Protocol.optIndex n of
+        Just i ->
+            Index i
+
+        Nothing ->
+            Name "no option"
 
 
 suite : Test
@@ -70,12 +82,17 @@ suite =
             ]
         , describe "commands"
             [ test "hello" <| \_ -> Expect.equal (Just "ed hello") (encode Hello)
-            , test "describe" <| \_ -> Expect.equal (Just "ed describe ALGO 3") (encode (Describe "ALGO" 3))
+            , test "describe" <| \_ -> Expect.equal (Just "ed describe ALGO 3") (encode (Describe Unit.Algo 3))
             , test "get" <| \_ -> Expect.equal (Just "ed get OP_C.CRSE") (encode (Get (Addr "OP_C.CRSE")))
             , test "set num" <| \_ -> Expect.equal (Just "ed set FILTER.CUTOFF 1234.5") (encode (Set (Addr "FILTER.CUTOFF") (Num 1234.5)))
             , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))
-            , test "set index" <| \_ -> Expect.equal (Just "ed set ENV1.HOLD #2") (encode (Set (Addr "ENV1.HOLD") (Index 2)))
-            , test "set negative index" <| \_ -> Expect.equal Nothing (encode (Set (Addr "ENV1.HOLD") (Index -1)))
+            , test "set index" <| \_ -> Expect.equal (Just "ed set ENV1.HOLD #2") (encode (Set (Addr "ENV1.HOLD") (idx 2)))
+            , test "an option number is never negative" <| \_ -> Expect.equal Nothing (optIndex -1)
+            , test "every engine is described by its name" <|
+                \_ ->
+                    Expect.equal (List.map (\e -> Just ("ed describe " ++ Unit.engineName e ++ " 0")) Unit.allEngines)
+                        (List.map (\e -> encode (Describe e 0)) Unit.allEngines)
+            , p "since too large" "ERR ed since too large" SinceTooLarge
             , test "since" <| \_ -> Expect.equal (Just "ed since 7") (encode (Since (Unit.genFromInt 7)))
             , test "since nothing held is 0" <| \_ -> Expect.equal (Just "ed since 0") (encode (Since Nothing))
             , test "part" <| \_ -> Expect.equal (Just (Just "ed part 2")) (Unit.partFromInt 2 |> Maybe.map (Follow >> encode))
@@ -86,9 +103,8 @@ suite =
                     , encode (Get (Addr ""))
                     , encode (Set (Addr "A.B") (Name "X Y"))
                     , encode (Set (Addr "A.B") (Name "X\u{000D}"))
-                    , encode (Describe "AL GO" 0)
                     ]
-                        |> Expect.equal (List.repeat 6 Nothing)
+                        |> Expect.equal (List.repeat 5 Nothing)
             , test "refuses non-decimal floats" <|
                 \_ ->
                     [ 0 / 0, 1 / 0, -1 / 0, 1.0e-7, 1.0e21 ]
@@ -104,5 +120,17 @@ isUnknown l =
         Unknown _ ->
             True
 
-        _ ->
+        Answer _ ->
+            False
+
+        Ok_ _ ->
+            False
+
+        Queued ->
+            False
+
+        Err_ _ ->
+            False
+
+        SinceTooLarge ->
             False

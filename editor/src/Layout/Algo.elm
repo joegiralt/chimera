@@ -7,6 +7,7 @@ module Layout.Algo exposing
     , Screen
     , Section(..)
     , SectionBox
+    , When
     , items
     , place
     , routes
@@ -91,8 +92,8 @@ type alias Screen =
 
 sections : List SectionBox
 sections =
-    [ { section = Algorithm, title = "Algorithm", box = Cell 1 1 2 6 } ]
-        ++ List.map (\n -> { section = Operator n, title = "Operator " ++ String.fromInt n, box = Cell 3 n 20 1 }) (List.range 1 6)
+    { section = Algorithm, title = "Algorithm", box = Cell 1 1 2 6 }
+        :: List.map (\n -> { section = Operator n, title = "Operator " ++ String.fromInt n, box = Cell 3 n 20 1 }) (List.range 1 6)
         ++ [ { section = Filter, title = "Filter", box = Cell 1 7 6 2 }
            , { section = FilterMod, title = "Filter Mod", box = Cell 7 7 3 2 }
            , { section = Jacks, title = "Jacks", box = Cell 10 7 2 2 }

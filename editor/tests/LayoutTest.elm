@@ -4,7 +4,7 @@ import Dict exposing (Dict)
 import Expect
 import Fixture
 import Layout.Algo as Algo exposing (Control(..), Section(..))
-import Protocol exposing (Addr(..), Kind(..), addrKey)
+import Protocol exposing (Addr(..), addrKey)
 import Schema
 import Test exposing (Test, describe, test)
 
@@ -134,7 +134,19 @@ suite =
                                         Protocol.Answer a ->
                                             Schema.add a s
 
-                                        _ ->
+                                        Protocol.Ok_ _ ->
+                                            s
+
+                                        Protocol.Queued ->
+                                            s
+
+                                        Protocol.Err_ _ ->
+                                            s
+
+                                        Protocol.SinceTooLarge ->
+                                            s
+
+                                        Protocol.Unknown _ ->
                                             s
                                 )
                                 Schema.empty

@@ -2,6 +2,8 @@ module Model exposing
     ( Model
     , Msg(..)
     , Reading
+    , Stage
+    , Via
     , init
     , isPending
     , notice
@@ -47,6 +49,7 @@ type Why
     | UpdateUnit
     | Refused String
     | Silent
+    | TooLarge
 
 
 type alias Model =
@@ -138,8 +141,8 @@ init =
     }
 
 
-subscriptions : Model -> Sub Msg
-subscriptions _ =
+subscriptions : Sub Msg
+subscriptions =
     Sub.batch
         [ Transport.lineIn Line
         , Transport.linkState (Transport.parseLink >> LinkChanged)
@@ -156,7 +159,22 @@ update msg model =
         ConnectSocket ->
             ( { model | via = Just ViaSimulator }, Transport.connectSocket "ws://127.0.0.1:7342" )
 
-        _ ->
+        LinkChanged _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        Line _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        Tick _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        Edit _ _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        Pick _ _ ->
+            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+
+        FollowPart _ ->
             step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
 
 
@@ -218,6 +236,9 @@ stageNotice m =
         Halted Silent ->
             Just "THE UNIT STOPPED ANSWERING"
 
+        Halted TooLarge ->
+            Just "THE UNIT'S ANSWER IS TOO LARGE FOR ONE READ"
+
         _ ->
             case ( m.part, m.engine ) of
                 ( Just p, Just e ) ->
@@ -259,11 +280,14 @@ step msg m =
 
         -- By its number: a name with a space (GATE EXT) is one word so.
         Pick a i ->
-            case Schema.optionName m.variants a i m.schema of
-                Just _ ->
-                    edit a (Protocol.Index i) m
+            case ( Schema.optionName m.variants a i m.schema, Protocol.optIndex i ) of
+                ( Just _, Just ix ) ->
+                    edit a (Protocol.Index ix) m
 
-                Nothing ->
+                ( Just _, Nothing ) ->
+                    ( m, [] )
+
+                ( Nothing, _ ) ->
                     ( m, [] )
 
         -- The box moves; the mark follows when `since` says so.
@@ -291,19 +315,20 @@ tick t m0 =
                 , pending = Dict.filter (\_ at -> ms t - ms at < pendingMs) m0.pending
             }
 
-        timedOut =
-            m.asked |> Maybe.map (\at -> ms t - ms at >= answerTimeoutMs) |> Maybe.withDefault False
-
         ask c =
             ( { m | asked = Just t, owed = m.owed + 1, leftover = False }, [ c ] )
-
-        silent =
-            ( { m | stage = Halted Silent, asked = Nothing }, [] )
     in
     if m.link /= Just Open then
         ( m, [] )
 
     else
+        let
+            timedOut =
+                m.asked |> Maybe.map (\at -> ms t - ms at >= answerTimeoutMs) |> Maybe.withDefault False
+
+            silent =
+                ( { m | stage = Halted Silent, asked = Nothing }, [] )
+        in
         case m.stage of
             Halted _ ->
                 ( m, [] )
@@ -330,7 +355,7 @@ tick t m0 =
                 connecting timedOut silent (ask Hello) m
 
             Describing n ->
-                connecting timedOut silent (ask (Describe "ALGO" n)) m
+                connecting timedOut silent (ask (Describe Algo n)) m
 
 
 connecting : Bool -> ( Model, List Command ) -> ( Model, List Command ) -> Model -> ( Model, List Command )
@@ -378,7 +403,13 @@ isHalted m =
         Halted _ ->
             True
 
-        _ ->
+        Greeting ->
+            False
+
+        Describing _ ->
+            False
+
+        Following ->
             False
 
 
@@ -397,8 +428,21 @@ lineIn l m =
                     -- Ignored: a `set`'s ERR looks the same. A refused `since` stays owed; the timeout re-asks, then settles it as lost.
                     m
 
-                _ ->
-                    -- Firmware without `ed` doesn't know the command.
+                Greeting ->
+                    if m.stage == Greeting && String.startsWith "unknown command" why then
+                        { m | stage = Halted UpdateUnit, asked = Nothing }
+
+                    else
+                        { m | stage = Halted (Refused why), asked = Nothing }
+
+                Describing _ ->
+                    if m.stage == Greeting && String.startsWith "unknown command" why then
+                        { m | stage = Halted UpdateUnit, asked = Nothing }
+
+                    else
+                        { m | stage = Halted (Refused why), asked = Nothing }
+
+                Halted _ ->
                     if m.stage == Greeting && String.startsWith "unknown command" why then
                         { m | stage = Halted UpdateUnit, asked = Nothing }
 
@@ -407,6 +451,10 @@ lineIn l m =
 
         Queued ->
             m
+
+        -- Asking again gets the same: stop, and say so.
+        SinceTooLarge ->
+            { m | stage = Halted TooLarge, asked = Nothing }
 
         Unknown _ ->
             m

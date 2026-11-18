@@ -17,7 +17,7 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 -}
 
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine(..), Kind, Scale, addrKey)
+import Protocol exposing (Addr, AnswerLine, Kind, Scale, addrKey)
 
 
 type alias Param =

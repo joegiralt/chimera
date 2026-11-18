@@ -4,10 +4,12 @@ module Protocol exposing
     , Command(..)
     , Kind(..)
     , Line(..)
+    , OptIndex
     , Scale(..)
     , Value(..)
     , addrKey
     , encode
+    , optIndex
     , parse
     )
 
@@ -15,7 +17,7 @@ module Protocol exposing
 Parsing never fails: a line that isn't understood is `Unknown` and is ignored.
 -}
 
-import Unit exposing (Gen, Part)
+import Unit exposing (Engine, Gen, Part)
 
 
 {-| A parameter address, `OP3.CRSE`. The unit's own text, opaque here.
@@ -35,7 +37,23 @@ addrKey (Addr a) =
 type Value
     = Num Float
     | Name String
-    | Index Int
+    | Index OptIndex
+
+
+{-| A choice's option by its number, as `opt` lines give it: never
+negative, so `#n` is always a number the unit reads.
+-}
+type OptIndex
+    = OptIndex Int
+
+
+optIndex : Int -> Maybe OptIndex
+optIndex i =
+    if i >= 0 then
+        Just (OptIndex i)
+
+    else
+        Nothing
 
 
 {-| How a value moves under a hand, as the unit describes it.
@@ -53,7 +71,7 @@ type Kind
 
 type Command
     = Hello
-    | Describe String Int
+    | Describe Engine Int
     | Get Addr
     | Set Addr Value
     | Since (Maybe Gen)
@@ -77,6 +95,9 @@ type Line
     | Ok_ (Maybe Int)
     | Queued
     | Err_ String
+      -- `ERR ed since too large` (ADR 0285): the unit's whole answer is past
+      -- what one answer may carry. Asking again gets the same.
+    | SinceTooLarge
     | Unknown String
 
 
@@ -92,7 +113,7 @@ encode c =
             Just "ed hello"
 
         Describe engine page ->
-            word engine |> Maybe.map (\e -> "ed describe " ++ e ++ " " ++ String.fromInt page)
+            Just ("ed describe " ++ Unit.engineName engine ++ " " ++ String.fromInt page)
 
         Get (Addr a) ->
             word a |> Maybe.map (\x -> "ed get " ++ x)
@@ -103,12 +124,8 @@ encode c =
         Set (Addr a) (Name n) ->
             Maybe.map2 (\x v -> "ed set " ++ x ++ " " ++ v) (word a) (word n)
 
-        Set (Addr a) (Index i) ->
-            if i >= 0 then
-                word a |> Maybe.map (\x -> "ed set " ++ x ++ " #" ++ String.fromInt i)
-
-            else
-                Nothing
+        Set (Addr a) (Index (OptIndex i)) ->
+            word a |> Maybe.map (\x -> "ed set " ++ x ++ " #" ++ String.fromInt i)
 
         Since held ->
             Just ("ed since " ++ String.fromInt (held |> Maybe.map Unit.genToInt |> Maybe.withDefault 0))
@@ -148,7 +165,10 @@ parse raw =
         trimmed =
             String.trimLeft line
     in
-    if trimmed == "ERR" || String.startsWith "ERR " trimmed then
+    if trimmed == "ERR ed since too large" then
+        SinceTooLarge
+
+    else if trimmed == "ERR" || String.startsWith "ERR " trimmed then
         -- By prefix, not tokens: a refusal's text may hold a stray quote.
         Err_ (String.trim (String.dropLeft 3 trimmed))
 

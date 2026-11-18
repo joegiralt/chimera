@@ -1,4 +1,4 @@
-module View.Algo exposing (Msg(..), State, init, subscriptions, update, view)
+module View.Algo exposing (Drag, Msg(..), State, init, subscriptions, update, view)
 
 {-| The ALGO panel: every parameter the unit describes, on one face. The
 face shows only what the unit last reported; a hand turns a control by
@@ -125,7 +125,13 @@ travel c =
         Slider ->
             60
 
-        _ ->
+        Knob ->
+            150
+
+        Choice ->
+            150
+
+        Toggle ->
             150
 
 
@@ -233,14 +239,15 @@ view m s =
     let
         all =
             Layout.items m.schema m.variants
-
-        routes =
-            Layout.routes m.schema m.variants
     in
-    if all == [] then
+    if List.isEmpty all then
         div [ class "waiting" ] [ text "WAITING FOR THE UNIT" ]
 
     else
+        let
+            routes =
+                Layout.routes m.schema m.variants
+        in
         div []
             [ div [ class "face" ] (List.map (section m s all routes) Layout.sections)
             , unplacedStrip m s (Layout.unplaced all)
@@ -358,7 +365,7 @@ cellFor m s i c =
 -}
 unplacedStrip : Model -> State -> List Item -> Html Msg
 unplacedStrip m s xs =
-    if xs == [] then
+    if List.isEmpty xs then
         text ""
 
     else

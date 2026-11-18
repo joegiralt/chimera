@@ -70,6 +70,18 @@ shown m =
     Model.shown cutoff m |> Maybe.map .text
 
 
+{-| Option `n` as a set's value; a negative `n` is no option at all.
+-}
+idx : Int -> Value
+idx n =
+    case Protocol.optIndex n of
+        Just i ->
+            Index i
+
+        Nothing ->
+            Name "no option"
+
+
 suite : Test
 suite =
     describe "Model"
@@ -82,8 +94,8 @@ suite =
                             |> Tuple.second
                 in
                 Expect.all
-                    [ \_ -> Expect.equal [ Set (Addr "FILTER.MODE") (Index 1) ] (pick [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
-                    , \_ -> Expect.equal [ Set (Addr "ENV1.FORM") (Index 0) ] (pick [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
+                    [ \_ -> Expect.equal [ Set (Addr "FILTER.MODE") (idx 1) ] (pick [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
+                    , \_ -> Expect.equal [ Set (Addr "ENV1.FORM") (idx 0) ] (pick [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
                     ]
                     ()
         , test "every_choice_under_every_variant_sends_an_option_that_variant_lists" <|
@@ -96,7 +108,7 @@ suite =
                             |> List.concatMap
                                 (\pn ->
                                     pn.params
-                                        |> List.filter (\p -> p.options /= [])
+                                        |> List.filter (\p -> not (List.isEmpty p.options))
                                         |> List.concatMap
                                             (\p ->
                                                 p.options
@@ -108,7 +120,7 @@ suite =
                                                                         |> Model.step (Pick p.addr i)
                                                                         |> Tuple.second
                                                             in
-                                                            if name /= "" && sent == [ Set p.addr (Index i) ] then
+                                                            if name /= "" && sent == [ Set p.addr (idx i) ] then
                                                                 Nothing
 
                                                             else
@@ -163,7 +175,7 @@ suite =
                     ( m, _ ) =
                         Model.init |> Model.step (LinkChanged Open) |> Tuple.first |> tick 0
 
-                    ( m2, c ) =
+                    ( _, c ) =
                         m
                             |> feed [ "ed hello 3 b part 1 ALGO", "OK" ]
                             |> tick 33
@@ -171,7 +183,7 @@ suite =
                             |> feed [ "page 0 A of 2", "panel A -", "OK" ]
                             |> tick 66
                 in
-                Expect.equal [ Describe "ALGO" 1 ] c
+                Expect.equal [ Describe Algo 1 ] c
         , test "shows_only_the_units_value" <|
             \_ ->
                 let
@@ -325,7 +337,7 @@ suite =
                         m2 |> feed [ "OK 4" ] |> tick 1132
 
                     -- the re-ask's answer
-                    ( m4, c4 ) =
+                    ( _, c4 ) =
                         m3 |> feed [ "OK 5" ] |> tick 1165
                 in
                 Expect.equal [ [ Since Nothing ], [ Since Nothing ], [], [ Since (gen 5) ] ] [ c1, c2, c3, c4 ]
@@ -444,7 +456,7 @@ suite =
                     (following |> feed [ "part 2 VA", "OK 1" ] |> Model.step (Edit cutoff (Num 1)) |> Tuple.second)
         , test "a_choice_is_sent_by_its_number" <|
             \_ ->
-                Expect.equal [ Set (Addr "ENV1.HOLD") (Index 0) ]
+                Expect.equal [ Set (Addr "ENV1.HOLD") (idx 0) ]
                     (following |> Model.step (Pick (Addr "ENV1.HOLD") 0) |> Tuple.second)
         , test "a_choice_name_with_a_space_is_sent_by_its_number_and_pends" <|
             \_ ->
@@ -453,7 +465,7 @@ suite =
                     ( m, c ) =
                         following |> Model.step (Pick (Addr "ENV1.HOLD") 2)
                 in
-                Expect.equal ( [ Set (Addr "ENV1.HOLD") (Index 2) ], True ) ( c, Model.isPending (Addr "ENV1.HOLD") m )
+                Expect.equal ( [ Set (Addr "ENV1.HOLD") (idx 2) ], True ) ( c, Model.isPending (Addr "ENV1.HOLD") m )
         , test "an_option_the_schema_lacks_sends_nothing" <|
             \_ ->
                 Expect.equal [] (following |> Model.step (Pick (Addr "ENV1.HOLD") 1) |> Tuple.second)
@@ -464,6 +476,18 @@ suite =
             \_ ->
                 Expect.equal (List.map Just [ Algo, Modal, Va, Tape, Drum ])
                     (List.map Unit.engineFromName [ "ALGO", "MODAL", "VA", "TAPE", "DRUM" ])
+        , test "a_since_too_large_says_so_and_stops_asking" <|
+            \_ ->
+                let
+                    m =
+                        following |> feed [ "ERR ed since too large" ]
+                in
+                Expect.all
+                    [ \x -> Expect.equal (Just "THE UNIT'S ANSWER IS TOO LARGE FOR ONE READ") (Model.notice x)
+                    , \x -> Expect.equal [] (tick 33 x |> Tuple.second)
+                    , \x -> Expect.equal [] (tick 5000 x |> Tuple.second)
+                    ]
+                    m
         , test "tapes_source_text_is_kept_while_following" <|
             \_ ->
                 Expect.equal (Just "KICK 909") (following |> feed [ "source \"KICK 909\"", "OK 1" ] |> .source)
