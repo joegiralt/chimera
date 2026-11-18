@@ -17,7 +17,7 @@ static DOOR: Mutex<()> = Mutex::new(());
 fn input(b: usize) -> [f32; BLOCK_SIZE] {
     core::array::from_fn(|i| {
         let n = (b * BLOCK_SIZE + i) as f32;
-        0.6 * (n * 0.0291).sin() * if (b / 40) % 2 == 0 { 1.0 } else { 0.0 }
+        0.6 * (n * 0.0291).sin() * if (b / 40).is_multiple_of(2) { 1.0 } else { 0.0 }
     })
 }
 
