@@ -18,6 +18,7 @@ use super::{B, Blk, Ctl, FS, Model};
 use crate::drums::parts::{Lcg, expo};
 use chimera_core::dsp::fast_sin_turns;
 use chimera_core::dsp::va::osc::{MAX_INC, MIN_INC, NO_WRAP, Ramps, VarOsc};
+use chimera_core::dsp::va::stability::WrapJitter;
 
 pub const VOICES: usize = 8;
 /// Each oscillator's place in the spread, evenly −1..1.
@@ -131,12 +132,13 @@ impl Model for Swarm {
                 wave: (wave_from, wave_step),
                 shape: (0.0, 0.0),
             };
+            let mut jit = WrapJitter::NONE;
             self.osc[v].render::<B, false, false, false, false>(
                 &mut buf,
                 &mut mk,
                 &r,
-                &mut 1.0,
-                &mut || 1.0,
+                &mut jit,
+                &mut || WrapJitter::NONE,
                 &[0.0; B],
                 (0.0, 0.0),
             );

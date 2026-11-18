@@ -5,6 +5,7 @@
 mod common;
 
 use chimera_core::dsp::va::osc::{Correction, Morph, NO_WRAP, Ramps, Unit, VarOsc, ZEROS, wave_at};
+use chimera_core::dsp::va::stability::WrapJitter;
 use chimera_hal::BLOCK_SIZE;
 use common::spectrum::{alias_db, alias_db_lattice, peak_hz};
 
@@ -47,12 +48,13 @@ fn osc(c: Correction) -> VarOsc {
 fn plain(o: &mut VarOsc, r: &Ramps) -> [f32; B] {
     let (mut out, mut mk) = ([0.0f32; B], [[NO_WRAP; 2]; B]);
     o.begin(r, B);
+    let mut jit = WrapJitter::NONE;
     o.render::<B, false, false, false, false>(
         &mut out,
         &mut mk,
         r,
-        &mut 1.0,
-        &mut || 1.0,
+        &mut jit,
+        &mut || WrapJitter::NONE,
         &ZEROS,
         (0.0, 0.0),
     );
@@ -63,7 +65,16 @@ fn plain(o: &mut VarOsc, r: &Ramps) -> [f32; B] {
 fn modulated(o: &mut VarOsc, r: &Ramps, m: &[f32; B], k: (f32, f32)) -> [f32; B] {
     let (mut out, mut mk) = ([0.0f32; B], [[NO_WRAP; 2]; B]);
     o.begin(r, B);
-    o.render::<B, false, false, false, true>(&mut out, &mut mk, r, &mut 1.0, &mut || 1.0, m, k);
+    let mut jit = WrapJitter::NONE;
+    o.render::<B, false, false, false, true>(
+        &mut out,
+        &mut mk,
+        r,
+        &mut jit,
+        &mut || WrapJitter::NONE,
+        m,
+        k,
+    );
     out
 }
 
