@@ -15,7 +15,7 @@ use chimera_core::tracked::Tracked;
 fn non_default_performance() -> Performance {
     let mut perf = Performance::new();
     **perf.edit(PartId::ALL[4]).sound = Sound::init(EngineType::Algo);
-    perf.edit(PartId::ALL[4]).mix.mode = PartMode::Mono;
+    perf.edit(PartId::ALL[4]).mix.set_mode(PartMode::Mono);
     perf.edit(PartId::ALL[4]).mix.pan = -0.5;
     perf.fx.reverb.mix = 0.4;
 

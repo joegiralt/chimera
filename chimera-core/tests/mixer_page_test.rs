@@ -133,7 +133,7 @@ fn mix_b2_edits_part_2() {
     turn(&mut ui, EncoderId::D, -8); // level
     let m = &ui.project().part(PartId::ALL[1]).mix;
     assert_eq!(
-        (m.channel.get(), m.mode, m.output),
+        (m.channel.get(), m.mode(), m.output),
         (4, PartMode::Mono, DacPair::P3)
     );
     assert_eq!(m.level, 0.8 - 8.0 / 128.0);

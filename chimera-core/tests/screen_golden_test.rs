@@ -257,8 +257,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("modal_amp", 0xa87011df4f83c078),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it they have their own rows, run by `just test`.
+    // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0xfd1a118204f19d77),
+    ("mixer_part", 0xc79ed4eee8011243),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_part_voices", 0xefa1c087d6aad31a),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
@@ -306,8 +309,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0xd8749d38a37857ed),
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
+    // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x9f6c12c0b45db43d),
+    ("mixer_part", 0x9bdaaf4db814739d),
+    #[cfg(feature = "master-tape")]
+    ("mixer_part_voices", 0x6bacb821270f6d4c),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x4f5f9daa56c5aea5),
     // DLY's branch hides REV's label it ran into (TAPE Task 15). With master-tape

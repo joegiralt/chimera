@@ -268,6 +268,9 @@ pub struct UiDoor {
     /// DRUM's voice groups (`ui::kit_groups`, ADR 0280): a CHOKE turn or
     /// edit, a held one's reason, the count.
     groups: fn(crate::ui::kit_groups::Ask<'_>) -> crate::ui::kit_groups::Said,
+    /// A Part's MAX VOICES and RESERVE (`ui::part_voices`, ADR 0281): a
+    /// turn or edit, a held one's reason, the reserves booked.
+    voices: fn(crate::ui::part_voices::Ask<'_>),
 }
 
 // The table fits its 128 B before the next door's (`bank2.x`): 32 words
@@ -315,6 +318,7 @@ impl UiDoor {
         tuning: crate::ui::tuning::work_in,
         tuning_note: crate::ui::tuning::note_in,
         groups: crate::ui::kit_groups::ask_in,
+        voices: crate::ui::part_voices::ask_in,
     };
 
     #[inline(always)]
@@ -514,6 +518,18 @@ impl UiDoor {
     pub(crate) fn groups(&self, a: crate::ui::kit_groups::Ask<'_>) -> crate::ui::kit_groups::Said {
         (self.groups)(a)
     }
+
+    #[inline(always)]
+    pub(crate) fn voices(&self, a: crate::ui::part_voices::Ask<'_>) {
+        (self.voices)(a)
+    }
+}
+
+/// MAX VOICES and RESERVE through the UI door's `voices` (ADR 0281): one
+/// out-of-line call for every bank-1 stub. Closed, `None`.
+#[inline(never)]
+pub(crate) fn voices(a: crate::ui::part_voices::Ask<'_>) -> Option<()> {
+    ui_door(|u| u.voices(a))
 }
 
 /// DRUM's voice groups through the UI door's `groups` (ADR 0280): one

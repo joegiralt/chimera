@@ -13,6 +13,7 @@ use chimera_core::hw::{MAX_VOICES, SampleBudget};
 use chimera_core::instrument::AudioShared;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot, Steal};
+use chimera_core::project::PartId;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, fundamental_hz};
@@ -263,7 +264,7 @@ fn another_parts_steal_cuts() {
     assert!(ratios.iter().all(|&r| r == 1.0), "{ratios:?}");
     let s = rig.inst.allocator().slots();
     assert!(
-        s.iter().any(|s| s.part() == Some(1)),
+        s.iter().any(|s| s.part() == Some(PartId::ALL[1])),
         "Part 2 took the voice"
     );
 }

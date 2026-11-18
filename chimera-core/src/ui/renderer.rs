@@ -899,9 +899,9 @@ impl Renderer {
         let tuning = view
             .addr()
             .and_then(|a| view::tuning_note(a, f.tuned, f.active_part, part));
-        let tonal = view
-            .addr()
-            .and_then(|a| view::tonal_note(a, &f.ctx).or_else(|| view::groups_note(a, f.pads.kit)));
+        let tonal = view.addr().and_then(|a| {
+            view::tonal_note(a, &f.ctx).or_else(|| view::kit_or_voices_note(a, f.pads.kit, f.parts))
+        });
         let note = view
             .addr()
             .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)))

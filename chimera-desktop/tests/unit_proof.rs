@@ -302,7 +302,7 @@ fn project() {
     let five = PartId::ALL[4];
     place(&mut p, template, five, heavy);
     let e = p.edit_part(five);
-    e.mix.mode = PartMode::Poly;
+    e.mix.set_mode(PartMode::Poly);
     e.mix.channel = MidiChannel::new(4).expect("CH 5");
     for (k, part) in PartId::ALL[..4].iter().enumerate() {
         p.edit_part(*part).mix.channel = MidiChannel::new(k as u8).expect("CH 1-4");

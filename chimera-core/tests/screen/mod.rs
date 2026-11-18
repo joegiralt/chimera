@@ -2009,6 +2009,14 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Minus)); // SENDS → PART
         feed(ui, Input::turn(EncoderId::D, -8));
     }),
+    // PRT › VOICES: a cap of 4, a reserve of 2 (ADR 0281).
+    ("mixer_part_voices", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::press(ButtonId::Minus)); // SENDS → PART
+        feed(ui, Input::press(ButtonId::Edit)); // PART → VOICES
+        feed(ui, Input::turn(EncoderId::B, 4));
+        feed(ui, Input::turn(EncoderId::C, 2));
+    }),
     ("mixer_sends", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::C, 40));
