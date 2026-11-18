@@ -1,6 +1,6 @@
 # 0281. Give each Part a MAX VOICES cap and a RESERVE floor in the shared pool
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** owner (approved #966 on 2026-11-15, from dspmax's request in chimera-releases#5), firmware
 
 ## Context
