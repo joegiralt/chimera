@@ -1,6 +1,6 @@
 # 0285. Editor protocol 3: every engine, every pad addressed, scales, choices by number
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** owner (2026-11-18, #1014: the whole kit, SOURCE read-only, the screens on ALGO's grid), firmware
 
 ## Context
