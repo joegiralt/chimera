@@ -57,7 +57,9 @@ impl Depth {
     /// No drift, no jitter: STABILITY 1.
     pub const NONE: Depth = Depth(0.0);
 
-    /// A depth given as such (tests, and the knob's curve).
+    /// A raw depth, unchecked, for host tests that drive the drift at a
+    /// depth directly; the instrument's come only from `depth`'s curve.
+    #[cfg(any(test, feature = "test-support"))]
     pub const fn new(d: f32) -> Depth {
         Depth(d)
     }
@@ -65,6 +67,12 @@ impl Depth {
     #[inline(always)]
     pub const fn get(self) -> f32 {
         self.0
+    }
+
+    /// No drift and no jitter (`NONE`, ±0): every term returns its rest.
+    #[inline(always)]
+    pub fn is_none(self) -> bool {
+        self.0 == 0.0
     }
 }
 
@@ -75,7 +83,7 @@ pub fn depth(stability: f32) -> Depth {
 }
 
 /// A raw 32-bit word's full scale, 2³¹: a word over it is −1..1.
-const WORD: f32 = 2_147_483_648.0;
+pub(super) const WORD: f32 = 2_147_483_648.0;
 
 /// splitmix32's finaliser on a golden step: every input bit reaches
 /// every output bit, so neighbouring (Part, slot)s draw apart.
@@ -206,7 +214,6 @@ impl Stability {
     /// Once a block: each oscillator's drift + trim in cents. The walks
     /// advance at any `d`; `d == 0` returns exactly 0.
     pub fn step(&mut self, d: Depth) -> [f32; 2] {
-        let d = d.get();
         let mut w = [0.0f32; 3];
         for (k, w) in w.iter_mut().enumerate() {
             let x = xorshift(&mut self.rng[k]);
@@ -214,9 +221,10 @@ impl Stability {
             self.y2[k] += self.a * (self.y1[k] - self.y2[k]);
             *w = clampf(self.g * self.y2[k], -1.0, 1.0);
         }
-        if d == 0.0 {
+        if d.is_none() {
             return [0.0; 2];
         }
+        let d = d.get();
         let shared = DRIFT_SHARED_CENTS * w[0];
         let t = self.character.trim;
         [
@@ -233,20 +241,20 @@ impl Stability {
     /// HF tracking: `f/(1 + f·τ)`, τ = d·τ_max·u, the divisor floored at
     /// ½. `d == 0` returns `hz` untouched.
     pub fn tracked(&self, hz: [f32; 2], d: Depth) -> [f32; 2] {
-        let d = d.get();
-        if d == 0.0 {
+        if d.is_none() {
             return hz;
         }
+        let d = d.get();
         let u = self.character.tau_u;
         [0, 1].map(|k| hz[k] / (1.0 + hz[k] * d * TAU_MAX_S * u[k]).max(0.5))
     }
 
     /// Scale error: the extra cents for pitches `cents` (C4 = 6000).
     pub fn scale_cents(&self, cents: [f32; 2], d: Depth) -> [f32; 2] {
-        let d = d.get();
-        if d == 0.0 {
+        if d.is_none() {
             return [0.0; 2];
         }
+        let d = d.get();
         let s = self.character.scale;
         [0, 1].map(|k| (cents[k] - C4_CENTS) * SCALE_ERR * s[k] * d)
     }

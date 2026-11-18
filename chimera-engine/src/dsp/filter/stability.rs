@@ -199,15 +199,15 @@ impl FilterStability {
     /// holds where it is.
     #[inline(never)]
     pub fn step(&mut self, d: Depth) -> Spread {
-        let d = d.get();
         let last = self.last;
-        if d == 0.0 {
+        if d.is_none() {
             self.last = (1.0, 1.0);
             return Spread {
                 cut: (last.0, 1.0),
                 res: (last.1, 1.0),
             };
         }
+        let d = d.get();
         let x = xorshift(&mut self.rng);
         self.y1 += WALK_A * (x - self.y1);
         self.y2 += WALK_A * (self.y1 - self.y2);

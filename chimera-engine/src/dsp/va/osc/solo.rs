@@ -139,24 +139,31 @@ std::thread_local! {
 }
 
 /// Host tests only: while it lives, every plain block this thread renders
-/// plays its pair, the door's other entries as ever. Its drop restores the
-/// solos; no other thread sees it.
+/// plays its pair, the door's other entries as ever. Its drop restores what
+/// was before it, so guards nest; no other thread sees it.
 #[cfg(feature = "test-support")]
 #[must_use]
-pub struct ForcePairs(());
+pub struct ForcePairs {
+    /// The flag before it, put back on drop: guards nest.
+    prev: bool,
+    /// Its thread's: never sent to another (`!Send`).
+    _thread: core::marker::PhantomData<*const ()>,
+}
 
 #[cfg(feature = "test-support")]
 impl ForcePairs {
     pub fn engage() -> ForcePairs {
-        FORCE_PAIRS.with(|f| f.set(true));
-        ForcePairs(())
+        ForcePairs {
+            prev: FORCE_PAIRS.with(|f| f.replace(true)),
+            _thread: core::marker::PhantomData,
+        }
     }
 }
 
 #[cfg(feature = "test-support")]
 impl Drop for ForcePairs {
     fn drop(&mut self) {
-        FORCE_PAIRS.with(|f| f.set(false));
+        FORCE_PAIRS.with(|f| f.set(self.prev));
     }
 }
 
