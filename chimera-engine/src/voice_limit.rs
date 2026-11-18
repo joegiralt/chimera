@@ -296,21 +296,21 @@ impl VoiceLimit {
     }
 }
 
-/// The six Parts' reserves summed, past the pool or not: 0..=48
-/// (`MAX_PARTS` × `POOL`) by construction, as it sums exactly one
-/// `Reserve` (0..=`POOL`) a Part.
+/// The six Parts' reserves summed, past the pool or not: 0..=`MOST_RESERVED`
+/// by construction, as it sums exactly one `Reserve` (0..=`POOL`) a Part.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Reserved(u8);
 
-/// Six Parts' worth of `POOL` fits the sum's `u8`.
-const _: () = assert!(MAX_PARTS * MAX_VOICES <= u8::MAX as usize);
+/// The most the Parts can reserve: every Part the whole pool.
+const MOST_RESERVED: usize = MAX_PARTS * MAX_VOICES;
+// It fits the sum's `u8`.
+const _: () = assert!(MOST_RESERVED <= u8::MAX as usize);
 
 impl Reserved {
     pub const NONE: Reserved = Reserved(0);
 
-    /// Each Part's reserve `r` summed: at most `MAX_PARTS` × `POOL`
-    /// (asserted above), so
-    /// no overflow.
+    /// Each Part's reserve `r` summed: at most `MOST_RESERVED` (asserted
+    /// to fit), so no overflow.
     pub const fn of(r: &[Reserve; MAX_PARTS]) -> Reserved {
         let (mut sum, mut i) = (0u8, 0);
         while i < MAX_PARTS {
@@ -320,7 +320,7 @@ impl Reserved {
         Reserved(sum)
     }
 
-    /// The sum in voices, 0..=48: for its words.
+    /// The sum in voices, 0..=`MOST_RESERVED`: for its words.
     pub const fn get(self) -> u8 {
         self.0
     }

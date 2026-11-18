@@ -200,9 +200,9 @@ impl Strike {
 /// What a booked slot plays: its Part, its note and how it holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Booking {
-    pub part: PartId,
-    pub note: MidiNote,
-    pub strike: Strike,
+    part: PartId,
+    note: MidiNote,
+    strike: Strike,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -230,11 +230,6 @@ impl VoiceSlot {
 
     pub fn note(&self) -> Option<MidiNote> {
         self.booking.map(|b| b.note)
-    }
-
-    /// What it plays; `None` while free.
-    pub fn booking(&self) -> Option<Booking> {
-        self.booking
     }
 
     /// `Allocator`'s clock at the note-on: lower is older. The sympathetic

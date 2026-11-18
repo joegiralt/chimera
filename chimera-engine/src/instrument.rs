@@ -1393,7 +1393,7 @@ impl Instrument {
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first { Knobs::COST } else { Cost::ZERO };
                     let mut cost =
-                        self.costs[p].whole() + knobs + self.high_note(p, shared, note, first);
+                        self.costs[p].whole() + knobs + self.high_note(q, shared, note, first);
                     let at = admission::BillAt {
                         key: ev.note,
                         note,
@@ -1658,10 +1658,11 @@ impl Instrument {
             Expr::Pressure(v) => self.expr[ch][1] = v.get(),
             Expr::Timbre(v) => self.expr[ch][2] = v.get(),
             Expr::Poly(key, v) => {
-                for i in 0..MAX_VOICES {
+                for vi in VoiceIdx::ALL {
+                    let i = vi.index();
                     // A held key's voice: a releasing one of a re-struck
                     // key keeps its last value.
-                    if self.alloc.slots()[i].held()
+                    if self.alloc.slot(vi).held()
                         && self.note_channel[i] == ev.channel
                         && self.note_origin[i] == NoteOrigin::Live
                         && self.keys[i] == key
@@ -2013,7 +2014,7 @@ impl Instrument {
         params: &ParamSnapshot,
         src: &GateView<'_>,
     ) -> bool {
-        let s = self.alloc.slots()[v.index()];
+        let s = *self.alloc.slot(v);
         let (Some(id), Some(key)) = (s.part(), s.note()) else {
             return false;
         };
@@ -2250,14 +2251,14 @@ impl Instrument {
     /// glide steal's start too: any of the Part's sounding voices may be
     /// taken, so its highest note and largest slide.
     #[inline(never)]
-    fn high_note(&self, p: usize, shared: &AudioShared, note: MidiNote, first: bool) -> Cost {
-        let part = &shared.parts[p];
+    fn high_note(&self, q: PartId, shared: &AudioShared, note: MidiNote, first: bool) -> Cost {
+        let part = &shared.parts[q.index()];
         let (mut top, mut slide) = (note.get(), 1.0f32);
         if part.params.pitch.steal_glide().is_some() {
             for vi in VoiceIdx::ALL {
                 let v = vi.index();
                 let s = *self.alloc.slot(vi);
-                if s.part() == Some(PartId::ALL[p]) {
+                if s.part() == Some(q) {
                     top = top.max(s.note().map_or(0, MidiNote::get));
                     slide = slide.max(self.voices[v].algo_slide());
                 }
@@ -2695,7 +2696,8 @@ impl Instrument {
     pub fn formant_views_into(&self, out: &mut FormantViews) {
         let mut age = [None; MAX_PARTS];
         *out = [FormantView::NONE; MAX_PARTS];
-        for (v, s) in self.alloc.slots().iter().enumerate() {
+        for vi in VoiceIdx::ALL {
+            let (v, s) = (vi.index(), self.alloc.slot(vi));
             if s.is_free() || !self.voices[v].is_active() {
                 continue;
             }
@@ -2739,7 +2741,8 @@ impl Instrument {
             return;
         };
         let mut newest = None;
-        for (v, s) in self.alloc.slots().iter().enumerate() {
+        for vi in VoiceIdx::ALL {
+            let (v, s) = (vi.index(), self.alloc.slot(vi));
             if !s.is_free()
                 && self.sounding[v].map(PartId::index) == Some(part)
                 && self.voices[v].is_active()
@@ -2755,7 +2758,8 @@ impl Instrument {
     /// TAPE, none where no voice does. One store a Part a block.
     fn publish_heads(&self) {
         let mut newest = [(0, Heads::NONE); MAX_PARTS];
-        for (v, s) in self.alloc.slots().iter().enumerate() {
+        for vi in VoiceIdx::ALL {
+            let (v, s) = (vi.index(), self.alloc.slot(vi));
             let h = self.voices[v].heads();
             let Some(p) = self.sounding[v] else {
                 continue;
