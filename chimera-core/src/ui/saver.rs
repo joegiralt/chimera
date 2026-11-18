@@ -127,7 +127,7 @@ pub fn out_line(b: &mut FmtBuf, o: NoteOut) {
 pub fn in_line(b: &mut FmtBuf, i: NoteIn, held: usize) {
     let _ = b.write_str("IN  ");
     note_name(b, i.note as i32);
-    let _ = write!(b, "  v{}  P{}", i.vel, i.part + 1);
+    let _ = write!(b, "  v{}  P{}", i.vel, i.part.number());
     if held > 1 {
         let _ = write!(b, "  +{}", held - 1);
     }

@@ -3,7 +3,9 @@
 //! process, so the hit seeds start alike: `AB_PATTERN` 1–6, `AB_MODE`
 //! `today` (patterns 4–6 with the open HAT's, CYMBAL's and toms' chokes
 //! OFF: 11 groups, a kit from before the bound) or `groups` (INIT's
-//! chokes: 8), `AB_OUT` the directory:
+//! chokes: 8) or `reserve` (`groups` with the DRUM Part on RESERVE
+//! `AB_RESERVE`, ADR 0281, the mode's name then `reserveN`), `AB_OUT`
+//! the directory:
 //! `cargo test --release -p chimera-core --test drum_groups_ab -- --ignored`.
 
 mod common;
@@ -233,9 +235,15 @@ fn render_ab() {
             .set_retrig(Retrig::Stack);
     }
     assert!(
-        mode == "today" || mode == "groups",
-        "AB_MODE today or groups"
+        mode == "today" || mode == "groups" || mode == "reserve",
+        "AB_MODE today, groups or reserve"
     );
+    let reserve: u8 = std::env::var("AB_RESERVE").map_or(4, |r| r.parse().unwrap());
+    let mode = if mode == "reserve" {
+        format!("reserve{reserve}")
+    } else {
+        mode
+    };
     if pat >= 4 && mode == "today" {
         // Let the open HAT, the CYMBAL and the toms ring: no chokes.
         for p in [5, 6, 8, 9] {
@@ -252,6 +260,16 @@ fn render_ab() {
     for (i, part) in r.shared.parts.iter_mut().enumerate() {
         part.mix.channel = MidiChannel::new(if i < 3 { i as u8 } else { 15 }).unwrap();
     }
+    if mode.starts_with("reserve") {
+        r.shared.parts[0]
+            .mix
+            .set_voices(chimera_core::voice_limit::Asked {
+                max: chimera_core::voice_limit::MaxVoices::Auto,
+                reserve: chimera_core::voice_limit::Reserve::new(
+                    chimera_core::voice_limit::VoiceCount::new(reserve).unwrap(),
+                ),
+            });
+    }
     *r.shared.parts[0].params = Sound::init(EngineType::Drum).params;
     *r.shared.parts[1].params = Sound::init(EngineType::Va).params;
     *r.shared.parts[2].params = Sound::init(EngineType::Algo).params;
@@ -267,7 +285,7 @@ fn render_ab() {
     let blocks = ev.last().unwrap().0 + at(2.0);
     let (mut struck, mut refused, mut peak, mut live_peak) = (0, 0, 0u8, 0u32);
     // The FX bus and control reserve; the reverb's extra is left out.
-    let reserve = FxBus::COST.0 + CONTROL_RESERVE.0;
+    let fixed = FxBus::COST.0 + CONTROL_RESERVE.0;
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
     let mut lr = Vec::with_capacity(blocks * BLOCK_SIZE * 2);
     let mut i = 0;
@@ -296,7 +314,7 @@ fn render_ab() {
                 .filter(|s| !s.dying())
                 .map(|s| s.cost().0)
                 .sum();
-            live_peak = live_peak.max((live + reserve) * 100 / budget);
+            live_peak = live_peak.max((live + fixed) * 100 / budget);
         };
         look(&r);
         r.render(1);

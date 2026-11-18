@@ -1,6 +1,6 @@
 # 0286. Keep the audio's Performance snapshots in ITCM, with an 8 KiB ITCM margin and a CPU-only list
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-18)
 - **Deciders:** owner (2026-11-18: free AXI by moving CPU-only state to ITCM), firmware
 
 ## Context

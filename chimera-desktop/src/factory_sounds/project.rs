@@ -484,7 +484,7 @@ pub fn build(d: &Demo, sounds: &[Source]) -> Result<Box<Project>, String> {
             .map_err(|n| fail(format!("the load asks {:?}", n.prompt())))?;
         p.replace_part(c).map_err(|e| fail(format!("{e:?}")))?;
         let e = p.edit_part(dp.part);
-        e.mix.mode = dp.mode;
+        e.mix.set_mode(dp.mode);
         e.mix.channel = dp.channel;
     }
     Ok(p)

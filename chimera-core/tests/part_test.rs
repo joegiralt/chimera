@@ -22,7 +22,7 @@ fn performance_defaults_per_part() {
     for (n, part) in perf.parts().iter().enumerate() {
         let m = &part.mix;
         assert_eq!(m.channel.get() as usize, n);
-        assert_eq!((m.mode, m.output), (PartMode::Poly, DacPair::P1));
+        assert_eq!((m.mode(), m.output), (PartMode::Poly, DacPair::P1));
         assert_eq!((m.level, m.pan), (0.8, 0.0));
     }
     assert_eq!(perf.parts().len(), MAX_PARTS);
@@ -32,7 +32,7 @@ fn performance_defaults_per_part() {
 fn enum_params_round_trip_through_the_block() {
     let mut m = PartParams::for_part(0);
     m.set(PartParams::MODE, 0.0);
-    assert_eq!(m.mode, PartMode::Mono);
+    assert_eq!(m.mode(), PartMode::Mono);
     m.set(PartParams::OUTPUT, 2.0);
     assert_eq!(m.output, DacPair::P3);
     assert_eq!(m.output.index(), 2);

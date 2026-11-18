@@ -88,7 +88,7 @@ fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
     let chokes = KitChokes::of(kit);
     let from = match ui.held {
         Some((h, Held::Choke(c))) if h == at && c.kit == chokes => c.to,
-        Some((_, Held::Choke(_) | Held::Sound(_))) | None => kit.pad(p).choke(),
+        Some((_, Held::Choke(_) | Held::Sound(_) | Held::Voices(_))) | None => kit.pad(p).choke(),
     };
     let to = if shift {
         ChokeGroup::end(delta)

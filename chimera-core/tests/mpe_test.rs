@@ -58,7 +58,7 @@ fn held(rig: &InstRig) -> Vec<(usize, u8)> {
     let slots = rig.inst.allocator().slots();
     (0..slots.len())
         .filter(|&v| slots[v].held())
-        .map(|v| (v, slots[v].part().unwrap()))
+        .map(|v| (v, slots[v].part().unwrap().index() as u8))
         .collect()
 }
 
