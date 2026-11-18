@@ -1,6 +1,6 @@
 # 0280. Keep a DRUM kit to eight voice groups; a STACK pad steals only its own voices
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** owner (2026-11-15, #993), firmware
 
 ## Context
