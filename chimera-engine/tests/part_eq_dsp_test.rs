@@ -271,3 +271,44 @@ fn a_side_is_filtered_as_its_mid() {
         }
     }
 }
+
+/// Host timing (release, `--ignored --nocapture`): six Parts EQ'd, steady
+/// and with TILT turned every block, ns a block. The unit's figure is the
+/// bench's ROUTING rows EQ and EQ MOVE.
+#[test]
+#[ignore]
+fn time_six_parts() {
+    use std::hint::black_box;
+    use std::time::Instant;
+    for moving in [false, true] {
+        let mut eqs = PartEqs::REST;
+        let mut buses: Buses = [[0.25; BLOCK_SIZE]; MAX_PARTS];
+        let mut sides: Sides = [None; MAX_PARTS];
+        let n = 200_000;
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let t = Instant::now();
+            for b in 0..n {
+                let s = if moving { (b % 128) as i8 - 64 } else { 63 };
+                let settings = [PartEq::new(Tilt::at(s), LoCut::On); MAX_PARTS];
+                run(
+                    &mut eqs,
+                    EqBlock {
+                        buses: black_box(&mut buses),
+                        sides: &mut sides,
+                        written: &[true; MAX_PARTS],
+                        settings: &settings,
+                        sample_rate: FS,
+                    },
+                );
+            }
+            best = best.min(t.elapsed().as_nanos() as f64 / n as f64);
+        }
+        let block_ns = BLOCK_SIZE as f64 * 1e9 / f64::from(FS);
+        println!(
+            "six Parts, {}: {best:.0} ns a block, {:.3} % of the block's {block_ns:.0} ns",
+            if moving { "TILT moving" } else { "steady" },
+            100.0 * best / block_ns
+        );
+    }
+}

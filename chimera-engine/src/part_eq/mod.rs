@@ -4,6 +4,7 @@
 //! settings are the project's mix (`PartParams::eq`), never the Sound's.
 //! One EQ a Part: SMART EQ (#396) adds its cuts here.
 
+pub mod door;
 pub mod dsp;
 
 /// TILT: a step in `MIN_STEP..=MAX_STEP`, each 1/128 of the 20 dB travel.
@@ -246,5 +247,52 @@ impl PartEqs {
     /// Whether Part `p`'s EQ runs: for the tests.
     pub fn running(&self, p: usize) -> bool {
         self.parts[p].live == Live::Running
+    }
+}
+
+/// Where the audio keeps `PartEqs`: on the unit `PART_EQS`, an ITCM
+/// resident (ADR 0266, 0286; D2, where the `Instrument` lives, is full),
+/// and this is a token for it, 0 B; on a host the Instrument's own, so
+/// each test's Instrument has its EQ.
+pub struct EqHome {
+    #[cfg(not(target_os = "none"))]
+    eqs: PartEqs,
+}
+
+// ITCM, NOLOAD: `shared::zero_itcm` leaves it `REST` at boot, before any
+// Instrument is built; `EqHome::new` sets it `REST` again for each.
+#[cfg(target_os = "none")]
+#[unsafe(link_section = ".itcm")]
+static mut PART_EQS: PartEqs = PartEqs::REST;
+
+impl EqHome {
+    /// Every Part bypassed. Only `Instrument::init_in_place` makes one.
+    pub(crate) fn new() -> EqHome {
+        #[cfg(target_os = "none")]
+        {
+            // SAFETY: on the unit the one Instrument is built in place in
+            // `INSTRUMENT`'s slot (the engine's, or before it the bench's),
+            // after ITCM's boot zeroing; each build replaces the last, whose
+            // `EqHome` (and any borrow through it) is gone with it, and no
+            // render runs while it is built. So nothing else holds
+            // `PART_EQS`.
+            unsafe { core::ptr::addr_of_mut!(PART_EQS).write(PartEqs::REST) };
+            EqHome {}
+        }
+        #[cfg(not(target_os = "none"))]
+        EqHome {
+            eqs: PartEqs::REST,
+        }
+    }
+
+    pub fn get(&mut self) -> &mut PartEqs {
+        #[cfg(target_os = "none")]
+        {
+            // SAFETY: one `EqHome` lives at a time, its Instrument's (`new`),
+            // and this borrow is tied to `&mut self`, so it is the only one.
+            unsafe { &mut *core::ptr::addr_of_mut!(PART_EQS) }
+        }
+        #[cfg(not(target_os = "none"))]
+        &mut self.eqs
     }
 }

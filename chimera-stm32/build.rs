@@ -359,10 +359,12 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // anchor, the next S4 group. Its table heads the S4 groups
     // (`VA_SOLO_DOOR_ADDR`): the door's own is full, and a slot in S0
     // would take S0-S3 under ADR 0251's 8 KB.
+    // The Parts' EQ (ADR 0284): `part_eq::dsp`, its block, the next S4
+    // group; its table 16 B after the solos' (`PART_EQ_DOOR_ADDR`).
     let (ed, ed_slot, ed_assert) = (
-        "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n",
+        "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x10;\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n",
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
-        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08180400, \"VA's solos' table heads the S4 groups\");",
+        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08180400, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x08180410, \"the Parts' EQ's table 16 B after the solos'\");",
     );
     // DRUM's voice groups (ADR 0280, `UiDoor::groups`, its one entry):
     // `ui::kit_groups` and the count it reads, `drum::groups`;

@@ -846,6 +846,8 @@ pub struct Instrument {
     tuned: crate::tuning::VoiceTunes,
     /// Each voice's stream: what admission counts.
     streaming: [Streaming; MAX_VOICES],
+    /// Each Part's EQ state (ADR 0284): ITCM's on the unit, 0 B here.
+    eq: crate::part_eq::EqHome,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -861,7 +863,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -944,6 +946,7 @@ impl Instrument {
             addr_of_mut!((*p).tune).write(0.0);
             addr_of_mut!((*p).tuned).write(crate::tuning::VoiceTunes::NEW);
             addr_of_mut!((*p).streaming).write([Streaming::IDLE; MAX_VOICES]);
+            addr_of_mut!((*p).eq).write(crate::part_eq::EqHome::new());
             slot.assume_init_mut()
         }
     }
@@ -2653,6 +2656,8 @@ impl Instrument {
         self.publish_pads();
         self.clear_left = SYM_CLEAR_BUDGET;
 
+        // 1b. Each Part's EQ, before its level, pan and sends (ADR 0284).
+        self.part_eq(shared, &written, &mut sides);
         // 2-4.
         let scope_block = mix_sided(
             (&self.buses, &sides),
@@ -2683,6 +2688,34 @@ impl Instrument {
         }
         // The block is over: the next may carry other patches.
         self.costed = 0;
+    }
+
+    /// Each written Part's bus (and side) through its EQ, in bank 2 behind
+    /// the EQ's door (ADR 0284): bank 1's stub. With every Part flat, off
+    /// and settled, no call: the buses as the voices left them, bit for
+    /// bit. A closed door plays them flat.
+    #[inline(never)]
+    fn part_eq(&mut self, shared: &AudioShared, written: &[bool; MAX_PARTS], sides: &mut Sides) {
+        let settings: [crate::part_eq::PartEq; MAX_PARTS] =
+            core::array::from_fn(|p| shared.parts[p].mix.eq);
+        let eqs = self.eq.get();
+        if !eqs.any_live() && settings.iter().all(|e| e.is_flat()) {
+            return;
+        }
+        let b = crate::part_eq::dsp::EqBlock {
+            buses: &mut self.buses,
+            sides,
+            written,
+            settings: &settings,
+            sample_rate: self.sample_rate,
+        };
+        crate::part_eq::door::through(|d| d.eq().run(eqs, b));
+    }
+
+    /// Each Part's EQ state: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn part_eqs(&mut self) -> &crate::part_eq::PartEqs {
+        self.eq.get()
     }
 
     /// Each Part's newest sounding Algo voice's formant view (plan Ruling
