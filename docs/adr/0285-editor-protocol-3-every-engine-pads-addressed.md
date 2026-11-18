@@ -26,6 +26,8 @@ The spec is `docs/superpowers/specs/2026-11-18-editor-every-engine-design.md` an
 - **Choices by number.** `ed set <addr> #<n>` sets option `n` (`EdValue::Index(OptIndex)`), checked against the cell's names: `ERR ed set <addr> has no such option`, or `takes a number` on a continuous param. `#` starts no name or number. The editor sends every choice this way, so `GATE EXT` is set (#996). Names stay accepted for a human. This supersedes ADR 0276's "choices are set by their option names, never by number".
 - **`set` takes what `describe` lists** for the followed Part's engine (the `Described` mask, built per engine), and nothing else. A queued set keeps the engine it was taken for, and a Part that changed engine drops it.
 - **A pad's set lands on its pad.** In the UI pass, `edits::turn` selects the named pad on the Part, runs `edit_to` (the knob's whole path, ADR 0280's CHOKE check included) and puts the selection back. This happens in one straight-line function in bank 2, so the box never sees the selection move. A CHOKE that would make a 9th group writes nothing.
+- **What the box's turn refuses, `ed set` writes nothing of (ADR 0151).** The turn path's refusals that the write path doesn't make are applied in `edits::refused` before the edit: TAPE's MODEL and DIRECTION onto a machine or way a streamed source can't play, through the same `Pick::Tape(..).why()` as `turn_model` and a CC's `cc_cost`. The rest already refuse in the write: WAVE and ALG A/B in `try_set_kind` and `try_set_algs` (the formant budget), CHOKE in `edit_in` (ADR 0280). The answer is still `OK queued` (ADR 0276), and the editor sees the unchanged value. Tests set every MODEL and DIRECTION on a streamed source, a formant on every operator and every ALG A and B, each against what the box's own `why` says.
+  - A refused `ed set PAD<n>.CHOKE` shows the box's toast (`9 GROUPS · KIT HOLDS 8`) as a CC's does, even when the box shows another Part.
 - **Reads follow the named pad.** `value::block` reads pad `n`'s blocks from the kit, never the selected pad's. A pad's cell reads under its own context (`on_kit(kit, n).on_route(r).on_drum()`). The Sound's cells on DRUM read under pad 1's.
 - **`since` is per engine.**
   - The slots are laid out per engine: the Sound's blocks in `BlockRef::ALL` order (`in_schema`, an exhaustive match), then on DRUM `KIT` and each pad in `PadBlock::ALL` order. `SLOTS` is 711, DRUM's, which is the most.
@@ -33,26 +35,40 @@ The spec is `docs/superpowers/specs/2026-11-18-editor-every-engine-design.md` an
   - The text context on DRUM is the live one with pad 1 and route 1 set, never the box's selected pad, so choosing a pad on the box answers nothing.
   - A panel change (a pad's machine relabels its knobs) answers the values whole, as a context change does.
   - TAPE's SOURCE is read-only. `describe` lists `source "<label>"`, and every whole `since` answer carries `source "<text>"`, the box's text. `ctx.src` is in the text context, so a new source answers whole. The picker is #1015's.
-- **Bank placement (ADR 0198, 0272).** Everything new is in `console::ed`, in the S4 group. Every `ed` function has its own `.bank2_ed.<module>.<fn>` section, and the S4 glob takes `.bank2_ed.*`. LLVM outlines nothing from a function with an explicit section (build.rs's `card_work` note). Before this, the outliner had put `OUTLINED_FUNCTION`s that call `describe::pad_prefix` and `axis_of` into bank 1, which the split refused. `SlotCtx::on_kit` and `on_drum` are `#[inline(always)]`, so bank 1 keeps no out-of-line copy for bank 2 to call.
+- **A `since` answer past one answer's bound is refused, never cut.** `ANSWER_BYTES_MAX` (`console`) is half what the console's floor rate moves in `ANSWER_MS`: 64 B × 1,000 packets/s × 1 s / 2 = 32,000 B. `since` first measures its answer, writing to a `ByteCount` and keeping nothing (`Pass::Measure`), then writes and keeps it (`Pass::Commit`). Past the bound it answers `ERR ed since too large` and keeps nothing. The editor shows THE UNIT'S ANSWER IS TOO LARGE FOR ONE READ and stops asking: asking again gets the same. `ByteCount` is bank 1's, in `fmt_buf`: a `Write` impl's vtable is bank 1's and may not point into bank 2.
+- **One page walk.** `pages::Pages` walks the chain once, in `describe`'s order (the Part's pages, then each pad's), or one round alone. `find` walks only the address's own pad's pages (a Sound address: the Part's, then pad 1's). A full answer is O(addresses × that pad's pages), not O(addresses × every page × the chain). The page count is `const`: a compile-time assert holds every engine's within a `u8`.
+- **One table for panel names.** `describe::PanelName` writes every panel's name, for `describe`'s `panel` lines and `since`'s alike.
+- **Refusals are typed.** `ed set`'s are a `SetRefusal` (`NoSuchOption`, `TakesANumber`, `TakesAName`), each its own words.
+- **Bank placement (ADR 0198, 0272).** Everything new is in `console::ed`, in the S4 group. Every `ed` function has its own `.bank2_ed.<module>.<fn>` section, and the S4 glob takes `.bank2_ed.*`. LLVM outlines nothing from a function with an explicit section (build.rs's `card_work` note). Before this, the outliner had put `OUTLINED_FUNCTION`s that call `describe::pad_prefix` and `axis_of` into bank 1, which the split refused. `SlotCtx::on_kit` and `on_drum`, `Project::select_pad`, `Kits::select` and `PadRoutes::route` are `#[inline(always)]`, so bank 1 keeps no out-of-line copy for bank 2 to call.
+
+## After merge: measure on the unit
+The bound is the console's documented floor, not a reading (#1002). Once flashed:
+1. `chimera-usb.py status` reads `protocol 3`.
+2. Load INIT DRUM on Part 1, then make the kit messy: run `ED_SERIAL=/dev/ttyACM0 node editor/e2e/sim.mjs`, whose DRUM pass sets every param it shows to its max and min, so it ends untidy. Then put every pad on TONE COWBELL, and every pad's filter on LADDER.
+3. Time `ed since 0` from the host, the request's write to its `OK <m>`, ten times. Note the bytes and the slowest time. On the host the same answer is 24,192 B, and 2.8 ms for both passes on x86 in release.
+4. Watch the box's `stats` (AUDIO LOAD) during step 3: no overrun, and the UI loop's time stays under its budget.
+5. Record the numbers on #1002 and set `ANSWER_BYTES_MAX` from the measured rate if it is lower than the floor's.
 
 ## Alternatives considered
 - **Follow the box's selected pad (`ed pad <n>`, `PAD.LEVEL`).** Cheaper, about 50 slots. But an edit lands on whatever pad the box selects before the UI pass. The owner chose the whole kit.
 - **Describe a pad's pages once, with a pad placeholder in the addresses.** About 165 fewer pages at connect, but a new line grammar and an editor that expands templates. The schema is static, so the editor reads it once a session.
 - **Keep slice 1's per-binding copies and add MODAL's, TAPE's and DRUM's.** Each copy can drift from the box. `view::view` is what the box draws, and a test now walks every page of every engine through the box's own context and compares `ed get`'s text with the cell's.
 - **Quote names with spaces in `set` (#996's other option).** A quoted word in the console's word splitter. The option number is already in every `opt` line.
+- **Refuse a too-large answer by an upper bound on its lines.** Each `val` line's longest is about 80 B, so DRUM's 672 addresses would be refused at about 53 KB when the real answer is 24 KB. Measuring the answer costs a second pass of the same work.
 - **A pad-aware edit path in bank 1 (`edit_pad_to`).** Bank 1 is frozen. Selecting and restoring in bank 2 takes the knob's whole path unchanged.
 
 ## Consequences
 - **ITCM:** `EdState`'s `since` copy grows from 256 to 711 slots. `.itcm` went from 17,432 B to 19,512 B (+2,080 B) of 63 KB.
 - **Bank 1:**
-  - ORBIT: 890,192 → 890,312 B (+120, built clean as `just check` builds; the line +88, from 890,224).
-  - Default: 875,888 → 876,064 B (+176), within its line.
-  - The growth is `Project::select_pad` and `PadRoutes::route` out of line now that bank 2 calls them, the `GATE_DECAY` ident, and codegen shuffle.
+  - ORBIT: 890,192 → 890,344 B (+152, built clean as `just check` builds; its line +88 then +32, from 890,224).
+  - Default: 875,888 → 876,040 B (+152), within its line.
+  - What grew: `ByteCount` (+74 code, and its vtable), the `GATE_DECAY` ident, and codegen shuffle (`edit_to` +22). `Project::select_pad`, `Kits::select`, `PadRoutes::route`, `SlotCtx::on_kit` and `on_drum` are inlined, so none of them is out of line for bank 2's sake.
 - **Bank 2:**
-  - ORBIT: 526,560 → 531,968 B (+5,408). Its S0–S3 stays at 8,320 B free; all of the growth is in S4.
-  - Default and the gate build: 498,368 → 503,776 B (+5,408; the lines +5,376, from 498,400).
+  - ORBIT: 526,560 → 531,840 B (+5,280). Its S0–S3 stays at 8,320 B free; all of the growth is in S4.
+  - Default and the gate build: 498,368 → 503,648 B (+5,280).
 - **Answer sizes:**
   - Full `since` answers, in `console_ed_engines_test`: ALGO 6.1 KB, MODAL 3.4 KB, TAPE 3.6 KB, VA 3.2 KB, DRUM 21.4 KB. All are under the 32,000 B answer clock.
+  - A messy kit (`a_messy_kit_fits_one_answer`: every pad on each machine in turn, the longest filter name, untidy values) is at most 24,192 B. Both passes take at most 2.8 ms on x86 in release; it was 18–25 ms before the one page walk.
   - DRUM's schema is 165 pages and 210 KB, read once a session; the largest page is under the clock.
 - **The editor (slice 1 screens unchanged):** it speaks protocol 3, reads the scale, sends choices by number, types the five engines (an unknown one says UPDATE THE EDITOR) and keeps TAPE's source text. The other engines' screens wait for the owner's mockup approval.
 - **#1002:** the "dimmed values", the measured answer bound, text-context narrowing and the gate-build answers stay open. The back-to-back answers after a stall are already counted and harmless (`owed`).

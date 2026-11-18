@@ -38,6 +38,7 @@ use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::view::SlotCtx;
 use chimera_engine::block::DiskCode;
+use chimera_engine::fmt_buf::ByteCount;
 use chimera_engine::params::EngineType;
 
 /// The number of an answer: never 0 (that is the editor's "I have
@@ -303,17 +304,6 @@ enum Pass {
     Commit,
 }
 
-/// A writer that counts and keeps nothing.
-struct Count(usize);
-
-impl Write for Count {
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.write_str"))]
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.0 += s.len();
-        Ok(())
-    }
-}
-
 /// What the Part looked like when last reported.
 #[derive(Clone, Copy)]
 struct Seen {
@@ -397,7 +387,7 @@ impl EdSince {
         w: &mut dyn Write,
         max: usize,
     ) -> fmt::Result {
-        let mut size = Count(0);
+        let mut size = ByteCount(0);
         self.pass(held, ui, Pass::Measure, &mut size)?;
         if size.0 > max {
             return w.write_str("ERR ed since too large\n");
