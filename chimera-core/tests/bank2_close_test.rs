@@ -58,7 +58,7 @@ fn closing_bank_two_releases_tape_and_leaves_algo_playing() {
             .active()
             .iter()
             .zip(parts)
-            .filter(|&(&a, p)| a && p == 0)
+            .filter(|&(&a, p)| a && p == Some(chimera_core::project::PartId::ALL[0]))
             .count()
     };
     assert_eq!(tape_voices(&rig), 1, "TAPE sounds first");

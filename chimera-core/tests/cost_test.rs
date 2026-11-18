@@ -25,6 +25,7 @@ use chimera_core::hw::{
 use chimera_core::instrument::{AudioShared, NoteOrigin};
 use chimera_core::modulation::{FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::project::PartId;
 use chimera_core::taps::TapOp;
 
 const UNROUTED: [bool; OPS] = [false; OPS];
@@ -1417,7 +1418,7 @@ fn rendered(inst: &chimera_core::instrument::Instrument, shared: &AudioShared) -
     (0..MAX_VOICES)
         .filter(|&v| active[v])
         .map(|v| {
-            let p = &shared.parts[parts[v] as usize];
+            let p = &shared.parts[parts[v].map_or(0, |p| p.index())];
             Voice::cost(&p.params, &p.mod_state).0
         })
         .sum::<u32>()
@@ -1462,7 +1463,8 @@ fn a_stolen_voice_is_billed_until_its_fade_ends() {
     let active = r.inst.active();
     for p in [0u8, 1] {
         assert!(
-            (0..MAX_VOICES).any(|v| active[v] && sounding[v] == p),
+            (0..MAX_VOICES)
+                .any(|v| active[v] && sounding[v].map(|q| q.index()) == Some(usize::from(p))),
             "Part {} sounds",
             p + 1
         );
@@ -1519,7 +1521,10 @@ fn stress(keys_first: bool, blocks: usize) -> (usize, u32, bool) {
         let held = (0..MAX_VOICES)
             .filter(|&v| {
                 let s = a.slots()[v];
-                s.part() == Some(5) && s.held() && !s.dying() && origins[v] == NoteOrigin::Live
+                s.part() == Some(PartId::ALL[5])
+                    && s.held()
+                    && !s.dying()
+                    && origins[v] == NoteOrigin::Live
             })
             .count();
         kept &= held == 6;

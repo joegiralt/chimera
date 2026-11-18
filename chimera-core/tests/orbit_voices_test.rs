@@ -112,7 +112,7 @@ fn two_rings_on_one_note_release_their_own() {
 
     // Mono: ring 1's retrigger takes the voice; ring 0's Off does nothing.
     let mut r = rig();
-    r.shared.parts[CH2 as usize].mix.mode = PartMode::Mono;
+    r.shared.parts[CH2 as usize].mix.set_mode(PartMode::Mono);
     play(&mut r, ring(0), 60, true);
     play(&mut r, ring(1), 60, true);
     assert_eq!(held(&r, 60), 1);

@@ -1,6 +1,6 @@
 # 0283. Play VA's saw alone on its anchor, behind a bank-2 table of its own
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-18)
 - **Deciders:** owner (0.3 efficiency: cycle wins sound-identical, bank 1 frozen), firmware
 
 ## Context

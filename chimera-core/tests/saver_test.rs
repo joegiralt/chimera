@@ -103,7 +103,7 @@ fn out_and_in_lines() {
     let i = NoteIn {
         note: 60,
         vel: 96,
-        part: 0,
+        part: chimera_core::project::PartId::ALL[0],
     };
     assert_eq!(s(|b| saver::in_line(b, i, 1)), "IN  C4  v96  P1");
     assert_eq!(s(|b| saver::in_line(b, i, 3)), "IN  C4  v96  P1  +2");
@@ -302,7 +302,7 @@ fn readout(keys: &[u8], heard: Option<f32>) -> Readout {
         r.input = Some(NoteIn {
             note: k,
             vel: 96,
-            part: 0,
+            part: chimera_core::project::PartId::ALL[0],
         });
         r.out = Some(NoteOut { note: k, cents: 12 });
         r.heard = heard;

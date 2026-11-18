@@ -16,6 +16,7 @@ use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::part::PartMode;
+use chimera_core::project::PartId;
 use chimera_core::scope::ScopeWriter;
 use chimera_core::sym_alloc::{SYM_SLOTS, SymSlot};
 use chimera_core::voice_alloc::VoiceIdx;
@@ -74,7 +75,7 @@ impl Stage {
         let mut shared = AudioShared::default();
         for (part, (p, mode)) in shared.parts.iter_mut().zip(parts) {
             *part.params = p.clone();
-            part.mix.mode = *mode;
+            part.mix.set_mode(*mode);
         }
         Self {
             inst: Box::new(Instrument::new(SR, budget)),
@@ -129,7 +130,7 @@ impl Stage {
         let slots = self.inst.allocator().slots();
         slots
             .iter()
-            .filter(|s| s.part() == Some(part as u8) && !s.dying())
+            .filter(|s| s.part() == Some(PartId::ALL[part]) && !s.dying())
             .count()
     }
 
@@ -143,7 +144,7 @@ impl Stage {
         (0..MAX_VOICES)
             .find(|&v| {
                 let s = &slots[v];
-                s.held() && s.part() == Some(part as u8) && s.note() == MidiNote::new(n)
+                s.held() && s.part() == Some(PartId::ALL[part]) && s.note() == MidiNote::new(n)
             })
             .unwrap_or_else(|| panic!("no voice plays {n} for part {part}"))
     }
@@ -319,7 +320,9 @@ fn other_models_keep_eight_voices() {
         }
         let slots = s.inst.allocator().slots();
         assert!(
-            slots.iter().all(|v| v.held() && v.part() == Some(0)),
+            slots
+                .iter()
+                .all(|v| v.held() && v.part() == Some(PartId::ALL[0])),
             "{mode:?}: eight notes booked"
         );
         assert_eq!(s.inst.active(), [true; MAX_VOICES], "{mode:?}: eight sound");
@@ -745,7 +748,7 @@ fn a_note_waiting_across_a_switch_to_sympathetic_is_placed() {
     }
     let held_silent = (0..MAX_VOICES).any(|u| {
         let slot = s.inst.allocator().slots()[u];
-        slot.held() && slot.part() == Some(1) && !s.inst.active()[u]
+        slot.held() && slot.part() == Some(PartId::ALL[1]) && !s.inst.active()[u]
     });
     assert!(
         sounded || s.inst.allocator().refused() > 0,
@@ -918,4 +921,43 @@ fn restarts_whose_fades_end_together_start_oldest_first() {
     }
     let rang = rang.map(|b| b.expect("each restart rings"));
     assert!(rang.windows(2).all(|w| w[1] == w[0] + 1), "{rang:?}");
+}
+
+/// A booked voice that never sounded (a Sympathetic note deferred on the
+/// clear budget, on a voice idle since boot) and is then shed (CC 120)
+/// frees its slot and its promise once its fade ends, as any shed voice
+/// does: nothing leaks, and the pool takes four Sympathetic notes again.
+#[test]
+fn a_shed_voice_that_never_sounded_frees_its_slot_and_promise() {
+    use chimera_core::note_queue::{ChannelMode, ChannelModeEvent};
+    let mut s = after(0);
+    for (part, &n) in CHORD.iter().enumerate() {
+        s.on(part, n);
+    }
+    s.block();
+    for part in 0..4u8 {
+        s.inst.channel_mode(ChannelModeEvent {
+            channel: MidiChannel::new(part).unwrap(),
+            mode: ChannelMode::SoundOff,
+        });
+    }
+    for _ in 0..FADE_BLOCKS + 400 {
+        s.block();
+    }
+    let slots = s.inst.allocator().slots();
+    assert!(slots.iter().all(|v| v.is_free()), "every slot freed");
+    for v in VoiceIdx::ALL {
+        assert!(!s.inst.sym().promised(v), "voice {v:?} still promised");
+    }
+    for n in [40, 44, 47, 52] {
+        s.on(0, n);
+        for _ in 0..FADE_BLOCKS + 2 {
+            s.block();
+        }
+    }
+    assert_eq!(
+        s.inst.sym().lent(),
+        SYM_SLOTS,
+        "four Sympathetic notes ring"
+    );
 }

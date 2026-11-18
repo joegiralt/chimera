@@ -79,7 +79,7 @@ pub(super) fn play_at(snd: &Sound, mode: PartMode, plan: &Plan, budget: SampleBu
     let mut perf = Performance::new();
     let e = perf.edit(PartId::ALL[0]);
     **e.sound = snd.clone();
-    e.mix.mode = plan.mode.unwrap_or(mode);
+    e.mix.set_mode(plan.mode.unwrap_or(mode));
     let channel = perf.part(PartId::ALL[0]).mix.channel;
     play_on(&perf, channel, plan, budget)
 }

@@ -70,5 +70,6 @@ pub mod tracked;
 pub mod triple;
 pub mod tuning;
 pub mod voice_alloc;
+pub mod voice_limit;
 #[cfg(feature = "bench-warm")]
 pub mod warm;
