@@ -1277,8 +1277,9 @@ impl Instrument {
     /// start while held; a shed voice the oldest of all), and the end of a
     /// fade it was billed for.
     #[cfg(feature = "tape")]
-    fn age_stream(&mut self, v: usize) {
-        let s = self.alloc.slots()[v];
+    fn age_stream(&mut self, vi: VoiceIdx) {
+        let v = vi.index();
+        let s = *self.alloc.slot(vi);
         let st = &mut self.streaming[v];
         let level = self.voices[v].level();
         st.age = if s.dying() {
@@ -1293,7 +1294,7 @@ impl Instrument {
 
     #[cfg(not(feature = "tape"))]
     #[inline(always)]
-    fn age_stream(&mut self, _: usize) {}
+    fn age_stream(&mut self, _: VoiceIdx) {}
 
     /// The voices' bills as admission counts them: for the tests.
     #[cfg(any(test, feature = "test-support"))]
@@ -1360,14 +1361,15 @@ impl Instrument {
                 crate::probe::acc(3, 1);
                 // The DRUM Parts' hits, out of line: no port's.
                 self.drum_on(ev, heard, shared, from, src);
-                for (p, part) in shared.parts.iter().enumerate() {
+                for (q, part) in PartId::ALL.into_iter().zip(&shared.parts) {
+                    let p = q.index();
                     if part.mix.channel != heard
                         || part.params.engine() == EngineType::Drum
                         || self.refuses(p, shared, src)
                     {
                         continue;
                     }
-                    let (q, mode) = (PartId::ALL[p], part.mix.mode());
+                    let mode = part.mix.mode();
                     // ORBIT's notes are snapped in their ring.
                     let note = match from {
                         NoteOrigin::Live => part.live_note(ev.note, self.harmony),
@@ -1391,7 +1393,7 @@ impl Instrument {
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first { Knobs::COST } else { Cost::ZERO };
                     let mut cost =
-                        self.costs[p].whole() + knobs + self.high_note(p, shared, note, first);
+                        self.costs[p].whole() + knobs + self.high_note(q, shared, note, first);
                     let at = admission::BillAt {
                         key: ev.note,
                         note,
@@ -1428,7 +1430,7 @@ impl Instrument {
                     }
                     // A key whose note this Part's voice already holds, from
                     // this origin and channel, joins its held keys.
-                    let was = self.alloc.slots()[v];
+                    let was = *self.alloc.slot(vi);
                     let joins = was.held()
                         && !was.dying()
                         && was.part() == Some(q)
@@ -1557,7 +1559,7 @@ impl Instrument {
                 crate::probe::acc(5, 1);
                 for vi in VoiceIdx::ALL {
                     let v = vi.index();
-                    let s = self.alloc.slots()[v];
+                    let s = *self.alloc.slot(vi);
                     if !(s.held()
                         && self.held_keys[v].contains(ev.note)
                         && self.note_channel[v] == ev.channel
@@ -1656,10 +1658,11 @@ impl Instrument {
             Expr::Pressure(v) => self.expr[ch][1] = v.get(),
             Expr::Timbre(v) => self.expr[ch][2] = v.get(),
             Expr::Poly(key, v) => {
-                for i in 0..MAX_VOICES {
+                for vi in VoiceIdx::ALL {
+                    let i = vi.index();
                     // A held key's voice: a releasing one of a re-struck
                     // key keeps its last value.
-                    if self.alloc.slots()[i].held()
+                    if self.alloc.slot(vi).held()
                         && self.note_channel[i] == ev.channel
                         && self.note_origin[i] == NoteOrigin::Live
                         && self.keys[i] == key
@@ -1684,7 +1687,7 @@ impl Instrument {
             let v = vi.index();
             if self.sustained[v] && self.master[v] == ev.channel {
                 self.sustained[v] = false;
-                if self.alloc.slots()[v].held() && self.held_keys[v].is_empty() {
+                if self.alloc.slot(vi).held() && self.held_keys[v].is_empty() {
                     self.let_go(vi);
                 }
             }
@@ -1716,7 +1719,7 @@ impl Instrument {
                 crate::played::clear_channel(ch.get());
                 for vi in VoiceIdx::ALL {
                     let v = vi.index();
-                    if self.alloc.slots()[v].held()
+                    if self.alloc.slot(vi).held()
                         && self.in_zone(v, ch)
                         && self.note_origin[v] == NoteOrigin::Live
                         && !self.held_keys[v].is_empty()
@@ -1734,7 +1737,7 @@ impl Instrument {
                 crate::played::clear_channel(ch.get());
                 for vi in VoiceIdx::ALL {
                     let v = vi.index();
-                    if !self.alloc.slots()[v].is_free() && self.in_zone(v, ch) {
+                    if !self.alloc.slot(vi).is_free() && self.in_zone(v, ch) {
                         self.sound_off(vi);
                     }
                 }
@@ -1761,8 +1764,9 @@ impl Instrument {
     /// Whether voice `v` still plays a TAPE Part's Sound, or is booked to
     /// one (a TAPE note waiting on a fading voice).
     #[cfg(feature = "bank2-gate")]
-    fn is_tape(&self, v: usize, shared: &AudioShared) -> bool {
-        let slot = self.alloc.slots()[v];
+    fn is_tape(&self, vi: VoiceIdx, shared: &AudioShared) -> bool {
+        let v = vi.index();
+        let slot = *self.alloc.slot(vi);
         !slot.is_free()
             && (self.sounding[v].is_some_and(|q| Self::part_is_tape(shared, q))
                 || slot.part().is_some_and(|q| Self::part_is_tape(shared, q)))
@@ -1778,10 +1782,10 @@ impl Instrument {
     pub fn sound_off_tape(&mut self, shared: &AudioShared) {
         for vi in VoiceIdx::ALL {
             let v = vi.index();
-            if !self.is_tape(v, shared) {
+            if !self.is_tape(vi, shared) {
                 continue;
             }
-            let owner = self.alloc.slots()[v].part();
+            let owner = self.alloc.slot(vi).part();
             if owner.is_some_and(|q| !Self::part_is_tape(shared, q)) && self.waiting[v].is_some() {
                 let _ = self.voices[v].kill();
             } else {
@@ -1793,7 +1797,7 @@ impl Instrument {
     /// A TAPE voice still sounds, fading too.
     #[cfg(feature = "bank2-gate")]
     pub fn tape_sounding(&self, shared: &AudioShared) -> bool {
-        (0..MAX_VOICES).any(|v| self.is_tape(v, shared))
+        VoiceIdx::ALL.into_iter().any(|v| self.is_tape(v, shared))
     }
 
     /// Each Part's wheel reach in semitones, glided as a knob: a Part with
@@ -1844,7 +1848,7 @@ impl Instrument {
         };
         for vi in VoiceIdx::ALL {
             let v = vi.index();
-            let s = self.alloc.slots()[v];
+            let s = *self.alloc.slot(vi);
             let (Some(q), Some(now)) = (s.part(), s.note()) else {
                 continue;
             };
@@ -1876,7 +1880,7 @@ impl Instrument {
             let Some(to) = self.resnap_to[v] else {
                 continue;
             };
-            if !self.alloc.slots()[v].held() {
+            if !self.alloc.slot(vi).held() {
                 self.resnap_to[v] = None;
                 continue;
             }
@@ -2010,7 +2014,7 @@ impl Instrument {
         params: &ParamSnapshot,
         src: &GateView<'_>,
     ) -> bool {
-        let s = self.alloc.slots()[v.index()];
+        let s = *self.alloc.slot(v);
         let (Some(id), Some(key)) = (s.part(), s.note()) else {
             return false;
         };
@@ -2038,11 +2042,12 @@ impl Instrument {
         let NoteKind::On(vel) = ev.kind else {
             return;
         };
-        for (p, part) in shared.parts.iter().enumerate() {
+        for (q, part) in PartId::ALL.into_iter().zip(&shared.parts) {
+            let p = q.index();
             if part.mix.channel != heard || part.params.engine() != EngineType::Drum {
                 continue;
             }
-            let (q, key) = (PartId::ALL[p], ev.note);
+            let key = ev.note;
             let (hit, mine) = self.choke(q, key);
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
             // The bill `recost` worked out, so the kit it read.
@@ -2055,7 +2060,7 @@ impl Instrument {
                 continue;
             };
             let v = vi.index();
-            let was = self.alloc.slots()[v];
+            let was = *self.alloc.slot(vi);
             self.held_keys[v] = NoteSet::EMPTY.with(key);
             self.alloc.book_hit(vi, q, mode, key, cost);
             let waits = self.voices[v].is_active();
@@ -2166,7 +2171,7 @@ impl Instrument {
         let t0 = crate::probe::now();
         // Each kit's bill read once: the Part's bill, its glide and its
         // hits' all from the same kit.
-        let kits: [KitBill; MAX_PARTS] = core::array::from_fn(|p| KIT_VIEW.bill(PartId::ALL[p]));
+        let kits: [KitBill; MAX_PARTS] = PartId::ALL.map(|p| KIT_VIEW.bill(p));
         // Only a Part with a gliding knob pays the glide scans (ADR 0117).
         let glides: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
             let g = self.knobs[p].0.gliding();
@@ -2206,7 +2211,7 @@ impl Instrument {
                         shared.tune,
                     );
                 }
-                let high = match (self.alloc.slots()[v].note(), reach[p]) {
+                let high = match (self.alloc.slot(vi).note(), reach[p]) {
                     (Some(n), Some(h)) => h.bill(n, self.voices[v].algo_slide(), first),
                     _ => Cost::ZERO,
                 };
@@ -2246,14 +2251,14 @@ impl Instrument {
     /// glide steal's start too: any of the Part's sounding voices may be
     /// taken, so its highest note and largest slide.
     #[inline(never)]
-    fn high_note(&self, p: usize, shared: &AudioShared, note: MidiNote, first: bool) -> Cost {
-        let part = &shared.parts[p];
+    fn high_note(&self, q: PartId, shared: &AudioShared, note: MidiNote, first: bool) -> Cost {
+        let part = &shared.parts[q.index()];
         let (mut top, mut slide) = (note.get(), 1.0f32);
         if part.params.pitch.steal_glide().is_some() {
             for vi in VoiceIdx::ALL {
                 let v = vi.index();
-                let s = self.alloc.slots()[v];
-                if s.part() == Some(PartId::ALL[p]) {
+                let s = *self.alloc.slot(vi);
+                if s.part() == Some(q) {
                     top = top.max(s.note().map_or(0, MidiNote::get));
                     slide = slide.max(self.voices[v].algo_slide());
                 }
@@ -2327,8 +2332,7 @@ impl Instrument {
         let (pad, p) = (hit.pad(), hit.params());
         let mut own = Steal::Any;
         for wi in VoiceIdx::ALL {
-            let w = wi.index();
-            let s = self.alloc.slots()[w];
+            let s = *self.alloc.slot(wi);
             if s.part() != Some(id) || s.dying() {
                 continue;
             }
@@ -2353,12 +2357,12 @@ impl Instrument {
     /// The hit voice `w`, booked by DRUM Part `id`, plays: the one
     /// waiting out its fade as its pad's in the kit now, else the one
     /// sounding.
-    fn hit_of(&self, w: VoiceIdx, id: PartId) -> Option<DrumHit> {
-        let w = w.index();
+    fn hit_of(&self, wi: VoiceIdx, id: PartId) -> Option<DrumHit> {
+        let w = wi.index();
         match self.waiting[w] {
             Some(Waiting {
                 plays: Plays::Hit, ..
-            }) => self.alloc.slots()[w].note().map(|n| KIT_VIEW.hit(id, n)),
+            }) => self.alloc.slot(wi).note().map(|n| KIT_VIEW.hit(id, n)),
             Some(_) => None,
             None => self.voices[w]
                 .drum_hit()
@@ -2370,8 +2374,7 @@ impl Instrument {
     /// RETRIG CUT.
     fn cut_part(&mut self, q: PartId) {
         for wi in VoiceIdx::ALL {
-            let w = wi.index();
-            let s = self.alloc.slots()[w];
+            let s = *self.alloc.slot(wi);
             if s.part() == Some(q) && !s.dying() && !s.is_free() {
                 self.alloc.kill(wi);
                 self.shed(wi);
@@ -2386,7 +2389,8 @@ impl Instrument {
     /// played ring and the rest play bare (the owner's rule, 2026-09-29,
     /// spec § 4.5). Nothing is evicted.
     fn restart_switched(&mut self, shared: &AudioShared) {
-        for (p, part) in shared.parts.iter().enumerate() {
+        for (q, part) in PartId::ALL.into_iter().zip(&shared.parts) {
+            let p = q.index();
             let kind = SlotKind::of(&part.params);
             let became = kind == SYMPATHETIC && self.last_kind[p] != SYMPATHETIC;
             self.last_kind[p] = kind;
@@ -2399,7 +2403,6 @@ impl Instrument {
             // shed.
             let mut held = [(VoiceIdx::ALL[0], 0u32); MAX_VOICES];
             let mut n = 0;
-            let q = PartId::ALL[p];
             for vi in VoiceIdx::ALL {
                 let (s, voice) = (self.alloc.slot(vi), &self.voices[vi.index()]);
                 if s.held()
@@ -2447,7 +2450,7 @@ impl Instrument {
         let owns = self.owns(shared.mpe);
         for vi in VoiceIdx::ALL {
             let v = vi.index();
-            if !self.alloc.slots()[v].is_free() {
+            if !self.alloc.slot(vi).is_free() {
                 if let Some(p) = self.sounding[v] {
                     playing[p.index()] = true;
                 }
@@ -2619,7 +2622,7 @@ impl Instrument {
                     side,
                 );
             });
-            self.age_stream(v);
+            self.age_stream(vi);
             // Killed, rebuilt or ended: its deck no longer tends the ring.
             if !self.voices[v].streams() {
                 ports.drop_ring(vi);
@@ -2693,7 +2696,8 @@ impl Instrument {
     pub fn formant_views_into(&self, out: &mut FormantViews) {
         let mut age = [None; MAX_PARTS];
         *out = [FormantView::NONE; MAX_PARTS];
-        for (v, s) in self.alloc.slots().iter().enumerate() {
+        for vi in VoiceIdx::ALL {
+            let (v, s) = (vi.index(), self.alloc.slot(vi));
             if s.is_free() || !self.voices[v].is_active() {
                 continue;
             }
@@ -2737,7 +2741,8 @@ impl Instrument {
             return;
         };
         let mut newest = None;
-        for (v, s) in self.alloc.slots().iter().enumerate() {
+        for vi in VoiceIdx::ALL {
+            let (v, s) = (vi.index(), self.alloc.slot(vi));
             if !s.is_free()
                 && self.sounding[v].map(PartId::index) == Some(part)
                 && self.voices[v].is_active()
@@ -2753,7 +2758,8 @@ impl Instrument {
     /// TAPE, none where no voice does. One store a Part a block.
     fn publish_heads(&self) {
         let mut newest = [(0, Heads::NONE); MAX_PARTS];
-        for (v, s) in self.alloc.slots().iter().enumerate() {
+        for vi in VoiceIdx::ALL {
+            let (v, s) = (vi.index(), self.alloc.slot(vi));
             let h = self.voices[v].heads();
             let Some(p) = self.sounding[v] else {
                 continue;
