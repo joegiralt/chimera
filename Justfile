@@ -286,7 +286,8 @@ check-door-placed elf:
     # So are VA's solos and their table (ADR 0283).
     grep -E ' [tT] .*va::osc::solo::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "VA solo outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
     # And no solo code of theirs sits in bank 1: the quiet pulse's or its runs' (ADR 0283).
-    grep -E ' [tT] .*PulseQuiet' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "VA solo code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # (awk alone: when all of it is inlined into `solo::play` there is none, and grep would fail.)
+    awk '/ [tT] .*PulseQuiet/ { a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "VA solo code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"
 
 check-no-gate bin:
     #!/usr/bin/env bash
