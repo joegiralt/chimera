@@ -184,7 +184,7 @@ fn bad_pad_and_kit_tokens_are_refused() {
     }
     // The kit's and a pad's block are never a Sound block.
     assert_eq!(SoundBlock::new(BlockRef::Pad), None);
-    assert_eq!(SoundBlock::new(BlockRef::Chorus).is_some(), true);
+    assert!(SoundBlock::new(BlockRef::Chorus).is_some());
 }
 
 #[test]

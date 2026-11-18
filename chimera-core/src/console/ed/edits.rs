@@ -156,7 +156,7 @@ fn fmt_of(ui: &UiState, a: EdAddr) -> Option<ValFmt> {
 /// number.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.resolve"))]
 fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, &'static str> {
-    let names = fmt_of(ui, a).and_then(|f| super::describe::names(f));
+    let names = fmt_of(ui, a).and_then(super::describe::names);
     match (val, names) {
         (EdValue::Index(n), Some(names)) => match names.get(usize::from(n.get())) {
             Some(_) => Ok(f32::from(n.get())),

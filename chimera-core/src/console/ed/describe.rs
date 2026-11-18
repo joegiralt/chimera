@@ -150,11 +150,10 @@ pub(super) fn page_at(engine: EngineType, n: usize) -> Option<(&'static BlockDef
     let (part, pad) = counts(engine);
     let (want_pad, mut k) = if n < part {
         (None, n)
-    } else if pad == 0 {
-        return None;
     } else {
-        let p = *PadId::ALL.get((n - part) / pad)?;
-        (Some(p), (n - part) % pad)
+        // No pad pages (every engine but DRUM): nothing past the Part's.
+        let p = *PadId::ALL.get((n - part).checked_div(pad)?)?;
+        (Some(p), (n - part).checked_rem(pad)?)
     };
     let mut i = 0;
     while let Some(def) = def_in(c, i) {
