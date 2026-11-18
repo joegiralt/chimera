@@ -121,23 +121,43 @@ pub fn through<R>(f: impl FnOnce(&SoloDoor) -> R) -> Option<R> {
             return None;
         }
         #[cfg(feature = "test-support")]
-        if FORCE_PAIRS.load(core::sync::atomic::Ordering::Relaxed) {
+        if FORCE_PAIRS.with(core::cell::Cell::get) {
             return None;
         }
         Some(f(&SoloDoor::OWN))
     }
 }
 
-/// Host tests only: the solos' table answers as closed, the door open
-/// (`force_pairs`), so a test plays the pairs where the solos would.
 #[cfg(feature = "test-support")]
-static FORCE_PAIRS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+extern crate std;
 
-/// Host tests only: every plain block plays its pair (`true`), the door's
-/// other entries as ever.
 #[cfg(feature = "test-support")]
-pub fn force_pairs(on: bool) {
-    FORCE_PAIRS.store(on, core::sync::atomic::Ordering::Relaxed);
+std::thread_local! {
+    /// Host tests only: on this thread the solos' table answers as closed,
+    /// the door open (`ForcePairs`).
+    static FORCE_PAIRS: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Host tests only: while it lives, every plain block this thread renders
+/// plays its pair, the door's other entries as ever. Its drop restores the
+/// solos; no other thread sees it.
+#[cfg(feature = "test-support")]
+#[must_use]
+pub struct ForcePairs(());
+
+#[cfg(feature = "test-support")]
+impl ForcePairs {
+    pub fn engage() -> ForcePairs {
+        FORCE_PAIRS.with(|f| f.set(true));
+        ForcePairs(())
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl Drop for ForcePairs {
+    fn drop(&mut self) {
+        FORCE_PAIRS.with(|f| f.set(false));
+    }
 }
 
 /// A plain render's solo: OSC 1's instance (`<true, true>`, recording,

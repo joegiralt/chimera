@@ -4,7 +4,7 @@
 
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::va::stability::{
-    Character, DRIFT_OWN_CENTS, DRIFT_SHARED_CENTS, JITTER_CENTS, JitterScale, SALT_SCALE,
+    Character, DRIFT_OWN_CENTS, DRIFT_SHARED_CENTS, Depth, JITTER_CENTS, JitterScale, SALT_SCALE,
     SALT_TAU, SALT_TRIM, Seed, Stability, TRIM_CENTS, depth,
 };
 
@@ -24,7 +24,7 @@ fn stab(rate: f32, s: Seed) -> Stability {
     st.prepare(rate);
     st.seed(s);
     for _ in 0..(30.0 * rate) as usize {
-        st.step(1.0);
+        st.step(Depth::new(1.0));
     }
     st
 }
@@ -35,7 +35,7 @@ fn walk_stats(rate: f32, s: Seed, secs: f32) -> (f64, f64, f64) {
     let n = (secs * rate) as usize;
     let (mut sq, mut cross, mut state, mut clip) = (0.0f64, 0usize, 0i32, 0usize);
     for _ in 0..n {
-        st.step(1.0);
+        st.step(Depth::new(1.0));
         let raw = st.walk_raw(0);
         let v = clampf(raw, -1.0, 1.0);
         sq += (v as f64) * (v as f64);
@@ -67,11 +67,11 @@ fn cents(f: f32, f0: f32) -> f64 {
 
 #[test]
 fn depth_curve() {
-    assert_eq!(depth(1.0), 0.0);
-    assert_eq!(depth(0.0), 1.0);
-    assert_eq!(depth(0.5), 0.25);
-    assert!((depth(0.7) - 0.09).abs() <= 1e-6, "{}", depth(0.7));
-    assert_eq!(depth(f32::NAN), 1.0);
+    assert_eq!(depth(1.0).get(), 0.0);
+    assert_eq!(depth(0.0).get(), 1.0);
+    assert_eq!(depth(0.5).get(), 0.25);
+    assert!((depth(0.7).get() - 0.09).abs() <= 1e-6, "{:?}", depth(0.7));
+    assert_eq!(depth(f32::NAN).get(), 1.0);
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn drift_has_its_depth() {
         let ch = Character::of(seed);
         let walk = |st: &Stability, k: usize| clampf(st.walk_raw(k), -1.0, 1.0);
         for _ in 0..(600.0 * BLOCK) as usize {
-            let c = st.step(1.0);
+            let c = st.step(Depth::new(1.0));
             let w0 = walk(&st, 0);
             shared_sq += (w0 as f64 * DRIFT_SHARED_CENTS as f64).powi(2);
             n += 1;
@@ -147,7 +147,7 @@ fn drift_has_its_depth() {
     let (mut a, mut b) = (stab(BLOCK, Seed::of(1, 2)), stab(BLOCK, Seed::of(1, 2)));
     let (mut sa, mut sb) = (0.0f64, 0.0f64);
     for _ in 0..(600.0 * BLOCK) as usize {
-        let (x, y) = (a.step(1.0), b.step(0.25));
+        let (x, y) = (a.step(Depth::new(1.0)), b.step(Depth::new(0.25)));
         for k in 0..2 {
             sa += (x[k] as f64).powi(2);
             sb += (y[k] as f64).powi(2);
@@ -164,7 +164,7 @@ fn the_pair_drifts_together() {
     let (mut sa, mut sb, mut sab, mut saa, mut sbb) = (0.0f64, 0.0, 0.0, 0.0, 0.0);
     let n = (600.0 * BLOCK) as usize;
     for _ in 0..n {
-        let [a, b] = st.step(1.0).map(f64::from);
+        let [a, b] = st.step(Depth::new(1.0)).map(f64::from);
         sa += a;
         sb += b;
         sab += a * b;
@@ -216,14 +216,14 @@ fn jitter_in_bounds() {
         let mut st = Stability::NEW;
         st.prepare(BLOCK);
         st.seed(Seed::of(3, 5));
-        let js = JitterScale::new(d);
+        let js = JitterScale::new(Depth::new(d));
         // a full word moves the factor `JITTER_CENTS · d` cents
         let reach = js.reach();
         let cents = |x: f32| x / reach * JITTER_CENTS * d;
         let mut sum = 0.0f64;
         let mut worst = 0.0f32;
         for _ in 0..100_000 {
-            let x = js.draw(&mut st) - 1.0;
+            let x = js.draw(&mut st).factor() - 1.0;
             assert!(x.abs() <= reach + f32::EPSILON, "d {d}: {x}");
             worst = worst.max(cents(x).abs());
             sum += cents(x) as f64;
@@ -246,8 +246,8 @@ fn hf_tracking() {
         for x in u {
             assert!((-0.25..=1.0).contains(&x), "seed {i}: u {x}");
         }
-        let c7 = st.tracked([C7; 2], 1.0);
-        let at_a2 = st.tracked([A2; 2], 1.0);
+        let c7 = st.tracked([C7; 2], Depth::new(1.0));
+        let at_a2 = st.tracked([A2; 2], Depth::new(1.0));
         for k in 0..2 {
             let c = cents(c7[k], C7);
             assert!((-14.5..=3.7).contains(&c), "seed {i} osc {k}: C7 {c}");
@@ -258,11 +258,11 @@ fn hf_tracking() {
             a2 = a2.max(e.abs());
         }
         assert_eq!(
-            st.tracked([C7, A2], 0.0).map(f32::to_bits),
+            st.tracked([C7, A2], Depth::new(0.0)).map(f32::to_bits),
             [C7.to_bits(), A2.to_bits()]
         );
         if (u[0] - u[1]).abs() > 0.05 {
-            let c4 = st.tracked([C4; 2], 1.0);
+            let c4 = st.tracked([C4; 2], Depth::new(1.0));
             let beat = |f: [f32; 2]| (f[0] as f64 - f[1] as f64).abs();
             assert!(
                 beat(c7) > beat(c4),
@@ -283,16 +283,16 @@ fn scale_error() {
         let mut st = Stability::NEW;
         st.prepare(BLOCK);
         st.seed(Seed::of(i / 8, i % 8));
-        assert_eq!(st.scale_cents([6000.0; 2], 1.0), [0.0; 2]);
-        for x in st.scale_cents([9600.0; 2], 1.0) {
+        assert_eq!(st.scale_cents([6000.0; 2], Depth::new(1.0)), [0.0; 2]);
+        for x in st.scale_cents([9600.0; 2], Depth::new(1.0)) {
             assert!(x.abs() <= 7.2, "seed {i}: C7 {x}");
             worst[0] = worst[0].max(x.abs());
         }
-        for x in st.scale_cents([4500.0; 2], 1.0) {
+        for x in st.scale_cents([4500.0; 2], Depth::new(1.0)) {
             assert!(x.abs() <= 3.0, "seed {i}: A2 {x}");
             worst[1] = worst[1].max(x.abs());
         }
-        let z = st.scale_cents([9600.0, 4500.0], 0.0);
+        let z = st.scale_cents([9600.0, 4500.0], Depth::new(0.0));
         assert_eq!(z.map(f32::to_bits), [0.0f32.to_bits(); 2]);
     }
     println!(
@@ -308,7 +308,7 @@ fn hf_tracking_is_rate_independent() {
         let mut st = Stability::NEW;
         st.prepare(rate);
         st.seed(seed);
-        st.tracked([C7; 2], 1.0).map(f32::to_bits)
+        st.tracked([C7; 2], Depth::new(1.0)).map(f32::to_bits)
     };
     for rate in RATES {
         assert_eq!(at(rate), at(BLOCK), "rate {rate}");
@@ -321,8 +321,8 @@ fn character_is_the_seeds() {
     st.prepare(BLOCK);
     st.seed(Seed::of(2, 3));
     for _ in 0..10_000 {
-        st.step(0.5);
-        JitterScale::new(0.5).draw(&mut st);
+        st.step(Depth::new(0.5));
+        JitterScale::new(Depth::new(0.5)).draw(&mut st);
     }
     assert_eq!(st.character(), Character::of(Seed::of(2, 3)));
     assert_ne!(st.character(), Character::of(Seed::of(1, 3)));
@@ -334,9 +334,15 @@ fn depth_zero_is_silent_bits() {
     st.prepare(BLOCK);
     st.seed(Seed::of(4, 1));
     for _ in 0..10_000 {
-        assert_eq!(st.step(0.0).map(f32::to_bits), [0.0f32.to_bits(); 2]);
         assert_eq!(
-            JitterScale::new(0.0).draw(&mut st).to_bits(),
+            st.step(Depth::new(0.0)).map(f32::to_bits),
+            [0.0f32.to_bits(); 2]
+        );
+        assert_eq!(
+            JitterScale::new(Depth::NONE)
+                .draw(&mut st)
+                .factor()
+                .to_bits(),
             1.0f32.to_bits()
         );
     }

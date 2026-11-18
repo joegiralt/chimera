@@ -26,6 +26,7 @@ pub mod solo;
 pub use anchor::OnAnchor;
 
 use super::blep::{blamp_into, blamp6_into, blep_into};
+use super::stability::WrapJitter;
 use crate::dsp::provenance::{PatentLine, Provenance};
 use crate::dsp::{clampf, sqrt};
 
@@ -262,6 +263,22 @@ enum Pair {
     SawPulse,
 }
 
+/// Which way WAVE's ramp runs: up for a rising step, else down (a held
+/// ramp, which crosses nothing, too).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Way {
+    Up,
+    Down,
+}
+
+impl Way {
+    /// The way a ramp with step `step` runs.
+    #[inline(always)]
+    fn of(step: f32) -> Way {
+        if step > 0.0 { Way::Up } else { Way::Down }
+    }
+}
+
 /// `3·WAVE`: WAVE in segments, each pair's a unit.
 #[inline(always)]
 fn thirds(wave: Unit) -> f32 {
@@ -306,13 +323,13 @@ impl Pair {
         }
     }
 
-    /// The neighbouring pair up or down WAVE, the end pairs their own.
+    /// The neighbouring pair `way` along WAVE, the end pairs their own.
     #[inline(always)]
-    fn next(self, up: bool) -> Pair {
-        match (self, up) {
-            (Pair::SineTri, true) | (Pair::SawPulse, false) => Pair::TriSaw,
-            (Pair::TriSaw, true) | (Pair::SawPulse, true) => Pair::SawPulse,
-            (Pair::TriSaw, false) | (Pair::SineTri, false) => Pair::SineTri,
+    fn next(self, way: Way) -> Pair {
+        match (self, way) {
+            (Pair::SineTri, Way::Up) | (Pair::SawPulse, Way::Down) => Pair::TriSaw,
+            (Pair::TriSaw, Way::Up) | (Pair::SawPulse, Way::Up) => Pair::SawPulse,
+            (Pair::TriSaw, Way::Down) | (Pair::SineTri, Way::Down) => Pair::SineTri,
         }
     }
 
@@ -824,7 +841,10 @@ fn run_end(r: &Ramps, pair: Pair, i0: usize, n: usize) -> usize {
     let (from, step) = r.wave;
     // the segment's edge WAVE leaves by: its second wave's anchor going up
     let (lo, hi) = pair.waves();
-    let edge = if step > 0.0 { hi.anchor() } else { lo.anchor() };
+    let edge = match Way::of(step) {
+        Way::Up => hi.anchor(),
+        Way::Down => lo.anchor(),
+    };
     // sample i plays j = i + 1: the first j past the edge (`as` saturates,
     // NaN to 0); max/min, not clamp: no assert (and no panic path) in audio
     (((edge.get() - from) / step) as usize).max(i0 + 1).min(n)
@@ -1286,12 +1306,13 @@ impl VarOsc {
         };
         let mut out = [0.0f32];
         let mut mk = [[sync.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0)), NO_WRAP]];
-        let draw = &mut || 1.0;
+        let draw = &mut || WrapJitter::NONE;
+        let mut jit = WrapJitter::NONE;
         self.render::<1, true, true, true, false>(
             &mut out,
             &mut mk,
             &r,
-            &mut 1.0,
+            &mut jit,
             draw,
             &[0.0],
             (0.0, 0.0),
@@ -1309,7 +1330,7 @@ impl VarOsc {
     #[inline(never)]
     pub fn tick_pulse(&mut self, inc: f32, shape: Unit) -> f32 {
         let r = pulse_ramps(inc, shape);
-        let blk = self.block::<false, false, true>(&r, 1, 1.0);
+        let blk = self.block::<false, false, true>(&r, 1, WrapJitter::NONE);
         self.pulse_run(&r, &blk)
     }
 
@@ -1343,7 +1364,7 @@ impl VarOsc {
                         self.sh[0] = self.sh[1];
                     }
                     self.next_ok = flat;
-                    self.block::<false, false, true>(&r, 1, 1.0)
+                    self.block::<false, false, true>(&r, 1, WrapJitter::NONE)
                 }
             };
             last = flat.then_some((inc, blk));
@@ -1364,16 +1385,17 @@ impl VarOsc {
             self.runs = 1;
         }
         let r = pulse_ramps(inc, shape);
-        let blk = self.block::<false, false, true>(&r, N, 1.0);
+        let blk = self.block::<false, false, true>(&r, N, WrapJitter::NONE);
         let mut mk = [[NO_WRAP, NO_WRAP]; N];
+        let mut jit = WrapJitter::NONE;
         self.run_in::<SawOff, Pulse, N, false, false, false, false, false, true>(
             &blk,
             (0, N),
             &r,
             out,
             &mut mk,
-            &mut 1.0,
-            &mut || 1.0,
+            &mut jit,
+            &mut || WrapJitter::NONE,
             &[0.0; N],
             (0.0, 0.0),
         );
@@ -1389,14 +1411,15 @@ impl VarOsc {
         }
         let mut out = [0.0f32];
         let mut mk = [[NO_WRAP, NO_WRAP]];
+        let mut jit = WrapJitter::NONE;
         self.run::<SawOff, Pulse, 1, false, false, false, false>(
             blk,
             (0, 1),
             r,
             &mut out,
             &mut mk,
-            &mut 1.0,
-            &mut || 1.0,
+            &mut jit,
+            &mut || WrapJitter::NONE,
             &[0.0],
             (0.0, 0.0),
         );
@@ -1416,12 +1439,13 @@ impl VarOsc {
         };
         let mut out = [0.0f32];
         let mut mk = [[turn.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0)), NO_WRAP]];
-        let draw = &mut || 1.0;
+        let draw = &mut || WrapJitter::NONE;
+        let mut jit = WrapJitter::NONE;
         self.render::<1, true, true, true, true>(
             &mut out,
             &mut mk,
             &r,
-            &mut 1.0,
+            &mut jit,
             draw,
             &[rr_extra],
             (0.0, 1.0),
@@ -1460,8 +1484,8 @@ impl VarOsc {
         out: &mut [f32; N],
         mk: &mut [[f32; 2]; N],
         r: &Ramps,
-        jit: &mut f32,
-        draw: &mut impl FnMut() -> f32,
+        jit: &mut WrapJitter,
+        draw: &mut impl FnMut() -> WrapJitter,
         m: &[f32; N],
         k: (f32, f32),
     ) {
@@ -1484,8 +1508,8 @@ impl VarOsc {
         out: &mut [f32; N],
         mk: &mut [[f32; 2]; N],
         r: &Ramps,
-        jit: &mut f32,
-        draw: &mut impl FnMut() -> f32,
+        jit: &mut WrapJitter,
+        draw: &mut impl FnMut() -> WrapJitter,
         m: &[f32; N],
         k: (f32, f32),
     ) {
@@ -1496,7 +1520,7 @@ impl VarOsc {
         }
         // WAVE's ramp is linear: the pairs run from the first sample's to
         // the last's, one segment at a time
-        let (mut pair, last, up) = (seg(r, 0), seg(r, N - 1), r.wave.1 > 0.0);
+        let (mut pair, last, way) = (seg(r, 0), seg(r, N - 1), Way::of(r.wave.1));
         let mut i0 = 0;
         // two runs a block at most, by construction: a second run plays to
         // the block's end on its pair (`wave_reach` keeps WAVE short of a
@@ -1534,7 +1558,7 @@ impl VarOsc {
                 Pair::SawPulse => run!(Saw, Pulse),
             }
             i0 = i1;
-            pair = pair.next(up);
+            pair = pair.next(way);
         }
     }
 
@@ -1568,7 +1592,7 @@ impl VarOsc {
         &mut self,
         r: &Ramps,
         n: usize,
-        jit: f32,
+        jit: WrapJitter,
     ) -> Blk {
         // the engine's blocks have `begin`'s; a lone `tick` fills here
         if !self.next_ok {
@@ -1584,7 +1608,7 @@ impl VarOsc {
         }
         self.next_ok = false;
         let [sh0, sh1] = &self.sh;
-        let ie = val(r.inc, n.div_ceil(2)) * jit;
+        let ie = val(r.inc, n.div_ceil(2)) * jit.factor();
         let il = RECIP[n.min(RECIP.len() - 1)];
         let mut blk = Blk {
             rate: [[(0.0, 0.0); 2]; 3],
@@ -1757,8 +1781,8 @@ impl VarOsc {
         r: &Ramps,
         out: &mut [f32; N],
         mk: &mut [[f32; 2]; N],
-        jit: &mut f32,
-        draw: &mut impl FnMut() -> f32,
+        jit: &mut WrapJitter,
+        draw: &mut impl FnMut() -> WrapJitter,
         m: &[f32; N],
         km: (f32, f32),
     ) {
@@ -1787,8 +1811,8 @@ impl VarOsc {
         r: &Ramps,
         out: &mut [f32; N],
         mk: &mut [[f32; 2]; N],
-        jit: &mut f32,
-        draw: &mut impl FnMut() -> f32,
+        jit: &mut WrapJitter,
+        draw: &mut impl FnMut() -> WrapJitter,
         m: &[f32; N],
         km: (f32, f32),
     ) {
@@ -1833,7 +1857,7 @@ impl VarOsc {
                 }
             }
             inc += dinc;
-            let ie = inc * j;
+            let ie = inc * j.factor();
             for (k, l) in c.iter_mut().enumerate() {
                 if !(merged && k == 3) {
                     l.v += l.d;

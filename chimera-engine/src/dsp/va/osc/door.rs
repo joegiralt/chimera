@@ -12,8 +12,8 @@ use chimera_hal::BLOCK_SIZE;
 
 use super::super::blep::blep_into;
 use super::{Blk, Kind, Leg, Lin, PM_JUMPS, Ramps, VarOsc, ZEROS, frac};
-use crate::dsp::va::stability::JitterScale;
 use crate::dsp::va::stability::Stability;
+use crate::dsp::va::stability::{JitterScale, WrapJitter};
 
 /// A `MOD` render as the door carries it: the oscillator, its block, its
 /// marks, its lanes and jitter, STABILITY and the jitter's scale, the
@@ -23,7 +23,7 @@ pub type ModRender = fn(
     &mut [f32; BLOCK_SIZE],
     &mut [[f32; 2]; BLOCK_SIZE],
     &Ramps,
-    &mut f32,
+    &mut WrapJitter,
     &mut Stability,
     JitterScale,
     &[f32; BLOCK_SIZE],
@@ -43,7 +43,7 @@ impl ModEntry {
         out: &mut [f32; BLOCK_SIZE],
         mk: &mut [[f32; 2]; BLOCK_SIZE],
         r: &Ramps,
-        jit: &mut f32,
+        jit: &mut WrapJitter,
         stab: &mut Stability,
         js: JitterScale,
         m: &[f32; BLOCK_SIZE],
@@ -109,7 +109,7 @@ pub fn osc1_mod(
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
     r: &Ramps,
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
     js: JitterScale,
     m: &[f32; BLOCK_SIZE],
@@ -128,7 +128,7 @@ pub fn osc2_rev(
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
     r: &Ramps,
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
     js: JitterScale,
     m: &[f32; BLOCK_SIZE],
@@ -148,7 +148,7 @@ pub fn osc1_phase(
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
     r: &Ramps,
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
     js: JitterScale,
     m: &[f32; BLOCK_SIZE],
@@ -172,7 +172,7 @@ pub fn osc2_steps(
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
     r: &Ramps,
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
     js: JitterScale,
     _: &[f32; BLOCK_SIZE],
@@ -287,8 +287,8 @@ pub(super) fn run<
     r: &Ramps,
     out: &mut [f32; N],
     mk: &mut [[f32; 2]; N],
-    jit: &mut f32,
-    draw: &mut impl FnMut() -> f32,
+    jit: &mut WrapJitter,
+    draw: &mut impl FnMut() -> WrapJitter,
     m: &[f32; N],
     k: (f32, f32),
 ) {

@@ -68,10 +68,10 @@ impl<'a> OnAnchor<'a> {
         out: &mut [f32; BLOCK_SIZE],
         mk: &mut [[f32; 2]; BLOCK_SIZE],
         jit: &mut WrapJitter,
-        draw: &mut impl FnMut() -> f32,
+        draw: &mut impl FnMut() -> WrapJitter,
     ) {
         let OnAnchor { o, r } = self;
-        let blk = o.block::<false, false, false>(r, BLOCK_SIZE, jit.factor());
+        let blk = o.block::<false, false, false>(r, BLOCK_SIZE, *jit);
         #[cfg(any(test, feature = "test-support"))]
         {
             o.runs = 1;
@@ -82,7 +82,7 @@ impl<'a> OnAnchor<'a> {
             r,
             out,
             mk,
-            jit.factor_mut(),
+            jit,
             draw,
             &ZEROS,
             (0.0, 0.0),

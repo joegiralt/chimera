@@ -29,7 +29,7 @@ use noise::Noise;
 pub use noise::{KIND_NAMES, NoiseKind};
 use osc::solo::SoloRun;
 use osc::{MAX_INC, NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
-use stability::{JitterScale, Seed, Stability, WrapJitter, depth};
+use stability::{Depth, JitterScale, Seed, Stability, WrapJitter, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
 
@@ -171,7 +171,7 @@ pub struct VaParams {
 impl Default for VaParams {
     fn default() -> Self {
         Self {
-            wave: [2.0 / 3.0; 2],
+            wave: [osc::SAW_ANCHOR.get(); 2],
             shape: [0.0; 2],
             coarse: [0; 2],
             fine: [0.0; 2],
@@ -250,10 +250,10 @@ const fn fine(id: u8, label: &'static str, short: &'static str) -> ParamSpec {
 }
 
 pub static VA_SPECS: [ParamSpec; 14] = [
-    uni(0, "WAVE1", "WAVE1", 2.0 / 3.0)
+    uni(0, "WAVE1", "WAVE1", osc::SAW_ANCHOR.get())
         .short("WV1")
         .glyph(FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
-    uni(1, "WAVE2", "WAVE2", 2.0 / 3.0)
+    uni(1, "WAVE2", "WAVE2", osc::SAW_ANCHOR.get())
         .short("WV2")
         .glyph(FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
     ParamSpec::choice(
@@ -456,7 +456,7 @@ pub fn phase_depth(blend: f32) -> f32 {
 
 /// STABILITY's jitter draw at scale `js`: one closure type for every
 /// MODE, so the renders share the oscillators' instances (flash).
-fn jitter_draw(stab: &mut Stability, js: JitterScale) -> impl FnMut() -> f32 + '_ {
+fn jitter_draw(stab: &mut Stability, js: JitterScale) -> impl FnMut() -> WrapJitter + '_ {
     move || js.draw(stab)
 }
 
@@ -711,7 +711,7 @@ pub struct Lanes {
     /// step's step (within 10⁻⁷ of exact on a knob's sweep).
     norm: (f32, f32, f32),
     pk: Peaks,
-    d: f32,
+    d: Depth,
     /// NOISE's RMS (a share of R) along its ramp; `(0, 0)`: off.
     nz: (f32, f32),
 }
@@ -1224,7 +1224,7 @@ impl VaEngine {
             out,
             mk,
             &l.osc[0],
-            jit[0].factor_mut(),
+            &mut jit[0],
             &mut jitter_draw(stab, JitterScale::new(l.d)),
             &ZEROS,
             (0.0, 0.0),
@@ -1237,7 +1237,7 @@ impl VaEngine {
                 b,
                 mk,
                 &l.osc[1],
-                jit[1].factor_mut(),
+                &mut jit[1],
                 stab,
                 js,
                 &ZEROS,
@@ -1298,7 +1298,7 @@ impl VaEngine {
             b,
             mk,
             &l.osc[1],
-            jit[1].factor_mut(),
+            &mut jit[1],
             &mut jitter_draw(stab, JitterScale::new(l.d)),
             &ZEROS,
             (0.0, 0.0),
@@ -1312,17 +1312,7 @@ impl VaEngine {
         // OSC 1's MOD render is bank 2's with `bank2` (ADR 0163). Closed,
         // the voice is silent and OSC 1 waits as it was.
         let mut osc1 = |f: &osc::door::ModEntry| {
-            f.render(
-                o1,
-                out,
-                mk,
-                &l.osc[0],
-                jit[0].factor_mut(),
-                stab,
-                js,
-                b,
-                (1.0, 0.0),
-            )
+            f.render(o1, out, mk, &l.osc[0], &mut jit[0], stab, js, b, (1.0, 0.0))
         };
         #[cfg(feature = "bank2")]
         if crate::bank2::DOOR_CELL
@@ -1383,7 +1373,7 @@ impl VaEngine {
             l.osc[0].inc,
             out,
             mk,
-            jit[0].factor_mut(),
+            &mut jit[0],
             &mut draw,
         );
         o1.set_phase(p);
@@ -1394,7 +1384,7 @@ impl VaEngine {
             l.osc[1].inc,
             b,
             mk,
-            jit[1].factor_mut(),
+            &mut jit[1],
             &mut draw,
         );
         o2.set_phase(p);
@@ -1432,7 +1422,7 @@ impl VaEngine {
                 b,
                 mk,
                 &l.osc[1],
-                jit[1].factor_mut(),
+                &mut jit[1],
                 stab,
                 js,
                 &ZEROS,
@@ -1463,17 +1453,7 @@ impl VaEngine {
                 }
             }
             o1.set_pm_scale((x0, dx));
-            osc1.render(
-                o1,
-                out,
-                mk,
-                &l.osc[0],
-                jit[0].factor_mut(),
-                stab,
-                js,
-                b,
-                (0.0, 1.0),
-            );
+            osc1.render(o1, out, mk, &l.osc[0], &mut jit[0], stab, js, b, (0.0, 1.0));
         };
         // closed, the voice is silent and both oscillators wait as they were
         #[cfg(feature = "bank2")]
@@ -1527,29 +1507,13 @@ impl VaEngine {
             js,
             |o, out, mk, j, s| {
                 let draw = &mut jitter_draw(s, js);
-                o.render::<BLOCK_SIZE, true, false, true, false>(
-                    out,
-                    mk,
-                    r1,
-                    j.factor_mut(),
-                    draw,
-                    z,
-                    nk,
-                );
+                o.render::<BLOCK_SIZE, true, false, true, false>(out, mk, r1, j, draw, z, nk);
             },
         );
         let p2 = match o2run {
             Osc2Run::Slave => {
                 let draw = &mut jitter_draw(stab, js);
-                o2.render::<BLOCK_SIZE, false, true, false, false>(
-                    b,
-                    mk,
-                    r2,
-                    j2.factor_mut(),
-                    draw,
-                    z,
-                    nk,
-                );
+                o2.render::<BLOCK_SIZE, false, true, false, false>(b, mk, r2, j2, draw, z, nk);
                 Played::Pair
             }
             Osc2Run::Plain => plain(
@@ -1563,15 +1527,7 @@ impl VaEngine {
                 js,
                 |o, b, mk, j, s| {
                     let draw = &mut jitter_draw(s, js);
-                    o.render::<BLOCK_SIZE, false, false, false, false>(
-                        b,
-                        mk,
-                        r2,
-                        j.factor_mut(),
-                        draw,
-                        z,
-                        nk,
-                    );
+                    o.render::<BLOCK_SIZE, false, false, false, false>(b, mk, r2, j, draw, z, nk);
                 },
             ),
         };
@@ -1883,8 +1839,9 @@ mod tests {
                 f.restore(e.carry());
                 let (mut a, mut b) = (e.stab, f.stab);
                 for _ in 0..64 {
-                    assert_eq!(a.step(0.25), b.step(0.25));
-                    let js = JitterScale::new(0.25);
+                    let d = Depth::new(0.25);
+                    assert_eq!(a.step(d), b.step(d));
+                    let js = JitterScale::new(d);
                     assert_eq!(js.draw(&mut a), js.draw(&mut b));
                 }
             });

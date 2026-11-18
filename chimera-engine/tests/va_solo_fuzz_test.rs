@@ -1,205 +1,204 @@
-//! VA's saw solo (ADR 0283) against the pairs it stands in for, fuzzed:
-//! every scene plays twice in one tree, the solos taken where they may and
-//! then every plain block forced to its pair (`osc::solo::force_pairs`),
-//! and each block's bits must match. The scenes draw MODE, WAVE (on the
-//! saw's anchor, a ulp either side, −0, NaN, out of range), SHAPE,
-//! STABILITY, BLEND, SUB, tuning, glides, steals, restarts, pitch and
-//! phase sets, and the door closing and opening mid-note. A process-wide
-//! door and switch: one test in its own binary.
-#![cfg(all(feature = "bank2", feature = "test-support"))]
+//! VA's saw solo (ADR 0283) fuzzed (`va_fuzz`): every scene plays twice
+//! in one tree, the solos taken where they may and then every plain block
+//! forced to its pair (`ForcePairs`), and each block's bits must match.
+//! The first `PINNED` scenes' digests must also be those origin/0.4
+//! `807e740d` played, before the solo: the pairs' own path can't drift
+//! either. With bank 2 the scenes open and close its door mid-note; without
+//! it (the door absent) they play bank 1's own renders. A process-wide
+//! door: one test in its own binary.
 
-use core::mem::MaybeUninit;
+mod va_fuzz;
 
-use chimera_engine::bank2::DOOR_CELL;
-use chimera_engine::dsp::va::osc::{SAW_ANCHOR, solo};
-use chimera_engine::dsp::va::{Played, VaEngine, VaMode, VaParams};
-use chimera_engine::project::PartId;
-use chimera_hal::BLOCK_SIZE;
+use chimera_engine::dsp::va::Played;
+use chimera_engine::dsp::va::osc::SAW_ANCHOR;
+use chimera_engine::dsp::va::osc::solo::ForcePairs;
 
-const SR: u32 = 48_000;
-/// Scenes and blocks a scene: about a second in `just check`.
+/// Scenes played: about a second in `just check`.
 const SCENES: u64 = 400;
-const BLOCKS: usize = 160;
+/// Scenes pinned to 807e740d's digests.
+const PINNED: usize = 64;
 
-/// xorshift64: the scene's draws, the same both times it plays.
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-
-    /// 0..1.
-    fn unit(&mut self) -> f32 {
-        (self.next() >> 40) as f32 / (1u64 << 24) as f32
-    }
-
-    fn pick<T: Copy>(&mut self, v: &[T]) -> T {
-        v[(self.next() % v.len() as u64) as usize]
-    }
-
-    fn chance(&mut self, p: f32) -> bool {
-        self.unit() < p
-    }
-
-    /// One of `v`, or a fresh draw, or now and then NaN.
-    fn knob(&mut self, v: &[f32]) -> f32 {
-        if self.chance(0.03) {
-            f32::NAN
-        } else if self.chance(0.5) {
-            self.pick(v)
-        } else {
-            self.unit()
-        }
-    }
-}
-
-const MODES: [VaMode; 11] = [
-    VaMode::Mix,
-    VaMode::Sync,
-    VaMode::Ring,
-    VaMode::Xor,
-    VaMode::Bits,
-    VaMode::Fm,
-    VaMode::Am,
-    VaMode::Max,
-    VaMode::LoopFm,
-    VaMode::SoftSync,
-    VaMode::Phase,
-];
-
-/// The plain MODEs, which play the solos.
-const PLAIN: [VaMode; 4] = [VaMode::Mix, VaMode::Sync, VaMode::Ring, VaMode::Max];
-
-/// WAVE: mostly on or beside the saw's anchor, or off it, or nonsense.
-fn wave(r: &mut Rng) -> f32 {
-    let saw = SAW_ANCHOR.get();
-    let near = [
-        saw,
-        saw,
-        saw,
-        f32::from_bits(saw.to_bits() - 1),
-        f32::from_bits(saw.to_bits() + 1),
-        f32::from_bits(saw.to_bits() + 2),
-        0.0,
-        -0.0,
-        1.0 / 3.0,
-        1.0,
-        0.7,
-        0.8,
-        0.5,
-        f32::NAN,
-        1.5,
-        -0.2,
-    ];
-    if r.chance(0.8) {
-        r.pick(&near)
+#[cfg(feature = "bank2")]
+fn door(open: bool) {
+    use chimera_engine::bank2::DOOR_CELL;
+    if open {
+        DOOR_CELL.open_host()
     } else {
-        r.unit()
+        DOOR_CELL.close()
     }
 }
 
-/// A scene's bits, block by block, and the plain blocks it played alone.
-fn play(seed: u64) -> (Vec<u64>, u32) {
-    let mut r = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-    let part = PartId::new((seed % 4) as u8).unwrap();
-    let mut slot = Box::new(MaybeUninit::<VaEngine>::uninit());
-    let e = VaEngine::init_in_place(&mut slot);
-    let plain_heavy = seed % 3 == 0;
-    let mut p = VaParams {
-        mode: if plain_heavy {
-            VaMode::Mix
-        } else {
-            r.pick(&MODES)
-        },
-        wave: [wave(&mut r), wave(&mut r)],
-        shape: [r.unit(), r.unit()],
-        stability: r.knob(&[0.0, 0.5, 1.0]),
-        sub: r.knob(&[0.0, 0.5]),
-        amount: r.unit(),
-        coarse: [r.pick(&[0i8, 0, 12, -12]), r.pick(&[0i8, 7, -5, 19])],
-        fine: [0.0, r.pick(&[0.0, 0.3, -0.2])],
-        ..VaParams::default()
-    };
-    let mut note = r.pick(&[24u8, 36, 48, 60, 84, 96, 108, 120]);
-    DOOR_CELL.open_host();
-    e.hold();
-    e.note_on(note, &p, part, SR);
-    let mut prints = Vec::with_capacity(BLOCKS);
-    let mut alone = 0;
-    for _ in 0..BLOCKS {
-        let roll = r.unit();
-        if roll < 0.05 {
-            p.mode = if plain_heavy && r.chance(0.7) {
-                r.pick(&PLAIN)
-            } else {
-                r.pick(&MODES)
-            };
-        } else if roll < 0.12 {
-            let w = wave(&mut r);
-            match r.next() % 3 {
-                0 => p.wave[0] = w,
-                1 => p.wave[1] = w,
-                _ => p.wave = [w; 2],
-            }
-        } else if roll < 0.15 {
-            p.shape = [r.knob(&[0.0, 1.0]), r.knob(&[0.0, 1.0])];
-        } else if roll < 0.16 {
-            p.stability = r.pick(&[0.0, 0.5, 1.0]);
-        } else if roll < 0.17 {
-            note = r.pick(&[24u8, 36, 48, 60, 72, 84, 127]);
-            e.glide_on(note, &p, part, (SR, 0.05));
-        } else if roll < 0.18 {
-            note = r.pick(&[24u8, 36, 48, 60, 72, 84]);
-            e.hold();
-            e.note_on(note, &p, part, SR);
-        } else if roll < 0.19 {
-            e.note_on(note, &p, part, SR);
-        } else if roll < 0.20 {
-            e.set_pitch(r.unit() * 200.0 - 100.0);
-        } else if roll < 0.21 {
-            e.set_osc_phase([r.unit(), r.unit()]);
-        } else if roll < 0.23 {
-            if r.chance(0.5) {
-                DOOR_CELL.close()
-            } else {
-                DOOR_CELL.open_host()
-            }
-        } else if roll < 0.24 {
-            (p.amount, p.sub) = (r.unit(), r.unit());
-        }
-        let mut out = [0.0f32; BLOCK_SIZE];
-        e.render(&mut out, &p, SR);
-        alone += e
-            .played()
-            .iter()
-            .filter(|x| **x == Some(Played::Alone))
-            .count() as u32;
-        prints.push(out.iter().fold(0xcbf2_9ce4_8422_2325, |h, v| {
-            (h ^ u64::from(v.to_bits())).wrapping_mul(0x0000_0100_0000_01b3)
-        }));
-    }
-    DOOR_CELL.close();
-    (prints, alone)
-}
+/// No door: bank 1 plays everything.
+#[cfg(not(feature = "bank2"))]
+fn door(_: bool) {}
 
 #[test]
-fn solos_play_their_pairs_bit_for_bit() {
+fn solos_play_their_pairs_and_807e740d_bit_for_bit() {
+    assert_eq!(va_fuzz::SAW, SAW_ANCHOR.get());
     let mut alone = 0;
     for seed in 0..SCENES {
-        solo::force_pairs(false);
-        let (solos, n) = play(seed);
-        solo::force_pairs(true);
-        let (pairs, _) = play(seed);
-        solo::force_pairs(false);
-        alone += n;
+        let solos = va_fuzz::play(seed, door, |e| {
+            alone += e
+                .played()
+                .iter()
+                .filter(|x| **x == Some(Played::Alone))
+                .count();
+        });
+        let pairs = {
+            let _pairs = ForcePairs::engage();
+            va_fuzz::play(seed, door, |_| {})
+        };
         if let Some(b) = solos.iter().zip(&pairs).position(|(a, b)| a != b) {
-            panic!("scene {seed}: block {b} differs");
+            panic!("scene {seed}: block {b}: the solo differs from its pair");
+        }
+        if let Some(&want) = DIGESTS.get(seed as usize) {
+            assert_eq!(
+                va_fuzz::digest(&solos),
+                want,
+                "scene {seed}: not as at 807e740d"
+            );
         }
     }
     // the fuzz reaches the solo: a good share of its plain blocks
     assert!(alone > 5_000, "only {alone} solo blocks");
 }
+
+/// `va_fuzz::digest` of scenes `0..PINNED` at origin/0.4 `807e740d`,
+/// door toggled (`bank2`, `test-support`).
+#[cfg(feature = "bank2")]
+const DIGESTS: [u64; PINNED] = [
+    0xda5eda69b4c38822,
+    0x001dc45f33b47647,
+    0x965cf6ba43a1ac6f,
+    0xf57d864f161a6fd3,
+    0xb34f2305157ce67c,
+    0x789874ed1c619d35,
+    0x0b393c26ca8d3e5d,
+    0x74fa72ae7c26393e,
+    0xb37079e0715faa85,
+    0xe11c1e4619dd2f06,
+    0xb0729a10ed61610f,
+    0xc10bc9ab6532988c,
+    0x9e6ed31a1f9d21e4,
+    0xd2f6f52d979bc386,
+    0x84c2e411c2ca3229,
+    0x2b98e4c869ccf767,
+    0xf30e9486a3a69b39,
+    0x523609b269d867c4,
+    0xad1d3c7fbd546115,
+    0xf1f91cf6ad2a2f4d,
+    0x30885edd2d3bc4b2,
+    0x25ff568c71a5f03a,
+    0xd66bd57a5651ee8a,
+    0x675ca4214b34fb3f,
+    0x447fd46fbd15131e,
+    0x460e1c47b90c317d,
+    0xd2388b326e62b1e3,
+    0x2a1deb0b3db9a7e8,
+    0x1b568c994b831543,
+    0x900f991daea0a7df,
+    0xe79ac888b64d893a,
+    0x5a87020de2b65dc8,
+    0x0ba845baac65e5f4,
+    0x37c957af68915806,
+    0x2a2d4a37baba9f83,
+    0xac3104d257e3c145,
+    0x2efc15ba131b3d8f,
+    0x8fc954a850e70f0f,
+    0xf7b7a03aa8faf4b8,
+    0x5c44c56cf29fcaf1,
+    0x407a8bc898ab246b,
+    0xb483854eb23f3cbc,
+    0xa31a08aa23b117f2,
+    0x766ff1ffce9bd8c2,
+    0x08ef7e53b335f073,
+    0xa9f6d210f7e08f89,
+    0x3ed891b9541ada68,
+    0x0e11ca0b6a0f661f,
+    0xc29305530e3f05ff,
+    0x5d957295ee16c7d3,
+    0xdd87f3dce99337da,
+    0x975c7a9b1c11efb1,
+    0x175a4a90386d918e,
+    0xeee53294b47b6663,
+    0x97fecbf44498854b,
+    0x5675a6fca2b0f541,
+    0xd91465686dddea37,
+    0x731d7021e10e9236,
+    0x7c20238b680e4e8c,
+    0xa7cc860ccabeb2f2,
+    0xbb26db112397f753,
+    0x4e07fce77e3da11f,
+    0x01359a5b19500136,
+    0xba69629f3bdd4c60,
+];
+
+/// `va_fuzz::digest` of scenes `0..PINNED` at origin/0.4 `807e740d`, no
+/// door (`test-support`).
+#[cfg(not(feature = "bank2"))]
+const DIGESTS: [u64; PINNED] = [
+    0xda5eda69b4c38822,
+    0xd0d5fc82260c0dc9,
+    0x965cf6ba43a1ac6f,
+    0xdca802f2d0febc4d,
+    0xb34f2305157ce67c,
+    0x6e7e2d03ff6e6db3,
+    0x0b393c26ca8d3e5d,
+    0x74fa72ae7c26393e,
+    0x27dc40258d432826,
+    0xe11c1e4619dd2f06,
+    0x592bcfc94a9e3498,
+    0xc10bc9ab6532988c,
+    0x9e6ed31a1f9d21e4,
+    0xae3579d255219b03,
+    0x84c2e411c2ca3229,
+    0x2b98e4c869ccf767,
+    0xaf1abad4ce0c3a89,
+    0x523609b269d867c4,
+    0xad1d3c7fbd546115,
+    0xf1f91cf6ad2a2f4d,
+    0x6fdde5bb10e5a0f0,
+    0x25ff568c71a5f03a,
+    0xd66bd57a5651ee8a,
+    0xc3381be2fd46daba,
+    0x447fd46fbd15131e,
+    0x2225be1e9b01e2e0,
+    0xa21ca6a49b38656f,
+    0x9b289cb2f3a019af,
+    0x0f30f35ed6fc7253,
+    0x900f991daea0a7df,
+    0xe79ac888b64d893a,
+    0x6e00c5acb23af019,
+    0xc1b352a3daa37a03,
+    0x8e1e5bd589698833,
+    0x2a2d4a37baba9f83,
+    0x213830f628869060,
+    0x0579da769abb9ac6,
+    0x8fc954a850e70f0f,
+    0x7d1ae7c3a2251767,
+    0x57ba472e112b64f7,
+    0x407a8bc898ab246b,
+    0xca6b9fe15f1c6822,
+    0xa31a08aa23b117f2,
+    0x766ff1ffce9bd8c2,
+    0x94787481953166ba,
+    0x65a755d5de511451,
+    0x805fba7e716152a8,
+    0x0e11ca0b6a0f661f,
+    0xc29305530e3f05ff,
+    0x6954f455a2e7b07b,
+    0xf3e555cbf9be1d6e,
+    0x975c7a9b1c11efb1,
+    0x31965e7264717c92,
+    0xeee53294b47b6663,
+    0x4c22c827f4b75a7a,
+    0x5675a6fca2b0f541,
+    0xd91465686dddea37,
+    0x49e82cf202b93b54,
+    0x1d6b6ab259901d8c,
+    0x41a02a0c76b3f6e2,
+    0x65dd11f68386f528,
+    0x0fc73eedce76255d,
+    0x1099d62a886835b4,
+    0xa646966e27d3f2d5,
+];
