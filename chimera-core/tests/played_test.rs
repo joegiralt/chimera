@@ -91,7 +91,7 @@ fn notes_publish_the_pitch_the_voice_is_given() {
     assert!(keys().is_empty());
 
     // A key no voice holds (a note-off lost) goes at the next block.
-    played::note_on(0, 0, 70, 96, 70, 0);
+    played::note_on(0, chimera_core::project::PartId::ALL[0], 70, 96, 70, 0);
     assert_eq!(keys(), [70]);
     rig.render(1);
     assert!(keys().is_empty());
@@ -102,7 +102,7 @@ fn notes_publish_the_pitch_the_voice_is_given() {
     assert_eq!(keys(), [62]);
     // More keys than the panel names are still counted.
     for k in 40..60 {
-        played::note_on(0, 0, k, 96, k, 0);
+        played::note_on(0, chimera_core::project::PartId::ALL[0], k, 96, k, 0);
     }
     let (_, total) = played::held::<8>();
     assert_eq!(total, 21);

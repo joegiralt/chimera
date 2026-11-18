@@ -51,7 +51,7 @@ pub struct AdmitDoor {
         (Cost, bool),
         Paid,
         (Option<&StreamStats>, CardFault),
-    ) -> Option<(usize, Option<Paid>)>,
+    ) -> Option<(VoiceIdx, Option<Paid>)>,
     refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
     loop_extra: fn(&Instrument, PartId, &AudioShared, &GateView<'_>, BillAt) -> Cost,
 }
@@ -77,7 +77,7 @@ impl AdmitDoor {
         costs: (Cost, bool),
         new: Paid,
         ctx: (Option<&StreamStats>, CardFault),
-    ) -> Option<(usize, Option<Paid>)> {
+    ) -> Option<(VoiceIdx, Option<Paid>)> {
         (self.pick)(i, at, costs, new, ctx)
     }
 
@@ -297,7 +297,12 @@ impl Instrument {
                 let b = s.billed().filter(|_| !gone.contains(v))?;
                 Some((v, b, self.age_now(v, s.age)))
             });
-        admit(new, playing, STREAM_BUDGET_BPS, self.alloc.stealable(part))
+        admit(
+            new,
+            playing,
+            STREAM_BUDGET_BPS,
+            self.alloc.card_stealable(part),
+        )
     }
 
     /// Voice `v`'s age as a steal sees it: shed or cut this block (dying
@@ -334,12 +339,12 @@ impl Instrument {
                 .fold(0u32, |a, o| a.saturating_add(o.1.get()));
             let released = others().filter(|o| o.2.released());
             let room = BytesPerSec::new(STREAM_BUDGET_BPS.get().saturating_sub(held));
-            match admit(new, released, room, self.alloc.stealable(part)) {
+            match admit(new, released, room, self.alloc.card_stealable(part)) {
                 Admit::Ok => return true,
                 Admit::Steal(w) => {
                     gone = gone.with(w);
-                    self.alloc.kill(w.index());
-                    self.shed(w.index());
+                    self.alloc.kill(w);
+                    self.shed(w);
                 }
                 Admit::Refuse => return false,
             }
@@ -407,8 +412,8 @@ impl Instrument {
                 if let Some(s) = stats {
                     s.late_refused.fetch_add(1, Relaxed);
                 }
-                self.alloc.kill(v);
-                self.shed(v);
+                self.alloc.kill(vi);
+                self.shed(vi);
             }
         }
     }
@@ -426,30 +431,30 @@ impl Instrument {
         (cost, glides): (Cost, bool),
         new: Paid,
         (stats, fault): (Option<&StreamStats>, CardFault),
-    ) -> Option<(usize, Option<Paid>)> {
+    ) -> Option<(VoiceIdx, Option<Paid>)> {
         let mut gone = VoiceSet::EMPTY;
         // Each steal adds a voice to `gone`: at most one a voice.
         for _ in 0..=MAX_VOICES {
-            let Some(vi) = self.pick_one(at, cost).and_then(VoiceIdx::new) else {
+            let Some(vi) = self.pick_one(at, cost) else {
                 break;
             };
             let v = vi.index();
-            let s = self.alloc.slots()[v];
+            let s = *self.alloc.slot(vi);
             let replaces = !s.dying()
                 && s.part() == Some(at.part)
                 && (at.mode == PartMode::Mono || s.note() == Some(at.note));
             if replaces && glides && self.voices[v].is_active() && self.streaming[v].paid.is_some()
             {
                 self.raise(vi, new, stats);
-                return Some((v, self.streaming[v].paid));
+                return Some((vi, self.streaming[v].paid));
             }
             let ask = if replaces { gone.with(vi) } else { gone };
             match self.admit_stream(new.bill, ask, at.part, fault) {
-                Admit::Ok => return Some((v, Some(new))),
+                Admit::Ok => return Some((vi, Some(new))),
                 Admit::Steal(w) => {
                     gone = gone.with(w);
-                    self.alloc.kill(w.index());
-                    self.shed(w.index());
+                    self.alloc.kill(w);
+                    self.shed(w);
                 }
                 Admit::Refuse => break,
             }

@@ -139,16 +139,16 @@ fn run(seed: u64, shares: Shares, steps: usize, k: u64, seen: &mut Seen) {
                 }
             }
             4 | 5 => {
-                a.release(v);
+                a.release(new::VoiceIdx::ALL[v]);
                 b.release(v);
             }
             6 | 7 => {
-                a.release_finished(v);
+                a.release_finished(new::VoiceIdx::ALL[v]);
                 b.release_finished(v);
             }
             8 => {
                 let (sa, sb) = (a.shed(reserved), b.shed(reserved));
-                assert_eq!(sa, sb, "shed: {ctx}");
+                assert_eq!(sa.map(new::VoiceIdx::index), sb, "shed: {ctx}");
                 seen.sheds += u32::from(sb.is_some());
             }
             9 => {
@@ -162,13 +162,13 @@ fn run(seed: u64, shares: Shares, steps: usize, k: u64, seen: &mut Seen) {
                 seen.sheds += u32::from(sb.is_some());
             }
             10 => {
-                a.kill(v);
+                a.kill(new::VoiceIdx::ALL[v]);
                 b.kill(v);
             }
             _ => {
-                a.recost(v, cost);
+                a.recost(new::VoiceIdx::ALL[v], cost);
                 b.recost(v, cost);
-                a.fade_from(v, reserved);
+                a.fade_from(new::VoiceIdx::ALL[v], reserved);
                 b.fade_from(v, reserved);
             }
         }

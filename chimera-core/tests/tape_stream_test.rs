@@ -2556,3 +2556,117 @@ fn a_cut_takes_the_room_it_frees() {
     let v = pl.voice_of(0, 63).expect("the cut note");
     assert!(pl.rig.inst.active()[v]);
 }
+
+// MAX VOICES and RESERVE (ADR 0281) on the card's steals.
+
+/// Bend `b` semitones on every Part, the wheel full up: each note bills
+/// its whole range.
+fn bent(pl: &mut Played<'_>, b: u8) {
+    for part in pl.rig.shared.parts.iter_mut() {
+        part.mix.bend = b;
+    }
+    pl.wheel_up();
+}
+
+fn reserve(n: u8) -> chimera_core::voice_limit::Reserve {
+    chimera_core::voice_limit::Reserve::new(chimera_core::voice_limit::VoiceCount::new(n).unwrap())
+}
+
+/// Part 1 holds two streams on RESERVE `r`; Part 2's note needs the card
+/// room one of them uses, with seven voices free. Whether Part 1 keeps
+/// both.
+fn guarded_streams_kept(r: u8) -> bool {
+    use chimera_core::voice_limit::{Asked, MaxVoices};
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = one_hold();
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
+    bent(&mut pl, 20);
+    let b = |n| bill_of(&p, n, 20);
+    assert!(b(60) + b(62) <= STREAM_BUDGET_BPS.get(), "two fit");
+    assert!(
+        b(60) + b(62) + b(64) > STREAM_BUDGET_BPS.get(),
+        "a third doesn't"
+    );
+    pl.rig.shared.parts[0].mix.set_voices(Asked {
+        max: MaxVoices::Auto,
+        reserve: reserve(r),
+    });
+    pl.on(0, 60);
+    pl.on(0, 62);
+    for _ in 0..4 {
+        pl.block();
+    }
+    let held = [pl.voice_of(0, 60).unwrap(), pl.voice_of(0, 62).unwrap()];
+    pl.on(1, 64);
+    for _ in 0..2 {
+        pl.block();
+    }
+    let slots = pl.rig.inst.allocator().slots();
+    held.iter()
+        .all(|&v| slots[v].part() == Some(PartId::ALL[0]) && !slots[v].dying())
+}
+
+/// A1: a card steal never stops a Part's guarded held stream; on RESERVE
+/// 0 the same note stops one.
+#[test]
+fn a_card_steal_keeps_off_a_reserved_parts_streams() {
+    assert!(
+        guarded_streams_kept(2),
+        "RESERVE 2: both kept, the note refused"
+    );
+    assert!(
+        !guarded_streams_kept(0),
+        "RESERVE 0: one stopped for the note"
+    );
+}
+
+/// R2 (the owner's ruling, 2026-11-18): a MONO TAPE Part at its cap of 1
+/// re-strikes beside another Part's released stream, its new note billing
+/// more than the card has left: it stops that stream, as on AUTO. The cap
+/// limits only its own voice count.
+fn capped_mono_admits(capped: bool) -> (bool, bool) {
+    use chimera_core::part::PartMode;
+    use chimera_core::voice_limit::{Asked, MaxVoices, VoiceCap};
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = one_hold();
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
+    bent(&mut pl, 20);
+    let b = |n| bill_of(&p, n, 20);
+    assert!(b(48) + b(50) <= STREAM_BUDGET_BPS.get(), "both fit");
+    assert!(
+        b(48) + b(72) > STREAM_BUDGET_BPS.get(),
+        "the higher note doesn't"
+    );
+    pl.rig.shared.parts[1].mix.set_mode(PartMode::Mono);
+    if capped {
+        pl.rig.shared.parts[1].mix.set_voices(Asked {
+            max: MaxVoices::Cap(VoiceCap::new(1).unwrap()),
+            reserve: chimera_core::voice_limit::Reserve::NONE,
+        });
+    }
+    pl.on(0, 48);
+    pl.block();
+    pl.off(0, 48);
+    pl.on(1, 50);
+    for _ in 0..4 {
+        pl.block();
+    }
+    let other = pl.voice_of(0, 48).unwrap();
+    pl.on(1, 72);
+    pl.block();
+    let slots = pl.rig.inst.allocator().slots();
+    (pl.voice_of(1, 72).is_some(), slots[other].dying())
+}
+
+#[test]
+fn a_capped_mono_part_steals_card_room_as_auto() {
+    let auto = capped_mono_admits(false);
+    assert_eq!(auto, (true, true), "AUTO: admitted, the tail stopped");
+    assert_eq!(capped_mono_admits(true), auto, "capped at 1: the same");
+}

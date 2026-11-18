@@ -127,18 +127,18 @@ fn a_cap_is_reached_at_its_count_and_a_reserve_guards_up_to_it() {
 #[test]
 fn reserves_are_booked_within_the_pool() {
     let mut l = Limits::AUTO;
-    assert_eq!(l.booked().get(), 0);
+    assert_eq!(l.booked().count(), VoiceCount::ZERO);
     let two = VoiceLimit::new(MaxVoices::Auto, reserve(2)).unwrap();
     for p in PartId::ALL.into_iter().take(4) {
         assert_eq!(l.try_set(p, two), Ok(()));
     }
-    assert_eq!(l.booked().get(), 8);
+    assert_eq!(l.booked().count(), VoiceCount::POOL);
     let refused = l.try_set(part(4), two).unwrap_err();
-    assert!(matches!(refused, Refusal::Overbooked(b) if b.get() == 10));
-    assert_eq!(l.booked().get(), 8, "nothing written");
+    assert!(matches!(refused, Refusal::Overbooked(b) if b.sum().get() == 10));
+    assert_eq!(l.booked().count(), VoiceCount::POOL, "nothing written");
     assert_eq!(Booked::new(9), None);
     assert_eq!(
-        Booked::sum([reserve(5), reserve(4)].into_iter()).map_err(|o| o.get()),
+        Booked::sum([reserve(5), reserve(4)].into_iter()).map_err(|o| o.sum().get()),
         Err(9)
     );
 }
@@ -153,7 +153,7 @@ fn a_reserve_over_its_cap_is_unlawful() {
         max: cap(1),
         reserve: reserve(4),
     };
-    assert_eq!(a.over_cap(), 3);
+    assert_eq!(a.over_cap(), VoiceCount::new(3).unwrap());
     assert!(a.lawful().is_err());
 }
 
@@ -235,7 +235,7 @@ fn at_its_cap_its_tail_goes_before_its_held_note() {
     let mut a = limited(&[capped(0, 2)]);
     on(&mut a, 0, 60);
     on(&mut a, 0, 61);
-    a.release(1);
+    a.release(VoiceIdx::ALL[1]);
     assert_eq!(voice(on(&mut a, 0, 62)), 1);
 }
 
@@ -343,7 +343,7 @@ fn a_shed_voice_leaves_the_cap() {
     let mut a = limited(&[capped(0, 2)]);
     on(&mut a, 0, 60);
     on(&mut a, 0, 61);
-    a.kill(0);
+    a.kill(VoiceIdx::ALL[0]);
     assert_eq!(voice(on(&mut a, 0, 62)), 2);
 }
 
@@ -403,7 +403,7 @@ fn a_part_above_its_reserve_loses_down_to_it() {
 fn a_tail_of_a_guarded_part_is_fair_game() {
     let mut a = limited(&[reserved(0, 1)]);
     on(&mut a, 0, 60);
-    a.release(0);
+    a.release(VoiceIdx::ALL[0]);
     for i in 0..7 {
         on(&mut a, 1, 70 + i);
     }
@@ -418,7 +418,7 @@ fn only_held_notes_count_toward_the_reserve() {
     for i in 0..3 {
         on(&mut a, 0, 60 + i);
     }
-    a.release(2);
+    a.release(VoiceIdx::ALL[2]);
     for i in 0..5 {
         on(&mut a, 1, 70 + i);
     }
@@ -489,7 +489,7 @@ fn a_guarded_parts_tail_sheds_first() {
     for i in 0..3 {
         on(&mut a, 0, 60 + i);
     }
-    a.release(0);
+    a.release(VoiceIdx::ALL[0]);
     on(&mut a, 1, 70);
     assert_eq!(a.shed_one(|_| true), VoiceIdx::new(0));
 }
@@ -550,8 +550,10 @@ fn key(p: u8) -> u8 {
 }
 
 /// The dspmax case (chimera-releases#5) on a kit: DRUM Part 1 on RESERVE 3
-/// rings three pads; Part 2 then plays eight notes. The kit's three voices
-/// are never taken.
+/// rings three pads, each pad's note-off sent at once; Part 2 then plays
+/// eight notes. A hit counts toward its reserve until its voice finishes
+/// (the owner's ruling, 2026-11-18): the kit's three voices are never
+/// taken.
 #[test]
 fn a_reserved_drum_part_keeps_its_hits_through_a_busy_part() {
     let mut w = writer();
@@ -561,10 +563,13 @@ fn a_reserved_drum_part_keeps_its_hits_through_a_busy_part() {
     r.shared.parts[1].mix.channel = chimera_core::MidiChannel::new(1).unwrap();
     for p in [1, 2, 5] {
         r.note_on_vel(0, key(p), 127);
+        r.note_off(0, key(p));
         r.render(1);
     }
     let kit: Vec<usize> = drum_hits(&r.inst).map(|(v, _)| v).collect();
     assert_eq!(kit.len(), 3);
+    let slots = r.inst.allocator().slots();
+    assert!(kit.iter().all(|&v| !slots[v].held()), "every pad's key up");
     for i in 0..8 {
         r.note_on_vel(1, 60 + i, 100);
         r.render(1);
@@ -771,7 +776,7 @@ fn the_rule_refuses_a_reserve_over_its_cap_and_reserves_past_the_pool() {
     assert_eq!(s.refusal(p, limit(0, 2)), None, "8 fits");
     assert!(matches!(
         s.refusal(p, limit(0, 3)),
-        Some(Refusal::Overbooked(b)) if b.get() == 9
+        Some(Refusal::Overbooked(b)) if b.sum().get() == 9
     ));
     // Past the rule already (a file): coming down lands, going up doesn't.
     let s = Shares::of(asks(&[(1, limit(0, 6)), (0, limit(0, 5))]));
@@ -801,7 +806,7 @@ fn a_reserve_past_the_pool_is_held_with_its_reason() {
     );
     let shown = ui.held_choice().expect("3 held");
     assert_eq!(shown.held.code(), 3);
-    assert!(matches!(shown.why, Reason::Voices(Refusal::Overbooked(b)) if b.get() == 9));
+    assert!(matches!(shown.why, Reason::Voices(Refusal::Overbooked(b)) if b.sum().get() == 9));
     let why = held::reason(shown.why);
     assert_eq!(why.as_str(), "RESERVES 9 · POOL HOLDS 8");
     fits_band(why.as_str());
@@ -893,13 +898,10 @@ fn voicing_packs_mode_cap_and_reserve() {
                 };
                 let v = Voicing::new(mode, l);
                 assert_eq!((v.mode(), v.asked()), (mode, l));
-                assert_eq!(Voicing::from_raw(v.raw()), Some(v));
             }
         }
     }
     assert_eq!(core::mem::size_of::<Voicing>(), 1);
-    assert_eq!(Voicing::from_raw(161).map(Voicing::raw), Some(161));
-    assert_eq!(Voicing::from_raw(162), None, "every digit within its radix");
     assert_eq!(core::mem::size_of::<PartParams>(), 16);
 }
 

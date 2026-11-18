@@ -17,6 +17,8 @@ use crate::project::PartId;
 pub struct VoiceCount(u8);
 
 const _: () = assert!(MAX_VOICES < u8::MAX as usize);
+// A `VoiceSet` is a `u8`, a bit a voice: its count never passes the pool's.
+const _: () = assert!(u8::BITS as usize == MAX_VOICES);
 
 impl VoiceCount {
     pub const ZERO: VoiceCount = VoiceCount(0);
@@ -51,6 +53,12 @@ impl VoiceCount {
 
     pub const fn get(self) -> u8 {
         self.0
+    }
+
+    /// The bits set in `mask`, a set of the pool's voices (`VoiceSet`): at
+    /// most its 8 bits, which are the pool's, so a count by construction.
+    pub const fn of_pool_bits(mask: u8) -> VoiceCount {
+        VoiceCount(mask.count_ones() as u8)
     }
 
     /// `delta` along 0..=`POOL`, saturating at both ends.
@@ -240,11 +248,12 @@ impl Asked {
         VoiceLimit::new(self.max, self.reserve)
     }
 
-    /// By how many voices the reserve passes the cap: 0 when lawful.
-    pub const fn over_cap(self) -> u8 {
+    /// By how many voices the reserve passes the cap: none when lawful.
+    pub const fn over_cap(self) -> VoiceCount {
         match self.max {
-            MaxVoices::Cap(c) => self.reserve.code().saturating_sub(c.0.0),
-            MaxVoices::Auto => 0,
+            // Both are counts: their difference is one.
+            MaxVoices::Cap(c) => VoiceCount(self.reserve.code().saturating_sub(c.0.0)),
+            MaxVoices::Auto => VoiceCount::ZERO,
         }
     }
 }
@@ -287,6 +296,38 @@ impl VoiceLimit {
     }
 }
 
+/// The six Parts' reserves summed, past the pool or not: 0..=48
+/// (`MAX_PARTS` × `POOL`) by construction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Reserved(u8);
+
+impl Reserved {
+    pub const NONE: Reserved = Reserved(0);
+
+    /// The reserves `r` summed.
+    pub fn of(r: impl Iterator<Item = Reserve>) -> Reserved {
+        // At most `MAX_PARTS` × `POOL`: no overflow (asserted below).
+        Reserved(r.map(Reserve::code).fold(0u8, u8::saturating_add))
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+
+    /// Within the pool, or past it.
+    pub const fn fits(self) -> Result<Booked, Overbooked> {
+        match VoiceCount::new(self.0) {
+            Some(n) => Ok(Booked(n)),
+            None => Err(Overbooked(self)),
+        }
+    }
+
+    /// By how many voices it passes the pool.
+    const fn excess(self) -> u8 {
+        self.0.saturating_sub(VoiceCount::POOL.0)
+    }
+}
+
 /// The six Parts' reserves summed, within the pool by construction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Booked(VoiceCount);
@@ -294,7 +335,7 @@ pub struct Booked(VoiceCount);
 /// The six Parts' reserves summed past the pool: they can't all hold.
 /// 9..=48 (`MAX_PARTS` × `POOL`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Overbooked(u8);
+pub struct Overbooked(Reserved);
 
 const _: () = assert!(MAX_PARTS * MAX_VOICES <= u8::MAX as usize);
 
@@ -308,18 +349,16 @@ impl Booked {
 
     /// The reserves `r` summed: booked, or past the pool.
     pub fn sum(r: impl Iterator<Item = Reserve>) -> Result<Booked, Overbooked> {
-        // At most `MAX_PARTS` × `POOL`: no overflow (asserted above).
-        let n = r.map(Reserve::code).fold(0u8, u8::saturating_add);
-        Booked::new(n).ok_or(Overbooked(n))
+        Reserved::of(r).fits()
     }
 
-    pub const fn get(self) -> u8 {
-        self.0.0
+    pub const fn count(self) -> VoiceCount {
+        self.0
     }
 }
 
 impl Overbooked {
-    pub const fn get(self) -> u8 {
+    pub const fn sum(self) -> Reserved {
         self.0
     }
 }
@@ -383,16 +422,8 @@ impl Over {
     }
 
     /// The reserves summed, past the pool or not.
-    fn sum(&self) -> u8 {
-        self.0
-            .iter()
-            .map(|a| a.reserve.code())
-            .fold(0, u8::saturating_add)
-    }
-
-    /// By how many voices the reserves pass the pool.
-    fn overbooked(&self) -> u8 {
-        self.sum().saturating_sub(VoiceCount::POOL.0)
+    fn sum(&self) -> Reserved {
+        Reserved::of(self.0.iter().map(|a| a.reserve))
     }
 }
 
@@ -425,6 +456,16 @@ impl Shares {
         Shares::Lawful(l)
     }
 
+    /// The six Parts' pairs, in Part order (each Part's mix's `voices`):
+    /// the one way the allocator, the UI and the renderer read them.
+    pub fn from_parts(asks: impl IntoIterator<Item = Asked>) -> Shares {
+        let mut a = [Asked::AUTO; MAX_PARTS];
+        for (slot, x) in a.iter_mut().zip(asks) {
+            *slot = x;
+        }
+        Shares::of(a)
+    }
+
     /// Part `p`'s pair.
     pub const fn ask(&self, p: PartId) -> Asked {
         match self {
@@ -434,9 +475,9 @@ impl Shares {
     }
 
     /// The reserves summed, past the pool or not.
-    pub fn reserved(&self) -> u8 {
+    pub fn reserved(&self) -> Reserved {
         match self {
-            Shares::Lawful(l) => l.booked().get(),
+            Shares::Lawful(l) => Reserved(l.booked().count().0),
             Shares::Over(o) => o.sum(),
         }
     }
@@ -463,7 +504,9 @@ impl Shares {
                 let mut next = *o;
                 next.0[p.index()] = to;
                 match Booked::sum(next.0.iter().map(|a| a.reserve)) {
-                    Err(b) if next.overbooked() > o.overbooked() => Some(Refusal::Overbooked(b)),
+                    Err(b) if next.sum().excess() > o.sum().excess() => {
+                        Some(Refusal::Overbooked(b))
+                    }
                     _ => None,
                 }
             }

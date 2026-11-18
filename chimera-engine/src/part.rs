@@ -44,6 +44,8 @@ impl DiskCode for PartMode {
 }
 
 impl PartMode {
+    pub const ALL: [PartMode; 2] = [PartMode::Mono, PartMode::Poly];
+
     fn from_u8(v: u8) -> Self {
         match v {
             0 => PartMode::Mono,
@@ -213,8 +215,8 @@ pub struct PartParams {
 /// The byte is a mixed-radix number, `(mode × VALUES + max) × VALUES +
 /// reserve`, with `VALUES` = 9 (each count 0..=8; MAX VOICES' place 0 is
 /// AUTO). Each digit is below its radix, so the byte is below `MODES ×
-/// VALUES²` = 162 (asserted to fit a `u8`) and `new` is the only way in
-/// but `from_raw`, which checks that bound. Every byte below it decodes:
+/// VALUES²` = 162 (asserted to fit a `u8`), and `new` is the only way
+/// in. Every byte below it decodes:
 /// `% VALUES` and `/ VALUES % VALUES` are counts by construction, and the
 /// mode digit is `< MODES`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,7 +225,7 @@ pub struct Voicing(u8);
 /// Each count digit's radix: 0..=`POOL`.
 const VALUES: u8 = VoiceCount::VALUES;
 /// The mode digit's radix: MONO and POLY.
-const MODES: u8 = 2;
+const MODES: u8 = PartMode::ALL.len() as u8;
 /// Bytes that decode: every digit within its radix.
 const VOICINGS: u16 = MODES as u16 * VALUES as u16 * VALUES as u16;
 const _: () = assert!(VOICINGS <= 256);
@@ -235,19 +237,6 @@ impl Voicing {
             PartMode::Poly => 1,
         };
         Voicing((m * VALUES + a.max.code()) * VALUES + a.reserve.code())
-    }
-
-    /// A byte that came from `new`, or `None`.
-    pub const fn from_raw(b: u8) -> Option<Voicing> {
-        if (b as u16) < VOICINGS {
-            Some(Voicing(b))
-        } else {
-            None
-        }
-    }
-
-    pub const fn raw(self) -> u8 {
-        self.0
     }
 
     pub const fn mode(self) -> PartMode {
@@ -583,7 +572,7 @@ impl Block for PartParams {
             Self::MAX_VOICES => MAX_VOICES_NAMES
                 .get(usize::from(self.voices().max.code()))
                 .copied(),
-            Self::RESERVE => NUMERALS
+            Self::RESERVE => RESERVE_NAMES
                 .get(usize::from(self.voices().reserve.code()))
                 .copied(),
             _ => None,

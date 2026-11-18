@@ -39,8 +39,8 @@ fn poly_takes_free_voices_round_robin() {
     let mut a = Allocator::new(BUDGET);
     let got: Vec<usize> = (0..3).map(|i| voice(on(&mut a, 0, Poly, 60 + i))).collect();
     assert_eq!(got, [0, 1, 2]);
-    a.release(0);
-    a.release_finished(0);
+    a.release(VoiceIdx::ALL[0]);
+    a.release_finished(VoiceIdx::ALL[0]);
     // The next notes continue after the last voice used, wrapping, instead
     // of reusing the just-freed voice 0.
     let got: Vec<usize> = (0..MAX_VOICES as u8 - 2)
@@ -113,12 +113,11 @@ fn release_unholds_only_that_voice() {
     let mut a = Allocator::new(BUDGET);
     let v0 = voice(on(&mut a, 0, Poly, 60));
     let v1 = voice(on(&mut a, 1, Poly, 60)); // same note, other part
-    a.release(v1);
+    a.release(VoiceIdx::ALL[v1]);
     assert!(a.slots()[v0].held());
     assert!(!a.slots()[v1].held());
-    a.release(v1); // already released
-    a.release(5); // free
-    a.release(MAX_VOICES); // out of range
+    a.release(VoiceIdx::ALL[v1]); // already released
+    a.release(VoiceIdx::ALL[5]); // free
     assert_eq!(
         a.slots()[v1].part(),
         Some(PartId::ALL[1]),
@@ -133,11 +132,11 @@ fn release_unholds_only_that_voice() {
 fn tails_keep_the_voice_until_finished() {
     let mut a = Allocator::new(BUDGET);
     let v = voice(on(&mut a, 0, Poly, 60));
-    a.release_finished(v); // still held: ignored
+    a.release_finished(VoiceIdx::ALL[v]); // still held: ignored
     assert_eq!(a.slots()[v].part(), Some(PartId::ALL[0]));
-    a.release(v);
+    a.release(VoiceIdx::ALL[v]);
     assert_eq!(a.slots()[v].part(), Some(PartId::ALL[0]), "tail rings");
-    a.release_finished(v);
+    a.release_finished(VoiceIdx::ALL[v]);
     assert!(a.slots()[v].is_free());
 }
 
@@ -250,12 +249,12 @@ fn random_play_keeps_the_pool_invariants() {
                 2 => {
                     if let Some(i) = held.iter().position(|h| h.0 == part && h.1 == note) {
                         let (_, _, v) = held.remove(i);
-                        a.release(v);
+                        a.release(VoiceIdx::ALL[v]);
                     }
                 }
                 _ => {
                     let v = rng.below(MAX_VOICES as u64) as usize;
-                    a.release_finished(v); // the engine went quiet
+                    a.release_finished(VoiceIdx::ALL[v]); // the engine went quiet
                 }
             }
             // Every held note is still on its voice, held; nothing else is held.
@@ -308,16 +307,16 @@ fn recost_sheds_the_newest_held_voice_over_budget() {
         on(&mut a, 0, Poly, 60 + i); // 6 × 610 + 600 = 4,260
     }
     for v in 0..6 {
-        a.recost(v, Cost(1_210)); // the part switched to Modal: 7,860
+        a.recost(VoiceIdx::ALL[v], Cost(1_210)); // the part switched to Modal: 7,860
     }
     let mut shed = Vec::new();
-    while let Some(v) = a.shed(fx) {
+    while let Some(v) = a.shed(fx).map(VoiceIdx::index) {
         shed.push(v);
     }
     assert_eq!(shed, [5], "newest first, only as many as needed");
     assert!(a.slots()[5].dying() && !a.slots()[5].is_free());
     assert_eq!(a.sounding_cost() + fx, Cost(6 * 1_210 + 600));
-    a.release_finished(5); // the fade ended
+    a.release_finished(VoiceIdx::ALL[5]); // the fade ended
     assert!(a.slots()[5].is_free());
     assert!(a.sounding_cost() + fx <= BUDGET.as_cost());
 }
@@ -330,13 +329,13 @@ fn recost_sheds_a_tail_before_a_held_note() {
     for i in 0..6 {
         on(&mut a, 0, Poly, 60 + i);
     }
-    a.release(3);
-    a.release(1);
+    a.release(VoiceIdx::ALL[3]);
+    a.release(VoiceIdx::ALL[1]);
     for v in 0..6 {
-        a.recost(v, Cost(1_210));
+        a.recost(VoiceIdx::ALL[v], Cost(1_210));
     }
-    assert_eq!(a.shed(fx), Some(1), "the oldest tail");
-    assert_eq!(a.shed(fx), None);
+    assert_eq!(a.shed(fx).map(VoiceIdx::index), Some(1), "the oldest tail");
+    assert_eq!(a.shed(fx).map(VoiceIdx::index), None);
 }
 
 /// A dying voice is neither stolen, retriggered nor shed again before its
@@ -348,36 +347,36 @@ fn a_dying_voice_keeps_its_slot_until_freed() {
     for i in 0..MAX_VOICES as u8 {
         on(&mut a, 0, Poly, 60 + i);
     }
-    a.release(2);
+    a.release(VoiceIdx::ALL[2]);
     for v in 0..MAX_VOICES {
-        a.recost(v, Cost(1_210));
+        a.recost(VoiceIdx::ALL[v], Cost(1_210));
     }
-    assert_eq!(a.shed(fx), Some(2));
+    assert_eq!(a.shed(fx).map(VoiceIdx::index), Some(2));
     // More over budget: the next shed takes another voice, never 2.
     let mut shed = vec![2];
     for v in 0..MAX_VOICES {
-        a.recost(v, Cost(1_500));
+        a.recost(VoiceIdx::ALL[v], Cost(1_500));
     }
-    while let Some(v) = a.shed(fx) {
+    while let Some(v) = a.shed(fx).map(VoiceIdx::index) {
         assert_ne!(v, 2, "shed twice");
         shed.push(v);
     }
     for v in 0..MAX_VOICES {
-        a.recost(v, Cost(100)); // room again
+        a.recost(VoiceIdx::ALL[v], Cost(100)); // room again
     }
     let live = (0..MAX_VOICES).find(|v| !shed.contains(v)).unwrap();
-    a.release(live);
-    a.release_finished(live);
+    a.release(VoiceIdx::ALL[live]);
+    a.release_finished(VoiceIdx::ALL[live]);
     assert_eq!(voice(on(&mut a, 1, Poly, 80)), live, "a free voice first");
     assert!(a.slots()[2].dying());
     assert_eq!(a.slots()[2].note(), Some(n(62)));
     let v = voice(on(&mut a, 1, Poly, 81));
     assert!(shed.contains(&v), "then a dying one, not a held note");
     assert!(!a.slots()[v].dying() && a.slots()[v].held());
-    a.release_finished(v); // the old note's fade ended: the new one stays
+    a.release_finished(VoiceIdx::ALL[v]); // the old note's fade ended: the new one stays
     assert_eq!(a.slots()[v].note(), Some(n(81)));
     for &d in shed.iter().filter(|&&d| d != v) {
-        a.release_finished(d);
+        a.release_finished(VoiceIdx::ALL[d]);
         assert!(a.slots()[d].is_free());
     }
 }
@@ -393,9 +392,9 @@ fn a_note_on_does_not_pay_for_a_dying_voice() {
         on(&mut a, 0, Poly, 60 + i);
     }
     for v in 0..5 {
-        a.recost(v, Cost(1_400)); // 7,600: one must go
+        a.recost(VoiceIdx::ALL[v], Cost(1_400)); // 7,600: one must go
     }
-    assert_eq!(a.shed(fx), Some(4));
+    assert_eq!(a.shed(fx).map(VoiceIdx::index), Some(4));
     let v = voice(a.note_on(PartId::ALL[1], Poly, n(80), Cost(600), fx));
     assert_eq!(v, 5, "a free voice");
     assert!((0..4).all(|v| a.slots()[v].held() && a.slots()[v].note() == Some(n(60 + v as u8))));
@@ -407,9 +406,9 @@ fn a_note_on_does_not_pay_for_a_dying_voice() {
 fn a_mono_part_does_not_retrigger_its_dying_voice() {
     let mut a = Allocator::new(BUDGET);
     let m = voice(on(&mut a, 0, Mono, 60));
-    a.recost(m, Cost(7_001));
-    assert_eq!(a.shed(NONE), Some(m));
-    a.recost(m, Cost(100));
+    a.recost(VoiceIdx::ALL[m], Cost(7_001));
+    assert_eq!(a.shed(NONE).map(VoiceIdx::index), Some(m));
+    a.recost(VoiceIdx::ALL[m], Cost(100));
     let v = voice(on(&mut a, 0, Mono, 62));
     assert_ne!(v, m);
     assert!(a.slots()[m].dying());
@@ -426,7 +425,7 @@ fn poly_to_mono_switch_releases_the_held_chord() {
     assert_eq!(voice(on(&mut a, 0, Mono, 74)), m);
     for (i, &v) in chord.iter().enumerate() {
         assert_eq!(a.slots()[v].note(), Some(n(60 + i as u8)));
-        a.release(v);
+        a.release(VoiceIdx::ALL[v]);
         assert!(!a.slots()[v].held());
     }
 }
@@ -441,7 +440,7 @@ fn full_pool_steals_a_tail_before_a_held_drone() {
         .map(|i| voice(on(&mut a, 1, Poly, 60 + i)))
         .collect();
     for &v in &tails {
-        a.release(v); // tails ring
+        a.release(VoiceIdx::ALL[v]); // tails ring
     }
     let v = voice(on(&mut a, 2, Poly, 90));
     assert_eq!(v, tails[0], "the oldest tail, not the drone");
@@ -460,8 +459,8 @@ fn cpu_budget_steals_a_tail_before_a_held_note() {
     let rest: Vec<usize> = (1..4)
         .map(|i| voice(a.note_on(PartId::ALL[0], Poly, n(60 + i), modal, fx)))
         .collect();
-    a.release(rest[1]);
-    a.release(rest[2]);
+    a.release(VoiceIdx::ALL[rest[1]]);
+    a.release(VoiceIdx::ALL[rest[2]]);
     assert_eq!(
         a.note_on(PartId::ALL[1], Poly, n(70), modal, fx),
         Alloc::Voice(VoiceIdx::ALL[rest[1]])
@@ -498,18 +497,18 @@ fn a_note_on_takes_the_dying_voice_shed_first() {
         on(&mut a, 0, Poly, 60 + i);
     }
     for v in 0..MAX_VOICES {
-        a.recost(v, one_over(MAX_VOICES)); // one must go
+        a.recost(VoiceIdx::ALL[v], one_over(MAX_VOICES)); // one must go
     }
-    let first = a.shed(fx).unwrap();
-    assert_eq!(a.shed(fx), None);
+    let first = a.shed(fx).map(VoiceIdx::index).unwrap();
+    assert_eq!(a.shed(fx).map(VoiceIdx::index), None);
     for v in 0..MAX_VOICES {
-        a.recost(v, one_over(MAX_VOICES - 1)); // another must go
+        a.recost(VoiceIdx::ALL[v], one_over(MAX_VOICES - 1)); // another must go
     }
-    let second = a.shed(fx).unwrap();
-    assert_eq!(a.shed(fx), None);
+    let second = a.shed(fx).map(VoiceIdx::index).unwrap();
+    assert_eq!(a.shed(fx).map(VoiceIdx::index), None);
     assert_ne!(first, second);
     for v in 0..MAX_VOICES {
-        a.recost(v, Cost(100));
+        a.recost(VoiceIdx::ALL[v], Cost(100));
     }
     assert_eq!(voice(on(&mut a, 1, Poly, 80)), first);
 }
@@ -523,7 +522,7 @@ fn a_restruck_key_reuses_its_voice() {
     let first = voice(on(&mut a, 0, Poly, 48));
     on(&mut a, 0, Poly, 52);
     assert_eq!(voice(on(&mut a, 0, Poly, 48)), first, "held");
-    a.release(first);
+    a.release(VoiceIdx::ALL[first]);
     assert_eq!(voice(on(&mut a, 0, Poly, 48)), first, "ringing");
     assert_ne!(voice(on(&mut a, 1, Poly, 48)), first, "another Part");
 }
@@ -536,8 +535,8 @@ fn a_steal_takes_the_oldest_tail_first() {
     for i in 0..MAX_VOICES as u8 {
         on(&mut a, 0, Poly, 40 + i);
     }
-    a.release(5);
-    a.release(3);
+    a.release(VoiceIdx::ALL[5]);
+    a.release(VoiceIdx::ALL[3]);
     assert_eq!(voice(on(&mut a, 1, Poly, 90)), 3, "the older of the tails");
 }
 
@@ -550,7 +549,7 @@ fn a_restrike_over_budget_steals_as_any_note_does() {
     // Everything but 1,000 cycles reserved: a dear tail, then the key.
     let reserved = Cost(total - 1_000);
     let tail = voice(a.note_on(PartId::ALL[0], Poly, n(40), Cost(700), reserved));
-    a.release(tail);
+    a.release(VoiceIdx::ALL[tail]);
     let key = voice(a.note_on(PartId::ALL[0], Poly, n(48), Cost(300), reserved));
     // Re-struck at 650: its own voice frees 300 (700 + 650 > 1,000); the
     // tail frees 700 (300 + 650 fits).
@@ -587,11 +586,11 @@ fn a_glide_bills_admission_but_never_sheds() {
         on(&mut a, 0, Poly, 40 + k);
     }
     for v in 0..MAX_VOICES {
-        a.recost(v, each);
+        a.recost(VoiceIdx::ALL[v], each);
     }
     assert!(a.shed(Cost::ZERO).is_none(), "fits at the steady bill");
     for v in 0..MAX_VOICES {
-        a.recost_with_glide(v, each, Cost(50));
+        a.recost_with_glide(VoiceIdx::ALL[v], each, Cost(50));
     }
     assert!(a.shed(Cost::ZERO).is_none(), "a glide sheds nothing");
     assert!(a.sounding_cost().0 > budget.as_cost().0, "but it is billed");
@@ -644,8 +643,8 @@ fn a_stacked_pad_ends_its_own_oldest_voice() {
 #[test]
 fn a_stacked_pad_ends_its_own_tail_before_its_held_voice() {
     let (mut a, own) = stacked();
-    a.release(0);
-    a.release(4);
+    a.release(VoiceIdx::ALL[0]);
+    a.release(VoiceIdx::ALL[4]);
     let v = a
         .pick_hit(PartId::ALL[0], Poly, n(0), NOTE_COST, NONE, own)
         .map(VoiceIdx::index);

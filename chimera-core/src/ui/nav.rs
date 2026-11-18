@@ -39,11 +39,17 @@ const fn mixer_page(node: usize) -> PageAt {
     }
 }
 const PART_PAGE: PageAt = mixer_page(MIXER_PART);
-/// PART's sub-page, VOICES (ADR 0281).
-const VOICES_PAGE: PageAt = match MIXER_CHANNEL_CHAIN.page(MIXER_PART, 1) {
+/// VOICES' place among PART's sub-pages (ADR 0281): the first under it.
+const VOICES_SUB: usize = 1;
+/// PART's sub-page, VOICES.
+const VOICES_PAGE: PageAt = match MIXER_CHANNEL_CHAIN.page(MIXER_PART, VOICES_SUB) {
     Some(p) => p,
     None => panic!("PART has VOICES"),
 };
+const _: () = assert!(
+    MIXER_CHANNEL_CHAIN.blocks[MIXER_PART].sub_pages[VOICES_SUB - 1].id
+        == block_registry::PART_VOICES.id
+);
 const SENDS_PAGE: PageAt = mixer_page(MIXER_HOME);
 const FX_FIRST_PAGE: PageAt = mixer_page(FX_FIRST as usize);
 
@@ -866,16 +872,14 @@ impl Location {
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
             // PART's sub-page, VOICES, is down from it (ADR 0281): EDIT
             // under STACK, SEQ under ROW; EDIT on from it under STACK, the
-            // Sound rung.
-            (Part(p, m), k) if voices_step(m, k, cx.pages).is_some() => {
-                match voices_step(m, k, cx.pages) {
-                    Some(Some(m)) => go(Part(p, m)),
-                    _ => go(Sound(p, cx.opens[p.index()])),
-                }
-            }
-            (Part(p, _), NavKey::Edit) => go(Sound(p, cx.opens[p.index()])),
-            // The mixer is the top of its chain; the Sound rung is under it.
-            (Part(..), NavKey::SeqTap) => Step::Stay,
+            // Sound rung. Otherwise EDIT goes down to the Sound rung, and
+            // the mixer is the top of its chain (SEQ stays).
+            (Part(p, m), k) => match voices_step(m, k, cx.pages) {
+                MixStep::ToPage(m) => go(Part(p, m)),
+                MixStep::ToSound => go(Sound(p, cx.opens[p.index()])),
+                MixStep::Pass if k == NavKey::Edit => go(Sound(p, cx.opens[p.index()])),
+                MixStep::Pass => Step::Stay,
+            },
             (Sound(p, _), NavKey::SeqTap) => go(r.mix_entry(p)),
             (Fx(p, at), NavKey::Minus) if at.node() == FX_FIRST => go(Part(p, MixPage::Sends)),
             (Fx(p, at), k) => page_step(&MIXER_CHANNEL_CHAIN, at, k, cx.pages)
@@ -961,17 +965,32 @@ fn mix_walk(p: PartId, m: MixPage, d: i8) -> Loc {
     }
 }
 
-/// A sub-page key on PART or VOICES (ADR 0281): `Some(Some(m))` to
-/// mixer page `m`, `Some(None)` down past VOICES to the Sound rung,
-/// `None` for any other key or page.
-fn voices_step(m: MixPage, k: NavKey, pages: Pages) -> Option<Option<MixPage>> {
-    match (m, sub_move(pages, k)?) {
-        (MixPage::Part, Move::Down) => Some(Some(MixPage::Voices)),
-        (MixPage::Voices, Move::Up) => Some(Some(MixPage::Part)),
+/// Where a key on a mixer page goes between PART and VOICES (ADR 0281).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MixStep {
+    /// To this mixer page.
+    ToPage(MixPage),
+    /// Down past VOICES to the Sound rung.
+    ToSound,
+    /// Not a step between them: the mixer's own rules.
+    Pass,
+}
+
+/// A sub-page key on PART or VOICES.
+fn voices_step(m: MixPage, k: NavKey, pages: Pages) -> MixStep {
+    let Some(mv) = sub_move(pages, k) else {
+        return MixStep::Pass;
+    };
+    match (m, mv, pages) {
+        (MixPage::Part, Move::Down, _) => MixStep::ToPage(MixPage::Voices),
+        (MixPage::Voices, Move::Up, _) => MixStep::ToPage(MixPage::Part),
         // Under STACK, down is EDIT, the way to the Sound rung; under ROW
-        // it is SEQ, and the mixer stays its top (`SeqTap` stays).
-        (MixPage::Voices, Move::Down) if pages == Pages::Stack => Some(None),
-        _ => None,
+        // it is SEQ, and the mixer stays its top.
+        (MixPage::Voices, Move::Down, Pages::Stack) => MixStep::ToSound,
+        (MixPage::Voices, Move::Down, Pages::Row)
+        | (MixPage::Part, Move::Up, _)
+        | (MixPage::Part | MixPage::Voices | MixPage::Sends, Move::Next | Move::Prev, _)
+        | (MixPage::Sends, Move::Down | Move::Up, _) => MixStep::Pass,
     }
 }
 

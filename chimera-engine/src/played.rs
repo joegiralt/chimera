@@ -35,10 +35,10 @@ impl NoteOut {
 }
 
 /// Audio: a key went down on `part`, sounding `note` at `cents` offset.
-pub fn note_on(channel: u8, part: u8, key: u8, vel: u8, note: u8, cents: i16) {
+pub fn note_on(channel: u8, part: crate::project::PartId, key: u8, vel: u8, note: u8, cents: i16) {
     HELD[word(channel, key)].fetch_or(1 << (key & 31), Ordering::Relaxed);
     LAST_IN.store(
-        VALID | (part as u32 & 15) << 14 | (vel as u32 & 127) << 7 | key as u32 & 127,
+        VALID | (part.index() as u32 & 15) << 14 | (vel as u32 & 127) << 7 | key as u32 & 127,
         Ordering::Relaxed,
     );
     LAST_OUT.store(

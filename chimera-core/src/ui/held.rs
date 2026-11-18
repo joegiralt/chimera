@@ -365,9 +365,9 @@ pub fn reason(w: impl Into<Reason>) -> Line {
         }
         Reason::Voices(r) => {
             // Bank 2's words (`part_voices`): closed, none.
-            let mut l = Line::new("");
+            let mut l = None;
             crate::bank2::voices(super::part_voices::Ask::Why(r, &mut l));
-            return l;
+            return l.unwrap_or_else(|| Line::new(""));
         }
     };
     match w {

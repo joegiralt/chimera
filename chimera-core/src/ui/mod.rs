@@ -1792,7 +1792,7 @@ impl UiState {
         cell: held::VoiceCell,
         act: part_voices::Act,
     ) -> Option<part_voices::Turned> {
-        let mut out = part_voices::Turned::Unchanged;
+        let mut out = None;
         let job = part_voices::Job::Act {
             ui: self,
             at,
@@ -1800,7 +1800,8 @@ impl UiState {
             act,
             out: &mut out,
         };
-        crate::bank2::voices(part_voices::Ask::Judge(job)).map(|()| out)
+        crate::bank2::voices(part_voices::Ask::Judge(job));
+        out
     }
 
     /// Why a held MAX VOICES or RESERVE is refused, if it still is: bank
@@ -1815,7 +1816,7 @@ impl UiState {
             out: &mut out,
         };
         crate::bank2::voices(part_voices::Ask::Judge(job));
-        out.map(held::Reason::Voices)
+        out.and_then(Result::err).map(held::Reason::Voices)
     }
 
     /// The choice the focused cell shows dimmed and why, if any.

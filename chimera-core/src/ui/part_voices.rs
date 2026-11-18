@@ -19,12 +19,13 @@ use crate::voice_limit::{Asked, Refusal, Shares, VoiceCount};
 type Parts = [crate::preset::Part; MAX_PARTS];
 
 /// What bank 1 asks. Each answer goes to the ask's own slot, typed by
-/// it; with the door closed the slot is left as the caller set it.
+/// it and empty (`None`) until bank 2 answers: with the door closed it
+/// stays empty.
 pub(crate) enum Ask<'a> {
     /// A turn or an edit, or a held choice's check.
     Judge(Job<'a>),
     /// A refusal's words.
-    Why(Refusal, &'a mut Line),
+    Why(Refusal, &'a mut Option<Line>),
     /// RESERVE's focus band: the reserves booked.
     Note(&'a Parts, &'a mut Option<Line>),
 }
@@ -37,7 +38,7 @@ pub(crate) enum Job<'a> {
         at: PartId,
         cell: VoiceCell,
         act: Act,
-        out: &'a mut Turned,
+        out: &'a mut Option<Turned>,
     },
     /// A held choice on Part `at`: why it is refused, if it still is and
     /// what it was judged against is unchanged.
@@ -45,7 +46,7 @@ pub(crate) enum Job<'a> {
         ui: &'a UiState,
         at: PartId,
         hold: VoicesHold,
-        out: &'a mut Option<Refusal>,
+        out: &'a mut Option<Result<(), Refusal>>,
     },
 }
 
@@ -106,20 +107,18 @@ const fn text(b: &'static [u8]) -> &'static str {
 pub(crate) fn ask_in(a: Ask<'_>) {
     match a {
         Ask::Judge(j) => judge(j),
-        Ask::Why(r, out) => *out = why(r),
+        Ask::Why(r, out) => *out = Some(why(r)),
         Ask::Note(parts, out) => {
-            *out = Some(note(&Shares::of(core::array::from_fn(|q| {
-                parts[q].mix.voices()
-            }))))
+            *out = Some(note(&Shares::from_parts(
+                parts.iter().map(|p| p.mix.voices()),
+            )))
         }
     }
 }
 
 /// Every Part's pair in `project`.
 pub fn shares(project: &Project) -> Shares {
-    Shares::of(core::array::from_fn(|q| {
-        project.part(PartId::ALL[q]).mix.voices()
-    }))
+    Shares::from_parts(project.perf().parts().iter().map(|p| p.mix.voices()))
 }
 
 /// `job` against the rule. `Shares::refusal` is called once, here: a
@@ -137,13 +136,13 @@ fn judge(job: Job<'_>) {
             act,
             out,
         } => {
-            *out = match (asked, act) {
+            *out = Some(match (asked, act) {
                 (None, _) => Turned::Unchanged,
                 (Some((s, _, to)), Act::Turn { .. }) => turn(ui, at, (cell, to, s), refused),
                 (Some((_, _, to)), Act::Edit(_)) => edit(ui, at, to, refused),
-            };
+            });
         }
-        Job::Held { out, .. } => *out = refused,
+        Job::Held { out, .. } => *out = Some(refused.map_or(Ok(()), Err)),
     }
 }
 
@@ -237,7 +236,7 @@ fn edit(ui: &mut UiState, at: PartId, to: Asked, refused: Option<Refusal>) -> Tu
 /// the rule.
 fn note(s: &Shares) -> Line {
     let mut l = Line::new(RESERVES_W);
-    let _ = write!(l, "{}/{}", s.reserved(), VoiceCount::POOL.get());
+    let _ = write!(l, "{}/{}", s.reserved().get(), VoiceCount::POOL.get());
     l
 }
 
@@ -254,7 +253,7 @@ fn why(r: Refusal) -> Line {
         Refusal::Overbooked(b) => write!(
             l,
             "{RESERVES_W}{}{POOL_W}{}",
-            b.get(),
+            b.sum().get(),
             VoiceCount::POOL.get()
         ),
     };
