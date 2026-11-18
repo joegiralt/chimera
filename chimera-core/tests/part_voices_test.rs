@@ -987,6 +987,10 @@ fn a_strike_says_when_its_slot_frees_and_whether_it_reserves() {
         (Strike::Hit(Key::Up), true, true),
     ];
     for (s, frees, reserves) in table {
-        assert_eq!((s.ends_with_voice(), s.reserves()), (frees, reserves), "{s:?}");
+        assert_eq!(
+            (s.ends_with_voice(), s.reserves()),
+            (frees, reserves),
+            "{s:?}"
+        );
     }
 }
