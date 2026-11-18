@@ -4,13 +4,13 @@
 mod common;
 use common::SR;
 
-use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusMode, ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::ring::{first_reflection, size_step};
+use chimera_core::dsp::{SendLevel, Stereo};
 use chimera_core::hw::DAC_PAIRS;
 use chimera_hal::BLOCK_SIZE;
 
@@ -38,7 +38,7 @@ fn off_is_all_off() {
     assert!(!p.chorus.is_on() && !p.delay.is_on() && !p.reverb.is_on());
     assert_eq!(p.reverb.mix, 0.0);
     assert_eq!(p.delay.time_ms, 375.0);
-    assert_eq!(p.delay.rev_send, 0.0);
+    assert_eq!(p.delay.rev_send, SendLevel::OFF);
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn with_rev_send(blocks: usize, own: bool, send: impl Fn(usize) -> f32) -> Vec<f
     let mut bus = Box::new(FxBus::new());
     let mut out = Vec::new();
     for b in 0..blocks {
-        p.delay.rev_send = send(b);
+        p.delay.rev_send = SendLevel::new(send(b));
         let x = if b < 8 { burst() } else { [0.0; BLOCK_SIZE] };
         let own = if own { x } else { [0.0; BLOCK_SIZE] };
         let mut sends = [[0.0; BLOCK_SIZE], x, own];
@@ -206,12 +206,30 @@ fn rev_send_raises_the_reverbs_energy() {
     assert!(full > 2.0 * half, "{half} → {full}");
 }
 
+/// REV SEND is on the Part sends' squared taper (ADR 0278): half way feeds
+/// the reverb 12 dB under the top, where linear fed it 6. The reverb's
+/// share of the return falls a little faster than its feed (7.2 dB
+/// measured on the linear knob, 15.4 on the taper), so the bound is wide.
+#[test]
+fn rev_send_half_sits_12_db_under_full() {
+    let base = with_rev_send(400, false, |_| 0.0);
+    let reverb = |s: f32| -> f32 {
+        with_rev_send(400, false, |_| s)
+            .iter()
+            .zip(&base)
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum()
+    };
+    let db = 10.0 * (reverb(0.5) / reverb(1.0)).log10();
+    assert!((-18.0..-12.0).contains(&db), "{db} dB");
+}
+
 /// With the delay off its buffer holds the raw send: REV SEND passes none
 /// of it to the reverb.
 #[test]
 fn rev_send_feeds_nothing_while_the_delay_is_off() {
     let mut p = FxParams::OFF;
-    (p.delay.rev_send, p.reverb.mix) = (1.0, 0.5);
+    (p.delay.rev_send, p.reverb.mix) = (SendLevel::FULL, 0.5);
     let mut bus = Box::new(FxBus::new());
     for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE + 64 {
         let mut sends = [[0.0; BLOCK_SIZE], burst(), [0.0; BLOCK_SIZE]];
@@ -363,7 +381,7 @@ fn a_send_on_new_is_heard() {
     let mut perf = init_perf(chimera_core::params::EngineType::Algo);
     let e = perf.edit(chimera_core::project::PartId::ALL[0]);
     e.mix.output = chimera_core::part::DacPair::P3;
-    e.sound.params.out.sends = [0.0, 0.0, 0.5];
+    e.sound.params.out.sends = [0.0, 0.0, 0.5].map(SendLevel::new);
     let blocks = 24_000 / BLOCK_SIZE;
     let r = run(&perf, &[(0, 60)], 100, blocks, blocks, None);
     let p1 = &r.out[0];

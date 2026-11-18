@@ -3,6 +3,7 @@
 //! param for param.
 
 use chimera_core::addr::{BlockRead, BlockRef};
+use chimera_core::dsp::{Gain, SendLevel};
 use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -143,7 +144,11 @@ fn factory_tinz_is_the_owners() {
     let s = r.sounds.iter().find(|s| s.name.as_str() == "TINZ").unwrap();
     let src = r.sources.iter().find(|x| x.name == s.source).unwrap();
     let built = source(src, audio(src, &originals()).unwrap().unwrap()).unwrap();
-    let (built, owner) = (tape_sound(s, &built.head), load(TINZ));
+    let (built, mut owner) = (tape_sound(s, &built.head), load(TINZ));
+    // ADR 0278: the recipe re-voices the owner's sends for the send taper,
+    // the grid level whose gain is the one the unit stored.
+    let revoiced = |l: SendLevel| SendLevel::from_gain(Gain::new(l.get()));
+    owner.params.out.sends = owner.params.out.sends.map(revoiced);
     assert_eq!(sound_crc(&built), sound_crc(&owner), "the files' records");
     let (ours, theirs) = (dump(&built), dump(&owner));
     if ours != theirs {

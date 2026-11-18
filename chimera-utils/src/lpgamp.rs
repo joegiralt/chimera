@@ -48,7 +48,7 @@ fn eighths(notes: &[(u8, u8)], len: f64) -> Phrase {
 /// `p` on `snd` through `Instrument`, as `unitab::engine` plays a script.
 fn engine(snd: &Sound, p: &Phrase) -> Vec<f32> {
     let mut s = snd.clone();
-    s.params.out.sends = [0.0; FX_SENDS];
+    s.params.out.sends = [chimera_core::dsp::SendLevel::OFF; FX_SENDS];
     let sound = Tracked::fresh(s);
     let loads = Loads::NONE.next();
     let mut pubr = KnobPublisher::new();

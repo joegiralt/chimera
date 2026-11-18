@@ -6,6 +6,7 @@
 //! chorus's own loop, against I+II's.
 
 use crate::grain_listen::{Phrase, phrases, render_stereo};
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus, MODE_NAMES};
 use chimera_core::dsp::fx_bus::FxParams;
@@ -15,8 +16,9 @@ use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use std::path::Path;
 use std::time::Instant;
 
-/// The send: dry and return at equal level, as the Juno sums them.
-const SEND: f32 = 1.0;
+/// The send: dry and return at equal level, as the Juno sums them (unity,
+/// the taper's top, ADR 0278).
+const SEND: SendLevel = SendLevel::FULL;
 /// Kept past the phrase: FLANGER's and PHASER's ring is far shorter.
 const KEEP_S: f64 = 1.0;
 
@@ -98,7 +100,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 },
                 ..FxParams::OFF
             };
-            let mut x = render_stereo(&ph, [SEND, 0.0, 0.0], fx);
+            let mut x = render_stereo(&ph, [SEND, SendLevel::OFF, SendLevel::OFF], fx);
             x.truncate(keep);
             let take = name.replace('+', "_").to_lowercase();
             let file = format!("{}_{take}.wav", ph.name);
@@ -113,4 +115,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
         println!("{name}: {ns:.2} ns a sample, {:.2}x I+II", ns / both);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SEND;
+    use chimera_core::dsp::{Gain, SendLevel};
+
+    /// The A/B keeps the level it had on the linear knob (ADR 0278).
+    #[test]
+    fn the_chorus_send_is_unity() {
+        assert_eq!(SEND, SendLevel::from_gain(Gain::UNITY));
+    }
 }

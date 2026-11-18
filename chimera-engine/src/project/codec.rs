@@ -24,7 +24,7 @@ use chimera_hal::store::{Dir, Store, StoreError};
 
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::block::{Block, DiskCode};
-use crate::dsp::clampf;
+use crate::dsp::SendLevel;
 use crate::dsp::drum::sound::{PAD_SOUND_BYTES, PadSound};
 use crate::dsp::drum::types::{Kit, PAD_BYTES, Pad, PadId, PadSet, Tonal};
 use crate::dsp::fx_bus::{FX_SENDS, FxParams};
@@ -70,18 +70,14 @@ const OLD_SEND_IDS: [u8; FX_SENDS] = [5, 6, 7];
 /// A PART payload's old sends: non-finite as 0, the rest in 0..=1; `None`
 /// when it holds none.
 #[optimize(size)]
-fn old_sends(payload: &[u8]) -> Option<[f32; FX_SENDS]> {
-    let mut out = [0.0; FX_SENDS];
+fn old_sends(payload: &[u8]) -> Option<[SendLevel; FX_SENDS]> {
+    let mut out = [SendLevel::OFF; FX_SENDS];
     let mut any = false;
     for e in payload.get(1..)?.chunks(ENTRY_LEN) {
         let [id, a, b, c, d] = *e else { continue };
         if let Some(k) = OLD_SEND_IDS.iter().position(|&x| x == id) {
             let v = f32::from_le_bytes([a, b, c, d]);
-            out[k] = if v.is_finite() {
-                clampf(v, 0.0, 1.0)
-            } else {
-                0.0
-            };
+            out[k] = SendLevel::new(if v.is_finite() { v } else { 0.0 });
             any = true;
         }
     }
@@ -550,7 +546,7 @@ pub struct ProjectCheck {
     kit_sounds: PadSet,
     origins: [ReadOrigin; MAX_PARTS],
     /// The open Part's pre-ADR-0123 sends (PART ids 5-7), for its Sound.
-    old_sends: Option<[f32; FX_SENDS]>,
+    old_sends: Option<[SendLevel; FX_SENDS]>,
     /// Pass 2 took less than the file holds: an ORBIT record skipped or a
     /// value in it defaulted, or no ORBIT records at all (ADR 0078). A save
     /// would write other bytes, so the load is not Saved.
@@ -682,7 +678,7 @@ impl ProjectCheck {
                 if let Some(s) = old_sends(p) {
                     self.old_sends = Some(s);
                     // All 0 moves nothing; every old file holds the ids.
-                    self.lossy |= s != [0.0; FX_SENDS];
+                    self.lossy |= s != [SendLevel::OFF; FX_SENDS];
                 }
                 let mut mix = target.map(|t| MixBlocks(&mut t.perf.parts[n.index()].mix));
                 decode_block(
@@ -1003,7 +999,7 @@ impl ProjectCheck {
                 self.sound.finish(Some(&mut *part.sound))?;
                 // ADR 0123: a Sound with no sends takes the Part's old ones.
                 if let Some(s) = self.old_sends.take()
-                    && part.sound.params.out.sends == [0.0; FX_SENDS]
+                    && part.sound.params.out.sends == [SendLevel::OFF; FX_SENDS]
                 {
                     part.sound.params.out.sends = s;
                 }

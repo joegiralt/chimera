@@ -6,6 +6,7 @@
 
 mod common;
 
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::rev::sync::Tempo;
@@ -75,7 +76,7 @@ fn render_bus(smear: bool) -> Vec<f32> {
         (fx.reverb, _) = sweep(b, smear);
         fx.reverb.mix = if (300..400).contains(&b) { 0.0 } else { 0.4 };
         (fx.delay.time_ms, fx.delay.feedback, fx.delay.mix) = (180.0, 0.5, 0.3);
-        fx.delay.rev_send = if b < 450 { 0.7 } else { 0.0 };
+        fx.delay.rev_send = SendLevel::new(if b < 450 { 0.7 } else { 0.0 });
         let x = send(&mut n, b);
         let mut sends = [x; FX_SENDS];
         let mut ret = Stereo::SILENT;
@@ -90,11 +91,12 @@ const GOLDENS: &[(&str, u64)] = &[
     // SMEAR walking (T5), the tail gate + tail low-pass, and ADR 0121 SMEAR depths/RATE.
     ("quad_sweep_48k", 0x95d0a3b98ff582a1),
     ("quad_sweep_44k1", 0x1bf6f40a1119f2dd),
-    ("quad_bus", 0xf1b777ef81fefc7f),
+    // ADR 0278: REV SEND on the send taper.
+    ("quad_bus", 0x1fdaa449b0199dc3),
     // a2abe82f at GRIT 0, then the tail gate.
     ("quad_sweep_48k_smear_0", 0x4b57df50438ebfe2),
     ("quad_sweep_44k1_smear_0", 0x06605a040e651bca),
-    ("quad_bus_smear_0", 0x36b57272cbec8047),
+    ("quad_bus_smear_0", 0x19970ea6ab42504d), // ADR 0278 REV SEND taper
 ];
 
 #[test]

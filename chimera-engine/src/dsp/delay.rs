@@ -8,8 +8,8 @@ mod tape;
 
 use crate::block::{Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt};
 use crate::dsp::algo::math::inv_sqrt;
-use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, ease_coeff};
+use crate::dsp::{SendLevel, clampf};
 use crate::dsp::{sin_turns, xorshift_noise};
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
@@ -88,9 +88,9 @@ pub struct DelayParams {
     pub tone: f32,
     /// Dry/wet mix (0..1)
     pub mix: f32,
-    /// The delay's return into the reverb's send (0..1): FX diet spec
-    /// § REV SEND.
-    pub rev_send: f32,
+    /// The delay's return into the reverb's send: FX diet spec § REV SEND,
+    /// fed as its tapered gain (ADR 0278).
+    pub rev_send: SendLevel,
     /// GRAIN's TYPE and knobs, ids 7–11 in order: TYPE's index (0 TAPE,
     /// 1 GRAIN, `kind`), SIZE, DENSITY, PITCH (semitones, −24..24) and
     /// TEXTURE (ADR 0202). One array, so `get` and `write` reach them in
@@ -106,7 +106,7 @@ impl DelayParams {
         saturation: 0.2,
         tone: 0.6,
         mix: 1.0, // unity return (sends spec § 4)
-        rev_send: 0.0,
+        rev_send: SendLevel::OFF,
         grain: [0.0, 0.6, 0.6, 0.0, 0.2],
     };
 }
@@ -346,7 +346,7 @@ impl Block for DelayParams {
             Self::SATURATION => self.saturation,
             Self::TONE => self.tone,
             Self::MIX => self.mix,
-            Self::REV_SEND => self.rev_send,
+            Self::REV_SEND => self.rev_send.get(),
             _ => grain_slot(id).map_or(0.0, |i| self.grain[i]),
         }
     }
@@ -360,7 +360,7 @@ impl Block for DelayParams {
             Self::SATURATION => self.saturation = v,
             Self::TONE => self.tone = v,
             Self::MIX => self.mix = v,
-            Self::REV_SEND => self.rev_send = v,
+            Self::REV_SEND => self.rev_send = SendLevel::new(v),
             _ => {
                 if let Some(i) = grain_slot(id) {
                     self.grain[i] = v;

@@ -7,6 +7,7 @@
 mod common;
 
 use chimera_core::block::{Block, ParamSpec};
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{CHORUS_SPECS, ChorusParams};
 use chimera_core::dsp::comp::{COMP_SPECS, CompParams};
@@ -194,7 +195,7 @@ fn project_a() -> FxParams {
             saturation: 0.2,
             tone: 0.6,
             mix: 0.7,
-            rev_send: 0.3,
+            rev_send: SendLevel::new(0.3),
             ..DelayParams::DEFAULT
         },
         reverb: ReverbParams {
@@ -245,7 +246,7 @@ fn project_b() -> FxParams {
             saturation: 0.7,
             tone: 0.3,
             mix: 0.5,
-            rev_send: 0.0,
+            rev_send: SendLevel::OFF,
             ..DelayParams::DEFAULT
         }
         .with(
@@ -293,7 +294,7 @@ fn solo(fx: Fx) -> FxParams {
         Fx::Reverb => p.reverb = a.reverb,
         Fx::Delay | Fx::Comp | Fx::Tape => p.delay = a.delay,
     }
-    p.delay.rev_send = 0.0;
+    p.delay.rev_send = SendLevel::OFF;
     match fx {
         Fx::Comp => p.comp = a.comp,
         Fx::Tape => p.tape = a.tape,
