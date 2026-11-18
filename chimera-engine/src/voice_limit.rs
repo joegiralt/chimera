@@ -481,7 +481,9 @@ pub struct Seen {
 }
 
 impl Shares {
-    /// Part `p`'s `Seen`.
+    /// Part `p`'s `Seen`. Only the UI asks (bank 2's `part_voices`):
+    /// inlined there, not linked in bank 1.
+    #[inline(always)]
     pub fn seen(&self, p: PartId) -> Seen {
         let others = PartId::ALL
             .into_iter()

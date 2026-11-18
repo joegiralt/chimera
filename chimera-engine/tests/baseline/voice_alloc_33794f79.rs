@@ -506,4 +506,3 @@ impl Allocator {
         fits(self.slots[oldest].cost()).then_some(oldest)
     }
 }
-

@@ -298,13 +298,33 @@ impl Allocator {
         }
         for v in VoiceIdx::ALL {
             let s = self.slot(v);
-            if let Some(q) = s.part.filter(|&q| s.dying.is_none() && s.held && Some(q) != but)
+            if let Some(q) = s
+                .part
+                .filter(|&q| s.dying.is_none() && s.held && Some(q) != but)
                 && self.shares.ask(q).reserve.guards(self.held(q).count())
             {
                 g = g.with(v);
             }
         }
         g
+    }
+
+    /// Rule 3's victim in `pool`: the oldest booked, live voice whose
+    /// `mono` is as asked, a tail before a held note; the first of equals.
+    #[inline(never)]
+    fn oldest(&self, pool: VoiceSet, mono: bool) -> Option<VoiceIdx> {
+        let mut best: Option<(VoiceIdx, (bool, u32))> = None;
+        for v in VoiceIdx::ALL {
+            let s = self.slot(v);
+            if !pool.contains(v) || s.is_free() || s.mono != mono || s.dying() {
+                continue;
+            }
+            let key = (s.held, s.age);
+            if best.is_none_or(|(_, b)| key < b) {
+                best = Some((v, key));
+            }
+        }
+        best.map(|(v, _)| v)
     }
 
     /// The voices a note on `part` may steal (ADR 0281): at its cap only
@@ -614,18 +634,11 @@ impl Allocator {
         // notes — if that makes room: at the cap the Part's own, else none
         // of a guarded Part's (ADR 0281).
         let pool = steal.pool().and(self.stealable(part));
-        let oldest = |mono: bool| {
-            VoiceIdx::ALL
-                .into_iter()
-                .filter(|&v| {
-                    let s = self.slot(v);
-                    pool.contains(v) && !s.is_free() && s.mono == mono && !s.dying()
-                })
-                .min_by_key(|&v| (self.slot(v).held, self.slot(v).age))
-        };
         // At the cap with no other voice of its own, its mono one (MODE
         // switched while it rang): a capped Part always reuses its own.
-        let v = oldest(false).or_else(|| capped.then(|| oldest(true)).flatten())?;
+        let v = self
+            .oldest(pool, false)
+            .or_else(|| capped.then(|| self.oldest(pool, true)).flatten())?;
         fits(self.slot(v).cost()).then_some(v)
     }
 }

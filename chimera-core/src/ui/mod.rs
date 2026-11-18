@@ -1803,6 +1803,21 @@ impl UiState {
         crate::bank2::voices(part_voices::Ask::Judge(job)).map(|()| out)
     }
 
+    /// Why a held MAX VOICES or RESERVE is refused, if it still is: bank
+    /// 2's (`part_voices`), `None` closed. Out of line: bank 1's stub.
+    #[inline(never)]
+    fn voices_held(&self, at: PartId, hold: held::VoicesHold) -> Option<held::Reason> {
+        let mut out = None;
+        let job = part_voices::Job::Held {
+            ui: self,
+            at,
+            hold,
+            out: &mut out,
+        };
+        crate::bank2::voices(part_voices::Ask::Judge(job));
+        out.map(held::Reason::Voices)
+    }
+
     /// The choice the focused cell shows dimmed and why, if any.
     pub fn held_choice(&self) -> Option<held::Shown> {
         let (at, h) = self.held?;
@@ -1817,17 +1832,7 @@ impl UiState {
                     }
                 }
                 held::Held::Sound(pick) => pick.why(&self.project.part(at).sound, self.streams(at)),
-                held::Held::Voices(hold) => {
-                    let mut out = None;
-                    let job = part_voices::Job::Held {
-                        ui: self,
-                        at,
-                        hold,
-                        out: &mut out,
-                    };
-                    crate::bank2::voices(part_voices::Ask::Judge(job));
-                    out.map(held::Reason::Voices)
-                }
+                held::Held::Voices(hold) => self.voices_held(at, hold),
             })
             .flatten()
             .map(|why| held::Shown { held: h, why })

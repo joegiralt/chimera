@@ -387,11 +387,9 @@ fn drum_rig(w: &mut KitWriter, kit: &Kit) -> common::InstRig {
 
 /// Part 1's slot booked for `key`, not dying.
 fn slot_for(r: &common::InstRig, key: u8) -> Option<usize> {
-    r.inst
-        .allocator()
-        .slots()
-        .iter()
-        .position(|s| s.part() == Some(PartId::ALL[0]) && !s.dying() && s.note().map(|n| n.get()) == Some(key))
+    r.inst.allocator().slots().iter().position(|s| {
+        s.part() == Some(PartId::ALL[0]) && !s.dying() && s.note().map(|n| n.get()) == Some(key)
+    })
 }
 
 /// What Part 1's slot for `key` books.

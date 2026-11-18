@@ -5,9 +5,9 @@
 
 mod common;
 
-use chimera_core::project::PartId;
 use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::Way;
+use chimera_core::project::PartId;
 use chimera_core::stream::units::{Cents, SourceRate};
 use core::mem::MaybeUninit;
 use core::num::NonZeroU32;
@@ -1008,12 +1008,10 @@ impl<'r> Played<'r> {
 
     /// The voice booked for `note` on Part `part`.
     fn voice_of(&self, part: usize, note: u8) -> Option<usize> {
-        self.rig
-            .inst
-            .allocator()
-            .slots()
-            .iter()
-            .position(|s| s.part() == Some(PartId::ALL[part as usize]) && s.note().map(MidiNote::get) == Some(note))
+        self.rig.inst.allocator().slots().iter().position(|s| {
+            s.part() == Some(PartId::ALL[part as usize])
+                && s.note().map(MidiNote::get) == Some(note)
+        })
     }
 
     fn booked(&self) -> usize {

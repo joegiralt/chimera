@@ -1171,6 +1171,17 @@ pub fn voices_note(
     }
 }
 
+/// CHOKE's note (`groups_note`), else MAX VOICES' or RESERVE's
+/// (`voices_note`): one out-of-line call for the renderer.
+#[inline(never)]
+pub fn kit_or_voices_note(
+    addr: ParamAddr,
+    kit: &crate::dsp::drum::types::Kit,
+    parts: &[crate::preset::Part; crate::hw::MAX_PARTS],
+) -> Option<crate::project::Line> {
+    groups_note(addr, kit).or_else(|| voices_note(addr, parts))
+}
+
 /// MAX VOICES' and RESERVE's band with bank 2 closed: nothing checks
 /// them (ADR 0281).
 pub const RULE_OFF: &str = "NO VOICE RULE \u{b7} NEEDS UPDATE";

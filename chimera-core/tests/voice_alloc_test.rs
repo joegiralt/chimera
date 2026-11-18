@@ -1,9 +1,9 @@
 //! Digitone-style voice allocation (instrument-core spec § Voice allocation).
 
 use chimera_core::MidiNote;
-use chimera_core::project::PartId;
 use chimera_core::hw::{AUDIO_BUDGET_PERCENT, CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
 use chimera_core::part::PartMode::{self, Mono, Poly};
+use chimera_core::project::PartId;
 use chimera_core::voice_alloc::{Alloc, Allocator};
 
 /// The 7,000 cycles a sample these scenarios' bills were written against,
@@ -18,7 +18,13 @@ fn n(v: u8) -> MidiNote {
 }
 
 fn on(a: &mut Allocator, part: u8, mode: PartMode, note: u8) -> Alloc {
-    a.note_on(PartId::ALL[usize::from(part)], mode, n(note), NOTE_COST, NONE)
+    a.note_on(
+        PartId::ALL[usize::from(part)],
+        mode,
+        n(note),
+        NOTE_COST,
+        NONE,
+    )
 }
 
 fn voice(r: Alloc) -> usize {
@@ -90,7 +96,13 @@ fn mono_retrigger_reuses_its_voice() {
     let v = voice(on(&mut a, 3, Mono, 60));
     assert_eq!(voice(on(&mut a, 3, Mono, 64)), v);
     assert_eq!(a.slots()[v].note(), Some(n(64)));
-    assert_eq!(a.slots().iter().filter(|s| s.part() == Some(PartId::ALL[3])).count(), 1);
+    assert_eq!(
+        a.slots()
+            .iter()
+            .filter(|s| s.part() == Some(PartId::ALL[3]))
+            .count(),
+        1
+    );
     assert!(a.slots()[v].held());
 }
 
@@ -107,7 +119,11 @@ fn release_unholds_only_that_voice() {
     a.release(v1); // already released
     a.release(5); // free
     a.release(MAX_VOICES); // out of range
-    assert_eq!(a.slots()[v1].part(), Some(PartId::ALL[1]), "released, tail still rings");
+    assert_eq!(
+        a.slots()[v1].part(),
+        Some(PartId::ALL[1]),
+        "released, tail still rings"
+    );
     assert!(a.slots()[5].is_free() && a.slots()[v0].held());
 }
 
@@ -148,7 +164,10 @@ fn cpu_budget_steals_or_refuses() {
     // Nothing to steal that frees enough: a voice costing more than the
     // whole budget is refused and nothing is stolen.
     let before: Vec<_> = a.slots().iter().map(|s| (s.part(), s.note())).collect();
-    assert_eq!(a.note_on(PartId::ALL[2], Poly, n(80), Cost(6_500), fx), Alloc::Refused);
+    assert_eq!(
+        a.note_on(PartId::ALL[2], Poly, n(80), Cost(6_500), fx),
+        Alloc::Refused
+    );
     let after: Vec<_> = a.slots().iter().map(|s| (s.part(), s.note())).collect();
     assert_eq!(before, after);
 }
@@ -196,9 +215,13 @@ fn random_play_keeps_the_pool_invariants() {
                         .map(|s| (s.part(), s.note(), s.held()))
                         .collect();
                     let cost = COSTS[part as usize % 3];
-                    if let Alloc::Voice(v) =
-                        a.note_on(PartId::ALL[part as usize], modes[part as usize], n(note), cost, FX)
-                    {
+                    if let Alloc::Voice(v) = a.note_on(
+                        PartId::ALL[part as usize],
+                        modes[part as usize],
+                        n(note),
+                        cost,
+                        FX,
+                    ) {
                         // The voice's previous held note, if any, was stolen or
                         // (same mono part) retriggered: it is no longer held.
                         let v = v.index();
@@ -253,7 +276,11 @@ fn random_play_keeps_the_pool_invariants() {
             for p in 0..6u8 {
                 if modes[p as usize] == Mono {
                     assert!(
-                        a.slots().iter().filter(|s| s.part() == Some(PartId::ALL[p as usize])).count() <= 1,
+                        a.slots()
+                            .iter()
+                            .filter(|s| s.part() == Some(PartId::ALL[p as usize]))
+                            .count()
+                            <= 1,
                         "{ctx}"
                     );
                 }
@@ -435,7 +462,10 @@ fn cpu_budget_steals_a_tail_before_a_held_note() {
         .collect();
     a.release(rest[1]);
     a.release(rest[2]);
-    assert_eq!(a.note_on(PartId::ALL[1], Poly, n(70), modal, fx), Alloc::Voice(VoiceIdx::ALL[rest[1]]));
+    assert_eq!(
+        a.note_on(PartId::ALL[1], Poly, n(70), modal, fx),
+        Alloc::Voice(VoiceIdx::ALL[rest[1]])
+    );
     assert!(a.slots()[drone].held());
 }
 
@@ -605,7 +635,9 @@ fn every_voice_is_in_the_pool_and_any_steals_from_it() {
 #[test]
 fn a_stacked_pad_ends_its_own_oldest_voice() {
     let (a, own) = stacked();
-    let v = a.pick_hit(PartId::ALL[0], Poly, n(0), NOTE_COST, NONE, own).map(VoiceIdx::index);
+    let v = a
+        .pick_hit(PartId::ALL[0], Poly, n(0), NOTE_COST, NONE, own)
+        .map(VoiceIdx::index);
     assert_eq!(v, Some(1), "pad 1's oldest, not pad 2's older voice 0");
 }
 
@@ -614,16 +646,24 @@ fn a_stacked_pad_ends_its_own_tail_before_its_held_voice() {
     let (mut a, own) = stacked();
     a.release(0);
     a.release(4);
-    let v = a.pick_hit(PartId::ALL[0], Poly, n(0), NOTE_COST, NONE, own).map(VoiceIdx::index);
+    let v = a
+        .pick_hit(PartId::ALL[0], Poly, n(0), NOTE_COST, NONE, own)
+        .map(VoiceIdx::index);
     assert_eq!(v, Some(4), "its own tail, not pad 2's tail");
 }
 
 #[test]
 fn a_pad_with_no_voice_steals_as_rule_3() {
     let (a, _) = stacked();
-    let v = a.pick_hit(PartId::ALL[0], Poly, n(2), NOTE_COST, NONE, Steal::Any).map(VoiceIdx::index);
+    let v = a
+        .pick_hit(PartId::ALL[0], Poly, n(2), NOTE_COST, NONE, Steal::Any)
+        .map(VoiceIdx::index);
     assert_eq!(v, Some(0), "the oldest voice, as `pick`");
-    assert_eq!(v, a.pick(PartId::ALL[0], Poly, n(2), NOTE_COST, NONE).map(VoiceIdx::index));
+    assert_eq!(
+        v,
+        a.pick(PartId::ALL[0], Poly, n(2), NOTE_COST, NONE)
+            .map(VoiceIdx::index)
+    );
 }
 
 #[test]
@@ -631,7 +671,9 @@ fn a_stacked_pad_takes_a_free_voice_first() {
     let mut a = Allocator::new(BUDGET);
     let v = voice(on(&mut a, 0, Poly, 0));
     let own = Steal::Only(VoiceSet::EMPTY.with(VoiceIdx::new(v).unwrap()));
-    let got = a.pick_hit(PartId::ALL[0], Poly, n(0), NOTE_COST, NONE, own).map(VoiceIdx::index);
+    let got = a
+        .pick_hit(PartId::ALL[0], Poly, n(0), NOTE_COST, NONE, own)
+        .map(VoiceIdx::index);
     assert_ne!(
         got,
         Some(v),
@@ -652,9 +694,14 @@ fn a_stacked_pad_never_takes_another_pads_voice() {
     let own = Steal::Only(VoiceSet::EMPTY.with(VoiceIdx::new(v).unwrap()));
     let big = Cost(1_500);
     assert_eq!(
-        a.pick(PartId::ALL[0], Poly, n(0), big, fx).map(VoiceIdx::index),
+        a.pick(PartId::ALL[0], Poly, n(0), big, fx)
+            .map(VoiceIdx::index),
         Some(0),
         "rule 3 takes pad 2's"
     );
-    assert_eq!(a.pick_hit(PartId::ALL[0], Poly, n(0), big, fx, own).map(VoiceIdx::index), None);
+    assert_eq!(
+        a.pick_hit(PartId::ALL[0], Poly, n(0), big, fx, own)
+            .map(VoiceIdx::index),
+        None
+    );
 }

@@ -154,7 +154,11 @@ fn run(seed: u64, shares: Shares, steps: usize, k: u64, seen: &mut Seen) {
             9 => {
                 let sa = a.shed_one(|w| (mask >> w.index()) & 1 == 0);
                 let sb = b.shed_one(|w| (mask >> w.index()) & 1 == 0);
-                assert_eq!(sa.map(new::VoiceIdx::index), sb.map(old::VoiceIdx::index), "shed_one: {ctx}");
+                assert_eq!(
+                    sa.map(new::VoiceIdx::index),
+                    sb.map(old::VoiceIdx::index),
+                    "shed_one: {ctx}"
+                );
                 seen.sheds += u32::from(sb.is_some());
             }
             10 => {
@@ -180,12 +184,21 @@ fn walk(shares: Shares) -> Seen {
     let mut seen = Seen::default();
     for seed in 1..200u64 {
         for k in BUDGETS {
-            run(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1, shares, 3_000, k, &mut seen);
+            run(
+                seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+                shares,
+                3_000,
+                k,
+                &mut seen,
+            );
         }
     }
     // The walk reaches every path it means to: refusals, steals, hits,
     // sheds.
-    assert!(seen.picks > 0 && seen.refused > 0 && seen.steals > 0, "picks");
+    assert!(
+        seen.picks > 0 && seen.refused > 0 && seen.steals > 0,
+        "picks"
+    );
     assert!(seen.hits > 0 && seen.sheds > 0, "hits and sheds");
     seen
 }

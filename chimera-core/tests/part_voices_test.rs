@@ -159,7 +159,10 @@ fn a_reserve_over_its_cap_is_unlawful() {
 
 #[test]
 fn shares_are_lawful_or_over() {
-    assert!(matches!(Shares::of(asks(&[reserved(0, 8)])), Shares::Lawful(_)));
+    assert!(matches!(
+        Shares::of(asks(&[reserved(0, 8)])),
+        Shares::Lawful(_)
+    ));
     assert!(matches!(
         Shares::of(asks(&[reserved(0, 5), reserved(1, 4)])),
         Shares::Over(_)
@@ -250,13 +253,29 @@ fn a_restrike_at_the_cap_takes_its_key_back() {
 #[test]
 fn a_capped_part_reuses_its_leftover_mono_voice() {
     let mut a = limited(&[capped(0, 1)]);
-    let mono = voice(a.note_on(part(0), chimera_core::part::PartMode::Mono, n(60), NOTE_COST, NONE));
+    let mono = voice(a.note_on(
+        part(0),
+        chimera_core::part::PartMode::Mono,
+        n(60),
+        NOTE_COST,
+        NONE,
+    ));
     let got = a.note_on(part(0), Poly, n(62), NOTE_COST, NONE);
-    assert_eq!(got, Alloc::Voice(VoiceIdx::ALL[mono]), "its own voice, not refused");
+    assert_eq!(
+        got,
+        Alloc::Voice(VoiceIdx::ALL[mono]),
+        "its own voice, not refused"
+    );
     assert_eq!(a.slots()[mono].note(), Some(n(62)));
     // Another Part's mono voice is still never stolen.
     let mut b = limited(&[capped(0, 1)]);
-    b.note_on(part(1), chimera_core::part::PartMode::Mono, n(50), NOTE_COST, NONE);
+    b.note_on(
+        part(1),
+        chimera_core::part::PartMode::Mono,
+        n(50),
+        NOTE_COST,
+        NONE,
+    );
     let v = voice(b.note_on(part(0), Poly, n(62), NOTE_COST, NONE));
     assert_ne!(b.slots()[v].part(), Some(part(1)));
 }
@@ -269,7 +288,13 @@ fn a_mode_switch_with_voices_sounding_keeps_to_the_part() {
     on(&mut a, 1, 40);
     on(&mut a, 0, 60);
     on(&mut a, 0, 61);
-    let v = voice(a.note_on(part(0), chimera_core::part::PartMode::Mono, n(70), NOTE_COST, NONE));
+    let v = voice(a.note_on(
+        part(0),
+        chimera_core::part::PartMode::Mono,
+        n(70),
+        NOTE_COST,
+        NONE,
+    ));
     assert_eq!(a.slots()[v].part(), Some(part(0)));
     assert!(v == 1 || v == 2, "one of its own: {v}");
     assert_eq!(a.slots()[0].note(), Some(n(40)), "Part 2's voice kept");
@@ -284,7 +309,13 @@ fn a_cap_lowered_mid_note_takes_effect_at_the_next_note() {
         on(&mut a, 0, 60 + i);
     }
     a.set_shares(Shares::of(asks(&[capped(0, 2)])));
-    assert_eq!(a.slots().iter().filter(|s| s.part() == Some(part(0))).count(), 4);
+    assert_eq!(
+        a.slots()
+            .iter()
+            .filter(|s| s.part() == Some(part(0)))
+            .count(),
+        4
+    );
     assert_eq!(voice(on(&mut a, 0, 70)), 0, "its own oldest");
     a.set_shares(Shares::of(asks(&[capped(0, 6)])));
     assert_eq!(voice(on(&mut a, 0, 71)), 4, "a free voice again");
@@ -325,7 +356,10 @@ fn at_its_cap_a_steal_that_doesnt_fit_is_refused() {
     a.note_on(part(0), Poly, n(60), Cost(500), fx);
     let room = a.budget().as_cost().0 - 1_000 - 500;
     assert_eq!(a.pick(part(0), Poly, n(61), Cost(room + 600), fx), None);
-    assert_eq!(a.pick(part(0), Poly, n(61), Cost(room + 400), fx), Some(VoiceIdx::ALL[0]));
+    assert_eq!(
+        a.pick(part(0), Poly, n(61), Cost(room + 400), fx),
+        Some(VoiceIdx::ALL[0])
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -389,7 +423,11 @@ fn only_held_notes_count_toward_the_reserve() {
         on(&mut a, 1, 70 + i);
     }
     assert_eq!(voice(on(&mut a, 1, 80)), 2, "the tail");
-    assert_eq!(voice(on(&mut a, 1, 81)), 3, "then Part 2's own: both held guarded");
+    assert_eq!(
+        voice(on(&mut a, 1, 81)),
+        3,
+        "then Part 2's own: both held guarded"
+    );
 }
 
 #[test]
@@ -431,7 +469,11 @@ fn a_shed_takes_guarded_voices_last() {
     };
     let mut plain = Allocator::new(BUDGET);
     fill(&mut plain);
-    assert_eq!(plain.shed_one(|_| true), VoiceIdx::new(7), "today: the newest");
+    assert_eq!(
+        plain.shed_one(|_| true),
+        VoiceIdx::new(7),
+        "today: the newest"
+    );
     let mut a = limited(&[reserved(0, 4)]);
     fill(&mut a);
     let order: Vec<usize> = std::iter::from_fn(|| a.shed_one(|_| true))
@@ -474,7 +516,8 @@ fn drum_at_cap() -> (Allocator, VoiceSet) {
 fn a_stack_pad_at_the_cap_ends_its_own_oldest() {
     let (a, own) = drum_at_cap();
     assert_eq!(
-        a.pick_hit(part(0), Poly, n(0), NOTE_COST, NONE, Steal::Only(own)).map(VoiceIdx::index),
+        a.pick_hit(part(0), Poly, n(0), NOTE_COST, NONE, Steal::Only(own))
+            .map(VoiceIdx::index),
         Some(2)
     );
 }
@@ -483,7 +526,8 @@ fn a_stack_pad_at_the_cap_ends_its_own_oldest() {
 fn a_pad_with_no_voice_at_the_cap_ends_the_parts_oldest() {
     let (a, _) = drum_at_cap();
     assert_eq!(
-        a.pick_hit(part(0), Poly, n(0), NOTE_COST, NONE, Steal::Any).map(VoiceIdx::index),
+        a.pick_hit(part(0), Poly, n(0), NOTE_COST, NONE, Steal::Any)
+            .map(VoiceIdx::index),
         Some(1),
         "the Part's oldest, not Part 1's older voice 0 nor a free one"
     );
@@ -865,7 +909,9 @@ fn voicing_packs_mode_cap_and_reserve() {
 #[test]
 fn a_held_value_stays_through_other_edits_and_drops_on_a_rule_change() {
     use chimera_core::part::PartParams as P;
-    let mut ui = voices_page(ButtonId::B1, |p| p.edit_part(part(1)).mix.set_voices(limit(0, 6)));
+    let mut ui = voices_page(ButtonId::B1, |p| {
+        p.edit_part(part(1)).mix.set_voices(limit(0, 6))
+    });
     feed(&mut ui, Input::turn(EncoderId::C, 3));
     assert!(ui.held_choice().is_some(), "3 held");
     let lvl = chimera_core::addr::ParamAddr::new(BlockRef::Part, P::LEVEL);
@@ -874,5 +920,8 @@ fn a_held_value_stays_through_other_edits_and_drops_on_a_rule_change() {
     assert!(ui.edit_to(part(0), pan, 0.25));
     assert!(ui.held_choice().is_some(), "still held after other edits");
     assert!(ui.edit_to(part(1), held::RESERVE, 4.0));
-    assert!(ui.held_choice().is_none(), "Part 2's RESERVE moved: dropped");
+    assert!(
+        ui.held_choice().is_none(),
+        "Part 2's RESERVE moved: dropped"
+    );
 }

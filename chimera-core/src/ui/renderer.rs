@@ -900,9 +900,7 @@ impl Renderer {
             .addr()
             .and_then(|a| view::tuning_note(a, f.tuned, f.active_part, part));
         let tonal = view.addr().and_then(|a| {
-            view::tonal_note(a, &f.ctx)
-                .or_else(|| view::groups_note(a, f.pads.kit))
-                .or_else(|| view::voices_note(a, f.parts))
+            view::tonal_note(a, &f.ctx).or_else(|| view::kit_or_voices_note(a, f.pads.kit, f.parts))
         });
         let note = view
             .addr()

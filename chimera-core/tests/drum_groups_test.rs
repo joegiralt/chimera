@@ -303,7 +303,9 @@ fn an_old_kit_over_eight_plays_every_hit() {
     for p in PadId::ALL {
         r.note_on_vel(0, key(p), 120);
         let booked = r.inst.allocator().slots().iter().any(|s| {
-            s.part() == Some(PartId::ALL[0]) && !s.dying() && s.note().map(|n| n.get()) == Some(key(p))
+            s.part() == Some(PartId::ALL[0])
+                && !s.dying()
+                && s.note().map(|n| n.get()) == Some(key(p))
         });
         assert!(booked, "pad {} books a voice", p.number());
         r.render(1);

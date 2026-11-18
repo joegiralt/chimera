@@ -5,7 +5,6 @@
 mod common;
 
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::project::PartId;
 use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::dsp::modal::{ResonatorMode, out_gain};
 use chimera_core::dsp::note_to_freq;
@@ -14,6 +13,7 @@ use chimera_core::hw::{MAX_VOICES, SampleBudget};
 use chimera_core::instrument::AudioShared;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot, Steal};
+use chimera_core::project::PartId;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, fundamental_hz};

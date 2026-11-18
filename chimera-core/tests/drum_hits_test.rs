@@ -471,7 +471,10 @@ fn fill_with_part_2(w: &mut KitWriter, r: &mut InstRig) {
 /// Part 1's slots, sounding or waiting.
 fn part_1_slots(r: &InstRig) -> usize {
     let slots = r.inst.allocator().slots();
-    slots.iter().filter(|s| s.part() == Some(PartId::ALL[0])).count()
+    slots
+        .iter()
+        .filter(|s| s.part() == Some(PartId::ALL[0]))
+        .count()
 }
 
 #[test]

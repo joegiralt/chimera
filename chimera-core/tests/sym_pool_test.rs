@@ -7,7 +7,6 @@ mod common;
 use common::{SR, peak, scope_writer};
 
 use chimera_core::dsp::engines::SlotKind;
-use chimera_core::project::PartId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::{ResonatorMode, take_cleared_bytes};
 use chimera_core::dsp::voice::Voice;
@@ -17,6 +16,7 @@ use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::part::PartMode;
+use chimera_core::project::PartId;
 use chimera_core::scope::ScopeWriter;
 use chimera_core::sym_alloc::{SYM_SLOTS, SymSlot};
 use chimera_core::voice_alloc::VoiceIdx;
@@ -144,7 +144,9 @@ impl Stage {
         (0..MAX_VOICES)
             .find(|&v| {
                 let s = &slots[v];
-                s.held() && s.part() == Some(PartId::ALL[part as usize]) && s.note() == MidiNote::new(n)
+                s.held()
+                    && s.part() == Some(PartId::ALL[part as usize])
+                    && s.note() == MidiNote::new(n)
             })
             .unwrap_or_else(|| panic!("no voice plays {n} for part {part}"))
     }
@@ -320,7 +322,9 @@ fn other_models_keep_eight_voices() {
         }
         let slots = s.inst.allocator().slots();
         assert!(
-            slots.iter().all(|v| v.held() && v.part() == Some(PartId::ALL[0])),
+            slots
+                .iter()
+                .all(|v| v.held() && v.part() == Some(PartId::ALL[0])),
             "{mode:?}: eight notes booked"
         );
         assert_eq!(s.inst.active(), [true; MAX_VOICES], "{mode:?}: eight sound");

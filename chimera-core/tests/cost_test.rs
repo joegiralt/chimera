@@ -4,7 +4,6 @@
 mod common;
 
 use chimera_core::budget::{CONTROL_RESERVE, FORMANT_N, FORMANT_N_UNLINKED, HEAVY_OVERHEAD};
-use chimera_core::project::PartId;
 use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::algo::kinds::{Linked, OpKind, fits};
@@ -26,6 +25,7 @@ use chimera_core::hw::{
 use chimera_core::instrument::{AudioShared, NoteOrigin};
 use chimera_core::modulation::{FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::project::PartId;
 use chimera_core::taps::TapOp;
 
 const UNROUTED: [bool; OPS] = [false; OPS];
@@ -1520,7 +1520,10 @@ fn stress(keys_first: bool, blocks: usize) -> (usize, u32, bool) {
         let held = (0..MAX_VOICES)
             .filter(|&v| {
                 let s = a.slots()[v];
-                s.part() == Some(PartId::ALL[5]) && s.held() && !s.dying() && origins[v] == NoteOrigin::Live
+                s.part() == Some(PartId::ALL[5])
+                    && s.held()
+                    && !s.dying()
+                    && origins[v] == NoteOrigin::Live
             })
             .count();
         kept &= held == 6;

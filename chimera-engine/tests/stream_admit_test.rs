@@ -89,8 +89,14 @@ fn plus_12_route_doubles_the_bill() {
 fn seven_beds_fit_the_budget_an_eighth_steals() {
     let b = bill(hz(24_000), ReadRatio::ONE);
     let p = (0..7).map(|i| (v(i), b, age(false, i as u32)));
-    assert_eq!(admit(b, p.clone().take(6), STREAM_BUDGET_BPS, VoiceSet::ALL), Admit::Ok);
-    assert_eq!(admit(b, p, STREAM_BUDGET_BPS, VoiceSet::ALL), Admit::Steal(v(6)));
+    assert_eq!(
+        admit(b, p.clone().take(6), STREAM_BUDGET_BPS, VoiceSet::ALL),
+        Admit::Ok
+    );
+    assert_eq!(
+        admit(b, p, STREAM_BUDGET_BPS, VoiceSet::ALL),
+        Admit::Steal(v(6))
+    );
 }
 
 /// A TRON chord at +3 st under wow (TAPE up: the caller adds it): six
@@ -101,8 +107,14 @@ fn six_tron_notes_fit() {
     let total = 8 * b.get();
     assert!((395_000..=403_000).contains(&total), "{total}");
     let p = (0..6).map(|i| (v(i), b, age(false, 0)));
-    assert_eq!(admit(b, p.clone().take(5), STREAM_BUDGET_BPS, VoiceSet::ALL), Admit::Ok);
-    assert!(matches!(admit(b, p, STREAM_BUDGET_BPS, VoiceSet::ALL), Admit::Steal(_)));
+    assert_eq!(
+        admit(b, p.clone().take(5), STREAM_BUDGET_BPS, VoiceSet::ALL),
+        Admit::Ok
+    );
+    assert!(matches!(
+        admit(b, p, STREAM_BUDGET_BPS, VoiceSet::ALL),
+        Admit::Steal(_)
+    ));
 }
 
 /// Released notes go first, the oldest; then, all held at full level, the
@@ -135,7 +147,12 @@ fn ninth_steals_oldest_released_then_youngest_settled_held() {
 #[test]
 fn refuse_when_nothing_can_be_stolen() {
     assert_eq!(
-        admit(Bill::new(500_000), std::iter::empty(), STREAM_BUDGET_BPS, VoiceSet::ALL),
+        admit(
+            Bill::new(500_000),
+            std::iter::empty(),
+            STREAM_BUDGET_BPS,
+            VoiceSet::ALL
+        ),
         Admit::Refuse
     );
 }
@@ -144,7 +161,12 @@ fn refuse_when_nothing_can_be_stolen() {
 fn admit_refuses_a_note_over_the_whole_budget() {
     let p = (0..3).map(|i| (v(i), Bill::new(100_000), age(true, 5)));
     assert_eq!(
-        admit(Bill::new(STREAM_BUDGET_BPS.get() + 1), p, STREAM_BUDGET_BPS, VoiceSet::ALL),
+        admit(
+            Bill::new(STREAM_BUDGET_BPS.get() + 1),
+            p,
+            STREAM_BUDGET_BPS,
+            VoiceSet::ALL
+        ),
         Admit::Refuse
     );
 }
@@ -177,7 +199,12 @@ fn the_callers_re_ask_loop_steals_two_oldest_released_first() {
     let new = Bill::new(150_000);
     let mut stolen = Vec::new();
     loop {
-        match admit(new, playing.iter().copied(), STREAM_BUDGET_BPS, VoiceSet::ALL) {
+        match admit(
+            new,
+            playing.iter().copied(),
+            STREAM_BUDGET_BPS,
+            VoiceSet::ALL,
+        ) {
             Admit::Ok => break,
             Admit::Steal(i) => {
                 stolen.push(i);
@@ -204,7 +231,10 @@ fn the_quietest_held_note_goes_first() {
             .copied()
             .chain((3..7).map(|i| held(i, 0, LOUD)))
     };
-    assert_eq!(admit(b, full(), STREAM_BUDGET_BPS, VoiceSet::ALL), Admit::Steal(v(1)));
+    assert_eq!(
+        admit(b, full(), STREAM_BUDGET_BPS, VoiceSet::ALL),
+        Admit::Steal(v(1))
+    );
     // A released note, however loud, goes before any held one.
     let released = (
         v(7),
@@ -214,7 +244,10 @@ fn the_quietest_held_note_goes_first() {
         },
     );
     let p = full().take(6).chain([released]);
-    assert_eq!(admit(b, p, STREAM_BUDGET_BPS, VoiceSet::ALL), Admit::Steal(v(7)));
+    assert_eq!(
+        admit(b, p, STREAM_BUDGET_BPS, VoiceSet::ALL),
+        Admit::Steal(v(7))
+    );
 }
 
 /// #698: a 24 kHz source fits 7 notes at ROOT with the wheel at rest and
