@@ -86,19 +86,24 @@ beats a generic one.
 paramIn : Dict String String -> Addr -> Schema -> Maybe Param
 paramIn variants a (Schema s) =
     let
+        key : String
         key =
             addrKey a
 
+        shown : Panel -> Bool
         shown pn =
             pn.variant == "-" || Dict.get pn.name variants == Just pn.variant
 
+        mine : Panel -> Maybe ( Bool, Param )
         mine pn =
             pn.params |> List.filter (\p -> addrKey p.addr == key) |> List.head |> Maybe.map (\p -> ( pn.variant /= "-", p ))
 
+        found : List ( Bool, Param )
         found =
             s.pages
                 |> List.concatMap (\pg -> pg.panels |> List.filter shown |> List.filterMap mine)
 
+        specific : Maybe ( Bool, Param )
         specific =
             found |> List.filter Tuple.first |> List.head
     in
@@ -140,6 +145,7 @@ add line (Schema s) =
 
         Protocol.Param p ->
             let
+                q : Param
                 q =
                     { addr = p.addr, label = p.label, kind = p.kind, scale = p.scale, min = p.min, max = p.max, step = p.step, default = p.default, options = [] }
             in
@@ -151,6 +157,7 @@ add line (Schema s) =
 
         Protocol.Opt o ->
             let
+                withOpt : Param -> Param
                 withOpt q =
                     if q.addr == o.addr then
                         { q | options = q.options ++ [ ( o.index, o.name ) ] }

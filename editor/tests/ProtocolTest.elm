@@ -35,8 +35,8 @@ suite =
             , p "param cont" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625" (Answer (Param { addr = Addr "OUT.LEVEL", label = "VOL", kind = Cont, scale = Linear, min = 0, max = 1, step = 0.0078125, default = 0.3515625 }))
             , p "param negative" "param ALGO.TRNSP \"TRNSP\" cont lin -24 24 1 0" (Answer (Param { addr = Addr "ALGO.TRNSP", label = "TRNSP", kind = Cont, scale = Linear, min = -24, max = 24, step = 1, default = 0 }))
             , p "param octaves" "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000" (Answer (Param { addr = Addr "FILTER.CUTOFF", label = "CUTOFF", kind = Cont, scale = Octaves, min = 20, max = 20000, step = 1, default = 1000 }))
-            , p "a protocol 2 param line is not understood" "param OUT.LEVEL \"VOL\" cont 0 1 0.0078125 0.3515625" (Unknown "param OUT.LEVEL \"VOL\" cont 0 1 0.0078125 0.3515625")
-            , p "bad scale" "param A.B \"L\" cont log 0 1 1 0" (Unknown "param A.B \"L\" cont log 0 1 1 0")
+            , p "a protocol 2 param line is not understood" "param OUT.LEVEL \"VOL\" cont 0 1 0.0078125 0.3515625" Unknown
+            , p "bad scale" "param A.B \"L\" cont log 0 1 1 0" Unknown
             , p "source" "source \"KICK 909\"" (Answer (Source "KICK 909"))
             , p "opt" "opt ALGO.ALG_A 8 \"A1\"" (Answer (Opt { addr = Addr "ALGO.ALG_A", index = 8, name = "A1" }))
             , p "route" "route \"ENV AMT\" next-slice" (Answer (Route "ENV AMT"))
@@ -44,7 +44,7 @@ suite =
             , p "val with unit" "val FILTER.CUTOFF 1 20000 \"20.0 kHz\"" (Answer (Val { addr = Addr "FILTER.CUTOFF", norm = 1, stored = 20000, text = "20.0 kHz" }))
             , p "val text with a space and sign" "val PIT.NOTE 0.5 60 \"C4 +12ct\"" (Answer (Val { addr = Addr "PIT.NOTE", norm = 0.5, stored = 60, text = "C4 +12ct" }))
             , p "val empty text" "val A.B 0 0 \"\"" (Answer (Val { addr = Addr "A.B", norm = 0, stored = 0, text = "" }))
-            , p "val inner quote not before a space" "val A.B 0 0 \"5\" wide\"" (Unknown "val A.B 0 0 \"5\" wide\"")
+            , p "val inner quote not before a space" "val A.B 0 0 \"5\" wide\"" Unknown
             , p "val signed text" "val VOICEFX.MIX 1 1 \"+63\"" (Answer (Val { addr = Addr "VOICEFX.MIX", norm = 1, stored = 1, text = "+63" }))
             , p "since part" "part 1 ALGO" (Answer (PartIs 1 "ALGO"))
             , p "since panel" "panel LFO3 CLASSIC" (Answer (Panel { name = "LFO3", variant = "CLASSIC" }))
@@ -66,14 +66,14 @@ suite =
             , p "CR stripped" "OK 3\u{000D}" (Ok_ (Just 3))
             ]
         , describe "garbage is ignorable"
-            [ p "empty" "" (Unknown "")
-            , p "noise" "\u{0000}�xx" (Unknown "\u{0000}�xx")
-            , p "truncated val" "val OP_C.CRSE 0.06" (Unknown "val OP_C.CRSE 0.06")
-            , p "bad number" "val A.B x y \"t\"" (Unknown "val A.B x y \"t\"")
-            , p "unterminated quote" "opt A.B 1 \"oops" (Unknown "opt A.B 1 \"oops")
-            , p "bad kind" "param A.B \"L\" weird lin 0 1 1 0" (Unknown "param A.B \"L\" weird lin 0 1 1 0")
-            , p "bad OK" "OK soon" (Unknown "OK soon")
-            , p "lone keyword" "page" (Unknown "page")
+            [ p "empty" "" Unknown
+            , p "noise" "\u{0000}�xx" Unknown
+            , p "truncated val" "val OP_C.CRSE 0.06" Unknown
+            , p "bad number" "val A.B x y \"t\"" Unknown
+            , p "unterminated quote" "opt A.B 1 \"oops" Unknown
+            , p "bad kind" "param A.B \"L\" weird lin 0 1 1 0" Unknown
+            , p "bad OK" "OK soon" Unknown
+            , p "lone keyword" "page" Unknown
             , test "never crashes" <|
                 \_ ->
                     [ "val", "val \"", "\"", "param", "ed hello", "ed hello x", "OK -1", "part x", "route", "opt", "  " ]
@@ -117,7 +117,7 @@ suite =
 isUnknown : Line -> Bool
 isUnknown l =
     case l of
-        Unknown _ ->
+        Unknown ->
             True
 
         Answer _ ->

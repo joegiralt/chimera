@@ -90,20 +90,64 @@ type alias Screen =
 -- THE FACE
 
 
+{-| A section's title, its number in it: one place for both.
+-}
+title : Section -> String
+title s =
+    case s of
+        Algorithm ->
+            "Algorithm"
+
+        Operator n ->
+            "Operator " ++ String.fromInt n
+
+        Filter ->
+            "Filter"
+
+        FilterMod ->
+            "Filter Mod"
+
+        Jacks ->
+            "Jacks"
+
+        VoiceFx ->
+            "Voice FX"
+
+        Amp ->
+            "Amp"
+
+        Envelope n ->
+            "Envelope " ++ String.fromInt n
+
+        Lfo n ->
+            "LFO " ++ String.fromInt n
+
+        Pitch ->
+            "Pitch"
+
+        Sends ->
+            "Out / Sends"
+
+
+boxed : Section -> Cell -> SectionBox
+boxed s c =
+    { section = s, title = title s, box = c }
+
+
 sections : List SectionBox
 sections =
-    { section = Algorithm, title = "Algorithm", box = Cell 1 1 2 6 }
-        :: List.map (\n -> { section = Operator n, title = "Operator " ++ String.fromInt n, box = Cell 3 n 20 1 }) (List.range 1 6)
-        ++ [ { section = Filter, title = "Filter", box = Cell 1 7 6 2 }
-           , { section = FilterMod, title = "Filter Mod", box = Cell 7 7 3 2 }
-           , { section = Jacks, title = "Jacks", box = Cell 10 7 2 2 }
-           , { section = VoiceFx, title = "Voice FX", box = Cell 12 7 5 2 }
-           , { section = Amp, title = "Amp", box = Cell 17 7 4 2 }
+    boxed Algorithm (Cell 1 1 2 6)
+        :: List.map (\n -> boxed (Operator n) (Cell 3 n 20 1)) (List.range 1 6)
+        ++ [ boxed Filter (Cell 1 7 6 2)
+           , boxed FilterMod (Cell 7 7 3 2)
+           , boxed Jacks (Cell 10 7 2 2)
+           , boxed VoiceFx (Cell 12 7 5 2)
+           , boxed Amp (Cell 17 7 4 2)
            ]
-        ++ List.map (\n -> { section = Envelope n, title = "Envelope " ++ String.fromInt n, box = Cell 1 (8 + n) 9 1 }) (List.range 1 3)
-        ++ List.map (\n -> { section = Lfo n, title = "LFO " ++ String.fromInt n, box = Cell 10 (8 + n) 7 1 }) (List.range 1 3)
-        ++ [ { section = Pitch, title = "Pitch", box = Cell 17 9 2 3 }
-           , { section = Sends, title = "Out / Sends", box = Cell 19 9 2 3 }
+        ++ List.map (\n -> boxed (Envelope n) (Cell 1 (8 + n) 9 1)) (List.range 1 3)
+        ++ List.map (\n -> boxed (Lfo n) (Cell 10 (8 + n) 7 1)) (List.range 1 3)
+        ++ [ boxed Pitch (Cell 17 9 2 3)
+           , boxed Sends (Cell 19 9 2 3)
            ]
 
 
@@ -153,6 +197,7 @@ table =
 algorithm : List Entry
 algorithm =
     let
+        o : String -> Control -> Int -> Int -> Entry
         o =
             one Algorithm
     in
@@ -170,9 +215,11 @@ kind's cells (FORMANT and NOISE share the first columns).
 operator : Int -> List Entry
 operator n =
     let
+        a : String -> String
         a i =
             "OP_" ++ String.fromChar (Char.fromCode (64 + n)) ++ "." ++ i
 
+        o : String -> Control -> Int -> Entry
         o i c col =
             one (Operator n) (a i) c col 1
     in
@@ -201,6 +248,7 @@ operator n =
 filter : List Entry
 filter =
     let
+        o : String -> Control -> Int -> Int -> Entry
         o =
             one Filter
     in
@@ -217,9 +265,11 @@ filter =
 filterMod : List Entry
 filterMod =
     let
+        o : String -> Control -> Int -> Int -> Entry
         o =
             one FilterMod
 
+        semMode : Entry
         semMode =
             o "FILTER.MODE" Choice 3 1
     in
@@ -237,6 +287,7 @@ jacks =
 voiceFx : List Entry
 voiceFx =
     let
+        o : String -> Control -> Int -> Int -> Entry
         o =
             one VoiceFx
     in
@@ -252,6 +303,7 @@ voiceFx =
 amp : List Entry
 amp =
     let
+        o : String -> Control -> Int -> Int -> Entry
         o =
             one Amp
     in
@@ -264,9 +316,11 @@ amp =
 envelope : Int -> List Entry
 envelope n =
     let
+        a : String -> String
         a i =
             "ENV" ++ String.fromInt n ++ "." ++ i
 
+        o : String -> Control -> Int -> Entry
         o i c col =
             one (Envelope n) (a i) c col 1
     in
@@ -289,9 +343,11 @@ envelope n =
 lfo : Int -> List Entry
 lfo n =
     let
+        a : String -> String
         a i =
             "LFO" ++ String.fromInt n ++ "." ++ i
 
+        o : String -> Control -> Int -> Entry
         o i c col =
             one (Lfo n) (a i) c col 1
     in
@@ -311,6 +367,7 @@ lfo n =
 pitch : List Entry
 pitch =
     let
+        o : String -> Control -> Int -> Int -> Entry
         o =
             one Pitch
     in
@@ -325,6 +382,7 @@ pitch =
 sends : List Entry
 sends =
     let
+        o : String -> Control -> Int -> Int -> Entry
         o =
             one Sends
     in
@@ -337,12 +395,15 @@ placement tied to a variant beats the general one.
 place : Dict String String -> Addr -> Maybe Placed
 place variants addr =
     let
+        k : String
         k =
             addrKey addr
 
+        mine : List Entry
         mine =
             List.filter (\e -> e.addr == k) table
 
+        special : List Entry
         special =
             List.filter
                 (\e ->
@@ -367,6 +428,13 @@ place variants addr =
 -- WHAT THE UNIT DESCRIBES, NOW
 
 
+{-| A described param on its page and panel, as `items` weighs it: a
+generic panel's description gives way to a variant panel's.
+-}
+type alias Candidate =
+    { generic : Bool, page : Schema.Page, panel : Schema.Panel, param : Schema.Param }
+
+
 {-| A parameter the Sound has now, as the cell shows it.
 -}
 type alias Item =
@@ -388,6 +456,7 @@ operator's own): the variant panel's description wins, being the specific one.
 items : Schema -> Dict String String -> List Item
 items sch variants =
     let
+        candidates : List Candidate
         candidates =
             Schema.pages sch
                 |> List.concatMap
@@ -397,11 +466,14 @@ items sch variants =
                             |> List.concatMap (\pn -> List.map (\p -> { generic = pn.variant == "-", page = pg, panel = pn, param = p }) pn.params)
                     )
 
+        keep : Candidate -> ( List String, Dict String ( Bool, String, Schema.Param ) ) -> ( List String, Dict String ( Bool, String, Schema.Param ) )
         keep c ( order, best ) =
             let
+                k : String
                 k =
                     addrKey c.param.addr
 
+                cand : ( Bool, String, Schema.Param )
                 cand =
                     ( c.generic, labelOf c.page c.panel c.param, c.param )
             in

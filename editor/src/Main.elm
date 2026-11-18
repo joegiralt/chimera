@@ -60,6 +60,7 @@ update msg app =
 view : App -> Html Msg
 view app =
     let
+        notice : Maybe String
         notice =
             Model.notice app.unit
     in

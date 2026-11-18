@@ -61,6 +61,7 @@ suite =
             , test "norm_maps_the_unit_range" <|
                 \_ ->
                     let
+                        c : Param
                         c =
                             param "FILTER.CUTOFF"
                     in

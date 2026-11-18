@@ -67,9 +67,11 @@ it is always a plain number the unit reads. The unit quantises it.
 atNorm : Param -> Float -> Float
 atNorm p t0 =
     let
+        t : Float
         t =
             clamp 0 1 t0
 
+        v : Float
         v =
             case scaleOf p of
                 Linear ->
@@ -102,6 +104,7 @@ dragIndex { n, from } startY y =
 wheelNorm : Param -> Float
 wheelNorm p =
     let
+        travel : Float
         travel =
             case scaleOf p of
                 Linear ->

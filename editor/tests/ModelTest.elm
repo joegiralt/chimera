@@ -88,6 +88,7 @@ suite =
         [ test "a_choice_pick_uses_the_active_variants_names" <|
             \_ ->
                 let
+                    pick : List ( String, String ) -> String -> Int -> List Command
                     pick v a i =
                         { following | schema = Fixture.schema, variants = Dict.fromList v }
                             |> Model.step (Pick (Addr a) i)
@@ -101,6 +102,7 @@ suite =
         , test "every_choice_under_every_variant_sends_an_option_that_variant_lists" <|
             \_ ->
                 let
+                    bad : List ( String, String, Int )
                     bad =
                         Schema.pages Fixture.schema
                             |> List.concatMap .panels
@@ -115,6 +117,7 @@ suite =
                                                     |> List.filterMap
                                                         (\( i, name ) ->
                                                             let
+                                                                sent : List Command
                                                                 sent =
                                                                     { following | schema = Fixture.schema, variants = Dict.fromList [ ( pn.name, pn.variant ) ] }
                                                                         |> Model.step (Pick p.addr i)
@@ -147,6 +150,7 @@ suite =
         , test "the_status_names_the_link_part_and_engine_once_following" <|
             \_ ->
                 let
+                    sim : Model.Model
                     sim =
                         following |> Model.update ConnectSocket |> Tuple.first
                 in
@@ -187,6 +191,7 @@ suite =
         , test "shows_only_the_units_value" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> feed [ cutoffLine "1000", "OK 1" ]
@@ -208,6 +213,7 @@ suite =
         , test "pending_clears_on_report" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following |> Model.step (Edit cutoff (Num 5000)) |> Tuple.first
                 in
@@ -220,6 +226,7 @@ suite =
         , test "pending_clears_after_250ms_with_no_report" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> Model.step (Tick (at 1000))
@@ -235,6 +242,7 @@ suite =
         , test "a_repeated_edit_restarts_the_250ms" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> Model.step (Tick (at 1000))
@@ -252,6 +260,7 @@ suite =
         , test "since_answer_replaces_values_and_gen" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> feed [ "part 1 ALGO", "panel FILTER CLEAN", cutoffLine "1000", "OK 5" ]
@@ -285,6 +294,7 @@ suite =
         , test "a_hello_timeout_halts_and_a_late_ok_never_reaches_following" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         Model.init
                             |> Model.step (LinkChanged Open)
@@ -304,6 +314,7 @@ suite =
         , test "a_describe_timeout_halts_the_same_way" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         Model.init
                             |> Model.step (LinkChanged Open)
@@ -353,6 +364,7 @@ suite =
                     ( m3, c3 ) =
                         m2 |> tick 2099
 
+                    m4 : Model.Model
                     m4 =
                         m3 |> feed [ cutoffLine "777", "OK 7" ]
 
@@ -370,6 +382,7 @@ suite =
         , test "only_the_re_asks_ok_arrives_and_following_goes_on" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> tick 99
@@ -387,6 +400,7 @@ suite =
         , test "a_refused_first_since_is_settled_the_same_way" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> tick 99
@@ -404,6 +418,7 @@ suite =
         , test "an_echo_of_the_same_value_clears_pending" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> feed [ cutoffLine "1000", "OK 1" ]
@@ -414,6 +429,7 @@ suite =
         , test "part_change_follows_the_box" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> feed [ cutoffLine "1000", "OK 1" ]
@@ -431,6 +447,7 @@ suite =
         , test "a_new_part_drops_the_old_parts_values" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following
                             |> feed [ cutoffLine "1000", "panel FILTER CLEAN", "OK 1" ]
@@ -442,6 +459,7 @@ suite =
         , test "non_algo_part_shows_message" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following |> feed [ "part 2 VA", "OK 1" ]
                 in
@@ -479,6 +497,7 @@ suite =
         , test "a_since_too_large_says_so_and_stops_asking" <|
             \_ ->
                 let
+                    m : Model.Model
                     m =
                         following |> feed [ "ERR ed since too large" ]
                 in

@@ -29,7 +29,7 @@ type alias Face =
 
 type Msg
     = Grab Addr Control Float
-    | Wheel Addr Control Float
+    | Wheel Addr Float
     | Pick Addr Int
 
 
@@ -76,19 +76,19 @@ handle control f =
     , attribute "aria-label" f.label
     , attribute "aria-valuetext" f.text
     , Events.preventDefaultOn "mousedown" (Decode.map (\y -> ( Grab f.addr control y, True )) (Decode.field "clientY" Decode.float))
-    , Events.preventDefaultOn "wheel" (Decode.map (\dy -> ( Wheel f.addr control dy, True )) (Decode.field "deltaY" Decode.float))
-    , Events.preventDefaultOn "keydown" (Decode.andThen (arrow f.addr control) (Decode.field "key" Decode.string))
+    , Events.preventDefaultOn "wheel" (Decode.map (\dy -> ( Wheel f.addr dy, True )) (Decode.field "deltaY" Decode.float))
+    , Events.preventDefaultOn "keydown" (Decode.andThen (arrow f.addr) (Decode.field "key" Decode.string))
     ]
 
 
-arrow : Addr -> Control -> String -> Decoder ( Msg, Bool )
-arrow addr control key =
+arrow : Addr -> String -> Decoder ( Msg, Bool )
+arrow addr key =
     case key of
         "ArrowUp" ->
-            Decode.succeed ( Wheel addr control -1, True )
+            Decode.succeed ( Wheel addr -1, True )
 
         "ArrowDown" ->
-            Decode.succeed ( Wheel addr control 1, True )
+            Decode.succeed ( Wheel addr 1, True )
 
         _ ->
             Decode.fail "not an arrow"
@@ -123,9 +123,11 @@ lit f ( i, name ) =
 lever : Face -> Html Msg
 lever f =
     let
+        n : Int
         n =
             List.length f.options
 
+        next : Int
         next =
             if n == 0 then
                 f.current
@@ -133,9 +135,11 @@ lever f =
             else
                 modBy n (f.current + 1)
 
+        h : Float
         h =
             toFloat (max 2 n) * 13
 
+        top : Float
         top =
             1 + toFloat f.current * (h - 13) / toFloat (max 1 (n - 1))
     in

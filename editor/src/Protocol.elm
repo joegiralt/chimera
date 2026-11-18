@@ -98,7 +98,7 @@ type Line
       -- `ERR ed since too large` (ADR 0285): the unit's whole answer is past
       -- what one answer may carry. Asking again gets the same.
     | SinceTooLarge
-    | Unknown String
+    | Unknown
 
 
 {-| The line to send, or `Nothing` if it could not be one command: an address
@@ -146,6 +146,7 @@ word w =
 decimal : Float -> Maybe String
 decimal n =
     let
+        t : String
         t =
             String.fromFloat n
     in
@@ -159,9 +160,11 @@ decimal n =
 parse : String -> Line
 parse raw =
     let
+        line : String
         line =
             stripCr raw
 
+        trimmed : String
         trimmed =
             String.trimLeft line
     in
@@ -181,15 +184,15 @@ parse raw =
                 Queued
 
             m ->
-                nat m |> Maybe.map (Just >> Ok_) |> Maybe.withDefault (Unknown line)
+                nat m |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
 
     else
         case tokens line of
             Just ts ->
-                answer ts |> Maybe.map Answer |> Maybe.withDefault (Unknown line)
+                answer ts |> Maybe.map Answer |> Maybe.withDefault Unknown
 
             Nothing ->
-                Unknown line
+                Unknown
 
 
 stripCr : String -> String
@@ -213,6 +216,7 @@ nat s =
 num : String -> Maybe Float
 num s =
     let
+        body : String
         body =
             if String.startsWith "-" s || String.startsWith "+" s then
                 String.dropLeft 1 s

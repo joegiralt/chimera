@@ -27,7 +27,7 @@ schema =
                 SinceTooLarge ->
                     s
 
-                Unknown _ ->
+                Unknown ->
                     s
         )
         Schema.empty

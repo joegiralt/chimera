@@ -11,6 +11,7 @@ import NoDebug.TodoOrToString
 import NoExposingEverything
 import NoImportingEverything
 import NoMissingTypeAnnotation
+import NoMissingTypeAnnotationInLetIn
 import NoMissingTypeExpose
 import NoPrematureLetComputation
 import NoUnused.CustomTypeConstructorArgs
@@ -36,18 +37,15 @@ config =
     , NoExposingEverything.rule
     , NoImportingEverything.rule []
     , NoMissingTypeAnnotation.rule
-
-    -- NoMissingTypeAnnotationInLetIn (the site's) is not taken yet: slice
-    -- 1's lets carry about ninety unannotated bindings.
+    , NoMissingTypeAnnotationInLetIn.rule
     , NoMissingTypeExpose.rule
         -- An application's Main exposes only `main`.
         |> Review.Rule.ignoreErrorsForFiles [ "src/Main.elm" ]
     , NoPrematureLetComputation.rule
     , NoUnused.CustomTypeConstructorArgs.rule
-        -- Told apart by (==), never taken apart: a Section's number, a
-        -- control's kind on a wheel, an unknown line's text, a test's Msg.
-        |> Review.Rule.ignoreErrorsForFiles [ "src/Layout/Algo.elm", "src/View/Controls.elm", "src/Protocol.elm" ]
-        |> Review.Rule.ignoreErrorsForDirectories [ "tests/" ]
+        -- A test's own Msg is built and compared, never taken apart: the view
+        -- under test hands it back, and Event.expect compares it whole.
+        |> Review.Rule.ignoreErrorsForFiles [ "tests/PartsTest.elm" ]
     , NoUnused.CustomTypeConstructors.rule []
     , NoUnused.Dependencies.rule
     , NoUnused.Exports.rule

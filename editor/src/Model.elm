@@ -309,12 +309,14 @@ step msg m =
 tick : Time.Posix -> Model -> ( Model, List Command )
 tick t m0 =
     let
+        m : Model
         m =
             { m0
                 | now = t
                 , pending = Dict.filter (\_ at -> ms t - ms at < pendingMs) m0.pending
             }
 
+        ask : Command -> ( Model, List Command )
         ask c =
             ( { m | asked = Just t, owed = m.owed + 1, leftover = False }, [ c ] )
     in
@@ -323,9 +325,11 @@ tick t m0 =
 
     else
         let
+            timedOut : Bool
             timedOut =
                 m.asked |> Maybe.map (\at -> ms t - ms at >= answerTimeoutMs) |> Maybe.withDefault False
 
+            silent : ( Model, List Command )
             silent =
                 ( { m | stage = Halted Silent, asked = Nothing }, [] )
         in
@@ -378,6 +382,7 @@ ms =
 edit : Addr -> Value -> Model -> ( Model, List Command )
 edit a v m =
     let
+        c : Command
         c =
             Set a v
     in
@@ -456,7 +461,7 @@ lineIn l m =
         SinceTooLarge ->
             { m | stage = Halted TooLarge, asked = Nothing }
 
-        Unknown _ ->
+        Unknown ->
             m
 
 
@@ -547,6 +552,7 @@ ok done m =
 
         Describing n ->
             let
+                more : Bool
                 more =
                     Schema.pageCount m.schema |> Maybe.map (\c -> n + 1 < c) |> Maybe.withDefault False
             in
@@ -556,6 +562,7 @@ ok done m =
             case done |> Maybe.andThen Unit.genFromInt of
                 Just g ->
                     let
+                        owed : Int
                         owed =
                             max 0 (m.owed - 1)
                     in
