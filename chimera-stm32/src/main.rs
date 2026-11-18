@@ -79,6 +79,7 @@ fn bench(
     clk: chimera_board::clocks::Clocks,
     project: &mut chimera_engine::project::Project,
     sources: &mut chimera_engine::source_table::AudioToken,
+    itcm: chimera_board::shared::ItcmZeroed,
     rings: chimera_board::BenchRings<'_>,
 ) -> &'static str {
     use chimera_core::bank2::{BENCH_DOOR_ADDR, DOOR_CELL, DoorSlot};
@@ -92,7 +93,7 @@ fn bench(
                 bench::BENCH_MAGIC,
                 "the bench's table at its slot"
             );
-            (d.enter)(display, clk, project, sources, rings)
+            (d.enter)(display, clk, project, sources, itcm, rings)
         })
         .unwrap_or("# bench: bank 2 closed: install this build's .bk2\n")
 }

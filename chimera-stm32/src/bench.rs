@@ -134,6 +134,7 @@ pub type Enter = fn(
     Clocks,
     &mut Project,
     &mut AudioToken,
+    chimera_board::shared::ItcmZeroed,
     chimera_board::BenchRings<'_>,
 ) -> &'static str;
 
@@ -159,10 +160,11 @@ fn enter(
     clk: Clocks,
     project: &mut Project,
     sources: &mut AudioToken,
+    itcm: chimera_board::shared::ItcmZeroed,
     rings: chimera_board::BenchRings<'_>,
 ) -> &'static str {
     let report = take_report().expect("bench report taken once");
-    run(display, clk, (project, sources), rings, report);
+    run(display, clk, (project, sources), itcm, rings, report);
     let report: &'static Text = report;
     report.as_str()
 }
@@ -1229,6 +1231,7 @@ pub fn run(
     display: &mut Display,
     clocks: Clocks,
     (project, sources): (&mut Project, &mut AudioToken),
+    itcm: chimera_board::shared::ItcmZeroed,
     rings: chimera_board::BenchRings<'_>,
     report: &mut Text,
 ) {
@@ -1245,7 +1248,7 @@ pub fn run(
     let (inst_slot, fx_slot, shared_slot, scope_w) = unsafe {
         let (i, f) = engine::slots();
         let (w, _unread) = (&mut *addr_of_mut!(SCOPE)).write(scope_buffer()).split();
-        (i, f, chimera_board::shared::bench_audio(), w)
+        (i, f, chimera_board::shared::bench_audio(itcm), w)
     };
     let (scope, dac) = rig_io(scope_w);
     #[cfg(feature = "bench-tape")]

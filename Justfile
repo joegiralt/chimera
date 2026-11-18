@@ -211,6 +211,7 @@ bank2-split elf out:
         rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2
         {{utils}} door-check {{elf}}
         just check-door-placed {{elf}}
+        just check-itcm {{elf}}
         {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
         just check-slots {{elf}} {{out}}.bk2
         just check-bin-paths {{out}}.bk2
@@ -298,6 +299,12 @@ check-door-placed elf:
     # And no solo code of theirs sits in bank 1: the quiet pulse's or its runs' (ADR 0283).
     # (awk alone: when all of it is inlined into `solo::play` there is none, and grep would fail.)
     awk '/ [tT] .*PulseQuiet/ { a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "VA solo code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"
+
+# ITCM's state (ADR 0266, 0286): CPU-only, never a DMA's. Only the
+# residents tools/itcm-residents.txt lists lie in `[__sitcm, __eitcm)`, and
+# `AUDIO` is there wherever the synth is linked (not in sd-probe).
+check-itcm elf:
+    python3 tools/check_itcm.py {{elf}}
 
 check-no-gate bin:
     #!/usr/bin/env bash
@@ -503,16 +510,20 @@ check $CHIMERA_STAMP_CLEAN="1":
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     just check-bank1 default
     just check-bank2 default
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     just check-bank1 orbit
     just check-bank2 orbit
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
     just check-bank2 bank2-gate
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     # ORBIT with usb-device writing the configuration, the static's fallback (ADR 0260).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,usb-config-writer
     just check-bank1 orbit,usb-config-writer
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     # The gate's doors and placement, USB audio's stream among them (ADR
     # 0256); `release-bin` checks the default and ORBIT builds'.
     {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32
@@ -520,8 +531,10 @@ check $CHIMERA_STAMP_CLEAN="1":
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits, and held to
     # its bank-1 budget (ADR 0198).
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; done
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
+    # Its split as `flash-sd-probe` makes it (the seal, check-itcm with ITCM empty).
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
     out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
