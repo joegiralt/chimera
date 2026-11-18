@@ -203,7 +203,9 @@ impl SlotCtx {
     }
 
     /// This context on `kit` with pad `id` selected: its machine, and the
-    /// TONAL pad's.
+    /// TONAL pad's. Inlined into each caller, `UiState::ctx` and bank 2's
+    /// `ed` (ADR 0285), so bank 1 holds no second copy.
+    #[inline(always)]
     pub fn on_kit(self, kit: &Kit, id: PadId) -> Self {
         Self {
             pad: Some(kit.pad(id).machine()),
@@ -218,6 +220,8 @@ impl SlotCtx {
     }
 
     /// This context on a DRUM Part: FLT shows the selected pad's KIND.
+    /// Inlined as `on_kit` is.
+    #[inline(always)]
     pub fn on_drum(self) -> Self {
         Self {
             drum: true,

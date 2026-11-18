@@ -2,6 +2,7 @@ module Unit exposing
     ( Engine(..)
     , Gen
     , Part
+    , allEngines
     , allParts
     , engineFromName
     , engineName
@@ -91,20 +92,28 @@ partFromInt n =
     allParts |> List.filter (\p -> partNumber p == n) |> List.head
 
 
-{-| The editor edits ALGO; any other engine is named, so it can be said.
+{-| The unit's engines, by the names `ed` gives them. A name the editor
+doesn't know is a newer unit's: `Nothing`, and the editor says so.
 -}
 type Engine
     = Algo
-    | Other String
+    | Modal
+    | Va
+    | Tape
+    | Drum
 
 
-engineFromName : String -> Engine
+{-| Every engine, in the box's order (`EngineType::PLAYABLE`): the names
+the editor knows come from this list alone.
+-}
+allEngines : List Engine
+allEngines =
+    [ Algo, Modal, Va, Tape, Drum ]
+
+
+engineFromName : String -> Maybe Engine
 engineFromName s =
-    if s == "ALGO" then
-        Algo
-
-    else
-        Other s
+    List.filter (\e -> engineName e == s) allEngines |> List.head
 
 
 engineName : Engine -> String
@@ -113,5 +122,14 @@ engineName e =
         Algo ->
             "ALGO"
 
-        Other s ->
-            s
+        Modal ->
+            "MODAL"
+
+        Va ->
+            "VA"
+
+        Tape ->
+            "TAPE"
+
+        Drum ->
+            "DRUM"

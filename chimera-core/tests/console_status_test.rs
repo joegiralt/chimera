@@ -106,7 +106,7 @@ fn status_has_its_lines_in_order() {
         format!("{VERSION} {}", BUILD.to_ascii_lowercase())
     );
     assert_eq!(line(&s, "build"), format!("{VERSION} dev"));
-    assert_eq!(line(&s, "protocol"), "2");
+    assert_eq!(line(&s, "protocol"), "3");
     assert_eq!(line(&s, "project"), ui.project().meta().name().as_str());
     assert_eq!(line(&s, "part"), "1");
     assert!(

@@ -4,7 +4,7 @@ import Dict exposing (Dict)
 import Expect
 import Fixture
 import Layout.Algo as Algo exposing (Control(..), Section(..))
-import Protocol exposing (Addr(..), Kind(..), addrKey)
+import Protocol exposing (Addr(..), addrKey)
 import Schema
 import Test exposing (Test, describe, test)
 
@@ -20,9 +20,11 @@ Sounds: the default of each, then the others.
 sounds : List (Dict String String)
 sounds =
     let
+        base : List ( String, String )
         base =
             [ ( "FILTER", "CLEAN" ), ( "FX", "SOFT" ), ( "ENV1", "A-FAST" ), ( "ENV2", "A-FAST" ), ( "ENV3", "A-FAST" ), ( "LFO1", "CLASSIC" ), ( "LFO2", "CLASSIC" ), ( "LFO3", "CLASSIC" ), ( "OP1", "TABLE" ), ( "OP2", "TABLE" ), ( "OP3", "TABLE" ), ( "OP4", "TABLE" ), ( "OP5", "TABLE" ), ( "OP6", "TABLE" ) ]
 
+        over : List ( String, String ) -> Dict String String
         over xs =
             Dict.union (ctx xs) (ctx base)
     in
@@ -77,6 +79,7 @@ suite =
         , test "sem_output_sits_in_filter_mod_and_the_others_mode_in_filter" <|
             \_ ->
                 let
+                    at : String -> Maybe Section
                     at v =
                         Algo.place (ctx [ ( "FILTER", v ) ]) (Addr "FILTER.MODE") |> Maybe.map .section
                 in
@@ -84,8 +87,10 @@ suite =
         , test "no_two_controls_share_a_cell_in_any_sound" <|
             \_ ->
                 let
+                    clashes : Dict String String -> List String
                     clashes v =
                         let
+                            placed : List ( String, Algo.Placed )
                             placed =
                                 Algo.items Fixture.schema v |> List.filterMap (\i -> i.placed |> Maybe.map (\p -> ( i.param.label, p )))
                         in
@@ -101,6 +106,7 @@ suite =
         , test "the_screens_clear_the_controls" <|
             \_ ->
                 let
+                    clash : Dict String String -> List String
                     clash v =
                         Algo.items Fixture.schema v
                             |> List.filterMap .placed
@@ -111,9 +117,11 @@ suite =
         , test "a_cell_stays_inside_its_section" <|
             \_ ->
                 let
+                    box : Section -> Algo.Cell
                     box s =
                         Algo.sections |> List.filter (\x -> x.section == s) |> List.head |> Maybe.map .box |> Maybe.withDefault { col = 0, row = 0, w = 0, h = 0 }
 
+                    outside : Algo.Cell -> Section -> Bool
                     outside c s =
                         c.col < 1 || c.row < 1 || c.col + c.w - 1 > (box s).w || c.row + c.h - 1 > (box s).h
                 in
@@ -126,15 +134,28 @@ suite =
         , test "a_param_the_layout_lacks_goes_to_unplaced" <|
             \_ ->
                 let
+                    withExtra : Schema.Schema
                     withExtra =
-                        [ "page 0 ALG of 1", "panel ALG -", "param ALGO.MORPH \"MORPH\" cont 0 127 1 0", "param ALGO.NEW \"NEW\" cont 0 1 1 0" ]
+                        [ "page 0 ALG of 1", "panel ALG -", "param ALGO.MORPH \"MORPH\" cont lin 0 127 1 0", "param ALGO.NEW \"NEW\" cont lin 0 1 1 0" ]
                             |> List.foldl
                                 (\raw s ->
                                     case Protocol.parse raw of
                                         Protocol.Answer a ->
                                             Schema.add a s
 
-                                        _ ->
+                                        Protocol.Ok_ _ ->
+                                            s
+
+                                        Protocol.Queued ->
+                                            s
+
+                                        Protocol.Err_ _ ->
+                                            s
+
+                                        Protocol.SinceTooLarge ->
+                                            s
+
+                                        Protocol.Unknown ->
                                             s
                                 )
                                 Schema.empty
@@ -152,6 +173,7 @@ suite =
         , test "only_the_shown_variants_params_are_in_play" <|
             \_ ->
                 let
+                    has : Dict String String -> String -> Bool
                     has v a =
                         Algo.items Fixture.schema v |> List.any (\i -> addrKey i.param.addr == a)
                 in
@@ -164,6 +186,7 @@ suite =
         , test "a_variant_panels_label_beats_a_page_of_all_six_operators" <|
             \_ ->
                 let
+                    label : Dict String String -> String -> Maybe String
                     label v a =
                         Algo.items Fixture.schema v
                             |> List.filter (\i -> addrKey i.param.addr == a)

@@ -69,6 +69,7 @@ suite =
                         run [ grab, Algo.Moved 290, Algo.Moved 240, Algo.Frame ]
 
                     -- 0.5 + 60 / 240 = 0.75 of ten octaves above 20 Hz
+                    expected : Model.Msg
                     expected =
                         Model.Edit cutoff (Num (Gesture.atNorm cutoffParam 0.75))
                 in
@@ -92,7 +93,7 @@ suite =
                     |> Expect.equal [ Model.Pick (Addr "FILTER.KIND") 2 ]
         , test "a_sideways_wheel_edits_nothing" <|
             \_ ->
-                run [ Algo.Hand (Controls.Wheel cutoff Hero 0), Algo.Frame ]
+                run [ Algo.Hand (Controls.Wheel cutoff 0), Algo.Frame ]
                     |> Tuple.second
                     |> Expect.equal []
         ]

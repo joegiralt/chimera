@@ -31,9 +31,9 @@ editor-sim:
 editor-e2e:
     node editor/e2e/sim.mjs
 
-# The browser editor's Elm tests
+# The browser editor's Elm tests, then elm-review (the site's gate, editor/review)
 editor-test:
-    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && node public/ports.check.js
+    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && npx elm-review && node public/ports.check.js
 
 # The browser editor, optimised, into editor/dist/
 editor-build:
