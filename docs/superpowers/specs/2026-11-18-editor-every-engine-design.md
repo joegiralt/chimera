@@ -1,6 +1,6 @@
 # Browser editor, slice 1b: every engine
 
-**Status:** draft 2026-11-18, waiting on the owner for the three questions at the end (#1014). Nothing is built on them.
+**Status:** approved 2026-11-18 (owner, #1014). The three questions at the end are answered, each with the recommendation: DRUM addresses every pad (B), TAPE's SOURCE is read-only in this slice (a, the picker with #1015), and the screens go on ALGO's grid after one mockup of all four is approved.
 
 ## Intent
 
@@ -85,7 +85,7 @@ FILTER, FX, ENV and LFO panels keep slice 1's variants on every engine.
 
 ADR 0285, "The editor protocol 3: every engine, scales, choices by index", supersedes ADR 0276 in part ("Choices are set by their option names, never by number", "`ed describe ALGO <page>`", the 218-address cost). It also notes what it changes in ADR 0280 ("the console's `ed set` reaches only ALGO's cells"). If question 1 is answered B, it also freezes DRUM's pad tokens.
 
-## Questions for the owner
+## Questions for the owner (answered 2026-11-18)
 
 ### 1. How does the editor show and address DRUM's 12 pads?
 
@@ -94,7 +94,7 @@ On the box, every DRUM page edits the Part's selected pad (`BlockRef::Pad`, `Pad
 - **A. Follow the box's pad.** Tokens address the selected pad (`PAD.LEVEL`, `PADFLT.CUTOFF`). A new `ed pad <n>` selects a pad on the box, as `ed part` selects a Part, and `since` reports the selected pad. The editor shows one pad at a time with a 12-pad strip. This is cheap (about 50 slots, existing edit paths). But an `ed set` lands on whatever pad the box has selected when the UI pass runs: press another pad on the box between the click and the pass, and the edit lands on the wrong pad. That's a sync bug class.
 - **B. Every pad addressed.** Tokens carry the pad (`PAD1.LEVEL` … `PAD12.LEVEL`, `PAD1_FLT.CUTOFF`, `PAD1_RT2.AMOUNT`). The editor shows the whole kit at once: a 12-row overview of MACHINE, LEVEL, PAN, CHOKE and RETRIG (Machinedrum's kit view), plus one pad's full detail, chosen in the editor without moving the box. The cost is about 590 slots (about 2.3 KB more ITCM, which has room), a full DRUM answer of roughly 25 KB, and a pad-targeted edit path in bank 2: today `edit_to` reaches only the selected pad, and CHOKE's group check must run on the named pad.
 
-**Recommendation: B.** It removes the wrong-pad race by construction, which is the kind of design the owner prefers over detecting drift (2026-11-16). It matches ALGO's precedent, where all six operators are shown although the box selects one. And seeing a whole kit is what the editor is for. The pad routes (4 a pad) are plain `ParamSpec` params, so they're edited as rows here, unlike the Part matrix (slice 2).
+**Answer (owner, 2026-11-18): B**, the whole kit: a 12-row overview plus one pad's full detail, picked in the editor, never on the box. **Recommendation was B.** It removes the wrong-pad race by construction, which is the kind of design the owner prefers over detecting drift (2026-11-16). It matches ALGO's precedent, where all six operators are shown although the box selects one. And seeing a whole kit is what the editor is for. The pad routes (4 a pad) are plain `ParamSpec` params, so they're edited as rows here, unlike the Part matrix (slice 2).
 
 ### 2. What does TAPE's SOURCE do over USB?
 
@@ -104,10 +104,10 @@ SOURCE isn't a param. It's the Sound's `SourceRef` (a CRC, frames and rate), and
 - **b.** A picker now: `ed sources` lists the card's prepared sources and `ed source <name>` queues the box's own load job.
 - **c.** Leave SOURCE out until #1015.
 
-**Recommendation: a**, with the picker built in #1015 (files on the unit), which owns listing the card. Building it here would design card listing twice.
+**Answer (owner, 2026-11-18): a**, read-only; the picker comes with #1015. **Recommendation was a**, with the picker built in #1015 (files on the unit), which owns listing the card. Building it here would design card listing twice.
 
 ### 3. Do the new screens need a mockup approved first?
 
 ALGO's screen follows the owner-approved mockup v10. Nothing exists yet for MODAL, VA, TAPE or DRUM, and the memory notes say each engine eventually gets its ancestor's look.
 
-**Recommendation:** for 0.4, lay each engine out on ALGO's grid and widgets: Prophet-6 sections in the box's chain order, the shared FLT, AMP, MOD and PIT sections exactly as ALGO's, and glyph placeholders as ALGO has. I'd show one mockup artifact with all four for a yes or no before writing the Elm screens. The ancestor looks stay a later pass. The firmware half (protocol 3, all engines described, host tests, simulator) doesn't depend on this answer, and could start as soon as question 1 is answered.
+**Answer (owner, 2026-11-18): yes**, on ALGO's grid, one mockup of all four for a yes or no before the Elm screens; ancestor looks later. **Recommendation was:** for 0.4, lay each engine out on ALGO's grid and widgets: Prophet-6 sections in the box's chain order, the shared FLT, AMP, MOD and PIT sections exactly as ALGO's, and glyph placeholders as ALGO has. I'd show one mockup artifact with all four for a yes or no before writing the Elm screens. The ancestor looks stay a later pass. The firmware half (protocol 3, all engines described, host tests, simulator) doesn't depend on this answer, and could start as soon as question 1 is answered.
