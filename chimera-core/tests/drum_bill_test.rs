@@ -525,17 +525,21 @@ fn twelve_pads_a_block_apart_on_rev_v() {
     );
 }
 
-/// The load net (ADR 0273) passes over a booked voice gone silent: a
-/// closed HAT ended with its key still held frees nothing, so it is
-/// neither shed nor counted; a ringing KICK beside it is.
+/// The load net (ADR 0273) sheds only a sounding voice. A closed HAT
+/// that ended with its key still held has freed its slot (a hit ends with
+/// its voice, ADR 0281's ruling): there is nothing to shed or count. A
+/// ringing KICK is.
 #[test]
 fn the_load_net_sheds_only_a_sounding_voice() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     r.note_on_vel(0, key(pad(8)), 127);
     r.render(SR_BLOCKS / 2);
-    let hat = slot_for(&r, key(pad(8))).expect("the HAT's key still books its voice");
-    assert!(!r.inst.voice(hat).is_active(), "the HAT has ended");
+    assert_eq!(
+        slot_for(&r, key(pad(8))),
+        None,
+        "the HAT ended: its slot is free, its key held or not"
+    );
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
     let counter = CycleCounter::new(true).expect("a counting DWT");
     let net = LoadNet::new(counter, block);
@@ -548,7 +552,6 @@ fn the_load_net_sheds_only_a_sounding_voice() {
     r.render(1);
     assert!(net.after(over, &mut r.inst), "one shed, counted once");
     let s = r.inst.allocator().slots();
-    assert!(!s[hat].dying(), "the silent HAT left booked");
     assert!(
         s.iter()
             .any(|s| s.dying() && s.note().map(|n| n.get()) == Some(0))

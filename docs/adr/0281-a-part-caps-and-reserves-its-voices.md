@@ -73,7 +73,7 @@ Chimera's six Parts share one pool of 8 voices (ADR 0015, 0027, 0040). When the 
 ## Supersedes in part
 - [0015](0015-voice-steal-and-fx-returns.md) rule 1 ("steal … from any part"): a guarded Part's voices are not stolen by another Part's note, and a Part at its cap steals only its own voices, even with voices free.
 - [0027](0027-shedding-fades-tails-first.md) "Order": guarded voices are shed last.
-- [0273](0273-a-block-near-its-deadline-sheds-a-voice.md) "The response": the voice the net sheds is the one `shed_one` picks with guarded voices last.
+- [0273](0273-a-block-near-its-deadline-sheds-a-voice.md) "The response": the voice the net sheds is the one `shed_one` picks with guarded voices last. Its "a booked voice gone silent (a DRUM hit ended with its key held)" no longer occurs: a hit's slot frees when its voice finishes.
 - [0183](0183-tape-streams-billed-by-the-reach-in-use.md) "Steals: released voices first, the oldest; then the quietest held": only among voices that aren't another Part's guarded ones (`Allocator::card_stealable`); with none that frees room, refused.
 - [0280](0280-a-drum-kit-has-at-most-eight-voice-groups.md) "A pad with no live voice of its own … steals as rule 3 always has": at its Part's cap it steals within the Part.
 - Extends [0151](0151-a-refused-kind-or-algorithm-is-shown-dimmed-with-its-reason.md)'s dimmed-with-reason refusal to MAX VOICES and RESERVE.
