@@ -45,12 +45,12 @@ The spec is `docs/superpowers/specs/2026-11-18-editor-every-engine-design.md` an
 ## Consequences
 - **ITCM:** `EdState`'s `since` copy grows from 256 to 711 slots. `.itcm` went from 17,432 B to 19,512 B (+2,080 B) of 63 KB.
 - **Bank 1:**
-  - ORBIT: 890,192 → 890,336 B (+144; the line +112, from 890,224).
-  - Default: 875,888 → 876,088 B (+200), within its line.
+  - ORBIT: 890,192 → 890,312 B (+120, built clean as `just check` builds; the line +88, from 890,224).
+  - Default: 875,888 → 876,064 B (+176), within its line.
   - The growth is `Project::select_pad` and `PadRoutes::route` out of line now that bank 2 calls them, the `GATE_DECAY` ident, and codegen shuffle.
 - **Bank 2:**
   - ORBIT: 526,560 → 531,968 B (+5,408). Its S0–S3 stays at 8,320 B free; all of the growth is in S4.
-  - Default: 498,368 → 503,776 B (+5,408).
+  - Default and the gate build: 498,368 → 503,776 B (+5,408; the lines +5,376, from 498,400).
 - **Answer sizes:**
   - Full `since` answers, in `console_ed_engines_test`: ALGO 6.1 KB, MODAL 3.4 KB, TAPE 3.6 KB, VA 3.2 KB, DRUM 21.4 KB. All are under the 32,000 B answer clock.
   - DRUM's schema is 165 pages and 210 KB, read once a session; the largest page is under the clock.
