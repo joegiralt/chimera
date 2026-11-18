@@ -256,16 +256,13 @@ fn shown_at(engine: EngineType, mut i: usize) -> Option<PanelName> {
     }
     i -= LfoSlot::ALL.len();
     match engine {
-        EngineType::Algo => match Op::ALL.get(i) {
-            Some(&o) => Some(PanelName::Op(o)),
-            None => None,
-        },
+        EngineType::Algo => Op::ALL.get(i).map(|&o| PanelName::Op(o)),
         EngineType::Modal => (i == 0).then_some(PanelName::Resonator),
         EngineType::Tape => (i == 0).then_some(PanelName::Machine),
         EngineType::Va => None,
         EngineType::Drum => {
             let pad = *PadId::ALL.get(i / 2)?;
-            Some(if i % 2 == 0 {
+            Some(if i.is_multiple_of(2) {
                 PanelName::PadFilter(pad)
             } else {
                 PanelName::PadMachine(pad)

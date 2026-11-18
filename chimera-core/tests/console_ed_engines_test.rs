@@ -845,7 +845,6 @@ fn a_formant_kind_or_algorithm_past_the_budget_writes_nothing() {
             set(&mut f, &ed(a), &format!("#{code}"));
             let want = if why.is_some() { was } else { f32::from(code) };
             assert_eq!(get(&mut f, &ed(a)).0, want, "{side:?} {code}: {why:?}");
-            refused += usize::from(why.is_some());
         }
     }
 }
