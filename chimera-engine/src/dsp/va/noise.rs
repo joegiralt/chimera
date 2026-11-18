@@ -60,8 +60,8 @@ impl DiskCode for NoiseKind {
 const A: u32 = 1_664_525;
 const C: u32 = 1_013_904_223;
 
-/// A draw's word to the waves' RMS: a uniform ±√3·R has RMS R.
-const WORD: f32 = R * 1.732_050_8 / 2_147_483_648.0;
+/// A draw's raw word to the waves' level: a uniform ±√3·R has RMS R.
+const WORD_TO_RMS: f32 = R * 1.732_050_8 / super::stability::WORD;
 
 /// PINK: Kellet's economy filter, poles and gains, and its power make-up
 /// (`1/√(d² + 2dΣc + ΣΣ cⱼcₖ/(1 − aⱼaₖ))`).
@@ -81,9 +81,9 @@ pub const STEPS: f32 = 16.0;
 /// Each KIND's gain from its filter's output to RMS R.
 const fn make_up(k: NoiseKind) -> f32 {
     match k {
-        NoiseKind::White | NoiseKind::Digital => WORD,
-        NoiseKind::Pink => WORD * PK_N,
-        NoiseKind::Red => WORD * RD_N,
+        NoiseKind::White | NoiseKind::Digital => WORD_TO_RMS,
+        NoiseKind::Pink => WORD_TO_RMS * PK_N,
+        NoiseKind::Red => WORD_TO_RMS * RD_N,
     }
 }
 

@@ -352,6 +352,7 @@ fn leaving_fm_settles() {
 // ---- LOOPFM (#613) ----
 
 use chimera_core::dsp::va::lbfm::{LEAN, PEAK, b0_cap, lbfm, render_loop, scale_of, target_b0};
+use chimera_core::dsp::va::stability::WrapJitter;
 
 const R_RMS: f64 = 0.2;
 const TWO_THIRDS: f32 = 2.0 / 3.0;
@@ -430,7 +431,7 @@ fn one_osc(b0: f32) -> Vec<f32> {
     const N: usize = 4000;
     let mut out = [0.0f32; N];
     let mut mk = [[0.0f32; 2]; N];
-    let (mut ph, mut jit) = (0.0f32, 1.0f32);
+    let (mut ph, mut jit) = (0.0f32, WrapJitter::NONE);
     render_loop::<N, false>(
         &mut ph,
         (b0, 0.0),
@@ -438,7 +439,7 @@ fn one_osc(b0: f32) -> Vec<f32> {
         &mut out,
         &mut mk,
         &mut jit,
-        &mut || 1.0,
+        &mut || WrapJitter::NONE,
     );
     out.to_vec()
 }

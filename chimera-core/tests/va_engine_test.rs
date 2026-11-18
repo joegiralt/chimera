@@ -9,6 +9,7 @@ use core::mem::MaybeUninit;
 use chimera_core::dsp::ease::{at, step_of};
 use chimera_core::dsp::va::combine::with_sub;
 use chimera_core::dsp::va::osc::{Morph, NO_WRAP, Ramps, Unit, VarOsc, ZEROS, wave_at};
+use chimera_core::dsp::va::stability::WrapJitter;
 use chimera_core::dsp::va::{VA_CHAIN_GAIN, VaEngine, VaMode, VaParams};
 use chimera_core::hw::Cost;
 use chimera_core::project::PartId;
@@ -637,12 +638,13 @@ fn a_block_never_starts_a_third_run() {
         };
         let (mut out, mut mk) = ([0.0f32; B], [[NO_WRAP; 2]; B]);
         o.begin(&r, B);
+        let mut jit = WrapJitter::NONE;
         o.render::<B, false, false, false, false>(
             &mut out,
             &mut mk,
             &r,
-            &mut 1.0,
-            &mut || 1.0,
+            &mut jit,
+            &mut || WrapJitter::NONE,
             &ZEROS,
             (0.0, 0.0),
         );
