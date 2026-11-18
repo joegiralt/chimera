@@ -12,7 +12,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use super::super::blep::blep_into;
 use super::{Blk, Kind, Leg, Lin, PM_JUMPS, Ramps, VarOsc, ZEROS, frac};
-use crate::dsp::va::JitterScale;
+use crate::dsp::va::stability::JitterScale;
 use crate::dsp::va::stability::Stability;
 
 /// A `MOD` render as the door carries it: the oscillator, its block, its

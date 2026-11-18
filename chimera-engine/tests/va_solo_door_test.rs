@@ -11,7 +11,9 @@ mod va_scenes;
 
 use core::mem::MaybeUninit;
 
-use chimera_engine::dsp::va::osc::{ANCHORS as WAVE_ANCHORS, SAW_ANCHOR};
+use chimera_engine::dsp::va::osc::{
+    ANCHORS as WAVE_ANCHORS, PULSE_ANCHOR, SAW_ANCHOR, SINE_ANCHOR, TRI_ANCHOR,
+};
 use chimera_engine::dsp::va::{Played, VaEngine, VaMode, VaParams};
 use chimera_engine::project::PartId;
 use chimera_hal::BLOCK_SIZE;
@@ -19,13 +21,14 @@ use chimera_hal::BLOCK_SIZE;
 const SR: u32 = 48_000;
 const BLOCKS: usize = 200;
 
-/// WAVE's anchors: sine, triangle, saw, pulse (`osc::ANCHORS`).
-const ANCHORS: [f32; 4] = [
-    WAVE_ANCHORS[0].get(),
-    WAVE_ANCHORS[1].get(),
-    WAVE_ANCHORS[2].get(),
-    WAVE_ANCHORS[3].get(),
-];
+/// WAVE's anchors, by name.
+const SINE: f32 = SINE_ANCHOR.get();
+const TRI: f32 = TRI_ANCHOR.get();
+const SAW: f32 = SAW_ANCHOR.get();
+const PULSE: f32 = PULSE_ANCHOR.get();
+
+/// WAVE's anchors in its order (`osc::ANCHORS`).
+const ANCHORS: [f32; 4] = [SINE, TRI, SAW, PULSE];
 
 /// A held note on `mode`, both oscillators at WAVE `w`, a sub, STABILITY's
 /// jitter, SHAPE off the ends; OSC 2 a fifth up.
@@ -46,25 +49,26 @@ fn held(mode: VaMode, w: [f32; 2]) -> VaParams {
 /// through every anchor that dwells on each.
 fn moving(b: usize) -> f32 {
     match b {
-        0..30 => ANCHORS[2],
+        0..30 => SAW,
         30..50 => 0.8,
-        50..80 => ANCHORS[3],
-        80..110 => ANCHORS[1],
+        50..80 => PULSE,
+        80..110 => TRI,
         // a stepped LFO up and down WAVE, three blocks a step: it
         // dwells on each anchor and leaves it
         _ => {
+            // the anchors and the midpoints between them
             const STEPS: [f32; 12] = [
-                0.0,
+                SINE,
                 1.0 / 6.0,
-                1.0 / 3.0,
+                TRI,
                 0.5,
-                2.0 / 3.0,
+                SAW,
                 5.0 / 6.0,
-                1.0,
+                PULSE,
                 5.0 / 6.0,
-                2.0 / 3.0,
+                SAW,
                 0.5,
-                1.0 / 3.0,
+                TRI,
                 1.0 / 6.0,
             ];
             STEPS[(b - 110) / 3 % STEPS.len()]
@@ -356,7 +360,7 @@ const SCENES: [u64; 21] = [
 #[test]
 fn the_scenes_saw_is_the_anchor() {
     assert_eq!(va_scenes::SAW, SAW_ANCHOR.get());
-    assert_eq!(ANCHORS[2], SAW_ANCHOR.get());
+    assert_eq!(ANCHORS, WAVE_ANCHORS.map(|u| u.get()));
 }
 
 /// What the plain renders played in each block of `scene`.

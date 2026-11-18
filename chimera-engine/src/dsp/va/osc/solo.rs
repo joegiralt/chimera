@@ -1,17 +1,17 @@
 //! VA's saw alone on its anchor behind bank 2's door (ADR 0283). With
 //! WAVE held on ⅔, OSC 1 and, but as SYNC's slave, OSC 2 play one run of
-//! the saw, the pulse quiet (`OnAnchor`), instead of the pair's. `play` holds both runs,
-//! inlined, so with `bank2` the module links into an S4 group whole
-//! (`bank2.x`, `*3osc4solo*`), reached through `SoloDoor` at its own slot:
-//! the door's table has no room. Without `bank2` it is bank 1's, called
+//! the saw, the pulse quiet (`OnAnchor`), instead of the pair's. `play`
+//! holds both runs, inlined, so with `bank2` the module links into an S4
+//! group whole (`bank2.x`, `*3osc4solo*`), reached through `SoloDoor` at
+//! its own address at the head of the S4 groups: the door's table has no
+//! room. Without `bank2` it is bank 1's, called
 //! directly. `VarOsc::on_anchor`, `block` and the pair's runs stay in
 //! bank 1.
 
 use chimera_hal::BLOCK_SIZE;
 
-use super::{OnAnchor, VarOsc};
-use crate::dsp::va::JitterScale;
-use crate::dsp::va::stability::Stability;
+use super::OnAnchor;
+use crate::dsp::va::stability::{JitterScale, Stability, WrapJitter};
 
 /// Which plain instance a solo plays: two of the engine's three
 /// (`VaEngine::oscs`). SYNC's slave plays its pair.
@@ -19,20 +19,20 @@ use crate::dsp::va::stability::Stability;
 pub enum SoloRun {
     /// OSC 1, marking its wraps and the sub's flips.
     Osc1,
-    /// OSC 2, plain (every MODE but SYNC that runs the plain renders).
+    /// OSC 2 as `Osc2Run::Plain` plays it: every plain MODE but SYNC,
+    /// whose slave plays its pair.
     Osc2,
 }
 
-/// A solo render as the table carries it: the oscillator, its instance,
-/// the proof and its ramps, its block, its marks, its jitter, STABILITY
-/// and the jitter's scale.
-pub type SoloRender = for<'r> fn(
-    &mut VarOsc,
+/// A solo render as the table carries it: its instance, the proof (the
+/// oscillator and its ramps), its block, its marks, its wrap's jitter,
+/// STABILITY and the jitter's scale.
+pub type SoloRender = for<'a> fn(
     SoloRun,
-    OnAnchor<'r>,
+    OnAnchor<'a>,
     &mut [f32; BLOCK_SIZE],
     &mut [[f32; 2]; BLOCK_SIZE],
-    &mut f32,
+    &mut WrapJitter,
     &mut Stability,
     JitterScale,
 );
@@ -46,16 +46,15 @@ impl SoloEntry {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
-        o: &mut VarOsc,
         run: SoloRun,
         at: OnAnchor<'_>,
         out: &mut [f32; BLOCK_SIZE],
         mk: &mut [[f32; 2]; BLOCK_SIZE],
-        jit: &mut f32,
+        jit: &mut WrapJitter,
         stab: &mut Stability,
         js: JitterScale,
     ) {
-        (self.0)(o, run, at, out, mk, jit, stab, js)
+        (self.0)(run, at, out, mk, jit, stab, js)
     }
 }
 
@@ -121,8 +120,24 @@ pub fn through<R>(f: impl FnOnce(&SoloDoor) -> R) -> Option<R> {
         if !crate::bank2::DOOR_CELL.is_open() {
             return None;
         }
+        #[cfg(feature = "test-support")]
+        if FORCE_PAIRS.load(core::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
         Some(f(&SoloDoor::OWN))
     }
+}
+
+/// Host tests only: the solos' table answers as closed, the door open
+/// (`force_pairs`), so a test plays the pairs where the solos would.
+#[cfg(feature = "test-support")]
+static FORCE_PAIRS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Host tests only: every plain block plays its pair (`true`), the door's
+/// other entries as ever.
+#[cfg(feature = "test-support")]
+pub fn force_pairs(on: bool) {
+    FORCE_PAIRS.store(on, core::sync::atomic::Ordering::Relaxed);
 }
 
 /// A plain render's solo: OSC 1's instance (`<true, true>`, recording,
@@ -130,18 +145,17 @@ pub fn through<R>(f: impl FnOnce(&SoloDoor) -> R) -> Option<R> {
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn play(
-    o: &mut VarOsc,
     run: SoloRun,
     at: OnAnchor<'_>,
     out: &mut [f32; BLOCK_SIZE],
     mk: &mut [[f32; 2]; BLOCK_SIZE],
-    jit: &mut f32,
+    jit: &mut WrapJitter,
     stab: &mut Stability,
     js: JitterScale,
 ) {
     let d = &mut || js.draw(stab);
     match run {
-        SoloRun::Osc1 => o.render_solo::<true, true>(at, out, mk, jit, d),
-        SoloRun::Osc2 => o.render_solo::<false, false>(at, out, mk, jit, d),
+        SoloRun::Osc1 => at.render::<true, true>(out, mk, jit, d),
+        SoloRun::Osc2 => at.render::<false, false>(out, mk, jit, d),
     }
 }

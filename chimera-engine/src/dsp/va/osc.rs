@@ -19,13 +19,15 @@
 //! the wraps, the sub's flips and the jitter. A plain instance never
 //! touches `read` but to leave it on the clock.
 
+mod anchor;
 pub mod door;
 pub mod solo;
+
+pub use anchor::OnAnchor;
 
 use super::blep::{blamp_into, blamp6_into, blep_into};
 use crate::dsp::provenance::{PatentLine, Provenance};
 use crate::dsp::{clampf, sqrt};
-use chimera_hal::BLOCK_SIZE;
 
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
@@ -130,7 +132,7 @@ impl Morph {
     /// The live pair and the second wave's weight.
     #[inline(always)]
     fn segment(self) -> (Pair, Weight) {
-        let p = Pair::of(3.0 * self.wave.get());
+        let p = Pair::at(self.wave);
         (p, p.weight(self.wave))
     }
 }
@@ -144,6 +146,17 @@ enum Wave {
 }
 
 impl Wave {
+    /// Its place in WAVE's order (`WAVES`, the peaks' and the zeros' slot).
+    #[inline(always)]
+    const fn index(self) -> usize {
+        match self {
+            Wave::Sine => 0,
+            Wave::Tri => 1,
+            Wave::Saw => 2,
+            Wave::Pulse => 3,
+        }
+    }
+
     /// Its anchor: the WAVE where it plays alone, `k/3`.
     const fn anchor(self) -> Unit {
         Unit::new(match self {
@@ -212,15 +225,11 @@ impl Wave {
     }
 }
 
-/// The proof that a plain block plays the saw alone (ADR 0283): WAVE held
-/// on the saw's anchor, the pulse at weight 0 through the block, and the
-/// pulse's held constants, which the run lerps from, its weight-0 ones.
-/// Only `VarOsc::on_anchor` builds one, for the ramps it binds.
-pub struct OnAnchor<'r> {
-    r: &'r Ramps,
-}
-
-/// The second wave's weight in its pair: `3·WAVE` less the pair's base.
+/// The second wave's weight in its pair: `3·WAVE` less the pair's base
+/// (`Pair::weight`). Off its pair's segment it runs past 0..1; `clamped`
+/// holds it there, the form a bound over a stretch of WAVE reads. Whether
+/// WAVE sits on an anchor is never read from a weight: it is WAVE itself
+/// against `Wave::anchor` (`OnAnchor`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Weight(f32);
 
@@ -230,28 +239,33 @@ impl Weight {
         self.0
     }
 
-    /// On the first wave's anchor: the second's constants are its weight-0
-    /// ones, ±0.
+    /// Held to 0..1: the pair's own segment.
     #[inline(always)]
-    fn is_anchor(self) -> bool {
-        self.0 == 0.0
+    fn clamped(self) -> Weight {
+        Weight(clampf(self.0, 0.0, 1.0))
     }
 }
 
 /// The pair whose constants and edge places (at its last sample) a
-/// `VarOsc` holds, and the weight they were taken at.
+/// `VarOsc` holds, and the WAVE they were taken at.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct HeldPair {
     pair: Pair,
-    weight: Weight,
+    wave: Unit,
 }
 
-/// The two live waves: WAVE's segment.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The two live waves: WAVE's segment, in WAVE's order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Pair {
-    SineTri = 0,
-    TriSaw = 1,
-    SawPulse = 2,
+    SineTri,
+    TriSaw,
+    SawPulse,
+}
+
+/// `3·WAVE`: WAVE in segments, each pair's a unit.
+#[inline(always)]
+fn thirds(wave: Unit) -> f32 {
+    3.0 * wave.get()
 }
 
 impl Pair {
@@ -268,19 +282,24 @@ impl Pair {
     /// `3·WAVE` at the pair's first anchor.
     #[inline(always)]
     fn base(self) -> f32 {
-        self as usize as f32
+        match self {
+            Pair::SineTri => 0.0,
+            Pair::TriSaw => 1.0,
+            Pair::SawPulse => 2.0,
+        }
     }
 
     /// The second wave's weight at `wave`.
     #[inline(always)]
     fn weight(self, wave: Unit) -> Weight {
-        Weight(3.0 * wave.get() - self.base())
+        Weight(thirds(wave) - self.base())
     }
 
-    /// The pair at `3 × WAVE`.
+    /// The pair WAVE `wave` plays: its segment (the anchors 1 and the
+    /// pulse's own end, 2, in the pair above).
     #[inline(always)]
-    fn of(x3: f32) -> Pair {
-        match x3 as usize {
+    fn at(wave: Unit) -> Pair {
+        match thirds(wave) as usize {
             0 => Pair::SineTri,
             1 => Pair::TriSaw,
             _ => Pair::SawPulse,
@@ -735,6 +754,14 @@ pub struct Ramps {
     pub shape: (f32, f32),
 }
 
+impl Ramps {
+    /// WAVE `j` samples in (`val`), held to 0..1.
+    #[inline(always)]
+    fn wave_at(&self, j: usize) -> Unit {
+        Unit::new(val(self.wave, j))
+    }
+}
+
 /// The edge the sub flips with (ADR 0118 point 13).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SubEdge {
@@ -756,27 +783,19 @@ fn val((from, step): (f32, f32), j: usize) -> f32 {
 /// The pair sample `i` plays on `r`.
 #[inline(always)]
 fn seg(r: &Ramps, i: usize) -> Pair {
-    Pair::of(3.0 * Unit::new(val(r.wave, i + 1)).get())
+    Pair::at(r.wave_at(i + 1))
 }
 
-/// WAVE's anchors: sine, triangle, saw, pulse.
-pub const ANCHORS: [Unit; 4] = [
-    Wave::Sine.anchor(),
-    Wave::Tri.anchor(),
-    Wave::Saw.anchor(),
-    Wave::Pulse.anchor(),
-];
-
+/// WAVE's anchor that plays the sine alone.
+pub const SINE_ANCHOR: Unit = Wave::Sine.anchor();
+/// WAVE's anchor that plays the triangle alone.
+pub const TRI_ANCHOR: Unit = Wave::Tri.anchor();
 /// WAVE's anchor that plays the saw alone (`OnAnchor`).
 pub const SAW_ANCHOR: Unit = Wave::Saw.anchor();
-
-/// WAVE's segment edges, its anchors.
-const THIRDS: [f32; 4] = [
-    ANCHORS[0].get(),
-    ANCHORS[1].get(),
-    ANCHORS[2].get(),
-    ANCHORS[3].get(),
-];
+/// WAVE's anchor that plays the pulse alone.
+pub const PULSE_ANCHOR: Unit = Wave::Pulse.anchor();
+/// WAVE's anchors in its order.
+pub const ANCHORS: [Unit; 4] = [SINE_ANCHOR, TRI_ANCHOR, SAW_ANCHOR, PULSE_ANCHOR];
 
 /// How far a block's WAVE ramp may go from `from` toward `to`: across one
 /// segment edge at most (owner, 2026-10-11; ADR 0118). Past a second edge it
@@ -784,15 +803,13 @@ const THIRDS: [f32; 4] = [
 /// snaps, a jump end to end lands in two blocks, and an oscillator crosses
 /// one edge a block at most.
 pub fn wave_reach(from: f32, to: f32) -> f32 {
-    let (k0, k1) = (Pair::of(3.0 * from) as usize, Pair::of(3.0 * to) as usize);
-    if k1 > k0 + 1 {
-        // up from the first segment: short of 2/3 (inside the second)
-        to.min(THIRDS[2] - 1e-6)
-    } else if k0 > k1 + 1 {
-        // down from the third: short of 1/3 (inside the second)
-        to.max(THIRDS[1] + 1e-6)
-    } else {
-        to
+    match (Pair::at(Unit::new(from)), Pair::at(Unit::new(to))) {
+        // up from the first segment: short of the saw (inside the second)
+        (Pair::SineTri, Pair::SawPulse) => to.min(SAW_ANCHOR.get() - 1e-6),
+        // down from the third: short of the triangle (inside the second)
+        (Pair::SawPulse, Pair::SineTri) => to.max(TRI_ANCHOR.get() + 1e-6),
+        // within a segment or into the next: as asked
+        _ => to,
     }
 }
 
@@ -805,12 +822,12 @@ pub fn wave_reach(from: f32, to: f32) -> f32 {
 #[inline(never)]
 fn run_end(r: &Ramps, pair: Pair, i0: usize, n: usize) -> usize {
     let (from, step) = r.wave;
-    let k = pair as usize + usize::from(step > 0.0);
+    // the segment's edge WAVE leaves by: its second wave's anchor going up
+    let (lo, hi) = pair.waves();
+    let edge = if step > 0.0 { hi.anchor() } else { lo.anchor() };
     // sample i plays j = i + 1: the first j past the edge (`as` saturates,
     // NaN to 0); max/min, not clamp: no assert (and no panic path) in audio
-    (((THIRDS[k.min(3)] - from) / step) as usize)
-        .max(i0 + 1)
-        .min(n)
+    (((edge.get() - from) / step) as usize).max(i0 + 1).min(n)
 }
 
 /// The pair `a`, `b`'s constants and places from SHAPE constants `sh`,
@@ -872,15 +889,16 @@ const WAVES: [Wave; 4] = [Wave::Sine, Wave::Tri, Wave::Saw, Wave::Pulse];
 /// anchor, which can peak above both ends); on each piece the crossfaded
 /// peak is a quadratic in time, bounded by its ends plus a quarter of its
 /// curvature.
-fn bound(sh0: &Shaped, sh1: &Shaped, w0: f32, w1: f32) -> f32 {
-    let (k0, k1) = (Pair::of(3.0 * w0) as usize, Pair::of(3.0 * w1) as usize);
+fn bound(sh0: &Shaped, sh1: &Shaped, w0: Unit, w1: Unit) -> f32 {
+    let (k0, k1) = (Pair::at(w0), Pair::at(w1));
+    let (w0, w1) = (w0.get(), w1.get());
     // no anchor passed (the steady case): one piece
     if k0 == k1 {
         let (p0, p1) = (sh0.peaks(), sh1.peaks());
         return match k0 {
-            0 => piece::<0>(&p0, &p1, (w0, w1), (0.0, 1.0)),
-            1 => piece::<1>(&p0, &p1, (w0, w1), (0.0, 1.0)),
-            _ => piece::<2>(&p0, &p1, (w0, w1), (0.0, 1.0)),
+            Pair::SineTri => piece(Pair::SineTri, &p0, &p1, (w0, w1), (0.0, 1.0)),
+            Pair::TriSaw => piece(Pair::TriSaw, &p0, &p1, (w0, w1), (0.0, 1.0)),
+            Pair::SawPulse => piece(Pair::SawPulse, &p0, &p1, (w0, w1), (0.0, 1.0)),
         };
     }
     bound_split(sh0, sh1, (w0, w1), (k0, k1))
@@ -889,31 +907,32 @@ fn bound(sh0: &Shaped, sh1: &Shaped, w0: f32, w1: f32) -> f32 {
 /// `bound` across anchors: a piece for each pair the path is on (pairs
 /// `k0` to `k1`), over the stretch it is on it.
 #[inline(never)]
-fn bound_split(sh0: &Shaped, sh1: &Shaped, (w0, w1): (f32, f32), (k0, k1): (usize, usize)) -> f32 {
+fn bound_split(sh0: &Shaped, sh1: &Shaped, (w0, w1): (f32, f32), (k0, k1): (Pair, Pair)) -> f32 {
     let rdw = 1.0 / (w1 - w0);
     // when the path is at WAVE `a`, held to the block (an anchor not
     // passed lands on an end)
     let at = |a: f32| clampf((a - w0) * rdw, 0.0, 1.0);
-    let (t1, t2) = (at(1.0 / 3.0), at(2.0 / 3.0));
+    let (t1, t2) = (at(TRI_ANCHOR.get()), at(SAW_ANCHOR.get()));
     let (p0, p1) = (sh0.peaks(), sh1.peaks());
     let w = (w0, w1);
     let (lo, hi) = (k0.min(k1), k0.max(k1));
     // the path rises through the pairs or falls; a pair it is not on adds 0
-    let on = |k: usize, v: f32| if lo <= k && k <= hi { v } else { 0.0 };
+    let on = |k: Pair, v: f32| if lo <= k && k <= hi { v } else { 0.0 };
     let (s0, s1, s2) = if w1 > w0 {
         ((0.0, t1), (t1, t2), (t2, 1.0))
     } else {
         ((t1, 1.0), (t2, t1), (0.0, t2))
     };
-    on(0, piece::<0>(&p0, &p1, w, s0))
-        .max(on(1, piece::<1>(&p0, &p1, w, s1)))
-        .max(on(2, piece::<2>(&p0, &p1, w, s2)))
+    on(Pair::SineTri, piece(Pair::SineTri, &p0, &p1, w, s0))
+        .max(on(Pair::TriSaw, piece(Pair::TriSaw, &p0, &p1, w, s1)))
+        .max(on(Pair::SawPulse, piece(Pair::SawPulse, &p0, &p1, w, s2)))
 }
 
-/// `bound` on the piece `ta..tb` of the path, on pair `K`, each wave's
+/// `bound` on the piece `ta..tb` of the path, on `pair`, each wave's
 /// peak lerping from `pk0`'s to `pk1`'s.
 #[inline(always)]
-fn piece<const K: usize>(
+fn piece(
+    pair: Pair,
     pk0: &[f32; 4],
     pk1: &[f32; 4],
     (w0, w1): (f32, f32),
@@ -925,9 +944,11 @@ fn piece<const K: usize>(
         let (a, b) = (pk0[i], pk1[i]);
         a + (b - a) * t
     };
-    let (a, b) = (K, K + 1);
-    let base = K as f32;
-    let f = |w: f32| clampf(3.0 * w - base, 0.0, 1.0);
+    let (a, b) = pair.waves();
+    let (a, b) = (a.index(), b.index());
+    // the weight held to the pair's segment: an end of the path past it
+    // plays one wave
+    let f = |w: f32| pair.weight(Unit::new(w)).clamped().get();
     let (fa, fb) = (f(wa), f(wb));
     let g = |t: f32, fw: f32| (1.0 - fw) * pk(a, t) + fw * pk(b, t);
     let curve = (fb - fa) * ((pk(b, tb) - pk(b, ta)) - (pk(a, tb) - pk(a, ta)));
@@ -1517,60 +1538,6 @@ impl VarOsc {
         }
     }
 
-    /// Whether the block on `r` plays the saw alone (`OnAnchor`): WAVE
-    /// steady on the saw's anchor, and the pulse's held constants its
-    /// weight-0 ones. A block that left them elsewhere (a LOOPFM block
-    /// between, which holds none) plays the pair, which lerps them home.
-    #[inline(always)]
-    pub fn on_anchor<'r>(&self, r: &'r Ramps) -> Option<OnAnchor<'r>> {
-        let pair = seg(r, 0);
-        let steady = r.wave.1 == 0.0;
-        let anchored = pair == Pair::SawPulse && pair.weight(Unit::new(r.wave.0)).is_anchor();
-        // a held saw–pulse is the run's start; any other pair's start is
-        // taken at this block's WAVE
-        let held_quiet = match self.held_pair {
-            Some(HeldPair {
-                pair: Pair::SawPulse,
-                weight,
-            }) => weight.is_anchor(),
-            _ => true,
-        };
-        (steady && anchored && held_quiet).then_some(OnAnchor { r })
-    }
-
-    /// `render`'s plain block on the saw's anchor (`at`): one run of the
-    /// saw, the pulse quiet (`quiet_kind!`). Every sample `render`'s, bit
-    /// for bit, and the pulse's edges left as its run leaves them. Inlined
-    /// into `solo::play`, so with `bank2` the run links with it in bank 2
-    /// (ADR 0283).
-    #[inline(always)]
-    fn render_solo<const REC: bool, const FLIP: bool>(
-        &mut self,
-        at: OnAnchor<'_>,
-        out: &mut [f32; BLOCK_SIZE],
-        mk: &mut [[f32; 2]; BLOCK_SIZE],
-        jit: &mut f32,
-        draw: &mut impl FnMut() -> f32,
-    ) {
-        let r = at.r;
-        let blk = self.block::<false, false, false>(r, BLOCK_SIZE, *jit);
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.runs = 1;
-        }
-        self.run_in::<Saw, PulseQuiet, BLOCK_SIZE, REC, false, FLIP, false, false, false>(
-            &blk,
-            (0, BLOCK_SIZE),
-            r,
-            out,
-            mk,
-            jit,
-            draw,
-            &ZEROS,
-            (0.0, 0.0),
-        );
-    }
-
     /// Every wave's SHAPE constants at the end of the block on `r` (`n`
     /// samples), kept for `render`, and the block's peak bound (`bound`:
     /// WAVE's path split at every anchor it passes).
@@ -1578,12 +1545,7 @@ impl VarOsc {
     pub fn begin(&mut self, r: &Ramps, n: usize) -> f32 {
         self.ends(Shaped::all(Unit::new(val(r.shape, n)).get(), val(r.inc, n)));
         self.next_ok = true;
-        bound(
-            &self.sh[0],
-            &self.sh[1],
-            Unit::new(val(r.wave, 0)).get(),
-            Unit::new(val(r.wave, n)).get(),
-        )
+        bound(&self.sh[0], &self.sh[1], r.wave_at(0), r.wave_at(n))
     }
 
     /// The block's SHAPE ends: the last block's end (or `end`, if none is
@@ -1672,11 +1634,12 @@ impl VarOsc {
         let il = RECIP[(i1 - i0).min(RECIP.len() - 1)];
         let (a, b) = (A::WAVE, B::WAVE);
         let pair = Pair::led_by(a);
-        let weight = |j: usize| pair.weight(Unit::new(val(r.wave, j)));
+        let weight = |j: usize| pair.weight(r.wave_at(j));
         // the block's end is its SHAPE end itself; a run ending earlier
         // (a WAVE segment crossing) lerps the two ends
         let ends = (&self.sh[0], &self.sh[1]);
-        let w1 = weight(i1);
+        let wave1 = r.wave_at(i1);
+        let w1 = pair.weight(wave1);
         let (c1, p1) = if i1 == n {
             at(a, b, ends.1, w1)
         } else {
@@ -1689,7 +1652,7 @@ impl VarOsc {
             None => (c1, p1),
             Some(_) => at_lerp::<A, B>(ends, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0)),
         };
-        let held = HeldPair { pair, weight: w1 };
+        let held = HeldPair { pair, wave: wave1 };
         (self.held_pair, self.c, self.pos) = (Some(held), c1, p1);
         (run.rinc, run.inc, run.dinc) = (blk.rinc, val(r.inc, i0), r.inc.1);
         for (k, l) in run.c.iter_mut().enumerate() {
@@ -1705,7 +1668,7 @@ impl VarOsc {
         }
         if SYNC && !MOD {
             let f = w1.get();
-            let (za, zb) = (blk.zero[a as usize], blk.zero[b as usize]);
+            let (za, zb) = (blk.zero[a.index()], blk.zero[b.index()]);
             run.y0 = (1.0 - f) * za.0 + f * zb.0;
             run.d0 = (1.0 - f) * za.1 + f * zb.1;
         }

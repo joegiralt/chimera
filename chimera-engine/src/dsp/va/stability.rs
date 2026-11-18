@@ -225,14 +225,7 @@ impl Stability {
         [0, 1].map(|k| (cents[k] - C4_CENTS) * SCALE_ERR * s[k] * d)
     }
 
-    /// The cents for the cycle a wrap starts.
-    pub fn jitter(&mut self, d: f32) -> f32 {
-        let x = uni(self.jitter_word() as u32);
-        if d == 0.0 { 0.0 } else { JITTER_CENTS * d * x }
-    }
-
-    /// `jitter`'s draw as a raw word: `jitter(d)` is `JITTER_CENTS · d ·
-    /// uni(word)` (0 at `d == 0`), the scale set once a block.
+    /// The jitter's draw as a raw word, scaled once a block (`JitterScale`).
     #[inline(always)]
     pub fn jitter_word(&mut self) -> i32 {
         let mut x = self.rng[3];
@@ -241,5 +234,44 @@ impl Stability {
         x ^= x << 5;
         self.rng[3] = x;
         x as i32
+    }
+}
+
+/// STABILITY's jitter at depth `d` (`depth`): a raw word's scale, so a
+/// wrap's pitch factor is `1 + scale·word` (`draw`), `JITTER_CENTS · d`
+/// cents at a full word. Defined here once; every render draws through it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JitterScale(f32);
+
+impl JitterScale {
+    pub fn new(d: f32) -> Self {
+        JitterScale(JITTER_CENTS * d * super::CENT * (1.0 / 2_147_483_648.0))
+    }
+
+    /// A wrap's factor from the next raw draw: exactly 1 at depth 0.
+    #[inline(always)]
+    pub fn draw(self, stab: &mut Stability) -> f32 {
+        1.0 + self.0 * stab.jitter_word() as f32
+    }
+}
+
+/// An oscillator's pitch factor for the cycle under way, drawn at its last
+/// wrap (`JitterScale::draw`): 1 at rest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(transparent)]
+pub struct WrapJitter(f32);
+
+impl WrapJitter {
+    pub const NONE: WrapJitter = WrapJitter(1.0);
+
+    #[inline(always)]
+    pub fn factor(&self) -> f32 {
+        self.0
+    }
+
+    /// The factor where a render keeps it, wrap to wrap.
+    #[inline(always)]
+    pub fn factor_mut(&mut self) -> &mut f32 {
+        &mut self.0
     }
 }
