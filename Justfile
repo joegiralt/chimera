@@ -466,6 +466,8 @@ build:
 # folds into code, and bank 1 is measured as the commit would build (#874).
 check $CHIMERA_STAMP_CLEAN="1":
     python3 -m unittest discover -s tools -p 'test_*.py'
+    # The editor's Elm tests: its Part count is pinned to the unit's (UnitTest).
+    just editor-test
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features

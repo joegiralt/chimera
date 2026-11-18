@@ -10,6 +10,7 @@
 //! and only a `Held`'s `Staging` reads the DMA's buffer, so no view of it
 //! outlives a burst's start.
 
+pub use chimera_hal::units::Hz;
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::{MaybeUninit, offset_of, replace};
@@ -339,20 +340,6 @@ struct Line {
 impl Line {
     fn us(&self, cycles: Cycles) -> Micros {
         Micros::new(cycles.get() / self.cycles_per_us.get())
-    }
-}
-
-/// A clock rate in hertz.
-#[derive(Clone, Copy)]
-pub struct Hz(u32);
-
-impl Hz {
-    pub const fn new(n: u32) -> Self {
-        Self(n)
-    }
-
-    pub const fn get(self) -> u32 {
-        self.0
     }
 }
 

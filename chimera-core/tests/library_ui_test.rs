@@ -1329,3 +1329,19 @@ fn naming_returns_to_library() {
     assert!(r.ui.location().browse().is_some());
     assert_eq!(r.ui.lib_tab(), Tab::Library);
 }
+
+#[test]
+fn ed_part_during_a_library_load_is_swallowed_as_its_key_is() {
+    let mut r = Rig::new();
+    tape_library(&mut r, 100.0, "TAPE");
+    r.start_load();
+    r.one_pass();
+    assert!(r.ui.card_pending(), "streaming");
+    let at = r.ui.location();
+    let mut q = chimera_core::console::EdState::new();
+    q.follow(PartId::ALL[1]);
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+    chimera_core::bank2::ed_apply(&mut q, &mut r.ui);
+    assert_eq!(r.ui.active_part, P1);
+    assert_eq!(r.ui.location(), at);
+}

@@ -805,6 +805,9 @@ impl Location {
         }
     }
 
+    // Inlined into its two callers, the keys' pass and `ed part`'s (bank
+    // 2): out of line, bank 1 would hold it and `next` twice over.
+    #[inline(always)]
     pub fn step(self, k: NavKey, cx: &NavCtx, r: &mut Recall) -> Step {
         let s = self.next(k, cx, r);
         self.went(s, cx, r)
@@ -891,6 +894,16 @@ impl Location {
         match self.0 {
             Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Fx(p, _) | Loc::Sound(p, _) => Some(p),
             Loc::Settings(_) | Loc::Orbit(_) => None,
+        }
+    }
+
+    /// The Part whose pages or mixer this is: where its key flips between
+    /// the two (`next`), not where it comes back to them.
+    #[inline(always)]
+    pub fn ladder_part(self) -> Option<PartId> {
+        match self.0 {
+            Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Fx(p, _) => Some(p),
+            Loc::Sound(..) | Loc::Settings(..) | Loc::Orbit(..) => None,
         }
     }
 
