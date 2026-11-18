@@ -1009,7 +1009,7 @@ impl<'r> Played<'r> {
     /// The voice booked for `note` on Part `part`.
     fn voice_of(&self, part: usize, note: u8) -> Option<usize> {
         self.rig.inst.allocator().slots().iter().position(|s| {
-            s.part() == Some(PartId::ALL[part as usize])
+            s.part() == Some(PartId::ALL[part])
                 && s.note().map(MidiNote::get) == Some(note)
         })
     }

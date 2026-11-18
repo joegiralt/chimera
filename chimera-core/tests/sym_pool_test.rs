@@ -130,7 +130,7 @@ impl Stage {
         let slots = self.inst.allocator().slots();
         slots
             .iter()
-            .filter(|s| s.part() == Some(PartId::ALL[part as usize]) && !s.dying())
+            .filter(|s| s.part() == Some(PartId::ALL[part]) && !s.dying())
             .count()
     }
 
@@ -145,7 +145,7 @@ impl Stage {
             .find(|&v| {
                 let s = &slots[v];
                 s.held()
-                    && s.part() == Some(PartId::ALL[part as usize])
+                    && s.part() == Some(PartId::ALL[part])
                     && s.note() == MidiNote::new(n)
             })
             .unwrap_or_else(|| panic!("no voice plays {n} for part {part}"))
