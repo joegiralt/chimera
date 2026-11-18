@@ -135,7 +135,10 @@ fn lo_cut_is_a_150_hz_one_pole_high_pass() {
         let y = play(&mut eqs, 300, sine(hz), |_| on);
         let want = cut_db(f64::from(hz)) as f32;
         let got = level_db(&y, 9_600);
-        assert!((got - want).abs() < 0.05, "{hz} Hz: {got:.3} dB, want {want:.3}");
+        assert!(
+            (got - want).abs() < 0.05,
+            "{hz} Hz: {got:.3} dB, want {want:.3}"
+        );
     }
     assert!((cut_db(150.0) + 3.0103).abs() < 1e-3, "−3 dB at the corner");
     // −6 dB an octave, well below it.
@@ -144,7 +147,10 @@ fn lo_cut_is_a_150_hz_one_pole_high_pass() {
 
 /// The largest sample-to-sample move of `y[from..to]`.
 fn max_step(y: &[f32], from: usize, to: usize) -> f32 {
-    y[from..to].windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max)
+    y[from..to]
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
 }
 
 #[test]
@@ -154,7 +160,11 @@ fn a_full_tilt_turn_glides_without_a_step() {
     let mut eqs = PartEqs::REST;
     let turn = 40;
     let y = play(&mut eqs, 120, sine(200.0), |b| {
-        let t = if b < turn { Tilt::MIN_STEP } else { Tilt::MAX_STEP };
+        let t = if b < turn {
+            Tilt::MIN_STEP
+        } else {
+            Tilt::MAX_STEP
+        };
         PartEq::new(Tilt::at(t), LoCut::Off)
     });
     let at = turn * BLOCK_SIZE;
@@ -181,7 +191,10 @@ fn lo_cut_switches_without_a_click() {
         let at = 40 * BLOCK_SIZE;
         let steady = max_step(&y, at - 2_400, at).max(max_step(&y, y.len() - 2_400, y.len()));
         let during = max_step(&y, at - 1, at + 2_400);
-        assert!(during <= 1.01 * steady, "{from:?}→{to:?}: {during} against {steady}");
+        assert!(
+            during <= 1.01 * steady,
+            "{from:?}→{to:?}: {during} against {steady}"
+        );
     }
 }
 
@@ -190,7 +203,9 @@ fn back_at_flat_the_eq_settles_into_bypass() {
     let mut eqs = PartEqs::REST;
     let x = sine(440.0);
     let bright = PartEq::new(Tilt::at(40), LoCut::On);
-    let y = play(&mut eqs, 400, &x, |b| if b < 20 { bright } else { PartEq::FLAT });
+    let y = play(&mut eqs, 400, &x, |b| {
+        if b < 20 { bright } else { PartEq::FLAT }
+    });
     assert!(!eqs.any_live(), "settled at flat, off again");
     // The last blocks are the input itself, bit for bit.
     let n = y.len();
@@ -217,7 +232,10 @@ fn a_part_with_nothing_written_lands_its_eq_unheard() {
             sample_rate: FS,
         },
     );
-    assert!(buses.iter().flatten().all(|&s| s == 0.0), "a silent bus stays silent");
+    assert!(
+        buses.iter().flatten().all(|&s| s == 0.0),
+        "a silent bus stays silent"
+    );
     // Written next, it plays the setting at once: landed, not gliding.
     written[2] = true;
     let mut buses: Buses = [[1.0; BLOCK_SIZE]; MAX_PARTS];
@@ -267,7 +285,10 @@ fn a_side_is_filtered_as_its_mid() {
         );
         let s = sides[0].expect("kept");
         for i in 0..BLOCK_SIZE {
-            assert!((s[i] - 0.5 * buses[0][i]).abs() < 1e-6, "block {b} sample {i}");
+            assert!(
+                (s[i] - 0.5 * buses[0][i]).abs() < 1e-6,
+                "block {b} sample {i}"
+            );
         }
     }
 }

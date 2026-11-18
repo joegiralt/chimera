@@ -803,8 +803,15 @@ fn eq(p: &mut PartAudio, t: Tilt) {
 fn eq_turn(p: &mut PartAudio, block: u32) {
     let span = (Tilt::MAX_STEP as i32 - Tilt::MIN_STEP as i32) as u32;
     let s = (block % (2 * span)) as i32;
-    let s = if s < span as i32 { s } else { 2 * span as i32 - s };
-    p.mix.eq = p.mix.eq.with_tilt(Tilt::at((Tilt::MIN_STEP as i32 + s) as i8));
+    let s = if s < span as i32 {
+        s
+    } else {
+        2 * span as i32 - s
+    };
+    p.mix.eq = p
+        .mix
+        .eq
+        .with_tilt(Tilt::at((Tilt::MIN_STEP as i32 + s) as i8));
 }
 
 /// 1 OP through the 2040 at REV2, VA's VOICE.

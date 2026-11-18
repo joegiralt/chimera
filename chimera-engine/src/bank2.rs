@@ -49,7 +49,8 @@ pub const VA_SOLO_DOOR_ADDR: u32 = Slot::Mixer.base() + slot::RESERVE;
 pub const PART_EQ_DOOR_ADDR: u32 = VA_SOLO_DOOR_ADDR + 0x10;
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(
-    size_of::<crate::dsp::va::osc::solo::SoloDoor>() <= (PART_EQ_DOOR_ADDR - VA_SOLO_DOOR_ADDR) as usize
+    size_of::<crate::dsp::va::osc::solo::SoloDoor>()
+        <= (PART_EQ_DOOR_ADDR - VA_SOLO_DOOR_ADDR) as usize
 );
 
 /// A table's fixed address in bank 2 (after the door in S0, or at the head

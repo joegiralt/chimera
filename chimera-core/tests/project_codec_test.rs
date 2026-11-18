@@ -731,7 +731,11 @@ fn the_eq_round_trips_and_an_old_file_loads_flat() {
     decode(&encode(&p), &mut q).unwrap();
     assert_eq!(q.part(PartId::ALL[2]).mix.eq, eq);
     // A file from before the EQ: flat, LO CUT off, the rest of the mix kept.
-    let old = mix_without(&p, PartId::ALL[2], &[PartParams::TILT.0, PartParams::LO_CUT.0]);
+    let old = mix_without(
+        &p,
+        PartId::ALL[2],
+        &[PartParams::TILT.0, PartParams::LO_CUT.0],
+    );
     decode(&old, &mut q).unwrap();
     let m = q.part(PartId::ALL[2]).mix;
     assert_eq!(m.eq, PartEq::FLAT);

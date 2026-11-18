@@ -649,7 +649,9 @@ impl Block for PartParams {
                     ..self.voices()
                 })
             }),
-            Self::LO_CUT => apply_code(LoCut::from_code(code), |c| self.eq = self.eq.with_lo_cut(c)),
+            Self::LO_CUT => {
+                apply_code(LoCut::from_code(code), |c| self.eq = self.eq.with_lo_cut(c))
+            }
             _ => false,
         }
     }

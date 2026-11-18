@@ -58,8 +58,7 @@ const EQ_PAGE: PageAt = match MIXER_CHANNEL_CHAIN.page(MIXER_PART, EQ_SUB) {
     None => panic!("PART has EQ"),
 };
 const _: () = assert!(
-    MIXER_CHANNEL_CHAIN.blocks[MIXER_PART].sub_pages[EQ_SUB - 1].id
-        == block_registry::PART_EQ.id
+    MIXER_CHANNEL_CHAIN.blocks[MIXER_PART].sub_pages[EQ_SUB - 1].id == block_registry::PART_EQ.id
 );
 const SENDS_PAGE: PageAt = mixer_page(MIXER_HOME);
 const FX_FIRST_PAGE: PageAt = mixer_page(FX_FIRST as usize);
@@ -885,9 +884,8 @@ impl Location {
             (Part(p, m), NavKey::Plus) => go(mix_walk(p, m, 1)),
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
             // PART's sub-pages, VOICES then EQ, are down from it (ADR 0281,
-            // 0284): EDIT
-            // under STACK, SEQ under ROW; EDIT on from it under STACK, the
-            // Sound rung. Otherwise EDIT goes down to the Sound rung, and
+            // 0284): EDIT under STACK, SEQ under ROW; EDIT on from EQ under
+            // STACK, the Sound rung. Otherwise EDIT goes down to the Sound rung, and
             // the mixer is the top of its chain (SEQ stays).
             (Part(p, m), k) => match voices_step(m, k, cx.pages) {
                 MixStep::ToPage(m) => go(Part(p, m)),

@@ -188,7 +188,10 @@ pub(crate) struct Taps {
 }
 
 impl Taps {
-    pub(crate) const ZERO: Taps = Taps { cut: 0.0, tilt: 0.0 };
+    pub(crate) const ZERO: Taps = Taps {
+        cut: 0.0,
+        tilt: 0.0,
+    };
 }
 
 /// A block's end coefficients (`dsp::Coeffs`): TILT's `k`, `c` and
@@ -280,9 +283,7 @@ impl EqHome {
             EqHome {}
         }
         #[cfg(not(target_os = "none"))]
-        EqHome {
-            eqs: PartEqs::REST,
-        }
+        EqHome { eqs: PartEqs::REST }
     }
 
     pub fn get(&mut self) -> &mut PartEqs {

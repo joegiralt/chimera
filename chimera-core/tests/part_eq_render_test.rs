@@ -34,8 +34,12 @@ fn brightness(x: &[f32]) -> f32 {
 fn tilt_darkens_and_brightens_the_part() {
     let flat = brightness(&play(PartEq::FLAT, 200).0[BLOCK_SIZE * 100..]);
     let dark = brightness(&play(PartEq::new(Tilt::at(-64), LoCut::Off), 200).0[BLOCK_SIZE * 100..]);
-    let bright = brightness(&play(PartEq::new(Tilt::at(63), LoCut::Off), 200).0[BLOCK_SIZE * 100..]);
-    assert!(dark < 0.5 * flat && bright > 2.0 * flat, "{dark} {flat} {bright}");
+    let bright =
+        brightness(&play(PartEq::new(Tilt::at(63), LoCut::Off), 200).0[BLOCK_SIZE * 100..]);
+    assert!(
+        dark < 0.5 * flat && bright > 2.0 * flat,
+        "{dark} {flat} {bright}"
+    );
 }
 
 #[test]
