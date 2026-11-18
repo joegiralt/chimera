@@ -1,7 +1,7 @@
 //! `status`: firmware, project, Part, where the UI is and bank 2.
 
 use core::fmt::{self, Write};
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use super::PROTOCOL;
 use crate::board::BoardId;
@@ -9,7 +9,9 @@ use crate::project::ProjectStatus;
 use crate::ui::UiState;
 use crate::ui::about_page::{BUILD, VERSION, write_build_rev};
 use crate::ui::nav::{MixPage, Rung};
-use chimera_hal::store::{DOUBT_HALT, Doubt, Mark, Sweep, SweepRun, SweepStats, Then, Trigger};
+use chimera_hal::store::{
+    BootCard, DOUBT_HALT, Doubt, Mark, Sweep, SweepRun, SweepStats, Then, Trigger,
+};
 
 /// The footer's word for `s`.
 pub fn state_word(s: ProjectStatus) -> &'static str {
@@ -97,6 +99,22 @@ impl LoadNetCell {
 
 pub static LOAD_NET: LoadNetCell = LoadNetCell(AtomicU8::new(LoadNetState::Absent as u8));
 
+/// How the card answered at boot (`BootCard::to_bits`).
+pub struct BootCardCell(AtomicU32);
+
+impl BootCardCell {
+    pub fn store(&self, b: Option<BootCard>) {
+        self.0.store(BootCard::to_bits(b), Ordering::Relaxed);
+    }
+
+    pub fn load(&self) -> Option<BootCard> {
+        BootCard::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
+/// Stored by the board's boot acquire.
+pub static BOOT_CARD: BootCardCell = BootCardCell(AtomicU32::new(BootCard::to_bits(None)));
+
 /// MIDI in's pipe (`PipeStats`): the faults its parser counted, the events
 /// a full note queue refused (`drops`) and those a full control ring
 /// refused (`ctrl_drops`), DIN's; the events the note queue refused USB's
@@ -136,6 +154,19 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     w.write_char('\n')?;
     writeln!(w, "sram4 {}", SRAM4.load().word())?;
     writeln!(w, "load_net {}", LOAD_NET.load().word())?;
+    // `Late`: nothing in the boot's window; a later ask found the card.
+    match BOOT_CARD.load() {
+        None => w.write_str("boot_card untried\n")?,
+        Some(b) => {
+            let (word, ms) = match b {
+                BootCard::Ready(ms) => ("ready after", ms),
+                BootCard::Busy(ms) => ("busy after", ms),
+                BootCard::Absent(ms) => ("no answer after", ms),
+                BootCard::Late(ms) => ("late, none in", ms),
+            };
+            writeln!(w, "boot_card {word} {} ms", ms.get())?;
+        }
+    }
     match ui.bank2() {
         Some(b) => {
             b.line(w)?;

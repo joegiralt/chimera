@@ -13,6 +13,8 @@ html, body { background: var(--ground); color: var(--ink); font-family: var(--di
 .notice { color: var(--ink); letter-spacing: .06em; }
 button.part { padding: 2px 7px; border-radius: 3px; border: 1px solid var(--dim); background: none; color: var(--mute); font: inherit; cursor: pointer; }
 button.part:hover { color: var(--ink); border-color: var(--line); }
+.parts { display: flex; gap: 4px; }
+.parts button.part.on { color: var(--ink); border-color: var(--led); box-shadow: 0 0 6px var(--led); }
 .waiting { padding: 40px 4px; color: var(--mute); letter-spacing: .14em; }
 
 .face { display: grid; grid-template-columns: repeat(22, var(--u)); gap: 0; }

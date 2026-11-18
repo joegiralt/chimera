@@ -510,4 +510,35 @@ suite =
                         |> Tuple.first
                         |> (\x -> ( tick 6000 x |> Tuple.second, x.gen ))
                     )
+        , test "a_part_button_asks_the_box_and_waits_for_it" <|
+            \_ ->
+                case Unit.partFromInt 2 of
+                    Just p2 ->
+                        let
+                            ( m, cs ) =
+                                following |> Model.step (FollowPart p2)
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal [ Follow p2 ] cs
+                            , -- Never guessed: the mark moves when `since` says so.
+                              \_ -> Expect.equal (Unit.partFromInt 1) m.part
+                            , \_ -> Expect.equal (Just p2) (feed [ "part 2 VA", "OK 2" ] m).part
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "no Part 2"
+        , test "a_part_button_before_following_sends_nothing" <|
+            \_ ->
+                case Unit.partFromInt 2 of
+                    Just p2 ->
+                        Model.init
+                            |> Model.step (LinkChanged Open)
+                            |> Tuple.first
+                            |> Model.step (FollowPart p2)
+                            |> Tuple.second
+                            |> Expect.equal []
+
+                    Nothing ->
+                        Expect.fail "no Part 2"
         ]

@@ -1,6 +1,8 @@
 mod screen;
 
-use chimera_core::console::{LOAD_NET, LoadNetState, SRAM4, Sram4, state_word, write_status};
+use chimera_core::console::{
+    BOOT_CARD, LOAD_NET, LoadNetState, SRAM4, Sram4, state_word, write_status,
+};
 use chimera_core::part::DacPair;
 use chimera_core::project::{PartId, ProjectStatus};
 use chimera_core::ui::UiState;
@@ -8,6 +10,8 @@ use chimera_core::ui::about_page::{BUILD, VERSION};
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::nav::{MixPage, Rung};
 use chimera_hal::ButtonId;
+use chimera_hal::store::BootCard;
+use chimera_hal::units::Millis;
 use screen::{Input, feed, modify, naming_save_as, tap, to_leaf};
 
 fn status(ui: &UiState) -> String {
@@ -48,6 +52,35 @@ fn status_reports_the_load_net() {
     LOAD_NET.store(LoadNetState::Absent);
 }
 
+/// chimera-releases#16: how the card answered boot's CMD0s, measured.
+/// NO CARD with `ready` is a failed init; with `no answer` an empty slot.
+#[test]
+fn status_reports_the_boot_card() {
+    let ui = Box::new(UiState::new());
+    let say = |b| {
+        BOOT_CARD.store(b);
+        line(&status(&ui), "boot_card")
+    };
+    assert_eq!(say(None), "untried");
+    assert_eq!(
+        say(Some(BootCard::Ready(Millis::new(30)))),
+        "ready after 30 ms"
+    );
+    assert_eq!(
+        say(Some(BootCard::Busy(Millis::new(1_004)))),
+        "busy after 1004 ms"
+    );
+    assert_eq!(
+        say(Some(BootCard::Absent(Millis::new(1_004)))),
+        "no answer after 1004 ms"
+    );
+    assert_eq!(
+        say(Some(BootCard::Late(Millis::new(1_004)))),
+        "late, none in 1004 ms"
+    );
+    BOOT_CARD.store(None);
+}
+
 #[test]
 fn status_has_its_lines_in_order() {
     let ui = Box::new(UiState::new());
@@ -56,7 +89,16 @@ fn status_has_its_lines_in_order() {
     assert_eq!(
         keys,
         [
-            "firmware", "build", "protocol", "project", "state", "part", "at", "sram4", "load_net"
+            "firmware",
+            "build",
+            "protocol",
+            "project",
+            "state",
+            "part",
+            "at",
+            "sram4",
+            "load_net",
+            "boot_card"
         ]
     );
     assert_eq!(
