@@ -1,6 +1,6 @@
 # 0278. Put the sends on a squared taper
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** owner (approved the change in #1004; on 2026-11-17 chose
   the squared law over dB-linear and cubed, where #1004 had said
   "dB-shaped"), Claude (law)
