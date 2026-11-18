@@ -208,9 +208,8 @@ fn back_at_flat_the_eq_settles_into_bypass() {
     });
     assert!(!eqs.any_live(), "settled at flat, off again");
     // The last blocks are the input itself, bit for bit.
-    let n = y.len();
-    for i in n - 64..n {
-        assert_eq!(y[i].to_bits(), x(i).to_bits(), "sample {i}");
+    for (i, v) in y.iter().enumerate().skip(y.len() - BLOCK_SIZE) {
+        assert_eq!(v.to_bits(), x(i).to_bits(), "sample {i}");
     }
 }
 
