@@ -17,7 +17,6 @@ use chimera_hal::BLOCK_SIZE;
 use chimera_hal::card_bus::CardFault;
 use chimera_hal::units::StreamCount;
 
-use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
@@ -28,6 +27,7 @@ use crate::dsp::rev::RevBill;
 use crate::dsp::rev::sync::Tempo;
 use crate::dsp::tape_engine::{COST_STREAM, Heads, TapeEngine};
 use crate::dsp::voice::{HighNote, Own, Voice};
+use crate::dsp::{Gain, Stereo};
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
@@ -49,7 +49,7 @@ use crate::stream::admit::{Age, Bill, ReadRatio};
 use crate::stream::port::{CtxBase, NoPorts, Port, VoicePorts};
 use crate::stream::stats::StreamStats;
 use crate::tracked::Tracked;
-use crate::voice_alloc::{Allocator, VoiceIdx};
+use crate::voice_alloc::{Allocator, Steal, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 
 mod admission;
@@ -603,20 +603,26 @@ fn mix_sided(
         let (gl, gr) = mix.pan_gains(p, part.mix.pan);
         // Expression swells the whole Part, its FX feed too (ADR 0263):
         // 1.0, every gain bit for bit, at 127.
-        let x = crate::part::expressed(1.0, part.expression);
-        let [s0, s1, s2] = part.params.out.sends.map(|s| s * x);
-        let level = part.mix.level * x;
-        let to = [gl * level, gr * level, s0, s1, s2];
+        let x = Gain::new(crate::part::expressed(1.0, part.expression));
+        let [s0, s1, s2] = part.params.out.sends.map(|s| s.gain().times(x));
+        let level = Gain::new(part.mix.level).times(x);
+        let to: [Gain; MIX_GAINS] = [
+            Gain::new(gl).times(level),
+            Gain::new(gr).times(level),
+            s0,
+            s1,
+            s2,
+        ];
         let eases = &mut mix.gains[p];
         // A part with no voices this block has a silent bus: nothing to
         // add, and its gains land unheard.
         if !written[p] {
-            for (e, &t) in eases.iter_mut().zip(&to) {
-                e.land(t);
+            for (e, t) in eases.iter_mut().zip(to) {
+                e.land(t.get());
             }
             continue;
         }
-        let g: [(f32, f32); MIX_GAINS] = core::array::from_fn(|j| eases[j].step(to[j], k));
+        let g: [(f32, f32); MIX_GAINS] = core::array::from_fn(|j| eases[j].step(to[j].get(), k));
         let bus = &buses[p];
         src[n] = (bus, [g[2].0, g[3].0, g[4].0]);
         n += 1;
@@ -1236,10 +1242,14 @@ impl Instrument {
         let reserved = self.reserved();
         let origins = &self.note_origin;
         let q = at.part.index() as u8;
-        self.alloc
-            .pick_where(q, at.mode, at.note, cost, reserved, &|v| {
-                origins[v] == at.origin
-            })
+        self.alloc.pick_where(
+            q,
+            at.mode,
+            at.note,
+            (cost, reserved),
+            &|v| origins[v.index()] == at.origin,
+            Steal::Any,
+        )
     }
 
     /// Voice `v`'s port this call, capped at what it is paid, only while
@@ -2017,17 +2027,14 @@ impl Instrument {
                 continue;
             }
             let (q, id, key) = (p as u8, PartId::ALL[p], ev.note);
-            let hit = self.choke(id, key);
+            let (hit, mine) = self.choke(id, key);
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
             // The bill `recost` worked out, so the kit it read.
             let own = self.costs[p].hit(HitKernel::Sounding(hit.params().machine()));
             let cost = own + if first { Knobs::COST } else { Cost::ZERO };
             let reserved = self.reserved();
             let mode = part.mix.mode;
-            let Some(v) = self
-                .alloc
-                .pick_where(q, mode, key, cost, reserved, &|_| false)
-            else {
+            let Some(v) = self.alloc.pick_hit(q, mode, key, cost, reserved, mine) else {
                 self.alloc.refuse();
                 continue;
             };
@@ -2279,12 +2286,15 @@ impl Instrument {
     /// shed does, what it chokes (ADR 0265): its own pad's voices if it
     /// CUTs, and every other pad's in its choke group but OFF. A hit still
     /// waiting out a fade counts as its pad's in the kit now, and is
-    /// dropped unheard. Out of line: bank 1's (ADR 0251).
+    /// dropped unheard. With it, what a hit that needs room may steal: a
+    /// pad's live voices left, a STACK pad's own (ADR 0280), else any. Out of
+    /// line: bank 1's (ADR 0251).
     #[inline(never)]
-    fn choke(&mut self, id: PartId, key: MidiNote) -> DrumHit {
+    fn choke(&mut self, id: PartId, key: MidiNote) -> (DrumHit, Steal) {
         let hit = KIT_VIEW.hit(id, key);
         let (pad, p) = (hit.pad(), hit.params());
         let q = id.index() as u8;
+        let mut own = Steal::Any;
         for w in 0..MAX_VOICES {
             let s = self.alloc.slots()[w];
             if s.part() != Some(q) || s.dying() {
@@ -2301,9 +2311,11 @@ impl Instrument {
             if ends {
                 self.alloc.kill(w);
                 self.shed(w);
+            } else if h.pad() == pad {
+                own = own.mine(VoiceIdx::ALL[w]);
             }
         }
-        hit
+        (hit, own)
     }
 
     /// The hit voice `w`, booked by DRUM Part `id`, plays: the one

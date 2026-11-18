@@ -80,6 +80,7 @@ type Msg
     | Tick Time.Posix
     | Edit Addr Value
     | Pick Addr Int
+    | FollowPart Part
     | ConnectSerial
     | ConnectSocket
 
@@ -261,6 +262,14 @@ step msg m =
 
                 Nothing ->
                     ( m, [] )
+
+        -- The box moves; the mark follows when `since` says so.
+        FollowPart p ->
+            if m.stage == Following then
+                ( m, [ Follow p ] )
+
+            else
+                ( m, [] )
 
         -- Connecting is `update`'s (it asks the shim).
         ConnectSerial ->

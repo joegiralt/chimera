@@ -10,7 +10,6 @@
 //! `limit` then runs the output stage, the trim and the peak limiter
 //! (ADR 0050).
 
-use crate::dsp::clampf;
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
@@ -186,10 +185,11 @@ impl FxBus {
             add(&mut ret.l, delay);
             add(&mut ret.r, delay);
         }
-        // REV SEND: the delay's return into the reverb's send, this block.
+        // REV SEND: the delay's return into the reverb's send, this block, at
+        // its tapered gain (ADR 0278).
         let (from, to) = self
             .rev_send
-            .step(unit(params.delay.rev_send), ease_coeff(sample_rate));
+            .step(params.delay.rev_send.gain().get(), ease_coeff(sample_rate));
         if !dry && (from != 0.0 || to != 0.0) {
             let n = BLOCK_SIZE as f32;
             for (i, (r, &d)) in reverb.iter_mut().zip(delay.iter()).enumerate() {
@@ -258,9 +258,4 @@ fn add(acc: &mut [f32; BLOCK_SIZE], x: &[f32; BLOCK_SIZE]) {
     for (a, &v) in acc.iter_mut().zip(x) {
         *a += v;
     }
-}
-
-/// Clamped to 0..1; NaN reads as 0.
-fn unit(v: f32) -> f32 {
-    if v.is_nan() { 0.0 } else { clampf(v, 0.0, 1.0) }
 }

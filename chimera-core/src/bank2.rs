@@ -236,7 +236,7 @@ pub struct UiDoor {
     machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
     band_note: fn(ParamAddr, &Sound, crate::ui::view::SourceState) -> Option<&'static str>,
-    tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
+    tape_held: fn(&TapeEngineParams, crate::ui::held::TapeTurn) -> Option<NeedsRam>,
     /// TAPE cells' units where the engine has a law (`ui::walk`).
     tape_fmt: fn(
         ParamId,
@@ -247,7 +247,7 @@ pub struct UiDoor {
     /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
     delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,
     /// A TAPE MODEL or DIRECTION edit's knob writes (`ui::walk`).
-    tape_writes: fn(ParamId, u8, &TapeEngineParams) -> u8,
+    tape_writes: fn(crate::ui::held::TapeTurn, &TapeEngineParams) -> u8,
     /// The focus readout's full words for TAPE's MODEL and DIRECTION.
     readout_word: fn(ParamAddr, f32, Option<u8>) -> Option<&'static str>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
@@ -265,7 +265,14 @@ pub struct UiDoor {
         crate::project::PartId,
         &crate::preset::Part,
     ) -> Option<crate::project::Line>,
+    /// DRUM's voice groups (`ui::kit_groups`, ADR 0280): a CHOKE turn or
+    /// edit, a held one's reason, the count.
+    groups: fn(crate::ui::kit_groups::Ask<'_>) -> crate::ui::kit_groups::Said,
 }
+
+// The table fits its 128 B before the next door's (`bank2.x`): 32 words
+// on the unit, as wide as a pointer on the host.
+const _: () = assert!(core::mem::size_of::<UiDoor>() <= 32 * core::mem::size_of::<usize>());
 
 /// A card row's head and how it loads (`SourceCell::kind`).
 type HeadKind = (SourceHead, LoadKind);
@@ -307,6 +314,7 @@ impl UiDoor {
         roll: crate::randomize::kern::roll,
         tuning: crate::ui::tuning::work_in,
         tuning_note: crate::ui::tuning::note_in,
+        groups: crate::ui::kit_groups::ask_in,
     };
 
     #[inline(always)]
@@ -443,10 +451,9 @@ impl UiDoor {
     pub(crate) fn tape_held(
         &self,
         t: &TapeEngineParams,
-        id: ParamId,
-        code: u8,
+        turn: crate::ui::held::TapeTurn,
     ) -> Option<NeedsRam> {
-        (self.tape_held)(t, id, code)
+        (self.tape_held)(t, turn)
     }
 
     #[inline(always)]
@@ -489,8 +496,8 @@ impl UiDoor {
     }
 
     #[inline(always)]
-    pub(crate) fn tape_writes(&self, id: ParamId, code: u8, t: &TapeEngineParams) -> u8 {
-        (self.tape_writes)(id, code, t)
+    pub(crate) fn tape_writes(&self, turn: crate::ui::held::TapeTurn, t: &TapeEngineParams) -> u8 {
+        (self.tape_writes)(turn, t)
     }
 
     #[inline(always)]
@@ -502,6 +509,18 @@ impl UiDoor {
     ) -> f32 {
         (self.jog)(j, now_ms, drag)
     }
+
+    #[inline(always)]
+    pub(crate) fn groups(&self, a: crate::ui::kit_groups::Ask<'_>) -> crate::ui::kit_groups::Said {
+        (self.groups)(a)
+    }
+}
+
+/// DRUM's voice groups through the UI door's `groups` (ADR 0280): one
+/// out-of-line call for every bank-1 stub. Closed, `None`.
+#[inline(never)]
+pub(crate) fn groups(a: crate::ui::kit_groups::Ask<'_>) -> Option<crate::ui::kit_groups::Said> {
+    ui_door(|u| u.groups(a))
 }
 
 /// `UI_DOOR`'s slot.

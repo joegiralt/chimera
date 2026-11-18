@@ -7,6 +7,7 @@ import Html.Events exposing (onClick)
 import Model
 import Unit exposing (Engine(..))
 import View.Algo as Algo
+import View.Parts as Parts
 
 
 {-| The unit's state, and the hands on the face.
@@ -66,6 +67,11 @@ view app =
         [ div [ class "top" ]
             [ button [ class "part", onClick (Unit Model.ConnectSerial) ] [ text "CONNECT UNIT" ]
             , button [ class "part", onClick (Unit Model.ConnectSocket) ] [ text "CONNECT SIMULATOR" ]
+            , if Model.status app.unit /= Nothing then
+                Html.map Unit (Parts.view app.unit.part Model.FollowPart)
+
+              else
+                text ""
             , div [ class "notice" ] [ text (Maybe.withDefault "" notice) ]
             , div [ class "status" ] [ text (Maybe.withDefault "" (Model.status app.unit)) ]
             ]

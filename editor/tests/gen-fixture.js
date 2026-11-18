@@ -4,6 +4,8 @@ var fs = require('fs');
 var path = require('path');
 var txt = fs.readFileSync(path.join(__dirname, 'fixtures', 'algo-schema.txt'), 'utf8');
 var lines = txt.split('\n').filter(function (l) { return l !== ''; });
-var out = 'module FixtureData exposing (lines)\n\n\nlines : List String\nlines =\n    [ ' +
+var out = 'module FixtureData exposing (lines, partRefusal)\n\n\nlines : List String\nlines =\n    [ ' +
   lines.map(function (l) { return JSON.stringify(l); }).join('\n    , ') + '\n    ]\n';
+var refusal = fs.readFileSync(path.join(__dirname, 'fixtures', 'part-refusal.txt'), 'utf8').trim();
+out += '\n\npartRefusal : String\npartRefusal =\n    ' + JSON.stringify(refusal) + '\n';
 fs.writeFileSync(path.join(__dirname, 'FixtureData.elm'), out);

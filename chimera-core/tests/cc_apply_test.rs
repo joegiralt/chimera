@@ -528,7 +528,7 @@ fn stepped_cc_past_the_formant_budget_is_refused_as_a_turn() {
         "the turn doesn't toast"
     );
     let shown = b.ui.held_choice().expect("NOIS is shown dimmed");
-    assert_eq!(shown.held.code, 17);
+    assert_eq!(shown.held.code(), 17);
     assert_eq!(kind(&b), OpKind::Formant);
 }
 

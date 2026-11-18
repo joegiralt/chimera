@@ -49,6 +49,8 @@ pub enum Pushed {
 pub struct EdState {
     items: [Pending; CAP],
     len: u8,
+    /// `ed part`'s Part, for the same pass: the last asked wins.
+    part: Option<PartId>,
     /// `ed since`'s copy and number (`since.rs`).
     pub(super) since: super::EdSince,
 }
@@ -61,6 +63,7 @@ impl EdState {
         EdState {
             items: [Pending::SPARE; CAP],
             len: 0,
+            part: None,
             since: super::EdSince::new(),
         }
     }
@@ -76,8 +79,14 @@ impl EdState {
         }
     }
 
+    /// Follow `p` on the next UI pass, as its key would.
+    pub fn follow(&mut self, p: PartId) {
+        self.part = Some(p);
+    }
+
     /// Every queued set, oldest first, as a knob turn on the Part it was
-    /// taken for. A Part that is no longer ALGO drops its sets.
+    /// taken for (a Part that is no longer ALGO drops its sets), then the
+    /// Part to follow: the sets were taken for theirs.
     pub fn apply(&mut self, ui: &mut UiState) {
         let mut i = 0;
         while i < usize::from(self.len) {
@@ -89,6 +98,9 @@ impl EdState {
             i += 1;
         }
         self.len = 0;
+        if let Some(p) = self.part.take() {
+            ui.follow_part(p);
+        }
     }
 }
 

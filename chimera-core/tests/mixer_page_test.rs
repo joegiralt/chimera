@@ -2,6 +2,7 @@
 //! and SENDS pages and the shared FX pages, all bound through slot bindings.
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::part::{DacPair, PartMode, PartParams};
 use chimera_core::preset::Performance;
@@ -150,7 +151,7 @@ fn sends_page_edits_the_part_sends() {
     turn(&mut ui, EncoderId::C, 64); // reverb send
     assert_eq!(
         ui.project().part(PartId::ALL[2]).sound.params.out.sends,
-        [0.0, 0.0, 0.5]
+        [0.0, 0.0, 0.5].map(SendLevel::new)
     );
 }
 
@@ -189,7 +190,7 @@ fn fx_encoders_step_like_before() {
     turn_def(&reg::EFX_MORE, 3, 2, &mut perf);
     assert!((perf.fx.reverb.rate - (0.75 + 2.0 / 128.0)).abs() < 1e-6);
     turn_def(&reg::DELAY, 4, 64, &mut perf);
-    assert_eq!(perf.fx.delay.rev_send, 0.5);
+    assert_eq!(perf.fx.delay.rev_send, SendLevel::new(0.5));
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
     assert!((perf.fx.delay.wow_flutter - (0.15 + 1.0 / 128.0)).abs() < 1e-6);
     // TYPE to GRAIN, and DLY › GRAIN's pots (ADR 0202).

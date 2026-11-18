@@ -2,6 +2,7 @@
 //! `Instrument` (as `loudness_test` plays a scene: Part 1, P1, after the
 //! limiter), offline at 48 kHz, at the unit's voice budget.
 
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::limiter::OUTPUT_GAIN;
 use chimera_core::dsp::rev::sync::Tempo;
@@ -183,7 +184,7 @@ pub fn dry(src: &Source, s: Script) -> Result<Vec<f32>, String> {
 /// `snd` with its sends (ADR 0123) at 0.
 pub(super) fn dried(snd: &Sound) -> Sound {
     let mut d = snd.clone();
-    d.params.out.sends = [0.0; FX_SENDS];
+    d.params.out.sends = [SendLevel::OFF; FX_SENDS];
     d
 }
 
@@ -192,7 +193,7 @@ pub fn heard_through(snd: &Sound) -> Vec<&'static str> {
     ["CHORUS", "DELAY", "REVERB"]
         .into_iter()
         .zip(snd.params.out.sends)
-        .filter(|&(_, s)| s > 0.0)
+        .filter(|&(_, s)| s > SendLevel::OFF)
         .map(|(n, _)| n)
         .collect()
 }
@@ -202,7 +203,7 @@ pub fn heard_through(snd: &Sound) -> Vec<&'static str> {
 /// section and the limiter. Block 0 is silent, so every gain lands first.
 pub(super) fn play_stim(
     fx_params: &FxParams,
-    sends: [f32; FX_SENDS],
+    sends: [SendLevel; FX_SENDS],
     x: &[f32],
     secs: f32,
 ) -> Take {

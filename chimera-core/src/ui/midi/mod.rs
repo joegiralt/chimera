@@ -952,15 +952,14 @@ impl UiState {
     fn cc_cost(&self, p: PartId, a: ParamAddr, to: f32) -> Option<u8> {
         let mut cost = u8::from(knob(a));
         if a == super::held::MODEL || a == super::held::DIRECTION {
-            let code = to as u8;
+            let turn = super::held::TapeTurn::of(a, to)?;
             let s = &self.project.part(p).sound;
-            if self.streams(p) && (super::held::Held { addr: a, code }).why(s, true).is_some() {
+            if self.streams(p) && super::held::Pick::Tape(turn).why(s, true).is_some() {
                 return None;
             }
             // Its machine's or DIRECTION's knob writes too (bank 2's,
             // `walk::tape_writes_in`).
-            cost += crate::bank2::ui_door(|u| u.tape_writes(a.param, code, &s.params.tape))
-                .unwrap_or(0);
+            cost += crate::bank2::ui_door(|u| u.tape_writes(turn, &s.params.tape)).unwrap_or(0);
         }
         Some(cost)
     }

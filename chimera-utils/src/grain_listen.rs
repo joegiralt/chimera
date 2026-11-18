@@ -6,6 +6,7 @@
 //! `.superpowers/ledgers/filters-last/ab-method.md`). Each GRAIN take's
 //! level against TAPE's on the same phrase goes to `levels.json`.
 
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::delay::{DelayParams, DelayType};
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::knobs::KnobPublisher;
@@ -26,8 +27,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 const SR: f64 = SAMPLE_RATE as f64;
-/// The Part's DELAY send: the dry stays in, the return beside it.
-const SEND: f32 = 0.5;
+/// The Part's DELAY send: the dry stays in, the return beside it, at the
+/// gain the linear knob's 0.5 gave (`SendLevel::from_gain`, ADR 0278).
+const SEND: SendLevel = SendLevel::step::<91>();
 const TAIL_S: f64 = 5.0;
 
 /// (seconds, note, on) and the phrase's length.
@@ -169,7 +171,7 @@ fn render(ph: &Phrase, d: DelayParams) -> Vec<f32> {
         delay: d,
         ..FxParams::OFF
     };
-    render_stereo(ph, [0.0, SEND, 0.0], fx)
+    render_stereo(ph, [SendLevel::OFF, SEND, SendLevel::OFF], fx)
         .into_iter()
         .map(|[l, r]| 0.5 * (l + r))
         .collect()
@@ -177,7 +179,7 @@ fn render(ph: &Phrase, d: DelayParams) -> Vec<f32> {
 
 /// `ph` on Part 1 at `sends` (chorus, delay, reverb) into the bus at
 /// `fx`, its tail `TAIL_S`: (L, R) frames after the limiter.
-pub(crate) fn render_stereo(ph: &Phrase, sends: [f32; 3], fx: FxParams) -> Vec<[f32; 2]> {
+pub(crate) fn render_stereo(ph: &Phrase, sends: [SendLevel; 3], fx: FxParams) -> Vec<[f32; 2]> {
     let mut s = ph.sound.clone();
     s.params.out.sends = sends;
     let sound = Tracked::fresh(s);
@@ -268,4 +270,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
     json.truncate(json.trim_end_matches([',', '\n']).len());
     json.push_str("\n]\n");
     std::fs::write(dir.join("levels.json"), json).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SEND;
+    use chimera_core::dsp::{Gain, SendLevel};
+
+    /// The A/B keeps the level it had on the linear knob (ADR 0278).
+    #[test]
+    fn the_delay_send_is_the_old_half_gain() {
+        assert_eq!(SEND, SendLevel::from_gain(Gain::new(0.5)));
+    }
 }

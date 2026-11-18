@@ -39,7 +39,7 @@ id = "P0000003"
 name = "REVERB GATE"
 try = "Play short, sharp notes: the gate cuts every tail, the echoes too"
 fx.REVERB.TYPE = "GATE"
-fx.DELAY.REV = "0.5"
+fx.DELAY.REV = "0.7109375"
 part.1 = "WARM BRASS, POLY, CH 1"
 part.2 = "SOLO PORTA, MONO, CH 2"
 

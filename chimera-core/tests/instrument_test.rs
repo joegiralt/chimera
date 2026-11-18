@@ -3,6 +3,7 @@
 //! sends into the FX bus, FX return into DAC pair 1.
 
 mod common;
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::knobs::Knobs;
 use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::project::PartId;
@@ -179,7 +180,7 @@ fn mix_parts_alone_is_renders_mix() {
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
     shared.parts[0].mix.pan = 0.3;
-    shared.parts[0].params.out.sends = [0.2, 0.3, 0.4];
+    shared.parts[0].params.out.sends = [0.2, 0.3, 0.4].map(SendLevel::new);
     shared.fx.delay.mix = 0.5;
     rig.inst.handle(on(0, 60), &shared);
     rig.block(&shared);
@@ -228,7 +229,7 @@ fn mix_parts_reference(
     let mut moving = Vec::new();
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = pan_gains(part.mix.pan);
-        let [s0, s1, s2] = part.params.out.sends;
+        let [s0, s1, s2] = part.params.out.sends.map(|s| s.gain().get());
         let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
         if !written[p] {
             for (e, &t) in eases[p].iter_mut().zip(&to) {
@@ -319,7 +320,7 @@ fn mix_parts_is_bit_identical_to_the_reference() {
                 part.mix.pan = rnd() * 2.4 - 1.2;
             }
             part.mix.level = rnd();
-            part.params.out.sends = [rnd(), rnd(), rnd()];
+            part.params.out.sends = [rnd(), rnd(), rnd()].map(SendLevel::new);
             part.mix.output = pairs[(rnd() * 3.0) as usize % 3];
         }
         let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|_| {
@@ -379,7 +380,7 @@ fn mix_parts_is_bit_identical_to_the_reference() {
 #[test]
 fn fx_send_puts_no_dry_signal_on_pair_1() {
     // Low enough that the return stays under the limiter's knee (ADR 0109).
-    const SEND: f32 = 0.1;
+    const SEND: SendLevel = SendLevel::new(0.1);
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
     shared.fx.reverb.mix = 0.5;
@@ -393,7 +394,11 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
     for b in 0..120 {
         rig.block(&shared);
         let bus = *rig.inst.part_bus(0);
-        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * SEND)];
+        let mut sends = [
+            [0.0; BLOCK_SIZE],
+            [0.0; BLOCK_SIZE],
+            bus.map(|s| s * SEND.gain().get()),
+        ];
         let mut ret = Stereo::SILENT;
         fx.process(&mut sends, &shared.fx, Tempo::DEFAULT, SR, &mut ret);
         let (l, r) = lr(&rig.out()[0]);
@@ -432,7 +437,7 @@ fn the_chorus_returns_stereo_on_pair_1() {
         mix: 1.0,
     };
     shared.parts[0].mix.output = DacPair::P3;
-    shared.parts[0].params.out.sends = [1.0, 0.0, 0.0];
+    shared.parts[0].params.out.sends = [SendLevel::FULL, SendLevel::OFF, SendLevel::OFF];
     rig.inst.handle(on(0, 60), &shared);
     let (mut l, mut r) = (Vec::new(), Vec::new());
     for _ in 0..100 {
@@ -651,7 +656,7 @@ fn reverb_perf(send: f32) -> Performance {
     let mut perf = sine_perf();
     perf.fx.reverb.mix = 0.5;
     perf.fx.reverb.time = 0.7;
-    perf.edit(PartId::ALL[0]).sound.params.out.sends[2] = send;
+    perf.edit(PartId::ALL[0]).sound.params.out.sends[2] = SendLevel::new(send);
     perf
 }
 
@@ -785,9 +790,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x99176e24a041d1ea),
     ("reverb_send_off", 0xfd4ac36e6db74819), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0x815a3b73b4db0061),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0xe5a7b0d605929052), // ADR 0049 INIT, the ADR 0050 output trim, then ADR 0278 send taper
     ("six_voice_chord", 0x38adad839982e05d), // ADR 0049 INIT, then the ADR 0050 output trim
-                                             // Every row re-recorded for ADR 0109's master gain and soft knee.
+                                            // Every row re-recorded for ADR 0109's master gain and soft knee.
 ];
 
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
@@ -803,7 +808,7 @@ const PRE_LIMITER: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x39011cff1c61c20f),
     ("reverb_send_off", 0xfa51f05d4383455d),
-    ("reverb_send_on", 0x6c4f0bdf615a9cd5),
+    ("reverb_send_on", 0x42383402b998ed9e), // ADR 0278 send taper
     ("six_voice_chord", 0x5132735055c0c78d),
 ];
 
@@ -1704,7 +1709,7 @@ fn a_sound_load_eases_its_sends() {
         assert_eq!(block(&shared), 0.0);
     }
     let mut s = Tracked::fresh(Sound::init(EngineType::Algo));
-    s.params.out.sends = [1.0; FX_SENDS];
+    s.params.out.sends = [SendLevel::FULL; FX_SENDS];
     shared.publish_sound(0, &s, Loads::NONE.next(), &mut knobs);
     let first = block(&shared);
     assert!(first > 0.0 && first < 0.5, "eases in, not a snap: {first}");

@@ -178,21 +178,7 @@ impl Speed {
     }
 }
 
-/// A gain, 0 or more and finite (NaN is 0).
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
-pub struct Gain(f32);
-
-impl Gain {
-    pub const ZERO: Self = Self(0.0);
-
-    pub const fn new(v: f32) -> Self {
-        Self(clampf(v, 0.0, f32::MAX))
-    }
-
-    pub const fn get(self) -> f32 {
-        self.0
-    }
-}
+pub use crate::dsp::Gain;
 
 /// Grains a sample: 0 to ¼ (Beads' `CONSTRAIN(f, …, 0.25)`; NaN is 0).
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]

@@ -4,6 +4,7 @@
 
 mod common;
 
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::engines::SlotKind;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::Knobs;
@@ -875,7 +876,7 @@ mod e2e {
 #[test]
 fn a_delay_tail_rings_through_the_swap() {
     let mut r = rev_v();
-    r.shared.parts[0].params.out.sends = [0.0, 0.8, 0.0];
+    r.shared.parts[0].params.out.sends = [0.0, 0.8, 0.0].map(SendLevel::new);
     r.shared.fx.delay.mix = 0.7;
     r.note_on(0, 60);
     r.render(400); // past the first echo

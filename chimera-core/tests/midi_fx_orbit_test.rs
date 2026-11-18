@@ -458,3 +458,20 @@ fn steps_shrunk_under_a_held_bin() {
         assert!(share * 4 >= 64, "{k} holds {share}: {up:?}");
     }
 }
+
+#[test]
+fn ed_part_in_orbit_is_a_no_op() {
+    let mut ui = on_chance();
+    mix_seq(&mut ui);
+    let at = ui.location();
+    let mut q = chimera_core::console::EdState::new();
+    q.follow(PartId::ALL[1]);
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+    chimera_core::bank2::ed_apply(&mut q, &mut ui);
+    assert_eq!(ui.active_part, P1);
+    assert_eq!(ui.location(), at);
+    assert!(
+        matches!(ui.learn(), Learn::Armed { part: P1, .. }),
+        "learn stays armed"
+    );
+}

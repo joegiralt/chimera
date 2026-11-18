@@ -153,8 +153,6 @@ fn main() {
                 ed: Some(&mut ed),
             })
         });
-        // The console's `ed set`s, applied as knob turns.
-        chimera_core::bank2::ed_apply(&mut ed, &mut ui);
         let now = Instant::now();
         let frame_us = now.duration_since(frame_start).as_micros() as u32;
         frame_start = now;
@@ -202,6 +200,9 @@ fn main() {
         ui.set_formant_views(formant_r.read());
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
+        // The console's `ed`: sets as knob turns, then `ed part`, after the
+        // hand's keys so a B*n* and `ed part n` in one frame land once.
+        chimera_core::bank2::ed_apply(&mut ed, &mut ui);
         // Mapped CCs, in the room the hand's moves left.
         #[cfg(feature = "midi")]
         ui.hear_ccs(

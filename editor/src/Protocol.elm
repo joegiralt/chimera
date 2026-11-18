@@ -14,7 +14,7 @@ module Protocol exposing
 Parsing never fails: a line that isn't understood is `Unknown` and is ignored.
 -}
 
-import Unit exposing (Gen)
+import Unit exposing (Gen, Part)
 
 
 {-| A parameter address, `OP3.CRSE`. The unit's own text, opaque here.
@@ -45,6 +45,7 @@ type Command
     | Get Addr
     | Set Addr Value
     | Since (Maybe Gen)
+    | Follow Part
 
 
 type AnswerLine
@@ -91,6 +92,9 @@ encode c =
 
         Since held ->
             Just ("ed since " ++ String.fromInt (held |> Maybe.map Unit.genToInt |> Maybe.withDefault 0))
+
+        Follow p ->
+            Just ("ed part " ++ String.fromInt (Unit.partNumber p))
 
 
 word : String -> Maybe String

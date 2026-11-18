@@ -6,6 +6,7 @@ use common::Rig;
 use common::{SR, peak, scope_writer, tri};
 
 use chimera_core::addr::{BlockRef, Blocks};
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::dsp::voice::Voice;
@@ -248,7 +249,7 @@ fn other_parts_are_untouched_by_a_switch() {
     shared.parts[0].mix.level = 0.0;
     *shared.parts[1].params = string();
     shared.parts[1].mix.level = 0.0;
-    shared.parts[1].params.out.sends = [0.5; 3];
+    shared.parts[1].params.out.sends = [SendLevel::new(0.5); 3];
     shared.fx.reverb.mix = 0.5;
     let mut switched = shared.clone();
     *switched.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);

@@ -343,6 +343,13 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08180400, \"VA's solos' table heads the S4 groups\");",
     );
+    // DRUM's voice groups (ADR 0280, `UiDoor::groups`, its one entry):
+    // `ui::kit_groups` and the count it reads, `drum::groups`;
+    // an S4 group after `ed`'s (ADR 0272: new 0.4 work goes high).
+    let groups =
+        "    *(.text.*12chimera_core2ui10kit_groups* .rodata.*12chimera_core2ui10kit_groups*
+      .text.*14chimera_engine3dsp4drum6groups* .rodata.*14chimera_engine3dsp4drum6groups*);\n";
+    let s4 = format!("{ed}{groups}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -470,7 +477,7 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
         .replace("    /* TUNING */\n", tuning)
         .replace("    /* MIDI UI SLOT */\n", midi_ui_slot)
         .replace("/* MIDI UI ASSERT */", midi_ui_assert)
-        .replace("    /* S4 GROUPS */\n", ed)
+        .replace("    /* S4 GROUPS */\n", &s4)
         .replace("    /* ED SLOT */\n", ed_slot)
         .replace("/* ED ASSERT */", ed_assert),
     )
