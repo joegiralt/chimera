@@ -412,6 +412,7 @@ With SETTINGS › MIDI CONFIG › ECHO › PARAM OUT at `NRPN`, Chimera sends th
 |---|---|---|---|
 | LEVEL | 25:3 (3203) | 14-bit | 0 to 16383, lowest to highest |
 | PAN | 25:4 (3204) | 14-bit | 0 to 16383, lowest to highest |
+| TILT | 25:15 (3215) | MSB | 0 to 127 (-64 to 63) |
 
 ## Master FX
 

@@ -28,9 +28,10 @@ fn the_door_plays_the_eq_open_and_flat_closed() {
     DOOR_CELL.close();
     let (flat, closed) = (play(PartEq::FLAT), play(eq));
     assert_eq!(flat, closed, "closed: flat");
+    // Open, the other doors play too (the reverb's engines): compare open
+    // with open.
     DOOR_CELL.open_host();
-    let open = play(eq);
+    let (flat, open) = (play(PartEq::FLAT), play(eq));
     assert_ne!(open, flat, "open: EQ'd");
-    assert_eq!(play(PartEq::FLAT), flat, "open, flat: as closed");
     DOOR_CELL.close();
 }

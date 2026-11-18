@@ -2696,17 +2696,15 @@ impl Instrument {
     /// bit. A closed door plays them flat.
     #[inline(never)]
     fn part_eq(&mut self, shared: &AudioShared, written: &[bool; MAX_PARTS], sides: &mut Sides) {
-        let settings: [crate::part_eq::PartEq; MAX_PARTS] =
-            core::array::from_fn(|p| shared.parts[p].mix.eq);
         let eqs = self.eq.get();
-        if !eqs.any_live() && settings.iter().all(|e| e.is_flat()) {
+        if !eqs.any_live() && shared.parts.iter().all(|p| p.mix.eq.is_flat()) {
             return;
         }
-        let b = crate::part_eq::dsp::EqBlock {
+        let b = crate::part_eq::dsp::PartsBlock {
             buses: &mut self.buses,
             sides,
             written,
-            settings: &settings,
+            parts: &shared.parts,
             sample_rate: self.sample_rate,
         };
         crate::part_eq::door::through(|d| d.eq().run(eqs, b));

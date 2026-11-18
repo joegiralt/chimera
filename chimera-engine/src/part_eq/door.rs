@@ -5,10 +5,10 @@
 //! A closed door plays every Part flat.
 
 use super::PartEqs;
-use super::dsp::{EqBlock, run};
+use super::dsp::{PartsBlock, run_parts};
 
 /// The EQ's block as the table carries it.
-pub type EqRun = for<'a> fn(&mut PartEqs, EqBlock<'a>);
+pub type EqRun = for<'a> fn(&mut PartEqs, PartsBlock<'a>);
 
 /// `EqDoor`'s entry: called, never handed out.
 #[repr(transparent)]
@@ -16,7 +16,7 @@ pub struct EqEntry(EqRun);
 
 impl EqEntry {
     #[inline(always)]
-    pub fn run(&self, eqs: &mut PartEqs, b: EqBlock<'_>) {
+    pub fn run(&self, eqs: &mut PartEqs, b: PartsBlock<'_>) {
         (self.0)(eqs, b)
     }
 }
@@ -39,7 +39,7 @@ pub struct EqDoor {
 impl EqDoor {
     const OWN: EqDoor = EqDoor {
         magic: MAGIC,
-        eq: EqEntry(run),
+        eq: EqEntry(run_parts),
     };
 
     #[inline(always)]
