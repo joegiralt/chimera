@@ -4,6 +4,8 @@
 //! settings are the project's mix (`PartParams::eq`), never the Sound's.
 //! One EQ a Part: SMART EQ (#396) adds its cuts here.
 
+pub mod dsp;
+
 /// TILT: a step in `MIN_STEP..=MAX_STEP`, each 1/128 of the 20 dB travel.
 /// `FLAT` (step 0) is exactly 0 dB; −64 is −10 dB, +63 is +9.84 dB. Its
 /// code (CC/NRPN value, the stored digit) is `64 + step`: CC 64 is flat.
@@ -164,5 +166,85 @@ impl PartEq {
 impl Default for PartEq {
     fn default() -> Self {
         PartEq::FLAT
+    }
+}
+
+/// Whether a Part's EQ runs. Zero bytes are `Bypass`, so ITCM's zeroed
+/// boot state (ADR 0286) is every Part bypassed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Live {
+    /// Flat, off and settled: the Part's bus is not touched.
+    Bypass = 0,
+    Running = 1,
+}
+
+/// One filter's memory: LO CUT's low-pass and TILT's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Taps {
+    pub(crate) cut: f32,
+    pub(crate) tilt: f32,
+}
+
+impl Taps {
+    pub(crate) const ZERO: Taps = Taps { cut: 0.0, tilt: 0.0 };
+}
+
+/// A block's end coefficients (`dsp::Coeffs`): TILT's `k`, `c` and
+/// low-pass gain `g`, LO CUT's amount `a`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Coeffs {
+    pub(crate) k: f32,
+    pub(crate) c: f32,
+    pub(crate) g: f32,
+    pub(crate) a: f32,
+}
+
+/// A Part's EQ as the audio keeps it: the eases (TILT in dB, LO CUT's
+/// amount 0..1), the last block's coefficients, and the filters' memory
+/// on its bus (`mid`) and a DRUM pad's side (`side`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChannelEq {
+    pub(crate) tilt: crate::dsp::ease::Ease,
+    pub(crate) cut: crate::dsp::ease::Ease,
+    pub(crate) at: Coeffs,
+    pub(crate) mid: Taps,
+    pub(crate) side: Taps,
+    pub(crate) live: Live,
+}
+
+/// Every Part's EQ state: on the unit an ITCM resident (`home`), on a host
+/// the Instrument's own. All-zero bytes are `REST`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartEqs {
+    pub(crate) parts: [ChannelEq; crate::hw::MAX_PARTS],
+}
+
+impl PartEqs {
+    /// Every Part bypassed: the bytes ITCM's boot zeroing leaves.
+    pub const REST: PartEqs = PartEqs {
+        parts: [ChannelEq {
+            tilt: crate::dsp::ease::Ease::ZERO,
+            cut: crate::dsp::ease::Ease::ZERO,
+            at: Coeffs {
+                k: 0.0,
+                c: 0.0,
+                g: 0.0,
+                a: 0.0,
+            },
+            mid: Taps::ZERO,
+            side: Taps::ZERO,
+            live: Live::Bypass,
+        }; crate::hw::MAX_PARTS],
+    };
+
+    /// A Part's EQ runs (or settles): bank 1's test for the door call.
+    pub fn any_live(&self) -> bool {
+        self.parts.iter().any(|p| p.live == Live::Running)
+    }
+
+    /// Whether Part `p`'s EQ runs: for the tests.
+    pub fn running(&self, p: usize) -> bool {
+        self.parts[p].live == Live::Running
     }
 }
