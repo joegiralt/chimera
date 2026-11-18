@@ -389,7 +389,7 @@ impl Instrument {
     ) {
         for vi in VoiceIdx::ALL {
             let v = vi.index();
-            let s = self.alloc.slots()[v];
+            let s = *self.alloc.slot(vi);
             let (Some(q), Some(note)) = (s.part(), s.note()) else {
                 continue;
             };

@@ -578,14 +578,24 @@ fn the_load_net_skips_a_booked_voice_still_fading() {
         .iter()
         .position(|s| s.part() == Some(PartId::ALL[1]))
         .expect("Part 2's note took a voice");
-    assert!(r.inst.voice(stolen).fading(), "it fades out Part 1's note first");
+    assert!(
+        r.inst.voice(stolen).fading(),
+        "it fades out Part 1's note first"
+    );
     assert!(slots[stolen].held() && !slots[stolen].dying());
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
     let net = LoadNet::new(CycleCounter::new(true).expect("a counting DWT"), block);
-    assert!(net.after(Cycles::new(block.block_cycles()), &mut r.inst), "one shed");
+    assert!(
+        net.after(Cycles::new(block.block_cycles()), &mut r.inst),
+        "one shed"
+    );
     let s = r.inst.allocator().slots();
     assert!(!s[stolen].dying(), "the fading voice is passed over");
     let shed: Vec<usize> = (0..s.len()).filter(|&v| s[v].dying()).collect();
     assert_eq!(shed.len(), 1);
-    assert_eq!(s[shed[0]].note().map(|n| n.get()), Some(67), "Part 1's newest");
+    assert_eq!(
+        s[shed[0]].note().map(|n| n.get()),
+        Some(67),
+        "Part 1's newest"
+    );
 }

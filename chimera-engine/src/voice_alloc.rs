@@ -178,6 +178,16 @@ impl Strike {
         }
     }
 
+    /// Its slot frees when its voice goes quiet, its key down or not: a
+    /// released note, or a DRUM hit, which ends with its voice (the
+    /// owner's ruling, 2026-11-18). A held note's voice keeps its slot.
+    pub const fn ends_with_voice(self) -> bool {
+        match self {
+            Strike::Note(k) => matches!(k, Key::Up),
+            Strike::Hit(_) => true,
+        }
+    }
+
     /// After its note-off.
     pub const fn released(self) -> Strike {
         match self {
@@ -187,14 +197,20 @@ impl Strike {
     }
 }
 
+/// What a booked slot plays: its Part, its note and how it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Booking {
+    pub part: PartId,
+    pub note: MidiNote,
+    pub strike: Strike,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VoiceSlot {
-    part: Option<PartId>,
-    note: Option<MidiNote>,
+    /// What it plays; `None` while free.
+    booking: Option<Booking>,
     /// `Allocator::clock` at the last note-on: lower is older.
     age: u32,
-    /// What it plays; `None` while free.
-    strike: Option<Strike>,
     mono: bool,
     /// Shed, fading out, freed by `release_finished`: the shed's order.
     dying: Option<u32>,
@@ -209,11 +225,16 @@ pub struct VoiceSlot {
 
 impl VoiceSlot {
     pub fn part(&self) -> Option<PartId> {
-        self.part
+        self.booking.map(|b| b.part)
     }
 
     pub fn note(&self) -> Option<MidiNote> {
-        self.note
+        self.booking.map(|b| b.note)
+    }
+
+    /// What it plays; `None` while free.
+    pub fn booking(&self) -> Option<Booking> {
+        self.booking
     }
 
     /// `Allocator`'s clock at the note-on: lower is older. The sympathetic
@@ -224,17 +245,17 @@ impl VoiceSlot {
 
     /// Key still down (no note-off yet).
     pub fn held(&self) -> bool {
-        self.strike.is_some_and(Strike::held)
+        self.booking.is_some_and(|b| b.strike.held())
     }
 
     /// What it plays: a note or a DRUM hit, and its key; `None` while free.
     pub fn strike(&self) -> Option<Strike> {
-        self.strike
+        self.booking.map(|b| b.strike)
     }
 
     /// It counts toward its Part's RESERVE (`Strike::reserves`).
     fn reserves(&self) -> bool {
-        self.strike.is_some_and(Strike::reserves)
+        self.booking.is_some_and(|b| b.strike.reserves())
     }
 
     /// Shed and fading out.
@@ -243,7 +264,7 @@ impl VoiceSlot {
     }
 
     pub fn is_free(&self) -> bool {
-        self.part.is_none()
+        self.booking.is_none()
     }
 
     /// Cycles/sample this voice costs now (0 when free): its note's, or
@@ -309,7 +330,7 @@ impl Allocator {
         let mut s = VoiceSet::EMPTY;
         for v in VoiceIdx::ALL {
             let slot = self.slot(v);
-            if slot.part == Some(part) && slot.dying.is_none() {
+            if slot.part() == Some(part) && slot.dying.is_none() {
                 s = s.with(v);
             }
         }
@@ -333,7 +354,7 @@ impl Allocator {
         let mut s = VoiceSet::EMPTY;
         for v in VoiceIdx::ALL {
             let slot = self.slot(v);
-            if slot.part == Some(part) && slot.dying.is_none() && slot.reserves() {
+            if slot.part() == Some(part) && slot.dying.is_none() && slot.reserves() {
                 s = s.with(v);
             }
         }
@@ -354,7 +375,7 @@ impl Allocator {
         for v in VoiceIdx::ALL {
             let s = self.slot(v);
             if let Some(q) = s
-                .part
+                .part()
                 .filter(|&q| s.dying.is_none() && s.reserves() && Some(q) != but)
                 && self.shares.ask(q).reserve.guards(self.reserving(q).count())
             {
@@ -514,10 +535,8 @@ impl Allocator {
         self.clock = self.next_age();
         self.rr = v.wrapping_add(1);
         self.slots[v.index()] = VoiceSlot {
-            part: Some(part),
-            note: Some(note),
+            booking: Some(Booking { part, note, strike }),
             age: self.clock,
-            strike: Some(strike),
             mono,
             dying: None,
             cost,
@@ -532,16 +551,24 @@ impl Allocator {
     /// Instrument matches note and note-on channel, which a (part, note)
     /// lookup cannot tell apart when one Part holds a key from two channels.
     pub fn release(&mut self, voice: VoiceIdx) {
-        if let Some(s) = self.slots.get_mut(voice.index()) {
-            s.strike = s.strike.map(Strike::released);
+        if let Some(b) = self
+            .slots
+            .get_mut(voice.index())
+            .and_then(|s| s.booking.as_mut())
+        {
+            b.strike = b.strike.released();
         }
     }
 
     /// A held `voice`'s note moved to `note` (a re-snap): its age and the
     /// rest stand. No-op for a free voice.
     pub fn renote(&mut self, voice: VoiceIdx, note: MidiNote) {
-        if let Some(s) = self.slots.get_mut(voice.index()).filter(|s| !s.is_free()) {
-            s.note = Some(note);
+        if let Some(b) = self
+            .slots
+            .get_mut(voice.index())
+            .and_then(|s| s.booking.as_mut())
+        {
+            b.note = note;
         }
     }
 
@@ -630,7 +657,7 @@ impl Allocator {
     /// nothing held.
     pub fn release_finished(&mut self, voice: VoiceIdx) {
         if let Some(s) = self.slots.get_mut(voice.index())
-            && (!s.held() || s.dying() || matches!(s.strike, Some(Strike::Hit(_))))
+            && (s.dying() || s.strike().is_some_and(Strike::ends_with_voice))
         {
             *s = VoiceSlot::default();
         }
@@ -685,7 +712,7 @@ impl Allocator {
         if mode == PartMode::Mono
             && let Some(v) = VoiceIdx::ALL.into_iter().find(|&v| {
                 let s = self.slot(v);
-                s.mono && !s.dying() && s.part == Some(part)
+                s.mono && !s.dying() && s.part() == Some(part)
             })
         {
             return fits(self.slot(v).cost()).then_some(v);
@@ -696,7 +723,11 @@ impl Allocator {
         if mode != PartMode::Mono
             && let Some(v) = VoiceIdx::ALL.into_iter().find(|&v| {
                 let s = self.slot(v);
-                !s.mono && !s.dying() && s.part == Some(part) && s.note == Some(note) && restrike(v)
+                !s.mono
+                    && !s.dying()
+                    && s.part() == Some(part)
+                    && s.note() == Some(note)
+                    && restrike(v)
             })
             && fits(self.slot(v).cost())
         {

@@ -307,10 +307,9 @@ const _: () = assert!(MAX_PARTS * MAX_VOICES <= u8::MAX as usize);
 
 impl Reserved {
     pub const NONE: Reserved = Reserved(0);
-    /// The most it can be: every Part reserving the pool.
-    pub const MOST: Reserved = Reserved((MAX_PARTS * MAX_VOICES) as u8);
 
-    /// Each Part's reserve `r` summed: at most `MOST` (asserted above), so
+    /// Each Part's reserve `r` summed: at most `MAX_PARTS` × `POOL`
+    /// (asserted above), so
     /// no overflow.
     pub const fn of(r: &[Reserve; MAX_PARTS]) -> Reserved {
         let (mut sum, mut i) = (0u8, 0);
@@ -321,7 +320,7 @@ impl Reserved {
         Reserved(sum)
     }
 
-    /// The sum in voices, 0..=`MOST`'s: for its words.
+    /// The sum in voices, 0..=48: for its words.
     pub const fn get(self) -> u8 {
         self.0
     }
