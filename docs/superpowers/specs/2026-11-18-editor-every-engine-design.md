@@ -65,7 +65,7 @@ FILTER, FX, ENV and LFO panels keep slice 1's variants on every engine.
 - `Unit.Engine` becomes the five engines (`Algo | Modal | Va | Tape | Drum`), replacing `Other String`. An engine name the editor doesn't know is a protocol refusal, which shows UPDATE THE EDITOR. `Main` stops gating the screen on `Algo`. Each engine gets `Layout/<Engine>.elm` and `View/<Engine>.elm` on the shared sections, and a `case` over `Engine` picks them, with no catch-all (elm-review `NoCatchAllForSpecificRemainingPatterns`).
 - On connect and on every engine change, the editor describes that engine (`ed describe <ENGINE> 0..n`) and caches each engine's schema for the session. The schema is static per engine and firmware.
 - Placement is checked per engine. The fixtures from `gen-fixture.js` are generated for each engine from the simulator, and `LayoutTest` fails if any described address of any engine has no place. The unplaced strip stays as the visible fallback.
-- #1002's back-to-back answers: the editor ignores an `ed since` answer that arrives when none is outstanding (the second of a pair after a stall). That is the narrow fix. The rest of #1002 stays open (see below).
+- #1002's back-to-back answers: on building, the model already counts answers owed (`owed`, `leftover`), so a late second answer is counted and its lines are true. Nothing changes. The rest of #1002 stays open (see below).
 
 ## Testing
 

@@ -60,6 +60,7 @@ impl EdState {
     /// Sets the queue holds.
     pub const CAP: usize = CAP;
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.new"))]
     pub const fn new() -> Self {
         EdState {
             items: [Pending::SPARE; CAP],
@@ -69,6 +70,7 @@ impl EdState {
         }
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.push"))]
     fn push(&mut self, part: PartId, engine: EngineType, addr: EdAddr, to: f32) -> Pushed {
         match self.items.get_mut(usize::from(self.len)) {
             None => Pushed::Full,
@@ -86,6 +88,7 @@ impl EdState {
     }
 
     /// Follow `p` on the next UI pass, as its key would.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.follow"))]
     pub fn follow(&mut self, p: PartId) {
         self.part = Some(p);
     }
@@ -93,6 +96,7 @@ impl EdState {
     /// Every queued set, oldest first, as a knob turn on the Part it was
     /// taken for (a Part that has changed engine since drops its sets),
     /// then the Part to follow: the sets were taken for theirs.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.apply"))]
     pub fn apply(&mut self, ui: &mut UiState) {
         let mut i = 0;
         while i < usize::from(self.len) {
@@ -114,6 +118,7 @@ impl EdState {
 /// selected for it, and the box's selection put back: the box never sees
 /// it move, and the edit takes the knob's whole path (ADR 0280's CHOKE
 /// check with it).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.turn"))]
 fn turn(ui: &mut UiState, p: Pending) {
     match p.addr.pad() {
         None => {
@@ -129,6 +134,7 @@ fn turn(ui: &mut UiState, p: Pending) {
 }
 
 impl Default for EdState {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.default"))]
     fn default() -> Self {
         Self::new()
     }
@@ -136,6 +142,7 @@ impl Default for EdState {
 
 /// `a`'s format as the Part shows it now: its cell's where a page shows
 /// it, else its spec's (as `ed get` reads it).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.fmt_of"))]
 fn fmt_of(ui: &UiState, a: EdAddr) -> Option<ValFmt> {
     let own = ui.cell_own();
     match find(ui, &own, a) {
@@ -147,6 +154,7 @@ fn fmt_of(ui: &UiState, a: EdAddr) -> Option<ValFmt> {
 /// The stored value `val` means for `a`, or why not: a choice's name (its
 /// own, matched exactly, the typed word kept), its option number, or a
 /// number.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.resolve"))]
 fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, &'static str> {
     let names = fmt_of(ui, a).and_then(|f| super::describe::names(f));
     match (val, names) {
@@ -171,6 +179,7 @@ fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, &'static str> {
 }
 
 /// The answer, `OK queued` or `ERR`: whole, for `answer_in`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.set"))]
 pub(super) fn set(
     addr: EdAddr,
     val: EdValue,

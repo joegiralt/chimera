@@ -20,12 +20,14 @@ use chimera_engine::addr::BlockView;
 use chimera_engine::params::EngineType;
 
 /// The followed Part's engine.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.engine_of"))]
 pub(super) fn engine_of(ui: &UiState) -> EngineType {
     ui.project().part(ui.active_part).sound.engine()
 }
 
 /// `at`'s values on the followed Part: its Sound's block, its kit's, or
 /// pad `n`'s, never the box's selected pad's.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.block"))]
 pub(super) fn block(ui: &UiState, at: EdBlock) -> Option<BlockView<'_>> {
     let kit = ui.project().kit(ui.active_part);
     match at {
@@ -51,12 +53,14 @@ pub(super) fn block(ui: &UiState, at: EdBlock) -> Option<BlockView<'_>> {
 /// What the followed Part's texts read beside the bits, as the editor
 /// sees it: on DRUM, pad 1 and route 1, never the box's selected pad, so
 /// choosing a pad on the box moves no text.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.text_ctx"))]
 pub(super) fn text_ctx(ui: &UiState, own: &CellOwn) -> SlotCtx {
     pad_ctx(ui, own, PadId::ALL[0], RouteId::ALL[0])
 }
 
 /// The context pad `n`'s cells read under, its route `r` selected. Off
 /// DRUM, the live context.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.pad_ctx"))]
 fn pad_ctx(ui: &UiState, own: &CellOwn, n: PadId, r: RouteId) -> SlotCtx {
     match engine_of(ui) {
         EngineType::Drum => own
@@ -69,6 +73,7 @@ fn pad_ctx(ui: &UiState, own: &CellOwn, n: PadId, r: RouteId) -> SlotCtx {
 }
 
 /// The context `a`'s cell reads under.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.ctx_for"))]
 fn ctx_for(ui: &UiState, own: &CellOwn, a: EdAddr) -> SlotCtx {
     match a.at() {
         EdBlock::Pad(n, PadBlock::Route(r)) => pad_ctx(ui, own, n, r),
@@ -80,6 +85,7 @@ fn ctx_for(ui: &UiState, own: &CellOwn, a: EdAddr) -> SlotCtx {
 /// Where a page of the followed engine shows `a` now: the page, its slot
 /// and the context it reads under. A pad's on that pad's page; the
 /// Sound's on the Part's pages, or pad 1's.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.find"))]
 pub(super) fn find(
     ui: &UiState,
     own: &CellOwn,
@@ -116,6 +122,7 @@ pub(super) fn find(
 /// never disagree. `None` for an address the Part's Sound doesn't hold (not
 /// its engine's, or a block it lacks). The value is the Sound's stored one, as
 /// the unit holds it: a refused choice the box shows dimmed is not reported.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.reading"))]
 pub(super) fn reading(addr: EdAddr, ui: &UiState, own: &CellOwn) -> Option<(f32, f32, FmtBuf)> {
     if !since::in_engine(engine_of(ui), addr.at()) {
         return None;
@@ -137,6 +144,10 @@ pub(super) fn reading(addr: EdAddr, ui: &UiState, own: &CellOwn) -> Option<(f32,
 }
 
 /// TAPE's SOURCE as the box reads it, if the followed engine shows one.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.value.source_text")
+)]
 pub(super) fn source_text(ui: &UiState, own: &CellOwn) -> Option<FmtBuf> {
     let ctx = text_ctx(ui, own);
     let mut n = 0;
@@ -158,12 +169,14 @@ pub(super) fn source_text(ui: &UiState, own: &CellOwn) -> Option<FmtBuf> {
 }
 
 /// The answer but for the closing `OK`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.get"))]
 pub(super) fn get(addr: EdAddr, ui: &UiState, w: &mut dyn Write) -> Option<fmt::Result> {
     let (norm, stored, text) = reading(addr, ui, &ui.cell_own())?;
     Some(line(addr, norm, stored, text.as_str(), w))
 }
 
 /// `val <addr> <normalized> <stored> "<text>"`, newline-ended.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.line"))]
 pub(super) fn line(
     a: EdAddr,
     norm: f32,

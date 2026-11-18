@@ -33,10 +33,12 @@ pub use since::{
 pub struct OptIndex(u8);
 
 impl OptIndex {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.new"))]
     pub const fn new(n: u8) -> OptIndex {
         OptIndex(n)
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.get"))]
     pub const fn get(self) -> u8 {
         self.0
     }
@@ -80,6 +82,7 @@ pub enum EdRefusal {
     NoSuchPart,
 }
 
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.engine"))]
 fn engine(w: &[u8]) -> Option<EngineType> {
     EngineType::ALL
         .into_iter()
@@ -89,6 +92,7 @@ fn engine(w: &[u8]) -> Option<EngineType> {
 /// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
 /// or a choice's name of at most `WORD_MAX`. `inf` and `nan` are refused,
 /// never names: `Num` is always finite.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.value"))]
 fn value(w: &[u8]) -> Option<EdValue> {
     if let Some(n) = w.strip_prefix(b"#") {
         let n = chimera_theory::tuning::uint(n)?;
@@ -112,6 +116,7 @@ impl EdArg {
 
     /// The command, or the refusal it gets. `Since`'s `None` is no
     /// failure: 0 is the editor holding nothing.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.parse"))]
     pub fn parse(mut words: Words<'_>) -> Result<Self, EdRefusal> {
         let Some(sub) = words.next() else {
             return Err(EdRefusal::Usage);
@@ -130,6 +135,7 @@ impl EdArg {
         EdArg::parse_rest(sub, words).ok_or(EdRefusal::Usage)
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.parse_rest"))]
     fn parse_rest(sub: &[u8], mut words: Words<'_>) -> Option<Self> {
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
         let got = if is(b"hello") {
@@ -156,6 +162,7 @@ impl EdArg {
 }
 
 /// The whole answer, `OK` or `ERR` included: `EdDoor::answer`'s entry.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.answer_in"))]
 pub(crate) fn answer_in(
     line: &EdLine,
     ui: &UiState,
@@ -201,6 +208,7 @@ pub(crate) fn answer_in(
 
 /// `ed hello <protocol> <build> part <n> <engine>`: the build is `status`'s
 /// as one word, `0.3.0-a1b2c3d4`, `+` after a dirty tree's hash.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.hello"))]
 fn hello(ui: &UiState, w: &mut dyn Write) -> fmt::Result {
     let dirty = if DIRTY { "+" } else { "" };
     let engine = ui.project().part(ui.active_part).sound.engine();

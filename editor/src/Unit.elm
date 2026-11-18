@@ -91,20 +91,37 @@ partFromInt n =
     allParts |> List.filter (\p -> partNumber p == n) |> List.head
 
 
-{-| The editor edits ALGO; any other engine is named, so it can be said.
+{-| The unit's engines, by the names `ed` gives them. A name the editor
+doesn't know is a newer unit's: `Nothing`, and the editor says so.
 -}
 type Engine
     = Algo
-    | Other String
+    | Modal
+    | Va
+    | Tape
+    | Drum
 
 
-engineFromName : String -> Engine
+engineFromName : String -> Maybe Engine
 engineFromName s =
-    if s == "ALGO" then
-        Algo
+    case s of
+        "ALGO" ->
+            Just Algo
 
-    else
-        Other s
+        "MODAL" ->
+            Just Modal
+
+        "VA" ->
+            Just Va
+
+        "TAPE" ->
+            Just Tape
+
+        "DRUM" ->
+            Just Drum
+
+        _ ->
+            Nothing
 
 
 engineName : Engine -> String
@@ -113,5 +130,14 @@ engineName e =
         Algo ->
             "ALGO"
 
-        Other s ->
-            s
+        Modal ->
+            "MODAL"
+
+        Va ->
+            "VA"
+
+        Tape ->
+            "TAPE"
+
+        Drum ->
+            "DRUM"

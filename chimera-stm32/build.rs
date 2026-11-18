@@ -333,9 +333,12 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // parse and answers, text and rodata, its table at its slot after the
     // MIDI UI's (`ED_DOOR_ADDR`). Bank 1 keeps `EdLine` and the stub. The
     // first S4 group (ADR 0272: new 0.4 work goes high), after MIXER's
-    // reserve; its table stays in S0 with the other doors.
+    // reserve; its table stays in S0 with the other doors. Each of its
+    // functions has its own `.bank2_ed.*` section (ADR 0285): LLVM outlines
+    // nothing from a function with an explicit section, so no outlined
+    // helper in bank 1 calls into `ed`.
     let (ed, ed_slot, ed_assert) = (
-        "    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n",
+        "    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .bank2_ed .bank2_ed.*);\n",
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");",
     );

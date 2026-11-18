@@ -58,6 +58,7 @@ type alias Model =
     , part : Maybe Part
     , engine : Maybe Engine
     , variants : Dict String String
+    , source : Maybe String
     , gen : Maybe Gen
     , stage : Stage
     , asked : Maybe Time.Posix
@@ -89,7 +90,7 @@ type Msg
 -}
 supported : Int
 supported =
-    2
+    3
 
 
 {-| A request unanswered this long has timed out. While connecting, that
@@ -127,6 +128,7 @@ init =
     , part = Nothing
     , engine = Nothing
     , variants = Dict.empty
+    , source = Nothing
     , gen = Nothing
     , stage = Greeting
     , asked = Nothing
@@ -255,10 +257,11 @@ step msg m =
         Edit a v ->
             edit a v m
 
+        -- By its number: a name with a space (GATE EXT) is one word so.
         Pick a i ->
             case Schema.optionName m.variants a i m.schema of
-                Just name ->
-                    edit a (Protocol.Name name) m
+                Just _ ->
+                    edit a (Protocol.Index i) m
 
                 Nothing ->
                     ( m, [] )
@@ -414,7 +417,12 @@ answer a m =
     case a of
         HelloIs h ->
             if h.protocol == supported then
-                { m | part = Unit.partFromInt h.part, engine = Just (Unit.engineFromName h.engine) }
+                case Unit.engineFromName h.engine of
+                    Just e ->
+                        { m | part = Unit.partFromInt h.part, engine = Just e }
+
+                    Nothing ->
+                        { m | stage = Halted UpdateEditor }
 
             else
                 { m
@@ -428,14 +436,20 @@ answer a m =
                             )
                 }
 
-        PartIs n e ->
-            { m
-                | part = Unit.partFromInt n
-                , engine = Just (Unit.engineFromName e)
-                , values = Dict.empty
-                , variants = Dict.empty
-                , pending = Dict.empty
-            }
+        PartIs n name ->
+            case Unit.engineFromName name of
+                Just e ->
+                    { m
+                        | part = Unit.partFromInt n
+                        , engine = Just e
+                        , values = Dict.empty
+                        , variants = Dict.empty
+                        , pending = Dict.empty
+                        , source = Nothing
+                    }
+
+                Nothing ->
+                    { m | stage = Halted UpdateEditor }
 
         Panel p ->
             if m.stage == Following then
@@ -455,7 +469,23 @@ answer a m =
                     , pending = Dict.remove (addrKey v.addr) m.pending
                 }
 
-        _ ->
+        Source text ->
+            if m.stage == Following then
+                { m | source = Just text }
+
+            else
+                { m | schema = Schema.add a m.schema }
+
+        Page _ ->
+            { m | schema = Schema.add a m.schema }
+
+        Param _ ->
+            { m | schema = Schema.add a m.schema }
+
+        Opt _ ->
+            { m | schema = Schema.add a m.schema }
+
+        Route _ ->
             { m | schema = Schema.add a m.schema }
 
 

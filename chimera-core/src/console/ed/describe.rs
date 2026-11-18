@@ -42,6 +42,7 @@ use chimera_engine::dsp::drum::params::PadParams;
 use chimera_engine::dsp::modal::ModalParams;
 
 /// The chain the editor walks for `engine`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.chain"))]
 pub fn chain(engine: EngineType) -> &'static ChainDef2 {
     match engine {
         EngineType::Algo => &ALGO_FORMANT_CHAIN,
@@ -55,6 +56,10 @@ pub fn chain(engine: EngineType) -> &'static ChainDef2 {
 /// Whether a cell bound `b` resolves against the pad (DRUM's): a pad's
 /// param, its machine's knobs, its filter's panel, its routes. FLT's
 /// sub-pages' panel cells count: on DRUM they read the pad's KIND.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.pad_binding")
+)]
 fn pad_binding(b: SlotBinding) -> bool {
     match b {
         SlotBinding::Param(a) => a.block.is_pad(),
@@ -82,6 +87,10 @@ fn pad_binding(b: SlotBinding) -> bool {
 }
 
 /// `def` is described once a pad on `engine`.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.per_pad")
+)]
 fn per_pad(engine: EngineType, def: &BlockDef) -> bool {
     let mut any = false;
     for s in &def.params {
@@ -91,6 +100,7 @@ fn per_pad(engine: EngineType, def: &BlockDef) -> bool {
 }
 
 /// Flat page `n` of the chain: each node's home, then its sub-pages.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.def_in"))]
 fn def_in(c: &ChainDef2, mut n: usize) -> Option<&'static BlockDef> {
     for b in c.blocks {
         if n == 0 {
@@ -106,6 +116,7 @@ fn def_in(c: &ChainDef2, mut n: usize) -> Option<&'static BlockDef> {
 }
 
 /// The chain's pages, `(the Part's, a pad's)`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.counts"))]
 fn counts(engine: EngineType) -> (usize, usize) {
     let c = chain(engine);
     let (mut part, mut pad) = (0, 0);
@@ -122,6 +133,7 @@ fn counts(engine: EngineType) -> (usize, usize) {
 }
 
 /// The pages the editor walks for `engine`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.pages"))]
 pub fn pages(engine: EngineType) -> u8 {
     let (part, pad) = counts(engine);
     let pads = if pad == 0 { 0 } else { PadId::ALL.len() };
@@ -129,6 +141,10 @@ pub fn pages(engine: EngineType) -> u8 {
 }
 
 /// Page `n`: the Part's pages in chain order, then each pad's.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.page_at")
+)]
 pub(super) fn page_at(engine: EngineType, n: usize) -> Option<(&'static BlockDef, Option<PadId>)> {
     let c = chain(engine);
     let (part, pad) = counts(engine);
@@ -155,6 +171,10 @@ pub(super) fn page_at(engine: EngineType, n: usize) -> Option<(&'static BlockDef
 
 /// A variant as one token: a name's spaces as `-` (`TONE KICK` is
 /// `TONE-KICK`). `since` writes them the same way.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.variant_token")
+)]
 pub(super) fn variant_token(name: &str, w: &mut dyn Write) -> fmt::Result {
     for c in name.chars() {
         w.write_char(if c == ' ' { '-' } else { c })?;
@@ -163,17 +183,29 @@ pub(super) fn variant_token(name: &str, w: &mut dyn Write) -> fmt::Result {
 }
 
 /// A panel's variant names; `since` reports the same ones.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.filter_variant")
+)]
 pub fn filter_variant(k: FilterKind) -> &'static str {
     let i = FilterKind::BUILT.iter().position(|&b| b == k).unwrap_or(0);
     KIND_NAMES[i]
 }
 
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.fx_variant")
+)]
 pub fn fx_variant(t: FxType) -> &'static str {
     let i = FxType::LIST.iter().position(|&b| b == t).unwrap_or(0);
     FxType::NAMES[i]
 }
 
 /// One name for each panel `mod_panel::env_panel` has.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.env_variant")
+)]
 pub fn env_variant(k: EnvKind) -> &'static str {
     match k {
         EnvKind::A(EnvSpeed::Fast) => "A-FAST",
@@ -186,6 +218,10 @@ pub fn env_variant(k: EnvKind) -> &'static str {
     }
 }
 
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.lfo_variant")
+)]
 pub fn lfo_variant(k: LfoKind) -> &'static str {
     match k {
         LfoKind::Classic => "CLASSIC",
@@ -194,6 +230,10 @@ pub fn lfo_variant(k: LfoKind) -> &'static str {
     }
 }
 
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.op_variant")
+)]
 pub fn op_variant(k: OpKind) -> &'static str {
     match k {
         OpKind::Table(_) => "TABLE",
@@ -203,6 +243,10 @@ pub fn op_variant(k: OpKind) -> &'static str {
 }
 
 /// Option `i`'s name of `a`'s choice: a variant named by the box's word.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.option_name")
+)]
 fn option_name(a: ParamAddr, i: usize) -> &'static str {
     a.spec()
         .and_then(|s| names(s.fmt))
@@ -211,6 +255,10 @@ fn option_name(a: ParamAddr, i: usize) -> &'static str {
 }
 
 /// MODAL's MODEL, by its option name.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.modal_variant")
+)]
 pub fn modal_variant(m: ResonatorMode) -> &'static str {
     option_name(
         ParamAddr::new(BlockRef::Modal, ModalParams::MODE),
@@ -219,6 +267,10 @@ pub fn modal_variant(m: ResonatorMode) -> &'static str {
 }
 
 /// TAPE's MODEL, by its option name.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.tape_variant")
+)]
 pub fn tape_variant(t: TapeMachine) -> &'static str {
     option_name(
         ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL),
@@ -227,6 +279,10 @@ pub fn tape_variant(t: TapeMachine) -> &'static str {
 }
 
 /// A pad's MACHINE, by its option name.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.machine_variant")
+)]
 pub fn machine_variant(m: Machine) -> &'static str {
     option_name(ParamAddr::new(BlockRef::Pad, PadParams::MACHINE), m.index())
 }
@@ -269,6 +325,10 @@ enum Cell {
 
 /// `a`'s range: a filter's is its kind's (`FilterParams::spec`), MODE's
 /// names and count differ by kind.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.spec_under")
+)]
 pub(super) fn spec_under(a: ParamAddr, ctx: &SlotCtx) -> Option<&'static ParamSpec> {
     let kind = match a.block {
         BlockRef::Filter => ctx.kind,
@@ -281,6 +341,10 @@ pub(super) fn spec_under(a: ParamAddr, ctx: &SlotCtx) -> Option<&'static ParamSp
 }
 
 /// What a param's control is.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.kind_word")
+)]
 fn kind_word(fmt: ValFmt) -> &'static str {
     match names(fmt) {
         Some(["OFF", "ON"]) => "toggle",
@@ -290,6 +354,7 @@ fn kind_word(fmt: ValFmt) -> &'static str {
 }
 
 /// A choice's names: `Names` is the one format that has them.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.names"))]
 pub(super) fn names(fmt: ValFmt) -> Option<&'static [&'static str]> {
     if let ValFmt::Names(n) = fmt {
         Some(n)
@@ -299,6 +364,10 @@ pub(super) fn names(fmt: ValFmt) -> Option<&'static [&'static str]> {
 }
 
 /// How the value moves under a hand: in its unit, or in octaves.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.scale_word")
+)]
 fn scale_word(s: Scale) -> &'static str {
     match s {
         Scale::Linear => "lin",
@@ -307,6 +376,7 @@ fn scale_word(s: Scale) -> &'static str {
 }
 
 impl Cell {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.write"))]
     fn write(&self, ctx: &SlotCtx, w: &mut dyn Write) -> fmt::Result {
         let (addr, label, fmt) = match *self {
             Cell::Route(label) => return writeln!(w, "route \"{label}\" next-slice"),
@@ -336,6 +406,7 @@ impl Cell {
 
 /// `v` to seven decimals, trailing zeros dropped. Core's float `Display`
 /// is 20 KB of bank 1 this module can't be placed out of.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.num"))]
 pub(super) fn num(w: &mut dyn Write, v: f32) -> fmt::Result {
     let mut whole = v.abs() as u32;
     let mut frac = ((v.abs() - whole as f32) * 1e7 + 0.5) as u32;
@@ -383,6 +454,10 @@ enum Axis {
 
 /// The axis a cell bound `b` resolves on; `None` for a cell the editor
 /// never shows (a selector, ORBIT's, the mixer's).
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.axis_of")
+)]
 fn axis_of(b: SlotBinding) -> Option<Axis> {
     Some(match b {
         SlotBinding::Param(_) | SlotBinding::Source => Axis::Fixed,
@@ -423,6 +498,10 @@ enum Group {
 }
 
 /// A pad's panel names start `PAD<n>_`.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.pad_prefix")
+)]
 fn pad_prefix(pad: Option<PadId>, w: &mut dyn Write) -> fmt::Result {
     match pad {
         Some(p) => write!(w, "PAD{}_", p.number()),
@@ -431,6 +510,7 @@ fn pad_prefix(pad: Option<PadId>, w: &mut dyn Write) -> fmt::Result {
 }
 
 impl Group {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.axis"))]
     fn axis(self) -> Axis {
         match self {
             Group::Fixed => Axis::Fixed,
@@ -447,31 +527,40 @@ impl Group {
     }
 
     /// `panel <name> <variant>`.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.describe.write_head")
+    )]
     fn write_head(self, def: &BlockDef, pad: Option<PadId>, w: &mut dyn Write) -> fmt::Result {
+        // The name, and whether it is a pad's: one write of each, so no
+        // call sequence repeats for the outliner to share with bank 1.
+        let (pads, name) = match (self, pad) {
+            (Group::Fixed, _) => (true, def.short),
+            (Group::Filter(_), Some(_)) => (true, "FLT"),
+            (Group::Filter(_), None) => (false, "FILTER"),
+            (Group::Fx(_), _) => (false, "FX"),
+            (Group::Env(s, _), _) => (false, ["ENV1", "ENV2", "ENV3"][s.index()]),
+            (Group::Lfo(s, _), _) => (false, ["LFO1", "LFO2", "LFO3"][s.index()]),
+            (Group::Op(o, _), _) => (false, ["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"][o.index()]),
+            (Group::Modal(_), _) => (false, "RESONATOR"),
+            (Group::Tape(_), _) => (false, "MACHINE"),
+            (Group::Machine(_), _) => (true, "MCH"),
+            (Group::Route(r), _) => (true, ["RT1", "RT2", "RT3", "RT4"][r.index()]),
+        };
         w.write_str("panel ")?;
-        match (self, pad) {
-            (Group::Fixed, _) => pad_prefix(pad, w).and_then(|()| w.write_str(def.short))?,
-            (Group::Filter(_), Some(_)) => pad_prefix(pad, w).and_then(|()| w.write_str("FLT"))?,
-            (Group::Filter(_), None) => w.write_str("FILTER")?,
-            (Group::Fx(_), _) => w.write_str("FX")?,
-            (Group::Env(s, _), _) => w.write_str(["ENV1", "ENV2", "ENV3"][s.index()])?,
-            (Group::Lfo(s, _), _) => w.write_str(["LFO1", "LFO2", "LFO3"][s.index()])?,
-            (Group::Op(o, _), _) => {
-                w.write_str(["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"][o.index()])?
-            }
-            (Group::Modal(_), _) => w.write_str("RESONATOR")?,
-            (Group::Tape(_), _) => w.write_str("MACHINE")?,
-            (Group::Machine(_), _) => pad_prefix(pad, w).and_then(|()| w.write_str("MCH"))?,
-            (Group::Route(r), _) => {
-                pad_prefix(pad, w)?;
-                write!(w, "RT{}", r.number())?
-            }
+        if pads {
+            pad_prefix(pad, w)?;
         }
+        w.write_str(name)?;
         w.write_char(' ')?;
         variant_token(self.variant(), w)?;
         w.write_char('\n')
     }
 
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.describe.variant")
+    )]
     fn variant(self) -> &'static str {
         match self {
             Group::Fixed | Group::Route(_) => "-",
@@ -487,6 +576,7 @@ impl Group {
     }
 
     /// `base` with this group's axis set to its variant.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.ctx"))]
     fn ctx(self, base: SlotCtx) -> SlotCtx {
         let mut c = base;
         match self {
@@ -508,6 +598,7 @@ impl Group {
     }
 
     /// Slot `i` of `def` under this group, on pad `pad`'s page.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.cell"))]
     fn cell(self, def: &BlockDef, i: usize, ctx: &SlotCtx, pad: Option<PadId>) -> Option<Cell> {
         let slot = def.params.get(i)?;
         if axis_of(slot.binding)? != self.axis() {
@@ -535,6 +626,10 @@ impl Group {
 }
 
 /// Group `i`, in the order a page lists them.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.group_at")
+)]
 fn group_at(mut i: usize) -> Option<Group> {
     if i == 0 {
         return Some(Group::Fixed);
@@ -582,6 +677,7 @@ fn group_at(mut i: usize) -> Option<Group> {
 struct NoBlocks;
 
 impl BlockRead for NoBlocks {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.block"))]
     fn block(&self, _: BlockRef) -> Option<BlockView<'_>> {
         None
     }
@@ -589,6 +685,10 @@ impl BlockRead for NoBlocks {
 
 /// The context describe resolves against before a group sets its axis:
 /// DRUM's reads the pad's filter.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.base_ctx")
+)]
 fn base_ctx(engine: EngineType) -> SlotCtx {
     let c = SlotCtx::read(&NoBlocks, Op::A);
     match engine {
@@ -598,11 +698,19 @@ fn base_ctx(engine: EngineType) -> SlotCtx {
 }
 
 /// `page`'s answer, but for the closing `OK`; `None` past the last page.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.describe")
+)]
 pub(super) fn describe(engine: EngineType, page: u8, w: &mut dyn Write) -> Option<fmt::Result> {
     let (def, pad) = page_at(engine, usize::from(page))?;
     Some(write_page(engine, def, pad, page, w))
 }
 
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.write_page")
+)]
 fn write_page(
     engine: EngineType,
     def: &BlockDef,
@@ -639,6 +747,10 @@ fn write_page(
 
 /// Note in `d` every param `describe` lists for `engine`: `write_page`'s
 /// walk, to a mask and not a writer.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.mark_described")
+)]
 pub(super) fn mark_described(engine: EngineType, d: &mut super::since::Described) {
     let base = base_ctx(engine);
     let mut page = 0;

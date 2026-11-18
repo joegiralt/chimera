@@ -46,14 +46,14 @@ following =
         |> Tuple.first
         |> tick 0
         |> Tuple.first
-        |> feed [ "ed hello 2 0.3.0-dev part 1 ALGO", "OK" ]
+        |> feed [ "ed hello 3 0.3.0-dev part 1 ALGO", "OK" ]
         |> tick 33
         |> Tuple.first
         |> feed
             [ "page 0 ALG of 1"
             , "panel ALG -"
-            , "param FILTER.CUTOFF \"CUTOFF\" cont 20 20000 1 1000"
-            , "param ENV1.HOLD \"HOLD\" choice 0 2 1 0"
+            , "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000"
+            , "param ENV1.HOLD \"HOLD\" choice lin 0 2 1 0"
             , "opt ENV1.HOLD 0 \"OFF\""
             , "opt ENV1.HOLD 2 \"GATE EXT\""
             , "OK"
@@ -82,11 +82,11 @@ suite =
                             |> Tuple.second
                 in
                 Expect.all
-                    [ \_ -> Expect.equal [ Set (Addr "FILTER.MODE") (Name "LP4") ] (pick [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
-                    , \_ -> Expect.equal [ Set (Addr "ENV1.FORM") (Name "FREE") ] (pick [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
+                    [ \_ -> Expect.equal [ Set (Addr "FILTER.MODE") (Index 1) ] (pick [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
+                    , \_ -> Expect.equal [ Set (Addr "ENV1.FORM") (Index 0) ] (pick [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
                     ]
                     ()
-        , test "every_choice_under_every_variant_sends_a_name_that_variant_lists" <|
+        , test "every_choice_under_every_variant_sends_an_option_that_variant_lists" <|
             \_ ->
                 let
                     bad =
@@ -108,7 +108,7 @@ suite =
                                                                         |> Model.step (Pick p.addr i)
                                                                         |> Tuple.second
                                                             in
-                                                            if sent == [ Set p.addr (Name name) ] then
+                                                            if name /= "" && sent == [ Set p.addr (Index i) ] then
                                                                 Nothing
 
                                                             else
@@ -165,7 +165,7 @@ suite =
 
                     ( m2, c ) =
                         m
-                            |> feed [ "ed hello 2 b part 1 ALGO", "OK" ]
+                            |> feed [ "ed hello 3 b part 1 ALGO", "OK" ]
                             |> tick 33
                             |> Tuple.first
                             |> feed [ "page 0 A of 2", "panel A -", "OK" ]
@@ -281,7 +281,7 @@ suite =
                             |> Tuple.first
                             |> tick 1000
                             |> Tuple.first
-                            |> feed [ "ed hello 2 b part 1 ALGO", "OK" ]
+                            |> feed [ "ed hello 3 b part 1 ALGO", "OK" ]
                 in
                 Expect.all
                     [ \x -> Expect.equal (Just "THE UNIT STOPPED ANSWERING") (Model.notice x)
@@ -298,7 +298,7 @@ suite =
                             |> Tuple.first
                             |> tick 0
                             |> Tuple.first
-                            |> feed [ "ed hello 2 b part 1 ALGO", "OK" ]
+                            |> feed [ "ed hello 3 b part 1 ALGO", "OK" ]
                             |> tick 33
                             |> Tuple.first
                             |> feed [ "page 0 A of 2", "panel A -" ]
@@ -435,25 +435,38 @@ suite =
                 in
                 Expect.all
                     [ \_ -> Expect.equal (Just "PART 2 PLAYS VA. THE EDITOR EDITS ALGO FOR NOW.") (Model.notice m)
-                    , \_ -> Expect.equal (Other "VA") (Maybe.withDefault Algo m.engine)
+                    , \_ -> Expect.equal (Just Va) m.engine
                     ]
                     ()
         , test "no_edit_on_a_part_that_is_not_algo" <|
             \_ ->
                 Expect.equal []
                     (following |> feed [ "part 2 VA", "OK 1" ] |> Model.step (Edit cutoff (Num 1)) |> Tuple.second)
-        , test "a_choice_is_sent_by_its_name" <|
+        , test "a_choice_is_sent_by_its_number" <|
             \_ ->
-                Expect.equal [ Set (Addr "ENV1.HOLD") (Name "OFF") ]
+                Expect.equal [ Set (Addr "ENV1.HOLD") (Index 0) ]
                     (following |> Model.step (Pick (Addr "ENV1.HOLD") 0) |> Tuple.second)
-        , test "a_choice_name_with_a_space_cannot_be_sent_so_nothing_is_sent_or_pending" <|
+        , test "a_choice_name_with_a_space_is_sent_by_its_number_and_pends" <|
             \_ ->
-                -- The unit matches a choice by one word; GATE EXT has two (a firmware gap).
+                -- GATE EXT is two words: its number is one (#996).
                 let
                     ( m, c ) =
                         following |> Model.step (Pick (Addr "ENV1.HOLD") 2)
                 in
-                Expect.equal ( [], False ) ( c, Model.isPending (Addr "ENV1.HOLD") m )
+                Expect.equal ( [ Set (Addr "ENV1.HOLD") (Index 2) ], True ) ( c, Model.isPending (Addr "ENV1.HOLD") m )
+        , test "an_option_the_schema_lacks_sends_nothing" <|
+            \_ ->
+                Expect.equal [] (following |> Model.step (Pick (Addr "ENV1.HOLD") 1) |> Tuple.second)
+        , test "an_engine_the_editor_does_not_know_says_update_the_editor" <|
+            \_ ->
+                Expect.equal (Just "UPDATE THE EDITOR") (following |> feed [ "part 2 GRANULAR", "OK 1" ] |> Model.notice)
+        , test "every_engine_is_named_as_the_unit_names_it" <|
+            \_ ->
+                Expect.equal (List.map Just [ Algo, Modal, Va, Tape, Drum ])
+                    (List.map Unit.engineFromName [ "ALGO", "MODAL", "VA", "TAPE", "DRUM" ])
+        , test "tapes_source_text_is_kept_while_following" <|
+            \_ ->
+                Expect.equal (Just "KICK 909") (following |> feed [ "source \"KICK 909\"", "OK 1" ] |> .source)
         , test "hello_with_the_same_protocol_runs" <|
             \_ ->
                 Expect.equal Nothing (Model.notice following)
@@ -468,7 +481,7 @@ suite =
                     , \x -> Expect.equal [] (tick 33 x |> Tuple.second)
                     , \x -> Expect.equal [] (tick 5000 x |> Tuple.second)
                     ]
-                    (feed [ "ed hello 3 x part 1 ALGO", "OK" ] m)
+                    (feed [ "ed hello 4 x part 1 ALGO", "OK" ] m)
         , test "unit_older_than_the_editor_says_update_the_unit_and_stops" <|
             \_ ->
                 let
@@ -479,7 +492,7 @@ suite =
                     [ \x -> Expect.equal (Just "UPDATE THE UNIT") (Model.notice x)
                     , \x -> Expect.equal [] (tick 33 x |> Tuple.second)
                     ]
-                    (feed [ "ed hello 1 x part 1 ALGO", "OK" ] m)
+                    (feed [ "ed hello 2 x part 1 ALGO", "OK" ] m)
         , test "a_refusal_while_connecting_stops_with_its_text" <|
             \_ ->
                 let

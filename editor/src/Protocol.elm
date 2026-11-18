@@ -4,6 +4,7 @@ module Protocol exposing
     , Command(..)
     , Kind(..)
     , Line(..)
+    , Scale(..)
     , Value(..)
     , addrKey
     , encode
@@ -28,9 +29,20 @@ addrKey (Addr a) =
     a
 
 
+{-| A choice is sent by its option's number (`#2`), so a name with a space
+(`GATE EXT`) is sent too. `Name` stays for a human's own words.
+-}
 type Value
     = Num Float
     | Name String
+    | Index Int
+
+
+{-| How a value moves under a hand, as the unit describes it.
+-}
+type Scale
+    = Linear
+    | Octaves
 
 
 type Kind
@@ -52,9 +64,10 @@ type AnswerLine
     = HelloIs { protocol : Int, build : String, part : Int, engine : String }
     | Page { n : Int, label : String, count : Int }
     | Panel { name : String, variant : String }
-    | Param { addr : Addr, label : String, kind : Kind, min : Float, max : Float, step : Float, default : Float }
+    | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float }
     | Opt { addr : Addr, index : Int, name : String }
     | Route String
+    | Source String
     | Val { addr : Addr, norm : Float, stored : Float, text : String }
     | PartIs Int String
 
@@ -89,6 +102,13 @@ encode c =
 
         Set (Addr a) (Name n) ->
             Maybe.map2 (\x v -> "ed set " ++ x ++ " " ++ v) (word a) (word n)
+
+        Set (Addr a) (Index i) ->
+            if i >= 0 then
+                word a |> Maybe.map (\x -> "ed set " ++ x ++ " #" ++ String.fromInt i)
+
+            else
+                Nothing
 
         Since held ->
             Just ("ed since " ++ String.fromInt (held |> Maybe.map Unit.genToInt |> Maybe.withDefault 0))
@@ -203,14 +223,17 @@ answer ts =
         [ "part", n, engine ] ->
             nat n |> Maybe.map (\i -> PartIs i engine)
 
-        [ "param", a, label, kind, lo, hi, step, def ] ->
-            param a label kind lo hi step def
+        [ "param", a, label, kind, scale, lo, hi, step, def ] ->
+            Maybe.andThen (\sc -> param a label kind sc lo hi step def) (scaleOf scale)
 
         [ "opt", a, i, name ] ->
             nat i |> Maybe.map (\ix -> Opt { addr = Addr a, index = ix, name = name })
 
         [ "route", label, "next-slice" ] ->
             Just (Route label)
+
+        [ "source", text ] ->
+            Just (Source text)
 
         [ "val", a, norm, stored, text ] ->
             Maybe.map2 (\n s -> Val { addr = Addr a, norm = n, stored = s, text = text }) (num norm) (num stored)
@@ -219,15 +242,28 @@ answer ts =
             Nothing
 
 
-param : String -> String -> String -> String -> String -> String -> String -> Maybe AnswerLine
-param a label kind lo hi step def =
+param : String -> String -> String -> Scale -> String -> String -> String -> String -> Maybe AnswerLine
+param a label kind scale lo hi step def =
     Maybe.map5
-        (\k l h s d -> Param { addr = Addr a, label = label, kind = k, min = l, max = h, step = s, default = d })
+        (\k l h s d -> Param { addr = Addr a, label = label, kind = k, scale = scale, min = l, max = h, step = s, default = d })
         (kindOf kind)
         (num lo)
         (num hi)
         (num step)
         (num def)
+
+
+scaleOf : String -> Maybe Scale
+scaleOf s =
+    case s of
+        "lin" ->
+            Just Linear
+
+        "oct" ->
+            Just Octaves
+
+        _ ->
+            Nothing
 
 
 kindOf : String -> Maybe Kind

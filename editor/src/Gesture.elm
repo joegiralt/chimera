@@ -1,6 +1,5 @@
 module Gesture exposing
-    ( Scale(..)
-    , Want(..)
+    ( Want(..)
     , Wanted
     , atNorm
     , dragIndex
@@ -20,7 +19,7 @@ at most one `ed set` leaves per animation frame per control.
 -}
 
 import Dict exposing (Dict)
-import Protocol exposing (Addr, addrKey)
+import Protocol exposing (Addr, Scale(..), addrKey)
 import Schema exposing (Param)
 
 
@@ -55,23 +54,11 @@ flush (Wanted d) =
 -- WHERE A TURN LANDS
 
 
-{-| How a knob's travel maps onto the stored range: the box's CUTOFF turns
-by octaves, the rest by plain range. `describe` does not say, so it is read
-from the numbers: a positive range of over two decades whose step (in
-octaves) is below its minimum.
+{-| How the param moves under a hand: the unit says (`describe`'s scale).
 -}
-type Scale
-    = Linear
-    | Octaves
-
-
 scaleOf : Param -> Scale
 scaleOf p =
-    if p.min > 0 && p.max / p.min >= 100 && p.step < p.min then
-        Octaves
-
-    else
-        Linear
+    p.scale
 
 
 {-| The stored value at knob position `t`, 0 to 1, kept to four decimals so

@@ -22,10 +22,12 @@ const PAD: &[u8] = b"PAD";
 pub struct SoundBlock(BlockRef);
 
 impl SoundBlock {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.new"))]
     pub fn new(b: BlockRef) -> Option<SoundBlock> {
         (!b.is_pad() && token(b).is_some()).then_some(SoundBlock(b))
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.get"))]
     pub const fn get(self) -> BlockRef {
         self.0
     }
@@ -34,6 +36,7 @@ impl SoundBlock {
 /// The block's token. One call site for `disk_ident` in this module, so the
 /// compiler inlines it here, into bank 2, and not a shared copy in bank 1.
 #[inline(never)]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.token"))]
 fn token(b: BlockRef) -> Option<&'static str> {
     match b {
         BlockRef::Kit => Some(KIT),
@@ -67,6 +70,7 @@ impl PadBlock {
     ];
 
     /// The selected pad's block this one is, on the named pad.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.block"))]
     pub const fn block(self) -> BlockRef {
         match self {
             PadBlock::Pad => BlockRef::Pad,
@@ -79,6 +83,7 @@ impl PadBlock {
     }
 
     /// The pad block `b` names; `None` for a block no pad has.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.of"))]
     pub const fn of(b: BlockRef) -> Option<PadBlock> {
         Some(match b {
             BlockRef::Pad => PadBlock::Pad,
@@ -115,6 +120,7 @@ impl PadBlock {
         })
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.suffix"))]
     const fn suffix(self) -> &'static str {
         match self {
             PadBlock::Pad => "",
@@ -135,6 +141,7 @@ pub enum EdBlock {
 }
 
 impl EdBlock {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.block.1"))]
     pub const fn block(self) -> BlockRef {
         match self {
             EdBlock::Sound(s) => s.get(),
@@ -142,6 +149,7 @@ impl EdBlock {
         }
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.pad"))]
     pub const fn pad(self) -> Option<PadId> {
         match self {
             EdBlock::Sound(_) => None,
@@ -150,6 +158,7 @@ impl EdBlock {
     }
 
     /// Its params' slots: a pad's filter holds only `PadFilter::IDS`.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.width"))]
     pub fn width(self) -> usize {
         match self {
             EdBlock::Pad(_, PadBlock::Filter) => PadFilter::IDS.len(),
@@ -158,6 +167,7 @@ impl EdBlock {
     }
 
     /// Param `i` of its slots.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.id_at"))]
     pub fn id_at(self, i: usize) -> Option<ParamId> {
         match self {
             EdBlock::Pad(_, PadBlock::Filter) => PadFilter::IDS.get(i).copied(),
@@ -166,6 +176,7 @@ impl EdBlock {
     }
 
     /// The slot `id` takes in it: `None` for a param it doesn't hold.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.slot"))]
     pub fn slot(self, id: ParamId) -> Option<usize> {
         let mut i = 0;
         while let Some(at) = self.id_at(i) {
@@ -194,22 +205,26 @@ impl EdAddr {
     };
 
     /// `id` of `at`, if `at` holds it.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.new.1"))]
     pub fn new(at: EdBlock, id: ParamId) -> Option<EdAddr> {
         at.slot(id).map(|_| EdAddr { at, id })
     }
 
     /// A param of the Sound (or the kit): never a pad's.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.sound"))]
     pub fn sound(a: ParamAddr) -> Option<EdAddr> {
         EdAddr::new(EdBlock::Sound(SoundBlock::new(a.block)?), a.param)
     }
 
     /// The selected pad's param `a`, on pad `n`.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.on_pad"))]
     pub fn on_pad(n: PadId, a: ParamAddr) -> Option<EdAddr> {
         EdAddr::new(EdBlock::Pad(n, PadBlock::of(a.block)?), a.param)
     }
 
     /// `a` as a cell on pad `n`'s page shows it: a pad's param is pad
     /// `n`'s, any other the Sound's.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.shown"))]
     pub fn shown(a: ParamAddr, pad: Option<PadId>) -> Option<EdAddr> {
         match (pad, a.block.is_pad()) {
             (Some(n), true) => EdAddr::on_pad(n, a),
@@ -218,23 +233,28 @@ impl EdAddr {
         }
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.at"))]
     pub const fn at(self) -> EdBlock {
         self.at
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.id"))]
     pub const fn id(self) -> ParamId {
         self.id
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.pad.1"))]
     pub const fn pad(self) -> Option<PadId> {
         self.at.pad()
     }
 
     /// The box's address of it: the selected pad's, for a pad's.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.param"))]
     pub const fn param(self) -> ParamAddr {
         ParamAddr::new(self.at.block(), self.id)
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.parse"))]
     pub fn parse(word: &[u8]) -> Option<EdAddr> {
         let dot = word.iter().position(|&b| b == b'.')?;
         let (block, ident) = (&word[..dot], &word[dot + 1..]);
@@ -252,6 +272,10 @@ impl EdAddr {
 }
 
 /// The block `name` is the token of.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.addr.block_named")
+)]
 fn block_named(name: &[u8]) -> Option<EdBlock> {
     if let Some(rest) = name.strip_prefix(PAD) {
         return pad_named(rest);
@@ -266,6 +290,7 @@ fn block_named(name: &[u8]) -> Option<EdBlock> {
 }
 
 /// `<n><suffix>` after `PAD`: `n` 1–12, written without a leading zero.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.pad_named"))]
 fn pad_named(rest: &[u8]) -> Option<EdBlock> {
     let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
     let (num, suffix) = rest.split_at(digits);
@@ -283,6 +308,7 @@ fn pad_named(rest: &[u8]) -> Option<EdBlock> {
 }
 
 impl fmt::Display for EdBlock {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.fmt"))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             EdBlock::Sound(s) => f.write_str(token(s.get()).ok_or(fmt::Error)?),
@@ -292,6 +318,7 @@ impl fmt::Display for EdBlock {
 }
 
 impl fmt::Display for EdAddr {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.fmt.1"))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let spec = self.param().spec().ok_or(fmt::Error)?;
         write!(f, "{}.{}", self.at, spec.ident)

@@ -17,13 +17,14 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 -}
 
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine, Kind, addrKey)
+import Protocol exposing (Addr, AnswerLine(..), Kind, Scale, addrKey)
 
 
 type alias Param =
     { addr : Addr
     , label : String
     , kind : Kind
+    , scale : Scale
     , min : Float
     , max : Float
     , step : Float
@@ -140,7 +141,7 @@ add line (Schema s) =
         Protocol.Param p ->
             let
                 q =
-                    { addr = p.addr, label = p.label, kind = p.kind, min = p.min, max = p.max, step = p.step, default = p.default, options = [] }
+                    { addr = p.addr, label = p.label, kind = p.kind, scale = p.scale, min = p.min, max = p.max, step = p.step, default = p.default, options = [] }
             in
             Schema
                 { s
@@ -166,7 +167,17 @@ add line (Schema s) =
         Protocol.Route r ->
             Schema { s | pages = onLastPanel (\pn -> { pn | routes = pn.routes ++ [ r ] }) s.pages }
 
-        _ ->
+        -- TAPE's SOURCE is read-only: its text comes with `since`.
+        Protocol.Source _ ->
+            Schema s
+
+        Protocol.HelloIs _ ->
+            Schema s
+
+        Protocol.Val _ ->
+            Schema s
+
+        Protocol.PartIs _ _ ->
             Schema s
 
 

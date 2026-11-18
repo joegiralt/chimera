@@ -50,6 +50,7 @@ impl Gen {
     pub const FIRST: Gen = Gen(1);
 
     /// `n` as a number: `None` for 0, which is no answer at all.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.new"))]
     pub const fn new(n: u32) -> Option<Gen> {
         if n == 0 || n > Gen::LAST {
             None
@@ -58,6 +59,7 @@ impl Gen {
         }
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.next"))]
     pub const fn next(self) -> Gen {
         if self.0 == Gen::LAST {
             Gen::FIRST
@@ -66,6 +68,7 @@ impl Gen {
         }
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.get"))]
     pub const fn get(self) -> u32 {
         self.0
     }
@@ -92,6 +95,7 @@ const MASK_WORDS: usize = SLOTS.div_ceil(32);
 /// The Sound's blocks an engine's editor shows: the other engines' params
 /// sit in the Sound too, and are no part of it. The kit's and the pads'
 /// are DRUM's.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.in_schema"))]
 fn in_schema(engine: EngineType, b: BlockRef) -> bool {
     match b {
         BlockRef::Algo | BlockRef::AlgoOp(_) => engine == EngineType::Algo,
@@ -128,12 +132,14 @@ fn in_schema(engine: EngineType, b: BlockRef) -> bool {
 }
 
 /// `at` is one of `engine`'s blocks.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.in_engine"))]
 pub(super) fn in_engine(engine: EngineType, at: EdBlock) -> bool {
     in_schema(engine, at.block())
 }
 
 /// Block `i` of `engine`'s slots: the Sound's in `BlockRef::ALL` order,
 /// then on DRUM the kit's and each pad's in `PadBlock::ALL` order.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.block_at"))]
 fn block_at(engine: EngineType, mut i: usize) -> Option<EdBlock> {
     let mut b = 0;
     while let Some(&r) = BlockRef::ALL.get(b) {
@@ -162,6 +168,7 @@ fn block_at(engine: EngineType, mut i: usize) -> Option<EdBlock> {
 }
 
 /// Slot `a` takes in `engine`'s copy.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.slot_of"))]
 fn slot_of(engine: EngineType, a: EdAddr) -> Option<usize> {
     let mut n = 0;
     let mut i = 0;
@@ -185,6 +192,7 @@ pub(super) struct Described {
 
 impl Described {
     /// Note that `describe` lists `a`.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.mark"))]
     pub(super) fn mark(&mut self, a: EdAddr) {
         if let Some(n) = slot_of(self.engine, a)
             && let Some(w) = self.mask.get_mut(n / 32)
@@ -193,6 +201,7 @@ impl Described {
         }
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.has_slot"))]
     fn has_slot(&self, n: usize) -> bool {
         self.mask
             .get(n / 32)
@@ -200,10 +209,12 @@ impl Described {
     }
 
     /// `describe` lists `a` for this engine.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.has"))]
     pub(super) fn has(&self, a: EdAddr) -> bool {
         slot_of(self.engine, a).is_some_and(|n| self.has_slot(n))
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.built"))]
     pub(super) fn built(engine: EngineType) -> Described {
         let mut d = Described {
             engine,
@@ -234,6 +245,7 @@ const PANELS: usize = 1 + 3 + 3 + 2 * 12;
 const _: () = assert!(PadId::ALL.len() == 12);
 
 /// Panel `i` of `engine`'s, in the order `since` lists them.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.shown_at"))]
 fn shown_at(engine: EngineType, mut i: usize) -> Option<Shown> {
     let filter = match engine {
         EngineType::Drum => 0,
@@ -271,6 +283,10 @@ fn shown_at(engine: EngineType, mut i: usize) -> Option<Shown> {
 }
 
 impl Shown {
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.write_name")
+    )]
     fn write_name(self, w: &mut dyn Write) -> fmt::Result {
         match self {
             Shown::Filter => w.write_str("FILTER"),
@@ -285,6 +301,7 @@ impl Shown {
         }
     }
 
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.variant"))]
     fn variant(self, c: &SlotCtx, kit: &Kit) -> &'static str {
         match self {
             Shown::Filter => filter_variant(c.kind),
@@ -326,6 +343,7 @@ pub struct EdSince {
 }
 
 impl EdSince {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.new.1"))]
     pub const fn new() -> EdSince {
         EdSince {
             issued: None,
@@ -337,6 +355,7 @@ impl EdSince {
 
     /// The copy `held` is of: `None` if the editor holds nothing, or not
     /// the last answer.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.known"))]
     fn known(&self, held: Option<Gen>) -> Option<Seen> {
         match (held, self.issued) {
             (Some(h), Some(i)) if h == i => self.seen,
@@ -345,6 +364,7 @@ impl EdSince {
     }
 
     /// What `describe` lists for `engine`, built once an engine.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.described"))]
     pub(super) fn described(&mut self, engine: EngineType) -> &Described {
         let stale = self.described.as_ref().is_none_or(|d| d.engine != engine);
         if stale {
@@ -355,6 +375,7 @@ impl EdSince {
     }
 
     /// The whole answer, `OK <m>` included.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.answer"))]
     pub(super) fn answer(
         &mut self,
         held: Option<Gen>,
@@ -385,7 +406,7 @@ impl EdSince {
         // The texts too: whole again if the cells' context moved, or a
         // panel did (a pad's machine labels its knobs).
         let texts = match known {
-            Some(k) => same && k.ctx == ctx && k.closed == closed && now == was,
+            Some(k) => same && k.ctx == ctx && k.closed == closed && same_panels(&now, &was),
             None => false,
         };
         self.seen = Some(Seen {
@@ -424,6 +445,7 @@ impl EdSince {
     /// The `val` lines of what differs from the copy, all of them unless
     /// `same` (the Sound and the texts' context as last reported); the copy
     /// is brought up to date.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.values"))]
     fn values(
         &mut self,
         ui: &UiState,
@@ -475,12 +497,31 @@ impl EdSince {
 }
 
 impl Default for EdSince {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.default"))]
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// Every panel as it was: one `str` compare each (a whole-array compare
+/// would be a slice compare instantiated into bank 1).
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.since.same_panels")
+)]
+fn same_panels(now: &[&'static str; PANELS], was: &[&'static str; PANELS]) -> bool {
+    let mut i = 0;
+    while i < PANELS {
+        if now[i] != was[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// Each panel's variant under `engine`, in `shown_at` order; the rest empty.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.panels"))]
 fn panels(engine: EngineType, c: &SlotCtx, kit: &Kit) -> [&'static str; PANELS] {
     let mut v = [""; PANELS];
     let mut i = 0;
@@ -495,6 +536,10 @@ fn panels(engine: EngineType, c: &SlotCtx, kit: &Kit) -> [&'static str; PANELS] 
 
 /// How many slots `engine`'s blocks take: for the test that `SLOTS`
 /// holds them.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.since.slots_used")
+)]
 pub fn slots_used(engine: EngineType) -> usize {
     let mut n = 0;
     let mut i = 0;
@@ -506,6 +551,10 @@ pub fn slots_used(engine: EngineType) -> usize {
 }
 
 /// How many panels `engine` reports: for the test that `PANELS` holds them.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.since.panels_used")
+)]
 pub fn panels_used(engine: EngineType) -> usize {
     let mut i = 0;
     while shown_at(engine, i).is_some() {
