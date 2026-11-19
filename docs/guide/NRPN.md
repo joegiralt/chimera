@@ -13,6 +13,8 @@ An ENGINE's cells move only on a Part playing that engine. The master FX are sha
 
 With SETTINGS › MIDI CONFIG › ECHO › PARAM OUT at `NRPN`, Chimera sends these same NRPNs, on the Part's channel, for every cell you turn on the panel, so a sequencer can record your edits. A master FX or ORBIT ring cell goes out on the active Part's channel.
 
+Each release also ships this chart as `NRPN.json`, for a script that builds a controller template. It holds `schema` (its shape's version, now 1), `firmware` (the version it lists) and `cells`, one object per row below, in order: `section` and `block` (the headings), `name` (the cell's screen name), `msb`, `lsb` and `nrpn` (MSB × 128 + LSB), `kind` (`14bit`, `msb` or `msb_code`, the **Value** column), `min` and `max` (what CC 6, with CC 38 for `14bit`, carries: the lowest and highest code for `msb_code`), `screen` (`from` and `to`, the bracketed range shown on screen, else null) and `codes` (a choice's `code` and `name` list, else null).
+
 ## ALGO
 
 | Cell | NRPN | Value | Range |

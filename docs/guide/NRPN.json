@@ -1,0 +1,6449 @@
+{
+  "cells": [
+    {
+      "block": "ALGO",
+      "codes": [
+        {
+          "code": 0,
+          "name": "T1"
+        },
+        {
+          "code": 1,
+          "name": "T2"
+        },
+        {
+          "code": 2,
+          "name": "T3"
+        },
+        {
+          "code": 3,
+          "name": "T4"
+        },
+        {
+          "code": 4,
+          "name": "T5"
+        },
+        {
+          "code": 5,
+          "name": "T6"
+        },
+        {
+          "code": 6,
+          "name": "T7"
+        },
+        {
+          "code": 7,
+          "name": "T8"
+        },
+        {
+          "code": 8,
+          "name": "A1"
+        },
+        {
+          "code": 9,
+          "name": "A2"
+        },
+        {
+          "code": 10,
+          "name": "A3"
+        },
+        {
+          "code": 11,
+          "name": "A4"
+        },
+        {
+          "code": 12,
+          "name": "A5"
+        },
+        {
+          "code": 13,
+          "name": "A6"
+        },
+        {
+          "code": 14,
+          "name": "A7"
+        },
+        {
+          "code": 15,
+          "name": "A8"
+        },
+        {
+          "code": 16,
+          "name": "A9"
+        },
+        {
+          "code": 17,
+          "name": "A10"
+        },
+        {
+          "code": 18,
+          "name": "A11"
+        },
+        {
+          "code": 19,
+          "name": "A12"
+        },
+        {
+          "code": 20,
+          "name": "A13"
+        },
+        {
+          "code": 21,
+          "name": "A14"
+        },
+        {
+          "code": 22,
+          "name": "A15"
+        },
+        {
+          "code": 23,
+          "name": "A16"
+        },
+        {
+          "code": 24,
+          "name": "A17"
+        },
+        {
+          "code": 25,
+          "name": "A18"
+        },
+        {
+          "code": 26,
+          "name": "A19"
+        },
+        {
+          "code": 27,
+          "name": "A20"
+        },
+        {
+          "code": 28,
+          "name": "A21"
+        },
+        {
+          "code": 29,
+          "name": "A22"
+        },
+        {
+          "code": 30,
+          "name": "A23"
+        },
+        {
+          "code": 31,
+          "name": "A24"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 31,
+      "min": 0,
+      "msb": 2,
+      "name": "ALG A",
+      "nrpn": 256,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "ALGO",
+      "codes": [
+        {
+          "code": 0,
+          "name": "T1"
+        },
+        {
+          "code": 1,
+          "name": "T2"
+        },
+        {
+          "code": 2,
+          "name": "T3"
+        },
+        {
+          "code": 3,
+          "name": "T4"
+        },
+        {
+          "code": 4,
+          "name": "T5"
+        },
+        {
+          "code": 5,
+          "name": "T6"
+        },
+        {
+          "code": 6,
+          "name": "T7"
+        },
+        {
+          "code": 7,
+          "name": "T8"
+        },
+        {
+          "code": 8,
+          "name": "A1"
+        },
+        {
+          "code": 9,
+          "name": "A2"
+        },
+        {
+          "code": 10,
+          "name": "A3"
+        },
+        {
+          "code": 11,
+          "name": "A4"
+        },
+        {
+          "code": 12,
+          "name": "A5"
+        },
+        {
+          "code": 13,
+          "name": "A6"
+        },
+        {
+          "code": 14,
+          "name": "A7"
+        },
+        {
+          "code": 15,
+          "name": "A8"
+        },
+        {
+          "code": 16,
+          "name": "A9"
+        },
+        {
+          "code": 17,
+          "name": "A10"
+        },
+        {
+          "code": 18,
+          "name": "A11"
+        },
+        {
+          "code": 19,
+          "name": "A12"
+        },
+        {
+          "code": 20,
+          "name": "A13"
+        },
+        {
+          "code": 21,
+          "name": "A14"
+        },
+        {
+          "code": 22,
+          "name": "A15"
+        },
+        {
+          "code": 23,
+          "name": "A16"
+        },
+        {
+          "code": 24,
+          "name": "A17"
+        },
+        {
+          "code": 25,
+          "name": "A18"
+        },
+        {
+          "code": 26,
+          "name": "A19"
+        },
+        {
+          "code": 27,
+          "name": "A20"
+        },
+        {
+          "code": 28,
+          "name": "A21"
+        },
+        {
+          "code": 29,
+          "name": "A22"
+        },
+        {
+          "code": 30,
+          "name": "A23"
+        },
+        {
+          "code": 31,
+          "name": "A24"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 1,
+      "max": 31,
+      "min": 0,
+      "msb": 2,
+      "name": "ALG B",
+      "nrpn": 257,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "ALGO",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 127,
+      "min": 0,
+      "msb": 2,
+      "name": "MORPH",
+      "nrpn": 258,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "ALGO",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 48,
+      "min": 0,
+      "msb": 2,
+      "name": "TRNSP",
+      "nrpn": 259,
+      "screen": {
+        "from": "-24",
+        "to": "24"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "ALGO",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 100,
+      "min": 0,
+      "msb": 2,
+      "name": "VOWEL",
+      "nrpn": 260,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "W1"
+        },
+        {
+          "code": 1,
+          "name": "W2"
+        },
+        {
+          "code": 2,
+          "name": "W3"
+        },
+        {
+          "code": 3,
+          "name": "W4"
+        },
+        {
+          "code": 4,
+          "name": "W5"
+        },
+        {
+          "code": 5,
+          "name": "W6"
+        },
+        {
+          "code": 6,
+          "name": "W7"
+        },
+        {
+          "code": 7,
+          "name": "W8"
+        },
+        {
+          "code": 8,
+          "name": "TRI"
+        },
+        {
+          "code": 9,
+          "name": "SAW"
+        },
+        {
+          "code": 10,
+          "name": "SQR"
+        },
+        {
+          "code": 11,
+          "name": "P25"
+        },
+        {
+          "code": 12,
+          "name": "P12"
+        },
+        {
+          "code": 13,
+          "name": "TSAW"
+        },
+        {
+          "code": 14,
+          "name": "RSQR"
+        },
+        {
+          "code": 15,
+          "name": "SSAW"
+        },
+        {
+          "code": 16,
+          "name": "FRMT"
+        },
+        {
+          "code": 17,
+          "name": "NOISE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 17,
+      "min": 0,
+      "msb": 3,
+      "name": "WAVE",
+      "nrpn": 384,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 63,
+      "min": 0,
+      "msb": 3,
+      "name": "CRSE",
+      "nrpn": 385,
+      "screen": {
+        "from": "0.50",
+        "to": "25.95"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 15,
+      "min": 0,
+      "msb": 3,
+      "name": "FINE",
+      "nrpn": 386,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 6,
+      "min": 0,
+      "msb": 3,
+      "name": "DETUN",
+      "nrpn": 387,
+      "screen": {
+        "from": "-3",
+        "to": "3"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 99,
+      "min": 0,
+      "msb": 3,
+      "name": "LEVEL",
+      "nrpn": 388,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 5,
+      "max": 31,
+      "min": 0,
+      "msb": 3,
+      "name": "AR",
+      "nrpn": 389,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 31,
+      "min": 0,
+      "msb": 3,
+      "name": "D1R",
+      "nrpn": 390,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 15,
+      "min": 0,
+      "msb": 3,
+      "name": "D1L",
+      "nrpn": 391,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 31,
+      "min": 0,
+      "msb": 3,
+      "name": "D2R",
+      "nrpn": 392,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 14,
+      "min": 0,
+      "msb": 3,
+      "name": "RR",
+      "nrpn": 393,
+      "screen": {
+        "from": "1",
+        "to": "15"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 10,
+      "max": 3,
+      "min": 0,
+      "msb": 3,
+      "name": "RS",
+      "nrpn": 394,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 11,
+      "max": 7,
+      "min": 0,
+      "msb": 3,
+      "name": "FDBK",
+      "nrpn": 395,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 12,
+      "max": 7,
+      "min": 0,
+      "msb": 3,
+      "name": "VEL",
+      "nrpn": 396,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 168,
+      "min": 0,
+      "msb": 3,
+      "name": "FORMANT",
+      "nrpn": 397,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 216,
+      "min": 0,
+      "msb": 3,
+      "name": "BW",
+      "nrpn": 398,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 15,
+      "max": 3,
+      "min": 0,
+      "msb": 3,
+      "name": "SKIRT",
+      "nrpn": 399,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 16,
+      "max": 100,
+      "min": 0,
+      "msb": 3,
+      "name": "KEY",
+      "nrpn": 400,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 17,
+      "max": 100,
+      "min": 0,
+      "msb": 3,
+      "name": "RES",
+      "nrpn": 401,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AUTO"
+        },
+        {
+          "code": 1,
+          "name": "F1"
+        },
+        {
+          "code": 2,
+          "name": "F2"
+        },
+        {
+          "code": 3,
+          "name": "F3"
+        },
+        {
+          "code": 4,
+          "name": "OFF"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 4,
+      "min": 0,
+      "msb": 3,
+      "name": "SLOT",
+      "nrpn": 402,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "W1"
+        },
+        {
+          "code": 1,
+          "name": "W2"
+        },
+        {
+          "code": 2,
+          "name": "W3"
+        },
+        {
+          "code": 3,
+          "name": "W4"
+        },
+        {
+          "code": 4,
+          "name": "W5"
+        },
+        {
+          "code": 5,
+          "name": "W6"
+        },
+        {
+          "code": 6,
+          "name": "W7"
+        },
+        {
+          "code": 7,
+          "name": "W8"
+        },
+        {
+          "code": 8,
+          "name": "TRI"
+        },
+        {
+          "code": 9,
+          "name": "SAW"
+        },
+        {
+          "code": 10,
+          "name": "SQR"
+        },
+        {
+          "code": 11,
+          "name": "P25"
+        },
+        {
+          "code": 12,
+          "name": "P12"
+        },
+        {
+          "code": 13,
+          "name": "TSAW"
+        },
+        {
+          "code": 14,
+          "name": "RSQR"
+        },
+        {
+          "code": 15,
+          "name": "SSAW"
+        },
+        {
+          "code": 16,
+          "name": "FRMT"
+        },
+        {
+          "code": 17,
+          "name": "NOISE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 17,
+      "min": 0,
+      "msb": 4,
+      "name": "WAVE",
+      "nrpn": 512,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 63,
+      "min": 0,
+      "msb": 4,
+      "name": "CRSE",
+      "nrpn": 513,
+      "screen": {
+        "from": "0.50",
+        "to": "25.95"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 15,
+      "min": 0,
+      "msb": 4,
+      "name": "FINE",
+      "nrpn": 514,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 6,
+      "min": 0,
+      "msb": 4,
+      "name": "DETUN",
+      "nrpn": 515,
+      "screen": {
+        "from": "-3",
+        "to": "3"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 99,
+      "min": 0,
+      "msb": 4,
+      "name": "LEVEL",
+      "nrpn": 516,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 5,
+      "max": 31,
+      "min": 0,
+      "msb": 4,
+      "name": "AR",
+      "nrpn": 517,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 31,
+      "min": 0,
+      "msb": 4,
+      "name": "D1R",
+      "nrpn": 518,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 15,
+      "min": 0,
+      "msb": 4,
+      "name": "D1L",
+      "nrpn": 519,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 31,
+      "min": 0,
+      "msb": 4,
+      "name": "D2R",
+      "nrpn": 520,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 14,
+      "min": 0,
+      "msb": 4,
+      "name": "RR",
+      "nrpn": 521,
+      "screen": {
+        "from": "1",
+        "to": "15"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 10,
+      "max": 3,
+      "min": 0,
+      "msb": 4,
+      "name": "RS",
+      "nrpn": 522,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 11,
+      "max": 7,
+      "min": 0,
+      "msb": 4,
+      "name": "FDBK",
+      "nrpn": 523,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 12,
+      "max": 7,
+      "min": 0,
+      "msb": 4,
+      "name": "VEL",
+      "nrpn": 524,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 168,
+      "min": 0,
+      "msb": 4,
+      "name": "FORMANT",
+      "nrpn": 525,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 216,
+      "min": 0,
+      "msb": 4,
+      "name": "BW",
+      "nrpn": 526,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 15,
+      "max": 3,
+      "min": 0,
+      "msb": 4,
+      "name": "SKIRT",
+      "nrpn": 527,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 16,
+      "max": 100,
+      "min": 0,
+      "msb": 4,
+      "name": "KEY",
+      "nrpn": 528,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 17,
+      "max": 100,
+      "min": 0,
+      "msb": 4,
+      "name": "RES",
+      "nrpn": 529,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AUTO"
+        },
+        {
+          "code": 1,
+          "name": "F1"
+        },
+        {
+          "code": 2,
+          "name": "F2"
+        },
+        {
+          "code": 3,
+          "name": "F3"
+        },
+        {
+          "code": 4,
+          "name": "OFF"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 4,
+      "min": 0,
+      "msb": 4,
+      "name": "SLOT",
+      "nrpn": 530,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "W1"
+        },
+        {
+          "code": 1,
+          "name": "W2"
+        },
+        {
+          "code": 2,
+          "name": "W3"
+        },
+        {
+          "code": 3,
+          "name": "W4"
+        },
+        {
+          "code": 4,
+          "name": "W5"
+        },
+        {
+          "code": 5,
+          "name": "W6"
+        },
+        {
+          "code": 6,
+          "name": "W7"
+        },
+        {
+          "code": 7,
+          "name": "W8"
+        },
+        {
+          "code": 8,
+          "name": "TRI"
+        },
+        {
+          "code": 9,
+          "name": "SAW"
+        },
+        {
+          "code": 10,
+          "name": "SQR"
+        },
+        {
+          "code": 11,
+          "name": "P25"
+        },
+        {
+          "code": 12,
+          "name": "P12"
+        },
+        {
+          "code": 13,
+          "name": "TSAW"
+        },
+        {
+          "code": 14,
+          "name": "RSQR"
+        },
+        {
+          "code": 15,
+          "name": "SSAW"
+        },
+        {
+          "code": 16,
+          "name": "FRMT"
+        },
+        {
+          "code": 17,
+          "name": "NOISE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 17,
+      "min": 0,
+      "msb": 5,
+      "name": "WAVE",
+      "nrpn": 640,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 63,
+      "min": 0,
+      "msb": 5,
+      "name": "CRSE",
+      "nrpn": 641,
+      "screen": {
+        "from": "0.50",
+        "to": "25.95"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 15,
+      "min": 0,
+      "msb": 5,
+      "name": "FINE",
+      "nrpn": 642,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 6,
+      "min": 0,
+      "msb": 5,
+      "name": "DETUN",
+      "nrpn": 643,
+      "screen": {
+        "from": "-3",
+        "to": "3"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 99,
+      "min": 0,
+      "msb": 5,
+      "name": "LEVEL",
+      "nrpn": 644,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 5,
+      "max": 31,
+      "min": 0,
+      "msb": 5,
+      "name": "AR",
+      "nrpn": 645,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 31,
+      "min": 0,
+      "msb": 5,
+      "name": "D1R",
+      "nrpn": 646,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 15,
+      "min": 0,
+      "msb": 5,
+      "name": "D1L",
+      "nrpn": 647,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 31,
+      "min": 0,
+      "msb": 5,
+      "name": "D2R",
+      "nrpn": 648,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 14,
+      "min": 0,
+      "msb": 5,
+      "name": "RR",
+      "nrpn": 649,
+      "screen": {
+        "from": "1",
+        "to": "15"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 10,
+      "max": 3,
+      "min": 0,
+      "msb": 5,
+      "name": "RS",
+      "nrpn": 650,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 11,
+      "max": 7,
+      "min": 0,
+      "msb": 5,
+      "name": "FDBK",
+      "nrpn": 651,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 12,
+      "max": 7,
+      "min": 0,
+      "msb": 5,
+      "name": "VEL",
+      "nrpn": 652,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 168,
+      "min": 0,
+      "msb": 5,
+      "name": "FORMANT",
+      "nrpn": 653,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 216,
+      "min": 0,
+      "msb": 5,
+      "name": "BW",
+      "nrpn": 654,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 15,
+      "max": 3,
+      "min": 0,
+      "msb": 5,
+      "name": "SKIRT",
+      "nrpn": 655,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 16,
+      "max": 100,
+      "min": 0,
+      "msb": 5,
+      "name": "KEY",
+      "nrpn": 656,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 17,
+      "max": 100,
+      "min": 0,
+      "msb": 5,
+      "name": "RES",
+      "nrpn": 657,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AUTO"
+        },
+        {
+          "code": 1,
+          "name": "F1"
+        },
+        {
+          "code": 2,
+          "name": "F2"
+        },
+        {
+          "code": 3,
+          "name": "F3"
+        },
+        {
+          "code": 4,
+          "name": "OFF"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 4,
+      "min": 0,
+      "msb": 5,
+      "name": "SLOT",
+      "nrpn": 658,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": [
+        {
+          "code": 0,
+          "name": "W1"
+        },
+        {
+          "code": 1,
+          "name": "W2"
+        },
+        {
+          "code": 2,
+          "name": "W3"
+        },
+        {
+          "code": 3,
+          "name": "W4"
+        },
+        {
+          "code": 4,
+          "name": "W5"
+        },
+        {
+          "code": 5,
+          "name": "W6"
+        },
+        {
+          "code": 6,
+          "name": "W7"
+        },
+        {
+          "code": 7,
+          "name": "W8"
+        },
+        {
+          "code": 8,
+          "name": "TRI"
+        },
+        {
+          "code": 9,
+          "name": "SAW"
+        },
+        {
+          "code": 10,
+          "name": "SQR"
+        },
+        {
+          "code": 11,
+          "name": "P25"
+        },
+        {
+          "code": 12,
+          "name": "P12"
+        },
+        {
+          "code": 13,
+          "name": "TSAW"
+        },
+        {
+          "code": 14,
+          "name": "RSQR"
+        },
+        {
+          "code": 15,
+          "name": "SSAW"
+        },
+        {
+          "code": 16,
+          "name": "FRMT"
+        },
+        {
+          "code": 17,
+          "name": "NOISE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 17,
+      "min": 0,
+      "msb": 6,
+      "name": "WAVE",
+      "nrpn": 768,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 63,
+      "min": 0,
+      "msb": 6,
+      "name": "CRSE",
+      "nrpn": 769,
+      "screen": {
+        "from": "0.50",
+        "to": "25.95"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 15,
+      "min": 0,
+      "msb": 6,
+      "name": "FINE",
+      "nrpn": 770,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 6,
+      "min": 0,
+      "msb": 6,
+      "name": "DETUN",
+      "nrpn": 771,
+      "screen": {
+        "from": "-3",
+        "to": "3"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 99,
+      "min": 0,
+      "msb": 6,
+      "name": "LEVEL",
+      "nrpn": 772,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 5,
+      "max": 31,
+      "min": 0,
+      "msb": 6,
+      "name": "AR",
+      "nrpn": 773,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 31,
+      "min": 0,
+      "msb": 6,
+      "name": "D1R",
+      "nrpn": 774,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 15,
+      "min": 0,
+      "msb": 6,
+      "name": "D1L",
+      "nrpn": 775,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 31,
+      "min": 0,
+      "msb": 6,
+      "name": "D2R",
+      "nrpn": 776,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 14,
+      "min": 0,
+      "msb": 6,
+      "name": "RR",
+      "nrpn": 777,
+      "screen": {
+        "from": "1",
+        "to": "15"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 10,
+      "max": 3,
+      "min": 0,
+      "msb": 6,
+      "name": "RS",
+      "nrpn": 778,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 11,
+      "max": 7,
+      "min": 0,
+      "msb": 6,
+      "name": "FDBK",
+      "nrpn": 779,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 12,
+      "max": 7,
+      "min": 0,
+      "msb": 6,
+      "name": "VEL",
+      "nrpn": 780,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 168,
+      "min": 0,
+      "msb": 6,
+      "name": "FORMANT",
+      "nrpn": 781,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 216,
+      "min": 0,
+      "msb": 6,
+      "name": "BW",
+      "nrpn": 782,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 15,
+      "max": 3,
+      "min": 0,
+      "msb": 6,
+      "name": "SKIRT",
+      "nrpn": 783,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 16,
+      "max": 100,
+      "min": 0,
+      "msb": 6,
+      "name": "KEY",
+      "nrpn": 784,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 17,
+      "max": 100,
+      "min": 0,
+      "msb": 6,
+      "name": "RES",
+      "nrpn": 785,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 4",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AUTO"
+        },
+        {
+          "code": 1,
+          "name": "F1"
+        },
+        {
+          "code": 2,
+          "name": "F2"
+        },
+        {
+          "code": 3,
+          "name": "F3"
+        },
+        {
+          "code": 4,
+          "name": "OFF"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 4,
+      "min": 0,
+      "msb": 6,
+      "name": "SLOT",
+      "nrpn": 786,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": [
+        {
+          "code": 0,
+          "name": "W1"
+        },
+        {
+          "code": 1,
+          "name": "W2"
+        },
+        {
+          "code": 2,
+          "name": "W3"
+        },
+        {
+          "code": 3,
+          "name": "W4"
+        },
+        {
+          "code": 4,
+          "name": "W5"
+        },
+        {
+          "code": 5,
+          "name": "W6"
+        },
+        {
+          "code": 6,
+          "name": "W7"
+        },
+        {
+          "code": 7,
+          "name": "W8"
+        },
+        {
+          "code": 8,
+          "name": "TRI"
+        },
+        {
+          "code": 9,
+          "name": "SAW"
+        },
+        {
+          "code": 10,
+          "name": "SQR"
+        },
+        {
+          "code": 11,
+          "name": "P25"
+        },
+        {
+          "code": 12,
+          "name": "P12"
+        },
+        {
+          "code": 13,
+          "name": "TSAW"
+        },
+        {
+          "code": 14,
+          "name": "RSQR"
+        },
+        {
+          "code": 15,
+          "name": "SSAW"
+        },
+        {
+          "code": 16,
+          "name": "FRMT"
+        },
+        {
+          "code": 17,
+          "name": "NOISE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 17,
+      "min": 0,
+      "msb": 7,
+      "name": "WAVE",
+      "nrpn": 896,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 63,
+      "min": 0,
+      "msb": 7,
+      "name": "CRSE",
+      "nrpn": 897,
+      "screen": {
+        "from": "0.50",
+        "to": "25.95"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 15,
+      "min": 0,
+      "msb": 7,
+      "name": "FINE",
+      "nrpn": 898,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 6,
+      "min": 0,
+      "msb": 7,
+      "name": "DETUN",
+      "nrpn": 899,
+      "screen": {
+        "from": "-3",
+        "to": "3"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 99,
+      "min": 0,
+      "msb": 7,
+      "name": "LEVEL",
+      "nrpn": 900,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 5,
+      "max": 31,
+      "min": 0,
+      "msb": 7,
+      "name": "AR",
+      "nrpn": 901,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 31,
+      "min": 0,
+      "msb": 7,
+      "name": "D1R",
+      "nrpn": 902,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 15,
+      "min": 0,
+      "msb": 7,
+      "name": "D1L",
+      "nrpn": 903,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 31,
+      "min": 0,
+      "msb": 7,
+      "name": "D2R",
+      "nrpn": 904,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 14,
+      "min": 0,
+      "msb": 7,
+      "name": "RR",
+      "nrpn": 905,
+      "screen": {
+        "from": "1",
+        "to": "15"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 10,
+      "max": 3,
+      "min": 0,
+      "msb": 7,
+      "name": "RS",
+      "nrpn": 906,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 11,
+      "max": 7,
+      "min": 0,
+      "msb": 7,
+      "name": "FDBK",
+      "nrpn": 907,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 12,
+      "max": 7,
+      "min": 0,
+      "msb": 7,
+      "name": "VEL",
+      "nrpn": 908,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 168,
+      "min": 0,
+      "msb": 7,
+      "name": "FORMANT",
+      "nrpn": 909,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 216,
+      "min": 0,
+      "msb": 7,
+      "name": "BW",
+      "nrpn": 910,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 15,
+      "max": 3,
+      "min": 0,
+      "msb": 7,
+      "name": "SKIRT",
+      "nrpn": 911,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 16,
+      "max": 100,
+      "min": 0,
+      "msb": 7,
+      "name": "KEY",
+      "nrpn": 912,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 17,
+      "max": 100,
+      "min": 0,
+      "msb": 7,
+      "name": "RES",
+      "nrpn": 913,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 5",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AUTO"
+        },
+        {
+          "code": 1,
+          "name": "F1"
+        },
+        {
+          "code": 2,
+          "name": "F2"
+        },
+        {
+          "code": 3,
+          "name": "F3"
+        },
+        {
+          "code": 4,
+          "name": "OFF"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 4,
+      "min": 0,
+      "msb": 7,
+      "name": "SLOT",
+      "nrpn": 914,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": [
+        {
+          "code": 0,
+          "name": "W1"
+        },
+        {
+          "code": 1,
+          "name": "W2"
+        },
+        {
+          "code": 2,
+          "name": "W3"
+        },
+        {
+          "code": 3,
+          "name": "W4"
+        },
+        {
+          "code": 4,
+          "name": "W5"
+        },
+        {
+          "code": 5,
+          "name": "W6"
+        },
+        {
+          "code": 6,
+          "name": "W7"
+        },
+        {
+          "code": 7,
+          "name": "W8"
+        },
+        {
+          "code": 8,
+          "name": "TRI"
+        },
+        {
+          "code": 9,
+          "name": "SAW"
+        },
+        {
+          "code": 10,
+          "name": "SQR"
+        },
+        {
+          "code": 11,
+          "name": "P25"
+        },
+        {
+          "code": 12,
+          "name": "P12"
+        },
+        {
+          "code": 13,
+          "name": "TSAW"
+        },
+        {
+          "code": 14,
+          "name": "RSQR"
+        },
+        {
+          "code": 15,
+          "name": "SSAW"
+        },
+        {
+          "code": 16,
+          "name": "FRMT"
+        },
+        {
+          "code": 17,
+          "name": "NOISE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 17,
+      "min": 0,
+      "msb": 8,
+      "name": "WAVE",
+      "nrpn": 1024,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 63,
+      "min": 0,
+      "msb": 8,
+      "name": "CRSE",
+      "nrpn": 1025,
+      "screen": {
+        "from": "0.50",
+        "to": "25.95"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 15,
+      "min": 0,
+      "msb": 8,
+      "name": "FINE",
+      "nrpn": 1026,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 6,
+      "min": 0,
+      "msb": 8,
+      "name": "DETUN",
+      "nrpn": 1027,
+      "screen": {
+        "from": "-3",
+        "to": "3"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 99,
+      "min": 0,
+      "msb": 8,
+      "name": "LEVEL",
+      "nrpn": 1028,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 5,
+      "max": 31,
+      "min": 0,
+      "msb": 8,
+      "name": "AR",
+      "nrpn": 1029,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 31,
+      "min": 0,
+      "msb": 8,
+      "name": "D1R",
+      "nrpn": 1030,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 15,
+      "min": 0,
+      "msb": 8,
+      "name": "D1L",
+      "nrpn": 1031,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 31,
+      "min": 0,
+      "msb": 8,
+      "name": "D2R",
+      "nrpn": 1032,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 14,
+      "min": 0,
+      "msb": 8,
+      "name": "RR",
+      "nrpn": 1033,
+      "screen": {
+        "from": "1",
+        "to": "15"
+      },
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 10,
+      "max": 3,
+      "min": 0,
+      "msb": 8,
+      "name": "RS",
+      "nrpn": 1034,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 11,
+      "max": 7,
+      "min": 0,
+      "msb": 8,
+      "name": "FDBK",
+      "nrpn": 1035,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 12,
+      "max": 7,
+      "min": 0,
+      "msb": 8,
+      "name": "VEL",
+      "nrpn": 1036,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 168,
+      "min": 0,
+      "msb": 8,
+      "name": "FORMANT",
+      "nrpn": 1037,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 216,
+      "min": 0,
+      "msb": 8,
+      "name": "BW",
+      "nrpn": 1038,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 15,
+      "max": 3,
+      "min": 0,
+      "msb": 8,
+      "name": "SKIRT",
+      "nrpn": 1039,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 16,
+      "max": 100,
+      "min": 0,
+      "msb": 8,
+      "name": "KEY",
+      "nrpn": 1040,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 17,
+      "max": 100,
+      "min": 0,
+      "msb": 8,
+      "name": "RES",
+      "nrpn": 1041,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "OPERATOR 6",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AUTO"
+        },
+        {
+          "code": 1,
+          "name": "F1"
+        },
+        {
+          "code": 2,
+          "name": "F2"
+        },
+        {
+          "code": 3,
+          "name": "F3"
+        },
+        {
+          "code": 4,
+          "name": "OFF"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 4,
+      "min": 0,
+      "msb": 8,
+      "name": "SLOT",
+      "nrpn": 1042,
+      "screen": null,
+      "section": "ALGO"
+    },
+    {
+      "block": "MODAL",
+      "codes": [
+        {
+          "code": 0,
+          "name": "STRING"
+        },
+        {
+          "code": 1,
+          "name": "BANK"
+        },
+        {
+          "code": 2,
+          "name": "BOWED"
+        },
+        {
+          "code": 3,
+          "name": "SYMP"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 3,
+      "min": 0,
+      "msb": 1,
+      "name": "MODEL",
+      "nrpn": 128,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "STRUCT",
+      "nrpn": 141,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "BRIGHT",
+      "nrpn": 131,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 12,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "DAMP",
+      "nrpn": 140,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "POS",
+      "nrpn": 132,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "EXCITE",
+      "nrpn": 129,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 6,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "BODY",
+      "nrpn": 134,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 9,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "ENS.D",
+      "nrpn": 137,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "ENS.R",
+      "nrpn": 138,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 11,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "ENS.M",
+      "nrpn": 139,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "COUPLE",
+      "nrpn": 142,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 15,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "HALO",
+      "nrpn": 143,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": [
+        {
+          "code": 0,
+          "name": "16"
+        },
+        {
+          "code": 1,
+          "name": "24"
+        },
+        {
+          "code": 2,
+          "name": "32"
+        },
+        {
+          "code": 3,
+          "name": "48"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 16,
+      "max": 3,
+      "min": 0,
+      "msb": 1,
+      "name": "MODES",
+      "nrpn": 144,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 19,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "COLOR",
+      "nrpn": 147,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 20,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "BURST",
+      "nrpn": 148,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 17,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "FORCE",
+      "nrpn": 145,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "MODAL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 18,
+      "max": 16383,
+      "min": 0,
+      "msb": 1,
+      "name": "SPEED",
+      "nrpn": 146,
+      "screen": null,
+      "section": "MODAL"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 35,
+      "name": "WAVE1",
+      "nrpn": 4480,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 35,
+      "name": "WAVE2",
+      "nrpn": 4481,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": [
+        {
+          "code": 0,
+          "name": "MIX"
+        },
+        {
+          "code": 1,
+          "name": "SYNC"
+        },
+        {
+          "code": 2,
+          "name": "RING"
+        },
+        {
+          "code": 3,
+          "name": "XOR"
+        },
+        {
+          "code": 4,
+          "name": "BITS"
+        },
+        {
+          "code": 5,
+          "name": "FM"
+        },
+        {
+          "code": 6,
+          "name": "AM"
+        },
+        {
+          "code": 7,
+          "name": "MAX"
+        },
+        {
+          "code": 8,
+          "name": "LOOPFM"
+        },
+        {
+          "code": 9,
+          "name": "SOFT SYNC"
+        },
+        {
+          "code": 10,
+          "name": "PHASE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 2,
+      "max": 10,
+      "min": 0,
+      "msb": 35,
+      "name": "MODE",
+      "nrpn": 4482,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 35,
+      "name": "AMNT",
+      "nrpn": 4483,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 35,
+      "name": "SUB",
+      "nrpn": 4484,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 35,
+      "name": "STAB",
+      "nrpn": 4485,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 48,
+      "min": 0,
+      "msb": 35,
+      "name": "CRSE1",
+      "nrpn": 4486,
+      "screen": {
+        "from": "-24",
+        "to": "24"
+      },
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 7,
+      "max": 200,
+      "min": 0,
+      "msb": 35,
+      "name": "FINE1",
+      "nrpn": 4487,
+      "screen": {
+        "from": "-100",
+        "to": "100"
+      },
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 8,
+      "max": 16383,
+      "min": 0,
+      "msb": 35,
+      "name": "SHAPE1",
+      "nrpn": 4488,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 48,
+      "min": 0,
+      "msb": 35,
+      "name": "CRSE2",
+      "nrpn": 4489,
+      "screen": {
+        "from": "-24",
+        "to": "24"
+      },
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 200,
+      "min": 0,
+      "msb": 35,
+      "name": "FINE2",
+      "nrpn": 4490,
+      "screen": {
+        "from": "-100",
+        "to": "100"
+      },
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 11,
+      "max": 16383,
+      "min": 0,
+      "msb": 35,
+      "name": "SHAPE2",
+      "nrpn": 4491,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": [
+        {
+          "code": 0,
+          "name": "WHITE"
+        },
+        {
+          "code": 1,
+          "name": "PINK"
+        },
+        {
+          "code": 2,
+          "name": "RED"
+        },
+        {
+          "code": 3,
+          "name": "DIGITAL"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 12,
+      "max": 3,
+      "min": 0,
+      "msb": 35,
+      "name": "KIND",
+      "nrpn": 4492,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "VA",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 16383,
+      "min": 0,
+      "msb": 35,
+      "name": "NOISE",
+      "nrpn": 4493,
+      "screen": null,
+      "section": "VA"
+    },
+    {
+      "block": "TAPE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "WALK"
+        },
+        {
+          "code": 3,
+          "name": "WAVE"
+        },
+        {
+          "code": 4,
+          "name": "SCRUB"
+        },
+        {
+          "code": 5,
+          "name": "STRCH"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 0,
+      "max": 5,
+      "min": 0,
+      "msb": 34,
+      "name": "MODEL",
+      "nrpn": 4352,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "START",
+      "nrpn": 4353,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "END",
+      "nrpn": 4354,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "POSITION",
+      "nrpn": 4355,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "MOTION",
+      "nrpn": 4356,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "TAPE",
+      "nrpn": 4357,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 6,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "AGE",
+      "nrpn": 4358,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 7,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "SIZE",
+      "nrpn": 4359,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 8,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "XFADE",
+      "nrpn": 4360,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 9,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "DRAG",
+      "nrpn": 4361,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "CLASSIC"
+        },
+        {
+          "code": 1,
+          "name": "CLS POLY"
+        },
+        {
+          "code": 2,
+          "name": "GRAIN"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 10,
+      "max": 2,
+      "min": 0,
+      "msb": 34,
+      "name": "TYPE",
+      "nrpn": 4362,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 11,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "ROOT",
+      "nrpn": 4363,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 12,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "PERIOD",
+      "nrpn": 4364,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "OFF"
+        },
+        {
+          "code": 1,
+          "name": "NOTE"
+        },
+        {
+          "code": 2,
+          "name": "1"
+        },
+        {
+          "code": 3,
+          "name": "2"
+        },
+        {
+          "code": 4,
+          "name": "3"
+        },
+        {
+          "code": 5,
+          "name": "4"
+        },
+        {
+          "code": 6,
+          "name": "5"
+        },
+        {
+          "code": 7,
+          "name": "6"
+        },
+        {
+          "code": 8,
+          "name": "7"
+        },
+        {
+          "code": 9,
+          "name": "8"
+        },
+        {
+          "code": 10,
+          "name": "9"
+        },
+        {
+          "code": 11,
+          "name": "10"
+        },
+        {
+          "code": 12,
+          "name": "11"
+        },
+        {
+          "code": 13,
+          "name": "12"
+        },
+        {
+          "code": 14,
+          "name": "13"
+        },
+        {
+          "code": 15,
+          "name": "14"
+        },
+        {
+          "code": 16,
+          "name": "15"
+        },
+        {
+          "code": 17,
+          "name": "16"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 13,
+      "max": 17,
+      "min": 0,
+      "msb": 34,
+      "name": "SLICE",
+      "nrpn": 4365,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "CAPSTAN"
+        },
+        {
+          "code": 1,
+          "name": "WARBLE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 14,
+      "max": 1,
+      "min": 0,
+      "msb": 34,
+      "name": "WOW",
+      "nrpn": 4366,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": [
+        {
+          "code": 1,
+          "name": "LOOP"
+        },
+        {
+          "code": 2,
+          "name": "PING"
+        },
+        {
+          "code": 3,
+          "name": "FWD"
+        },
+        {
+          "code": 4,
+          "name": "REVERSE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 15,
+      "max": 4,
+      "min": 1,
+      "msb": 34,
+      "name": "DIRECTION",
+      "nrpn": 4367,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "STACK"
+        },
+        {
+          "code": 1,
+          "name": "CUT"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 16,
+      "max": 1,
+      "min": 0,
+      "msb": 34,
+      "name": "RETRIG",
+      "nrpn": 4368,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "OFF"
+        },
+        {
+          "code": 1,
+          "name": "ON"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 19,
+      "max": 1,
+      "min": 0,
+      "msb": 34,
+      "name": "TRON",
+      "nrpn": 4371,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 20,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "DRIFT",
+      "nrpn": 4372,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "POSITION"
+        },
+        {
+          "code": 1,
+          "name": "PITCH"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 21,
+      "max": 1,
+      "min": 0,
+      "msb": 34,
+      "name": "KEY",
+      "nrpn": 4373,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 22,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "LENGTH",
+      "nrpn": 4374,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 23,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "GRAIN",
+      "nrpn": 4375,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 24,
+      "max": 16383,
+      "min": 0,
+      "msb": 34,
+      "name": "SPRAY",
+      "nrpn": 4376,
+      "screen": null,
+      "section": "TAPE"
+    },
+    {
+      "block": "TAPE",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 25,
+      "max": 1,
+      "min": 0,
+      "msb": 34,
+      "name": "FINISH",
+      "nrpn": 4377,
+      "screen": {
+        "from": "HOLD",
+        "to": "STOP"
+      },
+      "section": "TAPE"
+    },
+    {
+      "block": "FILTER",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 10,
+      "name": "CUTOFF",
+      "nrpn": 1280,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FILTER",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 10,
+      "name": "RESO",
+      "nrpn": 1281,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FILTER",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 12,
+      "max": 16383,
+      "min": 0,
+      "msb": 10,
+      "name": "INPUT LEVEL",
+      "nrpn": 1292,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FILTER",
+      "codes": [
+        {
+          "code": 0,
+          "name": "CLEAN"
+        },
+        {
+          "code": 1,
+          "name": "LADDER"
+        },
+        {
+          "code": 4,
+          "name": "2040"
+        },
+        {
+          "code": 6,
+          "name": "DIRTY"
+        },
+        {
+          "code": 8,
+          "name": "SEM"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 6,
+      "max": 8,
+      "min": 0,
+      "msb": 10,
+      "name": "TYPE",
+      "nrpn": 1286,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FILTER",
+      "codes": [
+        {
+          "code": 0,
+          "name": "LP1"
+        },
+        {
+          "code": 1,
+          "name": "LP2"
+        },
+        {
+          "code": 2,
+          "name": "LP4"
+        },
+        {
+          "code": 3,
+          "name": "BP2"
+        },
+        {
+          "code": 4,
+          "name": "BP4"
+        },
+        {
+          "code": 5,
+          "name": "HP4"
+        },
+        {
+          "code": 6,
+          "name": "NOTCH1"
+        },
+        {
+          "code": 7,
+          "name": "NOTCH2"
+        },
+        {
+          "code": 9,
+          "name": "HP2"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 7,
+      "max": 9,
+      "min": 0,
+      "msb": 10,
+      "name": "MODE",
+      "nrpn": 1287,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FILTER",
+      "codes": [
+        {
+          "code": 0,
+          "name": "REV2"
+        },
+        {
+          "code": 1,
+          "name": "EXPNDR"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 13,
+      "max": 1,
+      "min": 0,
+      "msb": 10,
+      "name": "VOICE",
+      "nrpn": 1293,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FILTER",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 16383,
+      "min": 0,
+      "msb": 10,
+      "name": "STAB",
+      "nrpn": 1294,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FILTER",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 15,
+      "max": 16383,
+      "min": 0,
+      "msb": 10,
+      "name": "FEEDBACK",
+      "nrpn": 1295,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FILTER",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 16,
+      "max": 16383,
+      "min": 0,
+      "msb": 10,
+      "name": "SEM MODE",
+      "nrpn": 1296,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "ATK",
+      "nrpn": 1536,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "DEC",
+      "nrpn": 1537,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "SUS",
+      "nrpn": 1538,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "REL",
+      "nrpn": 1539,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "LEVEL",
+      "nrpn": 1540,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "VEL",
+      "nrpn": 1541,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 6,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "H",
+      "nrpn": 1542,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "A"
+        },
+        {
+          "code": 1,
+          "name": "B"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 7,
+      "max": 1,
+      "min": 0,
+      "msb": 12,
+      "name": "TYPE",
+      "nrpn": 1543,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FAST"
+        },
+        {
+          "code": 1,
+          "name": "MED"
+        },
+        {
+          "code": 2,
+          "name": "SLOW"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 8,
+      "max": 2,
+      "min": 0,
+      "msb": 12,
+      "name": "SPEED",
+      "nrpn": 1544,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "OFF"
+        },
+        {
+          "code": 1,
+          "name": "AHDSR"
+        },
+        {
+          "code": 2,
+          "name": "GATE EXT"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 9,
+      "max": 2,
+      "min": 0,
+      "msb": 12,
+      "name": "HOLD",
+      "nrpn": 1545,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "TIME",
+      "nrpn": 1546,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "ENV"
+        },
+        {
+          "code": 1,
+          "name": "LFO"
+        },
+        {
+          "code": 2,
+          "name": "BURST"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 11,
+      "max": 2,
+      "min": 0,
+      "msb": 12,
+      "name": "MODE",
+      "nrpn": 1547,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "RISE",
+      "nrpn": 1549,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "FALL",
+      "nrpn": 1550,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 15,
+      "max": 16383,
+      "min": 0,
+      "msb": 12,
+      "name": "SHAPE",
+      "nrpn": 1551,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AD"
+        },
+        {
+          "code": 1,
+          "name": "AHR"
+        },
+        {
+          "code": 2,
+          "name": "CYCLE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 16,
+      "max": 2,
+      "min": 0,
+      "msb": 12,
+      "name": "ENV FORM",
+      "nrpn": 1552,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "SYNC"
+        },
+        {
+          "code": 2,
+          "name": "LFV"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 17,
+      "max": 2,
+      "min": 0,
+      "msb": 12,
+      "name": "LFO FORM",
+      "nrpn": 1553,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AD"
+        },
+        {
+          "code": 1,
+          "name": "AHR"
+        },
+        {
+          "code": 2,
+          "name": "CYCLE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 2,
+      "min": 0,
+      "msb": 12,
+      "name": "BRST FORM",
+      "nrpn": 1554,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "ATK",
+      "nrpn": 1664,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "DEC",
+      "nrpn": 1665,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "SUS",
+      "nrpn": 1666,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "REL",
+      "nrpn": 1667,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "LEVEL",
+      "nrpn": 1668,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "VEL",
+      "nrpn": 1669,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 6,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "H",
+      "nrpn": 1670,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "A"
+        },
+        {
+          "code": 1,
+          "name": "B"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 7,
+      "max": 1,
+      "min": 0,
+      "msb": 13,
+      "name": "TYPE",
+      "nrpn": 1671,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FAST"
+        },
+        {
+          "code": 1,
+          "name": "MED"
+        },
+        {
+          "code": 2,
+          "name": "SLOW"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 8,
+      "max": 2,
+      "min": 0,
+      "msb": 13,
+      "name": "SPEED",
+      "nrpn": 1672,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "OFF"
+        },
+        {
+          "code": 1,
+          "name": "AHDSR"
+        },
+        {
+          "code": 2,
+          "name": "GATE EXT"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 9,
+      "max": 2,
+      "min": 0,
+      "msb": 13,
+      "name": "HOLD",
+      "nrpn": 1673,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "TIME",
+      "nrpn": 1674,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "ENV"
+        },
+        {
+          "code": 1,
+          "name": "LFO"
+        },
+        {
+          "code": 2,
+          "name": "BURST"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 11,
+      "max": 2,
+      "min": 0,
+      "msb": 13,
+      "name": "MODE",
+      "nrpn": 1675,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "RISE",
+      "nrpn": 1677,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "FALL",
+      "nrpn": 1678,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 15,
+      "max": 16383,
+      "min": 0,
+      "msb": 13,
+      "name": "SHAPE",
+      "nrpn": 1679,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AD"
+        },
+        {
+          "code": 1,
+          "name": "AHR"
+        },
+        {
+          "code": 2,
+          "name": "CYCLE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 16,
+      "max": 2,
+      "min": 0,
+      "msb": 13,
+      "name": "ENV FORM",
+      "nrpn": 1680,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "SYNC"
+        },
+        {
+          "code": 2,
+          "name": "LFV"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 17,
+      "max": 2,
+      "min": 0,
+      "msb": 13,
+      "name": "LFO FORM",
+      "nrpn": 1681,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AD"
+        },
+        {
+          "code": 1,
+          "name": "AHR"
+        },
+        {
+          "code": 2,
+          "name": "CYCLE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 2,
+      "min": 0,
+      "msb": 13,
+      "name": "BRST FORM",
+      "nrpn": 1682,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "ATK",
+      "nrpn": 1792,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "DEC",
+      "nrpn": 1793,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "SUS",
+      "nrpn": 1794,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "REL",
+      "nrpn": 1795,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "LEVEL",
+      "nrpn": 1796,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "VEL",
+      "nrpn": 1797,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 6,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "H",
+      "nrpn": 1798,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "A"
+        },
+        {
+          "code": 1,
+          "name": "B"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 7,
+      "max": 1,
+      "min": 0,
+      "msb": 14,
+      "name": "TYPE",
+      "nrpn": 1799,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FAST"
+        },
+        {
+          "code": 1,
+          "name": "MED"
+        },
+        {
+          "code": 2,
+          "name": "SLOW"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 8,
+      "max": 2,
+      "min": 0,
+      "msb": 14,
+      "name": "SPEED",
+      "nrpn": 1800,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "OFF"
+        },
+        {
+          "code": 1,
+          "name": "AHDSR"
+        },
+        {
+          "code": 2,
+          "name": "GATE EXT"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 9,
+      "max": 2,
+      "min": 0,
+      "msb": 14,
+      "name": "HOLD",
+      "nrpn": 1801,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "TIME",
+      "nrpn": 1802,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "ENV"
+        },
+        {
+          "code": 1,
+          "name": "LFO"
+        },
+        {
+          "code": 2,
+          "name": "BURST"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 11,
+      "max": 2,
+      "min": 0,
+      "msb": 14,
+      "name": "MODE",
+      "nrpn": 1803,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 13,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "RISE",
+      "nrpn": 1805,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "FALL",
+      "nrpn": 1806,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 15,
+      "max": 16383,
+      "min": 0,
+      "msb": 14,
+      "name": "SHAPE",
+      "nrpn": 1807,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AD"
+        },
+        {
+          "code": 1,
+          "name": "AHR"
+        },
+        {
+          "code": 2,
+          "name": "CYCLE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 16,
+      "max": 2,
+      "min": 0,
+      "msb": 14,
+      "name": "ENV FORM",
+      "nrpn": 1808,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "SYNC"
+        },
+        {
+          "code": 2,
+          "name": "LFV"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 17,
+      "max": 2,
+      "min": 0,
+      "msb": 14,
+      "name": "LFO FORM",
+      "nrpn": 1809,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "ENV 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "AD"
+        },
+        {
+          "code": 1,
+          "name": "AHR"
+        },
+        {
+          "code": 2,
+          "name": "CYCLE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 18,
+      "max": 2,
+      "min": 0,
+      "msb": 14,
+      "name": "BRST FORM",
+      "nrpn": 1810,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 15,
+      "name": "RATE",
+      "nrpn": 1920,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "SINE"
+        },
+        {
+          "code": 1,
+          "name": "TRI"
+        },
+        {
+          "code": 2,
+          "name": "SAW"
+        },
+        {
+          "code": 3,
+          "name": "SQR"
+        },
+        {
+          "code": 4,
+          "name": "S&H"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 1,
+      "max": 4,
+      "min": 0,
+      "msb": 15,
+      "name": "SHAPE",
+      "nrpn": 1921,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "RETRIG"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 2,
+      "max": 1,
+      "min": 0,
+      "msb": 15,
+      "name": "SYNC",
+      "nrpn": 1922,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 15,
+      "name": "PHASE",
+      "nrpn": 1923,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 15,
+      "name": "DEPTH",
+      "nrpn": 1924,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 15,
+      "name": "OFST",
+      "nrpn": 1925,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "CLASSIC"
+        },
+        {
+          "code": 1,
+          "name": "FUNC"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 6,
+      "max": 1,
+      "min": 0,
+      "msb": 15,
+      "name": "TYPE",
+      "nrpn": 1926,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "SYNC"
+        },
+        {
+          "code": 2,
+          "name": "LFV"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 7,
+      "max": 2,
+      "min": 0,
+      "msb": 15,
+      "name": "FORM",
+      "nrpn": 1927,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 8,
+      "max": 16383,
+      "min": 0,
+      "msb": 15,
+      "name": "RISE",
+      "nrpn": 1928,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 9,
+      "max": 16383,
+      "min": 0,
+      "msb": 15,
+      "name": "FALL",
+      "nrpn": 1929,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 1",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 16383,
+      "min": 0,
+      "msb": 15,
+      "name": "SHAPE",
+      "nrpn": 1930,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 16,
+      "name": "RATE",
+      "nrpn": 2048,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "SINE"
+        },
+        {
+          "code": 1,
+          "name": "TRI"
+        },
+        {
+          "code": 2,
+          "name": "SAW"
+        },
+        {
+          "code": 3,
+          "name": "SQR"
+        },
+        {
+          "code": 4,
+          "name": "S&H"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 1,
+      "max": 4,
+      "min": 0,
+      "msb": 16,
+      "name": "SHAPE",
+      "nrpn": 2049,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "RETRIG"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 2,
+      "max": 1,
+      "min": 0,
+      "msb": 16,
+      "name": "SYNC",
+      "nrpn": 2050,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 16,
+      "name": "PHASE",
+      "nrpn": 2051,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 16,
+      "name": "DEPTH",
+      "nrpn": 2052,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 16,
+      "name": "OFST",
+      "nrpn": 2053,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "CLASSIC"
+        },
+        {
+          "code": 1,
+          "name": "FUNC"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 6,
+      "max": 1,
+      "min": 0,
+      "msb": 16,
+      "name": "TYPE",
+      "nrpn": 2054,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "SYNC"
+        },
+        {
+          "code": 2,
+          "name": "LFV"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 7,
+      "max": 2,
+      "min": 0,
+      "msb": 16,
+      "name": "FORM",
+      "nrpn": 2055,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 8,
+      "max": 16383,
+      "min": 0,
+      "msb": 16,
+      "name": "RISE",
+      "nrpn": 2056,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 9,
+      "max": 16383,
+      "min": 0,
+      "msb": 16,
+      "name": "FALL",
+      "nrpn": 2057,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 2",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 16383,
+      "min": 0,
+      "msb": 16,
+      "name": "SHAPE",
+      "nrpn": 2058,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 17,
+      "name": "RATE",
+      "nrpn": 2176,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "SINE"
+        },
+        {
+          "code": 1,
+          "name": "TRI"
+        },
+        {
+          "code": 2,
+          "name": "SAW"
+        },
+        {
+          "code": 3,
+          "name": "SQR"
+        },
+        {
+          "code": 4,
+          "name": "S&H"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 1,
+      "max": 4,
+      "min": 0,
+      "msb": 17,
+      "name": "SHAPE",
+      "nrpn": 2177,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "RETRIG"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 2,
+      "max": 1,
+      "min": 0,
+      "msb": 17,
+      "name": "SYNC",
+      "nrpn": 2178,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 17,
+      "name": "PHASE",
+      "nrpn": 2179,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 17,
+      "name": "DEPTH",
+      "nrpn": 2180,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 17,
+      "name": "OFST",
+      "nrpn": 2181,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "CLASSIC"
+        },
+        {
+          "code": 1,
+          "name": "FUNC"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 6,
+      "max": 1,
+      "min": 0,
+      "msb": 17,
+      "name": "TYPE",
+      "nrpn": 2182,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": [
+        {
+          "code": 0,
+          "name": "FREE"
+        },
+        {
+          "code": 1,
+          "name": "SYNC"
+        },
+        {
+          "code": 2,
+          "name": "LFV"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 7,
+      "max": 2,
+      "min": 0,
+      "msb": 17,
+      "name": "FORM",
+      "nrpn": 2183,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 8,
+      "max": 16383,
+      "min": 0,
+      "msb": 17,
+      "name": "RISE",
+      "nrpn": 2184,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 9,
+      "max": 16383,
+      "min": 0,
+      "msb": 17,
+      "name": "FALL",
+      "nrpn": 2185,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "LFO 3",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 16383,
+      "min": 0,
+      "msb": 17,
+      "name": "SHAPE",
+      "nrpn": 2186,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "LEVEL",
+      "nrpn": 2304,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "PAN",
+      "nrpn": 2305,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "VCA",
+      "nrpn": 2306,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "VEL",
+      "nrpn": 2307,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "CHORUS",
+      "nrpn": 2308,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "DELAY",
+      "nrpn": 2309,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 6,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "REVERB",
+      "nrpn": 2310,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 7,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "LPG",
+      "nrpn": 2311,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 8,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "DECAY",
+      "nrpn": 2312,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "OUTPUT",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 9,
+      "max": 16383,
+      "min": 0,
+      "msb": 18,
+      "name": "STRIKE",
+      "nrpn": 2313,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "VOICE",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 0,
+      "max": 48,
+      "min": 0,
+      "msb": 19,
+      "name": "PITCH",
+      "nrpn": 2432,
+      "screen": {
+        "from": "-24",
+        "to": "24"
+      },
+      "section": "Every engine"
+    },
+    {
+      "block": "VOICE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 200,
+      "min": 0,
+      "msb": 19,
+      "name": "FINE",
+      "nrpn": 2433,
+      "screen": {
+        "from": "-100",
+        "to": "100"
+      },
+      "section": "Every engine"
+    },
+    {
+      "block": "VOICE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "CUT"
+        },
+        {
+          "code": 1,
+          "name": "GLIDE"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 2,
+      "max": 1,
+      "min": 0,
+      "msb": 19,
+      "name": "STEAL",
+      "nrpn": 2434,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "VOICE",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 19,
+      "name": "TIME",
+      "nrpn": 2435,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "VOICE",
+      "codes": [
+        {
+          "code": 0,
+          "name": "CHROMA"
+        },
+        {
+          "code": 1,
+          "name": "MUSICAL"
+        }
+      ],
+      "kind": "msb_code",
+      "lsb": 4,
+      "max": 1,
+      "min": 0,
+      "msb": 19,
+      "name": "SNAP",
+      "nrpn": 2436,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FX",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 36,
+      "name": "AMOUNT",
+      "nrpn": 4610,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FX",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 36,
+      "name": "SHAPE",
+      "nrpn": 4611,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FX",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 36,
+      "name": "LEVEL",
+      "nrpn": 4612,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "FX",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 36,
+      "name": "MIX",
+      "nrpn": 4613,
+      "screen": null,
+      "section": "Every engine"
+    },
+    {
+      "block": "PART",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 25,
+      "name": "LEVEL",
+      "nrpn": 3203,
+      "screen": null,
+      "section": "Part"
+    },
+    {
+      "block": "PART",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 25,
+      "name": "PAN",
+      "nrpn": 3204,
+      "screen": null,
+      "section": "Part"
+    },
+    {
+      "block": "CHORUS",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 20,
+      "name": "RATE",
+      "nrpn": 2561,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "CHORUS",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 20,
+      "name": "DEPTH",
+      "nrpn": 2562,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "CHORUS",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 20,
+      "name": "MIX",
+      "nrpn": 2563,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "TIME",
+      "nrpn": 2688,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "FDBK",
+      "nrpn": 2689,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "MECHANICS",
+      "nrpn": 2690,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "SAT",
+      "nrpn": 2691,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "TONE",
+      "nrpn": 2692,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "MIX",
+      "nrpn": 2693,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 6,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "REV",
+      "nrpn": 2694,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 8,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "SIZE",
+      "nrpn": 2696,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 9,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "DENSITY",
+      "nrpn": 2697,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 10,
+      "max": 48,
+      "min": 0,
+      "msb": 21,
+      "name": "PITCH",
+      "nrpn": 2698,
+      "screen": {
+        "from": "-24",
+        "to": "24"
+      },
+      "section": "Master FX"
+    },
+    {
+      "block": "DELAY",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 11,
+      "max": 16383,
+      "min": 0,
+      "msb": 21,
+      "name": "TEXTURE",
+      "nrpn": 2699,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "TIME",
+      "nrpn": 2817,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "DAMP",
+      "nrpn": 2818,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "SIZE",
+      "nrpn": 2819,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "MIX",
+      "nrpn": 2820,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 7,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "TONE",
+      "nrpn": 2823,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 8,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "DIFFUSE",
+      "nrpn": 2824,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 9,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "PRE-DLY",
+      "nrpn": 2825,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 10,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "SHAPE",
+      "nrpn": 2826,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 11,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "SMEAR",
+      "nrpn": 2827,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 12,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "RATE",
+      "nrpn": 2828,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REVERB",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 14,
+      "max": 16383,
+      "min": 0,
+      "msb": 22,
+      "name": "DENSITY",
+      "nrpn": 2830,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REEL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 23,
+      "name": "DRIVE",
+      "nrpn": 2944,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REEL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 1,
+      "max": 16383,
+      "min": 0,
+      "msb": 23,
+      "name": "TONE",
+      "nrpn": 2945,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REEL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 23,
+      "name": "WOW",
+      "nrpn": 2946,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "REEL",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 23,
+      "name": "MIX",
+      "nrpn": 2947,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "COMP",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 0,
+      "max": 16383,
+      "min": 0,
+      "msb": 24,
+      "name": "THRESH",
+      "nrpn": 3072,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "COMP",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 2,
+      "max": 16383,
+      "min": 0,
+      "msb": 24,
+      "name": "ATK",
+      "nrpn": 3074,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "COMP",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 3,
+      "max": 16383,
+      "min": 0,
+      "msb": 24,
+      "name": "REL",
+      "nrpn": 3075,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "COMP",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 4,
+      "max": 16383,
+      "min": 0,
+      "msb": 24,
+      "name": "MAKEUP",
+      "nrpn": 3076,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "COMP",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 5,
+      "max": 16383,
+      "min": 0,
+      "msb": 24,
+      "name": "MIX",
+      "nrpn": 3077,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "COMP",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 6,
+      "max": 16383,
+      "min": 0,
+      "msb": 24,
+      "name": "VOL",
+      "nrpn": 3078,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "COMP",
+      "codes": null,
+      "kind": "14bit",
+      "lsb": 7,
+      "max": 16383,
+      "min": 0,
+      "msb": 24,
+      "name": "PAN",
+      "nrpn": 3079,
+      "screen": null,
+      "section": "Master FX"
+    },
+    {
+      "block": "RING 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 32,
+      "min": 0,
+      "msb": 28,
+      "name": "HITS",
+      "nrpn": 3585,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 31,
+      "min": 0,
+      "msb": 28,
+      "name": "ROTATE",
+      "nrpn": 3586,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 100,
+      "min": 0,
+      "msb": 28,
+      "name": "CHANCE",
+      "nrpn": 3587,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 100,
+      "min": 0,
+      "msb": 28,
+      "name": "MUTATE",
+      "nrpn": 3588,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 100,
+      "min": 0,
+      "msb": 28,
+      "name": "GATE",
+      "nrpn": 3590,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 126,
+      "min": 0,
+      "msb": 28,
+      "name": "VEL",
+      "nrpn": 3591,
+      "screen": {
+        "from": "1",
+        "to": "127"
+      },
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 32,
+      "min": 0,
+      "msb": 28,
+      "name": "ACCENT",
+      "nrpn": 3592,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 1",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 8,
+      "min": 0,
+      "msb": 28,
+      "name": "OCTAVE",
+      "nrpn": 3593,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 32,
+      "min": 0,
+      "msb": 29,
+      "name": "HITS",
+      "nrpn": 3713,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 31,
+      "min": 0,
+      "msb": 29,
+      "name": "ROTATE",
+      "nrpn": 3714,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 100,
+      "min": 0,
+      "msb": 29,
+      "name": "CHANCE",
+      "nrpn": 3715,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 100,
+      "min": 0,
+      "msb": 29,
+      "name": "MUTATE",
+      "nrpn": 3716,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 100,
+      "min": 0,
+      "msb": 29,
+      "name": "GATE",
+      "nrpn": 3718,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 126,
+      "min": 0,
+      "msb": 29,
+      "name": "VEL",
+      "nrpn": 3719,
+      "screen": {
+        "from": "1",
+        "to": "127"
+      },
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 32,
+      "min": 0,
+      "msb": 29,
+      "name": "ACCENT",
+      "nrpn": 3720,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 2",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 8,
+      "min": 0,
+      "msb": 29,
+      "name": "OCTAVE",
+      "nrpn": 3721,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 32,
+      "min": 0,
+      "msb": 30,
+      "name": "HITS",
+      "nrpn": 3841,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 31,
+      "min": 0,
+      "msb": 30,
+      "name": "ROTATE",
+      "nrpn": 3842,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 100,
+      "min": 0,
+      "msb": 30,
+      "name": "CHANCE",
+      "nrpn": 3843,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 100,
+      "min": 0,
+      "msb": 30,
+      "name": "MUTATE",
+      "nrpn": 3844,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 100,
+      "min": 0,
+      "msb": 30,
+      "name": "GATE",
+      "nrpn": 3846,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 126,
+      "min": 0,
+      "msb": 30,
+      "name": "VEL",
+      "nrpn": 3847,
+      "screen": {
+        "from": "1",
+        "to": "127"
+      },
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 32,
+      "min": 0,
+      "msb": 30,
+      "name": "ACCENT",
+      "nrpn": 3848,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 3",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 8,
+      "min": 0,
+      "msb": 30,
+      "name": "OCTAVE",
+      "nrpn": 3849,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 32,
+      "min": 0,
+      "msb": 31,
+      "name": "HITS",
+      "nrpn": 3969,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 31,
+      "min": 0,
+      "msb": 31,
+      "name": "ROTATE",
+      "nrpn": 3970,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 100,
+      "min": 0,
+      "msb": 31,
+      "name": "CHANCE",
+      "nrpn": 3971,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 100,
+      "min": 0,
+      "msb": 31,
+      "name": "MUTATE",
+      "nrpn": 3972,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 100,
+      "min": 0,
+      "msb": 31,
+      "name": "GATE",
+      "nrpn": 3974,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 126,
+      "min": 0,
+      "msb": 31,
+      "name": "VEL",
+      "nrpn": 3975,
+      "screen": {
+        "from": "1",
+        "to": "127"
+      },
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 32,
+      "min": 0,
+      "msb": 31,
+      "name": "ACCENT",
+      "nrpn": 3976,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 4",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 8,
+      "min": 0,
+      "msb": 31,
+      "name": "OCTAVE",
+      "nrpn": 3977,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 1,
+      "max": 32,
+      "min": 0,
+      "msb": 32,
+      "name": "HITS",
+      "nrpn": 4097,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 2,
+      "max": 31,
+      "min": 0,
+      "msb": 32,
+      "name": "ROTATE",
+      "nrpn": 4098,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 3,
+      "max": 100,
+      "min": 0,
+      "msb": 32,
+      "name": "CHANCE",
+      "nrpn": 4099,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 4,
+      "max": 100,
+      "min": 0,
+      "msb": 32,
+      "name": "MUTATE",
+      "nrpn": 4100,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 6,
+      "max": 100,
+      "min": 0,
+      "msb": 32,
+      "name": "GATE",
+      "nrpn": 4102,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 7,
+      "max": 126,
+      "min": 0,
+      "msb": 32,
+      "name": "VEL",
+      "nrpn": 4103,
+      "screen": {
+        "from": "1",
+        "to": "127"
+      },
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 8,
+      "max": 32,
+      "min": 0,
+      "msb": 32,
+      "name": "ACCENT",
+      "nrpn": 4104,
+      "screen": null,
+      "section": "ORBIT"
+    },
+    {
+      "block": "RING 5",
+      "codes": null,
+      "kind": "msb",
+      "lsb": 9,
+      "max": 8,
+      "min": 0,
+      "msb": 32,
+      "name": "OCTAVE",
+      "nrpn": 4105,
+      "screen": null,
+      "section": "ORBIT"
+    }
+  ],
+  "firmware": "0.3.0",
+  "schema": 1
+}
