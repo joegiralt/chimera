@@ -3332,7 +3332,8 @@ impl UiState {
                         0 => self.matrix_state.move_row(delta),
                         1 => self.matrix_state.move_col(delta),
                         3 => self.matrix_state.scroll_h(delta),
-                        4 => {
+                        // Pointing edits no amount (ADR 0288).
+                        4 if !matches!(self.learn, learn::Learn::Pointing(_)) => {
                             self.matrix_state.adjust_amount(delta);
                             self.sync_mod_state(self.active_part);
                         }
@@ -3341,7 +3342,10 @@ impl UiState {
                 }
             }
             // MIX + Minus deletes the route under the cursor (spec § 2).
-            if shift && controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
+            if shift
+                && controls.button_state(ButtonId::Minus) == ButtonState::Pressed
+                && !matches!(self.learn, learn::Learn::Pointing(_))
+            {
                 self.matrix_state.delete_selected();
                 self.sync_mod_state(self.active_part);
             }
@@ -3818,6 +3822,7 @@ impl UiState {
         let def = self.page_def();
         let settings = self.loc.settings();
         let (ctx, focus, orbit) = (self.ctx(), self.focused_slot(), self.orbit_frame());
+        let status = self.band_status();
         let anim = &self.renderer.anim;
         renderer::Frame {
             head: self.head(),
@@ -3844,8 +3849,9 @@ impl UiState {
             live: self.live,
             parts: self.project.perf().parts(),
             active_part: self.active_part,
-            prime_status: self.band_status(),
-            point: self.point_band(),
+            prime_status: status,
+            #[cfg(feature = "midi-map")]
+            point: Self::point_band(status),
             pickup: self
                 .pickup()
                 .filter(|_| self.theme.hints)

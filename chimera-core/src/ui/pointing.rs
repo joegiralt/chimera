@@ -189,7 +189,7 @@ impl UiState {
         let Pointer::At(c) = pt.at else {
             return None;
         };
-        (c.page == self.page_def().id && c.slot == self.focused_slot()).then_some(c)
+        (c.page == self.page_def().id && usize::from(c.slot) == self.focused_slot()).then_some(c)
     }
 
     /// What `pt` says on the page shown.

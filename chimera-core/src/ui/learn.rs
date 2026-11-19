@@ -66,7 +66,8 @@ pub enum Pointer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
     pub page: u16,
-    pub slot: usize,
+    /// 0..6: a page's six slots.
+    pub slot: u8,
 }
 
 /// What pointing says in the value's place (bank 2's `point_say`).
@@ -210,6 +211,7 @@ impl UiState {
 
     /// What the focus band says in the value's place: learn's while armed
     /// or sensing.
+    #[inline(never)]
     pub(super) fn band_status(&self) -> Option<PrimeStatus> {
         #[cfg(feature = "midi-map")]
         match self.learn {
@@ -234,13 +236,13 @@ impl UiState {
         self.prime_status
     }
 
-    /// Pointing's hint (ADR 0288), bank 2's words for what it says now.
-    pub(super) fn point_band(&self) -> Option<super::hint::Hint> {
-        #[cfg(feature = "midi-map")]
-        if let Learn::Pointing(_) = self.learn {
-            return self.point_say().and_then(super::cc::point_hint);
-        }
-        None
+    /// Pointing's hint (ADR 0288) for the band's `status`: bank 2's words.
+    #[cfg(feature = "midi-map")]
+    pub(super) fn point_band(status: Option<PrimeStatus>) -> Option<super::hint::Hint> {
+        let Some(PrimeStatus::Learn(Some(LearnNote::Point(p)))) = status else {
+            return None;
+        };
+        super::cc::point_hint(p)
     }
 
     /// The band's words as drawn: the tests' read.
@@ -330,20 +332,10 @@ impl UiState {
             }
         };
         let (def, ctx) = (self.page_def(), self.ctx());
-        // Pointing on MOD MATRIX: A, B and D move its cursor; no route is
-        // a cell a control may drive, so nothing is pointed at.
+        // Pointing on MOD MATRIX: its own keys move its cursor and edit
+        // nothing (`input`'s matrix arm); no route is a cell to point at.
         if let (Learn::Pointing(_), PageLayout::Matrix) = (then, def.layout) {
-            let m = &mut self.matrix_state;
-            for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
-                match (i, c.encoder_delta(enc)) {
-                    (_, 0) => {}
-                    (0, d) => m.move_row(d),
-                    (1, d) => m.move_col(d),
-                    (3, d) => m.scroll_h(d),
-                    _ => {}
-                }
-            }
-            return true;
+            return false;
         }
         for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
             if c.encoder_delta(enc) != 0 && view::view(def, i, &ctx) != View::Empty {
@@ -352,7 +344,7 @@ impl UiState {
                     Learn::Pointing(p) => Learn::Pointing(Point {
                         at: Pointer::At(Cell {
                             page: def.id,
-                            slot: i,
+                            slot: i as u8,
                         }),
                         ..p
                     }),
