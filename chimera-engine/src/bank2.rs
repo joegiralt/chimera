@@ -40,18 +40,11 @@ pub const MIDI_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x300;
 /// The console's `ed` table (`chimera_core::bank2::EdDoor`, ADR 0251): the
 /// browser editor's answers.
 pub const ED_DOOR_ADDR: u32 = DOOR_ADDR + 0x380;
-/// VA's solos' table (`dsp::va::osc::solo::SoloDoor`, ADR 0283): the
-/// door's own table is full, and a slot after it would take S0-S3 under
-/// ADR 0251's 8 KB; the head of the S4 groups, after MIXER's reserve.
-pub const VA_SOLO_DOOR_ADDR: u32 = Slot::Mixer.base() + slot::RESERVE;
-/// The Parts' EQ's table (`part_eq::door::EqDoor`, ADR 0284): the next
-/// 16 B after VA's solos' (an 8 B table).
-pub const PART_EQ_DOOR_ADDR: u32 = VA_SOLO_DOOR_ADDR + 0x10;
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(
-    size_of::<crate::dsp::va::osc::solo::SoloDoor>()
-        <= (PART_EQ_DOOR_ADDR - VA_SOLO_DOOR_ADDR) as usize
-);
+include!("s4_tables.rs");
+const _: () = assert!(S4_TABLES_ADDR == Slot::Mixer.base() + slot::RESERVE);
+const _: () =
+    assert!(size_of::<crate::dsp::va::osc::solo::SoloDoor>() <= DOOR_TABLE_STRIDE as usize);
+const _: () = assert!(size_of::<crate::part_eq::door::EqDoor>() <= DOOR_TABLE_STRIDE as usize);
 
 /// A table's fixed address in bank 2 (after the door in S0, or at the head
 /// of the S4 groups) and the type `bank2.x` links there: a crate the engine
