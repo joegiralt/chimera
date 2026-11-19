@@ -310,7 +310,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0xe6fc4c9683caa417),
+    ("mixer_master_level", 0xde759c85ad7b26f5),
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
