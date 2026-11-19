@@ -16,7 +16,10 @@ import Html exposing (Html, button, div, p, text)
 import Html.Attributes exposing (class)
 import Html.Events exposing (onClick)
 import Layout.Algo
+import Layout.Modal
 import Layout.Shared as Shared exposing (As(..), Extra(..), Item, Module)
+import Layout.Tape
+import Layout.Va
 import Model exposing (Model)
 import Protocol exposing (Addr(..), Kind(..), OptIndex, Scale(..), Value(..), addrKey)
 import Schema exposing (Param)
@@ -120,13 +123,13 @@ layout e =
             one Layout.Algo.modules
 
         Va ->
-            one []
+            one Layout.Va.modules
 
         Modal ->
-            one []
+            one Layout.Modal.modules
 
         Tape ->
-            one []
+            one Layout.Tape.modules
 
         Drum ->
             one []
@@ -705,6 +708,12 @@ extra ctx x =
 
             else
                 p [ class "pnote" ] [ text (String.join " · " named ++ ": MOD MATRIX ROUTES, IN MOD ONCE THE UNIT DESCRIBES THEM") ]
+
+        SourceText ->
+            Control.cell [ class "ro" ] "SOURCE" [ Control.readout 16 (Control.reading 0 (Maybe.withDefault "--" ctx.m.source)) ]
+
+        Note t ->
+            p [ class "pnote" ] [ text t ]
 
         PartMatrix ->
             div []

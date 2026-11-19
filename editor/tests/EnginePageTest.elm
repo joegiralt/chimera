@@ -79,12 +79,28 @@ cutoffParam =
 
 run : List Page.Msg -> List Model.Msg
 run =
+    runOn model
+
+
+runOn : Model.Model -> List Page.Msg -> List Model.Msg
+runOn unit =
     List.foldl
         (\msg ( s, out ) ->
-            Page.update msg model s |> (\( s1, m, _ ) -> ( s1, out ++ m ))
+            Page.update msg unit s |> (\( s1, m, _ ) -> ( s1, out ++ m ))
         )
         ( Page.init Day, [] )
         >> Tuple.second
+
+
+{-| Each engine followed, with a value on its first control.
+-}
+engines : List ( String, Model.Model )
+engines =
+    [ ( "ALGO", model )
+    , ( "VA", connected FixtureData.va "VA" |> feed [ "val VA.WAVE1 0.25 0.25 \"SAW\"", "panel FILTER SEM", "OK 1" ] )
+    , ( "MODAL", connected FixtureData.modal "MODAL" |> feed [ "panel RESONATOR SYMP", "OK 1" ] )
+    , ( "TAPE", connected FixtureData.tape "TAPE" |> feed [ "panel MACHINE STRCH", "OK 1" ] )
+    ]
 
 
 grab : Page.Msg
@@ -142,12 +158,18 @@ suite =
                 \_ ->
                     run [ Hand (Control.Reset cutoff), Frame ]
                         |> Expect.equal [ Model.Edit cutoff (Num cutoffParam.default) ]
-            , test "every_shown_control_answers_a_hand_with_the_units_edit" <|
-                \_ ->
-                    Shared.active model.schema model.variants
-                        |> List.filter (\i -> run (hands i) /= expected i)
-                        |> List.map (.param >> .addr)
-                        |> Expect.equal []
+            , describe "every shown control answers a hand with the unit's edit"
+                (List.map
+                    (\( name, unit ) ->
+                        test name <|
+                            \_ ->
+                                Shared.active unit.schema unit.variants
+                                    |> List.filter (\i -> runOn unit (hands i) /= expected unit i)
+                                    |> List.map (.param >> .addr)
+                                    |> Expect.equal []
+                    )
+                    engines
+                )
             ]
         , describe "the page"
             [ test "the_hero_cutoff_knob_grabs_with_the_hero_travel" <|
@@ -194,6 +216,16 @@ suite =
                         |> Query.findAll [ Sel.tag "h2", Sel.containing [ Sel.text "OTHER" ] ]
                         |> Query.count (Expect.equal 0)
             ]
+        , test "tapes_source_is_printed_read_only" <|
+            \_ ->
+                Page.view (connected FixtureData.tape "TAPE" |> feed [ "source CHOIR", "panel MACHINE WALK", "OK 1" ]) (Page.init Day)
+                    |> Query.fromHtml
+                    |> Query.has [ Sel.text "CHOIR" ]
+        , test "a_module_with_nothing_for_this_type_says_so" <|
+            \_ ->
+                Page.view (connected FixtureData.modal "MODAL" |> feed [ "panel RESONATOR BOWED", "OK 1" ]) (Page.init Day)
+                    |> Query.fromHtml
+                    |> Query.has [ Sel.text "NOTHING TO SET FOR THIS TYPE" ]
         , test "the_folds_and_chips_are_the_pages_own" <|
             \_ ->
                 Page.update (PageMsg (Ui.Page.ToggleChip "MOD")) model (Page.init Day)
@@ -223,11 +255,11 @@ hands i =
             [ Hand (Control.Grab i.param.addr Knob 300), Hand (Control.Moved 270), Frame ]
 
 
-expected : Shared.Item -> List Model.Msg
-expected i =
+expected : Model.Model -> Shared.Item -> List Model.Msg
+expected unit i =
     case List.reverse i.param.options of
         ( o, _ ) :: _ ->
             [ Model.Pick i.param.addr o ]
 
         [] ->
-            [ Model.Edit i.param.addr (Num (Control.atNorm i.param ((Model.shown i.param.addr model |> Maybe.map .norm |> Maybe.withDefault 0) + 30 / 150))) ]
+            [ Model.Edit i.param.addr (Num (Control.atNorm i.param ((Model.shown i.param.addr unit |> Maybe.map .norm |> Maybe.withDefault 0) + 30 / 150))) ]

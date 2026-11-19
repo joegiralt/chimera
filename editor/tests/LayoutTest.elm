@@ -16,7 +16,7 @@ import View.EnginePage as EnginePage
 -}
 paged : List Engine
 paged =
-    [ Algo ]
+    [ Algo, Va, Modal, Tape ]
 
 
 described : Schema -> Set String
@@ -173,6 +173,41 @@ suite =
                     )
                         |> Expect.equal ( [ "ATTACK", "HOLD", "DECAY", "SUSTAIN", "RELEASE", "E1 SPEED", "E1 HOLD" ], [ "RATE", "PHASE", "TILT", "MODE", "FORM", "E1 SPEED", "E1 HOLD" ] )
             ]
+        , test "the_va_page_is_in_v6s_order" <|
+            \_ ->
+                (EnginePage.layout Va).shown
+                    |> List.map .title
+                    |> Expect.equal [ "OSC 1", "OSC 2", "MODE", "MIXER", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "PITCH", "MOD" ]
+        , test "the_modal_page_is_in_v6s_order" <|
+            \_ ->
+                (EnginePage.layout Modal).shown
+                    |> List.map .title
+                    |> Expect.equal [ "RESONATOR", "EXCITER", "MODAL-2", "PITCH", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
+        , test "the_tape_page_is_in_v6s_order" <|
+            \_ ->
+                (EnginePage.layout Tape).shown
+                    |> List.map .title
+                    |> Expect.equal [ "SOURCE", "DECK", "MACHINE", "PITCH", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
+        , test "the_resonators_model_picks_the_exciters_controls" <|
+            \_ ->
+                ( shownLabels Modal [ ( "RESONATOR", "BOWED" ) ] "EXCITER" |> List.map Tuple.second
+                , shownLabels Modal [ ( "RESONATOR", "BANK" ) ] "EXCITER" |> List.map Tuple.second
+                , shownLabels Modal [ ( "RESONATOR", "BOWED" ) ] "MODAL-2"
+                )
+                    |> Expect.equal ( [ "FORCE", "SPEED" ], [ "EXCITE", "BURST" ], [] )
+        , test "a_tape_machine_names_its_own_controls" <|
+            \_ ->
+                ( shownLabels Tape [ ( "MACHINE", "SCRUB" ) ] "DECK" |> List.map Tuple.second
+                , shownLabels Tape [ ( "MACHINE", "WAVE" ) ] "DECK" |> List.map Tuple.second
+                )
+                    |> Expect.equal ( [ "FINGER", "SPEED", "LENGTH", "DRAG", "XFADE" ], [ "FRAME", "SCAN", "RANGE" ] )
+        , test "the_tape_source_is_shown_and_never_a_control" <|
+            \_ ->
+                (EnginePage.layout Tape).shown
+                    |> List.filter (\m -> m.title == "SOURCE")
+                    |> List.concatMap .extras
+                    |> List.member Shared.SourceText
+                    |> Expect.equal True
         , test "the_algo_page_is_in_v6s_order" <|
             \_ ->
                 (EnginePage.layout Algo).shown

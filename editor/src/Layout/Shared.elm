@@ -71,8 +71,11 @@ type alias Group =
 {-| What a module holds besides its controls.
 -}
 type Extra
-    = -- The routes a panel names that the unit doesn't describe yet.
-      NextSlice
+    = -- TAPE's sample name: shown, never edited here (#1015).
+      SourceText
+    | Note String
+      -- The routes a panel names that the unit doesn't describe yet.
+    | NextSlice
       -- The Part's mod matrix: no protocol yet, so an empty bay.
     | PartMatrix
 
