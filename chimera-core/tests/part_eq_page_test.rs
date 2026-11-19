@@ -13,6 +13,7 @@ use screen::{Input, feed};
 
 /// MIX + B1, back to PRT, EDIT down twice: EQ.
 fn eq_page() -> UiState {
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
     let mut ui = screen::stack_ui();
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B1));
     feed(&mut ui, Input::press(ButtonId::Minus));
@@ -44,7 +45,8 @@ fn the_eq_page_turns_the_part_s_tilt_and_lo_cut() {
     );
     screen::settle(&mut ui);
     let shot = screen::render_ui(&ui);
-    assert!(screen::cell_reads(&shot, 0, "+5"), "TILT reads its step");
+    // Step 5 of 64 to the shelves' 10 dB: 0.78 dB.
+    assert!(screen::cell_reads(&shot, 0, "+0.8 dB"), "TILT reads its dB");
     assert!(screen::cell_reads(&shot, 1, "ON"));
 }
 
@@ -56,4 +58,20 @@ fn up_from_eq_is_voices_and_down_the_sound() {
     feed(&mut ui, Input::press(ButtonId::Edit));
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_ne!(ui.page_def().id, reg::PART_EQ.id, "on to the Sound");
+}
+
+#[test]
+fn tilt_reads_its_db_flat_0_and_the_ends_10() {
+    let mut ui = eq_page();
+    let mut reads = |turn: i8, want: &str| {
+        for _ in 0..3 {
+            feed(&mut ui, Input::turn(EncoderId::A, turn));
+        }
+        screen::settle(&mut ui);
+        let shot = screen::render_ui(&ui);
+        assert!(screen::cell_reads(&shot, 0, want), "{want}");
+    };
+    reads(0, "0 dB");
+    reads(-100, "-10.0 dB");
+    reads(100, "+9.8 dB");
 }

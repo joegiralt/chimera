@@ -488,7 +488,7 @@ pub static PART_SPECS: [ParamSpec; 14] = [
     ParamSpec::stepped(
         15,
         "TILT",
-        ValFmt::Bi,
+        ValFmt::Law(crate::dsp::modulator::law::Law::EqTilt),
         Tilt::MIN_STEP as f32,
         Tilt::MAX_STEP as f32,
         0.0,
@@ -571,10 +571,7 @@ impl Block for PartParams {
                 ..self.voices()
             }),
             Self::TILT => self.eq = self.eq.with_tilt(Tilt::from_f32(v)),
-            Self::LO_CUT => {
-                let c = if v >= 0.5 { LoCut::On } else { LoCut::Off };
-                self.eq = self.eq.with_lo_cut(c);
-            }
+            Self::LO_CUT => self.eq = self.eq.with_lo_cut(LoCut::from_f32(v)),
             _ => {}
         }
     }
