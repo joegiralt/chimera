@@ -407,7 +407,8 @@ fn help(t: &mut impl Write) -> fmt::Result {
 fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
     let a = &s.audio;
     writeln!(t, "load_pct {}", a.load_avg)?;
-    writeln!(t, "peak_pct {}", a.load_peak)?;
+    writeln!(t, "peak_pct {}", a.read_peak)?;
+    writeln!(t, "peak_boot_pct {}", a.load_peak)?;
     writeln!(t, "overruns {}", a.overruns)?;
     writeln!(t, "load_sheds {}", a.load_sheds)?;
     t.write_str("drops")?;

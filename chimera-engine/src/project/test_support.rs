@@ -112,6 +112,9 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     let mix = p.edit_part(PartId::ALL[2]).mix;
     mix.set(PartParams::PAN, -0.5);
     mix.set(PartParams::LEVEL, 0.6);
+    // Its EQ (ADR 0284).
+    mix.set(PartParams::TILT, -21.0);
+    mix.set(PartParams::LO_CUT, 1.0);
     let fx = p.edit_fx();
     fx.delay.mix = 0.3;
     fx.reverb.mix = 0.45;

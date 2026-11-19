@@ -10,3 +10,4 @@ chimera_board::shared::ED | EdState | 1
 chimera_board::shared::KITS | Kits | 1 | chimera_board::shared::take_ui
 chimera_engine::dsp::drum::view::KIT_VIEW | KitView | 1 | <chimera_engine::dsp::drum::view::KitWriter>::publish_all
 chimera_board::shared::AUDIO | AudioShared | 3 | chimera_board::shared::take_audio
+chimera_engine::part_eq::PART_EQS | PartEqs | 1 | <chimera_engine::instrument::Instrument>::part_eq

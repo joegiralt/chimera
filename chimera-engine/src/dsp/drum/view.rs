@@ -42,8 +42,8 @@ struct PartView {
     sounding: AtomicU16,
     /// The last hit's `HitSeed`: the audio's alone, each hit the next.
     seed: AtomicU32,
-    /// The kit's `kit_bill` (`KitBill::to_bits`): the UI's, stored each
-    /// publish.
+    /// The kit's `kit_bill` (`KitBill::to_bits`): the UI's, stored by a
+    /// publish that changes the pads.
     bill: AtomicU32,
     slots: [[[AtomicU8; VIEW_BYTES]; PadId::ALL.len()]; 2],
 }
@@ -197,13 +197,14 @@ impl KitWriter {
         Some(KitWriter { _once: () })
     }
 
-    /// `kit` as `part`'s, if it changed: one publish an edit. TONAL and
-    /// the bill are stored apart from the pads' slots, each publish: a hit
-    /// may play its first block on the last bill.
+    /// `kit` as `part`'s, if it changed: one publish an edit. TONAL is
+    /// stored apart from the pads' slots each publish, the bill (the pads'
+    /// alone) as they change: a hit may play its first block on the last
+    /// bill. Pads that already match the slots before any bill was stored
+    /// keep `KitBill::NONE`'s, the costliest.
     pub fn publish(&mut self, part: PartId, kit: &Kit) {
         let v = &KIT_VIEW.parts[part.index()];
         v.tonal.store(kit.tonal().code(), Ordering::Relaxed);
-        v.bill.store(kit_bill(kit).to_bits(), Ordering::Relaxed);
         let b = PadId::ALL.map(|p| {
             let (pad, mut b) = (kit.pad(p), [0; VIEW_BYTES]);
             b[..PAD_BYTES].copy_from_slice(&pad.to_bytes());
@@ -216,6 +217,7 @@ impl KitWriter {
         if bytes(slot(s)).all(|(x, a)| *x == a.load(Ordering::Relaxed)) {
             return;
         }
+        v.bill.store(kit_bill(kit).to_bits(), Ordering::Relaxed);
         v.seq.store(s.wrapping_add(1), Ordering::Release);
         fence(Ordering::Release);
         for (x, a) in bytes(slot(s) ^ 1) {

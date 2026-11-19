@@ -265,6 +265,10 @@ pub struct UiDoor {
         crate::project::PartId,
         &crate::preset::Part,
     ) -> Option<crate::project::Line>,
+    /// The encoders' feel (`ui::feel`, ADR 0279): a cell's turn, whether
+    /// SEQ + turn steps it fine, its band's hint, a list's rows, CLASSIC
+    /// RATE's semitone.
+    feel: fn(crate::ui::feel::Ask<'_>),
     /// DRUM's voice groups (`ui::kit_groups`, ADR 0280): a CHOKE turn or
     /// edit, a held one's reason, the count.
     groups: fn(crate::ui::kit_groups::Ask<'_>) -> crate::ui::kit_groups::Said,
@@ -317,9 +321,16 @@ impl UiDoor {
         roll: crate::randomize::kern::roll,
         tuning: crate::ui::tuning::work_in,
         tuning_note: crate::ui::tuning::note_in,
+        feel: crate::ui::feel::ask_in,
         groups: crate::ui::kit_groups::ask_in,
         voices: crate::ui::part_voices::ask_in,
     };
+
+    /// `ui::feel`'s answer to `a` (ADR 0279).
+    #[inline(always)]
+    pub(crate) fn feel(&self, a: crate::ui::feel::Ask<'_>) {
+        (self.feel)(a)
+    }
 
     #[inline(always)]
     pub(crate) fn overview(&self, v: &SourceView<'_>, start: f32, end: f32) -> Overview {
@@ -537,6 +548,55 @@ pub(crate) fn voices(a: crate::ui::part_voices::Ask<'_>) -> Option<()> {
 #[inline(never)]
 pub(crate) fn groups(a: crate::ui::kit_groups::Ask<'_>) -> Option<crate::ui::kit_groups::Said> {
     ui_door(|u| u.groups(a))
+}
+
+/// The feel's stubs (ADR 0279): `ui::feel`'s answer through the door's
+/// `feel`, each in its ask's own slot; `None` closed (an install, a build
+/// without TAPE's UI).
+pub(crate) mod feel {
+    use crate::addr::ParamAddr;
+    use crate::block::Block;
+    use crate::ui::feel::{Ask, Band, Nudged, Pushes};
+    use crate::ui::turns::FrameTurns;
+    use crate::ui::view::{View, Words};
+    use chimera_hal::{Controls, EncoderId, Ticks};
+
+    /// One out-of-line call for every stub.
+    #[inline(never)]
+    fn ask(a: Ask<'_>) {
+        let _ = super::ui_door(|u| u.feel(a));
+    }
+
+    pub(crate) fn frame(ui: &crate::ui::UiState, c: &dyn Controls) -> Option<FrameTurns> {
+        let mut out = None;
+        ask(Ask::Frame(ui, c, &mut out));
+        out
+    }
+
+    pub(crate) fn list(c: &dyn Controls, taken: &[EncoderId]) -> Option<Ticks> {
+        let mut out = None;
+        ask(Ask::List(c, taken, &mut out));
+        out
+    }
+
+    pub(crate) fn hint(
+        v: &View,
+        w: Words,
+        band: Band,
+        push: Pushes,
+    ) -> Option<crate::ui::hint::Hint> {
+        let mut out = None;
+        ask(Ask::Hint(v, w, band, push, &mut out));
+        out
+    }
+
+    /// Who turned `a`: bank 2 (CLASSIC RATE), or its spec, which the
+    /// caller then steps (closed, always).
+    pub(crate) fn nudge(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> Nudged {
+        let mut out = None;
+        ask(Ask::Nudge(b, a, d, &mut out));
+        out.unwrap_or(Nudged::Spec)
+    }
 }
 
 /// `UI_DOOR`'s slot.

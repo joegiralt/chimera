@@ -389,4 +389,6 @@ const OWN_OUTSIDE: &[&str] = &[
     "Part PAN",
     // The wheel's reach, glided as a knob (`Instrument::ease_bend`).
     "Part BEND",
+    // The Part's EQ glides it (ADR 0284).
+    "Part TILT",
 ];

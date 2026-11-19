@@ -181,6 +181,9 @@ pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
     let motion = 2.0 * v - 1.0;
     use crate::dsp::modulator::law::{DRAG_TIME, SCRUB_LENGTH};
     let x = match law {
+        // CLASSIC RATE's places (ADR 0279).
+        Law::LfoHz => return crate::ui::feel::rate_text(buf, v),
+        Law::EqTilt => return eq_tilt_text(buf, v),
         Law::FadeHold if v >= 0.999 => {
             let _ = buf.write_str(word(Word::Hold));
             return;
@@ -192,6 +195,23 @@ pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
         _ => 2.0 * motion,
     };
     crate::ui::fmt::fixed(buf, x, 2, word(Word::Times));
+}
+
+/// A Part's TILT at `v` (0..1 of its steps) in dB, as the EQ plays it
+/// (ADR 0284): `0 dB` flat, else signed to a tenth, `-10.0 dB` to `+9.8 dB`.
+fn eq_tilt_text(buf: &mut FmtBuf, v: f32) {
+    use crate::part_eq::Tilt;
+    let span = (Tilt::SPAN - 1) as f32;
+    let db = Tilt::from_f32(f32::from(Tilt::MIN_STEP) + v * span)
+        .db()
+        .get();
+    if db == 0.0 {
+        return crate::ui::fmt::fixed(buf, db, 0, " dB");
+    }
+    if db > 0.0 {
+        let _ = core::fmt::Write::write_str(buf, "+");
+    }
+    crate::ui::fmt::fixed(buf, db, 1, " dB");
 }
 
 /// Why the delay's cell `id` is dimmed under TYPE `k` (ADR 0202): DLY ›

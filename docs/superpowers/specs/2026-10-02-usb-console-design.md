@@ -133,6 +133,7 @@ OK
 ```
 load_pct 23
 peak_pct 41
+peak_boot_pct 52
 overruns 0
 load_sheds 0
 drops 0
@@ -147,7 +148,8 @@ loop_peak_us 4210
 OK
 ```
 
-- The first nine lines are `AudioStats` as the AUDIO LOAD page reads them.
+- The first ten lines are `AudioStats`.
+- `peak_pct` is the worst block's load since the last `stats` (`AudioStats::read_peak`): reading starts it over, through the same flag as the voice peak, so one hit's peak can be read (#995). The blocks between the snapshot `stats` answers from and the block that takes the flag (usually none, at most the few the UI loop takes to reach it) count in neither answer: strike after `stats`, not with it. `peak_boot_pct` is the worst since boot (`load_peak`), the AUDIO LOAD page's.
 - `load_sheds` counts the voices the load net shed: a block past 95 % of its deadline fades one voice out before the next (ADR 0273). Above 0 means a bill is under the voices' real cost.
 - `drops` holds one count per note source (`sources` of them), separated by spaces; `-` when `sources` is 0.
 - `desyncs` counts trailing DMA streams drifting from stream 0; `dma_errors` and `fifo_errors` count transfer and FIFO errors on streams 1 and 2 (each transfer error re-arms the stream).

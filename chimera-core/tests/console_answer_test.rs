@@ -7,7 +7,7 @@ use chimera_core::console::{
     SHOT_HEADER, Stalled, Stats, StormKinds, StreamTally, SweepAsk, UsbTally, answer, check_staged,
     installed,
 };
-use chimera_core::perf::load::AudioStats;
+use chimera_core::perf::load::{AudioStats, Peaks};
 use chimera_core::reset::ResetCause;
 use chimera_core::ui::UiState;
 use chimera_hal::store::{
@@ -186,8 +186,9 @@ fn stats_reads_audio_load_and_the_loop() {
     ) = (23, 41, 0, 2, 2, 12_288);
     (a.dma_errors, a.fifo_errors, a.load_sheds) = (3, 4, 6);
     a.drops[..2].copy_from_slice(&[5, 7]);
-    a.record_voices(5, 60, false);
-    a.record_voices(3, 47, false);
+    a.read_peak = 12;
+    a.record_voices(5, 60, Peaks::Kept);
+    a.record_voices(3, 47, Peaks::Kept);
     u.stats = Some(Stats {
         audio: a,
         loop_avg_us: 812,
@@ -197,7 +198,7 @@ fn stats_reads_audio_load_and_the_loop() {
     });
     assert_eq!(
         ask(&mut u, "stats\n"),
-        "load_pct 23\npeak_pct 41\noverruns 0\nload_sheds 6\ndrops 5 7\ndesyncs 2\ndma_errors 3\nfifo_errors 4\nstack_bytes 12288\nvoices 3 5 of 8\ncost_pct 47\nloop_avg_us 812\nloop_peak_us 4210\nOK\n"
+        "load_pct 23\npeak_pct 12\npeak_boot_pct 41\noverruns 0\nload_sheds 6\ndrops 5 7\ndesyncs 2\ndma_errors 3\nfifo_errors 4\nstack_bytes 12288\nvoices 3 5 of 8\ncost_pct 47\nloop_avg_us 812\nloop_peak_us 4210\nOK\n"
     );
     for (sources, want) in [
         (1, "\ndrops 5\n"),

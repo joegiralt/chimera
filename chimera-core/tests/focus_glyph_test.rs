@@ -174,6 +174,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // AUTO, then counts: a list, no arc (ADR 0281).
     ("Part", "MAX_VOICES", NONE),
     ("Part", "RESERVE", NONE),
+    // A toggle (ADR 0284).
+    ("Part", "LO_CUT", SWITCH),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),
