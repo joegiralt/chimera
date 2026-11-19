@@ -2684,6 +2684,11 @@ impl Instrument {
 
         // 1b. Each Part's EQ, before its level, pan and sends (ADR 0284).
         self.part_eq(shared, &written, &mut sides);
+        // 1c. Each Part's peak for MIXER › PRT's meters (ADR 0293), bank
+        // 2's, only while they're up.
+        if crate::part_peaks::watched() {
+            crate::part_peaks::door::through(|d| d.peaks().run(&self.buses, &sides, &written));
+        }
         // 2-4.
         let scope_block = mix_sided(
             (&self.buses, &sides),

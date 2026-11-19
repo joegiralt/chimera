@@ -73,6 +73,9 @@ use screen::*;
 // ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
 // tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
 // pool's count (sound_browser_pool_full).
+// ADR 0293: PRT's band draws each Part's meter and key mark; the
+// earlier hold_note leaves Part 1's key held. Re-recorded: mixer_part,
+// mixer_part_voices.
 // ADR 0292: AMP's E is BASE. Re-recorded: row_amp, amp_vel_dimmed,
 // amp_gate, amp_vel_live, modal_amp, large_bigviz_filter, large_modal_amp.
 // ADR 0195: AMP is VEL · LPG · DECAY · STRIKE, the sends on AMP › SENDS.
@@ -264,9 +267,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // (ADR 0055); with it they have their own rows, run by `just test`.
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0xf3f3d1a43b585b81),
+    ("mixer_part", 0x2997d264b9c8899f),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part_voices", 0xefa1c087d6aad31a),
+    ("mixer_part_voices", 0xcd18a982578c8cf4),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
@@ -316,9 +319,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x0b8145c7369cec63),
+    ("mixer_part", 0x20011a0c4a3b3ad9),
     #[cfg(feature = "master-tape")]
-    ("mixer_part_voices", 0x6bacb821270f6d4c),
+    ("mixer_part_voices", 0x33d2c16a719d8c66),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x4f5f9daa56c5aea5),
     // DLY's branch hides REV's label it ran into (TAPE Task 15). With master-tape

@@ -145,7 +145,7 @@ them from MIX+B6, so they read PART 6 · MIX.
 
 | Screen | Where | What it shows |
 |---|---|---|
-| ![](mixer_part.png) | PRT | CHANNEL, MODE, OUT, LEVEL, PAN and the Parts' levels |
+| ![](mixer_part.png) | PRT | CHANNEL, MODE, OUT, LEVEL, PAN and the Parts' levels, each with its live meter and key mark |
 | ![](mixer_sends.png) | SND | Home: the three sends and the FX flow |
 | ![](mixer_out_p2.png) | SND | Part 1 sent to P2: the OUT warning |
 | ![](mixer_chr.png) | CHR | Chorus: TYPE (OFF, I, II, I+II, FLANGER, PHASER), RATE, DEPTH, MIX |

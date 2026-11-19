@@ -278,6 +278,8 @@ pub struct UiDoor {
     /// The band's words on 0.4's tester cells (`ui::notes`, ADR 0292):
     /// the matrix's VCA column, AMP's BASE.
     notes: fn(crate::ui::notes::Ask<'_>),
+    /// MIXER › PRT's meters and key marks (`ui::part_meter`, ADR 0293).
+    meters: fn(crate::ui::part_meter::Ask<'_>),
 }
 
 // The table fits its 128 B before the next door's (`bank2.x`): 32 words
@@ -328,7 +330,14 @@ impl UiDoor {
         groups: crate::ui::kit_groups::ask_in,
         voices: crate::ui::part_voices::ask_in,
         notes: crate::ui::notes::ask_in,
+        meters: crate::ui::part_meter::ask_in,
     };
+
+    /// `ui::part_meter`'s answer to `a` (ADR 0293).
+    #[inline(always)]
+    pub(crate) fn meters(&self, a: crate::ui::part_meter::Ask<'_>) {
+        (self.meters)(a)
+    }
 
     /// `ui::notes`' answer to `a` (ADR 0292).
     #[inline(always)]

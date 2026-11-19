@@ -34,6 +34,7 @@ pub mod library;
 pub mod meter;
 pub mod midi;
 pub mod param_out;
+pub mod part_meter;
 pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
@@ -377,6 +378,8 @@ pub struct UiState {
     lib: library::LibState,
     /// Each Part's filter LEVEL LED: its meter, held and falling.
     clip: [ClipHold; crate::hw::MAX_PARTS],
+    /// MIXER › PRT's meters and key marks (ADR 0293): bank 2's to step.
+    meters: part_meter::PartMeters,
     /// The Parts with a voice sounding, as the audio last published.
     live: PartSet,
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
@@ -480,6 +483,7 @@ crate::in_place::field_list!(UiState => UiState {
     src,
     lib,
     clip,
+    meters,
     live,
     rev_knobs,
     cc,
@@ -586,6 +590,7 @@ impl UiState {
             addr_of_mut!((*p).bank2).write(None);
             addr_of_mut!((*p).live).write(PartSet::EMPTY);
             addr_of_mut!((*p).clip).write([ClipHold::default(); crate::hw::MAX_PARTS]);
+            addr_of_mut!((*p).meters).write(part_meter::PartMeters::REST);
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
@@ -3630,6 +3635,17 @@ impl UiState {
         for (h, m) in self.clip.iter_mut().zip(&crate::meter::FILTER_CLIP) {
             h.step(m.take().get(), animation::FRAME_MS as u16);
         }
+        // MIXER › PRT's meters (ADR 0293): bank 2's, measured while shown.
+        let shown = match self.page_def().viz {
+            VizType::MixerLevels if self.loc.on_mixer() => part_meter::Shown::On {
+                parts: self.project.perf().parts(),
+                zones: self.midi.mpe,
+                dt: part_meter::Ms(animation::FRAME_MS as u16),
+            },
+            _ => part_meter::Shown::Off,
+        };
+        let meters = &mut self.meters;
+        crate::bank2::ui_door(|d| d.meters(part_meter::Ask::Frame(meters, shown)));
         self.live = crate::meter::sounding_parts();
         let at = self.active_part;
         self.strip_pass();
@@ -3911,6 +3927,7 @@ impl UiState {
             bank2: self.bank2,
             master_gr_db: crate::meter::MASTER_GR.read(),
             clip: self.clip[self.active_part.index()].fill(),
+            meters: &self.meters,
             rev_clock: crate::meter::rev_clock(),
             clock: self.clock,
             fx: &self.project.perf().fx,
