@@ -2212,6 +2212,27 @@ impl UiState {
         self.go(to)
     }
 
+    /// The display's own motion put at rest (chimera-screen's stills,
+    /// #1035): the display LFOs back at their start and the map's scroll on
+    /// its page's row, so the next frame depends on the Sound, the page
+    /// and the focus alone, never on the frames drawn before it. The
+    /// values' animators are already snapped by the page's entry.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn still_for_test(&mut self) {
+        self.display_lfos = [Lfo::new(); 3];
+        // `update`'s own target for the map's scroll.
+        let sub = self.loc.page(&self.cx()).map_or(0, |(_, at)| at.sub());
+        let bottom = theme::BRANCH_START_Y + (sub as i32 + 1) * theme::BRANCH_LINE_HEIGHT;
+        let over = bottom - chimera_hal::SCREEN_HEIGHT as i32;
+        let rows = if over > 0 {
+            over as f32 / theme::BRANCH_LINE_HEIGHT as f32
+        } else {
+            0.0
+        };
+        self.renderer.branch_scroll.snap(rows);
+    }
+
     /// Slot `slot` of the page shown in the focus band, as its last turn
     /// leaves it, its value untouched (chimera-screen's `focus`).
     #[cfg(any(test, feature = "test-support"))]
