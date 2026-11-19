@@ -493,31 +493,148 @@ fn every_box_cell_of_every_engine_is_described_and_reads_as_the_box() {
     }
 }
 
-/// The worst DRUM answer: every pad on each machine in turn, the longest
-/// filter name, untidy values. Under the bound with room, and timed.
+/// The longest `val` line address `p` (a describe `param` line's fields)
+/// can make now: every option, or every step of a continuous range (257
+/// points across a longer one), each read back by `ed get`, whose line is
+/// `since`'s own. The value is put back afterwards.
+fn longest_line(f: &mut Fake, p: &[String]) -> usize {
+    let addr = &p[1];
+    let (min, max, step): (f32, f32, f32) = (
+        p[5].parse().unwrap(),
+        p[6].parse().unwrap(),
+        p[7].parse().unwrap(),
+    );
+    let a = EdAddr::parse(addr.as_bytes()).unwrap();
+    let spec = a.param().spec().unwrap();
+    let was = get(f, addr).0;
+    let words: Vec<String> = if p[3] == "cont" {
+        let n = ((max - min) / step.max(1e-6)).round() as usize;
+        let k = n.clamp(1, 256);
+        (0..=k)
+            .map(|i| format!("{:.6}", min + (max - min) * i as f32 / k as f32))
+            .collect()
+    } else {
+        (0..=(max - min).round() as usize)
+            .map(|i| format!("#{i}"))
+            .collect()
+    };
+    let mut longest = 0;
+    for w in &words {
+        if !spec.stored || spec.patching {
+            break;
+        }
+        let got = ask(f, &format!("ed set {addr} {w}\n"));
+        if got != "OK queued\n" {
+            continue;
+        }
+        apply(f);
+        let line = ask(f, &format!("ed get {addr}\n"));
+        longest = longest.max(line.lines().next().unwrap().len() + 1);
+    }
+    let _ = ask(f, &format!("ed set {addr} {was}\n"));
+    apply(f);
+    // A param no set reaches (read only, or patched): its line now.
+    longest.max(
+        ask(f, &format!("ed get {addr}\n"))
+            .lines()
+            .next()
+            .unwrap()
+            .len()
+            + 1,
+    )
+}
+
+/// The worst DRUM `since 0` answer, bounded from above: each address's
+/// longest line over every value it can take, each pad on whichever machine
+/// and filter kind make its lines longest (measured on pad 12, whose tokens
+/// are the longest), each panel at its longest variant. A cell's text
+/// depends on its own value, its pad's machine and kind, and its panel's
+/// variant: each is maximised. The Part's own lines are bounded by the
+/// longest text a cell can hold. The real answer can never be longer.
 #[test]
-fn a_messy_kit_fits_one_answer() {
+fn the_worst_drum_answer_fits_one_answer() {
     let mut f = fake(EngineType::Drum);
     let texts = page_texts(&mut f, EngineType::Drum);
-    let kinds = FilterKind::BUILT;
-    let longest = (0..kinds.len())
-        .max_by_key(|&k| filter_variant(kinds[k]).len())
-        .unwrap();
-    let mut worst = 0;
-    let mut slowest = std::time::Duration::ZERO;
-    for m in 0..Machine::ALL.len() {
-        for n in 1..=12 {
-            set(&mut f, &format!("PAD{n}.MACHINE"), &format!("#{m}"));
-            set(&mut f, &format!("PAD{n}_FLT.KIND"), &format!("#{longest}"));
-        }
-        mess(&mut f, &texts);
-        let t = std::time::Instant::now();
-        let (lines, _, bytes) = since(&mut f, 0);
-        slowest = slowest.max(t.elapsed());
-        assert!(lines[0].starts_with("part 1 DRUM"), "{:?}", &lines[..2]);
-        worst = worst.max(bytes);
+    let all = params(&texts);
+    let pad12: Vec<&Vec<String>> = {
+        let mut seen = BTreeSet::new();
+        all.iter()
+            .filter(|p| {
+                (p[1].starts_with("PAD12.") || p[1].starts_with("PAD12_"))
+                    && seen.insert(p[1].clone())
+            })
+            .collect()
+    };
+    let knob = |p: &Vec<String>| p[1].starts_with("PAD12.KNOB_");
+    let flt = |p: &Vec<String>| p[1].starts_with("PAD12_FLT.") && p[1] != "PAD12_FLT.KIND";
+    // A pad's lines on no machine or kind: measured once.
+    let mut pad = 0;
+    for p in pad12.iter().filter(|p| !knob(p) && !flt(p)) {
+        pad += longest_line(&mut f, p);
     }
-    println!("a messy kit's full answer: {worst} B of {ANSWER_BYTES_MAX}, the slowest {slowest:?}");
+    // Its machine's knobs on the machine that makes them longest.
+    let mut knobs = 0;
+    for m in 0..Machine::ALL.len() {
+        set(&mut f, "PAD12.MACHINE", &format!("#{m}"));
+        let sum: usize = pad12
+            .iter()
+            .filter(|p| knob(p))
+            .map(|p| longest_line(&mut f, p))
+            .sum();
+        knobs = knobs.max(sum);
+    }
+    // Its filter's cells on the kind that makes them longest.
+    let mut filter = 0;
+    for k in 0..FilterKind::BUILT.len() {
+        set(&mut f, "PAD12_FLT.KIND", &format!("#{k}"));
+        let sum: usize = pad12
+            .iter()
+            .filter(|p| flt(p))
+            .map(|p| longest_line(&mut f, p))
+            .sum();
+        filter = filter.max(sum);
+    }
+    let per_pad = pad + knobs + filter;
+    // The Part's own lines: `val <addr> <norm> <stored> "<text>"`, the
+    // norm at most 9 characters, the stored value its spec's widest, the
+    // text at most a cell's 32 bytes.
+    let part: usize = {
+        let mut seen = BTreeSet::new();
+        all.iter()
+            .filter(|p| !p[1].starts_with("PAD") && seen.insert(p[1].clone()))
+            .map(|p| {
+                let wide =
+                    |v: &str| v.trim_start_matches('-').split('.').next().unwrap().len() + 1 + 8;
+                let stored = wide(&p[5]).max(wide(&p[6]));
+                "val ".len() + p[1].len() + 1 + 9 + 1 + stored + 2 + 32 + 2
+            })
+            .sum()
+    };
+    // Each panel at its longest variant, as `describe` lists them.
+    let mut panels: std::collections::BTreeMap<String, usize> = Default::default();
+    for l in texts
+        .iter()
+        .flat_map(|t| t.lines())
+        .filter(|l| l.starts_with("panel "))
+    {
+        let name = l.split(' ').nth(1).unwrap().to_string();
+        let e = panels.entry(name).or_default();
+        *e = (*e).max(l.len() + 1);
+    }
+    let shown: usize = panels
+        .iter()
+        .filter(|(n, _)| {
+            n.ends_with("_MCH")
+                || n.ends_with("_FLT")
+                || ["FX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3"].contains(&n.as_str())
+        })
+        .map(|(_, len)| len)
+        .sum();
+    let head = "\n".len() + "part 1 DRUM\n".len() + "OK 999999999\n".len();
+    let worst = head + shown + part + 12 * per_pad;
+    println!(
+        "the worst DRUM answer: at most {worst} B of {ANSWER_BYTES_MAX} (a pad {per_pad} B, the Part {part} B, the panels {shown} B)"
+    );
     assert!(worst < ANSWER_BYTES_MAX, "{worst} B");
 }
 
