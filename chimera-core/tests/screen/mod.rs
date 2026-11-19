@@ -2605,6 +2605,23 @@ pub const CASES: &[ScreenCase] = &[
         midi_map_layer(ui);
         feed(ui, Input::turn(EncoderId::A, -1));
     }),
+    // MIDI MAP's last row (ADR 0288): `+ NEW BINDING` under INIT's map,
+    // the bar on it, EDIT to point at a cell.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_new_row", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        midi_map_new_row(ui);
+    }),
+    // Pointing from it (ADR 0288): PIT, FINE turned to point at it, NEW
+    // BINDING in the value's place, EDIT BINDS  MENU CANCELS under it.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_pointing", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        to_pitch(ui, EngineType::Algo);
+        midi_map_new_row(ui);
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
     // INIT Algo's PIT, FINE bound to a PICKUP CC that waits below it: the
     // focus band says which way to turn (spec § 8.3).
     #[cfg(feature = "midi-map")]
@@ -2838,6 +2855,16 @@ fn midi_map_mixed(ui: &mut UiState) {
     plus(ui, chimera_core::ui::settings::tree::PART.len() - 1);
     feed(ui, Input::press(ButtonId::Edit));
     feed(ui, Input::turn(EncoderId::A, 6));
+}
+
+/// INIT's Part 1, its default map, MIDI MAP open with the bar on its last
+/// row, `+ NEW BINDING` (ADR 0288).
+#[cfg(feature = "midi-map")]
+fn midi_map_new_row(ui: &mut UiState) {
+    to_leaf(ui, &["PART"]);
+    plus(ui, chimera_core::ui::settings::tree::PART.len() - 1);
+    feed(ui, Input::press(ButtonId::Edit));
+    feed(ui, Input::turn(EncoderId::A, -1));
 }
 
 /// `midi_map_mixed`'s Part with map EC4 picked: CC 30 MORPH and CC 74

@@ -264,7 +264,7 @@ pub struct MidiUi {
     /// The hand's turns waiting to go out as NRPNs (ADR 0258).
     param_out: super::param_out::ParamOut,
     /// Each Part's controller layer (ADR 0226).
-    ctl: layer::Layers,
+    pub(in crate::ui) ctl: layer::Layers,
     /// Learn's first SysEx message, its length 0 for none (#846).
     sx_first: ([u8; SX_LEN], u8),
     /// A carry sensing heard, waiting for a second to confirm a pair.
@@ -322,7 +322,7 @@ impl MidiSlot {
 
     /// The state, if built: a read never builds it.
     #[inline(always)]
-    fn built(&self) -> Option<&MidiUi> {
+    pub(in crate::ui) fn built(&self) -> Option<&MidiUi> {
         // SAFETY: `built` says the slot was written (`ui`).
         self.built.then(|| unsafe { self.ui.assume_init_ref() })
     }
@@ -1077,6 +1077,14 @@ impl UiState {
         if moved {
             m.loads = loads;
             m.reset();
+            // Pointing on this Part ends: the map it was started on went
+            // (ADR 0288).
+            if let super::learn::Learn::Pointing(pt) = self.learn
+                && pt.part == p
+                && pt.loads != loads
+            {
+                self.learn = super::learn::Learn::Off;
+            }
         }
         #[cfg(feature = "midi-map")]
         self.cc_keep(p, moved);

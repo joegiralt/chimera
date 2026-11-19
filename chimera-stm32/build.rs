@@ -395,7 +395,12 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // the UI's curves, fine turn, band hint and CLASSIC RATE's semitone,
     // text and rodata (its words are named statics, not anonymous).
     let feel = "    *(.text.*12chimera_core2ui4feel* .rodata.*12chimera_core2ui4feel*);\n";
-    let s4 = format!("{ed}{groups}{voices}{feel}");
+    // MIDI MAP's pointing (ADR 0288): `ui::pointing`, reached through
+    // `MidiUiDoor`'s `point_say`, `point` and `point_hint`, and from
+    // `ui::midi::page`; an S4 group (ADR 0272: new 0.4 work goes high).
+    let pointing =
+        "    *(.text.*12chimera_core2ui8pointing* .rodata.*12chimera_core2ui8pointing*);\n";
+    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"
