@@ -45,7 +45,7 @@ suite =
             \_ ->
                 PadStrip.view strip Kit
                     |> Query.fromHtml
-                    |> Query.findAll [ Sel.tag "chimera-screen" ]
+                    |> Query.findAll [ Sel.tag "img" ]
                     |> Query.count (Expect.equal 12)
         , test "the_shown_tab_is_selected" <|
             \_ ->

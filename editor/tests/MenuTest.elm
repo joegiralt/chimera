@@ -89,7 +89,7 @@ suite =
             \_ ->
                 Menu.view (Menu.glyphs (\_ -> Just (Screen.new Va EnvAdsr)) alg) opened (Control.chosen (opt 0))
                     |> Query.fromHtml
-                    |> Query.findAll [ Sel.tag "chimera-screen" ]
+                    |> Query.findAll [ Sel.class "screen" ]
                     |> Query.count (Expect.equal 11)
         , test "in_a_title_bar_it_wears_the_header_look" <|
             \_ ->

@@ -104,6 +104,8 @@ var ChimeraScreen = (function () {
         ATTRS.forEach(function (n) { a[n] = self.getAttribute(n); });
         var got = draw(x, a);
         this.hidden = !got;
+        // Painted: the crop Elm put inside gives way to the canvas.
+        if (got) this.setAttribute('data-painted', ''); else this.removeAttribute('data-painted');
         if (!got) return;
         this.canvas.width = got.rect.w;
         this.canvas.height = got.rect.h;

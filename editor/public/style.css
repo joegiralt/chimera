@@ -219,6 +219,7 @@ fieldset.n1 legend { margin-left: 2px; letter-spacing: .06em; }
 /* the unit's screens, inset into the panel */
 .ui .screen { position: relative; flex: none; background: #080808; border: 2px solid var(--screen-border); border-radius: 3px; overflow: hidden; }
 .ui .screen chimera-screen { display: block; width: 100%; height: 100%; }
+.ui .screen chimera-screen[data-painted] > img { display: none; }
 .ui .screen img { display: block; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
 .ui .screen .cap { position: absolute; left: 6px; top: 4px; font: 600 10px/1 var(--sans); letter-spacing: .12em; color: #8c8a84; }
 
