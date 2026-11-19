@@ -110,8 +110,9 @@ pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
     // bend and slide); 128 B more for AMP's BASE, a knob a Part (ADR 0292);
     // 64 B more for PRT's meters' UI state (ADR 0293); 128 B more for
     // AMP › STEREO, 96 B over: PAN a knob a Part, the WIDTHs' state and
-    // each voice's played WIDTH (ADR 0294).
-    5312
+    // each voice's played WIDTH (ADR 0294); 128 B more, 96 B over: each
+    // voice's last PAN and BASE, kept from a retrigger (ADR 0294).
+    5184
 } else {
     6144
 };
