@@ -129,14 +129,21 @@ async function settle(addr, ok) {
 // ---- `since`: the generation a client holds ----
 
 let gen = 0;
-/** `ed since <gen>` : its lines, the generation held moves on. */
+/** `ed since <gen>` : its lines, the generation held moves on. An answer
+ * that ends `OK <m> more` owes sections: asked again at once, its lines
+ * joined (ADR 0289). */
 async function since(n = gen) {
-  const got = await ask(`ed since ${n}`);
-  const end = got.at(-1);
-  const m = /^OK (\d+)$/.exec(end);
-  if (!m) throw new Error(`ed since ${n}: ${got.join(" | ")}`);
-  gen = Number(m[1]);
-  return got.slice(0, -1);
+  const lines = [];
+  for (let ask_ = n; ; ) {
+    const got = await ask(`ed since ${ask_}`);
+    const end = got.at(-1);
+    const m = /^OK (\d+)( more)?$/.exec(end);
+    if (!m) throw new Error(`ed since ${ask_}: ${got.join(" | ")}`);
+    gen = Number(m[1]);
+    lines.push(...got.slice(0, -1));
+    if (!m[2]) return lines;
+    ask_ = gen;
+  }
 }
 
 /** `since` until a line matches, or the settle time: every line seen meanwhile. */
@@ -192,32 +199,52 @@ async function describeAll(engine) {
   if (!(count > 0)) throw new Error(`describe ${engine} 0: ${first.join(" | ")}`);
   const blocks = []; // { panel, variant, params: [{ addr, kind, scale, min, max, opts }] }
   const params = new Map(); // every addr described anywhere
+  const texts = []; // each page's lines, for the hash
   for (let n = 0; n < count; n++) {
     const got = n === 0 ? first : await ask(`ed describe ${engine} ${n}`);
     if (got.at(-1) !== "OK") {
       fail(`${engine} page ${n}`, "ed describe", got.join(" | "));
       continue;
     }
+    texts.push(got.slice(0, -1));
     let block = null;
     for (const l of got) {
       const t = tokens(l);
       if (t[0] === "panel" && t.length === 3) {
         block = { panel: t[1], variant: t[2], params: [] };
         blocks.push(block);
-      } else if (t[0] === "param" && t.length === 9 && block) {
+      } else if (t[0] === "param" && t.length === 10 && block) {
         if (t[4] !== "lin" && t[4] !== "oct") fail(t[1], "describe", `scale ${t[4]}`);
+        if (!["-", "m", "d", "md"].includes(t[9])) fail(t[1], "describe", `flags ${t[9]}`);
         const p = { addr: t[1], kind: t[3], scale: t[4], min: Number(t[5]), max: Number(t[6]), opts: [] };
         block.params.push(p);
         params.set(p.addr, p);
       } else if (t[0] === "param") {
-        fail(t[1] ?? "?", "describe", `not a protocol 3 param line: ${l}`);
+        fail(t[1] ?? "?", "describe", `not a protocol 4 param line: ${l}`);
       } else if (t[0] === "opt" && t.length === 4 && block) {
         block.params.at(-1)?.opts.push([Number(t[2]), t[3]]);
       }
     }
   }
   info(`describe ${engine}: ${count} pages, ${blocks.length} panel variants, ${params.size} addresses`);
+  await checkHash(engine, texts);
   return { blocks, params, count };
+}
+
+/** FNV-1a 64 of every byte `describe` wrote, as `ed schema` hashes it. */
+function fnv64(text) {
+  let h = 0xcbf29ce484222325n;
+  for (const b of Buffer.from(text, "utf8")) h = BigInt.asUintN(64, (h ^ BigInt(b)) * 0x100000001b3n);
+  return h.toString(16).padStart(16, "0");
+}
+
+/** `ed schema <S>`: its pages and the hash of describe's own bytes. */
+async function checkHash(schema, texts) {
+  const got = await ask(`ed schema ${schema}`);
+  const t = tokens(got[0] ?? "");
+  const want = fnv64(texts.map((lines) => lines.map((l) => l + "\n").join("")).join(""));
+  if (t[0] !== "schema" || t[1] !== schema || Number(t[2]) !== texts.length || t[3] !== want)
+    fail(schema, "ed schema", `${got.join(" | ")}: want ${texts.length} pages, ${want}`);
 }
 
 /** The variants the Part shows now. */
@@ -283,6 +310,7 @@ async function loadInit(engine) {
 /** One engine end to end: INIT loaded, described, every param in the
  * variants the Part shows set and read back, a full answer only of
  * described addresses. */
+let mixerAddrs = new Set();
 async function enginePass(engine) {
   await loadInit(engine);
   const { blocks, params } = await describeAll(engine);
@@ -295,8 +323,8 @@ async function enginePass(engine) {
   const refusable = (a) => /\.KNOB_|\.CHOKE$/.test(a);
   await sweep(shown.filter((p) => !selector(p)), ` ${engine}`, done, refusable);
   await sweep(shown.filter(selector), ` ${engine}`, done, refusable);
-  const all = await ask("ed since 0");
-  const vals = all.map(parseVal).filter(Boolean);
+  const all = await since(0);
+  const vals = all.map(parseVal).filter(Boolean).filter((v) => !mixerAddrs.has(v.addr));
   const extra = vals.filter((v) => !params.has(v.addr)).map((v) => v.addr);
   if (extra.length) fail(engine, "since 0", `answered but not described: ${extra.slice(0, 5).join(" ")}`);
   if (all[1] !== `part 1 ${engine}`) fail(engine, "since 0", `opens ${JSON.stringify(all.slice(0, 2))}`);
@@ -315,15 +343,25 @@ async function main() {
   // hello
   const hello = tokens((await ask("ed hello"))[0]);
   if (
-    !(hello.length === 7 && hello[0] === "ed" && hello[1] === "hello" && hello[2] === "3" &&
+    !(hello.length === 7 && hello[0] === "ed" && hello[1] === "hello" && hello[2] === "4" &&
       hello[4] === "part" && hello[5] === "1" && hello[6] === "ALGO")
   ) {
-    fail("hello", "ed hello", `${hello.join(" ")}: want protocol 3, part 1 ALGO`);
+    fail("hello", "ed hello", `${hello.join(" ")}: want protocol 4, part 1 ALGO`);
     throw new Error("not on Part 1 ALGO: cannot go on");
   }
   info(`hello: protocol ${hello[2]}, build ${hello[3]}, part 1 ALGO`);
 
-  const { blocks, params, count } = await describeAll("ALGO");
+  const { blocks, params: algo, count } = await describeAll("ALGO");
+  // The mixer (ADR 0289): Part 3's own cells and the buses, set and read
+  // back while the box follows Part 1.
+  const mixer = await describeAll("MIXER");
+  const params = new Map([...algo, ...mixer.params]);
+  mixerAddrs = new Set(mixer.params.keys());
+  const mixerShown = mixer.blocks
+    .filter((b) => b.variant === "-" || b.panel === "REVERB")
+    .flatMap((b) => b.params)
+    .filter((p) => /^(PART3(_SND)?|CHORUS|DELAY|REVERB|TAPE|COMP)\./.test(p.addr) && p.addr !== "REVERB.TYPE");
+  await sweep(mixerShown, " MIXER", new Set(), (a) => /\.(RESERVE|MAX_VOICES)$/.test(a));
 
   // every param to its max, then its min, read back
   const done = new Set();
@@ -409,7 +447,7 @@ async function main() {
   // a stale number: everything
   await since();
   for (const stale of [0, gen + 1000]) {
-    const all = await ask(`ed since ${stale}`);
+    const all = await since(stale);
     const vals = all.map(parseVal).filter(Boolean);
     const addrs = new Set(vals.map((v) => v.addr));
     if (all[0] !== "" || all[1] !== "part 1 ALGO") fail("since", `stale ${stale}`, `first lines ${JSON.stringify(all.slice(0, 2))}: a full answer opens with an empty line`);
@@ -420,8 +458,8 @@ async function main() {
     if (extra.length) fail("since", `stale ${stale}`, `answered but not described: ${extra.join(" ")}`);
     const ps = all.filter((l) => l.startsWith("panel ")).map((l) => tokens(l)[1]);
     if (ps.length === 0) fail("since", `stale ${stale}`, "no panel lines");
-    info(`stale ${stale}: ${all.length - 1} lines, ${vals.length} vals, ${ps.length} panels`);
-    gen = Number(/^OK (\d+)$/.exec(all.at(-1))?.[1] ?? gen);
+    if (!all.includes("mixer")) fail("since", `stale ${stale}`, "no mixer section");
+    info(`stale ${stale}: ${all.length} lines, ${vals.length} vals, ${ps.length} panels`);
   }
   // and a current one: nothing
   const none = await since();

@@ -2,7 +2,7 @@ mod common;
 mod screen;
 use common::console_fake::{Fake, ask};
 
-use chimera_core::console::EdAddr;
+use chimera_core::console::{EdAddr, Schema};
 use chimera_engine::addr::{BlockRef, Op, ParamAddr};
 use chimera_engine::dsp::modulator::{EnvSlot, LfoSlot};
 
@@ -52,7 +52,7 @@ fn hello_reports_protocol_build_part_engine() {
     chimera_core::ui::about_page::write_build_rev(&mut build).unwrap();
     let build = build.replace(' ', "-");
     let got = ask(&mut f, "ed hello\n");
-    assert_eq!(got, format!("ed hello 3 {build} part 1 ALGO\nOK\n"));
+    assert_eq!(got, format!("ed hello 4 {build} part 1 ALGO\nOK\n"));
     // One word for the build: a fixed word count.
     assert_eq!(got.lines().next().unwrap().split(' ').count(), 7, "{got}");
 }
@@ -547,8 +547,8 @@ fn get_unknown_addr_is_refused() {
     }
     // A real address the ALGO Sound doesn't hold is another refusal.
     assert_eq!(
-        ask(&mut f, "ed get CHORUS.MODE\n"),
-        "ERR ed get has no CHORUS.MODE here\n"
+        ask(&mut f, "ed get MODAL.MODE\n"),
+        "ERR ed get has no MODAL.MODE here\n"
     );
 }
 
@@ -816,7 +816,8 @@ fn cutoff() -> ParamAddr {
     )
 }
 
-/// What `ed since <n>` answered: its lines but the closing `OK <m>`, and `m`.
+/// What `ed since <n>` answered for PART: its lines but the closing `OK
+/// <m>`, and `m`.
 fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
     let got = ask(f, &format!("ed since {n}\n"));
     assert!(got.ends_with('\n'), "{got}");
@@ -831,6 +832,8 @@ fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
         .unwrap_or_else(|| panic!("{last}"))
         .parse()
         .unwrap();
+    // PART's section alone: the mixer's has its own tests.
+    let lines = lines.into_iter().take_while(|l| l != "mixer").collect();
     (lines, m)
 }
 
@@ -1129,16 +1132,16 @@ fn gen_is_never_zero_and_wraps_past_it() {
     assert_eq!(Gen::FIRST.next().get(), 2);
     // The copy holds every param of every block.
     let schema: usize = algo_blocks().iter().map(|b| b.specs().len()).sum();
-    assert_eq!(ed_slots_used(EngineType::Algo), schema);
+    assert_eq!(ed_slots_used(Schema::Engine(EngineType::Algo)), schema);
     for e in EngineType::ALL {
         assert!(
-            ed_slots_used(e) <= ED_SLOTS,
+            ed_slots_used(Schema::Engine(e)) <= ED_SLOTS,
             "{e:?}: {} of {ED_SLOTS}",
-            ed_slots_used(e)
+            ed_slots_used(Schema::Engine(e))
         );
     }
     // DRUM, the most, sets it: no slot held for nothing.
-    assert_eq!(ed_slots_used(EngineType::Drum), ED_SLOTS);
+    assert_eq!(ed_slots_used(Schema::Engine(EngineType::Drum)), ED_SLOTS);
     // A number past nine digits is refused, not wrapped.
     let mut f = Fake::new();
     let got = ask(&mut f, "ed since 1000000000\n");

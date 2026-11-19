@@ -1,5 +1,7 @@
 module Model exposing
-    ( Model
+    ( Effect(..)
+    , Held
+    , Model
     , Msg(..)
     , Reading
     , Stage
@@ -17,12 +19,18 @@ module Model exposing
 {-| Only the unit's state: what it last reported, and which edits wait to be
 confirmed. The editor never guesses a value; a control always shows the unit's.
 
-`step` is the pure core (messages in, commands out); `update` only sends them.
+`step` is the pure core (messages in, effects out); `update` only runs them.
+
+The schemas are the unit's own text (ADR 0289): on connect, and on an engine
+the editor hasn't read, it asks `ed schema <S>` for its page count and hash,
+and uses its cached copy of that hash (IndexedDB, `Cache`) or describes every
+page and keeps them. It reads the followed engine's schema and the MIXER's.
 
 -}
 
+import Cache
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine(..), Command(..), Line(..), OptIndex, Value, addrKey, encode, parse)
+import Protocol exposing (Addr, AnswerLine(..), Command(..), Hash, Line(..), OptIndex, SchemaId(..), Value, addrKey, encode, hashText, parse, schemaToken)
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
@@ -36,12 +44,36 @@ type alias Reading =
 
 
 {-| Where the connect sequence is. One request is in flight at a time.
+A schema is checked (`ed schema`), recalled from the cache, or described page
+by page; then the next one the editor lacks, then following.
 -}
 type Stage
     = Greeting
-    | Describing Int
+    | Checking SchemaId (Maybe Reply)
+    | Recalling SchemaId Reply
+    | Describing SchemaId Reply Int
     | Following
     | Halted Why
+
+
+{-| What `ed schema` said of a schema.
+-}
+type alias Reply =
+    { pages : Int, hash : Hash }
+
+
+{-| A schema read this connection, and the hash it was read under.
+-}
+type alias Held =
+    { hash : Hash, schema : Schema }
+
+
+{-| What `step` asks of the world: a line to the unit, or the schema cache.
+-}
+type Effect
+    = Send Command
+    | Recall String
+    | Keep String (List String)
 
 
 type Why
@@ -56,6 +88,10 @@ type alias Model =
     { link : Maybe Link
     , via : Maybe Via
     , schema : Schema
+    , mixer : Schema
+    , held : Dict String Held
+    , building : Schema
+    , described : List String
     , values : Dict String Reading
     , pending : Dict String Time.Posix
     , part : Maybe Part
@@ -87,13 +123,21 @@ type Msg
     | FollowPart Part
     | ConnectSerial
     | ConnectSocket
+    | Recalled { key : String, lines : Maybe (List String) }
 
 
 {-| The console protocol this editor speaks.
 -}
 supported : Int
 supported =
-    3
+    4
+
+
+{-| A schema's cache key: the protocol, the schema and its hash.
+-}
+cacheKey : SchemaId -> Hash -> String
+cacheKey s h =
+    String.join "/" [ String.fromInt supported, schemaToken s, hashText h ]
 
 
 {-| A request unanswered this long has timed out. While connecting, that
@@ -126,6 +170,10 @@ init =
     { link = Nothing
     , via = Nothing
     , schema = Schema.empty
+    , mixer = Schema.empty
+    , held = Dict.empty
+    , building = Schema.empty
+    , described = []
     , values = Dict.empty
     , pending = Dict.empty
     , part = Nothing
@@ -146,6 +194,7 @@ subscriptions =
     Sub.batch
         [ Transport.lineIn Line
         , Transport.linkState (Transport.parseLink >> LinkChanged)
+        , Cache.got Recalled
         , Time.every pollMs Tick
         ]
 
@@ -160,27 +209,38 @@ update msg model =
             ( { model | via = Just ViaSimulator }, Transport.connectSocket "ws://127.0.0.1:7342" )
 
         LinkChanged _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
 
         Line _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
 
         Tick _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
 
         Edit _ _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
 
         Pick _ _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
 
         FollowPart _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
+
+        Recalled _ ->
+            step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
 
 
-send : Command -> Cmd msg
-send c =
-    encode c |> Maybe.map Transport.send |> Maybe.withDefault Cmd.none
+run : Effect -> Cmd msg
+run e =
+    case e of
+        Send c ->
+            encode c |> Maybe.map Transport.send |> Maybe.withDefault Cmd.none
+
+        Recall key ->
+            Cache.recall key
+
+        Keep key lines ->
+            Cache.keep { key = key, lines = lines }
 
 
 {-| Once connected and following: the link and the Part and engine it follows.
@@ -262,7 +322,7 @@ isPending a m =
     Dict.member (addrKey a) m.pending
 
 
-step : Msg -> Model -> ( Model, List Command )
+step : Msg -> Model -> ( Model, List Effect )
 step msg m =
     case msg of
         LinkChanged l ->
@@ -270,19 +330,19 @@ step msg m =
             ( { init | link = Just l, via = m.via, now = m.now }, [] )
 
         Tick t ->
-            tick t m
+            tick t m |> Tuple.mapSecond (List.map Send)
 
         Line raw ->
-            ( line (parse raw) m, [] )
+            line raw (parse raw) m
 
         Edit a v ->
-            edit a v m
+            edit a v m |> Tuple.mapSecond (List.map Send)
 
         -- By its number: a name with a space (GATE EXT) is one word so.
         Pick a i ->
-            case Schema.optionName m.variants a i m.schema of
+            case Schema.optionName m.variants a i (schemaOf a m) of
                 Just _ ->
-                    edit a (Protocol.Index i) m
+                    edit a (Protocol.Index i) m |> Tuple.mapSecond (List.map Send)
 
                 Nothing ->
                     ( m, [] )
@@ -290,7 +350,7 @@ step msg m =
         -- The box moves; the mark follows when `since` says so.
         FollowPart p ->
             if m.stage == Following then
-                ( m, [ Follow p ] )
+                ( m, [ Send (Follow p) ] )
 
             else
                 ( m, [] )
@@ -301,6 +361,28 @@ step msg m =
 
         ConnectSocket ->
             ( m, [] )
+
+        Recalled r ->
+            ( recalled r m, [] )
+
+
+{-| The schema that describes `a`: the followed engine's, else the mixer's.
+-}
+schemaOf : Addr -> Model -> Schema
+schemaOf a m =
+    case Schema.param a m.schema of
+        Just _ ->
+            m.schema
+
+        Nothing ->
+            m.mixer
+
+
+{-| Some schema the editor holds describes `a`.
+-}
+isDescribed : Addr -> Model -> Bool
+isDescribed a m =
+    Schema.param a m.schema /= Nothing || Schema.param a m.mixer /= Nothing
 
 
 tick : Time.Posix -> Model -> ( Model, List Command )
@@ -355,8 +437,16 @@ tick t m0 =
             Greeting ->
                 connecting timedOut silent (ask Hello) m
 
-            Describing n ->
-                connecting timedOut silent (ask (Describe Algo n)) m
+            Checking s _ ->
+                connecting timedOut silent (ask (AskSchema s)) m
+
+            -- The browser's store always answers, a miss or a failure as
+            -- `Nothing`: no clock.
+            Recalling _ _ ->
+                ( m, [] )
+
+            Describing s _ n ->
+                connecting timedOut silent (ask (Describe s n)) m
 
 
 connecting : Bool -> ( Model, List Command ) -> ( Model, List Command ) -> Model -> ( Model, List Command )
@@ -383,20 +473,20 @@ edit a v m =
         c =
             Set a v
     in
-    if m.stage == Following && m.engine == Just Algo && encode c /= Nothing then
+    if m.stage == Following && isDescribed a m && encode c /= Nothing then
         ( { m | pending = Dict.insert (addrKey a) m.now m.pending }, [ c ] )
 
     else
         ( m, [] )
 
 
-line : Line -> Model -> Model
-line l m =
+line : String -> Line -> Model -> ( Model, List Effect )
+line raw l m =
     if isHalted m then
-        m
+        ( m, [] )
 
     else
-        lineIn l m
+        lineIn raw l m
 
 
 isHalted : Model -> Bool
@@ -408,62 +498,74 @@ isHalted m =
         Greeting ->
             False
 
-        Describing _ ->
+        Checking _ _ ->
+            False
+
+        Recalling _ _ ->
+            False
+
+        Describing _ _ _ ->
             False
 
         Following ->
             False
 
 
-lineIn : Line -> Model -> Model
-lineIn l m =
+lineIn : String -> Line -> Model -> ( Model, List Effect )
+lineIn raw l m =
     case l of
         Answer a ->
-            answer a m
+            ( answer raw a m, [] )
 
         Ok_ done ->
-            ok done m
+            ok done False m
+
+        OkMore done ->
+            ok (Just done) True m
 
         Err_ why ->
             case m.stage of
                 Following ->
                     -- Ignored: a `set`'s ERR looks the same. A refused `since` stays owed; the timeout re-asks, then settles it as lost.
-                    m
+                    ( m, [] )
 
                 Greeting ->
-                    if m.stage == Greeting && String.startsWith "unknown command" why then
-                        { m | stage = Halted UpdateUnit, asked = Nothing }
+                    if String.startsWith "unknown command" why then
+                        ( { m | stage = Halted UpdateUnit, asked = Nothing }, [] )
 
                     else
-                        { m | stage = Halted (Refused why), asked = Nothing }
+                        ( refused why m, [] )
 
-                Describing _ ->
-                    if m.stage == Greeting && String.startsWith "unknown command" why then
-                        { m | stage = Halted UpdateUnit, asked = Nothing }
+                Checking _ _ ->
+                    ( refused why m, [] )
 
-                    else
-                        { m | stage = Halted (Refused why), asked = Nothing }
+                Recalling _ _ ->
+                    ( refused why m, [] )
+
+                Describing _ _ _ ->
+                    ( refused why m, [] )
 
                 Halted _ ->
-                    if m.stage == Greeting && String.startsWith "unknown command" why then
-                        { m | stage = Halted UpdateUnit, asked = Nothing }
-
-                    else
-                        { m | stage = Halted (Refused why), asked = Nothing }
+                    ( m, [] )
 
         Queued ->
-            m
+            ( m, [] )
 
         -- Asking again gets the same: stop, and say so.
         SinceTooLarge ->
-            { m | stage = Halted TooLarge, asked = Nothing }
+            ( { m | stage = Halted TooLarge, asked = Nothing }, [] )
 
         Unknown ->
-            m
+            ( m, [] )
 
 
-answer : AnswerLine -> Model -> Model
-answer a m =
+refused : String -> Model -> Model
+refused why m =
+    { m | stage = Halted (Refused why), asked = Nothing }
+
+
+answer : String -> AnswerLine -> Model -> Model
+answer raw a m =
     case a of
         HelloIs h ->
             if h.protocol == supported then
@@ -486,30 +588,66 @@ answer a m =
                             )
                 }
 
+        SchemaIs r ->
+            case m.stage of
+                Checking s Nothing ->
+                    if r.schema == s then
+                        { m | stage = Checking s (Just { pages = r.pages, hash = r.hash }) }
+
+                    else
+                        m
+
+                Checking _ (Just _) ->
+                    m
+
+                Greeting ->
+                    m
+
+                Recalling _ _ ->
+                    m
+
+                Describing _ _ _ ->
+                    m
+
+                Following ->
+                    m
+
+                Halted _ ->
+                    m
+
         PartIs n name ->
             case Unit.engineFromName name of
                 Just e ->
+                    -- A new Part or engine: PART's section is whole.
                     { m
                         | part = Unit.partFromInt n
                         , engine = Just e
-                        , values = Dict.empty
-                        , variants = Dict.empty
-                        , pending = Dict.empty
+                        , schema = Dict.get (Unit.engineName e) m.held |> Maybe.map .schema |> Maybe.withDefault Schema.empty
+                        , values = Dict.filter (\k _ -> Schema.param (Protocol.Addr k) m.mixer /= Nothing) m.values
+                        , variants = Dict.filter (\k _ -> Schema.hasPanel k m.mixer) m.variants
+                        , pending = Dict.filter (\k _ -> Schema.param (Protocol.Addr k) m.mixer /= Nothing) m.pending
                         , source = Nothing
                     }
 
                 Nothing ->
                     { m | stage = Halted UpdateEditor }
 
+        MixerIs ->
+            -- MIXER's section whole: what was held for it goes.
+            { m
+                | values = Dict.filter (\k _ -> Schema.param (Protocol.Addr k) m.mixer == Nothing) m.values
+                , variants = Dict.filter (\k _ -> not (Schema.hasPanel k m.mixer)) m.variants
+            }
+
         Panel p ->
             if m.stage == Following then
                 { m | variants = Dict.insert p.name p.variant m.variants }
 
             else
-                { m | schema = Schema.add a m.schema }
+                describing raw a m
 
         Val v ->
-            if Schema.param v.addr m.schema == Nothing then
+            if not (isDescribed v.addr m) then
                 -- The unit says nothing of it in `describe`: not the editor's.
                 m
 
@@ -524,36 +662,97 @@ answer a m =
                 { m | source = Just text }
 
             else
-                { m | schema = Schema.add a m.schema }
+                describing raw a m
 
         Page _ ->
-            { m | schema = Schema.add a m.schema }
+            describing raw a m
 
         Param _ ->
-            { m | schema = Schema.add a m.schema }
+            describing raw a m
 
         Opt _ ->
-            { m | schema = Schema.add a m.schema }
+            describing raw a m
 
         Route _ ->
-            { m | schema = Schema.add a m.schema }
+            describing raw a m
 
 
-{-| `OK` ends the request in flight.
+{-| A line of `ed describe`'s answer: into the schema being read, and kept
+as the unit wrote it for the cache.
 -}
-ok : Maybe Int -> Model -> Model
-ok done m =
+describing : String -> AnswerLine -> Model -> Model
+describing raw a m =
+    case m.stage of
+        Describing _ _ _ ->
+            { m | building = Schema.add a m.building, described = raw :: m.described }
+
+        Greeting ->
+            m
+
+        Checking _ _ ->
+            m
+
+        Recalling _ _ ->
+            m
+
+        Following ->
+            m
+
+        Halted _ ->
+            m
+
+
+{-| `OK` ends the request in flight. `more`: a `since` answer owes sections,
+asked for on the next tick.
+-}
+ok : Maybe Int -> Bool -> Model -> ( Model, List Effect )
+ok done more m =
     case m.stage of
         Greeting ->
-            { m | stage = Describing 0, asked = Nothing, owed = 0 }
+            ( next { m | asked = Nothing, owed = 0 }, [] )
 
-        Describing n ->
+        Checking s (Just r) ->
             let
-                more : Bool
-                more =
-                    Schema.pageCount m.schema |> Maybe.map (\c -> n + 1 < c) |> Maybe.withDefault False
+                m1 : Model
+                m1 =
+                    { m | asked = Nothing, owed = 0 }
             in
-            { m | stage = nextPage n more, asked = Nothing, owed = 0 }
+            case Dict.get (schemaToken s) m.held of
+                Just h ->
+                    if h.hash == r.hash then
+                        ( next (install s h m1), [] )
+
+                    else
+                        ( { m1 | stage = Recalling s r }, [ Recall (cacheKey s r.hash) ] )
+
+                Nothing ->
+                    ( { m1 | stage = Recalling s r }, [ Recall (cacheKey s r.hash) ] )
+
+        -- An `OK` with no `schema` line: not the unit this editor speaks to.
+        Checking _ Nothing ->
+            ( { m | stage = Halted UpdateEditor, asked = Nothing }, [] )
+
+        Recalling _ _ ->
+            ( m, [] )
+
+        Describing s r n ->
+            let
+                m1 : Model
+                m1 =
+                    { m | asked = Nothing, owed = 0 }
+            in
+            if n + 1 < r.pages then
+                ( { m1 | stage = Describing s r (n + 1) }, [] )
+
+            else
+                let
+                    h : Held
+                    h =
+                        { hash = r.hash, schema = m.building }
+                in
+                ( next (install s h { m1 | building = Schema.empty, described = [] })
+                , [ Keep (cacheKey s r.hash) (List.reverse m.described) ]
+                )
 
         Following ->
             case done |> Maybe.andThen Unit.genFromInt of
@@ -562,30 +761,155 @@ ok done m =
                         owed : Int
                         owed =
                             max 0 (m.owed - 1)
-                    in
-                    { m
-                        | gen = Just g
-                        , owed = owed
-                        , leftover = owed > 0
-                        , asked =
-                            if owed > 0 then
-                                Just m.now
 
-                            else
-                                Nothing
-                    }
+                        m1 : Model
+                        m1 =
+                            { m
+                                | gen = Just g
+                                , owed = owed
+                                , leftover = owed > 0
+                                , asked =
+                                    if owed > 0 then
+                                        Just m.now
+
+                                    else
+                                        Nothing
+                            }
+                    in
+                    -- An engine the editor hasn't read: read it once nothing is owed.
+                    if owed == 0 && not more then
+                        ( next m1, [] )
+
+                    else
+                        ( m1, [] )
 
                 Nothing ->
-                    m
+                    ( m, [] )
+
+        Halted _ ->
+            ( m, [] )
+
+
+{-| The cache's answer for the schema being recalled: its lines read as
+`describe`'s, if they make the pages the unit said; else describe it.
+-}
+recalled : { key : String, lines : Maybe (List String) } -> Model -> Model
+recalled r m =
+    case m.stage of
+        Recalling s reply ->
+            if r.key /= cacheKey s reply.hash then
+                m
+
+            else
+                let
+                    cached : Maybe Schema
+                    cached =
+                        r.lines
+                            |> Maybe.map (List.foldl (\l acc -> read l acc) Schema.empty)
+                            |> Maybe.andThen
+                                (\sch ->
+                                    if Schema.pageCount sch == Just reply.pages && List.length (Schema.pages sch) == reply.pages then
+                                        Just sch
+
+                                    else
+                                        Nothing
+                                )
+                in
+                case cached of
+                    Just sch ->
+                        next (install s { hash = reply.hash, schema = sch } m)
+
+                    Nothing ->
+                        { m | stage = Describing s reply 0, building = Schema.empty, described = [] }
+
+        Greeting ->
+            m
+
+        Checking _ _ ->
+            m
+
+        Describing _ _ _ ->
+            m
+
+        Following ->
+            m
 
         Halted _ ->
             m
 
 
-nextPage : Int -> Bool -> Stage
-nextPage n more =
-    if more then
-        Describing (n + 1)
+{-| One cached line into a schema, as `describe`'s answer is read.
+-}
+read : String -> Schema -> Schema
+read raw sch =
+    case parse raw of
+        Answer a ->
+            Schema.add a sch
 
-    else
-        Following
+        Ok_ _ ->
+            sch
+
+        OkMore _ ->
+            sch
+
+        Queued ->
+            sch
+
+        Err_ _ ->
+            sch
+
+        SinceTooLarge ->
+            sch
+
+        Unknown ->
+            sch
+
+
+{-| A schema read: held for this connection, and shown where it belongs.
+-}
+install : SchemaId -> Held -> Model -> Model
+install s h m =
+    let
+        m1 : Model
+        m1 =
+            { m | held = Dict.insert (schemaToken s) h m.held }
+    in
+    case s of
+        MixerSchema ->
+            { m1 | mixer = h.schema }
+
+        EngineSchema e ->
+            if m.engine == Just e then
+                { m1 | schema = h.schema }
+
+            else
+                m1
+
+
+{-| What to read next: the followed engine's schema, then the mixer's, each
+once a connection; then following.
+-}
+next : Model -> Model
+next m =
+    let
+        lacks : SchemaId -> Bool
+        lacks s =
+            not (Dict.member (schemaToken s) m.held)
+
+        go : Stage -> Model
+        go st =
+            { m | stage = st }
+    in
+    case m.engine of
+        Just e ->
+            if lacks (EngineSchema e) then
+                go (Checking (EngineSchema e) Nothing)
+
+            else if lacks MixerSchema then
+                go (Checking MixerSchema Nothing)
+
+            else
+                go Following
+
+        Nothing ->
+            go (Halted UpdateEditor)

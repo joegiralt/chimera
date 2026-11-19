@@ -770,6 +770,12 @@ impl Location {
         Location(Loc::Part(p, m))
     }
 
+    /// A shared FX page of the mixer, entered from Part `p`'s: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fx(p: PartId, at: PageAt) -> Location {
+        Location(Loc::Fx(p, at))
+    }
+
     pub fn sound(p: PartId) -> Location {
         Self::sound_at(p, Browse::default())
     }

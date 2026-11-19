@@ -8,8 +8,9 @@ use common::console_fake::{Fake, ask};
 use std::collections::BTreeSet;
 
 use chimera_core::console::{
-    ED_PANELS, ED_SLOTS, EdAddr, EdBlock, MODELS, PadBlock, SoundBlock, ed_pages, ed_panels_used,
-    ed_slots_used, filter_variant, machine_variant, modal_variant, tape_variant,
+    BusBlock, ED_PANELS, ED_SLOTS, EdAddr, EdBlock, GlobalBlock, MODELS, OrbitBlock, PadBlock,
+    PartBlock, Round, Schema, SoundBlock, ed_pages, ed_panels_used, ed_slots_used, filter_variant,
+    machine_variant, modal_variant, tape_variant,
 };
 use chimera_core::project::PartId;
 use chimera_core::ui::block_def::slot_addr;
@@ -21,6 +22,7 @@ use chimera_engine::dsp::drum::types::{Machine, PadId};
 use chimera_engine::dsp::filter::FilterKind;
 use chimera_engine::dsp::tape_engine::params::TapeMachine;
 use chimera_engine::dsp::voice_fx::params::FxType;
+use chimera_engine::midi_map::Mappable;
 use chimera_engine::params::EngineType;
 
 const P1: PartId = PartId::ALL[0];
@@ -116,24 +118,57 @@ const OTHERS: [EngineType; 4] = [
 
 // ---- addresses ----
 
-/// Every block an address can name.
-fn all_blocks() -> Vec<EdBlock> {
-    let mut v: Vec<EdBlock> = BlockRef::ALL
-        .into_iter()
-        .chain([BlockRef::Kit])
-        .filter_map(SoundBlock::new)
-        .map(EdBlock::Sound)
-        .collect();
-    for p in PadId::ALL {
-        v.extend(PadBlock::ALL.map(|b| EdBlock::Pad(p, b)));
+/// The block a box's block is, named by its own token: `None` for the
+/// active Part's (`PART`, reserved), the mirror and a pad's.
+fn named(b: BlockRef) -> Option<EdBlock> {
+    if let Some(s) = SoundBlock::new(b) {
+        return Some(EdBlock::Sound(s));
     }
+    Some(match b {
+        BlockRef::Chorus => EdBlock::Bus(BusBlock::Chorus),
+        BlockRef::Delay => EdBlock::Bus(BusBlock::Delay),
+        BlockRef::Reverb => EdBlock::Bus(BusBlock::Reverb),
+        BlockRef::Tape => EdBlock::Bus(BusBlock::Tape),
+        BlockRef::Comp => EdBlock::Bus(BusBlock::Comp),
+        BlockRef::Theme => EdBlock::Global(GlobalBlock::Theme),
+        BlockRef::Midi => EdBlock::Global(GlobalBlock::Midi),
+        BlockRef::Random => EdBlock::Global(GlobalBlock::Random),
+        BlockRef::OrbitChords => EdBlock::Orbit(OrbitBlock::Chords),
+        BlockRef::OrbitRing(r) => EdBlock::Orbit(OrbitBlock::Ring(r)),
+        BlockRef::Tempo => EdBlock::Orbit(OrbitBlock::Tempo),
+        _ => return None,
+    })
+}
+
+/// Every block an address can name, in the tokens fixture's order: the
+/// box's blocks (`PART`, the active Part's, a reserved token since
+/// protocol 3 and never reachable), the kit, each pad's, then protocol
+/// 4's: each Part's mix and sends, `RANDOM` and `TEMPO`.
+fn all_blocks() -> Vec<Option<EdBlock>> {
+    let mut v: Vec<Option<EdBlock>> = BlockRef::ALL.into_iter().map(named).collect();
+    v.push(Some(EdBlock::Sound(
+        SoundBlock::new(BlockRef::Kit).unwrap(),
+    )));
+    for p in PadId::ALL {
+        v.extend(PadBlock::ALL.map(|b| Some(EdBlock::Pad(p, b))));
+    }
+    for p in PartId::ALL {
+        v.extend(PartBlock::ALL.map(|b| Some(EdBlock::Part(p, b))));
+    }
+    v.push(named(BlockRef::Random));
+    v.push(named(BlockRef::Tempo));
     v
+}
+
+/// Every block an address names.
+fn blocks() -> Vec<EdBlock> {
+    all_blocks().into_iter().flatten().collect()
 }
 
 #[test]
 fn every_address_round_trips() {
     let mut n = 0;
-    for at in all_blocks() {
+    for at in blocks() {
         let mut i = 0;
         while let Some(id) = at.id_at(i) {
             i += 1;
@@ -152,7 +187,7 @@ fn every_address_round_trips() {
 
 #[test]
 fn idents_are_unique_in_every_block() {
-    for at in all_blocks() {
+    for at in blocks() {
         let mut seen = BTreeSet::new();
         let mut i = 0;
         while let Some(id) = at.id_at(i) {
@@ -183,14 +218,23 @@ fn bad_pad_and_kit_tokens_are_refused() {
     }
     // The kit's and a pad's block are never a Sound block.
     assert_eq!(SoundBlock::new(BlockRef::Pad), None);
-    assert!(SoundBlock::new(BlockRef::Chorus).is_some());
+    // Nor a bus, the active Part's or a mirror: those are their own.
+    for b in [
+        BlockRef::Chorus,
+        BlockRef::Part,
+        BlockRef::PartMix(PartId::ALL[2]),
+        BlockRef::Theme,
+        BlockRef::Tempo,
+    ] {
+        assert_eq!(SoundBlock::new(b), None, "{b:?}");
+    }
 }
 
 #[test]
 fn block_tokens_are_frozen() {
     let mut text = String::new();
     for at in all_blocks() {
-        text.push_str(&at.to_string());
+        text.push_str(&at.map_or("PART".to_string(), |b| b.to_string()));
         text.push('\n');
     }
     let path =
@@ -329,14 +373,24 @@ fn every_param_line_says_its_scale() {
     for e in EngineType::ALL {
         let mut f = Fake::new();
         for p in params(&page_texts(&mut f, e)) {
-            // param <addr> "<label>" <kind> <scale> <min> <max> <step> <default>
-            assert_eq!(p.len(), 9, "{p:?}");
+            // param <addr> "<label>" <kind> <scale> <min> <max> <step> <default> <flags>
+            assert_eq!(p.len(), 10, "{p:?}");
             let a = EdAddr::parse(p[1].as_bytes()).unwrap();
             let want = match a.param().spec().unwrap().scale {
                 Scale::Linear => "lin",
                 Scale::Octaves => "oct",
             };
             assert_eq!(p[4], want, "{p:?}");
+            // The flags are the box's own rules (ADR 0289).
+            let m = Mappable::new(a.param()).is_some();
+            let d = a.param().modulatable();
+            let flags = match (m, d) {
+                (true, true) => "md",
+                (true, false) => "m",
+                (false, true) => "d",
+                (false, false) => "-",
+            };
+            assert_eq!(p[9], flags, "{p:?}");
             assert!(
                 ["cont", "choice", "toggle"].contains(&p[3].as_str()),
                 "{p:?}"
@@ -402,7 +456,9 @@ fn check_box_cells(f: &mut Fake, e: EngineType, listed: &BTreeSet<String>) -> us
                         let Some(a) = slot_addr(def, i, &ctx) else {
                             continue;
                         };
-                        let ed = EdAddr::shown(a, p).unwrap().to_string();
+                        let ed = EdAddr::shown(a, p.map_or(Round::Shared, Round::Pad))
+                            .unwrap()
+                            .to_string();
                         assert!(listed.contains(&ed), "{e:?} {ed} on {}", def.short);
                         let want = f.ui.cell_text_for_test(i);
                         let (_, text) = get(f, &ed);
@@ -765,13 +821,19 @@ fn a_choice_is_set_by_its_number() {
 
 // ---- since ----
 
+/// `ed since <n>`'s PART section (the lines before any other section's
+/// header), its number and its bytes. It owes nothing.
 fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32, usize) {
     let got = ask(f, &format!("ed since {n}\n"));
     let mut lines: Vec<String> = got.lines().map(str::to_string).collect();
     let last = lines.pop().unwrap();
     let m = last.strip_prefix("OK ").unwrap().parse().unwrap();
     (
-        lines.into_iter().filter(|l| !l.is_empty()).collect(),
+        lines
+            .into_iter()
+            .filter(|l| !l.is_empty())
+            .take_while(|l| l != "mixer")
+            .collect(),
         m,
         got.len(),
     )
@@ -855,11 +917,11 @@ fn a_pad_edit_is_a_diff_and_choosing_a_pad_is_nothing() {
 #[test]
 fn the_copy_holds_every_engine() {
     for e in EngineType::ALL {
-        assert!(ed_slots_used(e) <= ED_SLOTS, "{e:?}");
+        assert!(ed_slots_used(Schema::Engine(e)) <= ED_SLOTS, "{e:?}");
         assert!(ed_panels_used(e) <= ED_PANELS, "{e:?}");
     }
     // DRUM, the most, sets both: nothing held for nothing.
-    assert_eq!(ed_slots_used(EngineType::Drum), ED_SLOTS);
+    assert_eq!(ed_slots_used(Schema::Engine(EngineType::Drum)), ED_SLOTS);
     assert_eq!(ed_panels_used(EngineType::Drum), ED_PANELS);
 }
 

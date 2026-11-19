@@ -9,23 +9,30 @@ use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::about_page::{DIRTY, HASH, VERSION};
 use chimera_engine::block::DiskCode;
-use chimera_engine::params::EngineType;
+use chimera_engine::fmt_buf::Fnv64;
+use lit::lit;
 
 mod addr;
 mod describe;
 mod edits;
+mod lit;
 mod pages;
+mod schema;
 mod since;
 mod value;
-pub use addr::{EdAddr, EdBlock, PadBlock, SoundBlock};
+pub use addr::{
+    BusBlock, EdAddr, EdBlock, GlobalBlock, OrbitBlock, PadBlock, PartBlock, SoundBlock,
+};
 pub use describe::{
     MODELS, chain, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
-    modal_variant, op_variant, pages, tape_variant,
+    modal_variant, op_variant, pages, reverb_variant, tape_variant,
 };
 pub use edits::{EdState, Pushed, SetRefusal};
+pub use pages::schema_pages;
+pub use schema::{Round, Schema};
 pub use since::{
-    EdSince, Gen, PANELS_MAX as ED_PANELS, SLOTS as ED_SLOTS, panels_used as ed_panels_used,
-    slots_used as ed_slots_used,
+    EdSince, Gen, MIXER_SLOTS as ED_MIXER_SLOTS, PANELS_MAX as ED_PANELS, SLOTS as ED_SLOTS,
+    panels_used as ed_panels_used, slots_used as ed_slots_used,
 };
 
 /// A choice's option by its number, `#<n>` (`opt`'s index): a name with a
@@ -63,9 +70,11 @@ impl Eq for EdValue {}
 pub enum EdArg {
     Hello,
     Describe {
-        engine: EngineType,
+        schema: Schema,
         page: u8,
     },
+    /// `ed schema <SCHEMA>`: its page count and hash.
+    Schema(Schema),
     Get(EdAddr),
     Set(EdAddr, EdValue),
     /// The editor's last answer's number; `None`: it holds nothing.
@@ -81,13 +90,6 @@ pub enum EdRefusal {
     Usage,
     /// `ed part` with no Part's number: `ERR ed part takes 1-6`.
     NoSuchPart,
-}
-
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.engine"))]
-fn engine(w: &[u8]) -> Option<EngineType> {
-    EngineType::ALL
-        .into_iter()
-        .find(|e| e.disk_ident().as_bytes().eq_ignore_ascii_case(w))
 }
 
 /// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
@@ -113,7 +115,7 @@ fn value(w: &[u8]) -> Option<EdValue> {
 }
 
 impl EdArg {
-    pub const USAGE: &'static str = "hello, describe, get, set, since or part";
+    pub const USAGE: &'static str = "hello, schema, describe, get, set, since or part";
 
     /// The command, or the refusal it gets. `Since`'s `None` is no
     /// failure: 0 is the editor holding nothing.
@@ -145,11 +147,13 @@ impl EdArg {
             let n = chimera_theory::tuning::uint(words.next()?)?;
             EdArg::Since(Gen::new(n))
         } else if is(b"describe") {
-            let engine = engine(words.next()?)?;
+            let schema = Schema::parse(words.next()?)?;
             let page = chimera_theory::tuning::uint(words.next()?)?
                 .try_into()
                 .ok()?;
-            EdArg::Describe { engine, page }
+            EdArg::Describe { schema, page }
+        } else if is(SCHEMA.get().trim_end().as_bytes()) {
+            EdArg::Schema(Schema::parse(words.next()?)?)
         } else if is(b"get") {
             EdArg::Get(EdAddr::parse(words.next()?)?)
         } else if is(b"set") {
@@ -179,15 +183,29 @@ pub(crate) fn answer_in(
             PartId::LAST.number()
         ),
         Ok(EdArg::Hello) => hello(ui, w).and_then(|()| w.write_str("OK\n")),
-        Ok(EdArg::Describe { engine, page }) => match describe::describe(engine, page, w) {
+        Ok(EdArg::Describe { schema, page }) => match describe::describe(schema, page, w) {
             Some(done) => done.and_then(|()| w.write_str("OK\n")),
             None => writeln!(
                 w,
                 "ERR ed describe {} has {} pages",
-                engine.disk_ident(),
-                pages(engine)
+                schema.token(),
+                schema_pages(schema)
             ),
         },
+        Ok(EdArg::Schema(s)) => {
+            let hash = match q {
+                Some(q) => q.hashes.of(s, || hash(s)),
+                None => hash(s),
+            };
+            w.write_str(SCHEMA.get())?;
+            w.write_str(s.token())?;
+            w.write_char(' ')?;
+            lit::uint(w, u32::from(schema_pages(s)))?;
+            w.write_char(' ')?;
+            hex16(hash, w)?;
+            w.write_char('\n')?;
+            w.write_str("OK\n")
+        }
         Ok(EdArg::Get(a)) => match value::get(a, ui, w) {
             Some(done) => done.and_then(|()| w.write_str("OK\n")),
             None => writeln!(w, "ERR ed get has no {} here", a),
@@ -205,6 +223,35 @@ pub(crate) fn answer_in(
             }
         },
     }
+}
+
+lit!(
+    /// `ed schema`'s word and its answer's head.
+    SCHEMA = "schema "
+);
+
+/// FNV-1a 64 of every byte `ed describe <s> 0..pages` writes, in order:
+/// equal hashes are the same text, so an editor's cached schema can't
+/// disagree with `describe`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.hash"))]
+fn hash(s: Schema) -> u64 {
+    let mut h = Fnv64::NEW;
+    // A hasher never refuses a write.
+    let _ = describe::describe_all(s, &mut h);
+    h.0
+}
+
+/// `h` as sixteen lowercase hex digits (core's `LowerHex` would be bank
+/// 1's to place).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.hex16"))]
+fn hex16(h: u64, w: &mut dyn Write) -> fmt::Result {
+    let mut i = 16;
+    while i > 0 {
+        i -= 1;
+        let d = ((h >> (i * 4)) & 0xF) as u8;
+        w.write_char(char::from(if d < 10 { b'0' + d } else { b'a' + d - 10 }))?;
+    }
+    Ok(())
 }
 
 /// `ed hello <protocol> <build> part <n> <engine>`: the build is `status`'s

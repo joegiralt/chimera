@@ -1,10 +1,13 @@
 //! `ed set <addr> <value>`: the value resolved here, bank 2's, queued for
 //! the shell's UI pass, which applies it as a knob turn (`UiState::edit_to`,
 //! ADR 0112's glide): never a snap, never a zipper. A pad's lands on that
-//! pad, whichever the box has selected (ADR 0285).
+//! pad, whichever the box has selected (ADR 0285); a Part's on that Part,
+//! whichever the box shows (ADR 0289).
 
 use core::fmt::{self, Write};
 
+use super::addr::EdBlock;
+use super::schema::Hashes;
 use super::value::{engine_of, find};
 use super::{EdAddr, EdValue, OptIndex};
 use crate::addr::BlockRead;
@@ -21,12 +24,47 @@ use chimera_engine::params::EngineType;
 /// handful; more than this is the host outrunning the pass.
 pub const CAP: usize = 16;
 
+/// What a set was taken for, so it lands there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Taken {
+    /// The followed Part's Sound (or kit, or a pad), on `engine`: a Part
+    /// that changed engine since drops it.
+    Sound { part: PartId, engine: EngineType },
+    /// Part `n`'s mix or sends, whichever Part the box shows.
+    Part(PartId),
+    /// A bus: the mixer's, the same from any Part.
+    Bus,
+}
+
+impl Taken {
+    /// What a set of `at` is taken for while following `part` on
+    /// `engine`; `None` for a block no set reaches yet.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.of"))]
+    fn of(at: EdBlock, part: PartId, engine: EngineType) -> Option<Taken> {
+        match at {
+            EdBlock::Sound(_) | EdBlock::Pad(..) => Some(Taken::Sound { part, engine }),
+            EdBlock::Part(n, _) => Some(Taken::Part(n)),
+            EdBlock::Bus(_) => Some(Taken::Bus),
+            EdBlock::Global(_) | EdBlock::Orbit(_) => None,
+        }
+    }
+
+    /// The Part it lands on now; `None`: it is dropped.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.lands"))]
+    fn lands(self, ui: &UiState) -> Option<PartId> {
+        match self {
+            Taken::Sound { part, engine } => {
+                (ui.project().part(part).sound.engine() == engine).then_some(part)
+            }
+            Taken::Part(n) => Some(n),
+            Taken::Bus => Some(ui.active_part),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Pending {
-    part: PartId,
-    /// The engine the set was taken for: a Part that changed engine since
-    /// drops it.
-    engine: EngineType,
+    taken: Taken,
     addr: EdAddr,
     to: To,
 }
@@ -34,8 +72,7 @@ struct Pending {
 impl Pending {
     /// A slot nothing is queued in (`len` says so).
     const SPARE: Pending = Pending {
-        part: PartId::ALL[0],
-        engine: EngineType::Algo,
+        taken: Taken::Bus,
         addr: EdAddr::SPARE,
         to: To::Num(0.0),
     };
@@ -76,6 +113,8 @@ pub struct EdState {
     part: Option<PartId>,
     /// `ed since`'s copy and number (`since.rs`).
     pub(super) since: super::EdSince,
+    /// `ed schema`'s hashes, made once a boot.
+    pub(super) hashes: Hashes,
 }
 
 impl EdState {
@@ -89,20 +128,16 @@ impl EdState {
             len: 0,
             part: None,
             since: super::EdSince::new(),
+            hashes: Hashes::new(),
         }
     }
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.push"))]
-    fn push(&mut self, part: PartId, engine: EngineType, addr: EdAddr, to: To) -> Pushed {
+    fn push(&mut self, taken: Taken, addr: EdAddr, to: To) -> Pushed {
         match self.items.get_mut(usize::from(self.len)) {
             None => Pushed::Full,
             Some(slot) => {
-                *slot = Pending {
-                    part,
-                    engine,
-                    addr,
-                    to,
-                };
+                *slot = Pending { taken, addr, to };
                 self.len += 1;
                 Pushed::Queued
             }
@@ -116,16 +151,16 @@ impl EdState {
     }
 
     /// Every queued set, oldest first, as a knob turn on the Part it was
-    /// taken for (a Part that has changed engine since drops its sets),
-    /// then the Part to follow: the sets were taken for theirs.
+    /// taken for (a Part that has changed engine since drops its Sound's
+    /// sets), then the Part to follow: the sets were taken for theirs.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.apply"))]
     pub fn apply(&mut self, ui: &mut UiState) {
         let mut i = 0;
         while i < usize::from(self.len) {
             if let Some(&p) = self.items.get(i)
-                && ui.project().part(p.part).sound.engine() == p.engine
+                && let Some(at) = p.taken.lands(ui)
             {
-                turn(ui, p);
+                turn(ui, at, p);
             }
             i += 1;
         }
@@ -141,35 +176,35 @@ impl EdState {
 /// it move, and the edit takes the knob's whole path (ADR 0280's CHOKE
 /// check with it).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.turn"))]
-fn turn(ui: &mut UiState, p: Pending) {
+fn turn(ui: &mut UiState, at: PartId, p: Pending) {
     let (a, pad) = (p.addr.param(), p.addr.pad());
-    if let Some(why) = refusal(ui, p) {
+    if let Some(why) = refusal(ui, at, p) {
         // To the value it has: no change, the hold kept, nothing said.
-        if !unchanged(ui, p) {
-            ed_cue::refused(ui, p.part, a, pad, why);
+        if !unchanged(ui, at, p) {
+            ed_cue::refused(ui, at, a, pad, why);
         }
         return;
     }
     let to = p.to.stored();
     match pad {
         None => {
-            ui.edit_to(p.part, a, to);
+            ui.edit_to(at, a, to);
         }
         Some(n) => {
-            let was = ui.project().selected_pad(p.part);
-            ui.project_mut().select_pad(p.part, n);
-            ui.edit_to(p.part, a, to);
-            ui.project_mut().select_pad(p.part, was);
+            let was = ui.project().selected_pad(at);
+            ui.project_mut().select_pad(at, n);
+            ui.edit_to(at, a, to);
+            ui.project_mut().select_pad(at, was);
         }
     }
-    ed_cue::landed(ui, p.part, a, pad);
+    ed_cue::landed(ui, at, a, pad);
 }
 
-/// `p` sets its Sound cell to the value stored there already.
+/// `p` sets its Sound cell on Part `at` to the value stored there already.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.unchanged"))]
-fn unchanged(ui: &UiState, p: Pending) -> bool {
+fn unchanged(ui: &UiState, at: PartId, p: Pending) -> bool {
     let a = p.addr.param();
-    let params = &ui.project().part(p.part).sound.params;
+    let params = &ui.project().part(at).sound.params;
     params
         .block(a.block)
         .is_some_and(|b| b.get(a.param) == p.to.stored())
@@ -181,14 +216,14 @@ fn unchanged(ui: &UiState, p: Pending) -> bool {
 /// budget (a CC's words). CHOKE refuses in `edit_in`, with its own toast
 /// (ADR 0280); `None`: the write goes ahead.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.refusal"))]
-fn refusal(ui: &UiState, p: Pending) -> Option<Line> {
+fn refusal(ui: &UiState, at: PartId, p: Pending) -> Option<Line> {
     // Each cell refused here is a choice: a number never reaches one.
     let To::Opt(i) = p.to else {
         return None;
     };
     let a = p.addr.param();
-    let sound = &ui.project().part(p.part).sound;
-    let src = ui.streams(p.part);
+    let sound = &ui.project().part(at).sound;
+    let src = ui.streams(at);
     if let Some(t) = held::TapeTurn::of(a, p.to.stored()) {
         return held::Pick::Tape(t).why(sound, src).map(held::reason);
     }
@@ -282,14 +317,15 @@ pub(super) fn set(
     let Some(q) = q else {
         return w.write_str("ERR ed set is not in this build\n");
     };
-    if !q.since.described(engine).has(addr) {
+    let taken = Taken::of(addr.at(), part, engine);
+    let Some(taken) = taken.filter(|_| q.since.lists(engine, addr)) else {
         return writeln!(w, "ERR ed set has no {addr} here");
-    }
+    };
     let to = match resolve(ui, addr, val) {
         Ok(to) => to,
         Err(why) => return writeln!(w, "ERR ed set {addr} {}", why.words()),
     };
-    match q.push(part, engine, addr, to) {
+    match q.push(taken, addr, to) {
         Pushed::Full => w.write_str("ERR busy\n"),
         Pushed::Queued => w.write_str("OK queued\n"),
     }

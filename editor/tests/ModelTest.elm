@@ -3,8 +3,8 @@ module ModelTest exposing (suite)
 import Dict
 import Expect
 import Fixture
-import Model exposing (Msg(..))
-import Protocol exposing (Addr(..), Command(..), OptIndex, Value(..))
+import Model exposing (Effect(..), Msg(..))
+import Protocol exposing (Addr(..), Command(..), OptIndex, SchemaId(..), Value(..))
 import Schema
 import Test exposing (Test, describe, test)
 import Time
@@ -22,9 +22,89 @@ feed ls m =
     List.foldl (\l -> Model.step (Line l) >> Tuple.first) m ls
 
 
+{-| The lines to the unit among a step's effects.
+-}
+sends : List Effect -> List Command
+sends =
+    List.filterMap
+        (\e ->
+            case e of
+                Send c ->
+                    Just c
+
+                Recall _ ->
+                    Nothing
+
+                Keep _ _ ->
+                    Nothing
+        )
+
+
+{-| A step, and the lines it sends.
+-}
+stepSends : Msg -> Model.Model -> ( Model.Model, List Command )
+stepSends msg =
+    Model.step msg >> Tuple.mapSecond sends
+
+
 tick : Int -> Model.Model -> ( Model.Model, List Command )
 tick ms =
-    Model.step (Tick (at ms))
+    stepSends (Tick (at ms))
+
+
+algoHash : String
+algoHash =
+    "00000000000000a1"
+
+
+mixerHash : String
+mixerHash =
+    "000000000000000b"
+
+
+{-| The cache had nothing for the schema being recalled.
+-}
+missed : SchemaId -> String -> Model.Model -> Model.Model
+missed s h m =
+    m |> Model.step (Recalled { key = key s h, lines = Nothing }) |> Tuple.first
+
+
+key : SchemaId -> String -> String
+key s h =
+    "4/" ++ Protocol.schemaToken s ++ "/" ++ h
+
+
+algoPage : List String
+algoPage =
+    [ "page 0 ALG of 1"
+    , "panel ALG -"
+    , "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000 md"
+    , "param ENV1.HOLD \"HOLD\" choice lin 0 2 1 0 -"
+    , "opt ENV1.HOLD 0 \"OFF\""
+    , "opt ENV1.HOLD 2 \"GATE EXT\""
+    ]
+
+
+mixerPage : List String
+mixerPage =
+    [ "page 0 REV of 1"
+    , "panel REV -"
+    , "param PART3.LEVEL \"LEVEL\" cont lin 0 1 0.0078125 0.75 m"
+    , "panel REVERB HALL"
+    , "param REVERB.SIZE \"SIZE\" cont lin 0 1 0.0078125 0.5 m"
+    ]
+
+
+{-| Said hello: about to ask for the followed engine's schema.
+-}
+greeted : Model.Model
+greeted =
+    Model.init
+        |> Model.step (LinkChanged Open)
+        |> Tuple.first
+        |> tick 0
+        |> Tuple.first
+        |> feed [ "ed hello 4 0.3.0-dev part 1 ALGO", "OK" ]
 
 
 gen : Int -> Maybe Unit.Gen
@@ -37,27 +117,26 @@ cutoff =
     Addr "FILTER.CUTOFF"
 
 
-{-| A connected editor that has said hello and read a one-page schema: following, nothing asked yet.
+{-| A connected editor that has said hello and read a one-page ALGO schema and
+a one-page MIXER schema, neither cached: following, nothing asked yet.
 -}
 following : Model.Model
 following =
-    Model.init
-        |> Model.step (LinkChanged Open)
-        |> Tuple.first
-        |> tick 0
-        |> Tuple.first
-        |> feed [ "ed hello 3 0.3.0-dev part 1 ALGO", "OK" ]
+    greeted
         |> tick 33
         |> Tuple.first
-        |> feed
-            [ "page 0 ALG of 1"
-            , "panel ALG -"
-            , "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000"
-            , "param ENV1.HOLD \"HOLD\" choice lin 0 2 1 0"
-            , "opt ENV1.HOLD 0 \"OFF\""
-            , "opt ENV1.HOLD 2 \"GATE EXT\""
-            , "OK"
-            ]
+        |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+        |> missed (EngineSchema Algo) algoHash
+        |> tick 66
+        |> Tuple.first
+        |> feed (algoPage ++ [ "OK" ])
+        |> tick 99
+        |> Tuple.first
+        |> feed [ "schema MIXER 1 " ++ mixerHash, "OK" ]
+        |> missed MixerSchema mixerHash
+        |> tick 132
+        |> Tuple.first
+        |> feed (mixerPage ++ [ "OK" ])
 
 
 cutoffLine : String -> String
@@ -81,7 +160,7 @@ shown m =
 pick : Addr -> Int -> Model.Model -> List Command
 pick a n m =
     Protocol.optIndex n
-        |> Maybe.map (\i -> Model.step (Pick a i) m |> Tuple.second)
+        |> Maybe.map (\i -> stepSends (Pick a i) m |> Tuple.second)
         |> Maybe.withDefault []
 
 
@@ -131,7 +210,7 @@ suite =
                                                                 sent : List Command
                                                                 sent =
                                                                     { following | schema = Fixture.schema, variants = Dict.fromList [ ( pn.name, pn.variant ) ] }
-                                                                        |> Model.step (Pick p.addr i)
+                                                                        |> stepSends (Pick p.addr i)
                                                                         |> Tuple.second
                                                             in
                                                             if name /= "" && sent == [ Set p.addr (Index i) ] then
@@ -187,18 +266,18 @@ suite =
         , test "describe_walks_every_page_before_following" <|
             \_ ->
                 let
-                    ( m, _ ) =
-                        Model.init |> Model.step (LinkChanged Open) |> Tuple.first |> tick 0
-
                     ( _, c ) =
-                        m
-                            |> feed [ "ed hello 3 b part 1 ALGO", "OK" ]
+                        greeted
                             |> tick 33
                             |> Tuple.first
-                            |> feed [ "page 0 A of 2", "panel A -", "OK" ]
+                            |> feed [ "schema ALGO 2 " ++ algoHash, "OK" ]
+                            |> missed (EngineSchema Algo) algoHash
                             |> tick 66
+                            |> Tuple.first
+                            |> feed [ "page 0 A of 2", "panel A -", "OK" ]
+                            |> tick 99
                 in
-                Expect.equal [ Describe Algo 1 ] c
+                Expect.equal [ Describe (EngineSchema Algo) 1 ] c
         , test "shows_only_the_units_value" <|
             \_ ->
                 let
@@ -220,7 +299,7 @@ suite =
         , test "an_edit_sends_set" <|
             \_ ->
                 Expect.equal [ Set cutoff (Num 5000) ]
-                    (following |> Model.step (Edit cutoff (Num 5000)) |> Tuple.second)
+                    (following |> stepSends (Edit cutoff (Num 5000)) |> Tuple.second)
         , test "pending_clears_on_report" <|
             \_ ->
                 let
@@ -314,7 +393,7 @@ suite =
                             |> Tuple.first
                             |> tick 1000
                             |> Tuple.first
-                            |> feed [ "ed hello 3 b part 1 ALGO", "OK" ]
+                            |> feed [ "ed hello 4 b part 1 ALGO", "OK" ]
                 in
                 Expect.all
                     [ \x -> Expect.equal (Just "THE UNIT STOPPED ANSWERING") (Model.notice x)
@@ -332,17 +411,21 @@ suite =
                             |> Tuple.first
                             |> tick 0
                             |> Tuple.first
-                            |> feed [ "ed hello 3 b part 1 ALGO", "OK" ]
+                            |> feed [ "ed hello 4 b part 1 ALGO", "OK" ]
                             |> tick 33
                             |> Tuple.first
+                            |> feed [ "schema ALGO 2 " ++ algoHash, "OK" ]
+                            |> missed (EngineSchema Algo) algoHash
+                            |> tick 66
+                            |> Tuple.first
                             |> feed [ "page 0 A of 2", "panel A -" ]
-                            |> tick 1033
+                            |> tick 1066
                             |> Tuple.first
                             |> feed [ "OK" ]
                 in
                 Expect.all
                     [ \x -> Expect.equal (Just "THE UNIT STOPPED ANSWERING") (Model.notice x)
-                    , \x -> Expect.equal [] (tick 1066 x |> Tuple.second)
+                    , \x -> Expect.equal [] (tick 1099 x |> Tuple.second)
                     ]
                     m
         , test "a_since_timeout_re_asks_once_and_no_third_goes_out_until_the_re_asks_answer" <|
@@ -482,7 +565,7 @@ suite =
         , test "no_edit_on_a_part_that_is_not_algo" <|
             \_ ->
                 Expect.equal []
-                    (following |> feed [ "part 2 VA", "OK 1" ] |> Model.step (Edit cutoff (Num 1)) |> Tuple.second)
+                    (following |> feed [ "part 2 VA", "OK 1" ] |> stepSends (Edit cutoff (Num 1)) |> Tuple.second)
         , test "a_choice_is_sent_by_its_number" <|
             \_ ->
                 Expect.equal [ Set (Addr "ENV1.HOLD") (idx 0) ]
@@ -493,7 +576,7 @@ suite =
                 let
                     ( m, c ) =
                         Protocol.optIndex 2
-                            |> Maybe.map (\i -> following |> Model.step (Pick (Addr "ENV1.HOLD") i))
+                            |> Maybe.map (\i -> following |> stepSends (Pick (Addr "ENV1.HOLD") i))
                             |> Maybe.withDefault ( following, [] )
                 in
                 Expect.equal ( [ Set (Addr "ENV1.HOLD") (idx 2) ], True ) ( c, Model.isPending (Addr "ENV1.HOLD") m )
@@ -537,7 +620,7 @@ suite =
                     , \x -> Expect.equal [] (tick 33 x |> Tuple.second)
                     , \x -> Expect.equal [] (tick 5000 x |> Tuple.second)
                     ]
-                    (feed [ "ed hello 4 x part 1 ALGO", "OK" ] m)
+                    (feed [ "ed hello 5 x part 1 ALGO", "OK" ] m)
         , test "unit_older_than_the_editor_says_update_the_unit_and_stops" <|
             \_ ->
                 let
@@ -548,7 +631,7 @@ suite =
                     [ \x -> Expect.equal (Just "UPDATE THE UNIT") (Model.notice x)
                     , \x -> Expect.equal [] (tick 33 x |> Tuple.second)
                     ]
-                    (feed [ "ed hello 2 x part 1 ALGO", "OK" ] m)
+                    (feed [ "ed hello 3 x part 1 ALGO", "OK" ] m)
         , test "a_refusal_while_connecting_stops_with_its_text" <|
             \_ ->
                 let
@@ -585,7 +668,7 @@ suite =
                     Just p2 ->
                         let
                             ( m, cs ) =
-                                following |> Model.step (FollowPart p2)
+                                following |> stepSends (FollowPart p2)
                         in
                         Expect.all
                             [ \_ -> Expect.equal [ Follow p2 ] cs
@@ -604,10 +687,150 @@ suite =
                         Model.init
                             |> Model.step (LinkChanged Open)
                             |> Tuple.first
-                            |> Model.step (FollowPart p2)
+                            |> stepSends (FollowPart p2)
                             |> Tuple.second
                             |> Expect.equal []
 
                     Nothing ->
                         Expect.fail "no Part 2"
+        , test "the_connect_walk_asks_each_schema_and_keeps_what_it_described" <|
+            \_ ->
+                let
+                    ( m1, c1 ) =
+                        greeted |> tick 33
+
+                    ( m2, e2 ) =
+                        m1 |> feed [ "schema ALGO 1 " ++ algoHash ] |> Model.step (Line "OK")
+
+                    ( m3, e3 ) =
+                        m2 |> missed (EngineSchema Algo) algoHash |> tick 66 |> Tuple.first |> feed algoPage |> Model.step (Line "OK")
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ AskSchema (EngineSchema Algo) ] c1
+                    , \_ -> Expect.equal [ Recall (key (EngineSchema Algo) algoHash) ] e2
+                    , \_ -> Expect.equal [ Keep (key (EngineSchema Algo) algoHash) algoPage ] e3
+                    , \_ -> Expect.equal [ AskSchema MixerSchema ] (tick 99 m3 |> Tuple.second)
+                    ]
+                    ()
+        , test "a_cached_schema_is_used_without_describing_it" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        greeted
+                            |> tick 33
+                            |> Tuple.first
+                            |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+                            |> Model.step (Recalled { key = key (EngineSchema Algo) algoHash, lines = Just algoPage })
+                            |> Tuple.first
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just "CUTOFF") (Schema.param cutoff m.schema |> Maybe.map .label)
+                    , \_ -> Expect.equal [ AskSchema MixerSchema ] (tick 66 m |> Tuple.second)
+                    ]
+                    ()
+        , test "a_cached_copy_that_isnt_the_pages_the_unit_said_is_described_again" <|
+            \_ ->
+                greeted
+                    |> tick 33
+                    |> Tuple.first
+                    |> feed [ "schema ALGO 2 " ++ algoHash, "OK" ]
+                    |> Model.step (Recalled { key = key (EngineSchema Algo) algoHash, lines = Just algoPage })
+                    |> Tuple.first
+                    |> tick 66
+                    |> Tuple.second
+                    |> Expect.equal [ Describe (EngineSchema Algo) 0 ]
+        , test "a_recall_for_another_key_is_ignored" <|
+            \_ ->
+                greeted
+                    |> tick 33
+                    |> Tuple.first
+                    |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+                    |> Model.step (Recalled { key = key (EngineSchema Algo) "ffffffffffffffff", lines = Nothing })
+                    |> Tuple.first
+                    |> tick 66
+                    |> Tuple.second
+                    |> Expect.equal []
+        , test "an_ok_with_no_schema_line_says_update_the_editor" <|
+            \_ ->
+                greeted
+                    |> tick 33
+                    |> Tuple.first
+                    |> feed [ "OK" ]
+                    |> Model.notice
+                    |> Expect.equal (Just "UPDATE THE EDITOR")
+        , test "a_new_engine_is_read_once_the_since_answer_ends" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following |> tick 165 |> Tuple.first |> feed [ "part 2 VA", "OK 3" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ AskSchema (EngineSchema Va) ] (tick 198 m |> Tuple.second)
+                    , \_ -> Expect.equal (gen 3) m.gen
+                    , -- An engine already read is used again with no ask.
+                      \_ ->
+                        m
+                            |> tick 198
+                            |> Tuple.first
+                            |> feed [ "schema VA 1 00000000000000c3", "OK" ]
+                            |> missed (EngineSchema Va) "00000000000000c3"
+                            |> tick 231
+                            |> Tuple.first
+                            |> feed [ "page 0 OSC of 1", "panel OSC -", "OK" ]
+                            |> tick 264
+                            |> Tuple.first
+                            |> feed [ "part 1 ALGO", "OK 4" ]
+                            |> tick 297
+                            |> Tuple.second
+                            |> Expect.equal [ Since (gen 4) ]
+                    ]
+                    ()
+        , test "ok_more_asks_again_at_once_with_its_number" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following |> tick 165 |> Tuple.first |> feed [ "part 1 ALGO", cutoffLine "1000", "OK 7 more" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (gen 7) m.gen
+                    , \_ -> Expect.equal [ Since (gen 7) ] (tick 198 m |> Tuple.second)
+                    , \_ -> Expect.equal (Just "1000 Hz") (shown m)
+                    ]
+                    ()
+        , test "the_mixers_values_are_kept_and_its_header_drops_only_its_own" <|
+            \_ ->
+                let
+                    level : Addr
+                    level =
+                        Addr "PART3.LEVEL"
+
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed [ "part 1 ALGO", cutoffLine "1000", "mixer", "panel REVERB HALL", "val PART3.LEVEL 0.5 0.5 \"64\"", "OK 2" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just "64") (Model.shown level m |> Maybe.map .text)
+                    , \_ -> Expect.equal (Just "HALL") (Dict.get "REVERB" m.variants)
+                    , -- A new Part: PART's whole, the mixer's kept.
+                      \_ ->
+                        feed [ "part 2 ALGO", "OK 3" ] m
+                            |> (\x -> ( Model.shown level x |> Maybe.map .text, shown x, Dict.get "REVERB" x.variants ))
+                            |> Expect.equal ( Just "64", Nothing, Just "HALL" )
+                    , -- The mixer whole: the Part's kept, the mixer's dropped.
+                      \_ ->
+                        feed [ "mixer", "panel REVERB QUAD", "OK 3" ] m
+                            |> (\x -> ( Model.shown level x, shown x, Dict.get "REVERB" x.variants ))
+                            |> Expect.equal ( Nothing, Just "1000 Hz", Just "QUAD" )
+                    ]
+                    ()
+        , test "a_mixer_address_is_edited_like_any_other" <|
+            \_ ->
+                following
+                    |> stepSends (Edit (Addr "PART3.LEVEL") (Num 0.25))
+                    |> Tuple.second
+                    |> Expect.equal [ Set (Addr "PART3.LEVEL") (Num 0.25) ]
         ]

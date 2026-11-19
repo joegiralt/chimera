@@ -18,6 +18,9 @@ schema =
                 Ok_ _ ->
                     s
 
+                OkMore _ ->
+                    s
+
                 Queued ->
                     s
 

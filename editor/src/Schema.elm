@@ -5,6 +5,7 @@ module Schema exposing
     , Schema
     , add
     , empty
+    , hasPanel
     , optionName
     , pageCount
     , pages
@@ -17,7 +18,7 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 -}
 
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine, Kind, OptIndex, Scale, addrKey)
+import Protocol exposing (Addr, AnswerLine, Flags, Kind, OptIndex, Scale, addrKey)
 
 
 type alias Param =
@@ -29,6 +30,7 @@ type alias Param =
     , max : Float
     , step : Float
     , default : Float
+    , flags : Flags
     , options : List ( OptIndex, String )
     }
 
@@ -76,6 +78,13 @@ pages (Schema s) =
 param : Addr -> Schema -> Maybe Param
 param a (Schema s) =
     Dict.get (addrKey a) s.index
+
+
+{-| Some page of it lists a panel of that name (`REVERB`, `FILTER`).
+-}
+hasPanel : String -> Schema -> Bool
+hasPanel name (Schema s) =
+    List.any (\pg -> List.any (\pn -> pn.name == name) pg.panels) s.pages
 
 
 {-| The parameter as the panels now showing describe it. One address can be
@@ -147,7 +156,7 @@ add line (Schema s) =
             let
                 q : Param
                 q =
-                    { addr = p.addr, label = p.label, kind = p.kind, scale = p.scale, min = p.min, max = p.max, step = p.step, default = p.default, options = [] }
+                    { addr = p.addr, label = p.label, kind = p.kind, scale = p.scale, min = p.min, max = p.max, step = p.step, default = p.default, flags = p.flags, options = [] }
             in
             Schema
                 { s
@@ -185,6 +194,12 @@ add line (Schema s) =
             Schema s
 
         Protocol.PartIs _ _ ->
+            Schema s
+
+        Protocol.SchemaIs _ ->
+            Schema s
+
+        Protocol.MixerIs ->
             Schema s
 
 

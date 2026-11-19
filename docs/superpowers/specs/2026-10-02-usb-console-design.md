@@ -69,7 +69,7 @@ A text body is lines of `<key> <value>`: a lowercase key, one space, then the va
 **`help`**
 
 ```
-chimera console 3
+chimera console 4
 help    this list
 status  firmware, project, Part and where the UI is
 stats   AUDIO LOAD and the UI loop's time

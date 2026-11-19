@@ -1,0 +1,477 @@
+page 0 CHR of 33
+panel CHR -
+param CHORUS.MODE "TYPE" choice lin 0 5 1 1 -
+opt CHORUS.MODE 0 "OFF"
+opt CHORUS.MODE 1 "I"
+opt CHORUS.MODE 2 "II"
+opt CHORUS.MODE 3 "I+II"
+opt CHORUS.MODE 4 "FLANGER"
+opt CHORUS.MODE 5 "PHASER"
+param CHORUS.RATE "RATE" cont lin 0 1 0.0078125 0.5 m
+param CHORUS.DEPTH "DEPTH" cont lin 0 1 0.0078125 0.5 m
+param CHORUS.MIX "MIX" cont lin 0 1 0.0078125 1 m
+OK
+page 1 DLY of 33
+panel DLY -
+param DELAY.TYPE "TYPE" choice lin 0 1 1 0 -
+opt DELAY.TYPE 0 "TAPE"
+opt DELAY.TYPE 1 "GRAIN"
+param DELAY.TIME "TIME" cont lin 10 500 8 375 m
+param DELAY.FDBK "FDBK" cont lin 0 1 0.0078125 0.4 m
+param DELAY.TONE "TONE" cont lin 0 1 0.0078125 0.6 m
+param DELAY.REV "REV" cont lin 0 1 0.0078125 0 m
+param DELAY.MIX "MIX" cont lin 0 1 0.0078125 1 m
+OK
+page 2 CHAR of 33
+panel CHAR -
+param DELAY.WOW "MECHANICS" cont lin 0 1 0.0078125 0.15 m
+param DELAY.SAT "SAT" cont lin 0 1 0.0078125 0.2 m
+OK
+page 3 GRAIN of 33
+panel GRAIN -
+param DELAY.SIZE "SIZE" cont lin 0 1 0.0078125 0.6 m
+param DELAY.DENSITY "DENSITY" cont lin 0 1 0.0078125 0.6 m
+param DELAY.PITCH "PITCH" cont lin -24 24 1 0 m
+param DELAY.TEXTURE "TEXTURE" cont lin 0 1 0.0078125 0.2 m
+OK
+page 4 REV of 33
+panel REV -
+param REVERB.TYPE "TYPE" choice lin 0 5 1 0 -
+opt REVERB.TYPE 0 "QUAD"
+opt REVERB.TYPE 1 "ROOM"
+opt REVERB.TYPE 2 "HALL"
+opt REVERB.TYPE 3 "BLOOM"
+opt REVERB.TYPE 4 "GATE"
+opt REVERB.TYPE 5 "REVERSE"
+param REVERB.MIX "MIX" cont lin 0 1 0.0078125 1 m
+panel REVERB QUAD
+param REVERB.SIZE "SIZE" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TIME "TIME" cont lin 0 1 0.0078125 0.5 m
+param REVERB.DAMP "DAMP" cont lin 0 1 0.0078125 0.3 m
+param REVERB.SMEAR "SMEAR" cont lin 0 1 0.0078125 0 m
+panel REVERB ROOM
+param REVERB.SIZE "SIZE" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TIME "DECAY" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TONE "TONE" cont lin 0 1 0.0078125 0.3 m
+param REVERB.DIFFUSE "DIFFUSE" cont lin 0 1 0.0078125 0.4 m
+panel REVERB HALL
+param REVERB.SIZE "SIZE" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TIME "DECAY" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TONE "TONE" cont lin 0 1 0.0078125 0.3 m
+param REVERB.DIFFUSE "DIFFUSE" cont lin 0 1 0.0078125 0.4 m
+panel REVERB BLOOM
+param REVERB.SIZE "SWELL" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TIME "DECAY" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TONE "TONE" cont lin 0 1 0.0078125 0.3 m
+param REVERB.DIFFUSE "DIFFUSE" cont lin 0 1 0.0078125 0.4 m
+panel REVERB GATE
+param REVERB.SIZE "LENGTH" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TIME "TAIL" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TONE "TONE" cont lin 0 1 0.0078125 0.3 m
+param REVERB.DIFFUSE "DENSITY" cont lin 0 1 0.0078125 0.4 m
+panel REVERB REVERSE
+param REVERB.SIZE "LENGTH" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TIME "REGEN" cont lin 0 1 0.0078125 0.5 m
+param REVERB.TONE "TONE" cont lin 0 1 0.0078125 0.3 m
+param REVERB.DIFFUSE "DENSITY" cont lin 0 1 0.0078125 0.4 m
+OK
+page 5 MORE of 33
+panel REVERB QUAD
+param REVERB.RATE "RATE" cont lin 0 1 0.0078125 0.75 m
+panel REVERB ROOM
+param REVERB.PREDELAY "PRE-DLY" cont lin 0 1 0.0078125 0 m
+param REVERB.DAMP "DAMP" cont lin 0 1 0.0078125 0.3 m
+param REVERB.SMEAR "SMEAR" cont lin 0 1 0.0078125 0 m
+param REVERB.RATE "RATE" cont lin 0 1 0.0078125 0.75 m
+param REVERB.SYNC "SYNC" choice lin 0 2 1 0 -
+opt REVERB.SYNC 0 "OFF"
+opt REVERB.SYNC 1 "TIME"
+opt REVERB.SYNC 2 "ALL"
+param REVERB.SHAPE "LOOPS" cont lin 0 1 0.0078125 0.2 m
+panel REVERB HALL
+param REVERB.PREDELAY "PRE-DLY" cont lin 0 1 0.0078125 0 m
+param REVERB.DAMP "DAMP" cont lin 0 1 0.0078125 0.3 m
+param REVERB.SMEAR "SMEAR" cont lin 0 1 0.0078125 0 m
+param REVERB.RATE "RATE" cont lin 0 1 0.0078125 0.75 m
+param REVERB.SYNC "SYNC" choice lin 0 2 1 0 -
+opt REVERB.SYNC 0 "OFF"
+opt REVERB.SYNC 1 "TIME"
+opt REVERB.SYNC 2 "ALL"
+param REVERB.SHAPE "SPREAD" cont lin 0 1 0.0078125 0.2 m
+panel REVERB BLOOM
+param REVERB.PREDELAY "PRE-DLY" cont lin 0 1 0.0078125 0 m
+param REVERB.SMEAR "SMEAR" cont lin 0 1 0.0078125 0 m
+param REVERB.RATE "RATE" cont lin 0 1 0.0078125 0.75 m
+param REVERB.SYNC "SYNC" choice lin 0 2 1 0 -
+opt REVERB.SYNC 0 "OFF"
+opt REVERB.SYNC 1 "TIME"
+opt REVERB.SYNC 2 "ALL"
+panel REVERB GATE
+param REVERB.PREDELAY "PRE-DLY" cont lin 0 1 0.0078125 0 m
+param REVERB.SHAPE "SHAPE" cont lin 0 1 0.0078125 0.2 m
+param REVERB.SMEAR "SMEAR" cont lin 0 1 0.0078125 0 m
+param REVERB.RATE "RATE" cont lin 0 1 0.0078125 0.75 m
+param REVERB.SYNC "SYNC" choice lin 0 2 1 0 -
+opt REVERB.SYNC 0 "OFF"
+opt REVERB.SYNC 1 "TIME"
+opt REVERB.SYNC 2 "ALL"
+param REVERB.DAMP "DAMP" cont lin 0 1 0.0078125 0.3 m
+panel REVERB REVERSE
+param REVERB.PREDELAY "ONSET" cont lin 0 1 0.0078125 0 m
+param REVERB.SHAPE "CURVE" cont lin 0 1 0.0078125 0.2 m
+param REVERB.SMEAR "SMEAR" cont lin 0 1 0.0078125 0 m
+param REVERB.RATE "RATE" cont lin 0 1 0.0078125 0.75 m
+param REVERB.SYNC "SYNC" choice lin 0 2 1 0 -
+opt REVERB.SYNC 0 "OFF"
+opt REVERB.SYNC 1 "TIME"
+opt REVERB.SYNC 2 "ALL"
+OK
+page 6 MOR2 of 33
+panel REVERB QUAD
+panel REVERB ROOM
+panel REVERB HALL
+param REVERB.DENSITY "DENSITY" cont lin 0 1 0.0078125 0.207298 m
+panel REVERB BLOOM
+panel REVERB GATE
+panel REVERB REVERSE
+OK
+page 7 MST of 33
+panel MST -
+param COMP.THRESH "THRESH" cont lin 0 1 0.0078125 0.7 m
+param COMP.RATIO "RATIO" choice lin 0 7 1 0 -
+opt COMP.RATIO 0 "1:1"
+opt COMP.RATIO 1 "1.5:1"
+opt COMP.RATIO 2 "2:1"
+opt COMP.RATIO 3 "3:1"
+opt COMP.RATIO 4 "4:1"
+opt COMP.RATIO 5 "6:1"
+opt COMP.RATIO 6 "10:1"
+opt COMP.RATIO 7 "20:1"
+param COMP.ATK "ATK" cont lin 0 1 0.0078125 0.5 m
+param COMP.REL "REL" cont lin 0 1 0.0078125 0.5 m
+param COMP.MAKEUP "MAKEUP" cont lin 0 1 0.0078125 0 m
+param COMP.MIX "MIX" cont lin 0 1 0.0078125 1 m
+OK
+page 8 LVL of 33
+panel LVL -
+param COMP.VOL "VOL" cont lin 0 1 0.0078125 1 m
+param COMP.PAN "PAN" cont lin -1 1 0.015625 0 m
+OK
+page 9 PART1_PRT of 33
+panel PART1_PRT -
+param PART1.CH "CH" cont lin 0 15 1 0 -
+param PART1.MODE "MODE" choice lin 0 1 1 1 -
+opt PART1.MODE 0 "MONO"
+opt PART1.MODE 1 "POLY"
+param PART1.OUT "OUT" choice lin 0 2 1 0 -
+opt PART1.OUT 0 "P1"
+opt PART1.OUT 1 "P2"
+opt PART1.OUT 2 "P3"
+param PART1.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
+param PART1.PAN "PAN" cont lin -1 1 0.015625 0 m
+param PART1.BEND "BEND" cont lin 0 24 1 2 -
+OK
+page 10 PART1_VOI of 33
+panel PART1_VOI -
+param PART1.MODE "MODE" choice lin 0 1 1 1 -
+opt PART1.MODE 0 "MONO"
+opt PART1.MODE 1 "POLY"
+param PART1.MAX_VOICES "VOICES" choice lin 0 8 1 0 -
+opt PART1.MAX_VOICES 0 "AUTO"
+opt PART1.MAX_VOICES 1 "1"
+opt PART1.MAX_VOICES 2 "2"
+opt PART1.MAX_VOICES 3 "3"
+opt PART1.MAX_VOICES 4 "4"
+opt PART1.MAX_VOICES 5 "5"
+opt PART1.MAX_VOICES 6 "6"
+opt PART1.MAX_VOICES 7 "7"
+opt PART1.MAX_VOICES 8 "8"
+param PART1.RESERVE "RESERVE" choice lin 0 8 1 0 -
+opt PART1.RESERVE 0 "0"
+opt PART1.RESERVE 1 "1"
+opt PART1.RESERVE 2 "2"
+opt PART1.RESERVE 3 "3"
+opt PART1.RESERVE 4 "4"
+opt PART1.RESERVE 5 "5"
+opt PART1.RESERVE 6 "6"
+opt PART1.RESERVE 7 "7"
+opt PART1.RESERVE 8 "8"
+OK
+page 11 PART1_EQ of 33
+panel PART1_EQ -
+param PART1.TILT "TILT" cont lin -64 63 1 0 m
+param PART1.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
+opt PART1.LO_CUT 0 "OFF"
+opt PART1.LO_CUT 1 "ON"
+OK
+page 12 PART1_SND of 33
+panel PART1_SND -
+param PART1_SND.SEND1 "CHORUS" cont lin 0 1 0.0078125 0 m
+param PART1_SND.SEND2 "DELAY" cont lin 0 1 0.0078125 0 m
+param PART1_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
+OK
+page 13 PART2_PRT of 33
+panel PART2_PRT -
+param PART2.CH "CH" cont lin 0 15 1 0 -
+param PART2.MODE "MODE" choice lin 0 1 1 1 -
+opt PART2.MODE 0 "MONO"
+opt PART2.MODE 1 "POLY"
+param PART2.OUT "OUT" choice lin 0 2 1 0 -
+opt PART2.OUT 0 "P1"
+opt PART2.OUT 1 "P2"
+opt PART2.OUT 2 "P3"
+param PART2.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
+param PART2.PAN "PAN" cont lin -1 1 0.015625 0 m
+param PART2.BEND "BEND" cont lin 0 24 1 2 -
+OK
+page 14 PART2_VOI of 33
+panel PART2_VOI -
+param PART2.MODE "MODE" choice lin 0 1 1 1 -
+opt PART2.MODE 0 "MONO"
+opt PART2.MODE 1 "POLY"
+param PART2.MAX_VOICES "VOICES" choice lin 0 8 1 0 -
+opt PART2.MAX_VOICES 0 "AUTO"
+opt PART2.MAX_VOICES 1 "1"
+opt PART2.MAX_VOICES 2 "2"
+opt PART2.MAX_VOICES 3 "3"
+opt PART2.MAX_VOICES 4 "4"
+opt PART2.MAX_VOICES 5 "5"
+opt PART2.MAX_VOICES 6 "6"
+opt PART2.MAX_VOICES 7 "7"
+opt PART2.MAX_VOICES 8 "8"
+param PART2.RESERVE "RESERVE" choice lin 0 8 1 0 -
+opt PART2.RESERVE 0 "0"
+opt PART2.RESERVE 1 "1"
+opt PART2.RESERVE 2 "2"
+opt PART2.RESERVE 3 "3"
+opt PART2.RESERVE 4 "4"
+opt PART2.RESERVE 5 "5"
+opt PART2.RESERVE 6 "6"
+opt PART2.RESERVE 7 "7"
+opt PART2.RESERVE 8 "8"
+OK
+page 15 PART2_EQ of 33
+panel PART2_EQ -
+param PART2.TILT "TILT" cont lin -64 63 1 0 m
+param PART2.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
+opt PART2.LO_CUT 0 "OFF"
+opt PART2.LO_CUT 1 "ON"
+OK
+page 16 PART2_SND of 33
+panel PART2_SND -
+param PART2_SND.SEND1 "CHORUS" cont lin 0 1 0.0078125 0 m
+param PART2_SND.SEND2 "DELAY" cont lin 0 1 0.0078125 0 m
+param PART2_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
+OK
+page 17 PART3_PRT of 33
+panel PART3_PRT -
+param PART3.CH "CH" cont lin 0 15 1 0 -
+param PART3.MODE "MODE" choice lin 0 1 1 1 -
+opt PART3.MODE 0 "MONO"
+opt PART3.MODE 1 "POLY"
+param PART3.OUT "OUT" choice lin 0 2 1 0 -
+opt PART3.OUT 0 "P1"
+opt PART3.OUT 1 "P2"
+opt PART3.OUT 2 "P3"
+param PART3.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
+param PART3.PAN "PAN" cont lin -1 1 0.015625 0 m
+param PART3.BEND "BEND" cont lin 0 24 1 2 -
+OK
+page 18 PART3_VOI of 33
+panel PART3_VOI -
+param PART3.MODE "MODE" choice lin 0 1 1 1 -
+opt PART3.MODE 0 "MONO"
+opt PART3.MODE 1 "POLY"
+param PART3.MAX_VOICES "VOICES" choice lin 0 8 1 0 -
+opt PART3.MAX_VOICES 0 "AUTO"
+opt PART3.MAX_VOICES 1 "1"
+opt PART3.MAX_VOICES 2 "2"
+opt PART3.MAX_VOICES 3 "3"
+opt PART3.MAX_VOICES 4 "4"
+opt PART3.MAX_VOICES 5 "5"
+opt PART3.MAX_VOICES 6 "6"
+opt PART3.MAX_VOICES 7 "7"
+opt PART3.MAX_VOICES 8 "8"
+param PART3.RESERVE "RESERVE" choice lin 0 8 1 0 -
+opt PART3.RESERVE 0 "0"
+opt PART3.RESERVE 1 "1"
+opt PART3.RESERVE 2 "2"
+opt PART3.RESERVE 3 "3"
+opt PART3.RESERVE 4 "4"
+opt PART3.RESERVE 5 "5"
+opt PART3.RESERVE 6 "6"
+opt PART3.RESERVE 7 "7"
+opt PART3.RESERVE 8 "8"
+OK
+page 19 PART3_EQ of 33
+panel PART3_EQ -
+param PART3.TILT "TILT" cont lin -64 63 1 0 m
+param PART3.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
+opt PART3.LO_CUT 0 "OFF"
+opt PART3.LO_CUT 1 "ON"
+OK
+page 20 PART3_SND of 33
+panel PART3_SND -
+param PART3_SND.SEND1 "CHORUS" cont lin 0 1 0.0078125 0 m
+param PART3_SND.SEND2 "DELAY" cont lin 0 1 0.0078125 0 m
+param PART3_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
+OK
+page 21 PART4_PRT of 33
+panel PART4_PRT -
+param PART4.CH "CH" cont lin 0 15 1 0 -
+param PART4.MODE "MODE" choice lin 0 1 1 1 -
+opt PART4.MODE 0 "MONO"
+opt PART4.MODE 1 "POLY"
+param PART4.OUT "OUT" choice lin 0 2 1 0 -
+opt PART4.OUT 0 "P1"
+opt PART4.OUT 1 "P2"
+opt PART4.OUT 2 "P3"
+param PART4.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
+param PART4.PAN "PAN" cont lin -1 1 0.015625 0 m
+param PART4.BEND "BEND" cont lin 0 24 1 2 -
+OK
+page 22 PART4_VOI of 33
+panel PART4_VOI -
+param PART4.MODE "MODE" choice lin 0 1 1 1 -
+opt PART4.MODE 0 "MONO"
+opt PART4.MODE 1 "POLY"
+param PART4.MAX_VOICES "VOICES" choice lin 0 8 1 0 -
+opt PART4.MAX_VOICES 0 "AUTO"
+opt PART4.MAX_VOICES 1 "1"
+opt PART4.MAX_VOICES 2 "2"
+opt PART4.MAX_VOICES 3 "3"
+opt PART4.MAX_VOICES 4 "4"
+opt PART4.MAX_VOICES 5 "5"
+opt PART4.MAX_VOICES 6 "6"
+opt PART4.MAX_VOICES 7 "7"
+opt PART4.MAX_VOICES 8 "8"
+param PART4.RESERVE "RESERVE" choice lin 0 8 1 0 -
+opt PART4.RESERVE 0 "0"
+opt PART4.RESERVE 1 "1"
+opt PART4.RESERVE 2 "2"
+opt PART4.RESERVE 3 "3"
+opt PART4.RESERVE 4 "4"
+opt PART4.RESERVE 5 "5"
+opt PART4.RESERVE 6 "6"
+opt PART4.RESERVE 7 "7"
+opt PART4.RESERVE 8 "8"
+OK
+page 23 PART4_EQ of 33
+panel PART4_EQ -
+param PART4.TILT "TILT" cont lin -64 63 1 0 m
+param PART4.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
+opt PART4.LO_CUT 0 "OFF"
+opt PART4.LO_CUT 1 "ON"
+OK
+page 24 PART4_SND of 33
+panel PART4_SND -
+param PART4_SND.SEND1 "CHORUS" cont lin 0 1 0.0078125 0 m
+param PART4_SND.SEND2 "DELAY" cont lin 0 1 0.0078125 0 m
+param PART4_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
+OK
+page 25 PART5_PRT of 33
+panel PART5_PRT -
+param PART5.CH "CH" cont lin 0 15 1 0 -
+param PART5.MODE "MODE" choice lin 0 1 1 1 -
+opt PART5.MODE 0 "MONO"
+opt PART5.MODE 1 "POLY"
+param PART5.OUT "OUT" choice lin 0 2 1 0 -
+opt PART5.OUT 0 "P1"
+opt PART5.OUT 1 "P2"
+opt PART5.OUT 2 "P3"
+param PART5.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
+param PART5.PAN "PAN" cont lin -1 1 0.015625 0 m
+param PART5.BEND "BEND" cont lin 0 24 1 2 -
+OK
+page 26 PART5_VOI of 33
+panel PART5_VOI -
+param PART5.MODE "MODE" choice lin 0 1 1 1 -
+opt PART5.MODE 0 "MONO"
+opt PART5.MODE 1 "POLY"
+param PART5.MAX_VOICES "VOICES" choice lin 0 8 1 0 -
+opt PART5.MAX_VOICES 0 "AUTO"
+opt PART5.MAX_VOICES 1 "1"
+opt PART5.MAX_VOICES 2 "2"
+opt PART5.MAX_VOICES 3 "3"
+opt PART5.MAX_VOICES 4 "4"
+opt PART5.MAX_VOICES 5 "5"
+opt PART5.MAX_VOICES 6 "6"
+opt PART5.MAX_VOICES 7 "7"
+opt PART5.MAX_VOICES 8 "8"
+param PART5.RESERVE "RESERVE" choice lin 0 8 1 0 -
+opt PART5.RESERVE 0 "0"
+opt PART5.RESERVE 1 "1"
+opt PART5.RESERVE 2 "2"
+opt PART5.RESERVE 3 "3"
+opt PART5.RESERVE 4 "4"
+opt PART5.RESERVE 5 "5"
+opt PART5.RESERVE 6 "6"
+opt PART5.RESERVE 7 "7"
+opt PART5.RESERVE 8 "8"
+OK
+page 27 PART5_EQ of 33
+panel PART5_EQ -
+param PART5.TILT "TILT" cont lin -64 63 1 0 m
+param PART5.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
+opt PART5.LO_CUT 0 "OFF"
+opt PART5.LO_CUT 1 "ON"
+OK
+page 28 PART5_SND of 33
+panel PART5_SND -
+param PART5_SND.SEND1 "CHORUS" cont lin 0 1 0.0078125 0 m
+param PART5_SND.SEND2 "DELAY" cont lin 0 1 0.0078125 0 m
+param PART5_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
+OK
+page 29 PART6_PRT of 33
+panel PART6_PRT -
+param PART6.CH "CH" cont lin 0 15 1 0 -
+param PART6.MODE "MODE" choice lin 0 1 1 1 -
+opt PART6.MODE 0 "MONO"
+opt PART6.MODE 1 "POLY"
+param PART6.OUT "OUT" choice lin 0 2 1 0 -
+opt PART6.OUT 0 "P1"
+opt PART6.OUT 1 "P2"
+opt PART6.OUT 2 "P3"
+param PART6.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
+param PART6.PAN "PAN" cont lin -1 1 0.015625 0 m
+param PART6.BEND "BEND" cont lin 0 24 1 2 -
+OK
+page 30 PART6_VOI of 33
+panel PART6_VOI -
+param PART6.MODE "MODE" choice lin 0 1 1 1 -
+opt PART6.MODE 0 "MONO"
+opt PART6.MODE 1 "POLY"
+param PART6.MAX_VOICES "VOICES" choice lin 0 8 1 0 -
+opt PART6.MAX_VOICES 0 "AUTO"
+opt PART6.MAX_VOICES 1 "1"
+opt PART6.MAX_VOICES 2 "2"
+opt PART6.MAX_VOICES 3 "3"
+opt PART6.MAX_VOICES 4 "4"
+opt PART6.MAX_VOICES 5 "5"
+opt PART6.MAX_VOICES 6 "6"
+opt PART6.MAX_VOICES 7 "7"
+opt PART6.MAX_VOICES 8 "8"
+param PART6.RESERVE "RESERVE" choice lin 0 8 1 0 -
+opt PART6.RESERVE 0 "0"
+opt PART6.RESERVE 1 "1"
+opt PART6.RESERVE 2 "2"
+opt PART6.RESERVE 3 "3"
+opt PART6.RESERVE 4 "4"
+opt PART6.RESERVE 5 "5"
+opt PART6.RESERVE 6 "6"
+opt PART6.RESERVE 7 "7"
+opt PART6.RESERVE 8 "8"
+OK
+page 31 PART6_EQ of 33
+panel PART6_EQ -
+param PART6.TILT "TILT" cont lin -64 63 1 0 m
+param PART6.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
+opt PART6.LO_CUT 0 "OFF"
+opt PART6.LO_CUT 1 "ON"
+OK
+page 32 PART6_SND of 33
+panel PART6_SND -
+param PART6_SND.SEND1 "CHORUS" cont lin 0 1 0.0078125 0 m
+param PART6_SND.SEND2 "DELAY" cont lin 0 1 0.0078125 0 m
+param PART6_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
+OK

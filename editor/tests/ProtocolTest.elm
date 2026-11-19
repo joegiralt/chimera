@@ -2,7 +2,7 @@ module ProtocolTest exposing (suite)
 
 import Expect
 import FixtureData
-import Protocol exposing (Addr(..), AnswerLine(..), Command(..), Kind(..), Line(..), Scale(..), Value(..), encode, optIndex, parse)
+import Protocol exposing (Addr(..), AnswerLine(..), Command(..), Flags, Kind(..), Line(..), Scale(..), SchemaId(..), Value(..), encode, optIndex, parse)
 import Test exposing (Test, describe, test)
 import Unit
 
@@ -10,6 +10,11 @@ import Unit
 p : String -> String -> Line -> Test
 p name raw want =
     test name <| \_ -> Expect.equal want (parse raw)
+
+
+none : Flags
+none =
+    { mappable = False, modulation = False }
 
 
 {-| Option `n` as a set's value; a negative `n` is no option at all.
@@ -28,15 +33,30 @@ suite : Test
 suite =
     describe "Protocol"
         [ describe "answers, copied from chimera-core/tests/console_ed_test.rs and the fixture"
-            [ p "hello" "ed hello 3 0.3.0-dev part 1 ALGO" (Answer (HelloIs { protocol = 3, build = "0.3.0-dev", part = 1, engine = "ALGO" }))
+            [ p "hello" "ed hello 4 0.3.0-dev part 1 ALGO" (Answer (HelloIs { protocol = 4, build = "0.3.0-dev", part = 1, engine = "ALGO" }))
             , p "page" "page 22 FLT of 36" (Answer (Page { n = 22, label = "FLT", count = 36 }))
             , p "panel fixed" "panel ALG -" (Answer (Panel { name = "ALG", variant = "-" }))
             , p "panel variant" "panel FILTER CLEAN" (Answer (Panel { name = "FILTER", variant = "CLEAN" }))
-            , p "param choice" "param ALGO.ALG_A \"ALG A\" choice lin 0 31 1 0" (Answer (Param { addr = Addr "ALGO.ALG_A", label = "ALG A", kind = Choice, scale = Linear, min = 0, max = 31, step = 1, default = 0 }))
-            , p "param cont" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625" (Answer (Param { addr = Addr "OUT.LEVEL", label = "VOL", kind = Cont, scale = Linear, min = 0, max = 1, step = 0.0078125, default = 0.3515625 }))
-            , p "param negative" "param ALGO.TRNSP \"TRNSP\" cont lin -24 24 1 0" (Answer (Param { addr = Addr "ALGO.TRNSP", label = "TRNSP", kind = Cont, scale = Linear, min = -24, max = 24, step = 1, default = 0 }))
-            , p "param octaves" "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000" (Answer (Param { addr = Addr "FILTER.CUTOFF", label = "CUTOFF", kind = Cont, scale = Octaves, min = 20, max = 20000, step = 1, default = 1000 }))
+            , p "param choice" "param ALGO.ALG_A \"ALG A\" choice lin 0 31 1 0 m" (Answer (Param { addr = Addr "ALGO.ALG_A", label = "ALG A", kind = Choice, scale = Linear, min = 0, max = 31, step = 1, default = 0, flags = { mappable = True, modulation = False } }))
+            , p "param cont" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625 -" (Answer (Param { addr = Addr "OUT.LEVEL", label = "VOL", kind = Cont, scale = Linear, min = 0, max = 1, step = 0.0078125, default = 0.3515625, flags = none }))
+            , p "param negative" "param ALGO.TRNSP \"TRNSP\" cont lin -24 24 1 0 d" (Answer (Param { addr = Addr "ALGO.TRNSP", label = "TRNSP", kind = Cont, scale = Linear, min = -24, max = 24, step = 1, default = 0, flags = { mappable = False, modulation = True } }))
+            , p "param octaves" "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000 md" (Answer (Param { addr = Addr "FILTER.CUTOFF", label = "CUTOFF", kind = Cont, scale = Octaves, min = 20, max = 20000, step = 1, default = 1000, flags = { mappable = True, modulation = True } }))
             , p "a protocol 2 param line is not understood" "param OUT.LEVEL \"VOL\" cont 0 1 0.0078125 0.3515625" Unknown
+            , p "a protocol 3 param line, no flags, is not understood" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625" Unknown
+            , p "bad flags" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625 dm" Unknown
+            , test "schema reads its schema, pages and hash" <|
+                \_ ->
+                    case parse "schema DRUM 165 0123456789abcdef" of
+                        Answer (SchemaIs r) ->
+                            Expect.equal ( r.schema, r.pages, Protocol.hashText r.hash ) ( EngineSchema Unit.Drum, 165, "0123456789abcdef" )
+
+                        other ->
+                            Expect.fail (Debug.toString other)
+            , p "schema with a short hash" "schema MIXER 31 00ff" Unknown
+            , p "schema with an upper-case hash" "schema MIXER 31 00FF00FF00FF00FF" Unknown
+            , p "schema of an unknown schema" "schema ORBIT 19 00ff00ff00ff00ff" Unknown
+            , p "mixer" "mixer" (Answer MixerIs)
+            , p "panel reverb" "panel REVERB HALL" (Answer (Panel { name = "REVERB", variant = "HALL" }))
             , p "bad scale" "param A.B \"L\" cont log 0 1 1 0" Unknown
             , p "source" "source \"KICK 909\"" (Answer (Source "KICK 909"))
             , p "opt" "opt ALGO.ALG_A 8 \"A1\"" (optIndex 8 |> Maybe.map (\ix -> Answer (Opt { addr = Addr "ALGO.ALG_A", index = ix, name = "A1" })) |> Maybe.withDefault Unknown)
@@ -52,10 +72,41 @@ suite =
             , p "since val" "val OUT.PAN 0.5 0 \"C\"" (Answer (Val { addr = Addr "OUT.PAN", norm = 0.5, stored = 0, text = "C" }))
             , p "queued" "OK queued" Queued
             ]
+        , test "every line of the unit's MIXER schema is understood" <|
+            \_ ->
+                FixtureData.mixer
+                    |> List.filter (parse >> isUnknown)
+                    |> Expect.equal []
+        , test "the MIXER schema addresses each Part's mix and sends, and the buses, with flags" <|
+            \_ ->
+                let
+                    params : List ( String, Flags )
+                    params =
+                        FixtureData.mixer
+                            |> List.filterMap
+                                (\l ->
+                                    case parse l of
+                                        Answer (Param q) ->
+                                            Just ( Protocol.addrKey q.addr, q.flags )
+
+                                        _ ->
+                                            Nothing
+                                )
+                in
+                Expect.all
+                    [ \ps -> Expect.equal (Just { mappable = True, modulation = False }) (lookup "PART6.LEVEL" ps)
+                    , \ps -> Expect.equal (Just none) (lookup "PART1.CH" ps)
+                    , \ps -> Expect.notEqual Nothing (lookup "PART4_SND.SEND3" ps)
+                    , \ps -> Expect.notEqual Nothing (lookup "COMP.THRESH" ps)
+                    ]
+                    params
         , describe "terminators"
             [ p "OK" "OK" (Ok_ Nothing)
             , p "OK m" "OK 2" (Ok_ (Just 2))
             , p "OK big" "OK 999999999" (Ok_ (Just 999999999))
+            , p "OK more" "OK 12 more" (OkMore 12)
+            , p "OK more with no number" "OK more" Unknown
+            , p "OK and a stray word" "OK 12 less" Unknown
             , p "ERR takes" "ERR ed takes hello, describe, get, set, since or part" (Err_ "ed takes hello, describe, get, set, since or part")
             , p "ERR get" "ERR ed get has no CHORUS.MODE here" (Err_ "ed get has no CHORUS.MODE here")
             , p "ERR part" "ERR ed part takes 1-6" (Err_ "ed part takes 1-6")
@@ -83,7 +134,9 @@ suite =
             ]
         , describe "commands"
             [ test "hello" <| \_ -> Expect.equal (Just "ed hello") (encode Hello)
-            , test "describe" <| \_ -> Expect.equal (Just "ed describe ALGO 3") (encode (Describe Unit.Algo 3))
+            , test "describe" <| \_ -> Expect.equal (Just "ed describe ALGO 3") (encode (Describe (EngineSchema Unit.Algo) 3))
+            , test "describe the mixer" <| \_ -> Expect.equal (Just "ed describe MIXER 30") (encode (Describe MixerSchema 30))
+            , test "ask a schema" <| \_ -> Expect.equal (Just "ed schema DRUM") (encode (AskSchema (EngineSchema Unit.Drum)))
             , test "get" <| \_ -> Expect.equal (Just "ed get OP_C.CRSE") (encode (Get (Addr "OP_C.CRSE")))
             , test "set num" <| \_ -> Expect.equal (Just "ed set FILTER.CUTOFF 1234.5") (encode (Set (Addr "FILTER.CUTOFF") (Num 1234.5)))
             , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))
@@ -99,7 +152,7 @@ suite =
             , test "every engine is described by its name" <|
                 \_ ->
                     Expect.equal (List.map (\e -> Just ("ed describe " ++ Unit.engineName e ++ " 0")) Unit.allEngines)
-                        (List.map (\e -> encode (Describe e 0)) Unit.allEngines)
+                        (List.map (\e -> encode (Describe (EngineSchema e) 0)) Unit.allEngines)
             , p "since too large" "ERR ed since too large" SinceTooLarge
             , test "since" <| \_ -> Expect.equal (Just "ed since 7") (encode (Since (Unit.genFromInt 7)))
             , test "since nothing held is 0" <| \_ -> Expect.equal (Just "ed since 0") (encode (Since Nothing))
@@ -134,6 +187,9 @@ isUnknown l =
         Ok_ _ ->
             False
 
+        OkMore _ ->
+            False
+
         Queued ->
             False
 
@@ -142,3 +198,8 @@ isUnknown l =
 
         SinceTooLarge ->
             False
+
+
+lookup : String -> List ( String, a ) -> Maybe a
+lookup k =
+    List.filter (\( a, _ ) -> a == k) >> List.head >> Maybe.map Tuple.second

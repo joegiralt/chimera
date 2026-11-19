@@ -2,15 +2,20 @@ module Protocol exposing
     ( Addr(..)
     , AnswerLine(..)
     , Command(..)
+    , Flags
+    , Hash
     , Kind(..)
     , Line(..)
     , OptIndex
     , Scale(..)
+    , SchemaId(..)
     , Value(..)
     , addrKey
     , encode
+    , hashText
     , optIndex
     , parse
+    , schemaToken
     )
 
 {-| The unit's text console, `ed` namespace: one command out, answer lines in.
@@ -69,9 +74,55 @@ type Kind
     | Toggle
 
 
+{-| What else may target a parameter, as the unit's rules say (ADR 0289):
+a MIDI map (`m`), the mod matrix (`d`).
+-}
+type alias Flags =
+    { mappable : Bool, modulation : Bool }
+
+
+{-| A schema the unit describes: an engine's pages, or the mixer's.
+-}
+type SchemaId
+    = EngineSchema Engine
+    | MixerSchema
+
+
+{-| A schema's hash, sixteen hex digits: describe's own bytes, so equal
+hashes are the same text. Opaque: only `parse` makes one.
+-}
+type Hash
+    = Hash String
+
+
+hashText : Hash -> String
+hashText (Hash h) =
+    h
+
+
+schemaToken : SchemaId -> String
+schemaToken s =
+    case s of
+        EngineSchema e ->
+            Unit.engineName e
+
+        MixerSchema ->
+            "MIXER"
+
+
+schemaFromToken : String -> Maybe SchemaId
+schemaFromToken t =
+    if t == "MIXER" then
+        Just MixerSchema
+
+    else
+        Unit.engineFromName t |> Maybe.map EngineSchema
+
+
 type Command
     = Hello
-    | Describe Engine Int
+    | AskSchema SchemaId
+    | Describe SchemaId Int
     | Get Addr
     | Set Addr Value
     | Since (Maybe Gen)
@@ -80,19 +131,24 @@ type Command
 
 type AnswerLine
     = HelloIs { protocol : Int, build : String, part : Int, engine : String }
+    | SchemaIs { schema : SchemaId, pages : Int, hash : Hash }
     | Page { n : Int, label : String, count : Int }
     | Panel { name : String, variant : String }
-    | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float }
+    | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float, flags : Flags }
     | Opt { addr : Addr, index : OptIndex, name : String }
     | Route String
     | Source String
     | Val { addr : Addr, norm : Float, stored : Float, text : String }
     | PartIs Int String
+      -- The MIXER section of `since`, whole: what was held for it is dropped.
+    | MixerIs
 
 
 type Line
     = Answer AnswerLine
     | Ok_ (Maybe Int)
+      -- `OK <m> more`: a `since` answer with sections still owed; ask again.
+    | OkMore Int
     | Queued
     | Err_ String
       -- `ERR ed since too large` (ADR 0285): the unit's whole answer is past
@@ -112,8 +168,11 @@ encode c =
         Hello ->
             Just "ed hello"
 
-        Describe engine page ->
-            Just ("ed describe " ++ Unit.engineName engine ++ " " ++ String.fromInt page)
+        AskSchema s ->
+            Just ("ed schema " ++ schemaToken s)
+
+        Describe s page ->
+            Just ("ed describe " ++ schemaToken s ++ " " ++ String.fromInt page)
 
         Get (Addr a) ->
             word a |> Maybe.map (\x -> "ed get " ++ x)
@@ -184,7 +243,15 @@ parse raw =
                 Queued
 
             m ->
-                nat m |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
+                case String.split " " m of
+                    [ n ] ->
+                        nat n |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
+
+                    [ n, "more" ] ->
+                        nat n |> Maybe.map OkMore |> Maybe.withDefault Unknown
+
+                    _ ->
+                        Unknown
 
     else
         case tokens line of
@@ -238,6 +305,12 @@ answer ts =
         [ "ed", "hello", proto, build, "part", n, engine ] ->
             Maybe.map2 (\pr pt -> HelloIs { protocol = pr, build = build, part = pt, engine = engine }) (nat proto) (nat n)
 
+        [ "schema", token, pages, hash ] ->
+            Maybe.map3 (\sc n h -> SchemaIs { schema = sc, pages = n, hash = h }) (schemaFromToken token) (nat pages) (hashOf hash)
+
+        [ "mixer" ] ->
+            Just MixerIs
+
         [ "page", n, label, "of", count ] ->
             Maybe.map2 (\a b -> Page { n = a, label = label, count = b }) (nat n) (nat count)
 
@@ -247,8 +320,9 @@ answer ts =
         [ "part", n, engine ] ->
             nat n |> Maybe.map (\i -> PartIs i engine)
 
-        [ "param", a, label, kind, scale, lo, hi, step, def ] ->
-            Maybe.andThen (\sc -> param a label kind sc lo hi step def) (scaleOf scale)
+        [ "param", a, label, kind, scale, lo, hi, step, def, flags ] ->
+            Maybe.map2 Tuple.pair (scaleOf scale) (flagsOf flags)
+                |> Maybe.andThen (\( sc, fl ) -> param a label kind sc fl ( lo, hi ) ( step, def ))
 
         [ "opt", a, i, name ] ->
             nat i |> Maybe.andThen optIndex |> Maybe.map (\ix -> Opt { addr = Addr a, index = ix, name = name })
@@ -266,15 +340,47 @@ answer ts =
             Nothing
 
 
-param : String -> String -> String -> Scale -> String -> String -> String -> String -> Maybe AnswerLine
-param a label kind scale lo hi step def =
+param : String -> String -> String -> Scale -> Flags -> ( String, String ) -> ( String, String ) -> Maybe AnswerLine
+param a label kind scale flags ( lo, hi ) ( step, def ) =
     Maybe.map5
-        (\k l h s d -> Param { addr = Addr a, label = label, kind = k, scale = scale, min = l, max = h, step = s, default = d })
+        (\k l h s d -> Param { addr = Addr a, label = label, kind = k, scale = scale, min = l, max = h, step = s, default = d, flags = flags })
         (kindOf kind)
         (num lo)
         (num hi)
         (num step)
         (num def)
+
+
+{-| `m`, `d`, `md` or `-`: nothing else.
+-}
+flagsOf : String -> Maybe Flags
+flagsOf s =
+    case s of
+        "-" ->
+            Just { mappable = False, modulation = False }
+
+        "m" ->
+            Just { mappable = True, modulation = False }
+
+        "d" ->
+            Just { mappable = False, modulation = True }
+
+        "md" ->
+            Just { mappable = True, modulation = True }
+
+        _ ->
+            Nothing
+
+
+{-| Sixteen lowercase hex digits.
+-}
+hashOf : String -> Maybe Hash
+hashOf h =
+    if String.length h == 16 && String.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) h then
+        Just (Hash h)
+
+    else
+        Nothing
 
 
 scaleOf : String -> Maybe Scale

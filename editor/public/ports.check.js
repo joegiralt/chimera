@@ -36,6 +36,8 @@ function fakeApp() {
       connectSerial: port('connectSerial'), connectSocket: port('connectSocket'), send: port('send'),
       linkState: { send: function (s) { states.push(s); } },
       lineIn: { send: function () {} },
+      recall: port('recall'), keep: port('keep'),
+      got: { send: function (g) { (subs.gotLog = subs.gotLog || []).push(g); } },
     },
   };
 }
@@ -89,8 +91,48 @@ async function quickClicksDoNotInterleave() {
   eq(app.states.join(), 'open', 'one connection, one open');
 }
 
+// A fake IndexedDB: open, one store, get and put, each answering on a tick.
+function fakeIdb() {
+  var data = {};
+  function req(f) { var r = {}; setTimeout(function () { try { r.result = f(); r.onsuccess && r.onsuccess(); } catch (e) { r.error = e; r.onerror && r.onerror(); } }, 0); return r; }
+  var store = {
+    get: function (k) { return req(function () { return data[k]; }); },
+    put: function (v, k) { data[k] = v; return {}; },
+  };
+  var db = {
+    createObjectStore: function () { return store; },
+    transaction: function () { var t = { objectStore: function () { return store; } }; setTimeout(function () { t.oncomplete && t.oncomplete(); }, 0); return t; },
+    close: function () {},
+  };
+  return { open: function () { var r = req(function () { return db; }); setTimeout(function () { r.onupgradeneeded && r.onupgradeneeded(); }, 0); return r; } };
+}
+
+// No IndexedDB (or any failure of it) is a miss, never silence.
+async function noStoreIsAMiss() {
+  var app = fakeApp(); P.attach(app);
+  delete globalThis.indexedDB;
+  await P.recall('4/ALGO/0123456789abcdef');
+  eq(JSON.stringify(app.subs.gotLog), JSON.stringify([{ key: '4/ALGO/0123456789abcdef', lines: null }]), 'no store: a miss');
+}
+
+// What is kept under a key is recalled under it, and nothing under another.
+async function keptIsRecalled() {
+  var app = fakeApp(); P.attach(app);
+  globalThis.indexedDB = fakeIdb();
+  await P.keep({ key: '4/MIXER/00000000000000ab', lines: ['page 0 CHR of 1', 'panel CHR -'] });
+  await P.recall('4/MIXER/00000000000000ab');
+  await P.recall('4/MIXER/00000000000000ac');
+  eq(JSON.stringify(app.subs.gotLog), JSON.stringify([
+    { key: '4/MIXER/00000000000000ab', lines: ['page 0 CHR of 1', 'panel CHR -'] },
+    { key: '4/MIXER/00000000000000ac', lines: null },
+  ]), 'kept, recalled');
+  delete globalThis.indexedDB;
+}
+
 (async function () {
   await teardownOrder();
+  await noStoreIsAMiss();
+  await keptIsRecalled();
   fragmentThenFullAnswer();
   await serialEnds();
   await failedWriteReleases();

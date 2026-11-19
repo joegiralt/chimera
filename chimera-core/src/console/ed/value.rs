@@ -5,13 +5,15 @@
 
 use core::fmt::{self, Write};
 
-use super::addr::{EdBlock, PadBlock};
+use super::EdAddr;
+use super::addr::{EdBlock, PadBlock, PartBlock};
 use super::describe::num;
 use super::pages::Pages;
-use super::{EdAddr, since};
+use super::schema::{Round, Schema};
 use crate::addr::{BlockRead, BlockRef};
 use crate::dsp::drum::sound::RouteId;
 use crate::dsp::drum::types::PadId;
+use crate::project::{Part, PartId};
 use crate::ui::UiState;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::cell_text::{self, CellCx, CellOwn};
@@ -26,12 +28,19 @@ pub(super) fn engine_of(ui: &UiState) -> EngineType {
     ui.project().part(ui.active_part).sound.engine()
 }
 
-/// `at`'s values on the followed Part: its Sound's block, its kit's, or
-/// pad `n`'s, never the box's selected pad's.
+/// `at`'s values: the followed Part's Sound's block, its kit's, or pad
+/// `n`'s (never the box's selected pad's); Part `n`'s mix or sends; a bus.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.block"))]
 pub(super) fn block(ui: &UiState, at: EdBlock) -> Option<BlockView<'_>> {
     let kit = ui.project().kit(ui.active_part);
     match at {
+        EdBlock::Part(n, PartBlock::Mix) => Some(BlockView::Plain(&ui.project().part(n).mix)),
+        EdBlock::Part(n, PartBlock::Sends) => {
+            ui.project().part(n).sound.params.block(BlockRef::Out)
+        }
+        EdBlock::Bus(b) => ui.project().read_part(ui.active_part).block(b.block()),
+        // SETTINGS' and ORBIT's slices read these.
+        EdBlock::Global(_) | EdBlock::Orbit(_) => None,
         EdBlock::Sound(s) => match s.get() {
             BlockRef::Kit => Some(BlockView::Plain(kit)),
             b => ui.params().block(b),
@@ -73,19 +82,46 @@ fn pad_ctx(ui: &UiState, own: &CellOwn, n: PadId, r: RouteId) -> SlotCtx {
     }
 }
 
-/// The context `a`'s cell reads under.
+/// The context `a`'s cell reads under: a pad's its own; the Sound's the
+/// followed Part's; a Part's, a bus's and the rest the live one (their
+/// cells read no Sound).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.ctx_for"))]
 fn ctx_for(ui: &UiState, own: &CellOwn, a: EdAddr) -> SlotCtx {
     match a.at() {
         EdBlock::Pad(n, PadBlock::Route(r)) => pad_ctx(ui, own, n, r),
         EdBlock::Pad(n, _) => pad_ctx(ui, own, n, RouteId::ALL[0]),
         EdBlock::Sound(_) => text_ctx(ui, own),
+        EdBlock::Part(..) | EdBlock::Bus(_) | EdBlock::Global(_) | EdBlock::Orbit(_) => own.ctx,
     }
 }
 
-/// Where a page of the followed engine shows `a` now: the page, its slot
-/// and the context it reads under. A pad's on that pad's page; the
-/// Sound's on the Part's pages, or pad 1's.
+/// The Part whose cell shows `a`: a Part's own, else the followed one.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.part_of"))]
+pub(super) fn part_of(ui: &UiState, a: EdAddr) -> PartId {
+    a.at().part().unwrap_or(ui.active_part)
+}
+
+/// The rounds a page shows `a` on, in the order `find` tries them: a
+/// pad's its pad's; the Sound's the Part's pages, then pad 1's (a Sound
+/// cell on a pad page reads the same on every pad); a Part's its round of
+/// the mixer; a bus the mixer's shared pages.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.homes"))]
+fn homes(engine: EngineType, a: EdAddr) -> [Option<Pages>; 2] {
+    let e = Schema::Engine(engine);
+    match a.at() {
+        EdBlock::Pad(p, _) => [Some(Pages::round(e, Round::Pad(p))), None],
+        EdBlock::Sound(_) => [
+            Some(Pages::round(e, Round::Shared)),
+            Some(Pages::round(e, Round::Pad(PadId::ALL[0]))),
+        ],
+        EdBlock::Part(n, _) => [Some(Pages::round(Schema::Mixer, Round::Part(n))), None],
+        EdBlock::Bus(_) => [Some(Pages::round(Schema::Mixer, Round::Shared)), None],
+        EdBlock::Global(_) | EdBlock::Orbit(_) => [None, None],
+    }
+}
+
+/// Where a page shows `a` now: the page, its slot and the context it
+/// reads under.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.find"))]
 pub(super) fn find(
     ui: &UiState,
@@ -93,34 +129,34 @@ pub(super) fn find(
     a: EdAddr,
 ) -> Option<(&'static BlockDef, usize, SlotCtx)> {
     let ctx = ctx_for(ui, own, a);
-    let engine = engine_of(ui);
-    // A pad's address is on its own pad's pages alone; the Sound's on the
-    // Part's, else pad 1's (a Sound cell on a pad page reads the same on
-    // every pad).
-    let (first, then) = match a.pad() {
-        Some(p) => (Pages::pad(engine, p), None),
-        None => (Pages::part(engine), Some(Pages::pad(engine, PadId::ALL[0]))),
-    };
-    if let Some((def, i)) = slot_in(first, a, &ctx) {
-        return Some((def, i, ctx));
+    for pages in homes(engine_of(ui), a).into_iter().flatten() {
+        if let Some((def, i)) = slot_in(pages, a, &ctx) {
+            return Some((def, i, ctx));
+        }
     }
-    let (def, i) = slot_in(then?, a, &ctx)?;
-    Some((def, i, ctx))
+    None
 }
 
 /// The first page of `pages` with a slot that shows `a` under `ctx`.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.slot_in"))]
 fn slot_in(pages: Pages, a: EdAddr, ctx: &SlotCtx) -> Option<(&'static BlockDef, usize)> {
-    for (def, _) in pages {
+    for (def, round) in pages {
         let mut i = 0;
         while i < def.params.len() {
-            if view::view(def, i, ctx).addr() == Some(a.param()) {
+            let shown = view::view(def, i, ctx).addr();
+            if shown.and_then(|c| EdAddr::shown(c, round)) == Some(a) {
                 return Some((def, i));
             }
             i += 1;
         }
     }
     None
+}
+
+/// The Part a cell's text reads for `a`: its own Part's on a Part's round.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.cell_part"))]
+fn cell_part(ui: &UiState, a: EdAddr) -> &Part {
+    ui.project().part(part_of(ui, a))
 }
 
 /// What `ed get` and `ed since`'s `val` line say of an address: its place, the
@@ -130,7 +166,7 @@ fn slot_in(pages: Pages, a: EdAddr, ctx: &SlotCtx) -> Option<(&'static BlockDef,
 /// the unit holds it: a refused choice the box shows dimmed is not reported.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.reading"))]
 pub(super) fn reading(addr: EdAddr, ui: &UiState, own: &CellOwn) -> Option<(f32, f32, FmtBuf)> {
-    if !since::in_engine(engine_of(ui), addr.at()) {
+    if !addr.at().reachable(engine_of(ui)) {
         return None;
     }
     let blk = block(ui, addr.at())?;
@@ -140,6 +176,7 @@ pub(super) fn reading(addr: EdAddr, ui: &UiState, own: &CellOwn) -> Option<(f32,
         Some((def, i, ctx)) => {
             let cx = CellCx {
                 ctx: &ctx,
+                part: cell_part(ui, addr),
                 ..ui.cell_cx(def, own)
             };
             cell_text::value_text(&cx, i, norm)
@@ -156,7 +193,7 @@ pub(super) fn reading(addr: EdAddr, ui: &UiState, own: &CellOwn) -> Option<(f32,
 )]
 pub(super) fn source_text(ui: &UiState, own: &CellOwn) -> Option<FmtBuf> {
     let ctx = text_ctx(ui, own);
-    for (def, _) in Pages::part(engine_of(ui)) {
+    for (def, _) in Pages::round(Schema::Engine(engine_of(ui)), Round::Shared) {
         let mut i = 0;
         while let Some(s) = def.params.get(i) {
             if let SlotBinding::Source = s.binding {

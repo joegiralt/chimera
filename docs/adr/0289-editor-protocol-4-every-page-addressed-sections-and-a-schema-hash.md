@@ -56,6 +56,22 @@ Protocol 3 (ADR 0285) reaches the followed Part's engine pages only. `in_schema`
 - **Frozen by this ADR at 0.4:** the new tokens, the route cell grammar, the section headers and the `param` flags field.
 - **Answered:** the spec's six owner questions (2026-11-19), recorded above. No slice waits on them.
 
+## As built
+
+### Slice 1: MIXER and the frame
+- **Schemas:** `Schema { Engine(EngineType), Mixer }`; `ed schema <S>` and `ed describe <S> <page>`. MIXER is 33 pages: CHR, DLY, CHAR, GRAIN, REV, MORE, MOR2, MST, LVL shared (REEL with `master-tape`), then PRT, VOI, EQ (ADR 0284's, merged since the design) and SND once a Part, `PART3_PRT`.
+- **Rounds:** `Round { Shared, Pad, Part }`; a mixer page is a Part's when a cell binds `Part` or `Out`. `Pages` walks shared pages, then each round's.
+- **Addresses:** every `EdBlock` arm is in (`Part`, `Bus`, `Global`, `Orbit`); `reachable` admits `Global` and `Orbit` with their slices. `SoundBlock` now holds only a Sound's blocks and the kit's: protocol 3 parsed `CHORUS.MIX` as a Sound address and refused it later. `PART` (the active Part's block) was in protocol 3's token fixture; it stays there as a reserved token no address takes.
+- **`param` flags** are on every schema's lines; the engines' fixtures changed only by that field.
+- **`since` in sections:** PART, then MIXER. MIXER answers whole on a reverb TYPE, chorus MODE, delay TYPE, plate or bank 2 change; the reverb's values again when its texts' key moves (PRE-DLY's pull, the clock). Paging takes sections in order, skipping one that doesn't fit for a later one that does (the design said "while it fits"); what isn't taken is owed. `OK <m> more`. A section past the bound alone is `ERR ed since too large`.
+- **Answer sizes:** a whole MIXER section is about 3.1 KB in every reverb TYPE with every value at its max (the design's 7.5 KB was an upper estimate). Every engine's whole answer with MIXER still fits one answer; paging is tested at a smaller bound (`since.rs`).
+- **Words in bank 2:** a `str` literal or a `write!`'s pieces are anonymous rodata, which bank 1 holds. Protocol 4's words are `ed::lit::Lit` statics in `.bank2_ed.lit`, numbers are written by `lit::uint`, never `write!`.
+- **Not built:** `ed schema` answers synchronously. `schema <S> pending` (a page a pass) waits for the unit gate's timing of `ed schema DRUM`.
+- **The editor:** protocol 4; the connect walk asks `ed schema` for the followed engine and MIXER, recalls the cached pages (IndexedDB, `Cache` ports, key `4/<SCHEMA>/<hash>`) or describes and keeps them; a new engine is read once the `since` answer ends; `OK <m> more` asks again on the next tick; the `part` and `mixer` headers drop their own section's values and panels.
+- **Bank 1:** default 883,320 → 883,472 (+152), ORBIT 898,008 → 898,168 (+160), the gate 887,840 → 887,976 (+136), ORBIT with the writer +168; the bench sets +224 to +352. What grew: `Fnv64` (`write_str` 50 B, its vtable's `write_char` and `write_fmt`, 24 B of vtable), `EdState`'s layout in `Usb::service` and `tend_usb` (+20), the usage text (+8). Lines raised by the measured deltas.
+- **Bank 2:** +3,296 B on default, ORBIT and the gate, all in S4; ORBIT's S0–S3 stays at 8,480 B free.
+- **ITCM:** 43,064 → 43,816 B (+752): MIXER's copy and mask, the hashes, the owed set.
+
 ## Supersedes in part
 - [0285](0285-editor-protocol-3-every-engine-pads-addressed.md): `PROTOCOL` 3 → 4; "the slots are laid out per engine" → per engine plus the common sections; `SLOTS` 711 → 952; `param`'s grammar gains flags; `ERR ed since too large` only for a single section past the bound.
 - [0276](0276-browser-editor-protocol-ed-over-the-console-pulled.md): `route "<label>" next-slice` → a route cell; "every `ed since` answer that isn't a diff starts with `\n`" → every answer holding a whole section.
