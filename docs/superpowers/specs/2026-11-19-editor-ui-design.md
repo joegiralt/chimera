@@ -62,7 +62,7 @@ A page's layout table can override the default by meaning: the hero CUTOFF, knob
 Every component's width is a function of its `Config` alone, never of its value. Each readout is sized in `ch` with tabular numerals from what the config knows:
 
 - **A choice** knows its widest option name.
-- **A continuous value** has a declared `chars` (default 7, the longest text the box's formats print: `1.20 kHz`, `+100`, `C#-1`), and longer text is cut with an ellipsis, never grown.
+- **A continuous value** has a declared `chars` (default 8, the longest text the box's formats print: `1.20 kHz`, `+100`, `C#-1`), and longer text is cut with an ellipsis, never grown.
 
 The rule is enforced in two places:
 
