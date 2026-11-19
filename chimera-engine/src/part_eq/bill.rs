@@ -6,28 +6,62 @@
 //! rounded up; ADR 0296 has the counts. Bank 1's: admission runs with the
 //! door open or closed (closed, the EQ plays flat and these over-bill).
 
-use super::PartEq;
-use super::smart::{PartKind, Role, SmartEq};
+use super::smart::{PartKind, Role, SmartEq, SmartState};
+use super::{PartEq, PartEqs};
 use crate::hw::Cost;
 
 /// LO CUT and TILT on a Part's bus (ADR 0284: 23 instructions a sample
 /// and the block's coefficients).
 pub const TILT: Cost = Cost(50);
 /// SMART EQ listening to a Part it cannot cut (FRONT): its four bands
-/// decimated, the rule's share.
-pub const LISTEN: Cost = Cost(40);
-/// SMART EQ on a Part it can cut: its four bands at the full rate, the
-/// dips, the rule's share.
-pub const CUT: Cost = Cost(115);
-/// A DRUM Part's side through the bands that cut, at worst all four.
-pub const SIDE: Cost = Cost(85);
+/// decimated (12.7 instructions a sample), and a Part's share of the
+/// block's rules, levels and dips (about 80 cycles a sample in all).
+pub const LISTEN: Cost = Cost(36);
+/// SMART EQ on a Part it can cut: its four bands at the full rate (42
+/// instructions a sample), and its share of the block's work.
+pub const CUT: Cost = Cost(84);
+/// A DRUM Part's side through the bands that cut, at worst all four
+/// (36.5 instructions a sample).
+pub const SIDE: Cost = Cost(60);
+/// SMART EQ listening to the reverb's return (FRONT): its sum's four
+/// bands decimated.
+pub const WASH_LISTEN: Cost = Cost(36);
+/// SMART EQ on a return it can cut: its left and its right through the
+/// four bands (36.5 instructions a sample each), the sum listened to.
+pub const WASH_CUT: Cost = Cost(160);
+
+/// Whether SMART EQ's bands run this block, so are billed: switched on
+/// with an AMOUNT, or still letting its cuts go after (up to some
+/// seconds, at the full rate until they are back).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SmartLoad {
+    /// Zero bytes: ITCM's boot state.
+    Rests = 0,
+    Runs = 1,
+}
+
+impl SmartLoad {
+    pub fn of(smart: SmartEq, st: &SmartState) -> SmartLoad {
+        if smart.listens() || st.live() {
+            SmartLoad::Runs
+        } else {
+            SmartLoad::Rests
+        }
+    }
+
+    /// As `of`, from the EQ's whole state.
+    pub fn now(smart: SmartEq, eqs: &PartEqs) -> SmartLoad {
+        SmartLoad::of(smart, &eqs.smart)
+    }
+}
 
 /// What a Part's EQ adds to its first voice's bill: nothing flat with
-/// SMART EQ off (or at AMOUNT 0), so every bill is then as before. A DRUM
-/// Part pays for its side too. A Part in MID or BACK is billed as cut
-/// whether or not anything outranks it: its bands run at the full rate
-/// the moment something does.
-pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartEq) -> Cost {
+/// SMART EQ at rest, so every bill is then as before. A DRUM Part pays
+/// for its side too. A Part in MID or BACK is billed as cut whether or
+/// not anything outranks it: its bands run at the full rate the moment
+/// something does.
+pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartLoad) -> Cost {
     let sides = |c: Cost| match kind {
         PartKind::Drum => c,
         PartKind::Tonal => Cost::ZERO,
@@ -37,28 +71,21 @@ pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartEq) -> Co
     } else {
         TILT + sides(TILT)
     };
-    let smart = match (smart.listens(), role) {
-        (false, _) => Cost::ZERO,
-        (true, Role::Front) => LISTEN,
-        (true, Role::Mid | Role::Back) => CUT + sides(SIDE),
+    let smart = match (smart, role) {
+        (SmartLoad::Rests, _) => Cost::ZERO,
+        (SmartLoad::Runs, Role::Front) => LISTEN,
+        (SmartLoad::Runs, Role::Mid | Role::Back) => CUT + sides(SIDE),
     };
     tilt + smart
 }
 
-/// SMART EQ listening to the reverb's return (FRONT, or the reverb off):
-/// its sum's four bands decimated.
-pub const WASH_LISTEN: Cost = Cost(40);
-/// SMART EQ on a return it can cut: its left and its right through the
-/// four bands, the sum listened to.
-pub const WASH_CUT: Cost = Cost(165);
-
 /// What SMART EQ on the reverb's return reserves from the budget beside
 /// the bus (ADR 0296), with the reverb TYPE's own extra: nothing with
-/// SMART EQ off or the reverb off.
-pub fn wash(reverb: &crate::dsp::reverb::ReverbParams, smart: SmartEq) -> Cost {
-    match (smart.listens() && reverb.is_on(), reverb.role) {
-        (false, _) => Cost::ZERO,
-        (true, Role::Front) => WASH_LISTEN,
-        (true, Role::Mid | Role::Back) => WASH_CUT,
+/// SMART EQ at rest or the reverb off.
+pub fn wash(reverb: &crate::dsp::reverb::ReverbParams, smart: SmartLoad) -> Cost {
+    match (smart, reverb.is_on(), reverb.role) {
+        (SmartLoad::Rests, _, _) | (_, false, _) => Cost::ZERO,
+        (SmartLoad::Runs, true, Role::Front) => WASH_LISTEN,
+        (SmartLoad::Runs, true, Role::Mid | Role::Back) => WASH_CUT,
     }
 }

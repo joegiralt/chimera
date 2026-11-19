@@ -676,7 +676,8 @@ fn side_bands(
 fn tidy(taps: &mut [BandTaps; BANDS]) {
     for t in taps.iter_mut() {
         let size = t.s1.abs() + t.s2.abs();
-        if !(size >= FLUSH && size <= f32::MAX) {
+        // A NaN is in no range.
+        if !(FLUSH..=f32::MAX).contains(&size) {
             *t = BandTaps::ZERO;
         }
     }
@@ -1036,7 +1037,7 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
         wash: b.wash,
     };
     let caps = caps_at(b.smart);
-    if st.turn % RULES == 0 {
+    if st.turn.is_multiple_of(RULES) {
         slow_rule(st, usize::from(st.turn / RULES) % BANDS, &roles, caps);
     } else {
         kick_rule(st, &r, &roles, caps.kick, u16::from(RULES));

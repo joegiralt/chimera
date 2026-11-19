@@ -100,8 +100,13 @@ fn mst_lvl_turns_smart_eq_and_amount() {
         Amount::DEFAULT,
         "AMOUNT starts at half"
     );
+    // Cell F: the reverb return's role, BACK until moved.
+    assert_eq!(ui.project().perf().fx.reverb.role, Role::Back);
+    feed(&mut ui, Input::turn(EncoderId::F, -1));
+    assert_eq!(ui.project().perf().fx.reverb.role, Role::Mid);
     screen::settle(&mut ui);
     let shot = screen::render_ui(&ui);
     assert!(screen::cell_reads(&shot, 3, "ON"));
+    assert!(screen::cell_reads(&shot, 5, "MID"));
     assert!(band_px(&shot, theme::FAINT) > 0, "the Parts' columns drawn");
 }

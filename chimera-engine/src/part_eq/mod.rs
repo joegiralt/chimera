@@ -379,6 +379,9 @@ pub struct PartEqs {
     pub(crate) parts: [ChannelEq; crate::hw::MAX_PARTS],
     /// SMART EQ's four cut bands a Part (ADR 0296), after TILT.
     pub smart: smart::SmartState,
+    /// Whether the Parts' bills last carried SMART EQ's bands
+    /// (`Instrument::recost`).
+    pub(crate) billed: bill::SmartLoad,
 }
 
 impl PartEqs {
@@ -386,6 +389,7 @@ impl PartEqs {
     pub const REST: PartEqs = PartEqs {
         parts: [ChannelEq::REST; crate::hw::MAX_PARTS],
         smart: smart::SmartState::REST,
+        billed: bill::SmartLoad::Rests,
     };
 
     /// A Part's EQ runs (or settles): bank 1's test for the door call.

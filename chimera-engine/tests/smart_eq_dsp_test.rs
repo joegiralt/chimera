@@ -553,9 +553,7 @@ fn sided(st: &mut SmartState, start: usize, side: Option<&dyn Fn(usize) -> f32>)
     let mut sides: Sides = [None; MAX_PARTS];
     for p in 0..2 {
         let g = sine(100.0 + 10.0 * p as f32, 0.3);
-        for i in 0..BLOCK_SIZE {
-            buses[p][i] = g(start + i);
-        }
+        buses[p] = core::array::from_fn(|i| g(start + i));
         sides[p] = side.map(|f| core::array::from_fn(|i| f(start + i)));
     }
     let mut written = [false; MAX_PARTS];

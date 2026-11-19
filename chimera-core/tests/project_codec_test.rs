@@ -787,6 +787,14 @@ fn smart_eq_and_roles_round_trip_and_an_old_file_loads_mid_and_off() {
     let old = fx_without(&p, 24, &[CompParams::SMART_EQ.0, CompParams::AMOUNT.0]);
     decode(&old, &mut q).unwrap();
     assert_eq!(q.perf().fx.comp.smart, SmartEq::OFF);
+    // The reverb return's role is the project's too; an old file's is BACK.
+    let (mut r, _) = full();
+    r.edit_fx().reverb.role = Role::Front;
+    decode(&encode(&r), &mut q).unwrap();
+    assert_eq!(q.perf().fx.reverb.role, Role::Front);
+    let old = fx_without(&r, 22, &[chimera_core::dsp::reverb::ReverbParams::ROLE.0]);
+    decode(&old, &mut q).unwrap();
+    assert_eq!(q.perf().fx.reverb.role, Role::Back);
     assert_eq!(q.perf().fx.comp.vol, p.perf().fx.comp.vol);
 }
 

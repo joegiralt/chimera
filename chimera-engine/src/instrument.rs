@@ -41,6 +41,7 @@ use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::part::{Held, LiveSnap, PartParams};
+use crate::part_eq::bill::SmartLoad;
 use crate::preset::{Part, Performance, Sound};
 use crate::project::{Loads, PartId, Project, SourceId};
 use crate::scope::ScopeWriter;
@@ -1005,15 +1006,20 @@ impl Instrument {
     /// What a sounding Part costs once, on its first voice: its knobs
     /// (ADR 0112) and its EQ with SMART EQ's bands (ADR 0296).
     #[inline(never)]
-    fn part_cost(part: &PartAudio, shared: &AudioShared) -> Cost {
+    fn part_cost(part: &PartAudio, smart: SmartLoad) -> Cost {
         use crate::part_eq::smart::PartKind;
         Knobs::COST
             + crate::part_eq::bill::first_voice(
                 part.mix.eq,
                 part.mix.role,
                 PartKind::of(part.params.engine()),
-                shared.fx.comp.smart,
+                smart,
             )
+    }
+
+    /// Whether SMART EQ's bands run, so are billed (`SmartLoad`).
+    fn smart_load(&mut self, shared: &AudioShared) -> SmartLoad {
+        SmartLoad::now(shared.fx.comp.smart, self.eq.get())
     }
 
     /// Spent outside the pool each block, so a new voice must fit beside
@@ -1361,6 +1367,7 @@ impl Instrument {
     ) {
         match ev.kind {
             NoteKind::On(vel) => {
+                let smart_load = self.smart_load(shared);
                 let live = from == NoteOrigin::Live;
                 // A zone's member channel plays its master's Parts.
                 // ORBIT's notes are on their Part's channel already.
@@ -1410,7 +1417,7 @@ impl Instrument {
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first {
-                        Self::part_cost(part, shared)
+                        Self::part_cost(part, smart_load)
                     } else {
                         Cost::ZERO
                     };
@@ -2065,6 +2072,7 @@ impl Instrument {
         let NoteKind::On(vel) = ev.kind else {
             return;
         };
+        let smart_load = self.smart_load(shared);
         for (q, part) in PartId::ALL.into_iter().zip(&shared.parts) {
             let p = q.index();
             if part.mix.channel != heard || part.params.engine() != EngineType::Drum {
@@ -2077,7 +2085,7 @@ impl Instrument {
             let own = self.costs[p].hit(HitKernel::Sounding(hit.bill(self.sample_rate)));
             let cost = own
                 + if first {
-                    Self::part_cost(part, shared)
+                    Self::part_cost(part, smart_load)
                 } else {
                     Cost::ZERO
                 };
@@ -2191,10 +2199,16 @@ impl Instrument {
     /// render, on the same snapshot reuses it (ADR 0091), so a burst of
     /// notes, admitted or refused, costs the Parts once.
     fn recost(&mut self, shared: &AudioShared) {
+        // SMART EQ's bands starting or coming to rest move the Parts'
+        // bills with the same snapshot.
+        let smart_load = self.smart_load(shared);
         let at = core::ptr::from_ref(shared) as usize;
-        if self.costed == at {
+        // What the bills last carried is kept with the EQ's state (ITCM):
+        // D2, where the Instrument lives, has no byte to spare.
+        if self.costed == at && self.eq.get().billed == smart_load {
             return;
         }
+        self.eq.get().billed = smart_load;
         #[cfg(feature = "probe")]
         let t0 = crate::probe::now();
         // Each kit's bill read once: the Part's bill, its glide and its
@@ -2249,7 +2263,7 @@ impl Instrument {
                     + self.streaming[v].looped
                     + high;
                 let k = if first {
-                    Self::part_cost(part, shared)
+                    Self::part_cost(part, smart_load)
                 } else {
                     Cost::ZERO
                 };
@@ -2597,7 +2611,7 @@ impl Instrument {
         // The reverb TYPE's extra, and GRAIN's (ADR 0202).
         self.rev_extra = self.rev_bill.step(shared.fx.reverb.kind)
             + crate::dsp::delay::extra_cost(&shared.fx.delay)
-            + crate::part_eq::bill::wash(&shared.fx.reverb, shared.fx.comp.smart);
+            + crate::part_eq::bill::wash(&shared.fx.reverb, self.smart_load(shared));
         let (_, cents) = self
             .tune_ease
             .step(f32::from(shared.tune), ease_coeff(self.sample_rate.get()));

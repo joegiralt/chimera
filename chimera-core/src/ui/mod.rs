@@ -3459,9 +3459,11 @@ impl UiState {
                     continue;
                 }
                 // The reverb turns by its TYPE's panel, and TYPE keeps the
-                // knobs it leaves (reverb TYPEs spec § Pages).
+                // knobs it leaves (reverb TYPEs spec § Pages); the return's
+                // SMART EQ role (ADR 0296) is no panel's, a plain choice.
                 if let Some(a) = v.addr()
                     && a.block == BlockRef::Reverb
+                    && a.param != crate::dsp::reverb::ReverbParams::ROLE
                     && (!shift
                         || reverb_panel::whole_ticks(&self.project.perf().fx.reverb, a.param))
                 {

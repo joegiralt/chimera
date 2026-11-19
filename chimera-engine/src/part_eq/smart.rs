@@ -429,10 +429,10 @@ impl Level {
     pub(crate) const SILENT: Level = Level(0.0);
 
     /// `over` dB over silence; under it, NaN included, is silent
-    /// (`f32::max` keeps the number).
+    /// (`clampf` gives a NaN its low bound).
     #[inline(always)]
     pub(crate) fn over_silence(over: f32) -> Level {
-        Level(over.max(0.0).min(f32::MAX))
+        Level(crate::dsp::clampf(over, 0.0, f32::MAX))
     }
 
     /// dB over silence, as a number for the rule's sums: finite and 0 or
