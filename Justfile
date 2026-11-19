@@ -184,9 +184,10 @@ firmware-gate:
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
-# The NRPN guide page (#926), from the chart the firmware answers with.
+# The NRPN guide page (#926) and its JSON (#983), from the chart the firmware answers with.
 nrpn-guide:
     {{utils}} nrpn-guide > docs/guide/NRPN.md
+    {{utils}} nrpn-json > docs/guide/NRPN.json
 
 # SUGGEST, the factory controller map, from the param tables: its card
 # file into DIR/CHIMERA/MAPS (the factory pack's), or `--tables` for
@@ -289,13 +290,15 @@ check-door-placed elf:
     midi_ui+=('ui::part_voices::')
     if grep -qE ' [tT] .*ToastTimer>::shows' <<< "$syms"; then midi_ui+=('ToastTimer>::shows'); fi
     if grep -qE ' [tT] .*Shares>::refusal' <<< "$syms"; then midi_ui+=('Shares>::refusal'); fi
-    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::osc::solo::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'voice::depth::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on' 'randomize::kern::' 'console::ed::'; do
+    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::osc::solo::' 'part_eq::dsp::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'voice::depth::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on' 'randomize::kern::' 'console::ed::'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); o = (a - 0x08100000) % 0x40000; if (a < 0x08100000 || a >= 0x08200000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } else if (a - 0x08100000 >= 0x80000 && (o < 0x400 || o >= 0x3FFE0)) { print "in a slot reserve or end marker: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
     # ed is pinned to the S4 group (ADR 0272), not anywhere in bank 2.
     grep -E ' [tT] .*console::ed::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "ed outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
     # So are VA's solos and their table (ADR 0283).
     grep -E ' [tT] .*va::osc::solo::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "VA solo outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # So is the Parts' EQ's block (ADR 0284).
+    grep -E ' [tT] .*part_eq::dsp::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "part EQ outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
     # And no solo code of theirs sits in bank 1: the quiet pulse's or its runs' (ADR 0283).
     # (awk alone: when all of it is inlined into `solo::play` there is none, and grep would fail.)
     awk '/ [tT] .*PulseQuiet/ { a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "VA solo code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"
@@ -383,9 +386,10 @@ check-slots elf bk2:
 # the only firmware shipped), CHIMERA.BK2 (sealed for that .bin: dropped in
 # the card root, the next boot installs it) and factory-v1.zip (the
 # card's whole CHIMERA folder: every factory Sound, TAPE's sources, the
-# demo projects and the SUGGEST controller map); writes
+# demo projects and the SUGGEST controller map) and NRPN.json (the NRPN
+# chart for scripts, #983); writes
 # SHA256SUMS and the notes from docs/alpha/RELEASE-NOTES.md.tmpl; asserts
-# the assets are exactly those four and none is a private file's bytes. A
+# the assets are exactly those five and none is a private file's bytes. A
 # draft only: the owner publishes. --dry-run does everything but `gh release create`.
 release version *flags:
     #!/usr/bin/env bash
@@ -422,10 +426,23 @@ release version *flags:
     pub=${FACTORY_PUBLIC:-target/factory-sounds/public}; tapes=${FACTORY_TAPES:-target/tapes-v1}
     rm -rf target/factory-maps; just suggest-map target/factory-maps
     python3 -I tools/factory_zip.py "$pub" "$tapes" target/factory-maps "$out/factory-v1.zip"
-    (cd "$out" && sha256sum CHIMERA.BIN CHIMERA.BK2 factory-v1.zip > SHA256SUMS)
+    # The NRPN chart for scripts (#983), fresh from the chart the firmware
+    # answers with; the guide's copy must be this one.
+    {{utils}} nrpn-json > "$out/NRPN.json"
+    cmp -s "$out/NRPN.json" docs/guide/NRPN.json || { echo "docs/guide/NRPN.json is stale: run just nrpn-guide" >&2; exit 1; }
+    # It names the firmware it lists: this release, which is the workspace's version too.
+    python3 -I - "$V" "$out/NRPN.json" <<'PY'
+    import json, sys, tomllib
+    v, path = sys.argv[1:]
+    ws = tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"]
+    fw = json.load(open(path))["firmware"]
+    if (ws, fw) != (v, v):
+        sys.exit("releasing %s, but Cargo.toml's version is %s and NRPN.json's firmware %s: bump the workspace version, then just nrpn-guide" % (v, ws, fw))
+    PY
+    (cd "$out" && sha256sum CHIMERA.BIN CHIMERA.BK2 NRPN.json factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
     # file (the stock bootloader backup, the bootloader, a dev chimera.bin or .bk2).
-    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "CHIMERA.BIN CHIMERA.BK2 SHA256SUMS factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
+    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "CHIMERA.BIN CHIMERA.BK2 NRPN.json SHA256SUMS factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
     for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin chimera.bk2 target/chimera.bin target/chimera.bk2; do
         [ -f "$p" ] || continue
         h=$(sha256sum "$p" | cut -d' ' -f1)
@@ -450,8 +467,8 @@ release version *flags:
         -e "/@DEMOS@/{r $out/demos.md" -e "d}" -e "/@CRATES@/{r $out/crates.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
     rm "$out/demos.md" "$out/crates.md"
     ! grep -q '@[A-Z]*@' "$out/RELEASE-NOTES.md" || { echo "unfilled template field" >&2; exit 1; }
-    assets=("$out/CHIMERA.BIN" "$out/CHIMERA.BK2" "$out/factory-v1.zip" "$out/SHA256SUMS")
-    echo "assets:"; (cd "$out" && ls -l CHIMERA.BIN CHIMERA.BK2 factory-v1.zip SHA256SUMS && cat SHA256SUMS)
+    assets=("$out/CHIMERA.BIN" "$out/CHIMERA.BK2" "$out/NRPN.json" "$out/factory-v1.zip" "$out/SHA256SUMS")
+    echo "assets:"; (cd "$out" && ls -l CHIMERA.BIN CHIMERA.BK2 NRPN.json factory-v1.zip SHA256SUMS && cat SHA256SUMS)
     if [ $dry = 1 ]; then
         echo "dry run: would draft v$V on $REPO with notes $out/RELEASE-NOTES.md"; exit 0
     fi
@@ -498,7 +515,7 @@ check $CHIMERA_STAMP_CLEAN="1":
     # TAPE's, the reverb's, VA FM's and solos' (and the solos fuzzed against their pairs), the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's, ALGO's and the streamed loads' bank-1 sides through the host's own door.
     cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test va_solo_door_test --test va_solo_fuzz_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test --test depth_proxy_test --test algo_door_test --test modal_door_test --test midi_door_test
     # ORBIT's runner and pages through the host's own door: open it plays as before the move, closed nothing (ADR 0208); a closed door keeps each Part's map record for its saves (#815).
-    cargo test -p chimera-core --features bank2 --test orbit_door_test --test randomize_door_test --test drum_groups_door_test --test part_voices_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test --test ed_door_test --test mpe_closed_door_test --test bindings_codec_test --test replace_guard_test
+    cargo test -p chimera-core --features bank2 --test orbit_door_test --test part_eq_door_test --test randomize_door_test --test drum_groups_door_test --test part_voices_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test --test ed_door_test --test mpe_closed_door_test --test bindings_codec_test --test replace_guard_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features

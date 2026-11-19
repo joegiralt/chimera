@@ -259,6 +259,40 @@ impl Gain {
     }
 }
 
+/// A frequency in Hz, 0..=24 000 (the rate's Nyquist); NaN is 0.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct Hz(f32);
+
+impl Hz {
+    pub const fn new(v: f32) -> Hz {
+        Hz(clampf(v, 0.0, 24_000.0))
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// A level in dB, finite; NaN is 0 dB.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Db(f32);
+
+impl Db {
+    pub const ZERO: Db = Db(0.0);
+
+    pub const fn new(v: f32) -> Db {
+        Db(if v.is_nan() {
+            0.0
+        } else {
+            clampf(v, -f32::MAX, f32::MAX)
+        })
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
 /// A send's stored level: a Part's CHORUS, DELAY and REVERB sends and the
 /// delay's REV SEND, 0..=1, shown 0–127 on the 1/128 grid (MIDI, NRPN and
 /// the editor write between). It reaches an effect only as `gain`, the

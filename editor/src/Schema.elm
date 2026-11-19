@@ -17,7 +17,7 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 -}
 
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine, Kind, Scale, addrKey)
+import Protocol exposing (Addr, AnswerLine, Kind, OptIndex, Scale, addrKey)
 
 
 type alias Param =
@@ -29,7 +29,7 @@ type alias Param =
     , max : Float
     , step : Float
     , default : Float
-    , options : List ( Int, String )
+    , options : List ( OptIndex, String )
     }
 
 
@@ -120,7 +120,7 @@ paramIn variants a (Schema s) =
                     Dict.get key s.index
 
 
-optionName : Dict String String -> Addr -> Int -> Schema -> Maybe String
+optionName : Dict String String -> Addr -> OptIndex -> Schema -> Maybe String
 optionName variants a i sch =
     paramIn variants a sch
         |> Maybe.andThen (\p -> p.options |> List.filter (\( k, _ ) -> k == i) |> List.head)

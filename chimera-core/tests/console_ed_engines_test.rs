@@ -493,31 +493,160 @@ fn every_box_cell_of_every_engine_is_described_and_reads_as_the_box() {
     }
 }
 
-/// The worst DRUM answer: every pad on each machine in turn, the longest
-/// filter name, untidy values. Under the bound with room, and timed.
-#[test]
-fn a_messy_kit_fits_one_answer() {
-    let mut f = fake(EngineType::Drum);
-    let texts = page_texts(&mut f, EngineType::Drum);
-    let kinds = FilterKind::BUILT;
-    let longest = (0..kinds.len())
-        .max_by_key(|&k| filter_variant(kinds[k]).len())
-        .unwrap();
-    let mut worst = 0;
-    let mut slowest = std::time::Duration::ZERO;
-    for m in 0..Machine::ALL.len() {
-        for n in 1..=12 {
-            set(&mut f, &format!("PAD{n}.MACHINE"), &format!("#{m}"));
-            set(&mut f, &format!("PAD{n}_FLT.KIND"), &format!("#{longest}"));
+/// The longest `val` line address `p` (a describe `param` line's fields)
+/// can make now: every option, or every step of a continuous range (257
+/// points across a longer one), each read back by `ed get`, whose line is
+/// `since`'s own. The value is put back afterwards.
+fn longest_line(f: &mut Fake, p: &[String]) -> usize {
+    let addr = &p[1];
+    let (min, max, step): (f32, f32, f32) = (
+        p[5].parse().unwrap(),
+        p[6].parse().unwrap(),
+        p[7].parse().unwrap(),
+    );
+    let a = EdAddr::parse(addr.as_bytes()).unwrap();
+    let spec = a.param().spec().unwrap();
+    let was = get(f, addr).0;
+    let words: Vec<String> = if p[3] == "cont" {
+        let n = ((max - min) / step.max(1e-6)).round() as usize;
+        let k = n.clamp(1, 256);
+        (0..=k)
+            .map(|i| format!("{:.6}", min + (max - min) * i as f32 / k as f32))
+            .collect()
+    } else {
+        (0..=(max - min).round() as usize)
+            .map(|i| format!("#{i}"))
+            .collect()
+    };
+    let mut longest = 0;
+    for w in &words {
+        if !spec.stored || spec.patching {
+            break;
         }
-        mess(&mut f, &texts);
-        let t = std::time::Instant::now();
-        let (lines, _, bytes) = since(&mut f, 0);
-        slowest = slowest.max(t.elapsed());
-        assert!(lines[0].starts_with("part 1 DRUM"), "{:?}", &lines[..2]);
-        worst = worst.max(bytes);
+        let got = ask(f, &format!("ed set {addr} {w}\n"));
+        if got != "OK queued\n" {
+            continue;
+        }
+        apply(f);
+        let line = ask(f, &format!("ed get {addr}\n"));
+        longest = longest.max(line.lines().next().unwrap().len() + 1);
     }
-    println!("a messy kit's full answer: {worst} B of {ANSWER_BYTES_MAX}, the slowest {slowest:?}");
+    let _ = ask(f, &format!("ed set {addr} {was}\n"));
+    apply(f);
+    // A param no set reaches (read only, or patched): its line now.
+    longest.max(
+        ask(f, &format!("ed get {addr}\n"))
+            .lines()
+            .next()
+            .unwrap()
+            .len()
+            + 1,
+    )
+}
+
+/// The worst DRUM `since 0` answer, bounded from above under these
+/// assumptions, each this test's, not proven by it:
+/// - a cell's text depends only on its own value, its pad's MACHINE and
+///   filter KIND, and its panel's variant;
+/// - a continuous param's longest text is among 257 evenly spaced values
+///   (every step where it has fewer);
+/// - pad 12's lines are each pad's longest: its address tokens are the
+///   longest, and its texts are any pad's;
+/// - the Part's own lines hold at most a cell's 32-byte text.
+///
+/// Each address's line is maximised over its values, each pad over its
+/// machine and kind, each panel over its variants. DRUM shows no SOURCE
+/// cell, so the answer has no `source` line (asserted below; TAPE's
+/// answer has one, not bounded here).
+#[test]
+fn the_worst_drum_answer_fits_one_answer() {
+    let mut f = fake(EngineType::Drum);
+    let (lines, _, _) = since(&mut f, 0);
+    assert!(
+        !lines.iter().any(|l| l.starts_with("source ")),
+        "DRUM writes no source line"
+    );
+    let texts = page_texts(&mut f, EngineType::Drum);
+    let all = params(&texts);
+    let pad12: Vec<&Vec<String>> = {
+        let mut seen = BTreeSet::new();
+        all.iter()
+            .filter(|p| {
+                (p[1].starts_with("PAD12.") || p[1].starts_with("PAD12_"))
+                    && seen.insert(p[1].clone())
+            })
+            .collect()
+    };
+    let knob = |p: &Vec<String>| p[1].starts_with("PAD12.KNOB_");
+    let flt = |p: &Vec<String>| p[1].starts_with("PAD12_FLT.") && p[1] != "PAD12_FLT.KIND";
+    // A pad's lines on no machine or kind: measured once.
+    let mut pad = 0;
+    for p in pad12.iter().filter(|p| !knob(p) && !flt(p)) {
+        pad += longest_line(&mut f, p);
+    }
+    // Its machine's knobs on the machine that makes them longest.
+    let mut knobs = 0;
+    for m in 0..Machine::ALL.len() {
+        set(&mut f, "PAD12.MACHINE", &format!("#{m}"));
+        let sum: usize = pad12
+            .iter()
+            .filter(|p| knob(p))
+            .map(|p| longest_line(&mut f, p))
+            .sum();
+        knobs = knobs.max(sum);
+    }
+    // Its filter's cells on the kind that makes them longest.
+    let mut filter = 0;
+    for k in 0..FilterKind::BUILT.len() {
+        set(&mut f, "PAD12_FLT.KIND", &format!("#{k}"));
+        let sum: usize = pad12
+            .iter()
+            .filter(|p| flt(p))
+            .map(|p| longest_line(&mut f, p))
+            .sum();
+        filter = filter.max(sum);
+    }
+    let per_pad = pad + knobs + filter;
+    // The Part's own lines: `val <addr> <norm> <stored> "<text>"`, the
+    // norm at most 9 characters, the stored value its spec's widest, the
+    // text at most a cell's 32 bytes.
+    let part: usize = {
+        let mut seen = BTreeSet::new();
+        all.iter()
+            .filter(|p| !p[1].starts_with("PAD") && seen.insert(p[1].clone()))
+            .map(|p| {
+                let wide =
+                    |v: &str| v.trim_start_matches('-').split('.').next().unwrap().len() + 1 + 8;
+                let stored = wide(&p[5]).max(wide(&p[6]));
+                "val ".len() + p[1].len() + 1 + 9 + 1 + stored + 2 + 32 + 2
+            })
+            .sum()
+    };
+    // Each panel at its longest variant, as `describe` lists them.
+    let mut panels: std::collections::BTreeMap<String, usize> = Default::default();
+    for l in texts
+        .iter()
+        .flat_map(|t| t.lines())
+        .filter(|l| l.starts_with("panel "))
+    {
+        let name = l.split(' ').nth(1).unwrap().to_string();
+        let e = panels.entry(name).or_default();
+        *e = (*e).max(l.len() + 1);
+    }
+    let shown: usize = panels
+        .iter()
+        .filter(|(n, _)| {
+            n.ends_with("_MCH")
+                || n.ends_with("_FLT")
+                || ["FX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3"].contains(&n.as_str())
+        })
+        .map(|(_, len)| len)
+        .sum();
+    let head = "\n".len() + "part 1 DRUM\n".len() + "OK 999999999\n".len();
+    let worst = head + shown + part + 12 * per_pad;
+    println!(
+        "the worst DRUM answer: at most {worst} B of {ANSWER_BYTES_MAX} (a pad {per_pad} B, the Part {part} B, the panels {shown} B)"
+    );
     assert!(worst < ANSWER_BYTES_MAX, "{worst} B");
 }
 
@@ -756,7 +885,7 @@ fn reads_follow_the_named_pad_not_the_selection() {
 
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::kinds::OpKind;
-use chimera_core::ui::held::{self, AlgSide, Pick, TapeTurn};
+use chimera_core::ui::held::{self, AlgSide, Pick, Source, TapeTurn};
 use chimera_engine::addr::Op;
 use chimera_engine::addr::ParamAddr;
 
@@ -804,7 +933,7 @@ fn a_tape_turn_a_streamed_source_refuses_writes_nothing() {
             set(&mut f, "TAPE_ENG.MODEL", "#0");
             set(&mut f, &ed(a), "#0");
             let turn = TapeTurn::of(a, f32::from(i)).unwrap();
-            let why = Pick::Tape(turn).why(&f.ui.project().part(P1).sound, true);
+            let why = Pick::Tape(turn).why(&f.ui.project().part(P1).sound, Source::Streamed);
             set(&mut f, &ed(a), &format!("#{i}"));
             let want = if why.is_some() { 0.0 } else { f32::from(i) };
             assert_eq!(get(&mut f, &ed(a)).0, want, "{} #{i}: {why:?}", ed(a));
@@ -825,7 +954,8 @@ fn a_formant_kind_or_algorithm_past_the_budget_writes_nothing() {
             chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
         );
         let was = get(&mut f, &ed(a)).0;
-        let why = Pick::Wave(op, OpKind::Formant).why(&f.ui.project().part(P1).sound, false);
+        let why =
+            Pick::Wave(op, OpKind::Formant).why(&f.ui.project().part(P1).sound, Source::InRam);
         set(&mut f, &ed(a), &format!("#{formant}"));
         let want = if why.is_some() {
             was
@@ -840,11 +970,215 @@ fn a_formant_kind_or_algorithm_past_the_budget_writes_nothing() {
         let a = ParamAddr::new(BlockRef::Algo, side.param());
         for code in 0..32u8 {
             let was = get(&mut f, &ed(a)).0;
-            let why =
-                Pick::Alg(side, AlgoId::clamped(code)).why(&f.ui.project().part(P1).sound, false);
+            let why = Pick::Alg(side, AlgoId::clamped(code))
+                .why(&f.ui.project().part(P1).sound, Source::InRam);
             set(&mut f, &ed(a), &format!("#{code}"));
             let want = if why.is_some() { was } else { f32::from(code) };
             assert_eq!(get(&mut f, &ed(a)).0, want, "{side:?} {code}: {why:?}");
         }
     }
+}
+
+// ---- the box's cue for an ed set: a held choice ends, a refusal says why ----
+
+use chimera_core::ui::busy::ToastStep;
+
+/// TAPE on a streamed source at DECK, as tape_musical_ui_test's `ui_on`.
+fn streamed_at_deck() -> Fake {
+    use chimera_core::storage::{SourceRef, TapeSource};
+    use chimera_core::stream::ring::{Rings, ThirdSlots};
+    use chimera_core::stream::test_card::TestCard;
+    use common::tape::{held_plain, sine};
+    let whole = held_plain(&sine(24_000, 100.7, 720_000), 24_000);
+    let rings: &'static Rings = Box::leak(Box::new(Rings::new()));
+    let third: &'static ThirdSlots = Box::leak(Box::new(ThirdSlots::new()));
+    let (_, card) = rings.sides(third).unwrap();
+    let bytes = TestCard::new(card, &whole, 0).held(&[0, 0], 4_800);
+    let r = SourceRef {
+        crc: 0x5EED,
+        frames: 720_000,
+        rate: 24_000,
+    };
+    let mut f = Fake::new();
+    screen::load_init(&mut f.ui, EngineType::Tape);
+    f.ui.project_mut().source_store(r, &bytes).unwrap();
+    f.ui.project_mut().edit_part(P1).sound.source = Some(TapeSource { r, tune: None });
+    screen::plus(&mut f.ui, 1);
+    f
+}
+
+fn toast(f: &mut Fake) -> Option<String> {
+    match f.ui.step_toast(0) {
+        ToastStep::Show(l) => Some(l.as_str().to_string()),
+        _ => None,
+    }
+}
+
+#[test]
+fn an_ed_set_on_a_held_cell_ends_the_hold() {
+    use chimera_hal::EncoderId;
+    let mut f = streamed_at_deck();
+    let dir = ed(held::DIRECTION);
+    // The box holds PING-PONG, refused, dimmed.
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, 1));
+    assert!(f.ui.held_choice().is_some(), "PING-PONG held");
+    // The editor's FORWARD lands, and the hold is gone.
+    set(&mut f, &dir, "#0");
+    assert!(f.ui.held_choice().is_none(), "a landed set ends the hold");
+    // Held again; a refused set ends it too, and says why.
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, 3));
+    assert!(f.ui.held_choice().is_some(), "held again");
+    f.ui.step_toast(60_000);
+    set(&mut f, &dir, "#3");
+    assert!(f.ui.held_choice().is_none(), "a refused set ends the hold");
+    assert_eq!(toast(&mut f).as_deref(), Some("PING NEEDS RAM · STREAMED"));
+}
+
+#[test]
+fn a_refused_ed_set_says_why_as_a_cc_does() {
+    // TAPE: the streamed source's reason.
+    let mut f = streamed_at_deck();
+    f.ui.step_toast(60_000);
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    assert_eq!(toast(&mut f).as_deref(), Some("SCRUB NEEDS RAM · STREAMED"));
+    // ALGO: the formant budget, as a CC past it says.
+    let mut f = fake(EngineType::Algo);
+    let formant = OpKind::Formant.code();
+    let mut said = None;
+    for op in Op::ALL {
+        let a = ParamAddr::new(
+            BlockRef::AlgoOp(op),
+            chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
+        );
+        f.ui.step_toast(60_000);
+        set(&mut f, &ed(a), &format!("#{formant}"));
+        if let Some(t) = toast(&mut f) {
+            said = Some(t);
+        }
+    }
+    assert_eq!(said.as_deref(), Some("FORMANT BUDGET FULL"));
+    // DRUM: a 9th group, its own words.
+    let mut f = fake(EngineType::Drum);
+    f.ui.step_toast(60_000);
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    assert!(
+        toast(&mut f).is_some_and(|t| t.contains("GROUPS")),
+        "the groups' reason"
+    );
+    // A set that lands says nothing.
+    f.ui.step_toast(60_000);
+    set(&mut f, "PAD5.LEVEL", "40");
+    assert_eq!(toast(&mut f), None);
+}
+
+#[test]
+fn a_landed_ed_set_is_silent_and_another_cell_leaves_the_hold() {
+    use chimera_core::dsp::tape_engine::TapeEngineParams;
+    use chimera_hal::EncoderId;
+    let mut f = streamed_at_deck();
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, 1));
+    assert!(f.ui.held_choice().is_some(), "DIRECTION held");
+    // AGE lands, says nothing, and DIRECTION's hold stays.
+    let age = ed(ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::AGE));
+    let (now, _) = get(&mut f, &age);
+    f.ui.step_toast(60_000);
+    set(&mut f, &age, &format!("{now}"));
+    assert_eq!(toast(&mut f), None, "a landed set is silent");
+    assert!(f.ui.held_choice().is_some(), "another cell leaves the hold");
+    // So does a refused set on another cell: MODEL's SCRUB.
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    assert!(
+        f.ui.held_choice().is_some(),
+        "a refusal elsewhere leaves it"
+    );
+    // ALGO: a WAVE that lands says nothing either.
+    let mut f = fake(EngineType::Algo);
+    let wave = ed(ParamAddr::new(
+        BlockRef::AlgoOp(Op::ALL[0]),
+        chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
+    ));
+    f.ui.step_toast(60_000);
+    set(&mut f, &wave, "#1");
+    assert_eq!(toast(&mut f), None);
+}
+
+#[test]
+fn a_refused_set_to_the_value_it_has_changes_nothing() {
+    use chimera_core::block::Block;
+    use chimera_core::dsp::tape_engine::TapeEngineParams;
+    use chimera_hal::EncoderId;
+    // DIRECTION already PING-PONG on a streamed source: refused, but no
+    // change. The box's held REVERSE stays and nothing is said.
+    let mut f = streamed_at_deck();
+    f.ui.project_mut()
+        .edit_part(P1)
+        .sound
+        .params
+        .tape
+        .set(TapeEngineParams::MODE, 3.0);
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, -2));
+    let held = f.ui.held_choice().map(|s| s.held);
+    assert!(held.is_some(), "REVERSE held");
+    f.ui.step_toast(60_000);
+    set(&mut f, &ed(held::DIRECTION), "#3");
+    assert_eq!(f.ui.held_choice().map(|s| s.held), held, "the hold stays");
+    assert_eq!(toast(&mut f), None, "nothing to say");
+}
+
+/// INIT DRUM, pad 3's CHOKE held at OFF on the box (a 9th group), as
+/// drum_groups_door_test's.
+fn choke_held() -> Fake {
+    use chimera_hal::{ButtonId, EncoderId};
+    let mut f = Fake::new();
+    screen::stack_map(&mut f.ui);
+    screen::load_init(&mut f.ui, EngineType::Drum);
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::A, 1));
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::A, 1));
+    assert_eq!(f.ui.selected_pad(P1), pad(3));
+    screen::tap(&mut f.ui, ButtonId::Edit);
+    for d in [1, -1, -1] {
+        screen::feed(&mut f.ui, screen::Input::turn(EncoderId::B, d));
+    }
+    assert!(f.ui.held_choice().is_some(), "OFF held on pad 3");
+    f
+}
+
+#[test]
+fn an_ed_set_on_another_pads_choke_leaves_the_hold() {
+    let mut f = choke_held();
+    // Pad 1's CHOKE to the OFF it has: pad 3's hold stays.
+    set(&mut f, "PAD1.CHOKE", "OFF");
+    assert!(f.ui.held_choice().is_some(), "a no-op on pad 1");
+    // Pad 6 (B with pad 7) to OFF: refused, still pad 3's.
+    set(&mut f, "PAD6.CHOKE", "OFF");
+    assert!(f.ui.held_choice().is_some(), "a refusal on pad 6");
+    assert_eq!(f.ui.selected_pad(P1), pad(3));
+    // Pad 3's own refused set ends it.
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    assert!(f.ui.held_choice().is_none(), "pad 3's set ends it");
+}
+
+/// The editor's engine list is the firmware's: every engine the box plays,
+/// in its order (`EngineType::PLAYABLE`, which holds all of `ALL`), for the
+/// Elm test that `Unit.allEngines` names each and no other.
+#[test]
+fn writes_editor_engines_fixture() {
+    for e in EngineType::ALL {
+        assert!(EngineType::PLAYABLE.contains(&e), "{e:?} plays");
+    }
+    let text: String = EngineType::PLAYABLE
+        .iter()
+        .map(|e| format!("{}\n", e.disk_ident_for_test()))
+        .collect();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../editor/tests/fixtures/engines.txt");
+    if std::env::var_os("BLESS").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        on_disk == text,
+        "the engines changed: BLESS=1 rewrites {}",
+        path.display()
+    );
 }

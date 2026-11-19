@@ -1077,6 +1077,24 @@ pub static PART_VOICES: BlockDef = BlockDef {
     ],
 };
 
+/// PRT's second sub-page: the Part's channel EQ (ADR 0284), TILT and LO
+/// CUT, before LEVEL, PAN and the sends.
+pub static PART_EQ: BlockDef = BlockDef {
+    id: 118,
+    name: "EQ",
+    short: "EQ",
+    layout: PageLayout::CellGrid,
+    viz: VizType::MixerLevels,
+    params: [
+        ParamSlot::param(BlockRef::Part, PartParams::TILT),
+        ParamSlot::param(BlockRef::Part, PartParams::LO_CUT),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 pub static SENDS: BlockDef = BlockDef {
     id: 30,
     name: "Sends",
@@ -1096,7 +1114,7 @@ pub static SENDS: BlockDef = BlockDef {
 /// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
 /// TAPE sits before MASTER only with `master-tape` (ADR 0055).
 static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
-    ChainBlock::with_subs(&PART, &[&PART_VOICES]),
+    ChainBlock::with_subs(&PART, &[&PART_VOICES, &PART_EQ]),
     ChainBlock::page(&SENDS),
     ChainBlock::page(&CHORUS),
     ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),
