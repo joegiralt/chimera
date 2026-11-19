@@ -7,6 +7,7 @@ use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::EnvSlot;
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
+use chimera_hal::Ticks;
 
 /// Normalized (0..1) display values of the six slots (a route view reads 0:
 /// the UI overlays its amount).
@@ -77,24 +78,6 @@ pub enum Edit {
     To(f32),
 }
 
-/// CLASSIC RATE: an LFO's Hz.
-fn is_lfo_rate(a: ParamAddr) -> bool {
-    matches!(a.block, BlockRef::Lfo(_)) && a.param == crate::dsp::lfo::LfoParams::RATE
-}
-
-/// `d` ticks on `a`: CLASSIC RATE a semitone a tick, bank 2's
-/// (`feel::lfo_rate`, ADR 0279); closed, and any other, its spec's step.
-fn nudge(b: &mut dyn crate::block::Block, a: ParamAddr, d: i8) {
-    let hz = b.get(a.param);
-    match is_lfo_rate(a)
-        .then(|| crate::bank2::feel::lfo_rate(hz, d))
-        .flatten()
-    {
-        Some(v) => b.write(a.param, v),
-        None => b.nudge(a.param, d),
-    }
-}
-
 /// The one edit path (spec § 6): `a` in `params` moved by `how`, then a
 /// TAPE MODEL change's machine. `true` when the value moved.
 pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
@@ -110,12 +93,19 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
             b.nudge(a.param, d.signum() * i8::MAX)
         }
         Edit::Snap(d) => b.snap(a.param, d),
-        Edit::Nudge(d) => nudge(&mut *b, a, d),
-        // CLASSIC RATE's semitone is its fine step already.
+        // CLASSIC RATE's semitone is bank 2's (`feel::nudge`, ADR 0279), a
+        // fine step too; closed, and any other, the spec's or its fine.
+        Edit::Nudge(d) => {
+            if !crate::bank2::feel::nudge(&mut *b, a, Ticks::new(d)) {
+                b.nudge(a.param, d)
+            }
+        }
         #[cfg(feature = "push-encoders")]
-        Edit::Fine(d) if is_lfo_rate(a) => nudge(&mut *b, a, d.signum()),
-        #[cfg(feature = "push-encoders")]
-        Edit::Fine(d) => crate::block::nudge_fine(&mut *b, a.param, d),
+        Edit::Fine(d) => {
+            if !crate::bank2::feel::nudge(&mut *b, a, Ticks::new(d)) {
+                crate::block::nudge_fine(&mut *b, a.param, d)
+            }
+        }
         Edit::To(v) => b.set(a.param, v),
     }
     // WALK's defaults, bank 2's (`ui::walk`); a closed door writes none.

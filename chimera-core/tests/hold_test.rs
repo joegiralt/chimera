@@ -1,7 +1,9 @@
 mod screen;
 
 use chimera_core::orbit::RINGS;
-use chimera_core::ui::hold::{HOLD_MS, HoldGate, HoldGates, Press, Presses, SeqHold};
+use chimera_core::ui::hold::{
+    HOLD_MS, HoldGate, HoldGates, Press, Presses, SeqHold, SeqKey, SeqTurn,
+};
 use chimera_hal::{ButtonId, ButtonState, Controls};
 use chimera_hal::{Edges, Ms};
 use screen::Input;
@@ -185,7 +187,13 @@ fn stub(now: u32, mix: Edges, menu: Edges, seq: Edges) -> Stub {
 
 /// A frame with no fine turn in it: SEQ up or held as its edges say.
 fn plain(g: &mut HoldGates, c: &impl Controls) -> Presses {
-    g.step(c, SeqHold::of(c.edges(ButtonId::Seq).down, false, false))
+    g.step(
+        c,
+        SeqHold::of(
+            SeqKey::of(c.edges(ButtonId::Seq), c.edges(ButtonId::Mix)),
+            SeqTurn::Untouched,
+        ),
+    )
 }
 
 const NONE: Presses = Presses {

@@ -74,26 +74,51 @@ impl HoldGate {
 
 pub use chimera_engine::confirm::{Press, Presses};
 
-/// SEQ this frame (ADR 0279), derived once and handed to its gate, the
-/// edit path and the band.
+/// SEQ's and MIX's keys this frame, before the turns (ADR 0279).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeqKey {
+    Up,
+    Down,
+    /// Down with MIX: MIX + SEQ's chord (learn) wins.
+    UnderMix,
+}
+
+impl SeqKey {
+    pub const fn of(seq: Edges, mix: Edges) -> Self {
+        match (seq.down, mix.down) {
+            (false, _) => SeqKey::Up,
+            (true, false) => SeqKey::Down,
+            (true, true) => SeqKey::UnderMix,
+        }
+    }
+}
+
+/// What this frame's turns did to SEQ's hold (ADR 0279).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeqTurn {
+    Untouched,
+    /// A turn on a Part's, mixer's or FX page, SEQ down: the owner's
+    /// ruling, a turn during a SEQ hold cancels its tap and ORBIT.
+    Turned,
+}
+
+/// SEQ this frame (ADR 0279), derived once and handed to its gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeqHold {
     Up,
-    /// Down, with no fine turn this frame.
+    /// Down, with no turn this frame that cancels it.
     Held,
-    /// Down through a turn on a cell that steps fine: the turn is fine,
-    /// and SEQ's press is no key (no tap, no ORBIT hold).
+    /// Down through a turn: SEQ's press is no key (no tap, no ORBIT
+    /// hold).
     Turned,
 }
 
 impl SeqHold {
-    /// SEQ `down`; MIX `mix` (its chord wins: MIX + SEQ learns); a turn
-    /// this frame on a cell that steps fine, `fine_turn`.
-    pub const fn of(down: bool, mix: bool, fine_turn: bool) -> Self {
-        match (down, !mix && fine_turn) {
-            (false, _) => SeqHold::Up,
-            (true, false) => SeqHold::Held,
-            (true, true) => SeqHold::Turned,
+    pub const fn of(key: SeqKey, turn: SeqTurn) -> Self {
+        match (key, turn) {
+            (SeqKey::Up, _) => SeqHold::Up,
+            (SeqKey::Down, SeqTurn::Turned) => SeqHold::Turned,
+            (SeqKey::Down | SeqKey::UnderMix, _) => SeqHold::Held,
         }
     }
 }
@@ -121,7 +146,7 @@ impl HoldGates {
     }
 
     /// MENU, SEQ and B1–B5 are muted while MIX is down (MIX + SEQ learns,
-    /// MIX + B*n* is a mute in ORBIT), SEQ too by a fine turn while it is
+    /// MIX + B*n* is a mute in ORBIT), SEQ too by a turn while it is
     /// down (`SeqHold::Turned`), and B1–B5 while EDIT is: EDIT + B*n*
     /// is no ring key. MIX is read as a level at frame end, so a chord
     /// inside one frame is not muted. The B gates run everywhere, so they are in step

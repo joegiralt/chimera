@@ -60,6 +60,7 @@ pub mod theme;
 pub mod theme_settings;
 pub mod tuning;
 pub mod tuning_walk;
+pub mod turns;
 pub mod view;
 pub mod viz;
 pub(crate) mod walk;
@@ -70,8 +71,8 @@ use core::ptr::addr_of_mut;
 use crate::storage::{Card, CardEvent, Exit, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{
-    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms, NUM_ENCODERS,
-    PART_BUTTONS, Turn,
+    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms, PART_BUTTONS,
+    Turn,
 };
 
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
@@ -2172,11 +2173,8 @@ impl UiState {
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     pub fn orbit_frame_for_test(&mut self, c: &impl Controls) -> [Option<OrbitKey>; 11] {
-        let seq = hold::SeqHold::of(
-            c.edges(ButtonId::Seq).down,
-            c.edges(ButtonId::Mix).down,
-            false,
-        );
+        let key = hold::SeqKey::of(c.edges(ButtonId::Seq), c.edges(ButtonId::Mix));
+        let seq = hold::SeqHold::of(key, hold::SeqTurn::Untouched);
         let p = self.gates.step(c, seq);
         self.orbit_keys(c, p)
     }
@@ -2915,8 +2913,16 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
-        let drop =
+        let woke =
             self.idle.touch(any_turn(controls), any_down(controls)) == saver::Wake::FirstDetent;
+        // The waking detent is the first moved encoder's, found once.
+        let drop = woke
+            .then(|| {
+                ALL_ENCODERS
+                    .into_iter()
+                    .find(|&e| controls.encoder_delta(e) != 0)
+            })
+            .flatten();
         // One wrapper always, so the input path is compiled once.
         self.handle_frame(&Frame(controls, drop));
     }
@@ -3116,17 +3122,6 @@ impl UiState {
         }
     }
 
-    /// Each encoder turned this frame, with SEQ down, on a cell SEQ + turn
-    /// steps fine (ADR 0279): bank 2's verdict (`feel::fine_cells`); closed,
-    /// none.
-    fn fine_turns(&self, c: &impl Controls) -> [bool; NUM_ENCODERS] {
-        let turned = ALL_ENCODERS.map(|e| c.encoder_delta(e) != 0);
-        if !c.edges(ButtonId::Seq).down || !turned.contains(&true) {
-            return [false; NUM_ENCODERS];
-        }
-        crate::bank2::feel::cells(self, turned).unwrap_or([false; NUM_ENCODERS])
-    }
-
     /// The focused cell's band hint, as `render` draws it.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
@@ -3155,14 +3150,13 @@ impl UiState {
         }
         self.refresh_status();
 
-        // SEQ's state, once: a turn on a cell that steps fine mutes its key.
-        let fine = self.fine_turns(controls);
-        let seq = hold::SeqHold::of(
-            controls.edges(ButtonId::Seq).down,
-            controls.edges(ButtonId::Mix).down,
-            fine.contains(&true),
-        );
-        let presses = self.gates.step(controls, seq);
+        // The frame's turns and SEQ's state, once (ADR 0279): bank 2's
+        // curves and fine steps; closed, a parameter's and SEQ untouched.
+        let key = hold::SeqKey::of(controls.edges(ButtonId::Seq), controls.edges(ButtonId::Mix));
+        let turns = ALL_ENCODERS.map(|e| controls.turn(e));
+        let feel = crate::bank2::feel::frame(self, turns, key)
+            .unwrap_or_else(|| turns::FrameTurns::closed(turns));
+        let presses = self.gates.step(controls, hold::SeqHold::of(key, feel.seq));
         // A card row loading takes every key: MENU cancels it.
         if self.src.loading() {
             if presses.menu.is_some() {
@@ -3348,29 +3342,18 @@ impl UiState {
             let at = self.active_part;
             let before = self.ctx();
             let chain = PartChain::of(&self.project.part(at).sound);
-            for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
-                let delta = controls.encoder_delta(enc);
-                if delta == 0 {
-                    continue;
-                }
+            for (i, &e) in feel.enc.iter().enumerate() {
                 // Pushed, a turn is fine: a tick a frame, no acceleration,
                 // and a tenth of a continuous param's step. SEQ held, the
                 // same a detent (ADR 0279). MIX wins.
                 let pushed = cfg!(feature = "push-encoders") && pushes[i].fine && !shift;
+                let (delta, fine) = match e {
+                    turns::EncTurn::Still => continue,
+                    turns::EncTurn::Plain(t) if pushed => (t.get().signum(), true),
+                    turns::EncTurn::Plain(t) => (t.get(), false),
+                    turns::EncTurn::Fine(t) => (t.get(), true),
+                };
                 let v = view::view(def, i, &self.ctx());
-                let step = if seq == hold::SeqHold::Turned && fine[i] {
-                    feel::Step::Fine
-                } else {
-                    feel::Step::Plain
-                };
-                let fine = pushed || step == feel::Step::Fine;
-                // The cell's curve is bank 2's; closed, a parameter's.
-                let delta = if pushed {
-                    delta.signum()
-                } else {
-                    crate::bank2::feel::ticks(&v, controls.turn(enc), step)
-                        .map_or(delta, |t| t.get())
-                };
                 // An empty slot edits nothing, so it does not take the focus.
                 if v != View::Empty {
                     self.focus.touch(def.id, i);
@@ -4330,14 +4313,14 @@ fn any_turn(controls: &impl Controls) -> bool {
     ALL_ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
 }
 
-/// `Controls`, with one detent taken off the first encoder that moved
-/// when `.1`.
-struct Frame<'a, C>(&'a C, bool);
+/// `Controls`, with one detent taken off encoder `.1`, the first that
+/// moved in a frame that woke the screen.
+struct Frame<'a, C>(&'a C, Option<EncoderId>);
 
 impl<C: Controls> Frame<'_, C> {
-    /// `id` is the first that moved, and loses a detent.
+    /// `id` loses a detent.
     fn dropped(&self, id: EncoderId) -> bool {
-        self.1 && ALL_ENCODERS.iter().find(|&&e| self.0.encoder_delta(e) != 0) == Some(&id)
+        self.1 == Some(id)
     }
 }
 

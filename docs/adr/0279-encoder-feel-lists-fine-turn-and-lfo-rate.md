@@ -19,8 +19,9 @@ so 0.01–1 Hz was seven detents.
    encoder's detents and the burst position of the first of them
    (`chimera_hal::Turn`, built by `Turn::at` from a `Detents`, never
    −128, and a `BurstPos`; `Controls::turn`). A burst starts again after
-   a 150 ms rest and when SEQ goes down or up (`BurstPos::next`), so the
-   plain turn after a fine one starts slow. `encoder_delta` stays a
+   a 150 ms rest, when SEQ goes down or up, and when the turn reverses
+   (`BurstPos::next`), so the plain turn after a fine one starts slow and
+   a correction never jumps rows. `encoder_delta` stays a
    parameter's ticks (`Accel::Param`, the old curve, bit for bit). The
    policy is pure and host-tested in `chimera_hal::Accel`: `Param` is 1,
    2, 4, 5, 10 then 10; `List` is 1 for four detents, 2 for four, then 3
@@ -31,28 +32,33 @@ so 0.01–1 Hz was seven detents.
    `Param`. A shell without acceleration (the desktop, the console's
    hand, tests) reports `Turn::steady`: its ticks are its detents under
    either curve.
-2. **SEQ + turn is fine.** With SEQ held, a turn on a Part's or its
-   mixer's value cell moves one raw step a detent with no acceleration,
-   and a continuous parameter a tenth of its step where pushes are built
-   in (`FINE_DIV`, ADR 0140's path; without it, a whole step). The fine
-   turn changes the step and nothing else: TAPE MODEL's and DIRECTION's
+2. **A turn during a SEQ hold cancels it; on a value it is fine.** The
+   owner's ruling, unnarrowed: any turn while SEQ is down on a Part's,
+   mixer's or FX page cancels SEQ's tap and ORBIT's 500 ms hold, on a
+   choice as on a value; a SEQ hold with no turn opens ORBIT at 500 ms as
+   before. SETTINGS (RANDOMIZE's roll among them), the browser and ORBIT
+   keep SEQ's keys as they were, and so do a card row loading, the
+   library at work, an open prompt and learn armed, which take the turn
+   themselves. On a cell that takes it, the same turn moves one raw step
+   a detent with no acceleration (several detents in one frame each
+   step), and a continuous parameter a tenth of its step where pushes
+   are built in (`FINE_DIV`, ADR 0140's path; without it, a whole step).
+   The fine turn changes the step and nothing else: TAPE MODEL's and DIRECTION's
    refusals on a streamed source, ALGO's budget and TUNING's walk guard it
    as they guard a plain turn. MIX wins (MIX + turn still snaps). A cell
    takes it (`feel::takes`) when it is a value: not a choice (a list turn
    is a row a detent already), not a cell drawn on the staff (TRANSPOSE,
    whose notes fill the band), not one with words of its own that leave
    the hint no room (START/END's onset snap, SCRUB's KEY POSITION); never
-   in SETTINGS (RANDOMIZE's roll among them) or ORBIT. SEQ's state is one
-   value a frame (`hold::SeqHold`: up, held, or held through a turn on a
-   cell that takes it), handed to its gate and the edit path. Only a fine
-   turn mutes SEQ's gate for that hold (`HoldGates::step`): its release is
-   no tap and ORBIT's 500 ms hold never fires; a turn where the fine step
-   does not apply leaves SEQ's tap and hold as they were, and a SEQ hold
-   with no turn opens ORBIT at 500 ms as before (owner's ruling).
+   in SETTINGS or ORBIT. The frame's turns are one value
+   (`turns::FrameTurns`: each encoder still, plain or fine with its
+   ticks, and `SeqTurn`), asked of bank 2 once a frame; SEQ's state
+   (`hold::SeqHold::of(SeqKey, SeqTurn)`: up, held, or held through a
+   turn) goes to its gate (`HoldGates::step`).
    **Every cell that takes it says so** in its focus band, at rest:
    `SEQ+TURN FINE`, beside `MIX + SEQ LEARN` on a mappable cell and
-   beside `MIX + -/+ PAD` on a pad's (`feel::hint`); PUSH ENCODERS' hint
-   still replaces it when on. On a mixer cell the band hints the fine
+   beside `MIX + -/+ PAD` on a pad's (`feel::hint`); with PUSH ENCODERS
+   on, `PUSH DEFAULT  PUSH/SEQ FINE` (`+TURN` runs past the line). On a mixer cell the band hints the fine
    turn at rest too, and while MIX is held the PART jump (`MIX + B1-6
    PART`) in its place. This replaces the first ruling (the fine turn's
    hint only while SEQ is held): a user who held SEQ to read that hint
@@ -65,15 +71,17 @@ so 0.01–1 Hz was seven detents.
    range, its CC/NRPN law, DRUM's SPEED (which reads RATE's range) and
    mod offsets are as before, so every saved Sound loads and sounds the
    same. Its readout shows four places under 0.1 Hz and three under 1 Hz,
-   so every detent reads new. A push turn on RATE steps the same twelfth.
-4. **Bank 2 holds the feel** (ADR 0198: bank 1 is frozen). `ui::feel` (the
-   cell's curve, `takes`, the hint and its words, RATE's semitone) links
-   into bank 2's S4 group and is reached through `UiDoor` (the engine's
-   door table is full with ORBIT, so RATE's tick is the UI's edit path's,
-   not `LfoParams::nudge`).
-   Bank 1 keeps the board's count and `Turn`, `SeqHold` and the gate's
-   mute, the fine branch's stubs and `Accel::Param` inlined into the
-   board. With bank 2 closed (an install, a bench build) the curve is a
+   so every detent reads new (`law_text`, bank 2's; closed, two). A push
+   or SEQ fine turn on RATE steps the same twelfth.
+4. **Bank 2 holds the feel** (ADR 0198: bank 1 is frozen). `ui::feel`
+   (the frame's turns: each cell's curve, `takes`, SEQ's cancel; the
+   lists' curve; the hint and its words; RATE's semitone nudge and
+   readout) links into bank 2's S4 group, reached through one `UiDoor`
+   entry whose asks each carry their answer's slot (`feel::Ask`). The
+   engine's door table is full with ORBIT, so RATE's tick is the UI's
+   edit path's (`feel::nudge`), not `LfoParams::nudge`. Bank 1 keeps the
+   board's count, `Turn`, `SeqHold` and the gate's mute, the stubs with
+   their closed paths and `Accel::Param` inlined into the board. With bank 2 closed (an install, a bench build) the curve is a
    parameter's everywhere, no cell takes the fine turn, the band is as
    before, and RATE steps linearly.
 
@@ -103,19 +111,9 @@ so 0.01–1 Hz was seven detents.
 - The fine turn reaches every Part and FX value without a push; a SEQ
   tap with a turn in it no longer moves up a page.
 - Bank 1 grows by the board's `Turn` and burst, SEQ's state and gate,
-  the band's `Words`, RATE's readout and the door's stubs (the fine
-  branch's, the band's, the lists' and RATE's, each with its closed
-  path): measured against 92df1b18, +984 B on the default build, +968 B
-  on ORBIT, +976 B on bank2-gate, +984 B on ORBIT's usb-config-writer,
-  +832 to +1256 B on the bench sets. Merged onto 0.4 (76de24c6) each line
-  is that tip's line raised to the measured size, the delta cited (+392
-  ORBIT, +1416 default and bank2-gate, +328 to +1512 elsewhere; 0.4's
-  lines carry their own slack, so these spread wider than the sizes). Bank 2
-  grows by `ui::feel` (about 600 B of it the curves, fine cells, hints
-  and RATE's tick that bank 1 would otherwise hold): +864 B on the
-  default build and bank2-gate, +832 B on ORBIT, S4's group; +736 B over
-  0.4's lines after the merge. One `UiDoor` entry (`feel::Ask`/`Said`):
-  the table's 128 B are 28 words with it.
+  the band's `Words` and the door's stubs with their closed paths:
+  BANK1_LINE. Bank 2 grows by `ui::feel`: BANK2_LINE. One `UiDoor` entry
+  (`feel::Ask`): the table's 128 B are 28 words with it.
 
 ## Sources
 - private issue #1005; tester report joegiralt/chimera-releases#11.

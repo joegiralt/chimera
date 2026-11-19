@@ -90,29 +90,46 @@ fn a_seq_edge_restarts_the_burst() {
         down: true,
         ..Edges::default()
     };
-    assert_eq!(deep.next(false, Edges::default()), deep);
-    assert_eq!(deep.next(false, held), deep);
-    assert_eq!(deep.next(true, Edges::default()), BurstPos::START);
+    let (fwd, back) = (Detents::new(1), Detents::new(-2));
+    assert_eq!(deep.next(false, Edges::default(), fwd, fwd), deep);
+    assert_eq!(deep.next(false, held, fwd, fwd), deep);
+    assert_eq!(deep.next(true, Edges::default(), fwd, fwd), BurstPos::START);
+    // A turn back starts a burst: no 3-row first detent past the row.
+    assert_eq!(deep.next(false, held, fwd, back), BurstPos::START);
+    assert_eq!(deep.next(false, held, back, Detents::new(0)), deep);
     let pressed = Edges {
         pressed_at: Some(Ms(4)),
         ..held
     };
-    assert_eq!(deep.next(false, pressed), BurstPos::START);
+    assert_eq!(deep.next(false, pressed, fwd, fwd), BurstPos::START);
     let released = Edges {
         released_at: Some(Ms(4)),
         ..Edges::default()
     };
-    assert_eq!(deep.next(false, released), BurstPos::START);
+    assert_eq!(deep.next(false, released, fwd, fwd), BurstPos::START);
 }
 
-/// SEQ's state, once a frame: up, held, or held through a turn on a cell
-/// that steps fine; MIX's chord wins.
+/// SEQ's state, once a frame, from SEQ's and MIX's keys and what the
+/// turns did: up, held, or held through a turn on a Part's, mixer's or
+/// FX page; MIX's chord wins.
 #[test]
 fn seq_hold_is_one_state() {
-    assert_eq!(SeqHold::of(false, false, true), SeqHold::Up);
-    assert_eq!(SeqHold::of(true, false, false), SeqHold::Held);
-    assert_eq!(SeqHold::of(true, false, true), SeqHold::Turned);
-    assert_eq!(SeqHold::of(true, true, true), SeqHold::Held);
+    use chimera_core::ui::hold::{SeqKey, SeqTurn};
+    let up = Edges::default();
+    let down = Edges {
+        down: true,
+        ..Edges::default()
+    };
+    assert_eq!(SeqKey::of(up, down), SeqKey::Up);
+    assert_eq!(SeqKey::of(down, up), SeqKey::Down);
+    assert_eq!(SeqKey::of(down, down), SeqKey::UnderMix);
+    assert_eq!(SeqHold::of(SeqKey::Up, SeqTurn::Turned), SeqHold::Up);
+    assert_eq!(SeqHold::of(SeqKey::Down, SeqTurn::Untouched), SeqHold::Held);
+    assert_eq!(SeqHold::of(SeqKey::Down, SeqTurn::Turned), SeqHold::Turned);
+    assert_eq!(
+        SeqHold::of(SeqKey::UnderMix, SeqTurn::Turned),
+        SeqHold::Held
+    );
 }
 
 /// One frame: turns (detents at a burst position) and held buttons.
@@ -312,7 +329,7 @@ fn every_fine_cell_hints_it() {
     let v = cell(ValFmt::Uni);
     for w in words {
         for band in [Band::Sound, Band::Mixer { mix: false }] {
-            let h = feel::hint(&v, w, band);
+            let h = feel::hint(&v, w, band, feel::Pushes::Off);
             assert!(hint::width(h) <= theme::CONTENT_W, "{w:?}: {h:?}");
             let says = h.iter().any(|g| g.1 == "FINE");
             assert_eq!(says, feel::takes(&v, w), "{w:?} {band:?}: {h:?}");
@@ -391,4 +408,95 @@ fn a_fine_turn_takes_seqs_tap() {
     let at = ui.location();
     seq_turn_release(&mut ui, EncoderId::D);
     assert_eq!(ui.location(), at);
+}
+
+/// SEQ pressed at 0, `e` turned at 200 ms, SEQ still down at 700.
+#[cfg(feature = "orbit")]
+fn seq_turn_and_wait(ui: &mut UiState, e: EncoderId) {
+    screen::feed(ui, screen::Input::press(ButtonId::Seq).at(0));
+    screen::feed(
+        ui,
+        screen::Input::held(ButtonId::Seq).and_turn(e, 1).at(200),
+    );
+    screen::feed(ui, screen::Input::held(ButtonId::Seq).at(700));
+}
+
+/// The owner's ruling: a turn during a SEQ hold cancels ORBIT, on any
+/// cell of a Part's or mixer's page, a choice as well as a value (review
+/// round 2, I1: Part 1's first page, A at 200 ms, ORBIT at 700).
+#[cfg(all(feature = "orbit", feature = "tape"))]
+#[test]
+fn any_turn_during_a_seq_hold_cancels_orbit() {
+    for e in [EncoderId::A, EncoderId::B, EncoderId::D] {
+        let mut ui = Box::new(UiState::new());
+        seq_turn_and_wait(&mut ui, e);
+        assert!(ui.location().orbit().is_none(), "Part page, {e:?}");
+        let mut mixer = part_page();
+        seq_turn_and_wait(&mut mixer, e);
+        assert!(mixer.location().orbit().is_none(), "mixer, {e:?}");
+    }
+    // Untouched, the hold still opens ORBIT.
+    let mut ui = Box::new(UiState::new());
+    screen::feed(&mut ui, screen::Input::press(ButtonId::Seq).at(0));
+    screen::feed(&mut ui, screen::Input::held(ButtonId::Seq).at(700));
+    assert!(ui.location().orbit().is_some());
+}
+
+/// SEQ + turn on a stepped cell moves a step a detent, several in one
+/// frame too (review round 2, M2): mixer BEND, 3 detents at once.
+#[cfg(feature = "tape")]
+#[test]
+fn a_fine_turn_on_a_stepped_cell_steps_each_detent() {
+    let mut ui = part_page();
+    let bend = |ui: &UiState| ui.project().part(PartId::ALL[0]).mix.bend;
+    let was = bend(&ui);
+    ui.handle_input(&Frame {
+        turns: vec![(EncoderId::F, Turn::steady(3))],
+        held: vec![ButtonId::Seq],
+        ..Frame::default()
+    });
+    assert_eq!(bend(&ui), was + 3);
+}
+
+/// Learn armed takes the turn: SEQ's tap stays a tap (review round 2,
+/// M3).
+#[cfg(all(feature = "tape", feature = "midi-map"))]
+#[test]
+fn an_armed_learn_leaves_seq_its_tap() {
+    let mut ui = part_page();
+    screen::feed(
+        &mut ui,
+        screen::Input::chord(ButtonId::Mix, ButtonId::Seq).at(1_000),
+    );
+    screen::feed(
+        &mut ui,
+        screen::Input::release(ButtonId::Seq)
+            .and_held(ButtonId::Mix)
+            .at(1_100),
+    );
+    screen::feed(&mut ui, screen::Input::release(ButtonId::Mix).at(1_133));
+    let at = ui.location();
+    screen::feed(&mut ui, screen::Input::press(ButtonId::Seq).at(2_000));
+    screen::feed(
+        &mut ui,
+        screen::Input::held(ButtonId::Seq)
+            .and_turn(EncoderId::D, 1)
+            .at(2_050),
+    );
+    screen::feed(&mut ui, screen::Input::release(ButtonId::Seq).at(2_100));
+    assert_ne!(ui.location(), at, "SEQ's tap moved");
+}
+
+/// PUSH ENCODERS on: a value cell's band names both fine turns (review
+/// round 2, M4).
+#[cfg(all(feature = "tape", feature = "push-encoders"))]
+#[test]
+fn pushes_on_keep_the_seq_fine_hint() {
+    let mut ui = part_page();
+    ui.set_midi(chimera_core::ui::midi_settings::MidiSettings::DEFAULT.with_push(true));
+    screen::feed(&mut ui, screen::Input::turn(EncoderId::D, 1));
+    let h = ui.focus_hint_for_test();
+    assert!(h.iter().any(|g| g.0.contains("SEQ")), "{h:?}");
+    assert!(h.iter().any(|g| g.0.contains("PUSH")), "{h:?}");
+    assert!(hint::width(h) <= theme::CONTENT_W, "{h:?}");
 }

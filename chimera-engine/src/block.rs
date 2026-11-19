@@ -14,9 +14,10 @@ pub const OFF_ON: [&str; 2] = ["OFF", "ON"];
 #[cfg(feature = "push-encoders")]
 pub const FINE_DIV: f32 = 10.0;
 
-/// A pushed encoder's turn (ADR 0140): a continuous param moves a tenth
-/// of its step a tick; any other, or one on its own `ladder`, moves one
-/// plain tick through `nudge`, so a block's own stepping (WAVE's budget,
+/// A fine turn (a push's, ADR 0140, or SEQ's, ADR 0279): a continuous
+/// param moves a tenth of its step a tick; any other, or one on its own
+/// `ladder`, moves its plain ticks through `nudge` (a push passes one a
+/// frame, SEQ one a detent), so a block's own stepping (WAVE's budget,
 /// ROTATE's wrap) still holds. One copy for every block, not one each.
 #[cfg(feature = "push-encoders")]
 #[inline(never)]
@@ -25,7 +26,7 @@ pub fn nudge_fine(b: &mut dyn Block, id: ParamId, delta: i8) {
         Some(s) if s.kind == ParamKind::Continuous && !b.ladder(id) => {
             b.write(id, s.nudged_fine(b.get(id), delta))
         }
-        _ => b.nudge(id, delta.signum()),
+        _ => b.nudge(id, delta),
     }
 }
 

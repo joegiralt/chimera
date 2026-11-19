@@ -427,16 +427,10 @@ impl Renderer {
             let _ = w;
         } else if let Some(h) = f.pickup {
             hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
-        } else if f.hints
-            && matches!(
-                view::cell_words(f.def, &view::view(f.def, f.focus, &f.ctx), &f.ctx),
-                view::Words::Pad
-            )
-        {
+        } else if let (pad, true) = Self::band(f) {
             // A pad cell: MIX + -/+ steps the pad (and SEQ + turn is
             // fine), said where the band would, on the status line's own
             // backing (`viz_status`'s).
-            let pad = Self::focus_hint(f);
             draw::fill_rect(
                 display,
                 theme::MARGIN_X - 2,
@@ -930,31 +924,41 @@ impl Renderer {
     /// ENCODERS on: the pushes' hint over none or the generic LEARN (the
     /// two never fit together); a cell's own words stay.
     pub fn focus_hint(f: &Frame) -> hint::Hint {
+        Self::band(f).0
+    }
+
+    /// The focus band's hint, and whether its cell is a pad's (its words
+    /// go on a big viz's status line too). Once per cell: the band and
+    /// the status line share it.
+    fn band(f: &Frame) -> (hint::Hint, bool) {
         if let Some(o) = &f.orbit_focus {
-            return f.hint(o.hint);
+            return (f.hint(o.hint), false);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
         let words = view::cell_words(f.def, &view, &f.ctx);
-        let generic = matches!(words, view::Words::Plain | view::Words::Learn);
         let band = match f.head {
             Head::Mix(_) => crate::ui::feel::Band::Mixer { mix: f.mix },
             Head::Sound(_) => crate::ui::feel::Band::Sound,
             _ => crate::ui::feel::Band::Other,
         };
-        let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
-            crate::ui::push::HINT
+        let push = if f.push {
+            crate::ui::feel::Pushes::On
         } else {
-            // With the fine turn in it, bank 2's (ADR 0279); closed, the
-            // cell's own and the mixer's PART jump.
-            crate::bank2::feel::hint(&view, words, band).unwrap_or_else(|| {
-                if matches!(f.head, Head::Mix(_)) {
-                    view::mixer_hint(words)
-                } else {
-                    words.hint()
-                }
-            })
+            crate::ui::feel::Pushes::Off
         };
-        f.hint(h)
+        // With the fine turn in it, bank 2's (ADR 0279); closed, the
+        // pushes', the cell's own and the mixer's PART jump.
+        let h = crate::bank2::feel::hint(&view, words, band, push).unwrap_or_else(|| {
+            let generic = matches!(words, view::Words::Plain | view::Words::Learn);
+            if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
+                crate::ui::push::HINT
+            } else if matches!(f.head, Head::Mix(_)) {
+                view::mixer_hint(words)
+            } else {
+                words.hint()
+            }
+        });
+        (f.hint(h), f.hints && matches!(words, view::Words::Pad))
     }
 
     /// Words in the hint's place: why the cell's choice is dimmed (ALERT),

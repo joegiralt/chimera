@@ -67,6 +67,8 @@ impl BurstPos {
     /// A burst's first detent.
     pub const START: Self = BurstPos(0);
 
+    /// A test's place in a burst; the board starts at `START`.
+    #[cfg(any(test, feature = "testkit"))]
     pub const fn new(n: u8) -> Self {
         BurstPos(n)
     }
@@ -80,12 +82,14 @@ impl BurstPos {
         BurstPos(self.0.saturating_add(n))
     }
 
-    /// Where this frame's detents start: from the start after a rest past
-    /// `ENCODER_BURST_GAP_MS`, or when SEQ went down or up (`seq`'s
-    /// edges): a fine turn starts or ends, and the plain turn after it
-    /// accelerates from its first detent again.
-    pub const fn next(self, rested: bool, seq: Edges) -> Self {
-        if rested || seq.pressed_at.is_some() || seq.released_at.is_some() {
+    /// Where this frame's detents `now` start: from the start after a rest
+    /// past `ENCODER_BURST_GAP_MS`, when SEQ went down or up (`seq`'s
+    /// edges: a fine turn starts or ends, and the plain turn after it
+    /// accelerates from its first detent again), or when `now` turns back
+    /// from `last`, the burst's way (a correction never jumps rows).
+    pub const fn next(self, rested: bool, seq: Edges, last: Detents, now: Detents) -> Self {
+        let back = (last.get() as i16) * (now.get() as i16) < 0;
+        if rested || back || seq.pressed_at.is_some() || seq.released_at.is_some() {
             Self::START
         } else {
             self
@@ -98,6 +102,11 @@ impl BurstPos {
 pub struct Ticks(i8);
 
 impl Ticks {
+    /// `n` ticks, −128 taken as −127.
+    pub const fn new(n: i8) -> Self {
+        Ticks(if n == i8::MIN { -127 } else { n })
+    }
+
     pub const fn get(self) -> i8 {
         self.0
     }

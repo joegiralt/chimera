@@ -268,7 +268,7 @@ pub struct UiDoor {
     /// The encoders' feel (`ui::feel`, ADR 0279): a cell's turn, whether
     /// SEQ + turn steps it fine, its band's hint, a list's rows, CLASSIC
     /// RATE's semitone.
-    feel: fn(crate::ui::feel::Ask<'_>) -> crate::ui::feel::Said,
+    feel: fn(crate::ui::feel::Ask<'_>),
     /// DRUM's voice groups (`ui::kit_groups`, ADR 0280): a CHOKE turn or
     /// edit, a held one's reason, the count.
     groups: fn(crate::ui::kit_groups::Ask<'_>) -> crate::ui::kit_groups::Said,
@@ -328,7 +328,7 @@ impl UiDoor {
 
     /// `ui::feel`'s answer to `a` (ADR 0279).
     #[inline(always)]
-    pub(crate) fn feel(&self, a: crate::ui::feel::Ask<'_>) -> crate::ui::feel::Said {
+    pub(crate) fn feel(&self, a: crate::ui::feel::Ask<'_>) {
         (self.feel)(a)
     }
 
@@ -550,53 +550,56 @@ pub(crate) fn groups(a: crate::ui::kit_groups::Ask<'_>) -> Option<crate::ui::kit
     ui_door(|u| u.groups(a))
 }
 
-/// The feel's stubs (ADR 0279): `ui::feel`'s answer through the door;
-/// `None` closed (an install, a build without TAPE's UI).
+/// The feel's stubs (ADR 0279): `ui::feel`'s answer through the door's
+/// `feel`, each in its ask's own slot; `None` closed (an install, a build
+/// without TAPE's UI).
 pub(crate) mod feel {
-    use crate::ui::feel::{Ask, Band, Said, Step};
+    use crate::addr::ParamAddr;
+    use crate::block::Block;
+    use crate::ui::feel::{Ask, Band, Pushes};
+    use crate::ui::hold::SeqKey;
+    use crate::ui::turns::FrameTurns;
     use crate::ui::view::{View, Words};
     use chimera_hal::{NUM_ENCODERS, Ticks, Turn};
 
-    fn ask(a: Ask<'_>) -> Option<Said> {
-        super::ui_door(|u| u.feel(a))
+    /// One out-of-line call for every stub.
+    #[inline(never)]
+    fn ask(a: Ask<'_>) {
+        let _ = super::ui_door(|u| u.feel(a));
     }
 
-    pub(crate) fn cells(
+    pub(crate) fn frame(
         ui: &crate::ui::UiState,
-        turned: [bool; NUM_ENCODERS],
-    ) -> Option<[bool; NUM_ENCODERS]> {
-        match ask(Ask::Cells(ui, turned))? {
-            Said::Cells(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn ticks(v: &View, t: Turn, step: Step) -> Option<Ticks> {
-        match ask(Ask::Ticks(v, t, step))? {
-            Said::Ticks(t) => Some(t),
-            _ => None,
-        }
+        turns: [Turn; NUM_ENCODERS],
+        key: SeqKey,
+    ) -> Option<FrameTurns> {
+        let mut out = None;
+        ask(Ask::Frame(ui, turns, key, &mut out));
+        out
     }
 
     pub(crate) fn list(t: Turn) -> Option<Ticks> {
-        match ask(Ask::List(t))? {
-            Said::Ticks(t) => Some(t),
-            _ => None,
-        }
+        let mut out = None;
+        ask(Ask::List(t, &mut out));
+        out
     }
 
-    pub(crate) fn hint(v: &View, w: Words, band: Band) -> Option<crate::ui::hint::Hint> {
-        match ask(Ask::Hint(v, w, band))? {
-            Said::Hint(h) => Some(h),
-            _ => None,
-        }
+    pub(crate) fn hint(
+        v: &View,
+        w: Words,
+        band: Band,
+        push: Pushes,
+    ) -> Option<crate::ui::hint::Hint> {
+        let mut out = None;
+        ask(Ask::Hint(v, w, band, push, &mut out));
+        out
     }
 
-    pub(crate) fn lfo_rate(hz: f32, d: i8) -> Option<f32> {
-        match ask(Ask::LfoRate(hz, d))? {
-            Said::Hz(v) => Some(v),
-            _ => None,
-        }
+    /// `true` where bank 2 turned `a` (CLASSIC RATE).
+    pub(crate) fn nudge(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> bool {
+        let mut out = None;
+        ask(Ask::Nudge(b, a, d, &mut out));
+        out == Some(true)
     }
 }
 

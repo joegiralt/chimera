@@ -181,6 +181,8 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         }
         Law::Curve => bend(buf, "LOG", "LIN", "EXP"),
         Law::Tilt => bend(buf, "SAW", "TRI", "RAMP"),
+        // CLASSIC RATE's places are bank 2's (ADR 0279); closed, two.
+        Law::LfoHz if crate::bank2::ui_door(|u| u.law_text(buf, law, v)).is_some() => {}
         Law::BRate | Law::BurstRate | Law::LfoRate | Law::LfoHz => {
             // Each unit is picked from the value as it would print.
             let hz = match law {
@@ -190,15 +192,8 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
                 }
                 _ => law.range().map_or(0.0, |r| r.at(v)),
             };
-            // CLASSIC RATE turns a semitone a detent (ADR 0279): under 1 Hz
-            // places enough that each one reads new.
-            let places = match law {
-                Law::LfoHz if round(hz * 1000.0) < 100 => 4,
-                Law::LfoHz if round(hz * 1000.0) < 1000 => 3,
-                _ => 2,
-            };
             if round(hz * 100.0) < 1000 {
-                fixed(buf, hz, places, " Hz");
+                fixed(buf, hz, 2, " Hz");
             } else if round(hz * 10.0) < 1000 {
                 fixed(buf, hz, 1, " Hz");
             } else {

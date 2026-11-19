@@ -296,7 +296,10 @@ pub fn hand(h: &Hand) {
     let now = ISR_TICK.load(Ordering::Relaxed);
     for ((&d, delta), edge) in h.detents.iter().zip(&ENC_DELTA).zip(&ENC_LAST_EDGE) {
         if d != 0 {
-            delta.fetch_add(d, Ordering::Relaxed);
+            // Saturating: a hand on top of the ISR's detents never wraps.
+            let _ = delta.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                Some(x.saturating_add(d))
+            });
             edge.store(now, Ordering::Relaxed);
         }
     }
@@ -310,6 +313,8 @@ pub struct Stm32Controls {
     /// `enc` as a parameter's ticks (`Accel::Param`).
     ticks: [i8; NUM_ENCODERS],
     burst: [BurstPos; NUM_ENCODERS],
+    /// Each encoder's last turn: its way, for a reversal's new burst.
+    last: [Detents; NUM_ENCODERS],
 }
 
 impl Stm32Controls {
@@ -319,6 +324,7 @@ impl Stm32Controls {
             now_ms: Ms(0),
             enc: [Turn::default(); NUM_ENCODERS],
             ticks: [0; NUM_ENCODERS],
+            last: [Detents::new(0); NUM_ENCODERS],
             burst: [BurstPos::START; NUM_ENCODERS],
         }
     }
@@ -342,7 +348,10 @@ impl Stm32Controls {
             // edge (a fine turn's start or end, ADR 0279).
             let last = ENC_LAST_EDGE[i].load(Ordering::Relaxed);
             let rested = now.wrapping_sub(last) > chimera_hal::ENCODER_BURST_GAP_MS / 2;
-            let at = self.burst[i].next(rested, seq);
+            let at = self.burst[i].next(rested, seq, self.last[i], d);
+            if d.get() != 0 {
+                self.last[i] = d;
+            }
             // The detents and their place in the burst; the UI picks the
             // acceleration.
             self.enc[i] = Turn::at(d, at);
