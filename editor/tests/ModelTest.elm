@@ -467,22 +467,58 @@ suite =
                             |> feed [ "part 2 VA", "OK 2" ]
                 in
                 Expect.equal ( Nothing, Dict.empty, False ) ( Model.shown cutoff m, m.variants, Model.isPending cutoff m )
-        , test "non_algo_part_shows_message" <|
+        , test "a_part_on_another_engine_is_described_afresh" <|
             \_ ->
                 let
                     m : Model.Model
                     m =
-                        following |> feed [ "part 2 VA", "OK 1" ]
+                        following |> feed [ cutoffLine "1000", "OK 1", "part 2 VA", "OK 2" ]
                 in
                 Expect.all
-                    [ \_ -> Expect.equal (Just "PART 2 PLAYS VA. THE EDITOR EDITS ALGO FOR NOW.") (Model.notice m)
+                    [ \_ -> Expect.equal Nothing (Model.notice m)
                     , \_ -> Expect.equal (Just Va) m.engine
+                    , \_ -> Expect.equal [ Describe Va 0 ] (tick 99 m |> Tuple.second)
+                    , \_ -> Expect.equal [] (Schema.pages m.schema)
+                    , \_ -> Expect.equal Nothing (Model.status m)
                     ]
                     ()
-        , test "no_edit_on_a_part_that_is_not_algo" <|
+        , test "hello_says_which_engine_to_describe" <|
             \_ ->
-                Expect.equal []
-                    (following |> feed [ "part 2 VA", "OK 1" ] |> Model.step (Edit cutoff (Num 1)) |> Tuple.second)
+                Model.init
+                    |> Model.step (LinkChanged Open)
+                    |> Tuple.first
+                    |> tick 0
+                    |> Tuple.first
+                    |> feed [ "ed hello 3 b part 4 MODAL", "OK" ]
+                    |> tick 33
+                    |> Tuple.second
+                    |> Expect.equal [ Describe Modal 0 ]
+        , test "the_same_engine_on_another_part_keeps_its_schema" <|
+            \_ ->
+                following
+                    |> feed [ "OK 1", "part 3 ALGO", "OK 2" ]
+                    |> tick 99
+                    |> Tuple.second
+                    |> Expect.equal [ Since (gen 2) ]
+        , test "a_redescribed_engine_follows_from_nothing_and_takes_edits" <|
+            \_ ->
+                let
+                    described : Model.Model
+                    described =
+                        following
+                            |> feed [ "OK 1", "part 2 VA", "OK 2" ]
+                            |> tick 99
+                            |> Tuple.first
+                            |> feed [ "page 0 VA of 1", "panel VA -", "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000", "OK" ]
+
+                    ( _, asked ) =
+                        tick 132 described
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ Since Nothing ] asked
+                    , \_ -> Expect.equal [ Set cutoff (Num 1000) ] (Model.step (Edit cutoff (Num 1000)) described |> Tuple.second)
+                    ]
+                    ()
         , test "a_choice_is_sent_by_its_number" <|
             \_ ->
                 Expect.equal [ Set (Addr "ENV1.HOLD") (idx 0) ]

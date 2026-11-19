@@ -26,7 +26,7 @@ import Protocol exposing (Addr, AnswerLine(..), Command(..), Line(..), OptIndex,
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
-import Unit exposing (Engine(..), Gen, Part)
+import Unit exposing (Engine, Gen, Part)
 
 
 {-| One value as the unit reported it: its text is the box's own.
@@ -60,6 +60,7 @@ type alias Model =
     , pending : Dict String Time.Posix
     , part : Maybe Part
     , engine : Maybe Engine
+    , described : Maybe Engine
     , variants : Dict String String
     , source : Maybe String
     , gen : Maybe Gen
@@ -130,6 +131,7 @@ init =
     , pending = Dict.empty
     , part = Nothing
     , engine = Nothing
+    , described = Nothing
     , variants = Dict.empty
     , source = Nothing
     , gen = Nothing
@@ -239,17 +241,14 @@ stageNotice m =
         Halted TooLarge ->
             Just "THE UNIT'S ANSWER IS TOO LARGE FOR ONE READ"
 
-        _ ->
-            case ( m.part, m.engine ) of
-                ( Just p, Just e ) ->
-                    if e /= Algo then
-                        Just ("PART " ++ String.fromInt (Unit.partNumber p) ++ " PLAYS " ++ Unit.engineName e ++ ". THE EDITOR EDITS ALGO FOR NOW.")
+        Greeting ->
+            Nothing
 
-                    else
-                        Nothing
+        Describing _ ->
+            Nothing
 
-                _ ->
-                    Nothing
+        Following ->
+            Nothing
 
 
 shown : Addr -> Model -> Maybe Reading
@@ -356,7 +355,12 @@ tick t m0 =
                 connecting timedOut silent (ask Hello) m
 
             Describing n ->
-                connecting timedOut silent (ask (Describe Algo n)) m
+                case m.described of
+                    Just e ->
+                        connecting timedOut silent (ask (Describe e n)) m
+
+                    Nothing ->
+                        ( m, [] )
 
 
 connecting : Bool -> ( Model, List Command ) -> ( Model, List Command ) -> Model -> ( Model, List Command )
@@ -383,7 +387,7 @@ edit a v m =
         c =
             Set a v
     in
-    if m.stage == Following && m.engine == Just Algo && encode c /= Nothing then
+    if m.stage == Following && encode c /= Nothing then
         ( { m | pending = Dict.insert (addrKey a) m.now m.pending }, [ c ] )
 
     else
@@ -545,7 +549,7 @@ ok : Maybe Int -> Model -> Model
 ok done m =
     case m.stage of
         Greeting ->
-            { m | stage = Describing 0, asked = Nothing, owed = 0 }
+            { m | stage = Describing 0, described = m.engine, asked = Nothing, owed = 0 }
 
         Describing n ->
             let
@@ -563,17 +567,32 @@ ok done m =
                         owed =
                             max 0 (m.owed - 1)
                     in
-                    { m
-                        | gen = Just g
-                        , owed = owed
-                        , leftover = owed > 0
-                        , asked =
-                            if owed > 0 then
-                                Just m.now
+                    if owed == 0 && m.engine /= m.described then
+                        -- The box follows a Part on another engine: read its schema, then everything.
+                        { m
+                            | stage = Describing 0
+                            , described = m.engine
+                            , schema = Schema.empty
+                            , values = Dict.empty
+                            , variants = Dict.empty
+                            , gen = Nothing
+                            , owed = 0
+                            , leftover = False
+                            , asked = Nothing
+                        }
 
-                            else
-                                Nothing
-                    }
+                    else
+                        { m
+                            | gen = Just g
+                            , owed = owed
+                            , leftover = owed > 0
+                            , asked =
+                                if owed > 0 then
+                                    Just m.now
+
+                                else
+                                    Nothing
+                        }
 
                 Nothing ->
                     m
