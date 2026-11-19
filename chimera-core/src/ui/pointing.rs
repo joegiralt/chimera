@@ -257,6 +257,7 @@ impl UiState {
     /// cancels), or a move (pointing goes on, nothing pointed at, through
     /// its Part's pages, mixer and FX and through ORBIT; the Sound rung,
     /// whose EDIT loads, and anywhere else end it). The door's `point`.
+    #[optimize(speed)]
     pub(in crate::ui) fn point_in(&mut self, a: PointAct<'_>) -> Took {
         let Learn::Pointing(pt) = self.learn else {
             return Took::Walk;
@@ -299,22 +300,28 @@ impl UiState {
                 }
             }
         }
-        if menu {
-            self.point_back(pt, None);
-            return Took::Frame;
-        }
-        if !edit || !self.pointed(pt).binds() {
-            return Took::Walk;
-        }
-        let Some(t) = self.learn_target() else {
-            return Took::Walk;
-        };
-        let at = match self.point_bind(pt, t) {
-            Ok(i) => Some(i),
-            // Said, not silent: the row went (a load), or no CC is free.
-            Err(w) => {
-                self.error(Line::new(word(w)));
-                None
+        // MENU cancels; EDIT binds where the hint says so. One call back to
+        // MIDI MAP: two are what the machine outliner shares into bank 1
+        // (ADR 0175).
+        let at = match (menu, edit) {
+            (true, _) => None,
+            (false, false) => return Took::Walk,
+            (false, true) => {
+                let target = match self.pointed(pt).binds() {
+                    true => self.learn_target(),
+                    false => None,
+                };
+                let Some(t) = target else {
+                    return Took::Walk;
+                };
+                match self.point_bind(pt, t) {
+                    Ok(i) => Some(i),
+                    // Said, not silent: the row went, or no CC is free.
+                    Err(w) => {
+                        self.error(Line::new(word(w)));
+                        None
+                    }
+                }
             }
         };
         self.point_back(pt, at);
