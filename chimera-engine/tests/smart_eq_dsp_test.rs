@@ -369,7 +369,8 @@ fn kick_and_bass(snare: bool) -> [Gen; MAX_PARTS] {
                 let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
                 let kick = 0.8 * (-t / 0.15).exp() * ph.sin();
                 let u = ((n + beat / 2) % beat) as f32 / FS as f32;
-                let noise = (((n as u32).wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0) - 1.0;
+                let noise =
+                    (((n as u32).wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0) - 1.0;
                 let tone = (2.0 * PI * 180.0 * u).sin() + (2.0 * PI * 330.0 * u).sin();
                 let sn = 0.4 * (-u / 0.08).exp() * (0.5 * tone + noise);
                 Some(kick + if snare { sn } else { 0.0 })
@@ -413,14 +414,22 @@ fn a_front_kick_dips_the_bass_low_band_on_each_hit_and_lets_go() {
     let beat = ms(500.0);
     // Settled bars: the fourth second on.
     for kick in (4..8).map(|s| s * 2 * beat) {
-        let peak = dip[kick..kick + ms(30.0)].iter().fold(0.0f32, |m, &d| m.max(d));
+        let peak = dip[kick..kick + ms(30.0)]
+            .iter()
+            .fold(0.0f32, |m, &d| m.max(d));
         assert!(peak > 3.0, "{peak} dB within 30 ms of the kick");
         // Its first 10 ms already well in.
-        assert!(dip[kick + ms(10.0)] > 0.5 * peak, "{} dB at 10 ms", dip[kick + ms(10.0)]);
+        assert!(
+            dip[kick + ms(10.0)] > 0.5 * peak,
+            "{} dB at 10 ms",
+            dip[kick + ms(10.0)]
+        );
         // Let go by the snare, and the snare does not dip it again.
         let after = dip[kick + ms(240.0)];
         assert!(after < 0.3 * peak, "{after} dB at 240 ms of {peak}");
-        let snare = dip[kick + ms(260.0)..kick + ms(490.0)].iter().fold(0.0f32, |m, &d| m.max(d));
+        let snare = dip[kick + ms(260.0)..kick + ms(490.0)]
+            .iter()
+            .fold(0.0f32, |m, &d| m.max(d));
         assert!(snare < 0.3 * peak, "{snare} dB under the snare of {peak}");
     }
     // The kick never cuts the bass's LOW slowly: only its hits dip it.
@@ -454,12 +463,19 @@ fn the_kick_dip_never_clicks_on_a_sine_bass() {
     assert!(dip.iter().fold(0.0f32, |m, &d| m.max(d)) > 3.0);
     let skip = FS as usize;
     let (base, dipped) = (above_2k(&plain[skip..]), above_2k(&out[skip..]));
-    let total = plain[skip..].iter().map(|&v| (v as f64).powi(2)).sum::<f64>() / (plain.len() - skip) as f64;
+    let total = plain[skip..]
+        .iter()
+        .map(|&v| (v as f64).powi(2))
+        .sum::<f64>()
+        / (plain.len() - skip) as f64;
     let db = 10.0 * (dipped / total).log10();
     let plain_db = 10.0 * (base / total).log10();
     // The filters' own residue of a 55 Hz sine sits near −84 dB; a click
     // would lift it by tens of dB.
-    assert!(db < plain_db + 3.0, "above 2 kHz {db:.1} dB under the bass, plain {plain_db:.1}");
+    assert!(
+        db < plain_db + 3.0,
+        "above 2 kHz {db:.1} dB under the bass, plain {plain_db:.1}"
+    );
 }
 
 #[test]

@@ -11,7 +11,7 @@ use chimera_engine::hw::MAX_PARTS;
 use chimera_engine::instrument::Sides;
 use chimera_engine::part_eq::PartEqs;
 use chimera_engine::part_eq::dsp::smart::{SmartBlock, run};
-use chimera_engine::part_eq::smart::{Amount, Role, SmartEq, Switch};
+use chimera_engine::part_eq::smart::{Amount, PartKind, Role, SmartEq, Switch};
 use chimera_hal::BLOCK_SIZE;
 
 const FS: u32 = 48_000;
@@ -42,6 +42,7 @@ fn time(roles: [Role; MAX_PARTS]) -> f64 {
                 sides: &mut sides,
                 written: &[true; MAX_PARTS],
                 roles: &roles,
+                kinds: &[PartKind::Tonal; MAX_PARTS],
                 smart,
                 sample_rate: FS,
             },
@@ -58,6 +59,7 @@ fn time(roles: [Role; MAX_PARTS]) -> f64 {
                 sides: &mut sides,
                 written: &[true; MAX_PARTS],
                 roles: &roles,
+                kinds: &[PartKind::Tonal; MAX_PARTS],
                 smart,
                 sample_rate: FS,
             },

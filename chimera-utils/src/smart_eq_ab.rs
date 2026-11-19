@@ -241,9 +241,12 @@ fn kick_over_bass() -> Result<(), String> {
     kits.publish(PartId::ALL[0], &Kit::init());
     let mut perf = Performance::new();
     perf.fx = FxParams::OFF;
-    for (p, (engine, role)) in [(EngineType::Drum, Role::Front), (EngineType::Algo, Role::Mid)]
-        .into_iter()
-        .enumerate()
+    for (p, (engine, role)) in [
+        (EngineType::Drum, Role::Front),
+        (EngineType::Algo, Role::Mid),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let e = perf.edit(PartId::ALL[p]);
         **e.sound = Sound::init(engine);
@@ -252,10 +255,25 @@ fn kick_over_bass() -> Result<(), String> {
     let beat = SAMPLE_RATE as usize / 2;
     let mut notes = Vec::new();
     for i in 0..16 {
-        notes.push(Note { at: i * beat, part: 0, key: 36, on: Some(120) });
-        notes.push(Note { at: i * beat + beat / 4, part: 0, key: 36, on: None });
+        notes.push(Note {
+            at: i * beat,
+            part: 0,
+            key: 36,
+            on: Some(120),
+        });
+        notes.push(Note {
+            at: i * beat + beat / 4,
+            part: 0,
+            key: 36,
+            on: None,
+        });
     }
-    notes.push(Note { at: 0, part: 1, key: 33, on: Some(100) });
+    notes.push(Note {
+        at: 0,
+        part: 1,
+        key: 33,
+        on: Some(100),
+    });
     let len = 16 * beat;
     let off = render(&mut perf, &notes, len, SmartEq::OFF);
     let base = kick_to_bass(&off.buses[0], &off.buses[1], &off.buses[0]);
@@ -307,13 +325,20 @@ fn kick_band(x: &[f32]) -> Vec<f64> {
 /// kicks on and off).
 pub fn kick_to_bass(kick: &[f32], bass: &[f32], onsets_of: &[f32]) -> f64 {
     let (k, b, o) = (kick_band(kick), kick_band(bass), kick_band(onsets_of));
-    let frames: Vec<f64> = o.chunks(FRAME).map(|c| c.iter().map(|v| v * v).sum()).collect();
+    let frames: Vec<f64> = o
+        .chunks(FRAME)
+        .map(|c| c.iter().map(|v| v * v).sum())
+        .collect();
     let loud = frames.iter().cloned().fold(0.0, f64::max) * 1e-3;
     let (mut ek, mut eb, mut last) = (0.0, 0.0, None::<usize>);
     for i in 1..frames.len() {
         let at = i * FRAME;
         let gap = last.is_none_or(|l| at - l > crate::SR as usize / 10);
-        if frames[i] > 8.0 * frames[i - 1] && frames[i] > loud && gap && at + HIT <= k.len().min(b.len()) {
+        if frames[i] > 8.0 * frames[i - 1]
+            && frames[i] > loud
+            && gap
+            && at + HIT <= k.len().min(b.len())
+        {
             ek += k[at..at + HIT].iter().map(|v| v * v).sum::<f64>();
             eb += b[at..at + HIT].iter().map(|v| v * v).sum::<f64>();
             last = Some(at);

@@ -19,8 +19,8 @@ use crate::hw::MAX_PARTS;
 use crate::instrument::Sides;
 use crate::part_eq::Live;
 use crate::part_eq::smart::{
-    BANDS, Band, BandTaps, CutDb, CutView, Dip, PartKind, PartSmart, Power, Role, SMART_VIEW, SmartEq,
-    SmartState,
+    BANDS, Band, BandTaps, CutDb, CutView, Dip, PartKind, PartSmart, Power, Role, SMART_VIEW,
+    SmartEq, SmartState,
 };
 
 /// Each band's Q: a two-octave bandwidth, neighbours crossing at −3 dB.
@@ -395,7 +395,8 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
     let mut keys = [(FLOOR_DB - ACTIVE_SPAN_DB, FLOOR_DB - ACTIVE_SPAN_DB); MAX_PARTS];
     let lanes = b.buses.iter_mut().zip(b.sides.iter_mut()).zip(b.written);
     let heard_at = levels.iter_mut().zip(keys.iter_mut());
-    for ((p, (heard, keyed)), ((bus, side), &written)) in st.parts.iter_mut().zip(heard_at).zip(lanes)
+    for ((p, (heard, keyed)), ((bus, side), &written)) in
+        st.parts.iter_mut().zip(heard_at).zip(lanes)
     {
         let from = p.dip;
         let to = p.applied().map(dip_of);
