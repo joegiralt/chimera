@@ -1,0 +1,17 @@
+[package]
+name = "chimera-screen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The browser editor's glyphs: the firmware's own Renderer over a headless
+# UiState, built for wasm32 (`just editor-screen`). Never in a firmware.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# test-support: `go_for_test`, `load_for_test` and `UiTick::for_test`, the
+# headless drive the core's own screen tests use.
+chimera-core = { path = "../chimera-core", features = ["test-support"] }
+chimera-hal = { path = "../chimera-hal" }
+embedded-graphics-core = "0.4"
