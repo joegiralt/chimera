@@ -2759,7 +2759,7 @@ impl Instrument {
         if self.widths.at_rest(|p| parts[p].params.out.width) {
             return;
         }
-        let (w, sr) = (&mut self.widths, self.sample_rate.get());
+        let (w, sr) = (&mut self.widths, self.sample_rate);
         if crate::stereo::door::through(|d| d.widths().run(w, sides, parts, sr)).is_none() {
             self.widths = crate::stereo::PartWidths::REST;
         }

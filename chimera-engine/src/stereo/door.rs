@@ -4,6 +4,7 @@
 //! called directly. A closed door plays every note centred and every
 //! Part's side as panned.
 
+use crate::dsp::drum::types::SampleRate;
 use crate::hw::{BLOCK_SIZE, MAX_PARTS};
 use crate::instrument::{PartAudio, Sides};
 
@@ -12,7 +13,7 @@ use super::{PartWidths, VoicePan};
 /// A note's place as the table carries it (`kern::pan`).
 pub type PanRun = fn(&mut [f32; BLOCK_SIZE], &mut Option<[f32; BLOCK_SIZE]>, VoicePan, VoicePan);
 /// The Parts' WIDTHs as the table carries them (`kern::widths`).
-pub type WidthsRun = fn(&mut PartWidths, &mut Sides, &[PartAudio; MAX_PARTS], u32);
+pub type WidthsRun = fn(&mut PartWidths, &mut Sides, &[PartAudio; MAX_PARTS], SampleRate);
 
 /// `StereoDoor`'s note entry: called, never handed out.
 #[repr(transparent)]
@@ -43,7 +44,7 @@ impl WidthsEntry {
         w: &mut PartWidths,
         sides: &mut Sides,
         parts: &[PartAudio; MAX_PARTS],
-        sample_rate: u32,
+        sample_rate: SampleRate,
     ) {
         (self.0)(w, sides, parts, sample_rate)
     }

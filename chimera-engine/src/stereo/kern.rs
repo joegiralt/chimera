@@ -1,6 +1,7 @@
 //! The stereo's blocks (ADR 0294), bank 2's: an S4 group (`bank2.x`,
 //! `*6stereo4kern*`), reached through `StereoDoor`.
 
+use crate::dsp::drum::types::SampleRate;
 use crate::dsp::ease::{at, ease_coeff, step_of};
 use crate::hw::{BLOCK_SIZE, MAX_PARTS};
 use crate::instrument::{PartAudio, Sides};
@@ -44,9 +45,9 @@ pub(super) fn widths(
     w: &mut PartWidths,
     sides: &mut Sides,
     parts: &[PartAudio; MAX_PARTS],
-    sample_rate: u32,
+    sample_rate: SampleRate,
 ) {
-    let k = ease_coeff(sample_rate);
+    let k = ease_coeff(sample_rate.get());
     for (p, (side, part)) in sides.iter_mut().zip(parts).enumerate() {
         let to = part.params.out.width;
         let Some(side) = side else {
