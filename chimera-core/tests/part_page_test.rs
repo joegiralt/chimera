@@ -182,8 +182,14 @@ fn envelope_and_lfo_pages() {
 
     assert_eq!(read(&reg::LFO, &p)[0], (1.0 - 0.01) / (20.0 - 0.01));
     turn(&reg::LFO, 0, 2, &mut p);
-    // RATE turns a twelfth of an octave a tick (ADR 0279).
-    assert!((p.lfos[0].rate - 2f32.powf(2.0 / 12.0)).abs() < 1e-5);
+    // RATE turns a twelfth of an octave a tick (ADR 0279), bank 2's:
+    // without TAPE's UI the door is closed, and the linear 0.15 Hz.
+    let want = if cfg!(feature = "tape") {
+        2f32.powf(2.0 / 12.0)
+    } else {
+        1.0 + 2.0 * 0.15
+    };
+    assert!((p.lfos[0].rate - want).abs() < 1e-5);
     turn(&reg::LFO, 1, 9, &mut p);
     assert_eq!(p.lfos[0].shape, 4);
     turn(&reg::LFO, 2, 1, &mut p); // SYNC: free-running -> retrigger

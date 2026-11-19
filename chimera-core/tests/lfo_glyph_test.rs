@@ -164,7 +164,8 @@ fn the_specs_carry_the_lfo_glyph() {
     assert_ne!(LFO_SPECS[usize::from(L::OFFSET.0)].glyph, FocusGlyph::Lfo);
 }
 
-/// CLASSIC RATE reads Hz on its own linear curve, 0.01–20.
+/// CLASSIC RATE reads Hz on its own linear curve, 0.01–20; under 1 Hz
+/// with the places a semitone's turn needs (ADR 0279).
 #[test]
 fn classic_rate_reads_hz() {
     let at = |v: f32| {
@@ -172,7 +173,8 @@ fn classic_rate_reads_hz() {
         fmt_val(&mut b, v, ValFmt::Law(Law::LfoHz));
         b.as_str().to_owned()
     };
-    assert_eq!(at(0.0), "0.01 Hz");
+    assert_eq!(at(0.0), "0.0100 Hz");
+    assert_eq!(at((0.5 - 0.01) / 19.99), "0.500 Hz");
     assert_eq!(at((1.0 - 0.01) / 19.99), "1.00 Hz");
     assert_eq!(at(1.0), "20.0 Hz");
 }

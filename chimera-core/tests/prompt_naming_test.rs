@@ -9,7 +9,7 @@ use chimera_core::params::EngineType;
 use chimera_core::project::{Line, PartFrom, PartId, PartSet, PartSource, SlotId, Subject};
 use chimera_core::storage::ProjectId;
 use chimera_core::ui::busy::ToastStep;
-use chimera_core::ui::hold::{HoldGates, Presses};
+use chimera_core::ui::hold::{HoldGates, Presses, SeqHold};
 use chimera_core::ui::nav::{ListAt, Location};
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::perf::PerfStats;
@@ -55,7 +55,7 @@ fn edit_confirms_and_menu_and_seq_cancel_on_release() {
     let mut c = Choice::<R>::new();
     c.input(1, &NO_PRESS);
     let mut frame = |c: &mut Choice<R>, i: Input| {
-        let p = gates.step(&i);
+        let p = gates.step(&i, SeqHold::of(i.edges(ButtonId::Seq).down, false, false));
         c.input(i.encoder_delta(EncoderId::A) as i32, &p)
     };
     assert_eq!(

@@ -9,8 +9,8 @@ use chimera_core::board::{Hc165Pins, Port};
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_core::console::Hand;
 use chimera_hal::{
-    Accel, ButtonId, ButtonState, Controls, Debounce, Edges, EncoderId, Latch, Ms, NUM_BUTTONS,
-    NUM_ENCODERS, Turn, push_levels,
+    Accel, BurstPos, ButtonId, ButtonState, Controls, Debounce, Detents, Edges, EncoderId, Latch,
+    Ms, NUM_BUTTONS, NUM_ENCODERS, Turn, push_levels,
 };
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, AtomicUsize, Ordering};
@@ -307,7 +307,9 @@ pub struct Stm32Controls {
     edges: [Edges; NUM_SWITCHES],
     now_ms: Ms,
     enc: [Turn; NUM_ENCODERS],
-    burst: [u8; NUM_ENCODERS],
+    /// `enc` as a parameter's ticks (`Accel::Param`).
+    ticks: [i8; NUM_ENCODERS],
+    burst: [BurstPos; NUM_ENCODERS],
 }
 
 impl Stm32Controls {
@@ -316,7 +318,8 @@ impl Stm32Controls {
             edges: [Edges::default(); NUM_SWITCHES],
             now_ms: Ms(0),
             enc: [Turn::default(); NUM_ENCODERS],
-            burst: [0; NUM_ENCODERS],
+            ticks: [0; NUM_ENCODERS],
+            burst: [BurstPos::START; NUM_ENCODERS],
         }
     }
 
@@ -332,28 +335,26 @@ impl Stm32Controls {
         });
         let now = ISR_TICK.load(Ordering::Relaxed);
         self.now_ms = Ms(tick_ms(now));
+        let seq = self.edges[ButtonId::Seq as usize];
         for i in 0..NUM_ENCODERS {
-            let raw = ENC_DELTA[i].swap(0, Ordering::Relaxed);
-            // A burst ends after the gap, in 500 Hz ticks.
+            let d = Detents::new(ENC_DELTA[i].swap(0, Ordering::Relaxed));
+            // A burst ends after the gap, in 500 Hz ticks, or at SEQ's
+            // edge (a fine turn's start or end, ADR 0279).
             let last = ENC_LAST_EDGE[i].load(Ordering::Relaxed);
-            if now.wrapping_sub(last) > chimera_hal::ENCODER_BURST_GAP_MS / 2 {
-                self.burst[i] = 0;
-            }
+            let rested = now.wrapping_sub(last) > chimera_hal::ENCODER_BURST_GAP_MS / 2;
+            let at = self.burst[i].next(rested, seq);
             // The detents and their place in the burst; the UI picks the
-            // acceleration (ADR 0279).
-            let detents = raw.clamp(-127, 127);
-            self.enc[i] = Turn {
-                detents,
-                burst: Some(self.burst[i]),
-            };
-            self.burst[i] = self.burst[i].saturating_add(detents.unsigned_abs());
+            // acceleration.
+            self.enc[i] = Turn::at(d, at);
+            self.ticks[i] = Accel::Param.ticks(self.enc[i]).get();
+            self.burst[i] = at.after(d.count());
         }
     }
 }
 
 impl Controls for Stm32Controls {
     fn encoder_delta(&self, id: EncoderId) -> i8 {
-        Accel::Param.ticks(self.enc[id as usize])
+        self.ticks[id as usize]
     }
 
     fn turn(&self, id: EncoderId) -> Turn {

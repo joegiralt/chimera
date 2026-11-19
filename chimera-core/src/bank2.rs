@@ -8,6 +8,7 @@ pub use chimera_engine::bank2::{
     Judged, PROBE_ADDS, TABLE_LEN, UI_DOOR_ADDR,
 };
 use chimera_hal::store::Store;
+use chimera_hal::{Ticks, Turn};
 use chimera_image::{FlashFail, Slot, Verdict};
 pub use chimera_image::{Seal, Version};
 
@@ -265,7 +266,30 @@ pub struct UiDoor {
         crate::project::PartId,
         &crate::preset::Part,
     ) -> Option<crate::project::Line>,
+    /// The encoders' feel (`ui::feel`, ADR 0279): a cell's turn, whether
+    /// SEQ + turn steps it fine, its band's hint, a list's rows, CLASSIC
+    /// RATE's semitone.
+    feel_ticks: fn(&crate::ui::view::View, Turn, crate::ui::feel::Step) -> Ticks,
+    feel_cells: fn(
+        &crate::ui::UiState,
+        [bool; chimera_hal::NUM_ENCODERS],
+    ) -> [bool; chimera_hal::NUM_ENCODERS],
+    feel_hint: fn(
+        &crate::ui::view::View,
+        crate::ui::view::Words,
+        crate::ui::feel::Band,
+    ) -> crate::ui::hint::Hint,
+    list_ticks: fn(Turn) -> Ticks,
+    lfo_rate: fn(f32, i8) -> f32,
 }
+
+// The table fits its slot, before the bench's (the link would fail later,
+// and less plainly).
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(
+    size_of::<UiDoor>()
+        <= (chimera_engine::bank2::BENCH_DOOR_ADDR - chimera_engine::bank2::UI_DOOR_ADDR) as usize
+);
 
 /// A card row's head and how it loads (`SourceCell::kind`).
 type HeadKind = (SourceHead, LoadKind);
@@ -307,7 +331,51 @@ impl UiDoor {
         roll: crate::randomize::kern::roll,
         tuning: crate::ui::tuning::work_in,
         tuning_note: crate::ui::tuning::note_in,
+        feel_ticks: crate::ui::feel::ticks,
+        feel_cells: crate::ui::feel::fine_cells,
+        feel_hint: crate::ui::feel::hint,
+        list_ticks: crate::ui::feel::list_ticks,
+        lfo_rate: crate::ui::feel::lfo_rate,
     };
+
+    #[inline(always)]
+    pub(crate) fn lfo_rate(&self, hz: f32, d: i8) -> f32 {
+        (self.lfo_rate)(hz, d)
+    }
+
+    #[inline(always)]
+    pub(crate) fn feel_ticks(
+        &self,
+        v: &crate::ui::view::View,
+        t: Turn,
+        step: crate::ui::feel::Step,
+    ) -> Ticks {
+        (self.feel_ticks)(v, t, step)
+    }
+
+    #[inline(always)]
+    pub(crate) fn fine_cells(
+        &self,
+        ui: &crate::ui::UiState,
+        turned: [bool; chimera_hal::NUM_ENCODERS],
+    ) -> [bool; chimera_hal::NUM_ENCODERS] {
+        (self.feel_cells)(ui, turned)
+    }
+
+    #[inline(always)]
+    pub(crate) fn feel_hint(
+        &self,
+        v: &crate::ui::view::View,
+        w: crate::ui::view::Words,
+        band: crate::ui::feel::Band,
+    ) -> crate::ui::hint::Hint {
+        (self.feel_hint)(v, w, band)
+    }
+
+    #[inline(always)]
+    pub(crate) fn list_ticks(&self, t: Turn) -> Ticks {
+        (self.list_ticks)(t)
+    }
 
     #[inline(always)]
     pub(crate) fn overview(&self, v: &SourceView<'_>, start: f32, end: f32) -> Overview {

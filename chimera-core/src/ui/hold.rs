@@ -1,7 +1,7 @@
 //! Tap and hold from latched button edges: a tap acts on release, a hold
 //! fires once at `HOLD_MS` while still down.
 
-use chimera_hal::{ALL_ENCODERS, ButtonId, Controls, Edges, Ms, PART_BUTTONS};
+use chimera_hal::{ButtonId, Controls, Edges, Ms, PART_BUTTONS};
 
 use crate::orbit::RINGS;
 
@@ -74,6 +74,30 @@ impl HoldGate {
 
 pub use chimera_engine::confirm::{Press, Presses};
 
+/// SEQ this frame (ADR 0279), derived once and handed to its gate, the
+/// edit path and the band.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeqHold {
+    Up,
+    /// Down, with no fine turn this frame.
+    Held,
+    /// Down through a turn on a cell that steps fine: the turn is fine,
+    /// and SEQ's press is no key (no tap, no ORBIT hold).
+    Turned,
+}
+
+impl SeqHold {
+    /// SEQ `down`; MIX `mix` (its chord wins: MIX + SEQ learns); a turn
+    /// this frame on a cell that steps fine, `fine_turn`.
+    pub const fn of(down: bool, mix: bool, fine_turn: bool) -> Self {
+        match (down, !mix && fine_turn) {
+            (false, _) => SeqHold::Up,
+            (true, false) => SeqHold::Held,
+            (true, true) => SeqHold::Turned,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct HoldGates {
     menu: HoldGate,
@@ -96,13 +120,13 @@ impl HoldGates {
         }
     }
 
-    /// MENU, SEQ and B1–B5 are muted while MIX is down, SEQ too by a turn
-    /// while it is down (MIX + SEQ learns,
-    /// MIX + B*n* is a mute in ORBIT), and B1–B5 while EDIT is: EDIT + B*n*
+    /// MENU, SEQ and B1–B5 are muted while MIX is down (MIX + SEQ learns,
+    /// MIX + B*n* is a mute in ORBIT), SEQ too by a fine turn while it is
+    /// down (`SeqHold::Turned`), and B1–B5 while EDIT is: EDIT + B*n*
     /// is no ring key. MIX is read as a level at frame end, so a chord
     /// inside one frame is not muted. The B gates run everywhere, so they are in step
     /// when ORBIT opens.
-    pub fn step(&mut self, c: &impl Controls) -> Presses {
+    pub fn step(&mut self, c: &impl Controls, seq: SeqHold) -> Presses {
         let now = c.now_ms();
         let mix = c.edges(ButtonId::Mix).down;
         let edit = c.edges(ButtonId::Edit).down;
@@ -111,13 +135,12 @@ impl HoldGates {
             *out = g.step(c.edges(b), now, mix || edit);
         }
         let chord = mix || PART_BUTTONS.iter().any(|&b| c.edges(b).down);
-        let turned =
-            c.edges(ButtonId::Seq).down && ALL_ENCODERS.iter().any(|&e| c.encoder_delta(e) != 0);
         Presses {
             edit: c.edges(ButtonId::Edit).pressed_at.is_some() && !chord,
             menu: self.menu.step(c.edges(ButtonId::Menu), now, mix),
-            // SEQ + turn is a fine turn (ADR 0279): no tap, no hold.
-            seq: self.seq.step(c.edges(ButtonId::Seq), now, mix || turned),
+            seq: self
+                .seq
+                .step(c.edges(ButtonId::Seq), now, mix || seq == SeqHold::Turned),
             ring,
         }
     }

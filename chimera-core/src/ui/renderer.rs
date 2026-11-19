@@ -122,9 +122,9 @@ pub struct Frame<'a> {
     /// SYSTEM's PUSH ENCODERS: a value cell with no hint of its own hints
     /// the pushes (ADR 0140).
     pub push: bool,
-    /// SEQ is down: on a mixer cell the band hints the fine turn in place
-    /// of the PART jump (ADR 0279).
-    pub seq: bool,
+    /// MIX is down: a mixer cell's band hints its PART jump in place of
+    /// the fine turn (ADR 0279).
+    pub mix: bool,
     /// TAPE's strip: the active Part's source, and its newest note's heads.
     pub strip: &'a crate::ui::tape_strip::Overview,
     pub heads: crate::dsp::tape_engine::Heads,
@@ -427,23 +427,25 @@ impl Renderer {
             let _ = w;
         } else if let Some(h) = f.pickup {
             hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
-        } else if Self::focus_hint(f) == view::PAD_HINT {
-            // A pad cell: MIX + -/+ steps the pad, said where the band
-            // would, on the status line's own backing (`viz_status`'s).
+        } else if f.hints
+            && matches!(
+                view::cell_words(f.def, &view::view(f.def, f.focus, &f.ctx), &f.ctx),
+                view::Words::Pad
+            )
+        {
+            // A pad cell: MIX + -/+ steps the pad (and SEQ + turn is
+            // fine), said where the band would, on the status line's own
+            // backing (`viz_status`'s).
+            let pad = Self::focus_hint(f);
             draw::fill_rect(
                 display,
                 theme::MARGIN_X - 2,
                 theme::HEADER_BOTTOM,
-                hint::width_at(view::PAD_HINT, theme::TextSize::Normal) + 4,
+                hint::width_at(pad, theme::TextSize::Normal) + 4,
                 viz::PLOT_TOP - theme::HEADER_BOTTOM,
                 theme::BG,
             );
-            hint::draw(
-                display,
-                view::PAD_HINT,
-                theme::MARGIN_X,
-                theme::BIGVIZ_STATUS_Y,
-            );
+            hint::draw(display, pad, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
         }
     }
 
@@ -930,25 +932,25 @@ impl Renderer {
             return f.hint(o.hint);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
-        // A Part cell on a pad's page (DRUM FLT's FX TYPE and PLACE): MIX
-        // + -/+ steps the pad there too (`view::edits_pad`).
-        let own = match view.addr() {
-            Some(a) if f.def.edits_pad() && !a.block.is_pad() => view::PAD_HINT,
-            _ => view.hint(&f.ctx),
+        let words = view::cell_words(f.def, &view, &f.ctx);
+        let generic = matches!(words, view::Words::Plain | view::Words::Learn);
+        let band = match f.head {
+            Head::Mix(_) => crate::ui::feel::Band::Mixer { mix: f.mix },
+            Head::Sound(_) => crate::ui::feel::Band::Sound,
+            _ => crate::ui::feel::Band::Other,
         };
-        let generic = own.is_empty() || own == view::LEARN_HINT;
         let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
             crate::ui::push::HINT
-        } else if matches!(f.head, Head::Mix(_)) {
-            if f.seq && view.fine_turns() {
-                view::FINE_HINT
-            } else {
-                view::mixer_hint(own)
-            }
-        } else if matches!(f.head, Head::Sound(_)) && view.fine_turns() {
-            view::fine_hint(own)
         } else {
-            own
+            // With the fine turn in it, bank 2's (ADR 0279); closed, the
+            // cell's own and the mixer's PART jump.
+            crate::bank2::ui_door(|d| d.feel_hint(&view, words, band)).unwrap_or_else(|| {
+                if matches!(f.head, Head::Mix(_)) {
+                    view::mixer_hint(words)
+                } else {
+                    words.hint()
+                }
+            })
         };
         f.hint(h)
     }

@@ -5,9 +5,16 @@ mod common;
 mod screen;
 
 use chimera_core::project::PartId;
-use chimera_core::ui::hold::{HoldGates, Press};
-use chimera_core::ui::{UiState, hint, theme, view};
-use chimera_hal::{Accel, ButtonId, ButtonState, Controls, EncoderId, Turn, encoder_accel};
+use chimera_core::ui::hold::{HoldGates, Press, SeqHold};
+use chimera_core::ui::{UiState, feel, hint, theme};
+use chimera_hal::{
+    Accel, BurstPos, ButtonId, ButtonState, Controls, Detents, Edges, EncoderId, Ms, Turn,
+    encoder_accel,
+};
+
+fn turn(d: i8, burst: u8) -> Turn {
+    Turn::at(Detents::new(d), BurstPos::new(burst))
+}
 
 /// The panel's acceleration, as it was: 1, 2, 4, 5, 10, then 10.
 #[test]
@@ -17,16 +24,10 @@ fn a_param_accelerates_as_before() {
             let want: i32 = (0..detents as u8)
                 .map(|k| i32::from(encoder_accel(burst.saturating_add(k))))
                 .sum();
-            let t = Turn {
-                detents,
-                burst: Some(burst),
-            };
-            assert_eq!(i32::from(Accel::Param.ticks(t)), want.min(127));
-            let back = Turn {
-                detents: -detents,
-                burst: Some(burst),
-            };
-            assert_eq!(Accel::Param.ticks(back), -Accel::Param.ticks(t));
+            let t = turn(detents, burst);
+            assert_eq!(i32::from(Accel::Param.ticks(t).get()), want.min(127));
+            let back = turn(-detents, burst);
+            assert_eq!(Accel::Param.ticks(back).get(), -Accel::Param.ticks(t).get());
         }
     }
 }
@@ -36,29 +37,14 @@ fn a_param_accelerates_as_before() {
 #[test]
 fn a_list_accelerates_gentler() {
     for burst in 0..4u8 {
-        assert_eq!(
-            Accel::List.ticks(Turn {
-                detents: 1,
-                burst: Some(burst)
-            }),
-            1
-        );
+        assert_eq!(Accel::List.ticks(turn(1, burst)).get(), 1);
     }
     for burst in 0..40u8 {
-        let t = Turn {
-            detents: 1,
-            burst: Some(burst),
-        };
-        assert!(Accel::List.ticks(t) <= 3);
-        assert!(Accel::List.ticks(t) <= Accel::Param.ticks(t));
+        let t = turn(1, burst);
+        assert!(Accel::List.ticks(t).get() <= 3);
+        assert!(Accel::List.ticks(t).get() <= Accel::Param.ticks(t).get());
     }
-    assert_eq!(
-        Accel::List.ticks(Turn {
-            detents: 0,
-            burst: Some(9)
-        }),
-        0
-    );
+    assert_eq!(Accel::List.ticks(turn(0, 9)).get(), 0);
 }
 
 /// A shell that does not accelerate (the desktop, a test's hand) reports
@@ -66,12 +52,67 @@ fn a_list_accelerates_gentler() {
 #[test]
 fn a_steady_turn_is_its_ticks() {
     for d in [-9i8, -1, 0, 1, 5, 12] {
-        let t = Turn {
-            detents: d,
-            burst: None,
-        };
-        assert_eq!((Accel::Param.ticks(t), Accel::List.ticks(t)), (d, d));
+        let t = Turn::steady(d);
+        assert_eq!(
+            (Accel::Param.ticks(t).get(), Accel::List.ticks(t).get()),
+            (d, d)
+        );
     }
+}
+
+/// −128 detents has no negation: it is never one, and its ticks are
+/// −127's.
+#[test]
+fn detents_are_never_minus_128() {
+    assert_eq!(Detents::new(i8::MIN).get(), -127);
+    let t = Turn::at(Detents::new(i8::MIN), BurstPos::START);
+    assert_eq!(Accel::Param.ticks(t).get(), -127);
+    assert_eq!(Turn::steady(i8::MIN).detents().get(), -127);
+}
+
+/// The wake detent taken off: one fewer, the rest a place further into
+/// the burst; a steady turn stays steady.
+#[test]
+fn consume_first_takes_one_detent() {
+    assert_eq!(turn(3, 2).consume_first(), turn(2, 3));
+    assert_eq!(turn(-1, 0).consume_first(), turn(0, 1));
+    assert_eq!(Turn::steady(-2).consume_first(), Turn::steady(-1));
+    assert_eq!(Turn::steady(0).consume_first(), Turn::steady(0));
+}
+
+/// A burst starts again after a rest, and when SEQ goes down or up: a
+/// fine turn's release never hands the plain turn after it a burst it
+/// counted through (review A6).
+#[test]
+fn a_seq_edge_restarts_the_burst() {
+    let deep = BurstPos::new(9);
+    let held = Edges {
+        down: true,
+        ..Edges::default()
+    };
+    assert_eq!(deep.next(false, Edges::default()), deep);
+    assert_eq!(deep.next(false, held), deep);
+    assert_eq!(deep.next(true, Edges::default()), BurstPos::START);
+    let pressed = Edges {
+        pressed_at: Some(Ms(4)),
+        ..held
+    };
+    assert_eq!(deep.next(false, pressed), BurstPos::START);
+    let released = Edges {
+        released_at: Some(Ms(4)),
+        ..Edges::default()
+    };
+    assert_eq!(deep.next(false, released), BurstPos::START);
+}
+
+/// SEQ's state, once a frame: up, held, or held through a turn on a cell
+/// that steps fine; MIX's chord wins.
+#[test]
+fn seq_hold_is_one_state() {
+    assert_eq!(SeqHold::of(false, false, true), SeqHold::Up);
+    assert_eq!(SeqHold::of(true, false, false), SeqHold::Held);
+    assert_eq!(SeqHold::of(true, false, true), SeqHold::Turned);
+    assert_eq!(SeqHold::of(true, true, true), SeqHold::Held);
 }
 
 /// One frame: turns (detents at a burst position) and held buttons.
@@ -84,7 +125,7 @@ struct Frame {
 
 impl Controls for Frame {
     fn encoder_delta(&self, id: EncoderId) -> i8 {
-        Accel::Param.ticks(self.turn(id))
+        Accel::Param.ticks(self.turn(id)).get()
     }
     fn turn(&self, id: EncoderId) -> Turn {
         self.turns
@@ -99,8 +140,8 @@ impl Controls for Frame {
             ButtonState::Up
         }
     }
-    fn now_ms(&self) -> chimera_hal::Ms {
-        chimera_hal::Ms(self.now)
+    fn now_ms(&self) -> Ms {
+        Ms(self.now)
     }
 }
 
@@ -118,34 +159,21 @@ fn part_page() -> Box<UiState> {
 
 /// Deep in a fast burst, a plain turn accelerates; SEQ held, each detent
 /// is one fine step (a tenth with pushes built in, else a whole one).
+/// Bank 2's (`ui::feel`): without TAPE's UI its door is closed.
+#[cfg(feature = "tape")]
 #[test]
 fn seq_and_a_turn_step_fine() {
-    let fast = Turn {
-        detents: 3,
-        burst: Some(8),
-    };
+    let fast = turn(-3, 8);
     let mut plain = part_page();
     plain.handle_input(&Frame {
-        turns: vec![(
-            EncoderId::D,
-            Turn {
-                detents: -3,
-                ..fast
-            },
-        )],
+        turns: vec![(EncoderId::D, fast)],
         ..Frame::default()
     });
     assert!(level(&plain) < 0.8 - 20.0 / 128.0, "{}", level(&plain));
 
     let mut ui = part_page();
     ui.handle_input(&Frame {
-        turns: vec![(
-            EncoderId::D,
-            Turn {
-                detents: -3,
-                ..fast
-            },
-        )],
+        turns: vec![(EncoderId::D, fast)],
         held: vec![ButtonId::Seq],
         ..Frame::default()
     });
@@ -161,143 +189,206 @@ fn seq_and_a_turn_step_fine() {
     );
 }
 
-/// SEQ held through a turn is a fine turn, not a key: its release is no
-/// tap (no move up) and holding on never opens ORBIT.
+/// SEQ's edges, by hand.
+fn seq_edges(down: bool, pressed: Option<u32>, released: Option<u32>) -> Edges {
+    Edges {
+        down,
+        pressed_at: pressed.map(Ms),
+        released_at: released.map(Ms),
+    }
+}
+
+/// SEQ held through a fine turn is no key: its release is no tap (no
+/// move up) and holding on never opens ORBIT.
 #[test]
 fn a_turn_mutes_seq() {
     let mut g = HoldGates::new();
-    // Edges by hand: pressed at 0, turned at 100, held to 900, let go.
+    // Pressed at 0, turned at 100, held to 900, let go.
     let frames = [
-        chimera_hal::Edges {
-            down: true,
-            pressed_at: Some(chimera_hal::Ms(0)),
-            released_at: None,
-        },
-        chimera_hal::Edges {
-            down: true,
-            pressed_at: None,
-            released_at: None,
-        },
-        chimera_hal::Edges {
-            down: true,
-            pressed_at: None,
-            released_at: None,
-        },
-        chimera_hal::Edges {
-            down: false,
-            pressed_at: None,
-            released_at: Some(chimera_hal::Ms(900)),
-        },
+        (seq_edges(true, Some(0), None), SeqHold::Held, 0),
+        (seq_edges(true, None, None), SeqHold::Turned, 100),
+        (seq_edges(true, None, None), SeqHold::Held, 800),
+        (seq_edges(false, None, Some(900)), SeqHold::Up, 900),
     ];
-    let turned = [false, true, false, false];
-    let times = [0, 100, 800, 900];
-    for ((e, t), now) in frames.into_iter().zip(turned).zip(times) {
-        let f = SeqFrame {
-            seq: e,
-            turned: t,
-            now,
-        };
-        let p = g.step(&f);
+    for (e, seq, now) in frames {
+        let p = g.step(&SeqFrame { seq: e, now }, seq);
         assert_eq!(p.seq, None::<Press>, "at {now} ms");
     }
 }
 
-/// SEQ's edges and one encoder's turn.
+/// SEQ's edges alone.
 struct SeqFrame {
-    seq: chimera_hal::Edges,
-    turned: bool,
+    seq: Edges,
     now: u32,
 }
 
 impl Controls for SeqFrame {
-    fn encoder_delta(&self, id: EncoderId) -> i8 {
-        i8::from(self.turned && id == EncoderId::C)
+    fn encoder_delta(&self, _: EncoderId) -> i8 {
+        0
     }
     fn button_state(&self, _: ButtonId) -> ButtonState {
         ButtonState::Up
     }
-    fn edges(&self, id: ButtonId) -> chimera_hal::Edges {
+    fn edges(&self, id: ButtonId) -> Edges {
         if id == ButtonId::Seq {
             self.seq
         } else {
-            chimera_hal::Edges::default()
+            Edges::default()
         }
     }
-    fn now_ms(&self) -> chimera_hal::Ms {
-        chimera_hal::Ms(self.now)
+    fn now_ms(&self) -> Ms {
+        Ms(self.now)
     }
-}
-
-/// A value cell's band names the fine turn, and the line fits.
-#[test]
-fn a_value_cell_hints_seq_fine() {
-    assert!(view::FINE_LEARN_HINT.iter().any(|g| g.1 == view::FINE.1));
-    assert!(hint::width(view::FINE_LEARN_HINT) <= theme::CONTENT_W);
-    assert!(hint::width(view::FINE_HINT) <= theme::CONTENT_W);
-}
-
-/// A pick from names turns as a list; a level as a parameter.
-#[test]
-fn a_choice_turns_as_a_list() {
-    use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::block::ValFmt;
-    use chimera_core::params::OutParams;
-    use chimera_core::ui::view::View;
-    let level = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
-    let cell = |fmt| View::Param {
-        addr: level,
-        label: "X",
-        fmt,
-        short: None,
-    };
-    assert_eq!(cell(ValFmt::Uni).accel(), Accel::Param);
-    assert_eq!(cell(ValFmt::Names(&["A", "B"])).accel(), Accel::List);
-    assert_eq!(View::SelectPad.accel(), Accel::List);
 }
 
 /// A SEQ hold with no turn still opens ORBIT at 500 ms, as before.
 #[test]
 fn an_untouched_seq_hold_still_holds() {
     let mut g = HoldGates::new();
-    let down = |at| chimera_hal::Edges {
-        down: true,
-        pressed_at: at,
-        released_at: None,
-    };
-    let f = |seq, now| SeqFrame {
-        seq,
-        turned: false,
-        now,
-    };
-    assert_eq!(g.step(&f(down(Some(chimera_hal::Ms(0))), 0)).seq, None);
-    assert_eq!(g.step(&f(down(None), 499)).seq, None);
-    assert_eq!(g.step(&f(down(None), 500)).seq, Some(Press::Hold));
+    let f = |seq, now| SeqFrame { seq, now };
+    let held = SeqHold::Held;
+    assert_eq!(
+        g.step(&f(seq_edges(true, Some(0), None), 0), held).seq,
+        None
+    );
+    assert_eq!(g.step(&f(seq_edges(true, None, None), 499), held).seq, None);
+    assert_eq!(
+        g.step(&f(seq_edges(true, None, None), 500), held).seq,
+        Some(Press::Hold)
+    );
 }
 
-/// The focus band's hint line: INK pixels in it, column by column.
-fn hint_line(ui: &UiState) -> Vec<bool> {
-    let fb = screen::render_ui(ui);
-    (theme::MARGIN_X..theme::SCREEN_W - theme::MARGIN_X)
-        .flat_map(|x| (hint::FOCUS_Y - 7..=hint::FOCUS_Y).map(move |y| (x, y)))
-        .map(|(x, y)| fb.at(x, y) == theme::INK)
-        .collect()
+/// A param cell on OUT's VOLUME in `fmt`.
+fn cell(fmt: chimera_core::block::ValFmt) -> chimera_core::ui::view::View {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::params::OutParams;
+    chimera_core::ui::view::View::Param {
+        addr: ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
+        label: "X",
+        fmt,
+        short: None,
+    }
 }
 
-/// On a mixer cell the band hints the PART jump; SEQ held there, it says
-/// the fine turn in its place, and let go, the PART jump again.
+/// A pick from names turns as a list; a level as a parameter.
 #[test]
-fn seq_held_on_a_mixer_cell_hints_fine() {
+fn a_choice_turns_as_a_list() {
+    use chimera_core::block::ValFmt;
+    use chimera_core::ui::view::View;
+    assert_eq!(feel::accel(&cell(ValFmt::Uni)), Accel::Param);
+    assert_eq!(feel::accel(&cell(ValFmt::Names(&["A", "B"]))), Accel::List);
+    assert_eq!(feel::accel(&View::SelectPad), Accel::List);
+}
+
+/// A choice (a list turn, already a row a detent) takes no fine turn and
+/// says none (review A5); a value does.
+#[test]
+fn a_choice_takes_no_fine_turn() {
+    use chimera_core::block::ValFmt;
+    use chimera_core::ui::view::{View, Words};
+    assert!(feel::takes(&cell(ValFmt::Uni), Words::Plain));
+    assert!(!feel::takes(
+        &cell(ValFmt::Names(&["A", "B"])),
+        Words::Plain
+    ));
+    assert!(!feel::takes(&View::SelectPad, Words::Pad));
+}
+
+/// Every cell that takes the fine turn says so, beside its own words, on
+/// one line; a cell whose words leave no room takes none (review A3).
+#[test]
+fn every_fine_cell_hints_it() {
+    use chimera_core::block::ValFmt;
+    use chimera_core::ui::feel::Band;
+    use chimera_core::ui::view::{self, Words};
+    let words = [
+        Words::Plain,
+        Words::Learn,
+        Words::Pad,
+        Words::Own(view::ONSET_HINT),
+        Words::Own(view::KEY_HINT),
+        Words::Own(view::ROLL_HINT),
+    ];
+    let v = cell(ValFmt::Uni);
+    for w in words {
+        for band in [Band::Sound, Band::Mixer { mix: false }] {
+            let h = feel::hint(&v, w, band);
+            assert!(hint::width(h) <= theme::CONTENT_W, "{w:?}: {h:?}");
+            let says = h.iter().any(|g| g.1 == "FINE");
+            assert_eq!(says, feel::takes(&v, w), "{w:?} {band:?}: {h:?}");
+        }
+    }
+    // The plain, the mapped and the pad's cells keep it.
+    for w in [Words::Plain, Words::Learn, Words::Pad] {
+        assert!(feel::takes(&v, w), "{w:?}");
+    }
+}
+
+/// The focused cell's band hint says `keys`.
+fn says(ui: &UiState, keys: &str) -> bool {
+    ui.focus_hint_for_test().iter().any(|g| g.0 == keys)
+}
+
+/// A mixer value cell hints the fine turn at rest, before SEQ is down (a
+/// pause on SEQ opens ORBIT at 500 ms); MIX held, the PART jump MIX
+/// starts (review A4).
+#[cfg(feature = "tape")]
+#[test]
+fn a_mixer_cell_hints_fine_at_rest_and_the_part_jump_under_mix() {
     let mut ui = part_page();
     ui.set_midi(chimera_core::ui::midi_settings::MidiSettings::DEFAULT.with_push(false));
     screen::feed(&mut ui, screen::Input::turn(EncoderId::D, 1));
-    let jump = hint_line(&ui);
-    ui.handle_input(&Frame {
-        held: vec![ButtonId::Seq],
-        ..Frame::default()
-    });
-    let fine = hint_line(&ui);
-    assert_ne!(fine, jump, "SEQ held: the fine turn's hint");
-    assert!(fine.iter().any(|&p| p));
-    ui.handle_input(&Frame::default());
-    assert_eq!(hint_line(&ui), jump, "let go: the PART jump again");
+    assert!(says(&ui, "SEQ+TURN"), "{:?}", ui.focus_hint_for_test());
+    screen::feed(&mut ui, screen::Input::held(ButtonId::Mix));
+    assert!(says(&ui, "MIX + B1-6"), "{:?}", ui.focus_hint_for_test());
+    screen::feed(&mut ui, screen::Input::release(ButtonId::Mix));
+    assert!(says(&ui, "SEQ+TURN"));
+}
+
+/// A DRUM pad cell takes the fine turn and says it beside MIX + -/+ PAD
+/// (review A3).
+#[cfg(feature = "tape")]
+#[test]
+fn a_pad_cell_hints_fine_beside_the_pad() {
+    let mut ui = Box::new(UiState::new());
+    ui.set_midi(chimera_core::ui::midi_settings::MidiSettings::DEFAULT.with_push(false));
+    screen::load_init(&mut ui, chimera_core::params::EngineType::Drum);
+    screen::feed(&mut ui, screen::Input::press(ButtonId::Plus)); // MCH
+    screen::feed(&mut ui, screen::Input::turn(EncoderId::D, 1));
+    let h = ui.focus_hint_for_test();
+    assert!(says(&ui, "MIX + -/+") && says(&ui, "SEQ+TURN"), "{h:?}");
+}
+
+/// SEQ pressed, `e` turned, SEQ let go.
+fn seq_turn_release(ui: &mut UiState, e: EncoderId) {
+    screen::feed(ui, screen::Input::press(ButtonId::Seq).at(0));
+    screen::feed(ui, screen::Input::held(ButtonId::Seq).and_turn(e, 1).at(50));
+    screen::feed(ui, screen::Input::release(ButtonId::Seq).at(100));
+}
+
+/// Where the fine turn does not apply (SETTINGS' RANDOMIZE), a turn
+/// during SEQ's tap leaves it a tap (review A8).
+#[test]
+fn a_plain_turn_leaves_seq_its_tap() {
+    let at_randomize = || {
+        let mut ui = Box::new(UiState::new());
+        screen::to_leaf(&mut ui, &["PART", "RANDOMIZE"]);
+        ui
+    };
+    let mut tapped = at_randomize();
+    screen::tap(&mut tapped, ButtonId::Seq);
+    let mut turned = at_randomize();
+    seq_turn_release(&mut turned, EncoderId::E);
+    assert_ne!(tapped.location(), at_randomize().location(), "SEQ moves");
+    assert_eq!(turned.location(), tapped.location());
+}
+
+/// On a value cell the turn is fine and SEQ's release is no tap.
+#[cfg(feature = "tape")]
+#[test]
+fn a_fine_turn_takes_seqs_tap() {
+    let mut ui = part_page();
+    let at = ui.location();
+    seq_turn_release(&mut ui, EncoderId::D);
+    assert_eq!(ui.location(), at);
 }

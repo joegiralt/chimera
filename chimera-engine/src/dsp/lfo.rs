@@ -122,30 +122,22 @@ impl LfoParams {
     pub const SHAPE_B: ParamId = ParamId(10);
 }
 
-/// CLASSIC RATE: Hz, its range and readout linear over 0.01–20.
-const RATE_SPEC: ParamSpec = ParamSpec::continuous(
-    0,
-    "RATE",
-    ValFmt::Law(crate::dsp::modulator::law::Law::LfoHz),
-    0.01,
-    20.0,
-    1.0,
-    0.15,
-    false,
-    Smoothing::Own,
-)
-.ident("RATE")
-.glyph(crate::glyph::FocusGlyph::Lfo);
-
-/// CLASSIC RATE's turn (ADR 0279): a twelfth of an octave a tick, 0.006 Hz
-/// at 0.1 Hz, 0.06 at 1, 0.6 at 10; 132 ticks end to end, as the linear
-/// 0.15 Hz steps were. The stored Hz, the range, CCs and the readout stay.
-const RATE_TICK: ParamSpec = RATE_SPEC.ticks_per_octave(12.0);
-
 /// The LFO sources are computed from `params.lfos`; DEPTH alone takes
 /// routes, last block's sums, as an ENV slot's (#876).
 pub static LFO_SPECS: [ParamSpec; 11] = [
-    RATE_SPEC,
+    ParamSpec::continuous(
+        0,
+        "RATE",
+        ValFmt::Law(crate::dsp::modulator::law::Law::LfoHz),
+        0.01,
+        20.0,
+        1.0,
+        0.15,
+        false,
+        Smoothing::Own,
+    )
+    .ident("RATE")
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::choice(
         1,
         "SHAPE",
@@ -311,24 +303,6 @@ impl Block for LfoParams {
             Self::SHAPE_B => self.func.shape = v,
             _ => {}
         }
-    }
-
-    /// RATE turns by `RATE_TICK`; the rest by their specs.
-    fn nudge(&mut self, id: ParamId, delta: i8) {
-        let s = if id == Self::RATE {
-            Some(&RATE_TICK)
-        } else {
-            self.spec(id)
-        };
-        if let Some(s) = s {
-            self.write(id, s.nudged(self.get(id), delta));
-        }
-    }
-
-    /// RATE's ticks are its fine steps already.
-    #[cfg(feature = "push-encoders")]
-    fn ladder(&self, id: ParamId) -> bool {
-        id == Self::RATE
     }
 
     fn enum_code(&self, id: ParamId) -> Option<u8> {

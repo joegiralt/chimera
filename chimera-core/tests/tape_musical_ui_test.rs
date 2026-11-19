@@ -453,3 +453,17 @@ fn label_reads(shot: &Fb, text: &str) -> bool {
     }
     any
 }
+
+/// SEQ + turn on DIRECTION, on a streamed source, is refused as a turn
+/// is (review A2): the fine turn changes the step, never the guards.
+#[test]
+fn a_seq_turn_is_refused_what_a_turn_is() {
+    let mut ui = streamed_ui();
+    assert_eq!(ui.params().tape.way(), Way::Loop);
+    feed(
+        &mut ui,
+        Input::held(ButtonId::Seq).and_turn(EncoderId::D, 1),
+    );
+    assert_eq!(ui.params().tape.way(), Way::Loop, "PING-PONG refused");
+    assert!(ui.held_choice().is_some(), "held, dimmed, with its reason");
+}

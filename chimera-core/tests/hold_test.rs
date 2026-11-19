@@ -1,7 +1,7 @@
 mod screen;
 
 use chimera_core::orbit::RINGS;
-use chimera_core::ui::hold::{HOLD_MS, HoldGate, HoldGates, Press, Presses};
+use chimera_core::ui::hold::{HOLD_MS, HoldGate, HoldGates, Press, Presses, SeqHold};
 use chimera_hal::{ButtonId, ButtonState, Controls};
 use chimera_hal::{Edges, Ms};
 use screen::Input;
@@ -183,6 +183,11 @@ fn stub(now: u32, mix: Edges, menu: Edges, seq: Edges) -> Stub {
     }
 }
 
+/// A frame with no fine turn in it: SEQ up or held as its edges say.
+fn plain(g: &mut HoldGates, c: &impl Controls) -> Presses {
+    g.step(c, SeqHold::of(c.edges(ButtonId::Seq).down, false, false))
+}
+
 const NONE: Presses = Presses {
     menu: None,
     seq: None,
@@ -193,9 +198,12 @@ const NONE: Presses = Presses {
 #[test]
 fn mix_held_mutes_a_menu_tap() {
     let mut g = HoldGates::new();
-    assert_eq!(g.step(&stub(0, press(0), press(0), Edges::default())), NONE);
     assert_eq!(
-        g.step(&stub(100, held(), release(100), Edges::default())),
+        plain(&mut g, &stub(0, press(0), press(0), Edges::default())),
+        NONE
+    );
+    assert_eq!(
+        plain(&mut g, &stub(100, held(), release(100), Edges::default())),
         NONE
     );
 }
@@ -203,13 +211,16 @@ fn mix_held_mutes_a_menu_tap() {
 #[test]
 fn mix_released_first_still_mutes_the_menu_press() {
     let mut g = HoldGates::new();
-    g.step(&stub(0, press(0), press(0), Edges::default()));
+    plain(&mut g, &stub(0, press(0), press(0), Edges::default()));
     assert_eq!(
-        g.step(&stub(50, release(50), held(), Edges::default())),
+        plain(&mut g, &stub(50, release(50), held(), Edges::default())),
         NONE
     );
     assert_eq!(
-        g.step(&stub(100, Edges::default(), release(100), Edges::default())),
+        plain(
+            &mut g,
+            &stub(100, Edges::default(), release(100), Edges::default())
+        ),
         NONE
     );
 }
@@ -218,8 +229,8 @@ fn mix_released_first_still_mutes_the_menu_press() {
 #[test]
 fn seq_tap_is_muted_by_mix() {
     let mut g = HoldGates::new();
-    g.step(&stub(0, press(0), Edges::default(), press(0)));
-    let p = g.step(&stub(100, held(), Edges::default(), release(100)));
+    plain(&mut g, &stub(0, press(0), Edges::default(), press(0)));
+    let p = plain(&mut g, &stub(100, held(), Edges::default(), release(100)));
     assert_eq!(p.seq, None);
     assert_eq!(p.menu, None);
 }
@@ -227,7 +238,7 @@ fn seq_tap_is_muted_by_mix() {
 // Frames as the harness's `tap` and `hold` feed them.
 fn run(frames: &[Input]) -> Vec<Presses> {
     let mut g = HoldGates::new();
-    frames.iter().map(|f| g.step(f)).collect()
+    frames.iter().map(|f| plain(&mut g, f)).collect()
 }
 
 #[test]

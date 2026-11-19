@@ -190,8 +190,15 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
                 }
                 _ => law.range().map_or(0.0, |r| r.at(v)),
             };
+            // CLASSIC RATE turns a semitone a detent (ADR 0279): under 1 Hz
+            // places enough that each one reads new.
+            let places = match law {
+                Law::LfoHz if round(hz * 1000.0) < 100 => 4,
+                Law::LfoHz if round(hz * 1000.0) < 1000 => 3,
+                _ => 2,
+            };
             if round(hz * 100.0) < 1000 {
-                fixed(buf, hz, 2, " Hz");
+                fixed(buf, hz, places, " Hz");
             } else if round(hz * 10.0) < 1000 {
                 fixed(buf, hz, 1, " Hz");
             } else {
