@@ -57,6 +57,8 @@ The default comes from the schema's `kind`, `scale` and option count:
 
 A page's layout table can override the default by meaning: the hero CUTOFF, knobs for ratios and morphs, faders for envelope stages. A layout can never invent a parameter. Labels, ranges, option names and value text all come from the unit.
 
+**Steps count from the unit (M-e).** An arrow key or a wheel notch steps from the value the unit last reported, never from an edit still in flight: the editor holds no value of its own. Several quick steps before the next `since` answer each send the same next value, so they move the unit one step, not several. A drag is different: it follows the pointer's travel from where it was grabbed.
+
 ### The fixed-width rule, as a contract
 
 Every component's width is a function of its `Config` alone, never of its value. Each readout is sized in `ch` with tabular numerals from what the config knows:

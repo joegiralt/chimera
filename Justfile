@@ -40,11 +40,12 @@ editor-test:
 editor-build: editor-screen
     cd editor && npm install --no-audit --no-fund --silent && mkdir -p dist/glyphs && npx elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/theme.js public/style.css public/screen.js public/screen.wasm dist/ && cp public/glyphs/*.png dist/glyphs/
 
-# Stripped, then wasm-opt'd if there is one (`just editor-wasm-opt`'s, else
-# one on PATH; optional: it trims ~17%, ~2% gzipped); each size printed,
-# then checked from node (screen.check.js, which prints the paint cost).
-# Its own target dir (target-wasm): the host's builds aren't touched.
-# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32 into editor/public/screen.wasm
+# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32 into editor/public/screen.wasm.
+# Stripped, then wasm-opt'd if there is one whose sha256 is the pinned
+# release binary's (`just editor-wasm-opt`'s, else one on PATH; optional: it
+# trims ~17%, ~2% gzipped; any other is not run); each size printed, then
+# checked from node (screen.check.js, which prints the paint cost). Its own
+# target dir (target-wasm): the host's builds aren't touched.
 editor-screen:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -57,18 +58,28 @@ editor-screen:
     bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
     "$bin/llvm-strip" "$out"
     size stripped
-    opt=tools/binaryen/wasm-opt
-    [ -x "$opt" ] || opt="$(command -v wasm-opt || true)"
+    # binaryen version_119's wasm-opt, as editor-wasm-opt unpacks it.
+    pinned=f661d2bb96cfc3e399dd3513c1efb674c820bb5a5a70edf0b4e5a029065c45c2
+    opt=""
+    for c in tools/binaryen/wasm-opt "$(command -v wasm-opt || true)"; do
+        if [ -n "$c" ] && [ -x "$c" ]; then
+            if [ "$(sha256sum "$c" | cut -d' ' -f1)" = "$pinned" ]; then
+                opt="$c"
+                break
+            fi
+            echo "screen.wasm: $c is not the pinned wasm-opt (sha256), not run"
+        fi
+    done
     if [ -n "$opt" ]; then
         BINARYEN_CORES=10 "$opt" -Oz --all-features "$out" -o "$out"
         size wasm-opt
     else
-        echo "screen.wasm: no wasm-opt (optional; just editor-wasm-opt fetches it)"
+        echo "screen.wasm: no pinned wasm-opt (optional; just editor-wasm-opt fetches it)"
     fi
     node editor/public/screen.check.js
 
-# The release's static binary alone, its tarball's sha256 checked.
-# binaryen's wasm-opt for editor-screen, pinned, into tools/binaryen/ (gitignored)
+# binaryen's wasm-opt for editor-screen, pinned, into tools/binaryen/ (gitignored):
+# the release's static binary alone, its tarball's sha256 and its own checked.
 editor-wasm-opt:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -81,6 +92,7 @@ editor-wasm-opt:
     curl -sSfL -o "$tmp/b.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/$v/binaryen-$v-x86_64-linux.tar.gz"
     echo "$sum  $tmp/b.tar.gz" | sha256sum -c --quiet
     tar xzf "$tmp/b.tar.gz" -C "$tmp" "binaryen-$v/bin/wasm-opt"
+    echo "f661d2bb96cfc3e399dd3513c1efb674c820bb5a5a70edf0b4e5a029065c45c2  $tmp/binaryen-$v/bin/wasm-opt" | sha256sum -c --quiet
     mv "$tmp/binaryen-$v/bin/wasm-opt" "$dir/wasm-opt"
     "$dir/wasm-opt" --version
 
