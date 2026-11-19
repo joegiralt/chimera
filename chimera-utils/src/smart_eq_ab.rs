@@ -110,6 +110,10 @@ pub fn render(perf: &mut Performance, notes: &[Note], len: usize, smart: SmartEq
         buses: (0..parts).map(|_| Vec::with_capacity(len)).collect(),
         cuts: Vec::new(),
     };
+    // The view is the audio's one global: a render before this left its own.
+    for p in PartId::ALL {
+        SMART_VIEW.publish(p, chimera_core::part_eq::smart::CutView::NONE);
+    }
     let mut next = 0;
     for b in 0..len.div_ceil(BLOCK_SIZE) {
         while next < ev.len() && ev[next].at < (b + 1) * BLOCK_SIZE {
