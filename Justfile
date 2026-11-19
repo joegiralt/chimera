@@ -39,9 +39,11 @@ editor-test:
 editor-build: editor-screen
     cd editor && mkdir -p dist/glyphs && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/theme.js public/style.css public/screen.js public/screen.wasm dist/ && cp public/glyphs/*.png dist/glyphs/
 
-# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32
-# into editor/public/screen.wasm, stripped, then wasm-opt'd if installed;
-# each size printed, then checked from node (screen.check.js). Its own target dir: the host's builds aren't touched.
+# Stripped, then wasm-opt'd if there is one (`just editor-wasm-opt`'s, else
+# one on PATH; optional: it trims ~17%, ~2% gzipped); each size printed,
+# then checked from node (screen.check.js, which prints the paint cost).
+# Its own target dir (target-wasm): the host's builds aren't touched.
+# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32 into editor/public/screen.wasm
 editor-screen:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -49,16 +51,37 @@ editor-screen:
     cargo build -q -p chimera-screen --target wasm32-unknown-unknown --profile wasm
     out=editor/public/screen.wasm
     cp target-wasm/wasm32-unknown-unknown/wasm/chimera_screen.wasm "$out"
-    size() { echo "screen.wasm $1: $(stat -c %s "$out") bytes"; }
+    size() { echo "screen.wasm $1: $(stat -c %s "$out") bytes, $(gzip -9c "$out" | wc -c) gzipped"; }
     size built
     bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
     "$bin/llvm-strip" "$out"
     size stripped
-    if command -v wasm-opt >/dev/null; then
-        wasm-opt -Oz --all-features "$out" -o "$out"
+    opt=tools/binaryen/wasm-opt
+    [ -x "$opt" ] || opt="$(command -v wasm-opt || true)"
+    if [ -n "$opt" ]; then
+        BINARYEN_CORES=10 "$opt" -Oz --all-features "$out" -o "$out"
         size wasm-opt
+    else
+        echo "screen.wasm: no wasm-opt (optional; just editor-wasm-opt fetches it)"
     fi
     node editor/public/screen.check.js
+
+# The release's static binary alone, its tarball's sha256 checked.
+# binaryen's wasm-opt for editor-screen, pinned, into tools/binaryen/ (gitignored)
+editor-wasm-opt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    v=version_119
+    sum=716bcf9f5f36a6f466239fbb09a925eeaf54c46411ccefac979ec649e7c06d2d
+    dir=tools/binaryen
+    mkdir -p "$dir"
+    tmp="$(mktemp -d)"
+    trap 'rm -r "$tmp"' EXIT
+    curl -sSfL -o "$tmp/b.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/$v/binaryen-$v-x86_64-linux.tar.gz"
+    echo "$sum  $tmp/b.tar.gz" | sha256sum -c --quiet
+    tar xzf "$tmp/b.tar.gz" -C "$tmp" "binaryen-$v/bin/wasm-opt"
+    mv "$tmp/binaryen-$v/bin/wasm-opt" "$dir/wasm-opt"
+    "$dir/wasm-opt" --version
 
 # The UI component gallery (every component, every state, DAY and NIGHT, and
 # the JITTER probe), into editor/gallery/
