@@ -3,6 +3,7 @@
   "private": true,
   "devDependencies": {
     "elm-format": "^0.8.7",
-    "elm-test": "^0.19.1-revision12"
+    "elm-test": "^0.19.1-revision12",
+    "elm-review": "^2.13.4"
   }
 }

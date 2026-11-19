@@ -2,8 +2,8 @@ module GestureTest exposing (suite)
 
 import Expect
 import Fixture
-import Gesture exposing (Scale(..), Want(..))
-import Protocol exposing (Addr(..))
+import Gesture exposing (Want(..))
+import Protocol exposing (Addr(..), Scale(..))
 import Schema exposing (Param)
 import Test exposing (Test, describe, test)
 
@@ -54,13 +54,14 @@ suite =
                         |> Expect.equal [ ( Addr "FILTER.KIND", Option 2 ) ]
             ]
         , describe "where a turn lands"
-            [ test "cutoff_turns_by_octaves_the_rate_by_range" <|
+            [ test "the_unit_says_cutoff_turns_by_octaves_the_rate_by_range" <|
                 \_ ->
                     Expect.equal [ Octaves, Linear, Linear ]
                         (List.map (param >> Gesture.scaleOf) [ "FILTER.CUTOFF", "LFO1.RATE", "FILTER.RESO" ])
             , test "norm_maps_the_unit_range" <|
                 \_ ->
                     let
+                        c : Param
                         c =
                             param "FILTER.CUTOFF"
                     in

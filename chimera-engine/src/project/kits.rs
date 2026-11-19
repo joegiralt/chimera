@@ -128,7 +128,8 @@ impl Kits {
         self.selected[p.index()]
     }
 
-    #[optimize(size)]
+    /// Inlined as `Project::select_pad` is (ADR 0285).
+    #[inline(always)]
     pub fn select(&mut self, p: PartId, pad: PadId) {
         self.selected[p.index()] = pad;
     }

@@ -354,7 +354,10 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // parse and answers, text and rodata, its table at its slot after the
     // MIDI UI's (`ED_DOOR_ADDR`). Bank 1 keeps `EdLine` and the stub. The
     // first S4 group (ADR 0272: new 0.4 work goes high), after MIXER's
-    // reserve; its table stays in S0 with the other doors.
+    // reserve; its table stays in S0 with the other doors. Each of its
+    // functions has its own `.bank2_ed.*` section (ADR 0285): LLVM outlines
+    // nothing from a function with an explicit section, so no outlined
+    // helper in bank 1 calls into `ed`; they follow VA's solos' table.
     // VA's solos (ADR 0283): `va::osc::solo`, the saw's runs on its
     // anchor, the next S4 group. Its table heads the S4 groups
     // (`VA_SOLO_DOOR_ADDR`): the door's own is full, and a slot in S0
@@ -362,7 +365,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The Parts' EQ (ADR 0284): `part_eq::dsp`, its block, the next S4
     // group; its table 16 B after the solos' (`PART_EQ_DOOR_ADDR`).
     let (ed, ed_slot, ed_assert) = (
-        "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x10;\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n",
+        "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x10;\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n",
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08180400, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x08180410, \"the Parts' EQ's table 16 B after the solos'\");",
     );
