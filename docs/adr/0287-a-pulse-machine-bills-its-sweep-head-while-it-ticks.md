@@ -1,6 +1,6 @@
 # 0287. A pulse machine bills its sweep head while its pulses tick, its plateau after
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19)
 - **Deciders:** firmware (#991)
 
 ## Context
@@ -10,7 +10,7 @@ TONE COWBELL and PLAIN IMPULSE play VA's pulse. `Pulse::sweep` renders a block a
 
 ## Decision
 - **A hit bills a `KernelBill`** (`dsp::drum::types`): `Machine(m)`, its machine's `Machine::cost`, or `Ticking(Ticking)` while its pulses render a sample at a time. `Ticking` names each per-sample path a pulse machine has: `CowbellSwept`, `ImpulseSwept`, `ImpulseFloored`, `ImpulseFlooredSwept`; no other machine, and no floored COWBELL, can be billed one.
-- **The kernel says how** (`KernelState::pace`, a `PulsePace`: `Runs`, `Swept`, `Floored`, `FlooredSwept`), and `KernelBill::of(machine, pace)` picks the bill, matching every machine. Swept: the sweep's fall is above `octaves`' exp2f skip (`sweeping`, on typed `Octaves` and the fall as a `Unit`); it errs high for the few blocks after exp2f already rounds to 1. Floored: the pulse's width floors at the block's first, highest pitch (`Octaves::head`, a sweep only falls), which is exactly whether any sample of the block floors. Unit tests in each kernel hold both, block by block, and that once a hit runs it stays running.
+- **The kernel says how** (`KernelState::pace`, a `PulsePace`: `Runs`, `Swept`, `Floored`, `FlooredSwept`), and `KernelBill::of(machine, pace)` picks the bill, matching every machine. Swept: the sweep's fall is above `octaves`' exp2f skip (`sweeping` gives a `SweepState`, `Moving` or `Spent`, on typed `Octaves`, never below 0, and the fall as a `Unit`); it errs high for the few blocks after exp2f already rounds to 1. Floored: the pulse's width floors at the block's first, highest pitch (`Octaves::head`: `Octaves` clamps a depth under 0 to 0, so a sweep only falls), which is exactly whether any sample of the block floors. Unit tests in each kernel hold both, block by block, and that once a hit runs it stays running.
 - **A strike or a waiting hit** bills from its params (`DrumHit::bill`, through `KernelParams::pace` at the Instrument's `SampleRate`: each sweep's fall starts at 1). A test holds that this equals the struck kernel's `pace` for every machine at its defaults, all knobs 0, all 127 and each knob at 1, at transposes −60, 0, +12 and +67.
 - **A Part's kit bill** (`KitBill`, `PartBill::whole`) takes the costliest bill its pads' machines can run up at any knobs, pitch and rate (`KernelBill::worst`): no rate or resolve in the UI, and it is stored only when a publish changes the pads. A DRUM hit's admission bills its own; `whole` is the Part's bound.
 - **Constants**, ceil(1.1 × reading) − 83 (ADR 0274):

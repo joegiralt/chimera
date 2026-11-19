@@ -187,13 +187,14 @@ impl KernelParams {
     pub fn pace(&self, sr: SampleRate) -> PulsePace {
         match self {
             KernelParams::Metal(MetalParams::Cowbell(p)) => {
-                PulsePace::of(sweeping(Octaves::of_unit(p.bump), Unit::ONE), false)
+                let sweep = sweeping(Octaves::of_unit(p.bump), Unit::ONE);
+                PulsePace::of(sweep == SweepState::Moving, false)
             }
             KernelParams::Plain(PlainParams::Impulse { body, width, .. }) => {
                 let oct = Octaves::of_semis(body.depth);
-                let swept = sweeping(oct, Unit::ONE);
-                let inc = pulse_inc(oct.head(body.pitch.get(), Unit::ONE, swept), sr);
-                PulsePace::of(swept, floored(inc, *width))
+                let sweep = sweeping(oct, Unit::ONE);
+                let inc = pulse_inc(oct.head(body.pitch.get(), Unit::ONE, sweep), sr);
+                PulsePace::of(sweep == SweepState::Moving, floored(inc, *width))
             }
             KernelParams::Metal(MetalParams::Bank(_) | MetalParams::Jingle(_))
             | KernelParams::Plain(PlainParams::Sine { .. } | PlainParams::Noise(_))
@@ -208,14 +209,17 @@ fn pulse_inc(hz: f32, sr: SampleRate) -> f32 {
     inc_at(hz, 1.0 / sr.hz())
 }
 
-/// A sweep's depth in octaves: its pitch factor is 2^(depth × its fall).
+/// A sweep's depth in octaves, never below 0: its pitch factor,
+/// 2^(depth × its fall), only falls toward 1, so a block's first sample
+/// is its highest (`head`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Octaves(f32);
 
 impl Octaves {
-    /// SWEEP's semitones.
+    /// SWEEP's semitones, a fall from above; a depth under 0 (no law
+    /// gives one) sweeps nothing.
     pub fn of_semis(s: Semis) -> Octaves {
-        Octaves(s.get() / 12.0)
+        Octaves((s.get() / 12.0).max(0.0))
     }
 
     /// BUMP's 0..1: up to an octave.
@@ -224,14 +228,22 @@ impl Octaves {
     }
 
     /// The pitch at a block's first sample, `f0` × 2^(depth × `fall`),
-    /// `octaves`' first factor; `f0` when not `swept` (its factors are 1).
-    pub fn head(self, f0: f32, fall: Unit, swept: bool) -> f32 {
-        if swept {
-            f0 * libm::exp2f(self.0 * fall.get())
-        } else {
-            f0
+    /// `octaves`' first factor; `f0` when the sweep is spent (its factors
+    /// are 1).
+    pub fn head(self, f0: f32, fall: Unit, sweep: SweepState) -> f32 {
+        match sweep {
+            SweepState::Moving => f0 * libm::exp2f(self.0 * fall.get()),
+            SweepState::Spent => f0,
         }
     }
+}
+
+/// Whether a sweep still moves its pitch (`sweeping`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SweepState {
+    Moving,
+    /// Under `octaves`' exp2f skip: its factors are exactly 1.
+    Spent,
 }
 
 /// What every kernel takes at the strike.
@@ -430,8 +442,11 @@ impl Pulse {
     /// sweep moving, and its width floored at the block's first (highest:
     /// a sweep only falls) pitch.
     pub(super) fn pace(&self, f0: f32, oct: Octaves, d: &Decay) -> PulsePace {
-        let swept = sweeping(oct, d.fall());
-        PulsePace::of(swept, self.floored(oct.head(f0, d.fall(), swept)))
+        let sweep = sweeping(oct, d.fall());
+        PulsePace::of(
+            sweep == SweepState::Moving,
+            self.floored(oct.head(f0, d.fall(), sweep)),
+        )
     }
 }
 
@@ -527,8 +542,12 @@ const EXP2_ONE: f32 = 1.0 / 67_108_864.0;
 /// A sweep of `oct` whose fall is at `fall` still moves its pitch:
 /// `octaves` calls `exp2f` for it.
 #[inline(always)]
-pub(super) fn sweeping(oct: Octaves, fall: Unit) -> bool {
-    (oct.0 * fall.get()).abs() >= EXP2_ONE
+pub(super) fn sweeping(oct: Octaves, fall: Unit) -> SweepState {
+    if (oct.0 * fall.get()).abs() >= EXP2_ONE {
+        SweepState::Moving
+    } else {
+        SweepState::Spent
+    }
 }
 
 /// 2^(`oct` × each of `d`'s next block of values) into `m`: a sweep's
@@ -538,7 +557,7 @@ pub(super) fn sweeping(oct: Octaves, fall: Unit) -> bool {
 pub(super) fn octaves(d: &mut Decay, oct: Octaves, m: &mut Blk) {
     // under 2^-26 octaves libm's exp2f is exactly 1 and a decay only
     // falls: a spent (or zero) sweep is 1s without the calls
-    if !sweeping(oct, d.fall()) {
+    if sweeping(oct, d.fall()) == SweepState::Spent {
         for m in m.iter_mut() {
             d.next();
             *m = 1.0;
@@ -649,6 +668,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A sweep only falls, so a block's first sample is its highest pitch
+    /// (`Octaves::head`, the floor's check): a negative depth, which no law
+    /// gives, sweeps nothing rather than rising past the head.
+    #[test]
+    fn a_negative_depth_sweeps_nothing() {
+        use super::super::types::{Seconds, Semis};
+        use super::{Decay, Octaves, SweepState, octaves, sweeping};
+        use crate::dsp::Unit;
+        let down = Octaves::of_semis(Semis::new(-24.0));
+        assert_eq!(down, Octaves::of_semis(Semis::new(0.0)));
+        assert_eq!(sweeping(down, Unit::ONE), SweepState::Spent);
+        assert_eq!(down.head(1000.0, Unit::ONE, SweepState::Moving), 1000.0);
+        let up = Octaves::of_semis(Semis::new(24.0));
+        assert_eq!(sweeping(up, Unit::ONE), SweepState::Moving);
+        assert_eq!(up.head(1000.0, Unit::ONE, SweepState::Moving), 4000.0);
+        let mut d = Decay::tau(Seconds::new(0.006), SampleRate::HW);
+        let mut m = [0.0; crate::hw::BLOCK_SIZE];
+        octaves(&mut d, up, &mut m);
+        assert!(m.windows(2).all(|w| w[1] <= w[0]), "it only falls");
     }
 
     /// `octaves`' skip leans on libm: under `EXP2_ONE` its `exp2f` is 1.

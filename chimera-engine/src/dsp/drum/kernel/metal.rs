@@ -13,8 +13,8 @@ use crate::in_place::{field_list, in_place_enum};
 use super::super::laws::{BankParams, CowbellParams, JingleParams, MetalParams};
 use super::super::types::{Hz, PulsePace, SampleRate, Seconds, Semis};
 use super::{
-    Blk, Decay, Hiss, Hit, Lcg, Octaves, Pulse, Square, Svf, Swept, drive, octaves, per_sample,
-    quiet, sweeping,
+    Blk, Decay, Hiss, Hit, Lcg, Octaves, Pulse, Square, Svf, SweepState, Swept, drive, octaves,
+    per_sample, quiet, sweeping,
 };
 
 in_place_enum! {
@@ -112,7 +112,8 @@ impl Cowbell {
     /// Its next block's pulses: swept while BUMP still moves them.
     /// Squares (SHAPE 0) never floor (`MAX_INC` < ½).
     fn pace(&self) -> PulsePace {
-        PulsePace::of(sweeping(self.bump_oct, self.bump.fall()), false)
+        let sweep = sweeping(self.bump_oct, self.bump.fall());
+        PulsePace::of(sweep == SweepState::Moving, false)
     }
 
     #[inline(never)]
