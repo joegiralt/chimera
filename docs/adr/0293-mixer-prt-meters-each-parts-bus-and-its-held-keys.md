@@ -29,7 +29,7 @@ What the code had (origin/0.4 b136ef37):
 - **Metering always:** about 420 cycles a block for a page that is rarely up.
 
 ## Consequences
-- CPU: only while MIXER › PRT is up, six Parts' abs-max over 64 samples, about 70 cycles a written Part (the design's estimate; ~0.07 % of a block at six Parts). None otherwise.
+- CPU: only while MIXER › PRT is up, six Parts' abs-max over 64 samples. Host, release, best of five runs of 20,000 blocks, six Parts each holding an ALGO note: the instrument's block 21,372 ns unwatched, 21,775 ns watched (+1.9 %; the pass is sized, not unrolled). The design estimated about 70 cycles a Part on the unit (0.07 % of a block); not read on the unit. None while the page is down.
 - RAM: 24 B of atomics and a flag; the UI's `PartMeters` (6 × 20 B and its key) with `UiState`: AXI on the shipping builds, D2 on bench-algo's, whose bench text gives 64 B for it.
 - The band redraws while a meter moves (its key carries every bar's pixels).
 - Docs: `docs/chimera-sitemap.md`'s PRT text describes the meters and the key mark. MIXER › PRT needs a new annotated screenshot for the tester guide (meter, peak mark, over, key mark).

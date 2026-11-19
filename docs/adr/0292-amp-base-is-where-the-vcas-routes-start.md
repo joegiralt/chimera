@@ -34,7 +34,7 @@ The owner chose, on 2026-11-19, to expose the stored value as a cell, bit-identi
 
 ## Consequences
 - RAM: no voice state. `Knobs` and the knob publisher grow one knob a Part: 96 B of D2 on bench-algo's link, which had none to spare, so its bench text gives 128 B (`BENCH_TEXT_LEN` 5,632 → 5,504, as ADR 0217 and 0252 did).
-- CPU: none at BASE 0 (no call). Above 0, `vca_start` writes the 64 samples over the zeroed buffer once a block per routed voice, about 130 cycles (0.02 % a voice); the bill (`ModRouting::cost`, the VCA's `CLAMP` term) is not raised for it.
+- CPU: none at BASE 0 (no call). Above 0, `vca_start` writes the 64 samples over the zeroed buffer once a block per routed voice, about 130 cycles (0.02 % a voice); the bill (`ModRouting::cost`, the VCA's `CLAMP` term) is not raised for it. Host, release, best of five runs of 20,000 blocks: an ALGO voice under a PRESS route renders a block in 3,263 ns at BASE 0 and 3,344 ns with BASE moving every block (+2.5 %, the worst case: a still BASE above 0 costs the fill alone). Not read on the unit.
 - Flash: below.
 - The matrix hint on the VCA column replaces `MIX + PLUS ON A PARAM PRIMES IT` there; the fixed columns are permanent, so priming never applied to them.
 - Docs: `docs/chimera-sitemap.md`'s AMP row describes BASE and the matrix's words. The AMP page and the matrix's VCA column need new annotated screenshots for the tester guide.

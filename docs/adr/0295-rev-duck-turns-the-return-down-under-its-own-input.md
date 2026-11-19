@@ -29,7 +29,7 @@ What the code had (origin/0.4 b136ef37):
 - **The delay's duck** (the 2290 is a delay): not asked for 0.4; `duck::run` takes any stereo return, so the delay could take the same later.
 
 ## Consequences
-- CPU: none at AMOUNT 0 (no call). Ducking, one abs-max over 64 samples, a `fast_log2`, a `fast_exp2` and a ramp over 128 samples a block: about 300 cycles (0.05 % of a block) on the host's count; not billed (the FX bus's reserve, ADR 0116).
+- CPU: none at AMOUNT 0 (no call). Ducking, one abs-max over 64 samples, a `fast_log2`, two `fast_exp2` and a ramp over 128 samples a block. Host, release, best of five runs of 20,000 blocks, HALL under a steady send: 1,646 ns a block at AMOUNT 0, 1,811 ns at AMOUNT 1 (+165 ns, +10 % of the reverb, a small share of the whole block); not read on the unit; not billed (the FX bus's reserve, ADR 0116).
 - RAM: 12 B in the `Reverb` (AXI).
 - Sound work: needs the owner's ear, A/B on a bass hit and a chord stab per the listening stimuli, at AMOUNT 64 and 127 and RELEASE 0.1, 0.3 and 1 s. Not rendered here.
 - Docs: `docs/chimera-sitemap.md`'s mixer map and text describe REV › DUCK. The page needs a new annotated screenshot for the tester guide.
