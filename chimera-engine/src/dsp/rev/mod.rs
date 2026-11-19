@@ -779,13 +779,10 @@ impl Reverb {
                 step_of((from, to), BLOCK_SIZE) * wet / FULL_SCALE,
             );
         }
-        // REV › DUCK (ADR 0295), bank 2's: the return under its own input.
-        // AMOUNT 0 and let go, no call: the return bit for bit.
-        let amount = crate::dsp::Unit::new(p.duck);
-        if !self.duck.idle(amount) {
-            let release = crate::dsp::Unit::new(p.duck_release);
-            duck::run(&mut self.duck, send, amount, release, sample_rate, out);
-        }
+        // REV › DUCK (ADR 0295), bank 2's S4: the return under its own
+        // input. AMOUNT 0 and let go, it returns at once: the return bit for
+        // bit.
+        duck::step(&mut self.duck, send, p, sample_rate, out);
         // The switch's ramp: its own pass, so FADE IN is a fresh engine's
         // return times the ramp, bit for bit.
         if let Some(r) = phase.gains() {

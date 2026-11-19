@@ -96,6 +96,24 @@ pub fn gain_of(amount: Unit, share: Unit) -> Gain {
     Gain::new(fast_exp2(db / DB_PER_OCTAVE))
 }
 
+/// The duck's block, as `Reverb::process` hands it on: AMOUNT 0 and let
+/// go, nothing (the return as it is, bit for bit); else `run`. Out of
+/// line in the duck's S4 group, so the reverb's S0-S3 block holds only
+/// the call.
+#[inline(never)]
+pub fn step(
+    d: &mut Duck,
+    send: &[f32; BLOCK_SIZE],
+    p: &crate::dsp::reverb::ReverbParams,
+    bus_hz: u32,
+    out: &mut Stereo,
+) {
+    let amount = Unit::new(p.duck);
+    if !d.idle(amount) {
+        run(d, send, amount, Unit::new(p.duck_release), bus_hz, out);
+    }
+}
+
 /// One block: `send` (the reverb's input) keys the follower; `out`, the
 /// wet return, is ramped from the last block's gain to this one's.
 /// `bus_hz` is the FX bus's rate as it hands it on, untyped: typed into
