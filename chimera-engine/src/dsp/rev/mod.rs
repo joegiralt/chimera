@@ -288,15 +288,18 @@ pub struct Reverb {
     tail: TailGate,
     /// REV › DUCK (ADR 0295): its follower and gain, at rest `Duck::REST`.
     duck: duck::Duck,
+    /// The bus's rate as the duck takes it, typed when it changes
+    /// (`duck::rate`), not each block.
+    rate: crate::dsp::drum::types::SampleRate,
 }
 
 #[cfg(any(test, feature = "smear-probe"))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix, fold, tail, duck
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix, fold, tail, duck, rate
 });
 #[cfg(not(any(test, feature = "smear-probe")))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix, fold, tail, duck
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix, fold, tail, duck, rate
 });
 
 /// QUAD's SMEAR seed: its four lines' wanders hash it.
@@ -340,6 +343,7 @@ impl Reverb {
             fold: FoldState(0),
             tail: TailGate::new(),
             duck: duck::Duck::REST,
+            rate: crate::dsp::drum::types::SampleRate::HW,
         }
     }
 
@@ -362,8 +366,10 @@ impl Reverb {
             slot.assume_init_mut()
         };
         r.wander = QUAD_WANDERS;
-        // The duck rests at unity gain, not zero bytes' 0.
+        // The duck rests at unity gain, not zero bytes' 0; the rate is
+        // never 0.
         r.duck = duck::Duck::REST;
+        r.rate = crate::dsp::drum::types::SampleRate::HW;
         r
     }
 
@@ -784,10 +790,10 @@ impl Reverb {
         let amount = crate::dsp::Unit::new(p.duck);
         if !self.duck.idle(amount) {
             let release = crate::dsp::Unit::new(p.duck_release);
-            // The bus's rate, never 0; typed once, here.
-            let sr = crate::dsp::drum::types::SampleRate::new(sample_rate)
-                .unwrap_or(crate::dsp::drum::types::SampleRate::HW);
-            duck::run(&mut self.duck, send, amount, release, sr, out);
+            if self.rate.get() != sample_rate {
+                self.rate = duck::rate(sample_rate);
+            }
+            duck::run(&mut self.duck, send, amount, release, self.rate, out);
         }
         // The switch's ramp: its own pass, so FADE IN is a fresh engine's
         // return times the ramp, bit for bit.

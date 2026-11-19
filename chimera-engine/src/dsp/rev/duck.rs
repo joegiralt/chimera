@@ -93,6 +93,15 @@ pub fn gain_of(amount: Unit, share: Unit) -> Gain {
     Gain::new(fast_exp2(db / DB_PER_OCTAVE))
 }
 
+/// `hz` typed: the bus's rate, never 0 (the DACs' if it were). Out of
+/// line, in the duck's S4 group: `Reverb::process` calls it only when the
+/// rate changes.
+#[inline(never)]
+#[cold]
+pub fn rate(hz: u32) -> SampleRate {
+    SampleRate::new(hz).unwrap_or(SampleRate::HW)
+}
+
 /// One block: `send` (the reverb's input) keys the follower; `out`, the
 /// wet return, is ramped from the last block's gain to this one's.
 #[inline(never)]
