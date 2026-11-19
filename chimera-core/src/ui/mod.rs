@@ -12,6 +12,7 @@ pub mod cell_text;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
+pub(crate) mod ed_cue;
 pub mod file_buf;
 pub mod filter_panel;
 pub mod fmt;
@@ -1734,7 +1735,7 @@ impl UiState {
     /// nothing written, so a key never plays into silence. `false` off a
     /// streamed source: the plain edit.
     fn turn_model(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
-        if !self.streams(at) {
+        if self.streams(at) == held::Source::InRam {
             return false;
         }
         let sound = &self.project.part(at).sound;
@@ -1750,7 +1751,7 @@ impl UiState {
         };
         let to = from.step(delta, shift);
         let pick = held::Pick::Tape(to);
-        if pick.why(sound, true).is_some() {
+        if pick.why(sound, held::Source::Streamed).is_some() {
             self.held = Some((at, held::Held::Sound(pick)));
         } else {
             self.held = None;
@@ -1789,10 +1790,16 @@ impl UiState {
         true
     }
 
-    /// Part `at`'s source streams.
-    fn streams(&self, at: PartId) -> bool {
+    /// Where Part `at`'s source plays from: the turn's, a CC's and `ed
+    /// set`'s one test, inlined into each (bank 2's `ed` keeps no call into
+    /// bank 1).
+    #[inline(always)]
+    pub(crate) fn streams(&self, at: PartId) -> held::Source {
         let r = self.project.part(at).sound.source_ref();
-        r.is_some_and(|r| self.project.pool().streamed(r))
+        match r.is_some_and(|r| self.project.pool().streamed(r)) {
+            true => held::Source::Streamed,
+            false => held::Source::InRam,
+        }
     }
 
     /// A turn or an edit on MAX VOICES or RESERVE, bank 2's

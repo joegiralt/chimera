@@ -49,6 +49,7 @@ pub mod orbit;
 pub mod out_ring;
 pub mod params;
 pub mod part;
+pub mod part_eq;
 pub mod perf;
 pub mod played;
 pub mod preset;

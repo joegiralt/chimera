@@ -137,6 +137,20 @@ class OneUpdate(unittest.TestCase):
     update`; a release ships one firmware, the ORBIT build's .bin and its
     sealed .bk2, dropped on the card."""
 
+    def test_release_ships_nrpn_json_fresh_and_current(self):
+        # #983: the chart for scripts, from the generator, summed and uploaded.
+        body = "\n".join(recipes()["release"])
+        self.assertIn('{{utils}} nrpn-json > "$out/NRPN.json"', body)
+        self.assertIn('cmp -s "$out/NRPN.json" docs/guide/NRPN.json', body)
+        self.assertIn("sha256sum CHIMERA.BIN CHIMERA.BK2 NRPN.json factory-v1.zip", body)
+        self.assertIn('"$out/NRPN.json"', body.split("assets=(", 1)[1].split(")", 1)[0])
+        # The version it names is the release's, and so is the workspace's.
+        self.assertIn('"$V" "$out/NRPN.json"', body)
+        self.assertIn('["workspace"]["package"]["version"]', body)
+        self.assertIn('json.load(open(path))["firmware"]', body)
+        guide = "\n".join(recipes()["nrpn-guide"])
+        self.assertIn("nrpn-json > docs/guide/NRPN.json", guide)
+
     def test_flash_goes_through_update(self):
         body = "\n".join(recipes()["flash"])
         self.assertIn("chimera-usb.py update target/chimera.bin target/chimera.bk2", body)
@@ -146,7 +160,7 @@ class OneUpdate(unittest.TestCase):
     def test_release_ships_the_orbit_bin_and_its_bk2(self):
         body = "\n".join(recipes()["release"])
         for want in (
-            'CHIMERA.BIN CHIMERA.BK2 SHA256SUMS factory-v1.zip ',
+            'CHIMERA.BIN CHIMERA.BK2 NRPN.json SHA256SUMS factory-v1.zip ',
             'cp target/release-bin/chimera-orbit.bin "$out/CHIMERA.BIN"',
             'cp target/release-bin/chimera-orbit.bk2 "$out/CHIMERA.BK2"',
             'bank2-seal --check "$out/CHIMERA.BIN" "$out/CHIMERA.BK2"',

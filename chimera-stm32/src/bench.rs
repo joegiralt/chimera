@@ -69,6 +69,7 @@ use chimera_engine::params::{
     EngineType, EnvParams, FilterParams, OutParams, ParamSnapshot, Steal,
 };
 use chimera_engine::part::{DacPair, PartParams};
+use chimera_engine::part_eq::{LoCut, PartEq, Tilt};
 use chimera_engine::preset::{Performance, Sound};
 use chimera_engine::project::{NEW_PARTS, Project, SlotId, SourceId, SourceRef, project_crc};
 use chimera_engine::scope::{ScopeFrame, ScopeWriter, scope_buffer};
@@ -497,7 +498,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 91;
+const ROUTING_ROWS: usize = 93;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -785,7 +786,27 @@ static ROUTING: [RoutingRow; ROUTING_ROWS] = [
         },
         STILL,
     ),
+    // The Part's EQ (ADR 0284): EQ − 1 OP is one Part's EQ, steady (TILT
+    // at its end, LO CUT on); EQ MOVE − 1 OP with TILT turned every block,
+    // its coefficients re-worked and lerped each one.
+    ("EQ", |p| eq(p, Tilt::at(Tilt::MAX_STEP)), STILL),
+    ("EQ MOVE", |p| eq(p, Tilt::at(Tilt::MIN_STEP)), eq_turn),
 ];
+
+/// 1 OP through its Part's EQ at `t`, LO CUT on.
+fn eq(p: &mut PartAudio, t: Tilt) {
+    one_op(p);
+    p.mix.eq = PartEq::new(t, LoCut::On);
+}
+
+/// TILT a step either way each block, end to end.
+fn eq_turn(p: &mut PartAudio, block: u32) {
+    let ends = Tilt::SPAN as u32 - 1;
+    let s = block % (2 * ends);
+    let s = if s < ends { s } else { 2 * ends - s };
+    // `s` is under `SPAN`: a step, dark end on.
+    p.mix.eq = p.mix.eq.with_tilt(Tilt::at(Tilt::MIN_STEP + s as i8));
+}
 
 /// 1 OP through the 2040 at REV2, VA's VOICE.
 fn r2(p: &mut PartAudio) {

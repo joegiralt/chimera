@@ -20,7 +20,7 @@ A binding's control can be:
 
 The master FX and ORBIT are shared by every Part, but a binding to them still lives in one Part's map and listens on that Part's channel: the Part you learned it on owns it. If two Parts bind the same cell, both move it, and the last message wins. A ring amount moves the playing scene and its saved slot, as a turn on its page does. A fader on HITS or ROTATE covers the ring as it is now, 0 to STEPS or 0 to STEPS − 1, once over its travel.
 
-Every stored parameter also has a fixed NRPN address of its own, which works with no binding at all: see the [NRPN chart](NRPN.md), which lists every address by engine and block. A binding on the same NRPN number wins over it.
+Every stored parameter also has a fixed NRPN address of its own, which works with no binding at all: see the [NRPN chart](NRPN.md), which lists every address by engine and block. A binding on the same NRPN number wins over it. The same chart comes as `NRPN.json` with each release, for a script that builds a controller template.
 
 ## The mod wheel and aftertouch in the matrix
 

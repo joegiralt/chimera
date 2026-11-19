@@ -426,8 +426,8 @@ fn kits_are_compact_and_outside_the_parts() {
     );
 }
 
-/// ADR 0266, 0286: ITCM's residents, the kits, the audio's kit view, `ed`'s
-/// state and the audio's three `AudioShared` snapshots, fit with the
+/// ADR 0266, 0286, 0284: ITCM's residents, the kits, the audio's kit view, `ed`'s
+/// state, the audio's three `AudioShared` snapshots and the Parts' EQ, fit with the
 /// margin to spare. The linker's assert (`itcm.x`) is the proof; this is a
 /// conservative host estimate (each rounded up to 8, though `.itcm` packs
 /// them at their own alignment, 4 here; the host's `usize` is 8 B), which
@@ -454,7 +454,7 @@ fn itcm_residents_fit() {
 
 /// ITCM's residents: the type and count `tools/itcm-residents.txt` gives
 /// each, and the bytes of the static holding them.
-fn itcm_parts() -> [(&'static str, usize, usize); 4] {
+fn itcm_parts() -> [(&'static str, usize, usize); 5] {
     use chimera_core::console::EdState;
     use chimera_core::dsp::drum::view::KitView;
     use chimera_core::instrument::AudioShared;
@@ -465,6 +465,7 @@ fn itcm_parts() -> [(&'static str, usize, usize); 4] {
         ("KitView", 1, size_of::<KitView>()),
         ("EdState", 1, size_of::<EdState>()),
         ("AudioShared", 3, size_of::<TripleBuffer<AudioShared>>()),
+        ("PartEqs", 1, size_of::<chimera_core::part_eq::PartEqs>()),
     ]
 }
 

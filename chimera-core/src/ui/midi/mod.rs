@@ -954,7 +954,10 @@ impl UiState {
         if a == super::held::MODEL || a == super::held::DIRECTION {
             let turn = super::held::TapeTurn::of(a, to)?;
             let s = &self.project.part(p).sound;
-            if self.streams(p) && super::held::Pick::Tape(turn).why(s, true).is_some() {
+            if super::held::Pick::Tape(turn)
+                .why(s, self.streams(p))
+                .is_some()
+            {
                 return None;
             }
             // Its machine's or DIRECTION's knob writes too (bank 2's,

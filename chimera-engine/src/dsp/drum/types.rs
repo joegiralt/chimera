@@ -800,19 +800,8 @@ impl DrumHit {
     }
 }
 
-/// A frequency in Hz, 0..=24 000 (the rate's Nyquist); NaN is 0.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub struct Hz(f32);
-
-impl Hz {
-    pub const fn new(v: f32) -> Hz {
-        Hz(clampf(v, 0.0, 24_000.0))
-    }
-
-    pub const fn get(self) -> f32 {
-        self.0
-    }
-}
+/// `dsp`'s, lifted for the Parts' EQ (ADR 0284).
+pub use crate::dsp::Hz;
 
 /// A time in seconds, 0..=60; NaN is 0. A decay's T60, a sweep's tau.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
