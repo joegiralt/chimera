@@ -93,6 +93,25 @@ FRONT is never cut. Parts of one role never cut each other: sonible's
 smart:EQ 4 balances members of one layer against each other; we leave
 that out so a role is a promise (two FRONT Parts stay as mixed).
 
+### 2b. The kick's dip (owner decision, 2026-11-19)
+
+When a higher-role DRUM Part's kick hits, a lower Part's LOW band takes a
+quick dip, its upper bands untouched: the kick punches through and the
+bass never audibly ducks. In LOW a DRUM Part presses only this way; LOW
+MID, HIGH MID and HIGH keep the slow rule.
+
+- Key: the DRUM Part's own LOW low-pass (the LOW SVF's `v2`, 2-pole at
+  100 Hz), so a snare on the same Part barely keys it. Its power rises at
+  once and falls with τ 20 ms; a hit is the key within 6 dB of its recent
+  peak (which falls with τ 0.5 s), the peak itself active.
+- The dip: up to the same caps (4 dB one rank, 6 dB two, × AMOUNT),
+  τ 3 ms in and τ 100 ms out (the owner's range was 60–150 ms): over a
+  kick's body and 95 % back in 0.3 s, before the next kick at up to
+  190 BPM. No KICK RELEASE control.
+- LOW plays the deeper of its slow cut and the dip, still lerped a sample
+  at a time.
+- Ducking the whole mix is not this (#13).
+
 ### 3. Time
 
 - A ringing tail keeps its cut while it rings within the mud bands'
@@ -216,6 +235,9 @@ Clean room: no code read or copied from any implementation.
 - A FRONT bass and a MID pad clashing about 100 Hz: the pad's LOW cut
   deepens, its HIGH bands do not, the bass is untouched.
 - A ringing tail keeps its LOW cut while it rings within reach.
+- A sine bass under a 4/4 kick with off-beat snares: a LOW dip on each
+  kick within 30 ms, gone by 240 ms, none on the snares, LOW only, no
+  click above 2 kHz.
 - The tuning: `just smart-eq-ab` (a MODAL pad over a bass) and the teaser's
   breaks vignette, on the 250 Hz – 2 kHz overlap.
 - No gain moves more than 0.001 dB in a sample, on and off, AMOUNT swept.
@@ -229,5 +251,9 @@ Clean room: no code read or copied from any implementation.
 2. Listening in the four cut bands rather than about 8 (§ 1).
 3. SMART EQ and AMOUNT on MST › LVL rather than a page of their own.
 4. The caps (4 dB one rank, 6 dB two, × AMOUNT) now bound how far the mud
-   drops: the breaks vignette's 250 Hz – 2 kHz overlap −1.4 dB at AMOUNT 64,
-   −2.7 dB at 127. A deeper cap in LOW and LOW MID would go further.
+   drops: the breaks vignette's 250 Hz – 2 kHz overlap −1.0 dB at AMOUNT 64,
+   −1.9 dB at 127 (−1.4 / −2.7 before the kick's dip). A deeper cap in LOW
+   and LOW MID would go further.
+5. With the kick's dip, a kit presses on LOW only on its hits; the steady
+   LOW carve under a kit (NYLON's 2.9 dB) became 0.8 dB on average. Both
+   (slow plus dip) is a one-line change if wanted.

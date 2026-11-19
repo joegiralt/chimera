@@ -45,7 +45,7 @@ snapshots live in ITCM (ADR 0286).
    takes the same cut through its own filters; the side is not listened to.
 3. **The rule**, per block and band, for each written Part `p`:
    `target = AMOUNT · 6 dB · weight(b) · max_q depth(q, p) · active(q) ·
-   own(q) · active(p) · threat_b(p, q)`, with `active(L) = clamp((L + 66) /
+   own(q) · active(p) · own(p) · threat_b(p, q)`, with `active(L) = clamp((L + 66) /
    24, 0, 1)` and `depth` 2/3 one rank apart, 1 two apart (BACK under
    FRONT), 0 otherwise.
    - `threat_b`: how far under `q` the lower Part still masks it. In LOW
@@ -62,22 +62,43 @@ snapshots live in ITCM (ADR 0286).
    in HIGH MID (its skirt hears it 20.6 dB down) and cuts a pad's 1.6 kHz
    (the first test caught it, 3.1 dB). FRONT is never cut; one role never
    cuts itself.
-4. **Time.** Each cut (`CutDb`, 0..=6 dB) follows its target at block rate,
+4. **The kick's dip (owner decision, 2026-11-19).** In LOW, a higher-role
+   DRUM Part (`PartKind::Drum`, from its Sound's engine) presses only
+   through a fast dip on its hits; its LOW does not press slowly. LOW
+   MID, HIGH MID and HIGH keep the slow rule against every Part.
+   - The key is the DRUM Part's own LOW low-pass (the LOW SVF's `v2`, a
+     2-pole low-pass at 100 Hz): a snare's 180–330 Hz body barely moves
+     it. Its block power rises at once and falls with τ 20 ms; its peak
+     falls with τ 0.5 s. `hit = active(peak) · clamp((key − peak + 6) /
+     6, 0, 1)`: the kick's attack and the top of its body, not its tail.
+   - `kick target = AMOUNT · 6 dB · max_q depth(q, p) · hit(q) ·
+     active(p) · own(p) · threat_mud(p, q)` in LOW only.
+   - The dip follows its target with τ 3 ms in and τ 100 ms out (owner's
+     range 60–150 ms): over a kick's body (50–80 ms) and 95 % back in
+     0.3 s, before the next kick at up to 190 BPM in four. No KICK
+     RELEASE control: one value serves the tempos the teaser and the drum
+     machines play.
+   - LOW plays the deeper of its slow cut and the dip; the gain is still
+     lerped a sample at a time across each block (a 4 dB dip over two
+     blocks is under 0.05 dB a sample).
+   - Whole-mix pumping (ducking as an effect) is not this: it stays with
+     the DRUM bus work (#13).
+5. **Time.** Each cut (`CutDb`, 0..=6 dB) follows its target at block rate,
    τ 0.5 s deeper and τ 2 s shallower; under 0.01 dB it lands on 0. Each
    band's linear gain is lerped across the block from the last block's: at
    most 0.000 25 dB a sample.
-5. **Off is free.** A Part whose four gains are unity at both ends of a
+6. **Off is free.** A Part whose four gains are unity at both ends of a
    block is not written. With SMART EQ OFF or AMOUNT 0 the cuts release,
    then the state rests and `PartEqs::any_live` is false; bank 1's stub
    (`Instrument::part_eq`) then skips the door as before (it also checks
    `SmartEq::listens`). All-zero bytes are the rest (ITCM's boot zeroing).
-6. **Bank 2, behind the Part EQ's door.** `part_eq::dsp::smart` is inside
+7. **Bank 2, behind the Part EQ's door.** `part_eq::dsp::smart` is inside
    the Part EQ's S4 group (`*7part_eq3dsp*`) and runs from `run_parts`, the
    `EqDoor` entry, after LO CUT and TILT. No new door table. `PartsBlock`
    carries the snapshot's `SmartEq`. A closed door rests it with the EQ.
-7. **State in ITCM** with the EQ: `PartEqs::smart` (`SmartState`) holds
+8. **State in ITCM** with the EQ: `PartEqs::smart` (`SmartState`) holds
    each Part's band filters for bus and side, levels, cuts and last gains.
-8. **UI.**
+9. **UI.**
    - ROLE: MIXER › PRT › EQ cell C.
    - MIXER › MST › LVL: SMART EQ (D) and AMOUNT (E) under VOL and PAN; its
      band (no band before) draws each Part's four live cuts under its
@@ -157,6 +178,9 @@ its set's measured change, never ADR 0198's slack:
   every Part one role it listens and writes nothing.
 
 ## Tuning
+Measured before the kick's dip (Decision 4); the dip's own numbers, and
+the overlaps with it, follow in the next section.
+
 The owner, on the pre-SMART EQ teaser renders: "still a little bit
 muddy", MODAL's long tails intruding most. Measured on the 250 Hz – 2 kHz
 overlap (`smart_eq_ab::overlap`: over Hann frames of 4,096, each bin's
@@ -200,6 +224,43 @@ lower Part's own 250 Hz – 2 kHz:
   detector, now bounds how far the mud drops. A deeper mud cap is the
   owner's call (open question).
 
+## The kick's dip, measured
+`just smart-eq-ab`'s second case: a DRUM kit's INIT kick on every beat
+(FRONT) over ALGO's INIT bass held at A1 (MID). The kick's transient over
+the bass in 40–120 Hz (each onset's next 43 ms, the kick's band energy
+over the bass's): −1.7 dB off, +0.8 dB better at AMOUNT 64 and +1.5 dB at
+127; the bass's LOW dip 2.0 / 3.9 dB at most; its 250 Hz – 2 kHz −0.07 /
+−0.12 dB (its upper harmonics left).
+
+The teaser vignettes, the kick-and-snare kit's transient over the bass in
+40–120 Hz (off) and its gain, and the 250 Hz – 2 kHz overlap, at AMOUNT 64
+and 127:
+
+| Vignette | Kick over bass, off | 64: kick · overlap | 127: kick · overlap |
+|---|---|---|---|
+| electro | 12.0 dB | +0.5 · −0.9 dB | +0.8 · −1.6 dB |
+| breaks | 6.3 dB | +0.4 · −1.0 dB | +0.8 · −1.9 dB |
+| glitch | 9.7 dB | +1.0 · −0.6 dB | +1.7 · −1.1 dB |
+| dub | 5.9 dB | +0.9 · −0.1 dB | +1.7 · −0.1 dB |
+| triphop | 7.3 dB | +0.5 · −0.7 dB | +0.9 · −1.3 dB |
+| garage | 4.2 dB | +0.6 · −0.3 dB | +1.0 · −0.6 dB |
+
+- The dip, not a duck: a sine bass under a 4/4 kick with a snare on the
+  off-beats (`smart_eq_dsp_test`) dips more than 3 dB within 30 ms of
+  each kick, over half of it by 10 ms, under 30 % of it by 240 ms, and
+  the snares do not dip it again; above 2 kHz the dipped bass is within
+  1.1 dB of the plain bass's filter residue (−83 dB): no click.
+- The overlap drops less than with the slow rule alone (breaks −1.0
+  against −1.4 dB at 64): in LOW the kit now presses only on its hits.
+  NYLON's mean LOW cut under the kit went 2.9 → 0.8 dB; LOW MID, where
+  most of 250 Hz – 2 kHz lives, is as before (1.9 dB). If the owner
+  wants both, a steady LOW carve plus the hits' dip, LOW would play the
+  slow cut plus the dip (open question).
+- `own(p)` joined the rule with the dip: a lower Part masks only with its
+  own sound in a band, not a skirt's (a 55 Hz sine bass's LOW MID skirt
+  met a snare and took 0.3 dB). The bass's HIGH cuts in the vignettes
+  went to 0 with it.
+
 ## Alternatives considered
 - **A separate 8-band filterbank.** Eight more band filters a Part a
   sample, and eight answers folded into four decisions, since only four
@@ -215,6 +276,10 @@ lower Part's own 250 Hz – 2 kHz:
   and its LOW MID cut eased while it still rang; the owner heard mud.
 - **A level followed by peaks (τ 60 ms both ways), the first draft.** A
   tail between strikes read as gone.
+- **A KICK RELEASE control.** One value covers the owner's range and the
+  tempos played; a control only if a unit test by ear asks for it.
+- **Keying the dip from the kit's whole LOW band.** Its 50–200 Hz skirt
+  hears a snare's body; LOW's low-pass does not.
 - **Summing every higher Part's pressure.** Unbounded with more Parts; the
   max keeps 6 dB the most.
 - **A learned, static curve (smart:EQ 4).** A synth's Parts change by the
