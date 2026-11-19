@@ -2,10 +2,15 @@ module ControlTest exposing (suite)
 
 import Expect
 import Fixture
-import Protocol exposing (Addr(..), Scale(..))
+import Html
+import Json.Encode as Encode
+import Protocol exposing (Addr(..), OptIndex, Scale(..))
 import Schema exposing (Param)
 import Test exposing (Test, describe, test)
-import Ui.Control as Control exposing (Want(..))
+import Test.Html.Event as Event
+import Test.Html.Query as Query
+import Test.Html.Selector as Sel
+import Ui.Control as Control exposing (Direction(..), Intent(..), Msg(..), Target(..), Travel(..), Want(..))
 
 
 param : String -> Param
@@ -101,4 +106,117 @@ suite =
                         ]
                         ()
             ]
+        , describe "the shared update" updates
+        , describe "the shared hands" hands
         ]
+
+
+cutoff : Addr
+cutoff =
+    Addr "FILTER.CUTOFF"
+
+
+kind : Addr
+kind =
+    Addr "FILTER.KIND"
+
+
+opt : Int -> OptIndex
+opt i =
+    case Protocol.optIndex i of
+        Just o ->
+            o
+
+        Nothing ->
+            Debug.todo "a negative option"
+
+
+{-| CUTOFF at 0.5 (wheel steps of 1/64); KIND on its second of four options.
+-}
+lookup : Addr -> Maybe Target
+lookup a =
+    if a == cutoff then
+        Just (Continuous { norm = 0.5, wheel = 1 / 64 })
+
+    else if a == kind then
+        Just (Discrete { options = List.map opt [ 0, 1, 2, 3 ], current = opt 1 })
+
+    else
+        Nothing
+
+
+run : List Msg -> List Intent
+run msgs =
+    List.foldl
+        (\m ( d, out ) ->
+            let
+                ( d1, i ) =
+                    Control.update lookup m d
+            in
+            ( d1, out ++ i )
+        )
+        ( Control.idle, [] )
+        msgs
+        |> Tuple.second
+
+
+updates : List Test
+updates =
+    [ test "a_drag_up_raises_the_value_by_the_travel" <|
+        \_ ->
+            run [ Grab cutoff Knob 300, Moved 225 ]
+                |> Expect.equal [ SetNorm cutoff 1 ]
+    , test "the_hero_travels_further" <|
+        \_ ->
+            run [ Grab cutoff Hero 300, Moved 240 ]
+                |> Expect.equal [ SetNorm cutoff 0.75 ]
+    , test "a_drag_of_a_choice_steps_its_options" <|
+        \_ ->
+            run [ Grab kind Knob 100, Moved 55 ]
+                |> Expect.equal [ SetOption kind (opt 2) ]
+    , test "after_release_a_move_does_nothing" <|
+        \_ ->
+            run [ Grab cutoff Knob 300, Released, Moved 0 ]
+                |> Expect.equal []
+    , test "a_grab_of_an_unknown_address_drags_nothing" <|
+        \_ ->
+            run [ Grab (Addr "NOPE") Knob 300, Moved 0 ]
+                |> Expect.equal []
+    , test "a_wheel_notch_steps_a_value_and_a_choice" <|
+        \_ ->
+            run [ Step cutoff Up, Step kind Down, Step kind Up ]
+                |> Expect.equal [ SetNorm cutoff (0.5 + 1 / 64), SetOption kind (opt 0), SetOption kind (opt 2) ]
+    , test "a_step_stops_at_the_ends" <|
+        \_ ->
+            Control.update (\_ -> Just (Discrete { options = [ opt 0, opt 1 ], current = opt 1 })) (Step kind Up) Control.idle
+                |> Tuple.second
+                |> Expect.equal [ SetOption kind (opt 1) ]
+    , test "a_pick_and_a_reset_pass_through" <|
+        \_ ->
+            run [ Pick kind (opt 3), Reset cutoff ]
+                |> Expect.equal [ SetOption kind (opt 3), Restore cutoff ]
+    ]
+
+
+hands : List Test
+hands =
+    let
+        probe : Query.Single Msg
+        probe =
+            Html.div (Control.grab cutoff Knob) []
+                |> Query.fromHtml
+    in
+    [ test "a_mouse_down_grabs" <|
+        \_ -> probe |> Event.simulate (Event.custom "mousedown" (Encode.object [ ( "clientY", Encode.float 12 ) ])) |> Event.expect (Grab cutoff Knob 12)
+    , test "the_wheel_steps_up_when_it_rolls_away" <|
+        \_ -> probe |> Event.simulate (Event.custom "wheel" (Encode.object [ ( "deltaY", Encode.float -3 ) ])) |> Event.expect (Step cutoff Up)
+    , test "an_arrow_down_steps_down" <|
+        \_ -> probe |> Event.simulate (Event.custom "keydown" (Encode.object [ ( "key", Encode.string "ArrowDown" ) ])) |> Event.expect (Step cutoff Down)
+    , test "a_double_click_resets" <|
+        \_ -> probe |> Event.simulate Event.doubleClick |> Event.expect (Reset cutoff)
+    , test "a_readout_is_sized_in_ch_with_tabular_numerals" <|
+        \_ ->
+            Control.readout 7 (Control.reading 0.5 "1.20 kHz")
+                |> Query.fromHtml
+                |> Query.has [ Sel.style "width" "7ch", Sel.class "v", Sel.text "1.20 kHz" ]
+    ]

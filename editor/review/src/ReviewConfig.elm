@@ -39,13 +39,13 @@ config =
     , NoMissingTypeAnnotation.rule
     , NoMissingTypeAnnotationInLetIn.rule
     , NoMissingTypeExpose.rule
-        -- An application's Main exposes only `main`.
-        |> Review.Rule.ignoreErrorsForFiles [ "src/Main.elm" ]
+        -- An application's Main (and the gallery's) exposes only `main`.
+        |> Review.Rule.ignoreErrorsForFiles [ "src/Main.elm", "src/Gallery.elm" ]
     , NoPrematureLetComputation.rule
     , NoUnused.CustomTypeConstructorArgs.rule
         -- A test's own Msg is built and compared, never taken apart: the view
         -- under test hands it back, and Event.expect compares it whole.
-        |> Review.Rule.ignoreErrorsForFiles [ "tests/PartsTest.elm" ]
+        |> Review.Rule.ignoreErrorsForFiles [ "tests/PartsTest.elm", "tests/PageTest.elm" ]
     , NoUnused.CustomTypeConstructors.rule []
     , NoUnused.Dependencies.rule
     , NoUnused.Exports.rule

@@ -1,0 +1,66 @@
+module SelectorTest exposing (suite)
+
+import Contract exposing (opt)
+import Expect
+import Json.Encode as Encode
+import Protocol exposing (Addr(..))
+import Test exposing (Test, describe, test)
+import Test.Html.Event as Event
+import Test.Html.Query as Query
+import Test.Html.Selector as Sel
+import Ui.Control as Control exposing (Direction(..), Msg(..))
+import Ui.Selector as Selector
+
+
+modes : List String
+modes =
+    [ "LP4", "LP2", "LP1", "BP2", "BP4", "HP4", "NOTCH1", "NOTCH2" ]
+
+
+mode : Selector.Config
+mode =
+    case Selector.fromOptions (Addr "FILTER.MODE") (Contract.options modes) of
+        Just c ->
+            Selector.label "MODE" c
+
+        Nothing ->
+            Debug.todo "eight options make a selector"
+
+
+suite : Test
+suite =
+    describe "Ui.Selector"
+        [ test "four_to_eight_options_make_a_selector" <|
+            \_ ->
+                List.map (\n -> Selector.fromOptions (Addr "X") (Contract.options (List.repeat n "A")) /= Nothing) [ 3, 4, 8, 9 ]
+                    |> Expect.equal [ False, True, True, False ]
+        , test "it_prints_every_position_and_lights_the_current" <|
+            \_ ->
+                Selector.view mode (Control.chosen (opt 6))
+                    |> Query.fromHtml
+                    |> Query.find [ Sel.attribute (Control.ariaChecked True) ]
+                    |> Query.has [ Sel.text "NOTCH1" ]
+        , test "a_printed_position_picks_it" <|
+            \_ ->
+                Selector.view mode (Control.chosen (opt 0))
+                    |> Query.fromHtml
+                    |> Query.find [ Sel.attribute (Control.ariaRole "radio"), Sel.containing [ Sel.text "HP4" ] ]
+                    |> Event.simulate Event.click
+                    |> Event.expect (Pick (Addr "FILTER.MODE") (opt 5))
+        , test "the_small_knob_steps_by_wheel" <|
+            \_ ->
+                Selector.view mode (Control.chosen (opt 0))
+                    |> Query.fromHtml
+                    |> Query.find [ Sel.class "kn" ]
+                    |> Event.simulate (Event.custom "wheel" (Encode.object [ ( "deltaY", Encode.float -1 ) ]))
+                    |> Event.expect (Step (Addr "FILTER.MODE") Up)
+        , test "it_is_a_labelled_radio_group" <|
+            \_ ->
+                Selector.view mode (Control.chosen (opt 0))
+                    |> Query.fromHtml
+                    |> Query.find [ Sel.attribute (Control.ariaRole "radiogroup") ]
+                    |> Query.has [ Sel.attribute (Control.ariaLabel "MODE") ]
+        , describe "the width contract"
+            [ test "every_option" <| \_ -> Contract.widthHolds (Selector.width mode) (List.map (\i -> Selector.view mode (Control.chosen (opt i))) (List.range 0 7))
+            ]
+        ]

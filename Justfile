@@ -39,6 +39,11 @@ editor-test:
 editor-build:
     cd editor && mkdir -p dist && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/style.css dist/
 
+# The UI component gallery (every component, every state, DAY and NIGHT, and
+# the JITTER probe), into editor/gallery/
+editor-gallery:
+    cd editor && mkdir -p gallery/glyphs && elm make src/Gallery.elm --optimize --output=gallery/gallery.js && cp public/gallery.html gallery/index.html && cp public/style.css public/theme.js gallery/ && cp public/glyphs/*.png gallery/glyphs/
+
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes
 # QA). `just tape-listen loop --src chimera --src <file.wav>`; a bare file
