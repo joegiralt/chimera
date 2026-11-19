@@ -1,4 +1,4 @@
-module View.EnginePage exposing (BayId, Held, Layout, Msg(..), State, init, layout, other, subscriptions, update, view)
+module View.EnginePage exposing (BayId(..), Held, Layout, Msg(..), State, init, layout, other, subscriptions, update, view)
 
 {-| An engine's page: the unit's schema, placed by the engine's layout,
 read from `Model`, drawn with the Ui components. What the unit describes and
@@ -16,6 +16,7 @@ import Html exposing (Html, button, div, p, text)
 import Html.Attributes exposing (class)
 import Html.Events exposing (onClick)
 import Layout.Algo
+import Layout.Drum
 import Layout.Modal
 import Layout.Shared as Shared exposing (As(..), Extra(..), Item, Module)
 import Layout.Tape
@@ -30,9 +31,11 @@ import Ui.Fader as Fader
 import Ui.Knob as Knob
 import Ui.Menu as Menu
 import Ui.Module as Module
+import Ui.Pad as Pad exposing (Pad)
+import Ui.PadStrip as PadStrip exposing (Tab(..))
 import Ui.Page as Page exposing (Current(..), Effect(..))
 import Ui.PatchBay as PatchBay
-import Ui.Routes as Routes
+import Ui.Routes as Routes exposing (Dest(..), Source(..))
 import Ui.Screen as Screen
 import Ui.Selector as Selector
 import Ui.Toggle as Toggle
@@ -51,8 +54,11 @@ type Held
     | HeldOption OptIndex
 
 
+{-| A patch bay on the page: the Part's mod matrix, or a DRUM pad's routes.
+-}
 type BayId
     = PartBay
+    | PadBay Pad
 
 
 type alias State =
@@ -62,7 +68,8 @@ type alias State =
     , wanted : Control.Wanted
     , held : Dict String Held
     , menu : Menu.State
-    , bays : Dict String PatchBay.Bay
+    , bays : Dict String ( BayId, PatchBay.Bay )
+    , tab : Tab
     }
 
 
@@ -71,6 +78,7 @@ type Msg
     | MenuMsg Menu.Msg
     | PageMsg Page.Msg
     | BayMsg BayId PatchBay.Msg
+    | PadMsg PadStrip.Msg
     | Frame
     | Unit Model.Msg
 
@@ -84,6 +92,7 @@ init t =
     , held = Dict.empty
     , menu = Menu.shut
     , bays = Dict.empty
+    , tab = Kit
     }
 
 
@@ -96,7 +105,7 @@ subscriptions s =
 
           else
             Browser.Events.onAnimationFrame (\_ -> Frame)
-        , Sub.map (BayMsg PartBay) (PatchBay.subscriptions (bayOf PartBay s))
+        , Sub.batch (List.map (\( id, bay ) -> Sub.map (BayMsg id) (PatchBay.subscriptions bay)) (Dict.values s.bays))
         ]
 
 
@@ -111,8 +120,8 @@ type alias Layout =
     { shown : List Module, every : List Module }
 
 
-layout : Engine -> Layout
-layout e =
+layout : Engine -> Tab -> Layout
+layout e tab =
     let
         one : List Module -> Layout
         one ms =
@@ -132,7 +141,15 @@ layout e =
             one Layout.Tape.modules
 
         Drum ->
-            one []
+            { shown =
+                case tab of
+                    Kit ->
+                        Layout.Drum.kit
+
+                    PadTab p ->
+                        Layout.Drum.pad p
+            , every = Layout.Drum.every
+            }
 
 
 {-| The Sound's items no module of the layout places.
@@ -188,7 +205,10 @@ update msg m s =
                 ( bay, effects ) =
                     PatchBay.update bm (bayOf id s)
             in
-            ( List.foldl (bayEffect m) { s | bays = Dict.insert (bayKey id) bay s.bays } effects, [], Nothing )
+            ( List.foldl (bayEffect m id) { s | bays = Dict.insert (bayKey id) ( id, bay ) s.bays } effects, [], Nothing )
+
+        PadMsg (PadStrip.Select t) ->
+            ( { s | tab = t }, [], Nothing )
 
         Frame ->
             let
@@ -219,25 +239,139 @@ bayKey id =
         PartBay ->
             "MOD"
 
+        PadBay p ->
+            "PAD" ++ String.fromInt (Pad.number p)
+
 
 bayOf : BayId -> State -> PatchBay.Bay
 bayOf id s =
-    Dict.get (bayKey id) s.bays |> Maybe.withDefault PatchBay.init
+    Dict.get (bayKey id) s.bays |> Maybe.map Tuple.second |> Maybe.withDefault PatchBay.init
 
 
-{-| The Part's bay has no routes yet: only its own state moves.
+{-| A hand on a bay. The Part's has no routes yet, so only its own state
+moves; a pad's patches its routes: a new cable takes the first route with
+no amount, and unpatching sets the amount to nothing.
 -}
-bayEffect : Model -> PatchBay.Effect -> State -> State
-bayEffect m effect s =
-    case effect of
-        PatchBay.Handed h ->
+bayEffect : Model -> BayId -> PatchBay.Effect -> State -> State
+bayEffect m id effect s =
+    case ( id, effect ) of
+        ( _, PatchBay.Handed h ) ->
             hand m h s
 
-        PatchBay.Patched _ _ ->
+        ( PartBay, PatchBay.Patched _ _ ) ->
             s
 
-        PatchBay.Unpatched _ _ ->
+        ( PartBay, PatchBay.Unpatched _ _ ) ->
             s
+
+        ( PadBay p, PatchBay.Patched (Source from) (Dest to) ) ->
+            let
+                routes : List RouteNow
+                routes =
+                    routesNow m s p
+            in
+            if List.any (\r -> r.on && r.from == Just from && r.to == Just to) routes then
+                s
+
+            else
+                case List.filter (.on >> not) routes |> List.head of
+                    Just r ->
+                        s
+                            |> pickNamed m r.route.source from
+                            |> pickNamed m r.route.dest to
+                            |> (\st -> paramOf m r.route.amount |> Maybe.map (\ap -> want ap (Number (Control.atNorm ap newCable)) (HeldNorm newCable) st) |> Maybe.withDefault st)
+
+                    Nothing ->
+                        s
+
+        ( PadBay p, PatchBay.Unpatched (Source from) (Dest to) ) ->
+            routesNow m s p
+                |> List.filter (\r -> r.on && r.from == Just from && r.to == Just to)
+                |> List.foldl (\r st -> paramOf m r.route.amount |> Maybe.map (\ap -> want ap (Number 0) (HeldNorm (normOf ap 0)) st) |> Maybe.withDefault st) s
+
+
+{-| Where a new cable's attenuverter starts: half way up.
+-}
+newCable : Float
+newCable =
+    0.75
+
+
+pickNamed : Model -> Addr -> String -> State -> State
+pickNamed m a name s =
+    paramOf m a
+        |> Maybe.andThen (\p -> p.options |> List.filter (\( _, n ) -> n == name) |> List.head |> Maybe.map (\( i, _ ) -> want p (Option i) (HeldOption i) s))
+        |> Maybe.withDefault s
+
+
+{-| A pad route as the unit (or a hand) has it now: patched while its amount
+is not nothing.
+-}
+type alias RouteNow =
+    { route : Shared.Route, on : Bool, from : Maybe String, to : Maybe String, amount : Maybe Param }
+
+
+routesNow : Model -> State -> Pad -> List RouteNow
+routesNow m s p =
+    List.map
+        (\r ->
+            let
+                amount : Maybe Param
+                amount =
+                    paramOf m r.amount
+
+                stored : Maybe Float
+                stored =
+                    amount
+                        |> Maybe.andThen
+                            (\ap ->
+                                case holding m s ap.addr of
+                                    Just (HeldNorm t) ->
+                                        Just (Control.atNorm ap t)
+
+                                    Just (HeldOption _) ->
+                                        Nothing
+
+                                    Nothing ->
+                                        Model.shown ap.addr m |> Maybe.map .stored
+                            )
+
+                name : Addr -> Maybe String
+                name a =
+                    paramOf m a |> Maybe.map (\q -> optionName q (optionNow m s q))
+            in
+            { route = r
+            , on = Maybe.map2 (\v ap -> abs v >= ap.step / 2) stored amount |> Maybe.withDefault False
+            , from = name r.source
+            , to = name r.dest
+            , amount = amount
+            }
+        )
+        (Shared.padRoutes p)
+
+
+padBay : Model -> State -> Pad -> Routes.Routes
+padBay m s p =
+    let
+        routes : List RouteNow
+        routes =
+            routesNow m s p
+
+        names : (Shared.Route -> Addr) -> List String
+        names f =
+            routes |> List.head |> Maybe.andThen (\r -> paramOf m (f r.route)) |> Maybe.map (.options >> List.map Tuple.second) |> Maybe.withDefault []
+    in
+    routes
+        |> List.filterMap
+            (\r ->
+                case ( r.on, ( r.from, r.to ), r.amount ) of
+                    ( True, ( Just from, Just to ), Just ap ) ->
+                        Just { from = Source from, to = Dest to, amount = Routes.amountFromNorm (normNow m s ap), addr = ap.addr }
+
+                    _ ->
+                        Nothing
+            )
+        |> List.foldl Routes.add (Routes.new (List.map Source (names .source)) (List.map Dest (names .dest)))
 
 
 hand : Model -> Control.Msg -> State -> State
@@ -537,7 +671,7 @@ enginePage m s status e =
     let
         lay : Layout
         lay =
-            layout e
+            layout e s.tab
 
         items : List Item
         items =
@@ -567,6 +701,22 @@ enginePage m s status e =
             |> Page.meta status
             |> Page.parts (partTabs m)
             |> Page.link (Page.Linked status)
+            |> (case e of
+                    Drum ->
+                        Page.strip (Html.map PadMsg (PadStrip.view (PadStrip.new "DRUM" (padName m)) s.tab))
+
+                    Algo ->
+                        identity
+
+                    Va ->
+                        identity
+
+                    Modal ->
+                        identity
+
+                    Tape ->
+                        identity
+               )
             |> Page.modules
                 (List.map (moduleOf ctx) lay.shown
                     ++ (if List.isEmpty rest then
@@ -577,6 +727,13 @@ enginePage m s status e =
                        )
                 )
         )
+
+
+{-| A pad's name in the strip: its machine, as the unit prints it.
+-}
+padName : Model -> Pad -> String
+padName m p =
+    Model.shown (Addr ("PAD" ++ String.fromInt (Pad.number p) ++ ".MACHINE")) m |> Maybe.map .text |> Maybe.withDefault ""
 
 
 partTabs : Model -> List (Page.Tab Msg)
@@ -714,6 +871,9 @@ extra ctx x =
 
         Note t ->
             p [ class "pnote" ] [ text t ]
+
+        PadRoutes pad ->
+            Html.map (BayMsg (PadBay pad)) (PatchBay.view (bayOf (PadBay pad) ctx.s) (padBay ctx.m ctx.s pad))
 
         PartMatrix ->
             div []

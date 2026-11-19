@@ -8,6 +8,8 @@ import Protocol exposing (Addr(..), addrKey)
 import Schema exposing (Schema)
 import Set exposing (Set)
 import Test exposing (Test, describe, test)
+import Ui.Pad as Pad
+import Ui.PadStrip exposing (Tab(..))
 import Unit exposing (Engine(..))
 import View.EnginePage as EnginePage
 
@@ -16,7 +18,26 @@ import View.EnginePage as EnginePage
 -}
 paged : List Engine
 paged =
-    [ Algo, Va, Modal, Tape ]
+    [ Algo, Va, Modal, Tape, Drum ]
+
+
+views : Engine -> List Tab
+views e =
+    case e of
+        Drum ->
+            Kit :: List.map PadTab Pad.all
+
+        Algo ->
+            [ Kit ]
+
+        Va ->
+            [ Kit ]
+
+        Modal ->
+            [ Kit ]
+
+        Tape ->
+            [ Kit ]
 
 
 described : Schema -> Set String
@@ -95,13 +116,18 @@ withExtra =
 
 
 shownLabels : Engine -> List ( String, String ) -> String -> List ( String, String )
-shownLabels e vs title =
+shownLabels e =
+    shownIn e Kit
+
+
+shownIn : Engine -> Tab -> List ( String, String ) -> String -> List ( String, String )
+shownIn e tab vs title =
     let
         items : List Shared.Item
         items =
             Shared.active (Fixture.schemaFor e) (Dict.fromList vs)
     in
-    (EnginePage.layout e).shown
+    (EnginePage.layout e tab).shown
         |> List.filter (\m -> m.title == title)
         |> List.concatMap (Shared.fill (Shared.index items) >> List.concatMap Tuple.second)
         |> List.map (\( i, _ ) -> ( addrKey i.param.addr, i.label ))
@@ -120,17 +146,24 @@ suite =
                     in
                     [ test (name ++ " places every described address in some view") <|
                         \_ ->
-                            Set.diff (described (Fixture.schemaFor e)) (Set.fromList (placed (EnginePage.layout e).every))
+                            Set.diff (described (Fixture.schemaFor e)) (Set.fromList (placed (EnginePage.layout e Kit).every))
                                 |> Set.toList
                                 |> Expect.equal []
-                    , test (name ++ " places no address twice") <|
+                    , test (name ++ " places no address twice in a view") <|
                         \_ ->
-                            dupes (placed (EnginePage.layout e).shown)
+                            views e
+                                |> List.concatMap (\v -> dupes (placed (EnginePage.layout e v).shown))
+                                |> Expect.equal []
+                    , test (name ++ " shows each view's modules among every module") <|
+                        \_ ->
+                            views e
+                                |> List.concatMap (\v -> placed (EnginePage.layout e v).shown)
+                                |> List.filter (\a -> not (List.member a (placed (EnginePage.layout e Kit).every)))
                                 |> Expect.equal []
                     , test (name ++ " leaves nothing to OTHER in any Sound") <|
                         \_ ->
                             sounds (Fixture.schemaFor e)
-                                |> List.concatMap (\v -> EnginePage.other (Shared.active (Fixture.schemaFor e) v) (EnginePage.layout e).every)
+                                |> List.concatMap (\v -> EnginePage.other (Shared.active (Fixture.schemaFor e) v) (EnginePage.layout e Kit).every)
                                 |> List.map (.param >> .addr >> addrKey)
                                 |> Expect.equal []
                     ]
@@ -145,12 +178,12 @@ suite =
                         List.foldl (\e -> Set.union (described (Fixture.schemaFor e))) Set.empty Unit.allEngines
                 in
                 paged
-                    |> List.concatMap (\e -> placed (EnginePage.layout e).every)
+                    |> List.concatMap (\e -> placed (EnginePage.layout e Kit).every)
                     |> List.filter (\a -> not (Set.member a any))
                     |> Expect.equal []
         , test "a_param_the_layout_lacks_lands_in_other" <|
             \_ ->
-                EnginePage.other (Shared.active withExtra Dict.empty) (EnginePage.layout Algo).every
+                EnginePage.other (Shared.active withExtra Dict.empty) (EnginePage.layout Algo Kit).every
                     |> List.map (.param >> .addr)
                     |> Expect.equal [ Addr "ALGO.NEW" ]
         , describe "variants are followed"
@@ -175,17 +208,17 @@ suite =
             ]
         , test "the_va_page_is_in_v6s_order" <|
             \_ ->
-                (EnginePage.layout Va).shown
+                (EnginePage.layout Va Kit).shown
                     |> List.map .title
                     |> Expect.equal [ "OSC 1", "OSC 2", "MODE", "MIXER", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "PITCH", "MOD" ]
         , test "the_modal_page_is_in_v6s_order" <|
             \_ ->
-                (EnginePage.layout Modal).shown
+                (EnginePage.layout Modal Kit).shown
                     |> List.map .title
                     |> Expect.equal [ "RESONATOR", "EXCITER", "MODAL-2", "PITCH", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
         , test "the_tape_page_is_in_v6s_order" <|
             \_ ->
-                (EnginePage.layout Tape).shown
+                (EnginePage.layout Tape Kit).shown
                     |> List.map .title
                     |> Expect.equal [ "SOURCE", "DECK", "MACHINE", "PITCH", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
         , test "the_resonators_model_picks_the_exciters_controls" <|
@@ -203,14 +236,51 @@ suite =
                     |> Expect.equal ( [ "FINGER", "SPEED", "LENGTH", "DRAG", "XFADE" ], [ "FRAME", "SCAN", "RANGE" ] )
         , test "the_tape_source_is_shown_and_never_a_control" <|
             \_ ->
-                (EnginePage.layout Tape).shown
+                (EnginePage.layout Tape Kit).shown
                     |> List.filter (\m -> m.title == "SOURCE")
                     |> List.concatMap .extras
                     |> List.member Shared.SourceText
                     |> Expect.equal True
+        , describe "DRUM mirrors the box"
+            [ test "the_kit_view_is_the_pads_then_the_whole_kits_voice" <|
+                \_ ->
+                    (EnginePage.layout Drum Kit).shown
+                        |> List.map .title
+                        |> Expect.equal [ "PADS 1–6", "PADS 7–12", "VOICE FX", "OUT", "FILTER MOD", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3" ]
+            , test "a_pad_view_is_that_pads_voice_then_mod" <|
+                \_ ->
+                    (EnginePage.layout Drum (PadTab Pad.Pad3)).shown
+                        |> List.map .title
+                        |> Expect.equal [ "PAD", "MACHINE", "FILTER", "AMP", "PITCH ENV", "PITCH LFO", "ROUTE 1–4", "MOD" ]
+            , test "a_pad_view_places_only_that_pads_addresses" <|
+                \_ ->
+                    (EnginePage.layout Drum (PadTab Pad.Pad3)).shown
+                        |> placed
+                        |> List.filter (\a -> not (String.startsWith "PAD3." a || String.startsWith "PAD3_" a))
+                        |> Expect.equal []
+            , test "the_kit_view_holds_every_pads_level_and_the_kits_tonal" <|
+                \_ ->
+                    (EnginePage.layout Drum Kit).shown
+                        |> placed
+                        |> (\xs -> List.all (\a -> List.member a xs) ("KIT.TONAL" :: List.map (\p -> "PAD" ++ String.fromInt (Pad.number p) ++ ".LEVEL") Pad.all))
+                        |> Expect.equal True
+            , test "a_pads_routes_are_its_bay" <|
+                \_ ->
+                    (EnginePage.layout Drum (PadTab Pad.Pad7)).shown
+                        |> List.filter (\m -> m.title == "ROUTE 1–4")
+                        |> List.concatMap Shared.addresses
+                        |> List.map addrKey
+                        |> List.sort
+                        |> Expect.equal (List.sort (List.concatMap (\k -> List.map (\f -> "PAD7_RT" ++ String.fromInt k ++ "." ++ f) [ "SOURCE", "DEST", "AMOUNT" ]) (List.range 1 4)))
+            , test "the_machine_names_its_knobs" <|
+                \_ ->
+                    shownIn Drum (PadTab Pad.Pad3) [ ( "PAD3_MCH", "TONE-SNARE" ) ] "MACHINE"
+                        |> List.take 3
+                        |> Expect.equal [ ( "PAD3.KNOB_A", "PITCH" ), ( "PAD3.KNOB_B", "DECAY" ), ( "PAD3.KNOB_C", "BUMP" ) ]
+            ]
         , test "the_algo_page_is_in_v6s_order" <|
             \_ ->
-                (EnginePage.layout Algo).shown
+                (EnginePage.layout Algo Kit).shown
                     |> List.map .title
                     |> Expect.equal [ "ALGORITHM", "PITCH", "OP 1", "OP 2", "OP 3", "OP 4", "OP 5", "OP 6", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
         ]

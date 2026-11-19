@@ -1,4 +1,4 @@
-module Fixture exposing (param, schema, schemaFor)
+module Fixture exposing (param, paramIn, schema, schemaFor)
 
 import FixtureData
 import Protocol exposing (Addr(..), Line(..))
@@ -65,6 +65,18 @@ read =
 param : String -> Schema.Param
 param a =
     case Schema.param (Addr a) schema of
+        Just p ->
+            p
+
+        Nothing ->
+            Debug.todo ("the fixture has no " ++ a)
+
+
+{-| A parameter another fixture must hold.
+-}
+paramIn : Schema -> String -> Schema.Param
+paramIn sch a =
+    case Schema.param (Addr a) sch of
         Just p ->
             p
 

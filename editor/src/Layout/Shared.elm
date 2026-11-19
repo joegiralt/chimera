@@ -4,6 +4,7 @@ module Layout.Shared exposing
     , Group
     , Item
     , Module
+    , Route
     , ScreenAt
     , Slot
     , active
@@ -14,6 +15,7 @@ module Layout.Shared exposing
     , fader
     , fill
     , filter
+    , filterCore
     , filterMod
     , group
     , hero
@@ -24,8 +26,10 @@ module Layout.Shared exposing
     , menu
     , mod
     , module_
+    , padRoutes
     , pitch
     , strip
+    , tall
     , voiceFx
     )
 
@@ -39,6 +43,7 @@ drawn. The modules every voice engine shares live here.
 import Dict exposing (Dict)
 import Protocol exposing (Addr(..), addrKey)
 import Schema exposing (Schema)
+import Ui.Pad as Pad exposing (Pad)
 import Ui.Screen exposing (Glyph, Shape(..))
 
 
@@ -78,6 +83,8 @@ type Extra
     | NextSlice
       -- The Part's mod matrix: no protocol yet, so an empty bay.
     | PartMatrix
+      -- A DRUM pad's four routes, a live patch bay.
+    | PadRoutes Pad
 
 
 {-| A screen: the page (by its `ed describe` label) whose art it draws.
@@ -153,11 +160,51 @@ tall page =
     Just { page = page, shape = Tall, fallback = Nothing }
 
 
+{-| One of a DRUM pad's routes: its three addresses.
+-}
+type alias Route =
+    { source : Addr, dest : Addr, amount : Addr }
+
+
+padRoutes : Pad -> List Route
+padRoutes p =
+    List.map
+        (\k ->
+            let
+                at : String -> Addr
+                at f =
+                    Addr ("PAD" ++ String.fromInt (Pad.number p) ++ "_RT" ++ String.fromInt k ++ "." ++ f)
+            in
+            { source = at "SOURCE", dest = at "DEST", amount = at "AMOUNT" }
+        )
+        (List.range 1 4)
+
+
 {-| Every address the module places.
 -}
 addresses : Module -> List Addr
 addresses m =
-    m.header ++ List.concatMap (.slots >> List.map .addr) m.groups
+    m.header
+        ++ List.concatMap (.slots >> List.map .addr) m.groups
+        ++ List.concatMap
+            (\x ->
+                case x of
+                    PadRoutes p ->
+                        List.concatMap (\r -> [ r.source, r.dest, r.amount ]) (padRoutes p)
+
+                    SourceText ->
+                        []
+
+                    Note _ ->
+                        []
+
+                    NextSlice ->
+                        []
+
+                    PartMatrix ->
+                        []
+            )
+            m.extras
 
 
 

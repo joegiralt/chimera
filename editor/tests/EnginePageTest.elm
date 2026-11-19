@@ -17,10 +17,14 @@ import Test.Html.Selector as Sel
 import Time
 import Transport exposing (Link(..))
 import Ui.Control as Control exposing (Direction(..), Travel(..))
+import Ui.Pad as Pad
+import Ui.PadStrip as PadStrip exposing (Tab(..))
 import Ui.Page
+import Ui.PatchBay as PatchBay
+import Ui.Routes exposing (Dest(..), Source(..))
 import Ui.Tokens exposing (Theme(..))
 import Unit
-import View.EnginePage as Page exposing (Msg(..))
+import View.EnginePage as Page exposing (BayId(..), Msg(..))
 
 
 feed : List String -> Model.Model -> Model.Model
@@ -226,6 +230,46 @@ suite =
                 Page.view (connected FixtureData.modal "MODAL" |> feed [ "panel RESONATOR BOWED", "OK 1" ]) (Page.init Day)
                     |> Query.fromHtml
                     |> Query.has [ Sel.text "NOTHING TO SET FOR THIS TYPE" ]
+        , describe "DRUM"
+            [ test "the_pad_strip_opens_a_pads_view" <|
+                \_ ->
+                    let
+                        ( s, _, _ ) =
+                            Page.update (PadMsg (PadStrip.Select (PadTab Pad.Pad5))) drum (Page.init Day)
+                    in
+                    Page.view drum s
+                        |> Query.fromHtml
+                        |> Query.findAll [ Sel.attribute (attribute "aria-label" "LEVEL") ]
+                        |> Query.count (Expect.equal 1)
+            , test "the_kit_view_shows_every_pads_level" <|
+                \_ ->
+                    Page.view drum (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.findAll [ Sel.attribute (attribute "role" "slider"), Sel.attribute (attribute "aria-label" "LEVEL") ]
+                        |> Query.count (Expect.equal 12)
+            , test "a_patched_route_is_a_cable" <|
+                \_ ->
+                    Page.view drum (onPad Pad.Pad1)
+                        |> Query.fromHtml
+                        |> Query.findAll [ Sel.attribute (attribute "aria-label" "LFO to RESO") ]
+                        |> Query.count (Expect.equal 1)
+            , test "patching_takes_the_first_free_route" <|
+                \_ ->
+                    runOn drum [ BayMsg (PadBay Pad.Pad1) (PatchBay.Connect (Source "VEL") (Dest "VOLUME")), Frame ]
+                        |> Expect.equal
+                            (Model.Edit (Addr "PAD1_RT2.AMOUNT") (Num (Control.atNorm (Fixture.paramIn drumSchema "PAD1_RT2.AMOUNT") 0.75))
+                                :: pick "PAD1_RT2.DEST" 2
+                                ++ pick "PAD1_RT2.SOURCE" 2
+                            )
+            , test "unpatching_sets_the_amount_to_nothing" <|
+                \_ ->
+                    runOn drum [ BayMsg (PadBay Pad.Pad1) (PatchBay.Unpatch (Source "LFO") (Dest "RESO")), Frame ]
+                        |> Expect.equal [ Model.Edit (Addr "PAD1_RT1.AMOUNT") (Num 0) ]
+            , test "a_cables_attenuverter_turns_its_amount" <|
+                \_ ->
+                    runOn drum [ BayMsg (PadBay Pad.Pad1) (PatchBay.Hand (Control.Grab (Addr "PAD1_RT1.AMOUNT") Attenuverter 300)), Hand (Control.Moved 276), Frame ]
+                        |> Expect.equal [ Model.Edit (Addr "PAD1_RT1.AMOUNT") (Num (Control.atNorm (Fixture.paramIn drumSchema "PAD1_RT1.AMOUNT") 0.85)) ]
+            ]
         , test "the_folds_and_chips_are_the_pages_own" <|
             \_ ->
                 Page.update (PageMsg (Ui.Page.ToggleChip "MOD")) model (Page.init Day)
@@ -240,6 +284,30 @@ suite =
             \_ ->
                 Dict.size model.values |> Expect.equal 2
         ]
+
+
+drumSchema : Schema.Schema
+drumSchema =
+    Fixture.schemaFor Unit.Drum
+
+
+{-| DRUM followed: pad 1's route 1 patched LFO to RESO at +64 (norm 0.75).
+-}
+drum : Model.Model
+drum =
+    connected FixtureData.drum "DRUM"
+        |> feed
+            [ "val PAD1_RT1.SOURCE 0.2 1 \"LFO\""
+            , "val PAD1_RT1.DEST 0.25 1 \"RESO\""
+            , "val PAD1_RT1.AMOUNT 0.75 63.5 \"+64\""
+            , "val PAD1_RT2.AMOUNT 0.5 0 \"0\""
+            , "OK 1"
+            ]
+
+
+onPad : Pad.Pad -> Page.State
+onPad p =
+    Page.update (PadMsg (PadStrip.Select (PadTab p))) drum (Page.init Day) |> (\( s, _, _ ) -> s)
 
 
 {-| A hand on item `i`: a choice picks its last option; a value drags up 30
