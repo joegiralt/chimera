@@ -1,10 +1,10 @@
 module Ui.Routes exposing
     ( Amount
     , Cable
-    , Dest(..)
+    , Dest
     , Routes
     , Sign(..)
-    , Source(..)
+    , Source
     , add
     , amount
     , amountFromNorm
@@ -12,11 +12,17 @@ module Ui.Routes exposing
     , amountText
     , amountValue
     , cables
+    , dest
+    , destName
+    , destOption
     , dests
     , new
     , remove
     , setAmount
     , sign
+    , source
+    , sourceName
+    , sourceOption
     , sources
     )
 
@@ -25,15 +31,51 @@ between them, each with a signed amount. The patch bay and the matrix grid
 are two views of this one model.
 -}
 
-import Protocol exposing (Addr)
+import Addr exposing (Addr)
+import Protocol exposing (OptIndex)
 
 
+{-| A modulation source: one of the unit's options for a route's SOURCE,
+by its number and its name.
+-}
 type Source
-    = Source String
+    = Source OptIndex String
 
 
+source : ( OptIndex, String ) -> Source
+source ( i, name ) =
+    Source i name
+
+
+sourceName : Source -> String
+sourceName (Source _ name) =
+    name
+
+
+sourceOption : Source -> OptIndex
+sourceOption (Source i _) =
+    i
+
+
+{-| A modulation destination: one of the unit's options for a route's DEST.
+-}
 type Dest
-    = Dest String
+    = Dest OptIndex String
+
+
+dest : ( OptIndex, String ) -> Dest
+dest ( i, name ) =
+    Dest i name
+
+
+destName : Dest -> String
+destName (Dest _ name) =
+    name
+
+
+destOption : Dest -> OptIndex
+destOption (Dest i _) =
+    i
 
 
 {-| A cable's amount, −100 to +100.

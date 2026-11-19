@@ -1,10 +1,10 @@
 module MenuTest exposing (suite)
 
+import Addr exposing (Addr)
 import Contract exposing (opt)
 import Expect
 import Html.Attributes exposing (attribute)
 import Json.Encode as Encode
-import Protocol exposing (Addr(..))
 import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
@@ -13,11 +13,12 @@ import Ui.Control as Control
 import Ui.Menu as Menu exposing (Msg(..))
 import Ui.Screen as Screen exposing (Glyph(..))
 import Unit exposing (Engine(..))
+import Wire exposing (addr)
 
 
 algA : Addr
 algA =
-    Addr "ALGO.A"
+    addr "ALGO.A"
 
 
 names : List String
@@ -76,7 +77,7 @@ suite =
                     |> Expect.equal ( Menu.shut, Just (Control.Pick algA (opt 3)) )
         , test "another_menu_opening_shuts_this_one" <|
             \_ ->
-                Menu.view alg (Menu.update (Open (Addr "ALGO.B")) |> Tuple.first) (Control.chosen (opt 0))
+                Menu.view alg (Menu.update (Open (addr "ALGO.B")) |> Tuple.first) (Control.chosen (opt 0))
                     |> Query.fromHtml
                     |> Query.findAll [ Sel.attribute (Control.ariaRole "listbox") ]
                     |> Query.count (Expect.equal 0)

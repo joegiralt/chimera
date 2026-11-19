@@ -6,13 +6,14 @@ import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
 import Test.Html.Selector as Sel
+import Ui.Chip as Chip
 import Ui.Module as Module exposing (Fold(..))
 import Ui.Row as Row
 
 
 m : String -> Module.Config Module.Msg
 m t =
-    Module.new t |> Module.body [ text t ]
+    Module.new Chip.Folding t |> Module.body [ text t ]
 
 
 titles : Row.Row msg -> List String

@@ -4,11 +4,12 @@ module Ui.Toggle exposing (Config, fromOptions, label, three, two, view, width)
 words. A click on a word picks it; a click on the lever moves to the next.
 -}
 
+import Addr exposing (Addr)
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (attribute, class, classList, style)
 import Html.Events exposing (onClick)
-import Protocol exposing (Addr)
 import Ui.Control as Control exposing (Chosen, Msg(..), Option, Width)
+import Ui.Tokens as Tokens exposing (Face(..))
 
 
 type Positions
@@ -68,7 +69,7 @@ options p =
 
 wordPx : String -> Int
 wordPx w =
-    ceiling (toFloat (String.length w) * 7.5) + 4
+    Tokens.textPx ToggleFace w + 4
 
 
 width : Config -> Width
@@ -78,7 +79,7 @@ width (Config c) =
         widest =
             options c.positions |> List.map (Tuple.second >> wordPx) |> List.maximum |> Maybe.withDefault 0
     in
-    Control.width { px = Control.snap16 (max (Control.labelPx c.label) (14 + 6 + widest)), ch = 0 }
+    Control.pxWidth (Control.snap16 (max (Control.labelPx c.label) (14 + 6 + widest)))
 
 
 view : Config -> Chosen -> Html Msg
@@ -92,32 +93,44 @@ view ((Config c) as config) ch =
         n =
             List.length opts
 
-        here : Int
+        here : Maybe Int
         here =
             opts
                 |> List.indexedMap Tuple.pair
-                |> List.filter (\( _, ( i, _ ) ) -> i == Control.current ch)
+                |> List.filter (\( _, ( i, _ ) ) -> Just i == Control.current ch)
                 |> List.head
                 |> Maybe.map Tuple.first
-                |> Maybe.withDefault 0
 
+        -- Off every position (not reported, or not in the list), the lever
+        -- moves to the first.
         next : Maybe Option
         next =
-            List.head (List.drop (modBy n (here + 1)) opts)
+            case here of
+                Just k ->
+                    List.head (List.drop (modBy n (k + 1)) opts)
+
+                Nothing ->
+                    List.head opts
 
         ball : String
         ball =
             case ( c.positions, here ) of
-                ( Three _ _ _, 1 ) ->
+                ( _, Nothing ) ->
+                    "none"
+
+                ( Three _ _ _, Just 1 ) ->
                     "m"
 
-                ( _, 0 ) ->
+                ( _, Just 0 ) ->
                     "t"
 
-                _ ->
+                ( Two _ _, Just _ ) ->
+                    "b"
+
+                ( Three _ _ _, Just _ ) ->
                     "b"
     in
-    Control.cell [ class "tgc", Control.syncClass (Control.chosenSync ch), Control.widthStyle (width config) ]
+    Control.cell (class "tgc" :: Control.widthStyle (width config) :: Control.markAttrs (Control.chosenMark ch))
         c.label
         [ div [ classList [ ( "tg", True ), ( "n3", n == 3 ) ], Control.ariaRole "radiogroup", Control.ariaLabel c.label ]
             [ button
@@ -135,9 +148,9 @@ view ((Config c) as config) ch =
                 (List.map
                     (\( i, w ) ->
                         button
-                            [ classList [ ( "on", i == Control.current ch ) ]
+                            [ classList [ ( "on", Just i == Control.current ch ) ]
                             , Control.ariaRole "radio"
-                            , Control.ariaChecked (i == Control.current ch)
+                            , Control.ariaChecked (Just i == Control.current ch)
                             , style "width" (String.fromInt (wordPx w) ++ "px")
                             , onClick (Pick c.addr i)
                             ]

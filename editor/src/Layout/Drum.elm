@@ -7,9 +7,11 @@ AMP, PITCH ENV, PITCH LFO, its four routes as a patch bay, then MOD). What
 is per pad on the box is per pad here.
 -}
 
+import Addr exposing (Addr, Block(..), PadBlock(..))
+import Layout.Page exposing (PadPage(..), UnitPage(..))
 import Layout.Shared as Shared exposing (Extra(..), Module, auto, fader, group, hero, heroFader, knob, menu, module_, strip, tall)
-import Protocol exposing (Addr(..))
-import Ui.Pad as Pad exposing (Pad)
+import Ui.Chip as Chip
+import Ui.Pad as Pad exposing (Pad(..))
 
 
 {-| Every module of every view.
@@ -21,143 +23,110 @@ every =
 
 kit : List Module
 kit =
-    [ pads 1, pads 7, wholeKit Shared.voiceFx, out, wholeKit filterMod ]
-        ++ List.map (Shared.envelope >> wholeKit) (List.range 1 3)
-        ++ List.map (Shared.lfo >> wholeKit) (List.range 1 3)
+    [ pads ( Pad1, [ Pad2, Pad3, Pad4, Pad5, Pad6 ] ), pads ( Pad7, [ Pad8, Pad9, Pad10, Pad11, Pad12 ] ), wholeKit (Shared.voiceFx (PadPage Pad1 PadFx)), out, wholeKit filterMod ]
+        ++ List.map (Shared.envelope >> wholeKit) Addr.envs
+        ++ List.map (Shared.lfo >> wholeKit) Addr.lfos
 
 
 wholeKit : Module -> Module
-wholeKit m =
-    { m | note = "WHOLE KIT" }
+wholeKit =
+    Shared.withNote "WHOLE KIT"
 
 
-{-| Six pads at a glance: level, pan, choke and retrig each. The first
-holds the kit's TONAL.
+{-| Six pads at a glance: level, pan, choke and retrig each, the first's
+kit band on top. The first six hold the kit's TONAL.
 -}
-pads : Int -> Module
-pads from =
+pads : ( Pad, List Pad ) -> Module
+pads ( first, rest ) =
     let
-        m : Module
-        m =
-            module_ ("PADS " ++ String.fromInt from ++ "–" ++ String.fromInt (from + 5)) "KIT"
-
-        row : Int -> Shared.Group
-        row n =
+        row : Pad -> Shared.Group
+        row p =
             let
-                a : String -> String
-                a f =
-                    "PAD" ++ String.fromInt n ++ "." ++ f
+                a : String -> Addr
+                a =
+                    Addr.field >> Addr.at (Pad p Voice)
             in
-            group ("PAD " ++ String.padLeft 2 '0' (String.fromInt n)) [ knob (a "LEVEL"), knob (a "PAN"), menu (a "CHOKE"), auto (a "RETRIG") ]
-    in
-    { m
-        | screen = strip ("PAD" ++ String.fromInt from ++ "_KIT")
-        , groups =
-            (if from == 1 then
-                [ group "" [ menu "KIT.TONAL" ] ]
+            group ("PAD " ++ Pad.label p) [ knob (a "LEVEL"), knob (a "PAN"), menu (a "CHOKE"), auto (a "RETRIG") ]
 
-             else
+        last : Pad
+        last =
+            List.foldl always first rest
+    in
+    module_ Chip.Kit ("PADS " ++ String.fromInt (Pad.number first) ++ "–" ++ String.fromInt (Pad.number last))
+        |> Shared.withScreen (strip (PadPage first PadKit))
+        |> Shared.withGroups
+            ((if first == Pad1 then
+                [ group "" [ menu (Addr.at Kit (Addr.field "TONAL")) ] ]
+
+              else
                 []
+             )
+                ++ List.map row (first :: rest)
             )
-                ++ List.map row (List.range from (from + 5))
-    }
 
 
 out : Module
 out =
     let
-        m : Module
-        m =
-            module_ "OUT" "OUT"
+        a : String -> Addr
+        a =
+            Addr.field >> Addr.at Out
     in
-    { m | note = "SENDS · WHOLE KIT", screen = strip "SND", groups = [ group "" [ fader "OUT.SEND1", fader "OUT.SEND2", fader "OUT.SEND3" ] ] }
+    module_ Chip.Out "OUT"
+        |> Shared.withNote "SENDS · WHOLE KIT"
+        |> Shared.withScreen (strip Snd)
+        |> Shared.withGroups [ group "" [ fader (a "SEND1"), fader (a "SEND2"), fader (a "SEND3") ] ]
 
 
 {-| The kit's filter modulation, and the STABILITY its pads' filters share.
 -}
 filterMod : Module
 filterMod =
-    let
-        m : Module
-        m =
-            Shared.filterMod
-    in
-    { m | groups = m.groups ++ [ group "" [ fader "FILTER.STAB" ] ] }
+    Shared.filterMod |> Shared.addGroups [ group "" [ fader (Addr.at Filter (Addr.field "STAB")) ] ]
 
 
 pad : Pad -> List Module
 pad p =
     let
-        n : String
-        n =
-            String.fromInt (Pad.number p)
-
-        a : String -> String -> String
-        a block f =
-            "PAD" ++ n ++ block ++ "." ++ f
+        a : PadBlock -> String -> Addr
+        a block =
+            Addr.field >> Addr.at (Pad p block)
 
         this : Module -> Module
-        this m =
-            { m | note = "PAD " ++ Pad.label p, chip = "PAD" }
+        this =
+            Shared.withNote ("PAD " ++ Pad.label p) >> Shared.withChip Chip.Pad
 
-        voice : Module
-        voice =
-            module_ "PAD" "PAD"
-
-        machine : Module
-        machine =
-            module_ "MACHINE" "PAD"
-
-        filter : Module
-        filter =
-            Shared.filterCore ("PAD" ++ n ++ "_FLT") ("PAD" ++ n ++ "_FLT")
-
-        amp : Module
-        amp =
-            module_ "AMP" "PAD"
-
-        penv : Module
-        penv =
-            module_ "PITCH ENV" "PAD"
-
-        plfo : Module
-        plfo =
-            module_ "PITCH LFO" "PAD"
-
-        routes : Module
-        routes =
-            module_ "ROUTE 1–4" "PAD"
+        on : PadPage -> UnitPage
+        on =
+            PadPage p
     in
     List.map this
-        [ { voice
-            | screen = strip ("PAD" ++ n ++ "_KIT")
-            , groups = [ group "" [ heroFader (a "" "LEVEL"), knob (a "" "PAN") ], group "KEYS" [ auto (a "" "CHOKE"), auto (a "" "RETRIG") ] ]
-          }
-        , { machine
-            | header = [ Addr (a "" "MACHINE") ]
-            , screen = strip ("PAD" ++ n ++ "_MCH")
-            , groups =
-                [ group "A–F" [ hero (a "" "KNOB_A"), knob (a "" "KNOB_B"), knob (a "" "KNOB_C"), knob (a "" "KNOB_D"), knob (a "" "KNOB_E"), knob (a "" "KNOB_F") ]
-                , group "MORE" [ knob (a "" "KNOB_G"), knob (a "" "KNOB_H") ]
+        [ module_ Chip.Pad "PAD"
+            |> Shared.withScreen (strip (on PadKit))
+            |> Shared.withGroups [ group "" [ heroFader (a Voice "LEVEL"), knob (a Voice "PAN") ], group "KEYS" [ auto (a Voice "CHOKE"), auto (a Voice "RETRIG") ] ]
+        , module_ Chip.Pad "MACHINE"
+            |> Shared.withHeader [ a Voice "MACHINE" ]
+            |> Shared.withScreen (strip (on PadMch))
+            |> Shared.withGroups
+                [ group "A–F" [ hero (a Voice "KNOB_A"), knob (a Voice "KNOB_B"), knob (a Voice "KNOB_C"), knob (a Voice "KNOB_D"), knob (a Voice "KNOB_E"), knob (a Voice "KNOB_F") ]
+                , group "MORE" [ knob (a Voice "KNOB_G"), knob (a Voice "KNOB_H") ]
                 ]
-          }
-        , filter
-        , { amp
-            | screen = tall ("PAD" ++ n ++ "_AMP")
-            , groups =
-                [ group "" [ fader (a "_AMP" "ATTACK"), fader (a "_AMP" "HOLD"), fader (a "_AMP" "DECAY") ]
-                , group "" [ auto (a "_AMP" "SPEED"), auto (a "_AMP" "MODE"), fader (a "_AMP" "VEL") ]
-                , group "GATE" [ fader (a "_AMP" "LPG"), fader (a "_AMP" "GATE_DECAY"), fader (a "_AMP" "STRIKE") ]
+        , Shared.filterCore (Pad p PadFilter) (on PadFlt)
+        , module_ Chip.Pad "AMP"
+            |> Shared.withScreen (tall (on PadAmp))
+            |> Shared.withGroups
+                [ group "" [ fader (a Amp "ATTACK"), fader (a Amp "HOLD"), fader (a Amp "DECAY") ]
+                , group "" [ auto (a Amp "SPEED"), auto (a Amp "MODE"), fader (a Amp "VEL") ]
+                , group "GATE" [ fader (a Amp "LPG"), fader (a Amp "GATE_DECAY"), fader (a Amp "STRIKE") ]
                 ]
-          }
-        , { penv
-            | screen = tall ("PAD" ++ n ++ "_PENV")
-            , groups = [ group "" [ fader (a "_ENV" "ATTACK"), fader (a "_ENV" "HOLD"), fader (a "_ENV" "DECAY") ], group "" [ auto (a "_ENV" "SPEED") ] ]
-          }
-        , { plfo
-            | screen = strip ("PAD" ++ n ++ "_PLFO")
-            , groups = [ group "" [ hero (a "_LFO" "SPEED"), auto (a "_LFO" "WAVE") ], group "" [ fader (a "_LFO" "DEPTH"), knob (a "_LFO" "PHASE"), auto (a "_LFO" "MODE") ] ]
-          }
-        , { routes | full = True, extras = [ PadRoutes p ] }
+        , module_ Chip.Pad "PITCH ENV"
+            |> Shared.withScreen (tall (on PadPenv))
+            |> Shared.withGroups [ group "" [ fader (a PitchEnv "ATTACK"), fader (a PitchEnv "HOLD"), fader (a PitchEnv "DECAY") ], group "" [ auto (a PitchEnv "SPEED") ] ]
+        , module_ Chip.Pad "PITCH LFO"
+            |> Shared.withScreen (strip (on PadPlfo))
+            |> Shared.withGroups [ group "" [ hero (a PitchLfo "SPEED"), auto (a PitchLfo "WAVE") ], group "" [ fader (a PitchLfo "DEPTH"), knob (a PitchLfo "PHASE"), auto (a PitchLfo "MODE") ] ]
+
+        -- Half a row, beside nothing: whether it takes the whole row waits on the owner.
+        , module_ Chip.Pad "ROUTE 1–4" |> Shared.withExtras [ PadRoutes p ]
         ]
         ++ [ Shared.mod ]

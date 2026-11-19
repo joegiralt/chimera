@@ -7,6 +7,7 @@ import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
 import Test.Html.Selector as Sel
+import Ui.Chip as Chip
 import Ui.Module as Module exposing (Fold(..))
 import Ui.Page as Page exposing (Current(..), Effect(..), Link(..), Msg(..))
 import Ui.Tokens exposing (Theme(..))
@@ -21,7 +22,20 @@ type Go
 
 m : String -> Module.Config Go
 m t =
-    Module.new t |> Module.body [ text (t ++ " body") ]
+    Module.new
+        (if t == "AMP" then
+            Chip.Amp
+
+         else
+            Chip.Filter
+        )
+        t
+        |> Module.body [ text (t ++ " body") ]
+
+
+env : String -> Module.Config Go
+env t =
+    Module.new Chip.Envelopes t |> Module.body [ text (t ++ " body") ]
 
 
 page : Page.Config Go
@@ -31,7 +45,7 @@ page =
         |> Page.parts [ { kicker = "P1 · VA", name = "WARM SAW PAD", current = Elsewhere, go = GoP1 }, { kicker = "P2 · ALGO", name = "GLASS BELLS", current = Here, go = GoP2 } ]
         |> Page.units [ { kicker = "UNIT", name = "MIXER", current = Elsewhere, go = GoMixer } ]
         |> Page.link (Linked "PREENFM3 · 0.4.0 · LIVE")
-        |> Page.modules [ m "FILTER", m "AMP", Module.chip "ENVELOPES" (m "ENV 1"), Module.chip "ENVELOPES" (m "ENV 2") ]
+        |> Page.modules [ m "FILTER", m "AMP", env "ENV 1", env "ENV 2" ]
 
 
 {-| What the page asked of its own update, if anything.
@@ -79,12 +93,12 @@ suite =
                 let
                     hidden : Page.State
                     hidden =
-                        Page.init Day |> Page.update (ToggleChip "ENVELOPES") |> Tuple.first
+                        Page.init Day |> Page.update (ToggleChip Chip.Envelopes) |> Tuple.first
                 in
                 Expect.all
                     [ \_ -> render hidden |> Query.findAll [ Sel.class "sec" ] |> Query.count (Expect.equal 2)
                     , \_ -> render hidden |> Query.find [ Sel.class "chip", Sel.containing [ Sel.text "ENVELOPES" ] ] |> Query.has [ Sel.class "off", Sel.attribute (attribute "aria-pressed" "false") ]
-                    , \_ -> render (hidden |> Page.update (ToggleChip "ENVELOPES") |> Tuple.first) |> Query.findAll [ Sel.class "sec" ] |> Query.count (Expect.equal 4)
+                    , \_ -> render (hidden |> Page.update (ToggleChip Chip.Envelopes) |> Tuple.first) |> Query.findAll [ Sel.class "sec" ] |> Query.count (Expect.equal 4)
                     ]
                     ()
         , test "one_chip_per_group_in_page_order" <|
@@ -97,7 +111,7 @@ suite =
                 render (Page.init Day)
                     |> Query.find [ Sel.class "chip", Sel.containing [ Sel.text "FOLD ALL" ] ]
                     |> Event.simulate Event.click
-                    |> Event.expect (Page (Folding (Module.SetFold (List.map Module.idOf [ m "FILTER", m "AMP", m "ENV 1", m "ENV 2" ]) Folded)))
+                    |> Event.expect (Page (Folding (Module.SetFold (List.map Module.idOf [ m "FILTER", m "AMP", env "ENV 1", env "ENV 2" ]) Folded)))
         , test "modules_sit_in_rows_of_two" <|
             \_ ->
                 render (Page.init Day)

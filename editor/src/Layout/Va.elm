@@ -4,66 +4,57 @@ module Layout.Va exposing (modules)
 PITCH and MOD. The wave is the continuous variable wave, so it is a knob.
 -}
 
+import Addr exposing (Addr, Block(..), Osc(..))
+import Layout.Page exposing (UnitPage(..))
 import Layout.Shared as Shared exposing (Module, auto, fader, group, hero, knob, menu, module_, strip)
+import Ui.Chip as Chip
 import Ui.Screen exposing (Glyph(..))
 
 
 modules : List Module
 modules =
-    [ osc 1, osc 2, mode, mixer, Shared.filter, Shared.filterMod, Shared.voiceFx, Shared.ampOut ]
-        ++ List.map Shared.envelope (List.range 1 3)
-        ++ List.map Shared.lfo (List.range 1 3)
+    [ osc Osc1, osc Osc2, mode, mixer, Shared.filter, Shared.filterMod, Shared.voiceFx Fx, Shared.ampOut ]
+        ++ List.map Shared.envelope Addr.envs
+        ++ List.map Shared.lfo Addr.lfos
         ++ [ Shared.pitch, Shared.mod ]
 
 
-osc : Int -> Module
-osc n =
-    let
-        m : Module
-        m =
-            module_ ("OSC " ++ String.fromInt n) "OSCILLATORS"
+va : String -> Addr
+va =
+    Addr.field >> Addr.at Va
 
-        a : String -> String
-        a f =
-            "VA." ++ f ++ String.fromInt n
+
+osc : Osc -> Module
+osc o =
+    let
+        a : String -> Addr
+        a =
+            Addr.field >> Addr.vaOsc o
     in
-    { m
-        | screen = Maybe.map (\s -> { s | fallback = Just VaWave }) (strip ("OSC" ++ String.fromInt n))
-        , groups =
+    module_ Chip.Oscillators ("OSC " ++ String.fromInt (Addr.oscNumber o))
+        |> Shared.withScreen (strip (OscPage o) |> Shared.withFallback VaWave)
+        |> Shared.withGroups
             [ group "" [ hero (a "WAVE"), knob (a "SHAPE") ]
             , group "PITCH" [ knob (a "CRSE"), knob (a "FINE") ]
             ]
-    }
 
 
 mode : Module
 mode =
-    let
-        m : Module
-        m =
-            module_ "MODE" "OSCILLATORS"
-    in
-    { m
-        | screen = strip "VA"
-        , groups =
-            [ group "" [ menu "VA.MODE" ]
-            , group "" [ hero "VA.AMOUNT" ]
-            , group "" [ fader "VA.STAB" ]
+    module_ Chip.Oscillators "MODE"
+        |> Shared.withScreen (strip VaPage)
+        |> Shared.withGroups
+            [ group "" [ menu (va "MODE") ]
+            , group "" [ hero (va "AMOUNT") ]
+            , group "" [ fader (va "STAB") ]
             ]
-    }
 
 
 mixer : Module
 mixer =
-    let
-        m : Module
-        m =
-            module_ "MIXER" "OSCILLATORS"
-    in
-    { m
-        | screen = strip "NOISE"
-        , groups =
-            [ group "" [ fader "VA.SUB" ]
-            , group "NOISE" [ auto "VA.NOISEKIND", fader "VA.NOISE" ]
+    module_ Chip.Oscillators "MIXER"
+        |> Shared.withScreen (strip Noise)
+        |> Shared.withGroups
+            [ group "" [ fader (va "SUB") ]
+            , group "NOISE" [ auto (va "NOISEKIND"), fader (va "NOISE") ]
             ]
-    }

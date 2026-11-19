@@ -1,17 +1,20 @@
 module ControlTest exposing (suite)
 
+import Addr exposing (Addr)
 import Contract
 import Expect
 import Fixture
 import Html
 import Json.Encode as Encode
-import Protocol exposing (Addr(..), OptIndex, Scale(..))
+import Protocol exposing (OptIndex, Scale(..))
 import Schema exposing (Param)
 import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
 import Test.Html.Selector as Sel
 import Ui.Control as Control exposing (Direction(..), Intent(..), Msg(..), Target(..), Travel(..), Want(..))
+import Ui.Tokens as Tokens
+import Wire exposing (addr)
 
 
 param : String -> Param
@@ -26,25 +29,25 @@ suite =
             [ test "many_wants_for_one_control_flush_as_one_the_last" <|
                 \_ ->
                     Control.empty
-                        |> Control.want (Addr "FILTER.CUTOFF") (Number 100)
-                        |> Control.want (Addr "FILTER.CUTOFF") (Number 200)
-                        |> Control.want (Addr "FILTER.CUTOFF") (Number 300)
+                        |> Control.want (addr "FILTER.CUTOFF") (Number 100)
+                        |> Control.want (addr "FILTER.CUTOFF") (Number 200)
+                        |> Control.want (addr "FILTER.CUTOFF") (Number 300)
                         |> Control.flush
                         |> Tuple.first
-                        |> Expect.equal [ ( Addr "FILTER.CUTOFF", Number 300 ) ]
+                        |> Expect.equal [ ( addr "FILTER.CUTOFF", Number 300 ) ]
             , test "two_controls_flush_one_each" <|
                 \_ ->
                     Control.empty
-                        |> Control.want (Addr "FILTER.RESO") (Number 0.5)
-                        |> Control.want (Addr "FILTER.CUTOFF") (Number 300)
-                        |> Control.want (Addr "FILTER.RESO") (Number 0.6)
+                        |> Control.want (addr "FILTER.RESO") (Number 0.5)
+                        |> Control.want (addr "FILTER.CUTOFF") (Number 300)
+                        |> Control.want (addr "FILTER.RESO") (Number 0.6)
                         |> Control.flush
                         |> Tuple.first
-                        |> Expect.equal [ ( Addr "FILTER.CUTOFF", Number 300 ), ( Addr "FILTER.RESO", Number 0.6 ) ]
+                        |> Expect.equal [ ( addr "FILTER.CUTOFF", Number 300 ), ( addr "FILTER.RESO", Number 0.6 ) ]
             , test "a_flush_empties_so_the_next_frame_sends_nothing" <|
                 \_ ->
                     Control.empty
-                        |> Control.want (Addr "FILTER.RESO") (Number 0.5)
+                        |> Control.want (addr "FILTER.RESO") (Number 0.5)
                         |> Control.flush
                         |> Tuple.second
                         |> Control.flush
@@ -53,11 +56,11 @@ suite =
             , test "an_option_is_a_want_too" <|
                 \_ ->
                     Control.empty
-                        |> Control.want (Addr "FILTER.KIND") (Option (Contract.opt 1))
-                        |> Control.want (Addr "FILTER.KIND") (Option (Contract.opt 2))
+                        |> Control.want (addr "FILTER.KIND") (Option (Contract.opt 1))
+                        |> Control.want (addr "FILTER.KIND") (Option (Contract.opt 2))
                         |> Control.flush
                         |> Tuple.first
-                        |> Expect.equal [ ( Addr "FILTER.KIND", Option (Contract.opt 2) ) ]
+                        |> Expect.equal [ ( addr "FILTER.KIND", Option (Contract.opt 2) ) ]
             ]
         , describe "where a turn lands"
             [ test "the_unit_says_cutoff_turns_by_octaves_the_rate_by_range" <|
@@ -114,12 +117,12 @@ suite =
 
 cutoff : Addr
 cutoff =
-    Addr "FILTER.CUTOFF"
+    addr "FILTER.CUTOFF"
 
 
 kind : Addr
 kind =
-    Addr "FILTER.KIND"
+    addr "FILTER.KIND"
 
 
 opt : Int -> OptIndex
@@ -176,7 +179,7 @@ updates =
                 |> Expect.equal []
     , test "a_grab_of_an_unknown_address_drags_nothing" <|
         \_ ->
-            run [ Grab (Addr "NOPE") Knob 300, Moved 0 ]
+            run [ Grab (addr "NOPE") Knob 300, Moved 0 ]
                 |> Expect.equal []
     , test "a_wheel_notch_steps_a_value_and_a_choice" <|
         \_ ->
@@ -212,7 +215,16 @@ hands =
         \_ -> probe |> Event.simulate Event.doubleClick |> Event.expect (Reset cutoff)
     , test "a_readout_is_sized_in_ch_with_tabular_numerals" <|
         \_ ->
-            Control.readout 7 (Control.reading 0.5 "1.20 kHz")
+            Control.readout Tokens.readoutChars (Control.reading 0.5 "1.20 kHz")
                 |> Query.fromHtml
-                |> Query.has [ Sel.style "width" "7ch", Sel.class "v", Sel.text "1.20 kHz" ]
+                |> Query.has [ Sel.style "width" "8ch", Sel.class "v", Sel.text "1.20 kHz" ]
+    , test "a_chars_count_is_never_less_than_one" <|
+        \_ -> List.map (Tokens.chars >> Maybe.map Tokens.charsCount) [ 0, -2, 1, 9 ] |> Expect.equal [ Nothing, Nothing, Just 1, Just 9 ]
+    , test "bipolar_follows_from_the_range_alone" <|
+        \_ ->
+            List.map Control.polarity [ { min = -24, max = 24 }, { min = 0, max = 127 }, { min = -1, max = 0 }, { min = 20, max = 20000 } ]
+                |> List.map Control.isBipolar
+                |> Expect.equal [ True, False, False, False ]
+    , test "a_value_not_reported_reads_as_missing_never_as_nothing" <|
+        \_ -> ( Control.norm Control.missing, Control.text Control.missing ) |> Expect.equal ( Nothing, "--" )
     ]

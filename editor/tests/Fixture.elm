@@ -1,9 +1,10 @@
 module Fixture exposing (param, paramIn, schema, schemaFor)
 
 import FixtureData
-import Protocol exposing (Addr(..), Line(..))
+import Protocol exposing (Line(..))
 import Schema exposing (Schema)
 import Unit exposing (Engine(..))
+import Wire exposing (addr)
 
 
 {-| What the unit's `ed describe ALGO` answers, read the way the model reads it.
@@ -51,6 +52,9 @@ read =
                 Err_ _ ->
                     s
 
+                SetRefused _ _ ->
+                    s
+
                 SinceTooLarge ->
                     s
 
@@ -73,7 +77,7 @@ empty), so the test fails on it.
 -}
 missing : String -> Schema.Param
 missing a =
-    { addr = Addr a
+    { addr = addr a
     , label = "NOT IN THE FIXTURE: " ++ a
     , kind = Protocol.Cont
     , scale = Protocol.Linear
@@ -89,7 +93,7 @@ missing a =
 -}
 paramIn : Schema -> String -> Schema.Param
 paramIn sch a =
-    case Schema.param (Addr a) sch of
+    case Schema.param (addr a) sch of
         Just p ->
             p
 

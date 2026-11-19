@@ -5,14 +5,16 @@ and the JITTER probe: it steps every control through its range and reports
 the largest shift of any box, which must stay 0.00 px.
 -}
 
+import Addr exposing (Addr)
 import Browser
 import Dict exposing (Dict)
 import Html exposing (Html, button, div, h1, span, text)
 import Html.Attributes exposing (class, classList)
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
-import Protocol exposing (Addr(..), OptIndex, addrKey)
-import Ui.Control as Control exposing (Chosen, Intent(..), Option, Reading, Sync(..), Target(..))
+import Protocol exposing (OptIndex)
+import Ui.Chip as Chip
+import Ui.Control as Control exposing (Chosen, Intent(..), Mark(..), Option, Reading, Target(..))
 import Ui.Fader as Fader
 import Ui.Knob as Knob
 import Ui.Menu as Menu
@@ -21,11 +23,11 @@ import Ui.Pad as Pad exposing (Pad(..))
 import Ui.PadStrip as PadStrip
 import Ui.Page as Page exposing (Current(..), Effect(..), Link(..))
 import Ui.PatchBay as PatchBay
-import Ui.Routes as Routes exposing (Dest(..), Routes, Source(..))
+import Ui.Routes as Routes exposing (Dest, Routes, Source)
 import Ui.Screen as Screen exposing (Glyph(..))
 import Ui.Selector as Selector
 import Ui.Toggle as Toggle
-import Ui.Tokens as Tokens exposing (Os(..), Theme(..))
+import Ui.Tokens as Tokens exposing (Theme(..))
 import Ui.WordRow as WordRow
 import Unit exposing (Engine(..))
 
@@ -66,8 +68,17 @@ type Format
 
 
 type Entry
-    = Cont { norm : Float, format : Format, sync : Sync, override : Maybe String }
-    | Pick { options : List OptIndex, current : OptIndex, sync : Sync }
+    = Cont { norm : Float, format : Format, mark : Mark, override : Maybe String, reported : Bool }
+    | Pick { options : List OptIndex, current : OptIndex, mark : Mark, place : Place }
+
+
+{-| Where a choice is: on its option, on a value the unit's list lacks, or
+not reported yet.
+-}
+type Place
+    = OnOption
+    | OffList
+    | NotReported
 
 
 type Layout
@@ -132,24 +143,18 @@ init flags =
     let
         preference : Tokens.Preference
         preference =
-            Decode.decodeValue
-                (Decode.map2 (\s d -> { stored = s, os = os d })
-                    (Decode.field "stored" (Decode.nullable Decode.string))
-                    (Decode.field "dark" Decode.bool)
-                )
-                flags
-                |> Result.withDefault { stored = Nothing, os = OsLight }
+            Tokens.preference flags
 
         fresh : Theme -> Column
         fresh t =
             { page =
                 Page.init t
-                    |> Page.update (Page.Folding (Module.SetFold [ Module.idOf (Module.new "FOLDED") ] Folded))
+                    |> Page.update (Page.Folding (Module.SetFold [ Module.idOf (Module.new Chip.Folding "FOLDED") ] Folded))
                     |> Tuple.first
             , menu = Menu.shut
             }
     in
-    ( { values = Dict.fromList (List.map (\( a, e ) -> ( addrKey a, e )) entries)
+    ( { values = Dict.fromList (List.map (\( a, e ) -> ( Addr.key a, e )) entries)
       , drag = Control.idle
       , layout = Both
       , day = fresh Day
@@ -157,8 +162,8 @@ init flags =
       , one = fresh (Tokens.fromPreference preference)
       , bayOne = PatchBay.init
       , bayMany = PatchBay.init
-      , routesOne = Routes.add (cable "ENV1" "FREQ" 30) blankRoutes
-      , routesMany = List.foldl Routes.add blankRoutes [ cable "ENV1" "FREQ" 0, cable "VELO" "OUT DECAY" 30, cable "NOTE" "FREQ" -45, cable "LFO2" "Q" 80, cable "ENV3" "VCA" -100 ]
+      , routesOne = List.foldl Routes.add blankRoutes (cable "ENV1" "FREQ" 30)
+      , routesMany = List.foldl Routes.add blankRoutes (List.concat [ cable "ENV1" "FREQ" 0, cable "VELO" "OUT DECAY" 30, cable "NOTE" "FREQ" -45, cable "LFO2" "Q" 80, cable "ENV3" "VCA" -100 ])
       , pad = PadStrip.PadTab Pad9
       , jitter = Idle
       }
@@ -166,25 +171,41 @@ init flags =
     )
 
 
-os : Bool -> Os
-os dark =
-    if dark then
-        OsDark
+sourceNames : List Option
+sourceNames =
+    options [ "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3", "VELO", "NOTE", "WHEEL" ]
 
-    else
-        OsLight
+
+destNames : List Option
+destNames =
+    options [ "FREQ", "Q", "VCA", "FX", "OUT DECAY", "PIT PITCH" ]
 
 
 blankRoutes : Routes
 blankRoutes =
-    Routes.new
-        (List.map Source [ "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3", "VELO", "NOTE", "WHEEL" ])
-        (List.map Dest [ "FREQ", "Q", "VCA", "FX", "OUT DECAY", "PIT PITCH" ])
+    Routes.new (List.map Routes.source sourceNames) (List.map Routes.dest destNames)
 
 
-cable : String -> String -> Int -> Routes.Cable
+{-| A demo address: the gallery's controls stand for no real parameter.
+-}
+demo : String -> Addr
+demo =
+    Addr.field >> Addr.at Addr.Kit
+
+
+named : String -> List Option -> List Option
+named n =
+    List.filter (\( _, x ) -> x == n)
+
+
+cable : String -> String -> Int -> List Routes.Cable
 cable s d a =
-    { from = Source s, to = Dest d, amount = Routes.amount a, addr = Addr ("MOD." ++ s ++ "." ++ d) }
+    List.map2 (\so de -> wire (Routes.source so) (Routes.dest de) a) (named s sourceNames) (named d destNames)
+
+
+wire : Source -> Dest -> Int -> Routes.Cable
+wire s d a =
+    { from = s, to = d, amount = Routes.amount a, addr = demo ("MOD_" ++ Routes.sourceName s ++ "_" ++ Routes.destName d) }
 
 
 
@@ -205,14 +226,14 @@ options names =
 
 cont : Float -> Format -> Entry
 cont n f =
-    Cont { norm = n, format = f, sync = Confirmed, override = Nothing }
+    Cont { norm = n, format = f, mark = Clear, override = Nothing, reported = True }
 
 
 pick : Int -> Int -> Entry
 pick n i =
     case List.drop i (indices n) of
         current :: _ ->
-            Pick { options = indices n, current = current, sync = Confirmed }
+            Pick { options = indices n, current = current, mark = Clear, place = OnOption }
 
         [] ->
             cont 0 Plain
@@ -255,33 +276,33 @@ accents =
 
 entries : List ( Addr, Entry )
 entries =
-    [ ( Addr "K.CUTOFF", cont 0.62 Hertz )
-    , ( Addr "K.HERO", cont 0.45 Hertz )
-    , ( Addr "K.TRNSP", cont 0.5 Semis )
-    , ( Addr "K.NARROW", cont 0.3 Plain )
-    , ( Addr "K.PEND", cont 0.7 Millis )
-    , ( Addr "F.LEVEL", cont 0.98 Plain )
-    , ( Addr "F.HERO", cont 0.54 Plain )
-    , ( Addr "F.BIP", cont 0.2 Signed )
-    , ( Addr "F.ATTACK", cont 0.1 Millis )
-    , ( Addr "T.STEAL0", pick 2 0 )
-    , ( Addr "T.STEAL1", pick 2 1 )
-    , ( Addr "T.SPEED0", pick 3 0 )
-    , ( Addr "T.SPEED1", pick 3 1 )
-    , ( Addr "T.SPEED2", pick 3 2 )
-    , ( Addr "S.WAVE0", pick 4 0 )
-    , ( Addr "S.WAVE1", pick 4 1 )
-    , ( Addr "S.WAVE2", pick 4 2 )
-    , ( Addr "S.WAVE3", pick 4 3 )
-    , ( Addr "S.MODE", pick 8 6 )
-    , ( Addr "M.ALG", pick 11 0 )
-    , ( Addr "M.SHAPE", pick 9 1 )
-    , ( Addr "M.WAVE", pick 11 10 )
-    , ( Addr "W.ACCENT", pick 5 3 )
+    [ ( demo "K_CUTOFF", cont 0.62 Hertz )
+    , ( demo "K_HERO", cont 0.45 Hertz )
+    , ( demo "K_TRNSP", cont 0.5 Semis )
+    , ( demo "K_NARROW", cont 0.3 Plain )
+    , ( demo "K_PEND", cont 0.7 Millis )
+    , ( demo "F_LEVEL", cont 0.98 Plain )
+    , ( demo "F_HERO", cont 0.54 Plain )
+    , ( demo "F_BIP", cont 0.2 Signed )
+    , ( demo "F_ATTACK", cont 0.1 Millis )
+    , ( demo "T_STEAL0", pick 2 0 )
+    , ( demo "T_STEAL1", pick 2 1 )
+    , ( demo "T_SPEED0", pick 3 0 )
+    , ( demo "T_SPEED1", pick 3 1 )
+    , ( demo "T_SPEED2", pick 3 2 )
+    , ( demo "S_WAVE0", pick 4 0 )
+    , ( demo "S_WAVE1", pick 4 1 )
+    , ( demo "S_WAVE2", pick 4 2 )
+    , ( demo "S_WAVE3", pick 4 3 )
+    , ( demo "S_MODE", pick 8 6 )
+    , ( demo "M_ALG", pick 11 0 )
+    , ( demo "M_SHAPE", pick 9 1 )
+    , ( demo "M_WAVE", pick 11 10 )
+    , ( demo "W_ACCENT", pick 5 3 )
     ]
         |> List.map
             (\( a, e ) ->
-                if a == Addr "K.PEND" then
+                if a == demo "K_PEND" then
                     ( a, pend e )
 
                 else
@@ -289,14 +310,21 @@ entries =
             )
 
 
+{-| A value the unit refused, with the box's own reason.
+-}
 pend : Entry -> Entry
 pend e =
     case e of
         Cont c ->
-            Cont { c | sync = Pending }
+            Cont { c | mark = Refused refusal }
 
         Pick p ->
-            Pick { p | sync = Pending }
+            Pick { p | mark = Refused refusal }
+
+
+refusal : String
+refusal =
+    "NOT ON THIS MACHINE"
 
 
 format : Format -> Float -> String
@@ -371,38 +399,55 @@ signed v =
 
 readingOf : Model -> String -> Reading
 readingOf m key =
-    case Dict.get key m.values of
+    case Dict.get (Addr.key (demo key)) m.values of
         Just (Cont c) ->
             let
                 r : Reading
                 r =
-                    Control.reading c.norm (Maybe.withDefault (format c.format c.norm) c.override)
-            in
-            case c.sync of
-                Pending ->
-                    Control.pending r
+                    if c.reported then
+                        Control.reading c.norm (Maybe.withDefault (format c.format c.norm) c.override)
 
-                Confirmed ->
+                    else
+                        Control.missing
+            in
+            case c.mark of
+                Refused why ->
+                    Control.refused why r
+
+                Clear ->
                     r
 
         Just (Pick _) ->
-            Control.reading 0 "--"
+            Control.missing
 
         Nothing ->
-            Control.reading 0 "--"
+            Control.missing
 
 
 chosenOf : Model -> String -> Maybe Chosen
 chosenOf m key =
-    case Dict.get key m.values of
+    case Dict.get (Addr.key (demo key)) m.values of
         Just (Pick p) ->
-            Just
-                (case p.sync of
-                    Pending ->
-                        Control.pendingChoice (Control.chosen p.current)
+            let
+                at : Chosen
+                at =
+                    case p.place of
+                        OnOption ->
+                            Control.chosen p.current
 
-                    Confirmed ->
-                        Control.chosen p.current
+                        OffList ->
+                            Control.notInList
+
+                        NotReported ->
+                            Control.noValue
+            in
+            Just
+                (case p.mark of
+                    Refused why ->
+                        Control.refusedChoice why at
+
+                    Clear ->
+                        at
                 )
 
         Just (Cont _) ->
@@ -423,7 +468,7 @@ lookup m a =
             Just (Continuous { norm = Routes.amountNorm c.amount, wheel = 0.005 })
 
         [] ->
-            case Dict.get (addrKey a) m.values of
+            case Dict.get (Addr.key a) m.values of
                 Just (Cont c) ->
                     Just (Continuous { norm = c.norm, wheel = 1 / 64 })
 
@@ -439,13 +484,13 @@ apply intent m =
     case intent of
         SetNorm a t ->
             { m
-                | values = Dict.update (addrKey a) (Maybe.map (setNorm t)) m.values
+                | values = Dict.update (Addr.key a) (Maybe.map (setNorm t)) m.values
                 , routesOne = Routes.setAmount a (Routes.amountFromNorm t) m.routesOne
                 , routesMany = Routes.setAmount a (Routes.amountFromNorm t) m.routesMany
             }
 
         SetOption a i ->
-            { m | values = Dict.update (addrKey a) (Maybe.map (setOption i)) m.values }
+            { m | values = Dict.update (Addr.key a) (Maybe.map (setOption i)) m.values }
 
         Restore a ->
             apply (SetNorm a 0.5) m
@@ -593,8 +638,8 @@ bayEffect which effect m =
                     { m | routesMany = f m.routesMany }
     in
     case effect of
-        PatchBay.Patched (Source s) (Dest d) ->
-            onRoutes (Routes.add (cable s d 30))
+        PatchBay.Patched s d ->
+            onRoutes (Routes.add (wire s d 30))
 
         PatchBay.Unpatched s d ->
             onRoutes (Routes.remove s d)
@@ -623,13 +668,26 @@ atSample k saved m =
         t =
             toFloat k / toFloat samples
 
-        sync : Sync
-        sync =
+        -- Refused on odd samples; every fifth not reported, every seventh
+        -- (a choice) off its list.
+        mark : Mark
+        mark =
             if modBy 2 k == 1 then
-                Pending
+                Refused refusal
 
             else
-                Confirmed
+                Clear
+
+        place : Place
+        place =
+            if modBy 5 k == 4 then
+                NotReported
+
+            else if modBy 7 k == 6 then
+                OffList
+
+            else
+                OnOption
 
         override : Maybe String
         override =
@@ -646,10 +704,10 @@ atSample k saved m =
         step e =
             case e of
                 Cont c ->
-                    Cont { c | norm = t, sync = sync, override = override }
+                    Cont { c | norm = t, mark = mark, override = override, reported = modBy 5 k /= 4 }
 
                 Pick p ->
-                    Pick { p | current = List.drop (modBy (max 1 (List.length p.options)) k) p.options |> List.head |> Maybe.withDefault p.current, sync = sync }
+                    Pick { p | current = List.drop (modBy (max 1 (List.length p.options)) k) p.options |> List.head |> Maybe.withDefault p.current, mark = mark, place = place }
 
         amounts : Routes -> Routes
         amounts r =
@@ -850,110 +908,120 @@ catalogue w menu m =
 
         selector : String -> List Option -> String -> Html Msg
         selector lab opts key =
-            Maybe.map2 (\sc c -> hands (Selector.view (Selector.label lab sc) c)) (Selector.fromOptions (Addr key) opts) (ch key)
+            Maybe.map2 (\sc c -> hands (Selector.view (Selector.label lab sc) c)) (Selector.fromOptions (demo key) opts) (ch key)
                 |> Maybe.withDefault (text "")
 
-        knob : String -> (Knob.Config -> Knob.Config) -> String -> Html Msg
-        knob lab f key =
-            hands (Knob.view (Knob.new (Addr key) |> Knob.label lab |> f) (r key))
+        knob : String -> Range -> (Knob.Config -> Knob.Config) -> String -> Html Msg
+        knob lab range f key =
+            hands (Knob.view (Knob.new (demo key) (Control.polarity range) |> Knob.label lab |> f) (r key))
 
-        fader : String -> (Fader.Config -> Fader.Config) -> String -> Html Msg
-        fader lab f key =
-            hands (Fader.view (Fader.new (Addr key) |> Fader.label lab |> f) (r key))
+        fader : String -> Range -> (Fader.Config -> Fader.Config) -> String -> Html Msg
+        fader lab range f key =
+            hands (Fader.view (Fader.new (demo key) (Control.polarity range) |> Fader.label lab |> f) (r key))
 
         screen : Glyph -> String -> Html Msg
         screen g cap =
             Screen.view (Screen.new Algo g |> Screen.caption cap)
     in
-    [ Module.new "KNOB"
+    [ Module.new Chip.Controls "KNOB"
         |> Module.note "PLAIN · HERO · BIPOLAR · NARROW · PENDING"
-        |> Module.chip "CONTROLS"
-        |> Module.summary [ ( "CUTOFF", Control.text (r "K.CUTOFF") ) ]
+        |> Module.summary [ ( "CUTOFF", Control.text (r "K_CUTOFF") ) ]
         |> Module.body
             [ Module.panel
-                [ Module.group "" [ knob "CUTOFF" identity "K.CUTOFF", knob "TRANSPOSE" Knob.bipolar "K.TRNSP", knob "FINE" (Knob.chars 3) "K.NARROW", knob "DECAY" identity "K.PEND" ]
-                , Module.group "HERO" [ knob "CUTOFF" Knob.hero "K.HERO" ]
+                [ Module.group "" [ knob "CUTOFF" uni identity "K_CUTOFF", knob "TRANSPOSE" bip identity "K_TRNSP", knob "FINE" uni narrow "K_NARROW", knob "DECAY" uni identity "K_PEND" ]
+                , Module.group "HERO" [ knob "CUTOFF" uni Knob.hero "K_HERO" ]
                 ]
             ]
-    , Module.new "FADER"
+    , Module.new Chip.Controls "FADER"
         |> Module.note "PLAIN · HERO · BIPOLAR"
-        |> Module.chip "CONTROLS"
-        |> Module.jacks [ In "LEVEL", Out "ENV" ]
+        |> Module.jacks (List.map (Routes.dest >> In) (named "VCA" destNames) ++ List.map (Routes.source >> Out) (named "ENV1" sourceNames))
         |> Module.body
             [ Module.panel
-                [ Module.group "OUTPUT" [ fader "LEVEL" Fader.hero "F.HERO", fader "VELO" identity "F.LEVEL" ]
-                , Module.group "ENVELOPE" [ fader "ATTACK" identity "F.ATTACK", fader "AMOUNT" Fader.bipolar "F.BIP" ]
+                [ Module.group "OUTPUT" [ fader "LEVEL" uni Fader.hero "F_HERO", fader "VELO" uni identity "F_LEVEL" ]
+                , Module.group "ENVELOPE" [ fader "ATTACK" uni identity "F_ATTACK", fader "AMOUNT" bip identity "F_BIP" ]
                 ]
             ]
-    , Module.new "TOGGLE"
+    , Module.new Chip.Choices "TOGGLE"
         |> Module.note "EVERY POSITION"
-        |> Module.chip "CHOICES"
         |> Module.body
             [ Module.panel
-                [ Module.group "TWO" (List.map (\i -> toggle (Toggle.fromOptions (Addr ("T.STEAL" ++ String.fromInt i)) steal |> Maybe.map (Toggle.label "STEAL")) ("T.STEAL" ++ String.fromInt i)) [ 0, 1 ])
-                , Module.group "THREE" (List.map (\i -> toggle (Toggle.fromOptions (Addr ("T.SPEED" ++ String.fromInt i)) speed |> Maybe.map (Toggle.label "SPEED")) ("T.SPEED" ++ String.fromInt i)) [ 0, 1, 2 ])
+                [ Module.group "TWO" (List.map (\i -> toggle (Toggle.fromOptions (demo ("T_STEAL" ++ String.fromInt i)) steal |> Maybe.map (Toggle.label "STEAL")) ("T_STEAL" ++ String.fromInt i)) [ 0, 1 ])
+                , Module.group "THREE" (List.map (\i -> toggle (Toggle.fromOptions (demo ("T_SPEED" ++ String.fromInt i)) speed |> Maybe.map (Toggle.label "SPEED")) ("T_SPEED" ++ String.fromInt i)) [ 0, 1, 2 ])
                 ]
             ]
-    , Module.new "SELECTOR"
+    , Module.new Chip.Choices "SELECTOR"
         |> Module.note "FOUR TO EIGHT"
-        |> Module.chip "CHOICES"
         |> Module.body
             [ Module.panel
-                [ Module.group "FOUR" (List.map (\i -> selector "WAVE" wave ("S.WAVE" ++ String.fromInt i)) [ 0, 1, 2, 3 ])
-                , Module.group "EIGHT" [ selector "MODE" modes "S.MODE" ]
+                [ Module.group "FOUR" (List.map (\i -> selector "WAVE" wave ("S_WAVE" ++ String.fromInt i)) [ 0, 1, 2, 3 ])
+                , Module.group "EIGHT" [ selector "MODE" modes "S_MODE" ]
                 ]
             ]
-    , Module.new "MENU"
+    , Module.new Chip.Choices "MENU"
         |> Module.note "MORE THAN EIGHT"
-        |> Module.chip "CHOICES"
-        |> Module.menus [ menuView (Control.options algs |> Maybe.map (Menu.new (Addr "M.WAVE")) |> Maybe.map (Menu.label "WAVE" >> Menu.inHeader)) "M.WAVE" ]
+        |> Module.menus [ menuView (Control.options algs |> Maybe.map (Menu.new (demo "M_WAVE")) |> Maybe.map (Menu.label "WAVE" >> Menu.inHeader)) "M_WAVE" ]
         |> Module.body
             [ Module.panel
-                [ Module.group "" [ menuView (Control.options algs |> Maybe.map (Menu.new (Addr "M.ALG")) |> Maybe.map (Menu.label "ALG A")) "M.ALG" ]
-                , Module.group "WITH GLYPHS" [ menuView (Control.options shapes |> Maybe.map (Menu.new (Addr "M.SHAPE")) |> Maybe.map (Menu.label "SHAPE" >> Menu.glyphs shapeGlyph)) "M.SHAPE" ]
+                [ Module.group "" [ menuView (Control.options algs |> Maybe.map (Menu.new (demo "M_ALG")) |> Maybe.map (Menu.label "ALG A")) "M_ALG" ]
+                , Module.group "WITH GLYPHS" [ menuView (Control.options shapes |> Maybe.map (Menu.new (demo "M_SHAPE")) |> Maybe.map (Menu.label "SHAPE" >> Menu.glyphs shapeGlyph)) "M_SHAPE" ]
                 ]
             ]
-    , Module.new "WORD ROW"
+    , Module.new Chip.Choices "WORD ROW"
         |> Module.note "SETTINGS SHEET"
-        |> Module.chip "CHOICES"
-        |> Module.body [ Maybe.map2 (\opts c -> hands (WordRow.view (WordRow.new (Addr "W.ACCENT") opts |> WordRow.label "ACCENT") c)) (Control.options accents) (ch "W.ACCENT") |> Maybe.withDefault (text "") ]
-    , Module.new "SCREENS"
+        |> Module.body [ Maybe.map2 (\opts c -> hands (WordRow.view (WordRow.new (demo "W_ACCENT") opts |> WordRow.label "ACCENT") c)) (Control.options accents) (ch "W_ACCENT") |> Maybe.withDefault (text "") ]
+    , Module.new Chip.Screens "SCREENS"
         |> Module.note "THE UNIT'S GLYPHS"
-        |> Module.chip "SCREENS"
         |> Module.body
             [ Module.panel
                 [ Module.group "" [ screen AlgoChart "ALGORITHM", screen EnvAdsr "ENV", screen EnvFunction "FUNCTION", screen FilterClean "CLEAN" ]
                 , Module.group "" [ screen LfoClassic "LFO", screen VaWave "WAVE", screen OpWave "OP" ]
                 ]
             ]
-    , Module.new "TALL NEIGHBOUR"
+    , Module.new Chip.Screens "TALL NEIGHBOUR"
         |> Module.note "A ROW TAKES THE TALLER HEIGHT"
-        |> Module.chip "SCREENS"
-        |> Module.body [ Module.panel [ Module.group "" [ fader "A" identity "F.ATTACK", fader "D" identity "F.LEVEL" ] ] ]
-    , Module.new "FOLDED"
+        |> Module.body [ Module.panel [ Module.group "" [ fader "A" uni identity "F_ATTACK", fader "D" uni identity "F_LEVEL" ] ] ]
+    , Module.new Chip.Folding "FOLDED"
         |> Module.note "FOLDS ITS ROW"
-        |> Module.chip "FOLDING"
-        |> Module.summary [ ( "LEVEL", Control.text (r "F.LEVEL") ), ( "", Control.text (r "K.CUTOFF") ) ]
+        |> Module.summary [ ( "LEVEL", Control.text (r "F_LEVEL") ), ( "", Control.text (r "K_CUTOFF") ) ]
         |> Module.body [ text "folded" ]
-    , Module.new "ITS PAIR"
-        |> Module.chip "FOLDING"
+    , Module.new Chip.Folding "ITS PAIR"
         |> Module.summary [ ( "MODE", "LP4" ) ]
         |> Module.body [ text "folds with its row" ]
-    , Module.new "MOD"
+    , Module.new Chip.Mod "MOD"
         |> Module.note "ONE CABLE"
-        |> Module.chip "MOD"
         |> Module.full
         |> Module.body [ Html.map (BayMsg OneCable) (PatchBay.view m.bayOne m.routesOne) ]
-    , Module.new "MOD · MANY"
+    , Module.new Chip.Mod "MOD · MANY"
         |> Module.note "PATCH | MATRIX"
-        |> Module.chip "MOD"
         |> Module.full
         |> Module.body [ Html.map (BayMsg ManyCables) (PatchBay.view m.bayMany m.routesMany) ]
-    , Module.new "ALONE"
+    , Module.new Chip.Folding "ALONE"
         |> Module.note "A LONE HALF BESIDE A BLANK"
-        |> Module.chip "FOLDING"
         |> Module.body [ text "half a row" ]
     ]
+
+
+{-| A control's range, as the unit would describe it: its polarity follows.
+-}
+type alias Range =
+    { min : Float, max : Float }
+
+
+uni : Range
+uni =
+    { min = 0, max = 1 }
+
+
+bip : Range
+bip =
+    { min = -1, max = 1 }
+
+
+{-| A readout three characters wide.
+-}
+narrow : Knob.Config -> Knob.Config
+narrow c =
+    Tokens.chars 3 |> Maybe.map (\n -> Knob.chars n c) |> Maybe.withDefault c
 
 
 shapeGlyph : OptIndex -> Maybe Screen.Config

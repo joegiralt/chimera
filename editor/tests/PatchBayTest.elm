@@ -1,9 +1,9 @@
 module PatchBayTest exposing (suite)
 
+import Contract exposing (opt)
 import Expect
 import Html.Attributes exposing (attribute)
 import Json.Encode as Encode
-import Protocol exposing (Addr(..))
 import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
@@ -11,35 +11,36 @@ import Test.Html.Selector as Sel
 import Ui.Control as Control exposing (Travel(..))
 import Ui.MatrixGrid as MatrixGrid
 import Ui.PatchBay as PatchBay exposing (Effect(..), Msg(..), View(..))
-import Ui.Routes as Routes exposing (Dest(..), Routes, Sign(..), Source(..))
+import Ui.Routes as Routes exposing (Dest, Routes, Sign(..), Source)
+import Wire exposing (addr)
 
 
 env1 : Source
 env1 =
-    Source "ENV1"
+    Routes.source ( opt 0, "ENV1" )
 
 
 velo : Source
 velo =
-    Source "VELO"
+    Routes.source ( opt 2, "VELO" )
 
 
 freq : Dest
 freq =
-    Dest "FREQ"
+    Routes.dest ( opt 0, "FREQ" )
 
 
 q : Dest
 q =
-    Dest "Q"
+    Routes.dest ( opt 1, "Q" )
 
 
 routes : List Int -> Routes
 routes amounts =
-    Routes.new [ env1, Source "LFO1", velo ] [ freq, q, Dest "VCA" ]
+    Routes.new [ env1, Routes.source ( opt 1, "LFO1" ), velo ] [ freq, q, Routes.dest ( opt 2, "VCA" ) ]
         |> (\r ->
                 List.foldl
-                    (\( ( s, d ), a ) acc -> Routes.add { from = s, to = d, amount = Routes.amount a, addr = Addr ("RT." ++ String.fromInt a) } acc)
+                    (\( ( s, d ), a ) acc -> Routes.add { from = s, to = d, amount = Routes.amount a, addr = addr ("RT.A" ++ String.fromInt (abs a)) } acc)
                     r
                     (List.map2 Tuple.pair [ ( env1, freq ), ( velo, q ) ] amounts)
            )
@@ -65,14 +66,14 @@ suite =
             , test "set_amount_moves_only_its_cable" <|
                 \_ ->
                     routes [ 30, -45 ]
-                        |> Routes.setAmount (Addr "RT.30") (Routes.amount 70)
+                        |> Routes.setAmount (addr "RT.A30") (Routes.amount 70)
                         |> Routes.cables
                         |> List.map (.amount >> Routes.amountValue)
                         |> Expect.equal [ 70, -45 ]
             , test "a_second_cable_between_the_same_jacks_replaces_the_first" <|
                 \_ ->
                     routes [ 30 ]
-                        |> Routes.add { from = env1, to = freq, amount = Routes.amount 5, addr = Addr "RT.5" }
+                        |> Routes.add { from = env1, to = freq, amount = Routes.amount 5, addr = addr "RT.A5" }
                         |> Routes.cables
                         |> List.map (.amount >> Routes.amountValue)
                         |> Expect.equal [ 5 ]
@@ -96,7 +97,7 @@ suite =
                         |> Query.fromHtml
                         |> Query.find [ Sel.class "att" ]
                         |> Event.simulate (Event.custom "mousedown" (Encode.object [ ( "clientY", Encode.float 5 ) ]))
-                        |> Event.expect (Hand (Control.Grab (Addr "RT.30") Attenuverter 5))
+                        |> Event.expect (Hand (Control.Grab (addr "RT.A30") Attenuverter 5))
             , test "a_double_click_on_an_attenuverter_unpatches" <|
                 \_ ->
                     PatchBay.view bay (routes [ 30 ])
@@ -170,7 +171,7 @@ suite =
                         |> Query.fromHtml
                         |> Query.find [ Sel.tag "td", Sel.class "adds" ]
                         |> Event.simulate (Event.custom "mousedown" (Encode.object [ ( "clientY", Encode.float 5 ) ]))
-                        |> Event.expect (Hand (Control.Grab (Addr "RT.30") Attenuverter 5))
+                        |> Event.expect (Hand (Control.Grab (addr "RT.A30") Attenuverter 5))
             , test "an_empty_cell_patches" <|
                 \_ ->
                     MatrixGrid.view { connect = Connect, hand = Hand } (routes [])

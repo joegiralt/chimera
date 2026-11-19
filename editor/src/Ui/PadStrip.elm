@@ -1,4 +1,4 @@
-module Ui.PadStrip exposing (Config, Msg(..), Tab(..), new, view)
+module Ui.PadStrip exposing (Config, Msg(..), Tab(..), icons, new, view)
 
 {-| DRUM as on the box: a KIT tab, then PAD 1–12 as the unit's pad grid
 (machine icon, number, name), Analog Rytm Overbridge-style.
@@ -22,14 +22,21 @@ type Msg
 
 
 type Config
-    = Config { kit : String, name : Pad -> String }
+    = Config { kit : String, name : Pad -> String, icon : Pad -> Screen.Config }
 
 
 {-| The kit's name, and each pad's name as the unit gives it.
 -}
 new : String -> (Pad -> String) -> Config
 new kit name =
-    Config { kit = kit, name = name }
+    Config { kit = kit, name = name, icon = \p -> Screen.new Drum (PadIcon p) }
+
+
+{-| Each pad's icon: the unit's own for its machine (`Screen.padIcon`).
+-}
+icons : (Pad -> Screen.Config) -> Config -> Config
+icons f (Config c) =
+    Config { c | icon = f }
 
 
 view : Config -> Tab -> Html Msg
@@ -44,7 +51,7 @@ view (Config c) shown =
                     tab (shown == PadTab p)
                         (PadTab p)
                         []
-                        [ Screen.view (Screen.new Drum (PadIcon p))
+                        [ Screen.view (c.icon p)
                         , span [] [ b [] [ text (Pad.label p) ], text (c.name p) ]
                         ]
                 )

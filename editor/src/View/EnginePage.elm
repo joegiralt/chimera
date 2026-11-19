@@ -1,15 +1,16 @@
-module View.EnginePage exposing (BayId(..), Held, Layout, Msg(..), State, init, layout, other, subscriptions, update, view)
+module View.EnginePage exposing (BayId(..), Layout, Msg(..), State, follow, init, layout, other, screenSpec, subscriptions, update, view)
 
 {-| An engine's page: the unit's schema, placed by the engine's layout,
 read from `Model`, drawn with the Ui components. What the unit describes and
 the layout doesn't place is shown in OTHER, never hidden.
 
 A hand never changes a value here: it asks for edits, at most one `ed set`
-a frame for each control, and holds the control where the hand put it until
-the unit's report (or the pending mark's end) takes over.
+a frame for each control. Every control shows the unit's stored value, and a
+refusal with the unit's reason; nothing is guessed.
 
 -}
 
+import Addr exposing (Addr, PadBlock(..))
 import Browser.Events
 import Dict exposing (Dict)
 import Html exposing (Html, button, div, p, text)
@@ -18,14 +19,16 @@ import Html.Events exposing (onClick)
 import Layout.Algo
 import Layout.Drum
 import Layout.Modal
-import Layout.Shared as Shared exposing (As(..), Extra(..), Item, Module)
+import Layout.Page as UnitPage exposing (PadPage(..), UnitPage(..))
+import Layout.Shared as Shared exposing (As(..), Extra(..), Item, Module, Placement(..))
 import Layout.Tape
 import Layout.Va
-import Model exposing (Model)
-import Protocol exposing (Addr(..), Kind(..), OptIndex, Scale(..), Value(..), addrKey)
+import Model exposing (Model, Seat)
+import Protocol exposing (Kind(..), OptIndex, PageNo, Scale(..), Value(..))
 import Schema exposing (Param)
 import Set exposing (Set)
 import Transport
+import Ui.Chip as Chip
 import Ui.Control as Control exposing (Chosen, Intent(..), Reading, Target(..), Want(..))
 import Ui.Fader as Fader
 import Ui.Knob as Knob
@@ -35,7 +38,7 @@ import Ui.Pad as Pad exposing (Pad)
 import Ui.PadStrip as PadStrip exposing (Tab(..))
 import Ui.Page as Page exposing (Current(..), Effect(..))
 import Ui.PatchBay as PatchBay
-import Ui.Routes as Routes exposing (Dest(..), Source(..))
+import Ui.Routes as Routes exposing (Dest, Source)
 import Ui.Screen as Screen
 import Ui.Selector as Selector
 import Ui.Toggle as Toggle
@@ -45,13 +48,6 @@ import Unit exposing (Engine(..))
 
 
 -- STATE
-
-
-{-| Where a hand put a control, shown until the unit's own value takes over.
--}
-type Held
-    = HeldNorm Float
-    | HeldOption OptIndex
 
 
 {-| A patch bay on the page: the Part's mod matrix, or a DRUM pad's routes.
@@ -64,12 +60,11 @@ type BayId
 type alias State =
     { page : Page.State
     , drag : Control.Drag
-    , grabbed : Maybe Addr
     , wanted : Control.Wanted
-    , held : Dict String Held
     , menu : Menu.State
     , bays : Dict String ( BayId, PatchBay.Bay )
     , tab : Tab
+    , seat : Maybe Seat
     }
 
 
@@ -87,12 +82,11 @@ init : Theme -> State
 init t =
     { page = Page.init t
     , drag = Control.idle
-    , grabbed = Nothing
     , wanted = Control.empty
-    , held = Dict.empty
     , menu = Menu.shut
     , bays = Dict.empty
     , tab = Kit
+    , seat = Nothing
     }
 
 
@@ -107,6 +101,19 @@ subscriptions s =
             Browser.Events.onAnimationFrame (\_ -> Frame)
         , Sub.batch (List.map (\( id, bay ) -> Sub.map (BayMsg id) (PatchBay.subscriptions bay)) (Dict.values s.bays))
         ]
+
+
+{-| The page follows the box: when the box takes another Part (a new
+seat), a hand on a control lets go and its unsent wants are dropped, so
+nothing meant for the old Part reaches the new one.
+-}
+follow : Model -> State -> State
+follow m s =
+    if s.seat == Just (Model.seat m) then
+        s
+
+    else
+        { s | drag = Control.idle, wanted = Control.empty, menu = Menu.shut, seat = Just (Model.seat m) }
 
 
 
@@ -157,11 +164,20 @@ layout e tab =
 other : List Item -> List Module -> List Item
 other items every =
     let
-        placed : Set String
+        placed : Item -> Shared.Placement
         placed =
-            Set.fromList (List.concatMap (Shared.addresses >> List.map addrKey) every)
+            Shared.place every
     in
-    List.filter (\i -> not (Set.member (addrKey i.param.addr) placed)) items
+    List.filter
+        (\i ->
+            case placed i of
+                Placed _ ->
+                    False
+
+                Unplaced ->
+                    True
+        )
+        items
 
 
 
@@ -169,7 +185,12 @@ other items every =
 
 
 update : Msg -> Model -> State -> ( State, List Model.Msg, Maybe Theme )
-update msg m s =
+update msg m s0 =
+    let
+        s : State
+        s =
+            follow m s0
+    in
     case msg of
         Hand h ->
             ( hand m h s, [], Nothing )
@@ -264,11 +285,11 @@ bayEffect m id effect s =
         ( PartBay, PatchBay.Unpatched _ _ ) ->
             s
 
-        ( PadBay p, PatchBay.Patched (Source from) (Dest to) ) ->
+        ( PadBay p, PatchBay.Patched from to ) ->
             let
                 routes : List RouteNow
                 routes =
-                    routesNow m s p
+                    routesNow m p
             in
             if List.any (\r -> r.on && r.from == Just from && r.to == Just to) routes then
                 s
@@ -277,17 +298,17 @@ bayEffect m id effect s =
                 case List.filter (.on >> not) routes |> List.head of
                     Just r ->
                         s
-                            |> pickNamed m r.route.source from
-                            |> pickNamed m r.route.dest to
-                            |> (\st -> paramOf m r.route.amount |> Maybe.map (\ap -> want ap (Number (Control.atNorm ap newCable)) (HeldNorm newCable) st) |> Maybe.withDefault st)
+                            |> want r.route.source (Option (Routes.sourceOption from))
+                            |> want r.route.dest (Option (Routes.destOption to))
+                            |> (\st -> paramOf m r.route.amount |> Maybe.map (\ap -> want ap.addr (Number (Control.atNorm ap newCable)) st) |> Maybe.withDefault st)
 
                     Nothing ->
                         s
 
-        ( PadBay p, PatchBay.Unpatched (Source from) (Dest to) ) ->
-            routesNow m s p
+        ( PadBay p, PatchBay.Unpatched from to ) ->
+            routesNow m p
                 |> List.filter (\r -> r.on && r.from == Just from && r.to == Just to)
-                |> List.foldl (\r st -> paramOf m r.route.amount |> Maybe.map (\ap -> want ap (Number 0) (HeldNorm (normOf ap 0)) st) |> Maybe.withDefault st) s
+                |> List.foldl (\r -> want r.route.amount (Number 0)) s
 
 
 {-| Where a new cable's attenuverter starts: half way up.
@@ -297,22 +318,15 @@ newCable =
     0.75
 
 
-pickNamed : Model -> Addr -> String -> State -> State
-pickNamed m a name s =
-    paramOf m a
-        |> Maybe.andThen (\p -> p.options |> List.filter (\( _, n ) -> n == name) |> List.head |> Maybe.map (\( i, _ ) -> want p (Option i) (HeldOption i) s))
-        |> Maybe.withDefault s
-
-
-{-| A pad route as the unit (or a hand) has it now: patched while its amount
-is not nothing.
+{-| A pad route as the unit has it now: patched while its amount is not
+nothing.
 -}
 type alias RouteNow =
-    { route : Shared.Route, on : Bool, from : Maybe String, to : Maybe String, amount : Maybe Param }
+    { route : Shared.Route, on : Bool, from : Maybe Source, to : Maybe Dest, amount : Maybe Param }
 
 
-routesNow : Model -> State -> Pad -> List RouteNow
-routesNow m s p =
+routesNow : Model -> Pad -> List RouteNow
+routesNow m p =
     List.map
         (\r ->
             let
@@ -320,88 +334,51 @@ routesNow m s p =
                 amount =
                     paramOf m r.amount
 
-                stored : Maybe Float
-                stored =
-                    amount
-                        |> Maybe.andThen
-                            (\ap ->
-                                case holding m s ap.addr of
-                                    Just (HeldNorm t) ->
-                                        Just (Control.atNorm ap t)
-
-                                    Just (HeldOption _) ->
-                                        Nothing
-
-                                    Nothing ->
-                                        Model.shown ap.addr m |> Maybe.map .stored
-                            )
-
-                name : Addr -> Maybe String
-                name a =
-                    paramOf m a |> Maybe.map (\q -> optionName q (optionNow m s q))
+                option : Addr -> Maybe ( OptIndex, String )
+                option a =
+                    paramOf m a |> Maybe.andThen (\q -> Control.current (chosen m q) |> Maybe.andThen (\i -> q.options |> List.filter (\( k, _ ) -> k == i) |> List.head))
             in
             { route = r
-            , on = Maybe.map2 (\v ap -> abs v >= ap.step / 2) stored amount |> Maybe.withDefault False
-            , from = name r.source
-            , to = name r.dest
+            , on = Maybe.map2 (\v ap -> abs v.stored >= ap.step / 2) (Model.shown r.amount m) amount |> Maybe.withDefault False
+            , from = option r.source |> Maybe.map Routes.source
+            , to = option r.dest |> Maybe.map Routes.dest
             , amount = amount
             }
         )
         (Shared.padRoutes p)
 
 
-padBay : Model -> State -> Pad -> Routes.Routes
-padBay m s p =
+padBay : Model -> Pad -> Routes.Routes
+padBay m p =
     let
         routes : List RouteNow
         routes =
-            routesNow m s p
+            routesNow m p
 
-        names : (Shared.Route -> Addr) -> List String
-        names f =
-            routes |> List.head |> Maybe.andThen (\r -> paramOf m (f r.route)) |> Maybe.map (.options >> List.map Tuple.second) |> Maybe.withDefault []
+        options : (Shared.Route -> Addr) -> List ( OptIndex, String )
+        options f =
+            routes |> List.head |> Maybe.andThen (\r -> paramOf m (f r.route)) |> Maybe.map .options |> Maybe.withDefault []
     in
     routes
         |> List.filterMap
             (\r ->
-                case ( r.on, ( r.from, r.to ), r.amount ) of
-                    ( True, ( Just from, Just to ), Just ap ) ->
-                        Just { from = Source from, to = Dest to, amount = Routes.amountFromNorm (normNow m s ap), addr = ap.addr }
+                case ( r.on, ( r.from, r.to ), Maybe.andThen (\ap -> Model.shown ap.addr m) r.amount ) of
+                    ( True, ( Just from, Just to ), Just v ) ->
+                        Just { from = from, to = to, amount = Routes.amountFromNorm v.norm, addr = r.route.amount }
 
                     _ ->
                         Nothing
             )
-        |> List.foldl Routes.add (Routes.new (List.map Source (names .source)) (List.map Dest (names .dest)))
+        |> List.foldl Routes.add (Routes.new (List.map Routes.source (options .source)) (List.map Routes.dest (options .dest)))
 
 
 hand : Model -> Control.Msg -> State -> State
 hand m h s =
     let
         ( drag, intents ) =
-            Control.update (target m s) h s.drag
-
-        grabbed : Maybe Addr
-        grabbed =
-            case h of
-                Control.Grab a _ _ ->
-                    Just a
-
-                Control.Released ->
-                    Nothing
-
-                Control.Moved _ ->
-                    s.grabbed
-
-                Control.Step _ _ ->
-                    s.grabbed
-
-                Control.Pick _ _ ->
-                    s.grabbed
-
-                Control.Reset _ ->
-                    s.grabbed
+            Control.update (target m) h s.drag
     in
-    List.foldl (intend m) { s | drag = drag, grabbed = grabbed } intents
+    List.foldl (intend m) { s | drag = drag } intents
 
 
 paramOf : Model -> Addr -> Maybe Param
@@ -422,18 +399,20 @@ isChoice p =
             True
 
 
-target : Model -> State -> Addr -> Maybe Target
-target m s a =
+{-| What a hand reaches: the unit's own value. A control the unit has not
+reported cannot be taken hold of.
+-}
+target : Model -> Addr -> Maybe Target
+target m a =
     paramOf m a
-        |> Maybe.map
+        |> Maybe.andThen
             (\p ->
                 if isChoice p then
-                    optionNow m s p |> Maybe.map (\i -> Discrete { options = List.map Tuple.first p.options, current = i })
+                    Control.current (chosen m p) |> Maybe.map (\i -> Discrete { options = List.map Tuple.first p.options, current = i })
 
                 else
-                    Just (Continuous { norm = normNow m s p, wheel = Control.wheelNorm p })
+                    Model.shown p.addr m |> Maybe.map (\v -> Continuous { norm = v.norm, wheel = Control.wheelNorm p })
             )
-        |> Maybe.andThen identity
 
 
 intend : Model -> Intent -> State -> State
@@ -445,166 +424,175 @@ intend m intent s =
     in
     case intent of
         SetNorm a t ->
-            on a (\p -> want p (Number (Control.atNorm p t)) (HeldNorm (clamp 0 1 t)) s)
+            on a (\p -> want p.addr (Number (Control.atNorm p t)) s)
 
         SetOption a i ->
-            on a (\p -> want p (Option i) (HeldOption i) s)
+            want a (Option i) s
 
         Restore a ->
             on a
                 (\p ->
                     if isChoice p then
                         Protocol.optIndex (round p.default)
-                            |> Maybe.map (\i -> want p (Option i) (HeldOption i) s)
+                            |> Maybe.map (\i -> want p.addr (Option i) s)
                             |> Maybe.withDefault s
 
                     else
-                        want p (Number p.default) (HeldNorm (normOf p p.default)) s
+                        want p.addr (Number p.default) s
                 )
 
 
-{-| The last want of a control this frame, and where its hand now is.
+{-| The last want of a control this frame.
 -}
-want : Param -> Want -> Held -> State -> State
-want p w h s =
-    { s | wanted = Control.want p.addr w s.wanted, held = Dict.insert (addrKey p.addr) h s.held }
-
-
-{-| Where a stored value sits on the travel: `Control.atNorm` backwards.
--}
-normOf : Param -> Float -> Float
-normOf p v =
-    case p.scale of
-        Linear ->
-            if p.max == p.min then
-                0
-
-            else
-                clamp 0 1 ((v - p.min) / (p.max - p.min))
-
-        Octaves ->
-            if p.min <= 0 || v <= 0 || p.max <= p.min then
-                0
-
-            else
-                clamp 0 1 (logBase 2 (v / p.min) / logBase 2 (p.max / p.min))
+want : Addr -> Want -> State -> State
+want a w s =
+    { s | wanted = Control.want a w s.wanted }
 
 
 
--- WHERE A CONTROL IS NOW
+-- WHERE A CONTROL IS NOW: THE UNIT'S VALUE
 
 
-{-| A hand holds the control while it drags it, while its edit waits to
-leave, and while the unit has not confirmed it.
--}
-holding : Model -> State -> Addr -> Maybe Held
-holding m s a =
-    if s.grabbed == Just a || Model.isPending a m || Control.wants a s.wanted then
-        Dict.get (addrKey a) s.held
-
-    else
-        Nothing
-
-
-normNow : Model -> State -> Param -> Float
-normNow m s p =
-    case holding m s p.addr of
-        Just (HeldNorm t) ->
-            t
-
-        Just (HeldOption _) ->
-            Model.shown p.addr m |> Maybe.map .norm |> Maybe.withDefault 0
-
-        Nothing ->
-            Model.shown p.addr m |> Maybe.map .norm |> Maybe.withDefault 0
-
-
-optionNow : Model -> State -> Param -> Maybe OptIndex
-optionNow m s p =
-    let
-        unit : Maybe OptIndex
-        unit =
-            Model.shown p.addr m |> Maybe.andThen (.stored >> round >> Protocol.optIndex)
-
-        held : Maybe OptIndex
-        held =
-            case holding m s p.addr of
-                Just (HeldOption i) ->
-                    Just i
-
-                Just (HeldNorm _) ->
-                    Nothing
-
-                Nothing ->
-                    Nothing
-
-        first : Maybe OptIndex
-        first =
-            p.options |> List.head |> Maybe.map Tuple.first
-    in
-    [ held, unit, Protocol.optIndex (round p.default), first ] |> List.filterMap identity |> List.head
-
-
-isHeldOrPending : Model -> State -> Addr -> Bool
-isHeldOrPending m s a =
-    Model.isPending a m || holding m s a /= Nothing
-
-
-reading : Model -> State -> Param -> Reading
-reading m s p =
+reading : Model -> Param -> Reading
+reading m p =
     let
         r : Reading
         r =
-            Control.reading (normNow m s p) (Model.shown p.addr m |> Maybe.map .text |> Maybe.withDefault "")
+            case Model.shown p.addr m of
+                Just v ->
+                    Control.reading v.norm v.text
+
+                Nothing ->
+                    Control.missing
     in
-    if isHeldOrPending m s p.addr then
-        Control.pending r
+    case Model.refusal p.addr m of
+        Just why ->
+            Control.refused why r
 
-    else
-        r
-
-
-chosen : Model -> State -> Param -> Maybe Chosen
-chosen m s p =
-    optionNow m s p
-        |> Maybe.map
-            (\i ->
-                if isHeldOrPending m s p.addr then
-                    Control.pendingChoice (Control.chosen i)
-
-                else
-                    Control.chosen i
-            )
+        Nothing ->
+            r
 
 
-optionName : Param -> Maybe OptIndex -> String
-optionName p i =
-    p.options |> List.filter (\( k, _ ) -> Just k == i) |> List.head |> Maybe.map Tuple.second |> Maybe.withDefault "--"
+chosen : Model -> Param -> Chosen
+chosen m p =
+    let
+        c : Chosen
+        c =
+            case Model.shown p.addr m of
+                Just v ->
+                    case Protocol.optIndex (round v.stored) |> Maybe.andThen (\i -> p.options |> List.filter (\( k, _ ) -> k == i) |> List.head) of
+                        Just ( i, _ ) ->
+                            Control.chosen i
+
+                        Nothing ->
+                            Control.notInList
+
+                Nothing ->
+                    Control.noValue
+    in
+    case Model.refusal p.addr m of
+        Just why ->
+            Control.refusedChoice why c
+
+        Nothing ->
+            c
 
 
 {-| A choice turned like a knob (an operator's ratio): its option's place
 along the list, and the option's name.
 -}
-choiceReading : Model -> State -> Param -> Reading
-choiceReading m s p =
+choiceReading : Model -> Param -> Reading
+choiceReading m p =
     let
-        i : Maybe OptIndex
-        i =
-            optionNow m s p
-
-        at : Int
-        at =
-            p.options |> List.indexedMap (\k ( o, _ ) -> ( k, o )) |> List.filter (\( _, o ) -> Just o == i) |> List.head |> Maybe.map Tuple.first |> Maybe.withDefault 0
+        ch : Chosen
+        ch =
+            chosen m p
 
         r : Reading
         r =
-            Control.reading (toFloat at / toFloat (max 1 (List.length p.options - 1))) (optionName p i)
-    in
-    if isHeldOrPending m s p.addr then
-        Control.pending r
+            case Control.current ch of
+                Just i ->
+                    p.options
+                        |> List.indexedMap (\k ( o, _ ) -> ( k, o ))
+                        |> List.filter (\( _, o ) -> o == i)
+                        |> List.head
+                        |> Maybe.map (\( k, _ ) -> Control.reading (toFloat k / toFloat (max 1 (List.length p.options - 1))) (Control.choiceText p.options ch))
+                        |> Maybe.withDefault Control.missing
 
-    else
-        r
+                Nothing ->
+                    Control.missing
+    in
+    case Model.refusal p.addr m of
+        Just why ->
+            Control.refused why r
+
+        Nothing ->
+            r
+
+
+
+-- THE SCREENS
+
+
+{-| What a screen on `page` draws from: that page's own addresses and the
+selectors its variants hang on (FILTER.KIND for FILTER's), in `describe`
+order, each with the unit's stored value. Nothing else, so a value elsewhere
+never repaints it.
+-}
+screenVals : Model -> PageNo -> List ( Addr, Float )
+screenVals m n =
+    let
+        own : List Addr
+        own =
+            Schema.pageAddresses n m.schema
+
+        selectors : List Addr
+        selectors =
+            Schema.pages m.schema
+                |> List.filter (\pg -> pg.n == n)
+                |> List.concatMap .panels
+                |> List.filter (\pn -> pn.variant /= "-")
+                |> List.filterMap (.name >> UnitPage.variantSelector)
+
+        wanted : Set String
+        wanted =
+            Set.fromList (List.map Addr.key (own ++ selectors))
+    in
+    Schema.addresses m.schema
+        |> List.filter (\a -> Set.member (Addr.key a) wanted)
+        |> List.filterMap (\a -> Model.shown a m |> Maybe.map (\v -> ( a, v.stored )))
+
+
+{-| A module's screen, as `<chimera-screen>` is told it.
+-}
+screenSpec : Model -> Engine -> Shared.ScreenAt -> Maybe Screen.Config
+screenSpec m e sc =
+    UnitPage.resolve sc.page m.schema
+        |> Maybe.map
+            (\n ->
+                Screen.drawn e n sc.shape
+                    |> (sc.fallback |> Maybe.map Screen.fallback |> Maybe.withDefault identity)
+                    |> (sc.focus |> Maybe.map Screen.focus |> Maybe.withDefault identity)
+                    |> (UnitPage.pad sc.page |> Maybe.map Screen.onPad |> Maybe.withDefault identity)
+                    |> Screen.values (screenVals m n)
+            )
+
+
+{-| Pad `p`'s icon in the strip: the unit's own for the pad's machine.
+-}
+padIcon : Model -> Pad -> Screen.Config
+padIcon m p =
+    case UnitPage.resolve (PadPage p PadMch) m.schema of
+        Just n ->
+            let
+                machine : Addr
+                machine =
+                    Addr.at (Addr.Pad p Voice) (Addr.field "MACHINE")
+            in
+            Screen.padIcon n p |> Screen.values (Model.shown machine m |> Maybe.map (\v -> [ ( machine, v.stored ) ]) |> Maybe.withDefault [])
+
+        Nothing ->
+            Screen.new Drum (Screen.PadIcon p)
 
 
 
@@ -618,16 +606,16 @@ type alias Ctx =
     , s : State
     , engine : Engine
     , items : Dict String Item
-    , pages : Dict String Int
-    , vals : List ( Addr, Float )
     }
 
 
 view : Model -> State -> Html Msg
 view m s =
-    case ( Model.status m, m.engine ) of
-        ( Just status, Just e ) ->
-            enginePage m s status e
+    case ( Model.notice m, m.described, m.link ) of
+        ( Nothing, Just e, Just Transport.Open ) ->
+            -- The page stays up while the unit is read again (another
+            -- engine's schema): it says so, and takes no edits meanwhile.
+            enginePage m s (Model.status m |> Maybe.withDefault "READING THE UNIT") e
 
         _ ->
             connectPage m s
@@ -654,12 +642,12 @@ connectPage m s =
         (Page.new "CHIMERA"
             |> Page.meta says
             |> Page.modules
-                [ Module.new "UNIT"
+                [ Module.new Chip.Unit "UNIT"
                     |> Module.note says
                     |> Module.body
                         [ div [ class "connect" ]
-                            [ button [ class "hbtn", onClick (Unit Model.ConnectSerial) ] [ text "CONNECT UNIT" ]
-                            , button [ class "hbtn", onClick (Unit Model.ConnectSocket) ] [ text "CONNECT SIMULATOR" ]
+                            [ button [ class "hbtn", onClick (Unit (Model.Connect Model.ViaUnit)) ] [ text "CONNECT UNIT" ]
+                            , button [ class "hbtn", onClick (Unit (Model.Connect Model.ViaSimulator)) ] [ text "CONNECT SIMULATOR" ]
                             ]
                         ]
                 ]
@@ -683,8 +671,6 @@ enginePage m s status e =
             , s = s
             , engine = e
             , items = Shared.index items
-            , pages = Dict.fromList (List.map (\pg -> ( pg.label, pg.n )) (Schema.pages m.schema))
-            , vals = Dict.toList m.values |> List.map (\( k, r ) -> ( Addr k, r.stored ))
             }
 
         rest : List Item
@@ -693,7 +679,7 @@ enginePage m s status e =
 
         title : String
         title =
-            (m.part |> Maybe.map (\p -> "PART " ++ String.fromInt (Unit.partNumber p) ++ " · ") |> Maybe.withDefault "") ++ Unit.engineName e
+            (m.part |> Maybe.map (\pt -> "PART " ++ String.fromInt (Unit.partNumber pt) ++ " · ") |> Maybe.withDefault "") ++ Unit.engineName e
     in
     Page.view PageMsg
         s.page
@@ -703,7 +689,7 @@ enginePage m s status e =
             |> Page.link (Page.Linked status)
             |> (case e of
                     Drum ->
-                        Page.strip (Html.map PadMsg (PadStrip.view (PadStrip.new "DRUM" (padName m)) s.tab))
+                        Page.strip (Html.map PadMsg (PadStrip.view (PadStrip.new "DRUM" (padName m) |> PadStrip.icons (padIcon m)) s.tab))
 
                     Algo ->
                         identity
@@ -733,27 +719,31 @@ enginePage m s status e =
 -}
 padName : Model -> Pad -> String
 padName m p =
-    Model.shown (Addr ("PAD" ++ String.fromInt (Pad.number p) ++ ".MACHINE")) m |> Maybe.map .text |> Maybe.withDefault ""
+    Model.shown (Addr.at (Addr.Pad p Voice) (Addr.field "MACHINE")) m |> Maybe.map .text |> Maybe.withDefault "--"
 
 
 partTabs : Model -> List (Page.Tab Msg)
 partTabs m =
     List.map
-        (\p ->
-            { kicker = "P" ++ String.fromInt (Unit.partNumber p)
+        (\pt ->
+            { kicker = "P" ++ String.fromInt (Unit.partNumber pt)
             , name =
-                if m.part == Just p then
-                    m.engine |> Maybe.map Unit.engineName |> Maybe.withDefault ""
+                case ( m.part == Just pt, m.engine ) of
+                    ( True, Just e ) ->
+                        Unit.engineName e
 
-                else
-                    "PART"
+                    ( True, Nothing ) ->
+                        "PART"
+
+                    ( False, _ ) ->
+                        "PART"
             , current =
-                if m.part == Just p then
+                if m.part == Just pt then
                     Here
 
                 else
                     Elsewhere
-            , go = Unit (Model.FollowPart p)
+            , go = Unit (Model.FollowPart pt)
             }
         )
         Unit.allParts
@@ -768,43 +758,28 @@ moduleOf ctx md =
 
         headers : List Item
         headers =
-            List.filterMap (\a -> Dict.get (addrKey a) ctx.items) md.header
+            List.filterMap (\a -> Dict.get (Addr.key a) ctx.items) (Shared.header md)
 
         screen : List (Html Msg)
         screen =
-            md.screen
-                |> Maybe.andThen
-                    (\sc ->
-                        Dict.get sc.page ctx.pages
-                            |> Maybe.map
-                                (\n ->
-                                    Screen.drawn ctx.engine n sc.shape
-                                        |> (sc.fallback |> Maybe.map Screen.fallback |> Maybe.withDefault identity)
-                                        |> Screen.values ctx.vals
-                                        |> Screen.view
-                                )
-                    )
-                |> Maybe.map (\h -> [ Module.group "" [ h ] ])
+            Shared.screen md
+                |> Maybe.andThen (screenSpec ctx.m ctx.engine)
+                |> Maybe.map (\sc -> [ Module.group "" [ Screen.view sc ] ])
                 |> Maybe.withDefault []
-
-        extras : List (Html Msg)
-        extras =
-            List.map (extra ctx) md.extras
 
         nothing : List (Html Msg)
         nothing =
-            if List.isEmpty groups && List.isEmpty md.extras then
+            if List.isEmpty groups && List.isEmpty (Shared.extras md) then
                 [ p [ class "pnote" ] [ text "NOTHING TO SET FOR THIS TYPE" ] ]
 
             else
                 []
     in
-    Module.new md.title
-        |> Module.note md.note
-        |> Module.chip md.chip
+    Module.new (Shared.chip md) (Shared.title md)
+        |> Module.note (Shared.note md)
         |> Module.menus (List.map (\i -> menuOf ctx True i) headers)
         |> Module.summary (List.map (summaryOf ctx) (List.take 3 (headers ++ List.concatMap (Tuple.second >> List.map Tuple.first) groups)))
-        |> (if md.full then
+        |> (if Shared.isWhole md then
                 Module.full
 
             else
@@ -818,15 +793,14 @@ moduleOf ctx md =
                 [ Module.panel (screen ++ List.map (\( t, xs ) -> Module.group t (List.map (control ctx) xs)) groups) ]
              )
                 ++ nothing
-                ++ extras
+                ++ List.map (extra ctx) (Shared.extras md)
             )
 
 
 otherModule : Ctx -> List Item -> Module.Config Msg
 otherModule ctx items =
-    Module.new "OTHER"
+    Module.new Chip.Other "OTHER"
         |> Module.note "DESCRIBED BY THE UNIT, NOT YET PLACED"
-        |> Module.chip "OTHER"
         |> Module.body [ Module.panel [ Module.group "" (List.map (\i -> control ctx ( i, Auto )) items) ] ]
 
 
@@ -834,10 +808,10 @@ summaryOf : Ctx -> Item -> ( String, String )
 summaryOf ctx i =
     ( i.label
     , if isChoice i.param then
-        optionName i.param (optionNow ctx.m ctx.s i.param)
+        Control.choiceText i.param.options (chosen ctx.m i.param)
 
       else
-        Model.shown i.param.addr ctx.m |> Maybe.map .text |> Maybe.withDefault "--"
+        Control.text (reading ctx.m i.param)
     )
 
 
@@ -867,13 +841,27 @@ extra ctx x =
                 p [ class "pnote" ] [ text (String.join " · " named ++ ": MOD MATRIX ROUTES, IN MOD ONCE THE UNIT DESCRIBES THEM") ]
 
         SourceText ->
-            Module.panel [ Module.group "" [ Control.cell [ class "ro" ] "SOURCE" [ Control.readout 16 (Control.reading 0 (Maybe.withDefault "--" ctx.m.source)) ] ] ]
+            Module.panel
+                [ Module.group ""
+                    [ Control.cell [ class "ro" ]
+                        "SOURCE"
+                        [ Control.readout sourceChars
+                            (case ctx.m.source of
+                                Just t ->
+                                    Control.reading 0 t
+
+                                Nothing ->
+                                    Control.missing
+                            )
+                        ]
+                    ]
+                ]
 
         Note t ->
             p [ class "pnote" ] [ text t ]
 
         PadRoutes pad ->
-            Html.map (BayMsg (PadBay pad)) (PatchBay.view (bayOf (PadBay pad) ctx.s) (padBay ctx.m ctx.s pad))
+            Html.map (BayMsg (PadBay pad)) (PatchBay.view (bayOf (PadBay pad) ctx.s) (padBay ctx.m pad))
 
         PartMatrix ->
             div []
@@ -882,13 +870,15 @@ extra ctx x =
                 ]
 
 
+{-| TAPE's sample name: the card's longest that fits the cell.
+-}
+sourceChars : Ui.Tokens.Chars
+sourceChars =
+    Ui.Tokens.oneMore (Ui.Tokens.oneMore Ui.Tokens.readoutChars)
+
+
 
 -- THE CONTROLS, BY MEANING
-
-
-bipolar : Param -> Bool
-bipolar p =
-    p.min < 0 && p.max > 0
 
 
 control : Ctx -> ( Item, As ) -> Html Msg
@@ -946,28 +936,29 @@ control ctx ( item, as_ ) =
 
 contKnob : Ctx -> Item -> Bool -> Html Msg
 contKnob ctx item big =
-    Knob.new item.param.addr
+    Knob.new item.param.addr (Control.polarity item.param)
         |> Knob.label item.label
         |> when big Knob.hero
-        |> when (bipolar item.param) Knob.bipolar
-        |> (\c -> Html.map Hand (Knob.view c (reading ctx.m ctx.s item.param)))
+        |> (\c -> Html.map Hand (Knob.view c (reading ctx.m item.param)))
 
 
 contFader : Ctx -> Item -> Bool -> Html Msg
 contFader ctx item big =
-    Fader.new item.param.addr
+    Fader.new item.param.addr (Control.polarity item.param)
         |> Fader.label item.label
         |> when big Fader.hero
-        |> when (bipolar item.param) Fader.bipolar
-        |> (\c -> Html.map Hand (Fader.view c (reading ctx.m ctx.s item.param)))
+        |> (\c -> Html.map Hand (Fader.view c (reading ctx.m item.param)))
 
 
+{-| A choice turned like a knob: its options run one way, never either side
+of nothing.
+-}
 choiceKnob : Ctx -> Item -> Bool -> Html Msg
 choiceKnob ctx item big =
-    Knob.new item.param.addr
+    Knob.new item.param.addr (Control.polarity { min = 0, max = 1 })
         |> Knob.label item.label
         |> when big Knob.hero
-        |> (\c -> Html.map Hand (Knob.view c (choiceReading ctx.m ctx.s item.param)))
+        |> (\c -> Html.map Hand (Knob.view c (choiceReading ctx.m item.param)))
 
 
 when : Bool -> (a -> a) -> a -> a
@@ -989,32 +980,27 @@ autoChoice ctx item =
         p =
             item.param
 
-        n : Int
-        n =
-            List.length p.options
-
-        c : Maybe Chosen
-        c =
-            chosen ctx.m ctx.s p
+        now : Chosen
+        now =
+            chosen ctx.m p
     in
-    if n >= 2 && n <= 3 then
-        Maybe.map2 (\t now -> Html.map Hand (Toggle.view (Toggle.label item.label t) now)) (Toggle.fromOptions p.addr p.options) c
-            |> Maybe.withDefault (menuOf ctx False item)
+    case ( Toggle.fromOptions p.addr p.options, Selector.fromOptions p.addr p.options ) of
+        ( Just t, _ ) ->
+            Html.map Hand (Toggle.view (Toggle.label item.label t) now)
 
-    else if n >= 4 && n <= 8 then
-        Maybe.map2 (\sl now -> Html.map Hand (Selector.view (Selector.label item.label sl) now)) (Selector.fromOptions p.addr p.options) c
-            |> Maybe.withDefault (menuOf ctx False item)
+        ( Nothing, Just sl ) ->
+            Html.map Hand (Selector.view (Selector.label item.label sl) now)
 
-    else
-        menuOf ctx False item
+        ( Nothing, Nothing ) ->
+            menuOf ctx False item
 
 
 menuOf : Ctx -> Bool -> Item -> Html Msg
 menuOf ctx header item =
-    case ( Control.options item.param.options |> Maybe.map (Menu.new item.param.addr), chosen ctx.m ctx.s item.param ) of
-        ( Just cfg, Just now ) ->
-            Html.map MenuMsg (Menu.view (cfg |> Menu.label item.label |> when header Menu.inHeader) ctx.s.menu now)
+    case Control.options item.param.options of
+        Just opts ->
+            Html.map MenuMsg (Menu.view (Menu.new item.param.addr opts |> Menu.label item.label |> when header Menu.inHeader) ctx.s.menu (chosen ctx.m item.param))
 
-        _ ->
+        Nothing ->
             -- A choice the unit lists no options for: turned like a knob.
             choiceKnob ctx item False

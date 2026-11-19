@@ -106,8 +106,13 @@ html, body { margin: 0; background: #121212; }
 .ui .c > .k { display: block; width: 100%; font: 700 12px/1.1 var(--sans); letter-spacing: .06em; color: var(--ink); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 14px; }
 .ui .c > .v { font: inherit; font-weight: 600; height: 1.2em; line-height: 1.2em; color: var(--ink); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; max-width: 100%; }
 .ui .c.hero > .v { font-weight: 700; }
-.ui .c.pending > .v { color: var(--mod); }
-.ui .c.pending::after { content: ""; position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; border-radius: 50%; background: var(--mod); }
+/* the unit refused the last edit: its reason is the title; a badge that takes no room */
+.ui .c.refused::after, .ui .hmn.refused::after { content: "!"; position: absolute; top: 0; right: 0; width: 13px; height: 13px; border-radius: 50%; background: var(--modneg); color: var(--pn); font: 700 10px/13px var(--sans); text-align: center; pointer-events: none; }
+.ui .c.refused > .k { color: var(--modneg); }
+/* not reported yet, or a value the unit's list lacks: said, never guessed */
+.ui .c > .v.missing, .ui .c.missing > .v { color: var(--dim); }
+.ui .c.unlisted .sl, .ui .c.missing .sl { opacity: .55; }
+.ui .lv[data-p="none"]::after { display: none; }
 .ui .kn { position: relative; cursor: ns-resize; touch-action: none; outline: none; flex: none; }
 .ui .kn svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .ui .kn:focus-visible { outline: 2px solid var(--mod); border-radius: 50%; }

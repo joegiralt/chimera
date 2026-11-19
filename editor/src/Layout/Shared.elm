@@ -4,33 +4,51 @@ module Layout.Shared exposing
     , Group
     , Item
     , Module
+    , Placement(..)
     , Route
     , ScreenAt
     , Slot
     , active
+    , addGroups
     , addresses
     , ampOut
     , auto
+    , chip
     , envelope
+    , extras
     , fader
     , fill
     , filter
     , filterCore
     , filterMod
     , group
+    , header
     , hero
     , heroFader
     , index
+    , isWhole
     , knob
     , lfo
     , menu
     , mod
     , module_
+    , note
     , padRoutes
     , pitch
+    , place
+    , screen
     , strip
     , tall
+    , title
     , voiceFx
+    , withChip
+    , withExtras
+    , withFallback
+    , withFocus
+    , withGroups
+    , withHeader
+    , withNote
+    , withScreen
     )
 
 {-| A page is a table: modules in signal order, each placing the unit's
@@ -38,13 +56,20 @@ addresses into groups, with the control each gets by meaning. A layout never
 invents a parameter: labels, ranges and option names come from the unit, and
 an address the Sound doesn't show now (another variant's) is simply not
 drawn. The modules every voice engine shares live here.
+
+A `Module` is opaque: a layout builds one with `module_` and the `with`
+setters, and every address in it comes from `Addr`'s typed builders.
+
 -}
 
+import Addr exposing (Addr, Block(..), Env, Lfo, PadBlock(..))
 import Dict exposing (Dict)
-import Protocol exposing (Addr(..), addrKey)
+import Layout.Page exposing (UnitPage(..))
+import Protocol
 import Schema exposing (Schema)
-import Ui.Pad as Pad exposing (Pad)
-import Ui.Screen exposing (Glyph, Shape(..))
+import Ui.Chip as Chip exposing (Chip)
+import Ui.Pad exposing (Pad)
+import Ui.Screen exposing (Focus, Glyph, Shape(..))
 
 
 
@@ -87,27 +112,113 @@ type Extra
     | PadRoutes Pad
 
 
-{-| A screen: the page (by its `ed describe` label) whose art it draws.
+{-| A screen: the unit's page whose art it draws, its shape, the crop under
+it while the WASM loads, and the cell the unit's focus band is on.
 -}
 type alias ScreenAt =
-    { page : String, shape : Shape, fallback : Maybe Glyph }
+    { page : UnitPage, shape : Shape, fallback : Maybe Glyph, focus : Maybe Focus }
 
 
-type alias Module =
-    { title : String
-    , note : String
-    , chip : String
-    , header : List Addr
-    , screen : Maybe ScreenAt
-    , groups : List Group
-    , extras : List Extra
-    , full : Bool
-    }
+type Span
+    = Half
+    | Whole
 
 
-module_ : String -> String -> Module
-module_ title chip =
-    { title = title, note = "", chip = chip, header = [], screen = Nothing, groups = [], extras = [], full = False }
+type Module
+    = Module
+        { title : String
+        , note : String
+        , chip : Chip
+        , header : List Addr
+        , screen : Maybe ScreenAt
+        , groups : List Group
+        , extras : List Extra
+        , span : Span
+        }
+
+
+module_ : Chip -> String -> Module
+module_ c t =
+    Module { title = t, note = "", chip = c, header = [], screen = Nothing, groups = [], extras = [], span = Half }
+
+
+withChip : Chip -> Module -> Module
+withChip c (Module m) =
+    Module { m | chip = c }
+
+
+withNote : String -> Module -> Module
+withNote n (Module m) =
+    Module { m | note = n }
+
+
+{-| The title bar's type menus: the selectors that swap the module's body.
+-}
+withHeader : List Addr -> Module -> Module
+withHeader h (Module m) =
+    Module { m | header = h }
+
+
+withScreen : ScreenAt -> Module -> Module
+withScreen s (Module m) =
+    Module { m | screen = Just s }
+
+
+withGroups : List Group -> Module -> Module
+withGroups gs (Module m) =
+    Module { m | groups = gs }
+
+
+addGroups : List Group -> Module -> Module
+addGroups gs (Module m) =
+    Module { m | groups = m.groups ++ gs }
+
+
+withExtras : List Extra -> Module -> Module
+withExtras xs (Module m) =
+    Module { m | extras = xs }
+
+
+{-| A module that takes a whole row (MOD).
+-}
+whole : Module -> Module
+whole (Module m) =
+    Module { m | span = Whole }
+
+
+title : Module -> String
+title (Module m) =
+    m.title
+
+
+note : Module -> String
+note (Module m) =
+    m.note
+
+
+chip : Module -> Chip
+chip (Module m) =
+    m.chip
+
+
+header : Module -> List Addr
+header (Module m) =
+    m.header
+
+
+screen : Module -> Maybe ScreenAt
+screen (Module m) =
+    m.screen
+
+
+extras : Module -> List Extra
+extras (Module m) =
+    m.extras
+
+
+isWhole : Module -> Bool
+isWhole (Module m) =
+    m.span == Whole
 
 
 group : String -> List Slot -> Group
@@ -115,49 +226,54 @@ group =
     Group
 
 
-slot : As -> String -> Slot
-slot a s =
-    { addr = Addr s, as_ = a }
+auto : Addr -> Slot
+auto a =
+    { addr = a, as_ = Auto }
 
 
-auto : String -> Slot
-auto =
-    slot Auto
+knob : Addr -> Slot
+knob a =
+    { addr = a, as_ = AsKnob }
 
 
-knob : String -> Slot
-knob =
-    slot AsKnob
+hero : Addr -> Slot
+hero a =
+    { addr = a, as_ = AsHero }
 
 
-hero : String -> Slot
-hero =
-    slot AsHero
+fader : Addr -> Slot
+fader a =
+    { addr = a, as_ = AsFader }
 
 
-fader : String -> Slot
-fader =
-    slot AsFader
+heroFader : Addr -> Slot
+heroFader a =
+    { addr = a, as_ = AsHeroFader }
 
 
-heroFader : String -> Slot
-heroFader =
-    slot AsHeroFader
+menu : Addr -> Slot
+menu a =
+    { addr = a, as_ = AsMenu }
 
 
-menu : String -> Slot
-menu =
-    slot AsMenu
-
-
-strip : String -> Maybe ScreenAt
+strip : UnitPage -> ScreenAt
 strip page =
-    Just { page = page, shape = Strip, fallback = Nothing }
+    { page = page, shape = Strip, fallback = Nothing, focus = Nothing }
 
 
-tall : String -> Maybe ScreenAt
+tall : UnitPage -> ScreenAt
 tall page =
-    Just { page = page, shape = Tall, fallback = Nothing }
+    { page = page, shape = Tall, fallback = Nothing, focus = Nothing }
+
+
+withFallback : Glyph -> ScreenAt -> ScreenAt
+withFallback g s =
+    { s | fallback = Just g }
+
+
+withFocus : Focus -> ScreenAt -> ScreenAt
+withFocus f s =
+    { s | focus = Just f }
 
 
 {-| One of a DRUM pad's routes: its three addresses.
@@ -173,17 +289,17 @@ padRoutes p =
             let
                 at : String -> Addr
                 at f =
-                    Addr ("PAD" ++ String.fromInt (Pad.number p) ++ "_RT" ++ String.fromInt k ++ "." ++ f)
+                    Addr.at (Pad p (PadRoute k)) (Addr.field f)
             in
             { source = at "SOURCE", dest = at "DEST", amount = at "AMOUNT" }
         )
-        (List.range 1 4)
+        Addr.routeSlots
 
 
 {-| Every address the module places.
 -}
 addresses : Module -> List Addr
-addresses m =
+addresses (Module m) =
     m.header
         ++ List.concatMap (.slots >> List.map .addr) m.groups
         ++ List.concatMap
@@ -218,6 +334,31 @@ type alias Item =
     { param : Schema.Param, label : String }
 
 
+{-| Where an item sits on a page: in a module, or in no module (OTHER's, so
+nothing the unit describes is ever hidden).
+-}
+type Placement
+    = Placed Module
+    | Unplaced
+
+
+place : List Module -> Item -> Placement
+place every =
+    let
+        -- Built once per layout: the first module that places each address.
+        holder : Dict String Module
+        holder =
+            List.foldr (\m acc -> List.foldl (\a -> Dict.insert (Addr.key a) m) acc (addresses m)) Dict.empty every
+    in
+    \item ->
+        case Dict.get (Addr.key item.param.addr) holder of
+            Just m ->
+                Placed m
+
+            Nothing ->
+                Unplaced
+
+
 {-| Every parameter of the panels the Sound shows, once each, in the unit's
 order. One address can sit on several pages (an operator's WAVE is on the OSC
 page and on the operator's own): the variant panel's description wins.
@@ -234,7 +375,7 @@ active sch variants =
             let
                 k : String
                 k =
-                    addrKey item.param.addr
+                    Addr.key item.param.addr
             in
             case Dict.get k best of
                 Nothing ->
@@ -264,16 +405,16 @@ active sch variants =
 -}
 index : List Item -> Dict String Item
 index items =
-    Dict.fromList (List.map (\i -> ( addrKey i.param.addr, i )) items)
+    Dict.fromList (List.map (\i -> ( Addr.key i.param.addr, i )) items)
 
 
 {-| A module's groups as the Sound shows them now: each slot whose address
 the Sound has, and no empty group.
 -}
 fill : Dict String Item -> Module -> List ( String, List ( Item, As ) )
-fill items m =
+fill items (Module m) =
     m.groups
-        |> List.map (\g -> ( g.title, List.filterMap (\s -> Dict.get (addrKey s.addr) items |> Maybe.map (\i -> ( i, s.as_ ))) g.slots ))
+        |> List.map (\g -> ( g.title, List.filterMap (\s -> Dict.get (Addr.key s.addr) items |> Maybe.map (\i -> ( i, s.as_ ))) g.slots ))
         |> List.filter (Tuple.second >> List.isEmpty >> not)
 
 
@@ -285,7 +426,7 @@ labelOf pg pn p =
     case ( pn.variant, String.toList p.label ) of
         ( "-", [ 'O', 'P', d ] ) ->
             if d >= '1' && d <= '6' then
-                pg.label
+                Protocol.pageLabel pg.label
 
             else
                 p.label
@@ -298,55 +439,48 @@ labelOf pg pn p =
 -- THE MODULES EVERY VOICE SHARES
 
 
+word : String -> Addr.Field
+word =
+    Addr.field
+
+
 pitch : Module
 pitch =
     let
-        m : Module
-        m =
-            module_ "PITCH" "PITCH"
+        a : String -> Addr
+        a =
+            word >> Addr.at Pitch
     in
-    { m
-        | screen = strip "PIT"
-        , groups =
-            [ group "" [ hero "PITCH.PITCH", knob "PITCH.FINE" ]
-            , group "" [ fader "PITCH.GLIDE_TIME" ]
-            , group "" [ auto "PITCH.STEAL", auto "PITCH.SNAP" ]
+    module_ Chip.Pitch "PITCH"
+        |> withScreen (strip Pit)
+        |> withGroups
+            [ group "" [ hero (a "PITCH"), knob (a "FINE") ]
+            , group "" [ fader (a "GLIDE_TIME") ]
+            , group "" [ auto (a "STEAL"), auto (a "SNAP") ]
             ]
-    }
 
 
-{-| A filter whose addresses start `prefix` (FILTER, or a DRUM pad's
-PADn\_FLT), its art on page `page`.
+{-| A filter in `block` (FILTER, or a DRUM pad's own), its art on `page`.
 -}
-filterCore : String -> String -> Module
-filterCore prefix page =
+filterCore : Block -> UnitPage -> Module
+filterCore block page =
     let
-        m : Module
-        m =
-            module_ "FILTER" "FILTER"
-
-        a : String -> String
-        a f =
-            prefix ++ "." ++ f
+        a : String -> Addr
+        a =
+            word >> Addr.at block
     in
-    { m
-        | header = [ Addr (a "KIND") ]
-        , screen = tall page
-        , groups =
+    module_ Chip.Filter "FILTER"
+        |> withHeader [ a "KIND" ]
+        |> withScreen (tall page)
+        |> withGroups
             [ group "" [ hero (a "CUTOFF"), knob (a "RESO") ]
             , group "" [ auto (a "MODE"), auto (a "VOICE"), knob (a "MORPH") ]
             ]
-    }
 
 
 filter : Module
 filter =
-    let
-        m : Module
-        m =
-            filterCore "FILTER" "FLT"
-    in
-    { m | groups = m.groups ++ [ group "" [ fader "FILTER.STAB" ] ] }
+    filterCore Filter Flt |> addGroups [ group "" [ fader (Addr.at Filter (word "STAB")) ] ]
 
 
 {-| The filter's own modulation: feedback, the input, and the two jacks.
@@ -354,106 +488,93 @@ filter =
 filterMod : Module
 filterMod =
     let
-        m : Module
-        m =
-            module_ "FILTER MOD" "FILTER"
+        a : String -> Addr
+        a =
+            word >> Addr.at Filter
     in
-    { m
-        | groups =
-            [ group "" [ fader "FILTER.FB", fader "FILTER.LEVEL" ]
-            , group "JACKS" [ menu "FILTER.FM3IN", menu "FILTER.QMIN" ]
+    module_ Chip.Filter "FILTER MOD"
+        |> withGroups
+            [ group "" [ fader (a "FB"), fader (a "LEVEL") ]
+            , group "JACKS" [ menu (a "FM3IN"), menu (a "QMIN") ]
             ]
-        , extras = [ NextSlice ]
-    }
+        |> withExtras [ NextSlice ]
 
 
-voiceFx : Module
-voiceFx =
+{-| The voice's effect, its art on `page` (FX, or a DRUM pad's).
+-}
+voiceFx : UnitPage -> Module
+voiceFx page =
     let
-        m : Module
-        m =
-            module_ "VOICE FX" "FX"
+        a : String -> Addr
+        a =
+            word >> Addr.at VoiceFx
     in
-    { m
-        | header = [ Addr "VOICEFX.TYPE" ]
-        , screen = strip "FX"
-        , groups =
-            [ group "" [ auto "VOICEFX.PLACE" ]
-            , group "" [ hero "VOICEFX.P1", knob "VOICEFX.P2" ]
-            , group "" [ fader "VOICEFX.P3", fader "VOICEFX.MIX" ]
+    module_ Chip.Fx "VOICE FX"
+        |> withHeader [ a "TYPE" ]
+        |> withScreen (strip page)
+        |> withGroups
+            [ group "" [ auto (a "PLACE") ]
+            , group "" [ hero (a "P1"), knob (a "P2") ]
+            , group "" [ fader (a "P3"), fader (a "MIX") ]
             ]
-    }
 
 
 ampOut : Module
 ampOut =
     let
-        m : Module
-        m =
-            module_ "AMP · OUT" "AMP"
+        a : String -> Addr
+        a =
+            word >> Addr.at Out
     in
-    { m
-        | note = "LOW-PASS GATE · SENDS"
-        , screen = strip "SND"
-        , groups =
-            [ group "GATE" [ heroFader "OUT.LPG", fader "OUT.DECAY", fader "OUT.STRIKE", fader "OUT.VEL" ]
-            , group "OUT" [ heroFader "OUT.LEVEL", fader "OUT.SEND1", fader "OUT.SEND2", fader "OUT.SEND3" ]
+    module_ Chip.Amp "AMP · OUT"
+        |> withNote "LOW-PASS GATE · SENDS"
+        |> withScreen (strip Snd)
+        |> withGroups
+            [ group "GATE" [ heroFader (a "LPG"), fader (a "DECAY"), fader (a "STRIKE"), fader (a "VEL") ]
+            , group "OUT" [ heroFader (a "LEVEL"), fader (a "SEND1"), fader (a "SEND2"), fader (a "SEND3") ]
             ]
-    }
 
 
-{-| Envelope `n`: type A's stages or type B's function, by the unit's TYPE.
+{-| An envelope: type A's stages or type B's function, by the unit's TYPE.
 -}
-envelope : Int -> Module
-envelope n =
+envelope : Env -> Module
+envelope e =
     let
-        m : Module
-        m =
-            module_ ("ENVELOPE " ++ String.fromInt n) "ENVELOPES"
-
-        a : String -> String
-        a f =
-            "ENV" ++ String.fromInt n ++ "." ++ f
+        a : String -> Addr
+        a =
+            word >> Addr.at (EnvBlock e)
     in
-    { m
-        | header = [ Addr (a "TYPE") ]
-        , screen = tall ("E" ++ String.fromInt n)
-        , groups =
+    module_ Chip.Envelopes ("ENVELOPE " ++ String.fromInt (Addr.envNumber e))
+        |> withHeader [ a "TYPE" ]
+        |> withScreen (tall (EnvPage e))
+        |> withGroups
             [ group "" [ fader (a "ATK"), fader (a "H"), fader (a "DEC"), fader (a "SUS"), fader (a "REL") ]
             , group "" [ fader (a "RISE"), fader (a "FALL"), knob (a "SHAPE") ]
             , group "" [ auto (a "MODE"), auto (a "FORM"), auto (a "SPEED"), auto (a "HOLD") ]
             ]
-    }
 
 
-lfo : Int -> Module
-lfo n =
+lfo : Lfo -> Module
+lfo l =
     let
-        m : Module
-        m =
-            module_ ("LFO " ++ String.fromInt n) "LFOS"
-
-        a : String -> String
-        a f =
-            "LFO" ++ String.fromInt n ++ "." ++ f
+        a : String -> Addr
+        a =
+            word >> Addr.at (LfoBlock l)
     in
-    { m
-        | header = [ Addr (a "TYPE") ]
-        , screen = strip ("L" ++ String.fromInt n)
-        , groups =
+    module_ Chip.Lfos ("LFO " ++ String.fromInt (Addr.lfoNumber l))
+        |> withHeader [ a "TYPE" ]
+        |> withScreen (strip (LfoPage l))
+        |> withGroups
             [ group "" [ hero (a "RATE"), hero (a "RISE"), auto (a "SHAPE") ]
             , group "" [ fader (a "DEPTH"), auto (a "SYNC"), knob (a "PHASE"), knob (a "FALL"), knob (a "SHAPE_B"), auto (a "FORM") ]
             ]
-    }
 
 
 {-| The Part's mod matrix, at full width.
 -}
 mod : Module
 mod =
-    let
-        m : Module
-        m =
-            module_ "MOD" "MOD"
-    in
-    { m | note = "PATCH BAY", full = True, extras = [ PartMatrix ] }
+    module_ Chip.Mod "MOD"
+        |> withNote "PATCH BAY"
+        |> whole
+        |> withExtras [ PartMatrix ]

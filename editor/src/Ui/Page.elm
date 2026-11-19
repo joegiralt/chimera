@@ -27,7 +27,7 @@ rows of two below.
 import Html exposing (Html, button, div, h1, main_, span, text)
 import Html.Attributes exposing (attribute, class, classList)
 import Html.Events exposing (onClick)
-import Set exposing (Set)
+import Ui.Chip as Chip exposing (Chip, Chips)
 import Ui.Module as Module exposing (Fold(..), Folds)
 import Ui.Row as Row
 import Ui.Tokens as Tokens exposing (Theme)
@@ -101,12 +101,12 @@ modules ms (Config c) =
 
 
 type State
-    = State { theme : Theme, hidden : Set String, folds : Folds }
+    = State { theme : Theme, hidden : Chips, folds : Folds }
 
 
 init : Theme -> State
 init t =
-    State { theme = t, hidden = Set.empty, folds = Module.noFolds }
+    State { theme = t, hidden = Chip.none, folds = Module.noFolds }
 
 
 theme : State -> Theme
@@ -116,7 +116,7 @@ theme (State s) =
 
 type Msg
     = ChoseTheme Theme
-    | ToggleChip String
+    | ToggleChip Chip
     | Folding Module.Msg
 
 
@@ -134,17 +134,7 @@ update msg (State s) =
             ( State { s | theme = t }, StoreTheme t )
 
         ToggleChip chip ->
-            ( State
-                { s
-                    | hidden =
-                        if Set.member chip s.hidden then
-                            Set.remove chip s.hidden
-
-                        else
-                            Set.insert chip s.hidden
-                }
-            , NoEffect
-            )
+            ( State { s | hidden = Chip.toggle chip s.hidden }, NoEffect )
 
         Folding m ->
             ( State { s | folds = Module.update m s.folds }, NoEffect )
@@ -155,9 +145,9 @@ view toMsg (State s) (Config c) =
     let
         shown : List (Module.Config msg)
         shown =
-            List.filter (\m -> not (Set.member (Module.chipOf m) s.hidden)) c.modules
+            List.filter (\m -> not (Chip.member (Module.chipOf m) s.hidden)) c.modules
 
-        chips : List String
+        chips : List Chip
         chips =
             List.foldl
                 (\m acc ->
@@ -212,11 +202,11 @@ view toMsg (State s) (Config c) =
                     :: List.map
                         (\chip ->
                             button
-                                [ classList [ ( "chip", True ), ( "off", Set.member chip s.hidden ) ]
-                                , attribute "aria-pressed" (ariaBool (not (Set.member chip s.hidden)))
+                                [ classList [ ( "chip", True ), ( "off", Chip.member chip s.hidden ) ]
+                                , attribute "aria-pressed" (ariaBool (not (Chip.member chip s.hidden)))
                                 , onClick (toMsg (ToggleChip chip))
                                 ]
-                                [ text chip ]
+                                [ text (Chip.label chip) ]
                         )
                         chips
                     ++ [ button [ class "chip push", onClick (foldAll Folded) ] [ text "FOLD ALL" ]

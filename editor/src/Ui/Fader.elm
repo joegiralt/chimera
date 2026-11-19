@@ -1,23 +1,19 @@
-module Ui.Fader exposing (Config, bipolar, chars, hero, label, new, view, width)
+module Ui.Fader exposing (Config, chars, hero, label, new, view, width)
 
 {-| A vertical fader for levels and envelope stages: a slot, a cap and a
 readout. `bipolar` marks the centre and fills from it.
 -}
 
+import Addr exposing (Addr)
 import Html exposing (Html, div, i)
 import Html.Attributes exposing (class, classList, style)
-import Protocol exposing (Addr)
-import Ui.Control as Control exposing (Msg, Reading, Travel(..), Width)
+import Ui.Control as Control exposing (Msg, Polarity, Reading, Travel(..), Width)
+import Ui.Tokens as Tokens exposing (Chars)
 
 
 type Size
     = Regular
     | Tall
-
-
-type Polarity
-    = Unipolar
-    | Bipolar
 
 
 type Config
@@ -26,13 +22,16 @@ type Config
         , label : String
         , size : Size
         , polarity : Polarity
-        , chars : Int
+        , chars : Chars
         }
 
 
-new : Addr -> Config
-new a =
-    Config { addr = a, label = "", size = Regular, polarity = Unipolar, chars = 8 }
+{-| A control for the param at `a`: its polarity is the param's range's
+(`Control.polarity`), so a bipolar one fills from its centre.
+-}
+new : Addr -> Polarity -> Config
+new a p =
+    Config { addr = a, label = "", size = Regular, polarity = p, chars = Tokens.readoutChars }
 
 
 label : String -> Config -> Config
@@ -47,48 +46,47 @@ hero (Config c) =
     Config { c | size = Tall }
 
 
-bipolar : Config -> Config
-bipolar (Config c) =
-    Config { c | polarity = Bipolar }
-
-
-chars : Int -> Config -> Config
+chars : Chars -> Config -> Config
 chars n (Config c) =
-    Config { c | chars = max 1 n }
+    Config { c | chars = n }
 
 
 width : Config -> Width
 width (Config c) =
-    Control.width { px = Control.snap16 (max 44 (Control.labelPx c.label)), ch = c.chars + 1 }
+    Control.width { px = Control.snap16 (max 44 (Control.labelPx c.label)), ch = Tokens.oneMore c.chars }
 
 
 view : Config -> Reading -> Html Msg
 view ((Config c) as config) r =
     let
-        t : Float
-        t =
-            Control.norm r
-
         at : Float -> String
         at x =
             "calc(4px + (100% - 21px) * " ++ String.fromFloat x ++ ")"
     in
     Control.cell
-        [ classList [ ( "hero", c.size == Tall ), ( "bip", c.polarity == Bipolar ) ]
-        , Control.syncClass (Control.sync r)
-        , Control.widthStyle (width config)
-        ]
+        ([ classList [ ( "hero", c.size == Tall ), ( "bip", Control.isBipolar c.polarity ) ]
+         , classList [ ( "missing", Control.norm r == Nothing ) ]
+         , Control.widthStyle (width config)
+         ]
+            ++ Control.markAttrs (Control.mark r)
+        )
         c.label
         [ div (class "fd" :: Control.slider c.label r ++ Control.grab c.addr Fader)
             (i [ class "tk" ] []
-                :: (case c.polarity of
-                        Unipolar ->
-                            []
+                -- A value not yet reported draws no cap (the cell says `missing`).
+                :: (case Control.norm r of
+                        Just t ->
+                            (if Control.isBipolar c.polarity then
+                                [ i [ class "fill", style "bottom" (at (min t 0.5)), style "top" ("calc(100% - " ++ at (max t 0.5) ++ ")") ] [] ]
 
-                        Bipolar ->
-                            [ i [ class "fill", style "bottom" (at (min t 0.5)), style "top" ("calc(100% - " ++ at (max t 0.5) ++ ")") ] [] ]
+                             else
+                                []
+                            )
+                                ++ [ Html.b [ class "cap", style "bottom" (at t) ] [] ]
+
+                        Nothing ->
+                            []
                    )
-                ++ [ Html.b [ class "cap", style "bottom" (at t) ] [] ]
             )
         , Control.readout c.chars r
         ]

@@ -3,13 +3,13 @@ module SelectorTest exposing (suite)
 import Contract exposing (opt)
 import Expect exposing (Expectation)
 import Json.Encode as Encode
-import Protocol exposing (Addr(..))
 import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
 import Test.Html.Selector as Sel
 import Ui.Control as Control exposing (Direction(..), Msg(..))
 import Ui.Selector as Selector
+import Wire exposing (addr)
 
 
 modes : List String
@@ -19,7 +19,7 @@ modes =
 
 mode : Maybe Selector.Config
 mode =
-    Selector.fromOptions (Addr "FILTER.MODE") (Contract.options modes) |> Maybe.map (Selector.label "MODE")
+    Selector.fromOptions (addr "FILTER.MODE") (Contract.options modes) |> Maybe.map (Selector.label "MODE")
 
 
 {-| A test of the eight-option selector, which must exist.
@@ -34,7 +34,7 @@ suite =
     describe "Ui.Selector"
         [ test "four_to_eight_options_make_a_selector" <|
             \_ ->
-                List.map (\n -> Selector.fromOptions (Addr "X") (Contract.options (List.repeat n "A")) /= Nothing) [ 3, 4, 8, 9 ]
+                List.map (\n -> Selector.fromOptions (addr "X") (Contract.options (List.repeat n "A")) /= Nothing) [ 3, 4, 8, 9 ]
                     |> Expect.equal [ False, True, True, False ]
         , test "it_prints_every_position_and_lights_the_current" <|
             \_ ->
@@ -53,7 +53,7 @@ suite =
                             |> Query.fromHtml
                             |> Query.find [ Sel.attribute (Control.ariaRole "radio"), Sel.containing [ Sel.text "HP4" ] ]
                             |> Event.simulate Event.click
-                            |> Event.expect (Pick (Addr "FILTER.MODE") (opt 5))
+                            |> Event.expect (Pick (addr "FILTER.MODE") (opt 5))
                     )
         , test "the_small_knob_steps_by_wheel" <|
             \_ ->
@@ -63,7 +63,7 @@ suite =
                             |> Query.fromHtml
                             |> Query.find [ Sel.class "kn" ]
                             |> Event.simulate (Event.custom "wheel" (Encode.object [ ( "deltaY", Encode.float -1 ) ]))
-                            |> Event.expect (Step (Addr "FILTER.MODE") Up)
+                            |> Event.expect (Step (addr "FILTER.MODE") Up)
                     )
         , test "it_is_a_labelled_radio_group" <|
             \_ ->

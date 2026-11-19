@@ -1,13 +1,15 @@
 module Ui.Control exposing
-    ( Chosen
+    ( Choice(..)
+    , Chosen
     , Direction(..)
     , Drag
     , Intent(..)
+    , Mark(..)
     , Msg(..)
     , Option
     , Options
+    , Polarity
     , Reading
-    , Sync(..)
     , Target(..)
     , Travel(..)
     , Want(..)
@@ -19,8 +21,10 @@ module Ui.Control exposing
     , ariaValueText
     , atNorm
     , cell
+    , choice
+    , choiceText
     , chosen
-    , chosenSync
+    , chosenMark
     , current
     , drag
     , dragIndex
@@ -29,26 +33,31 @@ module Ui.Control exposing
     , flush
     , grab
     , idle
+    , isBipolar
     , isEmpty
     , labelPx
+    , mark
+    , markAttrs
+    , missing
+    , noValue
     , nonEmpty
     , norm
+    , notInList
     , optionList
     , options
-    , pending
-    , pendingChoice
+    , polarity
+    , pxWidth
     , reading
     , readout
+    , refused
+    , refusedChoice
     , scaleOf
     , slider
     , snap16
     , subscriptions
-    , sync
-    , syncClass
     , text
     , update
     , want
-    , wants
     , wheelNorm
     , width
     , widthStyle
@@ -57,8 +66,9 @@ module Ui.Control exposing
 
 {-| What a hand does to a control, shared by every control of the UI.
 
-A control is handed a `Reading` (where it points, the unit's own text, and
-whether an edit is waiting on the unit) or a `Chosen` option, and gives back
+A control is handed a `Reading` (where the unit's value points and its own
+text, or that the unit has not reported it, and any refusal with the unit's
+reason) or a `Chosen` option, and gives back
 one `Msg` type, so a page has one `update` for every control. `update` turns
 pointer travel into a normalised value and says it as an `Intent`.
 
@@ -68,83 +78,160 @@ one `ed set` leaves per animation frame per control.
 
 -}
 
+import Addr exposing (Addr)
 import Browser.Events
 import Dict exposing (Dict)
 import Html exposing (Html, div)
 import Html.Attributes exposing (attribute, class, classList, style, tabindex, title)
 import Html.Events as Events
 import Json.Decode as Decode exposing (Decoder)
-import Protocol exposing (Addr, OptIndex, Scale(..), addrKey)
+import Protocol exposing (OptIndex, Scale(..))
 import Schema exposing (Param)
+import Ui.Tokens as Tokens exposing (Chars, Face(..))
 
 
 
 -- WHAT A CONTROL SHOWS
 
 
-{-| Whether the value shown is the unit's, or an edit the unit has not yet
-confirmed.
+{-| Whether the unit took the last edit: a refusal carries the unit's own
+reason, until the unit next reports the value.
 -}
-type Sync
-    = Confirmed
-    | Pending
+type Mark
+    = Clear
+    | Refused String
 
 
-{-| A continuous control's reading: its position (0 to 1) and the unit's text.
+{-| A continuous control's reading: where it points (0 to 1) and the unit's
+text, or that the unit has not reported it yet.
 -}
 type Reading
-    = Reading { norm : Float, text : String, sync : Sync }
+    = Reading { at : At, mark : Mark }
+
+
+type At
+    = Known { norm : Float, text : String }
+    | Missing
 
 
 reading : Float -> String -> Reading
 reading n t =
-    Reading { norm = clamp 0 1 n, text = t, sync = Confirmed }
+    Reading { at = Known { norm = clamp 0 1 n, text = t }, mark = Clear }
 
 
-pending : Reading -> Reading
-pending (Reading r) =
-    Reading { r | sync = Pending }
+{-| A value the unit has not reported: the control says so, never a guess.
+-}
+missing : Reading
+missing =
+    Reading { at = Missing, mark = Clear }
 
 
-norm : Reading -> Float
+refused : String -> Reading -> Reading
+refused why (Reading r) =
+    Reading { r | mark = Refused why }
+
+
+norm : Reading -> Maybe Float
 norm (Reading r) =
-    r.norm
+    case r.at of
+        Known k ->
+            Just k.norm
+
+        Missing ->
+            Nothing
 
 
+{-| The text a readout prints: the unit's, or a dash for a value not yet
+reported.
+-}
 text : Reading -> String
 text (Reading r) =
-    r.text
+    case r.at of
+        Known k ->
+            k.text
+
+        Missing ->
+            "--"
 
 
-sync : Reading -> Sync
-sync (Reading r) =
-    r.sync
+mark : Reading -> Mark
+mark (Reading r) =
+    r.mark
 
 
-{-| A choice's reading: the option it is on.
+{-| Where a choice is: on one of its options, on a value the unit's list
+doesn't hold, or not reported yet.
+-}
+type Choice
+    = On OptIndex
+    | NotInList
+    | NoValue
+
+
+{-| A choice's reading.
 -}
 type Chosen
-    = Chosen { index : OptIndex, sync : Sync }
+    = Chosen { choice : Choice, mark : Mark }
 
 
 chosen : OptIndex -> Chosen
 chosen i =
-    Chosen { index = i, sync = Confirmed }
+    Chosen { choice = On i, mark = Clear }
 
 
-pendingChoice : Chosen -> Chosen
-pendingChoice (Chosen c) =
-    Chosen { c | sync = Pending }
+notInList : Chosen
+notInList =
+    Chosen { choice = NotInList, mark = Clear }
 
 
-current : Chosen -> OptIndex
+noValue : Chosen
+noValue =
+    Chosen { choice = NoValue, mark = Clear }
+
+
+refusedChoice : String -> Chosen -> Chosen
+refusedChoice why (Chosen c) =
+    Chosen { c | mark = Refused why }
+
+
+choice : Chosen -> Choice
+choice (Chosen c) =
+    c.choice
+
+
+{-| The option it is on, if it is on one.
+-}
+current : Chosen -> Maybe OptIndex
 current (Chosen c) =
-    c.index
+    case c.choice of
+        On i ->
+            Just i
+
+        NotInList ->
+            Nothing
+
+        NoValue ->
+            Nothing
 
 
-chosenSync : Chosen -> Sync
-chosenSync (Chosen c) =
-    c.sync
+chosenMark : Chosen -> Mark
+chosenMark (Chosen c) =
+    c.mark
+
+
+{-| The name a choice shows: its option's, or what the unit said instead.
+-}
+choiceText : List Option -> Chosen -> String
+choiceText opts ch =
+    case choice ch of
+        On i ->
+            opts |> List.filter (\( k, _ ) -> k == i) |> List.head |> Maybe.map Tuple.second |> Maybe.withDefault "--"
+
+        NotInList ->
+            "??"
+
+        NoValue ->
+            "--"
 
 
 {-| An option as the unit lists it: its number and its name.
@@ -179,18 +266,39 @@ optionList (Options first rest) =
     first :: rest
 
 
-syncClass : Sync -> Html.Attribute msg
-syncClass s =
-    classList
-        [ ( "pending"
-          , case s of
-                Pending ->
-                    True
+{-| A control's marks: a refusal wears its reason, which a hover and a
+screen reader both get, and a small badge that takes no room.
+-}
+markAttrs : Mark -> List (Html.Attribute msg)
+markAttrs m =
+    case m of
+        Clear ->
+            []
 
-                Confirmed ->
-                    False
-          )
-        ]
+        Refused why ->
+            [ class "refused", title ("THE UNIT REFUSED: " ++ why), attribute "aria-description" ("the unit refused: " ++ why) ]
+
+
+{-| Whether a control's range runs either side of nothing: it follows from
+the unit's range alone (min below 0, max above), never a hand flag.
+-}
+type Polarity
+    = Unipolar
+    | Bipolar
+
+
+polarity : { a | min : Float, max : Float } -> Polarity
+polarity r =
+    if r.min < 0 && r.max > 0 then
+        Bipolar
+
+    else
+        Unipolar
+
+
+isBipolar : Polarity -> Bool
+isBipolar p =
+    p == Bipolar
 
 
 
@@ -204,9 +312,18 @@ type Width
     = Width { px : Int, ch : Int }
 
 
-width : { px : Int, ch : Int } -> Width
-width =
-    Width
+{-| At least `px` pixels (never negative) and `ch` characters.
+-}
+width : { px : Int, ch : Chars } -> Width
+width w =
+    Width { px = max 0 w.px, ch = Tokens.charsCount w.ch }
+
+
+{-| Pixels alone.
+-}
+pxWidth : Int -> Width
+pxWidth px =
+    Width { px = max 0 px, ch = 0 }
 
 
 widthText : Width -> String
@@ -222,9 +339,9 @@ widthStyle w =
 {-| The value's text in a box `chars` wide: tabular numerals, and text that
 is longer is cut with an ellipsis, never grown.
 -}
-readout : Int -> Reading -> Html msg
+readout : Chars -> Reading -> Html msg
 readout chars r =
-    div [ class "v", style "width" (String.fromInt chars ++ "ch"), title (text r) ] [ Html.text (text r) ]
+    div [ classList [ ( "v", True ), ( "missing", norm r == Nothing ) ], style "width" (String.fromInt (Tokens.charsCount chars) ++ "ch"), title (text r) ] [ Html.text (text r) ]
 
 
 {-| A control's box: its label above what it holds. The label is cut with
@@ -235,11 +352,11 @@ cell attrs label body =
     div (class "c" :: attrs) (div [ class "k", title label ] [ Html.text label ] :: body)
 
 
-{-| Pixels a label takes in the label face (12px condensed capitals).
+{-| Pixels a label takes in the label face.
 -}
 labelPx : String -> Int
 labelPx label =
-    ceiling (toFloat (String.length label) * 7.2) + 4
+    Tokens.textPx LabelFace label + 4
 
 
 {-| Widths step in 16px, so a module's controls sit on a grid.
@@ -284,8 +401,14 @@ slider label r =
     , ariaValueText (text r)
     , attribute "aria-valuemin" "0"
     , attribute "aria-valuemax" "100"
-    , attribute "aria-valuenow" (String.fromInt (round (norm r * 100)))
     ]
+        ++ (case norm r of
+                Just n ->
+                    [ attribute "aria-valuenow" (String.fromInt (round (n * 100))) ]
+
+                Nothing ->
+                    []
+           )
 
 
 
@@ -521,7 +644,7 @@ empty =
 
 want : Addr -> Want -> Wanted -> Wanted
 want a w (Wanted d) =
-    Wanted (Dict.insert (addrKey a) ( a, w ) d)
+    Wanted (Dict.insert (Addr.key a) ( a, w ) d)
 
 
 {-| The wants to send this frame, one per control in address order, and what
@@ -605,8 +728,3 @@ wheelNorm p =
 isEmpty : Wanted -> Bool
 isEmpty (Wanted d) =
     Dict.isEmpty d
-
-
-wants : Addr -> Wanted -> Bool
-wants a (Wanted d) =
-    Dict.member (addrKey a) d

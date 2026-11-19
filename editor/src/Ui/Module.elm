@@ -6,7 +6,6 @@ module Ui.Module exposing
     , Jack(..)
     , Msg(..)
     , body
-    , chip
     , chipOf
     , foldOf
     , full
@@ -34,12 +33,20 @@ import Html exposing (Html, div, h2, header, small, span, text)
 import Html.Attributes exposing (attribute, class, classList)
 import Html.Events as Events
 import Set exposing (Set)
+import Ui.Chip as Chip exposing (Chip)
+import Ui.Routes as Routes exposing (Dest, Source)
 
 
-{-| A module on a page, by its title unless told otherwise.
+{-| A module on a page: its chip and its title, so two modules of one title
+under different chips never fold together.
 -}
 type Id
-    = Id String
+    = Id Chip String
+
+
+idKey : Id -> String
+idKey (Id c t) =
+    Chip.label c ++ "/" ++ t
 
 
 type Fold
@@ -59,8 +66,8 @@ noFolds =
 
 
 foldOf : Id -> Folds -> Fold
-foldOf (Id i) (Folds s) =
-    if Set.member i s then
+foldOf i (Folds s) =
+    if Set.member (idKey i) s then
         Folded
 
     else
@@ -76,7 +83,7 @@ update (SetFold ids fold) (Folds s) =
     let
         keys : Set String
         keys =
-            Set.fromList (List.map (\(Id i) -> i) ids)
+            Set.fromList (List.map idKey ids)
     in
     Folds
         (case fold of
@@ -96,16 +103,15 @@ type Span
 {-| A jack: inputs are destinations, outputs are sources.
 -}
 type Jack
-    = In String
-    | Out String
+    = In Dest
+    | Out Source
 
 
 type Config msg
     = Config
-        { id : Id
-        , title : String
+        { title : String
         , note : String
-        , chip : String
+        , chip : Chip
         , menus : List (Html msg)
         , summary : List ( String, String )
         , span : Span
@@ -114,21 +120,14 @@ type Config msg
         }
 
 
-new : String -> Config msg
-new title =
-    Config { id = Id title, title = title, note = "", chip = title, menus = [], summary = [], span = Half, jacks = [], body = [] }
+new : Chip -> String -> Config msg
+new c title =
+    Config { title = title, note = "", chip = c, menus = [], summary = [], span = Half, jacks = [], body = [] }
 
 
 note : String -> Config msg -> Config msg
 note s (Config c) =
     Config { c | note = s }
-
-
-{-| The show/hide chip the module answers to (several modules can share one).
--}
-chip : String -> Config msg -> Config msg
-chip s (Config c) =
-    Config { c | chip = s }
 
 
 {-| The title bar's type menus (`Ui.Menu.inHeader`).
@@ -164,7 +163,7 @@ body b (Config c) =
 
 idOf : Config msg -> Id
 idOf (Config c) =
-    c.id
+    Id c.chip c.title
 
 
 titleOf : Config msg -> String
@@ -172,7 +171,9 @@ titleOf (Config c) =
     c.title
 
 
-chipOf : Config msg -> String
+{-| The show/hide chip the module answers to (several modules share one).
+-}
+chipOf : Config msg -> Chip
 chipOf (Config c) =
     c.chip
 
@@ -256,8 +257,8 @@ jacksOf js =
             List.filterMap
                 (\j ->
                     case j of
-                        In l ->
-                            Just l
+                        In d ->
+                            Just (Routes.destName d)
 
                         Out _ ->
                             Nothing
@@ -269,8 +270,8 @@ jacksOf js =
             List.filterMap
                 (\j ->
                     case j of
-                        Out l ->
-                            Just l
+                        Out o ->
+                            Just (Routes.sourceName o)
 
                         In _ ->
                             Nothing

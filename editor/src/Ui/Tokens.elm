@@ -1,12 +1,20 @@
 module Ui.Tokens exposing
-    ( Os(..)
+    ( Chars
+    , Face(..)
+    , Os(..)
     , Preference
     , Theme(..)
     , Token(..)
+    , chars
+    , charsCount
     , fromName
     , fromPreference
     , label
     , name
+    , oneMore
+    , preference
+    , readoutChars
+    , textPx
     , themed
     , themes
     , var
@@ -19,6 +27,7 @@ UI's root, so the gallery can show both side by side.
 
 import Html
 import Html.Attributes exposing (attribute)
+import Json.Decode as Decode exposing (Decoder)
 
 
 type Theme
@@ -44,6 +53,31 @@ type alias Preference =
 themes : List Theme
 themes =
     [ Day, Night ]
+
+
+{-| The flags theme.js hands Elm at start: `{ stored, dark }`. Flags that
+don't decode are an OS in light mode with nothing stored.
+-}
+preference : Decode.Value -> Preference
+preference flags =
+    Decode.decodeValue preferenceDecoder flags
+        |> Result.withDefault { stored = Nothing, os = OsLight }
+
+
+preferenceDecoder : Decoder Preference
+preferenceDecoder =
+    Decode.map2 (\s dark -> { stored = s, os = osOf dark })
+        (Decode.field "stored" (Decode.nullable Decode.string))
+        (Decode.field "dark" Decode.bool)
+
+
+osOf : Bool -> Os
+osOf dark =
+    if dark then
+        OsDark
+
+    else
+        OsLight
 
 
 {-| A stored choice wins; without one, the OS decides.
@@ -132,3 +166,82 @@ var t =
                     "knob-ptr"
            )
         ++ ")"
+
+
+
+-- THE FACES' METRICS
+
+
+{-| A readout's width in characters of its own face: never less than one.
+-}
+type Chars
+    = Chars Int
+
+
+chars : Int -> Maybe Chars
+chars n =
+    if n >= 1 then
+        Just (Chars n)
+
+    else
+        Nothing
+
+
+charsCount : Chars -> Int
+charsCount (Chars n) =
+    n
+
+
+{-| A character's slack beside a readout.
+-}
+oneMore : Chars -> Chars
+oneMore (Chars n) =
+    Chars (n + 1)
+
+
+{-| The longest text the box's formats print: `1.20 kHz`, `+100`, `C#-1`.
+-}
+readoutChars : Chars
+readoutChars =
+    Chars 8
+
+
+{-| The faces text is set in, each with the pixels a capital takes
+(public/style.css sets them).
+-}
+type Face
+    = LabelFace
+    | ToggleFace
+    | WordFace
+    | SelectorFace
+    | HeaderValueFace
+
+
+capitalPx : Face -> Float
+capitalPx f =
+    case f of
+        -- 12px condensed capitals
+        LabelFace ->
+            7.2
+
+        -- 12px condensed, letter-spaced
+        ToggleFace ->
+            7.5
+
+        -- the word row's 15px condensed
+        WordFace ->
+            9.3
+
+        SelectorFace ->
+            7
+
+        -- the title bar's 14px mono
+        HeaderValueFace ->
+            9
+
+
+{-| Pixels a word takes in a face.
+-}
+textPx : Face -> String -> Int
+textPx f s =
+    ceiling (toFloat (String.length s) * capitalPx f)

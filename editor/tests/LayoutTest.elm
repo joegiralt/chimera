@@ -1,17 +1,21 @@
 module LayoutTest exposing (suite)
 
+import Addr
 import Dict exposing (Dict)
 import Expect
 import Fixture
+import Layout.Page
 import Layout.Shared as Shared exposing (Module)
-import Protocol exposing (Addr(..), addrKey)
+import Protocol
 import Schema exposing (Schema)
 import Set exposing (Set)
 import Test exposing (Test, describe, test)
+import Ui.Chip as Chip
 import Ui.Pad as Pad
 import Ui.PadStrip exposing (Tab(..))
 import Unit exposing (Engine(..))
 import View.EnginePage as EnginePage
+import Wire exposing (addr)
 
 
 {-| The engines with a page, and the views each has.
@@ -43,13 +47,13 @@ views e =
 described : Schema -> Set String
 described sch =
     Schema.pages sch
-        |> List.concatMap (.panels >> List.concatMap (.params >> List.map (.addr >> addrKey)))
+        |> List.concatMap (.panels >> List.concatMap (.params >> List.map (.addr >> Addr.key)))
         |> Set.fromList
 
 
 placed : List Module -> List String
 placed =
-    List.concatMap (Shared.addresses >> List.map addrKey)
+    List.concatMap (Shared.addresses >> List.map Addr.key)
 
 
 {-| Every variant of every panel, one Sound each: a panel shows its first
@@ -106,6 +110,9 @@ withExtra =
                     Protocol.Err_ _ ->
                         s
 
+                    Protocol.SetRefused _ _ ->
+                        s
+
                     Protocol.SinceTooLarge ->
                         s
 
@@ -128,9 +135,9 @@ shownIn e tab vs title =
             Shared.active (Fixture.schemaFor e) (Dict.fromList vs)
     in
     (EnginePage.layout e tab).shown
-        |> List.filter (\m -> m.title == title)
+        |> List.filter (\m -> Shared.title m == title)
         |> List.concatMap (Shared.fill (Shared.index items) >> List.concatMap Tuple.second)
-        |> List.map (\( i, _ ) -> ( addrKey i.param.addr, i.label ))
+        |> List.map (\( i, _ ) -> ( Addr.key i.param.addr, i.label ))
 
 
 suite : Test
@@ -162,9 +169,14 @@ suite =
                                 |> Expect.equal []
                     , test (name ++ " leaves nothing to OTHER in any Sound") <|
                         \_ ->
-                            sounds (Fixture.schemaFor e)
-                                |> List.concatMap (\v -> EnginePage.other (Shared.active (Fixture.schemaFor e) v) (EnginePage.layout e Kit).every)
-                                |> List.map (.param >> .addr >> addrKey)
+                            let
+                                sch : Schema
+                                sch =
+                                    Fixture.schemaFor e
+                            in
+                            sounds sch
+                                |> List.concatMap (\v -> EnginePage.other (Shared.active sch v) (EnginePage.layout e Kit).every)
+                                |> List.map (.param >> .addr >> Addr.key)
                                 |> Expect.equal []
                     ]
                 )
@@ -181,11 +193,68 @@ suite =
                     |> List.concatMap (\e -> placed (EnginePage.layout e Kit).every)
                     |> List.filter (\a -> not (Set.member a any))
                     |> Expect.equal []
+        , describe "every screen a layout draws is a page its engine describes"
+            (List.map
+                (\e ->
+                    test (Unit.engineName e) <|
+                        \_ ->
+                            let
+                                sch : Schema
+                                sch =
+                                    Fixture.schemaFor e
+                            in
+                            views e
+                                |> List.concatMap (\v -> (EnginePage.layout e v).shown)
+                                |> List.filterMap Shared.screen
+                                |> List.filter (\sc -> Layout.Page.resolve sc.page sch == Nothing)
+                                |> List.map (.page >> Layout.Page.label)
+                                |> Expect.equal []
+                )
+                paged
+            )
+        , describe "every variant panel names the selector that picks it"
+            (List.map
+                (\e ->
+                    test (Unit.engineName e) <|
+                        \_ ->
+                            let
+                                sch : Schema
+                                sch =
+                                    Fixture.schemaFor e
+                            in
+                            Schema.pages sch
+                                |> List.concatMap .panels
+                                |> List.filter (\pn -> pn.variant /= "-")
+                                |> List.map .name
+                                |> List.filter (\n -> Layout.Page.variantSelector n |> Maybe.andThen (\a -> Schema.param a sch) |> (==) Nothing)
+                                |> Set.fromList
+                                |> Set.toList
+                                |> Expect.equal []
+                )
+                paged
+            )
+        , test "an_item_is_placed_in_the_module_that_holds_it" <|
+            \_ ->
+                Shared.active (Fixture.schemaFor Algo) Dict.empty
+                    |> List.filter (\i -> Addr.key i.param.addr == "ALGO.MORPH")
+                    |> List.map
+                        (\i ->
+                            case Shared.place (EnginePage.layout Algo Kit).every i of
+                                Shared.Placed m ->
+                                    Shared.title m
+
+                                Shared.Unplaced ->
+                                    "OTHER"
+                        )
+                    |> Expect.equal [ "ALGORITHM" ]
+        , test "every_chip_has_its_own_word" <|
+            \_ ->
+                Set.size (Set.fromList (List.map Chip.label Chip.all)) |> Expect.equal (List.length Chip.all)
         , test "a_param_the_layout_lacks_lands_in_other" <|
             \_ ->
                 EnginePage.other (Shared.active withExtra Dict.empty) (EnginePage.layout Algo Kit).every
                     |> List.map (.param >> .addr)
-                    |> Expect.equal [ Addr "ALGO.NEW" ]
+                    |> Expect.equal [ addr "ALGO.NEW" ]
         , describe "variants are followed"
             [ test "an_operators_formant_band_shows_only_while_its_wave_is_formant" <|
                 \_ ->
@@ -209,17 +278,17 @@ suite =
         , test "the_va_page_is_in_v6s_order" <|
             \_ ->
                 (EnginePage.layout Va Kit).shown
-                    |> List.map .title
+                    |> List.map Shared.title
                     |> Expect.equal [ "OSC 1", "OSC 2", "MODE", "MIXER", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "PITCH", "MOD" ]
         , test "the_modal_page_is_in_v6s_order" <|
             \_ ->
                 (EnginePage.layout Modal Kit).shown
-                    |> List.map .title
+                    |> List.map Shared.title
                     |> Expect.equal [ "RESONATOR", "EXCITER", "MODAL-2", "PITCH", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
         , test "the_tape_page_is_in_v6s_order" <|
             \_ ->
                 (EnginePage.layout Tape Kit).shown
-                    |> List.map .title
+                    |> List.map Shared.title
                     |> Expect.equal [ "SOURCE", "DECK", "MACHINE", "PITCH", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
         , test "the_resonators_model_picks_the_exciters_controls" <|
             \_ ->
@@ -237,20 +306,20 @@ suite =
         , test "the_tape_source_is_shown_and_never_a_control" <|
             \_ ->
                 (EnginePage.layout Tape Kit).shown
-                    |> List.filter (\m -> m.title == "SOURCE")
-                    |> List.concatMap .extras
+                    |> List.filter (\m -> Shared.title m == "SOURCE")
+                    |> List.concatMap Shared.extras
                     |> List.member Shared.SourceText
                     |> Expect.equal True
         , describe "DRUM mirrors the box"
             [ test "the_kit_view_is_the_pads_then_the_whole_kits_voice" <|
                 \_ ->
                     (EnginePage.layout Drum Kit).shown
-                        |> List.map .title
+                        |> List.map Shared.title
                         |> Expect.equal [ "PADS 1–6", "PADS 7–12", "VOICE FX", "OUT", "FILTER MOD", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3" ]
             , test "a_pad_view_is_that_pads_voice_then_mod" <|
                 \_ ->
                     (EnginePage.layout Drum (PadTab Pad.Pad3)).shown
-                        |> List.map .title
+                        |> List.map Shared.title
                         |> Expect.equal [ "PAD", "MACHINE", "FILTER", "AMP", "PITCH ENV", "PITCH LFO", "ROUTE 1–4", "MOD" ]
             , test "a_pad_view_places_only_that_pads_addresses" <|
                 \_ ->
@@ -267,9 +336,9 @@ suite =
             , test "a_pads_routes_are_its_bay" <|
                 \_ ->
                     (EnginePage.layout Drum (PadTab Pad.Pad7)).shown
-                        |> List.filter (\m -> m.title == "ROUTE 1–4")
+                        |> List.filter (\m -> Shared.title m == "ROUTE 1–4")
                         |> List.concatMap Shared.addresses
-                        |> List.map addrKey
+                        |> List.map Addr.key
                         |> List.sort
                         |> Expect.equal (List.sort (List.concatMap (\k -> List.map (\f -> "PAD7_RT" ++ String.fromInt k ++ "." ++ f) [ "SOURCE", "DEST", "AMOUNT" ]) (List.range 1 4)))
             , test "the_machine_names_its_knobs" <|
@@ -281,6 +350,6 @@ suite =
         , test "the_algo_page_is_in_v6s_order" <|
             \_ ->
                 (EnginePage.layout Algo Kit).shown
-                    |> List.map .title
+                    |> List.map Shared.title
                     |> Expect.equal [ "ALGORITHM", "PITCH", "OP 1", "OP 2", "OP 3", "OP 4", "OP 5", "OP 6", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
         ]

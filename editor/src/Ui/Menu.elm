@@ -4,13 +4,15 @@ module Ui.Menu exposing (Config, Msg(..), State, glyphs, inHeader, label, new, s
 optionally with the unit's glyph on each option. One menu is open at a time.
 -}
 
+import Addr exposing (Addr)
 import Html exposing (Html, b, button, div, span, text)
 import Html.Attributes exposing (attribute, class, classList, style)
 import Html.Events as Events exposing (onClick)
 import Json.Decode as Decode
-import Protocol exposing (Addr, OptIndex)
+import Protocol exposing (OptIndex)
 import Ui.Control as Control exposing (Chosen, Option, Options, Width)
 import Ui.Screen as Screen
+import Ui.Tokens as Tokens exposing (Chars, Face(..))
 
 
 type Place
@@ -83,9 +85,12 @@ update msg =
             ( Shut, Just (Control.Pick a i) )
 
 
-widest : List Option -> Int
+{-| The widest option's name, in characters (the "--" of a value not
+reported included).
+-}
+widest : List Option -> Chars
 widest opts =
-    opts |> List.map (Tuple.second >> String.length) |> List.maximum |> Maybe.withDefault 1
+    ("--" :: List.map Tuple.second opts) |> List.map String.length |> List.maximum |> Maybe.andThen Tokens.chars |> Maybe.withDefault Tokens.readoutChars
 
 
 {-| The value's box holds the widest option name, in its own face.
@@ -94,10 +99,10 @@ width : Config -> Width
 width (Config c) =
     case c.place of
         InPanel ->
-            Control.width { px = Control.snap16 (max 56 (Control.labelPx c.label)), ch = widest c.options + 2 }
+            Control.width { px = Control.snap16 (max 56 (Control.labelPx c.label)), ch = Tokens.oneMore (Tokens.oneMore (widest c.options)) }
 
         InHeader ->
-            Control.width { px = Control.labelPx c.label + 34 + 9 * widest c.options, ch = 0 }
+            Control.pxWidth (Control.labelPx c.label + 34 + Tokens.textPx HeaderValueFace (String.repeat (Tokens.charsCount (widest c.options)) "M"))
 
 
 view : Config -> State -> Chosen -> Html Msg
@@ -109,11 +114,7 @@ view ((Config c) as config) state ch =
 
         name : String
         name =
-            c.options
-                |> List.filter (\( i, _ ) -> i == Control.current ch)
-                |> List.head
-                |> Maybe.map Tuple.second
-                |> Maybe.withDefault "--"
+            Control.choiceText c.options ch
 
         toggle : Html.Attribute Msg
         toggle =
@@ -137,9 +138,9 @@ view ((Config c) as config) state ch =
                     (List.map
                         (\( i, w ) ->
                             button
-                                [ classList [ ( "on", i == Control.current ch ) ]
+                                [ classList [ ( "on", Just i == Control.current ch ) ]
                                 , Control.ariaRole "option"
-                                , attribute "aria-selected" (ariaBool (i == Control.current ch))
+                                , attribute "aria-selected" (ariaBool (Just i == Control.current ch))
                                 , onClick (Choose c.addr i)
                                 ]
                                 (case c.glyph i of
@@ -162,14 +163,14 @@ view ((Config c) as config) state ch =
     in
     case c.place of
         InPanel ->
-            Control.cell [ class "mnc", Control.syncClass (Control.chosenSync ch), Control.widthStyle (width config) ]
+            Control.cell (class "mnc" :: Control.widthStyle (width config) :: Control.markAttrs (Control.chosenMark ch))
                 c.label
                 [ button (class "mn" :: popupAttrs) [ text name ], popup ]
 
         InHeader ->
-            div [ class "hmn", Control.syncClass (Control.chosenSync ch), Control.widthStyle (width config) ]
+            div (class "hmn" :: Control.widthStyle (width config) :: Control.markAttrs (Control.chosenMark ch))
                 [ button (class "hbtn" :: popupAttrs)
-                    [ b [] [ text c.label ], span [ style "width" (String.fromInt (widest c.options) ++ "ch") ] [ text name ] ]
+                    [ b [] [ text c.label ], span [ style "width" (String.fromInt (Tokens.charsCount (widest c.options)) ++ "ch") ] [ text name ] ]
                 , popup
                 ]
 

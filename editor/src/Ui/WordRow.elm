@@ -4,11 +4,12 @@ module Ui.WordRow exposing (Config, label, new, view, width)
 type menus.
 -}
 
+import Addr exposing (Addr)
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (class, classList, style)
 import Html.Events exposing (onClick)
-import Protocol exposing (Addr)
 import Ui.Control as Control exposing (Chosen, Msg(..), Option, Options, Width)
+import Ui.Tokens as Tokens exposing (Face(..))
 
 
 type Config
@@ -29,7 +30,7 @@ label l (Config c) =
 
 wordPx : String -> Int
 wordPx w =
-    ceiling (toFloat (String.length w) * 9.3) + 24
+    Tokens.textPx WordFace w + 24
 
 
 width : Config -> Width
@@ -39,20 +40,20 @@ width (Config c) =
         words =
             List.sum (List.map (Tuple.second >> wordPx) c.options) + 4 * (List.length c.options - 1)
     in
-    Control.width { px = max (Control.labelPx c.label) words, ch = 0 }
+    Control.pxWidth (max (Control.labelPx c.label) words)
 
 
 view : Config -> Chosen -> Html Msg
 view ((Config c) as config) ch =
-    Control.cell [ class "wrc", Control.syncClass (Control.chosenSync ch), Control.widthStyle (width config) ]
+    Control.cell (class "wrc" :: Control.widthStyle (width config) :: Control.markAttrs (Control.chosenMark ch))
         c.label
         [ div [ class "words", Control.ariaRole "radiogroup", Control.ariaLabel c.label ]
             (List.map
                 (\( i, w ) ->
                     button
-                        [ classList [ ( "on", i == Control.current ch ) ]
+                        [ classList [ ( "on", Just i == Control.current ch ) ]
                         , Control.ariaRole "radio"
-                        , Control.ariaChecked (i == Control.current ch)
+                        , Control.ariaChecked (Just i == Control.current ch)
                         , style "width" (String.fromInt (wordPx w) ++ "px")
                         , onClick (Pick c.addr i)
                         ]

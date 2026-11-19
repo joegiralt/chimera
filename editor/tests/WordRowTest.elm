@@ -1,18 +1,18 @@
 module WordRowTest exposing (suite)
 
 import Contract exposing (opt)
-import Protocol exposing (Addr(..))
 import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
 import Test.Html.Selector as Sel
 import Ui.Control as Control exposing (Msg(..))
 import Ui.WordRow as WordRow
+import Wire exposing (addr)
 
 
 accent : WordRow.Config
 accent =
-    WordRow.new (Addr "THEME.ACCENT") (Control.nonEmpty ( opt 0, "TEAL" ) (List.drop 1 (Contract.options [ "TEAL", "AMBER", "RED", "PUNCH", "WHITE" ]))) |> WordRow.label "ACCENT"
+    WordRow.new (addr "THEME.ACCENT") (Control.nonEmpty ( opt 0, "TEAL" ) (List.drop 1 (Contract.options [ "TEAL", "AMBER", "RED", "PUNCH", "WHITE" ]))) |> WordRow.label "ACCENT"
 
 
 suite : Test
@@ -30,7 +30,7 @@ suite =
                     |> Query.fromHtml
                     |> Query.find [ Sel.attribute (Control.ariaRole "radio"), Sel.containing [ Sel.text "RED" ] ]
                     |> Event.simulate Event.click
-                    |> Event.expect (Pick (Addr "THEME.ACCENT") (opt 2))
+                    |> Event.expect (Pick (addr "THEME.ACCENT") (opt 2))
         , test "it_is_a_labelled_radio_group" <|
             \_ ->
                 WordRow.view accent (Control.chosen (opt 0))

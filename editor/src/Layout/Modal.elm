@@ -5,60 +5,49 @@ EXCITER, MODAL-2, PITCH, then the voice and MOD. The model picks what the
 exciter and MODAL-2 hold.
 -}
 
+import Addr exposing (Addr, Block(..))
+import Layout.Page exposing (UnitPage(..))
 import Layout.Shared as Shared exposing (Module, auto, fader, group, hero, knob, module_, strip)
-import Protocol exposing (Addr(..))
+import Ui.Chip as Chip
 
 
 modules : List Module
 modules =
-    [ resonator, exciter, modal2, Shared.pitch, Shared.filter, Shared.filterMod, Shared.voiceFx, Shared.ampOut ]
-        ++ List.map Shared.envelope (List.range 1 3)
-        ++ List.map Shared.lfo (List.range 1 3)
+    [ resonator, exciter, modal2, Shared.pitch, Shared.filter, Shared.filterMod, Shared.voiceFx Fx, Shared.ampOut ]
+        ++ List.map Shared.envelope Addr.envs
+        ++ List.map Shared.lfo Addr.lfos
         ++ [ Shared.mod ]
+
+
+a : String -> Addr
+a =
+    Addr.field >> Addr.at Modal
 
 
 resonator : Module
 resonator =
-    let
-        m : Module
-        m =
-            module_ "RESONATOR" "RESONATOR"
-    in
-    { m
-        | header = [ Addr "MODAL.MODE" ]
-        , screen = strip "RES"
-        , groups =
-            [ group "" [ hero "MODAL.BRIGHT", knob "MODAL.STRUCTURE" ]
-            , group "" [ fader "MODAL.DAMP", fader "MODAL.POS" ]
+    module_ Chip.Resonator "RESONATOR"
+        |> Shared.withHeader [ a "MODE" ]
+        |> Shared.withScreen (strip Res)
+        |> Shared.withGroups
+            [ group "" [ hero (a "BRIGHT"), knob (a "STRUCTURE") ]
+            , group "" [ fader (a "DAMP"), fader (a "POS") ]
             ]
-    }
 
 
 exciter : Module
 exciter =
-    let
-        m : Module
-        m =
-            module_ "EXCITER" "RESONATOR"
-    in
-    { m
-        | screen = strip "EXC"
-        , groups = [ group "" [ hero "MODAL.EXCITE", hero "MODAL.FORCE", fader "MODAL.COLOR", fader "MODAL.BURST", fader "MODAL.SPEED" ] ]
-    }
+    module_ Chip.Resonator "EXCITER"
+        |> Shared.withScreen (strip Exc)
+        |> Shared.withGroups [ group "" [ hero (a "EXCITE"), hero (a "FORCE"), fader (a "COLOR"), fader (a "BURST"), fader (a "SPEED") ] ]
 
 
 modal2 : Module
 modal2 =
-    let
-        m : Module
-        m =
-            module_ "MODAL-2" "RESONATOR"
-    in
-    { m
-        | screen = strip "MDL2"
-        , groups =
-            [ group "" [ auto "MODAL.MODES" ]
-            , group "BODY" [ knob "MODAL.COUPLE", fader "MODAL.HALO", fader "MODAL.BODY" ]
-            , group "ENSEMBLE" [ fader "MODAL.E.DPT", fader "MODAL.E.RAT", fader "MODAL.E.MIX" ]
+    module_ Chip.Resonator "MODAL-2"
+        |> Shared.withScreen (strip Mdl2)
+        |> Shared.withGroups
+            [ group "" [ auto (a "MODES") ]
+            , group "BODY" [ knob (a "COUPLE"), fader (a "HALO"), fader (a "BODY") ]
+            , group "ENSEMBLE" [ fader (a "E.DPT"), fader (a "E.RAT"), fader (a "E.MIX") ]
             ]
-    }

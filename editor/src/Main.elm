@@ -4,7 +4,7 @@ import Browser
 import Html exposing (Html)
 import Json.Decode as Decode
 import Model
-import Ui.Tokens as Tokens exposing (Os(..))
+import Ui.Tokens as Tokens
 import View.EnginePage as EnginePage
 
 
@@ -40,27 +40,7 @@ main =
 -}
 init : Decode.Value -> ( App, Cmd Msg )
 init flags =
-    let
-        preference : Tokens.Preference
-        preference =
-            Decode.decodeValue
-                (Decode.map2 (\s d -> { stored = s, os = os d })
-                    (Decode.field "stored" (Decode.nullable Decode.string))
-                    (Decode.field "dark" Decode.bool)
-                )
-                flags
-                |> Result.withDefault { stored = Nothing, os = OsLight }
-    in
-    ( { unit = Model.init, page = EnginePage.init (Tokens.fromPreference preference) }, Cmd.none )
-
-
-os : Bool -> Os
-os dark =
-    if dark then
-        OsDark
-
-    else
-        OsLight
+    ( { unit = Model.init, page = EnginePage.init (Tokens.fromPreference (Tokens.preference flags)) }, Cmd.none )
 
 
 update : Msg -> App -> ( App, Cmd Msg )
@@ -71,7 +51,7 @@ update msg app =
                 ( unit, cmd ) =
                     Model.update m app.unit
             in
-            ( { app | unit = unit }, Cmd.map Unit cmd )
+            ( { app | unit = unit, page = EnginePage.follow unit app.page }, Cmd.map Unit cmd )
 
         Page m ->
             let
@@ -84,7 +64,7 @@ update msg app =
                         ( app.unit, [] )
                         asks
             in
-            ( { app | unit = unit, page = page }
+            ( { app | unit = unit, page = EnginePage.follow unit page }
             , Cmd.batch (Maybe.withDefault Cmd.none (Maybe.map (Tokens.name >> storeTheme) store) :: cmds)
             )
 

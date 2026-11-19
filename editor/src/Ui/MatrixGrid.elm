@@ -8,17 +8,17 @@ import Html exposing (Html, table, td, text, th, tr)
 import Html.Attributes as Attr exposing (class, classList, style, title)
 import Html.Events exposing (onClick)
 import Ui.Control as Control exposing (Travel(..))
-import Ui.Routes as Routes exposing (Cable, Dest(..), Routes, Sign(..), Source(..))
+import Ui.Routes as Routes exposing (Cable, Dest, Routes, Sign(..), Source)
 
 
 view : { connect : Source -> Dest -> msg, hand : Control.Msg -> msg } -> Routes -> Html msg
 view { connect, hand } routes =
     table [ class "mx" ]
-        (tr [] (th [ class "rh" ] [] :: List.map (\(Dest d) -> th [ title d ] [ text d ]) (Routes.dests routes))
+        (tr [] (th [ class "rh" ] [] :: List.map (\dst -> th [ title (Routes.destName dst) ] [ text (Routes.destName dst) ]) (Routes.dests routes))
             :: List.map
-                (\((Source s) as src) ->
+                (\src ->
                     tr []
-                        (th [ class "rh" ] [ text s ]
+                        (th [ class "rh" ] [ text (Routes.sourceName src) ]
                             :: List.map (cell connect hand routes src) (Routes.dests routes)
                         )
                 )
@@ -27,13 +27,13 @@ view { connect, hand } routes =
 
 
 cell : (Source -> Dest -> msg) -> (Control.Msg -> msg) -> Routes -> Source -> Dest -> Html msg
-cell connect hand routes ((Source s) as src) ((Dest d) as dst) =
+cell connect hand routes src dst =
     case List.filter (\c -> c.from == src && c.to == dst) (Routes.cables routes) of
         c :: _ ->
             patched hand c
 
         [] ->
-            td [ title ("patch " ++ s ++ " → " ++ d), onClick (connect src dst) ] [ text "·" ]
+            td [ title ("patch " ++ Routes.sourceName src ++ " → " ++ Routes.destName dst), onClick (connect src dst) ] [ text "·" ]
 
 
 patched : (Control.Msg -> msg) -> Cable -> Html msg

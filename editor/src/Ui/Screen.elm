@@ -1,15 +1,37 @@
-module Ui.Screen exposing (Config, Glyph(..), Shape(..), caption, drawn, fallback, new, values, view, width)
+module Ui.Screen exposing
+    ( Config
+    , Focus(..)
+    , Glyph(..)
+    , Region
+    , Shape(..)
+    , Spec
+    , caption
+    , drawn
+    , encodeSpec
+    , fallback
+    , focus
+    , new
+    , onPad
+    , padIcon
+    , spec
+    , values
+    , view
+    , width
+    )
 
 {-| One of the unit's screens. A drawn screen is a `<chimera-screen>`
 element (public/screen.js): the firmware's own renderer, compiled to WASM,
 paints `ed describe`'s page from the stored values, so it moves as they do.
-Until the WASM is loaded it shows v6's crop of the same screen, if there is
-one. A crop alone (the pad strip's icons) is only an image.
+Elm hands it one attribute, `spec`, a JSON object (`encodeSpec`). Until the
+WASM is loaded it shows v6's crop of the same screen, if there is one. A crop
+alone is only an image.
 -}
 
+import Addr exposing (Addr)
 import Html exposing (Html, div, img, text)
 import Html.Attributes exposing (alt, attribute, class, src, style)
-import Protocol exposing (Addr, addrKey)
+import Json.Encode as Encode
+import Protocol exposing (PageNo)
 import Ui.Control as Control exposing (Width)
 import Ui.Pad as Pad exposing (Pad)
 import Unit exposing (Engine)
@@ -36,9 +58,52 @@ type Shape
     | Tall
 
 
+{-| What of the page the renderer paints: the page's art, the focus band's
+gauge, the whole screen, or one DRUM pad's machine icon.
+-}
+type Region
+    = ScreenArt
+    | PadIconOf Pad
+
+
+{-| The cell in the focus band, knob A to F.
+-}
+type Focus
+    = CellA
+    | CellB
+    | CellC
+
+
+focusIndex : Focus -> Int
+focusIndex f =
+    case f of
+        CellA ->
+            0
+
+        CellB ->
+            1
+
+        CellC ->
+            2
+
+
+{-| What `<chimera-screen>` is told: the engine and page, the region, the
+focused cell, the DRUM pad it draws for, and the stored values it draws, in
+`describe` order.
+-}
+type alias Spec =
+    { engine : Engine
+    , page : PageNo
+    , region : Region
+    , focus : Maybe Focus
+    , pad : Maybe Pad
+    , vals : List ( Addr, Float )
+    }
+
+
 type Art
     = Crop Glyph
-    | Drawn Int Shape
+    | Drawn { page : PageNo, region : Region, shape : Shape, focus : Maybe Focus, pad : Maybe Pad }
 
 
 type Config
@@ -60,9 +125,41 @@ new e g =
 
 {-| The firmware's art for `ed describe`'s page `n`.
 -}
-drawn : Engine -> Int -> Shape -> Config
+drawn : Engine -> PageNo -> Shape -> Config
 drawn e n s =
-    Config { engine = e, art = Drawn n s, fallback = Nothing, caption = "", values = [] }
+    Config { engine = e, art = Drawn { page = n, region = ScreenArt, shape = s, focus = Nothing, pad = Nothing }, fallback = Nothing, caption = "", values = [] }
+
+
+{-| Pad `p`'s machine icon, from its MACHINE value on page `n` (its MACHINE
+page), the crop of it under it until the WASM draws.
+-}
+padIcon : PageNo -> Pad -> Config
+padIcon n p =
+    Config { engine = Unit.Drum, art = Drawn { page = n, region = PadIconOf p, shape = Strip, focus = Nothing, pad = Just p }, fallback = Just (PadIcon p), caption = "", values = [] }
+
+
+{-| The cell the unit's focus band is on while it draws this page.
+-}
+focus : Focus -> Config -> Config
+focus f (Config c) =
+    case c.art of
+        Drawn d ->
+            Config { c | art = Drawn { d | focus = Just f } }
+
+        Crop _ ->
+            Config c
+
+
+{-| The DRUM pad the unit has selected while it draws this page.
+-}
+onPad : Pad -> Config -> Config
+onPad p (Config c) =
+    case c.art of
+        Drawn d ->
+            Config { c | art = Drawn { d | pad = Just p } }
+
+        Crop _ ->
+            Config c
 
 
 fallback : Glyph -> Config -> Config
@@ -75,11 +172,46 @@ caption s (Config c) =
     Config { c | caption = s }
 
 
-{-| The stored values the screen draws, as `ed set` takes them.
+{-| The stored values the screen draws, as `ed set` takes them, in
+`describe` order.
 -}
 values : List ( Addr, Float ) -> Config -> Config
 values vs (Config c) =
     Config { c | values = vs }
+
+
+{-| What the element is told, for a drawn screen.
+-}
+spec : Config -> Maybe Spec
+spec (Config c) =
+    case c.art of
+        Drawn d ->
+            Just { engine = c.engine, page = d.page, region = d.region, focus = d.focus, pad = d.pad, vals = c.values }
+
+        Crop _ ->
+            Nothing
+
+
+encodeSpec : Spec -> Encode.Value
+encodeSpec s =
+    Encode.object
+        [ ( "engine", Encode.string (Unit.engineName s.engine) )
+        , ( "page", Encode.int (Protocol.pageNoToInt s.page) )
+        , ( "region", Encode.string (regionName s.region) )
+        , ( "focus", s.focus |> Maybe.map (focusIndex >> Encode.int) |> Maybe.withDefault Encode.null )
+        , ( "pad", s.pad |> Maybe.map (Pad.number >> Encode.int) |> Maybe.withDefault Encode.null )
+        , ( "vals", Encode.list (\( a, v ) -> Encode.list identity [ Encode.string (Addr.key a), Encode.float v ]) s.vals )
+        ]
+
+
+regionName : Region -> String
+regionName r =
+    case r of
+        ScreenArt ->
+            "screen"
+
+        PadIconOf _ ->
+            "padicon"
 
 
 type alias Still =
@@ -122,16 +254,21 @@ size art =
         Crop g ->
             ( (crop g).w, (crop g).h )
 
-        Drawn _ Strip ->
-            ( 240, 68 )
+        Drawn d ->
+            case ( d.region, d.shape ) of
+                ( PadIconOf p, _ ) ->
+                    ( (crop (PadIcon p)).w, (crop (PadIcon p)).h )
 
-        Drawn _ Tall ->
-            ( 240, 158 )
+                ( ScreenArt, Strip ) ->
+                    ( 240, 68 )
+
+                ( ScreenArt, Tall ) ->
+                    ( 240, 158 )
 
 
 width : Config -> Width
 width (Config c) =
-    Control.width { px = Tuple.first (size c.art), ch = 0 }
+    Control.pxWidth (Tuple.first (size c.art))
 
 
 image : String -> Glyph -> Html msg
@@ -139,21 +276,29 @@ image what g =
     img [ src ("glyphs/" ++ (crop g).file ++ ".png"), alt what ] []
 
 
+{-| The box keeps the unit's aspect and never grows past its module: a
+narrow module scales it down, never clips it.
+-}
 view : Config -> Html msg
 view ((Config c) as config) =
-    div [ class "screen", Control.widthStyle (width config), style "height" (String.fromInt (Tuple.second (size c.art)) ++ "px") ]
-        [ case c.art of
-            Crop g ->
-                image c.caption g
-
-            Drawn n _ ->
+    let
+        ( w, h ) =
+            size c.art
+    in
+    div [ class "screen", Control.widthStyle (width config), style "aspect-ratio" (String.fromInt w ++ " / " ++ String.fromInt h) ]
+        [ case spec config of
+            Just s ->
                 Html.node "chimera-screen"
-                    [ attribute "engine" (Unit.engineName c.engine)
-                    , attribute "page" (String.fromInt n)
-                    , attribute "region" "screen"
-                    , attribute "vals" (String.join ";" (List.map (\( a, v ) -> addrKey a ++ "=" ++ String.fromFloat v) c.values))
-                    ]
+                    [ attribute "spec" (Encode.encode 0 (encodeSpec s)) ]
                     (c.fallback |> Maybe.map (image c.caption >> List.singleton) |> Maybe.withDefault [])
+
+            Nothing ->
+                case c.art of
+                    Crop g ->
+                        image c.caption g
+
+                    Drawn _ ->
+                        text ""
         , if c.caption == "" then
             text ""
 

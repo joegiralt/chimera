@@ -14,7 +14,8 @@ import Svg
 import Svg.Attributes as S
 import Ui.Control as Control exposing (Travel(..), Width)
 import Ui.MatrixGrid as MatrixGrid
-import Ui.Routes as Routes exposing (Cable, Dest(..), Routes, Sign(..), Source(..))
+import Ui.Routes as Routes exposing (Cable, Dest, Routes, Sign(..), Source)
+import Ui.Tokens as Tokens exposing (Chars)
 
 
 type View
@@ -95,11 +96,18 @@ subscriptions (Bay b) =
             Sub.none
 
 
+{-| An amount's readout: `+100` and a sign's room.
+-}
+attenuverterChars : Chars
+attenuverterChars =
+    Tokens.oneMore Tokens.readoutChars
+
+
 {-| The attenuverter's box, the same at every amount.
 -}
 attenuverterWidth : Width
 attenuverterWidth =
-    Control.width { px = 78, ch = 9 }
+    Control.width { px = 78, ch = attenuverterChars }
 
 
 pitch : Float
@@ -194,12 +202,12 @@ patch patching routes =
     div [ class "pb" ]
         [ div [ class "jcol srcs" ]
             (List.map
-                (\((Source s) as src) ->
+                (\src ->
                     div
                         [ classList [ ( "jack", True ), ( "out", True ), ( "on", List.member src lit ), ( "hot", patching == Just src ) ]
                         , Events.preventDefaultOn "mousedown" (Decode.succeed ( Begin src, True ))
                         ]
-                        [ span [ class "hole" ] [], b [] [ text s ] ]
+                        [ span [ class "hole" ] [], b [] [ text (Routes.sourceName src) ] ]
                 )
                 srcs
             )
@@ -210,12 +218,12 @@ patch patching routes =
             )
         , div [ class "jcol dsts" ]
             (List.map
-                (\((Dest d) as dst) ->
+                (\dst ->
                     div
                         [ classList [ ( "jack", True ), ( "in", True ), ( "on", List.member dst litDst ) ]
                         , Events.onMouseUp (Drop dst)
                         ]
-                        [ b [] [ text d ], span [ class "hole" ] [] ]
+                        [ b [] [ text (Routes.destName dst) ], span [ class "hole" ] [] ]
                 )
                 dsts
             )
@@ -369,13 +377,13 @@ attenuverter ( w, ( x, y ) ) =
 
 
 sourceName : Source -> String
-sourceName (Source s) =
-    s
+sourceName =
+    Routes.sourceName
 
 
 destName : Dest -> String
-destName (Dest d) =
-    d
+destName =
+    Routes.destName
 
 
 ariaBool : Bool -> String
