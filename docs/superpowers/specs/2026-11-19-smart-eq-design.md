@@ -72,8 +72,13 @@ Per block, per band `b`, for each Part `p` with voices on its bus:
   enhanced channel", kept to a level difference per band.
 - `depth(q, p)`: how far `q` outranks `p`. MID under FRONT and BACK under
   MID: 2/3. BACK under FRONT: 1. Same role or `p` higher: 0.
+- `own(q, b)`: how much of band `b` is `q`'s own sound, not its other
+  bands' energy through `b`'s skirt. The skirts of a Q 2/3 band-pass are
+  wide (−8.6, −20.6, −32.6 dB at one, two, three bands away), so a pure
+  100 Hz bass "plays" in HIGH MID 20.6 dB under its LOW; `own` is its
+  excess over the loudest skirt prediction, full at 6 dB.
 - `target(p, b) = AMOUNT · 6 dB · max over q of depth · active(q) ·
-  active(p) · threat(p, q)`.
+  own(q) · active(p) · threat(p, q)`.
 
 So the deepest cut is 6 dB (BACK under FRONT at full AMOUNT), 4 dB one rank
 apart; AMOUNT 64 (the default when switched on) halves those. The max over
@@ -122,7 +127,8 @@ covers the smart state). Within the door:
 - Code: `part_eq::dsp::smart`, inside the Part EQ's S4 group and run by
   the same door entry (`EqDoor`), after LO CUT and TILT. No new door slot
   (tester-04's PRT meters take 0x08180420).
-- UI: `UiDoor::smart_eq`, one entry, paints both views.
+- UI: `UiDoor::smart_eq`, one entry, plans both views (rectangles and
+  short texts); bank 1 draws the plan with the display's own helpers.
 
 ### 6. UI
 
@@ -134,10 +140,11 @@ covers the smart state). Within the door:
   bars, LOW · LOW MID · HIGH MID · HIGH, each drawn down from the top by
   its live cut, the deepest's dB written under it; nothing drawn while
   SMART EQ is off and rested.
-- **MST › SMART EQ** (page id 120, MST's second sub-page after LVL): cell
-  A SMART EQ (OFF/ON), cell B AMOUNT (0–127). Its band is the coarse view:
-  each Part's four cuts as a small column of bars under its number and
-  role letter (F, M, B), the edited Part lit.
+- **MST › LVL**: cells D SMART EQ (OFF/ON) and E AMOUNT (0–127), under
+  VOL and PAN. Its band (empty before) is the coarse view: each Part's
+  four cuts as a small column of bars under its number and role letter
+  (F, M, B), the edited Part lit. A page of its own was the first build;
+  its new page id overflowed D2 by 8 B on bench-algo (open question 3).
 - AMOUNT is CC-mappable (a master knob); SMART EQ and ROLE are switches,
   the hand's (ADR 0217's rule).
 - The cells use full words: SMART EQ, AMOUNT, ROLE; FRONT, MID, BACK.
@@ -154,7 +161,7 @@ Taken:
 - One group switch for A/B and one impact amount: our SMART EQ and AMOUNT.
 - A wider rank gap yields more (Front over Back deeper than one rank).
 - A view of every member at once beside each member's own EQ: our MST ›
-  SMART EQ band and PRT › EQ's live bars.
+  LVL band and PRT › EQ's live bars.
 
 Not taken:
 - **Learning.** smart:EQ 4 learns for about ten seconds, then holds a
@@ -209,3 +216,4 @@ Clean room: no code read or copied from any implementation.
 
 1. ROLE on PRT › EQ (cell C) rather than PRT itself, which is full.
 2. Listening in the four cut bands rather than about 8 (§ 1).
+3. SMART EQ and AMOUNT on MST › LVL rather than a page of their own.

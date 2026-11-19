@@ -7,8 +7,6 @@
 //! through `UiDoor::smart_eq` and draws the plan (`smart_view::paint`).
 //! Closed, the band is blank.
 
-use core::fmt::Write;
-
 use embedded_graphics::pixelcolor::Rgb565;
 
 use super::smart_view::{Font, Plan, Rect, Shown, Shows, Text};
@@ -38,19 +36,34 @@ fn depth(c: CutDb, h: i32) -> i32 {
 /// A plan being written: past its room, nothing more is added.
 struct Pen<'a>(&'a mut Plan);
 
-/// `Text`'s bytes as `core::fmt::Write` fills them.
+/// `Text`'s bytes as they are pushed: no `core::fmt` (its `Write` vtable
+/// is bank 1's rodata pointing into bank 2, which the split refuses). Past
+/// `Text::CAP`, nothing more.
 struct Bytes<'a>(&'a mut Text);
 
-impl Write for Bytes<'_> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let at = usize::from(self.0.len);
-        let end = at + s.len();
-        if end > Text::CAP {
-            return Err(core::fmt::Error);
+impl Bytes<'_> {
+    fn str(&mut self, s: &str) -> &mut Self {
+        for &b in s.as_bytes() {
+            self.byte(b);
         }
-        self.0.bytes[at..end].copy_from_slice(s.as_bytes());
-        self.0.len = end as u8;
-        Ok(())
+        self
+    }
+
+    fn byte(&mut self, b: u8) -> &mut Self {
+        let at = usize::from(self.0.len);
+        if let Some(slot) = self.0.bytes.get_mut(at) {
+            *slot = b;
+            self.0.len += 1;
+        }
+        self
+    }
+
+    /// `n`, 0..=99, in decimal.
+    fn digits(&mut self, n: u32) -> &mut Self {
+        if n >= 10 {
+            self.byte(b'0' + (n / 10 % 10) as u8);
+        }
+        self.byte(b'0' + (n % 10) as u8)
     }
 }
 
@@ -70,14 +83,7 @@ impl Pen<'_> {
     }
 
     /// A text centred on `x`, written by `f`.
-    fn text(
-        &mut self,
-        x: i32,
-        y: i32,
-        font: Font,
-        color: Rgb565,
-        f: impl FnOnce(&mut Bytes<'_>) -> core::fmt::Result,
-    ) {
+    fn text(&mut self, x: i32, y: i32, font: Font, color: Rgb565, f: impl FnOnce(&mut Bytes<'_>)) {
         let n = usize::from(self.0.n_texts);
         if let Some(t) = self.0.texts.get_mut(n) {
             *t = Text {
@@ -88,9 +94,8 @@ impl Pen<'_> {
                 font,
                 color,
             };
-            if f(&mut Bytes(t)).is_ok() {
-                self.0.n_texts += 1;
-            }
+            f(&mut Bytes(t));
+            self.0.n_texts += 1;
         }
     }
 }
@@ -119,7 +124,7 @@ fn part(pen: &mut Pen<'_>, v: CutView) {
         );
         let name = b.name();
         pen.text(cx, PART_LABEL_Y, Font::Label, theme::MID, |w| {
-            w.write_str(name)
+            w.str(name);
         });
         let cutting = c.get() >= 0.05;
         let ink = if cutting { theme::INK } else { theme::MID };
@@ -127,7 +132,8 @@ fn part(pen: &mut Pen<'_>, v: CutView) {
             // Tenths, as the TILT cell reads: `-2.1 dB`, `0.0 dB`.
             let tenths = (c.get() * 10.0 + 0.5) as u32;
             let sign = if cutting { "-" } else { "" };
-            write!(w, "{sign}{}.{} dB", tenths / 10, tenths % 10)
+            w.str(sign).digits(tenths / 10).byte(b'.');
+            w.digits(tenths % 10).str(" dB");
         });
     }
 }
@@ -140,8 +146,10 @@ fn all(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
         } else {
             (Font::Label, theme::MID)
         };
-        let n = p.index() + 1;
-        pen.text(x + 4, viz::STRIP_NUM_Y, font, ink, |w| write!(w, "{n}"));
+        let n = p.index() as u32 + 1;
+        pen.text(x + 4, viz::STRIP_NUM_Y, font, ink, |w| {
+            w.digits(n);
+        });
         let fill = if lit { theme::ACCENT } else { theme::BAR_REST };
         let x0 = x + 4 - BANDS_W / 2;
         for b in Band::ALL {
@@ -152,7 +160,7 @@ fn all(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
         }
         let role = s.roles[p.index()].letter();
         pen.text(x + 4, viz::STRIP_PAN_Y - 3, Font::Label, ink, |w| {
-            w.write_str(role)
+            w.str(role);
         });
     }
 }

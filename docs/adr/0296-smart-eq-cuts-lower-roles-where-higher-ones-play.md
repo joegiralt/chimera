@@ -41,11 +41,17 @@ snapshots live in ITCM (ADR 0286).
    square, followed on power with τ 60 ms, in dBFS). A DRUM pad's side
    takes the same cut through its own filters; the side is not listened to.
 3. **The rule**, per block and band, for each written Part `p`:
-   `target = AMOUNT · 6 dB · max_q depth(q, p) · active(q) · active(p) ·
-   threat(p, q)`, with `active(L) = clamp((L + 60) / 24, 0, 1)`,
+   `target = AMOUNT · 6 dB · max_q depth(q, p) · active(q) · own(q) ·
+   active(p) · threat(p, q)`, with `active(L) = clamp((L + 60) / 24, 0, 1)`,
    `threat = clamp((L_p − L_q + 12) / 12, 0, 1)` and `depth` 2/3 one rank
-   apart, 1 two apart (BACK under FRONT), 0 otherwise. FRONT is never cut;
-   one role never cuts itself.
+   apart, 1 two apart (BACK under FRONT), 0 otherwise. `own(q)` is how much
+   of the band is `q`'s own sound rather than its other bands' energy
+   through this band's skirt: `clamp((L_q,b − max_o (L_q,o + skirt(|o −
+   b|))) / 6 dB, 0, 1)`, the skirts exact for Q 2/3 (−8.6, −20.6, −32.6 dB
+   one, two, three bands away). Without it a pure 100 Hz bass is "active"
+   in HIGH MID (its skirt hears it 20.6 dB down) and cuts a pad's 1.6 kHz
+   (the first test caught it, 3.1 dB). FRONT is never cut; one role never
+   cuts itself.
 4. **Time.** Each cut (`CutDb`, 0..=6 dB) follows its target at block rate,
    τ 0.5 s deeper and τ 2 s shallower; under 0.01 dB it lands on 0. Each
    band's linear gain is lerped across the block from the last block's: at
@@ -63,14 +69,21 @@ snapshots live in ITCM (ADR 0286).
    each Part's band filters for bus and side, levels, cuts and last gains.
 8. **UI.**
    - ROLE: MIXER › PRT › EQ cell C.
-   - MIXER › MST › SMART EQ (page id 120, after LVL): SMART EQ (A), AMOUNT
-     (B); its band draws each Part's four live cuts under its number and
-     role letter, the edited Part lit.
+   - MIXER › MST › LVL: SMART EQ (D) and AMOUNT (E) under VOL and PAN; its
+     band (no band before) draws each Part's four live cuts under its
+     number and role letter, the edited Part lit. Not a page of its own: a
+     new page id grows `FocusMemory` (a byte per id up to the largest), and
+     ids 119 → 120 overflowed D2 by 8 B on bench-algo (measured).
    - PRT › EQ's band draws the Part's four live cuts as bars named LOW,
      LOW MID, HIGH MID, HIGH, with the deepest in dB.
-   - Both through one UI door entry (`UiDoor::smart_eq`); the audio
-     publishes the cuts once a block (`part_eq::smart::SMART_VIEW`, six
-     relaxed words). A closed door draws nothing.
+   - Both through one UI door entry (`UiDoor::smart_eq`): bank 2 plans the
+     band (`ui::smart_eq::plan_in`: rectangles and short texts) and bank 1
+     draws the plan with the display's own `fill_rect` and `text_center`
+     (`ui::smart_view::paint`). Painting in bank 2 on ORBIT's `Ink` built
+     the draw helpers again for `Ink` in bank 1 on every set without ORBIT
+     (default +3,836 B, measured). The audio publishes the cuts once a
+     block (`part_eq::smart::SMART_VIEW`, six relaxed words). A closed door
+     draws nothing.
 
 ## Measurements
 Filled in at the end of the branch.
@@ -93,6 +106,10 @@ Filled in at the end of the branch.
   buses at the same point; one EQ a Part (ADR 0284 § 9).
 - **ROLE on PRT itself.** Its six cells are full; EQ is PRT's sub-page and
   the role only drives the EQ.
+- **MST › SMART EQ, a page of its own.** Clearer, but a new page id grows
+  `FocusMemory` past D2 on bench-algo (8 B, measured).
+- **Painting in bank 2 on ORBIT's `Ink`.** Builds the draw helpers a
+  second time in bank 1 wherever ORBIT is off (+3.8 KB on default).
 - **AMOUNT as a float.** 4 B more in `CompParams` (32 → 36), × 3 snapshots;
   a 7-bit code in the padding costs nothing.
 
@@ -101,7 +118,7 @@ Filled in at the end of the branch.
   project; old projects load MID and OFF and play bit for bit.
 - With SMART EQ on, cost scales with the Parts that play, not voices.
 - The four bands are fixed: no user control of their place or width.
-- A docs page (annotated screenshots) is owed for PRT › EQ and MST › SMART EQ.
+- A docs page (annotated screenshots) is owed for PRT › EQ and MST › LVL.
 
 ## Sources
 - #396; owner's design 2026-11-19; spec
