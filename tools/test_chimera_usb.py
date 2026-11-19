@@ -1241,7 +1241,7 @@ class Bank2(unittest.TestCase):
         saved = tool.to_dfu, tool.wait_console, tool.subprocess.run
         tool.to_dfu, tool.wait_console, tool.subprocess.run = (lambda t, e: 0), (lambda e, s: 0), run
         try:
-            tool.dfu_flash(None, {}, self.local("x.bin", b"fw"), 10.0)
+            tool.dfu_flash(None, {}, self.local("x.bin", b"fw"))
         finally:
             tool.to_dfu, tool.wait_console, tool.subprocess.run = saved
         self.assertIn("capture_output", seen)
@@ -1260,7 +1260,7 @@ class Bank2(unittest.TestCase):
             err = io.StringIO()
             try:
                 with contextlib.redirect_stderr(err):
-                    rc = tool.dfu_flash(None, {}, self.local("x.bin", b"fw"), 10.0)
+                    rc = tool.dfu_flash(None, {}, self.local("x.bin", b"fw"))
             finally:
                 tool.to_dfu, tool.subprocess.run = saved
             self.assertEqual(rc, 1)
@@ -1280,7 +1280,7 @@ class Bank2(unittest.TestCase):
         tool.to_dfu, tool.wait_console, tool.subprocess.run = (lambda t, e: 0), (lambda e, s: 0), run
         try:
             f = self.local("x.bin", b"fw")
-            self.assertEqual(tool.dfu_flash(None, {}, f, 10.0), 0)
+            self.assertEqual(tool.dfu_flash(None, {}, f), 0)
         finally:
             tool.to_dfu, tool.wait_console, tool.subprocess.run = saved
         self.assertEqual(argv[0], "dfu-util")
@@ -1346,6 +1346,10 @@ class Update(unittest.TestCase):
         tool.to_dfu = lambda t, e: self.events.append("to-dfu") or 0
         tool.subprocess.run = run
         tool.wait_console = wait
+        # A fixture without a status answer fails in seconds, not 120.
+        boot = tool.UPDATE_BOOT_WAIT_S
+        tool.UPDATE_BOOT_WAIT_S = 3.0
+        self.addCleanup(setattr, tool, "UPDATE_BOOT_WAIT_S", boot)
 
     def package(self, bin_data=None, bk2=None, name="chimera-0.2.0"):
         b, k = pathlib.Path(self.tmp.name, name + ".bin"), pathlib.Path(self.tmp.name, name + ".bk2")
@@ -1371,6 +1375,9 @@ class Update(unittest.TestCase):
 
     def test_stages_then_flashes_then_reads_status(self):
         answers = {b"status": self.status(self.open_line())}
+        back, backs = tool.back_after_flash, []
+        tool.back_after_flash = lambda t, env, secs: backs.append(secs) or back(t, env, secs)
+        self.addCleanup(setattr, tool, "back_after_flash", back)
         with PutUnit(answers=answers, after=b"OK staged: needs firmware 0.2.0 02e440e2\n") as u:
             rc, out, err = self.update(u, self.package())
         self.assertEqual(rc, 0, err)
@@ -1381,7 +1388,7 @@ class Update(unittest.TestCase):
         self.assertLess(dfu[0], status[0])
         self.assertEqual(u.data, self.bk2)
         self.assertEqual(self.sent("bank2"), [], "the boot installs it, not the console")
-        self.assertGreaterEqual(max(self.waits), 60.0, "the first boot installs before the console comes up")
+        self.assertEqual(backs, [tool.UPDATE_BOOT_WAIT_S], "the first boot installs before the console comes up")
 
     def test_a_boot_refused_for_a_foreign_slot_exits_2_with_its_address(self):
         # chimera-core's own words: `Bank2Status::SlotForeign`'s status line.
@@ -1429,7 +1436,7 @@ class Update(unittest.TestCase):
         self.assertLess(puts[0], dfu[0])
         self.assertLess(dfu[0], puts[1])
         self.assertLess(puts[1], install[0])
-        self.assertLess(install[0], status[0])
+        self.assertLess(install[0], status[-1])
 
     def test_old_firmware_flashes_first_then_puts_and_installs(self):
         answers = {
@@ -1446,7 +1453,7 @@ class Update(unittest.TestCase):
         self.assertLess(puts[0], dfu[0])
         self.assertLess(dfu[0], puts[1])
         self.assertLess(puts[1], install[0])
-        self.assertLess(install[0], status[0])
+        self.assertLess(install[0], status[-1])
         self.assertEqual(u.data, self.bk2)
 
     def flash_first(self, line, bk2=None):
@@ -1478,7 +1485,7 @@ class Update(unittest.TestCase):
             self.assertLess(puts[0], dfu[0])
             self.assertLess(dfu[0], puts[1])
             self.assertLess(puts[1], self.sent("bank2 install")[0])
-            self.assertLess(self.sent("bank2 install")[0], self.sent("status")[0])
+            self.assertLess(self.sent("bank2 install")[0], self.sent("status")[-1])
 
     def test_a_usage_refusal_of_a_small_bk2_is_an_error(self):
         line = b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex\n"
@@ -1497,7 +1504,7 @@ class Update(unittest.TestCase):
         self.assertEqual(self.sent("dfu-util"), [])
 
     def flashed_then(self, install, answers=None):
-        answers = {b"bank2": b"bank2 empty\nOK\n", b"bank2 install": install, **(answers or {})}
+        answers = {b"bank2": b"bank2 empty\nOK\n", b"bank2 install": install, b"status": self.status(b"bank2 empty"), **(answers or {})}
         with PutUnit(answers=answers, refuse=OLD_PUT, refuse_once=True) as u:
             rc, out, err = self.update(u, self.package())
         self.assertEqual(len(self.sent("dfu-util")), 1)
@@ -1510,7 +1517,7 @@ class Update(unittest.TestCase):
         self.assertIn("0x08180000", err)
 
     def test_flash_first_put_err_says_flashed_but(self):
-        with PutUnit(answers={b"bank2": b"bank2 empty\nOK\n"}, refuse=OLD_PUT, refuse_once=True, after=b"ERR put: CARD FULL\n") as u:
+        with PutUnit(answers={b"bank2": b"bank2 empty\nOK\n", b"status": self.status(b"bank2 empty")}, refuse=OLD_PUT, refuse_once=True, after=b"ERR put: CARD FULL\n") as u:
             rc, out, err = self.update(u, self.package())
         self.assertEqual(rc, 1)
         self.assertIn("flashed, but", err)
@@ -1582,6 +1589,166 @@ class Update(unittest.TestCase):
         with PutUnit() as u:
             rc, out, err = self.update(u, [k, b])
         self.assertEqual((rc, u.requests), (1, []))
+
+    def test_a_console_late_after_the_leave_still_exits_0(self):
+        # #1012: the first tries find no port; status answers later.
+        tries = []
+        real = tool.Conn
+
+        def late(t):
+            if not self.sent("dfu-util"):
+                return real(t)
+            tries.append(t)
+            if len(tries) < 4:
+                raise FileNotFoundError(2, "No such file or directory")
+            return real(t)
+
+        tool.Conn = late
+        self.addCleanup(setattr, tool, "Conn", real)
+        with PutUnit(answers={b"status": self.status(self.open_line())}) as u:
+            rc, out, err = self.update(u, self.package())
+        self.assertEqual(rc, 0, err)
+        self.assertIn("OK updated 0.2.0 02e440e2", out)
+        self.assertNotIn("no console", err)
+
+    def test_a_console_that_never_returns_says_what_to_do(self):
+        def gone(t):
+            raise FileNotFoundError(2, "No such file or directory")
+
+        real, wait = tool.Conn, tool.UPDATE_BOOT_WAIT_S
+        self.addCleanup(lambda: setattr(tool, "Conn", real) or setattr(tool, "UPDATE_BOOT_WAIT_S", wait))
+        with PutUnit(after=b"OK staged: needs firmware 0.2.0 02e440e2\n") as u:
+            tool.Conn = lambda t: real(t) if not self.sent("dfu-util") else gone(t)
+            tool.UPDATE_BOOT_WAIT_S = 0.3
+            rc, out, err = self.update(u, self.package())
+        self.assertEqual(rc, 1)
+        self.assertIn("DON'T POWER OFF", err)
+        self.assertNotIn("OK updated", out)
+
+
+class FakeClock:
+    """monotonic() and sleep() on a clock that only moves when slept on."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, s):
+        self.now += s
+
+
+class FakeConsole:
+    """The unit after the DFU leave, on a fake clock: off the bus until
+    `on_bus`, its port node missing until `node` (udev makes it after the
+    kernel lists the device), no access until `access` (uaccess comes
+    last), silent until `answers` (the first boot installs first). Ports
+    open as FakeConsole.Port, the transport `request` reads and writes."""
+
+    def __init__(self, clock, on_bus=1.0, node=2.0, access=2.5, answers=4.0, status=b"build x\nOK\n"):
+        self.clock, self.on_bus, self.node, self.access, self.answers, self.status = clock, on_bus, node, access, answers, status
+        self.opened = []
+
+    def devices(self, env, dfu=True):
+        return {tool.CONSOLE_ID} if self.clock() >= self.on_bus else set()
+
+    def open(self, t):
+        if self.clock() < self.node:
+            raise FileNotFoundError(2, "No such file or directory")
+        if self.clock() < self.access:
+            raise PermissionError(13, "Permission denied")
+        self.opened.append(t)
+        return FakeConsole.Port(self)
+
+    class Port:
+        def __init__(self, unit):
+            self.unit, self.out, self.closed = unit, b"", False
+
+        def write(self, data):
+            if data == b"status\n" and self.unit.clock() >= self.unit.answers:
+                self.out += self.unit.status
+
+        def read(self, timeout):
+            data, self.out = self.out, b""
+            if not data:
+                self.unit.clock.sleep(timeout)  # silence costs its wait
+            return data
+
+        def close(self):
+            self.closed = True
+
+
+class BackAfterFlash(unittest.TestCase):
+    """#1012: after the DFU leave, `update` waits for the console to come
+    back on the bus, its port to open and `status` to answer, instead of
+    failing on the first missing /dev/chimera."""
+
+    def setUp(self):
+        self.clock = FakeClock()
+        saved = tool.usb_devices, tool.Conn, tool.target
+        self.addCleanup(lambda: setattr(tool, "usb_devices", saved[0]) or setattr(tool, "Conn", saved[1]) or setattr(tool, "target", saved[2]))
+
+    def back(self, unit, env, secs=120.0, t=tool.Tty("tty", "/dev/chimera")):
+        tool.usb_devices, tool.Conn = unit.devices, unit.open
+        return tool.back_after_flash(t, env, secs, clock=self.clock, sleep=self.clock.sleep)
+
+    def test_waits_through_bus_node_access_and_install(self):
+        unit = FakeConsole(self.clock, status=b"build 0.4.0 1ff9f2a2\nOK\n")
+        status, body = self.back(unit, {"CHIMERA_USB": "/dev/chimera"})
+        self.assertEqual((status, body), (tool.Status.OK, b"build 0.4.0 1ff9f2a2\n"))
+        self.assertGreaterEqual(self.clock.now, 4.0)
+        self.assertLess(self.clock.now, 10.0)
+
+    def test_the_port_is_picked_again_once_back(self):
+        # CHIMERA_USB unset: the node may come back under another name.
+        unit = FakeConsole(self.clock)
+        picked = []
+        tool.target = lambda env: picked.append(self.clock()) or tool.Tty("tty", "/dev/ttyACM1")
+        self.back(unit, {}, t=tool.Tty("tty", "/dev/ttyACM0"))
+        self.assertEqual(set(unit.opened), {tool.Tty("tty", "/dev/ttyACM1")})
+        self.assertGreaterEqual(min(picked), unit.on_bus, "picked once on the bus")
+
+    def test_a_named_port_stays_named(self):
+        unit = FakeConsole(self.clock)
+        tool.target = lambda env: self.fail("CHIMERA_USB names the port")
+        self.back(unit, {"CHIMERA_USB": "/dev/ttyACM7"}, t=tool.Tty("tty", "/dev/ttyACM7"))
+        self.assertEqual(set(unit.opened), {tool.Tty("tty", "/dev/ttyACM7")})
+
+    def test_a_tcp_target_needs_no_bus(self):
+        unit = FakeConsole(self.clock, on_bus=1e9, node=0, access=0, answers=0)
+        status, _ = self.back(unit, {"CHIMERA_USB": "tcp:127.0.0.1:9"}, t=tool.Tcp("tcp", "127.0.0.1", 9))
+        self.assertEqual(status, tool.Status.OK)
+
+    def test_gives_up_after_its_wait_with_the_last_reason(self):
+        for kw, why in (
+            ({"on_bus": 1e9}, "not on USB"),
+            ({"node": 1e9}, "No such file or directory"),
+            ({"access": 1e9}, "no access"),
+            ({"answers": 1e9}, "no answer"),
+        ):
+            self.clock.now = 0.0
+            with self.assertRaises(tool.NotBack) as e:
+                self.back(FakeConsole(self.clock, **kw), {"CHIMERA_USB": "/dev/chimera"}, secs=120.0)
+            self.assertIn(why, str(e.exception))
+            self.assertGreaterEqual(self.clock.now, 120.0, why)
+            self.assertLess(self.clock.now, 125.0, why)
+
+    def test_every_opened_port_is_closed(self):
+        unit = FakeConsole(self.clock, answers=8.0)
+        ports, opener = [], unit.open
+        unit.open = lambda t: ports.append(opener(t)) or ports[-1]
+        self.back(unit, {"CHIMERA_USB": "/dev/chimera"})
+        self.assertGreater(len(ports), 1)
+        self.assertTrue(all(p.closed for p in ports))
+
+    def test_never_back_tells_a_tester_what_to_do_without_deleting_anything(self):
+        bin_data, bk2, seal = make_pair()
+        pkg = tool.check_pair("chimera", bin_data, bk2)
+        msg = tool.not_back(pkg, tool.NotBack("no console at /dev/chimera: No such file or directory"), 120.0)
+        for want in ("flashed", "120 s", "DON'T POWER OFF", " status", VERSION.decode(), seal.hex(), "No such file or directory", "update"):
+            self.assertIn(want, msg)
+        self.assertIsNone(re.search(r"\b(rm|del|erase|format|dd|dfu-util)\b", msg), msg)
 
 
 if __name__ == "__main__":

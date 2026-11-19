@@ -47,7 +47,8 @@ already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 (the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
 Python 3 and its standard library only; Linux and macOS (no Windows).
 `update` checks the whole pair before it touches the unit, stops before
-the flash if the .bk2 can't go onto the card, and exits 0 only once
+the flash if the .bk2 can't go onto the card, waits up to 2 minutes
+for the unit to answer after the flash, and exits 0 only once
 `status` shows the pair's seal open (`OK updated <version>`);
 it needs dfu-util. `bank2` exits 0 on OK (or `OK already installed`), 2 if
 the file belongs to another firmware (`staged: needs firmware <version>`: it
@@ -909,9 +910,8 @@ def read_files(bin_path: str, bk2_path: str) -> Package:
     return check_pair(pathlib.Path(bin_path).name[:-4], bin_data, bk2)
 
 
-def dfu_flash(t: Target, env, local: str, wait: float) -> int:
-    """`local` into the firmware area by DFU, then the console back within
-    `wait` s."""
+def dfu_flash(t: Target, env, local: str) -> int:
+    """`local` into the firmware area by DFU; the unit then resets."""
     rc = to_dfu(t, env)
     if rc:
         return rc
@@ -927,7 +927,60 @@ def dfu_flash(t: Target, env, local: str, wait: float) -> int:
     # `:leave` resets the unit under dfu-util, which then exits 74.
     if r.returncode not in (0, 74) or (r.returncode == 74 and "File downloaded successfully" not in r.stdout):
         return fail("update: dfu-util failed (%d)" % r.returncode)
-    return wait_console(env, wait)
+    return 0
+
+
+class NotBack(Exception):
+    """The console didn't answer after the flash: the last reason."""
+
+
+BACK_POLL_S = 0.25
+
+
+def back_after_flash(t: Target, env, secs, clock=time.monotonic, sleep=time.sleep) -> tuple:
+    """`status`'s answer once the unit is back from the flash: its console
+    on the bus (as wait-console sees it), its port open (udev makes the
+    node, /dev/chimera and the access a moment after the kernel lists the
+    device) and an answer (the first boot installs before it answers).
+    Unless CHIMERA_USB names it, the port is picked again once on the bus.
+    Raises NotBack with the last reason after `secs`."""
+    deadline = clock() + secs
+    why = "the console is not on USB"
+    while True:
+        if isinstance(t, Tcp) or CONSOLE_ID in usb_devices(env, dfu=False):
+            here = t if "CHIMERA_USB" in env else target(env)
+            try:
+                conn = Conn(here)
+            except PermissionError:
+                why = "no access to %s" % describe(here)
+            except OSError as e:
+                why = "no console at %s: %s" % (describe(here), e.strerror or e)
+            else:
+                try:
+                    return request(conn, "status")
+                except NoAnswer:
+                    why = "no answer from %s" % describe(here)
+                except Vanished:
+                    why = "%s went away" % describe(here)
+                finally:
+                    conn.close()
+        if clock() >= deadline:
+            raise NotBack(why)
+        sleep(BACK_POLL_S)
+
+
+def not_back(pkg: Package, e: NotBack, secs) -> str:
+    """What a tester does when the console doesn't come back: wait, look,
+    then check, all without touching anything on the unit or the card."""
+    return (
+        "update: the firmware is flashed, but the unit hadn't answered %g s later (%s).\n"
+        "  1. Leave the unit on while its screen says DON'T POWER OFF: it is installing.\n"
+        "  2. Once it shows its usual screen (if nothing changes for 5 minutes, switch it off and on), run:\n"
+        "       python3 %s status\n"
+        "  3. The update is done if that shows `build %s` and `bank2 open ... seal=%s`.\n"
+        "     If it doesn't, run the same update command again."
+        % (secs, e, os.path.basename(__file__), pkg.version, pkg.seal)
+    )
 
 
 def stage(t: Target, env, pkg: Package):
@@ -962,21 +1015,24 @@ def stage(t: Target, env, pkg: Package):
     return fail("%s: nothing flashed" % body.decode(errors="replace"))
 
 
-def updated(t: Target, pkg: Package) -> int:
-    """0 once `status` shows the new firmware running (its build line's
-    hash, the .bk2 version's) and `pkg`'s seal open, else what it shows
-    and 1. The seal, not bank 2's version: a release whose .bk2 didn't
-    change keeps the one installed before it, and its version."""
+def updated(t: Target, pkg: Package, got=None) -> int:
+    """0 once `status` (`got`, else asked now) shows the new firmware
+    running (its build line's hash, the .bk2 version's) and `pkg`'s seal
+    open, else what it shows and 1. The seal, not bank 2's version: a
+    release whose .bk2 didn't change keeps the one installed before it,
+    and its version."""
     want = "bank2 open %s seal=%s" % (pkg.version, pkg.seal)
-    conn = open_conn(t)
-    try:
-        status, body = request(conn, "status")
-    except NoAnswer:
-        return fail("update: flashed, but no status from %s" % describe(t))
-    except Vanished:
-        return fail("update: flashed, but %s went away" % describe(t))
-    finally:
-        conn.close()
+    if got is None:
+        conn = open_conn(t)
+        try:
+            got = request(conn, "status")
+        except NoAnswer:
+            return fail("update: flashed, but no status from %s" % describe(t))
+        except Vanished:
+            return fail("update: flashed, but %s went away" % describe(t))
+        finally:
+            conn.close()
+    status, body = got
     text = body.decode(errors="replace")
     build = next((ln for ln in text.splitlines() if ln.startswith("build ")), "")
     hash_ = pkg.version.split()[-1:]
@@ -1004,14 +1060,19 @@ def update(t: Target, env, pkg: Package) -> int:
         b, k = pathlib.Path(d, pkg.name + ".bin"), pathlib.Path(d, pkg.name + ".bk2")
         b.write_bytes(pkg.bin)
         k.write_bytes(pkg.bk2)
-        rc = dfu_flash(t, env, str(b), UPDATE_BOOT_WAIT_S)
+        rc = dfu_flash(t, env, str(b))
         if rc:
             return rc
+        try:
+            got = back_after_flash(t, env, UPDATE_BOOT_WAIT_S)
+        except NotBack as e:
+            return fail(not_back(pkg, e, UPDATE_BOOT_WAIT_S))
         if not staged:
             rc = bank2_install(t, env, str(k), "update: flashed, but ")
             if rc:
                 return rc
-    return updated(t, pkg)
+            got = None  # the install changed bank 2: ask again
+    return updated(t, pkg, got)
 
 
 def card_wait(t: Target, env, verbs) -> int:
