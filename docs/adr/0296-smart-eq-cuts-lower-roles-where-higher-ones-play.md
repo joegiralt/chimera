@@ -123,9 +123,9 @@ its set's measured change, never ADR 0198's slack:
 
 | Set | Bank 1 (B) | Bank 2 used (B) |
 |---|---:|---:|
-| default | +1,124 | +8,832 |
-| orbit | +1,156 | +8,832 |
-| bank2-gate | +1,132 | +8,832 |
+| default | +1,124 | +10,368 |
+| orbit | +1,156 | +10,368 |
+| bank2-gate | +1,132 | +10,368 |
 | orbit,usb-config-writer | +1,156 | |
 | fault-inject | +1,100 | |
 | bench-algo | +1,188 | |
@@ -151,12 +151,13 @@ its set's measured change, never ADR 0198's slack:
   - First draft: MST › SMART EQ, page id 120, grew `FocusMemory` and
     overflowed D2 by 8 B on bench-algo. SMART EQ and AMOUNT moved to MST ›
     LVL.
-- Bank 2 on ORBIT: S4–S5 +8,832 B (`run_parts` with SMART EQ's three
+- Bank 2 on ORBIT: S4–S5 +10,368 B (`run_parts` with SMART EQ's three
   inlined band loops, `ui::smart_eq`); S0–S3 unchanged at 8,096 B free
   (0.4's own, under its 8 KB warning before this change); total free
-  490,752 B.
-- RAM: `PartEqs` (`PART_EQS`, ITCM) +672 B: 112 B a Part (four bands'
-  filters on bus and side, levels, cuts, gains); ITCM 43,280 → 43,952 B
+  489,216 B.
+- RAM: `PartEqs` (`PART_EQS`, ITCM) +744 B: 124 B a Part (four bands'
+  filters on bus and side, levels, cuts, gains, the kick's key, peak and
+  dip); ITCM 43,280 → 44,024 B
   used on every set. `SMART_VIEW` 24 B in AXI. `PartParams` (20 B) and
   `CompParams` (32 B) unchanged: the snapshots, the project and D2 do not
   grow.
