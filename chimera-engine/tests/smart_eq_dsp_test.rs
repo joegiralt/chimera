@@ -489,62 +489,6 @@ fn the_kick_dip_moves_fast_but_smoothly_and_the_rest_stay_slow() {
     assert!(worst > 0.001 && worst < 0.05, "{worst} dB a sample");
 }
 
-/// Band `b`'s band-pass at `hz`: `1 / (1 + jQ(r − 1/r))`, `r` the ratio of
-/// the bilinear-warped frequencies (the TPT SVF's exact response).
-fn band_pass(b: Band, hz: f64) -> (f64, f64) {
-    let warp = |f: f64| (std::f64::consts::PI * f / FS as f64).tan();
-    let r = warp(hz) / warp(b.centre().get() as f64);
-    let x = (2.0 / 3.0) * (r - 1.0 / r);
-    (1.0 / (1.0 + x * x), -x / (1.0 + x * x))
-}
-
-/// The four bands' summed gain at `hz` under `d`, dB.
-fn summed_db(d: &[f32; 4], hz: f64) -> f64 {
-    let (mut re, mut im) = (1.0, 0.0);
-    for b in Band::ALL {
-        let (r, i) = band_pass(b, hz);
-        re += d[b.index()] as f64 * r;
-        im += d[b.index()] as f64 * i;
-    }
-    10.0 * (re * re + im * im).log10()
-}
-
-#[test]
-fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
-    use chimera_engine::part_eq::dsp::smart::dips;
-    // Every combination of 0, 1.5, 3, 4.5 and 6 dB on the four bands,
-    // 20 Hz to 20 kHz. Raw, four 6 dB dips reach −8.8 dB at 428 Hz.
-    let steps = [0.0f32, 1.5, 3.0, 4.5, 6.0];
-    let (mut deeper, mut over, mut off_centre) = (0.0f64, 0.0f64, 0.0f64);
-    for n in 0..steps.len().pow(4) {
-        let cuts: [f32; 4] =
-            core::array::from_fn(|b| steps[n / steps.len().pow(b as u32) % steps.len()]);
-        let d = dips(&cuts.map(CutDb::new));
-        let most = cuts.iter().fold(0.0f32, |m, &c| m.max(c)) as f64;
-        for i in 0..400 {
-            let hz = 20.0 * 1000f64.powf(i as f64 / 399.0);
-            let db = summed_db(&d, hz);
-            deeper = deeper.max(-db - most);
-            over = over.max(db);
-        }
-        for b in Band::ALL {
-            let at = summed_db(&d, b.centre().get() as f64);
-            off_centre = off_centre.max((at + cuts[b.index()] as f64).abs());
-        }
-    }
-    assert!(
-        deeper < 0.05,
-        "{deeper:.3} dB deeper than the deepest cut asked"
-    );
-    assert!(over < 0.3, "{over:.3} dB over unity");
-    assert!(
-        off_centre < 0.7,
-        "{off_centre:.3} dB off a band's readout at its centre"
-    );
-    // No cut is no dip, exactly.
-    assert_eq!(dips(&[CutDb::ZERO; 4]), [0.0; 4]);
-}
-
 /// A FRONT DRUM Part's kick every `gap` samples (a 120 → 50 Hz sweep,
 /// 60 ms) over a 55 Hz sine bass, MID: each block's kick dip on the bass.
 fn kicks_every(gap: usize, secs: f32) -> Vec<f32> {
@@ -603,17 +547,15 @@ fn dense_kicks_hold_one_steady_dip_and_sparse_ones_each_let_go() {
 
 /// One block: Part 1 a FRONT sine at 100 Hz, Part 2 a MID pad at 110 Hz,
 /// each with `side` beside its bus.
-fn sided(st: &mut SmartState, start: usize, side: impl Fn(usize) -> f32) -> Sides {
+fn sided(st: &mut SmartState, start: usize, side: Option<&dyn Fn(usize) -> f32>) -> Sides {
     let mut buses: Buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
     let mut sides: Sides = [None; MAX_PARTS];
     for p in 0..2 {
         let g = sine(100.0 + 10.0 * p as f32, 0.3);
-        let mut s = [0.0f32; BLOCK_SIZE];
         for i in 0..BLOCK_SIZE {
             buses[p][i] = g(start + i);
-            s[i] = side(start + i);
         }
-        sides[p] = Some(s);
+        sides[p] = side.map(|f| core::array::from_fn(|i| f(start + i)));
     }
     let mut written = [false; MAX_PARTS];
     (written[0], written[1]) = (true, true);
@@ -638,7 +580,7 @@ fn a_side_takes_only_the_bands_that_cut_and_a_listened_part_s_none() {
     let low = sine(105.0, 0.1);
     let mut last = [None; MAX_PARTS];
     for k in 0..seconds(4.0) {
-        last = sided(&mut st, k * BLOCK_SIZE, &low);
+        last = sided(&mut st, k * BLOCK_SIZE, Some(&low));
         // The FRONT Part is only listened to: its side is never written
         // and its side filters hold nothing.
         let front: [f32; BLOCK_SIZE] = core::array::from_fn(|i| low(k * BLOCK_SIZE + i));
@@ -655,9 +597,9 @@ fn a_side_takes_only_the_bands_that_cut_and_a_listened_part_s_none() {
         wet < 0.85 * dry,
         "the side's low cut with the bus: {wet} of {dry}"
     );
-    // A silent side has nothing to cut: its filters rest.
+    // No pad panned (no side this block): its filters rest.
     for k in seconds(4.0)..seconds(4.0) + 4 {
-        sided(&mut st, k * BLOCK_SIZE, |_| 0.0);
+        sided(&mut st, k * BLOCK_SIZE, None);
     }
     assert!(st.side_rests(PAD));
 }
@@ -698,4 +640,118 @@ fn a_part_hears_the_same_listened_to_or_cut() {
     // bands' (3.5 dB under: 4 dB × 0.75 × 8.5 / 12).
     assert!(lo > 3.9, "{lo}");
     assert!((hi - 4.0 * 0.75 * 8.5 / 12.0).abs() < 0.35, "{hi}");
+}
+
+/// The real bands' response to a tone at `hz` under dips `d`, as the
+/// block's own filters run them: its gain, real and imaginary.
+fn measured(d: &[f32; 4], hz: f32) -> (f64, f64) {
+    use chimera_engine::part_eq::dsp::smart::probe;
+    let n = FS as usize / 4;
+    let w = |i: usize| 2.0 * std::f64::consts::PI * hz as f64 * i as f64 / FS as f64;
+    let mut x: Vec<f32> = (0..n).map(|i| w(i).sin() as f32).collect();
+    probe(d, &mut x, FS);
+    let (mut re, mut im) = (0.0f64, 0.0f64);
+    for (i, v) in x.iter().enumerate().skip(n / 2) {
+        re += *v as f64 * w(i).sin();
+        im += *v as f64 * w(i).cos();
+    }
+    let half = (n - n / 2) as f64 / 2.0;
+    (re / half, im / half)
+}
+
+fn measured_db(cuts: [f32; 4], hz: f32) -> f64 {
+    use chimera_engine::part_eq::dsp::smart::dips;
+    let (re, im) = measured(&dips(&cuts.map(CutDb::new)), hz);
+    10.0 * (re * re + im * im).log10()
+}
+
+/// Prints `A[c][b] = Re B_b(f_c)` of the filters as they run, whose
+/// inverse is `UNMIX`: `cargo test -p chimera-engine --test
+/// smart_eq_dsp_test -- --ignored --nocapture unmix`.
+#[test]
+#[ignore]
+fn print_the_unmix_matrix_s_source() {
+    for c in Band::ALL {
+        let row: Vec<String> = Band::ALL
+            .iter()
+            .map(|b| {
+                let mut d = [0.0f32; 4];
+                d[b.index()] = -0.5;
+                let (re, _) = measured(&d, c.centre().get());
+                format!("{:.5}", (re - 1.0) / -0.5)
+            })
+            .collect();
+        println!("[{}],", row.join(", "));
+    }
+}
+
+#[test]
+fn the_real_bands_cut_what_the_page_reads() {
+    // The filters as they run (LOW and LOW MID state-variable, HIGH MID
+    // and HIGH direct form), not their ideal: each band alone at 6 dB
+    // reads −6 dB at its centre; all four at 6 dB is −6 dB across the
+    // band, not the raw sum's −8.8 dB at 428 Hz.
+    for b in Band::ALL {
+        let mut cuts = [0.0; 4];
+        cuts[b.index()] = 6.0;
+        let at = measured_db(cuts, b.centre().get());
+        assert!((at + 6.0).abs() < 0.5, "{b:?} alone reads {at:.2} dB at its centre");
+    }
+    for hz in [100.0, 200.0, 428.0, 800.0, 1_600.0, 3_200.0, 6_400.0] {
+        let at = measured_db([6.0; 4], hz);
+        assert!(at > -6.15 && at < -4.0, "all four at 6 dB: {at:.2} dB at {hz} Hz");
+    }
+    assert!(measured_db([0.0; 4], 428.0).abs() < 1e-6);
+}
+
+#[test]
+fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
+    use chimera_engine::part_eq::dsp::smart::dips;
+    // Each band's response as it runs, 30 Hz to 16 kHz and at the four
+    // centres: the bands' sum is linear in their dips, so every
+    // combination of 0, 1.5, 3, 4.5 and 6 dB on the four bands follows.
+    // Raw, four 6 dB dips reach −8.8 dB at 428 Hz.
+    let mut grid: Vec<f32> = (0..48).map(|i| 30.0 * (16_000.0f32 / 30.0).powf(i as f32 / 47.0)).collect();
+    grid.extend(Band::ALL.map(|b| b.centre().get()));
+    let bands: Vec<[(f64, f64); 4]> = grid
+        .iter()
+        .map(|&hz| {
+            Band::ALL.map(|b| {
+                let mut d = [0.0f32; 4];
+                d[b.index()] = -0.5;
+                let (re, im) = measured(&d, hz);
+                ((re - 1.0) / -0.5, im / -0.5)
+            })
+        })
+        .collect();
+    let db = |d: &[f32; 4], at: usize| {
+        let (mut re, mut im) = (1.0, 0.0);
+        for (b, (r, i)) in bands[at].iter().enumerate() {
+            re += d[b] as f64 * r;
+            im += d[b] as f64 * i;
+        }
+        10.0 * (re * re + im * im).log10()
+    };
+    let steps = [0.0f32, 1.5, 3.0, 4.5, 6.0];
+    let (mut deeper, mut over, mut off_centre) = (0.0f64, 0.0f64, 0.0f64);
+    for n in 0..steps.len().pow(4) {
+        let cuts: [f32; 4] =
+            core::array::from_fn(|b| steps[n / steps.len().pow(b as u32) % steps.len()]);
+        let d = dips(&cuts.map(CutDb::new));
+        let most = cuts.iter().fold(0.0f32, |m, &c| m.max(c)) as f64;
+        for at in 0..grid.len() {
+            deeper = deeper.max(-db(&d, at) - most);
+            over = over.max(db(&d, at));
+        }
+        for b in Band::ALL {
+            let at = db(&d, 48 + b.index());
+            off_centre = off_centre.max((at + cuts[b.index()] as f64).abs());
+        }
+    }
+    println!("deeper {deeper:.3} over {over:.3} off-centre {off_centre:.3}");
+    assert!(deeper < 0.1, "{deeper:.3} dB deeper than the deepest cut asked");
+    assert!(over < 0.4, "{over:.3} dB over unity");
+    assert!(off_centre < 0.8, "{off_centre:.3} dB off a band's readout at its centre");
+    // No cut is no dip, exactly.
+    assert_eq!(dips(&[CutDb::ZERO; 4]), [0.0; 4]);
 }

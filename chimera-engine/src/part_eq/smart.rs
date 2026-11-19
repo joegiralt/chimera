@@ -7,7 +7,7 @@
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use super::Live;
-use crate::dsp::{Db, Hz, Unit};
+use crate::dsp::{Hz, Unit};
 use crate::hw::MAX_PARTS;
 use crate::params::EngineType;
 use crate::project::PartId;
@@ -183,6 +183,19 @@ impl CutDb {
 
     pub const fn get(self) -> f32 {
         self.0
+    }
+
+    /// A step from here toward `target` by a one-pole's `pole` (0 to 1):
+    /// `target + pole · (self − target)`, between the two, so in range
+    /// with no clamp. Under `land` on the way to no cut, it lands on it.
+    #[inline(always)]
+    pub(crate) fn toward(self, target: CutDb, pole: Unit, land: f32) -> CutDb {
+        let next = target.0 + pole.get() * (self.0 - target.0);
+        if target.0 == 0.0 && next < land {
+            CutDb::ZERO
+        } else {
+            CutDb(next)
+        }
     }
 
     /// `MAX`'s share `u`.
@@ -403,16 +416,18 @@ pub(crate) struct Level(f32);
 impl Level {
     pub(crate) const SILENT: Level = Level(0.0);
 
-    /// `over` dB over silence; under it, NaN included, is silent.
+    /// `over` dB over silence; under it, NaN included, is silent
+    /// (`f32::max` keeps the number).
     #[inline(always)]
-    pub(crate) fn over_silence(over: Db) -> Level {
-        Level(over.get().max(0.0))
+    pub(crate) fn over_silence(over: f32) -> Level {
+        Level(over.max(0.0).min(f32::MAX))
     }
 
-    /// dB over silence.
+    /// dB over silence, as a number for the rule's sums: finite and 0 or
+    /// more by construction.
     #[inline(always)]
-    pub(crate) const fn db(self) -> Db {
-        Db::new(self.0)
+    pub(crate) const fn over(self) -> f32 {
+        self.0
     }
 }
 
@@ -430,8 +445,8 @@ impl Blocks {
     }
 
     #[inline(always)]
-    pub(crate) const fn next(self) -> Blocks {
-        Blocks(self.0.saturating_add(1))
+    pub(crate) const fn after(self, n: u16) -> Blocks {
+        Blocks(self.0.saturating_add(n))
     }
 
     #[inline(always)]
@@ -447,6 +462,16 @@ impl Blocks {
 pub(crate) enum Kick {
     Quiet = 0,
     Hitting = 1,
+}
+
+/// Whether a Part's cuts have anywhere to go: `Rest` with none cut, none
+/// wanted and its dips back at unity, when its cuts need no step. Zero
+/// bytes are `Rest`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Cuts {
+    Rest = 0,
+    Move = 1,
 }
 
 /// How a Part's bus filters ran last block: its memory is that rate's, so
@@ -482,14 +507,17 @@ pub(crate) struct PartSmart {
     pub(crate) key: Power,
     /// `key`'s recent peak, falling slowly: the hit `key` is measured from.
     pub(crate) key_peak: Power,
-    /// The kick's fast LOW dip on this Part, on top of `cut`'s slow LOW.
+    /// The kick's fast LOW dip on this Part, on top of `cut`'s slow LOW,
+    /// and its target as the kick's rule last set it.
     pub(crate) kick: CutDb,
+    pub(crate) kick_want: CutDb,
     /// Its own kick's onsets: blocks since the last, and between the last
     /// two (0: not known).
     pub(crate) since: Blocks,
     pub(crate) gap: Blocks,
     pub(crate) hitting: Kick,
     pub(crate) hears: Hears,
+    pub(crate) cuts: Cuts,
 }
 
 impl PartSmart {
@@ -505,10 +533,12 @@ impl PartSmart {
         key: Power::ZERO,
         key_peak: Power::ZERO,
         kick: CutDb::ZERO,
+        kick_want: CutDb::ZERO,
         since: Blocks::ZERO,
         gap: Blocks::ZERO,
         hitting: Kick::Quiet,
         hears: Hears::Thin,
+        cuts: Cuts::Rest,
     };
 
     /// The cuts the bands play: `cut`, LOW the deeper of its slow cut and
@@ -528,12 +558,18 @@ impl PartSmart {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SmartState {
     pub(crate) parts: [PartSmart; MAX_PARTS],
-    /// The band whose slow rule runs next: one a block, in turn.
+    /// Blocks run, modulo `TURNS`: whose turn it is (the slow rule's
+    /// band or the kick's rule, the band read in dB, the Part whose view
+    /// is published).
     pub(crate) turn: u8,
     pub(crate) live: Live,
 }
 
 impl SmartState {
+    /// A round of turns: every band's rule (one every other block) and
+    /// every Part's view come up evenly.
+    pub(crate) const TURNS: u8 = (2 * BANDS * MAX_PARTS) as u8;
+
     pub const REST: SmartState = SmartState {
         parts: [PartSmart::REST; MAX_PARTS],
         turn: 0,
