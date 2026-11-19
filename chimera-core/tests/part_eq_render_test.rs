@@ -6,6 +6,7 @@ use common::InstRig;
 
 use chimera_core::hw::SampleBudget;
 use chimera_core::part_eq::{LoCut, PartEq, Tilt};
+use chimera_core::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 
 /// Part 0 holding C3 under `eq` for `blocks` blocks: pair 1's left.
@@ -47,7 +48,7 @@ fn flat_and_off_never_wakes_the_eq() {
     let (_, mut rig) = play(PartEq::FLAT, 20);
     assert!(!rig.inst.part_eqs().any_live());
     let (_, mut rig) = play(PartEq::new(Tilt::FLAT, LoCut::On), 20);
-    assert!(rig.inst.part_eqs().running(0));
+    assert!(rig.inst.part_eqs().running(PartId::FIRST));
 }
 
 #[test]
@@ -76,5 +77,5 @@ fn back_to_flat_plays_as_never_eq_d() {
         .map(|(a, b)| (a - b).abs())
         .fold(0.0, f32::max);
     assert!(diff < 1e-4, "{diff}");
-    assert!(!rig.inst.part_eqs().running(0));
+    assert!(!rig.inst.part_eqs().running(PartId::FIRST));
 }

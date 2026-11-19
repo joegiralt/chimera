@@ -3,8 +3,9 @@
 
 use chimera_engine::hw::MAX_PARTS;
 use chimera_engine::instrument::Sides;
-use chimera_engine::part_eq::dsp::{EqBlock, LO_CUT_HZ, PIVOT_HZ, run};
+use chimera_engine::part_eq::dsp::{EqBlock, LO_CUT, PIVOT, run};
 use chimera_engine::part_eq::{LoCut, PartEq, PartEqs, Tilt};
+use chimera_engine::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::PI;
 
@@ -72,7 +73,7 @@ fn warp(hz: f32) -> f64 {
 /// TILT's exact response at `hz`, dB: `k − (k − 1/k)·LP_{g = k·tan(π·810/fs)}`.
 fn tilt_db(db: f32, hz: f64) -> f64 {
     let k = 10f64.powf(f64::from(db) / 20.0);
-    let (r, i) = lp(hz, k * warp(PIVOT_HZ));
+    let (r, i) = lp(hz, k * warp(PIVOT.get()));
     let c = k - 1.0 / k;
     let (yr, yi) = (k - c * r, -c * i);
     10.0 * (yr * yr + yi * yi).log10()
@@ -80,7 +81,7 @@ fn tilt_db(db: f32, hz: f64) -> f64 {
 
 /// LO CUT's exact response at `hz`, dB: `1 − LP_{150}`.
 fn cut_db(hz: f64) -> f64 {
-    let (r, i) = lp(hz, warp(LO_CUT_HZ));
+    let (r, i) = lp(hz, warp(LO_CUT.get()));
     let (yr, yi) = (1.0 - r, -i);
     10.0 * (yr * yr + yi * yi).log10()
 }
@@ -98,8 +99,9 @@ fn flat_and_off_never_touch_a_bus() {
 
 #[test]
 fn the_rest_state_is_zero_bytes() {
-    // SAFETY: `PartEqs` is plain floats, bools and a `repr(u8)` enum whose
-    // zero is a variant (`Bypass`); every all-zero value is one.
+    // SAFETY: `PartEqs` is plain floats (some in newtypes), bools,
+    // `PhantomData` and a `repr(u8)` enum whose zero is a variant
+    // (`Bypass`); every all-zero value is one.
     let zeroed: PartEqs = unsafe { core::mem::zeroed() };
     assert_eq!(zeroed, PartEqs::REST);
 }
@@ -113,7 +115,7 @@ fn the_shape_is_the_one_pole_tilt_pivoting_at_810_hz() {
             let e = PartEq::new(t, LoCut::Off);
             // 0.4 s: the 20 ms ease long settled.
             let y = play(&mut eqs, 300, sine(hz), |_| e);
-            let want = tilt_db(t.db(), f64::from(hz)) as f32;
+            let want = tilt_db(t.db().get(), f64::from(hz)) as f32;
             let got = level_db(&y, 9_600);
             assert!(
                 (got - want).abs() < 0.05,
@@ -252,7 +254,7 @@ fn a_part_with_nothing_written_lands_its_eq_unheard() {
     let mut cold = PartEqs::REST;
     let y = play(&mut cold, 1, |_| 0.0, |_| settings[2]);
     assert!(y.iter().all(|&s| s == 0.0));
-    assert!(once.running(2));
+    assert!(once.running(PartId::ALL[2]));
 }
 
 #[test]
@@ -290,6 +292,61 @@ fn a_side_is_filtered_as_its_mid() {
             );
         }
     }
+}
+
+/// One bad sample (NaN, or inf held on) on Part 0's bus and side at
+/// block 100 of 300; the blocks after it whose output is not finite.
+fn bad_blocks_after(bad: f32, held: bool) -> usize {
+    let mut eqs = PartEqs::REST;
+    let e = PartEq::new(Tilt::at(20), LoCut::On);
+    let x = sine(300.0);
+    let mut bad_blocks = 0;
+    for b in 0..300 {
+        let mut buses: Buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
+        let mut side = [0.0; BLOCK_SIZE];
+        for i in 0..BLOCK_SIZE {
+            buses[0][i] = x(b * BLOCK_SIZE + i);
+            side[i] = 0.5 * buses[0][i];
+        }
+        let poisoned = b == 100 || (held && b > 100 && b < 103);
+        if poisoned {
+            buses[0][7] = bad;
+            side[7] = bad;
+        }
+        let mut sides: Sides = [None; MAX_PARTS];
+        sides[0] = Some(side);
+        let mut settings = [PartEq::FLAT; MAX_PARTS];
+        settings[0] = e;
+        run(
+            &mut eqs,
+            EqBlock {
+                buses: &mut buses,
+                sides: &mut sides,
+                written: &[true; MAX_PARTS],
+                settings: &settings,
+                sample_rate: FS,
+            },
+        );
+        let s = sides[0].expect("kept");
+        let finite = buses[0].iter().chain(s.iter()).all(|v| v.is_finite());
+        if b > 100 && !poisoned && !finite {
+            bad_blocks += 1;
+        }
+    }
+    bad_blocks
+}
+
+#[test]
+fn a_nan_or_inf_does_not_poison_the_eq() {
+    // As CLEAN's filter (`filter::clean`): a block whose taps end up not
+    // finite starts the next one from rest.
+    assert_eq!(bad_blocks_after(f32::NAN, false), 0, "one NaN");
+    assert_eq!(
+        bad_blocks_after(f32::INFINITY, true),
+        0,
+        "inf held three blocks"
+    );
+    assert_eq!(bad_blocks_after(f32::NEG_INFINITY, false), 0, "one -inf");
 }
 
 /// Host timing (release, `--ignored --nocapture`): six Parts EQ'd, steady

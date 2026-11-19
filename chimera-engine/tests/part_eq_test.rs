@@ -1,13 +1,33 @@
 //! The per-Part EQ's settings (ADR 0284): TILT and LO CUT in one byte.
 
+use chimera_engine::dsp::{Db, Unit};
 use chimera_engine::part_eq::{LoCut, PartEq, Tilt};
 
 #[test]
-fn the_setting_is_one_byte_and_every_byte_round_trips() {
+fn the_setting_is_one_byte() {
     assert_eq!(core::mem::size_of::<PartEq>(), 1);
-    for b in 0..=u8::MAX {
-        assert_eq!(PartEq::from_raw(b).raw(), b);
-    }
+}
+
+#[test]
+fn tilt_s_span_is_its_128_steps_dark_to_bright() {
+    assert_eq!(Tilt::SPAN, 128);
+    let all: Vec<Tilt> = Tilt::all().collect();
+    assert_eq!(all.len(), Tilt::SPAN);
+    assert_eq!(all[0], Tilt::at(Tilt::MIN_STEP));
+    assert_eq!(all[Tilt::SPAN - 1], Tilt::at(Tilt::MAX_STEP));
+    assert!(all.windows(2).all(|w| w[1].step() == w[0].step() + 1));
+}
+
+#[test]
+fn lo_cut_reads_a_value_as_the_other_choices() {
+    assert_eq!(LoCut::from_f32(0.0), LoCut::Off);
+    assert_eq!(LoCut::from_f32(0.9), LoCut::Off);
+    assert_eq!(LoCut::from_f32(1.0), LoCut::On);
+    assert_eq!(LoCut::from_f32(f32::NAN), LoCut::Off);
+    assert_eq!(LoCut::from_f32(-1.0), LoCut::Off);
+    assert_eq!(LoCut::from_f32(1e9), LoCut::On);
+    assert_eq!(LoCut::Off.amount(), Unit::ZERO);
+    assert_eq!(LoCut::On.amount(), Unit::ONE);
 }
 
 #[test]
@@ -32,12 +52,12 @@ fn every_tilt_and_lo_cut_round_trip() {
 
 #[test]
 fn flat_lands_exactly_on_0_db_and_the_ends_on_10() {
-    assert_eq!(Tilt::FLAT.db(), 0.0);
+    assert_eq!(Tilt::FLAT.db(), Db::ZERO);
     assert_eq!(Tilt::FLAT.step(), 0);
-    assert_eq!(Tilt::at(Tilt::MIN_STEP).db(), -10.0);
-    assert_eq!(Tilt::at(Tilt::MAX_STEP).db(), 10.0 * 63.0 / 64.0);
+    assert_eq!(Tilt::at(Tilt::MIN_STEP).db(), Db::new(-10.0));
+    assert_eq!(Tilt::at(Tilt::MAX_STEP).db(), Db::new(10.0 * 63.0 / 64.0));
     // A step is 1/128 of the 20 dB travel.
-    assert_eq!(Tilt::at(1).db(), 20.0 / 128.0);
+    assert_eq!(Tilt::at(1).db(), Db::new(20.0 / 128.0));
 }
 
 #[test]
