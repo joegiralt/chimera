@@ -40,13 +40,17 @@ const LAND: f32 = 1e-5;
 /// Each Part's side times its WIDTH, eased from the last block's toward
 /// the stored one (20 ms, `ease_coeff`) and ramped across the block. A
 /// Part with no side lands on its WIDTH unheard; one at unity both ends
-/// is left as it is, bit for bit.
+/// is left as it is, bit for bit; with every Part so, it returns at once.
 pub(super) fn widths(
     w: &mut PartWidths,
     sides: &mut Sides,
     parts: &[PartAudio; MAX_PARTS],
     sample_rate: SampleRate,
 ) {
+    // Every WIDTH unity, last block and this: nothing to ease or scale.
+    if w.at_rest(|p| parts[p].params.out.width) {
+        return;
+    }
     let k = ease_coeff(sample_rate.get());
     for (p, (side, part)) in sides.iter_mut().zip(parts).enumerate() {
         let to = part.params.out.width;

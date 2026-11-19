@@ -111,7 +111,7 @@ impl PartWidths {
     pub const REST: PartWidths = PartWidths([Width::UNITY; MAX_PARTS]);
 
     /// Every Part's side as panned, last block and this (`to`, the
-    /// stored WIDTHs): no call, every side bit for bit.
+    /// stored WIDTHs): nothing to do, every side bit for bit.
     #[inline(always)]
     pub fn at_rest(&self, to: impl Fn(usize) -> Width) -> bool {
         self.0

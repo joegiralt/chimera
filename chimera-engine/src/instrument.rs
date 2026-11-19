@@ -2755,15 +2755,13 @@ impl Instrument {
     }
 
     /// Each Part's side times its WIDTH, eased, in bank 2 behind the
-    /// stereo's door (ADR 0294): bank 1's stub. With every Part's WIDTH
-    /// unity, last block and this, no call: every side bit for bit. A
-    /// closed door leaves the sides as panned and the WIDTHs at rest.
+    /// stereo's door (ADR 0294): bank 1's stub, the door call alone (the
+    /// stage's own check returns at once with every WIDTH at rest, every
+    /// side bit for bit). A closed door leaves the sides as panned and the
+    /// WIDTHs at rest.
     #[inline(never)]
     fn part_widths(&mut self, shared: &AudioShared, sides: &mut Sides) {
         let parts = &shared.parts;
-        if self.widths.at_rest(|p| parts[p].params.out.width) {
-            return;
-        }
         let (w, sr) = (&mut self.widths, self.sample_rate);
         if crate::stereo::door::through(|d| d.widths().run(w, sides, parts, sr)).is_none() {
             self.widths = crate::stereo::PartWidths::REST;

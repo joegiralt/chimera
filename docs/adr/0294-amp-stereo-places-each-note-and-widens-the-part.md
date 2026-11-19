@@ -24,7 +24,7 @@ The owner decided on 2026-11-19: PAN and WIDTH on a new AMP › STEREO sub-page;
    - A DAW's width (Ableton's Utility, recalled from its manual, not checked here) also goes past 100 %. Twice is where I stop: further, a hard-panned pad's far side carries more anti-phase than its near side's level, and the near side is +3.5 dB over a hard pan already (the master limiter holds it).
    - Unity at the knob's middle keeps one law for the whole travel (no knee) and a readout already in bank 1 (`Uni`); a percent readout would be a new format in frozen bank 1.
 6. **The WIDTH stage.** Each block, after the Parts' EQ and before #15's meters (so the meters read what is heard), `stereo::kern::widths` eases each Part's WIDTH toward the stored one (one-pole, 20 ms, `ease_coeff`, landing within 1e-5) and ramps its side across the block. A Part with no side this block lands on its WIDTH unheard. Its state is `PartWidths` (24 B, the Instrument's).
-7. **Unity is the mix as it was, bit for bit.** With every Part's WIDTH unity last block and this, bank 1's stub (`Instrument::part_widths`) makes no call.
+7. **Unity is the mix as it was, bit for bit.** With every Part's WIDTH unity last block and this, the stage returns at once and touches no side. The check is bank 2's: bank 1's stub (`Instrument::part_widths`) is the door call alone, a call a block (measured as a 290 B stub with the check in bank 1).
 8. **The pages.** AMP › STEREO (`block_registry::STEREO`, id 120): PAN · WIDTH, C–F empty; AMP's sub-pages are STEREO, then SENDS (the voice's page, then the mix's, as DRUM's GATE then SENDS). DRUM's AMP › GATE takes WIDTH in F. The map reads STEREO. PAN reads C, L64..R63 as the Part's PAN does.
 9. **Each cell's words** (`ui::notes::cell`, bank 2's): PAN `PLACES EACH NOTE, ROUTABLE`; WIDTH `0 MONO, 64 AS PANNED, 127 WIDE`, on both pages. Both fit the band (tested). PAN's routing gesture is the matrix's own MIX + PLUS priming, hinted there.
 10. **Bank 2.** `stereo::kern` (the note's split and the Parts' WIDTHs) is an S4 group (`*6stereo4kern*`), reached through `stereo::door::StereoDoor` (magic 0xB2E0_0294, two entries) at `STEREO_DOOR_ADDR` = 0x08180430, a stride after the meters' (`s4_tables.rs`, `bank2.x`'s placement and assert, the boot's `door_ok`); `check-door-placed` pins it. A closed door plays every note centred and every side as panned, and rests the WIDTHs. Bank 1 keeps the stubs (`Voice::out_pan`, `Instrument::part_widths`), WIDTH's spec and arms, PAN's knob row, the page's `BlockDef`, GATE's cell and the map's row: closed-door data (ADR 0198).
@@ -40,7 +40,7 @@ The owner decided on 2026-11-19: PAN and WIDTH on a new AMP › STEREO sub-page;
 - **PAN without a knob (`Smoothing::Own`, the voice's block ramp alone):** a turn would move in 1.3 ms ramps a detent; every other heard AMP cell glides 30 ms.
 
 ## Consequences
-- CPU: none at centre and unity (no call). See Measurements for the host bench.
+- CPU: none at centre (no call); at unity one door call a block and the stage's rest check. See Measurements for the host bench.
 - RAM: the Instrument's `PartWidths` 24 B; one knob a Part (`Knobs`, its publisher); 4 B in every `ParamSnapshot` (each voice's played copy, so `VOICE_CHAIN_BYTES` 2,464 → 2,472).
 - Sound: a note off centre sends its mid to the effects, as a pad does: at hard pan, 3 dB less into the sends than centred (constant power). DRUM unchanged.
 - MIDI and files: WIDTH is NRPN 18:10 and a Sound field; a Sound saved before it loads at unity. PAN's NRPN, ident and disk code are unchanged.
