@@ -234,61 +234,95 @@ const PANELS: usize = 1 + EnvSlot::ALL.len() + LfoSlot::ALL.len() + 2 * PadId::A
 /// Panel `i` of `engine`'s, in the order `since` lists them: names from
 /// `describe`'s own table (`PanelName`).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.shown_at"))]
-fn shown_at(engine: EngineType, mut i: usize) -> Option<PanelName> {
+fn shown_at(engine: EngineType, mut i: usize) -> Option<Shown> {
     let filter = match engine {
         EngineType::Drum => 0,
         EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => 1,
     };
     if i < filter {
-        return Some(PanelName::Filter);
+        return Some(Shown::Filter);
     }
     i -= filter;
     if i == 0 {
-        return Some(PanelName::Fx);
+        return Some(Shown::Fx);
     }
     i -= 1;
     if let Some(&s) = EnvSlot::ALL.get(i) {
-        return Some(PanelName::Env(s));
+        return Some(Shown::Env(s));
     }
     i -= EnvSlot::ALL.len();
     if let Some(&s) = LfoSlot::ALL.get(i) {
-        return Some(PanelName::Lfo(s));
+        return Some(Shown::Lfo(s));
     }
     i -= LfoSlot::ALL.len();
     match engine {
-        EngineType::Algo => Op::ALL.get(i).map(|&o| PanelName::Op(o)),
-        EngineType::Modal => (i == 0).then_some(PanelName::Resonator),
-        EngineType::Tape => (i == 0).then_some(PanelName::Machine),
+        EngineType::Algo => Op::ALL.get(i).map(|&o| Shown::Op(o)),
+        EngineType::Modal => (i == 0).then_some(Shown::Resonator),
+        EngineType::Tape => (i == 0).then_some(Shown::Machine),
         EngineType::Va => None,
         EngineType::Drum => {
             let pad = *PadId::ALL.get(i / 2)?;
             Some(if i.is_multiple_of(2) {
-                PanelName::PadFilter(pad)
+                Shown::PadFilter(pad)
             } else {
-                PanelName::PadMachine(pad)
+                Shown::PadMachine(pad)
             })
         }
     }
 }
 
-/// Panel `n`'s variant now; `-` for a panel with none (a page's own
-/// cells, a route), which `since` never lists.
+/// A panel `since` reports a variant of: a variant panel, never a page's
+/// own cells or a route (`PanelName` names those too, for `describe`).
+#[derive(Clone, Copy)]
+enum Shown {
+    Filter,
+    Fx,
+    Env(EnvSlot),
+    Lfo(LfoSlot),
+    Op(Op),
+    Resonator,
+    Machine,
+    PadFilter(PadId),
+    PadMachine(PadId),
+}
+
+impl Shown {
+    /// Its name, from `describe`'s one table.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.shown_name")
+    )]
+    fn name(self) -> PanelName {
+        match self {
+            Shown::Filter => PanelName::Filter,
+            Shown::Fx => PanelName::Fx,
+            Shown::Env(s) => PanelName::Env(s),
+            Shown::Lfo(s) => PanelName::Lfo(s),
+            Shown::Op(o) => PanelName::Op(o),
+            Shown::Resonator => PanelName::Resonator,
+            Shown::Machine => PanelName::Machine,
+            Shown::PadFilter(p) => PanelName::PadFilter(p),
+            Shown::PadMachine(p) => PanelName::PadMachine(p),
+        }
+    }
+}
+
+/// Panel `n`'s variant now.
 #[cfg_attr(
     target_os = "none",
     unsafe(link_section = ".bank2_ed.since.variant_of")
 )]
-fn variant_of(n: PanelName, c: &SlotCtx, kit: &Kit) -> &'static str {
+fn variant_of(n: Shown, c: &SlotCtx, kit: &Kit) -> &'static str {
     match n {
-        PanelName::Filter => filter_variant(c.kind),
-        PanelName::Fx => fx_variant(c.fx),
-        PanelName::Env(s) => env_variant(c.envs[s.index()]),
-        PanelName::Lfo(s) => lfo_variant(c.lfos[s.index()]),
-        PanelName::Op(o) => op_variant(c.op_kinds[o.index()]),
-        PanelName::Resonator => modal_variant(c.model),
-        PanelName::Machine => tape_variant(c.tape),
-        PanelName::PadFilter(p) => filter_variant(kit.pad(p).sound().filter().kind()),
-        PanelName::PadMachine(p) => machine_variant(kit.pad(p).machine()),
-        PanelName::PadRoute(..) | PanelName::Page(..) => "-",
+        Shown::Filter => filter_variant(c.kind),
+        Shown::Fx => fx_variant(c.fx),
+        Shown::Env(s) => env_variant(c.envs[s.index()]),
+        Shown::Lfo(s) => lfo_variant(c.lfos[s.index()]),
+        Shown::Op(o) => op_variant(c.op_kinds[o.index()]),
+        Shown::Resonator => modal_variant(c.model),
+        Shown::Machine => tape_variant(c.tape),
+        Shown::PadFilter(p) => filter_variant(kit.pad(p).sound().filter().kind()),
+        Shown::PadMachine(p) => machine_variant(kit.pad(p).machine()),
     }
 }
 
@@ -450,7 +484,7 @@ impl EdSince {
                 && n != v
             {
                 w.write_str("panel ")?;
-                s.write(w)?;
+                s.name().write(w)?;
                 w.write_char(' ')?;
                 describe::variant_token(n, w)?;
                 w.write_char('\n')?;
@@ -477,10 +511,7 @@ impl EdSince {
         w: &mut dyn Write,
     ) -> fmt::Result {
         let own = ui.cell_own();
-        let commit = match pass {
-            Pass::Measure => false,
-            Pass::Commit => true,
-        };
+
         self.described(engine);
         let (mut slot, mut b) = (0usize, 0);
         while let Some(at) = block_at(engine, b) {
@@ -488,7 +519,7 @@ impl EdSince {
             let width = at.width();
             let Some(blk) = block(ui, at) else {
                 let mut i = 0;
-                while commit && i < width {
+                while matches!(pass, Pass::Commit) && i < width {
                     if let Some(last) = self.last.get_mut(slot + i) {
                         *last = Bits::ABSENT;
                     }
@@ -508,7 +539,7 @@ impl EdSince {
                     && let Some(last) = self.last.get_mut(slot + i)
                     && (!same || *last != now)
                 {
-                    if commit {
+                    if let Pass::Commit = pass {
                         *last = now;
                     }
                     if let Some(a) = EdAddr::new(at, id)
