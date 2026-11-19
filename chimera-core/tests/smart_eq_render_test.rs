@@ -69,7 +69,10 @@ fn on_it_cuts_the_lower_roles_and_never_front() {
         .iter()
         .flat_map(|&p| Band::ALL.map(|b| eqs.smart.cut(PartId::ALL[p], b).get()))
         .sum();
-    assert!(lower > 0.5, "the MID and BACK Parts yield: {lower} dB in all");
+    assert!(
+        lower > 0.5,
+        "the MID and BACK Parts yield: {lower} dB in all"
+    );
 }
 
 #[test]

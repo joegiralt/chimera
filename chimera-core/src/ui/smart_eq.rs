@@ -11,8 +11,8 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use super::orbit::door::Ink;
-use super::{draw, theme, viz};
 use super::smart_view::{Shown, Shows};
+use super::{draw, theme, viz};
 use crate::part_eq::smart::{Band, CutDb, CutView};
 use crate::project::PartId;
 use crate::ui::fmt::FmtBuf;
@@ -47,16 +47,35 @@ fn part<D: DrawTarget<Color = Rgb565>>(d: &mut D, v: CutView) {
     for b in Band::ALL {
         let cx = PART_X0 + PART_DX * b.index() as i32;
         let c = v.cut(b);
-        draw::text_center(d, &theme::FONT_LABEL, b.name(), cx, PART_LABEL_Y, theme::MID, 0);
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            b.name(),
+            cx,
+            PART_LABEL_Y,
+            theme::MID,
+            0,
+        );
         let x = cx - PART_BAR_W / 2;
         draw::fill_rect(d, x, PART_BAR_Y, PART_BAR_W, PART_BAR_H, theme::FAINT);
-        draw::fill_rect(d, x, PART_BAR_Y, PART_BAR_W, depth(c, PART_BAR_H), theme::ACCENT);
+        draw::fill_rect(
+            d,
+            x,
+            PART_BAR_Y,
+            PART_BAR_W,
+            depth(c, PART_BAR_H),
+            theme::ACCENT,
+        );
         buf.clear();
         if c.get() >= 0.05 {
             let _ = core::fmt::Write::write_str(&mut buf, "-");
         }
         crate::ui::fmt::fixed(&mut buf, c.get(), 1, " dB");
-        let ink = if c.get() >= 0.05 { theme::INK } else { theme::MID };
+        let ink = if c.get() >= 0.05 {
+            theme::INK
+        } else {
+            theme::MID
+        };
         draw::text_center(d, &theme::FONT_LABEL, buf.as_str(), cx, PART_DB_Y, ink, 0);
     }
 }
@@ -79,10 +98,25 @@ fn all<D: DrawTarget<Color = Rgb565>>(d: &mut D, s: &Shown, sel: PartId) {
             let bx = x0 + (ALL_BAR_W + ALL_BAR_GAP) * b.index() as i32;
             let c = s.cuts[p.index()].cut(b);
             draw::fill_rect(d, bx, viz::STRIP_TOP, ALL_BAR_W, viz::STRIP_H, theme::FAINT);
-            draw::fill_rect(d, bx, viz::STRIP_TOP, ALL_BAR_W, depth(c, viz::STRIP_H), fill);
+            draw::fill_rect(
+                d,
+                bx,
+                viz::STRIP_TOP,
+                ALL_BAR_W,
+                depth(c, viz::STRIP_H),
+                fill,
+            );
         }
         let role = s.roles[p.index()].letter();
-        draw::text_center(d, &theme::FONT_LABEL, role, x + 4, viz::STRIP_PAN_Y - 3, ink, 0);
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            role,
+            x + 4,
+            viz::STRIP_PAN_Y - 3,
+            ink,
+            0,
+        );
     }
 }
 

@@ -768,7 +768,11 @@ fn smart_eq_and_roles_round_trip_and_an_old_file_loads_mid_and_off() {
     use chimera_core::part_eq::smart::{Amount, Role, SmartEq, Switch};
     let (p, _) = full();
     let on = SmartEq::new(Switch::On, Amount::from_code(100).unwrap());
-    assert_eq!(p.part(PartId::ALL[2]).mix.role, Role::Front, "full() sets it");
+    assert_eq!(
+        p.part(PartId::ALL[2]).mix.role,
+        Role::Front,
+        "full() sets it"
+    );
     assert_eq!(p.perf().fx.comp.smart, on, "full() sets it");
     let (mut q, _) = Project::boxed();
     decode(&encode(&p), &mut q).unwrap();

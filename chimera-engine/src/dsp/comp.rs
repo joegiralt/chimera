@@ -10,8 +10,8 @@ use core::mem::MaybeUninit;
 use crate::block::{
     Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code, identity_code,
 };
-use crate::part_eq::smart::{Amount, SWITCH_NAMES, SmartEq, Switch};
 use crate::dsp::algo::math::exp2;
+use crate::part_eq::smart::{Amount, SWITCH_NAMES, SmartEq, Switch};
 
 /// Samples per gain computation.
 pub const STEP: usize = 4;
@@ -342,9 +342,7 @@ impl Block for CompParams {
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
         match id {
-            Self::RATIO => {
-                apply_code(identity_code(&COMP_SPECS, id, code), |c| self.ratio = c)
-            }
+            Self::RATIO => apply_code(identity_code(&COMP_SPECS, id, code), |c| self.ratio = c),
             Self::SMART_EQ => apply_code(Switch::from_code(code), |s| {
                 self.smart = self.smart.with_switch(s)
             }),

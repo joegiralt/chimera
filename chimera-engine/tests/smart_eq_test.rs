@@ -64,7 +64,10 @@ fn settings_ride_the_mix_blocks_without_growing_them() {
     assert_eq!(c.smart, SmartEq::OFF);
     c.write(CompParams::SMART_EQ, 1.0);
     c.write(CompParams::AMOUNT, 100.0);
-    assert_eq!(c.smart, SmartEq::new(Switch::On, Amount::from_code(100).unwrap()));
+    assert_eq!(
+        c.smart,
+        SmartEq::new(Switch::On, Amount::from_code(100).unwrap())
+    );
     assert_eq!(c.get(CompParams::AMOUNT), 100.0);
     assert_eq!(c.enum_ident(CompParams::SMART_EQ), Some("ON"));
     assert_eq!(c.sanitised().smart, c.smart);

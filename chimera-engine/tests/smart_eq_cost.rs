@@ -113,7 +113,14 @@ fn time_bank8() -> f64 {
 #[ignore]
 fn cost() {
     let block_ns = BLOCK_SIZE as f64 * 1e9 / FS as f64;
-    let mixed = [Role::Front, Role::Front, Role::Mid, Role::Mid, Role::Back, Role::Back];
+    let mixed = [
+        Role::Front,
+        Role::Front,
+        Role::Mid,
+        Role::Mid,
+        Role::Back,
+        Role::Back,
+    ];
     let cutting = time(mixed);
     let listening = time([Role::Mid; MAX_PARTS]);
     let bank8 = time_bank8();

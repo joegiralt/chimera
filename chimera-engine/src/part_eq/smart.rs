@@ -189,7 +189,11 @@ impl Switch {
 
     /// As LO CUT reads its value: 0 (and NaN, and below) off.
     pub fn from_f32(v: f32) -> Switch {
-        if v as u8 == 0 { Switch::Off } else { Switch::On }
+        if v as u8 == 0 {
+            Switch::Off
+        } else {
+            Switch::On
+        }
     }
 
     pub const fn ident(self) -> &'static str {
@@ -214,7 +218,11 @@ impl Amount {
     pub const DEFAULT: Amount = Amount(64);
 
     pub const fn from_code(c: u8) -> Option<Amount> {
-        if c <= Self::MAX { Some(Amount(c)) } else { None }
+        if c <= Self::MAX {
+            Some(Amount(c))
+        } else {
+            None
+        }
     }
 
     /// A stored or knob value, rounded (halves up) and clamped; NaN is 0.
