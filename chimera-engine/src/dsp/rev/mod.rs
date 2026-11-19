@@ -784,7 +784,10 @@ impl Reverb {
         let amount = crate::dsp::Unit::new(p.duck);
         if !self.duck.idle(amount) {
             let release = crate::dsp::Unit::new(p.duck_release);
-            duck::run(&mut self.duck, send, amount, release, sample_rate, out);
+            // The bus's rate, never 0; typed once, here.
+            let sr = crate::dsp::drum::types::SampleRate::new(sample_rate)
+                .unwrap_or(crate::dsp::drum::types::SampleRate::HW);
+            duck::run(&mut self.duck, send, amount, release, sr, out);
         }
         // The switch's ramp: its own pass, so FADE IN is a fresh engine's
         // return times the ramp, bit for bit.

@@ -12,8 +12,9 @@
 //! only from `Reverb::process` (bank 2's). AMOUNT 0, let go, is no call:
 //! the return as before, bit for bit.
 
+use crate::dsp::drum::types::SampleRate;
 use crate::dsp::ease::{ease_coeff, step_of};
-use crate::dsp::{Db, Gain, Stereo, Unit, fast_exp2, fast_log2};
+use crate::dsp::{DB_PER_OCTAVE, Db, Gain, Stereo, Unit, fast_exp2, fast_log2};
 use crate::hw::BLOCK_SIZE;
 
 /// How far AMOUNT 1 takes the return down with the key at `KEY_FULL`.
@@ -22,9 +23,6 @@ pub const MAX_DEPTH: Db = Db::new(-30.0);
 pub const KEY_FLOOR: Db = Db::new(-42.0);
 /// The key's level from which all of AMOUNT ducks: the follower's top.
 pub const KEY_FULL: Db = Db::new(-6.0);
-
-/// dB a doubling: 20·log10(2).
-const DB_PER_OCTAVE: f32 = 6.020_6;
 
 /// RELEASE in seconds, on GLIDE TIME's law (1 ms – 2 s, its readout too):
 /// the follower's fall from `KEY_FULL` to `KEY_FLOOR`.
@@ -41,8 +39,8 @@ impl Release {
     }
 
     /// The follower's fall a block at `sr`, dB.
-    fn per_block(self, sr: u32) -> f32 {
-        let blocks = self.0 * sr as f32 / BLOCK_SIZE as f32;
+    fn per_block(self, sr: SampleRate) -> f32 {
+        let blocks = self.0 * sr.hz() / BLOCK_SIZE as f32;
         (KEY_FULL.get() - KEY_FLOOR.get()) / blocks.max(1.0)
     }
 }
@@ -104,11 +102,11 @@ pub fn run(
     send: &[f32; BLOCK_SIZE],
     amount: Unit,
     release: Unit,
-    sr: u32,
+    sr: SampleRate,
     out: &mut Stereo,
 ) {
     // AMOUNT's 20 ms ease, landing within −100 dB of its target.
-    let (t, k) = (amount.get(), ease_coeff(sr));
+    let (t, k) = (amount.get(), ease_coeff(sr.get()));
     let a = t + k * (d.amount.get() - t);
     let a = if libm::fabsf(a - t) < 1e-5 { t } else { a };
     d.amount = Unit::new(a);
@@ -178,11 +176,25 @@ mod tests {
         assert!(d.idle(Unit::ZERO));
         let loud = [0.5f32; BLOCK_SIZE];
         let mut out = ones();
-        run(&mut d, &loud, Unit::ONE, Unit::ZERO, 48_000, &mut out);
+        run(
+            &mut d,
+            &loud,
+            Unit::ONE,
+            Unit::ZERO,
+            SampleRate::HW,
+            &mut out,
+        );
         assert!(out.l[0] > out.l[BLOCK_SIZE - 1], "ramped down, not stepped");
         for _ in 0..200 {
             out = ones();
-            run(&mut d, &loud, Unit::ONE, Unit::ZERO, 48_000, &mut out);
+            run(
+                &mut d,
+                &loud,
+                Unit::ONE,
+                Unit::ZERO,
+                SampleRate::HW,
+                &mut out,
+            );
         }
         let ducked = out.l[BLOCK_SIZE - 1];
         assert!(
@@ -195,7 +207,7 @@ mod tests {
         let mut back_at = None;
         for b in 0..300 {
             out = ones();
-            run(&mut d, &quiet, Unit::ONE, release, 48_000, &mut out);
+            run(&mut d, &quiet, Unit::ONE, release, SampleRate::HW, &mut out);
             if back_at.is_none() && out.l[BLOCK_SIZE - 1] == 1.0 {
                 back_at = Some(b);
             }
@@ -204,7 +216,14 @@ mod tests {
         assert!((200..=226).contains(&b), "back at block {b}");
         for _ in 0..400 {
             out = ones();
-            run(&mut d, &quiet, Unit::ZERO, release, 48_000, &mut out);
+            run(
+                &mut d,
+                &quiet,
+                Unit::ZERO,
+                release,
+                SampleRate::HW,
+                &mut out,
+            );
         }
         assert!(d.idle(Unit::ZERO), "{d:?}");
     }
