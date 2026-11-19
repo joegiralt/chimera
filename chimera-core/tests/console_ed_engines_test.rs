@@ -848,3 +848,95 @@ fn a_formant_kind_or_algorithm_past_the_budget_writes_nothing() {
         }
     }
 }
+
+// ---- the box's cue for an ed set: a held choice ends, a refusal says why ----
+
+use chimera_core::ui::busy::ToastStep;
+
+/// TAPE on a streamed source at DECK, as tape_musical_ui_test's `ui_on`.
+fn streamed_at_deck() -> Fake {
+    use chimera_core::storage::{SourceRef, TapeSource};
+    use chimera_core::stream::ring::{Rings, ThirdSlots};
+    use chimera_core::stream::test_card::TestCard;
+    use common::tape::{held_plain, sine};
+    let whole = held_plain(&sine(24_000, 100.7, 720_000), 24_000);
+    let rings: &'static Rings = Box::leak(Box::new(Rings::new()));
+    let third: &'static ThirdSlots = Box::leak(Box::new(ThirdSlots::new()));
+    let (_, card) = rings.sides(third).unwrap();
+    let bytes = TestCard::new(card, &whole, 0).held(&[0, 0], 4_800);
+    let r = SourceRef {
+        crc: 0x5EED,
+        frames: 720_000,
+        rate: 24_000,
+    };
+    let mut f = Fake::new();
+    screen::load_init(&mut f.ui, EngineType::Tape);
+    f.ui.project_mut().source_store(r, &bytes).unwrap();
+    f.ui.project_mut().edit_part(P1).sound.source = Some(TapeSource { r, tune: None });
+    screen::plus(&mut f.ui, 1);
+    f
+}
+
+fn toast(f: &mut Fake) -> Option<String> {
+    match f.ui.step_toast(0) {
+        ToastStep::Show(l) => Some(l.as_str().to_string()),
+        _ => None,
+    }
+}
+
+#[test]
+fn an_ed_set_on_a_held_cell_ends_the_hold() {
+    use chimera_hal::EncoderId;
+    let mut f = streamed_at_deck();
+    let dir = ed(held::DIRECTION);
+    // The box holds PING-PONG, refused, dimmed.
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, 1));
+    assert!(f.ui.held_choice().is_some(), "PING-PONG held");
+    // The editor's FORWARD lands, and the hold is gone.
+    set(&mut f, &dir, "#0");
+    assert!(f.ui.held_choice().is_none(), "a landed set ends the hold");
+    // Held again; a refused set ends it too, and says why.
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, 3));
+    assert!(f.ui.held_choice().is_some(), "held again");
+    f.ui.step_toast(60_000);
+    set(&mut f, &dir, "#3");
+    assert!(f.ui.held_choice().is_none(), "a refused set ends the hold");
+    assert_eq!(toast(&mut f).as_deref(), Some("PING NEEDS RAM · STREAMED"));
+}
+
+#[test]
+fn a_refused_ed_set_says_why_as_a_cc_does() {
+    // TAPE: the streamed source's reason.
+    let mut f = streamed_at_deck();
+    f.ui.step_toast(60_000);
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    assert_eq!(toast(&mut f).as_deref(), Some("SCRUB NEEDS RAM · STREAMED"));
+    // ALGO: the formant budget, as a CC past it says.
+    let mut f = fake(EngineType::Algo);
+    let formant = OpKind::Formant.code();
+    let mut said = None;
+    for op in Op::ALL {
+        let a = ParamAddr::new(
+            BlockRef::AlgoOp(op),
+            chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
+        );
+        f.ui.step_toast(60_000);
+        set(&mut f, &ed(a), &format!("#{formant}"));
+        if let Some(t) = toast(&mut f) {
+            said = Some(t);
+        }
+    }
+    assert_eq!(said.as_deref(), Some("FORMANT BUDGET FULL"));
+    // DRUM: a 9th group, its own words.
+    let mut f = fake(EngineType::Drum);
+    f.ui.step_toast(60_000);
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    assert!(
+        toast(&mut f).is_some_and(|t| t.contains("GROUPS")),
+        "the groups' reason"
+    );
+    // A set that lands says nothing.
+    f.ui.step_toast(60_000);
+    set(&mut f, "PAD5.LEVEL", "40");
+    assert_eq!(toast(&mut f), None);
+}

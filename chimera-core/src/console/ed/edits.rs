@@ -7,10 +7,13 @@ use core::fmt::{self, Write};
 
 use super::value::{engine_of, find};
 use super::{EdAddr, EdValue};
+use crate::dsp::algo::algorithms::AlgoId;
+use crate::dsp::algo::kinds::OpKind;
+use crate::project::Line;
 use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::page::ValFmt;
-use crate::ui::{held, view};
+use crate::ui::{ed_cue, held, view};
 use chimera_engine::params::EngineType;
 
 /// Sets waiting for the next UI pass. A lap of a browser's sliders is a
@@ -120,40 +123,44 @@ impl EdState {
 /// check with it).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.turn"))]
 fn turn(ui: &mut UiState, p: Pending) {
-    if refused(ui, p) {
+    let a = p.addr.param();
+    if let Some(why) = refusal(ui, p) {
+        ed_cue::refused(ui, p.part, a, why);
         return;
     }
     match p.addr.pad() {
         None => {
-            ui.edit_to(p.part, p.addr.param(), p.to);
+            ui.edit_to(p.part, a, p.to);
         }
         Some(n) => {
             let was = ui.project().selected_pad(p.part);
             ui.project_mut().select_pad(p.part, n);
-            ui.edit_to(p.part, p.addr.param(), p.to);
+            ui.edit_to(p.part, a, p.to);
             ui.project_mut().select_pad(p.part, was);
         }
     }
+    ed_cue::landed(ui, p.part, a);
 }
 
-/// A choice the box's own turn refuses and its write path doesn't (ADR
-/// 0151): TAPE's MODEL or DIRECTION onto what a streamed source can't
-/// play (`turn_model`, and a CC's `cc_cost`). Nothing is written, as
-/// the hand's turn writes nothing. The rest refuse in the write itself:
-/// WAVE and ALG A/B in `try_set_kind` and `try_set_algs` (the formant
-/// budget), CHOKE in `edit_in` (ADR 0280).
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.refused"))]
-fn refused(ui: &UiState, p: Pending) -> bool {
-    let Some(t) = held::TapeTurn::of(p.addr.param(), p.to) else {
-        return false;
+/// Why the box refuses `p` before its write, as its toast reads: TAPE's
+/// MODEL or DIRECTION onto what a streamed source can't play (the turn's
+/// and a CC's check), or an operator kind or algorithm past the formant
+/// budget (a CC's words). CHOKE refuses in `edit_in`, with its own toast
+/// (ADR 0280); `None`: the write goes ahead.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.refusal"))]
+fn refusal(ui: &UiState, p: Pending) -> Option<Line> {
+    let a = p.addr.param();
+    let sound = &ui.project().part(p.part).sound;
+    let streams = ui.streams(p.part);
+    if let Some(t) = held::TapeTurn::of(a, p.to) {
+        return held::Pick::Tape(t).why(sound, streams).map(held::reason);
+    }
+    let code = p.to as u8;
+    let pick = match held::applies(a, false)? {
+        held::Cell::Wave(op) => held::Pick::Wave(op, OpKind::clamped(code)),
+        held::Cell::Alg(side) => held::Pick::Alg(side, AlgoId::clamped(code)),
     };
-    let project = ui.project();
-    let sound = &project.part(p.part).sound;
-    let streamed = match sound.source_ref() {
-        Some(r) => project.pool().streamed(r),
-        None => false,
-    };
-    held::Pick::Tape(t).why(sound, streamed).is_some()
+    pick.why(sound, streams).map(|_| ed_cue::formant_full())
 }
 
 /// Why `ed set` can't take a value: each its own `ERR`.

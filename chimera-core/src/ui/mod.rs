@@ -12,6 +12,7 @@ pub mod cell_text;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
+pub(crate) mod ed_cue;
 pub mod file_buf;
 pub mod filter_panel;
 pub mod fmt;
@@ -1776,8 +1777,10 @@ impl UiState {
         true
     }
 
-    /// Part `at`'s source streams.
-    fn streams(&self, at: PartId) -> bool {
+    /// Part `at`'s source streams: the turn's, a CC's and `ed set`'s one
+    /// test, inlined into each (bank 2's `ed` keeps no call into bank 1).
+    #[inline(always)]
+    pub(crate) fn streams(&self, at: PartId) -> bool {
         let r = self.project.part(at).sound.source_ref();
         r.is_some_and(|r| self.project.pool().streamed(r))
     }
