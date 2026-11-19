@@ -3,7 +3,7 @@ module ProtocolTest exposing (suite)
 import Addr
 import Expect
 import FixtureData
-import Protocol exposing (AnswerLine(..), Cell(..), Command(..), Flags, Kind(..), Line(..), RouteKind(..), RouteTo(..), Scale(..), SchemaId(..), Value(..), encode, optIndex, parse)
+import Protocol exposing (AnswerLine(..), Cell(..), Command(..), Edits(..), Flags, Health(..), Kind(..), Line(..), OverEdits(..), ProjectFile(..), RouteKind(..), RouteTo(..), Scale(..), SchemaId(..), SoundStatus(..), Value(..), encode, optIndex, parse)
 import Test exposing (Test, describe, test)
 import Unit
 import Wire exposing (addr, page)
@@ -116,6 +116,83 @@ suite =
                     , \ps -> Expect.notEqual Nothing (lookup "COMP.THRESH" ps)
                     ]
                     params
+        , describe "SETTINGS (slice 3)"
+            [ p "crumb" "crumb \"MIDI\" \"CHANNELS\"" (Answer (Crumb { list = "MIDI", row = "CHANNELS" }))
+            , p "settings" "settings" (Answer SettingsIs)
+            , test "schema SETTINGS" <|
+                \_ ->
+                    case parse "schema SETTINGS 26 0123456789abcdef" of
+                        Answer (SchemaIs r) ->
+                            Expect.equal ( r.schema, r.pages ) ( SettingsSchema, 26 )
+
+                        _ ->
+                            Expect.fail "not a schema line"
+            , test "a new project's line" <|
+                \_ ->
+                    Expect.equal (Answer (ProjectIs { name = "NEW PROJECT", file = NewProject, edits = Edited, generation = Nothing }))
+                        (parse "project \"NEW PROJECT\" new edited gen -")
+            , test "a saved project's line" <|
+                \_ ->
+                    case parse "project \"MY SONG\" 12 clean gen 3" of
+                        Answer (ProjectIs r) ->
+                            Expect.equal ( r.name, ( r.file |> fileInt, r.edits ), r.generation |> Maybe.map Protocol.generationToInt ) ( "MY SONG", ( 12, Clean ), Just 3 )
+
+                        _ ->
+                            Expect.fail "not a project line"
+            , p "a project line with a bad state" "project \"X\" 3 dirty gen 1" Unknown
+            , p "a project line with id 0" "project \"X\" 0 clean gen 1" Unknown
+            , p "sound" "sound 3 \"BASS 1\" stale" (Answer (SoundIs { part = 3, name = "BASS 1", status = SoundStale }))
+            , p "sound edited" "sound 1 \"INIT\" edited" (Answer (SoundIs { part = 1, name = "INIT", status = SoundEdited }))
+            , p "toast" "toast \"SAVED\"" (Answer (ToastIs "SAVED"))
+            , p "projects" "projects 3" (Answer (ProjectsIs { count = 3, more = False }))
+            , p "projects more" "projects 48 more" (Answer (ProjectsIs { count = 48, more = True }))
+            , test "proj" <|
+                \_ ->
+                    case parse "proj 10 \"MY SONG\" ok gen 2" of
+                        Answer (Proj r) ->
+                            Expect.equal ( ( Protocol.projectIdToInt r.id, r.name ), r.health, r.generation |> Maybe.map Protocol.generationToInt ) ( ( 10, "MY SONG" ), FileOk, Just 2 )
+
+                        _ ->
+                            Expect.fail "not a proj line"
+            , test "a damaged file" <|
+                \_ ->
+                    case parse "proj 4 \"\" bad gen -" of
+                        Answer (Proj r) ->
+                            Expect.equal ( r.health, r.generation ) ( FileBad, Nothing )
+
+                        _ ->
+                            Expect.fail "not a proj line"
+            , p "a newer file" "proj 4 \"X\" weird gen 1" Unknown
+            , test "every line of the unit's SETTINGS schema is understood" <|
+                \_ ->
+                    FixtureData.settings
+                        |> List.filter (parse >> isUnknown)
+                        |> Expect.equal []
+            , test "every SETTINGS page names its crumbs" <|
+                \_ ->
+                    let
+                        count : String -> Int
+                        count head =
+                            FixtureData.settings |> List.filter (String.startsWith head) |> List.length
+                    in
+                    Expect.equal (count "page ") (count "crumb ")
+            , test "ask projects" <| \_ -> Expect.equal (Just "ed projects") (encode ListProjects)
+            , test "save" <| \_ -> Expect.equal (Just "ed project save") (encode SaveProject)
+            , test "saveas writes a space as _" <|
+                \_ ->
+                    Expect.equal (Just (Just "ed project saveas MY_SONG-2"))
+                        (Protocol.projectName "MY SONG-2" |> Maybe.map (SaveProjectAs >> encode))
+            , test "a name NAMING couldn't type is none" <|
+                \_ ->
+                    [ "", " A", "A ", "A_B", "A.B", "ABCDEFGHIJKLMNOPQ", "Ä" ]
+                        |> List.map Protocol.projectName
+                        |> Expect.equal (List.repeat 7 Nothing)
+            , test "load" <|
+                \_ ->
+                    Expect.equal (Just [ Just "ed project load 10 3", Just "ed project load 10 3 discard" ])
+                        (Maybe.map2 (\i g -> [ encode (LoadProject i g RefuseOverEdits), encode (LoadProject i g DiscardEdits) ]) (Protocol.projectId 10) (Protocol.generation 3))
+            , test "a project id is 1 or more" <| \_ -> Expect.equal Nothing (Protocol.projectId 0)
+            ]
         , describe "terminators"
             [ p "OK" "OK" (Ok_ Nothing)
             , p "OK m" "OK 2" (Ok_ (Just 2))
@@ -241,6 +318,16 @@ isUnknown l =
 
         SinceTooLarge ->
             False
+
+
+fileInt : ProjectFile -> Int
+fileInt f =
+    case f of
+        FileId i ->
+            Protocol.projectIdToInt i
+
+        NewProject ->
+            0
 
 
 lookup : String -> List ( String, a ) -> Maybe a

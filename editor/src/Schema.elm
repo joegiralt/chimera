@@ -70,6 +70,9 @@ type alias Matrix =
 type alias Page =
     { n : PageNo
     , label : PageLabel
+
+    -- A SETTINGS page's place in the box's lists: its list's crumb and its own.
+    , crumb : Maybe { list : String, row : String }
     , panels : List Panel
     }
 
@@ -216,7 +219,7 @@ add line (Schema s) =
             Schema
                 { s
                     | count = Just p.count
-                    , pages = List.filter (\x -> x.n /= p.n) s.pages ++ [ { n = p.n, label = p.label, panels = [] } ]
+                    , pages = List.filter (\x -> x.n /= p.n) s.pages ++ [ { n = p.n, label = p.label, crumb = Nothing, panels = [] } ]
                 }
 
         Protocol.Panel p ->
@@ -317,6 +320,27 @@ add line (Schema s) =
             Schema s
 
         Protocol.MixerIs ->
+            Schema s
+
+        Protocol.Crumb c ->
+            Schema { s | pages = onLast (\pg -> { pg | crumb = Just c }) s.pages }
+
+        Protocol.SettingsIs ->
+            Schema s
+
+        Protocol.ProjectIs _ ->
+            Schema s
+
+        Protocol.SoundIs _ ->
+            Schema s
+
+        Protocol.ToastIs _ ->
+            Schema s
+
+        Protocol.ProjectsIs _ ->
+            Schema s
+
+        Protocol.Proj _ ->
             Schema s
 
         Protocol.Refused _ _ ->

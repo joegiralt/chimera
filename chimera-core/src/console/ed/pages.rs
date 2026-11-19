@@ -1,5 +1,6 @@
 //! The pages `ed` walks for a schema: its shared pages first, then each
-//! round's (each pad's on DRUM, each Part's on the mixer: ADR 0285, 0289).
+//! round's (each pad's on DRUM, each Part's on the mixer and SETTINGS:
+//! ADR 0285, 0289).
 //! One walk, `Pages`, for `describe`, `get`, `set` and `since`, so they
 //! can't disagree on what a page is. Its counts are `const`: the page
 //! number is a `u8` by a compile-time check, never a silent cast.
@@ -35,16 +36,28 @@ const fn def_in(c: &ChainDef2, mut n: usize) -> Option<&'static BlockDef> {
     None
 }
 
-/// The schema's pages, `(shared, a round's)`: a schema with no chain has
-/// one page, its own.
+/// Flat page `n` of `s`'s chain or leaves, rounds aside.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.def_of"))]
+const fn def_of(s: Schema, n: usize) -> Option<&'static BlockDef> {
+    match s.chain() {
+        Some(c) => def_in(c, n),
+        None => {
+            let l = s.leaves();
+            if n < l.len() { Some(l[n].def) } else { None }
+        }
+    }
+}
+
+/// The schema's pages, `(shared, a round's)`: the matrix has one page, its
+/// own.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.counts"))]
 const fn counts(s: Schema) -> (usize, usize) {
-    let Some(c) = s.chain() else {
+    if let Schema::Matrix(_) = s {
         return (1, 0);
-    };
+    }
     let (mut shared, mut round) = (0, 0);
     let mut n = 0;
-    while let Some(def) = def_in(c, n) {
+    while let Some(def) = def_of(s, n) {
         n += 1;
         if s.in_round(def) {
             round += 1;
@@ -143,10 +156,16 @@ impl Pages {
         }
     }
 
-    /// The next def of the chain in this round, or `None` at its end.
+    /// The next def of the chain (or the leaves) in this round, or `None`
+    /// at its end.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.next_def"))]
     fn next_def(&mut self) -> Option<&'static BlockDef> {
-        let node = self.schema.chain()?.blocks.get(self.node)?;
+        let Some(c) = self.schema.chain() else {
+            let leaf = self.schema.leaves().get(self.node)?;
+            self.node += 1;
+            return Some(leaf.def);
+        };
+        let node = c.blocks.get(self.node)?;
         let def = match self.sub {
             0 => node.def,
             k => node.sub_pages.get(k - 1)?,

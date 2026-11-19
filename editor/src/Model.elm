@@ -1,6 +1,8 @@
 module Model exposing
     ( Effect(..)
     , Held
+    , Listed
+    , Listing
     , Model
     , Msg(..)
     , Reading
@@ -29,15 +31,15 @@ value, and an edit the unit would not take shows the unit's reason.
 The schemas are the unit's own text (ADR 0289): on connect, and on an engine
 the editor hasn't read, it asks `ed schema <S>` for its page count and hash,
 and uses its cached copy of that hash (IndexedDB, `Cache`) or describes every
-page and keeps them. It reads the followed engine's schema, the MIXER's and
-the engine's matrix.
+page and keeps them. It reads the followed engine's schema, the MIXER's, the
+engine's matrix and SETTINGS'.
 
 -}
 
 import Addr exposing (Addr)
 import Cache
 import Dict exposing (Dict)
-import Protocol exposing (AnswerLine(..), Cell, Command(..), Hash, Line(..), PageNo, RouteTo, SchemaId(..), Value, cellKey, encode, hashText, parse, schemaToken)
+import Protocol exposing (AnswerLine(..), Cell, Command(..), Edits, Generation, Hash, Health, Line(..), OverEdits, PageNo, ProjectFile, ProjectId, ProjectName, RouteTo, SchemaId(..), SoundStatus, Value, cellKey, encode, hashText, parse, schemaToken)
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
@@ -54,6 +56,19 @@ type alias Reading =
 -}
 type alias RouteReading =
     { amount : Int, text : String }
+
+
+{-| A project file as `since`'s listing says it.
+-}
+type alias Listed =
+    { id : ProjectId, name : String, health : Health, generation : Maybe Generation }
+
+
+{-| The card's projects as last listed (`ed projects`), in id order, and
+whether the card has more than the box lists.
+-}
+type alias Listing =
+    { projects : List Listed, more : Bool }
 
 
 {-| Where the connect sequence is. One request is in flight at a time.
@@ -110,6 +125,7 @@ type alias Model =
     , schema : Schema
     , mixer : Schema
     , matrix : Schema
+    , settings : Schema
     , routes : Dict String RouteReading
     , held : Dict String Held
     , incoming : Schema
@@ -131,6 +147,13 @@ type alias Model =
     , owed : Int
     , leftover : Bool
     , now : Time.Posix
+
+    -- SETTINGS' section: the loaded project, each Part's Sound (by its
+    -- number), the box's last toast, the listing.
+    , project : Maybe { name : String, file : ProjectFile, edits : Edits, generation : Maybe Generation }
+    , sounds : Dict Int { name : String, status : SoundStatus }
+    , toast : Maybe String
+    , listing : Maybe Listing
     }
 
 
@@ -151,6 +174,14 @@ type Msg
     | Connect Via
     | Recalled { key : String, lines : Maybe (List String) }
     | EditRoute Cell RouteTo
+      -- The card's projects listed again.
+    | AskProjects
+      -- Save over the loaded project's own file.
+    | SaveOwn
+      -- Save into a new id.
+    | SaveNew ProjectName
+      -- Load a listed file, witnessed by the generation the listing said.
+    | LoadListed ProjectId Generation OverEdits
 
 
 {-| The console protocol this editor speaks.
@@ -194,6 +225,7 @@ init =
     , schema = Schema.empty
     , mixer = Schema.empty
     , matrix = Schema.empty
+    , settings = Schema.empty
     , routes = Dict.empty
     , held = Dict.empty
     , incoming = Schema.empty
@@ -213,6 +245,10 @@ init =
     , owed = 0
     , leftover = False
     , now = Time.millisToPosix 0
+    , project = Nothing
+    , sounds = Dict.empty
+    , toast = Nothing
+    , listing = Nothing
     }
 
 
@@ -268,6 +304,18 @@ opening msg =
             Cmd.none
 
         EditRoute _ _ ->
+            Cmd.none
+
+        AskProjects ->
+            Cmd.none
+
+        SaveOwn ->
+            Cmd.none
+
+        SaveNew _ ->
+            Cmd.none
+
+        LoadListed _ _ _ ->
             Cmd.none
 
 
@@ -434,29 +482,63 @@ step msg m =
             else
                 ( m, [] )
 
+        -- The project commands: the box's own card work, under BUSY; what
+        -- happened comes back through `since` (`project`, `projects`, `toast`).
+        AskProjects ->
+            projectCommand ListProjects m
+
+        SaveOwn ->
+            projectCommand SaveProject m
+
+        SaveNew n ->
+            projectCommand (SaveProjectAs n) m
+
+        LoadListed id g over ->
+            projectCommand (LoadProject id g over) m
+
+
+{-| A project command goes out while following: it reads no engine's schema.
+-}
+projectCommand : Command -> Model -> ( Model, List Effect )
+projectCommand c m =
+    if m.stage == Following then
+        ( m, [ Send c ] )
+
+    else
+        ( m, [] )
+
 
 nextSeat : Seat -> Seat
 nextSeat (Seat n) =
     Seat (n + 1)
 
 
-{-| The schema that describes `a`: the followed engine's, else the mixer's.
+{-| The schema that describes `a`: the followed engine's, else the mixer's,
+else SETTINGS'.
 -}
 schemaOf : Addr -> Model -> Schema
 schemaOf a m =
-    case Schema.param a m.schema of
-        Just _ ->
+    case ( Schema.param a m.schema, Schema.param a m.mixer ) of
+        ( Just _, _ ) ->
             m.schema
 
-        Nothing ->
+        ( Nothing, Just _ ) ->
             m.mixer
+
+        ( Nothing, Nothing ) ->
+            m.settings
 
 
 {-| Some schema the editor holds describes `a`.
 -}
 isDescribed : Addr -> Model -> Bool
 isDescribed a m =
-    Schema.param a m.schema /= Nothing || isMixer a m
+    Schema.param a m.schema /= Nothing || isMixer a m || isSettings a m
+
+
+isSettings : Addr -> Model -> Bool
+isSettings a m =
+    Schema.param a m.settings /= Nothing
 
 
 isMixer : Addr -> Model -> Bool
@@ -780,13 +862,39 @@ answer raw a m =
         Unroute c ->
             { m | routes = Dict.remove (cellKey c) m.routes }
 
+        Crumb _ ->
+            describing raw a m
 
-{-| Only the MIXER's values and panels kept: the Part's section starts afresh.
+        -- SETTINGS' section whole: its state goes. Its values are THEME's,
+        -- MIDI CONFIG's and RANDOMIZE's, a fixed set the whole answer
+        -- repeats; a Part's SETTINGS cells are the mixer's section's.
+        SettingsIs ->
+            { m | project = Nothing, sounds = Dict.empty, toast = Nothing, listing = Nothing }
+
+        ProjectIs p ->
+            { m | project = Just p }
+
+        SoundIs snd ->
+            { m | sounds = Dict.insert snd.part { name = snd.name, status = snd.status } m.sounds }
+
+        ToastIs t ->
+            { m | toast = Just t }
+
+        -- The listing whole: what was listed before is gone.
+        ProjectsIs r ->
+            { m | listing = Just { projects = [], more = r.more } }
+
+        Proj pr ->
+            { m | listing = m.listing |> Maybe.map (\l -> { l | projects = l.projects ++ [ pr ] }) }
+
+
+{-| Only the MIXER's and SETTINGS' values and the MIXER's panels kept: the
+Part's section starts afresh.
 -}
 mixerOnly : Model -> Model
 mixerOnly m =
     { m
-        | values = Dict.filter (\k _ -> isMixerKey k m) m.values
+        | values = Dict.filter (\k _ -> isMixerKey k m || isSettingsKey k m) m.values
         , variants = Dict.filter (\k _ -> Schema.hasPanel k m.mixer) m.variants
     }
 
@@ -794,6 +902,11 @@ mixerOnly m =
 isMixerKey : String -> Model -> Bool
 isMixerKey k m =
     Addr.fromWire k |> Maybe.map (\a -> isMixer a m) |> Maybe.withDefault False
+
+
+isSettingsKey : String -> Model -> Bool
+isSettingsKey k m =
+    Addr.fromWire k |> Maybe.map (\a -> isSettings a m) |> Maybe.withDefault False
 
 
 {-| A schema read this connection, or none.
@@ -1049,9 +1162,12 @@ install s h m =
             else
                 m1
 
+        SettingsSchema ->
+            { m1 | settings = h.schema }
 
-{-| What to read next: the followed engine's schema, the mixer's, then the
-engine's matrix, each once a connection; then following.
+
+{-| What to read next: the followed engine's schema, the mixer's, the
+engine's matrix, then SETTINGS', each once a connection; then following.
 -}
 readNext : Model -> Model
 readNext m =
@@ -1074,6 +1190,9 @@ readNext m =
 
             else if lacks (MatrixSchema e) then
                 go (Checking (MatrixSchema e) Nothing)
+
+            else if lacks SettingsSchema then
+                go (Checking SettingsSchema Nothing)
 
             else
                 go Following

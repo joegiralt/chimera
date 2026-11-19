@@ -1,5 +1,5 @@
 //! What `ed describe` describes (ADR 0289): an engine's pages, the
-//! mixer's, or an engine's mod matrix. A `Schema` is parsed once at the boundary from its token and
+//! mixer's, an engine's mod matrix, or SETTINGS'. A `Schema` is parsed once at the boundary from its token and
 //! walked by `Pages`. Its pages are shared, then each round's: a pad's on
 //! DRUM, a Part's on the mixer.
 
@@ -8,6 +8,7 @@ use core::mem::MaybeUninit;
 
 use super::addr::{PAD, PART};
 use super::lit::lit;
+use super::settings::{LEAVES, Leaf};
 use crate::dsp::drum::types::PadId;
 use crate::params::EngineType;
 use crate::project::PartId;
@@ -28,6 +29,9 @@ pub enum Schema {
     /// An engine's MTX: its sources, the fixed columns, the amounts. One
     /// page, from the matrix's own tables, not a chain.
     Matrix(EngineType),
+    /// SETTINGS' leaves with a param, in tree order (`settings::LEAVES`):
+    /// shared, then TUNING and LIVE SNAP once a Part.
+    Settings,
 }
 
 lit!(
@@ -38,9 +42,13 @@ lit!(
     /// The tokens of `Schema::Matrix`: `MTX-ALGO`.
     MTX = "MTX-"
 );
+lit!(
+    /// The token of `Schema::Settings`.
+    SETTINGS = "SETTINGS"
+);
 
 /// How many schemas there are: `ed schema`'s hashes, one each.
-pub const SCHEMAS: usize = 2 * EngineType::ALL.len() + 1;
+pub const SCHEMAS: usize = 2 * EngineType::ALL.len() + 2;
 
 /// What a schema's pages go round: nothing, each pad or each Part.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +110,7 @@ impl Schema {
         Schema::Matrix(EngineType::ALL[2]),
         Schema::Matrix(EngineType::ALL[3]),
         Schema::Matrix(EngineType::ALL[4]),
+        Schema::Settings,
     ];
 
     /// Its place in `ALL`.
@@ -111,6 +120,7 @@ impl Schema {
             Schema::Engine(e) => engine_index(e),
             Schema::Mixer => EngineType::ALL.len(),
             Schema::Matrix(e) => EngineType::ALL.len() + 1 + engine_index(e),
+            Schema::Settings => 2 * EngineType::ALL.len() + 1,
         }
     }
 
@@ -120,6 +130,9 @@ impl Schema {
         if w.eq_ignore_ascii_case(MIXER.bytes()) {
             return Some(Schema::Mixer);
         }
+        if w.eq_ignore_ascii_case(SETTINGS.bytes()) {
+            return Some(Schema::Settings);
+        }
         let mtx = MTX.bytes();
         match w.split_at_checked(mtx.len()) {
             Some((head, e)) if head.eq_ignore_ascii_case(mtx) => engine(e).map(Schema::Matrix),
@@ -128,13 +141,22 @@ impl Schema {
     }
 
     /// The chain it walks; `None` for a schema described from its own
-    /// tables (the matrix).
+    /// tables (the matrix) or the tree's leaves (SETTINGS).
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.chain"))]
     pub const fn chain(self) -> Option<&'static ChainDef2> {
         match self {
             Schema::Engine(e) => Some(engine_chain(e)),
             Schema::Mixer => Some(&MIXER_CHANNEL_CHAIN),
-            Schema::Matrix(_) => None,
+            Schema::Matrix(_) | Schema::Settings => None,
+        }
+    }
+
+    /// The tree's leaves it walks: SETTINGS', else none.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.leaves"))]
+    pub const fn leaves(self) -> &'static [Leaf] {
+        match self {
+            Schema::Settings => &LEAVES,
+            Schema::Engine(_) | Schema::Mixer | Schema::Matrix(_) => &[],
         }
     }
 
@@ -146,13 +168,14 @@ impl Schema {
             Schema::Engine(
                 EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va,
             ) => RoundKind::None,
-            Schema::Mixer => RoundKind::Parts,
+            Schema::Mixer | Schema::Settings => RoundKind::Parts,
             Schema::Matrix(_) => RoundKind::None,
         }
     }
 
     /// `def` is described once a round, not once: a cell binds what the
-    /// round names (the pad on DRUM, the Part or its OUT on the mixer).
+    /// round names (the pad on DRUM, the Part or its OUT on the mixer and
+    /// SETTINGS).
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.in_round"))]
     pub const fn in_round(self, def: &BlockDef) -> bool {
         let mut i = 0;
@@ -171,7 +194,7 @@ impl Schema {
         false
     }
 
-    /// Its token, `ALGO`…, `MIXER`, `MTX-ALGO`…, into `w`.
+    /// Its token, `ALGO`…, `MIXER`, `MTX-ALGO`…, `SETTINGS`, into `w`.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.write"))]
     pub fn write(self, w: &mut dyn Write) -> fmt::Result {
         match self {
@@ -181,6 +204,7 @@ impl Schema {
                 w.write_str(MTX.get())?;
                 w.write_str(e.disk_ident())
             }
+            Schema::Settings => w.write_str(SETTINGS.get()),
         }
     }
 }

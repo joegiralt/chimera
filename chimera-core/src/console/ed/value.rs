@@ -30,7 +30,8 @@ pub(super) fn engine_of(ui: &UiState) -> EngineType {
 }
 
 /// `at`'s values: the followed Part's Sound's block, its kit's, or pad
-/// `n`'s (never the box's selected pad's); Part `n`'s mix or sends; a bus.
+/// `n`'s (never the box's selected pad's); Part `n`'s mix or sends; a bus;
+/// THEME, MIDI CONFIG or RANDOMIZE.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.block"))]
 pub(super) fn block(ui: &UiState, at: EdBlock) -> Option<BlockView<'_>> {
     let kit = ui.project().kit(ui.active_part);
@@ -40,8 +41,9 @@ pub(super) fn block(ui: &UiState, at: EdBlock) -> Option<BlockView<'_>> {
             ui.project().part(n).sound.params.block(BlockRef::Out)
         }
         EdBlock::Bus(b) => ui.project().read_part(ui.active_part).block(b.block()),
-        // SETTINGS' and ORBIT's slices read these.
-        EdBlock::Global(_) | EdBlock::Orbit(_) => None,
+        EdBlock::Global(g) => crate::ui::ed_cue::global(ui, g),
+        // ORBIT's slice reads these.
+        EdBlock::Orbit(_) => None,
         EdBlock::Sound(s) => match s.get() {
             BlockRef::Kit => Some(BlockView::Plain(kit)),
             b => ui.params().block(b),
@@ -111,7 +113,9 @@ pub(super) fn part_of(ui: &UiState, a: EdAddr) -> PartId {
 /// The rounds a page shows `a` on, in the order `find` tries them: a
 /// pad's its pad's; the Sound's the Part's pages, then pad 1's (a Sound
 /// cell on a pad page reads the same on every pad); a Part's its round of
-/// the mixer; a bus the mixer's shared pages.
+/// the mixer, then of SETTINGS (TUNING, LIVE SNAP); a bus the mixer's
+/// shared pages; a global SETTINGS' shared pages, then Part 1's (TUNING's
+/// TUNE reads the same in every round).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.homes"))]
 fn homes(engine: EngineType, a: EdAddr) -> [Option<Pages>; 2] {
     let e = Schema::Engine(engine);
@@ -121,9 +125,16 @@ fn homes(engine: EngineType, a: EdAddr) -> [Option<Pages>; 2] {
             Some(Pages::round(e, Round::Shared)),
             Some(Pages::round(e, Round::Pad(PadId::ALL[0]))),
         ],
-        EdBlock::Part(n, _) => [Some(Pages::round(Schema::Mixer, Round::Part(n))), None],
+        EdBlock::Part(n, _) => [
+            Some(Pages::round(Schema::Mixer, Round::Part(n))),
+            Some(Pages::round(Schema::Settings, Round::Part(n))),
+        ],
         EdBlock::Bus(_) => [Some(Pages::round(Schema::Mixer, Round::Shared)), None],
-        EdBlock::Global(_) | EdBlock::Orbit(_) => [None, None],
+        EdBlock::Global(_) => [
+            Some(Pages::round(Schema::Settings, Round::Shared)),
+            Some(Pages::round(Schema::Settings, Round::Part(PartId::ALL[0]))),
+        ],
+        EdBlock::Orbit(_) => [None, None],
     }
 }
 

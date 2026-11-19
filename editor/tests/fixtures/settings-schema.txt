@@ -1,0 +1,450 @@
+page 0 RND of 26
+crumb "PART" "RANDOM"
+panel RND -
+param RANDOM.OSC "OSC" choice lin 0 3 1 2 -
+opt RANDOM.OSC 0 "OFF"
+opt RANDOM.OSC 1 "PURE"
+opt RANDOM.OSC 2 "RICH"
+opt RANDOM.OSC 3 "WILD"
+param RANDOM.ENV "ENV" choice lin 0 3 1 3 -
+opt RANDOM.ENV 0 "OFF"
+opt RANDOM.ENV 1 "PLUCK"
+opt RANDOM.ENV 2 "PAD"
+opt RANDOM.ENV 3 "ANY"
+param RANDOM.TONE "TONE" choice lin 0 3 1 2 -
+opt RANDOM.TONE 0 "OFF"
+opt RANDOM.TONE 1 "SOFT"
+opt RANDOM.TONE 2 "BRIGHT"
+opt RANDOM.TONE 3 "WILD"
+param RANDOM.MOD "MOD" choice lin 0 3 1 1 -
+opt RANDOM.MOD 0 "OFF"
+opt RANDOM.MOD 1 "SUBTLE"
+opt RANDOM.MOD 2 "MOVING"
+opt RANDOM.MOD 3 "WILD"
+param RANDOM.SEED "SEED" cont lin 0 255 1 0 -
+OK
+page 1 SYN of 26
+crumb "MIDI" "SYNC"
+panel SYN -
+param MIDI.SYNC "SYNC" choice lin 0 1 1 1 -
+opt MIDI.SYNC 0 "INT"
+opt MIDI.SYNC 1 "EXT"
+param MIDI.PRGIN "PROGRAM" toggle lin 0 1 1 0 -
+opt MIDI.PRGIN 0 "OFF"
+opt MIDI.PRGIN 1 "ON"
+OK
+page 2 CHN of 26
+crumb "MIDI" "CHANNELS"
+panel CHN -
+param PART1.CH "P1" cont lin 0 15 1 0 -
+param PART2.CH "P2" cont lin 0 15 1 0 -
+param PART3.CH "P3" cont lin 0 15 1 0 -
+param PART4.CH "P4" cont lin 0 15 1 0 -
+param PART5.CH "P5" cont lin 0 15 1 0 -
+param PART6.CH "P6" cont lin 0 15 1 0 -
+OK
+page 3 CTL of 26
+crumb "MIDI" "CONTROL"
+panel CTL -
+param MIDI.MIXER_CH "MIXER" choice lin 0 16 1 0 -
+opt MIDI.MIXER_CH 0 "OFF"
+opt MIDI.MIXER_CH 1 "1"
+opt MIDI.MIXER_CH 2 "2"
+opt MIDI.MIXER_CH 3 "3"
+opt MIDI.MIXER_CH 4 "4"
+opt MIDI.MIXER_CH 5 "5"
+opt MIDI.MIXER_CH 6 "6"
+opt MIDI.MIXER_CH 7 "7"
+opt MIDI.MIXER_CH 8 "8"
+opt MIDI.MIXER_CH 9 "9"
+opt MIDI.MIXER_CH 10 "10"
+opt MIDI.MIXER_CH 11 "11"
+opt MIDI.MIXER_CH 12 "12"
+opt MIDI.MIXER_CH 13 "13"
+opt MIDI.MIXER_CH 14 "14"
+opt MIDI.MIXER_CH 15 "15"
+opt MIDI.MIXER_CH 16 "16"
+param MIDI.SEQ_CH "SEQUENCER" choice lin 0 16 1 0 -
+opt MIDI.SEQ_CH 0 "OFF"
+opt MIDI.SEQ_CH 1 "1"
+opt MIDI.SEQ_CH 2 "2"
+opt MIDI.SEQ_CH 3 "3"
+opt MIDI.SEQ_CH 4 "4"
+opt MIDI.SEQ_CH 5 "5"
+opt MIDI.SEQ_CH 6 "6"
+opt MIDI.SEQ_CH 7 "7"
+opt MIDI.SEQ_CH 8 "8"
+opt MIDI.SEQ_CH 9 "9"
+opt MIDI.SEQ_CH 10 "10"
+opt MIDI.SEQ_CH 11 "11"
+opt MIDI.SEQ_CH 12 "12"
+opt MIDI.SEQ_CH 13 "13"
+opt MIDI.SEQ_CH 14 "14"
+opt MIDI.SEQ_CH 15 "15"
+opt MIDI.SEQ_CH 16 "16"
+param MIDI.AUTO_CH "AUTO" choice lin 0 16 1 0 -
+opt MIDI.AUTO_CH 0 "OFF"
+opt MIDI.AUTO_CH 1 "1"
+opt MIDI.AUTO_CH 2 "2"
+opt MIDI.AUTO_CH 3 "3"
+opt MIDI.AUTO_CH 4 "4"
+opt MIDI.AUTO_CH 5 "5"
+opt MIDI.AUTO_CH 6 "6"
+opt MIDI.AUTO_CH 7 "7"
+opt MIDI.AUTO_CH 8 "8"
+opt MIDI.AUTO_CH 9 "9"
+opt MIDI.AUTO_CH 10 "10"
+opt MIDI.AUTO_CH 11 "11"
+opt MIDI.AUTO_CH 12 "12"
+opt MIDI.AUTO_CH 13 "13"
+opt MIDI.AUTO_CH 14 "14"
+opt MIDI.AUTO_CH 15 "15"
+opt MIDI.AUTO_CH 16 "16"
+param MIDI.BUILT_IN "BUILT-IN" toggle lin 0 1 1 1 -
+opt MIDI.BUILT_IN 0 "OFF"
+opt MIDI.BUILT_IN 1 "ON"
+OK
+page 4 ECH of 26
+crumb "MIDI" "ECHO"
+panel ECH -
+param MIDI.ECHO "ECHO" toggle lin 0 1 1 1 -
+opt MIDI.ECHO 0 "OFF"
+opt MIDI.ECHO 1 "ON"
+param MIDI.PARAM_OUT "PARAM OUT" choice lin 0 1 1 0 -
+opt MIDI.PARAM_OUT 0 "OFF"
+opt MIDI.PARAM_OUT 1 "NRPN"
+OK
+page 5 MPE of 26
+crumb "MIDI" "MPE"
+panel MPE -
+param MIDI.MPE_LOWER "LOWER" choice lin 0 15 1 0 -
+opt MIDI.MPE_LOWER 0 "OFF"
+opt MIDI.MPE_LOWER 1 "1"
+opt MIDI.MPE_LOWER 2 "2"
+opt MIDI.MPE_LOWER 3 "3"
+opt MIDI.MPE_LOWER 4 "4"
+opt MIDI.MPE_LOWER 5 "5"
+opt MIDI.MPE_LOWER 6 "6"
+opt MIDI.MPE_LOWER 7 "7"
+opt MIDI.MPE_LOWER 8 "8"
+opt MIDI.MPE_LOWER 9 "9"
+opt MIDI.MPE_LOWER 10 "10"
+opt MIDI.MPE_LOWER 11 "11"
+opt MIDI.MPE_LOWER 12 "12"
+opt MIDI.MPE_LOWER 13 "13"
+opt MIDI.MPE_LOWER 14 "14"
+opt MIDI.MPE_LOWER 15 "15"
+param MIDI.MPE_LBEND "L BEND" cont lin 0 96 1 48 -
+param MIDI.MPE_UPPER "UPPER" choice lin 0 15 1 0 -
+opt MIDI.MPE_UPPER 0 "OFF"
+opt MIDI.MPE_UPPER 1 "1"
+opt MIDI.MPE_UPPER 2 "2"
+opt MIDI.MPE_UPPER 3 "3"
+opt MIDI.MPE_UPPER 4 "4"
+opt MIDI.MPE_UPPER 5 "5"
+opt MIDI.MPE_UPPER 6 "6"
+opt MIDI.MPE_UPPER 7 "7"
+opt MIDI.MPE_UPPER 8 "8"
+opt MIDI.MPE_UPPER 9 "9"
+opt MIDI.MPE_UPPER 10 "10"
+opt MIDI.MPE_UPPER 11 "11"
+opt MIDI.MPE_UPPER 12 "12"
+opt MIDI.MPE_UPPER 13 "13"
+opt MIDI.MPE_UPPER 14 "14"
+opt MIDI.MPE_UPPER 15 "15"
+param MIDI.MPE_UBEND "U BEND" cont lin 0 96 1 48 -
+OK
+page 6 OUT of 26
+crumb "AUDIO" "OUTPUTS"
+panel OUT -
+param PART1.OUT "P1" choice lin 0 2 1 0 -
+opt PART1.OUT 0 "P1"
+opt PART1.OUT 1 "P2"
+opt PART1.OUT 2 "P3"
+param PART2.OUT "P2" choice lin 0 2 1 0 -
+opt PART2.OUT 0 "P1"
+opt PART2.OUT 1 "P2"
+opt PART2.OUT 2 "P3"
+param PART3.OUT "P3" choice lin 0 2 1 0 -
+opt PART3.OUT 0 "P1"
+opt PART3.OUT 1 "P2"
+opt PART3.OUT 2 "P3"
+param PART4.OUT "P4" choice lin 0 2 1 0 -
+opt PART4.OUT 0 "P1"
+opt PART4.OUT 1 "P2"
+opt PART4.OUT 2 "P3"
+param PART5.OUT "P5" choice lin 0 2 1 0 -
+opt PART5.OUT 0 "P1"
+opt PART5.OUT 1 "P2"
+opt PART5.OUT 2 "P3"
+param PART6.OUT "P6" choice lin 0 2 1 0 -
+opt PART6.OUT 0 "P1"
+opt PART6.OUT 1 "P2"
+opt PART6.OUT 2 "P3"
+OK
+page 7 USB of 26
+crumb "AUDIO" "USB"
+panel USB -
+param MIDI.USB_IN "USB IN" choice lin 0 7 1 7 -
+opt MIDI.USB_IN 0 "OFF"
+opt MIDI.USB_IN 1 "-24dB"
+opt MIDI.USB_IN 2 "-18dB"
+opt MIDI.USB_IN 3 "-12dB"
+opt MIDI.USB_IN 4 "-9dB"
+opt MIDI.USB_IN 5 "-6dB"
+opt MIDI.USB_IN 6 "-3dB"
+opt MIDI.USB_IN 7 "0dB"
+OK
+page 8 THM of 26
+crumb "PERSONAL" "THEME"
+panel THM -
+param THEME.BRIGHT "BRIGHT" choice lin 0 18 1 12 -
+opt THEME.BRIGHT 0 "10"
+opt THEME.BRIGHT 1 "15"
+opt THEME.BRIGHT 2 "20"
+opt THEME.BRIGHT 3 "25"
+opt THEME.BRIGHT 4 "30"
+opt THEME.BRIGHT 5 "35"
+opt THEME.BRIGHT 6 "40"
+opt THEME.BRIGHT 7 "45"
+opt THEME.BRIGHT 8 "50"
+opt THEME.BRIGHT 9 "55"
+opt THEME.BRIGHT 10 "60"
+opt THEME.BRIGHT 11 "65"
+opt THEME.BRIGHT 12 "70"
+opt THEME.BRIGHT 13 "75"
+opt THEME.BRIGHT 14 "80"
+opt THEME.BRIGHT 15 "85"
+opt THEME.BRIGHT 16 "90"
+opt THEME.BRIGHT 17 "95"
+opt THEME.BRIGHT 18 "100"
+param THEME.GAMMA "GAMMA" choice lin 0 2 1 2 -
+opt THEME.GAMMA 0 "PANEL"
+opt THEME.GAMMA 1 "SOFT"
+opt THEME.GAMMA 2 "PUNCH"
+param THEME.ACCENT "ACCENT" choice lin 0 4 1 0 -
+opt THEME.ACCENT 0 "TEAL"
+opt THEME.ACCENT 1 "AMBER"
+opt THEME.ACCENT 2 "ROSE"
+opt THEME.ACCENT 3 "LIME"
+opt THEME.ACCENT 4 "ICE"
+param THEME.BLACK "BLACK" choice lin 0 6 1 0 -
+opt THEME.BLACK 0 "-2"
+opt THEME.BLACK 1 "-1"
+opt THEME.BLACK 2 "0"
+opt THEME.BLACK 3 "+1"
+opt THEME.BLACK 4 "+2"
+opt THEME.BLACK 5 "+3"
+opt THEME.BLACK 6 "+4"
+param THEME.HINTS "HINTS" toggle lin 0 1 1 1 -
+opt THEME.HINTS 0 "OFF"
+opt THEME.HINTS 1 "ON"
+param THEME.INVERT "INVERT" toggle lin 0 1 1 0 -
+opt THEME.INVERT 0 "OFF"
+opt THEME.INVERT 1 "ON"
+OK
+page 9 SAV of 26
+crumb "PERSONAL" "SAVER"
+panel SAV -
+param THEME.SAVER "SAVER" choice lin 0 8 1 7 -
+opt THEME.SAVER 0 "OFF"
+opt THEME.SAVER 1 "5 S"
+opt THEME.SAVER 2 "7 S"
+opt THEME.SAVER 3 "10 S"
+opt THEME.SAVER 4 "30 S"
+opt THEME.SAVER 5 "60 S"
+opt THEME.SAVER 6 "2 MIN"
+opt THEME.SAVER 7 "5 MIN"
+opt THEME.SAVER 8 "10 MIN"
+OK
+page 10 MAP of 26
+crumb "PERSONAL" "MAP"
+panel MAP -
+param THEME.PAGES "PAGES" choice lin 0 1 1 0 -
+opt THEME.PAGES 0 "ROW"
+opt THEME.PAGES 1 "STACK"
+OK
+page 11 TXT of 26
+crumb "PERSONAL" "TEXT"
+panel TXT -
+param THEME.TEXT "SIZE" choice lin 0 1 1 0 -
+opt THEME.TEXT 0 "NORMAL"
+opt THEME.TEXT 1 "LARGE"
+OK
+page 12 FOL of 26
+crumb "PERSONAL" "FOLLOW"
+panel FOL -
+param THEME.FOLLOW "FOLLOW" choice lin 0 2 1 1 -
+opt THEME.FOLLOW 0 "OFF"
+opt THEME.FOLLOW 1 "IDLE"
+opt THEME.FOLLOW 2 "ALWAYS"
+OK
+page 13 PSH of 26
+crumb "SYSTEM" "PUSH"
+panel PSH -
+param MIDI.PUSH "PUSH" toggle lin 0 1 1 0 -
+opt MIDI.PUSH 0 "OFF"
+opt MIDI.PUSH 1 "ON"
+OK
+page 14 PART1_SNP of 26
+crumb "PART" "SNAP"
+panel PART1_SNP -
+param PART1.SNAP "SNAP" choice lin 0 2 1 0 -
+opt PART1.SNAP 0 "OFF"
+opt PART1.SNAP 1 "SCALE"
+opt PART1.SNAP 2 "CHORD"
+param PART1.HELD "HELD" choice lin 0 1 1 0 -
+opt PART1.HELD 0 "STAY"
+opt PART1.HELD 1 "RE-SNAP"
+OK
+page 15 PART1_TUN of 26
+crumb "AUDIO" "TUNING"
+panel PART1_TUN -
+param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param PART1.TUNING "TUNING" choice lin 0 6 1 0 -
+opt PART1.TUNING 0 "12-TET"
+opt PART1.TUNING 1 "JUST"
+opt PART1.TUNING 2 "PYTHAG"
+opt PART1.TUNING 3 "MEANTONE"
+opt PART1.TUNING 4 "WERCK"
+opt PART1.TUNING 5 "MTS"
+opt PART1.TUNING 6 "SCALA"
+param PART1.MAPPING "MAPPING" choice lin 0 1 1 0 -
+opt PART1.MAPPING 0 "CONTIN."
+opt PART1.MAPPING 1 "KEYBD"
+OK
+page 16 PART2_SNP of 26
+crumb "PART" "SNAP"
+panel PART2_SNP -
+param PART2.SNAP "SNAP" choice lin 0 2 1 0 -
+opt PART2.SNAP 0 "OFF"
+opt PART2.SNAP 1 "SCALE"
+opt PART2.SNAP 2 "CHORD"
+param PART2.HELD "HELD" choice lin 0 1 1 0 -
+opt PART2.HELD 0 "STAY"
+opt PART2.HELD 1 "RE-SNAP"
+OK
+page 17 PART2_TUN of 26
+crumb "AUDIO" "TUNING"
+panel PART2_TUN -
+param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param PART2.TUNING "TUNING" choice lin 0 6 1 0 -
+opt PART2.TUNING 0 "12-TET"
+opt PART2.TUNING 1 "JUST"
+opt PART2.TUNING 2 "PYTHAG"
+opt PART2.TUNING 3 "MEANTONE"
+opt PART2.TUNING 4 "WERCK"
+opt PART2.TUNING 5 "MTS"
+opt PART2.TUNING 6 "SCALA"
+param PART2.MAPPING "MAPPING" choice lin 0 1 1 0 -
+opt PART2.MAPPING 0 "CONTIN."
+opt PART2.MAPPING 1 "KEYBD"
+OK
+page 18 PART3_SNP of 26
+crumb "PART" "SNAP"
+panel PART3_SNP -
+param PART3.SNAP "SNAP" choice lin 0 2 1 0 -
+opt PART3.SNAP 0 "OFF"
+opt PART3.SNAP 1 "SCALE"
+opt PART3.SNAP 2 "CHORD"
+param PART3.HELD "HELD" choice lin 0 1 1 0 -
+opt PART3.HELD 0 "STAY"
+opt PART3.HELD 1 "RE-SNAP"
+OK
+page 19 PART3_TUN of 26
+crumb "AUDIO" "TUNING"
+panel PART3_TUN -
+param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param PART3.TUNING "TUNING" choice lin 0 6 1 0 -
+opt PART3.TUNING 0 "12-TET"
+opt PART3.TUNING 1 "JUST"
+opt PART3.TUNING 2 "PYTHAG"
+opt PART3.TUNING 3 "MEANTONE"
+opt PART3.TUNING 4 "WERCK"
+opt PART3.TUNING 5 "MTS"
+opt PART3.TUNING 6 "SCALA"
+param PART3.MAPPING "MAPPING" choice lin 0 1 1 0 -
+opt PART3.MAPPING 0 "CONTIN."
+opt PART3.MAPPING 1 "KEYBD"
+OK
+page 20 PART4_SNP of 26
+crumb "PART" "SNAP"
+panel PART4_SNP -
+param PART4.SNAP "SNAP" choice lin 0 2 1 0 -
+opt PART4.SNAP 0 "OFF"
+opt PART4.SNAP 1 "SCALE"
+opt PART4.SNAP 2 "CHORD"
+param PART4.HELD "HELD" choice lin 0 1 1 0 -
+opt PART4.HELD 0 "STAY"
+opt PART4.HELD 1 "RE-SNAP"
+OK
+page 21 PART4_TUN of 26
+crumb "AUDIO" "TUNING"
+panel PART4_TUN -
+param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param PART4.TUNING "TUNING" choice lin 0 6 1 0 -
+opt PART4.TUNING 0 "12-TET"
+opt PART4.TUNING 1 "JUST"
+opt PART4.TUNING 2 "PYTHAG"
+opt PART4.TUNING 3 "MEANTONE"
+opt PART4.TUNING 4 "WERCK"
+opt PART4.TUNING 5 "MTS"
+opt PART4.TUNING 6 "SCALA"
+param PART4.MAPPING "MAPPING" choice lin 0 1 1 0 -
+opt PART4.MAPPING 0 "CONTIN."
+opt PART4.MAPPING 1 "KEYBD"
+OK
+page 22 PART5_SNP of 26
+crumb "PART" "SNAP"
+panel PART5_SNP -
+param PART5.SNAP "SNAP" choice lin 0 2 1 0 -
+opt PART5.SNAP 0 "OFF"
+opt PART5.SNAP 1 "SCALE"
+opt PART5.SNAP 2 "CHORD"
+param PART5.HELD "HELD" choice lin 0 1 1 0 -
+opt PART5.HELD 0 "STAY"
+opt PART5.HELD 1 "RE-SNAP"
+OK
+page 23 PART5_TUN of 26
+crumb "AUDIO" "TUNING"
+panel PART5_TUN -
+param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param PART5.TUNING "TUNING" choice lin 0 6 1 0 -
+opt PART5.TUNING 0 "12-TET"
+opt PART5.TUNING 1 "JUST"
+opt PART5.TUNING 2 "PYTHAG"
+opt PART5.TUNING 3 "MEANTONE"
+opt PART5.TUNING 4 "WERCK"
+opt PART5.TUNING 5 "MTS"
+opt PART5.TUNING 6 "SCALA"
+param PART5.MAPPING "MAPPING" choice lin 0 1 1 0 -
+opt PART5.MAPPING 0 "CONTIN."
+opt PART5.MAPPING 1 "KEYBD"
+OK
+page 24 PART6_SNP of 26
+crumb "PART" "SNAP"
+panel PART6_SNP -
+param PART6.SNAP "SNAP" choice lin 0 2 1 0 -
+opt PART6.SNAP 0 "OFF"
+opt PART6.SNAP 1 "SCALE"
+opt PART6.SNAP 2 "CHORD"
+param PART6.HELD "HELD" choice lin 0 1 1 0 -
+opt PART6.HELD 0 "STAY"
+opt PART6.HELD 1 "RE-SNAP"
+OK
+page 25 PART6_TUN of 26
+crumb "AUDIO" "TUNING"
+panel PART6_TUN -
+param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param PART6.TUNING "TUNING" choice lin 0 6 1 0 -
+opt PART6.TUNING 0 "12-TET"
+opt PART6.TUNING 1 "JUST"
+opt PART6.TUNING 2 "PYTHAG"
+opt PART6.TUNING 3 "MEANTONE"
+opt PART6.TUNING 4 "WERCK"
+opt PART6.TUNING 5 "MTS"
+opt PART6.TUNING 6 "SCALA"
+param PART6.MAPPING "MAPPING" choice lin 0 1 1 0 -
+opt PART6.MAPPING 0 "CONTIN."
+opt PART6.MAPPING 1 "KEYBD"
+OK

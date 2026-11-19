@@ -381,7 +381,7 @@ fn the_schema_hash_is_describes_bytes_and_the_same_every_boot() {
     let mut f = Fake::new();
     assert_eq!(
         ask(&mut f, "ed schema NOPE\n"),
-        "ERR ed takes hello, schema, describe, get, set, route, since or part\n"
+        "ERR ed takes hello, schema, describe, get, set, route, since, part, projects or project\n"
     );
 }
 

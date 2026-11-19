@@ -7,8 +7,9 @@
 use core::fmt::{self, Write};
 use core::mem::MaybeUninit;
 
-use super::addr::EdBlock;
+use super::addr::{EdBlock, GlobalBlock};
 use super::lit::{HERE, lit, quoted};
+use super::project::ProjectCmd;
 use super::route::{RouteCell, RouteDest, RouteTo};
 use super::schema::Hashes;
 use super::value::{engine_of, find};
@@ -38,6 +39,12 @@ enum Taken {
     Part(PartId),
     /// A bus: the mixer's, the same from any Part.
     Bus,
+    /// THEME or MIDI CONFIG: the box's, the same from any Part.
+    Global,
+    /// RANDOMIZE on Part `n`, the followed and active one: a turn rolls
+    /// the active Part's Sound (ADR 0232), so a box that has moved to
+    /// another Part since drops it.
+    Roll(PartId),
 }
 
 impl Taken {
@@ -49,7 +56,9 @@ impl Taken {
             EdBlock::Sound(_) | EdBlock::Pad(..) => Some(Taken::Sound { part, engine }),
             EdBlock::Part(n, _) => Some(Taken::Part(n)),
             EdBlock::Bus(_) => Some(Taken::Bus),
-            EdBlock::Global(_) | EdBlock::Orbit(_) => None,
+            EdBlock::Global(GlobalBlock::Theme | GlobalBlock::Midi) => Some(Taken::Global),
+            EdBlock::Global(GlobalBlock::Random) => Some(Taken::Roll(part)),
+            EdBlock::Orbit(_) => None,
         }
     }
 
@@ -61,7 +70,8 @@ impl Taken {
                 (ui.project().part(part).sound.engine() == engine).then_some(part)
             }
             Taken::Part(n) => Some(n),
-            Taken::Bus => Some(ui.active_part),
+            Taken::Bus | Taken::Global => Some(ui.active_part),
+            Taken::Roll(n) => (ui.active_part == n).then_some(n),
         }
     }
 }
@@ -115,6 +125,10 @@ enum Act {
         at: RouteAt,
         to: Option<i8>,
     },
+    /// `ed projects`: kept until the card is free to list (BUSY).
+    Projects,
+    /// `ed project …`: kept until the card is free; checked again then.
+    Project(ProjectCmd),
 }
 
 /// What `EdState::push` made of a set.
@@ -294,10 +308,16 @@ impl EdState {
             }
             i += 1;
         }
+        self.push_act(new)
+    }
+
+    /// `a` queued after the rest.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.push_act"))]
+    fn push_act(&mut self, a: Act) -> Pushed {
         match self.acts.get_mut(usize::from(self.acts_len)) {
             None => Pushed::Full,
             Some(slot) => {
-                slot.write(new);
+                slot.write(a);
                 self.acts_len += 1;
                 Pushed::Queued
             }
@@ -318,6 +338,8 @@ impl EdState {
                 Act::Route { taken, at, to } => {
                     taken.lands(ui) == Some(ui.active_part) && !crate::ui::ed_cue::route(ui, at, to)
                 }
+                Act::Projects => !crate::ui::ed_cue::card(ui, None),
+                Act::Project(c) => !crate::ui::ed_cue::card(ui, Some(c)),
             };
             if keep && let Some(slot) = self.acts.get_mut(kept) {
                 slot.write(a);
@@ -577,6 +599,49 @@ pub(super) fn route(
     }
 }
 
+/// `ed projects`' answer: one re-list queued, however often asked.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.projects"))]
+pub(super) fn projects(q: Option<&mut EdState>, w: &mut dyn Write) -> fmt::Result {
+    let Some(q) = q else {
+        return w.write_str(PROJECTS_UNBUILT.get());
+    };
+    let mut i = 0;
+    while let Some(a) = q.act(i) {
+        if let Act::Projects = a {
+            return w.write_str(QUEUED.get());
+        }
+        i += 1;
+    }
+    queued(q.push_act(Act::Projects), w)
+}
+
+/// `ed project …`'s answer: what the box would refuse now is said at
+/// once; the rest is queued, and checked again in the UI pass.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.project"))]
+pub(super) fn project(
+    c: ProjectCmd,
+    ui: &UiState,
+    q: Option<&mut EdState>,
+    w: &mut dyn Write,
+) -> fmt::Result {
+    let Some(q) = q else {
+        return w.write_str(PROJECT_UNBUILT.get());
+    };
+    match super::project::check(c, ui) {
+        Err(why) => why.write(w),
+        Ok(()) => queued(q.push_act(Act::Project(c)), w),
+    }
+}
+
+/// `OK queued`, or `ERR busy` past the queue.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.queued"))]
+fn queued(p: Pushed, w: &mut dyn Write) -> fmt::Result {
+    match p {
+        Pushed::Full => w.write_str(BUSY.get()),
+        Pushed::Queued => w.write_str(QUEUED.get()),
+    }
+}
+
 /// The answer, `OK queued` or `ERR`: whole, for `answer_in`.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.set"))]
 pub(super) fn set(
@@ -621,6 +686,8 @@ lit!(NO_SUCH_OPTION = "has no such option");
 lit!(TAKES_A_NUMBER = "takes a number");
 lit!(TAKES_A_NAME = "takes one of its names");
 lit!(ROUTE_UNBUILT = "ERR ed route is not in this build\n");
+lit!(PROJECTS_UNBUILT = "ERR ed projects is not in this build\n");
+lit!(PROJECT_UNBUILT = "ERR ed project is not in this build\n");
 lit!(ROUTE_HAS_NO = "ERR ed route has no ");
 lit!(SET_UNBUILT = "ERR ed set is not in this build\n");
 lit!(SET_HAS_NO = "ERR ed set has no ");

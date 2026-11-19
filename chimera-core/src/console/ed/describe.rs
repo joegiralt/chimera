@@ -6,6 +6,7 @@
 //!
 //! ```text
 //! page <n> <LABEL> of <count>
+//! crumb "<LIST>" "<ROW>"                   (SETTINGS' pages: the tree's crumbs)
 //! panel <name> <variant>
 //! param <addr> "<label>" <cont|choice|toggle> <lin|oct> <min> <max> <step> <default> <flags>
 //! opt <addr> <index> "<name>"
@@ -746,7 +747,8 @@ fn base_ctx(s: Schema) -> SlotCtx {
             EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va,
         )
         | Schema::Mixer
-        | Schema::Matrix(_) => c,
+        | Schema::Matrix(_)
+        | Schema::Settings => c,
     }
 }
 
@@ -798,6 +800,11 @@ fn write_page(
     w.write_str(OF.get())?;
     uint(w, u32::from(schema_pages(s)))?;
     w.write_char('\n')?;
+    if let Schema::Settings = s
+        && let Some(l) = super::settings::leaf_of(def)
+    {
+        super::settings::crumb(l, w)?;
+    }
     let base = base_ctx(s);
     let mut g = 0;
     while let Some(group) = group_at(g) {

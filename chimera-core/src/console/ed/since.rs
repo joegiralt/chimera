@@ -17,6 +17,13 @@
 //! mixer                                   MIXER, whole
 //! panel REVERB <TYPE>
 //! val PART3.LEVEL …
+//! settings                                SETTINGS, whole
+//! val THEME.ACCENT …
+//! project "<name>" <id|new> <clean|edited> gen <g|->
+//! sound <n> "<name>" <clean|edited|stale>
+//! toast "<text>"
+//! projects <n> [more]                     (the listing, whole on a re-list)
+//! proj <id> "<name>" <ok|bad|newer> gen <g|->
 //! OK <m> [more]
 //! ```
 //!
@@ -43,7 +50,9 @@
 use core::fmt::{self, Write};
 use core::mem::MaybeUninit;
 
-use super::addr::{BusBlock, EdBlock, PadBlock, PartBlock, SoundBlock};
+use core::num::NonZeroU32;
+
+use super::addr::{BusBlock, EdBlock, GlobalBlock, PadBlock, PartBlock, SoundBlock};
 use super::describe::{
     PanelName, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
     modal_variant, op_variant, reverb_variant, tape_variant,
@@ -52,6 +61,7 @@ use super::edits::Refusals;
 use super::lit::{PANEL, SOURCE, UNQUOTE, lit};
 use super::route::{self, Routes};
 use super::schema::Schema;
+use super::settings;
 use super::value::{block, engine_of, line, reading, source_text, text_ctx};
 use super::{EdAddr, describe};
 use crate::addr::{BlockRef, Op};
@@ -61,12 +71,12 @@ use crate::dsp::delay::DelayType;
 use crate::dsp::drum::types::{Kit, PadId};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbType;
-use crate::project::PartId;
+use crate::project::{PartId, PartStatus, ProjectStatus, part_status};
 use crate::ui::UiState;
 use crate::ui::cell_text::CellOwn;
 use crate::ui::view::SlotCtx;
 use chimera_engine::block::DiskCode;
-use chimera_engine::fmt_buf::ByteCount;
+use chimera_engine::fmt_buf::{ByteCount, Fnv64};
 use chimera_engine::params::EngineType;
 
 /// The number of an answer: never 0 (that is the editor's "I have
@@ -139,16 +149,33 @@ const fn mixer_slots() -> usize {
 
 const _: () = assert!(MIXER_SLOTS <= SLOTS);
 
+/// The values SETTINGS keeps: THEME's, MIDI CONFIG's and RANDOMIZE's. A
+/// Part's (CHANNELS, OUTPUTS, TUNING, LIVE SNAP) are the mixer's slots.
+pub const SETTINGS_SLOTS: usize = settings_slots();
+
+const _: () = assert!(SETTINGS_SLOTS <= u32::BITS as usize);
+
+const fn settings_slots() -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < GlobalBlock::ALL.len() {
+        n += GlobalBlock::ALL[i].block().specs().len();
+        i += 1;
+    }
+    n
+}
+
 /// Block `i` of schema `s`'s slots. An engine's: the Sound's in
 /// `BlockRef::ALL` order, then on DRUM the kit's and each pad's in
 /// `PadBlock::ALL` order. The mixer's: each Part's mix, each Part's sends,
-/// then the buses.
+/// then the buses. SETTINGS': THEME, MIDI CONFIG, RANDOMIZE.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.block_at"))]
 fn block_at(s: Schema, mut i: usize) -> Option<EdBlock> {
     let engine = match s {
         Schema::Engine(e) => e,
         // The matrix keeps no values: ROUTES keeps its cells.
         Schema::Matrix(_) => return None,
+        Schema::Settings => return GlobalBlock::ALL.get(i).map(|&g| EdBlock::Global(g)),
         Schema::Mixer => {
             let parts = PartId::ALL.len();
             if let Some(&p) = PartId::ALL.get(i) {
@@ -235,6 +262,30 @@ impl Described {
         slot_of(self.schema, a).is_some_and(|n| self.has_slot(n))
     }
 
+    /// What `describe` lists in `s`'s slots. The mixer's holds every
+    /// Part's mix, so SETTINGS' Part cells (TUNING, LIVE SNAP) are marked
+    /// there too: one value, one address, one copy.
+    /// SETTINGS' mask, kept as its one word (`SETTINGS_SLOTS` fit it):
+    /// built once, from `describe`'s walk.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.settings"))]
+    fn settings(kept: &mut Option<u32>) -> Described {
+        let word = *kept.get_or_insert_with(|| {
+            Described::built(Schema::Settings)
+                .mask
+                .first()
+                .copied()
+                .unwrap_or(0)
+        });
+        let mut d = Described {
+            schema: Schema::Settings,
+            mask: [0; MASK_WORDS],
+        };
+        if let Some(w) = d.mask.first_mut() {
+            *w = word;
+        }
+        d
+    }
+
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.built"))]
     pub(super) fn built(s: Schema) -> Described {
         let mut d = Described {
@@ -242,6 +293,9 @@ impl Described {
             mask: [0; MASK_WORDS],
         };
         describe::mark_described(s, &mut d);
+        if let Schema::Mixer = s {
+            describe::mark_described(Schema::Settings, &mut d);
+        }
         d
     }
 }
@@ -371,6 +425,10 @@ lit!(
     MIXER = "mixer\n"
 );
 lit!(
+    /// SETTINGS' header, whole.
+    SETTINGS = "settings\n"
+);
+lit!(
     /// After `OK <m>`: sections are owed.
     MORE = " more"
 );
@@ -398,10 +456,18 @@ pub enum Section {
     Routes,
     /// Every Part's mix and sends, the buses.
     Mixer,
+    /// THEME, MIDI CONFIG, RANDOMIZE; the project's and Parts' state, the
+    /// toast, the listing.
+    Settings,
 }
 
 impl Section {
-    pub const ALL: [Section; 3] = [Section::Part, Section::Routes, Section::Mixer];
+    pub const ALL: [Section; 4] = [
+        Section::Part,
+        Section::Routes,
+        Section::Mixer,
+        Section::Settings,
+    ];
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.bit"))]
     const fn bit(self) -> u8 {
@@ -409,17 +475,19 @@ impl Section {
             Section::Part => 1,
             Section::Routes => 2,
             Section::Mixer => 4,
+            Section::Settings => 8,
         }
     }
 
     /// The section that reports `a`; `None` for one no section reports
-    /// yet (SETTINGS' and ORBIT's come with their slices).
+    /// yet (ORBIT's comes with its slice).
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.of"))]
     pub(super) const fn of(a: EdBlock) -> Option<Section> {
         match a {
             EdBlock::Sound(_) | EdBlock::Pad(..) => Some(Section::Part),
             EdBlock::Part(..) | EdBlock::Bus(_) => Some(Section::Mixer),
-            EdBlock::Global(_) | EdBlock::Orbit(_) => None,
+            EdBlock::Global(_) => Some(Section::Settings),
+            EdBlock::Orbit(_) => None,
         }
     }
 }
@@ -536,6 +604,79 @@ struct MixerCopy {
     described: Option<Described>,
 }
 
+/// What SETTINGS' texts read beside the bits, when last reported: CHAIN
+/// MAP's PAGES and the CONTROL channels a Part's own takes (they dim). A
+/// change answers SETTINGS whole.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SetSeen {
+    pages: crate::ui::theme_settings::Pages,
+    clash: u16,
+}
+
+/// A line as last reported: a hash of its bytes (`None`: none said).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct LineSeen(Option<NonZeroU32>);
+
+impl LineSeen {
+    const NONE: LineSeen = LineSeen(None);
+
+    /// `line`'s bytes, hashed.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.line_of"))]
+    fn of(line: impl Fn(&mut dyn Write) -> fmt::Result) -> Result<LineSeen, fmt::Error> {
+        let mut h = Fnv64::NEW;
+        line(&mut h)?;
+        let fold = (h.0 ^ (h.0 >> 32)) as u32;
+        Ok(LineSeen(Some(
+            NonZeroU32::new(fold).unwrap_or(NonZeroU32::MIN),
+        )))
+    }
+}
+
+/// The project's and each Part's marks (`project_status`, `part_status`)
+/// as last hashed, at the project's revision then. The project's CRC costs
+/// about 1.7 ms on the chip (`StatusCache`): while the project moves, the
+/// marks are hashed again at most once every `MARKS_EVERY` answers, so a
+/// drag polled at 30 Hz costs a fifth of a millisecond an answer and a
+/// mark lags at most a quarter second; a whole SETTINGS hashes them now.
+#[derive(Clone, Copy)]
+struct Marks {
+    rev: u32,
+    project: ProjectStatus,
+    sounds: [PartStatus; PartId::ALL.len()],
+    /// Answers since they were hashed.
+    age: u8,
+}
+
+const MARKS_EVERY: u8 = 8;
+
+impl Marks {
+    /// The marks now.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.marks_now"))]
+    fn now(ui: &UiState) -> Marks {
+        let p = ui.project();
+        Marks {
+            rev: p.rev(),
+            project: ui.project_status(),
+            sounds: PartId::ALL.map(|n| part_status(p.part(n), p.pool())),
+            age: 0,
+        }
+    }
+}
+
+/// SETTINGS' copy: its values, and its lines as last reported.
+struct SettingsCopy {
+    seen: Option<SetSeen>,
+    /// What `describe` lists of its slots, one word.
+    listed: Option<u32>,
+    marks: Option<Marks>,
+    last: [Bits; SETTINGS_SLOTS],
+    project: LineSeen,
+    sounds: [LineSeen; PartId::ALL.len()],
+    toast: LineSeen,
+    /// The listing's revision as last reported.
+    listing: Option<u16>,
+}
+
 /// What `ed since` keeps: the last answer's number, the sections it still
 /// owes whole, and each section's copy. The shell owns it, in `EdState`.
 pub struct EdSince {
@@ -544,6 +685,7 @@ pub struct EdSince {
     part: PartCopy,
     routes: RoutesCopy,
     mixer: MixerCopy,
+    settings: SettingsCopy,
 }
 
 impl EdSince {
@@ -567,17 +709,16 @@ impl EdSince {
                 last: [Bits(0); MIXER_SLOTS],
                 described: None,
             },
-        }
-    }
-
-    /// What `describe` lists for `s`, built once a schema.
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.described"))]
-    pub(super) fn described(&mut self, s: Schema) -> &Described {
-        match s {
-            // The matrix describes no params: its cells are its sources'
-            // and its destinations' (the engine's `d`-flagged params).
-            Schema::Engine(_) | Schema::Matrix(_) => described_in(&mut self.part.described, s),
-            Schema::Mixer => described_in(&mut self.mixer.described, s),
+            settings: SettingsCopy {
+                seen: None,
+                listed: None,
+                marks: None,
+                last: [Bits(0); SETTINGS_SLOTS],
+                project: LineSeen::NONE,
+                sounds: [LineSeen::NONE; PartId::ALL.len()],
+                toast: LineSeen::NONE,
+                listing: None,
+            },
         }
     }
 
@@ -585,13 +726,18 @@ impl EdSince {
     /// only these.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.lists"))]
     pub(super) fn lists(&mut self, engine: EngineType, a: EdAddr) -> bool {
-        let s = match Section::of(a.at()) {
-            Some(Section::Part) => Schema::Engine(engine),
-            Some(Section::Mixer) => Schema::Mixer,
+        if !a.at().reachable(engine) {
+            return false;
+        }
+        match Section::of(a.at()) {
+            Some(Section::Part) => {
+                described_in(&mut self.part.described, Schema::Engine(engine)).has(a)
+            }
+            Some(Section::Mixer) => described_in(&mut self.mixer.described, Schema::Mixer).has(a),
+            Some(Section::Settings) => Described::settings(&mut self.settings.listed).has(a),
             // No address is a route's: those are cells (`ed route`).
-            Some(Section::Routes) | None => return false,
-        };
-        a.at().reachable(engine) && self.described(s).has(a)
+            Some(Section::Routes) | None => false,
+        }
     }
 
     /// The whole answer, `OK <m>` included.
@@ -694,7 +840,87 @@ impl EdSince {
             Section::Part => self.part_section(owed, ui, own, refused, pass, w),
             Section::Routes => self.routes_section(owed, ui, pass, w),
             Section::Mixer => self.mixer_section(owed, ui, own, pass, w),
+            Section::Settings => self.settings_section(owed, ui, own, pass, w),
         }
+    }
+
+    /// SETTINGS: THEME, MIDI CONFIG and RANDOMIZE's values; the project's
+    /// line and each Part's Sound's, again when they read otherwise; the
+    /// box's toast when a new one is up; the listing whole when it was
+    /// read again (`ed projects`, or the box's own LOAD).
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.settings_section")
+    )]
+    fn settings_section(
+        &mut self,
+        owed: bool,
+        ui: &UiState,
+        own: &CellOwn,
+        pass: Pass,
+        w: &mut dyn Write,
+    ) -> Result<bool, fmt::Error> {
+        let c = &mut self.settings;
+        let now = SetSeen {
+            pages: own.ctx.pages,
+            clash: own.ctx.clash,
+        };
+        let whole = owed || c.seen != Some(now);
+        if whole {
+            w.write_str(SETTINGS.get())?;
+        }
+        let d = Described::settings(&mut c.listed);
+        let copy = Copy {
+            schema: Schema::Settings,
+            last: &mut c.last,
+            described: &d,
+        };
+        values(ui, own, copy, !whole, pass, w)?;
+        let rev = ui.project().rev();
+        let marks = match c.marks {
+            Some(m) if m.rev == rev || (!whole && m.age < MARKS_EVERY) => m,
+            Some(_) | None => Marks::now(ui),
+        };
+        c.marks = Some(marks);
+        let project = LineSeen::of(|w| settings::project_line(ui, marks.project, w))?;
+        if whole || project != c.project {
+            settings::project_line(ui, marks.project, w)?;
+        }
+        let mut sounds = c.sounds;
+        for ((p, &st), was) in PartId::ALL.into_iter().zip(&marks.sounds).zip(&mut sounds) {
+            let now = LineSeen::of(|w| settings::sound_line(ui, p, st, w))?;
+            if whole || now != *was {
+                settings::sound_line(ui, p, st, w)?;
+            }
+            *was = now;
+        }
+        // A toast is said once, when it goes up: one gone says nothing.
+        let toast = match crate::ui::ed_cue::toast(ui) {
+            Some(t) => {
+                let now = LineSeen::of(|w| settings::toast_line(t, w))?;
+                if whole || now != c.toast {
+                    settings::toast_line(t, w)?;
+                }
+                now
+            }
+            None => LineSeen::NONE,
+        };
+        let l = ui.listing();
+        let rev = l.revision();
+        if whole || c.listing != Some(rev) {
+            settings::listing(l, w)?;
+        }
+        if let Pass::Commit = pass {
+            if let Some(m) = c.marks.as_mut() {
+                m.age = m.age.saturating_add(1);
+            }
+            c.seen = Some(now);
+            c.project = project;
+            c.sounds = sounds;
+            c.toast = toast;
+            c.listing = Some(rev);
+        }
+        Ok(whole)
     }
 
     /// PART: the followed Part's panels, values and TAPE's source.

@@ -409,6 +409,24 @@ async function main() {
   }
   info(`routes: ${srcs.length} sources into FREQ, set and removed`);
 
+  // SETTINGS (ADR 0289): its pages with their crumbs; THEME and Part 3's
+  // LIVE SNAP set and read back; `ed projects` lists the card once.
+  const settings = await describeAll("SETTINGS");
+  for (const [a, p] of settings.params) params.set(a, p);
+  mixerAddrs = new Set([...mixerAddrs, ...settings.params.keys()]);
+  const settingsShown = settings.blocks
+    .flatMap((b) => b.params)
+    .filter((p) => /^(THEME\.|PART3\.(SNAP|HELD)$)/.test(p.addr));
+  await sweep(settingsShown, " SETTINGS", new Set());
+  const listed = await ask("ed projects");
+  if (listed.at(-1) !== "OK queued") fail("projects", "ed projects", listed.join(" | "));
+  else {
+    const lines = await sinceUntil((l) => l.startsWith("projects "));
+    if (!lines.some((l) => l.startsWith("projects "))) fail("projects", "since", "never listed");
+    if (!(await since(0)).some((l) => l.startsWith("project \""))) fail("projects", "since 0", "no project line");
+  }
+  info(`settings: ${settings.count} pages, THEME and PART3's snap read back, the card listed`);
+
   // every param to its max, then its min, read back
   const done = new Set();
   const shownIn = (cur) =>

@@ -960,7 +960,13 @@ fn since_reports_knob_cc_load_and_set() {
     f.ui.project_mut().replace_part(c).unwrap();
     let (lines, _) = since(&mut f, m);
     assert!(!lines.is_empty());
-    assert!(lines.iter().all(|l| l.starts_with("val ")), "{lines:?}");
+    // SETTINGS' marks may say the Part's Sound moved (ADR 0289).
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.starts_with("val ") || l.starts_with("sound ") || l.starts_with("project ")),
+        "{lines:?}"
+    );
     let after = get_line(&mut f, "FILTER.CUTOFF");
     assert_ne!(before, after);
     assert!(lines.contains(&after), "{lines:?}");

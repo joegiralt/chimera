@@ -17,8 +17,10 @@ mod describe;
 mod edits;
 mod lit;
 mod pages;
+mod project;
 mod route;
 mod schema;
+mod settings;
 mod since;
 mod value;
 pub use addr::{
@@ -32,10 +34,12 @@ pub use describe::{
 pub use edits::StoredRefusal;
 pub use edits::{EdState, Pushed, REFUSED as ED_REFUSED, SetRefusal};
 pub use pages::schema_pages;
+pub use project::{EdName, OverEdits, ProjectCmd};
 pub use schema::{Round, Schema};
 pub use since::{
-    EdSince, Gen, MIXER_SLOTS as ED_MIXER_SLOTS, PANELS_MAX as ED_PANELS, SLOTS as ED_SLOTS,
-    panels_used as ed_panels_used, slots_used as ed_slots_used,
+    EdSince, Gen, MIXER_SLOTS as ED_MIXER_SLOTS, PANELS_MAX as ED_PANELS,
+    SETTINGS_SLOTS as ED_SETTINGS_SLOTS, SLOTS as ED_SLOTS, panels_used as ed_panels_used,
+    slots_used as ed_slots_used,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use value::stored;
@@ -88,6 +92,10 @@ pub enum EdArg {
     Part(PartId),
     /// `ed route <cell> <amount|off>`.
     Route(route::RouteCell, route::RouteTo),
+    /// `ed projects`: the card listed again, for `since`'s listing.
+    Projects,
+    /// `ed project save|saveas|load …`.
+    Project(project::ProjectCmd),
 }
 
 /// Why a line is no `ed` command: each its own `ERR`.
@@ -100,6 +108,9 @@ pub enum EdRefusal {
     /// `ed route` with no cell or amount: `ERR ed route takes <cell>
     /// <-127..127|off>`.
     Route,
+    /// `ed project` that is none of its forms, or a name NAMING couldn't
+    /// type.
+    Project(project::ProjectRefusal),
 }
 
 /// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
@@ -125,7 +136,8 @@ fn value(w: &[u8]) -> Option<EdValue> {
 }
 
 impl EdArg {
-    pub const USAGE: &'static str = "hello, schema, describe, get, set, route, since or part";
+    pub const USAGE: &'static str =
+        "hello, schema, describe, get, set, route, since, part, projects or project";
 
     /// The command, or the refusal it gets. `Since`'s `None` is no
     /// failure: 0 is the editor holding nothing.
@@ -153,6 +165,11 @@ impl EdArg {
                 (Some(_) | None, Some(_) | None, Some(_) | None) => Err(EdRefusal::Route),
             };
         }
+        if is(PROJECT_WORD.bytes()) {
+            return project::ProjectCmd::parse(words)
+                .map(EdArg::Project)
+                .map_err(EdRefusal::Project);
+        }
         EdArg::parse_rest(sub, words).ok_or(EdRefusal::Usage)
     }
 
@@ -161,6 +178,8 @@ impl EdArg {
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
         let got = if is(HELLO.bytes()) {
             EdArg::Hello
+        } else if is(PROJECTS_WORD.bytes()) {
+            EdArg::Projects
         } else if is(SINCE.bytes()) {
             let n = chimera_theory::tuning::uint(words.next()?)?;
             EdArg::Since(Gen::new(n))
@@ -199,6 +218,12 @@ pub(crate) fn answer_in(
             w.write_char('\n')
         }
         Err(EdRefusal::Route) => w.write_str(ROUTE_USAGE.get()),
+        Err(EdRefusal::Project(project::ProjectRefusal::Usage)) => {
+            w.write_str(project::USAGE.get())
+        }
+        Err(EdRefusal::Project(project::ProjectRefusal::Name)) => {
+            w.write_str(project::NAME_USAGE.get())
+        }
         Err(EdRefusal::NoSuchPart) => {
             w.write_str(PART_TAKES.get())?;
             lit::uint(w, u32::from(PartId::FIRST.number()))?;
@@ -245,6 +270,8 @@ pub(crate) fn answer_in(
             None => w.write_str(SINCE_UNBUILT.get()),
         },
         Ok(EdArg::Route(c, to)) => edits::route(c, to, ui, q, w),
+        Ok(EdArg::Projects) => edits::projects(q, w),
+        Ok(EdArg::Project(c)) => edits::project(c, ui, q, w),
         Ok(EdArg::Part(p)) => match q {
             None => w.write_str(PART_UNBUILT.get()),
             Some(q) => {
@@ -318,6 +345,8 @@ lit!(INF = "inf");
 lit!(INFINITY = "infinity");
 lit!(NAN = "nan");
 lit!(PART_WORD = "part");
+lit!(PROJECTS_WORD = "projects");
+lit!(PROJECT_WORD = "project");
 lit!(HELLO = "hello");
 lit!(SINCE = "since");
 lit!(DESCRIBE = "describe");

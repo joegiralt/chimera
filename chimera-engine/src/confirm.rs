@@ -225,3 +225,13 @@ impl<T> Said<T> {
         Said(PhantomData)
     }
 }
+
+impl Said<ProjectSource> {
+    /// The browser editor's `discard` (ADR 0289): its own confirm dialog's
+    /// yes to a load over unsaved edits, as LOAD ANYWAY's pill is the
+    /// box's. Only `ed project load … discard` makes one.
+    #[inline(always)]
+    pub fn editor_discard() -> Self {
+        Said::new()
+    }
+}

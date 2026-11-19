@@ -61,9 +61,9 @@ pagesOf ls =
         |> Tuple.second
 
 
-{-| Connected over a link, greeted, and the engine's, the MIXER's and a
-one-page matrix schema read the way the model reads them (no cache), then
-one `since` answer: following Part 1.
+{-| Connected over a link, greeted, and the engine's, the MIXER's, a
+one-page matrix schema and SETTINGS' read the way the model reads them (no
+cache), then one `since` answer: following Part 1.
 -}
 connected : List String -> String -> Model.Model
 connected answer engine =
@@ -75,6 +75,7 @@ connected answer engine =
         |> readSchema 1 engine answer
         |> readSchema 2 "MIXER" FixtureData.mixer
         |> readSchema 3 ("MTX-" ++ engine) [ "page 0 MTX of 1", "OK" ]
+        |> readSchema 4 "SETTINGS" FixtureData.settings
         |> tick 50000
 
 

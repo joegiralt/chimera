@@ -3,23 +3,33 @@ module Protocol exposing
     , AnswerLine(..)
     , Cell(..)
     , Command(..)
+    , Edits(..)
     , Flags
+    , Generation
     , Hash
+    , Health(..)
     , Kind(..)
     , Line(..)
     , OptIndex
+    , OverEdits(..)
     , PageLabel
     , PageNo
+    , ProjectFile(..)
+    , ProjectId
+    , ProjectName
     , RouteKind(..)
     , RouteTo(..)
     , Scale(..)
     , SchemaId(..)
+    , SoundStatus(..)
     , Value(..)
     , amount
     , cellKey
     , encode
     , firstOption
     , firstPage
+    , generation
+    , generationToInt
     , hashText
     , nextPage
     , optIndex
@@ -28,6 +38,9 @@ module Protocol exposing
     , pageNo
     , pageNoToInt
     , parse
+    , projectId
+    , projectIdToInt
+    , projectName
     , schemaToken
     )
 
@@ -181,13 +194,113 @@ type RouteKind
     | KnobKeybd
 
 
-{-| A schema the unit describes: an engine's pages, the mixer's, or an
-engine's mod matrix.
+{-| A schema the unit describes: an engine's pages, the mixer's, an
+engine's mod matrix, or SETTINGS'.
 -}
 type SchemaId
     = EngineSchema Engine
     | MixerSchema
     | MatrixSchema Engine
+    | SettingsSchema
+
+
+{-| A project file's id on the card, as the listing names it: 1 or more.
+-}
+type ProjectId
+    = ProjectId Int
+
+
+projectId : Int -> Maybe ProjectId
+projectId n =
+    if n >= 1 then
+        Just (ProjectId n)
+
+    else
+        Nothing
+
+
+projectIdToInt : ProjectId -> Int
+projectIdToInt (ProjectId n) =
+    n
+
+
+{-| A file's save generation as `since` said it: a load's witness.
+-}
+type Generation
+    = Generation Int
+
+
+generation : Int -> Maybe Generation
+generation n =
+    if n >= 0 then
+        Just (Generation n)
+
+    else
+        Nothing
+
+
+generationToInt : Generation -> Int
+generationToInt (Generation n) =
+    n
+
+
+{-| A project's name as the box's NAMING types it: A–Z, a–z, 0–9, space and
+`-`, one to sixteen of them, no space at either end.
+-}
+type ProjectName
+    = ProjectName String
+
+
+projectName : String -> Maybe ProjectName
+projectName s =
+    let
+        named : Char -> Bool
+        named c =
+            (Char.isAlphaNum c && Char.toCode c < 128) || c == ' ' || c == '-'
+    in
+    if not (String.isEmpty s) && String.length s <= 16 && String.all named s && String.trim s == s then
+        Just (ProjectName s)
+
+    else
+        Nothing
+
+
+{-| A load over a project with unsaved edits: refused, or the user said to
+drop them (`discard`, after the editor's own confirm).
+-}
+type OverEdits
+    = RefuseOverEdits
+    | DiscardEdits
+
+
+{-| The loaded project's file: its id, or a NEW project never saved.
+-}
+type ProjectFile
+    = FileId ProjectId
+    | NewProject
+
+
+{-| Whether the loaded project has edits since its save or load.
+-}
+type Edits
+    = Clean
+    | Edited
+
+
+{-| A Part's Sound against its slot, as the box's PART strip reads it.
+-}
+type SoundStatus
+    = SoundClean
+    | SoundEdited
+    | SoundStale
+
+
+{-| A listed file: loadable, damaged, or for newer firmware.
+-}
+type Health
+    = FileOk
+    | FileBad
+    | FileNewer
 
 
 {-| A schema's hash, sixteen hex digits: describe's own bytes, so equal
@@ -214,11 +327,17 @@ schemaToken s =
         MatrixSchema e ->
             "MTX-" ++ Unit.engineName e
 
+        SettingsSchema ->
+            "SETTINGS"
+
 
 schemaFromToken : String -> Maybe SchemaId
 schemaFromToken t =
     if t == "MIXER" then
         Just MixerSchema
+
+    else if t == "SETTINGS" then
+        Just SettingsSchema
 
     else if String.startsWith "MTX-" t then
         Unit.engineFromName (String.dropLeft 4 t) |> Maybe.map MatrixSchema
@@ -236,6 +355,14 @@ type Command
     | Since (Maybe Gen)
     | Follow Part
     | SetRoute Cell RouteTo
+      -- The card's projects listed again, for `since`'s listing.
+    | ListProjects
+      -- MENU hold's quick save, over the loaded project's own file.
+    | SaveProject
+      -- Into a new id, never over another project.
+    | SaveProjectAs ProjectName
+      -- A listed file, witnessed by its generation.
+    | LoadProject ProjectId Generation OverEdits
 
 
 type AnswerLine
@@ -265,6 +392,17 @@ type AnswerLine
       -- A set the unit took and then would not apply, and the box's reason
       -- (its own toast's words).
     | Refused Addr String
+      -- A SETTINGS page's place in the box's lists: its list's crumb and its own.
+    | Crumb { list : String, row : String }
+      -- The SETTINGS section of `since`, whole: what was held for it is dropped.
+    | SettingsIs
+    | ProjectIs { name : String, file : ProjectFile, edits : Edits, generation : Maybe Generation }
+    | SoundIs { part : Int, name : String, status : SoundStatus }
+      -- The box's toast, when a new one goes up.
+    | ToastIs String
+      -- The listing, whole: its count, and whether the card has more.
+    | ProjectsIs { count : Int, more : Bool }
+    | Proj { id : ProjectId, name : String, health : Health, generation : Maybe Generation }
 
 
 type Line
@@ -326,6 +464,31 @@ encode c =
                                         "off"
                                )
                     )
+
+        ListProjects ->
+            Just "ed projects"
+
+        SaveProject ->
+            Just "ed project save"
+
+        -- A space on the wire is `_`, a byte NAMING never types.
+        SaveProjectAs (ProjectName n) ->
+            Just ("ed project saveas " ++ String.replace " " "_" n)
+
+        LoadProject (ProjectId id) (Generation g) over ->
+            Just
+                ("ed project load "
+                    ++ String.fromInt id
+                    ++ " "
+                    ++ String.fromInt g
+                    ++ (case over of
+                            RefuseOverEdits ->
+                                ""
+
+                            DiscardEdits ->
+                                " discard"
+                       )
+                )
 
 
 {-| The address, if it is one the unit could write.
@@ -547,8 +710,99 @@ answer ts =
         [ "refused", a, why ] ->
             Addr.fromWire a |> Maybe.map (\x -> Refused x why)
 
+        [ "crumb", list, row ] ->
+            Just (Crumb { list = list, row = row })
+
+        [ "settings" ] ->
+            Just SettingsIs
+
+        [ "project", name, file, edits, "gen", g ] ->
+            Maybe.map3 (\f e gn -> ProjectIs { name = name, file = f, edits = e, generation = gn }) (fileOf file) (editsOf edits) (generationOf g)
+
+        [ "sound", n, name, status ] ->
+            Maybe.map2 (\i st -> SoundIs { part = i, name = name, status = st }) (nat n) (soundStatusOf status)
+
+        [ "toast", text ] ->
+            Just (ToastIs text)
+
+        [ "projects", n ] ->
+            nat n |> Maybe.map (\c -> ProjectsIs { count = c, more = False })
+
+        [ "projects", n, "more" ] ->
+            nat n |> Maybe.map (\c -> ProjectsIs { count = c, more = True })
+
+        [ "proj", id, name, health, "gen", g ] ->
+            Maybe.map3 (\i h gn -> Proj { id = i, name = name, health = h, generation = gn }) (nat id |> Maybe.andThen projectId) (healthOf health) (generationOf g)
+
         _ ->
             Nothing
+
+
+{-| `<id>` or `new`.
+-}
+fileOf : String -> Maybe ProjectFile
+fileOf s =
+    if s == "new" then
+        Just NewProject
+
+    else
+        nat s |> Maybe.andThen projectId |> Maybe.map FileId
+
+
+editsOf : String -> Maybe Edits
+editsOf s =
+    case s of
+        "clean" ->
+            Just Clean
+
+        "edited" ->
+            Just Edited
+
+        _ ->
+            Nothing
+
+
+soundStatusOf : String -> Maybe SoundStatus
+soundStatusOf s =
+    case s of
+        "clean" ->
+            Just SoundClean
+
+        "edited" ->
+            Just SoundEdited
+
+        "stale" ->
+            Just SoundStale
+
+        _ ->
+            Nothing
+
+
+healthOf : String -> Maybe Health
+healthOf s =
+    case s of
+        "ok" ->
+            Just FileOk
+
+        "bad" ->
+            Just FileBad
+
+        "newer" ->
+            Just FileNewer
+
+        _ ->
+            Nothing
+
+
+{-| A generation, or `-` for none: `Just Nothing`; anything else `Nothing`.
+-}
+generationOf : String -> Maybe (Maybe Generation)
+generationOf s =
+    if s == "-" then
+        Just Nothing
+
+    else
+        nat s |> Maybe.map (Generation >> Just)
 
 
 {-| A signed whole number: `-127`, `+42`, `42`.

@@ -69,6 +69,23 @@ mtxHash =
     "00000000000000c0"
 
 
+settingsHash : String
+settingsHash =
+    "00000000000000d0"
+
+
+settingsPage : List String
+settingsPage =
+    [ "page 0 THM of 1"
+    , "crumb \"PERSONAL\" \"THEME\""
+    , "panel THM -"
+    , "param THEME.ACCENT \"ACCENT\" choice lin 0 4 1 0 -"
+    , "opt THEME.ACCENT 0 \"TEAL\""
+    , "opt THEME.ACCENT 1 \"AMBER\""
+    , "param PART3.SNAP \"SNAP\" choice lin 0 2 1 0 -"
+    ]
+
+
 mtxPage : List String
 mtxPage =
     [ "page 0 MTX of 1"
@@ -162,6 +179,13 @@ following =
         |> tick 134
         |> Tuple.first
         |> feed (mtxPage ++ [ "OK" ])
+        |> tick 135
+        |> Tuple.first
+        |> feed [ "schema SETTINGS 1 " ++ settingsHash, "OK" ]
+        |> missed SettingsSchema settingsHash
+        |> tick 136
+        |> Tuple.first
+        |> feed (settingsPage ++ [ "OK" ])
 
 
 cutoffLine : String -> String
@@ -1006,4 +1030,77 @@ suite =
 
                     Nothing ->
                         Expect.fail "-40 is an amount"
+        , test "the_settings_schema_is_read_after_the_matrix_with_its_crumbs" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> Expect.notEqual Nothing (Model.status following)
+                    , \_ -> Expect.equal [ Just { list = "PERSONAL", row = "THEME" } ] (List.map .crumb (Schema.pages following.settings))
+                    , \_ -> Expect.notEqual Nothing (Schema.param (addr "THEME.ACCENT") following.settings)
+                    ]
+                    ()
+        , test "a_settings_value_is_kept_edited_and_picked_like_any_other" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following |> feed [ "part 1 ALGO", "settings", "val THEME.ACCENT 0 0 \"TEAL\"", "OK 2" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just "TEAL") (Model.shown (addr "THEME.ACCENT") m |> Maybe.map .text)
+                    , \_ -> Expect.equal [ Set (addr "THEME.ACCENT") (idx 1) ] (pick (addr "THEME.ACCENT") 1 m)
+                    , \_ -> Expect.equal [ Set (addr "PART3.SNAP") (Num 1) ] (stepSends (Edit (addr "PART3.SNAP") (Num 1)) m |> Tuple.second)
+                    , -- A new Part: PART's whole; SETTINGS' values kept.
+                      \_ ->
+                        feed [ "part 2 ALGO", "OK 3" ] m
+                            |> Model.shown (addr "THEME.ACCENT")
+                            |> Maybe.map .text
+                            |> Expect.equal (Just "TEAL")
+                    ]
+                    ()
+        , test "the_settings_section_carries_the_project_the_sounds_the_toast_and_the_listing" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed
+                                [ "settings"
+                                , "project \"MY SONG\" 10 edited gen 2"
+                                , "sound 3 \"BASS\" stale"
+                                , "toast \"SAVED\""
+                                , "projects 2"
+                                , "proj 10 \"MY SONG\" ok gen 2"
+                                , "proj 11 \"\" bad gen -"
+                                , "OK 2"
+                                ]
+
+                    whole : Model.Model
+                    whole =
+                        m |> feed [ "settings", "projects 0", "OK 3" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just ( "MY SONG", Protocol.Edited )) (m.project |> Maybe.map (\p -> ( p.name, p.edits )))
+                    , \_ -> Expect.equal (Just { name = "BASS", status = Protocol.SoundStale }) (Dict.get 3 m.sounds)
+                    , \_ -> Expect.equal (Just "SAVED") m.toast
+                    , \_ -> Expect.equal (Just [ 10, 11 ]) (m.listing |> Maybe.map (.projects >> List.map (.id >> Protocol.projectIdToInt)))
+                    , -- Whole again: what isn't repeated is gone.
+                      \_ -> Expect.equal ( Nothing, Dict.empty, Just [] ) ( whole.project, whole.sounds, whole.listing |> Maybe.map .projects )
+                    ]
+                    ()
+        , test "the_project_commands_go_out_typed_while_following" <|
+            \_ ->
+                case ( Protocol.projectName "MY SONG", Protocol.projectId 10, Protocol.generation 2 ) of
+                    ( Just n, Just i, Just g ) ->
+                        Expect.all
+                            [ \_ -> Expect.equal [ ListProjects ] (stepSends AskProjects following |> Tuple.second)
+                            , \_ -> Expect.equal [ SaveProject ] (stepSends SaveOwn following |> Tuple.second)
+                            , \_ -> Expect.equal [ SaveProjectAs n ] (stepSends (SaveNew n) following |> Tuple.second)
+                            , \_ -> Expect.equal [ LoadProject i g Protocol.DiscardEdits ] (stepSends (LoadListed i g Protocol.DiscardEdits) following |> Tuple.second)
+                            , -- Not yet following: nothing.
+                              \_ -> Expect.equal [] (stepSends AskProjects greeted |> Tuple.second)
+                            ]
+                            ()
+
+                    _ ->
+                        Expect.fail "a name, an id and a generation"
         ]

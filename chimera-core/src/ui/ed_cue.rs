@@ -135,3 +135,102 @@ fn col_of(m: &super::mod_grid::MatrixState, a: ParamAddr) -> Option<usize> {
     }
     None
 }
+
+/// A global block's values as the box holds them: SETTINGS › THEME, MIDI
+/// CONFIG, RANDOMIZE's (none while bank 2 is closed, as its turn reaches
+/// nothing then: ADR 0232).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.global"))]
+pub(crate) fn global(
+    ui: &UiState,
+    g: crate::console::GlobalBlock,
+) -> Option<chimera_engine::addr::BlockView<'_>> {
+    use crate::console::GlobalBlock;
+    use chimera_engine::addr::BlockView;
+    Some(BlockView::Plain(match g {
+        GlobalBlock::Theme => &ui.theme,
+        GlobalBlock::Midi => &ui.midi,
+        GlobalBlock::Random => {
+            crate::bank2::ui_door(|_| ())?;
+            &ui.random
+        }
+    }))
+}
+
+/// The box's toast up now, its words: `since`'s `toast` line.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.toast"))]
+pub(crate) fn toast(ui: &UiState) -> Option<&Line> {
+    ui.toast.text()
+}
+
+/// The listed entry `id` at `generation`, from a listing that is the card
+/// as last read (as MANAGE's `chosen`): an `ed project load`'s witness.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.listed"))]
+pub(crate) fn listed(
+    ui: &UiState,
+    id: crate::storage::ProjectId,
+    generation: crate::storage::Generation,
+) -> Option<crate::project::ProjectEntry> {
+    use super::settings::listing::Validity;
+    if ui.listing.validity() != Validity::Current {
+        return None;
+    }
+    let mut i = 0;
+    while let Some(e) = ui.listing.entry(i) {
+        if e.id == id && e.generation == Some(generation) {
+            return Some(e);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// One UI pass of `ed projects` (`None`) or an `ed project` command: the
+/// box's own card job queued for `card_work`, under BUSY, once the card is
+/// free (`false` until then, so the act waits and the answer never does).
+/// Checked again here: a save with no file of its own, a load whose
+/// listing moved or that has edits under it without `discard`, write
+/// nothing (`true`: the act is done).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.card"))]
+pub(crate) fn card(ui: &mut UiState, c: Option<crate::console::ProjectCmd>) -> bool {
+    use super::settings::job::Job;
+    use crate::console::{OverEdits, ProjectCmd};
+    use crate::project::{ProjectSource, ReplaceGuard};
+    if ui.card_pending() {
+        return false;
+    }
+    let job = match c {
+        None => Job::Relist(None),
+        Some(ProjectCmd::Save) => match ui.project.meta().file() {
+            Some(_) => Job::QuickSave(None),
+            None => return true,
+        },
+        Some(ProjectCmd::SaveAs(n)) => Job::Relist(Some(n.get())),
+        Some(ProjectCmd::Load {
+            id,
+            generation,
+            over,
+        }) => {
+            let Some(e) = listed(ui, id, generation) else {
+                return true;
+            };
+            if let Some(n) = super::settings::listing::refusal(&e) {
+                ui.show_note(n);
+                return true;
+            }
+            let src = ProjectSource::File {
+                id: e.id,
+                vol: e.vol,
+            };
+            match (ReplaceGuard::check(&ui.project, ui.template, src), over) {
+                (Ok(go), OverEdits::Refuse | OverEdits::Discard) => Job::Load(go),
+                (Err(ask), OverEdits::Discard) => {
+                    let yes = chimera_engine::confirm::Said::editor_discard();
+                    Job::Load(ask.into_pending().confirm(&ui.project, yes))
+                }
+                (Err(_), OverEdits::Refuse) => return true,
+            }
+        }
+    };
+    ui.job = Some(job);
+    true
+}
