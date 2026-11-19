@@ -110,3 +110,15 @@ inherits = "release"
 lto = false
 codegen-units = 16
 panic = "unwind"
+
+# The editor's glyph renderer (chimera-screen) in wasm32, through `just
+# editor-screen`: size first, no unwinding; stripped after, so the recipe
+# can show both sizes.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = false

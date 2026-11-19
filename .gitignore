@@ -18,3 +18,4 @@ __pycache__/
 /editor/elm-stuff
 /editor/dist
 /target-wasm
+/editor/public/screen.wasm

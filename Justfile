@@ -36,8 +36,29 @@ editor-test:
     cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && npx elm-review && node public/ports.check.js
 
 # The browser editor, optimised, into editor/dist/
-editor-build:
-    cd editor && mkdir -p dist && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/style.css dist/
+editor-build: editor-screen
+    cd editor && mkdir -p dist && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/style.css public/screen.js public/screen.wasm dist/
+
+# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32
+# into editor/public/screen.wasm, stripped, then wasm-opt'd if installed;
+# each size printed, then checked from node (screen.check.js). Its own target dir: the host's builds aren't touched.
+editor-screen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CARGO_TARGET_DIR=target-wasm
+    cargo build -q -p chimera-screen --target wasm32-unknown-unknown --profile wasm
+    out=editor/public/screen.wasm
+    cp target-wasm/wasm32-unknown-unknown/wasm/chimera_screen.wasm "$out"
+    size() { echo "screen.wasm $1: $(stat -c %s "$out") bytes"; }
+    size built
+    bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+    "$bin/llvm-strip" "$out"
+    size stripped
+    if command -v wasm-opt >/dev/null; then
+        wasm-opt -Oz --all-features "$out" -o "$out"
+        size wasm-opt
+    fi
+    node editor/public/screen.check.js
 
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes
@@ -488,6 +509,8 @@ check $CHIMERA_STAMP_CLEAN="1":
     just editor-test
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
+    # The editor's glyph renderer against the console's `ed` and the sim's frame.
+    cargo test -p chimera-screen
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
     # WALK's kept glyph styles (ADR 0209): host only, never in firmware.
@@ -651,6 +674,7 @@ test-fat-tools:
 clippy:
     cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
+    cargo clippy -p chimera-screen --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
