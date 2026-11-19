@@ -107,11 +107,15 @@ so 0.01–1 Hz was seven detents.
   branch's, the band's, the lists' and RATE's, each with its closed
   path): measured against 92df1b18, +984 B on the default build, +968 B
   on ORBIT, +976 B on bank2-gate, +984 B on ORBIT's usb-config-writer,
-  +832 to +1256 B on the bench sets; every set's line in
-  `tools/bank1-budget.txt` is raised by its delta citing this ADR. Bank 2
+  +832 to +1256 B on the bench sets. Merged onto 0.4 (76de24c6) each line
+  is that tip's line raised to the measured size, the delta cited (+392
+  ORBIT, +1416 default and bank2-gate, +328 to +1512 elsewhere; 0.4's
+  lines carry their own slack, so these spread wider than the sizes). Bank 2
   grows by `ui::feel` (about 600 B of it the curves, fine cells, hints
   and RATE's tick that bank 1 would otherwise hold): +864 B on the
-  default build and bank2-gate, +832 B on ORBIT, S4's group.
+  default build and bank2-gate, +832 B on ORBIT, S4's group; +736 B over
+  0.4's lines after the merge. One `UiDoor` entry (`feel::Ask`/`Said`):
+  the table's 128 B are 28 words with it.
 
 ## Sources
 - private issue #1005; tester report joegiralt/chimera-releases#11.
