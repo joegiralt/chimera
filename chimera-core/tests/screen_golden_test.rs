@@ -73,6 +73,10 @@ use screen::*;
 // ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
 // tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
 // pool's count (sound_browser_pool_full).
+// Each case renders from rest, one at a time (`screen::render`): no held
+// key or meter left by another case. mixer_part and mixer_part_voices
+// back to their hashes before ADR 0293 (rested meters draw nothing;
+// `part_meter_test` draws them).
 // ADR 0294: AMP › STEREO before SENDS, on the map under AMP (STER);
 // WIDTH in DRUM GATE's F; a dense Sound one param more. New: amp_stereo.
 // Re-recorded: row_amp, amp_vel_dimmed, amp_gate, amp_sends (through
@@ -277,9 +281,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // (ADR 0055); with it they have their own rows, run by `just test`.
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0x2997d264b9c8899f),
+    ("mixer_part", 0xf3f3d1a43b585b81),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part_voices", 0xcd18a982578c8cf4),
+    ("mixer_part_voices", 0xefa1c087d6aad31a),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
@@ -332,9 +336,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x20011a0c4a3b3ad9),
+    ("mixer_part", 0x0b8145c7369cec63),
     #[cfg(feature = "master-tape")]
-    ("mixer_part_voices", 0x33d2c16a719d8c66),
+    ("mixer_part_voices", 0x6bacb821270f6d4c),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x4f5f9daa56c5aea5),
     // DLY's branch hides REV's label it ran into (TAPE Task 15). With master-tape

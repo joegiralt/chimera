@@ -3106,6 +3106,16 @@ pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
 
 /// Full render of case `name`.
 pub fn render(name: &str) -> Fb {
+    // The audio's process-wide state a screen reads (the held keys, PRT's
+    // meters and their watch, ADR 0293): one case at a time, each from
+    // rest, whatever ran before or beside it.
+    static GLOBALS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = GLOBALS.lock().unwrap_or_else(|e| e.into_inner());
+    chimera_core::played::clear_held();
+    chimera_core::part_peaks::watch(chimera_core::part_peaks::Watch::Down);
+    for m in &chimera_core::part_peaks::PART_PEAKS {
+        m.take();
+    }
     if let Some(&(_, label)) = OVERLAYS.iter().find(|o| o.0 == name) {
         let (fb, _) = render_overlay(label);
         fb.dump(name);
