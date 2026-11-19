@@ -206,14 +206,14 @@ update msg m s =
                     Gesture.flush s.wanted
             in
             ( { s | wanted = rest }
-            , List.map
+            , List.filterMap
                 (\( a, w ) ->
                     case w of
                         Number v ->
-                            Model.Edit a (Num v)
+                            Just (Model.Edit a (Num v))
 
                         Option i ->
-                            Model.Pick a i
+                            Protocol.optIndex i |> Maybe.map (Model.Pick a)
                 )
                 wants
             )
@@ -363,7 +363,7 @@ face m s i =
         else
             pos
     , pending = Model.isPending i.param.addr m
-    , options = i.param.options
+    , options = List.indexedMap (\n ( _, name ) -> ( n, name )) i.param.options
     , current = round pos
     }
 

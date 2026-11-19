@@ -90,7 +90,7 @@ suite =
             \_ ->
                 run [ Algo.Hand (Controls.Pick (Addr "FILTER.KIND") 1), Algo.Hand (Controls.Pick (Addr "FILTER.KIND") 2), Algo.Frame ]
                     |> Tuple.second
-                    |> Expect.equal [ Model.Pick (Addr "FILTER.KIND") 2 ]
+                    |> Expect.equal (Protocol.optIndex 2 |> Maybe.map (Model.Pick (Addr "FILTER.KIND")) |> Maybe.map List.singleton |> Maybe.withDefault [])
         , test "a_sideways_wheel_edits_nothing" <|
             \_ ->
                 run [ Algo.Hand (Controls.Wheel cutoff 0), Algo.Frame ]

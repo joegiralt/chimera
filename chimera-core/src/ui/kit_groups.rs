@@ -96,7 +96,14 @@ fn turn(ui: &mut UiState, at: PartId, delta: i8, shift: bool) -> bool {
         from.step(delta)
     };
     let refused = VoiceGroups::choke(kit, p, to).is_err();
-    ui.held = refused.then_some((at, Held::Choke(ChokeHold { to, kit: chokes })));
+    ui.held = refused.then_some((
+        at,
+        Held::Choke(ChokeHold {
+            to,
+            kit: chokes,
+            pad: p,
+        }),
+    ));
     if !refused && to != kit.pad(p).choke() {
         ui.project.kit_mut(at).pad_mut(p).set_choke(to);
     }

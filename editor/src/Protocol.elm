@@ -83,7 +83,7 @@ type AnswerLine
     | Page { n : Int, label : String, count : Int }
     | Panel { name : String, variant : String }
     | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float }
-    | Opt { addr : Addr, index : Int, name : String }
+    | Opt { addr : Addr, index : OptIndex, name : String }
     | Route String
     | Source String
     | Val { addr : Addr, norm : Float, stored : Float, text : String }
@@ -251,7 +251,7 @@ answer ts =
             Maybe.andThen (\sc -> param a label kind sc lo hi step def) (scaleOf scale)
 
         [ "opt", a, i, name ] ->
-            nat i |> Maybe.map (\ix -> Opt { addr = Addr a, index = ix, name = name })
+            nat i |> Maybe.andThen optIndex |> Maybe.map (\ix -> Opt { addr = Addr a, index = ix, name = name })
 
         [ "route", label, "next-slice" ] ->
             Just (Route label)
