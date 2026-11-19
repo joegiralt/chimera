@@ -33,7 +33,7 @@ Core's float `Display` would print exactly, but it is 20 KB of bank 1 that `ed` 
 - Flash: below.
 
 ## Measurements
-(Filled in below.)
+Release builds, `CHIMERA_STAMP_CLEAN=1`, 9c197f842 against this change, every budgeted set built in both trees. Bank 1: +0 B on every set (orbit 900,300 B, 17,204 B free; all thirteen unchanged). Bank 2 used: +768 B on default, orbit and bank2-gate, all in S4 (`ed`'s group), each line raised by exactly that; S0-S3 on ORBIT stays at 7,776 B free. `still_for_test` is test-support's: in no firmware build.
 
 ## Sources
 - #1035; `chimera-screen/tests/screen.rs`.
