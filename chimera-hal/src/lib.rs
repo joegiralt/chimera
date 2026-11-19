@@ -28,6 +28,184 @@ pub const fn encoder_accel(n: u8) -> i8 {
     }
 }
 
+/// One frame's signed detents on an encoder, within ±127: −128 has no
+/// negation, so a turn is never it (ADR 0279).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Detents(i8);
+
+impl Detents {
+    /// `n` detents, −128 taken as −127.
+    pub const fn new(n: i8) -> Self {
+        Detents(if n == i8::MIN { -127 } else { n })
+    }
+
+    pub const fn get(self) -> i8 {
+        self.0
+    }
+
+    /// How many, unsigned.
+    pub const fn count(self) -> u8 {
+        self.0.unsigned_abs()
+    }
+
+    /// A tick each: a fine turn's (ADR 0279).
+    pub const fn ticks(self) -> Ticks {
+        Ticks(self.0)
+    }
+
+    /// Without its first: one fewer, the same way.
+    const fn less_one(self) -> Self {
+        Detents(self.0 - self.0.signum())
+    }
+}
+
+/// Where in its burst a detent falls: 0 after a rest (ADR 0279).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BurstPos(u8);
+
+impl BurstPos {
+    /// A burst's first detent.
+    pub const START: Self = BurstPos(0);
+
+    /// A test's place in a burst; the board starts at `START`.
+    #[cfg(any(test, feature = "testkit"))]
+    pub const fn new(n: u8) -> Self {
+        BurstPos(n)
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+
+    /// `n` detents on, saturating.
+    pub const fn after(self, n: u8) -> Self {
+        BurstPos(self.0.saturating_add(n))
+    }
+
+    /// Where this frame's detents `now` start: from the start after a rest
+    /// past `ENCODER_BURST_GAP_MS`, when SEQ went down or up (`seq`'s
+    /// edges: a fine turn starts or ends, and the plain turn after it
+    /// accelerates from its first detent again), or when `now` turns back
+    /// from `last`, the burst's way (a correction never jumps rows).
+    pub const fn next(self, rested: bool, seq: Edges, last: Detents, now: Detents) -> Self {
+        let back = (last.get() as i16) * (now.get() as i16) < 0;
+        if rested || back || seq.pressed_at.is_some() || seq.released_at.is_some() {
+            Self::START
+        } else {
+            self
+        }
+    }
+}
+
+/// Signed ticks a turn moves, within ±127 (`Accel::ticks`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Ticks(i8);
+
+impl Ticks {
+    /// `n` ticks, −128 taken as −127.
+    pub const fn new(n: i8) -> Self {
+        Ticks(if n == i8::MIN { -127 } else { n })
+    }
+
+    pub const fn get(self) -> i8 {
+        self.0
+    }
+}
+
+/// One encoder's frame: its detents and the burst position of the first
+/// of them; no position from a shell that does not accelerate, whose
+/// detents are its ticks. The board counts; the UI picks the acceleration
+/// (`Accel`, ADR 0279).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Turn {
+    detents: Detents,
+    burst: Option<BurstPos>,
+}
+
+impl Turn {
+    /// `d` detents from `burst`: the board's.
+    pub const fn at(d: Detents, burst: BurstPos) -> Self {
+        Turn {
+            detents: d,
+            burst: Some(burst),
+        }
+    }
+
+    /// `d` from a shell with no acceleration (the desktop, the console's
+    /// hand, a test): ticks as they are.
+    pub const fn steady(d: i8) -> Self {
+        Turn {
+            detents: Detents::new(d),
+            burst: None,
+        }
+    }
+
+    pub const fn detents(self) -> Detents {
+        self.detents
+    }
+
+    pub const fn burst(self) -> Option<BurstPos> {
+        self.burst
+    }
+
+    /// Without its first detent (the one that wakes the screen): one
+    /// fewer, the rest one further into the burst.
+    pub const fn consume_first(self) -> Self {
+        Turn {
+            detents: self.detents.less_one(),
+            burst: match self.burst {
+                Some(b) => Some(b.after(1)),
+                None => None,
+            },
+        }
+    }
+}
+
+/// How a turn accelerates (ADR 0279): a parameter's sweep, or a list's,
+/// menu's or name's rows, which must not skip past the one wanted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Accel {
+    /// `encoder_accel`: 1, 2, 4, 5, 10, then 10 ticks a detent.
+    Param,
+    /// 1 for four detents, 2 for four, then 3.
+    List,
+}
+
+impl Accel {
+    /// The ticks of the burst's `n`-th detent.
+    #[inline(always)]
+    const fn per_detent(self, n: u8) -> i8 {
+        match self {
+            Accel::Param => encoder_accel(n),
+            Accel::List => match n {
+                0..=3 => 1,
+                4..=7 => 2,
+                _ => 3,
+            },
+        }
+    }
+
+    /// `turn`'s ticks, saturating at ±127. Inlined: a caller's constant
+    /// curve folds, so the board's `Param` carries no `List`.
+    #[inline(always)]
+    pub const fn ticks(self, turn: Turn) -> Ticks {
+        let Some(burst) = turn.burst else {
+            return Ticks(turn.detents.get());
+        };
+        let mut total: i8 = 0;
+        let mut k: u8 = 0;
+        while k < turn.detents.count() {
+            total = total.saturating_add(self.per_detent(burst.after(k).get()));
+            k += 1;
+        }
+        Ticks(if turn.detents.get() < 0 {
+            -total
+        } else {
+            total
+        })
+    }
+}
+
 /// A burst ends after this long with no detent.
 pub const ENCODER_BURST_GAP_MS: u32 = 150;
 
@@ -254,8 +432,16 @@ impl Latch {
 }
 
 pub trait Controls {
+    /// Encoder `id`'s ticks this frame, a parameter's acceleration in them.
     fn encoder_delta(&self, id: EncoderId) -> i8;
     fn button_state(&self, id: ButtonId) -> ButtonState;
+
+    /// Encoder `id`'s raw detents this frame and where in its burst they
+    /// fell (ADR 0279). Shells with no acceleration: `encoder_delta`, as
+    /// ticks.
+    fn turn(&self, id: EncoderId) -> Turn {
+        Turn::steady(self.encoder_delta(id))
+    }
 
     /// The button's edges this frame. Shells that latch override it; this
     /// one stamps `button_state`'s edge at `now_ms`.

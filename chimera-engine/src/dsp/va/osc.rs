@@ -71,6 +71,12 @@ pub const SINE_RMS: [f32; 17] = [
 pub const MAX_INC: f32 = 0.45;
 pub const MIN_INC: f32 = 1e-6;
 
+/// `VarOsc::inc_for` with no oscillator: cycles a sample for `hz` at
+/// `inv_sr` (`prepare`'s 1 / rate).
+pub const fn inc_at(hz: f32, inv_sr: f32) -> f32 {
+    clampf(hz * inv_sr, MIN_INC, MAX_INC)
+}
+
 /// The triangle's peak, `R√3`.
 const TRI_PEAK: f32 = R * 1.732_050_8;
 const TAU: f32 = core::f32::consts::TAU;
@@ -1204,7 +1210,7 @@ impl VarOsc {
     /// Cycles a sample for `hz`, clamped to `[MIN_INC, MAX_INC]` (NaN is
     /// `MIN_INC`).
     pub fn inc_for(&self, hz: f32) -> f32 {
-        clampf(hz * self.inv_sr, MIN_INC, MAX_INC)
+        inc_at(hz, self.inv_sr)
     }
 
     /// Phase 0, the corrector cleared, the edges re-anchored and the

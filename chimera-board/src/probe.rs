@@ -11,7 +11,7 @@ mod imp {
     use chimera_core::board::BoardId;
     use chimera_core::clock_plan::SiliconRev;
     use chimera_core::hw::BlockBudget;
-    use chimera_core::perf::load::AudioStats;
+    use chimera_core::perf::load::{AudioStats, Peaks};
     use chimera_core::perf::stack::{STACK_PAINT, untouched_words};
     use chimera_core::reset::ResetCause;
     use chimera_core::triple::{Reader, TripleBuffer, Writer};
@@ -34,14 +34,14 @@ mod imp {
     static mut BUDGET: BlockBudget = BlockBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_Y);
     static READY: AtomicBool = AtomicBool::new(false);
     static TAKEN: AtomicBool = AtomicBool::new(false);
-    /// The console read the voice peak: the next block starts it over.
-    static VOICE_PEAK_READ: AtomicBool = AtomicBool::new(false);
+    /// The console read the peaks: the next block starts them over.
+    static PEAKS_READ: AtomicBool = AtomicBool::new(false);
 
-    /// After the console's `stats`: the voice peak starts over, as the
-    /// loop's does.
+    /// After the console's `stats`: the load and voice peaks start over,
+    /// as the loop's does (#995).
     #[cfg(feature = "usb-console")]
-    pub fn restart_voice_peak() {
-        VOICE_PEAK_READ.store(true, Ordering::Relaxed);
+    pub fn restart_peaks() {
+        PEAKS_READ.store(true, Ordering::Relaxed);
     }
 
     // Linker symbols: only their addresses mean anything. The stack between
@@ -125,7 +125,12 @@ mod imp {
                 (*addr_of_mut!(WRITER)).as_mut(),
             )
         };
-        stats.record(cycles, budget);
+        let peaks = if PEAKS_READ.swap(false, Ordering::Relaxed) {
+            Peaks::Restart
+        } else {
+            Peaks::Kept
+        };
+        stats.record(cycles, budget, peaks);
         stats.overruns = shared::OVERRUNS.load(Ordering::Relaxed);
         stats.load_sheds = shared::LOAD_SHEDS.load(Ordering::Relaxed);
         stats.desyncs = shared::DESYNCS.load(Ordering::Relaxed);
@@ -142,7 +147,7 @@ mod imp {
         stats.record_voices(
             shared::VOICES.load(Ordering::Relaxed),
             shared::COST_PCT.load(Ordering::Relaxed),
-            VOICE_PEAK_READ.swap(false, Ordering::Relaxed),
+            peaks,
         );
         if let Some(w) = writer {
             let s = *stats;
@@ -189,5 +194,5 @@ mod stub {
     }
 
     #[cfg(feature = "usb-console")]
-    pub fn restart_voice_peak() {}
+    pub fn restart_peaks() {}
 }

@@ -261,16 +261,18 @@ impl Machine {
     /// reads low (*): those, and the machines INIT DRUM doesn't play, are
     /// placed from desktop release ns per block against measured
     /// machines, erring high. COWBELL and IMPULSE are re-read on eb442a48,
-    /// 2026-11-16, at the top of their spread (ADR 0275).
+    /// 2026-11-16, at the top of their spread (ADR 0275): their pulses
+    /// rendering as square runs; a sample at a time they bill
+    /// `Ticking::cost` (ADR 0287).
     pub const fn cost(self) -> Cost {
         Cost(match self {
             Machine::ToneKick => 797,     // 800 (pad 1)
             Machine::ToneSnare => 797,    // 800 (pad 2)
             Machine::ToneTom => 687,      // 700 (pads 5–7)
             Machine::ToneClap => 577,     // 600 (pad 4)
-            Machine::ToneCowbell => 1567, // 1500 (pad 11, BUMP 127 sweep head; ADR 0275)
-            Machine::ToneCymbal => 1457,  // 1400 (pad 10)
-            Machine::MetalHat => 1457,    // 1400 (pad 9, open; closed pad 8 ends inside the window)
+            Machine::ToneCowbell => 687, // 700 (pad 11, BUMP 0 and the plateau after BUMP; ADR 0287)
+            Machine::ToneCymbal => 1457, // 1400 (pad 10)
+            Machine::MetalHat => 1457,   // 1400 (pad 9, open; closed pad 8 ends inside the window)
             Machine::MetalJingle => 1677, // est. 1600: unmeasured; desktop 7,000 ns, 1.12 × HAT's 6,250
             Machine::BodyShaker => 687, // est. 700: pad 12 read 300 *; desktop 1,370 ns, CLAP's 1,360 (600)
             Machine::PlainSine => 577, // est. 600: unmeasured; desktop 1,100 ns, under CLAP's 1,360 (600)
@@ -278,17 +280,188 @@ impl Machine {
             Machine::PlainImpulse => 577, // 600 (pad 3, DECAY 1.12 s head; plateau 500; ADR 0275)
         })
     }
+}
+
+/// How a hit's pulses render its next block (`Pulse::sweep`, ADR 0287):
+/// as square runs, or a sample at a time while a sweep moves their pitch,
+/// while their width floors at it, or both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PulsePace {
+    Runs,
+    Swept,
+    Floored,
+    FlooredSwept,
+}
+
+impl PulsePace {
+    pub const fn of(swept: bool, floored: bool) -> PulsePace {
+        match (swept, floored) {
+            (false, false) => PulsePace::Runs,
+            (true, false) => PulsePace::Swept,
+            (false, true) => PulsePace::Floored,
+            (true, true) => PulsePace::FlooredSwept,
+        }
+    }
+}
+
+/// A pulse machine's bills while its pulses render a sample at a time
+/// (#991). COWBELL's squares never floor (`MAX_INC` < ½).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ticking {
+    CowbellSwept,
+    ImpulseSwept,
+    ImpulseFloored,
+    ImpulseFlooredSwept,
+}
+
+impl Ticking {
+    pub const ALL: [Ticking; 4] = [
+        Ticking::CowbellSwept,
+        Ticking::ImpulseSwept,
+        Ticking::ImpulseFloored,
+        Ticking::ImpulseFlooredSwept,
+    ];
+
+    pub const fn machine(self) -> Machine {
+        match self {
+            Ticking::CowbellSwept => Machine::ToneCowbell,
+            Ticking::ImpulseSwept | Ticking::ImpulseFloored | Ticking::ImpulseFlooredSwept => {
+                Machine::PlainImpulse
+            }
+        }
+    }
+
+    /// Cycles/sample, by `Machine::cost`'s formula (ADR 0287). COWBELL:
+    /// BUMP 127's worst block on the unit, `peak_pct` 32 % over the 12 %
+    /// idle, eb442a48, 2026-11-16 (ADR 0275). IMPULSE, estimated erring
+    /// high, pending the unit: SWEEP 64's head window (700, 37 ms of sweep
+    /// in 85 ms over a 500 plateau) puts its sweep near 950, × 1.33 (COWBELL's
+    /// worst block over its window); floored, desktop ns put it near 2,000,
+    /// with SWEEP 127 near 2,700.
+    pub const fn cost(self) -> Cost {
+        Cost(match self {
+            Ticking::CowbellSwept => 2117, // 2000 (pad 11, BUMP 127, worst block)
+            Ticking::ImpulseSwept => 1347, // est. 1300 (SWEEP 64): 1.33 × 950
+            Ticking::ImpulseFloored => 2117, // est. 2000 (2 kHz +12, WIDTH 127)
+            Ticking::ImpulseFlooredSwept => 2887, // est. 2700 (the same, SWEEP 127)
+        })
+    }
+}
+
+/// What a DRUM hit's kernel is billed (ADR 0287): its machine, or a pulse
+/// machine's while its pulses render a sample at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KernelBill {
+    Machine(Machine),
+    Ticking(Ticking),
+}
+
+/// `KernelBill::ALL`'s length.
+const BILLS: usize = Machine::ALL.len() + Ticking::ALL.len();
+
+impl KernelBill {
+    pub const ALL: [KernelBill; BILLS] = {
+        let mut a = [KernelBill::Machine(Machine::ToneKick); BILLS];
+        let mut i = 0;
+        while i < BILLS {
+            a[i] = if i < Machine::ALL.len() {
+                KernelBill::Machine(Machine::ALL[i])
+            } else {
+                KernelBill::Ticking(Ticking::ALL[i - Machine::ALL.len()])
+            };
+            i += 1;
+        }
+        a
+    };
+
+    /// Its place in `ALL`.
+    pub const fn index(self) -> usize {
+        match self {
+            KernelBill::Machine(m) => m.index(),
+            KernelBill::Ticking(t) => Machine::ALL.len() + t as usize,
+        }
+    }
+
+    /// `m`'s bill while its pulses render at `pace`. A COWBELL's squares
+    /// never floor; were one to, it bills its sweep, its one per-sample
+    /// path.
+    pub const fn of(m: Machine, pace: PulsePace) -> KernelBill {
+        match (m, pace) {
+            (_, PulsePace::Runs) => KernelBill::Machine(m),
+            (
+                Machine::ToneCowbell,
+                PulsePace::Swept | PulsePace::Floored | PulsePace::FlooredSwept,
+            ) => KernelBill::Ticking(Ticking::CowbellSwept),
+            (Machine::PlainImpulse, PulsePace::Swept) => KernelBill::Ticking(Ticking::ImpulseSwept),
+            (Machine::PlainImpulse, PulsePace::Floored) => {
+                KernelBill::Ticking(Ticking::ImpulseFloored)
+            }
+            (Machine::PlainImpulse, PulsePace::FlooredSwept) => {
+                KernelBill::Ticking(Ticking::ImpulseFlooredSwept)
+            }
+            (
+                Machine::ToneKick
+                | Machine::ToneSnare
+                | Machine::ToneTom
+                | Machine::ToneClap
+                | Machine::ToneCymbal
+                | Machine::MetalHat
+                | Machine::MetalJingle
+                | Machine::BodyShaker
+                | Machine::PlainSine
+                | Machine::PlainNoise,
+                PulsePace::Swept | PulsePace::Floored | PulsePace::FlooredSwept,
+            ) => KernelBill::Machine(m),
+        }
+    }
+
+    /// The costliest bill a hit of `m` can run up, at any knobs and pitch:
+    /// a Part's kit bill (`KitBill::kernel`).
+    pub const fn worst(m: Machine) -> KernelBill {
+        let (mut i, mut w) = (0, KernelBill::Machine(m));
+        while i < Ticking::ALL.len() {
+            let t = Ticking::ALL[i];
+            if t.machine() as usize == m as usize && t.cost().0 > w.cost().0 {
+                w = KernelBill::Ticking(t);
+            }
+            i += 1;
+        }
+        w
+    }
+
+    pub const fn machine(self) -> Machine {
+        match self {
+            KernelBill::Machine(m) => m,
+            KernelBill::Ticking(t) => t.machine(),
+        }
+    }
+
+    /// Cycles/sample: a hit's `EngineSlot::cost`.
+    pub const fn cost(self) -> Cost {
+        match self {
+            KernelBill::Machine(m) => m.cost(),
+            KernelBill::Ticking(t) => t.cost(),
+        }
+    }
 
     /// The costliest `cost`: a DRUM hit's bill with no kit to read.
     pub const MAX_COST: Cost = {
         let (mut i, mut m) = (0, Cost::ZERO);
-        while i < Machine::ALL.len() {
-            m = m.max(Machine::ALL[i].cost());
+        while i < BILLS {
+            m = m.max(KernelBill::ALL[i].cost());
             i += 1;
         }
         m
     };
 }
+
+const _: () = {
+    let mut i = 0;
+    while i < BILLS {
+        assert!(KernelBill::ALL[i].index() == i);
+        i += 1;
+    }
+};
 
 impl DiskCode for Machine {
     fn disk_code(self) -> u8 {

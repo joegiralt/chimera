@@ -1,7 +1,7 @@
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::hw::BlockBudget;
 use chimera_core::note_queue::MAX_NOTE_SOURCES;
-use chimera_core::perf::load::{AVG_BLOCKS, AudioStats, load_percent};
+use chimera_core::perf::load::{AVG_BLOCKS, AudioStats, Peaks, load_percent};
 use chimera_core::perf::stack::{STACK_PAINT, untouched_words};
 use chimera_core::reset::ResetCause;
 
@@ -30,13 +30,13 @@ fn average_is_the_mean_of_the_last_full_window() {
         ResetCause::PowerOn,
     );
     for _ in 0..AVG_BLOCKS - 1 {
-        s.record(320_000, V);
+        s.record(320_000, V, Peaks::Kept);
     }
     assert_eq!(s.load_avg, 0, "no full window yet");
-    s.record(320_000, V);
+    s.record(320_000, V, Peaks::Kept);
     assert_eq!(s.load_avg, 50);
     for i in 0..AVG_BLOCKS {
-        s.record(if i % 2 == 0 { 64_000 } else { 192_000 }, V);
+        s.record(if i % 2 == 0 { 64_000 } else { 192_000 }, V, Peaks::Kept);
     }
     assert_eq!(s.load_avg, 20);
 }
@@ -50,9 +50,9 @@ fn peak_holds_the_worst_block_since_boot() {
         ResetCause::PowerOn,
     );
     let y = BlockBudget::for_cpu(400_000_000);
-    s.record(100_000, y);
-    s.record(400_000, y);
-    s.record(50_000, y);
+    s.record(100_000, y, Peaks::Kept);
+    s.record(400_000, y, Peaks::Kept);
+    s.record(50_000, y, Peaks::Kept);
     assert_eq!(s.load_peak, 75);
 }
 
@@ -89,15 +89,37 @@ fn the_voice_peak_holds_until_restarted() {
         ResetCause::PowerOn,
     );
     assert_eq!((s.voices, s.voices_peak, s.cost_pct), (0, 0, 0));
-    s.record_voices(5, 60, false);
-    s.record_voices(2, 25, false);
+    s.record_voices(5, 60, Peaks::Kept);
+    s.record_voices(2, 25, Peaks::Kept);
     assert_eq!((s.voices, s.voices_peak, s.cost_pct), (2, 5, 25));
-    s.record_voices(3, 30, true);
+    s.record_voices(3, 30, Peaks::Restart);
     assert_eq!(
         (s.voices, s.voices_peak),
         (3, 3),
         "the console read it: the peak starts over"
     );
-    s.record_voices(1, 10, false);
+    s.record_voices(1, 10, Peaks::Kept);
     assert_eq!(s.voices_peak, 3);
+}
+
+/// #995: the console's peak (`read_peak`, `peak_pct`) starts over at the
+/// block after each `stats`; the since-boot peak (the AUDIO page's)
+/// holds.
+#[test]
+fn the_read_peak_restarts_while_the_boot_peak_holds() {
+    let mut s = AudioStats::new(
+        SiliconRev::Y,
+        chimera_core::board::BoardId::Lqfp176,
+        400_000_000,
+        ResetCause::PowerOn,
+    );
+    let y = BlockBudget::for_cpu(400_000_000);
+    s.record(400_000, y, Peaks::Kept);
+    s.record(100_000, y, Peaks::Kept);
+    assert_eq!((s.load_peak, s.read_peak), (75, 75));
+    s.record(50_000, y, Peaks::Restart);
+    assert_eq!((s.load_peak, s.read_peak), (75, 9), "read: it starts over");
+    s.record(100_000, y, Peaks::Kept);
+    s.record(60_000, y, Peaks::Kept);
+    assert_eq!((s.load_peak, s.read_peak), (75, 19));
 }
