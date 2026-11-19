@@ -116,12 +116,12 @@ enum Taken { Sound { part: PartId, engine: EngineType }, Part(PartId), Global, O
 | `ed schema <SCHEMA>` | 1 | `schema <SCHEMA> <pages> <hash>` |
 | `ed route <cell> <amount\|off>` | 2 | `OK queued` |
 | `ed projects` | 3 | `OK queued` (a re-list) |
-| `ed project save` / `saveas <name>` / `load <gen> <slot> [discard]` | 3 | owner question 2 |
+| `ed project save` / `saveas <name>` / `load <gen> <slot> [discard]` | 3 | `OK queued` |
 | `ed map add\|set\|rm\|pick\|keep\|save\|rename …` | 4 | `OK queued` |
 | `ed learn <addr>` / `ed learn off` | 4 | `OK queued` |
 | `ed orbit play\|stop` | 5 | `OK queued` |
 | `ed scene queue\|save\|clear\|reload\|move …` | 5 | `OK queued` |
-| `ed chord <seg> <degree>`, `ed pool <ring> …`, `ed step <ring> …` | 5 | owner question 4 |
+| `ed chord <seg> <degree>`, `ed scale <mask>`, `ed pool <ring> …`, `ed step <ring> …` | 5 | `OK queued` |
 
 Commands queue in a small fixed array beside the sets (`EdState::acts`, 8 entries, `Pushed::Full` past it), applied in order after the sets in the UI pass.
 
@@ -218,7 +218,7 @@ FLT › MOD's jack knobs (FREQ MOD, RES MOD) edit "whatever FM3 IN or QM IN name
 - Applied through the matrix's own path: `MatrixState::set` or `clear`, then `sync_into` the Sound's `ModState` (taps into `params.taps`), never `ModState` directly. KEYBOARD's cell takes `keybd_step` (OFF, HALF, FULL).
 - **No snap.** A route amount isn't a glided param. Instead of a jump, the amount moves toward the target by at most the grid's largest accelerated step a UI pass, the same distance a hand's fastest turn covers. The step comes from the grid's jog table, never a new constant.
 
-**Amount range.** The box stores `i8` −127..127 and writes it as is (`fmt_amount`: `+42`). The wire carries that number and the box's text. The mockups' "−100..+100" is owner question 5.
+**Amount range.** The box stores `i8` −127..127 and writes it as is (`fmt_amount`: `+42`). The wire carries that number and the box's text. The editor shows the box's ±127 too (owner, answer 5).
 
 **Schema: `MTX-<ENGINE>`.** One page:
 
@@ -244,7 +244,7 @@ Destinations are every param with the `d` flag in the engine's schema, plus the 
 
 **Pages.** The tree's leaves with params, in tree order. `page` lines are followed by `crumb "<LIST>" "<ROW>"` (the tree's own crumbs), so the editor can lay SETTINGS out as the box's lists without a list of its own. CHANNELS and OUTPUTS bind `PartMix(n)` and read as `PART<n>.CH` and `PART<n>.OUT`, the same addresses as the MIXER's: one value, one address. TUNING and LIVE SNAP bind the active Part and are described once a Part.
 
-**RANDOM.** The five cells are params (`RANDOM.OSC` … `RANDOM.SEED`). A set rolls the followed Part's Sound, as a turn does (ADR 0232), only when it is the active Part (see "Where a set lands"). Whether the editor may roll at all is owner question 3.
+**RANDOM.** The five cells are params (`RANDOM.OSC` … `RANDOM.SEED`). A set rolls the followed Part's Sound, as a turn does (ADR 0232), only when it is the active Part (see "Where a set lands"). The editor may roll, labelled "ROLLS THE SOUND" as the box is (owner, answer 3).
 
 **Project and Part state (read-only)** in the SETTINGS section:
 
@@ -257,7 +257,7 @@ toast "<text>"                                    (the box's last toast, when it
 
 **Listing.** `ed projects` queues the box's own re-list (`card_work` reads it, as LOAD PROJECT does, at most `MAX_LISTED`). The SETTINGS section then carries the listing whole: `proj <id> "<name>" <ok|bad|newer> gen <g>`. No card read happens in the answer path.
 
-**Project commands** depend on owner question 2. Whatever is allowed goes through `settings::job` (`card_work`, under BUSY, the box's prompts' witnesses: `Confirmed<OverwriteTarget>`, `Pending<ProjectSource>`). A name is one word with `_` for a space, accepted only if NAMING's character set has no `_` (a test; else another byte outside the set). Never through `ed`: OS UPGRADE (`EnterDfu`, the updater's, #1016), FORMAT CARD, the card's files (#1015 owns `ls`, `get`, `put` and `rm`).
+**Project commands** (owner, answer 2): `ed project save` (the loaded project's own slot, MENU hold's quick save), `ed project saveas <name>` (a new slot, never over another project) and `ed project load <id> <gen> [discard]` (witnessed by the listing's generation; over unsaved edits it refuses unless the editor sends `discard` after its own confirm naming the edited Parts). No RENAME, CLEAR or DELETE of a project. They go through `settings::job` (`card_work`, under BUSY, the box's prompts' witnesses: `Confirmed<OverwriteTarget>`, `Pending<ProjectSource>`). A name is one word with `_` for a space, accepted only if NAMING's character set has no `_` (a test; else another byte outside the set). Never through `ed`: OS UPGRADE (`EnterDfu`, the updater's, #1016), FORMAT CARD, the card's files (#1015 owns `ls`, `get`, `put` and `rm`).
 
 **Tests.** Every leaf cell described. A THEME set reaches the panel's colours on the next frame. A RANDOM set on a Part the box left writes nothing. `ed projects` while BUSY waits for the job, never stalls the answer.
 
@@ -285,8 +285,8 @@ mapfile "<name>"                                     (after `ed maps`, at most 1
 - `ed map add <input> <kind> <addr> [<min> <max>]`: a Sound row, through `MidiMap::learn` (a target appears once; `MAP FULL` past 16). The input and kind are parsed as one typed `Input`, so an illegal pair (INC-DEC on a CC) is refused at parse, as `Input` can't hold it.
 - `ed map set <S<i>|M<i>> <control|min|max|input|echo> <value>`: the box's B–F on that row. A map row's edit is a card job, one waiting at a time (ADR 0255: `CARD BUSY`).
 - `ed map rm <S<i>|M<i>> <witness>`: the witness is the row as `since` reported it (its input and target), so a row that moved or changed between refuses.
-- `ed map pick <"name"|none>`, `ed map keep <on|off>` (ADR 0253), `ed map save`, `ed map save <name>`, `ed map rename <name>`, `ed maps` (the box's listing, as a job): row 0's gestures. Saving over or deleting a map is owner question 3.
-- `ed learn <addr>` arms learn on that cell the box's way: it takes the box to the cell's page (`value::find` gives the page and slot; `Location::step` and `go`, as `ed part` does), focuses it, and arms (`Learn::Armed`, MIX+SEQ's path). The box shows the learn in its focus band, and learn ends as it does on the box (a nav key, a page change, a turn, or `ed learn off`). Learn's state stays bank 1's `Learn` and needs no target field. ORBIT and SETTINGS cells can't be learned, as on the box (ADR 0139); the editor offers `ed map add` with a typed control there. Whether learn may move the box is owner question 6.
+- `ed map pick <"name"|none>`, `ed map keep <on|off>` (ADR 0253), `ed map save`, `ed map save <name>`, `ed map rename <name>`, `ed maps` (the box's listing, as a job): row 0's gestures. Saving rows into the picked map and renaming it are in; deleting a map file is not, for 0.4 (owner, answer 3). `ed map rm M<i>` writes the card: the editor confirms first.
+- `ed learn <addr>` arms learn on that cell the box's way: it takes the box to the cell's page (`value::find` gives the page and slot; `Location::step` and `go`, as `ed part` does), focuses it, and arms (`Learn::Armed`, MIX+SEQ's path). The box shows the learn in its focus band, and learn ends as it does on the box (a nav key, a page change, a turn, or `ed learn off`). Learn's state stays bank 1's `Learn` and needs no target field. ORBIT and SETTINGS cells can't be learned, as on the box (ADR 0139); the editor offers `ed map add` with a typed control there. Learn moves the box (owner, answer 6).
 
 **Schema: `MAP`.** One page, from the tables: the input forms, each `Input::kinds()` with its word and its line (`ABSOLUTE · JUMPS TO THE KNOB`), the learnable CCs (`LearnCc::new` over 0..127), `span 0 255`, `rows 16`, `maprows 90`.
 
@@ -317,10 +317,10 @@ Values are `live`'s, the playing scene with its drift (ADR 0083), as the pages s
 - `ed orbit play` / `ed orbit stop`: `Cmd::TogglePlay` only when the state differs. Under SYNC EXT the DAW drives the transport (ADR 0080), and both are refused as B6 is.
 - `ed scene queue <n>`: SCENE turned to *n* (`OrbitSong::queue`). To the playing one cancels a pending switch.
 - `ed scene save <n>`: SCN's SAVE (`save_to`). Over a saved slot other than the playing one, the box asks. Here the editor sends `ed scene save <n> over <rev>`, the slot's rev from `since`, made into `Confirmed<SceneSlot>`. A slot written since refuses (`Refused::SlotChanged`). Saving while a switch waits refuses (`SwitchPending`), as on the box.
-- `ed scene clear <n> <rev>` and `ed scene reload <rev>`: SETTINGS › ORBIT's CLEAR and RELOAD FROM PROJ, witnessed the same way.
-- `ed scene move <a> <b> <rev a> <rev b>`: swap two slots. The box has no move. The owner named "move scenes" in the editor's scope (2026-11-14), and it is part of owner question 1.
+- `ed scene clear <rev>` and `ed scene reload <rev>`: SETTINGS › ORBIT's CLEAR and RELOAD FROM PROJ, on the playing scene only as the box, witnessed the same way (owner, answer 3).
+- `ed scene move <a> <b> <rev a> <rev b>`: swap two slots, witnessed by both revs. The box has no move; the editor does (owner, answer 1).
 
-**Not in this slice unless owner question 4 says so:** chord degrees per segment, the custom scale, STEP notes and pool notes. They are scene data but no `ParamSpec`s.
+**Notes and chords** (owner, answer 4): `ed chord <seg> <degree>`, `ed scale <mask>`, `ed step <ring> <i> <note>` and `ed pool <ring> <notes…>`, each through `OrbitSong::edit`, with `chord`, `scale`, `step` and `pool` lines in `since`'s ORBIT section. Capture from the keys stays on the box. Print is SCN's SAVE (`ed scene save`); the song is the project's 8 slots with queued switching; advancing to the next scene is a box feature, out of protocol 4 (owner, answer 1).
 
 **Tests.** Every cell in every ring round. A set on RING3 lands on ring 3 while the box shows ring 1. A set marks the ring touched, and the runner hears it on the next loop. Save-over with a stale rev writes nothing. play while playing does nothing. Transport under EXT refuses.
 
@@ -353,7 +353,18 @@ The owner accepted every recommendation below:
 - **Matrix amounts:** the box's −127..+127, both on the box and in the editor.
 - **`ed learn`:** it moves the box to the cell's page, focuses the cell and arms learn there.
 
-## Questions for the owner
+## Owner's answers (2026-11-19)
+
+The owner accepted each recommendation:
+
+1. **ORBIT.** The song is the project's 8 scene slots with queued switching. Print is SCN's SAVE (`ed scene save`). `ed scene move` (swap two slots, both revs witnessed) is in. Advance to the next scene is out of protocol 4's scope.
+2. **Projects (c).** Read, `save`, `saveas` into a new slot, and `load` witnessed by the listing's generation. A load over unsaved edits refuses unless the editor sends `discard` after its own confirm. `ed` never formats or erases the card.
+3. **Destructive actions, as the table recommends.** In: save a scene over a saved one (rev witnessed), CLEAR the playing scene (as the box), remove a Sound's map row (row witnessed), remove a controller map's row (witnessed, editor confirm), save rows into the picked map, rename a map, RANDOMIZE's roll (labelled "ROLLS THE SOUND"), remove a matrix route. Out for 0.4: delete a map file; Part CLEAR, RELOAD FROM PROJ and SAVE TO LIBRARY.
+4. **ORBIT notes and chords (a)** are in protocol 4: `ed chord`, `ed scale`, `ed step`, `ed pool`, with `chord`, `scale`, `step` and `pool` lines in `since`.
+5. **Matrix amounts (a):** the box's −127..+127, written as the box writes them.
+6. **`ed learn` (a)** takes the box to the cell's page, focuses it and arms learn there.
+
+## Questions for the owner (answered above)
 
 ### 1. What do ORBIT's "print" and "song" mean, and is "advance to the next scene" in this protocol?
 

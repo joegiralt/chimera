@@ -1,7 +1,7 @@
 # 0289. Editor protocol 4: every page addressed, `since` in sections, a schema hash
 
 - **Status:** Accepted (owner, 2026-11-19: every recommendation in the spec's questions)
-- **Deciders:** firmware; owner (the questions in the spec)
+- **Deciders:** firmware; owner (the spec's six questions, answered 2026-11-19 as recommended)
 
 ## Context
 Protocol 3 (ADR 0285) reaches the followed Part's engine pages only. `in_schema` refuses the mixer's, the settings' and ORBIT's blocks. `PartMix`, `Tempo` and `Random` have no token. `axis_of` drops `ReverbPanel`, `SelectedRing` and `Orbit(_)`. FLT › MOD's route knobs and the MTX page describe as `route "<label>" next-slice`. Nothing reaches the MIDI map, learn, scene slots, the transport or projects. The owner wants the editor to control everything the box can in 0.4 (2026-11-18). A full answer for every page would pass the 32,000 B answer bound (ADR 0285). Describing DRUM again on every engine change takes 5 to 6 s. The spec is `docs/superpowers/specs/2026-11-19-ed-protocol-4-design.md`.
@@ -27,6 +27,13 @@ Protocol 3 (ADR 0285) reaches the followed Part's engine pages only. `in_schema`
 - **Whole answers page.** Sections are measured, then taken in order while the total fits `ANSWER_BYTES_MAX`, the first owed always. The rest are owed, and the answer ends `OK <m> more`. The editor asks again with `m`. A stale number starts over. A test holds every section's worst case under the bound alone.
 - **The schema hash.** `ed schema <SCHEMA>` answers `schema <SCHEMA> <pages> <hash>`: a 64-bit FNV-1a of describe's own bytes over every page, computed by the walk into `Fnv64` (bank 1's `fmt_buf`, beside `ByteCount`, for the vtable rule) and kept for the boot. The editor caches schemas in IndexedDB keyed by `(protocol, schema, hash)`. If the first DRUM hash costs over 20 ms of UI loop on the unit, it is filled a page a UI pass after `ed hello`, and `ed schema` answers `pending` until it is done.
 - **Never through `ed`:** OS UPGRADE, FORMAT CARD, and removing card files (#1015 and #1016 own those paths).
+- **The owner's answers (2026-11-19), each the spec's recommendation:**
+  - ORBIT's song is the project's 8 scene slots with queued switching; print is SCN's SAVE; `ed scene move` swaps two slots, both revs witnessed; advancing to the next scene is out of protocol 4.
+  - Projects: read, `ed project save`, `saveas <name>` into a new slot, and `load <id> <gen>` witnessed by the listing's generation, refused over unsaved edits unless the editor sends `discard` after its own confirm. No project RENAME, CLEAR or DELETE through `ed`.
+  - Destructive actions in protocol 4: save a scene over a saved one, CLEAR the playing scene, remove a Sound's map row, remove a controller map's row (editor confirm), save rows into the picked map, rename a map, RANDOMIZE's roll (labelled "ROLLS THE SOUND"), remove a matrix route. Out for 0.4: delete a map file; Part CLEAR, RELOAD FROM PROJ and SAVE TO LIBRARY.
+  - ORBIT's chord degrees, CUSTOM scale, STEP notes and pool notes: `ed chord`, `ed scale`, `ed step`, `ed pool`, with `chord`, `scale`, `step` and `pool` lines in `since`.
+  - Matrix amounts are the box's −127..+127.
+  - `ed learn <addr>` takes the box to the cell's page and arms learn there.
 - **Placement.** All new code is in `console::ed`, bank 2 S4, each fn in its own `.bank2_ed.*` section (ADR 0285). `EdState` stays in ITCM.
 
 ## Alternatives considered
@@ -47,7 +54,7 @@ Protocol 3 (ADR 0285) reaches the followed Part's engine pages only. `in_schema`
 - **Answers:** a messy DRUM Part with every section full takes two answers. Every other engine takes one. Diffs are as small as before.
 - **The editor** caches schemas, follows `more`, and speaks the new lines. Its screens for these pages wait for the owner's mockups.
 - **Frozen by this ADR at 0.4:** the new tokens, the route cell grammar, the section headers and the `param` flags field.
-- **Open:** the spec's owner questions (ORBIT print and song, project load and save, destructive actions, ORBIT notes and chords, amount display, learn moving the box). The slices that depend on them wait for the answers.
+- **Answered:** the spec's six owner questions (2026-11-19), recorded above. No slice waits on them.
 
 ## Supersedes in part
 - [0285](0285-editor-protocol-3-every-engine-pads-addressed.md): `PROTOCOL` 3 → 4; "the slots are laid out per engine" → per engine plus the common sections; `SLOTS` 711 → 952; `param`'s grammar gains flags; `ERR ed since too large` only for a single section past the bound.
