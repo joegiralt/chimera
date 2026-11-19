@@ -190,7 +190,8 @@ against AMOUNT 64 and 127.
 
 **MODAL pad (MID, MODAL's INIT) over a bass (FRONT, ALGO's INIT)**, `just
 smart-eq-ab`: overlap −0.7 dB at 64, −1.5 dB at 127; the pad's own
-250 Hz – 2 kHz −1.1 / −1.9 dB, the bass untouched. The pad's LOW MID cut
+250 Hz – 2 kHz −1.1 / −1.9 dB, the bass untouched (with the kick's dip
+and `own(p)`, the final rule: −0.6 / −1.3 dB, the pad −1.0 / −1.9 dB). The pad's LOW MID cut
 reaches its cap (2.0 / 4.0 dB) on the strike and holds through the ring:
 1.8–2.0 dB (64) and 3.7–4.0 dB (127) on each chord's last beat.
 
