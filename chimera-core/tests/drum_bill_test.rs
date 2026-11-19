@@ -557,3 +557,45 @@ fn the_load_net_sheds_only_a_sounding_voice() {
             .any(|s| s.dying() && s.note().map(|n| n.get()) == Some(0))
     );
 }
+
+/// ADR 0273's skip rule: the load net sheds only a voice that sounds and
+/// isn't already fading. Part 1 fills the pool; Part 2's note steals Part
+/// 1's oldest voice, which fades out on Part 1's Sound with Part 2's note
+/// waiting on it: booked, the newest held, so the shed order would take it
+/// first, but its fade frees nothing yet. The net passes over it and
+/// sheds Part 1's newest note.
+#[test]
+fn the_load_net_skips_a_booked_voice_still_fading() {
+    let mut r = common::InstRig::with_budget(chimera_core::hw::SampleBudget::for_cpu(u32::MAX));
+    r.shared.parts[1].mix.channel = chimera_core::MidiChannel::new(1).unwrap();
+    for n in 0..8 {
+        r.note_on(0, 60 + n);
+        r.render(1);
+    }
+    r.note_on(1, 40);
+    let slots = r.inst.allocator().slots();
+    let stolen = slots
+        .iter()
+        .position(|s| s.part() == Some(PartId::ALL[1]))
+        .expect("Part 2's note took a voice");
+    assert!(
+        r.inst.voice(stolen).fading(),
+        "it fades out Part 1's note first"
+    );
+    assert!(slots[stolen].held() && !slots[stolen].dying());
+    let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
+    let net = LoadNet::new(CycleCounter::new(true).expect("a counting DWT"), block);
+    assert!(
+        net.after(Cycles::new(block.block_cycles()), &mut r.inst),
+        "one shed"
+    );
+    let s = r.inst.allocator().slots();
+    assert!(!s[stolen].dying(), "the fading voice is passed over");
+    let shed: Vec<usize> = (0..s.len()).filter(|&v| s[v].dying()).collect();
+    assert_eq!(shed.len(), 1);
+    assert_eq!(
+        s[shed[0]].note().map(|n| n.get()),
+        Some(67),
+        "Part 1's newest"
+    );
+}

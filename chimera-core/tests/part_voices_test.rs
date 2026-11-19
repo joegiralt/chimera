@@ -973,3 +973,24 @@ fn a_held_value_stays_through_other_edits_and_drops_on_a_rule_change() {
         "Part 2's RESERVE moved: dropped"
     );
 }
+
+/// A slot's freeing rule and its reserve rule, side by side on `Strike`:
+/// a held note keeps its slot and reserves; a released one frees and
+/// doesn't; a DRUM hit frees with its voice and reserves until then.
+#[test]
+fn a_strike_says_when_its_slot_frees_and_whether_it_reserves() {
+    use chimera_core::voice_alloc::{Key, Strike};
+    let table = [
+        (Strike::Note(Key::Down), false, true),
+        (Strike::Note(Key::Up), true, false),
+        (Strike::Hit(Key::Down), true, true),
+        (Strike::Hit(Key::Up), true, true),
+    ];
+    for (s, frees, reserves) in table {
+        assert_eq!(
+            (s.ends_with_voice(), s.reserves()),
+            (frees, reserves),
+            "{s:?}"
+        );
+    }
+}

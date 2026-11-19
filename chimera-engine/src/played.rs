@@ -11,7 +11,7 @@ static LAST_IN: AtomicU32 = AtomicU32::new(0);
 static LAST_OUT: AtomicU32 = AtomicU32::new(0);
 const VALID: u32 = 1 << 31;
 
-/// The last note received: key, velocity and the Part (0-based) it played.
+/// The last note received: key, velocity and the Part it played.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NoteIn {
     pub note: u8,
