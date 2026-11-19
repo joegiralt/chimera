@@ -214,7 +214,10 @@ fn new_binding_by_pointing() {
     let e_cut = enc_of(&ui, CUTOFF);
     feed(&mut ui, Key::turn(e_cut, 3));
     assert_eq!(ui.project().rev(), before, "a turn points, never edits");
-    assert_eq!(pointing(&ui), Some((Aim::New, Pointer::At)));
+    assert!(matches!(
+        pointing(&ui),
+        Some((Aim::New, Pointer::At(c))) if c.page == FILTER.id
+    ));
     edit(&mut ui);
     assert_eq!(pointing(&ui), None);
     let m = map(&ui);
@@ -391,4 +394,123 @@ fn first_mappable(ui: &UiState) -> (usize, ParamAddr) {
             Mappable::new(a).map(|_| (i, a))
         })
         .expect("a mappable cell")
+}
+
+/// MOD MATRIX while pointing: its routes are no cell to bind, said on its
+/// hint line, and A and B still move its cursor; E edits no amount.
+#[test]
+fn mod_matrix_says_not_mappable_and_moves() {
+    use chimera_core::ui::block_registry::MOD_MATRIX;
+    let mut ui = page(&[], 1);
+    edit(&mut ui);
+    for _ in 0..12 {
+        if ui.page_def().id == MOD_MATRIX.id {
+            break;
+        }
+        feed(&mut ui, Key::press(Plus));
+    }
+    assert_eq!(ui.page_def().id, MOD_MATRIX.id);
+    assert!(pointing(&ui).is_some());
+    const NOT: Hint = &[Gesture("NOT MAPPABLE", ""), Gesture("MENU", "CANCELS")];
+    let shot = render_ui(&ui);
+    assert!((0..320).any(|y| drawn_at(&shot, NOT, y)), "said");
+    let (row, col) = (ui.matrix_state.sel_row, ui.matrix_state.sel_col);
+    let rev = ui.project().rev();
+    feed(&mut ui, Key::turn(EncoderId::A, 1));
+    feed(&mut ui, Key::turn(EncoderId::B, 1));
+    feed(&mut ui, Key::turn(EncoderId::E, 5));
+    assert_eq!(
+        (ui.matrix_state.sel_row, ui.matrix_state.sel_col),
+        (row + 1, col + 1)
+    );
+    assert_eq!(ui.project().rev(), rev, "no amount edited");
+    let def = ui.page_def().id;
+    edit(&mut ui);
+    assert!(pointing(&ui).is_some() || ui.page_def().id != def);
+    assert_eq!(map(&ui).len(), 0);
+}
+
+/// The Sound rung ends pointing: its EDIT loads a Sound, which would
+/// replace the map pointing writes.
+#[test]
+fn the_sound_rung_ends_pointing() {
+    let mut ui = page(&[], 1);
+    edit(&mut ui);
+    feed(&mut ui, Key::chord(Edit, chimera_hal::ButtonId::B1));
+    assert!(ui.location().browse().is_some(), "on the Sound rung");
+    assert_eq!(pointing(&ui), None);
+    edit(&mut ui);
+    assert!(map(&ui).is_empty());
+}
+
+/// MENU held cancels, as tapped: back on MIDI MAP, nothing saved.
+#[test]
+fn menu_held_cancels() {
+    let mut ui = page(&[], 1);
+    edit(&mut ui);
+    screen::hold(&mut ui, Menu);
+    assert_eq!(pointing(&ui), None);
+    assert!(ui.in_settings());
+    assert_eq!(bar(&ui), 1);
+}
+
+/// A new row never takes the mod wheel or a built-in control's CC: with
+/// 2-5 taken (6 is data entry) it skips 7 (LEVEL) for 8.
+#[test]
+fn a_new_row_skips_the_built_in_ccs() {
+    let taken: Vec<Binding> = (2..=5)
+        .map(|n| {
+            let mut b = bind(Input::cc(n).unwrap(), CUTOFF);
+            b.target = full_target(n - 2);
+            b
+        })
+        .collect();
+    let mut ui = page(&taken, 5);
+    edit(&mut ui);
+    to_pit(&mut ui);
+    let (slot, a) = first_mappable(&ui);
+    feed(&mut ui, Key::turn(chimera_hal::ALL_ENCODERS[slot], 1));
+    edit(&mut ui);
+    assert_eq!(map(&ui).entries()[4], bind(Input::cc(8).unwrap(), a));
+}
+
+/// A retarget whose row went meanwhile (a load) is said, not silent.
+#[test]
+fn a_bind_that_cannot_happen_is_said() {
+    use chimera_core::ui::busy::ToastStep;
+    let mut ui = page(&[bind(Input::cc(74).unwrap(), CUTOFF)], 1);
+    edit(&mut ui);
+    ui.project_mut().edit_part(P1).sound.map = MidiMap::EMPTY;
+    let e_res = enc_of(&ui, RESO);
+    feed(&mut ui, Key::turn(e_res, 1));
+    edit(&mut ui);
+    assert_eq!(pointing(&ui), None);
+    match ui.step_toast(0) {
+        ToastStep::Show(l) => assert_eq!(l.as_str(), "BINDING GONE"),
+        s => panic!("no toast: {s:?}"),
+    }
+}
+
+/// A pointed cell binds only while it is the one focused: a turn of
+/// another cell points there instead, and EDIT binds that one.
+#[test]
+fn edit_binds_the_cell_pointed_at() {
+    let mut ui = page(&[], 1);
+    edit(&mut ui);
+    let e_cut = enc_of(&ui, CUTOFF);
+    feed(&mut ui, Key::turn(e_cut, 1));
+    let e_res = enc_of(&ui, RESO);
+    feed(&mut ui, Key::turn(e_res, 1));
+    edit(&mut ui);
+    assert_eq!(map(&ui).entries()[0].target, at(RESO));
+}
+
+/// `+ NEW BINDING`'s lines name no key it doesn't answer.
+#[test]
+fn the_new_row_names_only_its_keys() {
+    let ui = page(&[], 1);
+    let t = ui.map_band().text(1);
+    assert_eq!(t.head.as_str(), "POINT AT A CELL");
+    assert_eq!(t.tail.as_str(), "ITS CC IS SET ON ITS ROW");
+    assert!(t.hint().is_empty());
 }

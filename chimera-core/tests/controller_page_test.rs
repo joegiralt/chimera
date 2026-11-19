@@ -159,6 +159,12 @@ fn row_0_picks_and_the_layer_s_rows_follow() {
     assert_eq!(b.text(0).word.as_str(), "EC4");
     assert_eq!(b.text(1).label.as_str(), "CC 21  CUTOFF");
     assert_eq!(b.text(1).tail.as_str(), "IN EC4");
+    // A layer row's EDIT does nothing: its hint names B and E only.
+    assert_eq!(
+        b.text(1).hint(),
+        chimera_core::ui::settings::midi_map::LAYER,
+        "no EDIT TARGET on a layer row (ADR 0288)"
+    );
     assert_eq!(b.look(1), RowLook::Normal);
     // The Sound's CC 74 holds the control: the map's row is dimmed.
     assert_eq!(b.look(2), RowLook::Dimmed);

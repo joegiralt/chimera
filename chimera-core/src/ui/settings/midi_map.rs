@@ -115,14 +115,17 @@ impl MapText {
         ]
     }
 
-    /// The keys' hint, under the values.
+    /// The keys' hint, under the values: a Sound row's EDIT points at its
+    /// new target (ADR 0288), a layer row's does nothing.
     pub fn hint(&self) -> Hint {
-        match self.row {
-            MapRow::Pick if self.fixed => PICK_MAP,
-            MapRow::Pick => PICK,
-            MapRow::New => crate::ui::hint::NONE,
-            _ if self.fixed => FIXED,
-            _ => KEYS,
+        match (self.row, self.fixed) {
+            (MapRow::Pick, true) => PICK_MAP,
+            (MapRow::Pick, false) => PICK,
+            (MapRow::Layer, true) => LAYER_FIXED,
+            (MapRow::Layer, false) => LAYER,
+            (MapRow::Own, true) => FIXED,
+            (MapRow::Own, false) => KEYS,
+            (MapRow::New, _) => crate::ui::hint::NONE,
         }
     }
 }
@@ -134,24 +137,75 @@ fn text(e: &Binding, fx: FxType, live: bool) -> MapText {
     t
 }
 
-/// B and E, under the values (spec § 8.2's hint line, ADR 0086); EDIT
-/// points at a new target (ADR 0288).
+/// A Sound row: B and E, under the values (spec § 8.2's hint line, ADR
+/// 0086); EDIT points at a new target (ADR 0288).
 pub const KEYS: Hint = &[
     Gesture("B", "CONTROL"),
     Gesture("E", "INPUT"),
     Gesture("EDIT", "TARGET"),
 ];
-/// An NRPN or pressure control is fixed: B can't step it.
+/// A Sound row on an NRPN or pressure: B can't step it.
 pub const FIXED: Hint = &[
-    Gesture("B", "RELEARN"),
+    Gesture("B", "FIXED"),
     Gesture("E", "INPUT"),
     Gesture("EDIT", "TARGET"),
 ];
+/// A controller layer's row: B and E edit it in its map; EDIT does
+/// nothing there (ADR 0288).
+pub const LAYER: Hint = &[Gesture("B", "CONTROL"), Gesture("E", "INPUT")];
+/// A layer's row on an NRPN or pressure.
+pub const LAYER_FIXED: Hint = &[Gesture("B", "RELEARN TO CHANGE"), Gesture("E", "INPUT")];
 /// Row 0: B picks the map, EDIT saves the Part's rows into one (ADR 0226).
 pub const PICK: Hint = &[Gesture("B", "PICK"), Gesture("EDIT", "SAVE ROWS TO MAP")];
 /// Row 0 with a map picked: MIX+MINUS deletes it; MIX+EDIT's rename is on
 /// the tail line (ADR 0255).
 pub const PICK_MAP: Hint = &[Gesture("EDIT", "SAVE"), Gesture("MIX+MINUS", "DELETE")];
+
+/// The rows MIDI MAP always has: the pick and `+ NEW BINDING`.
+pub const FRAME_ROWS: usize = 2;
+
+/// A pass's keys on MIDI MAP, as `map_in` reads them: MIX down, and
+/// MINUS's, PLUS's and EDIT's presses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct MapKeys(u8);
+
+impl MapKeys {
+    pub const NONE: MapKeys = MapKeys(0);
+    pub const MIX: MapKeys = MapKeys(1);
+    pub const MINUS: MapKeys = MapKeys(2);
+    pub const PLUS: MapKeys = MapKeys(4);
+    pub const EDIT: MapKeys = MapKeys(8);
+
+    /// These keys, with `k` if `on`.
+    #[inline(always)]
+    pub const fn with(self, k: MapKeys, on: bool) -> MapKeys {
+        MapKeys(self.0 | if on { k.0 } else { 0 })
+    }
+
+    #[inline(always)]
+    const fn has(self, k: MapKeys) -> bool {
+        self.0 & k.0 == k.0
+    }
+
+    /// MIX + MINUS: DELETE.
+    #[inline(always)]
+    pub const fn delete(self) -> bool {
+        self.has(MapKeys(MapKeys::MIX.0 | MapKeys::MINUS.0))
+    }
+
+    /// MIX + PLUS: KEEP MAP on row 0.
+    #[inline(always)]
+    pub const fn keep(self) -> bool {
+        self.has(MapKeys(MapKeys::MIX.0 | MapKeys::PLUS.0))
+    }
+
+    /// EDIT without MIX: pointing (ADR 0288).
+    #[inline(always)]
+    pub const fn point(self) -> bool {
+        self.has(MapKeys::EDIT) && !self.has(MapKeys::MIX)
+    }
+}
 
 /// The active Part's MIDI MAP for the bands: its rows are bank 2's.
 #[derive(Clone, Copy)]
@@ -212,16 +266,17 @@ impl UiState {
     /// A key on the page: A moves the bar (`NavKey::Bar`), B the control,
     /// C MIN, D MAX, E the input, F the echo; MIX+MINUS deletes, MIX + PLUS
     /// on row 0 is KEEP MAP; EDIT on a Sound row or `+ NEW BINDING` points
-    /// (ADR 0288). Bank 2's (`map_in`), from MIX down (bit 0), MINUS's
-    /// press (bit 1), PLUS's (bit 2) and EDIT's (bit 3); closed, nothing.
+    /// (ADR 0288). Bank 2's (`map_in`), from MIX down and MINUS's, PLUS's
+    /// and EDIT's presses (`MapKeys`); closed, nothing.
     #[inline(never)]
     pub(in crate::ui) fn map_input(&mut self, c: &impl Controls) {
         let d = ALL_ENCODERS.map(|e| c.encoder_delta(e));
-        let pressed = |b| u8::from(c.button_state(b) == ButtonState::Pressed);
-        let keys = u8::from(c.edges(ButtonId::Mix).down)
-            | pressed(ButtonId::Minus) << 1
-            | pressed(ButtonId::Plus) << 2
-            | pressed(ButtonId::Edit) << 3;
+        let pressed = |b| c.button_state(b) == ButtonState::Pressed;
+        let keys = MapKeys::NONE
+            .with(MapKeys::MIX, c.edges(ButtonId::Mix).down)
+            .with(MapKeys::MINUS, pressed(ButtonId::Minus))
+            .with(MapKeys::PLUS, pressed(ButtonId::Plus))
+            .with(MapKeys::EDIT, pressed(ButtonId::Edit));
         self.map_keys(d, keys);
     }
 
@@ -231,7 +286,7 @@ impl UiState {
         MapBand {
             ui: self,
             rows,
-            empty: rows <= 2,
+            empty: rows <= FRAME_ROWS,
             open: crate::ui::cc::map_open(),
         }
     }

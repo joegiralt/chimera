@@ -3158,6 +3158,14 @@ impl UiState {
             // Dropped: a pending replace with it.
             self.closed();
         }
+        // MENU held while pointing cancels, as tapped (ADR 0288): no save.
+        #[cfg(feature = "midi-map")]
+        if presses.menu == Some(Press::Hold)
+            && matches!(self.learn, learn::Learn::Pointing(_))
+            && self.point(learn::PointAct::MenuHeld) == learn::Took::Frame
+        {
+            return;
+        }
         if presses.menu == Some(Press::Hold) {
             // A key like any other: it cancels learn (spec § 4).
             self.learn = learn::Learn::Off;
@@ -3176,7 +3184,7 @@ impl UiState {
             // read the bind's EDIT again; the rest walk.
             #[cfg(feature = "midi-map")]
             if matches!(self.learn, learn::Learn::Pointing(_)) {
-                if self.point(learn::PointAct::Nav(k)) {
+                if self.point(learn::PointAct::Nav(k)) == learn::Took::Frame {
                     return;
                 }
             } else if k == NavKey::MixSeq {
@@ -3830,6 +3838,7 @@ impl UiState {
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.band_status(),
+            point: self.point_band(),
             pickup: self
                 .pickup()
                 .filter(|_| self.theme.hints)

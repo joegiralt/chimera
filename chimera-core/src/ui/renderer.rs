@@ -83,6 +83,9 @@ pub struct Frame<'a> {
     /// The last MIX+PLUS outcome or MIDI learn's word, shown in the focus
     /// band in place of the value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
+    /// MIDI MAP's pointing hint (ADR 0288): over every hint the page
+    /// would show, and in a BigViz status line's place.
+    pub point: Option<hint::Hint>,
     /// The focused cell's pickup waiting: the hint that says which way the
     /// knob must go, in the focus band or on a BigViz page's status line
     /// (none with HINTS off).
@@ -159,7 +162,12 @@ impl<'a> Frame<'a> {
 
     /// `h`, or none with HINTS off.
     pub fn hint(&self, h: hint::Hint) -> hint::Hint {
-        if self.hints { h } else { hint::NONE }
+        // Pointing's keys, whatever HINTS says: no other way out shows.
+        match (self.point, self.hints) {
+            (Some(p), _) => p,
+            (None, true) => h,
+            (None, false) => hint::NONE,
+        }
     }
 
     /// What the header shows beside its words: the load and the dots.
@@ -408,13 +416,10 @@ impl Renderer {
             }
             _ => {}
         }
-        // Pointing (ADR 0288): the hint in the status line's place, but
-        // for a refusal, which says why.
-        #[cfg(feature = "midi-map")]
-        if point_line(display, f, theme::BIGVIZ_STATUS_Y) {
-            return;
-        }
-        if let Some(status) = f.prime_status {
+        // Pointing (ADR 0288): its hint in the status line's place.
+        if f.point.is_none()
+            && let Some(status) = f.prime_status
+        {
             let label = view::view(f.def, f.focus, &f.ctx).label();
             let w = components::viz_status(display, status, label);
             // Sensing sure: MIX + SEQ  DONE after the guess, where it fits.
@@ -428,25 +433,26 @@ impl Renderer {
             }
             #[cfg(not(feature = "midi-map"))]
             let _ = w;
-        } else if let Some(h) = f.pickup {
+        } else if f.point.is_none()
+            && let Some(h) = f.pickup
+        {
             hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
-        } else if Self::focus_hint(f) == view::PAD_HINT {
-            // A pad cell: MIX + -/+ steps the pad, said where the band
-            // would, on the status line's own backing (`viz_status`'s).
+        } else if let Some(h) = f
+            .point
+            .or((Self::focus_hint(f) == view::PAD_HINT).then_some(view::PAD_HINT))
+        {
+            // Pointing's, or a pad cell's (MIX + -/+ steps the pad), said
+            // where the band would, on the status line's own backing
+            // (`viz_status`'s).
             draw::fill_rect(
                 display,
                 theme::MARGIN_X - 2,
                 theme::HEADER_BOTTOM,
-                hint::width_at(view::PAD_HINT, theme::TextSize::Normal) + 4,
+                hint::width_at(h, theme::TextSize::Normal) + 4,
                 viz::PLOT_TOP - theme::HEADER_BOTTOM,
                 theme::BG,
             );
-            hint::draw(
-                display,
-                view::PAD_HINT,
-                theme::MARGIN_X,
-                theme::BIGVIZ_STATUS_Y,
-            );
+            hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
         }
     }
 
@@ -851,10 +857,6 @@ impl Renderer {
                 f.prime_status,
                 f.text,
             );
-            #[cfg(feature = "midi-map")]
-            if point_line(display, f, hint::FOCUS_Y) {
-                return;
-            }
             let right = hint_right(&o.gauge);
             return hint::focus(display, f.hint(o.hint), f.text, right);
         }
@@ -900,9 +902,9 @@ impl Renderer {
             return;
         }
         // Pointing: its keys, whatever the cell's own (ADR 0288).
-        #[cfg(feature = "midi-map")]
-        if point_line(display, f, hint::FOCUS_Y) {
-            return;
+        // Pointing: its keys, over the cell's own (ADR 0288).
+        if f.point.is_some() {
+            return hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge));
         }
         // A pickup waiting: which way to turn, over the cell's own hint.
         // Never LARGE: it is near the line's whole width at NORMAL.
@@ -1426,41 +1428,6 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         }
         _ => components::Look::Live,
     }
-}
-
-/// Pointing's hint line (ADR 0288), drawn at the margin on baseline `y`:
-/// on the focus band's hint line, or, at `BIGVIZ_STATUS_Y`, in a BigViz
-/// status line's place on its backing, but for a refusal, which the status
-/// says. `true`, drawn.
-#[cfg(feature = "midi-map")]
-#[inline(never)]
-fn point_line<D>(d: &mut D, f: &Frame, y: i32) -> bool
-where
-    D: DrawTarget<Color = Rgb565>,
-{
-    use crate::ui::learn::{LearnNote, Pointed};
-    let Some(PrimeStatus::Learn(Some(LearnNote::Point(p)))) = f.prime_status else {
-        return false;
-    };
-    let viz = y == theme::BIGVIZ_STATUS_Y;
-    if viz && matches!(p, Pointed::NotMappable | Pointed::Bound) {
-        return false;
-    }
-    let Some(h) = crate::ui::cc::point_hint(p) else {
-        return false;
-    };
-    if viz {
-        draw::fill_rect(
-            d,
-            theme::MARGIN_X - 2,
-            theme::HEADER_BOTTOM,
-            hint::width_at(&h, theme::TextSize::Normal) + 4,
-            viz::PLOT_TOP - theme::HEADER_BOTTOM,
-            theme::BG,
-        );
-    }
-    hint::draw(d, &h, theme::MARGIN_X, y);
-    true
 }
 
 /// The focus band's label: FREQ MOD and RES MOD name the source their jack

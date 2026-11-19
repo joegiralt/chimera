@@ -20,7 +20,7 @@ use super::super::fmt::FmtBuf;
 use super::super::learn::Aim;
 use super::super::region::settings_key;
 use super::super::settings::Ask;
-use super::super::settings::midi_map::{MapDelete, MapRow, MapText, name};
+use super::super::settings::midi_map::{MapDelete, MapKeys, MapRow, MapText, name};
 use super::super::settings::prompt::Choice;
 use super::super::settings::view::RowLook;
 use super::layer::{W as Lw, shadowed, word as lword};
@@ -438,12 +438,10 @@ impl UiState {
     }
 
     /// A pass's keys on MIDI MAP: the encoders' detents A to F, and MIX
-    /// down (bit 0) with MINUS (bit 1, delete) or PLUS (bit 2, KEEP MAP)
-    /// pressed; EDIT (bit 3) alone points (ADR 0288). The door's `map_in`.
-    pub(in crate::ui) fn map_in(&mut self, d: [i8; 6], keys: u8) {
-        let delete = keys & 0b011 == 0b011;
-        let keep = keys & 0b101 == 0b101;
-        let point = keys & 0b1001 == 0b1000;
+    /// with MINUS (delete) or PLUS (KEEP MAP); EDIT alone points (ADR
+    /// 0288). The door's `map_in`.
+    pub(in crate::ui) fn map_in(&mut self, d: [i8; 6], keys: MapKeys) {
+        let (delete, keep, point) = (keys.delete(), keys.keep(), keys.point());
         let p = self.active_part;
         let (map, Some(at)) = (self.project.part(p).sound.map, self.loc.settings()) else {
             return;

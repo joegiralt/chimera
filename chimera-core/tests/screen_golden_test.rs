@@ -569,7 +569,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // New (MIDI phase 1, Task 13): MIDI MAP with every kind of control,
     // and FINE's pickup waiting below the knob.
     // midi_map_* re-recorded for ADR 0288: `+ NEW BINDING` ends the list
-    // (its scroll bar), a Sound row's keys add EDIT TARGET.
+    // (its scroll bar), a Sound row's keys add EDIT TARGET; midi_map_layer
+    // again: a layer row's keys stay B and E (no EDIT there).
     #[cfg(feature = "midi-map")]
     ("midi_map_mixed", 0xbceb78f40a940437),
     #[cfg(feature = "midi-map")]
@@ -578,13 +579,13 @@ const GOLDENS: &[(&str, u64)] = &[
     ("midi_map_pick", 0xe0f3c6a27ed04446),
     // Controller map EC4 picked, the bar on its first row (ADR 0255).
     #[cfg(feature = "midi-map")]
-    ("midi_map_layer", 0x682c55b5eea4ad4a),
+    ("midi_map_layer", 0xbac404b3446fd193),
     // The bar on its row 0: rename and delete in the tail line.
     #[cfg(feature = "midi-map")]
     ("midi_map_layer_row0", 0x7f30bc83c4c02eb6),
     // New for ADR 0288: MIDI MAP's `+ NEW BINDING`, and pointing from it.
     #[cfg(feature = "midi-map")]
-    ("midi_map_new_row", 0xe58bdda60046905a),
+    ("midi_map_new_row", 0x0912b518f2717b3f),
     #[cfg(feature = "midi-map")]
     ("midi_map_pointing", 0xb477dffacf7b7f28),
     // DRUM's pages (ADR 0265, slice 1 Task 8). KIT's re-recorded for ADR

@@ -914,16 +914,20 @@ impl Bands<'_> {
             (Some(Screen::SceneSaveTo), _) => return legend(LegendFor::Action, false),
             #[cfg(feature = "midi-map")]
             (Some(Screen::MidiMap), _) => {
+                // By the bar's row (ADR 0288): `+ NEW BINDING` points, or
+                // nothing on a full map.
+                use super::midi_map::MapRow;
                 let on = match self.map.filter(|m| m.open) {
                     None => LegendFor::Dimmed,
-                    Some(_) if self.at.row() == 0 => LegendFor::MapPick,
-                    // `+ NEW BINDING` (ADR 0288): EDIT points, or nothing
-                    // on a full map.
-                    Some(m) => match m.text(self.at.row() as usize) {
-                        t if t.row != super::midi_map::MapRow::New => LegendFor::Map,
-                        t if t.look == RowLook::Dimmed => LegendFor::Dimmed,
-                        _ => LegendFor::Action,
-                    },
+                    Some(m) => {
+                        let t = m.text(self.at.row() as usize);
+                        match (t.row, t.look) {
+                            (MapRow::Pick, _) => LegendFor::MapPick,
+                            (MapRow::Layer | MapRow::Own, _) => LegendFor::Map,
+                            (MapRow::New, RowLook::Dimmed) => LegendFor::Dimmed,
+                            (MapRow::New, RowLook::Normal | RowLook::Later) => LegendFor::Action,
+                        }
+                    }
                 };
                 return legend(on, false);
             }

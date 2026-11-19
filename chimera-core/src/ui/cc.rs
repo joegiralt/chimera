@@ -14,7 +14,7 @@ use super::fmt::FmtBuf;
 use super::hint::{Gesture, Hint};
 use super::learn::{LearnNote, Line, Sensed};
 #[cfg(feature = "midi-map")]
-use super::learn::{PointAct, Pointed};
+use super::learn::{PointAct, Pointed, Took};
 use super::midi::MidiUi;
 #[cfg(feature = "midi-map")]
 use super::midi::program::Recalls;
@@ -190,7 +190,7 @@ type Note = fn(Option<LearnNote>, &str, &mut FmtBuf);
 
 /// The door's `map_in`: `UiState::map_in`, MIDI MAP's keys.
 #[cfg(feature = "midi-map")]
-type MapIn = fn(&mut UiState, [i8; 6], u8);
+type MapIn = fn(&mut UiState, [i8; 6], super::settings::midi_map::MapKeys);
 /// The door's `map_text`: `page::text`, a binding's words on MIDI MAP.
 #[cfg(feature = "midi-map")]
 type MapTextFn = fn(&Binding, FxType, bool, &mut MapText);
@@ -226,9 +226,9 @@ type Clashes = fn(&crate::ui::midi_settings::MidiSettings, &crate::project::Proj
 #[cfg(feature = "midi-map")]
 type PointSay = fn(&UiState) -> Option<Pointed>;
 #[cfg(feature = "midi-map")]
-type PointFn = fn(&mut UiState, PointAct<'_>) -> bool;
+type PointFn = fn(&mut UiState, PointAct<'_>) -> Took;
 #[cfg(feature = "midi-map")]
-type PointHint = fn(Pointed) -> [Gesture<'static>; 2];
+type PointHint = fn(Pointed) -> Hint;
 
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
@@ -424,7 +424,7 @@ impl UiState {
 impl UiState {
     /// MIDI MAP's keys this pass: A to F's detents, and MIX, MINUS and
     /// PLUS as `map_input`'s bits (`map_in`). Closed, nothing.
-    pub(super) fn map_keys(&mut self, d: [i8; 6], keys: u8) {
+    pub(super) fn map_keys(&mut self, d: [i8; 6], keys: super::settings::midi_map::MapKeys) {
         through(|t| (t.map_in)(self, d, keys));
     }
 
@@ -469,16 +469,16 @@ impl UiState {
         through(|d| (d.point_say)(self)).flatten()
     }
 
-    /// What reaches pointing, `a` (`point`): `true`, the frame taken (a
-    /// bind or the cancel); `false`, it walks as ever. Closed, pointing
-    /// ends: it never starts there.
+    /// What reaches pointing, `a` (`point`): the frame taken (a bind or
+    /// the cancel), or a key that walks as ever. Closed, pointing ends: it
+    /// never starts there.
     #[inline(never)]
-    pub(super) fn point(&mut self, a: PointAct<'_>) -> bool {
+    pub(super) fn point(&mut self, a: PointAct<'_>) -> Took {
         match through(|d| (d.point)(self, a)) {
-            Some(taken) => taken,
+            Some(t) => t,
             None => {
                 self.learn = super::learn::Learn::Off;
-                false
+                Took::Walk
             }
         }
     }
@@ -538,9 +538,10 @@ pub(super) fn map_text(e: &Binding, fx: FxType, live: bool, out: &mut MapText) {
 }
 
 /// Pointing's hint line for `p` (`point_hint`): `EDIT BINDS  MENU
-/// CANCELS`, or `A-F POINT` in EDIT's place. Closed, none.
+/// CANCELS`, `A-F POINT` in EDIT's place, or why it can't bind. Bank 2's
+/// statics. Closed, none.
 #[cfg(feature = "midi-map")]
-pub(super) fn point_hint(p: Pointed) -> Option<[Gesture<'static>; 2]> {
+pub(super) fn point_hint(p: Pointed) -> Option<Hint> {
     through(|d| (d.point_hint)(p))
 }
 

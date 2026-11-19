@@ -8,6 +8,7 @@
 use chimera_hal::{ALL_ENCODERS, ButtonId, ButtonState, Controls};
 
 use super::nav::OrbitKey;
+use super::page::PageLayout;
 use super::view::{self, View};
 use super::{PrimeStatus, UiState};
 use crate::MidiChannel;
@@ -56,8 +57,16 @@ pub enum Aim {
 pub enum Pointer {
     /// No cell pointed at here yet: EDIT walks the pages as ever.
     Walking,
-    /// A turn pointed at the focused cell: EDIT binds it.
-    At,
+    /// A turn pointed at this cell: EDIT binds it while it is the cell
+    /// focused, never another (a rechained page, a moved focus).
+    At(Cell),
+}
+
+/// A cell of a page: its page's `BlockDef::id` and its slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cell {
+    pub page: u16,
+    pub slot: usize,
 }
 
 /// What pointing says in the value's place (bank 2's `point_say`).
@@ -98,12 +107,23 @@ impl Pointed {
 }
 
 /// What reaches pointing (ADR 0288), bank 2's to judge: a ladder key, a
-/// frame's ORBIT keys, a move.
+/// frame's ORBIT keys, a move, MENU held.
 #[derive(Clone, Copy, Debug)]
 pub enum PointAct<'a> {
     Nav(super::nav::NavKey),
     Orbit(&'a [Option<OrbitKey>]),
     Moved(super::nav::Location),
+    /// MENU held: it cancels, as MENU tapped does.
+    MenuHeld,
+}
+
+/// What pointing made of an act.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Took {
+    /// A bind or the cancel: the frame is pointing's.
+    Frame,
+    /// Not pointing's: the key walks as ever.
+    Walk,
 }
 
 /// What a learn heard or found.
@@ -214,6 +234,15 @@ impl UiState {
         self.prime_status
     }
 
+    /// Pointing's hint (ADR 0288), bank 2's words for what it says now.
+    pub(super) fn point_band(&self) -> Option<super::hint::Hint> {
+        #[cfg(feature = "midi-map")]
+        if let Learn::Pointing(_) = self.learn {
+            return self.point_say().and_then(super::cc::point_hint);
+        }
+        None
+    }
+
     /// The band's words as drawn: the tests' read.
     #[cfg(any(test, feature = "test-support"))]
     pub fn status_text(&self) -> Option<FmtBuf> {
@@ -250,7 +279,9 @@ impl UiState {
                 part: self.active_part,
                 note: None,
             },
-            _ => Learn::Off,
+            Learn::Off | Learn::Armed { .. } | Learn::Sensing { .. } | Learn::Pointing(_) => {
+                Learn::Off
+            }
         };
     }
 
@@ -265,7 +296,7 @@ impl UiState {
         // Pointing judges the frame's keys first (ADR 0288).
         #[cfg(feature = "midi-map")]
         if matches!(self.learn, Learn::Pointing(_)) {
-            return self.point(PointAct::Orbit(keys));
+            return self.point(PointAct::Orbit(keys)) == Took::Frame;
         }
         let mix = c.edges(ButtonId::Mix).down;
         if mix && c.button_state(ButtonId::Seq) == ButtonState::Pressed {
@@ -289,11 +320,8 @@ impl UiState {
             _ if !cfg!(feature = "midi-map") => return false,
             Learn::Off => return false,
             Learn::Armed { part, .. } => Learn::Armed { part, note: None },
-            // Pointing: a turn points at its cell (ADR 0288).
-            Learn::Pointing(p) => Learn::Pointing(Point {
-                at: Pointer::At,
-                ..p
-            }),
+            // Pointing: a turn points at its cell (ADR 0288), below.
+            p @ Learn::Pointing(_) => p,
             Learn::Sensing { .. } => {
                 if ALL_ENCODERS.iter().any(|&e| c.encoder_delta(e) != 0) {
                     self.learn = Learn::Off;
@@ -302,10 +330,34 @@ impl UiState {
             }
         };
         let (def, ctx) = (self.page_def(), self.ctx());
+        // Pointing on MOD MATRIX: A, B and D move its cursor; no route is
+        // a cell a control may drive, so nothing is pointed at.
+        if let (Learn::Pointing(_), PageLayout::Matrix) = (then, def.layout) {
+            let m = &mut self.matrix_state;
+            for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
+                match (i, c.encoder_delta(enc)) {
+                    (_, 0) => {}
+                    (0, d) => m.move_row(d),
+                    (1, d) => m.move_col(d),
+                    (3, d) => m.scroll_h(d),
+                    _ => {}
+                }
+            }
+            return true;
+        }
         for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
             if c.encoder_delta(enc) != 0 && view::view(def, i, &ctx) != View::Empty {
                 self.focus.touch(def.id, i);
-                self.learn = then;
+                self.learn = match then {
+                    Learn::Pointing(p) => Learn::Pointing(Point {
+                        at: Pointer::At(Cell {
+                            page: def.id,
+                            slot: i,
+                        }),
+                        ..p
+                    }),
+                    l @ (Learn::Off | Learn::Armed { .. } | Learn::Sensing { .. }) => l,
+                };
             }
         }
         true

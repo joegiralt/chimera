@@ -470,7 +470,7 @@ fn nrpn_row_b_does_nothing_and_hints() {
         assert_eq!(
             ui.map_band().text(1).hint(),
             &[
-                Gesture("B", "RELEARN"),
+                Gesture("B", "FIXED"),
                 Gesture("E", "INPUT"),
                 Gesture("EDIT", "TARGET")
             ][..]
