@@ -9,8 +9,8 @@ use chimera_core::board::{Hc165Pins, Port};
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_core::console::Hand;
 use chimera_hal::{
-    ButtonId, ButtonState, Controls, Debounce, Edges, EncoderId, Latch, Ms, NUM_BUTTONS,
-    NUM_ENCODERS, push_levels,
+    Accel, BurstPos, ButtonId, ButtonState, Controls, Debounce, Detents, Edges, EncoderId, Latch,
+    Ms, NUM_BUTTONS, NUM_ENCODERS, Turn, push_levels,
 };
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, AtomicUsize, Ordering};
@@ -296,7 +296,10 @@ pub fn hand(h: &Hand) {
     let now = ISR_TICK.load(Ordering::Relaxed);
     for ((&d, delta), edge) in h.detents.iter().zip(&ENC_DELTA).zip(&ENC_LAST_EDGE) {
         if d != 0 {
-            delta.fetch_add(d, Ordering::Relaxed);
+            // Saturating: a hand on top of the ISR's detents never wraps.
+            let _ = delta.try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                Some(x.saturating_add(d))
+            });
             edge.store(now, Ordering::Relaxed);
         }
     }
@@ -306,8 +309,12 @@ pub struct Stm32Controls {
     /// The buttons', then the pushes'.
     edges: [Edges; NUM_SWITCHES],
     now_ms: Ms,
-    enc: [i8; NUM_ENCODERS],
-    burst: [u8; NUM_ENCODERS],
+    enc: [Turn; NUM_ENCODERS],
+    /// `enc` as a parameter's ticks (`Accel::Param`).
+    ticks: [i8; NUM_ENCODERS],
+    burst: [BurstPos; NUM_ENCODERS],
+    /// Each encoder's last turn: its way, for a reversal's new burst.
+    last: [Detents; NUM_ENCODERS],
 }
 
 impl Stm32Controls {
@@ -315,8 +322,10 @@ impl Stm32Controls {
         Self {
             edges: [Edges::default(); NUM_SWITCHES],
             now_ms: Ms(0),
-            enc: [0; NUM_ENCODERS],
-            burst: [0; NUM_ENCODERS],
+            enc: [Turn::default(); NUM_ENCODERS],
+            ticks: [0; NUM_ENCODERS],
+            last: [Detents::new(0); NUM_ENCODERS],
+            burst: [BurstPos::START; NUM_ENCODERS],
         }
     }
 
@@ -332,31 +341,32 @@ impl Stm32Controls {
         });
         let now = ISR_TICK.load(Ordering::Relaxed);
         self.now_ms = Ms(tick_ms(now));
+        let seq = self.edges[ButtonId::Seq as usize];
         for i in 0..NUM_ENCODERS {
-            let raw = ENC_DELTA[i].swap(0, Ordering::Relaxed);
-            // A burst ends after the gap, in 500 Hz ticks.
+            let d = Detents::new(ENC_DELTA[i].swap(0, Ordering::Relaxed));
+            // A burst ends after the gap, in 500 Hz ticks, or at SEQ's
+            // edge (a fine turn's start or end, ADR 0279).
             let last = ENC_LAST_EDGE[i].load(Ordering::Relaxed);
-            if now.wrapping_sub(last) > chimera_hal::ENCODER_BURST_GAP_MS / 2 {
-                self.burst[i] = 0;
+            let rested = now.wrapping_sub(last) > chimera_hal::ENCODER_BURST_GAP_MS / 2;
+            let at = self.burst[i].next(rested, seq, self.last[i], d);
+            if d.get() != 0 {
+                self.last[i] = d;
             }
-            if raw != 0 {
-                let dir: i8 = if raw > 0 { 1 } else { -1 };
-                let edges = raw.unsigned_abs();
-                let mut total: i8 = 0;
-                for _ in 0..edges {
-                    total = total.saturating_add(dir * chimera_hal::encoder_accel(self.burst[i]));
-                    self.burst[i] = self.burst[i].saturating_add(1);
-                }
-                self.enc[i] = total;
-            } else {
-                self.enc[i] = 0;
-            }
+            // The detents and their place in the burst; the UI picks the
+            // acceleration.
+            self.enc[i] = Turn::at(d, at);
+            self.ticks[i] = Accel::Param.ticks(self.enc[i]).get();
+            self.burst[i] = at.after(d.count());
         }
     }
 }
 
 impl Controls for Stm32Controls {
     fn encoder_delta(&self, id: EncoderId) -> i8 {
+        self.ticks[id as usize]
+    }
+
+    fn turn(&self, id: EncoderId) -> Turn {
         self.enc[id as usize]
     }
 

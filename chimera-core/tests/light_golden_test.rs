@@ -16,14 +16,17 @@ use screen::*;
 // Re-recorded for #614 (Task 7, layout A): the Algo map without DRV in
 // engine_algo, algo_formant_page and the algo_op_page_* four; flt_clean's
 // cells in layout A.// Re-recorded in PR 4 (Task 8): the PLACE cell's FX/FLT glyph.
+// Re-recorded for ADR 0279: a value cell that steps fine hints SEQ+TURN
+// FINE (with MIX + SEQ LEARN where it maps, beside MIX + -/+ PAD on a
+// pad's), the mixer's too at rest; a choice cell keeps its own hint.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x1f9c0460b53edbe5),
     // Re-recorded: a value's unit sits small beside its number (ADR 0146).
-    ("algo_formant_page", 0x667903c194e3942f),
+    ("algo_formant_page", 0x8ed74c2becd31432),
     ("algo_op_page_3", 0x4fa1837d43fa861a),
-    ("algo_op_page_3_turned", 0x0fbe9f33b8f64f79),
+    ("algo_op_page_3_turned", 0x23df2f533b698751),
     ("algo_op_page_frmt", 0x3248e92fc9e0cf08),
-    ("algo_op_page_nois", 0x41d2669aa19cb3bf),
+    ("algo_op_page_nois", 0x3e18fb656fe7a252),
     // Re-recorded on the merge of main (#614): the filter picture in layout A.
     ("flt_clean", 0xb23c27d9c36f48d1),
     ("settings_top", 0xf1655533215f4e4b),

@@ -181,6 +181,8 @@ pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
     let motion = 2.0 * v - 1.0;
     use crate::dsp::modulator::law::{DRAG_TIME, SCRUB_LENGTH};
     let x = match law {
+        // CLASSIC RATE's places (ADR 0279).
+        Law::LfoHz => return crate::ui::feel::rate_text(buf, v),
         Law::EqTilt => return eq_tilt_text(buf, v),
         Law::FadeHold if v >= 0.999 => {
             let _ = buf.write_str(word(Word::Hold));
