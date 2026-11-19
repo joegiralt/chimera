@@ -14,9 +14,10 @@ pub const OFF_ON: [&str; 2] = ["OFF", "ON"];
 #[cfg(feature = "push-encoders")]
 pub const FINE_DIV: f32 = 10.0;
 
-/// A pushed encoder's turn (ADR 0140): a continuous param moves a tenth
-/// of its step a tick; any other, or one on its own `ladder`, moves one
-/// plain tick through `nudge`, so a block's own stepping (WAVE's budget,
+/// A fine turn (a push's, ADR 0140, or SEQ's, ADR 0279): a continuous
+/// param moves a tenth of its step a tick; any other, or one on its own
+/// `ladder`, moves its plain ticks through `nudge` (a push passes one a
+/// frame, SEQ one a detent), so a block's own stepping (WAVE's budget,
 /// ROTATE's wrap) still holds. One copy for every block, not one each.
 #[cfg(feature = "push-encoders")]
 #[inline(never)]
@@ -25,7 +26,7 @@ pub fn nudge_fine(b: &mut dyn Block, id: ParamId, delta: i8) {
         Some(s) if s.kind == ParamKind::Continuous && !b.ladder(id) => {
             b.write(id, s.nudged_fine(b.get(id), delta))
         }
-        _ => b.nudge(id, delta.signum()),
+        _ => b.nudge(id, delta),
     }
 }
 
@@ -77,12 +78,17 @@ pub enum ValFmt {
 impl ValFmt {
     /// Coarse snap points in normalized 0..1 space.
     pub fn snap_points(self) -> &'static [f32] {
+        use crate::dsp::modulator::law::Law;
         match self {
+            ValFmt::Bi
+            | ValFmt::Pan
+            | ValFmt::Route
+            | ValFmt::Keybd
+            | ValFmt::Law(Law::StretchSpeed | Law::ScrubSpeed | Law::EqTilt) => {
+                &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
+            }
             ValFmt::Uni | ValFmt::Hold | ValFmt::Inf | ValFmt::Law(_) | ValFmt::Knob(..) => {
                 &[0.0, 100.0 / 127.0, 1.0]
-            }
-            ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Keybd => {
-                &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
             }
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
@@ -104,7 +110,7 @@ impl ValFmt {
                 | ValFmt::Route
                 | ValFmt::Keybd
                 | ValFmt::Signed(_)
-                | ValFmt::Law(Law::StretchSpeed | Law::ScrubSpeed)
+                | ValFmt::Law(Law::StretchSpeed | Law::ScrubSpeed | Law::EqTilt)
         )
     }
 

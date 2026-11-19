@@ -12,10 +12,22 @@ pub fn load_percent(cycles: u32, budget: BlockBudget) -> u16 {
     ((cycles as u64 * 100 + block / 2) / block).min(u16::MAX as u64) as u16
 }
 
+/// Whether the console read the stats since the last block: its peaks
+/// (`read_peak`, `voices_peak`) start over (#995).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Peaks {
+    Kept,
+    Restart,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AudioStats {
     pub load_avg: u16,
+    /// The worst block since boot: the AUDIO page's.
     pub load_peak: u16,
+    /// The worst block since the console last read the stats: its
+    /// `peak_pct`.
+    pub read_peak: u16,
     pub overruns: u32,
     /// Voices the load net shed (ADR 0273).
     pub load_sheds: u32,
@@ -49,6 +61,7 @@ impl AudioStats {
         Self {
             load_avg: 0,
             load_peak: 0,
+            read_peak: 0,
             overruns: 0,
             load_sheds: 0,
             desyncs: 0,
@@ -75,20 +88,24 @@ impl AudioStats {
     }
 
     /// One block's voices: `now` sounding, `cost_pct` of the budget
-    /// booked. `restart`: the console read the peak, so it starts over.
-    pub fn record_voices(&mut self, now: u8, cost_pct: u8, restart: bool) {
+    /// booked; the peak starts over on `Peaks::Restart`.
+    pub fn record_voices(&mut self, now: u8, cost_pct: u8, peaks: Peaks) {
         self.voices = now;
-        self.voices_peak = if restart {
-            now
-        } else {
-            self.voices_peak.max(now)
+        self.voices_peak = match peaks {
+            Peaks::Restart => now,
+            Peaks::Kept => self.voices_peak.max(now),
         };
         self.cost_pct = cost_pct;
     }
 
-    pub fn record(&mut self, cycles: u32, budget: BlockBudget) {
+    /// One block's load; `read_peak` starts over on `Peaks::Restart`.
+    pub fn record(&mut self, cycles: u32, budget: BlockBudget, peaks: Peaks) {
         let pct = load_percent(cycles, budget);
         self.load_peak = self.load_peak.max(pct);
+        self.read_peak = match peaks {
+            Peaks::Restart => pct,
+            Peaks::Kept => self.read_peak.max(pct),
+        };
         self.window_sum += pct as u32;
         self.window_len += 1;
         if self.window_len == AVG_BLOCKS {

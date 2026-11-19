@@ -691,24 +691,30 @@ impl View {
     /// own cells give theirs through their focus. A route view's: MIX +
     /// MINUS deletes its route. A mappable param's adds MIX + SEQ's learn.
     pub fn hint(&self, ctx: &SlotCtx) -> Hint {
+        self.words(ctx).hint()
+    }
+
+    /// `hint`'s words by kind (ADR 0279): the fine turn and the mixer's
+    /// PART jump join the plain, the mapped and the pad's.
+    pub fn words(&self, ctx: &SlotCtx) -> Words {
         match self {
-            View::Route { .. } => return crate::ui::mod_grid::DELETE,
-            View::SelectPad | View::SelectRoute => return PAD_HINT,
+            View::Route { .. } => return Words::Own(crate::ui::mod_grid::DELETE),
+            View::SelectPad | View::SelectRoute => return Words::Pad,
             _ => {}
         }
         match self.addr() {
             // Every cell of a pad's pages steps the pad.
-            Some(a) if a.block.is_pad() => PAD_HINT,
+            Some(a) if a.block.is_pad() => Words::Pad,
             Some(ParamAddr {
                 block: BlockRef::Out,
                 param,
-            }) if param == OutParams::SEND3 => REV_HINTS[ctx.rev.index()],
+            }) if param == OutParams::SEND3 => Words::Own(REV_HINTS[ctx.rev.index()]),
             Some(ParamAddr {
                 block: BlockRef::Out,
                 param,
-            }) if param == OutParams::SEND1 => CHORUS_HINTS[ctx.chorus as usize],
+            }) if param == OutParams::SEND1 => Words::Own(CHORUS_HINTS[ctx.chorus as usize]),
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
-                MUTE_HINT
+                Words::Own(MUTE_HINT)
             }
             // MIX + turn snaps to an onset only on a held source
             // (`turn_window`); elsewhere it is the plain snap.
@@ -717,7 +723,7 @@ impl View {
                     && matches!(a.param, T::START | T::END)
                     && matches!(ctx.src, SourceState::Held { .. }) =>
             {
-                ONSET_HINT
+                Words::Own(ONSET_HINT)
             }
             Some(a)
                 if a.block == BlockRef::TapeEngine
@@ -725,11 +731,11 @@ impl View {
                     && ctx.tape == TapeMachine::Scrub
                     && ctx.keys_place =>
             {
-                KEY_HINT
+                Words::Own(KEY_HINT)
             }
-            Some(a) if a.block == BlockRef::Random => ROLL_HINT,
-            Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => LEARN_HINT,
-            _ => hint::NONE,
+            Some(a) if a.block == BlockRef::Random => Words::Own(ROLL_HINT),
+            Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => Words::Learn,
+            _ => Words::Plain,
         }
     }
 }
@@ -754,17 +760,47 @@ pub const LEARN_HINT: Hint = &[LEARN];
 /// MIX + B*n* in the mixer keeps the page and opens Part *n*'s (ADR 0044).
 const PART_JUMP: Gesture<'static> = Gesture("MIX + B1-6", "PART");
 const PART_JUMP_HINT: Hint = &[PART_JUMP];
-const PART_JUMP_LEARN: Hint = &[PART_JUMP, Gesture("MIX + SEQ", "LEARN")];
+/// Learn's short form, where another gesture shares its line.
+pub const LEARN_SHORT: Gesture<'static> = Gesture("MIX + SEQ", "LEARN");
+const PART_JUMP_LEARN: Hint = &[PART_JUMP, LEARN_SHORT];
 
-/// A mixer cell's hint: `own` where it has words of its own, else the Part
-/// jump, with learn's short form after it where `own` was the generic learn.
-pub fn mixer_hint(own: Hint) -> Hint {
-    if own == LEARN_HINT {
-        PART_JUMP_LEARN
-    } else if own.is_empty() {
-        PART_JUMP_HINT
-    } else {
-        own
+/// A mixer cell's hint: its own words where it has them, else the Part
+/// jump, with learn's short form after it on a mapped cell.
+pub fn mixer_hint(w: Words) -> Hint {
+    match w {
+        Words::Learn => PART_JUMP_LEARN,
+        Words::Plain => PART_JUMP_HINT,
+        w => w.hint(),
+    }
+}
+
+/// A cell's own words by kind (ADR 0279): none, MIX + SEQ's learn, the
+/// pad's step, or words of its own the band adds nothing beside.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Words {
+    Plain,
+    Learn,
+    Pad,
+    Own(Hint),
+}
+
+impl Words {
+    pub fn hint(self) -> Hint {
+        match self {
+            Words::Plain => hint::NONE,
+            Words::Learn => LEARN_HINT,
+            Words::Pad => PAD_HINT,
+            Words::Own(h) => h,
+        }
+    }
+}
+
+/// The words of slot `v` on `def`: a Part cell on a pad's page (DRUM
+/// FLT's FX TYPE and PLACE) steps the pad too (`edits_pad`).
+pub fn cell_words(def: &BlockDef, v: &View, ctx: &SlotCtx) -> Words {
+    match v.addr() {
+        Some(a) if def.edits_pad() && !a.block.is_pad() => Words::Pad,
+        _ => v.words(ctx),
     }
 }
 

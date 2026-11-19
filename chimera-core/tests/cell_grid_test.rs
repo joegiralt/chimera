@@ -110,15 +110,22 @@ fn focus_band_shows_the_last_touched_slot() {
         None,
         chimera_core::ui::theme::TextSize::Normal,
     );
-    // MORPH maps: its hint offers MIX + SEQ's learn.
-    if cfg!(feature = "midi-map") {
-        chimera_core::ui::hint::focus(
-            &mut want,
-            &[chimera_core::ui::view::LEARN],
-            chimera_core::ui::theme::TextSize::Normal,
-            228,
-        );
-    }
+    // MORPH maps: its hint offers SEQ + turn's fine step, then MIX + SEQ's
+    // learn (ADR 0279); unmapped, the fine step alone. The fine step is
+    // bank 2's: without TAPE's UI the door is closed, and learn alone.
+    use chimera_core::ui::{feel, hint::Hint, view};
+    let hint: Hint = match (cfg!(feature = "tape"), cfg!(feature = "midi-map")) {
+        (true, true) => &feel::FINE_LEARN,
+        (true, false) => &feel::FINE,
+        (false, true) => view::LEARN_HINT,
+        (false, false) => &[],
+    };
+    chimera_core::ui::hint::focus(
+        &mut want,
+        hint,
+        chimera_core::ui::theme::TextSize::Normal,
+        228,
+    );
     assert!(
         band(&fb, 28, 118) == band(&want, 28, 118),
         "focus band is {} {}",

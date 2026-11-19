@@ -69,7 +69,7 @@ use crate::params::{EngineType, FilterParams, OutParams};
 use crate::part::PartParams;
 
 /// A `ParamAddr` a CC may drive: a Sound's own, stored, non-patching
-/// params, the Part's LEVEL and PAN (CC 7 and 10), the master FX's knobs
+/// params, the Part's LEVEL and PAN (CC 7 and 10) and TILT, the master FX's knobs
 /// and ORBIT's ring amounts (#512). A switch that reshapes a bus or a ring
 /// (a TYPE, STEPS, MUTE, a ring's choices) stays the hand's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +82,10 @@ impl Mappable {
         };
         let knob = s.stored && !s.patching;
         let ok = match a.block {
-            BlockRef::Part => p == PartParams::LEVEL.0 || p == PartParams::PAN.0,
+            // TILT too (ADR 0284); LO CUT is a switch.
+            BlockRef::Part => {
+                p == PartParams::LEVEL.0 || p == PartParams::PAN.0 || p == PartParams::TILT.0
+            }
             // TYPE and PLACE crossfade a stage in and out: a switch, not a knob.
             BlockRef::VoiceFx => knob && p >= VoiceFxParams::P1.0,
             BlockRef::Chorus

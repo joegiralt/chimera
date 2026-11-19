@@ -458,6 +458,8 @@ fn part_snap_default_is_neutral() {
                 PartParams::MAPPING,
                 PartParams::MAX_VOICES,
                 PartParams::RESERVE,
+                PartParams::TILT,
+                PartParams::LO_CUT,
             ]
             .map(|i| i.0)
             .contains(&e[0])

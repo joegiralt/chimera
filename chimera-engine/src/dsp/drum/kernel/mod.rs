@@ -22,15 +22,15 @@ use crate::dsp::fast_sin_turns;
 use crate::dsp::filter::{Clean, FilterKind, FilterMode, FilterMods};
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::va::noise::{Noise, NoiseKind};
-use crate::dsp::va::osc::{MAX_INC, Morph, VarOsc};
+use crate::dsp::va::osc::{MAX_INC, Morph, VarOsc, inc_at};
 use crate::dsp::voice_fx::soft;
 use crate::dsp::{Unit, clampf};
 use crate::hw::BLOCK_SIZE;
 use crate::in_place::in_place_enum;
 use crate::params::FilterParams;
 
-use super::laws::{KernelParams, Sweep};
-use super::types::{Gain, HitSeed, Hz, SampleRate, Seconds, Semis};
+use super::laws::{KernelParams, MetalParams, PlainParams, Sweep, resolve};
+use super::types::{DrumHit, Gain, HitSeed, Hz, KernelBill, PulsePace, SampleRate, Seconds, Semis};
 
 pub(super) type Blk = [f32; BLOCK_SIZE];
 
@@ -119,6 +119,18 @@ impl KernelState {
         }
     }
 
+    /// How its next block renders its pulses (`Pulse::sweep`, ADR 0287),
+    /// erring high: a sweep still above `octaves`' skip is swept, and a
+    /// pulse whose width floors at the block's first (highest) pitch is
+    /// floored. Kernels without pulses run none.
+    pub fn pace(&self) -> PulsePace {
+        match self {
+            KernelState::Idle(_) | KernelState::Tone(_) | KernelState::Burst(_) => PulsePace::Runs,
+            KernelState::Metal(k) => k.pace(),
+            KernelState::Plain(k) => k.pace(),
+        }
+    }
+
     /// The hit has fallen under −80 dB for good: its envelopes are spent
     /// and its last block was quiet.
     pub fn finished(&self) -> bool {
@@ -146,6 +158,92 @@ fn ceiling(x: f32) -> f32 {
         let o = a - KNEE;
         (KNEE + o / (1.0 + o / ROOM)).copysign(x)
     }
+}
+
+impl DrumHit {
+    /// Its kernel params: its pad's knobs through its machine's laws,
+    /// moved by its TONAL pitch. Strike setup, built for size (ADR 0267):
+    /// one copy for the strike and the bill.
+    #[inline(never)]
+    #[optimize(size)]
+    pub fn kernel_params(&self) -> KernelParams {
+        let pad = self.params();
+        resolve(pad.machine(), pad.knobs()).transposed(self.pitch())
+    }
+
+    /// What it bills struck at `sr` (ADR 0287): its machine at its first
+    /// block's pulse pace (`KernelParams::pace`). Strike setup, built for
+    /// size (ADR 0267).
+    #[inline(never)]
+    #[optimize(size)]
+    pub fn bill(&self, sr: SampleRate) -> KernelBill {
+        KernelBill::of(self.params().machine(), self.kernel_params().pace(sr))
+    }
+}
+
+impl KernelParams {
+    /// `KernelState::pace` of its hit struck at `sr`, before its first
+    /// block: each sweep's fall starts at 1.
+    pub fn pace(&self, sr: SampleRate) -> PulsePace {
+        match self {
+            KernelParams::Metal(MetalParams::Cowbell(p)) => {
+                let sweep = sweeping(Octaves::of_unit(p.bump), Unit::ONE);
+                PulsePace::of(sweep == SweepState::Moving, false)
+            }
+            KernelParams::Plain(PlainParams::Impulse { body, width, .. }) => {
+                let oct = Octaves::of_semis(body.depth);
+                let sweep = sweeping(oct, Unit::ONE);
+                let inc = pulse_inc(oct.head(body.pitch.get(), Unit::ONE, sweep), sr);
+                PulsePace::of(sweep == SweepState::Moving, floored(inc, *width))
+            }
+            KernelParams::Metal(MetalParams::Bank(_) | MetalParams::Jingle(_))
+            | KernelParams::Plain(PlainParams::Sine { .. } | PlainParams::Noise(_))
+            | KernelParams::Tone(_)
+            | KernelParams::Burst(_) => PulsePace::Runs,
+        }
+    }
+}
+
+/// `VarOsc::inc_for` at `sr` with no oscillator (`prepare`'s 1 / rate).
+fn pulse_inc(hz: f32, sr: SampleRate) -> f32 {
+    inc_at(hz, 1.0 / sr.hz())
+}
+
+/// A sweep's depth in octaves, never below 0: its pitch factor,
+/// 2^(depth × its fall), only falls toward 1, so a block's first sample
+/// is its highest (`head`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Octaves(f32);
+
+impl Octaves {
+    /// SWEEP's semitones, a fall from above; a depth under 0 (no law
+    /// gives one) sweeps nothing.
+    pub fn of_semis(s: Semis) -> Octaves {
+        Octaves((s.get() / 12.0).max(0.0))
+    }
+
+    /// BUMP's 0..1: up to an octave.
+    pub fn of_unit(u: Unit) -> Octaves {
+        Octaves(u.get())
+    }
+
+    /// The pitch at a block's first sample, `f0` × 2^(depth × `fall`),
+    /// `octaves`' first factor; `f0` when the sweep is spent (its factors
+    /// are 1).
+    pub fn head(self, f0: f32, fall: Unit, sweep: SweepState) -> f32 {
+        match sweep {
+            SweepState::Moving => f0 * libm::exp2f(self.0 * fall.get()),
+            SweepState::Spent => f0,
+        }
+    }
+}
+
+/// Whether a sweep still moves its pitch (`sweeping`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SweepState {
+    Moving,
+    /// Under `octaves`' exp2f skip: its factors are exactly 1.
+    Spent,
 }
 
 /// What every kernel takes at the strike.
@@ -204,6 +302,11 @@ impl Decay {
 
     pub fn spent(&self) -> bool {
         self.v < FLOOR
+    }
+
+    /// Where it is, 1 falling to 0.
+    pub fn fall(&self) -> Unit {
+        Unit::new(self.v)
     }
 }
 
@@ -326,8 +429,32 @@ impl Pulse {
     #[inline(always)]
     fn steady(&self, f0: f32, m: &Blk) -> Option<f32> {
         let inc = self.o.inc_for(f0);
-        (m.iter().all(|&x| x == 1.0) && inc <= 0.5 - 0.45 * self.m.shape.get()).then_some(inc)
+        (m.iter().all(|&x| x == 1.0) && !floored(inc, self.m.shape)).then_some(inc)
     }
+
+    /// Its width floors at `f0`: `sweep` renders it a sample at a time,
+    /// swept or not.
+    pub(super) fn floored(&self, f0: f32) -> bool {
+        floored(self.o.inc_for(f0), self.m.shape)
+    }
+
+    /// Its pace at `f0` under a sweep of `oct` whose fall is at `d`: the
+    /// sweep moving, and its width floored at the block's first (highest:
+    /// a sweep only falls) pitch.
+    pub(super) fn pace(&self, f0: f32, oct: Octaves, d: &Decay) -> PulsePace {
+        let sweep = sweeping(oct, d.fall());
+        PulsePace::of(
+            sweep == SweepState::Moving,
+            self.floored(oct.head(f0, d.fall(), sweep)),
+        )
+    }
+}
+
+/// A pulse of `width` floors at `inc` (`Shaped::fill`): its width,
+/// ½ − 0.45 × `width`, is under `inc`.
+#[inline(always)]
+fn floored(inc: f32, width: Unit) -> bool {
+    inc > 0.5 - 0.45 * width.get()
 }
 
 /// `Pulse` at SHAPE 0: its width, ½, is above any `inc` (`MAX_INC`), so
@@ -367,7 +494,7 @@ impl Square {
 pub(super) struct Swept {
     pub ph: f32,
     f0: f32,
-    oct: f32,
+    oct: Octaves,
     sw: Decay,
     sr: SampleRate,
 }
@@ -378,7 +505,7 @@ impl Swept {
         Swept {
             ph: 0.0,
             f0: f0.get(),
-            oct: depth.get() / 12.0,
+            oct: Octaves::of_semis(depth),
             sw: Decay::tau(tau, sr),
             sr,
         }
@@ -412,14 +539,25 @@ impl Swept {
 /// Under this many octaves libm's `exp2f` is exactly 1: 2^-26.
 const EXP2_ONE: f32 = 1.0 / 67_108_864.0;
 
+/// A sweep of `oct` whose fall is at `fall` still moves its pitch:
+/// `octaves` calls `exp2f` for it.
+#[inline(always)]
+pub(super) fn sweeping(oct: Octaves, fall: Unit) -> SweepState {
+    if (oct.0 * fall.get()).abs() >= EXP2_ONE {
+        SweepState::Moving
+    } else {
+        SweepState::Spent
+    }
+}
+
 /// 2^(`oct` × each of `d`'s next block of values) into `m`: a sweep's
 /// pitch factor, its one `exp2f` for every kernel. A recurrence:
 /// private issue #952
 #[inline(never)]
-pub(super) fn octaves(d: &mut Decay, oct: f32, m: &mut Blk) {
+pub(super) fn octaves(d: &mut Decay, oct: Octaves, m: &mut Blk) {
     // under 2^-26 octaves libm's exp2f is exactly 1 and a decay only
     // falls: a spent (or zero) sweep is 1s without the calls
-    if (oct * d.v).abs() < EXP2_ONE {
+    if sweeping(oct, d.fall()) == SweepState::Spent {
         for m in m.iter_mut() {
             d.next();
             *m = 1.0;
@@ -427,7 +565,7 @@ pub(super) fn octaves(d: &mut Decay, oct: f32, m: &mut Blk) {
         return;
     }
     for m in m.iter_mut() {
-        *m = libm::exp2f(oct * d.next());
+        *m = libm::exp2f(oct.0 * d.next());
     }
 }
 
@@ -480,7 +618,78 @@ pub(super) fn drive(x: f32, d: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::EXP2_ONE;
+    use chimera_midi::value::U7;
+
+    use super::super::laws::resolve;
+    use super::super::types::{
+        ChokeGroup, DrumHit, HitSeed, KernelBill, Knob, KnobSet, KnobValue, Machine, Pad, PadId,
+        Pan, SampleRate, Transpose,
+    };
+    use super::{EXP2_ONE, KernelState};
+    use crate::Velocity;
+    use crate::dsp::tape_engine::params::Retrig;
+
+    /// ADR 0287: a hit's bill at its strike (`DrumHit::bill`, from its
+    /// params) is the struck kernel's (`KernelState::pace`), for every
+    /// machine at its defaults, all knobs 0, all 127 and each knob at 1,
+    /// across TONAL's reach.
+    #[test]
+    fn a_strikes_bill_is_its_kernels() {
+        let at = |v: u8| KnobValue::new(U7::new(v).expect("0..=127"));
+        let sr = SampleRate::HW;
+        let vel = Velocity::MAX;
+        for m in Machine::ALL {
+            let mut sets = [KnobSet::defaults(m); 11];
+            sets[1] = KnobSet::new([at(0); 8]);
+            sets[2] = KnobSet::new([at(127); 8]);
+            for (s, kn) in sets[3..].iter_mut().zip(Knob::ALL) {
+                s.set(kn, at(1));
+            }
+            for (i, knobs) in sets.iter().enumerate() {
+                for by in [-60, 0, 12, 67] {
+                    let pitch = Transpose::new(by).expect("a transpose");
+                    let pad = Pad::new(
+                        m,
+                        *knobs,
+                        U7::MAX,
+                        Pan::CENTRE,
+                        ChokeGroup::Off,
+                        Retrig::Cut,
+                    );
+                    let hit = DrumHit::new(PadId::ALL[0], pad, pitch);
+                    let p = resolve(m, knobs).transposed(pitch);
+                    assert_eq!(hit.kernel_params(), p);
+                    let k = KernelState::strike(p, vel, HitSeed::new(1), sr);
+                    assert_eq!(
+                        hit.bill(sr),
+                        KernelBill::of(m, k.pace()),
+                        "{m:?} set {i} at {by}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A sweep only falls, so a block's first sample is its highest pitch
+    /// (`Octaves::head`, the floor's check): a negative depth, which no law
+    /// gives, sweeps nothing rather than rising past the head.
+    #[test]
+    fn a_negative_depth_sweeps_nothing() {
+        use super::super::types::{Seconds, Semis};
+        use super::{Decay, Octaves, SweepState, octaves, sweeping};
+        use crate::dsp::Unit;
+        let down = Octaves::of_semis(Semis::new(-24.0));
+        assert_eq!(down, Octaves::of_semis(Semis::new(0.0)));
+        assert_eq!(sweeping(down, Unit::ONE), SweepState::Spent);
+        assert_eq!(down.head(1000.0, Unit::ONE, SweepState::Moving), 1000.0);
+        let up = Octaves::of_semis(Semis::new(24.0));
+        assert_eq!(sweeping(up, Unit::ONE), SweepState::Moving);
+        assert_eq!(up.head(1000.0, Unit::ONE, SweepState::Moving), 4000.0);
+        let mut d = Decay::tau(Seconds::new(0.006), SampleRate::HW);
+        let mut m = [0.0; crate::hw::BLOCK_SIZE];
+        octaves(&mut d, up, &mut m);
+        assert!(m.windows(2).all(|w| w[1] <= w[0]), "it only falls");
+    }
 
     /// `octaves`' skip leans on libm: under `EXP2_ONE` its `exp2f` is 1.
     #[test]

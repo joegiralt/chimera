@@ -11,9 +11,10 @@ use crate::hw::BLOCK_SIZE;
 use crate::in_place::{field_list, in_place_enum};
 
 use super::super::laws::{BankParams, CowbellParams, JingleParams, MetalParams};
-use super::super::types::{Hz, SampleRate, Seconds, Semis};
+use super::super::types::{Hz, PulsePace, SampleRate, Seconds, Semis};
 use super::{
-    Blk, Decay, Hiss, Hit, Lcg, Pulse, Square, Svf, Swept, drive, octaves, per_sample, quiet,
+    Blk, Decay, Hiss, Hit, Lcg, Octaves, Pulse, Square, Svf, SweepState, Swept, drive, octaves,
+    per_sample, quiet, sweeping,
 };
 
 in_place_enum! {
@@ -55,6 +56,15 @@ impl Metal {
         }
     }
 
+    /// `KernelState::pace`: the cowbell's pulses swept while BUMP moves
+    /// them; the bank's squares always run.
+    pub(super) fn pace(&self) -> PulsePace {
+        match self {
+            Metal::Cowbell(k) => k.pace(),
+            Metal::Bank(_) | Metal::Jingle(_) => PulsePace::Runs,
+        }
+    }
+
     pub(super) fn finished(&self) -> bool {
         match self {
             Metal::Cowbell(k) => k.quiet && k.slow.spent() && k.fast.spent(),
@@ -76,7 +86,7 @@ pub struct Cowbell {
     drive: f32,
     damp: f32,
     bump: Decay,
-    bump_oct: f32,
+    bump_oct: Octaves,
     vel: f32,
     quiet: bool,
 }
@@ -93,10 +103,17 @@ impl Cowbell {
             drive: p.drive.get(),
             damp: p.damp.get(),
             bump: Decay::tau(Seconds::new(0.006), h.sr),
-            bump_oct: p.bump.get(),
+            bump_oct: Octaves::of_unit(p.bump),
             vel: h.level.get(),
             quiet: false,
         }
+    }
+
+    /// Its next block's pulses: swept while BUMP still moves them.
+    /// Squares (SHAPE 0) never floor (`MAX_INC` < ½).
+    fn pace(&self) -> PulsePace {
+        let sweep = sweeping(self.bump_oct, self.bump.fall());
+        PulsePace::of(sweep == SweepState::Moving, false)
     }
 
     #[inline(never)]
@@ -346,5 +363,68 @@ impl Jingle {
             *o = self.vel * (0.5 * v + h);
         }
         self.quiet = quiet(out);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chimera_midi::value::U7;
+
+    use super::super::super::laws::{KernelParams, MetalParams, resolve};
+    use super::super::super::types::{
+        HitSeed, Knob, KnobSet, KnobValue, Machine, PulsePace, SampleRate,
+    };
+    use super::super::{Hit, octaves};
+    use super::{BLOCK_SIZE, Cowbell, Unit};
+
+    /// A COWBELL at BUMP `bump` (0..=127).
+    fn bell(bump: u8) -> Cowbell {
+        let mut k = KnobSet::defaults(Machine::ToneCowbell);
+        k.set(Knob::H, KnobValue::new(U7::new(bump).expect("0..=127")));
+        let KernelParams::Metal(MetalParams::Cowbell(p)) = resolve(Machine::ToneCowbell, &k) else {
+            panic!("COWBELL resolves to its kernel");
+        };
+        let h = Hit {
+            level: Unit::ONE,
+            seed: HitSeed::new(1),
+            sr: SampleRate::HW,
+        };
+        Cowbell::new(p, h)
+    }
+
+    /// ADR 0287: `pace` is swept before every block whose pulses render
+    /// a sample at a time (`Pulse::sweep`'s `steady` fails), never
+    /// floored, and once it runs it stays running: BUMP 0 from the start,
+    /// BUMP 127 after ~110 ms, a few blocks past the last ticked one at
+    /// most.
+    #[test]
+    fn pace_covers_every_ticked_block() {
+        for bump in [0, 1, 64, 127] {
+            let mut k = bell(bump);
+            let (mut stopped, mut last_ticked) = (None, None);
+            for b in 0..400 {
+                let pace = k.pace();
+                assert!(matches!(pace, PulsePace::Runs | PulsePace::Swept));
+                let said = pace == PulsePace::Swept;
+                let (mut d, mut m) = (k.bump, [0.0; BLOCK_SIZE]);
+                octaves(&mut d, k.bump_oct, &mut m);
+                let ticks =
+                    k.p[0].steady(k.hz[0], &m).is_none() || k.p[1].steady(k.hz[1], &m).is_none();
+                assert!(said || !ticks, "BUMP {bump}, block {b}");
+                if ticks {
+                    last_ticked = Some(b);
+                }
+                match stopped {
+                    None if !said => stopped = Some(b),
+                    Some(_) => assert!(!said, "BUMP {bump}, block {b}"),
+                    None => {}
+                }
+                k.render::<false>(&mut [0.0; BLOCK_SIZE]);
+            }
+            let stopped = stopped.expect("BUMP falls in 6 ms");
+            assert_eq!(stopped == 0, bump == 0, "BUMP {bump}");
+            assert!(stopped < 90, "BUMP {bump}: {stopped}");
+            assert!(stopped <= last_ticked.map_or(0, |t| t + 10), "BUMP {bump}");
+        }
     }
 }

@@ -6,7 +6,9 @@ use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::EnvSlot;
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
+use crate::ui::feel::Nudged;
 use crate::ui::view::{SlotCtx, View, view};
+use chimera_hal::Ticks;
 
 /// Normalized (0..1) display values of the six slots (a route view reads 0:
 /// the UI overlays its amount).
@@ -92,9 +94,19 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
             b.nudge(a.param, d.signum() * i8::MAX)
         }
         Edit::Snap(d) => b.snap(a.param, d),
-        Edit::Nudge(d) => b.nudge(a.param, d),
+        // CLASSIC RATE's semitone is bank 2's (`feel::nudge`, ADR 0279), a
+        // fine step too; closed, and any other, the spec's or its fine.
+        Edit::Nudge(d) => {
+            if crate::bank2::feel::nudge(&mut *b, a, Ticks::new(d)) == Nudged::Spec {
+                b.nudge(a.param, d)
+            }
+        }
         #[cfg(feature = "push-encoders")]
-        Edit::Fine(d) => crate::block::nudge_fine(&mut *b, a.param, d),
+        Edit::Fine(d) => {
+            if crate::bank2::feel::nudge(&mut *b, a, Ticks::new(d)) == Nudged::Spec {
+                crate::block::nudge_fine(&mut *b, a.param, d)
+            }
+        }
         Edit::To(v) => b.set(a.param, v),
     }
     // WALK's defaults, bank 2's (`ui::walk`); a closed door writes none.
