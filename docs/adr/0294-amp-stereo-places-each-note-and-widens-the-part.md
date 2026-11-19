@@ -47,7 +47,31 @@ The owner decided on 2026-11-19: PAN and WIDTH on a new AMP › STEREO sub-page;
 - Docs: `docs/chimera-sitemap.md` (the chain diagram and the STEREO row) and `docs/parity.md`. New annotated screenshots for the tester guide: AMP › STEREO (PAN, WIDTH, the band's words) and DRUM's AMP › GATE (WIDTH in F); the map's AMP rows.
 
 ## Measurements
-(Filled in below.)
+Release builds, `CHIMERA_STAMP_CLEAN=1`, 37fc068b9 against this change (its three commits alone, without the review fixes that ride beside it), each set built in both trees. Each budget line is raised by exactly its set's measured change, never the slack:
+
+| Set | Bank 1 (B) | Bank 2 used (B) |
+|---|---|---|
+| orbit | +380 | +2,624 |
+| default | +1,060 | +2,720 |
+| bank2-gate | +1,020 | +2,784 |
+| orbit,usb-config-writer | +396 |  |
+| fault-inject | +700 |  |
+| bench-algo | +940 |  |
+| bench-algo,master-tape | +956 |  |
+| bench-routing | +860 |  |
+| bench-memory | +748 |  |
+| bench-stress | +988 |  |
+| bench-orbit | +460 |  |
+| bench-tape | +844 |  |
+| filter-probes | +660 |  |
+
+Bank 1's growth on ORBIT (+380): `OUT_SPECS`' WIDTH (72 B), `STEREO` (96 B), `Voice::render_knobs`' OUT PAN stub (the engine match, the two places and the door call), `Instrument::part_widths` (96 B, the door call alone: with the rest check in bank 1 it was 290 B), PAN's row in `KNOBS`, WIDTH's get/write arms and the map's row. The non-ORBIT sets grow more where the other engines' code inlines differently around `render_knobs`. Bank 2: `stereo::kern::widths` 1,560 B and `stereo::kern::pan` 984 B (both unrolled for speed: audio), the notes' two words, in S4. ORBIT bank 1 has 16,732 B free after this and the review fixes (917,504 less 900,772).
+
+RAM: bench-algo's D2 overflowed by 96 B (PAN's knob a Part, the WIDTHs' 24 B, each voice's played WIDTH): its bench text gives 128 B (`BENCH_TEXT_LEN` 5,440 → 5,312), as ADRs 0292 and 0293 did.
+
+CPU, host, release, best of five runs of 20,000 blocks of the whole instrument holding one VA note (`stereo_test::host_timing`): centred 4,719 ns a block; a still PAN of 0.5 4,799 ns (+80 ns, +1.7 %, the split); PAN moving every block 5,225 ns (+506 ns: the split's ramp and PAN's knob gliding every block); PAN 0.5 with WIDTH 0.5 within the noise of PAN alone (a 64-sample multiply). Not read on the unit.
+
+Null: centre and unity make no change to any sample. `golden_test` (every factory Sound and case, voice and instrument paths), the reverb, VA, MODAL, TAPE and DRUM goldens and `vca_lpg_test`'s hash are unchanged; `stereo_test::centre_and_unity_are_the_mix_as_it_was` holds a centred note's left and right equal at WIDTH 1 and 2.
 
 ## Sources
 - Design: (private notes) § #14.

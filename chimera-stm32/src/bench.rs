@@ -108,8 +108,10 @@ pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
     // map grew 65 B in each of 7 Sounds): 128 B off is the least that links;
     // 384 B more for MPE's (ADR 0252: SLIDE's matrix row, each voice's own
     // bend and slide); 128 B more for AMP's BASE, a knob a Part (ADR 0292);
-    // 64 B more for PRT's meters' UI state (ADR 0293).
-    5440
+    // 64 B more for PRT's meters' UI state (ADR 0293); 128 B more for
+    // AMP › STEREO, 96 B over: PAN a knob a Part, the WIDTHs' state and
+    // each voice's played WIDTH (ADR 0294).
+    5312
 } else {
     6144
 };
