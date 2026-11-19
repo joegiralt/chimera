@@ -275,9 +275,9 @@ pub struct UiDoor {
     /// A Part's MAX VOICES and RESERVE (`ui::part_voices`, ADR 0281): a
     /// turn or edit, a held one's reason, the reserves booked.
     voices: fn(crate::ui::part_voices::Ask<'_>),
-    /// SMART EQ's band (`ui::smart_eq`, ADR 0296): PRT › EQ's four live
-    /// cuts, or every Part's on MST › SMART EQ.
-    smart_eq: fn(&mut crate::ui::orbit::door::Ink<'_>, &crate::ui::smart_view::Shown),
+    /// SMART EQ's band (`ui::smart_eq`, ADR 0296): the plan of PRT › EQ's
+    /// four live cuts, or of every Part's on MST › LVL.
+    smart_eq: fn(&crate::ui::smart_view::Shown, &mut crate::ui::smart_view::Plan),
 }
 
 // The table fits its 128 B before the next door's (`bank2.x`): 32 words
@@ -327,7 +327,7 @@ impl UiDoor {
         feel: crate::ui::feel::ask_in,
         groups: crate::ui::kit_groups::ask_in,
         voices: crate::ui::part_voices::ask_in,
-        smart_eq: crate::ui::smart_eq::paint_in,
+        smart_eq: crate::ui::smart_eq::plan_in,
     };
 
     /// `ui::feel`'s answer to `a` (ADR 0279).
@@ -542,10 +542,10 @@ impl UiDoor {
     #[inline(always)]
     pub(crate) fn smart_eq(
         &self,
-        on: &mut crate::ui::orbit::door::Ink<'_>,
         s: &crate::ui::smart_view::Shown,
+        out: &mut crate::ui::smart_view::Plan,
     ) {
-        (self.smart_eq)(on, s)
+        (self.smart_eq)(s, out)
     }
 }
 

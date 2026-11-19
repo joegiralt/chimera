@@ -1529,9 +1529,8 @@ fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
     cell_text::held_on(f.held, view)
 }
 
-/// Fingerprint of the Mixer overview (quantized levels and pans, selection).
 /// SMART EQ's band (ADR 0296): PRT › EQ's Part, or every Part on MST ›
-/// SMART EQ.
+/// LVL.
 fn smart_shown(f: &Frame) -> crate::ui::smart_view::Shown {
     use crate::ui::smart_view::{Shown, Shows};
     let shows = if core::ptr::eq(f.def, &crate::ui::block_registry::PART_EQ) {
@@ -1542,6 +1541,7 @@ fn smart_shown(f: &Frame) -> crate::ui::smart_view::Shown {
     Shown::now(shows, core::array::from_fn(|p| f.parts[p].mix.role))
 }
 
+/// Fingerprint of the Mixer overview (quantized levels and pans, selection).
 fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
     use core::hash::Hasher;
     let mut h = region::Fnv::new();

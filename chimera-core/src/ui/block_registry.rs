@@ -588,42 +588,27 @@ pub static MASTER: BlockDef = BlockDef {
 };
 
 /// MST › LEVEL: the legacy VOL and PAN, off the compressor's page (FX diet
-/// spec § UI; an assumed default, pending the owner's word).
+/// spec § UI; an assumed default, pending the owner's word); and SMART EQ
+/// and AMOUNT (ADR 0296), the master's own mix settings, its band every
+/// Part's live SMART EQ cuts. A page of their own would take a new page
+/// id, and `FocusMemory` (a byte an id) grows past D2 on bench-algo.
 pub static MASTER_LEVEL: BlockDef = BlockDef {
     id: 58,
     name: "Level",
     short: "LVL",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::SmartEq,
     params: [
         ParamSlot::param(BlockRef::Comp, CompParams::VOL),
         ParamSlot::param(BlockRef::Comp, CompParams::PAN),
         EMPTY,
-        EMPTY,
-        EMPTY,
-        EMPTY,
-    ],
-};
-
-/// MST › SMART EQ (ADR 0296): the switch and AMOUNT for every Part's SMART
-/// EQ cuts; the band shows each Part's four live cuts and its role.
-pub static MASTER_SMART: BlockDef = BlockDef {
-    id: 120,
-    name: "Smart EQ",
-    short: "SMART",
-    layout: PageLayout::CellGrid,
-    viz: VizType::SmartEq,
-    params: [
         ParamSlot::param(BlockRef::Comp, CompParams::SMART_EQ),
         ParamSlot::param(BlockRef::Comp, CompParams::AMOUNT),
         EMPTY,
-        EMPTY,
-        EMPTY,
-        EMPTY,
     ],
 };
 
-static MASTER_SUB_PAGES: [&BlockDef; 2] = [&MASTER_LEVEL, &MASTER_SMART];
+static MASTER_SUB_PAGES: [&BlockDef; 1] = [&MASTER_LEVEL];
 
 // ---------------------------------------------------------------------------
 // Mod Matrix (new placeholder)

@@ -110,11 +110,11 @@ FLT (the filter's response curve, with CUTOFF and RES), MST, E1-E3, SPD, ORBIT's
 ```
 PRT ── SND ── CHR ── DLY ── REV ── MST
                       │      │      │
-                      CHAR,  MORE,  LVL,
-                      GRAIN  MORE 2 SMART EQ
+                      CHAR,  MORE,  LVL
+                      GRAIN  MORE 2
 ```
 
-Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. CHR: TYPE (OFF, I, II, I+II, FLANGER, PHASER), RATE, DEPTH, MIX. I, II and I+II are the Juno-60's chorus buttons; FLANGER is a short swept delay fed back on itself, PHASER six all-passes a side swept and fed back. Each returns the effect alone, so the notches come with the dry beside it: the CHORUS send sets how deep they cut. RATE and DEPTH set each TYPE's sweep. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; below it CHAR (TAPE's MECHANICS and SAT) and GRAIN (SIZE, DENSITY, PITCH, TEXTURE), each heard under its TYPE and dimmed under the other, the band saying TAPE TYPE ONLY or GRAIN TYPE ONLY. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE. EDIT from PRT or SND goes down to the Sound browser. PRT › EQ: TILT, LO CUT and ROLE (FRONT, MID, BACK: where SMART EQ keeps the Part); its band shows SMART EQ's four live cuts on the Part, LOW, LOW MID, HIGH MID and HIGH. MST › SMART EQ: SMART EQ (OFF, ON) and AMOUNT; where a higher-role Part plays, SMART EQ slowly cuts a lower-role Part's bands by up to 6 dB × AMOUNT, never FRONT's; its band shows every Part's four cuts and its role's letter.
+Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. CHR: TYPE (OFF, I, II, I+II, FLANGER, PHASER), RATE, DEPTH, MIX. I, II and I+II are the Juno-60's chorus buttons; FLANGER is a short swept delay fed back on itself, PHASER six all-passes a side swept and fed back. Each returns the effect alone, so the notches come with the dry beside it: the CHORUS send sets how deep they cut. RATE and DEPTH set each TYPE's sweep. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; below it CHAR (TAPE's MECHANICS and SAT) and GRAIN (SIZE, DENSITY, PITCH, TEXTURE), each heard under its TYPE and dimmed under the other, the band saying TAPE TYPE ONLY or GRAIN TYPE ONLY. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE. EDIT from PRT or SND goes down to the Sound browser. PRT › EQ: TILT, LO CUT and ROLE (FRONT, MID, BACK: where SMART EQ keeps the Part); its band shows SMART EQ's four live cuts on the Part, LOW, LOW MID, HIGH MID and HIGH. MST › LVL: VOL, PAN, and in D and E SMART EQ (OFF, ON) and AMOUNT; where a higher-role Part plays, SMART EQ slowly cuts a lower-role Part's bands by up to 6 dB × AMOUNT, never FRONT's; its band shows every Part's four cuts and its role's letter.
 
 ---
 

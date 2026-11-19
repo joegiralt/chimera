@@ -1,6 +1,6 @@
 //! SMART EQ's pages (ADR 0296): ROLE on MIXER › PRT › EQ, its band the
-//! Part's four live cuts; MIXER › MST › SMART EQ, its switch and AMOUNT,
-//! its band every Part's.
+//! Part's four live cuts; MIXER › MST › LVL, SMART EQ and AMOUNT in D and
+//! E, its band every Part's.
 
 mod common;
 mod screen;
@@ -15,7 +15,6 @@ use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
 use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::prelude::RgbColor;
 use screen::{Fb, Input, feed};
 
 /// MIX + B1, back to PRT, EDIT down twice: EQ.
@@ -76,7 +75,7 @@ fn the_eq_pages_band_shows_the_parts_live_cuts() {
 }
 
 #[test]
-fn mst_smart_eq_turns_the_switch_and_amount() {
+fn mst_lvl_turns_smart_eq_and_amount() {
     chimera_core::bank2::DOOR_CELL.open_host_if_linked();
     let mut ui = screen::stack_ui();
     let master = reg::MIXER_CHANNEL_CHAIN
@@ -86,11 +85,10 @@ fn mst_smart_eq_turns_the_switch_and_amount() {
         .unwrap();
     screen::to_fx(&mut ui, master);
     feed(&mut ui, Input::press(ButtonId::Edit));
-    feed(&mut ui, Input::press(ButtonId::Edit));
-    assert_eq!(ui.page_def().id, reg::MASTER_SMART.id);
+    assert_eq!(ui.page_def().id, reg::MASTER_LEVEL.id);
     assert_eq!(ui.project().perf().fx.comp.smart, SmartEq::OFF);
-    feed(&mut ui, Input::turn(EncoderId::A, 1));
-    feed(&mut ui, Input::turn(EncoderId::B, 10));
+    feed(&mut ui, Input::turn(EncoderId::D, 1));
+    feed(&mut ui, Input::turn(EncoderId::E, 10));
     let s = ui.project().perf().fx.comp.smart;
     assert_eq!(s.switch(), Switch::On);
     assert!(s.amount().code() > Amount::DEFAULT.code());
@@ -101,7 +99,6 @@ fn mst_smart_eq_turns_the_switch_and_amount() {
     );
     screen::settle(&mut ui);
     let shot = screen::render_ui(&ui);
-    assert!(screen::cell_reads(&shot, 0, "ON"));
+    assert!(screen::cell_reads(&shot, 3, "ON"));
     assert!(band_px(&shot, theme::FAINT) > 0, "the Parts' columns drawn");
-    let _ = Rgb565::BLACK;
 }
