@@ -79,6 +79,16 @@ pub(crate) fn ask_in(a: Ask<'_>) -> Said {
     }
 }
 
+/// Why pad `p` of `kit` can't take CHOKE's stored value `v`, as `edit`'s
+/// `Edit::To` refuses it. An editor's set (`ed set`), checked before its
+/// turn as the box's other refusals are: bank 2 to bank 2, no door.
+#[optimize(speed)]
+pub(crate) fn refuses(kit: &Kit, p: PadId, v: f32) -> Option<Line> {
+    let mut pad = *kit.pad(p);
+    pad.set(held::CHOKE.param, v);
+    VoiceGroups::choke(kit, p, pad.choke()).err().map(why)
+}
+
 /// A CHOKE turn `delta` (to an end with `shift`) on Part `at`'s selected
 /// pad, from its held group (while the kit's chokes are as they were at
 /// the hold) or its own.

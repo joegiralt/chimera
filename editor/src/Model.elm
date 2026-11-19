@@ -2,31 +2,36 @@ module Model exposing
     ( Model
     , Msg(..)
     , Reading
+    , Seat
     , Stage
-    , Via
+    , Via(..)
     , init
-    , isPending
     , notice
+    , refusal
+    , seat
     , shown
     , status
     , step
     , subscriptions
+    , takesEdits
     , update
     )
 
-{-| Only the unit's state: what it last reported, and which edits wait to be
-confirmed. The editor never guesses a value; a control always shows the unit's.
+{-| Only the unit's state: what it last reported, and what it refused. The
+editor never guesses a value: a control always shows the unit's stored
+value, and an edit the unit would not take shows the unit's reason.
 
 `step` is the pure core (messages in, commands out); `update` only sends them.
 
 -}
 
+import Addr exposing (Addr)
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine(..), Command(..), Line(..), OptIndex, Value, addrKey, encode, parse)
+import Protocol exposing (AnswerLine(..), Command(..), Line(..), PageNo, Value, encode, parse)
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
-import Unit exposing (Engine(..), Gen, Part)
+import Unit exposing (Engine, Gen, Part)
 
 
 {-| One value as the unit reported it: its text is the box's own.
@@ -36,10 +41,11 @@ type alias Reading =
 
 
 {-| Where the connect sequence is. One request is in flight at a time.
+`Describing` reads one engine's pages, one at a time.
 -}
 type Stage
     = Greeting
-    | Describing Int
+    | Describing Engine PageNo
     | Following
     | Halted Why
 
@@ -47,19 +53,30 @@ type Stage
 type Why
     = UpdateEditor
     | UpdateUnit
-    | Refused String
+    | RefusedBy String
     | Silent
     | TooLarge
+
+
+{-| Which Part the box was following when a hand took hold: a new `part`
+line is a new seat, and a hand from the old one lets go.
+-}
+type Seat
+    = Seat Int
 
 
 type alias Model =
     { link : Maybe Link
     , via : Maybe Via
     , schema : Schema
+    , incoming : Schema
     , values : Dict String Reading
-    , pending : Dict String Time.Posix
+    , refusals : Dict String String
+    , whole : Bool
     , part : Maybe Part
     , engine : Maybe Engine
+    , described : Maybe Engine
+    , seat : Seat
     , variants : Dict String String
     , source : Maybe String
     , gen : Maybe Gen
@@ -83,10 +100,9 @@ type Msg
     | Line String
     | Tick Time.Posix
     | Edit Addr Value
-    | Pick Addr OptIndex
+    | Pick Addr Protocol.OptIndex
     | FollowPart Part
-    | ConnectSerial
-    | ConnectSocket
+    | Connect Via
 
 
 {-| The console protocol this editor speaks.
@@ -111,11 +127,6 @@ answerTimeoutMs =
     1000
 
 
-pendingMs : Int
-pendingMs =
-    250
-
-
 pollMs : Float
 pollMs =
     33
@@ -126,10 +137,14 @@ init =
     { link = Nothing
     , via = Nothing
     , schema = Schema.empty
+    , incoming = Schema.empty
     , values = Dict.empty
-    , pending = Dict.empty
+    , refusals = Dict.empty
+    , whole = False
     , part = Nothing
     , engine = Nothing
+    , described = Nothing
+    , seat = Seat 0
     , variants = Dict.empty
     , source = Nothing
     , gen = Nothing
@@ -152,30 +167,41 @@ subscriptions =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    case msg of
-        ConnectSerial ->
-            ( { model | via = Just ViaUnit }, Transport.connectSerial () )
+    let
+        ( m, commands ) =
+            step msg model
+    in
+    ( m, Cmd.batch (opening msg :: List.map send commands) )
 
-        ConnectSocket ->
-            ( { model | via = Just ViaSimulator }, Transport.connectSocket "ws://127.0.0.1:7342" )
+
+{-| The one thing besides commands a message asks of the world: a link.
+-}
+opening : Msg -> Cmd msg
+opening msg =
+    case msg of
+        Connect ViaUnit ->
+            Transport.connectSerial ()
+
+        Connect ViaSimulator ->
+            Transport.connectSocket "ws://127.0.0.1:7342"
 
         LinkChanged _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            Cmd.none
 
         Line _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            Cmd.none
 
         Tick _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            Cmd.none
 
         Edit _ _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            Cmd.none
 
         Pick _ _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            Cmd.none
 
         FollowPart _ ->
-            step msg model |> Tuple.mapSecond (List.map send >> Cmd.batch)
+            Cmd.none
 
 
 send : Command -> Cmd msg
@@ -187,10 +213,10 @@ send c =
 -}
 status : Model -> Maybe String
 status m =
-    case ( ( m.link, m.stage ), ( m.part, m.engine ) ) of
-        ( ( Just Open, Following ), ( Just p, Just e ) ) ->
-            Just
-                (String.join " · "
+    if m.link == Just Open && m.stage == Following then
+        Maybe.map2
+            (\p e ->
+                String.join " · "
                     [ if m.via == Just ViaSimulator then
                         "SIMULATOR"
 
@@ -199,10 +225,12 @@ status m =
                     , "PART " ++ String.fromInt (Unit.partNumber p)
                     , Unit.engineName e
                     ]
-                )
+            )
+            m.part
+            m.engine
 
-        _ ->
-            Nothing
+    else
+        Nothing
 
 
 {-| What to tell the user instead of the editor, if anything.
@@ -230,7 +258,7 @@ stageNotice m =
         Halted UpdateUnit ->
             Just "UPDATE THE UNIT"
 
-        Halted (Refused t) ->
+        Halted (RefusedBy t) ->
             Just ("THE UNIT REFUSED: " ++ t)
 
         Halted Silent ->
@@ -239,27 +267,41 @@ stageNotice m =
         Halted TooLarge ->
             Just "THE UNIT'S ANSWER IS TOO LARGE FOR ONE READ"
 
-        _ ->
-            case ( m.part, m.engine ) of
-                ( Just p, Just e ) ->
-                    if e /= Algo then
-                        Just ("PART " ++ String.fromInt (Unit.partNumber p) ++ " PLAYS " ++ Unit.engineName e ++ ". THE EDITOR EDITS ALGO FOR NOW.")
+        Greeting ->
+            Nothing
 
-                    else
-                        Nothing
+        Describing _ _ ->
+            Nothing
 
-                _ ->
-                    Nothing
+        Following ->
+            Nothing
 
 
 shown : Addr -> Model -> Maybe Reading
 shown a m =
-    Dict.get (addrKey a) m.values
+    Dict.get (Addr.key a) m.values
 
 
-isPending : Addr -> Model -> Bool
-isPending a m =
-    Dict.member (addrKey a) m.pending
+{-| The unit's reason for refusing the last edit of `a`, until it next
+reports a value for it.
+-}
+refusal : Addr -> Model -> Maybe String
+refusal a m =
+    Dict.get (Addr.key a) m.refusals
+
+
+seat : Model -> Seat
+seat m =
+    m.seat
+
+
+{-| Edits go out only while following, and only against the schema of the
+engine the box is on: during an engine change a shared address (FILTER.CUTOFF)
+would mean the old engine's parameter.
+-}
+takesEdits : Model -> Bool
+takesEdits m =
+    m.stage == Following && m.engine /= Nothing && m.engine == m.described
 
 
 step : Msg -> Model -> ( Model, List Command )
@@ -267,7 +309,7 @@ step msg m =
     case msg of
         LinkChanged l ->
             -- Any link change starts over: nothing of the last link is shown.
-            ( { init | link = Just l, via = m.via, now = m.now }, [] )
+            ( { init | link = Just l, via = m.via, now = m.now, seat = next m.seat }, [] )
 
         Tick t ->
             tick t m
@@ -295,12 +337,14 @@ step msg m =
             else
                 ( m, [] )
 
-        -- Connecting is `update`'s (it asks the shim).
-        ConnectSerial ->
-            ( m, [] )
+        -- Opening the link is `update`'s (it asks the shim).
+        Connect v ->
+            ( { m | via = Just v }, [] )
 
-        ConnectSocket ->
-            ( m, [] )
+
+next : Seat -> Seat
+next (Seat n) =
+    Seat (n + 1)
 
 
 tick : Time.Posix -> Model -> ( Model, List Command )
@@ -308,10 +352,7 @@ tick t m0 =
     let
         m : Model
         m =
-            { m0
-                | now = t
-                , pending = Dict.filter (\_ at -> ms t - ms at < pendingMs) m0.pending
-            }
+            { m0 | now = t }
 
         ask : Command -> ( Model, List Command )
         ask c =
@@ -355,8 +396,8 @@ tick t m0 =
             Greeting ->
                 connecting timedOut silent (ask Hello) m
 
-            Describing n ->
-                connecting timedOut silent (ask (Describe Algo n)) m
+            Describing e n ->
+                connecting timedOut silent (ask (Describe e n)) m
 
 
 connecting : Bool -> ( Model, List Command ) -> ( Model, List Command ) -> Model -> ( Model, List Command )
@@ -383,8 +424,8 @@ edit a v m =
         c =
             Set a v
     in
-    if m.stage == Following && m.engine == Just Algo && encode c /= Nothing then
-        ( { m | pending = Dict.insert (addrKey a) m.now m.pending }, [ c ] )
+    if takesEdits m && encode c /= Nothing then
+        ( m, [ c ] )
 
     else
         ( m, [] )
@@ -392,27 +433,18 @@ edit a v m =
 
 line : Line -> Model -> Model
 line l m =
-    if isHalted m then
-        m
-
-    else
-        lineIn l m
-
-
-isHalted : Model -> Bool
-isHalted m =
     case m.stage of
         Halted _ ->
-            True
+            m
 
         Greeting ->
-            False
+            lineIn l m
 
-        Describing _ ->
-            False
+        Describing _ _ ->
+            lineIn l m
 
         Following ->
-            False
+            lineIn l m
 
 
 lineIn : Line -> Model -> Model
@@ -425,31 +457,18 @@ lineIn l m =
             ok done m
 
         Err_ why ->
-            case m.stage of
-                Following ->
-                    -- Ignored: a `set`'s ERR looks the same. A refused `since` stays owed; the timeout re-asks, then settles it as lost.
-                    m
+            if m.stage == Following then
+                -- A refused `since` stays owed; the timeout re-asks, then settles it as lost.
+                m
 
-                Greeting ->
-                    if m.stage == Greeting && String.startsWith "unknown command" why then
-                        { m | stage = Halted UpdateUnit, asked = Nothing }
+            else if m.stage == Greeting && String.startsWith "unknown command" why then
+                { m | stage = Halted UpdateUnit, asked = Nothing }
 
-                    else
-                        { m | stage = Halted (Refused why), asked = Nothing }
+            else
+                { m | stage = Halted (RefusedBy why), asked = Nothing }
 
-                Describing _ ->
-                    if m.stage == Greeting && String.startsWith "unknown command" why then
-                        { m | stage = Halted UpdateUnit, asked = Nothing }
-
-                    else
-                        { m | stage = Halted (Refused why), asked = Nothing }
-
-                Halted _ ->
-                    if m.stage == Greeting && String.startsWith "unknown command" why then
-                        { m | stage = Halted UpdateUnit, asked = Nothing }
-
-                    else
-                        { m | stage = Halted (Refused why), asked = Nothing }
+        SetRefused a why ->
+            { m | refusals = Dict.insert (Addr.key a) why m.refusals }
 
         Queued ->
             m
@@ -492,9 +511,11 @@ answer a m =
                     { m
                         | part = Unit.partFromInt n
                         , engine = Just e
+                        , seat = next m.seat
                         , values = Dict.empty
+                        , refusals = Dict.empty
+                        , whole = True
                         , variants = Dict.empty
-                        , pending = Dict.empty
                         , source = Nothing
                     }
 
@@ -506,7 +527,7 @@ answer a m =
                 { m | variants = Dict.insert p.name p.variant m.variants }
 
             else
-                { m | schema = Schema.add a m.schema }
+                { m | incoming = Schema.add a m.incoming }
 
         Val v ->
             if Schema.param v.addr m.schema == Nothing then
@@ -515,65 +536,70 @@ answer a m =
 
             else
                 { m
-                    | values = Dict.insert (addrKey v.addr) { norm = v.norm, stored = v.stored, text = v.text } m.values
-                    , pending = Dict.remove (addrKey v.addr) m.pending
+                    | values = Dict.insert (Addr.key v.addr) { norm = v.norm, stored = v.stored, text = v.text } m.values
+                    , refusals = Dict.remove (Addr.key v.addr) m.refusals
                 }
+
+        -- The followed Part's, in a diff: a whole answer (a new Part, or
+        -- `since 0`) starts afresh, and an address the schema lacks is
+        -- another engine's.
+        Refused at why ->
+            if m.whole || Schema.param at m.schema == Nothing then
+                m
+
+            else
+                { m | refusals = Dict.insert (Addr.key at) why m.refusals }
 
         Source text ->
             if m.stage == Following then
                 { m | source = Just text }
 
             else
-                { m | schema = Schema.add a m.schema }
+                { m | incoming = Schema.add a m.incoming }
 
         Page _ ->
-            { m | schema = Schema.add a m.schema }
+            { m | incoming = Schema.add a m.incoming }
 
         Param _ ->
-            { m | schema = Schema.add a m.schema }
+            { m | incoming = Schema.add a m.incoming }
 
         Opt _ ->
-            { m | schema = Schema.add a m.schema }
+            { m | incoming = Schema.add a m.incoming }
 
         Route _ ->
-            { m | schema = Schema.add a m.schema }
+            { m | incoming = Schema.add a m.incoming }
 
 
 {-| `OK` ends the request in flight.
 -}
 ok : Maybe Int -> Model -> Model
-ok done m =
+ok done m0 =
+    let
+        m : Model
+        m =
+            { m0 | whole = False }
+    in
     case m.stage of
         Greeting ->
-            { m | stage = Describing 0, asked = Nothing, owed = 0 }
+            case m.engine of
+                Just e ->
+                    { m | stage = Describing e Protocol.firstPage, incoming = Schema.empty, asked = Nothing, owed = 0 }
 
-        Describing n ->
-            let
-                more : Bool
-                more =
-                    Schema.pageCount m.schema |> Maybe.map (\c -> n + 1 < c) |> Maybe.withDefault False
-            in
-            { m | stage = nextPage n more, asked = Nothing, owed = 0 }
+                Nothing ->
+                    { m | stage = Halted UpdateEditor, asked = Nothing }
+
+        Describing e n ->
+            if Schema.pageCount m.incoming |> Maybe.map (\c -> Protocol.pageNoToInt n + 1 < c) |> Maybe.withDefault False then
+                { m | stage = Describing e (Protocol.nextPage n), asked = Nothing, owed = 0 }
+
+            else
+                -- The whole schema is in: it replaces the one shown.
+                { m | stage = Following, schema = m.incoming, incoming = Schema.empty, described = Just e, asked = Nothing, owed = 0 }
 
         Following ->
             case done |> Maybe.andThen Unit.genFromInt of
                 Just g ->
-                    let
-                        owed : Int
-                        owed =
-                            max 0 (m.owed - 1)
-                    in
-                    { m
-                        | gen = Just g
-                        , owed = owed
-                        , leftover = owed > 0
-                        , asked =
-                            if owed > 0 then
-                                Just m.now
-
-                            else
-                                Nothing
-                    }
+                    following g (max 0 (m.owed - 1)) m
 
                 Nothing ->
                     m
@@ -582,10 +608,43 @@ ok done m =
             m
 
 
-nextPage : Int -> Bool -> Stage
-nextPage n more =
-    if more then
-        Describing (n + 1)
+{-| A `since` answered. Once nothing is owed, a box on another engine is
+described afresh, then read from nothing; the old page stays up meanwhile.
+-}
+following : Gen -> Int -> Model -> Model
+following g owed m =
+    case ( owed, m.engine ) of
+        ( 0, Just e ) ->
+            if m.engine /= m.described then
+                { m
+                    | stage = Describing e Protocol.firstPage
+                    , incoming = Schema.empty
+                    , values = Dict.empty
+                    , refusals = Dict.empty
+                    , variants = Dict.empty
+                    , gen = Nothing
+                    , owed = 0
+                    , leftover = False
+                    , asked = Nothing
+                }
 
-    else
-        Following
+            else
+                answered g owed m
+
+        _ ->
+            answered g owed m
+
+
+answered : Gen -> Int -> Model -> Model
+answered g owed m =
+    { m
+        | gen = Just g
+        , owed = owed
+        , leftover = owed > 0
+        , asked =
+            if owed > 0 then
+                Just m.now
+
+            else
+                Nothing
+    }

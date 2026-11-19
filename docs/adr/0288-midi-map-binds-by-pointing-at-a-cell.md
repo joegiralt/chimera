@@ -1,6 +1,6 @@
 # 0288. Add and retarget MIDI MAP bindings by pointing at a cell, no controller needed
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19)
 - **Deciders:** owner (design approved 2026-11-18, from chimera-releases#18), firmware
 
 ## Context

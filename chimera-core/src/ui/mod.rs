@@ -2206,6 +2206,14 @@ impl UiState {
         self.go(to)
     }
 
+    /// Slot `slot` of the page shown in the focus band, as its last turn
+    /// leaves it, its value untouched (chimera-screen's `focus`).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn focus_for_test(&mut self, slot: usize) {
+        self.focus.touch(self.page_def().id, slot);
+    }
+
     /// Whether a prompt is open.
     pub fn prompt_open(&self) -> bool {
         self.prompt().is_some()

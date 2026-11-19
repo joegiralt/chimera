@@ -1,0 +1,14 @@
+panel FILTER CLEAN
+panel FX OFF
+panel ENV1 A-MED
+panel ENV2 A-MED
+panel ENV3 B-ENV
+panel LFO1 CLASSIC
+panel LFO2 CLASSIC
+panel LFO3 CLASSIC
+panel OP1 TABLE
+panel OP2 TABLE
+panel OP3 TABLE
+panel OP4 TABLE
+panel OP5 TABLE
+panel OP6 TABLE
