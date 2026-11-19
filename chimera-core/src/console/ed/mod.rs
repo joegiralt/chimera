@@ -20,13 +20,17 @@ mod value;
 pub use addr::{EdAddr, EdBlock, PadBlock, SoundBlock};
 pub use describe::{
     MODELS, chain, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
-    modal_variant, op_variant, pages, tape_variant,
+    modal_variant, op_variant, page_at, pages, tape_variant,
 };
-pub use edits::{EdState, Pushed, SetRefusal};
+#[cfg(any(test, feature = "test-support"))]
+pub use edits::StoredRefusal;
+pub use edits::{EdState, Pushed, REFUSED as ED_REFUSED, SetRefusal};
 pub use since::{
     EdSince, Gen, PANELS_MAX as ED_PANELS, SLOTS as ED_SLOTS, panels_used as ed_panels_used,
     slots_used as ed_slots_used,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use value::stored;
 
 /// A choice's option by its number, `#<n>` (`opt`'s index): a name with a
 /// space (`GATE EXT`) is one word this way.
@@ -194,7 +198,7 @@ pub(crate) fn answer_in(
         },
         Ok(EdArg::Set(a, v)) => edits::set(a, v, ui, q, w),
         Ok(EdArg::Since(held)) => match q {
-            Some(st) => st.since.answer(held, ui, w),
+            Some(st) => st.since.answer(held, ui, &mut st.refused, w),
             None => writeln!(w, "ERR ed since is not in this build"),
         },
         Ok(EdArg::Part(p)) => match q {

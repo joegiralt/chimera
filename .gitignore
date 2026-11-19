@@ -17,3 +17,6 @@ __pycache__/
 /editor/node_modules
 /editor/elm-stuff
 /editor/dist
+/target-wasm
+/tools/binaryen/
+/editor/public/screen.wasm

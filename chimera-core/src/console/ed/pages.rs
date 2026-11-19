@@ -227,8 +227,8 @@ impl Iterator for Pages {
     }
 }
 
-/// Page `n`, in `describe`'s order.
+/// Page `n`, in `describe`'s order: its def, and the pad it is a page of.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.page_at"))]
-pub(super) fn page_at(engine: EngineType, n: usize) -> Option<(&'static BlockDef, Option<PadId>)> {
+pub fn page_at(engine: EngineType, n: usize) -> Option<(&'static BlockDef, Option<PadId>)> {
     Pages::all(engine).nth(n)
 }

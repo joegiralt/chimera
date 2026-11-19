@@ -8,8 +8,8 @@ use common::console_fake::{Fake, ask};
 use std::collections::BTreeSet;
 
 use chimera_core::console::{
-    ED_PANELS, ED_SLOTS, EdAddr, EdBlock, MODELS, PadBlock, SoundBlock, ed_pages, ed_panels_used,
-    ed_slots_used, filter_variant, machine_variant, modal_variant, tape_variant,
+    ED_PANELS, ED_REFUSED, ED_SLOTS, EdAddr, EdBlock, MODELS, PadBlock, SoundBlock, ed_pages,
+    ed_panels_used, ed_slots_used, filter_variant, machine_variant, modal_variant, tape_variant,
 };
 use chimera_core::project::PartId;
 use chimera_core::ui::block_def::slot_addr;
@@ -555,7 +555,9 @@ fn longest_line(f: &mut Fake, p: &[String]) -> usize {
 /// - the Part's own lines hold at most a cell's 32-byte text.
 ///
 /// Each address's line is maximised over its values, each pad over its
-/// machine and kind, each panel over its variants. DRUM shows no SOURCE
+/// machine and kind, each panel over its variants. A diff of every value
+/// may carry `refused` lines as well: the four the unit keeps, each at the
+/// longest address and reason, are counted in. DRUM shows no SOURCE
 /// cell, so the answer has no `source` line (asserted below; TAPE's
 /// answer has one, not bounded here).
 #[test]
@@ -643,9 +645,19 @@ fn the_worst_drum_answer_fits_one_answer() {
         .map(|(_, len)| len)
         .sum();
     let head = "\n".len() + "part 1 DRUM\n".len() + "OK 999999999\n".len();
-    let worst = head + shown + part + 12 * per_pad;
+    // A diff that moved every value says the turns refused too: the
+    // newest four, each `refused <ADDR> "<reason>"`, the address the
+    // longest listed, the reason a full `Line` (the toast's, cut there).
+    let longest_addr = all.iter().map(|p| p[1].len()).max().unwrap();
+    let refused = ED_REFUSED
+        * ("refused ".len()
+            + longest_addr
+            + " \"".len()
+            + chimera_core::project::LINE_LEN
+            + "\"\n".len());
+    let worst = head + shown + part + 12 * per_pad + refused;
     println!(
-        "the worst DRUM answer: at most {worst} B of {ANSWER_BYTES_MAX} (a pad {per_pad} B, the Part {part} B, the panels {shown} B)"
+        "the worst DRUM answer: at most {worst} B of {ANSWER_BYTES_MAX} (a pad {per_pad} B, the Part {part} B, the panels {shown} B, the refusals {refused} B)"
     );
     assert!(worst < ANSWER_BYTES_MAX, "{worst} B");
 }
@@ -924,7 +936,13 @@ fn a_tape_turn_a_streamed_source_refuses_writes_nothing() {
     set(&mut f, "TAPE_ENG.MODEL", "#2");
     assert_eq!(get(&mut f, "TAPE_ENG.MODEL").1, "WALK");
     let (lines, _, _) = since(&mut f, 0);
-    assert!(!lines.iter().any(|l| l.contains("NEEDS RAM")), "{lines:?}");
+    // Said only as the refusal: no value reads it.
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("val ") && l.contains("NEEDS RAM")),
+        "{lines:?}"
+    );
     // Every MODEL and DIRECTION: lands where the box's turn lands, else
     // nothing written.
     let mut refused = 0;
@@ -1069,6 +1087,167 @@ fn a_refused_ed_set_says_why_as_a_cc_does() {
     f.ui.step_toast(60_000);
     set(&mut f, "PAD5.LEVEL", "40");
     assert_eq!(toast(&mut f), None);
+}
+
+// ---- refusals over the protocol: `refused <ADDR> "<reason>"` in since ----
+
+/// `since`'s `refused` lines, each checked to come before its `OK`, and
+/// the answer's number.
+fn refused_lines(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
+    let got = ask(f, &format!("ed since {n}\n"));
+    let ok = got.rfind("OK ").unwrap();
+    let lines: Vec<String> = got
+        .lines()
+        .filter(|l| l.starts_with("refused "))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        got[..ok].matches("refused ").count() == lines.len(),
+        "{got}"
+    );
+    let m = got[ok + 3..].trim_end().parse().unwrap();
+    (lines, m)
+}
+
+/// A turn the box refuses is said in the next `since`, in the toast's
+/// own words, once.
+#[test]
+fn a_refused_turn_is_said_in_since_in_the_toasts_words() {
+    // TAPE: a streamed source.
+    let mut f = streamed_at_deck();
+    let (_, m) = refused_lines(&mut f, 0);
+    f.ui.step_toast(60_000);
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    let said = toast(&mut f).unwrap();
+    let (lines, m) = refused_lines(&mut f, m);
+    assert_eq!(lines, [format!("refused TAPE_ENG.MODEL \"{said}\"")]);
+    assert_eq!(said, "SCRUB NEEDS RAM · STREAMED");
+    // Reported: gone from the next answer.
+    assert!(refused_lines(&mut f, m).0.is_empty());
+
+    // ALGO: the formant budget.
+    let mut f = fake(EngineType::Algo);
+    let (_, mut m) = refused_lines(&mut f, 0);
+    let formant = OpKind::Formant.code();
+    let mut said = vec![];
+    for op in Op::ALL {
+        let a = ParamAddr::new(
+            BlockRef::AlgoOp(op),
+            chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
+        );
+        set(&mut f, &ed(a), &format!("#{formant}"));
+        let (lines, n) = refused_lines(&mut f, m);
+        m = n;
+        said.extend(lines);
+    }
+    assert!(!said.is_empty(), "the budget never refused");
+    for l in &said {
+        assert!(
+            l.starts_with("refused OP_") && l.ends_with(".WAVE \"FORMANT BUDGET FULL\""),
+            "{l}"
+        );
+    }
+
+    // DRUM: a 9th group, kit_groups' words, on the pad it was sent for.
+    let mut f = fake(EngineType::Drum);
+    let (_, m) = refused_lines(&mut f, 0);
+    f.ui.step_toast(60_000);
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    let said = toast(&mut f).unwrap();
+    assert!(said.contains("GROUPS"), "{said}");
+    let (lines, _) = refused_lines(&mut f, m);
+    assert_eq!(lines, [format!("refused PAD3.CHOKE \"{said}\"")]);
+}
+
+/// At most four, the newest, oldest first.
+#[test]
+fn since_keeps_the_four_newest_refusals() {
+    let mut f = streamed_at_deck();
+    let (_, m) = refused_lines(&mut f, 0);
+    // SCRUB, PING, SCRUB, PING, SCRUB: five, the first dropped.
+    for i in 0..5 {
+        if i % 2 == 0 {
+            set(&mut f, "TAPE_ENG.MODEL", "#2");
+        } else {
+            set(&mut f, &ed(held::DIRECTION), "#3");
+        }
+    }
+    let (lines, m) = refused_lines(&mut f, m);
+    let scrub = "refused TAPE_ENG.MODEL \"SCRUB NEEDS RAM · STREAMED\"";
+    let ping = format!(
+        "refused {} \"PING NEEDS RAM · STREAMED\"",
+        ed(held::DIRECTION)
+    );
+    assert_eq!(lines, [ping.as_str(), scrub, ping.as_str(), scrub]);
+    assert!(refused_lines(&mut f, m).0.is_empty());
+}
+
+/// A set refused at `ERR` time says so in its own answer: since never
+/// repeats it. Nor is a landed set, or a refused one to the value it has.
+#[test]
+fn since_says_only_the_turns_refusals() {
+    let mut f = streamed_at_deck();
+    let (_, m) = refused_lines(&mut f, 0);
+    assert_eq!(
+        ask(&mut f, "ed set TAPE_ENG.MODEL #99\n"),
+        "ERR ed set TAPE_ENG.MODEL has no such option\n"
+    );
+    apply(&mut f);
+    let (lines, m) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "{lines:?}");
+    // A landed set.
+    set(&mut f, "TAPE_ENG.MODEL", "#0");
+    let (lines, _) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "{lines:?}");
+}
+
+/// A line that is no `since` answer keeps the refusals for the next.
+#[test]
+fn a_refusal_waits_for_a_since_answer() {
+    let mut f = streamed_at_deck();
+    let (_, m) = refused_lines(&mut f, 0);
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    // An `ERR` answer (a malformed since) reports nothing and keeps them.
+    assert!(ask(&mut f, "ed since x\n").starts_with("ERR "));
+    let (lines, _) = refused_lines(&mut f, m);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+}
+
+/// A refusal is its Part's: a whole answer (another Part, or `since 0`)
+/// says none and drops them, and Part 2's answers never carry Part 1's.
+#[test]
+fn a_refusal_stays_with_its_part() {
+    let p2 = PartId::ALL[1];
+    let mut f = fake(EngineType::Drum);
+    screen::init_part_engine(&mut f.ui, p2, EngineType::Drum);
+    // Part 1's PAD3 CHOKE refused, then Part 2 followed: its whole answer
+    // has no refusal, nor has the diff after it.
+    let (_, m) = refused_lines(&mut f, 0);
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    assert_eq!(ask(&mut f, "ed part 2\n"), "OK\n");
+    apply(&mut f);
+    let (lines, m) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "Part 2's whole answer: {lines:?}");
+    let (lines, m) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "Part 2's diff: {lines:?}");
+    // Queued for Part 1, applied after Part 2 is followed: Part 1's still.
+    assert_eq!(ask(&mut f, "ed part 1\n"), "OK\n");
+    apply(&mut f);
+    let (_, m) = refused_lines(&mut f, m);
+    assert_eq!(ask(&mut f, "ed set PAD3.CHOKE OFF\n"), "OK queued\n");
+    assert_eq!(ask(&mut f, "ed part 2\n"), "OK\n");
+    apply(&mut f);
+    let (lines, m) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "Part 2 after Part 1's set: {lines:?}");
+    let (lines, _) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "{lines:?}");
+    // `since 0` is whole: a refusal before it is not said.
+    let mut f = fake(EngineType::Drum);
+    let (_, _) = refused_lines(&mut f, 0);
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    let (lines, m) = refused_lines(&mut f, 0);
+    assert!(lines.is_empty(), "since 0: {lines:?}");
+    assert!(refused_lines(&mut f, m).0.is_empty());
 }
 
 #[test]

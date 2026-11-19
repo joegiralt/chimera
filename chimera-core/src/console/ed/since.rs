@@ -15,6 +15,10 @@
 //!
 //! `m` is the new number. A `val` is `ed get`'s own line (`value::reading`),
 //! so the two never disagree. `source` is TAPE's, in every whole answer.
+//! A `refused` line is a set the box refused at its turn since the last
+//! answer (`edits::Refusals`, the newest four), in its toast's words; one
+//! refused at `ERR` time is said in that answer alone. Only the followed
+//! Part's, and only in a diff: a whole answer says none and drops them.
 //! The number moves before the answer is written, so an answer that never
 //! reached the editor leaves it asking with a stale one: everything again.
 //!
@@ -28,6 +32,7 @@ use super::describe::{
     PanelName, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
     modal_variant, op_variant, tape_variant,
 };
+use super::edits::Refusals;
 use super::value::{block, engine_of, line, reading, source_text, text_ctx};
 use super::{EdAddr, describe};
 use crate::addr::{BlockRef, Op};
@@ -398,9 +403,10 @@ impl EdSince {
         &mut self,
         held: Option<Gen>,
         ui: &UiState,
+        refused: &mut Refusals,
         w: &mut dyn Write,
     ) -> fmt::Result {
-        self.answer_within(held, ui, w, ANSWER_BYTES_MAX)
+        self.answer_within(held, ui, refused, w, ANSWER_BYTES_MAX)
     }
 
     /// The answer if it is at most `max` bytes, else `ERR ed since too
@@ -415,24 +421,27 @@ impl EdSince {
         &mut self,
         held: Option<Gen>,
         ui: &UiState,
+        refused: &mut Refusals,
         w: &mut dyn Write,
         max: usize,
     ) -> fmt::Result {
         let mut size = ByteCount(0);
-        self.pass(held, ui, Pass::Measure, &mut size)?;
+        self.pass(held, ui, refused, Pass::Measure, &mut size)?;
         if size.0 > max {
             return w.write_str("ERR ed since too large\n");
         }
-        self.pass(held, ui, Pass::Commit, w)
+        self.pass(held, ui, refused, Pass::Commit, w)
     }
 
     /// One pass of the answer: `Measure` writes to a counter and keeps
-    /// nothing, `Commit` writes it and keeps what it said.
+    /// nothing, `Commit` writes it, keeps what it said and clears the
+    /// refusals, said or stale.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.pass"))]
     fn pass(
         &mut self,
         held: Option<Gen>,
         ui: &UiState,
+        refused: &mut Refusals,
         pass: Pass,
         w: &mut dyn Write,
     ) -> fmt::Result {
@@ -494,6 +503,13 @@ impl EdSince {
         self.values(ui, engine, texts, pass, w)?;
         if !texts && let Some(t) = source_text(ui, &own) {
             writeln!(w, "source \"{}\"", t.as_str())?;
+        }
+        // A whole answer is a new start: the refusals before it are stale.
+        if same {
+            refused.write(part, w)?;
+        }
+        if let Pass::Commit = pass {
+            refused.clear();
         }
         writeln!(w, "OK {}", m.get())
     }
@@ -635,13 +651,14 @@ mod tests {
     fn too_large_is_a_refusal_and_keeps_nothing() {
         let ui = UiState::new();
         let mut s = EdSince::new();
+        let mut r = Refusals::new();
         let mut out = alloc_free::Buf::new();
-        s.answer_within(None, &ui, &mut out, 100).unwrap();
+        s.answer_within(None, &ui, &mut r, &mut out, 100).unwrap();
         assert_eq!(out.as_str(), "ERR ed since too large\n");
         assert_eq!(s.issued, None);
         assert!(s.seen.is_none());
         let mut out = alloc_free::Buf::new();
-        s.answer_within(None, &ui, &mut out, ANSWER_BYTES_MAX)
+        s.answer_within(None, &ui, &mut r, &mut out, ANSWER_BYTES_MAX)
             .unwrap();
         assert!(
             out.as_str().starts_with("\npart 1 ALGO\n"),

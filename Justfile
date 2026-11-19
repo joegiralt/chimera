@@ -32,12 +32,74 @@ editor-e2e:
     node editor/e2e/sim.mjs
 
 # The browser editor's Elm tests, then elm-review (the site's gate, editor/review)
+# and elm-format. Elm itself is pinned in editor/package.json (0.19.1).
 editor-test:
-    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && npx elm-review && node public/ports.check.js
+    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test --compiler node_modules/.bin/elm && npx elm-review --compiler node_modules/.bin/elm && npx elm-format --validate src tests review/src >/dev/null && node public/ports.check.js && node public/theme.check.js
 
 # The browser editor, optimised, into editor/dist/
-editor-build:
-    cd editor && mkdir -p dist && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/style.css dist/
+editor-build: editor-screen
+    cd editor && npm install --no-audit --no-fund --silent && mkdir -p dist/glyphs && npx elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/theme.js public/style.css public/screen.js public/screen.wasm dist/ && cp public/glyphs/*.png dist/glyphs/
+
+# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32 into editor/public/screen.wasm.
+# Stripped, then wasm-opt'd if there is one whose sha256 is the pinned
+# release binary's (`just editor-wasm-opt`'s, else one on PATH; optional: it
+# trims ~17%, ~2% gzipped; any other is not run); each size printed, then
+# checked from node (screen.check.js, which prints the paint cost). Its own
+# target dir (target-wasm): the host's builds aren't touched.
+editor-screen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CARGO_TARGET_DIR=target-wasm
+    cargo build -q -p chimera-screen --target wasm32-unknown-unknown --profile wasm
+    out=editor/public/screen.wasm
+    cp target-wasm/wasm32-unknown-unknown/wasm/chimera_screen.wasm "$out"
+    size() { echo "screen.wasm $1: $(stat -c %s "$out") bytes, $(gzip -9c "$out" | wc -c) gzipped"; }
+    size built
+    bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+    "$bin/llvm-strip" "$out"
+    size stripped
+    # binaryen version_119's wasm-opt, as editor-wasm-opt unpacks it.
+    pinned=f661d2bb96cfc3e399dd3513c1efb674c820bb5a5a70edf0b4e5a029065c45c2
+    opt=""
+    for c in tools/binaryen/wasm-opt "$(command -v wasm-opt || true)"; do
+        if [ -n "$c" ] && [ -x "$c" ]; then
+            if [ "$(sha256sum "$c" | cut -d' ' -f1)" = "$pinned" ]; then
+                opt="$c"
+                break
+            fi
+            echo "screen.wasm: $c is not the pinned wasm-opt (sha256), not run"
+        fi
+    done
+    if [ -n "$opt" ]; then
+        BINARYEN_CORES=10 "$opt" -Oz --all-features "$out" -o "$out"
+        size wasm-opt
+    else
+        echo "screen.wasm: no pinned wasm-opt (optional; just editor-wasm-opt fetches it)"
+    fi
+    node editor/public/screen.check.js
+
+# binaryen's wasm-opt for editor-screen, pinned, into tools/binaryen/ (gitignored):
+# the release's static binary alone, its tarball's sha256 and its own checked.
+editor-wasm-opt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    v=version_119
+    sum=716bcf9f5f36a6f466239fbb09a925eeaf54c46411ccefac979ec649e7c06d2d
+    dir=tools/binaryen
+    mkdir -p "$dir"
+    tmp="$(mktemp -d)"
+    trap 'rm -r "$tmp"' EXIT
+    curl -sSfL -o "$tmp/b.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/$v/binaryen-$v-x86_64-linux.tar.gz"
+    echo "$sum  $tmp/b.tar.gz" | sha256sum -c --quiet
+    tar xzf "$tmp/b.tar.gz" -C "$tmp" "binaryen-$v/bin/wasm-opt"
+    echo "f661d2bb96cfc3e399dd3513c1efb674c820bb5a5a70edf0b4e5a029065c45c2  $tmp/binaryen-$v/bin/wasm-opt" | sha256sum -c --quiet
+    mv "$tmp/binaryen-$v/bin/wasm-opt" "$dir/wasm-opt"
+    "$dir/wasm-opt" --version
+
+# The UI component gallery (every component, every state, DAY and NIGHT, and
+# the JITTER probe), into editor/gallery/
+editor-gallery:
+    cd editor && npm install --no-audit --no-fund --silent && mkdir -p gallery/glyphs && npx elm make src/Gallery.elm --optimize --output=gallery/gallery.js && cp public/gallery.html gallery/index.html && cp public/style.css public/theme.js gallery/ && cp public/glyphs/*.png gallery/glyphs/
 
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes
@@ -505,6 +567,8 @@ check $CHIMERA_STAMP_CLEAN="1":
     just editor-test
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
+    # The editor's glyph renderer against the console's `ed` and the sim's frame.
+    cargo test -p chimera-screen
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
     # WALK's kept glyph styles (ADR 0209): host only, never in firmware.
@@ -668,6 +732,7 @@ test-fat-tools:
 clippy:
     cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
+    cargo clippy -p chimera-screen --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
