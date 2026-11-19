@@ -134,6 +134,30 @@ fn the_frame_takes_readings_while_shown_and_rests_when_not() {
     assert_eq!(m, PartMeters::REST);
 }
 
+/// A reading raised as the page closes (a block in flight) is dropped:
+/// the page reopens on rested meters, not on stale audio.
+#[test]
+fn a_reopened_page_shows_no_stale_reading() {
+    let _g = lock();
+    played::clear_held();
+    let ui = UiState::new();
+    let parts = ui.project().perf().parts();
+    let mut m = PartMeters::REST;
+    part_meter::frame(&mut m, Shown::Off);
+    PART_PEAKS[2].raise(Peak::new(0.5));
+    part_meter::frame(&mut m, Shown::Off);
+    part_meter::frame(
+        &mut m,
+        Shown::On {
+            parts,
+            zones: Zones::OFF,
+            dt: Ms(50),
+        },
+    );
+    assert_eq!(m.get(P3).bar(), part_meter::Dbfs::FLOOR, "fresh");
+    part_meter::frame(&mut m, Shown::Off);
+}
+
 /// On MIXER › PRT the band draws Part 3's bar beside its LEVEL bar, its
 /// peak mark, and the key mark over its number.
 #[test]

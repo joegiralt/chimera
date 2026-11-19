@@ -9,7 +9,7 @@ use crate::MidiChannel;
 use crate::dsp::DB_PER_OCTAVE;
 use crate::hw::MAX_PARTS;
 use crate::mpe::Zones;
-use crate::part_peaks::{self, Peak, Watch};
+use crate::part_peaks::{self, PART_PEAKS, Peak, Watch};
 use crate::project::PartId;
 use crate::ui::renderer::Parts;
 use crate::ui::tape_strip::Paint;
@@ -213,12 +213,16 @@ pub(crate) fn ask_in(a: Ask<'_>) {
 }
 
 /// A frame: the audio told whether to measure; up, each Part's reading
-/// taken and its key mark read; down, every meter at rest, so the page
-/// opens on fresh ones.
+/// taken and its key mark read; down, every meter at rest and every
+/// reading dropped (a block in flight as the page closed included), so
+/// the page opens on fresh ones.
 pub fn frame(m: &mut PartMeters, s: Shown<'_>) {
     match s {
         Shown::Off => {
             part_peaks::watch(Watch::Down);
+            for meter in &PART_PEAKS {
+                meter.take();
+            }
             *m = PartMeters::REST;
         }
         Shown::On { parts, zones, dt } => {
