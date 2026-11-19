@@ -5,7 +5,6 @@
 //! whichever the box shows (ADR 0289).
 
 use core::fmt::{self, Write};
-
 use core::mem::MaybeUninit;
 
 use super::addr::EdBlock;
@@ -21,7 +20,7 @@ use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::ed_cue::RouteAt;
 use crate::ui::page::ValFmt;
-use crate::ui::{ed_cue, held, view};
+use crate::ui::{ed_cue, held, kit_groups, view};
 use chimera_engine::params::EngineType;
 
 /// Sets waiting for the next UI pass. A lap of a browser's sliders is a
@@ -124,14 +123,99 @@ pub enum Pushed {
     Full,
 }
 
+/// The refusals `ed since` says at most: the newest.
+pub const REFUSED: usize = 4;
+
+/// A set the box refused at its turn, on its Part, and why: the toast's
+/// words.
+#[derive(Clone, Copy)]
+struct Refused {
+    part: PartId,
+    addr: EdAddr,
+    why: Line,
+}
+
+/// The turns refused since `ed since` last said them, oldest first: the
+/// newest `REFUSED`. Uninit past `len`, so `EdState::new`, built in bank 1
+/// (`take_ed`), writes one byte for them; shifted by hand, as core's rotate
+/// would link into bank 1.
+pub(super) struct Refusals {
+    items: [MaybeUninit<Refused>; REFUSED],
+    len: u8,
+}
+
+impl Refusals {
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.edits.refusals_new")
+    )]
+    pub(super) const fn new() -> Refusals {
+        Refusals {
+            items: [MaybeUninit::uninit(); REFUSED],
+            len: 0,
+        }
+    }
+
+    /// `addr` on `part` refused for `why`: the oldest dropped when full.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.edits.refusals_push")
+    )]
+    fn push(&mut self, part: PartId, addr: EdAddr, why: Line) {
+        let mut at = usize::from(self.len);
+        if at == REFUSED {
+            let mut i = 1;
+            while i < REFUSED {
+                self.items[i - 1] = self.items[i];
+                i += 1;
+            }
+            at = REFUSED - 1;
+        }
+        self.items[at] = MaybeUninit::new(Refused { part, addr, why });
+        self.len = (at + 1) as u8;
+    }
+
+    /// `refused <ADDR> "<why>"`, one line each of `part`'s: an address
+    /// names no Part, so another's would read as this one's.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.edits.refusals_write")
+    )]
+    pub(super) fn write(&self, part: PartId, w: &mut dyn Write) -> fmt::Result {
+        let mut i = 0;
+        while i < usize::from(self.len) {
+            // SAFETY: `push` writes every item below `len` before raising
+            // it, and `len` never passes `REFUSED`.
+            let r = unsafe { self.items[i].assume_init_ref() };
+            if r.part == part {
+                writeln!(w, "refused {} \"{}\"", r.addr, r.why.as_str())?;
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// Said, or no longer the followed Part's: none left.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.edits.refusals_clear")
+    )]
+    pub(super) fn clear(&mut self) {
+        self.len = 0;
+    }
+}
+
 /// What the console keeps for `ed`, which the shell owns: the sets taken
 /// and not yet applied by the UI pass (as `Hands` queues `Gesture`s, a fixed
-/// array), and `ed since`'s copy of what it last reported.
+/// array), the turns refused since `ed since` last said so, and its copy of
+/// what it last reported.
 pub struct EdState {
     items: [Pending; CAP],
     len: u8,
     /// `ed part`'s Part, for the same pass: the last asked wins.
     part: Option<PartId>,
+    /// The turns refused, for `ed since`'s `refused` lines.
+    pub(super) refused: Refusals,
     /// `ed since`'s copy and number (`since.rs`).
     pub(super) since: super::EdSince,
     /// `ed schema`'s hashes, made once a boot.
@@ -152,6 +236,7 @@ impl EdState {
             items: [Pending::SPARE; CAP],
             len: 0,
             part: None,
+            refused: Refusals::new(),
             since: super::EdSince::new(),
             hashes: Hashes::new(),
             acts: [MaybeUninit::uninit(); ACTS],
@@ -254,8 +339,9 @@ impl EdState {
         while i < usize::from(self.len) {
             if let Some(&p) = self.items.get(i)
                 && let Some(at) = p.taken.lands(ui)
+                && let Some(why) = turn(ui, at, p)
             {
-                turn(ui, at, p);
+                self.refused.push(at, p.addr, why);
             }
             i += 1;
         }
@@ -270,16 +356,17 @@ impl EdState {
 /// `p` as a knob turn. A pad's is the selected pad's turn with its pad
 /// selected for it, and the box's selection put back: the box never sees
 /// it move, and the edit takes the knob's whole path (ADR 0280's CHOKE
-/// check with it).
+/// check with it). The refusal said on the box, if it was refused.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.turn"))]
-fn turn(ui: &mut UiState, at: PartId, p: Pending) {
+fn turn(ui: &mut UiState, at: PartId, p: Pending) -> Option<Line> {
     let (a, pad) = (p.addr.param(), p.addr.pad());
     if let Some(why) = refusal(ui, at, p) {
         // To the value it has: no change, the hold kept, nothing said.
-        if !unchanged(ui, at, p) {
-            ed_cue::refused(ui, at, a, pad, why);
+        if unchanged(ui, at, p) {
+            return None;
         }
-        return;
+        ed_cue::refused(ui, at, a, pad, why);
+        return Some(why);
     }
     let to = p.to.stored();
     match pad {
@@ -294,6 +381,7 @@ fn turn(ui: &mut UiState, at: PartId, p: Pending) {
         }
     }
     ed_cue::landed(ui, at, a, pad);
+    None
 }
 
 /// `p` sets its Sound cell on Part `at` to the value stored there already.
@@ -309,8 +397,8 @@ fn unchanged(ui: &UiState, at: PartId, p: Pending) -> bool {
 /// Why the box refuses `p` before its write, as its toast reads: TAPE's
 /// MODEL or DIRECTION onto what a streamed source can't play (the turn's
 /// and a CC's check), or an operator kind or algorithm past the formant
-/// budget (a CC's words). CHOKE refuses in `edit_in`, with its own toast
-/// (ADR 0280); `None`: the write goes ahead.
+/// budget (a CC's words), or a pad's CHOKE onto a 9th voice group
+/// (kit_groups' words, ADR 0280); `None`: the write goes ahead.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.refusal"))]
 fn refusal(ui: &UiState, at: PartId, p: Pending) -> Option<Line> {
     // Each cell refused here is a choice: a number never reaches one.
@@ -319,6 +407,11 @@ fn refusal(ui: &UiState, at: PartId, p: Pending) -> Option<Line> {
     };
     let a = p.addr.param();
     let sound = &ui.project().part(at).sound;
+    if a == held::CHOKE
+        && let Some(n) = p.addr.pad()
+    {
+        return kit_groups::refuses(ui.project().kit(at), n, p.to.stored());
+    }
     let src = ui.streams(at);
     if let Some(t) = held::TapeTurn::of(a, p.to.stored()) {
         return held::Pick::Tape(t).why(sound, src).map(held::reason);
@@ -349,6 +442,44 @@ impl SetRefusal {
             SetRefusal::TakesANumber => "takes a number",
             SetRefusal::TakesAName => "takes one of its names",
         }
+    }
+}
+
+/// Why `EdState::stored_set` won't take a stored value.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoredRefusal {
+    /// `describe` lists no such address for the followed Part's engine.
+    NotHere,
+    /// NaN or an infinity.
+    NotFinite,
+    /// What `ed set` says of it.
+    Set(SetRefusal),
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl EdState {
+    /// What `ed set <addr>` stores for the stored value `v`, sent as the
+    /// cell's own kind says (a choice's `#n`, else the number): checked as
+    /// `set` checks it, nothing queued. For a mirror of the unit's screens
+    /// (chimera-screen), which writes it itself.
+    pub fn stored_set(&mut self, ui: &UiState, addr: EdAddr, v: f32) -> Result<f32, StoredRefusal> {
+        if !v.is_finite() {
+            return Err(StoredRefusal::NotFinite);
+        }
+        if !self.since.lists(engine_of(ui), addr) {
+            return Err(StoredRefusal::NotHere);
+        }
+        let val = match fmt_of(ui, addr).and_then(super::describe::names) {
+            Some(_) if v.fract() == 0.0 && (0.0..=255.0).contains(&v) => {
+                EdValue::Index(OptIndex::new(v as u8))
+            }
+            Some(_) => return Err(StoredRefusal::Set(SetRefusal::NoSuchOption)),
+            None => EdValue::Num(v, super::super::Word::new(b"")),
+        };
+        resolve(ui, addr, val)
+            .map(To::stored)
+            .map_err(StoredRefusal::Set)
     }
 }
 

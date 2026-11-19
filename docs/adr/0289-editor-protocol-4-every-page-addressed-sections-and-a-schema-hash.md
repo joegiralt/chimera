@@ -84,6 +84,12 @@ Protocol 3 (ADR 0285) reaches the followed Part's engine pages only. `in_schema`
 - **Bank 2:** +6,112 B on default, ORBIT and the gate, all in S4; ORBIT's S0–S3 at 8,480 B free.
 - **ITCM:** 43,816 → 44,312 B (+496): the ROUTES copy (uninit until kept), the act queue.
 
+### The merge of 0.4 (b136ef37: ADRs 0288, 0290, 0291, the v6 editor)
+- **Refusals in sections:** `refused <ADDR> "<reason>"` (ADR 0290) is PART's last line, before ROUTES, written only while PART is a diff and only for the followed Part (ADR 0291); every committed answer clears them, whole or not. A Part's or a bus's set refused at its turn is the Part it landed on's.
+- **`ed_page_at`** takes a `Schema` and gives the page's `Round`; chimera-screen reads an engine's pages through it, the pad from the round.
+- **The editor:** 0.4's v6 editor is the base; protocol 4's schema walk, cache, sections, `more` and routes are on it. A `part` header drops PART's values, routes and refusals, never the MIXER's. An engine not yet read this connection keeps 0.4's rule (the old page stays up and takes no edits until the schema is read, then `since 0`); one already read is adopted at once.
+- **Bank 1:** measured on the merge, against the lines summed as ours + (0.4 − base): default +40, ORBIT +96, ORBIT with the writer +40, bench-memory +56, bench-orbit +32, bench-tape +24; the gate and six bench sets fell 32 to 72 B and their lines were lowered to the measure. Protocol 4 on ORBIT against 0.4 b136ef37 (899,048): +288. **Bank 2:** +32 on default, ORBIT and the gate. **ITCM:** 44,528 B (+216: the refusals beside the acts).
+
 ## Supersedes in part
 - [0285](0285-editor-protocol-3-every-engine-pads-addressed.md): `PROTOCOL` 3 → 4; "the slots are laid out per engine" → per engine plus the common sections; `SLOTS` 711 → 952; `param`'s grammar gains flags; `ERR ed since too large` only for a single section past the bound.
 - [0276](0276-browser-editor-protocol-ed-over-the-console-pulled.md): `route "<label>" next-slice` → a route cell; "every `ed since` answer that isn't a diff starts with `\n`" → every answer holding a whole section.

@@ -1,10 +1,12 @@
 module ProtocolTest exposing (suite)
 
+import Addr
 import Expect
 import FixtureData
-import Protocol exposing (Addr(..), AnswerLine(..), Cell(..), Command(..), Flags, Kind(..), Line(..), RouteKind(..), RouteTo(..), Scale(..), SchemaId(..), Value(..), encode, optIndex, parse)
+import Protocol exposing (AnswerLine(..), Cell(..), Command(..), Flags, Kind(..), Line(..), RouteKind(..), RouteTo(..), Scale(..), SchemaId(..), Value(..), encode, optIndex, parse)
 import Test exposing (Test, describe, test)
 import Unit
+import Wire exposing (addr, page)
 
 
 p : String -> String -> Line -> Test
@@ -34,13 +36,13 @@ suite =
     describe "Protocol"
         [ describe "answers, copied from chimera-core/tests/console_ed_test.rs and the fixture"
             [ p "hello" "ed hello 4 0.3.0-dev part 1 ALGO" (Answer (HelloIs { protocol = 4, build = "0.3.0-dev", part = 1, engine = "ALGO" }))
-            , p "page" "page 22 FLT of 36" (Answer (Page { n = 22, label = "FLT", count = 36 }))
+            , p "page" "page 22 FLT of 36" (Protocol.pageLabelFrom "FLT" |> Maybe.map (\l -> Answer (Page { n = page 22, label = l, count = 36 })) |> Maybe.withDefault Unknown)
             , p "panel fixed" "panel ALG -" (Answer (Panel { name = "ALG", variant = "-" }))
             , p "panel variant" "panel FILTER CLEAN" (Answer (Panel { name = "FILTER", variant = "CLEAN" }))
-            , p "param choice" "param ALGO.ALG_A \"ALG A\" choice lin 0 31 1 0 m" (Answer (Param { addr = Addr "ALGO.ALG_A", label = "ALG A", kind = Choice, scale = Linear, min = 0, max = 31, step = 1, default = 0, flags = { mappable = True, modulation = False } }))
-            , p "param cont" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625 -" (Answer (Param { addr = Addr "OUT.LEVEL", label = "VOL", kind = Cont, scale = Linear, min = 0, max = 1, step = 0.0078125, default = 0.3515625, flags = none }))
-            , p "param negative" "param ALGO.TRNSP \"TRNSP\" cont lin -24 24 1 0 d" (Answer (Param { addr = Addr "ALGO.TRNSP", label = "TRNSP", kind = Cont, scale = Linear, min = -24, max = 24, step = 1, default = 0, flags = { mappable = False, modulation = True } }))
-            , p "param octaves" "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000 md" (Answer (Param { addr = Addr "FILTER.CUTOFF", label = "CUTOFF", kind = Cont, scale = Octaves, min = 20, max = 20000, step = 1, default = 1000, flags = { mappable = True, modulation = True } }))
+            , p "param choice" "param ALGO.ALG_A \"ALG A\" choice lin 0 31 1 0 m" (Answer (Param { addr = addr "ALGO.ALG_A", label = "ALG A", kind = Choice, scale = Linear, min = 0, max = 31, step = 1, default = 0, flags = { mappable = True, modulation = False } }))
+            , p "param cont" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625 -" (Answer (Param { addr = addr "OUT.LEVEL", label = "VOL", kind = Cont, scale = Linear, min = 0, max = 1, step = 0.0078125, default = 0.3515625, flags = none }))
+            , p "param negative" "param ALGO.TRNSP \"TRNSP\" cont lin -24 24 1 0 d" (Answer (Param { addr = addr "ALGO.TRNSP", label = "TRNSP", kind = Cont, scale = Linear, min = -24, max = 24, step = 1, default = 0, flags = { mappable = False, modulation = True } }))
+            , p "param octaves" "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000 md" (Answer (Param { addr = addr "FILTER.CUTOFF", label = "CUTOFF", kind = Cont, scale = Octaves, min = 20, max = 20000, step = 1, default = 1000, flags = { mappable = True, modulation = True } }))
             , p "a protocol 2 param line is not understood" "param OUT.LEVEL \"VOL\" cont 0 1 0.0078125 0.3515625" Unknown
             , p "a protocol 3 param line, no flags, is not understood" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625" Unknown
             , p "bad flags" "param OUT.LEVEL \"VOL\" cont lin 0 1 0.0078125 0.3515625 dm" Unknown
@@ -50,8 +52,8 @@ suite =
                         Answer (SchemaIs r) ->
                             Expect.equal ( r.schema, r.pages, Protocol.hashText r.hash ) ( EngineSchema Unit.Drum, 165, "0123456789abcdef" )
 
-                        other ->
-                            Expect.fail (Debug.toString other)
+                        _ ->
+                            Expect.fail "not a schema line"
             , p "schema with a short hash" "schema MIXER 31 00ff" Unknown
             , p "schema with an upper-case hash" "schema MIXER 31 00FF00FF00FF00FF" Unknown
             , p "schema of an unknown schema" "schema ORBIT 19 00ff00ff00ff00ff" Unknown
@@ -59,7 +61,7 @@ suite =
             , p "panel reverb" "panel REVERB HALL" (Answer (Panel { name = "REVERB", variant = "HALL" }))
             , p "bad scale" "param A.B \"L\" cont log 0 1 1 0" Unknown
             , p "source" "source \"KICK 909\"" (Answer (Source "KICK 909"))
-            , p "opt" "opt ALGO.ALG_A 8 \"A1\"" (optIndex 8 |> Maybe.map (\ix -> Answer (Opt { addr = Addr "ALGO.ALG_A", index = ix, name = "A1" })) |> Maybe.withDefault Unknown)
+            , p "opt" "opt ALGO.ALG_A 8 \"A1\"" (optIndex 8 |> Maybe.map (\ix -> Answer (Opt { addr = addr "ALGO.ALG_A", index = ix, name = "A1" })) |> Maybe.withDefault Unknown)
             , p "a protocol 3 route line is not understood" "route \"ENV AMT\" next-slice" Unknown
             , p "route knob" "route \"ENV AMT\" ENV1:FILTER.CUTOFF route" (Answer (Route { label = "ENV AMT", cell = Cell "ENV1:FILTER.CUTOFF", kind = KnobRoute }))
             , p "keyboard knob" "route \"KEYBOARD\" NOTE:FILTER.CUTOFF keybd" (Answer (Route { label = "KEYBOARD", cell = Cell "NOTE:FILTER.CUTOFF", kind = KnobKeybd }))
@@ -69,19 +71,22 @@ suite =
             , p "a route's plus" "route ENV1:FILTER.CUTOFF 7 \"+7\"" (Answer (RouteIs { cell = Cell "ENV1:FILTER.CUTOFF", amount = 7, text = "+7" }))
             , p "unroute" "unroute OP5:FILTER.RESO" (Answer (Unroute (Cell "OP5:FILTER.RESO")))
             , p "src" "src OP5 \"OP 5\"" (Answer (Src { src = "OP5", label = "OP 5" }))
-            , p "col" "col FREQ FILTER.CUTOFF" (Answer (Col { tag = "FREQ", addr = Addr "FILTER.CUTOFF" }))
+            , p "col" "col FREQ FILTER.CUTOFF" (Answer (Col { tag = "FREQ", addr = addr "FILTER.CUTOFF" }))
             , p "amount" "amount -127 127" (Answer (AmountRange -127 127))
             , p "dests" "dests 16" (Answer (Dests 16))
-            , p "get val" "val OP_C.CRSE 0.0634921 4 \"1.00\"" (Answer (Val { addr = Addr "OP_C.CRSE", norm = 0.0634921, stored = 4, text = "1.00" }))
-            , p "val with unit" "val FILTER.CUTOFF 1 20000 \"20.0 kHz\"" (Answer (Val { addr = Addr "FILTER.CUTOFF", norm = 1, stored = 20000, text = "20.0 kHz" }))
-            , p "val text with a space and sign" "val PIT.NOTE 0.5 60 \"C4 +12ct\"" (Answer (Val { addr = Addr "PIT.NOTE", norm = 0.5, stored = 60, text = "C4 +12ct" }))
-            , p "val empty text" "val A.B 0 0 \"\"" (Answer (Val { addr = Addr "A.B", norm = 0, stored = 0, text = "" }))
+            , p "get val" "val OP_C.CRSE 0.0634921 4 \"1.00\"" (Answer (Val { addr = addr "OP_C.CRSE", norm = 0.0634921, stored = 4, text = "1.00" }))
+            , p "val with unit" "val FILTER.CUTOFF 1 20000 \"20.0 kHz\"" (Answer (Val { addr = addr "FILTER.CUTOFF", norm = 1, stored = 20000, text = "20.0 kHz" }))
+            , p "val text with a space and sign" "val PIT.NOTE 0.5 60 \"C4 +12ct\"" (Answer (Val { addr = addr "PIT.NOTE", norm = 0.5, stored = 60, text = "C4 +12ct" }))
+            , p "val empty text" "val A.B 0 0 \"\"" (Answer (Val { addr = addr "A.B", norm = 0, stored = 0, text = "" }))
             , p "val inner quote not before a space" "val A.B 0 0 \"5\" wide\"" Unknown
-            , p "val signed text" "val VOICEFX.MIX 1 1 \"+63\"" (Answer (Val { addr = Addr "VOICEFX.MIX", norm = 1, stored = 1, text = "+63" }))
+            , p "val signed text" "val VOICEFX.MIX 1 1 \"+63\"" (Answer (Val { addr = addr "VOICEFX.MIX", norm = 1, stored = 1, text = "+63" }))
             , p "since part" "part 1 ALGO" (Answer (PartIs 1 "ALGO"))
             , p "since panel" "panel LFO3 CLASSIC" (Answer (Panel { name = "LFO3", variant = "CLASSIC" }))
-            , p "since val" "val OUT.PAN 0.5 0 \"C\"" (Answer (Val { addr = Addr "OUT.PAN", norm = 0.5, stored = 0, text = "C" }))
+            , p "since val" "val OUT.PAN 0.5 0 \"C\"" (Answer (Val { addr = addr "OUT.PAN", norm = 0.5, stored = 0, text = "C" }))
             , p "queued" "OK queued" Queued
+            , p "refused" "refused PAD3.KNOB_G \"NOT ON THIS MACHINE\"" (Answer (Refused (addr "PAD3.KNOB_G") "NOT ON THIS MACHINE"))
+            , p "refused with the formant budget's words" "refused OP_B.WAVE \"FORMANT BUDGET FULL\"" (Answer (Refused (addr "OP_B.WAVE") "FORMANT BUDGET FULL"))
+            , p "refused, no address" "refused \"X\"" Unknown
             ]
         , test "every line of the unit's MIXER schema is understood" <|
             \_ ->
@@ -98,7 +103,7 @@ suite =
                                 (\l ->
                                     case parse l of
                                         Answer (Param q) ->
-                                            Just ( Protocol.addrKey q.addr, q.flags )
+                                            Just ( Addr.key q.addr, q.flags )
 
                                         _ ->
                                             Nothing
@@ -124,6 +129,10 @@ suite =
             , p "ERR busy" "ERR busy" (Err_ "busy")
             , p "ERR not in build" "ERR ed since is not in this build" (Err_ "ed since is not in this build")
             , p "ERR unterminated quote" "ERR ed set has no \"X here" (Err_ "ed set has no \"X here")
+            , p "ERR set refused" "ERR ed set FILTER.KIND has no such option" (SetRefused (addr "FILTER.KIND") "has no such option")
+            , p "ERR set takes a number" "ERR ed set OP_A.WAVE takes a number" (SetRefused (addr "OP_A.WAVE") "takes a number")
+            , p "ERR set has no address here" "ERR ed set has no CHORUS.MODE here" (SetRefused (addr "CHORUS.MODE") "has no CHORUS.MODE here")
+            , p "ERR set not in build" "ERR ed set is not in this build" (Err_ "ed set is not in this build")
             , p "ERR leading space" "  ERR busy" (Err_ "busy")
             , p "ERR alone" "ERR" (Err_ "")
             , p "CR stripped" "OK 3\u{000D}" (Ok_ (Just 3))
@@ -145,10 +154,10 @@ suite =
             ]
         , describe "commands"
             [ test "hello" <| \_ -> Expect.equal (Just "ed hello") (encode Hello)
-            , test "describe" <| \_ -> Expect.equal (Just "ed describe ALGO 3") (encode (Describe (EngineSchema Unit.Algo) 3))
-            , test "describe the mixer" <| \_ -> Expect.equal (Just "ed describe MIXER 30") (encode (Describe MixerSchema 30))
+            , test "describe" <| \_ -> Expect.equal (Just "ed describe ALGO 3") (encode (Describe (EngineSchema Unit.Algo) (page 3)))
+            , test "describe the mixer" <| \_ -> Expect.equal (Just "ed describe MIXER 30") (encode (Describe MixerSchema (page 30)))
             , test "ask a schema" <| \_ -> Expect.equal (Just "ed schema DRUM") (encode (AskSchema (EngineSchema Unit.Drum)))
-            , test "ask a matrix" <| \_ -> Expect.equal (Just "ed describe MTX-VA 0") (encode (Describe (MatrixSchema Unit.Va) 0))
+            , test "ask a matrix" <| \_ -> Expect.equal (Just "ed describe MTX-VA 0") (encode (Describe (MatrixSchema Unit.Va) Protocol.firstPage))
             , test "route an amount" <|
                 \_ ->
                     Expect.equal (Just (Just "ed route LFO1:FILTER.CUTOFF -42"))
@@ -156,10 +165,10 @@ suite =
             , test "route off" <| \_ -> Expect.equal (Just "ed route QMIN off") (encode (SetRoute (Cell "QMIN") RouteOff))
             , test "an amount is -127..127" <| \_ -> Expect.equal [ Nothing, Nothing ] [ Protocol.amount 128, Protocol.amount -128 ]
             , test "a cell with a space is no command" <| \_ -> Expect.equal Nothing (encode (SetRoute (Cell "OP 5:FILTER.CUTOFF") RouteOff))
-            , test "get" <| \_ -> Expect.equal (Just "ed get OP_C.CRSE") (encode (Get (Addr "OP_C.CRSE")))
-            , test "set num" <| \_ -> Expect.equal (Just "ed set FILTER.CUTOFF 1234.5") (encode (Set (Addr "FILTER.CUTOFF") (Num 1234.5)))
-            , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))
-            , test "set index" <| \_ -> Expect.equal (Just "ed set ENV1.HOLD #2") (encode (Set (Addr "ENV1.HOLD") (idx 2)))
+            , test "get" <| \_ -> Expect.equal (Just "ed get OP_C.CRSE") (encode (Get (addr "OP_C.CRSE")))
+            , test "set num" <| \_ -> Expect.equal (Just "ed set FILTER.CUTOFF 1234.5") (encode (Set (addr "FILTER.CUTOFF") (Num 1234.5)))
+            , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (addr "FILTER.KIND") (Name "LADDER")))
+            , test "set index" <| \_ -> Expect.equal (Just "ed set ENV1.HOLD #2") (encode (Set (addr "ENV1.HOLD") (idx 2)))
             , test "an option number is never negative" <| \_ -> Expect.equal Nothing (optIndex -1)
             , test "every engine the unit has, and no other, in its order" <|
                 -- The firmware writes `EngineType::PLAYABLE`'s names to the fixture
@@ -171,24 +180,36 @@ suite =
             , test "every engine is described by its name" <|
                 \_ ->
                     Expect.equal (List.map (\e -> Just ("ed describe " ++ Unit.engineName e ++ " 0")) Unit.allEngines)
-                        (List.map (\e -> encode (Describe (EngineSchema e) 0)) Unit.allEngines)
+                        (List.map (\e -> encode (Describe (EngineSchema e) Protocol.firstPage)) Unit.allEngines)
             , p "since too large" "ERR ed since too large" SinceTooLarge
             , test "since" <| \_ -> Expect.equal (Just "ed since 7") (encode (Since (Unit.genFromInt 7)))
             , test "since nothing held is 0" <| \_ -> Expect.equal (Just "ed since 0") (encode (Since Nothing))
             , test "part" <| \_ -> Expect.equal (Just (Just "ed part 2")) (Unit.partFromInt 2 |> Maybe.map (Follow >> encode))
-            , test "refuses what would split or inject" <|
+            , test "an_address_that_would_split_or_inject_is_no_address" <|
                 \_ ->
-                    [ encode (Get (Addr "A.B\ned hello"))
-                    , encode (Get (Addr "A B"))
-                    , encode (Get (Addr ""))
-                    , encode (Set (Addr "A.B") (Name "X Y"))
-                    , encode (Set (Addr "A.B") (Name "X\u{000D}"))
+                    [ "A.B\ned hello", "A B", "", "AB", ".B", "A.", "A.\"B" ]
+                        |> List.map Addr.fromWire
+                        |> Expect.equal (List.repeat 7 Nothing)
+            , test "a_field_that_is_no_unit_word_makes_no_address" <|
+                \_ ->
+                    [ "A B", "", "cutoff", "X\n", ".B", "A.", "A\"B" ]
+                        |> List.map (\w -> encode (Set (Addr.at Addr.Kit (Addr.field w)) (Num 1)))
+                        |> Expect.equal (List.repeat 7 Nothing)
+            , test "a_unit_word_makes_its_address" <|
+                \_ ->
+                    [ "TONAL", "E.DPT", "GATE_DECAY", "KNOB_G" ]
+                        |> List.map (\w -> encode (Get (Addr.at Addr.Kit (Addr.field w))))
+                        |> Expect.equal (List.map (\w -> Just ("ed get KIT." ++ w)) [ "TONAL", "E.DPT", "GATE_DECAY", "KNOB_G" ])
+            , test "refuses a name that would split or inject" <|
+                \_ ->
+                    [ encode (Set (addr "A.B") (Name "X Y"))
+                    , encode (Set (addr "A.B") (Name "X\u{000D}"))
                     ]
-                        |> Expect.equal (List.repeat 5 Nothing)
+                        |> Expect.equal (List.repeat 2 Nothing)
             , test "refuses non-decimal floats" <|
                 \_ ->
-                    [ 0 / 0, 1 / 0, -1 / 0, 1.0e-7, 1.0e21 ]
-                        |> List.map (\n -> encode (Set (Addr "A.B") (Num n)))
+                    [ sqrt -1, 1 / 0, -1 / 0, 1.0e-7, 1.0e21 ]
+                        |> List.map (\n -> encode (Set (addr "A.B") (Num n)))
                         |> Expect.equal (List.repeat 5 Nothing)
             ]
         ]
@@ -201,6 +222,9 @@ isUnknown l =
             True
 
         Answer _ ->
+            False
+
+        SetRefused _ _ ->
             False
 
         Ok_ _ ->

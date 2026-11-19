@@ -324,3 +324,37 @@ fn a_whole_routes_section_with_every_cell_fits_the_bound() {
     println!("a full ROUTES section is {routes} B");
     assert!(routes > 5000 && routes < ANSWER_BYTES_MAX / 2, "{routes}");
 }
+
+/// A refused turn is PART's last line, before ROUTES' (ADR 0291 in
+/// protocol 4's sections), and said once.
+#[test]
+fn a_refusal_ends_part_before_routes() {
+    let mut f = Fake::new();
+    let ops = ["OP_A", "OP_B", "OP_C", "OP_D", "OP_E", "OP_F"];
+    for o in ops {
+        ask(&mut f, &format!("ed set {o}.WAVE FRMT\n"));
+        apply(&mut f);
+    }
+    let refused = ops
+        .iter()
+        .find(|o| !ask(&mut f, &format!("ed get {o}.WAVE\n")).contains("FRMT"))
+        .copied()
+        .unwrap();
+    let m: u32 = {
+        let got = ask(&mut f, "ed since 0\n");
+        got.trim_end().rsplit(' ').next().unwrap().parse().unwrap()
+    };
+    ask(&mut f, &format!("ed set {refused}.WAVE FRMT\n"));
+    route(&mut f, "LFO1:FILTER.CUTOFF", "10");
+    settle(&mut f);
+    let got = ask(&mut f, &format!("ed since {m}\n"));
+    let lines: Vec<&str> = got.lines().collect();
+    let r = lines
+        .iter()
+        .position(|l| l.starts_with("refused "))
+        .unwrap();
+    let c = lines.iter().position(|l| l.starts_with("route ")).unwrap();
+    assert!(r < c, "{got}");
+    let m2: u32 = lines.last().unwrap()[3..].parse().unwrap();
+    assert!(!ask(&mut f, &format!("ed since {m2}\n")).contains("refused"));
+}

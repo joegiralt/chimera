@@ -6,11 +6,14 @@ module Schema exposing
     , Route
     , Schema
     , add
+    , addresses
     , empty
     , hasPanel
     , matrix
     , optionName
+    , pageAddresses
     , pageCount
+    , pageNumber
     , pages
     , param
     , paramIn
@@ -20,8 +23,9 @@ module Schema exposing
 answers arrive. Pages hold panels (a variant each), panels hold params.
 -}
 
+import Addr exposing (Addr)
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine, Cell, Flags, Kind, OptIndex, RouteKind, Scale, addrKey)
+import Protocol exposing (AnswerLine, Cell, Flags, Kind, OptIndex, PageLabel, PageNo, RouteKind, Scale)
 
 
 type alias Param =
@@ -64,8 +68,8 @@ type alias Matrix =
 
 
 type alias Page =
-    { n : Int
-    , label : String
+    { n : PageNo
+    , label : PageLabel
     , panels : List Panel
     }
 
@@ -76,12 +80,15 @@ type Schema
         , pages : List Page
         , index : Dict String Param
         , matrix : Matrix
+
+        -- Every address once, the last described first.
+        , order : List Addr
         }
 
 
 empty : Schema
 empty =
-    Schema { count = Nothing, pages = [], index = Dict.empty, matrix = { sources = [], cols = [], range = Nothing, dests = Nothing } }
+    Schema { count = Nothing, pages = [], index = Dict.empty, matrix = { sources = [], cols = [], range = Nothing, dests = Nothing }, order = [] }
 
 
 {-| The matrix part of a schema: empty but for `MTX-<ENGINE>`'s.
@@ -103,9 +110,44 @@ pages (Schema s) =
     s.pages
 
 
+{-| Every address the unit describes, once each, in `describe` order.
+-}
+addresses : Schema -> List Addr
+addresses (Schema s) =
+    List.reverse s.order
+
+
+{-| The addresses page `n` holds, in any of its panels and variants, once
+each, in `describe` order.
+-}
+pageAddresses : PageNo -> Schema -> List Addr
+pageAddresses n (Schema s) =
+    s.pages
+        |> List.filter (\pg -> pg.n == n)
+        |> List.concatMap (.panels >> List.concatMap (.params >> List.map .addr))
+        |> List.foldl
+            (\a ( seen, out ) ->
+                if List.member a seen then
+                    ( seen, out )
+
+                else
+                    ( a :: seen, a :: out )
+            )
+            ( [], [] )
+        |> Tuple.second
+        |> List.reverse
+
+
+{-| The number of the page the unit calls `label`.
+-}
+pageNumber : String -> Schema -> Maybe PageNo
+pageNumber label (Schema s) =
+    s.pages |> List.filter (\pg -> Protocol.pageLabel pg.label == label) |> List.head |> Maybe.map .n
+
+
 param : Addr -> Schema -> Maybe Param
 param a (Schema s) =
-    Dict.get (addrKey a) s.index
+    Dict.get (Addr.key a) s.index
 
 
 {-| Some page of it lists a panel of that name (`REVERB`, `FILTER`).
@@ -125,7 +167,7 @@ paramIn variants a (Schema s) =
     let
         key : String
         key =
-            addrKey a
+            Addr.key a
 
         shown : Panel -> Bool
         shown pn =
@@ -133,7 +175,7 @@ paramIn variants a (Schema s) =
 
         mine : Panel -> Maybe ( Bool, Param )
         mine pn =
-            pn.params |> List.filter (\p -> addrKey p.addr == key) |> List.head |> Maybe.map (\p -> ( pn.variant /= "-", p ))
+            pn.params |> List.filter (\p -> Addr.key p.addr == key) |> List.head |> Maybe.map (\p -> ( pn.variant /= "-", p ))
 
         found : List ( Bool, Param )
         found =
@@ -189,7 +231,13 @@ add line (Schema s) =
             Schema
                 { s
                     | pages = onLastPanel (\pn -> { pn | params = pn.params ++ [ q ] }) s.pages
-                    , index = Dict.insert (addrKey p.addr) q s.index
+                    , index = Dict.insert (Addr.key p.addr) q s.index
+                    , order =
+                        if Dict.member (Addr.key p.addr) s.index then
+                            s.order
+
+                        else
+                            p.addr :: s.order
                 }
 
         Protocol.Opt o ->
@@ -205,7 +253,7 @@ add line (Schema s) =
             Schema
                 { s
                     | pages = onLastPanel (\pn -> { pn | params = List.map withOpt pn.params }) s.pages
-                    , index = Dict.update (addrKey o.addr) (Maybe.map withOpt) s.index
+                    , index = Dict.update (Addr.key o.addr) (Maybe.map withOpt) s.index
                 }
 
         Protocol.Route r ->
@@ -269,6 +317,9 @@ add line (Schema s) =
             Schema s
 
         Protocol.MixerIs ->
+            Schema s
+
+        Protocol.Refused _ _ ->
             Schema s
 
 

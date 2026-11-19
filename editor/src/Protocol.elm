@@ -1,6 +1,5 @@
 module Protocol exposing
-    ( Addr(..)
-    , Amount
+    ( Amount
     , AnswerLine(..)
     , Cell(..)
     , Command(..)
@@ -9,17 +8,25 @@ module Protocol exposing
     , Kind(..)
     , Line(..)
     , OptIndex
+    , PageLabel
+    , PageNo
     , RouteKind(..)
     , RouteTo(..)
     , Scale(..)
     , SchemaId(..)
     , Value(..)
-    , addrKey
     , amount
     , cellKey
     , encode
+    , firstOption
+    , firstPage
     , hashText
+    , nextPage
     , optIndex
+    , pageLabel
+    , pageLabelFrom
+    , pageNo
+    , pageNoToInt
     , parse
     , schemaToken
     )
@@ -28,18 +35,56 @@ module Protocol exposing
 Parsing never fails: a line that isn't understood is `Unknown` and is ignored.
 -}
 
+import Addr exposing (Addr)
 import Unit exposing (Engine, Gen, Part)
 
 
-{-| A parameter address, `OP3.CRSE`. The unit's own text, opaque here.
+{-| A page of `ed describe`, by the unit's number for it: 0 is the first.
 -}
-type Addr
-    = Addr String
+type PageNo
+    = PageNo Int
 
 
-addrKey : Addr -> String
-addrKey (Addr a) =
-    a
+pageNo : Int -> Maybe PageNo
+pageNo n =
+    if n >= 0 then
+        Just (PageNo n)
+
+    else
+        Nothing
+
+
+firstPage : PageNo
+firstPage =
+    PageNo 0
+
+
+pageNoToInt : PageNo -> Int
+pageNoToInt (PageNo n) =
+    n
+
+
+nextPage : PageNo -> PageNo
+nextPage (PageNo n) =
+    PageNo (n + 1)
+
+
+{-| A page's name as the unit gives it (`FLT`, `PAD3_MCH`), read once.
+-}
+type PageLabel
+    = PageLabel String
+
+
+{-| A label off the wire: one word.
+-}
+pageLabelFrom : String -> Maybe PageLabel
+pageLabelFrom s =
+    word s |> Maybe.map PageLabel
+
+
+pageLabel : PageLabel -> String
+pageLabel (PageLabel l) =
+    l
 
 
 {-| A choice is sent by its option's number (`#2`), so a name with a space
@@ -56,6 +101,13 @@ negative, so `#n` is always a number the unit reads.
 -}
 type OptIndex
     = OptIndex Int
+
+
+{-| A choice's first option, `#0`.
+-}
+firstOption : OptIndex
+firstOption =
+    OptIndex 0
 
 
 optIndex : Int -> Maybe OptIndex
@@ -178,7 +230,7 @@ schemaFromToken t =
 type Command
     = Hello
     | AskSchema SchemaId
-    | Describe SchemaId Int
+    | Describe SchemaId PageNo
     | Get Addr
     | Set Addr Value
     | Since (Maybe Gen)
@@ -189,7 +241,7 @@ type Command
 type AnswerLine
     = HelloIs { protocol : Int, build : String, part : Int, engine : String }
     | SchemaIs { schema : SchemaId, pages : Int, hash : Hash }
-    | Page { n : Int, label : String, count : Int }
+    | Page { n : PageNo, label : PageLabel, count : Int }
     | Panel { name : String, variant : String }
     | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float, flags : Flags }
     | Opt { addr : Addr, index : OptIndex, name : String }
@@ -210,6 +262,9 @@ type AnswerLine
     | PartIs Int String
       -- The MIXER section of `since`, whole: what was held for it is dropped.
     | MixerIs
+      -- A set the unit took and then would not apply, and the box's reason
+      -- (its own toast's words).
+    | Refused Addr String
 
 
 type Line
@@ -219,6 +274,8 @@ type Line
     | OkMore Int
     | Queued
     | Err_ String
+      -- `ERR ed set <addr> <why>`: a set the unit would not take.
+    | SetRefused Addr String
       -- `ERR ed since too large` (ADR 0285): the unit's whole answer is past
       -- what one answer may carry. Asking again gets the same.
     | SinceTooLarge
@@ -239,20 +296,14 @@ encode c =
         AskSchema s ->
             Just ("ed schema " ++ schemaToken s)
 
-        Describe s page ->
+        Describe s (PageNo page) ->
             Just ("ed describe " ++ schemaToken s ++ " " ++ String.fromInt page)
 
-        Get (Addr a) ->
-            word a |> Maybe.map (\x -> "ed get " ++ x)
+        Get a ->
+            wire a |> Maybe.map (\k -> "ed get " ++ k)
 
-        Set (Addr a) (Num n) ->
-            Maybe.map2 (\x v -> "ed set " ++ x ++ " " ++ v) (word a) (decimal n)
-
-        Set (Addr a) (Name n) ->
-            Maybe.map2 (\x v -> "ed set " ++ x ++ " " ++ v) (word a) (word n)
-
-        Set (Addr a) (Index (OptIndex i)) ->
-            word a |> Maybe.map (\x -> "ed set " ++ x ++ " #" ++ String.fromInt i)
+        Set a v ->
+            wire a |> Maybe.andThen (\k -> setValue v |> Maybe.map (\x -> "ed set " ++ k ++ " " ++ x))
 
         Since held ->
             Just ("ed since " ++ String.fromInt (held |> Maybe.map Unit.genToInt |> Maybe.withDefault 0))
@@ -275,6 +326,30 @@ encode c =
                                         "off"
                                )
                     )
+
+
+{-| The address, if it is one the unit could write.
+-}
+wire : Addr -> Maybe String
+wire a =
+    if Addr.onWire a then
+        Just (Addr.key a)
+
+    else
+        Nothing
+
+
+setValue : Value -> Maybe String
+setValue v =
+    case v of
+        Num n ->
+            decimal n
+
+        Name n ->
+            word n
+
+        Index (OptIndex i) ->
+            Just ("#" ++ String.fromInt i)
 
 
 word : String -> Maybe String
@@ -314,6 +389,9 @@ parse raw =
     if trimmed == "ERR ed since too large" then
         SinceTooLarge
 
+    else if String.startsWith "ERR ed set " trimmed then
+        setRefusal (String.dropLeft 11 trimmed)
+
     else if trimmed == "ERR" || String.startsWith "ERR " trimmed then
         -- By prefix, not tokens: a refusal's text may hold a stray quote.
         Err_ (String.trim (String.dropLeft 3 trimmed))
@@ -344,6 +422,29 @@ parse raw =
 
             Nothing ->
                 Unknown
+
+
+{-| `<addr> <why>`, or `has no <addr> here`; anything else is a plain `ERR`.
+-}
+setRefusal : String -> Line
+setRefusal rest =
+    let
+        plain : Line
+        plain =
+            Err_ ("ed set " ++ rest)
+    in
+    case String.words rest of
+        "has" :: "no" :: a :: _ ->
+            Addr.fromWire a |> Maybe.map (\x -> SetRefused x rest) |> Maybe.withDefault plain
+
+        a :: ((_ :: _) as why) ->
+            Addr.fromWire a |> Maybe.map (\x -> SetRefused x (String.join " " why)) |> Maybe.withDefault plain
+
+        [ _ ] ->
+            plain
+
+        [] ->
+            plain
 
 
 stripCr : String -> String
@@ -396,7 +497,7 @@ answer ts =
             Just MixerIs
 
         [ "page", n, label, "of", count ] ->
-            Maybe.map2 (\a b -> Page { n = a, label = label, count = b }) (nat n) (nat count)
+            Maybe.map3 (\a l b -> Page { n = PageNo a, label = l, count = b }) (nat n) (pageLabelFrom label) (nat count)
 
         [ "panel", name, variant ] ->
             Just (Panel { name = name, variant = variant })
@@ -409,7 +510,7 @@ answer ts =
                 |> Maybe.andThen (\( sc, fl ) -> param a label kind sc fl ( lo, hi ) ( step, def ))
 
         [ "opt", a, i, name ] ->
-            nat i |> Maybe.andThen optIndex |> Maybe.map (\ix -> Opt { addr = Addr a, index = ix, name = name })
+            Maybe.map2 (\x ix -> Opt { addr = x, index = ix, name = name }) (Addr.fromWire a) (nat i |> Maybe.andThen optIndex)
 
         [ "route", a, b, c ] ->
             case int b of
@@ -429,7 +530,7 @@ answer ts =
             Just (Src { src = src, label = label })
 
         [ "col", tag, a ] ->
-            Just (Col { tag = tag, addr = Addr a })
+            Addr.fromWire a |> Maybe.map (\x -> Col { tag = tag, addr = x })
 
         [ "amount", lo, hi ] ->
             Maybe.map2 AmountRange (int lo) (int hi)
@@ -441,7 +542,10 @@ answer ts =
             Just (Source text)
 
         [ "val", a, norm, stored, text ] ->
-            Maybe.map2 (\n s -> Val { addr = Addr a, norm = n, stored = s, text = text }) (num norm) (num stored)
+            Maybe.map3 (\x n s -> Val { addr = x, norm = n, stored = s, text = text }) (Addr.fromWire a) (num norm) (num stored)
+
+        [ "refused", a, why ] ->
+            Addr.fromWire a |> Maybe.map (\x -> Refused x why)
 
         _ ->
             Nothing
@@ -481,8 +585,8 @@ routeKind s =
 param : String -> String -> String -> Scale -> Flags -> ( String, String ) -> ( String, String ) -> Maybe AnswerLine
 param a label kind scale flags ( lo, hi ) ( step, def ) =
     Maybe.map5
-        (\k l h s d -> Param { addr = Addr a, label = label, kind = k, scale = scale, min = l, max = h, step = s, default = d, flags = flags })
-        (kindOf kind)
+        (\( x, k ) l h s d -> Param { addr = x, label = label, kind = k, scale = scale, min = l, max = h, step = s, default = d, flags = flags })
+        (Maybe.map2 Tuple.pair (Addr.fromWire a) (kindOf kind))
         (num lo)
         (num hi)
         (num step)

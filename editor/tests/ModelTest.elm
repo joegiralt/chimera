@@ -1,15 +1,17 @@
 module ModelTest exposing (suite)
 
+import Addr exposing (Addr)
 import Dict
 import Expect
 import Fixture
 import Model exposing (Effect(..), Msg(..))
-import Protocol exposing (Addr(..), Command(..), OptIndex, SchemaId(..), Value(..))
+import Protocol exposing (Command(..), OptIndex, SchemaId(..), Value(..))
 import Schema
 import Test exposing (Test, describe, test)
 import Time
 import Transport exposing (Link(..))
 import Unit exposing (Engine(..))
+import Wire exposing (addr, page)
 
 
 at : Int -> Time.Posix
@@ -130,7 +132,7 @@ gen =
 
 cutoff : Addr
 cutoff =
-    Addr "FILTER.CUTOFF"
+    addr "FILTER.CUTOFF"
 
 
 {-| A connected editor that has said hello and read a one-page ALGO schema and
@@ -205,11 +207,11 @@ suite =
                 let
                     under : List ( String, String ) -> String -> Int -> List Command
                     under v a i =
-                        pick (Addr a) i { following | schema = Fixture.schema, variants = Dict.fromList v }
+                        pick (addr a) i { following | schema = Fixture.schema, variants = Dict.fromList v }
                 in
                 Expect.all
-                    [ \_ -> Expect.equal [ Set (Addr "FILTER.MODE") (idx 1) ] (under [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
-                    , \_ -> Expect.equal [ Set (Addr "ENV1.FORM") (idx 0) ] (under [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
+                    [ \_ -> Expect.equal [ Set (addr "FILTER.MODE") (idx 1) ] (under [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
+                    , \_ -> Expect.equal [ Set (addr "ENV1.FORM") (idx 0) ] (under [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
                     ]
                     ()
         , test "every_choice_under_every_variant_sends_an_option_that_variant_lists" <|
@@ -249,7 +251,7 @@ suite =
         , test "a_val_the_schema_does_not_list_is_dropped" <|
             \_ ->
                 Expect.equal Nothing
-                    (following |> feed [ "val OUT.PAN 0.5 0 \"C\"" ] |> Model.shown (Addr "OUT.PAN"))
+                    (following |> feed [ "val OUT.PAN 0.5 0 \"C\"" ] |> Model.shown (addr "OUT.PAN"))
         , test "an_old_unit_refusing_hello_says_update_the_unit" <|
             \_ ->
                 Model.init
@@ -265,11 +267,11 @@ suite =
                 let
                     sim : Model.Model
                     sim =
-                        following |> Model.update ConnectSocket |> Tuple.first
+                        following |> Model.update (Connect Model.ViaSimulator) |> Tuple.first
                 in
                 Expect.all
                     [ \_ -> Expect.equal (Just "SIMULATOR · PART 1 · ALGO") (Model.status sim)
-                    , \_ -> Expect.equal (Just "UNIT · PART 1 · ALGO") (Model.status (Model.update ConnectSerial following |> Tuple.first))
+                    , \_ -> Expect.equal (Just "UNIT · PART 1 · ALGO") (Model.status (Model.update (Connect Model.ViaUnit) following |> Tuple.first))
                     , \_ -> Expect.equal Nothing (Model.status Model.init)
                     ]
                     ()
@@ -300,7 +302,7 @@ suite =
                             |> feed [ "page 0 A of 2", "panel A -", "OK" ]
                             |> tick 99
                 in
-                Expect.equal [ Describe (EngineSchema Algo) 1 ] c
+                Expect.equal [ Describe (EngineSchema Algo) (page 1) ] c
         , test "shows_only_the_units_value" <|
             \_ ->
                 let
@@ -313,7 +315,6 @@ suite =
                 in
                 Expect.all
                     [ \_ -> Expect.equal (Just "1000 Hz") (shown m)
-                    , \_ -> Expect.equal True (Model.isPending cutoff m)
                     , \_ -> Expect.equal (Just "1000 Hz") (m |> feed [ "OK queued" ] |> shown)
                     , \_ -> Expect.equal (Just "1000 Hz") (m |> feed [ "ERR busy" ] |> shown)
                     , \_ -> Expect.equal (Just "5000 Hz") (m |> feed [ cutoffLine "5000" ] |> shown)
@@ -323,53 +324,81 @@ suite =
             \_ ->
                 Expect.equal [ Set cutoff (Num 5000) ]
                     (following |> stepSends (Edit cutoff (Num 5000)) |> Tuple.second)
-        , test "pending_clears_on_report" <|
-            \_ ->
-                let
-                    m : Model.Model
-                    m =
-                        following |> Model.step (Edit cutoff (Num 5000)) |> Tuple.first
-                in
-                Expect.all
-                    [ \_ -> Expect.equal True (Model.isPending cutoff m)
-                    , \_ -> Expect.equal False (Model.isPending cutoff (feed [ cutoffLine "5000" ] m))
-                    , \_ -> Expect.equal True (Model.isPending cutoff (feed [ "val ENV1.HOLD 0 0 \"OFF\"" ] m))
-                    ]
-                    ()
-        , test "pending_clears_after_250ms_with_no_report" <|
+        , test "a_refusal_from_since_shows_the_units_reason_until_its_next_value" <|
             \_ ->
                 let
                     m : Model.Model
                     m =
                         following
-                            |> Model.step (Tick (at 1000))
-                            |> Tuple.first
+                            |> feed [ cutoffLine "1000", "OK 1" ]
                             |> Model.step (Edit cutoff (Num 5000))
                             |> Tuple.first
+                            |> feed [ "OK queued", "refused FILTER.CUTOFF \"NOT ON THIS MACHINE\"", "OK 2" ]
                 in
                 Expect.all
-                    [ \_ -> Expect.equal True (Model.isPending cutoff (m |> Model.step (Tick (at 1249)) |> Tuple.first))
-                    , \_ -> Expect.equal False (Model.isPending cutoff (m |> Model.step (Tick (at 1250)) |> Tuple.first))
+                    [ \_ -> Expect.equal (Just "NOT ON THIS MACHINE") (Model.refusal cutoff m)
+                    , \_ -> Expect.equal (Just "1000 Hz") (shown m)
+                    , \_ -> Expect.equal Nothing (Model.refusal cutoff (feed [ cutoffLine "1200", "OK 3" ] m))
+                    , \_ -> Expect.equal (Just "NOT ON THIS MACHINE") (Model.refusal cutoff (feed [ "val ENV1.HOLD 0 0 \"OFF\"", "OK 3" ] m))
                     ]
                     ()
-        , test "a_repeated_edit_restarts_the_250ms" <|
+        , test "an_err_to_a_set_shows_the_same_way" <|
+            \_ ->
+                following
+                    |> feed [ cutoffLine "1000", "OK 1" ]
+                    |> Model.step (Edit cutoff (Num 5000))
+                    |> Tuple.first
+                    |> feed [ "ERR ed set FILTER.CUTOFF takes a number" ]
+                    |> Expect.all
+                        [ Model.refusal cutoff >> Expect.equal (Just "takes a number")
+                        , shown >> Expect.equal (Just "1000 Hz")
+                        , Model.notice >> Expect.equal Nothing
+                        ]
+        , test "no_value_is_guessed_an_edit_shows_nothing_until_the_unit_reports" <|
+            \_ ->
+                following
+                    |> feed [ cutoffLine "1000", "OK 1" ]
+                    |> Model.step (Edit cutoff (Num 5000))
+                    |> Tuple.first
+                    |> Model.step (Tick (at 5000))
+                    |> Tuple.first
+                    |> shown
+                    |> Expect.equal (Just "1000 Hz")
+        , test "a_new_part_drops_its_refusals" <|
+            \_ ->
+                following
+                    |> feed [ "refused FILTER.CUTOFF \"NO\"", "OK 1", "part 2 ALGO", "OK 2" ]
+                    |> Model.refusal cutoff
+                    |> Expect.equal Nothing
+        , test "a_whole_answer_says_no_refusal_part_2_never_shows_part_1s" <|
             \_ ->
                 let
                     m : Model.Model
                     m =
                         following
-                            |> Model.step (Tick (at 1000))
-                            |> Tuple.first
-                            |> Model.step (Edit cutoff (Num 5000))
-                            |> Tuple.first
-                            |> Model.step (Tick (at 1200))
-                            |> Tuple.first
-                            |> Model.step (Edit cutoff (Num 6000))
-                            |> Tuple.first
-                            |> Model.step (Tick (at 1400))
-                            |> Tuple.first
+                            |> feed [ "part 1 ALGO", cutoffLine "1000", "OK 1", "refused FILTER.CUTOFF \"PART 1'S\"", "OK 2" ]
+                            |> feed [ "", "part 2 ALGO", cutoffLine "1000", "refused FILTER.CUTOFF \"PART 1'S\"", "OK 3" ]
                 in
-                Expect.equal True (Model.isPending cutoff m)
+                Expect.all
+                    [ \_ -> Expect.equal Nothing (Model.refusal cutoff m)
+                    , \_ -> Expect.equal (Just "1000 Hz") (shown m)
+
+                    -- A diff after it says Part 2's own.
+                    , \_ -> Expect.equal (Just "PART 2'S") (Model.refusal cutoff (feed [ "refused FILTER.CUTOFF \"PART 2'S\"", "OK 4" ] m))
+                    ]
+                    ()
+        , test "since_0_is_whole_its_refusals_stale" <|
+            \_ ->
+                following
+                    |> feed [ "part 1 ALGO", "refused FILTER.CUTOFF \"OLD\"", "OK 1" ]
+                    |> Model.refusal cutoff
+                    |> Expect.equal Nothing
+        , test "a_refusal_of_an_address_not_in_the_schema_is_ignored" <|
+            \_ ->
+                following
+                    |> feed [ "part 1 ALGO", "OK 1", "refused PAD3.CHOKE \"9 GROUPS · KIT HOLDS 8\"", "OK 2" ]
+                    |> Model.refusal (addr "PAD3.CHOKE")
+                    |> Expect.equal Nothing
         , test "since_answer_replaces_values_and_gen" <|
             \_ ->
                 let
@@ -532,17 +561,6 @@ suite =
             \_ ->
                 Expect.equal Nothing
                     (following |> feed [ cutoffLine "1000", "OK 1" ] |> Model.step (LinkChanged Lost) |> Tuple.first |> shown)
-        , test "an_echo_of_the_same_value_clears_pending" <|
-            \_ ->
-                let
-                    m : Model.Model
-                    m =
-                        following
-                            |> feed [ cutoffLine "1000", "OK 1" ]
-                            |> Model.step (Edit cutoff (Num 1000))
-                            |> Tuple.first
-                in
-                Expect.equal ( True, False ) ( Model.isPending cutoff m, Model.isPending cutoff (feed [ cutoffLine "1000" ] m) )
         , test "part_change_follows_the_box" <|
             \_ ->
                 let
@@ -550,13 +568,12 @@ suite =
                     m =
                         following
                             |> feed [ cutoffLine "1000", "OK 1" ]
-                            |> Model.step (Edit (Addr "ENV1.HOLD") (Num 1))
+                            |> Model.step (Edit (addr "ENV1.HOLD") (Num 1))
                             |> Tuple.first
                             |> feed [ "part 3 ALGO", cutoffLine "300", "OK 2" ]
                 in
                 Expect.all
                     [ \_ -> Expect.equal (Unit.partFromInt 3) m.part
-                    , \_ -> Expect.equal False (Model.isPending (Addr "ENV1.HOLD") m)
                     , \_ -> Expect.equal (Just "300 Hz") (shown m)
                     , \_ -> Expect.equal Nothing (Model.notice m)
                     ]
@@ -572,40 +589,113 @@ suite =
                             |> Tuple.first
                             |> feed [ "part 2 VA", "OK 2" ]
                 in
-                Expect.equal ( Nothing, Dict.empty, False ) ( Model.shown cutoff m, m.variants, Model.isPending cutoff m )
-        , test "non_algo_part_shows_message" <|
+                Expect.equal ( Nothing, Dict.empty ) ( Model.shown cutoff m, m.variants )
+        , test "a_part_on_another_engine_is_described_afresh" <|
             \_ ->
                 let
                     m : Model.Model
                     m =
-                        following |> feed [ "part 2 VA", "OK 1" ]
+                        following |> feed [ cutoffLine "1000", "OK 1", "part 2 VA", "OK 2" ]
                 in
                 Expect.all
-                    [ \_ -> Expect.equal (Just "PART 2 PLAYS VA. THE EDITOR EDITS ALGO FOR NOW.") (Model.notice m)
+                    [ \_ -> Expect.equal Nothing (Model.notice m)
                     , \_ -> Expect.equal (Just Va) m.engine
+                    , \_ -> Expect.equal [ AskSchema (EngineSchema Va) ] (tick 99 m |> Tuple.second)
+                    , \_ -> Expect.equal Nothing (Model.status m)
                     ]
                     ()
-        , test "no_edit_on_a_part_that_is_not_algo" <|
+        , test "the_old_page_stays_up_while_the_new_engine_is_read" <|
             \_ ->
-                Expect.equal []
-                    (following |> feed [ "part 2 VA", "OK 1" ] |> stepSends (Edit cutoff (Num 1)) |> Tuple.second)
+                following
+                    |> feed [ cutoffLine "1000", "OK 1", "part 2 VA", "OK 2" ]
+                    |> Expect.all
+                        [ .described >> Expect.equal (Just Algo)
+                        , .schema >> Schema.pages >> List.length >> Expect.equal 1
+                        ]
+        , test "an_edit_waits_for_the_engine_the_box_is_on_to_be_read" <|
+            -- During an engine change FILTER.CUTOFF is ALGO's no longer:
+            -- nothing goes out against the old schema.
+            \_ ->
+                let
+                    switched : Model.Model
+                    switched =
+                        following |> feed [ cutoffLine "1000", "OK 1", "part 2 VA" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [] (stepSends (Edit cutoff (Num 5000)) switched |> Tuple.second)
+                    , \_ -> Expect.equal [] (stepSends (Edit cutoff (Num 5000)) (feed [ "OK 2" ] switched) |> Tuple.second)
+                    , \_ -> Expect.equal [] (pick (addr "ENV1.HOLD") 2 switched)
+                    , \_ -> Expect.equal False (Model.takesEdits switched)
+                    ]
+                    ()
+        , test "a_new_part_is_a_new_seat" <|
+            \_ ->
+                Expect.notEqual (Model.seat following) (Model.seat (feed [ "part 3 ALGO" ] following))
+        , test "hello_says_which_engine_to_read" <|
+            \_ ->
+                Model.init
+                    |> Model.step (LinkChanged Open)
+                    |> Tuple.first
+                    |> tick 0
+                    |> Tuple.first
+                    |> feed [ "ed hello 4 b part 4 MODAL", "OK" ]
+                    |> tick 33
+                    |> Tuple.second
+                    |> Expect.equal [ AskSchema (EngineSchema Modal) ]
+        , test "the_same_engine_on_another_part_keeps_its_schema" <|
+            \_ ->
+                following
+                    |> feed [ "OK 1", "part 3 ALGO", "OK 2" ]
+                    |> tick 99
+                    |> Tuple.second
+                    |> Expect.equal [ Since (gen 2) ]
+        , test "a_redescribed_engine_follows_from_nothing_and_takes_edits" <|
+            \_ ->
+                let
+                    described : Model.Model
+                    described =
+                        following
+                            |> feed [ "OK 1", "part 2 VA", "OK 2" ]
+                            |> tick 99
+                            |> Tuple.first
+                            |> feed [ "schema VA 1 00000000000000c3", "OK" ]
+                            |> missed (EngineSchema Va) "00000000000000c3"
+                            |> tick 132
+                            |> Tuple.first
+                            |> feed [ "page 0 VA of 1", "panel VA -", "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000 md", "OK" ]
+                            |> tick 165
+                            |> Tuple.first
+                            |> feed [ "schema MTX-VA 1 00000000000000c4", "OK" ]
+                            |> missed (MatrixSchema Va) "00000000000000c4"
+                            |> tick 198
+                            |> Tuple.first
+                            |> feed [ "page 0 MTX of 1", "OK" ]
+
+                    ( _, asked ) =
+                        tick 231 described
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ Since Nothing ] asked
+                    , \_ -> Expect.equal [ Set cutoff (Num 1000) ] (stepSends (Edit cutoff (Num 1000)) described |> Tuple.second)
+                    ]
+                    ()
         , test "a_choice_is_sent_by_its_number" <|
             \_ ->
-                Expect.equal [ Set (Addr "ENV1.HOLD") (idx 0) ]
-                    (following |> pick (Addr "ENV1.HOLD") 0)
-        , test "a_choice_name_with_a_space_is_sent_by_its_number_and_pends" <|
+                Expect.equal [ Set (addr "ENV1.HOLD") (idx 0) ]
+                    (following |> pick (addr "ENV1.HOLD") 0)
+        , test "a_choice_name_with_a_space_is_sent_by_its_number" <|
             \_ ->
                 -- GATE EXT is two words: its number is one (#996).
                 let
-                    ( m, c ) =
+                    ( _, c ) =
                         Protocol.optIndex 2
-                            |> Maybe.map (\i -> following |> stepSends (Pick (Addr "ENV1.HOLD") i))
+                            |> Maybe.map (\i -> following |> stepSends (Pick (addr "ENV1.HOLD") i))
                             |> Maybe.withDefault ( following, [] )
                 in
-                Expect.equal ( [ Set (Addr "ENV1.HOLD") (idx 2) ], True ) ( c, Model.isPending (Addr "ENV1.HOLD") m )
+                Expect.equal [ Set (addr "ENV1.HOLD") (idx 2) ] c
         , test "an_option_the_schema_lacks_sends_nothing" <|
             \_ ->
-                Expect.equal [] (following |> pick (Addr "ENV1.HOLD") 1)
+                Expect.equal [] (following |> pick (addr "ENV1.HOLD") 1)
         , test "an_engine_the_editor_does_not_know_says_update_the_editor" <|
             \_ ->
                 Expect.equal (Just "UPDATE THE EDITOR") (following |> feed [ "part 2 GRANULAR", "OK 1" ] |> Model.notice)
@@ -762,7 +852,7 @@ suite =
                     |> Tuple.first
                     |> tick 66
                     |> Tuple.second
-                    |> Expect.equal [ Describe (EngineSchema Algo) 0 ]
+                    |> Expect.equal [ Describe (EngineSchema Algo) (page 0) ]
         , test "a_recall_for_another_key_is_ignored" <|
             \_ ->
                 greeted
@@ -791,7 +881,7 @@ suite =
                 in
                 Expect.all
                     [ \_ -> Expect.equal [ AskSchema (EngineSchema Va) ] (tick 198 m |> Tuple.second)
-                    , \_ -> Expect.equal (gen 3) m.gen
+                    , \_ -> Expect.equal Nothing m.gen
                     , -- An engine already read is used again with no ask.
                       \_ ->
                         m
@@ -835,7 +925,7 @@ suite =
                 let
                     level : Addr
                     level =
-                        Addr "PART3.LEVEL"
+                        addr "PART3.LEVEL"
 
                     m : Model.Model
                     m =
@@ -860,9 +950,9 @@ suite =
         , test "a_mixer_address_is_edited_like_any_other" <|
             \_ ->
                 following
-                    |> stepSends (Edit (Addr "PART3.LEVEL") (Num 0.25))
+                    |> stepSends (Edit (addr "PART3.LEVEL") (Num 0.25))
                     |> Tuple.second
-                    |> Expect.equal [ Set (Addr "PART3.LEVEL") (Num 0.25) ]
+                    |> Expect.equal [ Set (addr "PART3.LEVEL") (Num 0.25) ]
         , test "the_matrix_schema_is_read_after_the_mixers" <|
             \_ ->
                 let

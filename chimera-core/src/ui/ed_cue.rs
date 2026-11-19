@@ -123,7 +123,12 @@ pub(crate) fn route(ui: &mut UiState, at: RouteAt, to: Option<i8>) -> bool {
 fn col_of(m: &super::mod_grid::MatrixState, a: ParamAddr) -> Option<usize> {
     let mut d = 0;
     while d < m.num_dests {
-        if m.dests.get(d).copied().flatten().is_some_and(|x| x.addr == a) {
+        if m.dests
+            .get(d)
+            .copied()
+            .flatten()
+            .is_some_and(|x| x.addr == a)
+        {
             return Some(super::mod_grid::FIXED_COLS + d);
         }
         d += 1;

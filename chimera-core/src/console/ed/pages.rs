@@ -185,8 +185,9 @@ impl Iterator for Pages {
     }
 }
 
-/// Page `n` of `s`, in `describe`'s order.
+/// Page `n` of `s`, in `describe`'s order: its def, and the round it is
+/// a page of.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.page_at"))]
-pub(super) fn page_at(s: Schema, n: usize) -> Option<(&'static BlockDef, Round)> {
+pub fn page_at(s: Schema, n: usize) -> Option<(&'static BlockDef, Round)> {
     Pages::all(s).nth(n)
 }

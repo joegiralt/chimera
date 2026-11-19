@@ -189,5 +189,8 @@ var ChimeraPorts = (function () {
 
 if (typeof module !== 'undefined') module.exports = ChimeraPorts;
 if (typeof Elm !== 'undefined' && typeof document !== 'undefined') {
-  ChimeraPorts.attach(Elm.Main.init({ node: document.getElementById('app') }));
+  var theme = typeof ChimeraTheme !== 'undefined' ? ChimeraTheme : { flags: function () { return { stored: null, dark: false }; }, store: function () {} };
+  var main = Elm.Main.init({ node: document.getElementById('app'), flags: theme.flags() });
+  if (main.ports.storeTheme) main.ports.storeTheme.subscribe(theme.store);
+  ChimeraPorts.attach(main);
 }

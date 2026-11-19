@@ -294,17 +294,40 @@ async function sweep(shown, label, done, lenient = () => false) {
  * the Part's row; the INIT rows are first, in `EngineType::PLAYABLE`'s order. */
 const INIT_ROW = { ALGO: 0, MODAL: 1, VA: 2, TAPE: 3, DRUM: 4 };
 async function loadInit(engine) {
-  await since();
-  await key("EDIT+B1");
-  await turn(1, -64);
-  await turn(1, -64);
-  if (INIT_ROW[engine] > 0) await turn(1, INIT_ROW[engine]);
-  await key("EDIT"); // an edited Sound asks first
-  await key("EDIT");
   const want = `part 1 ${engine}`;
-  const seen = await sinceUntil((l) => l === want);
-  if (!seen.includes(want) && !(await since(0)).includes(want)) throw new Error(`load INIT ${engine}: no "${want}"`);
+  // A full answer names the Part's engine too: it settles a load whose own lines were missed.
+  await browse(INIT_ROW[engine], (l) => l === want, async () => (await since(0)).includes(want));
   await onPart1();
+}
+
+/** Load the Sound on row `row` of Part 1's browser, until a `since` line
+ * passes `took` (or `settled` says the load took). The unit's UI takes its time over each key (the browser reads the
+ * card before a turn lands), so each key waits, and a load that didn't take
+ * is tried again from the Part's page, waiting twice as long. */
+async function browse(row, took, settled = async () => false) {
+  const tries = [];
+  for (let wait = 250; wait <= 2000; wait *= 2) {
+    await since();
+    await key("B1");
+    await sleep(wait);
+    await key("EDIT+B1");
+    await sleep(wait * 2);
+    await turn(1, -64);
+    await sleep(wait);
+    await turn(1, -64);
+    await sleep(wait);
+    if (row > 0) {
+      await turn(1, row);
+      await sleep(wait);
+    }
+    await key("EDIT"); // an edited Sound asks first
+    await sleep(wait * 2);
+    await key("EDIT");
+    const seen = await sinceUntil(took);
+    if (seen.some(took) || (await settled())) return seen;
+    tries.push(wait);
+  }
+  throw new Error(`load of row ${row}: not taken after waits of ${tries.join(", ")} ms`);
 }
 
 /** One engine end to end: INIT loaded, described, every param in the
@@ -453,13 +476,7 @@ async function main() {
   // load a Sound through the browser keys: INIT ALGO, the top row
   await send("ed set FILTER.CUTOFF 500");
   await settle("FILTER.CUTOFF", (v) => near(v.stored, 500));
-  await since();
-  await key("EDIT+B1");
-  await turn(1, -64);
-  await turn(1, -64);
-  await key("EDIT"); // the edited Sound asks first
-  await key("EDIT");
-  const load = await sinceUntil((l) => l.startsWith("val FILTER.CUTOFF "));
+  const load = await browse(0, (l) => l.startsWith("val FILTER.CUTOFF "));
   const cut = load.map(parseVal).filter(Boolean).find((v) => v.addr === "FILTER.CUTOFF");
   if (!cut || !near(cut.stored, 20000)) fail("FILTER.CUTOFF", "load INIT ALGO", `since: ${load.slice(0, 3).join(" | ")}`);
   else if (!load.every((l) => l.startsWith("val ") || l.startsWith("panel ") || l.startsWith("part "))) {

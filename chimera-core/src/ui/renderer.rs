@@ -83,6 +83,10 @@ pub struct Frame<'a> {
     /// The last MIX+PLUS outcome or MIDI learn's word, shown in the focus
     /// band in place of the value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
+    /// MIDI MAP's pointing hint (ADR 0288): over every hint the page
+    /// would show, and in a BigViz status line's place.
+    #[cfg(feature = "midi-map")]
+    pub point: Option<hint::Hint>,
     /// The focused cell's pickup waiting: the hint that says which way the
     /// knob must go, in the focus band or on a BigViz page's status line
     /// (none with HINTS off).
@@ -161,8 +165,23 @@ impl<'a> Frame<'a> {
     }
 
     /// `h`, or none with HINTS off.
+    /// MIDI MAP's pointing hint, if pointing (ADR 0288); none without
+    /// the map.
+    #[inline(always)]
+    pub fn point(&self) -> Option<hint::Hint> {
+        #[cfg(feature = "midi-map")]
+        return self.point;
+        #[cfg(not(feature = "midi-map"))]
+        None
+    }
+
     pub fn hint(&self, h: hint::Hint) -> hint::Hint {
-        if self.hints { h } else { hint::NONE }
+        // Pointing's keys, whatever HINTS says: no other way out shows.
+        match (self.point(), self.hints) {
+            (Some(p), _) => p,
+            (None, true) => h,
+            (None, false) => hint::NONE,
+        }
     }
 
     /// What the header shows beside its words: the load and the dots.
@@ -411,7 +430,10 @@ impl Renderer {
             }
             _ => {}
         }
-        if let Some(status) = f.prime_status {
+        // Pointing (ADR 0288): its hint in the status line's place.
+        if f.point().is_none()
+            && let Some(status) = f.prime_status
+        {
             let label = view::view(f.def, f.focus, &f.ctx).label();
             let w = components::viz_status(display, status, label);
             // Sensing sure: MIX + SEQ  DONE after the guess, where it fits.
@@ -425,21 +447,26 @@ impl Renderer {
             }
             #[cfg(not(feature = "midi-map"))]
             let _ = w;
-        } else if let Some(h) = f.pickup {
+        } else if f.point().is_none()
+            && let Some(h) = f.pickup
+        {
             hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
-        } else if let (pad, true) = Self::band(f) {
-            // A pad cell: MIX + -/+ steps the pad (and SEQ + turn is
-            // fine), said where the band would, on the status line's own
-            // backing (`viz_status`'s).
+        } else if let Some(h) = f.point().or_else(|| match Self::band(f) {
+            (pad, true) => Some(pad),
+            (_, false) => None,
+        }) {
+            // Pointing's, or a pad cell's (MIX + -/+ steps the pad, and SEQ
+            // + turn is fine), said where the band would, on the status
+            // line's own backing (`viz_status`'s).
             draw::fill_rect(
                 display,
                 theme::MARGIN_X - 2,
                 theme::HEADER_BOTTOM,
-                hint::width_at(pad, theme::TextSize::Normal) + 4,
+                hint::width_at(h, theme::TextSize::Normal) + 4,
                 viz::PLOT_TOP - theme::HEADER_BOTTOM,
                 theme::BG,
             );
-            hint::draw(display, pad, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
+            hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
         }
     }
 
@@ -887,6 +914,11 @@ impl Renderer {
                 );
             }
             return;
+        }
+        // Pointing: its keys, whatever the cell's own (ADR 0288).
+        // Pointing: its keys, over the cell's own (ADR 0288).
+        if f.point().is_some() {
+            return hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge));
         }
         // A pickup waiting: which way to turn, over the cell's own hint.
         // Never LARGE: it is near the line's whole width at NORMAL.

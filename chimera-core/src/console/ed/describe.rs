@@ -47,8 +47,8 @@ use chimera_engine::dsp::drum::params::PadParams;
 use chimera_engine::dsp::modal::ModalParams;
 use chimera_engine::midi_map::Mappable;
 
-use super::pages::{Pages, page_at, schema_pages};
-pub use super::pages::{chain, pages};
+use super::pages::{Pages, schema_pages};
+pub use super::pages::{chain, page_at, pages};
 
 /// A variant as one token: a name's spaces as `-` (`TONE KICK` is
 /// `TONE-KICK`). `since` writes them the same way.

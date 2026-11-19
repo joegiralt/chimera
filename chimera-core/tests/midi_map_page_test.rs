@@ -297,7 +297,11 @@ fn hint_names_every_key() {
     let t = ui.map_band().text(1);
     assert_eq!(
         t.hint(),
-        &[Gesture("B", "CONTROL"), Gesture("E", "INPUT")][..]
+        &[
+            Gesture("B", "CONTROL"),
+            Gesture("E", "INPUT"),
+            Gesture("EDIT", "TARGET")
+        ][..]
     );
     let keys: Vec<&str> = t.values().iter().map(|g| g.0).collect();
     assert_eq!(keys, ["C MIN", "D MAX", "F ECHO"]);
@@ -465,7 +469,11 @@ fn nrpn_row_b_does_nothing_and_hints() {
         assert_eq!(entry(&ui, 0).input, input);
         assert_eq!(
             ui.map_band().text(1).hint(),
-            &[Gesture("B", "RELEARN TO CHANGE"), Gesture("E", "INPUT")][..]
+            &[
+                Gesture("B", "FIXED"),
+                Gesture("E", "INPUT"),
+                Gesture("EDIT", "TARGET")
+            ][..]
         );
     }
 }

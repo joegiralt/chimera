@@ -914,10 +914,20 @@ impl Bands<'_> {
             (Some(Screen::SceneSaveTo), _) => return legend(LegendFor::Action, false),
             #[cfg(feature = "midi-map")]
             (Some(Screen::MidiMap), _) => {
+                // By the bar's row (ADR 0288): `+ NEW BINDING` points, or
+                // nothing on a full map.
+                use super::midi_map::MapRow;
                 let on = match self.map.filter(|m| m.open) {
                     None => LegendFor::Dimmed,
-                    Some(_) if self.at.row() == 0 => LegendFor::MapPick,
-                    Some(_) => LegendFor::Map,
+                    Some(m) => {
+                        let t = m.text(self.at.row() as usize);
+                        match (t.row, t.look) {
+                            (MapRow::Pick, _) => LegendFor::MapPick,
+                            (MapRow::Layer | MapRow::Own, _) => LegendFor::Map,
+                            (MapRow::New, RowLook::Dimmed) => LegendFor::Dimmed,
+                            (MapRow::New, RowLook::Normal | RowLook::Later) => LegendFor::Action,
+                        }
+                    }
                 };
                 return legend(on, false);
             }
@@ -1105,10 +1115,10 @@ impl Bands<'_> {
                 })
             });
         }
-        // No rows past the pick: how to learn one, under it (two rows: the
-        // one line outruns the list).
+        // No binding: how to learn one, under the pick and `+ NEW BINDING`
+        // (two rows: the one line outruns the list).
         let note = ["NO CCS", "MIX+SEQ ON A CELL"];
-        let rows = if m.empty { 1 + note.len() } else { m.rows };
+        let rows = if m.empty { m.rows + note.len() } else { m.rows };
         let bar = self.at.row() as usize;
         let c = Col {
             size: self.text,
@@ -1123,9 +1133,9 @@ impl Bands<'_> {
             self.first,
             Bar::Keyed,
             |i, f| {
-                if m.empty && i > 0 {
+                if m.empty && i >= m.rows {
                     return f(ListRow {
-                        label: note[i - 1],
+                        label: note[i - m.rows],
                         opens: false,
                         note: None,
                         look: RowLook::Dimmed,

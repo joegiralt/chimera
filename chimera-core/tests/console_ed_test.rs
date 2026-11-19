@@ -1053,7 +1053,7 @@ fn stale_number_answers_everything() {
 }
 
 #[test]
-fn refused_set_reports_nothing() {
+fn refused_set_reports_no_value() {
     let mut f = Fake::new();
     let (_, m) = since(&mut f, 0);
     // Every op a FRMT: the formant budget holds fewer, so the writer
@@ -1082,14 +1082,20 @@ fn refused_set_reports_nothing() {
         let want = get_line(&mut f, &format!("{o}.WAVE"));
         assert!(lines.contains(&want), "{want}");
     }
-    // Asked again, still refused: nothing to report.
+    // Asked again, still refused: no value to report, only the refusal.
     assert_eq!(
         ask(&mut f, &format!("ed set {}.WAVE FRMT\n", refused[0])),
         "OK queued\n"
     );
     apply(&mut f);
     let (lines, _) = since(&mut f, m);
-    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(
+        lines,
+        [format!(
+            "refused {}.WAVE \"FORMANT BUDGET FULL\"",
+            refused[0]
+        )]
+    );
 }
 
 #[test]

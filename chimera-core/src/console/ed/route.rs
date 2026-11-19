@@ -111,10 +111,11 @@ impl RouteSrc {
         if head != OP.bytes() {
             return None;
         }
-        TapOp::ALL
-            .into_iter()
-            .find(|&t| [b'5', b'6'].get(t as usize).is_some_and(|d| n == [*d]))
-            .map(RouteSrc::Tap)
+        match n {
+            [b'5'] => Some(RouteSrc::Tap(TapOp::Op5)),
+            [b'6'] => Some(RouteSrc::Tap(TapOp::Op6)),
+            _ => None,
+        }
     }
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.route.src_write"))]

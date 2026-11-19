@@ -13,6 +13,8 @@ use super::UiState;
 use super::fmt::FmtBuf;
 use super::hint::{Gesture, Hint};
 use super::learn::{LearnNote, Line, Sensed};
+#[cfg(feature = "midi-map")]
+use super::learn::{PointAct, Pointed, Took};
 use super::midi::MidiUi;
 #[cfg(feature = "midi-map")]
 use super::midi::program::Recalls;
@@ -188,7 +190,7 @@ type Note = fn(Option<LearnNote>, &str, &mut FmtBuf);
 
 /// The door's `map_in`: `UiState::map_in`, MIDI MAP's keys.
 #[cfg(feature = "midi-map")]
-type MapIn = fn(&mut UiState, [i8; 6], u8);
+type MapIn = fn(&mut UiState, [i8; 6], super::settings::midi_map::MapKeys);
 /// The door's `map_text`: `page::text`, a binding's words on MIDI MAP.
 #[cfg(feature = "midi-map")]
 type MapTextFn = fn(&Binding, FxType, bool, &mut MapText);
@@ -218,6 +220,15 @@ type CtlAsk = fn(&mut UiState, super::midi::layer::CtlJob);
 /// Part's own takes (ADR 0254).
 #[cfg(feature = "midi-map")]
 type Clashes = fn(&crate::ui::midi_settings::MidiSettings, &crate::project::Project) -> u16;
+
+/// The door's `point_say`, `point` and `point_hint`: MIDI MAP's
+/// pointing (ADR 0288).
+#[cfg(feature = "midi-map")]
+type PointSay = fn(&UiState) -> Option<Pointed>;
+#[cfg(feature = "midi-map")]
+type PointFn = fn(&mut UiState, PointAct<'_>) -> Took;
+#[cfg(feature = "midi-map")]
+type PointHint = fn(Pointed) -> Hint;
 
 /// The door's `hear`: `UiState::hear_in`.
 type Hear = fn(&mut UiState, &mut dyn Iterator<Item = HeardEv>, Ms, bool);
@@ -262,6 +273,12 @@ pub struct MidiUiDoor {
     clashes: Clashes,
     #[cfg(feature = "midi-map")]
     clash_note: fn(ParamAddr, u16) -> Option<&'static str>,
+    #[cfg(feature = "midi-map")]
+    point_say: PointSay,
+    #[cfg(feature = "midi-map")]
+    point: PointFn,
+    #[cfg(feature = "midi-map")]
+    point_hint: PointHint,
 }
 
 /// `MidiUiDoor`'s mark: a table at the slot that isn't this one fails the
@@ -270,8 +287,8 @@ pub struct MidiUiDoor {
 #[repr(transparent)]
 struct Magic(u32);
 
-// ADR 0255: `ctl_ask` takes MIDI MAP's job whole.
-const MAGIC: Magic = Magic(0xB2C0_0255);
+// ADR 0288: MIDI MAP's pointing, three entries at the end.
+const MAGIC: Magic = Magic(0xB2C0_0288);
 
 impl MidiUiDoor {
     pub const OWN: MidiUiDoor = MidiUiDoor {
@@ -307,6 +324,12 @@ impl MidiUiDoor {
         clashes: super::midi::control::clashes,
         #[cfg(feature = "midi-map")]
         clash_note: super::midi::control::clash_note,
+        #[cfg(feature = "midi-map")]
+        point_say: UiState::point_say_in,
+        #[cfg(feature = "midi-map")]
+        point: UiState::point_in,
+        #[cfg(feature = "midi-map")]
+        point_hint: super::pointing::hint,
     };
 }
 
@@ -401,7 +424,7 @@ impl UiState {
 impl UiState {
     /// MIDI MAP's keys this pass: A to F's detents, and MIX, MINUS and
     /// PLUS as `map_input`'s bits (`map_in`). Closed, nothing.
-    pub(super) fn map_keys(&mut self, d: [i8; 6], keys: u8) {
+    pub(super) fn map_keys(&mut self, d: [i8; 6], keys: super::settings::midi_map::MapKeys) {
         through(|t| (t.map_in)(self, d, keys));
     }
 
@@ -437,6 +460,26 @@ impl UiState {
         // No card: nothing is read till a pick, an engine or a save moves.
         if ran.is_err() {
             through(|d| (d.ctl_work)(self, s, None));
+        }
+    }
+
+    /// What pointing says now (`point_say`). Closed, nothing: it never
+    /// starts.
+    pub(super) fn point_say(&self) -> Option<Pointed> {
+        through(|d| (d.point_say)(self)).flatten()
+    }
+
+    /// What reaches pointing, `a` (`point`): the frame taken (a bind or
+    /// the cancel), or a key that walks as ever. Closed, pointing ends: it
+    /// never starts there.
+    #[inline(never)]
+    pub(super) fn point(&mut self, a: PointAct<'_>) -> Took {
+        match through(|d| (d.point)(self, a)) {
+            Some(t) => t,
+            None => {
+                self.learn = super::learn::Learn::Off;
+                Took::Walk
+            }
         }
     }
 
@@ -492,6 +535,14 @@ pub(super) fn clash_note(a: ParamAddr, clash: u16) -> Option<&'static str> {
 #[cfg(feature = "midi-map")]
 pub(super) fn map_text(e: &Binding, fx: FxType, live: bool, out: &mut MapText) {
     through(|d| (d.map_text)(e, fx, live, out));
+}
+
+/// Pointing's hint line for `p` (`point_hint`): `EDIT BINDS  MENU
+/// CANCELS`, `A-F POINT` in EDIT's place, or why it can't bind. Bank 2's
+/// statics. Closed, none.
+#[cfg(feature = "midi-map")]
+pub(super) fn point_hint(p: Pointed) -> Option<Hint> {
+    through(|d| (d.point_hint)(p))
 }
 
 /// Whether bank 2 answers: closed, MIDI MAP reads `NEEDS UPDATE`.

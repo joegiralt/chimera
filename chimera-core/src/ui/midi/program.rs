@@ -140,7 +140,12 @@ impl UiState {
         if self.cc.recall.is_null() {
             return;
         }
-        if busy || self.modal.is_some() || !matches!(self.learn, Learn::Off) {
+        // Learn holds them back; pointing doesn't (ADR 0288): it may last
+        // long, and a load under it is said at the bind (`BINDING GONE`).
+        if busy
+            || self.modal.is_some()
+            || matches!(self.learn, Learn::Armed { .. } | Learn::Sensing { .. })
+        {
             return;
         }
         let browsed = self

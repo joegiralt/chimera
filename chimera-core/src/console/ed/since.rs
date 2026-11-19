@@ -29,9 +29,13 @@
 //! past the bound by itself is `ERR ed since too large`, keeping nothing.
 //!
 //! `m` is the new number. A `val` is `ed get`'s own line (`value::reading`),
-//! so the two never disagree. The number moves before the answer is
-//! written, so an answer that never reached the editor leaves it asking
-//! with a stale one: everything again.
+//! so the two never disagree. A `refused` line is a set the box refused
+//! at its turn since the last answer (`edits::Refusals`, the newest four),
+//! in its toast's words, at the end of PART; one refused at `ERR` time is
+//! said in that answer alone. Only the followed Part's, and only while PART
+//! is a diff: a whole PART says none, and every answer drops them. The
+//! number moves before the answer is written, so an answer that never
+//! reached the editor leaves it asking with a stale one: everything again.
 //!
 //! Runs only in the console's answer path, never in audio. The unit never
 //! pushes: no sequence numbers, timers or hashes.
@@ -44,6 +48,7 @@ use super::describe::{
     PanelName, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
     modal_variant, op_variant, reverb_variant, tape_variant,
 };
+use super::edits::Refusals;
 use super::lit::lit;
 use super::route::{self, Routes};
 use super::schema::Schema;
@@ -251,6 +256,15 @@ fn described_in(d: &mut Option<Described>, s: Schema) -> &Described {
         *d = None;
     }
     d.get_or_insert_with(|| Described::built(s))
+}
+
+/// What an answer's sections read: the box, its cells' context, and the
+/// refusals PART says.
+#[derive(Clone, Copy)]
+struct Reading<'a> {
+    ui: &'a UiState,
+    own: &'a CellOwn,
+    refused: &'a Refusals,
 }
 
 /// The most panels an engine reports: DRUM's FX, its ENVs and LFOs, and
@@ -586,9 +600,10 @@ impl EdSince {
         &mut self,
         held: Option<Gen>,
         ui: &UiState,
+        refused: &mut Refusals,
         w: &mut dyn Write,
     ) -> fmt::Result {
-        self.answer_within(held, ui, w, ANSWER_BYTES_MAX)
+        self.answer_within(held, ui, refused, w, ANSWER_BYTES_MAX)
     }
 
     /// The answer, at most `max` bytes: each section measured first
@@ -603,6 +618,7 @@ impl EdSince {
         &mut self,
         held: Option<Gen>,
         ui: &UiState,
+        refused: &mut Refusals,
         w: &mut dyn Write,
         max: usize,
     ) -> fmt::Result {
@@ -619,7 +635,12 @@ impl EdSince {
         let (mut take, mut total, mut whole) = (Sections::NONE, 0, false);
         for s in Section::ALL {
             let mut size = ByteCount(0);
-            let w_s = self.section(s, owed.has(s), ui, &own, Pass::Measure, &mut size)?;
+            let at = Reading {
+                ui,
+                own: &own,
+                refused,
+            };
+            let w_s = self.section(s, owed.has(s), at, Pass::Measure, &mut size)?;
             if size.0 > room {
                 return w.write_str("ERR ed since too large\n");
             }
@@ -639,9 +660,16 @@ impl EdSince {
         }
         for s in Section::ALL {
             if take.has(s) {
-                self.section(s, owed.has(s), ui, &own, Pass::Commit, w)?;
+                let at = Reading {
+                    ui,
+                    own: &own,
+                    refused,
+                };
+                self.section(s, owed.has(s), at, Pass::Commit, w)?;
             }
         }
+        // Said, stale or not the followed Part's: none kept past an answer.
+        refused.clear();
         w.write_str(OK.get())?;
         super::lit::uint(w, m.get())?;
         if self.owed != Sections::NONE {
@@ -657,13 +685,13 @@ impl EdSince {
         &mut self,
         s: Section,
         owed: bool,
-        ui: &UiState,
-        own: &CellOwn,
+        at: Reading<'_>,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
+        let Reading { ui, own, refused } = at;
         match s {
-            Section::Part => self.part_section(owed, ui, own, pass, w),
+            Section::Part => self.part_section(owed, ui, own, refused, pass, w),
             Section::Routes => self.routes_section(owed, ui, pass, w),
             Section::Mixer => self.mixer_section(owed, ui, own, pass, w),
         }
@@ -679,6 +707,7 @@ impl EdSince {
         owed: bool,
         ui: &UiState,
         own: &CellOwn,
+        refused: &Refusals,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
@@ -738,6 +767,10 @@ impl EdSince {
         )?;
         if !texts && let Some(t) = source_text(ui, own) {
             writeln!(w, "source \"{}\"", t.as_str())?;
+        }
+        // A whole PART is a new start: the refusals before it are stale.
+        if same {
+            refused.write(part, w)?;
         }
         Ok(!same)
     }
@@ -1006,13 +1039,14 @@ mod tests {
     fn too_large_is_a_refusal_and_keeps_nothing() {
         let ui = UiState::new();
         let mut s = EdSince::new();
+        let mut r = Refusals::new();
         let mut out = alloc_free::Buf::new();
-        s.answer_within(None, &ui, &mut out, 100).unwrap();
+        s.answer_within(None, &ui, &mut r, &mut out, 100).unwrap();
         assert_eq!(out.as_str(), "ERR ed since too large\n");
         assert_eq!(s.issued, None);
         assert!(s.part.seen.is_none());
         let mut out = alloc_free::Buf::new();
-        s.answer_within(None, &ui, &mut out, ANSWER_BYTES_MAX)
+        s.answer_within(None, &ui, &mut r, &mut out, ANSWER_BYTES_MAX)
             .unwrap();
         assert!(
             out.as_str().starts_with("\npart 1 ALGO\n"),
@@ -1025,7 +1059,8 @@ mod tests {
     /// The answer's lines and its `OK` word.
     fn ask(s: &mut EdSince, ui: &UiState, held: Option<Gen>, max: usize) -> alloc_free::Buf {
         let mut out = alloc_free::Buf::new();
-        s.answer_within(held, ui, &mut out, max).unwrap();
+        s.answer_within(held, ui, &mut Refusals::new(), &mut out, max)
+            .unwrap();
         out
     }
 
@@ -1041,15 +1076,24 @@ mod tests {
         let mut s = EdSince::new();
         let mut whole = ByteCount(0);
         let mut all = EdSince::new();
-        all.answer_within(None, &ui, &mut whole, ANSWER_BYTES_MAX)
-            .unwrap();
+        all.answer_within(
+            None,
+            &ui,
+            &mut Refusals::new(),
+            &mut whole,
+            ANSWER_BYTES_MAX,
+        )
+        .unwrap();
         let mut part = ByteCount(0);
         EdSince::new()
             .section(
                 Section::Part,
                 true,
-                &ui,
-                &ui.cell_own(),
+                Reading {
+                    ui: &ui,
+                    own: &ui.cell_own(),
+                    refused: &Refusals::new(),
+                },
                 Pass::Measure,
                 &mut part,
             )
@@ -1081,8 +1125,11 @@ mod tests {
             .section(
                 Section::Part,
                 true,
-                &ui,
-                &ui.cell_own(),
+                Reading {
+                    ui: &ui,
+                    own: &ui.cell_own(),
+                    refused: &Refusals::new(),
+                },
                 Pass::Measure,
                 &mut part,
             )

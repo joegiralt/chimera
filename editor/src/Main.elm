@@ -1,36 +1,46 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Browser
-import Html exposing (Html, button, div, text)
-import Html.Attributes exposing (class)
-import Html.Events exposing (onClick)
+import Html exposing (Html)
+import Json.Decode as Decode
 import Model
-import Unit exposing (Engine(..))
-import View.Algo as Algo
-import View.Parts as Parts
+import Ui.Tokens as Tokens
+import View.EnginePage as EnginePage
 
 
-{-| The unit's state, and the hands on the face.
+{-| The theme a choice in the top bar keeps (theme.js, behind try/catch).
+-}
+port storeTheme : String -> Cmd msg
+
+
+{-| The unit's state, and the hands on the page.
 -}
 type alias App =
     { unit : Model.Model
-    , panel : Algo.State
+    , page : EnginePage.State
     }
 
 
 type Msg
     = Unit Model.Msg
-    | Panel Algo.Msg
+    | Page EnginePage.Msg
 
 
-main : Program () App Msg
+main : Program Decode.Value App Msg
 main =
     Browser.element
-        { init = \_ -> ( { unit = Model.init, panel = Algo.init }, Cmd.none )
+        { init = init
         , update = update
         , view = view
-        , subscriptions = \app -> Sub.batch [ Sub.map Unit Model.subscriptions, Sub.map Panel (Algo.subscriptions app.panel) ]
+        , subscriptions = \app -> Sub.batch [ Sub.map Unit Model.subscriptions, Sub.map Page (EnginePage.subscriptions app.page) ]
         }
+
+
+{-| The stored theme, else the OS's: what theme.js read at start.
+-}
+init : Decode.Value -> ( App, Cmd Msg )
+init flags =
+    ( { unit = Model.init, page = EnginePage.init (Tokens.fromPreference (Tokens.preference flags)) }, Cmd.none )
 
 
 update : Msg -> App -> ( App, Cmd Msg )
@@ -41,44 +51,24 @@ update msg app =
                 ( unit, cmd ) =
                     Model.update m app.unit
             in
-            ( { app | unit = unit }, Cmd.map Unit cmd )
+            ( { app | unit = unit, page = EnginePage.follow unit app.page }, Cmd.map Unit cmd )
 
-        Panel m ->
+        Page m ->
             let
-                ( panel, edits ) =
-                    Algo.update m app.unit app.panel
+                ( page, asks, store ) =
+                    EnginePage.update m app.unit app.page
 
                 ( unit, cmds ) =
                     List.foldl
                         (\e ( u, cs ) -> Model.update e u |> Tuple.mapSecond (\c -> Cmd.map Unit c :: cs))
                         ( app.unit, [] )
-                        edits
+                        asks
             in
-            ( { app | unit = unit, panel = panel }, Cmd.batch cmds )
+            ( { app | unit = unit, page = EnginePage.follow unit page }
+            , Cmd.batch (Maybe.withDefault Cmd.none (Maybe.map (Tokens.name >> storeTheme) store) :: cmds)
+            )
 
 
 view : App -> Html Msg
 view app =
-    let
-        notice : Maybe String
-        notice =
-            Model.notice app.unit
-    in
-    div [ class "editor" ]
-        [ div [ class "top" ]
-            [ button [ class "part", onClick (Unit Model.ConnectSerial) ] [ text "CONNECT UNIT" ]
-            , button [ class "part", onClick (Unit Model.ConnectSocket) ] [ text "CONNECT SIMULATOR" ]
-            , if Model.status app.unit /= Nothing then
-                Html.map Unit (Parts.view app.unit.part Model.FollowPart)
-
-              else
-                text ""
-            , div [ class "notice" ] [ text (Maybe.withDefault "" notice) ]
-            , div [ class "status" ] [ text (Maybe.withDefault "" (Model.status app.unit)) ]
-            ]
-        , if notice == Nothing && app.unit.engine == Just Algo then
-            Html.map Panel (Algo.view app.unit app.panel)
-
-          else
-            text ""
-        ]
+    Html.map Page (EnginePage.view app.unit app.page)

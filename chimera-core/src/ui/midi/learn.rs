@@ -341,6 +341,10 @@ pub fn note_words(n: Option<LearnNote>, label: &str, out: &mut FmtBuf) {
         }
         Some(LearnNote::Sensing(s)) => words(s, label, Line::Words, out),
         Some(LearnNote::Full) => put(out, Note::Full),
+        #[cfg(feature = "midi-map")]
+        Some(LearnNote::Point(p)) => super::super::pointing::say(p, label, out),
+        #[cfg(not(feature = "midi-map"))]
+        Some(LearnNote::Point(_)) => {}
     }
 }
 
@@ -455,7 +459,7 @@ impl UiState {
     /// another channel is said and heard on.
     pub(super) fn learn_in(&mut self, ch: MidiChannel, c: &Ctl) -> bool {
         let (part, entry) = match self.learn {
-            Learn::Off => return false,
+            Learn::Off | Learn::Pointing(_) => return false,
             Learn::Armed { part, .. } => (part, None),
             Learn::Sensing { part, entry } => (part, Some(usize::from(entry))),
         };
@@ -503,7 +507,7 @@ impl UiState {
     /// takes nothing: NOT MAPPABLE stands, as for a CC.
     pub(super) fn learn_sysex(&mut self, body: &[u8]) -> bool {
         match self.learn {
-            Learn::Off => false,
+            Learn::Off | Learn::Pointing(_) => false,
             Learn::Armed { part, .. } => self.learn_sysex_first(part, body),
             Learn::Sensing { part, entry } => {
                 let j = usize::from(entry);
