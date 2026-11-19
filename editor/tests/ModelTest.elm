@@ -5,7 +5,7 @@ import Dict
 import Expect
 import Fixture
 import Model exposing (Effect(..), Msg(..))
-import Protocol exposing (Command(..), OptIndex, SchemaId(..), Value(..))
+import Protocol exposing (Command(..), Learn(..), MapCommand(..), MapKind(..), OnOff(..), OptIndex, RowStatus(..), SchemaId(..), Value(..))
 import Schema
 import Test exposing (Test, describe, test)
 import Time
@@ -86,6 +86,26 @@ settingsPage =
     ]
 
 
+mapHash : String
+mapHash =
+    "00000000000000e0"
+
+
+mapPage : List String
+mapPage =
+    [ "page 0 MAP of 1"
+    , "input CC JUMP PICKUP SCALE TWOS-COMP OFFSET SIGNED SIGNED-2 MOMENTARY TOGGLE"
+    , "input CC14 JUMP PICKUP SCALE"
+    , "kind JUMP \"ABSOLUTE · JUMPS TO THE KNOB\" \"\""
+    , "kind TWOS-COMP \"RELATIVE · TWOS COMPLEMENT\" \"+1 = 1  -1 = 127\""
+    , "ccs 1 2 74"
+    , "msbs 1 2 31"
+    , "span 0 255"
+    , "rows 16"
+    , "maprows 90"
+    ]
+
+
 mtxPage : List String
 mtxPage =
     [ "page 0 MTX of 1"
@@ -152,11 +172,10 @@ cutoff =
     addr "FILTER.CUTOFF"
 
 
-{-| A connected editor that has said hello and read a one-page ALGO schema and
-a one-page MIXER schema, neither cached: following, nothing asked yet.
+{-| Every schema read but MAP's last `OK`.
 -}
-following : Model.Model
-following =
+describingMap : Model.Model
+describingMap =
     greeted
         |> tick 33
         |> Tuple.first
@@ -186,6 +205,22 @@ following =
         |> tick 136
         |> Tuple.first
         |> feed (settingsPage ++ [ "OK" ])
+        |> tick 137
+        |> Tuple.first
+        |> feed [ "schema MAP 1 " ++ mapHash, "OK" ]
+        |> missed MapSchema mapHash
+        |> tick 138
+        |> Tuple.first
+        |> feed mapPage
+
+
+{-| A connected editor that has said hello and read a one-page schema of
+each kind (the engine's, MIXER's, the matrix's, SETTINGS' and MAP's), none
+cached: following, nothing asked yet.
+-}
+following : Model.Model
+following =
+    feed [ "OK" ] describingMap
 
 
 cutoffLine : String -> String
@@ -1103,4 +1138,108 @@ suite =
 
                     _ ->
                         Expect.fail "a name, an id and a generation"
+        , test "the_map_schema_is_read_after_settings_and_kept_under_its_hash" <|
+            \_ ->
+                let
+                    kept : List Effect
+                    kept =
+                        describingMap |> Model.step (Line "OK") |> Tuple.second
+
+                    mm : Schema.MidiMap
+                    mm =
+                        Schema.midiMap following.midiMap
+                in
+                Expect.all
+                    [ \_ -> Expect.notEqual Nothing (Model.status following)
+                    , \_ -> Expect.equal [ Keep (key MapSchema mapHash) mapPage ] kept
+                    , \_ -> Expect.equal [ { form = Protocol.FormCc14, kinds = [ Jump, Pickup, ScaleTo ] } ] (List.drop 1 mm.inputs)
+                    , \_ -> Expect.equal [ { kind = TwosComp, head = "RELATIVE · TWOS COMPLEMENT", tail = "+1 = 1  -1 = 127" } ] (List.drop 1 mm.kinds)
+                    , \_ -> Expect.equal ( Just 16, Just 90 ) ( mm.rows, mm.mapRows )
+                    , \_ -> Expect.equal ( 3, 3, mm.span /= Nothing ) ( List.length mm.ccs, List.length mm.msbs, True )
+                    ]
+                    ()
+        , test "a_whole_map_section_fills_the_map_state" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following |> feed (mapSection ++ [ "OK 2" ])
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just ( 2, Just "KEYSTEP", On )) (m.mapHeader |> Maybe.map (\h -> ( Unit.partNumber h.part, h.name, h.keep )))
+                    , \_ -> Expect.equal [ ( 1, Live ), ( 2, Dead ) ] (m.soundRows |> Dict.toList |> List.map (Tuple.mapSecond .status))
+                    , \_ -> Expect.equal [ ( 1, Shadowed ) ] (m.mapRows |> Dict.toList |> List.map (Tuple.mapSecond .status))
+                    , \_ -> Expect.equal (Just (Armed (Just cutoff))) (m.learn |> Maybe.map .learn)
+                    , \_ -> Expect.equal ( Just cutoff, Nothing ) ( Model.armedOn m, Model.sensingRow m )
+                    , \_ -> Expect.equal ( Nothing, Just 3 ) (feed [ "learn sensing S3 \"CC74\"", "OK 3" ] m |> (\x -> ( Model.armedOn x, Model.sensingRow x )))
+                    , \_ -> Expect.equal [ "KEYSTEP", "BEATSTEP PRO" ] m.mapFiles
+                    , \_ -> Expect.equal (Just ( TwosComp, Nothing )) (Dict.get 2 m.soundRows |> Maybe.map (\r -> ( r.kind, r.addr )))
+                    ]
+                    ()
+        , test "a_map_header_drops_what_the_section_does_not_repeat" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed (mapSection ++ [ "OK 2" ])
+                            |> feed [ "map 3 none keep off", "row S1 CC1 JUMP FILTER.CUTOFF 0 255 off live", "learn off \"\"", "OK 3" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just ( 3, Nothing, Off )) (m.mapHeader |> Maybe.map (\h -> ( Unit.partNumber h.part, h.name, h.keep )))
+                    , \_ -> Expect.equal [ 1 ] (Dict.keys m.soundRows)
+                    , \_ -> Expect.equal [] (Dict.keys m.mapRows)
+                    , \_ -> Expect.equal [] m.mapFiles
+                    , \_ -> Expect.equal (Just NotLearning) (m.learn |> Maybe.map .learn)
+                    ]
+                    ()
+        , test "a_diff_learn_line_alone_replaces_only_learn" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed (mapSection ++ [ "OK 2" ])
+                            |> feed [ "learn pointing \"TURN A KNOB\"", "OK 3" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just { learn = Pointing, note = "TURN A KNOB" }) m.learn
+                    , \_ -> Expect.equal [ 1, 2 ] (Dict.keys m.soundRows)
+                    , \_ -> Expect.equal [ 1 ] (Dict.keys m.mapRows)
+                    , \_ -> Expect.equal [ "KEYSTEP", "BEATSTEP PRO" ] m.mapFiles
+                    , \_ -> Expect.notEqual Nothing m.mapHeader
+                    , -- A new Part's PART section leaves MAP's alone.
+                      \_ -> Expect.equal [ 1, 2 ] (feed [ "part 2 ALGO", "OK 4" ] m |> .soundRows |> Dict.keys)
+                    ]
+                    ()
+        , test "the_map_commands_go_out_typed" <|
+            \_ ->
+                case Protocol.mapName "MY KEYS" of
+                    Just n ->
+                        Expect.all
+                            [ \_ -> Expect.equal [ MapCmd ListMaps ] (stepSends (MapAct ListMaps) following |> Tuple.second)
+                            , \_ -> Expect.equal [ MapCmd (SaveMap (Just n)) ] (stepSends (MapAct (SaveMap (Just n))) following |> Tuple.second)
+                            , \_ -> Expect.equal [ MapCmd (LearnAt cutoff) ] (stepSends (MapAct (LearnAt cutoff)) following |> Tuple.second)
+                            , -- Not yet following: nothing.
+                              \_ -> Expect.equal [] (stepSends (MapAct ListMaps) greeted |> Tuple.second)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "a map name"
         ]
+
+
+{-| A whole MAP section: Part 2 on map KEYSTEP, two Sound rows, a map row,
+learn armed, the card's maps.
+-}
+mapSection : List String
+mapSection =
+    [ "map 2 \"KEYSTEP\" keep on"
+    , "row S1 CC74 JUMP FILTER.CUTOFF 0 255 off live"
+    , "row S2 CC75 TWOS-COMP - 0 255 off dead"
+    , "row M1 CC74 PICKUP PART1.LEVEL 255 0 on shadowed"
+    , "learn armed FILTER.CUTOFF \"MOVE A CONTROL\""
+    , "mapfile \"KEYSTEP\""
+    , "mapfile \"BEATSTEP PRO\""
+    ]

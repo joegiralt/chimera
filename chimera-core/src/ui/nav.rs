@@ -766,6 +766,33 @@ impl Location {
         Location(Loc::Pages(p, at))
     }
 
+    /// Part `p`'s own page `at` (a page of its chain): `ed learn`'s place
+    /// (ADR 0289). Inlined into its one caller, bank 2's.
+    #[cfg(feature = "midi-map")]
+    #[inline(always)]
+    pub(crate) fn own_page(p: PartId, at: PageAt) -> Location {
+        Location(Loc::Pages(p, at))
+    }
+
+    /// Part `p`'s mixer at `at` (a page of `MIXER_CHANNEL_CHAIN`): PART,
+    /// VOICES, EQ or SENDS, else the FX page. `ed learn`'s place (ADR
+    /// 0289). Inlined into its one caller, bank 2's.
+    #[cfg(feature = "midi-map")]
+    #[inline(always)]
+    pub(crate) fn mixer_page(p: PartId, at: PageAt) -> Location {
+        for (page, m) in [
+            (PART_PAGE, MixPage::Part),
+            (VOICES_PAGE, MixPage::Voices),
+            (EQ_PAGE, MixPage::Eq),
+            (SENDS_PAGE, MixPage::Sends),
+        ] {
+            if page == at {
+                return Location(Loc::Part(p, m));
+            }
+        }
+        Location(Loc::Fx(p, at))
+    }
+
     pub fn mixer(p: PartId, m: MixPage) -> Location {
         Location(Loc::Part(p, m))
     }

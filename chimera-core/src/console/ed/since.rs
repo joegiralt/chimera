@@ -14,6 +14,11 @@
 //! routes <n>                              ROUTES, whole
 //! route <SRC>:<DEST> <amount> "<text>"
 //! unroute <SRC>:<DEST>                    (a diff's: the route gone)
+//! map <n> <"<name>"|none> keep <on|off>   MAP, whole
+//! row S<i> <input> <kind> <addr> <min> <max> <on|off> <live|dead>
+//! row M<i> … <live|dead|shadowed>
+//! learn <off|armed <addr>|sensing S<i>|pointing> "<note>"
+//! mapfile "<name>"
 //! mixer                                   MIXER, whole
 //! panel REVERB <TYPE>
 //! val PART3.LEVEL …
@@ -173,8 +178,9 @@ const fn settings_slots() -> usize {
 fn block_at(s: Schema, mut i: usize) -> Option<EdBlock> {
     let engine = match s {
         Schema::Engine(e) => e,
-        // The matrix keeps no values: ROUTES keeps its cells.
-        Schema::Matrix(_) => return None,
+        // The matrix keeps no values: ROUTES keeps its cells. MIDI MAP's
+        // are rows: MAP keeps a hash of them.
+        Schema::Matrix(_) | Schema::Map => return None,
         Schema::Settings => return GlobalBlock::ALL.get(i).map(|&g| EdBlock::Global(g)),
         Schema::Mixer => {
             let parts = PartId::ALL.len();
@@ -454,6 +460,9 @@ pub enum Section {
     Part,
     /// The followed Part's mod matrix: every present cell.
     Routes,
+    /// The followed Part's MIDI MAP: its Sound's rows, its controller
+    /// map's, learn, the card's maps.
+    Map,
     /// Every Part's mix and sends, the buses.
     Mixer,
     /// THEME, MIDI CONFIG, RANDOMIZE; the project's and Parts' state, the
@@ -462,9 +471,10 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 4] = [
+    pub const ALL: [Section; 5] = [
         Section::Part,
         Section::Routes,
+        Section::Map,
         Section::Mixer,
         Section::Settings,
     ];
@@ -474,8 +484,9 @@ impl Section {
         match self {
             Section::Part => 1,
             Section::Routes => 2,
-            Section::Mixer => 4,
-            Section::Settings => 8,
+            Section::Map => 4,
+            Section::Mixer => 8,
+            Section::Settings => 16,
         }
     }
 
@@ -596,6 +607,23 @@ impl RoutesCopy {
     }
 }
 
+/// MAP's copy: what its lines read when last reported, hashed. The rows
+/// (with the header and the card's maps) whole on any change; learn alone. None
+/// without `midi-map`.
+#[cfg_attr(not(feature = "midi-map"), allow(dead_code))]
+struct MapCopy {
+    seen: Option<MapSeen>,
+}
+
+/// MAP's lines as last reported: what the rows and learn's line read,
+/// hashed (`map::rows_hash`, `learn_hash`).
+#[derive(Clone, Copy)]
+#[cfg_attr(not(feature = "midi-map"), allow(dead_code))]
+struct MapSeen {
+    rows: u32,
+    learn: u32,
+}
+
 /// MIXER's copy.
 struct MixerCopy {
     seen: Option<MixSeen>,
@@ -686,6 +714,7 @@ pub struct EdSince {
     routes: RoutesCopy,
     mixer: MixerCopy,
     settings: SettingsCopy,
+    map: MapCopy,
 }
 
 impl EdSince {
@@ -703,6 +732,7 @@ impl EdSince {
                 seen: None,
                 kept: MaybeUninit::uninit(),
             },
+            map: MapCopy { seen: None },
             mixer: MixerCopy {
                 seen: None,
                 rev_key: 0,
@@ -735,8 +765,9 @@ impl EdSince {
             }
             Some(Section::Mixer) => described_in(&mut self.mixer.described, Schema::Mixer).has(a),
             Some(Section::Settings) => Described::settings(&mut self.settings.listed).has(a),
-            // No address is a route's: those are cells (`ed route`).
-            Some(Section::Routes) | None => false,
+            // No address is a route's or a map row's: those are cells
+            // (`ed route`) and rows (`ed map`).
+            Some(Section::Routes | Section::Map) | None => false,
         }
     }
 
@@ -839,6 +870,7 @@ impl EdSince {
         match s {
             Section::Part => self.part_section(owed, ui, own, refused, pass, w),
             Section::Routes => self.routes_section(owed, ui, pass, w),
+            Section::Map => self.map_section(owed, ui, pass, w),
             Section::Mixer => self.mixer_section(owed, ui, own, pass, w),
             Section::Settings => self.settings_section(owed, ui, own, pass, w),
         }
@@ -1053,6 +1085,51 @@ impl EdSince {
             self.routes.keep(part, engine, live);
         }
         Ok(whole)
+    }
+
+    /// MAP: the followed Part's rows (its Sound's, its controller map's),
+    /// the card's maps and learn. Map edits are rare: any change in the
+    /// rows' lines answers them whole; learn's line alone when only it
+    /// moved. Without `midi-map`, none.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.map_section")
+    )]
+    fn map_section(
+        &mut self,
+        owed: bool,
+        ui: &UiState,
+        pass: Pass,
+        w: &mut dyn Write,
+    ) -> Result<bool, fmt::Error> {
+        #[cfg(feature = "midi-map")]
+        {
+            use super::map;
+            let now = MapSeen {
+                rows: map::rows_hash(ui),
+                learn: map::learn_hash(ui),
+            };
+            let was = self.map.seen;
+            let whole = owed || was.is_none_or(|w| w.rows != now.rows);
+            if whole {
+                map::rows(ui, w)?;
+            }
+            if whole || was.is_none_or(|w| w.learn != now.learn) {
+                map::learn_line(ui, w)?;
+            }
+            if whole {
+                map::files(ui, w)?;
+            }
+            if let Pass::Commit = pass {
+                self.map.seen = Some(now);
+            }
+            Ok(whole)
+        }
+        #[cfg(not(feature = "midi-map"))]
+        {
+            let _ = (owed, ui, pass, w, &self.map);
+            Ok(false)
+        }
     }
 
     /// MIXER: every Part's mix and sends, the buses, the reverb's panel.

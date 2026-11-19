@@ -352,6 +352,10 @@ fn the_schema_hash_is_describes_bytes_and_the_same_every_boot() {
     for s in Schema::ALL {
         let mut f = Fake::new();
         let n = ed_schema_pages(s);
+        // A schema this build lacks (MAP without `midi-map`) has no page.
+        if n == 0 {
+            continue;
+        }
         let text: String = (0..n)
             .map(|i| {
                 let a = ask(&mut f, &format!("ed describe {} {i}\n", token(s)));
@@ -381,7 +385,7 @@ fn the_schema_hash_is_describes_bytes_and_the_same_every_boot() {
     let mut f = Fake::new();
     assert_eq!(
         ask(&mut f, "ed schema NOPE\n"),
-        "ERR ed takes hello, schema, describe, get, set, route, since, part, projects or project\n"
+        "ERR ed takes hello, schema, describe, get, set, route, since, part, projects, project, map, maps or learn\n"
     );
 }
 

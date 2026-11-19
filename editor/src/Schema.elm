@@ -1,5 +1,6 @@
 module Schema exposing
     ( Matrix
+    , MidiMap
     , Page
     , Panel
     , Param
@@ -10,6 +11,7 @@ module Schema exposing
     , empty
     , hasPanel
     , matrix
+    , midiMap
     , optionName
     , pageAddresses
     , pageCount
@@ -25,7 +27,7 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 
 import Addr exposing (Addr)
 import Dict exposing (Dict)
-import Protocol exposing (AnswerLine, Cell, Flags, Kind, OptIndex, PageLabel, PageNo, RouteKind, Scale)
+import Protocol exposing (AnswerLine, Cell, ControlNo, Flags, Kind, MapForm, MapKind, Msb, OptIndex, PageLabel, PageNo, RouteKind, Scale, SpanPlace)
 
 
 type alias Param =
@@ -67,6 +69,21 @@ type alias Matrix =
     }
 
 
+{-| What `ed describe MAP` says: each input form and its kinds in the box's
+cycle order, each kind's box words, the CCs a binding may take, the 14-bit
+MSBs, a span's places, a Sound's rows and a controller map's.
+-}
+type alias MidiMap =
+    { inputs : List { form : MapForm, kinds : List MapKind }
+    , kinds : List { kind : MapKind, head : String, tail : String }
+    , ccs : List ControlNo
+    , msbs : List Msb
+    , span : Maybe ( SpanPlace, SpanPlace )
+    , rows : Maybe Int
+    , mapRows : Maybe Int
+    }
+
+
 type alias Page =
     { n : PageNo
     , label : PageLabel
@@ -78,20 +95,24 @@ type alias Page =
 
 
 type Schema
-    = Schema
-        { count : Maybe Int
-        , pages : List Page
-        , index : Dict String Param
-        , matrix : Matrix
+    = Schema Fields
 
-        -- Every address once, the last described first.
-        , order : List Addr
-        }
+
+type alias Fields =
+    { count : Maybe Int
+    , pages : List Page
+    , index : Dict String Param
+    , matrix : Matrix
+    , midiMap : MidiMap
+
+    -- Every address once, the last described first.
+    , order : List Addr
+    }
 
 
 empty : Schema
 empty =
-    Schema { count = Nothing, pages = [], index = Dict.empty, matrix = { sources = [], cols = [], range = Nothing, dests = Nothing }, order = [] }
+    Schema { count = Nothing, pages = [], index = Dict.empty, matrix = { sources = [], cols = [], range = Nothing, dests = Nothing }, midiMap = { inputs = [], kinds = [], ccs = [], msbs = [], span = Nothing, rows = Nothing, mapRows = Nothing }, order = [] }
 
 
 {-| The matrix part of a schema: empty but for `MTX-<ENGINE>`'s.
@@ -99,6 +120,13 @@ empty =
 matrix : Schema -> Matrix
 matrix (Schema s) =
     s.matrix
+
+
+{-| The MIDI MAP part of a schema: empty but for `MAP`'s.
+-}
+midiMap : Schema -> MidiMap
+midiMap (Schema s) =
+    s.midiMap
 
 
 {-| How many pages the unit says there are, once one has been described.
@@ -345,6 +373,44 @@ add line (Schema s) =
 
         Protocol.Refused _ _ ->
             Schema s
+
+        Protocol.InputIs r ->
+            onMidiMap (\mm -> { mm | inputs = mm.inputs ++ [ r ] }) s
+
+        Protocol.KindIs r ->
+            onMidiMap (\mm -> { mm | kinds = mm.kinds ++ [ r ] }) s
+
+        Protocol.CcsAre ns ->
+            onMidiMap (\mm -> { mm | ccs = ns }) s
+
+        Protocol.MsbsAre ns ->
+            onMidiMap (\mm -> { mm | msbs = ns }) s
+
+        Protocol.SpanIs lo hi ->
+            onMidiMap (\mm -> { mm | span = Just ( lo, hi ) }) s
+
+        Protocol.RowsAre n ->
+            onMidiMap (\mm -> { mm | rows = Just n }) s
+
+        Protocol.MapRowsAre n ->
+            onMidiMap (\mm -> { mm | mapRows = Just n }) s
+
+        Protocol.MapIs _ ->
+            Schema s
+
+        Protocol.RowIs _ ->
+            Schema s
+
+        Protocol.LearnIs _ ->
+            Schema s
+
+        Protocol.MapFileIs _ ->
+            Schema s
+
+
+onMidiMap : (MidiMap -> MidiMap) -> Fields -> Schema
+onMidiMap f s =
+    Schema { s | midiMap = f s.midiMap }
 
 
 onLastPanel : (Panel -> Panel) -> List Page -> List Page

@@ -832,12 +832,16 @@ fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
         .unwrap_or_else(|| panic!("{last}"))
         .parse()
         .unwrap();
-    // PART's section alone: ROUTES and MIXER have their own tests.
+    // PART's section alone: ROUTES, MAP and MIXER have their own tests.
     let lines = lines
         .into_iter()
         .take_while(|l| l != "mixer")
         .filter(|l| {
-            !l.starts_with("routes ") && !l.starts_with("route ") && !l.starts_with("unroute ")
+            ![
+                "routes ", "route ", "unroute ", "map ", "row ", "learn ", "mapfile ",
+            ]
+            .iter()
+            .any(|h| l.starts_with(h))
         })
         .collect();
     (lines, m)

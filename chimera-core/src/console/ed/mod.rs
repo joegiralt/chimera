@@ -16,6 +16,8 @@ mod addr;
 mod describe;
 mod edits;
 mod lit;
+#[cfg(feature = "midi-map")]
+mod map;
 mod pages;
 mod project;
 mod route;
@@ -96,6 +98,15 @@ pub enum EdArg {
     Projects,
     /// `ed project save|saveas|load …`.
     Project(project::ProjectCmd),
+    /// `ed map add|set|rm|pick|keep|save|rename …`.
+    #[cfg(feature = "midi-map")]
+    Map(map::MapCmd),
+    /// `ed maps`: the card's controller maps listed, for `since`.
+    #[cfg(feature = "midi-map")]
+    Maps,
+    /// `ed learn <addr>|off`.
+    #[cfg(feature = "midi-map")]
+    Learn(map::LearnCmd),
 }
 
 /// Why a line is no `ed` command: each its own `ERR`.
@@ -111,6 +122,12 @@ pub enum EdRefusal {
     /// `ed project` that is none of its forms, or a name NAMING couldn't
     /// type.
     Project(project::ProjectRefusal),
+    /// `ed map` that is none of its forms.
+    #[cfg(feature = "midi-map")]
+    Map(map::MapRefusal),
+    /// `ed learn` with no address or `off`.
+    #[cfg(feature = "midi-map")]
+    Learn,
 }
 
 /// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
@@ -136,8 +153,7 @@ fn value(w: &[u8]) -> Option<EdValue> {
 }
 
 impl EdArg {
-    pub const USAGE: &'static str =
-        "hello, schema, describe, get, set, route, since, part, projects or project";
+    pub const USAGE: &'static str = "hello, schema, describe, get, set, route, since, part, projects, project, map, maps or learn";
 
     /// The command, or the refusal it gets. `Since`'s `None` is no
     /// failure: 0 is the editor holding nothing.
@@ -170,12 +186,28 @@ impl EdArg {
                 .map(EdArg::Project)
                 .map_err(EdRefusal::Project);
         }
+        #[cfg(feature = "midi-map")]
+        if is(MAP_WORD.bytes()) {
+            return map::MapCmd::parse(words)
+                .map(EdArg::Map)
+                .map_err(EdRefusal::Map);
+        }
+        #[cfg(feature = "midi-map")]
+        if is(LEARN_WORD.bytes()) {
+            return map::LearnCmd::parse(words)
+                .map(EdArg::Learn)
+                .ok_or(EdRefusal::Learn);
+        }
         EdArg::parse_rest(sub, words).ok_or(EdRefusal::Usage)
     }
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.parse_rest"))]
     fn parse_rest(sub: &[u8], mut words: Words<'_>) -> Option<Self> {
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
+        #[cfg(feature = "midi-map")]
+        if is(MAPS_WORD.bytes()) {
+            return words.next().is_none().then_some(EdArg::Maps);
+        }
         let got = if is(HELLO.bytes()) {
             EdArg::Hello
         } else if is(PROJECTS_WORD.bytes()) {
@@ -224,6 +256,10 @@ pub(crate) fn answer_in(
         Err(EdRefusal::Project(project::ProjectRefusal::Name)) => {
             w.write_str(project::NAME_USAGE.get())
         }
+        #[cfg(feature = "midi-map")]
+        Err(EdRefusal::Map(r)) => r.write(w),
+        #[cfg(feature = "midi-map")]
+        Err(EdRefusal::Learn) => w.write_str(map::LEARN_USAGE.get()),
         Err(EdRefusal::NoSuchPart) => {
             w.write_str(PART_TAKES.get())?;
             lit::uint(w, u32::from(PartId::FIRST.number()))?;
@@ -272,6 +308,12 @@ pub(crate) fn answer_in(
         Ok(EdArg::Route(c, to)) => edits::route(c, to, ui, q, w),
         Ok(EdArg::Projects) => edits::projects(q, w),
         Ok(EdArg::Project(c)) => edits::project(c, ui, q, w),
+        #[cfg(feature = "midi-map")]
+        Ok(EdArg::Map(c)) => edits::map(c, ui, q, w),
+        #[cfg(feature = "midi-map")]
+        Ok(EdArg::Maps) => edits::maps(q, w),
+        #[cfg(feature = "midi-map")]
+        Ok(EdArg::Learn(c)) => edits::learn(c, ui, q, w),
         Ok(EdArg::Part(p)) => match q {
             None => w.write_str(PART_UNBUILT.get()),
             Some(q) => {
@@ -347,6 +389,12 @@ lit!(NAN = "nan");
 lit!(PART_WORD = "part");
 lit!(PROJECTS_WORD = "projects");
 lit!(PROJECT_WORD = "project");
+#[cfg(feature = "midi-map")]
+lit!(MAP_WORD = "map");
+#[cfg(feature = "midi-map")]
+lit!(MAPS_WORD = "maps");
+#[cfg(feature = "midi-map")]
+lit!(LEARN_WORD = "learn");
 lit!(HELLO = "hello");
 lit!(SINCE = "since");
 lit!(DESCRIBE = "describe");

@@ -129,6 +129,10 @@ enum Act {
     Projects,
     /// `ed project …`: kept until the card is free; checked again then.
     Project(ProjectCmd),
+    /// `ed map …`, `ed maps`, `ed learn`: checked again in the pass, a
+    /// listing kept until no map job waits, learn behind a load.
+    #[cfg(feature = "midi-map")]
+    Map(super::map::MapAct),
 }
 
 /// What `EdState::push` made of a set.
@@ -311,6 +315,43 @@ impl EdState {
         self.push_act(new)
     }
 
+    /// `ed map set` queued: one on the same row and field takes the new
+    /// value, so a drag keeps one act; any other after the rest.
+    #[cfg(feature = "midi-map")]
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.push_map"))]
+    fn push_map(&mut self, a: super::map::MapAct) -> Pushed {
+        use super::map::MapAct;
+        if let MapAct::Set {
+            part,
+            row,
+            was,
+            field,
+        } = a
+        {
+            let mut i = 0;
+            while let Some(b) = self.act(i) {
+                if let Act::Map(MapAct::Set {
+                    part: p,
+                    row: r,
+                    was: v,
+                    field: f,
+                }) = b
+                    && p == part
+                    && r == row
+                    && v == was
+                    && core::mem::discriminant(&f) == core::mem::discriminant(&field)
+                {
+                    if let Some(slot) = self.acts.get_mut(i) {
+                        slot.write(Act::Map(a));
+                    }
+                    return Pushed::Queued;
+                }
+                i += 1;
+            }
+        }
+        self.push_act(Act::Map(a))
+    }
+
     /// `a` queued after the rest.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.push_act"))]
     fn push_act(&mut self, a: Act) -> Pushed {
@@ -340,6 +381,8 @@ impl EdState {
                 }
                 Act::Projects => !crate::ui::ed_cue::card(ui, None),
                 Act::Project(c) => !crate::ui::ed_cue::card(ui, Some(c)),
+                #[cfg(feature = "midi-map")]
+                Act::Map(m) => !super::map::apply(ui, m),
             };
             if keep && let Some(slot) = self.acts.get_mut(kept) {
                 slot.write(a);
@@ -633,6 +676,65 @@ pub(super) fn project(
     }
 }
 
+/// `ed map …`'s answer: what the box would refuse now is said at once;
+/// the rest is queued, and checked again in the UI pass.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.map"))]
+pub(super) fn map(
+    c: super::map::MapCmd,
+    ui: &UiState,
+    q: Option<&mut EdState>,
+    w: &mut dyn Write,
+) -> fmt::Result {
+    let Some(q) = q else {
+        return w.write_str(MAP_UNBUILT.get());
+    };
+    match super::map::check(c, ui) {
+        Err(why) => why.write(w),
+        Ok(a) => queued(q.push_map(a), w),
+    }
+}
+
+/// `ed maps`' answer: one listing queued, however often asked.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.maps"))]
+pub(super) fn maps(q: Option<&mut EdState>, w: &mut dyn Write) -> fmt::Result {
+    let Some(q) = q else {
+        return w.write_str(MAP_UNBUILT.get());
+    };
+    let mut i = 0;
+    while let Some(a) = q.act(i) {
+        if let Act::Map(super::map::MapAct::List) = a {
+            return w.write_str(QUEUED.get());
+        }
+        i += 1;
+    }
+    queued(q.push_act(Act::Map(super::map::MapAct::List)), w)
+}
+
+/// `ed learn`'s answer: an address `describe` lists for the followed Part
+/// on a Part's own page or its mixer, a knob a control may drive.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.learn"))]
+pub(super) fn learn(
+    c: super::map::LearnCmd,
+    ui: &UiState,
+    q: Option<&mut EdState>,
+    w: &mut dyn Write,
+) -> fmt::Result {
+    let Some(q) = q else {
+        return w.write_str(MAP_UNBUILT.get());
+    };
+    let listed = match c {
+        super::map::LearnCmd::At(a) => q.since.lists(engine_of(ui), a),
+        super::map::LearnCmd::Off => true,
+    };
+    match super::map::learn_check(c, ui, listed) {
+        Err(why) => why.write(w),
+        Ok(a) => queued(q.push_map(a), w),
+    }
+}
+
 /// `OK queued`, or `ERR busy` past the queue.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.queued"))]
 fn queued(p: Pushed, w: &mut dyn Write) -> fmt::Result {
@@ -688,6 +790,8 @@ lit!(TAKES_A_NAME = "takes one of its names");
 lit!(ROUTE_UNBUILT = "ERR ed route is not in this build\n");
 lit!(PROJECTS_UNBUILT = "ERR ed projects is not in this build\n");
 lit!(PROJECT_UNBUILT = "ERR ed project is not in this build\n");
+#[cfg(feature = "midi-map")]
+lit!(MAP_UNBUILT = "ERR ed map is not in this build\n");
 lit!(ROUTE_HAS_NO = "ERR ed route has no ");
 lit!(SET_UNBUILT = "ERR ed set is not in this build\n");
 lit!(SET_HAS_NO = "ERR ed set has no ");

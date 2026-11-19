@@ -748,7 +748,8 @@ fn base_ctx(s: Schema) -> SlotCtx {
         )
         | Schema::Mixer
         | Schema::Matrix(_)
-        | Schema::Settings => c,
+        | Schema::Settings
+        | Schema::Map => c,
     }
 }
 
@@ -760,6 +761,9 @@ fn base_ctx(s: Schema) -> SlotCtx {
 pub(super) fn describe(s: Schema, page: u8, w: &mut dyn Write) -> Option<fmt::Result> {
     if let Schema::Matrix(e) = s {
         return (page == 0).then(|| super::route::describe(e, w));
+    }
+    if let Schema::Map = s {
+        return (page < schema_pages(s)).then(|| map_page(w));
     }
     let (def, round) = page_at(s, usize::from(page))?;
     Some(write_page(s, def, round, page, w))
@@ -775,10 +779,31 @@ pub(super) fn describe_all(s: Schema, w: &mut dyn Write) -> fmt::Result {
     if let Schema::Matrix(e) = s {
         return super::route::describe(e, w);
     }
+    if let Schema::Map = s {
+        return match schema_pages(s) {
+            0 => Ok(()),
+            _ => map_page(w),
+        };
+    }
     for (n, (def, round)) in Pages::all(s).enumerate() {
         write_page(s, def, round, u8::try_from(n).map_err(|_| fmt::Error)?, w)?;
     }
     Ok(())
+}
+
+/// MIDI MAP's page: the map's own, without `midi-map` never asked.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.map_page")
+)]
+fn map_page(w: &mut dyn Write) -> fmt::Result {
+    #[cfg(feature = "midi-map")]
+    return super::map::describe(w);
+    #[cfg(not(feature = "midi-map"))]
+    {
+        let _ = w;
+        Ok(())
+    }
 }
 
 #[cfg_attr(

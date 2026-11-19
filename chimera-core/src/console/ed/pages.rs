@@ -52,8 +52,11 @@ const fn def_of(s: Schema, n: usize) -> Option<&'static BlockDef> {
 /// own.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.counts"))]
 const fn counts(s: Schema) -> (usize, usize) {
-    if let Schema::Matrix(_) = s {
-        return (1, 0);
+    match s {
+        Schema::Matrix(_) => return (1, 0),
+        // MIDI MAP's grammar, with the map's code only.
+        Schema::Map => return (cfg!(feature = "midi-map") as usize, 0),
+        Schema::Engine(_) | Schema::Mixer | Schema::Settings => {}
     }
     let (mut shared, mut round) = (0, 0);
     let mut n = 0;

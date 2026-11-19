@@ -234,3 +234,237 @@ pub(crate) fn card(ui: &mut UiState, c: Option<crate::console::ProjectCmd>) -> b
     ui.job = Some(job);
     true
 }
+
+/// Part `p`'s controller map's rows as it plays them (ADR 0226): empty
+/// before the MIDI UI first ran, as MIDI MAP reads it.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.layer"))]
+pub(crate) fn layer(ui: &UiState, p: PartId) -> crate::midi_map::MidiMap {
+    match ui.cc.built() {
+        Some(m) => *m.ctl.layer(p.index()),
+        None => crate::midi_map::MidiMap::EMPTY,
+    }
+}
+
+/// `m` as Part `p`'s own rows: MIDI MAP's write, a Sound edit (`set_map`).
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.set_own"))]
+pub(crate) fn set_own(ui: &mut UiState, p: PartId, m: crate::midi_map::MidiMap) {
+    ui.set_map(p, m);
+}
+
+/// Row `i` of Part `p`'s controller map, `was`, made `to`: MIDI MAP's
+/// turn on a layer row (`Layers::edit`), the map on the card changed by
+/// the next card work. `false`: another job waits, nothing changed; the
+/// box says CARD BUSY, as it does to a hand.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.layer_edit"))]
+pub(crate) fn layer_edit(
+    ui: &mut UiState,
+    p: PartId,
+    i: usize,
+    was: crate::midi_map::Binding,
+    to: crate::midi_map::Binding,
+) -> bool {
+    let took = ui.cc.ui().ctl.edit(p, i, was, to);
+    match took {
+        true => ui.cc.reset_part(p),
+        false => ui.error(Line::new(chimera_hal::store::StoreError::Busy.message())),
+    }
+    took
+}
+
+/// MIDI MAP's card job `j` (`ctl_ask`): a save, a rename, a row's drop.
+/// One waits at a time: another waiting, the box says CARD BUSY.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_ask"))]
+pub(crate) fn ctl_ask(ui: &mut UiState, j: super::midi::layer::CtlJob) {
+    ui.ctl_ask_in(j);
+}
+
+/// The map job waiting for the card, if any.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_job"))]
+pub(crate) fn ctl_job(ui: &UiState) -> Option<super::midi::layer::CtlJob> {
+    ui.cc.built().and_then(|m| m.ctl.job)
+}
+
+/// The card's maps as last listed, `None` before a listing.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.maps"))]
+pub(crate) fn maps(ui: &UiState) -> Option<&[Option<crate::name::SoundName>]> {
+    ui.cc.built().and_then(|m| m.ctl.listed())
+}
+
+/// KEEP MAP on Part `p` (ADR 0253).
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.keeps"))]
+pub(crate) fn keeps(ui: &UiState, p: PartId) -> bool {
+    ui.keeps_map(p)
+}
+
+/// KEEP MAP on Part `p` made `on`: MIX + PLUS on row 0, only when it
+/// differs, so a second ask changes nothing.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.keep"))]
+pub(crate) fn keep(ui: &mut UiState, p: PartId, on: bool) {
+    if ui.keeps_map(p) != on {
+        ui.keep_map(p);
+    }
+}
+
+/// The editor asked for the card's maps (`ed maps`): the next card work
+/// lists them, as MIDI MAP opening does, nothing on screen moving. One
+/// editor, one ask: a flag, not a queue. RAM's (`.bss`), not a section of
+/// bank 2's.
+#[cfg(feature = "midi-map")]
+static MAPS_ASKED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// `ed maps` in the UI pass: the listing asked of the next card work,
+/// once no map job waits (`false` until then: the act waits).
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ask_maps"))]
+pub(crate) fn ask_maps(ui: &UiState) -> bool {
+    if ctl_job(ui).is_some() {
+        return false;
+    }
+    MAPS_ASKED.store(true, core::sync::atomic::Ordering::Relaxed);
+    true
+}
+
+/// The door's `ctl_due`: the layers' card work (`ctl_due_in`), or the
+/// editor's listing asked.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_due"))]
+pub(crate) fn ctl_due(ui: &UiState) -> bool {
+    ui.ctl_due_in() || MAPS_ASKED.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// The door's `ctl_work`: the layers' (`ctl_work_in`: a job, a stale
+/// layer, MIDI MAP's listing), and once they are done the editor's
+/// listing, as MIDI MAP's is made. No card: the layers' empties it.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_work"))]
+pub(crate) fn ctl_work(
+    ui: &mut UiState,
+    s: &mut dyn chimera_hal::store::Store,
+    r: Option<&crate::storage::Ready>,
+) {
+    use crate::midi_map::ctl::{self, MAX_MAPS};
+    use chimera_hal::store::StoreError;
+    use core::sync::atomic::Ordering;
+    let asked = MAPS_ASKED.load(Ordering::Relaxed);
+    let (Some(r), true, false) = (r, asked, ui.ctl_due_in()) else {
+        if r.is_none() {
+            MAPS_ASKED.store(false, Ordering::Relaxed);
+        }
+        return ui.ctl_work_in(s, r);
+    };
+    let c = &mut ui.cc.ui().ctl;
+    c.list = [None; MAX_MAPS];
+    let got = ctl::list(s, r, &mut c.list);
+    c.more = matches!(got, Ok((_, true)));
+    c.listed = !matches!(got, Err(StoreError::Busy));
+    if c.listed {
+        MAPS_ASKED.store(false, Ordering::Relaxed);
+    }
+}
+
+/// Where `ed learn` arms (ADR 0289): a page of the Part's own chain, or of
+/// its mixer (its pages, the FX's).
+#[cfg(feature = "midi-map")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LearnOn {
+    Own,
+    Mixer,
+}
+
+/// `ed learn` in the UI pass: the box taken to page `def` of Part `p`'s
+/// (its own chain, or its mixer), slot `slot` focused and learn armed
+/// there, as MIX + SEQ arms on the focused cell; `None`, learn ended, as
+/// MIX + SEQ ends it. Never over pointing (MIX + SEQ does nothing then).
+/// A move waits behind a load or a card job (`false`), as `ed part`'s
+/// key does; a page the Part's chain no longer holds arms nothing.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.learn"))]
+pub(crate) fn learn(
+    ui: &mut UiState,
+    at: Option<(PartId, LearnOn, &'static super::block_def::BlockDef, usize)>,
+) -> bool {
+    use super::learn::Learn;
+    use super::nav::{Location, PartChain};
+    if let Learn::Pointing(_) = ui.learn {
+        return true;
+    }
+    let Some((p, on, def, slot)) = at else {
+        if let Learn::Armed { .. } | Learn::Sensing { .. } = ui.learn {
+            ui.learn = Learn::Off;
+        }
+        return true;
+    };
+    if ui.src.loading() || ui.lib.busy() || ui.job.is_some() {
+        return false;
+    }
+    let chain = match on {
+        LearnOn::Own => PartChain::of(&ui.project.part(p).sound).def(),
+        LearnOn::Mixer => &super::block_registry::MIXER_CHANNEL_CHAIN,
+    };
+    let Some(page) = locate(chain, def.id) else {
+        return true;
+    };
+    if ui.modal.take().is_some() {
+        ui.closed();
+    }
+    ui.idle.touch(false, true);
+    ui.go(match on {
+        LearnOn::Own => Location::own_page(p, page),
+        LearnOn::Mixer => Location::mixer_page(p, page),
+    });
+    ui.focus.touch(def.id, slot);
+    ui.learn = Learn::Armed {
+        part: p,
+        note: None,
+    };
+    true
+}
+
+/// The page of `chain` showing def `id`: `ChainDef2::locate`'s walk, here
+/// in bank 2 (its iterator adaptors would be instances bank 1 holds).
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.locate"))]
+fn locate(chain: &super::block_def::ChainDef2, id: u16) -> Option<super::block_def::PageAt> {
+    let mut node = 0;
+    while let Some(b) = chain.block_at(node) {
+        if b.def.id == id {
+            return chain.page(node, 0);
+        }
+        let mut k = 0;
+        while let Some(d) = b.sub_pages.get(k) {
+            if d.id == id {
+                return chain.page(node, k + 1);
+            }
+            k += 1;
+        }
+        node += 1;
+    }
+    None
+}
+
+/// What learn says in the focus band now, under the focused cell's label:
+/// `since`'s `learn` line quotes it.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.learn_note"))]
+pub(crate) fn learn_note(ui: &UiState) -> Option<crate::ui::fmt::FmtBuf> {
+    let v = super::view::view(ui.page_def(), ui.focused_slot(), &ui.ctx());
+    ui.band_status().map(|s| s.text(v.label()))
+}
+
+/// The focused cell's param, if a control may drive it: what learn arms on.
+#[cfg(feature = "midi-map")]
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.cue.learn_target")
+)]
+pub(crate) fn learn_target(ui: &UiState) -> Option<crate::midi_map::Mappable> {
+    ui.learn_target()
+}

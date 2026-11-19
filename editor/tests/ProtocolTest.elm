@@ -3,7 +3,7 @@ module ProtocolTest exposing (suite)
 import Addr
 import Expect
 import FixtureData
-import Protocol exposing (AnswerLine(..), Cell(..), Command(..), Edits(..), Flags, Health(..), Kind(..), Line(..), OverEdits(..), ProjectFile(..), RouteKind(..), RouteTo(..), Scale(..), SchemaId(..), SoundStatus(..), Value(..), encode, optIndex, parse)
+import Protocol exposing (AddInput(..), AnswerLine(..), Cell(..), Command(..), Edits(..), Flags, Health(..), Kind(..), Learn(..), Line(..), MapCommand(..), MapForm(..), MapInput(..), MapKind(..), MapRow(..), OnOff(..), OverEdits(..), ProjectFile(..), RouteKind(..), RouteTo(..), RowIndex, RowSetting(..), RowStatus(..), Scale(..), SchemaId(..), SoundStatus(..), SpanPlace, Value(..), encode, optIndex, parse)
 import Test exposing (Test, describe, test)
 import Unit
 import Wire exposing (addr, page)
@@ -168,6 +168,11 @@ suite =
                     FixtureData.settings
                         |> List.filter (parse >> isUnknown)
                         |> Expect.equal []
+            , test "every line of the unit's MAP schema is understood" <|
+                \_ ->
+                    FixtureData.map
+                        |> List.filter (parse >> isUnknown)
+                        |> Expect.equal []
             , test "every SETTINGS page names its crumbs" <|
                 \_ ->
                     let
@@ -192,6 +197,131 @@ suite =
                     Expect.equal (Just [ Just "ed project load 10 3", Just "ed project load 10 3 discard" ])
                         (Maybe.map2 (\i g -> [ encode (LoadProject i g RefuseOverEdits), encode (LoadProject i g DiscardEdits) ]) (Protocol.projectId 10) (Protocol.generation 3))
             , test "a project id is 1 or more" <| \_ -> Expect.equal Nothing (Protocol.projectId 0)
+            ]
+        , describe "MAP (slice 4)"
+            [ test "schema MAP" <|
+                \_ ->
+                    case parse "schema MAP 1 0123456789abcdef" of
+                        Answer (SchemaIs r) ->
+                            Expect.equal ( r.schema, r.pages ) ( MapSchema, 1 )
+
+                        _ ->
+                            Expect.fail "not a schema line"
+            , test "MAP's token" <| \_ -> Expect.equal ( Just "ed schema MAP", Just "ed describe MAP 0" ) ( encode (AskSchema MapSchema), encode (Describe MapSchema Protocol.firstPage) )
+            , p "input CC" "input CC JUMP PICKUP SCALE TWOS-COMP OFFSET SIGNED SIGNED-2 MOMENTARY TOGGLE" (Answer (InputIs { form = FormCc, kinds = [ Jump, Pickup, ScaleTo, TwosComp, BinaryOffset, SignedBit, SignedBit2, Momentary, ToggleButton ] }))
+            , p "input SYSEX" "input SYSEX JUMP" (Answer (InputIs { form = FormSysex, kinds = [ Jump ] }))
+            , p "input of no form" "input MIDI JUMP" Unknown
+            , p "input with no such kind" "input CC JUMP SOFT" Unknown
+            , p "kind" "kind TWOS-COMP \"RELATIVE · TWOS COMPLEMENT\" \"+1 = 1  -1 = 127\"" (Answer (KindIs { kind = TwosComp, head = "RELATIVE · TWOS COMPLEMENT", tail = "+1 = 1  -1 = 127" }))
+            , p "kind with no tail" "kind JUMP \"ABSOLUTE · JUMPS TO THE KNOB\" \"\"" (Answer (KindIs { kind = Jump, head = "ABSOLUTE · JUMPS TO THE KNOB", tail = "" }))
+            , p "no such kind" "kind SOFT \"X\" \"\"" Unknown
+            , pm "ccs" "ccs 1 2 3 74 127" (each Protocol.controlNo [ 1, 2, 3, 74, 127 ] |> Maybe.map (CcsAre >> Answer))
+            , p "a CC past 127" "ccs 1 128" Unknown
+            , pm "msbs" "msbs 1 2 5 7 31" (each Protocol.msb [ 1, 2, 5, 7, 31 ] |> Maybe.map (MsbsAre >> Answer))
+            , p "6 is no MSB" "msbs 1 6" Unknown
+            , p "32 is no MSB" "msbs 1 32" Unknown
+            , pm "span" "span 0 255" (Maybe.map2 (\a b -> Answer (SpanIs a b)) (Protocol.spanPlace 0) (Protocol.spanPlace 255))
+            , p "a span past 255" "span 0 256" Unknown
+            , p "rows" "rows 16" (Answer (RowsAre 16))
+            , p "maprows" "maprows 90" (Answer (MapRowsAre 90))
+            , test "every line of MAP's schema is understood" <|
+                \_ ->
+                    mapSchemaLines
+                        |> List.filter (parse >> isUnknown)
+                        |> Expect.equal []
+            , test "the kinds a form takes are the schema's" <|
+                \_ ->
+                    mapSchemaLines
+                        |> List.filterMap
+                            (\l ->
+                                case parse l of
+                                    Answer (InputIs r) ->
+                                        Just ( r.kinds, Protocol.formKinds r.form )
+
+                                    _ ->
+                                        Nothing
+                            )
+                        |> List.filter (\( said, ours ) -> said /= ours)
+                        |> Expect.equal []
+            , pm "map" "map 2 \"MY MAP\" keep on" (Unit.partFromInt 2 |> Maybe.map (\pt -> Answer (MapIs { part = pt, name = Just "MY MAP", keep = On })))
+            , pm "map none" "map 1 none keep off" (Unit.partFromInt 1 |> Maybe.map (\pt -> Answer (MapIs { part = pt, name = Nothing, keep = Off })))
+            , pm "a map named none" "map 1 \"none\" keep off" (Unit.partFromInt 1 |> Maybe.map (\pt -> Answer (MapIs { part = pt, name = Just "none", keep = Off })))
+            , p "map of Part 7" "map 7 none keep on" Unknown
+            , p "map keep maybe" "map 1 none keep maybe" Unknown
+            , pm "a Sound row" "row S1 CC74 JUMP FILTER.CUTOFF 0 255 off live" (row SoundRow 1 (cc 74) Jump (Just "FILTER.CUTOFF") ( 0, 255 ) Off Live)
+            , pm "a map row, 14-bit, inverted" "row M3 CC14:2 SCALE PART1.LEVEL 255 0 on shadowed" (row MapFileRow 3 (Protocol.msb 2 |> Maybe.map InCc14) ScaleTo (Just "PART1.LEVEL") ( 255, 0 ) On Shadowed)
+            , pm "an NRPN row" "row M1 NRPN:1234 INC-DEC REVERB.MIX 10 20 off dead" (row MapFileRow 1 (Protocol.nrpnNo 1234 |> Maybe.map InNrpn) IncDec (Just "REVERB.MIX") ( 10, 20 ) Off Dead)
+            , pm "a row the unit can't name" "row S2 PRESS PICKUP - 0 255 off live" (row SoundRow 2 (Just InPress) Pickup Nothing ( 0, 255 ) Off Live)
+            , pm "a SysEx row" "row M16 SYSEX JUMP OUT.SEND1 0 255 off live" (row MapFileRow 16 (Just InSysex) Jump (Just "OUT.SEND1") ( 0, 255 ) Off Live)
+            , test "rows the unit never writes" <|
+                \_ ->
+                    [ "row X1 CC74 JUMP FILTER.CUTOFF 0 255 off live"
+                    , "row S0 CC74 JUMP FILTER.CUTOFF 0 255 off live"
+                    , "row S1 CC128 JUMP FILTER.CUTOFF 0 255 off live"
+                    , "row S1 CC14:6 JUMP FILTER.CUTOFF 0 255 off live"
+                    , "row S1 CC14:40 JUMP FILTER.CUTOFF 0 255 off live"
+                    , "row S1 NRPN:16384 JUMP FILTER.CUTOFF 0 255 off live"
+                    , "row S1 CC74 SOFT FILTER.CUTOFF 0 255 off live"
+                    , "row S1 CC74 JUMP FILTER.CUTOFF 0 256 off live"
+                    , "row S1 CC74 JUMP FILTER.CUTOFF 0 255 maybe live"
+                    , "row S1 CC74 JUMP FILTER.CUTOFF 0 255 off alive"
+                    , "row S1 CC74 JUMP FILTER.CUTOFF 0 255 off shadowed"
+                    ]
+                        |> List.map (parse >> isUnknown)
+                        |> Expect.equal (List.repeat 11 True)
+            , p "learn off" "learn off \"\"" (Answer (LearnIs { learn = NotLearning, note = "" }))
+            , p "learn armed" "learn armed FILTER.CUTOFF \"MOVE A CONTROL\"" (Answer (LearnIs { learn = Armed (Just (addr "FILTER.CUTOFF")), note = "MOVE A CONTROL" }))
+            , p "learn armed on no address" "learn armed - \"MOVE A CONTROL\"" (Answer (LearnIs { learn = Armed Nothing, note = "MOVE A CONTROL" }))
+            , pm "learn sensing" "learn sensing S3 \"CC74 HEARD\"" (Protocol.rowIndex 3 |> Maybe.map (\i -> Answer (LearnIs { learn = Sensing i, note = "CC74 HEARD" })))
+            , p "learn pointing" "learn pointing \"TURN A KNOB\"" (Answer (LearnIs { learn = Pointing, note = "TURN A KNOB" }))
+            , p "learn sensing a map row" "learn sensing M3 \"X\"" Unknown
+            , p "learn of no state" "learn maybe \"X\"" Unknown
+            , p "mapfile" "mapfile \"KEYSTEP 37\"" (Answer (MapFileIs "KEYSTEP 37"))
+            , pe "add" "ed map add CC74 JUMP FILTER.CUTOFF" (add (Protocol.controlNo 74 |> Maybe.map AddCc) Jump "FILTER.CUTOFF" Nothing)
+            , pe "add with a span" "ed map add NRPN:1234 INC-DEC REVERB.MIX 0 127" (add (Protocol.nrpnNo 1234 |> Maybe.map AddNrpn) IncDec "REVERB.MIX" (Just ( 0, 127 )))
+            , pe "add a 14-bit pair" "ed map add CC14:2 SCALE PART1.LEVEL" (add (Protocol.msb 2 |> Maybe.map AddCc14) ScaleTo "PART1.LEVEL" Nothing)
+            , pe "add pressure" "ed map add PRESS PICKUP RING2.HITS 255 0" (add (Just AddPress) Pickup "RING2.HITS" (Just ( 255, 0 )))
+            , test "a binding takes only the kinds its form takes" <|
+                \_ ->
+                    [ Protocol.msb 2 |> Maybe.map AddCc14 |> Maybe.andThen (\i -> Protocol.binding i TwosComp)
+                    , Protocol.binding AddPress Momentary
+                    , Protocol.controlNo 1 |> Maybe.map AddCc |> Maybe.andThen (\i -> Protocol.binding i IncDec)
+                    , Protocol.msb 2 |> Maybe.map AddCc14 |> Maybe.andThen (\i -> Protocol.binding i ToggleButton)
+                    ]
+                        |> Expect.equal [ Nothing, Nothing, Nothing, Nothing ]
+            , pe "set control" "ed map set S1 control 74" (Maybe.map2 (\i c -> MapCmd (SetRow (SoundRow i) (RowControl c))) (Protocol.rowIndex 1) (Protocol.controlNo 74))
+            , pe "set min" "ed map set M2 min 10" (Maybe.map2 (\i v -> MapCmd (SetRow (MapFileRow i) (RowMin v))) (Protocol.rowIndex 2) (Protocol.spanPlace 10))
+            , pe "set max" "ed map set M2 max 200" (Maybe.map2 (\i v -> MapCmd (SetRow (MapFileRow i) (RowMax v))) (Protocol.rowIndex 2) (Protocol.spanPlace 200))
+            , pe "set input" "ed map set S16 input SIGNED-2" (Protocol.rowIndex 16 |> Maybe.map (\i -> MapCmd (SetRow (SoundRow i) (RowKind SignedBit2))))
+            , pe "set echo" "ed map set M1 echo on" (Protocol.rowIndex 1 |> Maybe.map (\i -> MapCmd (SetRow (MapFileRow i) (RowEcho On))))
+            , pe "rm" "ed map rm M2 CC14:2 PART1.LEVEL" (Maybe.map2 (\i m -> MapCmd (RemoveRow (MapFileRow i) (InCc14 m) (Just (addr "PART1.LEVEL")))) (Protocol.rowIndex 2) (Protocol.msb 2))
+            , pe "rm a row the unit can't name" "ed map rm S1 SYSEX -" (Protocol.rowIndex 1 |> Maybe.map (\i -> MapCmd (RemoveRow (SoundRow i) InSysex Nothing)))
+            , pe "pick" "ed map pick MY_MAP-2" (Protocol.mapName "MY MAP-2" |> Maybe.map (\n -> MapCmd (PickMap (Just n))))
+            , test "the plain map commands" <|
+                \_ ->
+                    [ PickMap Nothing, KeepMap On, KeepMap Off, SaveMap Nothing, ListMaps, LearnAt (addr "FILTER.CUTOFF"), StopLearning ]
+                        |> List.map (MapCmd >> encode)
+                        |> Expect.equal (List.map Just [ "ed map pick none", "ed map keep on", "ed map keep off", "ed map save", "ed maps", "ed learn FILTER.CUTOFF", "ed learn off" ])
+            , pe "save into a name" "ed map save KEYSTEP" (Protocol.mapName "KEYSTEP" |> Maybe.map (\n -> MapCmd (SaveMap (Just n))))
+            , pe "rename" "ed map rename MY_KEYS" (Protocol.mapName "MY KEYS" |> Maybe.map (\n -> MapCmd (RenameMap n)))
+            , test "a map name NAMING couldn't type is none" <|
+                \_ ->
+                    [ "", " A", "A ", "A_B", "A.B", "ABCDEFGHIJKLMNOPQ", "Ä" ]
+                        |> List.map Protocol.mapName
+                        |> Expect.equal (List.repeat 7 Nothing)
+            , test "the numbers' ranges" <|
+                \_ ->
+                    [ Protocol.controlNo 128 == Nothing
+                    , Protocol.controlNo -1 == Nothing
+                    , Protocol.msb 0 == Nothing
+                    , Protocol.msb 6 == Nothing
+                    , Protocol.msb 32 == Nothing
+                    , Protocol.nrpnNo 16384 == Nothing
+                    , Protocol.nrpnNo 16383 /= Nothing
+                    , Protocol.spanPlace 256 == Nothing
+                    , Protocol.rowIndex 0 == Nothing
+                    ]
+                        |> Expect.equal (List.repeat 9 True)
             ]
         , describe "terminators"
             [ p "OK" "OK" (Ok_ Nothing)
@@ -333,3 +463,77 @@ fileInt f =
 lookup : String -> List ( String, a ) -> Maybe a
 lookup k =
     List.filter (\( a, _ ) -> a == k) >> List.head >> Maybe.map Tuple.second
+
+
+pm : String -> String -> Maybe Line -> Test
+pm name raw want =
+    test name <| \_ -> Expect.equal want (Just (parse raw))
+
+
+{-| A command, made of smart constructors, encodes as `want`.
+-}
+pe : String -> String -> Maybe Command -> Test
+pe name want c =
+    test name <| \_ -> Expect.equal (Just (Just want)) (Maybe.map encode c)
+
+
+each : (Int -> Maybe a) -> List Int -> Maybe (List a)
+each f =
+    List.foldr (\n acc -> Maybe.map2 (::) (f n) acc) (Just [])
+
+
+cc : Int -> Maybe MapInput
+cc =
+    Protocol.controlNo >> Maybe.map InCc
+
+
+row : (RowIndex -> MapRow) -> Int -> Maybe MapInput -> MapKind -> Maybe String -> ( Int, Int ) -> OnOff -> RowStatus -> Maybe Line
+row which i input kind a ( lo, hi ) echo status =
+    Maybe.map4 (\ix inp mn mx -> Answer (RowIs { row = which ix, input = inp, kind = kind, addr = Maybe.map addr a, min = mn, max = mx, echo = echo, status = status }))
+        (Protocol.rowIndex i)
+        input
+        (Protocol.spanPlace lo)
+        (Protocol.spanPlace hi)
+
+
+add : Maybe AddInput -> MapKind -> String -> Maybe ( Int, Int ) -> Maybe Command
+add input kind a span =
+    let
+        spanned : Maybe (Maybe ( SpanPlace, SpanPlace ))
+        spanned =
+            case span of
+                Nothing ->
+                    Just Nothing
+
+                Just ( lo, hi ) ->
+                    Maybe.map2 (\x y -> Just ( x, y )) (Protocol.spanPlace lo) (Protocol.spanPlace hi)
+    in
+    Maybe.map2 (\b s -> MapCmd (AddRow b (addr a) s)) (input |> Maybe.andThen (\i -> Protocol.binding i kind)) spanned
+
+
+{-| MAP's schema as the unit describes it (ADR 0289, slice 4).
+-}
+mapSchemaLines : List String
+mapSchemaLines =
+    [ "page 0 MAP of 1"
+    , "input CC JUMP PICKUP SCALE TWOS-COMP OFFSET SIGNED SIGNED-2 MOMENTARY TOGGLE"
+    , "input CC14 JUMP PICKUP SCALE"
+    , "input NRPN JUMP PICKUP SCALE TWOS-COMP OFFSET SIGNED SIGNED-2 INC-DEC MOMENTARY TOGGLE"
+    , "input PRESS JUMP PICKUP SCALE"
+    , "input SYSEX JUMP"
+    , "kind JUMP \"ABSOLUTE · JUMPS TO THE KNOB\" \"\""
+    , "kind PICKUP \"ABSOLUTE · WAITS TO PICK UP\" \"\""
+    , "kind SCALE \"ABSOLUTE · SCALES TO MEET\" \"\""
+    , "kind TWOS-COMP \"RELATIVE · TWOS COMPLEMENT\" \"+1 = 1  -1 = 127\""
+    , "kind OFFSET \"RELATIVE · BINARY OFFSET\" \"+1 = 65  -1 = 63\""
+    , "kind SIGNED \"RELATIVE · SIGNED BIT\" \"+1 = 1  -1 = 65\""
+    , "kind SIGNED-2 \"RELATIVE · SIGNED BIT 2\" \"+1 = 65  -1 = 1\""
+    , "kind INC-DEC \"RELATIVE · NRPN\" \"INCREMENT AND DECREMENT\""
+    , "kind MOMENTARY \"BUTTON · HELD IS MAX\" \"\""
+    , "kind TOGGLE \"BUTTON · EACH PRESS FLIPS\" \"\""
+    , "ccs 1 2 3 4 5 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 74 127"
+    , "msbs 1 2 3 4 5 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31"
+    , "span 0 255"
+    , "rows 16"
+    , "maprows 16"
+    ]

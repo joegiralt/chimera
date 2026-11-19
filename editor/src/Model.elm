@@ -1,8 +1,11 @@
 module Model exposing
     ( Effect(..)
     , Held
+    , LearnReading
     , Listed
     , Listing
+    , MapHeader
+    , MapRowReading
     , Model
     , Msg(..)
     , Reading
@@ -10,10 +13,12 @@ module Model exposing
     , Seat
     , Stage
     , Via(..)
+    , armedOn
     , init
     , notice
     , refusal
     , seat
+    , sensingRow
     , shown
     , status
     , step
@@ -32,14 +37,14 @@ The schemas are the unit's own text (ADR 0289): on connect, and on an engine
 the editor hasn't read, it asks `ed schema <S>` for its page count and hash,
 and uses its cached copy of that hash (IndexedDB, `Cache`) or describes every
 page and keeps them. It reads the followed engine's schema, the MIXER's, the
-engine's matrix and SETTINGS'.
+engine's matrix, SETTINGS' and MIDI MAP's.
 
 -}
 
 import Addr exposing (Addr)
 import Cache
 import Dict exposing (Dict)
-import Protocol exposing (AnswerLine(..), Cell, Command(..), Edits, Generation, Hash, Health, Line(..), OverEdits, PageNo, ProjectFile, ProjectId, ProjectName, RouteTo, SchemaId(..), SoundStatus, Value, cellKey, encode, hashText, parse, schemaToken)
+import Protocol exposing (AnswerLine(..), Cell, Command(..), Edits, Generation, Hash, Health, Learn, Line(..), MapCommand(..), MapInput, MapKind, MapRow(..), OnOff, OverEdits, PageNo, ProjectFile, ProjectId, ProjectName, RouteTo, RowStatus, SchemaId(..), SoundStatus, SpanPlace, Value, cellKey, encode, hashText, parse, rowIndexToInt, schemaToken)
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
@@ -69,6 +74,25 @@ whether the card has more than the box lists.
 -}
 type alias Listing =
     { projects : List Listed, more : Bool }
+
+
+{-| MIDI MAP's header: the followed Part, its controller map (none picked:
+`Nothing`) and KEEP MAP.
+-}
+type alias MapHeader =
+    { part : Part, name : Maybe String, keep : OnOff }
+
+
+{-| A MIDI MAP row as `since` said it.
+-}
+type alias MapRowReading =
+    { input : MapInput, kind : MapKind, addr : Maybe Addr, min : SpanPlace, max : SpanPlace, echo : OnOff, status : RowStatus }
+
+
+{-| The box's MIDI learn and its focus-band words.
+-}
+type alias LearnReading =
+    { learn : Learn, note : String }
 
 
 {-| Where the connect sequence is. One request is in flight at a time.
@@ -126,6 +150,7 @@ type alias Model =
     , mixer : Schema
     , matrix : Schema
     , settings : Schema
+    , midiMap : Schema
     , routes : Dict String RouteReading
     , held : Dict String Held
     , incoming : Schema
@@ -154,6 +179,14 @@ type alias Model =
     , sounds : Dict Int { name : String, status : SoundStatus }
     , toast : Maybe String
     , listing : Maybe Listing
+
+    -- MAP's section: its header, the Sound's rows and the controller map's
+    -- (by their 1-based number), learn, the card's maps as last listed.
+    , mapHeader : Maybe MapHeader
+    , soundRows : Dict Int MapRowReading
+    , mapRows : Dict Int MapRowReading
+    , learn : Maybe LearnReading
+    , mapFiles : List String
     }
 
 
@@ -182,6 +215,8 @@ type Msg
     | SaveNew ProjectName
       -- Load a listed file, witnessed by the generation the listing said.
     | LoadListed ProjectId Generation OverEdits
+      -- A MIDI MAP or learn command.
+    | MapAct MapCommand
 
 
 {-| The console protocol this editor speaks.
@@ -226,6 +261,7 @@ init =
     , mixer = Schema.empty
     , matrix = Schema.empty
     , settings = Schema.empty
+    , midiMap = Schema.empty
     , routes = Dict.empty
     , held = Dict.empty
     , incoming = Schema.empty
@@ -249,6 +285,11 @@ init =
     , sounds = Dict.empty
     , toast = Nothing
     , listing = Nothing
+    , mapHeader = Nothing
+    , soundRows = Dict.empty
+    , mapRows = Dict.empty
+    , learn = Nothing
+    , mapFiles = []
     }
 
 
@@ -316,6 +357,9 @@ opening msg =
             Cmd.none
 
         LoadListed _ _ _ ->
+            Cmd.none
+
+        MapAct _ ->
             Cmd.none
 
 
@@ -419,6 +463,48 @@ refusal a m =
     Dict.get (Addr.key a) m.refusals
 
 
+{-| The cell the box's MIDI learn is armed on, when the box can name it.
+-}
+armedOn : Model -> Maybe Addr
+armedOn m =
+    case m.learn |> Maybe.map .learn of
+        Just (Protocol.Armed a) ->
+            a
+
+        Just Protocol.NotLearning ->
+            Nothing
+
+        Just (Protocol.Sensing _) ->
+            Nothing
+
+        Just Protocol.Pointing ->
+            Nothing
+
+        Nothing ->
+            Nothing
+
+
+{-| The Sound row (1-based) learn is hearing a control onto.
+-}
+sensingRow : Model -> Maybe Int
+sensingRow m =
+    case m.learn |> Maybe.map .learn of
+        Just (Protocol.Sensing i) ->
+            Just (rowIndexToInt i)
+
+        Just Protocol.NotLearning ->
+            Nothing
+
+        Just (Protocol.Armed _) ->
+            Nothing
+
+        Just Protocol.Pointing ->
+            Nothing
+
+        Nothing ->
+            Nothing
+
+
 seat : Model -> Seat
 seat m =
     m.seat
@@ -495,6 +581,55 @@ step msg m =
 
         LoadListed id g over ->
             projectCommand (LoadProject id g over) m
+
+        MapAct c ->
+            mapCommand c m
+
+
+{-| A MIDI MAP command goes out while following; one naming a cell only
+against the engine the box is on, as an edit does.
+-}
+mapCommand : MapCommand -> Model -> ( Model, List Effect )
+mapCommand c m =
+    let
+        names : Bool
+        names =
+            case c of
+                AddRow _ _ _ ->
+                    True
+
+                LearnAt _ ->
+                    True
+
+                SetRow _ _ ->
+                    False
+
+                RemoveRow _ _ _ ->
+                    False
+
+                PickMap _ ->
+                    False
+
+                KeepMap _ ->
+                    False
+
+                SaveMap _ ->
+                    False
+
+                RenameMap _ ->
+                    False
+
+                ListMaps ->
+                    False
+
+                StopLearning ->
+                    False
+    in
+    if names && not (takesEdits m) then
+        ( m, [] )
+
+    else
+        projectCommand (MapCmd c) m
 
 
 {-| A project command goes out while following: it reads no engine's schema.
@@ -887,6 +1022,52 @@ answer raw a m =
         Proj pr ->
             { m | listing = m.listing |> Maybe.map (\l -> { l | projects = l.projects ++ [ pr ] }) }
 
+        InputIs _ ->
+            describing raw a m
+
+        KindIs _ ->
+            describing raw a m
+
+        CcsAre _ ->
+            describing raw a m
+
+        MsbsAre _ ->
+            describing raw a m
+
+        SpanIs _ _ ->
+            describing raw a m
+
+        RowsAre _ ->
+            describing raw a m
+
+        MapRowsAre _ ->
+            describing raw a m
+
+        -- MAP's section whole: it repeats its rows, learn and the listing,
+        -- so what was held for it goes.
+        MapIs h ->
+            { m | mapHeader = Just h, soundRows = Dict.empty, mapRows = Dict.empty, learn = Nothing, mapFiles = [] }
+
+        RowIs r ->
+            let
+                reading : MapRowReading
+                reading =
+                    { input = r.input, kind = r.kind, addr = r.addr, min = r.min, max = r.max, echo = r.echo, status = r.status }
+            in
+            case r.row of
+                SoundRow i ->
+                    { m | soundRows = Dict.insert (rowIndexToInt i) reading m.soundRows }
+
+                MapFileRow i ->
+                    { m | mapRows = Dict.insert (rowIndexToInt i) reading m.mapRows }
+
+        -- Whole or a diff's only line: it replaces the learn held.
+        LearnIs l ->
+            { m | learn = Just l }
+
+        MapFileIs name ->
+            { m | mapFiles = m.mapFiles ++ [ name ] }
+
 
 {-| Only the MIXER's and SETTINGS' values and the MIXER's panels kept: the
 Part's section starts afresh.
@@ -1165,9 +1346,13 @@ install s h m =
         SettingsSchema ->
             { m1 | settings = h.schema }
 
+        MapSchema ->
+            { m1 | midiMap = h.schema }
+
 
 {-| What to read next: the followed engine's schema, the mixer's, the
-engine's matrix, then SETTINGS', each once a connection; then following.
+engine's matrix, SETTINGS', then MAP's, each once a connection; then
+following.
 -}
 readNext : Model -> Model
 readNext m =
@@ -1193,6 +1378,9 @@ readNext m =
 
             else if lacks SettingsSchema then
                 go (Checking SettingsSchema Nothing)
+
+            else if lacks MapSchema then
+                go (Checking MapSchema Nothing)
 
             else
                 go Following

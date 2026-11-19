@@ -1,5 +1,5 @@
 //! What `ed describe` describes (ADR 0289): an engine's pages, the
-//! mixer's, an engine's mod matrix, or SETTINGS'. A `Schema` is parsed once at the boundary from its token and
+//! mixer's, an engine's mod matrix, SETTINGS', or MIDI MAP's grammar. A `Schema` is parsed once at the boundary from its token and
 //! walked by `Pages`. Its pages are shared, then each round's: a pad's on
 //! DRUM, a Part's on the mixer.
 
@@ -32,6 +32,9 @@ pub enum Schema {
     /// SETTINGS' leaves with a param, in tree order (`settings::LEAVES`):
     /// shared, then TUNING and LIVE SNAP once a Part.
     Settings,
+    /// MIDI MAP's binding grammar: one page, from the binding model's own
+    /// tables, not a chain (none without `midi-map`).
+    Map,
 }
 
 lit!(
@@ -46,9 +49,13 @@ lit!(
     /// The token of `Schema::Settings`.
     SETTINGS = "SETTINGS"
 );
+lit!(
+    /// The token of `Schema::Map`.
+    MAP = "MAP"
+);
 
 /// How many schemas there are: `ed schema`'s hashes, one each.
-pub const SCHEMAS: usize = 2 * EngineType::ALL.len() + 2;
+pub const SCHEMAS: usize = 2 * EngineType::ALL.len() + 3;
 
 /// What a schema's pages go round: nothing, each pad or each Part.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +118,7 @@ impl Schema {
         Schema::Matrix(EngineType::ALL[3]),
         Schema::Matrix(EngineType::ALL[4]),
         Schema::Settings,
+        Schema::Map,
     ];
 
     /// Its place in `ALL`.
@@ -121,6 +129,7 @@ impl Schema {
             Schema::Mixer => EngineType::ALL.len(),
             Schema::Matrix(e) => EngineType::ALL.len() + 1 + engine_index(e),
             Schema::Settings => 2 * EngineType::ALL.len() + 1,
+            Schema::Map => 2 * EngineType::ALL.len() + 2,
         }
     }
 
@@ -132,6 +141,9 @@ impl Schema {
         }
         if w.eq_ignore_ascii_case(SETTINGS.bytes()) {
             return Some(Schema::Settings);
+        }
+        if w.eq_ignore_ascii_case(MAP.bytes()) {
+            return Some(Schema::Map);
         }
         let mtx = MTX.bytes();
         match w.split_at_checked(mtx.len()) {
@@ -147,7 +159,7 @@ impl Schema {
         match self {
             Schema::Engine(e) => Some(engine_chain(e)),
             Schema::Mixer => Some(&MIXER_CHANNEL_CHAIN),
-            Schema::Matrix(_) | Schema::Settings => None,
+            Schema::Matrix(_) | Schema::Settings | Schema::Map => None,
         }
     }
 
@@ -156,7 +168,7 @@ impl Schema {
     pub const fn leaves(self) -> &'static [Leaf] {
         match self {
             Schema::Settings => &LEAVES,
-            Schema::Engine(_) | Schema::Mixer | Schema::Matrix(_) => &[],
+            Schema::Engine(_) | Schema::Mixer | Schema::Matrix(_) | Schema::Map => &[],
         }
     }
 
@@ -169,7 +181,7 @@ impl Schema {
                 EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va,
             ) => RoundKind::None,
             Schema::Mixer | Schema::Settings => RoundKind::Parts,
-            Schema::Matrix(_) => RoundKind::None,
+            Schema::Matrix(_) | Schema::Map => RoundKind::None,
         }
     }
 
@@ -205,6 +217,7 @@ impl Schema {
                 w.write_str(e.disk_ident())
             }
             Schema::Settings => w.write_str(SETTINGS.get()),
+            Schema::Map => w.write_str(MAP.get()),
         }
     }
 }

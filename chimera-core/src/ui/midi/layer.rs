@@ -68,11 +68,11 @@ pub struct Layers {
     /// `maps_put` when last seen: a console `put` or `rm` since reads every
     /// layer again.
     puts: u8,
-    list: [Option<SoundName>; MAX_MAPS],
-    listed: bool,
+    pub(in crate::ui) list: [Option<SoundName>; MAX_MAPS],
+    pub(in crate::ui) listed: bool,
     /// The card holds more maps than `list`.
-    pub(super) more: bool,
-    job: Option<CtlJob>,
+    pub(in crate::ui) more: bool,
+    pub(in crate::ui) job: Option<CtlJob>,
     /// The card last worked on: another reads every layer again.
     vol: Option<VolumeId>,
     /// A map read from the card (`ctl_work_in`): here, not on the stack,
@@ -153,8 +153,11 @@ impl Layers {
     /// Row `i` of Part `p`'s layer, `was`, made `to` here and, by the next
     /// card work, in the map; an edit of the row waiting takes it on.
     /// `false`: another job waits, nothing changed.
+    /// Inlined: MIDI MAP's keys and the editor's (`ed_cue`) call it, in
+    /// two bank-2 groups.
     #[cfg(feature = "midi-map")]
-    pub(super) fn edit(&mut self, p: PartId, i: usize, was: Binding, to: Binding) -> bool {
+    #[inline(always)]
+    pub(in crate::ui) fn edit(&mut self, p: PartId, i: usize, was: Binding, to: Binding) -> bool {
         let first = match self.job {
             None => was,
             // The same row: the whole binding, as two rows may share a
@@ -173,7 +176,8 @@ impl Layers {
         true
     }
 
-    /// The maps listed, `None` before a listing.
+    /// The maps listed, `None` before a listing. Inlined, as `edit`.
+    #[inline(always)]
     pub fn listed(&self) -> Option<&[Option<SoundName>]> {
         self.listed
             .then(|| &self.list[..self.list.iter().take_while(|n| n.is_some()).count()])
@@ -193,6 +197,9 @@ impl UiState {
 
     /// Card work waits: a job, a stale layer, or MIDI MAP open unlisted.
     /// The door's `ctl_due`.
+    // Out of line: the editor's wrappers (`ed_cue::ctl_due`, `ctl_work`)
+    // call it, and it stays in the MIDI UI's group.
+    #[inline(never)]
     pub(in crate::ui) fn ctl_due_in(&self) -> bool {
         let mapping = self.screen() == Some(super::super::settings::Screen::MidiMap);
         let Some(m) = self.cc.built() else {
@@ -215,6 +222,9 @@ impl UiState {
     /// No card (`None`): every layer empty, read for what it wants, the job
     /// dropped and the listing empty, so no pass mounts again for them.
     /// The door's `ctl_work`.
+    // Out of line: the editor's wrappers (`ed_cue::ctl_due`, `ctl_work`)
+    // call it, and it stays in the MIDI UI's group.
+    #[inline(never)]
     pub(in crate::ui) fn ctl_work_in(&mut self, s: &mut dyn Store, r: Option<&Ready>) {
         let Some(r) = r else {
             let saves = self.cc.ui().ctl.saves;
