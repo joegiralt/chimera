@@ -10,7 +10,6 @@ module Protocol exposing
     , addrKey
     , encode
     , optIndex
-    , optIndexToInt
     , parse
     )
 
@@ -46,13 +45,6 @@ negative, so `#n` is always a number the unit reads.
 -}
 type OptIndex
     = OptIndex Int
-
-
-{-| An option's number as the controls count it.
--}
-optIndexToInt : OptIndex -> Int
-optIndexToInt (OptIndex i) =
-    i
 
 
 optIndex : Int -> Maybe OptIndex

@@ -72,6 +72,19 @@ shown m =
 
 {-| Option `n` as a set's value; a negative `n` is no option at all.
 -}
+
+
+
+-- A pick of option `n`, as a hand's reaches the model.
+
+
+pick : Addr -> Int -> Model.Model -> List Command
+pick a n m =
+    Protocol.optIndex n
+        |> Maybe.map (\i -> Model.step (Pick a i) m |> Tuple.second)
+        |> Maybe.withDefault []
+
+
 idx : Int -> Value
 idx n =
     case Protocol.optIndex n of
@@ -88,15 +101,13 @@ suite =
         [ test "a_choice_pick_uses_the_active_variants_names" <|
             \_ ->
                 let
-                    pick : List ( String, String ) -> String -> Int -> List Command
-                    pick v a i =
-                        { following | schema = Fixture.schema, variants = Dict.fromList v }
-                            |> Model.step (Pick (Addr a) i)
-                            |> Tuple.second
+                    under : List ( String, String ) -> String -> Int -> List Command
+                    under v a i =
+                        pick (Addr a) i { following | schema = Fixture.schema, variants = Dict.fromList v }
                 in
                 Expect.all
-                    [ \_ -> Expect.equal [ Set (Addr "FILTER.MODE") (idx 1) ] (pick [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
-                    , \_ -> Expect.equal [ Set (Addr "ENV1.FORM") (idx 0) ] (pick [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
+                    [ \_ -> Expect.equal [ Set (Addr "FILTER.MODE") (idx 1) ] (under [ ( "FILTER", "LADDER" ) ] "FILTER.MODE" 1)
+                    , \_ -> Expect.equal [ Set (Addr "ENV1.FORM") (idx 0) ] (under [ ( "ENV1", "B-LFO" ) ] "ENV1.FORM" 0)
                     ]
                     ()
         , test "every_choice_under_every_variant_sends_an_option_that_variant_lists" <|
@@ -120,7 +131,7 @@ suite =
                                                                 sent : List Command
                                                                 sent =
                                                                     { following | schema = Fixture.schema, variants = Dict.fromList [ ( pn.name, pn.variant ) ] }
-                                                                        |> Model.step (Pick p.addr (Protocol.optIndexToInt i))
+                                                                        |> Model.step (Pick p.addr i)
                                                                         |> Tuple.second
                                                             in
                                                             if name /= "" && sent == [ Set p.addr (Index i) ] then
@@ -475,18 +486,20 @@ suite =
         , test "a_choice_is_sent_by_its_number" <|
             \_ ->
                 Expect.equal [ Set (Addr "ENV1.HOLD") (idx 0) ]
-                    (following |> Model.step (Pick (Addr "ENV1.HOLD") 0) |> Tuple.second)
+                    (following |> pick (Addr "ENV1.HOLD") 0)
         , test "a_choice_name_with_a_space_is_sent_by_its_number_and_pends" <|
             \_ ->
                 -- GATE EXT is two words: its number is one (#996).
                 let
                     ( m, c ) =
-                        following |> Model.step (Pick (Addr "ENV1.HOLD") 2)
+                        Protocol.optIndex 2
+                            |> Maybe.map (\i -> following |> Model.step (Pick (Addr "ENV1.HOLD") i))
+                            |> Maybe.withDefault ( following, [] )
                 in
                 Expect.equal ( [ Set (Addr "ENV1.HOLD") (idx 2) ], True ) ( c, Model.isPending (Addr "ENV1.HOLD") m )
         , test "an_option_the_schema_lacks_sends_nothing" <|
             \_ ->
-                Expect.equal [] (following |> Model.step (Pick (Addr "ENV1.HOLD") 1) |> Tuple.second)
+                Expect.equal [] (following |> pick (Addr "ENV1.HOLD") 1)
         , test "an_engine_the_editor_does_not_know_says_update_the_editor" <|
             \_ ->
                 Expect.equal (Just "UPDATE THE EDITOR") (following |> feed [ "part 2 GRANULAR", "OK 1" ] |> Model.notice)
