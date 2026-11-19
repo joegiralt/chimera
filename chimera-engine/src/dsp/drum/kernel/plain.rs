@@ -6,8 +6,8 @@ use crate::dsp::filter::FilterMode;
 use crate::hw::BLOCK_SIZE;
 
 use super::super::laws::{NoiseTone, PlainParams};
-use super::super::types::{Hz, PulseMachine};
-use super::{Blk, Decay, Hiss, Hit, Pulse, Svf, Swept, octaves, quiet, sweeping};
+use super::super::types::{Hz, PulsePace};
+use super::{Blk, Decay, Hiss, Hit, Octaves, Pulse, Svf, Swept, octaves, quiet};
 
 pub struct Plain {
     src: Source,
@@ -24,7 +24,7 @@ enum Source {
     Impulse {
         p: Pulse,
         f0: f32,
-        oct: f32,
+        oct: Octaves,
         sw: Decay,
         hp: Svf,
     },
@@ -42,7 +42,7 @@ impl Plain {
                 Source::Impulse {
                     p: Pulse::new(width, h.sr),
                     f0: body.pitch.get(),
-                    oct: body.depth.get() / 12.0,
+                    oct: Octaves::of_semis(body.depth),
                     sw: Decay::tau(body.time, h.sr),
                     hp: Svf::new(FilterMode::Hp24, Hz::new(20.0), Unit::ZERO, h.sr),
                 },
@@ -105,14 +105,12 @@ impl Plain {
         self.quiet = quiet(out);
     }
 
-    /// `KernelState::ticking`: the impulse's while SWEEP moves its pulse
-    /// or its width floors.
-    pub(super) fn ticking(&self) -> Option<PulseMachine> {
+    /// `KernelState::pace`: the impulse's pulse (`Pulse::pace`); SINE and
+    /// NOISE have none.
+    pub(super) fn pace(&self) -> PulsePace {
         match &self.src {
-            Source::Impulse { p, f0, oct, sw, .. } => {
-                (sweeping(*oct, sw.v) || p.floored(*f0)).then_some(PulseMachine::Impulse)
-            }
-            Source::Sine(_) | Source::Noise { .. } => None,
+            Source::Impulse { p, f0, oct, sw, .. } => p.pace(*f0, *oct, sw),
+            Source::Sine(_) | Source::Noise { .. } => PulsePace::Runs,
         }
     }
 
@@ -127,7 +125,7 @@ mod tests {
 
     use super::super::super::laws::resolve;
     use super::super::super::types::{
-        HitSeed, Knob, KnobSet, KnobValue, Machine, SampleRate, Transpose,
+        HitSeed, Knob, KnobSet, KnobValue, Machine, PulsePace, SampleRate, Transpose,
     };
     use super::super::{Hit, octaves};
     use super::{BLOCK_SIZE, Plain, Source, Unit};
@@ -151,7 +149,7 @@ mod tests {
         Plain::new(p, h)
     }
 
-    /// When a case's `ticking` stops.
+    /// When a case's pace returns to square runs.
     #[derive(Clone, Copy)]
     enum Stops {
         /// Before the first block: it never ticks.
@@ -165,35 +163,53 @@ mod tests {
     /// IMPULSE's knobs over its defaults, its transpose and when it stops.
     type Case = (&'static [(Knob, u8)], i8, Stops);
 
-    /// ADR 0287: `ticking` says so before every block whose pulse renders
-    /// a sample at a time, and once it stops it stays stopped. SWEEP 0
-    /// never ticks; SWEEP 64 ticks till its sweep is spent; full WIDTH at
-    /// 2 kHz an octave up floors and ticks for as long as it sounds.
+    /// ADR 0287: `pace` is swept before every block whose sweep moves the
+    /// pulse, floored exactly when the block's width floors at one of its
+    /// samples, and once it runs it stays running. SWEEP 0 never ticks;
+    /// SWEEP 64 till its sweep is spent; full WIDTH at 2 kHz an octave up
+    /// floors for as long as it sounds, swept too at SWEEP 127; at its
+    /// tuned 2 kHz SWEEP 127's head floors it, its tail doesn't.
     #[test]
-    fn ticking_covers_every_ticked_block() {
+    fn pace_covers_every_ticked_block() {
         const LONG: (Knob, u8) = (Knob::B, 127);
-        let cases: [Case; 5] = [
+        const HIGH: [(Knob, u8); 3] = [LONG, (Knob::A, 127), (Knob::G, 127)];
+        const HIGH_SWEPT: [(Knob, u8); 5] = [
+            LONG,
+            (Knob::A, 127),
+            (Knob::G, 127),
+            (Knob::C, 127),
+            (Knob::D, 30),
+        ];
+        let cases: [Case; 7] = [
             (&[LONG], 0, Stops::AtOnce),
             (&[LONG, (Knob::C, 1)], 0, Stops::Later),
             (&[LONG, (Knob::C, 64)], 0, Stops::Later),
             (&[LONG, (Knob::C, 127), (Knob::D, 30)], 0, Stops::Later),
-            (&[LONG, (Knob::A, 127), (Knob::G, 127)], 12, Stops::Never),
+            (&HIGH, 12, Stops::Never),
+            (&HIGH_SWEPT, 12, Stops::Never),
+            (&HIGH_SWEPT, 0, Stops::Later),
         ];
         for (n, &(knobs, by, want)) in cases.iter().enumerate() {
             let mut k = impulse(knobs, by);
-            let mut stopped = None;
+            let (mut stopped, mut floors) = (None, 0);
             for b in 0..400 {
-                let said = k.ticking().is_some();
+                let pace = k.pace();
                 let Source::Impulse { p, f0, oct, sw, .. } = &k.src else {
                     panic!("an impulse");
                 };
                 let (mut d, mut m) = (*sw, [0.0; BLOCK_SIZE]);
                 octaves(&mut d, *oct, &mut m);
-                let ticks = p.steady(*f0, &m).is_none();
-                assert!(said || !ticks, "case {n}, block {b}");
+                let swept = m.iter().any(|&x| x != 1.0);
+                let floored = m.iter().any(|&x| p.floored(*f0 * x));
+                let said_swept = matches!(pace, PulsePace::Swept | PulsePace::FlooredSwept);
+                let said_floored = matches!(pace, PulsePace::Floored | PulsePace::FlooredSwept);
+                assert!(said_swept || !swept, "case {n}, block {b}");
+                assert_eq!(said_floored, floored, "case {n}, block {b}");
+                assert!(pace != PulsePace::Runs || p.steady(*f0, &m).is_some());
+                floors += usize::from(floored);
                 match stopped {
-                    None if !said => stopped = Some(b),
-                    Some(_) => assert!(!said, "case {n}, block {b}"),
+                    None if pace == PulsePace::Runs => stopped = Some(b),
+                    Some(_) => assert_eq!(pace, PulsePace::Runs, "case {n}, block {b}"),
                     None => {}
                 }
                 k.render::<false>(&mut [0.0; BLOCK_SIZE]);
@@ -203,6 +219,8 @@ mod tests {
                 Stops::Later => assert!(stopped.is_some_and(|s| s > 0), "case {n}"),
                 Stops::Never => assert_eq!(stopped, None, "case {n}"),
             }
+            // The two high cases and the tuned sweep's head floor.
+            assert_eq!(floors > 0, n >= 4, "case {n}");
         }
     }
 }

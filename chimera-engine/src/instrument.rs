@@ -789,7 +789,7 @@ pub struct Instrument {
     buses: [[f32; BLOCK_SIZE]; MAX_PARTS],
     sends: [[f32; BLOCK_SIZE]; FX_SENDS],
     mix: MixState,
-    sample_rate: u32,
+    sample_rate: SampleRate,
     /// Each Part's kind at the last `render`: a Part that has just become
     /// Sympathetic restarts its held notes through the pool.
     last_kind: [SlotKind; MAX_PARTS],
@@ -915,7 +915,8 @@ impl Instrument {
             addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
             addr_of_mut!((*p).sends).write([[0.0; BLOCK_SIZE]; FX_SENDS]);
             addr_of_mut!((*p).mix).write(MixState::default());
-            addr_of_mut!((*p).sample_rate).write(sample_rate);
+            addr_of_mut!((*p).sample_rate)
+                .write(SampleRate::new(sample_rate).unwrap_or(SampleRate::HW));
             // The default Sound's (`Performance::new`: Algo).
             addr_of_mut!((*p).last_kind).write([SlotKind::Algo; MAX_PARTS]);
             addr_of_mut!((*p).clear_left).write(SYM_CLEAR_BUDGET);
@@ -1453,7 +1454,7 @@ impl Instrument {
                     let to = crate::tuning::offset(p, note.get());
                     let start = match part.params.pitch.steal_glide() {
                         Some(tau) if self.voices[v].is_active() => {
-                            let keep = crate::tuning::keep_for(tau, self.sample_rate);
+                            let keep = crate::tuning::keep_for(tau, self.sample_rate.get());
                             self.tuned.glide(v, to, keep)
                         }
                         _ => self.tuned.strike(v, to),
@@ -1877,7 +1878,7 @@ impl Instrument {
     /// rings' growth from it, unless a note waits on it first; any other
     /// writes nothing it bills. A voice let go meanwhile has none.
     fn serve_resnaps(&mut self) {
-        let glide = RESNAP_GLIDE_MS * self.sample_rate / 1000;
+        let glide = RESNAP_GLIDE_MS * self.sample_rate.get() / 1000;
         for vi in VoiceIdx::ALL {
             let v = vi.index();
             let Some(to) = self.resnap_to[v] else {
@@ -1894,7 +1895,8 @@ impl Instrument {
                 }
                 self.clear_left -= bytes;
             }
-            let keep = crate::tuning::keep_for(RESNAP_GLIDE_MS as f32 / 3_000.0, self.sample_rate);
+            let keep =
+                crate::tuning::keep_for(RESNAP_GLIDE_MS as f32 / 3_000.0, self.sample_rate.get());
             let Some(part) = self.sounding[v] else {
                 continue;
             };
@@ -2054,7 +2056,7 @@ impl Instrument {
             let (hit, mine) = self.choke(q, key);
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
             // The bill `recost` worked out, so the kit it read.
-            let own = self.costs[p].hit(HitKernel::Sounding(hit.bill(self.drum_rate())));
+            let own = self.costs[p].hit(HitKernel::Sounding(hit.bill(self.sample_rate)));
             let cost = own + if first { Knobs::COST } else { Cost::ZERO };
             let reserved = self.reserved();
             let mode = part.mix.mode();
@@ -2357,11 +2359,8 @@ impl Instrument {
         (hit, own)
     }
 
-    /// The hit voice `w`, booked by DRUM Part `id`, plays: the one
-    /// waiting out its fade as its pad's in the kit now, else the one
-    /// sounding.
     /// `hit_of`'s bill for its next block (ADR 0287): a waiting hit's at
-    /// its strike, a sounding one's by its kernel.
+    /// its strike, a sounding one's by its kernel's pace.
     fn bill_of(&self, wi: VoiceIdx, id: PartId) -> Option<KernelBill> {
         let w = wi.index();
         match self.waiting[w] {
@@ -2371,19 +2370,19 @@ impl Instrument {
                 .alloc
                 .slot(wi)
                 .note()
-                .map(|n| KIT_VIEW.hit(id, n).bill(self.drum_rate())),
-            Some(_) => None,
+                .map(|n| KIT_VIEW.hit(id, n).bill(self.sample_rate)),
+            Some(Waiting {
+                plays: Plays::Note, ..
+            }) => None,
             None => self.voices[w]
                 .drum_bill()
                 .filter(|_| self.sounding[w] == Some(id)),
         }
     }
 
-    /// The rate a hit is struck at (`Voice::strike`'s).
-    fn drum_rate(&self) -> SampleRate {
-        SampleRate::new(self.sample_rate).unwrap_or(SampleRate::HW)
-    }
-
+    /// The hit voice `w`, booked by DRUM Part `id`, plays: the one
+    /// waiting out its fade as its pad's in the kit now, else the one
+    /// sounding.
     fn hit_of(&self, wi: VoiceIdx, id: PartId) -> Option<DrumHit> {
         let w = wi.index();
         match self.waiting[w] {
@@ -2573,7 +2572,7 @@ impl Instrument {
             + crate::dsp::delay::extra_cost(&shared.fx.delay);
         let (_, cents) = self
             .tune_ease
-            .step(f32::from(shared.tune), ease_coeff(self.sample_rate));
+            .step(f32::from(shared.tune), ease_coeff(self.sample_rate.get()));
         self.tune = cents / 100.0;
         self.recost(shared);
         self.restart_switched(shared);
@@ -2694,7 +2693,7 @@ impl Instrument {
             fx,
             shared,
             self.tempo,
-            self.sample_rate,
+            self.sample_rate.get(),
             dac,
         );
         // The MST page's GR meter and the synced reverb cells' clock:
@@ -2733,7 +2732,7 @@ impl Instrument {
             sides,
             written,
             parts: &shared.parts,
-            sample_rate: self.sample_rate,
+            sample_rate: self.sample_rate.get(),
         };
         if crate::part_eq::door::through(|d| d.eq().run(eqs, b)).is_none() {
             *eqs = crate::part_eq::PartEqs::REST;
@@ -2783,7 +2782,7 @@ impl Instrument {
     /// count is `LfoClock::RESERVE`'s.
     #[inline(never)]
     fn step_lfo_clocks(&mut self, shared: &AudioShared) {
-        let step = BLOCK_SIZE as f32 / self.sample_rate as f32;
+        let step = BLOCK_SIZE as f32 / self.sample_rate.hz();
         for (c, part) in self.lfo_clocks.iter_mut().zip(&shared.parts) {
             c.advance(&part.params.lfos, step);
         }

@@ -4,7 +4,7 @@
 
 use chimera_midi::value::U7;
 
-use super::types::{DrumHit, Hz, KernelBill, Kit, PadId, SampleRate, Transpose};
+use super::types::{Hz, KernelBill, Kit, PadId};
 use crate::block::{DiskCode, ParamId, ParamSpec, find_spec};
 use crate::dsp::Unit;
 use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice};
@@ -957,25 +957,28 @@ impl PadMods {
     }
 }
 
-/// `KitBill::to_bits`' fields: mods 2 bits, the kernel's bill 4
-/// (`KernelBill::index` + 1, 0 for none), the shapes 6 and the moving
-/// shapes 6, the gate 1.
+/// `KitBill::to_bits`' fields: mods 2 bits, the kernel's bill 5 from bit
+/// 4 (`KernelBill::index` + 1, 0 for none), the shapes 6 from bit 16 and
+/// the moving shapes 6 from bit 24, the gate bit 31.
 const MODS_BITS: u32 = 0x3;
-const MACHINE_BITS: u32 = 0xf;
+const KERNEL_BITS: u32 = 0x1f;
 const _: () = assert!(PadMods::ALL.len() <= MODS_BITS as usize + 1);
-const _: () = assert!(KernelBill::ALL.len() <= MACHINE_BITS as usize);
+const _: () = assert!(KernelBill::ALL.len() <= KERNEL_BITS as usize);
+const _: () = assert!(KERNEL_BITS << 4 < 1 << 16);
 
 /// What a DRUM Part's hit is billed for its kit (`Voice::drum_cost`): the
 /// filter shapes its pads play, those a pad route moves, its costliest
-/// pad's mods and its costliest pad's kernel struck at its tuned pitch. Any bits are a bill
-/// (`from_bits`), so the view needs no build.
+/// pad's mods and the costliest bill its pads' machines can run up
+/// (`KernelBill::worst`). Any bits are a bill (`from_bits`), so the view
+/// needs no build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KitBill {
     shapes: u8,
     moving: u8,
     mods: PadMods,
-    /// The costliest pad's kernel bill; none before a kit is read.
-    machine: Option<KernelBill>,
+    /// The costliest of its pads' `KernelBill::worst`; none before a kit
+    /// is read.
+    kernel: Option<KernelBill>,
     /// A pad's LPG, DECAY or STRIKE above 0: the gate runs.
     gated: bool,
 }
@@ -986,7 +989,7 @@ impl KitBill {
         shapes: 0,
         moving: 0,
         mods: PadMods::None,
-        machine: None,
+        kernel: None,
         gated: false,
     };
 
@@ -1009,31 +1012,30 @@ impl KitBill {
         self.gated
     }
 
-    /// The Part's kernel bill: its costliest pad's `KernelBill::cost`,
-    /// the costliest of all with no kit read. A TONAL note may floor
-    /// IMPULSE's width where its tuned pitch does not: a hit bills its own
-    /// (`PartBill::hit`).
+    /// The Part's kernel bill: the costliest its pads' machines can run
+    /// up, at any knobs, pitch and rate (a hit bills its own,
+    /// `PartBill::hit`); the costliest of all with no kit read.
     pub const fn kernel(self) -> Cost {
-        match self.machine {
+        match self.kernel {
             Some(m) => m.cost(),
             None => KernelBill::MAX_COST,
         }
     }
 
     pub const fn to_bits(self) -> u32 {
-        let machine = match self.machine {
-            Some(m) => m.index() as u32 + 1,
+        let kernel = match self.kernel {
+            Some(k) => k.index() as u32 + 1,
             None => 0,
         };
         self.mods as u32
-            | machine << 4
+            | kernel << 4
             | (self.shapes as u32) << 16
             | (self.moving as u32) << 24
             | (self.gated as u32) << 31
     }
 
     pub const fn from_bits(b: u32) -> KitBill {
-        let m = (b >> 4 & MACHINE_BITS) as usize;
+        let k = (b >> 4 & KERNEL_BITS) as usize;
         let mods = (b & MODS_BITS) as usize;
         KitBill {
             mods: if mods < PadMods::ALL.len() {
@@ -1041,8 +1043,8 @@ impl KitBill {
             } else {
                 PadMods::Routed
             },
-            machine: if m >= 1 && m <= KernelBill::ALL.len() {
-                Some(KernelBill::ALL[m - 1])
+            kernel: if k >= 1 && k <= KernelBill::ALL.len() {
+                Some(KernelBill::ALL[k - 1])
             } else {
                 None
             },
@@ -1054,19 +1056,18 @@ impl KitBill {
 }
 
 /// `kit`'s bill: every pad's filter shape, whether a pad's gate runs, the
-/// costliest pad's mods and the costliest pad's strike at its tuned pitch
-/// (`DrumHit::bill`).
+/// costliest pad's mods and the costliest bill its machines can run up.
 pub fn kit_bill(kit: &Kit) -> KitBill {
     PadId::ALL.iter().fold(KitBill::NONE, |b, &p| {
         let s = kit.pad(p).sound();
         let f = FilterShape::of(s.filter.kind, s.filter.voice).bit();
         let m = s.mods();
-        let mc = DrumHit::new(p, *kit.pad(p), Transpose::ZERO).bill(SampleRate::HW);
+        let mc = KernelBill::worst(kit.pad(p).machine());
         KitBill {
             shapes: b.shapes | f,
             moving: b.moving | if s.routes.moves_filter() { f } else { 0 },
             mods: b.mods.max(m),
-            machine: match b.machine {
+            kernel: match b.kernel {
                 Some(was) if was.cost() >= mc.cost() => Some(was),
                 _ => Some(mc),
             },

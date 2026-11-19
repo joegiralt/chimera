@@ -390,11 +390,10 @@ impl DrumEngine {
     }
 
     /// What the hit sounding bills its next block (ADR 0287): its
-    /// machine, ticking while its kernel's pulses may render a sample at
-    /// a time.
+    /// machine at its kernel's pulse pace (`KernelState::pace`).
     pub fn bill(&self) -> Option<KernelBill> {
         self.hit
-            .map(|h| KernelBill::of(h.params().machine(), self.kernel.ticking()))
+            .map(|h| KernelBill::of(h.params().machine(), self.kernel.pace()))
     }
 
     /// The hit's next block at its pad's LEVEL (k / 127, before the

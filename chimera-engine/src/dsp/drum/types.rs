@@ -263,7 +263,7 @@ impl Machine {
     /// machines, erring high. COWBELL and IMPULSE are re-read on eb442a48,
     /// 2026-11-16, at the top of their spread (ADR 0275): their pulses
     /// rendering as square runs; a sample at a time they bill
-    /// `PulseMachine::ticking_cost` (ADR 0287).
+    /// `Ticking::cost` (ADR 0287).
     pub const fn cost(self) -> Cost {
         Cost(match self {
             Machine::ToneKick => 797,     // 800 (pad 1)
@@ -282,33 +282,68 @@ impl Machine {
     }
 }
 
-/// The machines whose pulses can render a sample at a time
-/// (`Pulse::sweep`'s per-sample path, #991): while BUMP or SWEEP still
-/// moves their pitch, or while IMPULSE's WIDTH floors at its pitch.
+/// How a hit's pulses render its next block (`Pulse::sweep`, ADR 0287):
+/// as square runs, or a sample at a time while a sweep moves their pitch,
+/// while their width floors at it, or both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PulseMachine {
-    Cowbell,
-    Impulse,
+pub enum PulsePace {
+    Runs,
+    Swept,
+    Floored,
+    FlooredSwept,
 }
 
-impl PulseMachine {
+impl PulsePace {
+    pub const fn of(swept: bool, floored: bool) -> PulsePace {
+        match (swept, floored) {
+            (false, false) => PulsePace::Runs,
+            (true, false) => PulsePace::Swept,
+            (false, true) => PulsePace::Floored,
+            (true, true) => PulsePace::FlooredSwept,
+        }
+    }
+}
+
+/// A pulse machine's bills while its pulses render a sample at a time
+/// (#991). COWBELL's squares never floor (`MAX_INC` < ½).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ticking {
+    CowbellSwept,
+    ImpulseSwept,
+    ImpulseFloored,
+    ImpulseFlooredSwept,
+}
+
+impl Ticking {
+    pub const ALL: [Ticking; 4] = [
+        Ticking::CowbellSwept,
+        Ticking::ImpulseSwept,
+        Ticking::ImpulseFloored,
+        Ticking::ImpulseFlooredSwept,
+    ];
+
     pub const fn machine(self) -> Machine {
         match self {
-            PulseMachine::Cowbell => Machine::ToneCowbell,
-            PulseMachine::Impulse => Machine::PlainImpulse,
+            Ticking::CowbellSwept => Machine::ToneCowbell,
+            Ticking::ImpulseSwept | Ticking::ImpulseFloored | Ticking::ImpulseFlooredSwept => {
+                Machine::PlainImpulse
+            }
         }
     }
 
-    /// Cycles/sample while its pulses render a sample at a time, by
-    /// `Machine::cost`'s formula (ADR 0287). COWBELL: BUMP 127's worst
-    /// block on the unit, `peak_pct` 32 % over the 12 % idle, eb442a48,
-    /// 2026-11-16 (ADR 0275). IMPULSE: estimated, erring high: SWEEP 64's
-    /// head window (700, 37 ms of sweep in 85 ms over a 500 plateau) puts
-    /// the sweep near 950, and COWBELL's worst block runs 1.33 × its window.
-    pub const fn ticking_cost(self) -> Cost {
+    /// Cycles/sample, by `Machine::cost`'s formula (ADR 0287). COWBELL:
+    /// BUMP 127's worst block on the unit, `peak_pct` 32 % over the 12 %
+    /// idle, eb442a48, 2026-11-16 (ADR 0275). IMPULSE, estimated erring
+    /// high, pending the unit: SWEEP 64's head window (700, 37 ms of sweep
+    /// in 85 ms over a 500 plateau) puts its sweep near 950, × 1.33 (COWBELL's
+    /// worst block over its window); floored, desktop ns put it near 2,000,
+    /// with SWEEP 127 near 2,700.
+    pub const fn cost(self) -> Cost {
         Cost(match self {
-            PulseMachine::Cowbell => 2117, // 2000 (pad 11, BUMP 127, worst block)
-            PulseMachine::Impulse => 1347, // est. 1300 (pad 3, SWEEP 64): 1.33 × 950
+            Ticking::CowbellSwept => 2117, // 2000 (pad 11, BUMP 127, worst block)
+            Ticking::ImpulseSwept => 1347, // est. 1300 (SWEEP 64): 1.33 × 950
+            Ticking::ImpulseFloored => 2117, // est. 2000 (2 kHz +12, WIDTH 127)
+            Ticking::ImpulseFlooredSwept => 2887, // est. 2700 (the same, SWEEP 127)
         })
     }
 }
@@ -318,19 +353,24 @@ impl PulseMachine {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KernelBill {
     Machine(Machine),
-    Ticking(PulseMachine),
+    Ticking(Ticking),
 }
 
+/// `KernelBill::ALL`'s length.
+const BILLS: usize = Machine::ALL.len() + Ticking::ALL.len();
+
 impl KernelBill {
-    pub const ALL: [KernelBill; 14] = {
-        let mut a = [KernelBill::Machine(Machine::ToneKick); 14];
+    pub const ALL: [KernelBill; BILLS] = {
+        let mut a = [KernelBill::Machine(Machine::ToneKick); BILLS];
         let mut i = 0;
-        while i < Machine::ALL.len() {
-            a[i] = KernelBill::Machine(Machine::ALL[i]);
+        while i < BILLS {
+            a[i] = if i < Machine::ALL.len() {
+                KernelBill::Machine(Machine::ALL[i])
+            } else {
+                KernelBill::Ticking(Ticking::ALL[i - Machine::ALL.len()])
+            };
             i += 1;
         }
-        a[12] = KernelBill::Ticking(PulseMachine::Cowbell);
-        a[13] = KernelBill::Ticking(PulseMachine::Impulse);
         a
     };
 
@@ -338,24 +378,61 @@ impl KernelBill {
     pub const fn index(self) -> usize {
         match self {
             KernelBill::Machine(m) => m.index(),
-            KernelBill::Ticking(PulseMachine::Cowbell) => 12,
-            KernelBill::Ticking(PulseMachine::Impulse) => 13,
+            KernelBill::Ticking(t) => Machine::ALL.len() + t as usize,
         }
     }
 
-    /// `m`'s bill, ticking if `ticking` says its pulses render a sample at
-    /// a time.
-    pub const fn of(m: Machine, ticking: Option<PulseMachine>) -> KernelBill {
-        match ticking {
-            Some(p) => KernelBill::Ticking(p),
-            None => KernelBill::Machine(m),
+    /// `m`'s bill while its pulses render at `pace`. A COWBELL's squares
+    /// never floor; were one to, it bills its sweep, its one per-sample
+    /// path.
+    pub const fn of(m: Machine, pace: PulsePace) -> KernelBill {
+        match (m, pace) {
+            (_, PulsePace::Runs) => KernelBill::Machine(m),
+            (
+                Machine::ToneCowbell,
+                PulsePace::Swept | PulsePace::Floored | PulsePace::FlooredSwept,
+            ) => KernelBill::Ticking(Ticking::CowbellSwept),
+            (Machine::PlainImpulse, PulsePace::Swept) => KernelBill::Ticking(Ticking::ImpulseSwept),
+            (Machine::PlainImpulse, PulsePace::Floored) => {
+                KernelBill::Ticking(Ticking::ImpulseFloored)
+            }
+            (Machine::PlainImpulse, PulsePace::FlooredSwept) => {
+                KernelBill::Ticking(Ticking::ImpulseFlooredSwept)
+            }
+            (
+                Machine::ToneKick
+                | Machine::ToneSnare
+                | Machine::ToneTom
+                | Machine::ToneClap
+                | Machine::ToneCymbal
+                | Machine::MetalHat
+                | Machine::MetalJingle
+                | Machine::BodyShaker
+                | Machine::PlainSine
+                | Machine::PlainNoise,
+                PulsePace::Swept | PulsePace::Floored | PulsePace::FlooredSwept,
+            ) => KernelBill::Machine(m),
         }
+    }
+
+    /// The costliest bill a hit of `m` can run up, at any knobs and pitch:
+    /// a Part's kit bill (`KitBill::kernel`).
+    pub const fn worst(m: Machine) -> KernelBill {
+        let (mut i, mut w) = (0, KernelBill::Machine(m));
+        while i < Ticking::ALL.len() {
+            let t = Ticking::ALL[i];
+            if t.machine() as usize == m as usize && t.cost().0 > w.cost().0 {
+                w = KernelBill::Ticking(t);
+            }
+            i += 1;
+        }
+        w
     }
 
     pub const fn machine(self) -> Machine {
         match self {
             KernelBill::Machine(m) => m,
-            KernelBill::Ticking(p) => p.machine(),
+            KernelBill::Ticking(t) => t.machine(),
         }
     }
 
@@ -363,14 +440,14 @@ impl KernelBill {
     pub const fn cost(self) -> Cost {
         match self {
             KernelBill::Machine(m) => m.cost(),
-            KernelBill::Ticking(p) => p.ticking_cost(),
+            KernelBill::Ticking(t) => t.cost(),
         }
     }
 
     /// The costliest `cost`: a DRUM hit's bill with no kit to read.
     pub const MAX_COST: Cost = {
         let (mut i, mut m) = (0, Cost::ZERO);
-        while i < KernelBill::ALL.len() {
+        while i < BILLS {
             m = m.max(KernelBill::ALL[i].cost());
             i += 1;
         }
@@ -380,7 +457,7 @@ impl KernelBill {
 
 const _: () = {
     let mut i = 0;
-    while i < KernelBill::ALL.len() {
+    while i < BILLS {
         assert!(KernelBill::ALL[i].index() == i);
         i += 1;
     }

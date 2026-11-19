@@ -17,7 +17,7 @@ use chimera_core::dsp::drum::sound::{
     RouteDest, RouteId, RouteSource, kit_bill,
 };
 use chimera_core::dsp::drum::types::{
-    KernelBill, Kit, Knob, KnobValue, Machine, PadId, PulseMachine, Tonal,
+    KernelBill, Kit, Knob, KnobValue, Machine, PadId, Ticking, Tonal,
 };
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
 use chimera_core::dsp::filter::FilterKind;
@@ -282,21 +282,22 @@ fn a_read_machine_bills_its_reading() {
         assert_eq!(m.cost().0, (read * 11).div_ceil(10) - 83, "pad {n}");
     }
     // COWBELL's BUMP 127 worst block, read the same day (ADR 0287).
-    assert_eq!(PulseMachine::Cowbell.ticking_cost().0, billed(2000));
+    assert_eq!(Ticking::CowbellSwept.cost().0, billed(2000));
 }
 
 #[test]
 fn a_part_bills_its_costliest_machine() {
     let kicks = kicks();
     assert_eq!(kit_bill(&kicks).kernel(), Machine::ToneKick.cost());
-    // INIT's COWBELL at BUMP 0 bills its plateau: the HATs are dearer.
-    assert_eq!(kit_bill(&Kit::DEFAULT).kernel(), Machine::MetalHat.cost());
-    let mut bumped = Kit::DEFAULT;
-    bumped.pad_mut(pad(11)).knobs_mut().set(Knob::H, at(1));
+    // A Part bills the worst its machines can run up, at any knobs and
+    // pitch: INIT's IMPULSE floored and swept, a COWBELL bumped.
     assert_eq!(
-        kit_bill(&bumped).kernel(),
-        PulseMachine::Cowbell.ticking_cost()
+        kit_bill(&Kit::DEFAULT).kernel(),
+        Ticking::ImpulseFlooredSwept.cost()
     );
+    let mut bell = kicks;
+    bell.pad_mut(pad(11)).set_machine(Machine::ToneCowbell);
+    assert_eq!(kit_bill(&bell).kernel(), Ticking::CowbellSwept.cost());
     let mut one = kicks;
     one.pad_mut(pad(7)).set_machine(Machine::MetalJingle);
     assert_eq!(kit_bill(&one).kernel(), Machine::MetalJingle.cost());
@@ -313,7 +314,9 @@ fn a_part_bills_its_costliest_machine() {
     let kick = part.hit(HitKernel::Sounding(KernelBill::Machine(Machine::ToneKick)));
     assert!(kick < part.whole());
     assert_eq!(
-        part.hit(HitKernel::Sounding(KernelBill::Machine(Machine::MetalHat))),
+        part.hit(HitKernel::Sounding(KernelBill::Ticking(
+            Ticking::ImpulseFlooredSwept
+        ))),
         part.whole()
     );
     assert_eq!(part.hit(HitKernel::Ended) + Machine::ToneKick.cost(), kick);
@@ -672,10 +675,13 @@ fn a_swept_impulse_bills_its_sweep_then_its_plateau() {
 }
 
 /// #991: an IMPULSE whose WIDTH floors at its pitch renders a sample at a
-/// time with no sweep (`Pulse::sweep`): TONAL on it, 2 kHz an octave up at
-/// full WIDTH, booked as the sweeping pulse for as long as it sounds.
+/// time for as long as it sounds (`Pulse::sweep`), at full SWEEP dearer
+/// still, and a sweep floors it while its head is high enough: TONAL on
+/// it, 2 kHz (an octave up) at full WIDTH. Desktop timing
+/// puts it near a 2,000 reading, 2,700 with SWEEP 127, both estimates
+/// pending the unit (ADR 0287).
 #[test]
-fn a_floored_impulse_bills_as_sweeping() {
+fn a_floored_impulse_bills_its_floor_and_its_sweep() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     let mut k = Kit::DEFAULT;
     k.set_tonal(Tonal::Pad(pad(3)));
@@ -684,9 +690,25 @@ fn a_floored_impulse_bills_as_sweeping() {
         knobs.set(kn, at(v));
     }
     assert_eq!(kernel_booked(&mut w, &k, 60, 0), Some(billed(600)));
-    assert_eq!(kernel_booked(&mut w, &k, 72, 0), Some(billed(1300)));
+    assert_eq!(kernel_booked(&mut w, &k, 72, 0), Some(billed(2000)));
     assert_eq!(
         kernel_booked(&mut w, &k, 72, SR_BLOCKS / 5),
-        Some(billed(1300))
+        Some(billed(2000))
     );
+    let knobs = k.pad_mut(pad(3)).knobs_mut();
+    knobs.set(Knob::C, at(127));
+    knobs.set(Knob::D, at(30));
+    assert_eq!(kernel_booked(&mut w, &k, 72, 0), Some(billed(2700)));
+    assert_eq!(
+        kernel_booked(&mut w, &k, 72, SR_BLOCKS / 2),
+        Some(billed(2000))
+    );
+    // At its tuned pitch the sweep's head floors it, its tail doesn't.
+    assert_eq!(kernel_booked(&mut w, &k, 60, 0), Some(billed(2700)));
+    assert_eq!(
+        kernel_booked(&mut w, &k, 60, SR_BLOCKS / 2),
+        Some(billed(600))
+    );
+    // The dearest bill there is: a DRUM voice's with no kit read.
+    assert_eq!(KernelBill::MAX_COST.0, billed(2700));
 }
