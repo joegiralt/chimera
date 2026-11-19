@@ -9,6 +9,7 @@ module Protocol exposing
     , Value(..)
     , addrKey
     , encode
+    , firstOption
     , optIndex
     , parse
     )
@@ -45,6 +46,13 @@ negative, so `#n` is always a number the unit reads.
 -}
 type OptIndex
     = OptIndex Int
+
+
+{-| A choice's first option, `#0`.
+-}
+firstOption : OptIndex
+firstOption =
+    OptIndex 0
 
 
 optIndex : Int -> Maybe OptIndex

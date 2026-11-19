@@ -8,16 +8,18 @@ import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (class, classList, style)
 import Html.Events exposing (onClick)
 import Protocol exposing (Addr)
-import Ui.Control as Control exposing (Chosen, Msg(..), Option, Width)
+import Ui.Control as Control exposing (Chosen, Msg(..), Option, Options, Width)
 
 
 type Config
     = Config { addr : Addr, label : String, options : List Option }
 
 
-new : Addr -> List Option -> Config
+{-| A row from the unit's options, of which there is always one.
+-}
+new : Addr -> Options -> Config
 new a opts =
-    Config { addr = a, label = "", options = opts }
+    Config { addr = a, label = "", options = Control.optionList opts }
 
 
 label : String -> Config -> Config

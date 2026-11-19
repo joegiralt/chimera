@@ -63,13 +63,26 @@ read =
 {-| A parameter the fixture must hold.
 -}
 param : String -> Schema.Param
-param a =
-    case Schema.param (Addr a) schema of
-        Just p ->
-            p
+param =
+    paramIn schema
 
-        Nothing ->
-            Debug.todo ("the fixture has no " ++ a)
+
+{-| What a test gets for an address its fixture lacks: a param no
+expectation can mistake for a real one (its label says so, its range is
+empty), so the test fails on it.
+-}
+missing : String -> Schema.Param
+missing a =
+    { addr = Addr a
+    , label = "NOT IN THE FIXTURE: " ++ a
+    , kind = Protocol.Cont
+    , scale = Protocol.Linear
+    , min = 0
+    , max = 0
+    , step = 0
+    , default = 0
+    , options = []
+    }
 
 
 {-| A parameter another fixture must hold.
@@ -81,4 +94,4 @@ paramIn sch a =
             p
 
         Nothing ->
-            Debug.todo ("the fixture has no " ++ a)
+            missing a

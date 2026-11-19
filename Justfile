@@ -32,12 +32,13 @@ editor-e2e:
     node editor/e2e/sim.mjs
 
 # The browser editor's Elm tests, then elm-review (the site's gate, editor/review)
+# and elm-format. Elm itself is pinned in editor/package.json (0.19.1).
 editor-test:
-    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && npx elm-review && node public/ports.check.js && node public/theme.check.js
+    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test --compiler node_modules/.bin/elm && npx elm-review --compiler node_modules/.bin/elm && npx elm-format --validate src tests review/src >/dev/null && node public/ports.check.js && node public/theme.check.js
 
 # The browser editor, optimised, into editor/dist/
 editor-build: editor-screen
-    cd editor && mkdir -p dist/glyphs && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/theme.js public/style.css public/screen.js public/screen.wasm dist/ && cp public/glyphs/*.png dist/glyphs/
+    cd editor && npm install --no-audit --no-fund --silent && mkdir -p dist/glyphs && npx elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/theme.js public/style.css public/screen.js public/screen.wasm dist/ && cp public/glyphs/*.png dist/glyphs/
 
 # The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32
 # into editor/public/screen.wasm, stripped, then wasm-opt'd if installed;
@@ -63,7 +64,7 @@ editor-screen:
 # The UI component gallery (every component, every state, DAY and NIGHT, and
 # the JITTER probe), into editor/gallery/
 editor-gallery:
-    cd editor && mkdir -p gallery/glyphs && elm make src/Gallery.elm --optimize --output=gallery/gallery.js && cp public/gallery.html gallery/index.html && cp public/style.css public/theme.js gallery/ && cp public/glyphs/*.png gallery/glyphs/
+    cd editor && npm install --no-audit --no-fund --silent && mkdir -p gallery/glyphs && npx elm make src/Gallery.elm --optimize --output=gallery/gallery.js && cp public/gallery.html gallery/index.html && cp public/style.css public/theme.js gallery/ && cp public/glyphs/*.png gallery/glyphs/
 
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes

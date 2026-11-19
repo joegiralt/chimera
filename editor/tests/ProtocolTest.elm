@@ -115,7 +115,7 @@ suite =
                         |> Expect.equal (List.repeat 5 Nothing)
             , test "refuses non-decimal floats" <|
                 \_ ->
-                    [ 0 / 0, 1 / 0, -1 / 0, 1.0e-7, 1.0e21 ]
+                    [ sqrt -1, 1 / 0, -1 / 0, 1.0e-7, 1.0e21 ]
                         |> List.map (\n -> encode (Set (Addr "A.B") (Num n)))
                         |> Expect.equal (List.repeat 5 Nothing)
             ]

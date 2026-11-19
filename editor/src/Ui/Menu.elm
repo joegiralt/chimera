@@ -1,4 +1,4 @@
-module Ui.Menu exposing (Config, Msg(..), State, fromOptions, glyphs, inHeader, label, shut, update, view, width)
+module Ui.Menu exposing (Config, Msg(..), State, glyphs, inHeader, label, new, shut, update, view, width)
 
 {-| More than eight choices: a button with the value that opens the list,
 optionally with the unit's glyph on each option. One menu is open at a time.
@@ -9,7 +9,7 @@ import Html.Attributes exposing (attribute, class, classList, style)
 import Html.Events as Events exposing (onClick)
 import Json.Decode as Decode
 import Protocol exposing (Addr, OptIndex)
-import Ui.Control as Control exposing (Chosen, Option, Width)
+import Ui.Control as Control exposing (Chosen, Option, Options, Width)
 import Ui.Screen as Screen
 
 
@@ -28,15 +28,11 @@ type Config
         }
 
 
-{-| A menu from the unit's options; there must be some.
+{-| A menu from the unit's options, of which there is always one.
 -}
-fromOptions : Addr -> List Option -> Maybe Config
-fromOptions a opts =
-    if List.isEmpty opts then
-        Nothing
-
-    else
-        Just (Config { addr = a, label = "", options = opts, glyph = \_ -> Nothing, place = InPanel })
+new : Addr -> Options -> Config
+new a opts =
+    Config { addr = a, label = "", options = Control.optionList opts, glyph = \_ -> Nothing, place = InPanel }
 
 
 label : String -> Config -> Config

@@ -906,17 +906,17 @@ catalogue w menu m =
     , Module.new "MENU"
         |> Module.note "MORE THAN EIGHT"
         |> Module.chip "CHOICES"
-        |> Module.menus [ menuView (Menu.fromOptions (Addr "M.WAVE") algs |> Maybe.map (Menu.label "WAVE" >> Menu.inHeader)) "M.WAVE" ]
+        |> Module.menus [ menuView (Control.options algs |> Maybe.map (Menu.new (Addr "M.WAVE")) |> Maybe.map (Menu.label "WAVE" >> Menu.inHeader)) "M.WAVE" ]
         |> Module.body
             [ Module.panel
-                [ Module.group "" [ menuView (Menu.fromOptions (Addr "M.ALG") algs |> Maybe.map (Menu.label "ALG A")) "M.ALG" ]
-                , Module.group "WITH GLYPHS" [ menuView (Menu.fromOptions (Addr "M.SHAPE") shapes |> Maybe.map (Menu.label "SHAPE" >> Menu.glyphs shapeGlyph)) "M.SHAPE" ]
+                [ Module.group "" [ menuView (Control.options algs |> Maybe.map (Menu.new (Addr "M.ALG")) |> Maybe.map (Menu.label "ALG A")) "M.ALG" ]
+                , Module.group "WITH GLYPHS" [ menuView (Control.options shapes |> Maybe.map (Menu.new (Addr "M.SHAPE")) |> Maybe.map (Menu.label "SHAPE" >> Menu.glyphs shapeGlyph)) "M.SHAPE" ]
                 ]
             ]
     , Module.new "WORD ROW"
         |> Module.note "SETTINGS SHEET"
         |> Module.chip "CHOICES"
-        |> Module.body [ Maybe.map (\c -> hands (WordRow.view (WordRow.new (Addr "W.ACCENT") accents |> WordRow.label "ACCENT") c)) (ch "W.ACCENT") |> Maybe.withDefault (text "") ]
+        |> Module.body [ Maybe.map2 (\opts c -> hands (WordRow.view (WordRow.new (Addr "W.ACCENT") opts |> WordRow.label "ACCENT") c)) (Control.options accents) (ch "W.ACCENT") |> Maybe.withDefault (text "") ]
     , Module.new "SCREENS"
         |> Module.note "THE UNIT'S GLYPHS"
         |> Module.chip "SCREENS"

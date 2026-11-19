@@ -13,7 +13,9 @@ import Ui.Tokens exposing (Theme(..))
 
 
 type Go
-    = Go String
+    = GoP1
+    | GoP2
+    | GoMixer
     | Page Page.Msg
 
 
@@ -26,10 +28,28 @@ page : Page.Config Go
 page =
     Page.new "GLASS BELLS"
         |> Page.meta "PART 2 · ALGO"
-        |> Page.parts [ { kicker = "P1 · VA", name = "WARM SAW PAD", current = Elsewhere, go = Go "P1" }, { kicker = "P2 · ALGO", name = "GLASS BELLS", current = Here, go = Go "P2" } ]
-        |> Page.units [ { kicker = "UNIT", name = "MIXER", current = Elsewhere, go = Go "MIXER" } ]
+        |> Page.parts [ { kicker = "P1 · VA", name = "WARM SAW PAD", current = Elsewhere, go = GoP1 }, { kicker = "P2 · ALGO", name = "GLASS BELLS", current = Here, go = GoP2 } ]
+        |> Page.units [ { kicker = "UNIT", name = "MIXER", current = Elsewhere, go = GoMixer } ]
         |> Page.link (Linked "PREENFM3 · 0.4.0 · LIVE")
         |> Page.modules [ m "FILTER", m "AMP", Module.chip "ENVELOPES" (m "ENV 1"), Module.chip "ENVELOPES" (m "ENV 2") ]
+
+
+{-| What the page asked of its own update, if anything.
+-}
+pageMsg : Go -> Maybe Page.Msg
+pageMsg go =
+    case go of
+        Page pm ->
+            Just pm
+
+        GoP1 ->
+            Nothing
+
+        GoP2 ->
+            Nothing
+
+        GoMixer ->
+            Nothing
 
 
 render : Page.State -> Query.Single Go
@@ -50,7 +70,7 @@ suite =
         , test "the_switch_says_the_theme_and_the_update_stores_it" <|
             \_ ->
                 Expect.all
-                    [ \_ -> render (Page.init Day) |> Query.find [ Sel.class "themesw" ] |> Query.find [ Sel.containing [ Sel.text "NIGHT" ], Sel.tag "button" ] |> Event.simulate Event.click |> Event.expect (Page (ChoseTheme Night))
+                    [ \_ -> render (Page.init Day) |> Query.find [ Sel.class "themesw" ] |> Query.find [ Sel.containing [ Sel.text "NIGHT" ], Sel.tag "button" ] |> Event.simulate Event.click |> Event.toResult |> Result.map pageMsg |> Expect.equal (Ok (Just (ChoseTheme Night)))
                     , \_ -> Page.update (ChoseTheme Night) (Page.init Day) |> Tuple.mapFirst Page.theme |> Expect.equal ( Night, StoreTheme Night )
                     ]
                     ()
@@ -87,7 +107,7 @@ suite =
             \_ ->
                 Expect.all
                     [ \_ -> render (Page.init Day) |> Query.find [ Sel.class "tab", Sel.class "on" ] |> Query.has [ Sel.text "GLASS BELLS" ]
-                    , \_ -> render (Page.init Day) |> Query.find [ Sel.class "tab", Sel.containing [ Sel.text "MIXER" ] ] |> Event.simulate Event.click |> Event.expect (Go "MIXER")
+                    , \_ -> render (Page.init Day) |> Query.find [ Sel.class "tab", Sel.containing [ Sel.text "MIXER" ] ] |> Event.simulate Event.click |> Event.expect GoMixer
                     ]
                     ()
         , test "the_link_is_printed" <|

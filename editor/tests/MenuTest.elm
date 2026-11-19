@@ -27,12 +27,7 @@ names =
 
 alg : Menu.Config
 alg =
-    case Menu.fromOptions algA (Contract.options names) of
-        Just c ->
-            Menu.label "ALG A" c
-
-        Nothing ->
-            Debug.todo "options make a menu"
+    Menu.new algA (Control.nonEmpty ( opt 0, "A1" ) (List.drop 1 (Contract.options names))) |> Menu.label "ALG A"
 
 
 opened : Menu.State
@@ -44,7 +39,7 @@ suite : Test
 suite =
     describe "Ui.Menu"
         [ test "no_options_no_menu" <|
-            \_ -> Menu.fromOptions algA [] |> Expect.equal Nothing
+            \_ -> Control.options [] |> Expect.equal Nothing
         , test "it_shows_the_current_options_name" <|
             \_ ->
                 Menu.view alg Menu.shut (Control.chosen (opt 9))

@@ -1,7 +1,7 @@
 module SelectorTest exposing (suite)
 
 import Contract exposing (opt)
-import Expect
+import Expect exposing (Expectation)
 import Json.Encode as Encode
 import Protocol exposing (Addr(..))
 import Test exposing (Test, describe, test)
@@ -17,14 +17,16 @@ modes =
     [ "LP4", "LP2", "LP1", "BP2", "BP4", "HP4", "NOTCH1", "NOTCH2" ]
 
 
-mode : Selector.Config
+mode : Maybe Selector.Config
 mode =
-    case Selector.fromOptions (Addr "FILTER.MODE") (Contract.options modes) of
-        Just c ->
-            Selector.label "MODE" c
+    Selector.fromOptions (Addr "FILTER.MODE") (Contract.options modes) |> Maybe.map (Selector.label "MODE")
 
-        Nothing ->
-            Debug.todo "eight options make a selector"
+
+{-| A test of the eight-option selector, which must exist.
+-}
+withMode : (Selector.Config -> Expectation) -> Expectation
+withMode f =
+    mode |> Maybe.map f |> Maybe.withDefault (Expect.fail "eight options make a selector")
 
 
 suite : Test
@@ -36,31 +38,43 @@ suite =
                     |> Expect.equal [ False, True, True, False ]
         , test "it_prints_every_position_and_lights_the_current" <|
             \_ ->
-                Selector.view mode (Control.chosen (opt 6))
-                    |> Query.fromHtml
-                    |> Query.find [ Sel.attribute (Control.ariaChecked True) ]
-                    |> Query.has [ Sel.text "NOTCH1" ]
+                withMode
+                    (\sel ->
+                        Selector.view sel (Control.chosen (opt 6))
+                            |> Query.fromHtml
+                            |> Query.find [ Sel.attribute (Control.ariaChecked True) ]
+                            |> Query.has [ Sel.text "NOTCH1" ]
+                    )
         , test "a_printed_position_picks_it" <|
             \_ ->
-                Selector.view mode (Control.chosen (opt 0))
-                    |> Query.fromHtml
-                    |> Query.find [ Sel.attribute (Control.ariaRole "radio"), Sel.containing [ Sel.text "HP4" ] ]
-                    |> Event.simulate Event.click
-                    |> Event.expect (Pick (Addr "FILTER.MODE") (opt 5))
+                withMode
+                    (\sel ->
+                        Selector.view sel (Control.chosen (opt 0))
+                            |> Query.fromHtml
+                            |> Query.find [ Sel.attribute (Control.ariaRole "radio"), Sel.containing [ Sel.text "HP4" ] ]
+                            |> Event.simulate Event.click
+                            |> Event.expect (Pick (Addr "FILTER.MODE") (opt 5))
+                    )
         , test "the_small_knob_steps_by_wheel" <|
             \_ ->
-                Selector.view mode (Control.chosen (opt 0))
-                    |> Query.fromHtml
-                    |> Query.find [ Sel.class "kn" ]
-                    |> Event.simulate (Event.custom "wheel" (Encode.object [ ( "deltaY", Encode.float -1 ) ]))
-                    |> Event.expect (Step (Addr "FILTER.MODE") Up)
+                withMode
+                    (\sel ->
+                        Selector.view sel (Control.chosen (opt 0))
+                            |> Query.fromHtml
+                            |> Query.find [ Sel.class "kn" ]
+                            |> Event.simulate (Event.custom "wheel" (Encode.object [ ( "deltaY", Encode.float -1 ) ]))
+                            |> Event.expect (Step (Addr "FILTER.MODE") Up)
+                    )
         , test "it_is_a_labelled_radio_group" <|
             \_ ->
-                Selector.view mode (Control.chosen (opt 0))
-                    |> Query.fromHtml
-                    |> Query.find [ Sel.attribute (Control.ariaRole "radiogroup") ]
-                    |> Query.has [ Sel.attribute (Control.ariaLabel "MODE") ]
+                withMode
+                    (\sel ->
+                        Selector.view sel (Control.chosen (opt 0))
+                            |> Query.fromHtml
+                            |> Query.find [ Sel.attribute (Control.ariaRole "radiogroup") ]
+                            |> Query.has [ Sel.attribute (Control.ariaLabel "MODE") ]
+                    )
         , describe "the width contract"
-            [ test "every_option" <| \_ -> Contract.widthHolds (Selector.width mode) (List.map (\i -> Selector.view mode (Control.chosen (opt i))) (List.range 0 7))
+            [ test "every_option" <| \_ -> withMode (\sel -> Contract.widthHolds (Selector.width sel) (List.map (\i -> Selector.view sel (Control.chosen (opt i))) (List.range 0 7)))
             ]
         ]

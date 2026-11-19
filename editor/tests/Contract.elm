@@ -34,12 +34,7 @@ widthHolds w renders =
 
 opt : Int -> OptIndex
 opt i =
-    case Protocol.optIndex i of
-        Just o ->
-            o
-
-        Nothing ->
-            Debug.todo "a negative option"
+    Protocol.optIndex i |> Maybe.withDefault Protocol.firstOption
 
 
 options : List String -> List Option

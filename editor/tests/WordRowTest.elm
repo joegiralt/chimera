@@ -12,7 +12,7 @@ import Ui.WordRow as WordRow
 
 accent : WordRow.Config
 accent =
-    WordRow.new (Addr "THEME.ACCENT") (Contract.options [ "TEAL", "AMBER", "RED", "PUNCH", "WHITE" ]) |> WordRow.label "ACCENT"
+    WordRow.new (Addr "THEME.ACCENT") (Control.nonEmpty ( opt 0, "TEAL" ) (List.drop 1 (Contract.options [ "TEAL", "AMBER", "RED", "PUNCH", "WHITE" ]))) |> WordRow.label "ACCENT"
 
 
 suite : Test

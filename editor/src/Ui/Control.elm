@@ -5,6 +5,7 @@ module Ui.Control exposing
     , Intent(..)
     , Msg(..)
     , Option
+    , Options
     , Reading
     , Sync(..)
     , Target(..)
@@ -30,7 +31,10 @@ module Ui.Control exposing
     , idle
     , isEmpty
     , labelPx
+    , nonEmpty
     , norm
+    , optionList
+    , options
     , pending
     , pendingChoice
     , reading
@@ -147,6 +151,32 @@ chosenSync (Chosen c) =
 -}
 type alias Option =
     ( OptIndex, String )
+
+
+{-| A choice's options: never none, so a list can always show one.
+-}
+type Options
+    = Options Option (List Option)
+
+
+nonEmpty : Option -> List Option -> Options
+nonEmpty =
+    Options
+
+
+options : List Option -> Maybe Options
+options opts =
+    case opts of
+        first :: rest ->
+            Just (Options first rest)
+
+        [] ->
+            Nothing
+
+
+optionList : Options -> List Option
+optionList (Options first rest) =
+    first :: rest
 
 
 syncClass : Sync -> Html.Attribute msg

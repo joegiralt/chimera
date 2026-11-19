@@ -124,12 +124,7 @@ kind =
 
 opt : Int -> OptIndex
 opt i =
-    case Protocol.optIndex i of
-        Just o ->
-            o
-
-        Nothing ->
-            Debug.todo "a negative option"
+    Protocol.optIndex i |> Maybe.withDefault Protocol.firstOption
 
 
 {-| CUTOFF at 0.5 (wheel steps of 1/64); KIND on its second of four options.

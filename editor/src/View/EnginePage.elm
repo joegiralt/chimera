@@ -1011,7 +1011,7 @@ autoChoice ctx item =
 
 menuOf : Ctx -> Bool -> Item -> Html Msg
 menuOf ctx header item =
-    case ( Menu.fromOptions item.param.addr item.param.options, chosen ctx.m ctx.s item.param ) of
+    case ( Control.options item.param.options |> Maybe.map (Menu.new item.param.addr), chosen ctx.m ctx.s item.param ) of
         ( Just cfg, Just now ) ->
             Html.map MenuMsg (Menu.view (cfg |> Menu.label item.label |> when header Menu.inHeader) ctx.s.menu now)
 
