@@ -68,6 +68,19 @@ S.load(fs.readFileSync(path.join(__dirname, 'screen.wasm'))).then(function (x) {
     if (got.error !== c[1]) fail('spec ' + c[0] + ': ' + JSON.stringify(got.error) + ' not ' + c[1]);
   });
 
+  // A value the mirror refuses is said on the element, the rest painted:
+  // data-refused and a mark, never only the console.
+  var r = paint({ engine: 'ALGO', page: 0, vals: [['OP_A.WAVE', 99], ['ALGO.MORPH', 3]] });
+  if (r.refused !== 1 || !r.rgba) fail('a refused value: ' + JSON.stringify({ refused: r.refused, rgba: !!r.rgba }));
+  var st = S.state(r);
+  if (st['data-refused'] !== '1 value refused' || st['data-painted'] !== '' || st['data-error'] !== null || !st.mark) {
+    fail('a refused value\'s state ' + JSON.stringify(st));
+  }
+  st = S.state(paint({ engine: 'ALGO', page: 0, vals: [['ALGO.MORPH', 3]] }));
+  if (st['data-refused'] !== null || st.mark) fail('a clean paint\'s state ' + JSON.stringify(st));
+  st = S.state({ error: 'x' });
+  if (st['data-error'] !== 'x' || st['data-painted'] !== null || !st.mark) fail('an error\'s state ' + JSON.stringify(st));
+
   // ALGO's algorithm page morphs its chart with MORPH focused (2), as Elm
   // sends it; on ALG A (no focus) it shows ALG A.
   var at = function (morph, focus, region) {

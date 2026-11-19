@@ -8,20 +8,22 @@
 //! engine, a choice's `#n` or a number by the cell's own kind), then
 //! written as the knob's turn lands it (`UiState::edit_to`, a pad's on its
 //! pad), never through the box's refusals or cues: the unit already took
-//! it. A write can move others (a MACHINE takes its knobs' defaults), so a
+//! it. A pad's CHOKE is written to the pad itself, past the 8-group check
+//! the turn makes: two legal kits can differ by steps that each make a 9th. A write can move others (a MACHINE takes its knobs' defaults), so a
 //! batch is written until every value holds (`Mirror::apply`), whatever
 //! its order.
 
 use chimera_core::console::{
     Console, EdAddr, EdState, Request, SetRefusal, StoredRefusal, ed_stored,
 };
-use chimera_core::dsp::drum::types::PadId;
+use chimera_core::dsp::drum::types::{ChokeGroup, PadId};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::{Origin, PartFrom, PartId, PartSource};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::BlockDef;
+use chimera_core::ui::held;
 use chimera_core::ui::kit_band;
 use chimera_core::ui::nav::{Location, PartChain};
 use chimera_core::ui::page::PageLayout;
@@ -207,8 +209,8 @@ pub enum Refused {
     NotFinite(Addr),
     /// What `ed set` says of it: no such option, or a number for a choice.
     Set(Addr, SetRefusal),
-    /// Written, and the Part holds another value (a CHOKE onto a 9th
-    /// group the rest of the batch never made room for).
+    /// Written, and the Part holds another value: a write the rest of the
+    /// batch undid every pass.
     Kept(Addr),
 }
 
@@ -330,6 +332,18 @@ impl Mirror {
         let (p, at) = (self.part(), a.0.param());
         Ok(match a.0.pad() {
             None => self.ui.edit_to(p, at, v),
+            // Past the group check: the unit holds this kit, and a diff
+            // between two 8-group kits can pass through a 9th.
+            Some(n) if at == held::CHOKE => {
+                let to = ChokeGroup::from_index(v as usize)
+                    .ok_or(Refused::Set(a, SetRefusal::NoSuchOption))?;
+                let pad = self.ui.project().kit(p).pad(n);
+                let moved = pad.choke() != to;
+                if moved {
+                    self.ui.project_mut().kit_mut(p).pad_mut(n).set_choke(to);
+                }
+                moved
+            }
             // On its pad, the selection put back: as `ed set`'s turn.
             Some(n) => {
                 let was = self.ui.selected_pad(p);

@@ -20,7 +20,8 @@
 // only the values the mirror doesn't hold, so a spec with the page's own
 // values is that page's diff. A spec decodes once a change; a bad one
 // sets data-error="<reason>" and draws a small mark (each reason warned
-// once).
+// once). Values the mirror refuses (the rest painted) set
+// data-refused="<n> values refused" and mark the paint's corner.
 var ChimeraScreen = (function () {
   var W = 240, H = 320;
   var REGIONS = { full: 0, screen: 1, gauge: 2, padicon: 3 }; // `Region`
@@ -97,11 +98,13 @@ var ChimeraScreen = (function () {
     return x.apply(engine, vals.length, text.length);
   }
 
-  // One decoded spec's pixels: `{ rect, rgba }`, `{ hidden }` where the
-  // Sound doesn't show the page or region, or `{ error }`.
+  // One decoded spec's pixels: `{ rect, rgba, refused }` (the values the
+  // mirror refused, 0 if none), `{ hidden }` where the Sound doesn't show
+  // the page or region, or `{ error }`.
   function draw(x, s) {
     var got = apply(x, s.engine, s.vals);
-    if (got === STATUS.refused) console.debug('chimera-screen: ' + x.refused() + ' values refused');
+    var refused = 0;
+    if (got === STATUS.refused) refused = x.refused();
     else if (got !== STATUS.ok) return { error: 'vals refused whole (' + got + ')' };
     got = x.show(s.engine, s.page, s.region, s.focus, s.pad);
     if (got === STATUS.notShown || got === STATUS.noRegion) return { hidden: true };
@@ -110,7 +113,20 @@ var ChimeraScreen = (function () {
     var q = new Uint16Array(x.memory.buffer, rp, 4);
     var rect = { x: q[0], y: q[1], w: q[2], h: q[3] };
     var px = new Uint16Array(x.memory.buffer, bp, W * H);
-    return { rect: rect, rgba: toRgba(px, W, rect, new Uint8ClampedArray(rect.w * rect.h * 4)) };
+    return { rect: rect, rgba: toRgba(px, W, rect, new Uint8ClampedArray(rect.w * rect.h * 4)), refused: refused };
+  }
+
+  // What a paint says on the element: each attribute's value (null:
+  // removed), and whether it draws the mark.
+  function state(got) {
+    if (got.error) return { 'data-error': got.error, 'data-refused': null, 'data-painted': null, mark: true };
+    var n = got.refused || 0;
+    return {
+      'data-error': null,
+      'data-refused': n ? n + (n === 1 ? ' value refused' : ' values refused') : null,
+      'data-painted': got.hidden ? null : '',
+      mark: n > 0
+    };
   }
 
   // A spec text's paint: decoded, then drawn.
@@ -126,15 +142,19 @@ var ChimeraScreen = (function () {
     console.warn('chimera-screen: ' + reason);
   }
 
-  // The error mark: a small red cross on black, 8x8.
+  // The mark: a small red cross on black, 8x8, at `x`.
+  function cross(g, x) {
+    g.fillStyle = '#000';
+    g.fillRect(x, 0, 8, 8);
+    g.fillStyle = '#e0302a';
+    for (var i = 1; i < 7; i++) { g.fillRect(x + i, i, 1, 1); g.fillRect(x + 7 - i, i, 1, 1); }
+  }
+
+  // The error mark, alone.
   function mark(canvas) {
     canvas.width = 8;
     canvas.height = 8;
-    var g = canvas.getContext('2d');
-    g.fillStyle = '#000';
-    g.fillRect(0, 0, 8, 8);
-    g.fillStyle = '#e0302a';
-    for (var i = 1; i < 7; i++) { g.fillRect(i, i, 1, 1); g.fillRect(7 - i, i, 1, 1); }
+    cross(canvas.getContext('2d'), 0);
   }
 
   function define(url) {
@@ -172,22 +192,28 @@ var ChimeraScreen = (function () {
         });
       }
       paint(got) {
+        var st = state(got);
+        for (var k in st) {
+          if (k === 'mark') continue;
+          if (st[k] === null) this.removeAttribute(k);
+          else this.setAttribute(k, st[k]);
+        }
         if (got.error) {
           warn(got.error);
           this.hidden = false;
-          this.setAttribute('data-error', got.error);
-          this.removeAttribute('data-painted');
           mark(this.canvas);
           return;
         }
-        this.removeAttribute('data-error');
+        if (st['data-refused']) warn(st['data-refused']);
         this.hidden = !!got.hidden;
         // Painted: the crop Elm put inside gives way to the canvas.
-        if (got.hidden) { this.removeAttribute('data-painted'); return; }
-        this.setAttribute('data-painted', '');
+        if (got.hidden) return;
         this.canvas.width = got.rect.w;
         this.canvas.height = got.rect.h;
-        this.canvas.getContext('2d').putImageData(new ImageData(got.rgba, got.rect.w, got.rect.h), 0, 0);
+        var g = this.canvas.getContext('2d');
+        g.putImageData(new ImageData(got.rgba, got.rect.w, got.rect.h), 0, 0);
+        // The rest painted, the refused marked in the corner.
+        if (st.mark) cross(g, Math.max(0, got.rect.w - 8));
       }
     }
     customElements.define('chimera-screen', Screen);
@@ -195,7 +221,7 @@ var ChimeraScreen = (function () {
 
   define('screen.wasm');
   return { decode: decode, engines: engines, toRgba: toRgba, load: load, apply: apply, draw: draw,
-           paintSpec: paintSpec, REGIONS: REGIONS, STATUS: STATUS };
+           paintSpec: paintSpec, state: state, REGIONS: REGIONS, STATUS: STATUS };
 })();
 
 if (typeof module !== 'undefined') module.exports = ChimeraScreen;

@@ -358,6 +358,38 @@ fn a_selector_after_its_params_is_replayed_under_them() {
     assert_eq!(m.stored(addr("PAD2.MACHINE")), Some(machine as f32));
 }
 
+/// Kits of 8 voice groups each (ADR 0280), CHOKE's options by number
+/// (OFF, A, B, C, D): pads 1-2 on `pair`, 3-4 C, 5-7 D, the rest OFF.
+fn eight_groups(pair: f32) -> Vec<(Addr, f32)> {
+    (1..=12)
+        .map(|n| {
+            let g = match n {
+                1 | 2 => pair,
+                3 | 4 => 3.0,
+                5..=7 => 4.0,
+                _ => 0.0,
+            };
+            (addr(&format!("PAD{n}.CHOKE")), g)
+        })
+        .collect()
+}
+
+/// S (pads 1-2 on A) to T (on B): each step alone makes a 9th group, so
+/// the box's check would never let the diff land. The unit holds T, so
+/// the mirror writes it: its values are the unit's, already taken.
+#[test]
+fn a_diff_between_two_legal_kits_lands_past_the_group_check() {
+    let mut m = mirror(EngineType::Drum);
+    for (kit, pair) in [("S", 1.0), ("T", 2.0)] {
+        let batch = eight_groups(pair);
+        let done = m.apply(&batch);
+        assert!(done.refused.is_empty(), "{kit}: {:?}", done.refused);
+        for (a, v) in batch {
+            assert_eq!(m.stored(a), Some(v), "{kit}: {a}");
+        }
+    }
+}
+
 #[test]
 fn a_set_stores_what_ed_set_stores() {
     for (a, stored, typed) in [
