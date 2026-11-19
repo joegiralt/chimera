@@ -12,6 +12,7 @@ pub mod cell_text;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
+pub(crate) mod ed_cue;
 pub mod feel;
 pub mod file_buf;
 pub mod filter_panel;
@@ -1729,7 +1730,7 @@ impl UiState {
     /// nothing written, so a key never plays into silence. `false` off a
     /// streamed source: the plain edit.
     fn turn_model(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
-        if !self.streams(at) {
+        if self.streams(at) == held::Source::InRam {
             return false;
         }
         let sound = &self.project.part(at).sound;
@@ -1745,7 +1746,7 @@ impl UiState {
         };
         let to = from.step(delta, shift);
         let pick = held::Pick::Tape(to);
-        if pick.why(sound, true).is_some() {
+        if pick.why(sound, held::Source::Streamed).is_some() {
             self.held = Some((at, held::Held::Sound(pick)));
         } else {
             self.held = None;
@@ -1784,10 +1785,16 @@ impl UiState {
         true
     }
 
-    /// Part `at`'s source streams.
-    fn streams(&self, at: PartId) -> bool {
+    /// Where Part `at`'s source plays from: the turn's, a CC's and `ed
+    /// set`'s one test, inlined into each (bank 2's `ed` keeps no call into
+    /// bank 1).
+    #[inline(always)]
+    pub(crate) fn streams(&self, at: PartId) -> held::Source {
         let r = self.project.part(at).sound.source_ref();
-        r.is_some_and(|r| self.project.pool().streamed(r))
+        match r.is_some_and(|r| self.project.pool().streamed(r)) {
+            true => held::Source::Streamed,
+            false => held::Source::InRam,
+        }
     }
 
     /// A turn or an edit on MAX VOICES or RESERVE, bank 2's
@@ -3152,11 +3159,9 @@ impl UiState {
 
         // The frame's turns and SEQ's state, once (ADR 0279): bank 2's
         // curves and fine steps; closed, a parameter's and SEQ untouched.
-        let key = hold::SeqKey::of(controls.edges(ButtonId::Seq), controls.edges(ButtonId::Mix));
-        let turns = ALL_ENCODERS.map(|e| controls.turn(e));
-        let feel = crate::bank2::feel::frame(self, turns, key)
-            .unwrap_or_else(|| turns::FrameTurns::closed(turns));
-        let presses = self.gates.step(controls, hold::SeqHold::of(key, feel.seq));
+        let feel = crate::bank2::feel::frame(self, controls)
+            .unwrap_or_else(|| turns::FrameTurns::closed(controls));
+        let presses = self.gates.step(controls, feel.seq);
         // A card row loading takes every key: MENU cancels it.
         if self.src.loading() {
             if presses.menu.is_some() {
@@ -3276,7 +3281,7 @@ impl UiState {
                 return;
             }
             // B turns between the tabs.
-            let tab = self.lib.tab.turned(list_ticks(controls, EncoderId::B));
+            let tab = self.lib.tab.turned(list_turn(controls, &NOT_B));
             if tab != self.lib.tab {
                 self.browser_dirty = true;
                 self.lib.entered();
@@ -4289,10 +4294,14 @@ const MAP_EDITS: [EncoderId; 0] = [];
 /// in `taken` (the first on a tie), so two brushed together move it once.
 /// A list's rows take the gentler acceleration (ADR 0279).
 pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
+    // Bank 2's gentler curve (ADR 0279); closed, a parameter's.
+    if let Some(t) = crate::bank2::feel::list(c, taken) {
+        return t.get();
+    }
     ALL_ENCODERS
         .iter()
         .filter(|e| !taken.contains(e))
-        .map(|&e| list_ticks(c, e))
+        .map(|&e| c.encoder_delta(e))
         .fold(0i8, |m, d| {
             if d.unsigned_abs() > m.unsigned_abs() {
                 d
@@ -4302,11 +4311,14 @@ pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
         })
 }
 
-/// `e`'s turn as a list's rows (ADR 0279): bank 2's gentler curve; closed,
-/// a parameter's.
-fn list_ticks(c: &impl Controls, e: EncoderId) -> i8 {
-    crate::bank2::feel::list(c.turn(e)).map_or_else(|| c.encoder_delta(e), |t| t.get())
-}
+/// Every encoder but B: the browser's tab turn is B's alone.
+const NOT_B: [EncoderId; 5] = [
+    EncoderId::A,
+    EncoderId::C,
+    EncoderId::D,
+    EncoderId::E,
+    EncoderId::F,
+];
 
 /// An encoder moved this frame.
 fn any_turn(controls: &impl Controls) -> bool {

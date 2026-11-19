@@ -4,7 +4,7 @@
 //! `ui::feel` group, through `UiDoor`); bank 1 keeps the board's count,
 //! SEQ's state, the gate's mute and the door's stubs.
 
-use chimera_hal::{Accel, NUM_ENCODERS, Ticks, Turn};
+use chimera_hal::{ALL_ENCODERS, Accel, ButtonId, Controls, EncoderId, Ticks, Turn};
 
 use crate::addr::ParamAddr;
 use crate::block::{Block, ParamKind, ParamSpec, ValFmt};
@@ -12,7 +12,7 @@ use crate::ui::UiState;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{Gesture, Hint};
-use crate::ui::hold::{SeqKey, SeqTurn};
+use crate::ui::hold::{SeqHold, SeqKey, SeqTurn};
 use crate::ui::page::PageLayout;
 use crate::ui::turns::{EncTurn, FrameTurns};
 use crate::ui::view::{self, View, Words};
@@ -21,14 +21,9 @@ use crate::ui::view::{self, View, Words};
 /// its own answer's slot.
 pub enum Ask<'a> {
     /// `frame`.
-    Frame(
-        &'a UiState,
-        [Turn; NUM_ENCODERS],
-        SeqKey,
-        &'a mut Option<FrameTurns>,
-    ),
-    /// `list_ticks`.
-    List(Turn, &'a mut Option<Ticks>),
+    Frame(&'a UiState, &'a dyn Controls, &'a mut Option<FrameTurns>),
+    /// `list`.
+    List(&'a dyn Controls, &'a [EncoderId], &'a mut Option<Ticks>),
     /// `hint`.
     Hint(&'a View, Words, Band, Pushes, &'a mut Option<Hint>),
     /// `nudge`: `true` where the feel turned it.
@@ -38,8 +33,8 @@ pub enum Ask<'a> {
 /// `UiDoor`'s entry.
 pub(crate) fn ask_in(a: Ask<'_>) {
     match a {
-        Ask::Frame(ui, turns, key, out) => *out = Some(frame(ui, turns, key)),
-        Ask::List(t, out) => *out = Some(list_ticks(t)),
+        Ask::Frame(ui, c, out) => *out = Some(frame(ui, c)),
+        Ask::List(c, taken, out) => *out = Some(list(c, taken)),
         Ask::Hint(v, w, band, push, out) => *out = Some(hint(v, w, band, push)),
         Ask::Nudge(b, a, d, out) => *out = Some(nudge(b, a, d)),
     }
@@ -70,14 +65,22 @@ pub fn takes(v: &View, w: Words) -> bool {
         && !matches!(w, Words::Own(_))
 }
 
-/// The frame's `turns` with SEQ's and MIX's `key`: each encoder's ticks
+/// The frame's turns from `c`, with SEQ's and MIX's keys: each encoder's ticks
 /// by its cell's curve, or a tick a detent (`Fine`) where SEQ is down on a
 /// cell that `takes` it; and a turn with SEQ down on a Part's, mixer's or
 /// FX page cancels SEQ's tap and ORBIT (the owner's ruling), except while
 /// a card row loads, the library works, a prompt is up or learn is armed
 /// (they take the turn), and never in SETTINGS, the browser or ORBIT.
-pub fn frame(ui: &UiState, turns: [Turn; NUM_ENCODERS], key: SeqKey) -> FrameTurns {
-    let mut out = FrameTurns::closed(turns);
+pub fn frame(ui: &UiState, c: &dyn Controls) -> FrameTurns {
+    let key = SeqKey::of(c.edges(ButtonId::Seq), c.edges(ButtonId::Mix));
+    let turns = ALL_ENCODERS.map(|e| c.turn(e));
+    let mut out = FrameTurns {
+        enc: turns.map(|t| match t.detents().get() {
+            0 => EncTurn::Still,
+            _ => EncTurn::Plain(Accel::Param.ticks(t)),
+        }),
+        seq: SeqHold::of(key, SeqTurn::Untouched),
+    };
     if ui.loc.orbit().is_some() || ui.loc.page(&ui.cx()).is_none() {
         return out;
     }
@@ -102,7 +105,7 @@ pub fn frame(ui: &UiState, turns: [Turn; NUM_ENCODERS], key: SeqKey) -> FrameTur
             EncTurn::Plain(accel(&v).ticks(t))
         };
         if held {
-            out.seq = SeqTurn::Turned;
+            out.seq = SeqHold::of(key, SeqTurn::Turned);
         }
     }
     out
@@ -111,6 +114,23 @@ pub fn frame(ui: &UiState, turns: [Turn; NUM_ENCODERS], key: SeqKey) -> FrameTur
 /// A list's rows: `Accel::List`'s ticks.
 pub fn list_ticks(t: Turn) -> Ticks {
     Accel::List.ticks(t)
+}
+
+/// A list's bar move from `c`: the biggest list turn among the encoders
+/// not in `taken` (the first on a tie), so two brushed together move it
+/// once.
+pub fn list(c: &dyn Controls, taken: &[EncoderId]) -> Ticks {
+    ALL_ENCODERS
+        .iter()
+        .filter(|e| !taken.contains(e))
+        .map(|&e| list_ticks(c.turn(e)))
+        .fold(Ticks::new(0), |m, d| {
+            if d.get().unsigned_abs() > m.get().unsigned_abs() {
+                d
+            } else {
+                m
+            }
+        })
 }
 
 /// Where the band is.

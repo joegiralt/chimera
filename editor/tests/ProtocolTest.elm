@@ -1,6 +1,7 @@
 module ProtocolTest exposing (suite)
 
 import Expect
+import FixtureData
 import Protocol exposing (Addr(..), AnswerLine(..), Command(..), Kind(..), Line(..), Scale(..), Value(..), encode, optIndex, parse)
 import Test exposing (Test, describe, test)
 import Unit
@@ -38,7 +39,7 @@ suite =
             , p "a protocol 2 param line is not understood" "param OUT.LEVEL \"VOL\" cont 0 1 0.0078125 0.3515625" Unknown
             , p "bad scale" "param A.B \"L\" cont log 0 1 1 0" Unknown
             , p "source" "source \"KICK 909\"" (Answer (Source "KICK 909"))
-            , p "opt" "opt ALGO.ALG_A 8 \"A1\"" (Answer (Opt { addr = Addr "ALGO.ALG_A", index = 8, name = "A1" }))
+            , p "opt" "opt ALGO.ALG_A 8 \"A1\"" (optIndex 8 |> Maybe.map (\ix -> Answer (Opt { addr = Addr "ALGO.ALG_A", index = ix, name = "A1" })) |> Maybe.withDefault Unknown)
             , p "route" "route \"ENV AMT\" next-slice" (Answer (Route "ENV AMT"))
             , p "get val" "val OP_C.CRSE 0.0634921 4 \"1.00\"" (Answer (Val { addr = Addr "OP_C.CRSE", norm = 0.0634921, stored = 4, text = "1.00" }))
             , p "val with unit" "val FILTER.CUTOFF 1 20000 \"20.0 kHz\"" (Answer (Val { addr = Addr "FILTER.CUTOFF", norm = 1, stored = 20000, text = "20.0 kHz" }))
@@ -88,6 +89,13 @@ suite =
             , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))
             , test "set index" <| \_ -> Expect.equal (Just "ed set ENV1.HOLD #2") (encode (Set (Addr "ENV1.HOLD") (idx 2)))
             , test "an option number is never negative" <| \_ -> Expect.equal Nothing (optIndex -1)
+            , test "every engine the unit has, and no other, in its order" <|
+                -- The firmware writes `EngineType::PLAYABLE`'s names to the fixture
+                -- (console_ed_engines_test): a new engine there fails here
+                -- until `Unit.allEngines` names it.
+                \_ -> Expect.equal FixtureData.engines (List.map Unit.engineName Unit.allEngines)
+            , test "every engine name reads back as its engine" <|
+                \_ -> Expect.equal (List.map Just Unit.allEngines) (List.map Unit.engineFromName FixtureData.engines)
             , test "every engine is described by its name" <|
                 \_ ->
                     Expect.equal (List.map (\e -> Just ("ed describe " ++ Unit.engineName e ++ " 0")) Unit.allEngines)

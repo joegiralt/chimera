@@ -557,10 +557,9 @@ pub(crate) mod feel {
     use crate::addr::ParamAddr;
     use crate::block::Block;
     use crate::ui::feel::{Ask, Band, Pushes};
-    use crate::ui::hold::SeqKey;
     use crate::ui::turns::FrameTurns;
     use crate::ui::view::{View, Words};
-    use chimera_hal::{NUM_ENCODERS, Ticks, Turn};
+    use chimera_hal::{Controls, EncoderId, Ticks};
 
     /// One out-of-line call for every stub.
     #[inline(never)]
@@ -568,19 +567,15 @@ pub(crate) mod feel {
         let _ = super::ui_door(|u| u.feel(a));
     }
 
-    pub(crate) fn frame(
-        ui: &crate::ui::UiState,
-        turns: [Turn; NUM_ENCODERS],
-        key: SeqKey,
-    ) -> Option<FrameTurns> {
+    pub(crate) fn frame(ui: &crate::ui::UiState, c: &dyn Controls) -> Option<FrameTurns> {
         let mut out = None;
-        ask(Ask::Frame(ui, turns, key, &mut out));
+        ask(Ask::Frame(ui, c, &mut out));
         out
     }
 
-    pub(crate) fn list(t: Turn) -> Option<Ticks> {
+    pub(crate) fn list(c: &dyn Controls, taken: &[EncoderId]) -> Option<Ticks> {
         let mut out = None;
-        ask(Ask::List(t, &mut out));
+        ask(Ask::List(c, taken, &mut out));
         out
     }
 

@@ -297,7 +297,7 @@ pub fn hand(h: &Hand) {
     for ((&d, delta), edge) in h.detents.iter().zip(&ENC_DELTA).zip(&ENC_LAST_EDGE) {
         if d != 0 {
             // Saturating: a hand on top of the ISR's detents never wraps.
-            let _ = delta.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+            let _ = delta.try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                 Some(x.saturating_add(d))
             });
             edge.store(now, Ordering::Relaxed);
