@@ -13,6 +13,8 @@ pub enum VizType {
     /// IN → CHR → DLY → REV → OUT, lighting this page's part of it.
     EffectsFlow(FxFlow),
     MixerLevels,
+    /// PRT › EQ and MST › SMART EQ: what SMART EQ cuts now (ADR 0296).
+    SmartEq,
     CompressorCurve,
     AudioStats,
     /// PROJECT › POOL: the pool meter; its cells are `pool_page`'s.

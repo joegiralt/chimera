@@ -46,6 +46,9 @@ pub mod part_page;
 pub mod part_voices;
 pub mod perf;
 pub mod pit_tuner;
+// SMART EQ's band (ADR 0296): the paint bank 2's, the view bank 1's.
+pub mod smart_eq;
+pub mod smart_view;
 // MIDI MAP's pointing (ADR 0288): bank 2's, an S4 group.
 #[cfg(feature = "midi-map")]
 pub mod pointing;

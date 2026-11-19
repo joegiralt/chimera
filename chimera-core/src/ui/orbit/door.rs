@@ -54,6 +54,13 @@ impl<D: DrawTarget<Color = Rgb565>> Paint for D {
 /// functions and `raster`'s are bank 2's.
 pub struct Ink<'a>(&'a mut dyn Paint);
 
+impl<'a> Ink<'a> {
+    /// `d` as ORBIT's and SMART EQ's bands draw on it.
+    pub fn new(d: &'a mut dyn Paint) -> Ink<'a> {
+        Ink(d)
+    }
+}
+
 impl Dimensions for Ink<'_> {
     fn bounding_box(&self) -> Rectangle {
         self.0.bounds()

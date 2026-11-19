@@ -605,7 +605,25 @@ pub static MASTER_LEVEL: BlockDef = BlockDef {
     ],
 };
 
-static MASTER_SUB_PAGES: [&BlockDef; 1] = [&MASTER_LEVEL];
+/// MST › SMART EQ (ADR 0296): the switch and AMOUNT for every Part's SMART
+/// EQ cuts; the band shows each Part's four live cuts and its role.
+pub static MASTER_SMART: BlockDef = BlockDef {
+    id: 120,
+    name: "Smart EQ",
+    short: "SMART",
+    layout: PageLayout::CellGrid,
+    viz: VizType::SmartEq,
+    params: [
+        ParamSlot::param(BlockRef::Comp, CompParams::SMART_EQ),
+        ParamSlot::param(BlockRef::Comp, CompParams::AMOUNT),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static MASTER_SUB_PAGES: [&BlockDef; 2] = [&MASTER_LEVEL, &MASTER_SMART];
 
 // ---------------------------------------------------------------------------
 // Mod Matrix (new placeholder)
@@ -1078,17 +1096,18 @@ pub static PART_VOICES: BlockDef = BlockDef {
 };
 
 /// PRT's second sub-page: the Part's channel EQ (ADR 0284), TILT and LO
-/// CUT, before LEVEL, PAN and the sends.
+/// CUT, before LEVEL, PAN and the sends, and its SMART EQ ROLE; the band
+/// shows SMART EQ's four live cuts on the Part (ADR 0296).
 pub static PART_EQ: BlockDef = BlockDef {
     id: 118,
     name: "EQ",
     short: "EQ",
     layout: PageLayout::CellGrid,
-    viz: VizType::MixerLevels,
+    viz: VizType::SmartEq,
     params: [
         ParamSlot::param(BlockRef::Part, PartParams::TILT),
         ParamSlot::param(BlockRef::Part, PartParams::LO_CUT),
-        EMPTY,
+        ParamSlot::param(BlockRef::Part, PartParams::ROLE),
         EMPTY,
         EMPTY,
         EMPTY,

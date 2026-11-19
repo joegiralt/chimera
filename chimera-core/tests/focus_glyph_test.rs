@@ -176,6 +176,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "RESERVE", NONE),
     // A toggle (ADR 0284).
     ("Part", "LO_CUT", SWITCH),
+    // SMART EQ (ADR 0296): a toggle, and three named roles.
+    ("Comp", "SMART_EQ", SWITCH),
+    ("Part", "ROLE", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),

@@ -68,6 +68,7 @@ impl Role {
     /// How far `self` outranks `lower`, as the share of the deepest cut
     /// `lower` takes where `self` plays: one rank 2/3, two (FRONT over
     /// BACK) all of it, none at or under `lower`.
+    #[inline(always)]
     pub const fn depth_over(self, lower: Role) -> Unit {
         match (self, lower) {
             (Role::Front, Role::Mid) | (Role::Mid, Role::Back) => Unit::new(2.0 / 3.0),
@@ -157,6 +158,7 @@ impl CutDb {
     }
 
     /// `MAX`'s share `u`.
+    #[inline(always)]
     pub const fn of(u: Unit) -> CutDb {
         CutDb::new(Self::MAX.0 * u.get())
     }
@@ -274,6 +276,7 @@ impl SmartEq {
     }
 
     /// How much of each cut's target this setting asks: AMOUNT, none off.
+    #[inline(always)]
     pub const fn share(self) -> Unit {
         if self.listens() {
             self.amount().unit()
@@ -383,6 +386,7 @@ impl CutView {
     const STEPS: f32 = 32.0;
     pub const NONE: CutView = CutView(0);
 
+    #[inline(always)]
     pub fn of(cuts: &[CutDb; BANDS]) -> CutView {
         let mut w = 0u32;
         for (b, c) in Band::ALL.iter().zip(cuts) {
@@ -420,6 +424,7 @@ impl SmartView {
         SmartView([const { AtomicU32::new(0) }; MAX_PARTS])
     }
 
+    #[inline(always)]
     pub fn publish(&self, p: usize, v: CutView) {
         if let Some(w) = self.0.get(p) {
             w.store(v.0, Relaxed);

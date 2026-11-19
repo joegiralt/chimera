@@ -43,7 +43,7 @@ pub fn page_label(def: &BlockDef, models: impl Into<Models>) -> &'static str {
 /// The row's word for each page on a node with sub-pages: the word a
 /// musician reads, in full where it fits (ADR 0145). STACK and the crumbs
 /// keep `short`. MDL2 and TAPE's model page are named at draw time.
-pub static ROW_WORDS: [(&BlockDef, &str); 68] = [
+pub static ROW_WORDS: [(&BlockDef, &str); 69] = [
     (&reg::ALGO_ALG, "ALGORITHM"),
     (&reg::PITCH, "PITCH"),
     (&reg::ALGO_WAVE, "WAVE"),
@@ -107,6 +107,7 @@ pub static ROW_WORDS: [(&BlockDef, &str); 68] = [
     (&reg::PART_EQ, "EQ"),
     (&reg::MASTER, "MASTER"),
     (&reg::MASTER_LEVEL, "LEVEL"),
+    (&reg::MASTER_SMART, "SMART EQ"),
     (&crate::ui::orbit::ORBIT_ORB, "ORB"),
     (&crate::ui::orbit::ORBIT_CUSTOM, "CUSTOM"),
     (&crate::ui::orbit::ORBIT_RHYTHM, "RHYTHM"),

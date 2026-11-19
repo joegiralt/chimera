@@ -383,14 +383,16 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
         "    *(.text.*12chimera_core2ui10kit_groups* .rodata.*12chimera_core2ui10kit_groups*
       .text.*14chimera_engine3dsp4drum6groups* .rodata.*14chimera_engine3dsp4drum6groups*);\n";
     // A Part's MAX VOICES and RESERVE (ADR 0281, `UiDoor::voices`, its
-    // one entry): `ui::part_voices`, beside the voice groups.
+    // one entry): `ui::part_voices`, beside the voice groups; and SMART
+    // EQ's band (ADR 0296, `UiDoor::smart_eq`): `ui::smart_eq`.
     // `ToastTimer::shows`' instance (`Option<Toast>::is_some_and` with
     // its closure): only kit_groups and part_voices call it.
     // `Shares::refusal` is only ever called from part_voices: placed with
     // it if it gets a symbol of its own.
     let voices =
         "    *(.text.*12chimera_core2ui11part_voices* .rodata.*12chimera_core2ui11part_voices*
-      .text.*10ToastTimer5shows* .text.*11voice_limit*6Shares7refusal*);\n";
+      .text.*10ToastTimer5shows* .text.*11voice_limit*6Shares7refusal*);
+    *(.text.*12chimera_core2ui8smart_eq* .rodata.*12chimera_core2ui8smart_eq*);\n";
     // The encoders' feel (ADR 0279, `UiDoor`'s feel entries): `ui::feel`,
     // the UI's curves, fine turn, band hint and CLASSIC RATE's semitone,
     // text and rodata (its words are named statics, not anonymous).
