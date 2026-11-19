@@ -61,15 +61,20 @@ cuts (feed-forward, no loop to go unstable or hunt).
 Per block, per band `b`, for each Part `p` with voices on its bus:
 
 - `L(p, b)`: the band's level, dBFS, the block's mean square of `bp`
-  followed by a one-pole on power (τ 60 ms), so one kick's hit is not a
-  verdict.
-- `active(L) = clamp((L − (−60)) / 24, 0, 1)`: silent below −60 dBFS, fully
-  active from −36 dBFS.
-- `threat(p, q) = clamp((L(p) − L(q) + 12) / 12, 0, 1)`: how much `p` can
-  mask `q` there: none when `p` sits 12 dB or more under `q`, full at
-  level with it or above. This is Perez-Gonzalez and Reiss's (DAFx-08)
-  "attenuate the others in proportion to their spectral relation to the
-  enhanced channel", kept to a level difference per band.
+  followed on power, rising with τ 50 ms and falling with τ 0.5 s: a long
+  MODAL tail or a pad's release is heard as the sustained energy it is,
+  not as peaks gone by (owner, 2026-11-19: "still a little bit muddy",
+  MODAL's long tails intrude most).
+- `active(L) = clamp((L − (−66)) / 24, 0, 1)`: silent below −66 dBFS, fully
+  active from −42 dBFS.
+- `threat(p, q)`: how much `p` can mask `q` there, by how far under `q` it
+  sits. In LOW and LOW MID, where the mud lives, fully to 12 dB under and
+  some to 30 dB under: a quiet ringing tail still clouds. Above, fully at
+  `q`'s level and none from 12 dB under. This is Perez-Gonzalez and
+  Reiss's (DAFx-08) "attenuate the others in proportion to their spectral
+  relation to the enhanced channel", kept to a level difference per band.
+- `weight(b)`: 1 in LOW and LOW MID, 3/4 above: the mud is where yielding
+  matters most.
 - `depth(q, p)`: how far `q` outranks `p`. MID under FRONT and BACK under
   MID: 2/3. BACK under FRONT: 1. Same role or `p` higher: 0.
 - `own(q, b)`: how much of band `b` is `q`'s own sound, not its other
@@ -77,8 +82,8 @@ Per block, per band `b`, for each Part `p` with voices on its bus:
   wide (−8.6, −20.6, −32.6 dB at one, two, three bands away), so a pure
   100 Hz bass "plays" in HIGH MID 20.6 dB under its LOW; `own` is its
   excess over the loudest skirt prediction, full at 6 dB.
-- `target(p, b) = AMOUNT · 6 dB · max over q of depth · active(q) ·
-  own(q) · active(p) · threat(p, q)`.
+- `target(p, b) = AMOUNT · 6 dB · weight(b) · max over q of depth ·
+  active(q) · own(q) · active(p) · threat(p, q)`.
 
 So the deepest cut is 6 dB (BACK under FRONT at full AMOUNT), 4 dB one rank
 apart; AMOUNT 64 (the default when switched on) halves those. The max over
@@ -90,6 +95,9 @@ that out so a role is a promise (two FRONT Parts stay as mixed).
 
 ### 3. Time
 
+- A ringing tail keeps its cut while it rings within the mud bands'
+  reach and lets it go as it fades: the target falls with the tail and
+  the cut follows at RELEASE's pace, never ahead of it.
 - The cut follows its target in dB at block rate: deeper with τ 0.5 s
   (attack), shallower with τ 2 s (release). A kick at 120 BPM hits every
   0.5 s, so the cut it causes settles near its average instead of
@@ -207,6 +215,9 @@ Clean room: no code read or copied from any implementation.
   on multi-Part material.
 - A FRONT bass and a MID pad clashing about 100 Hz: the pad's LOW cut
   deepens, its HIGH bands do not, the bass is untouched.
+- A ringing tail keeps its LOW cut while it rings within reach.
+- The tuning: `just smart-eq-ab` (a MODAL pad over a bass) and the teaser's
+  breaks vignette, on the 250 Hz – 2 kHz overlap.
 - No gain moves more than 0.001 dB in a sample, on and off, AMOUNT swept.
 - No subnormals in the state after silence follows sound.
 - ROLE, SMART EQ and AMOUNT save and load with the project; an old project
@@ -217,3 +228,6 @@ Clean room: no code read or copied from any implementation.
 1. ROLE on PRT › EQ (cell C) rather than PRT itself, which is full.
 2. Listening in the four cut bands rather than about 8 (§ 1).
 3. SMART EQ and AMOUNT on MST › LVL rather than a page of their own.
+4. The caps (4 dB one rank, 6 dB two, × AMOUNT) now bound how far the mud
+   drops: the breaks vignette's 250 Hz – 2 kHz overlap −1.4 dB at AMOUNT 64,
+   −2.7 dB at 127. A deeper cap in LOW and LOW MID would go further.
