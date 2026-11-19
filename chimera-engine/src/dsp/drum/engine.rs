@@ -17,11 +17,10 @@ use crate::params::{EnvParams, ParamSnapshot};
 use crate::project::PartId;
 
 use super::kernel::KernelState;
-use super::laws::resolve;
 use super::sound::{
     AmpMode, EnvDecay, PadAmp, PadRoutes, PadSound, Places, RouteDest, RouteOffsets, RouteValues,
 };
-use super::types::{DrumHit, HitSeed, Pan, SampleRate};
+use super::types::{DrumHit, HitSeed, KernelBill, Pan, SampleRate};
 use super::view::KIT_VIEW;
 
 /// A pad's PAN off centre, as the gains of the voice's mid (its Part's
@@ -228,7 +227,7 @@ impl DrumEngine {
     #[optimize(size)]
     pub fn strike(&mut self, hit: &DrumHit, vel: Velocity, seed: HitSeed, sr: SampleRate) {
         let pad = hit.params();
-        let p = resolve(pad.machine(), pad.knobs()).transposed(hit.pitch());
+        let p = hit.kernel_params();
         self.hit = Some(*hit);
         self.kernel
             .strike_in_place(p, pad.sound().amp().level(vel), seed, sr);
@@ -388,6 +387,13 @@ impl DrumEngine {
     /// The hit sounding, if one is.
     pub fn hit(&self) -> Option<DrumHit> {
         self.hit
+    }
+
+    /// What the hit sounding bills its next block (ADR 0287): its
+    /// machine at its kernel's pulse pace (`KernelState::pace`).
+    pub fn bill(&self) -> Option<KernelBill> {
+        self.hit
+            .map(|h| KernelBill::of(h.params().machine(), self.kernel.pace()))
     }
 
     /// The hit's next block at its pad's LEVEL (k / 127, before the

@@ -180,17 +180,21 @@ fn a_stack_pad_ends_its_own_oldest_voice_not_another_pads() {
 /// neither voice is taken (ADR 0280). Pad 1, STACK, rings a KICK; pad 11
 /// rings a COWBELL; pad 1 is then made a COWBELL too, so its next hit
 /// costs a COWBELL while its own KICK frees a KICK's worth. The budget
-/// leaves room only for a steal of the COWBELL's size.
+/// leaves room only for a steal of the COWBELL's size. Both COWBELLs at
+/// full BUMP, billed their sweep head above a KICK (ADR 0287).
 #[test]
 fn a_stack_pad_refuses_where_only_another_pads_voice_would_fit() {
-    use chimera_core::dsp::drum::types::Machine;
+    use chimera_core::dsp::drum::types::{Knob, KnobValue, Machine, Ticking};
     use chimera_core::hw::SampleBudget;
+    let bump = KnobValue::new(chimera_midi::value::U7::MAX);
     let mut w = writer();
     let mut k = Kit::DEFAULT;
     k.pad_mut(pad(1)).set_retrig(Retrig::Stack);
     k.pad_mut(pad(11)).set_machine(Machine::ToneCowbell);
+    k.pad_mut(pad(11)).knobs_mut().set(Knob::H, bump);
     let mut k2 = k;
     k2.pad_mut(pad(1)).set_machine(Machine::ToneCowbell);
+    k2.pad_mut(pad(1)).knobs_mut().set(Knob::H, bump);
     // Pad 11's tail, then pad 1's KICK, then pad 1 a COWBELL.
     let play = |r: &mut common::InstRig, w: &mut KitWriter| {
         r.note_on_vel(0, key(pad(11)), 127);
@@ -213,7 +217,7 @@ fn a_stack_pad_refuses_where_only_another_pads_voice_would_fit() {
         .sum();
     let booked = |pct: u8| u32::from(pct) * a.budget().as_cost().0 / 100;
     let reserve = booked(probe.inst.cost_pct()) - a.sounding_cost().0;
-    let (kick, cowbell) = (Machine::ToneKick.cost().0, Machine::ToneCowbell.cost().0);
+    let (kick, cowbell) = (Machine::ToneKick.cost().0, Ticking::CowbellSwept.cost().0);
     // Free room under the COWBELL hit by midway between a KICK and a
     // COWBELL: the KICK's steal doesn't fit, the COWBELL's would.
     let budget = reserve + pool + cowbell - (kick + cowbell) / 2;

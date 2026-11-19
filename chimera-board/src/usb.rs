@@ -662,7 +662,7 @@ impl Unit for ChipUnit<'_> {
     /// `None` without `perf-probe`: no reader.
     fn stats(&mut self) -> Option<Stats> {
         let audio = crate::audio_stats(self.stats.as_deref_mut())?;
-        crate::probe::restart_voice_peak();
+        crate::probe::restart_peaks();
         let (loop_avg_us, loop_peak_us) = self.timer.take();
         let wall = self.wall.fold(
             crate::shared::dwt(),
