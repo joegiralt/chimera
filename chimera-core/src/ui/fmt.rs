@@ -171,6 +171,10 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
             n => write!(buf, "{hi} {n}"),
         };
     };
+    // CLASSIC RATE's places are bank 2's (ADR 0279); closed, two.
+    if matches!(law, Law::LfoHz) && crate::bank2::ui_door(|u| u.law_text(buf, law, v)).is_some() {
+        return;
+    }
     match law {
         Law::Pct => {
             let _ = write!(buf, "{}%", round(v * 100.0));
