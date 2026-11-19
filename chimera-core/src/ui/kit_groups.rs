@@ -27,10 +27,6 @@ pub(crate) enum Ask<'a> {
     Held(&'a UiState, PartId, ChokeHold),
     /// The refusal's words for a count.
     Why(VoiceGroups),
-    /// Pad `p`'s CHOKE set to the stored value: its refusal's words
-    /// (`Said::Line`), or `Said::Fits`. An editor's set (`ed set`), checked
-    /// before its turn as the box's other refusals are.
-    Refuses(&'a UiState, PartId, PadId, f32),
     /// CHOKE's focus band: the kit's count.
     Note(&'a Kit),
 }
@@ -41,10 +37,9 @@ pub(crate) enum Said {
     Moved(bool),
     /// `Held`: refused, with the count it would make.
     Refused(VoiceGroups),
-    /// `Held`: it would land, or the kit changed since; `Refuses`: it
-    /// lands.
+    /// `Held`: it would land, or the kit changed since.
     Fits,
-    /// `Why`, `Note` and a `Refuses` refused.
+    /// `Why` and `Note`.
     Line(Line),
 }
 
@@ -81,19 +76,17 @@ pub(crate) fn ask_in(a: Ask<'_>) -> Said {
         }
         Ask::Why(n) => Said::Line(why(n)),
         Ask::Note(kit) => Said::Line(note(kit)),
-        Ask::Refuses(ui, at, p, v) => refuses(ui.project.kit(at), p, v),
     }
 }
 
-/// Pad `p` of `kit`'s CHOKE set to `v`, as `edit`'s `Edit::To` lands it.
+/// Why pad `p` of `kit` can't take CHOKE's stored value `v`, as `edit`'s
+/// `Edit::To` refuses it. An editor's set (`ed set`), checked before its
+/// turn as the box's other refusals are: bank 2 to bank 2, no door.
 #[optimize(speed)]
-fn refuses(kit: &Kit, p: PadId, v: f32) -> Said {
+pub(crate) fn refuses(kit: &Kit, p: PadId, v: f32) -> Option<Line> {
     let mut pad = *kit.pad(p);
     pad.set(held::CHOKE.param, v);
-    match VoiceGroups::choke(kit, p, pad.choke()) {
-        Ok(_) => Said::Fits,
-        Err(n) => Said::Line(why(n)),
-    }
+    VoiceGroups::choke(kit, p, pad.choke()).err().map(why)
 }
 
 /// A CHOKE turn `delta` (to an end with `shift`) on Part `at`'s selected

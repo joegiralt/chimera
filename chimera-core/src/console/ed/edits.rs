@@ -4,6 +4,7 @@
 //! pad, whichever the box has selected (ADR 0285).
 
 use core::fmt::{self, Write};
+use core::mem::MaybeUninit;
 
 use super::value::{engine_of, find};
 use super::{EdAddr, EdValue, OptIndex};
@@ -77,10 +78,12 @@ struct Refused {
 }
 
 /// The turns refused since `ed since` last said them, oldest first: the
-/// newest `REFUSED` (a fixed array, no rotate: core's would link into bank
-/// 1).
+/// newest `REFUSED`. Uninit past `len`, so `EdState::new`, built in bank 1
+/// (`take_ed`), writes one byte for them; shifted by hand, as core's rotate
+/// would link into bank 1.
 pub(super) struct Refusals {
-    items: [Option<Refused>; REFUSED],
+    items: [MaybeUninit<Refused>; REFUSED],
+    len: u8,
 }
 
 impl Refusals {
@@ -90,7 +93,8 @@ impl Refusals {
     )]
     pub(super) const fn new() -> Refusals {
         Refusals {
-            items: [None; REFUSED],
+            items: [MaybeUninit::uninit(); REFUSED],
+            len: 0,
         }
     }
 
@@ -100,19 +104,17 @@ impl Refusals {
         unsafe(link_section = ".bank2_ed.edits.refusals_push")
     )]
     fn push(&mut self, addr: EdAddr, why: Line) {
-        let mut i = 0;
-        while i < REFUSED && self.items[i].is_some() {
-            i += 1;
-        }
-        if i == REFUSED {
-            i = 1;
+        let mut at = usize::from(self.len);
+        if at == REFUSED {
+            let mut i = 1;
             while i < REFUSED {
                 self.items[i - 1] = self.items[i];
                 i += 1;
             }
-            i = REFUSED - 1;
+            at = REFUSED - 1;
         }
-        self.items[i] = Some(Refused { addr, why });
+        self.items[at] = MaybeUninit::new(Refused { addr, why });
+        self.len = (at + 1) as u8;
     }
 
     /// `refused <ADDR> "<why>"`, one line each.
@@ -122,10 +124,11 @@ impl Refusals {
     )]
     pub(super) fn write(&self, w: &mut dyn Write) -> fmt::Result {
         let mut i = 0;
-        while i < REFUSED {
-            if let Some(r) = &self.items[i] {
-                writeln!(w, "refused {} \"{}\"", r.addr, r.why.as_str())?;
-            }
+        while i < usize::from(self.len) {
+            // SAFETY: `push` writes every item below `len` before raising
+            // it, and `len` never passes `REFUSED`.
+            let r = unsafe { self.items[i].assume_init_ref() };
+            writeln!(w, "refused {} \"{}\"", r.addr, r.why.as_str())?;
             i += 1;
         }
         Ok(())
@@ -137,7 +140,7 @@ impl Refusals {
         unsafe(link_section = ".bank2_ed.edits.refusals_clear")
     )]
     pub(super) fn clear(&mut self) {
-        self.items = [None; REFUSED];
+        self.len = 0;
     }
 }
 
@@ -273,10 +276,7 @@ fn refusal(ui: &UiState, p: Pending) -> Option<Line> {
     if a == held::CHOKE
         && let Some(n) = p.addr.pad()
     {
-        return match crate::bank2::groups(kit_groups::Ask::Refuses(ui, p.part, n, p.to.stored())) {
-            Some(kit_groups::Said::Line(l)) => Some(l),
-            _ => None,
-        };
+        return kit_groups::refuses(ui.project().kit(p.part), n, p.to.stored());
     }
     let src = ui.streams(p.part);
     if let Some(t) = held::TapeTurn::of(a, p.to.stored()) {
