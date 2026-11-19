@@ -26,15 +26,72 @@ pub(crate) fn ask_in(a: Ask<'_>) {
     }
 }
 
+/// Each word `WORDS` holds, its index in `TEXT`.
+#[derive(Clone, Copy)]
+#[repr(usize)]
+enum W {
+    Vca,
+    Replaces,
+    SumStarts,
+    NeedsRoute,
+    DuckAmount,
+    DuckRelease,
+    StereoPan,
+    StereoWidth,
+}
+
+/// The words, in `W`'s order. Read only at compile time: their bytes
+/// reach the build through `WORDS` alone.
+const TEXT: [&str; 8] = [
+    "VCA:",
+    "ROUTES REPLACE CONTOUR",
+    "SUM STARTS AT AMP BASE",
+    "NEEDS A ROUTE INTO VCA",
+    "DUCKS THE TAIL UNDER ITS INPUT",
+    "HOW FAST THE TAIL RETURNS",
+    "PLACES EACH NOTE, ROUTABLE",
+    "0 MONO, 64 AS PANNED, 127 WIDE",
+];
+
+/// Where word `i` starts in `WORDS`: the lengths before it.
+const fn start(i: usize) -> usize {
+    let (mut at, mut j) = (0, 0);
+    while j < i {
+        at += TEXT[j].len();
+        j += 1;
+    }
+    at
+}
+
+const LEN: usize = start(TEXT.len());
+
+/// `TEXT` end to end.
+const fn joined() -> [u8; LEN] {
+    let mut out = [0u8; LEN];
+    let (mut i, mut at) = (0, 0);
+    while i < TEXT.len() {
+        let b = TEXT[i].as_bytes();
+        let mut k = 0;
+        while k < b.len() {
+            out[at] = b[k];
+            at += 1;
+            k += 1;
+        }
+        i += 1;
+    }
+    out
+}
+
 /// The words this module draws, named so they link into bank 2 with it
 /// (`.rodata.*notes*`), not into bank 1's unnamed rodata.
-static WORDS: [u8; 181] =
-    *b"VCA:ROUTES REPLACE CONTOURSUM STARTS AT AMP BASENEEDS A ROUTE INTO VCADUCKS THE TAIL UNDER ITS INPUTHOW FAST THE TAIL RETURNSPLACES EACH NOTE, ROUTABLE0 MONO, 64 AS PANNED, 127 WIDE";
+static WORDS: [u8; LEN] = joined();
 
-/// `WORDS[at..at + len]`; checked at compile time (`WORDS` is UTF-8).
-const fn word(at: usize, len: usize) -> &'static str {
-    let (_, b) = WORDS.split_at(at);
-    let (b, _) = b.split_at(len);
+/// Word `w`, cut from `WORDS` where `TEXT` puts it; checked at compile
+/// time (`WORDS` is UTF-8).
+const fn word(w: W) -> &'static str {
+    let i = w as usize;
+    let (_, b) = WORDS.split_at(start(i));
+    let (b, _) = b.split_at(TEXT[i].len());
     match core::str::from_utf8(b) {
         Ok(s) => s,
         Err(_) => panic!("WORDS is UTF-8"),
@@ -42,17 +99,17 @@ const fn word(at: usize, len: usize) -> &'static str {
 }
 
 /// The VCA column with no ENV route: its routes are the whole amp.
-pub static VCA_REPLACES: [Gesture<'static>; 1] = [Gesture(word(0, 4), word(4, 22))];
+pub static VCA_REPLACES: [Gesture<'static>; 1] = [Gesture(word(W::Vca), word(W::Replaces))];
 /// The VCA column with an ENV route: the sum starts at AMP's BASE.
-pub static VCA_BASE: [Gesture<'static>; 1] = [Gesture(word(0, 4), word(26, 22))];
+pub static VCA_BASE: [Gesture<'static>; 1] = [Gesture(word(W::Vca), word(W::SumStarts))];
 /// BASE dimmed: it waits for a route into VCA.
-pub static BASE_UNROUTED: &str = word(48, 22);
+pub static BASE_UNROUTED: &str = word(W::NeedsRoute);
 /// REV › DUCK's AMOUNT and RELEASE (ADR 0295).
-pub static DUCK_AMOUNT: &str = word(70, 30);
-pub static DUCK_RELEASE: &str = word(100, 25);
+pub static DUCK_AMOUNT: &str = word(W::DuckAmount);
+pub static DUCK_RELEASE: &str = word(W::DuckRelease);
 /// AMP › STEREO's PAN and WIDTH (ADR 0294), WIDTH on DRUM's GATE too.
-pub static STEREO_PAN: &str = word(125, 26);
-pub static STEREO_WIDTH: &str = word(151, 30);
+pub static STEREO_PAN: &str = word(W::StereoPan);
+pub static STEREO_WIDTH: &str = word(W::StereoWidth);
 
 /// The matrix's hint on `m`'s cursor in the VCA column, on a cell with no
 /// route (a route's own cell keeps its DELETE): the routes replace the
@@ -100,5 +157,10 @@ mod tests {
         assert_eq!(STEREO_PAN, "PLACES EACH NOTE, ROUTABLE");
         assert_eq!(STEREO_WIDTH, "0 MONO, 64 AS PANNED, 127 WIDE");
         assert_eq!(WORDS.len(), 181);
+        assert_eq!(
+            STEREO_WIDTH.as_ptr(),
+            WORDS[151..].as_ptr(),
+            "cut from WORDS"
+        );
     }
 }
