@@ -83,3 +83,43 @@ fn every_part_one_role_cuts_nothing_and_writes_nothing() {
     assert!(out == plain);
     assert!(rig.inst.part_eqs().smart.live());
 }
+
+/// Part 1 (FRONT) holding a chord, sent to the reverb, under `smart`:
+/// every DAC sample, as bits.
+fn washed(smart: SmartEq) -> (Vec<u32>, InstRig) {
+    use chimera_core::dsp::SendLevel;
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+    let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
+    rig.shared.fx.comp.smart = smart;
+    rig.shared.parts[0].mix.role = Role::Front;
+    rig.shared.parts[0].params.out.sends[2] = SendLevel::new(1.0);
+    for n in [45, 52, 57, 60] {
+        rig.note_on(0, n);
+    }
+    let mut out = Vec::new();
+    for _ in 0..BLOCKS {
+        rig.render(1);
+        for pair in rig.out().iter() {
+            out.extend(pair.iter().map(|s| s.to_bits()));
+        }
+    }
+    (out, rig)
+}
+
+#[test]
+fn the_reverb_s_return_yields_to_a_front_part_and_off_it_is_as_played() {
+    let (plain, _) = washed(SmartEq::OFF);
+    let (zero, mut rig) = washed(on(0));
+    assert!(zero == plain, "AMOUNT 0 changed the return");
+    assert!(!rig.inst.part_eqs().any_live());
+    // On: the return (BACK by default) is cut under the Part that feeds
+    // it; the Part itself is not.
+    let (out, mut rig) = washed(on(64));
+    assert!(out != plain);
+    let eqs = rig.inst.part_eqs();
+    let wash: f32 = Band::ALL.map(|b| eqs.smart.wash_cut(b).get()).iter().sum();
+    assert!(wash > 1.0, "the return yields: {wash} dB in all");
+    for b in Band::ALL {
+        assert_eq!(eqs.smart.cut(PartId::ALL[0], b), CutDb::ZERO);
+    }
+}

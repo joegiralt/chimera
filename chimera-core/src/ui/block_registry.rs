@@ -589,8 +589,9 @@ pub static MASTER: BlockDef = BlockDef {
 
 /// MST › LEVEL: the legacy VOL and PAN, off the compressor's page (FX diet
 /// spec § UI; an assumed default, pending the owner's word); and SMART EQ
-/// and AMOUNT (ADR 0296), the master's own mix settings, its band every
-/// Part's live SMART EQ cuts. A page of their own would take a new page
+/// and AMOUNT (ADR 0296), the master's own mix settings, and the reverb
+/// return's role in it (cell F, `renderer::WASH_ROLE_SLOT`); its band every
+/// Part's live SMART EQ cuts and the return's. A page of their own would take a new page
 /// id, and `FocusMemory` (a byte an id) grows past D2 on bench-algo.
 pub static MASTER_LEVEL: BlockDef = BlockDef {
     id: 58,
@@ -604,7 +605,7 @@ pub static MASTER_LEVEL: BlockDef = BlockDef {
         EMPTY,
         ParamSlot::param(BlockRef::Comp, CompParams::SMART_EQ),
         ParamSlot::param(BlockRef::Comp, CompParams::AMOUNT),
-        EMPTY,
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::ROLE),
     ],
 };
 

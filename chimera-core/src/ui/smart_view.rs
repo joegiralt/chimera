@@ -27,15 +27,19 @@ pub struct Shown {
     pub shows: Shows,
     pub cuts: [CutView; MAX_PARTS],
     pub roles: [Role; MAX_PARTS],
+    /// The reverb return's cuts and role: MST › LVL's last column.
+    pub wash: (CutView, Role),
 }
 
 impl Shown {
-    /// The audio's live cuts now, with `roles`.
-    pub fn now(shows: Shows, roles: [Role; MAX_PARTS]) -> Shown {
+    /// The audio's live cuts now, with the Parts' `roles` and the reverb
+    /// return's.
+    pub fn now(shows: Shows, roles: [Role; MAX_PARTS], wash: Role) -> Shown {
         Shown {
             shows,
             cuts: PartId::ALL.map(|p| SMART_VIEW.read(p)),
             roles,
+            wash: (SMART_VIEW.read_wash(), wash),
         }
     }
 
@@ -53,7 +57,7 @@ impl Shown {
         for c in self.cuts {
             k = k.rotate_left(7) ^ c.word();
         }
-        k
+        k.rotate_left(7) ^ self.wash.0.word() ^ u32::from(self.wash.1.code()) << 13
     }
 }
 
@@ -105,8 +109,8 @@ pub struct Plan {
 }
 
 impl Plan {
-    pub const RECTS: usize = 48;
-    pub const TEXTS: usize = 12;
+    pub const RECTS: usize = 56;
+    pub const TEXTS: usize = 14;
 
     pub const EMPTY: Plan = Plan {
         rects: [Rect {

@@ -228,14 +228,32 @@ pub struct PartsBlock<'a> {
     pub sides: &'a mut Sides,
     pub written: &'a [bool; MAX_PARTS],
     pub parts: &'a [PartAudio; MAX_PARTS],
-    /// The master's SMART EQ (ADR 0296), from the snapshot's `CompParams`.
+    /// The master's SMART EQ (ADR 0296), from the snapshot's `CompParams`,
+    /// and the reverb return's role in it.
     pub smart: SmartEq,
+    pub wash: Role,
     pub sample_rate: u32,
+}
+
+/// The door's entry (`EqDoor`): what bank 1 asked, answered here in the
+/// EQ's S4 group.
+#[inline(never)]
+pub fn answer(ask: super::door::Ask<'_, '_>) {
+    use super::door::Ask;
+    match ask {
+        Ask::Parts(eqs, b) => run_parts(eqs, b),
+        Ask::Wash {
+            eqs,
+            wet,
+            sounding,
+            sample_rate,
+        } => smart::run_wash(&mut eqs.smart, wet, sounding, sample_rate),
+    }
 }
 
 /// `run` on the Parts' own settings (`PartParams::eq`), then SMART EQ's
 /// cuts on their roles (`PartParams::role`).
-#[inline(never)]
+#[inline(always)]
 pub fn run_parts(eqs: &mut PartEqs, b: PartsBlock<'_>) {
     let settings: [PartEq; MAX_PARTS] = core::array::from_fn(|p| b.parts[p].mix.eq);
     run(
@@ -259,6 +277,7 @@ pub fn run_parts(eqs: &mut PartEqs, b: PartsBlock<'_>) {
             written: b.written,
             roles: &roles,
             kinds: &kinds,
+            wash: b.wash,
             smart: b.smart,
             sample_rate: b.sample_rate,
         },

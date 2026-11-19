@@ -482,7 +482,7 @@ impl Renderer {
                 viz::parts_overview(display, &self.strips(f), f.active_part.index())
             }
             VizType::SmartEq(scope) => {
-                crate::ui::smart_view::paint(display, &smart_shown(f, scope))
+                crate::ui::smart_view::paint(display, &self.smart_shown(f, scope))
             }
             VizType::EffectsFlow(FxFlow::Sends) => {
                 let sends = [
@@ -627,6 +627,31 @@ impl Renderer {
 
     /// Level and pan of every Part; the edited one from its animated LEVEL
     /// and PAN slots so it lerps like the cells.
+    /// SMART EQ's band (ADR 0296): PRT › EQ's Part, or every Part and the
+    /// reverb's return on MST › LVL, whose cell F is the return's role.
+    fn smart_shown(
+        &self,
+        f: &Frame,
+        scope: crate::ui::block_def::SmartScope,
+    ) -> crate::ui::smart_view::Shown {
+        use crate::part_eq::smart::Role;
+        use crate::ui::block_def::SmartScope;
+        use crate::ui::smart_view::{Shown, Shows};
+        let roles = core::array::from_fn(|p| f.parts[p].mix.role);
+        match scope {
+            SmartScope::Part => Shown::now(
+                Shows::Part(f.active_part),
+                roles,
+                crate::dsp::reverb::WASH_ROLE,
+            ),
+            SmartScope::All => {
+                let span = (Role::ALL.len() - 1) as f32;
+                let wash = Role::from_f32(self.anim[WASH_ROLE_SLOT].current() * span + 0.5);
+                Shown::now(Shows::All(f.active_part), roles, wash)
+            }
+        }
+    }
+
     fn strips(&self, f: &Frame) -> [viz::Strip; crate::hw::MAX_PARTS] {
         let slot = |id| {
             let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Part, id);
@@ -700,7 +725,7 @@ impl Renderer {
                     strips_key(&self.strips(f), f.active_part.index()),
                 ),
                 VizType::EffectsFlow(_) => (region::quantize_values(&self.anim), f.focus as u32),
-                VizType::SmartEq(scope) => ([0; 6], smart_shown(f, scope).key()),
+                VizType::SmartEq(scope) => ([0; 6], self.smart_shown(f, scope).key()),
                 VizType::AlgoDiagram => {
                     let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);
@@ -1531,17 +1556,8 @@ fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
     cell_text::held_on(f.held, view)
 }
 
-/// SMART EQ's band (ADR 0296): PRT › EQ's Part, or every Part on MST ›
-/// LVL.
-fn smart_shown(f: &Frame, scope: crate::ui::block_def::SmartScope) -> crate::ui::smart_view::Shown {
-    use crate::ui::block_def::SmartScope;
-    use crate::ui::smart_view::{Shown, Shows};
-    let shows = match scope {
-        SmartScope::Part => Shows::Part(f.active_part),
-        SmartScope::All => Shows::All(f.active_part),
-    };
-    Shown::now(shows, core::array::from_fn(|p| f.parts[p].mix.role))
-}
+/// MST › LVL's cell for the reverb return's SMART EQ role.
+pub const WASH_ROLE_SLOT: usize = 5;
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).
 fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {

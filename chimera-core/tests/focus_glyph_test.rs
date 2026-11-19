@@ -160,6 +160,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Reverb", "DENSITY", CUBE),
     ("Reverb", "TYPE", NONE),
     ("Reverb", "SYNC", NONE),
+    // The return's SMART EQ role (ADR 0296): three words.
+    ("Reverb", "ROLE", NONE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("VoiceFx", "MIX", XF),
@@ -1586,9 +1588,9 @@ fn cube_ui(slot: EncoderId) -> UiState {
 
 #[test]
 fn glyph_cube_page_moves_only_inside_its_box() {
-    // Every reverb knob carries the composite; TYPE and SYNC are words.
+    // Every reverb knob carries the composite; TYPE, SYNC and ROLE are words.
     for s in BlockRef::Reverb.specs() {
-        if matches!(s.ident, "TYPE" | "SYNC") {
+        if matches!(s.ident, "TYPE" | "SYNC" | "ROLE") {
             assert_eq!(s.glyph, NONE, "{}", s.ident);
             continue;
         }

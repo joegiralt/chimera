@@ -2,6 +2,7 @@
 //! semantic slots, read per TYPE. `knobs` maps them to what the engine
 //! plays; the engines and the panel's value text share it.
 
+use crate::part_eq::smart::Role;
 use core::f32::consts::LOG2_10;
 
 use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code};
@@ -99,6 +100,9 @@ pub struct ReverbParams {
     /// The wander's speed.
     pub rate: f32,
     pub sync: RevSync,
+    /// The return's SMART EQ role (ADR 0296): it yields as a Part of this
+    /// role would, and never makes a Part yield. In the struct's padding.
+    pub role: Role,
     /// HALL's DENSITY: its taps a side, 3 → 8.
     pub density: f32,
 }
@@ -117,6 +121,7 @@ impl ReverbParams {
         smear: 0.0,
         rate: RATE_DEFAULT,
         sync: RevSync::Off,
+        role: WASH_ROLE,
         density: DENSITY_DEFAULT,
     };
 }
@@ -776,6 +781,8 @@ impl ReverbParams {
     pub const RATE: ParamId = ParamId(12);
     pub const SYNC: ParamId = ParamId(13);
     pub const DENSITY: ParamId = ParamId(14);
+    /// 15 and 16 are REV › DUCK's (ADR 0295).
+    pub const ROLE: ParamId = ParamId(17);
 
     /// What the ring reads.
     pub fn controls(&self) -> RingControls {
@@ -848,7 +855,10 @@ const REV: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
 
 /// The reverb runs outside `Voice`: nothing is modulatable. Labels are the
 /// static ones; each TYPE's panel names its slots (`ui::reverb_panel`).
-pub static REVERB_SPECS: [ParamSpec; 13] = [
+/// Where the return starts in SMART EQ: behind everything.
+pub const WASH_ROLE: Role = Role::Back;
+
+pub static REVERB_SPECS: [ParamSpec; 14] = [
     ParamSpec::choice(
         6,
         "TYPE",
@@ -1016,6 +1026,17 @@ pub static REVERB_SPECS: [ParamSpec; 13] = [
     .ident("DENSITY")
     .short("DENS")
     .glyph(REV),
+    // The return's SMART EQ role (ADR 0296): BACK unless moved.
+    ParamSpec::choice(
+        17,
+        "REV ROLE",
+        ValFmt::Names(&crate::part_eq::smart::ROLE_NAMES),
+        2.0,
+        WASH_ROLE.code() as f32,
+        Change::Snap,
+    )
+    .ident("ROLE")
+    .glyph(FocusGlyph::None),
 ];
 
 impl Block for ReverbParams {
@@ -1040,6 +1061,7 @@ impl Block for ReverbParams {
             Self::RATE => self.rate,
             Self::SYNC => self.sync as u8 as f32,
             Self::DENSITY => self.density,
+            Self::ROLE => f32::from(self.role.code()),
             _ => 0.0,
         }
     }
@@ -1062,6 +1084,7 @@ impl Block for ReverbParams {
             Self::RATE => self.rate = v,
             Self::SYNC => self.sync = RevSync::at(v),
             Self::DENSITY => self.density = v,
+            Self::ROLE => self.role = Role::from_f32(v),
             _ => {}
         }
     }
@@ -1079,6 +1102,7 @@ impl Block for ReverbParams {
         match id {
             Self::TYPE => Some(self.kind.disk_code()),
             Self::SYNC => Some(self.sync.disk_code()),
+            Self::ROLE => Some(self.role.code()),
             _ => None,
         }
     }
@@ -1087,6 +1111,7 @@ impl Block for ReverbParams {
         match id {
             Self::TYPE => Some(self.kind.disk_ident()),
             Self::SYNC => Some(self.sync.disk_ident()),
+            Self::ROLE => Some(self.role.ident()),
             _ => None,
         }
     }
@@ -1095,6 +1120,7 @@ impl Block for ReverbParams {
         match id {
             Self::TYPE => apply_code(ReverbType::from_disk_code(code), |t| self.kind = t),
             Self::SYNC => apply_code(RevSync::from_disk_code(code), |s| self.sync = s),
+            Self::ROLE => apply_code(Role::from_code(code), |r| self.role = r),
             _ => false,
         }
     }

@@ -176,6 +176,21 @@ impl FxBus {
         sample_rate: u32,
         ret: &mut Stereo,
     ) {
+        self.process_washed(sends, params, tempo, sample_rate, ret, None);
+    }
+
+    /// `process`, the reverb's return through SMART EQ on its way (ADR
+    /// 0296) where `eqs` is given and SMART EQ runs: bank 2's, behind the
+    /// EQ's door; closed, or at rest, the return is as it was played.
+    pub fn process_washed(
+        &mut self,
+        sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
+        params: &FxParams,
+        tempo: Tempo,
+        sample_rate: u32,
+        ret: &mut Stereo,
+        eqs: Option<&mut crate::part_eq::PartEqs>,
+    ) {
         let [chorus, delay, reverb] = sends;
         self.chorus
             .process_wet(chorus, &params.chorus, sample_rate, ret);
@@ -206,6 +221,16 @@ impl FxBus {
             .reverb
             .play(reverb, &params.reverb, mix, tempo, sample_rate, &mut wet)
             && crate::dsp::may_skip();
+        if let Some(eqs) = eqs.filter(|e| e.smart.live()) {
+            use crate::part_eq::door::{Ask, through};
+            let ask = Ask::Wash {
+                eqs,
+                wet: &mut wet,
+                sounding: !none,
+                sample_rate,
+            };
+            through(|d| d.eq().run(ask));
+        }
         if !none {
             add(&mut ret.l, &wet.l);
             add(&mut ret.r, &wet.r);

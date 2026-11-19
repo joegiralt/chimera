@@ -44,3 +44,21 @@ pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartEq) -> Co
     };
     tilt + smart
 }
+
+/// SMART EQ listening to the reverb's return (FRONT, or the reverb off):
+/// its sum's four bands decimated.
+pub const WASH_LISTEN: Cost = Cost(40);
+/// SMART EQ on a return it can cut: its left and its right through the
+/// four bands, the sum listened to.
+pub const WASH_CUT: Cost = Cost(165);
+
+/// What SMART EQ on the reverb's return reserves from the budget beside
+/// the bus (ADR 0296), with the reverb TYPE's own extra: nothing with
+/// SMART EQ off or the reverb off.
+pub fn wash(reverb: &crate::dsp::reverb::ReverbParams, smart: SmartEq) -> Cost {
+    match (smart.listens() && reverb.is_on(), reverb.role) {
+        (false, _) => Cost::ZERO,
+        (true, Role::Front) => WASH_LISTEN,
+        (true, Role::Mid | Role::Back) => WASH_CUT,
+    }
+}

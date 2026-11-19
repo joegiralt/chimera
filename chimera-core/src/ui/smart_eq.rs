@@ -140,29 +140,44 @@ fn part(pen: &mut Pen<'_>, v: CutView) {
     }
 }
 
+/// MST › LVL's columns: the six Parts, then the reverb's return.
+const ALL_X0: i32 = 20;
+const ALL_DX: i32 = 32;
+
 fn all(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
+    let column = |pen: &mut Pen<'_>, i: usize, lit: bool, cuts: CutView, role: &'static str| {
+        let cx = ALL_X0 + ALL_DX * i as i32;
+        let fill = if lit { theme::ACCENT } else { theme::BAR_REST };
+        let x0 = cx - BANDS_W / 2;
+        for b in Band::ALL {
+            let bx = x0 + (ALL_BAR_W + ALL_BAR_GAP) * b.index() as i32;
+            let c = cuts.cut(b);
+            pen.rect(bx, viz::STRIP_TOP, ALL_BAR_W, viz::STRIP_H, theme::FAINT);
+            pen.rect(bx, viz::STRIP_TOP, ALL_BAR_W, depth(c, viz::STRIP_H), fill);
+        }
+        let ink = if lit { theme::INK } else { theme::MID };
+        pen.text(cx, viz::STRIP_PAN_Y - 3, Font::Label, ink, |w| {
+            w.str(role);
+        });
+        cx
+    };
     for p in PartId::ALL {
-        let (x, lit) = (viz::strip_x(p.index()), p == sel);
+        let lit = p == sel;
+        let role = s.roles[p.index()].letter();
+        let cx = column(pen, p.index(), lit, s.cuts[p.index()], role);
         let (font, ink) = if lit {
             (Font::LabelBold, theme::INK)
         } else {
             (Font::Label, theme::MID)
         };
         let n = p.index() as u32 + 1;
-        pen.text(x + 4, viz::STRIP_NUM_Y, font, ink, |w| {
+        pen.text(cx, viz::STRIP_NUM_Y, font, ink, |w| {
             w.digits(n);
         });
-        let fill = if lit { theme::ACCENT } else { theme::BAR_REST };
-        let x0 = x + 4 - BANDS_W / 2;
-        for b in Band::ALL {
-            let bx = x0 + (ALL_BAR_W + ALL_BAR_GAP) * b.index() as i32;
-            let c = s.cuts[p.index()].cut(b);
-            pen.rect(bx, viz::STRIP_TOP, ALL_BAR_W, viz::STRIP_H, theme::FAINT);
-            pen.rect(bx, viz::STRIP_TOP, ALL_BAR_W, depth(c, viz::STRIP_H), fill);
-        }
-        let role = s.roles[p.index()].letter();
-        pen.text(x + 4, viz::STRIP_PAN_Y - 3, Font::Label, ink, |w| {
-            w.str(role);
-        });
     }
+    // The reverb's return, a member with a role of its own.
+    let cx = column(pen, PartId::ALL.len(), false, s.wash.0, s.wash.1.letter());
+    pen.text(cx, viz::STRIP_NUM_Y, Font::Label, theme::MID, |w| {
+        w.str("REV");
+    });
 }

@@ -562,7 +562,7 @@ pub fn mix_parts(
         written,
         sends,
         mix,
-        fx,
+        (fx, None),
         shared,
         tempo,
         sample_rate,
@@ -583,7 +583,7 @@ fn mix_sided(
     written: &[bool; MAX_PARTS],
     sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
     mix: &mut MixState,
-    fx: &mut FxBus,
+    (fx, eqs): (&mut FxBus, Option<&mut crate::part_eq::PartEqs>),
     shared: &AudioShared,
     tempo: Tempo,
     sample_rate: u32,
@@ -678,7 +678,7 @@ fn mix_sided(
 
     // The FX bus once; its return lands on pair 1, L and R.
     let mut ret = Stereo::SILENT;
-    fx.process(sends, &shared.fx, tempo, sample_rate, &mut ret);
+    fx.process_washed(sends, &shared.fx, tempo, sample_rate, &mut ret, eqs);
 
     let (out, zero) = dac.mix_known();
     for (k, pair) in out.iter_mut().enumerate() {
@@ -2596,7 +2596,8 @@ impl Instrument {
     ) {
         // The reverb TYPE's extra, and GRAIN's (ADR 0202).
         self.rev_extra = self.rev_bill.step(shared.fx.reverb.kind)
-            + crate::dsp::delay::extra_cost(&shared.fx.delay);
+            + crate::dsp::delay::extra_cost(&shared.fx.delay)
+            + crate::part_eq::bill::wash(&shared.fx.reverb, shared.fx.comp.smart);
         let (_, cents) = self
             .tune_ease
             .step(f32::from(shared.tune), ease_coeff(self.sample_rate.get()));
@@ -2717,7 +2718,7 @@ impl Instrument {
             &written,
             &mut self.sends,
             &mut self.mix,
-            fx,
+            (fx, Some(self.eq.get())),
             shared,
             self.tempo,
             self.sample_rate.get(),
@@ -2763,9 +2764,11 @@ impl Instrument {
             written,
             parts: &shared.parts,
             smart: shared.fx.comp.smart,
+            wash: shared.fx.reverb.role,
             sample_rate: self.sample_rate.get(),
         };
-        if crate::part_eq::door::through(|d| d.eq().run(eqs, b)).is_none() {
+        use crate::part_eq::door::{Ask, through};
+        if through(|d| d.eq().run(Ask::Parts(&mut *eqs, b))).is_none() {
             *eqs = crate::part_eq::PartEqs::REST;
         }
     }

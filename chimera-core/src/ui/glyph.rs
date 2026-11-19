@@ -576,6 +576,7 @@ impl Tail {
             predelay: set[8],
             shape: set[9],
             sync: RevSync::Off,
+            role: crate::dsp::reverb::WASH_ROLE,
             density: set[10],
         };
         // Unsynced: the set values alone, at the default tempo.

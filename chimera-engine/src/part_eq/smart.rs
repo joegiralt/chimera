@@ -565,11 +565,30 @@ impl PartSmart {
     }
 }
 
-/// Every Part's SMART EQ, in `PartEqs` (ITCM on the unit). All-zero bytes
-/// are `REST`: nothing heard, nothing cut.
+/// The reverb's return as a member of SMART EQ (owner, 2026-11-19: "we
+/// should give the reverb its role of its own"): it yields as a Part of
+/// its role would, the kick's dip with it, and makes nothing yield. Its
+/// bands cut left and right alike (`cuts.mid` the left's memory,
+/// `cuts.side` the right's); it is heard as their sum, decimated.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Wash {
+    pub(crate) cuts: PartSmart,
+    pub(crate) listen: [BandTaps; BANDS],
+}
+
+impl Wash {
+    pub(crate) const REST: Wash = Wash {
+        cuts: PartSmart::REST,
+        listen: [BandTaps::ZERO; BANDS],
+    };
+}
+
+/// Every Part's SMART EQ and the reverb return's, in `PartEqs` (ITCM on
+/// the unit). All-zero bytes are `REST`: nothing heard, nothing cut.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SmartState {
     pub(crate) parts: [PartSmart; MAX_PARTS],
+    pub(crate) wash: Wash,
     /// Blocks run, modulo `TURNS`: whose turn it is (the slow rule's
     /// band or the kick's rule, the band read in dB, the Part whose view
     /// is published).
@@ -584,6 +603,7 @@ impl SmartState {
 
     pub const REST: SmartState = SmartState {
         parts: [PartSmart::REST; MAX_PARTS],
+        wash: Wash::REST,
         turn: 0,
         live: Live::Bypass,
     };
@@ -608,6 +628,12 @@ impl SmartState {
         self.parts[p.index()].kick
     }
 
+    /// The reverb return's cut in `b` as last decided, the kick's dip
+    /// with it.
+    pub fn wash_cut(&self, b: Band) -> CutDb {
+        self.wash.cuts.applied()[b.index()]
+    }
+
     /// Part `p`'s dip in `b` as last applied (`G − 1` of the band alone).
     pub fn dip(&self, p: PartId, b: Band) -> f32 {
         self.parts[p.index()].dip[b.index()].get()
@@ -620,14 +646,18 @@ impl SmartState {
 
     /// Every filter's and level's memory, for the tests' subnormal check.
     pub fn memory(&self) -> impl Iterator<Item = f32> + '_ {
-        self.parts.iter().flat_map(|p| {
-            let taps = p.mid.iter().chain(&p.side).flat_map(|t| [t.s1, t.s2]);
-            taps.chain(p.level.iter().map(|l| l.get())).chain([
-                p.key.get(),
-                p.key_peak.get(),
-                p.kick.get(),
-            ])
-        })
+        let listen = self.wash.listen.iter().flat_map(|t| [t.s1, t.s2]);
+        let members = self.parts.iter().chain([&self.wash.cuts]);
+        members
+            .flat_map(|p| {
+                let taps = p.mid.iter().chain(&p.side).flat_map(|t| [t.s1, t.s2]);
+                taps.chain(p.level.iter().map(|l| l.get())).chain([
+                    p.key.get(),
+                    p.key_peak.get(),
+                    p.kick.get(),
+                ])
+            })
+            .chain(listen)
     }
 }
 
@@ -673,27 +703,36 @@ impl CutView {
 
 /// Each Part's live cuts, published by the audio once a block it runs
 /// (relaxed stores, never blocking) and read by the UI's views.
-pub struct SmartView([AtomicU32; MAX_PARTS]);
+pub struct SmartView {
+    parts: [AtomicU32; MAX_PARTS],
+    wash: AtomicU32,
+}
 
 impl SmartView {
     pub const fn new() -> SmartView {
-        SmartView([const { AtomicU32::new(0) }; MAX_PARTS])
+        SmartView {
+            parts: [const { AtomicU32::new(0) }; MAX_PARTS],
+            wash: AtomicU32::new(0),
+        }
+    }
+
+    /// The reverb return's cuts.
+    #[inline(always)]
+    pub fn publish_wash(&self, v: CutView) {
+        self.wash.store(v.0, Relaxed);
+    }
+
+    pub fn read_wash(&self) -> CutView {
+        CutView(self.wash.load(Relaxed))
     }
 
     #[inline(always)]
     pub fn publish(&self, p: PartId, v: CutView) {
-        self.0[p.index()].store(v.0, Relaxed);
+        self.parts[p.index()].store(v.0, Relaxed);
     }
 
     pub fn read(&self, p: PartId) -> CutView {
-        CutView(self.0[p.index()].load(Relaxed))
-    }
-
-    /// Every Part's view, for the UI's dirty key.
-    pub fn key(&self) -> u32 {
-        self.0
-            .iter()
-            .fold(0u32, |k, w| k.rotate_left(5) ^ w.load(Relaxed))
+        CutView(self.parts[p.index()].load(Relaxed))
     }
 }
 

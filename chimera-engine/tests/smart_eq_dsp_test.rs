@@ -93,6 +93,7 @@ fn block_kinds(
             written: &written,
             roles,
             kinds,
+            wash: Role::Back,
             smart,
             sample_rate: FS,
         },
@@ -140,10 +141,16 @@ fn a_front_bass_cuts_a_mid_pads_low_band_and_is_never_touched() {
     };
     let polite = cut_at(64, &r);
     let b = cut_at(64, &roles(&[0], &[1]));
-    assert!(b > polite && b <= 6.0 + 1e-3, "BACK {b} dB, MID {polite} dB");
+    assert!(
+        b > polite && b <= 6.0 + 1e-3,
+        "BACK {b} dB, MID {polite} dB"
+    );
     let (deep, over) = (cut_at(95, &r), cut_at(127, &r));
     assert!((deep / polite - 2.0).abs() < 0.1, "DEEP {deep} of {polite}");
-    assert!((over / polite - 3.5).abs() < 0.15, "OVER {over} of {polite}");
+    assert!(
+        (over / polite - 3.5).abs() < 0.15,
+        "OVER {over} of {polite}"
+    );
 }
 
 /// The amplitude of `hz` in `x` (a projection on its sine and cosine).
@@ -561,6 +568,7 @@ fn sided(st: &mut SmartState, start: usize, side: Option<&dyn Fn(usize) -> f32>)
             written: &written,
             roles: &roles(&[0], &[]),
             kinds: &[PartKind::Tonal; MAX_PARTS],
+            wash: Role::Back,
             smart: on(64),
             sample_rate: FS,
         },
@@ -689,11 +697,17 @@ fn the_real_bands_cut_what_the_page_reads() {
         let mut cuts = [0.0; 4];
         cuts[b.index()] = 6.0;
         let at = measured_db(cuts, b.centre().get());
-        assert!((at + 6.0).abs() < 0.5, "{b:?} alone reads {at:.2} dB at its centre");
+        assert!(
+            (at + 6.0).abs() < 0.5,
+            "{b:?} alone reads {at:.2} dB at its centre"
+        );
     }
     for hz in [100.0, 200.0, 428.0, 800.0, 1_600.0, 3_200.0, 6_400.0] {
         let at = measured_db([6.0; 4], hz);
-        assert!(at > -6.15 && at < -4.0, "all four at 6 dB: {at:.2} dB at {hz} Hz");
+        assert!(
+            at > -6.15 && at < -4.0,
+            "all four at 6 dB: {at:.2} dB at {hz} Hz"
+        );
     }
     assert!(measured_db([0.0; 4], 428.0).abs() < 1e-6);
 }
@@ -705,7 +719,9 @@ fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
     // centres: the bands' sum is linear in their dips, so every
     // combination of 0, 3, 6, 12 and 21 dB on the four bands follows.
     // Raw, four 6 dB dips reach −8.8 dB at 428 Hz.
-    let mut grid: Vec<f32> = (0..48).map(|i| 30.0 * (16_000.0f32 / 30.0).powf(i as f32 / 47.0)).collect();
+    let mut grid: Vec<f32> = (0..48)
+        .map(|i| 30.0 * (16_000.0f32 / 30.0).powf(i as f32 / 47.0))
+        .collect();
     grid.extend(Band::ALL.map(|b| b.centre().get()));
     let bands: Vec<[(f64, f64); 4]> = grid
         .iter()
@@ -745,9 +761,15 @@ fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
         }
     }
     println!("deeper {deeper:.3} over {over:.3} off the readout {off_centre:.3}");
-    assert!(deeper < 0.2, "{deeper:.3} dB deeper than the deepest cut asked");
+    assert!(
+        deeper < 0.2,
+        "{deeper:.3} dB deeper than the deepest cut asked"
+    );
     assert!(over < 0.9, "{over:.3} dB over unity");
-    assert!(off_centre < 0.25, "{off_centre:.3} dB off a band's readout at its centre");
+    assert!(
+        off_centre < 0.25,
+        "{off_centre:.3} dB off a band's readout at its centre"
+    );
     // No cut is no dip, exactly.
     assert_eq!(dips(&[CutDb::ZERO; 4]), [0.0; 4]);
 }
@@ -758,15 +780,30 @@ fn amount_s_curve_passes_its_knots_and_only_ever_deepens() {
     use chimera_engine::part_eq::smart::Caps;
     let at = |a: u8| caps_at(on(a));
     for (amount, caps) in KNOTS {
-        let got = if amount.code() == 0 { Caps::NONE } else { at(amount.code()) };
-        for (g, w) in [(got.mud, caps.mud), (got.clear, caps.clear), (got.kick, caps.kick)] {
-            assert!((g.get() - w.get()).abs() < 1e-4, "AMOUNT {}: {g:?} for {w:?}", amount.code());
+        let got = if amount.code() == 0 {
+            Caps::NONE
+        } else {
+            at(amount.code())
+        };
+        for (g, w) in [
+            (got.mud, caps.mud),
+            (got.clear, caps.clear),
+            (got.kick, caps.kick),
+        ] {
+            assert!(
+                (g.get() - w.get()).abs() < 1e-4,
+                "AMOUNT {}: {g:?} for {w:?}",
+                amount.code()
+            );
         }
     }
     // Polite at 64, DEEP at 95 (75 % of the slider), OVER at 127: BACK
     // under FRONT; one rank is 2/3.
     assert_eq!(at(64).mud, CutDb::new(6.0));
-    assert_eq!((at(95).mud, at(95).clear, at(95).kick), (CutDb::new(12.0), CutDb::new(6.0), CutDb::new(15.0)));
+    assert_eq!(
+        (at(95).mud, at(95).clear, at(95).kick),
+        (CutDb::new(12.0), CutDb::new(6.0), CutDb::new(15.0))
+    );
     assert_eq!((at(127).mud, at(127).kick), (CutDb::new(21.0), CutDb::MAX));
     // More AMOUNT is never a shallower cut, and never a jump.
     for a in 1..=127u8 {
@@ -774,8 +811,171 @@ fn amount_s_curve_passes_its_knots_and_only_ever_deepens() {
         let lo = if a == 1 { Caps::NONE } else { lo };
         for (l, h) in [(lo.mud, hi.mud), (lo.clear, hi.clear), (lo.kick, hi.kick)] {
             assert!(h.get() >= l.get() - 1e-5, "AMOUNT {a}");
-            assert!(h.get() - l.get() < 0.5, "AMOUNT {a} jumps {} dB", h.get() - l.get());
+            assert!(
+                h.get() - l.get() < 0.5,
+                "AMOUNT {a} jumps {} dB",
+                h.get() - l.get()
+            );
         }
     }
     assert_eq!(caps_at(SmartEq::OFF), Caps::NONE);
+}
+
+/// One block: Part 1 (`role`, a kit if `kit`) plays `lead`, and the
+/// reverb returns `wash` on both sides (the right at half the left) in
+/// role `wash_role`. The return out.
+fn washed(
+    st: &mut SmartState,
+    start: usize,
+    (lead, role, kit): (&dyn Fn(usize) -> f32, Role, bool),
+    (wash, wash_role): (Option<&dyn Fn(usize) -> f32>, Role),
+) -> chimera_engine::dsp::Stereo {
+    use chimera_engine::dsp::Stereo;
+    use chimera_engine::part_eq::dsp::smart::run_wash;
+    let mut buses: Buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
+    for (i, s) in buses[0].iter_mut().enumerate() {
+        *s = lead(start + i);
+    }
+    let mut written = [false; MAX_PARTS];
+    written[0] = true;
+    let mut roles = [Role::Mid; MAX_PARTS];
+    roles[0] = role;
+    let mut kinds = [PartKind::Tonal; MAX_PARTS];
+    if kit {
+        kinds[0] = PartKind::Drum;
+    }
+    let mut sides: Sides = [None; MAX_PARTS];
+    run(
+        st,
+        SmartBlock {
+            buses: &mut buses,
+            sides: &mut sides,
+            written: &written,
+            roles: &roles,
+            kinds: &kinds,
+            wash: wash_role,
+            smart: on(64),
+            sample_rate: FS,
+        },
+    );
+    let mut wet = Stereo::SILENT;
+    if let Some(w) = wash {
+        for i in 0..BLOCK_SIZE {
+            wet.l[i] = w(start + i);
+            wet.r[i] = 0.5 * w(start + i);
+        }
+    }
+    run_wash(st, &mut wet, wash.is_some(), FS);
+    wet
+}
+
+#[test]
+fn the_reverb_s_return_yields_as_a_part_of_its_role_and_makes_nothing_yield() {
+    // A FRONT lead at 440 Hz; the return (BACK) washes 400 Hz and 7 kHz.
+    let lead = sine(440.0, 0.3);
+    let (a, b) = (sine(400.0, 0.1), sine(7_000.0, 0.03));
+    let wash = move |n: usize| a(n) + b(n);
+    let mut st = PartEqs::REST.smart;
+    let mut out = chimera_engine::dsp::Stereo::SILENT;
+    for k in 0..seconds(5.0) {
+        out = washed(
+            &mut st,
+            k * BLOCK_SIZE,
+            (&lead, Role::Front, false),
+            (Some(&wash), Role::Back),
+        );
+    }
+    let cut = st.wash_cut(Band::LowMid).get();
+    assert!(
+        cut > 5.0 && cut <= 6.0 + 1e-3,
+        "BACK under FRONT in LOW MID: {cut} dB"
+    );
+    assert_eq!(
+        st.wash_cut(Band::High),
+        CutDb::ZERO,
+        "the lead plays nothing up there"
+    );
+    // Left and right take the same cut: the right stays half the left.
+    let start = (seconds(5.0) - 1) * BLOCK_SIZE;
+    let dry: [f32; BLOCK_SIZE] = core::array::from_fn(|i| wash(start + i));
+    assert!(
+        rms(&out.l) < 0.8 * rms(&dry),
+        "{} of {}",
+        rms(&out.l),
+        rms(&dry)
+    );
+    for (l, r) in out.l.iter().zip(&out.r) {
+        assert!((r - 0.5 * l).abs() < 1e-6);
+    }
+    // The lead is never cut, whatever the return's role or level.
+    for b in Band::ALL {
+        assert_eq!(st.cut(BASS, b), CutDb::ZERO);
+    }
+    // A FRONT return over a BACK Part: nothing yields to it, and it is
+    // read, never written.
+    let mut st = PartEqs::REST.smart;
+    for k in 0..seconds(3.0) {
+        let out = washed(
+            &mut st,
+            k * BLOCK_SIZE,
+            (&lead, Role::Back, false),
+            (Some(&wash), Role::Front),
+        );
+        let dry: [f32; BLOCK_SIZE] = core::array::from_fn(|i| wash(k * BLOCK_SIZE + i));
+        assert_eq!(out.l.map(f32::to_bits), dry.map(f32::to_bits));
+    }
+    for b in Band::ALL {
+        assert_eq!(
+            st.cut(BASS, b),
+            CutDb::ZERO,
+            "a Part never yields to the return"
+        );
+        assert_eq!(st.wash_cut(b), CutDb::ZERO);
+    }
+}
+
+#[test]
+fn the_kick_dips_the_return_s_low_and_a_reverb_at_rest_is_left_alone() {
+    // A FRONT kit's kick on the beat; the return rumbles at 70 Hz.
+    let beat = FS as usize / 2;
+    let kick = move |n: usize| {
+        let t = (n % beat) as f32 / FS as f32;
+        let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
+        0.8 * (-t / 0.06).exp() * ph.sin()
+    };
+    let rumble = sine(70.0, 0.2);
+    let mut st = PartEqs::REST.smart;
+    let mut most = 0.0f32;
+    let mut least = f32::MAX;
+    for k in 0..seconds(6.0) {
+        washed(
+            &mut st,
+            k * BLOCK_SIZE,
+            (&kick, Role::Front, true),
+            (Some(&rumble), Role::Back),
+        );
+        if k > seconds(4.0) {
+            most = most.max(st.wash_cut(Band::Low).get());
+            least = least.min(st.wash_cut(Band::Low).get());
+        }
+    }
+    assert!(most > 4.0, "the kick dips the return's LOW: {most} dB");
+    assert!(
+        least < 0.1 * most,
+        "and lets it go between kicks: {least} dB"
+    );
+    // The reverb at rest: nothing run, nothing written, its filters empty.
+    let mut st = PartEqs::REST.smart;
+    for k in 0..seconds(1.0) {
+        let out = washed(
+            &mut st,
+            k * BLOCK_SIZE,
+            (&kick, Role::Front, true),
+            (None, Role::Back),
+        );
+        assert_eq!(out.l.map(f32::to_bits), [0u32; BLOCK_SIZE]);
+    }
+    for b in Band::ALL {
+        assert_eq!(st.wash_cut(b), CutDb::ZERO);
+    }
 }

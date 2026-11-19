@@ -20,14 +20,15 @@
 use chimera_hal::BLOCK_SIZE;
 
 use super::tan_small;
+use crate::dsp::Stereo;
 use crate::dsp::algo::math::{exp2, log2};
 use crate::dsp::{Db, Unit, clampf};
 use crate::hw::MAX_PARTS;
 use crate::instrument::Sides;
 use crate::part_eq::Live;
 use crate::part_eq::smart::{
-    Amount, BANDS, Band, BandTaps, Blocks, Caps, CutDb, CutView, Cuts, Dip, Hears, Kick, Level, PartKind, PartSmart,
-    Power, Role, SMART_VIEW, SmartEq, SmartState,
+    Amount, BANDS, Band, BandTaps, Blocks, Caps, CutDb, CutView, Cuts, Dip, Hears, Kick, Level,
+    PartKind, PartSmart, Power, Role, SMART_VIEW, SmartEq, SmartState,
 };
 use crate::project::PartId;
 
@@ -178,9 +179,17 @@ static CAPS: [Caps; Amount::MAX as usize + 1] = {
     while a < t.len() {
         let x = a as f32;
         t[a] = Caps {
-            mud: CutDb::new(curve([k0.mud.get(), k1.mud.get(), k2.mud.get(), k3.mud.get()], x)),
+            mud: CutDb::new(curve(
+                [k0.mud.get(), k1.mud.get(), k2.mud.get(), k3.mud.get()],
+                x,
+            )),
             clear: CutDb::new(curve(
-                [k0.clear.get(), k1.clear.get(), k2.clear.get(), k3.clear.get()],
+                [
+                    k0.clear.get(),
+                    k1.clear.get(),
+                    k2.clear.get(),
+                    k3.clear.get(),
+                ],
                 x,
             )),
             kick: CutDb::new(curve(
@@ -228,10 +237,30 @@ const DB_PER_LOG2_POWER: f32 = 3.010_3;
 /// `print_the_unmix_matrix_s_source`). The bands overlap: a neighbour is
 /// 0.14 to 0.18 in phase at a centre and 0.34 a quarter turn off.
 const RESPONSE: [[(f32, f32); BANDS]; BANDS] = [
-    [(0.999_31, 0.015_12), (0.135_75, 0.341_93), (0.008_91, 0.092_04), (0.000_53, 0.021_82)],
-    [(0.147_55, -0.341_59), (0.992_97, 0.055_20), (0.137_29, 0.342_62), (0.008_01, 0.087_44)],
-    [(0.018_64, -0.092_41), (0.183_80, -0.337_19), (0.994_93, 0.000_19), (0.122_73, 0.326_95)],
-    [(0.010_35, -0.021_93), (0.048_85, -0.087_21), (0.122_56, -0.327_06), (0.994_49, 0.000_13)],
+    [
+        (0.999_31, 0.015_12),
+        (0.135_75, 0.341_93),
+        (0.008_91, 0.092_04),
+        (0.000_53, 0.021_82),
+    ],
+    [
+        (0.147_55, -0.341_59),
+        (0.992_97, 0.055_20),
+        (0.137_29, 0.342_62),
+        (0.008_01, 0.087_44),
+    ],
+    [
+        (0.018_64, -0.092_41),
+        (0.183_80, -0.337_19),
+        (0.994_93, 0.000_19),
+        (0.122_73, 0.326_95),
+    ],
+    [
+        (0.010_35, -0.021_93),
+        (0.048_85, -0.087_21),
+        (0.122_56, -0.327_06),
+        (0.994_49, 0.000_13),
+    ],
 ];
 
 /// What each band's dip must be for the four bands' sum to be the gain
@@ -259,6 +288,8 @@ pub struct SmartBlock<'a> {
     pub written: &'a [bool; MAX_PARTS],
     pub roles: &'a [Role; MAX_PARTS],
     pub kinds: &'a [PartKind; MAX_PARTS],
+    /// The reverb return's role.
+    pub wash: Role,
     pub smart: SmartEq,
     pub sample_rate: u32,
 }
@@ -518,8 +549,14 @@ fn low_pair<const BY: usize, const WRITE: bool, const LISTEN: bool>(
         }
     }
     (taps[l], taps[m]) = (
-        BandTaps { s1: bp[0], s2: lp[0] },
-        BandTaps { s1: bp[1], s2: lp[1] },
+        BandTaps {
+            s1: bp[0],
+            s2: lp[0],
+        },
+        BandTaps {
+            s1: bp[1],
+            s2: lp[1],
+        },
     );
     if LISTEN {
         let n = (k * k) / steps.len() as f32;
@@ -569,8 +606,14 @@ fn high_pair<const BY: usize, const WRITE: bool, const LISTEN: bool>(
         }
     }
     (taps[h], taps[t]) = (
-        BandTaps { s1: s1[0], s2: s2[0] },
-        BandTaps { s1: s1[1], s2: s2[1] },
+        BandTaps {
+            s1: s1[0],
+            s2: s2[0],
+        },
+        BandTaps {
+            s1: s1[1],
+            s2: s2[1],
+        },
     );
     if LISTEN {
         let n = 1.0 / steps.len() as f32;
@@ -735,10 +778,11 @@ const DEPTH: [[f32; 3]; 3] = {
 };
 const _: () = assert!(Role::Front.code() == 0 && Role::Mid.code() == 1 && Role::Back.code() == 2);
 
-/// Each Part's role and kind.
+/// Each Part's role and kind, and the reverb return's role.
 struct Roles<'a> {
     roles: &'a [Role; MAX_PARTS],
     kinds: &'a [PartKind; MAX_PARTS],
+    wash: Role,
 }
 
 impl Roles<'_> {
@@ -746,6 +790,12 @@ impl Roles<'_> {
     #[inline(always)]
     fn depth(&self, q: usize, p: usize) -> f32 {
         DEPTH[usize::from(self.roles[q].code())][usize::from(self.roles[p].code())]
+    }
+
+    /// How far Part `q` outranks the reverb's return.
+    #[inline(always)]
+    fn over_wash(&self, q: usize) -> f32 {
+        DEPTH[usize::from(self.roles[q].code())][usize::from(self.wash.code())]
     }
 }
 
@@ -787,9 +837,80 @@ fn slow_rule(st: &mut SmartState, b: usize, roles: &Roles<'_>, caps: Caps) {
             st.parts[p].cuts = Cuts::Move;
         }
     }
+    // The reverb's return yields as a Part of its role, to every Part
+    // over it; nothing yields to it.
+    let w = &mut st.wash.cuts;
+    let (lw, aw) = (w.heard[b], active(w.heard[b]) * own(&w.heard, b));
+    let mut press = 0.0f32;
+    if aw > 0.0 {
+        for q in 0..MAX_PARTS {
+            let depth = roles.over_wash(q);
+            let keyed = low && roles.kinds[q] == PartKind::Drum;
+            if depth > 0.0 && !keyed {
+                let (lq, aq) = at[q];
+                press = press.max(depth * aq * threat(lw, lq, reach));
+            }
+        }
+    }
+    w.want[b] = cap.share(Unit::new(aw * press));
+    if w.want[b] != CutDb::ZERO {
+        w.cuts = Cuts::Move;
+    }
 }
 
 impl PartSmart {
+    /// A block's step of the cuts toward what the rules want: deeper at
+    /// the attack's pace, shallower at the release's. Whether there was
+    /// anything to step; at rest there is not.
+    #[inline(always)]
+    fn step(&mut self, r: &Rate) -> bool {
+        let k = self.kick_want;
+        if self.cuts == Cuts::Rest && k == CutDb::ZERO {
+            return false;
+        }
+        let mut still = self.dipped != [CutDb::ZERO; BANDS];
+        for (c, &want) in self.cut.iter_mut().zip(&self.want) {
+            let pole = if want > *c { r.attack } else { r.release };
+            *c = c.toward(want, pole, LAND_DB);
+            still |= *c != CutDb::ZERO || want != CutDb::ZERO;
+        }
+        let pole = if k > self.kick {
+            r.kick_attack
+        } else {
+            r.kick_release
+        };
+        self.kick = self.kick.toward(k, pole, LAND_DB);
+        still |= self.kick != CutDb::ZERO;
+        self.cuts = if still { Cuts::Move } else { Cuts::Rest };
+        true
+    }
+
+    /// This block's dips: the last block's, and those of the cuts as they
+    /// now stand.
+    #[inline(always)]
+    fn ramp(&mut self) -> ([Dip; BANDS], [Dip; BANDS]) {
+        let from = self.dip;
+        let applied = self.applied();
+        let to = if applied == self.dipped {
+            from
+        } else {
+            dips(&applied).map(Dip::new)
+        };
+        (self.dip, self.dipped) = (to, applied);
+        (from, to)
+    }
+
+    /// A block's levels from what was `heard`: each band's power rises
+    /// fast and falls slowly; band `read`'s is read in dB.
+    #[inline(always)]
+    fn follow(&mut self, heard: &Energy, r: &Rate, read: usize) {
+        for (l, ms) in self.level.iter_mut().zip(heard.bands) {
+            let pole = if ms > l.get() { r.rise } else { r.fall };
+            *l = Power::new(ms + pole * (l.get() - ms));
+        }
+        self.heard[read] = level(self.level[read]);
+    }
+
     /// This Part's kick as a key, a block on: how hard it presses, 0 to 1.
     /// Its hit, and between kicks that come closer than the dip can let
     /// go (`HOLD_UNDER_S`), held steady: a dense run is one dip, not a
@@ -834,6 +955,7 @@ fn kick_rule(st: &mut SmartState, r: &Rate, roles: &Roles<'_>, cap: CutDb, block
         for p in st.parts.iter_mut() {
             p.kick_want = CutDb::ZERO;
         }
+        st.wash.cuts.kick_want = CutDb::ZERO;
         return;
     }
     for p in 0..MAX_PARTS {
@@ -851,6 +973,20 @@ fn kick_rule(st: &mut SmartState, r: &Rate, roles: &Roles<'_>, cap: CutDb, block
         }
         st.parts[p].kick_want = cap.share(Unit::new(ap * most));
     }
+    // The return's LOW takes the kick's dip as a Part of its role would.
+    let h = st.wash.cuts.heard;
+    let aw = active(h[low]) * own(&h, low);
+    let mut most = 0.0f32;
+    if aw > 0.0 {
+        for q in 0..MAX_PARTS {
+            let depth = roles.over_wash(q);
+            if depth > 0.0 && press[q] > 0.0 {
+                let lq = st.parts[q].heard[low];
+                most = most.max(depth * press[q] * threat(h[low], lq, MUD_THREAT));
+            }
+        }
+    }
+    st.wash.cuts.kick_want = cap.share(Unit::new(aw * most));
 }
 
 /// The rules' turns: the slow rule, then the kick's.
@@ -877,14 +1013,7 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
     let shown = usize::from(st.turn) % MAX_PARTS;
     let lanes = b.buses.iter_mut().zip(b.sides.iter_mut()).zip(b.written);
     for (p, ((bus, side), &written)) in st.parts.iter_mut().zip(lanes) {
-        let from = p.dip;
-        let applied = p.applied();
-        let to = if applied == p.dipped {
-            from
-        } else {
-            dips(&applied).map(Dip::new)
-        };
-        (p.dip, p.dipped) = (to, applied);
+        let (from, to) = p.ramp();
         let mut heard = Energy::NONE;
         if written {
             let hears = if from == UNITY && to == UNITY {
@@ -920,18 +1049,12 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
             (p.mid, p.side) = (EMPTY, EMPTY);
             // Long silent (its levels read silent well before their
             // powers reach 0) with nothing to let go: nothing to step.
-            if p.level == [Power::ZERO; BANDS]
-                && p.key_peak == Power::ZERO
-                && p.cuts == Cuts::Rest
+            if p.level == [Power::ZERO; BANDS] && p.key_peak == Power::ZERO && p.cuts == Cuts::Rest
             {
                 continue;
             }
         }
-        for (l, ms) in p.level.iter_mut().zip(heard.bands) {
-            let pole = if ms > l.get() { r.rise } else { r.fall };
-            *l = Power::new(ms + pole * (l.get() - ms));
-        }
-        p.heard[read] = level(p.level[read]);
+        p.follow(&heard, &r, read);
         // The key rises at once and falls fast; its peak falls slowly.
         let ms = heard.key;
         p.key = Power::new(ms.max(ms + r.key_fall * (p.key.get() - ms)));
@@ -940,6 +1063,7 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
     let roles = Roles {
         roles: b.roles,
         kinds: b.kinds,
+        wash: b.wash,
     };
     let caps = caps_at(b.smart);
     if st.turn % RULES == 0 {
@@ -948,27 +1072,9 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
         kick_rule(st, &r, &roles, caps.kick, u16::from(RULES));
     }
     st.turn = (st.turn + 1) % SmartState::TURNS;
-    let mut any = false;
+    let mut any = st.wash.cuts.step(&r);
     for (p, id) in st.parts.iter_mut().zip(PartId::ALL) {
-        let k = p.kick_want;
-        if p.cuts == Cuts::Move || k != CutDb::ZERO {
-            // Deeper at the attack's pace, shallower at the release's.
-            let mut still = p.dipped != [CutDb::ZERO; BANDS];
-            for (c, &want) in p.cut.iter_mut().zip(&p.want) {
-                let pole = if want > *c { r.attack } else { r.release };
-                *c = c.toward(want, pole, LAND_DB);
-                still |= *c != CutDb::ZERO || want != CutDb::ZERO;
-            }
-            let pole = if k > p.kick {
-                r.kick_attack
-            } else {
-                r.kick_release
-            };
-            p.kick = p.kick.toward(k, pole, LAND_DB);
-            still |= p.kick != CutDb::ZERO;
-            p.cuts = if still { Cuts::Move } else { Cuts::Rest };
-            any = true;
-        }
+        any |= p.step(&r);
         // The pages read at the screen's pace: a Part a block, in turn.
         if id.index() == shown {
             SMART_VIEW.publish(id, CutView::of(&heard(&p.dip.map(Dip::get))));
@@ -979,5 +1085,46 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
         for id in PartId::ALL {
             SMART_VIEW.publish(id, CutView::NONE);
         }
+        SMART_VIEW.publish_wash(CutView::NONE);
+    }
+}
+
+/// The reverb's return through SMART EQ (ADR 0296 § the return), once it
+/// is played and before it joins pair 1: its left and right take the cuts
+/// the rules set it this block (`run`, earlier in the block), through the
+/// pairs that cut and no others; it is heard as their sum, decimated, for
+/// the next block's rules. `sounding` false is a reverb at rest: nothing
+/// is run or written. At unity it is read, never written.
+#[inline(never)]
+pub fn run_wash(st: &mut SmartState, wet: &mut Stereo, sounding: bool, sample_rate: u32) {
+    if st.live == Live::Bypass {
+        return;
+    }
+    let read = usize::from(st.turn) % BANDS;
+    let w = &mut st.wash;
+    let (from, to) = w.cuts.ramp();
+    let mut heard = Energy::NONE;
+    if sounding {
+        let r = Rate::at(sample_rate);
+        let sum: [f32; BLOCK_SIZE] = core::array::from_fn(|i| 0.5 * (wet.l[i] + wet.r[i]));
+        heard = thin(&sum, &mut w.listen, &r);
+        tidy(&mut w.listen);
+        if from == UNITY && to == UNITY {
+            (w.cuts.mid, w.cuts.side) = (EMPTY, EMPTY);
+        } else {
+            side_bands(&mut wet.l, &mut w.cuts.mid, &r, &from, &to);
+            side_bands(&mut wet.r, &mut w.cuts.side, &r, &from, &to);
+            tidy(&mut w.cuts.mid);
+            tidy(&mut w.cuts.side);
+        }
+        w.cuts.follow(&heard, &r, read);
+    } else {
+        (w.cuts.mid, w.cuts.side, w.listen) = (EMPTY, EMPTY, EMPTY);
+        if w.cuts.level != [Power::ZERO; BANDS] {
+            w.cuts.follow(&heard, &Rate::at(sample_rate), read);
+        }
+    }
+    if read == 0 {
+        SMART_VIEW.publish_wash(CutView::of(&self::heard(&w.cuts.dip.map(Dip::get))));
     }
 }

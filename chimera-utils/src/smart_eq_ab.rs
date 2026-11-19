@@ -206,7 +206,7 @@ pub fn run(_args: &[String]) -> Result<(), String> {
     let off = render(&mut perf, &notes, len, SmartEq::OFF);
     let o = overlap(&off.buses, &roles);
     println!("MODAL pad (MID) over a bass (FRONT), 250 Hz - 2 kHz:");
-    for a in [64u8, 127] {
+    for a in [64u8, 95, 127] {
         let t = render(&mut perf, &notes, len, on(a));
         let ring: Vec<[f32; 2]> = t.cuts.iter().map(|c| c[1]).collect();
         let peak = ring
@@ -279,7 +279,7 @@ fn kick_over_bass() -> Result<(), String> {
     let base = kick_to_bass(&off.buses[0], &off.buses[1], &off.buses[0]);
     println!("A kick (DRUM, FRONT) over a held bass (MID), 40 - 120 Hz:");
     println!("  off: the kick's transient {base:+.1} dB over the bass");
-    for a in [64u8, 127] {
+    for a in [64u8, 95, 127] {
         let t = render(&mut perf, &notes, len, on(a));
         let r = kick_to_bass(&t.buses[0], &t.buses[1], &off.buses[0]);
         let most = t.cuts.iter().map(|c| c[1][0]).fold(0.0f32, f32::max);
