@@ -1,6 +1,6 @@
 # Editor protocol 4: every page the unit has
 
-**Status:** proposed 2026-11-19. Design only; the owner's questions are at the end. ADR 0289 records the decisions.
+**Status:** approved 2026-11-19 (owner): every recommendation in *Questions for the owner* is accepted (see *Owner decisions*). ADR 0289 records the decisions.
 
 ## Intent
 
@@ -341,6 +341,17 @@ Values are `live`'s, the playing scene with its drift (ADR 0083), as the pages s
 - **Fixtures.** `ed_block_tokens.txt` appended. Schema fixtures for the editor regenerated per schema (`editor/tests/fixtures/*-schema.txt`). Protocol fixtures re-recorded at 4.
 - **e2e** (`editor/e2e/sim.mjs`): a pass per schema on the simulator, setting every described address and checking `ed get`; each command family once.
 - **Unit gate**, after merge and flash: ADR 0285's steps, plus `ed schema DRUM`'s time, a two-page `since`, and AUDIO LOAD while the editor drags a route.
+
+## Owner decisions (2026-11-19)
+
+The owner accepted every recommendation below:
+
+- **ORBIT:** a song is the project's 8 scene slots with queued switching, and "create a song" is a new project. Print is SCN's SAVE, which keeps the playing scene's drift. `ed scene move` is in. "Advance to the next scene" is out of scope for protocol 4.
+- **Projects:** option c. The editor may save, save-as into a new slot, and load. A load is witnessed by the listing's generation and refused over unsaved edits unless the editor sends `discard` after its own confirm. No `ed` command ever formats the card or removes a card file.
+- **Destructive actions:** as the table in question 3 recommends. In: saving a scene over a saved one; CLEAR of the playing scene; removing a Sound's map row; removing a controller map row, with a confirm; saving rows into the picked map; renaming a map; RANDOMIZE's roll; removing a matrix route. Out for 0.4: deleting a map file; Part CLEAR, RELOAD FROM PROJ and SAVE TO LIBRARY.
+- **ORBIT notes and chords:** in protocol 4 (`ed chord`, `scale`, `step`, `pool`).
+- **Matrix amounts:** the box's −127..+127, both on the box and in the editor.
+- **`ed learn`:** it moves the box to the cell's page, focuses the cell and arms learn there.
 
 ## Questions for the owner
 

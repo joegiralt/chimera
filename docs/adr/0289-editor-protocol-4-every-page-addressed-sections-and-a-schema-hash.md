@@ -1,12 +1,19 @@
 # 0289. Editor protocol 4: every page addressed, `since` in sections, a schema hash
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-11-19: every recommendation in the spec's questions)
 - **Deciders:** firmware; owner (the questions in the spec)
 
 ## Context
 Protocol 3 (ADR 0285) reaches the followed Part's engine pages only. `in_schema` refuses the mixer's, the settings' and ORBIT's blocks. `PartMix`, `Tempo` and `Random` have no token. `axis_of` drops `ReverbPanel`, `SelectedRing` and `Orbit(_)`. FLT › MOD's route knobs and the MTX page describe as `route "<label>" next-slice`. Nothing reaches the MIDI map, learn, scene slots, the transport or projects. The owner wants the editor to control everything the box can in 0.4 (2026-11-18). A full answer for every page would pass the 32,000 B answer bound (ADR 0285). Describing DRUM again on every engine change takes 5 to 6 s. The spec is `docs/superpowers/specs/2026-11-19-ed-protocol-4-design.md`.
 
 ## Decision
+- **The owner's decisions (2026-11-19), every recommendation accepted:**
+  - **ORBIT:** a song is the project's 8 scene slots with queued switching, and "create a song" is a new project. Print is SCN's SAVE, which keeps the playing scene's drift. `ed scene move` is in. "Advance to the next scene" is out of scope for protocol 4.
+  - **Projects:** option c. The editor may save, save-as into a new slot, and load. A load is witnessed by the listing's generation and refused over unsaved edits unless the editor sends `discard` after its own confirm. No `ed` command ever formats the card or removes a card file.
+  - **Destructive actions:** as the table in question 3 recommends. In: saving a scene over a saved one; CLEAR of the playing scene; removing a Sound's map row; removing a controller map row, with a confirm; saving rows into the picked map; renaming a map; RANDOMIZE's roll; removing a matrix route. Out for 0.4: deleting a map file; Part CLEAR, RELOAD FROM PROJ and SAVE TO LIBRARY.
+  - **ORBIT notes and chords:** in protocol 4 (`ed chord`, `scale`, `step`, `pool`).
+  - **Matrix amounts:** the box's −127..+127, both on the box and in the editor.
+  - **`ed learn`:** it moves the box to the cell's page, focuses the cell and arms learn there.
 - **`PROTOCOL` is 4.** The editor requires exactly 4 (UPDATE THE UNIT below, UPDATE THE EDITOR above, as ADR 0285). Slices 1–5 (MIXER, MTX, SETTINGS, MIDI MAP, ORBIT) land in 0.4 inside protocol 4. The grammar freezes at the 0.4 release. After that, any change to a line's grammar is protocol 5.
 - **Schemas.** `ed describe <SCHEMA> <page>`, `Schema` typed: the five engines, `MIXER` (`MIXER_CHANNEL_CHAIN`), `MTX-<ENGINE>`, `SETTINGS` (`settings::tree::ROOT`'s leaves but read-only and DEMO, each page with a `crumb` line), `MAP` (the binding grammar from `midi::page`'s words and `Input::kinds`) and `ORBIT` (`ORBIT_CHAIN`). No hand-written lists.
 - **One walk with typed rounds.** `Pages` walks `Round { Shared, Pad, Part, Ring }`. `Schema::round_of` is an exhaustive match: a page binding `Part` or `Out` is described once a Part (MIXER, SETTINGS), `SelectedRing` once a ring (ORBIT), a pad's once a pad (DRUM). `describe`, `get`, `set`, `since`, `find` and `fmt_of` all use it.
