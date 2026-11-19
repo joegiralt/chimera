@@ -126,6 +126,12 @@ fn dip_of(c: CutDb) -> Dip {
 /// unity-peak band-pass) summed into the output by its dip, lerped from
 /// `from` to `to` across the block (`WRITE`), and each band's energy
 /// (`Σ v1²`, `k²` applied by the caller) added to `energy` (`LISTEN`).
+/// Two bands at a time over the block: each pair's memory and
+/// coefficients fit the M7's 32 float registers (all four interleaved
+/// spilled to the stack, 75 instructions a sample), and two independent
+/// recurrences hide each other's FPU latency (one band alone waits on
+/// its own). Every band hears the block as it came in (`input`); the
+/// bands add to the output low to high, as a sample at a time would.
 #[inline(always)]
 fn bands<const WRITE: bool, const LISTEN: bool>(
     x: &mut [f32; BLOCK_SIZE],
@@ -137,37 +143,39 @@ fn bands<const WRITE: bool, const LISTEN: bool>(
 ) {
     let k = 1.0 / Q;
     let n = BLOCK_SIZE as f32;
-    // A dip's share of `k`, at the block's start and its step a sample.
-    let mut d: [f32; BANDS] = core::array::from_fn(|b| k * from[b].0);
-    let dd: [f32; BANDS] = core::array::from_fn(|b| k * (to[b].0 - from[b].0) / n);
-    let mut t = *taps;
-    let mut e = [0.0f32; BANDS];
-    for s in x.iter_mut() {
-        let input = *s;
-        let mut out = input;
-        for b in 0..BANDS {
-            let f = r.svf[b];
-            let v3 = input - t[b].s2;
-            let v1 = f.a1 * t[b].s1 + f.a2 * v3;
-            let v2 = t[b].s2 + f.a2 * t[b].s1 + f.a3 * v3;
-            t[b].s1 = 2.0 * v1 - t[b].s1;
-            t[b].s2 = 2.0 * v2 - t[b].s2;
-            if LISTEN {
-                e[b] += v1 * v1;
+    let input = *x;
+    for pair in [[0, 1], [2, 3]] {
+        let f = pair.map(|b| r.svf[b]);
+        let mut s = pair.map(|b| taps[b]);
+        // Each dip's share of `k`, at the block's start and its step a sample.
+        let mut d = pair.map(|b| k * from[b].0);
+        let dd = pair.map(|b| k * (to[b].0 - from[b].0) / n);
+        let mut e = [0.0f32; 2];
+        for (o, &v) in x.iter_mut().zip(input.iter()) {
+            let mut add = 0.0f32;
+            for i in 0..2 {
+                let v3 = v - s[i].s2;
+                let v1 = f[i].a1 * s[i].s1 + f[i].a2 * v3;
+                let v2 = s[i].s2 + f[i].a2 * s[i].s1 + f[i].a3 * v3;
+                s[i].s1 = 2.0 * v1 - s[i].s1;
+                s[i].s2 = 2.0 * v2 - s[i].s2;
+                if LISTEN {
+                    e[i] += v1 * v1;
+                }
+                if WRITE {
+                    d[i] += dd[i];
+                    add += d[i] * v1;
+                }
             }
             if WRITE {
-                d[b] += dd[b];
-                out += d[b] * v1;
+                *o += add;
             }
         }
-        if WRITE {
-            *s = out;
-        }
-    }
-    *taps = t;
-    if LISTEN {
-        for b in 0..BANDS {
-            energy[b] += e[b];
+        for (i, &b) in pair.iter().enumerate() {
+            taps[b] = s[i];
+            if LISTEN {
+                energy[b] += e[i];
+            }
         }
     }
 }
