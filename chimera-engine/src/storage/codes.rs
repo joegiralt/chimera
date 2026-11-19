@@ -151,6 +151,9 @@ impl ModSource {
     /// The source's frozen ident, an explicit literal (not `name` or `tag`,
     /// which are display text).
     #[optimize(size)]
+    // Inlined: bank 2's `ed` calls it too, so no out-of-line copy
+    // stays in bank 1 for it (ADR 0289).
+    #[inline(always)]
     pub const fn disk_ident(self) -> &'static str {
         match self {
             ModSource::Env1 => "ENV1",

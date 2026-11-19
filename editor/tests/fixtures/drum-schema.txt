@@ -646,35 +646,35 @@ param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 14 PAD1_FMD of 165
 panel PAD1_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD1_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD1_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD1_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD1_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD1_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD1_FLT.MODE 0 "MODE"
 opt PAD1_FLT.MODE 1 "BP"
@@ -1145,35 +1145,35 @@ param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 27 PAD2_FMD of 165
 panel PAD2_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD2_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD2_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD2_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD2_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD2_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD2_FLT.MODE 0 "MODE"
 opt PAD2_FLT.MODE 1 "BP"
@@ -1644,35 +1644,35 @@ param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 40 PAD3_FMD of 165
 panel PAD3_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD3_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD3_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD3_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD3_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD3_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD3_FLT.MODE 0 "MODE"
 opt PAD3_FLT.MODE 1 "BP"
@@ -2143,35 +2143,35 @@ param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 53 PAD4_FMD of 165
 panel PAD4_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD4_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD4_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD4_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD4_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD4_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD4_FLT.MODE 0 "MODE"
 opt PAD4_FLT.MODE 1 "BP"
@@ -2642,35 +2642,35 @@ param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 66 PAD5_FMD of 165
 panel PAD5_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD5_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD5_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD5_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD5_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD5_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD5_FLT.MODE 0 "MODE"
 opt PAD5_FLT.MODE 1 "BP"
@@ -3141,35 +3141,35 @@ param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 79 PAD6_FMD of 165
 panel PAD6_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD6_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD6_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD6_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD6_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD6_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD6_FLT.MODE 0 "MODE"
 opt PAD6_FLT.MODE 1 "BP"
@@ -3640,35 +3640,35 @@ param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 92 PAD7_FMD of 165
 panel PAD7_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD7_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD7_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD7_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD7_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD7_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD7_FLT.MODE 0 "MODE"
 opt PAD7_FLT.MODE 1 "BP"
@@ -4139,35 +4139,35 @@ param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 105 PAD8_FMD of 165
 panel PAD8_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD8_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD8_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD8_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD8_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD8_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD8_FLT.MODE 0 "MODE"
 opt PAD8_FLT.MODE 1 "BP"
@@ -4638,35 +4638,35 @@ param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 118 PAD9_FMD of 165
 panel PAD9_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD9_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD9_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD9_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD9_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD9_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD9_FLT.MODE 0 "MODE"
 opt PAD9_FLT.MODE 1 "BP"
@@ -5137,35 +5137,35 @@ param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 131 PAD10_FMD of 165
 panel PAD10_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD10_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD10_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD10_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD10_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD10_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD10_FLT.MODE 0 "MODE"
 opt PAD10_FLT.MODE 1 "BP"
@@ -5636,35 +5636,35 @@ param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 144 PAD11_FMD of 165
 panel PAD11_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD11_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD11_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD11_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD11_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD11_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD11_FLT.MODE 0 "MODE"
 opt PAD11_FLT.MODE 1 "BP"
@@ -6135,35 +6135,35 @@ param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
 OK
 page 157 PAD12_FMD of 165
 panel PAD12_FLT CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD12_FLT 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD12_FLT DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD12_FLT LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel PAD12_FLT SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param PAD12_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
 opt PAD12_FLT.MODE 0 "MODE"
 opt PAD12_FLT.MODE 1 "BP"

@@ -13,7 +13,7 @@ use crate::ui::block_def::{BlockDef, ChainDef2};
 /// The chain the editor walks for `engine`.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.chain"))]
 pub const fn chain(engine: EngineType) -> &'static ChainDef2 {
-    Schema::Engine(engine).chain()
+    super::schema::engine_chain(engine)
 }
 
 /// Flat page `n` of the chain: each node's home, then its sub-pages.
@@ -35,10 +35,13 @@ const fn def_in(c: &ChainDef2, mut n: usize) -> Option<&'static BlockDef> {
     None
 }
 
-/// The schema's pages, `(shared, a round's)`.
+/// The schema's pages, `(shared, a round's)`: a schema with no chain has
+/// one page, its own.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.counts"))]
 const fn counts(s: Schema) -> (usize, usize) {
-    let c = s.chain();
+    let Some(c) = s.chain() else {
+        return (1, 0);
+    };
     let (mut shared, mut round) = (0, 0);
     let mut n = 0;
     while let Some(def) = def_in(c, n) {
@@ -143,7 +146,7 @@ impl Pages {
     /// The next def of the chain in this round, or `None` at its end.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.next_def"))]
     fn next_def(&mut self) -> Option<&'static BlockDef> {
-        let node = self.schema.chain().blocks.get(self.node)?;
+        let node = self.schema.chain()?.blocks.get(self.node)?;
         let def = match self.sub {
             0 => node.def,
             k => node.sub_pages.get(k - 1)?,

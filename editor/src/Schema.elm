@@ -1,11 +1,14 @@
 module Schema exposing
-    ( Page
+    ( Matrix
+    , Page
     , Panel
     , Param
+    , Route
     , Schema
     , add
     , empty
     , hasPanel
+    , matrix
     , optionName
     , pageCount
     , pages
@@ -18,7 +21,7 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 -}
 
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine, Flags, Kind, OptIndex, Scale, addrKey)
+import Protocol exposing (Addr, AnswerLine, Cell, Flags, Kind, OptIndex, RouteKind, Scale, addrKey)
 
 
 type alias Param =
@@ -39,7 +42,24 @@ type alias Panel =
     { name : String
     , variant : String
     , params : List Param
-    , routes : List String
+    , routes : List Route
+    }
+
+
+{-| A FLT › MOD knob: the matrix cell it views.
+-}
+type alias Route =
+    { label : String, cell : Cell, kind : RouteKind }
+
+
+{-| What `ed describe MTX-<ENGINE>` says: the source rows, the fixed
+columns, the amounts' range and the registry's columns.
+-}
+type alias Matrix =
+    { sources : List ( String, String )
+    , cols : List ( String, Addr )
+    , range : Maybe ( Int, Int )
+    , dests : Maybe Int
     }
 
 
@@ -55,12 +75,20 @@ type Schema
         { count : Maybe Int
         , pages : List Page
         , index : Dict String Param
+        , matrix : Matrix
         }
 
 
 empty : Schema
 empty =
-    Schema { count = Nothing, pages = [], index = Dict.empty }
+    Schema { count = Nothing, pages = [], index = Dict.empty, matrix = { sources = [], cols = [], range = Nothing, dests = Nothing } }
+
+
+{-| The matrix part of a schema: empty but for `MTX-<ENGINE>`'s.
+-}
+matrix : Schema -> Matrix
+matrix (Schema s) =
+    s.matrix
 
 
 {-| How many pages the unit says there are, once one has been described.
@@ -182,6 +210,47 @@ add line (Schema s) =
 
         Protocol.Route r ->
             Schema { s | pages = onLastPanel (\pn -> { pn | routes = pn.routes ++ [ r ] }) s.pages }
+
+        Protocol.Src r ->
+            let
+                m : Matrix
+                m =
+                    s.matrix
+            in
+            Schema { s | matrix = { m | sources = m.sources ++ [ ( r.src, r.label ) ] } }
+
+        Protocol.Col c ->
+            let
+                m : Matrix
+                m =
+                    s.matrix
+            in
+            Schema { s | matrix = { m | cols = m.cols ++ [ ( c.tag, c.addr ) ] } }
+
+        Protocol.AmountRange lo hi ->
+            let
+                m : Matrix
+                m =
+                    s.matrix
+            in
+            Schema { s | matrix = { m | range = Just ( lo, hi ) } }
+
+        Protocol.Dests n ->
+            let
+                m : Matrix
+                m =
+                    s.matrix
+            in
+            Schema { s | matrix = { m | dests = Just n } }
+
+        Protocol.RoutesIs ->
+            Schema s
+
+        Protocol.RouteIs _ ->
+            Schema s
+
+        Protocol.Unroute _ ->
+            Schema s
 
         -- TAPE's SOURCE is read-only: its text comes with `since`.
         Protocol.Source _ ->

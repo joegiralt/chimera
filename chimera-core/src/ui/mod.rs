@@ -1368,7 +1368,7 @@ impl UiState {
     }
 
     /// Rebuild a part's audio-side `ModState` and taps from the matrix.
-    fn sync_mod_state(&mut self, part: PartId) {
+    pub(crate) fn sync_mod_state(&mut self, part: PartId) {
         let sound = self.project.edit_part(part).sound;
         self.matrix_state.sync_into(&mut sound.mod_state);
         if self.matrix_state.tap_rows {

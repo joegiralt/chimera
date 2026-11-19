@@ -528,7 +528,7 @@ unplaced =
 routes : Schema -> Dict String String -> List String
 routes sch variants =
     Schema.pages sch
-        |> List.concatMap (\pg -> pg.panels |> List.filter (active variants) |> List.concatMap .routes)
+        |> List.concatMap (\pg -> pg.panels |> List.filter (active variants) |> List.concatMap (.routes >> List.map .label))
         |> List.foldl
             (\r acc ->
                 if List.member r acc then

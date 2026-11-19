@@ -1,5 +1,5 @@
-//! What `ed describe` describes (ADR 0289): an engine's pages, or the
-//! mixer's. A `Schema` is parsed once at the boundary from its token and
+//! What `ed describe` describes (ADR 0289): an engine's pages, the
+//! mixer's, or an engine's mod matrix. A `Schema` is parsed once at the boundary from its token and
 //! walked by `Pages`. Its pages are shared, then each round's: a pad's on
 //! DRUM, a Part's on the mixer.
 
@@ -24,6 +24,9 @@ pub enum Schema {
     Engine(EngineType),
     /// MIX + B*n*: each Part's PRT, VOI, EQ and SND, then the buses.
     Mixer,
+    /// An engine's MTX: its sources, the fixed columns, the amounts. One
+    /// page, from the matrix's own tables, not a chain.
+    Matrix(EngineType),
 }
 
 lit!(
@@ -34,9 +37,13 @@ lit!(
     /// A Part's round's prefix, before its number.
     PART = "PART"
 );
+lit!(
+    /// The tokens of `Schema::Matrix`: `MTX-ALGO`.
+    MTX = "MTX-"
+);
 
 /// How many schemas there are: `ed schema`'s hashes, one each.
-pub const SCHEMAS: usize = EngineType::ALL.len() + 1;
+pub const SCHEMAS: usize = 2 * EngineType::ALL.len() + 1;
 
 /// What a schema's pages go round: nothing, each pad or each Part.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,23 +96,20 @@ impl Schema {
         Schema::Engine(EngineType::ALL[3]),
         Schema::Engine(EngineType::ALL[4]),
         Schema::Mixer,
+        Schema::Matrix(EngineType::ALL[0]),
+        Schema::Matrix(EngineType::ALL[1]),
+        Schema::Matrix(EngineType::ALL[2]),
+        Schema::Matrix(EngineType::ALL[3]),
+        Schema::Matrix(EngineType::ALL[4]),
     ];
 
     /// Its place in `ALL`.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.index"))]
     pub const fn index(self) -> usize {
         match self {
-            Schema::Engine(e) => {
-                let mut i = 0;
-                while i < EngineType::ALL.len() {
-                    if EngineType::ALL[i] as u8 == e as u8 {
-                        return i;
-                    }
-                    i += 1;
-                }
-                0
-            }
+            Schema::Engine(e) => engine_index(e),
             Schema::Mixer => EngineType::ALL.len(),
+            Schema::Matrix(e) => EngineType::ALL.len() + 1 + engine_index(e),
         }
     }
 
@@ -115,22 +119,21 @@ impl Schema {
         if w.eq_ignore_ascii_case(MIXER.bytes()) {
             return Some(Schema::Mixer);
         }
-        EngineType::ALL
-            .into_iter()
-            .find(|e| e.disk_ident().as_bytes().eq_ignore_ascii_case(w))
-            .map(Schema::Engine)
+        let mtx = MTX.bytes();
+        match w.split_at_checked(mtx.len()) {
+            Some((head, e)) if head.eq_ignore_ascii_case(mtx) => engine(e).map(Schema::Matrix),
+            Some(_) | None => engine(w).map(Schema::Engine),
+        }
     }
 
-    /// The chain it walks.
+    /// The chain it walks; `None` for a schema described from its own
+    /// tables (the matrix).
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.chain"))]
-    pub const fn chain(self) -> &'static ChainDef2 {
+    pub const fn chain(self) -> Option<&'static ChainDef2> {
         match self {
-            Schema::Engine(EngineType::Algo) => &ALGO_FORMANT_CHAIN,
-            Schema::Engine(EngineType::Modal) => &MODAL_PLUCK_CHAIN,
-            Schema::Engine(EngineType::Tape) => &TAPE_CHAIN,
-            Schema::Engine(EngineType::Va) => &VA_CHAIN,
-            Schema::Engine(EngineType::Drum) => &DRUM_CHAIN,
-            Schema::Mixer => &MIXER_CHANNEL_CHAIN,
+            Schema::Engine(e) => Some(engine_chain(e)),
+            Schema::Mixer => Some(&MIXER_CHANNEL_CHAIN),
+            Schema::Matrix(_) => None,
         }
     }
 
@@ -143,6 +146,7 @@ impl Schema {
                 EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va,
             ) => RoundKind::None,
             Schema::Mixer => RoundKind::Parts,
+            Schema::Matrix(_) => RoundKind::None,
         }
     }
 
@@ -166,14 +170,57 @@ impl Schema {
         false
     }
 
-    /// `ALGO`…, `MIXER`.
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.token"))]
-    pub fn token(self) -> &'static str {
+    /// Its token, `ALGO`…, `MIXER`, `MTX-ALGO`…, into `w`.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.write"))]
+    pub fn write(self, w: &mut dyn Write) -> fmt::Result {
         match self {
-            Schema::Engine(e) => e.disk_ident(),
-            Schema::Mixer => MIXER.get(),
+            Schema::Engine(e) => w.write_str(e.disk_ident()),
+            Schema::Mixer => w.write_str(MIXER.get()),
+            Schema::Matrix(e) => {
+                w.write_str(MTX.get())?;
+                w.write_str(e.disk_ident())
+            }
         }
     }
+}
+
+/// The chain the editor walks for engine `e`.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.schema.engine_chain")
+)]
+pub const fn engine_chain(e: EngineType) -> &'static ChainDef2 {
+    match e {
+        EngineType::Algo => &ALGO_FORMANT_CHAIN,
+        EngineType::Modal => &MODAL_PLUCK_CHAIN,
+        EngineType::Tape => &TAPE_CHAIN,
+        EngineType::Va => &VA_CHAIN,
+        EngineType::Drum => &DRUM_CHAIN,
+    }
+}
+
+/// `e`'s place in `EngineType::ALL`.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.schema.engine_index")
+)]
+const fn engine_index(e: EngineType) -> usize {
+    let mut i = 0;
+    while i < EngineType::ALL.len() {
+        if EngineType::ALL[i] as u8 == e as u8 {
+            return i;
+        }
+        i += 1;
+    }
+    0
+}
+
+/// The engine `w` names, as `ed hello` names it.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.engine"))]
+fn engine(w: &[u8]) -> Option<EngineType> {
+    EngineType::ALL
+        .into_iter()
+        .find(|e| e.disk_ident().as_bytes().eq_ignore_ascii_case(w))
 }
 
 /// Whether a cell bound `b` resolves against the pad (DRUM's): a pad's

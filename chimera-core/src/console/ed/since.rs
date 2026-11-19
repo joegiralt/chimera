@@ -11,6 +11,9 @@
 //! panel <name> <variant>
 //! val <addr> <normalized> <stored> "<text>"
 //! source "<text>"
+//! routes <n>                              ROUTES, whole
+//! route <SRC>:<DEST> <amount> "<text>"
+//! unroute <SRC>:<DEST>                    (a diff's: the route gone)
 //! mixer                                   MIXER, whole
 //! panel REVERB <TYPE>
 //! val PART3.LEVEL …
@@ -34,6 +37,7 @@
 //! pushes: no sequence numbers, timers or hashes.
 
 use core::fmt::{self, Write};
+use core::mem::MaybeUninit;
 
 use super::addr::{BusBlock, EdBlock, PadBlock, PartBlock, SoundBlock};
 use super::describe::{
@@ -41,6 +45,7 @@ use super::describe::{
     modal_variant, op_variant, reverb_variant, tape_variant,
 };
 use super::lit::lit;
+use super::route::{self, Routes};
 use super::schema::Schema;
 use super::value::{block, engine_of, line, reading, source_text, text_ctx};
 use super::{EdAddr, describe};
@@ -137,6 +142,8 @@ const _: () = assert!(MIXER_SLOTS <= SLOTS);
 fn block_at(s: Schema, mut i: usize) -> Option<EdBlock> {
     let engine = match s {
         Schema::Engine(e) => e,
+        // The matrix keeps no values: ROUTES keeps its cells.
+        Schema::Matrix(_) => return None,
         Schema::Mixer => {
             let parts = PartId::ALL.len();
             if let Some(&p) = PartId::ALL.get(i) {
@@ -373,18 +380,21 @@ enum Pass {
 pub enum Section {
     /// The followed Part's Sound (and kit): protocol 3's answer.
     Part,
+    /// The followed Part's mod matrix: every present cell.
+    Routes,
     /// Every Part's mix and sends, the buses.
     Mixer,
 }
 
 impl Section {
-    pub const ALL: [Section; 2] = [Section::Part, Section::Mixer];
+    pub const ALL: [Section; 3] = [Section::Part, Section::Routes, Section::Mixer];
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.bit"))]
     const fn bit(self) -> u8 {
         match self {
             Section::Part => 1,
-            Section::Mixer => 2,
+            Section::Routes => 2,
+            Section::Mixer => 4,
         }
     }
 
@@ -474,6 +484,36 @@ struct PartCopy {
     described: Option<Described>,
 }
 
+/// ROUTES' copy: the Part's routes as last reported, and whose. `kept`
+/// is uninit while `seen` is `None`: `EdState::new`, which bank 1 builds
+/// in place, writes no copy.
+struct RoutesCopy {
+    seen: Option<(PartId, EngineType)>,
+    kept: MaybeUninit<Routes>,
+}
+
+impl RoutesCopy {
+    /// The copy, if one was kept for `(part, engine)`.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.routes_of"))]
+    fn of(&self, part: PartId, engine: EngineType) -> Option<&Routes> {
+        match self.seen {
+            // SAFETY: `seen` is set only by `keep`, after it writes `kept`.
+            Some(s) if s == (part, engine) => Some(unsafe { self.kept.assume_init_ref() }),
+            Some(_) | None => None,
+        }
+    }
+
+    /// `r` kept for `(part, engine)`.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.routes_keep")
+    )]
+    fn keep(&mut self, part: PartId, engine: EngineType, r: Routes) {
+        self.kept.write(r);
+        self.seen = Some((part, engine));
+    }
+}
+
 /// MIXER's copy.
 struct MixerCopy {
     seen: Option<MixSeen>,
@@ -488,6 +528,7 @@ pub struct EdSince {
     issued: Option<Gen>,
     owed: Sections,
     part: PartCopy,
+    routes: RoutesCopy,
     mixer: MixerCopy,
 }
 
@@ -502,6 +543,10 @@ impl EdSince {
                 last: [Bits(0); SLOTS],
                 described: None,
             },
+            routes: RoutesCopy {
+                seen: None,
+                kept: MaybeUninit::uninit(),
+            },
             mixer: MixerCopy {
                 seen: None,
                 rev_key: 0,
@@ -515,7 +560,9 @@ impl EdSince {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.described"))]
     pub(super) fn described(&mut self, s: Schema) -> &Described {
         match s {
-            Schema::Engine(_) => described_in(&mut self.part.described, s),
+            // The matrix describes no params: its cells are its sources'
+            // and its destinations' (the engine's `d`-flagged params).
+            Schema::Engine(_) | Schema::Matrix(_) => described_in(&mut self.part.described, s),
             Schema::Mixer => described_in(&mut self.mixer.described, s),
         }
     }
@@ -527,7 +574,8 @@ impl EdSince {
         let s = match Section::of(a.at()) {
             Some(Section::Part) => Schema::Engine(engine),
             Some(Section::Mixer) => Schema::Mixer,
-            None => return false,
+            // No address is a route's: those are cells (`ed route`).
+            Some(Section::Routes) | None => return false,
         };
         a.at().reachable(engine) && self.described(s).has(a)
     }
@@ -616,6 +664,7 @@ impl EdSince {
     ) -> Result<bool, fmt::Error> {
         match s {
             Section::Part => self.part_section(owed, ui, own, pass, w),
+            Section::Routes => self.routes_section(owed, ui, pass, w),
             Section::Mixer => self.mixer_section(owed, ui, own, pass, w),
         }
     }
@@ -691,6 +740,54 @@ impl EdSince {
             writeln!(w, "source \"{}\"", t.as_str())?;
         }
         Ok(!same)
+    }
+
+    /// ROUTES: the followed Part's present cells, whole after another Part
+    /// or engine; else each cell whose amount moved, and each gone,
+    /// compared by (source, destination).
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.routes_section")
+    )]
+    fn routes_section(
+        &mut self,
+        owed: bool,
+        ui: &UiState,
+        pass: Pass,
+        w: &mut dyn Write,
+    ) -> Result<bool, fmt::Error> {
+        let part = ui.active_part;
+        let engine = engine_of(ui);
+        let sound = &ui.project().part(part).sound;
+        let live = Routes {
+            mods: sound.mod_state.clone(),
+            taps: sound.params.taps,
+        };
+        let kept = match owed {
+            false => self.routes.of(part, engine),
+            true => None,
+        };
+        match kept {
+            None => {
+                route::header(part, w)?;
+                live.each(engine, |c, a| route::line(c, a, w))?;
+            }
+            Some(k) => {
+                live.each(engine, |c, a| match k.get(c) == Some(a) {
+                    true => Ok(()),
+                    false => route::line(c, a, w),
+                })?;
+                k.each(engine, |c, _| match live.get(c) {
+                    Some(_) => Ok(()),
+                    None => route::unline(c, w),
+                })?;
+            }
+        }
+        let whole = kept.is_none();
+        if let Pass::Commit = pass {
+            self.routes.keep(part, engine, live);
+        }
+        Ok(whole)
     }
 
     /// MIXER: every Part's mix and sends, the buses, the reverb's panel.
@@ -936,8 +1033,8 @@ mod tests {
         b.as_str().trim_end().rsplit('\n').next().unwrap()
     }
 
-    /// Past the bound, sections page: PART first, MIXER owed, then MIXER
-    /// whole with PART's (empty) diff. Nothing is lost.
+    /// Past the bound, sections page: PART first, ROUTES and MIXER owed,
+    /// then those whole with PART's (empty) diff. Nothing is lost.
     #[test]
     fn a_whole_answer_past_the_bound_pages() {
         let ui = UiState::new();
@@ -965,7 +1062,8 @@ mod tests {
         assert!(!a.as_str().contains("\nmixer\n"));
         assert_eq!(last_line(&a), "OK 1 more");
         let b = ask(&mut s, &ui, Gen::new(1), max);
-        assert!(b.as_str().starts_with("\nmixer\n"), "{}", b.as_str());
+        assert!(b.as_str().starts_with("\nroutes 1\n"), "{}", b.as_str());
+        assert!(b.as_str().contains("\nmixer\n"), "{}", b.as_str());
         assert!(!b.as_str().contains("part 1"));
         assert_eq!(last_line(&b), "OK 2");
         // Now both diff: nothing.
@@ -1003,7 +1101,8 @@ mod tests {
         );
         assert_eq!(last_line(&again), "OK 3 more");
         let rest = ask(&mut s, &ui, Gen::new(3), max);
-        assert!(rest.as_str().starts_with("\nmixer\n"));
+        assert!(rest.as_str().starts_with("\nroutes 1\n"));
+        assert!(rest.as_str().contains("\nmixer\n"));
         assert_eq!(last_line(&rest), "OK 4");
     }
 

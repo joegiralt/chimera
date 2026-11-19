@@ -2,7 +2,7 @@ module ProtocolTest exposing (suite)
 
 import Expect
 import FixtureData
-import Protocol exposing (Addr(..), AnswerLine(..), Command(..), Flags, Kind(..), Line(..), Scale(..), SchemaId(..), Value(..), encode, optIndex, parse)
+import Protocol exposing (Addr(..), AnswerLine(..), Cell(..), Command(..), Flags, Kind(..), Line(..), RouteKind(..), RouteTo(..), Scale(..), SchemaId(..), Value(..), encode, optIndex, parse)
 import Test exposing (Test, describe, test)
 import Unit
 
@@ -60,7 +60,18 @@ suite =
             , p "bad scale" "param A.B \"L\" cont log 0 1 1 0" Unknown
             , p "source" "source \"KICK 909\"" (Answer (Source "KICK 909"))
             , p "opt" "opt ALGO.ALG_A 8 \"A1\"" (optIndex 8 |> Maybe.map (\ix -> Answer (Opt { addr = Addr "ALGO.ALG_A", index = ix, name = "A1" })) |> Maybe.withDefault Unknown)
-            , p "route" "route \"ENV AMT\" next-slice" (Answer (Route "ENV AMT"))
+            , p "a protocol 3 route line is not understood" "route \"ENV AMT\" next-slice" Unknown
+            , p "route knob" "route \"ENV AMT\" ENV1:FILTER.CUTOFF route" (Answer (Route { label = "ENV AMT", cell = Cell "ENV1:FILTER.CUTOFF", kind = KnobRoute }))
+            , p "keyboard knob" "route \"KEYBOARD\" NOTE:FILTER.CUTOFF keybd" (Answer (Route { label = "KEYBOARD", cell = Cell "NOTE:FILTER.CUTOFF", kind = KnobKeybd }))
+            , p "jack knob" "route \"FREQ MOD\" FM3IN route" (Answer (Route { label = "FREQ MOD", cell = Cell "FM3IN", kind = KnobRoute }))
+            , p "routes" "routes 3" (Answer RoutesIs)
+            , p "a route's amount" "route LFO1:OP_C.LEVEL -42 \"-42\"" (Answer (RouteIs { cell = Cell "LFO1:OP_C.LEVEL", amount = -42, text = "-42" }))
+            , p "a route's plus" "route ENV1:FILTER.CUTOFF 7 \"+7\"" (Answer (RouteIs { cell = Cell "ENV1:FILTER.CUTOFF", amount = 7, text = "+7" }))
+            , p "unroute" "unroute OP5:FILTER.RESO" (Answer (Unroute (Cell "OP5:FILTER.RESO")))
+            , p "src" "src OP5 \"OP 5\"" (Answer (Src { src = "OP5", label = "OP 5" }))
+            , p "col" "col FREQ FILTER.CUTOFF" (Answer (Col { tag = "FREQ", addr = Addr "FILTER.CUTOFF" }))
+            , p "amount" "amount -127 127" (Answer (AmountRange -127 127))
+            , p "dests" "dests 16" (Answer (Dests 16))
             , p "get val" "val OP_C.CRSE 0.0634921 4 \"1.00\"" (Answer (Val { addr = Addr "OP_C.CRSE", norm = 0.0634921, stored = 4, text = "1.00" }))
             , p "val with unit" "val FILTER.CUTOFF 1 20000 \"20.0 kHz\"" (Answer (Val { addr = Addr "FILTER.CUTOFF", norm = 1, stored = 20000, text = "20.0 kHz" }))
             , p "val text with a space and sign" "val PIT.NOTE 0.5 60 \"C4 +12ct\"" (Answer (Val { addr = Addr "PIT.NOTE", norm = 0.5, stored = 60, text = "C4 +12ct" }))
@@ -137,6 +148,14 @@ suite =
             , test "describe" <| \_ -> Expect.equal (Just "ed describe ALGO 3") (encode (Describe (EngineSchema Unit.Algo) 3))
             , test "describe the mixer" <| \_ -> Expect.equal (Just "ed describe MIXER 30") (encode (Describe MixerSchema 30))
             , test "ask a schema" <| \_ -> Expect.equal (Just "ed schema DRUM") (encode (AskSchema (EngineSchema Unit.Drum)))
+            , test "ask a matrix" <| \_ -> Expect.equal (Just "ed describe MTX-VA 0") (encode (Describe (MatrixSchema Unit.Va) 0))
+            , test "route an amount" <|
+                \_ ->
+                    Expect.equal (Just (Just "ed route LFO1:FILTER.CUTOFF -42"))
+                        (Protocol.amount -42 |> Maybe.map (\a -> encode (SetRoute (Cell "LFO1:FILTER.CUTOFF") (RouteAmount a))))
+            , test "route off" <| \_ -> Expect.equal (Just "ed route QMIN off") (encode (SetRoute (Cell "QMIN") RouteOff))
+            , test "an amount is -127..127" <| \_ -> Expect.equal [ Nothing, Nothing ] [ Protocol.amount 128, Protocol.amount -128 ]
+            , test "a cell with a space is no command" <| \_ -> Expect.equal Nothing (encode (SetRoute (Cell "OP 5:FILTER.CUTOFF") RouteOff))
             , test "get" <| \_ -> Expect.equal (Just "ed get OP_C.CRSE") (encode (Get (Addr "OP_C.CRSE")))
             , test "set num" <| \_ -> Expect.equal (Just "ed set FILTER.CUTOFF 1234.5") (encode (Set (Addr "FILTER.CUTOFF") (Num 1234.5)))
             , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (Addr "FILTER.KIND") (Name "LADDER")))

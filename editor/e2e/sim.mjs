@@ -363,6 +363,29 @@ async function main() {
     .filter((p) => /^(PART3(_SND)?|CHORUS|DELAY|REVERB|TAPE|COMP)\./.test(p.addr) && p.addr !== "REVERB.TYPE");
   await sweep(mixerShown, " MIXER", new Set(), (a) => /\.(RESERVE|MAX_VOICES)$/.test(a));
 
+  // The matrix (ADR 0289): every source into FREQ, set, read back and removed.
+  const mtx = await ask("ed describe MTX-ALGO 0");
+  await checkHash("MTX-ALGO", [mtx.slice(0, -1)]);
+  const srcs = mtx.map(tokens).filter((t) => t[0] === "src").map((t) => t[1]);
+  if (srcs.length !== 13) fail("MTX-ALGO", "describe", `${srcs.length} sources`);
+  for (const s of srcs) {
+    const cell = `${s}:FILTER.CUTOFF`;
+    for (const [to, want] of [["-90", "route " + cell + " -90 "], ["off", null]]) {
+      const got = await ask(`ed route ${cell} ${to}`);
+      if (got.at(-1) !== "OK queued") { fail(cell, `route ${to}`, got.join(" | ")); continue; }
+      const until = Date.now() + SETTLE_MS;
+      let ok = false;
+      while (!ok && Date.now() < until) {
+        const lines = await since(0);
+        const line = lines.find((l) => l.startsWith(`route ${cell} `));
+        ok = want ? line?.startsWith(want) : !line;
+        if (!ok) await sleep(40);
+      }
+      if (!ok) fail(cell, `route ${to}`, "since never said so");
+    }
+  }
+  info(`routes: ${srcs.length} sources into FREQ, set and removed`);
+
   // every param to its max, then its min, read back
   const done = new Set();
   const shownIn = (cur) =>

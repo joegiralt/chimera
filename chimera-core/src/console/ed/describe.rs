@@ -9,7 +9,7 @@
 //! panel <name> <variant>
 //! param <addr> "<label>" <cont|choice|toggle> <lin|oct> <min> <max> <step> <default> <flags>
 //! opt <addr> <index> "<name>"
-//! route "<cell label>" next-slice
+//! route "<cell label>" <cell> <route|keybd>
 //! source "<cell label>"
 //! ```
 //!
@@ -201,15 +201,16 @@ pub const MODELS: [ResonatorMode; 4] = [
     ResonatorMode::Sympathetic,
 ];
 
-/// A cell of a panel: a parameter under the cell's label, a matrix route
-/// (slice 2's), or TAPE's SOURCE, read-only.
+/// A cell of a panel: a parameter under the cell's label, a FLT › MOD
+/// route knob (the matrix cell it views, ADR 0289), or TAPE's SOURCE,
+/// read-only.
 enum Cell {
     Param {
         addr: EdAddr,
         label: &'static str,
         fmt: ValFmt,
     },
-    Route(&'static str),
+    Route(&'static str, crate::ui::filter_panel::RouteView),
     Source(&'static str),
 }
 
@@ -297,7 +298,7 @@ impl Cell {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.write"))]
     fn write(&self, ctx: &SlotCtx, w: &mut dyn Write) -> fmt::Result {
         let (addr, label, fmt) = match *self {
-            Cell::Route(label) => return writeln!(w, "route \"{label}\" next-slice"),
+            Cell::Route(label, r) => return super::route::knob_line(label, r, w),
             Cell::Source(label) => return writeln!(w, "source \"{label}\""),
             Cell::Param { addr, label, fmt } => (addr, label, fmt),
         };
@@ -647,7 +648,7 @@ impl Group {
                 label,
                 fmt,
             }),
-            View::Route { label, .. } => Some(Cell::Route(label)),
+            View::Route { label, route } => Some(Cell::Route(label, route)),
             View::Source(_) => Some(Cell::Source(slot.label())),
             View::Empty
             | View::SelectOp
@@ -737,7 +738,8 @@ fn base_ctx(s: Schema) -> SlotCtx {
         Schema::Engine(
             EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va,
         )
-        | Schema::Mixer => c,
+        | Schema::Mixer
+        | Schema::Matrix(_) => c,
     }
 }
 
@@ -747,6 +749,9 @@ fn base_ctx(s: Schema) -> SlotCtx {
     unsafe(link_section = ".bank2_ed.describe.describe")
 )]
 pub(super) fn describe(s: Schema, page: u8, w: &mut dyn Write) -> Option<fmt::Result> {
+    if let Schema::Matrix(e) = s {
+        return (page == 0).then(|| super::route::describe(e, w));
+    }
     let (def, round) = page_at(s, usize::from(page))?;
     Some(write_page(s, def, round, page, w))
 }
@@ -758,6 +763,9 @@ pub(super) fn describe(s: Schema, page: u8, w: &mut dyn Write) -> Option<fmt::Re
     unsafe(link_section = ".bank2_ed.describe.describe_all")
 )]
 pub(super) fn describe_all(s: Schema, w: &mut dyn Write) -> fmt::Result {
+    if let Schema::Matrix(e) = s {
+        return super::route::describe(e, w);
+    }
     for (n, (def, round)) in Pages::all(s).enumerate() {
         write_page(s, def, round, u8::try_from(n).map_err(|_| fmt::Error)?, w)?;
     }

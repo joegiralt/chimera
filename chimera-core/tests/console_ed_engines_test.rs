@@ -833,6 +833,9 @@ fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32, usize) {
             .into_iter()
             .filter(|l| !l.is_empty())
             .take_while(|l| l != "mixer")
+            .filter(|l| {
+                !l.starts_with("routes ") && !l.starts_with("route ") && !l.starts_with("unroute ")
+            })
             .collect(),
         m,
         got.len(),

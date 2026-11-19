@@ -1,16 +1,22 @@
 module Protocol exposing
     ( Addr(..)
+    , Amount
     , AnswerLine(..)
+    , Cell(..)
     , Command(..)
     , Flags
     , Hash
     , Kind(..)
     , Line(..)
     , OptIndex
+    , RouteKind(..)
+    , RouteTo(..)
     , Scale(..)
     , SchemaId(..)
     , Value(..)
     , addrKey
+    , amount
+    , cellKey
     , encode
     , hashText
     , optIndex
@@ -81,11 +87,55 @@ type alias Flags =
     { mappable : Bool, modulation : Bool }
 
 
-{-| A schema the unit describes: an engine's pages, or the mixer's.
+{-| A matrix cell, `ENV1:FILTER.CUTOFF`, or a jack knob's, `FM3IN`: the
+unit's own text, opaque here.
+-}
+type Cell
+    = Cell String
+
+
+cellKey : Cell -> String
+cellKey (Cell c) =
+    c
+
+
+{-| A route's amount as the box stores it: −127..127.
+-}
+type Amount
+    = Amount Int
+
+
+amount : Int -> Maybe Amount
+amount n =
+    if n >= -127 && n <= 127 then
+        Just (Amount n)
+
+    else
+        Nothing
+
+
+{-| What `ed route` sets a cell to: an amount, or no route (the grid's
+MIX + MINUS).
+-}
+type RouteTo
+    = RouteAmount Amount
+    | RouteOff
+
+
+{-| What a FLT › MOD knob's cell takes: any amount, or KEYBOARD's steps.
+-}
+type RouteKind
+    = KnobRoute
+    | KnobKeybd
+
+
+{-| A schema the unit describes: an engine's pages, the mixer's, or an
+engine's mod matrix.
 -}
 type SchemaId
     = EngineSchema Engine
     | MixerSchema
+    | MatrixSchema Engine
 
 
 {-| A schema's hash, sixteen hex digits: describe's own bytes, so equal
@@ -109,11 +159,17 @@ schemaToken s =
         MixerSchema ->
             "MIXER"
 
+        MatrixSchema e ->
+            "MTX-" ++ Unit.engineName e
+
 
 schemaFromToken : String -> Maybe SchemaId
 schemaFromToken t =
     if t == "MIXER" then
         Just MixerSchema
+
+    else if String.startsWith "MTX-" t then
+        Unit.engineFromName (String.dropLeft 4 t) |> Maybe.map MatrixSchema
 
     else
         Unit.engineFromName t |> Maybe.map EngineSchema
@@ -127,6 +183,7 @@ type Command
     | Set Addr Value
     | Since (Maybe Gen)
     | Follow Part
+    | SetRoute Cell RouteTo
 
 
 type AnswerLine
@@ -136,8 +193,19 @@ type AnswerLine
     | Panel { name : String, variant : String }
     | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float, flags : Flags }
     | Opt { addr : Addr, index : OptIndex, name : String }
-    | Route String
+      -- FLT › MOD's knob: the matrix cell it views.
+    | Route { label : String, cell : Cell, kind : RouteKind }
     | Source String
+      -- MTX's schema: a source row, a fixed column, the amounts, the registry's columns.
+    | Src { src : String, label : String }
+    | Col { tag : String, addr : Addr }
+    | AmountRange Int Int
+    | Dests Int
+      -- ROUTES: whole (`routes <n>`, n the followed Part's), a cell's amount
+      -- and the box's text, a cell gone.
+    | RoutesIs
+    | RouteIs { cell : Cell, amount : Int, text : String }
+    | Unroute Cell
     | Val { addr : Addr, norm : Float, stored : Float, text : String }
     | PartIs Int String
       -- The MIXER section of `since`, whole: what was held for it is dropped.
@@ -191,6 +259,22 @@ encode c =
 
         Follow p ->
             Just ("ed part " ++ String.fromInt (Unit.partNumber p))
+
+        SetRoute (Cell cell) to ->
+            word cell
+                |> Maybe.map
+                    (\x ->
+                        "ed route "
+                            ++ x
+                            ++ " "
+                            ++ (case to of
+                                    RouteAmount (Amount n) ->
+                                        String.fromInt n
+
+                                    RouteOff ->
+                                        "off"
+                               )
+                    )
 
 
 word : String -> Maybe String
@@ -327,14 +411,68 @@ answer ts =
         [ "opt", a, i, name ] ->
             nat i |> Maybe.andThen optIndex |> Maybe.map (\ix -> Opt { addr = Addr a, index = ix, name = name })
 
-        [ "route", label, "next-slice" ] ->
-            Just (Route label)
+        [ "route", a, b, c ] ->
+            case int b of
+                Just n ->
+                    Just (RouteIs { cell = Cell a, amount = n, text = c })
+
+                Nothing ->
+                    routeKind c |> Maybe.map (\k -> Route { label = a, cell = Cell b, kind = k })
+
+        [ "unroute", c ] ->
+            Just (Unroute (Cell c))
+
+        [ "routes", n ] ->
+            nat n |> Maybe.map (always RoutesIs)
+
+        [ "src", src, label ] ->
+            Just (Src { src = src, label = label })
+
+        [ "col", tag, a ] ->
+            Just (Col { tag = tag, addr = Addr a })
+
+        [ "amount", lo, hi ] ->
+            Maybe.map2 AmountRange (int lo) (int hi)
+
+        [ "dests", n ] ->
+            nat n |> Maybe.map Dests
 
         [ "source", text ] ->
             Just (Source text)
 
         [ "val", a, norm, stored, text ] ->
             Maybe.map2 (\n s -> Val { addr = Addr a, norm = n, stored = s, text = text }) (num norm) (num stored)
+
+        _ ->
+            Nothing
+
+
+{-| A signed whole number: `-127`, `+42`, `42`.
+-}
+int : String -> Maybe Int
+int s =
+    case String.uncons s of
+        Just ( '-', rest ) ->
+            nat rest |> Maybe.map negate
+
+        Just ( '+', rest ) ->
+            nat rest
+
+        Just _ ->
+            nat s
+
+        Nothing ->
+            Nothing
+
+
+routeKind : String -> Maybe RouteKind
+routeKind s =
+    case s of
+        "route" ->
+            Just KnobRoute
+
+        "keybd" ->
+            Just KnobKeybd
 
         _ ->
             Nothing

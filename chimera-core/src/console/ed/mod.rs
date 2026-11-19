@@ -17,6 +17,7 @@ mod describe;
 mod edits;
 mod lit;
 mod pages;
+mod route;
 mod schema;
 mod since;
 mod value;
@@ -81,6 +82,8 @@ pub enum EdArg {
     Since(Option<Gen>),
     /// The Part to follow.
     Part(PartId),
+    /// `ed route <cell> <amount|off>`.
+    Route(route::RouteCell, route::RouteTo),
 }
 
 /// Why a line is no `ed` command: each its own `ERR`.
@@ -90,6 +93,9 @@ pub enum EdRefusal {
     Usage,
     /// `ed part` with no Part's number: `ERR ed part takes 1-6`.
     NoSuchPart,
+    /// `ed route` with no cell or amount: `ERR ed route takes <cell>
+    /// <-127..127|off>`.
+    Route,
 }
 
 /// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
@@ -115,7 +121,7 @@ fn value(w: &[u8]) -> Option<EdValue> {
 }
 
 impl EdArg {
-    pub const USAGE: &'static str = "hello, schema, describe, get, set, since or part";
+    pub const USAGE: &'static str = "hello, schema, describe, get, set, route, since or part";
 
     /// The command, or the refusal it gets. `Since`'s `None` is no
     /// failure: 0 is the editor holding nothing.
@@ -133,6 +139,14 @@ impl EdArg {
             return match words.next() {
                 None => Ok(EdArg::Part(p)),
                 Some(_) => Err(EdRefusal::Usage),
+            };
+        }
+        if is(ROUTE_WORD.get().as_bytes()) {
+            let c = words.next().and_then(route::RouteCell::parse);
+            let to = words.next().and_then(route::RouteTo::parse);
+            return match (c, to, words.next()) {
+                (Some(c), Some(to), None) => Ok(EdArg::Route(c, to)),
+                (Some(_) | None, Some(_) | None, Some(_) | None) => Err(EdRefusal::Route),
             };
         }
         EdArg::parse_rest(sub, words).ok_or(EdRefusal::Usage)
@@ -176,6 +190,7 @@ pub(crate) fn answer_in(
 ) -> fmt::Result {
     match EdArg::parse(line.words()) {
         Err(EdRefusal::Usage) => writeln!(w, "ERR ed takes {}", EdArg::USAGE),
+        Err(EdRefusal::Route) => w.write_str(ROUTE_USAGE.get()),
         Err(EdRefusal::NoSuchPart) => writeln!(
             w,
             "ERR ed part takes {}-{}",
@@ -185,12 +200,11 @@ pub(crate) fn answer_in(
         Ok(EdArg::Hello) => hello(ui, w).and_then(|()| w.write_str("OK\n")),
         Ok(EdArg::Describe { schema, page }) => match describe::describe(schema, page, w) {
             Some(done) => done.and_then(|()| w.write_str("OK\n")),
-            None => writeln!(
-                w,
-                "ERR ed describe {} has {} pages",
-                schema.token(),
-                schema_pages(schema)
-            ),
+            None => {
+                w.write_str("ERR ed describe ")?;
+                schema.write(w)?;
+                writeln!(w, " has {} pages", schema_pages(schema))
+            }
         },
         Ok(EdArg::Schema(s)) => {
             let hash = match q {
@@ -198,7 +212,7 @@ pub(crate) fn answer_in(
                 None => hash(s),
             };
             w.write_str(SCHEMA.get())?;
-            w.write_str(s.token())?;
+            s.write(w)?;
             w.write_char(' ')?;
             lit::uint(w, u32::from(schema_pages(s)))?;
             w.write_char(' ')?;
@@ -215,6 +229,7 @@ pub(crate) fn answer_in(
             Some(st) => st.since.answer(held, ui, w),
             None => writeln!(w, "ERR ed since is not in this build"),
         },
+        Ok(EdArg::Route(c, to)) => edits::route(c, to, ui, q, w),
         Ok(EdArg::Part(p)) => match q {
             None => w.write_str("ERR ed part is not in this build\n"),
             Some(q) => {
@@ -228,6 +243,15 @@ pub(crate) fn answer_in(
 lit!(
     /// `ed schema`'s word and its answer's head.
     SCHEMA = "schema "
+);
+
+lit!(
+    /// `ed route`'s word.
+    ROUTE_WORD = "route"
+);
+lit!(
+    /// `ed route`'s refusal.
+    ROUTE_USAGE = "ERR ed route takes <cell> <-127..127|off>\n"
 );
 
 /// FNV-1a 64 of every byte `ed describe <s> 0..pages` writes, in order:

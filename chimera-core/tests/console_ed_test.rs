@@ -238,7 +238,7 @@ fn describe_covers_every_param_every_variant() {
     assert_eq!(got, want);
     assert!(routes > 0);
     let flt = all_pages(&mut f).join("");
-    assert!(flt.contains("route \"ENV AMT\" next-slice"));
+    assert!(flt.contains("route \"ENV AMT\" ENV1:FILTER.CUTOFF route"));
 }
 
 fn all_env_kinds() -> Vec<EnvKind> {
@@ -832,8 +832,14 @@ fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
         .unwrap_or_else(|| panic!("{last}"))
         .parse()
         .unwrap();
-    // PART's section alone: the mixer's has its own tests.
-    let lines = lines.into_iter().take_while(|l| l != "mixer").collect();
+    // PART's section alone: ROUTES and MIXER have their own tests.
+    let lines = lines
+        .into_iter()
+        .take_while(|l| l != "mixer")
+        .filter(|l| {
+            !l.starts_with("routes ") && !l.starts_with("route ") && !l.starts_with("unroute ")
+        })
+        .collect();
     (lines, m)
 }
 

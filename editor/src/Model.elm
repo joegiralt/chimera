@@ -4,6 +4,7 @@ module Model exposing
     , Model
     , Msg(..)
     , Reading
+    , RouteReading
     , Stage
     , Via
     , init
@@ -30,7 +31,7 @@ page and keeps them. It reads the followed engine's schema and the MIXER's.
 
 import Cache
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine(..), Command(..), Hash, Line(..), OptIndex, SchemaId(..), Value, addrKey, encode, hashText, parse, schemaToken)
+import Protocol exposing (Addr, AnswerLine(..), Cell, Command(..), Hash, Line(..), OptIndex, RouteTo, SchemaId(..), Value, addrKey, cellKey, encode, hashText, parse, schemaToken)
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
@@ -41,6 +42,12 @@ import Unit exposing (Engine(..), Gen, Part)
 -}
 type alias Reading =
     { norm : Float, stored : Float, text : String }
+
+
+{-| A route as the unit reported it: its amount and the box's text.
+-}
+type alias RouteReading =
+    { amount : Int, text : String }
 
 
 {-| Where the connect sequence is. One request is in flight at a time.
@@ -89,6 +96,8 @@ type alias Model =
     , via : Maybe Via
     , schema : Schema
     , mixer : Schema
+    , matrix : Schema
+    , routes : Dict String RouteReading
     , held : Dict String Held
     , building : Schema
     , described : List String
@@ -124,6 +133,7 @@ type Msg
     | ConnectSerial
     | ConnectSocket
     | Recalled { key : String, lines : Maybe (List String) }
+    | EditRoute Cell RouteTo
 
 
 {-| The console protocol this editor speaks.
@@ -171,6 +181,8 @@ init =
     , via = Nothing
     , schema = Schema.empty
     , mixer = Schema.empty
+    , matrix = Schema.empty
+    , routes = Dict.empty
     , held = Dict.empty
     , building = Schema.empty
     , described = []
@@ -227,6 +239,9 @@ update msg model =
             step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
 
         Recalled _ ->
+            step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
+
+        EditRoute _ _ ->
             step msg model |> Tuple.mapSecond (List.map run >> Cmd.batch)
 
 
@@ -364,6 +379,15 @@ step msg m =
 
         Recalled r ->
             ( recalled r m, [] )
+
+        -- A route's amount or its removal: the unit glides it a turn's step a
+        -- pass, and `since` says where it is.
+        EditRoute c to ->
+            if m.stage == Following then
+                ( m, [ Send (SetRoute c to) ] )
+
+            else
+                ( m, [] )
 
 
 {-| The schema that describes `a`: the followed engine's, else the mixer's.
@@ -622,7 +646,9 @@ answer raw a m =
                     { m
                         | part = Unit.partFromInt n
                         , engine = Just e
-                        , schema = Dict.get (Unit.engineName e) m.held |> Maybe.map .schema |> Maybe.withDefault Schema.empty
+                        , schema = heldSchema (EngineSchema e) m
+                        , matrix = heldSchema (MatrixSchema e) m
+                        , routes = Dict.empty
                         , values = Dict.filter (\k _ -> Schema.param (Protocol.Addr k) m.mixer /= Nothing) m.values
                         , variants = Dict.filter (\k _ -> Schema.hasPanel k m.mixer) m.variants
                         , pending = Dict.filter (\k _ -> Schema.param (Protocol.Addr k) m.mixer /= Nothing) m.pending
@@ -675,6 +701,34 @@ answer raw a m =
 
         Route _ ->
             describing raw a m
+
+        Src _ ->
+            describing raw a m
+
+        Col _ ->
+            describing raw a m
+
+        AmountRange _ _ ->
+            describing raw a m
+
+        Dests _ ->
+            describing raw a m
+
+        RoutesIs ->
+            { m | routes = Dict.empty }
+
+        RouteIs r ->
+            { m | routes = Dict.insert (cellKey r.cell) { amount = r.amount, text = r.text } m.routes }
+
+        Unroute c ->
+            { m | routes = Dict.remove (cellKey c) m.routes }
+
+
+{-| A schema read this connection, or none.
+-}
+heldSchema : SchemaId -> Model -> Schema
+heldSchema s m =
+    Dict.get (schemaToken s) m.held |> Maybe.map .schema |> Maybe.withDefault Schema.empty
 
 
 {-| A line of `ed describe`'s answer: into the schema being read, and kept
@@ -885,8 +939,16 @@ install s h m =
             else
                 m1
 
+        MatrixSchema e ->
+            if m.engine == Just e then
+                { m1 | matrix = h.schema }
 
-{-| What to read next: the followed engine's schema, then the mixer's, each
+            else
+                m1
+
+
+{-| What to read next: the followed engine's schema, the mixer's, then the
+engine's matrix, each
 once a connection; then following.
 -}
 next : Model -> Model
@@ -907,6 +969,9 @@ next m =
 
             else if lacks MixerSchema then
                 go (Checking MixerSchema Nothing)
+
+            else if lacks (MatrixSchema e) then
+                go (Checking (MatrixSchema e) Nothing)
 
             else
                 go Following

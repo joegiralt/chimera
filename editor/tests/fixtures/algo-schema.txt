@@ -1665,35 +1665,35 @@ param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 md
 OK
 page 23 FMD of 36
 panel FILTER CLEAN
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel FILTER 2040
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF keybd
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel FILTER DIRTY
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel FILTER LADDER
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 panel FILTER SEM
-route "ENV AMT" next-slice
-route "KEYBOARD" next-slice
-route "FREQ MOD" next-slice
+route "ENV AMT" ENV1:FILTER.CUTOFF route
+route "KEYBOARD" NOTE:FILTER.CUTOFF route
+route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
-route "RES MOD" next-slice
+route "RES MOD" QMIN route
 param FILTER.MODE "OUTPUT" choice lin 0 1 1 0 m
 opt FILTER.MODE 0 "MODE"
 opt FILTER.MODE 1 "BP"

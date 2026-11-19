@@ -42,6 +42,9 @@ impl FixedCol {
     pub const ALL: [FixedCol; 4] = [FixedCol::Freq, FixedCol::Q, FixedCol::Vca, FixedCol::Fx];
 
     /// The param the column routes into.
+    // Inlined: bank 2's `ed` calls it too, so no out-of-line copy
+    // stays in bank 1 for it (ADR 0289).
+    #[inline(always)]
     pub const fn addr(self) -> ParamAddr {
         match self {
             FixedCol::Freq => CUTOFF,
@@ -60,6 +63,9 @@ impl FixedCol {
     }
 
     /// The column header.
+    // Inlined: bank 2's `ed` calls it too, so no out-of-line copy
+    // stays in bank 1 for it (ADR 0289).
+    #[inline(always)]
     pub const fn tag(self) -> &'static str {
         match self {
             FixedCol::Freq => "FREQ",
@@ -347,6 +353,9 @@ impl ModState {
     }
 
     /// Amount from `source` to destination `dest`; 0 when out of range.
+    // Inlined: bank 2's `ed` calls it too, so no out-of-line copy
+    // stays in bank 1 for it (ADR 0289).
+    #[inline(always)]
     pub fn amount(&self, source: usize, dest: usize) -> i8 {
         if source < self.num_sources && dest < self.num_dests {
             self.amounts[source][dest]
@@ -356,6 +365,9 @@ impl ModState {
     }
 
     /// The present bits of destination `d` (0 out of range).
+    // Inlined: bank 2's `ed` calls it too, so no out-of-line copy
+    // stays in bank 1 for it (ADR 0289).
+    #[inline(always)]
     pub fn present(&self, d: usize) -> SourceBits {
         if d < self.num_dests {
             self.present[d]

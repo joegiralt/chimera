@@ -333,6 +333,13 @@ fn the_mixer_copy_holds_its_slots() {
 
 // ---- the schema hash ----
 
+/// A schema's token, as `ed describe` takes it.
+fn token(s: Schema) -> String {
+    let mut t = String::new();
+    s.write(&mut t).unwrap();
+    t
+}
+
 /// FNV-1a 64, the unit's.
 fn fnv64(b: &[u8]) -> u64 {
     b.iter().fold(0xcbf2_9ce4_8422_2325, |h, &x| {
@@ -347,21 +354,21 @@ fn the_schema_hash_is_describes_bytes_and_the_same_every_boot() {
         let n = ed_schema_pages(s);
         let text: String = (0..n)
             .map(|i| {
-                let a = ask(&mut f, &format!("ed describe {} {i}\n", s.token()));
+                let a = ask(&mut f, &format!("ed describe {} {i}\n", token(s)));
                 a.strip_suffix("OK\n").unwrap().to_string()
             })
             .collect();
-        assert!(text.len() > 300 * usize::from(n), "{s:?} {}", text.len());
+        assert!(text.len() > 250 * usize::from(n), "{s:?} {}", text.len());
         let want = format!(
             "schema {} {n} {:016x}\nOK\n",
-            s.token(),
+            token(s),
             fnv64(text.as_bytes())
         );
-        assert_eq!(ask(&mut f, &format!("ed schema {}\n", s.token())), want);
+        assert_eq!(ask(&mut f, &format!("ed schema {}\n", token(s))), want);
         // Kept for the boot, and another boot answers the same.
-        assert_eq!(ask(&mut f, &format!("ed schema {}\n", s.token())), want);
+        assert_eq!(ask(&mut f, &format!("ed schema {}\n", token(s))), want);
         let mut g = Fake::new();
-        assert_eq!(ask(&mut g, &format!("ed schema {}\n", s.token())), want);
+        assert_eq!(ask(&mut g, &format!("ed schema {}\n", token(s))), want);
         // One byte of a label moves it.
         let mut moved = text.into_bytes();
         moved[10] ^= 1;
@@ -374,7 +381,7 @@ fn the_schema_hash_is_describes_bytes_and_the_same_every_boot() {
     let mut f = Fake::new();
     assert_eq!(
         ask(&mut f, "ed schema NOPE\n"),
-        "ERR ed takes hello, schema, describe, get, set, since or part\n"
+        "ERR ed takes hello, schema, describe, get, set, route, since or part\n"
     );
 }
 

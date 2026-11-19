@@ -36,7 +36,14 @@ Editor (`editor/src/`):
 
 ## Slice 2: MTX
 
-Firmware: `Schema::Matrix(EngineType)`; `ed/route.rs` with `RouteCell { Matrix { src: Jack, dest: EdAddr }, Jack(JackSlot) }`; `ed route <cell> <amount|off>` queued and applied through `MatrixState::set`/`clear` + `sync_into`, priming as MIX+PLUS, stepping at most the grid's fastest turn a pass; `route "<label>" <cell> <route|keybd>` from `RouteView`; ROUTES section (`routes <n>`, `route …`, `unroute …`, diffed by (source, destination)). Editor: the route lines, `Route` command, the ROUTES section. Details written at the slice's start from `mod_grid.rs`, `filter_panel.rs`, `modulation.rs`, `taps.rs`.
+Firmware:
+1. `schema.rs`: `Schema::Matrix(EngineType)` (`MTX-<ENGINE>`), `chain()` an `Option` (the matrix has none), one page.
+2. `route.rs`: `RouteSrc { Mod(ModSource), Tap(TapOp) }` (tokens: `ModSource::disk_ident`, `OP5`, `OP6`), `RouteDest { Fixed(FixedCol), Reg(EdAddr) }`, `RouteCell { Matrix { src, dest }, Jack(JackSlot) }`, `Amount` (−127..127), `RouteTo { Amount, Off }`; `describe` for MTX; FLT › MOD's `route` line; the ROUTES lines.
+3. `edits.rs`: the act queue (8, uninit past its count), `ed route`'s act kept until the cell holds its amount; `ui::ed_cue::route` (bank 2, a `ui` child for the grid's private state) steps by `encoder_accel`'s top step, primes as MIX + PLUS, syncs the `ModState`.
+4. `since.rs`: ROUTES between PART and MIXER, its copy the Part's `ModState` and taps; whole on a new Part or engine; diffs by cell.
+5. Tests (`console_ed_matrix_test.rs`): the MTX schema, FLT › MOD's cells, every source × fixed column on ALGO and VA, the glide, priming and a full registry, refusals, a re-patched jack, the diff by cell, the whole section's size.
+
+Editor: `SchemaId.MatrixSchema`, `Cell`, `Amount`, `RouteTo`, `SetRoute`; the `route`, `routes`, `unroute`, `src`, `col`, `amount`, `dests` lines; `Model.routes`, `Model.matrix`, the MTX schema read after the mixer's; `Schema.Route` and `Schema.Matrix`.
 
 ## Slice 3: SETTINGS
 

@@ -62,6 +62,22 @@ mixerHash =
     "000000000000000b"
 
 
+mtxHash : String
+mtxHash =
+    "00000000000000c0"
+
+
+mtxPage : List String
+mtxPage =
+    [ "page 0 MTX of 1"
+    , "src ENV1 \"ENV1\""
+    , "src OP5 \"OP 5\""
+    , "col FREQ FILTER.CUTOFF"
+    , "amount -127 127"
+    , "dests 16"
+    ]
+
+
 {-| The cache had nothing for the schema being recalled.
 -}
 missed : SchemaId -> String -> Model.Model -> Model.Model
@@ -137,6 +153,13 @@ following =
         |> tick 132
         |> Tuple.first
         |> feed (mixerPage ++ [ "OK" ])
+        |> tick 133
+        |> Tuple.first
+        |> feed [ "schema MTX-ALGO 1 " ++ mtxHash, "OK" ]
+        |> missed (MatrixSchema Algo) mtxHash
+        |> tick 134
+        |> Tuple.first
+        |> feed (mtxPage ++ [ "OK" ])
 
 
 cutoffLine : String -> String
@@ -779,6 +802,13 @@ suite =
                             |> tick 231
                             |> Tuple.first
                             |> feed [ "page 0 OSC of 1", "panel OSC -", "OK" ]
+                            |> tick 250
+                            |> Tuple.first
+                            |> feed [ "schema MTX-VA 1 00000000000000c4", "OK" ]
+                            |> missed (MatrixSchema Va) "00000000000000c4"
+                            |> tick 255
+                            |> Tuple.first
+                            |> feed [ "page 0 MTX of 1", "OK" ]
                             |> tick 264
                             |> Tuple.first
                             |> feed [ "part 1 ALGO", "OK 4" ]
@@ -833,4 +863,57 @@ suite =
                     |> stepSends (Edit (Addr "PART3.LEVEL") (Num 0.25))
                     |> Tuple.second
                     |> Expect.equal [ Set (Addr "PART3.LEVEL") (Num 0.25) ]
+        , test "the_matrix_schema_is_read_after_the_mixers" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ ( "ENV1", "ENV1" ), ( "OP5", "OP 5" ) ] (Schema.matrix m.matrix).sources
+                    , \_ -> Expect.equal (Just 16) (Schema.matrix m.matrix).dests
+                    , \_ -> Expect.equal (Just ( -127, 127 )) (Schema.matrix m.matrix).range
+                    ]
+                    ()
+        , test "routes_are_kept_from_since_whole_and_diffed" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed [ "part 1 ALGO", "routes 1", "route ENV1:FILTER.CUTOFF 64 \"+64\"", "route LFO1:OP_C.LEVEL -3 \"-3\"", "OK 2" ]
+
+                    after : Model.Model
+                    after =
+                        m |> feed [ "route ENV1:FILTER.CUTOFF 70 \"+70\"", "unroute LFO1:OP_C.LEVEL", "OK 3" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ "ENV1:FILTER.CUTOFF", "LFO1:OP_C.LEVEL" ] (Dict.keys m.routes)
+                    , \_ -> Expect.equal [ ( "ENV1:FILTER.CUTOFF", { amount = 70, text = "+70" } ) ] (Dict.toList after.routes)
+                    , -- Whole again: what isn't repeated is gone.
+                      \_ -> Expect.equal [] (feed [ "routes 1", "OK 4" ] after |> .routes |> Dict.toList)
+                    , \_ -> Expect.equal [] (feed [ "part 2 ALGO", "OK 4" ] after |> .routes |> Dict.toList)
+                    ]
+                    ()
+        , test "a_route_edit_sends_ed_route" <|
+            \_ ->
+                case Protocol.amount -40 of
+                    Just a ->
+                        Expect.all
+                            [ \_ ->
+                                following
+                                    |> stepSends (EditRoute (Protocol.Cell "FM3IN") (Protocol.RouteAmount a))
+                                    |> Tuple.second
+                                    |> Expect.equal [ SetRoute (Protocol.Cell "FM3IN") (Protocol.RouteAmount a) ]
+                            , \_ ->
+                                Model.init
+                                    |> stepSends (EditRoute (Protocol.Cell "FM3IN") Protocol.RouteOff)
+                                    |> Tuple.second
+                                    |> Expect.equal []
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "-40 is an amount"
         ]

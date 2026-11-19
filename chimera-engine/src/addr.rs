@@ -321,6 +321,9 @@ impl ParamAddr {
 
     /// Modulation may target this address: the spec says the value is read
     /// per block *and* `Voice` reads this block instance (plan D7).
+    // Inlined: bank 2's `ed` calls it too, so no out-of-line copy
+    // stays in bank 1 for it (ADR 0289).
+    #[inline(always)]
     pub const fn modulatable(self) -> bool {
         self.block.voice_reads()
             && match self.spec() {

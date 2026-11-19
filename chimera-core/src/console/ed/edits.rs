@@ -6,7 +6,10 @@
 
 use core::fmt::{self, Write};
 
+use core::mem::MaybeUninit;
+
 use super::addr::EdBlock;
+use super::route::{RouteCell, RouteDest, RouteTo};
 use super::schema::Hashes;
 use super::value::{engine_of, find};
 use super::{EdAddr, EdValue, OptIndex};
@@ -16,6 +19,7 @@ use crate::dsp::algo::kinds::OpKind;
 use crate::project::Line;
 use crate::project::PartId;
 use crate::ui::UiState;
+use crate::ui::ed_cue::RouteAt;
 use crate::ui::page::ValFmt;
 use crate::ui::{ed_cue, held, view};
 use chimera_engine::params::EngineType;
@@ -96,6 +100,23 @@ impl To {
     }
 }
 
+/// Commands queued beside the sets (ADR 0289): a lap of a patch bay's
+/// cables is a handful.
+pub const ACTS: usize = 8;
+
+/// A command queued for the UI pass, after the sets.
+#[derive(Clone, Copy)]
+enum Act {
+    /// `ed route`: kept from pass to pass until the cell holds its amount
+    /// (a step a pass, never a jump), or the box leaves the Part it was
+    /// taken for. `to` `None` removes the route.
+    Route {
+        taken: Taken,
+        at: RouteAt,
+        to: Option<i8>,
+    },
+}
+
 /// What `EdState::push` made of a set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pushed {
@@ -115,6 +136,10 @@ pub struct EdState {
     pub(super) since: super::EdSince,
     /// `ed schema`'s hashes, made once a boot.
     pub(super) hashes: Hashes,
+    /// Commands for the UI pass, uninit past `acts_len`: `EdState::new`,
+    /// which bank 1 builds in place, writes one byte for them.
+    acts: [MaybeUninit<Act>; ACTS],
+    acts_len: u8,
 }
 
 impl EdState {
@@ -129,6 +154,8 @@ impl EdState {
             part: None,
             since: super::EdSince::new(),
             hashes: Hashes::new(),
+            acts: [MaybeUninit::uninit(); ACTS],
+            acts_len: 0,
         }
     }
 
@@ -142,6 +169,74 @@ impl EdState {
                 Pushed::Queued
             }
         }
+    }
+
+    /// The acts queued, oldest first.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.acts"))]
+    fn acts(&self) -> &[MaybeUninit<Act>] {
+        self.acts.get(..usize::from(self.acts_len)).unwrap_or(&[])
+    }
+
+    /// Act `i`, queued.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.act"))]
+    fn act(&self, i: usize) -> Option<Act> {
+        // SAFETY: `acts()` is the first `acts_len` slots, each written by
+        // `push_act` before `acts_len` counted it.
+        self.acts().get(i).map(|a| unsafe { a.assume_init() })
+    }
+
+    /// `ed route` queued: a route already queued on the same cell takes the
+    /// new amount, so a drag keeps one act.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.edits.push_route")
+    )]
+    fn push_route(&mut self, taken: Taken, at: RouteAt, to: Option<i8>) -> Pushed {
+        let new = Act::Route { taken, at, to };
+        let mut i = 0;
+        while let Some(Act::Route {
+            taken: t, at: a, ..
+        }) = self.act(i)
+        {
+            if t == taken && a == at {
+                if let Some(slot) = self.acts.get_mut(i) {
+                    slot.write(new);
+                }
+                return Pushed::Queued;
+            }
+            i += 1;
+        }
+        match self.acts.get_mut(usize::from(self.acts_len)) {
+            None => Pushed::Full,
+            Some(slot) => {
+                slot.write(new);
+                self.acts_len += 1;
+                Pushed::Queued
+            }
+        }
+    }
+
+    /// Every act, oldest first, on the Part it was taken for while the box
+    /// still edits it; an unfinished route stays for the next pass.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.edits.apply_acts")
+    )]
+    fn apply_acts(&mut self, ui: &mut UiState) {
+        let (mut i, mut kept) = (0, 0);
+        while let Some(a) = self.act(i) {
+            i += 1;
+            let keep = match a {
+                Act::Route { taken, at, to } => {
+                    taken.lands(ui) == Some(ui.active_part) && !crate::ui::ed_cue::route(ui, at, to)
+                }
+            };
+            if keep && let Some(slot) = self.acts.get_mut(kept) {
+                slot.write(a);
+                kept += 1;
+            }
+        }
+        self.acts_len = kept as u8;
     }
 
     /// Follow `p` on the next UI pass, as its key would.
@@ -165,6 +260,7 @@ impl EdState {
             i += 1;
         }
         self.len = 0;
+        self.apply_acts(ui);
         if let Some(p) = self.part.take() {
             ui.follow_part(p);
         }
@@ -300,6 +396,50 @@ fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<To, SetRefusal> {
         }
         (EdValue::Num(n, _), None) => Ok(To::Num(n)),
         (EdValue::Name(_), None) => Err(SetRefusal::TakesANumber),
+    }
+}
+
+/// `ed route`'s answer, `OK queued` or `ERR`: on the followed Part's
+/// engine, a tap's cell only on ALGO.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.route"))]
+pub(super) fn route(
+    c: RouteCell,
+    to: RouteTo,
+    ui: &UiState,
+    q: Option<&mut EdState>,
+    w: &mut dyn Write,
+) -> fmt::Result {
+    let Some(q) = q else {
+        return w.write_str("ERR ed route is not in this build\n");
+    };
+    let engine = engine_of(ui);
+    if !c.on(engine) {
+        w.write_str("ERR ed route has no ")?;
+        c.write(w)?;
+        return w.write_str(" here\n");
+    }
+    let at = match c {
+        RouteCell::Matrix {
+            src,
+            dest: RouteDest::Fixed(f),
+        } => RouteAt::Fixed(src.row(), f),
+        RouteCell::Matrix {
+            src,
+            dest: RouteDest::Reg(a),
+        } => RouteAt::Reg(src.row(), a.param()),
+        RouteCell::Jack(j) => RouteAt::Jack(j),
+    };
+    let to = match to {
+        RouteTo::Amount(a) => Some(a.get()),
+        RouteTo::Off => None,
+    };
+    let taken = Taken::Sound {
+        part: ui.active_part,
+        engine,
+    };
+    match q.push_route(taken, at, to) {
+        Pushed::Full => w.write_str("ERR busy\n"),
+        Pushed::Queued => w.write_str("OK queued\n"),
     }
 }
 
