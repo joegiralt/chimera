@@ -71,7 +71,8 @@ pub(crate) fn held_on(
     held: Option<crate::ui::held::Shown>,
     view: &View,
 ) -> Option<crate::ui::held::Held> {
-    held.map(|s| s.held).filter(|h| view.addr() == Some(h.addr))
+    held.map(|s| s.held)
+        .filter(|h| view.addr() == Some(h.addr()))
 }
 
 /// A param's text at display value `v`: a reverb panel cell's in its
@@ -82,7 +83,7 @@ pub(crate) fn param_text(cx: &CellCx, i: usize, view: &View, v: f32) -> FmtBuf {
         let fmt = view.fmt();
         fmt::fmt_val(
             &mut buf,
-            f32::from(h.code) / f32::from(fmt.max_int().max(1)),
+            f32::from(h.code()) / f32::from(fmt.max_int().max(1)),
             fmt,
         );
         return buf;

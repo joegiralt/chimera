@@ -22,6 +22,7 @@ use chimera_engine::dsp::filter::clean::{clean_k, clean_k2};
 use chimera_engine::dsp::filter::coef::g_of;
 use chimera_engine::dsp::filter::{Clean, FilterMode, FilterMods};
 use chimera_engine::dsp::va::osc::{NO_WRAP, Ramps, VarOsc};
+use chimera_engine::dsp::va::stability::WrapJitter;
 use chimera_engine::params::FilterParams;
 use rustfft::num_complex::Complex32 as C;
 
@@ -114,12 +115,13 @@ impl Va {
             shape: (0.0, 0.0),
         };
         let mut mk = [[NO_WRAP; 2]; B];
+        let mut jit = WrapJitter::NONE;
         self.0.render::<B, false, false, false, false>(
             out,
             &mut mk,
             &r,
-            &mut 1.0,
-            &mut || 1.0,
+            &mut jit,
+            &mut || WrapJitter::NONE,
             &[0.0; B],
             (0.0, 0.0),
         );

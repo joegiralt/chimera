@@ -5,6 +5,7 @@ mod common;
 
 use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{Block, ParamId};
+use chimera_core::dsp::SendLevel;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::midi_map::{Binding, Input as MapInput, MAP_LEN, Mappable, MidiMap};
@@ -815,11 +816,11 @@ fn sparse_bound() {
 #[test]
 fn sends_round_trip_and_cost_nothing_at_zero() {
     let mut s = Sound::init(EngineType::Algo);
-    s.params.out.sends = [0.25, 0.5, 1.0];
+    s.params.out.sends = [0.25, 0.5, 1.0].map(SendLevel::new);
     assert_round_trip(&s);
     assert_eq!(
         decode(&encode(&s)).unwrap().params.out.sends,
-        [0.25, 0.5, 1.0]
+        [0.25, 0.5, 1.0].map(SendLevel::new)
     );
 
     // The library save and load.
@@ -832,7 +833,7 @@ fn sends_round_trip_and_cost_nothing_at_zero() {
     .unwrap();
     let back = decode(&sink.0).unwrap();
     assert!(back.bits_eq(&s));
-    assert_eq!(back.params.out.sends, [0.25, 0.5, 1.0]);
+    assert_eq!(back.params.out.sends, [0.25, 0.5, 1.0].map(SendLevel::new));
 
     // Sends at 0 write nothing: INIT's bytes are the old encoder's.
     let init = Sound::plain_init(EngineType::Algo);
@@ -847,7 +848,10 @@ fn sends_round_trip_and_cost_nothing_at_zero() {
         encode_library_sound(&init, &st, None, w)
     })
     .unwrap();
-    assert_eq!(decode(&lib.0).unwrap().params.out.sends, [0.0; 3]);
+    assert_eq!(
+        decode(&lib.0).unwrap().params.out.sends,
+        [SendLevel::OFF; 3]
+    );
 }
 
 /// 16 mappings: Part LEVEL and PAN, then the first Sound params, with an

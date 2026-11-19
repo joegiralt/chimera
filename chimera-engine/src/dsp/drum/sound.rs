@@ -741,6 +741,8 @@ impl PadRoutes {
         self.0[i.index()] = r;
     }
 
+    /// Inlined into each caller, bank 2's `ed` among them (ADR 0285).
+    #[inline(always)]
     pub const fn route(&self, i: RouteId) -> &PadRoute {
         &self.0[i.index()]
     }

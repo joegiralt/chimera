@@ -2,10 +2,25 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+// ITCM's geometry (ADR 0266, 0286), `hw`'s own constants: one source.
+include!("../chimera-engine/src/itcm_geometry.rs");
+
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    fs::copy("memory.x", out_dir.join("memory.x")).unwrap();
+    let memory = fs::read_to_string("memory.x").unwrap();
+    assert!(
+        memory.contains("    /* ITCM REGION */\n"),
+        "memory.x: the ITCM region's place"
+    );
+    fs::write(
+        out_dir.join("memory.x"),
+        memory.replace(
+            "    /* ITCM REGION */\n",
+            &format!("    ITCM (rwx) : ORIGIN = 0x{ITCM_ORIGIN:08X}, LENGTH = {ITCM_STATE}\n"),
+        ),
+    )
+    .unwrap();
 
     fs::write(
         out_dir.join("ram_d2.x"),
@@ -50,21 +65,27 @@ ASSERT(SIZEOF(.sram4) <= LENGTH(RAM_D3), "SRAM4 overflows");
 
     fs::write(
         out_dir.join("itcm.x"),
-        r#"
-/* ITCM (ADR 0266): CPU-only state, never DMA's, built in place at boot
-   (NOLOAD: nothing zeroes or copies it). The kits first (ADR 0265). */
-SECTIONS {
-    .itcm (NOLOAD) : ALIGN(8) {
+        format!(
+            r#"
+/* ITCM (ADR 0266, 0286): CPU-only state, never DMA's, built in place at
+   boot (NOLOAD: `shared::zero_itcm` word-fills it first, then the builds):
+   the kits (ADR 0265), `ed`'s state and the audio's snapshots (`AUDIO`).
+   tools/itcm-residents.txt is the list `just check-itcm` holds. */
+SECTIONS {{
+    .itcm (NOLOAD) : ALIGN(8) {{
         __sitcm = .;
         *(.itcm .itcm.*);
         . = ALIGN(8);
         __eitcm = .;
-    } > ITCM
-}
+    }} > ITCM
+}}
 INSERT AFTER .uninit;
-ASSERT(__sitcm == 0x00000400, "ITCM's state starts at 0x400, clear of address 0");
+ASSERT(__sitcm == 0x{ITCM_ORIGIN:08X}, "ITCM's state starts at ITCM_ORIGIN, clear of address 0");
 ASSERT(__eitcm <= ORIGIN(ITCM) + LENGTH(ITCM), "ITCM overflows");
-"#,
+/* What a later move or a hot kernel may still take (ADR 0286). */
+ASSERT(ORIGIN(ITCM) + LENGTH(ITCM) - __eitcm >= {ITCM_MARGIN}, "ITCM: under the margin (ADR 0286)");
+"#
+        ),
     )
     .unwrap();
 
@@ -333,16 +354,39 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // parse and answers, text and rodata, its table at its slot after the
     // MIDI UI's (`ED_DOOR_ADDR`). Bank 1 keeps `EdLine` and the stub. The
     // first S4 group (ADR 0272: new 0.4 work goes high), after MIXER's
-    // reserve; its table stays in S0 with the other doors.
-    // And the encoders' feel (ADR 0279): the UI's curves, fine turn, band
-    // hint and CLASSIC RATE's semitone (`ui::feel`, through `UiDoor`),
-    // text and rodata.
+    // reserve; its table stays in S0 with the other doors. Each of its
+    // functions has its own `.bank2_ed.*` section (ADR 0285): LLVM outlines
+    // nothing from a function with an explicit section, so no outlined
+    // helper in bank 1 calls into `ed`; they follow VA's solos' table.
+    // VA's solos (ADR 0283): `va::osc::solo`, the saw's runs on its
+    // anchor, the next S4 group. Its table heads the S4 groups
+    // (`VA_SOLO_DOOR_ADDR`): the door's own is full, and a slot in S0
+    // would take S0-S3 under ADR 0251's 8 KB.
     let (ed, ed_slot, ed_assert) = (
-        "    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed*);
-    *(.text.*12chimera_core2ui4feel* .rodata.*12chimera_core2ui4feel*);\n",
+        "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n",
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
-        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");",
+        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08180400, \"VA's solos' table heads the S4 groups\");",
     );
+    // DRUM's voice groups (ADR 0280, `UiDoor::groups`, its one entry):
+    // `ui::kit_groups` and the count it reads, `drum::groups`;
+    // an S4 group after `ed`'s (ADR 0272: new 0.4 work goes high).
+    let groups =
+        "    *(.text.*12chimera_core2ui10kit_groups* .rodata.*12chimera_core2ui10kit_groups*
+      .text.*14chimera_engine3dsp4drum6groups* .rodata.*14chimera_engine3dsp4drum6groups*);\n";
+    // A Part's MAX VOICES and RESERVE (ADR 0281, `UiDoor::voices`, its
+    // one entry): `ui::part_voices`, beside the voice groups.
+    // `ToastTimer::shows`' instance (`Option<Toast>::is_some_and` with
+    // its closure): only kit_groups and part_voices call it.
+    // `Shares::refusal` is only ever called from part_voices: placed with
+    // it if it gets a symbol of its own.
+    let voices =
+        "    *(.text.*12chimera_core2ui11part_voices* .rodata.*12chimera_core2ui11part_voices*
+      .text.*10ToastTimer5shows* .text.*11voice_limit*6Shares7refusal*);\n";
+    // The encoders' feel (ADR 0279, `UiDoor`'s feel entries): `ui::feel`,
+    // the UI's curves, fine turn, band hint and CLASSIC RATE's semitone,
+    // text and rodata (its words are named statics, not anonymous).
+    let feel = "    *(.text.*12chimera_core2ui4feel* .rodata.*12chimera_core2ui4feel*);\n";
+    let s4 = format!("{ed}{groups}{voices}{feel}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -470,7 +514,7 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
         .replace("    /* TUNING */\n", tuning)
         .replace("    /* MIDI UI SLOT */\n", midi_ui_slot)
         .replace("/* MIDI UI ASSERT */", midi_ui_assert)
-        .replace("    /* S4 GROUPS */\n", ed)
+        .replace("    /* S4 GROUPS */\n", &s4)
         .replace("    /* ED SLOT */\n", ed_slot)
         .replace("/* ED ASSERT */", ed_assert),
     )
@@ -506,5 +550,6 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
     // The relocations stay in the ELF: the door check reads them.
     println!("cargo:rustc-link-arg=--emit-relocs");
     println!("cargo:rerun-if-changed=memory.x");
+    println!("cargo:rerun-if-changed=../chimera-engine/src/itcm_geometry.rs");
     println!("cargo:rerun-if-changed=build.rs");
 }

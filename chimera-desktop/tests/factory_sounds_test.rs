@@ -6,6 +6,7 @@
 use chimera_core::block::{ParamId, ParamSpec};
 use chimera_core::dsp::lfo::{LFO_SPECS, LfoParams};
 use chimera_core::dsp::modulator::{Func, LfoForm};
+use chimera_core::dsp::{Gain, SendLevel};
 use chimera_core::params::{ENV_SPECS, EnvParams};
 use chimera_core::storage::{
     BuildStamp, Card, FileKind, SoundDecoder, load_file, peek_library, sound_crc,
@@ -1648,7 +1649,7 @@ fn sends_parse_by_frozen_idents() {
     let t = format!("{BASE}OUT.SEND1 = \"0.5\"\nOUT.SEND2 = \"0.25\"\nOUT.SEND3 = \"1\"\n");
     let s = run(&t).unwrap();
     let snd = source::to_sound(&s[0]).unwrap();
-    assert_eq!(snd.params.out.sends, [0.5, 0.25, 1.0]);
+    assert_eq!(snd.params.out.sends, [0.5, 0.25, 1.0].map(SendLevel::new));
 }
 
 #[test]
@@ -2541,7 +2542,7 @@ fn demo_round_trips() {
         assert_eq!(sound_crc(&part.sound), sound_crc(&want), "Part {}", i + 1);
         assert_eq!(part.sound.params.out.sends, want.params.out.sends);
         assert_eq!(part.mix.channel, MidiChannel::new(i as u8).unwrap());
-        assert_eq!(part.mix.mode, PartMode::Poly);
+        assert_eq!(part.mix.mode(), PartMode::Poly);
         // From a pool slot, as a library load leaves it.
         assert!(
             matches!(part.origin(), Origin::Slot { .. }),
@@ -2654,9 +2655,9 @@ fn mono_part_mode_set() {
     let p =
         decoded(&run_demo(&demo_with(7, "part.2 = \"TEST TWO, MONO, CH 7\""), &sounds).unwrap());
     let two = p.part(PartId::ALL[1]);
-    assert_eq!(two.mix.mode, PartMode::Mono);
+    assert_eq!(two.mix.mode(), PartMode::Mono);
     assert_eq!(two.mix.channel, MidiChannel::new(6).unwrap());
-    assert_eq!(p.part(PartId::ALL[0]).mix.mode, PartMode::Poly);
+    assert_eq!(p.part(PartId::ALL[0]).mix.mode(), PartMode::Poly);
 }
 
 #[test]
@@ -2903,22 +2904,60 @@ fn hear_values_are_ones_the_try_line_names() {
     );
 }
 
+/// `MIN_SEND` is the gain reaching an effect, past the send taper
+/// (ADR 0278): a level of 0.31 feeds 0.096, under it; 0.32 feeds 0.102.
 #[test]
 fn a_send_under_a_tenth_is_not_heard() {
     use project::Effect;
     let fx = chimera_core::dsp::fx_bus::FxParams::DEFAULT;
-    assert!(project::heard(&fx, [0.0, 0.0, 0.09]).is_empty());
+    let reverb = |l: SendLevel| [SendLevel::OFF, SendLevel::OFF, l];
+    assert_eq!(project::MIN_SEND, Gain::new(0.1));
+    assert!(project::heard(&fx, reverb(SendLevel::new(0.31))).is_empty());
     assert_eq!(
-        project::heard(&fx, [0.0, 0.0, project::MIN_SEND]),
+        project::heard(&fx, reverb(SendLevel::new(0.32))),
         vec![Effect::Reverb(ReverbType::Quad)]
     );
     let mut off = fx;
     off.reverb.mix = 0.0;
     assert!(
-        project::heard(&off, [0.5, 0.0, 0.5])
+        project::heard(&off, [0.5, 0.0, 0.5].map(SendLevel::new))
             .iter()
             .all(|e| !matches!(e, Effect::Reverb(_)))
     );
+}
+
+/// The delay's REV SEND counts by its gain too: 0.3 into the reverb is
+/// not hearing it.
+#[test]
+fn a_rev_send_under_a_tenth_is_not_heard() {
+    use project::Effect;
+    let mut fx = chimera_core::dsp::fx_bus::FxParams::DEFAULT;
+    let delay = [SendLevel::OFF, SendLevel::FULL, SendLevel::OFF];
+    fx.delay.rev_send = SendLevel::new(0.3);
+    assert_eq!(project::heard(&fx, delay), vec![Effect::Delay]);
+    fx.delay.rev_send = SendLevel::new(0.4);
+    assert!(project::heard(&fx, delay).contains(&Effect::Reverb(fx.reverb.kind)));
+}
+
+/// The factory's sends and REV SENDs sit on the knob's 1/128 grid
+/// (ADR 0278: re-voiced by `SendLevel::from_gain`, never between steps).
+#[test]
+fn factory_sends_sit_on_the_grid() {
+    let dir = std::path::Path::new(SOURCES);
+    for s in build::sources(dir).unwrap() {
+        if s.is_placeholder() || s.from.is_some() {
+            continue;
+        }
+        for l in source::to_sound(&s).unwrap().params.out.sends {
+            assert!(l.grid_step().is_some(), "{}: {l:?}", s.name.as_str());
+        }
+    }
+    for d in build::demos(dir).unwrap() {
+        for fx in std::iter::once(d.fx).chain(d.hear) {
+            let l = fx.delay.rev_send;
+            assert!(l.grid_step().is_some(), "{:?}: {l:?}", d.name);
+        }
+    }
 }
 
 #[test]

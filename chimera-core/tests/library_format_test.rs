@@ -162,13 +162,14 @@ const PLAIN: [(usize, u64); 15] = [
     (268, 0x972b0812999ae0b4),
     (277, 0xdae80c8f09d402aa),
     // CHOIR, TALK BASS, BREATH and VOX, captured when they joined the bank.
-    (483, 0xa1b270a0d6ed7e9a),
+    // CHOIR, BREATH and VOX's sends re-voiced for the taper (ADR 0278).
+    (483, 0x0268409abfa0cf83),
     // TALK BASS's and VOX's DRV, now the FX slot's SOFT (#614).
     // Task 14: P3 added (cancels SOFT's `MAKE_UP`).
     (448, 0xc4c61a8fc438278d),
-    (446, 0xc543fd314e7a61a9),
+    (446, 0x84459cd24c53a181),
     // Task 14: P3 added (cancels SOFT's `MAKE_UP`).
-    (464, 0x548dd4eb65f23948),
+    (464, 0x8fc5852aa216de91),
     (132, 0x91e8cb92bf5162e0),
     (132, 0x8575cbc8307a58e3),
     // INIT TAPE's LOOP LENGTH 0.8 (ADR 0180): a one-param block more.

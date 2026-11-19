@@ -31,9 +31,9 @@ editor-sim:
 editor-e2e:
     node editor/e2e/sim.mjs
 
-# The browser editor's Elm tests
+# The browser editor's Elm tests, then elm-review (the site's gate, editor/review)
 editor-test:
-    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && node public/ports.check.js
+    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test && npx elm-review && node public/ports.check.js
 
 # The browser editor, optimised, into editor/dist/
 editor-build:
@@ -211,6 +211,7 @@ bank2-split elf out:
         rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2
         {{utils}} door-check {{elf}}
         just check-door-placed {{elf}}
+        just check-itcm {{elf}}
         {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
         just check-slots {{elf}} {{out}}.bk2
         just check-bin-paths {{out}}.bk2
@@ -278,11 +279,32 @@ check-door-placed elf:
     for p in 'ui::midi::' 'ui::UiState>::hear_in$' 'ui::UiState>::map_in$' 'ui::UiState>::focus_note$' 'ui::UiState>::out_in$' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
         if grep -qE " [tT] .*$p" <<< "$syms"; then midi_ui+=("$p"); fi
     done
-    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'voice::depth::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on' 'randomize::kern::' 'console::ed::'; do
+    # DRUM's voice groups (ADR 0280): the door's entry always links, the
+    # count where the inliner leaves it out of them.
+    midi_ui+=('ui::kit_groups::')
+    if grep -qE ' [tT] .*drum::groups::' <<< "$syms"; then midi_ui+=('drum::groups::'); fi
+    # MAX VOICES and RESERVE (ADR 0281): the door's entry; and what the
+    # linker script pins beside it, where it has a symbol of its own (the
+    # toast check's instance, the rule when not inlined).
+    midi_ui+=('ui::part_voices::')
+    if grep -qE ' [tT] .*ToastTimer>::shows' <<< "$syms"; then midi_ui+=('ToastTimer>::shows'); fi
+    if grep -qE ' [tT] .*Shares>::refusal' <<< "$syms"; then midi_ui+=('Shares>::refusal'); fi
+    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::osc::solo::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'voice::depth::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on' 'randomize::kern::' 'console::ed::'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); o = (a - 0x08100000) % 0x40000; if (a < 0x08100000 || a >= 0x08200000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } else if (a - 0x08100000 >= 0x80000 && (o < 0x400 || o >= 0x3FFE0)) { print "in a slot reserve or end marker: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
     # ed is pinned to the S4 group (ADR 0272), not anywhere in bank 2.
     grep -E ' [tT] .*console::ed::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "ed outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # So are VA's solos and their table (ADR 0283).
+    grep -E ' [tT] .*va::osc::solo::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "VA solo outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # And no solo code of theirs sits in bank 1: the quiet pulse's or its runs' (ADR 0283).
+    # (awk alone: when all of it is inlined into `solo::play` there is none, and grep would fail.)
+    awk '/ [tT] .*PulseQuiet/ { a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "VA solo code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"
+
+# ITCM's state (ADR 0266, 0286): CPU-only, never a DMA's. Only the
+# residents tools/itcm-residents.txt lists lie in `[__sitcm, __eitcm)`, and
+# `AUDIO` is there wherever the synth is linked (not in sd-probe).
+check-itcm elf:
+    python3 tools/check_itcm.py {{elf}}
 
 check-no-gate bin:
     #!/usr/bin/env bash
@@ -462,6 +484,8 @@ build:
 # folds into code, and bank 1 is measured as the commit would build (#874).
 check $CHIMERA_STAMP_CLEAN="1":
     python3 -m unittest discover -s tools -p 'test_*.py'
+    # The editor's Elm tests: its Part count is pinned to the unit's (UnitTest).
+    just editor-test
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
@@ -471,10 +495,10 @@ check $CHIMERA_STAMP_CLEAN="1":
     # TAPE's UI with bank 2 closed, through the host's own door (ADR 0175).
     cargo test -p chimera-core --features bank2 --test tape_closed_ui_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
-    # TAPE's, the reverb's, VA FM's, the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's, ALGO's and the streamed loads' bank-1 sides through the host's own door.
-    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test --test depth_proxy_test --test algo_door_test --test modal_door_test --test midi_door_test
+    # TAPE's, the reverb's, VA FM's and solos' (and the solos fuzzed against their pairs), the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's, ALGO's and the streamed loads' bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test va_solo_door_test --test va_solo_fuzz_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test --test depth_proxy_test --test algo_door_test --test modal_door_test --test midi_door_test
     # ORBIT's runner and pages through the host's own door: open it plays as before the move, closed nothing (ADR 0208); a closed door keeps each Part's map record for its saves (#815).
-    cargo test -p chimera-core --features bank2 --test orbit_door_test --test randomize_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test --test ed_door_test --test mpe_closed_door_test --test bindings_codec_test --test replace_guard_test
+    cargo test -p chimera-core --features bank2 --test orbit_door_test --test randomize_door_test --test drum_groups_door_test --test part_voices_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test --test ed_door_test --test mpe_closed_door_test --test bindings_codec_test --test replace_guard_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -486,16 +510,20 @@ check $CHIMERA_STAMP_CLEAN="1":
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     just check-bank1 default
     just check-bank2 default
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     just check-bank1 orbit
     just check-bank2 orbit
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
     just check-bank2 bank2-gate
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     # ORBIT with usb-device writing the configuration, the static's fallback (ADR 0260).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,usb-config-writer
     just check-bank1 orbit,usb-config-writer
+    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
     # The gate's doors and placement, USB audio's stream among them (ADR
     # 0256); `release-bin` checks the default and ORBIT builds'.
     {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32
@@ -503,8 +531,10 @@ check $CHIMERA_STAMP_CLEAN="1":
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits, and held to
     # its bank-1 budget (ADR 0198).
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; done
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
+    # Its split as `flash-sd-probe` makes it (the seal, check-itcm with ITCM empty).
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
     out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi

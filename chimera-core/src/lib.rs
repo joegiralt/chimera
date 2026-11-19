@@ -2,6 +2,7 @@
 //! `chimera-engine`, whose modules are re-exported here under their own
 //! names: `chimera_core::dsp` is `chimera_engine::dsp`.
 #![no_std]
+#![feature(optimize_attribute)]
 
 #[cfg(all(feature = "test-support", target_os = "none"))]
 compile_error!("test-support is for host tests: it forges confirmations and fresh files");
@@ -15,7 +16,7 @@ pub use chimera_engine::{
     instrument, lfo_glyph, meter, midi_in, midi_map, mod_path, modulation, mpe, name, note_queue,
     nrpn, orbit, out_ring, params, part, perf, played, preset, project, randomize, reset,
     scala_name, scope, source_table, storage, stream, sym_alloc, taps, tracked, triple, tuning,
-    voice_alloc,
+    voice_alloc, voice_limit,
 };
 
 // The engine's TAPE (`bank2` brings it) with the UI that loads its sources,

@@ -72,6 +72,8 @@ const LOAD_SHED_PERCENT: u64 = 95;
 pub const AXI_SRAM: usize = 512 * 1024; // D1: framebuffer, UI, Performance, FX bus
 pub const D2_SRAM: usize = 288 * 1024; // SRAM1+2+3 at 0x3000_0000: voices, DMA buffers
 pub const DTCM: usize = 128 * 1024; // tables, audio stack
+include!("itcm_geometry.rs");
+const _: () = assert!(ITCM_ORIGIN + ITCM_STATE == 64 * 1024 && ITCM_MARGIN < ITCM_STATE);
 
 /// D2 kept free, as one non-cacheable MPU region (16 KB), for the audio DMA
 /// rings (3 SAI × 2 halves × 64 frames × 2 ch × 4 B = 3 KB,

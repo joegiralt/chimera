@@ -235,6 +235,84 @@ impl Unit {
     }
 }
 
+/// A linear gain, 0 or more and finite (NaN is 0).
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Gain(f32);
+
+impl Gain {
+    pub const ZERO: Self = Self(0.0);
+    pub const UNITY: Self = Self(1.0);
+
+    pub const fn new(v: f32) -> Self {
+        Self(clampf(v, 0.0, f32::MAX))
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+
+    /// One gain after the other. Two finite gains 0 or more multiply to 0
+    /// or more, never NaN; an overflow saturates at `f32::MAX`.
+    #[inline(always)]
+    pub const fn times(self, g: Gain) -> Self {
+        Self((self.0 * g.0).min(f32::MAX))
+    }
+}
+
+/// A send's stored level: a Part's CHORUS, DELAY and REVERB sends and the
+/// delay's REV SEND, 0..=1, shown 0–127 on the 1/128 grid (MIDI, NRPN and
+/// the editor write between). It reaches an effect only as `gain`, the
+/// squared taper (ADR 0278).
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd)]
+pub struct SendLevel(Unit);
+
+/// Its value alone, as the plain `f32` it was (the neutral Sound's pinned
+/// dump, ADR 0087).
+impl core::fmt::Debug for SendLevel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.get(), f)
+    }
+}
+
+impl SendLevel {
+    pub const OFF: Self = Self(Unit::ZERO);
+    pub const FULL: Self = Self(Unit::ONE);
+
+    pub const fn new(v: f32) -> Self {
+        Self(Unit::new(v))
+    }
+
+    /// Step `N` of 128 on the knob's grid; past 128 does not compile.
+    pub const fn step<const N: u8>() -> Self {
+        const { assert!(N <= 128, "a send step is 0..=128") };
+        Self(Unit::new(N as f32 / 128.0))
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0.get()
+    }
+
+    /// The gain it feeds its effect: level², so 0 is off, the top unity,
+    /// half −12 dB and the first step −84 dB (ADR 0278).
+    #[inline(always)]
+    pub const fn gain(self) -> Gain {
+        let l = self.0.get();
+        Gain(l * l)
+    }
+
+    /// The grid level whose `gain` is nearest `g` (at most 1): how a send
+    /// voiced on the old linear knob keeps its sound (ADR 0278).
+    pub fn from_gain(g: Gain) -> Self {
+        Self::new(libm::roundf(libm::sqrtf(g.get()) * 128.0) / 128.0)
+    }
+
+    /// Its step on the 1/128 grid, `None` between steps.
+    pub fn grid_step(self) -> Option<u8> {
+        let n = self.get() * 128.0;
+        (n == libm::roundf(n)).then_some(n as u8)
+    }
+}
+
 pub mod algo;
 pub mod chorus;
 pub mod comp;

@@ -428,7 +428,8 @@ pub static PAD_AMP_SPECS: [ParamSpec; 9] = {
         sp,
         out_spec(OutParams::VCA_VEL, PadAmpParams::VEL),
         out_spec(OutParams::LPG, PadAmpParams::LPG),
-        out_spec(OutParams::DECAY, PadAmpParams::GATE_DECAY),
+        // Its own ident: the pad's AHD has a DECAY (ADR 0285).
+        out_spec(OutParams::DECAY, PadAmpParams::GATE_DECAY).ident("GATE_DECAY"),
         out_spec(OutParams::STRIKE, PadAmpParams::STRIKE),
         ParamSpec::choice(
             PadAmpParams::MODE.0,

@@ -136,7 +136,8 @@ fn algo_with_the_door_closed_is_silent_and_ends() {
     let silent = {
         let mut h = 0xcbf2_9ce4_8422_2325u64;
         for _ in 0..400 * chimera_hal::BLOCK_SIZE * 4 {
-            h = (h ^ 0).wrapping_mul(0x0100_0000_01b3);
+            // each sample is +0: its bits xor nothing in
+            h = h.wrapping_mul(0x0100_0000_01b3);
         }
         h
     };

@@ -17,7 +17,7 @@
 
 use super::k2040::k2040_k;
 use crate::dsp::clampf;
-pub use crate::dsp::va::stability::depth;
+pub use crate::dsp::va::stability::{Depth, depth};
 use crate::dsp::va::stability::{Seed, mix32, uni, xorshift};
 use crate::hw::Cost;
 use crate::project::PartId;
@@ -198,15 +198,16 @@ impl FilterStability {
     /// Once a block at depth `d`. `d == 0` is `Spread::NONE` and the walk
     /// holds where it is.
     #[inline(never)]
-    pub fn step(&mut self, d: f32) -> Spread {
+    pub fn step(&mut self, d: Depth) -> Spread {
         let last = self.last;
-        if d == 0.0 {
+        if d.is_none() {
             self.last = (1.0, 1.0);
             return Spread {
                 cut: (last.0, 1.0),
                 res: (last.1, 1.0),
             };
         }
+        let d = d.get();
         let x = xorshift(&mut self.rng);
         self.y1 += WALK_A * (x - self.y1);
         self.y2 += WALK_A * (self.y1 - self.y2);
@@ -289,7 +290,7 @@ mod tests {
     fn a_slot_is_the_same_chip() {
         let run = |p, slot| {
             let mut c = chip(p, slot, 60);
-            [(); 500].map(|_| c.step(0.25))
+            [(); 500].map(|_| c.step(Depth::new(0.25)))
         };
         assert_eq!(run(0, 2), run(0, 2));
         assert_ne!(run(0, 2), run(0, 3));
@@ -297,7 +298,7 @@ mod tests {
         // A new note on the slot keeps its walk and its draws.
         let mut c = chip(0, 2, 60);
         let fixed = c.fixed_cents();
-        c.step(0.25);
+        c.step(Depth::new(0.25));
         let w = c.walk();
         c.note_on(part(0), 2, 60);
         assert_eq!((c.fixed_cents(), c.walk()), (fixed, w));
@@ -332,7 +333,8 @@ mod tests {
     /// within a fifth, its peaks ±20 cents.
     #[test]
     fn the_prophet_setting_is_the_labs() {
-        let d = depth(PROPHET);
+        let depth = depth(PROPHET);
+        let d = depth.get();
         assert_eq!(d, 0.25);
         assert_eq!(d * OFFSET_CENTS, 25.0);
         assert_eq!(d * TRACK, 0.02);
@@ -342,7 +344,7 @@ mod tests {
         let n = 200_000;
         let (mut sum2, mut peak) = (0.0f64, 0.0f32);
         for _ in 0..n {
-            let s = c.step(d);
+            let s = c.step(depth);
             let drift = cents(s.cut.1) - fixed;
             sum2 += f64::from(drift * drift);
             peak = peak.max(drift.abs());
@@ -360,10 +362,10 @@ mod tests {
     #[test]
     fn the_drift_steps_far_below_audibility() {
         let mut c = chip(0, 4, 60);
-        let mut last = c.step(1.0);
+        let mut last = c.step(Depth::new(1.0));
         let mut worst = 0.0f32;
         for _ in 0..200_000 {
-            let s = c.step(1.0);
+            let s = c.step(Depth::new(1.0));
             assert_eq!(s.cut.0, s.cut.1, "held");
             assert_eq!(s.res.0, s.res.1);
             worst = worst.max((cents(s.cut.1) - cents(last.cut.1)).abs());
@@ -375,9 +377,9 @@ mod tests {
         assert_eq!(s.cut.0, last.cut.1);
         assert_ne!(s.cut.0, s.cut.1);
         // Back to 1: one ramp to neutral, then neutral.
-        let s1 = c.step(0.0);
+        let s1 = c.step(Depth::new(0.0));
         assert_eq!((s1.cut.0, s1.cut.1), (s.cut.1, 1.0));
-        assert_eq!(c.step(0.0), Spread::NONE);
+        assert_eq!(c.step(Depth::new(0.0)), Spread::NONE);
     }
 
     /// RES's spread never takes `k` past RES 1's.

@@ -25,6 +25,7 @@ pub mod hold;
 pub mod installing;
 pub mod jog;
 pub mod kit_band;
+pub mod kit_groups;
 pub mod learn;
 pub mod led;
 pub mod lfo_glyph;
@@ -41,6 +42,7 @@ pub mod op_page;
 pub mod orbit;
 pub mod page;
 pub mod part_page;
+pub mod part_voices;
 pub mod perf;
 pub mod pit_tuner;
 pub mod pool_page;
@@ -75,9 +77,8 @@ use chimera_hal::{
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::boot::RomDfu;
-use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::engine::{FormantView, FormantViews};
-use crate::dsp::algo::kinds::{OpKind, step_kind};
+use crate::dsp::algo::kinds::step_kind;
 use crate::dsp::algo::params::step_alg;
 use crate::dsp::drum::types::{Machine, PadId};
 use crate::dsp::lfo::Lfo;
@@ -1114,6 +1115,41 @@ impl UiState {
         self.enter_page();
     }
 
+    /// `ed part`: Part `p`'s key alone, in `input`'s order (a card or
+    /// library load swallows it, it drops a prompt or a half-typed NAMING,
+    /// waits for a job, then cancels learn), but on `p`'s own pages or
+    /// mixer it stays put: there its key would flip between them. In ORBIT
+    /// the keys are rings: nothing at all. A move retires what any press
+    /// does (the toast, the prime and source notes) and wakes the screen.
+    /// Inlined into `EdState::apply`, so it sits in bank 2 with it.
+    #[inline(always)]
+    pub(crate) fn follow_part(&mut self, p: PartId) {
+        if self.loc.ladder_part() == Some(p)
+            || self.loc.orbit().is_some()
+            || self.src.loading()
+            || self.lib.busy()
+        {
+            return;
+        }
+        if self.modal.take().is_some() {
+            self.closed();
+        }
+        if self.job.is_some() {
+            return;
+        }
+        self.learn = learn::Learn::Off;
+        let cx = self.cx();
+        if let Step::Go(to) = self.loc.step(NavKey::Part(p), &cx, &mut self.recall) {
+            self.idle.touch(false, true);
+            self.prime_status = None;
+            self.held = None;
+            self.toast.dismiss();
+            self.browser_dirty |= self.refusal.take().is_some();
+            self.src.input();
+            self.go(to)
+        }
+    }
+
     pub fn project(&self) -> &Project {
         &self.project
     }
@@ -1592,12 +1628,12 @@ impl UiState {
     /// budget refuses: say so (an encoder turn shows it dimmed instead).
     #[inline(never)]
     fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) {
-        if !held::applies(a, shift) {
+        let Some(cell) = held::applies(a, shift) else {
             return;
-        }
+        };
         let p = &self.project.part(at).sound.params.algo;
-        let refused = match a.block {
-            BlockRef::AlgoOp(op) => {
+        let refused = match cell {
+            held::Cell::Wave(op) => {
                 let d = if shift {
                     delta.signum() * i8::MAX
                 } else {
@@ -1606,7 +1642,10 @@ impl UiState {
                 let from = p.kinds().get(op.index());
                 step_kind(p.kinds(), p.linked(), op.index(), from, d).refused
             }
-            _ => step_alg(p, a.param, p.side(a.param), delta).refused,
+            held::Cell::Alg(side) => {
+                let id = side.param();
+                step_alg(p, id, p.side(id), delta).refused
+            }
         };
         if refused {
             self.error(Line::new(prompt::FORMANT_FULL));
@@ -1629,33 +1668,57 @@ impl UiState {
         if a == held::MODEL || a == held::DIRECTION {
             return self.turn_model(at, a, delta, shift);
         }
-        if !held::applies(a, shift) {
-            return false;
+        // DRUM's CHOKE (ADR 0280): bank 2's; closed, the plain edit.
+        if a == held::CHOKE
+            && let Some(s) = crate::bank2::groups(kit_groups::Ask::Turn(self, at, delta, shift))
+        {
+            return matches!(s, kit_groups::Said::Moved(true));
         }
+        // MAX VOICES and RESERVE (ADR 0281): bank 2's; closed, the plain
+        // edit.
+        if let Some(cell) = held::VoiceCell::of(a)
+            && let Some(t) = self.voices_act(at, cell, part_voices::Act::Turn { delta, shift })
+        {
+            return t != part_voices::Turned::Refused;
+        }
+        let Some(cell) = held::applies(a, shift) else {
+            return false;
+        };
         let p = &self.project.part(at).sound.params.algo;
-        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
-        let (code, refused) = match a.block {
-            BlockRef::AlgoOp(op) => {
+        let held = self.held.filter(|&(h, c)| h == at && c.addr() == a);
+        let (pick, refused) = match cell {
+            held::Cell::Wave(op) => {
                 let d = if shift {
                     delta.signum() * i8::MAX
                 } else {
                     delta
                 };
-                let from = held.map_or(p.kinds().get(op.index()), |(_, c)| OpKind::clamped(c.code));
+                let from = match held {
+                    Some((_, held::Held::Sound(held::Pick::Wave(_, k)))) => k,
+                    Some((_, held::Held::Sound(held::Pick::Alg(..) | held::Pick::Tape(_))))
+                    | Some((_, held::Held::Choke(_) | held::Held::Voices(_)))
+                    | None => p.kinds().get(op.index()),
+                };
                 let s = step_kind(p.kinds(), p.linked(), op.index(), from, d);
-                (s.to.code(), s.refused)
+                (held::Pick::Wave(op, s.to), s.refused)
             }
-            _ => {
-                let from = held.map_or(p.side(a.param), |(_, c)| AlgoId::clamped(c.code));
-                let s = step_alg(p, a.param, from, delta);
-                (s.to.get(), s.refused)
+            held::Cell::Alg(side) => {
+                let from = match held {
+                    Some((_, held::Held::Sound(held::Pick::Alg(_, x)))) => x,
+                    Some((_, held::Held::Sound(held::Pick::Wave(..) | held::Pick::Tape(_))))
+                    | Some((_, held::Held::Choke(_) | held::Held::Voices(_)))
+                    | None => p.side(side.param()),
+                };
+                let s = step_alg(p, side.param(), from, delta);
+                (held::Pick::Alg(side, s.to), s.refused)
             }
         };
+        let h = held::Held::Sound(pick);
         if refused {
-            self.held = Some((at, held::Held { addr: a, code }));
+            self.held = Some((at, h));
         } else {
             self.held = None;
-            self.edit_in(at, a, part_page::Edit::To(f32::from(code)));
+            self.edit_in(at, a, part_page::Edit::To(f32::from(h.code())));
         }
         true
     }
@@ -1669,27 +1732,24 @@ impl UiState {
             return false;
         }
         let sound = &self.project.part(at).sound;
-        let now = crate::block::Block::get(&sound.params.tape, a.param) as u8;
-        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
-        let from = held.map_or(now, |(_, c)| c.code);
-        // MODEL and DIRECTION each list four.
-        const _: () = assert!(
-            crate::dsp::tape_engine::TapeMachine::ALL.len() == 4
-                && crate::dsp::tape_engine::Direction::ALL.len() == 4
-        );
-        let last = 3;
-        let to = match (shift, delta > 0) {
-            (true, true) => last,
-            (true, false) => 0,
-            _ => (i16::from(from) + i16::from(delta)).clamp(0, last),
-        } as u8;
-        let h = held::Held { addr: a, code: to };
-        if h.why(sound, true).is_some() {
-            self.held = Some((at, h));
+        let Some(now) =
+            held::TapeTurn::of(a, crate::block::Block::get(&sound.params.tape, a.param))
+        else {
+            return false;
+        };
+        let from = match self.held {
+            Some((h, held::Held::Sound(held::Pick::Tape(t)))) if h == at && t.addr() == a => t,
+            Some((_, held::Held::Sound(_) | held::Held::Choke(_) | held::Held::Voices(_)))
+            | None => now,
+        };
+        let to = from.step(delta, shift);
+        let pick = held::Pick::Tape(to);
+        if pick.why(sound, true).is_some() {
+            self.held = Some((at, held::Held::Sound(pick)));
         } else {
             self.held = None;
             if to != now {
-                self.edit_in(at, a, part_page::Edit::To(f32::from(to)));
+                self.edit_in(at, a, part_page::Edit::To(f32::from(to.code())));
             }
         }
         true
@@ -1729,13 +1789,59 @@ impl UiState {
         r.is_some_and(|r| self.project.pool().streamed(r))
     }
 
+    /// A turn or an edit on MAX VOICES or RESERVE, bank 2's
+    /// (`part_voices`): `None` with the door closed. Out of line: bank 1's
+    /// one stub for both.
+    #[inline(never)]
+    fn voices_act(
+        &mut self,
+        at: PartId,
+        cell: held::VoiceCell,
+        act: part_voices::Act,
+    ) -> Option<part_voices::Turned> {
+        let mut out = None;
+        let job = part_voices::Job::Act {
+            ui: self,
+            at,
+            cell,
+            act,
+            out: &mut out,
+        };
+        crate::bank2::voices(part_voices::Ask::Judge(job));
+        out
+    }
+
+    /// Why a held MAX VOICES or RESERVE is refused, if it still is: bank
+    /// 2's (`part_voices`), `None` closed. Out of line: bank 1's stub.
+    #[inline(never)]
+    fn voices_held(&self, at: PartId, hold: held::VoicesHold) -> Option<held::Reason> {
+        let mut out = None;
+        let job = part_voices::Job::Held {
+            ui: self,
+            at,
+            hold,
+            out: &mut out,
+        };
+        crate::bank2::voices(part_voices::Ask::Judge(job));
+        out.and_then(Result::err).map(held::Reason::Voices)
+    }
+
     /// The choice the focused cell shows dimmed and why, if any.
     pub fn held_choice(&self) -> Option<held::Shown> {
         let (at, h) = self.held?;
         let def = self.page_def();
         let on = slot_addr(def, self.focused_slot(), &self.ctx());
-        (at == self.active_part && on == Some(h.addr))
-            .then(|| h.why(&self.project.part(at).sound, self.streams(at)))
+        (at == self.active_part && on == Some(h.addr()))
+            .then(|| match h {
+                held::Held::Choke(hold) => {
+                    match crate::bank2::groups(kit_groups::Ask::Held(self, at, hold)) {
+                        Some(kit_groups::Said::Refused(n)) => Some(held::Reason::Groups(n)),
+                        _ => None,
+                    }
+                }
+                held::Held::Sound(pick) => pick.why(&self.project.part(at).sound, self.streams(at)),
+                held::Held::Voices(hold) => self.voices_held(at, hold),
+            })
             .flatten()
             .map(|why| held::Shown { held: h, why })
     }
@@ -1753,6 +1859,8 @@ impl UiState {
         }
         self.project.select_pad(part, pad);
         if part == self.active_part {
+            // A held CHOKE was the last pad's.
+            self.held = None;
             self.snap_display();
         }
     }
@@ -1920,6 +2028,17 @@ impl UiState {
 
     /// `part_page::edit` on Part `part`'s blocks.
     fn edit_in(&mut self, part: PartId, a: ParamAddr, how: part_page::Edit) -> bool {
+        // DRUM's CHOKE (ADR 0280): bank 2's; closed, the plain edit.
+        if a == held::CHOKE
+            && let Some(s) = crate::bank2::groups(kit_groups::Ask::Edit(self, part, how))
+        {
+            return matches!(s, kit_groups::Said::Moved(true));
+        }
+        if let Some(cell) = held::VoiceCell::of(a)
+            && let Some(t) = self.voices_act(part, cell, part_voices::Act::Edit(how))
+        {
+            return t.moved();
+        }
         let params = &mut UiBlocks {
             project: &mut self.project,
             part,
@@ -2822,9 +2941,8 @@ impl UiState {
             // At most a MODEL turn's writes (`walk::tape_writes_in`).
             let t = &self.project.part(self.active_part).sound.params.tape;
             let defaults = if now != was {
-                let code = now.0.index();
-                crate::bank2::ui_door(|u| u.tape_writes(TapeEngineParams::MODEL, code, t))
-                    .unwrap_or(0)
+                let turn = held::TapeTurn::Model(now.0);
+                crate::bank2::ui_door(|u| u.tape_writes(turn, t)).unwrap_or(0)
             } else {
                 0
             };
@@ -3006,7 +3124,7 @@ impl UiState {
         if !c.edges(ButtonId::Seq).down || !turned.contains(&true) {
             return [false; NUM_ENCODERS];
         }
-        crate::bank2::ui_door(|d| d.fine_cells(self, turned)).unwrap_or([false; NUM_ENCODERS])
+        crate::bank2::feel::cells(self, turned).unwrap_or([false; NUM_ENCODERS])
     }
 
     /// The focused cell's band hint, as `render` draws it.
@@ -3250,15 +3368,15 @@ impl UiState {
                 let delta = if pushed {
                     delta.signum()
                 } else {
-                    crate::bank2::ui_door(|d| d.feel_ticks(&v, controls.turn(enc), step).get())
-                        .unwrap_or(delta)
+                    crate::bank2::feel::ticks(&v, controls.turn(enc), step)
+                        .map_or(delta, |t| t.get())
                 };
                 // An empty slot edits nothing, so it does not take the focus.
                 if v != View::Empty {
                     self.focus.touch(def.id, i);
                 }
                 // A turn elsewhere ends the held choice.
-                if self.held.is_some_and(|(_, h)| v.addr() != Some(h.addr)) {
+                if self.held.is_some_and(|(_, h)| v.addr() != Some(h.addr())) {
                     self.held = None;
                 }
                 if let View::Route { route, .. } = v {
@@ -4204,7 +4322,7 @@ pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
 /// `e`'s turn as a list's rows (ADR 0279): bank 2's gentler curve; closed,
 /// a parameter's.
 fn list_ticks(c: &impl Controls, e: EncoderId) -> i8 {
-    crate::bank2::ui_door(|d| d.list_ticks(c.turn(e)).get()).unwrap_or_else(|| c.encoder_delta(e))
+    crate::bank2::feel::list(c.turn(e)).map_or_else(|| c.encoder_delta(e), |t| t.get())
 }
 
 /// An encoder moved this frame.

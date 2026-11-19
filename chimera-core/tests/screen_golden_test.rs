@@ -260,8 +260,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("modal_amp", 0x83490498f67030f5),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it they have their own rows, run by `just test`.
+    // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0x04feb5471f3445a1),
+    ("mixer_part", 0xf3f3d1a43b585b81),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_part_voices", 0xefa1c087d6aad31a),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
@@ -309,8 +312,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0xe6fc4c9683caa417),
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
+    // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0xca1c29e5afd7649f),
+    ("mixer_part", 0x0b8145c7369cec63),
+    #[cfg(feature = "master-tape")]
+    ("mixer_part_voices", 0x6bacb821270f6d4c),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x4f5f9daa56c5aea5),
     // DLY's branch hides REV's label it ran into (TAPE Task 15). With master-tape
@@ -586,7 +592,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("drum_kit_machine", 0x4acb3ae25bc2568c),
     ("drum_kit_tonal", 0x243c1e4a583d619a),
     ("drum_kit_tonal_clap", 0x9553786b7a45cf13),
-    ("drum_keys", 0xefaf91fd346bbc5b),
+    // drum_keys re-recorded for ADR 0280: CHOKE's hint line reads GROUPS 8/8.
+    ("drum_keys", 0xbd45e466f4cede4b),
+    ("drum_keys_ninth", 0xf31caeebd7a1c4ad),
     ("drum_mch_kick", 0x7ae0bddf1c94b338),
     ("drum_mch_noise", 0xf5461cef3ef044be),
     ("drum_more", 0xfe656955eb63a3db),

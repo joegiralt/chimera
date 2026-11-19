@@ -1,4 +1,4 @@
-module View.Algo exposing (Msg(..), State, init, subscriptions, update, view)
+module View.Algo exposing (Drag, Msg(..), State, init, subscriptions, update, view)
 
 {-| The ALGO panel: every parameter the unit describes, on one face. The
 face shows only what the unit last reported; a hand turns a control by
@@ -92,6 +92,7 @@ else the unit's. A position for a knob, the option for a choice.
 position : Model -> State -> Param -> Float
 position m s p =
     let
+        held : Maybe Float
         held =
             if (s.drag |> Maybe.map (\d -> d.addr == p.addr) |> Maybe.withDefault False) || Model.isPending p.addr m || Gesture.wants p.addr s.wanted then
                 Dict.get (addrKey p.addr) s.at
@@ -125,7 +126,13 @@ travel c =
         Slider ->
             60
 
-        _ ->
+        Knob ->
+            150
+
+        Choice ->
+            150
+
+        Toggle ->
             150
 
 
@@ -143,10 +150,11 @@ update msg m s =
                 Nothing ->
                     ( s, [] )
 
-        Hand (Controls.Wheel a _ dy) ->
+        Hand (Controls.Wheel a dy) ->
             case ( dy == 0, Schema.paramIn m.variants a m.schema ) of
                 ( False, Just p ) ->
                     let
+                        dir : Int
                         dir =
                             if dy < 0 then
                                 1
@@ -154,6 +162,7 @@ update msg m s =
                             else
                                 -1
 
+                        here : Float
                         here =
                             position m s p
                     in
@@ -213,6 +222,7 @@ update msg m s =
 setNorm : Param -> Float -> State -> State
 setNorm p t s =
     let
+        t1 : Float
         t1 =
             clamp 0 1 t
     in
@@ -231,16 +241,19 @@ setOption p i s =
 view : Model -> State -> Html Msg
 view m s =
     let
+        all : List Item
         all =
             Layout.items m.schema m.variants
-
-        routes =
-            Layout.routes m.schema m.variants
     in
-    if all == [] then
+    if List.isEmpty all then
         div [ class "waiting" ] [ text "WAITING FOR THE UNIT" ]
 
     else
+        let
+            routes : List String
+            routes =
+                Layout.routes m.schema m.variants
+        in
         div []
             [ div [ class "face" ] (List.map (section m s all routes) Layout.sections)
             , unplacedStrip m s (Layout.unplaced all)
@@ -250,6 +263,7 @@ view m s =
 section : Model -> State -> List Item -> List String -> Layout.SectionBox -> Html Msg
 section m s all routes sb =
     let
+        mine : List ( Item, Layout.Placed )
         mine =
             all
                 |> List.filterMap
@@ -265,12 +279,15 @@ section m s all routes sb =
                                 )
                     )
 
+        screens : List Layout.Screen
         screens =
             Layout.screens |> List.filter (\x -> x.section == sb.section)
 
+        cols : Int
         cols =
             sb.box.w
 
+        rows : Int
         rows =
             sb.box.h
     in
@@ -328,9 +345,11 @@ modNote routes =
 face : Model -> State -> Item -> Controls.Face
 face m s i =
     let
+        r : Maybe Model.Reading
         r =
             Model.shown i.param.addr m
 
+        pos : Float
         pos =
             position m s i.param
     in
@@ -358,7 +377,7 @@ cellFor m s i c =
 -}
 unplacedStrip : Model -> State -> List Item -> Html Msg
 unplacedStrip m s xs =
-    if xs == [] then
+    if List.isEmpty xs then
         text ""
 
     else

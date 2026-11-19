@@ -170,6 +170,13 @@ impl ToastTimer {
         self.ended = false;
     }
 
+    /// Whether `text` is up: a refusal said again while it shows isn't
+    /// shown again (ADR 0280's controller sweep). Inlined into its caller.
+    #[inline(always)]
+    pub fn shows(&self, text: &Line) -> bool {
+        self.on.is_some_and(|t| t.text == *text)
+    }
+
     /// Takes it down early (new input).
     pub fn dismiss(&mut self) {
         self.ended |= self.on.take().is_some();

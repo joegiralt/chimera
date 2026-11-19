@@ -8,6 +8,7 @@ use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
 use crate::orbit::ring::SnapTo;
+use crate::voice_limit::{Asked, MaxVoices, Reserve, VoiceCount};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -43,6 +44,8 @@ impl DiskCode for PartMode {
 }
 
 impl PartMode {
+    pub const ALL: [PartMode; 2] = [PartMode::Mono, PartMode::Poly];
+
     fn from_u8(v: u8) -> Self {
         match v {
             0 => PartMode::Mono,
@@ -185,7 +188,8 @@ impl DiskCode for Held {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartParams {
     pub channel: MidiChannel,
-    pub mode: PartMode,
+    /// MODE, MAX VOICES and RESERVE (`mode`, `voices`).
+    pub voicing: Voicing,
     pub output: DacPair,
     /// 0..1
     pub level: f32,
@@ -201,6 +205,54 @@ pub struct PartParams {
     /// MAPPING (ADR 0259): a Scala file's degrees on consecutive keys (0,
     /// CONTINUOUS) or from each C, the spare keys silent (1, KEYBOARD).
     pub mapping: u8,
+}
+
+/// MODE with MAX VOICES and RESERVE (ADR 0281) in one byte: the Part
+/// block holds them without growing. Each Part's block is copied into
+/// the audio's three snapshots (ADR 0021), where a separate field would
+/// cost 4 B × 6 Parts × 3 = 72 B of AXI, past ADR 0087's margin on ORBIT.
+///
+/// The byte is a mixed-radix number, `(mode × VALUES + max) × VALUES +
+/// reserve`, with `VALUES` = 9 (each count 0..=8; MAX VOICES' place 0 is
+/// AUTO). Each digit is below its radix, so the byte is below `MODES ×
+/// VALUES²` = 162 (asserted to fit a `u8`), and `new` is the only way
+/// in. Every byte below it decodes:
+/// `% VALUES` and `/ VALUES % VALUES` are counts by construction, and the
+/// mode digit is `< MODES`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Voicing(u8);
+
+/// Each count digit's radix: 0..=`POOL`.
+const VALUES: u8 = VoiceCount::VALUES;
+/// The mode digit's radix: MONO and POLY.
+const MODES: u8 = PartMode::ALL.len() as u8;
+/// Bytes that decode: every digit within its radix.
+const VOICINGS: u16 = MODES as u16 * VALUES as u16 * VALUES as u16;
+const _: () = assert!(VOICINGS <= 256);
+
+impl Voicing {
+    pub const fn new(mode: PartMode, a: Asked) -> Voicing {
+        let m = match mode {
+            PartMode::Mono => 0,
+            PartMode::Poly => 1,
+        };
+        Voicing((m * VALUES + a.max.code()) * VALUES + a.reserve.code())
+    }
+
+    pub const fn mode(self) -> PartMode {
+        if self.0 / (VALUES * VALUES) == 0 {
+            PartMode::Mono
+        } else {
+            PartMode::Poly
+        }
+    }
+
+    pub const fn asked(self) -> Asked {
+        Asked {
+            max: MaxVoices::at(VoiceCount::saturating(self.0 / VALUES % VALUES)),
+            reserve: Reserve::new(VoiceCount::saturating(self.0 % VALUES)),
+        }
+    }
 }
 
 /// LEVEL `level` under expression `e` (CC 11, ADR 0263): (e / 127)², GM's
@@ -243,13 +295,38 @@ impl PartParams {
     pub const BEND: ParamId = ParamId(10);
     pub const TUNING: ParamId = ParamId(11);
     pub const MAPPING: ParamId = ParamId(12);
+    pub const MAX_VOICES: ParamId = ParamId(13);
+    pub const RESERVE: ParamId = ParamId(14);
+
+    pub const fn mode(&self) -> PartMode {
+        self.voicing.mode()
+    }
+
+    #[inline(never)]
+    #[optimize(size)]
+    pub fn set_mode(&mut self, m: PartMode) {
+        self.voicing = Voicing::new(m, self.voicing.asked());
+    }
+
+    /// MAX VOICES and RESERVE (ADR 0281).
+    #[inline(never)]
+    #[optimize(size)]
+    pub const fn voices(&self) -> Asked {
+        self.voicing.asked()
+    }
+
+    #[inline(never)]
+    #[optimize(size)]
+    pub fn set_voices(&mut self, l: Asked) {
+        self.voicing = Voicing::new(self.voicing.mode(), l);
+    }
 
     /// Part `index` (0-based) listens on channel `index`, Poly, output P1,
     /// level 0.8, centre pan, its keys as played.
     pub fn for_part(index: usize) -> Self {
         Self {
             channel: MidiChannel::clamped(index as u8),
-            mode: PartMode::Poly,
+            voicing: Voicing::new(PartMode::Poly, Asked::AUTO),
             output: DacPair::P1,
             level: 0.8,
             pan: 0.0,
@@ -269,7 +346,15 @@ impl Default for PartParams {
 }
 
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
-pub static PART_SPECS: [ParamSpec; 10] = [
+/// MAX VOICES' choices (ADR 0281): AUTO, then a cap of 1 to 8; a
+/// choice's index is its code (`MaxVoices::code`).
+pub const MAX_VOICES_NAMES: [&str; VoiceCount::VALUES as usize] =
+    ["AUTO", "1", "2", "3", "4", "5", "6", "7", "8"];
+/// RESERVE's choices: a count, 0 to the pool.
+pub const RESERVE_NAMES: [&str; VoiceCount::VALUES as usize] =
+    ["0", "1", "2", "3", "4", "5", "6", "7", "8"];
+
+pub static PART_SPECS: [ParamSpec; 12] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
     ParamSpec::choice(
         1,
@@ -369,6 +454,28 @@ pub static PART_SPECS: [ParamSpec; 10] = [
     )
     .ident("MAPPING")
     .glyph(crate::glyph::FocusGlyph::None),
+    // A new note honours them; sounding voices keep theirs (ADR 0281).
+    ParamSpec::choice(
+        13,
+        // MAX VOICES is 76 px, past the cell's 62: the cap reads VOICES.
+        "VOICES",
+        ValFmt::Names(&MAX_VOICES_NAMES),
+        VoiceCount::POOL.get() as f32,
+        0.0,
+        Change::Snap,
+    )
+    .ident("MAX_VOICES")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        14,
+        "RESERVE",
+        ValFmt::Names(&RESERVE_NAMES),
+        VoiceCount::POOL.get() as f32,
+        0.0,
+        Change::Snap,
+    )
+    .ident("RESERVE")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 /// 0 to 15 as text: CH's values by channel number (the byte is the
@@ -387,7 +494,7 @@ impl Block for PartParams {
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::CHANNEL => self.channel.get() as f32,
-            Self::MODE => self.mode as u8 as f32,
+            Self::MODE => self.mode() as u8 as f32,
             Self::OUTPUT => self.output as u8 as f32,
             Self::LEVEL => self.level,
             Self::PAN => self.pan,
@@ -396,6 +503,8 @@ impl Block for PartParams {
             Self::BEND => f32::from(self.bend),
             Self::TUNING => f32::from(self.tuning),
             Self::MAPPING => f32::from(self.mapping),
+            Self::MAX_VOICES => f32::from(self.voices().max.code()),
+            Self::RESERVE => f32::from(self.voices().reserve.code()),
             _ => 0.0,
         }
     }
@@ -404,7 +513,7 @@ impl Block for PartParams {
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::CHANNEL => self.channel = MidiChannel::clamped(v as u8),
-            Self::MODE => self.mode = PartMode::from_u8(v as u8),
+            Self::MODE => self.set_mode(PartMode::from_u8(v as u8)),
             Self::OUTPUT => self.output = DacPair::from_u8(v as u8),
             Self::LEVEL => self.level = v,
             Self::PAN => self.pan = v,
@@ -416,6 +525,16 @@ impl Block for PartParams {
             Self::BEND => self.bend = crate::dsp::clampf(v, 0.0, f32::from(MAX_BEND)) as u8,
             Self::TUNING => self.tuning = (v as u8).min(TUNING_NAMES.len() as u8 - 1),
             Self::MAPPING => self.mapping = (v as u8).min(1),
+            // The Part block is the pair at rest, lawful or not: every
+            // live edit is judged first (`Shares::refusal`, ADR 0281).
+            Self::MAX_VOICES => self.set_voices(Asked {
+                max: MaxVoices::from_f32(v),
+                ..self.voices()
+            }),
+            Self::RESERVE => self.set_voices(Asked {
+                reserve: Reserve::from_f32(v),
+                ..self.voices()
+            }),
             _ => {}
         }
     }
@@ -424,7 +543,7 @@ impl Block for PartParams {
     fn enum_code(&self, id: ParamId) -> Option<u8> {
         match id {
             Self::CHANNEL => Some(self.channel.get()),
-            Self::MODE => Some(self.mode.disk_code()),
+            Self::MODE => Some(self.mode().disk_code()),
             Self::OUTPUT => Some(self.output.disk_code()),
             Self::SNAP => Some(self.snap.disk_code()),
             Self::HELD => Some(self.held.disk_code()),
@@ -432,6 +551,8 @@ impl Block for PartParams {
             Self::TUNING if self.tuning == TUNING_SCALA => Some(SCALA_CODE),
             Self::TUNING => Some(self.tuning),
             Self::MAPPING => Some(self.mapping),
+            Self::MAX_VOICES => Some(self.voices().max.code()),
+            Self::RESERVE => Some(self.voices().reserve.code()),
             _ => None,
         }
     }
@@ -439,7 +560,7 @@ impl Block for PartParams {
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
         match id {
             Self::CHANNEL => NUMERALS.get(usize::from(self.channel.get())).copied(),
-            Self::MODE => Some(self.mode.disk_ident()),
+            Self::MODE => Some(self.mode().disk_ident()),
             Self::OUTPUT => Some(self.output.disk_ident()),
             Self::SNAP => Some(self.snap.disk_ident()),
             Self::HELD => Some(self.held.disk_ident()),
@@ -448,6 +569,12 @@ impl Block for PartParams {
             Self::MAPPING => ["CONTINUOUS", "KEYBOARD"]
                 .get(usize::from(self.mapping))
                 .copied(),
+            Self::MAX_VOICES => MAX_VOICES_NAMES
+                .get(usize::from(self.voices().max.code()))
+                .copied(),
+            Self::RESERVE => RESERVE_NAMES
+                .get(usize::from(self.voices().reserve.code()))
+                .copied(),
             _ => None,
         }
     }
@@ -455,7 +582,7 @@ impl Block for PartParams {
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
         match id {
             Self::CHANNEL => apply_code(MidiChannel::new(code), |c| self.channel = c),
-            Self::MODE => apply_code(PartMode::from_disk_code(code), |m| self.mode = m),
+            Self::MODE => apply_code(PartMode::from_disk_code(code), |m| self.set_mode(m)),
             Self::OUTPUT => apply_code(DacPair::from_disk_code(code), |o| self.output = o),
             Self::SNAP => apply_code(LiveSnap::from_disk_code(code), |s| self.snap = s),
             Self::HELD => apply_code(Held::from_disk_code(code), |h| self.held = h),
@@ -468,6 +595,18 @@ impl Block for PartParams {
                 |t| self.tuning = t,
             ),
             Self::MAPPING => apply_code((code < 2).then_some(code), |m| self.mapping = m),
+            Self::MAX_VOICES => apply_code(MaxVoices::from_code(code), |max| {
+                self.set_voices(Asked {
+                    max,
+                    ..self.voices()
+                })
+            }),
+            Self::RESERVE => apply_code(Reserve::from_code(code), |reserve| {
+                self.set_voices(Asked {
+                    reserve,
+                    ..self.voices()
+                })
+            }),
             _ => false,
         }
     }

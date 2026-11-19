@@ -203,7 +203,9 @@ impl SlotCtx {
     }
 
     /// This context on `kit` with pad `id` selected: its machine, and the
-    /// TONAL pad's.
+    /// TONAL pad's. Inlined into each caller, `UiState::ctx` and bank 2's
+    /// `ed` (ADR 0285), so bank 1 holds no second copy.
+    #[inline(always)]
     pub fn on_kit(self, kit: &Kit, id: PadId) -> Self {
         Self {
             pad: Some(kit.pad(id).machine()),
@@ -218,6 +220,8 @@ impl SlotCtx {
     }
 
     /// This context on a DRUM Part: FLT shows the selected pad's KIND.
+    /// Inlined as `on_kit` is.
+    #[inline(always)]
     pub fn on_drum(self) -> Self {
         Self {
             drum: true,
@@ -1169,6 +1173,58 @@ pub fn tonal_note(addr: ParamAddr, ctx: &SlotCtx) -> Option<crate::project::Line
     let _ = l.write_str(name.rsplit(' ').next().unwrap_or(name));
     Some(l)
 }
+
+/// What CHOKE's focus band says: the kit's voice groups, `GROUPS 6/8`
+/// (ADR 0280). Bank 2's (`kit_groups`, `Ask::Note`): closed, nothing.
+pub fn groups_note(
+    addr: ParamAddr,
+    kit: &crate::dsp::drum::types::Kit,
+) -> Option<crate::project::Line> {
+    if addr != crate::ui::held::CHOKE {
+        return None;
+    }
+    match crate::bank2::groups(crate::ui::kit_groups::Ask::Note(kit))? {
+        crate::ui::kit_groups::Said::Line(l) => Some(l),
+        _ => None,
+    }
+}
+
+/// What MAX VOICES' and RESERVE's focus band says (ADR 0281): on RESERVE
+/// the reserves booked across the Parts, `RESERVES 3/8` (bank 2's,
+/// `part_voices`); with the door closed, on either, that the rule is off.
+#[inline(never)]
+pub fn voices_note(
+    addr: ParamAddr,
+    parts: &[crate::preset::Part; crate::hw::MAX_PARTS],
+) -> Option<crate::project::Line> {
+    let cell = crate::ui::held::VoiceCell::of(addr)?;
+    let mut out = None;
+    let open = match cell {
+        crate::ui::held::VoiceCell::Reserve => {
+            crate::bank2::voices(crate::ui::part_voices::Ask::Note(parts, &mut out))
+        }
+        crate::ui::held::VoiceCell::Max => crate::bank2::ui_door(|_| ()),
+    };
+    match open {
+        Some(()) => out,
+        None => Some(crate::project::Line::new(RULE_OFF)),
+    }
+}
+
+/// CHOKE's note (`groups_note`), else MAX VOICES' or RESERVE's
+/// (`voices_note`): one out-of-line call for the renderer.
+#[inline(never)]
+pub fn kit_or_voices_note(
+    addr: ParamAddr,
+    kit: &crate::dsp::drum::types::Kit,
+    parts: &[crate::preset::Part; crate::hw::MAX_PARTS],
+) -> Option<crate::project::Line> {
+    groups_note(addr, kit).or_else(|| voices_note(addr, parts))
+}
+
+/// MAX VOICES' and RESERVE's band with bank 2 closed: nothing checks
+/// them (ADR 0281).
+pub const RULE_OFF: &str = "NO VOICE RULE \u{b7} NEEDS UPDATE";
 
 /// What the focus band says in its hint's place about a TAPE cell: why
 /// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms

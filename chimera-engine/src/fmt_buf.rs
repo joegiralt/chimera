@@ -79,3 +79,16 @@ mod tests {
         assert_eq!(buf.as_str().len(), 32);
     }
 }
+
+/// Counts what is written and keeps nothing: `ed since` measures its
+/// answer with it before sending (ADR 0285). Bank 1's: a `Write` impl's
+/// vtable is bank 1's, and may not point into bank 2.
+#[derive(Default)]
+pub struct ByteCount(pub usize);
+
+impl core::fmt::Write for ByteCount {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0 = self.0.saturating_add(s.len());
+        Ok(())
+    }
+}

@@ -8,7 +8,6 @@ pub use chimera_engine::bank2::{
     Judged, PROBE_ADDS, TABLE_LEN, UI_DOOR_ADDR,
 };
 use chimera_hal::store::Store;
-use chimera_hal::{Ticks, Turn};
 use chimera_image::{FlashFail, Slot, Verdict};
 pub use chimera_image::{Seal, Version};
 
@@ -237,7 +236,7 @@ pub struct UiDoor {
     machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
     band_note: fn(ParamAddr, &Sound, crate::ui::view::SourceState) -> Option<&'static str>,
-    tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
+    tape_held: fn(&TapeEngineParams, crate::ui::held::TapeTurn) -> Option<NeedsRam>,
     /// TAPE cells' units where the engine has a law (`ui::walk`).
     tape_fmt: fn(
         ParamId,
@@ -248,7 +247,7 @@ pub struct UiDoor {
     /// The delay's other TYPE's cells (`ui::walk`, ADR 0202).
     delay_note: fn(ParamId, crate::dsp::delay::DelayType) -> Option<&'static str>,
     /// A TAPE MODEL or DIRECTION edit's knob writes (`ui::walk`).
-    tape_writes: fn(ParamId, u8, &TapeEngineParams) -> u8,
+    tape_writes: fn(crate::ui::held::TapeTurn, &TapeEngineParams) -> u8,
     /// The focus readout's full words for TAPE's MODEL and DIRECTION.
     readout_word: fn(ParamAddr, f32, Option<u8>) -> Option<&'static str>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
@@ -269,27 +268,18 @@ pub struct UiDoor {
     /// The encoders' feel (`ui::feel`, ADR 0279): a cell's turn, whether
     /// SEQ + turn steps it fine, its band's hint, a list's rows, CLASSIC
     /// RATE's semitone.
-    feel_ticks: fn(&crate::ui::view::View, Turn, crate::ui::feel::Step) -> Ticks,
-    feel_cells: fn(
-        &crate::ui::UiState,
-        [bool; chimera_hal::NUM_ENCODERS],
-    ) -> [bool; chimera_hal::NUM_ENCODERS],
-    feel_hint: fn(
-        &crate::ui::view::View,
-        crate::ui::view::Words,
-        crate::ui::feel::Band,
-    ) -> crate::ui::hint::Hint,
-    list_ticks: fn(Turn) -> Ticks,
-    lfo_rate: fn(f32, i8) -> f32,
+    feel: fn(crate::ui::feel::Ask<'_>) -> crate::ui::feel::Said,
+    /// DRUM's voice groups (`ui::kit_groups`, ADR 0280): a CHOKE turn or
+    /// edit, a held one's reason, the count.
+    groups: fn(crate::ui::kit_groups::Ask<'_>) -> crate::ui::kit_groups::Said,
+    /// A Part's MAX VOICES and RESERVE (`ui::part_voices`, ADR 0281): a
+    /// turn or edit, a held one's reason, the reserves booked.
+    voices: fn(crate::ui::part_voices::Ask<'_>),
 }
 
-// The table fits its slot, before the bench's (the link would fail later,
-// and less plainly).
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(
-    size_of::<UiDoor>()
-        <= (chimera_engine::bank2::BENCH_DOOR_ADDR - chimera_engine::bank2::UI_DOOR_ADDR) as usize
-);
+// The table fits its 128 B before the next door's (`bank2.x`): 32 words
+// on the unit, as wide as a pointer on the host.
+const _: () = assert!(core::mem::size_of::<UiDoor>() <= 32 * core::mem::size_of::<usize>());
 
 /// A card row's head and how it loads (`SourceCell::kind`).
 type HeadKind = (SourceHead, LoadKind);
@@ -331,50 +321,15 @@ impl UiDoor {
         roll: crate::randomize::kern::roll,
         tuning: crate::ui::tuning::work_in,
         tuning_note: crate::ui::tuning::note_in,
-        feel_ticks: crate::ui::feel::ticks,
-        feel_cells: crate::ui::feel::fine_cells,
-        feel_hint: crate::ui::feel::hint,
-        list_ticks: crate::ui::feel::list_ticks,
-        lfo_rate: crate::ui::feel::lfo_rate,
+        feel: crate::ui::feel::ask_in,
+        groups: crate::ui::kit_groups::ask_in,
+        voices: crate::ui::part_voices::ask_in,
     };
 
+    /// `ui::feel`'s answer to `a` (ADR 0279).
     #[inline(always)]
-    pub(crate) fn lfo_rate(&self, hz: f32, d: i8) -> f32 {
-        (self.lfo_rate)(hz, d)
-    }
-
-    #[inline(always)]
-    pub(crate) fn feel_ticks(
-        &self,
-        v: &crate::ui::view::View,
-        t: Turn,
-        step: crate::ui::feel::Step,
-    ) -> Ticks {
-        (self.feel_ticks)(v, t, step)
-    }
-
-    #[inline(always)]
-    pub(crate) fn fine_cells(
-        &self,
-        ui: &crate::ui::UiState,
-        turned: [bool; chimera_hal::NUM_ENCODERS],
-    ) -> [bool; chimera_hal::NUM_ENCODERS] {
-        (self.feel_cells)(ui, turned)
-    }
-
-    #[inline(always)]
-    pub(crate) fn feel_hint(
-        &self,
-        v: &crate::ui::view::View,
-        w: crate::ui::view::Words,
-        band: crate::ui::feel::Band,
-    ) -> crate::ui::hint::Hint {
-        (self.feel_hint)(v, w, band)
-    }
-
-    #[inline(always)]
-    pub(crate) fn list_ticks(&self, t: Turn) -> Ticks {
-        (self.list_ticks)(t)
+    pub(crate) fn feel(&self, a: crate::ui::feel::Ask<'_>) -> crate::ui::feel::Said {
+        (self.feel)(a)
     }
 
     #[inline(always)]
@@ -511,10 +466,9 @@ impl UiDoor {
     pub(crate) fn tape_held(
         &self,
         t: &TapeEngineParams,
-        id: ParamId,
-        code: u8,
+        turn: crate::ui::held::TapeTurn,
     ) -> Option<NeedsRam> {
-        (self.tape_held)(t, id, code)
+        (self.tape_held)(t, turn)
     }
 
     #[inline(always)]
@@ -557,8 +511,8 @@ impl UiDoor {
     }
 
     #[inline(always)]
-    pub(crate) fn tape_writes(&self, id: ParamId, code: u8, t: &TapeEngineParams) -> u8 {
-        (self.tape_writes)(id, code, t)
+    pub(crate) fn tape_writes(&self, turn: crate::ui::held::TapeTurn, t: &TapeEngineParams) -> u8 {
+        (self.tape_writes)(turn, t)
     }
 
     #[inline(always)]
@@ -569,6 +523,80 @@ impl UiDoor {
         drag: f32,
     ) -> f32 {
         (self.jog)(j, now_ms, drag)
+    }
+
+    #[inline(always)]
+    pub(crate) fn groups(&self, a: crate::ui::kit_groups::Ask<'_>) -> crate::ui::kit_groups::Said {
+        (self.groups)(a)
+    }
+
+    #[inline(always)]
+    pub(crate) fn voices(&self, a: crate::ui::part_voices::Ask<'_>) {
+        (self.voices)(a)
+    }
+}
+
+/// MAX VOICES and RESERVE through the UI door's `voices` (ADR 0281): one
+/// out-of-line call for every bank-1 stub. Closed, `None`.
+#[inline(never)]
+pub(crate) fn voices(a: crate::ui::part_voices::Ask<'_>) -> Option<()> {
+    ui_door(|u| u.voices(a))
+}
+
+/// DRUM's voice groups through the UI door's `groups` (ADR 0280): one
+/// out-of-line call for every bank-1 stub. Closed, `None`.
+#[inline(never)]
+pub(crate) fn groups(a: crate::ui::kit_groups::Ask<'_>) -> Option<crate::ui::kit_groups::Said> {
+    ui_door(|u| u.groups(a))
+}
+
+/// The feel's stubs (ADR 0279): `ui::feel`'s answer through the door;
+/// `None` closed (an install, a build without TAPE's UI).
+pub(crate) mod feel {
+    use crate::ui::feel::{Ask, Band, Said, Step};
+    use crate::ui::view::{View, Words};
+    use chimera_hal::{NUM_ENCODERS, Ticks, Turn};
+
+    fn ask(a: Ask<'_>) -> Option<Said> {
+        super::ui_door(|u| u.feel(a))
+    }
+
+    pub(crate) fn cells(
+        ui: &crate::ui::UiState,
+        turned: [bool; NUM_ENCODERS],
+    ) -> Option<[bool; NUM_ENCODERS]> {
+        match ask(Ask::Cells(ui, turned))? {
+            Said::Cells(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn ticks(v: &View, t: Turn, step: Step) -> Option<Ticks> {
+        match ask(Ask::Ticks(v, t, step))? {
+            Said::Ticks(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn list(t: Turn) -> Option<Ticks> {
+        match ask(Ask::List(t))? {
+            Said::Ticks(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn hint(v: &View, w: Words, band: Band) -> Option<crate::ui::hint::Hint> {
+        match ask(Ask::Hint(v, w, band))? {
+            Said::Hint(h) => Some(h),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn lfo_rate(hz: f32, d: i8) -> Option<f32> {
+        match ask(Ask::LfoRate(hz, d))? {
+            Said::Hz(v) => Some(v),
+            _ => None,
+        }
     }
 }
 

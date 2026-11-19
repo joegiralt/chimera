@@ -854,7 +854,7 @@ impl Renderer {
             return hint::focus(display, f.hint(o.hint), f.text, right);
         }
         let v = self.set[f.focus].target();
-        let held = held_on(f, &view).map(|h| h.code);
+        let held = held_on(f, &view).map(|h| h.code());
         // The cell's own text where bank 2 can't say (NEEDS UPDATE).
         let word = view
             .addr()
@@ -904,7 +904,9 @@ impl Renderer {
         let tuning = view
             .addr()
             .and_then(|a| view::tuning_note(a, f.tuned, f.active_part, part));
-        let tonal = view.addr().and_then(|a| view::tonal_note(a, &f.ctx));
+        let tonal = view.addr().and_then(|a| {
+            view::tonal_note(a, &f.ctx).or_else(|| view::kit_or_voices_note(a, f.pads.kit, f.parts))
+        });
         let note = view
             .addr()
             .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)))
@@ -944,7 +946,7 @@ impl Renderer {
         } else {
             // With the fine turn in it, bank 2's (ADR 0279); closed, the
             // cell's own and the mixer's PART jump.
-            crate::bank2::ui_door(|d| d.feel_hint(&view, words, band)).unwrap_or_else(|| {
+            crate::bank2::feel::hint(&view, words, band).unwrap_or_else(|| {
                 if matches!(f.head, Head::Mix(_)) {
                     view::mixer_hint(words)
                 } else {
@@ -1471,8 +1473,8 @@ fn alg_pick(f: &Frame) -> Option<(bool, Option<u8>)> {
         .into_iter()
         .find(|&id| at == ParamAddr::new(BlockRef::Algo, id))
         .map(|id| {
-            let held = f.held.filter(|s| s.held.addr.param == id);
-            (id == AlgoParams::ALG_B, held.map(|s| s.held.code))
+            let held = f.held.filter(|s| s.held.addr().param == id);
+            (id == AlgoParams::ALG_B, held.map(|s| s.held.code()))
         })
 }
 

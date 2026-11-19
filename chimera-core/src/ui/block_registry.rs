@@ -1059,6 +1059,24 @@ pub static PART: BlockDef = BlockDef {
     ],
 };
 
+/// PRT's sub-page: a Part's share of the voice pool beside MONO/POLY
+/// (ADR 0281). MODE is PRT's too.
+pub static PART_VOICES: BlockDef = BlockDef {
+    id: 117,
+    name: "Voices",
+    short: "VOI",
+    layout: PageLayout::CellGrid,
+    viz: VizType::MixerLevels,
+    params: [
+        ParamSlot::param(BlockRef::Part, PartParams::MODE),
+        ParamSlot::param(BlockRef::Part, PartParams::MAX_VOICES),
+        ParamSlot::param(BlockRef::Part, PartParams::RESERVE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 pub static SENDS: BlockDef = BlockDef {
     id: 30,
     name: "Sends",
@@ -1078,7 +1096,7 @@ pub static SENDS: BlockDef = BlockDef {
 /// MIX + B<n>: Part n's mix settings, then the shared FX (spec § UI).
 /// TAPE sits before MASTER only with `master-tape` (ADR 0055).
 static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
-    ChainBlock::page(&PART),
+    ChainBlock::with_subs(&PART, &[&PART_VOICES]),
     ChainBlock::page(&SENDS),
     ChainBlock::page(&CHORUS),
     ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),

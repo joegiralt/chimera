@@ -150,6 +150,8 @@ pub struct UsbParts {
     pub sweep: Option<SweepRun>,
     /// The board's strap: `status`'s `board` line.
     pub board: BoardId,
+    /// ITCM zeroed: `ed`'s state is built there (ADR 0286).
+    pub itcm: crate::shared::ItcmZeroed,
 }
 
 /// `dfu` answered and its `OK` flushed: only `Usb::service` makes one, and
@@ -218,6 +220,7 @@ pub struct Unconnected {
     boot: BootSeen,
     sweep: Option<SweepRun>,
     board: BoardId,
+    itcm: crate::shared::ItcmZeroed,
 }
 
 /// The port's preconditions held, each checked with a bounded wait: only
@@ -292,6 +295,7 @@ pub fn init(ready: Ready, midi: MidiSinks, clocks: &CoreClocks, cpu_hz: u32) -> 
         boot,
         sweep,
         board,
+        itcm,
     } = parts;
     crs_rec.enable();
     // SAFETY: SYNCSRC is a 2-bit field and 0b11 is a defined value, USB2
@@ -338,6 +342,7 @@ pub fn init(ready: Ready, midi: MidiSinks, clocks: &CoreClocks, cpu_hz: u32) -> 
         boot,
         sweep,
         board,
+        itcm,
     }
 }
 
@@ -399,7 +404,7 @@ impl Unconnected {
             redraw: false,
             board: self.board,
             hands: Hands::new(),
-            ed: crate::shared::take_ed(),
+            ed: crate::shared::take_ed(self.itcm),
         }
     }
 }

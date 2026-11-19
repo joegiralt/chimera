@@ -11,12 +11,12 @@ static LAST_IN: AtomicU32 = AtomicU32::new(0);
 static LAST_OUT: AtomicU32 = AtomicU32::new(0);
 const VALID: u32 = 1 << 31;
 
-/// The last note received: key, velocity and the Part (0-based) it played.
+/// The last note received: key, velocity and the Part it played.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NoteIn {
     pub note: u8,
     pub vel: u8,
-    pub part: u8,
+    pub part: crate::project::PartId,
 }
 
 /// The pitch the last note sounds at: the note after snap, and the Part's
@@ -35,10 +35,10 @@ impl NoteOut {
 }
 
 /// Audio: a key went down on `part`, sounding `note` at `cents` offset.
-pub fn note_on(channel: u8, part: u8, key: u8, vel: u8, note: u8, cents: i16) {
+pub fn note_on(channel: u8, part: crate::project::PartId, key: u8, vel: u8, note: u8, cents: i16) {
     HELD[word(channel, key)].fetch_or(1 << (key & 31), Ordering::Relaxed);
     LAST_IN.store(
-        VALID | (part as u32 & 15) << 14 | (vel as u32 & 127) << 7 | key as u32 & 127,
+        VALID | (part.index() as u32 & 15) << 14 | (vel as u32 & 127) << 7 | key as u32 & 127,
         Ordering::Relaxed,
     );
     LAST_OUT.store(
@@ -80,10 +80,14 @@ pub fn any_held() -> bool {
 #[inline(always)]
 pub fn last_in() -> Option<NoteIn> {
     let w = LAST_IN.load(Ordering::Relaxed);
-    (w & VALID != 0).then_some(NoteIn {
+    if w & VALID == 0 {
+        return None;
+    }
+    // `note_on` stored a `PartId`'s index: always one.
+    Some(NoteIn {
         note: (w & 127) as u8,
         vel: (w >> 7 & 127) as u8,
-        part: (w >> 14 & 15) as u8,
+        part: crate::project::PartId::new((w >> 14 & 15) as u8)?,
     })
 }
 

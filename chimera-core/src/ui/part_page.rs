@@ -87,7 +87,7 @@ fn is_lfo_rate(a: ParamAddr) -> bool {
 fn nudge(b: &mut dyn crate::block::Block, a: ParamAddr, d: i8) {
     let hz = b.get(a.param);
     match is_lfo_rate(a)
-        .then(|| crate::bank2::ui_door(|u| u.lfo_rate(hz, d)))
+        .then(|| crate::bank2::feel::lfo_rate(hz, d))
         .flatten()
     {
         Some(v) => b.write(a.param, v),

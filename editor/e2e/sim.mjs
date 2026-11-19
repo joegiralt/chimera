@@ -180,6 +180,130 @@ async function settleVariant(panel, variant) {
   }
 }
 
+// ---- describe ----
+
+/** Every page of `engine`: its panels' variants, each with the params it
+ * shows (`panel FILTER DIRTY`, then DIRTY's `param` lines). One addr can be
+ * several params (FILTER.MODE's names are its TYPE's), so a param belongs
+ * to its block. Pages count from 0: `page 0 ALG of 36` is the first. */
+async function describeAll(engine) {
+  const first = await ask(`ed describe ${engine} 0`);
+  const count = Number(/^page 0 \S+ of (\d+)$/.exec(first[0])?.[1]);
+  if (!(count > 0)) throw new Error(`describe ${engine} 0: ${first.join(" | ")}`);
+  const blocks = []; // { panel, variant, params: [{ addr, kind, scale, min, max, opts }] }
+  const params = new Map(); // every addr described anywhere
+  for (let n = 0; n < count; n++) {
+    const got = n === 0 ? first : await ask(`ed describe ${engine} ${n}`);
+    if (got.at(-1) !== "OK") {
+      fail(`${engine} page ${n}`, "ed describe", got.join(" | "));
+      continue;
+    }
+    let block = null;
+    for (const l of got) {
+      const t = tokens(l);
+      if (t[0] === "panel" && t.length === 3) {
+        block = { panel: t[1], variant: t[2], params: [] };
+        blocks.push(block);
+      } else if (t[0] === "param" && t.length === 9 && block) {
+        if (t[4] !== "lin" && t[4] !== "oct") fail(t[1], "describe", `scale ${t[4]}`);
+        const p = { addr: t[1], kind: t[3], scale: t[4], min: Number(t[5]), max: Number(t[6]), opts: [] };
+        block.params.push(p);
+        params.set(p.addr, p);
+      } else if (t[0] === "param") {
+        fail(t[1] ?? "?", "describe", `not a protocol 3 param line: ${l}`);
+      } else if (t[0] === "opt" && t.length === 4 && block) {
+        block.params.at(-1)?.opts.push([Number(t[2]), t[3]]);
+      }
+    }
+  }
+  info(`describe ${engine}: ${count} pages, ${blocks.length} panel variants, ${params.size} addresses`);
+  return { blocks, params, count };
+}
+
+/** The variants the Part shows now. */
+async function current() {
+  const v = new Map();
+  for (const l of await since(0)) {
+    const t = tokens(l);
+    if (t[0] === "panel") v.set(t[1], t[2]);
+  }
+  return v;
+}
+
+/** Every param of `shown` to its max, then its min (a choice by its
+ * number, `#n`), read back. */
+let sets = 0;
+async function sweep(shown, label, done, lenient = () => false) {
+  for (const p of shown) {
+    const key = JSON.stringify(p);
+    if (done.has(key)) continue;
+    done.add(key);
+    const addr = p.addr;
+    let targets; // [text to send, stored it must land on, label]
+    if (p.opts.length) {
+      const by = [...p.opts].sort((a, b) => a[0] - b[0]);
+      targets = [by.at(-1), by[0]].map(([i, name]) => [`#${i}`, i, `${name} (${i})`]);
+    } else {
+      targets = [p.max, p.min].map((v) => [String(v), v, String(v)]);
+    }
+    for (const [text, want, what] of targets) {
+      const got = await send(`ed set ${addr} ${text}`);
+      if (got.at(-1) !== "OK queued") {
+        fail(addr, `set ${what}${label}`, got.join(" | "));
+        continue;
+      }
+      const v = await settle(addr, (v) => near(v.stored, want));
+      sets++;
+      if (near(v.stored, want)) continue;
+      // A DRUM knob its pad's machine lacks, or a CHOKE past 8 groups
+      // (ADR 0280), is refused: the unit says so through `since`.
+      if (lenient(addr)) skipped.push(`${addr} ${what}${label}: stored ${v.stored} (${v.text})`);
+      else fail(addr, `set ${what}${label}`, `read back stored ${v.stored}, want ${want} (${v.text})`);
+    }
+  }
+}
+
+/** Part 1 to INIT `engine` through the browser keys: EDIT+B1 opens it on
+ * the Part's row; the INIT rows are first, in `EngineType::PLAYABLE`'s order. */
+const INIT_ROW = { ALGO: 0, MODAL: 1, VA: 2, TAPE: 3, DRUM: 4 };
+async function loadInit(engine) {
+  await since();
+  await key("EDIT+B1");
+  await turn(1, -64);
+  await turn(1, -64);
+  if (INIT_ROW[engine] > 0) await turn(1, INIT_ROW[engine]);
+  await key("EDIT"); // an edited Sound asks first
+  await key("EDIT");
+  const want = `part 1 ${engine}`;
+  const seen = await sinceUntil((l) => l === want);
+  if (!seen.includes(want) && !(await since(0)).includes(want)) throw new Error(`load INIT ${engine}: no "${want}"`);
+  await onPart1();
+}
+
+/** One engine end to end: INIT loaded, described, every param in the
+ * variants the Part shows set and read back, a full answer only of
+ * described addresses. */
+async function enginePass(engine) {
+  await loadInit(engine);
+  const { blocks, params } = await describeAll(engine);
+  const cur = await current();
+  const shown = blocks.filter((b) => b.variant === "-" || cur.get(b.panel) === b.variant).flatMap((b) => b.params);
+  // Selectors last: what the rest shows depends on them.
+  const selector = (p) => /\.(KIND|MODE|MODEL|MACHINE|TYPE)$/.test(p.addr);
+  const done = new Set();
+  const before = sets;
+  const refusable = (a) => /\.KNOB_|\.CHOKE$/.test(a);
+  await sweep(shown.filter((p) => !selector(p)), ` ${engine}`, done, refusable);
+  await sweep(shown.filter(selector), ` ${engine}`, done, refusable);
+  const all = await ask("ed since 0");
+  const vals = all.map(parseVal).filter(Boolean);
+  const extra = vals.filter((v) => !params.has(v.addr)).map((v) => v.addr);
+  if (extra.length) fail(engine, "since 0", `answered but not described: ${extra.slice(0, 5).join(" ")}`);
+  if (all[1] !== `part 1 ${engine}`) fail(engine, "since 0", `opens ${JSON.stringify(all.slice(0, 2))}`);
+  if (engine === "TAPE" && !all.some((l) => l.startsWith("source \""))) fail(engine, "since 0", "no source line");
+  info(`${engine}: ${sets - before} sets read back, a full answer of ${vals.length} vals`);
+}
+
 // ---- the run ----
 
 async function main() {
@@ -191,89 +315,18 @@ async function main() {
   // hello
   const hello = tokens((await ask("ed hello"))[0]);
   if (
-    !(hello.length === 7 && hello[0] === "ed" && hello[1] === "hello" && hello[2] === "2" &&
+    !(hello.length === 7 && hello[0] === "ed" && hello[1] === "hello" && hello[2] === "3" &&
       hello[4] === "part" && hello[5] === "1" && hello[6] === "ALGO")
   ) {
-    fail("hello", "ed hello", `${hello.join(" ")}: want protocol 2, part 1 ALGO`);
+    fail("hello", "ed hello", `${hello.join(" ")}: want protocol 3, part 1 ALGO`);
     throw new Error("not on Part 1 ALGO: cannot go on");
   }
   info(`hello: protocol ${hello[2]}, build ${hello[3]}, part 1 ALGO`);
 
-  // describe every page
-  // Pages count from 0: `page 0 ALG of 36` is the first.
-  const first = await ask("ed describe ALGO 0");
-  const count = Number(/^page 0 \S+ of (\d+)$/.exec(first[0])?.[1]);
-  if (!(count > 0)) throw new Error(`describe ALGO 0: ${first.join(" | ")}`);
-  // A page's lines are its panels' variants, each with the params it shows:
-  // `panel FILTER DIRTY`, then DIRTY's `param` lines. One addr can be several
-  // params (FILTER.MODE's names are its TYPE's), so a param belongs to its block.
-  const blocks = []; // { panel, variant, params: [{ addr, kind, min, max, opts }] }
-  const params = new Map(); // every addr described anywhere
-  for (let n = 0; n < count; n++) {
-    const got = n === 0 ? first : await ask(`ed describe ALGO ${n}`);
-    if (got.at(-1) !== "OK") {
-      fail(`page ${n}`, "ed describe", got.join(" | "));
-      continue;
-    }
-    let block = null;
-    for (const l of got) {
-      const t = tokens(l);
-      if (t[0] === "panel" && t.length === 3) {
-        block = { panel: t[1], variant: t[2], params: [] };
-        blocks.push(block);
-      } else if (t[0] === "param" && t.length === 8 && block) {
-        const p = { addr: t[1], kind: t[3], min: Number(t[4]), max: Number(t[5]), opts: [] };
-        block.params.push(p);
-        params.set(p.addr, p);
-      } else if (t[0] === "opt" && t.length === 4 && block) {
-        block.params.at(-1)?.opts.push([Number(t[2]), t[3]]);
-      }
-    }
-  }
-  info(`describe: ${count} pages, ${blocks.length} panel variants, ${params.size} addresses`);
-
-  // The variants the Part shows now.
-  const current = async () => {
-    const v = new Map();
-    for (const l of await since(0)) {
-      const t = tokens(l);
-      if (t[0] === "panel") v.set(t[1], t[2]);
-    }
-    return v;
-  };
+  const { blocks, params, count } = await describeAll("ALGO");
 
   // every param to its max, then its min, read back
-  let sets = 0;
   const done = new Set();
-  async function sweep(shown, label) {
-    for (const p of shown) {
-      const key = JSON.stringify(p);
-      if (done.has(key)) continue;
-      done.add(key);
-      const addr = p.addr;
-      let targets; // [text to send, stored it must land on, label]
-      if (p.opts.length) {
-        const by = [...p.opts].sort((a, b) => a[0] - b[0]);
-        targets = [by.at(-1), by[0]].map(([i, name]) => [name, i, `${name} (${i})`]);
-      } else {
-        targets = [p.max, p.min].map((v) => [String(v), v, String(v)]);
-      }
-      for (const [text, want, what] of targets) {
-        if (/\s/.test(text)) {
-          skipped.push(`${addr} = "${text}"`);
-          continue;
-        }
-        const got = await send(`ed set ${addr} ${text}`);
-        if (got.at(-1) !== "OK queued") {
-          fail(addr, `set ${what}${label}`, got.join(" | "));
-          continue;
-        }
-        const v = await settle(addr, (v) => near(v.stored, want));
-        sets++;
-        if (!near(v.stored, want)) fail(addr, `set ${what}${label}`, `read back stored ${v.stored}, want ${want} (${v.text})`);
-      }
-    }
-  }
   const shownIn = (cur) =>
     blocks.filter((b) => b.variant === "-" || cur.get(b.panel) === b.variant).flatMap((b) => b.params);
   const start = await current();
@@ -281,19 +334,19 @@ async function main() {
   // takes depends on it. Other panels are swept in the variant the Part shows.
   const hold = (p) => p.addr === "FILTER.KIND";
   const shown = shownIn(start);
-  await sweep(shown.filter((p) => !hold(p)), "");
+  await sweep(shown.filter((p) => !hold(p)), "", done);
   const kinds = params.get("FILTER.KIND")?.opts.map(([, name]) => name) ?? [];
   for (const kind of kinds) {
     if (kind === start.get("FILTER")) continue;
-    await send(`ed set FILTER.KIND ${kind}`);
+    await send(`ed set FILTER.KIND #${params.get("FILTER.KIND").opts.find(([, n]) => n === kind)[0]}`);
     const now = await settleVariant("FILTER", kind);
     if (now !== kind) {
       fail("FILTER.KIND", `set ${kind}`, `panel FILTER is ${now}`);
       continue;
     }
-    await sweep(blocks.filter((b) => b.panel === "FILTER" && b.variant === kind).flatMap((b) => b.params), ` @${kind}`);
+    await sweep(blocks.filter((b) => b.panel === "FILTER" && b.variant === kind).flatMap((b) => b.params), ` @${kind}`, done);
   }
-  await sweep(shown.filter(hold), "");
+  await sweep(shown.filter(hold), "", done);
   info(`set/get: ${sets} sets read back, ${skipped.length} skipped`);
 
   // a knob: the simulator's own, seen in `since`
@@ -323,6 +376,18 @@ async function main() {
   await onPart1();
   const back = await sinceUntil((l) => l === "part 1 ALGO");
   if (!back.includes("part 1 ALGO")) fail("part", "key B1", `no "part 1 ALGO": ${back.join(" | ")}`);
+
+  // The editor's Part buttons: `ed part`, as the keys
+  await since();
+  for (const [n, want] of [[2, /^part 2 \S+$/], [1, /^part 1 ALGO$/]]) {
+    const got = await ask(`ed part ${n}`);
+    if (got.at(-1) !== "OK") fail("part", `ed part ${n}`, got.join(" | "));
+    const seen = await sinceUntil((l) => want.test(l));
+    if (!seen.some((l) => want.test(l))) fail("part", `ed part ${n}`, `no ${want}: ${seen.join(" | ")}`);
+    else info(`part: ed part ${n} -> ${seen.find((l) => want.test(l))}`);
+  }
+  const bad = await ask("ed part 7");
+  if (bad.at(-1) !== "ERR ed part takes 1-6") fail("part", "ed part 7", bad.join(" | "));
 
   // load a Sound through the browser keys: INIT ALGO, the top row
   await send("ed set FILTER.CUTOFF 500");
@@ -361,6 +426,16 @@ async function main() {
   // and a current one: nothing
   const none = await since();
   if (none.length) fail("since", "current", `${none.length} lines: ${none[0]}`);
+
+  // every other engine (ADR 0285), then back to ALGO
+  for (const engine of ["MODAL", "VA", "TAPE", "DRUM"]) {
+    try {
+      await enginePass(engine);
+    } catch (e) {
+      fail(engine, "pass", String(e.message ?? e));
+    }
+  }
+  await loadInit("ALGO");
 }
 
 try {
@@ -369,7 +444,7 @@ try {
   failures.push(String(e.message ?? e));
   console.log(`FAIL ${e.message ?? e}`);
 }
-if (skipped.length) console.log(`skipped (a name with a space cannot be set): ${skipped.join("; ")}`);
+if (skipped.length) console.log(`read back otherwise (a refused or clamped set, ADR 0276): ${skipped.length}\n  ${skipped.slice(0, 20).join("\n  ")}`);
 try {
   ws?.close();
 } catch {}

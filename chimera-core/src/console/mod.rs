@@ -3,11 +3,20 @@
 use core::fmt;
 
 pub const MAX_LINE: usize = 64;
-pub const PROTOCOL: u8 = 2;
+pub const PROTOCOL: u8 = 3;
 /// An answer gives up after this long with no byte taken…
 pub const STALL_MS: u32 = 250;
 /// …or after this long in all, however the bytes dribble out.
 pub const ANSWER_MS: u32 = 1000;
+/// The CDC bulk IN endpoint's packet: 64 B (`chimera-board/src/usb.rs`).
+pub const BULK_PACKET_BYTES: usize = 64;
+/// Full speed polls bulk IN once a 1 ms frame.
+pub const BULK_PACKETS_PER_S: usize = 1000;
+/// What one answer may carry: half what the console's floor rate moves in
+/// `ANSWER_MS` (the margin). `ed since` refuses an answer past it (ADR
+/// 0285) rather than be cut by the answer clock.
+pub const ANSWER_BYTES_MAX: usize =
+    BULK_PACKET_BYTES * BULK_PACKETS_PER_S * ANSWER_MS as usize / 1000 / 2;
 pub const WORD_MAX: usize = 16;
 const _: () = assert!(MAX_LINE <= u8::MAX as usize);
 const _: () = assert!(WORD_MAX <= u8::MAX as usize);
@@ -275,8 +284,10 @@ impl Console {
 mod ed;
 pub(crate) use ed::answer_in as ed_answer_in;
 pub use ed::{
-    ED_SLOTS, EdAddr, EdArg, EdSince, EdState, EdValue, Gen, Pushed, ed_slots_used, env_variant,
-    filter_variant, fx_variant, lfo_variant, op_variant, pages as ed_pages,
+    ED_PANELS, ED_SLOTS, EdAddr, EdArg, EdBlock, EdSince, EdState, EdValue, Gen, MODELS, OptIndex,
+    PadBlock, Pushed, SetRefusal, SoundBlock, chain as ed_chain, ed_panels_used, ed_slots_used,
+    env_variant, filter_variant, fx_variant, lfo_variant, machine_variant, modal_variant,
+    op_variant, pages as ed_pages, tape_variant,
 };
 mod status;
 pub use status::*;

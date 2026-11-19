@@ -7,11 +7,44 @@
 use chimera_hal::{Accel, NUM_ENCODERS, Ticks, Turn};
 
 use crate::block::{ParamKind, ParamSpec, ValFmt};
+use crate::ui::UiState;
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{Gesture, Hint};
-use crate::ui::UiState;
 use crate::ui::page::PageLayout;
 use crate::ui::view::{self, View, Words};
+
+/// What bank 1 asks of the feel through `UiDoor`'s one entry.
+pub enum Ask<'a> {
+    /// `fine_cells`.
+    Cells(&'a UiState, [bool; NUM_ENCODERS]),
+    /// `ticks`.
+    Ticks(&'a View, Turn, Step),
+    /// `list_ticks`.
+    List(Turn),
+    /// `hint`.
+    Hint(&'a View, Words, Band),
+    /// `lfo_rate`.
+    LfoRate(f32, i8),
+}
+
+/// The feel's answer, one per `Ask`.
+pub enum Said {
+    Cells([bool; NUM_ENCODERS]),
+    Ticks(Ticks),
+    Hint(Hint),
+    Hz(f32),
+}
+
+/// `UiDoor`'s entry.
+pub(crate) fn ask_in(a: Ask<'_>) -> Said {
+    match a {
+        Ask::Cells(ui, turned) => Said::Cells(fine_cells(ui, turned)),
+        Ask::Ticks(v, t, step) => Said::Ticks(ticks(v, t, step)),
+        Ask::List(t) => Said::Ticks(list_ticks(t)),
+        Ask::Hint(v, w, band) => Said::Hint(hint(v, w, band)),
+        Ask::LfoRate(hz, d) => Said::Hz(lfo_rate(hz, d)),
+    }
+}
 
 /// How a turn on `v` accelerates: a pick from names (a choice, SOURCE,
 /// OP, PAD, ROUTE) as a list, the rest as a parameter.
@@ -43,8 +76,7 @@ pub fn takes(v: &View, w: Words) -> bool {
 /// ORBIT, nor on the matrix.
 pub fn fine_cells(ui: &UiState, turned: [bool; NUM_ENCODERS]) -> [bool; NUM_ENCODERS] {
     let mut out = [false; NUM_ENCODERS];
-    if ui.loc.settings().is_some() || ui.loc.orbit().is_some() || ui.loc.page(&ui.cx()).is_none()
-    {
+    if ui.loc.settings().is_some() || ui.loc.orbit().is_some() || ui.loc.page(&ui.cx()).is_none() {
         return out;
     }
     let (def, ctx) = (ui.page_def(), ui.ctx());

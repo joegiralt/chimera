@@ -387,11 +387,9 @@ fn drum_rig(w: &mut KitWriter, kit: &Kit) -> common::InstRig {
 
 /// Part 1's slot booked for `key`, not dying.
 fn slot_for(r: &common::InstRig, key: u8) -> Option<usize> {
-    r.inst
-        .allocator()
-        .slots()
-        .iter()
-        .position(|s| s.part() == Some(0) && !s.dying() && s.note().map(|n| n.get()) == Some(key))
+    r.inst.allocator().slots().iter().position(|s| {
+        s.part() == Some(PartId::ALL[0]) && !s.dying() && s.note().map(|n| n.get()) == Some(key)
+    })
 }
 
 /// What Part 1's slot for `key` books.
@@ -527,17 +525,21 @@ fn twelve_pads_a_block_apart_on_rev_v() {
     );
 }
 
-/// The load net (ADR 0273) passes over a booked voice gone silent: a
-/// closed HAT ended with its key still held frees nothing, so it is
-/// neither shed nor counted; a ringing KICK beside it is.
+/// The load net (ADR 0273) sheds only a sounding voice. A closed HAT
+/// that ended with its key still held has freed its slot (a hit ends with
+/// its voice, ADR 0281's ruling): there is nothing to shed or count. A
+/// ringing KICK is.
 #[test]
 fn the_load_net_sheds_only_a_sounding_voice() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     r.note_on_vel(0, key(pad(8)), 127);
     r.render(SR_BLOCKS / 2);
-    let hat = slot_for(&r, key(pad(8))).expect("the HAT's key still books its voice");
-    assert!(!r.inst.voice(hat).is_active(), "the HAT has ended");
+    assert_eq!(
+        slot_for(&r, key(pad(8))),
+        None,
+        "the HAT ended: its slot is free, its key held or not"
+    );
     let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
     let counter = CycleCounter::new(true).expect("a counting DWT");
     let net = LoadNet::new(counter, block);
@@ -550,9 +552,50 @@ fn the_load_net_sheds_only_a_sounding_voice() {
     r.render(1);
     assert!(net.after(over, &mut r.inst), "one shed, counted once");
     let s = r.inst.allocator().slots();
-    assert!(!s[hat].dying(), "the silent HAT left booked");
     assert!(
         s.iter()
             .any(|s| s.dying() && s.note().map(|n| n.get()) == Some(0))
+    );
+}
+
+/// ADR 0273's skip rule: the load net sheds only a voice that sounds and
+/// isn't already fading. Part 1 fills the pool; Part 2's note steals Part
+/// 1's oldest voice, which fades out on Part 1's Sound with Part 2's note
+/// waiting on it: booked, the newest held, so the shed order would take it
+/// first, but its fade frees nothing yet. The net passes over it and
+/// sheds Part 1's newest note.
+#[test]
+fn the_load_net_skips_a_booked_voice_still_fading() {
+    let mut r = common::InstRig::with_budget(chimera_core::hw::SampleBudget::for_cpu(u32::MAX));
+    r.shared.parts[1].mix.channel = chimera_core::MidiChannel::new(1).unwrap();
+    for n in 0..8 {
+        r.note_on(0, 60 + n);
+        r.render(1);
+    }
+    r.note_on(1, 40);
+    let slots = r.inst.allocator().slots();
+    let stolen = slots
+        .iter()
+        .position(|s| s.part() == Some(PartId::ALL[1]))
+        .expect("Part 2's note took a voice");
+    assert!(
+        r.inst.voice(stolen).fading(),
+        "it fades out Part 1's note first"
+    );
+    assert!(slots[stolen].held() && !slots[stolen].dying());
+    let block = BlockBudget::for_cpu(CPU_HZ_REV_V);
+    let net = LoadNet::new(CycleCounter::new(true).expect("a counting DWT"), block);
+    assert!(
+        net.after(Cycles::new(block.block_cycles()), &mut r.inst),
+        "one shed"
+    );
+    let s = r.inst.allocator().slots();
+    assert!(!s[stolen].dying(), "the fading voice is passed over");
+    let shed: Vec<usize> = (0..s.len()).filter(|&v| s[v].dying()).collect();
+    assert_eq!(shed.len(), 1);
+    assert_eq!(
+        s[shed[0]].note().map(|n| n.get()),
+        Some(67),
+        "Part 1's newest"
     );
 }

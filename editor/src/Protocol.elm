@@ -4,9 +4,12 @@ module Protocol exposing
     , Command(..)
     , Kind(..)
     , Line(..)
+    , OptIndex
+    , Scale(..)
     , Value(..)
     , addrKey
     , encode
+    , optIndex
     , parse
     )
 
@@ -14,7 +17,7 @@ module Protocol exposing
 Parsing never fails: a line that isn't understood is `Unknown` and is ignored.
 -}
 
-import Unit exposing (Gen)
+import Unit exposing (Engine, Gen, Part)
 
 
 {-| A parameter address, `OP3.CRSE`. The unit's own text, opaque here.
@@ -28,9 +31,36 @@ addrKey (Addr a) =
     a
 
 
+{-| A choice is sent by its option's number (`#2`), so a name with a space
+(`GATE EXT`) is sent too. `Name` stays for a human's own words.
+-}
 type Value
     = Num Float
     | Name String
+    | Index OptIndex
+
+
+{-| A choice's option by its number, as `opt` lines give it: never
+negative, so `#n` is always a number the unit reads.
+-}
+type OptIndex
+    = OptIndex Int
+
+
+optIndex : Int -> Maybe OptIndex
+optIndex i =
+    if i >= 0 then
+        Just (OptIndex i)
+
+    else
+        Nothing
+
+
+{-| How a value moves under a hand, as the unit describes it.
+-}
+type Scale
+    = Linear
+    | Octaves
 
 
 type Kind
@@ -41,19 +71,21 @@ type Kind
 
 type Command
     = Hello
-    | Describe String Int
+    | Describe Engine Int
     | Get Addr
     | Set Addr Value
     | Since (Maybe Gen)
+    | Follow Part
 
 
 type AnswerLine
     = HelloIs { protocol : Int, build : String, part : Int, engine : String }
     | Page { n : Int, label : String, count : Int }
     | Panel { name : String, variant : String }
-    | Param { addr : Addr, label : String, kind : Kind, min : Float, max : Float, step : Float, default : Float }
+    | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float }
     | Opt { addr : Addr, index : Int, name : String }
     | Route String
+    | Source String
     | Val { addr : Addr, norm : Float, stored : Float, text : String }
     | PartIs Int String
 
@@ -63,7 +95,10 @@ type Line
     | Ok_ (Maybe Int)
     | Queued
     | Err_ String
-    | Unknown String
+      -- `ERR ed since too large` (ADR 0285): the unit's whole answer is past
+      -- what one answer may carry. Asking again gets the same.
+    | SinceTooLarge
+    | Unknown
 
 
 {-| The line to send, or `Nothing` if it could not be one command: an address
@@ -78,7 +113,7 @@ encode c =
             Just "ed hello"
 
         Describe engine page ->
-            word engine |> Maybe.map (\e -> "ed describe " ++ e ++ " " ++ String.fromInt page)
+            Just ("ed describe " ++ Unit.engineName engine ++ " " ++ String.fromInt page)
 
         Get (Addr a) ->
             word a |> Maybe.map (\x -> "ed get " ++ x)
@@ -89,8 +124,14 @@ encode c =
         Set (Addr a) (Name n) ->
             Maybe.map2 (\x v -> "ed set " ++ x ++ " " ++ v) (word a) (word n)
 
+        Set (Addr a) (Index (OptIndex i)) ->
+            word a |> Maybe.map (\x -> "ed set " ++ x ++ " #" ++ String.fromInt i)
+
         Since held ->
             Just ("ed since " ++ String.fromInt (held |> Maybe.map Unit.genToInt |> Maybe.withDefault 0))
+
+        Follow p ->
+            Just ("ed part " ++ String.fromInt (Unit.partNumber p))
 
 
 word : String -> Maybe String
@@ -105,6 +146,7 @@ word w =
 decimal : Float -> Maybe String
 decimal n =
     let
+        t : String
         t =
             String.fromFloat n
     in
@@ -118,13 +160,18 @@ decimal n =
 parse : String -> Line
 parse raw =
     let
+        line : String
         line =
             stripCr raw
 
+        trimmed : String
         trimmed =
             String.trimLeft line
     in
-    if trimmed == "ERR" || String.startsWith "ERR " trimmed then
+    if trimmed == "ERR ed since too large" then
+        SinceTooLarge
+
+    else if trimmed == "ERR" || String.startsWith "ERR " trimmed then
         -- By prefix, not tokens: a refusal's text may hold a stray quote.
         Err_ (String.trim (String.dropLeft 3 trimmed))
 
@@ -137,15 +184,15 @@ parse raw =
                 Queued
 
             m ->
-                nat m |> Maybe.map (Just >> Ok_) |> Maybe.withDefault (Unknown line)
+                nat m |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
 
     else
         case tokens line of
             Just ts ->
-                answer ts |> Maybe.map Answer |> Maybe.withDefault (Unknown line)
+                answer ts |> Maybe.map Answer |> Maybe.withDefault Unknown
 
             Nothing ->
-                Unknown line
+                Unknown
 
 
 stripCr : String -> String
@@ -169,6 +216,7 @@ nat s =
 num : String -> Maybe Float
 num s =
     let
+        body : String
         body =
             if String.startsWith "-" s || String.startsWith "+" s then
                 String.dropLeft 1 s
@@ -199,14 +247,17 @@ answer ts =
         [ "part", n, engine ] ->
             nat n |> Maybe.map (\i -> PartIs i engine)
 
-        [ "param", a, label, kind, lo, hi, step, def ] ->
-            param a label kind lo hi step def
+        [ "param", a, label, kind, scale, lo, hi, step, def ] ->
+            Maybe.andThen (\sc -> param a label kind sc lo hi step def) (scaleOf scale)
 
         [ "opt", a, i, name ] ->
             nat i |> Maybe.map (\ix -> Opt { addr = Addr a, index = ix, name = name })
 
         [ "route", label, "next-slice" ] ->
             Just (Route label)
+
+        [ "source", text ] ->
+            Just (Source text)
 
         [ "val", a, norm, stored, text ] ->
             Maybe.map2 (\n s -> Val { addr = Addr a, norm = n, stored = s, text = text }) (num norm) (num stored)
@@ -215,15 +266,28 @@ answer ts =
             Nothing
 
 
-param : String -> String -> String -> String -> String -> String -> String -> Maybe AnswerLine
-param a label kind lo hi step def =
+param : String -> String -> String -> Scale -> String -> String -> String -> String -> Maybe AnswerLine
+param a label kind scale lo hi step def =
     Maybe.map5
-        (\k l h s d -> Param { addr = Addr a, label = label, kind = k, min = l, max = h, step = s, default = d })
+        (\k l h s d -> Param { addr = Addr a, label = label, kind = k, scale = scale, min = l, max = h, step = s, default = d })
         (kindOf kind)
         (num lo)
         (num hi)
         (num step)
         (num def)
+
+
+scaleOf : String -> Maybe Scale
+scaleOf s =
+    case s of
+        "lin" ->
+            Just Linear
+
+        "oct" ->
+            Just Octaves
+
+        _ ->
+            Nothing
 
 
 kindOf : String -> Maybe Kind

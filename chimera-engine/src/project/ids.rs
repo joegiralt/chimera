@@ -46,6 +46,23 @@ impl PartId {
     pub const fn index(self) -> usize {
         self.0 as usize
     }
+
+    /// As the box numbers it: from 1, as its keys B1 to B6 do.
+    pub const fn number(self) -> u8 {
+        self.0 + 1
+    }
+
+    /// Part `n` as the box numbers them; `None` past them, or 0.
+    pub const fn from_number(n: u32) -> Option<PartId> {
+        if n >= 1 && n <= MAX_PARTS as u32 {
+            Some(PartId(n as u8 - 1))
+        } else {
+            None
+        }
+    }
+
+    pub const FIRST: PartId = PartId::ALL[0];
+    pub const LAST: PartId = PartId::ALL[MAX_PARTS - 1];
 }
 
 bounded_index!(

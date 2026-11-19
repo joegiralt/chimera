@@ -17,13 +17,14 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 -}
 
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine, Kind, addrKey)
+import Protocol exposing (Addr, AnswerLine, Kind, Scale, addrKey)
 
 
 type alias Param =
     { addr : Addr
     , label : String
     , kind : Kind
+    , scale : Scale
     , min : Float
     , max : Float
     , step : Float
@@ -85,19 +86,24 @@ beats a generic one.
 paramIn : Dict String String -> Addr -> Schema -> Maybe Param
 paramIn variants a (Schema s) =
     let
+        key : String
         key =
             addrKey a
 
+        shown : Panel -> Bool
         shown pn =
             pn.variant == "-" || Dict.get pn.name variants == Just pn.variant
 
+        mine : Panel -> Maybe ( Bool, Param )
         mine pn =
             pn.params |> List.filter (\p -> addrKey p.addr == key) |> List.head |> Maybe.map (\p -> ( pn.variant /= "-", p ))
 
+        found : List ( Bool, Param )
         found =
             s.pages
                 |> List.concatMap (\pg -> pg.panels |> List.filter shown |> List.filterMap mine)
 
+        specific : Maybe ( Bool, Param )
         specific =
             found |> List.filter Tuple.first |> List.head
     in
@@ -139,8 +145,9 @@ add line (Schema s) =
 
         Protocol.Param p ->
             let
+                q : Param
                 q =
-                    { addr = p.addr, label = p.label, kind = p.kind, min = p.min, max = p.max, step = p.step, default = p.default, options = [] }
+                    { addr = p.addr, label = p.label, kind = p.kind, scale = p.scale, min = p.min, max = p.max, step = p.step, default = p.default, options = [] }
             in
             Schema
                 { s
@@ -150,6 +157,7 @@ add line (Schema s) =
 
         Protocol.Opt o ->
             let
+                withOpt : Param -> Param
                 withOpt q =
                     if q.addr == o.addr then
                         { q | options = q.options ++ [ ( o.index, o.name ) ] }
@@ -166,7 +174,17 @@ add line (Schema s) =
         Protocol.Route r ->
             Schema { s | pages = onLastPanel (\pn -> { pn | routes = pn.routes ++ [ r ] }) s.pages }
 
-        _ ->
+        -- TAPE's SOURCE is read-only: its text comes with `since`.
+        Protocol.Source _ ->
+            Schema s
+
+        Protocol.HelloIs _ ->
+            Schema s
+
+        Protocol.Val _ ->
+            Schema s
+
+        Protocol.PartIs _ _ ->
             Schema s
 
 

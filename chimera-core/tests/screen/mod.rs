@@ -2009,6 +2009,14 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Minus)); // SENDS → PART
         feed(ui, Input::turn(EncoderId::D, -8));
     }),
+    // PRT › VOICES: a cap of 4, a reserve of 2 (ADR 0281).
+    ("mixer_part_voices", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::press(ButtonId::Minus)); // SENDS → PART
+        feed(ui, Input::press(ButtonId::Edit)); // PART → VOICES
+        feed(ui, Input::turn(EncoderId::B, 4));
+        feed(ui, Input::turn(EncoderId::C, 2));
+    }),
     ("mixer_sends", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::C, 40));
@@ -2637,6 +2645,14 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 2));
         tap(ui, ButtonId::Edit);
         feed(ui, Input::turn(EncoderId::B, 1));
+        feed(ui, Input::turn(EncoderId::B, -1));
+    }),
+    // KEYS on pad 3, CHOKE turned A to OFF: a 9th voice group, held
+    // dimmed with its reason (ADR 0280).
+    ("drum_keys_ninth", |ui| {
+        load_init(ui, EngineType::Drum);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        tap(ui, ButtonId::Edit);
         feed(ui, Input::turn(EncoderId::B, -1));
     }),
     // MCH on pad 1, TONE KICK: its six knobs in its own words.

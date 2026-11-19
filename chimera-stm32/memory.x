@@ -12,8 +12,10 @@ MEMORY
     RAM_D3 (rwx) : ORIGIN = 0x38000000, LENGTH = 64K
     DTCM (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
     /* ITCM (64K, CPU only, zero wait): NOLOAD state built in place (itcm.x,
-       ADR 0266). From 0x400, so nothing sits at or near address 0. */
-    ITCM (rwx) : ORIGIN = 0x00000400, LENGTH = 63K
+       ADR 0266). From 0x400, so nothing sits at or near address 0. build.rs
+       writes the region here from chimera-engine/src/itcm_geometry.rs
+       (ADR 0286). */
+    /* ITCM REGION */
 }
 
 /* ADR 0020, 0025: the stack lives in DTCM (zero-wait, CPU-only), not beside

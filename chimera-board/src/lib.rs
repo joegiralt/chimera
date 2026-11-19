@@ -146,6 +146,8 @@ struct SynthParts {
     dbgmcu: pac::DBGMCU,
     /// The DFU marker: `dfu::enter` writes it.
     marker: dfu::Marker,
+    /// ITCM zeroed: what its in-place builds take (ADR 0286).
+    itcm: shared::ItcmZeroed,
     #[cfg(feature = "usb-console")]
     usb: usb::UsbParts,
 }
@@ -178,6 +180,14 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     #[cfg(feature = "usb-console")]
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    // ITCM's state word-zeroed before anything builds into it (ADR 0286),
+    // at full clock. The probe has none.
+    // SAFETY: once: `main` takes the core's and the chip's peripherals
+    // (`take().unwrap()`, a second take panics) and hands them to this one
+    // call of `boot`, which consumes them. Here no interrupt is enabled yet
+    // and nothing is in ITCM.
+    #[cfg(not(feature = "sd-probe"))]
+    let itcm = unsafe { shared::zero_itcm() };
     // SAFETY: once, before audio and the rings' owner exist, so the eight
     // words (8 KiB apart, so in different lines) are nothing else's yet.
     #[cfg(not(feature = "sd-probe"))]
@@ -311,6 +321,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
             iwdg: dp.IWDG,
             dbgmcu: dp.DBGMCU,
             marker: dfu::Marker::new(checked, dp.RTC),
+            itcm,
             #[cfg(feature = "usb-console")]
             usb: usb::UsbParts {
                 dm: gpioa.pa11.into_alternate(),
@@ -324,6 +335,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
                 boot: seen,
                 sweep: None,
                 board: board_id,
+                itcm,
             },
         },
         sd: sd::SdParts {
@@ -425,6 +437,7 @@ pub struct Shell {
         clocks::Clocks,
         &mut chimera_core::project::Project,
         &mut chimera_core::source_table::AudioToken,
+        shared::ItcmZeroed,
         BenchRings<'_>,
     ) -> &'static str,
 }
@@ -506,6 +519,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 iwdg,
                 dbgmcu,
                 marker,
+                itcm,
                 #[cfg(feature = "usb-console")]
                     usb: usb_parts,
             },
@@ -563,7 +577,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     }
     // Then the UI and NEW, so an install's door is open for NEW's maps:
     // built closed, they decode empty and NEW's template reads Modified.
-    let ui = shared::take_ui().expect("UI state taken once");
+    let ui = shared::take_ui(itcm).expect("UI state taken once");
     // A build without bank 2 plays TAPE and the reverb from bank 1: no
     // status, so nothing reads NEEDS UPDATE (ADR 0141).
     if cfg!(feature = "bank2") {
@@ -620,6 +634,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         clk,
         ui.project_mut(),
         &mut sources,
+        itcm,
         #[cfg(feature = "bench-tape")]
         Some((&mut streams, &mut card_side)),
         #[cfg(not(feature = "bench-tape"))]
@@ -638,7 +653,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
     let (formant_w, mut formant_r) = shared::take_formant().expect("formant views taken once");
     let (mut shared_w, shared_r, knobs) =
-        shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
+        shared::take_audio(itcm, ui.project().perf()).expect("audio buffer taken once");
     // The kits, published before the audio starts (ADR 0265).
     let mut kits = chimera_core::dsp::drum::view::KitWriter::take().expect("kit writer once");
     kits.publish_all(ui.project().kits());
@@ -820,11 +835,6 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             &usb.up()
                 .map_or_else(Default::default, |u| u.hand(controls::now_ms())),
         );
-        // The console's `ed set`s, as knob turns before the frame's input.
-        #[cfg(feature = "usb-console")]
-        if let Some(u) = usb.up() {
-            u.apply_ed(ui);
-        }
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);
@@ -832,6 +842,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ui.set_formant_views(formant_r.read());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
+        // The console's `ed`: sets as knob turns, then `ed part`, after the
+        // hand's keys so a B*n* and `ed part n` in one frame land once.
+        #[cfg(feature = "usb-console")]
+        if let Some(u) = usb.up() {
+            u.apply_ed(ui);
+        }
         // Mapped CCs, in the room the hand's moves left: DIN's then USB's,
         // one pass, one budget. No bench run plays a controller: bench
         // firmware leaves the MIDI map out (FLASH, #507) and drops the rings
