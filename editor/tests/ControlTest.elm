@@ -1,5 +1,6 @@
 module ControlTest exposing (suite)
 
+import Contract
 import Expect
 import Fixture
 import Html
@@ -52,11 +53,11 @@ suite =
             , test "an_option_is_a_want_too" <|
                 \_ ->
                     Control.empty
-                        |> Control.want (Addr "FILTER.KIND") (Option 1)
-                        |> Control.want (Addr "FILTER.KIND") (Option 2)
+                        |> Control.want (Addr "FILTER.KIND") (Option (Contract.opt 1))
+                        |> Control.want (Addr "FILTER.KIND") (Option (Contract.opt 2))
                         |> Control.flush
                         |> Tuple.first
-                        |> Expect.equal [ ( Addr "FILTER.KIND", Option 2 ) ]
+                        |> Expect.equal [ ( Addr "FILTER.KIND", Option (Contract.opt 2) ) ]
             ]
         , describe "where a turn lands"
             [ test "the_unit_says_cutoff_turns_by_octaves_the_rate_by_range" <|

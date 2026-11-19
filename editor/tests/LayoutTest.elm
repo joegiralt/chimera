@@ -3,204 +3,179 @@ module LayoutTest exposing (suite)
 import Dict exposing (Dict)
 import Expect
 import Fixture
-import Layout.Algo as Algo exposing (Control(..), Section(..))
+import Layout.Shared as Shared exposing (Module)
 import Protocol exposing (Addr(..), addrKey)
-import Schema
+import Schema exposing (Schema)
+import Set exposing (Set)
 import Test exposing (Test, describe, test)
+import Unit exposing (Engine(..))
+import View.EnginePage as EnginePage
 
 
-ctx : List ( String, String ) -> Dict String String
-ctx =
-    Dict.fromList
-
-
-{-| Every panel variant the unit can show at once, spread over a few
-Sounds: the default of each, then the others.
+{-| The engines with a page, and the views each has.
 -}
-sounds : List (Dict String String)
-sounds =
+paged : List Engine
+paged =
+    [ Algo ]
+
+
+described : Schema -> Set String
+described sch =
+    Schema.pages sch
+        |> List.concatMap (.panels >> List.concatMap (.params >> List.map (.addr >> addrKey)))
+        |> Set.fromList
+
+
+placed : List Module -> List String
+placed =
+    List.concatMap (Shared.addresses >> List.map addrKey)
+
+
+{-| Every variant of every panel, one Sound each: a panel shows its first
+variant unless this Sound picks another.
+-}
+sounds : Schema -> List (Dict String String)
+sounds sch =
     let
-        base : List ( String, String )
-        base =
-            [ ( "FILTER", "CLEAN" ), ( "FX", "SOFT" ), ( "ENV1", "A-FAST" ), ( "ENV2", "A-FAST" ), ( "ENV3", "A-FAST" ), ( "LFO1", "CLASSIC" ), ( "LFO2", "CLASSIC" ), ( "LFO3", "CLASSIC" ), ( "OP1", "TABLE" ), ( "OP2", "TABLE" ), ( "OP3", "TABLE" ), ( "OP4", "TABLE" ), ( "OP5", "TABLE" ), ( "OP6", "TABLE" ) ]
+        variants : Dict String (List String)
+        variants =
+            Schema.pages sch
+                |> List.concatMap .panels
+                |> List.filter (\pn -> pn.variant /= "-")
+                |> List.foldl (\pn -> Dict.update pn.name (\vs -> Just (Maybe.withDefault [] vs ++ [ pn.variant ]))) Dict.empty
 
-        over : List ( String, String ) -> Dict String String
-        over xs =
-            Dict.union (ctx xs) (ctx base)
+        deepest : Int
+        deepest =
+            Dict.values variants |> List.map List.length |> List.maximum |> Maybe.withDefault 1
     in
-    [ ctx base
-    , over [ ( "FILTER", "SEM" ), ( "FX", "FUZZ" ), ( "ENV1", "B-LFO" ), ( "LFO1", "FUNC" ), ( "OP1", "FORMANT" ), ( "OP2", "NOISE" ) ]
-    , over [ ( "FILTER", "2040" ), ( "FX", "FOLD" ), ( "ENV2", "B-BURST" ), ( "LFO2", "FUNC-LFV" ), ( "OP3", "NOISE" ) ]
-    , over [ ( "FILTER", "LADDER" ), ( "FX", "OFF" ), ( "ENV3", "B-ENV" ), ( "ENV1", "A-SLOW" ), ( "OP4", "FORMANT" ) ]
-    , over [ ( "FILTER", "DIRTY" ), ( "ENV3", "B-LFV" ), ( "ENV2", "A-MED" ) ]
-    ]
+    List.range 0 (deepest - 1)
+        |> List.map (\k -> Dict.map (\_ vs -> List.drop (modBy (List.length vs) k) vs |> List.head |> Maybe.withDefault "") variants)
 
 
-overlap : Algo.Cell -> Algo.Cell -> Bool
-overlap a b =
-    a.col < b.col + b.w && b.col < a.col + a.w && a.row < b.row + b.h && b.row < a.row + a.h
+dupes : List String -> List String
+dupes xs =
+    xs
+        |> List.foldl
+            (\x ( seen, out ) ->
+                if Set.member x seen then
+                    ( seen, x :: out )
+
+                else
+                    ( Set.insert x seen, out )
+            )
+            ( Set.empty, [] )
+        |> Tuple.second
+
+
+withExtra : Schema
+withExtra =
+    [ "page 0 ALG of 1", "panel ALG -", "param ALGO.MORPH \"MORPH\" cont lin 0 127 1 0", "param ALGO.NEW \"NEW\" cont lin 0 1 1 0" ]
+        |> List.foldl
+            (\raw s ->
+                case Protocol.parse raw of
+                    Protocol.Answer a ->
+                        Schema.add a s
+
+                    Protocol.Ok_ _ ->
+                        s
+
+                    Protocol.Queued ->
+                        s
+
+                    Protocol.Err_ _ ->
+                        s
+
+                    Protocol.SinceTooLarge ->
+                        s
+
+                    Protocol.Unknown ->
+                        s
+            )
+            Schema.empty
+
+
+shownLabels : Engine -> List ( String, String ) -> String -> List ( String, String )
+shownLabels e vs title =
+    let
+        items : List Shared.Item
+        items =
+            Shared.active (Fixture.schemaFor e) (Dict.fromList vs)
+    in
+    (EnginePage.layout e).shown
+        |> List.filter (\m -> m.title == title)
+        |> List.concatMap (Shared.fill (Shared.index items) >> List.concatMap Tuple.second)
+        |> List.map (\( i, _ ) -> ( addrKey i.param.addr, i.label ))
 
 
 suite : Test
 suite =
-    describe "Layout.Algo"
-        [ test "every_schema_param_is_placed" <|
-            \_ ->
-                Schema.pages Fixture.schema
-                    |> List.concatMap
-                        (\pg ->
-                            List.concatMap
-                                (\pn ->
-                                    pn.params
-                                        |> List.filter (\p -> Algo.place (Dict.singleton pn.name pn.variant) p.addr == Nothing)
-                                        |> List.map (\p -> addrKey p.addr ++ " under " ++ pn.name ++ " " ++ pn.variant)
-                                )
-                                pg.panels
-                        )
-                    |> Expect.equal []
-        , test "no_placement_points_nowhere" <|
-            \_ ->
-                Algo.table
-                    |> List.filter (\e -> Schema.param (Addr e.addr) Fixture.schema == Nothing)
-                    |> List.map .addr
-                    |> Expect.equal []
-        , test "hero_is_cutoff" <|
-            \_ ->
-                Algo.place Dict.empty (Addr "FILTER.CUTOFF")
-                    |> Maybe.map (\p -> ( p.section, p.control ))
-                    |> Expect.equal (Just ( Filter, Hero ))
-        , test "only_cutoff_and_morph_are_heroes" <|
-            \_ ->
-                Algo.table
-                    |> List.filter (\e -> e.placed.control == Hero)
-                    |> List.map .addr
-                    |> List.sort
-                    |> Expect.equal [ "ALGO.MORPH", "FILTER.CUTOFF" ]
-        , test "sem_output_sits_in_filter_mod_and_the_others_mode_in_filter" <|
-            \_ ->
-                let
-                    at : String -> Maybe Section
-                    at v =
-                        Algo.place (ctx [ ( "FILTER", v ) ]) (Addr "FILTER.MODE") |> Maybe.map .section
-                in
-                Expect.equal [ Just FilterMod, Just Filter, Just Filter ] [ at "SEM", at "CLEAN", at "LADDER" ]
-        , test "no_two_controls_share_a_cell_in_any_sound" <|
-            \_ ->
-                let
-                    clashes : Dict String String -> List String
-                    clashes v =
-                        let
-                            placed : List ( String, Algo.Placed )
-                            placed =
-                                Algo.items Fixture.schema v |> List.filterMap (\i -> i.placed |> Maybe.map (\p -> ( i.param.label, p )))
-                        in
-                        placed
-                            |> List.concatMap
-                                (\( la, a ) ->
-                                    placed
-                                        |> List.filter (\( lb, b ) -> la < lb && a.section == b.section && overlap a.cell b.cell)
-                                        |> List.map (\( lb, _ ) -> la ++ "/" ++ lb)
-                                )
-                in
-                List.concatMap clashes sounds |> Expect.equal []
-        , test "the_screens_clear_the_controls" <|
-            \_ ->
-                let
-                    clash : Dict String String -> List String
-                    clash v =
-                        Algo.items Fixture.schema v
-                            |> List.filterMap .placed
-                            |> List.concatMap (\p -> Algo.screens |> List.filter (\s -> s.section == p.section && overlap s.cell p.cell))
-                            |> List.map .title
-                in
-                List.concatMap clash sounds |> Expect.equal []
-        , test "a_cell_stays_inside_its_section" <|
-            \_ ->
-                let
-                    box : Section -> Algo.Cell
-                    box s =
-                        Algo.sections |> List.filter (\x -> x.section == s) |> List.head |> Maybe.map .box |> Maybe.withDefault { col = 0, row = 0, w = 0, h = 0 }
-
-                    outside : Algo.Cell -> Section -> Bool
-                    outside c s =
-                        c.col < 1 || c.row < 1 || c.col + c.w - 1 > (box s).w || c.row + c.h - 1 > (box s).h
-                in
-                (List.map (\e -> ( e.addr, e.placed.section, e.placed.cell )) Algo.table
-                    ++ List.map (\s -> ( s.title, s.section, s.cell )) Algo.screens
+    describe "the engine pages' layouts"
+        [ describe "against each engine's own schema"
+            (List.concatMap
+                (\e ->
+                    let
+                        name : String
+                        name =
+                            Unit.engineName e
+                    in
+                    [ test (name ++ " places every described address in some view") <|
+                        \_ ->
+                            Set.diff (described (Fixture.schemaFor e)) (Set.fromList (placed (EnginePage.layout e).every))
+                                |> Set.toList
+                                |> Expect.equal []
+                    , test (name ++ " places no address twice") <|
+                        \_ ->
+                            dupes (placed (EnginePage.layout e).shown)
+                                |> Expect.equal []
+                    , test (name ++ " leaves nothing to OTHER in any Sound") <|
+                        \_ ->
+                            sounds (Fixture.schemaFor e)
+                                |> List.concatMap (\v -> EnginePage.other (Shared.active (Fixture.schemaFor e) v) (EnginePage.layout e).every)
+                                |> List.map (.param >> .addr >> addrKey)
+                                |> Expect.equal []
+                    ]
                 )
-                    |> List.filter (\( _, s, c ) -> outside c s)
-                    |> List.map (\( n, _, _ ) -> n)
+                paged
+            )
+        , test "a_layout_never_names_an_address_no_engine_describes" <|
+            \_ ->
+                let
+                    any : Set String
+                    any =
+                        List.foldl (\e -> Set.union (described (Fixture.schemaFor e))) Set.empty Unit.allEngines
+                in
+                paged
+                    |> List.concatMap (\e -> placed (EnginePage.layout e).every)
+                    |> List.filter (\a -> not (Set.member a any))
                     |> Expect.equal []
-        , test "a_param_the_layout_lacks_goes_to_unplaced" <|
+        , test "a_param_the_layout_lacks_lands_in_other" <|
             \_ ->
-                let
-                    withExtra : Schema.Schema
-                    withExtra =
-                        [ "page 0 ALG of 1", "panel ALG -", "param ALGO.MORPH \"MORPH\" cont lin 0 127 1 0", "param ALGO.NEW \"NEW\" cont lin 0 1 1 0" ]
-                            |> List.foldl
-                                (\raw s ->
-                                    case Protocol.parse raw of
-                                        Protocol.Answer a ->
-                                            Schema.add a s
-
-                                        Protocol.Ok_ _ ->
-                                            s
-
-                                        Protocol.Queued ->
-                                            s
-
-                                        Protocol.Err_ _ ->
-                                            s
-
-                                        Protocol.SinceTooLarge ->
-                                            s
-
-                                        Protocol.Unknown ->
-                                            s
-                                )
-                                Schema.empty
-                in
-                Algo.items withExtra Dict.empty
-                    |> Algo.unplaced
-                    |> List.map (\i -> addrKey i.param.addr)
-                    |> Expect.equal [ "ALGO.NEW" ]
-        , test "the_fixture_leaves_nothing_unplaced_in_any_sound" <|
+                EnginePage.other (Shared.active withExtra Dict.empty) (EnginePage.layout Algo).every
+                    |> List.map (.param >> .addr)
+                    |> Expect.equal [ Addr "ALGO.NEW" ]
+        , describe "variants are followed"
+            [ test "an_operators_formant_band_shows_only_while_its_wave_is_formant" <|
+                \_ ->
+                    ( shownLabels Algo [ ( "OP1", "FORMANT" ) ] "OP 1" |> List.member ( "OP_A.SKIRT", "SKIRT" )
+                    , shownLabels Algo [ ( "OP1", "TABLE" ) ] "OP 1" |> List.map Tuple.first |> List.member "OP_A.SKIRT"
+                    )
+                        |> Expect.equal ( True, False )
+            , test "the_variant_panel_names_the_control" <|
+                \_ ->
+                    ( shownLabels Algo [ ( "FILTER", "SEM" ) ] "FILTER" |> List.filter (\( a, _ ) -> a == "FILTER.MODE" || a == "FILTER.MORPH")
+                    , shownLabels Algo [ ( "FILTER", "CLEAN" ) ] "FILTER" |> List.filter (\( a, _ ) -> a == "FILTER.MODE" || a == "FILTER.MORPH")
+                    )
+                        |> Expect.equal ( [ ( "FILTER.MODE", "OUTPUT" ), ( "FILTER.MORPH", "MODE" ) ], [ ( "FILTER.MODE", "MODE" ) ] )
+            , test "an_envelope_shows_its_types_stages" <|
+                \_ ->
+                    ( shownLabels Algo [ ( "ENV1", "A-FAST" ) ] "ENVELOPE 1" |> List.map Tuple.second
+                    , shownLabels Algo [ ( "ENV1", "B-LFO" ) ] "ENVELOPE 1" |> List.map Tuple.second
+                    )
+                        |> Expect.equal ( [ "ATTACK", "HOLD", "DECAY", "SUSTAIN", "RELEASE", "E1 SPEED", "E1 HOLD" ], [ "RATE", "PHASE", "TILT", "MODE", "FORM", "E1 SPEED", "E1 HOLD" ] )
+            ]
+        , test "the_algo_page_is_in_v6s_order" <|
             \_ ->
-                sounds
-                    |> List.concatMap (\v -> Algo.items Fixture.schema v |> Algo.unplaced)
-                    |> List.map (\i -> addrKey i.param.addr)
-                    |> Expect.equal []
-        , test "only_the_shown_variants_params_are_in_play" <|
-            \_ ->
-                let
-                    has : Dict String String -> String -> Bool
-                    has v a =
-                        Algo.items Fixture.schema v |> List.any (\i -> addrKey i.param.addr == a)
-                in
-                Expect.equal [ True, False, False, True ]
-                    [ has (ctx [ ( "OP1", "FORMANT" ) ]) "OP_A.SKIRT"
-                    , has (ctx [ ( "OP1", "TABLE" ) ]) "OP_A.SKIRT"
-                    , has (ctx [ ( "FILTER", "CLEAN" ) ]) "FILTER.VOICE"
-                    , has (ctx [ ( "FILTER", "2040" ) ]) "FILTER.VOICE"
-                    ]
-        , test "a_variant_panels_label_beats_a_page_of_all_six_operators" <|
-            \_ ->
-                let
-                    label : Dict String String -> String -> Maybe String
-                    label v a =
-                        Algo.items Fixture.schema v
-                            |> List.filter (\i -> addrKey i.param.addr == a)
-                            |> List.head
-                            |> Maybe.map .label
-                in
-                Expect.equal [ Just "WAVE", Just "COARSE", Just "CRS", Just "DET" ]
-                    [ label (ctx [ ( "OP1", "FORMANT" ) ]) "OP_A.WAVE"
-                    , label (ctx [ ( "OP1", "TABLE" ) ]) "OP_A.CRSE"
-                    , label (ctx [ ( "OP1", "FORMANT" ) ]) "OP_A.CRSE"
-                    , label Dict.empty "OP_A.DETUN"
-                    ]
-        , test "filter_mod_lists_the_routes_the_unit_names" <|
-            \_ ->
-                Algo.routes Fixture.schema (ctx [ ( "FILTER", "SEM" ) ])
-                    |> Expect.equal [ "ENV AMT", "KEYBOARD", "FREQ MOD", "RES MOD" ]
+                (EnginePage.layout Algo).shown
+                    |> List.map .title
+                    |> Expect.equal [ "ALGORITHM", "PITCH", "OP 1", "OP 2", "OP 3", "OP 4", "OP 5", "OP 6", "FILTER", "FILTER MOD", "VOICE FX", "AMP · OUT", "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3", "LFO 1", "LFO 2", "LFO 3", "MOD" ]
         ]

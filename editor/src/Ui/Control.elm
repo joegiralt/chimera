@@ -477,7 +477,7 @@ arrow a key =
 
 type Want
     = Number Float
-    | Option Int
+    | Option OptIndex
 
 
 type Wanted

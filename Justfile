@@ -37,7 +37,7 @@ editor-test:
 
 # The browser editor, optimised, into editor/dist/
 editor-build: editor-screen
-    cd editor && mkdir -p dist && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/style.css public/screen.js public/screen.wasm dist/
+    cd editor && mkdir -p dist/glyphs && elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/theme.js public/style.css public/screen.js public/screen.wasm dist/ && cp public/glyphs/*.png dist/glyphs/
 
 # The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32
 # into editor/public/screen.wasm, stripped, then wasm-opt'd if installed;
