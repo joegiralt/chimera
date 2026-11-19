@@ -101,7 +101,7 @@ width (Config c) =
             Control.width { px = Control.snap16 (max 56 (Control.labelPx c.label)), ch = widest c.options + 2 }
 
         InHeader ->
-            Control.width { px = Control.labelPx c.label + 34, ch = widest c.options + 2 }
+            Control.width { px = Control.labelPx c.label + 34 + 9 * widest c.options, ch = 0 }
 
 
 view : Config -> State -> Chosen -> Html Msg

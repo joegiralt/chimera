@@ -91,6 +91,11 @@ suite =
                     |> Query.fromHtml
                     |> Query.findAll [ Sel.class "screen" ]
                     |> Query.count (Expect.equal 11)
+        , test "in_a_title_bar_it_holds_its_label_beside_its_widest_value" <|
+            \_ ->
+                -- ALG A (40px) + padding, arrow and gaps (34px) + the widest name in the 14px face (9px a character)
+                Control.widthText (Menu.width (Menu.inHeader alg))
+                    |> Expect.equal ("max(" ++ String.fromInt (Control.labelPx "ALG A" + 34 + 9 * List.foldl (String.length >> max) 0 names) ++ "px, 0ch)")
         , test "in_a_title_bar_it_wears_the_header_look" <|
             \_ ->
                 Menu.view (Menu.inHeader alg) Menu.shut (Control.chosen (opt 0))
