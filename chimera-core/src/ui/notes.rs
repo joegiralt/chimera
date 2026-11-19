@@ -26,8 +26,8 @@ pub(crate) fn ask_in(a: Ask<'_>) {
     }
 }
 
-/// Each word `WORDS` holds, its index in `TEXT`.
-#[derive(Clone, Copy)]
+/// Each word `WORDS` holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
 enum W {
     Vca,
@@ -40,18 +40,39 @@ enum W {
     StereoWidth,
 }
 
-/// The words, in `W`'s order. Read only at compile time: their bytes
+/// Each word with its text, in `W`'s order (checked below): one table, so
+/// a word and its text can't part. Read only at compile time: the bytes
 /// reach the build through `WORDS` alone.
-const TEXT: [&str; 8] = [
-    "VCA:",
-    "ROUTES REPLACE CONTOUR",
-    "SUM STARTS AT AMP BASE",
-    "NEEDS A ROUTE INTO VCA",
-    "DUCKS THE TAIL UNDER ITS INPUT",
-    "HOW FAST THE TAIL RETURNS",
-    "PLACES EACH NOTE, ROUTABLE",
-    "0 MONO, 64 AS PANNED, 127 WIDE",
+const TABLE: [(W, &str); 8] = [
+    (W::Vca, "VCA:"),
+    (W::Replaces, "ROUTES REPLACE CONTOUR"),
+    (W::SumStarts, "SUM STARTS AT AMP BASE"),
+    (W::NeedsRoute, "NEEDS A ROUTE INTO VCA"),
+    (W::DuckAmount, "DUCKS THE TAIL UNDER ITS INPUT"),
+    (W::DuckRelease, "HOW FAST THE TAIL RETURNS"),
+    (W::StereoPan, "PLACES EACH NOTE, ROUTABLE"),
+    (W::StereoWidth, "0 MONO, 64 AS PANNED, 127 WIDE"),
 ];
+
+// Row `i` is word `i`: `word` indexes the table by `W`.
+const _: () = {
+    let mut i = 0;
+    while i < TABLE.len() {
+        assert!(TABLE[i].0 as usize == i, "TABLE is in W's order");
+        i += 1;
+    }
+};
+
+/// The texts alone.
+const TEXT: [&str; TABLE.len()] = {
+    let mut t = [""; TABLE.len()];
+    let mut i = 0;
+    while i < TABLE.len() {
+        t[i] = TABLE[i].1;
+        i += 1;
+    }
+    t
+};
 
 /// Where word `i` starts in `WORDS`: the lengths before it.
 const fn start(i: usize) -> usize {
@@ -129,7 +150,9 @@ pub fn matrix(m: &MatrixState) -> Option<Hint> {
 }
 
 /// What the focus band says on `addr` of `s` in its hint's place: bank
-/// 2's `walk::band_note_in` asks it after TAPE's notes.
+/// 2's `walk::band_note_in` asks it after TAPE's notes. Out of line, so it
+/// stays in the notes' S4 group, not inlined into the walk's S0-S3 code.
+#[inline(never)]
 pub fn cell(addr: ParamAddr, s: &Sound) -> Option<&'static str> {
     match (addr.block, addr.param) {
         (BlockRef::Out, OutParams::VCA) => {
