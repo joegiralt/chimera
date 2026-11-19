@@ -228,5 +228,96 @@ pub fn run(_args: &[String]) -> Result<(), String> {
                 .collect::<Vec<_>>(),
         );
     }
+    kick_over_bass()
+}
+
+/// A DRUM kit (FRONT, its INIT, the kick on every beat at 120 BPM) over a
+/// held bass (MID, ALGO's INIT at A1): the kick's transient over the bass
+/// in 40–120 Hz, off and on, and the bass's dip.
+fn kick_over_bass() -> Result<(), String> {
+    use chimera_core::dsp::drum::types::Kit;
+    use chimera_core::dsp::drum::view::KitWriter;
+    let mut kits = KitWriter::take().ok_or("the kit writer, once")?;
+    kits.publish(PartId::ALL[0], &Kit::init());
+    let mut perf = Performance::new();
+    perf.fx = FxParams::OFF;
+    for (p, (engine, role)) in [(EngineType::Drum, Role::Front), (EngineType::Algo, Role::Mid)]
+        .into_iter()
+        .enumerate()
+    {
+        let e = perf.edit(PartId::ALL[p]);
+        **e.sound = Sound::init(engine);
+        e.mix.role = role;
+    }
+    let beat = SAMPLE_RATE as usize / 2;
+    let mut notes = Vec::new();
+    for i in 0..16 {
+        notes.push(Note { at: i * beat, part: 0, key: 36, on: Some(120) });
+        notes.push(Note { at: i * beat + beat / 4, part: 0, key: 36, on: None });
+    }
+    notes.push(Note { at: 0, part: 1, key: 33, on: Some(100) });
+    let len = 16 * beat;
+    let off = render(&mut perf, &notes, len, SmartEq::OFF);
+    let base = kick_to_bass(&off.buses[0], &off.buses[1], &off.buses[0]);
+    println!("A kick (DRUM, FRONT) over a held bass (MID), 40 - 120 Hz:");
+    println!("  off: the kick's transient {base:+.1} dB over the bass");
+    for a in [64u8, 127] {
+        let t = render(&mut perf, &notes, len, on(a));
+        let r = kick_to_bass(&t.buses[0], &t.buses[1], &off.buses[0]);
+        let most = t.cuts.iter().map(|c| c[1][0]).fold(0.0f32, f32::max);
+        println!(
+            "  AMOUNT {a:3}: {r:+.1} dB ({:+.1}); the bass's LOW dip at most {most:.2} dB, bass 250 Hz - 2 kHz {:+.2} dB",
+            r - base,
+            db(mud(&t.buses[1]), mud(&off.buses[1])),
+        );
+    }
     Ok(())
+}
+
+/// The kick's band (owner, 2026-11-19): where the kick's dip acts.
+const KICK_LO: f64 = 40.0;
+const KICK_HI: f64 = 120.0;
+/// The window after each kick's onset that is its transient, samples.
+const HIT: usize = 2048;
+/// Onsets are found in frames of this, samples.
+const FRAME: usize = 256;
+
+/// `x` through an RBJ band-pass about √(40·120) Hz spanning 40–120 Hz.
+fn kick_band(x: &[f32]) -> Vec<f64> {
+    let f0 = (KICK_LO * KICK_HI).sqrt();
+    let q = f0 / (KICK_HI - KICK_LO);
+    let w = 2.0 * std::f64::consts::PI * f0 / crate::SR;
+    let a = w.sin() / (2.0 * q);
+    let (b0, b2, a0, a1, a2) = (a, -a, 1.0 + a, -2.0 * w.cos(), 1.0 - a);
+    let (mut x1, mut x2, mut y1, mut y2) = (0.0, 0.0, 0.0, 0.0);
+    x.iter()
+        .map(|&v| {
+            let v = v as f64;
+            let y = (b0 * v + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+            (x2, x1, y2, y1) = (x1, v, y1, y);
+            y
+        })
+        .collect()
+}
+
+/// The kick's transient over the bass in 40–120 Hz, dB: at each kick
+/// onset (a frame of the kick's band 9 dB over the last, 100 ms apart at
+/// least), the kick's band energy over the next 43 ms against the bass's,
+/// summed over the onsets. The onsets come from `onsets_of` (the same
+/// kicks on and off).
+pub fn kick_to_bass(kick: &[f32], bass: &[f32], onsets_of: &[f32]) -> f64 {
+    let (k, b, o) = (kick_band(kick), kick_band(bass), kick_band(onsets_of));
+    let frames: Vec<f64> = o.chunks(FRAME).map(|c| c.iter().map(|v| v * v).sum()).collect();
+    let loud = frames.iter().cloned().fold(0.0, f64::max) * 1e-3;
+    let (mut ek, mut eb, mut last) = (0.0, 0.0, None::<usize>);
+    for i in 1..frames.len() {
+        let at = i * FRAME;
+        let gap = last.is_none_or(|l| at - l > crate::SR as usize / 10);
+        if frames[i] > 8.0 * frames[i - 1] && frames[i] > loud && gap && at + HIT <= k.len().min(b.len()) {
+            ek += k[at..at + HIT].iter().map(|v| v * v).sum::<f64>();
+            eb += b[at..at + HIT].iter().map(|v| v * v).sum::<f64>();
+            last = Some(at);
+        }
+    }
+    10.0 * (ek / eb.max(1e-30)).log10()
 }

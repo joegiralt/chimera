@@ -16,7 +16,7 @@ use chimera_hal::BLOCK_SIZE;
 
 pub mod smart;
 
-use super::smart::{Role, SmartEq};
+use super::smart::{PartKind, Role, SmartEq};
 use super::{ChannelEq, CoeffStep, Coeffs, Live, LpShare, OnePole, PartEq, PartEqs, Taps};
 use crate::dsp::ease::ease_coeff;
 use crate::dsp::{Db, Gain, Hz, Unit};
@@ -249,6 +249,8 @@ pub fn run_parts(eqs: &mut PartEqs, b: PartsBlock<'_>) {
         },
     );
     let roles: [Role; MAX_PARTS] = core::array::from_fn(|p| b.parts[p].mix.role);
+    let kinds: [PartKind; MAX_PARTS] =
+        core::array::from_fn(|p| PartKind::of(b.parts[p].params.engine()));
     smart::run(
         &mut eqs.smart,
         smart::SmartBlock {
@@ -256,6 +258,7 @@ pub fn run_parts(eqs: &mut PartEqs, b: PartsBlock<'_>) {
             sides: b.sides,
             written: b.written,
             roles: &roles,
+            kinds: &kinds,
             smart: b.smart,
             sample_rate: b.sample_rate,
         },

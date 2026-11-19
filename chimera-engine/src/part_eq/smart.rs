@@ -90,6 +90,24 @@ impl Default for Role {
 pub const ROLE_NAMES: [&str; Role::ALL.len()] =
     [Role::Front.ident(), Role::Mid.ident(), Role::Back.ident()];
 
+/// What a Part plays, as SMART EQ keys from it: a DRUM Part's LOW band
+/// keys the kick's fast dip (owner, 2026-11-19); any other Part's is
+/// heard slowly, as every band is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartKind {
+    Drum,
+    Tonal,
+}
+
+impl PartKind {
+    pub const fn of(e: crate::params::EngineType) -> PartKind {
+        match e {
+            crate::params::EngineType::Drum => PartKind::Drum,
+            _ => PartKind::Tonal,
+        }
+    }
+}
+
 /// The four places SMART EQ cuts, low to high, two octaves apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Band {
@@ -341,6 +359,12 @@ pub(crate) struct PartSmart {
     pub(crate) level: [Power; BANDS],
     pub(crate) cut: [CutDb; BANDS],
     pub(crate) dip: [Dip; BANDS],
+    /// The LOW band's low-pass energy, followed fast: a DRUM Part's kick.
+    pub(crate) key: Power,
+    /// `key`'s recent peak, falling slowly: the hit `key` is measured from.
+    pub(crate) key_peak: Power,
+    /// The kick's fast LOW dip on this Part, on top of `cut`'s slow LOW.
+    pub(crate) kick: CutDb,
 }
 
 impl PartSmart {
@@ -350,7 +374,21 @@ impl PartSmart {
         level: [Power(0.0); BANDS],
         cut: [CutDb::ZERO; BANDS],
         dip: [Dip::UNITY; BANDS],
+        key: Power(0.0),
+        key_peak: Power(0.0),
+        kick: CutDb::ZERO,
     };
+
+    /// The cuts the bands play: `cut`, LOW the deeper of its slow cut and
+    /// the kick's fast dip.
+    #[inline(always)]
+    pub(crate) fn applied(&self) -> [CutDb; BANDS] {
+        let mut c = self.cut;
+        if self.kick > c[0] {
+            c[0] = self.kick;
+        }
+        c
+    }
 }
 
 /// Every Part's SMART EQ, in `PartEqs` (ITCM on the unit). All-zero bytes
@@ -372,9 +410,19 @@ impl SmartState {
         self.live == Live::Running
     }
 
-    /// Part `p`'s cut in `b` as last decided.
+    /// Part `p`'s cut in `b` as last decided, the kick's dip with it.
     pub fn cut(&self, p: PartId, b: Band) -> CutDb {
+        self.parts[p.index()].applied()[b.index()]
+    }
+
+    /// Part `p`'s slow cut in `b` alone, without the kick's dip.
+    pub fn slow_cut(&self, p: PartId, b: Band) -> CutDb {
         self.parts[p.index()].cut[b.index()]
+    }
+
+    /// The kick's fast LOW dip on Part `p`.
+    pub fn kick(&self, p: PartId) -> CutDb {
+        self.parts[p.index()].kick
     }
 
     /// Part `p`'s gain in `b` as last applied, linear.
@@ -387,6 +435,7 @@ impl SmartState {
         self.parts.iter().flat_map(|p| {
             let taps = p.mid.iter().chain(&p.side).flat_map(|t| [t.s1, t.s2]);
             taps.chain(p.level.iter().map(|l| l.0))
+                .chain([p.key.0, p.key_peak.0, p.kick.get()])
         })
     }
 }

@@ -19,7 +19,7 @@ use crate::hw::MAX_PARTS;
 use crate::instrument::Sides;
 use crate::part_eq::Live;
 use crate::part_eq::smart::{
-    BANDS, Band, BandTaps, CutDb, CutView, Dip, PartSmart, Power, Role, SMART_VIEW, SmartEq,
+    BANDS, Band, BandTaps, CutDb, CutView, Dip, PartKind, PartSmart, Power, Role, SMART_VIEW, SmartEq,
     SmartState,
 };
 
@@ -30,6 +30,22 @@ const LEVEL_RISE_S: f32 = 0.05;
 /// ...and falls with this one: a long MODAL tail or a pad's release is
 /// heard as the sustained energy it is, not as peaks gone by.
 const LEVEL_FALL_S: f32 = 0.5;
+/// The kick's key (a DRUM Part's LOW low-pass energy) falls with this
+/// time constant, seconds; it rises at once. Short enough to fall 12 dB
+/// within a kick's body.
+const KEY_FALL_S: f32 = 0.02;
+/// The kick's dip deepens with this time constant, seconds: two blocks,
+/// inside the kick's first cycle at 50 Hz.
+const KICK_ATTACK_S: f32 = 0.003;
+/// ...and lets go with this one (owner's range 60–150 ms): over a kick's
+/// body (50–80 ms), and 95 % back in 0.3 s, before the next kick at up to
+/// 190 BPM in four. No control: one value serves every tempo the teaser
+/// and the drum machines play.
+const KICK_RELEASE_S: f32 = 0.1;
+/// A hit is the key within this of its recent peak (dB): the kick's
+/// attack and the top of its body, not its tail (a 150 ms 808 falls 6 dB
+/// in about 100 ms), so the dip is a dip, never a duck.
+const HIT_SPAN_DB: f32 = 6.0;
 /// A cut deepens with this time constant, seconds.
 const ATTACK_S: f32 = 0.5;
 /// A cut lets go with this one, seconds.
@@ -86,6 +102,7 @@ pub struct SmartBlock<'a> {
     pub sides: &'a mut Sides,
     pub written: &'a [bool; MAX_PARTS],
     pub roles: &'a [Role; MAX_PARTS],
+    pub kinds: &'a [PartKind; MAX_PARTS],
     pub smart: SmartEq,
     pub sample_rate: u32,
 }
@@ -107,6 +124,9 @@ struct Rate {
     /// cut's attack and release.
     rise: f32,
     fall: f32,
+    key_fall: f32,
+    kick_attack: f32,
+    kick_release: f32,
     attack: f32,
     release: f32,
 }
@@ -134,6 +154,9 @@ impl Rate {
             svf,
             rise: pole(LEVEL_RISE_S, sample_rate),
             fall: pole(LEVEL_FALL_S, sample_rate),
+            key_fall: pole(KEY_FALL_S, sample_rate),
+            kick_attack: pole(KICK_ATTACK_S, sample_rate),
+            kick_release: pole(KICK_RELEASE_S, sample_rate),
             attack: pole(ATTACK_S, sample_rate),
             release: pole(RELEASE_S, sample_rate),
         }
@@ -168,10 +191,12 @@ fn bands<const WRITE: bool, const LISTEN: bool>(
     from: &[Dip; BANDS],
     to: &[Dip; BANDS],
     energy: &mut [f32; BANDS],
+    key: &mut f32,
 ) {
     let k = 1.0 / Q;
     let n = BLOCK_SIZE as f32;
     let input = *x;
+    let mut lp = 0.0f32;
     for pair in [[0, 1], [2, 3]] {
         let f = pair.map(|b| r.svf[b]);
         let mut s = pair.map(|b| taps[b]);
@@ -189,6 +214,10 @@ fn bands<const WRITE: bool, const LISTEN: bool>(
                 s[i].s2 = 2.0 * v2 - s[i].s2;
                 if LISTEN {
                     e[i] += v1 * v1;
+                    // LOW's low-pass: the kick's key, under a snare.
+                    if pair[i] == 0 {
+                        lp += v2 * v2;
+                    }
                 }
                 if WRITE {
                     d[i] += dd[i];
@@ -205,6 +234,9 @@ fn bands<const WRITE: bool, const LISTEN: bool>(
                 energy[b] += e[i];
             }
         }
+    }
+    if LISTEN {
+        *key += lp;
     }
 }
 
@@ -257,44 +289,77 @@ fn own(levels: &[f32; BANDS], b: usize) -> f32 {
     clampf((levels[b] - leak) / OWN_SPAN_DB, 0.0, 1.0)
 }
 
-/// Each Part's cut target in each band: the deepest any higher-role Part
-/// asks, scaled by AMOUNT (`share`). The rule (ADR 0296 § 3): `q` presses
-/// on `p` in a band where `q` is active and the band is `q`'s own sound,
-/// `p` is active, and `p` is loud enough there to mask `q`.
+/// What every Part sounds like this block, as the rule reads it.
+struct Heard<'a> {
+    /// Each band's level, dBFS (sustained: rise 50 ms, fall 0.5 s).
+    levels: &'a [[f32; BANDS]; MAX_PARTS],
+    /// The LOW low-pass key and its recent peak, dBFS.
+    keys: &'a [(f32, f32); MAX_PARTS],
+    roles: &'a [Role; MAX_PARTS],
+    kinds: &'a [PartKind; MAX_PARTS],
+}
+
+/// How much a DRUM Part's kick is hitting now: its key within
+/// `HIT_SPAN_DB` of its recent peak, the peak itself active. A snare on
+/// the same Part barely moves LOW's low-pass.
 #[inline(always)]
-fn targets(
-    levels: &[[f32; BANDS]; MAX_PARTS],
-    roles: &[Role; MAX_PARTS],
-    share: Unit,
-) -> [[CutDb; BANDS]; MAX_PARTS] {
-    core::array::from_fn(|p| {
+fn hit((key, peak): (f32, f32)) -> f32 {
+    active(peak) * clampf((key - peak + HIT_SPAN_DB) / HIT_SPAN_DB, 0.0, 1.0)
+}
+
+/// Each Part's slow cut target in each band, and its kick's fast LOW dip
+/// target: the deepest any higher-role Part asks, scaled by AMOUNT
+/// (`share`). The rule (ADR 0296 § 3): `q` presses on `p` in a band where
+/// each is active and the band is each one's own sound, and `p` is loud
+/// enough there to mask `q`. In LOW a DRUM `q` presses only
+/// through the kick's dip (owner, 2026-11-19): fast, on its hits.
+#[inline(always)]
+fn targets(h: &Heard<'_>, share: Unit) -> ([[CutDb; BANDS]; MAX_PARTS], [CutDb; MAX_PARTS]) {
+    let low = Band::Low.index();
+    let slow = core::array::from_fn(|p| {
         core::array::from_fn(|b| {
             let (reach, weight) = if Band::ALL[b].muddy() {
                 (MUD_THREAT, 1.0)
             } else {
                 (CLEAR_THREAT, CLEAR_WEIGHT)
             };
-            let lp = levels[p][b];
-            let ap = active(lp);
+            let lp = h.levels[p][b];
+            // `p` masks only with its own sound there, not a skirt's.
+            let ap = active(lp) * own(&h.levels[p], b);
             let mut press = 0.0f32;
             for q in 0..MAX_PARTS {
-                let depth = roles[q].depth_over(roles[p]).get();
-                if depth > 0.0 {
-                    let lq = levels[q][b];
-                    let heard = active(lq) * own(&levels[q], b);
+                let depth = h.roles[q].depth_over(h.roles[p]).get();
+                let keyed = b == low && h.kinds[q] == PartKind::Drum;
+                if depth > 0.0 && !keyed {
+                    let lq = h.levels[q][b];
+                    let heard = active(lq) * own(&h.levels[q], b);
                     press = press.max(depth * heard * ap * threat(lp, lq, reach));
                 }
             }
             CutDb::of(Unit::new(share.get() * weight * press))
         })
-    })
+    });
+    let kick = core::array::from_fn(|p| {
+        let lp = h.levels[p][low];
+        let ap = active(lp) * own(&h.levels[p], low);
+        let mut press = 0.0f32;
+        for q in 0..MAX_PARTS {
+            let depth = h.roles[q].depth_over(h.roles[p]).get();
+            if depth > 0.0 && h.kinds[q] == PartKind::Drum {
+                let lq = h.levels[q][low];
+                press = press.max(depth * hit(h.keys[q]) * ap * threat(lp, lq, MUD_THREAT));
+            }
+        }
+        CutDb::of(Unit::new(share.get() * press))
+    });
+    (slow, kick)
 }
 
-/// A cut toward its target: deeper at ATTACK's pace, shallower at
-/// RELEASE's, landing on 0 under `LAND_DB`.
+/// A cut toward its target: deeper at `attack`'s pace, shallower at
+/// `release`'s (block poles), landing on 0 under `LAND_DB`.
 #[inline(always)]
-fn follow(c: CutDb, target: CutDb, r: &Rate) -> CutDb {
-    let pole = if target > c { r.attack } else { r.release };
+fn follow(c: CutDb, target: CutDb, attack: f32, release: f32) -> CutDb {
+    let pole = if target > c { attack } else { release };
     let next = target.get() + pole * (c.get() - target.get());
     if target == CutDb::ZERO && next < LAND_DB {
         CutDb::ZERO
@@ -307,7 +372,9 @@ impl PartSmart {
     /// Any band cut or not yet back at unity.
     #[inline(always)]
     fn cutting(&self) -> bool {
-        self.cut.iter().any(|c| *c != CutDb::ZERO) || self.dip.iter().any(|d| *d != Dip::UNITY)
+        self.cut.iter().any(|c| *c != CutDb::ZERO)
+            || self.kick != CutDb::ZERO
+            || self.dip.iter().any(|d| *d != Dip::UNITY)
     }
 }
 
@@ -325,19 +392,24 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
     let r = Rate::at(b.sample_rate);
     let k2 = 1.0 / (Q * Q);
     let mut levels = [[FLOOR_DB - ACTIVE_SPAN_DB; BANDS]; MAX_PARTS];
+    let mut keys = [(FLOOR_DB - ACTIVE_SPAN_DB, FLOOR_DB - ACTIVE_SPAN_DB); MAX_PARTS];
     let lanes = b.buses.iter_mut().zip(b.sides.iter_mut()).zip(b.written);
-    for ((p, heard), ((bus, side), &written)) in st.parts.iter_mut().zip(&mut levels).zip(lanes) {
+    let heard_at = levels.iter_mut().zip(keys.iter_mut());
+    for ((p, (heard, keyed)), ((bus, side), &written)) in st.parts.iter_mut().zip(heard_at).zip(lanes)
+    {
         let from = p.dip;
-        let to = p.cut.map(dip_of);
+        let to = p.applied().map(dip_of);
         let mut energy = [0.0f32; BANDS];
+        let mut key = 0.0f32;
         if written {
             if from == to && to == [Dip::UNITY; BANDS] {
-                bands::<false, true>(bus, &mut p.mid, &r, &from, &to, &mut energy);
+                bands::<false, true>(bus, &mut p.mid, &r, &from, &to, &mut energy, &mut key);
             } else {
-                bands::<true, true>(bus, &mut p.mid, &r, &from, &to, &mut energy);
+                bands::<true, true>(bus, &mut p.mid, &r, &from, &to, &mut energy, &mut key);
                 if let Some(side) = side {
-                    let mut none = [0.0f32; BANDS];
-                    bands::<true, false>(side, &mut p.side, &r, &from, &to, &mut none);
+                    let (mut none, mut no_key) = ([0.0f32; BANDS], 0.0f32);
+                    let s = &mut p.side;
+                    bands::<true, false>(side, s, &r, &from, &to, &mut none, &mut no_key);
                 }
             }
             if side.is_none() {
@@ -357,17 +429,31 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
             *l = Power(if v.is_finite() && v >= FLUSH { v } else { 0.0 });
             *h = db(*l);
         }
+        // The key rises at once and falls fast; its peak falls slowly.
+        let ms = key / BLOCK_SIZE as f32;
+        let fast = ms.max(ms + r.key_fall * (p.key.0 - ms));
+        let held = ms.max(ms + r.fall * (p.key_peak.0 - ms));
+        let clean = |v: f32| Power(if v.is_finite() && v >= FLUSH { v } else { 0.0 });
+        (p.key, p.key_peak) = (clean(fast), clean(held));
+        *keyed = (db(p.key), db(p.key_peak));
     }
-    let want = targets(&levels, b.roles, b.smart.share());
+    let heard = Heard {
+        levels: &levels,
+        keys: &keys,
+        roles: b.roles,
+        kinds: b.kinds,
+    };
+    let (slow, kick) = targets(&heard, b.smart.share());
     let mut any = false;
-    for (p, t) in st.parts.iter_mut().zip(want.iter()) {
+    for ((p, t), &k) in st.parts.iter_mut().zip(slow.iter()).zip(kick.iter()) {
         for (c, &tc) in p.cut.iter_mut().zip(t) {
-            *c = follow(*c, tc, &r);
+            *c = follow(*c, tc, r.attack, r.release);
         }
+        p.kick = follow(p.kick, k, r.kick_attack, r.kick_release);
         any |= p.cutting();
     }
     for (i, p) in st.parts.iter().enumerate() {
-        SMART_VIEW.publish(i, CutView::of(&p.cut));
+        SMART_VIEW.publish(i, CutView::of(&p.applied()));
     }
     if !listens && !any {
         *st = SmartState::REST;

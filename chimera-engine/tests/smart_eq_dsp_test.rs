@@ -5,7 +5,9 @@ use chimera_engine::hw::MAX_PARTS;
 use chimera_engine::instrument::Sides;
 use chimera_engine::part_eq::PartEqs;
 use chimera_engine::part_eq::dsp::smart::{SmartBlock, run};
-use chimera_engine::part_eq::smart::{Amount, Band, CutDb, Role, SmartEq, SmartState, Switch};
+use chimera_engine::part_eq::smart::{
+    Amount, Band, CutDb, PartKind, Role, SmartEq, SmartState, Switch,
+};
 use chimera_engine::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::PI;
@@ -59,6 +61,18 @@ fn block(
     roles: &[Role; MAX_PARTS],
     smart: SmartEq,
 ) -> (Buses, Buses) {
+    block_kinds(st, start, gens, roles, &[PartKind::Tonal; MAX_PARTS], smart)
+}
+
+/// `block`, with each Part's kind (a DRUM Part keys the kick's dip).
+fn block_kinds(
+    st: &mut SmartState,
+    start: usize,
+    gens: &[Gen; MAX_PARTS],
+    roles: &[Role; MAX_PARTS],
+    kinds: &[PartKind; MAX_PARTS],
+    smart: SmartEq,
+) -> (Buses, Buses) {
     let mut buses: Buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
     let mut written = [false; MAX_PARTS];
     for (p, g) in gens.iter().enumerate() {
@@ -78,6 +92,7 @@ fn block(
             sides: &mut sides,
             written: &written,
             roles,
+            kinds,
             smart,
             sample_rate: FS,
         },
@@ -339,4 +354,121 @@ fn a_ringing_tail_keeps_its_mud_cut_and_lets_go_smoothly() {
         "{} dB 3 s into the ring",
         at(11.0)
     );
+}
+
+/// Part 1 a DRUM kit, FRONT: a kick on every beat at 120 BPM (a 120 → 50
+/// Hz sweep, 150 ms) and a snare on every off-beat (180 and 330 Hz with a
+/// noise burst, 80 ms); Part 2 a sine bass at 55 Hz, MID.
+fn kick_and_bass(snare: bool) -> [Gen; MAX_PARTS] {
+    let beat = FS as usize / 2;
+    core::array::from_fn(|p| -> Gen {
+        match p {
+            0 => Box::new(move |n| {
+                let t = (n % beat) as f32 / FS as f32;
+                // The sweep's phase: ∫ 50 + 70 e^(−t/0.03) dt.
+                let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
+                let kick = 0.8 * (-t / 0.15).exp() * ph.sin();
+                let u = ((n + beat / 2) % beat) as f32 / FS as f32;
+                let noise = (((n as u32).wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0) - 1.0;
+                let tone = (2.0 * PI * 180.0 * u).sin() + (2.0 * PI * 330.0 * u).sin();
+                let sn = 0.4 * (-u / 0.08).exp() * (0.5 * tone + noise);
+                Some(kick + if snare { sn } else { 0.0 })
+            }),
+            1 => Box::new(|n| Some(0.3 * (2.0 * PI * 55.0 * n as f32 / FS as f32).sin())),
+            _ => Box::new(|_| None),
+        }
+    })
+}
+
+const DRUM_FIRST: [PartKind; MAX_PARTS] = {
+    let mut k = [PartKind::Tonal; MAX_PARTS];
+    k[0] = PartKind::Drum;
+    k
+};
+
+/// Each block's kick dip on the bass and its slow LOW cut, and the bass out.
+fn kicked(snare: bool, amount: u8) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let mut st = PartEqs::REST.smart;
+    let gens = kick_and_bass(snare);
+    let r = roles(&[0], &[]);
+    let (mut dip, mut slow, mut out) = (Vec::new(), Vec::new(), Vec::new());
+    for k in 0..seconds(8.0) {
+        let (_, o) = block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(amount));
+        dip.push(st.kick(PAD).get());
+        slow.push(st.slow_cut(PAD, Band::Low).get());
+        out.extend_from_slice(&o[PAD.index()]);
+        // The dip is LOW's alone; above, only the slow rule's hair of a
+        // cut where a 55 Hz sine's skirt meets the snare.
+        for b in [Band::LowMid, Band::HighMid, Band::High] {
+            assert!(st.cut(PAD, b).get() < 0.3, "{b:?} {:?}", st.cut(PAD, b));
+        }
+    }
+    (dip, slow, out)
+}
+
+#[test]
+fn a_front_kick_dips_the_bass_low_band_on_each_hit_and_lets_go() {
+    let (dip, slow, _) = kicked(true, 127);
+    let ms = |m: f32| (m * FS as f32 / 1000.0) as usize / BLOCK_SIZE;
+    let beat = ms(500.0);
+    // Settled bars: the fourth second on.
+    for kick in (4..8).map(|s| s * 2 * beat) {
+        let peak = dip[kick..kick + ms(30.0)].iter().fold(0.0f32, |m, &d| m.max(d));
+        assert!(peak > 3.0, "{peak} dB within 30 ms of the kick");
+        // Its first 10 ms already well in.
+        assert!(dip[kick + ms(10.0)] > 0.5 * peak, "{} dB at 10 ms", dip[kick + ms(10.0)]);
+        // Let go by the snare, and the snare does not dip it again.
+        let after = dip[kick + ms(240.0)];
+        assert!(after < 0.3 * peak, "{after} dB at 240 ms of {peak}");
+        let snare = dip[kick + ms(260.0)..kick + ms(490.0)].iter().fold(0.0f32, |m, &d| m.max(d));
+        assert!(snare < 0.3 * peak, "{snare} dB under the snare of {peak}");
+    }
+    // The kick never cuts the bass's LOW slowly: only its hits dip it.
+    assert!(slow.iter().all(|&c| c == 0.0));
+}
+
+#[test]
+fn the_kick_dip_never_clicks_on_a_sine_bass() {
+    // The bass out, high-passed at 2 kHz (four TPT one-poles): a click or
+    // a stepped gain shows there; a 55 Hz sine's gain moving smoothly
+    // does not. Against the bass with SMART EQ off.
+    fn above_2k(x: &[f32]) -> f64 {
+        let g = (PI * 2_000.0 / FS as f32).tan();
+        let g = g / (1.0 + g);
+        let mut s = [0.0f32; 4];
+        let mut e = 0.0f64;
+        for &v in x {
+            let mut y = v;
+            for st in s.iter_mut() {
+                let w = (y - *st) * g;
+                let lp = w + *st;
+                *st = lp + w;
+                y -= lp;
+            }
+            e += (y as f64).powi(2);
+        }
+        e / x.len() as f64
+    }
+    let (_, _, plain) = kicked(true, 0);
+    let (dip, _, out) = kicked(true, 127);
+    assert!(dip.iter().fold(0.0f32, |m, &d| m.max(d)) > 3.0);
+    let skip = FS as usize;
+    let (base, dipped) = (above_2k(&plain[skip..]), above_2k(&out[skip..]));
+    let total = plain[skip..].iter().map(|&v| (v as f64).powi(2)).sum::<f64>() / (plain.len() - skip) as f64;
+    let db = 10.0 * (dipped / total).log10();
+    let plain_db = 10.0 * (base / total).log10();
+    // The filters' own residue of a 55 Hz sine sits near −84 dB; a click
+    // would lift it by tens of dB.
+    assert!(db < plain_db + 3.0, "above 2 kHz {db:.1} dB under the bass, plain {plain_db:.1}");
+}
+
+#[test]
+fn the_kick_dip_moves_fast_but_smoothly_and_the_rest_stay_slow() {
+    let (dip, _, _) = kicked(true, 127);
+    let worst = dip
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs() / BLOCK_SIZE as f32)
+        .fold(0.0f32, f32::max);
+    // The fast LOW: under 0.05 dB a sample (a 4 dB dip over two blocks).
+    assert!(worst > 0.001 && worst < 0.05, "{worst} dB a sample");
 }
