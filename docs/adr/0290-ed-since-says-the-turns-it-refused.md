@@ -1,4 +1,4 @@
-# 0287. `ed since` says the turns it refused
+# 0290. `ed since` says the turns it refused
 
 - **Status:** Accepted (2026-11-19)
 - **Deciders:** firmware, the editor (editor-ui review fix round, I4)
