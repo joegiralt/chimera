@@ -1,27 +1,35 @@
 //! The browser editor's glyphs: one Part's `UiState`, headless, drawn by
 //! the firmware's own `Renderer` into a 240x320 RGB565 buffer. Built for
-//! wasm32 (`just editor-screen`); the `extern "C"` ABI is in `abi`.
+//! wasm32 (`just editor-screen`); the `extern "C"` ABI is in `abi`, and
+//! `tests/screen.rs` holds it to the unit's paths.
 //!
-//! The mirror takes values as the unit does: each set is an `ed set` line
-//! answered by the console's own `ed` and applied as a knob turn
-//! (`EdState::apply`), so a refusal here is the unit's refusal.
+//! Values reach the mirror as the stored values `ed since` reports: each
+//! is checked as `ed set` checks it (the address `describe` lists for the
+//! engine, a choice's `#n` or a number by the cell's own kind), then
+//! written as the knob's turn lands it (`UiState::edit_to`, a pad's on its
+//! pad), never through the box's refusals or cues: the unit already took
+//! it. A write can move others (a MACHINE takes its knobs' defaults), so a
+//! batch is written until every value holds (`Mirror::apply`), whatever
+//! its order.
 
-use chimera_core::addr::BlockRead;
-use chimera_core::console::{Console, EdState, Request};
+use chimera_core::console::{
+    Console, EdAddr, EdState, Request, SetRefusal, StoredRefusal, ed_stored,
+};
+use chimera_core::dsp::drum::types::PadId;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::{Origin, PartFrom, PartId, PartSource};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::BlockDef;
+use chimera_core::ui::kit_band;
 use chimera_core::ui::nav::{Location, PartChain};
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::palette;
-use chimera_hal::{
-    ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH,
-};
+use chimera_core::ui::view::{self, View};
+use chimera_hal::{ALL_ENCODERS, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::geometry::{OriginDimensions, Size};
@@ -88,11 +96,14 @@ pub enum Region {
     /// CellGrid's focus band, right of the big value: the focused cell's
     /// gauge (arc, switch, scope, crossfader...).
     Gauge = 2,
+    /// A pad's machine icon, as the focus band draws it large
+    /// (`kit_band::big_icon`'s scale and inks), alone.
+    PadIcon = 3,
 }
 
 impl Region {
     pub fn from_u8(n: u8) -> Option<Region> {
-        [Region::Full, Region::Screen, Region::Gauge]
+        [Region::Full, Region::Screen, Region::Gauge, Region::PadIcon]
             .into_iter()
             .find(|r| *r as u8 == n)
     }
@@ -117,6 +128,14 @@ impl Rect {
         }
     }
 
+    /// A pad icon's, drawn at the top left.
+    pub const PAD_ICON: Rect = Rect::span(
+        0,
+        0,
+        kit_band::ICON_W * kit_band::Scale::FOCUS.px(),
+        kit_band::ICON_H * kit_band::Scale::FOCUS.px(),
+    );
+
     /// `r` on a page laid out `layout`; `None` where it has none.
     pub fn of(r: Region, layout: PageLayout) -> Option<Rect> {
         use theme::*;
@@ -139,40 +158,104 @@ impl Rect {
                 FOCUS_BOTTOM,
             )),
             (Region::Gauge, PageLayout::BigViz | PageLayout::Matrix) => None,
+            (Region::PadIcon, _) => Some(Rect::PAD_ICON),
         }
     }
 }
 
 /// A page's cell, by its knob: a-f, 0-5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Slot(EncoderId);
+pub struct Slot(u8);
 
 impl Slot {
     pub const fn new(n: u8) -> Option<Slot> {
         if (n as usize) < ALL_ENCODERS.len() {
-            Some(Slot(ALL_ENCODERS[n as usize]))
+            Some(Slot(n))
         } else {
             None
         }
     }
-}
 
-/// One frame of the controls: knob `0` turned `1` detents, nothing else.
-struct Turn(Slot, i8);
-
-impl Controls for Turn {
-    fn encoder_delta(&self, id: EncoderId) -> i8 {
-        if id == self.0.0 { self.1 } else { 0 }
-    }
-
-    fn button_state(&self, _: ButtonId) -> ButtonState {
-        ButtonState::Up
+    pub const fn index(self) -> usize {
+        self.0 as usize
     }
 }
 
-/// Why a set didn't land: the unit's own `ERR` line, kept for the caller.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Refused(pub String);
+/// An `ed` address, as `describe` writes it (`FILTER.CUTOFF`,
+/// `PAD3_FLT.KIND`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Addr(EdAddr);
+
+impl Addr {
+    pub fn parse(text: &str) -> Option<Addr> {
+        EdAddr::parse(text.as_bytes()).map(Addr)
+    }
+}
+
+impl core::fmt::Display for Addr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Why a stored value didn't land, typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// `describe` lists no such address for the Part's engine.
+    NotHere(Addr),
+    /// NaN or an infinity.
+    NotFinite(Addr),
+    /// What `ed set` says of it: no such option, or a number for a choice.
+    Set(Addr, SetRefusal),
+    /// Written, and the Part holds another value (a CHOKE onto a 9th
+    /// group the rest of the batch never made room for).
+    Kept(Addr),
+}
+
+impl From<(Addr, StoredRefusal)> for Refused {
+    fn from((a, r): (Addr, StoredRefusal)) -> Refused {
+        match r {
+            StoredRefusal::NotHere => Refused::NotHere(a),
+            StoredRefusal::NotFinite => Refused::NotFinite(a),
+            StoredRefusal::Set(s) => Refused::Set(a, s),
+        }
+    }
+}
+
+/// What `Mirror::apply` did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Applied {
+    /// Values written: a value the Part held already is never written.
+    pub writes: usize,
+    /// Passes over the batch, the last writing nothing.
+    pub passes: usize,
+    /// What never landed.
+    pub refused: Vec<Refused>,
+}
+
+/// How a page is shown: the cell in its focus band, the pad selected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shown {
+    /// The focus band's cell, as its last turn leaves it; `None`: slot a,
+    /// the unit's until a turn. ALGO's algorithm page morphs its chart
+    /// with MORPH only off ALG A and B: `Slot::new(2)`, MORPH's own.
+    pub focus: Option<Slot>,
+    /// DRUM's selected pad: what KIT's pads draw selected, and what a
+    /// pad's page shows. `None`: the page's own pad (`PAD5_KIT` is pad
+    /// 5's), else pad 1.
+    pub pad: Option<PadId>,
+}
+
+/// `held` is the value `ed since` printed as `sent`: it prints seven
+/// decimals (`describe::num`), so a continuous value comes back within
+/// half a unit of the seventh place, and within an f32's rounding of it.
+pub fn same(held: f32, sent: f32) -> bool {
+    (held - sent).abs() <= 1e-7_f32.max(sent.abs() * 2.0 * f32::EPSILON)
+}
+
+/// Passes `apply` makes at most: a selector, the params it resets, and a
+/// CHOKE that waits on another pad's, each a pass.
+const PASSES: usize = 8;
 
 /// One Part of the unit, headless: Part 1 on an INIT Sound.
 pub struct Mirror {
@@ -232,28 +315,70 @@ impl Mirror {
         self.load(engine);
     }
 
-    /// `addr` (an `ed` address, `FILTER.CUTOFF`) to the value stored
-    /// `stored`, through `ed set` and the knob's turn. A whole number goes
-    /// as `#n` first, a choice's option; a param that takes a number gets
-    /// it as a decimal.
-    pub fn set(&mut self, addr: &str, stored: f32) -> Result<(), Refused> {
-        if !stored.is_finite() {
-            return Err(Refused(format!("ERR {addr} {stored} is no value")));
+    /// The value `a` holds, a pad's on its pad.
+    pub fn stored(&self, a: Addr) -> Option<f32> {
+        ed_stored(&self.ui, a.0)
+    }
+
+    /// `a` to the stored value `v`: checked as `ed set` checks it, then
+    /// written as the knob's turn lands it. Whether it moved.
+    pub fn set(&mut self, a: Addr, v: f32) -> Result<bool, Refused> {
+        let v = self
+            .ed
+            .stored_set(&self.ui, a.0, v)
+            .map_err(|r| Refused::from((a, r)))?;
+        let (p, at) = (self.part(), a.0.param());
+        Ok(match a.0.pad() {
+            None => self.ui.edit_to(p, at, v),
+            // On its pad, the selection put back: as `ed set`'s turn.
+            Some(n) => {
+                let was = self.ui.selected_pad(p);
+                self.ui.project_mut().select_pad(p, n);
+                let moved = self.ui.edit_to(p, at, v);
+                self.ui.project_mut().select_pad(p, was);
+                moved
+            }
+        })
+    }
+
+    /// Every value in `vals` to what it says, in any order: each pass
+    /// writes the values the Part doesn't hold, until a pass moves
+    /// nothing. A selector written after the params it resets (a MACHINE
+    /// after its knobs) costs one more pass; a value the Part holds is
+    /// never written, so a batch the mirror has mostly seen is its diff.
+    pub fn apply(&mut self, vals: &[(Addr, f32)]) -> Applied {
+        let mut done = Applied::default();
+        while done.passes < PASSES {
+            done.passes += 1;
+            done.refused.clear();
+            let mut moved = false;
+            for &(a, v) in vals {
+                if self.stored(a).is_some_and(|h| same(h, v)) {
+                    continue;
+                }
+                match self.set(a, v) {
+                    Ok(m) => {
+                        done.writes += 1;
+                        moved |= m;
+                    }
+                    Err(r) => done.refused.push(r),
+                }
+            }
+            if !moved {
+                break;
+            }
         }
-        let whole = stored.fract() == 0.0 && (0.0..=255.0).contains(&stored);
-        let mut got = if whole {
-            self.ed_line(&format!("ed set {addr} #{}", stored as u8))
-        } else {
-            String::new()
-        };
-        if !whole || got.starts_with("ERR ed set ") && got.ends_with("takes a number\n") {
-            got = self.ed_line(&format!("ed set {addr} {stored}"));
+        for &(a, v) in vals {
+            let held = self.stored(a);
+            let said = done.refused.iter().any(|r| match *r {
+                Refused::NotHere(b) | Refused::NotFinite(b) | Refused::Set(b, _) => b == a,
+                Refused::Kept(_) => false,
+            });
+            if !said && held.is_some_and(|h| !same(h, v)) {
+                done.refused.push(Refused::Kept(a));
+            }
         }
-        chimera_core::bank2::ed_apply(&mut self.ed, &mut self.ui);
-        match got.as_str() {
-            "OK queued\n" => Ok(()),
-            _ => Err(Refused(got.trim_end().to_string())),
-        }
+        done
     }
 
     /// One console line's answer, from the console's own `ed`.
@@ -275,71 +400,71 @@ impl Mirror {
         out
     }
 
-    /// Page `n` of `ed describe`'s walk on the Part's engine, drawn into
-    /// `fb` in the unit's colours. `None`: the engine has no such page, or
-    /// the Part's chain doesn't show it (an ALGO formant page on a Sound
-    /// with no formant operator).
-    pub fn render(&mut self, n: PageNo, fb: &mut Fb) -> Option<()> {
-        self.go(n)?;
+    /// Page `n` of `ed describe`'s walk on the Part's engine, shown as
+    /// `how` says, drawn into `fb` in the unit's colours. `None`: the
+    /// engine has no such page, the Part's chain doesn't show it (an ALGO
+    /// formant page on a Sound with no formant operator), or the focus
+    /// names an empty cell.
+    pub fn render(&mut self, n: PageNo, how: Shown, fb: &mut Fb) -> Option<()> {
+        self.show(n, how)?;
         self.ui.update(UiTick::for_test());
         self.ui.render_with_scope(fb, &PerfStats::zero(), &SCOPE);
-        let pal = palette(&self.ui.theme());
-        fb.0.iter_mut().for_each(|px| *px = pal.map_raw(*px));
+        self.paint(fb);
         Some(())
     }
 
-    /// The Part's pages on page `n` (a pad's selected for its pages).
-    pub fn go(&mut self, n: PageNo) -> Option<()> {
+    /// The unit's palette over `fb`, as the desktop's window maps it.
+    fn paint(&self, fb: &mut Fb) {
+        let pal = palette(&self.ui.theme());
+        fb.0.iter_mut().for_each(|px| *px = pal.map_raw(*px));
+    }
+
+    /// The Part on page `n`, shown as `how` says: its pad selected (a
+    /// pad's page's own), entered as its key enters it, the focus set.
+    pub fn show(&mut self, n: PageNo, how: Shown) -> Option<()> {
         let e = self.engine();
-        let (def, pad) = pages::page_at(e, n)?;
+        let (def, own) = pages::page_at(e, n)?;
         let p = self.part();
-        if let Some(pad) = pad {
+        if e == EngineType::Drum {
+            let pad = how.pad.or(own).unwrap_or(PadId::ALL[0]);
             self.ui.select_pad(p, pad);
         }
         let chain = PartChain::of(&self.ui.project().part(p).sound).def();
         let at = chain.locate(def.id)?;
         self.ui.go_for_test(Location::pages(p, at));
         self.shown = Some(def);
-        Some(())
-    }
-
-    /// Page `n` with its cell `slot` (knob a-f) in the focus band, as the
-    /// unit's last-turned cell: what the band's gauge shows, and ALG's
-    /// chart morphing rather than showing ALG A. A turn is the only way
-    /// the box focuses a cell, so it is one detent up and one down, then
-    /// the value put back by the knob's path if the round trip moved it
-    /// (a clamp at an end). `None`: no such page, or an empty cell.
-    pub fn focus(&mut self, n: PageNo, slot: Slot) -> Option<()> {
-        self.go(n)?;
-        let def = self.shown?;
-        let p = self.part();
+        let slot = how.focus.map_or(0, Slot::index);
         let ctx = self.ui.slot_ctx_for_test();
-        let view = chimera_core::ui::view::view(def, slot.0 as usize, &ctx);
-        if view == chimera_core::ui::view::View::Empty {
+        if how.focus.is_some() && view::view(def, slot, &ctx) == View::Empty {
             return None;
         }
-        let stored = |ui: &UiState| {
-            let a = view.addr()?;
-            ui.project()
-                .part(p)
-                .sound
-                .params
-                .block(a.block)
-                .map(|b| b.get(a.param))
-        };
-        let before = stored(&self.ui);
-        for d in [1, -1] {
-            self.ui.handle_input(&Turn(slot, d));
-        }
-        if let (Some(a), Some(v)) = (view.addr(), before)
-            && stored(&self.ui) != before
-        {
-            self.ui.edit_to(p, a, v);
-        }
+        self.ui.focus_for_test(slot);
         Some(())
     }
 
-    /// `r` on the page last drawn.
+    /// Pad `pad`'s machine icon, as the focus band draws it large, at the
+    /// top left of `fb` (`Rect::PAD_ICON`) on the page's ground.
+    pub fn pad_icon(&mut self, pad: PadId, fb: &mut Fb) {
+        let m = self.ui.project().kit(self.part()).pad(pad).machine();
+        let r = Rect::PAD_ICON;
+        let ground = RawU16::from(theme::BG).into_inner();
+        for y in 0..usize::from(r.h) {
+            let row = y * usize::from(SCREEN_WIDTH);
+            fb.0[row..row + usize::from(r.w)].fill(ground);
+        }
+        kit_band::icon(
+            fb,
+            m,
+            0,
+            0,
+            kit_band::Scale::FOCUS,
+            theme::ACCENT,
+            theme::INK2,
+        );
+        self.paint(fb);
+    }
+
+    /// `r` on the page last shown.
     pub fn region(&self, r: Region) -> Option<Rect> {
         Rect::of(r, self.shown?.layout)
     }
