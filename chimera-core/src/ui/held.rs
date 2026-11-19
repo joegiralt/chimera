@@ -11,7 +11,7 @@ use crate::dsp::algo::kinds::{Linked, OpKind, Why, why_kind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::drum::groups::{KitChokes, VoiceGroups};
 use crate::dsp::drum::params::PadParams;
-use crate::dsp::drum::types::ChokeGroup;
+use crate::dsp::drum::types::{ChokeGroup, PadId};
 use crate::dsp::tape_engine::{Direction, NeedsRam, TapeEngineParams, TapeMachine};
 use crate::part::PartParams;
 use crate::preset::Sound;
@@ -28,6 +28,14 @@ pub enum Held {
     Choke(ChokeHold),
     /// A Part's MAX VOICES or RESERVE that can't be honoured (ADR 0281).
     Voices(VoicesHold),
+}
+
+/// Where a TAPE Sound's source plays from: RAM plays every machine and
+/// direction, a streamed one refuses some (`NeedsRam`). No source: RAM's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    InRam,
+    Streamed,
 }
 
 /// A Sound's held choice.
@@ -205,13 +213,15 @@ pub struct VoicesHold {
     pub seen: Seen,
 }
 
-/// A held CHOKE: the group, and the kit's chokes at the hold. The kit's
-/// chokes changed since (a kit loaded in, a CC on another pad) drop it;
-/// any other edit (another Part's, a pedal's) leaves it.
+/// A held CHOKE: the group, the kit's chokes at the hold and the pad
+/// selected then, whose CHOKE it is. The kit's chokes changed since (a
+/// kit loaded in, a CC on another pad) drop it; any other edit (another
+/// Part's, a pedal's) leaves it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChokeHold {
     pub to: ChokeGroup,
     pub kit: KitChokes,
+    pub pad: PadId,
 }
 
 impl Held {
@@ -319,13 +329,13 @@ pub fn applies(a: ParamAddr, shift: bool) -> Option<Cell> {
 }
 
 impl Pick {
-    /// Why `sound` refuses it, or `None` where it would land. `streamed`:
-    /// the Sound's source streams.
-    pub fn why(self, sound: &Sound, streamed: bool) -> Option<Reason> {
+    /// Why `sound`, its source at `src`, refuses it, or `None` where it
+    /// would land.
+    pub fn why(self, sound: &Sound, src: Source) -> Option<Reason> {
         let p = &sound.params.algo;
         let why = match self {
             Pick::Tape(t) => {
-                if !streamed {
+                if src == Source::InRam {
                     return None;
                 }
                 // Bank 2's (`ui::walk`): closed, nothing is held.

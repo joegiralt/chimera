@@ -544,16 +544,28 @@ fn longest_line(f: &mut Fake, p: &[String]) -> usize {
     )
 }
 
-/// The worst DRUM `since 0` answer, bounded from above: each address's
-/// longest line over every value it can take, each pad on whichever machine
-/// and filter kind make its lines longest (measured on pad 12, whose tokens
-/// are the longest), each panel at its longest variant. A cell's text
-/// depends on its own value, its pad's machine and kind, and its panel's
-/// variant: each is maximised. The Part's own lines are bounded by the
-/// longest text a cell can hold. The real answer can never be longer.
+/// The worst DRUM `since 0` answer, bounded from above under these
+/// assumptions, each this test's, not proven by it:
+/// - a cell's text depends only on its own value, its pad's MACHINE and
+///   filter KIND, and its panel's variant;
+/// - a continuous param's longest text is among 257 evenly spaced values
+///   (every step where it has fewer);
+/// - pad 12's lines are each pad's longest: its address tokens are the
+///   longest, and its texts are any pad's;
+/// - the Part's own lines hold at most a cell's 32-byte text.
+///
+/// Each address's line is maximised over its values, each pad over its
+/// machine and kind, each panel over its variants. DRUM shows no SOURCE
+/// cell, so the answer has no `source` line (asserted below; TAPE's
+/// answer has one, not bounded here).
 #[test]
 fn the_worst_drum_answer_fits_one_answer() {
     let mut f = fake(EngineType::Drum);
+    let (lines, _, _) = since(&mut f, 0);
+    assert!(
+        !lines.iter().any(|l| l.starts_with("source ")),
+        "DRUM writes no source line"
+    );
     let texts = page_texts(&mut f, EngineType::Drum);
     let all = params(&texts);
     let pad12: Vec<&Vec<String>> = {
@@ -873,7 +885,7 @@ fn reads_follow_the_named_pad_not_the_selection() {
 
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::kinds::OpKind;
-use chimera_core::ui::held::{self, AlgSide, Pick, TapeTurn};
+use chimera_core::ui::held::{self, AlgSide, Pick, Source, TapeTurn};
 use chimera_engine::addr::Op;
 use chimera_engine::addr::ParamAddr;
 
@@ -921,7 +933,7 @@ fn a_tape_turn_a_streamed_source_refuses_writes_nothing() {
             set(&mut f, "TAPE_ENG.MODEL", "#0");
             set(&mut f, &ed(a), "#0");
             let turn = TapeTurn::of(a, f32::from(i)).unwrap();
-            let why = Pick::Tape(turn).why(&f.ui.project().part(P1).sound, true);
+            let why = Pick::Tape(turn).why(&f.ui.project().part(P1).sound, Source::Streamed);
             set(&mut f, &ed(a), &format!("#{i}"));
             let want = if why.is_some() { 0.0 } else { f32::from(i) };
             assert_eq!(get(&mut f, &ed(a)).0, want, "{} #{i}: {why:?}", ed(a));
@@ -942,7 +954,8 @@ fn a_formant_kind_or_algorithm_past_the_budget_writes_nothing() {
             chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
         );
         let was = get(&mut f, &ed(a)).0;
-        let why = Pick::Wave(op, OpKind::Formant).why(&f.ui.project().part(P1).sound, false);
+        let why =
+            Pick::Wave(op, OpKind::Formant).why(&f.ui.project().part(P1).sound, Source::InRam);
         set(&mut f, &ed(a), &format!("#{formant}"));
         let want = if why.is_some() {
             was
@@ -957,8 +970,8 @@ fn a_formant_kind_or_algorithm_past_the_budget_writes_nothing() {
         let a = ParamAddr::new(BlockRef::Algo, side.param());
         for code in 0..32u8 {
             let was = get(&mut f, &ed(a)).0;
-            let why =
-                Pick::Alg(side, AlgoId::clamped(code)).why(&f.ui.project().part(P1).sound, false);
+            let why = Pick::Alg(side, AlgoId::clamped(code))
+                .why(&f.ui.project().part(P1).sound, Source::InRam);
             set(&mut f, &ed(a), &format!("#{code}"));
             let want = if why.is_some() { was } else { f32::from(code) };
             assert_eq!(get(&mut f, &ed(a)).0, want, "{side:?} {code}: {why:?}");
@@ -1056,6 +1069,93 @@ fn a_refused_ed_set_says_why_as_a_cc_does() {
     f.ui.step_toast(60_000);
     set(&mut f, "PAD5.LEVEL", "40");
     assert_eq!(toast(&mut f), None);
+}
+
+#[test]
+fn a_landed_ed_set_is_silent_and_another_cell_leaves_the_hold() {
+    use chimera_core::dsp::tape_engine::TapeEngineParams;
+    use chimera_hal::EncoderId;
+    let mut f = streamed_at_deck();
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, 1));
+    assert!(f.ui.held_choice().is_some(), "DIRECTION held");
+    // AGE lands, says nothing, and DIRECTION's hold stays.
+    let age = ed(ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::AGE));
+    let (now, _) = get(&mut f, &age);
+    f.ui.step_toast(60_000);
+    set(&mut f, &age, &format!("{now}"));
+    assert_eq!(toast(&mut f), None, "a landed set is silent");
+    assert!(f.ui.held_choice().is_some(), "another cell leaves the hold");
+    // So does a refused set on another cell: MODEL's SCRUB.
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    assert!(
+        f.ui.held_choice().is_some(),
+        "a refusal elsewhere leaves it"
+    );
+    // ALGO: a WAVE that lands says nothing either.
+    let mut f = fake(EngineType::Algo);
+    let wave = ed(ParamAddr::new(
+        BlockRef::AlgoOp(Op::ALL[0]),
+        chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
+    ));
+    f.ui.step_toast(60_000);
+    set(&mut f, &wave, "#1");
+    assert_eq!(toast(&mut f), None);
+}
+
+#[test]
+fn a_refused_set_to_the_value_it_has_changes_nothing() {
+    use chimera_core::block::Block;
+    use chimera_core::dsp::tape_engine::TapeEngineParams;
+    use chimera_hal::EncoderId;
+    // DIRECTION already PING-PONG on a streamed source: refused, but no
+    // change. The box's held REVERSE stays and nothing is said.
+    let mut f = streamed_at_deck();
+    f.ui.project_mut()
+        .edit_part(P1)
+        .sound
+        .params
+        .tape
+        .set(TapeEngineParams::MODE, 3.0);
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, -2));
+    let held = f.ui.held_choice().map(|s| s.held);
+    assert!(held.is_some(), "REVERSE held");
+    f.ui.step_toast(60_000);
+    set(&mut f, &ed(held::DIRECTION), "#3");
+    assert_eq!(f.ui.held_choice().map(|s| s.held), held, "the hold stays");
+    assert_eq!(toast(&mut f), None, "nothing to say");
+}
+
+/// INIT DRUM, pad 3's CHOKE held at OFF on the box (a 9th group), as
+/// drum_groups_door_test's.
+fn choke_held() -> Fake {
+    use chimera_hal::{ButtonId, EncoderId};
+    let mut f = Fake::new();
+    screen::stack_map(&mut f.ui);
+    screen::load_init(&mut f.ui, EngineType::Drum);
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::A, 1));
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::A, 1));
+    assert_eq!(f.ui.selected_pad(P1), pad(3));
+    screen::tap(&mut f.ui, ButtonId::Edit);
+    for d in [1, -1, -1] {
+        screen::feed(&mut f.ui, screen::Input::turn(EncoderId::B, d));
+    }
+    assert!(f.ui.held_choice().is_some(), "OFF held on pad 3");
+    f
+}
+
+#[test]
+fn an_ed_set_on_another_pads_choke_leaves_the_hold() {
+    let mut f = choke_held();
+    // Pad 1's CHOKE to the OFF it has: pad 3's hold stays.
+    set(&mut f, "PAD1.CHOKE", "OFF");
+    assert!(f.ui.held_choice().is_some(), "a no-op on pad 1");
+    // Pad 6 (B with pad 7) to OFF: refused, still pad 3's.
+    set(&mut f, "PAD6.CHOKE", "OFF");
+    assert!(f.ui.held_choice().is_some(), "a refusal on pad 6");
+    assert_eq!(f.ui.selected_pad(P1), pad(3));
+    // Pad 3's own refused set ends it.
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    assert!(f.ui.held_choice().is_none(), "pad 3's set ends it");
 }
 
 /// The editor's engine list is the firmware's: every engine the box plays,

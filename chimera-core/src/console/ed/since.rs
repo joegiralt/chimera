@@ -511,7 +511,6 @@ impl EdSince {
         w: &mut dyn Write,
     ) -> fmt::Result {
         let own = ui.cell_own();
-
         self.described(engine);
         let (mut slot, mut b) = (0usize, 0);
         while let Some(at) = block_at(engine, b) {

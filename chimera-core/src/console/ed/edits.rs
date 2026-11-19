@@ -6,7 +6,8 @@
 use core::fmt::{self, Write};
 
 use super::value::{engine_of, find};
-use super::{EdAddr, EdValue};
+use super::{EdAddr, EdValue, OptIndex};
+use crate::addr::BlockRead;
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::kinds::OpKind;
 use crate::project::Line;
@@ -27,7 +28,7 @@ struct Pending {
     /// drops it.
     engine: EngineType,
     addr: EdAddr,
-    to: f32,
+    to: To,
 }
 
 impl Pending {
@@ -36,8 +37,26 @@ impl Pending {
         part: PartId::ALL[0],
         engine: EngineType::Algo,
         addr: EdAddr::SPARE,
-        to: 0.0,
+        to: To::Num(0.0),
     };
+}
+
+/// A set's value: a choice's option, or a continuous param's number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum To {
+    Opt(OptIndex),
+    Num(f32),
+}
+
+impl To {
+    /// As the cell stores it.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.stored"))]
+    fn stored(self) -> f32 {
+        match self {
+            To::Opt(i) => f32::from(i.get()),
+            To::Num(v) => v,
+        }
+    }
 }
 
 /// What `EdState::push` made of a set.
@@ -74,7 +93,7 @@ impl EdState {
     }
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.push"))]
-    fn push(&mut self, part: PartId, engine: EngineType, addr: EdAddr, to: f32) -> Pushed {
+    fn push(&mut self, part: PartId, engine: EngineType, addr: EdAddr, to: To) -> Pushed {
         match self.items.get_mut(usize::from(self.len)) {
             None => Pushed::Full,
             Some(slot) => {
@@ -123,23 +142,37 @@ impl EdState {
 /// check with it).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.turn"))]
 fn turn(ui: &mut UiState, p: Pending) {
-    let a = p.addr.param();
+    let (a, pad) = (p.addr.param(), p.addr.pad());
     if let Some(why) = refusal(ui, p) {
-        ed_cue::refused(ui, p.part, a, why);
+        // To the value it has: no change, the hold kept, nothing said.
+        if !unchanged(ui, p) {
+            ed_cue::refused(ui, p.part, a, pad, why);
+        }
         return;
     }
-    match p.addr.pad() {
+    let to = p.to.stored();
+    match pad {
         None => {
-            ui.edit_to(p.part, a, p.to);
+            ui.edit_to(p.part, a, to);
         }
         Some(n) => {
             let was = ui.project().selected_pad(p.part);
             ui.project_mut().select_pad(p.part, n);
-            ui.edit_to(p.part, a, p.to);
+            ui.edit_to(p.part, a, to);
             ui.project_mut().select_pad(p.part, was);
         }
     }
-    ed_cue::landed(ui, p.part, a);
+    ed_cue::landed(ui, p.part, a, pad);
+}
+
+/// `p` sets its Sound cell to the value stored there already.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.unchanged"))]
+fn unchanged(ui: &UiState, p: Pending) -> bool {
+    let a = p.addr.param();
+    let params = &ui.project().part(p.part).sound.params;
+    params
+        .block(a.block)
+        .is_some_and(|b| b.get(a.param) == p.to.stored())
 }
 
 /// Why the box refuses `p` before its write, as its toast reads: TAPE's
@@ -149,18 +182,21 @@ fn turn(ui: &mut UiState, p: Pending) {
 /// (ADR 0280); `None`: the write goes ahead.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.refusal"))]
 fn refusal(ui: &UiState, p: Pending) -> Option<Line> {
+    // Each cell refused here is a choice: a number never reaches one.
+    let To::Opt(i) = p.to else {
+        return None;
+    };
     let a = p.addr.param();
     let sound = &ui.project().part(p.part).sound;
-    let streams = ui.streams(p.part);
-    if let Some(t) = held::TapeTurn::of(a, p.to) {
-        return held::Pick::Tape(t).why(sound, streams).map(held::reason);
+    let src = ui.streams(p.part);
+    if let Some(t) = held::TapeTurn::of(a, p.to.stored()) {
+        return held::Pick::Tape(t).why(sound, src).map(held::reason);
     }
-    let code = p.to as u8;
     let pick = match held::applies(a, false)? {
-        held::Cell::Wave(op) => held::Pick::Wave(op, OpKind::clamped(code)),
-        held::Cell::Alg(side) => held::Pick::Alg(side, AlgoId::clamped(code)),
+        held::Cell::Wave(op) => held::Pick::Wave(op, OpKind::clamped(i.get())),
+        held::Cell::Alg(side) => held::Pick::Alg(side, AlgoId::clamped(i.get())),
     };
-    pick.why(sound, streams).map(|_| ed_cue::formant_full())
+    pick.why(sound, src).map(|_| ed_cue::formant_full())
 }
 
 /// Why `ed set` can't take a value: each its own `ERR`.
@@ -207,11 +243,11 @@ fn fmt_of(ui: &UiState, a: EdAddr) -> Option<ValFmt> {
 /// own, matched exactly, the typed word kept), its option number, or a
 /// number.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.resolve"))]
-fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, SetRefusal> {
+fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<To, SetRefusal> {
     let names = fmt_of(ui, a).and_then(super::describe::names);
     match (val, names) {
         (EdValue::Index(n), Some(names)) => match names.get(usize::from(n.get())) {
-            Some(_) => Ok(f32::from(n.get())),
+            Some(_) => Ok(To::Opt(n)),
             None => Err(SetRefusal::NoSuchOption),
         },
         (EdValue::Index(_), None) => Err(SetRefusal::TakesANumber),
@@ -219,13 +255,15 @@ fn resolve(ui: &UiState, a: EdAddr, val: EdValue) -> Result<f32, SetRefusal> {
             let mut i = 0;
             while i < names.len() {
                 if names[i].as_bytes() == word.as_bytes() {
-                    return Ok(i as f32);
+                    return u8::try_from(i)
+                        .map(|n| To::Opt(OptIndex::new(n)))
+                        .map_err(|_| SetRefusal::NoSuchOption);
                 }
                 i += 1;
             }
             Err(SetRefusal::TakesAName)
         }
-        (EdValue::Num(n, _), None) => Ok(n),
+        (EdValue::Num(n, _), None) => Ok(To::Num(n)),
         (EdValue::Name(_), None) => Err(SetRefusal::TakesANumber),
     }
 }
