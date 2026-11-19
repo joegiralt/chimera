@@ -8,6 +8,7 @@ use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
 use crate::orbit::ring::SnapTo;
+use crate::part_eq::smart::{ROLE_NAMES, Role};
 use crate::part_eq::{LoCut, PartEq, Tilt};
 use crate::voice_limit::{Asked, MaxVoices, Reserve, VoiceCount};
 
@@ -209,6 +210,9 @@ pub struct PartParams {
     /// TILT and LO CUT (ADR 0284): the Part's channel EQ, after its Sound
     /// and before LEVEL, PAN and the sends. The project's, never the Sound's.
     pub eq: PartEq,
+    /// ROLE (ADR 0296): where SMART EQ keeps the Part, FRONT, MID or BACK.
+    /// The project's, never the Sound's; in the struct's padding.
+    pub role: Role,
 }
 
 /// MODE with MAX VOICES and RESERVE (ADR 0281) in one byte: the Part
@@ -303,6 +307,7 @@ impl PartParams {
     pub const RESERVE: ParamId = ParamId(14);
     pub const TILT: ParamId = ParamId(15);
     pub const LO_CUT: ParamId = ParamId(16);
+    pub const ROLE: ParamId = ParamId(17);
 
     pub const fn mode(&self) -> PartMode {
         self.voicing.mode()
@@ -342,6 +347,7 @@ impl PartParams {
             tuning: 0,
             mapping: 0,
             eq: PartEq::FLAT,
+            role: Role::DEFAULT,
         }
     }
 }
@@ -361,7 +367,7 @@ pub const MAX_VOICES_NAMES: [&str; VoiceCount::VALUES as usize] =
 pub const RESERVE_NAMES: [&str; VoiceCount::VALUES as usize] =
     ["0", "1", "2", "3", "4", "5", "6", "7", "8"];
 
-pub static PART_SPECS: [ParamSpec; 14] = [
+pub static PART_SPECS: [ParamSpec; 15] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
     ParamSpec::choice(
         1,
@@ -506,6 +512,17 @@ pub static PART_SPECS: [ParamSpec; 14] = [
     )
     .ident("LO_CUT")
     .glyph(crate::glyph::FocusGlyph::Switch),
+    // SMART EQ's role (ADR 0296): FRONT is kept clear, BACK yields most.
+    ParamSpec::choice(
+        17,
+        "ROLE",
+        ValFmt::Names(&ROLE_NAMES),
+        2.0,
+        Role::DEFAULT.code() as f32,
+        Change::Snap,
+    )
+    .ident("ROLE")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 /// LO CUT's choices, by `LoCut::code`.
@@ -540,6 +557,7 @@ impl Block for PartParams {
             Self::RESERVE => f32::from(self.voices().reserve.code()),
             Self::TILT => f32::from(self.eq.tilt().step()),
             Self::LO_CUT => f32::from(self.eq.lo_cut().code()),
+            Self::ROLE => f32::from(self.role.code()),
             _ => 0.0,
         }
     }
@@ -572,6 +590,7 @@ impl Block for PartParams {
             }),
             Self::TILT => self.eq = self.eq.with_tilt(Tilt::from_f32(v)),
             Self::LO_CUT => self.eq = self.eq.with_lo_cut(LoCut::from_f32(v)),
+            Self::ROLE => self.role = Role::from_f32(v),
             _ => {}
         }
     }
@@ -591,6 +610,7 @@ impl Block for PartParams {
             Self::MAX_VOICES => Some(self.voices().max.code()),
             Self::RESERVE => Some(self.voices().reserve.code()),
             Self::LO_CUT => Some(self.eq.lo_cut().code()),
+            Self::ROLE => Some(self.role.code()),
             _ => None,
         }
     }
@@ -614,6 +634,7 @@ impl Block for PartParams {
                 .get(usize::from(self.voices().reserve.code()))
                 .copied(),
             Self::LO_CUT => Some(self.eq.lo_cut().ident()),
+            Self::ROLE => Some(self.role.ident()),
             _ => None,
         }
     }
@@ -649,6 +670,7 @@ impl Block for PartParams {
             Self::LO_CUT => {
                 apply_code(LoCut::from_code(code), |c| self.eq = self.eq.with_lo_cut(c))
             }
+            Self::ROLE => apply_code(Role::from_code(code), |r| self.role = r),
             _ => false,
         }
     }

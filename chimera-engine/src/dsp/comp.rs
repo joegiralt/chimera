@@ -8,8 +8,9 @@ use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 
 use crate::block::{
-    Block, Change, ParamId, ParamSpec, Smoothing, ValFmt, apply_code, identity_code,
+    Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code, identity_code,
 };
+use crate::part_eq::smart::{Amount, SWITCH_NAMES, SmartEq, Switch};
 use crate::dsp::algo::math::exp2;
 
 /// Samples per gain computation.
@@ -72,6 +73,10 @@ pub struct CompParams {
     pub vol: f32,
     /// Master PAN, -1..1: a balance, the far side cos-tapered.
     pub pan: f32,
+    /// SMART EQ and AMOUNT (ADR 0296), one byte in the struct's padding:
+    /// the master's switch for every Part's SMART EQ cuts, riding MST's
+    /// block.
+    pub smart: SmartEq,
 }
 
 impl CompParams {
@@ -84,6 +89,7 @@ impl CompParams {
         mix: 1.0,
         vol: 1.0,
         pan: 0.0,
+        smart: SmartEq::OFF,
     };
 }
 
@@ -102,6 +108,8 @@ impl CompParams {
     pub const MIX: ParamId = ParamId(5);
     pub const VOL: ParamId = ParamId(6);
     pub const PAN: ParamId = ParamId(7);
+    pub const SMART_EQ: ParamId = ParamId(8);
+    pub const AMOUNT: ParamId = ParamId(9);
 
     /// Off at MIX 0, or at 1:1 with no makeup: every pair passes untouched.
     pub fn is_on(&self) -> bool {
@@ -145,6 +153,7 @@ impl CompParams {
             } else {
                 clampf(self.pan, -1.0, 1.0)
             },
+            smart: self.smart,
         }
     }
 }
@@ -152,7 +161,7 @@ impl CompParams {
 const _: () = assert!(RATIO_TABLE.len() == COMP_SPECS[1].max as usize + 1);
 
 /// The compressor runs outside `Voice`: nothing is modulatable.
-pub static COMP_SPECS: [ParamSpec; 8] = [
+pub static COMP_SPECS: [ParamSpec; 10] = [
     ParamSpec::continuous(
         0,
         "THRESH",
@@ -249,6 +258,30 @@ pub static COMP_SPECS: [ParamSpec; 8] = [
         Smoothing::Own,
     )
     .ident("PAN"),
+    // SMART EQ (ADR 0296): the switch and how deep it cuts. AMOUNT moves a
+    // target the cuts follow over seconds: the DSP smooths it.
+    ParamSpec::choice(
+        8,
+        "SMART EQ",
+        ValFmt::Names(&SWITCH_NAMES),
+        1.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("SMART_EQ")
+    .glyph(crate::glyph::FocusGlyph::Switch),
+    ParamSpec::stepped(
+        9,
+        "AMOUNT",
+        ValFmt::Int(Amount::MAX),
+        0.0,
+        Amount::MAX as f32,
+        Amount::DEFAULT.code() as f32,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("AMOUNT")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
 ];
 
 impl Block for CompParams {
@@ -267,6 +300,8 @@ impl Block for CompParams {
             Self::MIX => self.mix,
             Self::VOL => self.vol,
             Self::PAN => self.pan,
+            Self::SMART_EQ => f32::from(self.smart.switch().code()),
+            Self::AMOUNT => f32::from(self.smart.amount().code()),
             _ => 0.0,
         }
     }
@@ -282,23 +317,39 @@ impl Block for CompParams {
             Self::MIX => self.mix = v,
             Self::VOL => self.vol = v,
             Self::PAN => self.pan = v,
+            Self::SMART_EQ => self.smart = self.smart.with_switch(Switch::from_f32(v)),
+            Self::AMOUNT => self.smart = self.smart.with_amount(Amount::from_f32(v)),
             _ => {}
         }
     }
 
     /// RATIO's code is its index into `RATIOS`, stored as is.
     fn enum_code(&self, id: ParamId) -> Option<u8> {
-        (id == Self::RATIO).then_some(self.ratio)
+        match id {
+            Self::RATIO => Some(self.ratio),
+            Self::SMART_EQ => Some(self.smart.switch().code()),
+            _ => None,
+        }
     }
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        (id == Self::RATIO)
-            .then(|| RATIO_TABLE.get(usize::from(self.ratio)).map(|e| e.1))
-            .flatten()
+        match id {
+            Self::RATIO => RATIO_TABLE.get(usize::from(self.ratio)).map(|e| e.1),
+            Self::SMART_EQ => Some(self.smart.switch().ident()),
+            _ => None,
+        }
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        id == Self::RATIO && apply_code(identity_code(&COMP_SPECS, id, code), |c| self.ratio = c)
+        match id {
+            Self::RATIO => {
+                apply_code(identity_code(&COMP_SPECS, id, code), |c| self.ratio = c)
+            }
+            Self::SMART_EQ => apply_code(Switch::from_code(code), |s| {
+                self.smart = self.smart.with_switch(s)
+            }),
+            _ => false,
+        }
     }
 }
 

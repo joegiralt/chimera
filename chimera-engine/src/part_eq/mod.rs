@@ -6,6 +6,7 @@
 
 pub mod door;
 pub mod dsp;
+pub mod smart;
 
 use core::marker::PhantomData;
 
@@ -375,17 +376,20 @@ impl ChannelEq {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartEqs {
     pub(crate) parts: [ChannelEq; crate::hw::MAX_PARTS],
+    /// SMART EQ's four cut bands a Part (ADR 0296), after TILT.
+    pub smart: smart::SmartState,
 }
 
 impl PartEqs {
     /// Every Part bypassed: the bytes ITCM's boot zeroing leaves.
     pub const REST: PartEqs = PartEqs {
         parts: [ChannelEq::REST; crate::hw::MAX_PARTS],
+        smart: smart::SmartState::REST,
     };
 
     /// A Part's EQ runs (or settles): bank 1's test for the door call.
     pub fn any_live(&self) -> bool {
-        self.parts.iter().any(|p| p.live == Live::Running)
+        self.parts.iter().any(|p| p.live == Live::Running) || self.smart.live()
     }
 
     /// Whether Part `p`'s EQ runs: for the tests.

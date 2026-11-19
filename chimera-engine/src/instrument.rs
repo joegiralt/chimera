@@ -2724,7 +2724,10 @@ impl Instrument {
     #[inline(never)]
     fn part_eq(&mut self, shared: &AudioShared, written: &[bool; MAX_PARTS], sides: &mut Sides) {
         let eqs = self.eq.get();
-        if !eqs.any_live() && shared.parts.iter().all(|p| p.mix.eq.is_flat()) {
+        if !eqs.any_live()
+            && shared.parts.iter().all(|p| p.mix.eq.is_flat())
+            && !shared.fx.comp.smart.listens()
+        {
             return;
         }
         let b = crate::part_eq::dsp::PartsBlock {
@@ -2732,6 +2735,7 @@ impl Instrument {
             sides,
             written,
             parts: &shared.parts,
+            smart: shared.fx.comp.smart,
             sample_rate: self.sample_rate.get(),
         };
         if crate::part_eq::door::through(|d| d.eq().run(eqs, b)).is_none() {

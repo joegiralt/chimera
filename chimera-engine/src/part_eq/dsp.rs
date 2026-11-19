@@ -14,6 +14,9 @@
 
 use chimera_hal::BLOCK_SIZE;
 
+pub mod smart;
+
+use super::smart::{Role, SmartEq};
 use super::{ChannelEq, CoeffStep, Coeffs, Live, LpShare, OnePole, PartEq, PartEqs, Taps};
 use crate::dsp::ease::ease_coeff;
 use crate::dsp::{Db, Gain, Hz, Unit};
@@ -225,10 +228,13 @@ pub struct PartsBlock<'a> {
     pub sides: &'a mut Sides,
     pub written: &'a [bool; MAX_PARTS],
     pub parts: &'a [PartAudio; MAX_PARTS],
+    /// The master's SMART EQ (ADR 0296), from the snapshot's `CompParams`.
+    pub smart: SmartEq,
     pub sample_rate: u32,
 }
 
-/// `run` on the Parts' own settings (`PartParams::eq`).
+/// `run` on the Parts' own settings (`PartParams::eq`), then SMART EQ's
+/// cuts on their roles (`PartParams::role`).
 #[inline(never)]
 pub fn run_parts(eqs: &mut PartEqs, b: PartsBlock<'_>) {
     let settings: [PartEq; MAX_PARTS] = core::array::from_fn(|p| b.parts[p].mix.eq);
@@ -239,6 +245,18 @@ pub fn run_parts(eqs: &mut PartEqs, b: PartsBlock<'_>) {
             sides: b.sides,
             written: b.written,
             settings: &settings,
+            sample_rate: b.sample_rate,
+        },
+    );
+    let roles: [Role; MAX_PARTS] = core::array::from_fn(|p| b.parts[p].mix.role);
+    smart::run(
+        &mut eqs.smart,
+        smart::SmartBlock {
+            buses: b.buses,
+            sides: b.sides,
+            written: b.written,
+            roles: &roles,
+            smart: b.smart,
             sample_rate: b.sample_rate,
         },
     );
