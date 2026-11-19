@@ -336,7 +336,7 @@ pub(crate) fn band_note_in(
     sound: &Sound,
     src: SourceState,
 ) -> Option<&'static str> {
-    if let Some(n) = tape_note_in(addr, sound) {
+    if let Some(n) = tape_note_in(addr, sound).or_else(|| crate::ui::notes::cell(addr, sound)) {
         return Some(n);
     }
     // ONE's FADE stays live, its HOLD the gate; below HOLD AMP releases.

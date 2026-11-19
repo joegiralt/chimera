@@ -286,6 +286,7 @@ param OUT.VEL "VEL" cont lin 0 1 0.0078125 1
 param OUT.LPG "LPG" cont lin 0 1 0.0078125 0
 param OUT.DECAY "DECAY" cont lin 0 1 0.0078125 0
 param OUT.STRIKE "STRIKE" cont lin 0 1 0.0078125 0
+param OUT.VCA "BASE" cont lin 0 1 0.0078125 0
 OK
 page 9 SND of 18
 panel SND -

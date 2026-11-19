@@ -160,6 +160,20 @@ enum AfterFade {
     Note,
 }
 
+/// The VCA's gain buffer at a block's start: AMP's BASE (ADR 0292) from
+/// the last block's to this one's, ramped. A steady BASE steps by +0, so
+/// each sample is BASE + 0: 0 is the +0-filled buffer it replaced, bit for
+/// bit. Out of line and sized: one rolled loop, not 64 stores in the
+/// voice's render.
+#[inline(never)]
+#[optimize(size)]
+fn vca_start(gain: &mut [f32; BLOCK_SIZE], base: (f32, f32)) {
+    let step = step_of(base, BLOCK_SIZE);
+    for (i, g) in gain.iter_mut().enumerate() {
+        *g = at(base.0, step, i);
+    }
+}
+
 /// The routes into VCA a voice plays, kept from the last block before a
 /// fade (spec § 4; a fading voice keeps its routes).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1005,13 +1019,26 @@ impl Voice {
     #[inline(always)]
     fn vca_holds(&self) -> bool {
         let key = self.held;
-        ModSource::ALL
-            .iter()
-            .filter(|s| self.vca.has(s.index()))
-            .any(|s| match s.env_slot() {
-                Some(e) => self.envs[e.index()].holds(key),
-                None => key,
-            })
+        self.base_holds()
+            || ModSource::ALL
+                .iter()
+                .filter(|s| self.vca.has(s.index()))
+                .any(|s| match s.env_slot() {
+                    Some(e) => self.envs[e.index()].holds(key),
+                    None => key,
+                })
+    }
+
+    /// AMP's BASE above 0 holds the voice as the engine would with no
+    /// route (ADR 0292): ALGO, MODAL and DRUM until their own tails end,
+    /// TAPE and VA (which never end) while the key is down.
+    #[inline(always)]
+    fn base_holds(&self) -> bool {
+        self.played.out.vca > 0.0
+            && match self.slot {
+                EngineSlot::Tape(_) | EngineSlot::Va(_) => self.held,
+                EngineSlot::Algo(_) | EngineSlot::Modal(_) | EngineSlot::Drum(_) => true,
+            }
     }
 
     /// One block of its own bend (semitones), pressure and timbre (0..1)
@@ -1105,6 +1132,9 @@ impl Voice {
             if self.fade == 0 { params } else { &self.played },
             mod_state,
         );
+        // AMP's BASE as the last block played it (ADR 0292): this block's
+        // ramps from it, no state of its own.
+        let base_from = self.played.out.vca;
         // A fading voice keeps the settings it last played; else the stored
         // ones, with the Part's knobs on their way in their place. The
         // routes' offsets go on after the modulators.
@@ -1125,9 +1155,14 @@ impl Voice {
             self.vca = VcaRoutes::of(mod_state);
         }
         let vca = self.vca;
-        // The VCA's gain (spec § 4): 64 samples on the audio stack, zeroed
-        // only with a route into VCA.
+        // The VCA's gain (spec § 4): 64 samples on the audio stack, only
+        // with a route into VCA, from AMP's BASE (ADR 0292; 0, a stored
+        // Sound's, is today's zeroed start).
+        let base = (base_from, self.played.out.vca);
         let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
+        if let Some(g) = gain.as_mut().filter(|_| base != (0.0, 0.0)) {
+            vca_start(g, base);
+        }
         // The last block's sources; on a retrigger, the new note's VEL and NOTE.
         let mut v = self.mod_values;
         let retrigger = core::mem::take(&mut self.retrigger);

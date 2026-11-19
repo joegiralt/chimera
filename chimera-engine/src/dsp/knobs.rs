@@ -204,6 +204,8 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
         BlockRef::Out => {
             let f = if id == OutParams::VOLUME.0 {
                 offset_of!(OutParams, volume)
+            } else if id == OutParams::VCA.0 {
+                offset_of!(OutParams, vca)
             } else if id == OutParams::VCA_VEL.0 {
                 offset_of!(OutParams, vca_vel)
             } else if id >= OutParams::LPG.0 && id <= OutParams::STRIKE.0 {

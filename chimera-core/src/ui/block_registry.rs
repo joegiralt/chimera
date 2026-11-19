@@ -246,8 +246,9 @@ pub static PITCH: BlockDef = BlockDef {
 // ---------------------------------------------------------------------------
 
 /// AMP: the VCA's VEL and its low-pass gate, LPG · DECAY · STRIKE (ADR
-/// 0195), last before MOD on every Part chain; E and F are free. The sends
-/// are AMP › SENDS, the mixer's own SENDS page.
+/// 0195), then BASE, where the VCA's routes start (ADR 0292); last before
+/// MOD on every Part chain; F is free. The sends are AMP › SENDS, the
+/// mixer's own SENDS page.
 pub static AMP: BlockDef = BlockDef {
     id: 9,
     name: "Amp",
@@ -259,7 +260,7 @@ pub static AMP: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Out, OutParams::LPG),
         ParamSlot::param(BlockRef::Out, OutParams::DECAY),
         ParamSlot::param(BlockRef::Out, OutParams::STRIKE),
-        EMPTY,
+        ParamSlot::param(BlockRef::Out, OutParams::VCA).with_label(&"BASE"),
         EMPTY,
     ],
 };

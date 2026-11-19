@@ -895,7 +895,9 @@ impl EngineType {
 pub struct OutParams {
     pub volume: f32,
     pub pan: f32,
-    /// The VCA destination's stored 0 (spec § 4): its value is the sum of its routes.
+    /// AMP's BASE (ADR 0292): where the VCA destination's sum of routes
+    /// starts, 0..1; 0, every Sound's before it, is today's VCA. Read only
+    /// with a route into VCA.
     pub vca: f32,
     /// AMP's VEL: the VCA's velocity sensitivity, 0..1.
     pub vca_vel: f32,
@@ -946,8 +948,9 @@ impl OutParams {
     }
 }
 
-/// Volume and VEL are read by `Voice`'s VCA every block, VCA is a hidden
-/// destination; pan is not used by `Voice`. LPG, DECAY and STRIKE are the
+/// Volume and VEL are read by `Voice`'s VCA every block, VCA (AMP's
+/// BASE, ADR 0292) too where a route into it exists; pan is not used by
+/// `Voice`. LPG, DECAY and STRIKE are the
 /// VCA's gate (ADR 0195).
 pub static OUT_SPECS: [ParamSpec; 10] = [
     ParamSpec::continuous(
@@ -975,6 +978,7 @@ pub static OUT_SPECS: [ParamSpec; 10] = [
         Smoothing::Unheard,
     )
     .ident("PAN"),
+    // The VCA destination; AMP's cell names it BASE (ADR 0292).
     ParamSpec::continuous(
         2,
         "VCA",
@@ -984,7 +988,7 @@ pub static OUT_SPECS: [ParamSpec; 10] = [
         0.0,
         1.0 / 128.0,
         true,
-        Smoothing::Unheard,
+        Smoothing::KNOB,
     )
     .ident("VCA"),
     ParamSpec::continuous(

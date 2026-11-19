@@ -868,7 +868,8 @@ fn since_zero_answers_everything() {
         );
         want += 1;
     }
-    assert_eq!(want, 218, "the schema's addresses");
+    // ADR 0292: AMP's BASE, OUT.VCA, on its page.
+    assert_eq!(want, 219, "the schema's addresses");
     assert_eq!(vals(&lines).len(), want);
     assert_eq!(lines.len(), 1 + 14 + want);
 }

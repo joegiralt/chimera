@@ -204,7 +204,7 @@ fn part_pages_display_like_before() {
                 ("LPG", Uni),
                 ("DECAY", Uni),
                 ("STRIKE", Uni),
-                ("--", Uni),
+                ("BASE", Uni),
                 ("--", Uni),
             ],
         ),

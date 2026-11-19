@@ -847,7 +847,7 @@ impl Renderer {
                 f.matrix,
                 amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
-                f.hint(f.matrix.hint()),
+                f.hint(view::matrix_hint(f.matrix)),
             );
         }
         if f.def.viz == VizType::AudioStats {

@@ -38,6 +38,7 @@ pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
+pub mod notes;
 pub mod onset;
 pub mod op_page;
 pub mod orbit;

@@ -400,7 +400,10 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // `ui::midi::page`; an S4 group (ADR 0272: new 0.4 work goes high).
     let pointing =
         "    *(.text.*12chimera_core2ui8pointing* .rodata.*12chimera_core2ui8pointing*);\n";
-    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}");
+    // 0.4's tester cells' words (ADR 0292, `UiDoor::notes`, its one
+    // entry): `ui::notes`, text and rodata (its words are named statics).
+    let notes = "    *(.text.*12chimera_core2ui5notes* .rodata.*12chimera_core2ui5notes*);\n";
+    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"
