@@ -5440,6 +5440,22 @@
       "codes": null
     },
     {
+      "section": "Part",
+      "block": "PART",
+      "name": "TILT",
+      "msb": 25,
+      "lsb": 15,
+      "nrpn": 3215,
+      "kind": "msb",
+      "min": 0,
+      "max": 127,
+      "screen": {
+        "from": "-64",
+        "to": "63"
+      },
+      "codes": null
+    },
+    {
       "section": "Master FX",
       "block": "CHORUS",
       "name": "RATE",
