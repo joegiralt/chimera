@@ -78,12 +78,17 @@ pub enum ValFmt {
 impl ValFmt {
     /// Coarse snap points in normalized 0..1 space.
     pub fn snap_points(self) -> &'static [f32] {
+        use crate::dsp::modulator::law::Law;
         match self {
+            ValFmt::Bi
+            | ValFmt::Pan
+            | ValFmt::Route
+            | ValFmt::Keybd
+            | ValFmt::Law(Law::StretchSpeed | Law::ScrubSpeed | Law::EqTilt) => {
+                &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
+            }
             ValFmt::Uni | ValFmt::Hold | ValFmt::Inf | ValFmt::Law(_) | ValFmt::Knob(..) => {
                 &[0.0, 100.0 / 127.0, 1.0]
-            }
-            ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Keybd => {
-                &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
             }
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
@@ -105,7 +110,7 @@ impl ValFmt {
                 | ValFmt::Route
                 | ValFmt::Keybd
                 | ValFmt::Signed(_)
-                | ValFmt::Law(Law::StretchSpeed | Law::ScrubSpeed)
+                | ValFmt::Law(Law::StretchSpeed | Law::ScrubSpeed | Law::EqTilt)
         )
     }
 

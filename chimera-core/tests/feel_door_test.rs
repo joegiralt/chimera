@@ -73,6 +73,20 @@ fn closed_plain_open_fine() {
     screen::feed(&mut ui, screen::Input::turn(EncoderId::D, 1));
     assert!(says(&ui, "MIX + B1-6"), "{:?}", ui.focus_hint_for_test());
     assert_eq!(rate(), "0.01 Hz");
+    // Closed, a turn leaves SEQ's hold as 0.4 had it: ORBIT at 500 ms.
+    #[cfg(feature = "orbit")]
+    {
+        let mut ui = mixer();
+        screen::feed(&mut ui, screen::Input::press(ButtonId::Seq).at(0));
+        screen::feed(
+            &mut ui,
+            screen::Input::held(ButtonId::Seq)
+                .and_turn(EncoderId::D, 1)
+                .at(200),
+        );
+        screen::feed(&mut ui, screen::Input::held(ButtonId::Seq).at(700));
+        assert!(ui.location().orbit().is_some(), "closed: ORBIT opens");
+    }
 
     DOOR_CELL.open_host();
     let mut ui = mixer();
@@ -81,4 +95,18 @@ fn closed_plain_open_fine() {
     screen::feed(&mut ui, screen::Input::turn(EncoderId::D, 1));
     assert!(says(&ui, "SEQ+TURN"), "{:?}", ui.focus_hint_for_test());
     assert_eq!(rate(), "0.0100 Hz");
+    // Open, the same turn cancels it.
+    #[cfg(feature = "orbit")]
+    {
+        let mut ui = mixer();
+        screen::feed(&mut ui, screen::Input::press(ButtonId::Seq).at(0));
+        screen::feed(
+            &mut ui,
+            screen::Input::held(ButtonId::Seq)
+                .and_turn(EncoderId::D, 1)
+                .at(200),
+        );
+        screen::feed(&mut ui, screen::Input::held(ButtonId::Seq).at(700));
+        assert!(ui.location().orbit().is_none(), "open: cancelled");
+    }
 }

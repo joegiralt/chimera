@@ -1,6 +1,6 @@
 # 0279. Turn lists gentler, step fine with SEQ + turn, and turn CLASSIC RATE by the semitone
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19)
 - **Deciders:** owner (approved the three changes in #1005), Claude (curves and keys)
 
 ## Context
@@ -112,14 +112,15 @@ so 0.01–1 Hz was seven detents.
   tap with a turn in it no longer moves up a page.
 - Bank 1 grows by the board's `Turn` and burst, SEQ's key and gate, the
   band's `Words` and the door's stubs with their closed paths, measured
-  against 0.4 at d7611695 on every set: +1432 B default, +1728 B ORBIT,
-  +1416 B bank2-gate, +1736 B usb-config-writer, +1352 to +2080 B on the
+  against 0.4 at b8230cc6 on every set: +1488 B default, +1768 B ORBIT,
+  +1496 B bank2-gate, +1760 B usb-config-writer, +1144 to +1608 B on the
   bench sets. This is the feel's real bank-1 cost, not any line's slack;
   the larger part is `UiState::input` (about +650 B: the frame's turns
   held from the gate to the edit loop, and the code around them), the
   band's `Words` and its one shared lookup (about +100 B), the board's
   burst and reversal (about +190 B), and the stubs. Bank 2 grows by
-  `ui::feel`: +1696 B on each checked set. One `UiDoor` entry
+  `ui::feel`: +1568 B on the default build and bank2-gate, +1536 B on
+  ORBIT. One `UiDoor` entry
   (`feel::Ask`): the table's 128 B are 28 words with it.
 
 ## Sources

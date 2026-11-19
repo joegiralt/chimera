@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 // ITCM's geometry (ADR 0266, 0286), `hw`'s own constants: one source.
 include!("../chimera-engine/src/itcm_geometry.rs");
+include!("../chimera-engine/src/s4_tables.rs");
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -178,7 +179,7 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*12chimera_core2ui4walk12tape_held_in .text.*12chimera_core2ui4walk11tape_fmt_in
       .text.*12chimera_core2ui4walk11law_text_in .text.*12chimera_core2ui4walk13delay_note_in
       .text.*12chimera_core2ui4walk15readout_word_in .text.*12chimera_core2ui4walk14tape_writes_in
-      .text.*12chimera_core2ui4walk12band_note_in);
+      .text.*12chimera_core2ui4walk12band_note_in .text.*12chimera_core2ui4walk12eq_tilt_text);
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
       .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*
       .rodata.*12chimera_core2ui9pit_tuner4calc* .rodata.*12chimera_core2ui4walk*);
@@ -363,10 +364,17 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // anchor, the next S4 group. Its table heads the S4 groups
     // (`VA_SOLO_DOOR_ADDR`): the door's own is full, and a slot in S0
     // would take S0-S3 under ADR 0251's 8 KB.
+    // The Parts' EQ (ADR 0284): `part_eq::dsp`, its block, the next S4
+    // group; its table a stride after the solos' (`PART_EQ_DOOR_ADDR`).
+    // The tables' addresses and stride are `s4_tables.rs`'s, as Rust's.
     let (ed, ed_slot, ed_assert) = (
-        "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n",
+        &format!(
+            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n"
+        ),
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
-        "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x08180400, \"VA's solos' table heads the S4 groups\");",
+        &format!(
+            "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x{VA_SOLO_DOOR_ADDR:08X}, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x{PART_EQ_DOOR_ADDR:08X}, \"the Parts' EQ's table a stride after the solos'\");"
+        ),
     );
     // DRUM's voice groups (ADR 0280, `UiDoor::groups`, its one entry):
     // `ui::kit_groups` and the count it reads, `drum::groups`;
@@ -552,5 +560,6 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
     println!("cargo:rustc-link-arg=--emit-relocs");
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=../chimera-engine/src/itcm_geometry.rs");
+    println!("cargo:rerun-if-changed=../chimera-engine/src/s4_tables.rs");
     println!("cargo:rerun-if-changed=build.rs");
 }

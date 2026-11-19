@@ -435,6 +435,16 @@ fn any_turn_during_a_seq_hold_cancels_orbit() {
         seq_turn_and_wait(&mut mixer, e);
         assert!(mixer.location().orbit().is_none(), "mixer, {e:?}");
     }
+    // An FX page's cell and a DRUM pad's cell alike.
+    let mut fx = Box::new(UiState::new());
+    screen::to_fx(&mut fx, screen::REV);
+    seq_turn_and_wait(&mut fx, EncoderId::B);
+    assert!(fx.location().orbit().is_none(), "FX page");
+    let mut pad = Box::new(UiState::new());
+    screen::load_init(&mut pad, chimera_core::params::EngineType::Drum);
+    screen::feed(&mut pad, screen::Input::press(ButtonId::Plus)); // MCH
+    seq_turn_and_wait(&mut pad, EncoderId::D);
+    assert!(pad.location().orbit().is_none(), "DRUM pad page");
     // Untouched, the hold still opens ORBIT.
     let mut ui = Box::new(UiState::new());
     screen::feed(&mut ui, screen::Input::press(ButtonId::Seq).at(0));
@@ -499,4 +509,44 @@ fn pushes_on_keep_the_seq_fine_hint() {
     assert!(h.iter().any(|g| g.0.contains("SEQ")), "{h:?}");
     assert!(h.iter().any(|g| g.0.contains("PUSH")), "{h:?}");
     assert!(hint::width(h) <= theme::CONTENT_W, "{h:?}");
+}
+
+/// MIX + SEQ held through a turn: MIX's chord wins, the turn is MIX +
+/// turn's snap as with MIX alone (no fine step), and ORBIT never opens.
+#[cfg(all(feature = "orbit", feature = "tape"))]
+#[test]
+fn mix_and_seq_turn_as_mix() {
+    let turned = |held: Vec<ButtonId>| {
+        let mut ui = part_page();
+        ui.handle_input(&Frame {
+            turns: vec![(EncoderId::D, turn(-3, 8))],
+            held,
+            ..Frame::default()
+        });
+        level(&ui)
+    };
+    let mix = turned(vec![ButtonId::Mix]);
+    assert_eq!(turned(vec![ButtonId::Mix, ButtonId::Seq]), mix);
+    assert_ne!(mix, 0.8);
+    let mut ui = part_page();
+    screen::feed(
+        &mut ui,
+        screen::Input::press(ButtonId::Seq)
+            .and_held(ButtonId::Mix)
+            .at(0),
+    );
+    screen::feed(
+        &mut ui,
+        screen::Input::held(ButtonId::Seq)
+            .and_held(ButtonId::Mix)
+            .and_turn(EncoderId::D, 1)
+            .at(200),
+    );
+    screen::feed(
+        &mut ui,
+        screen::Input::held(ButtonId::Seq)
+            .and_held(ButtonId::Mix)
+            .at(700),
+    );
+    assert!(ui.location().orbit().is_none());
 }

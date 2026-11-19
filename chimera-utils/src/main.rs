@@ -71,6 +71,7 @@ usage: chimera-utils [flags] COMMAND …
                            the simulator console over WebSocket, for the browser editor
   nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
   nrpn-guide               docs/guide/NRPN.md: the writable NRPNs by engine and block (#926)
+  nrpn-json                docs/guide/NRPN.json: the same cells for a script (#983)
   suggest-map DIR | suggest-map --tables
                            the SUGGEST controller map into DIR/CHIMERA/MAPS; or its
                            tables for docs/guide/MIDI.md
@@ -283,6 +284,10 @@ fn run() -> Result<bool, String> {
         "macro-render" if rest.len() == 1 => macro_osc::run(Path::new(&rest[0])).map(|_| true),
         "nrpn-guide" => {
             print!("{}", nrpn_guide::page());
+            Ok(true)
+        }
+        "nrpn-json" => {
+            print!("{}", nrpn_guide::json());
             Ok(true)
         }
         "suggest-map" if rest.len() == 1 && rest[0] == "--tables" => {

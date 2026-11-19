@@ -700,3 +700,58 @@ fn a_part_map_round_trips() {
     same(&p, &q);
     assert_eq!(q.part(PartId::ALL[2]).sound.map, m);
 }
+
+/// Part `part`'s mix payload with its param `ids` taken out.
+fn mix_without(p: &Project, part: PartId, ids: &[u8]) -> Vec<u8> {
+    edited(p, |recs| {
+        let r = part_ctx(recs, part);
+        let at = recs[r.clone()]
+            .iter()
+            .position(|(t, b)| *t == BLOCK && b[0] == PART_BLOCK)
+            .unwrap();
+        let b = &mut recs[r.start + at].1;
+        let kept: Vec<u8> = b[1..]
+            .chunks(5)
+            .filter(|e| !ids.contains(&e[0]))
+            .flatten()
+            .copied()
+            .collect();
+        b.truncate(1);
+        b.extend(kept);
+    })
+}
+
+#[test]
+fn the_eq_round_trips_and_an_old_file_loads_flat() {
+    use chimera_core::part_eq::{LoCut, PartEq, Tilt};
+    let (p, _) = full();
+    let eq = p.part(PartId::ALL[2]).mix.eq;
+    assert_eq!(eq, PartEq::new(Tilt::at(-21), LoCut::On), "full() sets it");
+    let (mut q, _) = Project::boxed();
+    decode(&encode(&p), &mut q).unwrap();
+    assert_eq!(q.part(PartId::ALL[2]).mix.eq, eq);
+    // A file from before the EQ: flat, LO CUT off, the rest of the mix kept.
+    let old = mix_without(
+        &p,
+        PartId::ALL[2],
+        &[PartParams::TILT.0, PartParams::LO_CUT.0],
+    );
+    decode(&old, &mut q).unwrap();
+    let m = q.part(PartId::ALL[2]).mix;
+    assert_eq!(m.eq, PartEq::FLAT);
+    assert_eq!(m.pan, p.part(PartId::ALL[2]).mix.pan);
+}
+
+#[test]
+fn a_sound_load_leaves_the_part_s_eq() {
+    use chimera_core::part_eq::{LoCut, PartEq, Tilt};
+    let (mut p, t) = Project::boxed();
+    let eq = PartEq::new(Tilt::at(40), LoCut::On);
+    p.edit_part(PartId::ALL[0]).mix.eq = eq;
+    let src = PartSource {
+        part: PartId::ALL[0],
+        from: PartFrom::Init(EngineType::Modal),
+    };
+    load(&mut p, t, src).unwrap();
+    assert_eq!(p.part(PartId::ALL[0]).mix.eq, eq);
+}

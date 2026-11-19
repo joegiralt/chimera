@@ -26,8 +26,8 @@ pub enum Ask<'a> {
     List(&'a dyn Controls, &'a [EncoderId], &'a mut Option<Ticks>),
     /// `hint`.
     Hint(&'a View, Words, Band, Pushes, &'a mut Option<Hint>),
-    /// `nudge`: `true` where the feel turned it.
-    Nudge(&'a mut dyn Block, ParamAddr, Ticks, &'a mut Option<bool>),
+    /// `nudge`.
+    Nudge(&'a mut dyn Block, ParamAddr, Ticks, &'a mut Option<Nudged>),
 }
 
 /// `UiDoor`'s entry.
@@ -74,13 +74,7 @@ pub fn takes(v: &View, w: Words) -> bool {
 pub fn frame(ui: &UiState, c: &dyn Controls) -> FrameTurns {
     let key = SeqKey::of(c.edges(ButtonId::Seq), c.edges(ButtonId::Mix));
     let turns = ALL_ENCODERS.map(|e| c.turn(e));
-    let mut out = FrameTurns {
-        enc: turns.map(|t| match t.detents().get() {
-            0 => EncTurn::Still,
-            _ => EncTurn::Plain(Accel::Param.ticks(t)),
-        }),
-        seq: SeqHold::of(key, SeqTurn::Untouched),
-    };
+    let mut out = FrameTurns::closed(c);
     if ui.loc.orbit().is_some() || ui.loc.page(&ui.cx()).is_none() {
         return out;
     }
@@ -90,13 +84,17 @@ pub fn frame(ui: &UiState, c: &dyn Controls) -> FrameTurns {
         && !ui.lib.busy()
         && ui.modal.is_none()
         && matches!(ui.learn, crate::ui::learn::Learn::Off);
-    let held = key == SeqKey::Down && part && free;
+    let grip = if key == SeqKey::Down && part && free {
+        SeqGrip::Grips
+    } else {
+        SeqGrip::Loose
+    };
     for (i, (e, t)) in out.enc.iter_mut().zip(turns).enumerate() {
         if *e == EncTurn::Still {
             continue;
         }
         let v = view::view(def, i, &ctx);
-        *e = if held
+        *e = if grip == SeqGrip::Grips
             && def.layout != PageLayout::Matrix
             && takes(&v, view::cell_words(def, &v, &ctx))
         {
@@ -104,7 +102,7 @@ pub fn frame(ui: &UiState, c: &dyn Controls) -> FrameTurns {
         } else {
             EncTurn::Plain(accel(&v).ticks(t))
         };
-        if held {
+        if grip == SeqGrip::Grips {
             out.seq = SeqHold::of(key, SeqTurn::Turned);
         }
     }
@@ -225,14 +223,32 @@ static RATE_TICK: ParamSpec =
 
 /// `a` on `b` turned `d`: CLASSIC RATE a semitone a tick; `false` for any
 /// other, which turns by its spec.
-pub fn nudge(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> bool {
-    let rate = matches!(a.block, crate::addr::BlockRef::Lfo(_))
-        && a.param == crate::dsp::lfo::LfoParams::RATE;
-    if rate {
+pub fn nudge(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> Nudged {
+    if matches!(a.block, crate::addr::BlockRef::Lfo(_))
+        && a.param == crate::dsp::lfo::LfoParams::RATE
+    {
         let hz = b.get(a.param);
         b.write(a.param, lfo_rate(hz, d.get()));
+        Nudged::Rate
+    } else {
+        Nudged::Spec
     }
-    rate
+}
+
+/// Who turns a cell's ticks: the feel (CLASSIC RATE's semitone) or the
+/// cell's own spec.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Nudged {
+    Rate,
+    Spec,
+}
+
+/// Whether SEQ holds this frame's turns: down, on a Part's, mixer's or FX
+/// page, with nothing else taking the turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeqGrip {
+    Grips,
+    Loose,
 }
 
 /// CLASSIC RATE `hz` turned `d` semitones, in its range.

@@ -744,7 +744,9 @@ fn an_old_part_record_loads_auto_and_zero() {
     let new = r.as_slice();
     let (code, body) = new.split_first().unwrap();
     let mut old = vec![*code];
-    for e in body.chunks(5).filter(|e| e[0] < PartParams::MAX_VOICES.0) {
+    // Ids 0–12 and the EQ's (ADR 0284), not ADR 0281's 13 and 14.
+    let voices = PartParams::MAX_VOICES.0..=PartParams::RESERVE.0;
+    for e in body.chunks(5).filter(|e| !voices.contains(&e[0])) {
         old.extend_from_slice(e);
     }
     assert_eq!(old.len(), new.len() - 10, "both entries were written");
@@ -914,7 +916,7 @@ fn the_reserve_cell_shows_the_reserves_booked() {
 }
 
 /// Under STACK: EDIT from PRT is VOICES, SEQ back up; EDIT on from
-/// VOICES is the Sound rung, as from PRT before.
+/// VOICES is EQ, then the Sound rung (ADR 0284).
 #[test]
 fn voices_sits_between_prt_and_the_sound_rung() {
     let mut ui = voices_page(ButtonId::B2, |_| {});
@@ -927,11 +929,15 @@ fn voices_sits_between_prt_and_the_sound_rung() {
     assert_eq!(ui.page_def().id, reg::PART.id);
     feed(&mut ui, Input::press(ButtonId::Edit));
     feed(&mut ui, Input::press(ButtonId::Edit));
+    // EQ under VOICES (ADR 0284), then the Sound rung.
+    assert_eq!(ui.page_def().id, reg::PART_EQ.id);
+    feed(&mut ui, Input::press(ButtonId::Edit));
     assert!(ui.location().browse().is_some(), "the Sound rung");
 }
 
 /// MODE, MAX VOICES and RESERVE share one byte, every combination round
-/// trips, and the Part block stays 16 B (ADR 0281: AXI's margin).
+/// trips, and the Part block holds them in one byte (ADR 0281); 20 B with
+/// the EQ's byte (ADR 0284), once the snapshots left AXI (ADR 0286).
 #[test]
 fn voicing_packs_mode_cap_and_reserve() {
     use chimera_core::part::{PartMode, Voicing};
@@ -948,7 +954,7 @@ fn voicing_packs_mode_cap_and_reserve() {
         }
     }
     assert_eq!(core::mem::size_of::<Voicing>(), 1);
-    assert_eq!(core::mem::size_of::<PartParams>(), 16);
+    assert_eq!(core::mem::size_of::<PartParams>(), 20);
 }
 
 /// A held RESERVE stays held through a CC on any Part (here Part 3's

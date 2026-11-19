@@ -35,8 +35,9 @@ fn mappable_whitelist() {
             // TYPE and PLACE are switches (`fx_pots_are_mappable`).
             let switch = b == BlockRef::VoiceFx && s.id.0 < 2;
             let want = b.in_sound() && !s.patching && s.stored && !switch;
-            let part_mix =
-                b == BlockRef::Part && matches!(s.id, PartParams::LEVEL | PartParams::PAN);
+            // LEVEL, PAN and TILT (ADR 0284).
+            let part_mix = b == BlockRef::Part
+                && matches!(s.id, PartParams::LEVEL | PartParams::PAN | PartParams::TILT);
             // The master FX's knobs and ORBIT's ring amounts (#512,
             // `midi_fx_orbit_test`).
             let global = matches!(

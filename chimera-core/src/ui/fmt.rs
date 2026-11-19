@@ -171,6 +171,10 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
             n => write!(buf, "{hi} {n}"),
         };
     };
+    // CLASSIC RATE's places are bank 2's (ADR 0279); closed, two.
+    if matches!(law, Law::LfoHz) && crate::bank2::ui_door(|u| u.law_text(buf, law, v)).is_some() {
+        return;
+    }
     match law {
         Law::Pct => {
             let _ = write!(buf, "{}%", round(v * 100.0));
@@ -181,8 +185,6 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         }
         Law::Curve => bend(buf, "LOG", "LIN", "EXP"),
         Law::Tilt => bend(buf, "SAW", "TRI", "RAMP"),
-        // CLASSIC RATE's places are bank 2's (ADR 0279); closed, two.
-        Law::LfoHz if crate::bank2::ui_door(|u| u.law_text(buf, law, v)).is_some() => {}
         Law::BRate | Law::BurstRate | Law::LfoRate | Law::LfoHz => {
             // Each unit is picked from the value as it would print.
             let hz = match law {
@@ -204,7 +206,12 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         Law::Cutoff => hz_text(buf, round(CUTOFF_HZ.at(v))),
         // The engine's laws, bank 2's: the door hands these formats out
         // only open (`view::fmt_of`).
-        Law::StretchSpeed | Law::ScrubSpeed | Law::FadeHold | Law::ScrubLength | Law::DragTime => {
+        Law::StretchSpeed
+        | Law::ScrubSpeed
+        | Law::FadeHold
+        | Law::ScrubLength
+        | Law::DragTime
+        | Law::EqTilt => {
             crate::bank2::ui_door(|u| u.law_text(buf, law, v));
         }
         _ => {

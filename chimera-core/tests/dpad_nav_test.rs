@@ -149,18 +149,24 @@ fn the_mixer_and_the_sound_rung() {
     let go = Step::Go;
     let part = Location::mixer(p, MixPage::Part);
     let voices = Location::mixer(p, MixPage::Voices);
+    let eq = Location::mixer(p, MixPage::Eq);
     let sends = Location::mixer(p, MixPage::Sends);
     let sound = Location::sound(p);
     let table = [
         (part, NavKey::Minus, Step::Stay),
         (part, NavKey::Plus, go(sends)),
-        // PART's sub-page, VOICES, is down, then the Sound rung (ADR 0281).
+        // PART's sub-pages, VOICES then EQ, are down, then the Sound rung
+        // (ADR 0281, 0284).
         (part, NavKey::Edit, go(voices)),
         (part, NavKey::SeqTap, Step::Stay),
         (voices, NavKey::Minus, go(part)),
         (voices, NavKey::Plus, go(sends)),
-        (voices, NavKey::Edit, go(sound)),
+        (voices, NavKey::Edit, go(eq)),
         (voices, NavKey::SeqTap, go(part)),
+        (eq, NavKey::Minus, go(part)),
+        (eq, NavKey::Plus, go(sends)),
+        (eq, NavKey::Edit, go(sound)),
+        (eq, NavKey::SeqTap, go(voices)),
         (sends, NavKey::Minus, go(part)),
         (sends, NavKey::Edit, go(sound)),
         (sends, NavKey::SeqTap, Step::Stay),

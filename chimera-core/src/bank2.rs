@@ -556,7 +556,7 @@ pub(crate) fn groups(a: crate::ui::kit_groups::Ask<'_>) -> Option<crate::ui::kit
 pub(crate) mod feel {
     use crate::addr::ParamAddr;
     use crate::block::Block;
-    use crate::ui::feel::{Ask, Band, Pushes};
+    use crate::ui::feel::{Ask, Band, Nudged, Pushes};
     use crate::ui::turns::FrameTurns;
     use crate::ui::view::{View, Words};
     use chimera_hal::{Controls, EncoderId, Ticks};
@@ -590,11 +590,12 @@ pub(crate) mod feel {
         out
     }
 
-    /// `true` where bank 2 turned `a` (CLASSIC RATE).
-    pub(crate) fn nudge(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> bool {
+    /// Who turned `a`: bank 2 (CLASSIC RATE), or its spec, which the
+    /// caller then steps (closed, always).
+    pub(crate) fn nudge(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> Nudged {
         let mut out = None;
         ask(Ask::Nudge(b, a, d, &mut out));
-        out == Some(true)
+        out.unwrap_or(Nudged::Spec)
     }
 }
 
