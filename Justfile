@@ -246,6 +246,11 @@ firmware-gate:
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
+# SMART EQ's A/B (ADR 0296): a MODAL pad over a bass, the 250 Hz - 2 kHz
+# overlap off and at AMOUNT 64 and 127, and the pad's cut through its ring.
+smart-eq-ab:
+    {{utils}} smart-eq-ab
+
 # The NRPN guide page (#926) and its JSON (#983), from the chart the firmware answers with.
 nrpn-guide:
     {{utils}} nrpn-guide > docs/guide/NRPN.md

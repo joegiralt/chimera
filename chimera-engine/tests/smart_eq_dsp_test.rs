@@ -303,3 +303,40 @@ fn a_nan_on_a_bus_rests_only_that_parts_filters() {
         assert!(st.cut(PAD, b).get().is_finite());
     }
 }
+
+#[test]
+fn a_ringing_tail_keeps_its_mud_cut_and_lets_go_smoothly() {
+    // A MID chord struck every 4 s and left to ring (τ 1.5 s, as MODAL's
+    // long tails) under a steady FRONT bass: while it rings within 12 dB
+    // of the bass it keeps its LOW cut whole (owner, 2026-11-19: tails
+    // muddy the mix); it lets go only as the ring falls far under.
+    let bass = sine(100.0, 0.3);
+    let ring = sine(110.0, 0.25);
+    let strike = 4.0 * FS as f32;
+    let gens: [Gen; MAX_PARTS] = core::array::from_fn(|p| -> Gen {
+        match p {
+            0 => Box::new(move |n| Some(bass(n))),
+            1 => Box::new(move |n| {
+                let t = (n as f32 % strike) / FS as f32;
+                Some(ring(n) * (-t / 1.5).exp())
+            }),
+            _ => Box::new(|_| None),
+        }
+    });
+    let r = roles(&[0], &[]);
+    let mut st = PartEqs::REST.smart;
+    let mut low = Vec::new();
+    for k in 0..seconds(12.0) {
+        block(&mut st, k * BLOCK_SIZE, &gens, &r, on(127));
+        low.push(st.cut(PAD, Band::Low).get());
+    }
+    let at = |s: f32| low[seconds(s)];
+    // The third strike (8 s): its cut built, then its ring 3 s later
+    // (−17 dB from the strike, ~13 dB under the bass) still holds most.
+    assert!(at(9.0) > 3.5, "{} dB a second into the ring", at(9.0));
+    assert!(
+        at(11.0) > 0.75 * at(9.0),
+        "{} dB 3 s into the ring",
+        at(11.0)
+    );
+}

@@ -124,6 +124,13 @@ impl Band {
         })
     }
 
+    /// LOW and LOW MID: where Parts pile into mud, a lower role yields
+    /// more and to quieter tails.
+    #[inline(always)]
+    pub const fn muddy(self) -> bool {
+        matches!(self, Band::Low | Band::LowMid)
+    }
+
     /// Its name on PRT › EQ.
     pub const fn name(self) -> &'static str {
         match self {

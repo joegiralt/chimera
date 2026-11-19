@@ -25,18 +25,43 @@ use crate::part_eq::smart::{
 
 /// Each band's Q: a two-octave bandwidth, neighbours crossing at −3 dB.
 const Q: f32 = 2.0 / 3.0;
-/// The level follower's time constant on power, seconds.
-const LEVEL_S: f32 = 0.06;
+/// The level follower rises on power with this time constant, seconds...
+const LEVEL_RISE_S: f32 = 0.05;
+/// ...and falls with this one: a long MODAL tail or a pad's release is
+/// heard as the sustained energy it is, not as peaks gone by.
+const LEVEL_FALL_S: f32 = 0.5;
 /// A cut deepens with this time constant, seconds.
 const ATTACK_S: f32 = 0.5;
 /// A cut lets go with this one, seconds.
 const RELEASE_S: f32 = 2.0;
 /// Under this a band is silent (dBFS).
-const FLOOR_DB: f32 = -60.0;
+const FLOOR_DB: f32 = -66.0;
 /// Over `FLOOR_DB` by this a band is fully active (dB).
 const ACTIVE_SPAN_DB: f32 = 24.0;
-/// A lower Part this far under a higher one in a band cannot mask it (dB).
-const THREAT_SPAN_DB: f32 = 12.0;
+/// How far under a higher Part a lower one masks it, dB: not at all from
+/// `none` under, fully from `full` under. Above the mud a lower Part
+/// masks only near the higher one's level.
+const CLEAR_THREAT: Threat = Threat {
+    none: 12.0,
+    full: 0.0,
+};
+/// In LOW and LOW MID a quiet ringing tail still clouds a louder Part
+/// (owner, 2026-11-19: "muddy", MODAL's tails the worst): it yields fully
+/// up to 12 dB under, and some to 30 dB under.
+const MUD_THREAT: Threat = Threat {
+    none: 30.0,
+    full: 12.0,
+};
+
+/// A band's masking reach (`threat`): dB under the higher Part.
+#[derive(Clone, Copy)]
+struct Threat {
+    none: f32,
+    full: f32,
+}
+/// Above the mud a lower Part yields this share of its LOW and LOW MID
+/// cut: the mud is where yielding matters most.
+const CLEAR_WEIGHT: f32 = 0.75;
 /// A band's skirt at the centre of the band `n` away (two octaves each),
 /// dB: `−10 log10(1 + Q² (4ⁿ − 4⁻ⁿ)²)` at Q 2/3, for n = 1, 2, 3 (index 0
 /// unused). What a tone at a neighbour's centre puts in this band.
@@ -78,8 +103,10 @@ struct Svf {
 #[derive(Clone, Copy)]
 struct Rate {
     svf: [Svf; BANDS],
-    /// One-pole coefficients a block: level, attack, release.
-    level: f32,
+    /// One-pole coefficients a block: the level's rise and fall, the
+    /// cut's attack and release.
+    rise: f32,
+    fall: f32,
     attack: f32,
     release: f32,
 }
@@ -105,7 +132,8 @@ impl Rate {
         });
         Rate {
             svf,
-            level: pole(LEVEL_S, sample_rate),
+            rise: pole(LEVEL_RISE_S, sample_rate),
+            fall: pole(LEVEL_FALL_S, sample_rate),
             attack: pole(ATTACK_S, sample_rate),
             release: pole(RELEASE_S, sample_rate),
         }
@@ -208,10 +236,11 @@ fn active(l: f32) -> f32 {
     clampf((l - FLOOR_DB) / ACTIVE_SPAN_DB, 0.0, 1.0)
 }
 
-/// How much a Part at `lower` dB can mask one at `higher` dB in a band.
+/// How much a Part at `lower` dB can mask one at `higher` dB in a band
+/// with reach `t`.
 #[inline(always)]
-fn threat(lower: f32, higher: f32) -> f32 {
-    clampf((lower - higher + THREAT_SPAN_DB) / THREAT_SPAN_DB, 0.0, 1.0)
+fn threat(lower: f32, higher: f32, t: Threat) -> f32 {
+    clampf((lower - higher + t.none) / (t.none - t.full), 0.0, 1.0)
 }
 
 /// How much of band `b` is a Part's own sound, not its other bands'
@@ -240,6 +269,11 @@ fn targets(
 ) -> [[CutDb; BANDS]; MAX_PARTS] {
     core::array::from_fn(|p| {
         core::array::from_fn(|b| {
+            let (reach, weight) = if Band::ALL[b].muddy() {
+                (MUD_THREAT, 1.0)
+            } else {
+                (CLEAR_THREAT, CLEAR_WEIGHT)
+            };
             let lp = levels[p][b];
             let ap = active(lp);
             let mut press = 0.0f32;
@@ -248,10 +282,10 @@ fn targets(
                 if depth > 0.0 {
                     let lq = levels[q][b];
                     let heard = active(lq) * own(&levels[q], b);
-                    press = press.max(depth * heard * ap * threat(lp, lq));
+                    press = press.max(depth * heard * ap * threat(lp, lq, reach));
                 }
             }
-            CutDb::of(Unit::new(share.get() * press))
+            CutDb::of(Unit::new(share.get() * weight * press))
         })
     })
 }
@@ -318,7 +352,8 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
         p.dip = to;
         for ((l, e), h) in p.level.iter_mut().zip(energy).zip(heard.iter_mut()) {
             let ms = e * k2 / BLOCK_SIZE as f32;
-            let v = ms + r.level * (l.0 - ms);
+            let pole = if ms > l.0 { r.rise } else { r.fall };
+            let v = ms + pole * (l.0 - ms);
             *l = Power(if v.is_finite() && v >= FLUSH { v } else { 0.0 });
             *h = db(*l);
         }
