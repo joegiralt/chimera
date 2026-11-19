@@ -1,7 +1,7 @@
 # 0296. SMART EQ cuts a lower-role Part's four fixed bands where a higher-role Part plays
 
 - **Status:** Proposed
-- **Deciders:** owner (design approved 2026-11-19, #396), firmware
+- **Deciders:** owner (design approved 2026-11-19, #396; the kick's dip, AMOUNT's curve and the reverb return's role, 2026-11-19), firmware
 
 ## Context
 #396: the owner wants Parts to stop masking each other without manual EQ,
@@ -9,112 +9,183 @@ after sonible smart:EQ 4's groups. ADR 0284 gave every Part one EQ (LO CUT,
 TILT) at the end of its channel and said SMART EQ would add its cuts there.
 The owner's design (2026-11-19): a role per Part (FRONT, MID, BACK) in the
 project's mix; SMART EQ ON/OFF and AMOUNT on the master; listening to the
-six Part buses in bands at block rate; per band, a lower-role Part active
-where a higher-role Part is loud is cut by up to a few dB, slowly, never
-pumping, never zippered; four dynamic cut bands at fixed places after TILT,
-moved only by SMART EQ and shown live on the Part EQ page; OFF or AMOUNT 0
-bit for bit; about 5 % CPU, a few KB ITCM, bank 2 behind a door.
+Part buses in bands at block rate; per band, a lower-role Part active where
+a higher-role Part is loud is cut, slowly; four dynamic cut bands at fixed
+places after TILT, moved only by SMART EQ and shown live on the Part EQ
+page; OFF or AMOUNT 0 bit for bit; the code in bank 2 behind a door.
 
-Bank 1 is frozen (ADR 0198); ORBIT's has about 18 KB left. The door's own
-table is full (ADR 0283); the S4 tables after Part EQ's (0x08180410) are
-being taken (tester-04's PRT meters, 0x08180420, ADR 0293). The audio's
-snapshots live in ITCM (ADR 0286).
+Later the same day, after the teaser renders, the owner added:
+- "still a little bit muddy", MODAL's long tails intruding most;
+- a kick-keyed fast dip in LOW only;
+- AMOUNT re-scaled: "Deep is like 75 % of the slider", and the top goes
+  on past good "to the point where it sounds like garbage", so there is
+  always more to reach for;
+- "we should give the reverb its role of its own".
+
+The review (2026-11-19) failed the first build on CPU: unbilled, 7–13 % of
+a block on top of ADR 0262's 89 % worst block, under ADR 0273's 95 % net.
+
+Bank 1 is frozen (ADR 0198). The door's own table is full (ADR 0283). The
+audio's snapshots live in ITCM (ADR 0286). D2, where the `Instrument` and
+the UI live, has no room: a page id more overflowed it by 8 B on
+bench-algo.
 
 ## Decision
 1. **Settings.**
    - `part_eq::smart::Role { Front, Mid, Back }` in `PartParams::role`, Part
-     block id 17 `ROLE`, codes FRONT 0, MID 1, BACK 2; `Mid` is the default
-     and what a project without it loads. It sits in `PartParams`' padding
-     (20 B before and after).
-   - `part_eq::smart::SmartEq(u8)` in `CompParams::smart`: ON in bit 7,
-     AMOUNT's code 0..=127 in bits 0–6, every byte a setting; `SmartEq::OFF`
-     (OFF, AMOUNT 64) the default and an old project's. Comp block ids 8
-     `SMART_EQ` (OFF/ON) and 9 `AMOUNT` (stepped 0–127). In `CompParams`'
-     padding (32 B before and after).
-   - AMOUNT is CC-mappable; SMART EQ and ROLE are switches, the hand's
+     block id 17 `ROLE`; `Mid` is the default and an old project's.
+   - `SmartEq(u8)` in `CompParams::smart`: ON in bit 7, AMOUNT 0..=127 in
+     bits 0–6; `SmartEq::OFF` (OFF, AMOUNT 64) the default and an old
+     project's. Comp block ids 8 `SMART_EQ` and 9 `AMOUNT`.
+   - The reverb return's role, `ReverbParams::role`, Reverb id 17 `ROLE`
+     (15 and 16 are REV › DUCK's, ADR 0295); `Back` the default and an old
+     project's.
+   - All three sit in their structs' padding: `PartParams` 20 B,
+     `CompParams` 32 B and `ReverbParams` unchanged; the snapshots do not
+     grow. AMOUNT is CC-mappable; the roles and the switch are the hand's
      (ADR 0217).
-2. **Four fixed bands a Part, listened through and cut through.** LOW
-   100 Hz, LOW MID 400 Hz, HIGH MID 1.6 kHz, HIGH 6.4 kHz (`Band`), each a
-   TPT state-variable band-pass, Q 2/3, on the Part's bus after LO CUT and
-   TILT, in parallel. A band's unity-peak band-pass `bp` is what it cuts
-   (`y = x + Σ (G_b − 1) · bp_b`) and what SMART EQ hears: its block mean
-   square, followed on power rising with τ 50 ms and falling with τ 0.5 s,
-   in dBFS, so a long MODAL tail or a pad's release counts as the
-   sustained energy it is (owner, 2026-11-19: "still a little bit muddy",
-   MODAL's long tails intrude most). A DRUM pad's side
-   takes the same cut through its own filters; the side is not listened to.
-3. **The rule**, per block and band, for each written Part `p`:
-   `target = AMOUNT · 6 dB · weight(b) · max_q depth(q, p) · active(q) ·
-   own(q) · active(p) · own(p) · threat_b(p, q)`, with `active(L) = clamp((L + 66) /
-   24, 0, 1)` and `depth` 2/3 one rank apart, 1 two apart (BACK under
-   FRONT), 0 otherwise.
-   - `threat_b`: how far under `q` the lower Part still masks it. In LOW
-     and LOW MID (`Band::muddy`, where the mud lives) fully to 12 dB under
-     and some to 30 dB under: a quiet ringing tail still clouds a louder
-     Part, so it keeps yielding while it rings and lets go as it fades
-     (the cut follows it down at RELEASE's pace). Above the mud, fully at
-     `q`'s level and none from 12 dB under.
-   - `weight`: 1 in LOW and LOW MID, 3/4 above. `own(q)` is how much
-   of the band is `q`'s own sound rather than its other bands' energy
-   through this band's skirt: `clamp((L_q,b − max_o (L_q,o + skirt(|o −
-   b|))) / 6 dB, 0, 1)`, the skirts exact for Q 2/3 (−8.6, −20.6, −32.6 dB
-   one, two, three bands away). Without it a pure 100 Hz bass is "active"
-   in HIGH MID (its skirt hears it 20.6 dB down) and cuts a pad's 1.6 kHz
-   (the first test caught it, 3.1 dB). FRONT is never cut; one role never
-   cuts itself.
-4. **The kick's dip (owner decision, 2026-11-19).** In LOW, a higher-role
-   DRUM Part (`PartKind::Drum`, from its Sound's engine) presses only
-   through a fast dip on its hits; its LOW does not press slowly. LOW
-   MID, HIGH MID and HIGH keep the slow rule against every Part.
-   - The key is the DRUM Part's own LOW low-pass (the LOW SVF's `v2`, a
-     2-pole low-pass at 100 Hz): a snare's 180–330 Hz body barely moves
-     it. Its block power rises at once and falls with τ 20 ms; its peak
-     falls with τ 0.5 s. `hit = active(peak) · clamp((key − peak + 6) /
-     6, 0, 1)`: the kick's attack and the top of its body, not its tail.
-   - `kick target = AMOUNT · 6 dB · max_q depth(q, p) · hit(q) ·
-     active(p) · own(p) · threat_mud(p, q)` in LOW only.
-   - The dip follows its target with τ 3 ms in and τ 100 ms out (owner's
-     range 60–150 ms): over a kick's body (50–80 ms) and 95 % back in
-     0.3 s, before the next kick at up to 190 BPM in four. No KICK
-     RELEASE control: one value serves the tempos the teaser and the drum
-     machines play.
-   - LOW plays the deeper of its slow cut and the dip; the gain is still
-     lerped a sample at a time across each block (a 4 dB dip over two
-     blocks is under 0.05 dB a sample).
-   - Whole-mix pumping (ducking as an effect) is not this: it stays with
-     the DRUM bus work (#13).
-5. **Time.** Each cut (`CutDb`, 0..=6 dB) follows its target at block rate,
-   τ 0.5 s deeper and τ 2 s shallower; under 0.01 dB it lands on 0. Each
-   band's linear gain is lerped across the block from the last block's: at
-   most 0.000 25 dB a sample.
-6. **Off is free.** A Part whose four gains are unity at both ends of a
+2. **Four fixed bands a member, listened through and cut through.** LOW
+   100 Hz, LOW MID 400 Hz, HIGH MID 1.6 kHz, HIGH 6.4 kHz (`Band`), Q 2/3,
+   in parallel on the Part's bus after LO CUT and TILT: a band's unity-peak
+   band-pass `bp` is what it cuts (`y = x + Σ d_b · bp_b`) and what SMART
+   EQ hears (its block mean square, rising τ 50 ms, falling τ 0.5 s, so a
+   long MODAL tail counts as the sustained energy it is).
+   - LOW and LOW MID are Chamberlin state-variable filters (three
+     multiply-adds a sample, quiet in `f32` far under the rate); HIGH MID
+     and HIGH the same bilinear band-pass as a transposed direct form II
+     (four).
+   - **A Part being cut** runs the four at the full rate and is heard
+     through them.
+   - **A Part only listened to** (FRONT, or nothing to yield to: its dips
+     at unity at both ends of the block) is read, never written, through
+     the same bands decimated: LOW and LOW MID at a quarter of the rate,
+     HIGH MID and HIGH at half (a boxcar; what folds down lands under the
+     skirts `own` allows for). A change of rate starts the filters empty.
+   - **Only the bus is listened to.** A DRUM pad's side (`Sides`, there
+     only while a panned pad sounds) takes the pairs of bands that cut,
+     and no others, with the bus's dips; a listened Part's side is not
+     touched and its side filters rest. A broadband gain on the side
+     would not null: the cut is a band's, and left and right must take
+     the same one.
+3. **The slow rule**, a band every other block in turn, for each member
+   `p`: `want = cap(AMOUNT, band) · max_q depth(q, p) · active(q) · own(q)
+   · active(p) · own(p) · threat_b(p, q)`.
+   - `active(L) = clamp((L + 66 dBFS) / 24, 0, 1)`; `depth` 2/3 one rank
+     apart, 1 two apart (BACK under FRONT), 0 otherwise.
+   - `own`: how much of a band is a member's own sound, not its other
+     bands' energy through this band's skirt (−8.6, −20.6, −32.6 dB one,
+     two, three bands away): its excess over the loudest skirt, full at
+     6 dB.
+   - `threat_b`: in LOW and LOW MID (`Band::muddy`) full to 12 dB under
+     `q` and some to 30 dB under (a quiet ringing tail still clouds);
+     above, full at `q`'s level and none from 12 dB under.
+   - FRONT is never cut; one role never cuts itself.
+4. **The kick's dip (owner).** In LOW a higher-role DRUM Part
+   (`PartKind::Drum`) presses only through a fast dip on its hits, never
+   slowly; the other bands keep the slow rule against every Part.
+   - The key is the DRUM Part's own LOW low-pass, so a snare barely keys
+     it: its power rises at once and falls with τ 20 ms; a hit is the key
+     within 6 dB of its recent peak (τ 0.5 s).
+   - The dip follows with τ 3 ms in and τ 100 ms out; the rule runs on the
+     blocks between the slow rule's (2.7 ms).
+   - **Dense kicks hold one dip.** Kicks whose onsets come closer than
+     150 ms hold the dip between them, for 1.5 of their gap past each
+     onset: 16ths at 170 BPM (88 ms) are one steady dip (0.5 dB peak to
+     peak at most; 1.4 dB of 11 Hz flutter without). Slower kicks each
+     dip and let go: quarter notes at 120 BPM are back under 5 % of the
+     dip before the next. Held, not a release scaled to the gap: a
+     release that slow would smear a sparse kick's dip into a duck.
+   - LOW plays the deeper of its slow cut and the dip. Whole-mix pumping
+     is not this (#13).
+5. **AMOUNT is a curve (owner).** How deep BACK yields under FRONT (one
+   rank apart 2/3 of it), in one typed table, `dsp::smart::KNOTS`:
+
+   | AMOUNT | LOW, LOW MID | HIGH MID, HIGH | the kick's dip |
+   |---|---|---|---|
+   | 64, polite | 6 dB (4 one rank) | 6 (4) | 6 (4) |
+   | 95, DEEP, 75 % of the slider | 12 (8) | 6 (4) | 15 (10) |
+   | 127, OVER, provisional | 21 (14) | 9 (6) | 27 (18) |
+
+   A monotone cubic (Fritsch and Carlson) through the knots and 0, a
+   table by AMOUNT's code (`CAPS`): smooth, and more AMOUNT is never a
+   shallower cut. `CutDb` goes to 27 dB. OVER's numbers wait for the
+   owner's ear.
+   - **"Never audible as pumping" holds for the lower part of the range
+     only (owner's decision).** To about AMOUNT 64 the cuts are 4 to 6 dB
+     and move over seconds. Past it the kick's dip is 10 to 27 dB in
+     3 ms: heard, and meant to be.
+6. **Stacked bands sum to the cut asked.** The bands overlap (a neighbour
+   is 0.14 to 0.18 in phase at a centre, 0.34 a quarter turn off), so
+   four 6 dB dips summed raw reach −8.8 dB at 428 Hz. Each band's dip is
+   unmixed (`UNMIX`, the inverse of the bands' in-phase parts at the
+   centres, measured from the filters as they run): the sum is never more
+   than 0.15 dB deeper than the deepest cut asked, over every combination
+   to 21 dB, and within half a dB of each band's cut to about 6 dB.
+   - **Deeper, the bands' phase holds a centre up**: two adjacent bands
+     asked 21 dB reach 10 to 18 dB, and a band beside a deep cut can rise
+     0.7 dB. Parallel band-passes cannot do more.
+   - **The pages read what is heard**: the view carries each centre's
+     real cut (`heard`, the sum's size from the measured responses),
+     within 0.01 dB of the filters, never the cut asked. No readout
+     wraps: a byte a band at 1/8 dB reaches 31.9 dB.
+7. **Time.** Each slow cut follows its target at block rate, τ 0.5 s
+   deeper and τ 2 s shallower; under 0.01 dB it lands on 0. Each band's
+   dip is lerped across the block from the last block's.
+8. **The reverb's return is a member (owner).** It yields as a Part of
+   its role would (the slow rule and the kick's dip), and makes nothing
+   yield.
+   - Its bands run on the return itself, after the reverb plays and
+     before it joins pair 1 (`FxBus::process_washed`), so the tail
+     already ringing is carved and dipped. Left and right take the same
+     dips through the pairs that cut; it is heard as their sum,
+     decimated; at unity it is read, never written; a reverb at rest
+     (`Reverb::play` silent) is not run.
+   - **Where the sends are tapped (verified, `mix_sided`):** a Part's
+     three sends take its bus after its EQ and SMART EQ's cuts
+     (`Instrument::part_eq` runs before `mix_sided`), scaled by the send
+     and the expression pedal, before LEVEL and PAN, the bus only (never
+     a pad's side). So a Part cut by SMART EQ already feeds the reverb
+     cut; the return's own bands act on what the reverb makes of it.
+   - **Against REV › DUCK (ADR 0295):** DUCK is level-only and self-keyed:
+     the whole return turned down under its own input. This is per band
+     and keyed by the Parts that outrank the return. They stack; DUCK
+     follows in the chain when tester-04 merges.
+   - The delay's return is not a member: it is mono and would be half
+     the cost, but needs its own role, bill, state and column; left out,
+     for the owner to ask.
+9. **Off is free.** A member whose four dips are unity at both ends of a
    block is not written. With SMART EQ OFF or AMOUNT 0 the cuts release,
-   then the state rests and `PartEqs::any_live` is false; bank 1's stub
-   (`Instrument::part_eq`) then skips the door as before (it also checks
+   then the state rests and bank 1's stub skips the door (it also checks
    `SmartEq::listens`). All-zero bytes are the rest (ITCM's boot zeroing).
-7. **Bank 2, behind the Part EQ's door.** `part_eq::dsp::smart` is inside
-   the Part EQ's S4 group (`*7part_eq3dsp*`) and runs from `run_parts`, the
-   `EqDoor` entry, after LO CUT and TILT. No new door table. `PartsBlock`
-   carries the snapshot's `SmartEq`. A closed door rests it with the EQ.
-8. **State in ITCM** with the EQ: `PartEqs::smart` (`SmartState`) holds
-   each Part's band filters for bus and side, levels, cuts and last gains.
-9. **UI.**
-   - ROLE: MIXER › PRT › EQ cell C.
-   - MIXER › MST › LVL: SMART EQ (D) and AMOUNT (E) under VOL and PAN; its
-     band (no band before) draws each Part's four live cuts under its
-     number and role letter, the edited Part lit. Not a page of its own: a
-     new page id grows `FocusMemory` (a byte per id up to the largest), and
-     ids 119 → 120 overflowed D2 by 8 B on bench-algo (measured).
-   - PRT › EQ's band draws the Part's four live cuts as bars named LOW,
-     LOW MID, HIGH MID, HIGH, with the deepest in dB.
-   - Both through one UI door entry (`UiDoor::smart_eq`): bank 2 plans the
-     band (`ui::smart_eq::plan_in`: rectangles and short texts) and bank 1
-     draws the plan with the display's own `fill_rect` and `text_center`
-     (`ui::smart_view::paint`). Painting in bank 2 on ORBIT's `Ink` built
-     the draw helpers again for `Ink` in bank 1 on every set without ORBIT
-     (default +3,836 B, measured). The audio publishes the cuts once a
-     block (`part_eq::smart::SMART_VIEW`, six relaxed words). A closed door
-     draws nothing.
+10. **Billed (ADR 0124, 0262).** While SMART EQ's bands run (ON with an
+    AMOUNT, or still letting go: `bill::SmartLoad`), admission and
+    `recost` book them, in cycles a sample:
+    - on a Part's first voice, as its knobs are (ADR 0112): `LISTEN` 36
+      for a FRONT Part, `CUT` 84 for MID or BACK (whether or not anything
+      outranks it now), `SIDE` 60 more for a DRUM Part that can be cut;
+    - beside the bus, with the reverb TYPE's extra: `WASH_CUT` 160 for the
+      return (`WASH_LISTEN` 36 in FRONT; nothing with the reverb off).
+    - **The Part EQ (ADR 0284) is billed the same way now**: `TILT` 50 on
+      the first voice of a Part whose EQ is not flat, twice for a DRUM
+      Part.
+    Flat, off and at rest every bill is as before.
+11. **Bank 2, behind the Part EQ's door.** `part_eq::dsp::smart` is inside
+    the Part EQ's S4 group (`*7part_eq3dsp*`). The door's one entry takes
+    an `Ask`: the Parts' block, or the return's later in the block. No new
+    door table. A closed door rests it with the EQ.
+12. **State in ITCM** with the EQ (`PartEqs::smart`).
+13. **UI.**
+    - ROLE: MIXER › PRT › EQ cell C. Its band: the Part's four bands as
+      bars with the cut heard in dB (bars by the square root of the cut,
+      27 dB the whole box).
+    - MIXER › MST › LVL: SMART EQ (D), AMOUNT (E), REV ROLE (F) under VOL
+      and PAN; its band, each Part's four cuts and role letter and the
+      return's (`REV`). Not a page of its own (D2), and no free cell on
+      the REV pages (every one is its TYPE's panel's): REV ROLE can move
+      to REV › DUCK's page when tester-04 merges.
+    - Bank 2 plans the band (`ui::smart_eq::plan_in`, through
+      `UiDoor::smart_eq`); bank 1 draws the plan. A closed door draws
+      nothing.
 
 ## Measurements
 Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 b136ef37 against this
@@ -123,197 +194,198 @@ its set's measured change, never ADR 0198's slack:
 
 | Set | Bank 1 (B) | Bank 2 used (B) |
 |---|---:|---:|
-| default | +1,124 | +10,368 |
-| orbit | +1,156 | +10,368 |
-| bank2-gate | +1,132 | +10,368 |
-| orbit,usb-config-writer | +1,156 | |
-| fault-inject | +1,100 | |
-| bench-algo | +1,188 | |
-| bench-algo,master-tape | +1,244 | |
-| bench-routing, bench-memory, bench-stress | +1,188 | |
-| bench-orbit | +1,236 | |
-| bench-tape | +1,428 | |
-| filter-probes | +1,100 | |
+| default | +1,768 | +21,280 |
+| orbit | +1,880 | +21,344 |
+| bank2-gate | +1,760 | +21,280 |
+| orbit,usb-config-writer | +1,872 | |
+| fault-inject | +2,120 | |
+| bench-algo | +2,112 | |
+| bench-algo,master-tape | +2,064 | |
+| bench-routing | +2,200 | |
+| bench-memory | +2,392 | |
+| bench-stress | +2,248 | |
+| bench-orbit | +2,088 | |
+| bench-tape | +2,344 | |
+| filter-probes | +2,120 | |
 
-- Bank 1 on ORBIT (900,204 B, 0.4's line 899,048): `COMP_SPECS` +144 B and
-  `PART_SPECS` +72 B (three specs), the ROLE and SMART EQ/AMOUNT arms of
-  `get`/`write`/`enum_*` (`CompParams::write` +116 B; code, an exception
-  to ADR 0198 as ADR 0284's TILT/LO CUT arms are: the codec, load, save,
-  MIDI and the editor reach a setting only through them), the names
-  (FRONT/MID/BACK, OFF/ON), the renderer's arm and `smart_shown` (148 B)
-  with the plan's painter, and the stub's `SmartEq::listens` test.
-  - First draft: the band painted in bank 2 on ORBIT's `Ink` cost default
-    +3,836 B (the draw helpers built again for `Ink`); the plan brought it
-    to +1,124 B.
-  - A `core::fmt::Write` impl in bank 2 left its vtable in bank 1's
-    rodata, pointing into bank 2: `rust-objcopy -R .bank2` refused the
-    split. The plan pushes its bytes instead.
-  - First draft: MST › SMART EQ, page id 120, grew `FocusMemory` and
-    overflowed D2 by 8 B on bench-algo. SMART EQ and AMOUNT moved to MST ›
-    LVL.
-- Bank 2 on ORBIT: S4–S5 +10,368 B (`run_parts` with SMART EQ's three
-  inlined band loops, `ui::smart_eq`); S0–S3 unchanged at 8,096 B free
-  (0.4's own, under its 8 KB warning before this change); total free
-  489,216 B.
-- RAM: `PartEqs` (`PART_EQS`, ITCM) +744 B: 124 B a Part (four bands'
-  filters on bus and side, levels, cuts, gains, the kick's key, peak and
-  dip); ITCM 43,280 → 44,024 B
-  used on every set. `SMART_VIEW` 24 B in AXI. `PartParams` (20 B) and
-  `CompParams` (32 B) unchanged: the snapshots, the project and D2 do not
-  grow.
-- CPU, host (x86, release, `smart_eq_cost`, a loaded machine): six Parts,
-  four cutting, about 2.5–5 µs a 1.33 ms block (0.2–0.4 %).
-- CPU, unit, static (the final ORBIT ELF's `run_parts`, `tools/
-  loop_count.py`'s 1.606 cycles an instruction): a cutting Part's band
-  loops are 122 instructions for 4 samples a pair of bands, about 98
-  cycles a sample; a listening-only Part's are 83 instructions for 2
-  samples (LOW and LOW MID, with the kick's key) and 66 for 2 (HIGH MID
-  and HIGH), about 120 cycles a sample; the block's rule, slews and
-  followers about 25 cycles a sample spread. So 1–1.2 % of the CPU a
-  playing Part: four Parts (the teaser's: two FRONT kits listening, two
-  cut) about 4.5 %, six about 7 %. All four bands interleaved in one loop
-  spilled to the stack: 149 instructions for 2 samples, about 120 cycles
-  a sample a cutting Part. Levers if six Parts must sit under 5 %: listen
-  at half rate on Parts that only listen (FRONT), about half their cost.
-  Not yet read on the unit (no flash in this change); a ROUTING row sets
-  one Part, and SMART EQ needs several and the master.
-- Sound: every golden bit for bit (`just check`); OFF, and ON at AMOUNT 0,
-  render bit for bit on three Parts at once (`smart_eq_render_test`); with
-  every Part one role it listens and writes nothing.
+- Bank 1 on ORBIT (900,928 B): the three settings' specs and
+  `get`/`write`/`enum_*` arms (code, an exception to ADR 0198 as ADR
+  0284's are), the names, the bills (`bill::first_voice`, `bill::wash`,
+  admission's with the door open or closed), the stub's test and the
+  return's ask in `FxBus`, the renderer's arm and the plan's painter.
+- Bank 2 on ORBIT: S4–S5 +21,344 B (`answer` 10.0 KB with the Parts'
+  bands and the rules inlined, the return's pass 4.4 KB, the rate's
+  making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
+  478 KB. S0–S3 8,096 → 8,000 B free (the reverb's ROLE arms; under ADR
+  0251's 8 KB warning before this change).
+- RAM: ITCM +1,424 B (`PART_EQS`: seven members' filters, levels, cuts
+  and dips, the return's listening filters, the rate's coefficients):
+  44,704 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged.
+
+### CPU
+The ORBIT build's instruction counts (`tools/loop_count.py`'s 1.606 cycles
+an instruction), cycles a sample:
+
+| | Instructions a sample | Cycles a sample |
+|---|---:|---:|
+| A cut Part's four bands (86 + 82 for 4 samples) | 42.0 | 68 |
+| A listened Part's (81 for 16, 61 for 8) | 12.7 | 21 |
+| A cut DRUM Part's side (73 for 4, twice) | 36.5 | 59 |
+| The return, cut (its sum, its listening, left and right) | 91 | 146 |
+| The return, listened to | 18 | 29 |
+
+- Block-rate work (the rules, the levels, the dips, the cuts' steps):
+  not a loop to count. On the host its time is 0.24 of five cut Parts'
+  bands (`smart_eq_cost`): about 80 cycles a sample with six Parts.
+  Counting every instruction of every block-rate loop body each trip, an
+  over-count, gives 130.
+- **Worst case, six Parts** (one FRONT, five behind it cut in every
+  band): 5 × 68 + 21 + 80 = 441 cycles a sample, **4.4 % of rev V's
+  10,000, 5.3 % of rev Y's 8,333** (4.9 % and 5.9 % by the over-count).
+  The first build was 5 × 109 + 120 + 240, about 9 %.
+- With the reverb's return cut too: +146 + 10, 6.0 % (rev V).
+- A cut DRUM Part with a panned pad sounding: +59 each.
+- The teaser's four Parts (two kits FRONT, a bass and a lead cut, the
+  return cut): 2 × 21 + 2 × 68 + 55 + 156 = 389, 3.9 %.
+- **Against ADR 0262 and 0273.** All of it is billed, inside admission's
+  75 % share: the worst block stays where ADR 0262 put it, the share
+  plus the unbilled fixed overhead (160 a sample, and 230 a sounding
+  Part): 89 % of rev V's deadline with six Parts (569,700 of 640,000 cycles),
+  93.5 % of rev Y's (the same overhead in cycles on 533,333), under
+  ADR 0273's 95 % on both. Unbilled, SMART EQ would have put six Parts
+  at 93 to 95 % on rev V and past the net on rev Y. If a bill is under
+  its bands' real cost, the net sheds a voice and `load_sheds` counts it.
+- What the bills cost in voices: 84 a cut Part is about a tenth of a
+  7-voice Sound's voice; a full pool on four Parts with the return cut
+  gives up 372 cycles a sample of 7,500, up to one voice while SMART EQ
+  is on.
+- Not yet read on the unit (no flash in this change).
+
+### Sound
+- Every golden bit for bit (`just check`); OFF, and ON at AMOUNT 0,
+  render bit for bit on three Parts at once and on a Part feeding the
+  reverb (`smart_eq_render_test`); with every Part one role and nothing
+  sent to the reverb it listens and writes nothing.
 
 ## Tuning
-Measured before the kick's dip (Decision 4); the dip's own numbers, and
-the overlaps with it, follow in the next section.
+Measured on the 250 Hz – 2 kHz overlap (`smart_eq_ab::overlap`: over Hann
+frames of 4,096, each bin's smaller power of every pair where one role
+outranks the other, the Parts' buses after their EQ and SMART EQ at their
+LEVEL) and on the kick's transient over the bass in 40–120 Hz (each kick
+onset's next 43 ms, the kick's band energy over the bass's), SMART EQ off
+against AMOUNT 64, 95 and 127.
 
-The owner, on the pre-SMART EQ teaser renders: "still a little bit
-muddy", MODAL's long tails intruding most. Measured on the 250 Hz – 2 kHz
-overlap (`smart_eq_ab::overlap`: over Hann frames of 4,096, each bin's
-smaller power of every pair where one role outranks the other, the
-Parts' buses after their EQ and SMART EQ at their LEVEL), SMART EQ off
-against AMOUNT 64 and 127.
+**`just smart-eq-ab`.**
+- A MODAL pad (MID, MODAL's INIT) over a bass (FRONT): overlap −1.1, −2.2
+  and −3.1 dB; the pad's own 250 Hz – 2 kHz −1.7, −2.4, −2.9 dB, the bass
+  untouched. The pad's LOW MID cut reads 3.9, 7.9 and 13.8 dB at most and
+  holds through each ring (3.6–3.9, 7.0–7.9, 11.3–13.5 dB on each chord's
+  last beat).
+- A DRUM kit's kick on the beat (FRONT) over a held bass (MID): the
+  kick's transient is −1.7 dB against the bass off, +1.4, +2.5 and
+  +3.0 dB better on; the bass's LOW dip reads 3.9, 9.6 and 17.3 dB at
+  most, its 250 Hz – 2 kHz within 0.03 dB.
 
-**MODAL pad (MID, MODAL's INIT) over a bass (FRONT, ALGO's INIT)**, `just
-smart-eq-ab`: overlap −0.7 dB at 64, −1.5 dB at 127; the pad's own
-250 Hz – 2 kHz −1.1 / −1.9 dB, the bass untouched (with the kick's dip
-and `own(p)`, the final rule: −0.6 / −1.3 dB, the pad −1.0 / −1.9 dB). The pad's LOW MID cut
-reaches its cap (2.0 / 4.0 dB) on the strike and holds through the ring:
-1.8–2.0 dB (64) and 3.7–4.0 dB (127) on each chord's last beat.
+**The six teaser vignettes** (teaser-04's, the two kits FRONT, the bass
+MID, the lead or chords BACK, the reverb's return BACK), rendered through
+the host instrument at this branch. Overlap and the kick over the bass,
+against off:
 
-**The six teaser vignettes** (teaser-04, the kits FRONT, the bass MID,
-the lead or chords BACK; NYLON in breaks is MODAL), the overlap and each
-lower Part's own 250 Hz – 2 kHz:
+| Vignette | Kick over bass, off | 64: overlap · kick | 95 (DEEP) | 127 (OVER) |
+|---|---|---|---|---|
+| electro (01) | 12.0 dB | −1.6 · +0.7 dB | −2.6 · +1.2 | −3.7 · +1.6 |
+| breaks (02, MODAL NYLON) | 6.4 dB | −1.0 · +0.7 | −2.0 · +1.3 | −3.1 · +1.8 |
+| glitch | 9.7 dB | −1.0 · +1.6 | −1.6 · +2.9 | −2.6 · +3.5 |
+| dub (04) | 5.9 dB | −0.1 · +1.8 | −0.1 · +3.1 | −0.2 · +3.9 |
+| triphop | 7.1 dB | −1.2 · +0.9 | −2.1 · +1.6 | −3.1 · +1.9 |
+| garage | 4.2 dB | −1.4 · +1.2 | −2.0 · +2.1 | −3.0 · +2.6 |
 
-| Vignette | AMOUNT 64: overlap · bass · top | AMOUNT 127 |
-|---|---|---|
-| electro | −1.2 · −1.3 · −2.6 dB | −2.3 · −2.4 · −5.0 dB |
-| breaks (MODAL NYLON) | −1.4 · −1.1 · −2.0 dB | −2.7 · −2.1 · −3.8 dB |
-| glitch | −0.9 · −1.3 · −1.9 dB | −1.7 · −2.6 · −3.8 dB |
-| dub | −0.3 · −0.5 · −0.6 dB | −0.6 · −0.9 · −1.1 dB |
-| triphop | −1.2 · −1.4 · −1.4 dB | −2.3 · −2.7 · −2.5 dB |
-| garage | −0.5 · −1.1 · −1.6 dB | −1.0 · −2.1 · −3.1 dB |
-
-- In breaks at 64 the NYLON chords hold 2.9 dB (mean, of a 3.0 dB cap)
-  in LOW and 1.9 dB in LOW MID; the first draft's rule held 2.1 and 2.3
-  dB of 3.0 with an overlap of −1.3 dB.
-- The kits (FRONT) are never cut. Mean and most cut sit close (breaks'
-  chords LOW 2.91 / 3.03 dB): the cuts hold through the bar rather than
-  breathing with each hit (attack 0.5 s against beats of 0.4–0.7 s).
-- The mix is 0.3–0.8 LUFS quieter at 64 and the limiter does 0.2–0.7 dB
-  less: less of the mix sits on top of itself.
-- dub's overlap moves least: its sub is under 100 Hz and its chords sit
-  above the mud; garage's sub likewise.
-- A sub bass as MID under the kick yields its LOW steadily (2.0 dB at 64):
-  a sub that should keep its weight belongs in FRONT with the kits. The
+- **The reverb's return** (mean / most cut heard, LOW MID, where the wash
+  sits): triphop 2.5/3.1 dB at 64, 4.6/5.6 at 95, 7.4/9.6 at 127; breaks
+  3.6/5.5, 7.0/10.8, 11.2/16.1; garage 2.6/4.3, 5.2/8.5, 8.5/13.6. In dub
+  the kick dips its LOW by up to 4.6, 11.6 and 20.5 dB.
+- **breaks' NYLON chords** (MODAL, BACK): LOW MID 3.5/5.4 dB at 64,
+  7.0/10.6 at 95, 11.5/17.4 at 127.
+- The mix is 0.3–1.6 LUFS quieter at 64 (0.4–2.0 at 95, 0.6–2.6 at 127)
+  and the limiter does up to 2.3 dB less: less of the mix sits on top of
+  itself.
+- dub's overlap barely moves: its sub is under 100 Hz and its chords sit
+  above the mud; there the kick's dip does the work (+1.8 to +3.9 dB).
+- The bills are heard too: with SMART EQ on a full pool gives up a voice
+  (electro's notes that found every voice busy went from 12 to 3: fewer
+  are admitted). And the Part EQ's bill is new with it off: these renders'
+  off takes are not the pre-SMART EQ renders' voice for voice.
+- A sub bass as MID under the kick dips on every kick (3.9 dB at 64): a
+  sub that should keep its weight belongs in FRONT with the kits. The
   teaser agent's call per vignette.
-- The cut is capped (4 dB one rank, 6 dB two, × AMOUNT): that, not the
-  detector, now bounds how far the mud drops. A deeper mud cap is the
-  owner's call (open question).
-
-## The kick's dip, measured
-`just smart-eq-ab`'s second case: a DRUM kit's INIT kick on every beat
-(FRONT) over ALGO's INIT bass held at A1 (MID). The kick's transient over
-the bass in 40–120 Hz (each onset's next 43 ms, the kick's band energy
-over the bass's): −1.7 dB off, +0.8 dB better at AMOUNT 64 and +1.5 dB at
-127; the bass's LOW dip 2.0 / 3.9 dB at most; its 250 Hz – 2 kHz −0.07 /
-−0.12 dB (its upper harmonics left).
-
-The teaser vignettes, the kick-and-snare kit's transient over the bass in
-40–120 Hz (off) and its gain, and the 250 Hz – 2 kHz overlap, at AMOUNT 64
-and 127:
-
-| Vignette | Kick over bass, off | 64: kick · overlap | 127: kick · overlap |
-|---|---|---|---|
-| electro | 12.0 dB | +0.5 · −0.9 dB | +0.8 · −1.6 dB |
-| breaks | 6.3 dB | +0.4 · −1.0 dB | +0.8 · −1.9 dB |
-| glitch | 9.7 dB | +1.0 · −0.6 dB | +1.7 · −1.1 dB |
-| dub | 5.9 dB | +0.9 · −0.1 dB | +1.7 · −0.1 dB |
-| triphop | 7.3 dB | +0.5 · −0.7 dB | +0.9 · −1.3 dB |
-| garage | 4.2 dB | +0.6 · −0.3 dB | +1.0 · −0.6 dB |
-
-- The dip, not a duck: a sine bass under a 4/4 kick with a snare on the
-  off-beats (`smart_eq_dsp_test`) dips more than 3 dB within 30 ms of
-  each kick, over half of it by 10 ms, under 30 % of it by 240 ms, and
-  the snares do not dip it again; above 2 kHz the dipped bass is within
-  1.1 dB of the plain bass's filter residue (−83 dB): no click.
-- The overlap drops less than with the slow rule alone (breaks −1.0
-  against −1.4 dB at 64): in LOW the kit now presses only on its hits.
-  NYLON's mean LOW cut under the kit went 2.9 → 0.8 dB; LOW MID, where
-  most of 250 Hz – 2 kHz lives, is as before (1.9 dB). If the owner
-  wants both, a steady LOW carve plus the hits' dip, LOW would play the
-  slow cut plus the dip (open question).
-- `own(p)` joined the rule with the dip: a lower Part masks only with its
-  own sound in a band, not a skirt's (a 55 Hz sine bass's LOW MID skirt
-  met a snare and took 0.3 dB). The bass's HIGH cuts in the vignettes
-  went to 0 with it.
 
 ## Alternatives considered
-- **A separate 8-band filterbank.** Eight more band filters a Part a
-  sample, and eight answers folded into four decisions, since only four
-  bands can cut.
-- **A small FFT.** 64 points cannot resolve LOW (750 Hz bins); 1,024
-  points need 24 KB of frames for six Parts and a frame's delay.
-- **Bands in series.** Each band would hear the cuts before it; parallel
-  bands hear the same pre-cut signal: feed-forward, no loop.
+- **A separate 8-band filterbank, or a small FFT.** Eight more filters a
+  Part for answers folded into four decisions; 64 points cannot resolve
+  LOW, 1,024 need 24 KB of frames and a frame's delay.
+- **Cascaded bells (a graphic EQ's, with its interaction solve).** They
+  reach any depth cleanly, where parallel band-passes stop near 12 dB
+  (Decision 6). About 20 cycles a sample more a cut Part (their
+  coefficients move with the gain and must be lerped), and the bands
+  could no longer be heard through. The path if OVER must truly reach
+  21 dB: for the owner, after the OVER render.
+- **Half-rate cut bands.** Their images are 40 dB under the source near
+  20 kHz: not for an instrument sold on its sound.
+- **A broadband gain on a pad's side.** Does not null against a band's
+  cut.
+- **The kick's release scaled to the gap between hits.** Smears sparse
+  kicks; a hold only acts where hits outrun the release.
+- **Cutting the reverb's send, not its return.** A third of the cost (the
+  send is mono), but the tail already in the tank would not be carved,
+  and the kick could not dip it.
+- **Billing a fixed reserve whenever SMART EQ is on.** Costs a voice with
+  one Part playing; by Part, each pays for its own bands.
 - **Balancing within a role, as smart:EQ 4's layers.** A role is a
   promise: two FRONT Parts stay as mixed.
-- **One threat span in every band, the first draft.** A NYLON chord's
-  ring under the breaks vignette's kit fell out of reach within a beat
-  and its LOW MID cut eased while it still rang; the owner heard mud.
-- **A level followed by peaks (τ 60 ms both ways), the first draft.** A
-  tail between strikes read as gone.
-- **A KICK RELEASE control.** One value covers the owner's range and the
-  tempos played; a control only if a unit test by ear asks for it.
-- **Keying the dip from the kit's whole LOW band.** Its 50–200 Hz skirt
-  hears a snare's body; LOW's low-pass does not.
-- **Summing every higher Part's pressure.** Unbounded with more Parts; the
-  max keeps 6 dB the most.
 - **A learned, static curve (smart:EQ 4).** A synth's Parts change by the
   bar, and there is no learn button; it listens all the time, slowly.
-- **A new S4 door table.** The Part EQ's door already reaches the same
-  buses at the same point; one EQ a Part (ADR 0284 § 9).
-- **ROLE on PRT itself.** Its six cells are full; EQ is PRT's sub-page and
-  the role only drives the EQ.
-- **MST › SMART EQ, a page of its own.** Clearer, but a new page id grows
-  `FocusMemory` past D2 on bench-algo (8 B, measured).
-- **Painting in bank 2 on ORBIT's `Ink`.** Builds the draw helpers a
-  second time in bank 1 wherever ORBIT is off (+3.8 KB on default).
-- **AMOUNT as a float.** 4 B more in `CompParams` (32 → 36), × 3 snapshots;
-  a 7-bit code in the padding costs nothing.
+- **A KICK RELEASE control.** One value and the hold cover what is
+  played; a control only if a unit test by ear asks for it.
+- **Keying the dip from the kit's whole LOW band.** Its skirt hears a
+  snare's body; LOW's low-pass does not.
+- **A new S4 door table, or a second entry.** The EQ's door already
+  reaches the buses; a second entry outgrows the table's stride on a
+  host, an `Ask` does not.
+- **ROLE on PRT itself; MST › SMART EQ, a page of its own.** PRT's cells
+  are full; a new page id grows `FocusMemory` past D2 on bench-algo.
+- **Painting in bank 2 on ORBIT's `Ink`; `core::fmt` there.** The draw
+  helpers built twice (+3.8 KB of bank 1); a `Write` vtable in bank 1
+  pointing into bank 2.
 
 ## Consequences
-- Every Part has a ROLE and the master SMART EQ and AMOUNT, saved with the
-  project; old projects load MID and OFF and play bit for bit.
-- With SMART EQ on, cost scales with the Parts that play, not voices.
+- Every Part and the reverb's return have a role, and the master SMART EQ
+  and AMOUNT, saved with the project; old projects load MID, BACK and OFF
+  and play bit for bit.
+- With SMART EQ on, a Part's first voice and the reverb cost more of the
+  budget; a full pool plays a voice fewer.
+- A Part's EQ (TILT, LO CUT) is billed now: a Part with its EQ off flat
+  pays 50 cycles a sample on its first voice.
+- Past about AMOUNT 64 the kick's dip is audible by design, and past
+  about 12 dB the bands cut less than asked; the pages read what is
+  heard.
 - The four bands are fixed: no user control of their place or width.
+- Open: tester-04 merges first (its PRT meters share PRT › EQ's band, and
+  `UiDoor` is then 32 of 32 words): the merge keeps both.
 - A docs page (annotated screenshots) is owed for PRT › EQ and MST › LVL.
 
 ## Sources
-- #396; owner's design 2026-11-19; spec
-  `docs/superpowers/specs/2026-11-19-smart-eq-design.md`, plan
-  `docs/superpowers/plans/2026-11-19-smart-eq.md`.
+- #396; owner's design and decisions 2026-11-19; the review of
+  2026-11-19; spec `docs/superpowers/specs/2026-11-19-smart-eq-design.md`,
+  plan `docs/superpowers/plans/2026-11-19-smart-eq.md`.
 - Perez Gonzalez and Reiss, DAFx-08 (selective minimization of masking);
   Pestana and Reiss, DAFx-14 (cross-adaptive spectral panning); Hafezi and
-  Reiss, JAES 2015 (abstract); Zavalishin, *The Art of VA Filter Design*
-  (TPT SVF).
+  Reiss, JAES 2015 (abstract); Zavalishin, *The Art of VA Filter Design*;
+  Chamberlin, *Musical Applications of Microprocessors* (the
+  state-variable filter); Bristow-Johnson, the Audio EQ Cookbook (the
+  band-pass); Fritsch and Carlson, "Monotone piecewise cubic
+  interpolation", SIAM J. Numer. Anal. 17 (1980); Välimäki and Liski,
+  "Accurate cascade graphic equalizer", IEEE SPL 24 (2017) (the
+  alternative, unread beyond its abstract).
 - sonible smart:EQ 4 manual (groups, layers, impact): UX precedent only.
-- ADR 0198, 0217, 0251, 0266, 0272, 0283, 0284, 0286, 0293.
+- ADR 0112, 0124, 0198, 0217, 0251, 0262, 0266, 0272, 0273, 0283, 0284,
+  0286, 0293, 0295.
