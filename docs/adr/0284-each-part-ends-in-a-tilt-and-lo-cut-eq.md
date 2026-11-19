@@ -1,6 +1,6 @@
 # 0284. End each Part's channel in a TILT and LO CUT EQ, in the project's mix
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** owner (design approved 2026-11-18, #342), firmware
 
 ## Context
