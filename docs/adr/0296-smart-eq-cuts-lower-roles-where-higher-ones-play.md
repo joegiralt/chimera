@@ -163,17 +163,20 @@ its set's measured change, never ADR 0198's slack:
   grow.
 - CPU, host (x86, release, `smart_eq_cost`, a loaded machine): six Parts,
   four cutting, about 2.5–5 µs a 1.33 ms block (0.2–0.4 %).
-- CPU, unit, static (the ORBIT ELF's `run_parts`, `tools/loop_count.py`'s
-  1.606 cycles an instruction): the cutting pair loop is 122 instructions
-  for 4 samples, 49 cycles a sample a pair, so about 98 cycles a sample a
-  Part cutting; the listening-only pair loop 67 instructions for 2
-  samples, about 108 cycles a sample a Part; the block's rule and slews
-  about 25 cycles a sample spread. So about 1 % of the CPU a playing Part:
-  four Parts (the teaser's) about 4.2 %, six about 6.5 %. Interleaving
-  all four bands in one loop spilled to the stack: 149 instructions for 2
-  samples, about 120 cycles a sample a Part. Not yet read on the unit (no
-  flash in this change); a ROUTING row sets one Part, and SMART EQ needs
-  several and the master.
+- CPU, unit, static (the final ORBIT ELF's `run_parts`, `tools/
+  loop_count.py`'s 1.606 cycles an instruction): a cutting Part's band
+  loops are 122 instructions for 4 samples a pair of bands, about 98
+  cycles a sample; a listening-only Part's are 83 instructions for 2
+  samples (LOW and LOW MID, with the kick's key) and 66 for 2 (HIGH MID
+  and HIGH), about 120 cycles a sample; the block's rule, slews and
+  followers about 25 cycles a sample spread. So 1–1.2 % of the CPU a
+  playing Part: four Parts (the teaser's: two FRONT kits listening, two
+  cut) about 4.5 %, six about 7 %. All four bands interleaved in one loop
+  spilled to the stack: 149 instructions for 2 samples, about 120 cycles
+  a sample a cutting Part. Levers if six Parts must sit under 5 %: listen
+  at half rate on Parts that only listen (FRONT), about half their cost.
+  Not yet read on the unit (no flash in this change); a ROUTING row sets
+  one Part, and SMART EQ needs several and the master.
 - Sound: every golden bit for bit (`just check`); OFF, and ON at AMOUNT 0,
   render bit for bit on three Parts at once (`smart_eq_render_test`); with
   every Part one role it listens and writes nothing.
