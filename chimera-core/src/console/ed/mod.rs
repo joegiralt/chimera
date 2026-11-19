@@ -14,6 +14,7 @@ use chimera_engine::params::EngineType;
 mod addr;
 mod describe;
 mod edits;
+mod exact;
 mod pages;
 mod since;
 mod value;

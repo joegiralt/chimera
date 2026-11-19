@@ -185,7 +185,9 @@ pub(super) fn get(addr: EdAddr, ui: &UiState, w: &mut dyn Write) -> Option<fmt::
     Some(line(addr, norm, stored, text.as_str(), w))
 }
 
-/// `val <addr> <normalized> <stored> "<text>"`, newline-ended.
+/// `val <addr> <normalized> <stored> "<text>"`, newline-ended. The stored
+/// value reads back as itself (`exact::stored`, #1035); the normalized
+/// one, a display's place, keeps `num`'s seven decimals.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.line"))]
 pub(super) fn line(
     a: EdAddr,
@@ -197,6 +199,6 @@ pub(super) fn line(
     write!(w, "val {a} ")?;
     num(w, norm)?;
     w.write_char(' ')?;
-    num(w, stored)?;
+    super::exact::stored(w, stored)?;
     writeln!(w, " \"{text}\"")
 }
