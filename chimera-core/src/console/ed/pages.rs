@@ -1,6 +1,6 @@
 //! The pages `ed` walks for a schema: its shared pages first, then each
-//! round's (each pad's on DRUM, each Part's on the mixer and SETTINGS:
-//! ADR 0285, 0289).
+//! round's (each pad's on DRUM, each Part's on the mixer and SETTINGS,
+//! each ring's on ORBIT: ADR 0285, 0289).
 //! One walk, `Pages`, for `describe`, `get`, `set` and `since`, so they
 //! can't disagree on what a page is. Its counts are `const`: the page
 //! number is a `u8` by a compile-time check, never a silent cast.
@@ -10,6 +10,7 @@ use crate::dsp::drum::types::PadId;
 use crate::params::EngineType;
 use crate::project::PartId;
 use crate::ui::block_def::{BlockDef, ChainDef2};
+use chimera_engine::orbit::RingIdx;
 
 /// The chain the editor walks for `engine`.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.chain"))]
@@ -56,7 +57,7 @@ const fn counts(s: Schema) -> (usize, usize) {
         Schema::Matrix(_) => return (1, 0),
         // MIDI MAP's grammar, with the map's code only.
         Schema::Map => return (cfg!(feature = "midi-map") as usize, 0),
-        Schema::Engine(_) | Schema::Mixer | Schema::Settings => {}
+        Schema::Engine(_) | Schema::Mixer | Schema::Settings | Schema::Orbit => {}
     }
     let (mut shared, mut round) = (0, 0);
     let mut n = 0;
@@ -71,13 +72,15 @@ const fn counts(s: Schema) -> (usize, usize) {
     (shared, round)
 }
 
-/// How many rounds a schema's round pages go: each pad, each Part.
+/// How many rounds a schema's round pages go: each pad, each Part, each
+/// ring.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.rounds_of"))]
 const fn rounds_of(k: RoundKind) -> usize {
     match k {
         RoundKind::None => 0,
         RoundKind::Pads => PadId::ALL.len(),
         RoundKind::Parts => PartId::ALL.len(),
+        RoundKind::Rings => RingIdx::ALL.len(),
     }
 }
 
@@ -120,6 +123,7 @@ fn round_at(k: RoundKind, i: usize) -> Option<Round> {
         RoundKind::None => None,
         RoundKind::Pads => PadId::ALL.get(i).map(|&p| Round::Pad(p)),
         RoundKind::Parts => PartId::ALL.get(i).map(|&p| Round::Part(p)),
+        RoundKind::Rings => RingIdx::ALL.get(i).map(|&r| Round::Ring(r)),
     }
 }
 

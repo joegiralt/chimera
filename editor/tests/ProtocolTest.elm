@@ -2,8 +2,10 @@ module ProtocolTest exposing (suite)
 
 import Addr
 import Expect
+import Fixture
 import FixtureData
-import Protocol exposing (AddInput(..), AnswerLine(..), Cell(..), Command(..), Edits(..), Flags, Health(..), Kind(..), Learn(..), Line(..), MapCommand(..), MapForm(..), MapInput(..), MapKind(..), MapRow(..), OnOff(..), OverEdits(..), ProjectFile(..), RouteKind(..), RouteTo(..), RowIndex, RowSetting(..), RowStatus(..), Scale(..), SchemaId(..), SoundStatus(..), SpanPlace, Value(..), encode, optIndex, parse)
+import Protocol exposing (ActCell(..), AddInput(..), AnswerLine(..), Cell(..), Clock(..), Command(..), Edits(..), Flags, Health(..), Kind(..), Learn(..), Line(..), MapCommand(..), MapForm(..), MapInput(..), MapKind(..), MapRow(..), NotePool, OnOff(..), OrbitCommand(..), OverEdits(..), Playback(..), ProjectFile(..), RouteKind(..), RouteTo(..), RowIndex, RowSetting(..), RowStatus(..), SaveInto(..), Scale(..), SchemaId(..), SlotState(..), SoundStatus(..), SpanPlace, Value(..), encode, optIndex, parse)
+import Schema
 import Test exposing (Test, describe, test)
 import Unit
 import Wire exposing (addr, page)
@@ -56,7 +58,7 @@ suite =
                             Expect.fail "not a schema line"
             , p "schema with a short hash" "schema MIXER 31 00ff" Unknown
             , p "schema with an upper-case hash" "schema MIXER 31 00FF00FF00FF00FF" Unknown
-            , p "schema of an unknown schema" "schema ORBIT 19 00ff00ff00ff00ff" Unknown
+            , p "schema of an unknown schema" "schema PADS 19 00ff00ff00ff00ff" Unknown
             , p "mixer" "mixer" (Answer MixerIs)
             , p "panel reverb" "panel REVERB HALL" (Answer (Panel { name = "REVERB", variant = "HALL" }))
             , p "bad scale" "param A.B \"L\" cont log 0 1 1 0" Unknown
@@ -323,6 +325,157 @@ suite =
                     ]
                         |> Expect.equal (List.repeat 9 True)
             ]
+        , describe "ORBIT (slice 5)"
+            [ test "schema ORBIT" <|
+                \_ ->
+                    case parse "schema ORBIT 19 0123456789abcdef" of
+                        Answer (SchemaIs r) ->
+                            Expect.equal ( r.schema, r.pages ) ( OrbitSchema, 19 )
+
+                        _ ->
+                            Expect.fail "not a schema line"
+            , test "a build without ORBIT has no ORBIT pages" <|
+                \_ ->
+                    case parse "schema ORBIT 0 0123456789abcdef" of
+                        Answer (SchemaIs r) ->
+                            Expect.equal ( r.schema, r.pages ) ( OrbitSchema, 0 )
+
+                        _ ->
+                            Expect.fail "not a schema line"
+            , test "ORBIT's token" <| \_ -> Expect.equal ( Just "ed schema ORBIT", Just "ed describe ORBIT 18" ) ( encode (AskSchema OrbitSchema), encode (Describe OrbitSchema (page 18)) )
+            , p "act" "act \"IN SCALE\" SET" (Answer (Act { label = "IN SCALE", cell = ActSet }))
+            , test "every act cell" <|
+                \_ ->
+                    [ "RING", "SCENE", "SAVE", "SWITCH", "DEGREE", "PLAY", "CURSOR", "SET", "NOTE", "LEARN", "CLEAR" ]
+                        |> List.map (\c -> parse ("act \"X\" " ++ c))
+                        |> Expect.equal
+                            (List.map (\c -> Answer (Act { label = "X", cell = c }))
+                                [ ActRing, ActScene, ActSave, ActSwitch, ActDegree, ActPlay, ActCursor, ActSet, ActNote, ActLearn, ActClear ]
+                            )
+            , p "an act of no cell" "act \"X\" BOUNCE" Unknown
+            , p "an act with no label" "act RING" Unknown
+            , test "every line of the unit's ORBIT schema is understood" <|
+                \_ ->
+                    FixtureData.orbit
+                        |> List.filter (parse >> isUnknown)
+                        |> Expect.equal []
+            , test "the ORBIT schema's pages, in order" <|
+                \_ ->
+                    Expect.equal
+                        ( Schema.pageCount Fixture.orbit
+                        , Schema.pages Fixture.orbit |> List.map (.label >> Protocol.pageLabel)
+                        )
+                        ( Just 19
+                        , [ "ORB", "CUSTOM", "CHRD", "SCN" ]
+                            ++ List.concatMap (\k -> List.map (\s -> "RING" ++ String.fromInt k ++ "_" ++ s) [ "RHYTHM", "VOICE", "NOTES" ]) (List.range 1 5)
+                        )
+            , test "the ORBIT schema's acts, each on its page" <|
+                \_ ->
+                    Schema.pages Fixture.orbit
+                        |> List.map (.acts >> List.map .cell)
+                        |> Expect.equal
+                            ([ [ ActRing, ActScene ], [ ActCursor, ActSet ], [ ActDegree, ActPlay ], [ ActScene, ActSave, ActSwitch ] ]
+                                ++ List.concat (List.repeat 5 [ [], [], [ ActLearn, ActClear, ActNote ] ])
+                            )
+            , test "the ORBIT schema's acts keep their labels" <|
+                \_ ->
+                    Schema.pages Fixture.orbit
+                        |> List.take 2
+                        |> List.concatMap (.acts >> List.map .label)
+                        |> Expect.equal [ "RING", "SCENE", "NOTE", "IN SCALE" ]
+            , test "the ORBIT schema's addresses" <|
+                \_ ->
+                    [ "ORBIT.KEY", "ORBIT.SCALE", "ORBIT.BARS", "ORBIT.SEGS", "TEMPO.BPM", "RING1.STEPS", "RING5.TARGET" ]
+                        |> List.map (\a -> Schema.param (addr a) Fixture.orbit |> Maybe.map (.addr >> Addr.key))
+                        |> Expect.equal (List.map Just [ "ORBIT.KEY", "ORBIT.SCALE", "ORBIT.BARS", "ORBIT.SEGS", "TEMPO.BPM", "RING1.STEPS", "RING5.TARGET" ])
+            , p "orbit" "orbit" (Answer OrbitIs)
+            , pm "song" "song playing clock INT scene 3 queued 5 edited yes" (Maybe.map2 (\s q -> Answer (SongIs { playback = Playing, clock = ClockInt, scene = s, queued = Just q, edits = Edited })) (Protocol.sceneNo 3) (Protocol.sceneNo 5))
+            , pm "song stopped, nothing queued" "song stopped clock EXT scene 8 queued - edited no" (Protocol.sceneNo 8 |> Maybe.map (\s -> Answer (SongIs { playback = Stopped, clock = ClockExt, scene = s, queued = Nothing, edits = Clean })))
+            , test "songs the unit never writes" <|
+                \_ ->
+                    [ "song playing clock INT scene 0 queued - edited no"
+                    , "song playing clock INT scene 9 queued - edited no"
+                    , "song playing clock INT scene 1 queued 9 edited no"
+                    , "song paused clock INT scene 1 queued - edited no"
+                    , "song playing clock MIDI scene 1 queued - edited no"
+                    , "song playing clock INT scene 1 queued - edited maybe"
+                    , "song playing clock INT scene 1 edited no"
+                    ]
+                        |> List.map (parse >> isUnknown)
+                        |> Expect.equal (List.repeat 7 True)
+            , pm "slot" "slot 2 saved rev 7" (Maybe.map2 (\s r -> Answer (SlotIs { slot = s, state = SlotSaved, rev = r })) (Protocol.sceneNo 2) (Protocol.rev 7))
+            , pm "slot neutral" "slot 8 neutral rev 65535" (Maybe.map2 (\s r -> Answer (SlotIs { slot = s, state = SlotNeutral, rev = r })) (Protocol.sceneNo 8) (Protocol.rev 65535))
+            , test "slots the unit never writes" <|
+                \_ ->
+                    [ "slot 0 saved rev 1", "slot 9 saved rev 1", "slot 1 saved rev 65536", "slot 1 empty rev 1", "slot 1 saved 1" ]
+                        |> List.map (parse >> isUnknown)
+                        |> Expect.equal (List.repeat 5 True)
+            , pm "chord" "chord 8 12" (Maybe.map2 (\s d -> Answer (ChordIs s d)) (Protocol.segment 8) (Protocol.degree 12))
+            , test "chords the unit never writes" <|
+                \_ ->
+                    [ "chord 0 1", "chord 9 1", "chord 1 0", "chord 1 13", "chord 1 V" ]
+                        |> List.map (parse >> isUnknown)
+                        |> Expect.equal (List.repeat 5 True)
+            , pm "scale" "scale 2741" (Protocol.scaleMask 2741 |> Maybe.map (ScaleIs >> Answer))
+            , test "scales the unit never writes" <|
+                \_ ->
+                    [ "scale 0", "scale 2740", "scale 4096", "scale -1", "scale" ]
+                        |> List.map (parse >> isUnknown)
+                        |> Expect.equal (List.repeat 5 True)
+            , pm "step" "step 5 32 127" (Maybe.map3 (\r i n -> Answer (StepIs r i n)) (Protocol.ringNo 5) (Protocol.stepNo 32) (Protocol.note 127))
+            , test "steps the unit never writes" <|
+                \_ ->
+                    [ "step 0 1 60", "step 6 1 60", "step 1 0 60", "step 1 33 60", "step 1 1 128", "step 1 1" ]
+                        |> List.map (parse >> isUnknown)
+                        |> Expect.equal (List.repeat 6 True)
+            , pm "pool" "pool 2 60 64 67" (Maybe.map2 (\r ns -> Answer (PoolIs r ns)) (Protocol.ringNo 2) (pool [ 60, 64, 67 ]))
+            , pm "a pool of eight" "pool 1 0 1 2 3 4 5 6 127" (Maybe.map2 (\r ns -> Answer (PoolIs r ns)) (Protocol.ringNo 1) (pool [ 0, 1, 2, 3, 4, 5, 6, 127 ]))
+            , test "pools the unit never writes" <|
+                \_ ->
+                    [ "pool 1", "pool 1 1 2 3 4 5 6 7 8 9", "pool 1 128", "pool 6 60", "pool 0 60" ]
+                        |> List.map (parse >> isUnknown)
+                        |> Expect.equal (List.repeat 5 True)
+            , p "ORBIT's values are vals" "val RING3.HITS 0.25 8 \"8\"" (Answer (Val { addr = addr "RING3.HITS", norm = 0.25, stored = 8, text = "8" }))
+            , test "play and stop" <| \_ -> Expect.equal [ Just "ed orbit play", Just "ed orbit stop" ] (List.map (OrbitCmd >> encode) [ PlaySong, StopSong ])
+            , pe "queue" "ed scene queue 4" (Protocol.sceneNo 4 |> Maybe.map (QueueScene >> OrbitCmd))
+            , pe "save into a neutral slot" "ed scene save 2" (Protocol.sceneNo 2 |> Maybe.map (\n -> OrbitCmd (SaveScene n IntoNeutral)))
+            , pe "save over a saved slot" "ed scene save 2 over 7" (Maybe.map2 (\n r -> OrbitCmd (SaveScene n (Over r))) (Protocol.sceneNo 2) (Protocol.rev 7))
+            , pe "clear" "ed scene clear 3 12" (Maybe.map2 (\n r -> OrbitCmd (ClearScene n r)) (Protocol.sceneNo 3) (Protocol.rev 12))
+            , pe "reload" "ed scene reload 3 0" (Maybe.map2 (\n r -> OrbitCmd (ReloadScene n r)) (Protocol.sceneNo 3) (Protocol.rev 0))
+            , pe "move" "ed scene move 1 4 9 65535" (Maybe.map4 (\a b ra rb -> Protocol.sceneMove ( a, ra ) ( b, rb ) |> Maybe.map (MoveScene >> OrbitCmd)) (Protocol.sceneNo 1) (Protocol.sceneNo 4) (Protocol.rev 9) (Protocol.rev 65535) |> Maybe.andThen identity)
+            , test "a scene moves only to another slot" <|
+                \_ ->
+                    Expect.equal (Just Nothing) (Maybe.map2 (\a r -> Protocol.sceneMove ( a, r ) ( a, r )) (Protocol.sceneNo 3) (Protocol.rev 1))
+            , pe "ed chord" "ed chord 8 12" (Maybe.map2 (\s d -> OrbitCmd (SetChord s d)) (Protocol.segment 8) (Protocol.degree 12))
+            , pe "ed scale" "ed scale 2741" (Protocol.scaleMask 2741 |> Maybe.map (SetScale >> OrbitCmd))
+            , pe "ed step" "ed step 2 16 60" (Maybe.map3 (\r i n -> OrbitCmd (SetStep r i n)) (Protocol.ringNo 2) (Protocol.stepNo 16) (Protocol.note 60))
+            , pe "ed pool" "ed pool 5 60 64 67" (Maybe.map2 (\r ns -> OrbitCmd (SetPool r ns)) (Protocol.ringNo 5) (pool [ 60, 64, 67 ]))
+            , test "ORBIT's numbers' ranges" <|
+                \_ ->
+                    [ Protocol.sceneNo 0 == Nothing
+                    , Protocol.sceneNo 9 == Nothing
+                    , Protocol.rev -1 == Nothing
+                    , Protocol.rev 65536 == Nothing
+                    , Protocol.segment 0 == Nothing
+                    , Protocol.segment 9 == Nothing
+                    , Protocol.degree 0 == Nothing
+                    , Protocol.degree 13 == Nothing
+                    , Protocol.scaleMask 0 == Nothing
+                    , Protocol.scaleMask 2 == Nothing
+                    , Protocol.scaleMask 4096 == Nothing
+                    , Protocol.scaleMask 1 /= Nothing
+                    , Protocol.scaleMask 4095 /= Nothing
+                    , Protocol.ringNo 0 == Nothing
+                    , Protocol.ringNo 6 == Nothing
+                    , Protocol.stepNo 0 == Nothing
+                    , Protocol.stepNo 33 == Nothing
+                    , Protocol.note -1 == Nothing
+                    , Protocol.note 128 == Nothing
+                    , Protocol.notePool [] == Nothing
+                    , pool (List.range 60 68) == Nothing
+                    ]
+                        |> Expect.equal (List.repeat 21 True)
+            ]
         , describe "terminators"
             [ p "OK" "OK" (Ok_ Nothing)
             , p "OK m" "OK 2" (Ok_ (Just 2))
@@ -480,6 +633,13 @@ pe name want c =
 each : (Int -> Maybe a) -> List Int -> Maybe (List a)
 each f =
     List.foldr (\n acc -> Maybe.map2 (::) (f n) acc) (Just [])
+
+
+{-| A pool of these notes, if each is a note and there are one to eight.
+-}
+pool : List Int -> Maybe NotePool
+pool =
+    each Protocol.note >> Maybe.andThen Protocol.notePool
 
 
 cc : Int -> Maybe MapInput

@@ -6,7 +6,7 @@
 use core::fmt::{self, Write};
 
 use super::EdAddr;
-use super::addr::{EdBlock, PadBlock, PartBlock};
+use super::addr::{EdBlock, OrbitBlock, PadBlock, PartBlock};
 use super::describe::num;
 use super::lit::lit;
 use super::pages::Pages;
@@ -42,8 +42,8 @@ pub(super) fn block(ui: &UiState, at: EdBlock) -> Option<BlockView<'_>> {
         }
         EdBlock::Bus(b) => ui.project().read_part(ui.active_part).block(b.block()),
         EdBlock::Global(g) => crate::ui::ed_cue::global(ui, g),
-        // ORBIT's slice reads these.
-        EdBlock::Orbit(_) => None,
+        // The playing scene as it plays (ADR 0083), as ORBIT's pages read it.
+        EdBlock::Orbit(o) => orbit_block(ui, o),
         EdBlock::Sound(s) => match s.get() {
             BlockRef::Kit => Some(BlockView::Plain(kit)),
             b => ui.params().block(b),
@@ -61,6 +61,20 @@ pub(super) fn block(ui: &UiState, at: EdBlock) -> Option<BlockView<'_>> {
             }))
         }
     }
+}
+
+/// ORBIT's block `o`: `live`'s chords or ring, or the song's tempo.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.value.orbit_block")
+)]
+fn orbit_block(ui: &UiState, o: OrbitBlock) -> Option<BlockView<'_>> {
+    let song = ui.project().orbit();
+    Some(BlockView::Plain(match o {
+        OrbitBlock::Chords => &song.live().chords,
+        OrbitBlock::Ring(r) => song.live().rings.get(usize::from(r.get()))?,
+        OrbitBlock::Tempo => &song.bpm,
+    }))
 }
 
 /// `a`'s stored value on the followed Part, a pad's on that pad.
@@ -100,7 +114,16 @@ fn ctx_for(ui: &UiState, own: &CellOwn, a: EdAddr) -> SlotCtx {
         EdBlock::Pad(n, PadBlock::Route(r)) => pad_ctx(ui, own, n, r),
         EdBlock::Pad(n, _) => pad_ctx(ui, own, n, RouteId::ALL[0]),
         EdBlock::Sound(_) => text_ctx(ui, own),
-        EdBlock::Part(..) | EdBlock::Bus(_) | EdBlock::Global(_) | EdBlock::Orbit(_) => own.ctx,
+        // A ring's cells read the ring, as its round's pages do.
+        EdBlock::Orbit(OrbitBlock::Ring(r)) => {
+            let mut c = own.ctx;
+            c.ring = r;
+            c
+        }
+        EdBlock::Part(..)
+        | EdBlock::Bus(_)
+        | EdBlock::Global(_)
+        | EdBlock::Orbit(OrbitBlock::Chords | OrbitBlock::Tempo) => own.ctx,
     }
 }
 
@@ -115,7 +138,8 @@ pub(super) fn part_of(ui: &UiState, a: EdAddr) -> PartId {
 /// cell on a pad page reads the same on every pad); a Part's its round of
 /// the mixer, then of SETTINGS (TUNING, LIVE SNAP); a bus the mixer's
 /// shared pages; a global SETTINGS' shared pages, then Part 1's (TUNING's
-/// TUNE reads the same in every round).
+/// TUNE reads the same in every round); ORBIT's chords and tempo its
+/// shared pages, a ring its round.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.homes"))]
 fn homes(engine: EngineType, a: EdAddr) -> [Option<Pages>; 2] {
     let e = Schema::Engine(engine);
@@ -134,7 +158,12 @@ fn homes(engine: EngineType, a: EdAddr) -> [Option<Pages>; 2] {
             Some(Pages::round(Schema::Settings, Round::Shared)),
             Some(Pages::round(Schema::Settings, Round::Part(PartId::ALL[0]))),
         ],
-        EdBlock::Orbit(_) => [None, None],
+        EdBlock::Orbit(OrbitBlock::Ring(r)) => {
+            [Some(Pages::round(Schema::Orbit, Round::Ring(r))), None]
+        }
+        EdBlock::Orbit(OrbitBlock::Chords | OrbitBlock::Tempo) => {
+            [Some(Pages::round(Schema::Orbit, Round::Shared)), None]
+        }
     }
 }
 

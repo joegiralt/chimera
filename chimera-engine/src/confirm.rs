@@ -226,6 +226,17 @@ impl<T> Said<T> {
     }
 }
 
+impl Said<SceneSlot> {
+    /// The browser editor's yes to a scene's SAVE OVER, CLEAR, RELOAD or
+    /// MOVE (ADR 0289): its own confirm dialog's, witnessed by the slot's
+    /// rev as `since` said it (`SceneAsk::seen`). Only `ed scene` makes
+    /// one.
+    #[inline(always)]
+    pub fn editor_confirm() -> Self {
+        Said::new()
+    }
+}
+
 impl Said<ProjectSource> {
     /// The browser editor's `discard` (ADR 0289): its own confirm dialog's
     /// yes to a load over unsaved edits, as LOAD ANYWAY's pill is the

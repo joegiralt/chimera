@@ -5,7 +5,7 @@ import Dict
 import Expect
 import Fixture
 import Model exposing (Effect(..), Msg(..))
-import Protocol exposing (Command(..), Learn(..), MapCommand(..), MapKind(..), OnOff(..), OptIndex, RowStatus(..), SchemaId(..), Value(..))
+import Protocol exposing (Clock(..), Command(..), Learn(..), MapCommand(..), MapKind(..), OnOff(..), OptIndex, OrbitCommand(..), Playback(..), RowStatus(..), SaveInto(..), SchemaId(..), SlotState(..), Value(..))
 import Schema
 import Test exposing (Test, describe, test)
 import Time
@@ -103,6 +103,25 @@ mapPage =
     , "span 0 255"
     , "rows 16"
     , "maprows 90"
+    ]
+
+
+orbitHash : String
+orbitHash =
+    "00000000000000f0"
+
+
+orbitPage : List String
+orbitPage =
+    [ "page 0 ORB of 1"
+    , "panel ORB -"
+    , "act \"RING\" RING"
+    , "param ORBIT.KEY \"KEY\" choice lin 0 11 1 0 -"
+    , "opt ORBIT.KEY 0 \"C\""
+    , "opt ORBIT.KEY 1 \"C#\""
+    , "act \"SCENE\" SCENE"
+    , "param TEMPO.BPM \"BPM\" cont lin 30 300 1 120 -"
+    , "param RING1.HITS \"HITS\" cont lin 0 32 1 4 m"
     ]
 
 
@@ -214,13 +233,28 @@ describingMap =
         |> feed mapPage
 
 
+{-| Every schema read but ORBIT's last `OK`.
+-}
+describingOrbit : Model.Model
+describingOrbit =
+    describingMap
+        |> feed [ "OK" ]
+        |> tick 139
+        |> Tuple.first
+        |> feed [ "schema ORBIT 1 " ++ orbitHash, "OK" ]
+        |> missed OrbitSchema orbitHash
+        |> tick 140
+        |> Tuple.first
+        |> feed orbitPage
+
+
 {-| A connected editor that has said hello and read a one-page schema of
-each kind (the engine's, MIXER's, the matrix's, SETTINGS' and MAP's), none
-cached: following, nothing asked yet.
+each kind (the engine's, MIXER's, the matrix's, SETTINGS', MAP's and
+ORBIT's), none cached: following, nothing asked yet.
 -}
 following : Model.Model
 following =
-    feed [ "OK" ] describingMap
+    feed [ "OK" ] describingOrbit
 
 
 cutoffLine : String -> String
@@ -1227,7 +1261,137 @@ suite =
 
                     Nothing ->
                         Expect.fail "a map name"
+        , test "the_orbit_schema_is_read_after_map_and_kept_under_its_hash" <|
+            \_ ->
+                let
+                    kept : List Effect
+                    kept =
+                        describingOrbit |> Model.step (Line "OK") |> Tuple.second
+                in
+                Expect.all
+                    [ \_ -> Expect.notEqual Nothing (Model.status following)
+                    , \_ -> Expect.equal [ Keep (key OrbitSchema orbitHash) orbitPage ] kept
+                    , \_ -> Expect.equal [ [ ( "RING", Protocol.ActRing ), ( "SCENE", Protocol.ActScene ) ] ] (Schema.pages following.orbit |> List.map (.acts >> List.map (\a -> ( a.label, a.cell ))))
+                    ]
+                    ()
+        , test "a_build_without_orbit_reads_no_orbit_pages" <|
+            \_ ->
+                let
+                    ( m, effects ) =
+                        describingMap
+                            |> feed [ "OK" ]
+                            |> tick 139
+                            |> Tuple.first
+                            |> feed [ "schema ORBIT 0 " ++ orbitHash ]
+                            |> Model.step (Line "OK")
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [] effects
+                    , \_ -> Expect.notEqual Nothing (Model.status m)
+                    , \_ -> Expect.equal [] (Schema.pages m.orbit)
+                    , \_ -> Expect.equal [ Since Nothing ] (tick 141 m |> Tuple.second)
+                    ]
+                    ()
+        , test "a_whole_orbit_section_fills_the_orbit_state" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following |> feed (orbitSection ++ [ "OK 2" ])
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just ( Playing, ClockInt, ( 3, Nothing, Protocol.Edited ) )) (m.song |> Maybe.map (\g -> ( g.playback, g.clock, ( Protocol.sceneNoToInt g.scene, g.queued, g.edits ) )))
+                    , \_ -> Expect.equal [ ( 1, ( SlotSaved, 4 ) ), ( 3, ( SlotNeutral, 0 ) ) ] (m.slots |> Dict.toList |> List.map (Tuple.mapSecond (\x -> ( x.state, Protocol.revToInt x.rev ))))
+                    , \_ -> Expect.equal [ Just "C#", Just "120", Just "8" ] (List.map (\a -> Model.shown (addr a) m |> Maybe.map .text) [ "ORBIT.KEY", "TEMPO.BPM", "RING1.HITS" ])
+                    , \_ -> Expect.equal [ ( 1, 1 ), ( 2, 5 ) ] (m.chords |> Dict.toList |> List.map (Tuple.mapSecond Protocol.degreeToInt))
+                    , \_ -> Expect.equal (Just 2741) (m.scale |> Maybe.map Protocol.scaleMaskToInt)
+                    , \_ -> Expect.equal [ ( ( 1, 1 ), 60 ), ( ( 2, 32 ), 67 ) ] (m.steps |> Dict.toList |> List.map (Tuple.mapSecond Protocol.noteToInt))
+                    , \_ -> Expect.equal [ ( 1, [ 60, 64, 67 ] ) ] (m.pools |> Dict.toList |> List.map (Tuple.mapSecond (Protocol.poolNotes >> List.map Protocol.noteToInt)))
+                    ]
+                    ()
+        , test "an_orbit_header_drops_what_the_section_does_not_repeat" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed ("val PART3.LEVEL 0.5 0.5 \"64\"" :: orbitSection ++ [ "OK 2" ])
+                            |> feed [ "orbit", "song stopped clock EXT scene 1 queued 2 edited no", "slot 2 saved rev 1", "OK 3" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just ( Stopped, ClockExt, Just 2 )) (m.song |> Maybe.map (\g -> ( g.playback, g.clock, Maybe.map Protocol.sceneNoToInt g.queued )))
+                    , \_ -> Expect.equal [ 2 ] (Dict.keys m.slots)
+                    , \_ -> Expect.equal ( Dict.isEmpty m.chords, m.scale == Nothing ) ( True, True )
+                    , \_ -> Expect.equal ( Dict.isEmpty m.steps, Dict.isEmpty m.pools ) ( True, True )
+                    , \_ -> Expect.equal [ Nothing, Nothing, Nothing ] (List.map (\a -> Model.shown (addr a) m) [ "ORBIT.KEY", "TEMPO.BPM", "RING1.HITS" ])
+                    , -- Another section's values stay.
+                      \_ -> Expect.equal (Just "64") (Model.shown (addr "PART3.LEVEL") m |> Maybe.map .text)
+                    ]
+                    ()
+        , test "an_orbit_diff_replaces_only_its_entries" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed (orbitSection ++ [ "OK 2" ])
+                            |> feed [ "slot 1 saved rev 5", "step 1 1 62", "chord 2 4", "pool 1 48", "val RING1.HITS 0.5 16 \"16\"", "OK 3" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ ( 1, 5 ), ( 3, 0 ) ] (m.slots |> Dict.toList |> List.map (Tuple.mapSecond (.rev >> Protocol.revToInt)))
+                    , \_ -> Expect.equal [ ( ( 1, 1 ), 62 ), ( ( 2, 32 ), 67 ) ] (m.steps |> Dict.toList |> List.map (Tuple.mapSecond Protocol.noteToInt))
+                    , \_ -> Expect.equal [ ( 1, 1 ), ( 2, 4 ) ] (m.chords |> Dict.toList |> List.map (Tuple.mapSecond Protocol.degreeToInt))
+                    , \_ -> Expect.equal [ ( 1, [ 48 ] ) ] (m.pools |> Dict.toList |> List.map (Tuple.mapSecond (Protocol.poolNotes >> List.map Protocol.noteToInt)))
+                    , \_ -> Expect.equal [ Just "C#", Just "16" ] (List.map (\a -> Model.shown (addr a) m |> Maybe.map .text) [ "ORBIT.KEY", "RING1.HITS" ])
+                    , \_ -> Expect.equal ( True, Just 2741 ) ( m.song /= Nothing, m.scale |> Maybe.map Protocol.scaleMaskToInt )
+                    , -- A new Part's PART section leaves ORBIT's alone.
+                      \_ -> Expect.equal (Just "C#") (feed [ "part 2 ALGO", "OK 4" ] m |> Model.shown (addr "ORBIT.KEY") |> Maybe.map .text)
+                    ]
+                    ()
+        , test "the_orbit_values_are_set_and_picked" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> Expect.equal [ Set (addr "TEMPO.BPM") (Num 128) ] (stepSends (Edit (addr "TEMPO.BPM") (Num 128)) following |> Tuple.second)
+                    , \_ -> Expect.equal [ Set (addr "ORBIT.KEY") (idx 1) ] (pick (addr "ORBIT.KEY") 1 following)
+                    ]
+                    ()
+        , test "the_orbit_commands_go_out_typed_while_following" <|
+            \_ ->
+                case ( Protocol.sceneNo 2, Protocol.rev 7 ) of
+                    ( Just n, Just r ) ->
+                        Expect.all
+                            [ \_ -> Expect.equal [ OrbitCmd PlaySong ] (stepSends (OrbitAct PlaySong) following |> Tuple.second)
+                            , \_ -> Expect.equal [ OrbitCmd (SaveScene n (Over r)) ] (stepSends (OrbitAct (SaveScene n (Over r))) following |> Tuple.second)
+                            , \_ -> Expect.equal [ OrbitCmd (ClearScene n r) ] (stepSends (OrbitAct (ClearScene n r)) following |> Tuple.second)
+                            , -- Not yet following: nothing.
+                              \_ -> Expect.equal [] (stepSends (OrbitAct StopSong) greeted |> Tuple.second)
+                            ]
+                            ()
+
+                    _ ->
+                        Expect.fail "a scene and a rev"
         ]
+
+
+{-| A whole ORBIT section: playing scene 3, two slots, ORBIT's values, two
+chords, the CUSTOM scale, two steps and a pool.
+-}
+orbitSection : List String
+orbitSection =
+    [ "orbit"
+    , "song playing clock INT scene 3 queued - edited yes"
+    , "slot 1 saved rev 4"
+    , "slot 3 neutral rev 0"
+    , "val ORBIT.KEY 0.0909 1 \"C#\""
+    , "val TEMPO.BPM 0.33 120 \"120\""
+    , "val RING1.HITS 0.25 8 \"8\""
+    , "chord 1 1"
+    , "chord 2 5"
+    , "scale 2741"
+    , "step 1 1 60"
+    , "step 2 32 67"
+    , "pool 1 60 64 67"
+    ]
 
 
 {-| A whole MAP section: Part 2 on map KEYSTEP, two Sound rows, a map row,

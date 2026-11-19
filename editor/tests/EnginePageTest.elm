@@ -62,8 +62,8 @@ pagesOf ls =
 
 
 {-| Connected over a link, greeted, and the engine's, the MIXER's, a
-one-page matrix schema, SETTINGS' and a one-page MAP schema read the way the
-model reads them (no cache), then one `since` answer: following Part 1.
+one-page matrix schema, SETTINGS', a one-page MAP schema and ORBIT's read the
+way the model reads them (no cache), then one `since` answer: following Part 1.
 -}
 connected : List String -> String -> Model.Model
 connected answer engine =
@@ -77,6 +77,7 @@ connected answer engine =
         |> readSchema 3 ("MTX-" ++ engine) [ "page 0 MTX of 1", "OK" ]
         |> readSchema 4 "SETTINGS" FixtureData.settings
         |> readSchema 5 "MAP" FixtureData.map
+        |> readSchema 6 "ORBIT" FixtureData.orbit
         |> tick 50000
 
 

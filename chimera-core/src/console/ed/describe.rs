@@ -12,6 +12,7 @@
 //! opt <addr> <index> "<name>"
 //! route "<cell label>" <cell> <route|keybd>
 //! source "<cell label>"
+//! act "<cell label>" <CELL>               (ORBIT's own cells: `orbit::act_line`)
 //! ```
 //!
 //! `flags` is `m` (a MIDI map may target it), `d` (a mod destination),
@@ -203,8 +204,8 @@ pub const MODELS: [ResonatorMode; 4] = [
 ];
 
 /// A cell of a panel: a parameter under the cell's label, a FLT › MOD
-/// route knob (the matrix cell it views, ADR 0289), or TAPE's SOURCE,
-/// read-only.
+/// route knob (the matrix cell it views, ADR 0289), TAPE's SOURCE,
+/// read-only, or one of ORBIT's own cells, a command's job.
 enum Cell {
     Param {
         addr: EdAddr,
@@ -213,6 +214,7 @@ enum Cell {
     },
     Route(&'static str, crate::ui::filter_panel::RouteView),
     Source(&'static str),
+    Act(crate::ui::orbit::OrbitCell),
 }
 
 /// `a`'s range: a filter's is its kind's (`FilterParams::spec`), MODE's
@@ -305,6 +307,7 @@ impl Cell {
                 w.write_str(label)?;
                 return w.write_str(UNQUOTE.get());
             }
+            Cell::Act(c) => return super::orbit::act_line(c, w),
             Cell::Param { addr, label, fmt } => (addr, label, fmt),
         };
         let Some(spec) = spec_under(addr.param(), ctx) else {
@@ -405,14 +408,18 @@ enum Axis {
 }
 
 /// The axis a cell bound `b` resolves on; `None` for a cell the editor
-/// never shows (a selector, ORBIT's).
+/// never shows (a selector). The selected ring's cells are fixed: a
+/// ring's round names the ring (ADR 0289).
 #[cfg_attr(
     target_os = "none",
     unsafe(link_section = ".bank2_ed.describe.axis_of")
 )]
 fn axis_of(b: SlotBinding) -> Option<Axis> {
     Some(match b {
-        SlotBinding::Param(_) | SlotBinding::Source => Axis::Fixed,
+        SlotBinding::Param(_)
+        | SlotBinding::Source
+        | SlotBinding::SelectedRing(_)
+        | SlotBinding::Orbit(_) => Axis::Fixed,
         SlotBinding::FilterPanel(_) | SlotBinding::PadFilterPanel(_) => Axis::Filter,
         SlotBinding::FxPanel(_) => Axis::Fx,
         SlotBinding::EnvPanel(s, _) => Axis::Env(s),
@@ -428,9 +435,7 @@ fn axis_of(b: SlotBinding) -> Option<Axis> {
         | SlotBinding::SelectOp
         | SlotBinding::SelectPad
         | SlotBinding::SelectRoute
-        | SlotBinding::Legacy(_)
-        | SlotBinding::SelectedRing(_)
-        | SlotBinding::Orbit(_) => return None,
+        | SlotBinding::Legacy(_) => return None,
     })
 }
 
@@ -658,13 +663,13 @@ impl Group {
             }),
             View::Route { label, route } => Some(Cell::Route(label, route)),
             View::Source(_) => Some(Cell::Source(slot.label())),
+            View::Orbit(c) => Some(Cell::Act(c)),
             View::Empty
             | View::SelectOp
             | View::SelectPad
             | View::SelectRoute
             | View::Legacy { .. }
-            | View::Text { .. }
-            | View::Orbit(_) => None,
+            | View::Text { .. } => None,
         }
     }
 }
@@ -749,8 +754,23 @@ fn base_ctx(s: Schema) -> SlotCtx {
         | Schema::Mixer
         | Schema::Matrix(_)
         | Schema::Settings
-        | Schema::Map => c,
+        | Schema::Map
+        | Schema::Orbit => c,
     }
+}
+
+/// `base` on round `r`: a ring's round reads its ring, as the box's
+/// location selects it.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.round_ctx")
+)]
+fn round_ctx(base: SlotCtx, r: Round) -> SlotCtx {
+    let mut c = base;
+    if let Some(ring) = r.ring() {
+        c.ring = ring;
+    }
+    c
 }
 
 /// `page`'s answer, but for the closing `OK`; `None` past the last page.
@@ -830,7 +850,7 @@ fn write_page(
     {
         super::settings::crumb(l, w)?;
     }
-    let base = base_ctx(s);
+    let base = round_ctx(base_ctx(s), round);
     let mut g = 0;
     while let Some(group) = group_at(g) {
         g += 1;
@@ -864,8 +884,8 @@ fn write_page(
     unsafe(link_section = ".bank2_ed.describe.mark_described")
 )]
 pub(super) fn mark_described(s: Schema, d: &mut super::since::Described) {
-    let base = base_ctx(s);
     for (def, round) in Pages::all(s) {
+        let base = round_ctx(base_ctx(s), round);
         let mut g = 0;
         while let Some(group) = group_at(g) {
             g += 1;

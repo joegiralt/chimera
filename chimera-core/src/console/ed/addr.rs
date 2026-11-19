@@ -406,7 +406,7 @@ impl EdBlock {
     /// Whether the editor reaches it while following a Part on `engine`:
     /// a Sound's block or a pad's by the engine; a Part's, the buses and
     /// the globals always (the master reel with `master-tape`); ORBIT's
-    /// not yet (its slice).
+    /// with `orbit`.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.reachable"))]
     pub fn reachable(self, engine: EngineType) -> bool {
         match self {
@@ -418,7 +418,9 @@ impl EdBlock {
                 BusBlock::Chorus | BusBlock::Delay | BusBlock::Reverb | BusBlock::Comp,
             ) => true,
             EdBlock::Global(GlobalBlock::Theme | GlobalBlock::Midi | GlobalBlock::Random) => true,
-            EdBlock::Orbit(_) => false,
+            EdBlock::Orbit(OrbitBlock::Chords | OrbitBlock::Ring(_) | OrbitBlock::Tempo) => {
+                cfg!(feature = "orbit")
+            }
         }
     }
 

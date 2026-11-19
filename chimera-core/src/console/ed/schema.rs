@@ -1,7 +1,8 @@
 //! What `ed describe` describes (ADR 0289): an engine's pages, the
-//! mixer's, an engine's mod matrix, SETTINGS', or MIDI MAP's grammar. A `Schema` is parsed once at the boundary from its token and
+//! mixer's, an engine's mod matrix, SETTINGS', MIDI MAP's grammar or
+//! ORBIT's. A `Schema` is parsed once at the boundary from its token and
 //! walked by `Pages`. Its pages are shared, then each round's: a pad's on
-//! DRUM, a Part's on the mixer.
+//! DRUM, a Part's on the mixer, a ring's on ORBIT.
 
 use core::fmt::{self, Write};
 use core::mem::MaybeUninit;
@@ -16,8 +17,10 @@ use crate::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
 use crate::ui::block_registry::{
     ALGO_FORMANT_CHAIN, DRUM_CHAIN, MIXER_CHANNEL_CHAIN, MODAL_PLUCK_CHAIN, TAPE_CHAIN, VA_CHAIN,
 };
+use crate::ui::orbit::ORBIT_CHAIN;
 use chimera_engine::addr::BlockRef;
 use chimera_engine::block::DiskCode;
+use chimera_engine::orbit::RingIdx;
 
 /// A schema the editor describes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +38,9 @@ pub enum Schema {
     /// MIDI MAP's binding grammar: one page, from the binding model's own
     /// tables, not a chain (none without `midi-map`).
     Map,
+    /// ORBIT's pages (`ORBIT_CHAIN`): ORB, CUSTOM, CHRD and SCN shared,
+    /// then RHYTHM, VOICE and NOTES once a ring (none without `orbit`).
+    Orbit,
 }
 
 lit!(
@@ -53,25 +59,36 @@ lit!(
     /// The token of `Schema::Map`.
     MAP = "MAP"
 );
+lit!(
+    /// The token of `Schema::Orbit`.
+    ORBIT = "ORBIT"
+);
+lit!(
+    /// A ring's round's prefix, before its number: `RING2_`.
+    RING = "RING"
+);
 
 /// How many schemas there are: `ed schema`'s hashes, one each.
-pub const SCHEMAS: usize = 2 * EngineType::ALL.len() + 3;
+pub const SCHEMAS: usize = 2 * EngineType::ALL.len() + 4;
 
-/// What a schema's pages go round: nothing, each pad or each Part.
+/// What a schema's pages go round: nothing, each pad, each Part or each
+/// ring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoundKind {
     None,
     Pads,
     Parts,
+    Rings,
 }
 
-/// The round a page is walked in: the shared pages, or one pad's or one
-/// Part's.
+/// The round a page is walked in: the shared pages, or one pad's, one
+/// Part's or one ring's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Round {
     Shared,
     Pad(PadId),
     Part(PartId),
+    Ring(RingIdx),
 }
 
 impl Round {
@@ -80,11 +97,21 @@ impl Round {
     pub const fn pad(self) -> Option<PadId> {
         match self {
             Round::Pad(p) => Some(p),
-            Round::Shared | Round::Part(_) => None,
+            Round::Shared | Round::Part(_) | Round::Ring(_) => None,
         }
     }
 
-    /// The prefix of its pages' labels and panels: `PAD3_`, `PART3_`.
+    /// Its ring, on a ring's round.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.ring"))]
+    pub const fn ring(self) -> Option<RingIdx> {
+        match self {
+            Round::Ring(r) => Some(r),
+            Round::Shared | Round::Pad(_) | Round::Part(_) => None,
+        }
+    }
+
+    /// The prefix of its pages' labels and panels: `PAD3_`, `PART3_`,
+    /// `RING2_`.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.prefix"))]
     pub fn prefix(self, w: &mut dyn Write) -> fmt::Result {
         match self {
@@ -97,6 +124,11 @@ impl Round {
             Round::Part(p) => {
                 w.write_str(PART.get())?;
                 super::lit::uint(w, u32::from(p.number()))?;
+                w.write_char('_')
+            }
+            Round::Ring(r) => {
+                w.write_str(RING.get())?;
+                super::lit::uint(w, u32::from(r.get()) + 1)?;
                 w.write_char('_')
             }
         }
@@ -119,6 +151,7 @@ impl Schema {
         Schema::Matrix(EngineType::ALL[4]),
         Schema::Settings,
         Schema::Map,
+        Schema::Orbit,
     ];
 
     /// Its place in `ALL`.
@@ -130,6 +163,7 @@ impl Schema {
             Schema::Matrix(e) => EngineType::ALL.len() + 1 + engine_index(e),
             Schema::Settings => 2 * EngineType::ALL.len() + 1,
             Schema::Map => 2 * EngineType::ALL.len() + 2,
+            Schema::Orbit => 2 * EngineType::ALL.len() + 3,
         }
     }
 
@@ -145,6 +179,9 @@ impl Schema {
         if w.eq_ignore_ascii_case(MAP.bytes()) {
             return Some(Schema::Map);
         }
+        if w.eq_ignore_ascii_case(ORBIT.bytes()) {
+            return Some(Schema::Orbit);
+        }
         let mtx = MTX.bytes();
         match w.split_at_checked(mtx.len()) {
             Some((head, e)) if head.eq_ignore_ascii_case(mtx) => engine(e).map(Schema::Matrix),
@@ -153,12 +190,16 @@ impl Schema {
     }
 
     /// The chain it walks; `None` for a schema described from its own
-    /// tables (the matrix) or the tree's leaves (SETTINGS).
+    /// tables (the matrix, MIDI MAP), the tree's leaves (SETTINGS), or
+    /// ORBIT in a build without it.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.chain"))]
     pub const fn chain(self) -> Option<&'static ChainDef2> {
         match self {
             Schema::Engine(e) => Some(engine_chain(e)),
             Schema::Mixer => Some(&MIXER_CHANNEL_CHAIN),
+            // ORBIT's pages, with its code only.
+            Schema::Orbit if cfg!(feature = "orbit") => Some(&ORBIT_CHAIN),
+            Schema::Orbit => None,
             Schema::Matrix(_) | Schema::Settings | Schema::Map => None,
         }
     }
@@ -168,7 +209,9 @@ impl Schema {
     pub const fn leaves(self) -> &'static [Leaf] {
         match self {
             Schema::Settings => &LEAVES,
-            Schema::Engine(_) | Schema::Mixer | Schema::Matrix(_) | Schema::Map => &[],
+            Schema::Engine(_) | Schema::Mixer | Schema::Matrix(_) | Schema::Map | Schema::Orbit => {
+                &[]
+            }
         }
     }
 
@@ -182,12 +225,13 @@ impl Schema {
             ) => RoundKind::None,
             Schema::Mixer | Schema::Settings => RoundKind::Parts,
             Schema::Matrix(_) | Schema::Map => RoundKind::None,
+            Schema::Orbit => RoundKind::Rings,
         }
     }
 
     /// `def` is described once a round, not once: a cell binds what the
     /// round names (the pad on DRUM, the Part or its OUT on the mixer and
-    /// SETTINGS).
+    /// SETTINGS, the selected ring on ORBIT).
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.in_round"))]
     pub const fn in_round(self, def: &BlockDef) -> bool {
         let mut i = 0;
@@ -197,6 +241,7 @@ impl Schema {
                 RoundKind::None => false,
                 RoundKind::Pads => pad_binding(b),
                 RoundKind::Parts => part_binding(b),
+                RoundKind::Rings => matches!(b, SlotBinding::SelectedRing(_)),
             };
             if hit {
                 return true;
@@ -206,7 +251,8 @@ impl Schema {
         false
     }
 
-    /// Its token, `ALGO`…, `MIXER`, `MTX-ALGO`…, `SETTINGS`, into `w`.
+    /// Its token, `ALGO`…, `MIXER`, `MTX-ALGO`…, `SETTINGS`, `MAP`,
+    /// `ORBIT`, into `w`.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.schema.write"))]
     pub fn write(self, w: &mut dyn Write) -> fmt::Result {
         match self {
@@ -218,6 +264,7 @@ impl Schema {
             }
             Schema::Settings => w.write_str(SETTINGS.get()),
             Schema::Map => w.write_str(MAP.get()),
+            Schema::Orbit => w.write_str(ORBIT.get()),
         }
     }
 }

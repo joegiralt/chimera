@@ -22,6 +22,14 @@
 //! mixer                                   MIXER, whole
 //! panel REVERB <TYPE>
 //! val PART3.LEVEL …
+//! orbit                                   ORBIT, whole
+//! song <playing|stopped> clock <INT|EXT> scene <n> queued <n|-> edited <yes|no>
+//! slot <n> <saved|neutral> rev <r>
+//! val RING2.HITS …
+//! chord <seg> <degree>
+//! scale <mask>
+//! step <ring> <i> <note>
+//! pool <ring> <note>…
 //! settings                                SETTINGS, whole
 //! val THEME.ACCENT …
 //! project "<name>" <id|new> <clean|edited> gen <g|->
@@ -57,7 +65,7 @@ use core::mem::MaybeUninit;
 
 use core::num::NonZeroU32;
 
-use super::addr::{BusBlock, EdBlock, GlobalBlock, PadBlock, PartBlock, SoundBlock};
+use super::addr::{BusBlock, EdBlock, GlobalBlock, OrbitBlock, PadBlock, PartBlock, SoundBlock};
 use super::describe::{
     PanelName, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
     modal_variant, op_variant, reverb_variant, tape_variant,
@@ -76,6 +84,7 @@ use crate::dsp::delay::DelayType;
 use crate::dsp::drum::types::{Kit, PadId};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbType;
+use crate::orbit::scene::{SCENES, SceneIdx};
 use crate::project::{PartId, PartStatus, ProjectStatus, part_status};
 use crate::ui::UiState;
 use crate::ui::cell_text::CellOwn;
@@ -160,6 +169,23 @@ pub const SETTINGS_SLOTS: usize = settings_slots();
 
 const _: () = assert!(SETTINGS_SLOTS <= u32::BITS as usize);
 
+/// The values ORBIT keeps: the chords', each ring's, the tempo's.
+pub const ORBIT_SLOTS: usize = orbit_slots();
+/// ORBIT's described mask's words.
+const ORBIT_WORDS: usize = ORBIT_SLOTS.div_ceil(32);
+
+const _: () = assert!(ORBIT_SLOTS <= SLOTS);
+
+const fn orbit_slots() -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < OrbitBlock::ALL.len() {
+        n += OrbitBlock::ALL[i].block().specs().len();
+        i += 1;
+    }
+    n
+}
+
 const fn settings_slots() -> usize {
     let mut n = 0;
     let mut i = 0;
@@ -182,6 +208,7 @@ fn block_at(s: Schema, mut i: usize) -> Option<EdBlock> {
         // are rows: MAP keeps a hash of them.
         Schema::Matrix(_) | Schema::Map => return None,
         Schema::Settings => return GlobalBlock::ALL.get(i).map(|&g| EdBlock::Global(g)),
+        Schema::Orbit => return OrbitBlock::ALL.get(i).map(|&o| EdBlock::Orbit(o)),
         Schema::Mixer => {
             let parts = PartId::ALL.len();
             if let Some(&p) = PartId::ALL.get(i) {
@@ -268,26 +295,30 @@ impl Described {
         slot_of(self.schema, a).is_some_and(|n| self.has_slot(n))
     }
 
-    /// What `describe` lists in `s`'s slots. The mixer's holds every
-    /// Part's mix, so SETTINGS' Part cells (TUNING, LIVE SNAP) are marked
-    /// there too: one value, one address, one copy.
-    /// SETTINGS' mask, kept as its one word (`SETTINGS_SLOTS` fit it):
-    /// built once, from `describe`'s walk.
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.settings"))]
-    fn settings(kept: &mut Option<u32>) -> Described {
-        let word = *kept.get_or_insert_with(|| {
-            Described::built(Schema::Settings)
-                .mask
-                .first()
-                .copied()
-                .unwrap_or(0)
+    /// A small schema's mask, kept as its first `K` words (SETTINGS'
+    /// one, ORBIT's three): built once, from `describe`'s walk.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.kept"))]
+    fn kept<const K: usize>(s: Schema, kept: &mut Option<[u32; K]>) -> Described {
+        let words = *kept.get_or_insert_with(|| {
+            let b = Described::built(s);
+            let mut w = [0; K];
+            let mut i = 0;
+            while i < K {
+                w[i] = b.mask.get(i).copied().unwrap_or(0);
+                i += 1;
+            }
+            w
         });
         let mut d = Described {
-            schema: Schema::Settings,
+            schema: s,
             mask: [0; MASK_WORDS],
         };
-        if let Some(w) = d.mask.first_mut() {
-            *w = word;
+        let mut i = 0;
+        while i < K {
+            if let Some(m) = d.mask.get_mut(i) {
+                *m = words[i];
+            }
+            i += 1;
         }
         d
     }
@@ -435,6 +466,10 @@ lit!(
     SETTINGS = "settings\n"
 );
 lit!(
+    /// ORBIT's header, whole.
+    ORBIT = "orbit\n"
+);
+lit!(
     /// After `OK <m>`: sections are owed.
     MORE = " more"
 );
@@ -465,17 +500,21 @@ pub enum Section {
     Map,
     /// Every Part's mix and sends, the buses.
     Mixer,
+    /// ORBIT's chords, rings and tempo, the song's line, its slots, and
+    /// the scene's chords, CUSTOM set, steps and pools.
+    Orbit,
     /// THEME, MIDI CONFIG, RANDOMIZE; the project's and Parts' state, the
     /// toast, the listing.
     Settings,
 }
 
 impl Section {
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Part,
         Section::Routes,
         Section::Map,
         Section::Mixer,
+        Section::Orbit,
         Section::Settings,
     ];
 
@@ -486,19 +525,19 @@ impl Section {
             Section::Routes => 2,
             Section::Map => 4,
             Section::Mixer => 8,
+            Section::Orbit => 32,
             Section::Settings => 16,
         }
     }
 
-    /// The section that reports `a`; `None` for one no section reports
-    /// yet (ORBIT's comes with its slice).
+    /// The section that reports `a`.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.of"))]
-    pub(super) const fn of(a: EdBlock) -> Option<Section> {
+    pub(super) const fn of(a: EdBlock) -> Section {
         match a {
-            EdBlock::Sound(_) | EdBlock::Pad(..) => Some(Section::Part),
-            EdBlock::Part(..) | EdBlock::Bus(_) => Some(Section::Mixer),
-            EdBlock::Global(_) => Some(Section::Settings),
-            EdBlock::Orbit(_) => None,
+            EdBlock::Sound(_) | EdBlock::Pad(..) => Section::Part,
+            EdBlock::Part(..) | EdBlock::Bus(_) => Section::Mixer,
+            EdBlock::Global(_) => Section::Settings,
+            EdBlock::Orbit(_) => Section::Orbit,
         }
     }
 }
@@ -695,7 +734,7 @@ impl Marks {
 struct SettingsCopy {
     seen: Option<SetSeen>,
     /// What `describe` lists of its slots, one word.
-    listed: Option<u32>,
+    listed: Option<[u32; 1]>,
     marks: Option<Marks>,
     last: [Bits; SETTINGS_SLOTS],
     project: LineSeen,
@@ -703,6 +742,54 @@ struct SettingsCopy {
     toast: LineSeen,
     /// The listing's revision as last reported.
     listing: Option<u16>,
+}
+
+/// What ORBIT's texts read beside the bits, when last reported: the
+/// clock that leads (BPM dims under a MIDI clock) and bank 2's door
+/// (closed, its cells read NEEDS UPDATE). A change answers ORBIT whole.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct OrbitSeen {
+    clock: crate::orbit::clock::ClockSource,
+    closed: bool,
+}
+
+/// ORBIT's lines as last reported: the song line's hash, the slots', the
+/// values and the scene's notes and chords.
+#[derive(Clone, Copy)]
+struct OrbitKept {
+    song: LineSeen,
+    slots: [super::orbit::SlotLine; SCENES],
+    last: [Bits; ORBIT_SLOTS],
+    notes: super::orbit::Notes,
+}
+
+/// ORBIT's copy, made on its first use (a set's check or an answer):
+/// `EdState::new`, which bank 1 builds in place, writes a byte for it.
+struct OrbitCopy {
+    /// What `describe` lists of its slots, its words.
+    listed: [u32; ORBIT_WORDS],
+    seen: Option<OrbitSeen>,
+    /// `None` until an answer has values.
+    kept: Option<OrbitKept>,
+}
+
+impl OrbitCopy {
+    /// The copy, made now if it wasn't.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.orbit_copy")
+    )]
+    fn made(c: &mut Option<OrbitCopy>) -> &mut OrbitCopy {
+        c.get_or_insert_with(|| {
+            let mut words = None;
+            Described::kept(Schema::Orbit, &mut words);
+            OrbitCopy {
+                listed: words.unwrap_or([0; ORBIT_WORDS]),
+                seen: None,
+                kept: None,
+            }
+        })
+    }
 }
 
 /// What `ed since` keeps: the last answer's number, the sections it still
@@ -713,6 +800,7 @@ pub struct EdSince {
     part: PartCopy,
     routes: RoutesCopy,
     mixer: MixerCopy,
+    orbit: Option<OrbitCopy>,
     settings: SettingsCopy,
     map: MapCopy,
 }
@@ -733,6 +821,7 @@ impl EdSince {
                 kept: MaybeUninit::uninit(),
             },
             map: MapCopy { seen: None },
+            orbit: None,
             mixer: MixerCopy {
                 seen: None,
                 rev_key: 0,
@@ -760,14 +849,18 @@ impl EdSince {
             return false;
         }
         match Section::of(a.at()) {
-            Some(Section::Part) => {
-                described_in(&mut self.part.described, Schema::Engine(engine)).has(a)
+            Section::Part => described_in(&mut self.part.described, Schema::Engine(engine)).has(a),
+            Section::Mixer => described_in(&mut self.mixer.described, Schema::Mixer).has(a),
+            Section::Orbit => {
+                let c = OrbitCopy::made(&mut self.orbit);
+                Described::kept(Schema::Orbit, &mut Some(c.listed)).has(a)
             }
-            Some(Section::Mixer) => described_in(&mut self.mixer.described, Schema::Mixer).has(a),
-            Some(Section::Settings) => Described::settings(&mut self.settings.listed).has(a),
+            Section::Settings => {
+                Described::kept(Schema::Settings, &mut self.settings.listed).has(a)
+            }
             // No address is a route's or a map row's: those are cells
             // (`ed route`) and rows (`ed map`).
-            Some(Section::Routes | Section::Map) | None => false,
+            Section::Routes | Section::Map => false,
         }
     }
 
@@ -872,6 +965,7 @@ impl EdSince {
             Section::Routes => self.routes_section(owed, ui, pass, w),
             Section::Map => self.map_section(owed, ui, pass, w),
             Section::Mixer => self.mixer_section(owed, ui, own, pass, w),
+            Section::Orbit => self.orbit_section(owed, ui, own, pass, w),
             Section::Settings => self.settings_section(owed, ui, own, pass, w),
         }
     }
@@ -901,7 +995,7 @@ impl EdSince {
         if whole {
             w.write_str(SETTINGS.get())?;
         }
-        let d = Described::settings(&mut c.listed);
+        let d = Described::kept(Schema::Settings, &mut c.listed);
         let copy = Copy {
             schema: Schema::Settings,
             last: &mut c.last,
@@ -1181,6 +1275,76 @@ impl EdSince {
     }
 }
 
+impl EdSince {
+    /// ORBIT: the song's line when it moved, each slot whose line moved,
+    /// the values from `live` (the playing scene with its drift, ADR
+    /// 0083), and each chord, the CUSTOM set, step and pool that moved;
+    /// all of it whole when owed or when the clock that leads changed.
+    /// Without `orbit`, none.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.orbit_section")
+    )]
+    fn orbit_section(
+        &mut self,
+        owed: bool,
+        ui: &UiState,
+        own: &CellOwn,
+        pass: Pass,
+        w: &mut dyn Write,
+    ) -> Result<bool, fmt::Error> {
+        if !cfg!(feature = "orbit") {
+            return Ok(false);
+        }
+        let c = OrbitCopy::made(&mut self.orbit);
+        let now = OrbitSeen {
+            clock: ui.orbit().status.source,
+            closed: ui.bank2().is_some_and(|b| !b.is_open()),
+        };
+        let whole = owed || c.seen != Some(now);
+        let song = ui.project().orbit();
+        let d = Described::kept(Schema::Orbit, &mut Some(c.listed));
+        let kept = c.kept.get_or_insert(OrbitKept {
+            song: LineSeen::NONE,
+            slots: [super::orbit::SlotLine::NONE; SCENES],
+            last: [Bits(0); ORBIT_SLOTS],
+            notes: super::orbit::Notes::of(song.live()),
+        });
+        if whole {
+            w.write_str(ORBIT.get())?;
+        }
+        let line = LineSeen::of(|w| super::orbit::song_line(ui, w))?;
+        if whole || line != kept.song {
+            super::orbit::song_line(ui, w)?;
+        }
+        let mut slots = kept.slots;
+        let mut i = 0;
+        while let (Some(&n), Some(was)) = (SceneIdx::ALL.get(i), slots.get_mut(i)) {
+            let at = super::orbit::SlotLine::now(song, n);
+            if whole || at != *was {
+                at.write(n, w)?;
+            }
+            *was = at;
+            i += 1;
+        }
+        let copy = Copy {
+            schema: Schema::Orbit,
+            last: &mut kept.last,
+            described: &d,
+        };
+        values(ui, own, copy, !whole, pass, w)?;
+        let notes = super::orbit::Notes::of(song.live());
+        notes.write((!whole).then_some(&kept.notes), w)?;
+        if let Pass::Commit = pass {
+            c.seen = Some(now);
+            kept.song = line;
+            kept.slots = slots;
+            kept.notes = notes;
+        }
+        Ok(whole)
+    }
+}
+
 impl Default for EdSince {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.default"))]
     fn default() -> Self {
@@ -1418,10 +1582,22 @@ mod tests {
         assert!(b.as_str().starts_with("\nroutes 1\n"), "{}", b.as_str());
         assert!(b.as_str().contains("\nmixer\n"), "{}", b.as_str());
         assert!(!b.as_str().contains("part 1"));
-        assert_eq!(last_line(&b), "OK 2");
-        // Now both diff: nothing.
-        let c = ask(&mut s, &ui, Gen::new(2), max);
-        assert_eq!(c.as_str(), "OK 3\n");
+        // ORBIT doesn't fit beside them: a third page, with its code.
+        let mut n = 2;
+        if cfg!(feature = "orbit") {
+            assert_eq!(last_line(&b), "OK 2 more");
+            let c = ask(&mut s, &ui, Gen::new(2), max);
+            assert!(c.as_str().starts_with("\norbit\n"), "{}", c.as_str());
+            assert!(!c.as_str().contains("\nmixer\n"));
+            assert_eq!(last_line(&c), "OK 3");
+            n = 3;
+        } else {
+            assert_eq!(last_line(&b), "OK 2");
+        }
+        // Now all diff: nothing.
+        let d = ask(&mut s, &ui, Gen::new(n), max);
+        assert_eq!(last_line(&d), if n == 3 { "OK 4" } else { "OK 3" });
+        assert!(d.as_str().starts_with("OK "));
     }
 
     /// A stale number mid-paging starts over: every section owed.
@@ -1459,7 +1635,14 @@ mod tests {
         let rest = ask(&mut s, &ui, Gen::new(3), max);
         assert!(rest.as_str().starts_with("\nroutes 1\n"));
         assert!(rest.as_str().contains("\nmixer\n"));
-        assert_eq!(last_line(&rest), "OK 4");
+        if cfg!(feature = "orbit") {
+            assert_eq!(last_line(&rest), "OK 4 more");
+            let orbit = ask(&mut s, &ui, Gen::new(4), max);
+            assert!(orbit.as_str().starts_with("\norbit\n"));
+            assert_eq!(last_line(&orbit), "OK 5");
+        } else {
+            assert_eq!(last_line(&rest), "OK 4");
+        }
     }
 
     mod alloc_free {

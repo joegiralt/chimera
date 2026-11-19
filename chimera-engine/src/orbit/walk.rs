@@ -66,6 +66,7 @@ impl Pool {
     }
 
     /// Note `i`, wrapping.
+    #[inline(always)]
     pub const fn get(&self, i: usize) -> Note {
         self.notes[i % self.len()]
     }

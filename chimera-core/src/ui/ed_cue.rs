@@ -468,3 +468,150 @@ pub(crate) fn learn_note(ui: &UiState) -> Option<crate::ui::fmt::FmtBuf> {
 pub(crate) fn learn_target(ui: &UiState) -> Option<crate::midi_map::Mappable> {
     ui.learn_target()
 }
+
+/// SETTINGS › MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.sync"))]
+pub(crate) fn sync(ui: &UiState) -> crate::orbit::clock::SyncMode {
+    ui.midi.sync
+}
+
+/// `ed set` of an ORBIT address, in the UI pass: a scene's param through
+/// `OrbitSong::edit` with a set to `v` (its write marks the ring touched
+/// where the runner keeps its own copy, ADR 0082), on `live` and its slot
+/// alike (ADR 0083), the ring the address names whatever ring the box
+/// shows; the tempo through the box's own blocks, as F's turn. Then the
+/// hand wins over its bindings, as a turn's (`cc_hand`).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.orbit_set"))]
+pub(crate) fn orbit_set(ui: &mut UiState, a: ParamAddr, v: f32) {
+    use crate::addr::{BlockRef, Blocks};
+    let part = ui.active_part;
+    match a.block {
+        BlockRef::OrbitChords | BlockRef::OrbitRing(_) => {
+            ui.project.orbit_mut().edit(&mut |s| {
+                if let Some(mut b) = s.block_mut(a.block) {
+                    b.set(a.param, v);
+                }
+            });
+            // SEGS shrunk under an armed segment drops the capture.
+            ui.orbit.fit(&ui.project.orbit().live().chords);
+        }
+        _ => {
+            ui.edit_to(part, a, v);
+        }
+    }
+    ui.cc_hand(part, a);
+}
+
+/// One UI pass of an ORBIT command, through the box's own path for the
+/// gesture, checked again first (a stale witness writes nothing, and a
+/// refusal the box would toast is toasted). `true` once done; the
+/// transport waits until every command before it is applied, so it reads
+/// the runner's transport as it is.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.orbit"))]
+pub(crate) fn orbit(ui: &mut UiState, c: crate::console::OrbitCmd) -> bool {
+    use super::settings::prompt;
+    use crate::console::{OrbitCmd, OrbitNotNow};
+    use crate::project::{Confirmed, SceneAsk};
+    let confirmed = |s: crate::console::OrbitSeen| {
+        Confirmed::said(
+            SceneAsk::seen(s.slot, s.rev.get()),
+            chimera_engine::confirm::Said::editor_confirm(),
+        )
+    };
+    if let OrbitCmd::Transport(t) = c {
+        if !ui.orbit.idle() {
+            return false;
+        }
+        if crate::console::orbit_check(c, ui).is_ok() && ui.orbit.status.running != t.runs() {
+            ui.orbit.play_stop();
+        }
+        return true;
+    }
+    let refused = match crate::console::orbit_check(c, ui) {
+        Err(OrbitNotNow::SwitchPending) => Some(crate::orbit::scene::Refused::SwitchPending),
+        Err(OrbitNotNow::SlotChanged | OrbitNotNow::Saved) => {
+            Some(crate::orbit::scene::Refused::SlotChanged)
+        }
+        // Dimmed on the box: nothing said.
+        Err(OrbitNotNow::Unbuilt | OrbitNotNow::NotPlaying | OrbitNotNow::NothingToReload) => {
+            return true;
+        }
+        Err(OrbitNotNow::Synced) | Ok(()) => None,
+    };
+    if let Some(e) = refused {
+        ui.error(Line::new(prompt::scene_refused(e)));
+        return true;
+    }
+    let song = ui.project.orbit_mut();
+    let done = match c {
+        OrbitCmd::Transport(_) => Ok(()),
+        OrbitCmd::Queue(n) => {
+            ui.orbit.queue(n, song);
+            Ok(())
+        }
+        OrbitCmd::Save(n) => match song.save_to(n) {
+            Ok(crate::orbit::scene::SceneSave::Saved(n)) => {
+                ui.scene_saved(n);
+                Ok(())
+            }
+            // Saved since: the editor's confirm names a rev.
+            Ok(crate::orbit::scene::SceneSave::Ask(_)) => {
+                Err(crate::orbit::scene::Refused::SlotChanged)
+            }
+            Err(e) => Err(e),
+        },
+        OrbitCmd::SaveOver(s) => song
+            .overwrite_scene(confirmed(s))
+            .map(|()| ui.scene_saved(s.slot)),
+        OrbitCmd::Clear(s) => ui.relanding(|song| song.clear_scene(confirmed(s))),
+        OrbitCmd::Reload(s) => ui.relanding(|song| song.reload_scene(confirmed(s))),
+        OrbitCmd::Move(a, b) => song.swap_scenes(confirmed(a), confirmed(b)).map(|()| {
+            // The runner plays `live` as the slot it moved to.
+            ui.orbit.issue_scene(ui.project.orbit());
+        }),
+        OrbitCmd::Chord(seg, d) => {
+            song.edit(&mut |s| {
+                if let Some(at) = s.chords.degrees.get_mut(seg.index()) {
+                    *at = d;
+                }
+            });
+            Ok(())
+        }
+        // IN SCALE's toggles, a note at a time: CUSTOM, the root kept.
+        OrbitCmd::Scale(m) => {
+            let to = m.get();
+            song.edit(&mut |s| {
+                for i in chimera_theory::Interval::ALL {
+                    if s.chords.set().contains(i) != to.contains(i) {
+                        s.chords.toggle(i);
+                    }
+                }
+            });
+            Ok(())
+        }
+        OrbitCmd::Step(r, i, n) => {
+            song.edit(&mut |s| {
+                if let Some(ring) = s.rings.get_mut(usize::from(r.get())) {
+                    if let Some(at) = ring.ring.notes.get_mut(i.index()) {
+                        *at = n;
+                    }
+                    ring.touched = ring.touched.with(crate::orbit::scene::Touched::NOTES);
+                }
+            });
+            Ok(())
+        }
+        OrbitCmd::Pool(r, p) => {
+            song.edit(&mut |s| {
+                if let Some(ring) = s.rings.get_mut(usize::from(r.get())) {
+                    ring.ring.pool = p;
+                    ring.touched = ring.touched.with(crate::orbit::scene::Touched::NOTES);
+                }
+            });
+            Ok(())
+        }
+    };
+    if let Err(e) = done {
+        ui.error(Line::new(prompt::scene_refused(e)));
+    }
+    true
+}

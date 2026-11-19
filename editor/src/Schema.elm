@@ -1,5 +1,6 @@
 module Schema exposing
-    ( Matrix
+    ( Act
+    , Matrix
     , MidiMap
     , Page
     , Panel
@@ -27,7 +28,7 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 
 import Addr exposing (Addr)
 import Dict exposing (Dict)
-import Protocol exposing (AnswerLine, Cell, ControlNo, Flags, Kind, MapForm, MapKind, Msb, OptIndex, PageLabel, PageNo, RouteKind, Scale, SpanPlace)
+import Protocol exposing (ActCell, AnswerLine, Cell, ControlNo, Flags, Kind, MapForm, MapKind, Msb, OptIndex, PageLabel, PageNo, RouteKind, Scale, SpanPlace)
 
 
 type alias Param =
@@ -84,6 +85,12 @@ type alias MidiMap =
     }
 
 
+{-| An ORBIT cell that is no parameter, and the box's label for it.
+-}
+type alias Act =
+    { label : String, cell : ActCell }
+
+
 type alias Page =
     { n : PageNo
     , label : PageLabel
@@ -91,6 +98,9 @@ type alias Page =
     -- A SETTINGS page's place in the box's lists: its list's crumb and its own.
     , crumb : Maybe { list : String, row : String }
     , panels : List Panel
+
+    -- ORBIT's own cells on the page, in describe order.
+    , acts : List Act
     }
 
 
@@ -247,7 +257,7 @@ add line (Schema s) =
             Schema
                 { s
                     | count = Just p.count
-                    , pages = List.filter (\x -> x.n /= p.n) s.pages ++ [ { n = p.n, label = p.label, crumb = Nothing, panels = [] } ]
+                    , pages = List.filter (\x -> x.n /= p.n) s.pages ++ [ { n = p.n, label = p.label, crumb = Nothing, panels = [], acts = [] } ]
                 }
 
         Protocol.Panel p ->
@@ -405,6 +415,30 @@ add line (Schema s) =
             Schema s
 
         Protocol.MapFileIs _ ->
+            Schema s
+
+        Protocol.Act a ->
+            Schema { s | pages = onLast (\pg -> { pg | acts = pg.acts ++ [ a ] }) s.pages }
+
+        Protocol.OrbitIs ->
+            Schema s
+
+        Protocol.SongIs _ ->
+            Schema s
+
+        Protocol.SlotIs _ ->
+            Schema s
+
+        Protocol.ChordIs _ _ ->
+            Schema s
+
+        Protocol.ScaleIs _ ->
+            Schema s
+
+        Protocol.StepIs _ _ _ ->
+            Schema s
+
+        Protocol.PoolIs _ _ ->
             Schema s
 
 

@@ -427,6 +427,27 @@ async function main() {
   }
   info(`settings: ${settings.count} pages, THEME and PART3's snap read back, the card listed`);
 
+  // ORBIT (ADR 0289): its pages, ring 3's rhythm and voice set and read
+  // back whatever ring the box shows; a step and a queued scene in since.
+  const orbit = await describeAll("ORBIT");
+  for (const [a, p] of orbit.params) params.set(a, p);
+  mixerAddrs = new Set([...mixerAddrs, ...orbit.params.keys()]);
+  const orbitShown = orbit.blocks
+    .flatMap((b) => b.params)
+    .filter((p) => /^RING3\.(STEPS|HITS|CHANCE|GATE|VEL)$/.test(p.addr));
+  await sweep(orbitShown, " ORBIT", new Set());
+  for (const [cmd, line] of [
+    ["ed step 2 5 62", "step 2 5 62"],
+    ["ed scene queue 2", "song "],
+  ]) {
+    const got = await ask(cmd);
+    if (got.at(-1) !== "OK queued") fail("orbit", cmd, got.join(" | "));
+    else if (!(await sinceUntil((l) => l.startsWith(line))).some((l) => l.startsWith(line)))
+      fail("orbit", cmd, `since never said ${line}`);
+  }
+  await ask("ed scene queue 1");
+  info(`orbit: ${orbit.count} pages, RING3 read back, a step and a queue in since`);
+
   // every param to its max, then its min, read back
   const done = new Set();
   const shownIn = (cur) =>

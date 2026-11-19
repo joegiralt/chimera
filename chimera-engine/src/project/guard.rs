@@ -508,6 +508,16 @@ impl SceneAsk {
     pub fn slot(&self) -> SceneSlot {
         self.slot
     }
+
+    /// Slot `n` as the browser editor saw it, at rev `seen` (`since`'s
+    /// `slot` line, ADR 0289): its confirm dialog's question.
+    #[inline(always)]
+    pub fn seen(n: SceneIdx, seen: u16) -> SceneAsk {
+        SceneAsk {
+            slot: SceneSlot(n),
+            seen,
+        }
+    }
 }
 
 impl Confirmed<SceneSlot> {

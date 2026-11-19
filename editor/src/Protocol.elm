@@ -1,11 +1,14 @@
 module Protocol exposing
-    ( AddInput(..)
+    ( ActCell(..)
+    , AddInput(..)
     , Amount
     , AnswerLine(..)
     , Binding
     , Cell(..)
+    , Clock(..)
     , Command(..)
     , ControlNo
+    , Degree
     , Edits(..)
     , Flags
     , Generation
@@ -21,29 +24,46 @@ module Protocol exposing
     , MapName
     , MapRow(..)
     , Msb
+    , Note
+    , NotePool
     , NrpnNo
     , OnOff(..)
     , OptIndex
+    , OrbitCommand(..)
     , OverEdits(..)
     , PageLabel
     , PageNo
+    , Playback(..)
     , ProjectFile(..)
     , ProjectId
     , ProjectName
+    , Rev
+    , RingNo
     , RouteKind(..)
     , RouteTo(..)
     , RowIndex
     , RowSetting(..)
     , RowStatus(..)
+    , SaveInto(..)
     , Scale(..)
+    , ScaleMask
+    , SceneMove
+    , SceneNo
     , SchemaId(..)
+    , Segment
+    , Slot
+    , SlotState(..)
+    , Song
     , SoundStatus(..)
     , SpanPlace
+    , StepNo
     , Value(..)
     , amount
     , binding
     , cellKey
     , controlNo
+    , degree
+    , degreeToInt
     , encode
     , firstOption
     , firstPage
@@ -54,6 +74,9 @@ module Protocol exposing
     , mapName
     , msb
     , nextPage
+    , note
+    , notePool
+    , noteToInt
     , nrpnNo
     , optIndex
     , pageLabel
@@ -61,13 +84,27 @@ module Protocol exposing
     , pageNo
     , pageNoToInt
     , parse
+    , poolNotes
     , projectId
     , projectIdToInt
     , projectName
+    , rev
+    , revToInt
+    , ringNo
+    , ringNoToInt
     , rowIndex
     , rowIndexToInt
+    , scaleMask
+    , scaleMaskToInt
+    , sceneMove
+    , sceneNo
+    , sceneNoToInt
     , schemaToken
+    , segment
+    , segmentToInt
     , spanPlace
+    , stepNo
+    , stepNoToInt
     )
 
 {-| The unit's text console, `ed` namespace: one command out, answer lines in.
@@ -229,6 +266,7 @@ type SchemaId
     | MatrixSchema Engine
     | SettingsSchema
     | MapSchema
+    | OrbitSchema
 
 
 {-| A project file's id on the card, as the listing names it: 1 or more.
@@ -602,6 +640,268 @@ type MapCommand
     | StopLearning
 
 
+{-| An ORBIT cell that is no parameter, as `act` lines name it: what a page
+shows beside its knobs.
+-}
+type ActCell
+    = ActRing
+    | ActScene
+    | ActSave
+    | ActSwitch
+    | ActDegree
+    | ActPlay
+    | ActCursor
+    | ActSet
+    | ActNote
+    | ActLearn
+    | ActClear
+
+
+{-| Whether ORBIT's song runs.
+-}
+type Playback
+    = Playing
+    | Stopped
+
+
+{-| What drives ORBIT's clock: its own tempo, or MIDI's.
+-}
+type Clock
+    = ClockInt
+    | ClockExt
+
+
+{-| A scene slot: 1..8.
+-}
+type SceneNo
+    = SceneNo Int
+
+
+sceneNo : Int -> Maybe SceneNo
+sceneNo =
+    within 1 8 SceneNo
+
+
+sceneNoToInt : SceneNo -> Int
+sceneNoToInt (SceneNo n) =
+    n
+
+
+{-| A slot's revision as `since` said it: a destructive scene command's
+witness, 0..65535.
+-}
+type Rev
+    = Rev Int
+
+
+rev : Int -> Maybe Rev
+rev =
+    within 0 65535 Rev
+
+
+revToInt : Rev -> Int
+revToInt (Rev n) =
+    n
+
+
+{-| A slot holds a saved scene, or none (neutral).
+-}
+type SlotState
+    = SlotSaved
+    | SlotNeutral
+
+
+{-| A chord segment: 1..8.
+-}
+type Segment
+    = Segment Int
+
+
+segment : Int -> Maybe Segment
+segment =
+    within 1 8 Segment
+
+
+segmentToInt : Segment -> Int
+segmentToInt (Segment n) =
+    n
+
+
+{-| A chord's scale degree: 1..12, I..XII.
+-}
+type Degree
+    = Degree Int
+
+
+degree : Int -> Maybe Degree
+degree =
+    within 1 12 Degree
+
+
+degreeToInt : Degree -> Int
+degreeToInt (Degree n) =
+    n
+
+
+{-| CUSTOM's notes: bit i is i semitones above the root, and the root is
+always in (bit 0), so 1..4095 and odd.
+-}
+type ScaleMask
+    = ScaleMask Int
+
+
+scaleMask : Int -> Maybe ScaleMask
+scaleMask n =
+    if n >= 1 && n <= 4095 && modBy 2 n == 1 then
+        Just (ScaleMask n)
+
+    else
+        Nothing
+
+
+scaleMaskToInt : ScaleMask -> Int
+scaleMaskToInt (ScaleMask n) =
+    n
+
+
+{-| An ORBIT ring: 1..5.
+-}
+type RingNo
+    = RingNo Int
+
+
+ringNo : Int -> Maybe RingNo
+ringNo =
+    within 1 5 RingNo
+
+
+ringNoToInt : RingNo -> Int
+ringNoToInt (RingNo n) =
+    n
+
+
+{-| A ring's step: 1..32.
+-}
+type StepNo
+    = StepNo Int
+
+
+stepNo : Int -> Maybe StepNo
+stepNo =
+    within 1 32 StepNo
+
+
+stepNoToInt : StepNo -> Int
+stepNoToInt (StepNo n) =
+    n
+
+
+{-| A MIDI note: 0..127.
+-}
+type Note
+    = Note Int
+
+
+note : Int -> Maybe Note
+note =
+    within 0 127 Note
+
+
+noteToInt : Note -> Int
+noteToInt (Note n) =
+    n
+
+
+{-| A ring's note pool: one to eight notes.
+-}
+type NotePool
+    = NotePool Note (List Note)
+
+
+notePool : List Note -> Maybe NotePool
+notePool ns =
+    case ns of
+        first :: rest ->
+            if List.length rest < 8 then
+                Just (NotePool first rest)
+
+            else
+                Nothing
+
+        [] ->
+            Nothing
+
+
+poolNotes : NotePool -> List Note
+poolNotes (NotePool first rest) =
+    first :: rest
+
+
+{-| `n` as `make n` when it is in `lo..hi`.
+-}
+within : Int -> Int -> (Int -> a) -> Int -> Maybe a
+within lo hi make n =
+    if n >= lo && n <= hi then
+        Just (make n)
+
+    else
+        Nothing
+
+
+{-| ORBIT's song line: running or not, its clock, the playing scene, the one
+queued after it, and whether it has edits since its save or load.
+-}
+type alias Song =
+    { playback : Playback, clock : Clock, scene : SceneNo, queued : Maybe SceneNo, edits : Edits }
+
+
+{-| A scene slot as its `slot` line says it.
+-}
+type alias Slot =
+    { state : SlotState, rev : Rev }
+
+
+{-| Where `ed scene save` writes: a neutral slot, or over a saved one,
+witnessed by its rev.
+-}
+type SaveInto
+    = IntoNeutral
+    | Over Rev
+
+
+{-| A scene from one slot to another, each witnessed by its rev: only
+`sceneMove` makes one, never onto itself.
+-}
+type SceneMove
+    = SceneMove ( SceneNo, Rev ) ( SceneNo, Rev )
+
+
+sceneMove : ( SceneNo, Rev ) -> ( SceneNo, Rev ) -> Maybe SceneMove
+sceneMove ( a, ra ) ( b, rb ) =
+    if a /= b then
+        Just (SceneMove ( a, ra ) ( b, rb ))
+
+    else
+        Nothing
+
+
+{-| ORBIT's commands. The scene ones that change a slot carry its rev; the
+clear and reload ones name the playing slot.
+-}
+type OrbitCommand
+    = PlaySong
+    | StopSong
+    | QueueScene SceneNo
+    | SaveScene SceneNo SaveInto
+    | ClearScene SceneNo Rev
+    | ReloadScene SceneNo Rev
+    | MoveScene SceneMove
+    | SetChord Segment Degree
+    | SetScale ScaleMask
+    | SetStep RingNo StepNo Note
+    | SetPool RingNo NotePool
+
+
 {-| A schema's hash, sixteen hex digits: describe's own bytes, so equal
 hashes are the same text. Opaque: only `parse` makes one.
 -}
@@ -632,6 +932,9 @@ schemaToken s =
         MapSchema ->
             "MAP"
 
+        OrbitSchema ->
+            "ORBIT"
+
 
 schemaFromToken : String -> Maybe SchemaId
 schemaFromToken t =
@@ -643,6 +946,9 @@ schemaFromToken t =
 
     else if t == "MAP" then
         Just MapSchema
+
+    else if t == "ORBIT" then
+        Just OrbitSchema
 
     else if String.startsWith "MTX-" t then
         Unit.engineFromName (String.dropLeft 4 t) |> Maybe.map MatrixSchema
@@ -669,6 +975,7 @@ type Command
       -- A listed file, witnessed by its generation.
     | LoadProject ProjectId Generation OverEdits
     | MapCmd MapCommand
+    | OrbitCmd OrbitCommand
 
 
 type AnswerLine
@@ -724,6 +1031,16 @@ type AnswerLine
     | RowIs { row : MapRow, input : MapInput, kind : MapKind, addr : Maybe Addr, min : SpanPlace, max : SpanPlace, echo : OnOff, status : RowStatus }
     | LearnIs { learn : Learn, note : String }
     | MapFileIs String
+      -- ORBIT's schema: a cell of its own, no parameter, and its label.
+    | Act { label : String, cell : ActCell }
+      -- The ORBIT section of `since`, whole: what was held for it is dropped.
+    | OrbitIs
+    | SongIs Song
+    | SlotIs { slot : SceneNo, state : SlotState, rev : Rev }
+    | ChordIs Segment Degree
+    | ScaleIs ScaleMask
+    | StepIs RingNo StepNo Note
+    | PoolIs RingNo NotePool
 
 
 type Line
@@ -812,6 +1129,54 @@ encode c =
 
         MapCmd mc ->
             encodeMap mc
+
+        OrbitCmd oc ->
+            Just (encodeOrbit oc)
+
+
+encodeOrbit : OrbitCommand -> String
+encodeOrbit c =
+    let
+        ints : String -> List Int -> String
+        ints head ns =
+            String.join " " (head :: List.map String.fromInt ns)
+    in
+    case c of
+        PlaySong ->
+            "ed orbit play"
+
+        StopSong ->
+            "ed orbit stop"
+
+        QueueScene (SceneNo n) ->
+            ints "ed scene queue" [ n ]
+
+        SaveScene (SceneNo n) IntoNeutral ->
+            ints "ed scene save" [ n ]
+
+        SaveScene (SceneNo n) (Over (Rev r)) ->
+            ints "ed scene save" [ n ] ++ " over " ++ String.fromInt r
+
+        ClearScene (SceneNo n) (Rev r) ->
+            ints "ed scene clear" [ n, r ]
+
+        ReloadScene (SceneNo n) (Rev r) ->
+            ints "ed scene reload" [ n, r ]
+
+        MoveScene (SceneMove ( SceneNo a, Rev ra ) ( SceneNo b, Rev rb )) ->
+            ints "ed scene move" [ a, b, ra, rb ]
+
+        SetChord (Segment sg) (Degree d) ->
+            ints "ed chord" [ sg, d ]
+
+        SetScale (ScaleMask m) ->
+            ints "ed scale" [ m ]
+
+        SetStep (RingNo r) (StepNo i) (Note n) ->
+            ints "ed step" [ r, i, n ]
+
+        SetPool (RingNo r) pool ->
+            ints "ed pool" (r :: List.map noteToInt (poolNotes pool))
 
 
 encodeMap : MapCommand -> Maybe String
@@ -1259,29 +1624,168 @@ answer ts =
         [ "row", r, input, kind, a, lo, hi, echo, status ] ->
             rowLine r input kind a ( lo, hi ) echo status
 
-        [ "learn", "off", note ] ->
-            Just (LearnIs { learn = NotLearning, note = note })
+        [ "learn", "off", band ] ->
+            Just (LearnIs { learn = NotLearning, note = band })
 
-        [ "learn", "armed", a, note ] ->
-            addrOrNone a |> Maybe.map (\x -> LearnIs { learn = Armed x, note = note })
+        [ "learn", "armed", a, band ] ->
+            addrOrNone a |> Maybe.map (\x -> LearnIs { learn = Armed x, note = band })
 
-        [ "learn", "sensing", r, note ] ->
+        [ "learn", "sensing", r, band ] ->
             rowOf r
                 |> Maybe.andThen
                     (\x ->
                         case x of
                             SoundRow i ->
-                                Just (LearnIs { learn = Sensing i, note = note })
+                                Just (LearnIs { learn = Sensing i, note = band })
 
                             MapFileRow _ ->
                                 Nothing
                     )
 
-        [ "learn", "pointing", note ] ->
-            Just (LearnIs { learn = Pointing, note = note })
+        [ "learn", "pointing", band ] ->
+            Just (LearnIs { learn = Pointing, note = band })
 
         [ "mapfile", name ] ->
             Just (MapFileIs name)
+
+        [ "act", label, cell ] ->
+            actCellOf cell |> Maybe.map (\x -> Act { label = label, cell = x })
+
+        [ "orbit" ] ->
+            Just OrbitIs
+
+        [ "song", playback, "clock", clock, "scene", n, "queued", q, "edited", e ] ->
+            Maybe.map3 (\( pb, ck ) ( sc, qd ) ed -> SongIs { playback = pb, clock = ck, scene = sc, queued = qd, edits = ed })
+                (Maybe.map2 Tuple.pair (playbackOf playback) (clockOf clock))
+                (Maybe.map2 Tuple.pair (number sceneNo n) (sceneOrNone q))
+                (yesNoOf e)
+
+        [ "slot", n, state, "rev", r ] ->
+            Maybe.map3 (\sc st rv -> SlotIs { slot = sc, state = st, rev = rv }) (number sceneNo n) (slotStateOf state) (number rev r)
+
+        [ "chord", sg, d ] ->
+            Maybe.map2 ChordIs (number segment sg) (number degree d)
+
+        [ "scale", m ] ->
+            number scaleMask m |> Maybe.map ScaleIs
+
+        [ "step", r, i, n ] ->
+            Maybe.map3 StepIs (number ringNo r) (number stepNo i) (number note n)
+
+        "pool" :: r :: ns ->
+            Maybe.map2 PoolIs (number ringNo r) (traverse (number note) ns |> Maybe.andThen notePool)
+
+        _ ->
+            Nothing
+
+
+{-| A plain whole number off the wire, if `make` takes it.
+-}
+number : (Int -> Maybe a) -> String -> Maybe a
+number make =
+    nat >> Maybe.andThen make
+
+
+{-| A scene, or `-` for none: `Just Nothing`.
+-}
+sceneOrNone : String -> Maybe (Maybe SceneNo)
+sceneOrNone s =
+    if s == "-" then
+        Just Nothing
+
+    else
+        number sceneNo s |> Maybe.map Just
+
+
+actCellOf : String -> Maybe ActCell
+actCellOf s =
+    case s of
+        "RING" ->
+            Just ActRing
+
+        "SCENE" ->
+            Just ActScene
+
+        "SAVE" ->
+            Just ActSave
+
+        "SWITCH" ->
+            Just ActSwitch
+
+        "DEGREE" ->
+            Just ActDegree
+
+        "PLAY" ->
+            Just ActPlay
+
+        "CURSOR" ->
+            Just ActCursor
+
+        "SET" ->
+            Just ActSet
+
+        "NOTE" ->
+            Just ActNote
+
+        "LEARN" ->
+            Just ActLearn
+
+        "CLEAR" ->
+            Just ActClear
+
+        _ ->
+            Nothing
+
+
+playbackOf : String -> Maybe Playback
+playbackOf s =
+    case s of
+        "playing" ->
+            Just Playing
+
+        "stopped" ->
+            Just Stopped
+
+        _ ->
+            Nothing
+
+
+clockOf : String -> Maybe Clock
+clockOf s =
+    case s of
+        "INT" ->
+            Just ClockInt
+
+        "EXT" ->
+            Just ClockExt
+
+        _ ->
+            Nothing
+
+
+{-| The song's `edited yes|no`.
+-}
+yesNoOf : String -> Maybe Edits
+yesNoOf s =
+    case s of
+        "yes" ->
+            Just Edited
+
+        "no" ->
+            Just Clean
+
+        _ ->
+            Nothing
+
+
+slotStateOf : String -> Maybe SlotState
+slotStateOf s =
+    case s of
+        "saved" ->
+            Just SlotSaved
+
+        "neutral" ->
+            Just SlotNeutral
 
         _ ->
             Nothing

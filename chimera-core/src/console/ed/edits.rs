@@ -45,6 +45,9 @@ enum Taken {
     /// the active Part's Sound (ADR 0232), so a box that has moved to
     /// another Part since drops it.
     Roll(PartId),
+    /// ORBIT's: the song's, the same from any Part, through
+    /// `OrbitSong::edit` (ADR 0082, 0083), never a Part's blocks.
+    Orbit,
 }
 
 impl Taken {
@@ -58,7 +61,7 @@ impl Taken {
             EdBlock::Bus(_) => Some(Taken::Bus),
             EdBlock::Global(GlobalBlock::Theme | GlobalBlock::Midi) => Some(Taken::Global),
             EdBlock::Global(GlobalBlock::Random) => Some(Taken::Roll(part)),
-            EdBlock::Orbit(_) => None,
+            EdBlock::Orbit(_) => Some(Taken::Orbit),
         }
     }
 
@@ -70,7 +73,7 @@ impl Taken {
                 (ui.project().part(part).sound.engine() == engine).then_some(part)
             }
             Taken::Part(n) => Some(n),
-            Taken::Bus | Taken::Global => Some(ui.active_part),
+            Taken::Bus | Taken::Global | Taken::Orbit => Some(ui.active_part),
             Taken::Roll(n) => (ui.active_part == n).then_some(n),
         }
     }
@@ -133,6 +136,10 @@ enum Act {
     /// listing kept until no map job waits, learn behind a load.
     #[cfg(feature = "midi-map")]
     Map(super::map::MapAct),
+    /// `ed orbit`, `ed scene`, `ed chord|scale|step|pool`: checked again
+    /// in the pass; the transport kept until every command before it is
+    /// applied.
+    Orbit(super::orbit::OrbitCmd),
 }
 
 /// What `EdState::push` made of a set.
@@ -383,6 +390,7 @@ impl EdState {
                 Act::Project(c) => !crate::ui::ed_cue::card(ui, Some(c)),
                 #[cfg(feature = "midi-map")]
                 Act::Map(m) => !super::map::apply(ui, m),
+                Act::Orbit(c) => !crate::ui::ed_cue::orbit(ui, c),
             };
             if keep && let Some(slot) = self.acts.get_mut(kept) {
                 slot.write(a);
@@ -428,6 +436,13 @@ impl EdState {
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.turn"))]
 fn turn(ui: &mut UiState, at: PartId, p: Pending) -> Option<Line> {
     let (a, pad) = (p.addr.param(), p.addr.pad());
+    if let Taken::Orbit = p.taken {
+        // Dimmed now (BPM under a MIDI clock): inert, as on the box.
+        if !dimmed(ui, p.addr) {
+            ed_cue::orbit_set(ui, a, p.to.stored());
+        }
+        return None;
+    }
     if let Some(why) = refusal(ui, at, p) {
         // To the value it has: no change, the hold kept, nothing said.
         if unchanged(ui, at, p) {
@@ -450,6 +465,21 @@ fn turn(ui: &mut UiState, at: PartId, p: Pending) -> Option<Line> {
     }
     ed_cue::landed(ui, at, a, pad);
     None
+}
+
+/// `a`'s cell is drawn dimmed and inert where a page shows it: BPM while a
+/// MIDI clock leads (`view::is_dimmed`).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.dimmed"))]
+fn dimmed(ui: &UiState, a: EdAddr) -> bool {
+    let own = ui.cell_own();
+    match find(ui, &own, a) {
+        Some((def, i, ctx)) => view::is_dimmed(
+            &view::view(def, i, &ctx),
+            &ui.project().part(ui.active_part).sound,
+            &ctx,
+        ),
+        None => false,
+    }
 }
 
 /// `p` sets its Sound cell on Part `at` to the value stored there already.
@@ -735,6 +765,25 @@ pub(super) fn learn(
     }
 }
 
+/// `ed orbit|scene|chord|scale|step|pool …`'s answer: what the box would
+/// refuse now is said at once; the rest is queued, and checked again in
+/// the UI pass.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.orbit"))]
+pub(super) fn orbit(
+    c: super::orbit::OrbitCmd,
+    ui: &UiState,
+    q: Option<&mut EdState>,
+    w: &mut dyn Write,
+) -> fmt::Result {
+    let Some(q) = q else {
+        return super::orbit::NotNow::Unbuilt.write(w);
+    };
+    match super::orbit::check(c, ui) {
+        Err(why) => why.write(w),
+        Ok(()) => queued(q.push_act(Act::Orbit(c)), w),
+    }
+}
+
 /// `OK queued`, or `ERR busy` past the queue.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.queued"))]
 fn queued(p: Pushed, w: &mut dyn Write) -> fmt::Result {
@@ -764,6 +813,13 @@ pub(super) fn set(
         addr.write(w)?;
         return w.write_str(HERE.get());
     };
+    if let Taken::Orbit = taken
+        && dimmed(ui, addr)
+    {
+        w.write_str(SET.get())?;
+        addr.write(w)?;
+        return w.write_str(DIMMED.get());
+    }
     let to = match resolve(ui, addr, val) {
         Ok(to) => to,
         Err(why) => {
@@ -785,6 +841,10 @@ lit!(
     REFUSED_HEAD = "refused "
 );
 lit!(NO_SUCH_OPTION = "has no such option");
+lit!(
+    /// A set of a dimmed cell's tail: BPM while a MIDI clock leads.
+    DIMMED = " is dimmed: a MIDI clock leads\n"
+);
 lit!(TAKES_A_NUMBER = "takes a number");
 lit!(TAKES_A_NAME = "takes one of its names");
 lit!(ROUTE_UNBUILT = "ERR ed route is not in this build\n");

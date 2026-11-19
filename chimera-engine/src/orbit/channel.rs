@@ -471,6 +471,7 @@ impl Channel {
     }
 
     /// The runner has applied every command issued.
+    #[inline(always)]
     pub fn idle(&self) -> bool {
         self.acked == self.log.head
             && self.outbox.is_empty()

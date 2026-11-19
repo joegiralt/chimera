@@ -435,8 +435,10 @@ impl OrbitSong {
         self.queued
     }
 
-    /// Slot `n`'s writes so far, wrapping: a `Confirmed<SceneSlot>`'s witness.
-    pub(crate) fn slot_rev(&self, n: SceneIdx) -> u16 {
+    /// Slot `n`'s writes so far, wrapping: a `Confirmed<SceneSlot>`'s
+    /// witness, and what the browser editor reads to give one (ADR 0289).
+    #[inline(always)]
+    pub fn slot_rev(&self, n: SceneIdx) -> u16 {
         self.slot_revs[n.0 as usize]
     }
 
@@ -526,11 +528,13 @@ impl OrbitSong {
     }
 
     /// `live` over slot `n`.
+    #[inline(always)]
     fn write(&mut self, n: SceneIdx) {
         self.put(n, self.live);
     }
 
     /// `s` into slot `n`, its rev moved and `saved` kept.
+    #[inline(always)]
     fn put(&mut self, n: SceneIdx, s: Scene) {
         self.scenes[n.0 as usize] = s;
         self.wrote(n);
@@ -538,12 +542,14 @@ impl OrbitSong {
 
     /// Slot `n` written: `moved`, and its touched marks dropped, as they
     /// are `live`'s to send.
+    #[inline(always)]
     fn wrote(&mut self, n: SceneIdx) {
         self.scenes[n.0 as usize].harvest();
         self.moved(n);
     }
 
     /// Slot `n` changed: its rev moved, `saved` kept.
+    #[inline(always)]
     fn moved(&mut self, n: SceneIdx) {
         let i = n.0 as usize;
         self.slot_revs[i] = self.slot_revs[i].wrapping_add(1);
@@ -571,6 +577,7 @@ impl OrbitSong {
     /// neutral, unless written since. The playing one also lands again, so
     /// `live` goes neutral on the loop. Refused while a switch waits: what
     /// lands stays what was queued, and the prompt's "on the loop" holds.
+    #[inline(always)]
     pub fn clear_scene(&mut self, yes: Confirmed<SceneSlot>) -> Result<(), Refused> {
         if self.queued.is_some() {
             return Err(Refused::SwitchPending);
@@ -590,6 +597,7 @@ impl OrbitSong {
     /// playing slot, queued like a switch, so the scene restarts on the
     /// loop from its edits, its drift dropped (ADR 0083). Refused while a
     /// switch waits, and for a slot written since, or no longer playing.
+    #[inline(always)]
     pub fn reload_scene(&mut self, yes: Confirmed<SceneSlot>) -> Result<(), Refused> {
         if self.queued.is_some() {
             return Err(Refused::SwitchPending);
@@ -604,6 +612,7 @@ impl OrbitSong {
     /// SCN's SAVE → `n`: at once over the playing slot or a neutral one;
     /// over another saved scene it asks.
     /// Only ever refused as `SwitchPending`.
+    #[inline(always)]
     pub fn save_to(&mut self, n: SceneIdx) -> Result<SceneSave, Refused> {
         if self.queued.is_some() {
             return Err(Refused::SwitchPending);
@@ -617,6 +626,7 @@ impl OrbitSong {
 
     /// SAVE OVER, answered: `live` over the slot it asked about, unless the
     /// slot was written since.
+    #[inline(always)]
     pub fn overwrite_scene(&mut self, yes: Confirmed<SceneSlot>) -> Result<(), Refused> {
         if self.queued.is_some() {
             return Err(Refused::SwitchPending);
@@ -625,6 +635,39 @@ impl OrbitSong {
             return Err(Refused::SlotChanged);
         }
         self.write(yes.target().index());
+        Ok(())
+    }
+
+    /// The browser editor's MOVE (ADR 0289): slots `a` and `b` swapped,
+    /// each confirmed as the editor saw it. The playing scene moves with
+    /// its slot, so `current` follows it and `live` plays on; the caller
+    /// tells the runner the slot it now plays. Refused while a switch
+    /// waits, and for a slot written since. Bank 2's: only `ed` moves.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.scene.swap_scenes")
+    )]
+    pub fn swap_scenes(
+        &mut self,
+        a: Confirmed<SceneSlot>,
+        b: Confirmed<SceneSlot>,
+    ) -> Result<(), Refused> {
+        if self.queued.is_some() {
+            return Err(Refused::SwitchPending);
+        }
+        if !a.holds(self) || !b.holds(self) {
+            return Err(Refused::SlotChanged);
+        }
+        let (a, b) = (a.target().index(), b.target().index());
+        let (i, j) = (a.0 as usize, b.0 as usize);
+        self.scenes.swap(i, j);
+        self.moved(a);
+        self.moved(b);
+        if self.current == a {
+            self.current = b;
+        } else if self.current == b {
+            self.current = a;
+        }
         Ok(())
     }
 
@@ -712,6 +755,7 @@ impl BlockRead for Scene {
 }
 
 impl Blocks for Scene {
+    #[inline(always)]
     fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         match b {
             BlockRef::OrbitChords => Some(BlockViewMut::Plain(&mut self.chords)),

@@ -37,14 +37,14 @@ The schemas are the unit's own text (ADR 0289): on connect, and on an engine
 the editor hasn't read, it asks `ed schema <S>` for its page count and hash,
 and uses its cached copy of that hash (IndexedDB, `Cache`) or describes every
 page and keeps them. It reads the followed engine's schema, the MIXER's, the
-engine's matrix, SETTINGS' and MIDI MAP's.
+engine's matrix, SETTINGS', MIDI MAP's and ORBIT's.
 
 -}
 
 import Addr exposing (Addr)
 import Cache
 import Dict exposing (Dict)
-import Protocol exposing (AnswerLine(..), Cell, Command(..), Edits, Generation, Hash, Health, Learn, Line(..), MapCommand(..), MapInput, MapKind, MapRow(..), OnOff, OverEdits, PageNo, ProjectFile, ProjectId, ProjectName, RouteTo, RowStatus, SchemaId(..), SoundStatus, SpanPlace, Value, cellKey, encode, hashText, parse, rowIndexToInt, schemaToken)
+import Protocol exposing (AnswerLine(..), Cell, Command(..), Degree, Edits, Generation, Hash, Health, Learn, Line(..), MapCommand(..), MapInput, MapKind, MapRow(..), Note, NotePool, OnOff, OrbitCommand, OverEdits, PageNo, ProjectFile, ProjectId, ProjectName, RouteTo, RowStatus, ScaleMask, SchemaId(..), Slot, Song, SoundStatus, SpanPlace, Value, cellKey, encode, hashText, parse, ringNoToInt, rowIndexToInt, sceneNoToInt, schemaToken, segmentToInt, stepNoToInt)
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
@@ -151,6 +151,7 @@ type alias Model =
     , matrix : Schema
     , settings : Schema
     , midiMap : Schema
+    , orbit : Schema
     , routes : Dict String RouteReading
     , held : Dict String Held
     , incoming : Schema
@@ -187,6 +188,16 @@ type alias Model =
     , mapRows : Dict Int MapRowReading
     , learn : Maybe LearnReading
     , mapFiles : List String
+
+    -- ORBIT's section: the song, each scene slot, each segment's chord (by
+    -- their 1-based numbers), CUSTOM's scale, each ring's steps (by ring and
+    -- step) and pools (by ring).
+    , song : Maybe Song
+    , slots : Dict Int Slot
+    , chords : Dict Int Degree
+    , scale : Maybe ScaleMask
+    , steps : Dict ( Int, Int ) Note
+    , pools : Dict Int NotePool
     }
 
 
@@ -217,6 +228,8 @@ type Msg
     | LoadListed ProjectId Generation OverEdits
       -- A MIDI MAP or learn command.
     | MapAct MapCommand
+      -- An ORBIT transport, scene, chord, scale, step or pool command.
+    | OrbitAct OrbitCommand
 
 
 {-| The console protocol this editor speaks.
@@ -262,6 +275,7 @@ init =
     , matrix = Schema.empty
     , settings = Schema.empty
     , midiMap = Schema.empty
+    , orbit = Schema.empty
     , routes = Dict.empty
     , held = Dict.empty
     , incoming = Schema.empty
@@ -290,6 +304,12 @@ init =
     , mapRows = Dict.empty
     , learn = Nothing
     , mapFiles = []
+    , song = Nothing
+    , slots = Dict.empty
+    , chords = Dict.empty
+    , scale = Nothing
+    , steps = Dict.empty
+    , pools = Dict.empty
     }
 
 
@@ -360,6 +380,9 @@ opening msg =
             Cmd.none
 
         MapAct _ ->
+            Cmd.none
+
+        OrbitAct _ ->
             Cmd.none
 
 
@@ -585,6 +608,10 @@ step msg m =
         MapAct c ->
             mapCommand c m
 
+        -- ORBIT's commands read no engine's schema; `since` says what came of them.
+        OrbitAct c ->
+            projectCommand (OrbitCmd c) m
+
 
 {-| A MIDI MAP command goes out while following; one naming a cell only
 against the engine the box is on, as an edit does.
@@ -649,18 +676,21 @@ nextSeat (Seat n) =
 
 
 {-| The schema that describes `a`: the followed engine's, else the mixer's,
-else SETTINGS'.
+else ORBIT's, else SETTINGS'.
 -}
 schemaOf : Addr -> Model -> Schema
 schemaOf a m =
-    case ( Schema.param a m.schema, Schema.param a m.mixer ) of
-        ( Just _, _ ) ->
+    case ( Schema.param a m.schema, Schema.param a m.mixer, isOrbit a m ) of
+        ( Just _, _, _ ) ->
             m.schema
 
-        ( Nothing, Just _ ) ->
+        ( Nothing, Just _, _ ) ->
             m.mixer
 
-        ( Nothing, Nothing ) ->
+        ( Nothing, Nothing, True ) ->
+            m.orbit
+
+        ( Nothing, Nothing, False ) ->
             m.settings
 
 
@@ -668,7 +698,12 @@ schemaOf a m =
 -}
 isDescribed : Addr -> Model -> Bool
 isDescribed a m =
-    Schema.param a m.schema /= Nothing || isMixer a m || isSettings a m
+    Schema.param a m.schema /= Nothing || isMixer a m || isSettings a m || isOrbit a m
+
+
+isOrbit : Addr -> Model -> Bool
+isOrbit a m =
+    Schema.param a m.orbit /= Nothing
 
 
 isSettings : Addr -> Model -> Bool
@@ -1068,14 +1103,48 @@ answer raw a m =
         MapFileIs name ->
             { m | mapFiles = m.mapFiles ++ [ name ] }
 
+        Act _ ->
+            describing raw a m
 
-{-| Only the MIXER's and SETTINGS' values and the MIXER's panels kept: the
-Part's section starts afresh.
+        -- ORBIT's section whole: its state and values go; it repeats them.
+        OrbitIs ->
+            { m
+                | values = Dict.filter (\k _ -> not (isOrbitKey k m)) m.values
+                , song = Nothing
+                , slots = Dict.empty
+                , chords = Dict.empty
+                , scale = Nothing
+                , steps = Dict.empty
+                , pools = Dict.empty
+            }
+
+        -- Whole or a diff, each line replaces its own entry.
+        SongIs g ->
+            { m | song = Just g }
+
+        SlotIs sl ->
+            { m | slots = Dict.insert (sceneNoToInt sl.slot) { state = sl.state, rev = sl.rev } m.slots }
+
+        ChordIs sg d ->
+            { m | chords = Dict.insert (segmentToInt sg) d m.chords }
+
+        ScaleIs mask ->
+            { m | scale = Just mask }
+
+        StepIs r i n ->
+            { m | steps = Dict.insert ( ringNoToInt r, stepNoToInt i ) n m.steps }
+
+        PoolIs r ns ->
+            { m | pools = Dict.insert (ringNoToInt r) ns m.pools }
+
+
+{-| Only the MIXER's, SETTINGS' and ORBIT's values and the MIXER's panels
+kept: the Part's section starts afresh.
 -}
 mixerOnly : Model -> Model
 mixerOnly m =
     { m
-        | values = Dict.filter (\k _ -> isMixerKey k m || isSettingsKey k m) m.values
+        | values = Dict.filter (\k _ -> isMixerKey k m || isSettingsKey k m || isOrbitKey k m) m.values
         , variants = Dict.filter (\k _ -> Schema.hasPanel k m.mixer) m.variants
     }
 
@@ -1088,6 +1157,11 @@ isMixerKey k m =
 isSettingsKey : String -> Model -> Bool
 isSettingsKey k m =
     Addr.fromWire k |> Maybe.map (\a -> isSettings a m) |> Maybe.withDefault False
+
+
+isOrbitKey : String -> Model -> Bool
+isOrbitKey k m =
+    Addr.fromWire k |> Maybe.map (\a -> isOrbit a m) |> Maybe.withDefault False
 
 
 {-| A schema read this connection, or none.
@@ -1148,10 +1222,10 @@ ok done more m0 =
                         ( readNext (install s h m1), [] )
 
                     else
-                        ( { m1 | stage = Recalling s r }, [ Recall (cacheKey s r.hash) ] )
+                        recall s r m1
 
                 Nothing ->
-                    ( { m1 | stage = Recalling s r }, [ Recall (cacheKey s r.hash) ] )
+                    recall s r m1
 
         -- An `OK` with no `schema` line: not the unit this editor speaks to.
         Checking _ Nothing ->
@@ -1189,6 +1263,18 @@ ok done more m0 =
 
         Halted _ ->
             ( m, [] )
+
+
+{-| A schema the editor doesn't hold: from the cache, or, with no pages
+(ORBIT or MIDI MAP not in the build), empty at once.
+-}
+recall : SchemaId -> Reply -> Model -> ( Model, List Effect )
+recall s r m =
+    if r.pages == 0 then
+        ( readNext (install s { hash = r.hash, schema = Schema.empty } m), [] )
+
+    else
+        ( { m | stage = Recalling s r }, [ Recall (cacheKey s r.hash) ] )
 
 
 {-| A `since` answered. Once nothing is owed, a box on another engine has its
@@ -1349,10 +1435,13 @@ install s h m =
         MapSchema ->
             { m1 | midiMap = h.schema }
 
+        OrbitSchema ->
+            { m1 | orbit = h.schema }
+
 
 {-| What to read next: the followed engine's schema, the mixer's, the
-engine's matrix, SETTINGS', then MAP's, each once a connection; then
-following.
+engine's matrix, SETTINGS', MAP's, then ORBIT's, each once a connection;
+then following.
 -}
 readNext : Model -> Model
 readNext m =
@@ -1381,6 +1470,9 @@ readNext m =
 
             else if lacks MapSchema then
                 go (Checking MapSchema Nothing)
+
+            else if lacks OrbitSchema then
+                go (Checking OrbitSchema Nothing)
 
             else
                 go Following

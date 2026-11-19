@@ -1,4 +1,4 @@
-module Fixture exposing (initVariants, param, paramIn, schema, schemaFor)
+module Fixture exposing (initVariants, orbit, param, paramIn, schema, schemaFor)
 
 import Dict exposing (Dict)
 import FixtureData
@@ -13,6 +13,13 @@ import Wire exposing (addr)
 schema : Schema
 schema =
     read FixtureData.lines
+
+
+{-| What the unit's `ed describe ORBIT` answers (fixtures/orbit-schema.txt).
+-}
+orbit : Schema
+orbit =
+    read FixtureData.orbit
 
 
 {-| Each engine's `ed describe` answer.

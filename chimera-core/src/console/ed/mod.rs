@@ -18,6 +18,7 @@ mod edits;
 mod lit;
 #[cfg(feature = "midi-map")]
 mod map;
+mod orbit;
 mod pages;
 mod project;
 mod route;
@@ -35,6 +36,7 @@ pub use describe::{
 #[cfg(any(test, feature = "test-support"))]
 pub use edits::StoredRefusal;
 pub use edits::{EdState, Pushed, REFUSED as ED_REFUSED, SetRefusal};
+pub(crate) use orbit::{NotNow as OrbitNotNow, OrbitCmd, Seen as OrbitSeen, check as orbit_check};
 pub use pages::schema_pages;
 pub use project::{EdName, OverEdits, ProjectCmd};
 pub use schema::{Round, Schema};
@@ -107,6 +109,8 @@ pub enum EdArg {
     /// `ed learn <addr>|off`.
     #[cfg(feature = "midi-map")]
     Learn(map::LearnCmd),
+    /// `ed orbit play|stop`, `ed scene …`, `ed chord|scale|step|pool …`.
+    Orbit(orbit::OrbitCmd),
 }
 
 /// Why a line is no `ed` command: each its own `ERR`.
@@ -128,6 +132,8 @@ pub enum EdRefusal {
     /// `ed learn` with no address or `off`.
     #[cfg(feature = "midi-map")]
     Learn,
+    /// An ORBIT command that is none of its family's forms.
+    Orbit(orbit::Family),
 }
 
 /// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
@@ -153,7 +159,9 @@ fn value(w: &[u8]) -> Option<EdValue> {
 }
 
 impl EdArg {
-    pub const USAGE: &'static str = "hello, schema, describe, get, set, route, since, part, projects, project, map, maps or learn";
+    /// Never shown: `EdLine` takes every line, and `ed`'s refusals are
+    /// bank 2's (`answer_in`, `ED_USAGE`), so bank 1 holds no list.
+    pub const USAGE: &'static str = "a command";
 
     /// The command, or the refusal it gets. `Since`'s `None` is no
     /// failure: 0 is the editor holding nothing.
@@ -197,6 +205,9 @@ impl EdArg {
             return map::LearnCmd::parse(words)
                 .map(EdArg::Learn)
                 .ok_or(EdRefusal::Learn);
+        }
+        if let Some(f) = orbit::Family::of(sub) {
+            return f.parse(words).map(EdArg::Orbit).ok_or(EdRefusal::Orbit(f));
         }
         EdArg::parse_rest(sub, words).ok_or(EdRefusal::Usage)
     }
@@ -246,9 +257,10 @@ pub(crate) fn answer_in(
     match EdArg::parse(line.words()) {
         Err(EdRefusal::Usage) => {
             w.write_str(TAKES.get())?;
-            w.write_str(EdArg::USAGE)?;
+            w.write_str(ED_USAGE.get())?;
             w.write_char('\n')
         }
+        Err(EdRefusal::Orbit(f)) => f.usage(w),
         Err(EdRefusal::Route) => w.write_str(ROUTE_USAGE.get()),
         Err(EdRefusal::Project(project::ProjectRefusal::Usage)) => {
             w.write_str(project::USAGE.get())
@@ -314,6 +326,7 @@ pub(crate) fn answer_in(
         Ok(EdArg::Maps) => edits::maps(q, w),
         #[cfg(feature = "midi-map")]
         Ok(EdArg::Learn(c)) => edits::learn(c, ui, q, w),
+        Ok(EdArg::Orbit(c)) => edits::orbit(c, ui, q, w),
         Ok(EdArg::Part(p)) => match q {
             None => w.write_str(PART_UNBUILT.get()),
             Some(q) => {
@@ -403,6 +416,10 @@ lit!(SET = "set");
 lit!(
     /// The usage refusal's head.
     TAKES = "ERR ed takes "
+);
+lit!(
+    /// `ed`'s commands, the usage refusal's tail.
+    ED_USAGE = "hello, schema, describe, get, set, route, since, part, projects, project, map, maps, learn, orbit, scene, chord, scale, step or pool"
 );
 lit!(PART_TAKES = "ERR ed part takes ");
 lit!(DESCRIBE_ERR = "ERR ed describe ");
