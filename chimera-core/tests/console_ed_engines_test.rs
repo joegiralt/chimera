@@ -1193,11 +1193,49 @@ fn since_says_only_the_turns_refusals() {
 #[test]
 fn a_refusal_waits_for_a_since_answer() {
     let mut f = streamed_at_deck();
+    let (_, m) = refused_lines(&mut f, 0);
     set(&mut f, "TAPE_ENG.MODEL", "#2");
     // An `ERR` answer (a malformed since) reports nothing and keeps them.
     assert!(ask(&mut f, "ed since x\n").starts_with("ERR "));
-    let (lines, _) = refused_lines(&mut f, 0);
+    let (lines, _) = refused_lines(&mut f, m);
     assert_eq!(lines.len(), 1, "{lines:?}");
+}
+
+/// A refusal is its Part's: a whole answer (another Part, or `since 0`)
+/// says none and drops them, and Part 2's answers never carry Part 1's.
+#[test]
+fn a_refusal_stays_with_its_part() {
+    let p2 = PartId::ALL[1];
+    let mut f = fake(EngineType::Drum);
+    screen::init_part_engine(&mut f.ui, p2, EngineType::Drum);
+    // Part 1's PAD3 CHOKE refused, then Part 2 followed: its whole answer
+    // has no refusal, nor has the diff after it.
+    let (_, m) = refused_lines(&mut f, 0);
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    assert_eq!(ask(&mut f, "ed part 2\n"), "OK\n");
+    apply(&mut f);
+    let (lines, m) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "Part 2's whole answer: {lines:?}");
+    let (lines, m) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "Part 2's diff: {lines:?}");
+    // Queued for Part 1, applied after Part 2 is followed: Part 1's still.
+    assert_eq!(ask(&mut f, "ed part 1\n"), "OK\n");
+    apply(&mut f);
+    let (_, m) = refused_lines(&mut f, m);
+    assert_eq!(ask(&mut f, "ed set PAD3.CHOKE OFF\n"), "OK queued\n");
+    assert_eq!(ask(&mut f, "ed part 2\n"), "OK\n");
+    apply(&mut f);
+    let (lines, m) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "Part 2 after Part 1's set: {lines:?}");
+    let (lines, _) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "{lines:?}");
+    // `since 0` is whole: a refusal before it is not said.
+    let mut f = fake(EngineType::Drum);
+    let (_, _) = refused_lines(&mut f, 0);
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    let (lines, m) = refused_lines(&mut f, 0);
+    assert!(lines.is_empty(), "since 0: {lines:?}");
+    assert!(refused_lines(&mut f, m).0.is_empty());
 }
 
 #[test]

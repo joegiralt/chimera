@@ -70,9 +70,11 @@ pub enum Pushed {
 /// The refusals `ed since` says at most: the newest.
 pub const REFUSED: usize = 4;
 
-/// A set the box refused at its turn, and why: the toast's words.
+/// A set the box refused at its turn, on its Part, and why: the toast's
+/// words.
 #[derive(Clone, Copy)]
 struct Refused {
+    part: PartId,
     addr: EdAddr,
     why: Line,
 }
@@ -98,12 +100,12 @@ impl Refusals {
         }
     }
 
-    /// `addr` refused for `why`: the oldest dropped when full.
+    /// `addr` on `part` refused for `why`: the oldest dropped when full.
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.edits.refusals_push")
     )]
-    fn push(&mut self, addr: EdAddr, why: Line) {
+    fn push(&mut self, part: PartId, addr: EdAddr, why: Line) {
         let mut at = usize::from(self.len);
         if at == REFUSED {
             let mut i = 1;
@@ -113,28 +115,31 @@ impl Refusals {
             }
             at = REFUSED - 1;
         }
-        self.items[at] = MaybeUninit::new(Refused { addr, why });
+        self.items[at] = MaybeUninit::new(Refused { part, addr, why });
         self.len = (at + 1) as u8;
     }
 
-    /// `refused <ADDR> "<why>"`, one line each.
+    /// `refused <ADDR> "<why>"`, one line each of `part`'s: an address
+    /// names no Part, so another's would read as this one's.
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.edits.refusals_write")
     )]
-    pub(super) fn write(&self, w: &mut dyn Write) -> fmt::Result {
+    pub(super) fn write(&self, part: PartId, w: &mut dyn Write) -> fmt::Result {
         let mut i = 0;
         while i < usize::from(self.len) {
             // SAFETY: `push` writes every item below `len` before raising
             // it, and `len` never passes `REFUSED`.
             let r = unsafe { self.items[i].assume_init_ref() };
-            writeln!(w, "refused {} \"{}\"", r.addr, r.why.as_str())?;
+            if r.part == part {
+                writeln!(w, "refused {} \"{}\"", r.addr, r.why.as_str())?;
+            }
             i += 1;
         }
         Ok(())
     }
 
-    /// Said: none left.
+    /// Said, or no longer the followed Part's: none left.
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.edits.refusals_clear")
@@ -208,7 +213,7 @@ impl EdState {
                 && ui.project().part(p.part).sound.engine() == p.engine
                 && let Some(why) = turn(ui, p)
             {
-                self.refused.push(p.addr, why);
+                self.refused.push(p.part, p.addr, why);
             }
             i += 1;
         }

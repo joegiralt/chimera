@@ -17,7 +17,8 @@
 //! so the two never disagree. `source` is TAPE's, in every whole answer.
 //! A `refused` line is a set the box refused at its turn since the last
 //! answer (`edits::Refusals`, the newest four), in its toast's words; one
-//! refused at `ERR` time is said in that answer alone.
+//! refused at `ERR` time is said in that answer alone. Only the followed
+//! Part's, and only in a diff: a whole answer says none and drops them.
 //! The number moves before the answer is written, so an answer that never
 //! reached the editor leaves it asking with a stale one: everything again.
 //!
@@ -434,7 +435,7 @@ impl EdSince {
 
     /// One pass of the answer: `Measure` writes to a counter and keeps
     /// nothing, `Commit` writes it, keeps what it said and clears the
-    /// refusals said.
+    /// refusals, said or stale.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.pass"))]
     fn pass(
         &mut self,
@@ -503,7 +504,10 @@ impl EdSince {
         if !texts && let Some(t) = source_text(ui, &own) {
             writeln!(w, "source \"{}\"", t.as_str())?;
         }
-        refused.write(w)?;
+        // A whole answer is a new start: the refusals before it are stale.
+        if same {
+            refused.write(part, w)?;
+        }
         if let Pass::Commit = pass {
             refused.clear();
         }
