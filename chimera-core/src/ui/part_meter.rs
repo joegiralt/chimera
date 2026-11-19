@@ -45,7 +45,7 @@ impl Dbfs {
     /// The bar's height in pixels, 0 at `FLOOR`, `STRIP_H` at `FULL` and over.
     pub fn px(self) -> u8 {
         let t = (self.0 - Self::FLOOR.0) / (Self::FULL.0 - Self::FLOOR.0);
-        libm::roundf(t.clamp(0.0, 1.0) * viz::STRIP_H as f32) as u8
+        libm::roundf(crate::dsp::clampf(t, 0.0, 1.0) * viz::STRIP_H as f32) as u8
     }
 }
 

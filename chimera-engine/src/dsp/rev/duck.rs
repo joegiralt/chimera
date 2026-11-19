@@ -80,7 +80,7 @@ fn key_db(peak: f32) -> Db {
     } else {
         KEY_FLOOR.get()
     };
-    Db::new(db.clamp(KEY_FLOOR.get(), KEY_FULL.get()))
+    Db::new(crate::dsp::clampf(db, KEY_FLOOR.get(), KEY_FULL.get()))
 }
 
 /// How far the follower at `env` asks to duck: 0 at `KEY_FLOOR`, 1 at
