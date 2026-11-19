@@ -311,6 +311,44 @@ impl SetRefusal {
     }
 }
 
+/// Why `EdState::stored_set` won't take a stored value.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoredRefusal {
+    /// `describe` lists no such address for the followed Part's engine.
+    NotHere,
+    /// NaN or an infinity.
+    NotFinite,
+    /// What `ed set` says of it.
+    Set(SetRefusal),
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl EdState {
+    /// What `ed set <addr>` stores for the stored value `v`, sent as the
+    /// cell's own kind says (a choice's `#n`, else the number): checked as
+    /// `set` checks it, nothing queued. For a mirror of the unit's screens
+    /// (chimera-screen), which writes it itself.
+    pub fn stored_set(&mut self, ui: &UiState, addr: EdAddr, v: f32) -> Result<f32, StoredRefusal> {
+        if !v.is_finite() {
+            return Err(StoredRefusal::NotFinite);
+        }
+        if !self.since.described(engine_of(ui)).has(addr) {
+            return Err(StoredRefusal::NotHere);
+        }
+        let val = match fmt_of(ui, addr).and_then(super::describe::names) {
+            Some(_) if v.fract() == 0.0 && (0.0..=255.0).contains(&v) => {
+                EdValue::Index(OptIndex::new(v as u8))
+            }
+            Some(_) => return Err(StoredRefusal::Set(SetRefusal::NoSuchOption)),
+            None => EdValue::Num(v, super::super::Word::new(b"")),
+        };
+        resolve(ui, addr, val)
+            .map(To::stored)
+            .map_err(StoredRefusal::Set)
+    }
+}
+
 impl Default for EdState {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.default"))]
     fn default() -> Self {

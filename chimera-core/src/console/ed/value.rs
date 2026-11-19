@@ -51,6 +51,12 @@ pub(super) fn block(ui: &UiState, at: EdBlock) -> Option<BlockView<'_>> {
     }
 }
 
+/// `a`'s stored value on the followed Part, a pad's on that pad.
+#[cfg(any(test, feature = "test-support"))]
+pub fn stored(ui: &UiState, a: EdAddr) -> Option<f32> {
+    block(ui, a.at()).map(|b| b.get(a.id()))
+}
+
 /// What the followed Part's texts read beside the bits, as the editor
 /// sees it: on DRUM, pad 1 and route 1, never the box's selected pad, so
 /// choosing a pad on the box moves no text.

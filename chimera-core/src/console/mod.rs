@@ -289,6 +289,8 @@ pub use ed::{
     env_variant, filter_variant, fx_variant, lfo_variant, machine_variant, modal_variant,
     op_variant, page_at as ed_page_at, pages as ed_pages, tape_variant,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use ed::{StoredRefusal, stored as ed_stored};
 mod status;
 pub use status::*;
 mod out;
