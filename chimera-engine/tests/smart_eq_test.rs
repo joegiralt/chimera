@@ -91,13 +91,16 @@ fn rest_is_zero_bytes() {
 }
 
 #[test]
-fn the_view_packs_four_cuts_to_a_32nd_of_a_db() {
+fn the_view_packs_four_cuts_to_an_eighth_of_a_db_up_to_the_deepest() {
     let cuts = [CutDb::new(4.0), CutDb::ZERO, CutDb::new(1.5), CutDb::MAX];
     let v = CutView::of(&cuts);
     for b in Band::ALL {
-        assert!((v.cut(b).get() - cuts[b.index()].get()).abs() <= 1.0 / 64.0);
+        assert!((v.cut(b).get() - cuts[b.index()].get()).abs() <= 1.0 / 16.0);
     }
     assert_eq!(v.deepest(), (Band::High, CutDb::MAX));
     assert_eq!(CutDb::new(f32::NAN), CutDb::ZERO);
-    assert_eq!(CutDb::new(9.0), CutDb::MAX);
+    assert_eq!(CutDb::new(40.0), CutDb::MAX);
+    // The deepest cut reads whole: no wrap at the old 7.97 dB.
+    assert_eq!(v.cut(Band::High), CutDb::MAX);
+    assert_eq!(CutDb::MAX.get(), 27.0);
 }

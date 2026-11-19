@@ -164,13 +164,15 @@ impl Band {
 }
 
 /// How deep a band is cut, 0 to `CutDb::MAX` dB (positive is down).
+/// AMOUNT's curve (`dsp::smart::KNOTS`) sets how deep each band may go.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct CutDb(f32);
 
 impl CutDb {
     pub const ZERO: CutDb = CutDb(0.0);
-    /// The deepest cut: BACK under FRONT at full AMOUNT.
-    pub const MAX: CutDb = CutDb(6.0);
+    /// The deepest any cut goes: the kick's dip, BACK under FRONT, at
+    /// AMOUNT 127 (`dsp::smart::KNOTS`, checked there).
+    pub const MAX: CutDb = CutDb(27.0);
 
     /// `db` held to 0..=`MAX`; NaN is 0.
     pub const fn new(db: f32) -> CutDb {
@@ -198,11 +200,30 @@ impl CutDb {
         }
     }
 
-    /// `MAX`'s share `u`.
+    /// This cap's share `u`.
     #[inline(always)]
-    pub const fn of(u: Unit) -> CutDb {
-        CutDb::new(Self::MAX.0 * u.get())
+    pub(crate) fn share(self, u: Unit) -> CutDb {
+        CutDb(self.0 * u.get())
     }
+}
+
+/// How deep SMART EQ may cut at an AMOUNT: BACK under FRONT (one rank
+/// apart is 2/3 of each, `Role::depth_over`), in LOW and LOW MID (`mud`),
+/// in HIGH MID and HIGH (`clear`), and the kick's dip in LOW (`kick`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Caps {
+    pub mud: CutDb,
+    pub clear: CutDb,
+    pub kick: CutDb,
+}
+
+impl Caps {
+    /// Nothing may be cut: OFF, AMOUNT 0.
+    pub const NONE: Caps = Caps {
+        mud: CutDb::ZERO,
+        clear: CutDb::ZERO,
+        kick: CutDb::ZERO,
+    };
 }
 
 /// SMART EQ's switch.
@@ -323,16 +344,6 @@ impl SmartEq {
     pub const fn listens(self) -> bool {
         matches!(self.switch(), Switch::On) && self.0 & AMOUNT_BITS != 0
     }
-
-    /// How much of each cut's target this setting asks: AMOUNT, none off.
-    #[inline(always)]
-    pub const fn share(self) -> Unit {
-        if self.listens() {
-            self.amount().unit()
-        } else {
-            Unit::ZERO
-        }
-    }
 }
 
 impl Default for SmartEq {
@@ -361,11 +372,12 @@ pub(crate) struct Dip(f32);
 
 impl Dip {
     pub(crate) const UNITY: Dip = Dip(0.0);
-    /// The deepest: under `CutDb::MAX` alone (−0.499) with its
-    /// neighbours' share taken off.
-    const MIN: f32 = -0.75;
-    /// The most a band gives back against its neighbours' skirts.
-    const MAX: f32 = 0.125;
+    /// The deepest: `CutDb::MAX` alone is −0.955; with its neighbours'
+    /// share taken off (`UNMIX`'s rows sum to 1.36 at most in size).
+    const MIN: f32 = -1.375;
+    /// The most a band gives back against its neighbours' skirts
+    /// (`UNMIX`'s largest negative terms, 0.19 of a full cut each side).
+    const MAX: f32 = 0.375;
 
     /// `v` held to `MIN..=MAX`; NaN is unity.
     #[inline(always)]
@@ -625,8 +637,9 @@ impl SmartState {
 pub struct CutView(u32);
 
 impl CutView {
-    /// Steps a dB in a band's byte: `CutDb::MAX` is 192.
-    const STEPS: f32 = 32.0;
+    /// Steps a dB in a band's byte: `CutDb::MAX` (27 dB) is 216, so the
+    /// deepest cut reads whole, never wrapped.
+    const STEPS: f32 = 8.0;
     pub const NONE: CutView = CutView(0);
 
     #[inline(always)]

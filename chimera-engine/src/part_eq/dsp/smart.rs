@@ -26,7 +26,7 @@ use crate::hw::MAX_PARTS;
 use crate::instrument::Sides;
 use crate::part_eq::Live;
 use crate::part_eq::smart::{
-    BANDS, Band, BandTaps, Blocks, CutDb, CutView, Cuts, Dip, Hears, Kick, Level, PartKind, PartSmart,
+    Amount, BANDS, Band, BandTaps, Blocks, Caps, CutDb, CutView, Cuts, Dip, Hears, Kick, Level, PartKind, PartSmart,
     Power, Role, SMART_VIEW, SmartEq, SmartState,
 };
 use crate::project::PartId;
@@ -101,9 +101,107 @@ impl Threat {
         }
     }
 }
-/// Above the mud a lower Part yields this share of its LOW and LOW MID
-/// cut: the mud is where yielding matters most.
-const CLEAR_WEIGHT: f32 = 0.75;
+/// AMOUNT's curve (owner, 2026-11-19: "Deep is like 75 % of the slider",
+/// and the top keeps going past good, so there is always more to reach
+/// for): how deep BACK yields under FRONT at four AMOUNTs, one rank apart
+/// 2/3 of each. 64 is polite (4 dB one rank, 6 two, everywhere); 95 is
+/// DEEP (LOW and LOW MID 8 and 12 dB, the kick's dip 10 and 15); 127 is
+/// OVER, provisional until the owner hears it (14 and 21 dB, the kick 18
+/// and 27, HIGH MID and HIGH 6 and 9). Re-tune here: `CAPS` follows.
+pub const KNOTS: [(Amount, Caps); 4] = [
+    (amount(0), caps(0.0, 0.0, 0.0)),
+    (amount(64), caps(6.0, 6.0, 6.0)),
+    (amount(95), caps(12.0, 6.0, 15.0)),
+    (amount(127), caps(21.0, 9.0, 27.0)),
+];
+
+const fn amount(code: u8) -> Amount {
+    match Amount::from_code(code) {
+        Some(a) => a,
+        None => panic!("an AMOUNT is 0..=127"),
+    }
+}
+
+const fn caps(mud: f32, clear: f32, kick: f32) -> Caps {
+    assert!(mud <= CutDb::MAX.get() && clear <= CutDb::MAX.get() && kick <= CutDb::MAX.get());
+    Caps {
+        mud: CutDb::new(mud),
+        clear: CutDb::new(clear),
+        kick: CutDb::new(kick),
+    }
+}
+
+/// A monotone cubic through `KNOTS` (Fritsch and Carlson's: each knot's
+/// slope the harmonic mean of its two chords', 0 where they differ in
+/// sign or one is flat), at AMOUNT `x`: smooth, and never past a knot's
+/// value between knots, so more AMOUNT is never a shallower cut.
+const fn curve(ys: [f32; 4], x: f32) -> f32 {
+    let xs = [
+        KNOTS[0].0.code() as f32,
+        KNOTS[1].0.code() as f32,
+        KNOTS[2].0.code() as f32,
+        KNOTS[3].0.code() as f32,
+    ];
+    let mut chord = [0.0f32; 3];
+    let mut i = 0;
+    while i < 3 {
+        chord[i] = (ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]);
+        i += 1;
+    }
+    // The ends take their one chord's slope.
+    let mut slope = [chord[0], 0.0, 0.0, chord[2]];
+    i = 1;
+    while i < 3 {
+        if chord[i - 1] * chord[i] > 0.0 {
+            slope[i] = 2.0 * chord[i - 1] * chord[i] / (chord[i - 1] + chord[i]);
+        }
+        i += 1;
+    }
+    i = 0;
+    while i < 2 && x > xs[i + 1] {
+        i += 1;
+    }
+    let h = xs[i + 1] - xs[i];
+    let t = (x - xs[i]) / h;
+    let (t2, t3) = (t * t, t * t * t);
+    (2.0 * t3 - 3.0 * t2 + 1.0) * ys[i]
+        + (t3 - 2.0 * t2 + t) * h * slope[i]
+        + (-2.0 * t3 + 3.0 * t2) * ys[i + 1]
+        + (t3 - t2) * h * slope[i + 1]
+}
+
+/// How deep SMART EQ may cut at each AMOUNT: `KNOTS`' curve, by code.
+static CAPS: [Caps; Amount::MAX as usize + 1] = {
+    let mut t = [Caps::NONE; Amount::MAX as usize + 1];
+    let (k0, k1, k2, k3) = (KNOTS[0].1, KNOTS[1].1, KNOTS[2].1, KNOTS[3].1);
+    let mut a = 0;
+    while a < t.len() {
+        let x = a as f32;
+        t[a] = Caps {
+            mud: CutDb::new(curve([k0.mud.get(), k1.mud.get(), k2.mud.get(), k3.mud.get()], x)),
+            clear: CutDb::new(curve(
+                [k0.clear.get(), k1.clear.get(), k2.clear.get(), k3.clear.get()],
+                x,
+            )),
+            kick: CutDb::new(curve(
+                [k0.kick.get(), k1.kick.get(), k2.kick.get(), k3.kick.get()],
+                x,
+            )),
+        };
+        a += 1;
+    }
+    t
+};
+
+/// How deep `smart` may cut: its AMOUNT's on the curve, nothing off.
+#[inline(always)]
+pub fn caps_at(smart: SmartEq) -> Caps {
+    if smart.listens() {
+        CAPS[usize::from(smart.amount().code())]
+    } else {
+        Caps::NONE
+    }
+}
 /// A band's skirt at the centre of the band `n` away (two octaves each):
 /// `−10 log10(1 + Q² (4ⁿ − 4⁻ⁿ)²)` dB at Q 2/3, for n = 1, 2, 3 (index 0
 /// unused). What a tone at a neighbour's centre puts in this band.
@@ -124,16 +222,28 @@ const FLUSH: f32 = 1e-15;
 /// 10·log10(2): dB of power per octave.
 const DB_PER_LOG2_POWER: f32 = 3.010_3;
 
+/// Each band's band-pass at each band's centre, `B_b(f_c)` as
+/// `RESPONSE[c][b]`, real and imaginary: measured from the filters as
+/// they run at 48 kHz (`smart_eq_dsp_test`'s
+/// `print_the_unmix_matrix_s_source`). The bands overlap: a neighbour is
+/// 0.14 to 0.18 in phase at a centre and 0.34 a quarter turn off.
+const RESPONSE: [[(f32, f32); BANDS]; BANDS] = [
+    [(0.999_31, 0.015_12), (0.135_75, 0.341_93), (0.008_91, 0.092_04), (0.000_53, 0.021_82)],
+    [(0.147_55, -0.341_59), (0.992_97, 0.055_20), (0.137_29, 0.342_62), (0.008_01, 0.087_44)],
+    [(0.018_64, -0.092_41), (0.183_80, -0.337_19), (0.994_93, 0.000_19), (0.122_73, 0.326_95)],
+    [(0.010_35, -0.021_93), (0.048_85, -0.087_21), (0.122_56, -0.327_06), (0.994_49, 0.000_13)],
+];
+
 /// What each band's dip must be for the four bands' sum to be the gain
-/// asked at each band's centre: the inverse of `A[c][b] = Re B_b(f_c)`,
-/// the real part of band `b`'s band-pass at band `c`'s centre, measured
-/// from the filters as they run at 48 kHz (`smart_eq_dsp_test`'s
-/// `print_the_unmix_matrix_s_source`). The bands overlap (a neighbour is
-/// 0.14 to 0.18 at a centre), so four 6 dB dips summed raw reach −8.8 dB
-/// at 428 Hz; with this the sum stays within the deepest cut asked, at
-/// each band's centre within about half a dB of its own, and barely over
-/// unity (`smart_eq_dsp_test` tries every combination on the real
-/// filters). Rows: the band dipped; columns: the gain asked, LOW to HIGH.
+/// asked at each band's centre, as far as their in-phase parts go: the
+/// inverse of `RESPONSE`'s real parts. Raw, four 6 dB dips reach −8.8 dB
+/// at 428 Hz; with this the sum is never deeper than the deepest cut
+/// asked (0.15 dB at most, over every combination to 21 dB) and within
+/// half a dB of each band's cut to about 6 dB. Deeper, the neighbours'
+/// quarter-turn parts hold a band's centre up: two adjacent bands asked
+/// 21 dB reach 10 to 18 dB. What the bands really do at each centre is
+/// `heard`, and the pages read that. Rows: the band dipped; columns: the
+/// gain asked, LOW to HIGH.
 pub const UNMIX: [[f32; BANDS]; BANDS] = [
     [1.021_40, -0.141_54, 0.010_47, -0.000_70],
     [-0.153_08, 1.054_43, -0.145_30, 0.009_52],
@@ -275,13 +385,16 @@ impl Rate {
     }
 }
 
-/// `G − 1` of a cut of `c` dB, `10^(−c/20) − 1`: its series to x⁵ in
-/// `x = c ln 10 / 20` (0.69 at 6 dB, where it is 0.0002 off, 0.004 dB).
-/// No cut is 0 exactly.
+/// `G − 1` of a cut of `c` dB, `10^(−c/20) − 1`. No cut is 0 exactly.
 #[inline(always)]
 fn gain_less_one(c: CutDb) -> f32 {
-    let x = c.get() * (core::f32::consts::LN_10 / 20.0);
-    -x * (1.0 - x * (0.5 - x * (1.0 / 6.0 - x * (1.0 / 24.0 - x * (1.0 / 120.0)))))
+    /// dB of amplitude to a gain's log2: `log2(10) / 20`.
+    const DB_TO_LOG2: f32 = core::f32::consts::LOG2_10 / 20.0;
+    if c == CutDb::ZERO {
+        0.0
+    } else {
+        exp2(-c.get() * DB_TO_LOG2) - 1.0
+    }
 }
 
 /// The four bands' dips for the cuts `c`: each band's `G − 1`, unmixed
@@ -292,6 +405,21 @@ pub fn dips(c: &[CutDb; BANDS]) -> [f32; BANDS] {
     core::array::from_fn(|b| {
         let u = &UNMIX[b];
         u[0] * g[0] + u[1] * g[1] + u[2] * g[2] + u[3] * g[3]
+    })
+}
+
+/// What the four bands' dips `d` really cut at each band's centre: the
+/// sum `1 + Σ d_b · B_b(f_c)`'s size, as a cut. What the pages read, so a
+/// readout is the cut heard there, however the bands stack.
+#[inline(always)]
+pub fn heard(d: &[f32; BANDS]) -> [CutDb; BANDS] {
+    core::array::from_fn(|c| {
+        let (mut re, mut im) = (1.0f32, 0.0f32);
+        for (b, (r, i)) in RESPONSE[c].iter().enumerate() {
+            re += d[b] * r;
+            im += d[b] * i;
+        }
+        CutDb::new(-DB_PER_LOG2_POWER * log2(re * re + im * im))
     })
 }
 
@@ -627,11 +755,11 @@ impl Roles<'_> {
 /// each one's own sound, and `p` is loud enough there to mask `q`. In LOW
 /// a DRUM `q` presses only through the kick's dip (`kick_rule`).
 #[inline(always)]
-fn slow_rule(st: &mut SmartState, b: usize, roles: &Roles<'_>, share: Unit) {
-    let (reach, weight) = if Band::ALL[b].muddy() {
-        (MUD_THREAT, 1.0)
+fn slow_rule(st: &mut SmartState, b: usize, roles: &Roles<'_>, caps: Caps) {
+    let (reach, cap) = if Band::ALL[b].muddy() {
+        (MUD_THREAT, caps.mud)
     } else {
-        (CLEAR_THREAT, CLEAR_WEIGHT)
+        (CLEAR_THREAT, caps.clear)
     };
     let low = b == Band::Low.index();
     // What each Part sounds like in the band: its level, and how much it
@@ -653,7 +781,7 @@ fn slow_rule(st: &mut SmartState, b: usize, roles: &Roles<'_>, share: Unit) {
                 }
             }
         }
-        let want = CutDb::of(Unit::new(share.get() * weight * ap * press));
+        let want = cap.share(Unit::new(ap * press));
         st.parts[p].want[b] = want;
         if want != CutDb::ZERO {
             st.parts[p].cuts = Cuts::Move;
@@ -691,7 +819,7 @@ impl PartSmart {
 /// dip target, the deepest any higher-role DRUM Part's kick asks. With no
 /// kit pressing, none. Run every `blocks` blocks.
 #[inline(always)]
-fn kick_rule(st: &mut SmartState, r: &Rate, roles: &Roles<'_>, share: Unit, blocks: u16) {
+fn kick_rule(st: &mut SmartState, r: &Rate, roles: &Roles<'_>, cap: CutDb, blocks: u16) {
     let low = Band::Low.index();
     let mut any = false;
     let press: [f32; MAX_PARTS] = core::array::from_fn(|q| match roles.kinds[q] {
@@ -721,7 +849,7 @@ fn kick_rule(st: &mut SmartState, r: &Rate, roles: &Roles<'_>, share: Unit, bloc
                 }
             }
         }
-        st.parts[p].kick_want = CutDb::of(Unit::new(share.get() * ap * most));
+        st.parts[p].kick_want = cap.share(Unit::new(ap * most));
     }
 }
 
@@ -813,11 +941,11 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
         roles: b.roles,
         kinds: b.kinds,
     };
-    let share = b.smart.share();
+    let caps = caps_at(b.smart);
     if st.turn % RULES == 0 {
-        slow_rule(st, usize::from(st.turn / RULES) % BANDS, &roles, share);
+        slow_rule(st, usize::from(st.turn / RULES) % BANDS, &roles, caps);
     } else {
-        kick_rule(st, &r, &roles, share, u16::from(RULES));
+        kick_rule(st, &r, &roles, caps.kick, u16::from(RULES));
     }
     st.turn = (st.turn + 1) % SmartState::TURNS;
     let mut any = false;
@@ -843,7 +971,7 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
         }
         // The pages read at the screen's pace: a Part a block, in turn.
         if id.index() == shown {
-            SMART_VIEW.publish(id, CutView::of(&p.applied()));
+            SMART_VIEW.publish(id, CutView::of(&heard(&p.dip.map(Dip::get))));
         }
     }
     if !listens && !any {

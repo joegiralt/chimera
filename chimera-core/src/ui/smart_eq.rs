@@ -28,9 +28,11 @@ const ALL_BAR_GAP: i32 = 2;
 /// The four small bars' width.
 const BANDS_W: i32 = 4 * ALL_BAR_W + 3 * ALL_BAR_GAP;
 
-/// `h` px of a cut's depth: `CutDb::MAX` the whole box.
+/// `h` px of a cut's depth, by its square root: `CutDb::MAX` (27 dB,
+/// AMOUNT's OVER) is the whole box, DEEP's 12 dB two thirds of it, and a
+/// polite 4 dB still two fifths, so every range reads.
 fn depth(c: CutDb, h: i32) -> i32 {
-    (h as f32 * c.get() / CutDb::MAX.get() + 0.5) as i32
+    (h as f32 * crate::dsp::algo::math::sqrt(c.get() / CutDb::MAX.get()) + 0.5) as i32
 }
 
 /// A plan being written: past its room, nothing more is added.

@@ -109,7 +109,7 @@ fn a_front_bass_cuts_a_mid_pads_low_band_and_is_never_touched() {
     let mut st = PartEqs::REST.smart;
     let (gens, r) = (clash(), roles(&[0], &[]));
     for k in 0..seconds(4.0) {
-        let (input, out) = block(&mut st, k * BLOCK_SIZE, &gens, &r, on(127));
+        let (input, out) = block(&mut st, k * BLOCK_SIZE, &gens, &r, on(64));
         assert_eq!(
             input[BASS.index()].map(f32::to_bits),
             out[BASS.index()].map(f32::to_bits),
@@ -128,28 +128,22 @@ fn a_front_bass_cuts_a_mid_pads_low_band_and_is_never_touched() {
     for b in Band::ALL {
         assert_eq!(st.cut(BASS, b), CutDb::ZERO);
     }
-    // Two ranks (BACK under FRONT) go deeper; half AMOUNT, half as deep.
-    let mut back = PartEqs::REST.smart;
-    let mut half = PartEqs::REST.smart;
-    for k in 0..seconds(6.0) {
-        block(
-            &mut back,
-            k * BLOCK_SIZE,
-            &gens,
-            &roles(&[0], &[1]),
-            on(127),
-        );
-        block(&mut half, k * BLOCK_SIZE, &gens, &r, on(64));
-    }
-    let (b, h) = (
-        back.cut(PAD, Band::Low).get(),
-        half.cut(PAD, Band::Low).get(),
-    );
-    assert!(b > low && b <= 6.0 + 1e-3, "BACK {b} dB, MID {low} dB");
-    assert!(
-        (h / st.cut(PAD, Band::Low).get() - 64.0 / 127.0).abs() < 0.05,
-        "half {h}"
-    );
+    // Two ranks (BACK under FRONT) go deeper; AMOUNT's curve goes on past
+    // polite: DEEP (95) twice as deep in LOW, OVER (127) three and a half
+    // times.
+    let cut_at = |amount: u8, r: &[Role; MAX_PARTS]| {
+        let mut st = PartEqs::REST.smart;
+        for k in 0..seconds(8.0) {
+            block(&mut st, k * BLOCK_SIZE, &gens, r, on(amount));
+        }
+        st.cut(PAD, Band::Low).get()
+    };
+    let polite = cut_at(64, &r);
+    let b = cut_at(64, &roles(&[0], &[1]));
+    assert!(b > polite && b <= 6.0 + 1e-3, "BACK {b} dB, MID {polite} dB");
+    let (deep, over) = (cut_at(95, &r), cut_at(127, &r));
+    assert!((deep / polite - 2.0).abs() < 0.1, "DEEP {deep} of {polite}");
+    assert!((over / polite - 3.5).abs() < 0.15, "OVER {over} of {polite}");
 }
 
 /// The amplitude of `hz` in `x` (a projection on its sine and cosine).
@@ -170,7 +164,7 @@ fn the_pads_low_band_dips_its_110_hz_and_leaves_its_highs() {
     let n = seconds(5.0);
     let (mut xi, mut xo) = (Vec::new(), Vec::new());
     for k in 0..n {
-        let (i, o) = block(&mut st, k * BLOCK_SIZE, &gens, &r, on(127));
+        let (i, o) = block(&mut st, k * BLOCK_SIZE, &gens, &r, on(64));
         if k >= n - seconds(1.0) {
             xi.extend_from_slice(&i[PAD.index()]);
             xo.extend_from_slice(&o[PAD.index()]);
@@ -198,10 +192,10 @@ fn no_gain_moves_more_than_a_thousandth_of_a_db_a_sample() {
     for k in 0..seconds(30.0) {
         // On full, off, on, AMOUNT jumping 127 ↔ 0: every jump a target's.
         let smart = match k / seconds(3.0) % 4 {
-            0 => on(127),
+            0 => on(64),
             1 => SmartEq::OFF,
             2 => on(0),
-            _ => on(127),
+            _ => on(64),
         };
         block(&mut st, k * BLOCK_SIZE, &gens, &r, smart);
         for p in PartId::ALL {
@@ -243,7 +237,7 @@ fn switched_off_it_lets_go_slowly_then_rests() {
     let (gens, r) = (clash(), roles(&[0], &[]));
     let mut k = 0;
     while k < seconds(4.0) {
-        block(&mut st, k * BLOCK_SIZE, &gens, &r, on(127));
+        block(&mut st, k * BLOCK_SIZE, &gens, &r, on(64));
         k += 1;
     }
     let was = st.cut(PAD, Band::Low).get();
@@ -281,10 +275,10 @@ fn silence_after_sound_leaves_no_subnormals() {
         Box::new(move |n| Some(g(n) * (-((n.saturating_sub(start)) as f32) / 2_000.0).exp()))
     });
     for k in 0..seconds(3.0) {
-        block(&mut st, k * BLOCK_SIZE, &loud, &r, on(127));
+        block(&mut st, k * BLOCK_SIZE, &loud, &r, on(64));
     }
     for k in seconds(3.0)..seconds(25.0) {
-        block(&mut st, k * BLOCK_SIZE, &fading, &r, on(127));
+        block(&mut st, k * BLOCK_SIZE, &fading, &r, on(64));
         for v in st.memory() {
             assert!(
                 v == 0.0 || v.abs() >= f32::MIN_POSITIVE,
@@ -300,7 +294,7 @@ fn a_nan_on_a_bus_rests_only_that_parts_filters() {
     let r = roles(&[0], &[]);
     let gens = clash();
     for k in 0..seconds(2.0) {
-        block(&mut st, k * BLOCK_SIZE, &gens, &r, on(127));
+        block(&mut st, k * BLOCK_SIZE, &gens, &r, on(64));
     }
     let bad: [Gen; MAX_PARTS] = core::array::from_fn(|p| -> Gen {
         let g = sine(110.0, 0.2);
@@ -310,7 +304,7 @@ fn a_nan_on_a_bus_rests_only_that_parts_filters() {
             Box::new(move |n| Some(g(n)))
         }
     });
-    block(&mut st, seconds(2.0) * BLOCK_SIZE, &bad, &r, on(127));
+    block(&mut st, seconds(2.0) * BLOCK_SIZE, &bad, &r, on(64));
     for v in st.memory() {
         assert!(v.is_finite());
     }
@@ -342,7 +336,7 @@ fn a_ringing_tail_keeps_its_mud_cut_and_lets_go_smoothly() {
     let mut st = PartEqs::REST.smart;
     let mut low = Vec::new();
     for k in 0..seconds(12.0) {
-        block(&mut st, k * BLOCK_SIZE, &gens, &r, on(127));
+        block(&mut st, k * BLOCK_SIZE, &gens, &r, on(64));
         low.push(st.cut(PAD, Band::Low).get());
     }
     let at = |s: f32| low[seconds(s)];
@@ -409,7 +403,7 @@ fn kicked(snare: bool, amount: u8) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
 
 #[test]
 fn a_front_kick_dips_the_bass_low_band_on_each_hit_and_lets_go() {
-    let (dip, slow, _) = kicked(true, 127);
+    let (dip, slow, _) = kicked(true, 64);
     let ms = |m: f32| (m * FS as f32 / 1000.0) as usize / BLOCK_SIZE;
     let beat = ms(500.0);
     // Settled bars: the fourth second on.
@@ -459,7 +453,7 @@ fn the_kick_dip_never_clicks_on_a_sine_bass() {
         e / x.len() as f64
     }
     let (_, _, plain) = kicked(true, 0);
-    let (dip, _, out) = kicked(true, 127);
+    let (dip, _, out) = kicked(true, 64);
     assert!(dip.iter().fold(0.0f32, |m, &d| m.max(d)) > 3.0);
     let skip = FS as usize;
     let (base, dipped) = (above_2k(&plain[skip..]), above_2k(&out[skip..]));
@@ -480,7 +474,7 @@ fn the_kick_dip_never_clicks_on_a_sine_bass() {
 
 #[test]
 fn the_kick_dip_moves_fast_but_smoothly_and_the_rest_stay_slow() {
-    let (dip, _, _) = kicked(true, 127);
+    let (dip, _, _) = kicked(true, 64);
     let worst = dip
         .windows(2)
         .map(|w| (w[1] - w[0]).abs() / BLOCK_SIZE as f32)
@@ -507,7 +501,7 @@ fn kicks_every(gap: usize, secs: f32) -> Vec<f32> {
     let r = roles(&[0], &[]);
     (0..seconds(secs))
         .map(|k| {
-            block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(127));
+            block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(64));
             st.kick(PAD).get()
         })
         .collect()
@@ -567,7 +561,7 @@ fn sided(st: &mut SmartState, start: usize, side: Option<&dyn Fn(usize) -> f32>)
             written: &written,
             roles: &roles(&[0], &[]),
             kinds: &[PartKind::Tonal; MAX_PARTS],
-            smart: on(127),
+            smart: on(64),
             sample_rate: FS,
         },
     );
@@ -616,7 +610,7 @@ fn a_part_hears_the_same_listened_to_or_cut() {
     let gens = clash();
     let mut thin = PartEqs::REST.smart;
     for k in 0..seconds(4.0) {
-        block(&mut thin, k * BLOCK_SIZE, &gens, &roles(&[0], &[]), on(127));
+        block(&mut thin, k * BLOCK_SIZE, &gens, &roles(&[0], &[]), on(64));
     }
     // HIGH's level through half the rate: a 6.4 kHz tone on a FRONT Part
     // cuts a MID Part's HIGH as a FRONT 100 Hz tone cuts its LOW.
@@ -630,16 +624,16 @@ fn a_part_hears_the_same_listened_to_or_cut() {
     });
     let mut high = PartEqs::REST.smart;
     for k in 0..seconds(4.0) {
-        block(&mut high, k * BLOCK_SIZE, &hi, &roles(&[0], &[]), on(127));
+        block(&mut high, k * BLOCK_SIZE, &hi, &roles(&[0], &[]), on(64));
     }
     let (lo, hi) = (
         thin.cut(PAD, Band::Low).get(),
         high.cut(PAD, Band::High).get(),
     );
     // LOW's reach is the mud's (full to 12 dB under), HIGH's the clear
-    // bands' (3.5 dB under: 4 dB × 0.75 × 8.5 / 12).
+    // bands' (3.5 dB under: 4 dB × 8.5 / 12).
     assert!(lo > 3.9, "{lo}");
-    assert!((hi - 4.0 * 0.75 * 8.5 / 12.0).abs() < 0.35, "{hi}");
+    assert!((hi - 4.0 * 8.5 / 12.0).abs() < 0.35, "{hi}");
 }
 
 /// The real bands' response to a tone at `hz` under dips `d`, as the
@@ -677,8 +671,8 @@ fn print_the_unmix_matrix_s_source() {
             .map(|b| {
                 let mut d = [0.0f32; 4];
                 d[b.index()] = -0.5;
-                let (re, _) = measured(&d, c.centre().get());
-                format!("{:.5}", (re - 1.0) / -0.5)
+                let (re, im) = measured(&d, c.centre().get());
+                format!("({:.5}, {:.5})", (re - 1.0) / -0.5, im / -0.5)
             })
             .collect();
         println!("[{}],", row.join(", "));
@@ -706,10 +700,10 @@ fn the_real_bands_cut_what_the_page_reads() {
 
 #[test]
 fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
-    use chimera_engine::part_eq::dsp::smart::dips;
+    use chimera_engine::part_eq::dsp::smart::{dips, heard};
     // Each band's response as it runs, 30 Hz to 16 kHz and at the four
     // centres: the bands' sum is linear in their dips, so every
-    // combination of 0, 1.5, 3, 4.5 and 6 dB on the four bands follows.
+    // combination of 0, 3, 6, 12 and 21 dB on the four bands follows.
     // Raw, four 6 dB dips reach −8.8 dB at 428 Hz.
     let mut grid: Vec<f32> = (0..48).map(|i| 30.0 * (16_000.0f32 / 30.0).powf(i as f32 / 47.0)).collect();
     grid.extend(Band::ALL.map(|b| b.centre().get()));
@@ -732,7 +726,7 @@ fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
         }
         10.0 * (re * re + im * im).log10()
     };
-    let steps = [0.0f32, 1.5, 3.0, 4.5, 6.0];
+    let steps = [0.0f32, 3.0, 6.0, 12.0, 21.0];
     let (mut deeper, mut over, mut off_centre) = (0.0f64, 0.0f64, 0.0f64);
     for n in 0..steps.len().pow(4) {
         let cuts: [f32; 4] =
@@ -744,14 +738,44 @@ fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
             over = over.max(db(&d, at));
         }
         for b in Band::ALL {
+            // What the page reads against what the filters do there.
             let at = db(&d, 48 + b.index());
-            off_centre = off_centre.max((at + cuts[b.index()] as f64).abs());
+            let read = heard(&d)[b.index()].get() as f64;
+            off_centre = off_centre.max((at.min(0.0) + read).abs());
         }
     }
-    println!("deeper {deeper:.3} over {over:.3} off-centre {off_centre:.3}");
-    assert!(deeper < 0.1, "{deeper:.3} dB deeper than the deepest cut asked");
-    assert!(over < 0.4, "{over:.3} dB over unity");
-    assert!(off_centre < 0.8, "{off_centre:.3} dB off a band's readout at its centre");
+    println!("deeper {deeper:.3} over {over:.3} off the readout {off_centre:.3}");
+    assert!(deeper < 0.2, "{deeper:.3} dB deeper than the deepest cut asked");
+    assert!(over < 0.9, "{over:.3} dB over unity");
+    assert!(off_centre < 0.25, "{off_centre:.3} dB off a band's readout at its centre");
     // No cut is no dip, exactly.
     assert_eq!(dips(&[CutDb::ZERO; 4]), [0.0; 4]);
+}
+
+#[test]
+fn amount_s_curve_passes_its_knots_and_only_ever_deepens() {
+    use chimera_engine::part_eq::dsp::smart::{KNOTS, caps_at};
+    use chimera_engine::part_eq::smart::Caps;
+    let at = |a: u8| caps_at(on(a));
+    for (amount, caps) in KNOTS {
+        let got = if amount.code() == 0 { Caps::NONE } else { at(amount.code()) };
+        for (g, w) in [(got.mud, caps.mud), (got.clear, caps.clear), (got.kick, caps.kick)] {
+            assert!((g.get() - w.get()).abs() < 1e-4, "AMOUNT {}: {g:?} for {w:?}", amount.code());
+        }
+    }
+    // Polite at 64, DEEP at 95 (75 % of the slider), OVER at 127: BACK
+    // under FRONT; one rank is 2/3.
+    assert_eq!(at(64).mud, CutDb::new(6.0));
+    assert_eq!((at(95).mud, at(95).clear, at(95).kick), (CutDb::new(12.0), CutDb::new(6.0), CutDb::new(15.0)));
+    assert_eq!((at(127).mud, at(127).kick), (CutDb::new(21.0), CutDb::MAX));
+    // More AMOUNT is never a shallower cut, and never a jump.
+    for a in 1..=127u8 {
+        let (lo, hi) = (at(a - 1), at(a));
+        let lo = if a == 1 { Caps::NONE } else { lo };
+        for (l, h) in [(lo.mud, hi.mud), (lo.clear, hi.clear), (lo.kick, hi.kick)] {
+            assert!(h.get() >= l.get() - 1e-5, "AMOUNT {a}");
+            assert!(h.get() - l.get() < 0.5, "AMOUNT {a} jumps {} dB", h.get() - l.get());
+        }
+    }
+    assert_eq!(caps_at(SmartEq::OFF), Caps::NONE);
 }
