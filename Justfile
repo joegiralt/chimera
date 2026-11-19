@@ -184,9 +184,10 @@ firmware-gate:
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
-# The NRPN guide page (#926), from the chart the firmware answers with.
+# The NRPN guide page (#926) and its JSON (#983), from the chart the firmware answers with.
 nrpn-guide:
     {{utils}} nrpn-guide > docs/guide/NRPN.md
+    {{utils}} nrpn-json > docs/guide/NRPN.json
 
 # SUGGEST, the factory controller map, from the param tables: its card
 # file into DIR/CHIMERA/MAPS (the factory pack's), or `--tables` for
@@ -385,9 +386,10 @@ check-slots elf bk2:
 # the only firmware shipped), CHIMERA.BK2 (sealed for that .bin: dropped in
 # the card root, the next boot installs it) and factory-v1.zip (the
 # card's whole CHIMERA folder: every factory Sound, TAPE's sources, the
-# demo projects and the SUGGEST controller map); writes
+# demo projects and the SUGGEST controller map) and NRPN.json (the NRPN
+# chart for scripts, #983); writes
 # SHA256SUMS and the notes from docs/alpha/RELEASE-NOTES.md.tmpl; asserts
-# the assets are exactly those four and none is a private file's bytes. A
+# the assets are exactly those five and none is a private file's bytes. A
 # draft only: the owner publishes. --dry-run does everything but `gh release create`.
 release version *flags:
     #!/usr/bin/env bash
@@ -424,10 +426,23 @@ release version *flags:
     pub=${FACTORY_PUBLIC:-target/factory-sounds/public}; tapes=${FACTORY_TAPES:-target/tapes-v1}
     rm -rf target/factory-maps; just suggest-map target/factory-maps
     python3 -I tools/factory_zip.py "$pub" "$tapes" target/factory-maps "$out/factory-v1.zip"
-    (cd "$out" && sha256sum CHIMERA.BIN CHIMERA.BK2 factory-v1.zip > SHA256SUMS)
+    # The NRPN chart for scripts (#983), fresh from the chart the firmware
+    # answers with; the guide's copy must be this one.
+    {{utils}} nrpn-json > "$out/NRPN.json"
+    cmp -s "$out/NRPN.json" docs/guide/NRPN.json || { echo "docs/guide/NRPN.json is stale: run just nrpn-guide" >&2; exit 1; }
+    # It names the firmware it lists: this release, which is the workspace's version too.
+    python3 -I - "$V" "$out/NRPN.json" <<'PY'
+    import json, sys, tomllib
+    v, path = sys.argv[1:]
+    ws = tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"]
+    fw = json.load(open(path))["firmware"]
+    if (ws, fw) != (v, v):
+        sys.exit("releasing %s, but Cargo.toml's version is %s and NRPN.json's firmware %s: bump the workspace version, then just nrpn-guide" % (v, ws, fw))
+    PY
+    (cd "$out" && sha256sum CHIMERA.BIN CHIMERA.BK2 NRPN.json factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
     # file (the stock bootloader backup, the bootloader, a dev chimera.bin or .bk2).
-    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "CHIMERA.BIN CHIMERA.BK2 SHA256SUMS factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
+    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "CHIMERA.BIN CHIMERA.BK2 NRPN.json SHA256SUMS factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
     for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin chimera.bk2 target/chimera.bin target/chimera.bk2; do
         [ -f "$p" ] || continue
         h=$(sha256sum "$p" | cut -d' ' -f1)
@@ -452,8 +467,8 @@ release version *flags:
         -e "/@DEMOS@/{r $out/demos.md" -e "d}" -e "/@CRATES@/{r $out/crates.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
     rm "$out/demos.md" "$out/crates.md"
     ! grep -q '@[A-Z]*@' "$out/RELEASE-NOTES.md" || { echo "unfilled template field" >&2; exit 1; }
-    assets=("$out/CHIMERA.BIN" "$out/CHIMERA.BK2" "$out/factory-v1.zip" "$out/SHA256SUMS")
-    echo "assets:"; (cd "$out" && ls -l CHIMERA.BIN CHIMERA.BK2 factory-v1.zip SHA256SUMS && cat SHA256SUMS)
+    assets=("$out/CHIMERA.BIN" "$out/CHIMERA.BK2" "$out/NRPN.json" "$out/factory-v1.zip" "$out/SHA256SUMS")
+    echo "assets:"; (cd "$out" && ls -l CHIMERA.BIN CHIMERA.BK2 NRPN.json factory-v1.zip SHA256SUMS && cat SHA256SUMS)
     if [ $dry = 1 ]; then
         echo "dry run: would draft v$V on $REPO with notes $out/RELEASE-NOTES.md"; exit 0
     fi
