@@ -24,7 +24,7 @@
 use core::fmt::{self, Write};
 
 use super::EdAddr;
-use super::lit::lit;
+use super::lit::{PANEL, QUOTE, QUOTE_SHUT, SOURCE, UNQUOTE, lit, quoted, uint};
 use super::schema::{Round, Schema};
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{Block, ParamSpec, Scale, ValFmt};
@@ -98,13 +98,13 @@ pub fn reverb_variant(t: ReverbType) -> &'static str {
 )]
 pub fn env_variant(k: EnvKind) -> &'static str {
     match k {
-        EnvKind::A(EnvSpeed::Fast) => "A-FAST",
-        EnvKind::A(EnvSpeed::Med) => "A-MED",
-        EnvKind::A(EnvSpeed::Slow) => "A-SLOW",
-        EnvKind::B(Func::Env(_)) => "B-ENV",
-        EnvKind::B(Func::Lfo(LfoForm::Lfv)) => "B-LFV",
-        EnvKind::B(Func::Lfo(_)) => "B-LFO",
-        EnvKind::B(Func::Burst(_)) => "B-BURST",
+        EnvKind::A(EnvSpeed::Fast) => A_FAST.get(),
+        EnvKind::A(EnvSpeed::Med) => A_MED.get(),
+        EnvKind::A(EnvSpeed::Slow) => A_SLOW.get(),
+        EnvKind::B(Func::Env(_)) => B_ENV.get(),
+        EnvKind::B(Func::Lfo(LfoForm::Lfv)) => B_LFV.get(),
+        EnvKind::B(Func::Lfo(_)) => B_LFO.get(),
+        EnvKind::B(Func::Burst(_)) => B_BURST.get(),
     }
 }
 
@@ -115,8 +115,8 @@ pub fn env_variant(k: EnvKind) -> &'static str {
 pub fn lfo_variant(k: LfoKind) -> &'static str {
     match k {
         LfoKind::Classic => "CLASSIC",
-        LfoKind::Func(LfoForm::Lfv) => "FUNC-LFV",
-        LfoKind::Func(_) => "FUNC",
+        LfoKind::Func(LfoForm::Lfv) => FUNC_LFV.get(),
+        LfoKind::Func(_) => FUNC.get(),
     }
 }
 
@@ -126,7 +126,7 @@ pub fn lfo_variant(k: LfoKind) -> &'static str {
 )]
 pub fn op_variant(k: OpKind) -> &'static str {
     match k {
-        OpKind::Table(_) => "TABLE",
+        OpKind::Table(_) => TABLE.get(),
         OpKind::Formant => "FORMANT",
         OpKind::Noise => "NOISE",
     }
@@ -266,9 +266,9 @@ pub(super) fn spec_under(a: ParamAddr, ctx: &SlotCtx) -> Option<&'static ParamSp
 )]
 fn kind_word(fmt: ValFmt) -> &'static str {
     match names(fmt) {
-        Some(["OFF", "ON"]) => "toggle",
-        Some(_) => "choice",
-        None => "cont",
+        Some(["OFF", "ON"]) => TOGGLE.get(),
+        Some(_) => CHOICE.get(),
+        None => CONT.get(),
     }
 }
 
@@ -289,8 +289,8 @@ pub(super) fn names(fmt: ValFmt) -> Option<&'static [&'static str]> {
 )]
 fn scale_word(s: Scale) -> &'static str {
     match s {
-        Scale::Linear => "lin",
-        Scale::Octaves => "oct",
+        Scale::Linear => LIN.get(),
+        Scale::Octaves => OCT.get(),
     }
 }
 
@@ -299,18 +299,24 @@ impl Cell {
     fn write(&self, ctx: &SlotCtx, w: &mut dyn Write) -> fmt::Result {
         let (addr, label, fmt) = match *self {
             Cell::Route(label, r) => return super::route::knob_line(label, r, w),
-            Cell::Source(label) => return writeln!(w, "source \"{label}\""),
+            Cell::Source(label) => {
+                w.write_str(SOURCE.get())?;
+                w.write_str(label)?;
+                return w.write_str(UNQUOTE.get());
+            }
             Cell::Param { addr, label, fmt } => (addr, label, fmt),
         };
         let Some(spec) = spec_under(addr.param(), ctx) else {
             return Ok(());
         };
-        write!(
-            w,
-            "param {addr} \"{label}\" {} {}",
-            kind_word(fmt),
-            scale_word(spec.scale)
-        )?;
+        w.write_str(PARAM.get())?;
+        addr.write(w)?;
+        w.write_str(QUOTE.get())?;
+        w.write_str(label)?;
+        w.write_str(QUOTE_SHUT.get())?;
+        w.write_str(kind_word(fmt))?;
+        w.write_char(' ')?;
+        w.write_str(scale_word(spec.scale))?;
         for v in [spec.min, spec.max, spec.step, spec.default] {
             w.write_char(' ')?;
             num(w, v)?;
@@ -319,7 +325,11 @@ impl Cell {
         flags(addr.param(), w)?;
         w.write_char('\n')?;
         for (i, name) in names(fmt).unwrap_or(&[]).iter().enumerate() {
-            writeln!(w, "opt {addr} {i} \"{name}\"")?;
+            w.write_str(OPT.get())?;
+            addr.write(w)?;
+            w.write_char(' ')?;
+            uint(w, u32::try_from(i).map_err(|_| fmt::Error)?)?;
+            quoted(w, name)?;
         }
         Ok(())
     }
@@ -357,7 +367,7 @@ pub(super) fn num(w: &mut dyn Write, v: f32) -> fmt::Result {
     if v < 0.0 && (whole, frac) != (0, 0) {
         w.write_char('-')?;
     }
-    write!(w, "{whole}")?;
+    uint(w, whole)?;
     if frac != 0 {
         // Seven places, zero-padded; the trailing zeros dropped.
         let mut digits = [b'0'; 7];
@@ -463,7 +473,11 @@ impl PanelName {
             PanelName::Machine => (Round::Shared, "MACHINE"),
             PanelName::PadFilter(p) => (Round::Pad(p), "FLT"),
             PanelName::PadMachine(p) => (Round::Pad(p), "MCH"),
-            PanelName::PadRoute(p, r) => (Round::Pad(p), route_name(r)),
+            PanelName::PadRoute(p, r) => {
+                Round::Pad(p).prefix(w)?;
+                w.write_str(ROUTE_NAME.get())?;
+                return uint(w, u32::from(r.number()));
+            }
             PanelName::Reverb => (Round::Shared, REVERB.get()),
             PanelName::Page(short, r) => (r, short),
         };
@@ -511,17 +525,10 @@ const fn op_name(o: Op) -> &'static str {
     }
 }
 
-/// `RT1`–`RT4`: a route is a number, 1–4.
-#[cfg_attr(
-    target_os = "none",
-    unsafe(link_section = ".bank2_ed.describe.route_name")
-)]
-fn route_name(r: RouteId) -> &'static str {
-    ["RT1", "RT2", "RT3", "RT4"]
-        .get(r.index())
-        .copied()
-        .unwrap_or("RT")
-}
+lit!(
+    /// A pad's route's panel, before its number, 1–4: `RT1`–`RT4`.
+    ROUTE_NAME = "RT"
+);
 
 /// A page's panels: what its cells resolve against, one per variant.
 #[derive(Clone, Copy)]
@@ -563,7 +570,7 @@ impl Group {
         unsafe(link_section = ".bank2_ed.describe.write_head")
     )]
     fn write_head(self, name: PanelName, w: &mut dyn Write) -> fmt::Result {
-        w.write_str("panel ")?;
+        w.write_str(PANEL.get())?;
         name.write(w)?;
         w.write_char(' ')?;
         variant_token(self.variant(), w)?;
@@ -783,9 +790,14 @@ fn write_page(
     page: u8,
     w: &mut dyn Write,
 ) -> fmt::Result {
-    write!(w, "page {page} ")?;
+    w.write_str(PAGE.get())?;
+    uint(w, u32::from(page))?;
+    w.write_char(' ')?;
     round.prefix(w)?;
-    writeln!(w, "{} of {}", def.short, schema_pages(s))?;
+    w.write_str(def.short)?;
+    w.write_str(OF.get())?;
+    uint(w, u32::from(schema_pages(s)))?;
+    w.write_char('\n')?;
     let base = base_ctx(s);
     let mut g = 0;
     while let Some(group) = group_at(g) {
@@ -834,3 +846,23 @@ pub(super) fn mark_described(s: Schema, d: &mut super::since::Described) {
         }
     }
 }
+
+lit!(A_FAST = "A-FAST");
+lit!(A_MED = "A-MED");
+lit!(A_SLOW = "A-SLOW");
+lit!(B_ENV = "B-ENV");
+lit!(B_LFV = "B-LFV");
+lit!(B_LFO = "B-LFO");
+lit!(B_BURST = "B-BURST");
+lit!(FUNC_LFV = "FUNC-LFV");
+lit!(FUNC = "FUNC");
+lit!(TABLE = "TABLE");
+lit!(TOGGLE = "toggle");
+lit!(CHOICE = "choice");
+lit!(CONT = "cont");
+lit!(LIN = "lin");
+lit!(OCT = "oct");
+lit!(PARAM = "param ");
+lit!(OPT = "opt ");
+lit!(PAGE = "page ");
+lit!(OF = " of ");

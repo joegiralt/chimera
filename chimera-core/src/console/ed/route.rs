@@ -226,9 +226,9 @@ impl RouteCell {
                 src.write(w)?;
                 w.write_char(':')?;
                 match dest {
-                    RouteDest::Reg(a) => write_addr(a, w),
+                    RouteDest::Reg(a) => a.write(w),
                     RouteDest::Fixed(c) => match EdAddr::sound(c.addr()) {
-                        Some(a) => write_addr(a, w),
+                        Some(a) => a.write(w),
                         None => Err(fmt::Error),
                     },
                 }
@@ -253,16 +253,6 @@ impl RouteCell {
             RouteView::Jack(j) => RouteCell::Jack(j),
         }
     }
-}
-
-/// An address as `<BLOCK>.<IDENT>`: its `Display` would put a
-/// `Formatter`'s `Write` in bank 1.
-#[cfg_attr(
-    target_os = "none",
-    unsafe(link_section = ".bank2_ed.route.write_addr")
-)]
-fn write_addr(a: EdAddr, w: &mut dyn Write) -> fmt::Result {
-    write!(w, "{a}")
 }
 
 /// A route's amount, −127..=127, as the box stores it (`i8`, never −128).
@@ -328,19 +318,20 @@ pub(super) fn describe(engine: EngineType, w: &mut dyn Write) -> fmt::Result {
     for s in sources(engine) {
         w.write_str(SRC.get())?;
         s.write(w)?;
-        w.write_str(" \"")?;
-        w.write_str(match s {
-            RouteSrc::Mod(m) => m.tag(),
-            RouteSrc::Tap(t) => t.tag(),
-        })?;
-        w.write_str("\"\n")?;
+        super::lit::quoted(
+            w,
+            match s {
+                RouteSrc::Mod(m) => m.tag(),
+                RouteSrc::Tap(t) => t.tag(),
+            },
+        )?;
     }
     for c in FixedCol::ALL {
         w.write_str(COL.get())?;
         w.write_str(c.tag())?;
         w.write_char(' ')?;
         match EdAddr::sound(c.addr()) {
-            Some(a) => write_addr(a, w)?,
+            Some(a) => a.write(w)?,
             None => return Err(fmt::Error),
         }
         w.write_char('\n')?;
@@ -370,7 +361,7 @@ pub(super) fn knob_line(label: &str, r: RouteView, w: &mut dyn Write) -> fmt::Re
     w.write_str(ROUTE.get())?;
     w.write_char('"')?;
     w.write_str(label)?;
-    w.write_str("\" ")?;
+    w.write_str(super::lit::QUOTE_SHUT.get())?;
     RouteCell::of_view(r).write(w)?;
     w.write_str(match r {
         RouteView::Keybd => KIND_KEYBD.get(),
@@ -465,9 +456,7 @@ pub(super) fn line(c: RouteCell, a: i8, w: &mut dyn Write) -> fmt::Result {
     uint(w, u32::from(a.unsigned_abs()))?;
     let mut text = FmtBuf::new();
     mod_grid::fmt_amount(&mut text, a);
-    w.write_str(" \"")?;
-    w.write_str(text.as_str())?;
-    w.write_str("\"\n")
+    super::lit::quoted(w, text.as_str())
 }
 
 /// `unroute <cell>`.

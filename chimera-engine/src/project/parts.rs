@@ -273,7 +273,9 @@ pub struct PartRead<'a> {
 
 impl<'a> PartRead<'a> {
     /// `BlockRead::block`, for as long as the Part is borrowed, not the view.
-    #[optimize(size)]
+    /// Always inlined: bank 2's `ed` calls it too, and an out-of-line copy
+    /// would be bank 1's (ADR 0289).
+    #[inline(always)]
     pub fn block(&self, b: BlockRef) -> Option<BlockView<'a>> {
         part_block(self.sound, self.mix, self.fx, b)
     }

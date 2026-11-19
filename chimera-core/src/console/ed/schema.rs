@@ -6,6 +6,7 @@
 use core::fmt::{self, Write};
 use core::mem::MaybeUninit;
 
+use super::addr::{PAD, PART};
 use super::lit::lit;
 use crate::dsp::drum::types::PadId;
 use crate::params::EngineType;
@@ -32,10 +33,6 @@ pub enum Schema {
 lit!(
     /// The token of `Schema::Mixer`.
     MIXER = "MIXER"
-);
-lit!(
-    /// A Part's round's prefix, before its number.
-    PART = "PART"
 );
 lit!(
     /// The tokens of `Schema::Matrix`: `MTX-ALGO`.
@@ -77,7 +74,11 @@ impl Round {
     pub fn prefix(self, w: &mut dyn Write) -> fmt::Result {
         match self {
             Round::Shared => Ok(()),
-            Round::Pad(p) => write!(w, "PAD{}_", p.number()),
+            Round::Pad(p) => {
+                w.write_str(PAD.get())?;
+                super::lit::uint(w, u32::from(p.number()))?;
+                w.write_char('_')
+            }
             Round::Part(p) => {
                 w.write_str(PART.get())?;
                 super::lit::uint(w, u32::from(p.number()))?;

@@ -118,7 +118,7 @@ fn value(w: &[u8]) -> Option<EdValue> {
         [b'+' | b'-', rest @ ..] => rest,
         _ => w,
     };
-    let not_finite = [&b"inf"[..], b"infinity", b"nan"]
+    let not_finite = [INF.bytes(), INFINITY.bytes(), NAN.bytes()]
         .iter()
         .any(|n| bare.eq_ignore_ascii_case(n));
     (w.len() <= WORD_MAX && !not_finite).then(|| EdValue::Name(Word::new(w)))
@@ -135,7 +135,7 @@ impl EdArg {
             return Err(EdRefusal::Usage);
         };
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
-        if is(b"part") {
+        if is(PART_WORD.bytes()) {
             let n = words.next().and_then(chimera_theory::tuning::uint);
             let p = n
                 .and_then(PartId::from_number)
@@ -159,12 +159,12 @@ impl EdArg {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.parse_rest"))]
     fn parse_rest(sub: &[u8], mut words: Words<'_>) -> Option<Self> {
         let is = |name: &[u8]| sub.eq_ignore_ascii_case(name);
-        let got = if is(b"hello") {
+        let got = if is(HELLO.bytes()) {
             EdArg::Hello
-        } else if is(b"since") {
+        } else if is(SINCE.bytes()) {
             let n = chimera_theory::tuning::uint(words.next()?)?;
             EdArg::Since(Gen::new(n))
-        } else if is(b"describe") {
+        } else if is(DESCRIBE.bytes()) {
             let schema = Schema::parse(words.next()?)?;
             let page = chimera_theory::tuning::uint(words.next()?)?
                 .try_into()
@@ -172,9 +172,9 @@ impl EdArg {
             EdArg::Describe { schema, page }
         } else if is(SCHEMA.get().trim_end().as_bytes()) {
             EdArg::Schema(Schema::parse(words.next()?)?)
-        } else if is(b"get") {
+        } else if is(GET.bytes()) {
             EdArg::Get(EdAddr::parse(words.next()?)?)
-        } else if is(b"set") {
+        } else if is(SET.bytes()) {
             let a = EdAddr::parse(words.next()?)?;
             EdArg::Set(a, value(words.next()?)?)
         } else {
@@ -193,21 +193,28 @@ pub(crate) fn answer_in(
     w: &mut dyn Write,
 ) -> fmt::Result {
     match EdArg::parse(line.words()) {
-        Err(EdRefusal::Usage) => writeln!(w, "ERR ed takes {}", EdArg::USAGE),
+        Err(EdRefusal::Usage) => {
+            w.write_str(TAKES.get())?;
+            w.write_str(EdArg::USAGE)?;
+            w.write_char('\n')
+        }
         Err(EdRefusal::Route) => w.write_str(ROUTE_USAGE.get()),
-        Err(EdRefusal::NoSuchPart) => writeln!(
-            w,
-            "ERR ed part takes {}-{}",
-            PartId::FIRST.number(),
-            PartId::LAST.number()
-        ),
+        Err(EdRefusal::NoSuchPart) => {
+            w.write_str(PART_TAKES.get())?;
+            lit::uint(w, u32::from(PartId::FIRST.number()))?;
+            w.write_char('-')?;
+            lit::uint(w, u32::from(PartId::LAST.number()))?;
+            w.write_char('\n')
+        }
         Ok(EdArg::Hello) => hello(ui, w).and_then(|()| w.write_str("OK\n")),
         Ok(EdArg::Describe { schema, page }) => match describe::describe(schema, page, w) {
             Some(done) => done.and_then(|()| w.write_str("OK\n")),
             None => {
-                w.write_str("ERR ed describe ")?;
+                w.write_str(DESCRIBE_ERR.get())?;
                 schema.write(w)?;
-                writeln!(w, " has {} pages", schema_pages(schema))
+                w.write_str(HAS.get())?;
+                lit::uint(w, u32::from(schema_pages(schema)))?;
+                w.write_str(PAGES.get())
             }
         },
         Ok(EdArg::Schema(s)) => {
@@ -226,16 +233,20 @@ pub(crate) fn answer_in(
         }
         Ok(EdArg::Get(a)) => match value::get(a, ui, w) {
             Some(done) => done.and_then(|()| w.write_str("OK\n")),
-            None => writeln!(w, "ERR ed get has no {} here", a),
+            None => {
+                w.write_str(GET_HAS_NO.get())?;
+                a.write(w)?;
+                w.write_str(lit::HERE.get())
+            }
         },
         Ok(EdArg::Set(a, v)) => edits::set(a, v, ui, q, w),
         Ok(EdArg::Since(held)) => match q {
             Some(st) => st.since.answer(held, ui, &mut st.refused, w),
-            None => writeln!(w, "ERR ed since is not in this build"),
+            None => w.write_str(SINCE_UNBUILT.get()),
         },
         Ok(EdArg::Route(c, to)) => edits::route(c, to, ui, q, w),
         Ok(EdArg::Part(p)) => match q {
-            None => w.write_str("ERR ed part is not in this build\n"),
+            None => w.write_str(PART_UNBUILT.get()),
             Some(q) => {
                 q.follow(p);
                 w.write_str("OK\n")
@@ -286,12 +297,48 @@ fn hex16(h: u64, w: &mut dyn Write) -> fmt::Result {
 /// as one word, `0.3.0-a1b2c3d4`, `+` after a dirty tree's hash.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.hello"))]
 fn hello(ui: &UiState, w: &mut dyn Write) -> fmt::Result {
-    let dirty = if DIRTY { "+" } else { "" };
     let engine = ui.project().part(ui.active_part).sound.engine();
-    writeln!(
-        w,
-        "ed hello {PROTOCOL} {VERSION}-{HASH}{dirty} part {} {}",
-        ui.active_part.number(),
-        engine.disk_ident()
-    )
+    w.write_str(HELLO_HEAD.get())?;
+    lit::uint(w, u32::from(PROTOCOL))?;
+    w.write_char(' ')?;
+    w.write_str(VERSION)?;
+    w.write_char('-')?;
+    w.write_str(HASH)?;
+    if DIRTY {
+        w.write_char('+')?;
+    }
+    w.write_str(HELLO_PART.get())?;
+    lit::uint(w, u32::from(ui.active_part.number()))?;
+    w.write_char(' ')?;
+    w.write_str(engine.disk_ident())?;
+    w.write_char('\n')
 }
+
+lit!(INF = "inf");
+lit!(INFINITY = "infinity");
+lit!(NAN = "nan");
+lit!(PART_WORD = "part");
+lit!(HELLO = "hello");
+lit!(SINCE = "since");
+lit!(DESCRIBE = "describe");
+lit!(GET = "get");
+lit!(SET = "set");
+lit!(
+    /// The usage refusal's head.
+    TAKES = "ERR ed takes "
+);
+lit!(PART_TAKES = "ERR ed part takes ");
+lit!(DESCRIBE_ERR = "ERR ed describe ");
+lit!(HAS = " has ");
+lit!(PAGES = " pages\n");
+lit!(GET_HAS_NO = "ERR ed get has no ");
+lit!(SINCE_UNBUILT = "ERR ed since is not in this build\n");
+lit!(PART_UNBUILT = "ERR ed part is not in this build\n");
+lit!(
+    /// `hello`'s answer's head, before the protocol.
+    HELLO_HEAD = "ed hello "
+);
+lit!(
+    /// After the build, before the followed Part's number.
+    HELLO_PART = " part "
+);

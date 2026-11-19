@@ -8,6 +8,7 @@ use core::fmt::{self, Write};
 use super::EdAddr;
 use super::addr::{EdBlock, PadBlock, PartBlock};
 use super::describe::num;
+use super::lit::lit;
 use super::pages::Pages;
 use super::schema::{Round, Schema};
 use crate::addr::{BlockRead, BlockRef};
@@ -231,9 +232,16 @@ pub(super) fn line(
     text: &str,
     w: &mut dyn Write,
 ) -> fmt::Result {
-    write!(w, "val {a} ")?;
+    w.write_str(VAL.get())?;
+    a.write(w)?;
+    w.write_char(' ')?;
     num(w, norm)?;
     w.write_char(' ')?;
     num(w, stored)?;
-    writeln!(w, " \"{text}\"")
+    super::lit::quoted(w, text)
 }
+
+lit!(
+    /// A value's line's head.
+    VAL = "val "
+);

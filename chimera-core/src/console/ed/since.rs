@@ -49,7 +49,7 @@ use super::describe::{
     modal_variant, op_variant, reverb_variant, tape_variant,
 };
 use super::edits::Refusals;
-use super::lit::lit;
+use super::lit::{PANEL, SOURCE, UNQUOTE, lit};
 use super::route::{self, Routes};
 use super::schema::Schema;
 use super::value::{block, engine_of, line, reading, source_text, text_ctx};
@@ -642,7 +642,7 @@ impl EdSince {
             };
             let w_s = self.section(s, owed.has(s), at, Pass::Measure, &mut size)?;
             if size.0 > room {
-                return w.write_str("ERR ed since too large\n");
+                return w.write_str(TOO_LARGE.get());
             }
             if total + size.0 <= room {
                 take = take.with(s);
@@ -656,7 +656,7 @@ impl EdSince {
         if whole {
             // The editor ignores an empty line. It ends a fragment a cut-off
             // answer left, so a header is never glued onto it.
-            writeln!(w)?;
+            w.write_char('\n')?;
         }
         for s in Section::ALL {
             if take.has(s) {
@@ -737,14 +737,18 @@ impl EdSince {
             });
         }
         if !same {
-            writeln!(w, "part {} {}", part.number(), engine.disk_ident())?;
+            w.write_str(PART_HEAD.get())?;
+            super::lit::uint(w, u32::from(part.number()))?;
+            w.write_char(' ')?;
+            w.write_str(engine.disk_ident())?;
+            w.write_char('\n')?;
         }
         let mut i = 0;
         while let Some(s) = shown_at(engine, i) {
             if let (Some(n), Some(v)) = (now.get(i), was.get(i))
                 && n != v
             {
-                w.write_str("panel ")?;
+                w.write_str(PANEL.get())?;
                 s.name().write(w)?;
                 w.write_char(' ')?;
                 describe::variant_token(n, w)?;
@@ -766,7 +770,9 @@ impl EdSince {
             w,
         )?;
         if !texts && let Some(t) = source_text(ui, own) {
-            writeln!(w, "source \"{}\"", t.as_str())?;
+            w.write_str(SOURCE.get())?;
+            w.write_str(t.as_str())?;
+            w.write_str(UNQUOTE.get())?;
         }
         // A whole PART is a new start: the refusals before it are stale.
         if same {
@@ -852,7 +858,7 @@ impl EdSince {
         }
         if whole {
             w.write_str(MIXER.get())?;
-            w.write_str("panel ")?;
+            w.write_str(PANEL.get())?;
             PanelName::Reverb.write(w)?;
             w.write_char(' ')?;
             describe::variant_token(reverb_variant(now.rev), w)?;
@@ -1186,3 +1192,9 @@ mod tests {
         }
     }
 }
+
+lit!(TOO_LARGE = "ERR ed since too large\n");
+lit!(
+    /// PART's header's head, before the Part's number and engine.
+    PART_HEAD = "part "
+);

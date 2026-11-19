@@ -8,6 +8,7 @@ use core::fmt::{self, Write};
 use core::mem::MaybeUninit;
 
 use super::addr::EdBlock;
+use super::lit::{HERE, lit, quoted};
 use super::route::{RouteCell, RouteDest, RouteTo};
 use super::schema::Hashes;
 use super::value::{engine_of, find};
@@ -188,7 +189,9 @@ impl Refusals {
             // it, and `len` never passes `REFUSED`.
             let r = unsafe { self.items[i].assume_init_ref() };
             if r.part == part {
-                writeln!(w, "refused {} \"{}\"", r.addr, r.why.as_str())?;
+                w.write_str(REFUSED_HEAD.get())?;
+                r.addr.write(w)?;
+                quoted(w, r.why.as_str())?;
             }
             i += 1;
         }
@@ -436,11 +439,11 @@ pub enum SetRefusal {
 
 impl SetRefusal {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.edits.words"))]
-    pub const fn words(self) -> &'static str {
+    pub fn words(self) -> &'static str {
         match self {
-            SetRefusal::NoSuchOption => "has no such option",
-            SetRefusal::TakesANumber => "takes a number",
-            SetRefusal::TakesAName => "takes one of its names",
+            SetRefusal::NoSuchOption => NO_SUCH_OPTION.get(),
+            SetRefusal::TakesANumber => TAKES_A_NUMBER.get(),
+            SetRefusal::TakesAName => TAKES_A_NAME.get(),
         }
     }
 }
@@ -541,13 +544,13 @@ pub(super) fn route(
     w: &mut dyn Write,
 ) -> fmt::Result {
     let Some(q) = q else {
-        return w.write_str("ERR ed route is not in this build\n");
+        return w.write_str(ROUTE_UNBUILT.get());
     };
     let engine = engine_of(ui);
     if !c.on(engine) {
-        w.write_str("ERR ed route has no ")?;
+        w.write_str(ROUTE_HAS_NO.get())?;
         c.write(w)?;
-        return w.write_str(" here\n");
+        return w.write_str(HERE.get());
     }
     let at = match c {
         RouteCell::Matrix {
@@ -569,8 +572,8 @@ pub(super) fn route(
         engine,
     };
     match q.push_route(taken, at, to) {
-        Pushed::Full => w.write_str("ERR busy\n"),
-        Pushed::Queued => w.write_str("OK queued\n"),
+        Pushed::Full => w.write_str(BUSY.get()),
+        Pushed::Queued => w.write_str(QUEUED.get()),
     }
 }
 
@@ -586,18 +589,50 @@ pub(super) fn set(
     let part = ui.active_part;
     let engine = engine_of(ui);
     let Some(q) = q else {
-        return w.write_str("ERR ed set is not in this build\n");
+        return w.write_str(SET_UNBUILT.get());
     };
     let taken = Taken::of(addr.at(), part, engine);
     let Some(taken) = taken.filter(|_| q.since.lists(engine, addr)) else {
-        return writeln!(w, "ERR ed set has no {addr} here");
+        w.write_str(SET_HAS_NO.get())?;
+        addr.write(w)?;
+        return w.write_str(HERE.get());
     };
     let to = match resolve(ui, addr, val) {
         Ok(to) => to,
-        Err(why) => return writeln!(w, "ERR ed set {addr} {}", why.words()),
+        Err(why) => {
+            w.write_str(SET.get())?;
+            addr.write(w)?;
+            w.write_char(' ')?;
+            w.write_str(why.words())?;
+            return w.write_char('\n');
+        }
     };
     match q.push(taken, addr, to) {
-        Pushed::Full => w.write_str("ERR busy\n"),
-        Pushed::Queued => w.write_str("OK queued\n"),
+        Pushed::Full => w.write_str(BUSY.get()),
+        Pushed::Queued => w.write_str(QUEUED.get()),
     }
 }
+
+lit!(
+    /// A refused set's line's head.
+    REFUSED_HEAD = "refused "
+);
+lit!(NO_SUCH_OPTION = "has no such option");
+lit!(TAKES_A_NUMBER = "takes a number");
+lit!(TAKES_A_NAME = "takes one of its names");
+lit!(ROUTE_UNBUILT = "ERR ed route is not in this build\n");
+lit!(ROUTE_HAS_NO = "ERR ed route has no ");
+lit!(SET_UNBUILT = "ERR ed set is not in this build\n");
+lit!(SET_HAS_NO = "ERR ed set has no ");
+lit!(
+    /// A set's refusal's head, before its address and why.
+    SET = "ERR ed set "
+);
+lit!(
+    /// The queue is full.
+    BUSY = "ERR busy\n"
+);
+lit!(
+    /// A set or route taken, for the UI pass.
+    QUEUED = "OK queued\n"
+);

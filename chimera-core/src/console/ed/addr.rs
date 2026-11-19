@@ -22,11 +22,14 @@ use super::schema::Round;
 /// The kit's own block's token: it has no `disk_ident` (a kit is stored
 /// as its own records, ADR 0265).
 const KIT: &str = "KIT";
-/// A pad's tokens start with this, then its number.
-const PAD: &[u8] = b"PAD";
 lit!(
-    /// A Part's tokens start with this, then its number.
-    PART = "PART"
+    /// A pad's tokens start with this, then its number.
+    pub(super) PAD = "PAD"
+);
+lit!(
+    /// A Part's tokens and its round's prefix start with this, then its
+    /// number.
+    pub(super) PART = "PART"
 );
 lit!(
     /// The suffix of a Part's sends' token, `PART3_SND`.
@@ -176,17 +179,65 @@ impl PadBlock {
     }
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.suffix"))]
-    const fn suffix(self) -> &'static str {
+    fn stem(self) -> &'static str {
         match self {
             PadBlock::Pad => "",
-            PadBlock::Filter => "_FLT",
-            PadBlock::Amp => "_AMP",
-            PadBlock::Env => "_ENV",
-            PadBlock::Lfo => "_LFO",
-            PadBlock::Route(r) => ["_RT1", "_RT2", "_RT3", "_RT4"][r.index()],
+            PadBlock::Filter => PAD_FLT.get(),
+            PadBlock::Amp => PAD_AMP.get(),
+            PadBlock::Env => PAD_ENV.get(),
+            PadBlock::Lfo => PAD_LFO.get(),
+            PadBlock::Route(_) => PAD_RT.get(),
+        }
+    }
+
+    /// A route's number, 1–4, after its stem.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.addr.route_number")
+    )]
+    fn route_number(self) -> Option<u8> {
+        match self {
+            PadBlock::Route(r) => Some(r.number()),
+            PadBlock::Pad | PadBlock::Filter | PadBlock::Amp | PadBlock::Env | PadBlock::Lfo => {
+                None
+            }
+        }
+    }
+
+    /// Its suffix: the stem, then a route's number (`_FLT`, `_RT2`).
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.addr.write_suffix")
+    )]
+    fn write_suffix(self, w: &mut dyn fmt::Write) -> fmt::Result {
+        w.write_str(self.stem())?;
+        match self.route_number() {
+            Some(n) => super::lit::uint(w, u32::from(n)),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether `s` is its suffix.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.is_suffix"))]
+    fn is_suffix(self, s: &[u8]) -> bool {
+        let Some(rest) = after(self.stem().as_bytes(), s) else {
+            return false;
+        };
+        match self.route_number() {
+            None => rest.is_empty(),
+            Some(n) => matches!(rest, [d] if *d == b'0' + n),
         }
     }
 }
+
+lit!(PAD_FLT = "_FLT");
+lit!(PAD_AMP = "_AMP");
+lit!(PAD_ENV = "_ENV");
+lit!(PAD_LFO = "_LFO");
+lit!(
+    /// A pad's route's suffix, before its number: `_RT1` … `_RT4`.
+    PAD_RT = "_RT"
+);
 
 /// A Part's own block: its mix (`PART<n>`, `PartParams`) or its Sound's
 /// sends (`PART<n>_SND`, OUT's SEND1–SEND3 alone).
@@ -608,7 +659,7 @@ fn in_engine(engine: EngineType, b: BlockRef) -> bool {
     unsafe(link_section = ".bank2_ed.addr.block_named")
 )]
 fn block_named(name: &[u8]) -> Option<EdBlock> {
-    if let Some(rest) = after(PAD, name) {
+    if let Some(rest) = after(PAD.bytes(), name) {
         return pad_named(rest);
     }
     if let Some(rest) = after(PART.bytes(), name) {
@@ -619,12 +670,6 @@ fn block_named(name: &[u8]) -> Option<EdBlock> {
         .find(|&&b| token(b).is_some_and(|t| t.as_bytes() == name))?;
     block_of(b)
 }
-
-lit!(
-    /// A Part's number, one digit: `DIGITS[n]`.
-    DIGITS = "0123456789"
-);
-const _: () = assert!(PartId::ALL.len() < 10, "a Part's number is one digit");
 
 /// What follows `prefix` in `name`, if it starts so: core's
 /// `strip_prefix` is a generic bank 1 would hold the copy of.
@@ -665,37 +710,52 @@ fn pad_named(rest: &[u8]) -> Option<EdBlock> {
     let pad = PadId::ALL
         .into_iter()
         .find(|p| u32::from(p.number()) == n)?;
-    let part = PadBlock::ALL
-        .into_iter()
-        .find(|p| p.suffix().as_bytes() == suffix)?;
+    let part = PadBlock::ALL.into_iter().find(|p| p.is_suffix(suffix))?;
     Some(EdBlock::Pad(pad, part))
 }
 
-impl fmt::Display for EdBlock {
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.fmt"))]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl EdBlock {
+    /// Its token, written with no `write!`: a format's pieces are bank 1's.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.write"))]
+    pub fn write(&self, w: &mut dyn fmt::Write) -> fmt::Result {
         match *self {
-            EdBlock::Sound(s) => f.write_str(token(s.get()).ok_or(fmt::Error)?),
-            EdBlock::Pad(n, p) => write!(f, "PAD{}{}", n.number(), p.suffix()),
+            EdBlock::Sound(s) => w.write_str(token(s.get()).ok_or(fmt::Error)?),
+            EdBlock::Pad(n, p) => {
+                w.write_str(PAD.get())?;
+                super::lit::uint(w, u32::from(n.number()))?;
+                p.write_suffix(w)
+            }
             EdBlock::Part(n, p) => {
-                // One digit, a `str`: a `Formatter`'s `write_char` would be
-                // instantiated in bank 1.
-                let i = n.index();
-                f.write_str(PART.get())?;
-                f.write_str(DIGITS.get().get(i + 1..i + 2).ok_or(fmt::Error)?)?;
-                f.write_str(p.suffix())
+                w.write_str(PART.get())?;
+                super::lit::uint(w, u32::from(n.number()))?;
+                w.write_str(p.suffix())
             }
             EdBlock::Bus(_) | EdBlock::Global(_) | EdBlock::Orbit(_) => {
-                f.write_str(token(self.block()).ok_or(fmt::Error)?)
+                w.write_str(token(self.block()).ok_or(fmt::Error)?)
             }
         }
     }
 }
 
-impl fmt::Display for EdAddr {
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.fmt.1"))]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl EdAddr {
+    /// `<BLOCK>.<IDENT>`, written with no `write!`.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.addr.write.1"))]
+    pub fn write(&self, w: &mut dyn fmt::Write) -> fmt::Result {
         let spec = self.param().spec().ok_or(fmt::Error)?;
-        write!(f, "{}.{}", self.at, spec.ident)
+        self.at.write(w)?;
+        w.write_char('.')?;
+        w.write_str(spec.ident)
+    }
+}
+
+impl fmt::Display for EdBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write(f)
+    }
+}
+
+impl fmt::Display for EdAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write(f)
     }
 }
