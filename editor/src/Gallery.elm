@@ -924,7 +924,7 @@ catalogue w menu m =
             Screen.view (Screen.new Algo g |> Screen.caption cap)
     in
     [ Module.new Chip.Controls "KNOB"
-        |> Module.note "PLAIN · HERO · BIPOLAR · NARROW · PENDING"
+        |> Module.note "PLAIN · HERO · BIPOLAR · NARROW · REFUSED"
         |> Module.summary [ ( "CUTOFF", Control.text (r "K_CUTOFF") ) ]
         |> Module.body
             [ Module.panel

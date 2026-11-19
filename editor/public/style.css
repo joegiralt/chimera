@@ -33,7 +33,9 @@ html, body { margin: 0; background: #121212; }
 .ui button { font: inherit; color: inherit; }
 
 /* the page: top bar, chips, rows */
-.ui.page { min-height: 100vh; overflow-x: hidden; }
+/* No sideways scroll, and nothing hidden to get it: every box below fits its
+   module (controls cap at the module's width and wrap; screens scale down). */
+.ui.page { min-height: 100vh; }
 .ui .ptop { position: sticky; top: 0; z-index: 50; background: var(--pn); border-bottom: 2px solid var(--ink); }
 .ui .ptop .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; }
 .ui .ptop .row + .row { padding-top: 0; }
@@ -80,16 +82,17 @@ html, body { margin: 0; background: #121212; }
 .ui .sec > header:hover { background: var(--bar-hover); }
 .ui .sec .fold { flex: none; width: 20px; color: var(--bar-mid); font-size: 13px; text-align: center; transition: transform .15s; }
 .ui .sec.folded .fold { transform: rotate(-90deg); }
-.ui .sec h2 { margin: 0; font: 700 15px/1 var(--sans); letter-spacing: .16em; white-space: nowrap; }
-.ui .sec h2 small { font: 600 11px/1 var(--sans); color: var(--bar-mid); letter-spacing: .08em; margin-left: 6px; }
+/* the title is never cut; its note gives way first, with an ellipsis */
+.ui .sec h2 { margin: 0; flex: 0 1 auto; min-width: 0; display: flex; align-items: baseline; font: 700 15px/1 var(--sans); letter-spacing: .16em; white-space: nowrap; }
+.ui .sec h2 small { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 600 11px/1 var(--sans); color: var(--bar-mid); letter-spacing: .08em; margin-left: 6px; }
 .ui .sum { display: flex; gap: 6px; min-width: 0; overflow: hidden; flex: 1; }
 .ui .sum span { flex: none; font: 600 13px/1 var(--mono); color: var(--bar-mid); white-space: nowrap; padding: 2px 4px; font-variant-numeric: tabular-nums; }
 .ui .sum span b { color: var(--bar-ink); font-weight: 600; }
 .ui .sec:not(.folded) .sum { visibility: hidden; }
-.ui .hmenu { margin-left: auto; flex: none; display: flex; align-items: center; gap: 8px; }
-.ui .sec .body { padding: 10px 12px 12px; flex: 1; overflow-x: clip; }
-.ui .pnl { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 0; }
-.ui .grp { display: flex; align-items: flex-start; gap: 6px 12px; padding: 0 14px; border-left: 1px solid var(--slot); flex-wrap: wrap; }
+.ui .hmenu { margin-left: auto; flex: none; display: flex; align-items: center; gap: 8px; max-width: 100%; }
+.ui .sec .body { padding: 10px 12px 12px; flex: 1; min-width: 0; }
+.ui .pnl { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 0; min-width: 0; }
+.ui .grp { display: flex; align-items: flex-start; gap: 6px 12px; padding: 0 14px; border-left: 1px solid var(--slot); flex-wrap: wrap; min-width: 0; max-width: 100%; }
 .ui .grp:first-child { border-left: 0; padding-left: 2px; }
 .ui .grp .gt { flex-basis: 100%; font: 700 11px/1 var(--sans); letter-spacing: .16em; color: var(--mid); }
 .ui .jacks { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; padding: 5px 12px 7px; border-top: 1px solid var(--rule); margin-top: auto; background: var(--pn2); }
@@ -101,7 +104,7 @@ html, body { margin: 0; background: #121212; }
 .ui .jk.out .hole { border-color: var(--bar-mid); }
 
 /* a control's box: label, the control, the readout. Its width is its Config's. */
-.ui .c { flex: none; display: flex; flex-direction: column; align-items: center; gap: 5px; position: relative; font: 600 13px/1 var(--mono); }
+.ui .c { flex: none; max-width: 100%; display: flex; flex-direction: column; align-items: center; gap: 5px; position: relative; font: 600 13px/1 var(--mono); }
 .ui .c.hero { font-size: 17px; }
 .ui .c > .k { display: block; width: 100%; font: 700 12px/1.1 var(--sans); letter-spacing: .06em; color: var(--ink); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 14px; }
 .ui .c > .v { font: inherit; font-weight: 600; height: 1.2em; line-height: 1.2em; color: var(--ink); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; max-width: 100%; }
@@ -155,11 +158,11 @@ html, body { margin: 0; background: #121212; }
 .ui .pop button.on { border: 2px solid var(--ink); }
 .ui .pop .screen { width: 100% !important; height: auto !important; aspect-ratio: 3 / 1; }
 /* the word row */
-.ui .words { display: flex; gap: 4px; }
+.ui .words { display: flex; flex-wrap: wrap; gap: 4px; max-width: 100%; }
 .ui .words button { flex: none; height: 30px; border: 1px solid var(--ink); background: transparent; border-radius: 3px; cursor: pointer; font: 700 15px/1 var(--sans); letter-spacing: .03em; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
 .ui .words button.on { background: var(--ink); color: var(--on-ink); }
 /* the unit's screens, inset into the panel */
-.ui .screen { position: relative; flex: none; background: #080808; border: 2px solid var(--screen-border); border-radius: 3px; overflow: hidden; }
+.ui .screen { position: relative; flex: none; max-width: 100%; background: #080808; border: 2px solid var(--screen-border); border-radius: 3px; overflow: hidden; }
 .ui .screen chimera-screen { display: block; width: 100%; height: 100%; }
 .ui .screen chimera-screen[data-painted] > img { display: none; }
 .ui .screen img { display: block; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
@@ -202,7 +205,7 @@ html, body { margin: 0; background: #121212; }
 .ui .mx td.strong { color: var(--strong-text); }
 
 /* DRUM: the pad strip */
-.ui .padstrip { display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; width: 100%; }
+.ui .padstrip { display: flex; gap: 6px; flex-wrap: nowrap; width: 100%; min-width: 0; }
 .ui .pst { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 2px; background: transparent; border: 2px solid transparent; border-radius: 4px; cursor: pointer; color: var(--ink); }
 .ui .pst .screen { width: 100% !important; max-width: 56px; height: auto !important; aspect-ratio: 35 / 32; border-width: 1px; }
 .ui .pst span { font: 600 10.5px/1 var(--sans); letter-spacing: .04em; color: var(--mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
