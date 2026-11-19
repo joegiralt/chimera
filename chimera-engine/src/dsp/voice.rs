@@ -161,6 +161,21 @@ enum AfterFade {
     Note,
 }
 
+/// AMP's BASE across a block (ADR 0292): the value the voice played last
+/// block, and this block's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BaseRamp {
+    from: f32,
+    to: f32,
+}
+
+impl BaseRamp {
+    /// 0 at both ends: the zeroed buffer as it is, no fill.
+    fn is_zero(self) -> bool {
+        self.from == 0.0 && self.to == 0.0
+    }
+}
+
 /// The VCA's gain buffer at a block's start: AMP's BASE (ADR 0292) from
 /// the last block's to this one's, ramped. A steady BASE steps by +0, so
 /// each sample is BASE + 0: 0 is the +0-filled buffer it replaced, bit for
@@ -168,10 +183,10 @@ enum AfterFade {
 /// voice's render.
 #[inline(never)]
 #[optimize(size)]
-fn vca_start(gain: &mut [f32; BLOCK_SIZE], base: (f32, f32)) {
-    let step = step_of(base, BLOCK_SIZE);
+fn vca_start(gain: &mut [f32; BLOCK_SIZE], base: BaseRamp) {
+    let step = step_of((base.from, base.to), BLOCK_SIZE);
     for (i, g) in gain.iter_mut().enumerate() {
-        *g = at(base.0, step, i);
+        *g = at(base.from, step, i);
     }
 }
 
@@ -1189,9 +1204,12 @@ impl Voice {
         // The VCA's gain (spec § 4): 64 samples on the audio stack, only
         // with a route into VCA, from AMP's BASE (ADR 0292; 0, a stored
         // Sound's, is today's zeroed start).
-        let base = (base_from, self.played.out.vca);
+        let base = BaseRamp {
+            from: base_from,
+            to: self.played.out.vca,
+        };
         let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
-        if let Some(g) = gain.as_mut().filter(|_| base != (0.0, 0.0)) {
+        if let Some(g) = gain.as_mut().filter(|_| !base.is_zero()) {
             vca_start(g, base);
         }
         // The last block's sources; on a retrigger, the new note's VEL and NOTE.
