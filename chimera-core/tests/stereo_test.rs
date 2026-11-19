@@ -11,7 +11,7 @@ use chimera_core::hw::SampleBudget;
 use chimera_core::modulation::{ModSource, ModState};
 use chimera_core::params::{EngineType, OutParams, ParamSnapshot};
 use chimera_core::preset::Sound;
-use chimera_core::stereo::Width;
+use chimera_core::stereo::{VoicePan, Width};
 use common::{InstRig, mods};
 
 const PAN: ParamAddr = ParamAddr::new(BlockRef::Out, OutParams::PAN);
@@ -20,7 +20,7 @@ fn rig(engine: EngineType, pan: f32, width: f32, m: Option<ModState>) -> InstRig
     let mut r = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
     let s = Sound::init(engine);
     let mut p: ParamSnapshot = s.params;
-    p.out.pan = pan;
+    p.out.pan = VoicePan::new(pan);
     p.out.width = Width::new(width);
     *r.shared.parts[0].params = p;
     *r.shared.parts[0].mod_state = m.unwrap_or(s.mod_state);
@@ -45,6 +45,8 @@ fn rms(x: &[f32]) -> f32 {
     (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
 }
 
+/// The engines the Instrument plays here: TAPE's notes need a source
+/// pool, so TAPE is placed on a voice of its own (`tape_is_placed`).
 const ENGINES: [EngineType; 3] = [EngineType::Algo, EngineType::Modal, EngineType::Va];
 
 #[test]
@@ -187,6 +189,159 @@ fn stereo_is_amps_page_and_gates_f() {
     assert!(!out(OutParams::WIDTH).modulatable());
 }
 
+/// TAPE (on a voice with its own source, as the Instrument's has none
+/// here): hard right, its side is its mid, every sample.
+#[test]
+fn tape_is_placed() {
+    use chimera_core::{MidiNote, Velocity};
+    use chimera_hal::BLOCK_SIZE;
+    let s = Sound::init(EngineType::Tape);
+    let mut p = s.params;
+    p.out.pan = VoicePan::new(1.0);
+    let mut v = common::rig::Rig::new(chimera_hal::SAMPLE_RATE);
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);
+    let (mut heard, mut out) = (0.0f32, [0.0f32; BLOCK_SIZE]);
+    for _ in 0..20 {
+        let mut side = None;
+        v.render_sided(&mut out, &p, &s.mod_state, &mut side);
+        let side = side.expect("placed: a side");
+        for (m, s) in out.iter().zip(&side) {
+            assert!((m - s).abs() <= 1e-6 * m.abs().max(1e-9) + 1e-9, "{m} {s}");
+            heard = heard.max(m.abs());
+        }
+    }
+    assert!(heard > 1e-4, "TAPE sounds");
+}
+
+/// Hard right by a route (VEL → PAN, a full velocity), through `act`
+/// after the first note: no block may flash into the left, as a copy of
+/// the stored, unrouted PAN would (a retrigger, a mono steal, legato).
+fn stays_right(act: impl Fn(&mut InstRig), setup: impl Fn(&mut InstRig)) {
+    let m = mods(&[(ModSource::Vel, PAN, 127)]);
+    let mut r = rig(EngineType::Algo, 0.0, 1.0, Some(m));
+    setup(&mut r);
+    r.note_on_vel(0, 60, 127);
+    let mut blocks = Vec::new();
+    for b in 0..60 {
+        if b == 20 {
+            act(&mut r);
+        }
+        r.render(1);
+        let (l, rr): (Vec<f32>, Vec<f32>) = r.out()[0].chunks(2).map(|f| (f[0], f[1])).unzip();
+        blocks.push((rms(&l), rms(&rr)));
+    }
+    assert!(blocks[30].1 > 1e-3, "sounds: {:?}", blocks[30]);
+    for (b, &(l, rr)) in blocks.iter().enumerate().skip(1) {
+        assert!(l <= 1e-4 * rr + 1e-9, "block {b}: left {l}, right {rr}");
+    }
+}
+
+#[test]
+fn a_retriggered_note_keeps_its_routed_place() {
+    stays_right(|r| r.note_on_vel(0, 60, 127), |_| {});
+}
+
+#[test]
+fn a_mono_steal_keeps_its_routed_place() {
+    use chimera_core::part::PartMode;
+    stays_right(
+        |r| r.note_on_vel(0, 64, 127),
+        |r| r.shared.parts[0].mix.set_mode(PartMode::Mono),
+    );
+}
+
+#[test]
+fn a_legato_note_keeps_its_routed_place() {
+    use chimera_core::params::Steal;
+    use chimera_core::part::PartMode;
+    stays_right(
+        |r| r.note_on_vel(0, 64, 127),
+        |r| {
+            r.shared.parts[0].mix.set_mode(PartMode::Mono);
+            r.shared.parts[0].params.pitch.steal = Steal::Glide;
+        },
+    );
+}
+
+/// A released note is placed to its last block: its tail never ends
+/// centred.
+#[test]
+fn a_note_is_placed_to_its_end() {
+    let mut r = rig(EngineType::Algo, 1.0, 1.0, None);
+    r.note_on(0, 60);
+    r.render(10);
+    r.note_off(0, 60);
+    let mut heard = false;
+    for b in 0..2000 {
+        r.render(1);
+        let (l, rr): (Vec<f32>, Vec<f32>) = r.out()[0].chunks(2).map(|f| (f[0], f[1])).unzip();
+        let (l, rr) = (rms(&l), rms(&rr));
+        heard |= rr > 1e-6;
+        assert!(l <= 1e-4 * rr + 1e-12, "block {b}: left {l}, right {rr}");
+    }
+    assert!(heard);
+}
+
+/// Under MPE each note is placed on its own: TIMBRE → PAN, one note's
+/// timbre up, the other's at rest.
+#[test]
+fn mpe_places_each_note_by_its_own_timbre() {
+    use chimera_core::MidiChannel;
+    use chimera_core::mpe::Zones;
+    use chimera_core::note_queue::{Expr, ExprEvent};
+    use chimera_midi::value::U7;
+    let m = mods(&[(ModSource::Timbre, PAN, 127)]);
+    let mut r = rig(EngineType::Algo, 0.0, 1.0, Some(m));
+    r.shared.mpe = Zones::OFF.with_lower(15);
+    r.note_on(1, 60);
+    r.note_on(2, 64);
+    r.inst.expr(ExprEvent {
+        channel: MidiChannel::new(2).unwrap(),
+        expr: Expr::Timbre(U7::new(127).unwrap()),
+    });
+    r.render(400);
+    let played = r.inst.played(PAN);
+    let slots = r.inst.allocator().slots();
+    let at = |n: u8| {
+        (0..slots.len())
+            .find(|&v| slots[v].held() && slots[v].note().map(|k| k.get()) == Some(n))
+            .map(|v| played[v])
+            .unwrap()
+    };
+    assert_eq!(at(60), 0.0, "at rest: centred");
+    assert_eq!(at(64), 1.0, "its timbre: hard right");
+    let (l, rr): (Vec<f32>, Vec<f32>) = r.out()[0].chunks(2).map(|f| (f[0], f[1])).unzip();
+    assert!(rms(&rr) > 1.2 * rms(&l), "{} {}", rms(&l), rms(&rr));
+}
+
+/// With the Part's own PAN off centre, panning after WIDTH moves left +
+/// right with WIDTH: by `(gR − gL)·side·WIDTH`, linear in it. (Centred, it
+/// never moves: `width_zero_is_mono_and_keeps_the_sum`.)
+#[test]
+fn an_off_centre_part_moves_the_sum_linearly_with_width() {
+    let sum = |w: f32| {
+        let mut r = rig(EngineType::Algo, 0.6, w, None);
+        r.shared.parts[0].mix.pan = 0.5;
+        // Quiet, under the output stage's limiter: the mix alone.
+        r.shared.parts[0].mix.level = 0.1;
+        r.render(1);
+        // Past WIDTH's 20 ms ease from unity.
+        let (l, rr) = play(&mut r, 160);
+        l.iter()
+            .zip(&rr)
+            .skip(120 * 64)
+            .map(|(a, b)| a + b)
+            .collect::<Vec<f32>>()
+    };
+    let (s0, s1, s2) = (sum(0.0), sum(1.0), sum(2.0));
+    let d1: Vec<f32> = s1.iter().zip(&s0).map(|(a, b)| a - b).collect();
+    let d2: Vec<f32> = s2.iter().zip(&s1).map(|(a, b)| a - b).collect();
+    assert!(rms(&d1) > 1e-3 * rms(&s1), "the sum moves: {}", rms(&d1));
+    for (a, b) in d1.iter().zip(&d2) {
+        assert!((a - b).abs() <= 1e-4 * rms(&s1), "linear: {a} {b}");
+    }
+}
+
 /// Host timings for ADR 0294 (release, `--ignored --nocapture`): best of
 /// five runs of 20,000 blocks of the whole instrument, one VA note held,
 /// centred, at a still PAN off centre, with PAN moving every block, and
@@ -203,7 +358,8 @@ fn host_timing() {
             let t = std::time::Instant::now();
             for b in 0..20_000 {
                 if moving {
-                    r.shared.parts[0].params.out.pan = if b % 2 == 0 { 0.3 } else { 0.6 };
+                    r.shared.parts[0].params.out.pan =
+                        VoicePan::new(if b % 2 == 0 { 0.3 } else { 0.6 });
                 }
                 r.render(1);
             }

@@ -104,6 +104,8 @@ pub struct Voice {
     lpg: Lpg,
     /// OUT LEVEL × the engine's gain, ramped across each block.
     volume: Ramp,
+    /// OUT PAN and BASE as the last block played them (`LastPlayed`).
+    last: Option<LastPlayed>,
     envs: [Envelope; 3],
     lfos: [Lfo; 3],
     /// The ENV destinations' sums from the last block's matrix (spec § Signal flow 1).
@@ -159,6 +161,22 @@ enum AfterFade {
     Restart,
     /// A note-on that came mid-fade: `last_note`.
     Note,
+}
+
+/// AMP's BASE as a voice plays it (ADR 0292), 0..1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct VcaBase(f32);
+
+/// What a sounding note's last block played, for this block to ramp from
+/// (ADR 0292, 0294): kept apart from `played`, which a retrigger's copy of
+/// the stored Sound overwrites (routes off, knobs at their targets). `None`
+/// before a fresh note's first block: it starts on its own values.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LastPlayed {
+    /// OUT PAN, its routes on.
+    pan: VoicePan,
+    /// AMP's BASE, as glided.
+    base: VcaBase,
 }
 
 /// AMP's BASE across a block (ADR 0292): the value the voice played last
@@ -562,6 +580,7 @@ impl Voice {
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 lpg: Lpg::NEW,
                 volume: Ramp::default(),
+                last: None,
                 envs: [Envelope::new(); 3],
                 lfos: [Lfo::new(); 3],
                 env_mods: [EnvMods::NONE; 3],
@@ -825,6 +844,7 @@ impl Voice {
             self.dc.reset();
             self.gate = AmpGate::OPEN;
             self.volume.hold();
+            self.last = None;
             self.slot.hold();
             // An idle voice's ENV slots and last source values start as a
             // fresh voice's. Idle is silent: a release its VCA routes still
@@ -1103,39 +1123,51 @@ impl Voice {
         ctx: &mut EngineCtx<'_>,
         side: &mut Option<[f32; BLOCK_SIZE]>,
     ) {
-        // Read before the block: a hit ending in it pans to its end; OUT
-        // PAN ramps from the last block's, a fresh note's from its own.
+        // Read before the block: a note ending in it is placed to its end,
+        // a pad's hit by its pad, any other note by OUT PAN.
         let pan = self.drum_pan();
-        let from = self.volume.value().map(|_| self.played.out.pan);
+        let placed = self.out_pans();
         self.render_mono(output, params, mod_state, knobs, clock, ctx);
+        let to = self.played.out.pan;
+        // From the last block's place; a fresh note's from its own.
+        let from = self.last.map_or(to, |l| l.pan);
+        self.last = Some(LastPlayed {
+            pan: to,
+            base: VcaBase(self.played.out.vca),
+        });
         if let Some(ms) = pan {
             ms.split(output, side);
-        } else {
-            self.out_pan(output, side, from);
+        } else if placed {
+            self.out_pan(output, side, from, to);
         }
     }
 
-    /// OUT PAN (ADR 0294): the note placed from `from` (the last block's,
-    /// `None` on a fresh note's first) to this block's, its side into
-    /// `side`, in bank 2 behind `StereoDoor`. Centred both ends, no call:
-    /// the bus as it was, bit for bit. A DRUM hit is placed by its pad.
+    /// OUT PAN places this voice's notes (ADR 0294): every engine's but
+    /// DRUM's, whose hits its pads place; a voice sounding.
     #[inline(always)]
-    fn out_pan(
-        &self,
-        output: &mut [f32; BLOCK_SIZE],
-        side: &mut Option<[f32; BLOCK_SIZE]>,
-        from: Option<f32>,
-    ) {
-        let pans = match self.slot {
+    fn out_pans(&self) -> bool {
+        match self.slot {
             EngineSlot::Algo(_)
             | EngineSlot::Modal(_)
             | EngineSlot::Tape(_)
             | EngineSlot::Va(_) => self.active,
             EngineSlot::Drum(_) => false,
-        };
-        let to = VoicePan::new(self.played.out.pan);
-        let from = from.map_or(to, VoicePan::new);
-        if pans && (from.off_centre() || to.off_centre()) {
+        }
+    }
+
+    /// OUT PAN (ADR 0294): the note placed from `from` (the last block's
+    /// place) to `to` (this block's), its side into `side`, in bank 2
+    /// behind `StereoDoor`. Centred both ends, no call: the bus as it was,
+    /// bit for bit.
+    #[inline(always)]
+    fn out_pan(
+        &self,
+        output: &mut [f32; BLOCK_SIZE],
+        side: &mut Option<[f32; BLOCK_SIZE]>,
+        from: VoicePan,
+        to: VoicePan,
+    ) {
+        if from.off_centre() || to.off_centre() {
             crate::stereo::door::through(|d| d.pan().run(output, side, from, to));
         }
     }
@@ -1178,9 +1210,9 @@ impl Voice {
             if self.fade == 0 { params } else { &self.played },
             mod_state,
         );
-        // AMP's BASE as the last block played it (ADR 0292): this block's
-        // ramps from it, no state of its own.
-        let base_from = self.played.out.vca;
+        // AMP's BASE as the last block played it (ADR 0292, `last`): this
+        // block's ramps from it; a fresh note's starts on its own.
+        let base_from = self.last.map(|l| l.base);
         // A fading voice keeps the settings it last played; else the stored
         // ones, with the Part's knobs on their way in their place. The
         // routes' offsets go on after the modulators.
@@ -1204,9 +1236,10 @@ impl Voice {
         // The VCA's gain (spec § 4): 64 samples on the audio stack, only
         // with a route into VCA, from AMP's BASE (ADR 0292; 0, a stored
         // Sound's, is today's zeroed start).
+        let to = self.played.out.vca;
         let base = BaseRamp {
-            from: base_from,
-            to: self.played.out.vca,
+            from: base_from.map_or(to, |b| b.0),
+            to,
         };
         let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
         if let Some(g) = gain.as_mut().filter(|_| !base.is_zero()) {

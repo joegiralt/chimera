@@ -21,7 +21,7 @@ use chimera_core::hw::{MAX_PARTS, MAX_VOICES};
 use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::project::PartId;
-use chimera_core::stereo::Width;
+use chimera_core::stereo::{VoicePan, Width};
 use chimera_hal::BLOCK_SIZE;
 use chimera_midi::value::U7;
 use common::drum::{PLAY_BUDGET, drum_hits, drum_rig};
@@ -376,7 +376,7 @@ fn stereo_peaks(pan: i8, out_pan: f32, width: f32) -> (f32, f32) {
     let mut k = Kit::DEFAULT;
     k.pad_mut(pad(1)).set_pan(Pan::clamped(pan));
     let (_w, mut r) = rig(&k);
-    r.shared.parts[0].params.out.pan = out_pan;
+    r.shared.parts[0].params.out.pan = VoicePan::new(out_pan);
     r.shared.parts[0].params.out.width = Width::new(width);
     // A block first: the Part's WIDTH lands while it has no side.
     r.block(&r.shared.clone());

@@ -11,17 +11,27 @@ pub mod kern;
 
 use crate::dsp::clampf;
 use crate::hw::MAX_PARTS;
+use crate::project::PartId;
 
-/// A note's place, −1 (left) ..= 1 (right), 0 the centre: OUT PAN as the
-/// voice plays it, its routes on. NaN is the centre.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+/// A note's place, −1 (left) ..= 1 (right), 0 the centre: OUT PAN as
+/// stored (`OutParams::pan`) and as the voice plays it, its routes on. NaN
+/// is the centre. Transparent: the Part's knobs read it as the `f32` it is.
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd)]
+#[repr(transparent)]
 pub struct VoicePan(f32);
+
+/// Its value alone, as the other OUT values print.
+impl core::fmt::Debug for VoicePan {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.0, f)
+    }
+}
 
 impl VoicePan {
     pub const CENTRE: VoicePan = VoicePan(0.0);
 
     #[inline(always)]
-    pub fn new(v: f32) -> VoicePan {
+    pub const fn new(v: f32) -> VoicePan {
         VoicePan(if v.is_nan() {
             0.0
         } else {
@@ -113,16 +123,16 @@ impl PartWidths {
     /// Every Part's side as panned, last block and this (`to`, the
     /// stored WIDTHs): nothing to do, every side bit for bit.
     #[inline(always)]
-    pub fn at_rest(&self, to: impl Fn(usize) -> Width) -> bool {
-        self.0
+    pub fn at_rest(&self, to: impl Fn(PartId) -> Width) -> bool {
+        PartId::ALL
             .iter()
-            .enumerate()
-            .all(|(p, &w)| w == Width::UNITY && to(p) == Width::UNITY)
+            .zip(&self.0)
+            .all(|(&p, &w)| w == Width::UNITY && to(p) == Width::UNITY)
     }
 
     /// Part `p`'s, as its side last played it.
-    pub fn at(&self, p: usize) -> Width {
-        self.0[p]
+    pub fn at(&self, p: PartId) -> Width {
+        self.0[p.index()]
     }
 }
 
@@ -183,7 +193,9 @@ mod tests {
         assert_eq!(Width::new(f32::NAN), Width::UNITY);
         assert_eq!(Width::default(), Width::UNITY);
         assert!(PartWidths::REST.at_rest(|_| Width::UNITY));
-        assert!(!PartWidths::REST.at_rest(|p| if p == 3 { Width::MAX } else { Width::UNITY }));
+        let p4 = PartId::ALL[3];
+        assert!(!PartWidths::REST.at_rest(|p| if p == p4 { Width::MAX } else { Width::UNITY }));
+        assert_eq!(PartWidths::REST.at(p4), Width::UNITY);
         let mut w = PartWidths::REST;
         w.0[2] = Width::MONO;
         assert!(!w.at_rest(|_| Width::UNITY), "still easing");

@@ -48,7 +48,7 @@ pub(super) fn widths(
     sample_rate: SampleRate,
 ) {
     // Every WIDTH unity, last block and this: nothing to ease or scale.
-    if w.at_rest(|p| parts[p].params.out.width) {
+    if w.at_rest(|p| parts[p.index()].params.out.width) {
         return;
     }
     let k = ease_coeff(sample_rate.get());

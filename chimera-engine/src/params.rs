@@ -894,7 +894,8 @@ impl EngineType {
 #[derive(Clone, Copy, Debug)]
 pub struct OutParams {
     pub volume: f32,
-    pub pan: f32,
+    /// OUT PAN (ADR 0294): each note's place, a knob and a destination.
+    pub pan: crate::stereo::VoicePan,
     /// AMP's BASE (ADR 0292): where the VCA destination's sum of routes
     /// starts, 0..1; 0, every Sound's before it, is today's VCA. Read only
     /// with a route into VCA.
@@ -921,7 +922,7 @@ impl Default for OutParams {
     fn default() -> Self {
         Self {
             volume: INIT_VOLUME,
-            pan: 0.0,
+            pan: crate::stereo::VoicePan::CENTRE,
             vca: 0.0,
             vca_vel: 1.0,
             sends: [SendLevel::OFF; crate::dsp::fx_bus::FX_SENDS],
@@ -1111,7 +1112,7 @@ impl Block for OutParams {
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::VOLUME => self.volume,
-            Self::PAN => self.pan,
+            Self::PAN => self.pan.get(),
             Self::VCA => self.vca,
             Self::VCA_VEL => self.vca_vel,
             // The sends, then the gate (ADR 0195): ids 4–6 and 7–9.
@@ -1126,7 +1127,7 @@ impl Block for OutParams {
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::VOLUME => self.volume = v,
-            Self::PAN => self.pan = v,
+            Self::PAN => self.pan = crate::stereo::VoicePan::new(v),
             Self::VCA => self.vca = v,
             Self::VCA_VEL => self.vca_vel = v,
             ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)] = SendLevel::new(v),

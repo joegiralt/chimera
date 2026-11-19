@@ -140,6 +140,21 @@ impl Rig {
         with_ctx!(self, |v, ctx, _id| v.render(out, params, mods, ctx))
     }
 
+    /// `render` with the voice's side kept: a note OUT PAN places (ADR
+    /// 0294) leaves its mid in `out` and its side in `side`.
+    #[allow(dead_code)]
+    pub fn render_sided(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        params: &ParamSnapshot,
+        mods: &ModState,
+        side: &mut Option<[f32; BLOCK_SIZE]>,
+    ) {
+        let knobs = Knobs::UNPRIMED;
+        with_ctx!(self, |v, ctx, _id| v
+            .render_knobs(out, params, mods, &knobs, None, ctx, side))
+    }
+
     /// The one-voice Part's pitch bend, semitones, landed.
     pub fn set_bend(&mut self, semitones: f32) {
         self.knobs.ease_bend(semitones, None);
