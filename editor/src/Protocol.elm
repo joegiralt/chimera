@@ -173,22 +173,40 @@ encode c =
             Just ("ed describe " ++ Unit.engineName engine ++ " " ++ String.fromInt page)
 
         Get a ->
-            Just ("ed get " ++ Addr.key a)
+            wire a |> Maybe.map (\k -> "ed get " ++ k)
 
-        Set a (Num n) ->
-            decimal n |> Maybe.map (\v -> "ed set " ++ Addr.key a ++ " " ++ v)
-
-        Set a (Name n) ->
-            word n |> Maybe.map (\v -> "ed set " ++ Addr.key a ++ " " ++ v)
-
-        Set a (Index (OptIndex i)) ->
-            Just ("ed set " ++ Addr.key a ++ " #" ++ String.fromInt i)
+        Set a v ->
+            wire a |> Maybe.andThen (\k -> setValue v |> Maybe.map (\x -> "ed set " ++ k ++ " " ++ x))
 
         Since held ->
             Just ("ed since " ++ String.fromInt (held |> Maybe.map Unit.genToInt |> Maybe.withDefault 0))
 
         Follow p ->
             Just ("ed part " ++ String.fromInt (Unit.partNumber p))
+
+
+{-| The address, if it is one the unit could write.
+-}
+wire : Addr -> Maybe String
+wire a =
+    if Addr.onWire a then
+        Just (Addr.key a)
+
+    else
+        Nothing
+
+
+setValue : Value -> Maybe String
+setValue v =
+    case v of
+        Num n ->
+            decimal n
+
+        Name n ->
+            word n
+
+        Index (OptIndex i) ->
+            Just ("#" ++ String.fromInt i)
 
 
 word : String -> Maybe String

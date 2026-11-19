@@ -72,6 +72,7 @@ type alias Model =
     , incoming : Schema
     , values : Dict String Reading
     , refusals : Dict String String
+    , whole : Bool
     , part : Maybe Part
     , engine : Maybe Engine
     , described : Maybe Engine
@@ -139,6 +140,7 @@ init =
     , incoming = Schema.empty
     , values = Dict.empty
     , refusals = Dict.empty
+    , whole = False
     , part = Nothing
     , engine = Nothing
     , described = Nothing
@@ -211,10 +213,10 @@ send c =
 -}
 status : Model -> Maybe String
 status m =
-    case ( ( m.link, m.stage ), ( m.part, m.engine ) ) of
-        ( ( Just Open, Following ), ( Just p, Just e ) ) ->
-            Just
-                (String.join " · "
+    if m.link == Just Open && m.stage == Following then
+        Maybe.map2
+            (\p e ->
+                String.join " · "
                     [ if m.via == Just ViaSimulator then
                         "SIMULATOR"
 
@@ -223,10 +225,12 @@ status m =
                     , "PART " ++ String.fromInt (Unit.partNumber p)
                     , Unit.engineName e
                     ]
-                )
+            )
+            m.part
+            m.engine
 
-        _ ->
-            Nothing
+    else
+        Nothing
 
 
 {-| What to tell the user instead of the editor, if anything.
@@ -510,6 +514,7 @@ answer a m =
                         , seat = next m.seat
                         , values = Dict.empty
                         , refusals = Dict.empty
+                        , whole = True
                         , variants = Dict.empty
                         , source = Nothing
                     }
@@ -535,8 +540,15 @@ answer a m =
                     , refusals = Dict.remove (Addr.key v.addr) m.refusals
                 }
 
+        -- The followed Part's, in a diff: a whole answer (a new Part, or
+        -- `since 0`) starts afresh, and an address the schema lacks is
+        -- another engine's.
         Refused at why ->
-            { m | refusals = Dict.insert (Addr.key at) why m.refusals }
+            if m.whole || Schema.param at m.schema == Nothing then
+                m
+
+            else
+                { m | refusals = Dict.insert (Addr.key at) why m.refusals }
 
         Source text ->
             if m.stage == Following then
@@ -561,7 +573,12 @@ answer a m =
 {-| `OK` ends the request in flight.
 -}
 ok : Maybe Int -> Model -> Model
-ok done m =
+ok done m0 =
+    let
+        m : Model
+        m =
+            { m0 | whole = False }
+    in
     case m.stage of
         Greeting ->
             case m.engine of
@@ -603,6 +620,7 @@ following g owed m =
                     | stage = Describing e Protocol.firstPage
                     , incoming = Schema.empty
                     , values = Dict.empty
+                    , refusals = Dict.empty
                     , variants = Dict.empty
                     , gen = Nothing
                     , owed = 0

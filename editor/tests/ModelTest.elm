@@ -268,6 +268,35 @@ suite =
                     |> feed [ "refused FILTER.CUTOFF \"NO\"", "OK 1", "part 2 ALGO", "OK 2" ]
                     |> Model.refusal cutoff
                     |> Expect.equal Nothing
+        , test "a_whole_answer_says_no_refusal_part_2_never_shows_part_1s" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed [ "part 1 ALGO", cutoffLine "1000", "OK 1", "refused FILTER.CUTOFF \"PART 1'S\"", "OK 2" ]
+                            |> feed [ "", "part 2 ALGO", cutoffLine "1000", "refused FILTER.CUTOFF \"PART 1'S\"", "OK 3" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal Nothing (Model.refusal cutoff m)
+                    , \_ -> Expect.equal (Just "1000 Hz") (shown m)
+
+                    -- A diff after it says Part 2's own.
+                    , \_ -> Expect.equal (Just "PART 2'S") (Model.refusal cutoff (feed [ "refused FILTER.CUTOFF \"PART 2'S\"", "OK 4" ] m))
+                    ]
+                    ()
+        , test "since_0_is_whole_its_refusals_stale" <|
+            \_ ->
+                following
+                    |> feed [ "part 1 ALGO", "refused FILTER.CUTOFF \"OLD\"", "OK 1" ]
+                    |> Model.refusal cutoff
+                    |> Expect.equal Nothing
+        , test "a_refusal_of_an_address_not_in_the_schema_is_ignored" <|
+            \_ ->
+                following
+                    |> feed [ "part 1 ALGO", "OK 1", "refused PAD3.CHOKE \"9 GROUPS · KIT HOLDS 8\"", "OK 2" ]
+                    |> Model.refusal (addr "PAD3.CHOKE")
+                    |> Expect.equal Nothing
         , test "since_answer_replaces_values_and_gen" <|
             \_ ->
                 let

@@ -16,6 +16,7 @@ module Addr exposing
     , key
     , lfoNumber
     , lfos
+    , onWire
     , operatorNumber
     , operators
     , oscNumber
@@ -52,6 +53,14 @@ plain c =
     Char.toCode c > 32 && Char.toCode c /= 127 && c /= '"'
 
 
+{-| The address is one the unit could write: a builder given a word the
+unit has none of makes one that is not.
+-}
+onWire : Addr -> Bool
+onWire (Addr a) =
+    fromWire a /= Nothing
+
+
 {-| The address as the unit writes it.
 -}
 key : Addr -> String
@@ -69,9 +78,22 @@ type Field
     = Field String
 
 
+{-| The unit's words are capitals, digits, `_` and inner dots. Anything else
+is a field the unit has none of: its address is never a wire address, so
+`Protocol.encode` sends nothing for it.
+-}
 field : String -> Field
-field =
-    Field
+field w =
+    if w /= "" && not (String.startsWith "." w) && not (String.endsWith "." w) && String.all unitChar w then
+        Field w
+
+    else
+        Field " "
+
+
+unitChar : Char -> Bool
+unitChar c =
+    Char.isUpper c || Char.isDigit c || c == '_' || c == '.'
 
 
 type Env

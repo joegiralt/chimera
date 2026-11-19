@@ -118,6 +118,16 @@ suite =
                     [ "A.B\ned hello", "A B", "", "AB", ".B", "A.", "A.\"B" ]
                         |> List.map Addr.fromWire
                         |> Expect.equal (List.repeat 7 Nothing)
+            , test "a_field_that_is_no_unit_word_makes_no_address" <|
+                \_ ->
+                    [ "A B", "", "cutoff", "X\n", ".B", "A.", "A\"B" ]
+                        |> List.map (\w -> encode (Set (Addr.at Addr.Kit (Addr.field w)) (Num 1)))
+                        |> Expect.equal (List.repeat 7 Nothing)
+            , test "a_unit_word_makes_its_address" <|
+                \_ ->
+                    [ "TONAL", "E.DPT", "GATE_DECAY", "KNOB_G" ]
+                        |> List.map (\w -> encode (Get (Addr.at Addr.Kit (Addr.field w))))
+                        |> Expect.equal (List.map (\w -> Just ("ed get KIT." ++ w)) [ "TONAL", "E.DPT", "GATE_DECAY", "KNOB_G" ])
             , test "refuses a name that would split or inject" <|
                 \_ ->
                     [ encode (Set (addr "A.B") (Name "X Y"))
