@@ -105,12 +105,10 @@ fn on(m: &MidiMap, i: &Input) -> bool {
 
 /// The row of `m` on target `t`.
 fn row_on(m: &MidiMap, t: Mappable) -> Option<usize> {
-    let mut i = 0;
-    for e in m.entries() {
+    for (i, e) in m.entries().iter().enumerate() {
         if e.target == t {
             return Some(i);
         }
-        i += 1;
     }
     None
 }
