@@ -359,6 +359,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // functions has its own `.bank2_ed.*` section (ADR 0285): LLVM outlines
     // nothing from a function with an explicit section, so no outlined
     // helper in bank 1 calls into `ed`; they follow VA's solos' table.
+    // `ui::ed_cue` (ADR 0285) goes with them: `ed set`'s cue on the box.
     // VA's solos (ADR 0283): `va::osc::solo`, the saw's runs on its
     // anchor, the next S4 group. Its table heads the S4 groups
     // (`VA_SOLO_DOOR_ADDR`): the door's own is full, and a slot in S0
@@ -368,7 +369,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The tables' addresses and stride are `s4_tables.rs`'s, as Rust's.
     let (ed, ed_slot, ed_assert) = (
         &format!(
-            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n"
+            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n"
         ),
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         &format!(

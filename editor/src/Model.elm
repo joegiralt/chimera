@@ -22,7 +22,7 @@ confirmed. The editor never guesses a value; a control always shows the unit's.
 -}
 
 import Dict exposing (Dict)
-import Protocol exposing (Addr, AnswerLine(..), Command(..), Line(..), Value, addrKey, encode, parse)
+import Protocol exposing (Addr, AnswerLine(..), Command(..), Line(..), OptIndex, Value, addrKey, encode, parse)
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
@@ -83,7 +83,7 @@ type Msg
     | Line String
     | Tick Time.Posix
     | Edit Addr Value
-    | Pick Addr Int
+    | Pick Addr OptIndex
     | FollowPart Part
     | ConnectSerial
     | ConnectSocket
@@ -280,14 +280,11 @@ step msg m =
 
         -- By its number: a name with a space (GATE EXT) is one word so.
         Pick a i ->
-            case ( Schema.optionName m.variants a i m.schema, Protocol.optIndex i ) of
-                ( Just _, Just ix ) ->
-                    edit a (Protocol.Index ix) m
+            case Schema.optionName m.variants a i m.schema of
+                Just _ ->
+                    edit a (Protocol.Index i) m
 
-                ( Just _, Nothing ) ->
-                    ( m, [] )
-
-                ( Nothing, _ ) ->
+                Nothing ->
                     ( m, [] )
 
         -- The box moves; the mark follows when `since` says so.
