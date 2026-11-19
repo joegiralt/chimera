@@ -867,7 +867,7 @@ extra ctx x =
                 p [ class "pnote" ] [ text (String.join " · " named ++ ": MOD MATRIX ROUTES, IN MOD ONCE THE UNIT DESCRIBES THEM") ]
 
         SourceText ->
-            Control.cell [ class "ro" ] "SOURCE" [ Control.readout 16 (Control.reading 0 (Maybe.withDefault "--" ctx.m.source)) ]
+            Module.panel [ Module.group "" [ Control.cell [ class "ro" ] "SOURCE" [ Control.readout 16 (Control.reading 0 (Maybe.withDefault "--" ctx.m.source)) ] ] ]
 
         Note t ->
             p [ class "pnote" ] [ text t ]
