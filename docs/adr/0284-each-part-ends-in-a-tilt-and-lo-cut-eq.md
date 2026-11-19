@@ -49,6 +49,7 @@ Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 76de24c6 against this change
 | bench-orbit | +876 | |
 | bench-tape | +924 | |
 
+- Merged with origin/0.4 d7611695 (#1027), each set measured again: only bench-orbit and bench-tape (bank 1, +8 B each) and default (bank 2, +32 B) were over their lines, raised by exactly that.
 - Bank 1 on ORBIT:
   - The stub `Instrument::part_eq`, 252 B, with the closed door's rest.
   - `PART_SPECS` +144 B, `PART_EQ` 96 B, the row word, LO CUT's names: data, ADR 0198's closed-door data.
