@@ -530,7 +530,7 @@ ampOut =
         |> withNote "LOW-PASS GATE · SENDS"
         |> withScreen (strip Snd)
         |> withGroups
-            [ group "GATE" [ heroFader (a "LPG"), fader (a "DECAY"), fader (a "STRIKE"), fader (a "VEL") ]
+            [ group "GATE" [ heroFader (a "LPG"), fader (a "DECAY"), fader (a "STRIKE"), fader (a "VEL"), fader (a "VCA") ]
             , group "OUT" [ heroFader (a "LEVEL"), fader (a "SEND1"), fader (a "SEND2"), fader (a "SEND3") ]
             ]
 
