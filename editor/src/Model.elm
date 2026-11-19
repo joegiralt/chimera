@@ -280,14 +280,11 @@ step msg m =
 
         -- By its number: a name with a space (GATE EXT) is one word so.
         Pick a i ->
-            case ( Schema.optionName m.variants a i m.schema, Protocol.optIndex i ) of
-                ( Just _, Just ix ) ->
+            case Protocol.optIndex i |> Maybe.andThen (\ix -> Schema.optionName m.variants a ix m.schema |> Maybe.map (\_ -> ix)) of
+                Just ix ->
                     edit a (Protocol.Index ix) m
 
-                ( Just _, Nothing ) ->
-                    ( m, [] )
-
-                ( Nothing, _ ) ->
+                Nothing ->
                     ( m, [] )
 
         -- The box moves; the mark follows when `since` says so.

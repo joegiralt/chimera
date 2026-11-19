@@ -363,7 +363,7 @@ face m s i =
         else
             pos
     , pending = Model.isPending i.param.addr m
-    , options = i.param.options
+    , options = List.map (Tuple.mapFirst Protocol.optIndexToInt) i.param.options
     , current = round pos
     }
 

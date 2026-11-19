@@ -1057,3 +1057,28 @@ fn a_refused_ed_set_says_why_as_a_cc_does() {
     set(&mut f, "PAD5.LEVEL", "40");
     assert_eq!(toast(&mut f), None);
 }
+
+/// The editor's engine list is the firmware's: every engine the box plays,
+/// in its order (`EngineType::PLAYABLE`, which holds all of `ALL`), for the
+/// Elm test that `Unit.allEngines` names each and no other.
+#[test]
+fn writes_editor_engines_fixture() {
+    for e in EngineType::ALL {
+        assert!(EngineType::PLAYABLE.contains(&e), "{e:?} plays");
+    }
+    let text: String = EngineType::PLAYABLE
+        .iter()
+        .map(|e| format!("{}\n", e.disk_ident_for_test()))
+        .collect();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../editor/tests/fixtures/engines.txt");
+    if std::env::var_os("BLESS").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        on_disk == text,
+        "the engines changed: BLESS=1 rewrites {}",
+        path.display()
+    );
+}

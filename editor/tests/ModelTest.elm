@@ -4,7 +4,7 @@ import Dict
 import Expect
 import Fixture
 import Model exposing (Msg(..))
-import Protocol exposing (Addr(..), Command(..), Value(..))
+import Protocol exposing (Addr(..), Command(..), OptIndex, Value(..))
 import Schema
 import Test exposing (Test, describe, test)
 import Time
@@ -102,7 +102,7 @@ suite =
         , test "every_choice_under_every_variant_sends_an_option_that_variant_lists" <|
             \_ ->
                 let
-                    bad : List ( String, String, Int )
+                    bad : List ( String, String, OptIndex )
                     bad =
                         Schema.pages Fixture.schema
                             |> List.concatMap .panels
@@ -120,10 +120,10 @@ suite =
                                                                 sent : List Command
                                                                 sent =
                                                                     { following | schema = Fixture.schema, variants = Dict.fromList [ ( pn.name, pn.variant ) ] }
-                                                                        |> Model.step (Pick p.addr i)
+                                                                        |> Model.step (Pick p.addr (Protocol.optIndexToInt i))
                                                                         |> Tuple.second
                                                             in
-                                                            if name /= "" && sent == [ Set p.addr (idx i) ] then
+                                                            if name /= "" && sent == [ Set p.addr (Index i) ] then
                                                                 Nothing
 
                                                             else
