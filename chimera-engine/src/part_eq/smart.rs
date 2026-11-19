@@ -565,6 +565,80 @@ impl PartSmart {
     }
 }
 
+/// LOW's and LOW MID's filter: Chamberlin's state-variable form, exact
+/// enough far under the rate (400 Hz of 12 kHz at most) and quiet in
+/// `f32` there, where a direct form's round-off is not. `bp += g · hp`,
+/// `lp += g · bp`; `k · bp` is the unity-peak band-pass, `lp` LOW's
+/// low-pass (the kick's key). Three multiply-adds a sample.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Sv {
+    /// `2 sin(π f / rate)`.
+    pub(crate) g: f32,
+}
+
+/// HIGH MID's and HIGH's filter: the bilinear band-pass (the TPT SVF's
+/// response exactly) as a transposed direct form II, unity at its
+/// centre: `y = b x + s1`, `s1 = s2 − a1 y`, `s2 = −b x − a2 y`. Four
+/// multiply-adds a sample; its round-off is far under the signal this
+/// high in the band (a centre at 1/30 of the rate or over).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Bq {
+    pub(crate) b: f32,
+    pub(crate) a1: f32,
+    pub(crate) a2: f32,
+}
+
+/// The four bands' filters, full and decimated, and the block's time
+/// constants at a sample rate: made once (`dsp::smart`'s `Rate::at`, its
+/// tangents and powers some 600 instructions) and kept with the state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Rate {
+    /// The sample rate these are for: 0, none yet (ITCM's zero bytes).
+    pub(crate) hz: u32,
+    pub(crate) low: [Sv; 2],
+    pub(crate) high: [Bq; 2],
+    pub(crate) thin_low: [Sv; 2],
+    pub(crate) thin_high: [Bq; 2],
+    /// One-pole coefficients a block: the level's rise and fall, the
+    /// key's fall, the kick dip's and the cut's attack and release.
+    pub(crate) rise: f32,
+    pub(crate) fall: f32,
+    pub(crate) key_fall: f32,
+    pub(crate) kick_attack: Unit,
+    pub(crate) kick_release: Unit,
+    pub(crate) attack: Unit,
+    pub(crate) release: Unit,
+    /// `HOLD_UNDER_S` in blocks.
+    pub(crate) hold_under: Blocks,
+}
+
+impl Rate {
+    /// None made: the bytes ITCM's boot zeroing leaves.
+    pub(crate) const NONE: Rate = Rate {
+        hz: 0,
+        low: [Sv { g: 0.0 }; 2],
+        high: [Bq {
+            b: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        }; 2],
+        thin_low: [Sv { g: 0.0 }; 2],
+        thin_high: [Bq {
+            b: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        }; 2],
+        rise: 0.0,
+        fall: 0.0,
+        key_fall: 0.0,
+        kick_attack: Unit::ZERO,
+        kick_release: Unit::ZERO,
+        attack: Unit::ZERO,
+        release: Unit::ZERO,
+        hold_under: Blocks::ZERO,
+    };
+}
+
 /// The reverb's return as a member of SMART EQ (owner, 2026-11-19: "we
 /// should give the reverb its role of its own"): it yields as a Part of
 /// its role would, the kick's dip with it, and makes nothing yield. Its
@@ -589,6 +663,8 @@ impl Wash {
 pub struct SmartState {
     pub(crate) parts: [PartSmart; MAX_PARTS],
     pub(crate) wash: Wash,
+    /// The filters and time constants at the rate in use.
+    pub(crate) rate: Rate,
     /// Blocks run, modulo `TURNS`: whose turn it is (the slow rule's
     /// band or the kick's rule, the band read in dB, the Part whose view
     /// is published).
@@ -604,6 +680,7 @@ impl SmartState {
     pub const REST: SmartState = SmartState {
         parts: [PartSmart::REST; MAX_PARTS],
         wash: Wash::REST,
+        rate: Rate::NONE,
         turn: 0,
         live: Live::Bypass,
     };

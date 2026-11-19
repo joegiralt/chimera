@@ -27,8 +27,8 @@ use crate::hw::MAX_PARTS;
 use crate::instrument::Sides;
 use crate::part_eq::Live;
 use crate::part_eq::smart::{
-    Amount, BANDS, Band, BandTaps, Blocks, Caps, CutDb, CutView, Cuts, Dip, Hears, Kick, Level,
-    PartKind, PartSmart, Power, Role, SMART_VIEW, SmartEq, SmartState,
+    Amount, BANDS, Band, BandTaps, Blocks, Bq, Caps, CutDb, CutView, Cuts, Dip, Hears, Kick, Level,
+    PartKind, PartSmart, Power, Rate, Role, SMART_VIEW, SmartEq, SmartState, Sv,
 };
 use crate::project::PartId;
 
@@ -294,29 +294,6 @@ pub struct SmartBlock<'a> {
     pub sample_rate: u32,
 }
 
-/// LOW's and LOW MID's filter: Chamberlin's state-variable form, exact
-/// enough far under the rate (400 Hz of 12 kHz at most) and quiet in
-/// `f32` there, where a direct form's round-off is not. `bp += g · hp`,
-/// `lp += g · bp`; `k · bp` is the unity-peak band-pass, `lp` LOW's
-/// low-pass (the kick's key). Three multiply-adds a sample.
-#[derive(Clone, Copy)]
-struct Sv {
-    /// `2 sin(π f / rate)`.
-    g: f32,
-}
-
-/// HIGH MID's and HIGH's filter: the bilinear band-pass (the TPT SVF's
-/// response exactly) as a transposed direct form II, unity at its
-/// centre: `y = b x + s1`, `s1 = s2 − a1 y`, `s2 = −b x − a2 y`. Four
-/// multiply-adds a sample; its round-off is far under the signal this
-/// high in the band (a centre at 1/30 of the rate or over).
-#[derive(Clone, Copy)]
-struct Bq {
-    b: f32,
-    a1: f32,
-    a2: f32,
-}
-
 /// `tan x` to x¹¹, for a band's centre at a decimated rate (HIGH at half
 /// the rate is 0.84 rad, where `tan_small`'s x⁷ is 0.5 % short; this is
 /// within 0.06 %): inlined here, not libm's `tanf` in bank 1.
@@ -368,27 +345,6 @@ const THIN_LOW: usize = 4;
 const THIN_HIGH: usize = 2;
 const _: () = assert!(BLOCK_SIZE.is_multiple_of(THIN_LOW) && BLOCK_SIZE.is_multiple_of(THIN_HIGH));
 
-/// The four bands' filters, full and decimated, and the block's time
-/// constants at the rate.
-#[derive(Clone, Copy)]
-struct Rate {
-    low: [Sv; 2],
-    high: [Bq; 2],
-    thin_low: [Sv; 2],
-    thin_high: [Bq; 2],
-    /// One-pole coefficients a block: the level's rise and fall, the
-    /// key's fall, the kick dip's and the cut's attack and release.
-    rise: f32,
-    fall: f32,
-    key_fall: f32,
-    kick_attack: Unit,
-    kick_release: Unit,
-    attack: Unit,
-    release: Unit,
-    /// `HOLD_UNDER_S` in blocks.
-    hold_under: Blocks,
-}
-
 /// `exp(−block / (τ fs))`, a block's one-pole pole.
 #[inline(always)]
 fn pole(tau_s: f32, sample_rate: u32) -> f32 {
@@ -396,10 +352,12 @@ fn pole(tau_s: f32, sample_rate: u32) -> f32 {
 }
 
 impl Rate {
-    #[inline(always)]
+    /// Out of line: run once a wake, or when the rate changes.
+    #[inline(never)]
     fn at(sample_rate: u32) -> Rate {
         let fs = sample_rate as f32;
         Rate {
+            hz: sample_rate,
             low: LOW_PAIR.map(|b| Sv::at(b, fs)),
             high: HIGH_PAIR.map(|b| Bq::at(b, fs)),
             thin_low: LOW_PAIR.map(|b| Sv::at(b, fs / THIN_LOW as f32)),
@@ -432,11 +390,17 @@ fn gain_less_one(c: CutDb) -> f32 {
 /// (`UNMIX`) so their sum is the gain asked. No cut is no dip, exactly.
 #[inline(always)]
 pub fn dips(c: &[CutDb; BANDS]) -> [f32; BANDS] {
-    let g: [f32; BANDS] = core::array::from_fn(|b| gain_less_one(c[b]));
-    core::array::from_fn(|b| {
-        let u = &UNMIX[b];
-        u[0] * g[0] + u[1] * g[1] + u[2] * g[2] + u[3] * g[3]
-    })
+    // Plain loops: `array::from_fn`'s instance for these is core's own,
+    // linked outside this group (in bank 1) when it is not inlined.
+    let mut g = [0.0f32; BANDS];
+    for (g, c) in g.iter_mut().zip(c) {
+        *g = gain_less_one(*c);
+    }
+    let mut d = [0.0f32; BANDS];
+    for (d, u) in d.iter_mut().zip(&UNMIX) {
+        *d = u[0] * g[0] + u[1] * g[1] + u[2] * g[2] + u[3] * g[3];
+    }
+    d
 }
 
 /// What the four bands' dips `d` really cut at each band's centre: the
@@ -444,14 +408,16 @@ pub fn dips(c: &[CutDb; BANDS]) -> [f32; BANDS] {
 /// readout is the cut heard there, however the bands stack.
 #[inline(always)]
 pub fn heard(d: &[f32; BANDS]) -> [CutDb; BANDS] {
-    core::array::from_fn(|c| {
+    let mut cut = [CutDb::ZERO; BANDS];
+    for (cut, row) in cut.iter_mut().zip(&RESPONSE) {
         let (mut re, mut im) = (1.0f32, 0.0f32);
-        for (b, (r, i)) in RESPONSE[c].iter().enumerate() {
-            re += d[b] * r;
-            im += d[b] * i;
+        for (d, (r, i)) in d.iter().zip(row) {
+            re += d * r;
+            im += d * i;
         }
-        CutDb::new(-DB_PER_LOG2_POWER * log2(re * re + im * im))
-    })
+        *cut = CutDb::new(-DB_PER_LOG2_POWER * log2(re * re + im * im));
+    }
+    cut
 }
 
 /// What a block's bus put in each band (its unity-peak band-pass's mean
@@ -645,7 +611,7 @@ fn full(
 /// HIGH at half, on coefficients for that rate. What folds down is 20 dB
 /// under by the boxcar and lands under the skirts `own` already allows
 /// for.
-#[inline(always)]
+#[inline(never)]
 fn thin(x: &[f32; BLOCK_SIZE], taps: &mut [BandTaps; BANDS], r: &Rate) -> Energy {
     let mut heard = Energy::NONE;
     let none = Ramp {
@@ -675,8 +641,9 @@ pub fn probe(d: &[f32; BANDS], x: &mut [f32], sample_rate: u32) {
 /// A cut Part's side through the pairs that cut, and no others: the same
 /// dips as its bus, so the cut is the same on left and right. A pair at
 /// unity at both ends of the block is not run and its memory rests; the
-/// side is never listened to.
-#[inline(always)]
+/// side is never listened to. One copy, for a Part's side and the reverb
+/// return's left and right.
+#[inline(never)]
 fn side_bands(
     x: &mut [f32; BLOCK_SIZE],
     taps: &mut [BandTaps; BANDS],
@@ -1005,7 +972,10 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
         *st = SmartState::REST;
         st.live = Live::Running;
     }
-    let r = Rate::at(b.sample_rate);
+    if st.rate.hz != b.sample_rate {
+        st.rate = Rate::at(b.sample_rate);
+    }
+    let r = st.rate;
     // One band's dB a block, one Part's view; the slow rule a band every
     // other block and the kick's rule the blocks between, so no block
     // carries both.
@@ -1097,15 +1067,16 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
 /// is run or written. At unity it is read, never written.
 #[inline(never)]
 pub fn run_wash(st: &mut SmartState, wet: &mut Stereo, sounding: bool, sample_rate: u32) {
-    if st.live == Live::Bypass {
+    // The rate is the Parts' block's, made there (`run`) earlier.
+    if st.live == Live::Bypass || st.rate.hz != sample_rate {
         return;
     }
+    let r = st.rate;
     let read = usize::from(st.turn) % BANDS;
     let w = &mut st.wash;
     let (from, to) = w.cuts.ramp();
     let mut heard = Energy::NONE;
     if sounding {
-        let r = Rate::at(sample_rate);
         let sum: [f32; BLOCK_SIZE] = core::array::from_fn(|i| 0.5 * (wet.l[i] + wet.r[i]));
         heard = thin(&sum, &mut w.listen, &r);
         tidy(&mut w.listen);
@@ -1121,7 +1092,7 @@ pub fn run_wash(st: &mut SmartState, wet: &mut Stereo, sounding: bool, sample_ra
     } else {
         (w.cuts.mid, w.cuts.side, w.listen) = (EMPTY, EMPTY, EMPTY);
         if w.cuts.level != [Power::ZERO; BANDS] {
-            w.cuts.follow(&heard, &Rate::at(sample_rate), read);
+            w.cuts.follow(&heard, &r, read);
         }
     }
     if read == 0 {
