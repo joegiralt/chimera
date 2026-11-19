@@ -5,7 +5,7 @@
 use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::clampf;
 use crate::dsp::drum::sound::{HitKernel, KitBill, PartBill};
-use crate::dsp::drum::types::{ChokeGroup, DrumHit, PadSet};
+use crate::dsp::drum::types::{ChokeGroup, DrumHit, KernelBill, PadSet, SampleRate};
 use crate::dsp::drum::view::KIT_VIEW;
 use crate::dsp::tape_engine::params::Retrig;
 use core::cmp::Reverse;
@@ -2051,7 +2051,7 @@ impl Instrument {
             let (hit, mine) = self.choke(q, key);
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
             // The bill `recost` worked out, so the kit it read.
-            let own = self.costs[p].hit(HitKernel::Sounding(hit.params().machine()));
+            let own = self.costs[p].hit(HitKernel::Sounding(hit.bill(self.drum_rate())));
             let cost = own + if first { Knobs::COST } else { Cost::ZERO };
             let reserved = self.reserved();
             let mode = part.mix.mode();
@@ -2221,14 +2221,14 @@ impl Instrument {
                     + self.streaming[v].looped
                     + high;
                 let k = if first { Knobs::COST } else { Cost::ZERO };
-                // A hit bills its own machine, not its kit's costliest; a
+                // A hit bills its own kernel, not its kit's costliest; a
                 // flat bill (not DRUM) has no kernel, so `Ended` is whole.
                 let hit = match part.params.engine() {
-                    EngineType::Drum => self.hit_of(vi, q),
+                    EngineType::Drum => self.bill_of(vi, q),
                     _ => None,
                 };
                 let own = costs[p].hit(match hit {
-                    Some(h) => HitKernel::Sounding(h.params().machine()),
+                    Some(b) => HitKernel::Sounding(b),
                     None => HitKernel::Ended,
                 });
                 self.alloc.recost_with_glide(vi, own + held + k, glides[p]);
@@ -2357,6 +2357,30 @@ impl Instrument {
     /// The hit voice `w`, booked by DRUM Part `id`, plays: the one
     /// waiting out its fade as its pad's in the kit now, else the one
     /// sounding.
+    /// `hit_of`'s bill for its next block (ADR 0287): a waiting hit's at
+    /// its strike, a sounding one's by its kernel.
+    fn bill_of(&self, wi: VoiceIdx, id: PartId) -> Option<KernelBill> {
+        let w = wi.index();
+        match self.waiting[w] {
+            Some(Waiting {
+                plays: Plays::Hit, ..
+            }) => self
+                .alloc
+                .slot(wi)
+                .note()
+                .map(|n| KIT_VIEW.hit(id, n).bill(self.drum_rate())),
+            Some(_) => None,
+            None => self.voices[w]
+                .drum_bill()
+                .filter(|_| self.sounding[w] == Some(id)),
+        }
+    }
+
+    /// The rate a hit is struck at (`Voice::strike`'s).
+    fn drum_rate(&self) -> SampleRate {
+        SampleRate::new(self.sample_rate).unwrap_or(SampleRate::HW)
+    }
+
     fn hit_of(&self, wi: VoiceIdx, id: PartId) -> Option<DrumHit> {
         let w = wi.index();
         match self.waiting[w] {

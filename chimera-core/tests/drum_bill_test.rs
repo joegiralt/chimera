@@ -16,7 +16,9 @@ use chimera_core::dsp::drum::sound::{
     Amount, HitKernel, KitBill, PAD_AMP_COST, PAD_ROUTED_COST, PadMods, PadRoute, PadSound,
     RouteDest, RouteId, RouteSource, kit_bill,
 };
-use chimera_core::dsp::drum::types::{Kit, Machine, PadId};
+use chimera_core::dsp::drum::types::{
+    KernelBill, Kit, Knob, KnobValue, Machine, PadId, PulseMachine, Tonal,
+};
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxBus;
@@ -28,6 +30,7 @@ use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::perf::load::{CycleCounter, LoadNet};
 use chimera_core::project::PartId;
+use chimera_midi::value::U7;
 use common::drum::{REV_V_BUDGET, drum_hits};
 
 static WRITER: LazyLock<Mutex<KitWriter>> =
@@ -49,7 +52,7 @@ fn cost(p: &ParamSnapshot) -> Cost {
 /// so its filter and mods compare with `cost`'s.
 fn drum(p: &ParamSnapshot, kit: &Kit) -> Cost {
     let b = Voice::drum_cost(p, &ModState::new(), kit_bill(kit));
-    b.hit(HitKernel::Ended) + Machine::MAX_COST
+    b.hit(HitKernel::Ended) + KernelBill::MAX_COST
 }
 
 /// `p` as its pad plays it: the same Sound on the pad's kind.
@@ -234,7 +237,8 @@ fn the_sounds_shape_bills_only_before_a_publish() {
 /// unit-costs-9c2cfd1d.md`: rev V, build 9c2cfd1d, 2026-11-14). Pad 8, the
 /// closed hat, ended inside the window and read nothing; pads 3 and 12
 /// ended inside it too, so read low. JINGLE, SINE and NOISE are not in
-/// INIT DRUM: unmeasured, so not here.
+/// INIT DRUM: unmeasured, so not here. Pads 3 and 11 re-read on eb442a48,
+/// 2026-11-16 (ADR 0275); pad 11 at INIT's BUMP 0 (ADR 0287).
 const READ: [(u8, u32); 11] = [
     (1, 800),
     (2, 800),
@@ -245,7 +249,7 @@ const READ: [(u8, u32); 11] = [
     (7, 700),
     (9, 1400),
     (10, 1400),
-    (11, 1500),
+    (11, 700),
     (12, 300),
 ];
 
@@ -277,21 +281,27 @@ fn a_read_machine_bills_its_reading() {
         let m = Kit::DEFAULT.pad(pad(n)).machine();
         assert_eq!(m.cost().0, (read * 11).div_ceil(10) - 83, "pad {n}");
     }
+    // COWBELL's BUMP 127 worst block, read the same day (ADR 0287).
+    assert_eq!(PulseMachine::Cowbell.ticking_cost().0, billed(2000));
 }
 
 #[test]
 fn a_part_bills_its_costliest_machine() {
     let kicks = kicks();
     assert_eq!(kit_bill(&kicks).kernel(), Machine::ToneKick.cost());
+    // INIT's COWBELL at BUMP 0 bills its plateau: the HATs are dearer.
+    assert_eq!(kit_bill(&Kit::DEFAULT).kernel(), Machine::MetalHat.cost());
+    let mut bumped = Kit::DEFAULT;
+    bumped.pad_mut(pad(11)).knobs_mut().set(Knob::H, at(1));
     assert_eq!(
-        kit_bill(&Kit::DEFAULT).kernel(),
-        Machine::ToneCowbell.cost()
+        kit_bill(&bumped).kernel(),
+        PulseMachine::Cowbell.ticking_cost()
     );
     let mut one = kicks;
     one.pad_mut(pad(7)).set_machine(Machine::MetalJingle);
     assert_eq!(kit_bill(&one).kernel(), Machine::MetalJingle.cost());
     // No kit read yet: the costliest of all, as `Voice::cost` bills.
-    assert_eq!(KitBill::NONE.kernel(), Machine::MAX_COST);
+    assert_eq!(KitBill::NONE.kernel(), KernelBill::MAX_COST);
     let p = drum_init();
     assert_eq!(
         Voice::drum_cost(&p, &ModState::new(), KitBill::NONE).whole(),
@@ -300,10 +310,10 @@ fn a_part_bills_its_costliest_machine() {
     // A hit of a cheaper machine bills under its Part; an ended one, no
     // kernel.
     let part = Voice::drum_cost(&p, &ModState::new(), kit_bill(&Kit::DEFAULT));
-    let kick = part.hit(HitKernel::Sounding(Machine::ToneKick));
+    let kick = part.hit(HitKernel::Sounding(KernelBill::Machine(Machine::ToneKick)));
     assert!(kick < part.whole());
     assert_eq!(
-        part.hit(HitKernel::Sounding(Machine::ToneCowbell)),
+        part.hit(HitKernel::Sounding(KernelBill::Machine(Machine::MetalHat))),
         part.whole()
     );
     assert_eq!(part.hit(HitKernel::Ended) + Machine::ToneKick.cost(), kick);
@@ -479,8 +489,9 @@ fn a_hat_among_kick_tails_on_rev_v() {
 /// by stealing a KICK and waits out its fade, and the COWBELL (pad 11),
 /// in its choke group D, chokes it unheard a block later: one choke, no
 /// budget refusal. With `master-tape` the bus bills 1494, not 1190, and
-/// the CYMBAL and the COWBELL are each refused at admission: two
-/// refusals, no choke. Each unheard pad is counted refused either way.
+/// the CYMBAL is refused at admission; the COWBELL at INIT's BUMP 0 bills
+/// its plateau (ADR 0287) and plays: one refusal, no choke. Each unheard
+/// pad is counted refused either way.
 #[test]
 fn twelve_pads_a_block_apart_on_rev_v() {
     let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
@@ -512,7 +523,7 @@ fn twelve_pads_a_block_apart_on_rev_v() {
         .collect();
     let (want_unheard, want_chokes, want_refusals): (&[u8], u32, u32) =
         if cfg!(feature = "master-tape") {
-            (&[10, 11], 0, 2)
+            (&[10], 0, 1)
         } else {
             (&[10], 1, 0)
         };
@@ -597,5 +608,85 @@ fn the_load_net_skips_a_booked_voice_still_fading() {
         s[shed[0]].note().map(|n| n.get()),
         Some(67),
         "Part 1's newest"
+    );
+}
+
+/// What Part 1's hit on `key` books for its kernel: its booking less a
+/// lone KICK's on the same kit, plus the KICK's machine.
+fn kernel_booked(w: &mut KitWriter, kit: &Kit, key: u8, after: usize) -> Option<u32> {
+    let mut k = drum_rig(w, kit);
+    k.note_on_vel(0, self::key(pad(1)), 127);
+    let rest = booked(&k, self::key(pad(1))).0 - Machine::ToneKick.cost().0;
+    let mut r = drum_rig(w, kit);
+    r.note_on_vel(0, key, 127);
+    r.render(after);
+    slot_for(&r, key).map(|v| r.inst.allocator().slots()[v].cost().0 - rest)
+}
+
+/// ADR 0274's bill for a reading: `ceil(1.1 × reading) − 83`.
+const fn billed(read: u32) -> u32 {
+    (read * 11).div_ceil(10) - 83
+}
+
+/// A knob at `v`.
+fn at(v: u8) -> KnobValue {
+    KnobValue::new(U7::new(v).expect("0..=127"))
+}
+
+/// #991: a COWBELL at BUMP 127 is booked its sweep head's worst block
+/// (about 2,000 over idle on the unit, 2026-11-16) while its pulses render
+/// a sample at a time, then its plateau (600–700) once the sweep is
+/// spent; at BUMP 0 (INIT) its plateau from the strike.
+#[test]
+fn a_bumped_cowbell_bills_its_head_then_its_plateau() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let bell = key(pad(11));
+    let mut k = Kit::DEFAULT;
+    k.pad_mut(pad(11)).knobs_mut().set(Knob::B, at(127));
+    assert_eq!(kernel_booked(&mut w, &k, bell, 0), Some(billed(700)));
+    k.pad_mut(pad(11)).knobs_mut().set(Knob::H, at(127));
+    assert_eq!(kernel_booked(&mut w, &k, bell, 0), Some(billed(2000)));
+    assert_eq!(kernel_booked(&mut w, &k, bell, 1), Some(billed(2000)));
+    // 200 ms on, the 6 ms bump is spent.
+    assert_eq!(
+        kernel_booked(&mut w, &k, bell, SR_BLOCKS / 5),
+        Some(billed(700))
+    );
+}
+
+/// #991: a PLAIN IMPULSE at SWEEP 64 is booked its sweeping pulse
+/// (estimated 1,300) until the sweep is spent, then its plateau (600).
+#[test]
+fn a_swept_impulse_bills_its_sweep_then_its_plateau() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let imp = key(pad(3));
+    let mut k = Kit::DEFAULT;
+    k.pad_mut(pad(3)).knobs_mut().set(Knob::B, at(127));
+    assert_eq!(kernel_booked(&mut w, &k, imp, 0), Some(billed(600)));
+    k.pad_mut(pad(3)).knobs_mut().set(Knob::C, at(64));
+    assert_eq!(kernel_booked(&mut w, &k, imp, 0), Some(billed(1300)));
+    assert_eq!(
+        kernel_booked(&mut w, &k, imp, SR_BLOCKS / 5),
+        Some(billed(600))
+    );
+}
+
+/// #991: an IMPULSE whose WIDTH floors at its pitch renders a sample at a
+/// time with no sweep (`Pulse::sweep`): TONAL on it, 2 kHz an octave up at
+/// full WIDTH, booked as the sweeping pulse for as long as it sounds.
+#[test]
+fn a_floored_impulse_bills_as_sweeping() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut k = Kit::DEFAULT;
+    k.set_tonal(Tonal::Pad(pad(3)));
+    let knobs = k.pad_mut(pad(3)).knobs_mut();
+    for (kn, v) in [(Knob::A, 127), (Knob::B, 127), (Knob::G, 127)] {
+        knobs.set(kn, at(v));
+    }
+    assert_eq!(kernel_booked(&mut w, &k, 60, 0), Some(billed(600)));
+    assert_eq!(kernel_booked(&mut w, &k, 72, 0), Some(billed(1300)));
+    assert_eq!(
+        kernel_booked(&mut w, &k, 72, SR_BLOCKS / 5),
+        Some(billed(1300))
     );
 }

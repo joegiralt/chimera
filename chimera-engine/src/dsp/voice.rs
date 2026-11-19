@@ -12,7 +12,7 @@ use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drum::engine::MidSide;
 use crate::dsp::drum::sound::{KitBill, PartBill, RouteOffsets};
-use crate::dsp::drum::types::{DrumHit, HitSeed, SampleRate};
+use crate::dsp::drum::types::{DrumHit, HitSeed, KernelBill, SampleRate};
 use crate::dsp::drum::view::KIT_VIEW;
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
@@ -743,6 +743,17 @@ impl Voice {
         match &self.slot {
             EngineSlot::Drum(d) if self.active => d.hit(),
             _ => None,
+        }
+    }
+
+    /// `drum_hit`'s bill for its next block (`DrumEngine::bill`).
+    pub fn drum_bill(&self) -> Option<KernelBill> {
+        match &self.slot {
+            EngineSlot::Drum(d) => d.bill().filter(|_| self.active),
+            EngineSlot::Algo(_)
+            | EngineSlot::Modal(_)
+            | EngineSlot::Tape(_)
+            | EngineSlot::Va(_) => None,
         }
     }
 

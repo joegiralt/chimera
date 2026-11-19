@@ -11,9 +11,10 @@ use crate::hw::BLOCK_SIZE;
 use crate::in_place::{field_list, in_place_enum};
 
 use super::super::laws::{BankParams, CowbellParams, JingleParams, MetalParams};
-use super::super::types::{Hz, SampleRate, Seconds, Semis};
+use super::super::types::{Hz, PulseMachine, SampleRate, Seconds, Semis};
 use super::{
     Blk, Decay, Hiss, Hit, Lcg, Pulse, Square, Svf, Swept, drive, octaves, per_sample, quiet,
+    sweeping,
 };
 
 in_place_enum! {
@@ -52,6 +53,14 @@ impl Metal {
             Metal::Cowbell(k) => k.render::<TICKED>(out),
             Metal::Bank(k) => k.render::<TICKED>(out),
             Metal::Jingle(k) => k.render::<TICKED>(out),
+        }
+    }
+
+    /// `KernelState::ticking`: the cowbell's while BUMP moves its pulses.
+    pub(super) fn ticking(&self) -> Option<PulseMachine> {
+        match self {
+            Metal::Cowbell(k) => k.ticking().then_some(PulseMachine::Cowbell),
+            Metal::Bank(_) | Metal::Jingle(_) => None,
         }
     }
 
@@ -97,6 +106,12 @@ impl Cowbell {
             vel: h.level.get(),
             quiet: false,
         }
+    }
+
+    /// Its next block's pulses may render a sample at a time: BUMP still
+    /// moves them. Squares (SHAPE 0) never floor (`MAX_INC` < ½).
+    fn ticking(&self) -> bool {
+        sweeping(self.bump_oct, self.bump.v)
     }
 
     #[inline(never)]
@@ -346,5 +361,63 @@ impl Jingle {
             *o = self.vel * (0.5 * v + h);
         }
         self.quiet = quiet(out);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chimera_midi::value::U7;
+
+    use super::super::super::laws::{KernelParams, MetalParams, resolve};
+    use super::super::super::types::{HitSeed, Knob, KnobSet, KnobValue, Machine, SampleRate};
+    use super::super::{Hit, octaves};
+    use super::{BLOCK_SIZE, Cowbell, Unit};
+
+    /// A COWBELL at BUMP `bump` (0..=127).
+    fn bell(bump: u8) -> Cowbell {
+        let mut k = KnobSet::defaults(Machine::ToneCowbell);
+        k.set(Knob::H, KnobValue::new(U7::new(bump).expect("0..=127")));
+        let KernelParams::Metal(MetalParams::Cowbell(p)) = resolve(Machine::ToneCowbell, &k) else {
+            panic!("COWBELL resolves to its kernel");
+        };
+        let h = Hit {
+            level: Unit::ONE,
+            seed: HitSeed::new(1),
+            sr: SampleRate::HW,
+        };
+        Cowbell::new(p, h)
+    }
+
+    /// ADR 0287: `ticking` says so before every block whose pulses render
+    /// a sample at a time (`Pulse::sweep`'s `steady` fails), and once it
+    /// stops it stays stopped: BUMP 0 never, BUMP 127 for its first
+    /// ~110 ms, a few blocks past the last ticked one at most.
+    #[test]
+    fn ticking_covers_every_ticked_block() {
+        for bump in [0, 1, 64, 127] {
+            let mut k = bell(bump);
+            let (mut stopped, mut last_ticked) = (None, None);
+            for b in 0..400 {
+                let said = k.ticking();
+                let (mut d, mut m) = (k.bump, [0.0; BLOCK_SIZE]);
+                octaves(&mut d, k.bump_oct, &mut m);
+                let ticks =
+                    k.p[0].steady(k.hz[0], &m).is_none() || k.p[1].steady(k.hz[1], &m).is_none();
+                assert!(said || !ticks, "BUMP {bump}, block {b}");
+                if ticks {
+                    last_ticked = Some(b);
+                }
+                match stopped {
+                    None if !said => stopped = Some(b),
+                    Some(_) => assert!(!said, "BUMP {bump}, block {b}"),
+                    None => {}
+                }
+                k.render::<false>(&mut [0.0; BLOCK_SIZE]);
+            }
+            let stopped = stopped.expect("BUMP falls in 6 ms");
+            assert_eq!(stopped == 0, bump == 0, "BUMP {bump}");
+            assert!(stopped < 90, "BUMP {bump}: {stopped}");
+            assert!(stopped <= last_ticked.map_or(0, |t| t + 10), "BUMP {bump}");
+        }
     }
 }

@@ -22,15 +22,17 @@ use crate::dsp::fast_sin_turns;
 use crate::dsp::filter::{Clean, FilterKind, FilterMode, FilterMods};
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::va::noise::{Noise, NoiseKind};
-use crate::dsp::va::osc::{MAX_INC, Morph, VarOsc};
+use crate::dsp::va::osc::{MAX_INC, Morph, VarOsc, inc_at};
 use crate::dsp::voice_fx::soft;
 use crate::dsp::{Unit, clampf};
 use crate::hw::BLOCK_SIZE;
 use crate::in_place::in_place_enum;
 use crate::params::FilterParams;
 
-use super::laws::{KernelParams, Sweep};
-use super::types::{Gain, HitSeed, Hz, SampleRate, Seconds, Semis};
+use super::laws::{KernelParams, MetalParams, PlainParams, Sweep, resolve};
+use super::types::{
+    DrumHit, Gain, HitSeed, Hz, KernelBill, PulseMachine, SampleRate, Seconds, Semis,
+};
 
 pub(super) type Blk = [f32; BLOCK_SIZE];
 
@@ -119,6 +121,17 @@ impl KernelState {
         }
     }
 
+    /// The pulse machine whose next block may render its pulses a sample
+    /// at a time (`Pulse::sweep`), erring high: a sweep still above
+    /// `octaves`' skip, or a pulse whose width floors (ADR 0287).
+    pub fn ticking(&self) -> Option<PulseMachine> {
+        match self {
+            KernelState::Idle(_) | KernelState::Tone(_) | KernelState::Burst(_) => None,
+            KernelState::Metal(k) => k.ticking(),
+            KernelState::Plain(k) => k.ticking(),
+        }
+    }
+
     /// The hit has fallen under −80 dB for good: its envelopes are spent
     /// and its last block was quiet.
     pub fn finished(&self) -> bool {
@@ -145,6 +158,46 @@ fn ceiling(x: f32) -> f32 {
     } else {
         let o = a - KNEE;
         (KNEE + o / (1.0 + o / ROOM)).copysign(x)
+    }
+}
+
+impl DrumHit {
+    /// Its kernel params: its pad's knobs through its machine's laws,
+    /// moved by its TONAL pitch. Strike setup, built for size (ADR 0267):
+    /// one copy for the strike and the bill.
+    #[inline(never)]
+    #[optimize(size)]
+    pub fn kernel_params(&self) -> KernelParams {
+        let pad = self.params();
+        resolve(pad.machine(), pad.knobs()).transposed(self.pitch())
+    }
+
+    /// What it bills struck at `sr` (ADR 0287): its machine, ticking if
+    /// its first block renders its pulses a sample at a time
+    /// (`KernelParams::ticking`).
+    pub fn bill(&self, sr: SampleRate) -> KernelBill {
+        KernelBill::of(self.params().machine(), self.kernel_params().ticking(sr))
+    }
+}
+
+impl KernelParams {
+    /// `KernelState::ticking` of its hit struck at `sr`, before its first
+    /// block: each sweep's fall starts at 1.
+    pub fn ticking(&self, sr: SampleRate) -> Option<PulseMachine> {
+        match self {
+            KernelParams::Metal(MetalParams::Cowbell(p)) => {
+                sweeping(p.bump.get(), 1.0).then_some(PulseMachine::Cowbell)
+            }
+            KernelParams::Plain(PlainParams::Impulse { body, width, .. }) => {
+                let inc = inc_at(body.pitch.get(), 1.0 / sr.hz());
+                (sweeping(body.depth.get() / 12.0, 1.0) || floored(inc, *width))
+                    .then_some(PulseMachine::Impulse)
+            }
+            KernelParams::Metal(MetalParams::Bank(_) | MetalParams::Jingle(_))
+            | KernelParams::Plain(PlainParams::Sine { .. } | PlainParams::Noise(_))
+            | KernelParams::Tone(_)
+            | KernelParams::Burst(_) => None,
+        }
     }
 }
 
@@ -326,8 +379,21 @@ impl Pulse {
     #[inline(always)]
     fn steady(&self, f0: f32, m: &Blk) -> Option<f32> {
         let inc = self.o.inc_for(f0);
-        (m.iter().all(|&x| x == 1.0) && inc <= 0.5 - 0.45 * self.m.shape.get()).then_some(inc)
+        (m.iter().all(|&x| x == 1.0) && !floored(inc, self.m.shape)).then_some(inc)
     }
+
+    /// Its width floors at `f0`: `sweep` renders it a sample at a time,
+    /// swept or not.
+    pub(super) fn floored(&self, f0: f32) -> bool {
+        floored(self.o.inc_for(f0), self.m.shape)
+    }
+}
+
+/// A pulse of `width` floors at `inc` (`Shaped::fill`): its width,
+/// ½ − 0.45 × `width`, is under `inc`.
+#[inline(always)]
+fn floored(inc: f32, width: Unit) -> bool {
+    inc > 0.5 - 0.45 * width.get()
 }
 
 /// `Pulse` at SHAPE 0: its width, ½, is above any `inc` (`MAX_INC`), so
@@ -412,6 +478,13 @@ impl Swept {
 /// Under this many octaves libm's `exp2f` is exactly 1: 2^-26.
 const EXP2_ONE: f32 = 1.0 / 67_108_864.0;
 
+/// A sweep of `oct` octaves whose fall is at `v` still moves its pitch:
+/// `octaves` calls `exp2f` for it.
+#[inline(always)]
+pub(super) fn sweeping(oct: f32, v: f32) -> bool {
+    (oct * v).abs() >= EXP2_ONE
+}
+
 /// 2^(`oct` × each of `d`'s next block of values) into `m`: a sweep's
 /// pitch factor, its one `exp2f` for every kernel. A recurrence:
 /// private issue #952
@@ -419,7 +492,7 @@ const EXP2_ONE: f32 = 1.0 / 67_108_864.0;
 pub(super) fn octaves(d: &mut Decay, oct: f32, m: &mut Blk) {
     // under 2^-26 octaves libm's exp2f is exactly 1 and a decay only
     // falls: a spent (or zero) sweep is 1s without the calls
-    if (oct * d.v).abs() < EXP2_ONE {
+    if !sweeping(oct, d.v) {
         for m in m.iter_mut() {
             d.next();
             *m = 1.0;
@@ -480,7 +553,57 @@ pub(super) fn drive(x: f32, d: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::EXP2_ONE;
+    use chimera_midi::value::U7;
+
+    use super::super::laws::resolve;
+    use super::super::types::{
+        ChokeGroup, DrumHit, HitSeed, KernelBill, Knob, KnobSet, KnobValue, Machine, Pad, PadId,
+        Pan, SampleRate, Transpose,
+    };
+    use super::{EXP2_ONE, KernelState};
+    use crate::Velocity;
+    use crate::dsp::tape_engine::params::Retrig;
+
+    /// ADR 0287: a hit's bill at its strike (`DrumHit::bill`, from its
+    /// params) is the struck kernel's (`KernelState::ticking`), for every
+    /// machine at its defaults, all knobs 0, all 127 and each knob at 1,
+    /// across TONAL's reach.
+    #[test]
+    fn a_strikes_bill_is_its_kernels() {
+        let at = |v: u8| KnobValue::new(U7::new(v).expect("0..=127"));
+        let sr = SampleRate::HW;
+        let vel = Velocity::MAX;
+        for m in Machine::ALL {
+            let mut sets = [KnobSet::defaults(m); 11];
+            sets[1] = KnobSet::new([at(0); 8]);
+            sets[2] = KnobSet::new([at(127); 8]);
+            for (s, kn) in sets[3..].iter_mut().zip(Knob::ALL) {
+                s.set(kn, at(1));
+            }
+            for (i, knobs) in sets.iter().enumerate() {
+                for by in [-60, 0, 12, 67] {
+                    let pitch = Transpose::new(by).expect("a transpose");
+                    let pad = Pad::new(
+                        m,
+                        *knobs,
+                        U7::MAX,
+                        Pan::CENTRE,
+                        ChokeGroup::Off,
+                        Retrig::Cut,
+                    );
+                    let hit = DrumHit::new(PadId::ALL[0], pad, pitch);
+                    let p = resolve(m, knobs).transposed(pitch);
+                    assert_eq!(hit.kernel_params(), p);
+                    let k = KernelState::strike(p, vel, HitSeed::new(1), sr);
+                    assert_eq!(
+                        hit.bill(sr),
+                        KernelBill::of(m, k.ticking()),
+                        "{m:?} set {i} at {by}"
+                    );
+                }
+            }
+        }
+    }
 
     /// `octaves`' skip leans on libm: under `EXP2_ONE` its `exp2f` is 1.
     #[test]

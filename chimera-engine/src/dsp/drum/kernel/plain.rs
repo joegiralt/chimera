@@ -6,8 +6,8 @@ use crate::dsp::filter::FilterMode;
 use crate::hw::BLOCK_SIZE;
 
 use super::super::laws::{NoiseTone, PlainParams};
-use super::super::types::Hz;
-use super::{Blk, Decay, Hiss, Hit, Pulse, Svf, Swept, octaves, quiet};
+use super::super::types::{Hz, PulseMachine};
+use super::{Blk, Decay, Hiss, Hit, Pulse, Svf, Swept, octaves, quiet, sweeping};
 
 pub struct Plain {
     src: Source,
@@ -105,7 +105,104 @@ impl Plain {
         self.quiet = quiet(out);
     }
 
+    /// `KernelState::ticking`: the impulse's while SWEEP moves its pulse
+    /// or its width floors.
+    pub(super) fn ticking(&self) -> Option<PulseMachine> {
+        match &self.src {
+            Source::Impulse { p, f0, oct, sw, .. } => {
+                (sweeping(*oct, sw.v) || p.floored(*f0)).then_some(PulseMachine::Impulse)
+            }
+            Source::Sine(_) | Source::Noise { .. } => None,
+        }
+    }
+
     pub(super) fn finished(&self) -> bool {
         self.quiet && self.amp.spent()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chimera_midi::value::U7;
+
+    use super::super::super::laws::resolve;
+    use super::super::super::types::{
+        HitSeed, Knob, KnobSet, KnobValue, Machine, SampleRate, Transpose,
+    };
+    use super::super::{Hit, octaves};
+    use super::{BLOCK_SIZE, Plain, Source, Unit};
+
+    /// A PLAIN IMPULSE at `knobs` over its defaults, `by` semitones up.
+    fn impulse(knobs: &[(Knob, u8)], by: i8) -> Plain {
+        let mut k = KnobSet::defaults(Machine::PlainImpulse);
+        for &(kn, v) in knobs {
+            k.set(kn, KnobValue::new(U7::new(v).expect("0..=127")));
+        }
+        let p =
+            resolve(Machine::PlainImpulse, &k).transposed(Transpose::new(by).expect("a transpose"));
+        let super::super::super::laws::KernelParams::Plain(p) = p else {
+            panic!("IMPULSE resolves to the plain kernel");
+        };
+        let h = Hit {
+            level: Unit::ONE,
+            seed: HitSeed::new(1),
+            sr: SampleRate::HW,
+        };
+        Plain::new(p, h)
+    }
+
+    /// When a case's `ticking` stops.
+    #[derive(Clone, Copy)]
+    enum Stops {
+        /// Before the first block: it never ticks.
+        AtOnce,
+        /// After some blocks: its sweep is spent.
+        Later,
+        /// Not while it sounds: its width floors.
+        Never,
+    }
+
+    /// IMPULSE's knobs over its defaults, its transpose and when it stops.
+    type Case = (&'static [(Knob, u8)], i8, Stops);
+
+    /// ADR 0287: `ticking` says so before every block whose pulse renders
+    /// a sample at a time, and once it stops it stays stopped. SWEEP 0
+    /// never ticks; SWEEP 64 ticks till its sweep is spent; full WIDTH at
+    /// 2 kHz an octave up floors and ticks for as long as it sounds.
+    #[test]
+    fn ticking_covers_every_ticked_block() {
+        const LONG: (Knob, u8) = (Knob::B, 127);
+        let cases: [Case; 5] = [
+            (&[LONG], 0, Stops::AtOnce),
+            (&[LONG, (Knob::C, 1)], 0, Stops::Later),
+            (&[LONG, (Knob::C, 64)], 0, Stops::Later),
+            (&[LONG, (Knob::C, 127), (Knob::D, 30)], 0, Stops::Later),
+            (&[LONG, (Knob::A, 127), (Knob::G, 127)], 12, Stops::Never),
+        ];
+        for (n, &(knobs, by, want)) in cases.iter().enumerate() {
+            let mut k = impulse(knobs, by);
+            let mut stopped = None;
+            for b in 0..400 {
+                let said = k.ticking().is_some();
+                let Source::Impulse { p, f0, oct, sw, .. } = &k.src else {
+                    panic!("an impulse");
+                };
+                let (mut d, mut m) = (*sw, [0.0; BLOCK_SIZE]);
+                octaves(&mut d, *oct, &mut m);
+                let ticks = p.steady(*f0, &m).is_none();
+                assert!(said || !ticks, "case {n}, block {b}");
+                match stopped {
+                    None if !said => stopped = Some(b),
+                    Some(_) => assert!(!said, "case {n}, block {b}"),
+                    None => {}
+                }
+                k.render::<false>(&mut [0.0; BLOCK_SIZE]);
+            }
+            match want {
+                Stops::AtOnce => assert_eq!(stopped, Some(0), "case {n}"),
+                Stops::Later => assert!(stopped.is_some_and(|s| s > 0), "case {n}"),
+                Stops::Never => assert_eq!(stopped, None, "case {n}"),
+            }
+        }
     }
 }
