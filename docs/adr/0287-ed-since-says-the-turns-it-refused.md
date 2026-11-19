@@ -21,7 +21,7 @@ ADR 0285 kept `ed set`'s answer `OK queued` for a set the box later refuses at i
 - **Ask kit_groups through the UI door (`Ask::Refuses`).** Measured +48 B in bank 1: a larger `Ask` copied by every bank-1 caller of `bank2::groups`.
 
 ## Consequences
-- **Bank 1:** default 879,012 → 879,036 B (+24), the gate build 883,492 → 883,508 B (+16), ORBIT 893,524 → 893,548 B (under its line): `EdState`'s layout moves `since`'s offsets in `Usb::service` and `tend_usb`, and the line's format pieces sit in bank 1's unnamed rodata.
+- **Bank 1:** default 879,012 → 879,036 B (+24), the gate build 883,492 → 883,508 B (+16), ORBIT 893,524 → 893,548 B (under its line); fault-inject, bench-tape and filter-probes +24, bench-orbit +16, their lines raised by that: `EdState`'s layout moves `since`'s offsets in `Usb::service` and `tend_usb`, and the line's format pieces sit in bank 1's unnamed rodata.
 - **Bank 2:** +576 B on default, ORBIT and the gate build, all in S4.
 - **ITCM:** `EdState` +208 B.
 - The editor (Elm) parses `refused` into its answer lines and shows the reason on the control until the next value.
