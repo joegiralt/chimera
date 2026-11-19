@@ -8,6 +8,7 @@ use common::InstRig;
 use chimera_core::bank2::DOOR_CELL;
 use chimera_core::hw::SampleBudget;
 use chimera_core::part_eq::{LoCut, PartEq, Tilt};
+use chimera_core::project::PartId;
 
 fn play(eq: PartEq) -> Vec<f32> {
     let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
@@ -33,5 +34,14 @@ fn the_door_plays_the_eq_open_and_flat_closed() {
     DOOR_CELL.open_host();
     let (flat, open) = (play(PartEq::FLAT), play(eq));
     assert_ne!(open, flat, "open: EQ'd");
+    // Closed mid-note, the EQ plays flat and its state goes to rest, so
+    // reopened it starts from flat, never from the taps it left.
+    let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
+    rig.shared.parts[0].mix.eq = eq;
+    rig.note_on(0, 48);
+    rig.render(20);
+    assert!(rig.inst.part_eqs().running(PartId::FIRST));
     DOOR_CELL.close();
+    rig.render(1);
+    assert!(!rig.inst.part_eqs().any_live(), "closed: at rest");
 }

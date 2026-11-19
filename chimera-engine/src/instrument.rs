@@ -2696,7 +2696,8 @@ impl Instrument {
     /// Each written Part's bus (and side) through its EQ, in bank 2 behind
     /// the EQ's door (ADR 0284): bank 1's stub. With every Part flat, off
     /// and settled, no call: the buses as the voices left them, bit for
-    /// bit. A closed door plays them flat.
+    /// bit. A closed door plays them flat and puts the EQ at rest, so a
+    /// reopened door starts each Part from flat, never from stale taps.
     #[inline(never)]
     fn part_eq(&mut self, shared: &AudioShared, written: &[bool; MAX_PARTS], sides: &mut Sides) {
         let eqs = self.eq.get();
@@ -2710,7 +2711,9 @@ impl Instrument {
             parts: &shared.parts,
             sample_rate: self.sample_rate,
         };
-        crate::part_eq::door::through(|d| d.eq().run(eqs, b));
+        if crate::part_eq::door::through(|d| d.eq().run(eqs, b)).is_none() {
+            *eqs = crate::part_eq::PartEqs::REST;
+        }
     }
 
     /// Each Part's EQ state: for the tests.
