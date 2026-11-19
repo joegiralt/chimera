@@ -1731,9 +1731,18 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::C, 64));
         feed(ui, Input::turn(EncoderId::D, 127));
     }),
-    // AMP › SENDS: the mixer's SENDS under AMP, REVERB up and focused.
+    // AMP › STEREO (ADR 0294): PAN R20, WIDTH 32, WIDTH focused.
+    ("amp_stereo", |ui| {
+        plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::A, 20));
+        feed(ui, Input::turn(EncoderId::B, -32));
+    }),
+    // AMP › SENDS: the mixer's SENDS under AMP (after STEREO), REVERB up
+    // and focused.
     ("amp_sends", |ui| {
         plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::turn(EncoderId::C, 40));
     }),

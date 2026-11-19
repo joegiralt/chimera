@@ -39,7 +39,7 @@ VA      VA ── FLT ── AMP ── MOD
         └ OSC1, OSC2, NOISE, PIT
 
 shared  FLT └ FMD (FILTER MOD), FX, JACK
-        AMP └ SENDS
+        AMP └ STEREO, SENDS
         MOD   MTX (matrix) └ E1 E2 E3, SPD, L1 L2 L3
 ```
 
@@ -91,6 +91,7 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 | FX | INPUT (the filter's input level) · the FX type's three pots · MIX · STABILITY (on the 2040, LADDER and SEM). SOFT: DRIVE · TONE · LEVEL. FOLD: FOLD · SYMMETRY · LEVEL. OFF: dashes, MIX dimmed |
 | JACK | FREQ SRC in C and RES SRC in E: the sources FREQ MOD and RES MOD read |
 | AMP | VEL (the VCA's velocity) · LPG · DECAY · STRIKE · BASE, F empty. LPG, DECAY and STRIKE turn the VCA into a low-pass gate; all three at 0 is a plain VCA. LPG ties darkening to gain, so quieter is darker. DECAY is how slowly the gate closes. STRIKE pings the gate at each note-on, as hard as the note is played: an accent over the envelope into VCA, which a held note falls back to; with no route into VCA the strike alone plays it at 1. VEL scales the routes into VCA. Routes into VCA are the amp: they replace the engine's own contour, and their sum starts at BASE and stops at full. BASE 127 with PRESS at −64 plays the engine's own contour and ducks it under pressure; BASE 64 with PRESS at +63 swells it; BASE 0 with PRESS alone is silent until pressed. On ALGO and MODAL a BASE above 0 keeps the carriers' or the resonator's own tail after key up. Until a route exists, VEL and BASE are dimmed, the band on BASE saying NEEDS A ROUTE INTO VCA. In the matrix, the VCA column says so on an empty cell: VCA: ROUTES REPLACE CONTOUR, or with an ENV routed, VCA: SUM STARTS AT AMP BASE |
+| STEREO | PAN · WIDTH, C-F empty. PAN places each note of ALGO, MODAL, VA and TAPE between the Part's outputs (C the middle, L64 hard left, R63 hard right), under the Part's own PAN; it is a destination (MIX + PLUS on it primes it in the matrix), so an LFO, an envelope, VEL or NOTE moves each note on its own. A note set or moved off the middle sends its middle to the effects. WIDTH scales the Part's stereo: 0 folds every panned note (and on DRUM every panned pad) to the middle, 64 plays them as panned, 127 spreads them twice as wide, past the outputs; left plus right never changes. A turn of WIDTH glides. The band says PLACES EACH NOTE, ROUTABLE on PAN and 0 MONO, 64 AS PANNED, 127 WIDE on WIDTH. DRUM's pads keep their own PAN: DRUM has no STEREO page, and WIDTH is F on its AMP › GATE |
 | SENDS | CHORUS · DELAY · REVERB (the three sends), the mixer's SENDS page |
 
 ### PIT

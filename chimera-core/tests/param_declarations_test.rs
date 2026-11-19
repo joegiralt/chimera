@@ -331,6 +331,8 @@ const OWN_IN_SOUND: &[&str] = &[
     "Out CHORUS",
     "Out DELAY",
     "Out REVERB",
+    // WIDTH: the Part's stage eases it over 20 ms (ADR 0294).
+    "Out WIDTH",
     // STRETCH's grains read these as each starts (ADR 0204).
     "TapeEngine LENGTH",
     "TapeEngine GRAIN",

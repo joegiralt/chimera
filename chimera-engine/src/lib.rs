@@ -62,6 +62,7 @@ pub mod reset;
 pub mod scala_name;
 pub mod scope;
 pub mod source_table;
+pub mod stereo;
 pub mod storage;
 pub mod stream;
 pub mod sym_alloc;

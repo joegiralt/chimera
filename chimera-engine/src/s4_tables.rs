@@ -17,3 +17,5 @@ pub const PART_EQ_DOOR_ADDR: u32 = VA_SOLO_DOOR_ADDR + DOOR_TABLE_STRIDE;
 /// The Parts' meters' table (`part_peaks::door::PeakDoor`, ADR 0293): the
 /// next.
 pub const PART_PEAKS_DOOR_ADDR: u32 = PART_EQ_DOOR_ADDR + DOOR_TABLE_STRIDE;
+/// The stereo's table (`stereo::door::StereoDoor`, ADR 0294): the next.
+pub const STEREO_DOOR_ADDR: u32 = PART_PEAKS_DOOR_ADDR + DOOR_TABLE_STRIDE;

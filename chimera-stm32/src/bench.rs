@@ -831,8 +831,8 @@ fn hot_res(p: &mut PartAudio) {
     p.params.filter.level = 0.5;
 }
 
-/// Destinations no voice bills a path for: MORPH, OUT LEVEL, PAN, the
-/// three sends and AMP's VEL.
+/// Destinations no voice bills a path for: MORPH, OUT LEVEL, PAN (its
+/// split runs, unbilled, ADR 0294), the three sends and AMP's VEL.
 fn quiet_dests() -> [ParamAddr; 7] {
     let out = |q| ParamAddr::new(BlockRef::Out, q);
     [

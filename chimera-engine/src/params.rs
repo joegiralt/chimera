@@ -908,6 +908,9 @@ pub struct OutParams {
     /// each, all 0 a plain VCA: LPG couples darkening to gain, DECAY is the
     /// vactrol's fall, STRIKE pings it at each note-on.
     pub gate: [f32; 3],
+    /// AMP › STEREO's WIDTH (ADR 0294): the Part's side, eased by its
+    /// stage (`stereo::kern::widths`), read from the Sound as the sends are.
+    pub width: crate::stereo::Width,
 }
 
 /// INIT's OUT LEVEL: ALGO INIT's C4 at velocity 100 at the factory median,
@@ -923,6 +926,7 @@ impl Default for OutParams {
             vca_vel: 1.0,
             sends: [SendLevel::OFF; crate::dsp::fx_bus::FX_SENDS],
             gate: [0.0; 3],
+            width: crate::stereo::Width::UNITY,
         }
     }
 }
@@ -940,6 +944,8 @@ impl OutParams {
     pub const LPG: ParamId = ParamId(7);
     pub const DECAY: ParamId = ParamId(8);
     pub const STRIKE: ParamId = ParamId(9);
+    /// AMP › STEREO (ADR 0294).
+    pub const WIDTH: ParamId = ParamId(10);
 
     /// The gate runs (ADR 0195): LPG, DECAY or STRIKE above 0, as played.
     #[inline(always)]
@@ -949,10 +955,11 @@ impl OutParams {
 }
 
 /// Volume and VEL are read by `Voice`'s VCA every block, VCA (AMP's
-/// BASE, ADR 0292) too where a route into it exists; pan is not used by
-/// `Voice`. LPG, DECAY and STRIKE are the
-/// VCA's gate (ADR 0195).
-pub static OUT_SPECS: [ParamSpec; 10] = [
+/// BASE, ADR 0292) too where a route into it exists; PAN places each note
+/// of every engine but DRUM, a knob and a destination (ADR 0294). LPG,
+/// DECAY and STRIKE are the VCA's gate (ADR 0195). WIDTH is the Part's
+/// side's, read at the Part's stage (ADR 0294).
+pub static OUT_SPECS: [ParamSpec; 11] = [
     ParamSpec::continuous(
         0,
         "LEVEL",
@@ -974,8 +981,8 @@ pub static OUT_SPECS: [ParamSpec; 10] = [
         1.0,
         0.0,
         2.0 / 128.0,
-        false,
-        Smoothing::Unheard,
+        true,
+        Smoothing::KNOB,
     )
     .ident("PAN"),
     // The VCA destination; AMP's cell names it BASE (ADR 0292).
@@ -1080,6 +1087,19 @@ pub static OUT_SPECS: [ParamSpec; 10] = [
     )
     .ident("STRIKE")
     .short("STRK"),
+    // 0 mono, 64 (unity) as panned, 127 twice the side (ADR 0294).
+    ParamSpec::continuous(
+        10,
+        "WIDTH",
+        ValFmt::Uni,
+        0.0,
+        2.0,
+        1.0,
+        2.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("WIDTH"),
 ];
 
 impl Block for OutParams {
@@ -1097,6 +1117,7 @@ impl Block for OutParams {
             // The sends, then the gate (ADR 0195): ids 4–6 and 7–9.
             ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)].get(),
             ParamId(i @ 7..=9) => self.gate[usize::from(i - 7)],
+            Self::WIDTH => self.width.get(),
             _ => 0.0,
         }
     }
@@ -1110,6 +1131,7 @@ impl Block for OutParams {
             Self::VCA_VEL => self.vca_vel = v,
             ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)] = SendLevel::new(v),
             ParamId(i @ 7..=9) => self.gate[usize::from(i - 7)] = v,
+            Self::WIDTH => self.width = crate::stereo::Width::new(v),
             _ => {}
         }
     }

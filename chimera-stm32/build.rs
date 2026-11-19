@@ -368,14 +368,17 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // group; its table a stride after the solos' (`PART_EQ_DOOR_ADDR`).
     // The Parts' meters (ADR 0293): `part_peaks::kern`, their pass, the
     // next; their table a stride after the EQ's (`PART_PEAKS_DOOR_ADDR`).
+    // The stereo (ADR 0294): `stereo::kern`, OUT PAN's split and the
+    // Parts' WIDTHs, the next; its table a stride after the meters'
+    // (`STEREO_DOOR_ADDR`).
     // The tables' addresses and stride are `s4_tables.rs`'s, as Rust's.
     let (ed, ed_slot, ed_assert) = (
         &format!(
-            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    . = __bank2_part_eq_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_peaks_door = .;\n    KEEP(*(.bank2.door.part_peaks));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n    *(.text.*10part_peaks4kern* .rodata.*10part_peaks4kern*);\n"
+            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    . = __bank2_part_eq_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_peaks_door = .;\n    KEEP(*(.bank2.door.part_peaks));\n    . = __bank2_part_peaks_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_stereo_door = .;\n    KEEP(*(.bank2.door.stereo));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n    *(.text.*10part_peaks4kern* .rodata.*10part_peaks4kern*);\n    *(.text.*6stereo4kern* .rodata.*6stereo4kern*);\n"
         ),
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         &format!(
-            "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x{VA_SOLO_DOOR_ADDR:08X}, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x{PART_EQ_DOOR_ADDR:08X}, \"the Parts' EQ's table a stride after the solos'\");\nASSERT(__bank2_part_peaks_door == 0x{PART_PEAKS_DOOR_ADDR:08X}, \"the Parts' meters' table a stride after the EQ's\");"
+            "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x{VA_SOLO_DOOR_ADDR:08X}, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x{PART_EQ_DOOR_ADDR:08X}, \"the Parts' EQ's table a stride after the solos'\");\nASSERT(__bank2_part_peaks_door == 0x{PART_PEAKS_DOOR_ADDR:08X}, \"the Parts' meters' table a stride after the EQ's\");\nASSERT(__bank2_stereo_door == 0x{STEREO_DOOR_ADDR:08X}, \"the stereo's table a stride after the meters'\");"
         ),
     );
     // DRUM's voice groups (ADR 0280, `UiDoor::groups`, its one entry):

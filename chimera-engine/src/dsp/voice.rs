@@ -41,6 +41,7 @@ use crate::modulation::{
 };
 use crate::params::{EngineType, EnvParams, FilterParams, OutParams, ParamSnapshot, Steal};
 use crate::project::SourceId;
+use crate::stereo::VoicePan;
 use crate::taps::{
     TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapOp, TapRoutes,
     TapRows, tap_vca,
@@ -1074,7 +1075,8 @@ impl Voice {
     /// LFOs play the Part's `clock` (ADR 0135); without one (a voice on its
     /// own) they run their own phase.
     /// A DRUM hit off centre (its pad's PAN) leaves its mid in `output`
-    /// and adds its side to `side` (`MidSide::split`).
+    /// and adds its side to `side` (`MidSide::split`); so does a note of
+    /// any other engine off centre by OUT PAN (ADR 0294, `out_pan`).
     #[allow(clippy::too_many_arguments)]
     pub fn render_knobs(
         &mut self,
@@ -1086,11 +1088,40 @@ impl Voice {
         ctx: &mut EngineCtx<'_>,
         side: &mut Option<[f32; BLOCK_SIZE]>,
     ) {
-        // Read before the block: a hit ending in it pans to its end.
+        // Read before the block: a hit ending in it pans to its end; OUT
+        // PAN ramps from the last block's, a fresh note's from its own.
         let pan = self.drum_pan();
+        let from = self.volume.value().map(|_| self.played.out.pan);
         self.render_mono(output, params, mod_state, knobs, clock, ctx);
         if let Some(ms) = pan {
             ms.split(output, side);
+        } else {
+            self.out_pan(output, side, from);
+        }
+    }
+
+    /// OUT PAN (ADR 0294): the note placed from `from` (the last block's,
+    /// `None` on a fresh note's first) to this block's, its side into
+    /// `side`, in bank 2 behind `StereoDoor`. Centred both ends, no call:
+    /// the bus as it was, bit for bit. A DRUM hit is placed by its pad.
+    #[inline(always)]
+    fn out_pan(
+        &self,
+        output: &mut [f32; BLOCK_SIZE],
+        side: &mut Option<[f32; BLOCK_SIZE]>,
+        from: Option<f32>,
+    ) {
+        let pans = match self.slot {
+            EngineSlot::Algo(_)
+            | EngineSlot::Modal(_)
+            | EngineSlot::Tape(_)
+            | EngineSlot::Va(_) => self.active,
+            EngineSlot::Drum(_) => false,
+        };
+        let to = VoicePan::new(self.played.out.pan);
+        let from = from.map_or(to, VoicePan::new);
+        if pans && (from.off_centre() || to.off_centre()) {
+            crate::stereo::door::through(|d| d.pan().run(output, side, from, to));
         }
     }
 

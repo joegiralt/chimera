@@ -265,9 +265,29 @@ pub static AMP: BlockDef = BlockDef {
     ],
 };
 
-/// AMP › SENDS (ADR 0195): CHORUS · DELAY · REVERB, the page the mixer
-/// opens on, so its cells keep one focus.
-static AMP_SUB_PAGES: [&BlockDef; 1] = [&SENDS];
+/// AMP › STEREO (ADR 0294): PAN, each note's place, a knob and a
+/// destination; WIDTH, the Part's side. Id 120: the next past REV ›
+/// DUCK's 119.
+pub static STEREO: BlockDef = BlockDef {
+    id: 120,
+    name: "Stereo",
+    short: "STER",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Out, OutParams::PAN),
+        ParamSlot::param(BlockRef::Out, OutParams::WIDTH),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// AMP › STEREO, then AMP › SENDS (ADR 0195): CHORUS · DELAY · REVERB, the
+/// page the mixer opens on, so its cells keep one focus. DRUM's AMP has
+/// GATE, then SENDS, in the same order: the voice's page, then the mix's.
+static AMP_SUB_PAGES: [&BlockDef; 2] = [&STEREO, &SENDS];
 
 // ---------------------------------------------------------------------------
 // Filter
@@ -977,7 +997,8 @@ pub static DRUM_AMP: BlockDef = pad_env_page(
     ParamSlot::param(BlockRef::PadAmp, PadAmpParams::MODE),
 );
 
-/// AMP › GATE: the pad's low-pass gate, in AMP's places.
+/// AMP › GATE: the pad's low-pass gate, in AMP's places; F the Part's
+/// WIDTH (ADR 0294).
 pub static DRUM_GATE: BlockDef = BlockDef {
     id: 15,
     name: "Gate",
@@ -988,7 +1009,8 @@ pub static DRUM_GATE: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::PadAmp, PadAmpParams::GATE_DECAY),
         ParamSlot::param(BlockRef::PadAmp, PadAmpParams::STRIKE),
         EMPTY,
-        EMPTY,
+        // The Part's WIDTH (ADR 0294): a kit's pans spread or narrowed.
+        ParamSlot::param(BlockRef::Out, OutParams::WIDTH),
     ],
     ..AMP
 };

@@ -73,6 +73,11 @@ use screen::*;
 // ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
 // tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
 // pool's count (sound_browser_pool_full).
+// ADR 0294: AMP › STEREO before SENDS, on the map under AMP (STER);
+// WIDTH in DRUM GATE's F; a dense Sound one param more. New: amp_stereo.
+// Re-recorded: row_amp, amp_vel_dimmed, amp_gate, amp_sends (through
+// STEREO), amp_vel_live, modal_amp, large_bigviz_filter (AMP's page),
+// large_modal_amp, drum_gate, sound_browser_pool_full.
 // ADR 0295: REV › DUCK before MORE 2, on the map under REV. New:
 // mixer_fx_reverb_duck. Re-recorded: mixer_fx_reverb_hall_more2 (the map
 // lists DUCK); gate_sync walks through DUCK back to REV.
@@ -202,7 +207,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("row_mod", 0x61ae81a248025efe),
     ("row_osc_mid", 0x3a940eff45163a8d),
     ("row_osc_last", 0xa3198b2d2fb8a67d),
-    ("row_amp", 0xa8ecb6b2f050d69c),
+    ("row_amp", 0xd04051edfa5af421),
     // New: VA OSC1 and OSC2 under STACK and ROW; the ROW bar says OSC1 / OSC2, not OSCILLATOR n.
     ("va_osc1", 0x04f0a670e078dcdc),
     ("va_osc2", 0xf1a7c80888806eed),
@@ -228,10 +233,12 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
     // mod_matrix_wide primes FOLD and MIX on their new cells. Then AMP is
     // the sends and VEL alone, SYM gone (#614).
-    ("amp_vel_dimmed", 0x77a4a19958117d8c),
-    ("amp_gate", 0x12810f8ba7874af5),
-    ("amp_sends", 0xc9b0116af8f449fa),
-    ("amp_vel_live", 0x8bd0162302ac131b),
+    ("amp_vel_dimmed", 0xe0e9af0d1e5315c0),
+    ("amp_gate", 0x6ae868aee0dac711),
+    // AMP › STEREO (ADR 0294).
+    ("amp_stereo", 0x36c6666eafed4366),
+    ("amp_sends", 0x278e67fcc8b4bc13),
+    ("amp_vel_live", 0xb53b3b663d93d9d7),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     // Re-recorded: the scope's corner reads REF C4 (ADR 0201).
@@ -265,7 +272,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_home_bowed", 0xedeb3ad6cfdbe66e),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_amp", 0xcc19e763b1e54b09),
+    ("modal_amp", 0x1732d805370d1645),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it they have their own rows, run by `just test`.
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
@@ -401,7 +408,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then the VCA's gate (ADR 0195): 15 B more. STRETCH GRAIN's four params
     // (ADR 0204): MAX_SOUND_COST 2720.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser_pool_full", 0x71d990054691f0f4),
+    ("sound_browser_pool_full", 0x17095df2dc0806a5),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -503,8 +510,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // large_algo_level, large_bigviz_filter, large_modal_amp, large_va_drive.
     ("large_engine_algo", 0x05c1170e863ceb31),
     ("large_algo_level", 0x14ef35031a573874),
-    ("large_bigviz_filter", 0xe0cf6bac78f63907),
-    ("large_modal_amp", 0xe96ac4c085b445fc),
+    ("large_bigviz_filter", 0x817adbe81693e363),
+    ("large_modal_amp", 0xb336bffa813829b0),
     // VA's NOISE page (ADR 0197): KIND · LEVEL; LEVEL at 60 with its bar;
     // KIND on DIGITAL.
     ("va_noise", 0xa02dcec5295dacbb),
@@ -627,7 +634,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("drum_flt_fx_hint", 0x25a3921478d46209),
     ("drum_fmd_sem", 0xbbcb0e8e59f85ea9),
     ("drum_amp", 0x4883991e77cc914a),
-    ("drum_gate", 0x93012b36a96d0ec8),
+    ("drum_gate", 0x99818d344ed1222c),
     ("drum_penv", 0xe7daf76b66dfc85c),
     ("drum_plfo", 0x4288bb33f5c25535),
     ("drum_route", 0x63d94ff420faf8b4),

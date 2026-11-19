@@ -94,8 +94,9 @@ impl Bits {
 /// The values kept: one for each param of every block the followed
 /// engine's schema has (`in_engine`), in `block_at` order, a block the
 /// Sound lacks included (so a slot never moves). DRUM's twelve pads take
-/// the most; a test says it holds every engine's.
-pub const SLOTS: usize = 711;
+/// the most; a test says it holds every engine's. 712 with OUT's WIDTH
+/// (ADR 0294).
+pub const SLOTS: usize = 712;
 /// `Described`'s words.
 const MASK_WORDS: usize = SLOTS.div_ceil(32);
 

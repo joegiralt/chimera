@@ -1,6 +1,6 @@
 //! The band's words for 0.4's tester cells: the matrix's VCA column says
 //! its routes are the amp, AMP's BASE says why it is dimmed (ADR 0292),
-//! REV › DUCK's cells what they do (ADR 0295). Bank 2's (`bank2.x`'s `ui::notes` group): the matrix's words
+//! REV › DUCK's cells what they do (ADR 0295), AMP › STEREO's (ADR 0294). Bank 2's (`bank2.x`'s `ui::notes` group): the matrix's words
 //! through `UiDoor`'s `notes` entry, a cell's through `band_note`'s; bank
 //! 1 keeps the stub in `view`.
 
@@ -28,8 +28,8 @@ pub(crate) fn ask_in(a: Ask<'_>) {
 
 /// The words this module draws, named so they link into bank 2 with it
 /// (`.rodata.*notes*`), not into bank 1's unnamed rodata.
-static WORDS: [u8; 125] =
-    *b"VCA:ROUTES REPLACE CONTOURSUM STARTS AT AMP BASENEEDS A ROUTE INTO VCADUCKS THE TAIL UNDER ITS INPUTHOW FAST THE TAIL RETURNS";
+static WORDS: [u8; 181] =
+    *b"VCA:ROUTES REPLACE CONTOURSUM STARTS AT AMP BASENEEDS A ROUTE INTO VCADUCKS THE TAIL UNDER ITS INPUTHOW FAST THE TAIL RETURNSPLACES EACH NOTE, ROUTABLE0 MONO, 64 AS PANNED, 127 WIDE";
 
 /// `WORDS[at..at + len]`; checked at compile time (`WORDS` is UTF-8).
 const fn word(at: usize, len: usize) -> &'static str {
@@ -50,6 +50,9 @@ pub static BASE_UNROUTED: &str = word(48, 22);
 /// REV › DUCK's AMOUNT and RELEASE (ADR 0295).
 pub static DUCK_AMOUNT: &str = word(70, 30);
 pub static DUCK_RELEASE: &str = word(100, 25);
+/// AMP › STEREO's PAN and WIDTH (ADR 0294), WIDTH on DRUM's GATE too.
+pub static STEREO_PAN: &str = word(125, 26);
+pub static STEREO_WIDTH: &str = word(151, 30);
 
 /// The matrix's hint on `m`'s cursor in the VCA column, on a cell with no
 /// route (a route's own cell keeps its DELETE): the routes replace the
@@ -77,6 +80,8 @@ pub fn cell(addr: ParamAddr, s: &Sound) -> Option<&'static str> {
         }
         (BlockRef::Reverb, ReverbParams::DUCK) => Some(DUCK_AMOUNT),
         (BlockRef::Reverb, ReverbParams::DUCK_RELEASE) => Some(DUCK_RELEASE),
+        (BlockRef::Out, OutParams::PAN) => Some(STEREO_PAN),
+        (BlockRef::Out, OutParams::WIDTH) => Some(STEREO_WIDTH),
         _ => None,
     }
 }
@@ -92,6 +97,8 @@ mod tests {
         assert_eq!(BASE_UNROUTED, "NEEDS A ROUTE INTO VCA");
         assert_eq!(DUCK_AMOUNT, "DUCKS THE TAIL UNDER ITS INPUT");
         assert_eq!(DUCK_RELEASE, "HOW FAST THE TAIL RETURNS");
-        assert_eq!(WORDS.len(), 125);
+        assert_eq!(STEREO_PAN, "PLACES EACH NOTE, ROUTABLE");
+        assert_eq!(STEREO_WIDTH, "0 MONO, 64 AS PANNED, 127 WIDE");
+        assert_eq!(WORDS.len(), 181);
     }
 }
