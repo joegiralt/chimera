@@ -1077,6 +1077,14 @@ impl UiState {
         if moved {
             m.loads = loads;
             m.reset();
+            // Pointing on this Part ends: the map it was started on went
+            // (ADR 0288).
+            if let super::learn::Learn::Pointing(pt) = self.learn
+                && pt.part == p
+                && pt.loads != loads
+            {
+                self.learn = super::learn::Learn::Off;
+            }
         }
         #[cfg(feature = "midi-map")]
         self.cc_keep(p, moved);

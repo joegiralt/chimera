@@ -400,34 +400,138 @@ fn first_mappable(ui: &UiState) -> (usize, ParamAddr) {
 /// hint line, and A and B still move its cursor; E edits no amount.
 #[test]
 fn mod_matrix_says_not_mappable_and_moves() {
-    use chimera_core::ui::block_registry::MOD_MATRIX;
     let mut ui = page(&[], 1);
     edit(&mut ui);
-    for _ in 0..12 {
-        if ui.page_def().id == MOD_MATRIX.id {
-            break;
-        }
-        feed(&mut ui, Key::press(Plus));
-    }
-    assert_eq!(ui.page_def().id, MOD_MATRIX.id);
+    to_mod_matrix(&mut ui);
     assert!(pointing(&ui).is_some());
     const NOT: Hint = &[Gesture("NOT MAPPABLE", ""), Gesture("MENU", "CANCELS")];
     let shot = render_ui(&ui);
     assert!((0..320).any(|y| drawn_at(&shot, NOT, y)), "said");
-    let (row, col) = (ui.matrix_state.sel_row, ui.matrix_state.sel_col);
+    let m = &ui.matrix_state;
+    let (row, col, scroll) = (m.sel_row, m.sel_col, m.scroll_x);
     let rev = ui.project().rev();
     feed(&mut ui, Key::turn(EncoderId::A, 1));
     feed(&mut ui, Key::turn(EncoderId::B, 1));
     feed(&mut ui, Key::turn(EncoderId::E, 5));
+    let m = &ui.matrix_state;
     assert_eq!(
-        (ui.matrix_state.sel_row, ui.matrix_state.sel_col),
-        (row + 1, col + 1)
+        (m.sel_row, m.sel_col),
+        (row + 1, col + 1),
+        "A and B move it"
     );
-    assert_eq!(ui.project().rev(), rev, "no amount edited");
-    let def = ui.page_def().id;
+    feed(&mut ui, Key::turn(EncoderId::D, 3));
+    assert_ne!(ui.matrix_state.scroll_x, scroll, "D scrolls it");
+    // MIX + MINUS on a route deletes nothing.
+    let (r, c) = present_route(&ui).expect("INIT has a route");
+    (ui.matrix_state.sel_row, ui.matrix_state.sel_col) = (r, c);
+    feed(&mut ui, Key::chord(Mix, chimera_hal::ButtonId::Minus));
+    assert!(
+        ui.matrix_state.is_present(r, c),
+        "MIX + MINUS deleted nothing"
+    );
+    assert_eq!(
+        ui.project().rev(),
+        rev,
+        "no amount edited, no route deleted"
+    );
+    // EDIT walks down MOD's sub-list, still pointing at nothing.
     edit(&mut ui);
-    assert!(pointing(&ui).is_some() || ui.page_def().id != def);
-    assert_eq!(map(&ui).len(), 0);
+    assert_ne!(
+        ui.page_def().id,
+        chimera_core::ui::block_registry::MOD_MATRIX.id
+    );
+    assert_eq!(pointing(&ui), Some((Aim::New, Pointer::Walking)));
+    assert!(map(&ui).is_empty());
+}
+
+/// On to the MOD node, whose home is the matrix.
+fn to_mod_matrix(ui: &mut UiState) {
+    use chimera_core::ui::block_registry::MOD_MATRIX;
+    for _ in 0..12 {
+        if ui.page_def().id == MOD_MATRIX.id {
+            break;
+        }
+        feed(ui, Key::press(Plus));
+    }
+    assert_eq!(ui.page_def().id, MOD_MATRIX.id);
+}
+
+/// The matrix's first route, if any.
+fn present_route(ui: &UiState) -> Option<(usize, usize)> {
+    let m = &ui.matrix_state;
+    (0..m.rows()).find_map(|r| {
+        (0..m.num_cols())
+            .find(|&c| m.is_present(r, c))
+            .map(|c| (r, c))
+    })
+}
+
+/// On a DRUM Part, MOD MATRIX's cursor under pointing is no pad edit:
+/// PAD FOLLOW IDLE still follows the next hit.
+#[test]
+fn drum_matrix_turns_under_pointing_leave_the_pad_free() {
+    use chimera_core::dsp::drum::types::PadId;
+    let mut ui = Box::new(screen::stack_ui());
+    screen::init_part_engine(&mut ui, P1, chimera_core::params::EngineType::Drum);
+    screen::to_leaf(&mut ui, &["PART"]);
+    for _ in 1..chimera_core::ui::settings::tree::PART.len() {
+        feed(&mut ui, Key::press(Plus));
+    }
+    feed(&mut ui, Key::press(Edit));
+    feed(&mut ui, Key::turn(A, -1));
+    edit(&mut ui);
+    assert!(pointing(&ui).is_some());
+    to_mod_matrix(&mut ui);
+    feed(&mut ui, Key::turn(EncoderId::A, 1));
+    feed(&mut ui, Key::turn(EncoderId::D, 1));
+    let nine = PadId::ALL[8];
+    ui.pad_struck(P1, nine);
+    assert_eq!(ui.selected_pad(P1), nine, "no edit held the pad");
+}
+
+/// Part 1 loaded with INIT over its edits, as a program change's load
+/// lands whatever the Part held.
+fn load_init(ui: &mut UiState) {
+    use chimera_core::project::{PartFrom, PartSource, ReplaceGuard};
+    let src = PartSource {
+        part: P1,
+        from: PartFrom::Init(chimera_core::params::EngineType::Algo),
+    };
+    let c = match ReplaceGuard::check(ui.project(), ui.template(), src) {
+        Ok(c) => c,
+        Err(n) => n.into_pending().anyway(ui.project()),
+    };
+    ui.project_mut().replace_part(c).expect("INIT loads");
+}
+
+/// A load on the pointing Part ends pointing (a program change, a library
+/// load): no bind lands in the newly loaded Sound's map. Heard or not
+/// before EDIT, the INIT map's CUTOFF row stays.
+#[test]
+fn a_load_ends_pointing() {
+    use chimera_hal::Ms;
+    for heard in [false, true] {
+        let mut ui = page(&[bind(Input::cc(21).unwrap(), CUTOFF)], 1);
+        edit(&mut ui);
+        load_init(&mut ui);
+        let init = map(&ui);
+        if heard {
+            ui.hear_ccs(
+                core::iter::empty::<chimera_core::midi_in::CtrlEvent>(),
+                Ms(10_000),
+                true,
+            );
+            assert_eq!(pointing(&ui), None, "heard: ended");
+        }
+        // INIT maps CC 74 to CUTOFF: a retarget of CUTOFF's row would
+        // move that row to PIT's cell.
+        to_pit(&mut ui);
+        let (slot, _) = first_mappable(&ui);
+        feed(&mut ui, Key::turn(chimera_hal::ALL_ENCODERS[slot], 1));
+        edit(&mut ui);
+        assert_eq!(pointing(&ui), None);
+        assert_eq!(map(&ui), init, "INIT's map untouched (heard {heard})");
+    }
 }
 
 /// The Sound rung ends pointing: its EDIT loads a Sound, which would

@@ -11,6 +11,8 @@ use core::fmt::Write;
 
 use chimera_midi::take::Takeover;
 
+use chimera_hal::ALL_ENCODERS;
+
 use super::UiState;
 use super::fmt::FmtBuf;
 use super::hint::{Gesture, Hint};
@@ -186,10 +188,13 @@ impl UiState {
     /// The cell `pt` points at, if it is still the one focused on the page
     /// shown: after a rechained page or a moved focus, nothing is.
     fn pointed_cell(&self, pt: Point) -> Option<Cell> {
-        let Pointer::At(c) = pt.at else {
-            return None;
-        };
-        (c.page == self.page_def().id && usize::from(c.slot) == self.focused_slot()).then_some(c)
+        match pt.at {
+            Pointer::Walking => None,
+            Pointer::At(c) => {
+                let focused = ALL_ENCODERS.get(self.focused_slot());
+                (c.page == self.page_def().id && focused == Some(&c.slot)).then_some(c)
+            }
+        }
     }
 
     /// What `pt` says on the page shown.
@@ -242,6 +247,7 @@ impl UiState {
             part: p,
             aim,
             at: Pointer::Walking,
+            loads: self.project.part(p).loads(),
         });
         self.go(back);
     }
@@ -255,6 +261,11 @@ impl UiState {
         let Learn::Pointing(pt) = self.learn else {
             return Took::Walk;
         };
+        // A load since pointing began ends it: its map is another.
+        if self.project.part(pt.part).loads() != pt.loads {
+            self.learn = Learn::Off;
+            return Took::Walk;
+        }
         let (mut edit, mut menu) = (false, false);
         match a {
             PointAct::Moved(to) => {

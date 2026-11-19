@@ -170,40 +170,61 @@ pub const FRAME_ROWS: usize = 2;
 #[repr(transparent)]
 pub struct MapKeys(u8);
 
+/// One of MIDI MAP's keys in a `MapKeys` set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MapKey {
+    /// MIX down.
+    Mix,
+    /// MINUS pressed.
+    Minus,
+    /// PLUS pressed.
+    Plus,
+    /// EDIT pressed.
+    Edit,
+}
+
+impl MapKey {
+    #[inline(always)]
+    const fn bit(self) -> u8 {
+        match self {
+            MapKey::Mix => 1,
+            MapKey::Minus => 2,
+            MapKey::Plus => 4,
+            MapKey::Edit => 8,
+        }
+    }
+}
+
 impl MapKeys {
     pub const NONE: MapKeys = MapKeys(0);
-    pub const MIX: MapKeys = MapKeys(1);
-    pub const MINUS: MapKeys = MapKeys(2);
-    pub const PLUS: MapKeys = MapKeys(4);
-    pub const EDIT: MapKeys = MapKeys(8);
 
-    /// These keys, with `k` if `on`.
+    /// These keys and `k`.
     #[inline(always)]
-    pub const fn with(self, k: MapKeys, on: bool) -> MapKeys {
-        MapKeys(self.0 | if on { k.0 } else { 0 })
+    pub const fn with(self, k: MapKey) -> MapKeys {
+        MapKeys(self.0 | k.bit())
     }
 
     #[inline(always)]
-    const fn has(self, k: MapKeys) -> bool {
-        self.0 & k.0 == k.0
+    const fn has(self, k: MapKey) -> bool {
+        self.0 & k.bit() != 0
     }
 
     /// MIX + MINUS: DELETE.
     #[inline(always)]
     pub const fn delete(self) -> bool {
-        self.has(MapKeys(MapKeys::MIX.0 | MapKeys::MINUS.0))
+        self.has(MapKey::Mix) && self.has(MapKey::Minus)
     }
 
     /// MIX + PLUS: KEEP MAP on row 0.
     #[inline(always)]
     pub const fn keep(self) -> bool {
-        self.has(MapKeys(MapKeys::MIX.0 | MapKeys::PLUS.0))
+        self.has(MapKey::Mix) && self.has(MapKey::Plus)
     }
 
     /// EDIT without MIX: pointing (ADR 0288).
     #[inline(always)]
     pub const fn point(self) -> bool {
-        self.has(MapKeys::EDIT) && !self.has(MapKeys::MIX)
+        self.has(MapKey::Edit) && !self.has(MapKey::Mix)
     }
 }
 
@@ -271,12 +292,19 @@ impl UiState {
     #[inline(never)]
     pub(in crate::ui) fn map_input(&mut self, c: &impl Controls) {
         let d = ALL_ENCODERS.map(|e| c.encoder_delta(e));
-        let pressed = |b| c.button_state(b) == ButtonState::Pressed;
-        let keys = MapKeys::NONE
-            .with(MapKeys::MIX, c.edges(ButtonId::Mix).down)
-            .with(MapKeys::MINUS, pressed(ButtonId::Minus))
-            .with(MapKeys::PLUS, pressed(ButtonId::Plus))
-            .with(MapKeys::EDIT, pressed(ButtonId::Edit));
+        let mut keys = MapKeys::NONE;
+        if c.edges(ButtonId::Mix).down {
+            keys = keys.with(MapKey::Mix);
+        }
+        for (b, k) in [
+            (ButtonId::Minus, MapKey::Minus),
+            (ButtonId::Plus, MapKey::Plus),
+            (ButtonId::Edit, MapKey::Edit),
+        ] {
+            if c.button_state(b) == ButtonState::Pressed {
+                keys = keys.with(k);
+            }
+        }
         self.map_keys(d, keys);
     }
 

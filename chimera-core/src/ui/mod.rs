@@ -3312,7 +3312,9 @@ impl UiState {
             return;
         }
 
-        if any_turn(controls) {
+        // Pointing edits nothing: MOD MATRIX's cursor under it is no pad
+        // edit (ADR 0288).
+        if any_turn(controls) && !matches!(self.learn, learn::Learn::Pointing(_)) {
             self.pad_edited();
         }
 

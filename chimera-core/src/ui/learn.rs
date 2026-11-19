@@ -41,6 +41,10 @@ pub struct Point {
     pub part: PartId,
     pub aim: Aim,
     pub at: Pointer,
+    /// The Part's loads when pointing began: a load since (a program
+    /// change, a library load) ends it, so no bind lands in a map it
+    /// wasn't started on.
+    pub loads: crate::project::Loads,
 }
 
 /// What a bind does (ADR 0288).
@@ -66,8 +70,8 @@ pub enum Pointer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
     pub page: u16,
-    /// 0..6: a page's six slots.
-    pub slot: u8,
+    /// The slot, by the encoder that turns it.
+    pub slot: chimera_hal::EncoderId,
 }
 
 /// What pointing says in the value's place (bank 2's `point_say`).
@@ -344,7 +348,7 @@ impl UiState {
                     Learn::Pointing(p) => Learn::Pointing(Point {
                         at: Pointer::At(Cell {
                             page: def.id,
-                            slot: i as u8,
+                            slot: enc,
                         }),
                         ..p
                     }),
