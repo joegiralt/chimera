@@ -9,7 +9,11 @@ mod screen;
 
 use chimera_core::hw::SampleBudget;
 use chimera_core::mpe::Zones;
-use chimera_core::part_peaks::{self, PART_PEAKS, Peak};
+use chimera_core::part_peaks::{self, PART_PEAKS, Peak, Watch};
+use chimera_core::project::PartId;
+
+const P2: PartId = PartId::ALL[1];
+const P3: PartId = PartId::ALL[2];
 use chimera_core::ui::part_meter::{self, Ms, PartMeters, Shown};
 use chimera_core::ui::{UiState, theme, viz};
 use chimera_core::{MidiChannel, played};
@@ -32,7 +36,7 @@ fn rig() -> InstRig {
 /// A note on Part 1 for `blocks`, LEVEL at `level`, the meters watched or
 /// not: what the pairs played and what Part 1's meter read.
 fn play(level: f32, watched: bool, blocks: usize) -> (Vec<f32>, f32) {
-    part_peaks::watch(watched);
+    part_peaks::watch(if watched { Watch::Up } else { Watch::Down });
     PART_PEAKS.iter().for_each(|m| {
         m.take();
     });
@@ -66,7 +70,7 @@ fn the_meter_reads_the_bus_before_level_and_leaves_the_sound_alone() {
     let (silent, faded) = play(0.0, true, 30);
     assert!(silent.iter().all(|&x| x == 0.0), "LEVEL 0 is silent");
     assert_eq!(faded, peak, "the meter is before LEVEL");
-    part_peaks::watch(false);
+    part_peaks::watch(Watch::Down);
 }
 
 /// The key mark: Part 1's channel holds a key; a member of the lower MPE
@@ -120,11 +124,11 @@ fn the_frame_takes_readings_while_shown_and_rests_when_not() {
     };
     on(&mut m);
     assert!(part_peaks::watched());
-    let bar = m.get(2).bar().get();
+    let bar = m.get(P3).bar().get();
     assert!((bar + 6.02).abs() < 0.01, "{bar}");
-    assert_eq!(m.get(1).bar(), part_meter::Dbfs::FLOOR);
+    assert_eq!(m.get(P2).bar(), part_meter::Dbfs::FLOOR);
     on(&mut m);
-    assert!(m.get(2).bar().get() < bar, "falling");
+    assert!(m.get(P3).bar().get() < bar, "falling");
     part_meter::frame(&mut m, Shown::Off);
     assert!(!part_peaks::watched());
     assert_eq!(m, PartMeters::REST);
@@ -146,7 +150,7 @@ fn prt_draws_the_meter_beside_the_level_bar() {
     played::note_on(2, chimera_core::project::PartId::ALL[2], 64, 100, 64, 0);
     ui.update(chimera_core::ui::animation::UiTick::for_test());
     let fb = render_ui(&ui);
-    let x = part_meter::bar_x(2) + 1;
+    let x = part_meter::bar_x(P3) + 1;
     let foot = viz::STRIP_TOP + viz::STRIP_H - 1;
     assert_eq!(fb.at(x, foot), theme::INK2, "the bar's foot");
     assert_eq!(
@@ -155,7 +159,7 @@ fn prt_draws_the_meter_beside_the_level_bar() {
         "full scale: to the top"
     );
     assert_eq!(
-        fb.at(part_meter::bar_x(1) + 1, foot),
+        fb.at(part_meter::bar_x(P2) + 1, foot),
         theme::BG,
         "Part 2 reads nothing"
     );
@@ -166,5 +170,5 @@ fn prt_draws_the_meter_beside_the_level_bar() {
     );
     fb.dump("mixer_part_meters");
     played::clear_held();
-    part_peaks::watch(false);
+    part_peaks::watch(Watch::Down);
 }

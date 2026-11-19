@@ -3,11 +3,10 @@
 //! (`PART_PEAKS_DOOR_ADDR`). Without `bank2` it is bank 1's, called
 //! directly. A closed door measures nothing: the meters rest.
 
-use crate::hw::{BLOCK_SIZE, MAX_PARTS};
-use crate::instrument::Sides;
+use super::kern::PeaksBlock;
 
 /// The meters' block as the table carries it.
-pub type PeaksRun = fn(&[[f32; BLOCK_SIZE]; MAX_PARTS], &Sides, &[bool; MAX_PARTS]);
+pub type PeaksRun = for<'a> fn(PeaksBlock<'a>);
 
 /// `PeakDoor`'s entry: called, never handed out.
 #[repr(transparent)]
@@ -15,13 +14,8 @@ pub struct PeaksEntry(PeaksRun);
 
 impl PeaksEntry {
     #[inline(always)]
-    pub fn run(
-        &self,
-        buses: &[[f32; BLOCK_SIZE]; MAX_PARTS],
-        sides: &Sides,
-        written: &[bool; MAX_PARTS],
-    ) {
-        (self.0)(buses, sides, written)
+    pub fn run(&self, b: PeaksBlock<'_>) {
+        (self.0)(b)
     }
 }
 

@@ -2692,7 +2692,12 @@ impl Instrument {
         // 1c. Each Part's peak for MIXER › PRT's meters (ADR 0293), bank
         // 2's, only while they're up.
         if crate::part_peaks::watched() {
-            crate::part_peaks::door::through(|d| d.peaks().run(&self.buses, &sides, &written));
+            let b = crate::part_peaks::kern::PeaksBlock {
+                buses: &self.buses,
+                sides: &sides,
+                written: &written,
+            };
+            crate::part_peaks::door::through(|d| d.peaks().run(b));
         }
         // 2-4.
         let scope_block = mix_sided(

@@ -11,6 +11,7 @@ pub mod kern;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::hw::MAX_PARTS;
+use crate::project::PartId;
 
 /// A bus's peak, linear full scale (1.0 is 0 dBFS; a Part's bus may pass
 /// it before LEVEL): never negative, −0 or NaN, so its bits order as its
@@ -65,12 +66,31 @@ impl Default for PeakMeter {
 /// renders owns them.
 pub static PART_PEAKS: [PeakMeter; MAX_PARTS] = [const { PeakMeter::new() }; MAX_PARTS];
 
+/// Part `p`'s meter.
+#[inline(always)]
+pub fn of(p: PartId) -> &'static PeakMeter {
+    &PART_PEAKS[p.index()]
+}
+
 static WATCHED: AtomicBool = AtomicBool::new(false);
+
+/// Whether MIXER › PRT's meters are up, as the UI tells the audio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Watch {
+    /// Up: measure each block.
+    Up,
+    /// Down: measure nothing.
+    Down,
+}
 
 /// The UI, each frame: whether MIXER › PRT's meters are up.
 #[inline(always)]
-pub fn watch(on: bool) {
-    WATCHED.store(on, Ordering::Relaxed);
+pub fn watch(w: Watch) {
+    let up = match w {
+        Watch::Up => true,
+        Watch::Down => false,
+    };
+    WATCHED.store(up, Ordering::Relaxed);
 }
 
 /// The audio: whether to measure this block.
@@ -109,7 +129,11 @@ mod tests {
         sides[1] = Some(side);
         buses[2][0] = 0.9;
         let written = [true, true, false, false, false, false];
-        kern::run(&buses, &sides, &written);
+        kern::run(kern::PeaksBlock {
+            buses: &buses,
+            sides: &sides,
+            written: &written,
+        });
         let got: [f32; MAX_PARTS] = core::array::from_fn(|p| PART_PEAKS[p].take().get());
         assert_eq!(got, [0.5, 0.75, 0.0, 0.0, 0.0, 0.0]);
     }

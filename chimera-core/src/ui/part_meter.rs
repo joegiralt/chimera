@@ -6,9 +6,11 @@
 //! entry); bank 1 keeps the state's home (`PartMeters`) and the stubs.
 
 use crate::MidiChannel;
+use crate::dsp::DB_PER_OCTAVE;
 use crate::hw::MAX_PARTS;
 use crate::mpe::Zones;
-use crate::part_peaks::{PART_PEAKS, Peak};
+use crate::part_peaks::{self, Peak, Watch};
+use crate::project::PartId;
 use crate::ui::renderer::Parts;
 use crate::ui::tape_strip::Paint;
 use crate::ui::{theme, viz};
@@ -39,7 +41,7 @@ impl Dbfs {
 
     /// `ms` of the fall from here, no lower than `FLOOR`.
     fn fallen(self, ms: Ms) -> Dbfs {
-        Dbfs((self.0 - FALL_DB_PER_S * f32::from(ms.0) / 1000.0).max(Self::FLOOR.0))
+        Dbfs((self.0 - FALL.over(ms)).max(Self::FLOOR.0))
     }
 
     /// The bar's height in pixels, 0 at `FLOOR`, `STRIP_H` at `FULL` and over.
@@ -49,28 +51,69 @@ impl Dbfs {
     }
 }
 
-/// dB a doubling: 20·log10(2).
-const DB_PER_OCTAVE: f32 = 6.020_6;
-
 /// Milliseconds, as a frame or a hold counts them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Ms(pub u16);
 
+/// A fall rate in dB a second.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct DbPerSec(f32);
+
+impl DbPerSec {
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+
+    /// The dB it falls in `ms`.
+    fn over(self, ms: Ms) -> f32 {
+        self.0 * f32::from(ms.0) / 1000.0
+    }
+}
+
 /// The bar's fall (the design's 20 dB/s).
-pub const FALL_DB_PER_S: f32 = 20.0;
+pub const FALL: DbPerSec = DbPerSec(20.0);
 /// How long the peak mark holds before it falls.
 pub const HOLD: Ms = Ms(1000);
 
+/// Whether a frame's reading passed full scale: the bar's top in ALERT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Over {
+    Over,
+    Clear,
+}
+
+impl Over {
+    fn of(p: Peak) -> Over {
+        if p.get() > 1.0 {
+            Over::Over
+        } else {
+            Over::Clear
+        }
+    }
+}
+
+/// Whether a key is down on the Part's channel (or its MPE zone).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyMark {
+    Held,
+    Up,
+}
+
+impl KeyMark {
+    fn of(held: bool) -> KeyMark {
+        if held { KeyMark::Held } else { KeyMark::Up }
+    }
+}
+
 /// One Part's meter: the bar, its held peak and how long that has held,
-/// and whether a key is down on its channel.
+/// whether it passed full scale, and whether a key is down on its channel.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Meter {
     bar: Dbfs,
     peak: Dbfs,
     held_for: Ms,
-    /// Its peak this frame passed full scale: the bar's top in ALERT.
-    over: bool,
-    key: bool,
+    over: Over,
+    key: KeyMark,
 }
 
 impl Meter {
@@ -78,8 +121,8 @@ impl Meter {
         bar: Dbfs::FLOOR,
         peak: Dbfs::FLOOR,
         held_for: Ms(0),
-        over: false,
-        key: false,
+        over: Over::Clear,
+        key: KeyMark::Up,
     };
 
     /// `dt` on, then this frame's reading `p`.
@@ -97,7 +140,7 @@ impl Meter {
             let fallen = self.peak.fallen(dt);
             self.peak = if fallen > self.bar { fallen } else { self.bar };
         }
-        self.over = p.get() > 1.0;
+        self.over = Over::of(p);
     }
 
     pub fn bar(&self) -> Dbfs {
@@ -108,7 +151,11 @@ impl Meter {
         self.peak
     }
 
-    pub fn key(&self) -> bool {
+    pub fn over(&self) -> Over {
+        self.over
+    }
+
+    pub fn key(&self) -> KeyMark {
         self.key
     }
 }
@@ -128,8 +175,8 @@ impl PartMeters {
         key: 0,
     };
 
-    pub fn get(&self, p: usize) -> &Meter {
-        &self.meters[p]
+    pub fn get(&self, p: PartId) -> &Meter {
+        &self.meters[p.index()]
     }
 
     /// What the band redraws on: 0 at rest.
@@ -171,14 +218,14 @@ pub(crate) fn ask_in(a: Ask<'_>) {
 pub fn frame(m: &mut PartMeters, s: Shown<'_>) {
     match s {
         Shown::Off => {
-            crate::part_peaks::watch(false);
+            part_peaks::watch(Watch::Down);
             *m = PartMeters::REST;
         }
         Shown::On { parts, zones, dt } => {
-            crate::part_peaks::watch(true);
-            for (p, meter) in m.meters.iter_mut().enumerate() {
-                meter.step(PART_PEAKS[p].take(), dt);
-                meter.key = held_on(parts[p].mix.channel, zones);
+            part_peaks::watch(Watch::Up);
+            for (&p, meter) in PartId::ALL.iter().zip(m.meters.iter_mut()) {
+                meter.step(part_peaks::of(p).take(), dt);
+                meter.key = KeyMark::of(held_on(parts[p.index()].mix.channel, zones));
             }
             m.key = key(&m.meters);
         }
@@ -199,9 +246,9 @@ pub const BAR_GAP: i32 = 2;
 /// The LEVEL bar's width (`viz::parts_overview`).
 const LEVEL_W: i32 = 8;
 
-/// Part `i`'s meter's left edge.
-pub fn bar_x(i: usize) -> i32 {
-    viz::strip_x(i) + LEVEL_W + BAR_GAP
+/// Part `p`'s meter's left edge.
+pub fn bar_x(p: PartId) -> i32 {
+    viz::strip_x(p.index()) + LEVEL_W + BAR_GAP
 }
 
 /// Each Part's bar beside its LEVEL, its peak a 1 px mark over it (the
@@ -209,12 +256,12 @@ pub fn bar_x(i: usize) -> i32 {
 /// right of its number.
 pub fn paint(on: &mut dyn Paint, m: &PartMeters) {
     let foot = viz::STRIP_TOP + viz::STRIP_H;
-    for (i, meter) in m.meters.iter().enumerate() {
-        let x = bar_x(i);
+    for (&p, meter) in PartId::ALL.iter().zip(&m.meters) {
+        let x = bar_x(p);
         let h = i32::from(meter.bar.px());
         if h > 0 {
             on.rect(x, foot - h, BAR_W, h, theme::INK2);
-            if meter.over {
+            if meter.over == Over::Over {
                 on.rect(x, viz::STRIP_TOP, BAR_W, 2, theme::ALERT);
             }
         }
@@ -222,7 +269,7 @@ pub fn paint(on: &mut dyn Paint, m: &PartMeters) {
         if peak > h {
             on.rect(x, foot - peak, BAR_W, 1, theme::INK);
         }
-        if meter.key {
+        if meter.key == KeyMark::Held {
             on.rect(x, viz::STRIP_NUM_Y - 6, 3, 3, theme::ACCENT);
         }
     }
@@ -234,8 +281,8 @@ fn key(m: &[Meter; MAX_PARTS]) -> u32 {
     m.iter().fold(0x811c_9dc5u32, |h, meter| {
         let w = u32::from(meter.bar.px())
             | u32::from(meter.peak.px()) << 8
-            | u32::from(meter.over) << 16
-            | u32::from(meter.key) << 17;
+            | u32::from(meter.over == Over::Over) << 16
+            | u32::from(meter.key == KeyMark::Held) << 17;
         (h ^ w).wrapping_mul(0x0100_0193)
     })
 }
@@ -274,16 +321,16 @@ mod tests {
             "falls after, never under the bar"
         );
         m.step(Peak::new(2.0), Ms(50));
-        assert!(m.over);
+        assert_eq!(m.over, Over::Over);
         m.step(Peak::new(0.5), Ms(50));
-        assert!(!m.over);
+        assert_eq!(m.over, Over::Clear);
     }
 
     #[test]
     fn the_bars_sit_beside_the_level_bars() {
-        for i in 0..MAX_PARTS {
+        for p in PartId::ALL {
             assert!(
-                bar_x(i) + BAR_W < viz::strip_x(i + 1) - 6,
+                bar_x(p) + BAR_W < viz::strip_x(p.index() + 1) - 6,
                 "clear of the next pan line"
             );
         }
