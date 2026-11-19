@@ -5785,6 +5785,32 @@
     },
     {
       "section": "Master FX",
+      "block": "REVERB",
+      "name": "DUCK",
+      "msb": 22,
+      "lsb": 15,
+      "nrpn": 2831,
+      "kind": "14bit",
+      "min": 0,
+      "max": 16383,
+      "screen": null,
+      "codes": null
+    },
+    {
+      "section": "Master FX",
+      "block": "REVERB",
+      "name": "RELEASE",
+      "msb": 22,
+      "lsb": 16,
+      "nrpn": 2832,
+      "kind": "14bit",
+      "min": 0,
+      "max": 16383,
+      "screen": null,
+      "codes": null
+    },
+    {
+      "section": "Master FX",
       "block": "REEL",
       "name": "DRIVE",
       "msb": 23,

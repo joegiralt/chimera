@@ -409,7 +409,10 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // `ui::part_meter`, text and rodata.
     let meters =
         "    *(.text.*12chimera_core2ui10part_meter* .rodata.*12chimera_core2ui10part_meter*);\n";
-    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}");
+    // The reverb's duck (ADR 0295): `rev::duck`, called from bank 2's
+    // `Reverb::process`; an S4 group (S0-S3 is under 8 KB free).
+    let duck = "    *(.text.*3rev4duck* .rodata.*3rev4duck*);\n";
+    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"

@@ -2048,8 +2048,16 @@ pub const CASES: &[ScreenCase] = &[
         to_fx(ui, REV);
         feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › DUCK
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE 2
         feed(ui, Input::turn(EncoderId::A, 20)); // DENSITY
+    }),
+    // REV › DUCK (ADR 0295): AMOUNT 64, RELEASE as set.
+    ("mixer_fx_reverb_duck", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › DUCK
+        feed(ui, Input::turn(EncoderId::A, 64)); // AMOUNT
     }),
     ("mixer_fx_reverb_gate", |ui| {
         to_fx(ui, REV);
@@ -2068,6 +2076,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
         feed(ui, Input::turn(EncoderId::E, 1)); // SYNC TIME: LENGTH 1/16D
+        feed(ui, Input::press(ButtonId::Edit)); // REV › DUCK
         feed(ui, Input::press(ButtonId::Edit)); // back to REV
         feed(ui, Input::turn(EncoderId::B, 1)); // LENGTH 1/8
     }),

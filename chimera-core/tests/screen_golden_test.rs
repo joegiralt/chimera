@@ -73,6 +73,9 @@ use screen::*;
 // ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
 // tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
 // pool's count (sound_browser_pool_full).
+// ADR 0295: REV › DUCK before MORE 2, on the map under REV. New:
+// mixer_fx_reverb_duck. Re-recorded: mixer_fx_reverb_hall_more2 (the map
+// lists DUCK); gate_sync walks through DUCK back to REV.
 // ADR 0293: PRT's band draws each Part's meter and key mark; the
 // earlier hold_note leaves Part 1's key held. Re-recorded: mixer_part,
 // mixer_part_voices.
@@ -290,7 +293,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_hall_more", 0xed2c1f1cc1ae1563),
     // HALL re-recorded as fitted (T10b): its knobs, SPREAD, MORE 2's DENSITY.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall_more2", 0xf966340add19ce03),
+    ("mixer_fx_reverb_hall_more2", 0x2803da1ca58848ff),
+    // REV › DUCK (ADR 0295).
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_duck", 0x0b08deae6182360a),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_gate", 0xe7a27e3bf03f7f81),
     #[cfg(not(feature = "master-tape"))]
@@ -337,7 +343,9 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_hall_more", 0x40ea9f8b334fe91c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more2", 0x41f780fda2f168dc),
+    ("mixer_fx_reverb_hall_more2", 0xec9dcc70c3dcc1e8),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_duck", 0x6cd78223efed5939),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_gate", 0x7f8d7ae08ef421ae),
     #[cfg(feature = "master-tape")]

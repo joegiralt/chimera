@@ -1,10 +1,11 @@
-//! The band's words for 0.4's tester cells (ADR 0292): the matrix's VCA
-//! column says its routes are the amp, and AMP's BASE says why it is
-//! dimmed. Bank 2's (`bank2.x`'s `ui::notes` group): the matrix's words
+//! The band's words for 0.4's tester cells: the matrix's VCA column says
+//! its routes are the amp, AMP's BASE says why it is dimmed (ADR 0292),
+//! REV › DUCK's cells what they do (ADR 0295). Bank 2's (`bank2.x`'s `ui::notes` group): the matrix's words
 //! through `UiDoor`'s `notes` entry, a cell's through `band_note`'s; bank
 //! 1 keeps the stub in `view`.
 
 use crate::addr::{BlockRef, ParamAddr};
+use crate::dsp::reverb::ReverbParams;
 use crate::modulation::{FixedCol, ModSource, VCA};
 use crate::params::OutParams;
 use crate::preset::Sound;
@@ -27,7 +28,8 @@ pub(crate) fn ask_in(a: Ask<'_>) {
 
 /// The words this module draws, named so they link into bank 2 with it
 /// (`.rodata.*notes*`), not into bank 1's unnamed rodata.
-static WORDS: [u8; 70] = *b"VCA:ROUTES REPLACE CONTOURSUM STARTS AT AMP BASENEEDS A ROUTE INTO VCA";
+static WORDS: [u8; 125] =
+    *b"VCA:ROUTES REPLACE CONTOURSUM STARTS AT AMP BASENEEDS A ROUTE INTO VCADUCKS THE TAIL UNDER ITS INPUTHOW FAST THE TAIL RETURNS";
 
 /// `WORDS[at..at + len]`; checked at compile time (`WORDS` is UTF-8).
 const fn word(at: usize, len: usize) -> &'static str {
@@ -45,6 +47,9 @@ pub static VCA_REPLACES: [Gesture<'static>; 1] = [Gesture(word(0, 4), word(4, 22
 pub static VCA_BASE: [Gesture<'static>; 1] = [Gesture(word(0, 4), word(26, 22))];
 /// BASE dimmed: it waits for a route into VCA.
 pub const BASE_UNROUTED: &str = word(48, 22);
+/// REV › DUCK's AMOUNT and RELEASE (ADR 0295).
+pub const DUCK_AMOUNT: &str = word(70, 30);
+pub const DUCK_RELEASE: &str = word(100, 25);
 
 /// The matrix's hint on `m`'s cursor in the VCA column, on a cell with no
 /// route (a route's own cell keeps its DELETE): the routes replace the
@@ -70,6 +75,8 @@ pub fn cell(addr: ParamAddr, s: &Sound) -> Option<&'static str> {
         (BlockRef::Out, OutParams::VCA) => {
             (s.mod_state.routes_into(VCA) == 0).then_some(BASE_UNROUTED)
         }
+        (BlockRef::Reverb, ReverbParams::DUCK) => Some(DUCK_AMOUNT),
+        (BlockRef::Reverb, ReverbParams::DUCK_RELEASE) => Some(DUCK_RELEASE),
         _ => None,
     }
 }
@@ -83,6 +90,8 @@ mod tests {
         assert_eq!(VCA_REPLACES[0], Gesture("VCA:", "ROUTES REPLACE CONTOUR"));
         assert_eq!(VCA_BASE[0], Gesture("VCA:", "SUM STARTS AT AMP BASE"));
         assert_eq!(BASE_UNROUTED, "NEEDS A ROUTE INTO VCA");
-        assert_eq!(WORDS.len(), 70);
+        assert_eq!(DUCK_AMOUNT, "DUCKS THE TAIL UNDER ITS INPUT");
+        assert_eq!(DUCK_RELEASE, "HOW FAST THE TAIL RETURNS");
+        assert_eq!(WORDS.len(), 125);
     }
 }

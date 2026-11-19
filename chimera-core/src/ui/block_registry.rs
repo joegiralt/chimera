@@ -478,7 +478,28 @@ pub static EFX_MORE2: BlockDef = BlockDef {
     ],
 };
 
-static EFX_SUB_PAGES: [&BlockDef; 2] = [&EFX_MORE, &EFX_MORE2];
+/// REV › DUCK (ADR 0295): AMOUNT · RELEASE, the return turned down
+/// under its own input, under every TYPE. Id 119: the next past PRT ›
+/// EQ's 118.
+pub static EFX_DUCK: BlockDef = BlockDef {
+    id: 119,
+    name: "Reverb Duck",
+    short: "DUCK",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
+    params: [
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::DUCK).with_label(&"AMOUNT"),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::DUCK_RELEASE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// MORE, DUCK, then MORE 2 last: HALL's alone, skipped going down under
+/// the other TYPEs (`nav::skip_empty_rev`).
+static EFX_SUB_PAGES: [&BlockDef; 3] = [&EFX_MORE, &EFX_DUCK, &EFX_MORE2];
 
 pub static CHORUS: BlockDef = BlockDef {
     id: 18,
