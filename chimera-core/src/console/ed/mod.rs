@@ -20,7 +20,7 @@ mod value;
 pub use addr::{EdAddr, EdBlock, PadBlock, SoundBlock};
 pub use describe::{
     MODELS, chain, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
-    modal_variant, op_variant, pages, tape_variant,
+    modal_variant, op_variant, page_at, pages, tape_variant,
 };
 pub use edits::{EdState, Pushed, SetRefusal};
 pub use since::{
@@ -194,7 +194,7 @@ pub(crate) fn answer_in(
         },
         Ok(EdArg::Set(a, v)) => edits::set(a, v, ui, q, w),
         Ok(EdArg::Since(held)) => match q {
-            Some(st) => st.since.answer(held, ui, w),
+            Some(st) => st.since.answer(held, ui, &mut st.refused, w),
             None => writeln!(w, "ERR ed since is not in this build"),
         },
         Ok(EdArg::Part(p)) => match q {

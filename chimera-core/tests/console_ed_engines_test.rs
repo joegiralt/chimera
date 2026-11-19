@@ -924,7 +924,13 @@ fn a_tape_turn_a_streamed_source_refuses_writes_nothing() {
     set(&mut f, "TAPE_ENG.MODEL", "#2");
     assert_eq!(get(&mut f, "TAPE_ENG.MODEL").1, "WALK");
     let (lines, _, _) = since(&mut f, 0);
-    assert!(!lines.iter().any(|l| l.contains("NEEDS RAM")), "{lines:?}");
+    // Said only as the refusal: no value reads it.
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("val ") && l.contains("NEEDS RAM")),
+        "{lines:?}"
+    );
     // Every MODEL and DIRECTION: lands where the box's turn lands, else
     // nothing written.
     let mut refused = 0;
@@ -1069,6 +1075,129 @@ fn a_refused_ed_set_says_why_as_a_cc_does() {
     f.ui.step_toast(60_000);
     set(&mut f, "PAD5.LEVEL", "40");
     assert_eq!(toast(&mut f), None);
+}
+
+// ---- refusals over the protocol: `refused <ADDR> "<reason>"` in since ----
+
+/// `since`'s `refused` lines, each checked to come before its `OK`, and
+/// the answer's number.
+fn refused_lines(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
+    let got = ask(f, &format!("ed since {n}\n"));
+    let ok = got.rfind("OK ").unwrap();
+    let lines: Vec<String> = got
+        .lines()
+        .filter(|l| l.starts_with("refused "))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        got[..ok].matches("refused ").count() == lines.len(),
+        "{got}"
+    );
+    let m = got[ok + 3..].trim_end().parse().unwrap();
+    (lines, m)
+}
+
+/// A turn the box refuses is said in the next `since`, in the toast's
+/// own words, once.
+#[test]
+fn a_refused_turn_is_said_in_since_in_the_toasts_words() {
+    // TAPE: a streamed source.
+    let mut f = streamed_at_deck();
+    let (_, m) = refused_lines(&mut f, 0);
+    f.ui.step_toast(60_000);
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    let said = toast(&mut f).unwrap();
+    let (lines, m) = refused_lines(&mut f, m);
+    assert_eq!(lines, [format!("refused TAPE_ENG.MODEL \"{said}\"")]);
+    assert_eq!(said, "SCRUB NEEDS RAM · STREAMED");
+    // Reported: gone from the next answer.
+    assert!(refused_lines(&mut f, m).0.is_empty());
+
+    // ALGO: the formant budget.
+    let mut f = fake(EngineType::Algo);
+    let (_, mut m) = refused_lines(&mut f, 0);
+    let formant = OpKind::Formant.code();
+    let mut said = vec![];
+    for op in Op::ALL {
+        let a = ParamAddr::new(
+            BlockRef::AlgoOp(op),
+            chimera_engine::dsp::algo::params::AlgoOpParams::WAVE,
+        );
+        set(&mut f, &ed(a), &format!("#{formant}"));
+        let (lines, n) = refused_lines(&mut f, m);
+        m = n;
+        said.extend(lines);
+    }
+    assert!(!said.is_empty(), "the budget never refused");
+    for l in &said {
+        assert!(
+            l.starts_with("refused OP_") && l.ends_with(".WAVE \"FORMANT BUDGET FULL\""),
+            "{l}"
+        );
+    }
+
+    // DRUM: a 9th group, kit_groups' words, on the pad it was sent for.
+    let mut f = fake(EngineType::Drum);
+    let (_, m) = refused_lines(&mut f, 0);
+    f.ui.step_toast(60_000);
+    set(&mut f, "PAD3.CHOKE", "OFF");
+    let said = toast(&mut f).unwrap();
+    assert!(said.contains("GROUPS"), "{said}");
+    let (lines, _) = refused_lines(&mut f, m);
+    assert_eq!(lines, [format!("refused PAD3.CHOKE \"{said}\"")]);
+}
+
+/// At most four, the newest, oldest first.
+#[test]
+fn since_keeps_the_four_newest_refusals() {
+    let mut f = streamed_at_deck();
+    let (_, m) = refused_lines(&mut f, 0);
+    // SCRUB, PING, SCRUB, PING, SCRUB: five, the first dropped.
+    for i in 0..5 {
+        if i % 2 == 0 {
+            set(&mut f, "TAPE_ENG.MODEL", "#2");
+        } else {
+            set(&mut f, &ed(held::DIRECTION), "#3");
+        }
+    }
+    let (lines, m) = refused_lines(&mut f, m);
+    let scrub = "refused TAPE_ENG.MODEL \"SCRUB NEEDS RAM · STREAMED\"";
+    let ping = format!(
+        "refused {} \"PING NEEDS RAM · STREAMED\"",
+        ed(held::DIRECTION)
+    );
+    assert_eq!(lines, [ping.as_str(), scrub, ping.as_str(), scrub]);
+    assert!(refused_lines(&mut f, m).0.is_empty());
+}
+
+/// A set refused at `ERR` time says so in its own answer: since never
+/// repeats it. Nor is a landed set, or a refused one to the value it has.
+#[test]
+fn since_says_only_the_turns_refusals() {
+    let mut f = streamed_at_deck();
+    let (_, m) = refused_lines(&mut f, 0);
+    assert_eq!(
+        ask(&mut f, "ed set TAPE_ENG.MODEL #99\n"),
+        "ERR ed set TAPE_ENG.MODEL has no such option\n"
+    );
+    apply(&mut f);
+    let (lines, m) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "{lines:?}");
+    // A landed set.
+    set(&mut f, "TAPE_ENG.MODEL", "#0");
+    let (lines, _) = refused_lines(&mut f, m);
+    assert!(lines.is_empty(), "{lines:?}");
+}
+
+/// A line that is no `since` answer keeps the refusals for the next.
+#[test]
+fn a_refusal_waits_for_a_since_answer() {
+    let mut f = streamed_at_deck();
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    // An `ERR` answer (a malformed since) reports nothing and keeps them.
+    assert!(ask(&mut f, "ed since x\n").starts_with("ERR "));
+    let (lines, _) = refused_lines(&mut f, 0);
+    assert_eq!(lines.len(), 1, "{lines:?}");
 }
 
 #[test]

@@ -27,6 +27,10 @@ pub(crate) enum Ask<'a> {
     Held(&'a UiState, PartId, ChokeHold),
     /// The refusal's words for a count.
     Why(VoiceGroups),
+    /// Pad `p`'s CHOKE set to the stored value: its refusal's words
+    /// (`Said::Line`), or `Said::Fits`. An editor's set (`ed set`), checked
+    /// before its turn as the box's other refusals are.
+    Refuses(&'a UiState, PartId, PadId, f32),
     /// CHOKE's focus band: the kit's count.
     Note(&'a Kit),
 }
@@ -37,9 +41,10 @@ pub(crate) enum Said {
     Moved(bool),
     /// `Held`: refused, with the count it would make.
     Refused(VoiceGroups),
-    /// `Held`: it would land, or the kit changed since.
+    /// `Held`: it would land, or the kit changed since; `Refuses`: it
+    /// lands.
     Fits,
-    /// `Why` and `Note`.
+    /// `Why`, `Note` and a `Refuses` refused.
     Line(Line),
 }
 
@@ -76,6 +81,18 @@ pub(crate) fn ask_in(a: Ask<'_>) -> Said {
         }
         Ask::Why(n) => Said::Line(why(n)),
         Ask::Note(kit) => Said::Line(note(kit)),
+        Ask::Refuses(ui, at, p, v) => refuses(ui.project.kit(at), p, v),
+    }
+}
+
+/// Pad `p` of `kit`'s CHOKE set to `v`, as `edit`'s `Edit::To` lands it.
+#[optimize(speed)]
+fn refuses(kit: &Kit, p: PadId, v: f32) -> Said {
+    let mut pad = *kit.pad(p);
+    pad.set(held::CHOKE.param, v);
+    match VoiceGroups::choke(kit, p, pad.choke()) {
+        Ok(_) => Said::Fits,
+        Err(n) => Said::Line(why(n)),
     }
 }
 

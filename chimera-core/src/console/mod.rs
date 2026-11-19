@@ -287,7 +287,7 @@ pub use ed::{
     ED_PANELS, ED_SLOTS, EdAddr, EdArg, EdBlock, EdSince, EdState, EdValue, Gen, MODELS, OptIndex,
     PadBlock, Pushed, SetRefusal, SoundBlock, chain as ed_chain, ed_panels_used, ed_slots_used,
     env_variant, filter_variant, fx_variant, lfo_variant, machine_variant, modal_variant,
-    op_variant, pages as ed_pages, tape_variant,
+    op_variant, page_at as ed_page_at, pages as ed_pages, tape_variant,
 };
 mod status;
 pub use status::*;
