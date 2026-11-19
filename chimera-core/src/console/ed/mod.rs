@@ -24,7 +24,7 @@ pub use describe::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use edits::StoredRefusal;
-pub use edits::{EdState, Pushed, SetRefusal};
+pub use edits::{EdState, Pushed, REFUSED as ED_REFUSED, SetRefusal};
 pub use since::{
     EdSince, Gen, PANELS_MAX as ED_PANELS, SLOTS as ED_SLOTS, panels_used as ed_panels_used,
     slots_used as ed_slots_used,

@@ -8,8 +8,8 @@ use common::console_fake::{Fake, ask};
 use std::collections::BTreeSet;
 
 use chimera_core::console::{
-    ED_PANELS, ED_SLOTS, EdAddr, EdBlock, MODELS, PadBlock, SoundBlock, ed_pages, ed_panels_used,
-    ed_slots_used, filter_variant, machine_variant, modal_variant, tape_variant,
+    ED_PANELS, ED_REFUSED, ED_SLOTS, EdAddr, EdBlock, MODELS, PadBlock, SoundBlock, ed_pages,
+    ed_panels_used, ed_slots_used, filter_variant, machine_variant, modal_variant, tape_variant,
 };
 use chimera_core::project::PartId;
 use chimera_core::ui::block_def::slot_addr;
@@ -555,7 +555,9 @@ fn longest_line(f: &mut Fake, p: &[String]) -> usize {
 /// - the Part's own lines hold at most a cell's 32-byte text.
 ///
 /// Each address's line is maximised over its values, each pad over its
-/// machine and kind, each panel over its variants. DRUM shows no SOURCE
+/// machine and kind, each panel over its variants. A diff of every value
+/// may carry `refused` lines as well: the four the unit keeps, each at the
+/// longest address and reason, are counted in. DRUM shows no SOURCE
 /// cell, so the answer has no `source` line (asserted below; TAPE's
 /// answer has one, not bounded here).
 #[test]
@@ -643,9 +645,19 @@ fn the_worst_drum_answer_fits_one_answer() {
         .map(|(_, len)| len)
         .sum();
     let head = "\n".len() + "part 1 DRUM\n".len() + "OK 999999999\n".len();
-    let worst = head + shown + part + 12 * per_pad;
+    // A diff that moved every value says the turns refused too: the
+    // newest four, each `refused <ADDR> "<reason>"`, the address the
+    // longest listed, the reason a full `Line` (the toast's, cut there).
+    let longest_addr = all.iter().map(|p| p[1].len()).max().unwrap();
+    let refused = ED_REFUSED
+        * ("refused ".len()
+            + longest_addr
+            + " \"".len()
+            + chimera_core::project::LINE_LEN
+            + "\"\n".len());
+    let worst = head + shown + part + 12 * per_pad + refused;
     println!(
-        "the worst DRUM answer: at most {worst} B of {ANSWER_BYTES_MAX} (a pad {per_pad} B, the Part {part} B, the panels {shown} B)"
+        "the worst DRUM answer: at most {worst} B of {ANSWER_BYTES_MAX} (a pad {per_pad} B, the Part {part} B, the panels {shown} B, the refusals {refused} B)"
     );
     assert!(worst < ANSWER_BYTES_MAX, "{worst} B");
 }

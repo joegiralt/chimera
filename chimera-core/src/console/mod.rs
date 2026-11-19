@@ -284,10 +284,10 @@ impl Console {
 mod ed;
 pub(crate) use ed::answer_in as ed_answer_in;
 pub use ed::{
-    ED_PANELS, ED_SLOTS, EdAddr, EdArg, EdBlock, EdSince, EdState, EdValue, Gen, MODELS, OptIndex,
-    PadBlock, Pushed, SetRefusal, SoundBlock, chain as ed_chain, ed_panels_used, ed_slots_used,
-    env_variant, filter_variant, fx_variant, lfo_variant, machine_variant, modal_variant,
-    op_variant, page_at as ed_page_at, pages as ed_pages, tape_variant,
+    ED_PANELS, ED_REFUSED, ED_SLOTS, EdAddr, EdArg, EdBlock, EdSince, EdState, EdValue, Gen,
+    MODELS, OptIndex, PadBlock, Pushed, SetRefusal, SoundBlock, chain as ed_chain, ed_panels_used,
+    ed_slots_used, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
+    modal_variant, op_variant, page_at as ed_page_at, pages as ed_pages, tape_variant,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use ed::{StoredRefusal, stored as ed_stored};
