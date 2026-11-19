@@ -86,12 +86,15 @@ import sys
 import tempfile
 import time
 import zlib
-from typing import NamedTuple, Union
+from typing import NamedTuple, Optional, Union
 
 try:
+    import termios
     import tty
 except ImportError:  # Windows: the console goes through pyserial
-    tty = None
+    termios = tty = None
+
+TermiosError = termios.error if termios else OSError
 
 SIM = ("127.0.0.1", 7341)  # the desktop simulator (developers)
 SILENCE_S = 2.0
@@ -154,6 +157,9 @@ UDEV_HINT = (
     "echo 'SUBSYSTEM==\"tty\", ATTRS{idVendor}==\"0483\", ATTRS{idProduct}==\"5740\", ENV{ID_MM_DEVICE_IGNORE}=\"1\", TAG+=\"uaccess\", SYMLINK+=\"chimera\"'"
     " | sudo tee /etc/udev/rules.d/70-chimera.rules && sudo udevadm control --reload && sudo udevadm trigger"
 )
+
+
+ACCESS_HINT = "add yourself to the dialout group (sudo usermod -aG dialout $USER, then log out and in), or on Linux run: " + UDEV_HINT
 
 
 class UsbId(NamedTuple):
@@ -235,7 +241,11 @@ class Conn:
         else:
             self.fd = os.open(t.path, os.O_RDWR | os.O_NOCTTY)
             # Raw: the tty's echo would send the unit's answers back as requests.
-            tty.setraw(self.fd)
+            try:
+                tty.setraw(self.fd)
+            except TermiosError:  # not a terminal: don't leak the fd
+                os.close(self.fd)
+                raise
 
     def read(self, timeout) -> bytes:
         """Some bytes, or b"" after `timeout` s of silence."""
@@ -713,7 +723,7 @@ def open_conn(t: Target) -> Conn:
     try:
         return Conn(t)
     except PermissionError:
-        sys.exit(fail("no access to %s. Add yourself to the dialout group (sudo usermod -aG dialout $USER, then log out and in), or on Linux run: %s" % (describe(t), UDEV_HINT)))
+        sys.exit(fail("no access to %s. %s" % (describe(t), ACCESS_HINT[0].upper() + ACCESS_HINT[1:])))
     except OSError as e:
         sys.exit(fail("no console at %s: %s. Is the unit on, running Chimera, and connected by USB? CHIMERA_USB=<port> picks another port." % (describe(t), e.strerror or e)))
 
@@ -930,57 +940,196 @@ def dfu_flash(t: Target, env, local: str) -> int:
     return 0
 
 
+class UnitPort(NamedTuple):
+    """A tty whose USB device has the console's id, and its USB serial
+    (None when the device has none)."""
+
+    path: str
+    serial: Optional[str]
+
+
+def unit_ports(env) -> list:
+    """The console's ports now, by USB id: sysfs's ttys where the kernel
+    has it, else pyserial's; never a guessed path."""
+    if not has_sysfs(env):
+        try:
+            from serial.tools import list_ports
+        except ImportError:
+            return []
+        return [UnitPort(p.device, getattr(p, "serial_number", None)) for p in list_ports.comports() if (p.vid, p.pid) == tuple(CONSOLE_ID)]
+    out = []
+    for d in sorted(pathlib.Path(env.get("CHIMERA_SYSFS", "/sys"), "class/tty").glob("*")):
+        usb = (d / "device").resolve().parent  # the interface's parent: the USB device
+        try:
+            ids = UsbId(int((usb / "idVendor").read_text(), 16), int((usb / "idProduct").read_text(), 16))
+        except (OSError, ValueError):
+            continue  # a virtual console, or a device leaving mid-read
+        if ids != CONSOLE_ID:
+            continue
+        try:
+            serial = (usb / "serial").read_text().strip()
+        except OSError:
+            serial = None
+        out.append(UnitPort("/dev/" + d.name, serial))
+    return out
+
+
+def unit_serial(t: Target, env) -> Optional[str]:
+    """The serial of the unit `t` talks to now, so the wait after the flash
+    knows it among others; None for a tcp target or when it can't tell."""
+    if isinstance(t, Tcp):
+        return None
+    ports = unit_ports(env)
+    if "CHIMERA_USB" in env:
+        ports = [p for p in ports if os.path.realpath(p.path) == os.path.realpath(t.path)]
+    return ports[0].serial if len(ports) == 1 else None
+
+
+class Cause(enum.Enum):
+    """Why the unit hadn't answered after the flash, at the last try."""
+
+    OFF_BUS = enum.auto()
+    IN_DFU = enum.auto()
+    NO_PORT = enum.auto()
+    NO_ACCESS = enum.auto()
+    PORT_FAULT = enum.auto()
+    NO_ANSWER = enum.auto()
+    BUSY = enum.auto()
+    WENT_AWAY = enum.auto()
+    SEVERAL = enum.auto()
+
+
 class NotBack(Exception):
-    """The console didn't answer after the flash: the last reason."""
+    """The console didn't answer after the flash: the last try's cause,
+    the port it was on, and for SEVERAL the units' ports."""
+
+    def __init__(self, cause: Cause, port: Optional[str], ports: tuple = ()):
+        super().__init__(cause, port, ports)
+        self.cause, self.port, self.ports = cause, port, ports
+
+    def reason(self) -> str:
+        port = self.port or "its port"
+        return {
+            Cause.OFF_BUS: "its console is not on USB",
+            Cause.IN_DFU: "it is still in its USB loader",
+            Cause.NO_PORT: "its console is on USB but its port hasn't appeared",
+            Cause.NO_ACCESS: "no access to %s" % port,
+            Cause.PORT_FAULT: "%s won't open as a serial port" % port,
+            Cause.NO_ANSWER: "no answer from %s" % port,
+            Cause.BUSY: "%s still answers busy" % port,
+            Cause.WENT_AWAY: "%s went away" % port,
+            Cause.SEVERAL: "more than one unit is on USB (%s)" % ", ".join(self.ports),
+        }[self.cause]
+
+    def __str__(self) -> str:
+        return self.reason()
+
+
+class Back(NamedTuple):
+    """The unit back from the flash: the port it answered on, and its status."""
+
+    target: Target
+    status: Status
+    body: bytes
 
 
 BACK_POLL_S = 0.25
+BACK_FIRST_MIN_S = 0.05  # the shortest wait for a first byte, near the deadline
+_clock, _sleep = time.monotonic, time.sleep  # the wait's; tests make them fake
 
 
-def back_after_flash(t: Target, env, secs, clock=time.monotonic, sleep=time.sleep) -> tuple:
-    """`status`'s answer once the unit is back from the flash: its console
-    on the bus (as wait-console sees it), its port open (udev makes the
-    node, /dev/chimera and the access a moment after the kernel lists the
-    device) and an answer (the first boot installs before it answers).
-    Unless CHIMERA_USB names it, the port is picked again once on the bus.
-    Raises NotBack with the last reason after `secs`."""
+def off_cause(env) -> Cause:
+    """Why no console port is listed: the console not yet a tty, the ROM
+    loader on the bus, or nothing."""
+    ids = usb_devices(env, dfu=False)
+    if CONSOLE_ID in ids:
+        return Cause.NO_PORT
+    return Cause.IN_DFU if ROM_DFU_ID in ids else Cause.OFF_BUS
+
+
+def pick(t: Tty, env, serial: Optional[str]) -> Optional[Tty]:
+    """The console's port, by USB id (and `serial`, when known): CHIMERA_USB's
+    once it is the console's, else the only one listed; None while there is
+    none. Raises NotBack(SEVERAL) when it can't tell units apart."""
+    ports = [p for p in unit_ports(env) if serial is None or p.serial == serial]
+    if "CHIMERA_USB" in env:
+        named = os.path.realpath(t.path)
+        return t if any(os.path.realpath(p.path) == named for p in ports) else None
+    if len(ports) > 1:
+        raise NotBack(Cause.SEVERAL, None, tuple(p.path for p in ports))
+    return Tty("tty", ports[0].path) if ports else None
+
+
+def back_after_flash(t: Target, env, secs, serial: Optional[str] = None, clock=None, sleep=None) -> Back:
+    """The unit once back from the flash: its console's port (by its USB
+    id, the one `serial` names when known: never a guessed path), open
+    (udev makes the node and its access a moment after the kernel lists
+    the device) and answering `status` (the first boot installs first;
+    `ERR busy` waits too). The port is picked when there is none and
+    again only when it goes. Raises NotBack after `secs`."""
+    clock, sleep = clock or _clock, sleep or _sleep
     deadline = clock() + secs
-    why = "the console is not on USB"
+    cause, here = Cause.OFF_BUS, None
     while True:
-        if isinstance(t, Tcp) or CONSOLE_ID in usb_devices(env, dfu=False):
-            here = t if "CHIMERA_USB" in env else target(env)
+        if isinstance(t, Tcp):
+            here = t
+        elif here is None:
+            here = pick(t, env, serial)
+            if here is None:
+                cause = off_cause(env)
+        if here is not None:
             try:
                 conn = Conn(here)
             except PermissionError:
-                why = "no access to %s" % describe(here)
-            except OSError as e:
-                why = "no console at %s: %s" % (describe(here), e.strerror or e)
+                cause = Cause.NO_ACCESS
+            except FileNotFoundError:
+                cause, here = Cause.NO_PORT, None
+            except (OSError, TermiosError):
+                cause = Cause.PORT_FAULT
             else:
                 try:
-                    return request(conn, "status")
+                    send(conn, "status")
+                    status, body = answer(conn, max(BACK_FIRST_MIN_S, min(SILENCE_S, deadline - clock())))
+                    if not is_busy(status, body):
+                        return Back(here, status, body)
+                    cause = Cause.BUSY
                 except NoAnswer:
-                    why = "no answer from %s" % describe(here)
+                    cause = Cause.NO_ANSWER
                 except Vanished:
-                    why = "%s went away" % describe(here)
+                    cause, here = Cause.WENT_AWAY, None
                 finally:
                     conn.close()
-        if clock() >= deadline:
-            raise NotBack(why)
-        sleep(BACK_POLL_S)
+        left = deadline - clock()
+        if left <= 0:
+            raise NotBack(cause, here and describe(here))
+        sleep(min(BACK_POLL_S, left))
+
+
+STATUS_CMD = "python3 tools/chimera-usb.py status"
 
 
 def not_back(pkg: Package, e: NotBack, secs) -> str:
-    """What a tester does when the console doesn't come back: wait, look,
-    then check, all without touching anything on the unit or the card."""
-    return (
-        "update: the firmware is flashed, but the unit hadn't answered %g s later (%s).\n"
-        "  1. Leave the unit on while its screen says DON'T POWER OFF: it is installing.\n"
-        "  2. Once it shows its usual screen (if nothing changes for 5 minutes, switch it off and on), run:\n"
-        "       python3 %s status\n"
-        "  3. The update is done if that shows `build %s` and `bank2 open ... seal=%s`.\n"
-        "     If it doesn't, run the same update command again."
-        % (secs, e, os.path.basename(__file__), pkg.version, pkg.seal)
+    """What a tester does when the unit doesn't answer after the flash, by
+    what its screen shows: never a power-off while it installs, never a
+    command that deletes anything."""
+    text = (
+        "update: flashed, but the unit hadn't answered %g s later: %s.\n"
+        "What to do depends on the unit's screen:\n"
+        "  - DON'T POWER OFF: it is still installing. Leave it on and wait until the screen changes.\n"
+        "  - Its usual screen: run\n"
+        "        %s\n"
+        "    The update is done if that shows `build %s` and `bank2 open ... seal=%s`.\n"
+        "    If it shows anything else, run the same update command again.\n"
+        "    If it doesn't answer, switch the unit off and on, only if the screen is NOT showing DON'T POWER OFF,\n"
+        "    then run status again.\n"
+        "  - Blank or dark: it is waiting in its USB loader. Unplug the USB cable, plug it back in,\n"
+        "    and run the same update command again.\n"
+        "With more than one unit on USB, name this one's port: CHIMERA_USB=<port> %s"
+        % (secs, e.reason(), STATUS_CMD, pkg.version, pkg.seal, STATUS_CMD)
     )
+    if e.cause is Cause.NO_ACCESS:
+        text += "\nNo access to the port: " + ACCESS_HINT
+    return text
 
 
 def stage(t: Target, env, pkg: Package):
@@ -1015,8 +1164,8 @@ def stage(t: Target, env, pkg: Package):
     return fail("%s: nothing flashed" % body.decode(errors="replace"))
 
 
-def updated(t: Target, pkg: Package, got=None) -> int:
-    """0 once `status` (`got`, else asked now) shows the new firmware
+def updated(t: Target, pkg: Package, got: Optional[Back] = None) -> int:
+    """0 once `status` (`got`'s, else asked now) shows the new firmware
     running (its build line's hash, the .bk2 version's) and `pkg`'s seal
     open, else what it shows and 1. The seal, not bank 2's version: a
     release whose .bk2 didn't change keeps the one installed before it,
@@ -1025,14 +1174,14 @@ def updated(t: Target, pkg: Package, got=None) -> int:
     if got is None:
         conn = open_conn(t)
         try:
-            got = request(conn, "status")
+            got = Back(t, *request(conn, "status"))
         except NoAnswer:
             return fail("update: flashed, but no status from %s" % describe(t))
         except Vanished:
             return fail("update: flashed, but %s went away" % describe(t))
         finally:
             conn.close()
-    status, body = got
+    status, body = got.status, got.body
     text = body.decode(errors="replace")
     build = next((ln for ln in text.splitlines() if ln.startswith("build ")), "")
     hash_ = pkg.version.split()[-1:]
@@ -1060,19 +1209,21 @@ def update(t: Target, env, pkg: Package) -> int:
         b, k = pathlib.Path(d, pkg.name + ".bin"), pathlib.Path(d, pkg.name + ".bk2")
         b.write_bytes(pkg.bin)
         k.write_bytes(pkg.bk2)
+        serial = unit_serial(t, env)  # the unit before the flash, to know it after
         rc = dfu_flash(t, env, str(b))
         if rc:
             return rc
         try:
-            got = back_after_flash(t, env, UPDATE_BOOT_WAIT_S)
+            back = back_after_flash(t, env, UPDATE_BOOT_WAIT_S, serial)
         except NotBack as e:
             return fail(not_back(pkg, e, UPDATE_BOOT_WAIT_S))
-        if not staged:
-            rc = bank2_install(t, env, str(k), "update: flashed, but ")
-            if rc:
-                return rc
-            got = None  # the install changed bank 2: ask again
-    return updated(t, pkg, got)
+        if staged:
+            return updated(back.target, pkg, back)
+        # The port it came back on carries on: the install, then status again.
+        rc = bank2_install(back.target, env, str(k), "update: flashed, but ")
+        if rc:
+            return rc
+    return updated(back.target, pkg)
 
 
 def card_wait(t: Target, env, verbs) -> int:
