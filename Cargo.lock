@@ -406,6 +406,7 @@ dependencies = [
  "object",
  "rayon",
  "rustfft",
+ "serde",
  "serde_json",
  "sha2",
  "tungstenite",

@@ -144,6 +144,10 @@ class OneUpdate(unittest.TestCase):
         self.assertIn('cmp -s "$out/NRPN.json" docs/guide/NRPN.json', body)
         self.assertIn("sha256sum CHIMERA.BIN CHIMERA.BK2 NRPN.json factory-v1.zip", body)
         self.assertIn('"$out/NRPN.json"', body.split("assets=(", 1)[1].split(")", 1)[0])
+        # The version it names is the release's, and so is the workspace's.
+        self.assertIn('"$V" "$out/NRPN.json"', body)
+        self.assertIn('["workspace"]["package"]["version"]', body)
+        self.assertIn('json.load(open(path))["firmware"]', body)
         guide = "\n".join(recipes()["nrpn-guide"])
         self.assertIn("nrpn-json > docs/guide/NRPN.json", guide)
 

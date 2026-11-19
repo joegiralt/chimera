@@ -428,6 +428,15 @@ release version *flags:
     # answers with; the guide's copy must be this one.
     {{utils}} nrpn-json > "$out/NRPN.json"
     cmp -s "$out/NRPN.json" docs/guide/NRPN.json || { echo "docs/guide/NRPN.json is stale: run just nrpn-guide" >&2; exit 1; }
+    # It names the firmware it lists: this release, which is the workspace's version too.
+    python3 -I - "$V" "$out/NRPN.json" <<'PY'
+    import json, sys, tomllib
+    v, path = sys.argv[1:]
+    ws = tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"]
+    fw = json.load(open(path))["firmware"]
+    if (ws, fw) != (v, v):
+        sys.exit("releasing %s, but Cargo.toml's version is %s and NRPN.json's firmware %s: bump the workspace version, then just nrpn-guide" % (v, ws, fw))
+    PY
     (cd "$out" && sha256sum CHIMERA.BIN CHIMERA.BK2 NRPN.json factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
     # file (the stock bootloader backup, the bootloader, a dev chimera.bin or .bk2).
