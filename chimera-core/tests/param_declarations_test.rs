@@ -370,6 +370,10 @@ const OWN_OUTSIDE: &[&str] = &[
     "Reverb SMEAR",
     "Reverb RATE",
     "Reverb DENSITY",
+    // REV › DUCK (ADR 0295): AMOUNT eased over 20 ms, the gain ramped a
+    // block; RELEASE the follower's fall.
+    "Reverb DUCK",
+    "Reverb RELEASE",
     // The master tape ramps its smoothed controls across each block.
     "Tape DRIVE",
     "Tape TONE",
