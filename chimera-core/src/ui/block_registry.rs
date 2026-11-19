@@ -20,7 +20,7 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{EnvParams, FilterParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{
-    BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, MachineSlot, ParamSlot, VizType,
+    BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, MachineSlot, ParamSlot, SmartScope, VizType,
 };
 use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
@@ -597,7 +597,7 @@ pub static MASTER_LEVEL: BlockDef = BlockDef {
     name: "Level",
     short: "LVL",
     layout: PageLayout::CellGrid,
-    viz: VizType::SmartEq,
+    viz: VizType::SmartEq(SmartScope::All),
     params: [
         ParamSlot::param(BlockRef::Comp, CompParams::VOL),
         ParamSlot::param(BlockRef::Comp, CompParams::PAN),
@@ -1088,7 +1088,7 @@ pub static PART_EQ: BlockDef = BlockDef {
     name: "EQ",
     short: "EQ",
     layout: PageLayout::CellGrid,
-    viz: VizType::SmartEq,
+    viz: VizType::SmartEq(SmartScope::Part),
     params: [
         ParamSlot::param(BlockRef::Part, PartParams::TILT),
         ParamSlot::param(BlockRef::Part, PartParams::LO_CUT),

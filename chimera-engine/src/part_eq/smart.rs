@@ -7,8 +7,9 @@
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use super::Live;
-use crate::dsp::{Hz, Unit};
+use crate::dsp::{Db, Hz, Unit};
 use crate::hw::MAX_PARTS;
+use crate::params::EngineType;
 use crate::project::PartId;
 
 /// A Part's place in the mix: FRONT is kept clear, MID yields to FRONT,
@@ -100,10 +101,12 @@ pub enum PartKind {
 }
 
 impl PartKind {
-    pub const fn of(e: crate::params::EngineType) -> PartKind {
+    pub const fn of(e: EngineType) -> PartKind {
         match e {
-            crate::params::EngineType::Drum => PartKind::Drum,
-            _ => PartKind::Tonal,
+            EngineType::Drum => PartKind::Drum,
+            EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => {
+                PartKind::Tonal
+            }
         }
     }
 }
@@ -336,47 +339,176 @@ impl BandTaps {
     pub(crate) const ZERO: BandTaps = BandTaps { s1: 0.0, s2: 0.0 };
 }
 
-/// A band's applied gain less one, `G − 1` (0 unity, −0.5 at −6 dB): zero
-/// bytes are unity, so ITCM's boot zeroing is no cut.
+/// A band's dip, what its band-pass adds to the bus: 0 unity, about −0.5
+/// at −6 dB, within `MIN..=MAX`. A little over 0 where a neighbour's cut
+/// is being kept out of this band (`dsp::smart::dips`). Zero bytes are
+/// unity, so ITCM's boot zeroing is no cut.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct Dip(pub(crate) f32);
+pub(crate) struct Dip(f32);
 
 impl Dip {
     pub(crate) const UNITY: Dip = Dip(0.0);
+    /// The deepest: under `CutDb::MAX` alone (−0.499) with its
+    /// neighbours' share taken off.
+    const MIN: f32 = -0.75;
+    /// The most a band gives back against its neighbours' skirts.
+    const MAX: f32 = 0.125;
+
+    /// `v` held to `MIN..=MAX`; NaN is unity.
+    #[inline(always)]
+    pub(crate) fn new(v: f32) -> Dip {
+        Dip(if v.is_nan() {
+            0.0
+        } else {
+            crate::dsp::clampf(v, Self::MIN, Self::MAX)
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) const fn get(self) -> f32 {
+        self.0
+    }
 }
 
-/// A band's level as followed: its band-pass's mean square (power).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct Power(pub(crate) f32);
+/// A mean square (power), 0 or `FLOOR` and over, finite: under `FLOOR`
+/// (−300 dB) is silence, so a follower never falls subnormal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub(crate) struct Power(f32);
+
+impl Power {
+    pub(crate) const ZERO: Power = Power(0.0);
+    const FLOOR: f32 = 1e-30;
+
+    /// `v`, or 0 if it is under `FLOOR`, negative, NaN or inf.
+    #[inline(always)]
+    pub(crate) fn new(v: f32) -> Power {
+        Power(if v.is_finite() && v >= Self::FLOOR {
+            v
+        } else {
+            0.0
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// A band's level as the rule reads it: dB over SMART EQ's silence
+/// (`dsp::smart::SILENCE`), 0 and up. Zero bytes are silence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub(crate) struct Level(f32);
+
+impl Level {
+    pub(crate) const SILENT: Level = Level(0.0);
+
+    /// `over` dB over silence; under it, NaN included, is silent.
+    #[inline(always)]
+    pub(crate) fn over_silence(over: Db) -> Level {
+        Level(over.get().max(0.0))
+    }
+
+    /// dB over silence.
+    #[inline(always)]
+    pub(crate) const fn db(self) -> Db {
+        Db::new(self.0)
+    }
+}
+
+/// Blocks counted since something, saturating: a kick's last onset, the
+/// gap between its last two.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Blocks(u16);
+
+impl Blocks {
+    pub(crate) const ZERO: Blocks = Blocks(0);
+
+    #[inline(always)]
+    pub(crate) const fn of(n: u16) -> Blocks {
+        Blocks(n)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn next(self) -> Blocks {
+        Blocks(self.0.saturating_add(1))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+/// Whether a DRUM Part's kick was hitting last block: an onset is the
+/// change to `Hitting`. Zero bytes are `Quiet`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Kick {
+    Quiet = 0,
+    Hitting = 1,
+}
+
+/// How a Part's bus filters ran last block: its memory is that rate's, so
+/// a change of rate starts them empty. Zero bytes are `Thin`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Hears {
+    /// Listening only, decimated: LOW and LOW MID at a quarter of the
+    /// rate, HIGH MID and HIGH at half.
+    Thin = 0,
+    /// Cutting: every band at the full rate, heard as it cuts.
+    Full = 1,
+}
 
 /// One Part's four bands: their filters on its bus (`mid`) and a DRUM
 /// pad's side, the levels heard, the cuts decided and the gains last
-/// applied.
+/// applied, and its kick as a key.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PartSmart {
     pub(crate) mid: [BandTaps; BANDS],
     pub(crate) side: [BandTaps; BANDS],
+    /// Each band's followed power, and its dB as the rule last read it.
     pub(crate) level: [Power; BANDS],
+    pub(crate) heard: [Level; BANDS],
+    /// The slow cuts' targets as the rule last set them, and the cuts.
+    pub(crate) want: [CutDb; BANDS],
     pub(crate) cut: [CutDb; BANDS],
+    /// The dips last applied (`cut` and `kick`, each band's neighbours
+    /// allowed for), and the cuts they were made from.
     pub(crate) dip: [Dip; BANDS],
+    pub(crate) dipped: [CutDb; BANDS],
     /// The LOW band's low-pass energy, followed fast: a DRUM Part's kick.
     pub(crate) key: Power,
     /// `key`'s recent peak, falling slowly: the hit `key` is measured from.
     pub(crate) key_peak: Power,
     /// The kick's fast LOW dip on this Part, on top of `cut`'s slow LOW.
     pub(crate) kick: CutDb,
+    /// Its own kick's onsets: blocks since the last, and between the last
+    /// two (0: not known).
+    pub(crate) since: Blocks,
+    pub(crate) gap: Blocks,
+    pub(crate) hitting: Kick,
+    pub(crate) hears: Hears,
 }
 
 impl PartSmart {
     pub(crate) const REST: PartSmart = PartSmart {
         mid: [BandTaps::ZERO; BANDS],
         side: [BandTaps::ZERO; BANDS],
-        level: [Power(0.0); BANDS],
+        level: [Power::ZERO; BANDS],
+        heard: [Level::SILENT; BANDS],
+        want: [CutDb::ZERO; BANDS],
         cut: [CutDb::ZERO; BANDS],
         dip: [Dip::UNITY; BANDS],
-        key: Power(0.0),
-        key_peak: Power(0.0),
+        dipped: [CutDb::ZERO; BANDS],
+        key: Power::ZERO,
+        key_peak: Power::ZERO,
         kick: CutDb::ZERO,
+        since: Blocks::ZERO,
+        gap: Blocks::ZERO,
+        hitting: Kick::Quiet,
+        hears: Hears::Thin,
     };
 
     /// The cuts the bands play: `cut`, LOW the deeper of its slow cut and
@@ -396,12 +528,15 @@ impl PartSmart {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SmartState {
     pub(crate) parts: [PartSmart; MAX_PARTS],
+    /// The band whose slow rule runs next: one a block, in turn.
+    pub(crate) turn: u8,
     pub(crate) live: Live,
 }
 
 impl SmartState {
     pub const REST: SmartState = SmartState {
         parts: [PartSmart::REST; MAX_PARTS],
+        turn: 0,
         live: Live::Bypass,
     };
 
@@ -425,17 +560,25 @@ impl SmartState {
         self.parts[p.index()].kick
     }
 
-    /// Part `p`'s gain in `b` as last applied, linear.
-    pub fn gain(&self, p: PartId, b: Band) -> f32 {
-        1.0 + self.parts[p.index()].dip[b.index()].0
+    /// Part `p`'s dip in `b` as last applied (`G − 1` of the band alone).
+    pub fn dip(&self, p: PartId, b: Band) -> f32 {
+        self.parts[p.index()].dip[b.index()].get()
+    }
+
+    /// Whether Part `p`'s side filters hold anything: for the tests.
+    pub fn side_rests(&self, p: PartId) -> bool {
+        self.parts[p.index()].side == [BandTaps::ZERO; BANDS]
     }
 
     /// Every filter's and level's memory, for the tests' subnormal check.
     pub fn memory(&self) -> impl Iterator<Item = f32> + '_ {
         self.parts.iter().flat_map(|p| {
             let taps = p.mid.iter().chain(&p.side).flat_map(|t| [t.s1, t.s2]);
-            taps.chain(p.level.iter().map(|l| l.0))
-                .chain([p.key.0, p.key_peak.0, p.kick.get()])
+            taps.chain(p.level.iter().map(|l| l.get())).chain([
+                p.key.get(),
+                p.key_peak.get(),
+                p.kick.get(),
+            ])
         })
     }
 }
@@ -489,10 +632,8 @@ impl SmartView {
     }
 
     #[inline(always)]
-    pub fn publish(&self, p: usize, v: CutView) {
-        if let Some(w) = self.0.get(p) {
-            w.store(v.0, Relaxed);
-        }
+    pub fn publish(&self, p: PartId, v: CutView) {
+        self.0[p.index()].store(v.0, Relaxed);
     }
 
     pub fn read(&self, p: PartId) -> CutView {

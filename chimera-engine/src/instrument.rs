@@ -1002,6 +1002,20 @@ impl Instrument {
         self.alloc.cost_pct(self.reserved())
     }
 
+    /// What a sounding Part costs once, on its first voice: its knobs
+    /// (ADR 0112) and its EQ with SMART EQ's bands (ADR 0296).
+    #[inline(never)]
+    fn part_cost(part: &PartAudio, shared: &AudioShared) -> Cost {
+        use crate::part_eq::smart::PartKind;
+        Knobs::COST
+            + crate::part_eq::bill::first_voice(
+                part.mix.eq,
+                part.mix.role,
+                PartKind::of(part.params.engine()),
+                shared.fx.comp.smart,
+            )
+    }
+
     /// Spent outside the pool each block, so a new voice must fit beside
     /// it: the FX bus, the reverb TYPE's extra, the knobs' reads, the LFO
     /// clocks (ADR 0135), and while
@@ -1395,7 +1409,11 @@ impl Instrument {
                     }
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
-                    let knobs = if first { Knobs::COST } else { Cost::ZERO };
+                    let knobs = if first {
+                        Self::part_cost(part, shared)
+                    } else {
+                        Cost::ZERO
+                    };
                     let mut cost =
                         self.costs[p].whole() + knobs + self.high_note(q, shared, note, first);
                     let at = admission::BillAt {
@@ -2057,7 +2075,12 @@ impl Instrument {
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
             // The bill `recost` worked out, so the kit it read.
             let own = self.costs[p].hit(HitKernel::Sounding(hit.bill(self.sample_rate)));
-            let cost = own + if first { Knobs::COST } else { Cost::ZERO };
+            let cost = own
+                + if first {
+                    Self::part_cost(part, shared)
+                } else {
+                    Cost::ZERO
+                };
             let reserved = self.reserved();
             let mode = part.mix.mode();
             let Some(vi) = self.alloc.pick_hit(q, mode, key, cost, reserved, mine) else {
@@ -2225,7 +2248,11 @@ impl Instrument {
                     + self.voices[v].held_ops_extra(&part.params, &part.mod_state)
                     + self.streaming[v].looped
                     + high;
-                let k = if first { Knobs::COST } else { Cost::ZERO };
+                let k = if first {
+                    Self::part_cost(part, shared)
+                } else {
+                    Cost::ZERO
+                };
                 // A hit bills its own kernel, not its kit's costliest; a
                 // flat bill (not DRUM) has no kernel, so `Ended` is whole.
                 let hit = match part.params.engine() {

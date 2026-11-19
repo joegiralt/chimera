@@ -206,7 +206,7 @@ fn no_gain_moves_more_than_a_thousandth_of_a_db_a_sample() {
         block(&mut st, k * BLOCK_SIZE, &gens, &r, smart);
         for p in PartId::ALL {
             for b in Band::ALL {
-                let db = 20.0 * st.gain(p, b).log10();
+                let db = 20.0 * (1.0 + st.dip(p, b)).log10();
                 let step = (db - last[p.index()][b.index()]).abs() / BLOCK_SIZE as f32;
                 worst = worst.max(step);
                 last[p.index()][b.index()] = db;
@@ -487,4 +487,215 @@ fn the_kick_dip_moves_fast_but_smoothly_and_the_rest_stay_slow() {
         .fold(0.0f32, f32::max);
     // The fast LOW: under 0.05 dB a sample (a 4 dB dip over two blocks).
     assert!(worst > 0.001 && worst < 0.05, "{worst} dB a sample");
+}
+
+/// Band `b`'s band-pass at `hz`: `1 / (1 + jQ(r − 1/r))`, `r` the ratio of
+/// the bilinear-warped frequencies (the TPT SVF's exact response).
+fn band_pass(b: Band, hz: f64) -> (f64, f64) {
+    let warp = |f: f64| (std::f64::consts::PI * f / FS as f64).tan();
+    let r = warp(hz) / warp(b.centre().get() as f64);
+    let x = (2.0 / 3.0) * (r - 1.0 / r);
+    (1.0 / (1.0 + x * x), -x / (1.0 + x * x))
+}
+
+/// The four bands' summed gain at `hz` under `d`, dB.
+fn summed_db(d: &[f32; 4], hz: f64) -> f64 {
+    let (mut re, mut im) = (1.0, 0.0);
+    for b in Band::ALL {
+        let (r, i) = band_pass(b, hz);
+        re += d[b.index()] as f64 * r;
+        im += d[b.index()] as f64 * i;
+    }
+    10.0 * (re * re + im * im).log10()
+}
+
+#[test]
+fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
+    use chimera_engine::part_eq::dsp::smart::dips;
+    // Every combination of 0, 1.5, 3, 4.5 and 6 dB on the four bands,
+    // 20 Hz to 20 kHz. Raw, four 6 dB dips reach −8.8 dB at 428 Hz.
+    let steps = [0.0f32, 1.5, 3.0, 4.5, 6.0];
+    let (mut deeper, mut over, mut off_centre) = (0.0f64, 0.0f64, 0.0f64);
+    for n in 0..steps.len().pow(4) {
+        let cuts: [f32; 4] =
+            core::array::from_fn(|b| steps[n / steps.len().pow(b as u32) % steps.len()]);
+        let d = dips(&cuts.map(CutDb::new));
+        let most = cuts.iter().fold(0.0f32, |m, &c| m.max(c)) as f64;
+        for i in 0..400 {
+            let hz = 20.0 * 1000f64.powf(i as f64 / 399.0);
+            let db = summed_db(&d, hz);
+            deeper = deeper.max(-db - most);
+            over = over.max(db);
+        }
+        for b in Band::ALL {
+            let at = summed_db(&d, b.centre().get() as f64);
+            off_centre = off_centre.max((at + cuts[b.index()] as f64).abs());
+        }
+    }
+    assert!(
+        deeper < 0.05,
+        "{deeper:.3} dB deeper than the deepest cut asked"
+    );
+    assert!(over < 0.3, "{over:.3} dB over unity");
+    assert!(
+        off_centre < 0.7,
+        "{off_centre:.3} dB off a band's readout at its centre"
+    );
+    // No cut is no dip, exactly.
+    assert_eq!(dips(&[CutDb::ZERO; 4]), [0.0; 4]);
+}
+
+/// A FRONT DRUM Part's kick every `gap` samples (a 120 → 50 Hz sweep,
+/// 60 ms) over a 55 Hz sine bass, MID: each block's kick dip on the bass.
+fn kicks_every(gap: usize, secs: f32) -> Vec<f32> {
+    let gens: [Gen; MAX_PARTS] = core::array::from_fn(|p| -> Gen {
+        match p {
+            0 => Box::new(move |n| {
+                let t = (n % gap) as f32 / FS as f32;
+                let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
+                Some(0.8 * (-t / 0.06).exp() * ph.sin())
+            }),
+            1 => Box::new(|n| Some(0.3 * (2.0 * PI * 55.0 * n as f32 / FS as f32).sin())),
+            _ => Box::new(|_| None),
+        }
+    });
+    let mut st = PartEqs::REST.smart;
+    let r = roles(&[0], &[]);
+    (0..seconds(secs))
+        .map(|k| {
+            block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(127));
+            st.kick(PAD).get()
+        })
+        .collect()
+}
+
+#[test]
+fn dense_kicks_hold_one_steady_dip_and_sparse_ones_each_let_go() {
+    // 16ths at 170 BPM, 88 ms apart: closer than the dip lets go. Held,
+    // not fluttering at 11 Hz (1.8 dB peak to peak before the hold).
+    let dense = kicks_every(FS as usize * 60 / 170 / 4, 6.0);
+    let tail = &dense[seconds(3.0)..];
+    let (lo, hi) = tail
+        .iter()
+        .fold((f32::MAX, 0.0f32), |(l, h), &d| (l.min(d), h.max(d)));
+    assert!(hi > 3.0, "the dip holds: {hi} dB");
+    assert!(
+        hi - lo < 0.5,
+        "{} dB peak to peak under 16ths at 170 BPM",
+        hi - lo
+    );
+    // Quarter notes at 120 BPM: each kick dips and is let go before the
+    // next.
+    let beat = FS as usize / 2;
+    let sparse = kicks_every(beat, 6.0);
+    for kick in 6..11 {
+        let at = kick * beat / BLOCK_SIZE;
+        let bar = &sparse[at..at + beat / BLOCK_SIZE];
+        let peak = bar.iter().fold(0.0f32, |m, &d| m.max(d));
+        let before_next = bar[bar.len() - 2];
+        assert!(peak > 3.0, "{peak} dB");
+        assert!(
+            before_next < 0.05 * peak,
+            "{before_next} dB left of {peak} before the next kick"
+        );
+    }
+}
+
+/// One block: Part 1 a FRONT sine at 100 Hz, Part 2 a MID pad at 110 Hz,
+/// each with `side` beside its bus.
+fn sided(st: &mut SmartState, start: usize, side: impl Fn(usize) -> f32) -> Sides {
+    let mut buses: Buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
+    let mut sides: Sides = [None; MAX_PARTS];
+    for p in 0..2 {
+        let g = sine(100.0 + 10.0 * p as f32, 0.3);
+        let mut s = [0.0f32; BLOCK_SIZE];
+        for i in 0..BLOCK_SIZE {
+            buses[p][i] = g(start + i);
+            s[i] = side(start + i);
+        }
+        sides[p] = Some(s);
+    }
+    let mut written = [false; MAX_PARTS];
+    (written[0], written[1]) = (true, true);
+    run(
+        st,
+        SmartBlock {
+            buses: &mut buses,
+            sides: &mut sides,
+            written: &written,
+            roles: &roles(&[0], &[]),
+            kinds: &[PartKind::Tonal; MAX_PARTS],
+            smart: on(127),
+            sample_rate: FS,
+        },
+    );
+    sides
+}
+
+#[test]
+fn a_side_takes_only_the_bands_that_cut_and_a_listened_part_s_none() {
+    let mut st = PartEqs::REST.smart;
+    let low = sine(105.0, 0.1);
+    let mut last = [None; MAX_PARTS];
+    for k in 0..seconds(4.0) {
+        last = sided(&mut st, k * BLOCK_SIZE, &low);
+        // The FRONT Part is only listened to: its side is never written
+        // and its side filters hold nothing.
+        let front: [f32; BLOCK_SIZE] = core::array::from_fn(|i| low(k * BLOCK_SIZE + i));
+        assert_eq!(last[0].unwrap().map(f32::to_bits), front.map(f32::to_bits));
+        assert!(st.side_rests(BASS));
+    }
+    // The pad's LOW cuts: its side's 105 Hz is cut with it.
+    assert!(st.cut(PAD, Band::Low).get() > 2.0);
+    assert!(!st.side_rests(PAD));
+    let start = (seconds(4.0) - 1) * BLOCK_SIZE;
+    let dry: [f32; BLOCK_SIZE] = core::array::from_fn(|i| low(start + i));
+    let (wet, dry) = (rms(&last[1].unwrap()), rms(&dry));
+    assert!(
+        wet < 0.85 * dry,
+        "the side's low cut with the bus: {wet} of {dry}"
+    );
+    // A silent side has nothing to cut: its filters rest.
+    for k in seconds(4.0)..seconds(4.0) + 4 {
+        sided(&mut st, k * BLOCK_SIZE, |_| 0.0);
+    }
+    assert!(st.side_rests(PAD));
+}
+
+fn rms(x: &[f32]) -> f32 {
+    (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
+}
+
+#[test]
+fn a_part_hears_the_same_listened_to_or_cut() {
+    // The pad cut by a FRONT bass heard decimated (the bass is only
+    // listened to), against the same bass heard at the full rate (cut
+    // itself, by a kit above it it never hears): the pad's cut agrees.
+    let gens = clash();
+    let mut thin = PartEqs::REST.smart;
+    for k in 0..seconds(4.0) {
+        block(&mut thin, k * BLOCK_SIZE, &gens, &roles(&[0], &[]), on(127));
+    }
+    // HIGH's level through half the rate: a 6.4 kHz tone on a FRONT Part
+    // cuts a MID Part's HIGH as a FRONT 100 Hz tone cuts its LOW.
+    let hi: [Gen; MAX_PARTS] = core::array::from_fn(|p| -> Gen {
+        let (a, b) = (sine(6_400.0, 0.3), sine(6_000.0, 0.2));
+        match p {
+            0 => Box::new(move |n| Some(a(n))),
+            1 => Box::new(move |n| Some(b(n))),
+            _ => Box::new(|_| None),
+        }
+    });
+    let mut high = PartEqs::REST.smart;
+    for k in 0..seconds(4.0) {
+        block(&mut high, k * BLOCK_SIZE, &hi, &roles(&[0], &[]), on(127));
+    }
+    let (lo, hi) = (
+        thin.cut(PAD, Band::Low).get(),
+        high.cut(PAD, Band::High).get(),
+    );
+    // LOW's reach is the mud's (full to 12 dB under), HIGH's the clear
+    // bands' (3.5 dB under: 4 dB × 0.75 × 8.5 / 12).
+    assert!(lo > 3.9, "{lo}");
+    assert!((hi - 4.0 * 0.75 * 8.5 / 12.0).abs() < 0.35, "{hi}");
 }

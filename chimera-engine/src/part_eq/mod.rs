@@ -4,6 +4,7 @@
 //! settings are the project's mix (`PartParams::eq`), never the Sound's.
 //! One EQ a Part: SMART EQ (#396) adds its cuts here.
 
+pub mod bill;
 pub mod door;
 pub mod dsp;
 pub mod smart;

@@ -481,7 +481,9 @@ impl Renderer {
             VizType::MixerLevels => {
                 viz::parts_overview(display, &self.strips(f), f.active_part.index())
             }
-            VizType::SmartEq => crate::ui::smart_view::paint(display, &smart_shown(f)),
+            VizType::SmartEq(scope) => {
+                crate::ui::smart_view::paint(display, &smart_shown(f, scope))
+            }
             VizType::EffectsFlow(FxFlow::Sends) => {
                 let sends = [
                     self.anim[0].current(),
@@ -698,7 +700,7 @@ impl Renderer {
                     strips_key(&self.strips(f), f.active_part.index()),
                 ),
                 VizType::EffectsFlow(_) => (region::quantize_values(&self.anim), f.focus as u32),
-                VizType::SmartEq => ([0; 6], smart_shown(f).key()),
+                VizType::SmartEq(scope) => ([0; 6], smart_shown(f, scope).key()),
                 VizType::AlgoDiagram => {
                     let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);
@@ -1531,12 +1533,12 @@ fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
 
 /// SMART EQ's band (ADR 0296): PRT › EQ's Part, or every Part on MST ›
 /// LVL.
-fn smart_shown(f: &Frame) -> crate::ui::smart_view::Shown {
+fn smart_shown(f: &Frame, scope: crate::ui::block_def::SmartScope) -> crate::ui::smart_view::Shown {
+    use crate::ui::block_def::SmartScope;
     use crate::ui::smart_view::{Shown, Shows};
-    let shows = if core::ptr::eq(f.def, &crate::ui::block_registry::PART_EQ) {
-        Shows::Part(f.active_part)
-    } else {
-        Shows::All(f.active_part)
+    let shows = match scope {
+        SmartScope::Part => Shows::Part(f.active_part),
+        SmartScope::All => Shows::All(f.active_part),
     };
     Shown::now(shows, core::array::from_fn(|p| f.parts[p].mix.role))
 }

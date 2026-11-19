@@ -61,18 +61,18 @@ fn role_is_the_eq_pages_third_cell() {
 fn the_eq_pages_band_shows_the_parts_live_cuts() {
     let mut ui = eq_page();
     let p = PartId::ALL[0];
-    SMART_VIEW.publish(p.index(), CutView::NONE);
+    SMART_VIEW.publish(p, CutView::NONE);
     screen::settle(&mut ui);
     let none = band_px(&screen::render_ui(&ui), theme::ACCENT);
     let mut cuts = [CutDb::ZERO; 4];
     cuts[Band::Low.index()] = CutDb::MAX;
     cuts[Band::LowMid.index()] = CutDb::new(2.1);
-    SMART_VIEW.publish(p.index(), CutView::of(&cuts));
+    SMART_VIEW.publish(p, CutView::of(&cuts));
     screen::settle(&mut ui);
     let shot = screen::render_ui(&ui);
     shot.dump("smart_eq_part_eq");
     let low = band_px(&shot, theme::ACCENT);
-    SMART_VIEW.publish(p.index(), CutView::NONE);
+    SMART_VIEW.publish(p, CutView::NONE);
     // LOW's bar, near its whole 24 × 34 px.
     assert!(low >= none + 24 * 30, "{none} → {low}");
 }
