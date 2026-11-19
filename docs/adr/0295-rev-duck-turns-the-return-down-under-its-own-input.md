@@ -1,6 +1,6 @@
 # 0295. REV › DUCK turns the reverb's return down under its own input
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19)
 - **Deciders:** owner (2026-11-19, tester request chimera-releases#12, the design's recommendation A), firmware
 
 ## Context

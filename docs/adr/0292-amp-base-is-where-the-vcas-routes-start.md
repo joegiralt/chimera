@@ -1,6 +1,6 @@
 # 0292. AMP's BASE is where the VCA's routes start
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19)
 - **Deciders:** owner (2026-11-19, tester request chimera-releases#10, the design's recommendation B), firmware
 
 ## Context

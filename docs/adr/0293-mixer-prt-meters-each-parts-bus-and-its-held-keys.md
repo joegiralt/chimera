@@ -1,6 +1,6 @@
 # 0293. MIXER › PRT meters each Part's bus and marks its held keys
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19)
 - **Deciders:** owner (2026-11-19, tester request chimera-releases#15, the design's recommendation A), firmware
 
 ## Context

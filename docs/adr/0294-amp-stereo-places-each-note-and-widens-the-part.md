@@ -1,6 +1,6 @@
 # 0294. AMP › STEREO places each note and widens the Part
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19)
 - **Deciders:** owner (2026-11-19, tester request chimera-releases#14, the design's recommendations A and C; the page and DRUM's cell the owner's), firmware
 
 ## Context
