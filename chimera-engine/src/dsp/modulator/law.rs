@@ -196,6 +196,9 @@ pub enum Law {
     /// SCRUB's `2 · MOTION`). Bipolar: 0 at the middle.
     StretchSpeed,
     ScrubSpeed,
+    /// A Part's TILT (ADR 0284), a step of `part_eq::Tilt` on its 128:
+    /// its text, in dB, the UI door's. Bipolar: flat at the middle.
+    EqTilt,
     Phase,
     Pct,
     Curve,
@@ -224,6 +227,7 @@ impl Law {
             | Law::LfoHz
             | Law::StretchSpeed
             | Law::ScrubSpeed
+            | Law::EqTilt
             | Law::ScrubLength
             | Law::DragTime
             | Law::FadeHold => return None,

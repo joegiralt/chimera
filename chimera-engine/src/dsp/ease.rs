@@ -30,6 +30,17 @@ pub struct Ease {
 const LAND: f32 = 1e-5;
 
 impl Ease {
+    /// Unprimed, at 0: `Default`'s, in a const.
+    pub const ZERO: Ease = Ease {
+        v: 0.0,
+        primed: false,
+    };
+
+    /// Where it stands: the last block's end.
+    pub const fn at(&self) -> f32 {
+        self.v
+    }
+
     /// This block's `(from, to)` toward `target`, `k` from `ease_coeff`.
     #[inline]
     pub fn step(&mut self, target: f32, k: f32) -> (f32, f32) {

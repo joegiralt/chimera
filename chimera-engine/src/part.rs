@@ -8,6 +8,7 @@ use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
 use crate::orbit::ring::SnapTo;
+use crate::part_eq::{LoCut, PartEq, Tilt};
 use crate::voice_limit::{Asked, MaxVoices, Reserve, VoiceCount};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,6 +206,9 @@ pub struct PartParams {
     /// MAPPING (ADR 0259): a Scala file's degrees on consecutive keys (0,
     /// CONTINUOUS) or from each C, the spare keys silent (1, KEYBOARD).
     pub mapping: u8,
+    /// TILT and LO CUT (ADR 0284): the Part's channel EQ, after its Sound
+    /// and before LEVEL, PAN and the sends. The project's, never the Sound's.
+    pub eq: PartEq,
 }
 
 /// MODE with MAX VOICES and RESERVE (ADR 0281) in one byte: the Part
@@ -297,6 +301,8 @@ impl PartParams {
     pub const MAPPING: ParamId = ParamId(12);
     pub const MAX_VOICES: ParamId = ParamId(13);
     pub const RESERVE: ParamId = ParamId(14);
+    pub const TILT: ParamId = ParamId(15);
+    pub const LO_CUT: ParamId = ParamId(16);
 
     pub const fn mode(&self) -> PartMode {
         self.voicing.mode()
@@ -335,6 +341,7 @@ impl PartParams {
             bend: INIT_BEND,
             tuning: 0,
             mapping: 0,
+            eq: PartEq::FLAT,
         }
     }
 }
@@ -354,7 +361,7 @@ pub const MAX_VOICES_NAMES: [&str; VoiceCount::VALUES as usize] =
 pub const RESERVE_NAMES: [&str; VoiceCount::VALUES as usize] =
     ["0", "1", "2", "3", "4", "5", "6", "7", "8"];
 
-pub static PART_SPECS: [ParamSpec; 12] = [
+pub static PART_SPECS: [ParamSpec; 14] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
     ParamSpec::choice(
         1,
@@ -476,7 +483,33 @@ pub static PART_SPECS: [ParamSpec; 12] = [
     )
     .ident("RESERVE")
     .glyph(crate::glyph::FocusGlyph::None),
+    // The EQ (ADR 0284): TILT's step, −64 dark to +63 bright, 0 flat; the
+    // audio glides it (`part_eq`), and LO CUT's switch.
+    ParamSpec::stepped(
+        15,
+        "TILT",
+        ValFmt::Law(crate::dsp::modulator::law::Law::EqTilt),
+        Tilt::MIN_STEP as f32,
+        Tilt::MAX_STEP as f32,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("TILT"),
+    ParamSpec::choice(
+        16,
+        "LO CUT",
+        ValFmt::Names(&LO_CUT_NAMES),
+        1.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("LO_CUT")
+    .glyph(crate::glyph::FocusGlyph::Switch),
 ];
+
+/// LO CUT's choices, by `LoCut::code`.
+pub const LO_CUT_NAMES: [&str; LoCut::ALL.len()] = [LoCut::Off.ident(), LoCut::On.ident()];
 
 /// 0 to 15 as text: CH's values by channel number (the byte is the
 /// meaning), and the digits ORB and the algorithm's operators draw.
@@ -505,6 +538,8 @@ impl Block for PartParams {
             Self::MAPPING => f32::from(self.mapping),
             Self::MAX_VOICES => f32::from(self.voices().max.code()),
             Self::RESERVE => f32::from(self.voices().reserve.code()),
+            Self::TILT => f32::from(self.eq.tilt().step()),
+            Self::LO_CUT => f32::from(self.eq.lo_cut().code()),
             _ => 0.0,
         }
     }
@@ -535,6 +570,8 @@ impl Block for PartParams {
                 reserve: Reserve::from_f32(v),
                 ..self.voices()
             }),
+            Self::TILT => self.eq = self.eq.with_tilt(Tilt::from_f32(v)),
+            Self::LO_CUT => self.eq = self.eq.with_lo_cut(LoCut::from_f32(v)),
             _ => {}
         }
     }
@@ -553,6 +590,7 @@ impl Block for PartParams {
             Self::MAPPING => Some(self.mapping),
             Self::MAX_VOICES => Some(self.voices().max.code()),
             Self::RESERVE => Some(self.voices().reserve.code()),
+            Self::LO_CUT => Some(self.eq.lo_cut().code()),
             _ => None,
         }
     }
@@ -575,6 +613,7 @@ impl Block for PartParams {
             Self::RESERVE => RESERVE_NAMES
                 .get(usize::from(self.voices().reserve.code()))
                 .copied(),
+            Self::LO_CUT => Some(self.eq.lo_cut().ident()),
             _ => None,
         }
     }
@@ -607,6 +646,9 @@ impl Block for PartParams {
                     ..self.voices()
                 })
             }),
+            Self::LO_CUT => {
+                apply_code(LoCut::from_code(code), |c| self.eq = self.eq.with_lo_cut(c))
+            }
             _ => false,
         }
     }
