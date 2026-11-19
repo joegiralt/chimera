@@ -2,12 +2,12 @@ module PanelTest exposing (suite)
 
 import Expect
 import Fixture
-import Gesture
 import Layout.Algo exposing (Control(..))
 import Model
 import Protocol exposing (Addr(..), Value(..))
 import Schema
 import Test exposing (Test, describe, test)
+import Ui.Control as Control
 import Unit exposing (Engine(..))
 import View.Algo as Algo
 import View.Controls as Controls
@@ -71,7 +71,7 @@ suite =
                     -- 0.5 + 60 / 240 = 0.75 of ten octaves above 20 Hz
                     expected : Model.Msg
                     expected =
-                        Model.Edit cutoff (Num (Gesture.atNorm cutoffParam 0.75))
+                        Model.Edit cutoff (Num (Control.atNorm cutoffParam 0.75))
                 in
                 Expect.equal [ expected ] out
         , test "the_next_frame_sends_nothing_new" <|

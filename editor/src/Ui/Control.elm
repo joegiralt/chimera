@@ -1,4 +1,4 @@
-module Gesture exposing
+module Ui.Control exposing
     ( Want(..)
     , Wanted
     , atNorm

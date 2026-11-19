@@ -7,7 +7,6 @@ asking for edits, at most one `ed set` a frame for each.
 
 import Browser.Events
 import Dict exposing (Dict)
-import Gesture exposing (Want(..))
 import Html exposing (Html, div, fieldset, legend, span, text)
 import Html.Attributes exposing (class, style)
 import Json.Decode as Decode
@@ -15,6 +14,7 @@ import Layout.Algo as Layout exposing (Cell, Control(..), Item)
 import Model exposing (Model)
 import Protocol exposing (Addr, Value(..), addrKey)
 import Schema exposing (Param)
+import Ui.Control as Control exposing (Want(..))
 import View.Controls as Controls
 
 
@@ -35,7 +35,7 @@ shown until the unit's own report or the pending mark's end replaces it.
 -}
 type alias State =
     { drag : Maybe Drag
-    , wanted : Gesture.Wanted
+    , wanted : Control.Wanted
     , at : Dict String Float
     }
 
@@ -49,13 +49,13 @@ type Msg
 
 init : State
 init =
-    { drag = Nothing, wanted = Gesture.empty, at = Dict.empty }
+    { drag = Nothing, wanted = Control.empty, at = Dict.empty }
 
 
 subscriptions : State -> Sub Msg
 subscriptions s =
     Sub.batch
-        [ if Gesture.isEmpty s.wanted then
+        [ if Control.isEmpty s.wanted then
             Sub.none
 
           else
@@ -94,7 +94,7 @@ position m s p =
     let
         held : Maybe Float
         held =
-            if (s.drag |> Maybe.map (\d -> d.addr == p.addr) |> Maybe.withDefault False) || Model.isPending p.addr m || Gesture.wants p.addr s.wanted then
+            if (s.drag |> Maybe.map (\d -> d.addr == p.addr) |> Maybe.withDefault False) || Model.isPending p.addr m || Control.wants p.addr s.wanted then
                 Dict.get (addrKey p.addr) s.at
 
             else
@@ -170,7 +170,7 @@ update msg m s =
                         setOption p (clamp 0 (optionCount p - 1) (round here + dir)) s
 
                       else
-                        setNorm p (here + toFloat dir * Gesture.wheelNorm p) s
+                        setNorm p (here + toFloat dir * Control.wheelNorm p) s
                     , []
                     )
 
@@ -189,10 +189,10 @@ update msg m s =
             case s.drag of
                 Just d ->
                     if isOptions d.param then
-                        ( setOption d.param (Gesture.dragIndex { n = optionCount d.param, from = round d.from } d.startY y) s, [] )
+                        ( setOption d.param (Control.dragIndex { n = optionCount d.param, from = round d.from } d.startY y) s, [] )
 
                     else
-                        ( setNorm d.param (Gesture.dragNorm { px = travel d.control, from = d.from } d.startY y) s, [] )
+                        ( setNorm d.param (Control.dragNorm { px = travel d.control, from = d.from } d.startY y) s, [] )
 
                 Nothing ->
                     ( s, [] )
@@ -203,7 +203,7 @@ update msg m s =
         Frame ->
             let
                 ( wants, rest ) =
-                    Gesture.flush s.wanted
+                    Control.flush s.wanted
             in
             ( { s | wanted = rest }
             , List.filterMap
@@ -226,12 +226,12 @@ setNorm p t s =
         t1 =
             clamp 0 1 t
     in
-    { s | wanted = Gesture.want p.addr (Number (Gesture.atNorm p t1)) s.wanted, at = Dict.insert (addrKey p.addr) t1 s.at }
+    { s | wanted = Control.want p.addr (Number (Control.atNorm p t1)) s.wanted, at = Dict.insert (addrKey p.addr) t1 s.at }
 
 
 setOption : Param -> Int -> State -> State
 setOption p i s =
-    { s | wanted = Gesture.want p.addr (Option i) s.wanted, at = Dict.insert (addrKey p.addr) (toFloat i) s.at }
+    { s | wanted = Control.want p.addr (Option i) s.wanted, at = Dict.insert (addrKey p.addr) (toFloat i) s.at }
 
 
 
