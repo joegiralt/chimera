@@ -408,6 +408,12 @@ impl Renderer {
             }
             _ => {}
         }
+        // Pointing (ADR 0288): the hint in the status line's place, but
+        // for a refusal, which says why.
+        #[cfg(feature = "midi-map")]
+        if point_line(display, f, theme::BIGVIZ_STATUS_Y) {
+            return;
+        }
         if let Some(status) = f.prime_status {
             let label = view::view(f.def, f.focus, &f.ctx).label();
             let w = components::viz_status(display, status, label);
@@ -845,6 +851,10 @@ impl Renderer {
                 f.prime_status,
                 f.text,
             );
+            #[cfg(feature = "midi-map")]
+            if point_line(display, f, hint::FOCUS_Y) {
+                return;
+            }
             let right = hint_right(&o.gauge);
             return hint::focus(display, f.hint(o.hint), f.text, right);
         }
@@ -887,6 +897,11 @@ impl Renderer {
                     hint::FOCUS_Y,
                 );
             }
+            return;
+        }
+        // Pointing: its keys, whatever the cell's own (ADR 0288).
+        #[cfg(feature = "midi-map")]
+        if point_line(display, f, hint::FOCUS_Y) {
             return;
         }
         // A pickup waiting: which way to turn, over the cell's own hint.
@@ -1411,6 +1426,41 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         }
         _ => components::Look::Live,
     }
+}
+
+/// Pointing's hint line (ADR 0288), drawn at the margin on baseline `y`:
+/// on the focus band's hint line, or, at `BIGVIZ_STATUS_Y`, in a BigViz
+/// status line's place on its backing, but for a refusal, which the status
+/// says. `true`, drawn.
+#[cfg(feature = "midi-map")]
+#[inline(never)]
+fn point_line<D>(d: &mut D, f: &Frame, y: i32) -> bool
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use crate::ui::learn::{LearnNote, Pointed};
+    let Some(PrimeStatus::Learn(Some(LearnNote::Point(p)))) = f.prime_status else {
+        return false;
+    };
+    let viz = y == theme::BIGVIZ_STATUS_Y;
+    if viz && matches!(p, Pointed::NotMappable | Pointed::Bound) {
+        return false;
+    }
+    let Some(h) = crate::ui::cc::point_hint(p) else {
+        return false;
+    };
+    if viz {
+        draw::fill_rect(
+            d,
+            theme::MARGIN_X - 2,
+            theme::HEADER_BOTTOM,
+            hint::width_at(&h, theme::TextSize::Normal) + 4,
+            viz::PLOT_TOP - theme::HEADER_BOTTOM,
+            theme::BG,
+        );
+    }
+    hint::draw(d, &h, theme::MARGIN_X, y);
+    true
 }
 
 /// The focus band's label: FREQ MOD and RES MOD name the source their jack

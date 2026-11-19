@@ -276,7 +276,7 @@ check-door-placed elf:
     # inliner leaves out of them is checked too, and MIDI MAP's entries
     # (`hear_in`, `map_in`) where `midi-map` links them.
     midi_ui=('ui::UiState>::hand_in$')
-    for p in 'ui::midi::' 'ui::UiState>::hear_in$' 'ui::UiState>::map_in$' 'ui::UiState>::focus_note$' 'ui::UiState>::out_in$' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
+    for p in 'ui::midi::' 'ui::pointing::' 'ui::UiState>::hear_in$' 'ui::UiState>::map_in$' 'ui::UiState>::focus_note$' 'ui::UiState>::out_in$' 'chimera_midi::take::' 'chimera_midi::law::' 'chimera_midi::rel::' 'chimera_midi::learn::' 'chimera_midi::out::'; do
         if grep -qE " [tT] .*$p" <<< "$syms"; then midi_ui+=("$p"); fi
     done
     # DRUM's voice groups (ADR 0280): the door's entry always links, the
@@ -294,6 +294,8 @@ check-door-placed elf:
     done
     # ed is pinned to the S4 group (ADR 0272), not anywhere in bank 2.
     grep -E ' [tT] .*console::ed::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "ed outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # So is MIDI MAP's pointing, where `midi-map` links it (ADR 0288).
+    awk '/ [tT] .*ui::pointing::/ { a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "pointing outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"
     # So are VA's solos and their table (ADR 0283).
     grep -E ' [tT] .*va::osc::solo::' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "VA solo outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
     # And no solo code of theirs sits in bank 1: the quiet pulse's or its runs' (ADR 0283).

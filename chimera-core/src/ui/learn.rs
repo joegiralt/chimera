@@ -28,6 +28,82 @@ pub enum Learn {
     /// Part `part`'s map entry `entry` is the control heard, its kind
     /// sensed from what it sends (the samples bank 2's, in AXI).
     Sensing { part: PartId, entry: u8 },
+    /// MIDI MAP's pointing (ADR 0288): no control is heard; EDIT on the
+    /// cell pointed at binds it.
+    Pointing(Point),
+}
+
+/// MIDI MAP's pointing (ADR 0288): whose map, what EDIT does to the cell
+/// pointed at, and whether a cell is pointed at on the page shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Point {
+    pub part: PartId,
+    pub aim: Aim,
+    pub at: Pointer,
+}
+
+/// What a bind does (ADR 0288).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aim {
+    /// `+ NEW BINDING`: a new row, on the first CC no row uses.
+    New,
+    /// The Sound's row on this target: only its target changes.
+    Retarget(Mappable),
+}
+
+/// Pointing's progress on the page shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pointer {
+    /// No cell pointed at here yet: EDIT walks the pages as ever.
+    Walking,
+    /// A turn pointed at the focused cell: EDIT binds it.
+    At,
+}
+
+/// What pointing says in the value's place (bank 2's `point_say`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pointed {
+    /// No cell pointed at: `NEW BINDING` or `NEW TARGET`.
+    Walking(AimKind),
+    /// The cell pointed at takes it: EDIT binds.
+    Binds(AimKind),
+    /// The cell pointed at no control may drive.
+    NotMappable,
+    /// Another row holds the cell's param.
+    Bound,
+}
+
+/// `Aim` without its target: what the band names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AimKind {
+    New,
+    Retarget,
+}
+
+impl Aim {
+    pub fn kind(self) -> AimKind {
+        match self {
+            Aim::New => AimKind::New,
+            Aim::Retarget(_) => AimKind::Retarget,
+        }
+    }
+}
+
+impl Pointed {
+    /// EDIT binds: the hint says so; else EDIT walks.
+    #[inline(always)]
+    pub fn binds(self) -> bool {
+        matches!(self, Pointed::Binds(_))
+    }
+}
+
+/// What reaches pointing (ADR 0288), bank 2's to judge: a ladder key, a
+/// frame's ORBIT keys, a move.
+#[derive(Clone, Copy, Debug)]
+pub enum PointAct<'a> {
+    Nav(super::nav::NavKey),
+    Orbit(&'a [Option<OrbitKey>]),
+    Moved(super::nav::Location),
 }
 
 /// What a learn heard or found.
@@ -45,6 +121,8 @@ pub enum LearnNote {
     Sensing(Sensed),
     /// Sixteen entries, the cell's param not among them.
     Full,
+    /// MIDI MAP's pointing (ADR 0288).
+    Point(Pointed),
 }
 
 impl LearnNote {
@@ -126,6 +204,11 @@ impl UiState {
                     .sensed()
                     .map(|s| PrimeStatus::Learn(Some(LearnNote::Sensing(s))));
             }
+            Learn::Pointing(_) => {
+                return self
+                    .point_say()
+                    .map(|p| PrimeStatus::Learn(Some(LearnNote::Point(p))));
+            }
             Learn::Off => {}
         }
         self.prime_status
@@ -179,6 +262,11 @@ impl UiState {
         if !cfg!(feature = "midi-map") {
             return false;
         }
+        // Pointing judges the frame's keys first (ADR 0288).
+        #[cfg(feature = "midi-map")]
+        if matches!(self.learn, Learn::Pointing(_)) {
+            return self.point(PointAct::Orbit(keys));
+        }
         let mix = c.edges(ButtonId::Mix).down;
         if mix && c.button_state(ButtonId::Seq) == ButtonState::Pressed {
             #[cfg(feature = "midi-map")]
@@ -191,15 +279,21 @@ impl UiState {
         false
     }
 
-    /// Armed, a turn moves the focus and never a value; sensing, a turn
-    /// ends it with its guess and moves nothing. `true` while learning.
+    /// Armed or pointing, a turn moves the focus and never a value;
+    /// sensing, a turn ends it with its guess and moves nothing. `true`
+    /// while learning.
     /// Out of line: `input` is big enough.
     #[cfg_attr(feature = "midi-map", inline(never))]
     pub(super) fn learn_turns(&mut self, c: &impl Controls) -> bool {
-        let part = match self.learn {
+        let then = match self.learn {
             _ if !cfg!(feature = "midi-map") => return false,
             Learn::Off => return false,
-            Learn::Armed { part, .. } => part,
+            Learn::Armed { part, .. } => Learn::Armed { part, note: None },
+            // Pointing: a turn points at its cell (ADR 0288).
+            Learn::Pointing(p) => Learn::Pointing(Point {
+                at: Pointer::At,
+                ..p
+            }),
             Learn::Sensing { .. } => {
                 if ALL_ENCODERS.iter().any(|&e| c.encoder_delta(e) != 0) {
                     self.learn = Learn::Off;
@@ -211,7 +305,7 @@ impl UiState {
         for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
             if c.encoder_delta(enc) != 0 && view::view(def, i, &ctx) != View::Empty {
                 self.focus.touch(def.id, i);
-                self.learn = Learn::Armed { part, note: None };
+                self.learn = then;
             }
         }
         true

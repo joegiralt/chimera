@@ -44,6 +44,9 @@ pub mod part_page;
 pub mod part_voices;
 pub mod perf;
 pub mod pit_tuner;
+// MIDI MAP's pointing (ADR 0288): bank 2's, an S4 group.
+#[cfg(feature = "midi-map")]
+pub mod pointing;
 pub mod pool_page;
 pub mod push;
 pub mod region;
@@ -1070,7 +1073,17 @@ impl UiState {
     /// matrix), and the page's values snap.
     fn go(&mut self, to: Location) {
         let from = self.loc;
-        self.learn = learn::Learn::Off;
+        // Pointing goes on through its Part's places (ADR 0288).
+        #[cfg(feature = "midi-map")]
+        if matches!(self.learn, learn::Learn::Pointing(_)) {
+            self.point(learn::PointAct::Moved(to));
+        } else {
+            self.learn = learn::Learn::Off;
+        }
+        #[cfg(not(feature = "midi-map"))]
+        {
+            self.learn = learn::Learn::Off;
+        }
         if from.browse().is_none() && to.browse().is_some() {
             self.lib.entered();
         }
@@ -3158,13 +3171,26 @@ impl UiState {
             if self.job.is_some() || self.modal.is_some() {
                 break;
             }
-            // MIX + SEQ arms or cancels learn; any other nav key cancels it.
-            if k == NavKey::MixSeq {
-                #[cfg(feature = "midi-map")]
+            // Pointing judges the key first (ADR 0288): EDIT binding or
+            // MENU cancelling takes the frame, so MIDI MAP's keys never
+            // read the bind's EDIT again; the rest walk.
+            #[cfg(feature = "midi-map")]
+            if matches!(self.learn, learn::Learn::Pointing(_)) {
+                if self.point(learn::PointAct::Nav(k)) {
+                    return;
+                }
+            } else if k == NavKey::MixSeq {
+                // MIX + SEQ arms or cancels learn; any other nav key
+                // cancels it.
                 self.toggle_learn();
                 continue;
+            } else {
+                self.learn = learn::Learn::Off;
             }
-            self.learn = learn::Learn::Off;
+            #[cfg(not(feature = "midi-map"))]
+            {
+                self.learn = learn::Learn::Off;
+            }
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
                 // MIX + EDIT saves to the source the tab shows; FACTORY
                 // is read-only.

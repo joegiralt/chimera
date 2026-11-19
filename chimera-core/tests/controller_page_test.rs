@@ -146,7 +146,8 @@ fn row_0_picks_and_the_layer_s_rows_follow() {
     let mut rig = Rig::new(&mut ui, s);
     rig.to(&["PART", "MIDI MAP"]);
     let b = rig.ui.map_band();
-    assert_eq!(b.rows, 1 + own);
+    // The pick, the Sound's rows, `+ NEW BINDING` (ADR 0288).
+    assert_eq!(b.rows, 2 + own);
     assert_eq!(b.text(0).label.as_str(), "CONTROLLER");
     assert_eq!(b.text(0).word.as_str(), "NONE");
     assert_eq!(rig.ui.legend_for_test().unwrap(), "B PICK · EDIT SAVE");
@@ -154,7 +155,7 @@ fn row_0_picks_and_the_layer_s_rows_follow() {
     assert_eq!(rig.ui.project().controller(P1), Some(name("EC4")));
     rig.work();
     let b = rig.ui.map_band();
-    assert_eq!(b.rows, 3 + own);
+    assert_eq!(b.rows, 4 + own);
     assert_eq!(b.text(0).word.as_str(), "EC4");
     assert_eq!(b.text(1).label.as_str(), "CC 21  CUTOFF");
     assert_eq!(b.text(1).tail.as_str(), "IN EC4");
@@ -197,7 +198,7 @@ fn edit_on_row_0_saves_the_part_s_rows() {
     assert_eq!(saved, was);
     // The page shows the same rows, now the map's.
     rig.work();
-    assert_eq!(rig.ui.map_band().rows, 1 + own.len());
+    assert_eq!(rig.ui.map_band().rows, 2 + own.len());
     assert_eq!(rig.ui.location().settings().unwrap().row(), 0);
 }
 
@@ -335,7 +336,7 @@ fn an_engine_change_swaps_the_layer() {
         rig.work();
         let b = rig.ui.map_band();
         let own = rig.ui.project().part(P1).sound.map.len();
-        (1..b.rows - own)
+        (1..b.rows - own - 1)
             .map(|i| b.text(i).label.as_str().to_owned())
             .collect::<Vec<_>>()
     };

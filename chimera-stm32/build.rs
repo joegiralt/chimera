@@ -382,7 +382,12 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     let voices =
         "    *(.text.*12chimera_core2ui11part_voices* .rodata.*12chimera_core2ui11part_voices*
       .text.*10ToastTimer5shows* .text.*11voice_limit*6Shares7refusal*);\n";
-    let s4 = format!("{ed}{groups}{voices}");
+    // MIDI MAP's pointing (ADR 0288): `ui::pointing`, reached through
+    // `MidiUiDoor`'s `point_say`, `point` and `point_hint`, and from
+    // `ui::midi::page`; an S4 group (ADR 0272: new 0.4 work goes high).
+    let pointing =
+        "    *(.text.*12chimera_core2ui8pointing* .rodata.*12chimera_core2ui8pointing*);\n";
+    let s4 = format!("{ed}{groups}{voices}{pointing}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"

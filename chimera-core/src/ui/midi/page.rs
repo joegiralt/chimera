@@ -17,6 +17,7 @@ use chimera_midi::take::Takeover;
 
 use super::super::UiState;
 use super::super::fmt::FmtBuf;
+use super::super::learn::Aim;
 use super::super::region::settings_key;
 use super::super::settings::Ask;
 use super::super::settings::midi_map::{MapDelete, MapRow, MapText, name};
@@ -27,7 +28,7 @@ use super::learn::put_num;
 use crate::addr::BlockRef;
 use crate::dsp::voice_fx::params::FxType;
 use crate::midi_map::{
-    Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, MidiMap, NrpnKind,
+    Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, MAP_LEN, MidiMap, NrpnKind,
 };
 
 /// The page's words, `|` between: a named static, so its bytes are bank
@@ -333,12 +334,14 @@ fn edited(e: &Binding, d: [i8; 6]) -> Binding {
     }
 }
 
-/// A MIDI MAP row (ADR 0226): a layer's or a Sound's, at its index.
+/// A MIDI MAP row (ADR 0226): a layer's or a Sound's, at its index, or
+/// `+ NEW BINDING` (ADR 0288).
 #[derive(Clone, Copy)]
 enum Row {
     Pick,
     Layer(usize, Binding),
     Own(usize, Binding),
+    New,
 }
 
 /// Row `i` of a Part whose Sound's map is `own` and layer `layer`.
@@ -350,7 +353,10 @@ fn row_of(own: &MidiMap, layer: &MidiMap, i: usize) -> Option<Row> {
         Some(&b) => Some(Row::Layer(k, b)),
         None => {
             let j = k - layer.len();
-            own.entries().get(j).map(|&b| Row::Own(j, b))
+            match own.entries().get(j) {
+                Some(&b) => Some(Row::Own(j, b)),
+                None => (j == own.len()).then_some(Row::New),
+            }
         }
     }
 }
@@ -362,10 +368,11 @@ impl UiState {
         self.cc.built().map_or(MidiMap::EMPTY, |m| *m.ctl.layer(i))
     }
 
-    /// The page's rows: row 0, the layer's, the Sound's. The door's
+    /// The page's rows: row 0, the layer's, the Sound's, `+ NEW
+    /// BINDING`. The door's
     /// `map_rows`.
     pub(in crate::ui) fn map_rows_in(&self) -> usize {
-        1 + self.page_layer().len() + self.project.part(self.active_part).sound.map.len()
+        2 + self.page_layer().len() + self.project.part(self.active_part).sound.map.len()
     }
 
     /// Row `i`'s words and look into `out`. The door's `map_row`.
@@ -375,6 +382,7 @@ impl UiState {
         let layer = self.page_layer();
         match row_of(&s.map, &layer, i) {
             None => {}
+            Some(Row::New) => self.new_row(s.map.len() >= MAP_LEN, out),
             Some(Row::Pick) => {
                 out.row = MapRow::Pick;
                 let _ = out.label.write_str(lword(Lw::Controller));
@@ -431,10 +439,11 @@ impl UiState {
 
     /// A pass's keys on MIDI MAP: the encoders' detents A to F, and MIX
     /// down (bit 0) with MINUS (bit 1, delete) or PLUS (bit 2, KEEP MAP)
-    /// pressed. The door's `map_in`.
+    /// pressed; EDIT (bit 3) alone points (ADR 0288). The door's `map_in`.
     pub(in crate::ui) fn map_in(&mut self, d: [i8; 6], keys: u8) {
         let delete = keys & 0b011 == 0b011;
         let keep = keys & 0b101 == 0b101;
+        let point = keys & 0b1001 == 0b1000;
         let p = self.active_part;
         let (map, Some(at)) = (self.project.part(p).sound.map, self.loc.settings()) else {
             return;
@@ -443,6 +452,14 @@ impl UiState {
         let fx = self.project.part(p).sound.params.fx.ty();
         let (layer_at, own_at, e) = match row_of(&map, &layer, at.row() as usize) {
             None => return,
+            Some(Row::New) => {
+                if point && map.len() < MAP_LEN {
+                    self.point_start(Aim::New);
+                }
+                return;
+            }
+            // A Sound row's EDIT: its new target (ADR 0288).
+            Some(Row::Own(_, e)) if point => return self.point_start(Aim::Retarget(e.target)),
             Some(Row::Pick) => {
                 if d[1] != 0 {
                     self.ctl_pick(p, d[1]);

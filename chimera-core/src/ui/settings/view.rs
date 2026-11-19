@@ -917,7 +917,13 @@ impl Bands<'_> {
                 let on = match self.map.filter(|m| m.open) {
                     None => LegendFor::Dimmed,
                     Some(_) if self.at.row() == 0 => LegendFor::MapPick,
-                    Some(_) => LegendFor::Map,
+                    // `+ NEW BINDING` (ADR 0288): EDIT points, or nothing
+                    // on a full map.
+                    Some(m) => match m.text(self.at.row() as usize) {
+                        t if t.row != super::midi_map::MapRow::New => LegendFor::Map,
+                        t if t.look == RowLook::Dimmed => LegendFor::Dimmed,
+                        _ => LegendFor::Action,
+                    },
                 };
                 return legend(on, false);
             }
@@ -1105,10 +1111,10 @@ impl Bands<'_> {
                 })
             });
         }
-        // No rows past the pick: how to learn one, under it (two rows: the
-        // one line outruns the list).
+        // No binding: how to learn one, under the pick and `+ NEW BINDING`
+        // (two rows: the one line outruns the list).
         let note = ["NO CCS", "MIX+SEQ ON A CELL"];
-        let rows = if m.empty { 1 + note.len() } else { m.rows };
+        let rows = if m.empty { m.rows + note.len() } else { m.rows };
         let bar = self.at.row() as usize;
         let c = Col {
             size: self.text,
@@ -1123,9 +1129,9 @@ impl Bands<'_> {
             self.first,
             Bar::Keyed,
             |i, f| {
-                if m.empty && i > 0 {
+                if m.empty && i >= m.rows {
                     return f(ListRow {
-                        label: note[i - 1],
+                        label: note[i - m.rows],
                         opens: false,
                         note: None,
                         look: RowLook::Dimmed,

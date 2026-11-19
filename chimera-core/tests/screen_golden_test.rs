@@ -568,18 +568,25 @@ const GOLDENS: &[(&str, u64)] = &[
     ("install_refused", 0xc046b081ce36613d),
     // New (MIDI phase 1, Task 13): MIDI MAP with every kind of control,
     // and FINE's pickup waiting below the knob.
+    // midi_map_* re-recorded for ADR 0288: `+ NEW BINDING` ends the list
+    // (its scroll bar), a Sound row's keys add EDIT TARGET.
     #[cfg(feature = "midi-map")]
-    ("midi_map_mixed", 0x03fc86edcb8d1692),
+    ("midi_map_mixed", 0xbceb78f40a940437),
     #[cfg(feature = "midi-map")]
     ("pickup_hint", 0xa90607689d854b4f),
     #[cfg(feature = "midi-map")]
-    ("midi_map_pick", 0xe200b09c0e9e62c2),
+    ("midi_map_pick", 0xe0f3c6a27ed04446),
     // Controller map EC4 picked, the bar on its first row (ADR 0255).
     #[cfg(feature = "midi-map")]
-    ("midi_map_layer", 0xbfb631040566fdb7),
+    ("midi_map_layer", 0x682c55b5eea4ad4a),
     // The bar on its row 0: rename and delete in the tail line.
     #[cfg(feature = "midi-map")]
-    ("midi_map_layer_row0", 0x399716417c55b81a),
+    ("midi_map_layer_row0", 0x7f30bc83c4c02eb6),
+    // New for ADR 0288: MIDI MAP's `+ NEW BINDING`, and pointing from it.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_new_row", 0xe58bdda60046905a),
+    #[cfg(feature = "midi-map")]
+    ("midi_map_pointing", 0xb477dffacf7b7f28),
     // DRUM's pages (ADR 0265, slice 1 Task 8). KIT's re-recorded for ADR
     // 0270's TONAL cell; drum_kit_machine's MACHINE reads BELL, its short;
     // drum_more's band draws the focused MACHINE's icon, large;
