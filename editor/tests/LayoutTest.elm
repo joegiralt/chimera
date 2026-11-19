@@ -193,6 +193,34 @@ suite =
                     |> List.concatMap (\e -> placed (EnginePage.layout e Kit).every)
                     |> List.filter (\a -> not (Set.member a any))
                     |> Expect.equal []
+        , describe "each engine's INIT leaves nothing to OTHER"
+            (List.map
+                (\e ->
+                    test (Unit.engineName e) <|
+                        \_ ->
+                            EnginePage.other (Shared.active (Fixture.schemaFor e) (Fixture.initVariants e)) (EnginePage.layout e Kit).every
+                                |> List.map (.param >> .addr >> Addr.key)
+                                |> Expect.equal []
+                )
+                paged
+            )
+        , test "the_init_fixtures_name_variants_their_schemas_describe" <|
+            \_ ->
+                paged
+                    |> List.concatMap
+                        (\e ->
+                            let
+                                sch : Schema
+                                sch =
+                                    Fixture.schemaFor e
+
+                                known : Set ( String, String )
+                                known =
+                                    Schema.pages sch |> List.concatMap .panels |> List.map (\pn -> ( pn.name, pn.variant )) |> Set.fromList
+                            in
+                            Fixture.initVariants e |> Dict.toList |> List.filter (\nv -> not (Set.member nv known))
+                        )
+                    |> Expect.equal []
         , describe "every screen a layout draws is a page its engine describes"
             (List.map
                 (\e ->

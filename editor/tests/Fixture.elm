@@ -1,5 +1,6 @@
-module Fixture exposing (param, paramIn, schema, schemaFor)
+module Fixture exposing (initVariants, param, paramIn, schema, schemaFor)
 
+import Dict exposing (Dict)
 import FixtureData
 import Protocol exposing (Line(..))
 import Schema exposing (Schema)
@@ -33,6 +34,39 @@ schemaFor e =
 
         Drum ->
             read FixtureData.drum
+
+
+{-| The panel variants each engine's INIT Sound shows, as the sim reports
+them with `ed since 0` (fixtures/<engine>-init.txt).
+-}
+initVariants : Engine -> Dict String String
+initVariants e =
+    (case e of
+        Algo ->
+            FixtureData.linesInit
+
+        Va ->
+            FixtureData.vaInit
+
+        Modal ->
+            FixtureData.modalInit
+
+        Tape ->
+            FixtureData.tapeInit
+
+        Drum ->
+            FixtureData.drumInit
+    )
+        |> List.filterMap
+            (\l ->
+                case String.words l of
+                    [ "panel", name, variant ] ->
+                        Just ( name, variant )
+
+                    _ ->
+                        Nothing
+            )
+        |> Dict.fromList
 
 
 read : List String -> Schema
