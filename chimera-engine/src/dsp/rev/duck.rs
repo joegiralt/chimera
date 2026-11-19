@@ -54,6 +54,8 @@ pub struct Duck {
     /// `KEY_FLOOR..=KEY_FULL`.
     env: Db,
     gain: Gain,
+    /// The bus's rate, typed when it changes (`run`), not each block.
+    rate: SampleRate,
 }
 
 impl Duck {
@@ -61,6 +63,7 @@ impl Duck {
         amount: Unit::ZERO,
         env: KEY_FLOOR,
         gain: Gain::UNITY,
+        rate: SampleRate::HW,
     };
 
     /// AMOUNT `to` is 0 and the duck has let go: nothing to do, the return
@@ -93,17 +96,11 @@ pub fn gain_of(amount: Unit, share: Unit) -> Gain {
     Gain::new(fast_exp2(db / DB_PER_OCTAVE))
 }
 
-/// `hz` typed: the bus's rate, never 0 (the DACs' if it were). Out of
-/// line, in the duck's S4 group: `Reverb::process` calls it only when the
-/// rate changes.
-#[inline(never)]
-#[cold]
-pub fn rate(hz: u32) -> SampleRate {
-    SampleRate::new(hz).unwrap_or(SampleRate::HW)
-}
-
 /// One block: `send` (the reverb's input) keys the follower; `out`, the
 /// wet return, is ramped from the last block's gain to this one's.
+/// `bus_hz` is the FX bus's rate as it hands it on, untyped: typed into
+/// the duck's own `rate` only when it changes (never 0: the DACs' if it
+/// were), here in S4, not in the reverb's S0-S3 block.
 #[inline(never)]
 #[optimize(size)]
 pub fn run(
@@ -111,9 +108,13 @@ pub fn run(
     send: &[f32; BLOCK_SIZE],
     amount: Unit,
     release: Unit,
-    sr: SampleRate,
+    bus_hz: u32,
     out: &mut Stereo,
 ) {
+    if d.rate.get() != bus_hz {
+        d.rate = SampleRate::new(bus_hz).unwrap_or(SampleRate::HW);
+    }
+    let sr = d.rate;
     // AMOUNT's 20 ms ease, landing within −100 dB of its target.
     let (t, k) = (amount.get(), ease_coeff(sr.get()));
     let a = t + k * (d.amount.get() - t);
@@ -190,7 +191,7 @@ mod tests {
             &loud,
             Unit::ONE,
             Unit::ZERO,
-            SampleRate::HW,
+            SampleRate::HW.get(),
             &mut out,
         );
         assert!(out.l[0] > out.l[BLOCK_SIZE - 1], "ramped down, not stepped");
@@ -201,7 +202,7 @@ mod tests {
                 &loud,
                 Unit::ONE,
                 Unit::ZERO,
-                SampleRate::HW,
+                SampleRate::HW.get(),
                 &mut out,
             );
         }
@@ -216,7 +217,14 @@ mod tests {
         let mut back_at = None;
         for b in 0..300 {
             out = ones();
-            run(&mut d, &quiet, Unit::ONE, release, SampleRate::HW, &mut out);
+            run(
+                &mut d,
+                &quiet,
+                Unit::ONE,
+                release,
+                SampleRate::HW.get(),
+                &mut out,
+            );
             if back_at.is_none() && out.l[BLOCK_SIZE - 1] == 1.0 {
                 back_at = Some(b);
             }
@@ -230,7 +238,7 @@ mod tests {
                 &quiet,
                 Unit::ZERO,
                 release,
-                SampleRate::HW,
+                SampleRate::HW.get(),
                 &mut out,
             );
         }
