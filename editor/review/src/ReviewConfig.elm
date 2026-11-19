@@ -45,7 +45,7 @@ config =
     , NoUnused.CustomTypeConstructorArgs.rule
         -- A test's own Msg is built and compared, never taken apart: the view
         -- under test hands it back, and Event.expect compares it whole.
-        |> Review.Rule.ignoreErrorsForFiles [ "tests/PartsTest.elm", "tests/PageTest.elm" ]
+        |> Review.Rule.ignoreErrorsForFiles [ "tests/PageTest.elm" ]
     , NoUnused.CustomTypeConstructors.rule []
     , NoUnused.Dependencies.rule
     , NoUnused.Exports.rule
