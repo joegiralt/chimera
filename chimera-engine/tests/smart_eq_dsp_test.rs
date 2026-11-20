@@ -775,11 +775,11 @@ fn the_bands_sum_against_the_cuts_asked_on_a_fine_grid() {
                         let cuts = [a, b, c, e];
                         let d = dips(&cuts.map(CutDb::new));
                         let most = cuts.iter().fold(0.0f32, |m, &c| m.max(c)) as f64;
-                        for at in 0..grid.len() {
+                        for (at, &hz) in grid.iter().enumerate() {
                             let g = db(&d, at);
                             f.deeper = f.deeper.max(-g - most);
                             if g > f.over {
-                                (f.over, f.over_hz) = (g, grid[at]);
+                                (f.over, f.over_hz) = (g, hz);
                             }
                         }
                         let read = heard(&d);
