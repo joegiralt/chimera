@@ -31,6 +31,7 @@ const BANDS_W: i32 = 4 * ALL_BAR_W + 3 * ALL_BAR_GAP;
 /// `h` px of a cut's depth, by its square root: `CutDb::MAX` (27 dB,
 /// AMOUNT's OVER) is the whole box, DEEP's 12 dB two thirds of it, and a
 /// polite 4 dB still two fifths, so every range reads.
+#[inline(always)]
 fn depth(c: CutDb, h: i32) -> i32 {
     (h as f32 * crate::dsp::algo::math::sqrt(c.get() / CutDb::MAX.get()) + 0.5) as i32
 }
@@ -44,12 +45,15 @@ struct Pen<'a>(&'a mut Plan);
 struct Bytes<'a>(&'a mut Text);
 
 impl Bytes<'_> {
+    #[inline(always)]
     fn str(&mut self, s: &str) -> &mut Self {
         for &b in s.as_bytes() {
             self.byte(b);
         }
         self
     }
+
+    #[inline(always)]
 
     fn byte(&mut self, b: u8) -> &mut Self {
         let at = usize::from(self.0.len);
@@ -61,6 +65,7 @@ impl Bytes<'_> {
     }
 
     /// `n`, 0..=99, in decimal.
+    #[inline(always)]
     fn digits(&mut self, n: u32) -> &mut Self {
         if n >= 10 {
             self.byte(b'0' + (n / 10 % 10) as u8);
@@ -70,6 +75,7 @@ impl Bytes<'_> {
 }
 
 impl Pen<'_> {
+    #[inline(always)]
     fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Rgb565) {
         let n = usize::from(self.0.n_rects);
         if let Some(r) = self.0.rects.get_mut(n) {
@@ -85,6 +91,7 @@ impl Pen<'_> {
     }
 
     /// A text centred on `x`, written by `f`.
+    #[inline(always)]
     fn text(&mut self, x: i32, y: i32, font: Font, color: Rgb565, f: impl FnOnce(&mut Bytes<'_>)) {
         let n = usize::from(self.0.n_texts);
         if let Some(t) = self.0.texts.get_mut(n) {
@@ -102,7 +109,10 @@ impl Pen<'_> {
     }
 }
 
-/// The band's plan, on bank 2's side of the door.
+/// The band's plan, on bank 2's side of the door. Every helper here is
+/// inlined into it: a call between them is one the outliner may share
+/// with bank 1's code, a jump from bank 1 into bank 2 (`door-check`).
+#[inline(never)]
 pub fn plan_in(s: &Shown, out: &mut Plan) {
     let mut pen = Pen(out);
     match s.shows {
@@ -114,6 +124,7 @@ pub fn plan_in(s: &Shown, out: &mut Plan) {
 /// PRT › EQ: beside each Part's LEVEL bar and meter (`viz::parts_overview`,
 /// `part_meter`), its four live cuts as thin bars; the edited Part's lit,
 /// its deepest cut in dB by its number.
+#[inline(always)]
 fn part(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
     for p in PartId::ALL {
         let lit = p == sel;
@@ -148,8 +159,11 @@ fn part(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
 const ALL_X0: i32 = 20;
 const ALL_DX: i32 = 32;
 
+#[inline(always)]
+
 fn all(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
-    let column = |pen: &mut Pen<'_>, i: usize, lit: bool, cuts: CutView, role: &'static str| {
+    #[inline(always)]
+    fn column(pen: &mut Pen<'_>, i: usize, lit: bool, cuts: CutView, role: &'static str) -> i32 {
         let cx = ALL_X0 + ALL_DX * i as i32;
         let fill = if lit { theme::ACCENT } else { theme::BAR_REST };
         let x0 = cx - BANDS_W / 2;
@@ -164,7 +178,7 @@ fn all(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
             w.str(role);
         });
         cx
-    };
+    }
     for p in PartId::ALL {
         let lit = p == sel;
         let role = s.roles[p.index()].letter();
