@@ -1588,10 +1588,15 @@ fn cube_ui(slot: EncoderId) -> UiState {
 
 #[test]
 fn glyph_cube_page_moves_only_inside_its_box() {
-    // Every reverb knob carries the composite; TYPE, SYNC and ROLE are words.
+    // Every reverb knob carries the composite; TYPE, SYNC and ROLE are
+    // words; REV › DUCK's (ADR 0295) are the duck's, not the room's: arcs.
     for s in BlockRef::Reverb.specs() {
         if matches!(s.ident, "TYPE" | "SYNC" | "ROLE") {
             assert_eq!(s.glyph, NONE, "{}", s.ident);
+            continue;
+        }
+        if matches!(s.ident, "DUCK" | "DUCK_RELEASE") {
+            assert_eq!(s.glyph, FocusGlyph::Arc, "{}", s.ident);
             continue;
         }
         assert_eq!(s.glyph, CUBE, "{}", s.ident);

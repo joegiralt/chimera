@@ -578,6 +578,7 @@ impl Tail {
             sync: RevSync::Off,
             role: crate::dsp::reverb::WASH_ROLE,
             density: set[10],
+            ..ReverbParams::DEFAULT
         };
         // Unsynced: the set values alone, at the default tempo.
         let k = knobs(&p, Tempo::DEFAULT, &mut FoldState(0));

@@ -2,7 +2,7 @@
 //! pages as `ed describe`'s, its pixels as the desktop simulator's.
 
 use chimera_core::block::DiskCode;
-use chimera_core::console::{Console, EdState, Request, SetRefusal, ed_pages};
+use chimera_core::console::{Console, EdAddr, EdState, Request, SetRefusal, ed_pages, ed_stored};
 use chimera_core::dsp::drum::types::{Machine, PadId};
 use chimera_core::params::EngineType;
 use chimera_core::project::{PartFrom, PartSource};
@@ -165,6 +165,9 @@ impl Sim {
         self.ui
             .go_for_test(Location::pages(p, chain.locate(def.id)?));
         self.ui.focus_for_test(how.focus.map_or(0, Slot::index));
+        // The same instant as the mirror's still: the display's own motion
+        // at rest, whatever this simulator drew before (#1035).
+        self.ui.still_for_test();
         // Its refusals' toasts gone: the editor's screens show none.
         self.ui.step_toast(60_000);
         self.ui.update(UiTick::for_test());
@@ -262,6 +265,17 @@ fn same_as_sim(sim: &mut Sim, m: &mut Mirror, vals: &[(String, f32)], how: &str)
         let get = format!("ed get {a}");
         assert_eq!(m.ed_line(&get), sim.ask(&get), "{e:?} {how}: {a}");
     }
+    // Bit for bit, not to `ed get`'s text alone: what it printed read
+    // back as the value the sim holds (#1035).
+    for (a, _) in vals {
+        let at = EdAddr::parse(a.as_bytes()).unwrap();
+        let (mine, theirs) = (m.stored(addr(a)), ed_stored(&sim.ui, at));
+        assert_eq!(
+            mine.map(f32::to_bits),
+            theirs.map(f32::to_bits),
+            "{e:?} {how}: {a} is {mine:?}, the sim's {theirs:?}"
+        );
+    }
     let mut drawn = 0;
     for n in 0..u16::from(ed_pages(e)) {
         let shown = Shown::default();
@@ -285,12 +299,65 @@ fn same_as_sim(sim: &mut Sim, m: &mut Mirror, vals: &[(String, f32)], how: &str)
     assert!(drawn > 0);
 }
 
+/// The seeds `a_render_is_the_desktop_simulators` and the stills draw
+/// from: several, so no one Sound's luck passes them (#1035 hid behind
+/// 0x5EED_0000 until a new param moved its draws).
+const SEEDS: [u64; 4] = [0x5EED_0000, 0x5EED_0100, 0x0BAD_C0DE, 0x1035_1035];
+
+/// A still is its Sound's, its page's and its focus's alone: the same
+/// page drawn first, again, and after every other page is the same
+/// picture, on Sounds whose LFOs move the cells shown (#1035: the display
+/// LFOs ran on from paint to paint, so a gauge sat where the paints before
+/// it left it).
+#[test]
+fn a_render_depends_on_nothing_drawn_before() {
+    let mut moved = 0;
+    for seed in SEEDS {
+        for (i, e) in EngineType::PLAYABLE.into_iter().enumerate() {
+            let (_, vals) = random_sound(e, seed + i as u64);
+            let batch: Vec<(Addr, f32)> = vals.iter().map(|(a, v)| (addr(a), *v)).collect();
+            let mut m = mirror(e);
+            m.apply(&batch);
+            let draw = |m: &mut Mirror, n: u16| {
+                let mut fb = Fb::new();
+                m.render(PageNo(n), Shown::default(), &mut fb).map(|()| fb)
+            };
+            let pages = u16::from(ed_pages(e)).min(40);
+            let first: Vec<Option<Fb>> = (0..pages).map(|n| draw(&mut m, n)).collect();
+            // A second pass, backwards: every page after all the others.
+            for n in (0..pages).rev() {
+                let (a, b) = (draw(&mut m, n), draw(&mut m, n));
+                match (&first[usize::from(n)], a, b) {
+                    (Some(f), Some(a), Some(b)) => {
+                        assert_eq!(differ(f, &a), 0, "{e:?} {seed:#x}: page {n} after the rest");
+                        assert_eq!(differ(&a, &b), 0, "{e:?} {seed:#x}: page {n} twice");
+                    }
+                    (None, None, None) => {}
+                    _ => panic!("{e:?} {seed:#x}: page {n} comes and goes"),
+                }
+            }
+            // The Sound moves something: the test would hold of a still
+            // Sound whatever the mirror did.
+            let sound = &m.ui().project().part(m.ui().active_part).sound;
+            moved += usize::from(!sound.mod_state.is_empty());
+        }
+    }
+    assert!(moved > 0, "no Sound here routes anything");
+}
+
 /// The mirror replays a random Sound's values, in describe order and
-/// shuffled, to the sim's values and pixels on every page of every engine.
+/// shuffled, to the sim's values and pixels on every page of every engine,
+/// on each of `SEEDS`.
 #[test]
 fn a_render_is_the_desktop_simulators() {
+    for seed in SEEDS {
+        a_render_is_the_sims(seed);
+    }
+}
+
+fn a_render_is_the_sims(seed: u64) {
     for (i, e) in EngineType::PLAYABLE.into_iter().enumerate() {
-        let (mut sim, vals) = random_sound(e, 0x5EED_0000 + i as u64);
+        let (mut sim, vals) = random_sound(e, seed + i as u64);
         let batch: Vec<(Addr, f32)> = vals.iter().map(|(a, v)| (addr(a), *v)).collect();
 
         let mut m = mirror(e);
@@ -305,7 +372,7 @@ fn a_render_is_the_desktop_simulators() {
         assert!(done.refused.is_empty(), "{e:?}: {:?}", done.refused);
         same_as_sim(&mut sim, &mut m, &vals, "shuffled");
         println!(
-            "{e:?}: {} values, shuffled in {} passes",
+            "{seed:#x} {e:?}: {} values, shuffled in {} passes",
             vals.len(),
             done.passes
         );

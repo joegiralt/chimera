@@ -103,6 +103,8 @@ pub struct Frame<'a> {
     pub master_gr_db: f32,
     /// The active Part's LEVEL LED fill (`ClipHold`); 0 is dark.
     pub clip: f32,
+    /// MIXER › PRT's meters and key marks (ADR 0293).
+    pub meters: &'a crate::ui::part_meter::PartMeters,
     /// The tempo the reverb follows and its synced time's fold.
     pub rev_clock: (
         crate::dsp::rev::sync::Tempo,
@@ -478,10 +480,13 @@ impl Renderer {
         match f.def.viz {
             VizType::AudioStats => audio_page::draw_viz(display, f.audio),
             VizType::Pool => crate::ui::pool_page::draw_viz(display, f.pool),
-            VizType::MixerLevels => {
-                viz::parts_overview(display, &self.strips(f), f.active_part.index())
-            }
+            VizType::MixerLevels => self.mixer_levels(display, f),
             VizType::SmartEq(scope) => {
+                // PRT › EQ keeps the Parts' overview and meters (ADR 0293)
+                // under SMART EQ's live cuts.
+                if scope == crate::ui::block_def::SmartScope::Part {
+                    self.mixer_levels(display, f);
+                }
                 crate::ui::smart_view::paint(display, &self.smart_shown(f, scope))
             }
             VizType::EffectsFlow(FxFlow::Sends) => {
@@ -627,6 +632,17 @@ impl Renderer {
 
     /// Level and pan of every Part; the edited one from its animated LEVEL
     /// and PAN slots so it lerps like the cells.
+    /// The Parts' overview with each one's live meter and key mark beside
+    /// it (ADR 0293).
+    fn mixer_levels<D>(&self, display: &mut D, f: &Frame)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        viz::parts_overview(display, &self.strips(f), f.active_part.index());
+        let on = &mut crate::ui::tape_strip::On(display);
+        crate::bank2::ui_door(|u| u.meters(crate::ui::part_meter::Ask::Paint(on, f.meters)));
+    }
+
     /// SMART EQ's band (ADR 0296): PRT › EQ's Part, or every Part and the
     /// reverb's return on MST › LVL, whose cell F is the return's role.
     fn smart_shown(
@@ -722,10 +738,21 @@ impl Renderer {
                 VizType::Pool => ([0; 6], crate::ui::pool_page::viz_key(f.pool)),
                 VizType::MixerLevels => (
                     region::quantize_values(&self.anim),
-                    strips_key(&self.strips(f), f.active_part.index()),
+                    strips_key(&self.strips(f), f.active_part.index()) ^ f.meters.key(),
                 ),
                 VizType::EffectsFlow(_) => (region::quantize_values(&self.anim), f.focus as u32),
-                VizType::SmartEq(scope) => ([0; 6], self.smart_shown(f, scope).key()),
+                VizType::SmartEq(scope) => {
+                    let cuts = self.smart_shown(f, scope).key();
+                    match scope {
+                        crate::ui::block_def::SmartScope::Part => (
+                            region::quantize_values(&self.anim),
+                            strips_key(&self.strips(f), f.active_part.index())
+                                ^ f.meters.key()
+                                ^ cuts.rotate_left(3),
+                        ),
+                        crate::ui::block_def::SmartScope::All => ([0; 6], cuts),
+                    }
+                }
                 VizType::AlgoDiagram => {
                     let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);
@@ -876,7 +903,7 @@ impl Renderer {
                 f.matrix,
                 amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
-                f.hint(f.matrix.hint()),
+                f.hint(view::matrix_hint(f.matrix)),
             );
         }
         if f.def.viz == VizType::AudioStats {

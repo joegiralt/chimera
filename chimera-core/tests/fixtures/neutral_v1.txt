@@ -424,6 +424,7 @@ Sound {
                 0.0,
                 0.0,
             ],
+            width: 1.0,
         },
         pitch: PitchParams {
             pitch: 0.0,

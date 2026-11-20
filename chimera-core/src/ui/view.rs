@@ -1233,6 +1233,14 @@ pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'s
     crate::bank2::ui_door(|u| u.band_note(addr, sound, src)).flatten()
 }
 
+/// The matrix's hint on its cursor, `ui::notes`' over the grid's own
+/// (ADR 0292): the VCA column's words, bank 2's.
+pub fn matrix_hint(m: &crate::ui::mod_grid::MatrixState) -> crate::ui::hint::Hint {
+    let mut out = None;
+    crate::bank2::ui_door(|u| u.notes(crate::ui::notes::Ask::Matrix(m, &mut out)));
+    out.unwrap_or_else(|| m.hint())
+}
+
 /// A route moves TAPE: its wow runs whatever TAPE stores (`tape_runs`).
 pub fn tape_routed(sound: &Sound) -> bool {
     let a = ParamAddr::new(BlockRef::TapeEngine, T::TAPE);
@@ -1243,9 +1251,11 @@ pub fn tape_routed(sound: &Sound) -> bool {
 /// (spec § UI "Dimmed").
 pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     match (addr.block, addr.param) {
-        // AMP's VEL under the Algo/Modal pass-through (spec § 5). A pad's
-        // VEL drives its own amp, routed or not (ADR 0269).
-        (BlockRef::Out, OutParams::VCA_VEL) => sound.mod_state.routes_into(VCA) == 0,
+        // AMP's VEL and BASE (ADR 0292) under the Algo/Modal pass-through
+        // (spec § 5). A pad's VEL drives its own amp, routed or not (ADR 0269).
+        (BlockRef::Out, OutParams::VCA_VEL | OutParams::VCA) => {
+            sound.mod_state.routes_into(VCA) == 0
+        }
         // MIX mixes nothing with TYPE OFF.
         (BlockRef::VoiceFx, VoiceFxParams::MIX) => sound.params.fx.ty() == FxType::Off,
         // KIND lists built kinds only; with one it is fixed.

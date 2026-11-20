@@ -21,6 +21,7 @@ use chimera_core::hw::{MAX_PARTS, MAX_VOICES};
 use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::project::PartId;
+use chimera_core::stereo::{VoicePan, Width};
 use chimera_hal::BLOCK_SIZE;
 use chimera_midi::value::U7;
 use common::drum::{PLAY_BUDGET, drum_hits, drum_rig};
@@ -367,6 +368,51 @@ fn pan_places_the_pad() {
     assert!(lr < 1e-4 * ll, "hard left {ll} {lr}");
     let (rl, rr) = pair_peaks(63);
     assert!(rl < 0.05 * rr, "right {rl} {rr}");
+}
+
+/// The pair's peaks for a pad at `pan` with the Sound's OUT PAN and
+/// WIDTH (ADR 0294).
+fn stereo_peaks(pan: i8, out_pan: f32, width: f32) -> (f32, f32) {
+    let mut k = Kit::DEFAULT;
+    k.pad_mut(pad(1)).set_pan(Pan::clamped(pan));
+    let (_w, mut r) = rig(&k);
+    r.shared.parts[0].params.out.pan = VoicePan::new(out_pan);
+    r.shared.parts[0].params.out.width = Width::new(width);
+    // A block first: the Part's WIDTH lands while it has no side.
+    r.block(&r.shared.clone());
+    r.note_on(0, 0);
+    let (mut l, mut rr) = (0.0f32, 0.0f32);
+    for _ in 0..40 {
+        let out = r.block(&r.shared.clone());
+        for f in out[0].chunks(2) {
+            l = l.max(f[0].abs());
+            rr = rr.max(f[1].abs());
+        }
+    }
+    (l, rr)
+}
+
+/// A pad is placed by its own PAN: the Sound's OUT PAN, not on DRUM's
+/// pages, moves nothing (ADR 0294).
+#[test]
+fn out_pan_leaves_a_pad_where_it_is() {
+    // Each hit is seeded anew: alike within its own variation.
+    let ((l0, r0), (l1, r1)) = (stereo_peaks(-30, 0.0, 1.0), stereo_peaks(-30, 1.0, 1.0));
+    assert!(
+        (l0 - l1).abs() < 1e-3 * l0 && (r0 - r1).abs() < 1e-3 * r0,
+        "{l0} {r0} / {l1} {r1}"
+    );
+}
+
+/// WIDTH (AMP › GATE's F on DRUM, ADR 0294): 0 folds a panned pad to
+/// the middle, unity is the pad as panned, 2 wider still.
+#[test]
+fn width_spreads_a_kits_pans() {
+    let (l, r) = stereo_peaks(-40, 0.0, 0.0);
+    assert!((l - r).abs() < 1e-6 * l, "mono {l} {r}");
+    let (l1, r1) = stereo_peaks(-40, 0.0, 1.0);
+    let (l2, r2) = stereo_peaks(-40, 0.0, 2.0);
+    assert!(l2 / r2 > l1 / r1 * 1.5, "wider: {l1}/{r1} to {l2}/{r2}");
 }
 
 #[test]

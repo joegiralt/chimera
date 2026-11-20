@@ -1,10 +1,12 @@
 //! What SMART EQ is doing (ADR 0296), planned for a page's viz band: on
-//! MIXER › PRT › EQ the Part's four cut bands, LOW to HIGH, each hanging
-//! down from its top by its live cut with the cut in dB under it; on
+//! MIXER › PRT › EQ, beside each Part's LEVEL bar and meter (ADR 0293),
+//! its four cut bands, LOW to HIGH, each hanging down from its top by its
+//! live cut, the edited Part's lit with its deepest cut in dB; on
 //! MIXER › MST › LVL every Part's four, small, under its number, its
 //! role's letter below, the edited Part lit. Bank 2's (`bank2.x` links this
 //! module with the UI door's groups); bank 1 reaches `plan_in` only
-//! through `UiDoor::smart_eq` and draws the plan (`smart_view::paint`).
+//! through `UiDoor`'s `meters` entry (`part_meter::Ask::Cuts`) and draws
+//! the plan (`smart_view::paint`).
 //! Closed, the band is blank.
 
 use embedded_graphics::pixelcolor::Rgb565;
@@ -14,14 +16,12 @@ use super::{theme, viz};
 use crate::part_eq::smart::{Band, CutDb, CutView};
 use crate::project::PartId;
 
-/// `MIXER › PRT › EQ`'s columns: centres and the bars' box.
-const PART_X0: i32 = 30;
-const PART_DX: i32 = 60;
-const PART_LABEL_Y: i32 = 128;
-const PART_BAR_Y: i32 = 136;
-const PART_BAR_W: i32 = 24;
-const PART_BAR_H: i32 = 34;
-const PART_DB_Y: i32 = 176;
+/// `MIXER › PRT › EQ`'s cut bars: right of a Part's LEVEL bar (8 px) and
+/// its meter (3 px, 2 px off), inside its 36 px column.
+const PART_BARS_X: i32 = 16;
+const PART_BAR_W: i32 = 3;
+const PART_BAR_GAP: i32 = 1;
+const PART_BARS_W: i32 = 4 * PART_BAR_W + 3 * PART_BAR_GAP;
 /// `MIXER › MST › LVL`'s small bars in each Part's column.
 const ALL_BAR_W: i32 = 4;
 const ALL_BAR_GAP: i32 = 2;
@@ -106,37 +106,41 @@ impl Pen<'_> {
 pub fn plan_in(s: &Shown, out: &mut Plan) {
     let mut pen = Pen(out);
     match s.shows {
-        Shows::Part(p) => part(&mut pen, s.cuts[p.index()]),
+        Shows::Part(p) => part(&mut pen, s, p),
         Shows::All(sel) => all(&mut pen, s, sel),
     }
 }
 
-fn part(pen: &mut Pen<'_>, v: CutView) {
-    for b in Band::ALL {
-        let cx = PART_X0 + PART_DX * b.index() as i32;
-        let c = v.cut(b);
-        let x = cx - PART_BAR_W / 2;
-        pen.rect(x, PART_BAR_Y, PART_BAR_W, PART_BAR_H, theme::FAINT);
-        pen.rect(
-            x,
-            PART_BAR_Y,
-            PART_BAR_W,
-            depth(c, PART_BAR_H),
-            theme::ACCENT,
-        );
-        let name = b.name();
-        pen.text(cx, PART_LABEL_Y, Font::Label, theme::MID, |w| {
-            w.str(name);
-        });
-        let cutting = c.get() >= 0.05;
-        let ink = if cutting { theme::INK } else { theme::MID };
-        pen.text(cx, PART_DB_Y, Font::Label, ink, |w| {
-            // Tenths, as the TILT cell reads: `-2.1 dB`, `0.0 dB`.
-            let tenths = (c.get() * 10.0 + 0.5) as u32;
-            let sign = if cutting { "-" } else { "" };
-            w.str(sign).digits(tenths / 10).byte(b'.');
-            w.digits(tenths % 10).str(" dB");
-        });
+/// PRT › EQ: beside each Part's LEVEL bar and meter (`viz::parts_overview`,
+/// `part_meter`), its four live cuts as thin bars; the edited Part's lit,
+/// its deepest cut in dB by its number.
+fn part(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
+    for p in PartId::ALL {
+        let lit = p == sel;
+        let x0 = viz::strip_x(p.index()) + PART_BARS_X;
+        let fill = if lit { theme::ACCENT } else { theme::BAR_REST };
+        let cuts = s.cuts[p.index()];
+        for b in Band::ALL {
+            let bx = x0 + (PART_BAR_W + PART_BAR_GAP) * b.index() as i32;
+            pen.rect(bx, viz::STRIP_TOP, PART_BAR_W, viz::STRIP_H, theme::FAINT);
+            let h = depth(cuts.cut(b), viz::STRIP_H);
+            pen.rect(bx, viz::STRIP_TOP, PART_BAR_W, h, fill);
+        }
+        let (_, deepest) = cuts.deepest();
+        if lit && deepest.get() >= 0.05 {
+            // Tenths under 10 dB (`-2.1`), whole dB from there (`-27`):
+            // what fits between this Part's number and the next.
+            let tenths = (deepest.get() * 10.0 + 0.5) as u32;
+            let cx = x0 + PART_BARS_W / 2 + 1;
+            pen.text(cx, viz::STRIP_NUM_Y, Font::Label, theme::INK, |w| {
+                if tenths < 100 {
+                    w.str("-").digits(tenths / 10).byte(b'.');
+                    w.digits(tenths % 10);
+                } else {
+                    w.str("-").digits((tenths + 5) / 10);
+                }
+            });
+        }
     }
 }
 

@@ -140,7 +140,8 @@ where
 {
     use crate::ui::{draw, theme};
     let mut plan = Plan::EMPTY;
-    if crate::bank2::ui_door(|u| u.smart_eq(s, &mut plan)).is_none() {
+    let ask = crate::ui::part_meter::Ask::Cuts(s, &mut plan);
+    if crate::bank2::ui_door(|u| u.meters(ask)).is_none() {
         return;
     }
     for r in &plan.rects[..usize::from(plan.n_rects).min(Plan::RECTS)] {

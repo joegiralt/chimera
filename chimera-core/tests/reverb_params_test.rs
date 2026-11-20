@@ -66,7 +66,10 @@ fn new_ids_and_idents_are_frozen() {
         (12, "RATE"),
         (13, "SYNC"),
         (14, "DENSITY"),
-        // 15 and 16 are REV › DUCK's (ADR 0295); 17 the return's SMART EQ role.
+        // REV › DUCK (ADR 0295).
+        (15, "DUCK"),
+        (16, "DUCK_RELEASE"),
+        // 17: the return's SMART EQ role (ADR 0296).
         (17, "ROLE"),
     ];
     for (id, ident) in want {
@@ -74,7 +77,7 @@ fn new_ids_and_idents_are_frozen() {
     }
     assert!(find_spec(&REVERB_SPECS, ParamId(0)).is_none());
     assert!(find_spec(&REVERB_SPECS, ParamId(5)).is_none());
-    assert_eq!(REVERB_SPECS.len(), 14);
+    assert_eq!(REVERB_SPECS.len(), 16);
 }
 
 #[test]

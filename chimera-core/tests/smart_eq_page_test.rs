@@ -67,14 +67,15 @@ fn the_eq_pages_band_shows_the_parts_live_cuts() {
     let mut cuts = [CutDb::ZERO; 4];
     cuts[Band::Low.index()] = CutDb::MAX;
     cuts[Band::LowMid.index()] = CutDb::new(2.1);
+    cuts[Band::High.index()] = CutDb::new(9.6);
     SMART_VIEW.publish(p, CutView::of(&cuts));
     screen::settle(&mut ui);
     let shot = screen::render_ui(&ui);
     shot.dump("smart_eq_part_eq");
     let low = band_px(&shot, theme::ACCENT);
     SMART_VIEW.publish(p, CutView::NONE);
-    // LOW's bar, near its whole 24 × 34 px.
-    assert!(low >= none + 24 * 30, "{none} → {low}");
+    // LOW's thin bar beside the Part's meter, its whole 3 × 38 px.
+    assert!(low >= none + 3 * 38, "{none} → {low}");
 }
 
 #[test]

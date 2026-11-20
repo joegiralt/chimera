@@ -218,6 +218,10 @@ pub use self::algo::math::log2 as fast_log2;
 /// `x` held to `[lo, hi]` without a panic path.
 pub use self::algo::math::clampf;
 
+/// dB a doubling of level: 20·log10(2). The one constant the compressor,
+/// the reverb's duck and PRT's meters convert by.
+pub const DB_PER_OCTAVE: f32 = 6.020_6;
+
 /// An `f32` in 0..=1; NaN is 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Unit(f32);

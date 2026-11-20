@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod bloom;
 pub mod burst;
+pub mod duck;
 pub mod loop_engine;
 pub mod parts;
 pub mod room;
@@ -285,15 +286,17 @@ pub struct Reverb {
     fold: FoldState,
     /// The tail's last LSBs faded out.
     tail: TailGate,
+    /// REV › DUCK (ADR 0295): its follower and gain, at rest `Duck::REST`.
+    duck: duck::Duck,
 }
 
 #[cfg(any(test, feature = "smear-probe"))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix, fold, tail
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix, fold, tail, duck
 });
 #[cfg(not(any(test, feature = "smear-probe")))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix, fold, tail
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix, fold, tail, duck
 });
 
 /// QUAD's SMEAR seed: its four lines' wanders hash it.
@@ -336,6 +339,7 @@ impl Reverb {
             mix: Ease::default(),
             fold: FoldState(0),
             tail: TailGate::new(),
+            duck: duck::Duck::REST,
         }
     }
 
@@ -358,6 +362,8 @@ impl Reverb {
             slot.assume_init_mut()
         };
         r.wander = QUAD_WANDERS;
+        // The duck rests at unity gain, not zero bytes' 0.
+        r.duck = duck::Duck::REST;
         r
     }
 
@@ -773,6 +779,10 @@ impl Reverb {
                 step_of((from, to), BLOCK_SIZE) * wet / FULL_SCALE,
             );
         }
+        // REV › DUCK (ADR 0295), bank 2's S4: the return under its own
+        // input. AMOUNT 0 and let go, it returns at once: the return bit for
+        // bit.
+        duck::step(&mut self.duck, send, p, sample_rate, out);
         // The switch's ramp: its own pass, so FADE IN is a fresh engine's
         // return times the ramp, bit for bit.
         if let Some(r) = phase.gains() {

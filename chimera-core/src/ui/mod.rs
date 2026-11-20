@@ -34,10 +34,12 @@ pub mod library;
 pub mod meter;
 pub mod midi;
 pub mod param_out;
+pub mod part_meter;
 pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
+pub mod notes;
 pub mod onset;
 pub mod op_page;
 pub mod orbit;
@@ -379,6 +381,8 @@ pub struct UiState {
     lib: library::LibState,
     /// Each Part's filter LEVEL LED: its meter, held and falling.
     clip: [ClipHold; crate::hw::MAX_PARTS],
+    /// MIXER › PRT's meters and key marks (ADR 0293): bank 2's to step.
+    meters: part_meter::PartMeters,
     /// The Parts with a voice sounding, as the audio last published.
     live: PartSet,
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
@@ -482,6 +486,7 @@ crate::in_place::field_list!(UiState => UiState {
     src,
     lib,
     clip,
+    meters,
     live,
     rev_knobs,
     cc,
@@ -588,6 +593,7 @@ impl UiState {
             addr_of_mut!((*p).bank2).write(None);
             addr_of_mut!((*p).live).write(PartSet::EMPTY);
             addr_of_mut!((*p).clip).write([ClipHold::default(); crate::hw::MAX_PARTS]);
+            addr_of_mut!((*p).meters).write(part_meter::PartMeters::REST);
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
@@ -2209,6 +2215,27 @@ impl UiState {
         self.go(to)
     }
 
+    /// The display's own motion put at rest (chimera-screen's stills,
+    /// #1035): the display LFOs back at their start and the map's scroll on
+    /// its page's row, so the next frame depends on the Sound, the page
+    /// and the focus alone, never on the frames drawn before it. The
+    /// values' animators are already snapped by the page's entry.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn still_for_test(&mut self) {
+        self.display_lfos = [Lfo::new(); 3];
+        // `update`'s own target for the map's scroll.
+        let sub = self.loc.page(&self.cx()).map_or(0, |(_, at)| at.sub());
+        let bottom = theme::BRANCH_START_Y + (sub as i32 + 1) * theme::BRANCH_LINE_HEIGHT;
+        let over = bottom - chimera_hal::SCREEN_HEIGHT as i32;
+        let rows = if over > 0 {
+            over as f32 / theme::BRANCH_LINE_HEIGHT as f32
+        } else {
+            0.0
+        };
+        self.renderer.branch_scroll.snap(rows);
+    }
+
     /// Slot `slot` of the page shown in the focus band, as its last turn
     /// leaves it, its value untouched (chimera-screen's `focus`).
     #[cfg(any(test, feature = "test-support"))]
@@ -3634,6 +3661,21 @@ impl UiState {
         for (h, m) in self.clip.iter_mut().zip(&crate::meter::FILTER_CLIP) {
             h.step(m.take().get(), animation::FRAME_MS as u16);
         }
+        // MIXER › PRT's meters (ADR 0293): bank 2's, measured while shown.
+        let shown = match self.page_def().viz {
+            VizType::MixerLevels | VizType::SmartEq(block_def::SmartScope::Part)
+                if self.loc.on_mixer() =>
+            {
+                part_meter::Shown::On {
+                    parts: self.project.perf().parts(),
+                    zones: self.midi.mpe,
+                    dt: part_meter::Ms(animation::FRAME_MS as u16),
+                }
+            }
+            _ => part_meter::Shown::Off,
+        };
+        let meters = &mut self.meters;
+        crate::bank2::ui_door(|d| d.meters(part_meter::Ask::Frame(meters, shown)));
         self.live = crate::meter::sounding_parts();
         let at = self.active_part;
         self.strip_pass();
@@ -3915,6 +3957,7 @@ impl UiState {
             bank2: self.bank2,
             master_gr_db: crate::meter::MASTER_GR.read(),
             clip: self.clip[self.active_part.index()].fill(),
+            meters: &self.meters,
             rev_clock: crate::meter::rev_clock(),
             clock: self.clock,
             fx: &self.project.perf().fx,

@@ -38,12 +38,12 @@ fn cx(engine: EngineType) -> NavCtx {
     }
 }
 
-/// Under a TYPE with no cell on REV › MORE 2, EDIT from REV › MORE goes
-/// round to REV.
+/// Under a TYPE with no cell on REV › MORE 2, EDIT from REV › DUCK (after
+/// MORE, ADR 0295) goes round to REV.
 #[test]
 fn edit_skips_an_empty_more_2() {
     use chimera_core::dsp::reverb::ReverbType;
-    use chimera_core::ui::block_registry::{EFX, EFX_MORE, EFX_MORE2};
+    use chimera_core::ui::block_registry::{EFX, EFX_DUCK, EFX_MORE, EFX_MORE2};
     for (rev, want) in [(ReverbType::Quad, EFX.id), (ReverbType::Hall, EFX_MORE2.id)] {
         let cx = NavCtx {
             rev,
@@ -67,7 +67,11 @@ fn edit_skips_an_empty_more_2() {
             panic!()
         };
         assert_eq!(def(more), EFX_MORE.id);
-        let Step::Go(next) = more.step(NavKey::Edit, &cx, &mut r) else {
+        let Step::Go(duck) = more.step(NavKey::Edit, &cx, &mut r) else {
+            panic!()
+        };
+        assert_eq!(def(duck), EFX_DUCK.id, "every TYPE has DUCK");
+        let Step::Go(next) = duck.step(NavKey::Edit, &cx, &mut r) else {
             panic!()
         };
         assert_eq!(def(next), want, "{rev:?}");

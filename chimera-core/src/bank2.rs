@@ -275,9 +275,14 @@ pub struct UiDoor {
     /// A Part's MAX VOICES and RESERVE (`ui::part_voices`, ADR 0281): a
     /// turn or edit, a held one's reason, the reserves booked.
     voices: fn(crate::ui::part_voices::Ask<'_>),
-    /// SMART EQ's band (`ui::smart_eq`, ADR 0296): the plan of PRT › EQ's
-    /// four live cuts, or of every Part's on MST › LVL.
-    smart_eq: fn(&crate::ui::smart_view::Shown, &mut crate::ui::smart_view::Plan),
+    /// The band's words on 0.4's tester cells (`ui::notes`, ADR 0292):
+    /// the matrix's VCA column, AMP's BASE.
+    notes: fn(crate::ui::notes::Ask<'_>),
+    /// MIXER › PRT's meters and key marks (`ui::part_meter`, ADR 0293),
+    /// and SMART EQ's live cuts beside them (`Ask::Cuts`, ADR 0296: the
+    /// table is full at 32 words, and the tables after it are at fixed
+    /// slots).
+    meters: fn(crate::ui::part_meter::Ask<'_>),
 }
 
 // The table fits its 128 B before the next door's (`bank2.x`): 32 words
@@ -327,8 +332,21 @@ impl UiDoor {
         feel: crate::ui::feel::ask_in,
         groups: crate::ui::kit_groups::ask_in,
         voices: crate::ui::part_voices::ask_in,
-        smart_eq: crate::ui::smart_eq::plan_in,
+        notes: crate::ui::notes::ask_in,
+        meters: crate::ui::part_meter::ask_in,
     };
+
+    /// `ui::part_meter`'s answer to `a` (ADR 0293).
+    #[inline(always)]
+    pub(crate) fn meters(&self, a: crate::ui::part_meter::Ask<'_>) {
+        (self.meters)(a)
+    }
+
+    /// `ui::notes`' answer to `a` (ADR 0292).
+    #[inline(always)]
+    pub(crate) fn notes(&self, a: crate::ui::notes::Ask<'_>) {
+        (self.notes)(a)
+    }
 
     /// `ui::feel`'s answer to `a` (ADR 0279).
     #[inline(always)]
@@ -537,15 +555,6 @@ impl UiDoor {
     #[inline(always)]
     pub(crate) fn voices(&self, a: crate::ui::part_voices::Ask<'_>) {
         (self.voices)(a)
-    }
-
-    #[inline(always)]
-    pub(crate) fn smart_eq(
-        &self,
-        s: &crate::ui::smart_view::Shown,
-        out: &mut crate::ui::smart_view::Plan,
-    ) {
-        (self.smart_eq)(s, out)
     }
 }
 
