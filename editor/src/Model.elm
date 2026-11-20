@@ -41,9 +41,9 @@ value, and an edit the unit would not take shows the unit's reason.
 
 Nothing the unit says is dropped unseen. It answers each command line in the
 order sent, so the commands still unanswered are held in that order
-(`awaiting`) and an `ERR` is tied to the one it answers. Every `ERR`, and
-every line the editor can't read, is kept as a `Notice` until the user has
-seen it (`SeenNotices`): no later answer, success or link erases one.
+(`awaiting`) and an `ERR` is tied to the one it answers. Every `ERR`, every
+set `since` says was refused, and every line the editor can't read, is kept
+as a `Notice` until the user has seen it (`SeenNotices`): no later answer, success or link erases one.
 
 The schemas are the unit's own text (ADR 0289): on connect, and on an engine
 the editor hasn't read, it asks `ed schema <S>` for its page count and hash,
@@ -599,8 +599,9 @@ noticeText n =
             "THE UNIT SAID A LINE THIS EDITOR CAN'T READ: " ++ raw
 
 
-{-| At most this many distinct notices are kept; past it the oldest falls
-off and is counted (`noticesLost`).
+{-| At most this many distinct notices are kept; past it one falls off and
+is counted (`noticesLost`): the oldest line the editor couldn't read, and
+only with none of those the oldest refusal.
 -}
 noticesKept : Int
 noticesKept =
@@ -608,7 +609,7 @@ noticesKept =
 
 
 {-| A notice kept: one the user has not seen yet is counted once more and
-comes first; else it is new, and past `noticesKept` the oldest is lost.
+comes first; else it is new, and past `noticesKept` one is lost.
 -}
 keep : Notice -> Model -> Model
 keep n m =
@@ -621,7 +622,64 @@ keep n m =
         all =
             { notice = n, times = times + 1 } :: List.filter (\k -> k.notice /= n) m.kept
     in
-    { m | kept = List.take noticesKept all, lost = m.lost + max 0 (List.length all - noticesKept) }
+    if List.length all > noticesKept then
+        { m | kept = evict all, lost = m.lost + 1 }
+
+    else
+        { m | kept = all }
+
+
+{-| A full list less one, newest first: its oldest unread line, or with
+none its oldest refusal. A refusal answers something the user did.
+-}
+evict : List Kept -> List Kept
+evict all =
+    let
+        isUnread : Kept -> Bool
+        isUnread k =
+            case k.notice of
+                Unread _ ->
+                    True
+
+                Refusal _ ->
+                    False
+
+        -- Oldest first: the first unread line met is the one to go.
+        less : List Kept -> List Kept
+        less ks =
+            case ks of
+                k :: rest ->
+                    if isUnread k then
+                        rest
+
+                    else
+                        k :: less rest
+
+                [] ->
+                    []
+    in
+    if List.any isUnread all then
+        List.reverse (less (List.reverse all))
+
+    else
+        List.take (List.length all - 1) all
+
+
+{-| A set's refusal as a notice: with the set it answers where one waits,
+else naming its address, so it is still said off its control's page.
+-}
+setRefused : Maybe Command -> Addr -> String -> Model -> Model
+setRefused sent a why m =
+    case sent of
+        Just _ ->
+            keep (Refusal { sent = sent, why = why }) m
+
+        Nothing ->
+            if String.contains (Addr.key a) why then
+                keep (Refusal { sent = Nothing, why = why }) m
+
+            else
+                keep (Refusal { sent = Nothing, why = Addr.key a ++ ": " ++ why }) m
 
 
 {-| The cell the box's MIDI learn is armed on, when the box can name it.
@@ -1005,8 +1063,8 @@ line raw l m =
                 Queued ->
                     ( m, [] )
 
-                SetRefused _ _ ->
-                    ( m, [] )
+                SetRefused a why ->
+                    ( setRefused Nothing a why m, [] )
 
                 SinceTooLarge ->
                     ( m, [] )
@@ -1188,7 +1246,15 @@ lineIn raw l m =
                     ( m, [] )
 
         SetRefused a why ->
-            ( answered (\k -> k == AskedSet a) { m | refusals = Dict.insert (Addr.key a) why m.refusals }, [] )
+            let
+                sent : Maybe Command
+                sent =
+                    m.awaiting |> List.filter (\c -> askedBy c == AskedSet a) |> List.head
+            in
+            ( answered (\k -> k == AskedSet a) { m | refusals = Dict.insert (Addr.key a) why m.refusals }
+                |> setRefused sent a why
+            , []
+            )
 
         Queued ->
             ( answered (\k -> k /= AskedSince) m, [] )
@@ -1334,7 +1400,7 @@ answer a m =
                 m
 
             else
-                { m | refusals = Dict.insert (Addr.key at) why m.refusals }
+                setRefused Nothing at why { m | refusals = Dict.insert (Addr.key at) why m.refusals }
 
         Source text ->
             if m.stage == Following then

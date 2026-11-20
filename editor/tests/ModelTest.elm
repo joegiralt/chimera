@@ -283,6 +283,16 @@ said m =
     Model.notices m |> List.map (.notice >> Model.noticeText)
 
 
+isUnread : Notice -> Bool
+isUnread n =
+    case n of
+        Unread _ ->
+            True
+
+        Refusal _ ->
+            False
+
+
 shown : Model.Model -> Maybe String
 shown m =
     Model.shown cutoff m |> Maybe.map .text
@@ -1612,6 +1622,89 @@ suite =
                         , \_ -> Expect.equal 0 (m |> Model.step SeenNotices |> Tuple.first |> Model.noticesLost)
                         ]
                         ()
+            , test "a_full_list_drops_its_oldest_unread_before_any_refusal" <|
+                \_ ->
+                    let
+                        m : Model.Model
+                        m =
+                            following |> feed ([ "ERR r 0", "wibble 1", "wibble 2" ] ++ (List.range 1 14 |> List.map (\n -> "ERR r " ++ String.fromInt n)))
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 16 (List.length (Model.notices m))
+                        , \_ -> Expect.equal [ Unread "wibble 2" ] (Model.notices m |> List.map .notice |> List.filter isUnread)
+                        , \_ -> Expect.equal (Just (Refusal { sent = Nothing, why = "r 0" })) (Model.notices m |> List.reverse |> List.head |> Maybe.map .notice)
+                        , \_ -> Expect.equal 1 (Model.noticesLost m)
+                        ]
+                        ()
+            , test "an_unread_line_never_pushes_a_refusal_off_a_full_list" <|
+                \_ ->
+                    let
+                        m : Model.Model
+                        m =
+                            following |> feed ((List.range 1 16 |> List.map (\n -> "ERR r " ++ String.fromInt n)) ++ [ "wibble" ])
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (List.range 1 16 |> List.reverse |> List.map (\n -> Refusal { sent = Nothing, why = "r " ++ String.fromInt n })) (Model.notices m |> List.map .notice)
+                        , \_ -> Expect.equal 1 (Model.noticesLost m)
+                        ]
+                        ()
+            , test "with_no_unread_kept_the_oldest_refusal_falls_off" <|
+                \_ ->
+                    let
+                        m : Model.Model
+                        m =
+                            following |> feed (List.range 1 17 |> List.map (\n -> "ERR r " ++ String.fromInt n))
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (List.range 2 17 |> List.reverse |> List.map (\n -> Refusal { sent = Nothing, why = "r " ++ String.fromInt n })) (Model.notices m |> List.map .notice)
+                        , \_ -> Expect.equal 1 (Model.noticesLost m)
+                        ]
+                        ()
+            , test "a_set_refused_by_its_address_is_kept_with_its_set_too" <|
+                \_ ->
+                    following
+                        |> Model.step (Edit cutoff (Num 99999))
+                        |> Tuple.first
+                        |> feed [ "ERR ed set FILTER.CUTOFF takes 20..20000" ]
+                        |> Expect.all
+                            [ Model.refusal cutoff >> Expect.equal (Just "takes 20..20000")
+                            , Model.notices >> Expect.equal [ { notice = Refusal { sent = Just (Set cutoff (Num 99999)), why = "takes 20..20000" }, times = 1 } ]
+                            , said >> Expect.equal [ "THE UNIT REFUSED ed set FILTER.CUTOFF 99999: takes 20..20000" ]
+                            ]
+            , test "a_set_refusal_no_set_waits_for_is_kept_naming_its_address" <|
+                \_ ->
+                    following
+                        |> feed [ "ERR ed set FILTER.CUTOFF takes a number", "ERR ed set has no CHORUS.MODE here" ]
+                        |> said
+                        |> Expect.equal [ "THE UNIT REFUSED: has no CHORUS.MODE here", "THE UNIT REFUSED: FILTER.CUTOFF: takes a number" ]
+            , test "a_refusal_from_since_is_kept_after_its_control_has_a_value_again" <|
+                \_ ->
+                    following
+                        |> feed [ cutoffLine "1000", "OK 1" ]
+                        |> Model.step (Edit cutoff (Num 5000))
+                        |> Tuple.first
+                        |> feed [ "OK queued", "refused FILTER.CUTOFF \"NOT ON THIS MACHINE\"", "OK 2", cutoffLine "1200", "OK 3" ]
+                        |> Expect.all
+                            [ Model.refusal cutoff >> Expect.equal Nothing
+                            , Model.notices >> Expect.equal [ { notice = Refusal { sent = Nothing, why = "FILTER.CUTOFF: NOT ON THIS MACHINE" }, times = 1 } ]
+                            , said >> Expect.equal [ "THE UNIT REFUSED: FILTER.CUTOFF: NOT ON THIS MACHINE" ]
+                            ]
+            , test "a_refusal_from_since_the_control_does_not_show_is_no_notice" <|
+                \_ ->
+                    -- A whole answer's is stale, and another engine's address is not this Part's.
+                    following
+                        |> feed [ "part 1 ALGO", "refused FILTER.CUTOFF \"OLD\"", "OK 1", "refused PAD3.CHOKE \"9 GROUPS · KIT HOLDS 8\"", "OK 2" ]
+                        |> Model.notices
+                        |> Expect.equal []
+            , test "a_set_refusal_after_a_halt_is_kept" <|
+                \_ ->
+                    greeted
+                        |> tick 33
+                        |> Tuple.first
+                        |> feed [ "OK", "ERR ed set FILTER.CUTOFF takes a number" ]
+                        |> Model.notices
+                        |> List.map .notice
+                        |> Expect.equal [ Refusal { sent = Nothing, why = "FILTER.CUTOFF: takes a number" } ]
             , test "an_unread_line_while_connecting_is_kept" <|
                 \_ -> greeted |> feed [ "wibble" ] |> Model.notices |> List.map .notice |> Expect.equal [ Unread "wibble" ]
             , test "an_err_or_unread_line_after_a_halt_is_kept" <|

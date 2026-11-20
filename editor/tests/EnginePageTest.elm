@@ -441,6 +441,29 @@ suite =
                         |> Maybe.andThen Screen.spec
                         |> Maybe.map (.page >> Protocol.pageNoToInt)
                         |> Expect.equal (Just 22)
+            , test "the_algo_page_stays_in_params_order_whatever_the_units_algo_pages_setting" <|
+                \_ ->
+                    -- PERSONALIZE › ALGO PAGES (THEME.ALGO_FIRST) orders the
+                    -- unit's own page walk; the editor's is PARAMS first by design.
+                    let
+                        opsFirst : Model.Model
+                        opsFirst =
+                            feed [ "settings", "val THEME.ALGO_FIRST 1 1 \"OPS\"", "OK 2" ] model
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just [ "PARAMS", "OPS" ]) (Schema.param (addr "THEME.ALGO_FIRST") opsFirst.settings |> Maybe.map (.options >> List.map Tuple.second))
+                        , \_ -> Expect.equal (Just "OPS") (Model.shown (addr "THEME.ALGO_FIRST") opsFirst |> Maybe.map .text)
+                        , \_ ->
+                            Page.view opsFirst (Page.init Day)
+                                |> Query.fromHtml
+                                |> Query.findAll [ Sel.tag "h2" ]
+                                |> Expect.all
+                                    [ Query.index 0 >> Query.has [ Sel.text "ALGORITHM" ]
+                                    , Query.index 1 >> Query.has [ Sel.text "PITCH" ]
+                                    , Query.index 2 >> Query.has [ Sel.text "OP 1" ]
+                                    ]
+                        ]
+                        ()
             , test "before_following_it_offers_the_links" <|
                 \_ ->
                     Page.view Model.init (Page.init Night)

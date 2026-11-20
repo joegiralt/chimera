@@ -490,6 +490,12 @@ async function main() {
     .flatMap((b) => b.params)
     .filter((p) => /^(THEME\.|PART3\.(SNAP|HELD)$)/.test(p.addr));
   await sweep(settingsShown, " SETTINGS", new Set());
+  // PERSONALIZE › ALGO PAGES (0.4 #1045): the sweep set OPS, then PARAMS, each
+  // read back; it is left on its first option.
+  const algoFirst = settingsShown.find((p) => p.addr === "THEME.ALGO_FIRST");
+  if (algoFirst?.opts.map(([i, n]) => `${i} ${n}`).join(", ") !== "0 PARAMS, 1 OPS")
+    fail("THEME.ALGO_FIRST", "describe", `options ${JSON.stringify(algoFirst?.opts)}: want PARAMS, OPS`);
+  else if ((await get("THEME.ALGO_FIRST")).stored !== 0) fail("THEME.ALGO_FIRST", "after the sweep", "not back on PARAMS");
   const listed = await ask("ed projects");
   if (listed.at(-1) !== "OK queued") fail("projects", "ed projects", listed.join(" | "));
   else {
@@ -552,6 +558,15 @@ async function main() {
     await sweep(blocks.filter((b) => b.panel === "FILTER" && b.variant === kind).flatMap((b) => b.params), ` @${kind}`, done);
   }
   await sweep(shown.filter(hold), "", done);
+  // FDBK steps 0.1 (0.4 #1045): the sweep took it to 7 and 0; a tenth is stored as sent.
+  if (!shown.some((p) => p.addr === "OP_A.FDBK")) fail("OP_A.FDBK", "sweep", "not among the params ALGO shows");
+  for (const want of [3.3, 0]) {
+    const got = await send(`ed set OP_A.FDBK ${want}`);
+    const v = got.at(-1) === "OK queued" ? await settle("OP_A.FDBK", (v) => near(v.stored, want)) : null;
+    sets++;
+    if (!v) fail("OP_A.FDBK", `set ${want}`, got.join(" | "));
+    else if (!near(v.stored, want)) fail("OP_A.FDBK", `set ${want}`, `read back stored ${v.stored}, want ${want} (${v.text})`);
+  }
   info(`set/get: ${sets} sets read back, ${skipped.length} skipped`);
 
   // a knob: the simulator's own, seen in `since`
