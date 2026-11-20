@@ -19,6 +19,9 @@ use chimera_hal::store::{Dir, FileName, Store};
 use chimera_hal::testkit::MemStore;
 use screen::{Input, Rig};
 
+/// Held by every test that runs a card pass: a pass writes each Part's
+/// table in the process's `TUNINGS` (a Part on 12-TET zeroed too) and
+/// takes `files_put`'s change, whichever test's UI it is (#1033).
 static LOCK: Mutex<()> = Mutex::new(());
 
 const MAJOR: &[u8] = b"! major.scl\nJust major, 7 notes\n7\n9/8\n5/4\n4/3\n3/2\n5/3\n15/8\n2/1\n";
@@ -153,6 +156,7 @@ fn a_missing_file_plays_twelve_tet_and_says_so() {
 
 #[test]
 fn the_project_keeps_the_name_not_a_place() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (mut p, _) = Project::boxed();
     p.set_scala(PartId::ALL[2], name("PELOG"));
     p.edit_part(PartId::ALL[2]).mix.tuning = TUNING_SCALA;
