@@ -237,16 +237,19 @@ fn a_set_on_ring3_lands_on_ring3_while_the_box_shows_ring1() {
     assert_eq!(f.ui.project().orbit().bpm.get(), 97);
 }
 
-/// A set marks the ring touched as a turn does, and the frame's flush
-/// sends it to the runner: it hears it on the next loop (ADR 0082).
+/// A set marks the ring touched as a turn does, and `ed`'s pass flushes
+/// it to the runner, as the hand's input does before the publish: it
+/// hears it on the next loop (ADR 0082). The pass runs after the frame's
+/// input, so nothing touched is left for the publish.
 #[test]
 fn a_set_marks_the_ring_touched_and_the_runner_hears_it() {
     let mut f = Fake::new();
     let head = f.ui.orbit().log().head();
     ok(&mut f, "ed set RING2.HITS 1");
-    assert!(!f.ui.project().orbit().live().untouched(), "touched");
-    f.ui.flush_orbit();
-    assert!(f.ui.project().orbit().live().untouched(), "harvested");
+    assert!(
+        f.ui.project().orbit().live().untouched(),
+        "harvested by the pass"
+    );
     assert_ne!(f.ui.orbit().log().head(), head, "the edit is in the log");
     assert!(!f.ui.orbit().idle());
 }
@@ -501,12 +504,15 @@ fn chord_scale_step_and_pool_round_trip_through_since() {
     }
 }
 
-/// A pool or step set marks its ring's notes touched, for the runner.
+/// A pool or step set marks its ring's notes touched, and the pass sends
+/// them to the runner.
 #[test]
 fn a_pool_marks_the_ring_touched() {
     let mut f = Fake::new();
+    let head = f.ui.orbit().log().head();
     ok(&mut f, "ed pool 5 81");
-    assert!(!f.ui.project().orbit().live().untouched());
+    assert!(f.ui.project().orbit().live().untouched());
+    assert_ne!(f.ui.orbit().log().head(), head, "the notes are in the log");
 }
 
 // ---- since ----

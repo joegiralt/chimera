@@ -435,7 +435,8 @@ async function main() {
   const orbitShown = orbit.blocks
     .flatMap((b) => b.params)
     .filter((p) => /^RING3\.(STEPS|HITS|CHANCE|GATE|VEL)$/.test(p.addr));
-  await sweep(orbitShown, " ORBIT", new Set());
+  // HITS never passes STEPS, as the box clamps it: the sweep leaves STEPS at its min.
+  await sweep(orbitShown, " ORBIT", new Set(), (a) => a === "RING3.HITS");
   for (const [cmd, line] of [
     ["ed step 2 5 62", "step 2 5 62"],
     ["ed scene queue 2", "song "],
@@ -518,8 +519,10 @@ async function main() {
   const load = await browse(0, (l) => l.startsWith("val FILTER.CUTOFF "));
   const cut = load.map(parseVal).filter(Boolean).find((v) => v.addr === "FILTER.CUTOFF");
   if (!cut || !near(cut.stored, 20000)) fail("FILTER.CUTOFF", "load INIT ALGO", `since: ${load.slice(0, 3).join(" | ")}`);
-  else if (!load.every((l) => l.startsWith("val ") || l.startsWith("panel ") || l.startsWith("part "))) {
-    fail("load", "since", `unexpected lines: ${load.filter((l) => !/^(val|panel|part) /.test(l)).join(" | ")}`);
+  // A load is a new Sound: its matrix (ROUTES), its Part's status and the
+  // box's toast (SETTINGS) come with it (ADR 0289).
+  else if (!load.every((l) => /^(val|panel|part|route|unroute|sound|project|toast) /.test(l))) {
+    fail("load", "since", `unexpected lines: ${load.filter((l) => !/^(val|panel|part|route|unroute|sound|project|toast) /.test(l)).join(" | ")}`);
   } else info(`load: INIT ALGO -> ${load.length} lines, FILTER.CUTOFF back to ${cut.stored}`);
   await onPart1();
 

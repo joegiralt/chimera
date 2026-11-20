@@ -426,6 +426,10 @@ impl EdState {
         if let Some(p) = self.part.take() {
             ui.follow_part(p);
         }
+        // The pass runs after the hand's input and its flush: ORBIT's
+        // edits go to the runner's log here, before the frame's publish
+        // (ADR 0082). Nothing touched, nothing sent.
+        ui.flush_orbit();
     }
 }
 
