@@ -273,3 +273,107 @@ fn decay_1_level_says_when_it_is_never_reached() {
     let w = draw::text_width(&theme::FONT_LABEL, notes::D1_HOLDS, theme::LABEL_TRACKING);
     assert!(w <= theme::CONTENT_W, "{w}");
 }
+
+// #986: the ratio CRSE, FINE and DETUN come to.
+
+use chimera_core::dsp::algo::params::AlgoParams;
+
+/// The ratio and the cents a readout line shows.
+fn read_ratio(line: &str) -> (f32, f32) {
+    let rest = line.strip_prefix("RATIO ").expect(line);
+    match rest.split_once(", DETUNE ") {
+        None => (rest.parse().expect(line), 0.0),
+        Some((r, c)) => {
+            let c = c.strip_suffix(" CENTS").expect(line);
+            assert!(c.starts_with(['+', '-']), "{line}");
+            (r.parse().expect(line), c.parse().expect(line))
+        }
+    }
+}
+
+/// #986: the readout is the engine's own ratio and detune, at every
+/// CRSE x FINE x DETUN, to the two decimals COARSE itself shows.
+#[test]
+fn the_ratio_readout_matches_the_engine_everywhere() {
+    use chimera_core::dsp::algo::tx::{detune_at, ratio_at};
+    let mut s = Sound::init(EngineType::Algo);
+    for coarse in 0..=63u8 {
+        for fine in 0..=15u8 {
+            for detune in -3..=3i8 {
+                let o = &mut s.params.algo.ops[2];
+                (o.coarse, o.fine, o.detune) = (coarse, fine, detune);
+                let line = notes::ratio(&s.params.algo, Op::C, AlgoOpParams::FINE).unwrap();
+                let (r, cents) = read_ratio(line.as_str());
+                // What `AlgoEngine` multiplies the note's frequency by.
+                let engine = ratio_at(coarse, f32::from(fine));
+                assert!(
+                    (r - engine).abs() <= 0.005 + 1e-4,
+                    "{}: {engine}",
+                    line.as_str()
+                );
+                let heard = 1200.0 * detune_at(f32::from(detune)).log2();
+                assert!((cents - heard).abs() < 0.01, "{}: {heard}", line.as_str());
+                assert_eq!(line.as_str().contains("DETUNE"), detune != 0);
+            }
+        }
+    }
+}
+
+/// Each FINE step moves the readout, and a step past a low CRSE's top
+/// (FINE 8-15 below 1.00) doesn't.
+#[test]
+fn the_ratio_readout_moves_with_each_step_the_engine_takes() {
+    let mut s = Sound::init(EngineType::Algo);
+    let mut at = |coarse: u8, fine: u8| {
+        let o = &mut s.params.algo.ops[0];
+        (o.coarse, o.fine) = (coarse, fine);
+        notes::ratio(&s.params.algo, Op::A, AlgoOpParams::COARSE).unwrap()
+    };
+    for coarse in 0..=63u8 {
+        let top = if coarse < 4 { 7 } else { 15 };
+        for fine in 1..=15u8 {
+            let (was, now) = (at(coarse, fine - 1), at(coarse, fine));
+            assert_eq!(was != now, fine <= top, "CRSE {coarse} FINE {fine}");
+        }
+    }
+    assert_eq!(at(4, 0).as_str(), "RATIO 1.00");
+    assert_eq!(at(5, 0).as_str(), "RATIO 1.41");
+}
+
+/// CRSE, FINE and DETUN show it, on the group pages and the operator's
+/// own; no other cell does, and a noise band has no pitch to show.
+#[test]
+fn the_ratio_shows_on_the_three_tuning_cells_only() {
+    use chimera_core::dsp::algo::kinds::OpKind;
+    let mut s = Sound::init(EngineType::Algo);
+    s.params.algo.ops[0].detune = -3;
+    for p in ALGO_OP_SPECS.iter() {
+        let tuned = [
+            AlgoOpParams::COARSE,
+            AlgoOpParams::FINE,
+            AlgoOpParams::DETUNE,
+        ]
+        .contains(&p.id);
+        let line = chimera_core::ui::view::ratio_note(op_addr(Op::A, p.id), &s);
+        assert_eq!(line.is_some(), tuned, "{}", p.label);
+        if let Some(l) = line {
+            assert_eq!(l.as_str(), "RATIO 1.00, DETUNE -4.5 CENTS");
+            let w = draw::text_width(&theme::FONT_LABEL, l.as_str(), theme::LABEL_TRACKING);
+            assert!(w <= theme::CONTENT_W, "{w}");
+        }
+    }
+    // The widest line there is.
+    let o = &mut s.params.algo.ops[0];
+    (o.coarse, o.fine, o.detune) = (63, 15, 3);
+    let l = notes::ratio(&s.params.algo, Op::A, AlgoOpParams::FINE).unwrap();
+    assert_eq!(l.as_str(), "RATIO 27.57, DETUNE +4.5 CENTS");
+    let w = draw::text_width(&theme::FONT_LABEL, l.as_str(), theme::LABEL_TRACKING);
+    assert!(w <= theme::CONTENT_W, "{w}");
+    s.params.algo.try_set_kind(1, OpKind::Noise).unwrap();
+    assert_eq!(
+        notes::ratio(&s.params.algo, Op::B, AlgoOpParams::FINE),
+        None
+    );
+    let part = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
+    assert_eq!(chimera_core::ui::view::ratio_note(part, &s), None);
+}

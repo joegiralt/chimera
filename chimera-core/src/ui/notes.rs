@@ -4,16 +4,19 @@
 //! through `UiDoor`'s `notes` entry, a cell's through `band_note`'s; bank
 //! 1 keeps the stub in `view`. ALGO's operator cells (ADR 0298): the
 //! envelope stages' names in the focus label, RATE SCALE's words and
-//! DECAY 1 LEVEL's under a held decay.
+//! DECAY 1 LEVEL's under a held decay, the ratio CRSE, FINE and DETUN
+//! come to.
 
-use crate::addr::{BlockRef, ParamAddr};
+use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::ParamId;
-use crate::dsp::algo::params::AlgoOpParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::dsp::algo::{kinds, tx};
 use crate::dsp::reverb::ReverbParams;
 use crate::modulation::{FixedCol, ModSource, VCA};
 use crate::params::OutParams;
 use crate::preset::Sound;
-use crate::ui::fmt::FmtBuf;
+use crate::project::Line;
+use crate::ui::fmt::{FmtBuf, fixed};
 use crate::ui::hint::{Gesture, Hint};
 use crate::ui::mod_grid::{Col, MatrixState};
 
@@ -27,6 +30,13 @@ pub enum Ask<'a> {
         param: ParamId,
         page: OpCells,
         label: &'a mut FmtBuf,
+    },
+    /// `ratio`: where CRSE, FINE and DETUN put operator `op`.
+    Ratio {
+        algo: &'a AlgoParams,
+        op: Op,
+        param: ParamId,
+        out: &'a mut Option<Line>,
     },
 }
 
@@ -43,6 +53,12 @@ pub(crate) fn ask_in(a: Ask<'_>) {
     match a {
         Ask::Matrix(m, out) => *out = matrix(m),
         Ask::OpLabel { param, page, label } => op_label(param, page, label),
+        Ask::Ratio {
+            algo,
+            op,
+            param,
+            out,
+        } => *out = ratio(algo, op, param),
     }
 }
 
@@ -66,12 +82,15 @@ enum W {
     Feedback,
     RateScale,
     D1Holds,
+    Ratio,
+    Detune,
+    Cents,
 }
 
 /// Each word with its text, in `W`'s order (checked below): one table, so
 /// a word and its text can't part. Read only at compile time: the bytes
 /// reach the build through `WORDS` alone.
-const TABLE: [(W, &str); 16] = [
+const TABLE: [(W, &str); 19] = [
     (W::Vca, "VCA:"),
     (W::Replaces, "ROUTES REPLACE CONTOUR"),
     (W::SumStarts, "SUM STARTS AT AMP BASE"),
@@ -88,6 +107,9 @@ const TABLE: [(W, &str); 16] = [
     (W::Feedback, "FEEDBACK"),
     (W::RateScale, "HIGH NOTES, FASTER ENVELOPES"),
     (W::D1Holds, "DECAY 1 RATE 0: NEVER REACHED"),
+    (W::Ratio, "RATIO "),
+    (W::Detune, ", DETUNE "),
+    (W::Cents, " CENTS"),
 ];
 
 // Row `i` is word `i`: `word` indexes the table by `W`.
@@ -209,6 +231,39 @@ pub static RATE_SCALE: &str = word(W::RateScale);
 /// at full, so the level it would fall to is never reached.
 pub static D1_HOLDS: &str = word(W::D1Holds);
 
+/// What the band says on operator `op`'s CRSE, FINE or DETUN (#986): the
+/// ratio CRSE and FINE give, from the engine's own tables (`tx::ratio`),
+/// and DETUN in cents (`tx::DETUNE_CENTS` a step): `RATIO 1.41`,
+/// `RATIO 1.41, DETUNE +4.5 CENTS`. None on any other param, or on a
+/// noise band, which has no pitch.
+pub fn ratio(algo: &AlgoParams, op: Op, param: ParamId) -> Option<Line> {
+    use core::fmt::Write;
+    let tuned = matches!(
+        param,
+        AlgoOpParams::COARSE | AlgoOpParams::FINE | AlgoOpParams::DETUNE
+    );
+    if !tuned || !kinds::reads(algo.kinds().get(op.index()), param) {
+        return None;
+    }
+    let o = &algo.ops[op.index()];
+    let mut b = FmtBuf::new();
+    let _ = b.write_str(word(W::Ratio));
+    fixed(&mut b, tx::ratio(o.coarse, o.fine), 2, "");
+    if o.detune != 0 {
+        let _ = b.write_str(word(W::Detune));
+        if o.detune > 0 {
+            let _ = b.write_char('+');
+        }
+        fixed(
+            &mut b,
+            f32::from(o.detune) * tx::DETUNE_CENTS,
+            1,
+            word(W::Cents),
+        );
+    }
+    Some(Line::new(b.as_str()))
+}
+
 /// The matrix's hint on `m`'s cursor in the VCA column, on a cell with no
 /// route (a route's own cell keeps its DELETE): the routes replace the
 /// engine's contour, or, with an ENV among them, they start at BASE.
@@ -267,7 +322,7 @@ mod tests {
         assert_eq!(op_name(AlgoOpParams::LEVEL), None);
         assert_eq!(RATE_SCALE, "HIGH NOTES, FASTER ENVELOPES");
         assert_eq!(D1_HOLDS, "DECAY 1 RATE 0: NEVER REACHED");
-        assert_eq!(WORDS.len(), 181 + 68 + 57);
+        assert_eq!(WORDS.len(), 181 + 68 + 57 + 21);
         assert_eq!(
             STEREO_WIDTH.as_ptr(),
             WORDS[151..].as_ptr(),
