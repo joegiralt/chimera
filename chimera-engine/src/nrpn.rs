@@ -91,7 +91,7 @@ pub fn law(block: BlockRef, spec: &ParamSpec) -> ValueLaw {
         ParamKind::Enum if WIDE_CODES.contains(&(block, spec.id)) => ValueLaw::Index7,
         ParamKind::Enum => ValueLaw::Code7,
         ParamKind::Continuous => ValueLaw::Place14,
-        ParamKind::Stepped if spec.max - spec.min < 128.0 => ValueLaw::Index7,
+        ParamKind::Stepped if (spec.max - spec.min) / spec.step < 128.0 => ValueLaw::Index7,
         ParamKind::Stepped => ValueLaw::Index14,
     }
 }
@@ -100,9 +100,10 @@ pub fn law(block: BlockRef, spec: &ParamSpec) -> ValueLaw {
 /// and 255. `nrpn_chart_test` checks the list is exactly these.
 pub const WIDE_CODES: &[(BlockRef, ParamId)] = &[(BlockRef::Theme, ThemeSettings::BLACK)];
 
-/// The highest index of a discrete param (`max - min`): `place_of`'s `steps`.
+/// The highest index of a discrete param (`max - min`, in its steps):
+/// `place_of`'s `steps`.
 pub fn steps(spec: &ParamSpec) -> u16 {
-    libm::roundf(spec.max - spec.min) as u16
+    libm::roundf((spec.max - spec.min) / spec.step) as u16
 }
 
 /// Phase 1 writes exactly ADR 0139's mappable set.
@@ -220,7 +221,12 @@ impl fmt::Display for Labelled<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             ChartLine::Live { spec, .. } => {
-                write!(f, "{}  # {} {}..{}", self.0, spec.label, spec.min, spec.max)
+                write!(f, "{}  # {} {}..{}", self.0, spec.label, spec.min, spec.max)?;
+                // A step that isn't 1 (FDBK's tenths): `Index7` counts in it.
+                if matches!(spec.kind, ParamKind::Stepped) && spec.step != 1.0 {
+                    write!(f, " by {}", spec.step)?;
+                }
+                Ok(())
             }
             ChartLine::Retired(_) => write!(f, "{}  # retired", self.0),
         }

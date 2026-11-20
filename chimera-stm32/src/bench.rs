@@ -3460,7 +3460,11 @@ fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
     for i in 0..OPS {
         let level = if lit & (1 << i) != 0 { 99 } else { 0 };
         let op = &mut p.algo.ops[i];
-        (op.coarse, op.level, op.feedback) = (COARSE[i], level, feedback);
+        (op.coarse, op.level, op.feedback) = (
+            COARSE[i],
+            level,
+            chimera_engine::dsp::algo::params::Fdbk::tx(feedback),
+        );
     }
     p.algo = AlgoParams::new(alg, alg, 0, Kinds::tables(WAVES), p.algo.ops);
     p

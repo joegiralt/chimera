@@ -151,7 +151,7 @@ use settings::view::PartBand;
 use settings::{
     Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
 };
-use theme_settings::{PadFollow, Pages, ThemeSettings};
+use theme_settings::{AlgoFirst, PadFollow, Pages, ThemeSettings};
 use view::{SlotCtx, View};
 
 /// A replace aimed at one Part: SAVE PART FIRST saves that Part.
@@ -321,6 +321,9 @@ pub struct UiState {
     refusal: Option<Line>,
     /// SETTINGS › THEME; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
+    /// ALGO PAGES' FIRST as the Parts' chains are laid out now: the
+    /// theme's, taken up by `order_pages` (ADR 0300).
+    algo_first: AlgoFirst,
     /// SETTINGS › MIDI CONFIG's SYNC; boot sets it from SYSTEM (`set_midi`).
     midi: MidiSettings,
     /// SETTINGS › PART › RANDOMIZE's amounts and seed: never stored.
@@ -458,6 +461,7 @@ crate::in_place::field_list!(UiState => UiState {
     held,
     refusal,
     theme,
+    algo_first,
     midi,
     random,
     idle,
@@ -532,7 +536,7 @@ impl UiState {
             let template =
                 Project::init_in_place(uninit_at(addr_of_mut!((*p).project)), arena, kits);
             let project = &mut *addr_of_mut!((*p).project);
-            let cx = nav_cx(project);
+            let cx = nav_cx(project, ThemeSettings::DEFAULT.algo_first);
             let loc = Location::home(&cx);
             let def = page_def(loc, &cx);
             let page = PageKey::from_location(loc, def, Op::A);
@@ -579,6 +583,7 @@ impl UiState {
             addr_of_mut!((*p).held).write(None);
             addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
+            addr_of_mut!((*p).algo_first).write(theme.algo_first);
             addr_of_mut!((*p).midi).write(midi);
             addr_of_mut!((*p).random).write(Randomize::DEFAULT);
             addr_of_mut!((*p).idle).write(saver::Idle::new());
@@ -671,6 +676,31 @@ impl UiState {
     /// The theme SYSTEM held, set at boot before the first frame.
     pub fn set_theme(&mut self, t: ThemeSettings) {
         self.theme = t;
+        self.order_pages();
+    }
+
+    /// Part `p`'s chain, as ALGO PAGES orders it.
+    fn chain_of(&self, p: PartId) -> PartChain {
+        PartChain::of(&self.project.part(p).sound).ordered(self.algo_first)
+    }
+
+    /// ALGO PAGES' FIRST taken up (ADR 0300): the chains re-laid, a Part's
+    /// page kept by its id. A turn of the cell, a card's SYSTEM or the
+    /// editor may have changed it; each pass asks.
+    fn order_pages(&mut self) {
+        let first = self.theme.algo_first;
+        if first == self.algo_first {
+            return;
+        }
+        let was = self.loc.part().map(|p| (p, self.chain_of(p)));
+        self.algo_first = first;
+        if let Some((p, was)) = was {
+            let from = self.loc;
+            self.loc = self.loc.rechained(p, was, &self.cx());
+            if self.loc != from {
+                self.enter_page();
+            }
+        }
     }
 
     /// Bank 2 as the boot judged it (ADR 0137), set before the first
@@ -784,7 +814,7 @@ impl UiState {
 
     /// The active Part's chain, before a replace (`project_replaced`).
     fn active_chain(&self) -> PartChain {
-        PartChain::of(&self.project.part(self.active_part).sound)
+        self.chain_of(self.active_part)
     }
 
     /// After a load or a boot replaced the project: the active Part's
@@ -1013,7 +1043,7 @@ impl UiState {
     }
 
     fn cx(&self) -> NavCtx {
-        let mut cx = nav_cx(&self.project);
+        let mut cx = nav_cx(&self.project, self.algo_first);
         cx.dyn_rows = self.screen().map_or(0, |s| self.screen_rows(s)) as u8;
         cx.pages = self.theme.pages;
         cx
@@ -1310,7 +1340,13 @@ impl UiState {
             .on_route(self.sel_route);
         let ctx = match PartChain::of(sound) {
             PartChain::Drum => ctx.on_drum(),
-            _ => ctx,
+            PartChain::Algo
+            | PartChain::AlgoFormant
+            | PartChain::AlgoOps
+            | PartChain::AlgoOpsFormant
+            | PartChain::Modal
+            | PartChain::Tape
+            | PartChain::Va => ctx,
         };
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
@@ -1937,7 +1973,7 @@ impl UiState {
     /// holds PAD FOLLOW IDLE's pad on that Part (ADR 0268).
     fn pad_edited(&mut self) {
         if let Rung::Pages(p, _) = self.loc.rung()
-            && PartChain::of(&self.project.part(p).sound) == PartChain::Drum
+            && self.chain_of(p) == PartChain::Drum
         {
             self.project.pad_edited(p);
         }
@@ -2014,7 +2050,7 @@ impl UiState {
         def: &'static BlockDef,
     ) -> &'static BlockDef {
         // An edit may change the Part's chain: keep the page by id.
-        let def = if PartChain::of(&self.project.part(at).sound) == chain {
+        let def = if self.chain_of(at) == chain {
             def
         } else {
             let from = self.loc;
@@ -2994,7 +3030,9 @@ impl UiState {
             (t.machine(), t.direction)
         };
         let was = model(self);
+        self.order_pages();
         self.input(controls);
+        self.order_pages();
         let jog = self.jog_pass(controls.now_ms());
         // Knob moves the hand may have made: a turn or the reel, each one,
         // and a new MODEL's defaults. Only CCs spend what is left.
@@ -3188,6 +3226,17 @@ impl UiState {
         let scope = [0.0; SCOPE_LEN];
         let perf = PerfStats::zero();
         renderer::Renderer::focus_hint(&self.frame(&perf, None, &scope))
+    }
+
+    /// The focused cell's band label, as `render` draws it.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn focus_label_for_test(&self) -> crate::ui::fmt::FmtBuf {
+        let scope = [0.0; SCOPE_LEN];
+        let perf = PerfStats::zero();
+        let f = self.frame(&perf, None, &scope);
+        let v = view::view(f.def, f.focus, &f.ctx);
+        renderer::band_label(&f, &v)
     }
 
     fn input(&mut self, controls: &impl Controls) {
@@ -3425,7 +3474,7 @@ impl UiState {
         } else {
             let at = self.active_part;
             let before = self.ctx();
-            let chain = PartChain::of(&self.project.part(at).sound);
+            let chain = self.chain_of(at);
             for (i, &e) in feel.enc.iter().enumerate() {
                 // Pushed, a turn is fine: a tick a frame, no acceleration,
                 // and a tenth of a continuous param's step. SEQ held, the
@@ -3643,6 +3692,7 @@ impl UiState {
 
     /// Advance animations one frame: a `Pacer`'s, at `UI_FPS`.
     pub fn update(&mut self, _: animation::UiTick) {
+        self.order_pages();
         self.saver_frames = self.saver_frames.saturating_add(1);
         self.saver_drawn |= self.idle.asleep();
         // A streamed source's heads follow its Part's turns (spec § 5.6).
@@ -4016,7 +4066,7 @@ impl UiState {
         let on = self
             .loc
             .part()
-            .is_some_and(|p| PartChain::of(&self.project.part(p).sound) == PartChain::AlgoFormant);
+            .is_some_and(|p| self.chain_of(p).has_formant_page());
         u8::from(on)
     }
 
@@ -4618,10 +4668,10 @@ fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, ctx: &Slo
     }
 }
 
-fn nav_cx(project: &Project) -> NavCtx {
+fn nav_cx(project: &Project, first: AlgoFirst) -> NavCtx {
     let live = project.orbit().live();
     NavCtx {
-        chains: PartId::ALL.map(|p| PartChain::of(&project.part(p).sound)),
+        chains: PartId::ALL.map(|p| PartChain::of(&project.part(p).sound).ordered(first)),
         rev: project.perf().fx.reverb.kind,
         dyn_rows: 0,
         orbit: OrbitCx {

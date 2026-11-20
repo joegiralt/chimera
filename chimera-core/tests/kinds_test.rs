@@ -228,14 +228,14 @@ fn formant_feedback_is_not_a_link() {
     p.try_set_kind(0, OpKind::Formant).unwrap();
     let all = [false; OPS];
     let dry = AlgoEngine::cost(&p, &all).0;
-    p.ops[0].feedback = 7;
+    p.ops[0].feedback = chimera_core::dsp::algo::params::Fdbk::tx(7);
     assert_eq!(
         AlgoEngine::cost(&p, &all).0,
         dry + AlgoEngine::COST_FEEDBACK.0
     );
     for i in 1..FORMANT_N_UNLINKED as usize {
         p.try_set_kind(i, OpKind::Formant).unwrap();
-        p.ops[i].feedback = 7;
+        p.ops[i].feedback = chimera_core::dsp::algo::params::Fdbk::tx(7);
     }
     assert!(fits(&p.kinds().all(), p.linked()));
 }

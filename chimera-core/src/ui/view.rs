@@ -1226,6 +1226,24 @@ pub fn kit_or_voices_note(
 /// them (ADR 0281).
 pub const RULE_OFF: &str = "NO VOICE RULE \u{b7} NEEDS UPDATE";
 
+/// What the focus band says on an operator's CRSE, FINE or DETUN: the
+/// ratio they come to (#986). Bank 2's (`notes::ratio`): closed, nothing.
+pub fn ratio_note(addr: ParamAddr, sound: &Sound) -> Option<crate::project::Line> {
+    let BlockRef::AlgoOp(op) = addr.block else {
+        return None;
+    };
+    let mut out = None;
+    crate::bank2::ui_door(|u| {
+        u.notes(crate::ui::notes::Ask::Ratio {
+            algo: &sound.params.algo,
+            op,
+            param: addr.param,
+            out: &mut out,
+        })
+    });
+    out
+}
+
 /// What the focus band says in its hint's place about a TAPE cell: why
 /// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
 /// its loop head holds. Bank 2's (`walk::band_note_in`): closed, nothing.

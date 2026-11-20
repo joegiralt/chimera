@@ -40,7 +40,7 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | D2R | 3:8 (392) | MSB | 0 to 31 |
 | RR | 3:9 (393) | MSB | 0 to 14 (1 to 15) |
 | RS | 3:10 (394) | MSB | 0 to 3 |
-| FDBK | 3:11 (395) | MSB | 0 to 7 |
+| FDBK | 3:11 (395) | MSB | 0 to 70 (0.0 to 7.0) |
 | VEL | 3:12 (396) | MSB | 0 to 7 |
 | FORMANT | 3:13 (397) | 14-bit | 0 to 168 |
 | BW | 3:14 (398) | 14-bit | 0 to 216 |
@@ -64,7 +64,7 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | D2R | 4:8 (520) | MSB | 0 to 31 |
 | RR | 4:9 (521) | MSB | 0 to 14 (1 to 15) |
 | RS | 4:10 (522) | MSB | 0 to 3 |
-| FDBK | 4:11 (523) | MSB | 0 to 7 |
+| FDBK | 4:11 (523) | MSB | 0 to 70 (0.0 to 7.0) |
 | VEL | 4:12 (524) | MSB | 0 to 7 |
 | FORMANT | 4:13 (525) | 14-bit | 0 to 168 |
 | BW | 4:14 (526) | 14-bit | 0 to 216 |
@@ -88,7 +88,7 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | D2R | 5:8 (648) | MSB | 0 to 31 |
 | RR | 5:9 (649) | MSB | 0 to 14 (1 to 15) |
 | RS | 5:10 (650) | MSB | 0 to 3 |
-| FDBK | 5:11 (651) | MSB | 0 to 7 |
+| FDBK | 5:11 (651) | MSB | 0 to 70 (0.0 to 7.0) |
 | VEL | 5:12 (652) | MSB | 0 to 7 |
 | FORMANT | 5:13 (653) | 14-bit | 0 to 168 |
 | BW | 5:14 (654) | 14-bit | 0 to 216 |
@@ -112,7 +112,7 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | D2R | 6:8 (776) | MSB | 0 to 31 |
 | RR | 6:9 (777) | MSB | 0 to 14 (1 to 15) |
 | RS | 6:10 (778) | MSB | 0 to 3 |
-| FDBK | 6:11 (779) | MSB | 0 to 7 |
+| FDBK | 6:11 (779) | MSB | 0 to 70 (0.0 to 7.0) |
 | VEL | 6:12 (780) | MSB | 0 to 7 |
 | FORMANT | 6:13 (781) | 14-bit | 0 to 168 |
 | BW | 6:14 (782) | 14-bit | 0 to 216 |
@@ -136,7 +136,7 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | D2R | 7:8 (904) | MSB | 0 to 31 |
 | RR | 7:9 (905) | MSB | 0 to 14 (1 to 15) |
 | RS | 7:10 (906) | MSB | 0 to 3 |
-| FDBK | 7:11 (907) | MSB | 0 to 7 |
+| FDBK | 7:11 (907) | MSB | 0 to 70 (0.0 to 7.0) |
 | VEL | 7:12 (908) | MSB | 0 to 7 |
 | FORMANT | 7:13 (909) | 14-bit | 0 to 168 |
 | BW | 7:14 (910) | 14-bit | 0 to 216 |
@@ -160,7 +160,7 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | D2R | 8:8 (1032) | MSB | 0 to 31 |
 | RR | 8:9 (1033) | MSB | 0 to 14 (1 to 15) |
 | RS | 8:10 (1034) | MSB | 0 to 3 |
-| FDBK | 8:11 (1035) | MSB | 0 to 7 |
+| FDBK | 8:11 (1035) | MSB | 0 to 70 (0.0 to 7.0) |
 | VEL | 8:12 (1036) | MSB | 0 to 7 |
 | FORMANT | 8:13 (1037) | 14-bit | 0 to 168 |
 | BW | 8:14 (1038) | 14-bit | 0 to 216 |

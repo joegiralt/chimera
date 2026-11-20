@@ -17,7 +17,7 @@ use crate::modulation::ModRouting;
 
 const TABLE_OP: AlgoOpParams = {
     let mut o = AlgoOpParams::DEFAULT;
-    (o.level, o.feedback) = (99, 1);
+    (o.level, o.feedback) = (99, crate::dsp::algo::params::Fdbk::tx(1));
     o
 };
 

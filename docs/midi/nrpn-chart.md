@@ -5,7 +5,7 @@ Every stored parameter has a fixed NRPN address (ADR 0216): the MSB is the block
 Send an NRPN on the Part's MIDI channel: CC 99 (MSB), CC 98 (LSB), then CC 6 (data MSB) and, for a 14-bit value, CC 38 (data LSB). No binding is needed. A binding on the same NRPN number in the Sound's MIDI map wins over the address.
 
 Each line reads `N <msb> <lsb> <block> <param> <law> <W|R>  # <cell> <range>`:
-- **Law:** `Place14` a continuous value over its range, 14-bit (an MSB alone reaches the top); `Code7` a choice, the data MSB its code; `Index7` steps from the minimum in the data MSB; `Index14` steps from the minimum, 14-bit.
+- **Law:** `Place14` a continuous value over its range, 14-bit (an MSB alone reaches the top); `Code7` a choice, the data MSB its code; `Index7` steps from the minimum in the data MSB (a range's `by` is the step, 1 where none is given); `Index14` steps from the minimum, 14-bit.
 - **W** the address writes the parameter; **R** reserved, it does nothing yet.
 - `X <msb> <lsb>`: a retired address.
 
@@ -45,7 +45,7 @@ N 3 7 OP_A D1L Index7 W  # D1L 0..15
 N 3 8 OP_A D2R Index7 W  # D2R 0..31
 N 3 9 OP_A RR Index7 W  # RR 1..15
 N 3 10 OP_A RS Index7 W  # RS 0..3
-N 3 11 OP_A FDBK Index7 W  # FDBK 0..7
+N 3 11 OP_A FDBK Index7 W  # FDBK 0..7 by 0.1
 N 3 12 OP_A VEL Index7 W  # VEL 0..7
 N 3 13 OP_A FRMT Index14 W  # FORMANT 0..168
 N 3 14 OP_A BW Index14 W  # BW 0..216
@@ -64,7 +64,7 @@ N 4 7 OP_B D1L Index7 W  # D1L 0..15
 N 4 8 OP_B D2R Index7 W  # D2R 0..31
 N 4 9 OP_B RR Index7 W  # RR 1..15
 N 4 10 OP_B RS Index7 W  # RS 0..3
-N 4 11 OP_B FDBK Index7 W  # FDBK 0..7
+N 4 11 OP_B FDBK Index7 W  # FDBK 0..7 by 0.1
 N 4 12 OP_B VEL Index7 W  # VEL 0..7
 N 4 13 OP_B FRMT Index14 W  # FORMANT 0..168
 N 4 14 OP_B BW Index14 W  # BW 0..216
@@ -83,7 +83,7 @@ N 5 7 OP_C D1L Index7 W  # D1L 0..15
 N 5 8 OP_C D2R Index7 W  # D2R 0..31
 N 5 9 OP_C RR Index7 W  # RR 1..15
 N 5 10 OP_C RS Index7 W  # RS 0..3
-N 5 11 OP_C FDBK Index7 W  # FDBK 0..7
+N 5 11 OP_C FDBK Index7 W  # FDBK 0..7 by 0.1
 N 5 12 OP_C VEL Index7 W  # VEL 0..7
 N 5 13 OP_C FRMT Index14 W  # FORMANT 0..168
 N 5 14 OP_C BW Index14 W  # BW 0..216
@@ -102,7 +102,7 @@ N 6 7 OP_D D1L Index7 W  # D1L 0..15
 N 6 8 OP_D D2R Index7 W  # D2R 0..31
 N 6 9 OP_D RR Index7 W  # RR 1..15
 N 6 10 OP_D RS Index7 W  # RS 0..3
-N 6 11 OP_D FDBK Index7 W  # FDBK 0..7
+N 6 11 OP_D FDBK Index7 W  # FDBK 0..7 by 0.1
 N 6 12 OP_D VEL Index7 W  # VEL 0..7
 N 6 13 OP_D FRMT Index14 W  # FORMANT 0..168
 N 6 14 OP_D BW Index14 W  # BW 0..216
@@ -121,7 +121,7 @@ N 7 7 OP_E D1L Index7 W  # D1L 0..15
 N 7 8 OP_E D2R Index7 W  # D2R 0..31
 N 7 9 OP_E RR Index7 W  # RR 1..15
 N 7 10 OP_E RS Index7 W  # RS 0..3
-N 7 11 OP_E FDBK Index7 W  # FDBK 0..7
+N 7 11 OP_E FDBK Index7 W  # FDBK 0..7 by 0.1
 N 7 12 OP_E VEL Index7 W  # VEL 0..7
 N 7 13 OP_E FRMT Index14 W  # FORMANT 0..168
 N 7 14 OP_E BW Index14 W  # BW 0..216
@@ -140,7 +140,7 @@ N 8 7 OP_F D1L Index7 W  # D1L 0..15
 N 8 8 OP_F D2R Index7 W  # D2R 0..31
 N 8 9 OP_F RR Index7 W  # RR 1..15
 N 8 10 OP_F RS Index7 W  # RS 0..3
-N 8 11 OP_F FDBK Index7 W  # FDBK 0..7
+N 8 11 OP_F FDBK Index7 W  # FDBK 0..7 by 0.1
 N 8 12 OP_F VEL Index7 W  # VEL 0..7
 N 8 13 OP_F FRMT Index14 W  # FORMANT 0..168
 N 8 14 OP_F BW Index14 W  # BW 0..216
@@ -333,6 +333,7 @@ N 26 6 THEME SAVER Index7 R  # SAVER 0..8
 N 26 7 THEME PAGES Code7 R  # PAGES 0..1
 N 26 8 THEME TEXT Code7 R  # SIZE 0..1
 N 26 9 THEME FOLLOW Code7 R  # FOLLOW 0..2
+N 26 10 THEME ALGO_FIRST Code7 R  # FIRST 0..1
 N 27 0 ORBIT KEY Code7 R  # KEY 0..11
 N 27 1 ORBIT SCALE Code7 R  # SCALE 0..10
 N 27 2 ORBIT BARS Index7 R  # BARS 0..7

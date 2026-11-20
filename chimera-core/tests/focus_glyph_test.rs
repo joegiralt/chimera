@@ -193,6 +193,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Theme", "PAGES", NONE),
     ("Theme", "TEXT", NONE),
     ("Theme", "FOLLOW", NONE),
+    ("Theme", "ALGO_FIRST", NONE),
     ("Midi", "SYNC", NONE),
     ("Midi", "PUSH", SWITCH),
     ("Midi", "ECHO", SWITCH),
@@ -231,6 +232,8 @@ const NAMED_ARC: &[(&str, &str)] = &[
 /// Two-value choices that are two peers, not on and off: a toggle would
 /// read one of them as "off". They show the word (NONE).
 const TWO_PEERS: &[(&str, &str)] = &[
+    // PARAMS and OPS: two orders of the same pages.
+    ("Theme", "ALGO_FIRST"),
     // CLEAN and 2040: two filters (until DIRTY makes three).
     ("Filter", "KIND"),
     // REV2 and EXP: two circuits, neither off.
@@ -1023,9 +1026,10 @@ fn glyph_level_page_drives_a_level_and_a_stepped_value() {
         assert_ne!(high.at(tick_x, tick_y(i, 8)), theme::BG, "tick {i}");
     }
 
-    // b: FDBK, 0..7, a tick per step; at 3 the handle sits on tick 3.
+    // b: FDBK, 0.0..7.0 in tenths, a tick per whole step; at 3.0 the
+    // handle sits on tick 3.
     feed(&mut ui, Input::turn(EncoderId::B, -127));
-    feed(&mut ui, Input::turn(EncoderId::B, 3));
+    feed(&mut ui, Input::turn(EncoderId::B, 30));
     settle(&mut ui);
     assert_eq!(ui.focused_slot(), 1);
     let b = render_ui(&ui);

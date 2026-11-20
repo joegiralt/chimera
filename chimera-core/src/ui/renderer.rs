@@ -511,18 +511,22 @@ impl Renderer {
                     crate::addr::BlockRef::Algo,
                     crate::dsp::algo::params::AlgoParams::MORPH,
                 );
-                let slot = (0..f.def.params.len())
+                // The ALG page's MORPH as it glides; FBK's has none: the
+                // stored one.
+                let morph = (0..f.def.params.len())
                     .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(morph))
-                    .expect("ALG page binds MORPH");
+                    .map_or(f32::from(algo.morph) / 127.0, |slot| {
+                        self.anim[slot].current()
+                    });
                 let (a, b) = (algo.algs().0.algorithm(), algo.algs().1.algorithm());
                 // Picking ALG A or B shows that algorithm itself (ADR 0153),
                 // even a refused, held one; else A moving to B with MORPH.
                 if let Some((is_b, held)) = alg_pick(f) {
                     let own = if is_b { b } else { a };
                     let shown = held.map_or(own, |c| AlgoId::clamped(c).algorithm());
-                    viz::algo_diagram(display, shown, shown, 0.0);
+                    viz::algo_diagram(display, shown, shown, 0.0, algo);
                 } else {
-                    viz::algo_diagram(display, a, b, self.anim[slot].current());
+                    viz::algo_diagram(display, a, b, morph, algo);
                 }
             }
             VizType::Strip => {
@@ -761,10 +765,15 @@ impl Renderer {
                         let side = u32::from(is_b) + 1;
                         side | u32::from(held.map_or(0, |c| c + 1)) << 2
                     });
-                    (
-                        [0, 0, q[2], 0, 0, 0],
-                        pick << 16 | (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
-                    )
+                    // Each operator's FDBK moves its loop (ADR 0298); FBK's
+                    // page reads the stored MORPH.
+                    let mut drawn = [u32::from(algo.morph); crate::dsp::algo::plan::OPS + 1];
+                    for (d, o) in drawn.iter_mut().zip(&algo.ops) {
+                        *d = u32::from(o.feedback.get());
+                    }
+                    let key =
+                        pick << 16 | (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32;
+                    ([0, 0, q[2], 0, 0, 0], region::fold_keys(key.into(), &drawn))
                 }
                 // ORBIT's own key: `orbit_viz_key`.
                 VizType::OrbitRhythm
@@ -987,7 +996,9 @@ impl Renderer {
             .addr()
             .and_then(|a| view::tuning_note(a, f.tuned, f.active_part, part));
         let tonal = view.addr().and_then(|a| {
-            view::tonal_note(a, &f.ctx).or_else(|| view::kit_or_voices_note(a, f.pads.kit, f.parts))
+            view::tonal_note(a, &f.ctx)
+                .or_else(|| view::kit_or_voices_note(a, f.pads.kit, f.parts))
+                .or_else(|| view::ratio_note(a, sound))
         });
         let note = view
             .addr()
@@ -1527,6 +1538,27 @@ pub fn band_label(f: &Frame, view: &View) -> FmtBuf {
     {
         crate::ui::learn::label_line(s, view.label(), &mut label);
         return label;
+    }
+    // An operator's cell: its name in full, bank 2's (ADR 0298).
+    if let Some(crate::addr::ParamAddr {
+        block: BlockRef::AlgoOp(_),
+        param,
+    }) = view.addr()
+    {
+        let page = match f.def.viz.op_page() {
+            Some(_) => crate::ui::notes::OpCells::Operator,
+            None => crate::ui::notes::OpCells::Group,
+        };
+        crate::bank2::ui_door(|u| {
+            u.notes(crate::ui::notes::Ask::OpLabel {
+                param,
+                page,
+                label: &mut label,
+            })
+        });
+        if !label.as_str().is_empty() {
+            return label;
+        }
     }
     let _ = label.write_str(view.label());
     if let View::Route {

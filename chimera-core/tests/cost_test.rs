@@ -45,7 +45,7 @@ fn worst() -> AlgoParams {
     p.try_set_algs(AlgoId::A14, AlgoId::A22).unwrap();
     p.morph = 64;
     for op in p.ops.iter_mut() {
-        (op.level, op.feedback) = (99, 7);
+        (op.level, op.feedback) = (99, chimera_core::dsp::algo::params::Fdbk::tx(7));
     }
     p
 }
@@ -702,7 +702,10 @@ fn the_model_bills_every_bench_row_high() {
         let mut p = AlgoParams::default();
         p.try_set_algs(alg, alg).unwrap();
         for (i, op) in p.ops.iter_mut().enumerate() {
-            (op.level, op.feedback) = (if lit.contains(&i) { 99 } else { 0 }, fb);
+            (op.level, op.feedback) = (
+                if lit.contains(&i) { 99 } else { 0 },
+                chimera_core::dsp::algo::params::Fdbk::tx(fb),
+            );
         }
         Voice::CHAIN_COST.0 + cost(&p)
     };
@@ -1123,14 +1126,14 @@ fn cost_is_monotonic_in_operators_links_and_feedback() {
             p.try_set_algs(AlgoId::clamped(a), AlgoId::clamped(b))
                 .unwrap();
             for op in p.ops.iter_mut() {
-                (op.level, op.feedback) = (0, 0);
+                (op.level, op.feedback) = (0, chimera_core::dsp::algo::params::Fdbk::OFF);
             }
             for i in 0..OPS {
                 let before = cost(&p);
                 p.ops[i].level = 1;
                 let lit = cost(&p);
                 assert!(lit > before, "op {i} on {a}/{b}");
-                p.ops[i].feedback = 1;
+                p.ops[i].feedback = chimera_core::dsp::algo::params::Fdbk::tx(1);
                 assert!(cost(&p) > lit, "fb {i} on {a}/{b}");
             }
         }
@@ -1154,7 +1157,7 @@ fn links_are_priced_by_their_active_target() {
     let mut all = worst();
     all.try_set_algs(AlgoId::A17, AlgoId::A17).unwrap();
     for op in all.ops.iter_mut() {
-        op.feedback = 0;
+        op.feedback = chimera_core::dsp::algo::params::Fdbk::OFF;
     }
     let (op, link) = (AlgoEngine::COST_OP.0, AlgoEngine::COST_LINK.0);
     let full = cost(&all);
@@ -2017,7 +2020,7 @@ fn algs_with(a: AlgoId, b: AlgoId, k: [OpKind; OPS]) -> AlgoParams {
     p.try_set_algs(a, b).unwrap();
     p.morph = 64;
     for op in p.ops.iter_mut() {
-        (op.level, op.feedback) = (99, 1);
+        (op.level, op.feedback) = (99, chimera_core::dsp::algo::params::Fdbk::tx(1));
     }
     let order = (0..OPS)
         .filter(|&i| k[i] == OpKind::Formant)
