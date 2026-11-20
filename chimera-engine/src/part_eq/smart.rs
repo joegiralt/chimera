@@ -452,7 +452,7 @@ impl Level {
 /// Blocks counted since something, saturating: a kick's last onset, the
 /// gap between its last two.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Blocks(u16);
+pub struct Blocks(u16);
 
 impl Blocks {
     pub(crate) const ZERO: Blocks = Blocks(0);
@@ -518,6 +518,11 @@ pub(crate) struct PartSmart {
     pub(crate) key_peak: Power,
     /// `key`'s floor (down at once, up slowly): an onset rises over it.
     pub(crate) floor: Power,
+    /// What the last onset added over what it landed on, an amplitude,
+    /// falling slowly: the next onset's measure.
+    pub(crate) onset: f32,
+    /// What that onset landed on, an amplitude.
+    pub(crate) under: f32,
     /// The kick's fast LOW dip on this Part, on top of `cut`'s slow LOW,
     /// and its target as the kick's rule last set it.
     pub(crate) kick: CutDb,
@@ -543,6 +548,8 @@ impl PartSmart {
         key: Power::ZERO,
         key_peak: Power::ZERO,
         floor: Power::ZERO,
+        onset: 0.0,
+        under: 0.0,
         kick: CutDb::ZERO,
         kick_want: CutDb::ZERO,
         since: Blocks::ZERO,
@@ -613,7 +620,9 @@ pub(crate) struct Rate {
     pub(crate) key_fall: Unit,
     /// The most the key's floor rises a turn of the kick's rule: a gain
     /// of power, less one (zero bytes at rest).
-    pub(crate) floor_rise: f32,
+    pub(crate) floor_rise: Unit,
+    /// The last onset's size's fall, a turn of the kick's rule.
+    pub(crate) onset_fall: Unit,
     pub(crate) kick_attack: Unit,
     pub(crate) kick_release: Unit,
     pub(crate) attack: Unit,
@@ -644,7 +653,8 @@ impl Rate {
         rise: Unit::ZERO,
         fall: Unit::ZERO,
         key_fall: Unit::ZERO,
-        floor_rise: 0.0,
+        floor_rise: Unit::ZERO,
+        onset_fall: Unit::ZERO,
         kick_attack: Unit::ZERO,
         kick_release: Unit::ZERO,
         attack: Unit::ZERO,
@@ -805,8 +815,8 @@ impl SmartState {
     }
 
     /// Blocks since Part `p`'s kick last began (its onset).
-    pub fn since_kick(&self, p: PartId) -> u16 {
-        self.parts[p.index()].since.get()
+    pub fn since_kick(&self, p: PartId) -> Blocks {
+        self.parts[p.index()].since
     }
 
     /// The reverb return's cut in `b` as last decided, the kick's dip

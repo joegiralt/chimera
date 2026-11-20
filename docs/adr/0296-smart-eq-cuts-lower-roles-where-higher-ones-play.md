@@ -107,13 +107,29 @@ bench-algo.
      of gap moves the swing by 1 dB. Slower kicks each dip and let go.
      Held, not a release scaled to the gap: a release that slow would
      smear a sparse kick's dip into a duck.
-   - An onset is the key within 3 dB of its recent peak and risen 3 dB
-     over its floor (the key followed down at once and up no faster than
-     150 dB a second), no sooner than 45 ms after the last: a kick after
-     quiet or over the last one's body. Not an onset: a snare's LOW on
-     the same Part, a tom's or a ghost kick's ripple, a held sub's
-     tremolo (to 8 Hz). A kit holding a tone under about 35 Hz ripples
-     past the floor; its onsets only steady a dip already held down.
+   - An onset is a kick starting: the key within 3 dB of its recent
+     peak, risen 3 dB over its floor (the key followed down at once and
+     up no faster than 150 dB a second), no sooner than 45 ms after the
+     last, and adding, as an amplitude over what it lands on, at least
+     0.71 (3 dB under) of what the last onset added. That measure falls
+     6 dB a second, so a quieter kick is an onset again a second after
+     one 6 dB louder. Onsets only time the hold; they dip nothing
+     themselves.
+     - A snare on the same Part is no onset while its LOW is more than
+       about 3 dB under the kick's (tested at 14.9, 8.9 and 5.4 dB under,
+       125 and 180 ms after the kick): it starts and stretches no hold.
+       Its own LOW still presses while it sounds, by the level rule (it
+       is low energy within 6 dB of the kit's peak): the bass's dip is up
+       to 1 dB deeper for the quiet snare, up to 4 dB for the loud ones,
+       and under 3 dB by 310 ms (228 ms with no snare).
+     - One tom (60 to 90 Hz, to 1.2) and one ghost kick are one onset
+       each.
+     - A held sub's tremolo is no onset to about 5 dB deep (5 to 8 Hz).
+       Deeper, each swell is one; so is the ripple of a tone held under
+       about 35 Hz. Both only steady a dip the tone already holds down.
+     - From silence the first kick's onset comes late, 42 to 45 ms in
+       (its key has no peak to be near until then): its dip lasts about
+       19 ms longer than a later kick's. No click.
    - **A kick under about −51 dBFS in LOW is no onset and no dip**: a hit
      is scaled by how active its peak is (silence −66 dBFS, whole 24 dB
      over), and an onset needs half a hit. A quiet kit does not dip the

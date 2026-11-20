@@ -1212,7 +1212,7 @@ fn kit_over_bass(kit: impl Fn(f32) -> f32 + 'static, secs: f32) -> (Vec<f32>, Ve
     let mut st = PartEqs::REST.smart;
     let r = roles(&[0], &[]);
     let (mut dip, mut onsets) = (Vec::new(), Vec::new());
-    let mut was = 0;
+    let mut was = st.since_kick(BASS);
     for k in 0..seconds(secs) {
         block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(95));
         dip.push(st.kick(PAD).get());
@@ -1242,52 +1242,82 @@ fn only_a_kick_is_an_onset() {
         let n = (t * FS as f32 + 0.5) as u32;
         ((n.wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0) - 1.0
     };
-    // A kick every 500 ms, and a snare 125 ms after each on the same
-    // Part: the dip lets go as it does with no snare.
-    let snare = move |t: f32| {
-        let u = t % 0.5 - 0.125;
+    // A kick every 500 ms, and a snare after each on the same Part: no
+    // onset, and the dip lets go as it does with no snare. The snare's
+    // LOW is 14.9, 8.9 and 5.4 dB under the kick's at 0.4, 0.8 and 1.2.
+    let snare = move |t: f32, level: f32, after: f32| {
+        let u = t % 0.5 - after;
         if u < 0.0 {
             return 0.0;
         }
         let tone = (2.0 * PI * 180.0 * u).sin() + (2.0 * PI * 330.0 * u).sin();
-        0.4 * (-u / 0.08).exp() * (0.5 * tone + noise(t))
+        level * (-u / 0.08).exp() * (0.5 * tone + noise(t))
     };
     let (plain, plain_on) = kit_over_bass(|t| 0.8 * kick_at(t % 0.5), 6.0);
-    let (with, with_on) = kit_over_bass(move |t| 0.8 * kick_at(t % 0.5) + snare(t), 6.0);
     // Settled, from the second kick: twelve kicks, eleven onsets. (From
     // silence the first kick's key has no peak to be near yet.)
     let settled = |on: &[usize]| on.iter().filter(|&&k| k > ms(250.0)).count();
     assert_eq!(settled(&plain_on), 11, "{plain_on:?}");
-    assert_eq!(settled(&with_on), 11, "a snare is no onset: {with_on:?}");
-    for bar in 8..11 {
-        let kick = ms(500.0 * bar as f32);
-        for at in ms(130.0)..ms(480.0) {
-            let (a, b) = (plain[kick + at], with[kick + at]);
-            assert!(
-                (a - b).abs() < 1.0,
-                "bar {bar}, block {at}: {a} dB plain, {b} with"
-            );
+    for (level, after) in [
+        (0.4, 0.125),
+        (0.8, 0.125),
+        (1.2, 0.125),
+        (0.8, 0.18),
+        (1.2, 0.18),
+    ] {
+        let (with, with_on) = kit_over_bass(
+            move |t| 0.8 * kick_at(t % 0.5) + snare(t, level, after),
+            6.0,
+        );
+        assert_eq!(
+            settled(&with_on),
+            11,
+            "a snare at {level}, {after} s on, is no onset: {with_on:?}"
+        );
+        // No hold: the dip lets go as with no snare, but for what the
+        // snare's own LOW presses while it sounds (the level rule: real
+        // low energy within 6 dB of the kit's peak counts, ADR 0296 § 4).
+        // The quiet snare leaves it within 1 dB; the loud ones press up
+        // to 4 dB more, and the dip is under 3 dB by 310 ms (228 ms
+        // plain; a hold kept it over 3 dB to 408 ms).
+        let more = if level < 0.5 { 1.0 } else { 4.0 };
+        for bar in 8..11 {
+            let kick = ms(500.0 * bar as f32);
+            for at in ms(1000.0 * after + 5.0)..ms(480.0) {
+                let (a, b) = (plain[kick + at], with[kick + at]);
+                assert!(
+                    b - a < more && a - b < 1.0,
+                    "snare {level} at {after} s, bar {bar}, block {at}: {a} dB plain, {b} with"
+                );
+            }
+            for at in ms(310.0)..ms(480.0) {
+                assert!(
+                    with[kick + at] < 3.0,
+                    "snare {level} at {after} s: block {at}"
+                );
+            }
         }
     }
     // One tom is one onset, one ghost kick is one.
     // (Each a second after a kick at 0.)
-    for hz in [70.0, 90.0] {
+    for (hz, level) in [(70.0, 0.7), (90.0, 0.7), (60.0, 1.2), (80.0, 1.2)] {
         let tom = move |t: f32| {
             let u = (t - 1.0).max(0.0);
-            0.8 * kick_at(t) + 0.7 * (-u / 0.2).exp() * (2.0 * PI * hz * u).sin()
+            0.8 * kick_at(t) + level * (-u / 0.2).exp() * (2.0 * PI * hz * u).sin()
         };
         let (_, on) = kit_over_bass(tom, 3.0);
-        assert_eq!(settled(&on), 1, "a {hz} Hz tom: {on:?}");
+        assert_eq!(settled(&on), 1, "a {hz} Hz tom at {level}: {on:?}");
     }
     for level in [0.6, 0.4] {
         let (_, on) = kit_over_bass(move |t| 0.8 * kick_at(t) + level * kick_at(t - 1.0), 3.0);
         assert_eq!(settled(&on), 1, "a ghost kick at {level}: {on:?}");
     }
-    // A held sub with tremolo is one onset, not one a cycle.
-    for (sub, rate) in [(50.0, 5.0), (40.0, 8.0), (60.0, 6.5)] {
+    // A held sub with tremolo (5.4 dB deep here) is one onset, not one a
+    // cycle. Deeper, its swells are onsets, steadying a dip already held.
+    for (sub, rate, deep) in [(50.0, 5.0, 0.3), (40.0, 8.0, 0.3), (60.0, 6.5, 0.3)] {
         let trem = move |t: f32| {
             let u = (t - 1.0).max(0.0);
-            let swell = 1.0 + 0.3 * (2.0 * PI * rate * u).sin();
+            let swell = 1.0 + deep * (2.0 * PI * rate * u).sin();
             0.8 * kick_at(t) + 0.6 * swell * (2.0 * PI * sub * u).sin()
         };
         let (_, on) = kit_over_bass(trem, 5.0);

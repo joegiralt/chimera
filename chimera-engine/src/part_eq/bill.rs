@@ -106,7 +106,9 @@ pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartBill, p: 
         (SmartLoad::Rests, _, _) => Cost::ZERO,
         (SmartLoad::Runs, Role::Front, Bands::Listened) => LISTEN,
         (SmartLoad::Runs, Role::Front, Bands::Full)
-        | (SmartLoad::Runs, Role::Mid | Role::Back, _) => CUT + sides(SIDE),
+        | (SmartLoad::Runs, Role::Mid | Role::Back, Bands::Full | Bands::Listened) => {
+            CUT + sides(SIDE)
+        }
     };
     tilt + smart
 }
@@ -119,6 +121,8 @@ pub fn wash(reverb: &crate::dsp::reverb::ReverbParams, smart: SmartBill) -> Cost
         (SmartLoad::Rests, _, _, _) | (_, false, _, _) => Cost::ZERO,
         (SmartLoad::Runs, true, Role::Front, Bands::Listened) => WASH_LISTEN,
         (SmartLoad::Runs, true, Role::Front, Bands::Full)
-        | (SmartLoad::Runs, true, Role::Mid | Role::Back, _) => WASH_CUT,
+        | (SmartLoad::Runs, true, Role::Mid | Role::Back, Bands::Full | Bands::Listened) => {
+            WASH_CUT
+        }
     }
 }

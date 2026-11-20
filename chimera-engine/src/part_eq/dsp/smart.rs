@@ -21,7 +21,7 @@ use chimera_hal::BLOCK_SIZE;
 use super::tan_small;
 use crate::dsp::Stereo;
 use crate::dsp::algo::math::{exp2, log2};
-use crate::dsp::{Db, Unit, clampf};
+use crate::dsp::{Db, Unit, clampf, sqrt};
 use crate::hw::MAX_PARTS;
 use crate::instrument::Sides;
 use crate::part_eq::Live;
@@ -60,19 +60,26 @@ const HOLD_FULL_S: f32 = 0.1;
 /// Between the two the hold fades, so no gap is a cliff (a hard edge at
 /// 150 ms was 5.6 dB of flutter one millisecond past it).
 const HOLD_NONE_S: f32 = 0.22;
-/// A kick's onset is its key hitting (within 3 dB of its recent peak: a
-/// snare's LOW is not one) and risen this much (power, 3 dB) over its
-/// floor: a kick after quiet, or over the last one's tail...
+/// A kick's onset is its key hitting (within 3 dB of its recent peak)
+/// and risen this much (power, 3 dB) over its floor: a kick after quiet,
+/// or over the last one's tail...
 const ONSET_RISE: f32 = 2.0;
 /// ...the floor being the key followed down at once and up no faster
 /// than this (dB a second): a kick's attack outruns it; a tremolo's
 /// swell (8 Hz, 5 dB deep, is 90) and a low tone's ripple on the key from
-/// block to block (2.2 dB at 50 Hz, 2.7 at 40) do not. A kit holding a
-/// tone under 35 Hz does ripple past it: its onsets only steady a dip
-/// that is already held down...
+/// block to block (2.2 dB at 50 Hz, 2.7 at 40) do not. A tone held under
+/// 35 Hz and a tremolo over 5 dB deep do pass it: their onsets only
+/// steady a dip that is already held down...
 const FLOOR_RISE_DB_S: f32 = 150.0;
 /// ...and no sooner than this after the last (seconds): one kick's
 /// attack, a flam or a tom's first cycles are one onset.
+/// ...and adding, as an amplitude over what it lands on, this much of
+/// what the last onset added (3 dB under it at most): a snare's LOW after
+/// a kick is no onset and stretches no hold...
+const ONSET_NEAR: f32 = core::f32::consts::FRAC_1_SQRT_2;
+/// ...the last onset's size falling this fast (dB a second), so a quieter
+/// kick is an onset again soon after a loud one (6 dB under, a second on).
+const ONSET_FALL_DB_S: f32 = 6.0;
 const REFRACT_S: f32 = 0.045;
 /// How long past a dense kick's onset its dip is held, of the gap to the
 /// one before: a late hit is still covered.
@@ -389,10 +396,16 @@ impl Rate {
             fall: Unit::new(pole(LEVEL_FALL_S, sample_rate)),
             key_fall: Unit::new(pole(KEY_FALL_S, sample_rate)),
             // A turn of the kick's rule on.
-            floor_rise: exp2(
-                FLOOR_RISE_DB_S * f32::from(RULES.get()) * BLOCK_SIZE as f32 / fs
-                    * (core::f32::consts::LOG2_10 / 10.0),
-            ) - 1.0,
+            onset_fall: Unit::new(exp2(
+                -ONSET_FALL_DB_S * f32::from(RULES.get()) * BLOCK_SIZE as f32 / fs
+                    * (core::f32::consts::LOG2_10 / 20.0),
+            )),
+            floor_rise: Unit::new(
+                exp2(
+                    FLOOR_RISE_DB_S * f32::from(RULES.get()) * BLOCK_SIZE as f32 / fs
+                        * (core::f32::consts::LOG2_10 / 10.0),
+                ) - 1.0,
+            ),
             kick_attack: Unit::new(pole(KICK_ATTACK_S, sample_rate)),
             kick_release: Unit::new(pole(KICK_RELEASE_S, sample_rate)),
             attack: Unit::new(pole(ATTACK_S, sample_rate)),
@@ -956,11 +969,22 @@ impl PartSmart {
         // quiet, or over the last kick's body), once per attack.
         let since = self.since.after(blocks);
         let key = self.key.get();
-        let floor = key.min(self.floor.get() * (1.0 + r.floor_rise));
-        if h >= HIT_ON && key > ONSET_RISE * floor && since >= r.refract {
+        let floor = key.min(self.floor.get() * (1.0 + r.floor_rise.get()));
+        // What this hit adds over what was already sounding, as an
+        // amplitude: a kick's own size, whatever tail it lands on.
+        let amp = sqrt(key);
+        let adds = amp - sqrt(floor);
+        self.onset *= r.onset_fall.get();
+        let kick = adds >= ONSET_NEAR * self.onset;
+        if h >= HIT_ON && key > ONSET_RISE * floor && kick && since >= r.refract {
             (self.gap, self.since, self.floor) = (since, Blocks::ZERO, self.key);
+            (self.onset, self.under) = (adds, amp - adds);
         } else {
             (self.since, self.floor) = (since, Power::new(floor));
+            // Its attack is still rising: the onset is as big as it gets.
+            if since < r.refract {
+                self.onset = self.onset.max(amp - self.under);
+            }
         }
         if self.gap == Blocks::ZERO {
             return h;
