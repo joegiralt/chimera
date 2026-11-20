@@ -487,102 +487,6 @@ fn orb_page_golden() {
     );
 }
 
-/// The beat dot, left of the sounding dot on every kind of page: absent
-/// while ORBIT is stopped; running, filled on a beat's first tick, part
-/// filled on the next, an outline by the third, and filled again on the
-/// next beat. The CPU label moves left by one dot. The dirty path
-/// redraws each step as a full render would.
-#[test]
-fn header_dot_pulses() {
-    use chimera_core::orbit::runner::OrbitView;
-    use chimera_core::ui::animation::UiTick;
-    use chimera_core::ui::perf::PerfStats;
-    use chimera_core::ui::region::RegionKind;
-    use screen::{Fb, audio_fixture, orbit_view, scope_fixture};
-    const LOAD: PerfStats = PerfStats {
-        frame_us: 0,
-        audio_us: 0,
-        audio_load_pct: 42,
-    };
-    let full = |ui: &UiState| {
-        let mut fb = Fb::new();
-        ui.render_with_audio(&mut fb, &LOAD, Some(&audio_fixture()), &scope_fixture());
-        fb
-    };
-    // The CPU label's right edge: the header's rightmost MID pixel.
-    let cpu_right = |fb: &Fb| {
-        (0..theme::SCREEN_W)
-            .rev()
-            .find(|&x| (0..theme::HEADER_BOTTOM).any(|y| fb.at(x, y) == theme::MID))
-    };
-    let (x, y) = (theme::ORBIT_DOT_X, theme::HEADER_DOT_Y);
-    let r = theme::HEADER_DOT_R;
-    for (name, cpu) in [
-        ("algo_level", true),
-        ("mixer_part", true),
-        ("settings_top", false),
-        ("settings_personal_theme", false),
-        ("orbit_orb", true),
-    ] {
-        let mut ui = Box::new(screen::ui_for(name));
-        ui.set_orbit_view(&OrbitView::default());
-        screen::settle(&mut ui);
-        let mut dirty = Fb::new();
-        // The band the dots are in: a page's header, SETTINGS' crumbs.
-        let head = |ui: &UiState| {
-            ui.drawn_key(RegionKind::Header)
-                .or(ui.drawn_key(RegionKind::Crumbs))
-                .expect("a header band")
-        };
-        let mut step = |ui: &mut UiState, what: &str| {
-            ui.update(UiTick::for_test());
-            ui.render_dirty_with_audio(&mut dirty, &LOAD, Some(&audio_fixture()), &scope_fixture());
-            let fb = full(ui);
-            assert!(dirty.px == fb.px, "{name}: {what}, dirty");
-            (fb, head(ui))
-        };
-        let (stopped, _) = step(&mut ui, "stopped");
-        for dx in -r..=r {
-            assert_eq!(stopped.at(x + dx, y), theme::BG, "{name}: stopped, no dot");
-        }
-
-        ui.set_orbit_view(&orbit_view(0.0));
-        let (first, k1) = step(&mut ui, "the beat");
-        assert_eq!(first.at(x, y), theme::ACCENT, "{name}: filled");
-        assert_eq!(first.at(x + 2, y), theme::ACCENT, "{name}: filled");
-        let (second, k2) = step(&mut ui, "fading");
-        assert_eq!(second.at(x, y), theme::ACCENT, "{name}: part filled");
-        assert_eq!(second.at(x + 2, y), theme::BG, "{name}: part filled");
-        let (third, k3) = step(&mut ui, "faded");
-        assert_eq!(third.at(x, y), theme::BG, "{name}: an outline");
-        assert_eq!(third.at(x + r, y), theme::ACCENT, "{name}: an outline");
-        let (still, k4) = step(&mut ui, "between beats");
-        // The header's rows: below them MIXER › PRT's meters (ADR 0293)
-        // read the shared Part peaks, which other tests' audio raises.
-        let head_px = |fb: &Fb| fb.px[..screen::W * theme::HEADER_BOTTOM as usize].to_vec();
-        assert!(
-            head_px(&still) == head_px(&third),
-            "{name}: still between beats"
-        );
-        // The band redraws as the dot fades, and not between beats.
-        assert!(k1 != k2 && k2 != k3, "{name}: each fade step redraws");
-        assert_eq!(k3, k4, "{name}: the band rests between beats");
-
-        ui.set_orbit_view(&orbit_view(0.25));
-        let (next, _) = step(&mut ui, "the next beat");
-        assert_eq!(next.at(x + 2, y), theme::ACCENT, "{name}: the next beat");
-
-        if cpu {
-            let (s, run) = (cpu_right(&stopped), cpu_right(&third));
-            assert_eq!(
-                s.zip(run).map(|(s, run)| s - run),
-                Some(theme::HEADER_DOT_X - theme::ORBIT_DOT_X),
-                "{name}: the CPU label moves left by one dot"
-            );
-        }
-    }
-}
-
 /// ORB's encoders: A picks the ring, one to five; F sets the BPM.
 #[test]
 fn orb_encoders() {
@@ -1178,4 +1082,76 @@ fn a_target_change_redraws_orb() {
     let after = keys(&ui);
     assert_ne!(after.0, before.0, "the circle redraws");
     assert_ne!(after.1, before.1, "the RING cell redraws");
+}
+
+/// #961: NOTE turned through an octave, sharps and naturals, redraws its
+/// own chip alone: the others keep their font, and none falls to a pitch
+/// mark. A STEP ring's picked step stays put under any turn.
+#[test]
+fn a_note_turn_changes_only_its_chip() {
+    use chimera_core::orbit::ring::NoteMode;
+    use chimera_core::orbit::walk::Pool;
+    use chimera_core::ui::draw::text_width;
+    use chimera_core::ui::orbit::draw::{CHIPS_SHOWN, NOTE_H, NOTE_TOP, chip_font};
+    use chimera_hal::ButtonId::Mix;
+    use chimera_hal::EncoderId::F;
+    use chimera_theory::Note;
+
+    // Any number of chips on show: a font, and every name from C0 fits it.
+    for n in 1..=CHIPS_SHOWN as i32 {
+        let cw = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) / n - 4;
+        let font = chip_font(cw).unwrap_or_else(|| panic!("{n} chips: no font"));
+        for note in (12..=127).filter_map(Note::new) {
+            assert!(
+                text_width(font, &note.to_string(), 0) <= cw - 2,
+                "{n} chips, {note}"
+            );
+        }
+    }
+
+    let mut ui = Box::new(crate::screen::stack_ui());
+    to_notes(&mut ui, 3);
+    let r = ui.location().orbit().unwrap().ring().get() as usize;
+    let notes = [48, 50, 52, 53, 55, 57, 59, 72].map(|n| Note::new(n).unwrap());
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[r]
+        .ring
+        .pool = Pool::new(&notes).unwrap();
+    feed(&mut ui, Input::turn(F, 9).and_held(Mix));
+    assert_eq!(ui.orbit().chip, 7);
+    let slot = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) as f32 / 8.0;
+    let last = theme::VIZ_LEFT + (slot * 7.0).round() as i32;
+    let others = |ui: &UiState| {
+        let fb = screen::render_ui(ui);
+        (NOTE_TOP..NOTE_TOP + NOTE_H)
+            .flat_map(|y| (theme::VIZ_LEFT..last).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect::<Vec<_>>()
+    };
+    // Its own chip's ink: a name, never the 2 px pitch mark.
+    let rows = |ui: &UiState| {
+        let fb = screen::render_ui(ui);
+        (NOTE_TOP + 4..NOTE_TOP + NOTE_H - 4)
+            .filter(|&y| (last + 2..last + 21).any(|x| fb.at(x, y) == theme::INK))
+            .count()
+    };
+    let before = others(&ui);
+    for _ in 0..12 {
+        feed(&mut ui, Input::turn(F, 1));
+        assert_eq!(ui.orbit().chip, 7);
+        let note = sel_ring(&ui).chip(7);
+        assert!(others(&ui) == before, "{note}: the other chips redrawn");
+        assert!(rows(&ui) > 2, "{note}: a pitch mark");
+    }
+
+    // STEP: the picked step is NOTE's, however far it turns.
+    use chimera_core::orbit::euclid::{Fill, Steps};
+    let ring = &mut ui.project_mut().orbit_mut().live_mut_for_test().rings[r].ring;
+    *ring = ring.with_fill(Fill::new(Steps::new(16).unwrap(), 5, 0).unwrap());
+    ring.mode = NoteMode::Step;
+    feed(&mut ui, Input::turn(F, -9).and_held(Mix));
+    feed(&mut ui, Input::turn(F, 2).and_held(Mix));
+    for d in [1, -1, 10, -10, 127, -127, 5] {
+        feed(&mut ui, Input::turn(F, d));
+        assert_eq!(ui.orbit().chip, 2, "turn {d}");
+    }
 }

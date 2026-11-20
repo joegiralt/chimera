@@ -1,6 +1,6 @@
 # 0300. ALGO PAGES › FIRST picks which of ALGO's views OSC opens on
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-20)
 - **Deciders:** owner (#985, on 0.4.0 since 2026-11-15), firmware
 
 ## Context

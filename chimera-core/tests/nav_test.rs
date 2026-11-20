@@ -209,6 +209,7 @@ fn part_key_restores_only_from_its_own_mixer() {
     let cx = cx();
     let mut r = Recall::new();
     let mut l = Location::pages(P[1], at(1, 0));
+    key(&mut l, NavKey::MenuTap, &cx, &mut r);
     key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
     assert_eq!(l, Location::pages(P[0], at(0, 0)));
     key(&mut l, NavKey::MixPart(P[1]), &cx, &mut r);
@@ -220,6 +221,68 @@ fn part_key_restores_only_from_its_own_mixer() {
     key(&mut l, NavKey::MixPart(P[1]), &cx, &mut r);
     key(&mut l, NavKey::Part(P[1]), &cx, &mut r);
     assert_eq!(l, Location::pages(P[1], at(1, 0)), "its own mixer");
+}
+
+/// Every page of a chain.
+fn pages_of(c: PartChain) -> Vec<PageAt> {
+    let d = c.def();
+    (0..d.len())
+        .flat_map(|n| (0..).map_while(move |s| d.page(n, s)))
+        .collect()
+}
+
+const CHAINS: [PartChain; 6] = [
+    PartChain::Algo,
+    PartChain::AlgoFormant,
+    PartChain::Modal,
+    PartChain::Tape,
+    PartChain::Va,
+    PartChain::Drum,
+];
+
+/// #957: B<n> from another Part's sound page keeps the page.
+#[test]
+fn bn_from_a_sound_page_keeps_the_page() {
+    for from in CHAINS {
+        for to in CHAINS {
+            let mut cx = cx();
+            cx.chains[0] = from;
+            cx.chains[1] = to;
+            for at in pages_of(from) {
+                let id = from.def().def_at(at).unwrap().id;
+                let want = if from == to {
+                    at
+                } else {
+                    to.def().locate(id).unwrap_or(to.def().home())
+                };
+                let mut r = Recall::new();
+                assert_eq!(
+                    Location::pages(P[0], at).step(NavKey::Part(P[1]), &cx, &mut r),
+                    Step::Go(Location::pages(P[1], want)),
+                    "{from:?} {at:?} to {to:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn bn_keeps_filter_across_engines_and_homes_a_page_the_part_lacks() {
+    use chimera_core::ui::block_registry::FILTER;
+    let mut cx = cx();
+    cx.chains[1] = PartChain::Va;
+    cx.chains[2] = PartChain::Modal;
+    let mut r = Recall::new();
+    let mut l = Location::pages(P[0], PartChain::Algo.def().locate(FILTER.id).unwrap());
+    key(&mut l, NavKey::Part(P[1]), &cx, &mut r);
+    assert_eq!(
+        l,
+        Location::pages(P[1], PartChain::Va.def().locate(FILTER.id).unwrap())
+    );
+    // MODAL's RES is no other engine's page.
+    let mut l = Location::pages(P[2], PartChain::Modal.def().home());
+    key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
+    assert_eq!(l, Location::home(&cx));
 }
 
 fn bn_lands_on(e: EngineType) -> PageAt {

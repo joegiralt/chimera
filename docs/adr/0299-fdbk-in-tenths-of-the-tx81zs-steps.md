@@ -1,6 +1,6 @@
 # 0299. FDBK runs the TX81Z's 0–7 in tenths
 
-- **Status:** Proposed (the owner's ear decides nothing here: no existing Sound changes, see Null)
+- **Status:** Accepted (2026-11-20)
 - **Deciders:** owner (#990, on 0.4.0 since 2026-11-15), firmware
 
 ## Context

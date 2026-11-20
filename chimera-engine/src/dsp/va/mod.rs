@@ -271,10 +271,15 @@ pub static VA_SPECS: [ParamSpec; 14] = [
     uni(5, "STAB", "STAB", 1.0).glyph(FocusGlyph::Stability),
     coarse(6, "CRSE1", "CR1"),
     fine(7, "FINE1", "FN1"),
-    uni(8, "SHAPE1", "SHAPE1", 0.0).short("SH1"),
+    // SHAPE draws the wave it makes at its oscillator's WAVE (#980).
+    uni(8, "SHAPE1", "SHAPE1", 0.0)
+        .short("SH1")
+        .glyph(FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
     coarse(9, "CRSE2", "CR2"),
     fine(10, "FINE2", "FN2"),
-    uni(11, "SHAPE2", "SHAPE2", 0.0).short("SH2"),
+    uni(11, "SHAPE2", "SHAPE2", 0.0)
+        .short("SH2")
+        .glyph(FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
     ParamSpec::choice(
         12,
         "KIND",

@@ -419,6 +419,32 @@ With PARAM OUT at `NRPN`, every cell you turn on Chimera goes out of MIDI OUT an
 
 If your setup sends Chimera's MIDI OUT back into its MIDI IN (a DAW track with MIDI thru on, an interface's soft thru, a controller that merges its input), ECHO can stay on: an echo that comes back within that quarter second is not taken as a turn, so a relative encoder's cell never walks.
 
+### Reading a Sound's values: the parameter dump
+
+A controller with LED rings or a screen (a Move or Cirklon template, an editor) can ask Chimera what a Part's Sound is set to, so it shows the right values after a Sound or project load instead of waiting for each knob to move.
+
+**The request** is a SysEx of seven bytes, `F0 7D 43 48 01 pp F7`: Chimera's maker and family bytes as its identity reply gives them (`7D`, then `43 48`, "CH"), `01` for the request, and `pp` saying whose values:
+
+| `pp` | Answers with |
+|---|---|
+| `00` to `05` | Part 1 to Part 6 |
+| `10` to `1F` | The Part on MIDI channel 1 to 16. With several Parts on the channel, the lowest answers, as with ECHO |
+| `7F` | The Part you are editing on Chimera |
+
+**The answer** goes out of the port that asked (DIN or USB), on the Part's channel:
+
+1. One NRPN for every cell of the Part's Sound marked `W` on the [NRPN chart](NRPN.md) that its engine reads (the engine's own cells, the filter and its FX, the envelopes, the LFOs, AMP and PITCH): the same message PARAM OUT sends when you turn that cell, CC 99, 98, 6 and, for a 14-bit value, 38. Anything that already reads PARAM OUT reads the dump with nothing new to parse. The cells come in the chart's order.
+2. Then `F0 7D 43 48 02 pp F7`, with `pp` the Part that answered (`00` to `05`): the dump is complete.
+
+The values are the knobs' own, as stored: a cell the mod matrix is moving sends where its knob sits.
+
+On DIN an ALGO Sound is 235 cells and takes about 0.55 s; the other engines have 116 to 140 cells and take about 0.3 s. Chimera paces it to the port, so nothing is dropped, and echoes and PARAM OUT still go out at once while it runs. On USB it takes under a tenth of a second.
+
+- A request while ECHO is off gets no answer. PARAM OUT need not be on.
+- A `pp` naming no Part (a number past 6, a channel no Part is on, any other value) gets no answer.
+- If the Part loads another Sound while its dump is going out, the dump starts again from the first cell, so the last complete run before the end message is the Sound that plays. A second request on the same port replaces the first.
+- The dump is the cells' values only. It does not carry the mod matrix's routes, the MIDI map, the Sound's name, the Part's LEVEL and PAN, or the project's effects: it is not a way to move a Sound between units.
+
 ## USB MIDI and audio
 
 Over USB, Chimera is class compliant: it needs no driver on Linux, macOS or Windows. It shows up as:
@@ -463,6 +489,7 @@ Select the bank with **CC 0** (bank select MSB) before the program change; if yo
 When SETTINGS › ABOUT reads `NEEDS UPDATE`, Chimera ignores MIDI in, notes and clock too, until the update is installed: MIDI MAP reads `NEEDS UPDATE`, and **MIX + SEQ** says `NEEDS UPDATE` instead of starting learn.
 
 - **Identity request** (`F0 7E 7F 06 01 F7`): Chimera answers with its identity and firmware version, while ECHO is on.
+- **Parameter dump request** (`F0 7D 43 48 01 pp F7`): Chimera answers with the values of a Part's Sound, while ECHO is on: see [Reading a Sound's values](#reading-a-sounds-values-the-parameter-dump).
 - **All Notes Off** (CC 123), and the Omni and Mono/Poly messages (CC 124–127): the notes of every Part on that channel are released. **All Sound Off** (CC 120) silences them, and **Reset All Controllers** (CC 121) resets the pedal, the bend, the mod wheel, pressure, CC 74 and expression (CC 11).
 - **System Reset** (`FF`): every sound stops and every controller resets.
 - **Active Sensing:** once a controller sends it, a pulled cable releases every held note within a third of a second, and the screen shows **DIN MIDI LOST**. A USB host that resets or sleeps while you hold a note or pedal does the same, with **USB MIDI LOST**.

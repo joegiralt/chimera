@@ -738,6 +738,18 @@ impl PartChain {
     }
 }
 
+/// `at` on another Part's chain (#957): as it is on the same chain, by
+/// page id on another that has the page, else that chain's home.
+fn kept(from: PartChain, at: PageAt, to: PartChain) -> PageAt {
+    if from == to {
+        return at;
+    }
+    from.def()
+        .def_at(at)
+        .and_then(|d| to.def().locate(d.id))
+        .unwrap_or(to.def().home())
+}
+
 /// An already-decided key: taps act on release (`ui::hold`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavKey {
@@ -907,6 +919,7 @@ impl Location {
             (Orbit(_), _) => Step::Stay,
             (Pages(p, _), NavKey::Part(n)) if p == n => go(r.mix_entry(n)),
             (Part(p, _) | Fx(p, _), NavKey::Part(n)) if p == n => go(Pages(n, r.pages_of(n, cx))),
+            (Pages(p, at), NavKey::Part(n)) => go(Pages(n, kept(cx.chain(p), at, cx.chain(n)))),
             (_, NavKey::Part(n)) => go(Pages(n, cx.chain(n).def().home())),
             (Part(_, m), NavKey::MixPart(n)) => go(Part(n, m)),
             (Fx(_, at), NavKey::MixPart(n)) => go(Fx(n, at)),

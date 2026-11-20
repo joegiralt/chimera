@@ -1,9 +1,10 @@
 //! Universal Device Inquiry: the request and Chimera's identity reply;
-//! the MIDI Tuning Standard's retunes (`mts`).
+//! the MIDI Tuning Standard's retunes (`mts`); Chimera's own messages:
+//! the parameter dump's request and end (#984).
 
 use crate::out::Writer;
 use crate::stream::SysEx;
-use crate::value::{Key, U7, U14};
+use crate::value::{Channel, Key, U7, U14};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
@@ -16,6 +17,79 @@ pub fn request(s: SysEx<'_>, own: U7) -> Option<Request> {
         [0x7E, d, 0x06, 0x01] if d == 0x7F || d == own.get() => Some(Request::Identity),
         _ => None,
     }
+}
+
+/// The head of Chimera's own messages: the identity reply's maker
+/// (`7D`, non-commercial) and family, "CH".
+pub const CHIMERA: [u8; 3] = [0x7D, 0x43, 0x48];
+
+/// A parameter dump request (#984, ADR 0301): Chimera's own message 1.
+const DUMP_REQUEST: u8 = 0x01;
+/// A dump's end: message 2.
+const DUMP_END: u8 = 0x02;
+
+/// A Part by number on the wire, 0 the first: sixteen fit, however many
+/// the box has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartNo(u8);
+
+impl PartNo {
+    pub const fn new(n: u8) -> Option<Self> {
+        if n < 16 { Some(Self(n)) } else { None }
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Whose values a dump request asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DumpWho {
+    /// `00`-`0F`: the Part of that number.
+    Part(PartNo),
+    /// `10`-`1F`: the Part on that channel.
+    Channel(Channel),
+    /// `7F`: the Part being edited.
+    Editing,
+}
+
+impl DumpWho {
+    /// The request's `who` byte; `None` for the bytes kept free.
+    pub const fn from_wire(b: U7) -> Option<Self> {
+        match b.get() {
+            n @ 0x00..=0x0F => Some(Self::Part(PartNo(n))),
+            n @ 0x10..=0x1F => Some(Self::Channel(Channel::clamped(n & 0x0F))),
+            0x7F => Some(Self::Editing),
+            _ => None,
+        }
+    }
+
+    pub const fn wire(self) -> U7 {
+        let b = match self {
+            Self::Part(p) => p.0,
+            Self::Channel(c) => 0x10 | c.get(),
+            Self::Editing => 0x7F,
+        };
+        match U7::new(b) {
+            Some(b) => b,
+            None => U7::MAX,
+        }
+    }
+}
+
+/// `F0 7D 43 48 01 <who> F7`, as its body between `F0` and `F7`.
+pub fn dump_request(body: &[u8]) -> Option<DumpWho> {
+    match *body {
+        [a, b, c, DUMP_REQUEST, who] if [a, b, c] == CHIMERA => DumpWho::from_wire(U7::new(who)?),
+        _ => None,
+    }
+}
+
+/// `F0 7D 43 48 02 <part> F7`: the dump of `part` is all sent.
+pub fn dump_end(part: PartNo, w: &mut Writer) -> bool {
+    let [a, b, c] = CHIMERA;
+    w.sysex(&[a, b, c, DUMP_END, part.get()])
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 # 0298. ALGO's pages say what they edit: stage names, RATE SCALE's words, the ratio, feedback loops
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-20)
 - **Deciders:** owner (the tickets, on 0.4.0 since 2026-11-15), firmware
 
 ## Context

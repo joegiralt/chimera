@@ -33,6 +33,7 @@ pub mod lfo_glyph;
 pub mod library;
 pub mod meter;
 pub mod midi;
+pub mod param_dump;
 pub mod param_out;
 pub mod part_meter;
 pub use chimera_engine::midi_settings;
