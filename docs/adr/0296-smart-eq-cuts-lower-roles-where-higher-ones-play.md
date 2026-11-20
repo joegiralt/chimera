@@ -258,9 +258,9 @@ ADR 0198's slack:
 
 | Set | Bank 1 (B) | Bank 2 used (B) |
 |---|---:|---:|
-| default | +2,304 | +24,000 |
-| orbit | +2,624 | +24,032 |
-| bank2-gate | +2,328 | +24,000 |
+| default | +2,304 | +24,288 |
+| orbit | +2,624 | +24,320 |
+| bank2-gate | +2,328 | +24,288 |
 | orbit,usb-config-writer | +2,640 | |
 | fault-inject | +2,592 | |
 | bench-algo | +2,448 | |
@@ -278,16 +278,16 @@ ADR 0198's slack:
   0284's are), the names, the bills (`bill::first_voice`, `bill::wash`,
   admission's with the door open or closed), the stub's test and the
   return's ask in `FxBus`, the renderer's arm and the plan's painter.
-- Bank 2 on ORBIT: S4–S5 +24,032 B (`answer` 10.0 KB with the Parts'
+- Bank 2 on ORBIT: S4–S5 +24,320 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
   460 KB. None of it is placed in S0–S3, which has 7,072 B free on
   ORBIT, 32 B less than 0.4's 7,104: code already there recompiles a
   little larger around the new settings (`orbit::door::block` +64 B,
   others smaller), under ADR 0251's 8 KB warning before this change.
-- RAM: ITCM +1,464 B (`PART_EQS`: seven members' filters, levels, cuts
+- RAM: ITCM +1,520 B (`PART_EQS`: seven members' filters, levels, cuts
   and dips, the return's listening filters, the rate's coefficients):
-  44,872 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged: bench-algo, whose
+  44,928 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged: bench-algo, whose
   D2 a page id overflowed, links with tester-04's page 119 and no new id.
 
 ### CPU
