@@ -206,7 +206,7 @@ fn free_plays_the_same_at_any_tempo_and_note() {
 #[test]
 fn each_note_repeats_on_its_time() {
     for bpm in [60.0, 90.0, 120.0, 140.0, 174.0] {
-        for (i, d) in NOTES.iter().enumerate() {
+        for (i, div) in NOTES.iter().enumerate() {
             let n = DelayNote::new(i);
             let (want, halved) = fitted(n, bpm);
             let mut d = Box::new(TapeDelay::new());
@@ -214,7 +214,7 @@ fn each_note_repeats_on_its_time() {
             let peak = (0..out.len())
                 .max_by(|&a, &b| out[a].abs().total_cmp(&out[b].abs()))
                 .unwrap();
-            let what = format!("{d:?} at {bpm} BPM: {want} samples");
+            let what = format!("{div:?} at {bpm} BPM: {want} samples");
             assert!((peak as f64 - want).abs() < 1.0, "{what}, peak at {peak}");
             // Linear interpolation: the click, whole, across two samples.
             let sum: f32 = out.iter().sum();
