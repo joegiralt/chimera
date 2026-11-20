@@ -1591,14 +1591,35 @@ fn writes_editor_part_fixture() {
     assert!(on_disk == text, "BLESS=1 rewrites {}", path.display());
 }
 
-/// The review's I3: a yes that is no key's takes an `EditorProof`, and the
-/// only proofs in the workspace are `ed`'s two tokens, whose fields are
-/// private to the modules that parse and check them (`orbit::Held`, made
-/// by `holds`; `project::Discard`, made by the `discard` word).
+/// The proof trait's name, never spelled whole in this file's code: the
+/// scan below reads this file too.
+fn proof_word() -> String {
+    ["Editor", "Proof"].concat()
+}
+
+/// How often `text` names the proof trait outside its comment lines. Any
+/// naming counts, not an `impl` line alone: an alias (`use … as`) names
+/// it once, and an impl split across lines names it on one of them.
+fn proof_mentions(text: &str) -> usize {
+    let word = proof_word();
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with("//"))
+        .map(|l| l.matches(word.as_str()).count())
+        .sum()
+}
+
+/// The review's I3: the scene's yes takes the engine's `Held`, made only
+/// by `Held::check` (its fields private to the engine, a doctest there);
+/// a load's `discard` takes the proof trait, and the workspace names that
+/// trait in two files only: where the engine declares and takes it, and
+/// `ed`'s one implementor (`project::Discard`, made by the `discard`
+/// word, its field private to its module). The backstop behind the
+/// types: a new implementor, however it is spelled, is a new mention.
 #[test]
 fn only_the_ed_path_proves_an_editors_yes() {
     use std::path::Path;
-    fn walk(dir: &Path, out: &mut Vec<(String, String)>, root: &Path) {
+    fn walk(dir: &Path, out: &mut Vec<(String, usize, String)>, root: &Path) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -1608,11 +1629,11 @@ fn only_the_ed_path_proves_an_editors_yes() {
                 walk(&p, out, root);
             } else if p.extension().is_some_and(|x| x == "rs") {
                 let text = std::fs::read_to_string(&p).unwrap();
-                for l in text.lines().map(str::trim) {
-                    if l.starts_with("impl") && l.contains("EditorProof<") && l.contains(" for ") {
-                        let at = p.strip_prefix(root).unwrap().to_str().unwrap();
-                        out.push((at.to_string(), l.to_string()));
-                    }
+                let n = proof_mentions(&text);
+                if n > 0 {
+                    let at = p.strip_prefix(root).unwrap().to_str().unwrap();
+                    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    out.push((at.to_string(), n, flat));
                 }
             }
         }
@@ -1627,19 +1648,35 @@ fn only_the_ed_path_proves_an_editors_yes() {
         }
     }
     found.sort();
+    let got: Vec<(&str, usize)> = found.iter().map(|(a, n, _)| (a.as_str(), *n)).collect();
+    // The engine: the trait's declaration and `editor_discard`'s argument.
     let want = [
-        (
-            "chimera-core/src/console/ed/orbit.rs",
-            "impl chimera_engine::confirm::EditorProof<SceneSlot> for Held {}",
-        ),
-        (
-            "chimera-core/src/console/ed/project.rs",
-            "impl chimera_engine::confirm::EditorProof<crate::project::ProjectSource> for Discard {}",
-        ),
+        ("chimera-core/src/console/ed/project.rs", 1),
+        ("chimera-engine/src/confirm.rs", 2),
     ];
-    let got: Vec<(&str, &str)> = found
-        .iter()
-        .map(|(a, b)| (a.as_str(), b.as_str()))
-        .collect();
     assert_eq!(got, want);
+    let word = proof_word();
+    let the_impl = format!(
+        "impl chimera_engine::confirm::{word}<crate::project::ProjectSource> for Discard {{}}"
+    );
+    assert!(found[0].2.contains(&the_impl), "{the_impl}");
+    let the_trait = format!("pub trait {word}<T: Witnessed> {{}}");
+    assert!(found[1].2.contains(&the_trait), "{the_trait}");
+}
+
+/// The scan's two old blind spots: an implementor under an alias, and an
+/// `impl` split across lines. Comment lines alone are no mention.
+#[test]
+fn the_proof_scan_sees_an_alias_and_a_split_impl() {
+    let word = proof_word();
+    let alias = format!(
+        "use chimera_engine::confirm::{word} as P;\nimpl P<ProjectSource> for Forged {{}}\n"
+    );
+    assert_eq!(proof_mentions(&alias), 1);
+    let split = format!(
+        "impl\n    chimera_engine::confirm::{word}<ProjectSource>\n    for Forged\n{{\n}}\n"
+    );
+    assert_eq!(proof_mentions(&split), 1);
+    let comments = format!("/// `{word}`\n// {word}\n//! {word}\nstruct Plain;\n");
+    assert_eq!(proof_mentions(&comments), 0);
 }

@@ -51,9 +51,10 @@ impl EdName {
 /// file's generation as the listing read it. Its field is this module's:
 /// only `ProjectCmd::parse` makes one.
 ///
-/// ```compile_fail
-/// use chimera_core::console::OverEdits;
-/// let _ = OverEdits::Discard(Default::default());
+/// ```compile_fail,E0423
+/// use chimera_core::console::{EdDiscard, OverEdits};
+/// use chimera_core::storage::Generation;
+/// let _ = OverEdits::Discard(EdDiscard(Generation::FIRST));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Discard(Generation);

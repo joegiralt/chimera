@@ -10,7 +10,8 @@ use core::marker::PhantomData;
 use crate::boot::RomDfu;
 use crate::orbit::RINGS;
 use crate::project::{
-    DeleteTarget, LibraryPart, OverwriteTarget, PartSource, ProjectSource, SceneSlot, Witnessed,
+    DeleteTarget, Held, LibraryPart, OverwriteTarget, PartSource, ProjectSource, SceneSlot,
+    Witnessed,
 };
 
 /// A key's press: a tap acts on release, a hold fires once while down.
@@ -226,15 +227,16 @@ impl<T> Said<T> {
     }
 }
 
-/// Proof that the browser editor's own confirm said yes to a `T` (ADR
-/// 0289): the one way to a `Said` that is no key's. The `ed` command path
-/// alone implements it (`chimera_core::console::ed`), on two tokens whose
-/// constructors are private to it: `orbit::Held`, made only when a scene
-/// command's slot still reads the rev the editor sent, and
-/// `project::Discard`, made only by parsing a load's `discard` word. A
-/// test holds the implementors to those two
-/// (`only_the_ed_path_proves_an_editors_yes`). Without a proof there is
-/// no yes:
+/// Proof that the browser editor's own confirm said to drop a project's
+/// unsaved edits (ADR 0289): the way to a `Said<ProjectSource>` that is
+/// no key's. The engine can't name the token, which is the `ed` command
+/// path's (`chimera_core::console::ed::project::Discard`, made only by
+/// parsing a load's `discard` word, its field private to its module), so
+/// the gate is this trait, and a test holds every naming of it in the
+/// workspace to that one implementor
+/// (`only_the_ed_path_proves_an_editors_yes`). A scene's yes needs no
+/// trait: it takes the engine's own `Held`. Without a proof there is no
+/// yes:
 ///
 /// ```compile_fail,E0061
 /// use chimera_engine::confirm::Said;
@@ -252,10 +254,10 @@ pub trait EditorProof<T: Witnessed> {}
 impl Said<SceneSlot> {
     /// The browser editor's yes to a scene's SAVE OVER, CLEAR, RELOAD or
     /// MOVE (ADR 0289): its own confirm dialog's, proven by the slot's
-    /// rev as `since` said it, checked against the slot (`SceneAsk::seen`
-    /// carries the same rev). Only `ed scene` holds a proof.
+    /// rev as `since` said it, read off the slot by `Held::check`
+    /// (`SceneAsk::seen` carries the same rev). Only a `Held` is a proof.
     #[inline(always)]
-    pub fn editor_confirm(_: &impl EditorProof<SceneSlot>) -> Self {
+    pub fn editor_confirm(_: &Held) -> Self {
         Said::new()
     }
 }

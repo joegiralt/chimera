@@ -43,7 +43,7 @@ pub(crate) use orbit::{
     NotNow as OrbitNotNow, OrbitCmd, Seen as OrbitSeen, check as orbit_check, holds as orbit_holds,
 };
 pub use pages::schema_pages;
-pub use project::{EdName, OverEdits, ProjectCmd};
+pub use project::{Discard as EdDiscard, EdName, OverEdits, ProjectCmd};
 pub use schema::{Round, Schema};
 pub use since::{
     EdSince, Gen, MIXER_SLOTS as ED_MIXER_SLOTS, PANELS_MAX as ED_PANELS,

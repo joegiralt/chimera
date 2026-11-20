@@ -38,6 +38,28 @@ struct Read {
     saves: u8,
 }
 
+/// A map's name as a queued rename carries it: FNV-1a 32 of its padded
+/// bytes, not the name, so the job and the editor's act are no wider than
+/// the widest they were (the act queue is ITCM's). Bytes, to align as a
+/// name does. Two names of one mark: the rename takes the other map only
+/// if the Part also moved to it while the job waited.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct MapMark([u8; 4]);
+
+impl MapMark {
+    /// `n`'s mark. Inlined: the editor's check takes it in its own slot.
+    #[inline(always)]
+    pub(crate) fn of(n: SoundName) -> MapMark {
+        // A counted loop: an array's iterator is an instance bank 1 holds.
+        let (bytes, mut h, mut i) = (n.padded(), 0x811C_9DC5u32, 0);
+        while i < bytes.len() {
+            h = (h ^ u32::from(bytes[i])).wrapping_mul(0x0100_0193);
+            i += 1;
+        }
+        MapMark(h.to_le_bytes())
+    }
+}
+
 /// Card work MIDI MAP asked for.
 #[derive(Clone, Copy)]
 pub enum CtlJob {
@@ -73,6 +95,12 @@ pub struct Layers {
     /// The card holds more maps than `list`.
     pub(in crate::ui) more: bool,
     pub(in crate::ui) job: Option<CtlJob>,
+    /// The waiting rename is the browser editor's (ADR 0289), asked of
+    /// the map so marked: the Part on another by the job, nothing is
+    /// renamed. `None`: the box's own. Written by every ask of a rename
+    /// and read by a rename alone. Beside `job`, not in it: `CtlJob` is
+    /// the door's, and bank 1 builds it.
+    of: Option<MapMark>,
     /// The card last worked on: another reads every layer again.
     vol: Option<VolumeId>,
     /// A map read from the card (`ctl_work_in`): here, not on the stack,
@@ -113,6 +141,7 @@ pub(super) unsafe fn rest_at(p: *mut Layers) {
         addr_of_mut!((*p).listed).write(false);
         addr_of_mut!((*p).more).write(false);
         addr_of_mut!((*p).job).write(None);
+        addr_of_mut!((*p).of).write(None);
         addr_of_mut!((*p).vol).write(None);
         #[cfg(feature = "midi-map")]
         ctl::empty_at(addr_of_mut!((*p).scratch));
@@ -121,9 +150,9 @@ pub(super) unsafe fn rest_at(p: *mut Layers) {
 
 /// The words a save or a delete says, `|` between: a named static, so its
 /// bytes are bank 2's.
-static WORDS: [u8; 106] =
+static WORDS: [u8; 118] =
     *b"SAVED |MAP FULL|CONTROLLER|NONE|IN |NO CONTROLLER MAP|NAME TAKEN|CARD HOLDS MORE: 16 SHOWN|\
-MIX+EDIT RENAME";
+MIX+EDIT RENAME|MAP CHANGED";
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -137,6 +166,7 @@ pub(super) enum W {
     Taken,
     More,
     Whole,
+    Changed,
 }
 
 #[inline(never)]
@@ -303,6 +333,25 @@ impl UiState {
         }
     }
 
+    /// The waiting rename is still asked of the map the Part is on,
+    /// `now`: the editor's is held to the map it marked, and the Part on
+    /// another, or on none, it renames nothing and the box says MAP
+    /// CHANGED. The box's own carries no mark. Out of line: the job's
+    /// own code stays as it was laid out.
+    #[inline(never)]
+    fn held(&mut self, now: Option<SoundName>) -> bool {
+        let Some(was) = self.cc.ui().ctl.of else {
+            return true;
+        };
+        match now {
+            Some(n) if MapMark::of(n) == was => true,
+            Some(_) | None => {
+                self.error(Line::new(word(W::Changed)));
+                false
+            }
+        }
+    }
+
     fn ctl_job(&mut self, s: &mut dyn Store, r: &Ready, j: CtlJob) {
         let p = match j {
             CtlJob::Save(p, _)
@@ -312,6 +361,11 @@ impl UiState {
             | CtlJob::Delete(p, _) => p,
         };
         let now = self.project.controller(p);
+        if let CtlJob::Rename(..) = j
+            && !self.held(now)
+        {
+            return;
+        }
         // The map a rename or a delete takes the Parts off.
         let was = match j {
             CtlJob::Delete(_, n) => Some(n),
@@ -377,6 +431,19 @@ impl UiState {
             return self.error(Line::new(StoreError::Busy.message()));
         }
         c.job = Some(j);
+        c.of = None;
+    }
+
+    /// The browser editor's rename of Part `p`'s map to `to` (ADR 0289),
+    /// asked while the Part was on the map marked `was`: `ctl_ask_in`'s
+    /// rename, held to that map when the card work runs it.
+    pub(in crate::ui) fn ctl_rename_of_in(&mut self, p: PartId, was: MapMark, to: SoundName) {
+        let c = &mut self.cc.ui().ctl;
+        if c.job.is_some() {
+            return self.error(Line::new(StoreError::Busy.message()));
+        }
+        c.job = Some(CtlJob::Rename(p, to));
+        c.of = Some(was);
     }
 
     /// Part `p`'s pick `d` steps along NONE and the listed maps.

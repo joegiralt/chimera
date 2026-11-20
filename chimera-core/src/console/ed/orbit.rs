@@ -22,7 +22,7 @@ use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::{OrbitSong, SCENES, Scene, SceneIdx, SlotRev};
 use crate::orbit::walk::Pool;
 use crate::orbit::{MAX_POOL, MAX_SEGS, MAX_STEPS, RINGS, RingIdx};
-use crate::project::{Confirmed, SceneAsk, SceneSlot};
+use crate::project::Held;
 use crate::ui::UiState;
 use crate::ui::orbit::OrbitCell;
 use chimera_theory::{Degree, Interval, Note, Scale};
@@ -76,24 +76,6 @@ impl Seen {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.seen_slot"))]
     pub const fn slot(self) -> SceneIdx {
         self.slot
-    }
-}
-
-/// Proof that a scene command's witness held: the slot read the rev the
-/// editor sent when `holds` looked. The editor's yes (`EditorProof`), and
-/// the only way from an `ed scene` line to a `Confirmed<SceneSlot>`; only
-/// `holds` makes one.
-pub struct Held(Seen);
-
-impl chimera_engine::confirm::EditorProof<SceneSlot> for Held {}
-
-impl Held {
-    /// The slot confirmed as the editor saw it: the rev `holds` checked
-    /// is the one the song's write checks again.
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.confirmed"))]
-    pub fn confirmed(self) -> Confirmed<SceneSlot> {
-        let yes = chimera_engine::confirm::Said::editor_confirm(&self);
-        Confirmed::said(SceneAsk::seen(self.0.slot, self.0.rev), yes)
     }
 }
 
@@ -423,12 +405,13 @@ impl NotNow {
     }
 }
 
-/// `s` still holds, proven: its slot unwritten since the editor read it.
+/// `s` still holds, proven by the engine's `Held`: its slot unwritten
+/// since the editor read it.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.holds"))]
 pub fn holds(song: &OrbitSong, s: Seen) -> Result<Held, NotNow> {
-    match song.slot_rev(s.slot) == s.rev {
-        true => Ok(Held(s)),
-        false => Err(NotNow::SlotChanged),
+    match Held::check(song, s.slot, s.rev) {
+        Some(held) => Ok(held),
+        None => Err(NotNow::SlotChanged),
     }
 }
 

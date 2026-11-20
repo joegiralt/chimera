@@ -28,7 +28,7 @@ use crate::project::PartId;
 use crate::ui::UiState;
 use crate::ui::ed_cue::{self, CellSlot, LearnAt, LearnOn, Pass};
 use crate::ui::learn::Learn;
-use crate::ui::midi::layer::{CtlJob, shadowed};
+use crate::ui::midi::layer::{CtlJob, MapMark, shadowed};
 use crate::ui::settings::midi_map::MapText;
 use chimera_midi::rel::ByteEncoding;
 use chimera_midi::sxmap::Shape;
@@ -803,8 +803,11 @@ pub(super) enum MapAct {
         part: PartId,
         name: Option<SoundName>,
     },
+    /// The map the answer checked, marked `was`, renamed: the Part on
+    /// another by the card job, nothing is renamed (`ed_cue::ctl_rename`).
     Rename {
         part: PartId,
+        was: MapMark,
         name: SoundName,
     },
     /// `ed maps`.
@@ -1096,14 +1099,15 @@ pub(super) fn check(c: MapCmd, ui: &UiState) -> Result<MapAct, NotNow> {
             })
         }
         MapCmd::Rename(n) => {
-            if ui.project().controller(p).is_none() {
+            let Some(was) = ui.project().controller(p) else {
                 return Err(NotNow::NoPick);
-            }
+            };
             if busy(ui, p, None) {
                 return Err(NotNow::Busy);
             }
             Ok(MapAct::Rename {
                 part: p,
+                was: MapMark::of(was),
                 name: n.get(),
             })
         }
@@ -1209,7 +1213,7 @@ fn learn_cell(ui: &UiState, a: EdAddr) -> Option<LearnAt> {
         part: p,
         on,
         def,
-        slot: CellSlot::new(slot),
+        slot: CellSlot::new(slot)?,
     })
 }
 
@@ -1278,7 +1282,9 @@ pub(super) fn apply(ui: &mut UiState, a: MapAct) -> Pass {
                 ed_cue::ctl_ask(ui, CtlJob::Save(part, n));
             }
         }
-        MapAct::Rename { part, name } => ed_cue::ctl_ask(ui, CtlJob::Rename(part, name)),
+        MapAct::Rename { part, was, name } => {
+            ed_cue::ctl_rename(ui, part, was, name);
+        }
         MapAct::List => return ed_cue::ask_maps(ui),
         MapAct::Learn(None) => return ed_cue::learn(ui, None),
         MapAct::Learn(Some((part, a))) => {

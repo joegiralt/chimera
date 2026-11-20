@@ -530,6 +530,48 @@ fn map_rows_edit_through_the_card() {
     );
 }
 
+/// `ed map rename` renames the map it was asked of, or nothing: a pick
+/// applied before the card job runs (queued after the rename, or before
+/// it and not yet applied when the rename was checked) leaves both files
+/// as they were, and the box says MAP CHANGED (`since`'s `toast`).
+#[test]
+fn a_rename_asked_of_one_map_never_renames_another() {
+    for pick_first in [false, true] {
+        let mut r = Rig::new();
+        r.put_map("EC4", &[(21, CUTOFF)]);
+        r.put_map("LCXL3", &[(30, CUTOFF)]);
+        queued(&mut r.f, "ed maps");
+        r.pass();
+        r.pass();
+        queued(&mut r.f, "ed map pick EC4");
+        r.pass();
+        r.pass();
+        let (_, n) = since(&mut r.f, 0);
+        match pick_first {
+            false => {
+                queued(&mut r.f, "ed map rename YOURS");
+                queued(&mut r.f, "ed map pick LCXL3");
+            }
+            true => {
+                queued(&mut r.f, "ed map pick LCXL3");
+                queued(&mut r.f, "ed map rename YOURS");
+            }
+        }
+        r.pass();
+        r.pass();
+        assert_eq!(
+            r.f.ui.project().controller(P1).map(|n| n.padded()),
+            Some(name("LCXL3").padded()),
+            "pick first: {pick_first}"
+        );
+        assert!(r.map_file("YOURS").is_none(), "pick first: {pick_first}");
+        assert!(r.map_file("LCXL3").is_some(), "pick first: {pick_first}");
+        assert!(r.map_file("EC4").is_some(), "pick first: {pick_first}");
+        let (said, _) = since(&mut r.f, n);
+        assert!(said.contains("toast \"MAP CHANGED\"\n"), "{said}");
+    }
+}
+
 fn hear_cc(f: &mut Fake, n: u8, v: u8, at: u32) {
     let ev = CcEvent {
         channel: MidiChannel::new(0).unwrap(),

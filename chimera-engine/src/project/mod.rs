@@ -22,7 +22,7 @@ pub mod test_support;
 
 pub use codec::{ProjectCheck, ProjectDecoder, encode_new_project, encode_project, project_crc};
 pub use guard::{
-    Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, Pending, ProjectSource, Prompt,
+    Confirmed, DeleteTarget, Held, NeedsConfirm, OverwriteTarget, Pending, ProjectSource, Prompt,
     ReplaceGuard, SceneAsk, SceneSlot, Seen, Target, Witnessed,
 };
 pub(crate) use ids::bounded_index;

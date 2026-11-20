@@ -318,6 +318,20 @@ pub(crate) fn ctl_ask(ui: &mut UiState, j: super::midi::layer::CtlJob) {
     ui.ctl_ask_in(j);
 }
 
+/// `ed map rename`: Part `p`'s map, marked `was` when the answer checked
+/// it, renamed `to` by the next card work, or nothing renamed if the Part
+/// is on another map by then (the box says MAP CHANGED).
+#[cfg(feature = "midi-map")]
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_rename"))]
+pub(crate) fn ctl_rename(
+    ui: &mut UiState,
+    p: PartId,
+    was: super::midi::layer::MapMark,
+    to: crate::name::SoundName,
+) {
+    ui.ctl_rename_of_in(p, was, to);
+}
+
 /// The map job waiting for the card, if any.
 #[cfg(feature = "midi-map")]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_job"))]
@@ -429,10 +443,13 @@ impl CellSlot {
     /// F's.
     const LAST: usize = 5;
 
-    /// Slot `i` of a page, as `value::find` counts it.
+    /// Slot `i` of a page, as `value::find` counts it; past F, none.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.cell_slot"))]
-    pub(crate) fn new(i: usize) -> CellSlot {
-        CellSlot(i.min(CellSlot::LAST) as u8)
+    pub(crate) fn new(i: usize) -> Option<CellSlot> {
+        match i <= CellSlot::LAST {
+            true => Some(CellSlot(i as u8)),
+            false => None,
+        }
     }
 }
 
@@ -722,4 +739,18 @@ pub(crate) fn orbit(ui: &mut UiState, c: crate::console::OrbitCmd) -> Pass {
         ui.error(Line::new(prompt::scene_refused(e)));
     }
     Pass::Done
+}
+
+#[cfg(all(test, feature = "midi-map"))]
+mod tests {
+    use super::CellSlot;
+
+    /// A page has six slots: a seventh is no slot, never F again.
+    #[test]
+    fn a_slot_past_f_is_no_slot() {
+        assert_eq!(CellSlot::new(0), Some(CellSlot(0)));
+        assert_eq!(CellSlot::new(5), Some(CellSlot(5)));
+        assert_eq!(CellSlot::new(6), None);
+        assert_eq!(CellSlot::new(usize::MAX), None);
+    }
 }
