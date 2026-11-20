@@ -392,6 +392,11 @@ fn values(b: BlockRef, spec: &ParamSpec) -> Value {
                 from: names[0].to_string(),
                 to: names[usize::from(steps)].to_string(),
             }),
+            // A step is a tenth: the screen reads `0.0` to `7.0`.
+            ValFmt::Tenths(n) => Some(Screen {
+                from: "0.0".to_string(),
+                to: format!("{}.{}", n / 10, n % 10),
+            }),
             ValFmt::Names(_)
             | ValFmt::Uni
             | ValFmt::Hold
@@ -447,6 +452,7 @@ fn codes(b: BlockRef, spec: &ParamSpec) -> Vec<(u8, String)> {
         | ValFmt::Bi
         | ValFmt::Int(_)
         | ValFmt::Signed(_)
+        | ValFmt::Tenths(_)
         | ValFmt::Pan
         | ValFmt::Route
         | ValFmt::Keybd

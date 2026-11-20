@@ -703,13 +703,22 @@ pub static ALGO_COARSE: BlockDef = group(45, "Coarse", "CRS", AlgoOpParams::COAR
 pub static ALGO_FINE: BlockDef = group(46, "Fine", "FIN", AlgoOpParams::FINE);
 pub static ALGO_DETUNE: BlockDef = group(47, "Detune", "DET", AlgoOpParams::DETUNE);
 pub static ALGO_VELOCITY: BlockDef = group(48, "Velocity", "VEL", AlgoOpParams::VELOCITY);
-pub static ALGO_AR: BlockDef = env_group(49, "Env AR", "AR", AlgoOpParams::AR);
-pub static ALGO_D1R: BlockDef = env_group(50, "Env D1R", "D1R", AlgoOpParams::D1R);
-pub static ALGO_D1L: BlockDef = env_group(51, "Env D1L", "D1L", AlgoOpParams::D1L);
-pub static ALGO_D2R: BlockDef = env_group(52, "Env D2R", "D2R", AlgoOpParams::D2R);
-pub static ALGO_RR: BlockDef = env_group(53, "Env RR", "RR", AlgoOpParams::RR);
+pub static ALGO_AR: BlockDef = env_group(49, "Attack Rate", "AR", AlgoOpParams::AR);
+pub static ALGO_D1R: BlockDef = env_group(50, "Decay 1 Rate", "D1R", AlgoOpParams::D1R);
+pub static ALGO_D1L: BlockDef = env_group(51, "Decay 1 Lvl", "D1L", AlgoOpParams::D1L);
+pub static ALGO_D2R: BlockDef = env_group(52, "Decay 2 Rate", "D2R", AlgoOpParams::D2R);
+pub static ALGO_RR: BlockDef = env_group(53, "Release Rate", "RR", AlgoOpParams::RR);
 pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
-pub static ALGO_FEEDBACK: BlockDef = group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK);
+/// What FBK's group page shows in its band: the live scope (the owner's
+/// call, 2026-11-20, ADR 0298), where feedback is seen bending the wave.
+/// `VizType::AlgoDiagram` would show the chart and its loops here instead:
+/// the one line to flip.
+pub const FBK_BAND: VizType = VizType::None;
+
+pub static ALGO_FEEDBACK: BlockDef = BlockDef {
+    viz: FBK_BAND,
+    ..group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK)
+};
 
 /// One FRMT per operator, on OSC while any operator is a formant.
 pub static ALGO_FORMANT: BlockDef = group(106, "Formant", "FRM", AlgoOpParams::FRMT);
@@ -771,7 +780,7 @@ pub use crate::ui::op_page::ALGO_OP_PAGES;
 
 /// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
 /// right after their group (sub-pages are one level deep), then OP1–OP6.
-static ALGO_OSC_SUB_PAGES: [&BlockDef; 18] = [
+pub(crate) static ALGO_OSC_SUB_PAGES: [&BlockDef; 18] = [
     &ALGO_COARSE,
     &ALGO_FINE,
     &ALGO_DETUNE,
@@ -804,7 +813,7 @@ static ALGO_FORMANT_OSC_SUB_PAGES: [&BlockDef; 19] = {
 };
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
-static ALGO_BLOCKS: [ChainBlock; 5] = [
+pub(crate) static ALGO_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::with_subs(&ALGO_ALG, &[&PITCH]),
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
@@ -1277,6 +1286,24 @@ pub static SYS_TEXT: BlockDef = BlockDef {
     ],
 };
 
+/// SETTINGS › PERSONALIZE › ALGO PAGES: FIRST, which of ALGO's views OSC
+/// opens on (ADR 0300). Held in the THEME block, stored in SYSTEM with it.
+pub static SYS_ALGO_PAGES: BlockDef = BlockDef {
+    id: 121,
+    name: "Algo Pages",
+    short: "ALG",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::ALGO_FIRST),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// SETTINGS › PERSONALIZE › PAD FOLLOW: whether a live hit moves KIT's pad
 /// (ADR 0268). Held in the THEME block, stored in SYSTEM with it.
 pub static SYS_FOLLOW: BlockDef = BlockDef {
@@ -1702,7 +1729,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 26 + cfg!(feature = "usb-audio") as usize] = [
+const FIXED: [&ChainDef2; 27 + cfg!(feature = "usb-audio") as usize] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
@@ -1724,6 +1751,7 @@ const FIXED: [&ChainDef2; 26 + cfg!(feature = "usb-audio") as usize] = [
     MAP_LEAF.chain(),
     TEXT_LEAF.chain(),
     FOLLOW_LEAF.chain(),
+    super::settings::leaves::ALGO_PAGES_LEAF.chain(),
     PUSH_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),

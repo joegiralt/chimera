@@ -266,6 +266,44 @@ impl PadFollow {
     pub const ALL: [PadFollow; 3] = [PadFollow::Off, PadFollow::Idle, PadFollow::Always];
 }
 
+/// Which of ALGO's views OSC opens on (ADR 0300): every page is there
+/// either way. Disk codes are frozen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlgoFirst {
+    /// One parameter across the six operators, then each operator's page.
+    Parameter,
+    /// Each operator's own page, then the parameter pages.
+    Operator,
+}
+
+impl DiskCode for AlgoFirst {
+    fn disk_code(self) -> u8 {
+        match self {
+            AlgoFirst::Parameter => 0,
+            AlgoFirst::Operator => 1,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            AlgoFirst::Parameter => "PARAMETER",
+            AlgoFirst::Operator => "OPERATOR",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(AlgoFirst::Parameter),
+            1 => Some(AlgoFirst::Operator),
+            _ => None,
+        }
+    }
+}
+
+impl AlgoFirst {
+    pub const ALL: [AlgoFirst; 2] = [AlgoFirst::Parameter, AlgoFirst::Operator];
+}
+
 /// Ground lift in RGB565 levels, −2..=4: green (6-bit) moves one level per
 /// step, red and blue follow at half that, so the ground stays neutral and
 /// every step differs (−2 is pure black; +4 is `#181818`, still well below
@@ -363,6 +401,8 @@ pub struct ThemeSettings {
     pub text: TextSize,
     /// Whether a live hit moves KIT's pad.
     pub pad_follow: PadFollow,
+    /// Which of ALGO's views OSC opens on.
+    pub algo_first: AlgoFirst,
 }
 
 impl Default for ThemeSettings {
@@ -384,6 +424,7 @@ impl ThemeSettings {
         pages: Pages::Row,
         text: TextSize::Normal,
         pad_follow: PadFollow::Idle,
+        algo_first: AlgoFirst::Parameter,
     };
 
     /// TEAL at ground 0: the palette the renderer draws, unchanged.
@@ -402,6 +443,7 @@ impl ThemeSettings {
     pub const PAGES: ParamId = ParamId(7);
     pub const TEXT: ParamId = ParamId(8);
     pub const FOLLOW: ParamId = ParamId(9);
+    pub const ALGO_FIRST: ParamId = ParamId(10);
 }
 
 const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
@@ -413,13 +455,15 @@ const _: () = assert!(SAVER_NAMES.len() == Saver::SECS.len());
 const PAGES_NAMES: [&str; 2] = ["ROW", "STACK"];
 const TEXT_NAMES: [&str; 2] = ["NORMAL", "LARGE"];
 const FOLLOW_NAMES: [&str; 3] = ["OFF", "IDLE", "ALWAYS"];
+/// As the cell and the band show them: PARAMETER is too wide for the band.
+const ALGO_FIRST_NAMES: [&str; 2] = ["PARAMS", "OPS"];
 
 const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
 const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
-pub static THEME_SPECS: [ParamSpec; 10] = [
+pub static THEME_SPECS: [ParamSpec; 11] = [
     ParamSpec::choice(
         0,
         "BRIGHT",
@@ -530,6 +574,17 @@ pub static THEME_SPECS: [ParamSpec; 10] = [
     )
     .ident("FOLLOW")
     .glyph(crate::glyph::FocusGlyph::None),
+    // A SYSTEM from before ALGO PAGES has none: PARAMETER.
+    ParamSpec::choice(
+        10,
+        "FIRST",
+        ValFmt::Names(&ALGO_FIRST_NAMES),
+        1.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("ALGO_FIRST")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for ThemeSettings {
@@ -550,6 +605,7 @@ impl Block for ThemeSettings {
             Self::PAGES => self.pages as u8 as f32,
             Self::TEXT => self.text as u8 as f32,
             Self::FOLLOW => self.pad_follow as u8 as f32,
+            Self::ALGO_FIRST => f32::from(self.algo_first.disk_code()),
             _ => 0.0,
         }
     }
@@ -570,6 +626,9 @@ impl Block for ThemeSettings {
             Self::FOLLOW => {
                 self.pad_follow = PadFollow::ALL[(i as usize).min(PadFollow::ALL.len() - 1)]
             }
+            Self::ALGO_FIRST => {
+                self.algo_first = AlgoFirst::ALL[(i as usize).min(AlgoFirst::ALL.len() - 1)]
+            }
             _ => {}
         }
     }
@@ -583,6 +642,7 @@ impl Block for ThemeSettings {
             Self::PAGES => Some(self.pages.disk_code()),
             Self::TEXT => Some(self.text.disk_code()),
             Self::FOLLOW => Some(self.pad_follow.disk_code()),
+            Self::ALGO_FIRST => Some(self.algo_first.disk_code()),
             _ => None,
         }
     }
@@ -596,6 +656,7 @@ impl Block for ThemeSettings {
             Self::PAGES => Some(self.pages.disk_ident()),
             Self::TEXT => Some(self.text.disk_ident()),
             Self::FOLLOW => Some(self.pad_follow.disk_ident()),
+            Self::ALGO_FIRST => Some(self.algo_first.disk_ident()),
             _ => None,
         }
     }
@@ -609,6 +670,9 @@ impl Block for ThemeSettings {
             Self::PAGES => apply_code(Pages::from_disk_code(code), |p| self.pages = p),
             Self::TEXT => apply_code(TextSize::from_disk_code(code), |t| self.text = t),
             Self::FOLLOW => apply_code(PadFollow::from_disk_code(code), |f| self.pad_follow = f),
+            Self::ALGO_FIRST => {
+                apply_code(AlgoFirst::from_disk_code(code), |a| self.algo_first = a)
+            }
             _ => false,
         }
     }

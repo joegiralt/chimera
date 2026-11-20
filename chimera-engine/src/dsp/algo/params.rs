@@ -27,7 +27,7 @@ pub struct AlgoOpParams {
     pub d2r: u8,
     pub rr: u8,
     pub rate_scale: u8,
-    pub feedback: u8,
+    pub feedback: Fdbk,
     pub velocity: u8,
     /// FRMT's formant frequency and NOIS's centre: `frmt_hz`.
     pub frmt: u8,
@@ -38,6 +38,74 @@ pub struct AlgoOpParams {
     pub res: u8,
     pub vslot: u8,
 }
+
+/// An operator's FDBK (ADR 0299): the TX81Z's steps 0–7 in tenths of a
+/// step, 0..=70. A whole step is the TX81Z's (`tx::FEEDBACK_CYCLES`); the
+/// tenths between run straight from one to the next (`tx::feedback_cycles`).
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct Fdbk(u8);
+
+/// Its tenths, bare, as the byte printed before it was typed: the neutral
+/// Sound's printed form is a pinned contract (`neutral_v1.txt`, ADR 0087).
+impl core::fmt::Debug for Fdbk {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl Fdbk {
+    pub const OFF: Fdbk = Fdbk(0);
+    /// The TX81Z's top step.
+    pub const TX_STEPS: u8 = 7;
+    /// Tenths to a step.
+    pub const PER_STEP: u8 = 10;
+    pub const MAX: Fdbk = Fdbk(Self::TX_STEPS * Self::PER_STEP);
+    /// A tenth, in steps: the spec's tick.
+    pub const STEP: f32 = 0.1;
+
+    /// The TX81Z's step `n`; past 7, 7.
+    pub const fn tx(n: u8) -> Fdbk {
+        Fdbk::tenths(n.saturating_mul(Self::PER_STEP))
+    }
+
+    /// `t` tenths of a step; past the top, the top.
+    pub const fn tenths(t: u8) -> Fdbk {
+        Fdbk(if t > Self::MAX.0 { Self::MAX.0 } else { t })
+    }
+
+    /// In tenths, 0..=70.
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+
+    pub const fn is_off(self) -> bool {
+        self.0 == 0
+    }
+
+    /// In the TX81Z's steps, as the spec, the card and the kernel read it:
+    /// the `f32` nearest `tenths / 10`, so `n` exactly at whole step `n`
+    /// and `0.9` as a text file writes it.
+    pub const fn steps(self) -> f32 {
+        self.0 as f32 / Self::PER_STEP as f32
+    }
+
+    /// The nearest tenth to `v` steps, held to the range: the cast
+    /// saturates (under 0 and NaN to 0, past 255 to 255), `tenths` holds
+    /// the top, and a half added before truncating rounds what is left.
+    pub fn from_steps(v: f32) -> Fdbk {
+        Fdbk::tenths((v * Self::PER_STEP as f32 + 0.5) as u8)
+    }
+}
+
+// Every whole step reads back exactly: an old Sound plays bit for bit.
+const _: () = {
+    let mut n = 0;
+    while n <= Fdbk::TX_STEPS {
+        assert!(Fdbk::tx(n).steps() == n as f32);
+        n += 1;
+    }
+};
 
 /// `100 · 2^(v / 24)` Hz.
 pub fn frmt_hz(v: f32) -> f32 {
@@ -68,7 +136,7 @@ impl AlgoOpParams {
         // RR 5: INIT's release, T60 about 1.1 s (ADR 0049's note).
         rr: 5,
         rate_scale: 0,
-        feedback: 0,
+        feedback: Fdbk::OFF,
         velocity: 0,
         frmt: 72,
         bw: 72,
@@ -235,16 +303,19 @@ pub static ALGO_OP_SPECS: [ParamSpec; 19] = [
         Motion::Continuous(Smoothing::Own),
     )
     .ident("RS"),
+    // The TX81Z's steps 0–7, in tenths (ADR 0299): a file from before
+    // holds a whole step, which plays as it did.
     ParamSpec::stepped(
         11,
         "FDBK",
-        ValFmt::Int(7),
+        ValFmt::Tenths(Fdbk::MAX.get()),
         0.0,
-        7.0,
+        Fdbk::TX_STEPS as f32,
         0.0,
         false,
         Motion::Continuous(Smoothing::KNOB),
     )
+    .stepping(Fdbk::STEP)
     .ident("FDBK")
     .glyph(crate::glyph::FocusGlyph::LevelBar),
     ParamSpec::stepped(
@@ -351,7 +422,7 @@ impl AlgoOpParams {
             Self::D2R => self.d2r as f32,
             Self::RR => self.rr as f32,
             Self::RATE_SCALE => self.rate_scale as f32,
-            Self::FEEDBACK => self.feedback as f32,
+            Self::FEEDBACK => self.feedback.steps(),
             Self::VELOCITY => self.velocity as f32,
             Self::FRMT => self.frmt as f32,
             Self::BW => self.bw as f32,
@@ -379,7 +450,7 @@ impl AlgoOpParams {
             Self::D2R => self.d2r = b,
             Self::RR => self.rr = b,
             Self::RATE_SCALE => self.rate_scale = b,
-            Self::FEEDBACK => self.feedback = b,
+            Self::FEEDBACK => self.feedback = Fdbk::from_steps(v),
             Self::VELOCITY => self.velocity = b,
             Self::FRMT => self.frmt = b,
             Self::BW => self.bw = b,

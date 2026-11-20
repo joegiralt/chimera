@@ -23,8 +23,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x1f9c0460b53edbe5),
     // Re-recorded: a value's unit sits small beside its number (ADR 0146).
     ("algo_formant_page", 0x8ed74c2becd31432),
-    ("algo_op_page_3", 0x4fa1837d43fa861a),
-    ("algo_op_page_3_turned", 0x23df2f533b698751),
+    // Re-recorded: FDBK reads to a tenth (ADR 0299).
+    ("algo_op_page_3", 0xa015ddcb345890ba),
+    ("algo_op_page_3_turned", 0x527188a1b5769ce1),
     ("algo_op_page_frmt", 0x3248e92fc9e0cf08),
     ("algo_op_page_nois", 0x3e18fb656fe7a252),
     // Re-recorded on the merge of main (#614): the filter picture in layout A.

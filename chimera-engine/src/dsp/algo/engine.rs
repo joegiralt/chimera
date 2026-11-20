@@ -130,7 +130,7 @@ impl AlgoLive {
             patch: level,
             fine: op(|o| f32::from(o.fine)),
             detune: op(|o| f32::from(o.detune)),
-            feedback: op(|o| f32::from(o.feedback)),
+            feedback: op(|o| o.feedback.steps()),
             velocity: op(|o| f32::from(o.velocity)),
             frmt: op(|o| f32::from(o.frmt)),
             bw: op(|o| f32::from(o.bw)),
@@ -535,7 +535,7 @@ impl AlgoEngine {
                     OpKind::Formant => Self::frmt_cost(p.ops[i].skirt, linked.has(i)),
                     OpKind::Noise => Self::nois_cost(linked.has(i)),
                 };
-                if p.ops[i].feedback > 0 && !matches!(kind, OpKind::Noise) {
+                if !p.ops[i].feedback.is_off() && !matches!(kind, OpKind::Noise) {
                     feedback += 1;
                 }
             }

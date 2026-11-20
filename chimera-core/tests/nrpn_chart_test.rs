@@ -277,13 +277,33 @@ impl Bank {
     }
 }
 
-/// `steps` and Index7 count values one apart: every stepped param steps
-/// by 1 between whole bounds.
+/// `steps` and Index7 count values a step apart: every stepped param
+/// steps by 1 between whole bounds, but an ALGO operator's FDBK, which
+/// steps by a tenth (ADR 0299) and so counts 0..=70.
 #[test]
 fn stepped_params_step_by_one() {
+    use chimera_core::dsp::algo::params::{AlgoOpParams, Fdbk};
+    // A choice steps by 1 too: `quantize` rounds both by `step`.
+    for b in BlockRef::ALL {
+        for s in b.specs().iter().filter(|s| s.kind == ParamKind::Enum) {
+            assert_eq!(s.step, 1.0, "{b:?} {}", s.ident);
+        }
+    }
     for b in BlockRef::ALL {
         for s in b.specs().iter().filter(|s| s.kind == ParamKind::Stepped) {
-            assert_eq!(s.step, 1.0, "{b:?} {}", s.ident);
+            let fdbk = matches!(b, BlockRef::AlgoOp(_)) && s.id == AlgoOpParams::FEEDBACK;
+            assert_eq!(
+                s.step,
+                if fdbk { Fdbk::STEP } else { 1.0 },
+                "{b:?} {}",
+                s.ident
+            );
+            let n = if fdbk {
+                u16::from(Fdbk::MAX.get())
+            } else {
+                (s.max - s.min) as u16
+            };
+            assert_eq!(nrpn::steps(s), n, "{b:?} {}", s.ident);
             assert!(
                 s.min.fract() == 0.0 && s.max.fract() == 0.0,
                 "{b:?} {}",
