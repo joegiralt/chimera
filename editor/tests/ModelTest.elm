@@ -4,8 +4,10 @@ import Addr exposing (Addr)
 import Dict
 import Expect
 import Fixture
-import Model exposing (Effect(..), Msg(..))
-import Protocol exposing (Clock(..), Command(..), Learn(..), MapCommand(..), MapKind(..), OnOff(..), OptIndex, OrbitCommand(..), Playback(..), RowStatus(..), SaveInto(..), SchemaId(..), SlotState(..), Value(..))
+import FixtureData
+import Hash
+import Model exposing (Effect(..), Msg(..), Notice(..))
+import Protocol exposing (Clock(..), Command(..), Learn(..), MapCommand(..), MapInput(..), MapKind(..), MapRow(..), OnOff(..), OptIndex, OrbitCommand(..), Playback(..), RowStatus(..), SaveInto(..), SchemaId(..), SlotState(..), Value(..))
 import Schema
 import Test exposing (Test, describe, test)
 import Time
@@ -54,24 +56,31 @@ tick ms =
     stepSends (Tick (at ms))
 
 
+{-| The hash the unit's `ed schema` gives a schema that describes as `ls`.
+-}
+hashOf : List String -> String
+hashOf ls =
+    Hash.toHex (Hash.ofLines ls)
+
+
 algoHash : String
 algoHash =
-    "00000000000000a1"
+    hashOf algoPage
 
 
 mixerHash : String
 mixerHash =
-    "000000000000000b"
+    hashOf mixerPage
 
 
 mtxHash : String
 mtxHash =
-    "00000000000000c0"
+    hashOf mtxPage
 
 
 settingsHash : String
 settingsHash =
-    "00000000000000d0"
+    hashOf settingsPage
 
 
 settingsPage : List String
@@ -88,7 +97,7 @@ settingsPage =
 
 mapHash : String
 mapHash =
-    "00000000000000e0"
+    hashOf mapPage
 
 
 mapPage : List String
@@ -108,7 +117,7 @@ mapPage =
 
 orbitHash : String
 orbitHash =
-    "00000000000000f0"
+    hashOf orbitPage
 
 
 orbitPage : List String
@@ -157,6 +166,11 @@ algoPage =
     , "opt ENV1.HOLD 0 \"OFF\""
     , "opt ENV1.HOLD 2 \"GATE EXT\""
     ]
+
+
+vaPage : List String
+vaPage =
+    [ "page 0 VA of 1", "panel VA -", "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000 md" ]
 
 
 mixerPage : List String
@@ -260,6 +274,13 @@ following =
 cutoffLine : String -> String
 cutoffLine v =
     "val FILTER.CUTOFF 0.5 " ++ v ++ " \"" ++ v ++ " Hz\""
+
+
+{-| Each kept notice as the UI says it, newest first.
+-}
+said : Model.Model -> List String
+said m =
+    Model.notices m |> List.map (.notice >> Model.noticeText)
 
 
 shown : Model.Model -> Maybe String
@@ -751,15 +772,15 @@ suite =
                             |> feed [ "OK 1", "part 2 VA", "OK 2" ]
                             |> tick 99
                             |> Tuple.first
-                            |> feed [ "schema VA 1 00000000000000c3", "OK" ]
-                            |> missed (EngineSchema Va) "00000000000000c3"
+                            |> feed [ "schema VA 1 " ++ hashOf vaPage, "OK" ]
+                            |> missed (EngineSchema Va) (hashOf vaPage)
                             |> tick 132
                             |> Tuple.first
-                            |> feed [ "page 0 VA of 1", "panel VA -", "param FILTER.CUTOFF \"CUTOFF\" cont oct 20 20000 1 1000 md", "OK" ]
+                            |> feed (vaPage ++ [ "OK" ])
                             |> tick 165
                             |> Tuple.first
-                            |> feed [ "schema MTX-VA 1 00000000000000c4", "OK" ]
-                            |> missed (MatrixSchema Va) "00000000000000c4"
+                            |> feed [ "schema MTX-VA 1 " ++ hashOf [ "page 0 MTX of 1" ], "OK" ]
+                            |> missed (MatrixSchema Va) (hashOf [ "page 0 MTX of 1" ])
                             |> tick 198
                             |> Tuple.first
                             |> feed [ "page 0 MTX of 1", "OK" ]
@@ -980,15 +1001,15 @@ suite =
                         m
                             |> tick 198
                             |> Tuple.first
-                            |> feed [ "schema VA 1 00000000000000c3", "OK" ]
-                            |> missed (EngineSchema Va) "00000000000000c3"
+                            |> feed [ "schema VA 1 " ++ hashOf [ "page 0 OSC of 1", "panel OSC -" ], "OK" ]
+                            |> missed (EngineSchema Va) (hashOf [ "page 0 OSC of 1", "panel OSC -" ])
                             |> tick 231
                             |> Tuple.first
                             |> feed [ "page 0 OSC of 1", "panel OSC -", "OK" ]
                             |> tick 250
                             |> Tuple.first
-                            |> feed [ "schema MTX-VA 1 00000000000000c4", "OK" ]
-                            |> missed (MatrixSchema Va) "00000000000000c4"
+                            |> feed [ "schema MTX-VA 1 " ++ hashOf [ "page 0 MTX of 1" ], "OK" ]
+                            |> missed (MatrixSchema Va) (hashOf [ "page 0 MTX of 1" ])
                             |> tick 255
                             |> Tuple.first
                             |> feed [ "page 0 MTX of 1", "OK" ]
@@ -1081,24 +1102,24 @@ suite =
                     ()
         , test "a_route_edit_sends_ed_route" <|
             \_ ->
-                case Protocol.amount -40 of
-                    Just a ->
+                case ( Protocol.amount -40, Protocol.cell "FM3IN" ) of
+                    ( Just a, Just fm3in ) ->
                         Expect.all
                             [ \_ ->
                                 following
-                                    |> stepSends (EditRoute (Protocol.Cell "FM3IN") (Protocol.RouteAmount a))
+                                    |> stepSends (EditRoute fm3in (Protocol.RouteAmount a))
                                     |> Tuple.second
-                                    |> Expect.equal [ SetRoute (Protocol.Cell "FM3IN") (Protocol.RouteAmount a) ]
+                                    |> Expect.equal [ SetRoute fm3in (Protocol.RouteAmount a) ]
                             , \_ ->
                                 Model.init
-                                    |> stepSends (EditRoute (Protocol.Cell "FM3IN") Protocol.RouteOff)
+                                    |> stepSends (EditRoute fm3in Protocol.RouteOff)
                                     |> Tuple.second
                                     |> Expect.equal []
                             ]
                             ()
 
-                    Nothing ->
-                        Expect.fail "-40 is an amount"
+                    _ ->
+                        Expect.fail "-40 is an amount and FM3IN a cell"
         , test "the_settings_schema_is_read_after_the_matrix_with_its_crumbs" <|
             \_ ->
                 Expect.all
@@ -1370,6 +1391,395 @@ suite =
 
                     _ ->
                         Expect.fail "a scene and a rev"
+        , describe "what the unit refused or the editor couldn't read is kept"
+            [ test "a_stale_witness_refusal_is_kept_with_the_command_it_answers" <|
+                \_ ->
+                    case ( Protocol.rowIndex 1, Protocol.controlNo 74 ) of
+                        ( Just i, Just cc ) ->
+                            let
+                                rm : MapCommand
+                                rm =
+                                    RemoveRow (SoundRow i) (InCc cc) (Just cutoff)
+
+                                m : Model.Model
+                                m =
+                                    following
+                                        |> Model.step (MapAct rm)
+                                        |> Tuple.first
+                                        |> feed [ "ERR ed map rm S1 is not that row: ed since" ]
+                            in
+                            Expect.all
+                                [ \_ -> Expect.equal [ { notice = Refusal { sent = Just (MapCmd rm), why = "ed map rm S1 is not that row: ed since" }, times = 1 } ] (Model.notices m)
+                                , \_ -> Expect.equal [ "THE UNIT REFUSED ed map rm S1 CC74 FILTER.CUTOFF: ed map rm S1 is not that row: ed since" ] (said m)
+                                ]
+                                ()
+
+                        _ ->
+                            Expect.fail "a row and a control"
+            , test "err_busy_is_tied_to_the_set_it_answers_and_shown_at_its_control" <|
+                \_ ->
+                    let
+                        m : Model.Model
+                        m =
+                            following |> Model.step (Edit cutoff (Num 1000)) |> Tuple.first |> feed [ "ERR busy" ]
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just { sent = Just (Set cutoff (Num 1000)), why = "busy" }) (Model.lastRefusal m)
+                        , \_ -> Expect.equal (Just "busy") (Model.refusal cutoff m)
+                        , \_ -> Expect.equal [ "THE UNIT REFUSED ed set FILTER.CUTOFF 1000: busy" ] (said m)
+                        ]
+                        ()
+            , test "a_load_over_unsaved_edits_is_kept_with_its_load" <|
+                \_ ->
+                    case ( Protocol.projectId 10, Protocol.generation 2 ) of
+                        ( Just i, Just g ) ->
+                            following
+                                |> Model.step (LoadListed i g Protocol.RefuseOverEdits)
+                                |> Tuple.first
+                                |> feed [ "ERR ed project load over unsaved edits: discard" ]
+                                |> Expect.all
+                                    [ Model.lastRefusal >> Expect.equal (Just { sent = Just (LoadProject i g Protocol.RefuseOverEdits), why = "ed project load over unsaved edits: discard" })
+                                    , said >> Expect.equal [ "THE UNIT REFUSED ed project load 10 2: ed project load over unsaved edits: discard" ]
+                                    ]
+
+                        _ ->
+                            Expect.fail "an id and a generation"
+            , test "a_route_to_a_cell_the_unit_lacks_is_kept_with_its_route" <|
+                \_ ->
+                    case Protocol.cell "OP5:FILTER.CUTOFF" of
+                        Just c ->
+                            following
+                                |> Model.step (EditRoute c Protocol.RouteOff)
+                                |> Tuple.first
+                                |> feed [ "ERR ed route has no OP5:FILTER.CUTOFF here" ]
+                                |> Expect.all
+                                    [ Model.lastRefusal >> Expect.equal (Just { sent = Just (SetRoute c Protocol.RouteOff), why = "ed route has no OP5:FILTER.CUTOFF here" })
+                                    , said >> Expect.equal [ "THE UNIT REFUSED ed route OP5:FILTER.CUTOFF off: ed route has no OP5:FILTER.CUTOFF here" ]
+                                    ]
+
+                        Nothing ->
+                            Expect.fail "a cell"
+            , test "a_line_the_editor_cant_read_is_kept_as_the_unit_wrote_it" <|
+                \_ ->
+                    following
+                        |> feed [ "wibble 1 \"two" ]
+                        |> Expect.all
+                            [ Model.notices >> Expect.equal [ { notice = Unread "wibble 1 \"two", times = 1 } ]
+                            , said >> Expect.equal [ "THE UNIT SAID A LINE THIS EDITOR CAN'T READ: wibble 1 \"two" ]
+                            , -- Not a refusal.
+                              Model.lastRefusal >> Expect.equal Nothing
+                            ]
+            , test "a_blank_line_says_nothing_and_is_no_notice" <|
+                \_ -> following |> feed [ "", "  ", "\u{000D}" ] |> Model.notices |> Expect.equal []
+            , test "answers_tie_to_commands_in_the_order_sent" <|
+                \_ ->
+                    case Unit.partFromInt 2 of
+                        Just p2 ->
+                            let
+                                m : Model.Model
+                                m =
+                                    following
+                                        |> tick 165
+                                        |> Tuple.first
+                                        |> Model.step SaveOwn
+                                        |> Tuple.first
+                                        |> Model.step (FollowPart p2)
+                                        |> Tuple.first
+                                        |> feed [ "OK 1", "ERR ed project save has no file of its own: saveas", "ERR busy" ]
+                            in
+                            Expect.equal
+                                [ Refusal { sent = Just (Follow p2), why = "busy" }
+                                , Refusal { sent = Just SaveProject, why = "ed project save has no file of its own: saveas" }
+                                ]
+                                (Model.notices m |> List.map .notice)
+
+                        Nothing ->
+                            Expect.fail "no Part 2"
+            , test "a_refused_since_names_its_since" <|
+                \_ ->
+                    following
+                        |> tick 165
+                        |> Tuple.first
+                        |> feed [ "ERR ed since is not in this build" ]
+                        |> Model.lastRefusal
+                        |> Expect.equal (Just { sent = Just (Since Nothing), why = "ed since is not in this build" })
+            , test "an_err_no_command_waits_for_is_kept_without_one" <|
+                \_ ->
+                    following
+                        |> feed [ "ERR busy" ]
+                        |> Expect.all
+                            [ Model.lastRefusal >> Expect.equal (Just { sent = Nothing, why = "busy" })
+                            , said >> Expect.equal [ "THE UNIT REFUSED: busy" ]
+                            ]
+            , test "a_commands_ok_ends_it_so_a_later_err_is_not_tied_to_it" <|
+                \_ ->
+                    following
+                        |> Model.step SaveOwn
+                        |> Tuple.first
+                        |> feed [ "OK queued" ]
+                        |> Model.step AskProjects
+                        |> Tuple.first
+                        |> feed [ "OK", "ERR busy" ]
+                        |> Model.lastRefusal
+                        |> Expect.equal (Just { sent = Nothing, why = "busy" })
+            , test "a_lost_answer_does_not_shift_the_refusals_after_it" <|
+                \_ ->
+                    -- The save's answer never comes; the since after it is
+                    -- answered, so the save is given up and the load's
+                    -- refusal is the load's.
+                    case ( Protocol.projectId 10, Protocol.generation 2 ) of
+                        ( Just i, Just g ) ->
+                            following
+                                |> Model.step SaveOwn
+                                |> Tuple.first
+                                |> tick 165
+                                |> Tuple.first
+                                |> feed [ "OK 1" ]
+                                |> Model.step (LoadListed i g Protocol.RefuseOverEdits)
+                                |> Tuple.first
+                                |> feed [ "ERR ed project load has no such id at that gen: ed projects" ]
+                                |> Model.lastRefusal
+                                |> Expect.equal (Just { sent = Just (LoadProject i g Protocol.RefuseOverEdits), why = "ed project load has no such id at that gen: ed projects" })
+
+                        _ ->
+                            Expect.fail "an id and a generation"
+            , test "a_set_refused_by_its_address_ends_the_set" <|
+                \_ ->
+                    following
+                        |> Model.step (Edit cutoff (Num 99999))
+                        |> Tuple.first
+                        |> Model.step SaveOwn
+                        |> Tuple.first
+                        |> feed [ "ERR ed set FILTER.CUTOFF takes 20..20000", "ERR busy" ]
+                        |> Expect.all
+                            [ Model.refusal cutoff >> Expect.equal (Just "takes 20..20000")
+                            , Model.lastRefusal >> Expect.equal (Just { sent = Just SaveProject, why = "busy" })
+                            ]
+            , test "a_later_success_erases_nothing_the_user_has_not_seen" <|
+                \_ ->
+                    following
+                        |> Model.step SaveOwn
+                        |> Tuple.first
+                        |> feed [ "ERR busy" ]
+                        |> Model.step SaveOwn
+                        |> Tuple.first
+                        |> feed [ "OK queued" ]
+                        |> tick 165
+                        |> Tuple.first
+                        |> feed [ cutoffLine "440", "toast \"SAVED\"", "OK 2" ]
+                        |> Model.lastRefusal
+                        |> Expect.equal (Just { sent = Just SaveProject, why = "busy" })
+            , test "only_the_users_seeing_them_drops_the_notices" <|
+                \_ ->
+                    let
+                        m : Model.Model
+                        m =
+                            following |> feed [ "ERR busy", "wibble" ]
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 2 (List.length (Model.notices m))
+                        , \_ -> Expect.equal [] (m |> Model.step SeenNotices |> Tuple.first |> Model.notices)
+                        , -- A lost link and the next one keep them: they were not seen.
+                          \_ -> Expect.equal 2 (m |> Model.step (LinkChanged Lost) |> Tuple.first |> Model.step (LinkChanged Open) |> Tuple.first |> Model.notices |> List.length)
+                        ]
+                        ()
+            , test "the_same_notice_again_is_counted_not_repeated_and_comes_first" <|
+                \_ ->
+                    following
+                        |> feed [ "ERR busy", "wibble", "ERR busy" ]
+                        |> Model.notices
+                        |> Expect.equal
+                            [ { notice = Refusal { sent = Nothing, why = "busy" }, times = 2 }
+                            , { notice = Unread "wibble", times = 1 }
+                            ]
+            , test "past_sixteen_the_oldest_notice_falls_off_and_is_counted" <|
+                \_ ->
+                    let
+                        m : Model.Model
+                        m =
+                            following |> feed (List.range 1 18 |> List.map (\n -> "wibble " ++ String.fromInt n))
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 16 (List.length (Model.notices m))
+                        , \_ -> Expect.equal (Just (Unread "wibble 18")) (Model.notices m |> List.head |> Maybe.map .notice)
+                        , \_ -> Expect.equal 2 (Model.noticesLost m)
+                        , \_ -> Expect.equal 0 (m |> Model.step SeenNotices |> Tuple.first |> Model.noticesLost)
+                        ]
+                        ()
+            , test "an_unread_line_while_connecting_is_kept" <|
+                \_ -> greeted |> feed [ "wibble" ] |> Model.notices |> List.map .notice |> Expect.equal [ Unread "wibble" ]
+            , test "an_err_or_unread_line_after_a_halt_is_kept" <|
+                \_ ->
+                    greeted
+                        |> tick 33
+                        |> Tuple.first
+                        |> feed [ "OK", "ERR busy", "wibble" ]
+                        |> Expect.all
+                            [ Model.notice >> Expect.equal (Just "UPDATE THE EDITOR")
+                            , Model.notices >> List.map .notice >> Expect.equal [ Unread "wibble", Refusal { sent = Nothing, why = "busy" } ]
+                            ]
+            , test "a_new_engine_is_read_only_once_every_command_sent_is_answered" <|
+                \_ ->
+                    -- The save went out after the since: its `OK` comes after
+                    -- the since's, and must not be read as `ed schema`'s.
+                    let
+                        m : Model.Model
+                        m =
+                            following
+                                |> tick 165
+                                |> Tuple.first
+                                |> Model.step SaveOwn
+                                |> Tuple.first
+                                |> feed [ "part 2 VA", "OK 3" ]
+
+                        ( m1, asked ) =
+                            tick 198 m
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ Since (gen 3) ] asked
+                        , \_ -> Expect.equal [ AskSchema (EngineSchema Va) ] (m1 |> feed [ "OK queued", "OK 4" ] |> tick 231 |> Tuple.second)
+                        , \_ -> Expect.equal Nothing (m1 |> feed [ "OK queued", "OK 4" ] |> Model.notice)
+                        ]
+                        ()
+            ]
+        , describe "a schema is the text its hash names"
+            [ test "a_cached_copy_that_doesnt_hash_to_the_units_hash_is_described_again" <|
+                \_ ->
+                    -- One page, as the unit said, but not its text.
+                    greeted
+                        |> tick 33
+                        |> Tuple.first
+                        |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+                        |> Model.step (Recalled { key = key (EngineSchema Algo) algoHash, lines = Just (List.map (String.replace "CUTOFF\"" "CUTOFG\"") algoPage) })
+                        |> Tuple.first
+                        |> Expect.all
+                            [ tick 66 >> Tuple.second >> Expect.equal [ Describe (EngineSchema Algo) (page 0) ]
+                            , .schema >> Schema.pages >> List.length >> Expect.equal 0
+                            ]
+            , test "a_cached_copy_missing_a_line_is_described_again" <|
+                \_ ->
+                    greeted
+                        |> tick 33
+                        |> Tuple.first
+                        |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+                        |> Model.step (Recalled { key = key (EngineSchema Algo) algoHash, lines = Just (List.take 5 algoPage) })
+                        |> Tuple.first
+                        |> tick 66
+                        |> Tuple.second
+                        |> Expect.equal [ Describe (EngineSchema Algo) (page 0) ]
+            , test "a_cached_line_that_doesnt_parse_marks_the_schema_bad" <|
+                \_ ->
+                    let
+                        lines : List String
+                        lines =
+                            algoPage ++ [ "knob FILTER.CUTOFF 3" ]
+                    in
+                    greeted
+                        |> tick 33
+                        |> Tuple.first
+                        |> feed [ "schema ALGO 1 " ++ hashOf lines, "OK" ]
+                        |> Model.step (Recalled { key = key (EngineSchema Algo) (hashOf lines), lines = Just lines })
+                        |> Tuple.first
+                        |> Expect.all
+                            [ Model.notice >> Expect.equal (Just "THE UNIT'S ALGO SCHEMA HAS A LINE THIS EDITOR CAN'T READ: knob FILTER.CUTOFF 3")
+                            , tick 66 >> Tuple.second >> Expect.equal []
+                            , .schema >> Schema.pages >> List.length >> Expect.equal 0
+                            ]
+            , test "a_described_line_that_doesnt_parse_marks_the_schema_bad_and_keeps_nothing" <|
+                \_ ->
+                    let
+                        ( m, effects ) =
+                            greeted
+                                |> tick 33
+                                |> Tuple.first
+                                |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+                                |> missed (EngineSchema Algo) algoHash
+                                |> tick 66
+                                |> Tuple.first
+                                |> feed (List.take 2 algoPage ++ [ "knob FILTER.CUTOFF 3" ] ++ List.drop 2 algoPage)
+                                |> Model.step (Line "OK")
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just "THE UNIT'S ALGO SCHEMA HAS A LINE THIS EDITOR CAN'T READ: knob FILTER.CUTOFF 3") (Model.notice m)
+                        , \_ -> Expect.equal [] effects
+                        , \_ -> Expect.equal 0 (List.length (Schema.pages m.schema))
+                        ]
+                        ()
+            , test "a_described_schema_that_isnt_the_text_its_hash_names_is_bad_and_not_kept" <|
+                \_ ->
+                    let
+                        ( m, effects ) =
+                            greeted
+                                |> tick 33
+                                |> Tuple.first
+                                |> feed [ "schema ALGO 1 ffffffffffffffff", "OK" ]
+                                |> missed (EngineSchema Algo) "ffffffffffffffff"
+                                |> tick 66
+                                |> Tuple.first
+                                |> feed algoPage
+                                |> Model.step (Line "OK")
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just ("THE UNIT'S ALGO SCHEMA IS NOT THE TEXT ITS HASH NAMES: ffffffffffffffff, READ " ++ algoHash)) (Model.notice m)
+                        , \_ -> Expect.equal [] effects
+                        , \_ -> Expect.equal 0 (List.length (Schema.pages m.schema))
+                        ]
+                        ()
+            , test "a_line_that_is_no_schema_line_in_a_describe_answer_moves_its_hash" <|
+                \_ ->
+                    greeted
+                        |> tick 33
+                        |> Tuple.first
+                        |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+                        |> missed (EngineSchema Algo) algoHash
+                        |> tick 66
+                        |> Tuple.first
+                        |> feed (algoPage ++ [ cutoffLine "440", "OK" ])
+                        |> Model.notice
+                        |> Expect.equal (Just ("THE UNIT'S ALGO SCHEMA IS NOT THE TEXT ITS HASH NAMES: " ++ algoHash ++ ", READ " ++ hashOf (algoPage ++ [ cutoffLine "440" ])))
+            , test "the_units_own_mixer_text_describes_and_is_kept_under_the_hash_of_its_bytes" <|
+                \_ ->
+                    let
+                        hash : String
+                        hash =
+                            FixtureData.schemaHashes |> List.filter (\( n, _ ) -> n == "mixer") |> List.map Tuple.second |> String.concat
+
+                        ( m, effects ) =
+                            greeted
+                                |> tick 33
+                                |> Tuple.first
+                                |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+                                |> Model.step (Recalled { key = key (EngineSchema Algo) algoHash, lines = Just algoPage })
+                                |> Tuple.first
+                                |> tick 66
+                                |> Tuple.first
+                                |> feed [ "schema MIXER 34 " ++ hash, "OK" ]
+                                |> missed MixerSchema hash
+                                |> feed (List.take (List.length FixtureData.mixer - 1) FixtureData.mixer)
+                                |> Model.step (Line "OK")
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal Nothing (Model.notice m)
+                        , \_ -> Expect.equal [ Keep (key MixerSchema hash) (List.filter (\l -> l /= "OK") FixtureData.mixer) ] effects
+                        , \_ -> Expect.equal 34 (List.length (Schema.pages m.mixer))
+                        , -- And recalled, it is the same schema with no describe.
+                          \_ ->
+                            greeted
+                                |> tick 33
+                                |> Tuple.first
+                                |> feed [ "schema ALGO 1 " ++ algoHash, "OK" ]
+                                |> Model.step (Recalled { key = key (EngineSchema Algo) algoHash, lines = Just algoPage })
+                                |> Tuple.first
+                                |> tick 66
+                                |> Tuple.first
+                                |> feed [ "schema MIXER 34 " ++ hash, "OK" ]
+                                |> Model.step (Recalled { key = key MixerSchema hash, lines = Just (List.filter (\l -> l /= "OK") FixtureData.mixer) })
+                                |> Tuple.first
+                                |> .mixer
+                                |> Expect.equal m.mixer
+                        ]
+                        ()
+            ]
         ]
 
 

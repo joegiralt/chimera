@@ -6,6 +6,7 @@ import Dict
 import Expect
 import Fixture
 import FixtureData
+import Hash
 import Html.Attributes exposing (attribute)
 import Json.Encode as Encode
 import Layout.Algo
@@ -81,14 +82,15 @@ connected answer engine =
         |> tick 50000
 
 
-{-| `ed schema` answered, the cache missing, then every page described.
+{-| `ed schema` answered with the hash of the answer's own text, the cache
+missing, then every page described.
 -}
 readSchema : Int -> String -> List String -> Model.Model -> Model.Model
 readSchema k token answer m0 =
     let
         hash : String
         hash =
-            "000000000000000" ++ String.fromInt k
+            Hash.toHex (Hash.ofLines (List.filter (\l -> l /= "OK") answer))
 
         pages : List (List String)
         pages =
@@ -306,6 +308,32 @@ suite =
                         |> Query.fromHtml
                         |> Query.findAll [ Sel.class "c", Sel.class "refused", Sel.containing [ Sel.text "FREQ" ] ]
                         |> Query.count (Expect.equal 1)
+            , test "a_refusal_that_is_no_controls_is_said_on_the_page_in_the_units_words" <|
+                \_ ->
+                    Page.view (feed [ "ERR busy", "ERR busy", "wibble 3" ] model) (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.find [ Sel.class "said" ]
+                        |> Query.has [ Sel.text "THE UNIT REFUSED: busy", Sel.text "×2", Sel.text "THE UNIT SAID A LINE THIS EDITOR CAN'T READ: wibble 3" ]
+            , test "seeing_the_notices_tells_the_model" <|
+                \_ ->
+                    Page.view (feed [ "ERR busy" ] model) (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.find [ Sel.class "said" ]
+                        |> Query.find [ Sel.tag "button" ]
+                        |> Event.simulate Event.click
+                        |> Event.expect (Unit Model.SeenNotices)
+            , test "nothing_kept_says_nothing" <|
+                \_ ->
+                    Page.view model (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.findAll [ Sel.class "said" ]
+                        |> Query.count (Expect.equal 0)
+            , test "a_notice_is_said_on_the_connect_page_too_with_how_many_were_lost" <|
+                \_ ->
+                    Page.view (feed (List.range 1 17 |> List.map (\n -> "wibble " ++ String.fromInt n)) Model.init) (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.find [ Sel.class "said" ]
+                        |> Query.has [ Sel.text "THE UNIT SAID A LINE THIS EDITOR CAN'T READ: wibble 17", Sel.text "AND 1 MORE NO LONGER KEPT" ]
             , test "the_next_value_clears_the_refusal" <|
                 \_ ->
                     Page.view (feed [ "refused FILTER.CUTOFF \"FILTER IS OFF\"", "OK 2", "val FILTER.CUTOFF 0.5 632.4555 \"632 Hz\"", "OK 3" ] model) (Page.init Day)

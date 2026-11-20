@@ -355,6 +355,78 @@ async function enginePass(engine) {
   info(`${engine}: ${sets - before} sets read back, a full answer of ${vals.length} vals`);
 }
 
+/** `cmd` is queued, then a `since` line passes `said`: else a failure at `where`. */
+async function queuedThenSaid(where, cmd, said, what) {
+  await since(); // catch up: only what the command moves is read
+  const got = await send(cmd);
+  if (got.at(-1) !== "OK queued") {
+    fail(where, cmd, got.join(" | "));
+    return null;
+  }
+  const seen = await sinceUntil(said);
+  const line = seen.find(said);
+  if (!line) fail(where, cmd, `since never said ${what}: ${seen.join(" | ")}`);
+  return line ?? null;
+}
+
+/** The followed Part's Sound row on FILTER.CUTOFF, as a whole answer says it. */
+async function cutoffRow() {
+  return (await since(0)).find((l) => /^row S\d+ \S+ \S+ FILTER\.CUTOFF /.test(l)) ?? null;
+}
+
+async function mapPass() {
+  const schema = tokens((await ask("ed schema MAP"))[0] ?? "");
+  if (schema[0] !== "schema" || schema[1] !== "MAP") return fail("MAP", "ed schema", schema.join(" "));
+  if (schema[2] === "0") return info("map: not in this build (0 pages)");
+  await describeAll("MAP");
+  const page = await ask("ed describe MAP 0");
+  for (const want of [/^input CC( \S+)+$/, /^kind PICKUP "/, /^ccs( \d+)+$/, /^msbs( \d+)+$/, /^span 0 255$/, /^rows \d+$/, /^maprows \d+$/])
+    if (!page.some((l) => want.test(l))) fail("MAP", "describe", `no line ${want}`);
+
+  // add: `row S<i> <input> <kind> <addr> <min> <max> <echo> <status>`
+  const row = (rest) => new RegExp(`^row (S\\d+) ${rest}$`);
+  const added = await queuedThenSaid(
+    "map", "ed map add CC20 PICKUP FILTER.CUTOFF",
+    (l) => row("CC20 PICKUP FILTER\\.CUTOFF 0 255 off live").test(l), "the row",
+  );
+  if (!added) return;
+  const s = tokens(added)[1];
+
+  // set: each against the row as `since` last said it
+  for (const [field, value, want] of [["min", 10, "10 255"], ["max", 200, "10 200"]]) {
+    const line = `row ${s} CC20 PICKUP FILTER.CUTOFF ${want} off live`;
+    await queuedThenSaid("map", `ed map set ${s} ${field} ${value}`, (l) => l === line, line);
+  }
+
+  // rm: witnessed by the row's input and target
+  for (const stale of [`ed map rm ${s} CC21 FILTER.CUTOFF`, `ed map rm ${s} CC20 FILTER.RESO`]) {
+    const got = await send(stale);
+    if (got.at(-1) !== `ERR ed map rm ${s} is not that row: ed since`) fail("map", stale, got.join(" | "));
+  }
+  if (!(await cutoffRow())) fail("map", "rm with a stale witness", "the row went");
+  const rm = `ed map rm ${s} CC20 FILTER.CUTOFF`;
+  const gone = await send(rm);
+  if (gone.at(-1) !== "OK queued") fail("map", rm, gone.join(" | "));
+  else {
+    const until = Date.now() + SETTLE_MS;
+    let left = await cutoffRow();
+    while (left && Date.now() < until) {
+      await sleep(40);
+      left = await cutoffRow();
+    }
+    if (left) fail("map", rm, `since still says ${left}`);
+  }
+
+  // learn: the box goes to the cell's page and arms there
+  const armed = (l) => l.startsWith('learn armed FILTER.CUTOFF "');
+  await queuedThenSaid("learn", "ed learn FILTER.CUTOFF", armed, "learn armed FILTER.CUTOFF");
+  await queuedThenSaid("learn", "ed learn off", (l) => l === 'learn off ""', 'learn off ""');
+  const not = await ask("ed learn THEME.ACCENT");
+  if (not.at(-1) !== "ERR ed learn THEME.ACCENT is no Part page's cell") fail("learn", "ed learn THEME.ACCENT", not.join(" | "));
+  await onPart1();
+  info(`map: a row added on FILTER.CUTOFF (${s}), its span set, removed by its witness; learn armed and off`);
+}
+
 // ---- the run ----
 
 async function main() {
@@ -448,6 +520,12 @@ async function main() {
   }
   await ask("ed scene queue 1");
   info(`orbit: ${orbit.count} pages, RING3 read back, a step and a queue in since`);
+
+  // MIDI MAP (ADR 0289, slice 4): its page; a Sound row added on CUTOFF
+  // (learn's write: the row INIT has there is replaced), its span set, a
+  // removal refused on a stale witness and taken on the row's own; learn
+  // armed on the cell and off again, each seen in `since`.
+  await mapPass();
 
   // every param to its max, then its min, read back
   const done = new Set();

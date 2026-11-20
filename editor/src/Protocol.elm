@@ -4,7 +4,7 @@ module Protocol exposing
     , Amount
     , AnswerLine(..)
     , Binding
-    , Cell(..)
+    , Cell
     , Clock(..)
     , Command(..)
     , ControlNo
@@ -12,7 +12,6 @@ module Protocol exposing
     , Edits(..)
     , Flags
     , Generation
-    , Hash
     , Health(..)
     , Kind(..)
     , Learn(..)
@@ -60,6 +59,7 @@ module Protocol exposing
     , Value(..)
     , amount
     , binding
+    , cell
     , cellKey
     , controlNo
     , degree
@@ -70,7 +70,6 @@ module Protocol exposing
     , formKinds
     , generation
     , generationToInt
-    , hashText
     , mapName
     , msb
     , nextPage
@@ -108,10 +107,12 @@ module Protocol exposing
     )
 
 {-| The unit's text console, `ed` namespace: one command out, answer lines in.
-Parsing never fails: a line that isn't understood is `Unknown` and is ignored.
+Parsing never fails: a line that isn't understood is `Unknown`, which the
+model keeps and shows; it is never dropped.
 -}
 
 import Addr exposing (Addr)
+import Hash exposing (Hash)
 import Unit exposing (Engine, Gen, Part)
 
 
@@ -216,10 +217,18 @@ type alias Flags =
 
 
 {-| A matrix cell, `ENV1:FILTER.CUTOFF`, or a jack knob's, `FM3IN`: the
-unit's own text, opaque here.
+unit's own text, opaque here. Only `cell` makes one, so it is always one
+word and `ed route` can always send it.
 -}
 type Cell
     = Cell String
+
+
+{-| A cell off the wire: one word.
+-}
+cell : String -> Maybe Cell
+cell s =
+    word s |> Maybe.map Cell
 
 
 cellKey : Cell -> String
@@ -902,18 +911,6 @@ type OrbitCommand
     | SetPool RingNo NotePool
 
 
-{-| A schema's hash, sixteen hex digits: describe's own bytes, so equal
-hashes are the same text. Opaque: only `parse` makes one.
--}
-type Hash
-    = Hash String
-
-
-hashText : Hash -> String
-hashText (Hash h) =
-    h
-
-
 schemaToken : SchemaId -> String
 schemaToken s =
     case s of
@@ -1045,9 +1042,10 @@ type AnswerLine
 
 type Line
     = Answer AnswerLine
-    | Ok_ (Maybe Int)
+      -- `OK`, a command's; `OK <m>`, a `since` answer and its number.
+    | Ok_ (Maybe Gen)
       -- `OK <m> more`: a `since` answer with sections still owed; ask again.
-    | OkMore Int
+    | OkMore Gen
     | Queued
     | Err_ String
       -- `ERR ed set <addr> <why>`: a set the unit would not take.
@@ -1087,21 +1085,19 @@ encode c =
         Follow p ->
             Just ("ed part " ++ String.fromInt (Unit.partNumber p))
 
-        SetRoute (Cell cell) to ->
-            word cell
-                |> Maybe.map
-                    (\x ->
-                        "ed route "
-                            ++ x
-                            ++ " "
-                            ++ (case to of
-                                    RouteAmount (Amount n) ->
-                                        String.fromInt n
+        SetRoute (Cell name) to ->
+            Just
+                ("ed route "
+                    ++ name
+                    ++ " "
+                    ++ (case to of
+                            RouteAmount (Amount n) ->
+                                String.fromInt n
 
-                                    RouteOff ->
-                                        "off"
-                               )
-                    )
+                            RouteOff ->
+                                "off"
+                       )
+                )
 
         ListProjects ->
             Just "ed projects"
@@ -1426,10 +1422,10 @@ parse raw =
             m ->
                 case String.split " " m of
                     [ n ] ->
-                        nat n |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
+                        nat n |> Maybe.andThen Unit.genFromInt |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
 
                     [ n, "more" ] ->
-                        nat n |> Maybe.map OkMore |> Maybe.withDefault Unknown
+                        nat n |> Maybe.andThen Unit.genFromInt |> Maybe.map OkMore |> Maybe.withDefault Unknown
 
                     _ ->
                         Unknown
@@ -1517,7 +1513,7 @@ answer ts =
             Maybe.map2 (\pr pt -> HelloIs { protocol = pr, build = build, part = pt, engine = engine }) (nat proto) (nat n)
 
         [ "schema", token, pages, hash ] ->
-            Maybe.map3 (\sc n h -> SchemaIs { schema = sc, pages = n, hash = h }) (schemaFromToken token) (nat pages) (hashOf hash)
+            Maybe.map3 (\sc n h -> SchemaIs { schema = sc, pages = n, hash = h }) (schemaFromToken token) (nat pages) (Hash.fromHex hash)
 
         [ "mixer" ] ->
             Just MixerIs
@@ -1541,13 +1537,13 @@ answer ts =
         [ "route", a, b, c ] ->
             case int b of
                 Just n ->
-                    Just (RouteIs { cell = Cell a, amount = n, text = c })
+                    cell a |> Maybe.map (\x -> RouteIs { cell = x, amount = n, text = c })
 
                 Nothing ->
-                    routeKind c |> Maybe.map (\k -> Route { label = a, cell = Cell b, kind = k })
+                    Maybe.map2 (\x k -> Route { label = a, cell = x, kind = k }) (cell b) (routeKind c)
 
         [ "unroute", c ] ->
-            Just (Unroute (Cell c))
+            cell c |> Maybe.map Unroute
 
         [ "routes", n ] ->
             nat n |> Maybe.map (always RoutesIs)
@@ -1648,8 +1644,8 @@ answer ts =
         [ "mapfile", name ] ->
             Just (MapFileIs name)
 
-        [ "act", label, cell ] ->
-            actCellOf cell |> Maybe.map (\x -> Act { label = label, cell = x })
+        [ "act", label, token ] ->
+            actCellOf token |> Maybe.map (\x -> Act { label = label, cell = x })
 
         [ "orbit" ] ->
             Just OrbitIs
@@ -2111,17 +2107,6 @@ flagsOf s =
 
         _ ->
             Nothing
-
-
-{-| Sixteen lowercase hex digits.
--}
-hashOf : String -> Maybe Hash
-hashOf h =
-    if String.length h == 16 && String.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) h then
-        Just (Hash h)
-
-    else
-        Nothing
 
 
 scaleOf : String -> Maybe Scale

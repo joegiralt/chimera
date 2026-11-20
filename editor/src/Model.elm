@@ -1,6 +1,7 @@
 module Model exposing
     ( Effect(..)
     , Held
+    , Kept
     , LearnReading
     , Listed
     , Listing
@@ -8,6 +9,7 @@ module Model exposing
     , MapRowReading
     , Model
     , Msg(..)
+    , Notice(..)
     , Reading
     , RouteReading
     , Seat
@@ -15,7 +17,11 @@ module Model exposing
     , Via(..)
     , armedOn
     , init
+    , lastRefusal
     , notice
+    , noticeText
+    , notices
+    , noticesLost
     , refusal
     , seat
     , sensingRow
@@ -33,10 +39,18 @@ value, and an edit the unit would not take shows the unit's reason.
 
 `step` is the pure core (messages in, effects out); `update` only runs them.
 
+Nothing the unit says is dropped unseen. It answers each command line in the
+order sent, so the commands still unanswered are held in that order
+(`awaiting`) and an `ERR` is tied to the one it answers. Every `ERR`, and
+every line the editor can't read, is kept as a `Notice` until the user has
+seen it (`SeenNotices`): no later answer, success or link erases one.
+
 The schemas are the unit's own text (ADR 0289): on connect, and on an engine
 the editor hasn't read, it asks `ed schema <S>` for its page count and hash,
 and uses its cached copy of that hash (IndexedDB, `Cache`) or describes every
-page and keeps them. It reads the followed engine's schema, the MIXER's, the
+page and keeps them. A schema is the text its hash names: a cached copy whose
+lines don't hash to the unit's is described again, and a described one that
+doesn't, or that holds a line the editor can't read, halts and says so. It reads the followed engine's schema, the MIXER's, the
 engine's matrix, SETTINGS', MIDI MAP's and ORBIT's.
 
 -}
@@ -44,7 +58,8 @@ engine's matrix, SETTINGS', MIDI MAP's and ORBIT's.
 import Addr exposing (Addr)
 import Cache
 import Dict exposing (Dict)
-import Protocol exposing (AnswerLine(..), Cell, Command(..), Degree, Edits, Generation, Hash, Health, Learn, Line(..), MapCommand(..), MapInput, MapKind, MapRow(..), Note, NotePool, OnOff, OrbitCommand, OverEdits, PageNo, ProjectFile, ProjectId, ProjectName, RouteTo, RowStatus, ScaleMask, SchemaId(..), Slot, Song, SoundStatus, SpanPlace, Value, cellKey, encode, hashText, parse, ringNoToInt, rowIndexToInt, sceneNoToInt, schemaToken, segmentToInt, stepNoToInt)
+import Hash exposing (Hash)
+import Protocol exposing (AnswerLine(..), Cell, Command(..), Degree, Edits, Generation, Health, Learn, Line(..), MapCommand(..), MapInput, MapKind, MapRow(..), Note, NotePool, OnOff, OrbitCommand, OverEdits, PageNo, ProjectFile, ProjectId, ProjectName, RouteTo, RowStatus, ScaleMask, SchemaId(..), Slot, Song, SoundStatus, SpanPlace, Value, cellKey, encode, parse, ringNoToInt, rowIndexToInt, sceneNoToInt, schemaToken, segmentToInt, stepNoToInt)
 import Schema exposing (Schema)
 import Time
 import Transport exposing (Link(..))
@@ -134,6 +149,30 @@ type Why
     | RefusedBy String
     | Silent
     | TooLarge
+    | BadSchema SchemaId SchemaFault
+
+
+{-| Why a schema's text can't be used: a line of it the editor can't read,
+or text that is not what the unit's hash names (what it said, what was read).
+-}
+type SchemaFault
+    = Unreadable String
+    | WrongHash Hash Hash
+
+
+{-| Something the unit said that the editor could not act on: a refusal, with
+the command it answers where one was waiting, or a line it can't read, as
+the unit wrote it.
+-}
+type Notice
+    = Refusal { sent : Maybe Command, why : String }
+    | Unread String
+
+
+{-| A notice kept for the user, and how many times the unit said it.
+-}
+type alias Kept =
+    { notice : Notice, times : Int }
 
 
 {-| Which Part the box was following when a hand took hold: a new `part`
@@ -173,6 +212,15 @@ type alias Model =
     , owed : Int
     , leftover : Bool
     , now : Time.Posix
+
+    -- The commands sent while following that the unit has not answered,
+    -- oldest first: it answers in the order sent.
+    , awaiting : List Command
+
+    -- What the unit refused or the editor couldn't read, newest first, each
+    -- distinct one once; and how many fell off the end unseen.
+    , kept : List Kept
+    , lost : Int
 
     -- SETTINGS' section: the loaded project, each Part's Sound (by its
     -- number), the box's last toast, the listing.
@@ -230,6 +278,8 @@ type Msg
     | MapAct MapCommand
       -- An ORBIT transport, scene, chord, scale, step or pool command.
     | OrbitAct OrbitCommand
+      -- The user has seen the notices: they go.
+    | SeenNotices
 
 
 {-| The console protocol this editor speaks.
@@ -243,7 +293,7 @@ supported =
 -}
 cacheKey : SchemaId -> Hash -> String
 cacheKey s h =
-    String.join "/" [ String.fromInt supported, schemaToken s, hashText h ]
+    String.join "/" [ String.fromInt supported, schemaToken s, Hash.toHex h ]
 
 
 {-| A request unanswered this long has timed out. While connecting, that
@@ -295,6 +345,9 @@ init =
     , owed = 0
     , leftover = False
     , now = Time.millisToPosix 0
+    , awaiting = []
+    , kept = []
+    , lost = 0
     , project = Nothing
     , sounds = Dict.empty
     , toast = Nothing
@@ -385,6 +438,9 @@ opening msg =
         OrbitAct _ ->
             Cmd.none
 
+        SeenNotices ->
+            Cmd.none
+
 
 run : Effect -> Cmd msg
 run e =
@@ -457,6 +513,12 @@ stageNotice m =
         Halted TooLarge ->
             Just "THE UNIT'S ANSWER IS TOO LARGE FOR ONE READ"
 
+        Halted (BadSchema s (Unreadable l)) ->
+            Just ("THE UNIT'S " ++ schemaToken s ++ " SCHEMA HAS A LINE THIS EDITOR CAN'T READ: " ++ l)
+
+        Halted (BadSchema s (WrongHash said read_)) ->
+            Just ("THE UNIT'S " ++ schemaToken s ++ " SCHEMA IS NOT THE TEXT ITS HASH NAMES: " ++ Hash.toHex said ++ ", READ " ++ Hash.toHex read_)
+
         Greeting ->
             Nothing
 
@@ -484,6 +546,82 @@ reports a value for it.
 refusal : Addr -> Model -> Maybe String
 refusal a m =
     Dict.get (Addr.key a) m.refusals
+
+
+{-| What the unit refused or the editor couldn't read and the user has not
+yet seen, newest first.
+-}
+notices : Model -> List Kept
+notices m =
+    m.kept
+
+
+{-| How many notices fell off the end of `notices` unseen.
+-}
+noticesLost : Model -> Int
+noticesLost m =
+    m.lost
+
+
+{-| The newest refusal the user has not seen: the command it answers, where
+one was waiting, and the unit's words.
+-}
+lastRefusal : Model -> Maybe { sent : Maybe Command, why : String }
+lastRefusal m =
+    m.kept
+        |> List.filterMap
+            (\k ->
+                case k.notice of
+                    Refusal r ->
+                        Just r
+
+                    Unread _ ->
+                        Nothing
+            )
+        |> List.head
+
+
+{-| A notice as the UI says it: the line sent, where known, and the unit's
+own words.
+-}
+noticeText : Notice -> String
+noticeText n =
+    case n of
+        Refusal r ->
+            case r.sent |> Maybe.andThen encode of
+                Just sent ->
+                    "THE UNIT REFUSED " ++ sent ++ ": " ++ r.why
+
+                Nothing ->
+                    "THE UNIT REFUSED: " ++ r.why
+
+        Unread raw ->
+            "THE UNIT SAID A LINE THIS EDITOR CAN'T READ: " ++ raw
+
+
+{-| At most this many distinct notices are kept; past it the oldest falls
+off and is counted (`noticesLost`).
+-}
+noticesKept : Int
+noticesKept =
+    16
+
+
+{-| A notice kept: one the user has not seen yet is counted once more and
+comes first; else it is new, and past `noticesKept` the oldest is lost.
+-}
+keep : Notice -> Model -> Model
+keep n m =
+    let
+        times : Int
+        times =
+            m.kept |> List.filter (\k -> k.notice == n) |> List.map .times |> List.sum
+
+        all : List Kept
+        all =
+            { notice = n, times = times + 1 } :: List.filter (\k -> k.notice /= n) m.kept
+    in
+    { m | kept = List.take noticesKept all, lost = m.lost + max 0 (List.length all - noticesKept) }
 
 
 {-| The cell the box's MIDI learn is armed on, when the box can name it.
@@ -544,10 +682,45 @@ takesEdits m =
 
 step : Msg -> Model -> ( Model, List Effect )
 step msg m =
+    let
+        ( m1, effects ) =
+            stepIn msg m
+    in
+    ( if m.stage == Following then
+        { m1 | awaiting = m1.awaiting ++ List.filterMap sentBy effects }
+
+      else
+        m1
+    , effects
+    )
+
+
+{-| The command an effect puts on the wire, if it does (`run` sends only
+what `encode` makes a line of).
+-}
+sentBy : Effect -> Maybe Command
+sentBy e =
+    case e of
+        Send c ->
+            encode c |> Maybe.map (\_ -> c)
+
+        Recall _ ->
+            Nothing
+
+        Keep _ _ ->
+            Nothing
+
+
+stepIn : Msg -> Model -> ( Model, List Effect )
+stepIn msg m =
     case msg of
         LinkChanged l ->
-            -- Any link change starts over: nothing of the last link is shown.
-            ( { init | link = Just l, via = m.via, now = m.now, seat = nextSeat m.seat }, [] )
+            -- Any link change starts over: nothing of the last link is shown
+            -- but the notices the user has not seen.
+            ( { init | link = Just l, via = m.via, now = m.now, seat = nextSeat m.seat, kept = m.kept, lost = m.lost }, [] )
+
+        SeenNotices ->
+            ( { m | kept = [], lost = 0 }, [] )
 
         Tick t ->
             tick t m |> Tuple.mapSecond (List.map Send)
@@ -757,7 +930,7 @@ tick t m0 =
                         ( fresh, cs ) =
                             ask (Since m.gen)
                     in
-                    ( { fresh | owed = 1 }, cs )
+                    ( { fresh | owed = 1, awaiting = [] }, cs )
 
                 else
                     ( m, [] )
@@ -811,8 +984,32 @@ edit a v m =
 line : String -> Line -> Model -> ( Model, List Effect )
 line raw l m =
     case m.stage of
+        -- Nothing more is read, but nothing said is dropped.
         Halted _ ->
-            ( m, [] )
+            case l of
+                Err_ why ->
+                    ( keep (Refusal { sent = Nothing, why = why }) m, [] )
+
+                Unknown ->
+                    ( unread raw m, [] )
+
+                Answer _ ->
+                    ( m, [] )
+
+                Ok_ _ ->
+                    ( m, [] )
+
+                OkMore _ ->
+                    ( m, [] )
+
+                Queued ->
+                    ( m, [] )
+
+                SetRefused _ _ ->
+                    ( m, [] )
+
+                SinceTooLarge ->
+                    ( m, [] )
 
         Greeting ->
             lineIn raw l m
@@ -823,30 +1020,153 @@ line raw l m =
         Recalling _ _ ->
             lineIn raw l m
 
-        Describing _ _ _ ->
-            lineIn raw l m
+        Describing s _ _ ->
+            case l of
+                -- Describe's own text, whatever it is: the hash reads it all.
+                Answer _ ->
+                    lineIn raw l { m | incomingLines = raw :: m.incomingLines }
+
+                Unknown ->
+                    if String.trim raw == "" then
+                        ( m, [] )
+
+                    else
+                        ( { m | stage = Halted (BadSchema s (Unreadable raw)), asked = Nothing }, [] )
+
+                Ok_ _ ->
+                    lineIn raw l m
+
+                OkMore _ ->
+                    lineIn raw l m
+
+                Queued ->
+                    lineIn raw l m
+
+                Err_ _ ->
+                    lineIn raw l m
+
+                SetRefused _ _ ->
+                    lineIn raw l m
+
+                SinceTooLarge ->
+                    lineIn raw l m
 
         Following ->
             lineIn raw l m
+
+
+{-| A line the editor can't read, kept as the unit wrote it. A blank line
+says nothing: it is no line.
+-}
+unread : String -> Model -> Model
+unread raw m =
+    if String.trim raw == "" then
+        m
+
+    else
+        keep (Unread raw) m
+
+
+{-| What kind of answer a command gets, as far as its last line tells: a
+`since`'s `OK` carries its number, a set's refusal its address (the set of
+that address it answers).
+-}
+type Asked
+    = AskedSince
+    | AskedSet Addr
+    | AskedOther
+
+
+askedBy : Command -> Asked
+askedBy c =
+    case c of
+        Since _ ->
+            AskedSince
+
+        Set a _ ->
+            AskedSet a
+
+        Hello ->
+            AskedOther
+
+        AskSchema _ ->
+            AskedOther
+
+        Describe _ _ ->
+            AskedOther
+
+        Get _ ->
+            AskedOther
+
+        Follow _ ->
+            AskedOther
+
+        SetRoute _ _ ->
+            AskedOther
+
+        ListProjects ->
+            AskedOther
+
+        SaveProject ->
+            AskedOther
+
+        SaveProjectAs _ ->
+            AskedOther
+
+        LoadProject _ _ _ ->
+            AskedOther
+
+        MapCmd _ ->
+            AskedOther
+
+        OrbitCmd _ ->
+            AskedOther
+
+
+{-| An answer's last line came, and it can only be the answer to a command
+`fits`: the oldest such one is answered, and any sent before it have lost
+their answers (the unit answers in order). With none waiting, nothing moves.
+-}
+answered : (Asked -> Bool) -> Model -> Model
+answered fits m =
+    let
+        after : List Command -> List Command
+        after cs =
+            case cs of
+                c :: rest ->
+                    if fits (askedBy c) then
+                        rest
+
+                    else
+                        after rest
+
+                [] ->
+                    m.awaiting
+    in
+    { m | awaiting = after m.awaiting }
 
 
 lineIn : String -> Line -> Model -> ( Model, List Effect )
 lineIn raw l m =
     case l of
         Answer a ->
-            ( answer raw a m, [] )
+            ( answer a m, [] )
 
-        Ok_ done ->
-            ok done False m
+        Ok_ (Just g) ->
+            ok (Just g) False (answered (\k -> k == AskedSince) m)
 
-        OkMore done ->
-            ok (Just done) True m
+        -- `OK` alone is never a `since`'s: a set's, or another command's.
+        Ok_ Nothing ->
+            ok Nothing False (answered (\k -> k /= AskedSince) m)
+
+        OkMore g ->
+            ok (Just g) True (answered (\k -> k == AskedSince) m)
 
         Err_ why ->
             case m.stage of
                 Following ->
                     -- A refused `since` stays owed; the timeout re-asks, then settles it as lost.
-                    ( m, [] )
+                    ( refusedCommand why m, [] )
 
                 Greeting ->
                     if String.startsWith "unknown command" why then
@@ -868,17 +1188,41 @@ lineIn raw l m =
                     ( m, [] )
 
         SetRefused a why ->
-            ( { m | refusals = Dict.insert (Addr.key a) why m.refusals }, [] )
+            ( answered (\k -> k == AskedSet a) { m | refusals = Dict.insert (Addr.key a) why m.refusals }, [] )
 
         Queued ->
-            ( m, [] )
+            ( answered (\k -> k /= AskedSince) m, [] )
 
         -- Asking again gets the same: stop, and say so.
         SinceTooLarge ->
             ( { m | stage = Halted TooLarge, asked = Nothing }, [] )
 
         Unknown ->
-            ( m, [] )
+            ( unread raw m, [] )
+
+
+{-| An `ERR` while following: the answer to the oldest command still
+waiting, whatever it is. Kept with it; a set's is shown at its control too.
+-}
+refusedCommand : String -> Model -> Model
+refusedCommand why m =
+    let
+        rest : Model
+        rest =
+            keep (Refusal { sent = List.head m.awaiting, why = why }) { m | awaiting = List.drop 1 m.awaiting }
+    in
+    case List.head m.awaiting |> Maybe.map askedBy of
+        Just (AskedSet a) ->
+            { rest | refusals = Dict.insert (Addr.key a) why rest.refusals }
+
+        Just AskedSince ->
+            rest
+
+        Just AskedOther ->
+            rest
+
+        Nothing ->
+            rest
 
 
 refused : String -> Model -> Model
@@ -886,8 +1230,8 @@ refused why m =
     { m | stage = Halted (RefusedBy why), asked = Nothing }
 
 
-answer : String -> AnswerLine -> Model -> Model
-answer raw a m =
+answer : AnswerLine -> Model -> Model
+answer a m =
     case a of
         HelloIs h ->
             if h.protocol == supported then
@@ -969,7 +1313,7 @@ answer raw a m =
                 { m | variants = Dict.insert p.name p.variant m.variants }
 
             else
-                describing raw a m
+                describing a m
 
         Val v ->
             if not (isDescribed v.addr m) then
@@ -997,31 +1341,31 @@ answer raw a m =
                 { m | source = Just text }
 
             else
-                describing raw a m
+                describing a m
 
         Page _ ->
-            describing raw a m
+            describing a m
 
         Param _ ->
-            describing raw a m
+            describing a m
 
         Opt _ ->
-            describing raw a m
+            describing a m
 
         Route _ ->
-            describing raw a m
+            describing a m
 
         Src _ ->
-            describing raw a m
+            describing a m
 
         Col _ ->
-            describing raw a m
+            describing a m
 
         AmountRange _ _ ->
-            describing raw a m
+            describing a m
 
         Dests _ ->
-            describing raw a m
+            describing a m
 
         RoutesIs ->
             { m | routes = Dict.empty }
@@ -1033,7 +1377,7 @@ answer raw a m =
             { m | routes = Dict.remove (cellKey c) m.routes }
 
         Crumb _ ->
-            describing raw a m
+            describing a m
 
         -- SETTINGS' section whole: its state goes. Its values are THEME's,
         -- MIDI CONFIG's and RANDOMIZE's, a fixed set the whole answer
@@ -1058,25 +1402,25 @@ answer raw a m =
             { m | listing = m.listing |> Maybe.map (\l -> { l | projects = l.projects ++ [ pr ] }) }
 
         InputIs _ ->
-            describing raw a m
+            describing a m
 
         KindIs _ ->
-            describing raw a m
+            describing a m
 
         CcsAre _ ->
-            describing raw a m
+            describing a m
 
         MsbsAre _ ->
-            describing raw a m
+            describing a m
 
         SpanIs _ _ ->
-            describing raw a m
+            describing a m
 
         RowsAre _ ->
-            describing raw a m
+            describing a m
 
         MapRowsAre _ ->
-            describing raw a m
+            describing a m
 
         -- MAP's section whole: it repeats its rows, learn and the listing,
         -- so what was held for it goes.
@@ -1104,7 +1448,7 @@ answer raw a m =
             { m | mapFiles = m.mapFiles ++ [ name ] }
 
         Act _ ->
-            describing raw a m
+            describing a m
 
         -- ORBIT's section whole: its state and values go; it repeats them.
         OrbitIs ->
@@ -1171,14 +1515,14 @@ heldSchema s m =
     Dict.get (schemaToken s) m.held |> Maybe.map .schema
 
 
-{-| A line of `ed describe`'s answer: into the schema being read, and kept
-as the unit wrote it for the cache.
+{-| A line of `ed describe`'s answer, into the schema being read (`line`
+keeps it as the unit wrote it, for the hash and the cache).
 -}
-describing : String -> AnswerLine -> Model -> Model
-describing raw a m =
+describing : AnswerLine -> Model -> Model
+describing a m =
     case m.stage of
         Describing _ _ _ ->
-            { m | incoming = Schema.add a m.incoming, incomingLines = raw :: m.incomingLines }
+            { m | incoming = Schema.add a m.incoming }
 
         Greeting ->
             m
@@ -1199,7 +1543,7 @@ describing raw a m =
 {-| `OK` ends the request in flight. `more`: a `since` answer owes sections,
 asked for on the next tick.
 -}
-ok : Maybe Int -> Bool -> Model -> ( Model, List Effect )
+ok : Maybe Gen -> Bool -> Model -> ( Model, List Effect )
 ok done more m0 =
     let
         m : Model
@@ -1245,16 +1589,25 @@ ok done more m0 =
 
             else
                 let
-                    h : Held
-                    h =
-                        { hash = r.hash, schema = m.incoming }
+                    lines : List String
+                    lines =
+                        List.reverse m.incomingLines
+
+                    read_ : Hash
+                    read_ =
+                        Hash.ofLines lines
                 in
-                ( readNext (install s h { m1 | incoming = Schema.empty, incomingLines = [] })
-                , [ Keep (cacheKey s r.hash) (List.reverse m.incomingLines) ]
-                )
+                if read_ == r.hash then
+                    ( readNext (install s { hash = r.hash, schema = m.incoming } { m1 | incoming = Schema.empty, incomingLines = [] })
+                    , [ Keep (cacheKey s r.hash) lines ]
+                    )
+
+                else
+                    -- Not the text the hash names: neither shown nor kept.
+                    ( { m1 | stage = Halted (BadSchema s (WrongHash r.hash read_)) }, [] )
 
         Following ->
-            case done |> Maybe.andThen Unit.genFromInt of
+            case done of
                 Just g ->
                     ( following g (max 0 (m.owed - 1)) more m, [] )
 
@@ -1277,13 +1630,14 @@ recall s r m =
         ( { m | stage = Recalling s r }, [ Recall (cacheKey s r.hash) ] )
 
 
-{-| A `since` answered. Once nothing is owed, a box on another engine has its
-schemas read (held, cached or described), then is read from nothing; the old
-page stays up meanwhile.
+{-| A `since` answered. Once nothing is owed and no command sent waits for
+its answer (its `OK` would be read as `ed schema`'s), a box on another engine
+has its schemas read (held, cached or described), then is read from nothing;
+the old page stays up meanwhile.
 -}
 following : Gen -> Int -> Bool -> Model -> Model
 following g owed more m =
-    if owed == 0 && not more && m.engine /= Nothing && m.engine /= m.described then
+    if owed == 0 && not more && List.isEmpty m.awaiting && m.engine /= Nothing && m.engine /= m.described then
         readNext
             (adopt
                 (mixerOnly
@@ -1324,8 +1678,10 @@ adopt m =
             m
 
 
-{-| The cache's answer for the schema being recalled: its lines read as
-`describe`'s, if they make the pages the unit said; else describe it.
+{-| The cache's answer for the schema being recalled. Lines that hash to
+what the unit said are describe's own text: read as its answer is, and a line
+of them the editor can't read marks the schema bad. Anything else is a miss:
+describe it.
 -}
 recalled : { key : String, lines : Maybe (List String) } -> Model -> Model
 recalled r m =
@@ -1336,25 +1692,26 @@ recalled r m =
 
             else
                 let
-                    cached : Maybe Schema
-                    cached =
-                        r.lines
-                            |> Maybe.map (List.foldl (\l acc -> read l acc) Schema.empty)
-                            |> Maybe.andThen
-                                (\sch ->
-                                    if Schema.pageCount sch == Just reply.pages && List.length (Schema.pages sch) == reply.pages then
-                                        Just sch
-
-                                    else
-                                        Nothing
-                                )
+                    describe : Model
+                    describe =
+                        { m | stage = Describing s reply Protocol.firstPage, incoming = Schema.empty, incomingLines = [] }
                 in
-                case cached of
-                    Just sch ->
-                        readNext (install s { hash = reply.hash, schema = sch } m)
+                case r.lines |> Maybe.map (\ls -> ( Hash.ofLines ls == reply.hash, List.foldl read (Ok Schema.empty) ls )) of
+                    Just ( True, Ok sch ) ->
+                        if Schema.pageCount sch == Just reply.pages && List.length (Schema.pages sch) == reply.pages then
+                            readNext (install s { hash = reply.hash, schema = sch } m)
+
+                        else
+                            describe
+
+                    Just ( True, Err l ) ->
+                        { m | stage = Halted (BadSchema s (Unreadable l)) }
+
+                    Just ( False, _ ) ->
+                        describe
 
                     Nothing ->
-                        { m | stage = Describing s reply Protocol.firstPage, incoming = Schema.empty, incomingLines = [] }
+                        describe
 
         Greeting ->
             m
@@ -1372,34 +1729,41 @@ recalled r m =
             m
 
 
-{-| One cached line into a schema, as `describe`'s answer is read.
+{-| One cached line into a schema, as `describe`'s answer is read; the first
+line that is not describe's (it can't be read, or is an answer's end) is the
+error.
 -}
-read : String -> Schema -> Schema
-read raw sch =
-    case parse raw of
-        Answer a ->
-            Schema.add a sch
+read : String -> Result String Schema -> Result String Schema
+read raw acc =
+    case acc of
+        Ok sch ->
+            case parse raw of
+                Answer a ->
+                    Ok (Schema.add a sch)
 
-        Ok_ _ ->
-            sch
+                Ok_ _ ->
+                    Err raw
 
-        OkMore _ ->
-            sch
+                OkMore _ ->
+                    Err raw
 
-        Queued ->
-            sch
+                Queued ->
+                    Err raw
 
-        Err_ _ ->
-            sch
+                Err_ _ ->
+                    Err raw
 
-        SetRefused _ _ ->
-            sch
+                SetRefused _ _ ->
+                    Err raw
 
-        SinceTooLarge ->
-            sch
+                SinceTooLarge ->
+                    Err raw
 
-        Unknown ->
-            sch
+                Unknown ->
+                    Err raw
+
+        Err _ ->
+            acc
 
 
 {-| A schema read: held for this connection, and shown where it belongs.

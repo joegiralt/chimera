@@ -4,7 +4,8 @@ import Addr
 import Expect
 import Fixture
 import FixtureData
-import Protocol exposing (ActCell(..), AddInput(..), AnswerLine(..), Cell(..), Clock(..), Command(..), Edits(..), Flags, Health(..), Kind(..), Learn(..), Line(..), MapCommand(..), MapForm(..), MapInput(..), MapKind(..), MapRow(..), NotePool, OnOff(..), OrbitCommand(..), OverEdits(..), Playback(..), ProjectFile(..), RouteKind(..), RouteTo(..), RowIndex, RowSetting(..), RowStatus(..), SaveInto(..), Scale(..), SchemaId(..), SlotState(..), SoundStatus(..), SpanPlace, Value(..), encode, optIndex, parse)
+import Hash
+import Protocol exposing (ActCell(..), AddInput(..), AnswerLine(..), Cell, Clock(..), Command(..), Edits(..), Flags, Health(..), Kind(..), Learn(..), Line(..), MapCommand(..), MapForm(..), MapInput(..), MapKind(..), MapRow(..), NotePool, OnOff(..), OrbitCommand(..), OverEdits(..), Playback(..), ProjectFile(..), RouteKind(..), RouteTo(..), RowIndex, RowSetting(..), RowStatus(..), SaveInto(..), Scale(..), SchemaId(..), SlotState(..), SoundStatus(..), SpanPlace, Value(..), encode, optIndex, parse)
 import Schema
 import Test exposing (Test, describe, test)
 import Unit
@@ -14,6 +15,21 @@ import Wire exposing (addr, page)
 p : String -> String -> Line -> Test
 p name raw want =
     test name <| \_ -> Expect.equal want (parse raw)
+
+
+{-| A line that names a cell: `Unknown` if the text were no cell, so the
+test fails on it.
+-}
+withCell : String -> (Cell -> AnswerLine) -> Line
+withCell s f =
+    Protocol.cell s |> Maybe.map (f >> Answer) |> Maybe.withDefault Unknown
+
+
+{-| A since answer's number as `OK <m>` says it.
+-}
+okAt : Int -> Line
+okAt n =
+    Unit.genFromInt n |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
 
 
 none : Flags
@@ -52,7 +68,7 @@ suite =
                 \_ ->
                     case parse "schema DRUM 165 0123456789abcdef" of
                         Answer (SchemaIs r) ->
-                            Expect.equal ( r.schema, r.pages, Protocol.hashText r.hash ) ( EngineSchema Unit.Drum, 165, "0123456789abcdef" )
+                            Expect.equal ( r.schema, r.pages, Hash.toHex r.hash ) ( EngineSchema Unit.Drum, 165, "0123456789abcdef" )
 
                         _ ->
                             Expect.fail "not a schema line"
@@ -65,13 +81,13 @@ suite =
             , p "source" "source \"KICK 909\"" (Answer (Source "KICK 909"))
             , p "opt" "opt ALGO.ALG_A 8 \"A1\"" (optIndex 8 |> Maybe.map (\ix -> Answer (Opt { addr = addr "ALGO.ALG_A", index = ix, name = "A1" })) |> Maybe.withDefault Unknown)
             , p "a protocol 3 route line is not understood" "route \"ENV AMT\" next-slice" Unknown
-            , p "route knob" "route \"ENV AMT\" ENV1:FILTER.CUTOFF route" (Answer (Route { label = "ENV AMT", cell = Cell "ENV1:FILTER.CUTOFF", kind = KnobRoute }))
-            , p "keyboard knob" "route \"KEYBOARD\" NOTE:FILTER.CUTOFF keybd" (Answer (Route { label = "KEYBOARD", cell = Cell "NOTE:FILTER.CUTOFF", kind = KnobKeybd }))
-            , p "jack knob" "route \"FREQ MOD\" FM3IN route" (Answer (Route { label = "FREQ MOD", cell = Cell "FM3IN", kind = KnobRoute }))
+            , p "route knob" "route \"ENV AMT\" ENV1:FILTER.CUTOFF route" (withCell "ENV1:FILTER.CUTOFF" (\c -> Route { label = "ENV AMT", cell = c, kind = KnobRoute }))
+            , p "keyboard knob" "route \"KEYBOARD\" NOTE:FILTER.CUTOFF keybd" (withCell "NOTE:FILTER.CUTOFF" (\c -> Route { label = "KEYBOARD", cell = c, kind = KnobKeybd }))
+            , p "jack knob" "route \"FREQ MOD\" FM3IN route" (withCell "FM3IN" (\c -> Route { label = "FREQ MOD", cell = c, kind = KnobRoute }))
             , p "routes" "routes 3" (Answer RoutesIs)
-            , p "a route's amount" "route LFO1:OP_C.LEVEL -42 \"-42\"" (Answer (RouteIs { cell = Cell "LFO1:OP_C.LEVEL", amount = -42, text = "-42" }))
-            , p "a route's plus" "route ENV1:FILTER.CUTOFF 7 \"+7\"" (Answer (RouteIs { cell = Cell "ENV1:FILTER.CUTOFF", amount = 7, text = "+7" }))
-            , p "unroute" "unroute OP5:FILTER.RESO" (Answer (Unroute (Cell "OP5:FILTER.RESO")))
+            , p "a route's amount" "route LFO1:OP_C.LEVEL -42 \"-42\"" (withCell "LFO1:OP_C.LEVEL" (\c -> RouteIs { cell = c, amount = -42, text = "-42" }))
+            , p "a route's plus" "route ENV1:FILTER.CUTOFF 7 \"+7\"" (withCell "ENV1:FILTER.CUTOFF" (\c -> RouteIs { cell = c, amount = 7, text = "+7" }))
+            , p "unroute" "unroute OP5:FILTER.RESO" (withCell "OP5:FILTER.RESO" Unroute)
             , p "src" "src OP5 \"OP 5\"" (Answer (Src { src = "OP5", label = "OP 5" }))
             , p "col" "col FREQ FILTER.CUTOFF" (Answer (Col { tag = "FREQ", addr = addr "FILTER.CUTOFF" }))
             , p "amount" "amount -127 127" (Answer (AmountRange -127 127))
@@ -478,9 +494,11 @@ suite =
             ]
         , describe "terminators"
             [ p "OK" "OK" (Ok_ Nothing)
-            , p "OK m" "OK 2" (Ok_ (Just 2))
-            , p "OK big" "OK 999999999" (Ok_ (Just 999999999))
-            , p "OK more" "OK 12 more" (OkMore 12)
+            , p "OK m" "OK 2" (okAt 2)
+            , p "OK big" "OK 999999999" (okAt 999999999)
+            , p "OK 0 is no since answer: the unit counts from 1" "OK 0" Unknown
+            , p "OK more" "OK 12 more" (Unit.genFromInt 12 |> Maybe.map OkMore |> Maybe.withDefault Unknown)
+            , p "OK 0 more" "OK 0 more" Unknown
             , p "OK more with no number" "OK more" Unknown
             , p "OK and a stray word" "OK 12 less" Unknown
             , p "ERR takes" "ERR ed takes hello, describe, get, set, since or part" (Err_ "ed takes hello, describe, get, set, since or part")
@@ -495,7 +513,7 @@ suite =
             , p "ERR set not in build" "ERR ed set is not in this build" (Err_ "ed set is not in this build")
             , p "ERR leading space" "  ERR busy" (Err_ "busy")
             , p "ERR alone" "ERR" (Err_ "")
-            , p "CR stripped" "OK 3\u{000D}" (Ok_ (Just 3))
+            , p "CR stripped" "OK 3\u{000D}" (okAt 3)
             ]
         , describe "garbage is ignorable"
             [ p "empty" "" Unknown
@@ -521,10 +539,15 @@ suite =
             , test "route an amount" <|
                 \_ ->
                     Expect.equal (Just (Just "ed route LFO1:FILTER.CUTOFF -42"))
-                        (Protocol.amount -42 |> Maybe.map (\a -> encode (SetRoute (Cell "LFO1:FILTER.CUTOFF") (RouteAmount a))))
-            , test "route off" <| \_ -> Expect.equal (Just "ed route QMIN off") (encode (SetRoute (Cell "QMIN") RouteOff))
+                        (Maybe.map2 (\c a -> encode (SetRoute c (RouteAmount a))) (Protocol.cell "LFO1:FILTER.CUTOFF") (Protocol.amount -42))
+            , test "route off" <| \_ -> Expect.equal (Just (Just "ed route QMIN off")) (Protocol.cell "QMIN" |> Maybe.map (\c -> encode (SetRoute c RouteOff)))
             , test "an amount is -127..127" <| \_ -> Expect.equal [ Nothing, Nothing ] [ Protocol.amount 128, Protocol.amount -128 ]
-            , test "a cell with a space is no command" <| \_ -> Expect.equal Nothing (encode (SetRoute (Cell "OP 5:FILTER.CUTOFF") RouteOff))
+            , test "text with a space, a control character or nothing is no cell" <|
+                \_ ->
+                    [ "OP 5:FILTER.CUTOFF", "QMIN\nkey b1", "" ]
+                        |> List.map (Protocol.cell >> Maybe.map Protocol.cellKey)
+                        |> Expect.equal [ Nothing, Nothing, Nothing ]
+            , test "a cell is the unit's own word" <| \_ -> Expect.equal (Just "ENV1:FILTER.CUTOFF") (Protocol.cell "ENV1:FILTER.CUTOFF" |> Maybe.map Protocol.cellKey)
             , test "get" <| \_ -> Expect.equal (Just "ed get OP_C.CRSE") (encode (Get (addr "OP_C.CRSE")))
             , test "set num" <| \_ -> Expect.equal (Just "ed set FILTER.CUTOFF 1234.5") (encode (Set (addr "FILTER.CUTOFF") (Num 1234.5)))
             , test "set name" <| \_ -> Expect.equal (Just "ed set FILTER.KIND LADDER") (encode (Set (addr "FILTER.KIND") (Name "LADDER")))
