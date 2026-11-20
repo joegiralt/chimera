@@ -271,7 +271,7 @@ ADR 0198's slack:
 - Bank 2 on ORBIT: S4–S5 +23,456 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
-  460 KB. None of it is placed in S0–S3, which has 7,072 B free on
+  461 KB. None of it is placed in S0–S3, which has 7,072 B free on
   ORBIT, 32 B less than 0.4's 7,104: code already there recompiles a
   little larger around the new settings (`orbit::door::block` +64 B,
   others smaller), under ADR 0251's 8 KB warning before this change.
