@@ -242,27 +242,27 @@ ADR 0198's slack:
 
 | Set | Bank 1 (B) | Bank 2 used (B) |
 |---|---:|---:|
-| default | +2,264 | +23,904 |
-| orbit | +2,552 | +23,872 |
-| bank2-gate | +2,232 | +23,904 |
-| orbit,usb-config-writer | +2,560 | |
-| fault-inject | +2,632 | |
+| default | +2,272 | +24,000 |
+| orbit | +2,560 | +23,968 |
+| bank2-gate | +2,240 | +24,032 |
+| orbit,usb-config-writer | +2,568 | |
+| fault-inject | +2,648 | |
 | bench-algo | +2,440 | |
-| bench-algo,master-tape | +2,480 | |
-| bench-routing | +2,552 | |
-| bench-memory | +2,672 | |
-| bench-stress | +2,528 | |
+| bench-algo,master-tape | +2,472 | |
+| bench-routing | +2,560 | |
+| bench-memory | +2,680 | |
+| bench-stress | +2,552 | |
 | bench-orbit | +2,280 | |
 | bench-tape | +2,840 | |
-| filter-probes | +2,632 | |
+| filter-probes | +2,648 | |
 
-- Bank 1 on ORBIT (905,392 B; +1,880 before the merge, 144 B the bill's `StillCut` and its Part, the rest PRT ›
+- Bank 1 on ORBIT (905,400 B; +1,880 before the merge, 144 B the bill's `StillCut` and its Part, the rest PRT ›
   EQ's band over tester-04's overview and meters and REV › DUCK's cell): the three settings' specs and
   `get`/`write`/`enum_*` arms (code, an exception to ADR 0198 as ADR
   0284's are), the names, the bills (`bill::first_voice`, `bill::wash`,
   admission's with the door open or closed), the stub's test and the
   return's ask in `FxBus`, the renderer's arm and the plan's painter.
-- Bank 2 on ORBIT: S4–S5 +23,872 B (`answer` 10.0 KB with the Parts'
+- Bank 2 on ORBIT: S4–S5 +23,968 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
   465 KB. S0–S3 is untouched: 7,328 B free on ORBIT, none of it taken (under
