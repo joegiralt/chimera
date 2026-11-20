@@ -112,6 +112,13 @@ use screen::*;
 // Re-recorded for ADR 0279: a value cell that steps fine hints SEQ+TURN
 // FINE (with MIX + SEQ LEARN where it maps, beside MIX + -/+ PAD on a
 // pad's), the mixer's too at rest; a choice cell keeps its own hint.
+// Re-recorded for the ALGO UI batch (ADRs 0298-0300): algo_ar, algo_d1l,
+// algo_d2r, row_osc_mid, row_osc_last (the envelope pages' names in the
+// header, the row and the band, #956, #987); algo_osc_last (FBK's band is
+// the chart, #989); algo_op_page_3, algo_op_page_3_turned (FDBK to a
+// tenth, #990); sound_browser_pool_full (the dense test Sound keeps a
+// fractional FDBK, 0.1K more); large_settings_personal (ALGO PAGES' row,
+// #985). New: algo_fbk_loops, row_osc_ops, settings_personal_algo.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x6a6639f41cb3937f),
@@ -128,20 +135,21 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     ("algo_level", 0x4a980303b60457a9),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_osc_last", 0x98f6b7ff32c1b331),
+    ("algo_osc_last", 0xabc7458aecc960e2),
+    ("algo_fbk_loops", 0xc32964917f7d2545),
     // New: OP3's page (ADR 0130), the band's envelope and wave, and with
     // its LEVEL cell turned.
-    ("algo_op_page_3", 0x78e1083b9c71ac40),
+    ("algo_op_page_3", 0xdace174b396f04cc),
     ("algo_op_page_frmt", 0x5da1e716152e57f2),
     ("algo_op_page_nois", 0x2f69260b2cd74c4f),
-    ("algo_op_page_3_turned", 0x8eb47f298e4817a2),
+    ("algo_op_page_3_turned", 0xd28c1606c14dda3a),
     // The ENV stages' band draws the focused operator's envelope (#311).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_ar", 0x065e86d53dea6010),
+    ("algo_ar", 0x43fea77e6f5fcc91),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_d1l", 0x6bf223b6090c3e34),
+    ("algo_d1l", 0x1a8cebe1647b1b84),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_d2r", 0x37a007084520187b),
+    ("algo_d2r", 0x24b38aed166d339e),
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
@@ -209,8 +217,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("row_flt", 0x51ab20fe12e65d68),
     ("row_res", 0x52e7d782b213fed2),
     ("row_mod", 0x61ae81a248025efe),
-    ("row_osc_mid", 0x3a940eff45163a8d),
-    ("row_osc_last", 0xa3198b2d2fb8a67d),
+    ("row_osc_mid", 0xcb54bff6693a9f55),
+    ("row_osc_last", 0x25dd4ab306c968e1),
+    ("row_osc_ops", 0x61e19f8d1373603f),
     ("row_amp", 0xd04051edfa5af421),
     // New: VA OSC1 and OSC2 under STACK and ROW; the ROW bar says OSC1 / OSC2, not OSCILLATOR n.
     ("va_osc1", 0x04f0a670e078dcdc),
@@ -412,7 +421,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then the VCA's gate (ADR 0195): 15 B more. STRETCH GRAIN's four params
     // (ADR 0204): MAX_SOUND_COST 2720.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser_pool_full", 0x17095df2dc0806a5),
+    ("sound_browser_pool_full", 0x9e43dff2664010d4),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -458,6 +467,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_text_size", 0x771bfc59119e85d2),
     // PERSONALIZE › PAD FOLLOW at IDLE (ADR 0268).
     ("settings_personal_pad_follow", 0x497d7bd253807ed7),
+    ("settings_personal_algo", 0x58a2db7b44f67ab4),
     // Re-recorded for ADR 0224: SYNC's B cell is PROGRAM IN, OFF.
     ("settings_midi_sync", 0x46dea79f34ea9084),
     ("settings_midi_mpe", 0x99c383fb27b32791),
@@ -529,7 +539,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_mixer_sends", 0x2db88c25aaaa4ce0),
     ("large_settings_top", 0x9d2976351278b0df),
     // Re-recorded: PAD FOLLOW, a fifth row (ADR 0268).
-    ("large_settings_personal", 0x9818d7f8dc310b17),
+    ("large_settings_personal", 0xd6fddecc666bdc5f),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("large_sound_browser", 0xdb7b0caeb8cae2a1),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
