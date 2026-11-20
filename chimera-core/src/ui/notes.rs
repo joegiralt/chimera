@@ -162,6 +162,7 @@ pub fn cell(addr: ParamAddr, s: &Sound) -> Option<&'static str> {
         (BlockRef::Reverb, ReverbParams::DUCK_RELEASE) => Some(DUCK_RELEASE),
         (BlockRef::Out, OutParams::PAN) => Some(STEREO_PAN),
         (BlockRef::Out, OutParams::WIDTH) => Some(STEREO_WIDTH),
+        (BlockRef::Delay, id) => crate::ui::delay_sync::word(id),
         _ => None,
     }
 }

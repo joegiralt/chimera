@@ -568,7 +568,8 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
         EMPTY,
         EMPTY,
-        EMPTY,
+        // SYNC, both TYPEs', in cell E here and on DLY › GRAIN (ADR 0302).
+        ParamSlot::param(BlockRef::Delay, DelayParams::SYNC),
         EMPTY,
     ],
 };
@@ -587,7 +588,7 @@ pub static DELAY_GRAIN: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Delay, DelayParams::DENSITY),
         ParamSlot::param(BlockRef::Delay, DelayParams::PITCH),
         ParamSlot::param(BlockRef::Delay, DelayParams::TEXTURE),
-        EMPTY,
+        ParamSlot::param(BlockRef::Delay, DelayParams::SYNC),
         EMPTY,
     ],
 };

@@ -8,7 +8,7 @@ use crate::dsp::algo::kinds::{self, OpKind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
-use crate::dsp::delay::{DelayParams, DelayType};
+use crate::dsp::delay::{DELAY_SPECS, DelayParams, DelaySync, DelayType};
 use crate::dsp::drum::laws::spec;
 use crate::dsp::drum::params::PadParams;
 use crate::dsp::drum::sound::{PadFilter, PadSound, RouteId};
@@ -103,6 +103,8 @@ pub struct SlotCtx {
     pub rev: ReverbType,
     /// The delay's TYPE: the other TYPE's cells dim (`delay_note`).
     pub delay: DelayType,
+    /// The delay's SYNC: under it the TIME cell is the note (ADR 0302).
+    pub delay_sync: DelaySync,
     /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
     pub plate: bool,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
@@ -178,6 +180,7 @@ impl SlotCtx {
             rev: reverb_panel::shown(rev.kind),
             // The project's, not a Sound's: `UiState::ctx` sets it.
             delay: DelayType::Tape,
+            delay_sync: DelaySync::Free,
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
@@ -270,10 +273,11 @@ impl SlotCtx {
     }
 
     /// This context under the project delay `fx` (a Sound's params hold
-    /// no FX): which TYPE's cells dim.
+    /// no FX): which TYPE's cells dim, and what TIME turns.
     pub fn on_delay(self, fx: &DelayParams) -> Self {
         Self {
             delay: fx.kind(),
+            delay_sync: fx.sync(),
             ..self
         }
     }
@@ -878,6 +882,11 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             label: slot.label(),
             text: "TYPE B",
         },
+        // The delay's TIME under SYNC is its note (ADR 0302): the slot
+        // keeps its label and place.
+        SlotBinding::Param(addr) if ctx.delay_sync == DelaySync::Sync && addr == DELAY_TIME => {
+            param(DELAY_NOTE, slot.label(), DELAY_SPECS[13].fmt)
+        }
         SlotBinding::Param(addr) => param(addr, slot.label(), fmt_of(addr, slot.format(), ctx)),
         SlotBinding::SelectedOp(id) => param(
             ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
@@ -1330,6 +1339,12 @@ pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
 pub fn readout_word(addr: ParamAddr, v: f32, held: Option<u8>) -> Option<&'static str> {
     crate::bank2::ui_door(|u| u.readout_word(addr, v, held)).flatten()
 }
+
+/// The delay's TIME cell: the knob's ms, or under SYNC its note (ADR
+/// 0302).
+pub const DELAY_TIME: ParamAddr = ParamAddr::new(BlockRef::Delay, DelayParams::TIME_MS);
+pub const DELAY_NOTE: ParamAddr = ParamAddr::new(BlockRef::Delay, DelayParams::NOTE);
+const _: () = assert!(DELAY_SPECS[13].id.0 == DelayParams::NOTE.0);
 
 /// Why a delay cell is dimmed: the other TYPE's (ADR 0202), bank 2's
 /// (`walk::delay_note_in`; closed, none).

@@ -13,6 +13,7 @@ pub mod components;
 pub mod draw;
 pub mod dungeon_map;
 pub(crate) mod ed_cue;
+pub mod delay_sync;
 pub mod feel;
 pub mod file_buf;
 pub mod filter_panel;
@@ -1295,6 +1296,7 @@ impl UiState {
         let pad = self.project.selected_pad(self.active_part);
         let ctx = SlotCtx {
             delay: self.project.perf().fx.delay.kind(),
+            delay_sync: self.project.perf().fx.delay.sync(),
             clash: self.clashes(),
             ..ctx
         }

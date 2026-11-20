@@ -184,6 +184,7 @@ pub(crate) fn law_text_in(buf: &mut FmtBuf, law: Law, v: f32) {
         // CLASSIC RATE's places (ADR 0279).
         Law::LfoHz => return crate::ui::feel::rate_text(buf, v),
         Law::EqTilt => return eq_tilt_text(buf, v),
+        Law::DelayNote => return crate::ui::delay_sync::note_text(buf, v),
         Law::FadeHold if v >= 0.999 => {
             let _ = buf.write_str(word(Word::Hold));
             return;

@@ -301,3 +301,37 @@ fn a_grain_delay_turned_on_returns() {
     let wet = b.render(400) / (400 * 2 * BLOCK_SIZE) as f32;
     assert!(wet > 1e-8, "GRAIN returns nothing ({wet:e})");
 }
+
+/// The delay's SYNC turned on by hand on DLY › CHAR, then TIME, now its
+/// note, turned down a detent on DELAY (ADR 0302): the engine's head
+/// moves to 1/8D at the project's 120 BPM, then to 1/4T, and the free
+/// TIME stays the ms it was.
+#[test]
+fn a_synced_delay_turned_by_hand_plays_its_note() {
+    use chimera_core::dsp::delay::{DelayNote, DelayParams, DelaySync};
+    use chimera_core::ui::block_registry::DELAY_CHAR;
+    let at = |id| ParamAddr::new(BlockRef::Delay, id);
+    let mut b = Bench::new(EngineType::Algo);
+    b.frame(Input::chord(ButtonId::Mix, ButtonId::B1));
+    b.go_to(&DELAY);
+    b.turn(at(DelayParams::TIME_MS), -4);
+    let free = b.ui.project().perf().fx.delay.time_ms;
+    assert!(free < 375.0);
+    assert_eq!(b.fx.delay().head(), (free * 48.0, 0));
+    b.go_down_to(&DELAY_CHAR);
+    b.turn(at(DelayParams::SYNC), 1);
+    assert_eq!(b.ui.project().perf().fx.delay.sync(), DelaySync::Sync);
+    assert_eq!(b.fx.delay().head(), (18_000.0, 0), "1/8D at 120 BPM");
+    // Back on DELAY the TIME cell is the note: one detent, one note.
+    // EDIT wraps past DLY › GRAIN.
+    b.go_down_to(&DELAY);
+    let slot = 1;
+    let ctx = b.ui.slot_ctx_for_test();
+    assert_eq!(slot_addr(&DELAY, slot, &ctx), Some(at(DelayParams::NOTE)));
+    b.frame(Input::turn(ENCODERS[slot], -1));
+    b.render(60);
+    let d = b.ui.project().perf().fx.delay;
+    assert_eq!(d.note().index(), DelayNote::DEFAULT.index() - 1);
+    assert_eq!(d.time_ms, free, "the free TIME is kept");
+    assert_eq!(b.fx.delay().head(), (16_000.0, 0), "1/4T at 120 BPM");
+}
