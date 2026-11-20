@@ -1179,3 +1179,71 @@ fn a_target_change_redraws_orb() {
     assert_ne!(after.0, before.0, "the circle redraws");
     assert_ne!(after.1, before.1, "the RING cell redraws");
 }
+
+/// #961: NOTE turned through an octave, sharps and naturals, redraws its
+/// own chip alone: the others keep their font, and none falls to a pitch
+/// mark. A STEP ring's picked step stays put under any turn.
+#[test]
+fn a_note_turn_changes_only_its_chip() {
+    use chimera_core::orbit::ring::NoteMode;
+    use chimera_core::orbit::walk::Pool;
+    use chimera_core::ui::draw::text_width;
+    use chimera_core::ui::orbit::draw::{CHIPS_SHOWN, NOTE_H, NOTE_TOP, chip_font};
+    use chimera_hal::ButtonId::Mix;
+    use chimera_hal::EncoderId::F;
+    use chimera_theory::Note;
+
+    // Any number of chips on show: a font, and every name from C0 fits it.
+    for n in 1..=CHIPS_SHOWN as i32 {
+        let cw = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) / n - 4;
+        let font = chip_font(cw).unwrap_or_else(|| panic!("{n} chips: no font"));
+        for note in (12..=127).filter_map(Note::new) {
+            assert!(text_width(font, &note.to_string(), 0) <= cw - 2, "{n} chips, {note}");
+        }
+    }
+
+    let mut ui = Box::new(crate::screen::stack_ui());
+    to_notes(&mut ui, 3);
+    let r = ui.location().orbit().unwrap().ring().get() as usize;
+    let notes = [48, 50, 52, 53, 55, 57, 59, 72].map(|n| Note::new(n).unwrap());
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[r].ring.pool =
+        Pool::new(&notes).unwrap();
+    feed(&mut ui, Input::turn(F, 9).and_held(Mix));
+    assert_eq!(ui.orbit().chip, 7);
+    let slot = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) as f32 / 8.0;
+    let last = theme::VIZ_LEFT + (slot * 7.0).round() as i32;
+    let others = |ui: &UiState| {
+        let fb = screen::render_ui(ui);
+        (NOTE_TOP..NOTE_TOP + NOTE_H)
+            .flat_map(|y| (theme::VIZ_LEFT..last).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect::<Vec<_>>()
+    };
+    // Its own chip's ink: a name, never the 2 px pitch mark.
+    let rows = |ui: &UiState| {
+        let fb = screen::render_ui(ui);
+        (NOTE_TOP + 4..NOTE_TOP + NOTE_H - 4)
+            .filter(|&y| (last + 2..last + 21).any(|x| fb.at(x, y) == theme::INK))
+            .count()
+    };
+    let before = others(&ui);
+    for _ in 0..12 {
+        feed(&mut ui, Input::turn(F, 1));
+        assert_eq!(ui.orbit().chip, 7);
+        let note = sel_ring(&ui).chip(7);
+        assert!(others(&ui) == before, "{note}: the other chips redrawn");
+        assert!(rows(&ui) > 2, "{note}: a pitch mark");
+    }
+
+    // STEP: the picked step is NOTE's, however far it turns.
+    use chimera_core::orbit::euclid::{Fill, Steps};
+    let ring = &mut ui.project_mut().orbit_mut().live_mut_for_test().rings[r].ring;
+    *ring = ring.with_fill(Fill::new(Steps::new(16).unwrap(), 5, 0).unwrap());
+    ring.mode = NoteMode::Step;
+    feed(&mut ui, Input::turn(F, -9).and_held(Mix));
+    feed(&mut ui, Input::turn(F, 2).and_held(Mix));
+    for d in [1, -1, 10, -10, 127, -127, 5] {
+        feed(&mut ui, Input::turn(F, d));
+        assert_eq!(ui.orbit().chip, 2, "turn {d}");
+    }
+}

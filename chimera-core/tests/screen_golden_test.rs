@@ -505,9 +505,10 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a stepped param shows no bar (ADR 0112).
     ("orbit_voice", 0x6500e49745a3f9dc),
     ("orbit_notes", 0x2865bfd4ee762860),
-    ("orbit_notes_step", 0xc1c3dab7eeb50a2f),
+    // Re-recorded for #961: eight chips are in the font a sharp fits.
+    ("orbit_notes_step", 0x05fbacf2c8d5ac66),
     // 32 steps, step 32 picked: the row scrolled to its last eight.
-    ("orbit_notes_step32", 0x211fc000f7a5be91),
+    ("orbit_notes_step32", 0xb434a6c2c107d8c4),
     // TEXT SIZE LARGE (ADR 0154): each its NORMAL case's screen a size up.
     // Re-recorded on the merge of main (#614): LARGE text (ADR 0154) over the
     // chain map without DRV, and FLT layout A: large_engine_algo,

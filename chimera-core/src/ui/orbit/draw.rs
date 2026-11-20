@@ -295,11 +295,34 @@ pub fn chip_window(sel: usize, n: usize) -> core::ops::Range<usize> {
     first..first + shown
 }
 
+/// A chip's name keeps this clear of each edge.
+const NOTE_PAD: i32 = 1;
+
+/// The font of chips `cw` wide, by their width alone, so no turn of NOTE
+/// changes it (#961): the largest every name from C0 up fits.
+pub fn chip_font(cw: i32) -> Option<&'static FontRenderer> {
+    [&theme::FONT_VALUE, &theme::FONT_LABEL_BOLD]
+        .into_iter()
+        .find(|&font| chip_fits(font, cw, FIRST_NAMED))
+}
+
+/// The lowest note every chip names: below it an octave reads `-1`, a
+/// character more, and a chip too narrow for one marks its pitch.
+const FIRST_NAMED: u8 = 12;
+
+fn chip_fits(font: &FontRenderer, cw: i32, from: u8) -> bool {
+    // Octaves differ by a digit, and the digits are one width.
+    (from..from + 12)
+        .filter_map(Note::new)
+        .all(|n| draw::text_width(font, note_name(n).as_str(), 0) <= cw - 2 * NOTE_PAD)
+}
+
 /// RING · NOTES: the line, then the pool as chips, each named; a STEP
 /// ring's steps instead, a hit's filled, a rest's outlined, the step under
 /// the clock lit, eight at a time with the selected one among them and a
-/// scroll line under them. The chip NOTE edits is outlined in INK2. Chips
-/// too narrow for their names mark each pitch in the register by height.
+/// scroll line under them. The chip NOTE edits is outlined in INK2. A chip
+/// too narrow for its name (`chip_font`) marks its pitch in the register
+/// by height.
 pub fn notes<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
 where
     D: DrawTarget<Color = Rgb565>,
@@ -321,15 +344,7 @@ where
     let now = f.now(r);
     let (lo, hi) = register(ring);
     let step = ring.mode == NoteMode::Step;
-    // One font for every chip on show: the largest every name fits.
-    let fits = |font| {
-        shown
-            .clone()
-            .all(|i| draw::text_width(font, note_name(sr.chip(i)).as_str(), 0) <= cw - 4)
-    };
-    let font = [&theme::FONT_VALUE, &theme::FONT_LABEL_BOLD]
-        .into_iter()
-        .find(|&font| fits(font));
+    let font = chip_font(cw);
     for (k, i) in shown.clone().enumerate() {
         let x = left(k as i32);
         let cw = left(k as i32 + 1) - NOTE_GAP - x;
@@ -346,10 +361,10 @@ where
             draw::round_outline(d, x, NOTE_TOP, cw, NOTE_H, radius, theme::INK2);
         }
         let note = sr.chip(i);
-        match font {
+        let name = note_name(note);
+        match font.filter(|f| draw::text_width(f, name.as_str(), 0) <= cw - 2 * NOTE_PAD) {
             Some(font) => {
                 let y = NOTE_TOP + NOTE_H / 2 + 5;
-                let name = note_name(note);
                 draw::text_center(d, font, name.as_str(), x + cw / 2, y, ink, 0);
             }
             None => {
