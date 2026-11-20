@@ -122,8 +122,11 @@ sample more a cut Part: open question 1.
   120 BPM hits every 0.5 s: the slow cuts sit near their average.
 - Every dip is lerped across its block, sample by sample: at polite
   depths under 0.001 dB a sample for the slow cuts, 0.05 for the kick's.
-- Dense kicks (onsets to 100 ms apart, fading out by 220 ms) hold one steady dip; sparse
-  ones each dip and let go.
+- Dense kicks (onsets to 100 ms apart, fading out by 220 ms) hold one
+  steady dip; sparse ones each dip and let go.
+- The tail counts (owner's decision, 2026-11-20): a long 808 tail or a
+  held sub on a higher-role DRUM Part keeps the lower Parts' LOW dipped
+  for its whole length.
 
 ### 6. Where it lives
 

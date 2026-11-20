@@ -88,12 +88,14 @@ bench-algo.
    - The key is the DRUM Part's own LOW low-pass, so a snare barely keys
      it: its power rises at once and falls with τ 20 ms; a hit is the key
      within 6 dB of its recent peak (τ 0.5 s).
-   - **A sustained low tone on a DRUM Part ducks.** A kit's LOW that
+   - **A sustained low tone on a DRUM Part ducks: the tail counts
+     (owner's decision, 2026-11-20).** A kit's LOW that
      stays up (a held 50 Hz sub, an 808 two seconds long) is a hit for as
      long as it holds within those 6 dB: a lower Part's LOW stays dipped
      under it (measured 9.6 falling to 7.5 dB over 2 s at AMOUNT 95).
-     The key cannot tell a long kick from a held note. Known; whether it
-     should let go is the owner's call.
+     The key does not tell a long kick from a held note, and is not
+     meant to: a long 808 tail on a FRONT kit holds everything under it
+     down in LOW for its whole length.
    - The dip follows with τ 3 ms in and τ 100 ms out; the rule runs on the
      blocks between the slow rule's (2.7 ms).
    - **Dense kicks hold one dip.** Between kicks the dip is held, for

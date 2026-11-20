@@ -73,7 +73,8 @@ const HOLD_OF_GAP: f32 = 1.5;
 /// the top of its body, not its tail (a 150 ms 808 falls 6 dB in about
 /// 100 ms). A kit's LOW that stays up (a held 50 Hz sub, an 808 two
 /// seconds long) is a hit for as long as it holds within this: the dip
-/// then stays down with it, a duck. Known, and the owner's to judge.
+/// stays down with it, a duck for the tail's whole length. Meant (owner
+/// 2026-11-20): the tail counts.
 const HIT_SPAN: Db = Db::new(6.0);
 /// A key this far into `HIT_SPAN` is hitting; under `HIT_OFF` it has let
 /// go (an onset is the change).
