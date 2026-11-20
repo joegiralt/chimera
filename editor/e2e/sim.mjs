@@ -509,6 +509,9 @@ async function main() {
     .filter((p) => /^RING3\.(STEPS|HITS|CHANCE|GATE|VEL)$/.test(p.addr));
   // HITS never passes STEPS, as the box clamps it: the sweep leaves STEPS at its min.
   await sweep(orbitShown, " ORBIT", new Set(), (a) => a === "RING3.HITS");
+  // Another note first, so a second run on the same simulator still sees a diff.
+  await ask("ed step 2 5 61");
+  await sinceUntil((l) => l.startsWith("step 2 5 61"));
   for (const [cmd, line] of [
     ["ed step 2 5 62", "step 2 5 62"],
     ["ed scene queue 2", "song "],
@@ -598,9 +601,9 @@ async function main() {
   const cut = load.map(parseVal).filter(Boolean).find((v) => v.addr === "FILTER.CUTOFF");
   if (!cut || !near(cut.stored, 20000)) fail("FILTER.CUTOFF", "load INIT ALGO", `since: ${load.slice(0, 3).join(" | ")}`);
   // A load is a new Sound: its matrix (ROUTES), its Part's status and the
-  // box's toast (SETTINGS) come with it (ADR 0289).
-  else if (!load.every((l) => /^(val|panel|part|route|unroute|sound|project|toast) /.test(l))) {
-    fail("load", "since", `unexpected lines: ${load.filter((l) => !/^(val|panel|part|route|unroute|sound|project|toast) /.test(l)).join(" | ")}`);
+  // box's toast (SETTINGS) come with it, and MAP whole (after its empty line) when the Sound's rows moved (ADR 0289).
+  else if (!load.every((l) => /^$|^(val|panel|part|route|unroute|sound|project|toast|map|row|learn) /.test(l))) {
+    fail("load", "since", `unexpected lines: ${load.filter((l) => !/^$|^(val|panel|part|route|unroute|sound|project|toast|map|row|learn) /.test(l)).join(" | ")}`);
   } else info(`load: INIT ALGO -> ${load.length} lines, FILTER.CUTOFF back to ${cut.stored}`);
   await onPart1();
 
