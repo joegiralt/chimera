@@ -17,7 +17,8 @@ pub enum VizType {
     AudioStats,
     /// PROJECT › POOL: the pool meter; its cells are `pool_page`'s.
     Pool,
-    /// ALG A's diagram moving to ALG B's with MORPH.
+    /// ALG A's diagram moving to ALG B's with MORPH, a loop on each
+    /// operator that feeds back: ALG's page and FBK's.
     AlgoDiagram,
     /// SPD: each slot's SPEED and HOLD POSITION.
     EnvSpeed,

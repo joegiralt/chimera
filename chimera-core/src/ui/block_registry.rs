@@ -709,7 +709,12 @@ pub static ALGO_D1L: BlockDef = env_group(51, "Decay 1 Lvl", "D1L", AlgoOpParams
 pub static ALGO_D2R: BlockDef = env_group(52, "Decay 2 Rate", "D2R", AlgoOpParams::D2R);
 pub static ALGO_RR: BlockDef = env_group(53, "Release Rate", "RR", AlgoOpParams::RR);
 pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
-pub static ALGO_FEEDBACK: BlockDef = group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK);
+/// FEEDBACK's band is the algorithm's chart: each operator's loop appears
+/// as its FDBK is turned (ADR 0298).
+pub static ALGO_FEEDBACK: BlockDef = BlockDef {
+    viz: VizType::AlgoDiagram,
+    ..group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK)
+};
 
 /// One FRMT per operator, on OSC while any operator is a formant.
 pub static ALGO_FORMANT: BlockDef = group(106, "Formant", "FRM", AlgoOpParams::FRMT);

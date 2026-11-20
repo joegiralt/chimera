@@ -5,20 +5,24 @@
 //! 1 keeps the stub in `view`. ALGO's operator cells (ADR 0298): the
 //! envelope stages' names in the focus label, RATE SCALE's words and
 //! DECAY 1 LEVEL's under a held decay, the ratio CRSE, FINE and DETUN
-//! come to.
+//! come to, the chart's feedback loops.
 
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::ParamId;
-use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, Fdbk};
 use crate::dsp::algo::{kinds, tx};
 use crate::dsp::reverb::ReverbParams;
 use crate::modulation::{FixedCol, ModSource, VCA};
 use crate::params::OutParams;
 use crate::preset::Sound;
 use crate::project::Line;
+use crate::ui::alg_layout::AlgLayout;
 use crate::ui::fmt::{FmtBuf, fixed};
 use crate::ui::hint::{Gesture, Hint};
 use crate::ui::mod_grid::{Col, MatrixState};
+use crate::ui::tape_strip::Paint;
+use crate::ui::theme;
+use embedded_graphics::pixelcolor::Rgb565;
 
 /// What bank 1 asks through `UiDoor`'s one `notes` entry, each with its
 /// answer's slot.
@@ -37,6 +41,12 @@ pub enum Ask<'a> {
         op: Op,
         param: ParamId,
         out: &'a mut Option<Line>,
+    },
+    /// `loops`: the chart's feedback loops, under its nodes.
+    Loops {
+        on: &'a mut dyn Paint,
+        algo: &'a AlgoParams,
+        at: &'a AlgLayout,
     },
 }
 
@@ -59,6 +69,7 @@ pub(crate) fn ask_in(a: Ask<'_>) {
             param,
             out,
         } => *out = ratio(algo, op, param),
+        Ask::Loops { on, algo, at } => loops(on, algo, at),
     }
 }
 
@@ -262,6 +273,94 @@ pub fn ratio(algo: &AlgoParams, op: Op, param: ParamId) -> Option<Line> {
         );
     }
     Some(Line::new(b.as_str()))
+}
+
+/// How hard an operator feeds back, as its loop is drawn (#989).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Loop {
+    /// FDBK 0, or a noise band, which has none.
+    None,
+    /// Grit: under the TX81Z's step 4, a quarter cycle.
+    Soft,
+    /// From step 4: the sine bends toward a saw, then noise.
+    Hard,
+}
+
+/// The step a loop turns `Hard` at: the TX81Z's 4.
+const HARD: Fdbk = Fdbk::tx(4);
+
+impl Loop {
+    /// Operator `op` of `algo`.
+    pub fn of(algo: &AlgoParams, op: Op) -> Loop {
+        let i = op.index();
+        let fdbk = algo.ops[i].feedback;
+        if fdbk.is_off() || !kinds::reads(algo.kinds().get(i), AlgoOpParams::FEEDBACK) {
+            Loop::None
+        } else if fdbk < HARD {
+            Loop::Soft
+        } else {
+            Loop::Hard
+        }
+    }
+
+    /// The loop's colour; none draws nothing.
+    pub const fn color(self) -> Option<Rgb565> {
+        match self {
+            Loop::None => None,
+            Loop::Soft => Some(theme::MID),
+            Loop::Hard => Some(theme::ACCENT),
+        }
+    }
+}
+
+/// A loop's reach past its node's rim, and its half-height: an ear
+/// `LOOP_R` round, its centre `LOOP_OUT` outside the rim.
+pub const LOOP_R: i32 = 3;
+pub const LOOP_OUT: i32 = 2;
+
+/// The ear's outline round its centre, joined in order and closed. A
+/// static, so it links into bank 2 with the module.
+static EAR: [(i8, i8); 8] = [
+    (-1, -3),
+    (1, -3),
+    (3, -1),
+    (3, 1),
+    (1, 3),
+    (-1, 3),
+    (-3, 1),
+    (-3, -1),
+];
+
+/// Where operator `op`'s loop is centred on `at`: right of its node, or
+/// left where the right would leave the band.
+pub fn loop_centre(at: &AlgLayout, op: Op) -> (i32, i32) {
+    let (x, y) = at.pos[op.index()];
+    let out = at.r + LOOP_OUT;
+    if x + out + LOOP_R > theme::VIZ_RIGHT {
+        (x - out, y)
+    } else {
+        (x + out, y)
+    }
+}
+
+/// The chart's feedback loops (#989): an ear on each operator that feeds
+/// back into itself, as every operator can here, brighter from `HARD`.
+/// Drawn before the nodes, which cover each ear's inner half.
+pub fn loops(on: &mut dyn Paint, algo: &AlgoParams, at: &AlgLayout) {
+    for op in Op::ALL {
+        let Some(c) = Loop::of(algo, op).color() else {
+            continue;
+        };
+        let (cx, cy) = loop_centre(at, op);
+        let p = |k: usize| {
+            let (dx, dy) = EAR[k % EAR.len()];
+            (cx + i32::from(dx), cy + i32::from(dy))
+        };
+        for k in 0..EAR.len() {
+            let ((x0, y0), (x1, y1)) = (p(k), p(k + 1));
+            on.line(x0, y0, x1, y1, c);
+        }
+    }
 }
 
 /// The matrix's hint on `m`'s cursor in the VCA column, on a cell with no

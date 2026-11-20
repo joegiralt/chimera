@@ -547,3 +547,137 @@ fn the_knobs_place_fdbk_by_its_tenths() {
         assert!((back - Fdbk::tenths(t).steps()).abs() <= 1e-5, "{t}");
     }
 }
+
+// #989: the chart's feedback loops.
+
+use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::ui::notes::Loop;
+use chimera_core::ui::{alg_layout, viz};
+
+/// The chart of `algo`, MORPH at rest on ALG A.
+fn chart(algo: &AlgoParams) -> Fb {
+    let mut fb = Fb::new();
+    let (a, _) = algo.algs();
+    viz::algo_diagram(&mut fb, a.algorithm(), a.algorithm(), 0.0, algo);
+    assert_eq!(fb.oob, 0);
+    fb
+}
+
+/// Where two charts differ.
+fn moved(a: &Fb, b: &Fb) -> Vec<(i32, i32)> {
+    (0..H as i32)
+        .flat_map(|y| (0..W as i32).map(move |x| (x, y)))
+        .filter(|&(x, y)| a.at(x, y) != b.at(x, y))
+        .collect()
+}
+
+fn algo_on(alg: AlgoId) -> AlgoParams {
+    let mut p = Sound::init(EngineType::Algo).params.algo;
+    p.try_set_algs(alg, alg).unwrap();
+    p
+}
+
+/// #989: FDBK 0 draws the chart as before; above 0 the operator, and only
+/// it, gains a loop beside its node, on a stack, a fan and a row.
+#[test]
+fn an_operator_that_feeds_back_wears_a_loop() {
+    for alg in [AlgoId::T1, AlgoId::A1, AlgoId::A16, AlgoId::A17, AlgoId::T8] {
+        let plain = chart(&algo_on(alg));
+        let at = alg_layout::layout(alg.algorithm());
+        for op in Op::ALL {
+            let mut p = algo_on(alg);
+            assert_eq!(Loop::of(&p, op), Loop::None);
+            p.ops[op.index()].feedback = Fdbk::tenths(1);
+            assert_eq!(Loop::of(&p, op), Loop::Soft);
+            let looped = chart(&p);
+            let px = moved(&plain, &looped);
+            assert!(px.len() >= 6, "{alg:?} OP{}: {px:?}", op.index() + 1);
+            let (cx, cy) = notes::loop_centre(&at, op);
+            for &(x, y) in &px {
+                assert!(
+                    (x - cx).abs() <= notes::LOOP_R && (y - cy).abs() <= notes::LOOP_R,
+                    "{alg:?} OP{}: ({x}, {y}) off the loop at ({cx}, {cy})",
+                    op.index() + 1
+                );
+                assert_eq!(looped.at(x, y), theme::MID);
+                // Outside the node: the node covers the loop's inner half.
+                let (nx, ny) = at.pos[op.index()];
+                assert!((x - nx).pow(2) + (y - ny).pow(2) > (at.r - 1).pow(2));
+                assert!((theme::VIZ_LEFT..=theme::VIZ_RIGHT).contains(&x), "{x}");
+            }
+        }
+    }
+}
+
+/// The loop brightens where the sine starts to break up, and a noise
+/// band, which ignores FDBK, wears none.
+#[test]
+fn the_loop_follows_the_amount_and_the_kind() {
+    use chimera_core::dsp::algo::kinds::OpKind;
+    let mut p = algo_on(AlgoId::T1);
+    let soft: Vec<_> = (0..=Fdbk::MAX.get())
+        .map(|t| {
+            p.ops[0].feedback = Fdbk::tenths(t);
+            Loop::of(&p, Op::A)
+        })
+        .collect();
+    assert_eq!(soft[0], Loop::None);
+    assert!(soft[1..40].iter().all(|&l| l == Loop::Soft));
+    assert!(soft[40..].iter().all(|&l| l == Loop::Hard));
+    p.ops[0].feedback = Fdbk::tx(1);
+    let low = chart(&p);
+    p.ops[0].feedback = Fdbk::tx(7);
+    let high = chart(&p);
+    let px = moved(&low, &high);
+    assert!(!px.is_empty());
+    assert!(px.iter().all(|&(x, y)| low.at(x, y) == theme::MID));
+    assert!(px.iter().all(|&(x, y)| high.at(x, y) == theme::ACCENT));
+    p.try_set_kind(0, OpKind::Noise).unwrap();
+    assert_eq!(Loop::of(&p, Op::A), Loop::None);
+    assert!(moved(&chart(&p), &chart(&algo_on(AlgoId::T1))).is_empty());
+}
+
+/// A node at the band's right edge wears its loop on the left.
+#[test]
+fn a_loop_stays_inside_the_band() {
+    let mut at = alg_layout::layout(AlgoId::A1.algorithm());
+    at.pos[0].0 = theme::VIZ_RIGHT - at.r;
+    let (cx, _) = notes::loop_centre(&at, Op::A);
+    assert!(cx + notes::LOOP_R <= theme::VIZ_RIGHT);
+    assert!(cx < at.pos[0].0);
+    for alg in chimera_core::dsp::algo::algorithms::ALGORITHMS.iter() {
+        let at = alg_layout::layout(alg);
+        for op in Op::ALL {
+            let (cx, _) = notes::loop_centre(&at, op);
+            assert!(cx - notes::LOOP_R >= theme::VIZ_LEFT, "{}", alg.name);
+            assert!(cx + notes::LOOP_R <= theme::VIZ_RIGHT, "{}", alg.name);
+        }
+    }
+}
+
+/// Live: on FBK's page the chart is the band, and a turn draws the loop.
+#[test]
+fn the_loop_appears_as_fdbk_is_turned() {
+    assert_eq!(ALGO_FEEDBACK.viz, VizType::AlgoDiagram);
+    let mut ui = ui();
+    to_osc_sub(&mut ui, &ALGO_FEEDBACK);
+    settle(&mut ui);
+    let before = render_ui(&ui);
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    settle(&mut ui);
+    let after = render_ui(&ui);
+    let algo = &ui.project().part(PartId::ALL[0]).sound.params.algo;
+    assert_eq!(Loop::of(algo, Op::B), Loop::Soft);
+    let at = alg_layout::layout(algo.algs().0.algorithm());
+    let (cx, cy) = notes::loop_centre(&at, Op::B);
+    let band: Vec<_> = moved(&before, &after)
+        .into_iter()
+        .filter(|&(_, y)| (theme::VIZ_BAND_TOP..theme::VIZ_BAND_BOTTOM).contains(&y))
+        .collect();
+    assert!(!band.is_empty());
+    assert!(
+        band.iter()
+            .all(|&(x, y)| (x - cx).abs() <= notes::LOOP_R && (y - cy).abs() <= notes::LOOP_R),
+        "{band:?}"
+    );
+}

@@ -1390,6 +1390,16 @@ pub const CASES: &[ScreenCase] = &[
         }
         feed(ui, Input::turn(EncoderId::D, 3));
     }),
+    // FBK's band is the chart (ADR 0298): OP1 at 0.8 wears a soft loop,
+    // OP4 at 4.5 a bright one; the cell in focus reads to a tenth (ADR 0299).
+    ("algo_fbk_loops", |ui| {
+        use chimera_core::ui::block_registry::ALGO_FEEDBACK;
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_FEEDBACK);
+        feed(ui, Input::turn(EncoderId::A, 8));
+        feed(ui, Input::turn(EncoderId::D, 45));
+    }),
     // OP3's page on INIT: its envelope and wave in the band.
     ("algo_op_page_3", |ui| {
         use chimera_core::ui::block_registry::ALGO_OP_PAGES;
