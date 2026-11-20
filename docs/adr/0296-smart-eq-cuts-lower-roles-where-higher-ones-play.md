@@ -1,6 +1,6 @@
 # 0296. SMART EQ cuts a lower-role Part's four fixed bands where a higher-role Part plays
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-20)
 - **Deciders:** owner (design approved 2026-11-19, #396; the kick's dip, AMOUNT's curve and the reverb return's role, 2026-11-19), firmware
 
 ## Context
