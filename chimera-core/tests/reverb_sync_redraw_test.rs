@@ -31,16 +31,16 @@ fn a_synced_cell_redraws_when_the_clock_moves() {
     }
     screen::settle(&mut ui);
     let (perf, scope) = (PerfStats::zero(), screen::scope_fixture());
-    publish_rev_clock(Tempo(120.0), FoldState(0));
+    publish_rev_clock(Tempo(120.0), FoldState(0), FoldState(0));
     let mut fb = screen::Fb::new();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope);
     let at_120 = fb.px.clone();
 
-    publish_rev_clock(Tempo(90.0), FoldState(1));
+    publish_rev_clock(Tempo(90.0), FoldState(1), FoldState(0));
     ui.render_dirty_with_scope(&mut fb, &perf, &scope);
     let mut full = screen::Fb::new();
     ui.render_with_audio(&mut full, &perf, None, &scope);
-    publish_rev_clock(Tempo::DEFAULT, FoldState(0));
+    publish_rev_clock(Tempo::DEFAULT, FoldState(0), FoldState(0));
 
     assert!(fb.px == full.px, "the dirty render kept a stale note");
     // The band's value and the cells both moved.

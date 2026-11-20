@@ -1179,7 +1179,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 /// (ADR 0055). The mixer opens on SENDS, node 1 (ADR 0057); the FX come
 /// after the Part's SENDS.
 const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
-const DLY: usize = 3;
+pub const DLY: usize = 3;
 pub const REV: usize = 4;
 #[cfg(feature = "master-tape")]
 const TAPE: usize = 5;
@@ -2159,6 +2159,12 @@ pub const CASES: &[ScreenCase] = &[
         ui.set_bank2(chimera_core::bank2::Bank2Status::Empty);
         to_fx(ui, DLY);
         feed(ui, Input::turn(EncoderId::A, 1)); // TYPE → GRAIN
+    }),
+    // SYNC (ADR 0302): MIX + turn on TIME, which then reads its note.
+    ("mixer_fx_delay_sync", |ui| {
+        to_fx(ui, DLY);
+        feed(ui, Input::held(ButtonId::Mix).and_turn(EncoderId::B, 1));
+        feed(ui, Input::release(ButtonId::Mix));
     }),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", |ui| {

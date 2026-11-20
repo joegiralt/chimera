@@ -199,6 +199,9 @@ pub enum Law {
     /// A Part's TILT (ADR 0284), a step of `part_eq::Tilt` on its 128:
     /// its text, in dB, the UI door's. Bipolar: flat at the middle.
     EqTilt,
+    /// The delay's TIME under SYNC (ADR 0302): a place in its notes
+    /// (`delay::DelayNote`), its text, the note that plays, the UI door's.
+    DelayNote,
     Phase,
     Pct,
     Curve,
@@ -228,6 +231,7 @@ impl Law {
             | Law::StretchSpeed
             | Law::ScrubSpeed
             | Law::EqTilt
+            | Law::DelayNote
             | Law::ScrubLength
             | Law::DragTime
             | Law::FadeHold => return None,

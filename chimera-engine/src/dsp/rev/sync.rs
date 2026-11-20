@@ -177,8 +177,8 @@ pub fn p_of(i: usize, n: usize) -> f32 {
 pub struct FoldState(pub i8);
 
 /// The fold's hysteresis: a state changes only once the time is this far
-/// past a limit, out or in.
-const HYST: f32 = 1.02;
+/// past a limit, out or in (the delay's `fit`: in only).
+pub const HYST: f32 = 1.02;
 
 /// `len`, ms, halved or doubled into `lo..=hi`, staying on the grid; `st`
 /// moves only when the time is 2 % past a limit, so clock jitter at a

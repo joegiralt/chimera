@@ -148,6 +148,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // TAPE and GRAIN: two delays, a word (ADR 0202). GRAIN's four pots
     // keep the arc: the rings draw TAPE's head.
     ("Delay", "TYPE", NONE),
+    // FREE and SYNC: a word. Its note keeps the arc, a place in the list
+    // (ADR 0302).
+    ("Delay", "SYNC", NONE),
     // The reverb: every knob shows its composite (the cube under QUAD);
     // TYPE and SYNC are words (reverb TYPEs spec § TYPE and the words).
     ("Reverb", "TIME", CUBE),
@@ -252,6 +255,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("TapeEngine", "WOW"),
     // TAPE and GRAIN: two delays.
     ("Delay", "TYPE"),
+    // FREE and SYNC: two ways to read TIME, neither is off.
+    ("Delay", "SYNC"),
     // SCALE and CHORD: two sets to snap to.
     ("OrbitRing", "SNAP"),
     // STEP and POOL: two ways to pick a note.
@@ -1413,8 +1418,8 @@ fn glyph_rings_page_moves_only_inside_its_box() {
     // GRAIN's pots keep the arc (ADR 0202).
     for s in BlockRef::Delay.specs() {
         let want = match s.ident {
-            "TYPE" => NONE,
-            "SIZE" | "DENSITY" | "PITCH" | "TEXTURE" => FocusGlyph::Arc,
+            "TYPE" | "SYNC" => NONE,
+            "SIZE" | "DENSITY" | "PITCH" | "TEXTURE" | "NOTE" => FocusGlyph::Arc,
             _ => RINGS,
         };
         assert_eq!(s.glyph, want, "{}", s.ident);
