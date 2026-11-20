@@ -356,7 +356,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_hall_more2", 0xec9dcc70c3dcc1e8),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_duck", 0x6cd78223efed5939),
+    ("mixer_fx_reverb_duck", 0x992a26843e1361a9),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_gate", 0x7f8d7ae08ef421ae),
     #[cfg(feature = "master-tape")]
