@@ -176,11 +176,26 @@ impl FxBus {
         sample_rate: u32,
         ret: &mut Stereo,
     ) {
+        self.process_washed(sends, params, tempo, sample_rate, ret, None);
+    }
+
+    /// `process`, the reverb's return through SMART EQ on its way (ADR
+    /// 0296) where `eqs` is given and SMART EQ runs: bank 2's, behind the
+    /// EQ's door; closed, or at rest, the return is as it was played.
+    pub fn process_washed(
+        &mut self,
+        sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
+        params: &FxParams,
+        tempo: Tempo,
+        sample_rate: u32,
+        ret: &mut Stereo,
+        eqs: Option<&mut crate::part_eq::PartEqs>,
+    ) {
         let [chorus, delay, reverb] = sends;
         self.chorus
             .process_wet(chorus, &params.chorus, sample_rate, ret);
         let dry =
-            self.delay.process_wet(delay, &params.delay, sample_rate) && crate::dsp::may_skip();
+            self.delay.play(delay, &params.delay, tempo, sample_rate) && crate::dsp::may_skip();
         if !dry {
             add(&mut ret.l, delay);
             add(&mut ret.r, delay);
@@ -206,6 +221,20 @@ impl FxBus {
             .reverb
             .play(reverb, &params.reverb, mix, tempo, sample_rate, &mut wet)
             && crate::dsp::may_skip();
+        if let Some(eqs) = eqs.filter(|e| e.smart.live()) {
+            use crate::part_eq::door::{Ask, through};
+            let ask = Ask::Wash {
+                eqs,
+                wet: &mut wet,
+                reverb: if none {
+                    crate::part_eq::smart::Returned::Rests
+                } else {
+                    crate::part_eq::smart::Returned::Sounding
+                },
+                sample_rate,
+            };
+            through(|d| d.eq().run(ask));
+        }
         if !none {
             add(&mut ret.l, &wet.l);
             add(&mut ret.r, &wet.r);
@@ -234,6 +263,11 @@ impl FxBus {
         self.limiter.process(dac, sample_rate);
         self.master_out
             .apply(dac.out_mut(), &params.comp, sample_rate);
+    }
+
+    /// The delay, for reading its fold.
+    pub fn delay(&self) -> &TapeDelay {
+        &self.delay
     }
 
     /// The reverb, for reading its arena and state.

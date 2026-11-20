@@ -4,8 +4,10 @@
 //! settings are the project's mix (`PartParams::eq`), never the Sound's.
 //! One EQ a Part: SMART EQ (#396) adds its cuts here.
 
+pub mod bill;
 pub mod door;
 pub mod dsp;
+pub mod smart;
 
 use core::marker::PhantomData;
 
@@ -375,17 +377,24 @@ impl ChannelEq {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartEqs {
     pub(crate) parts: [ChannelEq; crate::hw::MAX_PARTS],
+    /// SMART EQ's four cut bands a Part (ADR 0296), after TILT.
+    pub smart: smart::SmartState,
+    /// Whether the Parts' bills last carried SMART EQ's bands
+    /// (`Instrument::recost`).
+    pub(crate) billed: bill::SmartBill,
 }
 
 impl PartEqs {
     /// Every Part bypassed: the bytes ITCM's boot zeroing leaves.
     pub const REST: PartEqs = PartEqs {
         parts: [ChannelEq::REST; crate::hw::MAX_PARTS],
+        smart: smart::SmartState::REST,
+        billed: bill::SmartBill::RESTS,
     };
 
     /// A Part's EQ runs (or settles): bank 1's test for the door call.
     pub fn any_live(&self) -> bool {
-        self.parts.iter().any(|p| p.live == Live::Running)
+        self.parts.iter().any(|p| p.live == Live::Running) || self.smart.live()
     }
 
     /// Whether Part `p`'s EQ runs: for the tests.

@@ -425,13 +425,13 @@ fn worst_dry_delay(s: &mut AudioShared, b: u32) {
 /// grain playing), PITCH +12, TEXTURE ½.
 fn worst_grain(s: &mut AudioShared) {
     worst_delay(s);
-    s.fx.delay.grain = [1.0, 1.0, 1.0, 12.0, 0.5];
+    s.fx.delay.more[..5].copy_from_slice(&[1.0, 1.0, 1.0, 12.0, 0.5]);
 }
 
 /// `worst_grain`, TYPE TAPE and GRAIN in turn every 16 blocks.
 fn grain_switch(s: &mut AudioShared, b: u32) {
     worst_grain(s);
-    s.fx.delay.grain[0] = ((b / 16) % 2) as f32;
+    s.fx.delay.more[0] = ((b / 16) % 2) as f32;
 }
 
 fn worst_chorus(s: &mut AudioShared) {

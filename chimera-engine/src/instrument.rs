@@ -41,6 +41,7 @@ use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::part::{Held, LiveSnap, PartParams};
+use crate::part_eq::bill::SmartBill;
 use crate::preset::{Part, Performance, Sound};
 use crate::project::{Loads, PartId, Project, SourceId};
 use crate::scope::ScopeWriter;
@@ -562,7 +563,7 @@ pub fn mix_parts(
         written,
         sends,
         mix,
-        fx,
+        (fx, None),
         shared,
         tempo,
         sample_rate,
@@ -583,7 +584,7 @@ fn mix_sided(
     written: &[bool; MAX_PARTS],
     sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
     mix: &mut MixState,
-    fx: &mut FxBus,
+    (fx, eqs): (&mut FxBus, Option<&mut crate::part_eq::PartEqs>),
     shared: &AudioShared,
     tempo: Tempo,
     sample_rate: u32,
@@ -678,7 +679,7 @@ fn mix_sided(
 
     // The FX bus once; its return lands on pair 1, L and R.
     let mut ret = Stereo::SILENT;
-    fx.process(sends, &shared.fx, tempo, sample_rate, &mut ret);
+    fx.process_washed(sends, &shared.fx, tempo, sample_rate, &mut ret, eqs);
 
     let (out, zero) = dac.mix_known();
     for (k, pair) in out.iter_mut().enumerate() {
@@ -1003,6 +1004,27 @@ impl Instrument {
     /// `stats`.
     pub fn cost_pct(&self) -> u8 {
         self.alloc.cost_pct(self.reserved())
+    }
+
+    /// What a sounding Part costs once, on its first voice: its knobs
+    /// (ADR 0112) and its EQ with SMART EQ's bands (ADR 0296).
+    #[inline(never)]
+    fn part_cost(part: &PartAudio, smart: SmartBill, q: PartId) -> Cost {
+        use crate::part_eq::smart::PartKind;
+        Knobs::COST
+            + crate::part_eq::bill::first_voice(
+                part.mix.eq,
+                part.mix.role,
+                PartKind::of(part.params.engine()),
+                smart,
+                q,
+            )
+    }
+
+    /// Whether SMART EQ's bands run, and whose still run cut: what is
+    /// billed (`SmartBill`).
+    fn smart_load(&mut self, shared: &AudioShared) -> SmartBill {
+        SmartBill::now(shared.fx.comp.smart, self.eq.get())
     }
 
     /// Spent outside the pool each block, so a new voice must fit beside
@@ -1350,6 +1372,7 @@ impl Instrument {
     ) {
         match ev.kind {
             NoteKind::On(vel) => {
+                let smart_load = self.smart_load(shared);
                 let live = from == NoteOrigin::Live;
                 // A zone's member channel plays its master's Parts.
                 // ORBIT's notes are on their Part's channel already.
@@ -1398,7 +1421,11 @@ impl Instrument {
                     }
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
-                    let knobs = if first { Knobs::COST } else { Cost::ZERO };
+                    let knobs = if first {
+                        Self::part_cost(part, smart_load, q)
+                    } else {
+                        Cost::ZERO
+                    };
                     let mut cost =
                         self.costs[p].whole() + knobs + self.high_note(q, shared, note, first);
                     let at = admission::BillAt {
@@ -2050,6 +2077,7 @@ impl Instrument {
         let NoteKind::On(vel) = ev.kind else {
             return;
         };
+        let smart_load = self.smart_load(shared);
         for (q, part) in PartId::ALL.into_iter().zip(&shared.parts) {
             let p = q.index();
             if part.mix.channel != heard || part.params.engine() != EngineType::Drum {
@@ -2060,7 +2088,12 @@ impl Instrument {
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
             // The bill `recost` worked out, so the kit it read.
             let own = self.costs[p].hit(HitKernel::Sounding(hit.bill(self.sample_rate)));
-            let cost = own + if first { Knobs::COST } else { Cost::ZERO };
+            let cost = own
+                + if first {
+                    Self::part_cost(part, smart_load, q)
+                } else {
+                    Cost::ZERO
+                };
             let reserved = self.reserved();
             let mode = part.mix.mode();
             let Some(vi) = self.alloc.pick_hit(q, mode, key, cost, reserved, mine) else {
@@ -2171,10 +2204,16 @@ impl Instrument {
     /// render, on the same snapshot reuses it (ADR 0091), so a burst of
     /// notes, admitted or refused, costs the Parts once.
     fn recost(&mut self, shared: &AudioShared) {
+        // SMART EQ's bands starting or coming to rest move the Parts'
+        // bills with the same snapshot.
+        let smart_load = self.smart_load(shared);
         let at = core::ptr::from_ref(shared) as usize;
-        if self.costed == at {
+        // What the bills last carried is kept with the EQ's state (ITCM):
+        // D2, where the Instrument lives, has no byte to spare.
+        if self.costed == at && self.eq.get().billed == smart_load {
             return;
         }
+        self.eq.get().billed = smart_load;
         #[cfg(feature = "probe")]
         let t0 = crate::probe::now();
         // Each kit's bill read once: the Part's bill, its glide and its
@@ -2228,7 +2267,11 @@ impl Instrument {
                     + self.voices[v].held_ops_extra(&part.params, &part.mod_state)
                     + self.streaming[v].looped
                     + high;
-                let k = if first { Knobs::COST } else { Cost::ZERO };
+                let k = if first {
+                    Self::part_cost(part, smart_load, q)
+                } else {
+                    Cost::ZERO
+                };
                 // A hit bills its own kernel, not its kit's costliest; a
                 // flat bill (not DRUM) has no kernel, so `Ended` is whole.
                 let hit = match part.params.engine() {
@@ -2572,7 +2615,8 @@ impl Instrument {
     ) {
         // The reverb TYPE's extra, and GRAIN's (ADR 0202).
         self.rev_extra = self.rev_bill.step(shared.fx.reverb.kind)
-            + crate::dsp::delay::extra_cost(&shared.fx.delay);
+            + crate::dsp::delay::extra_cost(&shared.fx.delay)
+            + crate::part_eq::bill::wash(&shared.fx.reverb, self.smart_load(shared));
         let (_, cents) = self
             .tune_ease
             .step(f32::from(shared.tune), ease_coeff(self.sample_rate.get()));
@@ -2705,7 +2749,7 @@ impl Instrument {
             &written,
             &mut self.sends,
             &mut self.mix,
-            fx,
+            (fx, Some(self.eq.get())),
             shared,
             self.tempo,
             self.sample_rate.get(),
@@ -2718,7 +2762,7 @@ impl Instrument {
         for (m, c) in crate::meter::FILTER_CLIP.iter().zip(clip) {
             m.raise(c);
         }
-        crate::meter::publish_rev_clock(self.tempo, fx.reverb().fold());
+        crate::meter::publish_rev_clock(self.tempo, fx.reverb().fold(), fx.delay().fold());
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);
@@ -2739,7 +2783,10 @@ impl Instrument {
     #[inline(never)]
     fn part_eq(&mut self, shared: &AudioShared, written: &[bool; MAX_PARTS], sides: &mut Sides) {
         let eqs = self.eq.get();
-        if !eqs.any_live() && shared.parts.iter().all(|p| p.mix.eq.is_flat()) {
+        if !eqs.any_live()
+            && shared.parts.iter().all(|p| p.mix.eq.is_flat())
+            && !shared.fx.comp.smart.listens()
+        {
             return;
         }
         let b = crate::part_eq::dsp::PartsBlock {
@@ -2747,9 +2794,12 @@ impl Instrument {
             sides,
             written,
             parts: &shared.parts,
+            smart: shared.fx.comp.smart,
+            wash: shared.fx.reverb.role,
             sample_rate: self.sample_rate.get(),
         };
-        if crate::part_eq::door::through(|d| d.eq().run(eqs, b)).is_none() {
+        use crate::part_eq::door::{Ask, through};
+        if through(|d| d.eq().run(Ask::Parts(&mut *eqs, b))).is_none() {
             *eqs = crate::part_eq::PartEqs::REST;
         }
     }

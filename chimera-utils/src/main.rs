@@ -29,6 +29,7 @@ mod nrpn_guide;
 mod plot;
 mod reference;
 mod sig;
+mod smart_eq_ab;
 mod stim;
 mod suggest_map;
 mod unitab;
@@ -71,6 +72,7 @@ usage: chimera-utils [flags] COMMAND …
                            the simulator console over WebSocket, for the browser editor
   nrpn-chart               the NRPN chart (ADR 0216): the fixture's lines with labels
   nrpn-guide               docs/guide/NRPN.md: the writable NRPNs by engine and block (#926)
+  smart-eq-ab              SMART EQ's A/B (ADR 0296): a MODAL pad over a bass, the 250 Hz - 2 kHz overlap off and on
   nrpn-json                docs/guide/NRPN.json: the same cells for a script (#983)
   suggest-map DIR | suggest-map --tables
                            the SUGGEST controller map into DIR/CHIMERA/MAPS; or its
@@ -282,6 +284,7 @@ fn run() -> Result<bool, String> {
             harmonic_engine::run(Path::new(&rest[0])).map(|_| true)
         }
         "macro-render" if rest.len() == 1 => macro_osc::run(Path::new(&rest[0])).map(|_| true),
+        "smart-eq-ab" => smart_eq_ab::run(rest).map(|_| true),
         "nrpn-guide" => {
             print!("{}", nrpn_guide::page());
             Ok(true)

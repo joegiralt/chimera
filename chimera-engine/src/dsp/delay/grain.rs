@@ -226,8 +226,18 @@ impl State {
 /// One block of the delay with GRAIN heard, or fading in or out against
 /// TAPE: `tape::run` calls it while TYPE is GRAIN or its share is above 0.
 #[inline(never)]
-pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: u32, insert: bool) {
-    let tap = Tap::new(p, fs);
+pub fn run(
+    d: &mut TapeDelay,
+    buf: &mut [f32; BLOCK_SIZE],
+    p: &DelayParams,
+    tempo: crate::dsp::rev::sync::Tempo,
+    fs: u32,
+    insert: bool,
+) {
+    // TIME, the knob's or SYNC's note (ADR 0302): the grains start there
+    // from their next, and TAPE's head, heard, crossfades to it.
+    let (tap, _) = super::sync::tap(d, p, tempo, fs);
+    d.speed = 0.0;
     if !d.primed {
         (d.time, d.primed) = (tap.base(), true);
     }

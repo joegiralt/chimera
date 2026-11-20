@@ -93,7 +93,13 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
         {
             b.nudge(a.param, d.signum() * i8::MAX)
         }
-        Edit::Snap(d) => b.snap(a.param, d),
+        // MIX + turn on the delay's TIME flips SYNC, bank 2's
+        // (`delay_sync::snap`, ADR 0302); closed, and any other, the snap.
+        Edit::Snap(d) => {
+            if crate::bank2::feel::snap(&mut *b, a, Ticks::new(d)) == Nudged::Spec {
+                b.snap(a.param, d)
+            }
+        }
         // CLASSIC RATE's semitone is bank 2's (`feel::nudge`, ADR 0279), a
         // fine step too; closed, and any other, the spec's or its fine.
         Edit::Nudge(d) => {

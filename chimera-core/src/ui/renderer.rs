@@ -480,13 +480,14 @@ impl Renderer {
         match f.def.viz {
             VizType::AudioStats => audio_page::draw_viz(display, f.audio),
             VizType::Pool => crate::ui::pool_page::draw_viz(display, f.pool),
-            VizType::MixerLevels => {
-                viz::parts_overview(display, &self.strips(f), f.active_part.index());
-                // Each Part's live meter and key mark beside it (ADR 0293).
-                let on = &mut crate::ui::tape_strip::On(display);
-                crate::bank2::ui_door(|u| {
-                    u.meters(crate::ui::part_meter::Ask::Paint(on, f.meters))
-                });
+            VizType::MixerLevels => self.mixer_levels(display, f),
+            VizType::SmartEq(scope) => {
+                // PRT › EQ keeps the Parts' overview and meters (ADR 0293)
+                // under SMART EQ's live cuts.
+                if scope == crate::ui::block_def::SmartScope::Part {
+                    self.mixer_levels(display, f);
+                }
+                crate::ui::smart_view::paint(display, &self.smart_shown(f, scope))
             }
             VizType::EffectsFlow(FxFlow::Sends) => {
                 let sends = [
@@ -633,6 +634,45 @@ impl Renderer {
         Some((r, Some(lit)))
     }
 
+    /// The Parts' overview with each one's live meter and key mark beside
+    /// it (ADR 0293).
+    fn mixer_levels<D>(&self, display: &mut D, f: &Frame)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        viz::parts_overview(display, &self.strips(f), f.active_part.index());
+        let on = &mut crate::ui::tape_strip::On(display);
+        crate::bank2::ui_door(|u| u.meters(crate::ui::part_meter::Ask::Paint(on, f.meters)));
+    }
+
+    /// SMART EQ's band (ADR 0296): PRT › EQ's Part, or every Part and the
+    /// reverb's return on MST › LVL, whose cell F is the return's role.
+    fn smart_shown(
+        &self,
+        f: &Frame,
+        scope: crate::ui::block_def::SmartScope,
+    ) -> crate::ui::smart_view::Shown {
+        use crate::part_eq::smart::Role;
+        use crate::ui::block_def::SmartScope;
+        use crate::ui::smart_view::{Shown, Shows};
+        let roles = core::array::from_fn(|p| f.parts[p].mix.role);
+        match scope {
+            SmartScope::Part => Shown::now(
+                Shows::Part(f.active_part),
+                roles,
+                crate::dsp::reverb::WASH_ROLE,
+            ),
+            SmartScope::All => {
+                let span = (Role::ALL.len() - 1) as f32;
+                let wash = Role::from_f32(
+                    self.anim[crate::ui::block_def::LevelCell::WashRole.slot()].current() * span
+                        + 0.5,
+                );
+                Shown::now(Shows::All(f.active_part), roles, wash)
+            }
+        }
+    }
+
     /// Level and pan of every Part; the edited one from its animated LEVEL
     /// and PAN slots so it lerps like the cells.
     fn strips(&self, f: &Frame) -> [viz::Strip; crate::hw::MAX_PARTS] {
@@ -708,6 +748,18 @@ impl Renderer {
                     strips_key(&self.strips(f), f.active_part.index()) ^ f.meters.key(),
                 ),
                 VizType::EffectsFlow(_) => (region::quantize_values(&self.anim), f.focus as u32),
+                VizType::SmartEq(scope) => {
+                    let cuts = self.smart_shown(f, scope).key();
+                    match scope {
+                        crate::ui::block_def::SmartScope::Part => (
+                            region::quantize_values(&self.anim),
+                            strips_key(&self.strips(f), f.active_part.index())
+                                ^ f.meters.key()
+                                ^ cuts.rotate_left(3),
+                        ),
+                        crate::ui::block_def::SmartScope::All => ([0; 6], cuts),
+                    }
+                }
                 VizType::AlgoDiagram => {
                     let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);

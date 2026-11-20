@@ -326,6 +326,49 @@ fn since_answers_the_mixer_whole_then_its_diffs() {
     assert!(!lines.iter().any(|l| l.starts_with("part ")));
 }
 
+/// The delay's TIME cell is a panel of its own, DELAY (ADR 0302): the ms
+/// under FREE, the note under SYNC, each described, and `since` answers
+/// the mixer whole with the panel's variant when SYNC flips.
+#[test]
+fn the_delays_time_cell_is_the_note_under_sync() {
+    let mut f = Fake::new();
+    let dly = mixer_pages(&mut f)
+        .into_iter()
+        .find(|t| t.starts_with("page 1 DLY of "))
+        .unwrap();
+    let free = dly.split("panel DELAY FREE\n").nth(1).expect(&dly);
+    assert!(
+        free.starts_with("param DELAY.TIME \"TIME\" cont lin 10 500 "),
+        "{dly}"
+    );
+    let sync = dly.split("panel DELAY SYNC\n").nth(1).expect(&dly);
+    assert!(sync.starts_with("param DELAY.NOTE \"TIME\" "), "{dly}");
+    // TIME is in no other panel of the page.
+    assert_eq!(dly.matches("param DELAY.TIME ").count(), 1, "{dly}");
+    assert_eq!(dly.matches("param DELAY.NOTE ").count(), 1, "{dly}");
+
+    let (lines, m, _, _) = since(&mut f, 0);
+    let mixer = lines.iter().position(|l| l == "mixer").unwrap();
+    assert_eq!(lines[mixer + 2], "panel DELAY FREE", "{lines:?}");
+    assert!(lines.iter().any(|l| l.starts_with("val DELAY.TIME ")));
+    assert!(lines.iter().any(|l| l.starts_with("val DELAY.NOTE ")));
+
+    set(&mut f, "DELAY.SYNC", "SYNC");
+    let (lines, m2, _, _) = since(&mut f, m);
+    assert_eq!(lines[0], "");
+    assert!(lines.contains(&"mixer".to_string()));
+    assert!(lines.contains(&"panel DELAY SYNC".to_string()), "{lines:?}");
+    assert!(!lines.iter().any(|l| l.starts_with("part ")));
+
+    // The note, set and read back as the box writes it.
+    set(&mut f, "DELAY.NOTE", "0.7");
+    assert_eq!(get(&mut f, "DELAY.NOTE").1, "1/8");
+    let (lines, _, _, _) = since(&mut f, m2);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("val DELAY.NOTE "), "{lines:?}");
+    assert!(lines[0].ends_with(" \"1/8\""), "{lines:?}");
+}
+
 #[test]
 fn the_mixer_copy_holds_its_slots() {
     assert_eq!(ed_slots_used(Schema::Mixer), ED_MIXER_SLOTS);

@@ -15,7 +15,7 @@ A binding's control can be:
 
 - **The Sound's cells:** every engine, filter, envelope, LFO, FX slot and output cell, but the patching jacks.
 - **The Part's LEVEL and PAN.**
-- **The master FX's knobs:** CHORUS, DELAY, REVERB and MASTER, each continuous cell (RATE, TIME, MIX…). Their TYPE and MODE switches stay on the panel.
+- **The master FX's knobs:** CHORUS, DELAY, REVERB and MASTER, each continuous cell (RATE, TIME, MIX…). Their TYPE and MODE switches stay on the panel, and so does the delay's SYNC. The delay's TIME is two cells, its ms under FREE and its note under SYNC, and each takes its own binding: learn TIME while SYNC is on to turn the notes from a controller.
 - **ORBIT's ring amounts**, per ring: HITS, ROTATE, CHANCE, MUTATE, GATE, VEL, ACCENT and OCTAVE. STEPS, MUTE, a ring's choices and the chord ring stay on the panel.
 
 The master FX and ORBIT are shared by every Part, but a binding to them still lives in one Part's map and listens on that Part's channel: the Part you learned it on owns it. If two Parts bind the same cell, both move it, and the last message wins. A ring amount moves the playing scene and its saved slot, as a turn on its page does. A fader on HITS or ROTATE covers the ring as it is now, 0 to STEPS or 0 to STEPS − 1, once over its travel.

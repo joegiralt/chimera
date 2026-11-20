@@ -388,14 +388,16 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
         "    *(.text.*12chimera_core2ui10kit_groups* .rodata.*12chimera_core2ui10kit_groups*
       .text.*14chimera_engine3dsp4drum6groups* .rodata.*14chimera_engine3dsp4drum6groups*);\n";
     // A Part's MAX VOICES and RESERVE (ADR 0281, `UiDoor::voices`, its
-    // one entry): `ui::part_voices`, beside the voice groups.
+    // one entry): `ui::part_voices`, beside the voice groups; and SMART
+    // EQ's band (ADR 0296, asked through `UiDoor::meters`): `ui::smart_eq`.
     // `ToastTimer::shows`' instance (`Option<Toast>::is_some_and` with
     // its closure): only kit_groups and part_voices call it.
     // `Shares::refusal` is only ever called from part_voices: placed with
     // it if it gets a symbol of its own.
     let voices =
         "    *(.text.*12chimera_core2ui11part_voices* .rodata.*12chimera_core2ui11part_voices*
-      .text.*10ToastTimer5shows* .text.*11voice_limit*6Shares7refusal*);\n";
+      .text.*10ToastTimer5shows* .text.*11voice_limit*6Shares7refusal*);
+    *(.text.*12chimera_core2ui8smart_eq* .rodata.*12chimera_core2ui8smart_eq*);\n";
     // The encoders' feel (ADR 0279, `UiDoor`'s feel entries): `ui::feel`,
     // the UI's curves, fine turn, band hint and CLASSIC RATE's semitone,
     // text and rodata (its words are named statics, not anonymous).
@@ -419,7 +421,14 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // 2's `ui::midi` (its `hear` and `out`); an S4 group.
     let dump =
         "    *(.text.*12chimera_core2ui10param_dump* .rodata.*12chimera_core2ui10param_dump*);\n";
-    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}");
+    // The delay's tempo sync (ADR 0302): `delay::sync`, the notes, the
+    // fit, the head's aim and its glide, called from bank 2's `tape::run`
+    // and `grain::run`; and `ui::delay_sync`, the note's text, MIX +
+    // turn and the band's words, called from `walk`, `feel` and `notes`.
+    // S4 groups.
+    let delay_sync = "    *(.text.*5delay4sync* .rodata.*5delay4sync*
+      .text.*12chimera_core2ui10delay_sync* .rodata.*12chimera_core2ui10delay_sync*);\n";
+    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"

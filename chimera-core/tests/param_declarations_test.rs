@@ -359,6 +359,9 @@ const OWN_OUTSIDE: &[&str] = &[
     "Delay DENSITY",
     "Delay PITCH",
     "Delay TEXTURE",
+    // SYNC's note: a turn crossfades the heads, a tempo move glides or
+    // crossfades (ADR 0302).
+    "Delay NOTE",
     // Reverb: each TYPE eases its gains and filters (τ 20-50 ms), crossfades
     // its read heads (30 ms), and MIX `Ease`s; TYPE and SYNC are choices.
     "Reverb TIME",
@@ -390,6 +393,8 @@ const OWN_OUTSIDE: &[&str] = &[
     // The master VOL and PAN, `Ease`d after the limiter (`MasterOut`).
     "Comp VOL",
     "Comp PAN",
+    // SMART EQ's cuts follow it over seconds (ADR 0296).
+    "Comp AMOUNT",
     // The Part's pan × LEVEL gains, `Ease`.
     "Part LEVEL",
     "Part PAN",

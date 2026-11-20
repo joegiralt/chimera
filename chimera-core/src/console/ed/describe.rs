@@ -37,6 +37,7 @@ use crate::dsp::drum::types::{Machine, PadId};
 use crate::dsp::filter::{FilterKind, KIND_NAMES};
 use crate::dsp::modal::ResonatorMode;
 use crate::dsp::modulator::{EnvForm, EnvSlot, EnvSpeed, Func, LfoForm, LfoSlot};
+use crate::dsp::delay::DelaySync;
 use crate::dsp::reverb::ReverbType;
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::voice_fx::params::FxType;
@@ -82,6 +83,15 @@ pub fn filter_variant(k: FilterKind) -> &'static str {
 pub fn fx_variant(t: FxType) -> &'static str {
     let i = FxType::LIST.iter().position(|&b| b == t).unwrap_or(0);
     FxType::NAMES[i]
+}
+
+/// The delay's TIME cell's panel, by SYNC's option name.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.delay_variant")
+)]
+pub fn delay_variant(s: DelaySync) -> &'static str {
+    DelaySync::NAMES.get(s as usize).copied().unwrap_or("-")
 }
 
 /// A reverb TYPE's panel, by its option name.
@@ -405,6 +415,7 @@ enum Axis {
     Machine,
     Route,
     Reverb,
+    Delay,
 }
 
 /// The axis a cell bound `b` resolves on; `None` for a cell the editor
@@ -416,6 +427,8 @@ enum Axis {
 )]
 fn axis_of(b: SlotBinding) -> Option<Axis> {
     Some(match b {
+        // The delay's TIME cell: the ms, or under SYNC the note (ADR 0302).
+        SlotBinding::Param(a) if a == view::DELAY_TIME => Axis::Delay,
         SlotBinding::Param(_)
         | SlotBinding::Source
         | SlotBinding::SelectedRing(_)
@@ -444,6 +457,11 @@ lit!(
     REVERB = "REVERB"
 );
 
+lit!(
+    /// The delay's TIME cell's panel's name.
+    DELAY = "DELAY"
+);
+
 /// A panel's name, as `describe` lists it and `since` reports its
 /// variant: one table for both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -459,6 +477,8 @@ pub(super) enum PanelName {
     PadMachine(PadId),
     PadRoute(PadId, RouteId),
     Reverb,
+    /// The delay's TIME cell, by its SYNC.
+    Delay,
     /// A page's own cells, a round's when it is one.
     Page(&'static str, Round),
 }
@@ -485,6 +505,7 @@ impl PanelName {
                 return uint(w, u32::from(r.number()));
             }
             PanelName::Reverb => (Round::Shared, REVERB.get()),
+            PanelName::Delay => (Round::Shared, DELAY.get()),
             PanelName::Page(short, r) => (r, short),
         };
         round.prefix(w)?;
@@ -550,6 +571,7 @@ enum Group {
     Machine(Machine),
     Route(RouteId),
     Reverb(ReverbType),
+    Delay(DelaySync),
 }
 
 impl Group {
@@ -567,6 +589,7 @@ impl Group {
             Group::Machine(_) => Axis::Machine,
             Group::Route(_) => Axis::Route,
             Group::Reverb(_) => Axis::Reverb,
+            Group::Delay(_) => Axis::Delay,
         }
     }
 
@@ -601,6 +624,7 @@ impl Group {
             (Group::Route(rt), Some(p)) => PanelName::PadRoute(p, rt),
             (Group::Machine(_) | Group::Route(_), None) => return None,
             (Group::Reverb(_), _) => PanelName::Reverb,
+            (Group::Delay(_), _) => PanelName::Delay,
         })
     }
 
@@ -620,6 +644,7 @@ impl Group {
             Group::Tape(t) => tape_variant(t),
             Group::Machine(m) => machine_variant(m),
             Group::Reverb(t) => reverb_variant(t),
+            Group::Delay(s) => delay_variant(s),
         }
     }
 
@@ -642,6 +667,7 @@ impl Group {
             Group::Machine(m) => c.pad = Some(m),
             Group::Route(r) => c.route = r,
             Group::Reverb(t) => c.rev = t,
+            Group::Delay(s) => c.delay_sync = s,
         }
         c
     }
@@ -723,10 +749,16 @@ fn group_at(mut i: usize) -> Option<Group> {
         return Some(Group::Route(r));
     }
     i -= RouteId::ALL.len();
-    reverb_panel::types_on_screen()
-        .get(i)
-        .map(|&t| Group::Reverb(t))
+    let revs = reverb_panel::types_on_screen();
+    if let Some(&t) = revs.get(i) {
+        return Some(Group::Reverb(t));
+    }
+    i -= revs.len();
+    DELAY_SYNCS.get(i).map(|&s| Group::Delay(s))
 }
+
+/// The delay's TIME cell's variants, in SYNC's option order.
+static DELAY_SYNCS: [DelaySync; 2] = [DelaySync::Free, DelaySync::Sync];
 
 /// A `BlockRead` with no blocks: the context every param at its zero.
 struct NoBlocks;

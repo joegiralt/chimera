@@ -215,7 +215,8 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         | Law::FadeHold
         | Law::ScrubLength
         | Law::DragTime
-        | Law::EqTilt => {
+        | Law::EqTilt
+        | Law::DelayNote => {
             crate::bank2::ui_door(|u| u.law_text(buf, law, v));
         }
         _ => {

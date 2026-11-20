@@ -115,7 +115,11 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     // Its EQ (ADR 0284).
     mix.set(PartParams::TILT, -21.0);
     mix.set(PartParams::LO_CUT, 1.0);
+    // Its SMART EQ role, and the master's SMART EQ (ADR 0296).
+    mix.set(PartParams::ROLE, 0.0);
     let fx = p.edit_fx();
+    fx.comp.set(crate::dsp::comp::CompParams::SMART_EQ, 1.0);
+    fx.comp.set(crate::dsp::comp::CompParams::AMOUNT, 100.0);
     fx.delay.mix = 0.3;
     fx.reverb.mix = 0.45;
     fx.chorus.mode = 2;

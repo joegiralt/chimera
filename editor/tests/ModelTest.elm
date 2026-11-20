@@ -180,6 +180,10 @@ mixerPage =
     , "param PART3.LEVEL \"LEVEL\" cont lin 0 1 0.0078125 0.75 m"
     , "panel REVERB HALL"
     , "param REVERB.SIZE \"SIZE\" cont lin 0 1 0.0078125 0.5 m"
+    , "panel DELAY FREE"
+    , "param DELAY.TIME \"TIME\" cont lin 10 500 8 375 m"
+    , "panel DELAY SYNC"
+    , "param DELAY.NOTE \"TIME\" cont lin 0 1 0.1 0.9 m"
     ]
 
 
@@ -1069,6 +1073,27 @@ suite =
                         feed [ "mixer", "panel REVERB QUAD", "OK 3" ] m
                             |> (\x -> ( Model.shown level x, shown x, Dict.get "REVERB" x.variants ))
                             |> Expect.equal ( Nothing, Just "1000 Hz", Just "QUAD" )
+                    ]
+                    ()
+        , test "the_delays_time_panel_follows_sync_and_outlives_a_part_switch" <|
+            \_ ->
+                let
+                    m : Model.Model
+                    m =
+                        following
+                            |> feed [ "part 1 ALGO", cutoffLine "1000", "mixer", "panel REVERB HALL", "panel DELAY SYNC", "val DELAY.NOTE 0.7 0.7 \"1/8\"", "OK 2" ]
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just "SYNC") (Dict.get "DELAY" m.variants)
+                    , \_ -> Expect.equal (Just "1/8") (Model.shown (addr "DELAY.NOTE") m |> Maybe.map .text)
+                    , \_ ->
+                        feed [ "part 2 ALGO", "OK 3" ] m
+                            |> (\x -> ( Dict.get "DELAY" x.variants, Dict.get "REVERB" x.variants ))
+                            |> Expect.equal ( Just "SYNC", Just "HALL" )
+                    , \_ ->
+                        feed [ "mixer", "panel REVERB HALL", "panel DELAY FREE", "OK 3" ] m
+                            |> (\x -> Dict.get "DELAY" x.variants)
+                            |> Expect.equal (Just "FREE")
                     ]
                     ()
         , test "a_mixer_address_is_edited_like_any_other" <|

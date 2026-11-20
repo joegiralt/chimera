@@ -333,14 +333,16 @@ const TAPE_DELAY_F32: usize = 96_344;
 const ORBIT_AXI_USED: usize = 384_264;
 
 /// ADR 0090: the i16 delay line frees half its bytes, on every build.
-/// GRAIN's grains and fades sit beside it (ADR 0202): 272 B, no line.
+/// GRAIN's grains and fades sit beside it (ADR 0202): 272 B, no line;
+/// and SYNC's state (ADR 0302), 8 B: what it read, its fold, the glide's
+/// speed.
 #[test]
 fn delay_line_frees_48128() {
     use chimera_core::dsp::delay::TapeDelay;
     use chimera_core::dsp::delay::grain::State;
     assert_eq!(size_of::<State>(), 272);
     assert_eq!(
-        TAPE_DELAY_F32 + size_of::<State>() - size_of::<TapeDelay>(),
+        TAPE_DELAY_F32 + size_of::<State>() + 8 - size_of::<TapeDelay>(),
         48_128
     );
 }

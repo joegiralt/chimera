@@ -14,6 +14,9 @@
 
 use chimera_hal::BLOCK_SIZE;
 
+pub mod smart;
+
+use super::smart::{PartKind, Role, SmartEq};
 use super::{ChannelEq, CoeffStep, Coeffs, Live, LpShare, OnePole, PartEq, PartEqs, Taps};
 use crate::dsp::ease::ease_coeff;
 use crate::dsp::{Db, Gain, Hz, Unit};
@@ -225,11 +228,32 @@ pub struct PartsBlock<'a> {
     pub sides: &'a mut Sides,
     pub written: &'a [bool; MAX_PARTS],
     pub parts: &'a [PartAudio; MAX_PARTS],
+    /// The master's SMART EQ (ADR 0296), from the snapshot's `CompParams`,
+    /// and the reverb return's role in it.
+    pub smart: SmartEq,
+    pub wash: Role,
     pub sample_rate: u32,
 }
 
-/// `run` on the Parts' own settings (`PartParams::eq`).
+/// The door's entry (`EqDoor`): what bank 1 asked, answered here in the
+/// EQ's S4 group.
 #[inline(never)]
+pub fn answer(ask: super::door::Ask<'_, '_>) {
+    use super::door::Ask;
+    match ask {
+        Ask::Parts(eqs, b) => run_parts(eqs, b),
+        Ask::Wash {
+            eqs,
+            wet,
+            reverb,
+            sample_rate,
+        } => smart::run_wash(&mut eqs.smart, wet, reverb, sample_rate),
+    }
+}
+
+/// `run` on the Parts' own settings (`PartParams::eq`), then SMART EQ's
+/// cuts on their roles (`PartParams::role`).
+#[inline(always)]
 pub fn run_parts(eqs: &mut PartEqs, b: PartsBlock<'_>) {
     let settings: [PartEq; MAX_PARTS] = core::array::from_fn(|p| b.parts[p].mix.eq);
     run(
@@ -239,6 +263,22 @@ pub fn run_parts(eqs: &mut PartEqs, b: PartsBlock<'_>) {
             sides: b.sides,
             written: b.written,
             settings: &settings,
+            sample_rate: b.sample_rate,
+        },
+    );
+    let roles: [Role; MAX_PARTS] = core::array::from_fn(|p| b.parts[p].mix.role);
+    let kinds: [PartKind; MAX_PARTS] =
+        core::array::from_fn(|p| PartKind::of(b.parts[p].params.engine()));
+    smart::run(
+        &mut eqs.smart,
+        smart::SmartBlock {
+            buses: b.buses,
+            sides: b.sides,
+            written: b.written,
+            roles: &roles,
+            kinds: &kinds,
+            wash: b.wash,
+            smart: b.smart,
             sample_rate: b.sample_rate,
         },
     );

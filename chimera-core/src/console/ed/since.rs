@@ -80,7 +80,7 @@ use super::{EdAddr, describe};
 use crate::addr::{BlockRef, Op};
 use crate::console::ANSWER_BYTES_MAX;
 use crate::dsp::chorus::ChorusMode;
-use crate::dsp::delay::DelayType;
+use crate::dsp::delay::{DelaySync, DelayType};
 use crate::dsp::drum::types::{Kit, PadId};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbType;
@@ -592,6 +592,8 @@ struct MixSeen {
     rev: ReverbType,
     chorus: ChorusMode,
     delay: DelayType,
+    /// The delay's SYNC: TIME's cell is the ms or the note (ADR 0302).
+    sync: DelaySync,
     plate: bool,
     closed: bool,
 }
@@ -1227,7 +1229,8 @@ impl EdSince {
         }
     }
 
-    /// MIXER: every Part's mix and sends, the buses, the reverb's panel.
+    /// MIXER: every Part's mix and sends, the buses, the reverb's panel
+    /// and the delay's.
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.since.mixer_section")
@@ -1244,6 +1247,7 @@ impl EdSince {
             rev: own.ctx.rev,
             chorus: own.ctx.chorus,
             delay: own.ctx.delay,
+            sync: own.ctx.delay_sync,
             plate: own.ctx.plate,
             closed: ui.bank2().is_some_and(|b| !b.is_open()),
         };
@@ -1260,6 +1264,11 @@ impl EdSince {
             PanelName::Reverb.write(w)?;
             w.write_char(' ')?;
             describe::variant_token(reverb_variant(now.rev), w)?;
+            w.write_char('\n')?;
+            w.write_str(PANEL.get())?;
+            PanelName::Delay.write(w)?;
+            w.write_char(' ')?;
+            describe::variant_token(describe::delay_variant(now.sync), w)?;
             w.write_char('\n')?;
         }
         let d = described_in(&mut self.mixer.described, Schema::Mixer);

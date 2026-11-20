@@ -246,6 +246,11 @@ firmware-gate:
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
+# SMART EQ's A/B (ADR 0296): a MODAL pad over a bass, the 250 Hz - 2 kHz
+# overlap off and at AMOUNT 64 and 127, and the pad's cut through its ring.
+smart-eq-ab:
+    {{utils}} smart-eq-ab
+
 # The NRPN guide page (#926) and its JSON (#983), from the chart the firmware answers with.
 nrpn-guide:
     {{utils}} nrpn-guide > docs/guide/NRPN.md
@@ -350,6 +355,8 @@ check-door-placed elf:
     # linker script pins beside it, where it has a symbol of its own (the
     # toast check's instance, the rule when not inlined).
     midi_ui+=('ui::part_voices::')
+    # SMART EQ's band (ADR 0296): the door's entry.
+    midi_ui+=('ui::smart_eq::')
     if grep -qE ' [tT] .*ToastTimer>::shows' <<< "$syms"; then midi_ui+=('ToastTimer>::shows'); fi
     if grep -qE ' [tT] .*Shares>::refusal' <<< "$syms"; then midi_ui+=('Shares>::refusal'); fi
     for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::osc::solo::' 'part_eq::dsp::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'voice::depth::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on' 'randomize::kern::' 'console::ed::' 'ui::notes::' 'part_peaks::kern::' 'ui::part_meter::' 'rev::duck::run'; do
@@ -366,6 +373,8 @@ check-door-placed elf:
     # So are 0.4's tester cells' words (ADR 0292), PRT's meters (ADR 0293)
     # and the reverb's duck (ADR 0295).
     grep -E ' [tT] .*(ui::notes::|part_peaks::kern::|ui::part_meter::|rev::duck::)' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "tester work outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # So is the delay's tempo sync, engine and UI (ADR 0302).
+    grep -E ' [tT] .*(dsp::delay::sync::|ui::delay_sync::)' <<< "$syms" | awk '{ n++; a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "delay sync outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "delay sync: nothing linked" > "/dev/stderr"; exit bad || !n }'
     # And no solo code of theirs sits in bank 1: the quiet pulse's or its runs' (ADR 0283).
     # (awk alone: when all of it is inlined into `solo::play` there is none, and grep would fail.)
     awk '/ [tT] .*PulseQuiet/ { a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "VA solo code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"

@@ -3,6 +3,35 @@ use crate::block::{ParamId, ParamSpec, find_spec};
 use crate::orbit::RingIdx;
 use crate::ui::page::{PageLayout, ValFmt};
 
+/// Whose live SMART EQ cuts a page's band shows (ADR 0296).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmartScope {
+    /// PRT › EQ: the edited Part's four bands.
+    Part,
+    /// MST › LVL: every Part's, the edited one lit.
+    All,
+}
+
+/// MST › LVL's cells, A to F (`block_registry::MASTER_LEVEL`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LevelCell {
+    Vol,
+    Pan,
+    Spare,
+    SmartEq,
+    Amount,
+    /// The reverb return's SMART EQ role.
+    WashRole,
+}
+
+impl LevelCell {
+    /// Its slot among the page's six.
+    pub const fn slot(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VizType {
     None,
@@ -13,6 +42,8 @@ pub enum VizType {
     /// IN → CHR → DLY → REV → OUT, lighting this page's part of it.
     EffectsFlow(FxFlow),
     MixerLevels,
+    /// What SMART EQ cuts now (ADR 0296), of `SmartScope`.
+    SmartEq(SmartScope),
     CompressorCurve,
     AudioStats,
     /// PROJECT › POOL: the pool meter; its cells are `pool_page`'s.
@@ -68,6 +99,7 @@ impl VizType {
             | VizType::About
             | VizType::EffectsFlow(_)
             | VizType::MixerLevels
+            | VizType::SmartEq(_)
             | VizType::CompressorCurve
             | VizType::AudioStats
             | VizType::Pool

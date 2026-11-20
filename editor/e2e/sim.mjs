@@ -453,10 +453,34 @@ async function main() {
   const params = new Map([...algo, ...mixer.params]);
   mixerAddrs = new Set(mixer.params.keys());
   const mixerShown = mixer.blocks
-    .filter((b) => b.variant === "-" || b.panel === "REVERB")
+    .filter((b) => b.variant === "-" || b.panel === "REVERB" || b.panel === "DELAY")
     .flatMap((b) => b.params)
     .filter((p) => /^(PART3(_SND)?|CHORUS|DELAY|REVERB|TAPE|COMP)\./.test(p.addr) && p.addr !== "REVERB.TYPE");
   await sweep(mixerShown, " MIXER", new Set(), (a) => /\.(RESERVE|MAX_VOICES)$/.test(a));
+  // 0.4's mixer params (ADR 0296 SMART EQ, ADR 0302 the delay's SYNC): each described, so each in the sweep above.
+  for (const a of ["PART3.ROLE", "COMP.SMART_EQ", "COMP.AMOUNT", "REVERB.ROLE", "DELAY.SYNC", "DELAY.TIME", "DELAY.NOTE"])
+    if (!mixerShown.some((p) => p.addr === a)) fail(a, "describe", "not among the params MIXER shows");
+  // The delay's TIME cell is the DELAY panel: the ms under FREE, the note
+  // under SYNC. The sweep left SYNC on FREE.
+  const delayPanels = mixer.blocks.filter((b) => b.panel === "DELAY").map((b) => `${b.variant} ${b.params.map((p) => p.addr).join(" ")}`);
+  if (delayPanels.join(", ") !== "FREE DELAY.TIME, SYNC DELAY.NOTE") fail("DELAY", "describe", `panels ${JSON.stringify(delayPanels)}`);
+  for (const [opt, variant] of [["#1", "SYNC"], ["#0", "FREE"]]) {
+    const got = await send(`ed set DELAY.SYNC ${opt}`);
+    sets++;
+    const now = got.at(-1) === "OK queued" ? await settleVariant("DELAY", variant) : null;
+    if (now !== variant) fail("DELAY.SYNC", `set ${opt}`, `panel DELAY is ${now}: ${got.join(" | ")}`);
+    if (variant !== "SYNC") continue;
+    // A note under SYNC: stored as sent, read as the box writes it.
+    for (const [want, text] of [[0.7, "1/8"], [0.9, "1/8D"]]) {
+      const set = await send(`ed set DELAY.NOTE ${want}`);
+      sets++;
+      const v = set.at(-1) === "OK queued" ? await settle("DELAY.NOTE", (v) => near(v.stored, want)) : null;
+      if (!v) fail("DELAY.NOTE", `set ${want}`, set.join(" | "));
+      else if (!near(v.stored, want) || v.text.replace(/^\S*?(?=1\/)/, "") !== text)
+        fail("DELAY.NOTE", `set ${want}`, `read back stored ${v.stored} "${v.text}", want ${want} "${text}"`);
+    }
+  }
+  info("delay: SYNC and FREE seen as panel DELAY, the note set and read back under SYNC");
 
   // The matrix (ADR 0289): every source into FREQ, set, read back and removed.
   const mtx = await ask("ed describe MTX-ALGO 0");

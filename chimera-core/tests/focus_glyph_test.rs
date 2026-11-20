@@ -148,6 +148,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // TAPE and GRAIN: two delays, a word (ADR 0202). GRAIN's four pots
     // keep the arc: the rings draw TAPE's head.
     ("Delay", "TYPE", NONE),
+    // FREE and SYNC: a word. Its note keeps the arc, a place in the list
+    // (ADR 0302).
+    ("Delay", "SYNC", NONE),
     // The reverb: every knob shows its composite (the cube under QUAD);
     // TYPE and SYNC are words (reverb TYPEs spec § TYPE and the words).
     ("Reverb", "TIME", CUBE),
@@ -163,6 +166,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Reverb", "DENSITY", CUBE),
     ("Reverb", "TYPE", NONE),
     ("Reverb", "SYNC", NONE),
+    // The return's SMART EQ role (ADR 0296): three words.
+    ("Reverb", "ROLE", NONE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("VoiceFx", "MIX", XF),
@@ -179,6 +184,10 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "RESERVE", NONE),
     // A toggle (ADR 0284).
     ("Part", "LO_CUT", SWITCH),
+    // SMART EQ (ADR 0296): a toggle, and three named roles.
+    ("Comp", "SMART_EQ", SWITCH),
+    ("Comp", "AMOUNT", LEVEL),
+    ("Part", "ROLE", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),
@@ -252,6 +261,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("TapeEngine", "WOW"),
     // TAPE and GRAIN: two delays.
     ("Delay", "TYPE"),
+    // FREE and SYNC: two ways to read TIME, neither is off.
+    ("Delay", "SYNC"),
     // SCALE and CHORD: two sets to snap to.
     ("OrbitRing", "SNAP"),
     // STEP and POOL: two ways to pick a note.
@@ -1413,8 +1424,8 @@ fn glyph_rings_page_moves_only_inside_its_box() {
     // GRAIN's pots keep the arc (ADR 0202).
     for s in BlockRef::Delay.specs() {
         let want = match s.ident {
-            "TYPE" => NONE,
-            "SIZE" | "DENSITY" | "PITCH" | "TEXTURE" => FocusGlyph::Arc,
+            "TYPE" | "SYNC" => NONE,
+            "SIZE" | "DENSITY" | "PITCH" | "TEXTURE" | "NOTE" => FocusGlyph::Arc,
             _ => RINGS,
         };
         assert_eq!(s.glyph, want, "{}", s.ident);
@@ -1589,10 +1600,10 @@ fn cube_ui(slot: EncoderId) -> UiState {
 
 #[test]
 fn glyph_cube_page_moves_only_inside_its_box() {
-    // Every reverb knob carries the composite; TYPE and SYNC are words;
-    // REV › DUCK's (ADR 0295) are the duck's, not the room's: arcs.
+    // Every reverb knob carries the composite; TYPE, SYNC and ROLE are
+    // words; REV › DUCK's (ADR 0295) are the duck's, not the room's: arcs.
     for s in BlockRef::Reverb.specs() {
-        if matches!(s.ident, "TYPE" | "SYNC") {
+        if matches!(s.ident, "TYPE" | "SYNC" | "ROLE") {
             assert_eq!(s.glyph, NONE, "{}", s.ident);
             continue;
         }

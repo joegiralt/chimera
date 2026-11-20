@@ -86,7 +86,8 @@ fn a_longer_release_comes_back_slower() {
 fn duck_is_revs_page_with_amount_and_release() {
     assert_eq!((EFX_DUCK.name, EFX_DUCK.short), ("Reverb Duck", "DUCK"));
     let got: Vec<_> = (0..6).map(|i| EFX_DUCK.params[i].label()).collect();
-    assert_eq!(got, ["AMOUNT", "RELEASE", "--", "--", "--", "--"]);
+    // Cell C: the return's SMART EQ role (ADR 0296), beside the duck.
+    assert_eq!(got, ["AMOUNT", "RELEASE", "SMART ROLE", "--", "--", "--"]);
     let rev = |id| ParamAddr::new(BlockRef::Reverb, id);
     assert_eq!(
         rev(ReverbParams::DUCK).spec().map(|s| s.ident),
