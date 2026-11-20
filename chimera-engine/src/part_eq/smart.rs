@@ -473,15 +473,6 @@ impl Blocks {
     }
 }
 
-/// Whether a DRUM Part's kick was hitting last block: an onset is the
-/// change to `Hitting`. Zero bytes are `Quiet`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum Kick {
-    Quiet = 0,
-    Hitting = 1,
-}
-
 /// Whether a Part's cuts have anywhere to go: `Rest` with none cut, none
 /// wanted and its dips back at unity, when its cuts need no step. Zero
 /// bytes are `Rest`.
@@ -525,8 +516,8 @@ pub(crate) struct PartSmart {
     pub(crate) key: Power,
     /// `key`'s recent peak, falling slowly: the hit `key` is measured from.
     pub(crate) key_peak: Power,
-    /// `key` as the kick's rule last saw it: an onset is its rise.
-    pub(crate) key_was: Power,
+    /// `key`'s floor (down at once, up slowly): an onset rises over it.
+    pub(crate) floor: Power,
     /// The kick's fast LOW dip on this Part, on top of `cut`'s slow LOW,
     /// and its target as the kick's rule last set it.
     pub(crate) kick: CutDb,
@@ -535,7 +526,6 @@ pub(crate) struct PartSmart {
     /// two (0: not known).
     pub(crate) since: Blocks,
     pub(crate) gap: Blocks,
-    pub(crate) hitting: Kick,
     pub(crate) hears: Hears,
     pub(crate) cuts: Cuts,
 }
@@ -552,12 +542,11 @@ impl PartSmart {
         dipped: [CutDb::ZERO; BANDS],
         key: Power::ZERO,
         key_peak: Power::ZERO,
-        key_was: Power::ZERO,
+        floor: Power::ZERO,
         kick: CutDb::ZERO,
         kick_want: CutDb::ZERO,
         since: Blocks::ZERO,
         gap: Blocks::ZERO,
-        hitting: Kick::Quiet,
         hears: Hears::Thin,
         cuts: Cuts::Rest,
     };
@@ -618,6 +607,9 @@ pub(crate) struct Rate {
     pub(crate) rise: Unit,
     pub(crate) fall: Unit,
     pub(crate) key_fall: Unit,
+    /// The most the key's floor rises a turn of the kick's rule, as a
+    /// gain of power.
+    pub(crate) floor_rise: f32,
     pub(crate) kick_attack: Unit,
     pub(crate) kick_release: Unit,
     pub(crate) attack: Unit,
@@ -648,6 +640,7 @@ impl Rate {
         rise: Unit::ZERO,
         fall: Unit::ZERO,
         key_fall: Unit::ZERO,
+        floor_rise: 1.0,
         kick_attack: Unit::ZERO,
         kick_release: Unit::ZERO,
         attack: Unit::ZERO,
@@ -784,6 +777,11 @@ impl SmartState {
     /// The kick's fast LOW dip on Part `p`.
     pub fn kick(&self, p: PartId) -> CutDb {
         self.parts[p.index()].kick
+    }
+
+    /// Blocks since Part `p`'s kick last began (its onset).
+    pub fn since_kick(&self, p: PartId) -> u16 {
+        self.parts[p.index()].since.get()
     }
 
     /// The reverb return's cut in `b` as last decided, the kick's dip

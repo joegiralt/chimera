@@ -26,7 +26,7 @@ use crate::hw::MAX_PARTS;
 use crate::instrument::Sides;
 use crate::part_eq::Live;
 use crate::part_eq::smart::{
-    Amount, BANDS, Band, BandTaps, Blocks, Bq, Caps, CutDb, CutView, Cuts, Dip, Hears, Kick, Level,
+    Amount, BANDS, Band, BandTaps, Blocks, Bq, Caps, CutDb, CutView, Cuts, Dip, Hears, Level,
     PartKind, PartSmart, Power, Rate, Returned, Role, SMART_VIEW, SmartEq, SmartState, StillCut,
     Sv,
 };
@@ -60,12 +60,20 @@ const HOLD_FULL_S: f32 = 0.1;
 /// Between the two the hold fades, so no gap is a cliff (a hard edge at
 /// 150 ms was 5.6 dB of flutter one millisecond past it).
 const HOLD_NONE_S: f32 = 0.22;
-/// A kick's onset is its key hitting after quiet, or rising by this much
-/// (power, 2 dB) while still high: a kick over the last one's body...
-const ONSET_RISE: f32 = 1.585;
-/// ...no sooner than this after the last (seconds): one kick's attack is
-/// one onset.
-const REFRACT_S: f32 = 0.02;
+/// A kick's onset is its key hitting (within 3 dB of its recent peak: a
+/// snare's LOW is not one) and risen this much (power, 3 dB) over its
+/// floor: a kick after quiet, or over the last one's tail...
+const ONSET_RISE: f32 = 2.0;
+/// ...the floor being the key followed down at once and up no faster
+/// than this (dB a second): a kick's attack outruns it; a tremolo's
+/// swell (8 Hz, 5 dB deep, is 90) and a low tone's ripple on the key from
+/// block to block (2.2 dB at 50 Hz, 2.7 at 40) do not. A kit holding a
+/// tone under 35 Hz does ripple past it: its onsets only steady a dip
+/// that is already held down...
+const FLOOR_RISE_DB_S: f32 = 150.0;
+/// ...and no sooner than this after the last (seconds): one kick's
+/// attack, a flam or a tom's first cycles are one onset.
+const REFRACT_S: f32 = 0.045;
 /// How long past a dense kick's onset its dip is held, of the gap to the
 /// one before: a late hit is still covered.
 const HOLD_OF_GAP: f32 = 1.5;
@@ -76,10 +84,8 @@ const HOLD_OF_GAP: f32 = 1.5;
 /// stays down with it, a duck for the tail's whole length. Meant (owner
 /// 2026-11-20): the tail counts.
 const HIT_SPAN: Db = Db::new(6.0);
-/// A key this far into `HIT_SPAN` is hitting; under `HIT_OFF` it has let
-/// go (an onset is the change).
+/// A key this far into `HIT_SPAN` (3 dB from its peak) can be an onset.
 const HIT_ON: f32 = 0.5;
-const HIT_OFF: f32 = 0.25;
 /// A cut deepens with this time constant, seconds.
 const ATTACK_S: f32 = 0.5;
 /// A cut lets go with this one, seconds.
@@ -380,6 +386,11 @@ impl Rate {
             rise: Unit::new(pole(LEVEL_RISE_S, sample_rate)),
             fall: Unit::new(pole(LEVEL_FALL_S, sample_rate)),
             key_fall: Unit::new(pole(KEY_FALL_S, sample_rate)),
+            // A turn of the kick's rule on.
+            floor_rise: exp2(
+                FLOOR_RISE_DB_S * f32::from(RULES.get()) * BLOCK_SIZE as f32 / fs
+                    * (core::f32::consts::LOG2_10 / 10.0),
+            ),
             kick_attack: Unit::new(pole(KICK_ATTACK_S, sample_rate)),
             kick_release: Unit::new(pole(KICK_RELEASE_S, sample_rate)),
             attack: Unit::new(pole(ATTACK_S, sample_rate)),
@@ -939,21 +950,15 @@ impl PartSmart {
     fn kick_press(&mut self, r: &Rate, blocks: Blocks) -> f32 {
         let (key, peak) = (level(self.key), level(self.key_peak));
         let h = hit(key, peak);
-        let was = self.hitting;
-        if h >= HIT_ON {
-            self.hitting = Kick::Hitting;
-        } else if h < HIT_OFF {
-            self.hitting = Kick::Quiet;
-        }
-        // An onset: hitting after quiet, or the key rising again while
-        // still high (a kick over the last one's body), once per attack.
+        // An onset: near its peak and risen fast over its floor (after
+        // quiet, or over the last kick's body), once per attack.
         let since = self.since.after(blocks);
-        let rising = self.key.get() > ONSET_RISE * self.key_was.get() && since >= r.refract;
-        self.key_was = self.key;
-        if self.hitting == Kick::Hitting && (was == Kick::Quiet || rising) {
-            (self.gap, self.since) = (since, Blocks::ZERO);
+        let key = self.key.get();
+        let floor = key.min(self.floor.get() * r.floor_rise);
+        if h >= HIT_ON && key > ONSET_RISE * floor && since >= r.refract {
+            (self.gap, self.since, self.floor) = (since, Blocks::ZERO, self.key);
         } else {
-            self.since = since;
+            (self.since, self.floor) = (since, Power::new(floor));
         }
         if self.gap == Blocks::ZERO {
             return h;

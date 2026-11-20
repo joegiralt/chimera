@@ -1149,3 +1149,98 @@ fn a_part_moved_to_front_is_billed_as_cut_until_its_cuts_let_go() {
     // The bass, FRONT all along, was never held over.
     assert!(!StillCut::of(&st).part(BASS));
 }
+
+/// A kit (Part 1, FRONT) playing `kit` over the sine bass, at DEEP: each
+/// block's kick dip on the bass, and the blocks the kit's onsets fell on.
+fn kit_over_bass(kit: impl Fn(f32) -> f32 + 'static, secs: f32) -> (Vec<f32>, Vec<usize>) {
+    let gens: [Gen; MAX_PARTS] = [
+        Box::new(move |n| Some(kit(n as f32 / FS as f32))),
+        Box::new(|n| Some(0.3 * (2.0 * PI * 55.0 * n as f32 / FS as f32).sin())),
+        Box::new(|_| None),
+        Box::new(|_| None),
+        Box::new(|_| None),
+        Box::new(|_| None),
+    ];
+    let mut st = PartEqs::REST.smart;
+    let r = roles(&[0], &[]);
+    let (mut dip, mut onsets) = (Vec::new(), Vec::new());
+    let mut was = 0;
+    for k in 0..seconds(secs) {
+        block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(95));
+        dip.push(st.kick(PAD).get());
+        let since = st.since_kick(BASS);
+        if since < was {
+            onsets.push(k);
+        }
+        was = since;
+    }
+    (dip, onsets)
+}
+
+/// A kick `t` seconds in: a 120 to 50 Hz sweep, its body 150 ms.
+fn kick_at(t: f32) -> f32 {
+    if t < 0.0 {
+        return 0.0;
+    }
+    let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
+    (-t / 0.15).exp() * ph.sin()
+}
+
+#[test]
+fn only_a_kick_is_an_onset() {
+    let ms = |m: f32| (m * FS as f32 / 1000.0) as usize / BLOCK_SIZE;
+    // White, from the sample's own number.
+    let noise = |t: f32| {
+        let n = (t * FS as f32 + 0.5) as u32;
+        ((n.wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0) - 1.0
+    };
+    // A kick every 500 ms, and a snare 125 ms after each on the same
+    // Part: the dip lets go as it does with no snare.
+    let snare = move |t: f32| {
+        let u = t % 0.5 - 0.125;
+        if u < 0.0 {
+            return 0.0;
+        }
+        let tone = (2.0 * PI * 180.0 * u).sin() + (2.0 * PI * 330.0 * u).sin();
+        0.4 * (-u / 0.08).exp() * (0.5 * tone + noise(t))
+    };
+    let (plain, plain_on) = kit_over_bass(|t| 0.8 * kick_at(t % 0.5), 6.0);
+    let (with, with_on) =
+        kit_over_bass(move |t| 0.8 * kick_at(t % 0.5) + snare(t), 6.0);
+    // Settled, from the second kick: twelve kicks, eleven onsets. (From
+    // silence the first kick's key has no peak to be near yet.)
+    let settled = |on: &[usize]| on.iter().filter(|&&k| k > ms(250.0)).count();
+    assert_eq!(settled(&plain_on), 11, "{plain_on:?}");
+    assert_eq!(settled(&with_on), 11, "a snare is no onset: {with_on:?}");
+    for bar in 8..11 {
+        let kick = ms(500.0 * bar as f32);
+        for at in ms(130.0)..ms(480.0) {
+            let (a, b) = (plain[kick + at], with[kick + at]);
+            assert!((a - b).abs() < 1.0, "bar {bar}, block {at}: {a} dB plain, {b} with");
+        }
+    }
+    // One tom is one onset, one ghost kick is one.
+    // (Each a second after a kick at 0.)
+    for hz in [70.0, 90.0] {
+        let tom = move |t: f32| {
+            let u = (t - 1.0).max(0.0);
+            0.8 * kick_at(t) + 0.7 * (-u / 0.2).exp() * (2.0 * PI * hz * u).sin()
+        };
+        let (_, on) = kit_over_bass(tom, 3.0);
+        assert_eq!(settled(&on), 1, "a {hz} Hz tom: {on:?}");
+    }
+    for level in [0.6, 0.4] {
+        let (_, on) = kit_over_bass(move |t| 0.8 * kick_at(t) + level * kick_at(t - 1.0), 3.0);
+        assert_eq!(settled(&on), 1, "a ghost kick at {level}: {on:?}");
+    }
+    // A held sub with tremolo is one onset, not one a cycle.
+    for (sub, rate) in [(50.0, 5.0), (40.0, 8.0), (60.0, 6.5)] {
+        let trem = move |t: f32| {
+            let u = (t - 1.0).max(0.0);
+            let swell = 1.0 + 0.3 * (2.0 * PI * rate * u).sin();
+            0.8 * kick_at(t) + 0.6 * swell * (2.0 * PI * sub * u).sin()
+        };
+        let (_, on) = kit_over_bass(trem, 5.0);
+        assert!(settled(&on) <= 1, "a {sub} Hz sub, tremolo {rate} Hz: {on:?}");
+    }
+}
