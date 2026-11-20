@@ -104,8 +104,11 @@ pub const VOICE_RAM_BUDGET: usize =
 /// ADR 0204; 2,440 for the VCA's low-pass gate, 68 B and its padding, ADR
 /// 0195, measured on the merged tree; 2,448 for the WHEEL and PRESSURE
 /// sources' values and the voice's own pressure, #514; 2,464 for TIMBRE's
-/// value and the voice's own MPE bend and timbre, ADR 0252).
-pub const VOICE_CHAIN_BYTES: usize = 2464;
+/// value and the voice's own MPE bend and timbre, ADR 0252; 2,472 for the
+/// played Sound's WIDTH, 4 B and its padding, ADR 0294; 2,480 for the
+/// last block's OUT PAN and BASE, kept apart from what a retrigger
+/// overwrites, ADR 0294).
+pub const VOICE_CHAIN_BYTES: usize = 2480;
 
 /// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-board/src/display.rs`).
 pub const FB_BYTES: usize = chimera_hal::FB_SIZE * 2; // 153_600

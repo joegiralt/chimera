@@ -246,8 +246,9 @@ pub static PITCH: BlockDef = BlockDef {
 // ---------------------------------------------------------------------------
 
 /// AMP: the VCA's VEL and its low-pass gate, LPG · DECAY · STRIKE (ADR
-/// 0195), last before MOD on every Part chain; E and F are free. The sends
-/// are AMP › SENDS, the mixer's own SENDS page.
+/// 0195), then BASE, where the VCA's routes start (ADR 0292); last before
+/// MOD on every Part chain; F is free. The sends are AMP › SENDS, the
+/// mixer's own SENDS page.
 pub static AMP: BlockDef = BlockDef {
     id: 9,
     name: "Amp",
@@ -259,14 +260,34 @@ pub static AMP: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Out, OutParams::LPG),
         ParamSlot::param(BlockRef::Out, OutParams::DECAY),
         ParamSlot::param(BlockRef::Out, OutParams::STRIKE),
+        ParamSlot::param(BlockRef::Out, OutParams::VCA).with_label(&"BASE"),
+        EMPTY,
+    ],
+};
+
+/// AMP › STEREO (ADR 0294): PAN, each note's place, a knob and a
+/// destination; WIDTH, the Part's side. Id 120: the next past REV ›
+/// DUCK's 119.
+pub static STEREO: BlockDef = BlockDef {
+    id: 120,
+    name: "Stereo",
+    short: "STER",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Out, OutParams::PAN),
+        ParamSlot::param(BlockRef::Out, OutParams::WIDTH),
+        EMPTY,
+        EMPTY,
         EMPTY,
         EMPTY,
     ],
 };
 
-/// AMP › SENDS (ADR 0195): CHORUS · DELAY · REVERB, the page the mixer
-/// opens on, so its cells keep one focus.
-static AMP_SUB_PAGES: [&BlockDef; 1] = [&SENDS];
+/// AMP › STEREO, then AMP › SENDS (ADR 0195): CHORUS · DELAY · REVERB, the
+/// page the mixer opens on, so its cells keep one focus. DRUM's AMP has
+/// GATE, then SENDS, in the same order: the voice's page, then the mix's.
+static AMP_SUB_PAGES: [&BlockDef; 2] = [&STEREO, &SENDS];
 
 // ---------------------------------------------------------------------------
 // Filter
@@ -477,7 +498,28 @@ pub static EFX_MORE2: BlockDef = BlockDef {
     ],
 };
 
-static EFX_SUB_PAGES: [&BlockDef; 2] = [&EFX_MORE, &EFX_MORE2];
+/// REV › DUCK (ADR 0295): AMOUNT · RELEASE, the return turned down
+/// under its own input, under every TYPE. Id 119: the next past PRT ›
+/// EQ's 118.
+pub static EFX_DUCK: BlockDef = BlockDef {
+    id: 119,
+    name: "Reverb Duck",
+    short: "DUCK",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
+    params: [
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::DUCK).with_label(&"AMOUNT"),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::DUCK_RELEASE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// MORE, DUCK, then MORE 2 last: HALL's alone, skipped going down under
+/// the other TYPEs (`nav::skip_empty_rev`).
+static EFX_SUB_PAGES: [&BlockDef; 3] = [&EFX_MORE, &EFX_DUCK, &EFX_MORE2];
 
 pub static CHORUS: BlockDef = BlockDef {
     id: 18,
@@ -955,7 +997,8 @@ pub static DRUM_AMP: BlockDef = pad_env_page(
     ParamSlot::param(BlockRef::PadAmp, PadAmpParams::MODE),
 );
 
-/// AMP › GATE: the pad's low-pass gate, in AMP's places.
+/// AMP › GATE: the pad's low-pass gate, in AMP's places; F the Part's
+/// WIDTH (ADR 0294).
 pub static DRUM_GATE: BlockDef = BlockDef {
     id: 15,
     name: "Gate",
@@ -966,7 +1009,8 @@ pub static DRUM_GATE: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::PadAmp, PadAmpParams::GATE_DECAY),
         ParamSlot::param(BlockRef::PadAmp, PadAmpParams::STRIKE),
         EMPTY,
-        EMPTY,
+        // The Part's WIDTH (ADR 0294): a kit's pans spread or narrowed.
+        ParamSlot::param(BlockRef::Out, OutParams::WIDTH),
     ],
     ..AMP
 };

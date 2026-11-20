@@ -56,6 +56,14 @@ fn word(channel: u8, key: u8) -> usize {
     (channel as usize & 15) * 4 + (key as usize >> 5 & 3)
 }
 
+/// A key is held on `channel` (MIXER › PRT's key marks, ADR 0293).
+#[inline(always)]
+pub fn channel_held(channel: u8) -> bool {
+    HELD[(channel as usize & 15) * 4..][..4]
+        .iter()
+        .any(|w| w.load(Ordering::Relaxed) != 0)
+}
+
 /// Nothing is held on `channel`.
 pub fn clear_channel(channel: u8) {
     for w in &HELD[(channel as usize & 15) * 4..][..4] {

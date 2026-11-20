@@ -298,10 +298,11 @@ fn snap_walks_bipolar_points_both_ways() {
 /// PLAY's MODE adds 4 B with its padding (ADR 0170); the voice FX block 20 B
 /// (ADR 0155); the VCA's gate 12 B (ADR 0195); STRETCH's LENGTH, GRAIN,
 /// SPRAY and END 16 B (ADR 0204); WALK's TRON and DRIFT 8 B past the
-/// padding they fit alone (ADR 0203), measured on the merged tree.
+/// padding they fit alone (ADR 0203), measured on the merged tree; OUT's
+/// WIDTH 4 B (ADR 0294).
 #[test]
 fn snapshot_is_small() {
     let size = core::mem::size_of::<chimera_core::params::ParamSnapshot>();
     eprintln!("ParamSnapshot = {size} B");
-    assert!(size <= 684, "ParamSnapshot is {size} B");
+    assert!(size <= 688, "ParamSnapshot is {size} B");
 }

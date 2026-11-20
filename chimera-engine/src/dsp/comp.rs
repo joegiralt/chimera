@@ -22,8 +22,6 @@ pub const ENGAGE: u32 = 480;
 const SETTLED: f32 = 0.001;
 /// THRESH, MAKEUP and MIX: one-pole, once per block.
 const SMOOTH_S: f32 = 0.02;
-/// 20·log10(2): dB per octave of amplitude.
-const DB_PER_OCT: f32 = 6.020_6;
 const LOG2_E: f32 = core::f32::consts::LOG2_E;
 /// The detector's ceiling, +48 dBFS: one inf or runaway sample asks for a
 /// bounded reduction and releases in a bounded time.
@@ -379,7 +377,7 @@ impl MasterComp {
     /// Gain reduction now, dB (0 while bypassed); the GR meter reads it.
     pub fn gr_db(&self) -> f32 {
         if self.is_running() {
-            self.gr * DB_PER_OCT
+            self.gr * crate::dsp::DB_PER_OCTAVE
         } else {
             0.0
         }
@@ -399,7 +397,7 @@ impl MasterComp {
         if !on && !self.is_running() {
             return false;
         }
-        let oct = 1.0 / DB_PER_OCT;
+        let oct = 1.0 / crate::dsp::DB_PER_OCTAVE;
         if !self.is_running() {
             // From bypass: unity, nothing reduced, the controls at their
             // targets.

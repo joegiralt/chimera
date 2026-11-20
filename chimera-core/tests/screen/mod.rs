@@ -1731,9 +1731,18 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::C, 64));
         feed(ui, Input::turn(EncoderId::D, 127));
     }),
-    // AMP › SENDS: the mixer's SENDS under AMP, REVERB up and focused.
+    // AMP › STEREO (ADR 0294): PAN R20, WIDTH 32, WIDTH focused.
+    ("amp_stereo", |ui| {
+        plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::A, 20));
+        feed(ui, Input::turn(EncoderId::B, -32));
+    }),
+    // AMP › SENDS: the mixer's SENDS under AMP (after STEREO), REVERB up
+    // and focused.
     ("amp_sends", |ui| {
         plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::turn(EncoderId::C, 40));
     }),
@@ -2048,8 +2057,16 @@ pub const CASES: &[ScreenCase] = &[
         to_fx(ui, REV);
         feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › DUCK
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE 2
         feed(ui, Input::turn(EncoderId::A, 20)); // DENSITY
+    }),
+    // REV › DUCK (ADR 0295): AMOUNT 64, RELEASE as set.
+    ("mixer_fx_reverb_duck", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › DUCK
+        feed(ui, Input::turn(EncoderId::A, 64)); // AMOUNT
     }),
     ("mixer_fx_reverb_gate", |ui| {
         to_fx(ui, REV);
@@ -2068,6 +2085,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
         feed(ui, Input::turn(EncoderId::E, 1)); // SYNC TIME: LENGTH 1/16D
+        feed(ui, Input::press(ButtonId::Edit)); // REV › DUCK
         feed(ui, Input::press(ButtonId::Edit)); // back to REV
         feed(ui, Input::turn(EncoderId::B, 1)); // LENGTH 1/8
     }),
@@ -3088,6 +3106,16 @@ pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
 
 /// Full render of case `name`.
 pub fn render(name: &str) -> Fb {
+    // The audio's process-wide state a screen reads (the held keys, PRT's
+    // meters and their watch, ADR 0293): one case at a time, each from
+    // rest, whatever ran before or beside it.
+    static GLOBALS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = GLOBALS.lock().unwrap_or_else(|e| e.into_inner());
+    chimera_core::played::clear_held();
+    chimera_core::part_peaks::watch(chimera_core::part_peaks::Watch::Down);
+    for m in &chimera_core::part_peaks::PART_PEAKS {
+        m.take();
+    }
     if let Some(&(_, label)) = OVERLAYS.iter().find(|o| o.0 == name) {
         let (fb, _) = render_overlay(label);
         fb.dump(name);

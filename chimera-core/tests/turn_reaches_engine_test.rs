@@ -223,6 +223,8 @@ fn turned_sends_reach_the_fx_bus() {
                     quiet < 1e-12,
                     "{e:?} lpg {lpg}: a return at sends 0: {quiet}"
                 );
+                // AMP › STEREO (ADR 0294), then AMP › SENDS.
+                b.frame(Input::press(ButtonId::Edit));
                 b.frame(Input::press(ButtonId::Edit));
                 assert_eq!(b.ui.page_def().id, SENDS.id, "{e:?}: AMP › SENDS");
                 let a = ParamAddr::new(BlockRef::Out, send);

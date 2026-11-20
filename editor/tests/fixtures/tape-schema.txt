@@ -1,11 +1,11 @@
-page 0 SRC of 18
+page 0 SRC of 19
 panel SRC -
 source "SOURCE"
 param TAPE_ENG.START "START" cont lin 0 1 0.0078125 0
 param TAPE_ENG.END "END" cont lin 0 1 0.0078125 1
 param OUT.LEVEL "VOL" cont lin 0 1 0.0078125 0.3515625
 OK
-page 1 DECK of 18
+page 1 DECK of 19
 panel DECK -
 param TAPE_ENG.MODEL "MODEL" choice lin 0 3 1 0
 opt TAPE_ENG.MODEL 0 "WALK"
@@ -42,7 +42,7 @@ param TAPE_ENG.POSITION "FRAME" cont lin 0 1 0.0078125 0
 param TAPE_ENG.MOTION "SCAN" cont lin -1 1 0.015625 0
 param TAPE_ENG.SIZE "RANGE" cont lin 0 1 0.0078125 1
 OK
-page 2 MCH of 18
+page 2 MCH of 19
 panel MCH -
 param TAPE_ENG.TAPE "TAPE" cont lin 0 1 0.0078125 0
 param TAPE_ENG.AGE "AGE" cont lin 0 1 0.0078125 0
@@ -69,7 +69,7 @@ opt TAPE_ENG.KEY 0 "POSITION"
 opt TAPE_ENG.KEY 1 "PITCH"
 panel MACHINE WAVE
 OK
-page 3 PIT of 18
+page 3 PIT of 19
 panel PIT -
 param PITCH.PITCH "PITCH" cont lin -24 24 1 0
 param PITCH.FINE "FINE" cont lin -100 100 1 0
@@ -81,7 +81,7 @@ param PITCH.SNAP "SNAP" choice lin 0 1 1 0
 opt PITCH.SNAP 0 "CHROMA"
 opt PITCH.SNAP 1 "MUSICAL"
 OK
-page 4 FLT of 18
+page 4 FLT of 19
 panel FLT -
 param FILTER.KIND "TYPE" choice lin 0 4 1 0
 opt FILTER.KIND 0 "CLEAN"
@@ -137,7 +137,7 @@ param FILTER.RESO "RES" cont lin 0 1 0.0078125 0
 param FILTER.MORPH "MODE" cont lin 0 1 0.0078125 0
 param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000
 OK
-page 5 FMD of 18
+page 5 FMD of 19
 panel FILTER CLEAN
 route "ENV AMT" next-slice
 route "KEYBOARD" next-slice
@@ -172,7 +172,7 @@ param FILTER.MODE "OUTPUT" choice lin 0 1 1 0
 opt FILTER.MODE 0 "MODE"
 opt FILTER.MODE 1 "BP"
 OK
-page 6 FX of 18
+page 6 FX of 19
 panel FX -
 param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1
@@ -198,7 +198,7 @@ param VOICEFX.P1 "FOLD" cont lin 0 1 0.0078125 0
 param VOICEFX.P2 "SYMMETRY" cont lin 0 1 0.0078125 0.5
 param VOICEFX.P3 "LEVEL" cont lin 0 1 0.0078125 0.5
 OK
-page 7 JACK of 18
+page 7 JACK of 19
 panel FILTER CLEAN
 param FILTER.FM3IN "FREQ SRC" choice lin 0 7 1 0
 opt FILTER.FM3IN 0 "LFO1"
@@ -305,22 +305,28 @@ opt FILTER.QMIN 7 "NOTE"
 opt FILTER.QMIN 8 "OP5"
 opt FILTER.QMIN 9 "OP6"
 OK
-page 8 AMP of 18
+page 8 AMP of 19
 panel AMP -
 param OUT.VEL "VEL" cont lin 0 1 0.0078125 1
 param OUT.LPG "LPG" cont lin 0 1 0.0078125 0
 param OUT.DECAY "DECAY" cont lin 0 1 0.0078125 0
 param OUT.STRIKE "STRIKE" cont lin 0 1 0.0078125 0
+param OUT.VCA "BASE" cont lin 0 1 0.0078125 0
 OK
-page 9 SND of 18
+page 9 STER of 19
+panel STER -
+param OUT.PAN "PAN" cont lin -1 1 0.015625 0
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1
+OK
+page 10 SND of 19
 panel SND -
 param OUT.SEND1 "CHORUS" cont lin 0 1 0.0078125 0
 param OUT.SEND2 "DELAY" cont lin 0 1 0.0078125 0
 param OUT.SEND3 "REVERB" cont lin 0 1 0.0078125 0
 OK
-page 10 MTX of 18
+page 11 MTX of 19
 OK
-page 11 E1 of 18
+page 12 E1 of 19
 panel ENV1 A-FAST
 param ENV1.ATK "ATTACK" cont lin 0 1 0.0078125 0.189
 param ENV1.DEC "DECAY" cont lin 0 1 0.0078125 0.559
@@ -409,7 +415,7 @@ param ENV1.TYPE "TYPE" choice lin 0 1 1 0
 opt ENV1.TYPE 0 "A"
 opt ENV1.TYPE 1 "B"
 OK
-page 12 E2 of 18
+page 13 E2 of 19
 panel ENV2 A-FAST
 param ENV2.ATK "ATTACK" cont lin 0 1 0.0078125 0.189
 param ENV2.DEC "DECAY" cont lin 0 1 0.0078125 0.559
@@ -498,7 +504,7 @@ param ENV2.TYPE "TYPE" choice lin 0 1 1 0
 opt ENV2.TYPE 0 "A"
 opt ENV2.TYPE 1 "B"
 OK
-page 13 E3 of 18
+page 14 E3 of 19
 panel ENV3 A-FAST
 param ENV3.ATK "ATTACK" cont lin 0 1 0.0078125 0.189
 param ENV3.DEC "DECAY" cont lin 0 1 0.0078125 0.559
@@ -587,7 +593,7 @@ param ENV3.TYPE "TYPE" choice lin 0 1 1 0
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 OK
-page 14 SPD of 18
+page 15 SPD of 19
 panel SPD -
 param ENV1.SPEED "E1 SPEED" choice lin 0 2 1 1
 opt ENV1.SPEED 0 "FAST"
@@ -614,7 +620,7 @@ opt ENV3.HOLD 0 "OFF"
 opt ENV3.HOLD 1 "AHDSR"
 opt ENV3.HOLD 2 "GATE EXT"
 OK
-page 15 L1 of 18
+page 16 L1 of 19
 panel LFO1 CLASSIC
 param LFO1.RATE "RATE" cont lin 0.01 20 0.15 1
 param LFO1.SHAPE "SHAPE" choice lin 0 4 1 0
@@ -654,7 +660,7 @@ param LFO1.TYPE "TYPE" choice lin 0 1 1 0
 opt LFO1.TYPE 0 "CLASSIC"
 opt LFO1.TYPE 1 "FUNC"
 OK
-page 16 L2 of 18
+page 17 L2 of 19
 panel LFO2 CLASSIC
 param LFO2.RATE "RATE" cont lin 0.01 20 0.15 1
 param LFO2.SHAPE "SHAPE" choice lin 0 4 1 0
@@ -694,7 +700,7 @@ param LFO2.TYPE "TYPE" choice lin 0 1 1 0
 opt LFO2.TYPE 0 "CLASSIC"
 opt LFO2.TYPE 1 "FUNC"
 OK
-page 17 L3 of 18
+page 18 L3 of 19
 panel LFO3 CLASSIC
 param LFO3.RATE "RATE" cont lin 0.01 20 0.15 1
 param LFO3.SHAPE "SHAPE" choice lin 0 4 1 0

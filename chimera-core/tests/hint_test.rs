@@ -714,6 +714,7 @@ fn focus_hint_is(ui: &UiState, want: Hint) -> bool {
 fn chorus_send_hint_follows_the_project_chorus() {
     let amp = |ui: &mut UiState| {
         screen::plus(ui, 3);
+        feed(ui, Input::press(chimera_hal::ButtonId::Edit)); // AMP › STEREO
         feed(ui, Input::press(chimera_hal::ButtonId::Edit)); // AMP › SENDS
         feed(ui, Input::turn(A, 1)); // the CHORUS cell
     };

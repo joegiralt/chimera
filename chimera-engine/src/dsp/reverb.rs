@@ -101,6 +101,12 @@ pub struct ReverbParams {
     pub sync: RevSync,
     /// HALL's DENSITY: its taps a side, 3 → 8.
     pub density: f32,
+    /// REV › DUCK's AMOUNT (ADR 0295), 0..1: how far the return goes down
+    /// under its own input; 0 none.
+    pub duck: f32,
+    /// REV › DUCK's RELEASE, 0..1 on GLIDE TIME's law (1 ms – 2 s): how
+    /// fast it comes back.
+    pub duck_release: f32,
 }
 
 impl ReverbParams {
@@ -118,8 +124,13 @@ impl ReverbParams {
         rate: RATE_DEFAULT,
         sync: RevSync::Off,
         density: DENSITY_DEFAULT,
+        duck: 0.0,
+        duck_release: DUCK_RELEASE_DEFAULT,
     };
 }
+
+/// RELEASE's default: 96/128 on GLIDE TIME's law, about 300 ms (ADR 0295).
+pub const DUCK_RELEASE_DEFAULT: f32 = 96.0 / 128.0;
 
 impl Default for ReverbParams {
     fn default() -> Self {
@@ -776,6 +787,9 @@ impl ReverbParams {
     pub const RATE: ParamId = ParamId(12);
     pub const SYNC: ParamId = ParamId(13);
     pub const DENSITY: ParamId = ParamId(14);
+    /// REV › DUCK (ADR 0295).
+    pub const DUCK: ParamId = ParamId(15);
+    pub const DUCK_RELEASE: ParamId = ParamId(16);
 
     /// What the ring reads.
     pub fn controls(&self) -> RingControls {
@@ -848,7 +862,7 @@ const REV: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
 
 /// The reverb runs outside `Voice`: nothing is modulatable. Labels are the
 /// static ones; each TYPE's panel names its slots (`ui::reverb_panel`).
-pub static REVERB_SPECS: [ParamSpec; 13] = [
+pub static REVERB_SPECS: [ParamSpec; 15] = [
     ParamSpec::choice(
         6,
         "TYPE",
@@ -1016,6 +1030,31 @@ pub static REVERB_SPECS: [ParamSpec; 13] = [
     .ident("DENSITY")
     .short("DENS")
     .glyph(REV),
+    // REV › DUCK (ADR 0295): AMOUNT and RELEASE on its page.
+    ParamSpec::continuous(
+        15,
+        "DUCK",
+        ValFmt::Law(Law::Pct),
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DUCK"),
+    ParamSpec::continuous(
+        16,
+        "RELEASE",
+        ValFmt::Law(Law::GlideTime),
+        0.0,
+        1.0,
+        DUCK_RELEASE_DEFAULT,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DUCK_RELEASE"),
 ];
 
 impl Block for ReverbParams {
@@ -1040,6 +1079,8 @@ impl Block for ReverbParams {
             Self::RATE => self.rate,
             Self::SYNC => self.sync as u8 as f32,
             Self::DENSITY => self.density,
+            Self::DUCK => self.duck,
+            Self::DUCK_RELEASE => self.duck_release,
             _ => 0.0,
         }
     }
@@ -1062,6 +1103,8 @@ impl Block for ReverbParams {
             Self::RATE => self.rate = v,
             Self::SYNC => self.sync = RevSync::at(v),
             Self::DENSITY => self.density = v,
+            Self::DUCK => self.duck = v,
+            Self::DUCK_RELEASE => self.duck_release = v,
             _ => {}
         }
     }

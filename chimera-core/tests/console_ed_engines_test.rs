@@ -552,7 +552,15 @@ fn longest_line(f: &mut Fake, p: &[String]) -> usize {
 ///   (every step where it has fewer);
 /// - pad 12's lines are each pad's longest: its address tokens are the
 ///   longest, and its texts are any pad's;
-/// - the Part's own lines hold at most a cell's 32-byte text.
+/// - the Part's own lines hold at most a cell's 32-byte text;
+/// - each value sits on its param's steps, as a knob, the editor's
+///   controls and INIT put it (the points `longest_line` measures). `ed
+///   get` prints a stored value in the fewest decimals that read back
+///   exactly (#1035): on a step that is the step's own few, but a value
+///   between steps (an NRPN place, a typed `ed set`) prints up to nine
+///   significant digits, and one under 1e-7 more still (46 decimals at
+///   the very most). An answer that outgrew the bound that way is refused
+///   whole (`ERR ed since too large`, ADR 0285), never cut.
 ///
 /// Each address's line is maximised over its values, each pad over its
 /// machine and kind, each panel over its variants. A diff of every value
@@ -610,15 +618,17 @@ fn the_worst_drum_answer_fits_one_answer() {
     }
     let per_pad = pad + knobs + filter;
     // The Part's own lines: `val <addr> <norm> <stored> "<text>"`, the
-    // norm at most 9 characters, the stored value its spec's widest, the
-    // text at most a cell's 32 bytes.
+    // norm at most 9 characters, the stored value its spec's widest (a
+    // sign, its whole digits, the point and nine decimals: its own nine
+    // significant digits, more than any step's), the text at most a
+    // cell's 32 bytes.
     let part: usize = {
         let mut seen = BTreeSet::new();
         all.iter()
             .filter(|p| !p[1].starts_with("PAD") && seen.insert(p[1].clone()))
             .map(|p| {
                 let wide =
-                    |v: &str| v.trim_start_matches('-').split('.').next().unwrap().len() + 1 + 8;
+                    |v: &str| v.trim_start_matches('-').split('.').next().unwrap().len() + 1 + 10;
                 let stored = wide(&p[5]).max(wide(&p[6]));
                 "val ".len() + p[1].len() + 1 + 9 + 1 + stored + 2 + 32 + 2
             })

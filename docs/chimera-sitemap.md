@@ -39,7 +39,7 @@ VA      VA ── FLT ── AMP ── MOD
         └ OSC1, OSC2, NOISE, PIT
 
 shared  FLT └ FMD (FILTER MOD), FX, JACK
-        AMP └ SENDS
+        AMP └ STEREO, SENDS
         MOD   MTX (matrix) └ E1 E2 E3, SPD, L1 L2 L3
 ```
 
@@ -90,7 +90,8 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 | FMD | ENV AMT · KEYBOARD · FREQ MOD · FDBK (feedback) · RES MOD, F empty. FREQ MOD and RES MOD read the sources set on JACK. On SEM: F is OUTPUT, MODE (the MODE knob's sweep) or BP (band-pass) |
 | FX | INPUT (the filter's input level) · the FX type's three pots · MIX · STABILITY (on the 2040, LADDER and SEM). SOFT: DRIVE · TONE · LEVEL. FOLD: FOLD · SYMMETRY · LEVEL. OFF: dashes, MIX dimmed |
 | JACK | FREQ SRC in C and RES SRC in E: the sources FREQ MOD and RES MOD read |
-| AMP | VEL (the VCA's velocity) · LPG · DECAY · STRIKE, E and F empty. LPG, DECAY and STRIKE turn the VCA into a low-pass gate; all three at 0 is a plain VCA. LPG ties darkening to gain, so quieter is darker. DECAY is how slowly the gate closes. STRIKE pings the gate at each note-on, as hard as the note is played: an accent over the envelope into VCA, which a held note falls back to; with no route into VCA the strike alone plays it at 1. VEL scales the routes into VCA |
+| AMP | VEL (the VCA's velocity) · LPG · DECAY · STRIKE · BASE, F empty. LPG, DECAY and STRIKE turn the VCA into a low-pass gate; all three at 0 is a plain VCA. LPG ties darkening to gain, so quieter is darker. DECAY is how slowly the gate closes. STRIKE pings the gate at each note-on, as hard as the note is played: an accent over the envelope into VCA, which a held note falls back to; with no route into VCA the strike alone plays it at 1. VEL scales the routes into VCA. Routes into VCA are the amp: they replace the engine's own contour, and their sum starts at BASE and stops at full. BASE 127 with PRESS at −64 plays the engine's own contour and ducks it under pressure; BASE 64 with PRESS at +63 swells it; BASE 0 with PRESS alone is silent until pressed. On ALGO and MODAL a BASE above 0 keeps the carriers' or the resonator's own tail after key up. Until a route exists, VEL and BASE are dimmed, the band on BASE saying NEEDS A ROUTE INTO VCA. In the matrix, the VCA column says so on an empty cell: VCA: ROUTES REPLACE CONTOUR, or with an ENV routed, VCA: SUM STARTS AT AMP BASE |
+| STEREO | PAN · WIDTH, C-F empty. PAN places each note of ALGO, MODAL, VA and TAPE between the Part's outputs (C the middle, L64 hard left, R63 hard right), under the Part's own PAN; it is a destination (MIX + PLUS on it primes it in the matrix), so an LFO, an envelope, VEL or NOTE moves each note on its own. A note set or moved off the middle sends its middle to the effects. WIDTH scales the Part's stereo: 0 folds every panned note (and on DRUM every panned pad) to the middle, 64 plays them as panned, 127 spreads them twice as wide, past the outputs; left plus right never changes. A turn of WIDTH glides. The band says PLACES EACH NOTE, ROUTABLE on PAN and 0 MONO, 64 AS PANNED, 127 WIDE on WIDTH. DRUM's pads keep their own PAN: DRUM has no STEREO page, and WIDTH is F on its AMP › GATE |
 | SENDS | CHORUS · DELAY · REVERB (the three sends), the mixer's SENDS page |
 
 ### PIT
@@ -111,10 +112,11 @@ FLT (the filter's response curve, with CUTOFF and RES), MST, E1-E3, SPD, ORBIT's
 PRT ── SND ── CHR ── DLY ── REV ── MST
                       │      │      │
                       CHAR,  MORE,  LVL
-                      GRAIN  MORE 2
+                      GRAIN  DUCK,
+                             MORE 2
 ```
 
-Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. CHR: TYPE (OFF, I, II, I+II, FLANGER, PHASER), RATE, DEPTH, MIX. I, II and I+II are the Juno-60's chorus buttons; FLANGER is a short swept delay fed back on itself, PHASER six all-passes a side swept and fed back. Each returns the effect alone, so the notches come with the dry beside it: the CHORUS send sets how deep they cut. RATE and DEPTH set each TYPE's sweep. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; below it CHAR (TAPE's MECHANICS and SAT) and GRAIN (SIZE, DENSITY, PITCH, TEXTURE), each heard under its TYPE and dimmed under the other, the band saying TAPE TYPE ONLY or GRAIN TYPE ONLY. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE. EDIT from PRT or SND goes down to the Sound browser.
+Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. Its band shows each Part's LEVEL bar and pan dot; beside each LEVEL bar a thin live meter shows what the Part plays after its EQ and before LEVEL, so a Part pulled down still reads (foot −48 dB, top 0 dB; it falls 20 dB a second, its peak a bright tick held a second; its top lights red when the Part's bus passes full scale). A small square right of a Part's number is lit while a key is held on its MIDI channel (for an MPE zone, on any of its channels), so a Part that hears notes but plays nothing stands out. The meters run only while PRT, VOICES or EQ is up. SND: the three send levels. CHR: TYPE (OFF, I, II, I+II, FLANGER, PHASER), RATE, DEPTH, MIX. I, II and I+II are the Juno-60's chorus buttons; FLANGER is a short swept delay fed back on itself, PHASER six all-passes a side swept and fed back. Each returns the effect alone, so the notches come with the dry beside it: the CHORUS send sets how deep they cut. RATE and DEPTH set each TYPE's sweep. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; below it CHAR (TAPE's MECHANICS and SAT) and GRAIN (SIZE, DENSITY, PITCH, TEXTURE), each heard under its TYPE and dimmed under the other, the band saying TAPE TYPE ONLY or GRAIN TYPE ONLY. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE. REV › DUCK, under every TYPE: AMOUNT and RELEASE turn the reverb's return down while its own input is loud, so a big reverb doesn't smear a pluck's attack, and bring the tail back in the gaps. The input is what the reverb hears: the Parts' REVERB sends and the delay's REV send. AMOUNT 0 is no duck; at 127 a loud input (−6 dB and up) takes the return 30 dB down, a quieter one less, nothing below −42 dB. RELEASE (1 ms to 2 s) is how long the tail takes to come all the way back once the input stops. EDIT from PRT or SND goes down to the Sound browser.
 
 ---
 

@@ -107,8 +107,12 @@ pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
     // ALGO's D2 is 112 B over since the typed bindings (ADR 0217: a
     // map grew 65 B in each of 7 Sounds): 128 B off is the least that links;
     // 384 B more for MPE's (ADR 0252: SLIDE's matrix row, each voice's own
-    // bend and slide).
-    5632
+    // bend and slide); 128 B more for AMP's BASE, a knob a Part (ADR 0292);
+    // 64 B more for PRT's meters' UI state (ADR 0293); 128 B more for
+    // AMP › STEREO, 96 B over: PAN a knob a Part, the WIDTHs' state and
+    // each voice's played WIDTH (ADR 0294); 128 B more, 96 B over: each
+    // voice's last PAN and BASE, kept from a retrigger (ADR 0294).
+    5184
 } else {
     6144
 };
@@ -830,8 +834,8 @@ fn hot_res(p: &mut PartAudio) {
     p.params.filter.level = 0.5;
 }
 
-/// Destinations no voice bills a path for: MORPH, OUT LEVEL, PAN, the
-/// three sends and AMP's VEL.
+/// Destinations no voice bills a path for: MORPH, OUT LEVEL, PAN (its
+/// split runs, unbilled, ADR 0294), the three sends and AMP's VEL.
 fn quiet_dests() -> [ParamAddr; 7] {
     let out = |q| ParamAddr::new(BlockRef::Out, q);
     [

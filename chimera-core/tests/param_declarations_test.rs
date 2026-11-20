@@ -331,6 +331,8 @@ const OWN_IN_SOUND: &[&str] = &[
     "Out CHORUS",
     "Out DELAY",
     "Out REVERB",
+    // WIDTH: the Part's stage eases it over 20 ms (ADR 0294).
+    "Out WIDTH",
     // STRETCH's grains read these as each starts (ADR 0204).
     "TapeEngine LENGTH",
     "TapeEngine GRAIN",
@@ -370,6 +372,10 @@ const OWN_OUTSIDE: &[&str] = &[
     "Reverb SMEAR",
     "Reverb RATE",
     "Reverb DENSITY",
+    // REV › DUCK (ADR 0295): AMOUNT eased over 20 ms, the gain ramped a
+    // block; RELEASE the follower's fall.
+    "Reverb DUCK",
+    "Reverb RELEASE",
     // The master tape ramps its smoothed controls across each block.
     "Tape DRIVE",
     "Tape TONE",
