@@ -13,13 +13,13 @@ What the code had (origin/0.4 a1dd3a9c): a Part's chain is a `PartChain` picked 
 2. **OPS lays OSC out by operator**: OP1 is the node's home, OP2–OP6 follow, then WAVE and the parameter pages in their own order (`ALGO_OPS_CHAIN`); with a formant operator FORMANT follows WAVE, as it does today (`ALGO_OPS_FORMANT_CHAIN`). The node still reads OSC on the map (`ChainBlock::map`). The other four nodes are the same. Both chains are built from the PARAMETER ones' tables at compile time, so a page added to one is in both; a test holds that both hold the same pages, each once.
 3. **Two more `PartChain`s**, `AlgoOps` and `AlgoOpsFormant`; `PartChain::ordered(first)` swaps ALGO's chains for their twins. `UiState` keeps the order its Parts' chains are laid out in (`algo_first`) and takes the theme's up at the top of each pass (`order_pages`): the cell, a card's SYSTEM or the editor may have changed it. The page on show is kept by its id; each Part's remembered page re-resolves by id as it does across a formant change.
 4. **No page is skipped or dimmed.** The ticket left "skip or dim operator pages whose LEVEL is 0 and which modulate nothing" to design. My call: neither. A skipped page moves every later page's place under the hand, and an operator at LEVEL 0 is exactly the page one opens to turn it up. Dimming its name in the row is possible later (it needs the Sound in the map's draw, bank 1) and is left for the owner to ask for.
+6. **The operator-first tables are bank 2's** (the review's call, for bank 1): `notes::ALGO_OPS_CHAIN` and its formant twin, handed out through `UiDoor::notes` (`Ask::OpsChain`). `PartChain::ordered` makes the twins only while the door answers, and `PartChain::def` reads PARAMS' chain for a twin if it ever closes, so with bank 2 closed FIRST is PARAMS whatever it says and every place is on the chain it was made for (`algo_pages_door_test`).
 5. **The editor is unaffected**: `ed` describes `ALGO_FORMANT_CHAIN`, every page any Sound shows, whatever FIRST says.
 
 ## Alternatives considered
 - **A Sound field**: the ticket rules it out; the order is how a player works, not part of a patch.
 - **Reordering at run time** (one chain, a permutation in `NavCtx`): `PageAt` is a checked place on a static chain (ADR 0066's compile-time home, `refocus` by id); a second static chain keeps all of that and costs about 400 B of tables.
 - **OP1 as home with WAVE's page dropped** (the op pages hold WAVE): then the orders would not hold the same pages.
-- **The chains' tables in bank 2**: navigation runs with bank 2 closed, and reads them.
 
 ## Consequences
 - Bank 1: the two chains' tables, the page, the leaf and its row, the spec and its arms, `ordered` and `order_pages`: closed-door data and the navigation's own code (measured below).
@@ -27,34 +27,32 @@ What the code had (origin/0.4 a1dd3a9c): a Part's chain is a `PartChain` picked 
 - Guide: PERSONALIZE › ALGO PAGES and OSC in OPERATOR order need annotated screenshots; `docs/chimera-sitemap.md` describes both.
 
 ## Measurements
-The batch (ADRs 0298, 0299 and this one) was built and measured once, as one branch. Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 a1dd3a9c against the branch, each set built in both trees; each budget line is raised by exactly its set's measured change, never the slack.
+The batch (ADRs 0298, 0299 and this one) was measured as one branch, merged with origin/0.4 fda23e52 (ADR 0301). Release builds, `CHIMERA_STAMP_CLEAN=1`, every budgeted set. Each line is set to the size measured; its change is counted from 0.4's line, which the file's comment names (`from`), so line = from + change on every line.
 
-| Set | Bank 1 (B) | Bank 2 used (B) |
-|---|---:|---:|
-| orbit | +2,444 | +1,056 |
-| default | +2,308 | +1,056 |
-| bank2-gate | +2,292 | +1,024 |
-| orbit,usb-config-writer | +2,436 |  |
-| fault-inject | +2,348 |  |
-| bench-algo | +2,444 |  |
-| bench-algo,master-tape | +2,460 |  |
-| bench-routing | +2,436 |  |
-| bench-memory | +2,420 |  |
-| bench-stress | +2,452 |  |
-| bench-orbit | +2,468 |  |
-| bench-tape | +2,300 |  |
-| filter-probes | +2,348 |  |
+| Set | Bank 1 line (B) | Change | Bank 2 used (B) | Change |
+|---|---:|---:|---:|---:|
+| orbit | 902,840 | +2,220 | 557,056 | +1,888 |
+| default | 888,812 | +2,052 | 528,928 | +1,824 |
+| bank2-gate | 893,308 | +2,044 | 528,928 | +1,856 |
+| orbit,usb-config-writer | 897,688 | +2,204 | | |
+| fault-inject | 844,936 | +2,076 | | |
+| bench-algo | 886,448 | +2,204 | | |
+| bench-algo,master-tape | 864,636 | +2,228 | | |
+| bench-routing | 885,816 | +2,204 | | |
+| bench-memory | 888,400 | +2,188 | | |
+| bench-stress | 891,384 | +2,196 | | |
+| bench-orbit | 862,232 | +2,220 | | |
+| bench-tape | 852,000 | +2,052 | | |
+| filter-probes | 845,856 | +2,100 | | |
 
-ORBIT after the batch: bank 1 902,744 B; bank 2 554,304 B used, S0-S3 7,744 B free (it was 7,776: the old groups' own churn), S4-S5 223,328 B free.
+ORBIT after the batch: bank 1 902,840 B; bank 2 557,056 B used, S0-S3 7,296 B free, S4-S5 221,024 B free. Against 0.4's own measured ORBIT bank 1 (900,604 B, ADR 0301) the batch adds 2,236 B.
 
-Bank 1's growth on ORBIT, by symbol (`rust-nm`, base against branch; the rest is alignment):
-- **#985, about 1.2 KB:** the two chains' tables (`ALGO_OPS_*`, 404 B), `SYS_ALGO_PAGES` (96 B), THEME's eleventh spec (72 B) and its arms (about 140 B), the leaf and its row (76 B), `order_pages`, `chain_of` and `ordered` (212 B), and `chimera_board::synth` re-laid round the theme's extra byte (112 B, as ADR 0295 met).
-- **#990, about 0.3 KB:** `AlgoOpParams::write` and `get` (FDBK's tenths), `fmt_val`'s arm, `quantize` by step (one rounding for stepped and choice, so `quantized`, `moved` and `op_env` stay as they were), `snap_target`, PARAM OUT's index, `AlgoLive::from_params`.
-- **#956, #986, #987, #988, #989, about 0.6 KB:** the three door calls (`band_label` 100 B; the band's ratio and the chart's loops inside `draw_region_with_def`, 204 B), the chart's key (`region_data`, 76 B), `kinds::reads` out of line now bank 2 asks it (56 B), the pages' names and row words.
+Where bank 1's growth is, by symbol on ORBIT (`rust-nm`, taken before the review's round; the rest is alignment):
+- **#985, about 0.8 KB:** `SYS_ALGO_PAGES` (96 B), THEME's eleventh spec (72 B) and its arms (about 140 B), the leaf and its row (76 B), `order_pages`, `chain_of`, `ordered` and the door call for the chains, and `chimera_board::synth` re-laid round the theme's extra byte (112 B, as ADR 0295 met). The two chains' tables (404 B) are bank 2's since the review: that round, with the loops' link mask and FDBK's hint in it, took the batch from +2,444 B to +2,236 B on ORBIT.
+- **#990, about 0.3 KB:** `AlgoOpParams::write` and `get`, `fmt_val`'s arm, `quantize` by step, `snap_target`, PARAM OUT's index, `AlgoLive::from_params`.
+- **#956, #986, #987, #988, #989, about 0.6 KB:** the three door calls (the band's label and ratio, the chart's loops and the links handed to them), `kinds::reads` out of line now bank 2 asks it, the pages' names and row words.
 
-Everything else the tickets draw or say is bank 2's (`ui::notes`, S4): +1,024 B.
-
-**The owner's line:** ORBIT's bank 1 had about 17 KB left; the batch takes 2.4 KB of it, half for #985. If that is too much for a page order, #985's chains could be handed out by bank 2 (`PartChain::def` through the door, PARAMS' chain while it is closed), about 0.4 KB back, at the cost of navigation asking a door for its tables.
+Everything else the tickets draw or say is bank 2's (`ui::notes`, `ui::feel`, S4).
 
 ## Sources
 - #985 (private issue #985); Elektronauts PreenFM3 thread, post 251.

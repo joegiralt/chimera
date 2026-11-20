@@ -378,6 +378,36 @@ fn the_ratio_shows_on_the_three_tuning_cells_only() {
     assert_eq!(chimera_core::ui::view::ratio_note(part, &s), None);
 }
 
+/// The ratio reaches the screen: FINE's band draws it where the hint was.
+#[test]
+fn the_ratio_is_drawn_in_fines_band() {
+    use chimera_core::ui::block_registry::ALGO_FINE;
+    let mut ui = ui();
+    to_osc_sub(&mut ui, &ALGO_FINE);
+    feed(&mut ui, Input::turn(EncoderId::A, 5));
+    settle(&mut ui);
+    let sound = &ui.project().part(PartId::ALL[0]).sound;
+    let line = notes::ratio(&sound.params.algo, Op::A, AlgoOpParams::FINE).unwrap();
+    assert_eq!(line.as_str(), "RATIO 1.31");
+    let shot = render_ui(&ui);
+    let mut want = Fb::new();
+    draw::text_tracked(
+        &mut want,
+        &theme::FONT_LABEL,
+        line.as_str(),
+        theme::MARGIN_X,
+        chimera_core::ui::hint::FOCUS_Y,
+        theme::MID,
+        chimera_core::ui::source_cell::tracking(line.as_str()),
+    );
+    let lit: Vec<_> = (0..H as i32)
+        .flat_map(|y| (0..W as i32).map(move |x| (x, y)))
+        .filter(|&(x, y)| want.at(x, y) != Rgb565::BLACK)
+        .collect();
+    assert!(!lit.is_empty());
+    assert!(lit.iter().all(|&(x, y)| shot.at(x, y) == want.at(x, y)));
+}
+
 // #990: FDBK in tenths.
 
 use chimera_core::dsp::algo::params::Fdbk;
@@ -592,7 +622,7 @@ fn an_operator_that_feeds_back_wears_a_loop() {
             let looped = chart(&p);
             let px = moved(&plain, &looped);
             assert!(px.len() >= 6, "{alg:?} OP{}: {px:?}", op.index() + 1);
-            let (cx, cy) = notes::loop_centre(&at, op);
+            let (cx, cy) = notes::loop_centre(&at, op, &links_of(alg));
             for &(x, y) in &px {
                 assert!(
                     (x - cx).abs() <= notes::LOOP_R && (y - cy).abs() <= notes::LOOP_R,
@@ -637,39 +667,75 @@ fn the_loop_follows_the_amount_and_the_kind() {
     assert!(moved(&chart(&p), &chart(&algo_on(AlgoId::T1))).is_empty());
 }
 
-/// A node at the band's right edge wears its loop on the left.
+/// The links `alg`'s chart draws, as `algo_diagram` hands them on.
+fn links_of(alg: AlgoId) -> [u8; 6] {
+    alg.algorithm().mods
+}
+
+/// A node at the band's right edge wears its loop on the left; and on
+/// every algorithm every operator's loop stays inside the band, both
+/// ways, and lands on no link's lit pixel.
 #[test]
-fn a_loop_stays_inside_the_band() {
+fn a_loop_stays_inside_the_band_and_off_the_links() {
+    use chimera_core::dsp::algo::algorithms::ALGO_COUNT;
     let mut at = alg_layout::layout(AlgoId::A1.algorithm());
     at.pos[0].0 = theme::VIZ_RIGHT - at.r;
-    let (cx, _) = notes::loop_centre(&at, Op::A);
+    let (cx, _) = notes::loop_centre(&at, Op::A, &[0; 6]);
     assert!(cx + notes::LOOP_R <= theme::VIZ_RIGHT);
     assert!(cx < at.pos[0].0);
-    for alg in chimera_core::dsp::algo::algorithms::ALGORITHMS.iter() {
-        let at = alg_layout::layout(alg);
+    for i in 0..ALGO_COUNT as u8 {
+        let alg = AlgoId::from_index(i).unwrap();
+        let name = alg.algorithm().name;
+        let at = alg_layout::layout(alg.algorithm());
+        let plain = chart(&algo_on(alg));
         for op in Op::ALL {
-            let (cx, _) = notes::loop_centre(&at, op);
-            assert!(cx - notes::LOOP_R >= theme::VIZ_LEFT, "{}", alg.name);
-            assert!(cx + notes::LOOP_R <= theme::VIZ_RIGHT, "{}", alg.name);
+            let (cx, cy) = notes::loop_centre(&at, op, &links_of(alg));
+            assert!(cx - notes::LOOP_R >= theme::VIZ_LEFT, "{name}");
+            assert!(cx + notes::LOOP_R <= theme::VIZ_RIGHT, "{name}");
+            assert!(cy - notes::LOOP_R > theme::VIZ_BAND_TOP, "{name}");
+            assert!(cy + notes::LOOP_R < theme::VIZ_BAND_BOTTOM, "{name}");
+            let mut p = algo_on(alg);
+            p.ops[op.index()].feedback = Fdbk::MAX;
+            let looped = chart(&p);
+            let ear: Vec<_> = moved(&plain, &looped);
+            assert!(ear.len() >= 6, "{name} OP{}: {ear:?}", op.index() + 1);
+            for (x, y) in ear {
+                assert_eq!(looped.at(x, y), theme::ACCENT);
+                // Nothing was lit there: no link's MID or FAINT.
+                assert_eq!(
+                    plain.at(x, y),
+                    Rgb565::BLACK,
+                    "{name} OP{}: the loop is over a link at ({x}, {y})",
+                    op.index() + 1
+                );
+            }
         }
     }
 }
 
-/// Live: on FBK's page the chart is the band, and a turn draws the loop.
+/// FBK's page keeps the live scope (the owner's call); back on ALG's
+/// page the chart wears the loop of the operator just turned.
 #[test]
-fn the_loop_appears_as_fdbk_is_turned() {
-    assert_eq!(ALGO_FEEDBACK.viz, VizType::AlgoDiagram);
-    let mut ui = ui();
-    to_osc_sub(&mut ui, &ALGO_FEEDBACK);
-    settle(&mut ui);
-    let before = render_ui(&ui);
-    feed(&mut ui, Input::turn(EncoderId::B, 1));
-    settle(&mut ui);
-    let after = render_ui(&ui);
-    let algo = &ui.project().part(PartId::ALL[0]).sound.params.algo;
-    assert_eq!(Loop::of(algo, Op::B), Loop::Soft);
+fn the_loop_is_on_the_chart_after_fdbk_is_turned() {
+    assert_eq!(ALGO_FEEDBACK.viz, VizType::None);
+    let alg_after = |turn: i8| {
+        let mut ui = ui();
+        to_osc_sub(&mut ui, &ALGO_FEEDBACK);
+        feed(&mut ui, Input::turn(EncoderId::B, turn));
+        feed(&mut ui, Input::press(chimera_hal::ButtonId::Minus));
+        assert_eq!(
+            ui.page_def().id,
+            chimera_core::ui::block_registry::ALGO_ALG.id
+        );
+        settle(&mut ui);
+        let algo = ui.project().part(PartId::ALL[0]).sound.params.algo;
+        (render_ui(&ui), algo)
+    };
+    let (before, _) = alg_after(0);
+    let (after, algo) = alg_after(1);
+    assert_eq!(Loop::of(&algo, Op::B), Loop::Soft);
     let at = alg_layout::layout(algo.algs().0.algorithm());
-    let (cx, cy) = notes::loop_centre(&at, Op::B);
+    let (cx, cy) = notes::loop_centre(&at, Op::B, &algo.algs().0.algorithm().mods);
     let band: Vec<_> = moved(&before, &after)
         .into_iter()
         .filter(|&(_, y)| (theme::VIZ_BAND_TOP..theme::VIZ_BAND_BOTTOM).contains(&y))
@@ -680,4 +746,21 @@ fn the_loop_appears_as_fdbk_is_turned() {
             .all(|&(x, y)| (x - cx).abs() <= notes::LOOP_R && (y - cy).abs() <= notes::LOOP_R),
         "{band:?}"
     );
+}
+
+/// FDBK's band says its two turns: MIX for the TX81Z's whole numbers,
+/// SEQ for a tenth a detent (ADR 0299).
+#[test]
+fn fdbks_band_hints_the_whole_step_turn() {
+    let mut ui = ui();
+    to_osc_sub(&mut ui, &ALGO_FEEDBACK);
+    feed(&mut ui, Input::turn(EncoderId::C, 1));
+    let h = ui.focus_hint_for_test();
+    assert_eq!(h[0], chimera_core::ui::hint::Gesture("MIX+TURN", "WHOLE"));
+    assert_eq!(h[1].0, "SEQ+TURN");
+    assert!(chimera_core::ui::hint::width(h) <= theme::CONTENT_W);
+    // LEVEL's keeps the plain pair.
+    to_osc_sub(&mut ui, &chimera_core::ui::block_registry::ALGO_OP_PAGES[0]);
+    feed(&mut ui, Input::turn(EncoderId::D, -1));
+    assert!(ui.focus_hint_for_test().iter().all(|g| g.0 != "MIX+TURN"));
 }

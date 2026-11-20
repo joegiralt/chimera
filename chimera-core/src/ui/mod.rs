@@ -1337,7 +1337,13 @@ impl UiState {
             .on_route(self.sel_route);
         let ctx = match PartChain::of(sound) {
             PartChain::Drum => ctx.on_drum(),
-            _ => ctx,
+            PartChain::Algo
+            | PartChain::AlgoFormant
+            | PartChain::AlgoOps
+            | PartChain::AlgoOpsFormant
+            | PartChain::Modal
+            | PartChain::Tape
+            | PartChain::Va => ctx,
         };
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),

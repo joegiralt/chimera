@@ -709,10 +709,14 @@ pub static ALGO_D1L: BlockDef = env_group(51, "Decay 1 Lvl", "D1L", AlgoOpParams
 pub static ALGO_D2R: BlockDef = env_group(52, "Decay 2 Rate", "D2R", AlgoOpParams::D2R);
 pub static ALGO_RR: BlockDef = env_group(53, "Release Rate", "RR", AlgoOpParams::RR);
 pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
-/// FEEDBACK's band is the algorithm's chart: each operator's loop appears
-/// as its FDBK is turned (ADR 0298).
+/// What FBK's group page shows in its band: the live scope (the owner's
+/// call, 2026-11-20, ADR 0298), where feedback is seen bending the wave.
+/// `VizType::AlgoDiagram` would show the chart and its loops here instead:
+/// the one line to flip.
+pub const FBK_BAND: VizType = VizType::None;
+
 pub static ALGO_FEEDBACK: BlockDef = BlockDef {
-    viz: VizType::AlgoDiagram,
+    viz: FBK_BAND,
     ..group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK)
 };
 
@@ -776,7 +780,7 @@ pub use crate::ui::op_page::ALGO_OP_PAGES;
 
 /// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
 /// right after their group (sub-pages are one level deep), then OP1–OP6.
-static ALGO_OSC_SUB_PAGES: [&BlockDef; 18] = [
+pub(crate) static ALGO_OSC_SUB_PAGES: [&BlockDef; 18] = [
     &ALGO_COARSE,
     &ALGO_FINE,
     &ALGO_DETUNE,
@@ -809,7 +813,7 @@ static ALGO_FORMANT_OSC_SUB_PAGES: [&BlockDef; 19] = {
 };
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
-static ALGO_BLOCKS: [ChainBlock; 5] = [
+pub(crate) static ALGO_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::with_subs(&ALGO_ALG, &[&PITCH]),
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
@@ -837,71 +841,6 @@ static ALGO_FORMANT_BLOCKS: [ChainBlock; 5] = {
 /// ALGO's chain while an operator is a formant or a noise band.
 pub static ALGO_FORMANT_CHAIN: ChainDef2 =
     ChainDef2::new("Algo", &ALGO_FORMANT_BLOCKS, &PART_MOD_SOURCES);
-
-/// The group pages after OSC's home, WAVE.
-const GROUPS: usize = 12;
-const _: () = assert!(ALGO_OSC_SUB_PAGES.len() == GROUPS + ALGO_OP_PAGES.len());
-
-/// ALGO PAGES at OPERATOR (ADR 0300): OP1 is OSC's home, OP2–OP6 follow,
-/// then WAVE and the group pages in their order. Every page of
-/// `ALGO_OSC_SUB_PAGES` is here, built from it.
-static ALGO_OPS_OSC_SUB_PAGES: [&BlockDef; 18] = {
-    let mut a = [&ALGO_WAVE; 18];
-    let mut i = 1;
-    while i < ALGO_OP_PAGES.len() {
-        a[i - 1] = &ALGO_OP_PAGES[i];
-        i += 1;
-    }
-    // a[5] is WAVE; the groups follow it.
-    let mut g = 0;
-    while g < GROUPS {
-        a[ALGO_OP_PAGES.len() + g] = ALGO_OSC_SUB_PAGES[g];
-        g += 1;
-    }
-    a
-};
-
-/// `ALGO_OPS_OSC_SUB_PAGES` with the FORMANT page after WAVE, as it
-/// follows WAVE in `ALGO_FORMANT_OSC_SUB_PAGES`.
-static ALGO_OPS_FORMANT_OSC_SUB_PAGES: [&BlockDef; 19] = {
-    let mut a = [&ALGO_FORMANT; 19];
-    let mut i = 0;
-    while i < 18 {
-        a[if i < ALGO_OP_PAGES.len() { i } else { i + 1 }] = ALGO_OPS_OSC_SUB_PAGES[i];
-        i += 1;
-    }
-    a
-};
-
-/// OSC with OP1 for its home, still OSC on the map.
-const fn ops_osc(subs: &'static [&'static BlockDef]) -> ChainBlock {
-    ChainBlock {
-        def: &ALGO_OP_PAGES[0],
-        sub_pages: subs,
-        map: Some(ALGO_WAVE.short),
-    }
-}
-
-const fn with_osc(osc: ChainBlock) -> [ChainBlock; 5] {
-    let mut b = [ALGO_BLOCKS[0]; 5];
-    let mut i = 1;
-    while i < 5 {
-        b[i] = ALGO_BLOCKS[i];
-        i += 1;
-    }
-    b[1] = osc;
-    b
-}
-
-static ALGO_OPS_BLOCKS: [ChainBlock; 5] = with_osc(ops_osc(&ALGO_OPS_OSC_SUB_PAGES));
-static ALGO_OPS_FORMANT_BLOCKS: [ChainBlock; 5] =
-    with_osc(ops_osc(&ALGO_OPS_FORMANT_OSC_SUB_PAGES));
-
-/// ALGO's chain under ALGO PAGES' OPERATOR.
-pub static ALGO_OPS_CHAIN: ChainDef2 = ChainDef2::new("Algo", &ALGO_OPS_BLOCKS, &PART_MOD_SOURCES);
-/// The same while an operator is a formant or a noise band.
-pub static ALGO_OPS_FORMANT_CHAIN: ChainDef2 =
-    ChainDef2::new("Algo", &ALGO_OPS_FORMANT_BLOCKS, &PART_MOD_SOURCES);
 
 static TAPE_SUB_PAGES: [&BlockDef; 2] = [&TAPE_MODEL, &PITCH];
 
@@ -1790,11 +1729,9 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 29 + cfg!(feature = "usb-audio") as usize] = [
+const FIXED: [&ChainDef2; 27 + cfg!(feature = "usb-audio") as usize] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
-    &ALGO_OPS_CHAIN,
-    &ALGO_OPS_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &TAPE_CHAIN,
     &VA_CHAIN,

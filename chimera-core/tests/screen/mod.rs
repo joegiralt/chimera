@@ -1390,15 +1390,28 @@ pub const CASES: &[ScreenCase] = &[
         }
         feed(ui, Input::turn(EncoderId::D, 3));
     }),
-    // FBK's band is the chart (ADR 0298): OP1 at 0.8 wears a soft loop,
-    // OP4 at 4.5 a bright one; the cell in focus reads to a tenth (ADR 0299).
-    ("algo_fbk_loops", |ui| {
+    // FINE on OP2 with DETUN off 0: the band reads the ratio and the cents
+    // (ADR 0298).
+    ("algo_fine_ratio", |ui| {
+        use chimera_core::ui::block_registry::{ALGO_DETUNE, ALGO_FINE};
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_FINE);
+        to_osc_sub(ui, &ALGO_DETUNE);
+        feed(ui, Input::turn(EncoderId::B, 2));
+        tap(ui, ButtonId::Seq); // back up to FINE
+        feed(ui, Input::turn(EncoderId::B, 7));
+    }),
+    // ALG's chart after FDBK was turned on FBK's page (ADR 0298): OP1 at
+    // 0.8 wears a soft loop, OP4 at 4.5 a bright one.
+    ("algo_alg_loops", |ui| {
         use chimera_core::ui::block_registry::ALGO_FEEDBACK;
         init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         to_osc_sub(ui, &ALGO_FEEDBACK);
         feed(ui, Input::turn(EncoderId::A, 8));
         feed(ui, Input::turn(EncoderId::D, 45));
+        feed(ui, Input::press(ButtonId::Minus)); // back to ALG
     }),
     // OP3's page on INIT: its envelope and wave in the band.
     ("algo_op_page_3", |ui| {

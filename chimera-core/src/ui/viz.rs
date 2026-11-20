@@ -959,6 +959,8 @@ pub fn algo_diagram<D>(
 {
     let on = |bit: bool| if bit { 1.0 } else { 0.0 };
     let l = alg_layout::blend(&alg_layout::layout(a), &alg_layout::layout(b), morph);
+    // The links drawn: the loops keep clear of them.
+    let mut links = [0u8; OPS];
     for src in 0..OPS {
         for dst in 0..OPS {
             let bit = 1 << dst;
@@ -968,6 +970,7 @@ pub fn algo_diagram<D>(
                 morph,
             );
             if w > 0.0 {
+                links[src] |= bit;
                 let ((x0, y0), (x1, y1)) = (l.pos[src], l.pos[dst]);
                 let c = if w >= 0.5 { theme::MID } else { theme::FAINT };
                 draw::line(d, x0, y0, x1, y1, c, 1);
@@ -979,6 +982,7 @@ pub fn algo_diagram<D>(
             on: &mut crate::ui::tape_strip::On(d),
             algo,
             at: &l,
+            links,
         })
     });
     for (op, &label) in crate::part::NUMERALS[1..=OPS].iter().enumerate() {

@@ -15,10 +15,11 @@ use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::{BlockDef, ChainDef2};
 use chimera_core::ui::block_registry::{
-    ALGO_CHAIN, ALGO_D1R, ALGO_FORMANT, ALGO_FORMANT_CHAIN, ALGO_OP_PAGES, ALGO_OPS_CHAIN,
-    ALGO_OPS_FORMANT_CHAIN, ALGO_WAVE, SYS_ALGO_PAGES,
+    ALGO_CHAIN, ALGO_D1R, ALGO_FORMANT, ALGO_FORMANT_CHAIN, ALGO_OP_PAGES, ALGO_WAVE,
+    SYS_ALGO_PAGES,
 };
 use chimera_core::ui::nav::PartChain;
+use chimera_core::ui::notes::{ALGO_OPS_CHAIN, ALGO_OPS_FORMANT_CHAIN};
 use chimera_core::ui::theme_settings::{AlgoFirst, THEME_SPECS, ThemeSettings};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;

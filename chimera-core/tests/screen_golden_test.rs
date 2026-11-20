@@ -114,11 +114,12 @@ use screen::*;
 // pad's), the mixer's too at rest; a choice cell keeps its own hint.
 // Re-recorded for the ALGO UI batch (ADRs 0298-0300): algo_ar, algo_d1l,
 // algo_d2r, row_osc_mid, row_osc_last (the envelope pages' names in the
-// header, the row and the band, #956, #987); algo_osc_last (FBK's band is
-// the chart, #989); algo_op_page_3, algo_op_page_3_turned (FDBK to a
+// header, the row and the band, #956, #987); algo_osc_last (FBK's hint
+// for its two turns, #990); algo_op_page_3, algo_op_page_3_turned (FDBK to a
 // tenth, #990); sound_browser_pool_full (the dense test Sound keeps a
 // fractional FDBK, 0.1K more); large_settings_personal (ALGO PAGES' row,
-// #985). New: algo_fbk_loops, row_osc_ops, settings_personal_algo.
+// #985). New: algo_alg_loops (the chart's loops, #989), algo_fine_ratio (#986),
+// row_osc_ops, settings_personal_algo.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x6a6639f41cb3937f),
@@ -135,8 +136,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     ("algo_level", 0x4a980303b60457a9),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_osc_last", 0xabc7458aecc960e2),
-    ("algo_fbk_loops", 0xc32964917f7d2545),
+    ("algo_osc_last", 0x483e563823f34a54),
+    ("algo_fine_ratio", 0x1fdba8c160443fdf),
+    ("algo_alg_loops", 0x1fe9de510e3b77d0),
     // New: OP3's page (ADR 0130), the band's envelope and wave, and with
     // its LEVEL cell turned.
     ("algo_op_page_3", 0xdace174b396f04cc),
@@ -219,7 +221,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("row_mod", 0x61ae81a248025efe),
     ("row_osc_mid", 0xcb54bff6693a9f55),
     ("row_osc_last", 0x25dd4ab306c968e1),
-    ("row_osc_ops", 0x61e19f8d1373603f),
+    ("row_osc_ops", 0x28902bd73b5f0e34),
     ("row_amp", 0xd04051edfa5af421),
     // New: VA OSC1 and OSC2 under STACK and ROW; the ROW bar says OSC1 / OSC2, not OSCILLATOR n.
     ("va_osc1", 0x04f0a670e078dcdc),

@@ -645,6 +645,19 @@ impl NavCtx {
     }
 }
 
+/// ALGO's operator-first chain from bank 2 (`notes::ops_chain`); closed,
+/// none.
+fn ops_chain(formant: bool) -> Option<&'static ChainDef2> {
+    let mut out = None;
+    crate::bank2::ui_door(|u| {
+        u.notes(crate::ui::notes::Ask::OpsChain {
+            formant,
+            out: &mut out,
+        })
+    });
+    out
+}
+
 /// A Part's page chain: its engine's, picked per Sound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PartChain {
@@ -670,20 +683,22 @@ impl PartChain {
     }
 
     /// This chain as ALGO PAGES' `first` orders it (ADR 0300): ALGO's
-    /// two chains swap for their operator-first twins, the rest stay.
-    pub const fn ordered(self, first: AlgoFirst) -> PartChain {
-        match (self, first) {
-            (PartChain::Algo | PartChain::AlgoOps, AlgoFirst::Parameter) => PartChain::Algo,
-            (PartChain::Algo | PartChain::AlgoOps, AlgoFirst::Operator) => PartChain::AlgoOps,
-            (PartChain::AlgoFormant | PartChain::AlgoOpsFormant, AlgoFirst::Parameter) => {
-                PartChain::AlgoFormant
-            }
-            (PartChain::AlgoFormant | PartChain::AlgoOpsFormant, AlgoFirst::Operator) => {
-                PartChain::AlgoOpsFormant
-            }
+    /// two chains swap for their operator-first twins, the rest stay. The
+    /// twins' tables are bank 2's: closed, FIRST is PARAMS whatever it
+    /// says, so a place is always on the chain it was made for.
+    pub fn ordered(self, first: AlgoFirst) -> PartChain {
+        let ops = match first {
+            AlgoFirst::Parameter => false,
+            AlgoFirst::Operator => ops_chain(false).is_some(),
+        };
+        match (self, ops) {
+            (PartChain::Algo | PartChain::AlgoOps, false) => PartChain::Algo,
+            (PartChain::Algo | PartChain::AlgoOps, true) => PartChain::AlgoOps,
+            (PartChain::AlgoFormant | PartChain::AlgoOpsFormant, false) => PartChain::AlgoFormant,
+            (PartChain::AlgoFormant | PartChain::AlgoOpsFormant, true) => PartChain::AlgoOpsFormant,
             (
                 c @ (PartChain::Modal | PartChain::Tape | PartChain::Va | PartChain::Drum),
-                AlgoFirst::Parameter | AlgoFirst::Operator,
+                true | false,
             ) => c,
         }
     }
@@ -715,8 +730,11 @@ impl PartChain {
         match self {
             PartChain::Algo => &block_registry::ALGO_CHAIN,
             PartChain::AlgoFormant => &block_registry::ALGO_FORMANT_CHAIN,
-            PartChain::AlgoOps => &block_registry::ALGO_OPS_CHAIN,
-            PartChain::AlgoOpsFormant => &block_registry::ALGO_OPS_FORMANT_CHAIN,
+            // Bank 2's tables; `ordered` makes neither while it is closed.
+            PartChain::AlgoOps => ops_chain(false).unwrap_or(&block_registry::ALGO_CHAIN),
+            PartChain::AlgoOpsFormant => {
+                ops_chain(true).unwrap_or(&block_registry::ALGO_FORMANT_CHAIN)
+            }
             PartChain::Modal => &MODAL_PLUCK_CHAIN,
             PartChain::Tape => &block_registry::TAPE_CHAIN,
             PartChain::Va => &block_registry::VA_CHAIN,

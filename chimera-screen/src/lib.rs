@@ -443,7 +443,9 @@ impl Mirror {
             let pad = how.pad.or(own).unwrap_or(PadId::ALL[0]);
             self.ui.select_pad(p, pad);
         }
-        let chain = PartChain::of(&self.ui.project().part(p).sound).def();
+        let chain = PartChain::of(&self.ui.project().part(p).sound)
+            .ordered(self.ui.theme().algo_first)
+            .def();
         let at = chain.locate(def.id)?;
         self.ui.go_for_test(Location::pages(p, at));
         self.shown = Some(def);

@@ -5,11 +5,13 @@
 //! 1 keeps the stub in `view`. ALGO's operator cells (ADR 0298): the
 //! envelope stages' names in the focus label, RATE SCALE's words and
 //! DECAY 1 LEVEL's under a held decay, the ratio CRSE, FINE and DETUN
-//! come to, the chart's feedback loops.
+//! come to, the chart's feedback loops; ALGO PAGES' operator-first
+//! chains (ADR 0300).
 
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::ParamId;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, Fdbk};
+use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::{kinds, tx};
 use crate::dsp::reverb::ReverbParams;
 use crate::modulation::{FixedCol, ModSource, VCA};
@@ -17,6 +19,8 @@ use crate::params::OutParams;
 use crate::preset::Sound;
 use crate::project::Line;
 use crate::ui::alg_layout::AlgLayout;
+use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
+use crate::ui::block_registry as reg;
 use crate::ui::fmt::{FmtBuf, fixed};
 use crate::ui::hint::{Gesture, Hint};
 use crate::ui::mod_grid::{Col, MatrixState};
@@ -42,11 +46,19 @@ pub enum Ask<'a> {
         param: ParamId,
         out: &'a mut Option<Line>,
     },
-    /// `loops`: the chart's feedback loops, under its nodes.
+    /// `loops`: the chart's feedback loops, under its nodes, clear of
+    /// the `links` drawn (bit `dst` of `links[src]`).
     Loops {
         on: &'a mut dyn Paint,
         algo: &'a AlgoParams,
         at: &'a AlgLayout,
+        links: [u8; OPS],
+    },
+    /// ALGO's chain with OSC laid out by operator (ADR 0300), with
+    /// FORMANT's page or without.
+    OpsChain {
+        formant: bool,
+        out: &'a mut Option<&'static ChainDef2>,
     },
 }
 
@@ -69,7 +81,13 @@ pub(crate) fn ask_in(a: Ask<'_>) {
             param,
             out,
         } => *out = ratio(algo, op, param),
-        Ask::Loops { on, algo, at } => loops(on, algo, at),
+        Ask::Loops {
+            on,
+            algo,
+            at,
+            links,
+        } => loops(on, algo, at, &links),
+        Ask::OpsChain { formant, out } => *out = Some(ops_chain(formant)),
     }
 }
 
@@ -214,7 +232,14 @@ static OP_NAMES: [(ParamId, &str); 6] = [
 
 /// `param`'s name in full, if `OP_NAMES` has one.
 pub fn op_name(param: ParamId) -> Option<&'static str> {
-    OP_NAMES.iter().find(|n| n.0 == param).map(|n| n.1)
+    let mut k = 0;
+    while k < OP_NAMES.len() {
+        if OP_NAMES[k].0 == param {
+            return Some(OP_NAMES[k].1);
+        }
+        k += 1;
+    }
+    None
 }
 
 /// The focus label of an operator's cell where its own label can't say
@@ -331,27 +356,81 @@ static EAR: [(i8, i8); 8] = [
     (-3, -1),
 ];
 
-/// Where operator `op`'s loop is centred on `at`: right of its node, or
-/// left where the right would leave the band.
-pub fn loop_centre(at: &AlgLayout, op: Op) -> (i32, i32) {
+/// A drawn link (`links[src]` bit `dst`) runs through the ear centred
+/// `(cx, cy)`, outside operator `own`'s node, which covers what is under
+/// it. Plain loops, here and in `loop_centre`: an iterator adaptor's
+/// instance is `core`'s by name, which the linker keeps in bank 1, calling
+/// past the door.
+fn crossed(at: &AlgLayout, links: &[u8; OPS], own: usize, (cx, cy): (i32, i32)) -> bool {
+    const STEPS: i32 = 48;
+    let reach = LOOP_R + 1;
+    let (ox, oy) = at.pos[own];
+    let mut src = 0;
+    while src < OPS {
+        let mut dst = 0;
+        while dst < OPS {
+            if links[src] & (1 << dst) != 0 {
+                let ((x0, y0), (x1, y1)) = (at.pos[src], at.pos[dst]);
+                let mut k = 0;
+                while k <= STEPS {
+                    let (x, y) = (x0 + (x1 - x0) * k / STEPS, y0 + (y1 - y0) * k / STEPS);
+                    let under = (x - ox) * (x - ox) + (y - oy) * (y - oy) <= at.r * at.r;
+                    if !under && (x - cx).abs() <= reach && (y - cy).abs() <= reach {
+                        return true;
+                    }
+                    k += 1;
+                }
+            }
+            dst += 1;
+        }
+        src += 1;
+    }
+    false
+}
+
+/// An ear centred `(cx, cy)` is inside the viz band.
+fn inside((cx, cy): (i32, i32)) -> bool {
+    cx - LOOP_R >= theme::VIZ_LEFT
+        && cx + LOOP_R <= theme::VIZ_RIGHT
+        && cy - LOOP_R > theme::VIZ_BAND_TOP
+        && cy + LOOP_R < theme::VIZ_BAND_BOTTOM
+}
+
+/// Where operator `op`'s loop is centred on `at`: beside its node, on the
+/// first of right, left, above and below that stays in the band and
+/// clear of every drawn link; else the first in the band; else the right.
+pub fn loop_centre(at: &AlgLayout, op: Op, links: &[u8; OPS]) -> (i32, i32) {
     let (x, y) = at.pos[op.index()];
     let out = at.r + LOOP_OUT;
-    if x + out + LOOP_R > theme::VIZ_RIGHT {
-        (x - out, y)
-    } else {
-        (x + out, y)
+    let sides = [(x + out, y), (x - out, y), (x, y - out), (x, y + out)];
+    let mut fits = None;
+    let mut k = 0;
+    while k < sides.len() {
+        if inside(sides[k]) {
+            if !crossed(at, links, op.index(), sides[k]) {
+                return sides[k];
+            }
+            if fits.is_none() {
+                fits = Some(sides[k]);
+            }
+        }
+        k += 1;
+    }
+    match fits {
+        Some(c) => c,
+        None => sides[0],
     }
 }
 
 /// The chart's feedback loops (#989): an ear on each operator that feeds
 /// back into itself, as every operator can here, brighter from `HARD`.
 /// Drawn before the nodes, which cover each ear's inner half.
-pub fn loops(on: &mut dyn Paint, algo: &AlgoParams, at: &AlgLayout) {
+pub fn loops(on: &mut dyn Paint, algo: &AlgoParams, at: &AlgLayout, links: &[u8; OPS]) {
     for op in Op::ALL {
         let Some(c) = Loop::of(algo, op).color() else {
             continue;
         };
-        let (cx, cy) = loop_centre(at, op);
+        let (cx, cy) = loop_centre(at, op, links);
         let p = |k: usize| {
             let (dx, dy) = EAR[k % EAR.len()];
             (cx + i32::from(dx), cy + i32::from(dy))
@@ -360,6 +439,81 @@ pub fn loops(on: &mut dyn Paint, algo: &AlgoParams, at: &AlgLayout) {
             let ((x0, y0), (x1, y1)) = (p(k), p(k + 1));
             on.line(x0, y0, x1, y1, c);
         }
+    }
+}
+
+/// OSC's sub-pages by operator (ADR 0300): OP2-OP6 after OP1, the node's
+/// home, then WAVE and the group pages in their order. Built from
+/// `ALGO_OSC_SUB_PAGES`, so every page of it is here. Statics, so the
+/// tables link into bank 2 with this module.
+const OPS_SUBS: usize = reg::ALGO_OSC_SUB_PAGES.len();
+const OWN: usize = reg::ALGO_OP_PAGES.len();
+static ALGO_OPS_OSC_SUB_PAGES: [&BlockDef; OPS_SUBS] = {
+    let mut a = [&reg::ALGO_WAVE; OPS_SUBS];
+    let mut i = 1;
+    while i < OWN {
+        a[i - 1] = &reg::ALGO_OP_PAGES[i];
+        i += 1;
+    }
+    // a[OWN - 1] is WAVE; the groups follow it.
+    let mut g = 0;
+    while g < OPS_SUBS - OWN {
+        a[OWN + g] = reg::ALGO_OSC_SUB_PAGES[g];
+        g += 1;
+    }
+    a
+};
+
+/// The same with FORMANT's page after WAVE, as it follows WAVE in
+/// PARAMS' order.
+static ALGO_OPS_FORMANT_OSC_SUB_PAGES: [&BlockDef; OPS_SUBS + 1] = {
+    let mut a = [&reg::ALGO_FORMANT; OPS_SUBS + 1];
+    let mut i = 0;
+    while i < OPS_SUBS {
+        a[if i < OWN { i } else { i + 1 }] = ALGO_OPS_OSC_SUB_PAGES[i];
+        i += 1;
+    }
+    a
+};
+
+/// ALGO's nodes with OSC opening on OP1, still OSC on the map.
+const fn ops_blocks(subs: &'static [&'static BlockDef]) -> [ChainBlock; 5] {
+    let mut b = [reg::ALGO_BLOCKS[0]; 5];
+    let mut i = 1;
+    while i < 5 {
+        b[i] = reg::ALGO_BLOCKS[i];
+        i += 1;
+    }
+    b[1] = ChainBlock {
+        def: &reg::ALGO_OP_PAGES[0],
+        sub_pages: subs,
+        map: Some(reg::ALGO_WAVE.short),
+    };
+    b
+}
+
+static ALGO_OPS_BLOCKS: [ChainBlock; 5] = ops_blocks(&ALGO_OPS_OSC_SUB_PAGES);
+static ALGO_OPS_FORMANT_BLOCKS: [ChainBlock; 5] = ops_blocks(&ALGO_OPS_FORMANT_OSC_SUB_PAGES);
+
+/// ALGO's chain under ALGO PAGES' OPS, and while an operator is a
+/// formant or a noise band.
+pub static ALGO_OPS_CHAIN: ChainDef2 = ChainDef2::new(
+    reg::ALGO_CHAIN.name,
+    &ALGO_OPS_BLOCKS,
+    &reg::PART_MOD_SOURCES,
+);
+pub static ALGO_OPS_FORMANT_CHAIN: ChainDef2 = ChainDef2::new(
+    reg::ALGO_CHAIN.name,
+    &ALGO_OPS_FORMANT_BLOCKS,
+    &reg::PART_MOD_SOURCES,
+);
+
+/// The operator-first chain, with FORMANT's page or without.
+pub fn ops_chain(formant: bool) -> &'static ChainDef2 {
+    if formant {
+        &ALGO_OPS_FORMANT_CHAIN
+    } else {
+        &ALGO_OPS_CHAIN
     }
 }
 
